@@ -49,16 +49,34 @@ func begin_fight() -> bool:
 ## Close one active hand, execute the CURRENT announced phase once, and
 ## advance announcements and deal a new hand only if the fight remains active.
 func end_turn() -> bool:
+	# Validate all actor fields before result/phase readers access live records.
+	if not _started or _party == null or _enemies == null:
+		return false
+	var batch := CombatStatusTurnBatch.new()
+	var tick := batch.tick_side("heroes", _party.get_heroes())
+	if not tick["ok"] or not batch.tick_side("enemies", _enemies.get_enemies())["ok"]:
+		return false
 	if not _started or not _valid_bindings() or not _deck.turn_active:
 		return false
 	# A caller may have completed a lethal card play without explicitly
 	# observing it yet. Never discard/draw or let enemies act on that state.
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return false
-	if not _phase_is_executable():
+	if not _phase_is_executable(tick["actors"]):
 		return false
 	var announced := _intents.get_intents()
+	# Preflight succeeded for the complete transition. Preserve authoritative
+	# record identities and metadata; only the owner tick's fields are committed.
+	for index in range(CombatParty.PARTY_SIZE):
+		var hero: Dictionary = _party._heroes[index]
+		var next: Dictionary = tick["actors"][index]
+		hero["hp"] = next["hp"]
+		hero["block"] = next["block"]
+		if hero.has("statuses") or not next["statuses"].is_empty():
+			hero["statuses"] = next["statuses"]
 	_deck.end_turn()
+	if _result.evaluate() != CombatBattleResult.ACTIVE:
+		return true
 	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, announced)
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
@@ -119,14 +137,12 @@ func _valid_bindings() -> bool:
 	return true
 
 
-func _phase_is_executable() -> bool:
+func _phase_is_executable(next_heroes: Array) -> bool:
+	# Use the actual executor on independent actors to preflight every announced
+	# action, including capacity checks, without touching live actors or RNG.
+	var party := CombatParty.new(next_heroes)
+	party._heroes.assign(next_heroes.duplicate(true))
 	var roster := _enemies.get_enemies()
-	for intent in _intents.get_intents():
-		var position: int = intent["enemy_position"]
-		var actor: Dictionary = roster[position - 1]
-		# CombatEnemyPhase rejects the entire batch on Block overflow; catch
-		# it BEFORE closing the hand so a rejected end stays fully atomic.
-		if intent["type"] == "block" and actor["hp"] > 0 \
-				and intent["amount"] > CombatEnemies.MAX_INT - actor["block"]:
-			return false
-	return true
+	var enemies := CombatEnemies.new(roster)
+	enemies._enemies.assign(roster)
+	return CombatEnemyPhase.new().execute_phase(party, enemies, _intents.get_intents())["ok"]
