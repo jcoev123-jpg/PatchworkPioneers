@@ -136,6 +136,17 @@ func get_route() -> Array[String]:
 	return _route.duplicate()
 
 
+## Roll back only the caller's just-committed choice, with its exact prior route.
+## A mismatched ID, prior route, or advanced route is inert; never draws RNG.
+func undo_choice(node_id: String, prior_route: Array[String]) -> bool:
+	if _route.is_empty() or _route.back() != node_id or _route.size() != prior_route.size() + 1:
+		return false
+	if _route.slice(0, -1) != prior_route:
+		return false
+	_route.pop_back()
+	return true
+
+
 func get_current_node_id() -> String:
 	return "" if _route.is_empty() else _route.back()
 

@@ -13,6 +13,7 @@ func _initialize() -> void:
 	_test_playable_openings_preserve_original_generation()
 	_test_defensive_snapshots()
 	_test_traversal_and_rejections()
+	_test_guarded_undo()
 	if failures.is_empty():
 		print("run_map_test: PASS (", checks, " checks)")
 	else:
@@ -32,6 +33,42 @@ func _rng(value: int) -> RandomNumberGenerator:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = value
 	return rng
+
+
+func _test_guarded_undo() -> void:
+	var rng := _rng(6)
+	var map := RunMap.new()
+	var empty: Array[String] = []
+	_check(not map.undo_choice("f01_n0", empty), "ungenerated undo rejected")
+	_check(map.generate(rng), "undo fixture generated")
+	var opening := _snapshot(map, rng)
+	_check(not map.undo_choice("", empty) and _snapshot(map, rng) == opening,
+		"empty route undo is inert")
+	var id: String = map.get_legal_choices()[0]
+	_check(map.choose_node(id), "undo fixture commits")
+	var committed := _snapshot(map, rng)
+	var wrong: Array[String] = ["unknown"]
+	for bad_id in ["", "unknown", map.get_legal_choices()[0]]:
+		_check(not map.undo_choice(bad_id, empty) and _snapshot(map, rng) == committed,
+			"wrong undo ID leaves complete state untouched")
+	_check(not map.undo_choice(id, wrong) and _snapshot(map, rng) == committed,
+		"wrong prior route rejected")
+	var prior := map.get_route()
+	var next_id: String = map.get_legal_choices()[0]
+	_check(map.choose_node(next_id), "advance before stale undo")
+	var advanced := _snapshot(map, rng)
+	_check(not map.undo_choice(id, empty) and _snapshot(map, rng) == advanced,
+		"stale undo cannot remove a newer choice")
+	wrong = ["wrong_prefix"]
+	_check(not map.undo_choice(next_id, wrong) and _snapshot(map, rng) == advanced,
+		"same-length wrong prefix rejected")
+	_check(map.undo_choice(next_id, prior) and _snapshot(map, rng) == committed,
+		"guarded undo restores exact prior route and choices without RNG")
+	_check(map.undo_choice(id, empty) and _snapshot(map, rng) == opening,
+		"opening rollback restores entire snapshot")
+	_check(not map.undo_choice(id, empty) and _snapshot(map, rng) == opening,
+		"duplicate rollback inert")
+	_check(map.choose_node(id), "corrected choice can retry")
 
 
 func _snapshot(map: RunMap, rng: RandomNumberGenerator) -> Dictionary:

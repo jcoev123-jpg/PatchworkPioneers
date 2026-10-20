@@ -8,6 +8,11 @@ const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const STARTER_PARTY_PATH := "res://data/heroes/starter_party.json"
 const STARTER_ATTACKS_PATH := "res://data/encounters/starter_attacks.json"
 const STARTER_ENEMIES_PATH := "res://data/enemies/starter_enemies.json"
+const FIGHT_ENCOUNTER_PATHS := {
+	"starter_attacks": STARTER_ATTACKS_PATH,
+	"guard_counterattack": "res://data/encounters/guard_counterattack.json",
+	"ragling_rearline_feint": "res://data/encounters/ragling_rearline_feint.json",
+}
 
 @export var run_seed: int = 42
 @export_file("*.json") var starter_deck_path: String = STARTER_DECK_PATH
@@ -22,6 +27,9 @@ var route_view: VBoxContainer
 var route_back_button: Button
 var route_buttons: Array[Button] = []
 var run_map: RunMap
+var fight_encounter_paths: Dictionary = FIGHT_ENCOUNTER_PATHS.duplicate()
+var fight_selection: RunFightEncounterSelection
+var encounter_id := ""
 var title_view: VBoxContainer
 var battle_view: MarginContainer
 var hand_view: HBoxContainer
@@ -152,6 +160,7 @@ func _open_route() -> void:
 	run_rng.seed = run_seed
 	run_map = RunMap.new()
 	run_map.generate(run_rng)
+	fight_selection = RunFightEncounterSelection.new()
 	title_view.hide()
 	route_view = VBoxContainer.new()
 	route_view.set_anchors_preset(Control.PRESET_CENTER)
@@ -170,7 +179,7 @@ func _open_route() -> void:
 		if button.disabled:
 			button.text += " (unavailable)"
 		button.custom_minimum_size = Vector2(340, 48)
-		button.pressed.connect(_choose_route.bind(id))
+		button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
 		route_view.add_child(button)
 		route_buttons.append(button)
 		if not button.disabled:
@@ -187,16 +196,28 @@ func _open_route() -> void:
 	actions[0].grab_focus()
 
 
-func _choose_route(id: String) -> bool:
+func _choose_route(id: String, source_map: WeakRef = null) -> bool:
 	if deck != null or run_map == null or not is_instance_valid(route_view) \
 			or not route_view.is_visible_in_tree() or not run_map.get_route().is_empty():
 		return false
+	if source_map != null and source_map.get_ref() != run_map:
+		return false
 	if not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Fight":
 		return false
-	if not _start_battle(run_rng):
+	if run_rng == null or fight_selection == null:
 		return false
-	# Startup has succeeded; only now spend the route choice.
-	run_map.choose_node(id)
+	var rng_before := run_rng.state
+	var route_before := run_map.get_route()
+	if not run_map.choose_node(id):
+		return false
+	var selected := fight_selection.select_current_fight(run_map, run_rng, fight_encounter_paths)
+	if not selected.get("success", false) or not _start_battle(run_rng, selected.get("definitions", [])):
+		run_map.undo_choice(id, route_before)
+		run_rng.state = rng_before
+		fight_selection = RunFightEncounterSelection.new()
+		encounter_id = ""
+		return false
+	encounter_id = selected.encounter_id
 	_clear_route_view()
 	return true
 
@@ -216,16 +237,22 @@ func _cancel_route() -> void:
 	_clear_route_view()
 	run_map = null
 	run_rng = null
+	fight_selection = null
+	encounter_id = ""
 	title_view.show()
 	route_button.grab_focus()
 
 
-func _start_battle(shared_rng: RandomNumberGenerator = null) -> bool:
+func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitions: Array = []) -> bool:
 	var cards := _load_starter_deck()
 	if cards.is_empty():
 		push_warning("Starter deck is invalid or unreadable; run was not started")
 		return false
 	var selector := CombatEnemyIntents.new(_load_enemy_schedule())
+	if not selector.is_valid():
+		return false
+	if shared_rng != null:
+		selector = CombatEnemyIntents.new(encounter_definitions)
 	var starting_enemies := CombatEnemies.new(_load_enemy_definitions())
 	if not selector.is_valid() or not starting_enemies.is_valid() or not _positions_align(selector, starting_enemies):
 		push_warning("Starter enemies or schedule are invalid; run was not started")
@@ -722,6 +749,8 @@ func _return_to_title() -> void:
 	deck = null
 	run_rng = null
 	run_map = null
+	fight_selection = null
+	encounter_id = ""
 	_clear_route_view()
 	title_view.show()
 	start_button.grab_focus()

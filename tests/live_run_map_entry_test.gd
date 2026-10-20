@@ -43,20 +43,32 @@ func _click(button: Button) -> void:
 
 func _snapshot(app) -> Array:
 	var result: Array = [app.run_map.get_floors(), app.run_map.get_route(),
-		app.run_map.get_legal_choices(), app.run_rng.state]
+		app.run_map.get_legal_choices(), app.run_rng.state, app.encounter_id]
 	if app.deck != null:
 		result.append([app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
 			app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
 			app.party.get_heroes(), app.enemies.get_enemies(), app.enemy_intents.get_intents()])
 	else:
 		result.append([app.deck, app.party, app.enemies, app.battle_view, app.round_flow, app.battle_result])
+	result.append([app.title_view.visible, app.route_view, app.route_buttons.duplicate(),
+		app.run_deck.duplicate(), app.enemy_attacks.duplicate(true)])
+	var controls: Array = []
+	for button in app.route_buttons:
+		controls.append([button.text, button.disabled, button.is_visible_in_tree()])
+	result.append(controls)
 	return result
 
 
 func _reject(app, id: String, reason: String) -> void:
 	var before := _snapshot(app)
+	var selector = app.fight_selection
+	var attempted_fight: bool = app.deck == null and app.run_map.get_legal_choices().has(id) \
+		and app.run_map.get_node(id).get("type") == "Fight"
 	_check(not app._choose_route(id), reason + " rejected")
 	_check(_snapshot(app) == before, reason + " spends no map/combat/RNG state")
+	if attempted_fight:
+		_check(app.fight_selection != null and app.fight_selection != selector,
+			reason + " resets selector cache after failed startup")
 
 
 func _run() -> void:
@@ -124,6 +136,8 @@ func _run() -> void:
 	var old_rng: WeakRef = weakref(app.run_rng)
 	var old_map: WeakRef = weakref(app.run_map)
 	var old_view: int = app.route_view.get_instance_id()
+	var old_selector: WeakRef = weakref(app.fight_selection)
+	var stale_callback: Callable = app.route_buttons[0].pressed.get_connections()[0].callable
 	app.route_back_button.grab_focus()
 	await _key(KEY_ENTER)
 	await process_frame
@@ -131,15 +145,21 @@ func _run() -> void:
 		app.route_buttons.is_empty() and app.route_back_button == null, "Back clears route models and controls")
 	_check(old_rng.get_ref() == null and old_map.get_ref() == null and
 		not is_instance_id_valid(old_view), "Back releases map/RNG/view")
+	_check(app.fight_selection == null and app.encounter_id == "" and old_selector.get_ref() == null,
+		"Back releases selector and encounter identity")
 	_check(app.route_button.has_focus() and app.title_view.is_visible_in_tree(), "Back restores title focus")
 	_check(not app._choose_route(fight_id) and app.deck == null and app.run_rng == null, "cancelled callback cannot start battle")
 
 	var trace: Array = []
+	var phase_trace: Array = []
 	for session in range(2):
 		await _click(app.route_button)
 		_check(app.route_view != null, "mouse opens route chooser")
 		if app.route_view == null:
 			break
+		var before_stale := _snapshot(app)
+		stale_callback.call()
+		_check(_snapshot(app) == before_stale, "old chooser callback cannot affect restarted route")
 		var same_rng = app.run_rng
 		var same_map = app.run_map
 		var fight: Button = null
@@ -173,11 +193,40 @@ func _run() -> void:
 		rng.seed = fixture_seed
 		var map := RunMap.new()
 		_check(map.generate(rng), "combat reference generates")
+		_check(map.choose_node(fight_id), "reference commits before selection")
+		var ids: Array = app.FIGHT_ENCOUNTER_PATHS.keys()
+		ids.sort()
+		var draw_rng := RandomNumberGenerator.new()
+		draw_rng.state = rng.state
+		var expected_id: String = ids[draw_rng.randi_range(0, ids.size() - 1)]
+		var selection := RunFightEncounterSelection.new()
+		var selected := selection.select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+		_check(selected.get("success", false) and selected.get("encounter_id") == expected_id
+			and rng.state == draw_rng.state, "selector spends exactly one sorted-pool draw")
+		if not selected.get("success", false):
+			break
+		var authored := RunFightEncounterSelection._parse_schedule_text(
+			FileAccess.get_file_as_string(app.FIGHT_ENCOUNTER_PATHS[expected_id]))
+		var expected_intents := CombatEnemyIntents.new(authored)
+		_check(expected_intents.is_valid() and authored.size() == 2, "selected authored two-enemy schedule valid")
+		_check(app.enemy_intents._definitions == authored and selected.definitions == authored,
+			"battle receives exact selected authored definitions")
+		_check(app.encounter_id == expected_id and app.enemy_attacks == expected_intents.get_intents()
+			and app.enemy_intents.get_intents() == expected_intents.get_intents(),
+			"real initial intents for both enemies match selector and authored pattern")
+		_check(expected_id != "starter_attacks", "seed exercises a non-starter schedule")
+		_check(app.intent_label.text.contains("Enemy 1") and app.intent_label.text.contains("Enemy 2"),
+			"both initial announcements mounted")
 		var reference_deck := CombatDeck.new(cards, rng)
-		_check(reference_deck.start_turn() and map.choose_node(fight_id), "reference starts and commits")
+		var reference_party := CombatParty.new(app._load_party_definitions())
+		var reference_enemies := CombatEnemies.new(app._load_enemy_definitions())
+		var reference_result := CombatBattleResult.new(reference_party, reference_enemies)
+		var reference_flow := CombatRoundFlow.new(reference_deck, reference_party, reference_enemies,
+			expected_intents, reference_result)
+		_check(reference_flow.begin_fight(), "reference starts selected battle")
 		_check(app.deck.hand == reference_deck.hand and app.deck.draw_pile == reference_deck.draw_pile
 			and app.run_rng.state == rng.state and app.run_map.get_floors() == map.get_floors(),
-			"map then hand use one uninterrupted seeded stream")
+			"map then one selection draw then hand use one uninterrupted seeded stream")
 		_check(app.hand_view.get_child_count() == 5 and app.end_turn_button.has_focus(), "real hand mounted and battle focused")
 		for index in range(app.deck.hand.size()):
 			_check(app.hand_view.get_child(index).get_child(0).text == app.deck.hand[index], "mounted card matches real hand")
@@ -193,10 +242,31 @@ func _run() -> void:
 		app._open_route()
 		app._cancel_route()
 		_check(_snapshot(app) == before, "other starts and stale Back preserve battle")
+		_check(reference_flow.end_turn(), "reference executes selected enemy phase")
+		var heroes_before_phase: Array = app.party.get_heroes()
+		await _click(app.end_turn_button)
+		_check(app.party.get_heroes() != heroes_before_phase, "selected phase causes real hero damage")
+		_check(app.party.get_heroes() == reference_party.get_heroes()
+			and app.enemies.get_enemies() == reference_enemies.get_enemies()
+			and app.enemy_attacks == expected_intents.get_intents()
+			and app.deck.hand == reference_deck.hand and app.deck.draw_pile == reference_deck.draw_pile
+			and app.deck.discard_pile == reference_deck.discard_pile and app.run_rng.state == rng.state,
+			"mounted End Turn executes selected attacks/block, advances schedule and deals exact next hand")
+		_check(app.enemy_intents.get_intents() == expected_intents.get_intents(), "next phase follows selected schedule")
+		for definition in authored:
+			var action: Dictionary = definition.pattern[1 % definition.pattern.size()].duplicate(true)
+			action.enemy_position = definition.enemy_position
+			_check(app.enemy_attacks[definition.enemy_position - 1] == action,
+				"next announcement matches authored second beat for each enemy")
+		if session == 0:
+			phase_trace = _snapshot(app)
+		else:
+			_check(_snapshot(app) == phase_trace, "restarted run replays next phase and complete state")
 		same_rng = null
 		same_map = null
 		old_map = weakref(app.run_map)
 		old_rng = weakref(app.run_rng)
+		old_selector = weakref(app.fight_selection)
 		if session == 0:
 			await _click(app.return_button)
 		else:
@@ -206,11 +276,20 @@ func _run() -> void:
 		_check(app.deck == null and app.run_rng == null and app.run_map == null and app.battle_view == null,
 			"Return clears route and battle")
 		_check(old_map.get_ref() == null and old_rng.get_ref() == null, "Return releases map/RNG")
+		_check(app.fight_selection == null and app.encounter_id == "" and old_selector.get_ref() == null,
+			"Return releases selector and encounter identity")
 		_check(app.start_button.has_focus(), "Return restores original title focus")
 
 	await _click(app.route_button)
 	_check(app.run_map != null and app.route_view != null, "failed-data retry chooser mounted")
 	if app.run_map != null:
+		for pool in [{}, {"missing": "res://data/encounters/missing_036.json"},
+			{"bad": "res://data/encounters/../encounters/starter_attacks.json"},
+			{"bad": "res://data/encounters/starter_attacks.json", "corrupt": 42}]:
+			app.fight_encounter_paths = pool
+			_reject(app, fight_id, "invalid encounter pool")
+			_check(app.fight_selection != null and app.encounter_id == "", "failed selection reset for retry")
+		app.fight_encounter_paths = app.FIGHT_ENCOUNTER_PATHS.duplicate()
 		for field in ["starter_deck_path", "starter_party_path", "starter_attacks_path", "starter_enemies_path"]:
 			var original: String = app.get(field)
 			app.set(field, OS.get_environment("TEMP").path_join("patchwork_missing_029.json"))
@@ -240,6 +319,8 @@ func _run() -> void:
 			_check(app.deck != null and app.run_map.get_route() == [fight_id], "corrected data retries successfully via mouse")
 			if app.deck != null:
 				_check(app.run_map.get_floors() == before_retry[0], "retry retains generated graph")
+				_check(app.encounter_id == trace[4] and app.run_rng.state == trace[3]
+					and app.deck.hand == trace[5][1], "corrected retry repeats exact selection and shuffle")
 				await _click(app.return_button)
 	# The formerly blocked opening now offers Fight; Back still cancels it.
 	app.run_seed = fixture_seed
@@ -264,6 +345,9 @@ func _run() -> void:
 	await _click(app.start_button)
 	_check(app.deck != null and app.run_map == null and app.route_view == null, "original direct start preserved")
 	if app.deck != null:
+		var starter := CombatEnemyIntents.new(app._load_enemy_schedule())
+		_check(app.enemy_attacks == starter.get_intents() and app.fight_selection == null
+			and app.encounter_id == "", "direct start keeps starter schedule without routed selector")
 		var rng := RandomNumberGenerator.new()
 		rng.seed = fixture_seed
 		var direct := CombatDeck.new(app._load_starter_deck(), rng)
