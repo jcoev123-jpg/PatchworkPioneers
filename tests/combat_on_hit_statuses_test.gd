@@ -21,13 +21,6 @@ func _initialize() -> void:
 	quit(0 if failures.is_empty() else 1)
 
 
-func _seed_rng_and_get_draw(seed: int) -> int:
-	"""Seed RNG and return a random int to use as baseline draw."""
-	var rng = RandomNumberGenerator.new()
-	rng.seed = seed
-	return rng.randi()
-
-
 func _deep_snapshot_catalog() -> Dictionary:
 	"""Create a deep snapshot of all StarterCards definitions."""
 	var catalog = _get_catalog()
@@ -101,7 +94,12 @@ func _test_adapter_basic_emission() -> void:
 	var adapter = _get_adapter()
 	var catalog_before = _deep_snapshot_catalog()
 	var rng_seed = 12344
-	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
+	
+	# Seed global RNG and capture expected next draw
+	seed(rng_seed)
+	var expected_next = randi()
+	# Reseed to same state before adapter calls
+	seed(rng_seed)
 	
 	# Confirmed Prick hit emits bleed 3 (authored 2 + passive +1)
 	var prick_result: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
@@ -117,9 +115,8 @@ func _test_adapter_basic_emission() -> void:
 	_check(prick_result.size() == 1, "Prick result has exactly one key")
 	_check(bash_result.size() == 1, "Shield Bash result has exactly one key")
 	
-	# Verify RNG not consumed
-	var rng_after = _seed_rng_and_get_draw(rng_seed)
-	_check(rng_after == rng_baseline, "RNG state unchanged after basic emission calls")
+	# Verify global RNG not consumed
+	_check(randi() == expected_next, "Global RNG state unchanged after basic emission calls")
 	
 	# Verify catalog unchanged
 	var catalog_after = _deep_snapshot_catalog()
@@ -163,7 +160,12 @@ func _test_adapter_rejects_unknown_and_failed_hits() -> void:
 	var adapter = _get_adapter()
 	var catalog_before = _deep_snapshot_catalog()
 	var rng_seed = 12345
-	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
+	
+	# Seed global RNG and capture expected next draw
+	seed(rng_seed)
+	var expected_next = randi()
+	# Reseed to same state before adapter calls
+	seed(rng_seed)
 	
 	# hit_confirmed=false for supported IDs
 	_check(adapter.status_for_confirmed_hit("seamstress_prick", false) == {}, "Prick failed hit emits {}")
@@ -173,9 +175,8 @@ func _test_adapter_rejects_unknown_and_failed_hits() -> void:
 	_check(adapter.status_for_confirmed_hit("nonexistent_card", true) == {}, "unknown ID emits {}")
 	_check(adapter.status_for_confirmed_hit("", true) == {}, "empty string ID emits {}")
 	
-	# Verify RNG not consumed
-	var rng_after = _seed_rng_and_get_draw(rng_seed)
-	_check(rng_after == rng_baseline, "RNG state unchanged after failed/unknown hit calls")
+	# Verify global RNG not consumed
+	_check(randi() == expected_next, "Global RNG state unchanged after failed/unknown hit calls")
 	
 	# Verify catalog unchanged
 	var catalog_after = _deep_snapshot_catalog()
@@ -187,7 +188,12 @@ func _test_adapter_rejects_other_starter_cards() -> void:
 	var catalog = _get_catalog()
 	var catalog_before = _deep_snapshot_catalog()
 	var rng_seed = 12346
-	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
+	
+	# Seed global RNG and capture expected next draw
+	seed(rng_seed)
+	var expected_next = randi()
+	# Reseed to same state before adapter calls
+	seed(rng_seed)
 	
 	# All other seven authored starter card IDs emit {}
 	var other_ids: Array[String] = [
@@ -206,9 +212,8 @@ func _test_adapter_rejects_other_starter_cards() -> void:
 		var result: Dictionary = adapter.status_for_confirmed_hit(card_id, true)
 		_check(result == {}, card_id + " with hit_confirmed=true emits {}")
 	
-	# Verify RNG not consumed
-	var rng_after = _seed_rng_and_get_draw(rng_seed)
-	_check(rng_after == rng_baseline, "RNG state unchanged after other starter card calls")
+	# Verify global RNG not consumed
+	_check(randi() == expected_next, "Global RNG state unchanged after other starter card calls")
 	
 	# Verify catalog unchanged
 	var catalog_after = _deep_snapshot_catalog()
@@ -220,7 +225,12 @@ func _test_emitted_payloads_work_with_combat_statuses() -> void:
 	var rules = _get_status_rules()
 	var catalog_before = _deep_snapshot_catalog()
 	var rng_seed = 12347
-	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
+	
+	# Seed global RNG and capture expected next draw
+	seed(rng_seed)
+	var expected_next = randi()
+	# Reseed to same state before adapter calls
+	seed(rng_seed)
 	
 	# Test Bleed 3: 10 HP / 7 Block -> 7/7 {bleed:2} -> 5/7 {bleed:1} -> 4/7 {}
 	var bleed_payload: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
@@ -274,9 +284,8 @@ func _test_emitted_payloads_work_with_combat_statuses() -> void:
 	_check(blocked["block"] == 99, "Block unchanged by Bleed (99 stays 99)")
 	_check(blocked["hp"] == 7, "HP reduced by 3 directly (10 -> 7)")
 	
-	# Verify RNG not consumed
-	var rng_after = _seed_rng_and_get_draw(rng_seed)
-	_check(rng_after == rng_baseline, "RNG state unchanged after combat statuses integration calls")
+	# Verify global RNG not consumed
+	_check(randi() == expected_next, "Global RNG state unchanged after combat statuses integration calls")
 	
 	# Verify catalog unchanged
 	var catalog_after = _deep_snapshot_catalog()
@@ -288,7 +297,12 @@ func _test_replay_and_snapshots() -> void:
 	var rules = _get_status_rules()
 	var catalog_before = _deep_snapshot_catalog()
 	var rng_seed = 12348
-	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
+	
+	# Seed global RNG and capture expected next draw
+	seed(rng_seed)
+	var expected_next = randi()
+	# Reseed to same state before adapter calls
+	seed(rng_seed)
 	
 	# Repeated identical inputs reproduce same results
 	var prick_payload: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
@@ -314,9 +328,8 @@ func _test_replay_and_snapshots() -> void:
 		_check(p == {"bleed": 3}, "Prick deterministic call " + str(i))
 		_check(b_ == {"weak": 1}, "Shield Bash deterministic call " + str(i))
 	
-	# Verify RNG not consumed
-	var rng_after = _seed_rng_and_get_draw(rng_seed)
-	_check(rng_after == rng_baseline, "RNG state unchanged after replay and snapshot calls")
+	# Verify global RNG not consumed
+	_check(randi() == expected_next, "Global RNG state unchanged after replay and snapshot calls")
 	
 	# Verify catalog unchanged
 	var catalog_after = _deep_snapshot_catalog()
