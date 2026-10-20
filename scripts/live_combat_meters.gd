@@ -55,6 +55,9 @@ func _sync_battle() -> void:
 				for label in [meter.actor_heading, meter.hp_text, meter.block_text]:
 					label.add_theme_font_size_override("font_size", 12)
 				meter.status_text.add_theme_font_size_override("font_size", 10)
+				meter.modifier_explanation.add_theme_font_size_override("font_size", 9)
+				meter.modifier_explanation.custom_minimum_size = Vector2(200, 0)
+				meter.modifier_explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				meter.bleed_warning.add_theme_font_size_override("font_size", 9)
 				meter.bleed_warning.custom_minimum_size = Vector2(200, 0)
 				meter.bleed_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

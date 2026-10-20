@@ -75,6 +75,22 @@ func _visible(app) -> void:
 			_check(status.get_parent() == meter.get_node("Padding/Content")
 				and status.focus_mode == Control.FOCUS_NONE,
 				"status line belongs to mounted meter, remains keyboard-inert")
+		var modifier := meter.get_node_or_null("Padding/Content/ModifierExplanation") as Label
+		_check(modifier != null and modifier == meter.modifier_explanation, "real actor has one modifier explanation")
+		var expected_rules: Array[String] = []
+		if actor.hp > 0:
+			var mods: Dictionary = actor.get("statuses", {})
+			if mods.get("weak", 0) > 0:
+				expected_rules.append("Weak: -25% attack damage")
+			if mods.get("exposed", 0) > 0:
+				expected_rules.append("Exposed: +50% attack damage taken")
+		if modifier != null:
+			_check(modifier.text == "\n".join(expected_rules) and modifier.visible == not expected_rules.is_empty(),
+				"slot-local rules match only the living authoritative actor")
+			_check(modifier.focus_mode == Control.FOCUS_NONE and modifier.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+				"modifier line cannot receive input")
+			_check(meter.get_node("Padding/Content").find_children("ModifierExplanation", "Label", false, false).size() == 1,
+				"one permanent modifier explanation per slot")
 		var warning := meter.get_node_or_null("Padding/Content/BleedWarning") as Label
 		_check(warning != null and warning == meter.bleed_warning,
 			"mounted real actor has its single persistent BleedWarning")
@@ -91,7 +107,8 @@ func _visible(app) -> void:
 			_check(warning.focus_mode == Control.FOCUS_NONE
 				and warning.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 				"live Bleed warning cannot receive keyboard or mouse input")
-		_check(meter.get_node("Padding/Content").get_child_count() == (8 if index < 3 else 7)
+		_check(meter.get_node("Padding/Content").get_child_count() == (9 if index < 3 else 8)
+			and meter.get_node("Padding/Content").find_children("ModifierExplanation", "Label", false, false).size() == 1
 			and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1
 			and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1,
 			"one status, one Bleed warning, five original controls and hero-only forecast")
@@ -107,6 +124,15 @@ func _visible(app) -> void:
 			controls.append(line)
 		if status != null:
 			controls.append(status)
+		if modifier != null and modifier.visible:
+			controls.append(modifier)
+			_check(meter.get_global_rect().encloses(modifier.get_global_rect())
+				and modifier.size.x >= 180 and modifier.size.y >= 9,
+				"modifier line fits compact card at legible size")
+			_check(not modifier.get_global_rect().intersects(meter.hp_bar.get_global_rect())
+				and not modifier.get_global_rect().intersects(meter.block_bar.get_global_rect())
+				and (line == null or not modifier.get_global_rect().intersects(line.get_global_rect())),
+				"modifier line does not obscure bars or incoming forecast")
 		if warning != null and warning.visible:
 			controls.append(warning)
 			_check(meter.get_global_rect().encloses(warning.get_global_rect())
@@ -114,7 +140,8 @@ func _visible(app) -> void:
 				"Bleed text stays readable within compact actor card: %s %s" % [meter.name, warning.get_global_rect()])
 			_check(not warning.get_global_rect().intersects(meter.block_bar.get_global_rect())
 				and not warning.get_global_rect().intersects(meter.hp_bar.get_global_rect())
-				and (line == null or not warning.get_global_rect().intersects(line.get_global_rect())),
+				and (line == null or not warning.get_global_rect().intersects(line.get_global_rect()))
+				and (modifier == null or not modifier.visible or not warning.get_global_rect().intersects(modifier.get_global_rect())),
 				"Bleed warning never covers bars or existing IncomingForecast")
 		for control in controls:
 			_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0,
@@ -170,9 +197,11 @@ func _exercise_live_bleed(app, presenter) -> void:
 		return
 	var ids: Array[int] = []
 	var warning_ids: Array[int] = []
+	var modifier_ids: Array[int] = []
 	for meter in meters:
 		ids.append(meter.get_instance_id())
 		warning_ids.append(meter.bleed_warning.get_instance_id())
+		modifier_ids.append(meter.modifier_explanation.get_instance_id())
 	for index in range(3):
 		app.party._heroes[index]["statuses"] = [
 			{"bleed": 3, "weak": 1, "exposed": 2},
@@ -188,7 +217,37 @@ func _exercise_live_bleed(app, presenter) -> void:
 		and app.enemies.get_enemy(1)["statuses"]["bleed"] == 3,
 		"actual live Warden/enemy reader snapshots contain Bleed")
 	presenter._sync_battle()
+	await _frames()
 	_visible(app)
+	_check(meters[0].modifier_explanation.text == "Weak: -25% attack damage\nExposed: +50% attack damage taken"
+		and meters[1].modifier_explanation.text == "Exposed: +50% attack damage taken"
+		and meters[2].modifier_explanation.text.is_empty() and not meters[2].modifier_explanation.visible
+		and meters[3].modifier_explanation.text == meters[0].modifier_explanation.text
+		and meters[4].modifier_explanation.text == meters[1].modifier_explanation.text,
+		"all five live status lines follow their own actors")
+	var before_swap := _state(app)
+	var preview := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+	_check(preview["ok"] and preview["heroes"].size() == 3 and _state(app) == before_swap,
+		"real adjacent living swap preview succeeds without mutation")
+	if preview["ok"]:
+		for index in range(3):
+			app.party._heroes[index] = preview["heroes"][index].duplicate(true)
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		_check(app.party.get_hero(1)["id"] == "seamstress" and app.party.get_hero(2)["id"] == "warden"
+			and meters[0].modifier_explanation.text == "Exposed: +50% attack damage taken"
+			and meters[1].modifier_explanation.text == "Weak: -25% attack damage\nExposed: +50% attack damage taken",
+			"modifier text tracks hero identity after legal adjacent position swap")
+		var reverse := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
+		_check(reverse["ok"], "legal reverse movement exists")
+		if reverse["ok"]:
+			for index in range(3):
+				app.party._heroes[index] = reverse["heroes"][index].duplicate(true)
+		presenter._sync_battle()
+		await _frames()
+		_visible(app)
+		_check(_state(app) == before_swap, "reverse movement restores exact state and RNG")
 	_check(meters[0].bleed_warning.text == "Bleed next: -3 HP (bypasses Block)"
 		and meters[0].block_text.text == "Block: 6"
 		and meters[3].bleed_warning.text == "Bleed next: -2 HP (bypasses Block) — LETHAL"
@@ -206,7 +265,8 @@ func _exercise_live_bleed(app, presenter) -> void:
 		for index in range(5):
 			_check(meters[index].get_instance_id() == ids[index]
 				and meters[index].bleed_warning.get_instance_id() == warning_ids[index]
-				and meters[index].get_node("Padding/Content").get_child_count() == (8 if index < 3 else 7),
+				and meters[index].modifier_explanation.get_instance_id() == modifier_ids[index]
+				and meters[index].get_node("Padding/Content").get_child_count() == (9 if index < 3 else 8),
 				"read-only live refresh never allocates another warning or meter")
 	_check(_state(app) == live_before_refresh and randi() == expected_global
 		and incoming_before == [_incoming(app, 1), _incoming(app, 2), _incoming(app, 3)],
@@ -234,16 +294,27 @@ func _exercise_live_bleed(app, presenter) -> void:
 			"post-owner-boundary visual refresh never applies a second Bleed tick")
 		for index in range(5):
 			_check(meters[index].get_instance_id() == ids[index]
-				and meters[index].bleed_warning.get_instance_id() == warning_ids[index],
+				and meters[index].bleed_warning.get_instance_id() == warning_ids[index]
+				and meters[index].modifier_explanation.get_instance_id() == modifier_ids[index],
 				"owner-turn refresh retains every persistent warning identity")
 		if turn == 0:
+			_check(meters[0].modifier_explanation.text == "Exposed: +50% attack damage taken"
+				and not meters[1].modifier_explanation.visible
+				and not meters[3].modifier_explanation.visible
+				and not meters[4].modifier_explanation.visible,
+				"owner tick removes Weak and expired enemy stacks, keeps living Exposed")
 			_check(app.enemies.is_slain(1) and not meters[3].bleed_warning.visible
 				and meters[3].bleed_warning.text.is_empty()
 				and meters[0].bleed_warning.text == "Bleed next: -2 HP (bypasses Block)"
 				and not meters[2].bleed_warning.visible,
 				"lethal enemy Bleed hides on slain slot; Bleed one expires after boundary")
+		elif turn == 1:
+			_check(not meters[0].modifier_explanation.visible and meters[0].modifier_explanation.text.is_empty(),
+				"second owner tick expires Exposed explanation")
 		elif turn == 2:
 			for meter in meters:
+				_check(not meter.modifier_explanation.visible and meter.modifier_explanation.text.is_empty(),
+					"all weak and exposed descriptions are cleared after expiry")
 				_check(not meter.bleed_warning.visible and meter.bleed_warning.text.is_empty(),
 					"all expired Bleed stacks remove active warnings without removing labels")
 	# Restore the identical authoritative session so the existing attack/replay
@@ -258,7 +329,9 @@ func _exercise_live_bleed(app, presenter) -> void:
 		"live status probe restores complete authored combat, intents, deck and RNG")
 	for index in range(5):
 		_check(meters[index].bleed_warning.text.is_empty()
-			and not meters[index].bleed_warning.visible,
+			and not meters[index].bleed_warning.visible
+			and meters[index].modifier_explanation.text.is_empty()
+			and not meters[index].modifier_explanation.visible,
 			"clearing real statuses immediately hides every old warning")
 
 

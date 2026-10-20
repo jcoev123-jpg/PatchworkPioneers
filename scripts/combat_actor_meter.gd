@@ -16,6 +16,7 @@ var hp_bar: ProgressBar
 var block_text: Label
 var block_bar: ProgressBar
 var status_text: Label
+var modifier_explanation: Label
 var bleed_warning: Label
 
 var _panel_style: StyleBoxFlat
@@ -52,6 +53,9 @@ func _init() -> void:
 	block_bar = _make_bar(content, "BlockBar", BLOCK)
 	status_text = _make_label(content, "StatusText")
 	status_text.add_theme_font_size_override("font_size", 12)
+	modifier_explanation = _make_label(content, "ModifierExplanation")
+	modifier_explanation.add_theme_font_size_override("font_size", 11)
+	modifier_explanation.focus_mode = Control.FOCUS_NONE
 	bleed_warning = _make_label(content, "BleedWarning")
 	bleed_warning.focus_mode = Control.FOCUS_NONE
 	bleed_warning.add_theme_font_size_override("font_size", 11)
@@ -120,6 +124,16 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 			active.append("%s %d" % [key.capitalize(), count])
 	status_text.text = "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
+	# Presentation-only rules: counters and damage math remain owned by CombatStatuses.
+	var explanations: Array[String] = []
+	if current > 0:
+		if statuses.get("weak", 0) > 0:
+			explanations.append("Weak: -25% attack damage")
+		if statuses.get("exposed", 0) > 0:
+			explanations.append("Exposed: +50% attack damage taken")
+	modifier_explanation.text = "\n".join(explanations)
+	modifier_explanation.visible = not explanations.is_empty()
+
 	# A copied, pure owner-turn result is a forecast only; never apply it to actors.
 	bleed_warning.text = ""
 	bleed_warning.hide()
@@ -185,6 +199,8 @@ func _clear_actor() -> void:
 	hp_text.text = ""
 	block_text.text = ""
 	status_text.text = ""
+	modifier_explanation.text = ""
+	modifier_explanation.hide()
 	bleed_warning.text = ""
 	bleed_warning.hide()
 	hp_bar.max_value = 1.0
