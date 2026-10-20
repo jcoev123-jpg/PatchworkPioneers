@@ -113,7 +113,8 @@ func _validate_display(observed: Dictionary) -> void:
 		if support and panel.get_child_count() >= 2:
 			_check(panel.get_child(1) is Label and panel.get_child(1).text == "Click / Enter / Space",
 				"original visible support action hint survives")
-			_check(panel.tooltip_text == "Click or focus and press Enter / Space to play", "support tooltip unchanged")
+			_check(panel.tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support hint preserved")
+			_check(panel.tooltip_text.contains("BASE"), "support tooltip includes base effect detail")
 		var single_attack: bool = StarterCards.new().get_definition(card_id).get("target_kind") == "enemy_single"
 		_check(panel.gui_input.get_connections().size() == (1 if support or single_attack else 0),
 			"exactly one handler for support or single-target selection; no extra handlers")
@@ -149,6 +150,71 @@ func _validate_display(observed: Dictionary) -> void:
 		if definition.target_kind in ["enemy_single", "enemy_all"]:
 			target_line += _expected_positions(definition.to_positions)
 		_check(facts.get("target_text") == target_line, "authored enemy/ally/self/no-target line printed")
+		# Tooltip verifies the base effect text for every held card.
+		var tooltip_text := panel.tooltip_text
+		var tooltip_lines := tooltip_text.split("\n")
+		var header_line := "%s; %s; %d energy" % [definition.display_name, definition.owner.capitalize(), definition.cost]
+		_check(tooltip_lines.has(header_line), "tooltip exact header line: " + card_id)
+		var from_line := "From " + _expected_positions(definition.from_positions)
+		_check(tooltip_lines.has(from_line), "tooltip exact from line: " + card_id)
+		var tooltip_target_line := ""
+		match definition.target_kind:
+			"enemy_single":
+				tooltip_target_line = "To one selected enemy"
+				if not definition.to_positions.is_empty():
+					tooltip_target_line += " " + _expected_positions(definition.to_positions)
+			"enemy_all":
+				tooltip_target_line = "All enemies"
+				if not definition.to_positions.is_empty():
+					tooltip_target_line += " " + _expected_positions(definition.to_positions)
+			"self":
+				tooltip_target_line = "Self"
+			"ally_single":
+				tooltip_target_line = "Choose one living ally"
+			"none":
+				tooltip_target_line = "No target"
+		_check(tooltip_lines.has(tooltip_target_line), "tooltip exact target line: " + card_id)
+		_check(tooltip_text.contains("BASE"), "tooltip states base effect: " + card_id)
+		# Exact per-required-ID tooltip assertions for the nine authored cards.
+		if card_id == "warden_strike":
+			_check(tooltip_text.contains("BASE deal 6 damage"), "exact strike damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1\u20132"), "exact strike target: " + card_id)
+		elif card_id == "warden_brace":
+			_check(tooltip_text.contains("BASE gain 7 Block"), "exact brace block: " + card_id)
+			_check(tooltip_text.contains("Self"), "exact brace target: " + card_id)
+		elif card_id == "warden_shield_bash":
+			_check(tooltip_text.contains("BASE deal 8 damage"), "exact bash damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1"), "exact bash target: " + card_id)
+		elif card_id == "seamstress_prick":
+			_check(tooltip_text.contains("BASE deal 3 damage"), "exact prick damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1\u20133"), "exact prick target: " + card_id)
+		elif card_id == "seamstress_mend":
+			_check(tooltip_text.contains("BASE heal 5 HP, capped at max HP"), "exact mend heal with cap: " + card_id)
+			_check(tooltip_text.contains("Choose one living ally"), "exact mend living ally: " + card_id)
+		elif card_id == "seamstress_stitch_up":
+			_check(tooltip_text.contains("BASE gain 5 Block"), "exact stitch block: " + card_id)
+			_check(tooltip_text.contains("Choose one living ally"), "exact stitch living ally: " + card_id)
+		elif card_id == "tinker_pop_shot":
+			_check(tooltip_text.contains("BASE deal 5 damage"), "exact pop shot damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1\u20133"), "exact pop shot target: " + card_id)
+		elif card_id == "tinker_scrap_bomb":
+			_check(tooltip_text.contains("BASE deal 4 damage"), "exact scrap bomb damage: " + card_id)
+			_check(tooltip_text.contains("All enemies 1\u20133"), "exact scrap bomb all-enemies target: " + card_id)
+		elif card_id == "tinker_tune_up":
+			_check(tooltip_text.contains("BASE draw 1 card"), "exact tune draw: " + card_id)
+			_check(tooltip_text.contains("No target"), "exact tune no target: " + card_id)
+		# Support cards: exact instruction plus appended effect detail.
+		if card_id in SUPPORT_IDS:
+			_check(tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support exact instruction preserved: " + card_id)
+			_check(tooltip_text.contains("BASE"), "support tooltip contains base effect: " + card_id)
+			if card_id == "warden_brace":
+				_check(tooltip_text.contains("BASE gain 7 Block"), "support brace effect exact: " + card_id)
+			elif card_id == "tinker_tune_up":
+				_check(tooltip_text.contains("BASE draw 1 card"), "support tune effect exact: " + card_id)
+			elif card_id == "seamstress_mend":
+				_check(tooltip_text.contains("BASE heal 5 HP, capped at max HP"), "support mend effect exact: " + card_id)
+			elif card_id == "seamstress_stitch_up":
+				_check(tooltip_text.contains("BASE gain 5 Block"), "support stitch effect exact: " + card_id)
 		var geometry: Dictionary = metadata.get_geometry(panel)
 		if not geometry.is_empty():
 			if geometry["compact"]:
@@ -201,6 +267,13 @@ func _refresh_preserves_everything(observed: Dictionary) -> void:
 			and presenter._metadata._bindings[panel]["draw_count"] == old_draws[panel],
 			"unchanged facts and geometry never queue redundant redraws")
 		_check(panel.get_global_rect() == original_rects[panel], "decoration preserves original card hitbox")
+	# Byte-for-byte tooltip stability across repeated sync.
+	for panel in panels:
+		var original_tooltip: String = panel.tooltip_text
+		presenter._sync_battle()
+		await _frames()
+		_check(is_instance_valid(panel) and panel.tooltip_text == original_tooltip,
+			"repeated sync preserves tooltip byte-for-byte: " + (panel.get_child(0).text if panel.get_child_count() > 0 else "?"))
 	_validate_display(observed)
 
 
@@ -282,6 +355,13 @@ func _unknown_check() -> void:
 	await _frames()
 	_check(metadata._bindings.size() == 1 and metadata.get_facts(foreign) == unknown,
 		"unknown ID draws only an honest placeholder")
+	# Unknown tooltip must not invent any quantity.
+	var unknown_tooltip := foreign.tooltip_text
+	_check(unknown_tooltip == "Unknown card", "unknown tooltip is honest 'Unknown card': got '" + unknown_tooltip + "'")
+	_check(not unknown_tooltip.contains("damage") and not unknown_tooltip.contains("Block")
+		and not unknown_tooltip.contains("heal") and not unknown_tooltip.contains("draw")
+		and not unknown_tooltip.contains("energy") and not unknown_tooltip.contains("cost"),
+		"unknown tooltip invents no effect numbers")
 	_check(label.text == "unreleased_card" and foreign.get_child_count() == 1
 		and foreign.gui_input.get_connections().is_empty(),
 		"unknown panel leaves label and input inert")
@@ -291,10 +371,46 @@ func _unknown_check() -> void:
 	metadata.sync(panels, absent)
 	_check(metadata._bindings.is_empty() and foreign.draw.get_connections().is_empty(),
 		"absent/incorrect ID immediately releases drawing callback")
+	_check(foreign.tooltip_text == "" and not foreign.tooltip_text.contains("BASE")
+		and not foreign.tooltip_text.contains("damage") and not foreign.tooltip_text.contains("Block"),
+		"absent sync restores empty pre-bind tooltip with no stale effect words")
 	metadata.sync(panels, hand)
+	_check(metadata._bindings.size() == 1 and foreign.tooltip_text == "Unknown card",
+		"rebind to unknown restores exact unknown tooltip")
 	metadata.clear()
 	_check(metadata._bindings.is_empty() and foreign.draw.get_connections().is_empty(),
 		"explicit clear releases unknown panel")
+	_check(foreign.tooltip_text == "" and not foreign.tooltip_text.contains("BASE")
+		and not foreign.tooltip_text.contains("damage") and not foreign.tooltip_text.contains("Block"),
+		"clear restores empty pre-bind tooltip with no stale effect words")
+	# Same-panel valid-ID rebind: old effect text must be replaced, not duplicated.
+	var rebind_panel := PanelContainer.new()
+	rebind_panel.custom_minimum_size = Vector2(150, 96)
+	var real_label := Label.new()
+	real_label.text = "warden_brace"
+	rebind_panel.add_child(real_label)
+	root.add_child(rebind_panel)
+	await _frames()
+	var rebind_panels: Array[Node] = [rebind_panel]
+	var rebind_hand: Array[String] = ["warden_brace"]
+	metadata.sync(rebind_panels, rebind_hand)
+	await _frames()
+	_check(metadata._bindings.has(rebind_panel), "valid rebind creates binding")
+	var brace_tooltip := rebind_panel.tooltip_text
+	_check(brace_tooltip.contains("BASE gain 7 Block") and brace_tooltip.contains("Self"),
+		"valid rebind tooltip shows exact brace effect and target")
+	# Replace with another real card on the same panel.
+	real_label.text = "tinker_tune_up"
+	rebind_hand = ["tinker_tune_up"]
+	metadata.sync(rebind_panels, rebind_hand)
+	await _frames()
+	var tune_tooltip := rebind_panel.tooltip_text
+	_check(tune_tooltip.contains("BASE draw 1 card") and tune_tooltip.contains("No target"),
+		"rebind replaces tooltip with exact tune effect and target")
+	_check(not tune_tooltip.contains("BASE gain 7 Block"),
+		"rebind removes old brace effect text; no stale wording remains")
+	metadata.clear()
+	rebind_panel.free()
 	foreign.free()
 	_check(_snapshot() == before, "unknown/mismatched catalog view cannot touch any live model")
 
@@ -374,6 +490,10 @@ func _run() -> void:
 		for old in old_panels:
 			if is_instance_valid(old):
 				_check(old.draw.get_connections().is_empty(), "Return disconnects old draw callbacks")
+				var pre_bind_tooltip: String = old.tooltip_text
+				_check(not pre_bind_tooltip.contains("BASE deal") and not pre_bind_tooltip.contains("BASE gain")
+					and not pre_bind_tooltip.contains("BASE heal") and not pre_bind_tooltip.contains("BASE draw"),
+					"Return clears stale base-effect tooltip words: " + (old.get_child(0).text if old.get_child_count() > 0 else "?"))
 		await _frames()
 		_check(app.deck == null and app.battle_view == null,
 			"Return to Title released run and battle")

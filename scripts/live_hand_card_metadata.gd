@@ -14,6 +14,56 @@ var _catalog := StarterCards.new()
 var _bindings: Dictionary = {}
 
 
+func base_effect_text(card_id: String) -> String:
+	var definition: Dictionary = _catalog.get_definition(card_id)
+	if definition.is_empty():
+		return "Unknown card"
+	var display_name: String = definition.get("display_name", card_id)
+	var owner: String = definition.get("owner", "")
+	var cost: int = int(definition.get("cost", -1))
+	var effects: Dictionary = definition.get("effects", {})
+	# Derive complete target description from catalog target_kind and positions.
+	var target_kind: String = definition.get("target_kind", "")
+	var to_positions: Array = definition.get("to_positions", [])
+	var target_text := ""
+	match target_kind:
+		"enemy_single":
+			target_text = "To one selected enemy"
+			if not to_positions.is_empty():
+				target_text += " " + _positions(to_positions)
+		"enemy_all":
+			target_text = "All enemies"
+			if not to_positions.is_empty():
+				target_text += " " + _positions(to_positions)
+		"self":
+			target_text = "Self"
+		"ally_single":
+			target_text = "Choose one living ally"
+		"none":
+			target_text = "No target"
+		_:
+			target_text = "Unknown target"
+	# M01: leave Weak/Bleed for M02 live persistence.
+	var from_text: String = describe(card_id).get("from_text", "From ?")
+	var effect_parts: Array[String] = []
+	if effects.has("damage"):
+		effect_parts.append("BASE deal %d damage" % int(effects["damage"]))
+	if effects.has("block"):
+		effect_parts.append("BASE gain %d Block" % int(effects["block"]))
+	if effects.has("heal"):
+		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
+	if effects.has("draw"):
+		effect_parts.append("BASE draw %d card" % int(effects["draw"]))
+	var parts: Array[String] = ["%s; %s; %d energy" % [display_name, owner.capitalize(), cost], from_text]
+	if target_text != "No target" and target_text != "Unknown target" and not target_text.is_empty():
+		parts.append(target_text)
+	elif target_text == "No target":
+		parts.append("No target")
+	if effect_parts.size() > 0:
+		parts.append("; ".join(effect_parts))
+	return "\n".join(parts)
+
+
 func describe(card_id: String) -> Dictionary:
 	var definition: Dictionary = _catalog.get_definition(card_id)
 	if definition.is_empty():
@@ -88,10 +138,15 @@ func _bind(panel: Control, card_id: String) -> void:
 	var draw_callback := _draw_panel.bind(panel)
 	var resize_callback := _resized.bind(panel)
 	var exit_callback := _panel_exiting.bind(panel)
+	var original_tooltip: String = ""
+	if is_instance_valid(panel):
+		original_tooltip = panel.tooltip_text
 	_bindings[panel] = {
 		"id": card_id, "facts": describe(card_id), "draw": draw_callback,
 		"resize": resize_callback, "exit": exit_callback, "draw_count": 0,
+		"original_tooltip": original_tooltip,
 	}
+	panel.tooltip_text = base_effect_text(card_id)
 	panel.draw.connect(draw_callback)
 	panel.resized.connect(resize_callback)
 	panel.tree_exiting.connect(exit_callback)
@@ -118,6 +173,9 @@ func _unbind(panel) -> void:
 			panel.resized.disconnect(binding["resize"])
 		if panel.tree_exiting.is_connected(binding["exit"]):
 			panel.tree_exiting.disconnect(binding["exit"])
+		# Restore original tooltip so unbind/rebind is clean.
+		if binding.has("original_tooltip"):
+			panel.tooltip_text = binding.get("original_tooltip", "")
 	_bindings.erase(panel)
 
 

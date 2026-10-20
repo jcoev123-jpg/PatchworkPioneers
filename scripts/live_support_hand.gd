@@ -74,7 +74,7 @@ func _sync_battle() -> void:
 			continue
 		panel.focus_mode = Control.FOCUS_ALL
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		panel.tooltip_text = "Click or focus and press Enter / Space to play"
+		panel.tooltip_text = "Click or focus and press Enter / Space to play\n" + _metadata.base_effect_text(label.text)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var hint := Label.new()
 		hint.text = "Click / Enter / Space"
