@@ -1,16 +1,18 @@
 class_name RunFightEncounterSelection
 extends RefCounted
 ## One selector per run, supplied with the SAME seeded RNG used to generate its
-## RunMap. The caller must first use RunMap.choose_node() on a legal Fight.
+## RunMap. The caller must first use RunMap.choose_node() on a legal node.
 ## The service does not launch combat; the caller creates CombatEnemyIntents
-## from result["definitions"] at fight start.
+## from result["definitions"] when entering battle.
 ##
-## select_current_fight(map, run_rng, encounter_paths) returns
-## {"success": true, "encounter_id": String, "definitions": Array} or
-## {"success": false}. The success array is always a detached deep copy.
-## A successful current node is cached: querying it again never draws RNG.
-## Create a NEW selector and map for a new run; regenerating a bound map is
-## not a supported way to start another run.
+## select_current_fight(map, run_rng, encounter_paths) retains its exact
+## {"success": true, "encounter_id": String, "definitions": Array} contract.
+## select_current_battle(map, run_rng, pools_by_type) accepts independent
+## Fight/Elite/Boss pools and additionally returns "node_type" on success.
+## Both reject with {"success": false}; all success results are deep copies.
+## A successful current node is cached across both entry points, with no
+## further RNG draws. Create a NEW selector and map for a new run;
+## regenerating a bound map is not a supported way to start another run.
 
 var _bound_map: RunMap = null
 var _selected: Dictionary = {}
@@ -19,6 +21,16 @@ var _selected: Dictionary = {}
 func select_current_fight(
 		map: RunMap, run_rng: RandomNumberGenerator,
 		encounter_paths: Dictionary) -> Dictionary:
+	var choice := _select_current_kind(map, run_rng, encounter_paths, "Fight")
+	if choice.get("success", false):
+		# The legacy API deliberately does not acquire an extra result key.
+		choice.erase("node_type")
+	return choice
+
+
+func select_current_battle(
+		map: RunMap, run_rng: RandomNumberGenerator,
+		pools_by_type: Dictionary) -> Dictionary:
 	if map == null or run_rng == null or not map.is_generated():
 		return {"success": false}
 	if _bound_map != null and map != _bound_map:
@@ -27,13 +39,33 @@ func select_current_fight(
 	if current_id.is_empty() or not map.get_route().has(current_id):
 		return {"success": false}
 	var node: Dictionary = map.get_node(current_id)
-	if node.is_empty() or node.get("type") != "Fight":
+	var kind = node.get("type")
+	if not kind is String or not kind in ["Fight", "Elite", "Boss"]:
+		return {"success": false}
+	# Require the chosen kind's pool but never inspect another kind's pool.
+	if not pools_by_type.has(kind) or not pools_by_type[kind] is Dictionary:
+		return {"success": false}
+	return _select_current_kind(map, run_rng, pools_by_type[kind], kind)
+
+
+func _select_current_kind(
+		map: RunMap, run_rng: RandomNumberGenerator,
+		encounter_paths: Dictionary, kind: String) -> Dictionary:
+	if map == null or run_rng == null or not map.is_generated():
+		return {"success": false}
+	if _bound_map != null and map != _bound_map:
+		return {"success": false}
+	var current_id: String = map.get_current_node_id()
+	if current_id.is_empty() or not map.get_route().has(current_id):
+		return {"success": false}
+	var node: Dictionary = map.get_node(current_id)
+	if node.is_empty() or node.get("type") != kind:
 		return {"success": false}
 
 	if _selected.has(current_id):
 		return _copy_choice(_selected[current_id])
 
-	# Fail the ENTIRE candidate pool closed before consuming even one RNG draw.
+	# Fail the ENTIRE chosen-kind candidate pool closed before consuming RNG.
 	if encounter_paths.is_empty():
 		return {"success": false}
 	var ids: Array = encounter_paths.keys()
@@ -63,11 +95,11 @@ func select_current_fight(
 	_bound_map = map
 	_selected[current_id] = {
 		"success": true,
+		"node_type": kind,
 		"encounter_id": picked_id,
 		"definitions": schedules[picked_id],
 	}
 	return _copy_choice(_selected[current_id])
-
 
 static func _copy_choice(choice: Dictionary) -> Dictionary:
 	return choice.duplicate(true)
