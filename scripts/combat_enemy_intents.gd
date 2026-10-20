@@ -26,28 +26,36 @@ func _init(definitions: Array) -> void:
 		if not pattern is Array or pattern.is_empty():
 			return
 		for action in pattern:
-			if not action is Dictionary or not action.has("type") or not action.has("amount"):
-				return
-			var kind = action["type"]
-			var amount = action["amount"]
-			if not kind is String or not amount is int or amount < 0:
-				return
-			if kind == "attack":
-				if action.size() != 3 or not action.has("target_position"):
-					return
-				var target = action["target_position"]
-				if not target is int or target < 1 or target > 3:
-					return
-			elif kind == "block":
-				# Block has no hero target; it is only announced here.
-				if action.size() != 2:
-					return
-			else:
+			if not valid_action(action):
 				return
 		seen_positions.append(position)
 		validated.append({"enemy_position": position, "pattern": pattern})
 	_definitions = validated
 	_valid = true
+
+
+static func valid_action(action: Variant) -> bool:
+	if not action is Dictionary:
+		return false
+	var kind = action.get("type")
+	var amount = action.get("amount")
+	if not kind is String or not amount is int or amount < 0:
+		return false
+	if kind in ["block", "buff"]:
+		return action.size() == 2 and (kind == "block" or amount > 0)
+	if kind not in ["attack", "shove", "debuff"]:
+		return false
+	var target = action.get("target_position")
+	if not target is int or target < 1 or target > 3:
+		return false
+	if kind == "attack":
+		return action.size() == 3
+	if kind == "debuff":
+		return action.size() == 4 and amount > 0 and action.get("status") is String \
+			and action.status in ["bleed", "weak", "exposed"]
+	var direction = action.get("direction")
+	return action.size() == 4 and amount == 0 and direction is int \
+		and direction in [-1, 1] and target + direction >= 1 and target + direction <= 3
 
 
 func is_valid() -> bool:

@@ -62,22 +62,9 @@ func end_turn() -> bool:
 	# observing it yet. Never discard/draw or let enemies act on that state.
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return false
-	# Announcements remain base values. Resolve a separate effective batch after
-	# the heroes' owner tick, while enemy Weak still applies to this action.
+	# The phase adjusts each base attack at its execution point, after earlier
+	# swaps/debuffs and the hero owner tick, while enemy Weak still applies.
 	var effective := _intents.get_intents().duplicate(true)
-	var statuses := CombatStatuses.new()
-	for intent in effective:
-		if intent.get("type") != "attack":
-			continue
-		var amount = intent.get("amount")
-		var target = intent.get("target_position")
-		# Reject malformed inputs before the damage helper can turn them into zero.
-		if not amount is int or amount < 0 or not target is int \
-				or target < 1 or target > CombatParty.PARTY_SIZE:
-			return false
-		intent["amount"] = statuses.adjusted_attack_damage(amount,
-			_enemies.get_enemy(intent["enemy_position"]).get("statuses", {}),
-			tick["actors"][target - 1].get("statuses", {}))
 	if not _phase_is_executable(tick["actors"], effective):
 		return false
 	# Preflight succeeded for the complete transition. Preserve authoritative

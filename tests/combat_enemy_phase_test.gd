@@ -6,6 +6,7 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_ordered_specials()
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
 	_test_rejections()
@@ -325,3 +326,22 @@ func _test_replay_and_empty() -> void:
 			and enemies.get_enemies() == snapshot_enemies
 			and scheduler.get_intents() == snapshot_schedule,
 			"empty valid batch is harmless and never advances scheduler")
+
+
+func _test_ordered_specials() -> void:
+	var party := _party()
+	var enemies := _enemies()
+	party._heroes[0]["statuses"] = {"weak": 2}
+	var shove := {"type": "shove", "enemy_position": 1, "amount": 0, "target_position": 1, "direction": 1}
+	var debuff := {"type": "debuff", "enemy_position": 2, "amount": 2, "target_position": 1, "status": "exposed"}
+	_check(phase.execute_phase(party, enemies, [debuff, shove]).ok, "mixed phase sorts source order")
+	_check(party.get_hero(1).id == "seamstress" and party.get_hero(1).statuses == {"exposed": 2}
+		and party.get_hero(2).statuses == {"weak": 2}, "swap then bind preserves actor statuses")
+	var before := [party.get_heroes(), enemies.get_enemies()]
+	_check(not phase.execute_phase(party, enemies, [shove, shove]).ok
+		and [party.get_heroes(), enemies.get_enemies()] == before, "duplicate mixed source atomic")
+	_check(not phase.execute_phase(party, enemies, [_attack(1, 999, 1), debuff]).ok
+		and [party.get_heroes(), enemies.get_enemies()] == before, "earlier lethal attack makes late debuff illegal atomically")
+	_check(not phase.execute_phase(party, enemies, [_attack(1, 1, 1), {"type": "shove", "enemy_position": 2,
+		"amount": 0, "target_position": 3, "direction": 1}]).ok
+		and [party.get_heroes(), enemies.get_enemies()] == before, "late illegal shove atomic")

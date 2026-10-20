@@ -9,7 +9,8 @@ func forecast(party: CombatParty, enemies: CombatEnemies, announcements: Array) 
 	var heroes := party.get_heroes()
 	var roster := enemies.get_enemies()
 	var validator := CombatStatusTurnBatch.new()
-	if not validator.tick_side("heroes", heroes).ok or not validator.tick_side("enemies", roster).ok:
+	var hero_tick := validator.tick_side("heroes", heroes)
+	if not hero_tick.ok or not validator.tick_side("enemies", roster).ok:
 		return []
 	var actions: Array = []
 	var seen: Array[int] = []
@@ -19,31 +20,30 @@ func forecast(party: CombatParty, enemies: CombatEnemies, announcements: Array) 
 		var kind = raw.get("type")
 		var source = raw.get("enemy_position")
 		var amount = raw.get("amount")
-		if not kind is String or kind not in ["attack", "block"] \
+		if not kind is String or kind not in ["attack", "block", "buff", "shove", "debuff"] \
 			or not source is int or source < 1 or source > roster.size() or source in seen \
 			or not amount is int or amount < 0:
 			return []
 		seen.append(source)
-		if kind == "attack":
-			var target = raw.get("target_position")
-			if raw.size() != 4 or not target is int or target < 1 or target > CombatParty.PARTY_SIZE:
+		var definition: Dictionary = raw.duplicate(true)
+		definition.erase("enemy_position")
+		if not CombatEnemyIntents.valid_action(definition):
+			return []
+		if kind in ["block", "buff"] and amount > 0 and roster[source - 1].hp > 0:
+			if not roster[source - 1].get("name") is String or roster[source - 1].name.is_empty():
 				return []
-		else:
-			if raw.size() != 3:
-				return []
-			if amount > 0 and roster[source - 1].hp > 0:
-				if not roster[source - 1].get("name") is String or roster[source - 1].name.is_empty():
-					return []
-				actions.append({"type": "buff", "enemy_position": source, "amount": amount})
+			actions.append(raw.duplicate(true))
 	if actions.is_empty():
 		return []
 	# Constructors initialize fresh combatants; restore exact validated snapshots
 	# afterwards so current HP, Block, positions and nested statuses are retained.
 	var copied_party := CombatParty.new(heroes)
 	var copied_enemies := CombatEnemies.new(roster)
-	copied_party._heroes = heroes.duplicate(true)
+	copied_party._heroes = hero_tick.actors.duplicate(true)
 	copied_enemies._enemies = roster.duplicate(true)
-	if not CombatEnemySpecialActions.new().execute_actions(copied_party, copied_enemies, actions).ok:
+	if copied_party.is_defeated() or copied_enemies.is_defeated():
+		return []
+	if not CombatEnemyPhase.new().execute_phase(copied_party, copied_enemies, announcements).ok:
 		return []
 	var result: Array[Dictionary] = []
 	for action in actions:

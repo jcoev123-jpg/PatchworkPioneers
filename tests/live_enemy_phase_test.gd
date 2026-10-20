@@ -105,6 +105,18 @@ func _invalid_sources(app) -> void:
 		{"type": "block"}, {"type": "block", "amount": 1, "extra": 0}]:
 		fixtures.append(JSON.stringify([valid, {"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}, bad]}]))
 	fixtures.append(JSON.stringify([valid, {"enemy_position": 3, "pattern": guard.pattern}]))
+	for special in [
+		{"type": "shove", "amount": 0, "target_position": 2, "direction": -1},
+		{"type": "debuff", "amount": 2, "target_position": 1, "status": "bleed"},
+		{"type": "buff", "amount": 3}]:
+		for field in special:
+			for bad in [null, true, 0.5, "1", 1e30]:
+				var malformed: Dictionary = special.duplicate(true)
+				malformed[field] = bad
+				fixtures.append(JSON.stringify([valid, {"enemy_position": 2, "pattern": [special, malformed]}]))
+		var extra: Dictionary = special.duplicate(true)
+		extra["extra"] = 1
+		fixtures.append(JSON.stringify([valid, {"enemy_position": 2, "pattern": [special, extra]}]))
 	for source in fixtures:
 		# Keep the other source valid so rejection exercises bad data rather than a missing Guard.
 		var parser := JSON.new()

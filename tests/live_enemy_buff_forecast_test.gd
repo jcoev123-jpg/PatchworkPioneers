@@ -84,7 +84,18 @@ func _detached_cases(app) -> void:
 	var batch: Array = app.enemy_attacks.duplicate(true)
 	_check(rules.forecast(app.party, app.enemies, batch) == [
 		{"enemy_position": 2, "name": "Guard Ragling", "before": 2, "after": 3}], "helper projects exact current Block")
-	var bad_batches: Array = [[null], [{"type": "buff", "enemy_position": 2, "amount": 1}]]
+	_check(rules.forecast(app.party, app.enemies, [{"type": "buff", "enemy_position": 2, "amount": 1}]) == [
+		{"enemy_position": 2, "name": "Guard Ragling", "before": 2, "after": 3}], "typed buff projects exact current Block")
+	var special_batch: Array = [{"type": "buff", "enemy_position": 1, "amount": 2},
+		{"type": "debuff", "enemy_position": 2, "amount": 1, "target_position": 3, "status": "weak"}]
+	var original_hero: Dictionary = app.party._heroes[2].duplicate(true)
+	app.party._heroes[2].hp = 1
+	app.party._heroes[2]["statuses"] = {"bleed": 1}
+	var dying := _snapshot(app)
+	_check(rules.forecast(app.party, app.enemies, special_batch).is_empty()
+		and _snapshot(app) == dying, "forecast accounts for owner Bleed before illegal late debuff without writes")
+	app.party._heroes[2] = original_hero
+	var bad_batches: Array = [[null], [{"type": "buff", "enemy_position": 2, "amount": 0}]]
 	for bad in [-1, 0.5, true, "1", null]:
 		var invalid := batch.duplicate(true)
 		invalid[1].amount = bad

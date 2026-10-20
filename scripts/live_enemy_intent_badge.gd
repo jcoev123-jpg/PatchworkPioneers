@@ -39,6 +39,17 @@ func show_intent(action: Dictionary, slain: bool) -> void:
 		amount = action.get("amount", 0)
 		target_position = 0
 		readable_text = "BLOCK +%d" % amount
+	elif action.get("type") in ["buff", "debuff", "shove"]:
+		intent_type = action.type
+		icon_mode = intent_type
+		amount = action.amount
+		target_position = action.get("target_position", 0)
+		if intent_type == "buff":
+			readable_text = "BUFF BLOCK +%d" % amount
+		elif intent_type == "debuff":
+			readable_text = "%s %d -> HERO %d" % [action.status.to_upper(), amount, target_position]
+		else:
+			readable_text = "SHOVE HERO %d %s" % [target_position, "BACK" if action.direction == 1 else "FRONT"]
 	else:
 		icon_mode = "none"
 		intent_type = ""
@@ -76,6 +87,17 @@ func _draw() -> void:
 		draw_polyline(shield + PackedVector2Array([shield[0]]), RUST, 2.0, true)
 		draw_line(Vector2(29, 11), Vector2(29, 30), CREAM, 2.0, true)
 		draw_line(Vector2(21, 19), Vector2(37, 19), CREAM, 2.0, true)
+	elif icon_mode == "buff":
+		draw_circle(Vector2(29, 22), 12, SLATE)
+		draw_line(Vector2(20, 22), Vector2(38, 22), RUST, 4)
+		draw_line(Vector2(29, 13), Vector2(29, 31), RUST, 4)
+	elif icon_mode == "debuff":
+		draw_colored_polygon(PackedVector2Array([Vector2(29, 8), Vector2(44, 33), Vector2(14, 33)]), RUST)
+		draw_line(Vector2(29, 15), Vector2(29, 25), CREAM, 3)
+	elif icon_mode == "shove":
+		draw_line(Vector2(12, 22), Vector2(44, 22), RUST, 4)
+		draw_line(Vector2(34, 12), Vector2(44, 22), RUST, 4)
+		draw_line(Vector2(34, 32), Vector2(44, 22), RUST, 4)
 	elif icon_mode == "slain":
 		draw_line(Vector2(18, 12), Vector2(41, 32), MUTED, 4.0, true)
 		draw_line(Vector2(41, 12), Vector2(18, 32), MUTED, 4.0, true)

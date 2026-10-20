@@ -5,6 +5,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_special_schema()
 	_test_one_enemy()
 	_test_three_enemies_and_wrap()
 	_test_copy_isolation_and_replay()
@@ -206,3 +207,34 @@ func _test_invalid_schedules() -> void:
 		# A valid earlier enemy and a valid first action must not leak from a bad later action.
 		_reject("invalid late action " + str(bad), [
 			_enemy(1, [_attack(7, 1)]), _enemy(2, [_block(3), bad])])
+
+
+func _test_special_schema() -> void:
+	var valid: Array = [
+		{"type": "shove", "amount": 0, "target_position": 2, "direction": -1},
+		{"type": "debuff", "amount": 2, "target_position": 1, "status": "weak"},
+		{"type": "buff", "amount": 3}]
+	for action in valid:
+		_check(CombatEnemyIntents.new([_enemy(1, [action])]).is_valid(), "special schema accepts " + str(action))
+		for key in action:
+			var missing: Dictionary = action.duplicate(true)
+			missing.erase(key)
+			_reject("missing special key", [_enemy(1, [_block(1), missing])])
+		var extra: Dictionary = action.duplicate(true)
+		extra["extra"] = 1
+		_reject("extra special key", [_enemy(1, [_block(1), extra])])
+		for field in ["amount", "target_position", "direction", "status"]:
+			if not action.has(field):
+				continue
+			for value in [null, true, 0.5, "1", [], {}]:
+				var bad: Dictionary = action.duplicate(true)
+				bad[field] = value
+				_reject("invalid special field", [_enemy(1, [_block(1), bad])])
+	for bad in [
+		{"type": "shove", "amount": 1, "target_position": 2, "direction": -1},
+		{"type": "shove", "amount": 0, "target_position": 1, "direction": -1},
+		{"type": "shove", "amount": 0, "target_position": 2, "direction": 0},
+		{"type": "debuff", "amount": 1, "target_position": 1, "status": "poison"},
+		{"type": "debuff", "amount": 0, "target_position": 1, "status": "weak"},
+		{"type": "buff", "amount": 0}]:
+		_reject("special range rejection", [_enemy(1, [_block(1), bad])])

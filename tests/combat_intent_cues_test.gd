@@ -4,6 +4,7 @@ var failures: Array[String] = []
 var checks := 0
 
 func _initialize() -> void:
+	_test_special_cues()
 	_test_happy_path_first_turn()
 	_test_happy_path_after_advance()
 	_test_copy_isolation_and_repeat_calls()
@@ -494,3 +495,20 @@ func _find_cue(cues: Array[Dictionary], position: int, enemy_id: String) -> Vari
 		if cue["enemy_position"] == position and cue["enemy_id"] == enemy_id:
 			return cue
 	return null
+
+func _test_special_cues() -> void:
+	var roster := CombatEnemies.new(_load_starter_enemies())
+	for action in [
+		{"type": "shove", "amount": 0, "target_position": 2, "direction": -1},
+		{"type": "debuff", "amount": 3, "target_position": 2, "status": "bleed"},
+		{"type": "buff", "amount": 4}]:
+		var selector := CombatEnemyIntents.new([{"enemy_position": 1, "pattern": [action]}])
+		var cues := CombatIntentCues.new().get_cues(selector, roster)
+		var expected: Dictionary = action.duplicate(true)
+		expected["icon_key"] = expected.type
+		expected.erase("type")
+		expected["enemy_id"] = roster.get_enemy(1).id
+		expected["enemy_position"] = 1
+		_check(cues == [expected], "exact typed special cue fields")
+		cues[0].amount = 999
+		_check(CombatIntentCues.new().get_cues(selector, roster) == [expected], "special cue detached")

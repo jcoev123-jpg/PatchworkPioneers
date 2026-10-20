@@ -539,8 +539,8 @@ func _test_negative_resolution() -> void:
 	_check(party.get_heroes() == heroes_before and enemies.get_enemies() == enemies_before,
 		"negative: an all-slain phase never damages heroes or revives sources")
 
-	# No buff, debuff or shove action is accepted by this schedule's schema.
-	for kind in ["buff", "debuff", "shove"]:
+	# Unknown types and incomplete special actions still reject the whole schedule.
+	for kind in ["heal", "debuff", "shove"]:
 		var unsupported := _expected().duplicate(true)
 		unsupported[0]["pattern"][1] = {"type": kind, "amount": 1}
 		_check(unsupported != _expected(), "negative: %s probe actually changed the fixture" % kind)

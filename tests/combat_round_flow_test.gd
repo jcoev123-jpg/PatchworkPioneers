@@ -13,6 +13,7 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	_test_special_round_atomicity()
 	_test_opening_and_rounds()
 	_test_terminal_victory()
 	_test_terminal_defeat()
@@ -787,3 +788,22 @@ func _test_additional_boundaries() -> void:
 		and invalid_enemies["result"].get_outcome() == CombatBattleResult.UNRESOLVED,
 		"invalid enemy roster is inert and result unresolved")
 	_reject_invalid(invalid_enemies, "invalid enemies with valid party deck and schedule")
+
+
+func _test_special_round_atomicity() -> void:
+	var fight := _fight(540, [], [], [
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 999, "target_position": 1}]},
+		{"enemy_position": 2, "pattern": [{"type": "debuff", "amount": 2, "target_position": 1, "status": "bleed"}]}])
+	_check(fight.flow.begin_fight(), "mixed coordinator starts authoritative authored actors")
+	var before: Array = [fight.party.get_heroes(), fight.enemies.get_enemies(), fight.deck.hand.duplicate(),
+		fight.deck.draw_pile.duplicate(), fight.deck.discard_pile.duplicate(), fight.deck.energy,
+		fight.deck.turn_active, fight.rng.state, fight.intents._turn_index, fight.result.get_outcome()]
+	_check(not fight.flow.end_turn(), "coordinator rejects attack then dead-target debuff")
+	_check(before == [fight.party.get_heroes(), fight.enemies.get_enemies(), fight.deck.hand.duplicate(),
+		fight.deck.draw_pile.duplicate(), fight.deck.discard_pile.duplicate(), fight.deck.energy,
+		fight.deck.turn_active, fight.rng.state, fight.intents._turn_index, fight.result.get_outcome()],
+		"late special rejection preserves actors hand piles energy turn selector outcome and RNG")
+	fight.intents._definitions[0].pattern[0] = {"type": "shove", "amount": 0, "target_position": 1, "direction": 1}
+	_check(fight.flow.end_turn() and fight.party.get_hero(1).id == "seamstress"
+		and fight.party.get_hero(1).statuses == {"bleed": 2} and fight.intents._turn_index == 1,
+		"coordinator commits swap and new-occupant debuff before next draw")

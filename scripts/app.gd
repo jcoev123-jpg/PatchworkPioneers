@@ -438,23 +438,25 @@ func _load_enemy_schedule() -> Array:
 			if not action is Dictionary:
 				return []
 			var kind = action.get("type")
-			if not kind is String or kind not in ["attack", "block"]:
+			if not kind is String or kind not in ["attack", "block", "buff", "debuff", "shove"]:
 				return []
 			if not _normalize_schedule_number(action, "amount"):
 				return []
-			if kind == "attack" and not _normalize_schedule_number(action, "target_position"):
+			if kind in ["attack", "shove", "debuff"] and not _normalize_schedule_number(action, "target_position"):
+				return []
+			if kind == "shove" and not _normalize_schedule_number(action, "direction", -1):
 				return []
 	# CombatEnemyIntents validates exact keys, ranges and duplicate source positions.
 	return source
 
 
-func _normalize_schedule_number(record: Dictionary, field: String) -> bool:
+func _normalize_schedule_number(record: Dictionary, field: String, minimum: int = 0) -> bool:
 	var value = record.get(field)
 	if not (value is int or value is float):
 		return false
 	if not is_finite(float(value)) or floor(float(value)) != float(value):
 		return false
-	if value < 0 or value >= float(CombatParty.MAX_INT):
+	if value < minimum or value >= float(CombatParty.MAX_INT):
 		return false
 	record[field] = int(value)
 	return true
@@ -1057,6 +1059,12 @@ func _refresh_intents() -> void:
 	for attack in cues:
 		if attack.icon_key == "block":
 			announcements.append("Enemy %d: %d Block" % [attack.enemy_position, attack.amount])
+		elif attack.icon_key == "buff":
+			announcements.append("Enemy %d: Buff +%d Block" % [attack.enemy_position, attack.amount])
+		elif attack.icon_key == "debuff":
+			announcements.append("Enemy %d -> Hero %d: %s %d" % [attack.enemy_position, attack.target_position, attack.status.capitalize(), attack.amount])
+		elif attack.icon_key == "shove":
+			announcements.append("Enemy %d: Shove Hero %d %s" % [attack.enemy_position, attack.target_position, "back" if attack.direction == 1 else "front"])
 		else:
 			announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
 				attack["enemy_position"], attack["target_position"],

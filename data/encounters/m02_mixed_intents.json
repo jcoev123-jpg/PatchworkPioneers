@@ -1,0 +1,64 @@
+[
+  {
+    "enemy_position": 1,
+    "pattern": [
+      {
+        "type": "shove",
+        "amount": 0,
+        "target_position": 1,
+        "direction": 1
+      },
+      {
+        "type": "buff",
+        "amount": 3
+      },
+      {
+        "type": "block",
+        "amount": 2
+      },
+      {
+        "type": "debuff",
+        "amount": 2,
+        "target_position": 3,
+        "status": "weak"
+      },
+      {
+        "type": "shove",
+        "amount": 0,
+        "target_position": 2,
+        "direction": -1
+      }
+    ]
+  },
+  {
+    "enemy_position": 2,
+    "pattern": [
+      {
+        "type": "debuff",
+        "amount": 2,
+        "target_position": 1,
+        "status": "exposed"
+      },
+      {
+        "type": "attack",
+        "amount": 5,
+        "target_position": 1
+      },
+      {
+        "type": "debuff",
+        "amount": 2,
+        "target_position": 2,
+        "status": "bleed"
+      },
+      {
+        "type": "attack",
+        "amount": 4,
+        "target_position": 3
+      },
+      {
+        "type": "block",
+        "amount": 1
+      }
+    ]
+  }
+]

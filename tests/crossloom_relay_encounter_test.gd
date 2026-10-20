@@ -606,7 +606,7 @@ func _test_negative_resolution() -> void:
 
 	# No unsupported action, extra key or non-integral amount is accepted by this schema.
 	var unsupported := _expected().duplicate(true)
-	unsupported[0]["pattern"][1] = {"type": "buff", "amount": 1}
+	unsupported[0]["pattern"][1] = {"type": "heal", "amount": 1}
 	_check(unsupported != _expected(), "negative: unsupported-action probe changed the fixture")
 	_check(RunFightEncounterSelection._parse_schedule_text(JSON.stringify(unsupported)).is_empty(),
 		"negative: the real parser rejects an unsupported action type")

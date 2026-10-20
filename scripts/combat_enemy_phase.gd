@@ -1,68 +1,70 @@
 class_name CombatEnemyPhase
 extends RefCounted
-## Executes one announced mixed enemy phase. The owner advances CombatEnemyIntents
-## separately; this service neither advances turns nor resets player state.
-
+## Stage every source in order, then publish once. No turn or RNG ownership.
 
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array) -> Dictionary:
-	if party == null or not party.is_valid() or enemies == null or not enemies.is_valid():
-		return {"ok": false, "events": []}
-
-	# Validate the *entire* batch, including living Block capacity, before
-	# either underlying executor can mutate its owner.
+	var failure := {"ok": false, "events": []}
+	if party == null or enemies == null or not party.is_valid() or not enemies.is_valid():
+		return failure
+	var heroes := party.get_heroes()
 	var roster := enemies.get_enemies()
-	var seen: Array[int] = []
+	var validator := CombatStatusTurnBatch.new()
+	if not validator.tick_side("heroes", heroes).ok or not validator.tick_side("enemies", roster).ok:
+		return failure
 	var ordered: Array[Dictionary] = []
-	for intent in intents:
-		if not intent is Dictionary:
-			return {"ok": false, "events": []}
-		if not intent.has("type") or not intent.has("enemy_position") or not intent.has("amount"):
-			return {"ok": false, "events": []}
-		var kind = intent["type"]
-		var position = intent["enemy_position"]
-		var amount = intent["amount"]
-		if not kind is String or (kind != "attack" and kind != "block"):
-			return {"ok": false, "events": []}
-		if not position is int or position < 1 or position > roster.size() or position in seen:
-			return {"ok": false, "events": []}
-		if not amount is int or amount < 0:
-			return {"ok": false, "events": []}
-		if kind == "attack":
-			if intent.size() != 4 or not intent.has("target_position"):
-				return {"ok": false, "events": []}
-			var target = intent["target_position"]
-			if not target is int or target < 1 or target > CombatParty.PARTY_SIZE:
-				return {"ok": false, "events": []}
-		else:
-			if intent.size() != 3:
-				return {"ok": false, "events": []}
-			var enemy: Dictionary = roster[position - 1]
-			if enemy["hp"] > 0 and amount > CombatEnemies.MAX_INT - enemy["block"]:
-				return {"ok": false, "events": []}
-		seen.append(position)
-		ordered.append(intent.duplicate(true))
-
+	var seen: Array[int] = []
+	for raw in intents:
+		if not raw is Dictionary:
+			return failure
+		var source = raw.get("enemy_position")
+		if not source is int or source < 1 or source > roster.size() or source in seen:
+			return failure
+		var action: Dictionary = raw.duplicate(true)
+		action.erase("enemy_position")
+		if not CombatEnemyIntents.valid_action(action):
+			return failure
+		seen.append(source)
+		ordered.append(raw.duplicate(true))
 	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return a["enemy_position"] < b["enemy_position"])
-
-	var attacks := CombatEnemyAttacks.new()
+		return a.enemy_position < b.enemy_position)
+	var staged_party := CombatParty.new(heroes)
+	staged_party._heroes = heroes
+	var staged_enemies := CombatEnemies.new(roster)
+	staged_enemies._enemies = roster
 	var events: Array[Dictionary] = []
-	for intent in ordered:
-		var position: int = intent["enemy_position"]
-		var applied := false
-		if not enemies.is_slain(position):
-			if intent["type"] == "attack":
-				# CombatEnemyAttacks expects the raw record, without the kind.
-				var record := {"enemy_position": position,
-					"target_position": intent["target_position"], "amount": intent["amount"]}
-				var attack_result := attacks.execute_attacks(party, [record])
-				applied = attack_result["events"][0]["applied"]
+	for action in ordered:
+		var source: int = action.enemy_position
+		var event := {"type": action.type, "enemy_position": source, "applied": false}
+		for field in ["target_position", "status", "direction"]:
+			if action.has(field):
+				event[field] = action[field]
+		if not staged_enemies.is_slain(source):
+			if action.type == "attack":
+				var damage := CombatStatuses.new().adjusted_attack_damage(action.amount,
+					staged_enemies.get_enemy(source).get("statuses", {}),
+					staged_party.get_hero(action.target_position).get("statuses", {}))
+				event.applied = staged_party.apply_damage(action.target_position, damage)
+			elif action.type == "block":
+				if not staged_enemies.gain_block(source, action.amount):
+					return failure
+				event.applied = true
 			else:
-				var block_result := CombatEnemyBlocks.execute_blocks(enemies, [intent])
-				applied = block_result["events"][0]["applied"]
-		var event: Dictionary = {"type": intent["type"],
-			"enemy_position": position, "applied": applied}
-		if intent["type"] == "attack":
-			event["target_position"] = intent["target_position"]
+				var result := CombatEnemySpecialActions.new().execute_actions(staged_party, staged_enemies, [action])
+				if not result.ok:
+					return failure
+				event.applied = result.events[0].applied
 		events.append(event)
+	# Preserve dictionaries and unrelated metadata; actor identity follows swaps.
+	var originals: Dictionary = {}
+	for hero in party._heroes:
+		originals[hero.id] = hero
+	for index in range(heroes.size()):
+		var next: Dictionary = staged_party._heroes[index]
+		var original: Dictionary = originals[next.id]
+		for field in ["position", "hp", "block", "statuses"]:
+			if next.has(field):
+				original[field] = next[field]
+		party._heroes[index] = original
+	for index in range(roster.size()):
+		enemies._enemies[index].block = staged_enemies._enemies[index].block
 	return {"ok": true, "events": events}
