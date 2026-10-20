@@ -6,9 +6,11 @@ signal start_run_requested
 const TITLE := "Patchwork Pioneers"
 const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const STARTER_PARTY_PATH := "res://data/heroes/starter_party.json"
+const STARTER_ATTACKS_PATH := "res://data/encounters/starter_attacks.json"
 
 @export var run_seed: int = 42
 @export_file("*.json") var starter_party_path: String = STARTER_PARTY_PATH
+@export_file("*.json") var starter_attacks_path: String = STARTER_ATTACKS_PATH
 
 var title_label: Label
 var start_button: Button
@@ -23,6 +25,8 @@ var run_rng: RandomNumberGenerator
 var party: CombatParty
 var hero_view: HBoxContainer
 var hero_panels: Array[PanelContainer] = []
+var enemy_attacks: Array = []
+var intent_label: Label
 
 
 func _ready() -> void:
@@ -80,6 +84,11 @@ func _start_run() -> void:
 	if not starting_party.is_valid():
 		push_warning("Starter party definitions are invalid; run was not started")
 		return
+	var attacks := _load_enemy_attacks()
+	if attacks.is_empty():
+		push_warning("Starter attacks are invalid; run was not started")
+		return
+	enemy_attacks = attacks
 	party = starting_party
 	run_rng = RandomNumberGenerator.new()
 	run_rng.seed = run_seed
@@ -119,6 +128,38 @@ func _load_party_definitions() -> Array:
 	return source
 
 
+func _load_enemy_attacks() -> Array:
+	if not FileAccess.file_exists(starter_attacks_path):
+		return []
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(starter_attacks_path)) != OK:
+		return []
+	var source = parser.data
+	if not source is Array or source.is_empty():
+		return []
+	var sources: Array[int] = []
+	for attack in source:
+		if not attack is Dictionary:
+			return []
+		for field in ["enemy_position", "target_position", "amount"]:
+			var value = attack.get(field)
+			if not (value is int or value is float):
+				return []
+			if not is_finite(float(value)) or floor(float(value)) != float(value):
+				return []
+			if value < 0 or value >= float(CombatParty.MAX_INT):
+				return []
+			attack[field] = int(value)
+		if attack["enemy_position"] < 1 or attack["enemy_position"] > 3 or attack["enemy_position"] in sources:
+			return []
+		if attack["target_position"] < 1 or attack["target_position"] > CombatParty.PARTY_SIZE:
+			return []
+		sources.append(attack["enemy_position"])
+	source.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return a["enemy_position"] < b["enemy_position"])
+	return source
+
+
 func _build_battle() -> void:
 	battle_view = MarginContainer.new()
 	battle_view.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -141,6 +182,16 @@ func _build_battle() -> void:
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.add_theme_font_size_override("font_size", 22)
 		panel.add_child(label)
+	intent_label = Label.new()
+	intent_label.add_theme_font_size_override("font_size", 22)
+	var intents: PackedStringArray = []
+	for attack in enemy_attacks:
+		intents.append("Enemy %d -> Hero %d (%s): %d damage" % [
+			attack["enemy_position"], attack["target_position"],
+			party.get_hero(attack["target_position"])["name"], attack["amount"]])
+	intent_label.text = "Intent: " + "; ".join(intents)
+	intent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(intent_label)
 	var heading := Label.new()
 	heading.text = "Shared hand"
 	heading.add_theme_font_size_override("font_size", 32)
@@ -157,7 +208,7 @@ func _build_battle() -> void:
 	end_turn_button = Button.new()
 	end_turn_button.text = "End Turn"
 	end_turn_button.custom_minimum_size = Vector2(240, 56)
-	end_turn_button.pressed.connect(_end_turn)
+	end_turn_button.pressed.connect(_end_turn.bind(end_turn_button))
 	actions.add_child(end_turn_button)
 	return_button = Button.new()
 	return_button.text = "Return to title"
@@ -196,9 +247,12 @@ func _refresh_party() -> void:
 			"\nDOWNED" if party.is_downed(index + 1) else ""]
 
 
-func _end_turn() -> void:
+func _end_turn(button: Button = null) -> void:
+	if button == null or button != end_turn_button or button.disabled or not button.is_visible_in_tree():
+		return
 	if deck == null or party == null or not deck.end_turn():
 		return
+	CombatEnemyAttacks.new().execute_attacks(party, enemy_attacks)
 	if not deck.start_turn():
 		return
 	party.start_player_turn()
@@ -218,6 +272,8 @@ func _return_to_title() -> void:
 	return_button = null
 	hero_view = null
 	hero_panels.clear()
+	intent_label = null
+	enemy_attacks.clear()
 	party = null
 	deck = null
 	run_rng = null
