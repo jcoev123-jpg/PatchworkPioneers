@@ -54,7 +54,8 @@ func _snapshot() -> Array:
 		app.party.get_heroes(), app.enemies.get_enemies(), app.enemy_attacks.duplicate(true),
 		app.enemy_intents.get_intents(), app.enemy_intents._turn_index,
 		app.run_rng.seed, app.run_rng.state, app.battle_result.get_outcome(),
-		app.session_gold, app._battle_closed]
+		app.session_gold, app._battle_closed, app.round_flow._started,
+		app.round_flow._opening_block._consumed]
 
 
 func _supply(cards: Array[String]) -> void:
@@ -159,12 +160,72 @@ func _reject(label: String, id := "warden_backstep") -> void:
 	await _frames()
 
 
+func _status_backstep_turn() -> void:
+	var replay: Array = []
+	for session in range(2):
+		app.run_seed = 42
+		await _click(app.start_button)
+		var ready: bool = app.deck != null and app.party != null and app.round_flow != null
+		_check(ready, "status backstep has real session services")
+		if not ready:
+			return
+		hand = app.get_node("LiveSupportHand")
+		_check(app.deck.turn_active and app.party.get_hero(1).id == "warden"
+			and app.party.get_hero(1).block == 6 and app.party.get_hero(2).id == "seamstress"
+			and app.enemy_intents._turn_index == 0 and app.enemy_intents.get_intents() == [
+				{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 1},
+				{"enemy_position": 2, "type": "block", "amount": 1}],
+			"authored living formation, opening passive and front attack really present")
+		app.party._heroes[0].hp = 32
+		app.party._heroes[0].block = 4
+		app.party._heroes[0]["statuses"] = {"bleed": 3, "weak": 2, "exposed": 1}
+		app.party._heroes[1].hp = 20
+		app.party._heroes[1].block = 0
+		app.party._heroes[1]["statuses"] = {"bleed": 2, "exposed": 2}
+		var moved: Array = await _move("warden_backstep", 1, KEY_ENTER if session else KEY_NONE)
+		_check(app.party.get_hero(1).id == "seamstress" and app.party.get_hero(2).id == "warden",
+			"status-bearing paid backstep really reorders living actors")
+		var expected := moved.duplicate(true)
+		# Owner Bleed bypasses Block, then the announced 1 * 3/2 floors to 1.
+		expected[5][0].hp = 20 - 2 - 1
+		expected[5][0].statuses = {"bleed": 1, "exposed": 1}
+		expected[5][1].hp = 32 - 3
+		expected[5][1].statuses = {"bleed": 2, "weak": 1}
+		for hero in expected[5]:
+			hero.block = 0
+		expected[6][1].block = 1
+		expected[2].append_array(expected[0])
+		expected[0] = []
+		_check(expected[1].size() >= 5, "next hand needs no refill or RNG")
+		for i in range(5):
+			expected[0].append(expected[1].pop_back())
+		expected[3] = 3
+		expected[7] = [
+			{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 2},
+			{"enemy_position": 2, "type": "block", "amount": 1}]
+		expected[8] = expected[7].duplicate(true)
+		expected[9] = 1
+		seed(51050)
+		var next := randi()
+		seed(51050)
+		await _click(app.end_turn_button)
+		_check(_snapshot() == expected and randi() == next,
+			"physical End Turn: exact ID-local ticks, moved target HP, zero Block/no second passive, piles, energy, intents and RNG")
+		var trace: Array = [moved, _snapshot()]
+		if session == 0:
+			replay = trace
+		else:
+			_check(trace == replay, "same-seed status backstep and physical End Turn replay exactly")
+		await _click(app.return_button)
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
 	_catalog_checks()
+	await _status_backstep_turn()
 	var replay: Array = []
 	for session in range(2):
 		await _click(app.start_button)

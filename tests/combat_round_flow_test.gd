@@ -22,6 +22,7 @@ func _run() -> void:
 	_test_status_turns()
 	_test_enemy_status_turns()
 	_test_status_damage()
+	_test_reordered_status_turn()
 	await _test_mounted_enemy_status_turn()
 	if failures.is_empty():
 		print("combat_round_flow_test: PASS (", checks, " checks)")
@@ -620,6 +621,78 @@ func _test_status_damage() -> void:
 				replay = trace
 			else:
 				_check(trace == replay, "entire status damage timeline replays from identical seed")
+
+
+func _test_reordered_status_turn() -> void:
+	# Same Warden/Seamstress swap as the physical trace; a 5-point attack
+	# distinguishes one combined floor (5) from intermediate floors (4).
+	for exposed in [2, 1]:
+		var replay: Array = []
+		for session in range(2):
+			var fight := _fight(42, [], [], [
+				{"enemy_position": 1, "pattern": [
+					{"type": "attack", "amount": 5, "target_position": 1},
+					{"type": "attack", "amount": 5, "target_position": 2}]},
+				{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+			var flow: CombatRoundFlow = fight.flow
+			var party: CombatParty = fight.party
+			var deck: CombatDeck = fight.deck
+			_check(party.is_valid() and fight.enemies.is_valid() and fight.intents.is_valid()
+				and flow.begin_fight() and party.get_hero(1).block == 6,
+				"pure reordered fixture begins with real authored actors and opening Block")
+			party._heroes[0].hp = 32
+			party._heroes[0].block = 4
+			party._heroes[0]["statuses"] = {"bleed": 3, "weak": 2, "exposed": 1}
+			party._heroes[1].hp = 20
+			party._heroes[1].block = 2
+			party._heroes[1]["statuses"] = {"bleed": 2, "exposed": exposed}
+			fight.enemies._enemies[0]["statuses"] = {"weak": 1}
+			deck.hand.assign(["warden_backstep", "warden_strike"])
+			var before := _snapshot(fight)
+			var moved := before.duplicate(true)
+			moved[0][0] = before[0][1].duplicate(true)
+			moved[0][1] = before[0][0].duplicate(true)
+			moved[0][0].position = 1
+			moved[0][1].position = 2
+			moved[2][1].remove_at(0)
+			moved[2][2].append("warden_backstep")
+			moved[2][3] = 2
+			moved[2][5] = 2
+			_check(CombatPositionSwaps.play_move_card(deck, party, "warden_backstep",
+				M02PositionCards.new().get_definition("warden_backstep"))
+				and _snapshot(fight) == moved, "pure paid swap preserves every actor field/status by ID and spends exactly once")
+			var expected := moved.duplicate(true)
+			# Bleed 2 happens before the attack; Exposed 1 expires first.
+			var damage := 5 if exposed == 2 else 3
+			expected[0][0].hp = 20 - 2 - (damage - 2)
+			expected[0][0].statuses = {"bleed": 1, "exposed": 1} if exposed == 2 else {"bleed": 1}
+			expected[0][1].hp = 32 - 3
+			expected[0][1].statuses = {"bleed": 2, "weak": 1}
+			for hero in expected[0]:
+				hero.block = 0
+			expected[1][0].statuses = {}
+			expected[1][1].block = 1
+			# Independently advance only the deck cadence, copying the post-play
+			# piles and RNG; no combat/status helper computes the HP oracle.
+			var rng := _rng(42)
+			rng.state = fight.rng.state
+			var oracle := CombatDeck.new([], rng)
+			oracle.draw_pile.assign(deck.draw_pile)
+			oracle.hand.assign(deck.hand)
+			oracle.discard_pile.assign(deck.discard_pile)
+			oracle.combat_state.energy = 2
+			oracle.combat_state.player_turn_active = true
+			_check(oracle.end_turn() and oracle.start_turn(), "independent post-swap deck advances once")
+			expected[2] = _deck_snapshot(oracle)
+			expected[3][0].target_position = 2
+			expected[4] = 1
+			_check(flow.end_turn() and _snapshot(fight) == expected,
+				"reordered owner tick then Weak/Exposed single-floor attack, exact Block/reset, deck, intents, latch and RNG: " + str(exposed))
+			var trace: Array = [before, moved, _snapshot(fight)]
+			if session == 0:
+				replay = trace
+			else:
+				_check(trace == replay, "pure reordered status timeline replays completely")
 
 
 func _test_mounted_enemy_status_turn() -> void:
