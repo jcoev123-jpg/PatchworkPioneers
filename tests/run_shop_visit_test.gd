@@ -13,6 +13,7 @@ func _initialize() -> void:
 	_test_invalid_initial_state()
 	_test_rng_and_equal_replay()
 	_test_purchase_reconciliation()
+	_test_removal_before_purchase_reconciliation()
 	if failures.is_empty():
 		print("run_shop_visit_test: PASS (", checks, " checks)")
 	else:
@@ -49,23 +50,110 @@ func _test_purchase_reconciliation() -> void:
 		_check(not visit.reconcile_purchase(invalid), "malformed or unsuccessful purchase rejected")
 		_check_state_unchanged(visit, before, "rejected reconciliation")
 	_check(visit.reconcile_purchase(result), "successful purchase reconciles")
-	var expected_state := before.duplicate(true)
-	expected_state.deck = result.state.deck.duplicate()
-	expected_state.gold = 150
-	_check(visit.get_state() == expected_state and visit.quote() == 100, "reconcile changes only deck/gold, preserving node/count/quote")
+	var bought := before.duplicate(true)
+	bought.deck = result.state.deck.duplicate()
+	bought.gold = 150
+	_check(visit.get_state() == bought and visit.quote() == 100, "reconcile changes only deck/gold, preserving node/count/quote")
+	_check(visit.get_state().deck == ["warden_strike", "seamstress_prick", "tinker_pop_shot"] and visit.get_state().gold == 150, "purchase-before-removal keeps exact deck order and gold")
 	_check(not visit.reconcile_purchase(result), "repeated purchase snapshot rejected")
-	_check_state_unchanged(visit, expected_state, "repeated reconciliation")
+	_check_state_unchanged(visit, bought, "repeated reconciliation")
 	result.state.deck.clear()
-	_check_state_unchanged(visit, expected_state, "purchase result detached")
-	_check(visit.remove_card("warden_strike").ok, "same visit can remove after buying")
+	_check_state_unchanged(visit, bought, "purchase result detached")
+	var removal := visit.remove_card("warden_strike")
+	_check(removal.ok and removal.price == 100 and removal.gold == 50 and removal.prior_removals == 2, "single removal after buying costs 75 + 25 * 1")
+	_check(removal.deck == ["seamstress_prick", "tinker_pop_shot"], "removal drops only the first surviving Strike copy")
 	var used := visit.get_state()
-	_check(used.deck == ["seamstress_prick", "tinker_pop_shot"] and used.gold == 50 and used.prior_removals == 2, "removal uses reconciled gold/deck and original quote")
-	_check(not visit.reconcile_purchase({"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_strike"], "gold": 0}}), "used visit cannot reconcile")
-	_check_state_unchanged(visit, used, "used reconciliation")
-	_check(visit.close_visit(), "reconciled visit closes")
+	_check(used.deck == ["seamstress_prick", "tinker_pop_shot"] and used.gold == 50, "used visit holds reconciled deck and 50 gold")
+	_check(used.status == "used" and not used.removal_available, "removal consumes the visit option")
+	_check(used.prior_removals == 2 and used.price == 125, "removal increments the count once and quotes 125 next")
+	_check(used.shop_node_id == "shop-buy" and used.visited_ids == ["shop-buy"], "removal preserves original node and visited IDs")
+
+	var post := {"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_strike"], "gold": 0}}
+	for invalid in [
+		{"ok": false, "state": post.state}, {},
+		{"ok": true},
+		{"ok": true, "state": {"deck": post.state.deck, "gold": -1}},
+		{"ok": true, "state": {"deck": post.state.deck, "gold": 51}},
+		{"ok": true, "state": {"deck": post.state.deck, "gold": 0.0}},
+		{"ok": true, "state": {"deck": ["tinker_pop_shot", "seamstress_prick", "warden_strike"], "gold": 0}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot"], "gold": 0}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_strike", "warden_brace"], "gold": 0}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "  "], "gold": 0}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", 7], "gold": 0}},
+		{"ok": true, "state": {"deck": ["warden_strike", "seamstress_prick", "tinker_pop_shot"], "gold": 50}}
+	]:
+		_check(not visit.reconcile_purchase(invalid), "post-removal malformed, stale or mismatched purchase rejected")
+		_check_state_unchanged(visit, used, "post-removal rejected reconciliation")
+	_check(visit.reconcile_purchase(post), "post-removal purchase reconciles once")
+	var expected_after := used.duplicate(true)
+	expected_after.deck = post.state.deck.duplicate()
+	expected_after.gold = 0
+	_check(visit.get_state() == expected_after, "post-removal reconcile changes only deck/gold")
+	var after := visit.get_state()
+	_check(after.deck == ["seamstress_prick", "tinker_pop_shot", "warden_strike"] and after.gold == 0, "post-removal purchase appends in order and spends 50")
+	_check(after.status == "used" and not after.removal_available, "post-removal purchase leaves the used visit closed to another removal")
+	_check(after.prior_removals == 2 and after.price == 125, "post-removal purchase keeps the count and 125 quote")
+	_check(after.shop_node_id == "shop-buy" and after.visited_ids == ["shop-buy"], "post-removal purchase preserves node and visited IDs")
+	_check(not visit.reconcile_purchase(post), "replayed post-removal purchase rejected")
+	_check_state_unchanged(visit, after, "replayed post-removal reconciliation")
+	post.state.deck.clear()
+	_check_state_unchanged(visit, after, "post-removal purchase result detached")
+	_check(not visit.remove_card("seamstress_prick").ok, "used visit rejects a second removal after buying")
+	_check_state_unchanged(visit, after, "second removal after post-removal purchase")
+	_check(not visit.open_visit("shop-buy"), "post-removal purchase cannot reopen the same Shop")
+	_check_state_unchanged(visit, after, "duplicate opening after post-removal purchase")
+	_check(visit.close_visit(), "post-removal reconciled visit closes")
 	var closed := visit.get_state()
-	_check(not visit.reconcile_purchase(result), "closed visit cannot reconcile")
+	_check(closed.status == "closed" and not closed.removal_available, "closed visit disables removal")
+	_check(not visit.reconcile_purchase({"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_strike", "warden_brace"], "gold": 0}}), "closed visit cannot reconcile")
 	_check_state_unchanged(visit, closed, "closed reconciliation")
+
+
+func _test_removal_before_purchase_reconciliation() -> void:
+	var cards: Array[String] = ["warden_strike", "seamstress_prick"]
+	var visit := RunShopVisit.new(cards, 200, 1)
+	_check(visit.open_visit("shop-remove-first"), "removal-first visit opens")
+	var removal := visit.remove_card("warden_strike")
+	_check(removal.ok and removal.price == 100 and removal.gold == 100 and removal.prior_removals == 2, "removal-first charges 100 of 200 gold")
+	var used := visit.get_state()
+	_check(used.deck == ["seamstress_prick"] and used.gold == 100, "removal-first deck and gold exact")
+	_check(used.status == "used" and not used.removal_available, "removal-first consumes the removal option")
+	_check(used.prior_removals == 2 and used.price == 125, "removal-first count and next quote exact")
+	_check(used.shop_node_id == "shop-remove-first" and used.visited_ids == ["shop-remove-first"], "removal-first records the node once")
+	var purchase := {"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot"], "gold": 40}}
+	for invalid in [
+		{"ok": false, "state": purchase.state},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_brace"], "gold": 0}},
+		{"ok": true, "state": {"deck": ["tinker_pop_shot", "seamstress_prick"], "gold": 40}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot"], "gold": 101}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot"], "gold": -5}},
+		{"ok": true, "state": {"deck": ["seamstress_prick", " "], "gold": 40}},
+		{"ok": true, "state": {"deck": ["seamstress_prick"], "gold": 40}}
+	]:
+		_check(not visit.reconcile_purchase(invalid), "removal-first malformed, wrong-prefix or bad-gold purchase rejected")
+		_check_state_unchanged(visit, used, "removal-first rejected reconciliation")
+	_check(visit.reconcile_purchase(purchase), "removal-first purchase reconciles once")
+	var expected := used.duplicate(true)
+	expected.deck = purchase.state.deck.duplicate()
+	expected.gold = 40
+	_check(visit.get_state() == expected, "removal-first reconcile changes only deck/gold")
+	var after := visit.get_state()
+	_check(after.deck == ["seamstress_prick", "tinker_pop_shot"] and after.gold == 40, "removal-first purchase appends exactly one card and deducts its price")
+	_check(after.status == "used" and not after.removal_available, "removal-first purchase does not restore the removal option")
+	_check(after.prior_removals == 2 and after.price == 125, "removal-first purchase keeps the count and 125 quote")
+	_check(after.shop_node_id == "shop-remove-first" and after.visited_ids == ["shop-remove-first"], "removal-first purchase preserves node and visited IDs")
+	_check(not visit.reconcile_purchase(purchase), "replayed removal-first purchase rejected")
+	_check_state_unchanged(visit, after, "replayed removal-first reconciliation")
+	purchase.state.deck.clear()
+	_check_state_unchanged(visit, after, "removal-first purchase result detached")
+	_check(not visit.remove_card("seamstress_prick").ok, "removal-first visit rejects a second removal after buying")
+	_check_state_unchanged(visit, after, "second removal after removal-first purchase")
+	_check(visit.close_visit(), "removal-first reconciled visit closes")
+	var closed := visit.get_state()
+	_check(not visit.reconcile_purchase({"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_brace"], "gold": 0}}), "closed removal-first visit cannot reconcile")
+	_check_state_unchanged(visit, closed, "closed removal-first reconciliation")
+	_check(not visit.open_visit("shop-remove-first"), "closed removal-first visit cannot reopen the same node")
+	_check_state_unchanged(visit, closed, "reopening after removal-first close")
 
 
 func _starter_deck() -> Array[String]:
@@ -261,12 +349,22 @@ func _scenario(seed_value: int) -> Dictionary:
 	responses.append(ledger.open_visit("shop-A"))
 	responses.append(ledger.remove_card("not_owned")["ok"])
 	responses.append(ledger.remove_card("warden_strike")["ok"])
+	var bought_a_deck: Array[String] = ledger.get_state()["deck"]
+	bought_a_deck.append("tinker_tune_up")
+	var bought_a := {"ok": true, "state": {"deck": bought_a_deck, "gold": 185}}
+	responses.append(ledger.reconcile_purchase(bought_a))
+	responses.append(ledger.reconcile_purchase(bought_a))
 	responses.append(ledger.remove_card("warden_strike")["ok"])
 	responses.append(ledger.close_visit())
 	responses.append(ledger.open_visit("shop-B"))
 	responses.append(ledger.close_visit())
 	responses.append(ledger.open_visit("shop-C"))
 	responses.append(ledger.remove_card("warden_strike")["ok"])
+	var bought_c_deck: Array[String] = ledger.get_state()["deck"]
+	bought_c_deck.append("warden_brace")
+	var bought_c := {"ok": true, "state": {"deck": bought_c_deck, "gold": 55}}
+	responses.append(ledger.reconcile_purchase(bought_c))
+	responses.append(ledger.reconcile_purchase(bought_c))
 	responses.append(ledger.close_visit())
 	var observed_next_draw := randi()
 	return {
@@ -285,5 +383,6 @@ func _test_rng_and_equal_replay() -> void:
 	_check(second["expected_rng"] == second["observed_rng"], "replayed run also consumes zero global RNG draws")
 	_check(first == second, "two equal seeded runs replay complete results identically")
 	_check(first["caller_unchanged"] == true, "replay leaves source fixture intact")
-	_check(first["state"]["gold"] == 125 and first["state"]["prior_removals"] == 2, "replay applied exactly two valid removals")
-	_check(first["responses"] == [false, true, false, true, false, true, true, true, true, true, true], "replay exercises real rejections and success paths")
+	_check(first["state"]["gold"] == 55 and first["state"]["prior_removals"] == 2, "replay applied exactly two valid removals and two purchases")
+	_check(first["state"]["status"] == "closed" and first["state"]["deck"].size() == 12, "replay ends closed with one appended card per purchased offer")
+	_check(first["responses"] == [false, true, false, true, true, false, false, true, true, true, true, true, true, false, true], "replay exercises purchases before and after removal plus their rejections")
