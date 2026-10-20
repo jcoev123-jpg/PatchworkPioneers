@@ -1,0 +1,6 @@
+.godot/
+*.tmp
+*.log
+opencode.json
+.review/
+art_source/paper_raw/
