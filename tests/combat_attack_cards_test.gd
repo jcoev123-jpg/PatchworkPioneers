@@ -41,6 +41,8 @@ func _test_area_bridge_atomicity() -> void:
 	_accept(service, deck, party, enemies, "tinker_pop_shot", 1,
 		[_hit(1, 8, 0, 8)], 1, "Pop Shot consumes bonus before area bridge")
 	_check(enemies.gain_block(1, 2) and enemies.gain_block(3, 8), "second attack area Block fixture")
+	_seed_modifiers(party, enemies, "tinker_scrap_bomb", {"weak": 1},
+		{1: {"exposed": 1}, 3: {"exposed": 1}})
 	_accept(service, deck, party, enemies, "tinker_scrap_bomb", 0,
 		[_hit(1, 4, 2, 2), _hit(2, 3, 0, 3), _hit(3, 4, 4, 0)], 2,
 		"second Tinker attack area floors per slot without bonus", {"weak": 1},
@@ -134,6 +136,25 @@ func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> 
 		result["enemies"] = enemies.get_enemies()
 		result["victory"] = enemies.is_victorious()
 	return result
+
+
+
+# Only fixture creation may inject actor counters. Caller snapshot dictionaries
+# remain separate compatibility arguments and do not supply damage modifiers.
+func _seed_modifiers(party: CombatParty, enemies: CombatEnemies, card_id: String,
+		owner_statuses: Dictionary, defender_statuses: Dictionary) -> void:
+	var owner_id: String = StarterCards.new().get_definition(card_id)["owner"]
+	var found := 0
+	for hero in party._heroes:
+		if hero["id"] == owner_id:
+			hero["statuses"] = owner_statuses.duplicate(true)
+			found += 1
+	_check(found == 1, "fixture seeds unique owner by identity")
+	for position in defender_statuses:
+		var enemy := enemies.get_enemy(position)
+		_check(not enemy.is_empty(), "fixture seeds actual occupied enemy slot")
+		if not enemy.is_empty():
+			enemies._enemies[position - 1]["statuses"] = defender_statuses[position].duplicate(true)
 
 
 func _hit(position: int, damage: int, absorbed: int, loss: int,
@@ -261,7 +282,10 @@ func _test_modifier_math_and_first_attack() -> void:
 		var strike_deck := _deck(["warden_strike"])
 		var strike_enemies := _enemies()
 		_check(strike_enemies.gain_block(1, 3), "modified Strike hits real Block")
-		_accept(CombatAttackCards.new(), strike_deck, _party(), strike_enemies,
+		var strike_party := _party()
+		_seed_modifiers(strike_party, strike_enemies, "warden_strike", entry.attacker,
+			{1: entry.defender})
+		_accept(CombatAttackCards.new(), strike_deck, strike_party, strike_enemies,
 			"warden_strike", 1, [_hit(1, entry.damage, 3, entry.damage - 3)],
 			1, "Strike exact modifier math " + str(entry), entry.attacker, {1: entry.defender})
 	var service := CombatAttackCards.new()
@@ -275,6 +299,8 @@ func _test_modifier_math_and_first_attack() -> void:
 		"invalid attacker snapshot before Tinker hit", {"weak": -1})
 	_reject(service, deck, party, enemies, "tinker_pop_shot", 1,
 		"invalid unselected status before Tinker hit", {}, {3: {"exposed": "1"}})
+	_seed_modifiers(party, enemies, "tinker_pop_shot", {"weak": 1},
+		{1: {"exposed": 1}, 2: {"exposed": 1}})
 	# 8 * (3/4) * (3/2) = 9; floor only ONCE.
 	_accept(service, deck, party, enemies, "tinker_pop_shot", 1,
 		[_hit(1, 9, 0, 9)], 1, "first Tinker Weak+Exposed",
@@ -299,7 +325,7 @@ func _test_modifier_math_and_first_attack() -> void:
 		deck.draw_extra(1)
 	_check(deck.hand.has("tinker_scrap_bomb"), "reset test draws real bomb copy")
 	_accept(service, deck, party, enemies, "tinker_scrap_bomb", 0,
-		[_hit(1, 7, 0, 7), _hit(2, 7, 0, 7), _hit(3, 7, 0, 7)],
+		[_hit(1, 7, 0, 7), _hit(2, 7, 0, 7), _hit(3, 5, 0, 5)],
 		2, "new player turn restores Tinker +3")
 
 	# A first successful bomb consumes the bonus for later Pop Shot, too.
@@ -320,7 +346,9 @@ func _test_modifier_math_and_first_attack() -> void:
 		var s := CombatAttackCards.new()
 		var d := _deck(["tinker_pop_shot"])
 		var f := _enemies()
-		_accept(s, d, _party(), f, "tinker_pop_shot", 1,
+		var p := _party()
+		_seed_modifiers(p, f, "tinker_pop_shot", entry["weak"], {1: entry["defend"]})
+		_accept(s, d, p, f, "tinker_pop_shot", 1,
 			[_hit(1, entry["damage"], 0, entry["damage"])], 1,
 			"independent attack multiplier " + str(entry),
 			entry["weak"], {1: entry["defend"]})
@@ -500,6 +528,7 @@ func _replay(seed_value: int) -> Dictionary:
 	var foes := _enemies()
 	foes.gain_block(1, 4)
 	foes.gain_block(2, 2)
+	_seed_modifiers(party, foes, "tinker_pop_shot", {"weak": 1}, {2: {"exposed": 1}})
 	var service := CombatAttackCards.new()
 	var events := []
 	events.append(service.play_attack(deck, party, foes, "tinker_pop_shot", 2,
@@ -621,6 +650,7 @@ func _test_forecast_matrix() -> void:
 					_check(enemies.apply_damage(2, 100), "matrix excludes slain original middle slot")
 					var owner := {"weak": 1} if weak else {}
 					var defenders := {1: {"exposed": 1}} if exposed else {}
+					_seed_modifiers(party, enemies, id, owner, defenders)
 					var before := _snapshot(deck, party, enemies)
 					var forecast := service.forecast_attack(deck, party, enemies, id, owner, defenders)
 					var positions: Array = []

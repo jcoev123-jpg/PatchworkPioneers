@@ -1,7 +1,7 @@
 class_name CombatAttackCards
 extends RefCounted
 ## Scene-free, single authoritative charge/discard for authored starter attacks.
-## Damage uses caller-owned snapshots; confirmed hits persist on the enemy roster.
+## Damage reads current actor records; confirmed hits persist on the enemy roster.
 
 const ATTACK_IDS := [
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
@@ -37,9 +37,11 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var applications: Dictionary = plan.applications
 	var attack_damage: int = plan.attack_damage
 	var cost_value: int = plan.cost
+	var owner_statuses: Dictionary = plan.owner_statuses
+	var target_statuses: Dictionary = plan.target_statuses
 	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
 		var final_damage := _statuses.adjusted_attack_damage(attack_damage,
-			attacker_statuses, enemy_statuses_by_position.get(target_position, {}))
+			owner_statuses, target_statuses[target_position])
 		var before := enemies.get_enemy(target_position)
 		if not _basic.play(deck, party, enemies, card_id, target_position, final_damage):
 			return _failure()
@@ -60,13 +62,13 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var hits: Array[Dictionary] = []
 	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID:
 		hits.assign(_area.resolve(enemies, attack_damage,
-			attacker_statuses, enemy_statuses_by_position)["hits"])
+			owner_statuses, target_statuses)["hits"])
 		for hit in hits:
 			hit["statuses"] = applications[hit["position"]]
 	else:
 		for position in positions:
 			var event := _damage.resolve_vs_enemy(enemies, position, attack_damage,
-				attacker_statuses, enemy_statuses_by_position.get(position, {}))
+				owner_statuses, target_statuses[position])
 			# The validated living recipient guarantees this bridge succeeds.
 			var statuses := _on_hit.status_for_confirmed_hit(card_id, event["ok"])
 			hits.append({
@@ -128,7 +130,25 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not statuses is Dictionary or not _valid_statuses(statuses):
 			return _failure()
 
+	# Legacy caller snapshots are validated above but never control real damage.
+	# Bind the status map to the unique card owner by ID, not their old slot.
+	var heroes := party.get_heroes()
+	if not CombatStatusTurnBatch.new().tick_side("heroes", heroes)["ok"]:
+		return _failure()
+	var owner_id: Variant = definition.get("owner")
+	if not owner_id is String or owner_id.is_empty():
+		return _failure()
+	var owner_statuses: Dictionary = {}
+	var owner_count := 0
+	for hero in heroes:
+		if hero["id"] == owner_id:
+			owner_count += 1
+			owner_statuses = hero.get("statuses", {})
+	if owner_count != 1:
+		return _failure()
+
 	# Verify the entire batch before the first mutation (including late targets).
+	var target_statuses: Dictionary = {}
 	for position in positions:
 		var enemy := enemies.get_enemy(position)
 		if enemy.is_empty() or enemy.get("position") != position or enemies.is_slain(position):
@@ -137,6 +157,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			return _failure()
 		if enemy["hp"] <= 0 or enemy["block"] < 0:
 			return _failure()
+		target_statuses[position] = enemy.get("statuses", {})
 
 	var applications := {}
 	var eligible: Array[int] = []
@@ -156,11 +177,12 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var bonus := _tinker.bonus_for_attack(card_id)
 	var attack_damage: int = damage_value + bonus
 	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID and not _area.can_resolve(
-			enemies, attack_damage, attacker_statuses, enemy_statuses_by_position):
+			enemies, attack_damage, owner_statuses, target_statuses):
 		return _failure()
 	return {"ok": true, "positions": positions, "applications": applications,
 		"attack_damage": attack_damage, "cost": cost_value,
-		"requires_selection": preview["requires_selection"]}
+		"requires_selection": preview["requires_selection"],
+		"owner_statuses": owner_statuses, "target_statuses": target_statuses}
 
 
 ## Returns ordered damage choices for singles, or all recipients for target-free attacks.
@@ -175,7 +197,7 @@ func forecast_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 	var hits: Array[Dictionary] = []
 	for position in plan.positions:
 		hits.append({"position": position, "damage": _statuses.adjusted_attack_damage(
-			plan.attack_damage, attacker_statuses, enemy_statuses_by_position.get(position, {}))})
+			plan.attack_damage, plan.owner_statuses, plan.target_statuses[position])})
 	return {"playable": true, "requires_selection": plan.requires_selection, "hits": hits}
 
 
