@@ -14,8 +14,13 @@ var _catalog := StarterCards.new()
 var _bindings: Dictionary = {}
 
 
+func _definition(card_id: String) -> Dictionary:
+	var move := M02PositionCards.new().get_definition(card_id)
+	return _catalog.get_definition(card_id) if move.is_empty() else move
+
+
 func base_effect_text(card_id: String) -> String:
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	if definition.is_empty():
 		return "Unknown card"
 	var display_name: String = definition.get("display_name", card_id)
@@ -46,6 +51,8 @@ func base_effect_text(card_id: String) -> String:
 	# M01: leave Weak/Bleed for M02 live persistence.
 	var from_text: String = describe(card_id).get("from_text", "From ?")
 	var effect_parts: Array[String] = []
+	if definition.get("action_kind") == "adjacent_swap":
+		effect_parts.append("Swap with the living adjacent ally %s" % ("behind" if definition.direction == 1 else "ahead"))
 	if effects.has("damage"):
 		effect_parts.append("BASE deal %d damage" % int(effects["damage"]))
 	if effects.has("block"):
@@ -65,7 +72,7 @@ func base_effect_text(card_id: String) -> String:
 
 
 func describe(card_id: String) -> Dictionary:
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	if definition.is_empty():
 		return {
 			"id": card_id, "known": false, "owner": "", "owner_text": "Unknown",
@@ -88,6 +95,8 @@ func describe(card_id: String) -> Dictionary:
 			target_text = "Ally"
 		"none":
 			target_text = "No target"
+		"adjacent_ally":
+			target_text = "Swap with ally " + ("behind" if definition.direction == 1 else "ahead")
 	return {
 		"id": card_id, "known": true, "owner": owner,
 		"owner_text": owner.capitalize(), "cost": int(definition.get("cost", -1)),

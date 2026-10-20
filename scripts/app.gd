@@ -969,6 +969,7 @@ func _refresh_hand() -> void:
 		label.add_theme_font_size_override("font_size", 22)
 		panel.add_child(label)
 	pile_label.text = "Draw: %d | Discard: %d" % [deck.draw_pile.size(), deck.discard_pile.size()]
+	$LiveSupportHand._sync_battle()
 
 
 func _refresh_party() -> void:

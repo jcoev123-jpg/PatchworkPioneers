@@ -1,5 +1,5 @@
 extends Node
-## Input/presentation only. All card effects and charges belong to the support service.
+## Input/presentation only. Support and movement services own effects and charges.
 
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up"]
@@ -7,6 +7,7 @@ var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
 var _bindings: Dictionary = {}
+var _move_context: Dictionary = {}
 var _pending: Dictionary = {}
 var _targets: Dictionary = {}
 var _token := 0
@@ -67,7 +68,7 @@ func _sync_battle() -> void:
 	var actionable: Array[Control] = []
 	for panel in app.hand_view.get_children():
 		var label := panel.get_child(0) as Label
-		if label == null or label.text not in SUPPORT_IDS:
+		if label == null or (label.text not in SUPPORT_IDS and label.text not in M02PositionCards.IDS):
 			continue
 		actionable.append(panel)
 		if _bindings.has(panel):
@@ -89,6 +90,8 @@ func _sync_battle() -> void:
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_card_input.bind(panel, label.text, _deck, _party, _battle)
 		_bindings[panel] = callback
+		if label.text in M02PositionCards.IDS:
+			_move_context[panel] = _current_move_context(panel)
 		panel.gui_input.connect(callback)
 	# Keep the existing End/Return Tab cycle; Up enters the card row, Down exits it.
 	if not actionable.is_empty():
@@ -104,11 +107,17 @@ func _sync_battle() -> void:
 		app.return_button.focus_neighbor_top = NodePath()
 
 
+func _current_move_context(panel) -> Array:
+	var app = get_parent()
+	return [app.deck, app.party, app.battle_view, app.enemies, app.battle_result,
+		app.run_rng, app.enemy_intents, app.enemy_intents._turn_index, panel.get_index()]
+
+
 func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, battle) -> bool:
 	var app = get_parent()
 	if not is_instance_valid(panel) or not is_instance_valid(battle):
 		return false
-	if not _bindings.has(panel) or card_id not in SUPPORT_IDS:
+	if not _bindings.has(panel) or (card_id not in SUPPORT_IDS and card_id not in M02PositionCards.IDS):
 		return false
 	if app.deck != deck or app.party != party or app.battle_view != battle:
 		return false
@@ -116,6 +125,15 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
+	if card_id in M02PositionCards.IDS:
+		if app.enemy_intents == null or _move_context.get(panel, []) != _current_move_context(panel):
+			return false
+		if app._battle_closed or not deck.turn_active or app.battle_result == null \
+			or not app.battle_result.can_continue() or app.battle_result._party != party \
+			or app.battle_result._enemies != app.enemies or not party.is_valid() \
+			or app.enemies == null or not app.enemies.is_valid() \
+			or party.is_defeated() or app.enemies.is_victorious():
+			return false
 	var index: int = panel.get_index()
 	return index < deck.hand.size() and deck.hand[index] == card_id \
 		and panel.get_child(0) is Label and panel.get_child(0).text == card_id
@@ -153,6 +171,15 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			_cancel_pending()
 		return
 	_cancel_pending()
+	if card_id in M02PositionCards.IDS:
+		if CombatPositionSwaps.play_move_card(deck, party, card_id, M02PositionCards.new().get_definition(card_id)):
+			var app = get_parent()
+			app._refresh_party()
+			app._refresh_intents()
+			app._refresh_hand()
+			_sync_battle()
+			app.end_turn_button.grab_focus()
+		return
 	if not _play.play_card(deck, party, card_id, 0):
 		return
 	var app = get_parent()
@@ -269,6 +296,7 @@ func _unbind(panel) -> void:
 	if is_instance_valid(panel) and panel.gui_input.is_connected(_bindings[panel]):
 		panel.gui_input.disconnect(_bindings[panel])
 	_bindings.erase(panel)
+	_move_context.erase(panel)
 	if _pending.get("panel") == panel:
 		_cancel_pending()
 
