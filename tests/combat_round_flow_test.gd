@@ -293,6 +293,20 @@ func _reject_invalid(fight: Dictionary, name: String) -> void:
 
 
 func _test_rejections() -> void:
+	var alternate_defs := _load_json(HEROES_PATH)
+	alternate_defs[0].id = "alternate_front"
+	var alternate := _fight(39, alternate_defs)
+	_check(alternate["party"].is_valid() and alternate["flow"].begin_fight(),
+		"valid replacement front starts through coordinator")
+	for hero in alternate["party"].get_heroes():
+		_check(hero.block == 0 and hero.hp == hero.max_hp, "replacement front receives no Warden grant")
+	_check(alternate["flow"].end_turn() and alternate["party"].get_hero(1).hp == 39,
+		"replacement front continues and takes unprotected announced hit")
+	for slots in [[1, 0, 2], [0, 2, 1]]:
+		var authored := _load_json(HEROES_PATH)
+		var misplaced := _fight(39, [authored[slots[0]], authored[slots[1]], authored[slots[2]]])
+		_check(misplaced["party"].is_valid(), "misplaced authored party otherwise valid")
+		_reject_invalid(misplaced, "misplaced authored heroes")
 	var mismatched := _fight(40, [], [], [
 		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 1, "target_position": 1}]}])
 	_check(mismatched["intents"].is_valid() and mismatched["enemies"].get_enemies().size() == 2,

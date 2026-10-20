@@ -57,6 +57,12 @@ func _ready_session(app) -> bool:
 		and is_instance_valid(app.battle_view) and is_instance_valid(app.end_turn_button) \
 		and is_instance_valid(app.return_button)
 	_check(ready, "real Start Run creates complete valid session and controls")
+	_check(app.round_flow is CombatRoundFlow, "real Start creates coordinator")
+	if app.round_flow != null:
+		_check(app.round_flow._started and app.round_flow._deck == app.deck
+			and app.round_flow._party == app.party and app.round_flow._enemies == app.enemies
+			and app.round_flow._intents == app.enemy_intents and app.round_flow._result == app.battle_result,
+			"started coordinator binds every authoritative live model")
 	return ready
 
 
@@ -67,14 +73,16 @@ func _duplicate(app) -> void:
 	var rng: RandomNumberGenerator = app.run_rng
 	var selector: CombatEnemyIntents = app.enemy_intents
 	var battle: MarginContainer = app.battle_view
+	var flow: CombatRoundFlow = app.round_flow
 	app.start_button.pressed.emit()
 	_check(app.party == party and app.deck == deck and app.run_rng == rng
 		and app.enemy_intents == selector and app.battle_view == battle, "duplicate Start Run preserves session objects")
 	_check(_snapshot(app) == before, "duplicate Start Run cannot grant Block or mutate state")
+	_check(app.round_flow == flow, "duplicate Start preserves single coordinator")
 
 
 func _rejected(app) -> void:
-	_check(app.party == null and app.deck == null and app.run_rng == null,
+	_check(app.party == null and app.deck == null and app.run_rng == null and app.round_flow == null,
 		"invalid party creates no session or recipient of opening grant")
 	_check(app.battle_view == null and app.hero_panels.is_empty() and app.enemy_intents == null
 		and app.enemy_attacks.is_empty(), "invalid party publishes no battle, panels or intent")
@@ -173,11 +181,13 @@ func _run() -> void:
 		else:
 			_check(trace == first_trace, "same-seed restart repeats heroes, deck, energy, RNG and all intents")
 		var old_party: WeakRef = weakref(app.party)
+		var old_flow: WeakRef = weakref(app.round_flow)
 		var old_button: Button = app.end_turn_button
 		app.return_button.pressed.emit()
 		old_button.pressed.emit()
 		_rejected(app)
 		_check(old_party.get_ref() == null, "return releases old party and its grant")
+		_check(old_flow.get_ref() == null, "Return releases coordinator and its actor bindings")
 		await process_frame
 	app.free()
 	_finish()

@@ -66,6 +66,10 @@ func _start() -> bool:
 		return false
 	_check(app.battle_result._party == app.party and app.battle_result._enemies == app.enemies,
 		"result observes actual authoritative model identities")
+	_check(app.round_flow != null and app.round_flow._started
+		and app.round_flow._result == app.battle_result and app.round_flow._deck == app.deck
+		and app.round_flow._party == app.party and app.round_flow._enemies == app.enemies
+		and app.round_flow._intents == app.enemy_intents, "live coordinator shares complete session")
 	_check(app.victory_gold != null and app.victory_gold._result == app.battle_result
 		and not app.victory_gold.is_claimed() and app.session_gold == 0,
 		"fresh session binds one unclaimed payout to authoritative result")
@@ -78,6 +82,8 @@ func _start() -> bool:
 
 
 func _closed(outcome: String) -> void:
+	_check(app.round_flow != null and app.round_flow.get_outcome() == outcome,
+		"coordinator retains terminal session outcome")
 	_check(app.battle_result.get_outcome() == outcome, "authoritative outcome: " + outcome)
 	var expected_text := "Battle result: " + outcome
 	if outcome == CombatBattleResult.VICTORY:
@@ -113,6 +119,7 @@ func _inert() -> void:
 
 
 func _return() -> void:
+	var flow_ref: WeakRef = weakref(app.round_flow)
 	var result_ref: WeakRef = weakref(app.battle_result)
 	var gold_ref: WeakRef = weakref(app.victory_gold)
 	var old_label: Label = app.result_label
@@ -122,6 +129,7 @@ func _return() -> void:
 		and app.party == null and app.enemies == null and app.run_rng == null
 		and app.victory_gold == null and app.session_gold == 0, "Return cleans session references and payout")
 	_check(gold_ref.get_ref() == null, "Return frees bound payout service")
+	_check(app.round_flow == null and flow_ref.get_ref() == null, "Return releases terminal coordinator")
 	_check(result_ref.get_ref() == null and not is_instance_valid(old_label)
 		and app.find_children("BattleResult", "Label", true, false).is_empty(), "Return frees result and label")
 

@@ -33,6 +33,7 @@ var enemy_attacks: Array = []
 var enemy_intents: CombatEnemyIntents
 var intent_label: Label
 var battle_result: CombatBattleResult
+var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
 var session_gold := 0
 var result_label: Label
@@ -131,16 +132,23 @@ func _start_run() -> void:
 	if not starting_party.is_valid():
 		push_warning("Starter party definitions are invalid; run was not started")
 		return
-	CombatStartingBlock.new(starting_party).apply()
+	var starting_rng := RandomNumberGenerator.new()
+	starting_rng.seed = run_seed
+	var starting_deck := CombatDeck.new(cards, starting_rng)
+	var starting_result := CombatBattleResult.new(starting_party, starting_enemies)
+	var starting_flow := CombatRoundFlow.new(starting_deck, starting_party,
+		starting_enemies, selector, starting_result)
+	if not starting_flow.begin_fight():
+		push_warning("Starter combat bindings are invalid; run was not started")
+		return
 	enemy_intents = selector
 	enemy_attacks = enemy_intents.get_intents()
 	party = starting_party
 	enemies = starting_enemies
-	run_rng = RandomNumberGenerator.new()
-	run_rng.seed = run_seed
-	deck = CombatDeck.new(cards, run_rng)
-	deck.start_turn()
-	battle_result = CombatBattleResult.new(party, enemies)
+	run_rng = starting_rng
+	deck = starting_deck
+	battle_result = starting_result
+	round_flow = starting_flow
 	victory_gold = RunVictoryGold.new(battle_result)
 	session_gold = 0
 	_battle_closed = false
@@ -384,7 +392,12 @@ func _refresh_intents() -> void:
 func _end_turn(button: Button = null) -> void:
 	if button == null or button != end_turn_button or button.disabled or not button.is_visible_in_tree():
 		return
-	if deck == null or party == null or enemies == null or enemy_intents == null:
+	if deck == null or party == null or enemies == null or enemy_intents == null \
+			or battle_result == null or round_flow == null:
+		return
+	if round_flow._deck != deck or round_flow._party != party \
+			or round_flow._enemies != enemies or round_flow._intents != enemy_intents \
+			or round_flow._result != battle_result:
 		return
 	if not _observe_battle_result():
 		return
@@ -395,18 +408,11 @@ func _end_turn(button: Button = null) -> void:
 		return
 	# Accept one activation per input dispatch, including a burst of duplicate presses.
 	button.disabled = true
-	var phase := CombatEnemyPhase.new().execute_phase(party, enemies, enemy_attacks)
-	if not phase.ok:
+	if not round_flow.end_turn():
 		button.disabled = false
-		return
-	if not deck.end_turn():
 		return
 	if not _observe_battle_result():
 		return
-	if not deck.start_turn():
-		return
-	party.start_player_turn()
-	enemy_intents.advance_turn()
 	enemy_attacks = enemy_intents.get_intents()
 	_refresh_intents()
 	_refresh_hand()
@@ -430,6 +436,7 @@ func _refresh_enemy_roster() -> void:
 func _return_to_title() -> void:
 	if battle_view == null:
 		return
+	round_flow = null
 	remove_child(battle_view)
 	battle_view.queue_free()
 	battle_view = null

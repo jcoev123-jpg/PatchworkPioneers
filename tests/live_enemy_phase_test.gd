@@ -195,6 +195,27 @@ func _run() -> void:
 		var reference_enemies := CombatEnemies.new(app._load_enemy_definitions())
 		var trace: Array = [_snapshot(app)]
 		var before := _snapshot(app)
+		_check(app.round_flow != null and app.round_flow._started
+			and app.round_flow._deck == app.deck and app.round_flow._party == app.party
+			and app.round_flow._enemies == app.enemies and app.round_flow._intents == app.enemy_intents
+			and app.round_flow._result == app.battle_result, "mounted End Turn owns started authoritative coordinator")
+		var flow: CombatRoundFlow = app.round_flow
+		for field in ["_deck", "_party", "_enemies", "_intents", "_result"]:
+			var bound = flow.get(field)
+			flow.set(field, null)
+			app.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == before and not app.end_turn_button.disabled,
+				"stale coordinator binding rejects without changing surviving models: " + field)
+			flow.set(field, bound)
+		app.round_flow = null
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == before and not app.end_turn_button.disabled, "missing coordinator fails closed")
+		app.round_flow = flow
+		flow._started = false
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == before and not app.end_turn_button.disabled,
+			"coordinator rejection restores button and preserves all session state")
+		flow._started = true
 		app.start_button.pressed.emit()
 		_check(_snapshot(app) == before, "duplicate Start Run cannot execute attacks or replace session")
 		for turn in range(12):
@@ -281,6 +302,9 @@ func _run() -> void:
 		else:
 			_check(trace == first_trace, "fresh same-seed run replays every hero, deck and RNG snapshot")
 		var old_button: Button = app.end_turn_button
+		# Do not retain the coordinator while checking release of its actors.
+		flow = null
+		var old_flow: WeakRef = weakref(app.round_flow)
 		var old_party: WeakRef = weakref(app.party)
 		var old_selector: WeakRef = weakref(app.enemy_intents)
 		var old_enemies: WeakRef = weakref(app.enemies)
@@ -292,6 +316,7 @@ func _run() -> void:
 		_check(app.enemy_attacks.is_empty() and app.intent_label == null and app.enemy_intents == null,
 			"return clears selector, intent data and label")
 		_check(old_selector.get_ref() == null, "old selector released")
+		_check(app.round_flow == null and old_flow.get_ref() == null, "Return releases live coordinator")
 		_check(old_party.get_ref() == null, "old party released")
 		_check(app.enemies == null and old_enemies.get_ref() == null, "app and presenter release old enemy roster")
 		_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "return restores title and keyboard focus")

@@ -101,10 +101,12 @@ func _valid_bindings() -> bool:
 	# separate still-ACTIVE fight that could incorrectly permit more turns.
 	if _result._party != _party or _result._enemies != _enemies:
 		return false
-	var expected_heroes := ["warden", "seamstress", "tinker"]
-	for index in range(CombatParty.PARTY_SIZE):
-		if _party.get_hero(index + 1).get("id") != expected_heroes[index]:
-			return false
+	# A replacement front hero has no Warden passive. Authored heroes must
+	# still occupy their own slots; never accept a reversed/misplaced party.
+	if _party.get_hero(1).get("id") in ["seamstress", "tinker"] \
+			or _party.get_hero(2).get("id") != "seamstress" \
+			or _party.get_hero(3).get("id") != "tinker":
+		return false
 	# The scheduler must contain exactly one action per actual occupied enemy
 	# position: no phantom sources, gaps or omitted living/blocked enemies.
 	var roster := _enemies.get_enemies()
