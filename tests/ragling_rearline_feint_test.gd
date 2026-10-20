@@ -57,6 +57,24 @@ func _load_json(path: String) -> Array:
 	file.close()
 	return _normalize_json(JSON.parse_string(text))
 
+func _find_hero_by_id(heroes: Array, id: String) -> Dictionary:
+	var matches: Array = []
+	for hero in heroes:
+		if hero is Dictionary and hero.get("id") == id:
+			matches.append(hero)
+	if matches.size() != 1:
+		return {}
+	return matches[0].duplicate(true)
+
+func _find_enemy_by_id(enemies: Array, id: String) -> Dictionary:
+	var matches: Array = []
+	for enemy in enemies:
+		if enemy is Dictionary and enemy.get("id") == id:
+			matches.append(enemy)
+	if matches.size() != 1:
+		return {}
+	return matches[0].duplicate(true)
+
 func _test_file_parsing_and_shape() -> void:
 	var parsed := _load_json("res://data/encounters/ragling_rearline_feint.json")
 	_check(parsed is Array and parsed.size() == 2,
@@ -127,22 +145,58 @@ func _test_intents_schedule() -> void:
 		"turn 2 source 2 wraps back to position 2")
 	_check(parsed == original, "original parsed JSON unchanged after service")
 
+func _build_authored_party() -> CombatParty:
+	# Load authored starter heroes and pick the three required IDs in positions 1/2/3.
+	var heroes_raw := _load_json("res://data/heroes/starter_party.json")
+	var warden_raw := _find_hero_by_id(heroes_raw, "warden")
+	var seamstress_raw := _find_hero_by_id(heroes_raw, "seamstress")
+	var tinker_raw := _find_hero_by_id(heroes_raw, "tinker")
+	_check(not warden_raw.is_empty(), "warden found by ID in starter_party.json")
+	_check(not seamstress_raw.is_empty(), "seamstress found by ID in starter_party.json")
+	_check(not tinker_raw.is_empty(), "tinker found by ID in starter_party.json")
+	_check(warden_raw.get("name") == "Warden" and warden_raw.get("max_hp") == 40,
+		"warden name and HP match authored data")
+	_check(seamstress_raw.get("name") == "Seamstress" and seamstress_raw.get("max_hp") == 30,
+		"seamstress name and HP match authored data")
+	_check(tinker_raw.get("name") == "Tinker" and tinker_raw.get("max_hp") == 26,
+		"tinker name and HP match authored data")
+	# Order fixes positions: 1=warden, 2=seamstress, 3=tinker
+	var party_defs := [warden_raw.duplicate(true), seamstress_raw.duplicate(true), tinker_raw.duplicate(true)]
+	var party := CombatParty.new(party_defs)
+	_check(party.is_valid(), "authored starter party is valid")
+	_check(party.get_hero(1).get("id") == "warden" and party.get_hero(1).get("hp") == 40,
+		"position 1 is Warden at 40 HP")
+	_check(party.get_hero(2).get("id") == "seamstress" and party.get_hero(2).get("hp") == 30,
+		"position 2 is Seamstress at 30 HP")
+	_check(party.get_hero(3).get("id") == "tinker" and party.get_hero(3).get("hp") == 26,
+		"position 3 is Tinker at 26 HP")
+	return party
+
+func _build_authored_enemies() -> CombatEnemies:
+	# Load authored starter enemies and pick the two required IDs in positions 1/2.
+	var enemies_raw := _load_json("res://data/enemies/starter_enemies.json")
+	var ragling_raw := _find_enemy_by_id(enemies_raw, "ragling")
+	var guard_raw := _find_enemy_by_id(enemies_raw, "ragling_guard")
+	_check(not ragling_raw.is_empty(), "ragling found by ID in starter_enemies.json")
+	_check(not guard_raw.is_empty(), "ragling_guard found by ID in starter_enemies.json")
+	_check(ragling_raw.get("name") == "Ragling" and ragling_raw.get("max_hp") == 12,
+		"ragling name and HP match authored data")
+	_check(guard_raw.get("name") == "Guard Ragling" and guard_raw.get("max_hp") == 12,
+		"ragling_guard name and HP match authored data")
+	# Order fixes positions: 1=ragling, 2=ragling_guard
+	var enemy_defs := [ragling_raw.duplicate(true), guard_raw.duplicate(true)]
+	var enemies := CombatEnemies.new(enemy_defs)
+	_check(enemies.is_valid(), "authored starter enemies is valid")
+	_check(enemies.get_enemy(1).get("id") == "ragling" and enemies.get_enemy(1).get("hp") == 12,
+		"enemy position 1 is Ragling at 12 HP")
+	_check(enemies.get_enemy(2).get("id") == "ragling_guard" and enemies.get_enemy(2).get("hp") == 12,
+		"enemy position 2 is Guard Ragling at 12 HP")
+	return enemies
+
 func _test_real_combat_turns() -> void:
-	var heroes := [
-		{"id": "warden", "max_hp": 40, "name": "Warden"},
-		{"id": "seamstress", "max_hp": 30, "name": "Seamstress"},
-		{"id": "tinker", "max_hp": 26, "name": "Tinker"}]
-	var enemies_defs := [
-		{"id": "ragling", "max_hp": 12, "name": "Ragling"},
-		{"id": "ragling_guard", "max_hp": 12, "name": "Guard Ragling"}]
-
-	var party := CombatParty.new(heroes)
-	_check(party.is_valid(), "real starter party is valid")
-
-	var enemies := CombatEnemies.new(enemies_defs)
-	_check(enemies.is_valid(), "real starter enemies is valid")
-	_check(enemies.get_enemy(1)["hp"] == 12, "enemy 1 starts at 12 HP")
-	_check(enemies.get_enemy(2)["hp"] == 12, "enemy 2 starts at 12 HP")
+	# Build real CombatParty and CombatEnemies from on-disk authored definitions.
+	var party := _build_authored_party()
+	var enemies := _build_authored_enemies()
 
 	var opening := CombatStartingBlock.new(party)
 	_check(opening.apply(), "real Warden opening block applied")
@@ -199,16 +253,8 @@ func _test_real_combat_turns() -> void:
 
 func _test_negative_paths() -> void:
 	# Kill source 2 and run phase: source 2 must report not applied; source 1 still damages target.
-	var heroes := [
-		{"id": "warden", "max_hp": 40},
-		{"id": "seamstress", "max_hp": 30},
-		{"id": "tinker", "max_hp": 26}]
-	var enemies_defs := [
-		{"id": "ragling", "max_hp": 12},
-		{"id": "ragling_guard", "max_hp": 12}]
-
-	var party := CombatParty.new(heroes)
-	var enemies := CombatEnemies.new(enemies_defs)
+	var party := _build_authored_party()
+	var enemies := _build_authored_enemies()
 
 	var parsed := _load_json("res://data/encounters/ragling_rearline_feint.json")
 	var scheduler := CombatEnemyIntents.new(parsed)
@@ -230,11 +276,11 @@ func _test_negative_paths() -> void:
 		"dead source 2 reports not applied")
 
 	# Separate party: down target and verify hit is not redirected.
-	party = CombatParty.new(heroes)
+	party = _build_authored_party()
 	_check(party.apply_damage(2, 30), "down target position 2")
 	_check(party.is_downed(2), "target position 2 is downed")
 
-	enemies = CombatEnemies.new(enemies_defs)
+	enemies = _build_authored_enemies()
 	scheduler = CombatEnemyIntents.new(parsed)
 
 	turn0 = scheduler.get_intents()
