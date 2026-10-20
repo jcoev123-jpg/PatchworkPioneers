@@ -38,7 +38,7 @@ func _sync_battle() -> void:
 		row.add_theme_constant_override("separation", 8)
 		var column := app.hero_view.get_parent() as VBoxContainer
 		# Reserve room for the bars while leaving the existing target panels actionable.
-		column.add_theme_constant_override("separation", 8)
+		column.add_theme_constant_override("separation", 6)
 		column.add_child(row)
 		column.move_child(row, app.intent_label.get_index())
 		for side in ["hero", "enemy"]:
