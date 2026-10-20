@@ -4,11 +4,13 @@ var failures: Array[String] = []
 var checks := 0
 
 const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]
+const FORMERLY_BLOCKED_SEED := 6
 
 
 func _initialize() -> void:
 	_test_ungenerated_and_invalid_rng()
 	_test_seeded_replay_and_structure()
+	_test_playable_openings_preserve_original_generation()
 	_test_defensive_snapshots()
 	_test_traversal_and_rejections()
 	if failures.is_empty():
@@ -102,6 +104,42 @@ func _test_seeded_replay_and_structure() -> void:
 	var unchanged := _snapshot(first, first_rng)
 	_check(not first.generate(null) and _snapshot(first, first_rng) == unchanged,
 		"invalid regeneration preserves populated graph and route")
+
+
+func _test_playable_openings_preserve_original_generation() -> void:
+	var blocked_count := 0
+	var playable_count := 0
+	for value in range(128):
+		var original_rng := _rng(value)
+		var original := _original_graph(original_rng)
+		var expected: Array = original.duplicate(true)
+		var originally_playable := false
+		for node in original[0]:
+			originally_playable = originally_playable or node.type == "Fight"
+		if originally_playable:
+			playable_count += 1
+		else:
+			blocked_count += 1
+			expected[0][0].type = "Fight"
+		if value == FORMERLY_BLOCKED_SEED:
+			_check(not originally_playable, "pinned seed was blocked before fallback")
+			_check(original[0].size() == 3 and original[0][0].type == "Rest"
+				and original[0][1].type == "Rest" and original[0][2].type == "Treasure",
+				"pinned original opening is Rest, Rest, Treasure")
+		var rng := _rng(value)
+		var map := RunMap.new()
+		_check(map.generate(rng), "opening generates for seed %d" % value)
+		_check(map.get_floors() == expected,
+			"seed %d preserves original graph except required first-node fallback" % value)
+		_check(rng.state == original_rng.state,
+			"seed %d preserves exact original draw sequence state" % value)
+		var legal_fight := false
+		for id in map.get_legal_choices():
+			legal_fight = legal_fight or map.get_node(id).type == "Fight"
+		_check(legal_fight, "seed %d offers a legal opening Fight" % value)
+		_assert_graph(map)
+	_check(blocked_count > 0 and playable_count > 0,
+		"seed sweep exercises both fallback and already-playable graphs")
 
 
 func _assert_graph(map: RunMap) -> void:
@@ -271,3 +309,63 @@ func _test_traversal_and_rejections() -> void:
 	_reject(map, rng, floors[11][0]["id"], "any boss selection after completion")
 	_reject(map, rng, floors[0][0]["id"], "restart route after boss")
 	_reject(map, rng, "unknown", "unknown after boss")
+
+
+# Frozen pre-fallback generator: independent oracle for topology and RNG draws.
+func _original_graph(rng: RandomNumberGenerator) -> Array:
+	var new_floors: Array = []
+	var new_nodes: Dictionary = {}
+	for floor_index in range(12):
+		var floor_ids: Array[String] = []
+		var count: int = rng.randi_range(3, 4)
+		for position in range(count):
+			var node_id := "f%02d_n%d" % [floor_index + 1, position]
+			var kind := "Boss"
+			if floor_index < 12 - 1:
+				kind = NORMAL_TYPES[rng.randi_range(0, NORMAL_TYPES.size() - 1)]
+			new_nodes[node_id] = {
+				"id": node_id,
+				"floor": floor_index + 1,
+				"position": position,
+				"type": kind,
+				"outgoing": [],
+			}
+			floor_ids.append(node_id)
+		new_floors.append(floor_ids)
+
+	for floor_index in range(12 - 1):
+		var sources: Array = new_floors[floor_index]
+		var targets: Array = new_floors[floor_index + 1]
+		# Both passes matter: every source gets an exit and every target
+		# gets an entrance, even when adjacent floors differ in width.
+		for source_index in range(sources.size()):
+			_original_add_edge(new_nodes, sources[source_index],
+				targets[mini(source_index, targets.size() - 1)])
+		for target_index in range(targets.size()):
+			_original_add_edge(new_nodes,
+				sources[mini(target_index, sources.size() - 1)], targets[target_index])
+		# These two edges cross geometrically, rather than merely branching
+		# into parallel lanes; every map contains a crossing and a branch.
+		if floor_index == 0:
+			_original_add_edge(new_nodes, sources[0], targets[1])
+			_original_add_edge(new_nodes, sources[1], targets[0])
+		# Additional seeded links vary routes without dictating kind weights.
+		for source_index in range(sources.size()):
+			if rng.randi_range(0, 1) == 1:
+				_original_add_edge(new_nodes, sources[source_index],
+					targets[rng.randi_range(0, targets.size() - 1)])
+
+	var floors: Array = []
+	for ids in new_floors:
+		var row: Array = []
+		for id in ids:
+			row.append(new_nodes[id])
+		floors.append(row)
+	return floors
+
+
+static func _original_add_edge(nodes: Dictionary, source_id: String, target_id: String) -> void:
+	var source: Dictionary = nodes[source_id]
+	var edges: Array = source["outgoing"]
+	if not edges.has(target_id):
+		edges.append(target_id)
