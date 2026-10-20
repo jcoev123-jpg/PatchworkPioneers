@@ -106,32 +106,38 @@ func _return() -> void:
 
 func _expected(id: String) -> String:
 	var definition := catalog.get_definition(id)
-	var preview := targeting.get_preview(app.deck, app.party, app.enemies, id)
+	var attacker_statuses: Dictionary = {}
+	for hero in app.party.get_heroes():
+		if hero.id == definition.owner:
+			attacker_statuses = hero.get("statuses", {})
+	var target_statuses := {}
+	for enemy in app.enemies.get_enemies():
+		target_statuses[enemy.position] = enemy.get("statuses", {})
+	# The independent expected text uses the production forecast and the pure
+	# confirmed-hit adapter, never the presenter's string-formatting routine.
+	var forecast: Dictionary = presenter._play.forecast_attack(app.deck, app.party, app.enemies,
+		id, attacker_statuses, target_statuses)
+	var applied: Dictionary = CombatOnHitStatuses.new().status_for_confirmed_hit(id, true) if forecast.playable else {}
 	var slots: PackedStringArray = []
-	for position in preview.target_positions:
-		var owner: String = definition.owner
-		var statuses := {}
-		for hero in app.party.get_heroes():
-			if hero.id == owner:
-				statuses = hero.get("statuses", {})
-		var base: int = definition.effects.damage
-		if owner == "tinker" and not presenter._play._tinker._consumed:
-			base += 3
-		var weak: bool = statuses.get("weak", 0) > 0
-		var exposed: bool = app.enemies.get_enemy(position).get("statuses", {}).get("exposed", 0) > 0
-		var multiplier := 1.125 if weak and exposed else 0.75 if weak else 1.5 if exposed else 1.0
-		slots.append("%d: %d" % [position, int(floor(base * multiplier))])
-	var description := "Unavailable: no legal targets"
-	if preview.playable:
-		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(slots) + " damage"
-	var controls := "P / click card; 1-3 / click enemy" if preview.requires_selection or id != "tinker_scrap_bomb" else "P: select; Enter / Space / click card: cast"
+	for hit in forecast.hits:
+		var description := "%d: %d damage" % [hit.position, hit.damage]
+		for status in applied:
+			var previous: int = target_statuses[hit.position].get(status, 0)
+			description += " (%s %d → %d on confirmed hit)" % [
+				status.capitalize(), previous, previous + applied[status]]
+		slots.append(description)
+	var description := "Unavailable: no legal targets or energy"
+	if forecast.playable:
+		description = ("Choose one enemy slot: " if forecast.requires_selection else "All enemies in slots: ") + "; ".join(slots)
+	var controls := "P / click card; 1-3 / click enemy" if definition.target_kind == "enemy_single" else "P: select; Enter / Space / click card: cast"
 	return "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
 
 func _assert_preview(id: String) -> void:
 	if "--inject-wrong-cue" in OS.get_cmdline_user_args():
 		presenter.cue.text = "wrong"
-	_check(presenter._selected == _panel(id), "mounted event selected actual held attack: " + id)
+	_check(is_instance_valid(presenter._selected) and presenter._bindings.has(presenter._selected)
+		and presenter._card_id(presenter._selected) == id, "mounted event selected actual held attack: " + id)
 	_check(presenter.cue.text == _expected(id), "exact catalog name/cost and service targets: " + id)
 	_check(presenter.cue.is_visible_in_tree() and root.get_visible_rect().encloses(presenter.cue.get_global_rect()), "cue readable at 1280x720")
 	_check(presenter.cue.get_line_count() <= 2, "cue fits two readable lines")
@@ -172,7 +178,7 @@ func _run() -> void:
 			var trace: Array = [presenter.cue.text]
 			var held: Array[String] = []
 			for card in app.deck.hand:
-				if card in CombatAttackTargeting.ATTACK_IDS and card not in held:
+				if card in CombatAttackTargeting.ATTACK_IDS:
 					held.append(card)
 			for step in range(held.size() * 2):
 				await _key(KEY_P)
@@ -200,6 +206,9 @@ func _run() -> void:
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
 	await _forecast_statuses()
+	await _exact_on_hit_stacks()
+	await _duplicate_instances()
+	await _paid_move_refresh()
 	await _negative_cases()
 	await _attacks()
 	await _status_lifecycle()
@@ -797,3 +806,157 @@ func _forecast_statuses() -> void:
 			else:
 				_check(trace == replay, "physical forecast/status/attack replay")
 			await _return()
+
+
+func _exact_on_hit_stacks() -> void:
+	# Controlled held IDs, but mounted scene, resolver, and physical enemy
+	# selection remain the production ones. Never alter the starting deck.
+	for id in ["seamstress_prick", "warden_shield_bash"]:
+		var status := "bleed" if id == "seamstress_prick" else "weak"
+		var addition := 3 if status == "bleed" else 1
+		var cost: int = catalog.get_definition(id).cost
+		for existing in [0, 2] if status == "bleed" else [0, 1]:
+			if not await _start(_seed_for(id)):
+				return
+			app.deck.hand.assign([id])
+			app.deck.combat_state.energy = 3
+			app._refresh_hand()
+			_check(app.enemies.gain_block(1, 10), "status fixture has blocked live recipient")
+			var applications := {1: {"exposed": 1}}
+			if existing > 0:
+				applications[1][status] = existing
+			_check(app.enemies.apply_statuses(applications), "actual enemy counter fixture admitted")
+			for hero in app.party._heroes:
+				if hero.id == catalog.get_definition(id).owner:
+					hero["statuses"] = {"weak": 1}
+			await _frames()
+			var panel = _panel(id)
+			_check(panel != null and panel.gui_input.get_connections().size() == 1,
+				"one held status attack input path: " + id)
+			await _hover(panel)
+			_assert_preview(id)
+			var before := _snapshot()
+			var forecast: Dictionary = presenter._resolve_attack(app.party, app.enemies, id, 0, true)
+			var actual_addition: Dictionary = CombatOnHitStatuses.new().status_for_confirmed_hit(id, true)
+			_check(forecast.playable and not forecast.hits.is_empty()
+				and actual_addition == {status: addition}, "live forecast and pure confirmed-hit adapter agree")
+			var hit_damage: int = forecast.hits[0].damage
+			_check(presenter.cue.text.contains("1: %d damage (%s %d → %d on confirmed hit)" % [
+				hit_damage, status.capitalize(), existing, existing + addition]),
+				"precise selected legal slot damage and additive counter")
+			if id == "seamstress_prick":
+				_check(forecast.hits.size() >= 2 and presenter.cue.text.contains(
+					"2: %d damage (Bleed 0 → 3 on confirmed hit)" % forecast.hits[1].damage),
+					"Prick shows other living legal slot independently")
+			# No preview, keyboard cycling, hover or unsupported target mutates
+			# deck, statuses, intent, outcome or seeded RNG.
+			seed(478)
+			var global_next := randi()
+			seed(478)
+			await _key(KEY_P)
+			await _hover(panel)
+			await _key(KEY_3)
+			_check(_snapshot() == before and randi() == global_next,
+				"noncommitting inputs preserve full state and global RNG")
+			# Re-arm after any invalid attempt, then select the real target.
+			await _choose(id, true)
+			var expected := before.duplicate(true)
+			expected[0].erase(id)
+			expected[2].append(id)
+			expected[3] -= cost
+			expected[6][0].block -= mini(10, hit_damage)
+			expected[6][0].hp -= maxi(0, hit_damage - 10)
+			expected[6][0]["statuses"][status] = existing + addition
+			await _key(KEY_1)
+			_check(_snapshot() == expected, "complete actual confirmed attack transaction with additive stack: " + id)
+			_check(presenter.last_event.ok and presenter.last_event.hits.size() == 1
+				and presenter.last_event.hits[0].statuses == actual_addition
+				and presenter.last_event.hits[0].damage == hit_damage,
+				"committed resolver matches forecast and pure status payload")
+			await _return()
+
+
+func _duplicate_instances() -> void:
+	var id := "seamstress_prick"
+	if not await _start(_seed_for(id)):
+		return
+	app.deck.hand.assign([id, id])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var first := app.hand_view.get_child(0) as Control
+	var second := app.hand_view.get_child(1) as Control
+	_check(first != second and first.get_child(0).text == id and second.get_child(0).text == id,
+		"controlled duplicate held IDs occupy two real distinct card panels")
+	for panel in [first, second]:
+		_check(presenter._bindings.has(panel) and panel.gui_input.get_connections().size() == 1
+			and panel.mouse_entered.get_connections().size() == 1
+			and panel.mouse_exited.get_connections().size() == 1,
+			"each duplicate owns one independent input, enter and leave callback")
+	var before := _snapshot()
+	await _hover(first)
+	_check(presenter._selected == first, "hover selects first actual copy")
+	await _key(KEY_P)
+	_check(presenter._selected == second and presenter._armed == second,
+		"P selects second real copy instead of deduplicating IDs")
+	_assert_preview(id)
+	await _key(KEY_P)
+	_check(presenter._selected == first and presenter._armed == first,
+		"P wraps to first real copy")
+	await _hover(second)
+	_check(presenter._selected == second, "hover independently updates second copy")
+	_check(_snapshot() == before, "duplicate hover/cycle leaves every model unchanged")
+	await _click(second)
+	await _key(KEY_1)
+	_check(app.deck.hand.count(id) == 1 and app.deck.discard_pile.count(id) == before[2].count(id) + 1
+		and app.deck.energy == 2 and app.enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 3,
+		"playing second copy commits exactly one charge, discard and Bleed stack")
+	_check(not presenter._bindings.has(first) and not presenter._bindings.has(second),
+		"hand redraw drops obsolete duplicate listeners")
+	await _return()
+
+
+func _paid_move_refresh() -> void:
+	var replay: Array = []
+	for session in range(2):
+		if not await _start(_seed_for("warden_shield_bash")):
+			return
+		# This is the actual paid adjacent-move card and held Shield Bash,
+		# supplied in the current hand without changing the starter catalog.
+		app.deck.hand.assign(["warden_backstep", "warden_shield_bash"])
+		app.deck.combat_state.energy = 3
+		app._refresh_hand()
+		await _frames()
+		_check(app.party.get_hero(1).id == "warden" and app.party.get_hero(2).id == "seamstress",
+			"starting live owner positions allow Warden's paid adjacent backstep")
+		var bash: Control = _panel("warden_shield_bash")
+		var move: Control = _panel("warden_backstep")
+		_check(move != null and bash != null and targeting.get_preview(
+			app.deck, app.party, app.enemies, "warden_shield_bash").playable,
+			"both move and attack are real held cards, Bash initially playable")
+		await _hover(bash)
+		_assert_preview("warden_shield_bash")
+		var legal_description: String = presenter.cue.text
+		var before := _snapshot()
+		await _click(move)
+		_check(app.deck.energy == before[3] - 1 and app.deck.hand == ["warden_shield_bash"]
+			and app.deck.discard_pile.count("warden_backstep") == before[2].count("warden_backstep") + 1,
+			"real paid adjacent move charges and discards once")
+		_check(app.party.get_hero(2).id == "warden" and app.party.get_hero(1).id == "seamstress",
+			"real move changes current hero positions")
+		bash = _panel("warden_shield_bash")
+		_check(bash != null, "Bash remains held on refreshed panels after move")
+		await _hover(bash)
+		_assert_preview("warden_shield_bash")
+		_check(presenter.cue.text.contains("Unavailable") and not presenter.cue.text.contains("on confirmed hit")
+			and presenter.cue.text != legal_description, "moved owner's rejected Bash never promises Weak")
+		var moved := _snapshot()
+		await _click(bash)
+		await _key(KEY_1)
+		_check(_snapshot() == moved, "invalid post-move attack never spends or applies a stack")
+		var trace := [legal_description, presenter.cue.text, moved]
+		if replay.is_empty():
+			replay = trace
+		else:
+			_check(trace == replay, "same-seed paid move and refreshed attack rejection replay")
+		await _return()
