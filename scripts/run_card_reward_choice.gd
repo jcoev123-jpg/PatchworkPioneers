@@ -15,8 +15,8 @@ func _init(offered_cards: Array = [], party_ids: Array[String] = []) -> void:
 	for item in offered_cards:
 		if item is Dictionary:
 			_offered_cards.append({
-				"id": String(item.get("id", "")),
-				"owner": String(item.get("owner", ""))
+				"id": item.get("id", ""),
+				"owner": item.get("owner", "")
 			})
 		else:
 			_offered_cards.append({})
@@ -43,8 +43,14 @@ func is_valid() -> bool:
 	# Each offer must have non-empty String id and owner.
 	var offered_ids := {}
 	for offer in _offered_cards:
-		var card_id: String = offer.get("id", "")
-		var owner: String = offer.get("owner", "")
+		var card_id_raw = offer.get("id", "")
+		var owner_raw = offer.get("owner", "")
+		if not card_id_raw is String or card_id_raw.is_empty():
+			return false
+		if not owner_raw is String or owner_raw.is_empty():
+			return false
+		var card_id: String = card_id_raw
+		var owner: String = owner_raw
 		if not card_id is String or card_id.is_empty():
 			return false
 		if not owner is String or owner.is_empty():

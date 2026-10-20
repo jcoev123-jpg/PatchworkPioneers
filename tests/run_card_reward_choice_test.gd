@@ -93,6 +93,13 @@ func _test_positive_claim() -> void:
 	_check(deck.size() == 12, "starter deck has exactly 12 cards")
 
 	var party := _fixture_party()
+	# Verify actual starter hero IDs from file match fixtures.
+	var actual_party := _load_party()
+	_check(actual_party.size() == 3, "loaded party has 3 heroes")
+	_check(actual_party.has("warden") and actual_party.has("seamstress") and actual_party.has("tinker"),
+		"loaded party contains warden, seamstress, tinker")
+	for pid in actual_party:
+		_check(party.has(pid), "fixture party includes loaded hero: " + pid)
 	var offers := _fixture_offers()
 
 	# Verify fixture cards resolve in catalog with correct owners.
@@ -105,9 +112,11 @@ func _test_positive_claim() -> void:
 	var service := RunCardRewardChoice.new(offers, party)
 	_check(service.is_valid(), "valid offering passes is_valid")
 
-	# Positive claim: choose one card.
+	# Positive claim: choose one card. Pass the caller's original array (not a duplicate)
+	# so isolation can be verified afterward.
+	var claim_input := deck
 	var selected := "seamstress_prick"
-	var result := service.claim(deck.duplicate(), selected)
+	var result := service.claim(claim_input, selected)
 	_check(result.get("ok", false) == true, "positive claim succeeds")
 	_check(result.get("skipped", false) == false, "positive claim skipped is false")
 	_check(result.get("selected_id", "") == selected, "selected_id equals chosen card")
@@ -116,19 +125,8 @@ func _test_positive_claim() -> void:
 	_check(new_deck is Array, "result deck is array")
 	_check(new_deck.size() == 13, "chosen deck size is 13 (12 + 1)")
 
-	# Verify the original starter deck order and multiplicities preserved, with selected appended.
-	var original_sorted := deck.duplicate()
-	original_sorted.sort()
-	var result_sorted := new_deck.duplicate()
-	# Remove one selected card before sorting comparison.
-	var removed_index := result_sorted.find(selected)
-	_check(removed_index >= 0, "selected card present in result deck")
-	result_sorted.remove_at(removed_index)
-	result_sorted.sort()
-	original_sorted.sort()
-	_check(result_sorted == original_sorted, "existing 12 cards unchanged except appended selected")
-
-	# The appended selected card must be the exact last element (because we append, not insert).
+	# Verify exact 12-card prefix unchanged and selected appended at end.
+	_check(new_deck.slice(0, 12) == deck, "exact 12-card prefix preserved")
 	_check(new_deck[new_deck.size() - 1] == selected, "chosen card appended at end")
 
 	# Verify a fresh CombatDeck from result has 13 cards after drawing 5.
@@ -145,6 +143,17 @@ func _test_positive_claim() -> void:
 
 	# Verify caller's input array was not mutated.
 	_check(deck.size() == 12, "original input deck unchanged after claim")
+	_check(deck == claim_input, "submitted array unchanged after claim")
+
+	# Verify a second fresh CombatDeck with same seed produces identical draw.
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 42
+	var replay_deck := CombatDeck.new(new_deck, replay_rng)
+	_check(replay_deck.start_turn(), "replay combat deck starts turn")
+	_check(replay_deck.hand.size() == 5, "replay draws exactly 5 cards")
+	_check(combat_deck.hand == replay_deck.hand, "same seed yields equal five-card draw")
+	var replay_total := replay_deck.draw_pile.size() + replay_deck.hand.size() + replay_deck.discard_pile.size()
+	_check(replay_total == 13, "replay all 13 cards accounted for")
 
 
 func _test_skip() -> void:
@@ -298,13 +307,46 @@ func _test_invalidity() -> void:
 	)
 	_check(not empty_party_service.is_valid(), "empty party ID invalid")
 
-	# Selected ID absent from valid offers: must fail but NOT latch.
+	# Numeric (non-String) id and owner must fail (AC3: non-String offer fields fail closed).
+	var numeric_service := RunCardRewardChoice.new(
+		[
+			{"id": 123, "owner": "warden"},
+			{"id": "seamstress_prick", "owner": "seamstress"},
+			{"id": "tinker_pop_shot", "owner": "tinker"}
+		], _fixture_party()
+	)
+	_check(not numeric_service.is_valid(), "numeric id invalid")
+	var numeric_result := numeric_service.claim(base_deck.duplicate(), "seamstress_prick")
+	_check(numeric_result.get("ok", false) == false, "numeric id claim rejected")
+	_check(numeric_result.get("deck", []).size() == 12, "numeric id claim does not mutate deck")
+	_check(not numeric_service.is_claimed(), "numeric id claim does not latch")
+
+	var numeric_owner_service := RunCardRewardChoice.new(
+		[
+			{"id": "warden_strike", "owner": 456},
+			{"id": "seamstress_prick", "owner": "seamstress"},
+			{"id": "tinker_pop_shot", "owner": "tinker"}
+		], _fixture_party()
+	)
+	_check(not numeric_owner_service.is_valid(), "numeric owner invalid")
+
+	# Missing fields.
+	var missing_service := RunCardRewardChoice.new(
+		[
+			{"id": "warden_strike"},
+			{"id": "seamstress_prick", "owner": "seamstress"},
+			{"id": "tinker_pop_shot", "owner": "tinker"}
+		], _fixture_party()
+	)
+	_check(not missing_service.is_valid(), "missing owner field invalid")
+
+	# After rejected selection on valid service, a valid claim succeeds once.
 	var valid_service := RunCardRewardChoice.new(_fixture_offers(), _fixture_party())
 	var bad_selection := valid_service.claim(base_deck.duplicate(), "nonexistent_card")
 	_check(bad_selection.get("ok", false) == false, "absent selected card fails")
 	_check(not valid_service.is_claimed(), "invalid selection does not latch claim")
 
-	# After failed selection, a valid selection succeeds once.
+	# A subsequent valid selection succeeds once.
 	var valid_after_bad := valid_service.claim(base_deck.duplicate(), "tinker_pop_shot")
 	_check(valid_after_bad.get("ok", false) == true, "valid selection succeeds after rejected selection")
 	_check(valid_service.is_claimed(), "successful claim latches after prior failure")
