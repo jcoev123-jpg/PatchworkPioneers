@@ -26,6 +26,7 @@ var party: CombatParty
 var hero_view: HBoxContainer
 var hero_panels: Array[PanelContainer] = []
 var enemy_attacks: Array = []
+var enemy_intents: CombatEnemyIntents
 var intent_label: Label
 
 
@@ -79,16 +80,17 @@ func _start_run() -> void:
 			push_error("Starter deck contains an invalid card ID")
 			return
 		cards.append(card)
+	var selector := CombatEnemyIntents.new(_load_enemy_schedule())
+	if not selector.is_valid():
+		push_warning("Starter attack schedule is invalid; run was not started")
+		return
 	var definitions := _load_party_definitions()
 	var starting_party := CombatParty.new(definitions)
 	if not starting_party.is_valid():
 		push_warning("Starter party definitions are invalid; run was not started")
 		return
-	var attacks := _load_enemy_attacks()
-	if attacks.is_empty():
-		push_warning("Starter attacks are invalid; run was not started")
-		return
-	enemy_attacks = attacks
+	enemy_intents = selector
+	enemy_attacks = enemy_intents.get_intents()
 	party = starting_party
 	run_rng = RandomNumberGenerator.new()
 	run_rng.seed = run_seed
@@ -128,7 +130,7 @@ func _load_party_definitions() -> Array:
 	return source
 
 
-func _load_enemy_attacks() -> Array:
+func _load_enemy_schedule() -> Array:
 	if not FileAccess.file_exists(starter_attacks_path):
 		return []
 	var parser := JSON.new()
@@ -137,27 +139,35 @@ func _load_enemy_attacks() -> Array:
 	var source = parser.data
 	if not source is Array or source.is_empty():
 		return []
-	var sources: Array[int] = []
-	for attack in source:
-		if not attack is Dictionary:
+	for definition in source:
+		if not definition is Dictionary or not _normalize_schedule_number(definition, "enemy_position"):
 			return []
-		for field in ["enemy_position", "target_position", "amount"]:
-			var value = attack.get(field)
-			if not (value is int or value is float):
-				return []
-			if not is_finite(float(value)) or floor(float(value)) != float(value):
-				return []
-			if value < 0 or value >= float(CombatParty.MAX_INT):
-				return []
-			attack[field] = int(value)
-		if attack["enemy_position"] < 1 or attack["enemy_position"] > 3 or attack["enemy_position"] in sources:
+		var pattern = definition.get("pattern")
+		if not pattern is Array or pattern.is_empty():
 			return []
-		if attack["target_position"] < 1 or attack["target_position"] > CombatParty.PARTY_SIZE:
-			return []
-		sources.append(attack["enemy_position"])
-	source.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return a["enemy_position"] < b["enemy_position"])
+		for action in pattern:
+			# The live executor currently supports attacks only, including future steps.
+			if not action is Dictionary:
+				return []
+			var kind = action.get("type")
+			if not kind is String or kind != "attack":
+				return []
+			if not _normalize_schedule_number(action, "amount") or not _normalize_schedule_number(action, "target_position"):
+				return []
+	# CombatEnemyIntents validates exact keys, ranges and duplicate source positions.
 	return source
+
+
+func _normalize_schedule_number(record: Dictionary, field: String) -> bool:
+	var value = record.get(field)
+	if not (value is int or value is float):
+		return false
+	if not is_finite(float(value)) or floor(float(value)) != float(value):
+		return false
+	if value < 0 or value >= float(CombatParty.MAX_INT):
+		return false
+	record[field] = int(value)
+	return true
 
 
 func _build_battle() -> void:
@@ -184,12 +194,7 @@ func _build_battle() -> void:
 		panel.add_child(label)
 	intent_label = Label.new()
 	intent_label.add_theme_font_size_override("font_size", 22)
-	var intents: PackedStringArray = []
-	for attack in enemy_attacks:
-		intents.append("Enemy %d -> Hero %d (%s): %d damage" % [
-			attack["enemy_position"], attack["target_position"],
-			party.get_hero(attack["target_position"])["name"], attack["amount"]])
-	intent_label.text = "Intent: " + "; ".join(intents)
+	_refresh_intents()
 	intent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(intent_label)
 	var heading := Label.new()
@@ -247,15 +252,29 @@ func _refresh_party() -> void:
 			"\nDOWNED" if party.is_downed(index + 1) else ""]
 
 
+func _refresh_intents() -> void:
+	var announcements: PackedStringArray = []
+	for attack in enemy_attacks:
+		announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
+			attack["enemy_position"], attack["target_position"],
+			party.get_hero(attack["target_position"])["name"], attack["amount"]])
+	intent_label.text = "Intent: " + "; ".join(announcements)
+
+
 func _end_turn(button: Button = null) -> void:
 	if button == null or button != end_turn_button or button.disabled or not button.is_visible_in_tree():
 		return
 	if deck == null or party == null or not deck.end_turn():
 		return
-	CombatEnemyAttacks.new().execute_attacks(party, enemy_attacks)
+	var result := CombatEnemyAttacks.new().execute_attacks(party, enemy_attacks)
+	if not result["ok"]:
+		return
 	if not deck.start_turn():
 		return
 	party.start_player_turn()
+	enemy_intents.advance_turn()
+	enemy_attacks = enemy_intents.get_intents()
+	_refresh_intents()
 	_refresh_hand()
 	_refresh_party()
 
@@ -274,6 +293,7 @@ func _return_to_title() -> void:
 	hero_panels.clear()
 	intent_label = null
 	enemy_attacks.clear()
+	enemy_intents = null
 	party = null
 	deck = null
 	run_rng = null
