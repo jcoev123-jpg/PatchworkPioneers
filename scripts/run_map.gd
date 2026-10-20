@@ -70,6 +70,15 @@ func generate(rng: RandomNumberGenerator) -> bool:
 				_add_edge(new_nodes, sources[source_index],
 					targets[rng.randi_range(0, targets.size() - 1)])
 
+	# Guarantee a supported opening without rerolling the graph or spending RNG.
+	var has_opening_fight := false
+	for node_id in new_floors[0]:
+		if new_nodes[node_id]["type"] == "Fight":
+			has_opening_fight = true
+			break
+	if not has_opening_fight:
+		new_nodes[new_floors[0][0]]["type"] = "Fight"
+
 	_floor_ids = new_floors
 	_nodes = new_nodes
 	_route.clear()

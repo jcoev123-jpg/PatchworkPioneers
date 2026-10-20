@@ -61,28 +61,9 @@ func _reject(app, id: String, reason: String) -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
-	var fixture_seed := -1
-	var fight_id := ""
-	# Discover an available-Fight fixture without assuming node counts or kinds.
-	for value in range(100):
-		var rng := RandomNumberGenerator.new()
-		rng.seed = value
-		var map := RunMap.new()
-		_check(map.generate(rng), "reference generates")
-		var has_other := false
-		fight_id = ""
-		for id in map.get_legal_choices():
-			if map.get_node(id).type == "Fight":
-				fight_id = id
-			else:
-				has_other = true
-		if not fight_id.is_empty() and has_other:
-			fixture_seed = value
-			break
-	_check(fixture_seed >= 0 and not fight_id.is_empty(), "fixture has Fight and unsupported choices")
-	if fixture_seed < 0:
-		_finish()
-		return
+	# Seed 6 originally generated Rest, Rest, Treasure (pinned before the fix).
+	var fixture_seed := 6
+	var fight_id := "f01_n0"
 	var reference_rng := RandomNumberGenerator.new()
 	reference_rng.seed = fixture_seed
 	var reference := RunMap.new()
@@ -228,6 +209,7 @@ func _run() -> void:
 		_check(app.start_button.has_focus(), "Return restores original title focus")
 
 	await _click(app.route_button)
+	_check(app.run_map != null and app.route_view != null, "failed-data retry chooser mounted")
 	if app.run_map != null:
 		for field in ["starter_deck_path", "starter_party_path", "starter_attacks_path", "starter_enemies_path"]:
 			var original: String = app.get(field)
@@ -259,30 +241,25 @@ func _run() -> void:
 			if app.deck != null:
 				_check(app.run_map.get_floors() == before_retry[0], "retry retains generated graph")
 				await _click(app.return_button)
-	# A generated opening need not contain a supported activity. Back must remain reachable.
-	var no_fight_seed := -1
-	for value in range(100):
-		var rng := RandomNumberGenerator.new()
-		rng.seed = value
-		var map := RunMap.new()
-		map.generate(rng)
-		var has_fight := false
-		for id in map.get_legal_choices():
-			has_fight = has_fight or map.get_node(id).type == "Fight"
-		if not has_fight:
-			no_fight_seed = value
-			break
-	_check(no_fight_seed >= 0, "no-Fight fixture found")
-	if no_fight_seed >= 0:
-		app.run_seed = no_fight_seed
-		await _click(app.route_button)
-		_check(app.run_map != null and not app.route_buttons.is_empty(), "no-Fight map actually mounted")
-		for button in app.route_buttons:
-			_check(button.disabled and app.run_map.get_node(button.get_meta("route_id")).type != "Fight",
-				"unsupported opening remains disabled")
-		_check(app.route_back_button.has_focus(), "Back focused when no Fight exists")
-		await _key(KEY_ENTER)
-		_check(app.run_map == null and app.run_rng == null and app.deck == null, "no-Fight Back clears session")
+	# The formerly blocked opening now offers Fight; Back still cancels it.
+	app.run_seed = fixture_seed
+	await _click(app.route_button)
+	_check(app.run_map != null and app.route_buttons.size() == 3,
+		"formerly blocked seed has its actual opening mounted")
+	if app.run_map != null and app.route_buttons.size() == 3:
+		_check(app.route_buttons[0].get_meta("route_id") == fight_id
+			and not app.route_buttons[0].disabled and app.route_buttons[0].has_focus(),
+			"fallback Fight enabled and initially focused")
+		for index in [1, 2]:
+			_check(app.route_buttons[index].disabled, "other opening types remain unavailable")
+		_check(app.run_map.get_floors()[0][1].type == "Rest"
+			and app.run_map.get_floors()[0][2].type == "Treasure",
+			"fallback preserves unsupported kinds")
+		await _key(KEY_TAB)
+		_check(app.route_back_button.has_focus(), "Tab skips disabled choices to Back")
+		await _click(app.route_back_button)
+		_check(app.run_map == null and app.run_rng == null and app.deck == null,
+			"formerly blocked seed Back clears session")
 	app.run_seed = fixture_seed
 	await _click(app.start_button)
 	_check(app.deck != null and app.run_map == null and app.route_view == null, "original direct start preserved")

@@ -92,8 +92,13 @@ func _run() -> void:
 		_check(app.end_turn_button.has_focus(), "End Turn receives keyboard focus")
 		_check(app.end_turn_button.focus_mode == Control.FOCUS_ALL and
 			app.return_button.focus_mode == Control.FOCUS_ALL, "battle actions support keyboard and mouse")
-		_check(app.end_turn_button.get_node(app.end_turn_button.focus_next) == app.return_button and
-			app.return_button.get_node(app.return_button.focus_next) == app.end_turn_button, "keyboard action cycle")
+		var actions: Array = [app.end_turn_button, app.return_button]
+		actions.append_array(app.swap_preview_buttons)
+		_check(actions.size() == 4, "both preview controls join battle actions")
+		for index in range(actions.size()):
+			_check(actions[index].get_node(actions[index].focus_next) == actions[(index + 1) % actions.size()] and
+				actions[index].get_node(actions[index].focus_previous) == actions[(index - 1 + actions.size()) % actions.size()],
+				"complete forward and reverse keyboard action cycle")
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 42
 		var reference := CombatDeck.new(cards, rng)

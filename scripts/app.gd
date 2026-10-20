@@ -43,6 +43,9 @@ var victory_gold: RunVictoryGold
 var session_gold := 0
 var result_label: Label
 var _battle_closed := false
+var swap_preview_buttons: Array[Button] = []
+var swap_preview_cue: Label
+var _swap_preview_pair := 0
 
 
 func _ready() -> void:
@@ -58,6 +61,7 @@ func _process(_delta: float) -> void:
 	_observe_battle_result()
 	if is_instance_valid(battle_view) and battle_view.is_visible_in_tree():
 		_refresh_intents()
+		_refresh_swap_preview()
 
 
 ## Single observation boundary for live updates and resolved phases.
@@ -420,12 +424,29 @@ func _build_battle() -> void:
 	result_label.add_theme_font_size_override("font_size", 28)
 	result_label.hide()
 	column.add_child(result_label)
+	var previews := HBoxContainer.new()
+	previews.add_theme_constant_override("separation", 16)
+	column.add_child(previews)
 	var heading := Label.new()
 	heading.text = "Shared hand"
 	heading.add_theme_font_size_override("font_size", 32)
-	column.add_child(heading)
+	previews.add_child(heading)
+	for pair in [1, 2]:
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(240, 40)
+		previews.add_child(button)
+		swap_preview_buttons.append(button)
+		button.pressed.connect(_preview_position_swap.bind(pair, button))
+	var counts_and_preview := HBoxContainer.new()
+	counts_and_preview.add_theme_constant_override("separation", 24)
+	column.add_child(counts_and_preview)
 	pile_label = Label.new()
-	column.add_child(pile_label)
+	counts_and_preview.add_child(pile_label)
+	swap_preview_cue = Label.new()
+	swap_preview_cue.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	swap_preview_cue.add_theme_font_size_override("font_size", 18)
+	swap_preview_cue.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	counts_and_preview.add_child(swap_preview_cue)
 	hand_view = HBoxContainer.new()
 	hand_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	hand_view.add_theme_constant_override("separation", 16)
@@ -443,10 +464,62 @@ func _build_battle() -> void:
 	return_button.custom_minimum_size = Vector2(240, 56)
 	return_button.pressed.connect(_return_to_title)
 	actions.add_child(return_button)
-	end_turn_button.focus_next = end_turn_button.get_path_to(return_button)
-	end_turn_button.focus_previous = end_turn_button.get_path_to(return_button)
-	return_button.focus_next = return_button.get_path_to(end_turn_button)
-	return_button.focus_previous = return_button.get_path_to(end_turn_button)
+	_refresh_swap_preview()
+
+
+## Presentation only: never install the copied proposal into the live party.
+func _swap_preview_active() -> bool:
+	return is_instance_valid(battle_view) and battle_view.is_visible_in_tree() \
+		and not _battle_closed and deck != null and deck.turn_active \
+		and party != null and party.is_valid() and not party.is_defeated() \
+		and enemies != null and enemies.is_valid() and not enemies.is_victorious() \
+		and battle_result != null and battle_result._party == party \
+		and battle_result._enemies == enemies and battle_result.can_continue()
+
+
+func _preview_position_swap(pair: int, button) -> void:
+	if pair not in [1, 2] or not is_instance_valid(button) \
+			or swap_preview_buttons.size() != 2 or button != swap_preview_buttons[pair - 1] \
+			or not button.is_visible_in_tree():
+		return
+	_swap_preview_pair = pair
+	_refresh_swap_preview()
+
+
+func _refresh_swap_preview() -> void:
+	if not is_instance_valid(swap_preview_cue):
+		return
+	var active := _swap_preview_active()
+	var selected := {"ok": false, "heroes": []}
+	var actions: Array[Button] = []
+	if not end_turn_button.disabled:
+		actions.append(end_turn_button)
+	actions.append(return_button)
+	for index in range(swap_preview_buttons.size()):
+		var pair := index + 1
+		var proposal := CombatPositionSwaps.preview_adjacent_swap(party, pair, 1)
+		var button := swap_preview_buttons[index]
+		button.disabled = not active or not proposal.ok
+		button.text = "Preview swap %d / %d%s" % [pair, pair + 1,
+			" (unavailable)" if button.disabled else ""]
+		if not button.disabled:
+			actions.append(button)
+		if pair == _swap_preview_pair and active:
+			selected = proposal
+	for index in range(actions.size()):
+		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
+	if not active:
+		swap_preview_cue.text = "Swap preview unavailable: battle inactive or invalid."
+	elif _swap_preview_pair == 0:
+		swap_preview_cue.text = "Preview only: choose adjacent living heroes. No movement or cost."
+	elif not selected.ok:
+		swap_preview_cue.text = "Swap preview unavailable: both heroes must be living."
+	else:
+		var positions: PackedStringArray = []
+		for hero in selected.heroes:
+			positions.append("%d: %s" % [hero.position, hero.get("name", hero.id)])
+		swap_preview_cue.text = "Preview only: " + " | ".join(positions) + " (no movement or cost)"
 
 
 func _refresh_hand() -> void:
@@ -468,6 +541,7 @@ func _refresh_hand() -> void:
 
 
 func _refresh_party() -> void:
+	_refresh_swap_preview()
 	for index in range(hero_panels.size()):
 		var hero := party.get_hero(index + 1)
 		var label := hero_panels[index].get_child(0) as Label
@@ -548,6 +622,9 @@ func _return_to_title() -> void:
 	pile_label = null
 	end_turn_button = null
 	return_button = null
+	swap_preview_buttons.clear()
+	swap_preview_cue = null
+	_swap_preview_pair = 0
 	hero_view = null
 	hero_panels.clear()
 	intent_label = null
