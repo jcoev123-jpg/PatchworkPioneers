@@ -95,7 +95,10 @@ func _visible() -> void:
 				and meter.hp_bar.value == actor.hp and meter.block_bar.value == actor.block, "visible HP/Block and bars match models")
 	_check(app.result_label.is_visible_in_tree() == app.battle_result.is_finished(), "visible result follows actual outcome")
 	if app.battle_result.is_finished():
-		_check(app.result_label.text == "Battle result: " + app.battle_result.get_outcome(), "result text matches outcome")
+		var expected_text: String = "Battle result: " + app.battle_result.get_outcome()
+		if app.battle_result.get_outcome() == CombatBattleResult.VICTORY:
+			expected_text += " | Gold: %d" % app.session_gold
+		_check(app.result_label.text == expected_text, "result text matches outcome and actual payout")
 
 
 func _run() -> void:
@@ -181,6 +184,11 @@ func _run() -> void:
 		_check(app.enemies.apply_damage(1, 12) and app.enemies.apply_damage(2, 8), "slain first slot and final enemy at four HP")
 		var before := _live()
 		var expected: Array = before[0].duplicate(true)
+		var reference := RandomNumberGenerator.new()
+		reference.seed = app.run_rng.seed
+		reference.state = app.run_rng.state
+		var expected_gold := reference.randi_range(10, 20)
+		expected[8] = reference.state
 		expected[3] = 0 # Existing result observer ends the player turn after victory.
 		expected[4] = false
 		expected[6][1].hp = 0
@@ -189,7 +197,8 @@ func _run() -> void:
 		expected[2].append_array(expected[1])
 		expected[1].clear()
 		await _mouse(presenter.button)
-		_check(_live()[0] == expected and _live().slice(1) == before.slice(1), "terminal play preserves slain slot, party, intents and RNG; closes remaining hand once")
+		_check(_live()[0] == expected and _live().slice(1) == before.slice(1)
+			and app.session_gold == expected_gold, "terminal play preserves slain slot, party and intents; draws exact gold and closes remaining hand once")
 		_check(app.enemies.is_slain(1) and app.enemies.is_slain(2)
 			and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
 			and not app.deck.turn_active and app.end_turn_button.disabled, "final enemy triggers live victory")
