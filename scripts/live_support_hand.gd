@@ -52,10 +52,8 @@ func _sync_battle() -> void:
 		cancel_button.hide()
 	if not _pending.is_empty() and not _selection_valid():
 		_cancel_pending()
-	for panel in _targets.keys():
-		if panel not in app.hero_panels or _party.is_downed(app.hero_panels.find(panel) + 1):
-			_cancel_pending()
-			break
+	if not _targets_valid():
+		_cancel_pending()
 	energy_label.text = "Energy: %d | Up: cards | Click / Enter / Space: play" % _deck.energy
 	if _pending.get("choosing", false):
 		energy_label.text = "Energy: %d | %s\nchoose a living ally | Esc: cancel" % [
@@ -229,7 +227,8 @@ func _choose_target() -> void:
 		focus.set_border_width_all(3)
 		panel.add_theme_stylebox_override("focus", focus)
 		var callback := _on_target_input.bind(panel, index + 1, _token)
-		_targets[panel] = {"callback": callback, "cue": cue}
+		_targets[panel] = {"callback": callback, "cue": cue,
+			"position": index + 1, "hero_id": _party.get_hero(index + 1).id}
 		panel.gui_input.connect(callback)
 	for index in range(panels.size()):
 		var panel := panels[index]
@@ -241,8 +240,22 @@ func _choose_target() -> void:
 	_sync_battle()
 
 
+func _targets_valid() -> bool:
+	for panel in _targets:
+		var target: Dictionary = _targets[panel]
+		if not is_instance_valid(panel) or get_parent().hero_panels.find(panel) + 1 != target.position:
+			return false
+		var hero := _party.get_hero(target.position)
+		if hero.get("id") != target.hero_id or hero.get("hp", 0) <= 0:
+			return false
+	return true
+
+
 func _on_target_input(event: InputEvent, panel, position: int, token: int) -> void:
-	if event == null or token != _token or not _targets.has(panel) or not _selection_valid():
+	if event == null or token != _token or not _targets.has(panel):
+		return
+	if not _selection_valid() or not _targets_valid():
+		_cancel_pending()
 		return
 	if get_parent().hero_panels.find(panel) + 1 != position:
 		return
@@ -254,11 +267,17 @@ func _on_target_input(event: InputEvent, panel, position: int, token: int) -> vo
 		return
 	panel.accept_event()
 	_pending.queued = true
+	_pending.target = {"position": position, "hero_id": _targets[panel].hero_id}
 	_resolve_target.call_deferred(position, token)
 
 
 func _resolve_target(position: int, token: int) -> void:
-	if token != _token or not _selection_valid() or not _pending.get("queued", false):
+	if token != _token or not _pending.get("queued", false):
+		return
+	if not _selection_valid() or not _targets_valid() \
+		or _pending.target.position != position \
+		or _party.get_hero(position).get("id") != _pending.target.hero_id:
+		_cancel_pending()
 		return
 	var id: String = _pending.id
 	_cancel_pending()
@@ -278,6 +297,8 @@ func _cancel_pending() -> void:
 		if is_instance_valid(panel):
 			if panel.gui_input.is_connected(_targets[panel].callback):
 				panel.gui_input.disconnect(_targets[panel].callback)
+			if panel.has_focus():
+				panel.release_focus()
 			panel.focus_mode = Control.FOCUS_NONE
 			panel.mouse_default_cursor_shape = Control.CURSOR_ARROW
 			panel.focus_next = NodePath()

@@ -284,6 +284,7 @@ func _run() -> void:
 		await _frames()
 		_check(app.deck == null and presenter.energy_label == null, "title removes support presentation")
 	await _ally_cases()
+	await _ally_move_cases()
 	await _stale_restart(seed_value)
 	app.free()
 	_finish()
@@ -617,6 +618,105 @@ func _ally_cases() -> void:
 					await _mouse(app.hero_panels[position - 1])
 					_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng), "authored position live play matches service")
 			await _ally_return()
+
+
+func _ally_move_cases() -> void:
+	for id in ["seamstress_mend", "seamstress_stitch_up"]:
+		for mode in ["queued", "unconfirmed_input", "unconfirmed_sync"]:
+			for keyboard in [false, true]:
+				if not await _ally_start():
+					return
+				# Distinct actor-owned state must travel with each proposed actor.
+				for index in range(3):
+					_check(app.party.apply_damage(index + 1, index + 3)
+						and reference_party.apply_damage(index + 1, index + 3), "movement fixture wounds living heroes")
+					_check(app.party.gain_block(index + 1, index + 2)
+						and reference_party.gain_block(index + 1, index + 2), "movement fixture gives distinct Block")
+					app.party._heroes[index]["statuses"] = {"weak": index + 1, "bleed": index + 2}
+					reference_party._heroes[index]["statuses"] = {"weak": index + 1, "bleed": index + 2}
+				app._refresh_party()
+				if not await _select_ally(id, keyboard):
+					await _ally_return()
+					continue
+				var hero: Control = app.hero_panels[1]
+				var callback: Callable = presenter._targets[hero].callback
+				var chosen: Dictionary = app.party.get_hero(2)
+				_check(chosen.id == "seamstress" and chosen.hp > 0, "living slot-2 recipient really selected")
+				hero.grab_focus()
+				var event: InputEvent = _key(KEY_SPACE)
+				if not keyboard:
+					var click := InputEventMouseButton.new()
+					click.button_index = MOUSE_BUTTON_LEFT
+					click.pressed = true
+					click.position = hero.get_global_rect().get_center()
+					event = click
+				if mode == "queued":
+					# Real viewport dispatch queues resolution; install movement before yielding.
+					root.push_input(event, true)
+					_check(presenter._pending.get("queued", false), "target input actually queued before swap")
+					_check(presenter._pending.target == {"position": 2, "hero_id": chosen.id}, "queued action retains actor and slot")
+				var before_move := _live()
+				var proposal := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, 1)
+				_check(proposal.ok and proposal.heroes.size() == 3, "real adjacent preview accepts living slots 2/3")
+				_check(_live() == before_move, "preview itself leaves complete live state unchanged")
+				if not proposal.ok:
+					await _ally_return()
+					continue
+				app.party._heroes.assign(proposal.heroes)
+				var reference_proposal := CombatPositionSwaps.preview_adjacent_swap(reference_party, 2, 1)
+				_check(reference_proposal.ok, "reference movement valid")
+				reference_party._heroes.assign(reference_proposal.heroes)
+				var expected_move := before_move.duplicate(true)
+				expected_move[0][5] = proposal.heroes.duplicate(true)
+				var after_move := _live()
+				_check(after_move == expected_move, "only intentional roster swap changes state; actor HP/Block/statuses retained")
+				_check(app.party.get_hero(2).id == "tinker" and app.party.get_hero(3).id == chosen.id,
+					"slot 2 really has a different living occupant")
+				if mode == "unconfirmed_sync":
+					presenter._sync_battle()
+				elif mode == "unconfirmed_input":
+					# Exercise admission before the next presentation sync can cancel it.
+					callback.call(event)
+				await _frames()
+				_check(_live() == after_move, "movement rejects old recipient without any transaction: " + id + "/" + mode)
+				_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "movement clears pending choice and bindings")
+				_check(not presenter.cancel_button.visible and _panel(id).has_focus(), "movement hides cancel and restores card focus")
+				for panel in app.hero_panels:
+					_check(panel.focus_mode == Control.FOCUS_NONE and not panel.has_focus()
+						and panel.get_child_count() == 1 and panel.gui_input.get_connections().is_empty()
+						and not panel.has_theme_stylebox_override("focus")
+						and panel.focus_next.is_empty() and panel.focus_previous.is_empty()
+						and panel.focus_neighbor_bottom.is_empty(), "movement removes target cues, navigation and focus")
+				callback.call(event)
+				await _frames()
+				_check(_live() == after_move, "captured pre-movement target callback stays inert")
+				app._refresh_party()
+				if await _select_ally(id, keyboard):
+					# A fresh choice may target the new occupant at its current slot.
+					var old_hero: Dictionary = app.party.get_hero(2)
+					_check(service.play_card(reference, reference_party, id, 2), "service accepts newly chosen occupant")
+					var expected := after_move.duplicate(true)
+					expected[0] = _snapshot(reference, reference_party, reference_rng)
+					if keyboard:
+						app.hero_panels[0].grab_focus()
+						await _keyboard(KEY_TAB)
+						_check(hero.has_focus(), "Tab reaches moved slot-2 occupant")
+						root.push_input(_key(KEY_SPACE), true)
+						root.push_input(_key(KEY_SPACE), true)
+						root.push_input(_key(KEY_SPACE, false), true)
+						await _frames()
+					else:
+						await _mouse(hero)
+					_check(_live() == expected, "fresh moved target matches one authoritative transaction and preserves all other state")
+					_check(app.deck.energy == after_move[0][3] - 1
+						and app.deck.hand.size() == after_move[0][1].size() - 1
+						and app.deck.discard_pile.size() == after_move[0][2].size() + 1
+						and app.deck.discard_pile.back() == id, "moved target charged and discarded exactly once")
+					var updated: Dictionary = app.party.get_hero(2)
+					_check(updated.id == old_hero.id and (updated.hp == mini(old_hero.max_hp, old_hero.hp + 5)
+						if id == "seamstress_mend" else updated.block == old_hero.block + 5), "authored effect applies to new occupant")
+					_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "moved target success clears controls")
+				await _ally_return()
 
 
 func _finish() -> void:
