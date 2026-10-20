@@ -41,6 +41,10 @@ var battle_result: CombatBattleResult
 var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
 var session_gold := 0
+var run_deck: Array[String] = []
+var card_reward: RunCardRewardChoice
+var reward_buttons: Array[Button] = []
+const INTERIM_REWARD_IDS := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
 var result_label: Label
 var _battle_closed := false
 var swap_preview_buttons: Array[Button] = []
@@ -80,6 +84,8 @@ func _observe_battle_result() -> bool:
 			deck.end_turn()
 		$LiveSupportHand._cancel_pending()
 		_refresh_hand()
+		if outcome == CombatBattleResult.VICTORY:
+			_build_card_reward()
 		if party.is_valid():
 			_refresh_party()
 		_refresh_enemy_roster()
@@ -254,6 +260,7 @@ func _start_battle(shared_rng: RandomNumberGenerator = null) -> bool:
 	enemies = starting_enemies
 	run_rng = starting_rng
 	deck = starting_deck
+	run_deck = cards.duplicate()
 	battle_result = starting_result
 	round_flow = starting_flow
 	victory_gold = RunVictoryGold.new(battle_result)
@@ -495,6 +502,9 @@ func _refresh_swap_preview() -> void:
 	if not end_turn_button.disabled:
 		actions.append(end_turn_button)
 	actions.append(return_button)
+	for button in reward_buttons:
+		if is_instance_valid(button) and not button.disabled:
+			actions.append(button)
 	for index in range(swap_preview_buttons.size()):
 		var pair := index + 1
 		var proposal := CombatPositionSwaps.preview_adjacent_swap(party, pair, 1)
@@ -520,6 +530,75 @@ func _refresh_swap_preview() -> void:
 		for hero in selected.heroes:
 			positions.append("%d: %s" % [hero.position, hero.get("name", hero.id)])
 		swap_preview_cue.text = "Preview only: " + " | ".join(positions) + " (no movement or cost)"
+
+
+## Fixed interim catalog offering; owners include downed party members.
+func _build_card_reward() -> void:
+	var offers: Array = []
+	var party_ids: Array[String] = []
+	for hero in party.get_heroes():
+		party_ids.append(hero.id)
+	var catalog := StarterCards.new()
+	for id in INTERIM_REWARD_IDS:
+		var definition := catalog.get_definition(id)
+		if definition.get("id") != id or not party_ids.has(definition.get("owner")):
+			return
+		offers.append(definition)
+	card_reward = RunCardRewardChoice.new(offers, party_ids)
+	if not card_reward.is_valid():
+		card_reward = null
+		return
+	var column := HBoxContainer.new()
+	column.name = "CardReward"
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hand_view.add_child(column)
+	var heading := Label.new()
+	heading.text = "Card reward:"
+	column.add_child(heading)
+	var choices := HBoxContainer.new()
+	choices.add_theme_constant_override("separation", 16)
+	choices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(choices)
+	for index in range(4):
+		var id: String = INTERIM_REWARD_IDS[index] if index < 3 else ""
+		var button := Button.new()
+		button.text = "Skip"
+		if not id.is_empty():
+			var definition := catalog.get_definition(id)
+			button.text = "%s - %s" % [definition.owner.capitalize(), definition.display_name]
+		button.custom_minimum_size = Vector2(0, 36)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		choices.add_child(button)
+		reward_buttons.append(button)
+		button.pressed.connect(_claim_card_reward.bind(id, button, card_reward))
+
+
+func _claim_card_reward(id: String, button, offering: RunCardRewardChoice) -> void:
+	if offering == null or offering != card_reward or not _battle_closed \
+			or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY \
+			or not is_instance_valid(button) or button not in reward_buttons \
+			or button.disabled or not button.is_visible_in_tree():
+		return
+	var index := reward_buttons.find(button)
+	if id != (INTERIM_REWARD_IDS[index] if index < 3 else ""):
+		return
+	# Revalidate actual catalog ownership, beyond the transaction's structural checks.
+	var party_ids: Array[String] = []
+	for hero in party.get_heroes():
+		party_ids.append(hero.id)
+	var catalog := StarterCards.new()
+	for offered_id in INTERIM_REWARD_IDS:
+		var definition := catalog.get_definition(offered_id)
+		if definition.get("id") != offered_id or not party_ids.has(definition.get("owner")):
+			return
+	var result := offering.claim(run_deck, id)
+	if not result.ok:
+		return
+	run_deck = result.deck
+	for action in reward_buttons:
+		action.disabled = true
+	_refresh_swap_preview()
+	return_button.grab_focus()
 
 
 func _refresh_hand() -> void:
@@ -631,6 +710,9 @@ func _return_to_title() -> void:
 	result_label = null
 	battle_result = null
 	victory_gold = null
+	card_reward = null
+	reward_buttons.clear()
+	run_deck.clear()
 	session_gold = 0
 	_battle_closed = false
 	enemy_attacks.clear()

@@ -73,6 +73,11 @@ func _start() -> bool:
 func _visible() -> void:
 	var ids: Array[String] = []
 	for panel in app.hand_view.get_children():
+		if app.battle_result.get_outcome() == CombatBattleResult.VICTORY:
+			_check(app.deck.hand.is_empty() and app.hand_view.get_child_count() == 1
+				and panel.name == "CardReward" and app.reward_buttons.size() == 4,
+				"victory replaces closed hand with one reward offering")
+			continue
 		ids.append(panel.get_child(0).text)
 		if panel.get_child(0).text == ID:
 			_check(panel.gui_input.get_connections().is_empty(), "attack hand panel has no input handlers")

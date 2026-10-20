@@ -81,7 +81,12 @@ func _boundary(label: String) -> void:
 	var cards: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
 	cards.sort()
 	_check(cards == original, "all original card copies conserved: " + label)
-	_check(app.hand_view.get_child_count() == app.deck.hand.size(), "mounted hand count: " + label)
+	if expected.outcome == CombatBattleResult.VICTORY:
+		_check(app.deck.hand.is_empty() and app.hand_view.get_child_count() == 1
+			and app.hand_view.get_child(0).name == "CardReward" and app.reward_buttons.size() == 4,
+			"closed hand replaced by one reward offering: " + label)
+	else:
+		_check(app.hand_view.get_child_count() == app.deck.hand.size(), "mounted hand count: " + label)
 	for index in range(app.deck.hand.size()):
 		_check(app.hand_view.get_child(index).get_child(0).text == app.deck.hand[index], "mounted card order: " + label)
 	_check(app.pile_label.text.contains("Draw: %d" % app.deck.draw_pile.size())
