@@ -7,6 +7,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_exact_piles()
 	_test_boundaries()
+	_test_energy()
 	_test_replay()
 	if failures.is_empty():
 		print("combat_deck_test: PASS (", checks, " checks)")
@@ -31,7 +32,58 @@ func _rng(seed_value: int) -> RandomNumberGenerator:
 
 func _snapshot(deck: CombatDeck) -> Array:
 	return [deck.draw_pile.duplicate(), deck.hand.duplicate(),
-		deck.discard_pile.duplicate(), deck.turn_active]
+		deck.discard_pile.duplicate(), deck.turn_active, deck.energy,
+		deck.combat_state.player_turn_active, deck.combat_state.energy, deck._rng.state]
+
+
+func _reject(deck: CombatDeck, operation: Callable, message: String) -> void:
+	var before := _snapshot(deck)
+	_check(not operation.call(), message + " returns false")
+	_check(_snapshot(deck) == before, message + " preserves full state and RNG")
+
+
+func _test_energy() -> void:
+	var cards: Array[String] = ["a", "a", "b", "c", "d", "e", "f"]
+	var deck := CombatDeck.new(cards, _rng(123))
+	var other := CombatDeck.new(cards, _rng(123))
+	_check(deck.combat_state is CombatState and deck.combat_state != other.combat_state,
+		"each deck owns its own CombatState")
+	_check(deck.energy == 0 and not deck.turn_active, "initial energy zero and inactive")
+	for cost in [-1, 0, 1, 3, 4]:
+		_reject(deck, deck.try_spend_energy.bind(cost), "inactive spending %d" % cost)
+	_reject(deck, deck.end_turn, "initial end")
+	for cost in [0, 1, 2, 3]:
+		_check(deck.start_turn(), "energy turn starts")
+		_check(deck.energy == 3 and deck.turn_active, "start grants exactly three")
+		_reject(deck, deck.start_turn, "duplicate full start")
+		_reject(deck, deck.try_spend_energy.bind(-1), "negative active spending")
+		_reject(deck, deck.try_spend_energy.bind(4), "unaffordable active spending")
+		var before := _snapshot(deck)
+		_check(deck.try_spend_energy(cost), "affordable spending succeeds")
+		# Only the two energy readers in the full snapshot may change.
+		before[4] = 3 - cost
+		before[6] = 3 - cost
+		_check(_snapshot(deck) == before, "spending changes only authoritative energy")
+		_reject(deck, deck.start_turn, "duplicate start cannot refill")
+		_reject(deck, deck.try_spend_energy.bind(4 - cost), "overspend remaining energy")
+		_check(deck.try_spend_energy(3 - cost) and deck.energy == 0 and deck.turn_active,
+			"exact spending exhausts energy without ending turn")
+		_reject(deck, deck.try_spend_energy.bind(1), "exhausted spending")
+		_reject(deck, deck.try_spend_energy.bind(-1), "exhausted negative spending")
+		_reject(deck, deck.start_turn, "exhausted duplicate start")
+		before = _snapshot(deck)
+		_check(deck.try_spend_energy(0) and _snapshot(deck) == before,
+			"zero cost at exhaustion preserves full state and RNG")
+		_check(deck.end_turn() and deck.energy == 0 and not deck.turn_active,
+			"end deactivates and clears energy")
+		_reject(deck, deck.end_turn, "duplicate end")
+		_reject(deck, deck.try_spend_energy.bind(0), "spending after end")
+		_conserved(deck, cards)
+	_check(deck.start_turn() and deck.try_spend_energy(1) and deck.energy == 2,
+		"partly spent next turn")
+	_check(deck.end_turn() and deck.energy == 0 and not deck.turn_active,
+		"end clears unspent energy")
+	_check(other.energy == 0 and not other.turn_active, "other deck state stays independent")
 
 
 func _conserved(deck: CombatDeck, original: Array[String]) -> void:

@@ -8,7 +8,13 @@ const TURN_DRAW := 5
 var draw_pile: Array[String] = []
 var hand: Array[String] = []
 var discard_pile: Array[String] = []
-var turn_active: bool = false
+var combat_state := CombatState.new()
+var turn_active: bool:
+	get:
+		return combat_state.player_turn_active
+var energy: int:
+	get:
+		return combat_state.energy
 var _rng: RandomNumberGenerator
 
 
@@ -20,9 +26,8 @@ func _init(card_ids: Array[String], rng: RandomNumberGenerator) -> void:
 
 ## False means a turn was already active. No state changes on rejection.
 func start_turn() -> bool:
-	if turn_active:
+	if not combat_state.start_player_turn():
 		return false
-	turn_active = true
 	_draw(TURN_DRAW)
 	return true
 
@@ -47,12 +52,15 @@ func discard_played(card_id: String) -> bool:
 
 
 func end_turn() -> bool:
-	if not turn_active:
+	if not combat_state.end_player_turn():
 		return false
 	discard_pile.append_array(hand)
 	hand.clear()
-	turn_active = false
 	return true
+
+
+func try_spend_energy(cost: int) -> bool:
+	return combat_state.try_spend_energy(cost)
 
 
 func _draw(count: int) -> int:
