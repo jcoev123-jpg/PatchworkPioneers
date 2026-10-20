@@ -13,6 +13,7 @@ var _token := 0
 var cancel_button: Button
 var energy_label: Label
 var _play := CombatStarterSupportPlay.new()
+var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 
 
 func _ready() -> void:
@@ -61,6 +62,8 @@ func _sync_battle() -> void:
 	for panel in _bindings.keys():
 		if not is_instance_valid(panel) or panel.get_parent() != app.hand_view:
 			_unbind(panel)
+	# Decorate only the exact ordered live cards, without replacing their input panels.
+	_metadata.sync(app.hand_view.get_children(), _deck.hand)
 	var actionable: Array[Control] = []
 	for panel in app.hand_view.get_children():
 		var label := panel.get_child(0) as Label
@@ -271,6 +274,7 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	_metadata.clear()
 	_cancel_pending()
 	for panel in _bindings.keys():
 		_unbind(panel)
