@@ -50,6 +50,9 @@ func _visual(meter: CombatActorMeter) -> Dictionary:
 		"block_value": meter.block_bar.value,
 		"block_max": meter.block_bar.max_value,
 		"statuses": meter.status_text.text,
+		"bleed_warning": meter.bleed_warning.text,
+		"bleed_visible": meter.bleed_warning.visible,
+		"bleed_id": meter.bleed_warning.get_instance_id(),
 		"outer_children": meter.get_child_count(),
 		"padding_children": meter.get_node("Padding").get_child_count(),
 		"content_children": meter.get_node("Padding/Content").get_child_count()
@@ -57,7 +60,8 @@ func _visual(meter: CombatActorMeter) -> Dictionary:
 
 
 func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: int,
-		block: int, note: String, expected_status: String = "Statuses: none") -> void:
+		block: int, note: String, expected_status: String = "Statuses: none",
+		expected_warning: String = "") -> void:
 	_check(meter.visible and meter.is_visible_in_tree(), note + ": mounted and visible")
 	_check(meter.actor_heading.text == heading, note + ": position/name/death heading")
 	_check(meter.hp_text.text == "HP: %d/%d" % [hp, max_hp], note + ": exact HP text")
@@ -78,9 +82,18 @@ func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: in
 		and meter.status_text.focus_mode == Control.FOCUS_NONE
 		and meter.status_text.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		note + ": one inert status label inside existing Content")
-	_check(meter.get_node("Padding/Content").get_child_count() == 6
-		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1,
-		note + ": five original controls plus exactly one persistent status label")
+	_check(meter.get_node("Padding/Content").get_child_count() == 7
+		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1
+		and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1,
+		note + ": original controls plus exactly one status and one Bleed warning label")
+	_check(meter.bleed_warning.text == expected_warning
+		and meter.bleed_warning.visible == not expected_warning.is_empty()
+		and (expected_warning.is_empty() or meter.bleed_warning.is_visible_in_tree()),
+		note + ": exact pending owner-turn Bleed loss or hidden empty warning")
+	_check(meter.bleed_warning.get_parent() == meter.get_node("Padding/Content")
+		and meter.bleed_warning.focus_mode == Control.FOCUS_NONE
+		and meter.bleed_warning.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		note + ": persistent warning is mouse- and keyboard-inert")
 	_check(meter.hp_bar.get_theme_stylebox("fill") is StyleBoxFlat
 		and meter.block_bar.get_theme_stylebox("fill") is StyleBoxFlat,
 		note + ": bars have contrasting fill styles")
@@ -89,14 +102,16 @@ func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: in
 func _assert_cleared(meter: CombatActorMeter, note: String) -> void:
 	_check(not meter.visible and not meter.is_visible_in_tree(), note + ": invalid actor hidden")
 	_check(meter.actor_heading.text.is_empty() and meter.hp_text.text.is_empty()
-		and meter.block_text.text.is_empty() and meter.status_text.text.is_empty(),
+		and meter.block_text.text.is_empty() and meter.status_text.text.is_empty()
+		and meter.bleed_warning.text.is_empty() and not meter.bleed_warning.visible,
 		note + ": all old text, including stale statuses, cleared")
 	_check(meter.hp_bar.value == 0 and meter.hp_bar.max_value == 1
 		and meter.block_bar.value == 0 and meter.block_bar.max_value == 1,
 		note + ": no old bar value or range remains")
-	_check(meter.get_node("Padding/Content").get_child_count() == 6
-		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1,
-		note + ": invalid source does not append or leak status controls")
+	_check(meter.get_node("Padding/Content").get_child_count() == 7
+		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1
+		and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1,
+		note + ": invalid source does not append or leak either label")
 
 
 func _run() -> void:
@@ -145,6 +160,40 @@ func _run() -> void:
 		and meter.hp_bar.size.y > 0 and meter.block_bar.size.y > 0,
 		"bars have nonempty mounted rectangles")
 
+	# The warning is a read-only owner-turn-end forecast, not Block or incoming attack.
+	var shielded_bleed := party.get_hero(1)
+	shielded_bleed["statuses"] = {"bleed": 3, "weak": 1, "exposed": 2}
+	var shielded_before := shielded_bleed.duplicate(true)
+	var rule := CombatStatuses.new()
+	var shielded_tick := rule.end_owner_turn(shielded_bleed["hp"],
+		shielded_bleed["block"], shielded_bleed["statuses"].duplicate(true))
+	_check(shielded_tick["ok"] and shielded_tick["bleed_hp_loss"] == 3
+		and shielded_tick["hp"] == 37 and shielded_tick["block"] == 6,
+		"pure owner tick predicts 3 lost HP with Warden Block 6 unchanged")
+	_view(meter, shielded_bleed, "hero", party, enemies, rng)
+	_assert_actor(meter, "1. Warden", 40, 40, 6, "shielded Bleed plus other statuses",
+		"Statuses: Bleed 3 · Weak 1 · Exposed 2", "Bleed next: -3 HP (bypasses Block)")
+	var warning_id := meter.bleed_warning.get_instance_id()
+	var shielded_visual := _visual(meter)
+	_view(meter, shielded_bleed, "hero", party, enemies, rng)
+	_check(_visual(meter) == shielded_visual
+		and meter.bleed_warning.get_instance_id() == warning_id
+		and shielded_bleed == shielded_before,
+		"positive warning is stable across repeated reads and does not mutate snapshots")
+	var lethal_bleed := enemies.get_enemy(1)
+	lethal_bleed["hp"] = 2
+	lethal_bleed["statuses"] = {"bleed": 3, "weak": 2}
+	var lethal_before := lethal_bleed.duplicate(true)
+	var lethal_tick := rule.end_owner_turn(2, 0, lethal_bleed["statuses"].duplicate(true))
+	_check(lethal_tick["ok"] and lethal_tick["bleed_hp_loss"] == 2
+		and lethal_tick["hp"] == 0 and lethal_tick["block"] == 0,
+		"lethal enemy tick clamps the forecast to living HP")
+	_view(meter, lethal_bleed, "enemy", party, enemies, rng)
+	_assert_actor(meter, "1. Ragling", 2, 12, 0, "lethal enemy Bleed",
+		"Statuses: Bleed 3 · Weak 2", "Bleed next: -2 HP (bypasses Block) — LETHAL")
+	_check(lethal_bleed == lethal_before and meter.bleed_warning.get_instance_id() == warning_id,
+		"enemy warning uses the same label without applying lethal damage")
+	_view(meter, party.get_hero(1), "hero", party, enemies, rng)
 	var starting_visual := _visual(meter)
 	_view(meter, party.get_hero(1), "hero", party, enemies, rng)
 	_check(_visual(meter) == starting_visual, "second identical refresh is fully idempotent")
@@ -246,8 +295,18 @@ func _run() -> void:
 			var snapshot := source.duplicate(true)
 			snapshot["statuses"] = sample["statuses"].duplicate(true)
 			_view(meter, snapshot, side, party, enemies, rng)
+			var expected_warning := ""
+			if expected_hp > 0 and sample["statuses"].get("bleed", 0) > 0:
+				var tick := rule.end_owner_turn(expected_hp, expected_block,
+					sample["statuses"].duplicate(true))
+				_check(tick["ok"] and tick["block"] == expected_block
+					and tick["bleed_hp_loss"] == mini(expected_hp, sample["statuses"]["bleed"]),
+					"status permutation matches copied pure rule with unchanged Block")
+				expected_warning = "Bleed next: -%d HP (bypasses Block)%s" % [
+					tick["bleed_hp_loss"], " — LETHAL" if tick["hp"] == 0 else ""]
 			_assert_actor(meter, expected_heading, expected_hp, expected_max, expected_block,
-				"%s status permutation %s" % [side, str(sample["statuses"])], sample["text"])
+				"%s status permutation %s" % [side, str(sample["statuses"])], sample["text"],
+				expected_warning)
 			var visual := _visual(meter)
 			_view(meter, snapshot, side, party, enemies, rng)
 			_check(_visual(meter) == visual and meter.status_text.get_instance_id() == status_id,
@@ -290,12 +349,14 @@ func _run() -> void:
 	var party_before_invalid := party.get_heroes()
 	var enemy_before_invalid := enemies.get_enemies()
 	for invalid in invalids:
-		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2",
+		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2"
+			and not meter.bleed_warning.text.is_empty(),
 			"restore all positive stacks before negative case")
 		_check(not meter.show_actor(invalid, "hero"), "malformed source must fail closed: " + str(invalid))
 		_assert_cleared(meter, "malformed source")
 	for bad_side in ["", "ally", "HERO", "Enemy"]:
-		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2",
+		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2"
+			and not meter.bleed_warning.text.is_empty(),
 			"restore positive stacks before invalid side")
 		_check(not meter.show_actor(valid, bad_side), "unknown side must fail closed: " + bad_side)
 		_assert_cleared(meter, "unknown side")

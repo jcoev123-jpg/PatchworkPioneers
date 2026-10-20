@@ -46,7 +46,7 @@ func _sync_battle() -> void:
 			for position in range(1, count + 1):
 				var meter := CombatActorMeter.new()
 				meter.name = "%s%d" % [side, position]
-				meter.custom_minimum_size = Vector2(224, 92)
+				meter.custom_minimum_size = Vector2(224, 106)
 				meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				var padding := meter.get_node("Padding") as MarginContainer
 				for edge in ["left", "right", "top", "bottom"]:
@@ -55,6 +55,9 @@ func _sync_battle() -> void:
 				for label in [meter.actor_heading, meter.hp_text, meter.block_text]:
 					label.add_theme_font_size_override("font_size", 12)
 				meter.status_text.add_theme_font_size_override("font_size", 10)
+				meter.bleed_warning.add_theme_font_size_override("font_size", 9)
+				meter.bleed_warning.custom_minimum_size = Vector2(200, 0)
+				meter.bleed_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				for bar in [meter.hp_bar, meter.block_bar]:
 					bar.custom_minimum_size = Vector2(200, 8)
 				if side == "hero":

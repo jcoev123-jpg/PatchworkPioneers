@@ -16,6 +16,7 @@ var hp_bar: ProgressBar
 var block_text: Label
 var block_bar: ProgressBar
 var status_text: Label
+var bleed_warning: Label
 
 var _panel_style: StyleBoxFlat
 
@@ -51,6 +52,10 @@ func _init() -> void:
 	block_bar = _make_bar(content, "BlockBar", BLOCK)
 	status_text = _make_label(content, "StatusText")
 	status_text.add_theme_font_size_override("font_size", 12)
+	bleed_warning = _make_label(content, "BleedWarning")
+	bleed_warning.focus_mode = Control.FOCUS_NONE
+	bleed_warning.add_theme_font_size_override("font_size", 11)
+	bleed_warning.add_theme_color_override("font_color", HP_ENEMY)
 	_clear_actor()
 
 
@@ -115,6 +120,19 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 			active.append("%s %d" % [key.capitalize(), count])
 	status_text.text = "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
+	# A copied, pure owner-turn result is a forecast only; never apply it to actors.
+	bleed_warning.text = ""
+	bleed_warning.hide()
+	if current > 0 and statuses.get("bleed", 0) > 0:
+		var tick: Dictionary = CombatStatuses.new().end_owner_turn(
+			current, protection, statuses.duplicate(true))
+		if tick["ok"] and tick["bleed_hp_loss"] > 0:
+			var lethal: bool = tick["hp"] == 0
+			bleed_warning.text = "Bleed next: -%d HP (bypasses Block)%s" % [
+				tick["bleed_hp_loss"], " — LETHAL" if lethal else ""]
+			bleed_warning.add_theme_color_override("font_color", BORDER if lethal else HP_ENEMY)
+			bleed_warning.show()
+
 	hp_bar.max_value = float(maximum)
 	hp_bar.value = float(current)
 	block_bar.max_value = float(maxi(1, maxi(maximum, protection)))
@@ -167,6 +185,8 @@ func _clear_actor() -> void:
 	hp_text.text = ""
 	block_text.text = ""
 	status_text.text = ""
+	bleed_warning.text = ""
+	bleed_warning.hide()
 	hp_bar.max_value = 1.0
 	hp_bar.value = 0.0
 	block_bar.max_value = 1.0
