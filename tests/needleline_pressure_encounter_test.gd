@@ -446,7 +446,14 @@ func _test_existing_encounters_unchanged() -> void:
 	_check(starter_s1.get("pattern")[0].get("type") == "attack"
 		and starter_s1.get("pattern")[0].get("amount") == 1
 		and starter_s1.get("pattern")[0].get("target_position") == 1,
-		"existing: starter_attacks source 1 preserved")
+		"existing: starter_attacks source 1 turn 0")
+	_check(starter_s1.get("pattern")[1].get("type") == "attack"
+		and starter_s1.get("pattern")[1].get("amount") == 1
+		and starter_s1.get("pattern")[1].get("target_position") == 2,
+		"existing: starter_attacks source 1 turn 1")
+	_check(starter_s2.get("pattern")[0].get("type") == "block"
+		and starter_s2.get("pattern")[0].get("amount") == 1,
+		"existing: starter_attacks source 2 turn 0")
 
 	var guard := _load_json("res://data/encounters/guard_counterattack.json")
 	_check(guard is Array, "existing: guard_counterattack.json array")
@@ -459,9 +466,19 @@ func _test_existing_encounters_unchanged() -> void:
 			elif entry.get("enemy_position") == 2:
 				guard_s2 = entry
 	_check(guard_s1.get("pattern")[0].get("type") == "block"
-		and guard_s2.get("pattern")[0].get("type") == "attack"
+		and guard_s1.get("pattern")[0].get("amount") == 1,
+		"existing: guard_counterattack source 1 turn 0")
+	_check(guard_s1.get("pattern")[1].get("type") == "attack"
+		and guard_s1.get("pattern")[1].get("amount") == 1
+		and guard_s1.get("pattern")[1].get("target_position") == 1,
+		"existing: guard_counterattack source 1 turn 1")
+	_check(guard_s2.get("pattern")[0].get("type") == "attack"
+		and guard_s2.get("pattern")[0].get("amount") == 1
 		and guard_s2.get("pattern")[0].get("target_position") == 3,
-		"existing: guard_counterattack preserved")
+		"existing: guard_counterattack source 2 turn 0")
+	_check(guard_s2.get("pattern")[1].get("type") == "block"
+		and guard_s2.get("pattern")[1].get("amount") == 1,
+		"existing: guard_counterattack source 2 turn 1")
 
 	var ragling := _load_json("res://data/encounters/ragling_rearline_feint.json")
 	_check(ragling is Array, "existing: ragling_rearline_feint.json array")
@@ -474,8 +491,21 @@ func _test_existing_encounters_unchanged() -> void:
 			elif entry.get("enemy_position") == 2:
 				rag_s2 = entry
 	_check(rag_s1.get("pattern")[0].get("type") == "attack"
+		and rag_s1.get("pattern")[0].get("amount") == 1
 		and rag_s1.get("pattern")[0].get("target_position") == 3,
-		"existing: ragling_rearline_feint preserved")
+		"existing: ragling_rearline_feint source 1 turn 0")
+	_check(rag_s1.get("pattern")[1].get("type") == "attack"
+		and rag_s1.get("pattern")[1].get("amount") == 1
+		and rag_s1.get("pattern")[1].get("target_position") == 2,
+		"existing: ragling_rearline_feint source 1 turn 1")
+	_check(rag_s2.get("pattern")[0].get("type") == "attack"
+		and rag_s2.get("pattern")[0].get("amount") == 1
+		and rag_s2.get("pattern")[0].get("target_position") == 2,
+		"existing: ragling_rearline_feint source 2 turn 0")
+	_check(rag_s2.get("pattern")[1].get("type") == "attack"
+		and rag_s2.get("pattern")[1].get("amount") == 1
+		and rag_s2.get("pattern")[1].get("target_position") == 1,
+		"existing: ragling_rearline_feint source 2 turn 1")
 
 	var cross := _load_json("res://data/encounters/cross_stitch_guard.json")
 	_check(cross is Array, "existing: cross_stitch_guard.json array")
@@ -488,8 +518,19 @@ func _test_existing_encounters_unchanged() -> void:
 			elif entry.get("enemy_position") == 2:
 				cross_s2 = entry
 	_check(cross_s1.get("pattern")[0].get("type") == "attack"
+		and cross_s1.get("pattern")[0].get("amount") == 1
 		and cross_s1.get("pattern")[0].get("target_position") == 3,
-		"existing: cross_stitch_guard preserved")
+		"existing: cross_stitch_guard source 1 turn 0")
+	_check(cross_s1.get("pattern")[1].get("type") == "block"
+		and cross_s1.get("pattern")[1].get("amount") == 1,
+		"existing: cross_stitch_guard source 1 turn 1")
+	_check(cross_s2.get("pattern")[0].get("type") == "block"
+		and cross_s2.get("pattern")[0].get("amount") == 1,
+		"existing: cross_stitch_guard source 2 turn 0")
+	_check(cross_s2.get("pattern")[1].get("type") == "attack"
+		and cross_s2.get("pattern")[1].get("amount") == 1
+		and cross_s2.get("pattern")[1].get("target_position") == 1,
+		"existing: cross_stitch_guard source 2 turn 1")
 
 
 func _test_deterministic_replay_no_rng() -> void:
@@ -549,8 +590,14 @@ func _test_deterministic_replay_no_rng() -> void:
 		party_a.start_player_turn()
 		party_b.start_player_turn()
 
-	# Verify same-seed fixed replay produces identical complete traces
-	seed(0xCAFEBABE)
+	# Verify same-seed fixed replay with RandomNumberGenerator instances produces identical traces
+	var replay_rng_c := RandomNumberGenerator.new()
+	replay_rng_c.seed = 0xCAFEBABE
+	var replay_rng_d := RandomNumberGenerator.new()
+	replay_rng_d.seed = 0xCAFEBABE
+	var rng_state_before_c := replay_rng_c.state
+	var rng_state_before_d := replay_rng_d.state
+
 	var party_c := CombatParty.new(party_defs)
 	var enemies_c := CombatEnemies.new([
 		_find_enemy_by_id(_load_json("res://data/enemies/starter_enemies.json"), "ragling").duplicate(true),
@@ -561,7 +608,6 @@ func _test_deterministic_replay_no_rng() -> void:
 	var opening_c := CombatStartingBlock.new(party_c)
 	_check(opening_c.apply(), "replay C: opening block")
 
-	seed(0xCAFEBABE)
 	var party_d := CombatParty.new(party_defs)
 	var enemies_d := CombatEnemies.new([
 		_find_enemy_by_id(_load_json("res://data/enemies/starter_enemies.json"), "ragling").duplicate(true),
@@ -583,8 +629,21 @@ func _test_deterministic_replay_no_rng() -> void:
 
 		scheduler_c.advance_turn()
 		scheduler_d.advance_turn()
+
+		_check(party_c.get_heroes() == party_d.get_heroes(),
+			"replay fixed-seed turn %d: party states identical" % turn)
+		_check(enemies_c.get_enemies() == enemies_d.get_enemies(),
+			"replay fixed-seed turn %d: enemy states identical" % turn)
+
+		# Simulate player turn Block reset every beat
 		party_c.start_player_turn()
 		party_d.start_player_turn()
+
+	# Verify RNG state unchanged across replay (no consumption)
+	_check(replay_rng_c.state == rng_state_before_c,
+		"replay C: RNG state unchanged after full replay")
+	_check(replay_rng_d.state == rng_state_before_d,
+		"replay D: RNG state unchanged after full replay")
 
 	# Verify no RNG consumption
 	seed(0xDEADBEEF)
