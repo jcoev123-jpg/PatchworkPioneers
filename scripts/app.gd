@@ -348,27 +348,19 @@ func _end_turn(button: Button = null) -> void:
 		return
 	if not _observe_battle_result():
 		return
-	# Reject stale or corrupted announcements, including overflow, before ending the hand.
+	# Reject stale announcements and inactive hands before executing any enemy action.
 	if not party.is_valid() or not enemies.is_valid() or enemy_attacks != enemy_intents.get_intents():
 		return
-	for action in enemy_attacks:
-		var enemy := enemies.get_enemy(action.enemy_position)
-		if enemy.is_empty():
-			return
-		if action.type == "block" and enemy.hp > 0 and action.amount > CombatEnemies.MAX_INT - enemy.block:
-			return
-	if not deck.end_turn():
+	if not deck.turn_active:
 		return
 	# Accept one activation per input dispatch, including a burst of duplicate presses.
 	button.disabled = true
-	# The selector publishes one validated action per source in ascending position.
-	for action in enemy_attacks:
-		if enemies.is_slain(action.enemy_position):
-			continue
-		if action.type == "attack":
-			CombatEnemyAttacks.new().execute_attacks(party, [action])
-		else:
-			CombatEnemyBlocks.execute_blocks(enemies, [action])
+	var phase := CombatEnemyPhase.new().execute_phase(party, enemies, enemy_attacks)
+	if not phase.ok:
+		button.disabled = false
+		return
+	if not deck.end_turn():
+		return
 	if not _observe_battle_result():
 		return
 	if not deck.start_turn():

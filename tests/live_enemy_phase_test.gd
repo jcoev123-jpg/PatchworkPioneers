@@ -22,7 +22,7 @@ func _deck(deck: CombatDeck) -> Array:
 func _snapshot(app) -> Array:
 	return [app.party.get_heroes(), _deck(app.deck), app.run_rng.state,
 		app.enemy_intents.get_intents(), app.enemy_attacks.duplicate(true), app.intent_label.text,
-		app.enemies.get_enemies()]
+		app.enemies.get_enemies(), app.enemy_intents._turn_index]
 
 
 func _visible(app, target: int = 1) -> void:
@@ -208,11 +208,11 @@ func _run() -> void:
 				_check(reference_party.gain_block(1, 3) and reference_party.gain_block(2, 4), "reference Block fixture")
 			var target := turn % 2 + 1
 			var heroes: Array = app.party.get_heroes()
-			_check(reference.end_turn(), "reference ends hand before enemy actions")
 			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [{"enemy_position": 1,
 				"target_position": target, "amount": 1}]).ok, "reference resolves announced Ragling hit first")
 			_check(CombatEnemyBlocks.execute_blocks(reference_enemies, [{"type": "block",
 				"enemy_position": 2, "amount": 1}]).ok, "reference resolves Guard Block second")
+			_check(reference.end_turn(), "reference ends hand after successful enemy actions")
 			_check(reference.start_turn() and reference_party.start_player_turn(), "reference deck and party advance")
 			app.end_turn_button.pressed.emit()
 			var completed := _snapshot(app)
@@ -231,6 +231,7 @@ func _run() -> void:
 					_check(app.party.get_hero(position).hp == heroes[position - 1].hp, "only announced hero takes damage")
 			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state,
 				"enemy phase consumes no RNG; deck, discard, draw and three energy cadence unchanged")
+			_check(app.enemy_intents._turn_index == turn + 1, "successful phase advances selector exactly once")
 			_visible(app, (turn + 1) % 2 + 1)
 			trace.append(_snapshot(app))
 		# A stale announcement and an overflowing Block both fail before any hand or attack mutation.
@@ -241,11 +242,20 @@ func _run() -> void:
 		_check(_snapshot(app) == corrupt, "invalid announced source rejects atomically")
 		app.enemy_attacks = app.enemy_intents.get_intents()
 		_check(_snapshot(app) == before, "restoring snapshot changes no run state")
+		# A structurally valid but stale amount must also fail the authoritative equality guard.
+		app.enemy_attacks[0].amount += 1
+		corrupt = _snapshot(app)
+		app.end_turn_button.pressed.emit()
+		_check(_snapshot(app) == corrupt, "valid-shaped stale announcement preserves complete state")
+		app.enemy_attacks = app.enemy_intents.get_intents()
 		var prior_block: int = app.enemies.get_enemy(2).block
 		_check(app.enemies.gain_block(2, CombatEnemies.MAX_INT - prior_block), "overflow fixture reaches maximum Block")
 		before = _snapshot(app)
+		_check(app.deck.turn_active and not app.end_turn_button.disabled
+			and app.enemy_attacks == app.enemy_intents.get_intents(), "late overflow reaches service with active hand and authoritative intents")
 		app.end_turn_button.pressed.emit()
 		_check(_snapshot(app) == before, "overflowing later Block cannot end hand or apply earlier attack")
+		_check(not app.end_turn_button.disabled, "rejected batch leaves End Turn available")
 		_check(app.enemies.apply_damage(2, CombatEnemies.MAX_INT - prior_block), "restore valid Block before control rejection cases")
 		_check(app.enemies.get_enemies() == reference_enemies.get_enemies(), "control cases have otherwise valid enemy state")
 		# A mounted but inactive, hidden or disabled control must have no effects.
@@ -302,7 +312,26 @@ func _slain_sources(app) -> void:
 		# Remove opening protection so a spurious slain-source attack cannot hide in Block.
 		_check(app.party.start_player_turn(), "clear opening Block for slain-source check")
 		var heroes: Array = app.party.get_heroes()
+		var expected_heroes := heroes.duplicate(true)
+		if slain != 1:
+			expected_heroes[0].hp -= 1
+		var expected_enemies: Array = app.enemies.get_enemies()
+		if slain != 2:
+			expected_enemies[1].block += 1
+		var rng := RandomNumberGenerator.new()
+		rng.seed = app.run_seed
+		var cards: Array[String] = []
+		cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+		var reference := CombatDeck.new(cards, rng)
+		_check(reference.start_turn() and reference.end_turn() and reference.start_turn(), "slain-source reference advances exactly one hand")
 		app.end_turn_button.pressed.emit()
+		_check(app.party.get_heroes() == expected_heroes and app.enemies.get_enemies() == expected_enemies
+			and _deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state,
+			"slain-source full models, draw/discard, hand, energy and RNG match expected transition")
+		_check(app.enemy_intents._turn_index == 1 and app.enemy_attacks == app.enemy_intents.get_intents()
+			and app.enemy_attacks[0].target_position == 2, "slain-source turn advances intent exactly once")
+		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
+			else "Intent: Enemy 1 -> Hero 2 (Seamstress): 1 damage"), "living source displays exact next intent")
 		_check(app.party.get_hero(1).hp == heroes[0].hp - (0 if slain == 1 else 1), "only living Ragling attacks")
 		_check(app.enemies.get_enemy(2).block == (0 if slain == 2 else 1), "only living Guard gains Block")
 		_check(app.enemies.get_enemy(slain).hp == 0 and app.enemies.get_enemy(slain).position == slain,
