@@ -9,6 +9,7 @@ func _initialize() -> void:
 	_test_damage_and_turns()
 	_test_healing_and_defeat()
 	_test_rejections()
+	_test_adjacent_swap_preview()
 	if failures.is_empty():
 		print("combat_party_test: PASS (", checks, " checks)")
 	else:
@@ -141,3 +142,107 @@ func _test_rejections() -> void:
 			_check(party.call(method, position, 0) == true and party.get_heroes() == before, "zero on living hero succeeds without mutation")
 	_check(party.gain_block(3, CombatParty.MAX_INT), "maximum representable Block succeeds")
 	_reject(party, "gain_block", 3, 1)
+
+
+func _test_adjacent_swap_preview() -> void:
+	# Build a party with distinct non-default HP and Block for the first two heroes
+	var party := CombatParty.new(_definitions())
+	_check(party.apply_damage(1, 5), "Warden takes 5 damage")
+	_check(party.gain_block(1, 3), "Warden gains 3 Block")
+	_check(party.apply_damage(2, 7), "Seamstress takes 7 damage")
+	_check(party.gain_block(2, 4), "Seamstress gains 4 Block")
+	
+	# Snapshot original state
+	var original_heroes := party.get_heroes()
+	
+	# Test preview (1, +1) - Warden swaps with Seamstress
+	var proposal1: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party, 1, 1)
+	_check(proposal1["ok"] == true, "preview (1,+1) returns ok=true")
+	_check(proposal1["heroes"].size() == 3, "preview returns three heroes")
+	
+	# Verify exact reordered identities and positions
+	var h1: Array[Dictionary] = proposal1["heroes"]
+	_check(h1[0]["id"] == "seamstress" and h1[0]["position"] == 1, "Seamstress moves to position 1")
+	_check(h1[1]["id"] == "warden" and h1[1]["position"] == 2, "Warden moves to position 2")
+	_check(h1[2]["id"] == "tinker" and h1[2]["position"] == 3, "Tinker stays at position 3")
+	
+	# Verify HP and Block move with the hero
+	_check(h1[1]["hp"] == 35 and h1[1]["block"] == 3, "Warden HP/Block move with Warden (35 HP, 3 Block)")
+	_check(h1[0]["hp"] == 23 and h1[0]["block"] == 4, "Seamstress HP/Block move with Seamstress (23 HP, 4 Block)")
+	_check(h1[2]["hp"] == 26 and h1[2]["block"] == 0, "Tinker unchanged")
+	
+	# Verify original party is unchanged
+	_check(party.get_heroes() == original_heroes, "original party unchanged after preview (1,+1)")
+	
+	# Test preview (2, -1) from identical starting state - should produce same ordering
+	var proposal2: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party, 2, -1)
+	_check(proposal2["ok"] == true, "preview (2,-1) returns ok=true")
+	var h2: Array[Dictionary] = proposal2["heroes"]
+	_check(h2[0]["id"] == "seamstress" and h2[0]["position"] == 1, "Seamstress moves to position 1")
+	_check(h2[1]["id"] == "warden" and h2[1]["position"] == 2, "Warden moves to position 2")
+	_check(h2[2]["id"] == "tinker" and h2[2]["position"] == 3, "Tinker stays at position 3")
+	_check(h2[1]["hp"] == 35 and h2[1]["block"] == 3, "Warden HP/Block preserved")
+	_check(h2[0]["hp"] == 23 and h2[0]["block"] == 4, "Seamstress HP/Block preserved")
+	_check(h2[2]["hp"] == 26 and h2[2]["block"] == 0, "Tinker unchanged")
+	_check(party.get_heroes() == original_heroes, "original party unchanged after preview (2,-1)")
+	
+	# Test preview (2, +1) - Seamstress swaps with Tinker
+	var proposal3: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party, 2, 1)
+	_check(proposal3["ok"] == true, "preview (2,+1) returns ok=true")
+	var h3: Array[Dictionary] = proposal3["heroes"]
+	_check(h3[0]["id"] == "warden" and h3[0]["position"] == 1, "Warden stays at position 1")
+	_check(h3[1]["id"] == "tinker" and h3[1]["position"] == 2, "Tinker moves to position 2")
+	_check(h3[2]["id"] == "seamstress" and h3[2]["position"] == 3, "Seamstress moves to position 3")
+	_check(h3[0]["hp"] == 35 and h3[0]["block"] == 3, "Warden HP/Block preserved")
+	_check(h3[1]["hp"] == 26 and h3[1]["block"] == 0, "Tinker HP/Block preserved")
+	_check(h3[2]["hp"] == 23 and h3[2]["block"] == 4, "Seamstress HP/Block move with her")
+	_check(party.get_heroes() == original_heroes, "original party unchanged after preview (2,+1)")
+	
+	# Verify mutating returned proposal doesn't affect party or next preview
+	h1[0]["hp"] = 999
+	h1[0]["id"] = "mutated"
+	_check(party.get_heroes() == original_heroes, "mutating proposal doesn't affect party")
+	var proposal4: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party, 1, 1)
+	_check(proposal4["heroes"][0]["id"] == "seamstress" and proposal4["heroes"][0]["hp"] == 23, "next preview unaffected by mutation")
+	
+	# --- Rejection cases ---
+	
+	# Invalid/empty party
+	_check(CombatPositionSwaps.preview_adjacent_swap(null, 1, 1) == {"ok": false, "heroes": []}, "null party rejected")
+	var invalid_party := CombatParty.new([])
+	_check(CombatPositionSwaps.preview_adjacent_swap(invalid_party, 1, 1) == {"ok": false, "heroes": []}, "empty party rejected")
+	
+	# Mover position outside 1-3
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 0, 1) == {"ok": false, "heroes": []}, "position 0 rejected")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, -1, 1) == {"ok": false, "heroes": []}, "position -1 rejected")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 4, 1) == {"ok": false, "heroes": []}, "position 4 rejected")
+	
+	# Direction other than -1 or +1
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 1, 0) == {"ok": false, "heroes": []}, "direction 0 rejected")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 1, 2) == {"ok": false, "heroes": []}, "direction 2 rejected")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 1, -2) == {"ok": false, "heroes": []}, "direction -2 rejected")
+	
+	# Off-board swaps
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 1, -1) == {"ok": false, "heroes": []}, "1,-1 off-board rejected")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, 3, 1) == {"ok": false, "heroes": []}, "3,+1 off-board rejected")
+	
+	# Downed mover - fresh fixture
+	var party_downed_mover := CombatParty.new(_definitions())
+	_check(party_downed_mover.apply_damage(1, 40), "down Warden")
+	var downed_mover_before := party_downed_mover.get_heroes()
+	_check(CombatPositionSwaps.preview_adjacent_swap(party_downed_mover, 1, 1) == {"ok": false, "heroes": []}, "downed mover rejected")
+	_check(party_downed_mover.get_heroes() == downed_mover_before, "party unchanged after downed mover rejection")
+	
+	# Downed destination - fresh fixture
+	var party_downed_dest := CombatParty.new(_definitions())
+	_check(party_downed_dest.apply_damage(2, 30), "down Seamstress")
+	var downed_dest_before := party_downed_dest.get_heroes()
+	_check(CombatPositionSwaps.preview_adjacent_swap(party_downed_dest, 1, 1) == {"ok": false, "heroes": []}, "living mover into downed destination rejected")
+	_check(party_downed_dest.get_heroes() == downed_dest_before, "party unchanged after downed destination rejection")
+	
+	# Downed destination from other side - fresh fixture
+	var party_downed_dest2 := CombatParty.new(_definitions())
+	_check(party_downed_dest2.apply_damage(2, 30), "down Seamstress")
+	var downed_dest2_before := party_downed_dest2.get_heroes()
+	_check(CombatPositionSwaps.preview_adjacent_swap(party_downed_dest2, 3, -1) == {"ok": false, "heroes": []}, "living mover into downed destination from back rejected")
+	_check(party_downed_dest2.get_heroes() == downed_dest2_before, "party unchanged after downed destination rejection from back")
