@@ -262,6 +262,7 @@ func _run() -> void:
 		_check(presenter._bindings.is_empty() and presenter._deck == null, "Return immediately disconnects session")
 		await _frames()
 		_check(app.deck == null and presenter.energy_label == null, "title removes support presentation")
+	await _ally_cases()
 	await _stale_restart(seed_value)
 	app.free()
 	_finish()
@@ -284,7 +285,7 @@ func _negative_cases() -> void:
 	panel.grab_focus()
 	var before := _live()
 	presenter._on_card_input(null, panel, "warden_brace", deck, party, battle)
-	presenter._on_card_input(event, panel, "seamstress_mend", deck, party, battle)
+	presenter._on_card_input(event, panel, "seamstress_prick", deck, party, battle)
 	var foreign := PanelContainer.new()
 	root.add_child(foreign)
 	presenter._on_card_input(event, foreign, "warden_brace", deck, party, battle)
@@ -373,6 +374,225 @@ func _stale_restart(seed_value: int) -> void:
 			"queued old-turn activation cannot play into the new hand")
 	app.return_button.pressed.emit()
 	await _frames()
+
+
+func _ally_start() -> bool:
+	var cards: Array[String] = []
+	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+	for candidate in range(1000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = candidate
+		var deck := CombatDeck.new(cards, rng)
+		deck.start_turn()
+		if "seamstress_mend" in deck.hand and "seamstress_stitch_up" in deck.hand:
+			return await _start(candidate)
+	_check(false, "seeded opening contains both ally cards")
+	return false
+
+
+func _select_ally(id: String, keyboard: bool) -> bool:
+	var panel := _panel(id)
+	_check(is_instance_valid(panel), "real held ally card mounted: " + id)
+	if panel == null:
+		return false
+	var before := _live()
+	if keyboard:
+		panel.grab_focus()
+		await _keyboard(KEY_ENTER)
+	else:
+		await _mouse(panel)
+	_check(_live() == before, "pending ally choice never charges or changes rules")
+	var choosing: bool = presenter._pending.get("choosing", false)
+	_check(choosing and presenter.cancel_button.is_visible_in_tree(), "target mode and cancel visible")
+	_check(presenter.energy_label.text.contains("choose a living ally"), "visible targeting instruction")
+	_check(root.get_visible_rect().encloses(presenter.cancel_button.get_global_rect()), "cancel fits 1280x720 viewport")
+	for index in range(3):
+		var hero: Control = app.hero_panels[index]
+		var living: bool = not app.party.is_downed(index + 1)
+		_check((hero.focus_mode == Control.FOCUS_ALL) == living, "only living ally focusable")
+		_check(presenter._targets.has(hero) == living, "only living ally has input callback")
+		if living:
+			_check(hero.get_child_count() == 2 and hero.get_child(1).text.contains("Choose ally"), "visible hero target cue")
+			_check(hero.has_theme_stylebox_override("focus"), "visible hero focus outline")
+	return choosing
+
+
+func _ally_return() -> void:
+	app.return_button.pressed.emit()
+	_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "Return clears all target state immediately")
+	await _frames()
+
+
+func _ally_cases() -> void:
+	# Every success begins at the real title with a seeded, unmodified starter hand.
+	for id in ["seamstress_mend", "seamstress_stitch_up"]:
+		for target in [1, 2, 3]:
+			if not await _ally_start():
+				return
+			if id == "seamstress_mend" and target != 3:
+				var damage := 9 if target == 1 else 2
+				_check(app.party.apply_damage(target, damage) and reference_party.apply_damage(target, damage), "wounded ally fixture")
+			if id == "seamstress_stitch_up":
+				_check(app.party.gain_block(target, 3) and reference_party.gain_block(target, 3), "existing Block fixture")
+			app._refresh_party()
+			var old_energy: int = app.deck.energy
+			var old_discard: int = app.deck.discard_pile.size()
+			var old_hand: int = app.deck.hand.size()
+			var old_hero: Dictionary = app.party.get_hero(target)
+			var intent_before: Array = [app.enemy_attacks.duplicate(true), app.enemy_intents.get_intents(), app.intent_label.text]
+			if await _select_ally(id, target != 1):
+				var pending_before := _live()
+				await _mouse(app.hero_panels[target - 1], MOUSE_BUTTON_RIGHT)
+				app.hero_panels[target - 1].grab_focus()
+				root.push_input(_key(KEY_ENTER, true, true), true)
+				await _frames()
+				_check(_live() == pending_before, "target right-click and key echo never resolve")
+				app.hero_panels[0].grab_focus()
+				_check(service.play_card(reference, reference_party, id, target), "reference accepts chosen living ally")
+				var hero: Control = app.hero_panels[target - 1]
+				if target == 1:
+					await _mouse(hero)
+				else:
+					# Reach the hero using real focus navigation, then use both accept keys.
+					for step in range(target - 1):
+						await _keyboard(KEY_TAB)
+					_check(hero.has_focus(), "Tab reaches chosen hero")
+					var code := KEY_SPACE if target == 2 else KEY_ENTER
+					root.push_input(_key(code), true)
+					root.push_input(_key(code), true)
+					root.push_input(_key(code, false), true)
+					await _frames()
+				_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng), "chosen ally matches authoritative effect; other heroes and RNG unchanged")
+				_check(app.deck.energy == old_energy - 1 and app.deck.discard_pile.size() == old_discard + 1
+					and app.deck.hand.size() == old_hand - 1 and app.deck.discard_pile.back() == id, "exact one-energy one-card charge")
+				var updated: Dictionary = app.party.get_hero(target)
+				if id == "seamstress_mend":
+					_check(updated.hp == mini(old_hero.max_hp, old_hero.hp + 5), "Mend heals up to five including full HP")
+				else:
+					_check(updated.block == old_hero.block + 5, "Stitch stacks exactly five Block")
+				_check([app.enemy_attacks, app.enemy_intents.get_intents(), app.intent_label.text] == intent_before, "ally play leaves intents unchanged")
+				_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "success removes target handlers")
+				_visible()
+			await _ally_return()
+	# Both cards share the same fail-closed interaction, including queued target callbacks.
+	for id in ["seamstress_mend", "seamstress_stitch_up"]:
+		for scenario in ["escape", "queued_cancel", "cancel", "downed_target", "downed_after", "downed_owner", "zero", "inactive", "hidden", "absent", "replace", "turn", "return", "stale", "switch", "detached", "foreign", "invalid_target"]:
+			if not await _ally_start():
+				return
+			if scenario == "downed_target":
+				_check(app.party.apply_damage(1, 10000) and app.party.is_downed(1), "target truly downed")
+			if not await _select_ally(id, false):
+				await _ally_return()
+				continue
+			var hero: Control = app.hero_panels[1]
+			var callback: Callable = presenter._targets[hero].callback
+			var before := _live()
+			if scenario == "escape":
+				await _keyboard(KEY_ESCAPE)
+			elif scenario == "queued_cancel":
+				hero.grab_focus()
+				callback.call(_key(KEY_ENTER))
+				root.push_input(_key(KEY_ESCAPE), true)
+				root.push_input(_key(KEY_ESCAPE, false), true)
+			elif scenario == "cancel":
+				await _mouse(presenter.cancel_button)
+			elif scenario == "downed_target":
+				await _mouse(app.hero_panels[0])
+			elif scenario == "foreign":
+				var foreign := PanelContainer.new()
+				root.add_child(foreign)
+				presenter._on_target_input(_key(KEY_ENTER), foreign, 2, presenter._token)
+				foreign.free()
+			elif scenario == "invalid_target":
+				hero.grab_focus()
+				for position in [0, 1, 4]:
+					presenter._on_target_input(_key(KEY_ENTER), hero, position, presenter._token)
+			elif scenario == "turn":
+				hero.grab_focus()
+				callback.call(_key(KEY_ENTER))
+				await _turn()
+				before = _live()
+			elif scenario == "return":
+				var old_deck: CombatDeck = app.deck
+				var old_party: CombatParty = app.party
+				var old_rng: RandomNumberGenerator = app.run_rng
+				var old_state := _snapshot(old_deck, old_party, old_rng)
+				hero.grab_focus()
+				callback.call(_key(KEY_ENTER))
+				await _ally_return()
+				_check(_snapshot(old_deck, old_party, old_rng) == old_state, "queued target Return never spends")
+				if not await _ally_start():
+					return
+				before = _live()
+				callback.call(_key(KEY_ENTER))
+			elif scenario == "stale":
+				await _keyboard(KEY_ESCAPE)
+				await _select_ally(id, true)
+				hero.grab_focus()
+				callback.call(_key(KEY_ENTER))
+			elif scenario == "switch":
+				var other_id := "seamstress_stitch_up" if id == "seamstress_mend" else "seamstress_mend"
+				await _select_ally(other_id, true)
+				_check(presenter._pending.id == other_id, "only the newly selected card remains pending")
+				hero.grab_focus()
+				callback.call(_key(KEY_ENTER))
+			else:
+				if scenario == "downed_owner":
+					_check(app.party.apply_damage(2, 10000) and app.party.is_downed(2), "Seamstress truly downed")
+				elif scenario == "downed_after":
+					_check(app.party.apply_damage(1, 10000) and app.party.is_downed(1), "target downed during pending choice")
+					hero = app.hero_panels[0]
+					callback = presenter._targets[hero].callback
+				elif scenario == "zero":
+					app.deck.combat_state.energy = 0
+				elif scenario == "inactive":
+					app.deck.combat_state.player_turn_active = false
+				elif scenario == "hidden":
+					app.battle_view.hide()
+				elif scenario == "absent":
+					_check(app.deck.discard_played(id), "selected card actually removed")
+				elif scenario == "replace":
+					app._refresh_hand()
+				elif scenario == "detached":
+					var card: Control = _panel(id)
+					app.hand_view.remove_child(card)
+					presenter._sync_battle()
+					card.free()
+				before = _live()
+				if hero.focus_mode == Control.FOCUS_ALL and hero.is_visible_in_tree():
+					hero.grab_focus()
+				callback.call(_key(KEY_ENTER))
+			await _frames()
+			_check(_live() == before, "ally rejection preserves full state: " + id + "/" + scenario)
+			if scenario in ["escape", "queued_cancel", "cancel", "replace", "turn", "hidden", "downed_owner", "downed_after", "zero", "inactive", "absent", "detached"]:
+				_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "cancellation removes queued work and target callbacks: " + scenario)
+				for panel in app.hero_panels:
+					_check(panel.focus_mode == Control.FOCUS_NONE and panel.get_child_count() == 1
+						and panel.gui_input.get_connections().is_empty(), "cancel restores inert hero panels")
+			await _ally_return()
+	# Authored from-positions: Mend rejects front, accepts back; Stitch accepts front.
+	for id in ["seamstress_mend", "seamstress_stitch_up"]:
+		for position in [1, 3]:
+			if not await _ally_start():
+				return
+			var definitions: Array = app._load_party_definitions()
+			var seamstress = definitions.pop_at(1)
+			definitions.insert(position - 1, seamstress)
+			app.party = CombatParty.new(definitions)
+			reference_party = CombatParty.new(definitions)
+			presenter._sync_battle()
+			app._refresh_party()
+			_check(app.party.get_hero(position).id == "seamstress", "actual owner at authored position fixture")
+			var before := _live()
+			if id == "seamstress_mend" and position == 1:
+				await _mouse(_panel(id))
+				_check(_live() == before and presenter._pending.is_empty(), "front Mend rejects without target mode or spend")
+			else:
+				if await _select_ally(id, true):
+					_check(service.play_card(reference, reference_party, id, position), "authored owner position accepted")
+					await _mouse(app.hero_panels[position - 1])
+					_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng), "authored position live play matches service")
+			await _ally_return()
 
 
 func _finish() -> void:

@@ -228,6 +228,7 @@ func _build_battle() -> void:
 
 
 func _refresh_hand() -> void:
+	$LiveSupportHand._cancel_pending()
 	for child in hand_view.get_children():
 		child.free()
 	for card_id in deck.hand:
