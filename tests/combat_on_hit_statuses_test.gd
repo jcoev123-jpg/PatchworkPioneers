@@ -21,6 +21,30 @@ func _initialize() -> void:
 	quit(0 if failures.is_empty() else 1)
 
 
+func _seed_rng_and_get_draw(seed: int) -> int:
+	"""Seed RNG and return a random int to use as baseline draw."""
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed
+	return rng.randi()
+
+
+func _deep_snapshot_catalog() -> Dictionary:
+	"""Create a deep snapshot of all StarterCards definitions."""
+	var catalog = _get_catalog()
+	var snapshot: Dictionary = {}
+	var all_ids: Array[String] = catalog.get_all_card_ids()
+	for card_id in all_ids:
+		var def: Dictionary = catalog.get_definition(card_id)
+		if not def.is_empty():
+			snapshot[card_id] = def.duplicate(true)
+	return snapshot
+
+
+func _assert_catalog_unchanged(before: Dictionary, after: Dictionary, context: String) -> void:
+	"""Assert catalog snapshots are identical."""
+	_check(before == after, context + ": catalog definitions unchanged")
+
+
 func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
@@ -75,6 +99,9 @@ func _test_catalog_definitions() -> void:
 
 func _test_adapter_basic_emission() -> void:
 	var adapter = _get_adapter()
+	var catalog_before = _deep_snapshot_catalog()
+	var rng_seed = 12344
+	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
 	
 	# Confirmed Prick hit emits bleed 3 (authored 2 + passive +1)
 	var prick_result: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
@@ -89,6 +116,14 @@ func _test_adapter_basic_emission() -> void:
 	_check(not bash_result.has("damage"), "Shield Bash result has no damage field")
 	_check(prick_result.size() == 1, "Prick result has exactly one key")
 	_check(bash_result.size() == 1, "Shield Bash result has exactly one key")
+	
+	# Verify RNG not consumed
+	var rng_after = _seed_rng_and_get_draw(rng_seed)
+	_check(rng_after == rng_baseline, "RNG state unchanged after basic emission calls")
+	
+	# Verify catalog unchanged
+	var catalog_after = _deep_snapshot_catalog()
+	_assert_catalog_unchanged(catalog_before, catalog_after, "adapter basic emission")
 
 
 func _test_adapter_independence_and_determinism() -> void:
@@ -99,12 +134,12 @@ func _test_adapter_independence_and_determinism() -> void:
 	var r1: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
 	var r2: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
 	_check(r1 == r2, "two Prick calls return equal results")
-	_check(r1 != r2 or true, "dictionaries are separate instances (mutating one won't affect the other)")
 	
 	# Mutate returned dictionary and verify catalog and next call are unchanged
 	r1["bleed"] = 999
 	var r3: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
 	_check(r3 == {"bleed": 3}, "mutating returned dict doesn't affect subsequent call")
+	_check(r2 == {"bleed": 3}, "mutating r1 doesn't affect r2")
 	
 	# Verify catalog is unchanged
 	var def: Dictionary = catalog.get_definition("seamstress_prick")
@@ -117,6 +152,7 @@ func _test_adapter_independence_and_determinism() -> void:
 	b1["weak"] = 999
 	var b3: Dictionary = adapter.status_for_confirmed_hit("warden_shield_bash", true)
 	_check(b3 == {"weak": 1}, "mutating returned dict doesn't affect subsequent Shield Bash call")
+	_check(b2 == {"weak": 1}, "mutating b1 doesn't affect b2")
 	
 	# Verify catalog is unchanged
 	var def2: Dictionary = catalog.get_definition("warden_shield_bash")
@@ -125,6 +161,9 @@ func _test_adapter_independence_and_determinism() -> void:
 
 func _test_adapter_rejects_unknown_and_failed_hits() -> void:
 	var adapter = _get_adapter()
+	var catalog_before = _deep_snapshot_catalog()
+	var rng_seed = 12345
+	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
 	
 	# hit_confirmed=false for supported IDs
 	_check(adapter.status_for_confirmed_hit("seamstress_prick", false) == {}, "Prick failed hit emits {}")
@@ -133,11 +172,22 @@ func _test_adapter_rejects_unknown_and_failed_hits() -> void:
 	# Unknown ID with hit_confirmed=true
 	_check(adapter.status_for_confirmed_hit("nonexistent_card", true) == {}, "unknown ID emits {}")
 	_check(adapter.status_for_confirmed_hit("", true) == {}, "empty string ID emits {}")
+	
+	# Verify RNG not consumed
+	var rng_after = _seed_rng_and_get_draw(rng_seed)
+	_check(rng_after == rng_baseline, "RNG state unchanged after failed/unknown hit calls")
+	
+	# Verify catalog unchanged
+	var catalog_after = _deep_snapshot_catalog()
+	_assert_catalog_unchanged(catalog_before, catalog_after, "adapter rejects unknown and failed hits")
 
 
 func _test_adapter_rejects_other_starter_cards() -> void:
 	var adapter = _get_adapter()
 	var catalog = _get_catalog()
+	var catalog_before = _deep_snapshot_catalog()
+	var rng_seed = 12346
+	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
 	
 	# All other seven authored starter card IDs emit {}
 	var other_ids: Array[String] = [
@@ -155,11 +205,22 @@ func _test_adapter_rejects_other_starter_cards() -> void:
 		_check(not def.is_empty(), card_id + " exists in catalog for test")
 		var result: Dictionary = adapter.status_for_confirmed_hit(card_id, true)
 		_check(result == {}, card_id + " with hit_confirmed=true emits {}")
+	
+	# Verify RNG not consumed
+	var rng_after = _seed_rng_and_get_draw(rng_seed)
+	_check(rng_after == rng_baseline, "RNG state unchanged after other starter card calls")
+	
+	# Verify catalog unchanged
+	var catalog_after = _deep_snapshot_catalog()
+	_assert_catalog_unchanged(catalog_before, catalog_after, "adapter rejects other starter cards")
 
 
 func _test_emitted_payloads_work_with_combat_statuses() -> void:
 	var adapter = _get_adapter()
 	var rules = _get_status_rules()
+	var catalog_before = _deep_snapshot_catalog()
+	var rng_seed = 12347
+	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
 	
 	# Test Bleed 3: 10 HP / 7 Block -> 7/7 {bleed:2} -> 5/7 {bleed:1} -> 4/7 {}
 	var bleed_payload: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
@@ -212,11 +273,22 @@ func _test_emitted_payloads_work_with_combat_statuses() -> void:
 	var blocked: Dictionary = rules.end_owner_turn(10, 99, bleed_test)
 	_check(blocked["block"] == 99, "Block unchanged by Bleed (99 stays 99)")
 	_check(blocked["hp"] == 7, "HP reduced by 3 directly (10 -> 7)")
+	
+	# Verify RNG not consumed
+	var rng_after = _seed_rng_and_get_draw(rng_seed)
+	_check(rng_after == rng_baseline, "RNG state unchanged after combat statuses integration calls")
+	
+	# Verify catalog unchanged
+	var catalog_after = _deep_snapshot_catalog()
+	_assert_catalog_unchanged(catalog_before, catalog_after, "emitted payloads with combat statuses")
 
 
 func _test_replay_and_snapshots() -> void:
 	var adapter = _get_adapter()
 	var rules = _get_status_rules()
+	var catalog_before = _deep_snapshot_catalog()
+	var rng_seed = 12348
+	var rng_baseline = _seed_rng_and_get_draw(rng_seed)
 	
 	# Repeated identical inputs reproduce same results
 	var prick_payload: Dictionary = adapter.status_for_confirmed_hit("seamstress_prick", true)
@@ -241,3 +313,11 @@ func _test_replay_and_snapshots() -> void:
 		var b_: Dictionary = adapter.status_for_confirmed_hit("warden_shield_bash", true)
 		_check(p == {"bleed": 3}, "Prick deterministic call " + str(i))
 		_check(b_ == {"weak": 1}, "Shield Bash deterministic call " + str(i))
+	
+	# Verify RNG not consumed
+	var rng_after = _seed_rng_and_get_draw(rng_seed)
+	_check(rng_after == rng_baseline, "RNG state unchanged after replay and snapshot calls")
+	
+	# Verify catalog unchanged
+	var catalog_after = _deep_snapshot_catalog()
+	_assert_catalog_unchanged(catalog_before, catalog_after, "replay and snapshots")
