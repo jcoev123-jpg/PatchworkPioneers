@@ -45,7 +45,7 @@ func _visible(app, hp: Array, block: Array, target: int) -> void:
 	if is_instance_valid(app.intent_label):
 		_check(app.intent_label.is_visible_in_tree() and app.battle_view.is_ancestor_of(app.intent_label), "intent mounted and visible")
 		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" % [
-			target, "Warden" if target == 1 else "Seamstress"], "authored alternating intent text")
+			target, ["Warden", "Seamstress", "Tinker"][target - 1]], "authored rotating intent text")
 	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": 1,
 		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": 1}],
 		"authored attack cycle and Guard Block schedule")
@@ -173,7 +173,7 @@ func _run() -> void:
 			app.end_turn_button.pressed.emit()
 			await process_frame
 			_check(reference.end_turn() and reference.start_turn(), "reference advances")
-			_visible(app, [40 if turn < 2 else 39, 30 if turn == 0 else 29, 26], [0, 0, 0], (turn + 1) % 2 + 1)
+			_visible(app, [40, 30 if turn == 0 else 29, 26 if turn < 2 else 25], [0, 0, 0], (turn + 1) % 3 + 1)
 			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state
 				and app.deck.energy == 3, "enemy attack and Block reset preserve deterministic deck, RNG and energy")
 			_duplicate(app)

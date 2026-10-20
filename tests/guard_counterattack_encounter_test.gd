@@ -302,18 +302,21 @@ func _test_existing_starter_encounter_unchanged() -> void:
 	var starter_defs = _load_encounter_definitions("res://data/encounters/starter_attacks.json")
 	_check(starter_defs is Array and starter_defs.size() == 2, "starter_attacks has two enemy slots")
 	
-	# Original pattern: slot 1 [attack hero 1, attack hero 2], slot 2 [Block 1]
+	# Starter pattern: slot 1 attacks heroes 1, 2, 3; slot 2 repeats Block 1
 	var slot1 = starter_defs[0]
 	var slot2 = starter_defs[1]
 	_check(slot1["enemy_position"] == 1, "starter slot 1 position 1")
 	_check(slot2["enemy_position"] == 2, "starter slot 2 position 2")
 	
-	_check(slot1["pattern"].size() == 2, "starter Ragling has two-pattern cycle")
+	_check(slot1["pattern"].size() == 3, "starter Ragling has three-pattern cycle")
 	_check(slot1["pattern"][0] == {"type": "attack", "amount": 1, "target_position": 1},
 		"starter Ragling turn 0: Attack 1 at hero 1")
 	_check(slot1["pattern"][1] == {"type": "attack", "amount": 1, "target_position": 2},
 		"starter Ragling turn 1: Attack 1 at hero 2")
 	
+	_check(slot1["pattern"][2] == {"type": "attack", "amount": 1, "target_position": 3},
+		"starter Ragling turn 2: Attack 1 at hero 3")
+
 	_check(slot2["pattern"].size() == 1, "starter Guard has one-pattern cycle")
 	_check(slot2["pattern"][0] == {"type": "block", "amount": 1},
 		"starter Guard turn 0: Block 1")

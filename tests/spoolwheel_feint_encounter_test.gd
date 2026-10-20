@@ -108,7 +108,8 @@ func _test_authored_data() -> void:
 		{"path": STARTER, "positions": [
 			{"enemy_position": 1, "pattern": [
 				{"type": "attack", "amount": 1, "target_position": 1},
-				{"type": "attack", "amount": 1, "target_position": 2}]},
+				{"type": "attack", "amount": 1, "target_position": 2},
+				{"type": "attack", "amount": 1, "target_position": 3}]},
 			{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}]},
 		{"path": GUARD, "positions": [
 			{"enemy_position": 1, "pattern": [

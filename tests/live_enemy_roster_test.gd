@@ -331,7 +331,7 @@ func _run() -> void:
 			_check(app.enemies.get_enemy(1).hp == 12 and app.enemies.get_enemy(2).hp == 12
 				and app.enemies.get_enemy(1).block == 0 and app.enemies.get_enemy(2).block == turn,
 				"only Guard's announced Block changes the live roster")
-			_assert_badges(app, presenter, 1 if turn % 2 == 0 else 2)
+			_assert_badges(app, presenter, turn % 3 + 1)
 			trace.append([_snapshot(app), presenter.enemies.get_enemies() if presenter.enemies != null else []])
 			_check(app.deck.try_spend_energy(2) and reference.deck.try_spend_energy(2), "real shared energy spend")
 			if turn == 0:
@@ -343,7 +343,7 @@ func _run() -> void:
 				app.end_turn_button.pressed.emit()
 			reference.end_turn_button.pressed.emit()
 			await process_frame
-			_assert_badges(app, presenter, 2 if turn % 2 == 0 else 1)
+			_assert_badges(app, presenter, (turn + 1) % 3 + 1)
 			_check(_snapshot(app) == _snapshot(reference),
 				"real pointer/keyboard End Turn matches same exact reference state")
 		await _mouse_attack(app, reference, presenter)

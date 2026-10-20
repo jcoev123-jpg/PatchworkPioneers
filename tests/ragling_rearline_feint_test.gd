@@ -330,7 +330,7 @@ func _test_starter_attacks_preserved() -> void:
 			source2 = entry.duplicate(true)
 	_check(not source1.is_empty(), "starter source 1 exists by position")
 	_check(not source2.is_empty(), "starter source 2 exists by position")
-	_check(source1.get("pattern") is Array and source1.get("pattern").size() == 2,
+	_check(source1.get("pattern") is Array and source1.get("pattern").size() == 3,
 		"starter source 1 pattern preserved")
 	_check(source1.get("pattern")[0].get("type") == "attack"
 		and source1.get("pattern")[0].get("amount") == 1
@@ -340,6 +340,8 @@ func _test_starter_attacks_preserved() -> void:
 		and source1.get("pattern")[1].get("amount") == 1
 		and source1.get("pattern")[1].get("target_position") == 2,
 		"starter source 1 second action preserved")
+	_check(source1.get("pattern")[2] == {"type": "attack", "amount": 1, "target_position": 3},
+		"starter source 1 third action reaches back slot")
 	_check(source2.get("pattern") is Array and source2.get("pattern").size() == 1,
 		"starter source 2 pattern preserved")
 	_check(source2.get("pattern")[0].get("type") == "block"

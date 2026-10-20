@@ -31,7 +31,7 @@ func _visible(app, target: int = 1) -> void:
 		_check(app.intent_label.is_visible_in_tree() and app.battle_view.is_ancestor_of(app.intent_label),
 			"intent is mounted and visible in battle")
 		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" % [
-			target, "Warden" if target == 1 else "Seamstress"],
+			target, ["Warden", "Seamstress", "Tinker"][target - 1]],
 			"visible intent accurately describes authored source, target and damage")
 	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": 1,
 		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": 1}]
@@ -225,9 +225,9 @@ func _run() -> void:
 			_check(_snapshot(app) == before, "rejected actions preserve hero, piles, energy and RNG")
 			var blocked := turn % 4 < 2
 			if blocked:
-				_check(app.party.gain_block(1, 3) and app.party.gain_block(2, 4), "gain real front and middle Block")
-				_check(reference_party.gain_block(1, 3) and reference_party.gain_block(2, 4), "reference Block fixture")
-			var target := turn % 2 + 1
+				_check(app.party.gain_block(1, 3) and app.party.gain_block(2, 4) and app.party.gain_block(3, 2), "gain real Block in every target slot")
+				_check(reference_party.gain_block(1, 3) and reference_party.gain_block(2, 4) and reference_party.gain_block(3, 2), "reference Block fixture")
+			var target := turn % 3 + 1
 			var heroes: Array = app.party.get_heroes()
 			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [{"enemy_position": 1,
 				"target_position": target, "amount": 1}]).ok, "reference resolves announced Ragling hit first")
@@ -253,7 +253,7 @@ func _run() -> void:
 			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state,
 				"enemy phase consumes no RNG; deck, discard, draw and three energy cadence unchanged")
 			_check(app.enemy_intents._turn_index == turn + 1, "successful phase advances selector exactly once")
-			_visible(app, (turn + 1) % 2 + 1)
+			_visible(app, (turn + 1) % 3 + 1)
 			trace.append(_snapshot(app))
 		# A stale announcement and an overflowing Block both fail before any hand or attack mutation.
 		before = _snapshot(app)

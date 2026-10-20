@@ -198,18 +198,19 @@ func _test_opening_and_rounds() -> void:
 			and deck.hand.size() == 5 and deck.energy == 3 and deck.turn_active,
 			"turn %d exact hand/piles, energy and injected RNG match independent oracle" % turn)
 		_check(intents._turn_index == turn and
-			intents.get_intents()[0]["target_position"] == (1 if turn % 2 == 0 else 2),
+			intents.get_intents()[0]["target_position"] == (turn % 3 + 1),
 			"turn %d advances once to the next fixed-cycle announced attack" % turn)
 		_check(enemies.get_enemy(1)["hp"] == 12 and enemies.get_enemy(1)["block"] == 0
 			and enemies.get_enemy(2)["hp"] == 12 and enemies.get_enemy(2)["block"] == turn,
 			"turn %d executes exactly one Block for living guard" % turn)
-		var warden_hits := (turn + 1) / 2
-		var seamstress_hits := turn / 2
+		var warden_hits := (turn + 2) / 3
+		var seamstress_hits := (turn + 1) / 3
+		var tinker_hits := turn / 3
 		_check(party.get_hero(1)["hp"] == 40 - maxi(0, int(warden_hits) - 1)
 			and party.get_hero(1)["block"] == 0
 			and party.get_hero(2)["hp"] == 30 - int(seamstress_hits)
 			and party.get_hero(2)["block"] == 0
-			and party.get_hero(3)["hp"] == 26 and party.get_hero(3)["block"] == 0,
+			and party.get_hero(3)["hp"] == 26 - int(tinker_hits) and party.get_hero(3)["block"] == 0,
 			"turn %d resolves one point attack, opening Block once, then resets hero Block" % turn)
 		_check(flow.get_outcome() == CombatBattleResult.ACTIVE
 			and flow.observe_result() == CombatBattleResult.ACTIVE,

@@ -189,7 +189,8 @@ func _test_authored_schedule_and_parser() -> void:
 	var starter := RunFightEncounterSelection._parse_schedule_text(_read_text(STARTER_PATH))
 	_check_entry(starter, 1, [
 		{"type": "attack", "amount": 1, "target_position": 1},
-		{"type": "attack", "amount": 1, "target_position": 2}])
+		{"type": "attack", "amount": 1, "target_position": 2},
+		{"type": "attack", "amount": 1, "target_position": 3}])
 	_check_entry(starter, 2, [{"type": "block", "amount": 1}])
 	_check(CombatEnemyIntents.new(starter).is_valid(), "starter_attacks still valid")
 

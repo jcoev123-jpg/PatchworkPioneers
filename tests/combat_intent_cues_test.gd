@@ -194,6 +194,16 @@ func _test_happy_path_after_advance() -> void:
 	_check(guard_cue["amount"] == 1, "Guard block amount still 1")
 	_check(not guard_cue.has("target_position"), "Guard still no target_position")
 
+	for target in [3, 1]:
+		_check(selector.advance_turn(), "advance through back target and wrap")
+		var before = _snapshot_selector(selector)
+		var next_cues = CombatIntentCues.new().get_cues(selector, roster)
+		var expected = cues.duplicate(true)
+		expected[0]["target_position"] = target
+		_check(next_cues == expected, "complete cues rotate to target %d" % target)
+		_assert_selector_snapshots_equal(before, _snapshot_selector(selector), "rotation cue read")
+		_assert_roster_snapshots_equal(roster_snapshot_before, _snapshot_roster(roster), "rotation roster read")
+
 	# Verify selector advanced but roster unchanged
 	_check(selector.is_valid(), "selector still valid after advance")
 	_check(roster.is_valid(), "roster still valid")

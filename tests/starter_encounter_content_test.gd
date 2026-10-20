@@ -192,7 +192,7 @@ func _test_encounter_patterns() -> void:
 
 	var pattern1 = source1_raw.get("pattern")
 	var pattern2 = source2_raw.get("pattern")
-	_check(pattern1 is Array and pattern1.size() == 2, "source 1 has two actions")
+	_check(pattern1 is Array and pattern1.size() == 3, "source 1 has three actions")
 	_check(pattern2 is Array and pattern2.size() == 1, "source 2 has one action")
 
 	_check(pattern1[0].get("type") == "attack" and pattern1[0].get("amount") == 1
@@ -201,6 +201,9 @@ func _test_encounter_patterns() -> void:
 	_check(pattern1[1].get("type") == "attack" and pattern1[1].get("amount") == 1
 		and pattern1[1].get("target_position") == 2,
 		"source 1 second action: attack 1 on hero 2")
+
+	_check(pattern1[2] == {"type": "attack", "amount": 1, "target_position": 3},
+		"source 1 third action: attack 1 on hero 3")
 
 	_check(pattern2[0].get("type") == "block" and pattern2[0].get("amount") == 1,
 		"source 2 single action: block 1 (repeats)")
@@ -245,7 +248,7 @@ func _test_services_and_announcements() -> void:
 	var scheduler = CombatEnemyIntents.new(attack_defs)
 	_check(scheduler.is_valid(), "scheduler valid with two authored patterns")
 
-	# Three successive announcements: current, after advance, after second advance (wrap for source 1).
+	# Announcements cover every target and wraparound.
 	var turn0: Array[Dictionary] = scheduler.get_intents()
 	_check(turn0.size() == 2, "turn 0 announces two intents")
 	_check(turn0[0].get("enemy_position") == 1, "turn 0 source 1 position")
@@ -275,15 +278,18 @@ func _test_services_and_announcements() -> void:
 		and turn1[1].get("amount") == 1,
 		"turn 1 source 2: block 1 (repeats)")
 
-	# Wrap around for source 1 (two-item cycle) while source 2 stays fixed.
+	# Third target while source 2 stays fixed.
 	_check(scheduler.advance_turn(), "second advance succeeds")
 	var turn2: Array[Dictionary] = scheduler.get_intents()
 	_check(turn2[0].get("enemy_position") == 1 and turn2[0].get("type") == "attack"
-		and turn2[0].get("amount") == 1 and turn2[0].get("target_position") == 1,
-		"turn 2 source 1 wraps back to attack target 1")
+		and turn2[0].get("amount") == 1 and turn2[0].get("target_position") == 3,
+		"turn 2 source 1 attacks target 3")
 	_check(turn2[1].get("enemy_position") == 2 and turn2[1].get("type") == "block"
 		and turn2[1].get("amount") == 1,
 		"turn 2 source 2 remains block 1")
+
+	_check(scheduler.advance_turn() and scheduler.get_intents() == turn0,
+		"third advance wraps complete announcements to turn zero")
 
 	# Fresh replay: second construction from same copied definitions must match.
 	var replay_roster = CombatEnemies.new(_deep_copy(enemy_defs))
@@ -294,7 +300,10 @@ func _test_services_and_announcements() -> void:
 	_check(replay_scheduler.advance_turn() and replay_scheduler.get_intents() == turn1,
 		"fresh replay advance produces same turn 1")
 	_check(replay_scheduler.advance_turn() and replay_scheduler.get_intents() == turn2,
-		"fresh replay second advance produces same wrapped turn 2")
+		"fresh replay second advance produces same turn 2")
+
+	_check(replay_scheduler.advance_turn() and replay_scheduler.get_intents() == turn0,
+		"fresh replay also wraps on third advance")
 
 	# Unchanged caller data after service interaction.
 	_check(enemy_defs == [ragling_raw.duplicate(true), guard_raw.duplicate(true)],
