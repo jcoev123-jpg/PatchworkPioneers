@@ -69,8 +69,8 @@ func _routed_win(fixture: Dictionary, downed: bool) -> bool:
 			break
 		await _click(app.end_turn_button)
 	var won: bool = app.battle_result.get_outcome() == CombatBattleResult.VICTORY
-	_check(won and app.card_reward != null, "seeded routed fight wins using legal held-card inputs")
-	return won and app.card_reward != null
+	_check(won and app.fight_rewards != null, "seeded routed fight wins using legal held-card inputs")
+	return won and app.fight_rewards != null
 
 
 func _run() -> void:
@@ -101,14 +101,14 @@ func _run() -> void:
 		_check(app.party.apply_damage(1, 1), "probe combat snapshot independence")
 		_check(app.run_heroes == copy and app.party.get_heroes() != copy, "combat mutation cannot alias run heroes")
 		var before := _persistent()
-		app._continue_to_rest_route(app.card_reward, weakref(app.run_map), null)
+		app._continue_to_rest_route(app.fight_rewards, weakref(app.run_map), null)
 		_check(_persistent() == before and app.continue_button == null, "unclaimed reward offers no Continue")
 		if session == 1:
 			app.reward_buttons[3].grab_focus()
 			await _key(KEY_ENTER)
 		else:
 			await _click(app.reward_buttons[0])
-		_check(app.card_reward.is_claimed() and is_instance_valid(app.continue_button), "claim or Skip exposes Continue")
+		_check(app.fight_reward_claimed and is_instance_valid(app.continue_button), "claim or Skip exposes Continue")
 		if not is_instance_valid(app.continue_button):
 			break
 		before = _persistent()
@@ -121,13 +121,12 @@ func _run() -> void:
 			replay = before.duplicate(true)
 		elif session == 2:
 			_check(before == replay, "fresh routed restart deterministically replays complete victory state")
-		var claimed: RunCardRewardChoice = app.card_reward
-		app.card_reward = RunCardRewardChoice.new(claimed._offered_cards, ["warden", "seamstress", "tinker"])
-		_check(app.card_reward.is_valid() and not app.card_reward.is_claimed(), "otherwise valid unclaimed transaction fixture")
-		app._continue_to_rest_route(app.card_reward, weakref(app.run_map), app.continue_button)
+		app.fight_reward_claimed = false
+		_check(app.fight_rewards != null and not app.fight_reward_claimed, "current routed service with unclaimed latch fixture")
+		app._continue_to_rest_route(app.fight_rewards, weakref(app.run_map), app.continue_button)
 		_check(_persistent() == before and app.route_view == null, "unclaimed reward rejects with current real Continue control")
-		app.card_reward = claimed
-		app._continue_to_rest_route(app.card_reward, weakref(RunMap.new()), app.continue_button)
+		app.fight_reward_claimed = true
+		app._continue_to_rest_route(app.fight_rewards, weakref(RunMap.new()), app.continue_button)
 		_check(_persistent() == before and app.route_view == null, "wrong map identity cannot continue")
 		# Invalid and defeated snapshots reject before mounting or advancing the map.
 		for invalid in [[], [{"id": "bad"}], _defeated(copy)]:

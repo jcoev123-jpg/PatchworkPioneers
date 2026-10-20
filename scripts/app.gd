@@ -73,6 +73,11 @@ var run_removal_count := 0
 var _shop_map: WeakRef
 var _shop_route: Array[String] = []
 var card_reward: RunCardRewardChoice
+var fight_rewards: RunFightVictoryRewards
+var fight_reward_offers: Array = []
+var fight_reward_gold := 0
+var fight_reward_claimed := false
+var _reward_map: WeakRef
 var reward_buttons: Array[Button] = []
 const INTERIM_REWARD_IDS := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
 var result_label: Label
@@ -108,7 +113,8 @@ func _observe_battle_result() -> bool:
 	if not _battle_closed:
 		_battle_closed = true
 		if outcome == CombatBattleResult.VICTORY:
-			session_gold = victory_gold.claim_gold(false, run_rng)
+			if run_map == null:
+				session_gold = victory_gold.claim_gold(false, run_rng)
 			if run_map != null:
 				run_heroes = party.get_heroes()
 		# Enemy phases have already ended the turn; external/card damage may not have.
@@ -124,7 +130,7 @@ func _observe_battle_result() -> bool:
 		end_turn_button.disabled = true
 		result_label.text = "Battle result: " + outcome
 		if outcome == CombatBattleResult.VICTORY:
-			result_label.text += " | Gold: %d" % session_gold
+			result_label.text += " | Pending gold: %d" % fight_reward_gold if run_map != null else " | Gold: %d" % session_gold
 		result_label.show()
 		return_button.grab_focus()
 	return false
@@ -585,22 +591,40 @@ func _refresh_swap_preview() -> void:
 		swap_preview_cue.text = "Preview only: " + " | ".join(positions) + " (no movement or cost)"
 
 
-## Fixed interim catalog offering; owners include downed party members.
+## Routed rewards are prepared once; the standalone demo keeps its fixed offering.
 func _build_card_reward() -> void:
+	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
+		return
+	if run_map != null and fight_rewards != null:
+		return
 	var offers: Array = []
 	var party_ids: Array[String] = []
 	for hero in party.get_heroes():
 		party_ids.append(hero.id)
 	var catalog := StarterCards.new()
-	for id in INTERIM_REWARD_IDS:
+	var ids: Array = INTERIM_REWARD_IDS
+	if run_map != null:
+		fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
+			catalog.get_all_card_ids(), run_deck, session_gold, false)
+		var prepared := fight_rewards.prepare()
+		if not prepared.ok:
+			return
+		fight_reward_offers = prepared.offers
+		fight_reward_gold = prepared.gold_award
+		_reward_map = weakref(run_map)
+		ids = []
+		for offer in fight_reward_offers:
+			ids.append(offer.id)
+	for id in ids:
 		var definition := catalog.get_definition(id)
 		if definition.get("id") != id or not party_ids.has(definition.get("owner")):
 			return
 		offers.append(definition)
-	card_reward = RunCardRewardChoice.new(offers, party_ids)
-	if not card_reward.is_valid():
-		card_reward = null
-		return
+	if run_map == null:
+		card_reward = RunCardRewardChoice.new(offers, party_ids)
+		if not card_reward.is_valid():
+			card_reward = null
+			return
 	var column := HBoxContainer.new()
 	column.name = "CardReward"
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -613,20 +637,44 @@ func _build_card_reward() -> void:
 	choices.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(choices)
 	for index in range(4):
-		var id: String = INTERIM_REWARD_IDS[index] if index < 3 else ""
+		var id: String = ids[index] if index < 3 else ""
 		var button := Button.new()
 		button.text = "Skip"
 		if not id.is_empty():
 			var definition := catalog.get_definition(id)
 			button.text = "%s - %s" % [definition.owner.capitalize(), definition.display_name]
+			if run_map != null:
+				button.text = "%s\n%s" % [definition.owner, id]
 		button.custom_minimum_size = Vector2(0, 36)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		choices.add_child(button)
 		reward_buttons.append(button)
-		button.pressed.connect(_claim_card_reward.bind(id, button, card_reward))
+		button.pressed.connect(_claim_card_reward.bind(id, button, fight_rewards if run_map != null else card_reward))
 
 
-func _claim_card_reward(id: String, button, offering: RunCardRewardChoice) -> void:
+func _claim_card_reward(id: String, button, offering) -> void:
+	if offering is RunFightVictoryRewards:
+		if offering != fight_rewards or fight_reward_claimed or _reward_map == null \
+			or _reward_map.get_ref() != run_map or run_map == null or not _battle_closed \
+			or battle_result == null or battle_result._party != party or battle_result._enemies != enemies \
+			or battle_result.get_outcome() != CombatBattleResult.VICTORY \
+			or party == null or not party.is_valid() or party.is_defeated() \
+			or not is_instance_valid(button) or button not in reward_buttons \
+			or button.disabled or not button.is_visible_in_tree():
+			return
+		var index := reward_buttons.find(button)
+		if fight_reward_offers.size() != 3 or index > 3 \
+			or id != (fight_reward_offers[index].id if index < 3 else ""):
+			return
+		var result: Dictionary = offering.choose(id)
+		if not result.ok:
+			return
+		run_deck.assign(result.deck)
+		session_gold = result.gold
+		fight_reward_claimed = true
+		result_label.text = "Battle result: victory | Gold: %d" % session_gold
+		_finish_card_reward(offering)
+		return
 	if offering == null or offering != card_reward or not _battle_closed \
 			or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY \
 			or not is_instance_valid(button) or button not in reward_buttons \
@@ -644,10 +692,14 @@ func _claim_card_reward(id: String, button, offering: RunCardRewardChoice) -> vo
 		var definition := catalog.get_definition(offered_id)
 		if definition.get("id") != offered_id or not party_ids.has(definition.get("owner")):
 			return
-	var result := offering.claim(run_deck, id)
+	var result: Dictionary = offering.claim(run_deck, id)
 	if not result.ok:
 		return
 	run_deck = result.deck
+	_finish_card_reward(offering)
+
+
+func _finish_card_reward(offering) -> void:
 	for action in reward_buttons:
 		action.disabled = true
 	if run_map != null:
@@ -655,7 +707,7 @@ func _claim_card_reward(id: String, button, offering: RunCardRewardChoice) -> vo
 		continue_button.text = "Continue"
 		continue_button.custom_minimum_size = Vector2(160, 56)
 		return_button.get_parent().add_child(continue_button)
-		continue_button.pressed.connect(_continue_to_rest_route.bind(card_reward, weakref(run_map), continue_button))
+		continue_button.pressed.connect(_continue_to_rest_route.bind(offering, weakref(run_map), continue_button))
 	_refresh_swap_preview()
 	return_button.grab_focus()
 
@@ -668,12 +720,12 @@ func _can_leave_fight() -> bool:
 		and battle_result._party == party and battle_result._enemies == enemies \
 		and battle_result.get_outcome() == CombatBattleResult.VICTORY \
 		and party != null and party.is_valid() and not party.is_defeated() \
-		and card_reward != null and card_reward.is_claimed() \
+		and fight_rewards != null and fight_reward_claimed \
 		and RunRestRecovery._is_valid_roster(run_heroes)
 
 
-func _continue_to_rest_route(offering: RunCardRewardChoice, source_map: WeakRef, button) -> void:
-	if not _can_leave_fight() or offering != card_reward or source_map == null \
+func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
+	if not _can_leave_fight() or offering != fight_rewards or source_map == null \
 		or source_map.get_ref() != run_map or not is_instance_valid(button) \
 		or button != continue_button or button.disabled or not button.is_visible_in_tree() \
 		or is_instance_valid(route_view) or is_instance_valid(rest_view):
@@ -1046,6 +1098,12 @@ func _refresh_enemy_roster() -> void:
 func _return_to_title() -> void:
 	if battle_view == null:
 		return
+	for action in reward_buttons:
+		action.disabled = true
+	if is_instance_valid(continue_button):
+		continue_button.disabled = true
+	end_turn_button.disabled = true
+	return_button.disabled = true
 	if shop_visit != null:
 		shop_visit.close_visit()
 	if is_instance_valid(shop_view):
@@ -1094,6 +1152,11 @@ func _return_to_title() -> void:
 	battle_result = null
 	victory_gold = null
 	card_reward = null
+	fight_rewards = null
+	fight_reward_offers.clear()
+	fight_reward_gold = 0
+	fight_reward_claimed = false
+	_reward_map = null
 	reward_buttons.clear()
 	run_deck.clear()
 	session_gold = 0

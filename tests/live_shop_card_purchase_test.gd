@@ -32,7 +32,7 @@ func _run() -> void:
 		if not await _routed_win(fixture, false):
 			break
 		await _click(app.reward_buttons[0])
-		_check(app.card_reward.is_claimed() and is_instance_valid(app.continue_button), "real reward claimed before Continue")
+		_check(app.fight_reward_claimed and is_instance_valid(app.continue_button), "real reward claimed before Continue")
 		if not is_instance_valid(app.continue_button):
 			break
 		var before := _persistent()

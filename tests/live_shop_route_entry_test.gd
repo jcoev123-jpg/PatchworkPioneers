@@ -66,7 +66,7 @@ func _run() -> void:
 		else:
 			app.reward_buttons[0].grab_focus()
 			await _key(KEY_ENTER)
-		_check(app.card_reward.is_claimed() and is_instance_valid(app.continue_button), "reward claim/skip exposes live Continue")
+		_check(app.fight_reward_claimed and is_instance_valid(app.continue_button), "reward claim/skip exposes live Continue")
 		if not is_instance_valid(app.continue_button):
 			break
 		var before := _persistent()
