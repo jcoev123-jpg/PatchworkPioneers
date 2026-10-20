@@ -103,19 +103,21 @@ func _party_fixtures(app) -> void:
 	app.starter_party_path = path
 	app.start_button.pressed.emit()
 	_rejected(app)
-	# A valid alternate front hero must still start, even when the passive declines.
+	# A structurally valid substitute for Warden must now fail the strict
+	# one-time authored opening; no session or passive grant can leak.
 	definitions[0].id = "alternate_front"
+	var normalized := definitions.duplicate(true)
+	for hero in normalized:
+		hero["max_hp"] = int(hero["max_hp"])
+	_check(CombatParty.new(normalized).is_valid(),
+		"alternate-front party is structurally valid after authored JSON numeric normalization")
 	file = FileAccess.open(path, FileAccess.WRITE)
 	_check(file != null, "alternate fixture opens")
 	if file != null:
 		file.store_string(JSON.stringify(definitions))
 		file.close()
 		app.start_button.pressed.emit()
-		if _ready_session(app):
-			_check(app.party.get_hero(1).id == "alternate_front", "alternate party used by real start")
-			for hero in app.party.get_heroes():
-				_check(hero.block == 0 and hero.hp == hero.max_hp, "alternate party starts without unrelated grant")
-			app.return_button.pressed.emit()
+		_rejected(app)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	app.starter_party_path = path
 	app.start_button.pressed.emit()
