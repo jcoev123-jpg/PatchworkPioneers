@@ -50,6 +50,16 @@ var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
 var session_gold := 0
 var run_deck: Array[String] = []
+var run_heroes: Array = []
+var continue_button: Button
+var rest_view: VBoxContainer
+var rest_heal_button: Button
+var rest_back_button: Button
+var rest_hp_label: Label
+var rest_recovery: RunRestRecovery
+var _rest_route: Array[String] = []
+var _rest_heroes: Array = []
+var _rest_map: WeakRef
 var card_reward: RunCardRewardChoice
 var reward_buttons: Array[Button] = []
 const INTERIM_REWARD_IDS := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
@@ -87,6 +97,8 @@ func _observe_battle_result() -> bool:
 		_battle_closed = true
 		if outcome == CombatBattleResult.VICTORY:
 			session_gold = victory_gold.claim_gold(false, run_rng)
+			if run_map != null:
+				run_heroes = party.get_heroes()
 		# Enemy phases have already ended the turn; external/card damage may not have.
 		if deck.turn_active:
 			deck.end_turn()
@@ -532,6 +544,8 @@ func _refresh_swap_preview() -> void:
 	for button in reward_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			actions.append(button)
+	if is_instance_valid(continue_button) and not continue_button.disabled:
+		actions.append(continue_button)
 	for index in range(swap_preview_buttons.size()):
 		var pair := index + 1
 		var proposal := CombatPositionSwaps.preview_adjacent_swap(party, pair, 1)
@@ -624,8 +638,142 @@ func _claim_card_reward(id: String, button, offering: RunCardRewardChoice) -> vo
 	run_deck = result.deck
 	for action in reward_buttons:
 		action.disabled = true
+	if run_map != null:
+		continue_button = Button.new()
+		continue_button.text = "Continue"
+		continue_button.custom_minimum_size = Vector2(160, 56)
+		return_button.get_parent().add_child(continue_button)
+		continue_button.pressed.connect(_continue_to_rest_route.bind(card_reward, weakref(run_map), continue_button))
 	_refresh_swap_preview()
 	return_button.grab_focus()
+
+
+## The terminal Fight stays separate from persistent run data and future encounters.
+func _can_leave_fight() -> bool:
+	return run_map != null and run_map.get_route().size() == 1 \
+		and run_map.get_node(run_map.get_current_node_id()).get("type") == "Fight" \
+		and _battle_closed and battle_result != null \
+		and battle_result._party == party and battle_result._enemies == enemies \
+		and battle_result.get_outcome() == CombatBattleResult.VICTORY \
+		and party != null and party.is_valid() and not party.is_defeated() \
+		and card_reward != null and card_reward.is_claimed() \
+		and RunRestRecovery._is_valid_roster(run_heroes)
+
+
+func _continue_to_rest_route(offering: RunCardRewardChoice, source_map: WeakRef, button) -> void:
+	if not _can_leave_fight() or offering != card_reward or source_map == null \
+		or source_map.get_ref() != run_map or not is_instance_valid(button) \
+		or button != continue_button or button.disabled or not button.is_visible_in_tree() \
+		or is_instance_valid(route_view) or is_instance_valid(rest_view):
+		return
+	button.disabled = true
+	battle_view.hide()
+	route_view = VBoxContainer.new()
+	route_view.set_anchors_preset(Control.PRESET_CENTER)
+	route_view.add_theme_constant_override("separation", 16)
+	add_child(route_view)
+	var heading := Label.new()
+	heading.text = "Connected route - choose a Rest (other visits unavailable)"
+	route_view.add_child(heading)
+	var prior := run_map.get_route()
+	for id in run_map.get_legal_choices():
+		var node := run_map.get_node(id)
+		var action := Button.new()
+		action.text = "%s: %s" % [id, node.type]
+		action.set_meta("route_id", id)
+		action.disabled = node.type != "Rest"
+		if action.disabled:
+			action.text += " (unavailable)"
+		action.custom_minimum_size = Vector2(440, 48)
+		action.pressed.connect(_choose_rest_route.bind(id, source_map, prior, action))
+		route_view.add_child(action)
+		route_buttons.append(action)
+	route_back_button = Button.new()
+	route_back_button.text = "Return to title"
+	route_back_button.pressed.connect(_return_from_visit.bind(route_view))
+	route_view.add_child(route_back_button)
+	_focus_visit(route_view)
+
+
+func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
+	if not _can_leave_fight() or source_map == null or source_map.get_ref() != run_map \
+		or run_map.get_route() != prior or not is_instance_valid(route_view) \
+		or not route_view.is_visible_in_tree() or not is_instance_valid(button) \
+		or button not in route_buttons or button.disabled or not button.is_visible_in_tree() \
+		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "Rest":
+		return false
+	if not run_map.choose_node(id):
+		return false
+	rest_recovery = RunRestRecovery.new(run_heroes)
+	_rest_heroes = run_heroes.duplicate(true)
+	_rest_route = run_map.get_route()
+	_rest_map = weakref(run_map)
+	_clear_route_view()
+	rest_view = VBoxContainer.new()
+	rest_view.set_anchors_preset(Control.PRESET_CENTER)
+	rest_view.add_theme_constant_override("separation", 24)
+	add_child(rest_view)
+	var heading := Label.new()
+	heading.text = "Rest - " + id
+	rest_view.add_child(heading)
+	rest_hp_label = Label.new()
+	rest_view.add_child(rest_hp_label)
+	_refresh_rest_hp()
+	rest_heal_button = Button.new()
+	rest_heal_button.text = "Heal party (30% max HP; revive downed heroes)"
+	rest_heal_button.custom_minimum_size = Vector2(480, 56)
+	rest_heal_button.pressed.connect(_heal_at_rest.bind(rest_recovery, rest_heal_button))
+	rest_view.add_child(rest_heal_button)
+	rest_back_button = Button.new()
+	rest_back_button.text = "Return to title"
+	rest_back_button.pressed.connect(_return_from_visit.bind(rest_view))
+	rest_view.add_child(rest_back_button)
+	_focus_visit(rest_view)
+	return true
+
+
+func _heal_at_rest(visit: RunRestRecovery, button) -> void:
+	if visit == null or visit != rest_recovery or visit.is_consumed() \
+		or not is_instance_valid(rest_view) or not rest_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button != rest_heal_button \
+		or button.disabled or not button.is_visible_in_tree() or run_map == null \
+		or _rest_map == null or _rest_map.get_ref() != run_map \
+		or run_map.get_route() != _rest_route or _rest_route.size() != 2 \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Rest" \
+		or run_heroes != _rest_heroes or not RunRestRecovery._is_valid_roster(run_heroes):
+		return
+	var result := visit.choose_heal()
+	if not result.ok:
+		return
+	run_heroes = result.heroes.duplicate(true)
+	button.disabled = true
+	_refresh_rest_hp()
+	rest_back_button.grab_focus()
+
+
+func _refresh_rest_hp() -> void:
+	var lines: PackedStringArray = []
+	for hero in run_heroes:
+		lines.append("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp])
+	rest_hp_label.text = "\n".join(lines)
+
+
+func _focus_visit(view: VBoxContainer) -> void:
+	var actions: Array[Button] = []
+	for child in view.get_children():
+		if child is Button and not child.disabled:
+			actions.append(child)
+	for index in range(actions.size()):
+		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
+	view.position -= view.get_combined_minimum_size() / 2.0
+	actions[0].grab_focus()
+
+
+func _return_from_visit(view) -> void:
+	if is_instance_valid(view) and view in [route_view, rest_view] and view.is_visible_in_tree():
+		_return_to_title()
 
 
 func _refresh_hand() -> void:
@@ -720,6 +868,19 @@ func _refresh_enemy_roster() -> void:
 func _return_to_title() -> void:
 	if battle_view == null:
 		return
+	if is_instance_valid(rest_view):
+		remove_child(rest_view)
+		rest_view.queue_free()
+	rest_view = null
+	rest_heal_button = null
+	rest_back_button = null
+	rest_hp_label = null
+	rest_recovery = null
+	_rest_route.clear()
+	_rest_heroes.clear()
+	_rest_map = null
+	run_heroes.clear()
+	continue_button = null
 	round_flow = null
 	remove_child(battle_view)
 	battle_view.queue_free()
