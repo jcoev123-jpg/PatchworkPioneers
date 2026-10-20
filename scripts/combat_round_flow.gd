@@ -62,9 +62,24 @@ func end_turn() -> bool:
 	# observing it yet. Never discard/draw or let enemies act on that state.
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return false
-	if not _phase_is_executable(tick["actors"]):
+	# Announcements remain base values. Resolve a separate effective batch after
+	# the heroes' owner tick, while enemy Weak still applies to this action.
+	var effective := _intents.get_intents().duplicate(true)
+	var statuses := CombatStatuses.new()
+	for intent in effective:
+		if intent.get("type") != "attack":
+			continue
+		var amount = intent.get("amount")
+		var target = intent.get("target_position")
+		# Reject malformed inputs before the damage helper can turn them into zero.
+		if not amount is int or amount < 0 or not target is int \
+				or target < 1 or target > CombatParty.PARTY_SIZE:
+			return false
+		intent["amount"] = statuses.adjusted_attack_damage(amount,
+			_enemies.get_enemy(intent["enemy_position"]).get("statuses", {}),
+			tick["actors"][target - 1].get("statuses", {}))
+	if not _phase_is_executable(tick["actors"], effective):
 		return false
-	var announced := _intents.get_intents()
 	# Preflight succeeded for the complete transition. Preserve authoritative
 	# record identities and metadata; only the owner tick's fields are committed.
 	for index in range(CombatParty.PARTY_SIZE):
@@ -77,7 +92,7 @@ func end_turn() -> bool:
 	_deck.end_turn()
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return true
-	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, announced)
+	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective)
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
@@ -147,7 +162,7 @@ func _valid_bindings() -> bool:
 	return true
 
 
-func _phase_is_executable(next_heroes: Array) -> bool:
+func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:
 	# Use the actual executor on independent actors to preflight every announced
 	# action, including capacity checks, without touching live actors or RNG.
 	var party := CombatParty.new(next_heroes)
@@ -155,6 +170,6 @@ func _phase_is_executable(next_heroes: Array) -> bool:
 	var roster := _enemies.get_enemies()
 	var enemies := CombatEnemies.new(roster)
 	enemies._enemies.assign(roster.duplicate(true))
-	if not CombatEnemyPhase.new().execute_phase(party, enemies, _intents.get_intents())["ok"]:
+	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective)["ok"]:
 		return false
 	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]

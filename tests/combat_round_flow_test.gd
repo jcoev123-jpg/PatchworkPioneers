@@ -21,6 +21,7 @@ func _run() -> void:
 	_test_seeded_replay()
 	_test_status_turns()
 	_test_enemy_status_turns()
+	_test_status_damage()
 	await _test_mounted_enemy_status_turn()
 	if failures.is_empty():
 		print("combat_round_flow_test: PASS (", checks, " checks)")
@@ -554,6 +555,73 @@ func _test_enemy_status_turns() -> void:
 	_check(flow.end_turn() and _snapshot(defeat) == expected,
 		"announced lethal phase latches defeat before enemy Bleed, with no next turn or RNG")
 	_reject(defeat, flow.end_turn, "repeated phase defeat after enemy Bleed")
+
+
+func _test_status_damage() -> void:
+	# Explicit expected amounts catch single-floor rounding (5 * 9/8 = 5),
+	# owner timing, zero damage, and attacks on fixed downed slots.
+	for case in [
+		{"weak": 1, "exposed": 0, "damage": 3},
+		{"weak": 0, "exposed": 2, "damage": 7},
+		{"weak": 1, "exposed": 2, "damage": 5},
+		{"weak": 0, "exposed": 0, "damage": 5},
+		{"weak": 0, "exposed": 1, "damage": 5},
+		{"weak": 1, "exposed": 2, "damage": 5, "downed": true},
+		{"weak": 1, "exposed": 2, "damage": 5, "bleed_down": true},
+		{"weak": 1, "exposed": 0, "damage": 0, "base": 1}]:
+		var replay: Array = []
+		for session in range(2):
+			var base_damage: int = case.get("base", 5)
+			var fight := _fight(35035, [], [], [
+				{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]},
+				{"enemy_position": 1, "pattern": [{"type": "attack", "amount": base_damage, "target_position": 1}]}])
+			var flow: CombatRoundFlow = fight.flow
+			_check(flow.begin_fight(), "status damage fixture begins with real seeded services")
+			var hero: Dictionary = fight.party._heroes[0]
+			hero.block = 2
+			if case.weak > 0:
+				fight.enemies._enemies[0]["statuses"] = {"weak": case.weak}
+			if case.exposed > 0:
+				hero["statuses"] = {"exposed": case.exposed}
+			if case.get("downed", false):
+				_check(fight.party.apply_damage(1, 999) and fight.party.is_downed(1), "target really downed")
+			if case.get("bleed_down", false):
+				hero.hp = 1
+				hero.statuses["bleed"] = 1
+			var before := _snapshot(fight)
+			var expected := before.duplicate(true)
+			var downed: bool = case.get("downed", false) or case.get("bleed_down", false)
+			expected[0][0].hp = 0 if downed else hero.hp - maxi(0, case.damage - hero.block)
+			expected[0][0].block = 0
+			if hero.has("statuses"):
+				expected[0][0].statuses = {"exposed": 1} if case.exposed == 2 else {}
+			if case.weak > 0:
+				expected[1][0].statuses = {}
+			expected[1][1].block = 1
+			var oracle := CombatDeck.new(StarterCards.new().get_starting_deck(), _rng(35035))
+			_check(oracle.start_turn() and oracle.end_turn() and oracle.start_turn(), "damage oracle advances exactly one hand")
+			expected[2] = _deck_snapshot(oracle)
+			expected[4] = 1
+			_check(flow.end_turn() and _snapshot(fight) == expected,
+				"exact Weak/Exposed damage, Block, ticks, ordered intents, deck, result and RNG: " + str(case))
+			var trace: Array = [before, _snapshot(fight)]
+			# Weak 1 has expired and Exposed 1 expires before the next attack.
+			before = _snapshot(fight)
+			expected = before.duplicate(true)
+			if not downed:
+				expected[0][0].hp -= base_damage
+			if hero.has("statuses"):
+				expected[0][0].statuses = {}
+			expected[1][1].block = 2
+			_check(oracle.end_turn() and oracle.start_turn(), "second damage oracle includes seeded reshuffle")
+			expected[2] = _deck_snapshot(oracle)
+			expected[4] = 2
+			_check(flow.end_turn() and _snapshot(fight) == expected, "next attack uses expired statuses with exact full snapshot")
+			trace.append(_snapshot(fight))
+			if session == 0:
+				replay = trace
+			else:
+				_check(trace == replay, "entire status damage timeline replays from identical seed")
 
 
 func _test_mounted_enemy_status_turn() -> void:

@@ -22,7 +22,7 @@ func _deck(deck: CombatDeck) -> Array:
 func _snapshot(app) -> Array:
 	return [app.party.get_heroes(), _deck(app.deck), app.run_rng.state,
 		app.enemy_intents.get_intents(), app.enemy_attacks.duplicate(true), app.intent_label.text,
-		app.enemies.get_enemies(), app.enemy_intents._turn_index]
+		app.enemies.get_enemies(), app.enemy_intents._turn_index, app.battle_result.get_outcome()]
 
 
 func _visible(app, target: int = 1) -> void:
@@ -324,6 +324,7 @@ func _run() -> void:
 		_check(not is_instance_id_valid(intent_id), "old mounted intent freed")
 	await _slain_sources(app)
 	await _cue_refresh(app)
+	await _status_damage(app)
 	app.free()
 	_finish()
 
@@ -424,6 +425,84 @@ func _cue_refresh(app) -> void:
 	await process_frame
 	app._refresh_intents()
 	_check(app.intent_label == null and app.enemies == null, "title refresh cannot recreate session")
+
+
+func _status_damage(app) -> void:
+	for case in [
+		{"weak": 1, "exposed": 0, "damage": 3},
+		{"weak": 0, "exposed": 2, "damage": 7},
+		{"weak": 1, "exposed": 2, "damage": 5},
+		{"weak": 0, "exposed": 0, "damage": 5},
+		{"weak": 0, "exposed": 1, "damage": 5},
+		{"weak": 1, "exposed": 2, "damage": 5, "downed": true}]:
+		var replay: Array = []
+		for session in range(2):
+			app.run_seed = 35035
+			app.start_button.pressed.emit()
+			await process_frame
+			var bound: bool = app.party != null and app.enemies != null and app.deck != null \
+				and app.round_flow != null and is_instance_valid(app.end_turn_button) \
+				and app.end_turn_button.is_visible_in_tree() and not app.end_turn_button.disabled
+			_check(bound, "status damage uses mounted active End Turn and authoritative services")
+			if not bound:
+				return
+			# A five-damage schedule fixture exposes rounding and HP loss through Block;
+			# authored encounter files and the live scene wiring remain unchanged.
+			for action in app.enemy_intents._definitions[0].pattern:
+				action.amount = 5
+			app.enemy_attacks = app.enemy_intents.get_intents()
+			app._refresh_intents()
+			var hero: Dictionary = app.party._heroes[0]
+			hero.block = 2
+			if case.weak > 0:
+				app.enemies._enemies[0]["statuses"] = {"weak": 1}
+			if case.exposed > 0:
+				hero["statuses"] = {"exposed": case.exposed}
+			if case.get("downed", false):
+				_check(app.party.apply_damage(1, 999) and app.party.is_downed(1), "mounted announced target is genuinely downed")
+			var before := _snapshot(app)
+			_check(before[3][0].amount == 5 and before[5].contains("5 damage"), "displayed intent retains base damage")
+			# A late invalid status must not spend the hand or apply the earlier attack.
+			app.enemies._enemies[1]["statuses"] = {"weak": -1}
+			var invalid := _snapshot(app)
+			app.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == invalid and not app.end_turn_button.disabled, "mounted invalid status preserves every actor, deck, intent, result and RNG")
+			app.enemies._enemies[1].erase("statuses")
+			_check(_snapshot(app) == before, "restored fixture is identical before successful button dispatch")
+			var expected := before.duplicate(true)
+			expected[0][0].hp = 0 if case.get("downed", false) else hero.hp - maxi(0, case.damage - 2)
+			expected[0][0].block = 0
+			if hero.has("statuses"):
+				expected[0][0].statuses = {"exposed": 1} if case.exposed == 2 else {}
+			if case.weak > 0:
+				expected[6][0].statuses = {}
+			expected[6][1].block = 1
+			var rng := RandomNumberGenerator.new()
+			rng.seed = app.run_seed
+			var cards: Array[String] = []
+			cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+			var oracle := CombatDeck.new(cards, rng)
+			_check(oracle.start_turn() and oracle.end_turn() and oracle.start_turn(), "mounted damage deck oracle advances one hand")
+			expected[1] = _deck(oracle)
+			expected[2] = rng.state
+			expected[3][0].target_position = 2
+			expected[4][0].target_position = 2
+			expected[5] = "Intent: Enemy 1 -> Hero 2 (Seamstress): 5 damage; Enemy 2: 1 Block"
+			expected[7] = 1
+			app.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == expected, "mounted Weak/Exposed exact complete transition: " + str(case))
+			var after := _snapshot(app)
+			app.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == after, "duplicate status-modified End Turn is inert in same dispatch")
+			await process_frame
+			_check(_snapshot(app) == after, "rendered status transition preserves authoritative state and base announcements")
+			var trace: Array = [before, after]
+			if session == 0:
+				replay = trace
+			else:
+				_check(trace == replay, "mounted status actor/deck/intent/result snapshots replay exactly")
+			app.return_button.pressed.emit()
+			await process_frame
 
 
 func _finish() -> void:
