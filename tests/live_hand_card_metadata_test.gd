@@ -113,7 +113,8 @@ func _validate_display(observed: Dictionary) -> void:
 		if support and panel.get_child_count() >= 2:
 			_check(panel.get_child(1) is Label and panel.get_child(1).text == "Click / Enter / Space",
 				"original visible support action hint survives")
-			_check(panel.tooltip_text == "Click or focus and press Enter / Space to play", "support tooltip unchanged")
+			_check(panel.tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support hint preserved")
+			_check(panel.tooltip_text.contains("BASE"), "support tooltip includes base effect detail")
 		var single_attack: bool = StarterCards.new().get_definition(card_id).get("target_kind") == "enemy_single"
 		_check(panel.gui_input.get_connections().size() == (1 if support or single_attack else 0),
 			"exactly one handler for support or single-target selection; no extra handlers")
@@ -149,6 +150,12 @@ func _validate_display(observed: Dictionary) -> void:
 		if definition.target_kind in ["enemy_single", "enemy_all"]:
 			target_line += _expected_positions(definition.to_positions)
 		_check(facts.get("target_text") == target_line, "authored enemy/ally/self/no-target line printed")
+		# Tooltip verifies the base effect text for every held card.
+		var tooltip_text := panel.tooltip_text
+		_check(tooltip_text.contains(definition.display_name), "tooltip states card name: " + card_id)
+		_check(tooltip_text.contains(definition.owner.capitalize()), "tooltip states owner: " + card_id)
+		_check(tooltip_text.contains("Cost %d" % definition.cost) or tooltip_text.contains(str(definition.cost)), "tooltip states cost: " + card_id)
+		_check(tooltip_text.contains("BASE"), "tooltip states base effect: " + card_id)
 		var geometry: Dictionary = metadata.get_geometry(panel)
 		if not geometry.is_empty():
 			if geometry["compact"]:
