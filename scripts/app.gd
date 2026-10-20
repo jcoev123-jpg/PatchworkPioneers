@@ -32,6 +32,8 @@ var enemy_attacks: Array = []
 var enemy_intents: CombatEnemyIntents
 var intent_label: Label
 var battle_result: CombatBattleResult
+var victory_gold: RunVictoryGold
+var session_gold := 0
 var result_label: Label
 var _battle_closed := false
 
@@ -58,6 +60,8 @@ func _observe_battle_result() -> bool:
 		return true
 	if not _battle_closed:
 		_battle_closed = true
+		if outcome == CombatBattleResult.VICTORY:
+			session_gold = victory_gold.claim_gold(false, run_rng)
 		# Enemy phases have already ended the turn; external/card damage may not have.
 		if deck.turn_active:
 			deck.end_turn()
@@ -68,6 +72,8 @@ func _observe_battle_result() -> bool:
 		_refresh_enemy_roster()
 		end_turn_button.disabled = true
 		result_label.text = "Battle result: " + outcome
+		if outcome == CombatBattleResult.VICTORY:
+			result_label.text += " | Gold: %d" % session_gold
 		result_label.show()
 		return_button.grab_focus()
 	return false
@@ -138,6 +144,8 @@ func _start_run() -> void:
 	deck = CombatDeck.new(cards, run_rng)
 	deck.start_turn()
 	battle_result = CombatBattleResult.new(party, enemies)
+	victory_gold = RunVictoryGold.new(battle_result)
+	session_gold = 0
 	_battle_closed = false
 	title_view.hide()
 	_build_battle()
@@ -406,6 +414,8 @@ func _return_to_title() -> void:
 	intent_label = null
 	result_label = null
 	battle_result = null
+	victory_gold = null
+	session_gold = 0
 	_battle_closed = false
 	enemy_attacks.clear()
 	enemy_intents = null

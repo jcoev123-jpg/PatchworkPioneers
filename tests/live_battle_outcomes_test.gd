@@ -24,7 +24,7 @@ func _state() -> Array:
 	return [app.party.get_heroes(), app.enemies.get_enemies(), app.deck.hand.duplicate(),
 		app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(), app.deck.energy,
 		app.deck.turn_active, app.run_rng.state, app.enemy_intents.get_intents(),
-		app.enemy_attacks.duplicate(true)]
+		app.enemy_attacks.duplicate(true), app.session_gold, app.victory_gold.is_claimed()]
 
 
 func _click() -> InputEventMouseButton:
@@ -66,6 +66,9 @@ func _start() -> bool:
 		return false
 	_check(app.battle_result._party == app.party and app.battle_result._enemies == app.enemies,
 		"result observes actual authoritative model identities")
+	_check(app.victory_gold != null and app.victory_gold._result == app.battle_result
+		and not app.victory_gold.is_claimed() and app.session_gold == 0,
+		"fresh session binds one unclaimed payout to authoritative result")
 	_check(app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
 		and not app.result_label.is_visible_in_tree() and app.deck.turn_active,
 		"new battle ACTIVE without terminal banner")
@@ -76,7 +79,14 @@ func _start() -> bool:
 
 func _closed(outcome: String) -> void:
 	_check(app.battle_result.get_outcome() == outcome, "authoritative outcome: " + outcome)
-	_check(app.result_label.text == "Battle result: " + outcome
+	var expected_text := "Battle result: " + outcome
+	if outcome == CombatBattleResult.VICTORY:
+		expected_text += " | Gold: %d" % app.session_gold
+		_check(app.session_gold >= 10 and app.session_gold <= 20 and app.victory_gold.is_claimed(),
+			"victory claims normal gold once")
+	else:
+		_check(app.session_gold == 0 and not app.victory_gold.is_claimed(), "non-victory never claims gold")
+	_check(app.result_label.text == expected_text
 		and app.result_label.is_visible_in_tree(), "readable mounted outcome: " + outcome)
 	_check(app.result_label.size.x > 0 and app.result_label.size.y > 0
 		and Rect2(0, 0, 1280, 720).encloses(app.result_label.get_global_rect()), "banner fits viewport")
@@ -91,6 +101,9 @@ func _closed(outcome: String) -> void:
 func _inert() -> void:
 	var before := _state()
 	for repeat in range(3):
+		app.start_button.pressed.emit()
+		app._process(0.0)
+		app._reenable_end_turn(app.end_turn_button)
 		app.end_turn_button.pressed.emit()
 		app._end_turn(app.end_turn_button)
 		_check(not app.deck.try_spend_energy(1) and app.deck.draw_extra(1) == -1,
@@ -101,11 +114,14 @@ func _inert() -> void:
 
 func _return() -> void:
 	var result_ref: WeakRef = weakref(app.battle_result)
+	var gold_ref: WeakRef = weakref(app.victory_gold)
 	var old_label: Label = app.result_label
 	await _mouse(app.return_button)
 	_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "mouse Return restores actionable title")
 	_check(app.battle_result == null and app.result_label == null and app.deck == null
-		and app.party == null and app.enemies == null and app.run_rng == null, "Return cleans session references")
+		and app.party == null and app.enemies == null and app.run_rng == null
+		and app.victory_gold == null and app.session_gold == 0, "Return cleans session references and payout")
+	_check(gold_ref.get_ref() == null, "Return frees bound payout service")
 	_check(result_ref.get_ref() == null and not is_instance_valid(old_label)
 		and app.find_children("BattleResult", "Label", true, false).is_empty(), "Return frees result and label")
 
@@ -124,9 +140,11 @@ func _victory() -> void:
 			return
 		var trace: Array = [_state()]
 		var result: WeakRef = weakref(app.battle_result)
+		var gold: WeakRef = weakref(app.victory_gold)
 		app.start_button.pressed.emit()
 		await _frames()
-		_check(app.battle_result == result.get_ref() and _state() == trace[0], "duplicate Start preserves single result and state")
+		_check(app.battle_result == result.get_ref() and app.victory_gold == gold.get_ref()
+			and _state() == trace[0], "duplicate Start preserves single result, claim latch and state")
 		_check(app.enemies.get_enemies().size() == 2 and app.enemies.apply_damage(1, 999), "two-enemy fixture slays first slot")
 		var one_slain := _state()
 		await _frames()
@@ -147,6 +165,10 @@ func _victory() -> void:
 		var before := _state()
 		_check(app.enemies.apply_damage(2, 999), "final enemy damage succeeds")
 		var resolved_enemies: Array = app.enemies.get_enemies()
+		var reference := RandomNumberGenerator.new()
+		reference.seed = app.run_rng.seed
+		reference.state = app.run_rng.state
+		var expected_gold := reference.randi_range(10, 20)
 		# Real End Turn dispatch observes damage before allowing the enemy phase.
 		app.end_turn_button.pressed.emit()
 		await _frames()
@@ -154,8 +176,9 @@ func _victory() -> void:
 		_check(app.party.get_heroes() == before[0] and app.enemies.get_enemies() == resolved_enemies
 			and app.deck.draw_pile == before[3]
 			and app.deck.discard_pile == before[4] + before[2] and app.deck.energy == 0
-			and app.run_rng.state == before[7] and app.enemy_intents.get_intents() == before[8]
-			and app.enemy_attacks == before[9], "victory only ends hand; no queued heal, spend, draw, attack or intent advance")
+			and app.run_rng.state == reference.state and app.session_gold == expected_gold
+			and app.enemy_intents.get_intents() == before[8]
+			and app.enemy_attacks == before[9], "victory only ends hand and draws exact gold; no queued heal, spend, draw, attack or intent advance")
 		_check(support._pending.is_empty() and support._targets.is_empty(), "closure cancels pending target callbacks")
 		await _inert()
 		trace.append(_state())
@@ -227,6 +250,12 @@ func _unresolved_and_queued_support() -> void:
 			_check(not app.party.is_valid(), "unreadable roster genuinely invalid")
 		for position in range(1, 3):
 			_check(app.enemies.apply_damage(position, 999), "final enemy damage before live update")
+		var reference := RandomNumberGenerator.new()
+		reference.seed = app.run_rng.seed
+		reference.state = app.run_rng.state
+		var expected_gold := 0
+		if scenario in ["queued_brace", "live_update"]:
+			expected_gold = reference.randi_range(10, 20)
 		if scenario == "live_update":
 			# No explicit result callback or End Turn: normal mounted scene processing
 			# must observe final damage (the future attack-card update boundary).
@@ -237,6 +266,8 @@ func _unresolved_and_queued_support() -> void:
 		var before := _state()
 		await _frames()
 		_closed(CombatBattleResult.VICTORY if scenario in ["queued_brace", "live_update"] else CombatBattleResult.UNRESOLVED)
+		_check(app.session_gold == expected_gold and app.run_rng.state == reference.state,
+			"exact payout and RNG for live/deferred victory or invalid/tie: " + scenario)
 		_check(_state() == before and support._pending.is_empty(), "deferred support activation cannot spend after closure")
 		# Try all existing support service entry points against the closed live deck.
 		for card_id in support.SUPPORT_IDS:
@@ -255,11 +286,12 @@ func _run() -> void:
 		root.add_child(app)
 		await _frames()
 		_check(app.title_view.is_visible_in_tree() and app.battle_result == null
-			and app.result_label == null, "title has no result")
+			and app.result_label == null and app.victory_gold == null and app.session_gold == 0, "title has no result or payout")
 		app.starter_party_path = "user://missing_outcomes_party.json"
 		await _mouse(app.start_button)
 		_check(app.deck == null and app.party == null and app.enemies == null
 			and app.battle_result == null and app.title_view.is_visible_in_tree()
+			and app.victory_gold == null and app.session_gold == 0
 			and not app.start_button.disabled, "rejected Start remains actionable without partial result")
 		app.starter_party_path = app.STARTER_PARTY_PATH
 		# Pick a deterministic authored hand with both ally and immediate support inputs.
