@@ -24,7 +24,9 @@ func _state() -> Array:
 	return [app.party.get_heroes(), app.enemies.get_enemies(), app.deck.hand.duplicate(),
 		app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(), app.deck.energy,
 		app.deck.turn_active, app.run_rng.state, app.enemy_intents.get_intents(),
-		app.enemy_attacks.duplicate(true), app.session_gold, app.victory_gold.is_claimed()]
+		app.enemy_attacks.duplicate(true), app.session_gold, app.victory_gold.is_claimed(),
+		app.enemy_intents._turn_index, app.battle_result.get_outcome(),
+		app.deck.combat_state.energy, app.deck.combat_state.player_turn_active]
 
 
 func _click() -> InputEventMouseButton:
@@ -285,6 +287,75 @@ func _unresolved_and_queued_support() -> void:
 		await _return()
 
 
+func _status_turns() -> void:
+	var replay: Array = []
+	for session in range(2):
+		if not await _start():
+			return
+		var hero: Dictionary = app.party._heroes[0]
+		hero["statuses"] = {"bleed": 2, "weak": 2, "exposed": 1}
+		var expected: Array = app.party.get_heroes()
+		expected[0]["hp"] = 38
+		expected[0]["block"] = 0
+		expected[0]["statuses"] = {"bleed": 1, "weak": 1}
+		_check(hero["hp"] == 40 and hero["block"] == 6
+			and app.enemy_intents._turn_index == 0, "live status fixture has opening Block and current phase")
+		# Duplicate dispatches in one input burst must tick only once.
+		app.end_turn_button.pressed.emit()
+		app.end_turn_button.pressed.emit()
+		await _frames()
+		_check(app.party.get_heroes() == expected and hero == expected[0]
+			and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2)["block"] == 1
+			and app.deck.energy == 3 and app.deck.hand.size() == 5,
+			"mounted End Turn commits one hero tick and retains enemy/hand cadence")
+		var label := app.hero_panels[0].get_child(0) as Label
+		_check(label != null and label.is_visible_in_tree() and label.text.contains("HP: 38/40"),
+			"mounted hero label refreshes authoritative Bleed HP")
+		var trace: Array = [_state()]
+		_check(app.party.apply_damage(1, 999) and app.party.apply_damage(2, 999),
+			"live terminal fixture has exactly one living hero")
+		app.party._heroes[2]["hp"] = 2
+		app.party._heroes[2]["block"] = 9
+		app.party._heroes[2]["statuses"] = {"bleed": 2}
+		var before := _state()
+		await _mouse(app.end_turn_button)
+		_closed(CombatBattleResult.DEFEAT)
+		_check(app.party.is_defeated() and app.party.get_hero(3)["block"] == 9
+			and app.party.get_hero(3)["statuses"] == {"bleed": 1}
+			and app.enemies.get_enemies() == before[1] and app.deck.draw_pile == before[3]
+			and app.deck.discard_pile == before[4] + before[2] and app.deck.energy == 0
+			and app.run_rng.state == before[7] and app.enemy_intents.get_intents() == before[8]
+			and app.enemy_attacks == before[9] and app.enemy_intents._turn_index == before[12],
+			"mounted status defeat closes hand once before any enemy action, intent or new draw")
+		await _inert()
+		trace.append(_state())
+		if session == 0:
+			replay = trace
+		else:
+			_check(trace == replay, "title return/restart replays complete seeded status traces")
+		await _return()
+	for scenario in ["statuses", "position", "overflow", "stale"]:
+		if not await _start():
+			return
+		app.party._heroes[0]["statuses"] = {"bleed": 2}
+		match scenario:
+			"statuses": app.party._heroes[2]["statuses"] = {"bleed": -1}
+			"position": app.party._heroes[2]["position"] = 2
+			"overflow": app.enemies._enemies[1]["block"] = CombatEnemies.MAX_INT
+			"stale": app.enemy_attacks[0]["amount"] += 1
+		var before := _state()
+		app.end_turn_button.pressed.emit()
+		app.end_turn_button.pressed.emit()
+		_check(_state() == before and not app.end_turn_button.disabled,
+			"mounted rejected End Turn preserves complete state and remains actionable: " + scenario)
+		# Restore fixture before the normal scene update/render and Return.
+		app.party._heroes[2]["statuses"] = {}
+		app.party._heroes[2]["position"] = 3
+		app.enemies._enemies[1]["block"] = 0
+		app.enemy_attacks = app.enemy_intents.get_intents()
+		await _return()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -318,6 +389,7 @@ func _run() -> void:
 		_check(found, "deterministic support-hand seed found")
 		await _victory()
 		await _defeat()
+		await _status_turns()
 		await _unresolved_and_queued_support()
 		app.free()
 		await _frames()

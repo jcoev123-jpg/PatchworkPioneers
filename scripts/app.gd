@@ -17,6 +17,11 @@ const STARTER_ENEMIES_PATH := "res://data/enemies/starter_enemies.json"
 
 var title_label: Label
 var start_button: Button
+var route_button: Button
+var route_view: VBoxContainer
+var route_back_button: Button
+var route_buttons: Array[Button] = []
+var run_map: RunMap
 var title_view: VBoxContainer
 var battle_view: MarginContainer
 var hand_view: HBoxContainer
@@ -111,36 +116,134 @@ func _build_title() -> void:
 	start_button.add_theme_font_size_override("font_size", 28)
 	start_button.pressed.connect(func(): start_run_requested.emit())
 	box.add_child(start_button)
+	route_button = Button.new()
+	route_button.text = "Choose a route"
+	route_button.custom_minimum_size = Vector2(240, 56)
+	route_button.pressed.connect(_open_route)
+	box.add_child(route_button)
+	start_button.focus_next = start_button.get_path_to(route_button)
+	route_button.focus_next = route_button.get_path_to(start_button)
+	start_button.focus_previous = start_button.focus_next
+	route_button.focus_previous = route_button.focus_next
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
 
 
 func _start_run() -> void:
-	if deck != null:
+	if deck != null or run_map != null:
 		return
+	_start_battle()
+
+
+func _open_route() -> void:
+	if deck != null or run_map != null:
+		return
+	run_rng = RandomNumberGenerator.new()
+	run_rng.seed = run_seed
+	run_map = RunMap.new()
+	run_map.generate(run_rng)
+	title_view.hide()
+	route_view = VBoxContainer.new()
+	route_view.set_anchors_preset(Control.PRESET_CENTER)
+	route_view.add_theme_constant_override("separation", 16)
+	add_child(route_view)
+	var heading := Label.new()
+	heading.text = "Opening route - choose a Fight"
+	route_view.add_child(heading)
+	var actions: Array[Button] = []
+	for id in run_map.get_legal_choices():
+		var node := run_map.get_node(id)
+		var button := Button.new()
+		button.text = "%s: %s" % [id, node.type]
+		button.set_meta("route_id", id)
+		button.disabled = node.type != "Fight"
+		if button.disabled:
+			button.text += " (unavailable)"
+		button.custom_minimum_size = Vector2(340, 48)
+		button.pressed.connect(_choose_route.bind(id))
+		route_view.add_child(button)
+		route_buttons.append(button)
+		if not button.disabled:
+			actions.append(button)
+	route_back_button = Button.new()
+	route_back_button.text = "Back"
+	route_back_button.pressed.connect(_cancel_route)
+	route_view.add_child(route_back_button)
+	actions.append(route_back_button)
+	for index in range(actions.size()):
+		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
+	route_view.position -= route_view.get_combined_minimum_size() / 2.0
+	actions[0].grab_focus()
+
+
+func _choose_route(id: String) -> bool:
+	if deck != null or run_map == null or not is_instance_valid(route_view) \
+			or not route_view.is_visible_in_tree() or not run_map.get_route().is_empty():
+		return false
+	if not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Fight":
+		return false
+	if not _start_battle(run_rng):
+		return false
+	# Startup has succeeded; only now spend the route choice.
+	run_map.choose_node(id)
+	_clear_route_view()
+	return true
+
+
+func _clear_route_view() -> void:
+	if is_instance_valid(route_view):
+		remove_child(route_view)
+		route_view.queue_free()
+	route_view = null
+	route_back_button = null
+	route_buttons.clear()
+
+
+func _cancel_route() -> void:
+	if deck != null or route_view == null:
+		return
+	_clear_route_view()
+	run_map = null
+	run_rng = null
+	title_view.show()
+	route_button.grab_focus()
+
+
+func _start_battle(shared_rng: RandomNumberGenerator = null) -> bool:
 	var cards := _load_starter_deck()
 	if cards.is_empty():
 		push_warning("Starter deck is invalid or unreadable; run was not started")
-		return
+		return false
 	var selector := CombatEnemyIntents.new(_load_enemy_schedule())
 	var starting_enemies := CombatEnemies.new(_load_enemy_definitions())
 	if not selector.is_valid() or not starting_enemies.is_valid() or not _positions_align(selector, starting_enemies):
 		push_warning("Starter enemies or schedule are invalid; run was not started")
-		return
+		return false
 	var definitions := _load_party_definitions()
 	var starting_party := CombatParty.new(definitions)
 	if not starting_party.is_valid():
 		push_warning("Starter party definitions are invalid; run was not started")
-		return
-	var starting_rng := RandomNumberGenerator.new()
-	starting_rng.seed = run_seed
-	var starting_deck := CombatDeck.new(cards, starting_rng)
+		return false
+	var starting_rng := shared_rng
+	if starting_rng == null:
+		starting_rng = RandomNumberGenerator.new()
+		starting_rng.seed = run_seed
+	# An empty deck performs no shuffle. Validate the current binding contract first.
+	var starting_deck := CombatDeck.new([], starting_rng)
 	var starting_result := CombatBattleResult.new(starting_party, starting_enemies)
 	var starting_flow := CombatRoundFlow.new(starting_deck, starting_party,
 		starting_enemies, selector, starting_result)
-	if not starting_flow.begin_fight():
+	if not starting_flow._valid_bindings():
 		push_warning("Starter combat bindings are invalid; run was not started")
-		return
+		return false
+	var rng_before := starting_rng.state
+	starting_deck.draw_pile.assign(cards)
+	starting_deck._shuffle_draw_pile()
+	if not starting_flow.begin_fight():
+		starting_rng.state = rng_before
+		push_warning("Starter combat bindings are invalid; run was not started")
+		return false
 	enemy_intents = selector
 	enemy_attacks = enemy_intents.get_intents()
 	party = starting_party
@@ -158,6 +261,7 @@ func _start_run() -> void:
 	_refresh_party()
 	_refresh_enemy_roster()
 	end_turn_button.grab_focus()
+	return true
 
 
 ## Validate before allocating session objects; keep authored order for the seeded shuffle.
@@ -458,5 +562,7 @@ func _return_to_title() -> void:
 	enemies = null
 	deck = null
 	run_rng = null
+	run_map = null
+	_clear_route_view()
 	title_view.show()
 	start_button.grab_focus()

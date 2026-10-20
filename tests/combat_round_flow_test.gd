@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_additional_boundaries()
 	_test_seeded_replay()
+	_test_status_turns()
 	if failures.is_empty():
 		print("combat_round_flow_test: PASS (", checks, " checks)")
 	else:
@@ -388,6 +389,67 @@ func _test_seeded_replay() -> void:
 		+ "energy, intent indices, observed results, opening latch and RNG exactly")
 	_check(first[0][2] != first[2][2] and first[1][4] == 1
 		and first[2][4] == 2, "trace truly progresses through refills and announcements")
+
+
+func _test_status_turns() -> void:
+	var replay: Array = []
+	for session in range(2):
+		var fight := _fight(509)
+		var flow: CombatRoundFlow = fight["flow"]
+		var party: CombatParty = fight["party"]
+		_check(flow.begin_fight(), "status fixture begins real seeded fight")
+		var hero: Dictionary = party._heroes[0]
+		hero["statuses"] = {"bleed": 2, "weak": 2, "exposed": 1}
+		hero["fixture_metadata"] = {"kept": [1, 2]}
+		var expected := party.get_heroes()
+		expected[0]["hp"] = 38
+		expected[0]["block"] = 0
+		expected[0]["statuses"] = {"bleed": 1, "weak": 1}
+		_check(flow.end_turn() and party.get_heroes() == expected,
+			"Bleed bypasses opening Block, ages statuses and preserves every other hero field")
+		_check(hero == expected[0], "accepted tick updates existing authoritative dictionary reference")
+		var trace: Array = [_snapshot(fight)]
+		_check(party.apply_damage(1, 999) and party.apply_damage(2, 999),
+			"terminal status fixture downs first two heroes")
+		party._heroes[2]["hp"] = 2
+		party._heroes[2]["block"] = 9
+		party._heroes[2]["statuses"] = {"bleed": 2}
+		var before := _snapshot(fight)
+		_check(flow.end_turn() and flow.get_outcome() == CombatBattleResult.DEFEAT,
+			"final living hero Bleed freezes defeat")
+		var after := _snapshot(fight)
+		_check(party.get_hero(3)["hp"] == 0 and party.get_hero(3)["block"] == 9
+			and party.get_hero(3)["statuses"] == {"bleed": 1}
+			and after[1] == before[1] and after[3] == before[3] and after[4] == before[4]
+			and after[2][0] == before[2][0] and after[2][1] == []
+			and after[2][2] == before[2][2] + before[2][1]
+			and after[2][3] == 0 and not after[2][4] and after[2][7] == before[2][7],
+			"status defeat discards exactly once without enemy Block, reset, intent advance or RNG/draw")
+		_reject(fight, flow.end_turn, "repeated status-terminal end")
+		_conserved(fight)
+		trace.append(after)
+		if session == 0:
+			replay = trace
+		else:
+			_check(trace == replay, "seeded status success and terminal traces replay completely")
+	for scenario in ["status_type", "negative", "fraction", "unknown", "position", "duplicate_id", "missing_hp", "hp_type", "overflow", "bad_action"]:
+		var fight := _fight(509)
+		var flow: CombatRoundFlow = fight["flow"]
+		var party: CombatParty = fight["party"]
+		_check(flow.begin_fight(), "otherwise-valid rejection fight begins: " + scenario)
+		party._heroes[0]["statuses"] = {"bleed": 2}
+		match scenario:
+			"status_type": party._heroes[2]["statuses"] = []
+			"negative": party._heroes[2]["statuses"] = {"weak": -1}
+			"fraction": party._heroes[2]["statuses"] = {"bleed": 1.5}
+			"unknown": party._heroes[2]["statuses"] = {"poison": 1}
+			"position": party._heroes[2]["position"] = 2
+			"duplicate_id": party._heroes[2]["id"] = "warden"
+			"missing_hp": party._heroes[2].erase("hp")
+			"hp_type": party._heroes[2]["hp"] = "26"
+			"overflow": fight["enemies"]._enemies[1]["block"] = CombatEnemies.MAX_INT
+			"bad_action": fight["intents"]._definitions[1]["pattern"][0]["amount"] = -1
+		_reject(fight, flow.end_turn, "whole status/phase preflight: " + scenario)
 
 
 func _test_additional_boundaries() -> void:

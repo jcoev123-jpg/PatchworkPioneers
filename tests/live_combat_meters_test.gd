@@ -33,6 +33,14 @@ func _meters(app) -> Array[CombatActorMeter]:
 	return result
 
 
+func _incoming(app, position: int) -> String:
+	var meters := _meters(app)
+	if meters.size() < position or position < 1:
+		return ""
+	var label := meters[position - 1].get_node_or_null("Padding/Content/IncomingForecast") as Label
+	return label.text if label != null else ""
+
+
 func _visible(app) -> void:
 	var meters := _meters(app)
 	_check(meters.size() == 5, "exactly five real actor meters")
@@ -51,7 +59,17 @@ func _visible(app) -> void:
 			"exact HP text and bar %d" % index)
 		_check(meter.block_text.text == "Block: %d" % actor.block and meter.block_bar.value == actor.block
 			and meter.block_bar.max_value == maxi(1, maxi(actor.max_hp, actor.block)), "exact Block %d" % index)
-		for control in [meter, meter.actor_heading, meter.hp_text, meter.hp_bar, meter.block_text, meter.block_bar]:
+		var line := meter.get_node_or_null("Padding/Content/IncomingForecast") as Label
+		_check((line != null) == (index < 3), "forecast exists on hero meters only, never enemy meters")
+		if line != null:
+			_check(line.get_parent() == meter.get_node("Padding/Content")
+				and line.text != "" and line.focus_mode == Control.FOCUS_NONE,
+				"hero forecast is an inert line inside its existing meter")
+		var controls: Array[Control] = [meter, meter.actor_heading, meter.hp_text,
+			meter.hp_bar, meter.block_text, meter.block_bar]
+		if line != null:
+			controls.append(line)
+		for control in controls:
 			_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0,
 				"meter controls visibly mounted")
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "meter controls fit viewport")
@@ -64,7 +82,7 @@ func _visible(app) -> void:
 				_check(not meter.get_global_rect().intersects(other.get_global_rect()), "meter rectangles do not overlap")
 	for control in [app.hero_view, app.hand_view, app.end_turn_button, app.return_button]:
 		_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
-			"existing battle controls fit viewport")
+			"existing battle controls fit viewport: %s at %s" % [control.name, control.get_global_rect()])
 	_check(app.end_turn_button.focus_next == app.end_turn_button.get_path_to(app.return_button), "existing Tab cycle")
 
 
@@ -140,6 +158,10 @@ func _run() -> void:
 			_finish()
 			return
 		_visible(app)
+		_check(_incoming(app, 1) == "Incoming: 1 Block, 0 HP"
+			and _incoming(app, 2) == "Incoming: none"
+			and _incoming(app, 3) == "Incoming: none",
+			"authored opening Warden absorbs Ragling one, Guard Block contributes zero")
 		var initial := _state(app)
 		if session == 0:
 			replay = initial
@@ -164,14 +186,44 @@ func _run() -> void:
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 0
 			and app.enemies.get_enemy(2).block == 1, "actual turn absorbs attack and executes second enemy Block")
 		_visible(app)
+		_check(_incoming(app, 1) == "Incoming: none"
+			and _incoming(app, 2) == "Incoming: 0 Block, 1 HP",
+			"real End Turn reveals next Ragling intent at fixed Seamstress position")
 		# Direct valid model changes must refresh without app refresh callbacks.
 		_check(app.party.gain_block(2, 7) and app.party.apply_damage(2, 3), "valid hero Block absorption")
 		_check(app.party.apply_damage(3, 999) and app.enemies.gain_block(1, 8)
-			and app.enemies.apply_damage(1, 3) and app.enemies.apply_damage(2, 999), "valid HP/Block and zero HP mutations")
+			and app.enemies.apply_damage(1, 3) and app.enemies.apply_damage(2, 1), "valid HP/Block, enemy Block absorption and zero HP mutations")
 		var before := _state(app)
 		await _frames()
 		_visible(app)
+		_check(_incoming(app, 2) == "Incoming: 1 Block, 0 HP",
+			"real living attacker forecasts against changed Seamstress Block")
 		_check(_state(app) == before, "display refresh preserves every model, energy, piles, intents and RNG")
+		_check(app.party.apply_damage(2, 999) and app.party.is_downed(2),
+			"live downed target remains at position two")
+		await _frames()
+		_visible(app)
+		_check(_incoming(app, 2) == "DOWNED" and _incoming(app, 1) == "Incoming: none"
+			and _incoming(app, 3) == "DOWNED",
+			"downed target is not retargeted and never has a plausible incoming line")
+		_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
+			"real Ragling source is slain in retained position one")
+		before = _state(app)
+		await _frames()
+		_visible(app)
+		_check(_incoming(app, 1) == "Incoming: none" and _incoming(app, 2) == "DOWNED"
+			and _incoming(app, 3) == "DOWNED",
+			"slain attacker removes forecasts on surviving hero slots")
+		_check(_state(app) == before, "slain-attacker refresh is entirely read-only")
+		var valid_intents = app.enemy_intents
+		app.enemy_intents = null
+		presenter._sync_battle()
+		_check(_incoming(app, 1) == "Incoming: unavailable"
+			and _incoming(app, 3) == "DOWNED"
+			and _incoming(app, 2) == "DOWNED",
+			"missing intent interface fails closed without believable hero damage")
+		app.enemy_intents = valid_intents
+		presenter._sync_battle()
 		# Each source identity change tears down the old presentation, even with identical values.
 		for source in ["party", "enemies", "deck"]:
 			var old_ids: Array[int] = []
