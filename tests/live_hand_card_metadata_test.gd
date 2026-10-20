@@ -156,6 +156,46 @@ func _validate_display(observed: Dictionary) -> void:
 		_check(tooltip_text.contains(definition.owner.capitalize()), "tooltip states owner: " + card_id)
 		_check(tooltip_text.contains("Cost %d" % definition.cost) or tooltip_text.contains(str(definition.cost)), "tooltip states cost: " + card_id)
 		_check(tooltip_text.contains("BASE"), "tooltip states base effect: " + card_id)
+		# Exact per-required-ID tooltip assertions for the nine authored cards.
+		if card_id == "warden_strike":
+			_check(tooltip_text.contains("BASE deal 6 damage"), "exact strike damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1\u20132"), "exact strike target: " + card_id)
+		elif card_id == "warden_brace":
+			_check(tooltip_text.contains("BASE gain 7 Block"), "exact brace block: " + card_id)
+			_check(tooltip_text.contains("Self"), "exact brace target: " + card_id)
+		elif card_id == "warden_shield_bash":
+			_check(tooltip_text.contains("BASE deal 8 damage"), "exact bash damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1"), "exact bash target: " + card_id)
+		elif card_id == "seamstress_prick":
+			_check(tooltip_text.contains("BASE deal 3 damage"), "exact prick damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1\u20133"), "exact prick target: " + card_id)
+		elif card_id == "seamstress_mend":
+			_check(tooltip_text.contains("BASE heal 5 HP, capped at max HP"), "exact mend heal with cap: " + card_id)
+			_check(tooltip_text.contains("Choose one living ally"), "exact mend living ally: " + card_id)
+		elif card_id == "seamstress_stitch_up":
+			_check(tooltip_text.contains("BASE gain 5 Block"), "exact stitch block: " + card_id)
+			_check(tooltip_text.contains("Choose one living ally"), "exact stitch living ally: " + card_id)
+		elif card_id == "tinker_pop_shot":
+			_check(tooltip_text.contains("BASE deal 5 damage"), "exact pop shot damage: " + card_id)
+			_check(tooltip_text.contains("To one selected enemy 1\u20133"), "exact pop shot target: " + card_id)
+		elif card_id == "tinker_scrap_bomb":
+			_check(tooltip_text.contains("BASE deal 4 damage"), "exact scrap bomb damage: " + card_id)
+			_check(tooltip_text.contains("All enemies 1\u20133"), "exact scrap bomb all-enemies target: " + card_id)
+		elif card_id == "tinker_tune_up":
+			_check(tooltip_text.contains("BASE draw 1 card"), "exact tune draw: " + card_id)
+			_check(tooltip_text.contains("No target"), "exact tune no target: " + card_id)
+		# Support cards: exact instruction plus appended effect detail.
+		if card_id in SUPPORT_IDS:
+			_check(tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support exact instruction preserved: " + card_id)
+			_check(tooltip_text.contains("BASE"), "support tooltip contains base effect: " + card_id)
+			if card_id == "warden_brace":
+				_check(tooltip_text.contains("BASE gain 7 Block"), "support brace effect exact: " + card_id)
+			elif card_id == "tinker_tune_up":
+				_check(tooltip_text.contains("BASE draw 1 card"), "support tune effect exact: " + card_id)
+			elif card_id == "seamstress_mend":
+				_check(tooltip_text.contains("BASE heal 5 HP, capped at max HP"), "support mend effect exact: " + card_id)
+			elif card_id == "seamstress_stitch_up":
+				_check(tooltip_text.contains("BASE gain 5 Block"), "support stitch effect exact: " + card_id)
 		var geometry: Dictionary = metadata.get_geometry(panel)
 		if not geometry.is_empty():
 			if geometry["compact"]:
@@ -208,6 +248,13 @@ func _refresh_preserves_everything(observed: Dictionary) -> void:
 			and presenter._metadata._bindings[panel]["draw_count"] == old_draws[panel],
 			"unchanged facts and geometry never queue redundant redraws")
 		_check(panel.get_global_rect() == original_rects[panel], "decoration preserves original card hitbox")
+	# Byte-for-byte tooltip stability across repeated sync.
+	for panel in panels:
+		var original_tooltip: String = panel.tooltip_text
+		presenter._sync_battle()
+		await _frames()
+		_check(is_instance_valid(panel) and panel.tooltip_text == original_tooltip,
+			"repeated sync preserves tooltip byte-for-byte: " + (panel.get_child(0).text if panel.get_child_count() > 0 else "?"))
 	_validate_display(observed)
 
 
@@ -289,6 +336,13 @@ func _unknown_check() -> void:
 	await _frames()
 	_check(metadata._bindings.size() == 1 and metadata.get_facts(foreign) == unknown,
 		"unknown ID draws only an honest placeholder")
+	# Unknown tooltip must not invent any quantity.
+	var unknown_tooltip := foreign.tooltip_text
+	_check(unknown_tooltip == "Unknown card", "unknown tooltip is honest 'Unknown card': got '" + unknown_tooltip + "'")
+	_check(not unknown_tooltip.contains("damage") and not unknown_tooltip.contains("Block")
+		and not unknown_tooltip.contains("heal") and not unknown_tooltip.contains("draw")
+		and not unknown_tooltip.contains("energy") and not unknown_tooltip.contains("cost"),
+		"unknown tooltip invents no effect numbers")
 	_check(label.text == "unreleased_card" and foreign.get_child_count() == 1
 		and foreign.gui_input.get_connections().is_empty(),
 		"unknown panel leaves label and input inert")

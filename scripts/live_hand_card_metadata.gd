@@ -22,21 +22,43 @@ func base_effect_text(card_id: String) -> String:
 	var owner: String = definition.get("owner", "")
 	var cost: int = int(definition.get("cost", -1))
 	var effects: Dictionary = definition.get("effects", {})
+	# Derive complete target description from catalog target_kind and positions.
+	var target_kind: String = definition.get("target_kind", "")
+	var to_positions: Array = definition.get("to_positions", [])
+	var target_text := ""
+	match target_kind:
+		"enemy_single":
+			target_text = "To one selected enemy"
+			if not to_positions.is_empty():
+				target_text += " " + _positions(to_positions)
+		"enemy_all":
+			target_text = "All enemies"
+			if not to_positions.is_empty():
+				target_text += " " + _positions(to_positions)
+		"self":
+			target_text = "Self"
+		"ally_single":
+			target_text = "Choose one living ally"
+		"none":
+			target_text = "No target"
+		_:
+			target_text = "Unknown target"
+	# M01: leave Weak/Bleed for M02 live persistence.
+	var from_text: String = describe(card_id).get("from_text", "From ?")
 	var effect_parts: Array[String] = []
 	if effects.has("damage"):
 		effect_parts.append("BASE deal %d damage" % int(effects["damage"]))
 	if effects.has("block"):
 		effect_parts.append("BASE gain %d Block" % int(effects["block"]))
 	if effects.has("heal"):
-		effect_parts.append("BASE heal %d HP" % int(effects["heal"]))
+		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
 	if effects.has("draw"):
 		effect_parts.append("BASE draw %d card" % int(effects["draw"]))
-	# M01: leave Weak/Bleed for M02 live persistence.
-	var from_text: String = describe(card_id).get("from_text", "From ?")
-	var target_text: String = describe(card_id).get("target_text", "")
 	var parts: Array[String] = ["%s; %s; %d energy" % [display_name, owner.capitalize(), cost], from_text]
-	if not target_text.is_empty():
+	if target_text != "No target" and target_text != "Unknown target" and not target_text.is_empty():
 		parts.append(target_text)
+	elif target_text == "No target":
+		parts.append("No target")
 	if effect_parts.size() > 0:
 		parts.append("; ".join(effect_parts))
 	return "\n".join(parts)
