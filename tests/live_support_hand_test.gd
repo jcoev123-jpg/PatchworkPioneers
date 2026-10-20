@@ -6,6 +6,7 @@ var app
 var presenter
 var reference: CombatDeck
 var reference_party: CombatParty
+var reference_enemies: CombatEnemies
 var reference_rng: RandomNumberGenerator
 var service := CombatStarterSupportPlay.new()
 
@@ -63,10 +64,11 @@ func _snapshot(deck: CombatDeck, party: CombatParty, rng: RandomNumberGenerator)
 
 func _live() -> Array:
 	return [_snapshot(app.deck, app.party, app.run_rng), app.enemy_attacks.duplicate(true),
-		app.enemy_intents.get_intents(), app.intent_label.text, app.run_seed]
+		app.enemy_intents.get_intents(), app.intent_label.text, app.run_seed, app.enemies.get_enemies()]
 
 
 func _visible() -> void:
+	_check(app.enemies.get_enemies() == reference_enemies.get_enemies(), "all enemy HP and Block match independent reference")
 	if "--inject-wrong-energy" in OS.get_cmdline_user_args() and is_instance_valid(presenter.energy_label):
 		presenter.energy_label.text = "deliberately wrong"
 	var ids: Array[String] = []
@@ -118,6 +120,7 @@ func _start(seed_value: int) -> bool:
 	reference = CombatDeck.new(cards, reference_rng)
 	reference.start_turn()
 	reference_party = CombatParty.new(app._load_party_definitions())
+	reference_enemies = CombatEnemies.new(app._load_enemy_definitions())
 	CombatStartingBlock.new(reference_party).apply()
 	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
 		"no support action before activation; independent opening matches")
@@ -127,12 +130,22 @@ func _start(seed_value: int) -> bool:
 
 func _turn() -> void:
 	_check(reference.end_turn(), "reference ends turn")
-	_check(CombatEnemyAttacks.new().execute_attacks(reference_party, app.enemy_attacks).ok, "reference enemy phase")
+	_reference_enemy_phase()
 	_check(reference.start_turn() and reference_party.start_player_turn(), "reference starts turn")
 	await _mouse(app.end_turn_button)
 	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
 		"actual End Turn matches reference, including enemy damage and RNG")
 	_visible()
+
+
+func _reference_enemy_phase() -> void:
+	for action in app.enemy_attacks:
+		if reference_enemies.is_slain(action.enemy_position):
+			continue
+		if action.type == "attack":
+			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [action]).ok, "reference enemy attack")
+		else:
+			_check(CombatEnemyBlocks.execute_blocks(reference_enemies, [action]).ok, "reference enemy Block")
 
 
 func _play_card(id: String, keyboard: bool) -> void:
@@ -365,8 +378,7 @@ func _stale_restart(seed_value: int) -> void:
 		panel.grab_focus()
 		presenter._bindings[panel].call(_key(KEY_ENTER))
 		_check(reference.end_turn(), "queued-turn reference ends")
-		_check(CombatEnemyAttacks.new().execute_attacks(reference_party, app.enemy_attacks).ok,
-			"queued-turn reference enemy phase")
+		_reference_enemy_phase()
 		_check(reference.start_turn() and reference_party.start_player_turn(), "queued-turn reference starts")
 		app.end_turn_button.pressed.emit()
 		await _frames()

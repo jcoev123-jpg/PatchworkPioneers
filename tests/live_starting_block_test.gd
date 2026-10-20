@@ -21,7 +21,8 @@ func _deck(deck: CombatDeck) -> Array:
 
 func _snapshot(app) -> Array:
 	return [app.party.get_heroes(), _deck(app.deck), app.run_rng.state,
-		app.enemy_attacks.duplicate(true), app.enemy_intents.get_intents(), app.intent_label.text]
+		app.enemy_attacks.duplicate(true), app.enemy_intents.get_intents(), app.intent_label.text,
+		app.enemies.get_enemies()]
 
 
 func _visible(app, hp: Array, block: Array, target: int) -> void:
@@ -43,10 +44,11 @@ func _visible(app, hp: Array, block: Array, target: int) -> void:
 	_check(is_instance_valid(app.intent_label), "mounted intent exists")
 	if is_instance_valid(app.intent_label):
 		_check(app.intent_label.is_visible_in_tree() and app.battle_view.is_ancestor_of(app.intent_label), "intent mounted and visible")
-		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage" % [
+		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" % [
 			target, "Warden" if target == 1 else "Seamstress"], "authored alternating intent text")
 	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": 1,
-		"target_position": target}], "authored attack schedule unchanged")
+		"target_position": target}, {"enemy_position": 2, "type": "block", "amount": 1}],
+		"authored attack cycle and Guard Block schedule")
 
 
 func _ready_session(app) -> bool:
@@ -159,6 +161,7 @@ func _run() -> void:
 		for turn in range(3):
 			_check(app.deck.try_spend_energy(2) and reference.try_spend_energy(2), "spend shared energy before real End Turn")
 			app.end_turn_button.pressed.emit()
+			await process_frame
 			_check(reference.end_turn() and reference.start_turn(), "reference advances")
 			_visible(app, [40 if turn < 2 else 39, 30 if turn == 0 else 29, 26], [0, 0, 0], (turn + 1) % 2 + 1)
 			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state

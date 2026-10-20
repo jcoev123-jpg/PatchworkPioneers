@@ -1,7 +1,5 @@
 extends Node
-## Observes the live battle; owns presentation and roster lifetime, never combat actions.
-
-@export_file("*.json") var data_path := "res://data/enemies/starter_enemies.json"
+## Observes the app's authoritative roster; owns only presentation, never combat actions.
 
 var enemies: CombatEnemies
 var panel: PanelContainer
@@ -29,11 +27,7 @@ func _sync_battle() -> void:
 	_clear()
 	_battle = app.battle_view
 	_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
-	# Mark this battle observed even on invalid data: no repeated parsing or partial UI.
-	var candidate := CombatEnemies.new(_load_definitions())
-	if not candidate.is_valid():
-		return
-	enemies = candidate
+	enemies = app.enemies
 	panel = PanelContainer.new()
 	panel.name = "EnemyRosterPanel"
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -51,36 +45,6 @@ func _sync_battle() -> void:
 	column.add_child(panel)
 	column.move_child(panel, app.hero_view.get_index() + 1)
 	_refresh()
-
-
-func _load_definitions() -> Array:
-	if not FileAccess.file_exists(data_path):
-		return []
-	var file := FileAccess.open(data_path, FileAccess.READ)
-	if file == null:
-		return []
-	var parser := JSON.new()
-	if parser.parse(file.get_as_text()) != OK:
-		return []
-	var source = parser.data
-	if not source is Array:
-		return []
-	for definition in source:
-		if not definition is Dictionary:
-			return []
-		var hp = definition.get("max_hp")
-		if not (hp is int or hp is float):
-			return []
-		if not is_finite(float(hp)) or hp <= 0 or hp >= float(CombatEnemies.MAX_INT):
-			return []
-		if floor(float(hp)) != float(hp):
-			return []
-		definition["max_hp"] = int(hp)
-		for field in ["name", "art_path"]:
-			if not definition.get(field) is String or definition[field].is_empty():
-				return []
-	# CombatEnemies validates every ID and rejects duplicates atomically.
-	return source
 
 
 func _refresh() -> void:

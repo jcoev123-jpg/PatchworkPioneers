@@ -80,6 +80,7 @@ func _run() -> void:
 		_check(deck.energy == 3 and state.energy == 3 and deck.turn_active,
 			"End Turn button refreshes shared energy immediately")
 		_check(_cards(deck) == source, "End Turn button conserves all card copies")
+		await process_frame
 	# Observe the cleared phase directly on the same live object; the button otherwise
 	# completes end/start synchronously, which the repeated turns above exercise.
 	_check(deck.end_turn() and deck.energy == 0 and not state.player_turn_active,

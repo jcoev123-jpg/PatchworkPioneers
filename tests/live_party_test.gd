@@ -172,6 +172,7 @@ func _run() -> void:
 			_check(not app.deck.try_spend_energy(2) and not app.deck.start_turn(), "no-spend and duplicate turn rejected")
 			_check(party.gain_block(1, 3) and party.gain_block(2, 4), "Block added to cycling targets before real End Turn")
 			app.end_turn_button.pressed.emit()
+			await process_frame
 			_check(reference.end_turn() and reference.start_turn(), "reference advances")
 			_check(app.party == party, "End Turn retains party instance")
 			for position in range(1, 4):

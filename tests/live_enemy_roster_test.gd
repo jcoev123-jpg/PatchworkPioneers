@@ -19,7 +19,7 @@ func _check(condition: bool, message: String) -> void:
 func _snapshot(app) -> Array:
 	return [app.party.get_heroes(), app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
 		app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
-		app.run_rng.state, app.enemy_intents.get_intents()]
+		app.run_rng.state, app.enemy_intents.get_intents(), app.enemies.get_enemies()]
 
 
 func _visible(app, presenter) -> void:
@@ -28,6 +28,13 @@ func _visible(app, presenter) -> void:
 	if presenter.enemies == null or not is_instance_valid(presenter.panel):
 		return
 	_check(presenter.enemies.is_valid(), "roster valid")
+	_check(presenter.enemies == app.enemies, "app and presenter share the identical authoritative model")
+	var guard: Dictionary = app.enemies.get_enemy(2)
+	_check(guard.get("id") == "ragling_guard" and guard.get("name") == "Guard Ragling"
+		and guard.get("hp") == 12 and guard.get("max_hp") == 12 and guard.get("block") == 0,
+		"authored position-two Guard Ragling starts at 12 HP and zero Block")
+	_check(app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage; Enemy 2: 1 Block",
+		"real start announces both authored intents")
 	var ragling := presenter.enemies.get_enemy(1) as Dictionary
 	_check(ragling.get("id") == "ragling" and ragling.get("position") == 1 and
 		ragling.get("hp") == 12 and ragling.get("max_hp") == 12 and ragling.get("block") == 0,
@@ -44,6 +51,11 @@ func _visible(app, presenter) -> void:
 		var rect: Rect2 = labels[0].get_global_rect()
 		_check(rect.size.x > 0 and rect.size.y > 0 and Rect2(0, 0, 1280, 720).encloses(rect),
 			"enemy label fits target viewport")
+	_check(labels.size() >= 2, "Guard label exists")
+	if labels.size() >= 2:
+		_check(labels[1].is_visible_in_tree() and labels[1].text == "Enemy 2 - Guard Ragling\nHP: 12/12 | Block: 0",
+			"visible Guard placeholder identifies exact HP and Block")
+		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard fits target viewport")
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -97,7 +109,6 @@ func _run() -> void:
 			return
 		var roster_ref: WeakRef = weakref(presenter.enemies)
 		var panel_id: int = presenter.panel.get_instance_id() if is_instance_valid(presenter.panel) else 0
-		var initial: Array = presenter.enemies.get_enemies() if presenter.enemies != null else []
 		var before := _snapshot(app)
 		app.start_button.pressed.emit()
 		await process_frame
@@ -109,8 +120,11 @@ func _run() -> void:
 		var trace: Array = []
 		for turn in range(12):
 			_check(_snapshot(app) == _snapshot(reference), "presenter leaves hero/deck/energy/RNG trace intact")
-			_check(presenter.enemies != null and presenter.enemies.get_enemies() == initial,
-				"roster display never deals damage or fabricates outcomes")
+			_check(presenter.enemies == app.enemies and app.enemies.get_enemies() == reference.enemies.get_enemies(),
+				"observed roster matches battle without presenter")
+			_check(app.enemies.get_enemy(1).hp == 12 and app.enemies.get_enemy(2).hp == 12
+				and app.enemies.get_enemy(1).block == 0 and app.enemies.get_enemy(2).block == turn,
+				"only Guard's announced Block changes the live roster")
 			trace.append([_snapshot(app), presenter.enemies.get_enemies() if presenter.enemies != null else []])
 			_check(app.deck.try_spend_energy(2) and reference.deck.try_spend_energy(2), "real shared energy spend")
 			app.end_turn_button.pressed.emit()
@@ -133,7 +147,7 @@ func _run() -> void:
 	file.store_string(JSON.stringify([{"id": "first", "name": "First", "max_hp": 3, "art_path": "unused"},
 		{"id": "second", "name": "Second", "max_hp": 7, "art_path": "unused"}]))
 	file.close()
-	presenter.data_path = FIXTURE
+	app.starter_enemies_path = FIXTURE
 	app.start_button.pressed.emit()
 	await process_frame
 	_check(presenter.enemies != null and presenter.enemies.get_enemy(2).get("id") == "second",
@@ -178,22 +192,29 @@ func _invalid_sources(app, reference, presenter) -> void:
 				continue
 			file.store_string(fixtures[index - 1])
 			file.close()
-		presenter.data_path = paths[index]
-		app.start_button.pressed.emit()
+		app.starter_enemies_path = paths[index]
 		reference.start_button.pressed.emit()
-		await process_frame
-		_check(app.deck != null and app.party != null and app.run_rng != null, "bad roster leaves real battle valid")
-		_check(presenter.enemies == null and presenter.panel == null and
-			app.battle_view.find_children("EnemyRosterPanel", "PanelContainer", true, false).is_empty(),
-			"invalid complete source creates no partial roster or panel")
-		_check(_snapshot(app) == _snapshot(reference), "invalid input changes no hero, deck, energy or RNG state")
-		presenter.data_path = SOURCE
+		app.start_button.grab_focus()
 		app.start_button.pressed.emit()
 		await process_frame
-		_check(presenter.enemies == null and presenter.panel == null, "failed battle is observed only once")
-		app.end_turn_button.pressed.emit()
-		reference.end_turn_button.pressed.emit()
-		_check(_snapshot(app) == _snapshot(reference), "invalid roster cannot mutate End Turn gameplay")
+		_check(app.deck == null and app.party == null and app.run_rng == null and app.enemies == null,
+			"bad roster rejects every run object atomically")
+		_check(presenter.enemies == null and presenter.panel == null and app.battle_view == null,
+			"invalid complete source creates no partial roster or panel")
+		_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "invalid roster retains actionable title")
+		app._end_turn()
+		_check(app.deck == null and app.party == null and app.enemies == null, "invalid roster End Turn remains inert")
+		# Correcting the source permits a fresh start, with no leaked state from rejection.
+		app.starter_enemies_path = SOURCE
+		app.start_button.pressed.emit()
+		await process_frame
+		_check(app.deck != null and app.enemies != null and presenter.enemies == app.enemies,
+			"corrected source starts complete shared model")
+		if app.deck != null and app.enemies != null:
+			_check(_snapshot(app) == _snapshot(reference), "rejected source cannot leak hero, enemy, deck, energy or RNG state")
+			app.end_turn_button.pressed.emit()
+			reference.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == _snapshot(reference), "corrected run End Turn matches clean reference")
 		reference.return_button.pressed.emit()
 		app.return_button.pressed.emit()
 		_check(presenter.enemies == null and presenter.panel == null, "invalid battle teardown inert")

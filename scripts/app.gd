@@ -7,10 +7,12 @@ const TITLE := "Patchwork Pioneers"
 const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const STARTER_PARTY_PATH := "res://data/heroes/starter_party.json"
 const STARTER_ATTACKS_PATH := "res://data/encounters/starter_attacks.json"
+const STARTER_ENEMIES_PATH := "res://data/enemies/starter_enemies.json"
 
 @export var run_seed: int = 42
 @export_file("*.json") var starter_party_path: String = STARTER_PARTY_PATH
 @export_file("*.json") var starter_attacks_path: String = STARTER_ATTACKS_PATH
+@export_file("*.json") var starter_enemies_path: String = STARTER_ENEMIES_PATH
 
 var title_label: Label
 var start_button: Button
@@ -23,6 +25,7 @@ var return_button: Button
 var deck: CombatDeck
 var run_rng: RandomNumberGenerator
 var party: CombatParty
+var enemies: CombatEnemies
 var hero_view: HBoxContainer
 var hero_panels: Array[PanelContainer] = []
 var enemy_attacks: Array = []
@@ -81,8 +84,9 @@ func _start_run() -> void:
 			return
 		cards.append(card)
 	var selector := CombatEnemyIntents.new(_load_enemy_schedule())
-	if not selector.is_valid():
-		push_warning("Starter attack schedule is invalid; run was not started")
+	var starting_enemies := CombatEnemies.new(_load_enemy_definitions())
+	if not selector.is_valid() or not starting_enemies.is_valid() or not _positions_align(selector, starting_enemies):
+		push_warning("Starter enemies or schedule are invalid; run was not started")
 		return
 	var definitions := _load_party_definitions()
 	var starting_party := CombatParty.new(definitions)
@@ -93,6 +97,7 @@ func _start_run() -> void:
 	enemy_intents = selector
 	enemy_attacks = enemy_intents.get_intents()
 	party = starting_party
+	enemies = starting_enemies
 	run_rng = RandomNumberGenerator.new()
 	run_rng.seed = run_seed
 	deck = CombatDeck.new(cards, run_rng)
@@ -101,6 +106,7 @@ func _start_run() -> void:
 	_build_battle()
 	_refresh_hand()
 	_refresh_party()
+	_refresh_enemy_roster()
 	end_turn_button.grab_focus()
 
 
@@ -131,6 +137,34 @@ func _load_party_definitions() -> Array:
 	return source
 
 
+func _load_enemy_definitions() -> Array:
+	if not FileAccess.file_exists(starter_enemies_path):
+		return []
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(starter_enemies_path)) != OK:
+		return []
+	var source = parser.data
+	if not source is Array:
+		return []
+	for definition in source:
+		if not definition is Dictionary or not _normalize_schedule_number(definition, "max_hp"):
+			return []
+		for field in ["name", "art_path"]:
+			if not definition.get(field) is String or definition[field].is_empty():
+				return []
+	return source
+
+
+func _positions_align(selector: CombatEnemyIntents, roster: CombatEnemies) -> bool:
+	var intents := selector.get_intents()
+	if intents.size() != roster.get_enemies().size():
+		return false
+	for index in range(intents.size()):
+		if intents[index].enemy_position != index + 1:
+			return false
+	return true
+
+
 func _load_enemy_schedule() -> Array:
 	if not FileAccess.file_exists(starter_attacks_path):
 		return []
@@ -147,13 +181,14 @@ func _load_enemy_schedule() -> Array:
 		if not pattern is Array or pattern.is_empty():
 			return []
 		for action in pattern:
-			# The live executor currently supports attacks only, including future steps.
 			if not action is Dictionary:
 				return []
 			var kind = action.get("type")
-			if not kind is String or kind != "attack":
+			if not kind is String or kind not in ["attack", "block"]:
 				return []
-			if not _normalize_schedule_number(action, "amount") or not _normalize_schedule_number(action, "target_position"):
+			if not _normalize_schedule_number(action, "amount"):
+				return []
+			if kind == "attack" and not _normalize_schedule_number(action, "target_position"):
 				return []
 	# CombatEnemyIntents validates exact keys, ranges and duplicate source positions.
 	return source
@@ -257,20 +292,43 @@ func _refresh_party() -> void:
 func _refresh_intents() -> void:
 	var announcements: PackedStringArray = []
 	for attack in enemy_attacks:
-		announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
-			attack["enemy_position"], attack["target_position"],
-			party.get_hero(attack["target_position"])["name"], attack["amount"]])
+		if enemies.is_slain(attack.enemy_position):
+			continue
+		if attack.type == "block":
+			announcements.append("Enemy %d: %d Block" % [attack.enemy_position, attack.amount])
+		else:
+			announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
+				attack["enemy_position"], attack["target_position"],
+				party.get_hero(attack["target_position"])["name"], attack["amount"]])
 	intent_label.text = "Intent: " + "; ".join(announcements)
 
 
 func _end_turn(button: Button = null) -> void:
 	if button == null or button != end_turn_button or button.disabled or not button.is_visible_in_tree():
 		return
-	if deck == null or party == null or not deck.end_turn():
+	if deck == null or party == null or enemies == null or enemy_intents == null:
 		return
-	var result := CombatEnemyAttacks.new().execute_attacks(party, enemy_attacks)
-	if not result["ok"]:
+	# Reject stale or corrupted announcements, including overflow, before ending the hand.
+	if not party.is_valid() or not enemies.is_valid() or enemy_attacks != enemy_intents.get_intents():
 		return
+	for action in enemy_attacks:
+		var enemy := enemies.get_enemy(action.enemy_position)
+		if enemy.is_empty():
+			return
+		if action.type == "block" and enemy.hp > 0 and action.amount > CombatEnemies.MAX_INT - enemy.block:
+			return
+	if not deck.end_turn():
+		return
+	# Accept one activation per input dispatch, including a burst of duplicate presses.
+	button.disabled = true
+	# The selector publishes one validated action per source in ascending position.
+	for action in enemy_attacks:
+		if enemies.is_slain(action.enemy_position):
+			continue
+		if action.type == "attack":
+			CombatEnemyAttacks.new().execute_attacks(party, [action])
+		else:
+			CombatEnemyBlocks.execute_blocks(enemies, [action])
 	if not deck.start_turn():
 		return
 	party.start_player_turn()
@@ -279,6 +337,15 @@ func _end_turn(button: Button = null) -> void:
 	_refresh_intents()
 	_refresh_hand()
 	_refresh_party()
+	_refresh_enemy_roster()
+	button.set_deferred("disabled", false)
+
+
+func _refresh_enemy_roster() -> void:
+	var presenter := get_node_or_null("LiveEnemyRoster")
+	if presenter != null:
+		presenter._sync_battle()
+		presenter._refresh()
 
 
 func _return_to_title() -> void:
@@ -297,6 +364,7 @@ func _return_to_title() -> void:
 	enemy_attacks.clear()
 	enemy_intents = null
 	party = null
+	enemies = null
 	deck = null
 	run_rng = null
 	title_view.show()

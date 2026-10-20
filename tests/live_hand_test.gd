@@ -125,6 +125,7 @@ func _run() -> void:
 			if turn < 11:
 				_check(reference.end_turn() and reference.start_turn(), "reference turn advances")
 				app.end_turn_button.pressed.emit()
+				await process_frame
 		if session == 0:
 			first_trace = trace
 		else:
