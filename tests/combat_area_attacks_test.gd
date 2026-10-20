@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_fail_closed()
 	_test_duplicate_hand()
 	_test_seeded_replay()
+	_test_reusable_operation()
 	if failures.is_empty():
 		print("combat_area_attacks_test: PASS (", checks, " checks)")
 	else:
@@ -28,6 +29,54 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _test_reusable_operation() -> void:
+	for count in [1, 3]:
+		var hp: Array[int] = []
+		hp.assign([20] if count == 1 else [20, 20, 20])
+		var enemies := _enemies(hp)
+		var deck := _starter_deck()
+		var party := _party()
+		_check(enemies.gain_block(1, 3), "operation fixture Block")
+		var before := _snapshot(deck, party, enemies)
+		var expected := before.duplicate(true)
+		var hits: Array = []
+		for position in range(1, count + 1):
+			var damage := 7 if position == 1 else 5
+			var absorbed := 3 if position == 1 else 0
+			hits.append({"position": position, "damage": damage, "block_absorbed": absorbed,
+				"hp_loss": damage - absorbed, "statuses": {}})
+			expected.enemies[position - 1].hp -= damage - absorbed
+			expected.enemies[position - 1].block -= absorbed
+		var attacker := {"weak": 1}
+		var defenders := {1: {"exposed": 1}}
+		_check(resolver.can_resolve(enemies, 7, attacker, defenders), "area preflight accepts valid batch")
+		_check(_snapshot(deck, party, enemies) == before, "preflight is read-only")
+		_check(resolver.resolve(enemies, 7, attacker, defenders) == {"ok": true, "hits": hits},
+			"operation returns exact floor-once ordered hits")
+		_check(_snapshot(deck, party, enemies) == expected, "operation changes damage only; no spending or discard")
+		_check(attacker == {"weak": 1} and defenders == {1: {"exposed": 1}}, "operation preserves supplied maps")
+	var enemies := _enemies([20, 20, 20])
+	_check(enemies.apply_damage(2, 20), "operation slays original middle")
+	var before := enemies.get_enemies()
+	var result := resolver.resolve(enemies, 4)
+	_check(result == {"ok": true, "hits": [
+		{"position": 1, "damage": 4, "block_absorbed": 0, "hp_loss": 4, "statuses": {}},
+		{"position": 3, "damage": 4, "block_absorbed": 0, "hp_loss": 4, "statuses": {}}]},
+		"operation retains stable slots around slain middle")
+	_check(enemies.get_enemy(2) == before[1], "slain middle untouched")
+	for malformed in [{3: {"exposed": -1}}, {3: []}, {4: {}}, {"3": {}}]:
+		before = enemies.get_enemies()
+		_check(not resolver.can_resolve(enemies, 7, {}, malformed), "bad last map fails preflight")
+		_check(resolver.resolve(enemies, 7, {}, malformed) == {"ok": false, "hits": []}
+			and enemies.get_enemies() == before, "bad last map cannot partially damage")
+	for field in ["position", "hp", "block", "statuses"]:
+		var bad := _enemies([20, 20, 20])
+		bad._enemies[2][field] = {"exposed": -1} if field == "statuses" else -1
+		before = bad.get_enemies()
+		_check(resolver.resolve(bad, 7) == {"ok": false, "hits": []}
+			and bad.get_enemies() == before, "malformed late roster rejects atomically: " + field)
 
 
 func _rng(seed_value: int = 42) -> RandomNumberGenerator:

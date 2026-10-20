@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_rejection_and_atomicity()
 	_test_seeded_replay()
 	_test_persisted_statuses()
+	_test_area_bridge_atomicity()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -27,6 +28,29 @@ func _check(condition: bool, label: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(label)
+
+
+func _test_area_bridge_atomicity() -> void:
+	var service := CombatAttackCards.new()
+	var deck := _deck(["tinker_pop_shot", "tinker_scrap_bomb"])
+	var party := _party()
+	var enemies := _enemies([30, 30, 30])
+	_accept(service, deck, party, enemies, "tinker_pop_shot", 1,
+		[_hit(1, 8, 0, 8)], 1, "Pop Shot consumes bonus before area bridge")
+	_check(enemies.gain_block(1, 2) and enemies.gain_block(3, 8), "second attack area Block fixture")
+	_accept(service, deck, party, enemies, "tinker_scrap_bomb", 0,
+		[_hit(1, 4, 2, 2), _hit(2, 3, 0, 3), _hit(3, 4, 4, 0)], 2,
+		"second Tinker attack area floors per slot without bonus", {"weak": 1},
+		{1: {"exposed": 1}, 3: {"exposed": 1}})
+	for field in ["position", "hp", "block", "statuses"]:
+		var bad := _enemies()
+		bad._enemies[2][field] = {"weak": -1} if field == "statuses" else -1
+		_reject(CombatAttackCards.new(), _deck(["tinker_scrap_bomb"]), _party(), bad,
+			"tinker_scrap_bomb", 0, "late malformed roster " + field)
+	var absent := _deck(["tinker_scrap_bomb"])
+	_check(absent.discard_played("tinker_scrap_bomb"), "remove real held Bomb")
+	_reject(CombatAttackCards.new(), absent, _party(), _enemies(), "tinker_scrap_bomb", 0,
+		"Bomb absent despite full energy")
 
 
 func _party(order: Array = ["warden", "seamstress", "tinker"]) -> CombatParty:

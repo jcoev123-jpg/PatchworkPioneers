@@ -10,6 +10,7 @@ const ATTACK_IDS := [
 
 var _targeting := CombatAttackTargeting.new()
 var _damage := CombatStatusAttacks.new()
+var _area := CombatAreaAttacks.new()
 var _on_hit := CombatOnHitStatuses.new()
 var _tinker := CombatTinkerFirstAttack.new()
 var _basic := CombatBasicAttacks.new()
@@ -30,7 +31,9 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
 	if deck == null or party == null or enemies == null:
 		return _failure()
-	if not ATTACK_IDS.has(card_id) or enemies.is_victorious():
+	if not ATTACK_IDS.has(card_id) or not enemies.can_apply_statuses({}):
+		return _failure()
+	if enemies.is_victorious():
 		return _failure()
 
 	var definition: Dictionary = StarterCards.new().get_definition(card_id)
@@ -85,6 +88,9 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	var bonus := _tinker.bonus_for_attack(card_id)
 	var attack_damage: int = damage_value + bonus
+	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID and not _area.can_resolve(
+			enemies, attack_damage, attacker_statuses, enemy_statuses_by_position):
+		return _failure()
 	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
 		var final_damage := _statuses.adjusted_attack_damage(attack_damage,
 			attacker_statuses, enemy_statuses_by_position.get(target_position, {}))
@@ -106,18 +112,24 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not deck.try_spend_energy(cost_value):
 		return _failure()
 	var hits: Array[Dictionary] = []
-	for position in positions:
-		var event := _damage.resolve_vs_enemy(enemies, position, attack_damage,
-			attacker_statuses, enemy_statuses_by_position.get(position, {}))
-		# The validated living recipient guarantees this bridge succeeds.
-		var statuses := _on_hit.status_for_confirmed_hit(card_id, event["ok"])
-		hits.append({
-			"position": position,
-			"damage": event["damage"],
-			"block_absorbed": event["block_absorbed"],
-			"hp_loss": event["hp_loss"],
-			"statuses": statuses
-		})
+	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID:
+		hits.assign(_area.resolve(enemies, attack_damage,
+			attacker_statuses, enemy_statuses_by_position)["hits"])
+		for hit in hits:
+			hit["statuses"] = applications[hit["position"]]
+	else:
+		for position in positions:
+			var event := _damage.resolve_vs_enemy(enemies, position, attack_damage,
+				attacker_statuses, enemy_statuses_by_position.get(position, {}))
+			# The validated living recipient guarantees this bridge succeeds.
+			var statuses := _on_hit.status_for_confirmed_hit(card_id, event["ok"])
+			hits.append({
+				"position": position,
+				"damage": event["damage"],
+				"block_absorbed": event["block_absorbed"],
+				"hp_loss": event["hp_loss"],
+				"statuses": statuses
+			})
 	deck.discard_played(card_id)
 	enemies.apply_statuses(applications)
 	_tinker.record_successful_attack(card_id)

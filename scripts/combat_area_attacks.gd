@@ -1,9 +1,57 @@
 class_name CombatAreaAttacks
 extends RefCounted
 ## Resolves the authored, target-free Scrap Bomb against the real shared combat state.
-## Live hand/UI routing is intentionally handled by a separate battle integration.
+## Live charging and on-hit effects belong to CombatAttackCards; the reusable
+## area operation below owns only preflight and ordered status-adjusted damage.
 
 const SCRAP_BOMB_ID := "tinker_scrap_bomb"
+
+
+func can_resolve(enemies: CombatEnemies, base_damage: int,
+		attacker_statuses: Dictionary = {}, enemy_statuses_by_position: Dictionary = {}) -> bool:
+	if enemies == null or base_damage < 0:
+		return false
+	# This validates every original slot, including slain slots and stored statuses.
+	if not enemies.can_apply_statuses({}) or enemies.is_victorious():
+		return false
+	if not _valid_statuses(attacker_statuses):
+		return false
+	for position in enemy_statuses_by_position:
+		if not position is int or enemies.get_enemy(position).is_empty():
+			return false
+		var statuses: Variant = enemy_statuses_by_position[position]
+		if not statuses is Dictionary or not _valid_statuses(statuses):
+			return false
+	return true
+
+
+## No deck, spending, discard, status application or first-attack latch here.
+## Call can_resolve before spending; revalidate here for standalone atomic use.
+func resolve(enemies: CombatEnemies, base_damage: int,
+		attacker_statuses: Dictionary = {}, enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
+	if not can_resolve(enemies, base_damage, attacker_statuses, enemy_statuses_by_position):
+		return {"ok": false, "hits": []}
+	var damage := CombatStatusAttacks.new()
+	var hits: Array[Dictionary] = []
+	for enemy in enemies.get_enemies():
+		var position: int = enemy["position"]
+		if enemies.is_slain(position):
+			continue
+		var event := damage.resolve_vs_enemy(enemies, position, base_damage,
+			attacker_statuses, enemy_statuses_by_position.get(position, {}))
+		hits.append({"position": position, "damage": event["damage"],
+			"block_absorbed": event["block_absorbed"], "hp_loss": event["hp_loss"],
+			"statuses": {}})
+	return {"ok": true, "hits": hits}
+
+
+func _valid_statuses(statuses: Dictionary) -> bool:
+	for name in statuses:
+		if not name is String or name not in ["bleed", "weak", "exposed"]:
+			return false
+		if not statuses[name] is int or statuses[name] < 0:
+			return false
+	return true
 
 
 func play_scrap_bomb(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> bool:
