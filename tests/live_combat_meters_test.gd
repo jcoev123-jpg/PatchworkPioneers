@@ -22,7 +22,8 @@ func _frames() -> void:
 func _state(app) -> Array:
 	return [app.party.get_heroes(), app.enemies.get_enemies(), app.deck.hand.duplicate(),
 		app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(), app.deck.energy,
-		app.deck.turn_active, app.run_rng.state, app.enemy_intents.get_intents(), app.enemy_attacks.duplicate(true)]
+		app.deck.turn_active, app.run_rng.state, app.enemy_intents.get_intents(), app.enemy_attacks.duplicate(true),
+		app.enemy_intents._turn_index, app.battle_result.get_outcome()]
 
 
 func _meters(app) -> Array[CombatActorMeter]:
@@ -460,9 +461,76 @@ func _run() -> void:
 			and presenter.row == null and _meters(app).is_empty(), "real Return clears presentation and restores focus")
 		for id in final_ids:
 			_check(not is_instance_id_valid(id), "Return frees old meter")
+	await _status_end_turns(app, presenter)
 	app.free()
 	await _frames()
 	_finish()
+
+
+func _status_end_turns(app, presenter) -> void:
+	for scenario in ["weak", "exposed2", "exposed1", "combined", "bleed_slot", "lethal_bleed"]:
+		var replay: Array = []
+		for session in range(2):
+			await _mouse(app.start_button)
+			_check(app.party != null and app.round_flow != null and app.deck.turn_active
+				and _meters(app).size() == 5, scenario + ": actual Start mounts authoritative active fight")
+			if app.party == null or app.round_flow == null:
+				return
+			if scenario in ["weak", "combined"]:
+				app.enemies._enemies[0]["statuses"] = {"weak": 1}
+			if scenario in ["exposed2", "combined"]:
+				app.party._heroes[0]["statuses"] = {"exposed": 2, "bleed": 2}
+			if scenario == "exposed1":
+				app.party._heroes[0]["statuses"] = {"exposed": 1}
+			if scenario in ["bleed_slot", "lethal_bleed"]:
+				for index in range(3 if scenario == "lethal_bleed" else 1):
+					app.party._heroes[index]["hp"] = 2
+					app.party._heroes[index]["statuses"] = {"bleed": 3}
+			var before := _state(app)
+			var heroes: Array = app.party.get_heroes()
+			var prediction := CombatIncomingAttackPreview.new().forecast(heroes,
+				app.enemies.get_enemies(), app.enemy_intents.get_intents())
+			_check(prediction["ok"], scenario + ": live forecast valid")
+			seed(49099)
+			var expected_global := randi()
+			seed(49099)
+			for refresh in range(4):
+				presenter._sync_battle()
+				await _frames()
+			_check(_state(app) == before and randi() == expected_global, scenario + ": live refresh preserves all state and both RNGs")
+			_visible(app)
+			if not prediction["ok"]:
+				return
+			for index in range(3):
+				var predicted: Dictionary = prediction["heroes"][index]
+				_check(_incoming(app, index + 1) == ("Incoming: none" if predicted["incoming"] == 0 else
+					"Incoming: %d Block, %d HP" % [predicted["block_absorbed"], predicted["hp_lost"]]), scenario + ": mounted label displays attack-only forecast")
+			if session == 0:
+				await _mouse(app.end_turn_button)
+			else:
+				app.end_turn_button.grab_focus()
+				await _key(KEY_SPACE)
+			_check(not app.deck.turn_active if scenario == "lethal_bleed" else app.enemy_intents._turn_index == 1,
+				scenario + ": actual mouse/keyboard End Turn processed")
+			for index in range(3):
+				var predicted: Dictionary = prediction["heroes"][index]
+				var actual: Dictionary = app.party.get_hero(index + 1)
+				var bleed_loss: int = mini(heroes[index]["hp"], heroes[index].get("statuses", {}).get("bleed", 0))
+				_check(actual["hp"] == predicted["hp_remaining"]
+					and heroes[index]["hp"] - actual["hp"] == predicted["hp_lost"] + bleed_loss,
+					scenario + ": live committed HP equals attack plus separate Bleed")
+				_check(actual["block"] == (predicted["block_remaining"] if scenario == "lethal_bleed" else 0)
+					and predicted["block_remaining"] == heroes[index]["block"] - predicted["block_absorbed"],
+					scenario + ": live Block matches absorption and new-turn reset")
+			_check(app.enemies.get_enemy(2)["block"] == (0 if scenario == "lethal_bleed" else 1),
+				scenario + ": owner defeat skips enemy Block as well as attacks")
+			var after := _state(app)
+			if session == 0:
+				replay = after
+			else:
+				_check(after == replay, scenario + ": same-seed mouse/keyboard replay full state")
+			await _mouse(app.return_button)
+			_check(app.title_view.is_visible_in_tree() and presenter.row == null, scenario + ": actual Return clears session")
 
 
 func _finish() -> void:

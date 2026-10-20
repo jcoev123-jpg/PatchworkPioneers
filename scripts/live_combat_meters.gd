@@ -84,6 +84,7 @@ func _sync_battle() -> void:
 				incoming.text = "DOWNED"
 			elif forecast["ok"]:
 				var next: Dictionary = forecast["heroes"][position - 1]
+				# Attack-only loss after the owner tick; BleedWarning owns Bleed loss.
 				incoming.text = "Incoming: none" if next["incoming"] == 0 else (
 					"Incoming: %d Block, %d HP" % [next["block_absorbed"], next["hp_lost"]])
 			else:

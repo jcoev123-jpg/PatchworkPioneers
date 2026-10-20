@@ -1,6 +1,7 @@
 class_name CombatIncomingAttackPreview
 extends RefCounted
-## Pure immediate enemy-phase forecast; Block reset belongs to the NEXT player turn.
+## Pure End Turn attack forecast after hero owner ticks. HP loss excludes Bleed;
+## remaining HP includes it. Block reset belongs to the NEXT player turn.
 
 const MAX_INT := 9223372036854775807
 
@@ -9,9 +10,14 @@ func forecast(heroes: Array, enemies: Array, intents: Array) -> Dictionary:
 	var invalid := {"ok": false, "heroes": []}
 	if heroes.size() != CombatParty.PARTY_SIZE or enemies.is_empty() or enemies.size() > 3 or intents.size() != enemies.size():
 		return invalid
+	var batch := CombatStatusTurnBatch.new()
+	var tick := batch.tick_side("heroes", heroes)
+	if not tick["ok"] or not batch.tick_side("enemies", enemies)["ok"]:
+		return invalid
+	var next_heroes: Array = tick["actors"]
 	var result: Array[Dictionary] = []
 	for index in range(heroes.size()):
-		var record = heroes[index]
+		var record = next_heroes[index]
 		if not _valid_actor(record, index + 1):
 			return invalid
 		result.append({"position": index + 1, "downed": record["hp"] == 0,
@@ -61,7 +67,8 @@ func forecast(heroes: Array, enemies: Array, intents: Array) -> Dictionary:
 		# A downed slot remains empty, even if an earlier hit downed it.
 		if hero["hp_remaining"] == 0:
 			continue
-		var amount: int = intent["amount"]
+		var amount := CombatStatuses.new().adjusted_attack_damage(intent["amount"],
+			enemies[source - 1].get("statuses", {}), next_heroes[target - 1]["statuses"])
 		if amount > MAX_INT - hero["incoming"]:
 			return invalid
 		hero["incoming"] += amount
