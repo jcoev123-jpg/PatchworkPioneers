@@ -39,6 +39,10 @@ var _battle_closed := false
 func _ready() -> void:
 	_build_title()
 	start_run_requested.connect(_start_run)
+	var attack_preview := Node.new()
+	attack_preview.name = "LiveAttackPreview"
+	attack_preview.set_script(preload("res://scripts/live_attack_preview.gd"))
+	add_child(attack_preview)
 
 
 func _process(_delta: float) -> void:
