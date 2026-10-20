@@ -56,8 +56,15 @@ func close_visit() -> bool:
 
 
 ## Reconcile a successful purchase without reopening or resetting this visit.
+## Card buying is legal before or after the visit's single paid removal, so an
+## untouched "available" visit and a post-removal "used" visit both accept it.
+## Inactive and closed ledgers never reconcile, and a successful reconciliation
+## only commits deck and gold: status, removal count, quote and node history
+## stay exactly as they were.
 func reconcile_purchase(result: Dictionary) -> bool:
-	if not _valid or _status != "available" or result.get("ok") != true:
+	if not _valid or (_status != "available" and _status != "used"):
+		return false
+	if result.get("ok") != true:
 		return false
 	var state: Dictionary = result.get("state", {})
 	var cards: Variant = state.get("deck")
