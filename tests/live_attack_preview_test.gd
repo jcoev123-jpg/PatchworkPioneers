@@ -64,7 +64,7 @@ func _panel(id: String):
 
 func _snapshot() -> Array:
 	return [app.deck.hand.duplicate(), app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(),
-		app.deck.energy, app.deck.turn_active, app.party.get_heroes(), app.enemies.get_enemies(),
+		app.deck.energy, app.deck.turn_active, app.party.get_heroes(), app.enemies.get_enemies() if app.enemies != null else null,
 		app.enemy_attacks.duplicate(true), app.enemy_intents.get_intents(), app.enemy_intents._turn_index,
 		app.run_rng.seed, app.run_rng.state, app.battle_result.get_outcome()]
 
@@ -113,7 +113,7 @@ func _expected(id: String) -> String:
 	var description := "Unavailable: no legal targets"
 	if preview.playable:
 		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(slots)
-	return "%s | %d energy | Preview (P to cycle)\n%s" % [definition.display_name, definition.cost, description]
+	return "%s | %d energy | P / click card; 1-3 / click enemy\n%s" % [definition.display_name, definition.cost, description]
 
 
 func _assert_preview(id: String) -> void:
@@ -149,7 +149,7 @@ func _run() -> void:
 			if panel == null:
 				await _return()
 				continue
-			_check(panel.gui_input.get_connections().is_empty() and panel.focus_mode == Control.FOCUS_NONE, "attack remains hover-only")
+			_check(panel.gui_input.get_connections().size() == (1 if id != "tinker_scrap_bomb" else 0), "single attacks bind selection; bomb stays separate")
 			_check(panel.mouse_entered.get_connections().size() == 1, "one hover binding per panel")
 			var before := _snapshot()
 			seed(8123)
@@ -188,6 +188,11 @@ func _run() -> void:
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
 	await _negative_cases()
+	await _attacks()
+	await _rejections()
+	await _tinker_turns()
+	await _kills()
+	await _stale_restart()
 	await _controls()
 	app.free()
 	_finish()
@@ -250,6 +255,225 @@ func _negative_cases() -> void:
 			_assert_preview(id)
 		app.battle_view.show()
 		await _return()
+
+
+func _choose(id: String, keyboard: bool) -> void:
+	if keyboard:
+		for index in range(CombatAttackTargeting.ATTACK_IDS.size() + 1):
+			await _key(KEY_P)
+			if presenter._card_id(presenter._armed) == id:
+				break
+	else:
+		await _click(_panel(id))
+	_check(presenter._card_id(presenter._armed) == id, "physical selection armed " + id)
+
+
+func _attacks() -> void:
+	for id in ["warden_strike", "warden_shield_bash", "seamstress_prick", "tinker_pop_shot"]:
+		var replay: Array = []
+		for keyboard in [false, true]:
+			for session in range(2):
+				if not await _start(_seed_for(id)):
+					return
+				var position := 1 if id == "warden_shield_bash" else 2
+				_check(app.enemies.gain_block(position, 2), "target has real Block")
+				await _frames()
+				await _choose(id, keyboard)
+				var before := _snapshot()
+				var definition := catalog.get_definition(id)
+				var damage: int = definition.effects.damage + (3 if definition.owner == "tinker" else 0)
+				var expected := before.duplicate(true)
+				expected[0].erase(id)
+				expected[2].append(id)
+				expected[3] -= definition.cost
+				expected[6][position - 1].block = 0
+				expected[6][position - 1].hp -= damage - 2
+				seed(8123)
+				var global_next := randi()
+				seed(8123)
+				if keyboard:
+					# Duplicate presses within one dispatch still commit only once.
+					for duplicate in range(2):
+						var event := InputEventKey.new()
+						event.keycode = KEY_1 if position == 1 else KEY_2
+						event.pressed = true
+						root.push_input(event, true)
+					await _frames()
+				else:
+					await _click(app.get_node("LiveEnemyRoster")._labels[position - 1])
+				_check(_snapshot() == expected, "exact full data-driven transition " + id)
+				_check(randi() == global_next, "attack preserves global RNG " + id)
+				var statuses := {}
+				for status in ["weak", "bleed"]:
+					if definition.effects.has(status):
+						statuses[status] = definition.effects[status]
+				if id == "seamstress_prick":
+					statuses.bleed += 1 # Authored Seamstress passive on confirmed hit.
+				_check(presenter.last_event == {"ok": true, "hits": [{"position": position,
+					"damage": damage, "block_absorbed": 2, "hp_loss": damage - 2, "statuses": statuses}]}, "authored hit event " + id)
+				var roster = app.get_node("LiveEnemyRoster")
+				var enemy: Dictionary = app.enemies.get_enemy(position)
+				_check(roster._labels[position - 1].text.contains("HP: %d/%d | Block: 0" % [enemy.hp, enemy.max_hp]), "mounted enemy reflects hit")
+				var meter = app.get_node("LiveCombatMeters").row.get_child(3 + position - 1)
+				_check(meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp] and meter.block_text.text == "Block: 0" and meter.hp_bar.value == enemy.hp, "mounted meters reflect service hit")
+				_check(app.hand_view.get_child_count() == app.deck.hand.size() and app.pile_label.text.contains("Discard: 1"), "mounted hand and piles refresh")
+				_check(app.get_node("LiveSupportHand").energy_label.text.begins_with("Energy: %d |" % app.deck.energy), "mounted energy refresh")
+				var after := _snapshot()
+				await _key(KEY_1)
+				await _click(roster._labels[position - 1])
+				_check(_snapshot() == after, "consumed selection cannot double-cast")
+				if replay.is_empty():
+					replay = after
+				else:
+					_check(after == replay, "mouse/keyboard two-session deterministic replay " + id)
+				await _return()
+
+
+func _rejections() -> void:
+	for scenario in ["unselected", "hover", "wrong", "range", "slain", "energy", "downed", "position", "missing", "stale", "inactive", "terminal", "mismatch", "invalid_enemies", "queued_stale", "queued_turn"]:
+		var id := "warden_shield_bash"
+		if not await _start(_seed_for(id)):
+			return
+		var panel = _panel(id)
+		if scenario == "hover":
+			await _hover(panel)
+		elif scenario != "unselected":
+			await _choose(id, false)
+		if scenario == "energy":
+			app.deck.combat_state.energy = 0
+		elif scenario == "downed":
+			_check(app.party.apply_damage(1, 10000), "down owner")
+		elif scenario == "position":
+			var definitions: Array = app._load_party_definitions()
+			definitions.append(definitions.pop_front())
+			app.party = CombatParty.new(definitions)
+			app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		elif scenario == "slain":
+			_check(app.enemies.apply_damage(1, 10000), "slain target")
+			_check(app.enemies.get_enemy(2).position == 2 and not app.enemies.is_slain(2), "survivor retains slot two")
+		elif scenario == "missing":
+			_check(app.deck.discard_played(id), "remove actual held card")
+		elif scenario == "inactive":
+			app.deck.combat_state.player_turn_active = false
+		elif scenario == "terminal":
+			for enemy in app.enemies.get_enemies():
+				app.enemies.apply_damage(enemy.position, 10000)
+			await _frames()
+		elif scenario == "mismatch":
+			app.battle_result = CombatBattleResult.new(CombatParty.new(app._load_party_definitions()), app.enemies)
+		elif scenario == "invalid_enemies":
+			app.enemies = null
+		elif scenario in ["stale", "queued_stale"]:
+			if scenario == "queued_stale":
+				presenter._queue_attack(1)
+			app.hand_view.remove_child(panel)
+			app._refresh_hand()
+		elif scenario == "queued_turn":
+			presenter._queue_attack(1)
+			app.enemy_intents.advance_turn()
+			app.enemy_attacks = app.enemy_intents.get_intents()
+		var before := _snapshot()
+		seed(2345)
+		var global_next := randi()
+		seed(2345)
+		await _key(KEY_2 if scenario == "wrong" else KEY_3 if scenario == "range" else KEY_1)
+		if scenario != "range":
+			await _click(app.get_node("LiveEnemyRoster")._labels[1 if scenario == "wrong" else 0])
+		_check(_snapshot() == before, "complete no-spend snapshot " + scenario)
+		_check(randi() == global_next, "no global RNG consumption " + scenario)
+		if scenario in ["stale", "queued_stale"]:
+			panel.free()
+		await _return()
+
+
+func _tinker_turns() -> void:
+	var id := "tinker_pop_shot"
+	if not await _start(_seed_for(id)):
+		return
+	var service = presenter._play
+	for turn in range(2):
+		_check(app.enemies.gain_block(2, 30), "living target withstands repeated bonus probes")
+		# Keep real live models and use the mounted hand after controlled turn fixtures.
+		app.deck.hand.assign([id, id])
+		app.deck.combat_state.energy = 3
+		app._refresh_hand()
+		await _frames()
+		for attack in range(2):
+			await _choose(id, false)
+			await _key(KEY_2)
+			_check(presenter.last_event.ok and presenter.last_event.hits[0].damage == (8 if attack == 0 else 5), "Tinker bonus once each real player turn")
+		_check(presenter._play == service, "service lifetime spans hand rebuilds and turn")
+		if turn == 0:
+			await _click(app.end_turn_button)
+			_check(app.enemy_intents._turn_index == 1, "real End Turn boundary")
+	await _return()
+
+
+func _kills() -> void:
+	var id := "seamstress_prick"
+	if not await _start(_seed_for(id)):
+		return
+	app.deck.hand.assign([id, id])
+	app._refresh_hand()
+	for position in [1, 2]:
+		_check(app.enemies.apply_damage(position, 11), "living enemy prepared at one HP")
+	await _frames()
+	await _choose(id, false)
+	await _click(app.get_node("LiveEnemyRoster")._labels[0])
+	_check(app.enemies.is_slain(1) and app.enemies.get_enemy(2).hp == 1 and app.enemies.get_enemy(2).position == 2, "first physical kill preserves live slot two")
+	_check(app.intent_label.text.contains("Enemy 2:") and not app.intent_label.text.contains("Enemy 1"), "next-frame intent removes killed enemy only")
+	_check(app.battle_result.can_continue() and not app.result_label.is_visible_in_tree(), "first kill keeps battle active")
+	await _choose(id, true)
+	await _key(KEY_1)
+	_check(app.enemies.get_enemy(2).hp == 1 and app.deck.energy == 2, "slain slot remains illegal without compaction")
+	await _key(KEY_2)
+	_check(app.enemies.is_victorious() and app.battle_result.is_finished() and not app.deck.turn_active, "last physical kill reaches actual victory closure")
+	_check(app.result_label.is_visible_in_tree() and app.result_label.text.contains(CombatBattleResult.VICTORY) and app.intent_label.text == "Intent: none", "next-frame result and intents reflect final kill")
+	var before := _snapshot()
+	await _key(KEY_2)
+	_check(_snapshot() == before, "terminal key cannot attack")
+	await _return()
+
+
+func _stale_restart() -> void:
+	var id := "warden_shield_bash"
+	if not await _start(_seed_for(id)):
+		return
+	await _choose(id, false)
+	var panel = _panel(id)
+	var callback: Callable = presenter._bindings[panel].input
+	var old_deck: CombatDeck = app.deck
+	var old_party: CombatParty = app.party
+	var old_enemies: CombatEnemies = app.enemies
+	var old_rng: RandomNumberGenerator = app.run_rng
+	var before := [old_deck.hand.duplicate(), old_deck.discard_pile.duplicate(), old_deck.energy,
+		old_party.get_heroes(), old_enemies.get_enemies(), old_rng.state]
+	var event := InputEventKey.new()
+	event.keycode = KEY_1
+	event.pressed = true
+	root.push_input(event, true)
+	_check(presenter._queued, "physical attack is actually queued before Return")
+	# Physical Return in the same dispatch cancels the deferred attack.
+	for pressed in [true, false]:
+		var mouse := InputEventMouseButton.new()
+		mouse.position = app.return_button.get_global_rect().get_center()
+		mouse.button_index = MOUSE_BUTTON_LEFT
+		mouse.pressed = pressed
+		root.push_input(mouse, true)
+	await _frames()
+	_check(app.deck == null, "physical Return completed before deferred attack")
+	_check([old_deck.hand, old_deck.discard_pile, old_deck.energy,
+		old_party.get_heroes(), old_enemies.get_enemies(), old_rng.state] == before, "queued Return preserves old models")
+	if not await _start(_seed_for(id)):
+		return
+	var restarted := _snapshot()
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	callback.call(mouse)
+	await _key(KEY_1)
+	_check(_snapshot() == restarted, "captured freed card callback cannot act after restart")
+	await _return()
 
 
 func _controls() -> void:

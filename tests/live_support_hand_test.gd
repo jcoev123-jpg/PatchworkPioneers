@@ -82,8 +82,9 @@ func _visible() -> void:
 				"support has focus and visible action hint")
 			_check(panel.gui_input.get_connections().size() == 1, "exactly one input binding")
 		else:
-			_check(panel.focus_mode == Control.FOCUS_NONE and panel.gui_input.get_connections().is_empty(),
-				"other card remains inert")
+			var single_attack: bool = StarterCards.new().get_definition(id).get("target_kind") == "enemy_single"
+			_check(panel.focus_mode == Control.FOCUS_NONE and panel.gui_input.get_connections().size() == (1 if single_attack else 0),
+				"other cards preserve focus; single attacks bind their own selection only")
 	_check(ids == app.deck.hand, "mounted labels match entire authoritative hand")
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [app.deck.draw_pile.size(), app.deck.discard_pile.size()],
 		"mounted pile counts exact")

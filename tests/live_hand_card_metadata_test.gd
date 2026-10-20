@@ -114,8 +114,9 @@ func _validate_display(observed: Dictionary) -> void:
 			_check(panel.get_child(1) is Label and panel.get_child(1).text == "Click / Enter / Space",
 				"original visible support action hint survives")
 			_check(panel.tooltip_text == "Click or focus and press Enter / Space to play", "support tooltip unchanged")
-		_check(panel.gui_input.get_connections().size() == (1 if support else 0),
-			"no extra mouse/keyboard card handlers")
+		var single_attack: bool = StarterCards.new().get_definition(card_id).get("target_kind") == "enemy_single"
+		_check(panel.gui_input.get_connections().size() == (1 if support or single_attack else 0),
+			"exactly one handler for support or single-target selection; no extra handlers")
 		_check(panel.focus_mode == (Control.FOCUS_ALL if support else Control.FOCUS_NONE),
 			"support focusability and inert non-support focus preserved")
 		_check(panel.mouse_filter == Control.MOUSE_FILTER_STOP, "card remains mouse hit-testable")
