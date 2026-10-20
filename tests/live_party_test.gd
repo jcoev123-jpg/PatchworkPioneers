@@ -57,8 +57,8 @@ func _fresh(app) -> void:
 		var hero: Dictionary = app.party.get_hero(index + 1)
 		_check(hero["id"] == IDS[index] and hero["name"] == NAMES[index] and hero["position"] == index + 1,
 			"design identity and implicit position")
-		_check(hero["hp"] == MAX_HP[index] and hero["max_hp"] == MAX_HP[index] and hero["block"] == 0,
-			"design HP and zero starting Block")
+		_check(hero["hp"] == MAX_HP[index] and hero["max_hp"] == MAX_HP[index] and hero["block"] == (6 if index == 0 else 0),
+			"design HP and Warden-only opening Block")
 		_check(not app.party.is_downed(index + 1), "starting hero alive")
 
 

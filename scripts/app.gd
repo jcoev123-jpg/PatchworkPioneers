@@ -89,6 +89,7 @@ func _start_run() -> void:
 	if not starting_party.is_valid():
 		push_warning("Starter party definitions are invalid; run was not started")
 		return
+	CombatStartingBlock.new(starting_party).apply()
 	enemy_intents = selector
 	enemy_attacks = enemy_intents.get_intents()
 	party = starting_party
