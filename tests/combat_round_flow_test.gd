@@ -9,6 +9,10 @@ const INTENTS_PATH := "res://data/encounters/starter_attacks.json"
 
 
 func _initialize() -> void:
+	_run.call_deferred()
+
+
+func _run() -> void:
 	_test_opening_and_rounds()
 	_test_terminal_victory()
 	_test_terminal_defeat()
@@ -16,6 +20,8 @@ func _initialize() -> void:
 	_test_additional_boundaries()
 	_test_seeded_replay()
 	_test_status_turns()
+	_test_enemy_status_turns()
+	await _test_mounted_enemy_status_turn()
 	if failures.is_empty():
 		print("combat_round_flow_test: PASS (", checks, " checks)")
 	else:
@@ -432,12 +438,13 @@ func _test_status_turns() -> void:
 			replay = trace
 		else:
 			_check(trace == replay, "seeded status success and terminal traces replay completely")
-	for scenario in ["status_type", "negative", "fraction", "unknown", "position", "duplicate_id", "missing_hp", "hp_type", "overflow", "bad_action"]:
+	for scenario in ["status_type", "negative", "fraction", "unknown", "position", "duplicate_id", "missing_hp", "hp_type", "enemy_status_type", "enemy_negative", "enemy_fraction", "enemy_unknown", "enemy_position", "enemy_duplicate_id", "enemy_missing_hp", "enemy_hp_type", "overflow", "bad_action"]:
 		var fight := _fight(509)
 		var flow: CombatRoundFlow = fight["flow"]
 		var party: CombatParty = fight["party"]
 		_check(flow.begin_fight(), "otherwise-valid rejection fight begins: " + scenario)
 		party._heroes[0]["statuses"] = {"bleed": 2}
+		fight["enemies"]._enemies[0]["statuses"] = {"bleed": 1}
 		match scenario:
 			"status_type": party._heroes[2]["statuses"] = []
 			"negative": party._heroes[2]["statuses"] = {"weak": -1}
@@ -447,9 +454,140 @@ func _test_status_turns() -> void:
 			"duplicate_id": party._heroes[2]["id"] = "warden"
 			"missing_hp": party._heroes[2].erase("hp")
 			"hp_type": party._heroes[2]["hp"] = "26"
+			"enemy_status_type": fight["enemies"]._enemies[1]["statuses"] = []
+			"enemy_negative": fight["enemies"]._enemies[1]["statuses"] = {"weak": -1}
+			"enemy_fraction": fight["enemies"]._enemies[1]["statuses"] = {"bleed": 1.5}
+			"enemy_unknown": fight["enemies"]._enemies[1]["statuses"] = {"poison": 1}
+			"enemy_position": fight["enemies"]._enemies[1]["position"] = 1
+			"enemy_duplicate_id": fight["enemies"]._enemies[1]["id"] = "ragling"
+			"enemy_missing_hp": fight["enemies"]._enemies[1].erase("hp")
+			"enemy_hp_type": fight["enemies"]._enemies[1]["hp"] = "12"
 			"overflow": fight["enemies"]._enemies[1]["block"] = CombatEnemies.MAX_INT
 			"bad_action": fight["intents"]._definitions[1]["pattern"][0]["amount"] = -1
 		_reject(fight, flow.end_turn, "whole status/phase preflight: " + scenario)
+
+
+func _test_enemy_status_turns() -> void:
+	var replay: Array = []
+	for session in range(2):
+		var fight := _fight(3030)
+		_preconditions(fight)
+		var flow: CombatRoundFlow = fight["flow"]
+		var enemies: CombatEnemies = fight["enemies"]
+		var party: CombatParty = fight["party"]
+		_check(flow.begin_fight(), "enemy status fixture begins real seeded fight")
+		party._heroes[0]["block"] = 0
+		party._heroes[1]["statuses"] = {"weak": 3, "exposed": 2}
+		_check(enemies.apply_damage(1, 11), "first enemy lives at one HP before its announced attack")
+		enemies._enemies[0]["statuses"] = {"bleed": 1}
+		var guard: Dictionary = enemies._enemies[1]
+		guard["statuses"] = {"bleed": 3, "weak": 2, "exposed": 1}
+		guard["fixture_metadata"] = {"kept": [1, 2]}
+		var before := _snapshot(fight)
+		var expected := before.duplicate(true)
+		expected[0][0]["hp"] = 39
+		expected[0][1]["statuses"] = {"weak": 2, "exposed": 1}
+		expected[1][0]["hp"] = 0
+		expected[1][0]["statuses"] = {}
+		expected[1][1]["hp"] = 9
+		expected[1][1]["block"] = 1
+		expected[1][1]["statuses"] = {"bleed": 2, "weak": 1}
+		var oracle := CombatDeck.new(StarterCards.new().get_starting_deck(), _rng(3030))
+		_check(oracle.start_turn() and oracle.end_turn() and oracle.start_turn(),
+			"independent seeded deck oracle advances one round")
+		expected[2] = _deck_snapshot(oracle)
+		expected[3] = [
+			{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 2},
+			{"enemy_position": 2, "type": "block", "amount": 1}]
+		expected[4] = 1
+		_check(flow.end_turn() and _snapshot(fight) == expected,
+			"announced attack happens before lethal Bleed; guard gains Block then loses exactly 3 HP, all counters age once")
+		_check(guard == expected[1][1], "enemy tick preserves authoritative dictionary identity and metadata")
+		var trace: Array = [before, _snapshot(fight)]
+		_check(enemies.is_slain(1) and not enemies.is_victorious()
+			and enemies.apply_damage(2, 8) and enemies.get_enemy(2)["hp"] == 2,
+			"second round has only guard alive with exactly lethal Bleed and no Block")
+		before = _snapshot(fight)
+		expected = before.duplicate(true)
+		expected[0][1]["statuses"] = {"weak": 1}
+		expected[1][1]["hp"] = 0
+		expected[1][1]["block"] = 1
+		expected[1][1]["statuses"] = {"bleed": 1}
+		expected[2][1] = []
+		expected[2][2] = before[2][2] + before[2][1]
+		expected[2][3] = 0
+		expected[2][4] = false
+		expected[2][5] = 0
+		expected[2][6] = false
+		expected[5] = CombatBattleResult.VICTORY
+		_check(flow.end_turn() and _snapshot(fight) == expected,
+			"final enemy Bleed latches victory, closes hand once, freezes intents, energy, draw and RNG")
+		_reject(fight, flow.end_turn, "repeated enemy Bleed victory end")
+		_conserved(fight)
+		trace.append(_snapshot(fight))
+		if session == 0:
+			replay = trace
+		else:
+			_check(trace == replay, "two seeded enemy-status runs replay exact actors, deck, intents, result and RNG")
+
+	var defeat := _fight(3031)
+	var flow: CombatRoundFlow = defeat["flow"]
+	_check(flow.begin_fight() and defeat["party"].apply_damage(2, 999)
+		and defeat["party"].apply_damage(3, 999)
+		and defeat["enemies"].apply_damage(2, 12), "phase defeat fixture leaves one living actor per side")
+	defeat["party"]._heroes[0]["hp"] = 1
+	defeat["party"]._heroes[0]["block"] = 0
+	defeat["enemies"]._enemies[0]["hp"] = 1
+	defeat["enemies"]._enemies[0]["statuses"] = {"bleed": 1}
+	var before := _snapshot(defeat)
+	var expected := before.duplicate(true)
+	expected[0][0]["hp"] = 0
+	expected[1][0]["hp"] = 0
+	expected[1][0]["statuses"] = {}
+	expected[2][1] = []
+	expected[2][2] = before[2][2] + before[2][1]
+	expected[2][3] = 0
+	expected[2][4] = false
+	expected[2][5] = 0
+	expected[2][6] = false
+	expected[5] = CombatBattleResult.DEFEAT
+	_check(flow.end_turn() and _snapshot(defeat) == expected,
+		"announced lethal phase latches defeat before enemy Bleed, with no next turn or RNG")
+	_reject(defeat, flow.end_turn, "repeated phase defeat after enemy Bleed")
+
+
+func _test_mounted_enemy_status_turn() -> void:
+	var app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await process_frame
+	app.run_seed = 3030
+	app.start_button.pressed.emit()
+	await process_frame
+	var bound: bool = app.round_flow != null and app.enemies != null \
+		and app.round_flow._enemies == app.enemies and app.round_flow._deck == app.deck \
+		and app.end_turn_button != null and app.end_turn_button.is_visible_in_tree() \
+		and not app.end_turn_button.disabled
+	_check(bound, "mounted Start binds real coordinator, enemy roster, deck and reachable End Turn")
+	if bound:
+		app.enemies._enemies[1]["statuses"] = {"bleed": 3, "weak": 2, "exposed": 1}
+		app.end_turn_button.pressed.emit()
+		await process_frame
+		_check(app.enemies.get_enemy(2)["hp"] == 9
+			and app.enemies.get_enemy(2)["block"] == 1
+			and app.enemies.get_enemy(2)["statuses"] == {"bleed": 2, "weak": 1}
+			and app.deck.turn_active and app.enemy_intents._turn_index == 1,
+			"mounted End Turn applies post-action enemy tick through authoritative coordinator")
+		_check(app.enemies.apply_damage(1, 12) and app.enemies.apply_damage(2, 8),
+			"mounted victory fixture leaves only guard alive at two HP")
+		app.end_turn_button.pressed.emit()
+		await process_frame
+		_check(app.round_flow.get_outcome() == CombatBattleResult.VICTORY
+			and app.result_label.is_visible_in_tree() and app.end_turn_button.disabled
+			and app.deck.hand.is_empty() and not app.deck.turn_active
+			and app.enemy_intents._turn_index == 1,
+			"mounted enemy Bleed victory closes player hand and displays terminal result")
+	app.free()
+	await process_frame
 
 
 func _test_additional_boundaries() -> void:

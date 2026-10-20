@@ -81,6 +81,16 @@ func end_turn() -> bool:
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
+	# Latch a phase defeat before enemy Bleed can also kill the last enemy.
+	_result.evaluate()
+	var enemy_tick := batch.tick_side("enemies", _enemies.get_enemies())
+	for index in range(_enemies._enemies.size()):
+		var enemy: Dictionary = _enemies._enemies[index]
+		var next: Dictionary = enemy_tick["actors"][index]
+		enemy["hp"] = next["hp"]
+		enemy["block"] = next["block"]
+		if enemy.has("statuses") or not next["statuses"].is_empty():
+			enemy["statuses"] = next["statuses"]
 	if _result.evaluate() == CombatBattleResult.ACTIVE:
 		_intents.advance_turn()
 		_party.start_player_turn()
@@ -144,5 +154,7 @@ func _phase_is_executable(next_heroes: Array) -> bool:
 	party._heroes.assign(next_heroes.duplicate(true))
 	var roster := _enemies.get_enemies()
 	var enemies := CombatEnemies.new(roster)
-	enemies._enemies.assign(roster)
-	return CombatEnemyPhase.new().execute_phase(party, enemies, _intents.get_intents())["ok"]
+	enemies._enemies.assign(roster.duplicate(true))
+	if not CombatEnemyPhase.new().execute_phase(party, enemies, _intents.get_intents())["ok"]:
+		return false
+	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]
