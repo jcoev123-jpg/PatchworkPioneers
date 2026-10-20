@@ -45,6 +45,7 @@ var hero_panels: Array[PanelContainer] = []
 var enemy_attacks: Array = []
 var enemy_intents: CombatEnemyIntents
 var intent_label: Label
+var enemy_buff_forecast_label: Label
 var battle_result: CombatBattleResult
 var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
@@ -110,6 +111,9 @@ func _observe_battle_result() -> bool:
 	var outcome := battle_result.evaluate()
 	if outcome == CombatBattleResult.ACTIVE:
 		return true
+	if is_instance_valid(enemy_buff_forecast_label):
+		enemy_buff_forecast_label.text = ""
+		enemy_buff_forecast_label.hide()
 	if not _battle_closed:
 		_battle_closed = true
 		if outcome == CombatBattleResult.VICTORY:
@@ -463,7 +467,7 @@ func _build_battle() -> void:
 		battle_view.add_theme_constant_override("margin_" + side, 32)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 24)
+	column.add_theme_constant_override("separation", 16)
 	battle_view.add_child(column)
 	hero_view = HBoxContainer.new()
 	hero_view.add_theme_constant_override("separation", 16)
@@ -480,9 +484,17 @@ func _build_battle() -> void:
 		panel.add_child(label)
 	intent_label = Label.new()
 	intent_label.add_theme_font_size_override("font_size", 22)
-	_refresh_intents()
 	intent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(intent_label)
+	var intent_column := VBoxContainer.new()
+	intent_column.add_theme_constant_override("separation", 4)
+	column.add_child(intent_column)
+	intent_column.add_child(intent_label)
+	enemy_buff_forecast_label = Label.new()
+	enemy_buff_forecast_label.name = "EnemyBuffForecast"
+	enemy_buff_forecast_label.add_theme_font_size_override("font_size", 18)
+	enemy_buff_forecast_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intent_column.add_child(enemy_buff_forecast_label)
+	_refresh_intents()
 	result_label = Label.new()
 	result_label.name = "BattleResult"
 	result_label.add_theme_font_size_override("font_size", 28)
@@ -1035,6 +1047,7 @@ func _refresh_party() -> void:
 
 
 func _refresh_intents() -> void:
+	_refresh_enemy_buff_forecast()
 	if not is_instance_valid(intent_label):
 		return
 	var announcements: PackedStringArray = []
@@ -1049,6 +1062,21 @@ func _refresh_intents() -> void:
 				attack["enemy_position"], attack["target_position"],
 				party.get_hero(attack["target_position"])["name"], attack["amount"]])
 	intent_label.text = "Intent: " + ("none" if announcements.is_empty() else "; ".join(announcements))
+
+
+func _refresh_enemy_buff_forecast() -> void:
+	if not is_instance_valid(enemy_buff_forecast_label):
+		return
+	var lines: PackedStringArray = []
+	if is_instance_valid(battle_view) and battle_view.is_visible_in_tree() \
+		and not _battle_closed and battle_result != null \
+		and battle_result.get_outcome() == CombatBattleResult.ACTIVE \
+		and party != null and enemies != null and not party.is_defeated() and not enemies.is_defeated() \
+		and enemy_intents != null and enemy_intents.is_valid() and enemy_attacks == enemy_intents.get_intents():
+		for buff in LiveEnemyBuffForecast.new().forecast(party, enemies, enemy_attacks):
+			lines.append("%s Block: %d -> %d" % [buff.name, buff.before, buff.after])
+	enemy_buff_forecast_label.text = "" if lines.is_empty() else "Next enemy phase: " + "; ".join(lines)
+	enemy_buff_forecast_label.visible = not lines.is_empty()
 
 
 func _end_turn(button: Button = null) -> void:
@@ -1148,6 +1176,7 @@ func _return_to_title() -> void:
 	hero_view = null
 	hero_panels.clear()
 	intent_label = null
+	enemy_buff_forecast_label = null
 	result_label = null
 	battle_result = null
 	victory_gold = null
