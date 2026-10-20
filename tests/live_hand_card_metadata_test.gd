@@ -115,9 +115,9 @@ func _validate_display(observed: Dictionary) -> void:
 				"original visible support action hint survives")
 			_check(panel.tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support hint preserved")
 			_check(panel.tooltip_text.contains("BASE"), "support tooltip includes base effect detail")
-		var single_attack: bool = StarterCards.new().get_definition(card_id).get("target_kind") == "enemy_single"
-		_check(panel.gui_input.get_connections().size() == (1 if support or single_attack else 0),
-			"exactly one handler for support or single-target selection; no extra handlers")
+		var attack: bool = catalog.get_definition(card_id).get("target_kind") in ["enemy_single", "enemy_all"]
+		_check(panel.gui_input.get_connections().size() == (1 if support or attack else 0),
+			"exactly one handler for support or held attack; remaining inert cards have none")
 		_check(panel.focus_mode == (Control.FOCUS_ALL if support else Control.FOCUS_NONE),
 			"support focusability and inert non-support focus preserved")
 		_check(panel.mouse_filter == Control.MOUSE_FILTER_STOP, "card remains mouse hit-testable")

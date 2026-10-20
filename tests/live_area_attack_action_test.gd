@@ -46,6 +46,30 @@ func _mouse(control: Control) -> void:
 	await _frames()
 
 
+func _panel():
+	if not is_instance_valid(app.hand_view):
+		return null
+	for panel in app.hand_view.get_children():
+		if panel.get_child_count() > 0 and panel.get_child(0) is Label and panel.get_child(0).text == ID:
+			return panel
+	return null
+
+
+func _press() -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	return event
+
+
+func _select_bomb() -> void:
+	for index in range(CombatAttackTargeting.ATTACK_IDS.size() + 1):
+		await _key(KEY_P)
+		if presenter._card_id(presenter._armed) == ID:
+			break
+	_check(presenter._armed == _panel(), "P selects real Bomb panel")
+
+
 func _state(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, rng: RandomNumberGenerator) -> Array:
 	return [deck.draw_pile.duplicate(), deck.hand.duplicate(), deck.discard_pile.duplicate(),
 		deck.energy, deck.turn_active, party.get_heroes(), enemies.get_enemies(), rng.seed, rng.state]
@@ -59,14 +83,16 @@ func _live() -> Array:
 func _start() -> bool:
 	app.start_button.pressed.emit()
 	await _frames()
-	if "--inject-missing-action" in OS.get_cmdline_user_args() and is_instance_valid(presenter.button):
-		presenter.button.free()
+	if "--inject-missing-action" in OS.get_cmdline_user_args() and is_instance_valid(_panel()):
+		_panel().free()
 	var valid: bool = app.deck != null and app.party != null and app.enemies != null \
-		and app.battle_result != null and is_instance_valid(presenter.button)
-	_check(valid, "real start mounts Scrap Bomb with complete real models")
+		and app.battle_result != null and is_instance_valid(_panel())
+	_check(valid, "real start mounts held Scrap Bomb with complete real models")
 	if valid:
 		_check(app.deck.turn_active and app.deck.hand.has(ID) and app.deck.energy == 3
-			and not presenter.button.disabled and presenter.button.is_visible_in_tree(), "otherwise playable seeded hand")
+			and _panel().is_visible_in_tree() and _panel().gui_input.get_connections().size() == 1,
+			"otherwise playable seeded hand with bound Bomb")
+		_check(app.get_node("LiveAreaAttackAction").button == null, "obsolete mounted script creates no button")
 	return valid
 
 
@@ -80,7 +106,7 @@ func _visible() -> void:
 			continue
 		ids.append(panel.get_child(0).text)
 		if panel.get_child(0).text == ID:
-			_check(panel.gui_input.get_connections().is_empty(), "attack hand panel has no input handlers")
+			_check(panel.gui_input.get_connections().size() == 1, "held Bomb panel has one input handler")
 	_check(ids == app.deck.hand, "visible hand matches actual hand")
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [app.deck.draw_pile.size(), app.deck.discard_pile.size()], "visible piles refreshed")
 	var support = app.get_node("LiveSupportHand")
@@ -116,8 +142,8 @@ func _run() -> void:
 	app = scene.instantiate()
 	root.add_child(app)
 	await _frames()
-	presenter = app.get_node("LiveAreaAttackAction")
-	_check(presenter.button == null, "title has no bomb control")
+	presenter = app.get_node("LiveAttackPreview")
+	_check(presenter.cue == null, "title has no attack cue")
 	var cards: Array[String] = []
 	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
 	var chosen := -1
@@ -141,8 +167,7 @@ func _run() -> void:
 			app.free()
 			_finish()
 			return
-		_check(presenter.button.text.contains("Scrap Bomb") and presenter.button.text.contains("Tinker")
-			and presenter.button.text.contains("2 energy"), "visible name owner and authored cost")
+		_check(_panel().get_child(0).text == ID, "real held Bomb identity")
 		_visible()
 		await _key(KEY_TAB)
 		_check(app.return_button.has_focus(), "End to Return Tab preserved")
@@ -152,8 +177,7 @@ func _run() -> void:
 		_check(app.swap_preview_buttons[1].has_focus(), "Tab reaches second swap preview")
 		await _key(KEY_TAB)
 		_check(app.end_turn_button.has_focus(), "preview loop returns to End Turn")
-		await _key(KEY_LEFT)
-		_check(presenter.button.has_focus(), "Left reaches mounted action from End Turn")
+
 		var rng := RandomNumberGenerator.new()
 		rng.seed = chosen
 		var deck := CombatDeck.new(cards, rng)
@@ -174,8 +198,9 @@ func _run() -> void:
 		var expected_global := randi()
 		seed(9123)
 		if mode == "mouse":
-			await _mouse(presenter.button)
+			await _mouse(_panel())
 		else:
+			await _select_bomb()
 			await _key(KEY_ENTER if mode == "enter" else KEY_SPACE)
 		_check(randi() == expected_global, "live play never draws global RNG")
 		_check(_state(app.deck, app.party, app.enemies, app.run_rng) == _state(deck, party, enemies, rng), "complete state equals scene-free resolver")
@@ -192,7 +217,7 @@ func _run() -> void:
 			and app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage",
 			"real mouse/keyboard bomb immediately removes slain Guard intent and retains Ragling")
 		_check(app.session_gold == 0, "nonterminal bomb awards no gold")
-		_check(presenter.button == null and app.battle_result.can_continue(), "spent card removes action; surviving enemy keeps fight active")
+		_check(_panel() == null and app.battle_result.can_continue(), "spent card leaves hand; surviving enemy keeps fight active")
 		_visible()
 		if replay.is_empty():
 			replay = _live()
@@ -201,6 +226,8 @@ func _run() -> void:
 		app.return_button.pressed.emit()
 		await _frames()
 	await _rejections()
+	await _rosters()
+	await _focus_guards()
 	# Opposite survivor: the Guard's Block announcement and badge stay intact.
 	if await _start():
 		_check(app.enemies.apply_damage(1, 5), "Ragling at seven HP before real bomb")
@@ -211,7 +238,7 @@ func _run() -> void:
 		expected[2].append(ID)
 		expected[6][0].hp = 0
 		expected[6][1].hp -= 7
-		await _mouse(presenter.button)
+		await _mouse(_panel())
 		_check(_live()[0] == expected and _live().slice(1) == before.slice(1)
 			and app.session_gold == 0, "Guard survivor bomb preserves complete expected state, statuses, intents and RNG")
 		_check(app.enemies.is_slain(1) and not app.enemies.is_slain(2)
@@ -242,7 +269,7 @@ func _run() -> void:
 		expected[2].append(ID)
 		expected[2].append_array(expected[1])
 		expected[1].clear()
-		await _mouse(presenter.button)
+		await _mouse(_panel())
 		_check(_live()[0] == expected and _live().slice(1) == before.slice(1)
 			and app.session_gold == expected_gold, "terminal play preserves slain slot, party and intents; draws exact gold and closes remaining hand once")
 		_check(app.enemies.is_slain(1) and app.enemies.is_slain(2)
@@ -259,13 +286,16 @@ func _run() -> void:
 
 
 func _rejections() -> void:
-	for mode in ["energy", "downed", "position", "removed", "targets", "inactive", "terminal", "hidden", "identity", "deck_identity", "enemies_identity", "rng_identity", "result_identity", "presenter_missing", "presenter_unbound", "queued_turn", "bad_owner_status", "bad_late_status"]:
+	for mode in ["energy", "downed", "position", "removed", "targets", "inactive", "terminal", "hidden", "identity", "deck_identity", "enemies_identity", "rng_identity", "result_identity", "presenter_missing", "presenter_unbound", "queued_turn", "bad_owner_status", "bad_late_status", "rebuild", "end_turn", "intents_identity"]:
 		if not await _start():
 			return
-		var callback: Callable = presenter._callback
+		var panel = _panel()
+		var callback: Callable = presenter._bindings[panel].input
 		var token: int = presenter._token
+		var original_result = app.battle_result
+		var original_turn: int = presenter._turn
 		# Queue while valid, then invalidate before the deferred commit.
-		callback.call()
+		callback.call(_press())
 		_check(presenter._queued, "valid callback queues actual activation: " + mode)
 		var original_party: CombatParty = app.party
 		var original_deck: CombatDeck = app.deck
@@ -327,6 +357,12 @@ func _rejections() -> void:
 			app.remove_child(attack_presenter)
 		elif mode == "presenter_unbound":
 			attack_presenter._clear()
+		elif mode == "rebuild":
+			app._refresh_hand()
+		elif mode == "end_turn":
+			app.end_turn_button.pressed.emit()
+		elif mode == "intents_identity":
+			app.enemy_intents = CombatEnemyIntents.new(app._load_enemy_schedule())
 		elif mode == "queued_turn":
 			app.enemy_intents.advance_turn()
 			app.enemy_attacks = app.enemy_intents.get_intents()
@@ -335,8 +371,8 @@ func _rejections() -> void:
 		seed(9876)
 		var global_next := randi()
 		seed(9876)
-		presenter._activate(token)
-		callback.call()
+		presenter._commit(panel, ID, 0, token, original_party, original_enemies, original_result, original_rng, original_turn)
+		callback.call(_press())
 		_check(_live() == before and _state(original_deck, original_party, original_enemies, original_rng) == old_state, "rejection preserves complete state: " + mode)
 		_check(service._tinker.bonus_for_attack(ID) == bonus and randi() == global_next,
 			"rejection preserves pending bonus and global RNG: " + mode)
@@ -348,9 +384,10 @@ func _rejections() -> void:
 	if await _start():
 		app.deck.hand.append(ID)
 		app.deck.combat_state.energy = 6
-		var callback: Callable = presenter._callback
-		callback.call()
-		callback.call()
+		var panel = _panel()
+		var callback: Callable = presenter._bindings[panel].input
+		callback.call(_press())
+		callback.call(_press())
 		await _frames()
 		_check(app.deck.energy == 4 and app.deck.discard_pile == [ID]
 			and app.deck.hand.count(ID) == 1 and app.enemies.get_enemy(1).hp == 5, "duplicate callbacks resolve exactly once with playable extra copy")
@@ -360,33 +397,190 @@ func _rejections() -> void:
 		await _frames()
 
 
+func _rosters() -> void:
+	for count in [1, 3]:
+		if not await _start():
+			return
+		var definitions: Array = app._load_enemy_definitions()
+		if count == 1:
+			definitions.resize(1)
+		else:
+			var third: Dictionary = definitions[0].duplicate(true)
+			third.id = "third_fixture"
+			definitions.append(third)
+		var enemies := CombatEnemies.new(definitions)
+		# Keep the real bound session, altering only the controlled roster fixture.
+		var roster = app.get_node("LiveEnemyRoster")
+		app.battle_view.tree_exiting.disconnect(roster._clear)
+		roster._clear()
+		app.get_node("LiveCombatMeters")._clear()
+		app.enemies._enemies = enemies.get_enemies()
+		_check(app.enemies.is_valid() and app.enemies.get_enemies().size() == count,
+			"real bound roster contains required live slots")
+		for position in range(1, count + 1):
+			_check(app.enemies.gain_block(position, position) and enemies.gain_block(position, position),
+				"each occupied slot has distinct Block")
+		app._refresh_enemy_roster()
+		await _frames()
+		var before := _live()
+		var expected: Array = before[0].duplicate(true)
+		expected[3] -= 2
+		expected[1].erase(ID)
+		expected[2].append(ID)
+		for position in range(1, count + 1):
+			expected[6][position - 1].hp -= 7 - position
+			expected[6][position - 1].block = 0
+		await _select_bomb()
+		_check(_live() == before, "P selects without spending on alternate roster")
+		for duplicate in range(2):
+			var event := InputEventKey.new()
+			event.keycode = KEY_ENTER
+			event.pressed = true
+			root.push_input(event, true)
+		await _frames()
+		_check(_live()[0] == expected and _live().slice(1) == before.slice(1),
+			"target-zero Bomb damages every occupied slot once and preserves full remaining state")
+		_check(presenter.last_event.ok and presenter.last_event.hits.size() == count,
+			"confirmed event includes every live slot")
+		_visible()
+		app.return_button.pressed.emit()
+		await _frames()
+
+
+func _focus_until(control: Control, limit := 12) -> void:
+	for index in range(limit):
+		if is_instance_valid(control) and control.has_focus():
+			return
+		await _key(KEY_TAB)
+	_check(is_instance_valid(control) and control.has_focus(), "real Tab sequence focuses expected control")
+
+
+func _support_seed(support: String) -> int:
+	var cards: Array[String] = []
+	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+	for candidate in range(1000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = candidate
+		var deck := CombatDeck.new(cards, rng)
+		deck.start_turn()
+		if ID in deck.hand and support in deck.hand:
+			return candidate
+	_check(false, "seeded opening holds Bomb and " + support)
+	return -1
+
+
+## An armed Bomb must not steal Enter/Space from a control the player focused.
+func _focus_guards() -> void:
+	for code in [KEY_ENTER, KEY_SPACE]:
+		if not await _start():
+			return
+		var service = presenter._play
+		var deck: CombatDeck = app.deck
+		var party: CombatParty = app.party
+		var enemies: CombatEnemies = app.enemies
+		var rng: RandomNumberGenerator = app.run_rng
+		var state := _state(deck, party, enemies, rng)
+		var event_before: Dictionary = presenter.last_event.duplicate(true)
+		_check(app.end_turn_button.has_focus(), "battle starts with the inherited button focus")
+		await _select_bomb()
+		_check(root.gui_get_focus_owner() == null, "P attack selection clears the inherited battle focus")
+		await _focus_until(app.return_button)
+		_check(app.return_button.has_focus(), "real Tab sequence reaches Return")
+		await _key(code)
+		_check(app.deck == null and presenter._bindings.is_empty() and presenter.cue == null,
+			"focused Return activates by keyboard instead of the armed Bomb")
+		_check(_state(deck, party, enemies, rng) == state,
+			"focused Return leaves the armed Bomb session completely untouched")
+		_check(presenter.last_event == event_before and service._tinker.bonus_for_attack(ID) == 3,
+			"focused Return spends no Bomb pending first-attack bonus")
+	# End Turn keeps its own activation while the Bomb stays armed.
+	if not await _start():
+		return
+	var service = presenter._play
+	var before := _live()
+	var event_before: Dictionary = presenter.last_event.duplicate(true)
+	await _select_bomb()
+	await _focus_until(app.end_turn_button)
+	_check(app.end_turn_button.has_focus(), "real Tab sequence returns focus to End Turn")
+	await _key(KEY_ENTER)
+	_check(app.enemy_intents._turn_index == int(before[3]) + 1, "focused End Turn advances the real round")
+	_check(app.deck.turn_active and app.deck.energy == 3, "focused End Turn starts the next real player turn")
+	var damaged := false
+	for index in range(app.enemies.get_enemies().size()):
+		if app.enemies.get_enemies()[index].hp != before[0][6][index].hp:
+			damaged = true
+	_check(not damaged, "focused End Turn deals no Bomb damage")
+	_check(app.deck.discard_pile.count(ID) == int(before[0][2].count(ID)) + 1 and not app.deck.hand.has(ID),
+		"armed Bomb left by the turn discard, not a cast")
+	_check(presenter.last_event == event_before and service._tinker.bonus_for_attack(ID) == 3
+		and presenter._armed == null, "focused End Turn preserves the Bomb event and pending bonus")
+	app.return_button.pressed.emit()
+	await _frames()
+	# A focused support card keeps Enter rather than casting the armed Bomb.
+	var support := "warden_brace"
+	var chosen := _support_seed(support)
+	if chosen < 0:
+		return
+	app.run_seed = chosen
+	if not await _start():
+		return
+	var bomb_panel = _panel()
+	var brace = null
+	for candidate in app.hand_view.get_children():
+		if candidate.get_child(0).text == support:
+			brace = candidate
+	_check(bomb_panel != null and brace != null, "seeded opening mounts both Bomb and playable support")
+	if bomb_panel == null or brace == null:
+		app.return_button.pressed.emit()
+		await _frames()
+		return
+	var support_service = presenter._play
+	var support_before := _live()
+	var support_event: Dictionary = presenter.last_event.duplicate(true)
+	var block_before: int = app.party.get_hero(1).block
+	await _select_bomb()
+	await _focus_until(app.end_turn_button)
+	await _key(KEY_UP)
+	_check(app.hand_view.is_ancestor_of(root.gui_get_focus_owner()), "real Up leaves the buttons for the support row")
+	await _focus_until(brace)
+	await _key(KEY_ENTER)
+	_check(app.party.get_hero(1).block == block_before + 7 and app.deck.energy == 2,
+		"focused support activates with its own cost and effect")
+	_check(app.deck.hand.has(ID) and app.deck.discard_pile.count(support) == int(support_before[0][2].count(support)) + 1,
+		"focused support spends only its own card")
+	_check(app.enemies.get_enemies() == support_before[0][6] and presenter.last_event == support_event
+		and support_service._tinker.bonus_for_attack(ID) == 3,
+		"focused support deals no Bomb damage and keeps the pending bonus")
+	app.return_button.pressed.emit()
+	await _frames()
+
+
 func _stale() -> void:
 	if not await _start():
 		return
-	var callback: Callable = presenter._callback
-	var old_button: Button = presenter.button
+	var panel = _panel()
+	var callback: Callable = presenter._bindings[panel].input
 	var deck: CombatDeck = app.deck
 	var party: CombatParty = app.party
 	var enemies: CombatEnemies = app.enemies
 	var rng: RandomNumberGenerator = app.run_rng
 	var old_service = app.get_node("LiveAttackPreview")._play
 	var before := _state(deck, party, enemies, rng)
-	callback.call()
+	callback.call(_press())
 	app.return_button.pressed.emit()
-	_check(presenter.button == null and presenter._deck == null and presenter._party == null
-		and presenter._enemies == null and presenter._result == null, "Return immediately clears controls and model references")
-	old_button.pressed.emit()
-	callback.call()
+	_check(presenter.cue == null and presenter._deck == null and presenter._bindings.is_empty(),
+		"Return immediately clears cue, bindings and model references")
+	callback.call(_press())
 	if not await _start():
 		return
 	var fresh := _live()
-	callback.call()
+	callback.call(_press())
 	await _frames()
 	_check(_live() == fresh and _state(deck, party, enemies, rng) == before, "stale Return and deferred callbacks preserve both sessions")
 	_check(old_service._tinker.bonus_for_attack(ID) == 3
 		and app.get_node("LiveAttackPreview")._play._tinker.bonus_for_attack(ID) == 3,
 		"stale callbacks preserve both sessions' pending bonuses")
-	_check(app.title_view.visible == false and is_instance_valid(presenter.button), "new session retains its own action")
+	_check(app.title_view.visible == false and is_instance_valid(_panel()), "new session retains its own held Bomb")
 	app.return_button.pressed.emit()
 	await _frames()
 

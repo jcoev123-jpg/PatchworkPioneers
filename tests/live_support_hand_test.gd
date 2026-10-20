@@ -82,9 +82,9 @@ func _visible() -> void:
 				"support has focus and visible action hint")
 			_check(panel.gui_input.get_connections().size() == 1, "exactly one input binding")
 		else:
-			var single_attack: bool = StarterCards.new().get_definition(id).get("target_kind") == "enemy_single"
-			_check(panel.focus_mode == Control.FOCUS_NONE and panel.gui_input.get_connections().size() == (1 if single_attack else 0),
-				"other cards preserve focus; single attacks bind their own selection only")
+			var attack: bool = StarterCards.new().get_definition(id).get("target_kind") in ["enemy_single", "enemy_all"]
+			_check(panel.focus_mode == Control.FOCUS_NONE and panel.gui_input.get_connections().size() == (1 if attack else 0),
+				"other cards preserve focus; held attacks bind exactly one input handler")
 	_check(ids == app.deck.hand, "mounted labels match entire authoritative hand")
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [app.deck.draw_pile.size(), app.deck.discard_pile.size()],
 		"mounted pile counts exact")
@@ -208,9 +208,16 @@ func _run() -> void:
 		for inert in app.hand_view.get_children():
 			if inert.get_child(0).text not in presenter.SUPPORT_IDS:
 				before = _live()
-				await _mouse(inert)
-				_check(_live() == before, "real click on other card IDs is inert")
-				break
+				var id: String = inert.get_child(0).text
+				var click := InputEventMouseButton.new()
+				click.button_index = MOUSE_BUTTON_LEFT
+				click.pressed = true
+				presenter._on_card_input(click, inert, id, app.deck, app.party, app.battle_view)
+				await _frames()
+				_check(_live() == before, "support callback rejects every non-support ID: " + id)
+				# Bomb now casts on left click; right click must still reject.
+				await _mouse(inert, MOUSE_BUTTON_RIGHT if id == "tinker_scrap_bomb" else MOUSE_BUTTON_LEFT)
+				_check(_live() == before, "unconfirmed single attack or right-click Bomb never spends")
 		# Navigation from the existing button cycle reaches the support card row.
 		app.end_turn_button.grab_focus()
 		await _keyboard(KEY_UP)

@@ -113,7 +113,8 @@ func _expected(id: String) -> String:
 	var description := "Unavailable: no legal targets"
 	if preview.playable:
 		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(slots)
-	return "%s | %d energy | P / click card; 1-3 / click enemy\n%s" % [definition.display_name, definition.cost, description]
+	var controls := "P / click card; 1-3 / click enemy" if preview.requires_selection or id != "tinker_scrap_bomb" else "P: select; Enter / Space / click card: cast"
+	return "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
 
 func _assert_preview(id: String) -> void:
@@ -149,7 +150,7 @@ func _run() -> void:
 			if panel == null:
 				await _return()
 				continue
-			_check(panel.gui_input.get_connections().size() == (1 if id != "tinker_scrap_bomb" else 0), "single attacks bind selection; bomb stays separate")
+			_check(panel.gui_input.get_connections().size() == 1, "all held attacks bind real panel input")
 			_check(panel.mouse_entered.get_connections().size() == 1, "one hover binding per panel")
 			var before := _snapshot()
 			seed(8123)
@@ -511,9 +512,12 @@ func _bomb_entry_guards() -> void:
 			app.hand_view.hide()
 		var before := _snapshot()
 		var event: Dictionary = presenter.last_event.duplicate(true)
-		_check(not presenter.play_scrap_bomb(app.deck, app.party, app.enemies, app.battle_result,
-			app.run_rng, presenter._turn + (1 if mode == "wrong_turn" else 0),
-			1 if mode == "selected_target" else 0), "guarded Bomb entry rejects " + mode)
+		var panel = _panel(id)
+		presenter._armed = panel
+		presenter._queued = true
+		presenter._commit(panel, id, 1 if mode == "selected_target" else 0, presenter._token,
+			app.party, app.enemies, app.battle_result, app.run_rng,
+			presenter._turn + (1 if mode == "wrong_turn" else 0))
 		_check(_snapshot() == before and presenter.last_event == event
 			and service._tinker.bonus_for_attack(id) == 3, "entry rejection preserves state, event and pending bonus " + mode)
 		presenter._session = original_session
@@ -581,17 +585,17 @@ func _mixed_tinker_turns() -> void:
 						var event := oracle.play_attack(deck, party, enemies, id, 0 if id == bomb else 2)
 						_check(event.ok, "independent shared service accepts permutation step")
 						if id == bomb:
-							var action = app.get_node("LiveAreaAttackAction")
-							_check(is_instance_valid(action.button) and not action.button.disabled,
-								"actual target-free Bomb action available")
-							if not is_instance_valid(action.button):
-								await _return()
-								return
+							_check(app.get_node("LiveAreaAttackAction").button == null, "no separate Bomb action")
 							if keyboard:
-								action.button.grab_focus()
+								await _choose(id, true)
+								var before := _snapshot()
+								await _key(KEY_1)
+								await _key(KEY_2)
+								await _key(KEY_3)
+								_check(_snapshot() == before, "Bomb ignores enemy slot selections")
 								await _key(KEY_ENTER if session == 0 else KEY_SPACE)
 							else:
-								await _click(action.button)
+								await _click(_panel(id))
 						else:
 							await _choose(id, keyboard)
 							if keyboard:

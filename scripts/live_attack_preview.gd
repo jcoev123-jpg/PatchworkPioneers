@@ -18,30 +18,6 @@ var _turn := -1
 var _session: Array = []
 
 
-## The separate Bomb button delegates here so both Tinker cards share one turn bonus.
-## Do not resync here: a missing/stale binding must reject without resetting that bonus.
-func play_scrap_bomb(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		result: CombatBattleResult, rng: RandomNumberGenerator, turn: int, position: int = 0) -> bool:
-	var app = get_parent()
-	if app == null or not is_inside_tree() or deck != _deck or app.deck != _deck \
-			or not is_instance_valid(_battle) or app.battle_view != _battle \
-			or not _battle.is_visible_in_tree() or not is_instance_valid(app.hand_view) \
-			or not _battle.is_ancestor_of(app.hand_view) or not app.hand_view.is_visible_in_tree():
-		return false
-	if _session != [party, enemies, result, rng, app.enemy_intents] \
-			or _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents] \
-			or app.enemy_intents == null or turn != _turn or turn != app.enemy_intents._turn_index:
-		return false
-	if result == null or result._party != party or result._enemies != enemies or not result.can_continue():
-		return false
-	var event := _resolve_attack(party, enemies, "tinker_scrap_bomb", position)
-	if not event.ok:
-		return false
-	last_event = event
-	_after_attack()
-	return true
-
-
 func _after_attack() -> void:
 	var app = get_parent()
 	_armed = null
@@ -71,6 +47,14 @@ func _input(event: InputEvent) -> void:
 		return
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
+	if event.keycode in [KEY_ENTER, KEY_SPACE] and _bindings.has(_armed) and not _single(_armed):
+		# Only a target-free keyboard selection owns Enter/Space. A real focused
+		# control keeps its activation; P clears the inherited battle focus.
+		var focus := get_viewport().gui_get_focus_owner()
+		if focus == null or focus == _armed or not focus.is_visible_in_tree():
+			_queue_attack(0)
+			get_viewport().set_input_as_handled()
+		return
 	if event.keycode >= KEY_1 and event.keycode <= KEY_3:
 		_queue_attack(event.keycode - KEY_1 + 1)
 		return
@@ -88,7 +72,10 @@ func _input(event: InputEvent) -> void:
 		return
 	var index := ids.find(_card_id(_selected))
 	_selected = panels[(index + 1) % panels.size()]
-	_armed = _selected if _single(_selected) else null
+	_armed = _selected
+	if not _single(_armed):
+		# Attack keyboard selection must not inherit End Turn/Return focus.
+		get_viewport().gui_release_focus()
 	_token += 1
 	_queued = false
 	_keyboard = true
@@ -103,7 +90,7 @@ func _single(panel) -> bool:
 func _select(event: InputEvent, panel) -> void:
 	if not event is InputEventMouseButton or not event.pressed or event.button_index != MOUSE_BUTTON_LEFT:
 		return
-	if not _bindings.has(panel) or not _eligible(panel) or not _single(panel):
+	if _queued or not _bindings.has(panel) or not _eligible(panel) or _bindings[panel].id != _card_id(panel):
 		return
 	_token += 1
 	_queued = false
@@ -112,14 +99,16 @@ func _select(event: InputEvent, panel) -> void:
 	_keyboard = true
 	panel.accept_event()
 	_refresh()
+	if not _single(panel):
+		_queue_attack(0)
 
 
 func _queue_attack(position: int) -> void:
-	if _queued or not _bindings.has(_armed) or not _eligible(_armed) or not _single(_armed):
+	if _queued or not _bindings.has(_armed) or not _eligible(_armed):
 		return
 	var app = get_parent()
 	var preview := _targeting.get_preview(_deck, app.party, app.enemies, _card_id(_armed))
-	if not preview.playable or position not in preview.target_positions:
+	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0):
 		return
 	_queued = true
 	_commit.call_deferred(_armed, _card_id(_armed), position, _token,
@@ -128,13 +117,17 @@ func _queue_attack(position: int) -> void:
 
 func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng, turn: int) -> void:
 	var app = get_parent()
-	if token != _token or not _queued:
+	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
 		return
 	_queued = false
-	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id:
+	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		return
 	if app.party != party or app.enemies != enemies or app.battle_result != result or app.run_rng != rng \
-			or app.enemy_intents._turn_index != turn:
+			or app.enemy_intents == null or app.enemy_intents._turn_index != turn or _turn != turn \
+			or _session != [party, enemies, result, rng, app.enemy_intents]:
+		return
+	var preview := _targeting.get_preview(_deck, party, enemies, id)
+	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0):
 		return
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
@@ -164,11 +157,11 @@ func _card_id(panel) -> String:
 
 func _eligible(panel) -> bool:
 	var app = get_parent()
-	if not is_instance_valid(panel) or not is_instance_valid(_battle) or _deck == null:
+	if not is_inside_tree() or app == null or not is_instance_valid(panel) or not is_instance_valid(_battle) or _deck == null:
 		return false
 	if app.deck != _deck or app.battle_view != _battle or not is_instance_valid(app.hand_view):
 		return false
-	if not _battle.is_visible_in_tree() or not panel.is_visible_in_tree() or panel.get_parent() != app.hand_view:
+	if not _battle.is_ancestor_of(app.hand_view) or not _battle.is_visible_in_tree() or not panel.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
 	if app.party == null or app.enemies == null or not app.party.is_valid() or not app.enemies.is_valid():
 		return false
@@ -223,9 +216,8 @@ func _sync_battle() -> void:
 		var exited := _leave.bind(panel)
 		var input := _select.bind(panel)
 		_bindings[panel] = {"id": _card_id(panel), "entered": entered, "exited": exited, "input": input}
-		if _single(panel):
-			panel.gui_input.connect(input)
-			panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		panel.gui_input.connect(input)
+		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.mouse_entered.connect(entered)
 		panel.mouse_exited.connect(exited)
 	_refresh()
@@ -262,7 +254,8 @@ func _refresh() -> void:
 	var description := "Unavailable: no legal targets"
 	if preview.playable:
 		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(targets)
-	cue.text = "%s | %d energy | P / click card; 1-3 / click enemy\n%s" % [definition.display_name, definition.cost, description]
+	var controls := "P / click card; 1-3 / click enemy" if _single(_selected) else "P: select; Enter / Space / click card: cast"
+	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
 
 func _unbind(panel) -> void:
