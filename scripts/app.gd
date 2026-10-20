@@ -10,6 +10,7 @@ const STARTER_ATTACKS_PATH := "res://data/encounters/starter_attacks.json"
 const STARTER_ENEMIES_PATH := "res://data/enemies/starter_enemies.json"
 
 @export var run_seed: int = 42
+@export_file("*.json") var starter_deck_path: String = STARTER_DECK_PATH
 @export_file("*.json") var starter_party_path: String = STARTER_PARTY_PATH
 @export_file("*.json") var starter_attacks_path: String = STARTER_ATTACKS_PATH
 @export_file("*.json") var starter_enemies_path: String = STARTER_ENEMIES_PATH
@@ -116,16 +117,10 @@ func _build_title() -> void:
 func _start_run() -> void:
 	if deck != null:
 		return
-	var source = JSON.parse_string(FileAccess.get_file_as_string(STARTER_DECK_PATH))
-	if not source is Array or source.is_empty():
-		push_error("Starter deck must be a nonempty array of card IDs")
+	var cards := _load_starter_deck()
+	if cards.is_empty():
+		push_warning("Starter deck is invalid or unreadable; run was not started")
 		return
-	var cards: Array[String] = []
-	for card in source:
-		if not card is String or card.is_empty():
-			push_error("Starter deck contains an invalid card ID")
-			return
-		cards.append(card)
 	var selector := CombatEnemyIntents.new(_load_enemy_schedule())
 	var starting_enemies := CombatEnemies.new(_load_enemy_definitions())
 	if not selector.is_valid() or not starting_enemies.is_valid() or not _positions_align(selector, starting_enemies):
@@ -155,6 +150,34 @@ func _start_run() -> void:
 	_refresh_party()
 	_refresh_enemy_roster()
 	end_turn_button.grab_focus()
+
+
+## Validate before allocating session objects; keep authored order for the seeded shuffle.
+func _load_starter_deck() -> Array[String]:
+	var file := FileAccess.open(starter_deck_path, FileAccess.READ)
+	if file == null:
+		return []
+	var text := file.get_as_text()
+	var read_error := file.get_error()
+	file.close()
+	if read_error != OK:
+		return []
+	var parser := JSON.new()
+	if parser.parse(text) != OK or not parser.data is Array:
+		return []
+	var expected := {}
+	for card in StarterCards.new().get_starting_deck():
+		expected[card] = expected.get(card, 0) + 1
+	var actual := {}
+	var cards: Array[String] = []
+	for card in parser.data:
+		if not card is String:
+			return []
+		actual[card] = actual.get(card, 0) + 1
+		cards.append(card)
+	if actual != expected:
+		return []
+	return cards
 
 
 func _load_party_definitions() -> Array:
