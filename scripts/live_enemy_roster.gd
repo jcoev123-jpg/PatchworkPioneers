@@ -5,6 +5,7 @@ var enemies: CombatEnemies
 var panel: PanelContainer
 var _battle: Control
 var _labels: Array[Label] = []
+var _badges: Array[LiveEnemyIntentBadge] = []
 
 
 func _ready() -> void:
@@ -32,15 +33,27 @@ func _sync_battle() -> void:
 	panel.name = "EnemyRosterPanel"
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var rows := HBoxContainer.new()
+	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rows.add_theme_constant_override("separation", 24)
 	panel.add_child(rows)
 	for enemy in enemies.get_enemies():
+		var column := VBoxContainer.new()
+		column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		column.add_theme_constant_override("separation", 2)
+		rows.add_child(column)
 		var label := Label.new()
+		label.name = "EnemyState%d" % enemy.position
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.add_theme_font_size_override("font_size", 22)
-		rows.add_child(label)
+		column.add_child(label)
 		_labels.append(label)
+		var badge := LiveEnemyIntentBadge.new()
+		badge.name = "EnemyIntent%d" % enemy.position
+		badge.source_position = enemy.position
+		column.add_child(badge)
+		_badges.append(badge)
 	var column: Node = app.hero_view.get_parent()
 	column.add_child(panel)
 	column.move_child(panel, app.hero_view.get_index() + 1)
@@ -50,16 +63,25 @@ func _sync_battle() -> void:
 func _refresh() -> void:
 	if enemies == null:
 		return
+	var roster := enemies.get_enemies()
+	var announcements: Dictionary = {}
+	var app = get_parent()
+	if app.enemy_intents != null:
+		for action in app.enemy_intents.get_intents():
+			announcements[action["enemy_position"]] = action
 	for index in range(_labels.size()):
-		var enemy := enemies.get_enemy(index + 1)
+		var enemy: Dictionary = roster[index]
+		var position: int = enemy["position"]
 		_labels[index].text = "Enemy %d - %s\nHP: %d/%d | Block: %d%s" % [
-			enemy.position, enemy.name, enemy.hp, enemy.max_hp, enemy.block,
-			"\nSLAIN" if enemies.is_slain(index + 1) else ""]
+			position, enemy["name"], enemy["hp"], enemy["max_hp"], enemy["block"],
+			"\nSLAIN" if enemies.is_slain(position) else ""]
+		_badges[index].show_intent(announcements.get(position, {}), enemies.is_slain(position))
 
 
 func _clear() -> void:
 	enemies = null
 	_labels.clear()
+	_badges.clear()
 	if is_instance_valid(panel):
 		panel.get_parent().remove_child(panel)
 		panel.queue_free()

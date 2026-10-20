@@ -16,10 +16,119 @@ func _check(condition: bool, message: String) -> void:
 		failures.append(message)
 
 
+func _input_key(code: Key) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+		await process_frame
+
+
+func _input_mouse(control: Control) -> void:
+	var point := control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = point
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+		await process_frame
+
+
 func _snapshot(app) -> Array:
 	return [app.party.get_heroes(), app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
 		app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
 		app.run_rng.state, app.enemy_intents.get_intents(), app.enemies.get_enemies()]
+
+
+
+func _assert_badges(app, presenter, expected_target: int = -1) -> void:
+	if not is_instance_valid(presenter.panel) or presenter.enemies == null:
+		_check(false, "badge assertions require a mounted real battle")
+		return
+	var roster: Array[Dictionary] = presenter.enemies.get_enemies()
+	var intents: Array[Dictionary] = app.enemy_intents.get_intents()
+	var by_position := {}
+	for action in intents:
+		by_position[action["enemy_position"]] = action
+	var mounted: Array[Node] = presenter.panel.find_children("EnemyIntent*", "Control", true, false)
+	_check(mounted.size() == roster.size() and presenter._badges.size() == roster.size(),
+		"exactly one mounted intent badge per source roster position")
+	if mounted.size() != roster.size() or presenter._badges.size() != roster.size():
+		return
+	var meters: Array[CombatActorMeter] = []
+	for candidate in app.find_children("*", "VBoxContainer", true, false):
+		if candidate is CombatActorMeter:
+			meters.append(candidate)
+	_check(meters.size() == 5, "all three hero and two enemy HP/Block meters remain mounted")
+	var positions: Array[int] = []
+	var modes: Array[String] = []
+	for badge in presenter._badges:
+		_check(badge is LiveEnemyIntentBadge and badge in mounted and badge.is_visible_in_tree(),
+			"live badge is the drawn Control mounted under the battle roster")
+		var position: int = badge.source_position
+		positions.append(position)
+		_check(position >= 1 and position <= roster.size() and
+			roster[position - 1].position == position, "badge source_position matches its enemy")
+		_check(by_position.has(position), "authoritative scheduler supplies this enemy position")
+		if not by_position.has(position):
+			continue
+		var announced: Dictionary = by_position[position]
+		_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+			"drawn badge and text never intercept pointer events")
+		_check(not badge.readable_text.is_empty() and badge.get_theme_default_font() != null and
+			badge.get_theme_default_font().get_string_size(badge.readable_text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= 215,
+			"drawn readable intent fits within its badge")
+		var rect: Rect2 = badge.get_global_rect()
+		_check(rect.size.x >= 200 and rect.size.y >= 40 and
+			Rect2(0, 0, 1280, 720).encloses(rect), "badge has visible area within the viewport")
+		_check(not rect.intersects(app.end_turn_button.get_global_rect()) and
+			not rect.intersects(app.return_button.get_global_rect()) and
+			not rect.intersects(app.hand_view.get_global_rect()),
+			"roster intent badge does not cover hand or battle controls")
+		_check(rect.size.x >= 64 + 215, "badge's drawn caption area has adequate width")
+		for meter in meters:
+			_check(not rect.intersects(meter.get_global_rect()), "intent badge does not cover HP/Block meter")
+		if app.enemies.is_slain(position):
+			_check(badge.icon_mode == "slain" and badge.readable_text == "SLAIN" and
+				badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0,
+				"slain enemy has muted SLAIN icon and no active announced action")
+		else:
+			var kind: String = announced["type"]
+			var amount: int = announced["amount"]
+			var target: int = announced.get("target_position", 0)
+			var message := "ATTACK %d -> HERO %d" % [amount, target] if kind == "attack" else "BLOCK +%d" % amount
+			_check(badge.icon_mode == kind and badge.intent_type == kind and badge.amount == amount and
+				badge.target_position == target and badge.readable_text == message,
+				"badge mode, text, damage/Block and target equal authoritative copied intent")
+			if position == 1 and expected_target != -1:
+				_check(kind == "attack" and amount == 1 and target == expected_target and
+					badge.readable_text == "ATTACK 1 -> HERO %d" % expected_target,
+					"ragling next announced target follows real End Turn scheduler")
+			if position == 2:
+				_check(kind == "block" and amount == 1 and target == 0 and
+					badge.readable_text == "BLOCK +1",
+					"living Guard always announces upcoming +1 Block, not accumulated Block")
+		modes.append(badge.icon_mode)
+	_check(positions == [1, 2], "two unique badges preserve authored enemy source positions")
+	if not app.enemies.is_slain(1):
+		_check("attack" in modes and "block" in modes and modes[0] != modes[1],
+			"attack spear and Block shield use visibly distinct modes")
+	var before: Array = _snapshot(app)
+	presenter._refresh()
+	_check(_snapshot(app) == before, "badge refresh does not mutate HP/Block, deck, energy, turn, intents or run RNG")
+	seed(92741)
+	var next_global: int = randi()
+	seed(92741)
+	presenter._refresh()
+	_check(randi() == next_global, "badge refresh consumes no global RNG")
 
 
 func _visible(app, presenter) -> void:
@@ -42,8 +151,10 @@ func _visible(app, presenter) -> void:
 	_check(not presenter.enemies.is_slain(1), "ragling living")
 	_check(presenter.panel.is_visible_in_tree() and app.battle_view.is_ancestor_of(presenter.panel),
 		"enemy panel visibly mounted inside battle")
-	var labels: Array[Node] = presenter.panel.find_children("*", "Label", true, false)
-	_check(labels.size() == presenter.enemies.get_enemies().size(), "every roster entry has readable text")
+	var labels: Array[Label] = presenter._labels
+	_check(labels.size() == presenter.enemies.get_enemies().size(), "every roster entry has original readable state label")
+	_check(presenter.panel.find_children("*", "Label", true, false).size() == labels.size(),
+		"drawn badges preserve the legacy two original state Labels")
 	_check(not labels.is_empty(), "enemy text exists")
 	if not labels.is_empty():
 		_check(labels[0].is_visible_in_tree() and labels[0].text == "Enemy 1 - Ragling\nHP: 12/12 | Block: 0",
@@ -56,11 +167,17 @@ func _visible(app, presenter) -> void:
 		_check(labels[1].is_visible_in_tree() and labels[1].text == "Enemy 2 - Guard Ragling\nHP: 12/12 | Block: 0",
 			"visible Guard placeholder identifies exact HP and Block")
 		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard fits target viewport")
+	_assert_badges(app, presenter, 1)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
 	_check(app.end_turn_button.focus_next == app.end_turn_button.get_path_to(app.return_button),
 		"keyboard action navigation retained")
+	_check(app.end_turn_button.focus_mode != Control.FOCUS_NONE and
+		app.return_button.focus_mode != Control.FOCUS_NONE and
+		app.end_turn_button.mouse_filter != Control.MOUSE_FILTER_IGNORE and
+		app.return_button.mouse_filter != Control.MOUSE_FILTER_IGNORE,
+		"keyboard and pointer controls still receive input")
 
 
 func _run() -> void:
@@ -116,6 +233,7 @@ func _run() -> void:
 			presenter.panel.get_instance_id() == panel_id, "duplicate Start Run retains same roster and panel")
 		_check(app.battle_view.find_children("EnemyRosterPanel", "PanelContainer", true, false).size() == 1,
 			"exactly one presenter panel per battle")
+		_check(presenter._badges.size() == 2, "duplicate Start Run cannot add intent badges")
 		_check(_snapshot(app) == before, "duplicate Start Run preserves all gameplay state")
 		var trace: Array = []
 		for turn in range(12):
@@ -125,21 +243,43 @@ func _run() -> void:
 			_check(app.enemies.get_enemy(1).hp == 12 and app.enemies.get_enemy(2).hp == 12
 				and app.enemies.get_enemy(1).block == 0 and app.enemies.get_enemy(2).block == turn,
 				"only Guard's announced Block changes the live roster")
+			_assert_badges(app, presenter, 1 if turn % 2 == 0 else 2)
 			trace.append([_snapshot(app), presenter.enemies.get_enemies() if presenter.enemies != null else []])
 			_check(app.deck.try_spend_energy(2) and reference.deck.try_spend_energy(2), "real shared energy spend")
-			app.end_turn_button.pressed.emit()
+			if turn == 0:
+				await _input_mouse(app.end_turn_button)
+			elif turn == 1:
+				app.end_turn_button.grab_focus()
+				await _input_key(KEY_ENTER)
+			else:
+				app.end_turn_button.pressed.emit()
 			reference.end_turn_button.pressed.emit()
 			await process_frame
+			_assert_badges(app, presenter, 2 if turn % 2 == 0 else 1)
+			_check(_snapshot(app) == _snapshot(reference),
+				"real pointer/keyboard End Turn matches same exact reference state")
+		var announced_before_death: Array[Dictionary] = app.enemy_intents.get_intents()
+		var guard_before_death: Dictionary = app.enemies.get_enemy(2)
+		_check(app.enemies.apply_damage(1, 100), "real CombatEnemies.apply_damage slays only ragling")
+		presenter._refresh()
+		_check(app.enemies.is_slain(1) and not app.enemies.is_slain(2) and
+			app.enemies.get_enemy(2) == guard_before_death and
+			app.enemy_intents.get_intents() == announced_before_death,
+			"slaying ragling leaves guard and the schedule intact")
+		_assert_badges(app, presenter)
 		if session == 0:
 			first_trace = trace
 		else:
 			_check(trace == first_trace, "fresh same-seed session reproduces roster and full gameplay trace")
 		reference.return_button.pressed.emit()
 		app.return_button.pressed.emit()
-		_check(presenter.enemies == null and presenter.panel == null and roster_ref.get_ref() == null,
-			"Return to Title immediately releases roster and detaches panel")
+		_check(presenter.enemies == null and presenter.panel == null and roster_ref.get_ref() == null and
+			presenter._badges.is_empty(), "Return immediately releases roster, panel and badges")
 		await process_frame
 		_check(not is_instance_id_valid(panel_id), "old panel freed")
+		presenter._refresh()
+		_check(presenter._badges.is_empty() and presenter.panel == null,
+			"no-session refresh cannot resummon stale callbacks or badges")
 		_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "title and keyboard focus restored")
 	await _invalid_sources(app, reference, presenter)
 	# A valid multi-entry source proves the whole list is parsed, without fixing catalog totals.
@@ -152,8 +292,11 @@ func _run() -> void:
 	await process_frame
 	_check(presenter.enemies != null and presenter.enemies.get_enemy(2).get("id") == "second",
 		"complete valid list creates later enemy")
-	_check(is_instance_valid(presenter.panel) and presenter.panel.find_children("*", "Label", true, false).size() == 2,
-		"multi-entry fixture mounts every enemy")
+	_check(is_instance_valid(presenter.panel) and presenter._labels.size() == 2 and
+		presenter._badges.size() == 2 and
+		presenter.panel.find_children("*", "Label", true, false).size() == 2,
+		"multi-entry fixture mounts both original labels and both drawn intent badges")
+	_assert_badges(app, presenter, 1)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 	app.free()
@@ -199,8 +342,11 @@ func _invalid_sources(app, reference, presenter) -> void:
 		await process_frame
 		_check(app.deck == null and app.party == null and app.run_rng == null and app.enemies == null,
 			"bad roster rejects every run object atomically")
-		_check(presenter.enemies == null and presenter.panel == null and app.battle_view == null,
-			"invalid complete source creates no partial roster or panel")
+		_check(presenter.enemies == null and presenter.panel == null and presenter._badges.is_empty() and
+			app.battle_view == null, "invalid complete source creates no partial roster, panel or badges")
+		presenter._refresh()
+		_check(presenter._badges.is_empty() and presenter.panel == null,
+			"failed Start has no stale cue callback")
 		_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "invalid roster retains actionable title")
 		app._end_turn()
 		_check(app.deck == null and app.party == null and app.enemies == null, "invalid roster End Turn remains inert")
@@ -217,7 +363,8 @@ func _invalid_sources(app, reference, presenter) -> void:
 			_check(_snapshot(app) == _snapshot(reference), "corrected run End Turn matches clean reference")
 		reference.return_button.pressed.emit()
 		app.return_button.pressed.emit()
-		_check(presenter.enemies == null and presenter.panel == null, "invalid battle teardown inert")
+		_check(presenter.enemies == null and presenter.panel == null and presenter._badges.is_empty(),
+			"invalid battle teardown also clears all intent cues")
 		await process_frame
 
 
