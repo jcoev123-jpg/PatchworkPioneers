@@ -27,7 +27,9 @@ func _visible(app) -> void:
 	_check(is_instance_valid(app.hero_view) and app.hero_view.is_visible_in_tree(), "hero row visible")
 	if not is_instance_valid(app.hero_view):
 		return
-	_check(app.hero_view != app.hand_view and app.hero_view.get_parent() == app.hand_view.get_parent(),
+	_check(app.hero_view != app.hand_view and not app.hero_view.is_ancestor_of(app.hand_view)
+		and app.battle_view.is_ancestor_of(app.hero_view)
+		and app.hero_view.get_global_rect().end.y <= app.hand_view.get_global_rect().position.y,
 		"heroes occupy a separate row from hand")
 	_check(app.hero_view.get_child_count() == 3 and app.hero_panels.size() == 3, "three mounted hero panels")
 	for index in range(3):

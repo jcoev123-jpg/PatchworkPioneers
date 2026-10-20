@@ -178,6 +178,66 @@ func _visible(app, presenter) -> void:
 		app.end_turn_button.mouse_filter != Control.MOUSE_FILTER_IGNORE and
 		app.return_button.mouse_filter != Control.MOUSE_FILTER_IGNORE,
 		"keyboard and pointer controls still receive input")
+	_geometry(app, presenter)
+
+
+func _geometry(app, presenter) -> void:
+	_check(is_instance_valid(presenter.battle_row), "horizontal battle wrapper exists")
+	if not is_instance_valid(presenter.battle_row):
+		return
+	var left: Rect2 = app.hero_view.get_global_rect()
+	var right: Rect2 = presenter.panel.get_global_rect()
+	_check(app.hero_view.get_parent() == presenter.battle_row and
+		presenter.panel.get_parent() == presenter.battle_row and
+		presenter.battle_row.get_child_count() == 2,
+		"same app-owned hero row and original enemy panel are the two sides")
+	_check(left.end.x <= right.position.x and not left.intersects(right) and
+		is_equal_approx(left.position.y, right.position.y), "heroes left and enemies right share one horizontal row")
+	_check(app.hero_panels.size() == 3 and presenter._labels.size() == 2, "five original actor slots exist")
+	var controls: Array[Control] = [app.hero_view, presenter.panel, app.hand_view,
+		app.end_turn_button, app.return_button, app.intent_label, app.pile_label]
+	for index in range(app.hero_panels.size()):
+		var slot: PanelContainer = app.hero_panels[index]
+		_check(slot.get_parent() == app.hero_view and slot.get_index() == index and
+			slot.get_child(0).text.begins_with("%d - %s" % [index + 1, app.party.get_hero(index + 1).name]),
+			"hero slot retains authoritative ordered identity")
+		controls.append(slot)
+		controls.append(slot.get_child(0))
+	for label in presenter._labels:
+		controls.append(label)
+	for control in controls:
+		var rect := control.get_global_rect()
+		_check(control.is_visible_in_tree() and rect.size.x > 0 and rect.size.y > 0 and
+			Rect2(0, 0, 1280, 720).encloses(rect), "bounded visible battle control: " + control.name)
+		if control is Label:
+			_check(control.get_minimum_size().x <= rect.size.x, "actor and intent text has readable width")
+	for lower in [app.hand_view, app.end_turn_button, app.return_button]:
+		_check(presenter.battle_row.get_global_rect().end.y <= lower.get_global_rect().position.y,
+			"actor sides stay above usable hand and actions")
+
+
+func _mouse_attack(app, reference, presenter) -> void:
+	var chosen: Control
+	var target := 0
+	var card_id := ""
+	for card in app.hand_view.get_children():
+		var id: String = card.get_child(0).text
+		var preview := CombatAttackTargeting.new().get_preview(app.deck, app.party, app.enemies, id)
+		if preview.playable and preview.requires_selection and not preview.target_positions.is_empty():
+			chosen = card
+			target = preview.target_positions.back()
+			card_id = id
+			break
+	_check(chosen != null and target > 0, "real seeded hand supplies a playable targeted attack")
+	if chosen == null or target == 0:
+		return
+	var before := _snapshot(app)
+	await _input_mouse(chosen)
+	_check(_snapshot(app) == before, "mouse card selection alone changes no combat state")
+	await _input_mouse(presenter._labels[target - 1])
+	var result := CombatAttackCards.new().play_attack(reference.deck, reference.party, reference.enemies, card_id, target)
+	_check(result.ok and _snapshot(app) != before, "mouse enemy selection commits a real attack")
+	_check(_snapshot(app) == _snapshot(reference), "mouse attack preserves complete reference HP/Block, piles, energy and RNG")
 
 
 func _run() -> void:
@@ -224,7 +284,32 @@ func _run() -> void:
 			reference.free()
 			_finish()
 			return
+		var heroes = app.hero_view
+		var hero_slots: Array = app.hero_panels.duplicate()
+		var original_parent = presenter._hero_parent
+		var old_row_id: int = presenter.battle_row.get_instance_id()
+		var old_panel_id: int = presenter.panel.get_instance_id()
+		presenter._clear()
+		_check(is_instance_valid(heroes) and heroes.get_parent() == original_parent and
+			app.hero_panels == hero_slots, "explicit clear restores same app-owned heroes and slots")
+		presenter._sync_battle()
+		await process_frame
+		await process_frame
+		_check(not is_instance_id_valid(old_row_id) and not is_instance_id_valid(old_panel_id),
+			"clear/remount frees temporary wrapper and panel")
+		_check(app.hero_view == heroes and app.hero_panels == hero_slots, "remount retains hero node identities")
+		_geometry(app, presenter)
+		var state_before_repair := _snapshot(app)
+		presenter.panel.free()
+		presenter._refresh()
+		presenter._sync_battle()
+		await process_frame
+		await process_frame
+		_check(app.hero_view == heroes and app.hero_panels == hero_slots and
+			_snapshot(app) == state_before_repair, "destroyed enemy panel remount preserves app heroes and full combat state")
+		_geometry(app, presenter)
 		var roster_ref: WeakRef = weakref(presenter.enemies)
+		var row_id: int = presenter.battle_row.get_instance_id()
 		var panel_id: int = presenter.panel.get_instance_id() if is_instance_valid(presenter.panel) else 0
 		var before := _snapshot(app)
 		app.start_button.pressed.emit()
@@ -234,6 +319,9 @@ func _run() -> void:
 		_check(app.battle_view.find_children("EnemyRosterPanel", "PanelContainer", true, false).size() == 1,
 			"exactly one presenter panel per battle")
 		_check(presenter._badges.size() == 2, "duplicate Start Run cannot add intent badges")
+		_check(presenter.battle_row.get_instance_id() == row_id and
+			app.battle_view.find_children("BattleActorSides", "HBoxContainer", true, false).size() == 1,
+			"duplicate Start retains exactly one horizontal wrapper")
 		_check(_snapshot(app) == before, "duplicate Start Run preserves all gameplay state")
 		var trace: Array = []
 		for turn in range(12):
@@ -258,6 +346,8 @@ func _run() -> void:
 			_assert_badges(app, presenter, 2 if turn % 2 == 0 else 1)
 			_check(_snapshot(app) == _snapshot(reference),
 				"real pointer/keyboard End Turn matches same exact reference state")
+		await _mouse_attack(app, reference, presenter)
+		_geometry(app, presenter)
 		var announced_before_death: Array[Dictionary] = app.enemy_intents.get_intents()
 		var guard_before_death: Dictionary = app.enemies.get_enemy(2)
 		_check(app.enemies.apply_damage(1, 100), "real CombatEnemies.apply_damage slays only ragling")
@@ -266,6 +356,13 @@ func _run() -> void:
 			app.enemies.get_enemy(2) == guard_before_death and
 			app.enemy_intents.get_intents() == announced_before_death,
 			"slaying ragling leaves guard and the schedule intact")
+		_assert_badges(app, presenter)
+		_check(app.enemies.apply_damage(2, 100), "final enemy damage exercises terminal layout")
+		await process_frame
+		await process_frame
+		_check(app.battle_result.get_outcome() == CombatBattleResult.VICTORY and
+			app.reward_buttons.size() == 4, "terminal geometry uses real victory and reward controls")
+		_geometry(app, presenter)
 		_assert_badges(app, presenter)
 		if session == 0:
 			first_trace = trace
@@ -277,6 +374,8 @@ func _run() -> void:
 			presenter._badges.is_empty(), "Return immediately releases roster, panel and badges")
 		await process_frame
 		_check(not is_instance_id_valid(panel_id), "old panel freed")
+		_check(not is_instance_id_valid(row_id) and not is_instance_valid(heroes) and
+			presenter.battle_row == null, "Return frees old wrapper and app-owned battle with no orphan heroes")
 		presenter._refresh()
 		_check(presenter._badges.is_empty() and presenter.panel == null,
 			"no-session refresh cannot resummon stale callbacks or badges")
@@ -343,7 +442,8 @@ func _invalid_sources(app, reference, presenter) -> void:
 		_check(app.deck == null and app.party == null and app.run_rng == null and app.enemies == null,
 			"bad roster rejects every run object atomically")
 		_check(presenter.enemies == null and presenter.panel == null and presenter._badges.is_empty() and
-			app.battle_view == null, "invalid complete source creates no partial roster, panel or badges")
+			app.battle_view == null and presenter.battle_row == null,
+			"invalid complete source creates no partial roster, wrapper, panel or badges")
 		presenter._refresh()
 		_check(presenter._badges.is_empty() and presenter.panel == null,
 			"failed Start has no stale cue callback")

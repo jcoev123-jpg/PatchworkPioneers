@@ -36,7 +36,7 @@ func _sync_battle() -> void:
 		row.name = "CombatMeters"
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_theme_constant_override("separation", 8)
-		var column := app.hero_view.get_parent() as VBoxContainer
+		var column := app.intent_label.get_parent() as VBoxContainer
 		# Reserve room for the bars while leaving the existing target panels actionable.
 		column.add_theme_constant_override("separation", 6)
 		column.add_child(row)

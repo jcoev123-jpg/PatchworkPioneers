@@ -6,6 +6,12 @@ var panel: PanelContainer
 var _battle: Control
 var _labels: Array[Label] = []
 var _badges: Array[LiveEnemyIntentBadge] = []
+var battle_row: HBoxContainer
+var _heroes: HBoxContainer
+var _hero_parent: Node
+var _hero_index := 0
+var _hero_flags := 0
+var _hero_fonts: Dictionary = {}
 
 
 func _ready() -> void:
@@ -20,21 +26,41 @@ func _process(_delta: float) -> void:
 
 func _sync_battle() -> void:
 	var app = get_parent()
-	if app.deck == null or not is_instance_valid(app.battle_view):
+	if app.deck == null or not is_instance_valid(app.battle_view) \
+			or not is_instance_valid(app.hero_view):
 		_clear()
 		return
-	if _battle == app.battle_view:
+	if _battle == app.battle_view and is_instance_valid(battle_row) and is_instance_valid(panel):
 		return
 	_clear()
+	if app.enemies == null:
+		return
 	_battle = app.battle_view
 	_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 	enemies = app.enemies
+	_heroes = app.hero_view
+	_hero_parent = _heroes.get_parent()
+	_hero_index = _heroes.get_index()
+	_hero_flags = _heroes.size_flags_horizontal
+	for hero_panel in app.hero_panels:
+		var label := hero_panel.get_child(0) as Label
+		_hero_fonts[label] = label.get_theme_font_size("font_size")
+		label.add_theme_font_size_override("font_size", 18)
+	battle_row = HBoxContainer.new()
+	battle_row.name = "BattleActorSides"
+	battle_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	battle_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	battle_row.add_theme_constant_override("separation", 24)
+	_hero_parent.add_child(battle_row)
+	_hero_parent.move_child(battle_row, _hero_index)
+	_heroes.reparent(battle_row, false)
+	_heroes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel = PanelContainer.new()
 	panel.name = "EnemyRosterPanel"
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var rows := HBoxContainer.new()
 	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rows.add_theme_constant_override("separation", 24)
+	rows.add_theme_constant_override("separation", 8)
 	panel.add_child(rows)
 	for enemy in enemies.get_enemies():
 		var column := VBoxContainer.new()
@@ -54,14 +80,13 @@ func _sync_battle() -> void:
 		badge.source_position = enemy.position
 		column.add_child(badge)
 		_badges.append(badge)
-	var column: Node = app.hero_view.get_parent()
-	column.add_child(panel)
-	column.move_child(panel, app.hero_view.get_index() + 1)
+	panel.custom_minimum_size.x = 300
+	battle_row.add_child(panel)
 	_refresh()
 
 
 func _refresh() -> void:
-	if enemies == null:
+	if enemies == null or not is_instance_valid(panel):
 		return
 	var roster := enemies.get_enemies()
 	var announcements: Dictionary = {}
@@ -79,11 +104,31 @@ func _refresh() -> void:
 
 
 func _clear() -> void:
+	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_clear):
+		_battle.tree_exiting.disconnect(_clear)
+	# Return the app-owned controls before disposing of our temporary container.
+	if is_instance_valid(_heroes) and is_instance_valid(_hero_parent):
+		if _heroes.get_parent() != _hero_parent:
+			_heroes.reparent(_hero_parent, false)
+		_hero_parent.move_child(_heroes, mini(_hero_index, _hero_parent.get_child_count() - 1))
+		_heroes.size_flags_horizontal = _hero_flags
+	_heroes = null
+	_hero_parent = null
+	for label in _hero_fonts:
+		if is_instance_valid(label):
+			label.add_theme_font_size_override("font_size", _hero_fonts[label])
+	_hero_fonts.clear()
 	enemies = null
 	_labels.clear()
 	_badges.clear()
 	if is_instance_valid(panel):
-		panel.get_parent().remove_child(panel)
+		if panel.get_parent() != null:
+			panel.get_parent().remove_child(panel)
 		panel.queue_free()
 	panel = null
+	if is_instance_valid(battle_row):
+		if battle_row.get_parent() != null:
+			battle_row.get_parent().remove_child(battle_row)
+		battle_row.queue_free()
+	battle_row = null
 	_battle = null
