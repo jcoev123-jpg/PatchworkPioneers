@@ -10,6 +10,7 @@ var _keyboard := false
 var _targeting := CombatAttackTargeting.new()
 var _catalog := StarterCards.new()
 var _play := CombatAttackCards.new()
+var _on_hit := CombatOnHitStatuses.new()
 var last_event: Dictionary = {}
 var _armed: Control
 var _queued := false
@@ -61,16 +62,14 @@ func _input(event: InputEvent) -> void:
 	if event.keycode != KEY_P:
 		return
 	var panels: Array[Control] = []
-	var ids: Array[String] = []
-	for panel in _bindings:
-		if _eligible(panel):
-			var id := _card_id(panel)
-			if id not in ids:
-				ids.append(id)
-				panels.append(panel)
+	# Cycle actual held instances, not unique IDs: identical copies own their
+	# own input listeners, highlights, and pending selection.
+	for panel in get_parent().hand_view.get_children():
+		if _bindings.has(panel) and _eligible(panel):
+			panels.append(panel)
 	if panels.is_empty():
 		return
-	var index := ids.find(_card_id(_selected))
+	var index := panels.find(_selected)
 	_selected = panels[(index + 1) % panels.size()]
 	_armed = _selected
 	if not _single(_armed):
@@ -251,11 +250,22 @@ func _refresh() -> void:
 	var definition := _catalog.get_definition(id)
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
 	var targets: PackedStringArray = []
+	# Only attach on-hit counters to recipients accepted by the authoritative
+	# forecast. The adapter describes a *conditional* confirmed hit, not a
+	# future mutation or a promise that the player will cast this card.
+	var additions: Dictionary = _on_hit.status_for_confirmed_hit(id, true) if preview.playable else {}
 	for hit in preview.hits:
-		targets.append("%d: %d" % [hit.position, hit.damage])
-	var description := "Unavailable: no legal targets"
+		var detail := "%d: %d damage" % [hit.position, hit.damage]
+		var enemy: Dictionary = app.enemies.get_enemy(hit.position)
+		var current: Dictionary = enemy.get("statuses", {})
+		for status in additions:
+			var amount: int = additions[status]
+			var previous: int = current.get(status, 0)
+			detail += " (%s %d → %d on confirmed hit)" % [status.capitalize(), previous, previous + amount]
+		targets.append(detail)
+	var description := "Unavailable: no legal targets or energy"
 	if preview.playable:
-		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(targets) + " damage"
+		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + "; ".join(targets)
 	var controls := "P / click card; 1-3 / click enemy" if _single(_selected) else "P: select; Enter / Space / click card: cast"
 	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 

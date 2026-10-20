@@ -48,7 +48,8 @@ func base_effect_text(card_id: String) -> String:
 			target_text = "No target"
 		_:
 			target_text = "Unknown target"
-	# M01: leave Weak/Bleed for M02 live persistence.
+	# Describe only effects backed by the real confirmed-hit adapter; an
+	# authored counter by itself is not a promise of an applied status.
 	var from_text: String = describe(card_id).get("from_text", "From ?")
 	var effect_parts: Array[String] = []
 	if definition.get("action_kind") == "adjacent_swap":
@@ -61,6 +62,16 @@ func base_effect_text(card_id: String) -> String:
 		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
 	if effects.has("draw"):
 		effect_parts.append("BASE draw %d card" % int(effects["draw"]))
+	var on_hit := CombatOnHitStatuses.new().status_for_confirmed_hit(card_id, true)
+	for status in ["bleed", "weak"]:
+		if not on_hit.has(status):
+			continue
+		var addition: int = on_hit[status]
+		var rule := "ON CONFIRMED HIT add %s %d" % [status.capitalize(), addition]
+		if status == "bleed" and owner == "seamstress":
+			var authored: int = int(effects.get("bleed", 0))
+			rule += " (authored Bleed %d + Seamstress passive %d)" % [authored, addition - authored]
+		effect_parts.append(rule)
 	var parts: Array[String] = ["%s; %s; %d energy" % [display_name, owner.capitalize(), cost], from_text]
 	if target_text != "No target" and target_text != "Unknown target" and not target_text.is_empty():
 		parts.append(target_text)

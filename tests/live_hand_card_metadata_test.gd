@@ -185,8 +185,12 @@ func _validate_display(observed: Dictionary) -> void:
 		elif card_id == "warden_shield_bash":
 			_check(tooltip_text.contains("BASE deal 8 damage"), "exact bash damage: " + card_id)
 			_check(tooltip_text.contains("To one selected enemy 1"), "exact bash target: " + card_id)
+			_check(tooltip_lines.has("BASE deal 8 damage; ON CONFIRMED HIT add Weak 1"),
+				"Shield Bash exact authored confirmed-hit Weak rule, not generic status")
 		elif card_id == "seamstress_prick":
 			_check(tooltip_text.contains("BASE deal 3 damage"), "exact prick damage: " + card_id)
+			_check(tooltip_lines.has("BASE deal 3 damage; ON CONFIRMED HIT add Bleed 3 (authored Bleed 2 + Seamstress passive 1)"),
+				"Prick exact confirmed-hit stack derives authored 2 plus passive 1")
 			_check(tooltip_text.contains("To one selected enemy 1\u20133"), "exact prick target: " + card_id)
 		elif card_id == "seamstress_mend":
 			_check(tooltip_text.contains("BASE heal 5 HP, capped at max HP"), "exact mend heal with cap: " + card_id)
@@ -203,6 +207,9 @@ func _validate_display(observed: Dictionary) -> void:
 		elif card_id == "tinker_tune_up":
 			_check(tooltip_text.contains("BASE draw 1 card"), "exact tune draw: " + card_id)
 			_check(tooltip_text.contains("No target"), "exact tune no target: " + card_id)
+		if card_id in ["warden_strike", "tinker_pop_shot", "tinker_scrap_bomb"]:
+			_check(not tooltip_text.contains("ON CONFIRMED HIT") and not tooltip_text.contains("Bleed")
+				and not tooltip_text.contains("Weak"), "neutral attack never claims a debuff: " + card_id)
 		# Support cards: exact instruction plus appended effect detail.
 		if card_id in SUPPORT_IDS:
 			_check(tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support exact instruction preserved: " + card_id)
