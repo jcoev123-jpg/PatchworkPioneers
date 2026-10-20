@@ -156,6 +156,7 @@ func _reject(service: CombatAttackCards, deck: CombatDeck, party: CombatParty,
 		attacker_statuses: Dictionary = {}, defender_statuses: Dictionary = {}) -> void:
 	var before := _snapshot(deck, party, enemies)
 	var input_before := [attacker_statuses.duplicate(true), defender_statuses.duplicate(true)]
+	var first_attack_before := service._tinker._consumed
 	_check(service.play_attack(deck, party, enemies, card_id, target,
 		attacker_statuses, defender_statuses) == {"ok": false, "hits": []},
 		label + ": rejects with empty hits")
@@ -163,6 +164,8 @@ func _reject(service: CombatAttackCards, deck: CombatDeck, party: CombatParty,
 		label + ": rejects without spending, discarding, RNG or HP/Block mutation")
 	_check(input_before == [attacker_statuses, defender_statuses],
 		label + ": rejection does not alter supplied statuses")
+	_check(service._tinker._consumed == first_attack_before,
+		label + ": rejection preserves first-attack state")
 
 
 func _test_contract_and_five_attacks() -> void:
@@ -204,6 +207,17 @@ func _test_contract_and_five_attacks() -> void:
 
 
 func _test_modifier_math_and_first_attack() -> void:
+	for entry in [
+		{"attacker": {"weak": 1}, "defender": {}, "damage": 4},
+		{"attacker": {}, "defender": {"exposed": 1}, "damage": 9},
+		{"attacker": {"weak": 1}, "defender": {"exposed": 1}, "damage": 6},
+	]:
+		var strike_deck := _deck(["warden_strike"])
+		var strike_enemies := _enemies()
+		_check(strike_enemies.gain_block(1, 3), "modified Strike hits real Block")
+		_accept(CombatAttackCards.new(), strike_deck, _party(), strike_enemies,
+			"warden_strike", 1, [_hit(1, entry.damage, 3, entry.damage - 3)],
+			1, "Strike exact modifier math " + str(entry), entry.attacker, {1: entry.defender})
 	var service := CombatAttackCards.new()
 	var deck := _deck(["tinker_pop_shot", "tinker_pop_shot", "tinker_scrap_bomb"])
 	var party := _party()
@@ -213,6 +227,8 @@ func _test_modifier_math_and_first_attack() -> void:
 		"missing single selection before Tinker hit")
 	_reject(service, deck, party, enemies, "tinker_pop_shot", 1,
 		"invalid attacker snapshot before Tinker hit", {"weak": -1})
+	_reject(service, deck, party, enemies, "tinker_pop_shot", 1,
+		"invalid unselected status before Tinker hit", {}, {3: {"exposed": "1"}})
 	# 8 * (3/4) * (3/2) = 9; floor only ONCE.
 	_accept(service, deck, party, enemies, "tinker_pop_shot", 1,
 		[_hit(1, 9, 0, 9)], 1, "first Tinker Weak+Exposed",

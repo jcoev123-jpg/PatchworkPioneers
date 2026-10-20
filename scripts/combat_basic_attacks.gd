@@ -7,7 +7,13 @@ extends RefCounted
 const SUPPORTED_CARD_IDS := ["warden_strike", "tinker_pop_shot"]
 
 
-func play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String, target_position: int) -> bool:
+func play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String,
+		target_position: int, final_damage: Variant = null) -> bool:
+	# null preserves the original authored-damage, five-argument contract.
+	# Keep this a Variant so malformed overrides fail closed rather than coerce.
+	if final_damage != null and (not final_damage is int or final_damage < 0
+			or final_damage > CombatStatuses.MAX_INT):
+		return false
 	if deck == null or party == null or enemies == null:
 		return false
 	if not deck.turn_active:
@@ -50,6 +56,8 @@ func play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id:
 	var damage = effects.get("damage")
 	if not damage is int or damage < 0:
 		return false
+	if final_damage != null:
+		damage = final_damage
 
 	# Held copy and affordable energy.
 	if not deck.hand.has(card_id):

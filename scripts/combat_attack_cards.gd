@@ -12,6 +12,8 @@ var _targeting := CombatAttackTargeting.new()
 var _damage := CombatStatusAttacks.new()
 var _on_hit := CombatOnHitStatuses.new()
 var _tinker := CombatTinkerFirstAttack.new()
+var _basic := CombatBasicAttacks.new()
+var _statuses := CombatStatuses.new()
 
 
 ## The live turn coordinator must call this once per new player turn.
@@ -78,6 +80,21 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 	var bonus := _tinker.bonus_for_attack(card_id)
 	var attack_damage: int = damage_value + bonus
+	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
+		var final_damage := _statuses.adjusted_attack_damage(attack_damage,
+			attacker_statuses, enemy_statuses_by_position.get(target_position, {}))
+		var before := enemies.get_enemy(target_position)
+		if not _basic.play(deck, party, enemies, card_id, target_position, final_damage):
+			return _failure()
+		var after := enemies.get_enemy(target_position)
+		_tinker.record_successful_attack(card_id)
+		return {"ok": true, "hits": [{
+			"position": target_position,
+			"damage": final_damage,
+			"block_absorbed": before["block"] - after["block"],
+			"hp_loss": before["hp"] - after["hp"],
+			"statuses": _on_hit.status_for_confirmed_hit(card_id, true)
+		}]}
 	# All downstream operations are now guaranteed by the real models and
 	# immutable preflight. The existing status bridge owns final-floor rounding.
 	if not deck.try_spend_energy(cost_value):

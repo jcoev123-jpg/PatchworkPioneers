@@ -280,6 +280,9 @@ func _attacks() -> void:
 				await _frames()
 				await _choose(id, keyboard)
 				var before := _snapshot()
+				_check(app.deck.hand.has(id) and app.deck.energy >= 1
+					and app.enemies.get_enemy(position).block == 2,
+					"held attack has affordable cost and living blocked target: " + id)
 				var definition := catalog.get_definition(id)
 				var damage: int = definition.effects.damage + (3 if definition.owner == "tinker" else 0)
 				var expected := before.duplicate(true)
@@ -302,6 +305,9 @@ func _attacks() -> void:
 				else:
 					await _click(app.get_node("LiveEnemyRoster")._labels[position - 1])
 				_check(_snapshot() == expected, "exact full data-driven transition " + id)
+				_check(app.deck.hand.count(id) == before[0].count(id) - 1
+					and app.deck.discard_pile.count(id) == before[2].count(id) + 1,
+					"one physical activation spends exactly one held copy: " + id)
 				_check(randi() == global_next, "attack preserves global RNG " + id)
 				var statuses := {}
 				for status in ["weak", "bleed"]:

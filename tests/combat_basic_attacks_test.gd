@@ -7,6 +7,7 @@ var service := CombatBasicAttacks.new()
 
 func _initialize() -> void:
 	_test_success()
+	_test_damage_overrides()
 	_test_positions_and_victory()
 	_test_rejections()
 	_test_replay()
@@ -82,9 +83,15 @@ func _rejected(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 
 func _assert_play_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int, damage: int, cost: int, label: String) -> void:
+		card_id: String, target_position: int, damage: int, cost: int, label: String,
+		final_damage: Variant = null) -> void:
 	var before := _snapshot(deck, party, enemies)
-	_check(service.play(deck, party, enemies, card_id, target_position), label + ": accepted")
+	var accepted: bool
+	if final_damage == null:
+		accepted = service.play(deck, party, enemies, card_id, target_position)
+	else:
+		accepted = service.play(deck, party, enemies, card_id, target_position, final_damage)
+	_check(accepted, label + ": accepted")
 	var expected := before.duplicate(true)
 	var hand: Array = expected[1]
 	var hand_index := hand.find(card_id)
@@ -112,6 +119,27 @@ func _assert_play_snapshot(deck: CombatDeck, party: CombatParty, enemies: Combat
 	expected[8] = enemies_expected
 	var after := _snapshot(deck, party, enemies)
 	_check(after == expected, label + ": full expected snapshot")
+
+
+func _test_damage_overrides() -> void:
+	for id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
+		for damage in [0, 4, 8, CombatStatuses.MAX_INT]:
+			var deck := _deck([id, id])
+			var party := _default_party()
+			var enemies := _enemies([{"id": "e1", "max_hp": 20}])
+			_check(enemies.gain_block(1, 6), "override target has real Block")
+			_assert_play_snapshot(deck, party, enemies, id, 1, damage, 1,
+				id + " explicit damage " + str(damage), damage)
+		for damage in [-1, -9223372036854775807 - 1, 1.0, true, "8", [], {}, INF, NAN,
+				9223372036854775808.0]:
+			var deck := _deck([id, id])
+			var party := _default_party()
+			var enemies := _enemies([{"id": "e1", "max_hp": 20}])
+			var before := _snapshot(deck, party, enemies)
+			_check(not service.play(deck, party, enemies, id, 1, damage),
+				"malformed override rejected: " + str(damage))
+			_check(_snapshot(deck, party, enemies) == before,
+				"invalid override preserves complete models and RNG")
 
 
 func _test_success() -> void:
