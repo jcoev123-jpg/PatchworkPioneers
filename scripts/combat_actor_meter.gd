@@ -15,6 +15,7 @@ var hp_text: Label
 var hp_bar: ProgressBar
 var block_text: Label
 var block_bar: ProgressBar
+var status_text: Label
 
 var _panel_style: StyleBoxFlat
 
@@ -48,6 +49,8 @@ func _init() -> void:
 	hp_bar = _make_bar(content, "HPBar", HP_HERO)
 	block_text = _make_label(content, "BlockText")
 	block_bar = _make_bar(content, "BlockBar", BLOCK)
+	status_text = _make_label(content, "StatusText")
+	status_text.add_theme_font_size_override("font_size", 12)
 	_clear_actor()
 
 
@@ -104,6 +107,13 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 	actor_heading.text = title
 	hp_text.text = "HP: %d/%d" % [current, maximum]
 	block_text.text = "Block: %d" % protection
+	var statuses: Dictionary = snapshot.get("statuses", {})
+	var active: Array[String] = []
+	for key in ["bleed", "weak", "exposed"]:
+		var count: int = statuses.get(key, 0)
+		if count > 0:
+			active.append("%s %d" % [key.capitalize(), count])
+	status_text.text = "Statuses: none" if active.is_empty() else "Statuses: " + " · ".join(active)
 
 	hp_bar.max_value = float(maximum)
 	hp_bar.value = float(current)
@@ -139,6 +149,16 @@ func _valid_snapshot(snapshot: Dictionary, side: String) -> bool:
 		return false
 	if not protection is int or protection < 0:
 		return false
+	if snapshot.has("statuses"):
+		var statuses = snapshot["statuses"]
+		if not statuses is Dictionary:
+			return false
+		for key in statuses:
+			if not key is String or key not in ["bleed", "weak", "exposed"]:
+				return false
+			var count = statuses[key]
+			if not count is int or count < 0:
+				return false
 	return true
 
 
@@ -146,6 +166,7 @@ func _clear_actor() -> void:
 	actor_heading.text = ""
 	hp_text.text = ""
 	block_text.text = ""
+	status_text.text = ""
 	hp_bar.max_value = 1.0
 	hp_bar.value = 0.0
 	block_bar.max_value = 1.0

@@ -50,10 +50,11 @@ func _sync_battle() -> void:
 				meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				var padding := meter.get_node("Padding") as MarginContainer
 				for edge in ["left", "right", "top", "bottom"]:
-					padding.add_theme_constant_override("margin_" + edge, 4)
+					padding.add_theme_constant_override("margin_" + edge, 2 if edge in ["top", "bottom"] else 4)
 				meter.get_node("Padding/Content").add_theme_constant_override("separation", 0)
 				for label in [meter.actor_heading, meter.hp_text, meter.block_text]:
 					label.add_theme_font_size_override("font_size", 12)
+				meter.status_text.add_theme_font_size_override("font_size", 10)
 				for bar in [meter.hp_bar, meter.block_bar]:
 					bar.custom_minimum_size = Vector2(200, 8)
 				if side == "hero":
