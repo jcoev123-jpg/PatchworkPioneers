@@ -1,0 +1,5 @@
+[
+  {"id": "warden", "name": "Warden", "max_hp": 40, "art_path": "res://assets/paper/heroes/warden.png"},
+  {"id": "seamstress", "name": "Seamstress", "max_hp": 30, "art_path": "res://assets/paper/heroes/seamstress.png"},
+  {"id": "tinker", "name": "Tinker", "max_hp": 26, "art_path": "res://assets/paper/heroes/tinker.png"}
+]
