@@ -88,22 +88,26 @@ func _make_roster(definitions: Array) -> CombatEnemies:
 	return CombatEnemies.new(definitions)
 
 func _snapshot_selector(selector: CombatEnemyIntents) -> Dictionary:
+	# Authoritative deep snapshot of selector state for mutation detection
 	return {
 		"valid": selector.is_valid(),
-		"intents": selector.get_intents().duplicate(true),
-		"turn_index": _get_turn_index(selector)
+		"intents": selector.get_intents().duplicate(true)
 	}
 
 func _snapshot_roster(roster: CombatEnemies) -> Dictionary:
+	# Authoritative deep snapshot of roster state for mutation detection
 	return {
 		"valid": roster.is_valid(),
 		"enemies": roster.get_enemies().duplicate(true)
 	}
 
-func _get_turn_index(selector: CombatEnemyIntents) -> int:
-	# Access private _turn_index via a workaround - call advance_turn and track
-	# Actually, we can't access private. We'll just verify behavior.
-	return -1
+func _assert_selector_snapshots_equal(before: Dictionary, after: Dictionary, context: String) -> void:
+	_check(before["valid"] == after["valid"], context + ": selector validity unchanged")
+	_check(before["intents"] == after["intents"], context + ": selector intents deeply unchanged")
+
+func _assert_roster_snapshots_equal(before: Dictionary, after: Dictionary, context: String) -> void:
+	_check(before["valid"] == after["valid"], context + ": roster validity unchanged")
+	_check(before["enemies"] == after["enemies"], context + ": roster enemies deeply unchanged")
 
 func _test_happy_path_first_turn() -> void:
 	var enemy_defs = _load_starter_enemies()
@@ -115,7 +119,17 @@ func _test_happy_path_first_turn() -> void:
 	_check(selector.is_valid(), "selector is valid")
 	_check(roster.is_valid(), "roster is valid")
 
+	# Snapshot before cue read
+	var selector_snapshot_before = _snapshot_selector(selector)
+	var roster_snapshot_before = _snapshot_roster(roster)
+
 	var cues = CombatIntentCues.new().get_cues(selector, roster)
+
+	# Snapshot after cue read and assert no mutation
+	var selector_snapshot_after = _snapshot_selector(selector)
+	var roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "first turn selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "first turn roster")
 
 	_check(cues.size() == 2, "first turn returns two cues (Ragling attack, Guard block)")
 
@@ -150,7 +164,17 @@ func _test_happy_path_after_advance() -> void:
 
 	_check(selector.advance_turn(), "advance_turn succeeds")
 
+	# Snapshot before cue read (after advance)
+	var selector_snapshot_before = _snapshot_selector(selector)
+	var roster_snapshot_before = _snapshot_roster(roster)
+
 	var cues = CombatIntentCues.new().get_cues(selector, roster)
+
+	# Snapshot after cue read and assert no mutation
+	var selector_snapshot_after = _snapshot_selector(selector)
+	var roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "after advance selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "after advance roster")
 
 	_check(cues.size() == 2, "after advance, still two cues")
 
@@ -183,6 +207,10 @@ func _test_copy_isolation_and_repeat_calls() -> void:
 
 	var helper = CombatIntentCues.new()
 
+	# Snapshot before any cue reads
+	var selector_snapshot_before = _snapshot_selector(selector)
+	var roster_snapshot_before = _snapshot_roster(roster)
+
 	# First call
 	var cues1 = helper.get_cues(selector, roster)
 	# Second call
@@ -190,6 +218,12 @@ func _test_copy_isolation_and_repeat_calls() -> void:
 
 	# Deep equality
 	_check(cues1 == cues2, "repeated calls produce equal deep values")
+
+	# Snapshot after repeated reads and assert no mutation
+	var selector_snapshot_after = _snapshot_selector(selector)
+	var roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "repeat calls selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "repeat calls roster")
 
 	# Mutate first result
 	cues1[0]["amount"] = 999
@@ -205,11 +239,11 @@ func _test_copy_isolation_and_repeat_calls() -> void:
 	_check(cues3[0]["enemy_position"] == 1, "original position preserved")
 	_check(cues3.size() == 2, "original size preserved")
 
-	# Verify selector and roster unchanged
-	_check(selector.is_valid(), "selector unchanged after cue reads")
-	_check(roster.is_valid(), "roster unchanged after cue reads")
-	_check(selector.get_intents().size() == 2, "selector intents unchanged")
-	_check(roster.get_enemies().size() == 2, "roster enemies unchanged")
+	# Verify selector and roster still unchanged after mutation of returned copy
+	selector_snapshot_after = _snapshot_selector(selector)
+	roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "after mutation selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "after mutation roster")
 
 func _test_slain_enemy_omitted() -> void:
 	var enemy_defs = _load_starter_enemies()
@@ -223,7 +257,17 @@ func _test_slain_enemy_omitted() -> void:
 	_check(roster.is_slain(1), "Ragling is slain")
 	_check(not roster.is_slain(2), "Guard still alive")
 
+	# Snapshot before cue read (with slain enemy)
+	var selector_snapshot_before = _snapshot_selector(selector)
+	var roster_snapshot_before = _snapshot_roster(roster)
+
 	var cues = CombatIntentCues.new().get_cues(selector, roster)
+
+	# Snapshot after cue read and assert no mutation
+	var selector_snapshot_after = _snapshot_selector(selector)
+	var roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "slain enemy selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "slain enemy roster")
 
 	_check(cues.size() == 1, "only Guard cue remains after Ragling slain")
 	var guard_cue = _find_cue(cues, 2, "ragling_guard")
@@ -236,7 +280,19 @@ func _test_slain_enemy_omitted() -> void:
 
 	# Advance selector - should not affect cue generation for dead enemy
 	_check(selector.advance_turn(), "advance works with dead enemy in selector")
+
+	# Snapshot before second cue read (after advance with slain enemy)
+	selector_snapshot_before = _snapshot_selector(selector)
+	roster_snapshot_before = _snapshot_roster(roster)
+
 	var cues2 = CombatIntentCues.new().get_cues(selector, roster)
+
+	# Snapshot after second cue read and assert no mutation
+	selector_snapshot_after = _snapshot_selector(selector)
+	roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "after advance with slain selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "after advance with slain roster")
+
 	_check(cues2.size() == 1, "still only Guard cue after advance")
 	_check(_find_cue(cues2, 2, "ragling_guard") != null, "Guard cue persists")
 
@@ -252,12 +308,35 @@ func _test_all_slain_returns_empty() -> void:
 	_check(roster.apply_damage(2, 12), "kill Guard")
 	_check(roster.is_defeated(), "roster defeated")
 
+	# Snapshot before cue read (all slain)
+	var selector_snapshot_before = _snapshot_selector(selector)
+	var roster_snapshot_before = _snapshot_roster(roster)
+
 	var cues = CombatIntentCues.new().get_cues(selector, roster)
+
+	# Snapshot after cue read and assert no mutation
+	var selector_snapshot_after = _snapshot_selector(selector)
+	var roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "all slain selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "all slain roster")
+
 	_check(cues.is_empty(), "empty cues when all enemies slain")
 
 	# Advance and check again
 	_check(selector.advance_turn(), "advance works")
+
+	# Snapshot before second cue read (after advance, all slain)
+	selector_snapshot_before = _snapshot_selector(selector)
+	roster_snapshot_before = _snapshot_roster(roster)
+
 	var cues2 = CombatIntentCues.new().get_cues(selector, roster)
+
+	# Snapshot after second cue read and assert no mutation
+	selector_snapshot_after = _snapshot_selector(selector)
+	roster_snapshot_after = _snapshot_roster(roster)
+	_assert_selector_snapshots_equal(selector_snapshot_before, selector_snapshot_after, "after advance all slain selector")
+	_assert_roster_snapshots_equal(roster_snapshot_before, roster_snapshot_after, "after advance all slain roster")
+
 	_check(cues2.is_empty(), "still empty after advance")
 
 func _test_invalid_selector() -> void:
