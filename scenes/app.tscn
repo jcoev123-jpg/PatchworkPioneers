@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/app.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/live_enemy_roster.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/live_support_hand.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/live_combat_meters.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/live_area_attack_action.gd" id="5"]
 
 [node name="App" type="Control"]
 layout_mode = 3
@@ -22,3 +23,6 @@ script = ExtResource("3")
 
 [node name="LiveCombatMeters" type="Node" parent="."]
 script = ExtResource("4")
+
+[node name="LiveAreaAttackAction" type="Node" parent="."]
+script = ExtResource("5")
