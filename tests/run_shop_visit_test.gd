@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_first_duplicate_and_alias_isolation()
 	_test_invalid_initial_state()
 	_test_rng_and_equal_replay()
+	_test_purchase_reconciliation()
 	if failures.is_empty():
 		print("run_shop_visit_test: PASS (", checks, " checks)")
 	else:
@@ -25,6 +26,46 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _test_purchase_reconciliation() -> void:
+	var cards: Array[String] = ["warden_strike", "seamstress_prick"]
+	var visit := RunShopVisit.new(cards, 200, 1)
+	var result := {"ok": true, "state": {"deck": ["warden_strike", "seamstress_prick", "tinker_pop_shot"], "gold": 150}}
+	var before := visit.get_state()
+	_check(not visit.reconcile_purchase(result), "inactive reconciliation rejects")
+	_check_state_unchanged(visit, before, "inactive reconciliation")
+	_check(visit.open_visit("shop-buy"), "reconciliation opens real visit")
+	before = visit.get_state()
+	for invalid in [
+		{"ok": false, "state": result.state}, {},
+		{"ok": true, "state": {"deck": cards, "gold": 150}},
+		{"ok": true, "state": {"deck": ["wrong", "seamstress_prick", "tinker_pop_shot"], "gold": 150}},
+		{"ok": true, "state": {"deck": result.state.deck, "gold": -1}},
+		{"ok": true, "state": {"deck": result.state.deck, "gold": 201}},
+		{"ok": true, "state": {"deck": result.state.deck, "gold": 150.5}},
+		{"ok": true, "state": {"deck": ["warden_strike", "seamstress_prick", 1], "gold": 150}}
+	]:
+		_check(not visit.reconcile_purchase(invalid), "malformed or unsuccessful purchase rejected")
+		_check_state_unchanged(visit, before, "rejected reconciliation")
+	_check(visit.reconcile_purchase(result), "successful purchase reconciles")
+	var expected_state := before.duplicate(true)
+	expected_state.deck = result.state.deck.duplicate()
+	expected_state.gold = 150
+	_check(visit.get_state() == expected_state and visit.quote() == 100, "reconcile changes only deck/gold, preserving node/count/quote")
+	_check(not visit.reconcile_purchase(result), "repeated purchase snapshot rejected")
+	_check_state_unchanged(visit, expected_state, "repeated reconciliation")
+	result.state.deck.clear()
+	_check_state_unchanged(visit, expected_state, "purchase result detached")
+	_check(visit.remove_card("warden_strike").ok, "same visit can remove after buying")
+	var used := visit.get_state()
+	_check(used.deck == ["seamstress_prick", "tinker_pop_shot"] and used.gold == 50 and used.prior_removals == 2, "removal uses reconciled gold/deck and original quote")
+	_check(not visit.reconcile_purchase({"ok": true, "state": {"deck": ["seamstress_prick", "tinker_pop_shot", "warden_strike"], "gold": 0}}), "used visit cannot reconcile")
+	_check_state_unchanged(visit, used, "used reconciliation")
+	_check(visit.close_visit(), "reconciled visit closes")
+	var closed := visit.get_state()
+	_check(not visit.reconcile_purchase(result), "closed visit cannot reconcile")
+	_check_state_unchanged(visit, closed, "closed reconciliation")
 
 
 func _starter_deck() -> Array[String]:

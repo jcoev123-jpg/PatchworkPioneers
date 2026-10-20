@@ -66,6 +66,9 @@ var shop_remove_button: Button
 var shop_back_button: Button
 var shop_label: Label
 var shop_visit: RunShopVisit
+var shop_purchases: RunShopPurchases
+var shop_offers: OptionButton
+var shop_buy_button: Button
 var run_removal_count := 0
 var _shop_map: WeakRef
 var _shop_route: Array[String] = []
@@ -780,24 +783,47 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 		or run_map.get_node(id).get("type") != "Shop" or shop_visit != null:
 		return false
 	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count)
+	var offers: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	# JSON numbers must be converted only after validating integral prices.
+	for category in ["cards", "trinkets"]:
+		for offer in offers.get(category, []):
+			if typeof(offer.get("price")) not in [TYPE_INT, TYPE_FLOAT] or offer.price != floor(offer.price):
+				return false
+			offer.price = int(offer.price)
+	var party_ids: Array[String] = []
+	for hero in run_heroes:
+		party_ids.append(hero.id)
+	var purchases := RunShopPurchases.new(party_ids, run_deck, [], session_gold, offers.get("cards"), offers.get("trinkets"))
+	if not purchases.is_valid():
+		return false
 	if not visit.get_state().valid or not run_map.choose_node(id):
 		return false
 	if not visit.open_visit(id):
 		run_map.undo_choice(id, prior)
 		return false
 	shop_visit = visit
+	shop_purchases = purchases
 	_shop_map = weakref(run_map)
 	_shop_route = run_map.get_route()
 	_clear_route_view()
 	shop_view = VBoxContainer.new()
 	shop_view.set_anchors_preset(Control.PRESET_CENTER)
-	shop_view.add_theme_constant_override("separation", 24)
+	shop_view.add_theme_constant_override("separation", 12)
 	add_child(shop_view)
 	var heading := Label.new()
 	heading.text = "Shop - " + id
 	shop_view.add_child(heading)
 	shop_label = Label.new()
 	shop_view.add_child(shop_label)
+	shop_offers = OptionButton.new()
+	shop_offers.custom_minimum_size = Vector2(440, 48)
+	shop_view.add_child(shop_offers)
+	shop_offers.item_selected.connect(_select_shop_offer)
+	shop_buy_button = Button.new()
+	shop_buy_button.text = "Buy selected card"
+	shop_buy_button.custom_minimum_size = Vector2(440, 48)
+	shop_buy_button.pressed.connect(_buy_at_shop.bind(visit, purchases, shop_buy_button))
+	shop_view.add_child(shop_buy_button)
 	shop_cards = OptionButton.new()
 	shop_cards.custom_minimum_size = Vector2(440, 48)
 	for card_id in run_deck:
@@ -814,12 +840,58 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_view.add_child(shop_back_button)
 	_refresh_shop()
 	_focus_visit(shop_view)
-	var actions: Array[Control] = [shop_cards, shop_remove_button, shop_back_button]
+	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_back_button]
 	for index in range(actions.size()):
 		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
-	shop_cards.grab_focus()
+	shop_offers.grab_focus()
 	return true
+
+
+func _shop_offer_text(offer: Dictionary) -> String:
+	return "%s | %d gold%s" % [offer.id, offer.price, " | SOLD" if offer.sold else ""]
+
+
+func _select_shop_offer(_index: int) -> void:
+	if is_instance_valid(shop_view) and shop_view.is_visible_in_tree():
+		_refresh_shop()
+
+
+func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
+	if visit == null or visit != shop_visit or purchases == null or purchases != shop_purchases \
+		or run_map == null or _shop_map == null or _shop_map.get_ref() != run_map \
+		or run_map.get_route() != _shop_route or _shop_route.size() != 2 \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Shop" \
+		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button != shop_buy_button or button.disabled \
+		or not button.is_visible_in_tree() or not is_instance_valid(shop_offers) \
+		or shop_offers.disabled or not shop_offers.is_visible_in_tree():
+		return
+	var ledger := visit.get_state()
+	var state := purchases.get_state()
+	if not ledger.removal_available or ledger.shop_node_id != run_map.get_current_node_id() \
+		or ledger.deck != run_deck or ledger.gold != session_gold or ledger.prior_removals != run_removal_count \
+		or state.deck != run_deck or state.gold != session_gold:
+		return
+	var index := shop_offers.selected
+	var stock: Array = purchases.get_stock().cards
+	if index < 0 or index >= stock.size() or index >= shop_offers.item_count:
+		return
+	var offer: Dictionary = stock[index]
+	if offer.sold or session_gold < offer.price or shop_offers.get_item_metadata(index) != offer.id \
+		or shop_offers.get_item_text(index) != _shop_offer_text(offer):
+		return
+	var result := purchases.buy("card", offer.id)
+	if not result.ok:
+		return
+	if not visit.reconcile_purchase(result):
+		return
+	run_deck.assign(result.state.deck)
+	session_gold = result.state.gold
+	shop_cards.clear()
+	for card_id in run_deck:
+		shop_cards.add_item(card_id)
+	_refresh_shop()
 
 
 func _remove_at_shop(visit: RunShopVisit, button) -> void:
@@ -853,6 +925,15 @@ func _refresh_shop() -> void:
 	shop_label.text = "Gold: %d | Removal: %d gold" % [session_gold, shop_visit.quote()]
 	shop_remove_button.disabled = not shop_visit.get_state().removal_available
 	shop_cards.disabled = shop_remove_button.disabled
+	var selected := maxi(0, shop_offers.selected)
+	shop_offers.clear()
+	var stock: Array = shop_purchases.get_stock().cards
+	for offer in stock:
+		shop_offers.add_item(_shop_offer_text(offer))
+		shop_offers.set_item_metadata(shop_offers.item_count - 1, offer.id)
+	shop_offers.select(selected)
+	shop_offers.disabled = shop_remove_button.disabled
+	shop_buy_button.disabled = shop_remove_button.disabled or stock[selected].sold or session_gold < stock[selected].price
 
 
 func _focus_visit(view: VBoxContainer) -> void:
@@ -975,6 +1056,9 @@ func _return_to_title() -> void:
 	shop_back_button = null
 	shop_label = null
 	shop_visit = null
+	shop_purchases = null
+	shop_offers = null
+	shop_buy_button = null
 	_shop_map = null
 	_shop_route.clear()
 	run_removal_count = 0

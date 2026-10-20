@@ -1,0 +1,13 @@
+{
+  "cards": [
+    {"id": "warden_strike", "owner": "warden", "price": 50},
+    {"id": "warden_shield_bash", "owner": "warden", "price": 65},
+    {"id": "seamstress_prick", "owner": "seamstress", "price": 50},
+    {"id": "tinker_pop_shot", "owner": "tinker", "price": 50},
+    {"id": "tinker_scrap_bomb", "owner": "tinker", "price": 65}
+  ],
+  "trinkets": [
+    {"id": "stitched_badge", "price": 100},
+    {"id": "spare_spool", "price": 100}
+  ]
+}

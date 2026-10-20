@@ -55,6 +55,24 @@ func close_visit() -> bool:
 	return true
 
 
+## Reconcile a successful purchase without reopening or resetting this visit.
+func reconcile_purchase(result: Dictionary) -> bool:
+	if not _valid or _status != "available" or result.get("ok") != true:
+		return false
+	var state: Dictionary = result.get("state", {})
+	var cards: Variant = state.get("deck")
+	var gold: Variant = state.get("gold")
+	if typeof(cards) != TYPE_ARRAY or typeof(gold) != TYPE_INT or gold < 0 or gold > _gold:
+		return false
+	if cards.size() != _deck.size() + 1 or cards.slice(0, _deck.size()) != _deck:
+		return false
+	if typeof(cards.back()) != TYPE_STRING or cards.back().strip_edges().is_empty():
+		return false
+	_deck.assign(cards)
+	_gold = gold
+	return true
+
+
 ## Quote is delegated to the same helper, even when no visit is open.
 func quote() -> int:
 	return RunShopCardRemoval.try_remove(_deck, _gold, _prior_removals, "")["price"]
