@@ -29,68 +29,14 @@ func start_player_turn() -> void:
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, attacker_statuses: Dictionary = {},
 		enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
-	if deck == null or party == null or enemies == null:
+	var plan := _prepare(deck, party, enemies, card_id, target_position,
+		attacker_statuses, enemy_statuses_by_position, true)
+	if not plan.ok:
 		return _failure()
-	if not ATTACK_IDS.has(card_id) or not enemies.can_apply_statuses({}):
-		return _failure()
-	if enemies.is_victorious():
-		return _failure()
-
-	var definition: Dictionary = StarterCards.new().get_definition(card_id)
-	if definition.get("id") != card_id or not definition.get("effects") is Dictionary:
-		return _failure()
-	var damage_value: Variant = definition["effects"].get("damage")
-	var cost_value: Variant = definition.get("cost")
-	if not damage_value is int or damage_value < 0 or not cost_value is int or cost_value < 0:
-		return _failure()
-
-	# Preview owns hand/energy/owner-position and alive-target legality. Recheck
-	# the chosen target below, as previews do not commit a selection.
-	var preview := _targeting.get_preview(deck, party, enemies, card_id)
-	if not preview.get("playable", false):
-		return _failure()
-	var positions: Array[int] = preview["target_positions"]
-	if preview["requires_selection"]:
-		if not positions.has(target_position):
-			return _failure()
-		positions = [target_position]
-	elif target_position != 0:
-		# Enemy-all is deliberately target-free, even when there is one enemy.
-		return _failure()
-
-	# Validate ALL supplied status entries, including late or unselected slots,
-	# before damage/energy/discard or first-attack bonus can change.
-	if not _valid_statuses(attacker_statuses):
-		return _failure()
-	for position in enemy_statuses_by_position:
-		if not position is int or position < 1 or position > CombatEnemies.MAX_ENEMIES:
-			return _failure()
-		if enemies.get_enemy(position).is_empty():
-			return _failure()
-		var statuses: Variant = enemy_statuses_by_position[position]
-		if not statuses is Dictionary or not _valid_statuses(statuses):
-			return _failure()
-
-	# Verify the entire batch before the first mutation (including late targets).
-	for position in positions:
-		var enemy := enemies.get_enemy(position)
-		if enemy.is_empty() or enemy.get("position") != position or enemies.is_slain(position):
-			return _failure()
-		if not enemy.get("hp") is int or not enemy.get("block") is int:
-			return _failure()
-		if enemy["hp"] <= 0 or enemy["block"] < 0:
-			return _failure()
-
-	var applications := {}
-	for position in positions:
-		applications[position] = _on_hit.status_for_confirmed_hit(card_id, true)
-	if not enemies.can_apply_statuses(applications):
-		return _failure()
-	var bonus := _tinker.bonus_for_attack(card_id)
-	var attack_damage: int = damage_value + bonus
-	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID and not _area.can_resolve(
-			enemies, attack_damage, attacker_statuses, enemy_statuses_by_position):
-		return _failure()
+	var positions: Array[int] = plan.positions
+	var applications: Dictionary = plan.applications
+	var attack_damage: int = plan.attack_damage
+	var cost_value: int = plan.cost
 	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
 		var final_damage := _statuses.adjusted_attack_damage(attack_damage,
 			attacker_statuses, enemy_statuses_by_position.get(target_position, {}))
@@ -134,6 +80,103 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	enemies.apply_statuses(applications)
 	_tinker.record_successful_attack(card_id)
 	return {"ok": true, "hits": hits}
+
+
+## Pure preflight shared by forecasts and committed attacks. No latch is consumed.
+func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int, attacker_statuses: Dictionary,
+		enemy_statuses_by_position: Dictionary, select_target: bool) -> Dictionary:
+	if deck == null or party == null or enemies == null:
+		return _failure()
+	if not ATTACK_IDS.has(card_id) or not enemies.can_apply_statuses({}):
+		return _failure()
+	if enemies.is_victorious():
+		return _failure()
+
+	var definition: Dictionary = StarterCards.new().get_definition(card_id)
+	if definition.get("id") != card_id or not definition.get("effects") is Dictionary:
+		return _failure()
+	var damage_value: Variant = definition["effects"].get("damage")
+	var cost_value: Variant = definition.get("cost")
+	if not damage_value is int or damage_value < 0 or not cost_value is int or cost_value < 0:
+		return _failure()
+
+	# Preview owns hand/energy/owner-position and alive-target legality. Recheck
+	# the chosen target below, as previews do not commit a selection.
+	var preview := _targeting.get_preview(deck, party, enemies, card_id)
+	if not preview.get("playable", false):
+		return _failure()
+	var positions: Array[int] = preview["target_positions"]
+	if select_target and preview["requires_selection"]:
+		if not positions.has(target_position):
+			return _failure()
+		positions = [target_position]
+	elif select_target and target_position != 0:
+		# Enemy-all is deliberately target-free, even when there is one enemy.
+		return _failure()
+
+	# Validate ALL supplied status entries, including late or unselected slots,
+	# before damage/energy/discard or first-attack bonus can change.
+	if not _valid_statuses(attacker_statuses):
+		return _failure()
+	for position in enemy_statuses_by_position:
+		if not position is int or position < 1 or position > CombatEnemies.MAX_ENEMIES:
+			return _failure()
+		if enemies.get_enemy(position).is_empty():
+			return _failure()
+		var statuses: Variant = enemy_statuses_by_position[position]
+		if not statuses is Dictionary or not _valid_statuses(statuses):
+			return _failure()
+
+	# Verify the entire batch before the first mutation (including late targets).
+	for position in positions:
+		var enemy := enemies.get_enemy(position)
+		if enemy.is_empty() or enemy.get("position") != position or enemies.is_slain(position):
+			return _failure()
+		if not enemy.get("hp") is int or not enemy.get("block") is int:
+			return _failure()
+		if enemy["hp"] <= 0 or enemy["block"] < 0:
+			return _failure()
+
+	var applications := {}
+	var eligible: Array[int] = []
+	for position in positions:
+		var application := {position: _on_hit.status_for_confirmed_hit(card_id, true)}
+		# A single-target forecast lists independently playable choices. One
+		# overflowing on-hit status must not hide another valid destination.
+		if not select_target and preview["requires_selection"] and not enemies.can_apply_statuses(application):
+			continue
+		eligible.append(position)
+		applications[position] = application[position]
+	positions = eligible
+	if positions.is_empty():
+		return _failure()
+	if not enemies.can_apply_statuses(applications):
+		return _failure()
+	var bonus := _tinker.bonus_for_attack(card_id)
+	var attack_damage: int = damage_value + bonus
+	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID and not _area.can_resolve(
+			enemies, attack_damage, attacker_statuses, enemy_statuses_by_position):
+		return _failure()
+	return {"ok": true, "positions": positions, "applications": applications,
+		"attack_damage": attack_damage, "cost": cost_value,
+		"requires_selection": preview["requires_selection"]}
+
+
+## Returns ordered damage choices for singles, or all recipients for target-free attacks.
+## Uses the current instance's Tinker latch without spending or recording a hit.
+func forecast_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: String, attacker_statuses: Dictionary = {},
+		enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
+	var plan := _prepare(deck, party, enemies, card_id, 0,
+		attacker_statuses, enemy_statuses_by_position, false)
+	if not plan.ok:
+		return {"playable": false, "requires_selection": false, "hits": []}
+	var hits: Array[Dictionary] = []
+	for position in plan.positions:
+		hits.append({"position": position, "damage": _statuses.adjusted_attack_damage(
+			plan.attack_damage, attacker_statuses, enemy_statuses_by_position.get(position, {}))})
+	return {"playable": true, "requires_selection": plan.requires_selection, "hits": hits}
 
 
 func _valid_statuses(statuses: Dictionary) -> bool:

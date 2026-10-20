@@ -17,6 +17,9 @@ func _initialize() -> void:
 	_test_seeded_replay()
 	_test_persisted_statuses()
 	_test_area_bridge_atomicity()
+	_test_forecast_rejections()
+	_test_forecast_matrix()
+	_test_forecast_overflow_choice()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -149,6 +152,20 @@ func _accept(service: CombatAttackCards, deck: CombatDeck, party: CombatParty,
 		label + ": valid live energy and nonterminal enemy preconditions")
 	var before := _snapshot(deck, party, enemies)
 	var effects_before := [attacker_statuses.duplicate(true), defender_statuses.duplicate(true)]
+	var latch := service._tinker._consumed
+	seed(19348)
+	var next_global := randi()
+	seed(19348)
+	var forecast := service.forecast_attack(deck, party, enemies, card_id,
+		attacker_statuses, defender_statuses)
+	_check(forecast.playable and not forecast.hits.is_empty(), label + ": forecast has real recipients")
+	for hit in expected_hits:
+		_check({"position": hit.position, "damage": hit.damage} in forecast.hits,
+			label + ": forecast agrees with exact actual damage")
+	_check(service.forecast_attack(deck, party, enemies, card_id,
+		attacker_statuses, defender_statuses) == forecast, label + ": repeat forecast")
+	_check(_snapshot(deck, party, enemies) == before and service._tinker._consumed == latch
+		and randi() == next_global, label + ": pure forecast preserves full state, latch and RNG")
 	var result := service.play_attack(deck, party, enemies, card_id, target,
 		attacker_statuses, defender_statuses)
 	_check(result == {"ok": true, "hits": expected_hits}, label + ": exact ordered events and statuses")
@@ -550,3 +567,96 @@ func _test_persisted_statuses() -> void:
 	var enemies := _enemies()
 	enemies._enemies[2]["statuses"] = {"weak": -1}
 	_reject(CombatAttackCards.new(), deck, _party(), enemies, "tinker_scrap_bomb", 0, "malformed authoritative last recipient")
+
+
+func _test_forecast_rejections() -> void:
+	for scenario in ["owner", "late", "key", "type", "slot", "inactive", "missing", "energy", "terminal", "invalid", "null", "overflow"]:
+		var service := CombatAttackCards.new()
+		var deck := _deck(["tinker_scrap_bomb"])
+		var party := _party()
+		var enemies := _enemies()
+		var owner := {}
+		var defenders := {}
+		match scenario:
+			"owner": owner = {"weak": -1}
+			"late": defenders = {3: {"exposed": "1"}}
+			"key": owner = {9: 1}
+			"type": owner = {"weak": 1.5}
+			"slot": defenders = {"3": {}}
+			"inactive": deck.combat_state.player_turn_active = false
+			"missing": deck.discard_played("tinker_scrap_bomb")
+			"energy": deck.combat_state.energy = 0
+			"terminal":
+				for position in [1, 2, 3]:
+					enemies.apply_damage(position, 100)
+			"invalid": enemies._enemies[2]["position"] = 1
+			"null": party = null
+			"overflow":
+				# Shield Bash cannot apply another Weak stack, even on a blocked hit.
+				deck = _deck(["warden_shield_bash"])
+				enemies._enemies[0]["statuses"] = {"weak": CombatEnemies.MAX_INT}
+		var before := _snapshot(deck, party, enemies)
+		var id := "warden_shield_bash" if scenario == "overflow" else "tinker_scrap_bomb"
+		_check(service.forecast_attack(deck, party, enemies, id, owner, defenders)
+			== {"playable": false, "requires_selection": false, "hits": []}, "forecast fails closed " + scenario)
+		_check(_snapshot(deck, party, enemies) == before and not service._tinker._consumed,
+			"rejected forecast preserves surviving models and latch " + scenario)
+
+
+func _test_forecast_matrix() -> void:
+	for id in ATTACK_IDS:
+		for consumed in [false, true]:
+			for weak in [false, true]:
+				for exposed in [false, true]:
+					var service := CombatAttackCards.new()
+					var deck := _deck([id, "tinker_pop_shot"])
+					var party := _party()
+					var enemies := _enemies([100, 100, 100])
+					if consumed:
+						_check(service.play_attack(deck, party, enemies, "tinker_pop_shot", 1).ok,
+							"consume real bonus before matrix forecast")
+						# Refresh this controlled hand without replacing the session service.
+						deck.hand.assign([id])
+						deck.combat_state.energy = 3
+					_check(enemies.apply_damage(2, 100), "matrix excludes slain original middle slot")
+					var owner := {"weak": 1} if weak else {}
+					var defenders := {1: {"exposed": 1}} if exposed else {}
+					var before := _snapshot(deck, party, enemies)
+					var forecast := service.forecast_attack(deck, party, enemies, id, owner, defenders)
+					var positions: Array = []
+					var expected: Array = []
+					var definition := StarterCards.new().get_definition(id)
+					var base: int = definition.effects.damage + (3 if id.begins_with("tinker_") and not consumed else 0)
+					for position in [1, 3]:
+						if position not in definition.to_positions:
+							continue
+						positions.append(position)
+						var multiplier := 1.125 if weak and exposed and position == 1 else 0.75 if weak else 1.5 if exposed and position == 1 else 1.0
+						expected.append({"position": position, "damage": int(floor(base * multiplier))})
+					_check(forecast == {"playable": true, "requires_selection": id != "tinker_scrap_bomb", "hits": expected},
+						"exact ordered independent forecast math and excluded slots " + id)
+					_check(_snapshot(deck, party, enemies) == before and service._tinker._consumed == consumed,
+						"matrix forecast leaves state and used/unused latch intact")
+					var actual := service.play_attack(deck, party, enemies, id,
+						0 if id == "tinker_scrap_bomb" else positions[0], owner, defenders)
+					_check(actual.ok and not actual.hits.is_empty(), "matrix subsequent actual attack succeeds")
+					for hit in actual.hits:
+						_check({"position": hit.position, "damage": hit.damage} in forecast.hits,
+							"matrix forecast agrees with actual status-adjusted hit")
+
+
+func _test_forecast_overflow_choice() -> void:
+	var service := CombatAttackCards.new()
+	var deck := _deck(["seamstress_prick"])
+	var party := _party()
+	var enemies := _enemies([100, 100])
+	enemies._enemies[0]["statuses"] = {"bleed": CombatEnemies.MAX_INT - 2}
+	var before := _snapshot(deck, party, enemies)
+	var forecast := service.forecast_attack(deck, party, enemies, "seamstress_prick")
+	_check(forecast == {"playable": true, "requires_selection": true,
+		"hits": [{"position": 2, "damage": 3}]}, "overflow excludes only the individually unplayable choice")
+	_check(_snapshot(deck, party, enemies) == before, "overflow filtering is pure")
+	_reject(service, deck, party, enemies, "seamstress_prick", 1, "overflow choice still rejected at cast")
+	var actual := service.play_attack(deck, party, enemies, "seamstress_prick", 2)
+	_check(actual.ok and actual.hits[0].position == 2 and actual.hits[0].damage == forecast.hits[0].damage,
+		"remaining forecast choice matches successful actual hit")

@@ -109,10 +109,21 @@ func _expected(id: String) -> String:
 	var preview := targeting.get_preview(app.deck, app.party, app.enemies, id)
 	var slots: PackedStringArray = []
 	for position in preview.target_positions:
-		slots.append(str(position))
+		var owner: String = definition.owner
+		var statuses := {}
+		for hero in app.party.get_heroes():
+			if hero.id == owner:
+				statuses = hero.get("statuses", {})
+		var base: int = definition.effects.damage
+		if owner == "tinker" and not presenter._play._tinker._consumed:
+			base += 3
+		var weak: bool = statuses.get("weak", 0) > 0
+		var exposed: bool = app.enemies.get_enemy(position).get("statuses", {}).get("exposed", 0) > 0
+		var multiplier := 1.125 if weak and exposed else 0.75 if weak else 1.5 if exposed else 1.0
+		slots.append("%d: %d" % [position, int(floor(base * multiplier))])
 	var description := "Unavailable: no legal targets"
 	if preview.playable:
-		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(slots)
+		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(slots) + " damage"
 	var controls := "P / click card; 1-3 / click enemy" if preview.requires_selection or id != "tinker_scrap_bomb" else "P: select; Enter / Space / click card: cast"
 	return "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
@@ -188,6 +199,7 @@ func _run() -> void:
 			_assert_preview(id)
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
+	await _forecast_statuses()
 	await _negative_cases()
 	await _attacks()
 	await _status_lifecycle()
@@ -459,6 +471,11 @@ func _rejections() -> void:
 			presenter._queue_attack(1)
 			app.enemy_intents.advance_turn()
 			app.enemy_attacks = app.enemy_intents.get_intents()
+		if scenario in ["status_overflow", "bad_owner_status", "bad_late_status"]:
+			await _frames()
+		if scenario in ["status_overflow", "bad_owner_status", "bad_late_status"]:
+			_check(presenter.cue.text.contains("Unavailable") and not presenter.cue.text.contains(" damage"),
+				"malformed authoritative statuses cannot display a damage forecast " + scenario)
 		var before := _snapshot()
 		var latch: bool = presenter._play._tinker._consumed
 		seed(2345)
@@ -489,6 +506,7 @@ func _tinker_turns() -> void:
 		await _frames()
 		for attack in range(2):
 			await _choose(id, false)
+			_assert_preview(id)
 			await _key(KEY_2)
 			_check(presenter.last_event.ok and presenter.last_event.hits[0].damage == (8 if attack == 0 else 5), "Tinker bonus once each real player turn")
 		_check(presenter._play == service, "service lifetime spans hand rebuilds and turn")
@@ -718,3 +736,64 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_attack_preview_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _forecast_statuses() -> void:
+	for id in CombatAttackTargeting.ATTACK_IDS:
+		var replay: Array = []
+		for keyboard in [false, true]:
+			if not await _start(_seed_for(id)):
+				return
+			for hero in app.party._heroes:
+				if hero.id == catalog.get_definition(id).owner:
+					hero["statuses"] = {"weak": 1}
+			_check(app.enemies.apply_statuses({1: {"exposed": 1}}), "live distinct per-target status fixture")
+			var before := _snapshot()
+			var latch: bool = presenter._play._tinker._consumed
+			seed(917)
+			var next_global := randi()
+			seed(917)
+			if keyboard:
+				await _choose(id, true)
+			else:
+				await _hover(_panel(id))
+			_assert_preview(id)
+			var text: String = presenter.cue.text
+			_check(_snapshot() == before and presenter._play._tinker._consumed == latch
+				and randi() == next_global, "physical status forecast is pure")
+			# Refresh the same selected cue from fresh snapshots without another selection.
+			for hero in app.party._heroes:
+				if hero.id == catalog.get_definition(id).owner:
+					hero["statuses"] = {}
+			await _frames()
+			_assert_preview(id)
+			_check(presenter.cue.text != text, "cue refresh observes owner status expiry")
+			for hero in app.party._heroes:
+				if hero.id == catalog.get_definition(id).owner:
+					hero["statuses"] = {"weak": 1}
+			await _frames()
+			_assert_preview(id)
+			var forecast_text: String = presenter.cue.text
+			if id == "tinker_scrap_bomb":
+				if keyboard:
+					await _key(KEY_SPACE)
+				else:
+					await _click(_panel(id))
+			else:
+				await _choose(id, keyboard)
+				if keyboard:
+					await _key(KEY_1)
+				else:
+					await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			_check(presenter.last_event.ok and not presenter.last_event.hits.is_empty(), "forecast followed by actual physical attack")
+			for hit in presenter.last_event.hits:
+				var base: int = catalog.get_definition(id).effects.damage + (3 if id.begins_with("tinker_") else 0)
+				_check(hit.damage == int(floor(base * (1.125 if hit.position == 1 else 0.75)))
+					and forecast_text.contains("%d: %d" % [hit.position, hit.damage]),
+					"live forecast damage equals actual Weak/Exposed status hit")
+			var trace := [text, presenter.last_event.duplicate(true), _snapshot()]
+			if replay.is_empty():
+				replay = trace
+			else:
+				_check(trace == replay, "physical forecast/status/attack replay")
+			await _return()

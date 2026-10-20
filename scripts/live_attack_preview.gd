@@ -134,18 +134,20 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_after_attack()
 
 
-func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int) -> Dictionary:
+func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
 	var owner_statuses: Dictionary = {}
 	var owner: String = _catalog.get_definition(id).get("owner", "")
 	for hero in party.get_heroes():
 		if hero.id == owner:
 			# Malformed authoritative status fields must reject rather than coerce.
 			if not hero.get("statuses", {}) is Dictionary:
-				return {"ok": false, "hits": []}
+				return {"playable": false, "requires_selection": false, "hits": []} if forecast else {"ok": false, "hits": []}
 			owner_statuses = hero.get("statuses", {})
 	var enemy_statuses := {}
 	for enemy in enemies.get_enemies():
 		enemy_statuses[enemy.position] = enemy.get("statuses", {})
+	if forecast:
+		return _play.forecast_attack(_deck, party, enemies, id, owner_statuses, enemy_statuses)
 	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses, enemy_statuses)
 
 
@@ -247,13 +249,13 @@ func _refresh() -> void:
 	var app = get_parent()
 	var id := _card_id(_selected)
 	var definition := _catalog.get_definition(id)
-	var preview := _targeting.get_preview(app.deck, app.party, app.enemies, id)
+	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
 	var targets: PackedStringArray = []
-	for position in preview.target_positions:
-		targets.append(str(position))
+	for hit in preview.hits:
+		targets.append("%d: %d" % [hit.position, hit.damage])
 	var description := "Unavailable: no legal targets"
 	if preview.playable:
-		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(targets)
+		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + ", ".join(targets) + " damage"
 	var controls := "P / click card; 1-3 / click enemy" if _single(_selected) else "P: select; Enter / Space / click card: cast"
 	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
