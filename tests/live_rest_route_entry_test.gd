@@ -15,7 +15,7 @@ func _fixture() -> Dictionary:
 			var unsupported := false
 			for next in map.get_node(id).outgoing:
 				rest = rest or map.get_node(next).type == "Rest"
-				unsupported = unsupported or map.get_node(next).type != "Rest"
+				unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop"]
 			if rest and unsupported:
 				map.choose_node(id)
 				var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
@@ -161,13 +161,13 @@ func _run() -> void:
 		for button in app.route_buttons:
 			var id: String = button.get_meta("route_id")
 			shown.append(id)
-			_check(button.disabled == (app.run_map.get_node(id).type != "Rest"), "only actual Rest controls enabled")
+			_check(button.disabled == (app.run_map.get_node(id).type not in ["Rest", "Shop"]), "only actual Rest/Shop controls enabled")
 			if button.disabled:
 				await _click(button)
 				button.grab_focus()
 				await _key(KEY_ENTER)
 				button.pressed.emit()
-			else:
+			elif app.run_map.get_node(id).type == "Rest":
 				rest = button
 		_check(shown == app.run_map.get_legal_choices(), "all and only real connected choices are shown")
 		_check(rest != null and _persistent() == before, "disabled controls and duplicate Continue mutate nothing")
