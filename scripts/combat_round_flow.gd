@@ -26,7 +26,7 @@ func _init(deck: CombatDeck = null, party: CombatParty = null,
 ## Begin exactly once: clear inherited hero Block, deal the first hand, then
 ## grant the Warden's one-shot +6. The turn-zero intents are not advanced.
 func begin_fight() -> bool:
-	if _started or not _valid_bindings():
+	if _started or not _valid_bindings() or not _valid_opening_formation():
 		return false
 	if _deck.turn_active or _deck.energy != 0 or not _deck.hand.is_empty():
 		return false
@@ -144,11 +144,19 @@ func _valid_bindings() -> bool:
 	# separate still-ACTIVE fight that could incorrectly permit more turns.
 	if _result._party != _party or _result._enemies != _enemies:
 		return false
-	# A replacement front hero has no Warden passive. Authored heroes must
-	# still occupy their own slots; never accept a reversed/misplaced party.
-	if _party.get_hero(1).get("id") in ["seamstress", "tinker"] \
-			or _party.get_hero(2).get("id") != "seamstress" \
-			or _party.get_hero(3).get("id") != "tinker":
+	# Once begun, position changes are allowed but the original three actor
+	# identities, occupied slot indices, and statuses remain authoritative.
+	# A downed hero stays in their slot; no formation rollback is required.
+	var ids: Array[String] = []
+	for index in range(CombatParty.PARTY_SIZE):
+		var hero: Dictionary = _party.get_hero(index + 1)
+		if hero.get("id") not in ["warden", "seamstress", "tinker"] \
+				or hero["id"] in ids:
+			return false
+		ids.append(hero["id"])
+	var preflight := CombatStatusTurnBatch.new()
+	if not preflight.tick_side("heroes", _party.get_heroes())["ok"] \
+			or not preflight.tick_side("enemies", _enemies.get_enemies())["ok"]:
 		return false
 	# The scheduler must contain exactly one action per actual occupied enemy
 	# position: no phantom sources, gaps or omitted living/blocked enemies.
@@ -160,6 +168,14 @@ func _valid_bindings() -> bool:
 		if announcements[index].get("enemy_position") != index + 1:
 			return false
 	return true
+
+
+## A strict one-time opening: only the authored Warden, Seamstress, Tinker
+## formation can start the fight and receive the original Warden passive.
+func _valid_opening_formation() -> bool:
+	return _party.get_hero(1).get("id") == "warden" \
+		and _party.get_hero(2).get("id") == "seamstress" \
+		and _party.get_hero(3).get("id") == "tinker"
 
 
 func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:
