@@ -119,3 +119,19 @@ func claim(deck_ids: Array[String] = [], selected_id: String = "") -> Dictionary
 		"selected_id": selected_id,
 		"deck": chosen_deck
 	}
+
+## Select authored rewards using the caller's seeded run RNG and eligible pool.
+## Failure produces an invalid, unclaimable choice without touching the deck.
+static func from_seeded_pool(rng: Variant, party_ids: Variant, candidate_ids: Variant) -> RunCardRewardChoice:
+	var generated: Dictionary = RunCardRewardOffers.generate(rng, party_ids, candidate_ids)
+	if not generated.get("ok", false):
+		return RunCardRewardChoice.new()
+	var copied_party: Array[String] = []
+	for party_id in party_ids:
+		copied_party.append(party_id)
+	return RunCardRewardChoice.new(generated["offers"], copied_party)
+
+
+## A fresh deep copy of the offered IDs/owners, never internal mutable state.
+func get_offers() -> Array:
+	return _offered_cards.duplicate(true)
