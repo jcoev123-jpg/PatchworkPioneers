@@ -332,7 +332,7 @@ func _test_deterministic_replay_and_no_rng_consumption() -> void:
 	var enemy_defs = _load_enemy_definitions()
 	var guard_counterattack_defs = _load_encounter_definitions("res://data/encounters/guard_counterattack.json")
 	
-	# Create two identical setups
+	# Create two identical setups with explicit same-seed initialization
 	var party_a = CombatParty.new(party_defs)
 	var enemies_a = CombatEnemies.new(enemy_defs)
 	var intents_a = CombatEnemyIntents.new(guard_counterattack_defs)
@@ -367,7 +367,7 @@ func _test_deterministic_replay_and_no_rng_consumption() -> void:
 		if turn % 2 == 1:
 			party_a.start_player_turn()
 			party_b.start_player_turn()
-	
+
 	# Verify calling get_intents() multiple times doesn't advance
 	var snapshot_a = intents_a.get_intents()
 	for i in range(5):
@@ -383,8 +383,60 @@ func _test_deterministic_replay_and_no_rng_consumption() -> void:
 	phase_a.execute_phase(party_a, enemies_a, copied)
 	_check(intents_a.get_intents() == before_advance, "Copied announcement execution does not advance scheduler")
 	
-	# Verify no RNG consumption (CombatEnemyIntents and CombatEnemyPhase don't use RNG)
-	# This is implicit - they have no RNG dependency
+	# Verify no RNG consumption: seed global RNG, record baseline, run operations, verify RNG unchanged
+	seed(0xDEADBEEF)
+	var baseline_randi = randi()
+	
+	# Reseed and call get_intents()
+	seed(0xDEADBEEF)
+	var _unused = intents_a.get_intents()
+	_check(randi() == baseline_randi, "get_intents() does not consume RNG")
+	
+	# Reseed and execute phase
+	seed(0xDEADBEEF)
+	phase_a.execute_phase(party_a, enemies_a, before_advance)
+	_check(randi() == baseline_randi, "execute_phase() does not consume RNG")
+	
+	# Reseed and execute copied announcement
+	seed(0xDEADBEEF)
+	phase_a.execute_phase(party_a, enemies_a, copied)
+	_check(randi() == baseline_randi, "Copied announcement execution does not consume RNG")
+	
+	# Verify same-seed replay: two fresh fixtures with same seed produce identical traces
+	seed(0xCAFEBABE)
+	var party_c = CombatParty.new(party_defs)
+	var enemies_c = CombatEnemies.new(enemy_defs)
+	var intents_c = CombatEnemyIntents.new(guard_counterattack_defs)
+	var phase_c = CombatEnemyPhase.new()
+	var starting_block_c = CombatStartingBlock.new(party_c)
+	_check(starting_block_c.apply(), "Setup C: Warden starting block")
+	
+	seed(0xCAFEBABE)
+	var party_d = CombatParty.new(party_defs)
+	var enemies_d = CombatEnemies.new(enemy_defs)
+	var intents_d = CombatEnemyIntents.new(guard_counterattack_defs)
+	var phase_d = CombatEnemyPhase.new()
+	var starting_block_d = CombatStartingBlock.new(party_d)
+	_check(starting_block_d.apply(), "Setup D: Warden starting block")
+	
+	# Replay 6 turns and verify identical state at each step
+	for turn in range(6):
+		var intents_c_turn = intents_c.get_intents()
+		var intents_d_turn = intents_d.get_intents()
+		_check(intents_c_turn == intents_d_turn, "Replay Turn %d: identical intents" % turn)
+		
+		var result_c = phase_c.execute_phase(party_c, enemies_c, intents_c_turn)
+		var result_d = phase_d.execute_phase(party_d, enemies_d, intents_d_turn)
+		_check(result_c == result_d, "Replay Turn %d: identical phase results" % turn)
+		
+		_check(party_c.get_heroes() == party_d.get_heroes(), "Replay Turn %d: identical party state" % turn)
+		_check(enemies_c.get_enemies() == enemies_d.get_enemies(), "Replay Turn %d: identical enemy state" % turn)
+		
+		_check(intents_c.advance_turn() and intents_d.advance_turn(), "Replay Turn %d: both advance" % turn)
+		
+		if turn % 2 == 1:
+			party_c.start_player_turn()
+			party_d.start_player_turn()
 
 
 func _test_slain_guard_skips_attack() -> void:
