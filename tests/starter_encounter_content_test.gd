@@ -45,11 +45,18 @@ func _normalize_enemies(enemies: Array) -> Array:
 		for key in enemy:
 			var value = enemy[key]
 			if value is float:
-				norm[key] = int(value)
+				if not _is_integral(value):
+					norm[key] = value  # keep as float so comparison fails
+				else:
+					norm[key] = int(value)
 			else:
 				norm[key] = value
 		normalized.append(norm)
 	return normalized
+
+
+func _is_integral(value: float) -> bool:
+	return value == int(value)
 
 
 func _normalize_attacks(attacks: Array) -> Array:
@@ -61,7 +68,10 @@ func _normalize_attacks(attacks: Array) -> Array:
 			if key == "pattern":
 				norm[key] = _normalize_pattern(value)
 			elif value is float:
-				norm[key] = int(value)
+				if not _is_integral(value):
+					norm[key] = value
+				else:
+					norm[key] = int(value)
 			else:
 				norm[key] = value
 		normalized.append(norm)
@@ -75,7 +85,10 @@ func _normalize_pattern(pattern: Array) -> Array:
 		for key in action:
 			var value = action[key]
 			if value is float:
-				norm[key] = int(value)
+				if not _is_integral(value):
+					norm[key] = value
+				else:
+					norm[key] = int(value)
 			else:
 				norm[key] = value
 		normalized.append(norm)
@@ -98,17 +111,23 @@ func _deep_copy(value) -> Variant:
 
 
 func _find_enemy_by_id(enemies: Array, id: String) -> Dictionary:
+	var matches: Array = []
 	for enemy in enemies:
 		if enemy is Dictionary and enemy.get("id") == id:
-			return enemy.duplicate(true)
-	return {}
+			matches.append(enemy)
+	if matches.size() != 1:
+		return {}
+	return matches[0].duplicate(true)
 
 
 func _find_attack_by_position(attacks: Array, position: int) -> Dictionary:
+	var matches: Array = []
 	for attack in attacks:
 		if attack is Dictionary and attack.get("enemy_position") == position:
-			return attack.duplicate(true)
-	return {}
+			matches.append(attack)
+	if matches.size() != 1:
+		return {}
+	return matches[0].duplicate(true)
 
 
 func _test_json_readable_and_entries() -> void:
@@ -140,6 +159,23 @@ func _test_json_readable_and_entries() -> void:
 	_check(guard_raw.get("art_path") == "res://assets/paper/enemies/ragling.png",
 		"ragling_guard art_path is authored placeholder")
 
+	# Verify exactly-one-match: duplicate the required entry locally and observe failure.
+	var dup_ragling = _find_enemy_by_id(enemies_raw + [ragling_raw], "ragling")
+	_check(dup_ragling.is_empty(), "duplicate ragling entry fails unique-ID check")
+	var dup_guard = _find_enemy_by_id(enemies_raw + [guard_raw], "ragling_guard")
+	_check(dup_guard.is_empty(), "duplicate ragling_guard entry fails unique-ID check")
+
+	# Unrelated future catalog entries remain allowed (only duplicates of required IDs fail).
+	var extra_enemy = {"id":"future","name":"Future","max_hp":10,"art_path":"x"}
+	_check(not _find_enemy_by_id(enemies_raw + [extra_enemy], "ragling").is_empty(),
+		"extra unrelated entry does not break required-ID lookup")
+
+	# Verify non-integral floats are preserved (not truncated) so changed authored values fail.
+	var float_hp_enemy = _normalize_enemies([{"id":"test","name":"T","max_hp":12.5,"art_path":"x"}])
+	_check(float_hp_enemy[0].get("max_hp") != 12, "non-integral max_hp 12.5 preserved as float (not truncated to 12)")
+	var float_amount_attack = _normalize_attacks([{"enemy_position":1,"pattern":[{"type":"attack","amount":1.5,"target_position":1}]}])
+	_check(float_amount_attack[0]["pattern"][0].get("amount") != 1, "non-integral amount 1.5 preserved (not truncated to 1)")
+
 	# Prove no mutation to on-disk content through copy construction.
 	_check(enemies_raw == _load_enemies_json(), "loaded enemies JSON unchanged after reads")
 	_check(attacks_raw == _load_attacks_json(), "loaded attacks JSON unchanged after reads")
@@ -168,6 +204,12 @@ func _test_encounter_patterns() -> void:
 
 	_check(pattern2[0].get("type") == "block" and pattern2[0].get("amount") == 1,
 		"source 2 single action: block 1 (repeats)")
+
+	# Verify exactly-one-match for source positions.
+	var dup1 = _find_attack_by_position(attacks_raw + [source1_raw], 1)
+	_check(dup1.is_empty(), "duplicate source 1 fails unique-position check")
+	var dup2 = _find_attack_by_position(attacks_raw + [source2_raw], 2)
+	_check(dup2.is_empty(), "duplicate source 2 fails unique-position check")
 
 
 func _test_services_and_announcements() -> void:
@@ -251,6 +293,8 @@ func _test_services_and_announcements() -> void:
 		"fresh replay has identical initial state and first announcement")
 	_check(replay_scheduler.advance_turn() and replay_scheduler.get_intents() == turn1,
 		"fresh replay advance produces same turn 1")
+	_check(replay_scheduler.advance_turn() and replay_scheduler.get_intents() == turn2,
+		"fresh replay second advance produces same wrapped turn 2")
 
 	# Unchanged caller data after service interaction.
 	_check(enemy_defs == [ragling_raw.duplicate(true), guard_raw.duplicate(true)],
