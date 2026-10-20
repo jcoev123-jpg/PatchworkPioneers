@@ -45,6 +45,43 @@ func get_enemy(position: int) -> Dictionary:
 	return _enemies[position - 1].duplicate(true)
 
 
+## Validate the complete roster and additions before writing any counter.
+## Slain slots remain valid recipients so a confirmed lethal hit can persist.
+func can_apply_statuses(applications: Dictionary) -> bool:
+	if not CombatStatusTurnBatch.new().tick_side("enemies", get_enemies())["ok"]:
+		return false
+	for position in applications:
+		if not position is int or not _valid_position(position):
+			return false
+		var additions: Variant = applications[position]
+		if not additions is Dictionary:
+			return false
+		for status in additions:
+			if not status is String or status not in ["bleed", "weak", "exposed"]:
+				return false
+			var count: Variant = additions[status]
+			if not count is int or count < 0:
+				return false
+			var current: int = _enemies[position - 1].get("statuses", {}).get(status, 0)
+			if count > MAX_INT - current:
+				return false
+	return true
+
+
+func apply_statuses(applications: Dictionary) -> bool:
+	if not can_apply_statuses(applications):
+		return false
+	for position in applications:
+		var enemy: Dictionary = _enemies[position - 1]
+		for status in applications[position]:
+			if applications[position][status] == 0:
+				continue
+			if not enemy.has("statuses"):
+				enemy["statuses"] = {}
+			enemy["statuses"][status] = enemy["statuses"].get(status, 0) + applications[position][status]
+	return true
+
+
 func apply_damage(position: int, amount: int) -> bool:
 	if not _can_target(position, amount):
 		return false

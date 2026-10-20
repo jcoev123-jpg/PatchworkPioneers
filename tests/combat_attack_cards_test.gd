@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_bomb_roster_shapes()
 	_test_rejection_and_atomicity()
 	_test_seeded_replay()
+	_test_persisted_statuses()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -140,6 +141,10 @@ func _accept(service: CombatAttackCards, deck: CombatDeck, party: CombatParty,
 		var entry: Dictionary = slots[position - 1]
 		entry["block"] -= expected_hit["block_absorbed"]
 		entry["hp"] -= expected_hit["hp_loss"]
+		for status in expected_hit["statuses"]:
+			if not entry.has("statuses"):
+				entry["statuses"] = {}
+			entry["statuses"][status] = entry["statuses"].get(status, 0) + expected_hit["statuses"][status]
 	var all_slain := true
 	for entry in slots:
 		if entry["hp"] > 0:
@@ -487,3 +492,37 @@ func _test_seeded_replay() -> void:
 		"successful action leaves injected deck RNG untouched")
 	_check(randi() == expected_global,
 		"successful action does not consume global RNG draws")
+
+
+func _test_persisted_statuses() -> void:
+	for id in ["seamstress_prick", "warden_shield_bash"]:
+		var service := CombatAttackCards.new()
+		var deck := _deck([id])
+		var party := _party()
+		var enemies := _enemies([50, 50, 50])
+		var status: String = "bleed" if id == "seamstress_prick" else "weak"
+		var count: int = 3 if status == "bleed" else 1
+		_check(enemies.gain_block(1, 100), "status hit can be entirely blocked")
+		for attempt in range(2):
+			if not deck.hand.has(id):
+				deck.hand.append(id)
+			deck.combat_state.energy = 3
+			var event := service.play_attack(deck, party, enemies, id, 1)
+			_check(event.ok and event.hits[0].hp_loss == 0, "blocked confirmed hit succeeds")
+			_check(enemies.get_enemy(1).statuses == {status: count * (attempt + 1)}, "authoritative repeated statuses additive")
+		var tick := CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())
+		_check(tick.ok and tick.actors[0].statuses == {status: count * 2 - 1}, "persisted status advances at owner boundary")
+		enemies._enemies[0]["statuses"] = {status: CombatEnemies.MAX_INT}
+		deck.hand.append(id)
+		deck.combat_state.energy = 3
+		_reject(service, deck, party, enemies, id, 1, "authoritative application overflow")
+		enemies._enemies[0]["statuses"] = {}
+		enemies._enemies[0]["block"] = 0
+		enemies._enemies[0]["hp"] = 1
+		var lethal := service.play_attack(deck, party, enemies, id, 1)
+		_check(lethal.ok and enemies.is_slain(1) and enemies.get_enemy(1).statuses == {status: count}, "lethal confirmed hit persists original slot status")
+		_reject(service, deck, party, enemies, id, 1, "repeat input against slain slot")
+	var deck := _deck(["tinker_scrap_bomb"])
+	var enemies := _enemies()
+	enemies._enemies[2]["statuses"] = {"weak": -1}
+	_reject(CombatAttackCards.new(), deck, _party(), enemies, "tinker_scrap_bomb", 0, "malformed authoritative last recipient")

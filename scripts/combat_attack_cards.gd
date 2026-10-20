@@ -1,7 +1,7 @@
 class_name CombatAttackCards
 extends RefCounted
 ## Scene-free, single authoritative charge/discard for authored starter attacks.
-## Statuses are caller-owned snapshots: hits emit events, not persistent statuses.
+## Damage uses caller-owned snapshots; confirmed hits persist on the enemy roster.
 
 const ATTACK_IDS := [
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
@@ -24,7 +24,7 @@ func start_player_turn() -> void:
 
 ## Rejects every invalid selection, recipient and status snapshot before mutating
 ## any real combat state. Target positions are original roster slots, never indices
-## compacted after deaths. The caller is responsible for persisting status events.
+## compacted after deaths. Supplied status snapshots are never mutated.
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, attacker_statuses: Dictionary = {},
 		enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
@@ -78,6 +78,11 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if enemy["hp"] <= 0 or enemy["block"] < 0:
 			return _failure()
 
+	var applications := {}
+	for position in positions:
+		applications[position] = _on_hit.status_for_confirmed_hit(card_id, true)
+	if not enemies.can_apply_statuses(applications):
+		return _failure()
 	var bonus := _tinker.bonus_for_attack(card_id)
 	var attack_damage: int = damage_value + bonus
 	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
@@ -87,6 +92,7 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not _basic.play(deck, party, enemies, card_id, target_position, final_damage):
 			return _failure()
 		var after := enemies.get_enemy(target_position)
+		enemies.apply_statuses(applications)
 		_tinker.record_successful_attack(card_id)
 		return {"ok": true, "hits": [{
 			"position": target_position,
@@ -113,6 +119,7 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"statuses": statuses
 		})
 	deck.discard_played(card_id)
+	enemies.apply_statuses(applications)
 	_tinker.record_successful_attack(card_id)
 	return {"ok": true, "hits": hits}
 

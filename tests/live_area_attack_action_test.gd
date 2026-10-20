@@ -161,12 +161,15 @@ func _run() -> void:
 		var party := CombatParty.new(app._load_party_definitions())
 		CombatStartingBlock.new(party).apply()
 		var enemies := CombatEnemies.new(app._load_enemy_definitions())
+		app.party._heroes[2]["statuses"] = {"weak": 1}
+		party._heroes[2]["statuses"] = {"weak": 1}
+		_check(app.enemies.apply_statuses({1: {"exposed": 1}}) and enemies.apply_statuses({1: {"exposed": 1}}), "Bomb recipients have different authoritative Exposed")
 		_check(app.enemies.gain_block(1, 2) and enemies.gain_block(1, 2), "Block fixture")
 		_check(app.enemies.apply_damage(2, 9) and enemies.apply_damage(2, 9), "second enemy has three HP")
 		var before := _live()
 		var oracle := CombatAttackCards.new()
 		oracle.start_player_turn()
-		_check(oracle.play_attack(deck, party, enemies, ID, 0).ok, "shared scene-free resolver accepts same fixture")
+		_check(oracle.play_attack(deck, party, enemies, ID, 0, {"weak": 1}, {1: {"exposed": 1}, 2: {}}).ok, "shared scene-free resolver accepts same fixture")
 		seed(9123)
 		var expected_global := randi()
 		seed(9123)
@@ -182,6 +185,8 @@ func _run() -> void:
 			and app.enemies.get_enemy(2).hp == 0 and app.enemies.get_enemy(2).position == 2, "seven damage Block first and slain slot retained")
 		_check(app.get_node("LiveAttackPreview").last_event.hits[0].damage == 7,
 			"mounted Bomb includes first-attack passive")
+		_check(app.get_node("LiveAttackPreview").last_event.hits[1].damage == 5,
+			"same Bomb applies hero Weak and recipient-specific Exposed with floor once")
 		_check(_live().slice(1) == before.slice(1), "intents and selector unchanged")
 		_check(is_instance_valid(app.intent_label) and app.intent_label.is_visible_in_tree()
 			and app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage",
@@ -254,7 +259,7 @@ func _run() -> void:
 
 
 func _rejections() -> void:
-	for mode in ["energy", "downed", "position", "removed", "targets", "inactive", "terminal", "hidden", "identity", "deck_identity", "enemies_identity", "rng_identity", "result_identity", "presenter_missing", "presenter_unbound", "queued_turn"]:
+	for mode in ["energy", "downed", "position", "removed", "targets", "inactive", "terminal", "hidden", "identity", "deck_identity", "enemies_identity", "rng_identity", "result_identity", "presenter_missing", "presenter_unbound", "queued_turn", "bad_owner_status", "bad_late_status"]:
 		if not await _start():
 			return
 		var callback: Callable = presenter._callback
@@ -272,6 +277,10 @@ func _rejections() -> void:
 		_check(bonus == 3, "rejected action starts with pending first-attack bonus: " + mode)
 		if mode == "energy":
 			_check(app.deck.try_spend_energy(3), "zero energy fixture")
+		elif mode == "bad_owner_status":
+			app.party._heroes[2]["statuses"] = {"weak": -1}
+		elif mode == "bad_late_status":
+			app.enemies._enemies[1]["statuses"] = {"exposed": "1"}
 		elif mode == "downed":
 			_check(app.party.apply_damage(3, 26), "Tinker is downed")
 		elif mode == "position":

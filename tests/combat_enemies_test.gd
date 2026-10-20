@@ -8,6 +8,7 @@ func _initialize() -> void:
 	_test_construction()
 	_test_invalid_construction()
 	_test_required_queries()
+	_test_status_transaction()
 	for count in range(1, 4):
 		_test_damage_and_death(count)
 		_test_rejections(count)
@@ -25,6 +26,39 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _test_status_transaction() -> void:
+	var enemies := CombatEnemies.new(_definitions(3))
+	var identity: Dictionary = enemies._enemies[0]
+	var additions := {1: {"bleed": 3}, 3: {"weak": 1}}
+	var input := additions.duplicate(true)
+	_check(enemies.can_apply_statuses(additions) and enemies.apply_statuses(additions), "valid status batch commits")
+	_check(enemies.apply_statuses({1: {"bleed": 3, "exposed": 2}}), "repeated statuses add")
+	var expected := _expected(3)
+	expected[0]["statuses"] = {"bleed": 6, "exposed": 2}
+	expected[2]["statuses"] = {"weak": 1}
+	_check(enemies.get_enemies() == expected and is_same(identity, enemies._enemies[0]), "only named counters change, identity and slots retained")
+	_check(additions == input, "transaction input immutable")
+	for bad in [{1: {"bleed": 1}, 4: {"weak": 1}}, {1: {"bleed": 1}, 3: {"weak": -1}},
+		{1: {"bleed": 1}, 3: {"weak": 1.5}}, {"1": {}}, {2: []}, {2: {"poison": 1}},
+		{1: {"bleed": CombatEnemies.MAX_INT}}, {1: {"bleed": 1}, 3: {"weak": CombatEnemies.MAX_INT}}, {2: {8: 1}}]:
+		_check(not enemies.can_apply_statuses(bad) and not enemies.apply_statuses(bad), "bad late entry or overflow rejects")
+		_check(enemies.get_enemies() == expected, "failed status transaction is atomic")
+	for malformed in [[], {"weak": -1}, {"exposed": "1"}, {"unknown": 1}]:
+		enemies._enemies[2]["statuses"] = malformed
+		var before := enemies.get_enemies()
+		_check(not enemies.apply_statuses({1: {"bleed": 1}}) and enemies.get_enemies() == before, "malformed untouched slot rejects whole transaction")
+	enemies._enemies[2]["statuses"] = {"weak": 1}
+	_check(enemies.apply_damage(1, 100) and enemies.apply_statuses({1: {"bleed": 1}}), "confirmed lethal recipient accepts status without revival")
+	_check(enemies.is_slain(1) and enemies.get_enemy(1).statuses == {"bleed": 7, "exposed": 2}, "lethal status retains original record")
+	var before := enemies.get_enemies()
+	_check(enemies.apply_statuses({1: {"bleed": 0}, 2: {}}) and enemies.get_enemies() == before, "zero additions preserve exact records")
+	_check(enemies.apply_statuses({3: {"weak": CombatEnemies.MAX_INT - 1}})
+		and enemies.get_enemy(3).statuses.weak == CombatEnemies.MAX_INT, "status counter reaches maximum without overflow")
+	enemies._enemies[2]["position"] = 2
+	before = enemies.get_enemies()
+	_check(not enemies.apply_statuses({1: {"bleed": 1}}) and enemies.get_enemies() == before, "invalid original slot rejects atomically")
 
 
 func _definitions(count: int) -> Array:

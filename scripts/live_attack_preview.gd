@@ -34,7 +34,7 @@ func play_scrap_bomb(deck: CombatDeck, party: CombatParty, enemies: CombatEnemie
 		return false
 	if result == null or result._party != party or result._enemies != enemies or not result.can_continue():
 		return false
-	var event := _play.play_attack(deck, party, enemies, "tinker_scrap_bomb", position)
+	var event := _resolve_attack(party, enemies, "tinker_scrap_bomb", position)
 	if not event.ok:
 		return false
 	last_event = event
@@ -136,9 +136,24 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if app.party != party or app.enemies != enemies or app.battle_result != result or app.run_rng != rng \
 			or app.enemy_intents._turn_index != turn:
 		return
-	last_event = _play.play_attack(_deck, party, enemies, id, position)
+	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
 		_after_attack()
+
+
+func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int) -> Dictionary:
+	var owner_statuses: Dictionary = {}
+	var owner: String = _catalog.get_definition(id).get("owner", "")
+	for hero in party.get_heroes():
+		if hero.id == owner:
+			# Malformed authoritative status fields must reject rather than coerce.
+			if not hero.get("statuses", {}) is Dictionary:
+				return {"ok": false, "hits": []}
+			owner_statuses = hero.get("statuses", {})
+	var enemy_statuses := {}
+	for enemy in enemies.get_enemies():
+		enemy_statuses[enemy.position] = enemy.get("statuses", {})
+	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses, enemy_statuses)
 
 
 func _card_id(panel) -> String:

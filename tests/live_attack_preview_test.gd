@@ -189,6 +189,7 @@ func _run() -> void:
 			await _return()
 	await _negative_cases()
 	await _attacks()
+	await _status_lifecycle()
 	await _rejections()
 	await _tinker_turns()
 	await _bomb_entry_guards()
@@ -279,6 +280,9 @@ func _attacks() -> void:
 					return
 				var position := 1 if id == "warden_shield_bash" else 2
 				_check(app.enemies.gain_block(position, 2), "target has real Block")
+				var owner_position: int = {"warden": 1, "seamstress": 2, "tinker": 3}[catalog.get_definition(id).owner]
+				app.party._heroes[owner_position - 1]["statuses"] = {"weak": 1}
+				app.enemies._enemies[position - 1]["statuses"] = {"exposed": 1}
 				await _frames()
 				await _choose(id, keyboard)
 				var before := _snapshot()
@@ -287,12 +291,18 @@ func _attacks() -> void:
 					"held attack has affordable cost and living blocked target: " + id)
 				var definition := catalog.get_definition(id)
 				var damage: int = definition.effects.damage + (3 if definition.owner == "tinker" else 0)
+				# Combined Weak/Exposed floors only once (Pop 9, Prick 3, Bash 9).
+				damage = int(damage * 9 / 8)
 				var expected := before.duplicate(true)
 				expected[0].erase(id)
 				expected[2].append(id)
 				expected[3] -= definition.cost
 				expected[6][position - 1].block = 0
 				expected[6][position - 1].hp -= damage - 2
+				if id == "seamstress_prick":
+					expected[6][position - 1].statuses.bleed = 3
+				elif id == "warden_shield_bash":
+					expected[6][position - 1].statuses.weak = 1
 				seed(8123)
 				var global_next := randi()
 				seed(8123)
@@ -337,8 +347,70 @@ func _attacks() -> void:
 				await _return()
 
 
+func _status_lifecycle() -> void:
+	for id in ["seamstress_prick", "warden_shield_bash"]:
+		var replay: Array = []
+		for keyboard in [false, true]:
+			if not await _start(_seed_for(id)):
+				return
+			var status: String = "bleed" if id == "seamstress_prick" else "weak"
+			var amount: int = 3 if status == "bleed" else 1
+			# A durable fixture lets the real owner boundary run until expiry.
+			app.enemies._enemies[0]["max_hp"] = 100
+			app.enemies._enemies[0]["hp"] = 100
+			_check(app.enemies.gain_block(1, 100), "living blocked status recipient")
+			for attempt in range(2):
+				app.deck.hand.assign([id])
+				app.deck.combat_state.energy = 3
+				app._refresh_hand()
+				await _frames()
+				await _choose(id, keyboard)
+				if keyboard:
+					await _key(KEY_1)
+				else:
+					await _click(app.get_node("LiveEnemyRoster")._labels[0])
+				_check(presenter.last_event.ok and presenter.last_event.hits[0].hp_loss == 0
+					and app.enemies.get_enemy(1).statuses == {status: amount * (attempt + 1)}, "blocked mounted status application is additive exactly once")
+				var after := _snapshot()
+				await _key(KEY_1)
+				_check(_snapshot() == after, "duplicate physical input cannot reapply status")
+			app.party._heroes[0]["statuses"] = {"weak": 1}
+			_check(app.enemies.apply_statuses({1: {"exposed": 1}}), "recipient Exposed before actual boundary")
+			var hp := 100
+			for remaining in range(amount * 2, 0, -1):
+				var turn: int = app.enemy_intents._turn_index
+				await _click(app.end_turn_button)
+				if status == "bleed":
+					hp -= remaining
+				var expected := {status: remaining - 1} if remaining > 1 else {}
+				_check(app.enemy_intents._turn_index == turn + 1 and app.enemies.get_enemy(1).hp == hp
+					and app.enemies.get_enemy(1).statuses == expected, "real enemy owner tick reduces status then expires")
+				_check(app.party.get_hero(1).statuses == {}, "real hero owner boundary expires Weak")
+			var after_expiry := _snapshot()
+			if replay.is_empty():
+				replay = after_expiry
+			else:
+				_check(after_expiry == replay, "same-seed mouse/keyboard status and expiry replay")
+			app.enemies._enemies[0]["hp"] = 1
+			app.enemies._enemies[0]["block"] = 0
+			app.deck.hand.assign([id])
+			app.deck.combat_state.energy = 3
+			app._refresh_hand()
+			await _frames()
+			await _choose(id, keyboard)
+			if keyboard:
+				await _key(KEY_1)
+			else:
+				await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			_check(app.enemies.is_slain(1) and app.enemies.get_enemy(1).position == 1
+				and app.enemies.get_enemy(1).statuses == {status: amount}, "lethal mounted hit retains status in original slot")
+			_check(presenter.last_event.hits[0].damage == catalog.get_definition(id).effects.damage,
+				"expired Weak and Exposed no longer modify live damage")
+			await _return()
+
+
 func _rejections() -> void:
-	for scenario in ["unselected", "hover", "wrong", "range", "slain", "energy", "downed", "position", "missing", "stale", "inactive", "terminal", "mismatch", "invalid_enemies", "queued_stale", "queued_turn"]:
+	for scenario in ["unselected", "hover", "wrong", "range", "slain", "energy", "downed", "position", "missing", "stale", "inactive", "terminal", "mismatch", "invalid_enemies", "queued_stale", "queued_turn", "status_overflow", "bad_owner_status", "bad_late_status"]:
 		var id := "warden_shield_bash"
 		if not await _start(_seed_for(id)):
 			return
@@ -349,6 +421,12 @@ func _rejections() -> void:
 			await _choose(id, false)
 		if scenario == "energy":
 			app.deck.combat_state.energy = 0
+		elif scenario == "status_overflow":
+			app.enemies._enemies[0]["statuses"] = {"weak": CombatEnemies.MAX_INT}
+		elif scenario == "bad_owner_status":
+			app.party._heroes[0]["statuses"] = {"weak": -1}
+		elif scenario == "bad_late_status":
+			app.enemies._enemies[1]["statuses"] = {"exposed": "1"}
 		elif scenario == "downed":
 			_check(app.party.apply_damage(1, 10000), "down owner")
 		elif scenario == "position":
@@ -381,6 +459,7 @@ func _rejections() -> void:
 			app.enemy_intents.advance_turn()
 			app.enemy_attacks = app.enemy_intents.get_intents()
 		var before := _snapshot()
+		var latch: bool = presenter._play._tinker._consumed
 		seed(2345)
 		var global_next := randi()
 		seed(2345)
@@ -388,6 +467,7 @@ func _rejections() -> void:
 		if scenario != "range":
 			await _click(app.get_node("LiveEnemyRoster")._labels[1 if scenario == "wrong" else 0])
 		_check(_snapshot() == before, "complete no-spend snapshot " + scenario)
+		_check(presenter._play._tinker._consumed == latch, "rejection preserves first-attack latch " + scenario)
 		_check(randi() == global_next, "no global RNG consumption " + scenario)
 		if scenario in ["stale", "queued_stale"]:
 			panel.free()
@@ -554,6 +634,7 @@ func _kills() -> void:
 	await _choose(id, false)
 	await _click(app.get_node("LiveEnemyRoster")._labels[0])
 	_check(app.enemies.is_slain(1) and app.enemies.get_enemy(2).hp == 1 and app.enemies.get_enemy(2).position == 2, "first physical kill preserves live slot two")
+	_check(app.enemies.get_enemy(1).statuses == {"bleed": 3}, "lethal mouse Prick persists Bleed on slain slot")
 	_check(app.intent_label.text.contains("Enemy 2:") and not app.intent_label.text.contains("Enemy 1"), "next-frame intent removes killed enemy only")
 	_check(app.battle_result.can_continue() and not app.result_label.is_visible_in_tree(), "first kill keeps battle active")
 	await _choose(id, true)
@@ -561,6 +642,7 @@ func _kills() -> void:
 	_check(app.enemies.get_enemy(2).hp == 1 and app.deck.energy == 2, "slain slot remains illegal without compaction")
 	await _key(KEY_2)
 	_check(app.enemies.is_victorious() and app.battle_result.is_finished() and not app.deck.turn_active, "last physical kill reaches actual victory closure")
+	_check(app.enemies.get_enemy(2).statuses == {"bleed": 3}, "lethal keyboard Prick persists Bleed before victory")
 	_check(app.result_label.is_visible_in_tree() and app.result_label.text.contains(CombatBattleResult.VICTORY) and app.intent_label.text == "Intent: none", "next-frame result and intents reflect final kill")
 	var before := _snapshot()
 	await _key(KEY_2)

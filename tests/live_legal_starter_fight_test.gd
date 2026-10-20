@@ -141,6 +141,7 @@ func _opening() -> void:
 func _expected_end() -> void:
 	expected.discard.append_array(expected.hand)
 	expected.hand.clear()
+	_expected_owner_tick(expected.heroes)
 	for intent in expected.intents:
 		if expected.enemies[intent.enemy_position - 1].hp == 0:
 			continue
@@ -148,11 +149,18 @@ func _expected_end() -> void:
 			expected.enemies[intent.enemy_position - 1].block += intent.amount
 		else:
 			var hero: Dictionary = expected.heroes[intent.target_position - 1]
-			var absorbed := mini(hero.block, intent.amount)
+			var damage: int = intent.amount
+			if expected.enemies[intent.enemy_position - 1].get("statuses", {}).get("weak", 0) > 0:
+				damage = int(damage * 3 / 4)
+			var absorbed := mini(hero.block, damage)
 			hero.block -= absorbed
-			hero.hp -= intent.amount - absorbed
+			hero.hp -= damage - absorbed
 			hero_absorbed = hero_absorbed or absorbed > 0
-			hero_hp_hit = hero_hp_hit or intent.amount > absorbed
+			hero_hp_hit = hero_hp_hit or damage > absorbed
+	_expected_owner_tick(expected.enemies)
+	_expected_victory()
+	if expected.outcome == CombatBattleResult.VICTORY:
+		return
 	for hero in expected.heroes:
 		hero.block = 0
 	expected.turn += 1
@@ -160,6 +168,18 @@ func _expected_end() -> void:
 	expected.attacks = expected.intents.duplicate(true)
 	expected.energy = 3
 	_draw()
+
+
+func _expected_owner_tick(actors: Array) -> void:
+	for actor in actors:
+		if not actor.has("statuses"):
+			continue
+		actor.hp = maxi(0, actor.hp - actor.statuses.get("bleed", 0))
+		var next := {}
+		for status in actor.statuses:
+			if actor.statuses[status] > 1:
+				next[status] = actor.statuses[status] - 1
+		actor.statuses = next
 
 
 func _expected_attack(id: String, position: int) -> void:
@@ -173,6 +193,15 @@ func _expected_attack(id: String, position: int) -> void:
 	expected.energy -= definition.cost
 	expected.hand.erase(id)
 	expected.discard.append(id)
+	for status in ["weak", "bleed"]:
+		if definition.effects.has(status):
+			if not enemy.has("statuses"):
+				enemy.statuses = {}
+			enemy.statuses[status] = enemy.statuses.get(status, 0) + definition.effects[status] + (1 if status == "bleed" else 0)
+	_expected_victory()
+
+
+func _expected_victory() -> void:
 	if expected.enemies[0].hp == 0 and expected.enemies[1].hp == 0:
 		expected.outcome = CombatBattleResult.VICTORY
 		expected.gold = oracle_rng.randi_range(10, 20)
@@ -287,6 +316,8 @@ func _fight() -> Array:
 		await _click(app.end_turn_button)
 		_boundary("End Turn %d" % turn)
 		trace.append(_state())
+		if expected.outcome == CombatBattleResult.VICTORY:
+			break
 	_check(app.enemies.is_victorious() and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
 		and app.round_flow.get_outcome() == CombatBattleResult.VICTORY, "bounded legal plays win both enemies")
 	_check(app.result_label.is_visible_in_tree()
