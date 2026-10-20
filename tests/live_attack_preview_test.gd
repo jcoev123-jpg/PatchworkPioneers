@@ -191,6 +191,8 @@ func _run() -> void:
 	await _attacks()
 	await _rejections()
 	await _tinker_turns()
+	await _bomb_entry_guards()
+	await _mixed_tinker_turns()
 	await _kills()
 	await _stale_restart()
 	await _controls()
@@ -413,6 +415,131 @@ func _tinker_turns() -> void:
 			await _click(app.end_turn_button)
 			_check(app.enemy_intents._turn_index == 1, "real End Turn boundary")
 	await _return()
+
+
+func _bomb_entry_guards() -> void:
+	var id := "tinker_scrap_bomb"
+	if not await _start(_seed_for(id)):
+		return
+	var service = presenter._play
+	_check(service._tinker.bonus_for_attack(id) == 3, "guard probes start with pending bonus")
+	for mode in ["selected_target", "wrong_turn", "bound_session", "hidden_hand"]:
+		var original_session: Array = presenter._session.duplicate()
+		if mode == "bound_session":
+			presenter._session = []
+		elif mode == "hidden_hand":
+			app.hand_view.hide()
+		var before := _snapshot()
+		var event: Dictionary = presenter.last_event.duplicate(true)
+		_check(not presenter.play_scrap_bomb(app.deck, app.party, app.enemies, app.battle_result,
+			app.run_rng, presenter._turn + (1 if mode == "wrong_turn" else 0),
+			1 if mode == "selected_target" else 0), "guarded Bomb entry rejects " + mode)
+		_check(_snapshot() == before and presenter.last_event == event
+			and service._tinker.bonus_for_attack(id) == 3, "entry rejection preserves state, event and pending bonus " + mode)
+		presenter._session = original_session
+		app.hand_view.show()
+	await _return()
+
+
+func _mixed_tinker_turns() -> void:
+	var bomb := "tinker_scrap_bomb"
+	var pop := "tinker_pop_shot"
+	var cards: Array[String] = []
+	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+	var chosen := -1
+	for candidate in range(1000):
+		var probe_rng := RandomNumberGenerator.new()
+		probe_rng.seed = candidate
+		var probe := CombatDeck.new(cards, probe_rng)
+		probe.start_turn()
+		if bomb in probe.hand and pop in probe.hand:
+			chosen = candidate
+			break
+	_check(chosen >= 0, "seeded opening naturally holds both Tinker attacks")
+	if chosen < 0:
+		return
+	var previous_service
+	for bomb_first in [true, false]:
+		var replay: Array = []
+		for keyboard in [false, true]:
+			for session in range(2):
+				if not await _start(chosen):
+					return
+				_check(bomb in app.deck.hand and pop in app.deck.hand, "both authored cards held before physical permutation")
+				var service = presenter._play
+				_check(service != previous_service and service._tinker.bonus_for_attack(bomb) == 3,
+					"Return/restart creates a fresh pending bonus after prior consumed session")
+				previous_service = service
+				var rng := RandomNumberGenerator.new()
+				rng.seed = chosen
+				var deck := CombatDeck.new(cards, rng)
+				var party := CombatParty.new(app._load_party_definitions())
+				var enemies := CombatEnemies.new(app._load_enemy_definitions())
+				var intents := CombatEnemyIntents.new(app._load_enemy_schedule())
+				var result := CombatBattleResult.new(party, enemies)
+				var flow := CombatRoundFlow.new(deck, party, enemies, intents, result)
+				_check(flow.begin_fight(), "independent complete seeded fight starts")
+				var oracle := CombatAttackCards.new()
+				for position in [1, 2]:
+					_check(app.enemies.gain_block(position, 40) and enemies.gain_block(position, 40),
+						"living Block fixtures allow two complete mixed turns")
+				var trace: Array = []
+				for turn in range(2):
+					oracle.start_player_turn()
+					if turn == 1:
+						# Supply the same controlled second hand on the real, advanced session.
+						app.deck.hand.assign([bomb, pop])
+						deck.hand.assign([bomb, pop])
+						app._refresh_hand()
+						await _frames()
+					_check(presenter._play == service and service._tinker.bonus_for_attack(bomb) == 3,
+						"same attack service, fresh first-attack bonus at actual turn boundary")
+					var order := [bomb, pop] if bomb_first else [pop, bomb]
+					for index in range(2):
+						var id: String = order[index]
+						var damage: int = [7, 5][index] if bomb_first else [8, 4][index]
+						var event := oracle.play_attack(deck, party, enemies, id, 0 if id == bomb else 2)
+						_check(event.ok, "independent shared service accepts permutation step")
+						if id == bomb:
+							var action = app.get_node("LiveAreaAttackAction")
+							_check(is_instance_valid(action.button) and not action.button.disabled,
+								"actual target-free Bomb action available")
+							if not is_instance_valid(action.button):
+								await _return()
+								return
+							if keyboard:
+								action.button.grab_focus()
+								await _key(KEY_ENTER if session == 0 else KEY_SPACE)
+							else:
+								await _click(action.button)
+						else:
+							await _choose(id, keyboard)
+							if keyboard:
+								await _key(KEY_2)
+							else:
+								await _click(app.get_node("LiveEnemyRoster")._labels[1])
+						_check(presenter.last_event == event and event.hits[0].damage == damage,
+							"physical Bomb/Pop order deals exact authored damage with one shared bonus")
+						_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile, app.deck.energy,
+							app.deck.turn_active, app.party.get_heroes(), app.enemies.get_enemies(),
+							app.run_rng.state, app.enemy_intents.get_intents()] == [deck.hand, deck.draw_pile,
+							deck.discard_pile, deck.energy, deck.turn_active, party.get_heroes(),
+							enemies.get_enemies(), rng.state, intents.get_intents()],
+							"complete live permutation transition matches independent shared transaction")
+						_check(service == presenter._play and service._tinker.bonus_for_attack(bomb) == 0,
+							"hand refresh never replaces consumed attack state")
+						trace.append(_snapshot())
+					_check(app.deck.energy == 0, "mixed turn spends exactly three energy")
+					if turn == 0:
+						_check(flow.end_turn(), "oracle advances same real round flow")
+						await _click(app.end_turn_button)
+						_check(app.enemy_intents._turn_index == 1 and app.deck.energy == 3,
+							"physical End Turn advances and refills real player turn")
+				if replay.is_empty():
+					replay = trace
+				else:
+					_check(trace == replay, "both mixed turns replay identically after Return across mouse/Enter/Space")
+				await _return()
 
 
 func _kills() -> void:

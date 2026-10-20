@@ -1,5 +1,5 @@
 extends Node
-## Presentation and session guards only; CombatAreaAttacks owns the transaction.
+## Presentation and session guards only; LiveAttackPreview owns the shared transaction.
 
 var button: Button
 var _battle: Control
@@ -11,7 +11,8 @@ var _rng: RandomNumberGenerator
 var _token := 0
 var _queued := false
 var _callback: Callable
-var _play := CombatAreaAttacks.new()
+var _presenter: Node
+var _turn := -1
 
 
 func _ready() -> void:
@@ -86,6 +87,8 @@ func _on_pressed(token: int) -> void:
 	if token != _token or _queued or not is_instance_valid(button) or button.disabled or not _eligible():
 		return
 	_queued = true
+	_presenter = get_parent().get_node_or_null("LiveAttackPreview")
+	_turn = get_parent().enemy_intents._turn_index if get_parent().enemy_intents != null else -1
 	button.disabled = true
 	# Hand controls may be freed by refresh, outside the GUI input dispatch.
 	_activate.call_deferred(token)
@@ -95,8 +98,9 @@ func _activate(token: int) -> void:
 	if token != _token or not _queued:
 		return
 	_queued = false
-	if _eligible() and _play.play_scrap_bomb(_deck, _party, _enemies):
-		get_parent()._refresh_hand()
+	if _eligible() and is_instance_valid(_presenter) \
+			and _presenter == get_parent().get_node_or_null("LiveAttackPreview") \
+			and _presenter.play_scrap_bomb(_deck, _party, _enemies, _result, _rng, _turn, 0):
 		get_parent().end_turn_button.grab_focus()
 	_sync_battle()
 
@@ -123,3 +127,5 @@ func _clear() -> void:
 	_enemies = null
 	_result = null
 	_rng = null
+	_presenter = null
+	_turn = -1

@@ -155,7 +155,9 @@ func _run() -> void:
 		_check(app.enemies.gain_block(1, 2) and enemies.gain_block(1, 2), "Block fixture")
 		_check(app.enemies.apply_damage(2, 9) and enemies.apply_damage(2, 9), "second enemy has three HP")
 		var before := _live()
-		_check(CombatAreaAttacks.new().play_scrap_bomb(deck, party, enemies), "scene-free resolver accepts same fixture")
+		var oracle := CombatAttackCards.new()
+		oracle.start_player_turn()
+		_check(oracle.play_attack(deck, party, enemies, ID, 0).ok, "shared scene-free resolver accepts same fixture")
 		seed(9123)
 		var expected_global := randi()
 		seed(9123)
@@ -167,8 +169,10 @@ func _run() -> void:
 		_check(_state(app.deck, app.party, app.enemies, app.run_rng) == _state(deck, party, enemies, rng), "complete state equals scene-free resolver")
 		_check(app.deck.energy == 1 and app.deck.discard_pile == [ID]
 			and app.deck.hand.size() == 4, "exact two energy and one discard")
-		_check(app.enemies.get_enemy(1).hp == 10 and app.enemies.get_enemy(1).block == 0
-			and app.enemies.get_enemy(2).hp == 0 and app.enemies.get_enemy(2).position == 2, "four damage Block first and slain slot retained")
+		_check(app.enemies.get_enemy(1).hp == 7 and app.enemies.get_enemy(1).block == 0
+			and app.enemies.get_enemy(2).hp == 0 and app.enemies.get_enemy(2).position == 2, "seven damage Block first and slain slot retained")
+		_check(app.get_node("LiveAttackPreview").last_event.hits[0].damage == 7,
+			"mounted Bomb includes first-attack passive")
 		_check(_live().slice(1) == before.slice(1), "intents and selector unchanged")
 		_check(is_instance_valid(app.intent_label) and app.intent_label.is_visible_in_tree()
 			and app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage",
@@ -185,14 +189,14 @@ func _run() -> void:
 	await _rejections()
 	# Opposite survivor: the Guard's Block announcement and badge stay intact.
 	if await _start():
-		_check(app.enemies.apply_damage(1, 8), "Ragling at four HP before real bomb")
+		_check(app.enemies.apply_damage(1, 5), "Ragling at seven HP before real bomb")
 		var before := _live()
 		var expected: Array = before[0].duplicate(true)
 		expected[3] -= 2
 		expected[1].erase(ID)
 		expected[2].append(ID)
 		expected[6][0].hp = 0
-		expected[6][1].hp -= 4
+		expected[6][1].hp -= 7
 		await _mouse(presenter.button)
 		_check(_live()[0] == expected and _live().slice(1) == before.slice(1)
 			and app.session_gold == 0, "Guard survivor bomb preserves complete expected state, statuses, intents and RNG")
@@ -209,7 +213,7 @@ func _run() -> void:
 		await _frames()
 	# Final living target: the existing result observer closes the deck and UI.
 	if await _start():
-		_check(app.enemies.apply_damage(1, 12) and app.enemies.apply_damage(2, 8), "slain first slot and final enemy at four HP")
+		_check(app.enemies.apply_damage(1, 12) and app.enemies.apply_damage(2, 5), "slain first slot and final enemy at seven HP")
 		var before := _live()
 		var expected: Array = before[0].duplicate(true)
 		var reference := RandomNumberGenerator.new()
@@ -241,7 +245,7 @@ func _run() -> void:
 
 
 func _rejections() -> void:
-	for mode in ["energy", "downed", "position", "removed", "targets", "inactive", "terminal", "hidden", "identity", "deck_identity", "enemies_identity", "rng_identity", "result_identity"]:
+	for mode in ["energy", "downed", "position", "removed", "targets", "inactive", "terminal", "hidden", "identity", "deck_identity", "enemies_identity", "rng_identity", "result_identity", "presenter_missing", "presenter_unbound", "queued_turn"]:
 		if not await _start():
 			return
 		var callback: Callable = presenter._callback
@@ -253,6 +257,10 @@ func _rejections() -> void:
 		var original_deck: CombatDeck = app.deck
 		var original_enemies: CombatEnemies = app.enemies
 		var original_rng: RandomNumberGenerator = app.run_rng
+		var attack_presenter = app.get_node("LiveAttackPreview")
+		var service = attack_presenter._play
+		var bonus: int = service._tinker.bonus_for_attack(ID)
+		_check(bonus == 3, "rejected action starts with pending first-attack bonus: " + mode)
 		if mode == "energy":
 			_check(app.deck.try_spend_energy(3), "zero energy fixture")
 		elif mode == "downed":
@@ -297,11 +305,25 @@ func _rejections() -> void:
 			app.run_rng.seed = app.run_seed
 		elif mode == "result_identity":
 			app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		elif mode == "presenter_missing":
+			app.remove_child(attack_presenter)
+		elif mode == "presenter_unbound":
+			attack_presenter._clear()
+		elif mode == "queued_turn":
+			app.enemy_intents.advance_turn()
+			app.enemy_attacks = app.enemy_intents.get_intents()
 		var before := _live()
 		var old_state := _state(original_deck, original_party, original_enemies, original_rng)
+		seed(9876)
+		var global_next := randi()
+		seed(9876)
 		presenter._activate(token)
 		callback.call()
 		_check(_live() == before and _state(original_deck, original_party, original_enemies, original_rng) == old_state, "rejection preserves complete state: " + mode)
+		_check(service._tinker.bonus_for_attack(ID) == bonus and randi() == global_next,
+			"rejection preserves pending bonus and global RNG: " + mode)
+		if mode == "presenter_missing":
+			app.add_child(attack_presenter)
 		app.return_button.pressed.emit()
 		await _frames()
 	# Duplicates must be gated even if another copy and sufficient energy remain.
@@ -313,7 +335,9 @@ func _rejections() -> void:
 		callback.call()
 		await _frames()
 		_check(app.deck.energy == 4 and app.deck.discard_pile == [ID]
-			and app.deck.hand.count(ID) == 1 and app.enemies.get_enemy(1).hp == 8, "duplicate callbacks resolve exactly once with playable extra copy")
+			and app.deck.hand.count(ID) == 1 and app.enemies.get_enemy(1).hp == 5, "duplicate callbacks resolve exactly once with playable extra copy")
+		_check(app.get_node("LiveAttackPreview")._play._tinker.bonus_for_attack(ID) == 0,
+			"duplicate activation consumes shared bonus exactly once")
 		app.return_button.pressed.emit()
 		await _frames()
 
@@ -327,6 +351,7 @@ func _stale() -> void:
 	var party: CombatParty = app.party
 	var enemies: CombatEnemies = app.enemies
 	var rng: RandomNumberGenerator = app.run_rng
+	var old_service = app.get_node("LiveAttackPreview")._play
 	var before := _state(deck, party, enemies, rng)
 	callback.call()
 	app.return_button.pressed.emit()
@@ -340,6 +365,9 @@ func _stale() -> void:
 	callback.call()
 	await _frames()
 	_check(_live() == fresh and _state(deck, party, enemies, rng) == before, "stale Return and deferred callbacks preserve both sessions")
+	_check(old_service._tinker.bonus_for_attack(ID) == 3
+		and app.get_node("LiveAttackPreview")._play._tinker.bonus_for_attack(ID) == 3,
+		"stale callbacks preserve both sessions' pending bonuses")
 	_check(app.title_view.visible == false and is_instance_valid(presenter.button), "new session retains its own action")
 	app.return_button.pressed.emit()
 	await _frames()

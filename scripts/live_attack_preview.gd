@@ -15,6 +15,43 @@ var _armed: Control
 var _queued := false
 var _token := 0
 var _turn := -1
+var _session: Array = []
+
+
+## The separate Bomb button delegates here so both Tinker cards share one turn bonus.
+## Do not resync here: a missing/stale binding must reject without resetting that bonus.
+func play_scrap_bomb(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		result: CombatBattleResult, rng: RandomNumberGenerator, turn: int, position: int = 0) -> bool:
+	var app = get_parent()
+	if app == null or not is_inside_tree() or deck != _deck or app.deck != _deck \
+			or not is_instance_valid(_battle) or app.battle_view != _battle \
+			or not _battle.is_visible_in_tree() or not is_instance_valid(app.hand_view) \
+			or not _battle.is_ancestor_of(app.hand_view) or not app.hand_view.is_visible_in_tree():
+		return false
+	if _session != [party, enemies, result, rng, app.enemy_intents] \
+			or _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents] \
+			or app.enemy_intents == null or turn != _turn or turn != app.enemy_intents._turn_index:
+		return false
+	if result == null or result._party != party or result._enemies != enemies or not result.can_continue():
+		return false
+	var event := _play.play_attack(deck, party, enemies, "tinker_scrap_bomb", position)
+	if not event.ok:
+		return false
+	last_event = event
+	_after_attack()
+	return true
+
+
+func _after_attack() -> void:
+	var app = get_parent()
+	_armed = null
+	_token += 1
+	_queued = false
+	app._refresh_hand()
+	app._refresh_enemy_roster()
+	app._refresh_intents()
+	app._observe_battle_result()
+	_sync_battle()
 
 
 func _process(_delta: float) -> void:
@@ -101,11 +138,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		return
 	last_event = _play.play_attack(_deck, party, enemies, id, position)
 	if last_event.ok:
-		_armed = null
-		_token += 1
-		app._refresh_hand()
-		app._refresh_enemy_roster()
-		_sync_battle()
+		_after_attack()
 
 
 func _card_id(panel) -> String:
@@ -144,6 +177,7 @@ func _sync_battle() -> void:
 		_clear()
 		_battle = app.battle_view
 		_deck = app.deck
+		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 		_play = CombatAttackCards.new()
 		last_event = {}
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
@@ -248,4 +282,5 @@ func _clear() -> void:
 	cue = null
 	_battle = null
 	_deck = null
+	_session = []
 	_selected = null
