@@ -49,6 +49,8 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_observe_battle_result()
+	if is_instance_valid(battle_view) and battle_view.is_visible_in_tree():
+		_refresh_intents()
 
 
 ## Single observation boundary for live updates and resolved phases.
@@ -340,17 +342,20 @@ func _refresh_party() -> void:
 
 
 func _refresh_intents() -> void:
+	if not is_instance_valid(intent_label):
+		return
 	var announcements: PackedStringArray = []
-	for attack in enemy_attacks:
-		if enemies.is_slain(attack.enemy_position):
-			continue
-		if attack.type == "block":
+	var cues := CombatIntentCues.new().get_cues(enemy_intents, enemies)
+	if party == null or not party.is_valid():
+		cues.clear()
+	for attack in cues:
+		if attack.icon_key == "block":
 			announcements.append("Enemy %d: %d Block" % [attack.enemy_position, attack.amount])
 		else:
 			announcements.append("Enemy %d -> Hero %d (%s): %d damage" % [
 				attack["enemy_position"], attack["target_position"],
 				party.get_hero(attack["target_position"])["name"], attack["amount"]])
-	intent_label.text = "Intent: " + "; ".join(announcements)
+	intent_label.text = "Intent: " + ("none" if announcements.is_empty() else "; ".join(announcements))
 
 
 func _end_turn(button: Button = null) -> void:

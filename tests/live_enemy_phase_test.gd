@@ -298,6 +298,7 @@ func _run() -> void:
 		await process_frame
 		_check(not is_instance_id_valid(intent_id), "old mounted intent freed")
 	await _slain_sources(app)
+	await _cue_refresh(app)
 	app.free()
 	_finish()
 
@@ -309,6 +310,17 @@ func _slain_sources(app) -> void:
 		if app.enemies == null or app.party == null or app.deck == null:
 			return
 		_check(app.enemies.apply_damage(slain, 12) and app.enemies.is_slain(slain), "announced source really slain")
+		var before_frame := _snapshot(app)
+		await process_frame
+		await process_frame
+		_check(is_instance_valid(app.intent_label) and app.intent_label.is_visible_in_tree(),
+			"slain-source intent remains mounted before End Turn")
+		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
+			else "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage"),
+			"slain source disappears on rendered frame before End Turn")
+		var after_frame := _snapshot(app)
+		before_frame[5] = after_frame[5]
+		_check(before_frame == after_frame, "intent frame refresh changes no models, selector, deck or RNG")
 		# Remove opening protection so a spurious slain-source attack cannot hide in Block.
 		_check(app.party.start_player_turn(), "clear opening Block for slain-source check")
 		var heroes: Array = app.party.get_heroes()
@@ -344,6 +356,49 @@ func _slain_sources(app) -> void:
 			_check(labels.size() == 2 and labels[slain - 1].text.ends_with("SLAIN"), "mounted slain label refreshed")
 		app.return_button.pressed.emit()
 		await process_frame
+
+
+func _cue_refresh(app) -> void:
+	app.start_button.pressed.emit()
+	_check(app.enemies != null and app.enemy_intents != null and is_instance_valid(app.intent_label),
+		"cue refresh has real mounted roster, selector and label")
+	if app.enemies == null or app.enemy_intents == null or not is_instance_valid(app.intent_label):
+		return
+	var initial := _snapshot(app)
+	app.enemy_attacks[0].amount += 10
+	var stale := _snapshot(app)
+	app._refresh_intents()
+	_check(app.intent_label.text == initial[5] and _snapshot(app) == stale,
+		"label uses authoritative cues despite stale cached attack without mutating state")
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	var selector: CombatEnemyIntents = app.enemy_intents
+	var roster: CombatEnemies = app.enemies
+	for mode in ["missing_selector", "invalid_selector", "missing_roster", "invalid_roster", "mismatched_roster"]:
+		if mode == "missing_selector":
+			app.enemy_intents = null
+		elif mode == "invalid_selector":
+			app.enemy_intents = CombatEnemyIntents.new([])
+		elif mode == "missing_roster":
+			app.enemies = null
+		elif mode == "invalid_roster":
+			app.enemies = CombatEnemies.new([])
+		else:
+			app.enemies = CombatEnemies.new([app._load_enemy_definitions()[0]])
+		app._refresh_intents()
+		_check(app.intent_label.text == "Intent: none", "cue label fails closed: " + mode)
+		app.enemy_intents = selector
+		app.enemies = roster
+	app._refresh_intents()
+	_check(_snapshot(app) == initial, "cue reads preserve complete original session")
+	var label: Label = app.intent_label
+	app.intent_label = null
+	app._refresh_intents()
+	app.intent_label = label
+	_check(_snapshot(app) == initial, "missing label refresh is inert")
+	app.return_button.pressed.emit()
+	await process_frame
+	app._refresh_intents()
+	_check(app.intent_label == null and app.enemies == null, "title refresh cannot recreate session")
 
 
 func _finish() -> void:

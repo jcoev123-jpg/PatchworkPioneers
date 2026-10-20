@@ -170,6 +170,10 @@ func _run() -> void:
 		_check(app.enemies.get_enemy(1).hp == 10 and app.enemies.get_enemy(1).block == 0
 			and app.enemies.get_enemy(2).hp == 0 and app.enemies.get_enemy(2).position == 2, "four damage Block first and slain slot retained")
 		_check(_live().slice(1) == before.slice(1), "intents and selector unchanged")
+		_check(is_instance_valid(app.intent_label) and app.intent_label.is_visible_in_tree()
+			and app.intent_label.text == "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage",
+			"real mouse/keyboard bomb immediately removes slain Guard intent and retains Ragling")
+		_check(app.session_gold == 0, "nonterminal bomb awards no gold")
 		_check(presenter.button == null and app.battle_result.can_continue(), "spent card removes action; surviving enemy keeps fight active")
 		_visible()
 		if replay.is_empty():
@@ -179,6 +183,30 @@ func _run() -> void:
 		app.return_button.pressed.emit()
 		await _frames()
 	await _rejections()
+	# Opposite survivor: the Guard's Block announcement and badge stay intact.
+	if await _start():
+		_check(app.enemies.apply_damage(1, 8), "Ragling at four HP before real bomb")
+		var before := _live()
+		var expected: Array = before[0].duplicate(true)
+		expected[3] -= 2
+		expected[1].erase(ID)
+		expected[2].append(ID)
+		expected[6][0].hp = 0
+		expected[6][1].hp -= 4
+		await _mouse(presenter.button)
+		_check(_live()[0] == expected and _live().slice(1) == before.slice(1)
+			and app.session_gold == 0, "Guard survivor bomb preserves complete expected state, statuses, intents and RNG")
+		_check(app.enemies.is_slain(1) and not app.enemies.is_slain(2)
+			and app.intent_label.text == "Intent: Enemy 2: 1 Block", "living Guard alone retains exact Block intent")
+		var roster = app.get_node("LiveEnemyRoster")
+		_check(roster._badges.size() == 2, "both source badges mounted")
+		if roster._badges.size() == 2:
+			_check(roster._badges[1].is_visible_in_tree() and roster._badges[1].icon_mode == "block"
+				and roster._badges[1].readable_text == "BLOCK +1"
+				and roster._badges[0].icon_mode == "slain", "surviving Guard badge retains exact Block; Ragling badge slain")
+		_visible()
+		app.return_button.pressed.emit()
+		await _frames()
 	# Final living target: the existing result observer closes the deck and UI.
 	if await _start():
 		_check(app.enemies.apply_damage(1, 12) and app.enemies.apply_damage(2, 8), "slain first slot and final enemy at four HP")
@@ -202,6 +230,8 @@ func _run() -> void:
 		_check(app.enemies.is_slain(1) and app.enemies.is_slain(2)
 			and app.battle_result.get_outcome() == CombatBattleResult.VICTORY
 			and not app.deck.turn_active and app.end_turn_button.disabled, "final enemy triggers live victory")
+		_check(is_instance_valid(app.intent_label) and app.intent_label.is_visible_in_tree()
+			and app.intent_label.text == "Intent: none", "terminal real bomb clears every dead enemy announcement")
 		_visible()
 		app.return_button.pressed.emit()
 		await _frames()
