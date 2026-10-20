@@ -31,11 +31,42 @@ var hero_panels: Array[PanelContainer] = []
 var enemy_attacks: Array = []
 var enemy_intents: CombatEnemyIntents
 var intent_label: Label
+var battle_result: CombatBattleResult
+var result_label: Label
+var _battle_closed := false
 
 
 func _ready() -> void:
 	_build_title()
 	start_run_requested.connect(_start_run)
+
+
+func _process(_delta: float) -> void:
+	_observe_battle_result()
+
+
+## Single observation boundary for live updates and resolved phases.
+func _observe_battle_result() -> bool:
+	if battle_result == null:
+		return false
+	var outcome := battle_result.evaluate()
+	if outcome == CombatBattleResult.ACTIVE:
+		return true
+	if not _battle_closed:
+		_battle_closed = true
+		# Enemy phases have already ended the turn; external/card damage may not have.
+		if deck.turn_active:
+			deck.end_turn()
+		$LiveSupportHand._cancel_pending()
+		_refresh_hand()
+		if party.is_valid():
+			_refresh_party()
+		_refresh_enemy_roster()
+		end_turn_button.disabled = true
+		result_label.text = "Battle result: " + outcome
+		result_label.show()
+		return_button.grab_focus()
+	return false
 
 
 func _build_title() -> void:
@@ -102,6 +133,8 @@ func _start_run() -> void:
 	run_rng.seed = run_seed
 	deck = CombatDeck.new(cards, run_rng)
 	deck.start_turn()
+	battle_result = CombatBattleResult.new(party, enemies)
+	_battle_closed = false
 	title_view.hide()
 	_build_battle()
 	_refresh_hand()
@@ -233,6 +266,11 @@ func _build_battle() -> void:
 	_refresh_intents()
 	intent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(intent_label)
+	result_label = Label.new()
+	result_label.name = "BattleResult"
+	result_label.add_theme_font_size_override("font_size", 28)
+	result_label.hide()
+	column.add_child(result_label)
 	var heading := Label.new()
 	heading.text = "Shared hand"
 	heading.add_theme_font_size_override("font_size", 32)
@@ -308,6 +346,8 @@ func _end_turn(button: Button = null) -> void:
 		return
 	if deck == null or party == null or enemies == null or enemy_intents == null:
 		return
+	if not _observe_battle_result():
+		return
 	# Reject stale or corrupted announcements, including overflow, before ending the hand.
 	if not party.is_valid() or not enemies.is_valid() or enemy_attacks != enemy_intents.get_intents():
 		return
@@ -329,6 +369,8 @@ func _end_turn(button: Button = null) -> void:
 			CombatEnemyAttacks.new().execute_attacks(party, [action])
 		else:
 			CombatEnemyBlocks.execute_blocks(enemies, [action])
+	if not _observe_battle_result():
+		return
 	if not deck.start_turn():
 		return
 	party.start_player_turn()
@@ -338,7 +380,12 @@ func _end_turn(button: Button = null) -> void:
 	_refresh_hand()
 	_refresh_party()
 	_refresh_enemy_roster()
-	button.set_deferred("disabled", false)
+	_reenable_end_turn.call_deferred(button)
+
+
+func _reenable_end_turn(button: Button) -> void:
+	if is_instance_valid(button) and button == end_turn_button and _observe_battle_result():
+		button.disabled = false
 
 
 func _refresh_enemy_roster() -> void:
@@ -361,6 +408,9 @@ func _return_to_title() -> void:
 	hero_view = null
 	hero_panels.clear()
 	intent_label = null
+	result_label = null
+	battle_result = null
+	_battle_closed = false
 	enemy_attacks.clear()
 	enemy_intents = null
 	party = null
