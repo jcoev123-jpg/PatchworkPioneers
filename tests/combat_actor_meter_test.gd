@@ -49,6 +49,7 @@ func _visual(meter: CombatActorMeter) -> Dictionary:
 		"block": meter.block_text.text,
 		"block_value": meter.block_bar.value,
 		"block_max": meter.block_bar.max_value,
+		"statuses": meter.status_text.text,
 		"outer_children": meter.get_child_count(),
 		"padding_children": meter.get_node("Padding").get_child_count(),
 		"content_children": meter.get_node("Padding/Content").get_child_count()
@@ -56,7 +57,7 @@ func _visual(meter: CombatActorMeter) -> Dictionary:
 
 
 func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: int,
-		block: int, note: String) -> void:
+		block: int, note: String, expected_status: String = "Statuses: none") -> void:
 	_check(meter.visible and meter.is_visible_in_tree(), note + ": mounted and visible")
 	_check(meter.actor_heading.text == heading, note + ": position/name/death heading")
 	_check(meter.hp_text.text == "HP: %d/%d" % [hp, max_hp], note + ": exact HP text")
@@ -66,13 +67,20 @@ func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: in
 	_check(meter.block_bar.min_value == 0.0
 		and meter.block_bar.max_value == float(maxi(1, maxi(max_hp, block)))
 		and meter.block_bar.value == float(block), note + ": uncapped Block bar")
+	_check(meter.status_text.text == expected_status, note + ": exact status line")
 	_check(not meter.hp_bar.show_percentage and not meter.block_bar.show_percentage,
 		note + ": readable separately titled bars")
 	_check(meter.actor_heading.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
 		and meter.block_text.is_visible_in_tree() and meter.hp_bar.is_visible_in_tree()
 		and meter.block_bar.is_visible_in_tree(), note + ": all five visible child controls")
-	_check(meter.get_node("Padding/Content").get_child_count() == 5,
-		note + ": five persistent controls, never duplicate rows")
+	_check(meter.status_text.is_visible_in_tree() and meter.status_text.name == "StatusText"
+		and meter.status_text.get_parent() == meter.get_node("Padding/Content")
+		and meter.status_text.focus_mode == Control.FOCUS_NONE
+		and meter.status_text.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		note + ": one inert status label inside existing Content")
+	_check(meter.get_node("Padding/Content").get_child_count() == 6
+		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1,
+		note + ": five original controls plus exactly one persistent status label")
 	_check(meter.hp_bar.get_theme_stylebox("fill") is StyleBoxFlat
 		and meter.block_bar.get_theme_stylebox("fill") is StyleBoxFlat,
 		note + ": bars have contrasting fill styles")
@@ -81,12 +89,14 @@ func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: in
 func _assert_cleared(meter: CombatActorMeter, note: String) -> void:
 	_check(not meter.visible and not meter.is_visible_in_tree(), note + ": invalid actor hidden")
 	_check(meter.actor_heading.text.is_empty() and meter.hp_text.text.is_empty()
-		and meter.block_text.text.is_empty(), note + ": all old text cleared")
+		and meter.block_text.text.is_empty() and meter.status_text.text.is_empty(),
+		note + ": all old text, including stale statuses, cleared")
 	_check(meter.hp_bar.value == 0 and meter.hp_bar.max_value == 1
 		and meter.block_bar.value == 0 and meter.block_bar.max_value == 1,
 		note + ": no old bar value or range remains")
-	_check(meter.get_node("Padding/Content").get_child_count() == 5,
-		note + ": invalid source does not append controls")
+	_check(meter.get_node("Padding/Content").get_child_count() == 6
+		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1,
+		note + ": invalid source does not append or leak status controls")
 
 
 func _run() -> void:
@@ -185,6 +195,11 @@ func _run() -> void:
 		"downed hero retains original position and full state is exact")
 	_view(meter, party.get_hero(1), "hero", party, enemies, rng)
 	_assert_actor(meter, "1. Warden — DOWNED", 0, 40, 0, "downed hero")
+	var downed_with_status := party.get_hero(1)
+	downed_with_status["statuses"] = {"bleed": 3}
+	_view(meter, downed_with_status, "hero", party, enemies, rng)
+	_assert_actor(meter, "1. Warden — DOWNED", 0, 40, 0, "downed hero with stack",
+		"Statuses: Bleed 3")
 	_check(enemies.apply_damage(1, 27), "real Ragling lethal damage after Block 17 succeeds")
 	expected_enemies[0]["hp"] = 0
 	expected_enemies[0]["block"] = 0
@@ -198,6 +213,51 @@ func _run() -> void:
 	_view(meter, no_cap_party.get_hero(1), "hero", party, enemies, rng)
 	_assert_actor(meter, "1. Warden", 40, 40, 51, "Block 51 across new session")
 	_check(no_cap_party.get_hero(1).get("block") == 51, "view never limits source Block")
+
+	# Display data belongs only to the supplied snapshot, never to either roster.
+	var deck := CombatDeck.new(["warden_brace", "seamstress_prick", "tinker_jab"], rng)
+	_check(deck.start_turn() and deck.hand.size() == 3, "real deck state for presentation no-mutation check")
+	var deck_before := [deck.hand.duplicate(), deck.draw_pile.duplicate(),
+		deck.discard_pile.duplicate(), deck.energy, deck.turn_active]
+	var state_before := [party.get_heroes(), enemies.get_enemies(), no_cap_party.get_heroes(), rng.state]
+	seed(72911)
+	var next_global_random := randi()
+	seed(72911)
+	var status_id := meter.status_text.get_instance_id()
+	var samples: Array[Dictionary] = [
+		{"statuses": {}, "text": "Statuses: none"},
+		{"statuses": {"bleed": 0, "weak": 0, "exposed": 0}, "text": "Statuses: none"},
+		{"statuses": {"bleed": 3}, "text": "Statuses: Bleed 3"},
+		{"statuses": {"weak": 1}, "text": "Statuses: Weak 1"},
+		{"statuses": {"exposed": 2}, "text": "Statuses: Exposed 2"},
+		{"statuses": {"bleed": 3, "weak": 1}, "text": "Statuses: Bleed 3 · Weak 1"},
+		{"statuses": {"bleed": 3, "exposed": 2}, "text": "Statuses: Bleed 3 · Exposed 2"},
+		{"statuses": {"weak": 1, "exposed": 2}, "text": "Statuses: Weak 1 · Exposed 2"},
+		{"statuses": {"exposed": 2, "bleed": 3, "weak": 1}, "text": "Statuses: Bleed 3 · Weak 1 · Exposed 2"},
+		{"statuses": {"bleed": 0, "weak": 4, "exposed": 0}, "text": "Statuses: Weak 4"}
+	]
+	for side in ["hero", "enemy"]:
+		var source: Dictionary = no_cap_party.get_hero(1) if side == "hero" else enemies.get_enemy(1)
+		var expected_heading := "1. Warden" if side == "hero" else "1. Ragling — SLAIN"
+		var expected_hp := 40 if side == "hero" else 0
+		var expected_max := 40 if side == "hero" else 12
+		var expected_block := 51 if side == "hero" else 0
+		for sample in samples:
+			var snapshot := source.duplicate(true)
+			snapshot["statuses"] = sample["statuses"].duplicate(true)
+			_view(meter, snapshot, side, party, enemies, rng)
+			_assert_actor(meter, expected_heading, expected_hp, expected_max, expected_block,
+				"%s status permutation %s" % [side, str(sample["statuses"])], sample["text"])
+			var visual := _visual(meter)
+			_view(meter, snapshot, side, party, enemies, rng)
+			_check(_visual(meter) == visual and meter.status_text.get_instance_id() == status_id,
+				"repeated identical status refresh is stable, with exactly one label")
+	_check([party.get_heroes(), enemies.get_enemies(), no_cap_party.get_heroes(), rng.state] == state_before
+		and [deck.hand, deck.draw_pile, deck.discard_pile, deck.energy, deck.turn_active] == deck_before,
+		"all status permutations preserve every roster, deck pile, energy, turn state and seeded RNG")
+	_check(randi() == next_global_random, "status rendering never consumes the global RNG stream")
+	_view(meter, no_cap_party.get_hero(1), "hero", party, enemies, rng)
+	_check(meter.status_text.text == "Statuses: none", "missing statuses explicitly clears prior positive counters")
 
 	var valid := no_cap_party.get_hero(1)
 	var invalids: Array[Dictionary] = [
@@ -217,20 +277,34 @@ func _run() -> void:
 		{"name": "Ghost", "position": 1, "max_hp": 5, "hp": 5, "block": -1},
 		{"name": "Ghost", "position": 1, "max_hp": 5, "hp": 5, "block": 1.0}
 	]
+	# Every malformed *present* status map clears even a previously positive label.
+	for bad_status in [null, [], 3, "bleed", {"bleed": -1}, {"weak": 1.0},
+		{"exposed": true}, {"bleed": "3"}, {"poison": 1},
+		{"bleed": 1, "poison": 0}, {1: 2}, {"exposed": null}]:
+		var malformed := valid.duplicate(true)
+		malformed["statuses"] = bad_status
+		invalids.append(malformed)
+	var positive := valid.duplicate(true)
+	positive["statuses"] = {"bleed": 3, "weak": 1, "exposed": 2}
 	var rng_before_invalid := rng.state
 	var party_before_invalid := party.get_heroes()
 	var enemy_before_invalid := enemies.get_enemies()
 	for invalid in invalids:
-		_check(meter.show_actor(valid, "hero"), "restore living actor before negative case")
+		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2",
+			"restore all positive stacks before negative case")
 		_check(not meter.show_actor(invalid, "hero"), "malformed source must fail closed: " + str(invalid))
 		_assert_cleared(meter, "malformed source")
 	for bad_side in ["", "ally", "HERO", "Enemy"]:
-		_check(meter.show_actor(valid, "hero"), "restore living actor before invalid side")
+		_check(meter.show_actor(positive, "hero") and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2",
+			"restore positive stacks before invalid side")
 		_check(not meter.show_actor(valid, bad_side), "unknown side must fail closed: " + bad_side)
 		_assert_cleared(meter, "unknown side")
+	_check(positive["statuses"] == {"bleed": 3, "weak": 1, "exposed": 2},
+		"valid status source dictionary was never changed by presentation or rejection")
 	_check(party.get_heroes() == party_before_invalid
 		and enemies.get_enemies() == enemy_before_invalid
-		and rng.state == rng_before_invalid,
+		and rng.state == rng_before_invalid
+		and [deck.hand, deck.draw_pile, deck.discard_pile, deck.energy, deck.turn_active] == deck_before,
 		"all negative refreshes leave complete combat states and RNG untouched")
 
 	# Deterministic replay of every displayed text and bar value.

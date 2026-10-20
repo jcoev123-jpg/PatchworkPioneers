@@ -59,6 +59,18 @@ func _visible(app) -> void:
 			"exact HP text and bar %d" % index)
 		_check(meter.block_text.text == "Block: %d" % actor.block and meter.block_bar.value == actor.block
 			and meter.block_bar.max_value == maxi(1, maxi(actor.max_hp, actor.block)), "exact Block %d" % index)
+		var status := meter.get_node_or_null("Padding/Content/StatusText") as Label
+		_check(status != null and status == meter.status_text,
+			"mounted real actor has its persistent StatusText")
+		if status != null:
+			_check(status.text == "Statuses: none" and not actor.has("statuses"),
+				"live authoritative snapshots omit statuses and render honest neutral fallback")
+			_check(status.get_parent() == meter.get_node("Padding/Content")
+				and status.focus_mode == Control.FOCUS_NONE,
+				"status line belongs to mounted meter, remains keyboard-inert")
+		_check(meter.get_node("Padding/Content").get_child_count() == (7 if index < 3 else 6)
+			and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1,
+			"one status label, five original controls and only hero forecast")
 		var line := meter.get_node_or_null("Padding/Content/IncomingForecast") as Label
 		_check((line != null) == (index < 3), "forecast exists on hero meters only, never enemy meters")
 		if line != null:
@@ -69,6 +81,8 @@ func _visible(app) -> void:
 			meter.hp_bar, meter.block_text, meter.block_bar]
 		if line != null:
 			controls.append(line)
+		if status != null:
+			controls.append(status)
 		for control in controls:
 			_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0,
 				"meter controls visibly mounted")
@@ -158,6 +172,40 @@ func _run() -> void:
 			_finish()
 			return
 		_visible(app)
+		# Inject only into an existing mounted view: no invented live status persistence.
+		var model_before_status := _state(app)
+		var active_meters := _meters(app)
+		_check(active_meters.size() == 5, "synthetic status probes have five real mounted meters")
+		if active_meters.size() == 5:
+			for index in [1, 3]:
+				var side := "hero" if index == 1 else "enemy"
+				var snapshot: Dictionary = app.party.get_hero(2) if index == 1 else app.enemies.get_enemy(1)
+				var unmodified := snapshot.duplicate(true)
+				snapshot["statuses"] = {"exposed": 2, "bleed": 3, "weak": 1}
+				var snapshot_before := snapshot.duplicate(true)
+				var meter := active_meters[index]
+				var label_id := meter.status_text.get_instance_id()
+				_check(meter.show_actor(snapshot, side)
+					and meter.status_text.text == "Statuses: Bleed 3 · Weak 1 · Exposed 2",
+					"mounted %s displays supplied synthetic status counters" % side)
+				_check(snapshot == snapshot_before and not unmodified.has("statuses"),
+					"synthetic %s statuses never alter source snapshot" % side)
+				var displayed := meter.status_text.text
+				_check(meter.show_actor(snapshot, side) and meter.status_text.text == displayed
+					and meter.status_text.get_instance_id() == label_id,
+					"duplicate mounted status update retains one stable label")
+				var invalid := snapshot.duplicate(true)
+				invalid["statuses"] = {"bleed": -1}
+				_check(not meter.show_actor(invalid, side) and not meter.visible
+					and meter.status_text.text.is_empty(),
+					"invalid mounted status map clears prior positive stack")
+				presenter._sync_battle()
+				_check(meter.visible and meter.status_text.text == "Statuses: none"
+					and meter.status_text.get_instance_id() == label_id,
+					"next authoritative frame restores honest neutral live fallback")
+			_check(_state(app) == model_before_status,
+				"mounted synthetic/invalid/authoritative view refresh never mutates models or run RNG")
+			_visible(app)
 		_check(_incoming(app, 1) == "Incoming: 1 Block, 0 HP"
 			and _incoming(app, 2) == "Incoming: none"
 			and _incoming(app, 3) == "Incoming: none",
