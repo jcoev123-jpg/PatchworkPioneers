@@ -40,6 +40,26 @@ func _load_text(path: String) -> String:
 	return t
 
 
+func _normalize_numbers(value: Variant) -> Variant:
+	if value is float:
+		if is_nan(value) or is_inf(value) or absf(value) > 9007199254740991.0:
+			return value  # keep for validation failure; we keep it simple
+		if floorf(value) != value:
+			return value
+		return int(value)
+	if value is Array:
+		var items: Array = []
+		for item in value:
+			items.append(_normalize_numbers(item))
+		return items
+	if value is Dictionary:
+		var record: Dictionary = {}
+		for key in value:
+			record[key] = _normalize_numbers(value[key])
+		return record
+	return value
+
+
 func _load_definitions(path: String) -> Array:
 	var text := _load_text(path)
 	if text.is_empty():
@@ -50,7 +70,7 @@ func _load_definitions(path: String) -> Array:
 	var parsed = parser.data
 	if not parsed is Array:
 		return []
-	return parsed.duplicate(true)
+	return _normalize_numbers(parsed)
 
 
 func _expected_schedule() -> Array:
@@ -184,11 +204,11 @@ func _test_ac3_full_cycle_and_replay() -> void:
 	_check(enemies.get_enemy(1).get("block", 0) == 3,
 		"AC3: Button Guard has 3 Block after beat 2")
 	# Attack 5 on hero position 2 (current middle, Warden after swap)
-	# Block 3 absorbs first 3, so 2 damage reaches Warden
+	# Enemy Block protects the enemy, not the hero; hero takes full 5 damage
 	var hero_2_after_beat2 := party.get_hero(2)
 	_check(hero_2_after_beat2.get("id") == "warden"
-		and hero_2_after_beat2.get("hp") == 38,  # 40 - (5 - 3) = 38
-		"AC3: Warden at position 2 takes 2 damage (5 - 3 Block) = 38 HP")
+		and hero_2_after_beat2.get("hp") == 35,  # 40 - 5 = 35 (enemy Block does not protect hero)
+		"AC3: Warden at position 2 takes 5 damage = 35 HP")
 
 	# Both events applied
 	_check(r2.events.size() == 2,
@@ -326,10 +346,10 @@ func _test_ac4_roster_mapping_and_holdout() -> void:
 		"AC4: roster preserves Fight node type")
 
 	# Verify assembled enemies
-	var assembled_enemies := result.get("enemies", null)
+	var assembled_enemies: CombatEnemies = result.get("enemies", null)
 	_check(assembled_enemies != null and assembled_enemies.is_valid(),
 		"AC4: assembled enemies valid")
-	var assembled_roster := assembled_enemies.get_enemies()
+	var assembled_roster: Array = assembled_enemies.get_enemies()
 	_check(assembled_roster.size() == 2,
 		"AC4: assembled roster has exactly two enemies")
 	_check(assembled_roster[0].get("id") == "button_guard",
@@ -338,7 +358,7 @@ func _test_ac4_roster_mapping_and_holdout() -> void:
 		"AC4: second enemy is seam_ripper")
 
 	# Verify definitions preserved
-	var preserved_definitions := result.get("definitions", [])
+	var preserved_definitions: Array = result.get("definitions", [])
 	_check(preserved_definitions == definitions,
 		"AC4: definitions preserved in roster result")
 
