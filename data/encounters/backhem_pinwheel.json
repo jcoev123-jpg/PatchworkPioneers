@@ -1,0 +1,5 @@
+[
+  {"enemy_position": 1, "pattern": [{"type": "shove", "amount": 0, "target_position": 3, "direction": -1}, {"type": "attack", "amount": 2, "target_position": 1}, {"type": "block", "amount": 2}]},
+  {"enemy_position": 2, "pattern": [{"type": "debuff", "amount": 2, "target_position": 2, "status": "bleed"}, {"type": "buff", "amount": 3}, {"type": "attack", "amount": 3, "target_position": 2}]},
+  {"enemy_position": 3, "pattern": [{"type": "attack", "amount": 3, "target_position": 3}, {"type": "block", "amount": 1}, {"type": "attack", "amount": 2, "target_position": 1}]}
+]
