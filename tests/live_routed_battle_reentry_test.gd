@@ -98,6 +98,15 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 		else:
 			await _click(button)
 		match app.run_map.get_node(id).type:
+			"Event":
+				if is_instance_valid(app.quiet_spool_panel):
+					_check(app.route_view == null, "transit Event requires authored choice")
+					var ignore: Button = app.quiet_spool_panel.get_choice_buttons()[1]
+					if keyboard:
+						ignore.grab_focus()
+						await _key(KEY_ENTER)
+					else:
+						await _click(ignore)
 			"Rest":
 				await _click(app.rest_heal_button)
 				await _click(app.rest_continue_button)

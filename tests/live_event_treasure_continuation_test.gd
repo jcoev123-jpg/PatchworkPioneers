@@ -171,6 +171,9 @@ func _run() -> void:
 					else:
 						button.grab_focus()
 						await _key(KEY_SPACE if kind == "Event" else KEY_ENTER)
+					if is_instance_valid(app.quiet_spool_panel):
+						_check(app.route_view == null, "first Event blocks onward routing")
+						await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 					_check(map.get_route() == prior + [id], "one legal input advances exactly chosen node")
 					_check(_effects() == before, "placeholder changes no actors, resources, services or RNG")
 					_check(not is_instance_valid(old_view), "previous chooser freed")

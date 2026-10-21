@@ -114,6 +114,9 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 
 
 func _leave_flow(app, kind: String) -> void:
+	if kind == "Event" and is_instance_valid(app.quiet_spool_panel):
+		_check(app.route_view == null, "Event exit requires completing its pending choice")
+		await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	var back: Button
 	if kind == "Rest":
 		back = app.rest_back_button
@@ -199,6 +202,12 @@ func _legal_openings(app) -> void:
 			_check(app.run_map.get_route() == [fixture[2]]
 				and app.run_map.get_current_node_id() == fixture[2],
 				"%s opening commits exactly one selected node" % kind)
+			if kind == "Event":
+				_check(app.quiet_spool_panel != null and app.route_view == null
+					and not app._can_choose_connected_route(), "atlas Event mounts pending authored choice")
+				if app.quiet_spool_panel != null:
+					await _click(app.quiet_spool_panel.get_choice_buttons()[1])
+				_check(app.run_scraps == 0, "atlas Ignore preserves zero-scrap wallet")
 			_assert_flow(app, kind, fixture[2], rng_state)
 			if mode == 0:
 				replay = _values(app)

@@ -139,6 +139,11 @@ var _connected_map: WeakRef
 var _connected_route: Array[String] = []
 var _placeholder_map: WeakRef
 var _placeholder_route: Array[String] = []
+var event_catalog_path := "res://data/events/m04_events.json"
+var quiet_spool_panel: LiveEventChoicePanel
+var _quiet_spool_outcome: RunQuietSpoolOutcome
+var _quiet_spool_context: Array = []
+var _quiet_spool_completed := false
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var multi_fight_rewards: RunMultiFightRewards
@@ -1435,6 +1440,8 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
+	if is_instance_valid(quiet_spool_panel):
+		return false
 	if run_map == null or _connected_map == null or _connected_map.get_ref() != run_map \
 		or run_map.get_route() != _connected_route or not RunRestRecovery._is_valid_roster(run_heroes) \
 		or act_outcome == null or act_outcome._map != run_map \
@@ -1568,6 +1575,8 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") not in ["Event", "Treasure"]:
 		return false
+	if run_map.get_node(id).type == "Event" and not _quiet_spool_completed:
+		return _open_quiet_spool(id, source_map)
 	if not run_map.choose_node(id):
 		return false
 	_placeholder_map = source_map
@@ -1575,6 +1584,108 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 	_clear_route_view()
 	_present_connected_route(source_map)
 	return true
+
+
+func _load_quiet_spool() -> Dictionary:
+	if not FileAccess.file_exists(event_catalog_path):
+		return {}
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(event_catalog_path)) != OK:
+		return {}
+	var catalog: Variant = parser.data
+	if not catalog is Dictionary or not catalog.get("events") is Array:
+		return {}
+	var matches: Array = catalog.events.filter(func(record):
+		return record is Dictionary and record.get("id") == "quiet_spool")
+	if matches.size() != 1 or not RunEventChoice.new(matches[0]).is_valid():
+		return {}
+	var record: Dictionary = matches[0]
+	if record.choices.size() != 2:
+		return {}
+	var ids: Array = []
+	for choice in record.choices:
+		ids.append(choice.id)
+	if not ids.has("watch") or not ids.has("ignore"):
+		return {}
+	for id in ["watch", "ignore"]:
+		var receipt := RunEventChoice.new(record).choose_with_wallet(id, {"gold": 0, "scraps": 0})
+		if not receipt.ok or receipt.wallet != {"gold": 0, "scraps": 1 if id == "watch" else 0}:
+			return {}
+	return record
+
+
+func _quiet_spool_snapshot() -> Array:
+	if run_map == null or run_rng == null or party_carryover == null or act_outcome == null \
+		or not is_instance_valid(quiet_spool_panel) or quiet_spool_panel._selector == null:
+		return []
+	var carry := party_carryover as RunTornCarryover
+	if carry == null:
+		return []
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(),
+		run_map.get_route(), run_rng, run_rng.state, run_seed, run_deck.duplicate(),
+		run_heroes.duplicate(true), run_trinkets.duplicate(), session_gold, run_scraps,
+		run_removal_count, run_stitch_descriptors.duplicate(true), run_next_stitch_id,
+		carry, carry.read_state(), carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), quiet_spool_panel, _quiet_spool_outcome,
+		quiet_spool_panel._selector, quiet_spool_panel._selector.get_event()]
+
+
+func _open_quiet_spool(id: String, source: WeakRef) -> bool:
+	var record := _load_quiet_spool()
+	if record.is_empty() or run_scraps < 0 or run_scraps == 9223372036854775807:
+		return false
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_event(record):
+		panel.free()
+		return false
+	if not run_map.choose_node(id):
+		panel.free()
+		return false
+	_clear_route_view()
+	quiet_spool_panel = panel
+	_quiet_spool_outcome = RunQuietSpoolOutcome.new()
+	_quiet_spool_context = _quiet_spool_snapshot()
+	panel.choice_committed.connect(_commit_quiet_spool.bind(panel, _quiet_spool_outcome, source))
+	var buttons := panel.get_choice_buttons()
+	for index in range(buttons.size()):
+		buttons[index].focus_next = buttons[index].get_path_to(buttons[(index + 1) % buttons.size()])
+		buttons[index].focus_previous = buttons[index].focus_next
+	buttons[0].grab_focus()
+	return true
+
+
+func _commit_quiet_spool(event_id: String, choice_id: String, panel,
+		outcome: RunQuietSpoolOutcome, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != quiet_spool_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or outcome == null or outcome != _quiet_spool_outcome or outcome.is_consumed() \
+		or source == null or source.get_ref() != run_map \
+		or _quiet_spool_context.is_empty() or _quiet_spool_snapshot() != _quiet_spool_context \
+		or panel._selector == null or not panel._selector.is_claimed() \
+		or panel._committed_choice != {"ok": true, "event_id": event_id, "choice_id": choice_id} \
+		or event_id != "quiet_spool" or choice_id not in ["watch", "ignore"]:
+		return
+	var receipt := outcome.choose(event_id, choice_id, run_scraps)
+	if not receipt.ok:
+		return
+	run_scraps = receipt.scraps
+	_quiet_spool_completed = true
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_quiet_spool()
+	_present_connected_route(source)
+
+
+func _clear_quiet_spool() -> void:
+	_quiet_spool_context.clear()
+	_quiet_spool_outcome = null
+	if is_instance_valid(quiet_spool_panel):
+		quiet_spool_panel.close_event()
+		remove_child(quiet_spool_panel)
+		quiet_spool_panel.queue_free()
+	quiet_spool_panel = null
 
 
 func _current_completed_rest() -> bool:
@@ -2560,6 +2671,8 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	_clear_quiet_spool()
+	_quiet_spool_completed = false
 	_clear_rest_patch_overlay()
 	_rest_wardrobe = null
 	_rest_patch_context.clear()
