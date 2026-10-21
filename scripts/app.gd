@@ -55,6 +55,7 @@ var enemy_intents: CombatEnemyIntents
 var intent_label: Label
 var enemy_buff_forecast_label: Label
 var battle_result: CombatBattleResult
+var act_outcome: RunActBattleOutcome
 var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
 var session_gold := 0
@@ -128,11 +129,16 @@ func _observe_battle_result() -> bool:
 		return false
 	if party_carryover != null and not _current_carryover_fight():
 		return false
+	if run_map != null and not _current_act_battle():
+		return false
 	var outcome := battle_result.evaluate()
 	if outcome == CombatBattleResult.ACTIVE:
 		return true
 	if not _battle_closed and outcome == CombatBattleResult.VICTORY and run_map != null:
 		if not _commit_fight_carryover():
+			return false
+	if not _battle_closed and act_outcome != null:
+		if not act_outcome.settle_current_battle():
 			return false
 	if is_instance_valid(enemy_buff_forecast_label):
 		enemy_buff_forecast_label.text = ""
@@ -154,11 +160,24 @@ func _observe_battle_result() -> bool:
 		_refresh_enemy_roster()
 		end_turn_button.disabled = true
 		result_label.text = "Battle result: " + outcome
+		if act_outcome != null and outcome == CombatBattleResult.DEFEAT:
+			result_label.text += " | Run defeat"
 		if outcome == CombatBattleResult.VICTORY:
 			result_label.text += " | Pending gold: %d" % fight_reward_gold if run_map != null else " | Gold: %d" % session_gold
 		result_label.show()
 		return_button.grab_focus()
 	return false
+
+
+func _current_act_battle() -> bool:
+	if act_outcome == null or act_outcome._map != run_map or not _current_carryover_fight():
+		return false
+	if _battle_closed:
+		return true
+	return act_outcome._pending_result == battle_result \
+		and act_outcome._pending_node_id == run_map.get_current_node_id() \
+		and act_outcome._pending_route == run_map.get_route() \
+		and act_outcome._pending_floors == run_map.get_floors()
 
 
 func _current_carryover_fight() -> bool:
@@ -314,6 +333,7 @@ func _cancel_route() -> void:
 	if deck != null or route_view == null:
 		return
 	_clear_route_view()
+	act_outcome = null
 	run_map = null
 	run_rng = null
 	fight_selection = null
@@ -361,7 +381,11 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 		push_warning("Starter combat bindings are invalid; run was not started")
 		return false
 	var starting_carryover: RunPartyCarryover
+	var starting_outcome: RunActBattleOutcome
 	if shared_rng != null:
+		starting_outcome = RunActBattleOutcome.new(run_map)
+		if not starting_outcome.begin_current_battle(starting_result):
+			return false
 		starting_carryover = RunPartyCarryover.new(starting_party.get_heroes())
 		if not starting_carryover.is_valid():
 			return false
@@ -380,6 +404,7 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	deck = starting_deck
 	run_deck = cards.duplicate()
 	battle_result = starting_result
+	act_outcome = starting_outcome
 	party_carryover = starting_carryover
 	if party_carryover != null:
 		_carryover_map = weakref(run_map)
@@ -1377,6 +1402,7 @@ func _return_to_title() -> void:
 	enemy_buff_forecast_label = null
 	result_label = null
 	battle_result = null
+	act_outcome = null
 	victory_gold = null
 	card_reward = null
 	fight_rewards = null
