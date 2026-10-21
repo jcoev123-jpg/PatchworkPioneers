@@ -50,8 +50,8 @@
       "title": "The Needle Gate",
       "description": "Crossed needles mark a narrow wooden gate.",
       "choices": [
-        { "id": "examine", "text": "Examine the gate" },
-        { "id": "pass", "text": "Pass without stopping" }
+        { "id": "examine", "text": "Spend 1 scrap to unpick the gate and claim 12 gold", "outcome": { "gold": 12, "scraps": -1 } },
+        { "id": "pass", "text": "Pass without stopping", "outcome": { "gold": 0, "scraps": 0 } }
       ]
     }
   ]
