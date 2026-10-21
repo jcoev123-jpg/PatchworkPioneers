@@ -56,8 +56,8 @@ func _ready_session(app) -> bool:
 		and app.run_rng != null and app.enemy_intents is CombatEnemyIntents \
 		and is_instance_valid(app.battle_view) and is_instance_valid(app.end_turn_button) \
 		and is_instance_valid(app.return_button)
-	_check(ready, "real Start Run creates complete valid session and controls")
-	_check(app.round_flow is CombatRoundFlow, "real Start creates coordinator")
+	_check(ready, "M01 fixture creates complete valid session and controls")
+	_check(app.round_flow is CombatRoundFlow, "M01 fixture creates coordinator")
 	if app.round_flow != null:
 		_check(app.round_flow._started and app.round_flow._deck == app.deck
 			and app.round_flow._party == app.party and app.round_flow._enemies == app.enemies
@@ -101,7 +101,11 @@ func _party_fixtures(app) -> void:
 	file.store_string(JSON.stringify(invalid))
 	file.close()
 	app.starter_party_path = path
-	app.start_button.pressed.emit()
+	seed(1827)
+	var expected := randi()
+	seed(1827)
+	_check(not app._start_battle(), "duplicate-ID party rejects standalone M01 start")
+	_check(randi() == expected, "duplicate-ID party rejection preserves global RNG")
 	_rejected(app)
 	# A structurally valid substitute for Warden must now fail the strict
 	# one-time authored opening; no session or passive grant can leak.
@@ -116,11 +120,19 @@ func _party_fixtures(app) -> void:
 	if file != null:
 		file.store_string(JSON.stringify(definitions))
 		file.close()
-		app.start_button.pressed.emit()
+		seed(1827)
+		expected = randi()
+		seed(1827)
+		_check(not app._start_battle(), "alternate-front party rejects standalone M01 start")
+		_check(randi() == expected, "alternate-front rejection preserves global RNG")
 		_rejected(app)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	app.starter_party_path = path
-	app.start_button.pressed.emit()
+	seed(1827)
+	expected = randi()
+	seed(1827)
+	_check(not app._start_battle(), "missing party rejects standalone M01 start")
+	_check(randi() == expected, "missing party rejection preserves global RNG")
 	_rejected(app)
 	app.starter_party_path = app.STARTER_PARTY_PATH
 
@@ -145,7 +157,7 @@ func _run() -> void:
 	source.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
 	var first_trace: Array = []
 	for session in range(2):
-		app.start_button.pressed.emit()
+		_check(app._start_battle(), "standalone M01 opening-Block fixture starts successfully")
 		if not _ready_session(app):
 			app.free()
 			_finish()
