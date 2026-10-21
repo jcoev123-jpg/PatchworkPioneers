@@ -1427,10 +1427,9 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		or act_outcome.get_state().settled_node_ids.has(id) \
 		or ledger.completed_fights.has(id) or run_deck.size() < CombatDeck.TURN_DRAW:
 		return false
-	var catalog := StarterCards.new()
-	for card_id in run_deck:
-		if not catalog.has_card(card_id):
-			return false
+	# Rest composites are run-owned cards, validated against their full ledger.
+	if not RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id).is_valid():
+		return false
 	var next_party := party_carryover.create_next_fight_party()
 	if next_party == null:
 		return false

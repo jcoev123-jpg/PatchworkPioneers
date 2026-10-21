@@ -17,14 +17,113 @@ var _queued := false
 var _token := 0
 var _turn := -1
 var _session: Array = []
+var _stitched_preview := CombatStitchedTargetPreview.new()
+var _choices: Array[int] = []
+var _receipt: Dictionary = {}
+var _run_map
+var _target_ids: Array[String] = []
+
+
+func _ledger() -> RunRestStitchCards:
+	var app = get_parent()
+	return RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+
+
+func _stitch_preview(id: String) -> Dictionary:
+	if not id.begins_with(RunRestStitchCards.ID_PREFIX):
+		return {"playable": false}
+	var app = get_parent()
+	return _stitched_preview.get_preview(_ledger(), app._stitch_snapshot(), _deck, app.party, app.enemies, id)
+
+
+func _is_stitched(panel) -> bool:
+	return _card_id(panel).begins_with(RunRestStitchCards.ID_PREFIX)
+
+
+func _cancel_choice() -> void:
+	_token += 1
+	_queued = false
+	_armed = null
+	_choices.clear()
+	_target_ids.clear()
+	_receipt.clear()
+
+
+func _arm_stitch() -> void:
+	_choices.clear()
+	_target_ids.clear()
+	_receipt = get_parent()._stitch_snapshot()
+	_run_map = get_parent().run_map
+	get_viewport().gui_release_focus()
+	_skip_automatic()
+
+
+func _skip_automatic() -> void:
+	var preview := _stitch_preview(_card_id(_armed))
+	if not preview.playable:
+		return
+	while _choices.size() < 2 and not preview.halves[_choices.size()].requires_selection:
+		_choices.append(0)
+		_target_ids.append("")
+
+
+func _choose_stitch(position: int, side: String = "") -> void:
+	if _queued or not _eligible(_armed) or _receipt != get_parent()._stitch_snapshot() or _run_map != get_parent().run_map:
+		return
+	var preview := _stitch_preview(_card_id(_armed))
+	if not preview.playable:
+		return
+	if _choices.size() < 2:
+		var half: Dictionary = preview.halves[_choices.size()]
+		if (not side.is_empty() and side != half.side) or position not in half.target_positions:
+			return
+		_choices.append(position)
+		var app = get_parent()
+		_target_ids.append(app.party.get_hero(position).id if half.side == "ally" else app.enemies.get_enemy(position).id)
+		_skip_automatic()
+	if _choices.size() == 2:
+		_queued = true
+		_commit_stitch.call_deferred(_armed, _card_id(_armed), _token, _session.duplicate(), _turn, _choices.duplicate(), _target_ids.duplicate(), _receipt.duplicate(true), _deck, _run_map)
+	_refresh()
+
+
+func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, choices: Array, ids: Array, receipt: Dictionary, deck, map) -> void:
+	var app = get_parent()
+	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
+		return
+	_queued = false
+	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
+		return
+	if app.deck != deck or app.run_map != map or app._stitch_snapshot() != receipt or choices != _choices or ids != _target_ids \
+		or session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents] \
+		or app.enemy_intents == null or app.enemy_intents._turn_index != turn or _turn != turn:
+		return
+	var preview := _stitch_preview(id)
+	if not preview.playable or choices.size() != 2:
+		return
+	for index in range(2):
+		var half: Dictionary = preview.halves[index]
+		if half.requires_selection:
+			if choices[index] not in half.target_positions:
+				return
+			var actor: Dictionary = app.party.get_hero(choices[index]) if half.side == "ally" else app.enemies.get_enemy(choices[index])
+			if actor.id != ids[index]:
+				return
+		elif choices[index] != 0:
+			return
+	last_event = CombatStitchedCards.new(_play).play_stitched(deck, app.party, app.enemies, _ledger(), id, choices[0], choices[1])
+	if last_event.ok:
+		_after_attack()
+	else:
+		_cancel_choice()
+		_refresh()
 
 
 func _after_attack() -> void:
 	var app = get_parent()
-	_armed = null
-	_token += 1
-	_queued = false
+	_cancel_choice()
 	app._refresh_hand()
+	app._refresh_party()
 	app._refresh_enemy_roster()
 	app._refresh_intents()
 	app._observe_battle_result()
@@ -37,13 +136,28 @@ func _process(_delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	_sync_battle()
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_cancel_choice()
+		_selected = null
+		_refresh()
+		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if _bindings.has(_armed) and _is_stitched(_armed):
+			var app = get_parent()
+			for index in range(app.hero_panels.size()):
+				var hero: Control = app.hero_panels[index]
+				if hero.is_visible_in_tree() and hero.get_global_rect().has_point(event.position):
+					_choose_stitch(index + 1, "ally")
+					return
 		var roster = get_parent().get_node_or_null("LiveEnemyRoster")
 		if roster != null and is_instance_valid(_armed):
 			for index in range(roster._labels.size()):
 				var label: Label = roster._labels[index]
 				if label.is_visible_in_tree() and label.get_global_rect().has_point(event.position):
-					_queue_attack(index + 1)
+					if _is_stitched(_armed):
+						_choose_stitch(index + 1, "enemy")
+					else:
+						_queue_attack(index + 1)
 					get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -53,10 +167,18 @@ func _input(event: InputEvent) -> void:
 		# control keeps its activation; P clears the inherited battle focus.
 		var focus := get_viewport().gui_get_focus_owner()
 		if focus == null or focus == _armed or not focus.is_visible_in_tree():
-			_queue_attack(0)
+			if _is_stitched(_armed):
+				if _choices.size() == 2:
+					_choose_stitch(0)
+			else:
+				_queue_attack(0)
 			get_viewport().set_input_as_handled()
 		return
 	if event.keycode >= KEY_1 and event.keycode <= KEY_3:
+		if _bindings.has(_armed) and _is_stitched(_armed):
+			_choose_stitch(event.keycode - KEY_1 + 1)
+			get_viewport().set_input_as_handled()
+			return
 		_queue_attack(event.keycode - KEY_1 + 1)
 		return
 	if event.keycode != KEY_P:
@@ -78,11 +200,15 @@ func _input(event: InputEvent) -> void:
 	_token += 1
 	_queued = false
 	_keyboard = true
+	if _is_stitched(_armed):
+		_arm_stitch()
 	_refresh()
 	get_viewport().set_input_as_handled()
 
 
 func _single(panel) -> bool:
+	if _is_stitched(panel):
+		return _choices.size() < 2
 	return _catalog.get_definition(_card_id(panel)).get("target_kind") == "enemy_single"
 
 
@@ -96,8 +222,14 @@ func _select(event: InputEvent, panel) -> void:
 	_armed = panel
 	_selected = panel
 	_keyboard = true
+	if _is_stitched(panel):
+		_arm_stitch()
 	panel.accept_event()
 	_refresh()
+	if _is_stitched(panel):
+		if _choices.size() == 2:
+			_choose_stitch(0)
+		return
 	if not _single(panel):
 		_queue_attack(0)
 
@@ -174,7 +306,7 @@ func _eligible(panel) -> bool:
 		return false
 	var id := _card_id(panel)
 	var index: int = panel.get_index()
-	return id in CombatAttackTargeting.ATTACK_IDS and index < _deck.hand.size() and _deck.hand[index] == id
+	return (id in CombatAttackTargeting.ATTACK_IDS or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -199,12 +331,20 @@ func _sync_battle() -> void:
 		var column: Node = app.hand_view.get_parent()
 		column.add_child(cue)
 		column.move_child(cue, app.hand_view.get_index())
+	if _session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]:
+		_cancel_choice()
+		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 	if app.enemy_intents != null and _turn != app.enemy_intents._turn_index:
 		_turn = app.enemy_intents._turn_index
 		_play.start_player_turn()
 		_token += 1
 		_queued = false
 		_armed = null
+		_choices.clear()
+		_target_ids.clear()
+		_receipt.clear()
+	if _bindings.has(_armed) and _is_stitched(_armed) and (_receipt != app._stitch_snapshot() or _run_map != app.run_map):
+		_cancel_choice()
 	for panel in _bindings.keys():
 		if not _eligible(panel) or _bindings[panel].id != _card_id(panel):
 			_unbind(panel)
@@ -247,6 +387,23 @@ func _refresh() -> void:
 		return
 	var app = get_parent()
 	var id := _card_id(_selected)
+	if _is_stitched(_selected):
+		var stitched := _stitch_preview(id)
+		if not stitched.playable:
+			cue.text = "Unavailable stitched card"
+			return
+		var names: PackedStringArray = []
+		for half in stitched.halves:
+			names.append(_catalog.get_definition(half.card_id).display_name)
+		var details: PackedStringArray = []
+		for index in range(2):
+			var half: Dictionary = stitched.halves[index]
+			details.append("%d: %s %s" % [index + 1, half.side, str(half.target_positions) if half.requires_selection else "automatic (0), slots " + str(half.affected_positions)])
+		var controls := "Half %d: 1-3 / click hero or enemy" % mini(_choices.size() + 1, 2)
+		if _selected == _armed and _choices.size() == 2:
+			controls = "Enter / Space / click card: cast"
+		cue.text = "%s | %d energy | %s\n%s; Esc: cancel" % [" / ".join(names), stitched.cost, "; ".join(details), controls]
+		return
 	var definition := _catalog.get_definition(id)
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
 	var targets: PackedStringArray = []
@@ -283,15 +440,11 @@ func _unbind(panel) -> void:
 	if _selected == panel:
 		_selected = null
 	if _armed == panel:
-		_armed = null
-		_token += 1
-		_queued = false
+		_cancel_choice()
 
 
 func _clear() -> void:
-	_token += 1
-	_queued = false
-	_armed = null
+	_cancel_choice()
 	_turn = -1
 	for panel in _bindings.keys():
 		_unbind(panel)
