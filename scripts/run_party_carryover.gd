@@ -1,8 +1,8 @@
 class_name RunPartyCarryover
 extends RefCounted
 ## Scene-free persistence between run nodes. Initialize from a detached
-## CombatParty.get_heroes() snapshot. This is not a CombatParty hydrator:
-## the live run-entry integration must instantiate/repopulate a battle.
+## CombatParty.get_heroes() snapshot. A next-fight party can be hydrated:
+## the live run-entry integration must call this at Fight entry.
 ##
 ## read_state() returns {"ok", "heroes", "completed_fights", "completed_rests"};
 ## get_next_fight_heroes() returns a detached, Block-free Array;
@@ -11,6 +11,7 @@ extends RefCounted
 ## A node is recorded only after its entire transaction succeeds.
 
 const PARTY_SIZE := 3
+const STARTING_HP := {"warden": 40, "seamstress": 30, "tinker": 26}
 
 var _heroes: Array = []
 var _max_hp_by_id: Dictionary = {}
@@ -47,6 +48,28 @@ func get_next_fight_heroes() -> Array:
 	if not _valid:
 		return []
 	return _heroes.duplicate(true)
+
+
+## Restore a detached live party only after a witnessed victory. Construct a
+## canonical CombatParty first, then replace its full-HP actor snapshots.
+## The one-shot Warden Block belongs to later combat startup, never transit.
+func create_next_fight_party() -> CombatParty:
+	if not _valid or _fight_ids.is_empty() or not _valid_roster(_heroes, true) or not _same_identities(_heroes):
+		return null
+	if _max_hp_by_id.size() != STARTING_HP.size():
+		return null
+	for hero_id in STARTING_HP:
+		if _max_hp_by_id.get(hero_id) != STARTING_HP[hero_id]:
+			return null
+	var persisted: Array = _heroes.duplicate(true)
+	for hero in persisted:
+		if hero["block"] != 0:
+			return null
+	var party := CombatParty.new(persisted)
+	if not party.is_valid():
+		return null
+	party._heroes.assign(persisted.duplicate(true))
+	return party
 
 
 ## A result must have *already* witnessed VICTORY on this exact battle party,

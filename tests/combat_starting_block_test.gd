@@ -8,6 +8,7 @@ func _initialize() -> void:
 	_test_ac1()
 	_test_ac2()
 	_test_ac3()
+	_test_rng_preservation()
 	var first := _repeated_sequence()
 	var second := _repeated_sequence()
 	_check(first == second, "identical deterministic sequences produce identical full traces")
@@ -92,14 +93,63 @@ func _test_ac3() -> void:
 	_check(not invalid_party.is_valid(), "invalid party constructed")
 	_check(not invalid_helper.apply(), "invalid party returns false")
 
-	# swapped Warden: seamstress at position 1
-	var swapped_defs := [{"id": "seamstress", "max_hp": 30},
-		{"id": "warden", "max_hp": 40}, {"id": "tinker", "max_hp": 26}]
-	var swapped_party := CombatParty.new(swapped_defs)
+	# A legitimate adjacent move transfers the Warden to slot 2.
+	var swapped_party := CombatParty.new(_defs())
+	var swap := CombatPositionSwaps.preview_adjacent_swap(swapped_party, 1, 1)
+	_check(swap.get("ok") == true, "actual legal adjacent Warden swap to slot 2")
+	if swap.get("ok") != true:
+		return
+	swapped_party._heroes.assign(swap["heroes"])
 	var swapped_helper := CombatStartingBlock.new(swapped_party)
 	var swapped_before := _snap(swapped_party)
-	_check(not swapped_helper.apply(), "swapped Warden returns false")
-	_check(_snap(swapped_party) == swapped_before, "swapped party unchanged")
+	_check(swapped_helper.apply(), "swapped Warden receives his opening passive at slot 2")
+	var swapped_expected := swapped_before.duplicate(true)
+	swapped_expected[1]["block"] = 6
+	_check(_snap(swapped_party) == swapped_expected, "only slot 2 Warden gains exactly 6 Block")
+	_check(not swapped_helper.apply() and _snap(swapped_party) == swapped_expected,
+		"moved Warden cannot receive a second grant from the same helper")
+	# Two successive legal moves also place the Warden at slot 3.
+	var third_party := CombatParty.new(_defs())
+	var first_move := CombatPositionSwaps.preview_adjacent_swap(third_party, 1, 1)
+	_check(first_move.get("ok") == true, "first move toward slot 3 is legal")
+	if first_move.get("ok") != true:
+		return
+	third_party._heroes.assign(first_move["heroes"])
+	var second_move := CombatPositionSwaps.preview_adjacent_swap(third_party, 2, 1)
+	_check(second_move.get("ok") == true, "second move into slot 3 is legal")
+	if second_move.get("ok") != true:
+		return
+	third_party._heroes.assign(second_move["heroes"])
+	var third_before := _snap(third_party)
+	var third_helper := CombatStartingBlock.new(third_party)
+	_check(third_helper.apply(), "Warden gains his passive at slot 3")
+	var third_expected := third_before.duplicate(true)
+	third_expected[2]["block"] = 6
+	_check(_snap(third_party) == third_expected,
+		"slot 3 receives 6, with slots 1 and 2 untouched")
+	_check(not third_helper.apply() and _snap(third_party) == third_expected,
+		"slot 3 grant is one-use")
+	# Downing the legitimately moved Warden prevents any grant.
+	var moved_downed := CombatParty.new(_defs())
+	moved_downed._heroes.assign(swap["heroes"].duplicate(true))
+	_check(moved_downed.start_player_turn(), "moved Warden has no stale Block before downing")
+	_check(moved_downed.apply_damage(2, 40) and moved_downed.is_downed(2),
+		"moved Warden is actually downed in slot 2")
+	var downed_moved_before := _snap(moved_downed)
+	_check(not CombatStartingBlock.new(moved_downed).apply()
+		and _snap(moved_downed) == downed_moved_before,
+		"downed slot-2 Warden gets no opening Block")
+	# Duplication or invalid Warden identity is never rewarded.
+	var duplicated := CombatParty.new(_defs())
+	duplicated._heroes[1]["id"] = "warden"
+	var duplicated_before := _snap(duplicated)
+	_check(not CombatStartingBlock.new(duplicated).apply()
+		and _snap(duplicated) == duplicated_before, "duplicate Warden fails closed")
+	var bad_max := CombatParty.new(_defs())
+	bad_max._heroes[0]["max_hp"] = 41
+	var bad_max_before := _snap(bad_max)
+	_check(not CombatStartingBlock.new(bad_max).apply()
+		and _snap(bad_max) == bad_max_before, "invalid Warden max HP fails closed")
 
 	# no Warden at all
 	var no_warden_defs := [{"id": "seamstress", "max_hp": 30},
@@ -125,6 +175,19 @@ func _test_ac3() -> void:
 	var fresh_helper := CombatStartingBlock.new(fresh_party)
 	_check(fresh_helper.apply(), "fresh valid helper succeeds")
 	_check(fresh_party.get_hero(1).get("block") == 6, "fresh grant works")
+
+
+func _test_rng_preservation() -> void:
+	seed(791203)
+	var next_roll := randi()
+	seed(791203)
+	var party := CombatParty.new(_defs())
+	var snapshot := _snap(party)
+	var block := CombatStartingBlock.new(party)
+	_check(block.apply() and not block.apply(), "RNG fixture exercises both grant and replay")
+	_check(party.get_hero(1)["block"] == 6, "RNG fixture grants actual Block")
+	_check(randi() == next_roll, "opening Block grant and replay consume no global RNG")
+	_check(snapshot[0]["block"] == 0, "RNG fixture compares the pre-grant party")
 
 
 func _repeated_sequence() -> Array:

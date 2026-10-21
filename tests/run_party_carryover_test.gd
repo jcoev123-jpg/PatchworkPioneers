@@ -93,9 +93,11 @@ func _test_public_contract_and_detachment() -> void:
 	var invalid := RunPartyCarryover.new()
 	_check(invalid.has_method("read_state") and invalid.has_method("get_next_fight_heroes")
 		and invalid.has_method("commit_victory") and invalid.has_method("choose_rest_heal")
-		and invalid.has_method("is_valid"), "documented public API is exposed")
-	_check(not invalid.is_valid() and invalid.get_next_fight_heroes().is_empty(),
-		"invalid construction has no heroes")
+		and invalid.has_method("is_valid") and invalid.has_method("create_next_fight_party"),
+		"documented public API including party hydration is exposed")
+	_check(not invalid.is_valid() and invalid.get_next_fight_heroes().is_empty()
+		and invalid.create_next_fight_party() == null,
+		"invalid construction has no usable next party")
 	_check(invalid.read_state()["ok"] == false
 		and invalid.choose_rest_heal("rest") == {"ok": false, "heroes": []},
 		"invalid service cannot read an accepted state or heal")
@@ -105,6 +107,8 @@ func _test_public_contract_and_detachment() -> void:
 	var expected := initial.duplicate(true)
 	var carry := RunPartyCarryover.new(initial)
 	_check(carry.is_valid(), "initialization from real CombatParty snapshot succeeds")
+	_check(carry.create_next_fight_party() == null and carry.read_state()["completed_fights"].is_empty(),
+		"unwitnessed initial roster cannot claim a carried Fight")
 	_check(carry.read_state()["heroes"] == expected
 		and carry.get_next_fight_heroes() == expected, "initial identities, order, HP and metadata retained")
 	initial[0]["hp"] = 1
@@ -177,6 +181,42 @@ func _test_witnessed_victory_and_rest() -> void:
 	_check(carry.read_state()["completed_fights"] == ["fight_a"]
 		and carry.read_state()["completed_rests"].is_empty(),
 		"successful fight recorded once, Rest still open")
+	# Two genuine CombatParty instances rehydrate the witnessed formation.
+	var ledger_before_hydration := carry.read_state()
+	var first_party := carry.create_next_fight_party()
+	var second_party := carry.create_next_fight_party()
+	_check(first_party != null and second_party != null
+		and first_party != second_party and first_party.is_valid() and second_party.is_valid(),
+		"witnessed victory constructs two distinct valid CombatParty owners")
+	if first_party == null or second_party == null:
+		return
+	_check(first_party.get_heroes() == expected and second_party.get_heroes() == expected,
+		"both parties fully retain HP, downed Tinker, order, statuses and nested metadata")
+	_check(carry.read_state() == ledger_before_hydration
+		and party.get_heroes() == authoritative,
+		"hydration preserves ledger and original authoritative combat roster")
+	var new_wave := CombatEnemies.new([{"id": "second_wave", "max_hp": 5}])
+	var new_result := CombatBattleResult.new(first_party, new_wave)
+	_check(new_wave.is_valid() and new_result.get_outcome() == CombatBattleResult.ACTIVE
+		and not first_party.is_defeated(),
+		"real new enemy fixture starts a nonterminal ACTIVE battle with a downed Tinker")
+	var opening_first := CombatStartingBlock.new(first_party)
+	var opening_second := CombatStartingBlock.new(second_party)
+	_check(opening_first.apply(), "rehydrated slot-2 Warden gains opening Block")
+	var opened := expected.duplicate(true)
+	opened[1]["block"] = 6
+	_check(first_party.get_heroes() == opened and second_party.get_heroes() == expected,
+		"opening +6 hits only slot-2 Warden and does not alias the other battle")
+	_check(not opening_first.apply() and first_party.get_heroes() == opened,
+		"first battle opening passive cannot replay")
+	_check(opening_second.apply() and second_party.get_heroes() == opened
+		and not opening_second.apply(),
+		"independent second battle has its own one-use 6 Block")
+	_check(first_party.apply_damage(2, 7) and first_party.get_hero(2)["hp"] == 16
+		and second_party.get_heroes() == opened
+		and carry.get_next_fight_heroes() == expected
+		and carry.read_state() == ledger_before_hydration,
+		"independent battle mutation never aliases the other party or persistent ledger")
 	committed["heroes"][1]["statuses"]["bleed"] = 999
 	committed["heroes"][1]["metadata"]["tags"][1]["weave"].clear()
 	_check(carry.get_next_fight_heroes() == expected,
@@ -197,6 +237,11 @@ func _test_witnessed_victory_and_rest() -> void:
 		and carry.get_next_fight_heroes()[1]["hp"] == 29
 		and carry.get_next_fight_heroes()[2]["hp"] == 8,
 		"Seamstress +9 capped 30, Warden 17+12=29, downed Tinker 1+7=8")
+	var revived_party := carry.create_next_fight_party()
+	_check(revived_party != null and revived_party.is_valid()
+		and revived_party.get_heroes() == oracle_result["heroes"]
+		and revived_party.get_hero(3)["hp"] == 8,
+		"third independent post-Rest CombatParty retains revived Tinker at precisely 8 HP")
 	for i in range(3):
 		var before_hero: Dictionary = expected[i]
 		var after_hero: Dictionary = carry.get_next_fight_heroes()[i]
@@ -220,12 +265,21 @@ func _test_witnessed_victory_and_rest() -> void:
 	var second := carry.choose_rest_heal("rest_b")
 	_check(second["ok"] and second["heroes"] == second_expected["heroes"],
 		"different Rest ID heals exactly once using the same oracle")
-	# This service exports a rehydration snapshot; the caller (not this
-	# service) must place that snapshot into a *new* CombatParty for the next
-	# actual fight. Demonstrate a second witnessed victory without losing
-	# prior visit history or actor-owned statuses.
-	var next_party := _party()
-	next_party._heroes = carry.get_next_fight_heroes()
+	# A legitimate Rest revives Tinker at 1 + floor(26 * 0.3) = 8,
+	# without consuming his statuses or changing the carried slot order.
+	var third_party := carry.create_next_fight_party()
+	var rest_state := carry.get_next_fight_heroes()
+	_check(third_party != null and third_party.is_valid()
+		and third_party.get_heroes() == rest_state
+		and third_party.get_hero(3)["hp"] == 15,
+		"second unique Rest adds a further 7 to living Tinker, exactly 15 HP")
+	# Now witness another real fight using the service, never manual hydration.
+	var next_party := carry.create_next_fight_party()
+	_check(next_party != null and next_party.is_valid()
+		and next_party.get_heroes() == rest_state,
+		"post-Rest new battle starts from the carried snapshot")
+	if next_party == null:
+		return
 	var next_enemies := CombatEnemies.new([{"id": "second_wave", "max_hp": 5}])
 	var next_result := CombatBattleResult.new(next_party, next_enemies)
 	_check(next_result.get_outcome() == CombatBattleResult.ACTIVE
@@ -368,6 +422,43 @@ func _test_invalid_and_defeated() -> void:
 	mparty._heroes[0]["max_hp"] = 40
 	_check(mcarry.commit_victory("fight", mismatched["result"], mparty)["ok"],
 		"same still-unspent Fight ID is valid after repairing record")
+	# Even after a witnessed victory, corrupt persisted actors must never
+	# produce a partial or reset CombatParty, or change the visit ledger.
+	var safe_held := mcarry.get_next_fight_heroes()
+	var malformed_held: Array = []
+	var changed_id := safe_held.duplicate(true)
+	changed_id[0]["id"] = "intruder"
+	malformed_held.append(changed_id)
+	var changed_hp := safe_held.duplicate(true)
+	changed_hp[0]["max_hp"] = 31
+	malformed_held.append(changed_hp)
+	var changed_slot := safe_held.duplicate(true)
+	changed_slot[1]["position"] = 3
+	malformed_held.append(changed_slot)
+	var invalid_status := safe_held.duplicate(true)
+	invalid_status[2]["statuses"] = {"bleed": -1}
+	malformed_held.append(invalid_status)
+	var stale_block := safe_held.duplicate(true)
+	stale_block[0]["block"] = 8
+	malformed_held.append(stale_block)
+	var all_downed := safe_held.duplicate(true)
+	for hero in all_downed:
+		hero["hp"] = 0
+	malformed_held.append(all_downed)
+	for i in range(malformed_held.size()):
+		mcarry._heroes = malformed_held[i].duplicate(true)
+		var held_before := mcarry.read_state()
+		var observed_before: String = (mismatched["result"] as CombatBattleResult).get_outcome()
+		var combat_before := mparty.get_heroes()
+		_check(mcarry.create_next_fight_party() == null
+			and mcarry.read_state() == held_before
+			and mismatched["result"].get_outcome() == observed_before
+			and mparty.get_heroes() == combat_before,
+			"invalid persisted hero state %d rejects hydration without mutation" % i)
+	mcarry._heroes = safe_held.duplicate(true)
+	_check(mcarry.create_next_fight_party() != null
+		and mcarry.get_next_fight_heroes() == safe_held,
+		"correcting a malformed held roster restores valid independent construction")
 	# Battle result latches victory: it must not license a newly defeated party.
 	for i in range(1, 4):
 		_check(party.apply_damage(i, party.get_hero(i)["hp"]), "down hero after terminal victory")
@@ -427,6 +518,16 @@ func _test_seeded_replay_and_rng() -> void:
 	_win(battle)
 	_check(carry.commit_victory("fight", active_result, party)["ok"]
 		and carry.choose_rest_heal("rest")["ok"], "RNG test includes accepted transitions")
+	var before_hydrate := carry.read_state()
+	var hydrated := carry.create_next_fight_party()
+	_check(hydrated != null and hydrated.is_valid()
+		and hydrated.get_heroes() == before_hydrate["heroes"],
+		"RNG fixture builds the real next-fight party from Rest")
+	var opening := CombatStartingBlock.new(hydrated)
+	_check(opening.apply() and not opening.apply()
+		and hydrated.get_hero(1)["block"] == 6
+		and carry.read_state() == before_hydrate,
+		"RNG fixture grants one-time opening Block without changing carry")
 	var after := carry.read_state()
 	_check(not carry.commit_victory("fight", active_result, party)["ok"]
 		and not carry.choose_rest_heal("rest")["ok"]
