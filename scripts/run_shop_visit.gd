@@ -13,15 +13,29 @@ var _status: String = "inactive"
 var _shop_node_id: String = ""
 var _visited_ids: Array[String] = []
 var _claimed_fight_ids: Array[String] = []
+var _stitched_mode: bool = false
+var _descriptors: Dictionary = {}
+var _next_stitch_id: int = 1
 
 
+## Supplying BOTH optional ledger fields opts in to Rest-validated composite
+## ownership. The four-argument legacy constructor and its snapshots are intact.
 func _init(deck_ids: Array[String], gold: int, prior_removals: int,
-		owned_trinket_ids: Array[String] = []) -> void:
+		owned_trinket_ids: Array[String] = [],
+		stitched_descriptors: Variant = null, next_stitch_id: Variant = null) -> void:
 	_deck.assign(deck_ids)
 	_trinkets.assign(owned_trinket_ids)
 	_gold = gold
 	_prior_removals = prior_removals
 	_valid = gold >= 0 and prior_removals >= 0
+	_stitched_mode = stitched_descriptors != null or next_stitch_id != null
+	if _stitched_mode:
+		if typeof(stitched_descriptors) != TYPE_DICTIONARY or typeof(next_stitch_id) != TYPE_INT:
+			_valid = false
+		else:
+			_descriptors = stitched_descriptors.duplicate(true)
+			_next_stitch_id = next_stitch_id
+			_valid = _valid and _ledger_is_valid(_deck)
 	var owned_seen := {}
 	for trinket_id in owned_trinket_ids:
 		if owned_seen.has(trinket_id):
@@ -46,16 +60,31 @@ func open_visit(shop_node_id: String) -> bool:
 ## A failed attempt leaves the option available. The helper is the sole
 ## authority for price, first-match removal, charging, and removal count.
 func remove_card(card_id: String) -> Dictionary:
-	if not _valid or _status != "available":
-		# Ask the helper for a failed, detached result (including its quote).
-		return RunShopCardRemoval.try_remove(_deck, _gold, _prior_removals, "")
-	var result := RunShopCardRemoval.try_remove(_deck, _gold, _prior_removals, card_id)
+	# Dispatch even rejected/unavailable choices through the selected helper:
+	# legacy callers receive five keys; owned stitched runs receive seven.
+	var choice := card_id if _valid and _status == "available" else ""
+	var result: Dictionary
+	if _stitched_mode:
+		result = RunShopCardRemoval.try_remove_with_stitch_ledger(
+				_deck, _descriptors, _next_stitch_id, _gold, _prior_removals, choice)
+	else:
+		result = RunShopCardRemoval.try_remove(_deck, _gold, _prior_removals, choice)
 	if result["ok"]:
 		_deck.assign(result["deck"])
+		if _stitched_mode:
+			_descriptors = result["descriptors"].duplicate(true)
+			_next_stitch_id = result["next_stitch_id"]
 		_gold = result["gold"]
 		_prior_removals = result["prior_removals"]
 		_status = "used"
 	return result
+
+
+## All ledger-bearing transitions must remain legal Rest inputs. Legacy
+## purchase receipts are intentionally unaffected by this extra validation.
+func _ledger_is_valid(deck_ids: Array) -> bool:
+	var rest := RunRestStitchCards.new(deck_ids, _descriptors, 0, _next_stitch_id)
+	return rest.is_valid()
 
 
 func close_visit() -> bool:
@@ -114,6 +143,9 @@ func reconcile_purchase(result: Dictionary) -> bool:
 			return false
 		if trinkets.back() != purchased_id:
 			return false
+	# Reject purchases that would orphan descriptors or inject fake composites.
+	if _stitched_mode and not _ledger_is_valid(cards):
+		return false
 	# Both ledgers are committed only after the whole snapshot is validated.
 	_deck.assign(cards)
 	_trinkets.assign(trinkets)
@@ -158,6 +190,8 @@ func apply_fight_reward(fight_node_id: Variant, reward: Variant) -> bool:
 		if cards.size() != _deck.size() + 1 or cards.slice(0, _deck.size()) != _deck \
 				or cards.back() != selected:
 			return false
+	if _stitched_mode and not _ledger_is_valid(cards):
+		return false
 	_deck.assign(cards)
 	_gold = gold
 	_claimed_fight_ids.append(fight_node_id)
@@ -237,6 +271,8 @@ func apply_battle_reward(node_id: Variant, settled: Variant) -> bool:
 				or cards.slice(0, _deck.size()) != _deck \
 				or cards.back() != selected:
 			return false
+	if _stitched_mode and not _ledger_is_valid(cards):
+		return false
 	# Atomic publication, including the shared legacy/typed claim history.
 	_deck.assign(cards)
 	_trinkets.assign(trinkets)
@@ -250,7 +286,7 @@ func get_state() -> Dictionary:
 	var deck_copy: Array[String] = _deck.duplicate()
 	var trinket_copy: Array[String] = _trinkets.duplicate()
 	var ids_copy: Array[String] = _visited_ids.duplicate()
-	return {
+	var state := {
 		"valid": _valid,
 		"status": _status,
 		"shop_node_id": _shop_node_id,
@@ -263,6 +299,10 @@ func get_state() -> Dictionary:
 		"visited_ids": ids_copy,
 		"claimed_fight_ids": _claimed_fight_ids.duplicate(),
 	}
+	if _stitched_mode:
+		state["descriptors"] = _descriptors.duplicate(true)
+		state["next_stitch_id"] = _next_stitch_id
+	return state
 
 
 ## Mirror a destroyed old owned patch after a reconciled Shop purchase and
