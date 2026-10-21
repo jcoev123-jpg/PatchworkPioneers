@@ -383,6 +383,13 @@ func _patch_invalid(label: String, field: String, value: Variant) -> void:
 
 
 func _test_invalid_visits() -> void:
+	seed(76003)
+	var expected_draw := randi()
+	seed(76003)
+	for owned in [["old_badge", "old_badge"], ["t_spool", "old_badge", "t_spool"],
+			["outside_pool", "old_badge", "outside_pool"]]:
+		_patch_invalid("duplicate owned inventory", "trinkets", owned)
+	_check(randi() == expected_draw, "duplicate inventory admission and rejected buys consume no global RNG")
 	_patch_invalid("party too small", "party_ids", ["warden", "tinker"])
 	_patch_invalid("party extra", "party_ids", ["warden", "seamstress", "tinker", "other"])
 	_patch_invalid("duplicate party", "party_ids", ["warden", "warden", "tinker"])

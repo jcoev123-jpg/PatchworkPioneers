@@ -120,6 +120,15 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	var expected_edges := {}
 	var floors: Array = app.run_map.get_floors()
 	_check(floors.size() == 12, "live map has twelve floors")
+	var numbered_legal: Array[String] = []
+	var choices: Array[String] = app.run_map.get_legal_choices()
+	for floor_nodes in floors:
+		var ordered: Array = floor_nodes.duplicate()
+		ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["position"]) < int(b["position"]))
+		for node in ordered:
+			if choices.has(node["id"]):
+				numbered_legal.append(node["id"])
 	for floor_nodes in floors:
 		for node in floor_nodes:
 			expected_nodes[node.id] = node
@@ -136,7 +145,9 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 			if not expected_nodes.has(id):
 				continue
 			var node: Dictionary = expected_nodes[id]
-			_check(child.get_node("Identity").text == node.type + "\n" + id
+			var number := numbered_legal.find(id)
+			var expected_caption := (str(number + 1) + "\n" if number >= 0 else "") + String(node.type) + "\n" + id
+			_check(child.get_node("Identity").text == expected_caption
 				and atlas.get_global_rect().encloses(child.get_global_rect()), "readable mounted identity: " + id)
 			var legal: bool = app.run_map.get_legal_choices().has(id)
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")

@@ -366,6 +366,10 @@ func _test_seeded_replay(party: Array[String], catalog: StarterCards) -> void:
 	var card_pool := _card_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
+	owned.append(trinket_pool[0].id)
+	var owned_before := owned.duplicate()
+	var reordered_owned := owned.duplicate()
+	reordered_owned.reverse()
 	var reordered_cards := card_pool.duplicate(true)
 	reordered_cards.reverse()
 	var reordered_trinkets := trinket_pool.duplicate(true)
@@ -375,7 +379,8 @@ func _test_seeded_replay(party: Array[String], catalog: StarterCards) -> void:
 	var rng_b := _rng()
 	var oracle_rng := _rng()
 	var first: Dictionary = RunShopStockOffers.generate(rng_a, party, card_pool, trinket_pool, owned)
-	var second: Dictionary = RunShopStockOffers.generate(rng_b, party, reordered_cards, reordered_trinkets, owned)
+	var second: Dictionary = RunShopStockOffers.generate(rng_b, party, reordered_cards, reordered_trinkets, reordered_owned)
+	_check(owned == owned_before, "distinct owned IDs preserve caller ordering")
 	_check(first.get("ok", false) and second.get("ok", false), "both candidate orders generate")
 	_check(first.get("cards", []) == second.get("cards", []),
 		"a reordered card pool produces the same card offers")
@@ -603,5 +608,12 @@ func _test_rejections(party: Array[String], catalog: StarterCards) -> void:
 	_reject("nonarray owned trinkets", _rng(), party, card_pool, trinket_pool, "owned")
 	_reject("numeric owned trinket", _rng(), party, card_pool, trinket_pool, [17])
 	_reject("empty owned trinket id", _rng(), party, card_pool, trinket_pool, [""])
+	seed(48214)
+	var expected_global := randi()
+	seed(48214)
+	for duplicated in [[owned[0], owned[0]], [trinket_pool[0].id, owned[0], trinket_pool[0].id],
+			["outside_pool", owned[0], "outside_pool"]]:
+		_reject("duplicate owned trinket", _rng(), party, card_pool, trinket_pool, duplicated)
+	_check(randi() == expected_global, "duplicate ownership rejection leaves global RNG untouched")
 
 	_check(catalog_before == _catalog_snapshot(catalog), "the whole authored catalog survives every rejection")
