@@ -98,6 +98,9 @@ var rest_stitch: RunRestStitchCards
 var rest_stitch_first: OptionButton
 var rest_stitch_second: OptionButton
 var rest_stitch_button: Button
+var rest_stitch_guided_button: Button
+var rest_stitch_overlay: Control
+var rest_stitch_picker: LiveRestStitchPairPicker
 var _rest_stitch_source: Dictionary = {}
 var _rest_stitch_committed: Dictionary = {}
 var rest_upgrade: RunRestCardUpgrade
@@ -1833,11 +1836,106 @@ func _stitch_at_rest(visit: RunRestStitchCards, button, first, second) -> void:
 	_finish_rest_choice()
 
 
+func _refresh_rest_stitch_guided() -> void:
+	for connection in rest_stitch_guided_button.pressed.get_connections():
+		rest_stitch_guided_button.pressed.disconnect(connection.callable)
+	rest_stitch_guided_button.disabled = rest_recovery.is_consumed() or rest_upgrade.is_consumed() \
+		or RunRestStitchPairOptions.new(rest_stitch, _rest_stitch_source).first_options().is_empty()
+	rest_stitch_guided_button.pressed.connect(_open_rest_stitch.bind(rest_stitch, rest_stitch_guided_button))
+
+
+func _open_rest_stitch(visit: RunRestStitchCards, button) -> void:
+	if visit == null or visit != rest_stitch or not is_instance_valid(button) \
+		or button != rest_stitch_guided_button or button.disabled or button.get_parent() != rest_view \
+		or not button.is_visible_in_tree() or not _rest_upgrade_context() \
+		or rest_recovery.is_consumed() or rest_upgrade.is_consumed() \
+		or _stitch_snapshot() != _rest_stitch_source \
+		or RunRestStitchPairOptions.new(visit, _rest_stitch_source).first_options().is_empty() \
+		or is_instance_valid(rest_patch_overlay) or is_instance_valid(rest_stitch_overlay):
+		return
+	rest_stitch_overlay = Control.new()
+	add_child(rest_stitch_overlay)
+	rest_stitch_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var shade := ColorRect.new()
+	shade.color = Color(0, 0, 0, 0.8)
+	rest_stitch_overlay.add_child(shade)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rest_stitch_picker = LiveRestStitchPairPicker.new()
+	rest_stitch_overlay.add_child(rest_stitch_picker)
+	rest_stitch_picker.position = Vector2(285, 75)
+	rest_stitch_picker.bind(visit, _rest_stitch_source)
+	var back := Button.new()
+	back.text = "Back to Rest"
+	back.name = "DismissStitch"
+	back.position = Vector2(315, 590)
+	back.size = Vector2(650, 40)
+	rest_stitch_overlay.add_child(back)
+	back.pressed.connect(_dismiss_rest_stitch.bind(rest_stitch_overlay, back))
+	rest_stitch_picker.stitch_requested.connect(_guided_stitch_at_rest.bind(rest_stitch_picker, rest_stitch_overlay, visit))
+	var controls := [rest_stitch_picker.first_selector, rest_stitch_picker.second_selector,
+		rest_stitch_picker.confirm_button, back]
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
+	back.grab_focus()
+
+
+func _dismiss_rest_stitch(overlay, button) -> void:
+	if not is_instance_valid(overlay) or overlay != rest_stitch_overlay or overlay.get_parent() != self \
+		or not overlay.is_visible_in_tree() or not is_instance_valid(button) \
+		or button != overlay.get_node("DismissStitch") or button.disabled:
+		return
+	_clear_rest_stitch_overlay()
+	rest_stitch_guided_button.grab_focus()
+
+
+func _clear_rest_stitch_overlay() -> void:
+	if is_instance_valid(rest_stitch_picker):
+		rest_stitch_picker.clear()
+		for connection in rest_stitch_picker.stitch_requested.get_connections():
+			rest_stitch_picker.stitch_requested.disconnect(connection.callable)
+	if is_instance_valid(rest_stitch_overlay):
+		remove_child(rest_stitch_overlay)
+		rest_stitch_overlay.queue_free()
+	rest_stitch_picker = null
+	rest_stitch_overlay = null
+
+
+func _guided_stitch_at_rest(first_index: int, second_index: int, expected: Dictionary,
+		picker, overlay, visit: RunRestStitchCards) -> void:
+	if not is_instance_valid(picker) or picker != rest_stitch_picker \
+		or not is_instance_valid(overlay) or overlay != rest_stitch_overlay \
+		or overlay.get_parent() != self or picker.get_parent() != overlay \
+		or not picker.is_visible_in_tree() or visit != rest_stitch or visit == null \
+		or is_instance_valid(rest_patch_overlay) or expected != _rest_stitch_source \
+		or _stitch_snapshot() != expected or picker.confirm_button.disabled \
+		or picker._model._service != visit:
+		return
+	var pair: Dictionary = picker._current_pair()
+	if pair.is_empty() or pair.first_index != first_index or pair.second_index != second_index \
+		or pair.source_snapshot != expected:
+		return
+	var rows: Array[int] = []
+	for wanted in [first_index, second_index]:
+		var row := -1
+		for item in range(rest_stitch_first.item_count):
+			if rest_stitch_first.get_item_metadata(item) == wanted:
+				row = item
+		if row < 0:
+			return
+		rows.append(row)
+	rest_stitch_first.select(rows[0])
+	rest_stitch_second.select(rows[1])
+	_stitch_at_rest(visit, rest_stitch_button, rest_stitch_first, rest_stitch_second)
+
+
 func _rest_upgrade_text(index: int) -> String:
 	return "Deck #%d: Warden Strike -> Strike+ (7 damage, 1 energy)" % (index + 1)
 
 
 func _finish_rest_choice() -> void:
+	_clear_rest_stitch_overlay()
+	rest_stitch_guided_button.disabled = true
 	_sync_rest_patches()
 	rest_heal_button.disabled = true
 	rest_stitch_button.disabled = true
@@ -1895,7 +1993,7 @@ func _sync_rest_patches() -> void:
 func _open_rest_patches(button) -> void:
 	if not is_instance_valid(button) or button != rest_patch_button or button.disabled \
 		or not button.is_visible_in_tree() or not _rest_patch_current() \
-		or is_instance_valid(rest_patch_overlay):
+		or is_instance_valid(rest_patch_overlay) or is_instance_valid(rest_stitch_overlay):
 		return
 	rest_patch_overlay = Control.new()
 	add_child(rest_patch_overlay)
@@ -1989,6 +2087,7 @@ func _resew_at_rest(patch_id: String, from_hero: String, to_hero: String,
 			_rest_stitch_source.descriptors, run_scraps, _rest_stitch_source.next_stitch_id).get_snapshot()
 	_rest_patch_context = _rest_patch_snapshot()
 	rest_view.get_node("RestStitchCost").text = "Stitch two different owners: 3 scraps (owned: %d)" % run_scraps
+	_refresh_rest_stitch_guided()
 	picker.present(wardrobe, carry.torn, result.state, node, "Re-sewn for 1 scrap.")
 
 
@@ -2005,6 +2104,7 @@ func _continue_from_rest(visit: RunRestRecovery, source_map: WeakRef, prior: Arr
 		_clear_rest_patch_overlay()
 		_rest_patch_context = _rest_patch_snapshot()
 	button.disabled = true
+	_clear_rest_stitch_overlay()
 	rest_view.hide()
 	_present_connected_route(source_map)
 
@@ -2056,6 +2156,7 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 			return false
 	if not run_map.choose_node(id):
 		return false
+	_clear_rest_stitch_overlay()
 	_rest_wardrobe = wardrobe
 	_rest_patch_serial = 0
 	if wardrobe != null:
@@ -2134,6 +2235,10 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_stitch_second.disabled = rest_stitch_button.disabled
 	rest_stitch_button.pressed.connect(_stitch_at_rest.bind(rest_stitch, rest_stitch_button, rest_stitch_first, rest_stitch_second))
 	rest_view.add_child(rest_stitch_button)
+	rest_stitch_guided_button = Button.new()
+	rest_stitch_guided_button.text = "Guided Stitch: preview two cards (3 scraps)"
+	rest_view.add_child(rest_stitch_guided_button)
+	_refresh_rest_stitch_guided()
 	rest_continue_button = Button.new()
 	rest_continue_button.text = "Continue"
 	rest_continue_button.custom_minimum_size = Vector2(480, 48)
@@ -2154,6 +2259,8 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		var actions: Array[Control] = [rest_heal_button, rest_upgrade_cards, rest_upgrade_button]
 		if not rest_stitch_button.disabled:
 			actions.append_array([rest_stitch_first, rest_stitch_second, rest_stitch_button])
+		if not rest_stitch_guided_button.disabled:
+			actions.append(rest_stitch_guided_button)
 		if not rest_patch_button.disabled:
 			actions.append(rest_patch_button)
 		actions.append(rest_back_button)
@@ -2674,6 +2781,8 @@ func _return_to_title() -> void:
 	_clear_quiet_spool()
 	_quiet_spool_completed = false
 	_clear_rest_patch_overlay()
+	_clear_rest_stitch_overlay()
+	rest_stitch_guided_button = null
 	_rest_wardrobe = null
 	_rest_patch_context.clear()
 	rest_patch_button = null
