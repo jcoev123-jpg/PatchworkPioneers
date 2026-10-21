@@ -64,6 +64,35 @@
         "spool_stalker",
         "seam_ripper"
       ]
+    },
+    "rearline_needlemark": {
+      "schedule": "res://data/encounters/rearline_needlemark.json",
+      "enemy_ids": [
+        "fray_scavenger",
+        "seam_ripper"
+      ]
+    },
+    "middlemark_clamp": {
+      "schedule": "res://data/encounters/middlemark_clamp.json",
+      "enemy_ids": [
+        "spool_stalker",
+        "seam_ripper"
+      ]
+    },
+    "backhem_pinwheel": {
+      "schedule": "res://data/encounters/backhem_pinwheel.json",
+      "enemy_ids": [
+        "fray_scavenger",
+        "button_guard",
+        "spool_stalker"
+      ]
+    },
+    "hemdrag_relay": {
+      "schedule": "res://data/encounters/hemdrag_relay.json",
+      "enemy_ids": [
+        "seam_ripper",
+        "button_guard"
+      ]
     }
   },
   "Elite": {

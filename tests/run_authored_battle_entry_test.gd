@@ -2,6 +2,12 @@ extends SceneTree
 
 const POOLS := "res://data/encounters/m03_typed_battle_pools.json"
 const SOURCES := [
+    "res://data/encounters/front_hem_pivot.json",
+    "res://data/encounters/rear_spool_reversal.json",
+    "res://data/encounters/rearline_needlemark.json",
+    "res://data/encounters/middlemark_clamp.json",
+    "res://data/encounters/backhem_pinwheel.json",
+    "res://data/encounters/hemdrag_relay.json",
     POOLS,
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
@@ -45,6 +51,12 @@ const ART_PATHS := {
 }
 const BINDINGS := {
     "Fight": {
+        "front_hem_pivot": ["button_guard", "fray_scavenger"],
+        "rear_spool_reversal": ["spool_stalker", "seam_ripper"],
+        "rearline_needlemark": ["fray_scavenger", "seam_ripper"],
+        "middlemark_clamp": ["spool_stalker", "seam_ripper"],
+        "backhem_pinwheel": ["fray_scavenger", "button_guard", "spool_stalker"],
+        "hemdrag_relay": ["seam_ripper", "button_guard"],
         "starter_attacks": ["ragling", "ragling_guard"],
         "bobbin_skirmish": ["fray_scavenger", "spool_stalker"],
         "buttonhole_holdout": ["button_guard", "seam_ripper"],
@@ -144,6 +156,57 @@ func _registry() -> Dictionary:
 
 func _expected_actions() -> Dictionary:
     return {
+        "front_hem_pivot": [
+            [{"type": "shove", "amount": 0, "target_position": 1, "direction": 1},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 2, "target_position": 3}],
+            [{"type": "attack", "amount": 2, "target_position": 1},
+             {"type": "attack", "amount": 2, "target_position": 2},
+             {"type": "buff", "amount": 2}],
+        ],
+        "rear_spool_reversal": [
+            [{"type": "attack", "amount": 2, "target_position": 2},
+             {"type": "attack", "amount": 2, "target_position": 2},
+             {"type": "buff", "amount": 2}],
+            [{"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 2, "target_position": 3}],
+        ],
+        "rearline_needlemark": [
+            [{"type": "debuff", "amount": 1, "target_position": 3, "status": "exposed"},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 2, "target_position": 2}],
+            [{"type": "attack", "amount": 4, "target_position": 3},
+             {"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "buff", "amount": 2}],
+        ],
+        "middlemark_clamp": [
+            [{"type": "debuff", "amount": 1, "target_position": 2, "status": "exposed"},
+             {"type": "block", "amount": 3},
+             {"type": "attack", "amount": 2, "target_position": 3}],
+            [{"type": "attack", "amount": 4, "target_position": 2},
+             {"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "buff", "amount": 2}],
+        ],
+        "backhem_pinwheel": [
+            [{"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
+             {"type": "attack", "amount": 2, "target_position": 1},
+             {"type": "block", "amount": 2}],
+            [{"type": "debuff", "amount": 2, "target_position": 2, "status": "bleed"},
+             {"type": "buff", "amount": 3},
+             {"type": "attack", "amount": 3, "target_position": 2}],
+            [{"type": "attack", "amount": 3, "target_position": 3},
+             {"type": "block", "amount": 1},
+             {"type": "attack", "amount": 2, "target_position": 1}],
+        ],
+        "hemdrag_relay": [
+            [{"type": "debuff", "amount": 1, "target_position": 2, "status": "bleed"},
+             {"type": "shove", "amount": 0, "target_position": 2, "direction": 1},
+             {"type": "attack", "amount": 3, "target_position": 2}],
+            [{"type": "block", "amount": 2},
+             {"type": "attack", "amount": 3, "target_position": 3},
+             {"type": "buff", "amount": 3}],
+        ],
         "starter_attacks": [
             [{"type": "attack", "amount": 1, "target_position": 1},
              {"type": "attack", "amount": 1, "target_position": 2},
