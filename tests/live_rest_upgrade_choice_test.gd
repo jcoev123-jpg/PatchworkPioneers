@@ -27,7 +27,7 @@ func _upgrade_fixture() -> Dictionary:
 
 
 func _upgrade_state() -> Array:
-	return [_persistent(), app.run_map.get_floors(), app.party_carryover.read_state(),
+	return [app.run_scraps, app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id, _persistent(), app.run_map.get_floors(), app.party_carryover.read_state(),
 		app.rest_upgrade.is_consumed(), app.rest_recovery.is_consumed(),
 		app.rest_upgrade._source.duplicate(true), app.rest_upgrade._deck.duplicate(),
 		app.rest_upgrade._upgrades.duplicate(true), app.rest_upgrade._valid,
@@ -71,6 +71,7 @@ func _run() -> void:
 		if app.rest_upgrade == null or not is_instance_valid(app.rest_upgrade_cards):
 			break
 		_bounds(app.rest_view)
+		_check(app.run_scraps == 1 and app.rest_stitch_button.disabled, "one earned scrap cannot enable Stitch")
 		var choices: OptionButton = app.rest_upgrade_cards
 		var visit: RunRestCardUpgrade = app.rest_upgrade
 		var button: Button = app.rest_upgrade_button

@@ -26,7 +26,7 @@ func _multi_fixture() -> Dictionary:
 
 
 func _settlement_state() -> Array:
-	return [_persistent(), app.party_carryover.read_state(),
+	return [app.run_scraps, app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id, _persistent(), app.party_carryover.read_state(),
 		app.multi_fight_rewards.read_state() if app.multi_fight_rewards != null else {},
 		app.fight_reward_claimed, app.fight_reward_offers.duplicate(true),
 		app.fight_reward_gold, app.continue_button, app.route_view]
@@ -176,6 +176,7 @@ func _run() -> void:
 			app.run_deck.pop_back()
 			_check(not service.choose("foreign_node", "").ok, "coordinator rejects wrong node")
 			_check(_settlement_state() == before, "all rejected inputs preserve original complete state")
+			_check(app.run_scraps == fight_index + 1, "later reward preparation/rejection never awards scraps")
 			var survivors := _block_free_party()
 			for hero in survivors:
 				for previous in ledger.heroes:
@@ -208,6 +209,7 @@ func _run() -> void:
 			detached.deck.clear()
 			detached.party.heroes[0].hp = 0
 			_check(service.read_state().deck == owned and app.run_heroes == survivors, "published resources are detached")
+			_check(app.run_scraps == fight_index + 2, "later pick/Skip adds exactly one scrap")
 			var after := _settlement_state()
 			var continue_callback: Callable = app.continue_button.pressed.get_connections()[0].callable
 			app.continue_button.disabled = true

@@ -34,7 +34,7 @@ func _rest_state() -> Array:
 		app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.session_gold,
 		app.run_removal_count, app.run_rng, app.deck, app.party, app.enemies,
 		app.shop_visit, app.shop_purchases, app.title_view.visible]
-	return [state, app.run_map.get_floors() if app.run_map != null else [],
+	return [app.run_scraps, app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id, state, app.run_map.get_floors() if app.run_map != null else [],
 		app.rest_recovery.is_consumed() if app.rest_recovery != null else false,
 		app._rest_heroes.duplicate(true), app._rest_committed_heroes.duplicate(true),
 		app._rest_route.duplicate(), app.rest_view.visible if is_instance_valid(app.rest_view) else false,

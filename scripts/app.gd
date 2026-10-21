@@ -64,6 +64,9 @@ var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
 var session_gold := 0
 var run_deck: Array[String] = []
+var run_scraps := 0
+var run_stitch_descriptors: Dictionary = {}
+var run_next_stitch_id := 1
 var run_trinkets: Array[String] = []
 var fight_reward_trinket := ""
 var run_heroes: Array = []
@@ -81,6 +84,12 @@ var rest_continue_button: Button
 var rest_back_button: Button
 var rest_hp_label: Label
 var rest_recovery: RunRestRecovery
+var rest_stitch: RunRestStitchCards
+var rest_stitch_first: OptionButton
+var rest_stitch_second: OptionButton
+var rest_stitch_button: Button
+var _rest_stitch_source: Dictionary = {}
+var _rest_stitch_committed: Dictionary = {}
 var rest_upgrade: RunRestCardUpgrade
 var rest_upgrade_cards: OptionButton
 var rest_upgrade_button: Button
@@ -549,6 +558,9 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	round_flow = starting_flow
 	victory_gold = RunVictoryGold.new(battle_result)
 	session_gold = 0
+	run_scraps = 0
+	run_stitch_descriptors.clear()
+	run_next_stitch_id = 1
 	_battle_closed = false
 	title_view.hide()
 	_build_battle()
@@ -957,6 +969,7 @@ func _claim_card_reward(id: String, button, offering) -> void:
 		if offering is RunMultiFightRewards:
 			run_trinkets.assign(settled.trinkets)
 		run_heroes = carried.heroes.duplicate(true)
+		run_scraps += 2 if run_map.get_node(_carryover_node).get("type") == "Elite" else 1
 		fight_reward_claimed = true
 		result_label.text = "Battle result: victory | Gold: %d" % session_gold
 		_finish_card_reward(offering)
@@ -1188,7 +1201,10 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 
 
 func _current_completed_rest() -> bool:
-	return rest_recovery != null and ((rest_recovery.is_consumed() and _rest_committed_deck.is_empty()) or _completed_rest_upgrade()) \
+	return rest_recovery != null and ((rest_recovery.is_consumed() and _rest_committed_deck.is_empty() \
+		and rest_stitch != null and not rest_stitch.is_consumed() \
+		and rest_upgrade != null and not rest_upgrade.is_consumed() \
+		and _stitch_snapshot() == _rest_stitch_source) or _completed_rest_upgrade() or _completed_rest_stitch()) \
 		and run_map != null and _rest_map != null and _rest_map.get_ref() == run_map \
 		and not _rest_route.is_empty() and run_map.get_route() == _rest_route \
 		and run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest" \
@@ -1216,11 +1232,16 @@ func _completed_rest_upgrade() -> bool:
 	return rest_upgrade != null and rest_upgrade.is_consumed() \
 		and rest_recovery != null and not rest_recovery.is_consumed() \
 		and not _rest_committed_deck.is_empty() and run_deck == _rest_committed_deck \
+		and run_scraps == _rest_stitch_source.remaining_scraps \
+		and run_stitch_descriptors == _rest_stitch_source.descriptors \
+		and run_next_stitch_id == _rest_stitch_source.next_stitch_id \
+		and (rest_stitch == null or not rest_stitch.is_consumed()) \
 		and _rest_upgrade_context()
 
 
 func _upgrade_at_rest(visit: RunRestCardUpgrade, button, choices) -> void:
 	if visit == null or visit != rest_upgrade or visit.is_consumed() \
+		or rest_stitch == null or rest_stitch.is_consumed() or _stitch_snapshot() != _rest_stitch_source \
 		or rest_recovery == null or rest_recovery.is_consumed() or not rest_recovery._valid \
 		or rest_recovery._roster != _rest_heroes or not _rest_upgrade_context() \
 		or not _rest_committed_heroes.is_empty() or not _rest_committed_deck.is_empty() or run_deck != _rest_deck \
@@ -1265,12 +1286,73 @@ func _upgrade_at_rest(visit: RunRestCardUpgrade, button, choices) -> void:
 	_finish_rest_choice()
 
 
+func _stitch_snapshot() -> Dictionary:
+	return RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id).get_snapshot()
+
+
+func _rest_stitch_text(index: int) -> String:
+	var definition := StarterCards.new().get_definition(_rest_deck[index])
+	return "Deck #%d: %s - %s" % [index + 1, definition.owner, definition.display_name]
+
+
+func _completed_rest_stitch() -> bool:
+	return rest_stitch != null and rest_stitch.is_consumed() \
+		and rest_recovery != null and not rest_recovery.is_consumed() \
+		and rest_upgrade != null and not rest_upgrade.is_consumed() \
+		and not _rest_stitch_committed.is_empty() and _stitch_snapshot() == _rest_stitch_committed \
+		and run_deck == _rest_committed_deck and _rest_upgrade_context()
+
+
+func _stitch_at_rest(visit: RunRestStitchCards, button, first, second) -> void:
+	if visit == null or visit != rest_stitch or not visit.is_valid() or visit.is_consumed() \
+		or rest_recovery == null or not rest_recovery._valid or rest_recovery.is_consumed() \
+		or rest_recovery._roster != _rest_heroes or rest_upgrade == null or rest_upgrade.is_consumed() \
+		or not _rest_committed_deck.is_empty() or not _rest_committed_heroes.is_empty() \
+		or not _rest_upgrade_context() or run_deck != _rest_deck \
+		or not is_instance_valid(rest_view) or rest_view.get_parent() != self or not rest_view.is_visible_in_tree():
+		return
+	for pair in [[button, rest_stitch_button], [first, rest_stitch_first], [second, rest_stitch_second]]:
+		var control = pair[0]
+		if not is_instance_valid(control) or control != pair[1] or control.get_parent() != rest_view \
+			or control.disabled or not control.is_visible_in_tree():
+			return
+	var indices: Array[int] = []
+	for index in range(_rest_deck.size()):
+		if StarterCards.new().has_card(_rest_deck[index]):
+			indices.append(index)
+	for selector in [first, second]:
+		if selector.item_count != indices.size() or selector.selected < 0 or selector.selected >= indices.size():
+			return
+		for item in range(indices.size()):
+			if typeof(selector.get_item_metadata(item)) != TYPE_INT or selector.get_item_metadata(item) != indices[item] \
+				or selector.is_item_disabled(item) or selector.get_item_text(item) != _rest_stitch_text(indices[item]):
+				return
+	var current := _stitch_snapshot()
+	if current != _rest_stitch_source or visit.get_snapshot() != current or visit._source_snapshot != current:
+		return
+	var result := visit.choose_stitch(indices[first.selected], indices[second.selected], current)
+	if not result.ok:
+		return
+	# Synchronous transaction: publish every result field together before enabling Continue.
+	run_deck.assign(result.deck)
+	run_stitch_descriptors = result.descriptors.duplicate(true)
+	run_scraps = result.remaining_scraps
+	run_next_stitch_id = result.next_stitch_id
+	_rest_stitch_committed = visit.get_snapshot()
+	_rest_committed_deck = run_deck.duplicate()
+	_rest_committed_heroes = run_heroes.duplicate(true)
+	_finish_rest_choice()
+
+
 func _rest_upgrade_text(index: int) -> String:
 	return "Deck #%d: Warden Strike -> Strike+ (7 damage, 1 energy)" % (index + 1)
 
 
 func _finish_rest_choice() -> void:
 	rest_heal_button.disabled = true
+	rest_stitch_button.disabled = true
+	rest_stitch_first.disabled = true
+	rest_stitch_second.disabled = true
 	rest_upgrade_button.disabled = true
 	rest_upgrade_cards.disabled = true
 	rest_continue_button.disabled = false
@@ -1337,6 +1419,9 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_continue_button = null
 	_rest_committed_heroes.clear()
 	_rest_committed_deck.clear()
+	rest_stitch = RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id)
+	_rest_stitch_source = _stitch_snapshot()
+	_rest_stitch_committed.clear()
 	rest_recovery = RunRestRecovery.new(run_heroes)
 	rest_upgrade = RunRestCardUpgrade.new(run_deck, {"warden_strike": "warden_strike_plus"})
 	_rest_deck = run_deck.duplicate()
@@ -1354,7 +1439,7 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	_clear_route_view()
 	rest_view = VBoxContainer.new()
 	rest_view.set_anchors_preset(Control.PRESET_CENTER)
-	rest_view.add_theme_constant_override("separation", 24)
+	rest_view.add_theme_constant_override("separation", 8)
 	add_child(rest_view)
 	var heading := Label.new()
 	heading.text = "Rest - " + id
@@ -1362,6 +1447,18 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_hp_label = Label.new()
 	rest_view.add_child(rest_hp_label)
 	_refresh_rest_hp()
+	var stitch_label := Label.new()
+	stitch_label.text = "Stitch two different owners: 3 scraps (owned: %d)" % run_scraps
+	rest_view.add_child(stitch_label)
+	rest_stitch_first = OptionButton.new()
+	rest_stitch_second = OptionButton.new()
+	for selector in [rest_stitch_first, rest_stitch_second]:
+		selector.custom_minimum_size = Vector2(480, 36)
+		for index in range(run_deck.size()):
+			if StarterCards.new().has_card(run_deck[index]):
+				selector.add_item(_rest_stitch_text(index))
+				selector.set_item_metadata(selector.item_count - 1, index)
+		rest_view.add_child(selector)
 	rest_heal_button = Button.new()
 	rest_heal_button.text = "Heal party (30% max HP; revive downed heroes)"
 	rest_heal_button.custom_minimum_size = Vector2(480, 56)
@@ -1381,6 +1478,14 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_upgrade_cards.disabled = rest_upgrade_button.disabled
 	rest_upgrade_button.pressed.connect(_upgrade_at_rest.bind(rest_upgrade, rest_upgrade_button, rest_upgrade_cards))
 	rest_view.add_child(rest_upgrade_button)
+	rest_stitch_button = Button.new()
+	rest_stitch_button.text = "Stitch selected cards (instead of Heal / Upgrade)"
+	rest_stitch_button.custom_minimum_size = Vector2(480, 40)
+	rest_stitch_button.disabled = not rest_stitch.is_valid() or run_scraps < RunRestStitchCards.SCRAP_COST
+	rest_stitch_first.disabled = rest_stitch_button.disabled
+	rest_stitch_second.disabled = rest_stitch_button.disabled
+	rest_stitch_button.pressed.connect(_stitch_at_rest.bind(rest_stitch, rest_stitch_button, rest_stitch_first, rest_stitch_second))
+	rest_view.add_child(rest_stitch_button)
 	rest_continue_button = Button.new()
 	rest_continue_button.text = "Continue"
 	rest_continue_button.custom_minimum_size = Vector2(480, 48)
@@ -1393,7 +1498,10 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_view.add_child(rest_back_button)
 	_focus_visit(rest_view)
 	if not rest_upgrade_button.disabled:
-		var actions: Array[Control] = [rest_heal_button, rest_upgrade_cards, rest_upgrade_button, rest_back_button]
+		var actions: Array[Control] = [rest_heal_button, rest_upgrade_cards, rest_upgrade_button]
+		if not rest_stitch_button.disabled:
+			actions.append_array([rest_stitch_first, rest_stitch_second, rest_stitch_button])
+		actions.append(rest_back_button)
 		for index in range(actions.size()):
 			actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 			actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
@@ -1402,6 +1510,8 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 
 func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 	if visit == null or visit != rest_recovery or visit.is_consumed() \
+		or rest_stitch == null or rest_stitch.is_consumed() or _stitch_snapshot() != _rest_stitch_source \
+		or not _rest_upgrade_context() \
 		or (rest_upgrade != null and rest_upgrade.is_consumed()) or not _rest_committed_deck.is_empty() \
 		or not is_instance_valid(rest_view) or not rest_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != rest_heal_button \
@@ -1807,6 +1917,12 @@ func _return_to_title() -> void:
 	rest_back_button = null
 	rest_hp_label = null
 	rest_recovery = null
+	rest_stitch = null
+	rest_stitch_first = null
+	rest_stitch_second = null
+	rest_stitch_button = null
+	_rest_stitch_source.clear()
+	_rest_stitch_committed.clear()
 	rest_upgrade = null
 	rest_upgrade_cards = null
 	rest_upgrade_button = null
@@ -1864,6 +1980,9 @@ func _return_to_title() -> void:
 	run_deck.clear()
 	run_trinkets.clear()
 	session_gold = 0
+	run_scraps = 0
+	run_stitch_descriptors.clear()
+	run_next_stitch_id = 1
 	_battle_closed = false
 	enemy_attacks.clear()
 	enemy_intents = null

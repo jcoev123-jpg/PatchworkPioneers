@@ -8,6 +8,10 @@ var retained_rewards: Array[Callable] = []
 var active_checked := false
 
 
+func _persistent() -> Array:
+	return super._persistent() + [app.run_scraps, app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id]
+
+
 func _click(control: Control) -> void:
 	await super._click(control)
 	if not active_checked and app.battle_result != null and not app._battle_closed:
@@ -71,6 +75,7 @@ func _run() -> void:
 		_check(not expected_offers.is_empty() and app.fight_reward_offers == expected_offers
 			and app.fight_reward_gold == expected_award and expected_award >= 10 and expected_award <= 20
 			and app.run_rng.state == expected_rng, "independent oracle: one gold draw then three distinct sorted-pool draws")
+		_check(app.run_scraps == 0, "new run and pending rewards have no scraps")
 		_check(app.session_gold == 0 and not app.fight_reward_claimed and app.card_reward == null
 			and not app.victory_gold.is_claimed(), "routed prepare never pays or uses separate demo transactions")
 		_check(app.reward_buttons.size() == 4 and app.result_label.text.contains("Pending gold: %d" % expected_award),
@@ -134,6 +139,7 @@ func _run() -> void:
 		_check(app.fight_reward_claimed and app.run_deck == owned and app.session_gold == expected_award
 			and app.run_heroes == _block_free_party() and app.run_rng.state == expected_rng,
 			"physical choice/Skip publishes exactly owned deck and one award; heroes/RNG preserved")
+		_check(app.run_scraps == 1, "Fight pick and Skip grant exactly one scrap")
 		_check(is_instance_valid(app.continue_button), "successful transaction creates Continue")
 		if not is_instance_valid(app.continue_button):
 			break
