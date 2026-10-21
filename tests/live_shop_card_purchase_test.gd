@@ -49,6 +49,7 @@ func _run() -> void:
 			break
 		if session != 0:
 			app.session_gold = 200
+		var oracle := _stock_oracle()
 		await _click(route)
 		_check(app.shop_purchases != null and app.shop_purchases.is_valid() and app.shop_visit != null,
 			"real entry constructs valid purchases and removal ledger")
@@ -58,13 +59,21 @@ func _run() -> void:
 		var purchases: RunShopPurchases = app.shop_purchases
 		var stock: Dictionary = purchases.get_stock()
 		var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+		_check(stock == oracle.stock and app.run_rng.state == oracle.state,
+			"physical entry matches exact pre-entry seeded generator order and seven-draw state")
+		var prices := {}
+		for candidate in authored.cards:
+			prices[candidate.id] = int(candidate.price)
+		var seen := {}
 		_check(stock.cards.size() == 5 and stock.trinkets.size() == 2 and app.shop_offers.item_count == 5,
 			"authored five plus two stock reaches mounted Shop")
 		for index in range(stock.cards.size()):
 			var offer: Dictionary = stock.cards[index]
 			_check(catalog.has_card(offer.id) and catalog.get_definition(offer.id).owner == offer.owner,
 				"each listing is an existing playable card with correct owner")
-			_check(offer.price == authored.cards[index].price and not offer.sold
+			_check(not seen.has(offer.id), "generated card offers are distinct")
+			seen[offer.id] = true
+			_check(offer.price == prices.get(offer.id) and not offer.sold
 				and app.shop_offers.get_item_text(index) == "%s | %d gold" % [offer.id, offer.price],
 				"every quoted price matches authored unsold stock")
 		for control in [app.shop_view, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_back_button]:

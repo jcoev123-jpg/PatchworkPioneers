@@ -78,10 +78,13 @@ func _run() -> void:
 			# Funding is injected solely to exercise real purchase/removal transactions.
 			if kind == "Shop":
 				app.session_gold = 300
+			var first_oracle := _stock_oracle()
 			await _click(entry)
 			_check(app.shop_visit != null and is_instance_valid(app.shop_continue_button), "first Shop mounts ledger and Continue")
 			if app.shop_visit == null or not is_instance_valid(app.shop_continue_button):
 				break
+			_check(app.shop_purchases.get_stock() == first_oracle.stock and app.run_rng.state == first_oracle.state,
+				"first connected Shop matches pre-entry stock and RNG oracle")
 			if kind == "Shop":
 				var deck_before: Array = app.run_deck.duplicate()
 				var gold_before: int = app.session_gold
@@ -199,13 +202,19 @@ func _run() -> void:
 			choose.call()
 			next.disabled = false
 			_check(_continuation_state() == before, "forged ID/map/route and disabled following visit reject")
+			var next_oracle := _stock_oracle() if kind == "Shop" else {}
 			if session == 0:
 				await _click(next)
 			else:
 				next.grab_focus()
 				await _key(KEY_ENTER)
 			_check(live_map.get_route() == prior + [fixture.next] and app.run_map == live_map, "following visit advances exactly one connected node on same map")
-			_check(_persistent().slice(0, 4) == before[0].slice(0, 4) and app.run_removal_count == before[1], "entry carries exact heroes, deck, gold, RNG and removal count")
+			_check(_persistent().slice(0, 3) == before[0].slice(0, 3) and app.run_removal_count == before[1], "entry carries exact heroes, deck, gold and removal count")
+			if kind == "Shop":
+				_check(app.shop_purchases.get_stock() == next_oracle.stock and app.run_rng.state == next_oracle.state,
+					"later Shop generates once from ongoing run RNG rather than reseeding")
+			else:
+				_check(app.run_rng.state == before[0][3], "Rest entry preserves RNG")
 			before = _continuation_state()
 			for callback in [exit, remove, buy, back, choose]:
 				callback.call()

@@ -894,23 +894,30 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 		or run_map.get_node(id).get("type") != "Shop":
 		return false
 	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count)
-	var offers: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
-	# JSON numbers must be converted only after validating integral prices.
-	for category in ["cards", "trinkets"]:
-		for offer in offers.get(category, []):
-			if typeof(offer.get("price")) not in [TYPE_INT, TYPE_FLOAT] or offer.price != floor(offer.price):
-				return false
-			offer.price = int(offer.price)
+	var offers: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	if not (offers is Dictionary) or not (offers.get("cards") is Array) \
+		or not (offers.get("trinkets") is Array) or run_rng == null:
+		return false
 	var party_ids: Array[String] = []
 	for hero in run_heroes:
+		if not (hero is Dictionary) or not (hero.get("id") is String):
+			return false
 		party_ids.append(hero.id)
-	var purchases := RunShopPurchases.new(party_ids, run_deck, [], session_gold, offers.get("cards"), offers.get("trinkets"))
+	var rng_before := run_rng.state
+	var stock := RunShopStockOffers.generate(run_rng, party_ids, offers.cards, offers.trinkets, [])
+	if not stock.ok:
+		run_rng.state = rng_before
+		return false
+	var purchases := RunShopPurchases.new(party_ids, run_deck, [], session_gold, stock.cards, stock.trinkets)
 	if not purchases.is_valid():
+		run_rng.state = rng_before
 		return false
 	if not visit.get_state().valid or not run_map.choose_node(id):
+		run_rng.state = rng_before
 		return false
 	if not visit.open_visit(id):
 		run_map.undo_choice(id, prior)
+		run_rng.state = rng_before
 		return false
 	shop_visit = visit
 	shop_purchases = purchases

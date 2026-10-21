@@ -2,6 +2,28 @@ extends "res://tests/live_rest_route_entry_test.gd"
 ## Mounted route/combat/reward/Shop inputs; only funded gold/count are injected.
 
 
+class RejectingMap extends RunMap:
+	var attempts := 0
+	func choose_node(_id: String) -> bool:
+		attempts += 1
+		return false
+
+
+func _stock_oracle() -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.state = app.run_rng.state
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var ids: Array[String] = []
+	for hero in app.run_heroes:
+		ids.append(hero.id)
+	var expected := RunShopStockOffers.generate(rng, ids, authored.cards, authored.trinkets, [])
+	_check(expected.ok, "real authored pools produce oracle stock")
+	for category in ["cards", "trinkets"]:
+		for offer in expected[category]:
+			offer.sold = false
+	return {"stock": {"cards": expected.cards, "trinkets": expected.trinkets}, "state": rng.state}
+
+
 func _fixture() -> Dictionary:
 	for value in range(1, 1000):
 		var rng := RandomNumberGenerator.new()
@@ -120,6 +142,55 @@ func _run() -> void:
 		route_callback.call()
 		_check(_persistent() == invalid_before and app.shop_visit == null, "invalid ledger cannot commit a route choice")
 		app.session_gold = saved_gold
+		var saved_rng: RandomNumberGenerator = app.run_rng
+		app.run_rng = null
+		var missing_before := [app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.session_gold,
+			app.run_removal_count, app.run_map.get_floors(), app.run_map.get_route()]
+		route_callback.call()
+		_check(app.run_rng == null and app.shop_visit == null and app.shop_purchases == null
+			and missing_before == [app.run_heroes, app.run_deck, app.session_gold,
+			app.run_removal_count, app.run_map.get_floors(), app.run_map.get_route()], "absent RNG rejects without partial entry")
+		app.run_rng = saved_rng
+		# A valid roster with an unknown catalog owner must fail stock generation without draws.
+		var heroes: Array = app.run_heroes.duplicate(true)
+		app.run_heroes[0].id = "unknown_shop_owner"
+		_check(app._can_choose_connected_route(), "unknown catalog owner passes roster admission before stock rejection")
+		invalid_before = _persistent()
+		route_callback.call()
+		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
+			"rejected stock leaves roster, deck, gold, route and RNG untouched")
+		app.run_heroes = heroes
+		# Force choose_node to reject only after admission and valid generation.
+		var original_map: RunMap = app.run_map
+		var rejecting := RejectingMap.new()
+		rejecting._nodes = original_map._nodes.duplicate(true)
+		rejecting._floor_ids = original_map._floor_ids.duplicate(true)
+		rejecting._route.assign(prior)
+		app.run_map = rejecting
+		app._connected_map = weakref(rejecting)
+		app._reward_map = weakref(rejecting)
+		invalid_before = _persistent()
+		_check(not app._choose_shop_route(id, weakref(rejecting), prior, shop) and rejecting.attempts == 1,
+			"valid generated stock reaches rejecting map choice")
+		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
+			"rejected map choice restores RNG and publishes no ledger or stock")
+		app.run_map = original_map
+		app._connected_map = weakref(original_map)
+		app._reward_map = weakref(original_map)
+		# A connected whitespace node reaches open_visit, which rejects its ID.
+		original_map._nodes[" "] = original_map._nodes[id].duplicate(true)
+		original_map._nodes[parent].outgoing.append(" ")
+		shop.set_meta("route_id", " ")
+		_check(app._can_choose_connected_route() and original_map.get_legal_choices().has(" ")
+			and original_map.get_node(" ").type == "Shop" and _stock_oracle().stock.cards.size() == 5,
+			"whitespace fixture admits connected Shop with valid generated stock before visit opening")
+		invalid_before = _persistent()
+		_check(not app._choose_shop_route(" ", weakref(original_map), prior, shop), "visit opening rejects whitespace ID")
+		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
+			"failed visit opening rolls back committed map and generated RNG")
+		original_map._nodes.erase(" ")
+		original_map._nodes[parent].outgoing = outgoing
+		shop.set_meta("route_id", id)
 		if session in [1, 2]:
 			app.session_gold = 200
 			app.run_removal_count = 1 if session == 2 else 0
