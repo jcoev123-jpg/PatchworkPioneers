@@ -113,7 +113,14 @@ func choose_with_wallet(choice_id: Variant, wallet: Variant = null) -> Dictionar
 	var scraps_delta: int = parsed_outcome["scraps"]
 	var base_gold: int = base_wallet["gold"]
 	var base_scraps: int = base_wallet["scraps"]
-	if gold_delta > MAX_INT - base_gold or scraps_delta > MAX_INT - base_scraps:
+	if gold_delta > MAX_INT - base_gold:
+		return _wallet_rejection(base_wallet)
+	if scraps_delta >= 0:
+		if scraps_delta > MAX_INT - base_scraps:
+			return _wallet_rejection(base_wallet)
+	elif base_scraps + scraps_delta < 0:
+		# The sum is safe: base_scraps is nonnegative and scraps_delta is negative,
+		# including the smallest representable integer debit.
 		return _wallet_rejection(base_wallet)
 	_claimed = true
 	return {
@@ -172,27 +179,31 @@ func _parse_choice_outcome(choice: Dictionary) -> Dictionary:
 	var outcome: Dictionary = raw_outcome
 	if outcome.size() != 2 or not outcome.has("gold") or not outcome.has("scraps"):
 		return {"ok": false}
-	var gold: int = _read_outcome_amount(outcome.get("gold"))
-	var scraps: int = _read_outcome_amount(outcome.get("scraps"))
-	if gold < 0 or scraps < 0:
+	var gold: Dictionary = _read_outcome_amount(outcome.get("gold"), false)
+	var scraps: Dictionary = _read_outcome_amount(outcome.get("scraps"), true)
+	if not gold.get("ok", false) or not scraps.get("ok", false):
 		return {"ok": false}
 	return {
 		"ok": true,
-		"gold": gold,
-		"scraps": scraps,
+		"gold": gold["amount"],
+		"scraps": scraps["amount"],
 	}
 
 
-func _read_outcome_amount(value: Variant) -> int:
+func _read_outcome_amount(value: Variant, allow_negative: bool) -> Dictionary:
 	if typeof(value) == TYPE_INT:
 		var amount: int = value
-		return amount if amount >= 0 else -1
+		if not allow_negative and amount < 0:
+			return {"ok": false}
+		return {"ok": true, "amount": amount}
 	if typeof(value) == TYPE_FLOAT:
 		var number: float = value
-		if not is_finite(number) or number < 0.0 or number > MAX_SAFE_FLOAT_INT or floor(number) != number:
-			return -1
-		return int(number)
-	return -1
+		if not is_finite(number) or number > MAX_SAFE_FLOAT_INT or floor(number) != number:
+			return {"ok": false}
+		if number < (-MAX_SAFE_FLOAT_INT if allow_negative else 0.0):
+			return {"ok": false}
+		return {"ok": true, "amount": int(number)}
+	return {"ok": false}
 
 
 func _is_nonblank_string(value: Variant) -> bool:

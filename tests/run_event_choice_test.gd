@@ -1,7 +1,7 @@
 extends SceneTree
 ## Deterministic headless test for RunEventChoice (M04 authored event selector).
 ## Covers the six authored events in data/events/m04_events.json (looked up by
-## ID, never by catalog size/order/index), Button Trail wallet outcomes,
+## ID, never by catalog size/order/index), Button Trail and Needle Gate wallets,
 ## detached snapshots, one-claim semantics, fail-closed invalid records and
 ## outcomes, recovery after failed preflight, replay rejection and zero RNG use.
 
@@ -40,7 +40,11 @@ const REQUIRED := {
 	"needle_gate": {
 		"title": "The Needle Gate",
 		"description": "Crossed needles mark a narrow wooden gate.",
-		"choices": {"examine": "Examine the gate", "pass": "Pass without stopping"},
+		"choices": {"examine": "Spend 1 scrap to unpick the gate and claim 12 gold", "pass": "Pass without stopping"},
+		"outcomes": {
+			"examine": {"gold": 12, "scraps": -1},
+			"pass": {"gold": 0, "scraps": 0},
+		},
 	},
 }
 
@@ -54,6 +58,8 @@ func _initialize() -> void:
 	_test_catalog_content()
 	_test_authored_claim_flow()
 	_test_button_trail_wallet_settlement()
+	_test_needle_gate_wallet_settlement()
+	_test_signed_scraps_boundaries()
 	_test_wallet_preflight_rejections_and_recovery()
 	_test_invalid_records()
 	_test_bad_choice_recovery_and_replay()
@@ -103,12 +109,14 @@ func _wallet_exact_int(wallet: Variant, expected_gold: int, expected_scraps: int
 	)
 
 
-func _is_integral_json_number(value: Variant) -> bool:
+func _is_integral_json_number(value: Variant, allow_negative: bool = false) -> bool:
 	if typeof(value) == TYPE_INT:
-		return int(value) >= 0
+		return allow_negative or int(value) >= 0
 	if typeof(value) == TYPE_FLOAT:
 		var num: float = value
-		return is_finite(num) and num >= 0.0 and floor(num) == num
+		return (is_finite(num) and floor(num) == num
+			and num <= RunEventChoice.MAX_SAFE_FLOAT_INT
+			and num >= (-RunEventChoice.MAX_SAFE_FLOAT_INT if allow_negative else 0.0))
 	return false
 
 
@@ -178,6 +186,9 @@ func _test_catalog_content() -> void:
 			continue
 		_check((choices as Array).size() >= 2 and (choices as Array).size() <= 3,
 			"2 to 3 choices: " + event_id)
+		if event_id == "needle_gate":
+			_check((choices as Array).size() == 2 and (choices as Array).map(func(c): return c.get("id")) == ["examine", "pass"],
+				"Needle Gate retains exactly examine then pass in authored order")
 		var seen := {}
 		var by_id := {}
 		var choice_records := {}
@@ -223,9 +234,9 @@ func _test_catalog_content() -> void:
 					var raw_scraps: Variant = outcome.get("scraps")
 					_check(_is_integral_json_number(raw_gold),
 						"authored outcome gold is integral nonnegative: " + event_id + "/" + choice_id)
-					_check(_is_integral_json_number(raw_scraps),
-						"authored outcome scraps is integral nonnegative: " + event_id + "/" + choice_id)
-					if _is_integral_json_number(raw_gold) and _is_integral_json_number(raw_scraps):
+					_check(_is_integral_json_number(raw_scraps, true),
+						"authored outcome scraps is integral signed: " + event_id + "/" + choice_id)
+					if _is_integral_json_number(raw_gold) and _is_integral_json_number(raw_scraps, true):
 						_check(int(raw_gold) == expected_outcome["gold"]
 							and int(raw_scraps) == expected_outcome["scraps"],
 							"authored outcome matches exact gold/scraps: " + event_id + "/" + choice_id)
@@ -385,6 +396,163 @@ func _test_button_trail_wallet_settlement() -> void:
 		"JSON float outcome values normalize to exact ints matching integer outcomes")
 
 
+
+func _test_needle_gate_wallet_settlement() -> void:
+	var matches := _matching("needle_gate")
+	_check(matches.size() == 1, "exactly one needle_gate for wallet settlement")
+	if matches.size() != 1:
+		return
+	var authored: Dictionary = matches[0]
+	var original: Dictionary = authored.duplicate(true)
+
+	# The authored debit is affordable: eight gold and one scrap become 20 and zero.
+	var caller_event: Dictionary = authored.duplicate(true)
+	var wallet := {"gold": 8, "scraps": 1}
+	var expected_rng := _rng_start(64501)
+	var gate := RunEventChoice.new(caller_event)
+	_check(gate.is_valid() and not gate.is_claimed(), "Needle Gate has a fresh usable selector")
+	var result := gate.choose_with_wallet("examine", wallet)
+	_check(_wallet_shape_ok(result) and result.get("ok") == true
+		and result.get("event_id") == "needle_gate" and result.get("choice_id") == "examine"
+		and _wallet_exact_int(result.get("wallet"), 20, 0),
+		"examine returns exact four-key successful trade and IDs")
+	_check(_wallet_exact_int(wallet, 8, 1) and caller_event == original and gate.get_event() == original,
+		"examine preserves caller event/wallet and detached selector snapshot")
+	_check(gate.is_claimed() and not gate.is_valid(), "successful trade consumes exactly one claim")
+	var replay := gate.choose_with_wallet("pass", {"gold": 20, "scraps": 0})
+	_check(_wallet_shape_ok(replay) and replay.get("ok") == false
+		and replay.get("event_id") == "" and replay.get("choice_id") == ""
+		and _wallet_exact_int(replay.get("wallet"), 20, 0),
+		"trade replay rejected with exact IDs and unchanged wallet")
+	(result["wallet"] as Dictionary)["gold"] = 999
+	(replay["wallet"] as Dictionary)["scraps"] = 999
+	_check(_wallet_exact_int(wallet, 8, 1) and gate.get_event() == original,
+		"mutated successful/rejected result wallets cannot change caller or selector")
+	_check(gate.is_claimed() and not gate.is_valid() and randi() == expected_rng,
+		"trade and replay preserve claim state and global RNG")
+
+	# An unaffordable gate cannot latch; its free pass is still offered on this instance.
+	var empty_wallet := {"gold": 8, "scraps": 0}
+	var empty_caller: Dictionary = authored.duplicate(true)
+	var reject_rng := _rng_start(64502)
+	var free_gate := RunEventChoice.new(empty_caller)
+	var refusal := free_gate.choose_with_wallet("examine", empty_wallet)
+	_check(_wallet_shape_ok(refusal) and refusal.get("ok") == false
+		and refusal.get("event_id") == "" and refusal.get("choice_id") == ""
+		and _wallet_exact_int(refusal.get("wallet"), 8, 0),
+		"no-scrap refusal returns exact detached original wallet")
+	_check(free_gate.is_valid() and not free_gate.is_claimed()
+		and free_gate.get_event() == original and empty_caller == original,
+		"unaffordable debit preserves selector and both event snapshots")
+	(refusal["wallet"] as Dictionary)["gold"] = -999
+	_check(_wallet_exact_int(empty_wallet, 8, 0),
+		"mutating refused wallet cannot affect original zero-scrap wallet")
+	var free_result := free_gate.choose_with_wallet("pass", empty_wallet)
+	_check(_wallet_shape_ok(free_result) and free_result.get("ok") == true
+		and free_result.get("event_id") == "needle_gate" and free_result.get("choice_id") == "pass"
+		and _wallet_exact_int(free_result.get("wallet"), 8, 0),
+		"pass on SAME selector after unaffordable trade succeeds for free")
+	_check(_wallet_exact_int(empty_wallet, 8, 0) and free_gate.get_event() == original,
+		"passing preserves caller wallet and event")
+	_check(free_gate.is_claimed() and not free_gate.is_valid(), "free pass latches exactly one claim")
+	var after_pass := free_gate.choose_with_wallet("examine", {"gold": 8, "scraps": 1})
+	_check(_wallet_shape_ok(after_pass) and after_pass.get("ok") == false
+		and _wallet_exact_int(after_pass.get("wallet"), 8, 1),
+		"post-pass replay rejects even when the offered trade becomes affordable")
+	_check(randi() == reject_rng and free_gate.get_event() == original,
+		"refused debit, free pass, replay spend no RNG or authored event state")
+
+
+func _test_signed_scraps_boundaries() -> void:
+	var matches := _matching("needle_gate")
+	_check(matches.size() == 1, "exactly one Needle Gate for signed amount probes")
+	if matches.size() != 1:
+		return
+	var authored: Dictionary = matches[0]
+	# Both integer and JSON-style integral float deltas are admitted, including -1.
+	var accepted := [
+		{"label": "int debit", "gold": 1, "scraps": -1, "wallet": {"gold": 8, "scraps": 1}, "gold_after": 9, "scraps_after": 0},
+		{"label": "JSON-float debit", "gold": 1.0, "scraps": -1.0, "wallet": {"gold": 8, "scraps": 1}, "gold_after": 9, "scraps_after": 0},
+		{"label": "int positive scraps", "gold": 0, "scraps": 1, "wallet": {"gold": 8, "scraps": 0}, "gold_after": 8, "scraps_after": 1},
+		{"label": "JSON-float positive scraps", "gold": 0.0, "scraps": 1.0, "wallet": {"gold": 8, "scraps": 0}, "gold_after": 8, "scraps_after": 1},
+		{"label": "free zeros", "gold": 0.0, "scraps": 0.0, "wallet": {"gold": 8, "scraps": 0}, "gold_after": 8, "scraps_after": 0},
+		{"label": "max int debit", "gold": 0, "scraps": -RunEventChoice.MAX_INT, "wallet": {"gold": 8, "scraps": RunEventChoice.MAX_INT}, "gold_after": 8, "scraps_after": 0},
+		{"label": "max safe float debit", "gold": 0.0, "scraps": -9007199254740992.0, "wallet": {"gold": 8, "scraps": 9007199254740992}, "gold_after": 8, "scraps_after": 0},
+	]
+	for case_record in accepted:
+		var probe: Dictionary = case_record
+		var record: Dictionary = authored.duplicate(true)
+		record["choices"][0]["outcome"] = {"gold": probe["gold"], "scraps": probe["scraps"]}
+		var before: Dictionary = record.duplicate(true)
+		var wallet: Dictionary = probe["wallet"].duplicate(true)
+		var wallet_before: Dictionary = wallet.duplicate(true)
+		var instance := RunEventChoice.new(record)
+		_check(instance.is_valid() and not instance.is_claimed(), "positive fixture constructs: " + probe["label"])
+		var result := instance.choose_with_wallet("examine", wallet)
+		_check(_wallet_shape_ok(result) and result.get("ok") == true
+			and result.get("event_id") == "needle_gate" and result.get("choice_id") == "examine"
+			and _wallet_exact_int(result.get("wallet"), probe["gold_after"], probe["scraps_after"]),
+			"signed/integral delta settles exactly: " + probe["label"])
+		_check(wallet == wallet_before and record == before and instance.get_event() == before
+			and instance.is_claimed() and not instance.is_valid(),
+			"signed/integral delta leaves inputs and snapshots immutable: " + probe["label"])
+
+	# Malformed metadata, rejected gold debits, oversized credits and scrap overdrafts
+	# must all fail *before* claiming; the same selector can then pass for free.
+	var rejected := [
+		{"label": "negative int gold", "gold": -1, "scraps": -1},
+		{"label": "negative float gold", "gold": -1.0, "scraps": -1.0},
+		{"label": "int scraps overdraft", "gold": 0, "scraps": -2},
+		{"label": "float scraps overdraft", "gold": 0.0, "scraps": -2.0},
+		{"label": "smallest signed int overdraft", "gold": 0, "scraps": -RunEventChoice.MAX_INT - 1},
+		{"label": "fractional gold", "gold": 0.5, "scraps": -1},
+		{"label": "fractional scraps", "gold": 0, "scraps": -1.5},
+		{"label": "positive fractional scraps", "gold": 0, "scraps": 1.25},
+		{"label": "nonfinite gold", "gold": INF, "scraps": -1},
+		{"label": "nonfinite scraps", "gold": 0, "scraps": -INF},
+		{"label": "NaN gold", "gold": NAN, "scraps": -1},
+		{"label": "NaN scraps", "gold": 0, "scraps": NAN},
+		{"label": "typed wrong gold", "gold": "1", "scraps": -1},
+		{"label": "typed wrong scraps", "gold": 0, "scraps": "-1"},
+		{"label": "bool gold", "gold": true, "scraps": -1},
+		{"label": "bool scraps", "gold": 0, "scraps": false},
+		{"label": "null scraps", "gold": 0, "scraps": null},
+		{"label": "oversize float gold", "gold": 9007199254740994.0, "scraps": -1},
+		{"label": "oversize float scraps", "gold": 0, "scraps": -9007199254740994.0},
+		{"label": "overflow gold credit", "gold": 12, "scraps": -1, "wallet": {"gold": RunEventChoice.MAX_INT, "scraps": 1}},
+		{"label": "overflow scraps credit", "gold": 0, "scraps": 1, "wallet": {"gold": 8, "scraps": RunEventChoice.MAX_INT}},
+	]
+	for case_record in rejected:
+		var probe: Dictionary = case_record
+		var record: Dictionary = authored.duplicate(true)
+		record["choices"][0]["outcome"] = {"gold": probe["gold"], "scraps": probe["scraps"]}
+		var wallet: Dictionary = probe.get("wallet", {"gold": 8, "scraps": 1}).duplicate(true)
+		var wallet_before: Dictionary = wallet.duplicate(true)
+		var initial: Dictionary = record.duplicate(true)
+		var expected_rng := _rng_start(64600)
+		var instance := RunEventChoice.new(record)
+		var denied := instance.choose_with_wallet("examine", wallet)
+		_check(_wallet_shape_ok(denied) and denied.get("ok") == false
+			and denied.get("event_id") == "" and denied.get("choice_id") == ""
+			and denied.get("wallet") == wallet_before,
+			"invalid delta rejected with untouched exact wallet: " + probe["label"])
+		_check(instance.is_valid() and not instance.is_claimed()
+			and var_to_bytes(instance.get_event()) == var_to_bytes(initial)
+			and var_to_bytes(record) == var_to_bytes(initial) and wallet == wallet_before,
+			"invalid delta leaves selector/snapshots/inputs intact: " + probe["label"])
+		(denied["wallet"] as Dictionary)["gold"] = -4
+		_check(wallet == wallet_before, "invalid delta rejection wallet is detached: " + probe["label"])
+		var recovered := instance.choose_with_wallet("pass", wallet)
+		_check(_wallet_shape_ok(recovered) and recovered.get("ok") == true
+			and recovered.get("event_id") == "needle_gate" and recovered.get("choice_id") == "pass"
+			and recovered.get("wallet") == wallet_before,
+			"invalid delta recovers through free pass: " + probe["label"])
+		_check(instance.is_claimed() and not instance.is_valid()
+			and var_to_bytes(instance.get_event()) == var_to_bytes(initial) and wallet == wallet_before,
+			"recovery is one-time and input-safe: " + probe["label"])
+		_check(randi() == expected_rng, "invalid delta and recovery use no global RNG: " + probe["label"])
+
+
 func _test_wallet_preflight_rejections_and_recovery() -> void:
 	var matches := _matching("button_trail")
 	if matches.size() != 1:
@@ -480,9 +648,9 @@ func _test_wallet_preflight_rejections_and_recovery() -> void:
 	_check(service.is_claimed() and not service.is_valid(),
 		"recovered claim latches after preflight rejections")
 
-	# 2. The five placeholder events reject choose_with_wallet without claiming, then still accept legacy choose().
+	# 2. The four placeholder events reject choose_with_wallet without claiming, then still accept legacy choose().
 	for event_id in REQUIRED:
-		if event_id == "button_trail":
+		if event_id in ["button_trail", "needle_gate"]:
 			continue
 		var event_matches := _matching(event_id)
 		if event_matches.size() != 1:
@@ -694,33 +862,62 @@ func _test_no_rng_consumption() -> void:
 
 
 func _test_seeded_replay_and_wallet_rng() -> void:
-	var matches := _matching("button_trail")
-	if matches.size() != 1:
-		return
-	var authored_record: Dictionary = matches[0]
-	for choice_id in ["follow", "leave"]:
-		var traces: Array = []
-		for attempt in range(2):
-			var local_rng := RandomNumberGenerator.new()
-			local_rng.seed = 918273
-			var initial_local_state := local_rng.state
-			var expected_global := _rng_start(918273)
-			var instance := RunEventChoice.new(authored_record.duplicate(true))
-			var wallet := {"gold": 12, "scraps": 0}
-			var preflight_reject := instance.choose_with_wallet("not_a_choice", wallet)
-			var claim_result := instance.choose_with_wallet(choice_id, wallet)
-			var replay_reject := instance.choose_with_wallet(choice_id, claim_result["wallet"])
-			_check(local_rng.state == initial_local_state,
-				"local seeded RNG state unchanged for " + choice_id + " attempt " + str(attempt))
-			_check(randi() == expected_global,
-				"global seeded RNG stream unchanged for " + choice_id + " attempt " + str(attempt))
-			traces.append({
-				"preflight_reject": preflight_reject,
-				"claim_result": claim_result,
-				"replay_reject": replay_reject,
-				"is_claimed": instance.is_claimed(),
-				"is_valid": instance.is_valid(),
-				"event": instance.get_event(),
-			})
-		_check(traces.size() == 2 and traces[0] == traces[1],
-			"two independent seeded instances produce identical Button Trail traces for " + choice_id)
+	# Each branch gets two fresh selectors and seeded streams, including the
+	# unaffordable Needle Gate attempt before the successful free pass.
+	for event_id in ["button_trail", "needle_gate"]:
+		var matches := _matching(event_id)
+		_check(matches.size() == 1, "seeded replay record exists exactly once: " + event_id)
+		if matches.size() != 1:
+			continue
+		var authored_record: Dictionary = matches[0]
+		var choices := ["follow", "leave"] if event_id == "button_trail" else ["examine", "pass"]
+		for choice_id in choices:
+			var traces: Array = []
+			for attempt in range(2):
+				var local_rng := RandomNumberGenerator.new()
+				local_rng.seed = 918273
+				var initial_local_state := local_rng.state
+				var expected_global := _rng_start(918273)
+				var caller_event: Dictionary = authored_record.duplicate(true)
+				var original_event: Dictionary = caller_event.duplicate(true)
+				var instance := RunEventChoice.new(caller_event)
+				var wallet := {"gold": 12, "scraps": 0} if event_id == "button_trail" else {"gold": 8, "scraps": 1 if choice_id == "examine" else 0}
+				var wallet_before: Dictionary = wallet.duplicate(true)
+				var preflight_reject := instance.choose_with_wallet("not_a_choice", wallet)
+				var denied_debit: Dictionary = {}
+				if event_id == "needle_gate" and choice_id == "pass":
+					denied_debit = instance.choose_with_wallet("examine", wallet)
+					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
+						and _wallet_exact_int(denied_debit.get("wallet"), 8, 0)
+						and instance.is_valid() and not instance.is_claimed(),
+						"seeded no-scrap debit refused before free pass")
+				var claim_result := instance.choose_with_wallet(choice_id, wallet)
+				var replay_reject := instance.choose_with_wallet(choice_id, claim_result["wallet"])
+				_check(_wallet_shape_ok(preflight_reject) and preflight_reject.get("ok") == false
+					and preflight_reject.get("wallet") == wallet_before,
+					"seeded forged choice preserves wallet for " + event_id + "/" + choice_id)
+				_check(_wallet_shape_ok(claim_result) and claim_result.get("ok") == true
+					and claim_result.get("event_id") == event_id and claim_result.get("choice_id") == choice_id,
+					"seeded valid claim has expected IDs: " + event_id + "/" + choice_id)
+				_check(_wallet_shape_ok(replay_reject) and replay_reject.get("ok") == false
+					and replay_reject.get("wallet") == claim_result["wallet"]
+					and instance.is_claimed() and not instance.is_valid(),
+					"seeded replay fails after one claim: " + event_id + "/" + choice_id)
+				_check(wallet == wallet_before and caller_event == original_event
+					and instance.get_event() == original_event,
+					"seeded traces preserve caller event, wallet and selector snapshots")
+				_check(local_rng.state == initial_local_state,
+					"local seeded RNG state unchanged for " + event_id + "/" + choice_id + " attempt " + str(attempt))
+				_check(randi() == expected_global,
+					"global seeded RNG stream unchanged for " + event_id + "/" + choice_id + " attempt " + str(attempt))
+				traces.append({
+					"preflight_reject": preflight_reject,
+					"denied_debit": denied_debit,
+					"claim_result": claim_result,
+					"replay_reject": replay_reject,
+					"is_claimed": instance.is_claimed(),
+					"is_valid": instance.is_valid(),
+					"event": instance.get_event(),
+				})
+			_check(traces.size() == 2 and traces[0] == traces[1],
+				"two independent seeded instances produce identical wallet traces for " + event_id + "/" + choice_id)
