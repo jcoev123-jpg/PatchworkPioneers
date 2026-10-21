@@ -482,7 +482,7 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 		starting_outcome = RunActBattleOutcome.new(run_map)
 		if not starting_outcome.begin_current_battle(starting_result):
 			return false
-		starting_carryover = RunPartyCarryover.new(starting_party.get_heroes())
+		starting_carryover = RunTornCarryover.new(starting_party.get_heroes())
 		if not starting_carryover.is_valid():
 			return false
 	var rng_before := starting_rng.state
@@ -491,6 +491,9 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	if not starting_flow.begin_fight():
 		starting_rng.state = rng_before
 		push_warning("Starter combat bindings are invalid; run was not started")
+		return false
+	if starting_carryover != null and not starting_carryover.begin_battle(run_map.get_current_node_id(), starting_result, starting_party):
+		starting_rng.state = rng_before
 		return false
 	enemy_intents = selector
 	enemy_attacks = enemy_intents.get_intents()
@@ -904,15 +907,22 @@ func _claim_card_reward(id: String, button, offering) -> void:
 				or offering.read_state().party.heroes != run_heroes \
 				or offering.read_state().trinkets != run_trinkets:
 				return
+		var torn_carry := party_carryover as RunTornCarryover
+		if torn_carry == null or torn_carry.read_state().heroes != run_heroes \
+			or torn_carry.preview_reward(_carryover_node, battle_result, party) == null:
+			return
 		var result: Dictionary = offering.choose(_carryover_node, id) if offering is RunMultiFightRewards else offering.choose(id)
 		if not result.ok:
+			return
+		var carried := torn_carry.apply_reward(_carryover_node, battle_result, party)
+		if not carried.ok:
 			return
 		var settled: Dictionary = result.state if offering is RunMultiFightRewards else result
 		run_deck.assign(settled.deck)
 		session_gold = settled.gold
 		if offering is RunMultiFightRewards:
-			run_heroes = settled.party.heroes.duplicate(true)
 			run_trinkets.assign(settled.trinkets)
+		run_heroes = carried.heroes.duplicate(true)
 		fight_reward_claimed = true
 		result_label.text = "Battle result: victory | Gold: %d" % session_gold
 		_finish_card_reward(offering)
@@ -963,6 +973,7 @@ func _can_leave_fight() -> bool:
 		and battle_result.get_outcome() == CombatBattleResult.VICTORY \
 		and party != null and party.is_valid() and not party.is_defeated() \
 		and _routed_reward_service() != null and fight_reward_claimed \
+		and party_carryover != null and party_carryover.read_state().heroes == run_heroes \
 		and (multi_fight_rewards == null or (party_carryover.read_state().completed_fights.has(_carryover_node) \
 			and party_carryover.read_state().heroes == run_heroes \
 			and multi_fight_rewards.read_state().trinkets == run_trinkets)) \
@@ -1074,6 +1085,9 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		next_result = CombatBattleResult.new(next_party, entry.enemies)
 		next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
 		staged = next_flow.begin_fight()
+		if staged:
+			var torn_carry := party_carryover as RunTornCarryover
+			staged = torn_carry != null and torn_carry.begin_battle(id, next_result, next_party)
 	if not staged or not act_outcome.begin_current_battle(next_result):
 		run_map.undo_choice(id, prior)
 		run_rng.state = rng_before

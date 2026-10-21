@@ -151,15 +151,22 @@ func _run() -> void:
 			and missing_before == [app.run_heroes, app.run_deck, app.session_gold,
 			app.run_removal_count, app.run_map.get_floors(), app.run_map.get_route()], "absent RNG rejects without partial entry")
 		app.run_rng = saved_rng
-		# A valid roster with an unknown catalog owner must fail stock generation without draws.
+		# Published roster drift now fails before entering another run node.
 		var heroes: Array = app.run_heroes.duplicate(true)
 		app.run_heroes[0].id = "unknown_shop_owner"
+		_check(not app._can_choose_connected_route(), "published roster drift fails carryover admission")
+		invalid_before = _persistent()
+		route_callback.call()
+		_check(_persistent() == invalid_before and app.shop_visit == null, "roster drift cannot advance route or consume RNG")
+		# Align the held fixture too so the original stock rejection remains reachable.
+		app.party_carryover._heroes[0].id = "unknown_shop_owner"
 		_check(app._can_choose_connected_route(), "unknown catalog owner passes roster admission before stock rejection")
 		invalid_before = _persistent()
 		route_callback.call()
 		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
 			"rejected stock leaves roster, deck, gold, route and RNG untouched")
 		app.run_heroes = heroes
+		app.party_carryover._heroes = heroes.duplicate(true)
 		# Force choose_node to reject only after admission and valid generation.
 		var original_map: RunMap = app.run_map
 		var rejecting := RejectingMap.new()

@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_owned_stock_reconciliation()
 	_test_fight_reward_sequences()
 	_test_fight_reward_rejections()
+	_test_typed_battle_bridge()
 	if failures.is_empty():
 		print("run_shop_visit_test: PASS (", checks, " checks)")
 	else:
@@ -790,6 +791,309 @@ func _test_rng_and_equal_replay() -> void:
 	_check(first["state"]["gold"] == 55 and first["state"]["prior_removals"] == 2, "replay applied exactly two valid removals and two purchases")
 	_check(first["state"]["status"] == "closed" and first["state"]["deck"].size() == 12, "replay ends closed with one appended card per purchased offer")
 	_check(first["responses"] == [false, true, false, true, true, false, false, true, true, true, true, true, true, false, true], "replay exercises purchases before and after removal plus their rejections")
+
+
+## The typed bridge must consume actual witnessed map-bound reward settlements.
+## No mocked reward dictionaries appear on the positive path.
+func _typed_battle_fixture() -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	var map := RunMap.new()
+	var route: Array[String] = []
+	for map_seed in range(1, 3001):
+		rng.seed = map_seed
+		if not map.generate(rng):
+			continue
+		for fight in map.get_floors()[0]:
+			if fight.type != "Fight":
+				continue
+			for elite_id in fight.outgoing:
+				if map.get_node(elite_id).type != "Elite":
+					continue
+				for shop_id in map.get_node(elite_id).outgoing:
+					if map.get_node(shop_id).type != "Shop":
+						continue
+					for second_id in map.get_node(shop_id).outgoing:
+						if map.get_node(second_id).type == "Shop":
+							route.assign([fight.id, elite_id, shop_id, second_id])
+							break
+					if not route.is_empty():
+						break
+				if not route.is_empty():
+					break
+			if not route.is_empty():
+				break
+		if not route.is_empty():
+			break
+	_check(route.size() == 4, "real map has connected Fight/Elite/Shop/Shop path")
+	if route.size() != 4:
+		return {}
+	var heroes: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in heroes:
+		hero.max_hp = int(hero.max_hp)
+	var party := CombatParty.new(heroes)
+	var carry := RunPartyCarryover.new(party.get_heroes())
+	var deck := _starter_deck()
+	var owned: Array[String] = ["button_charm"]
+	var candidates := StarterCards.new().get_all_card_ids()
+	var drops := ["thread_token", "button_charm", "spool_pendant"]
+	_check(party.is_valid() and carry.is_valid() and not deck.is_empty()
+		and candidates.size() >= 3, "typed bridge uses real authored resources")
+	var owner := RunMultiFightRewards.new(map, rng, carry, deck, 350, owned, candidates, drops)
+	var ledger := RunShopVisit.new(deck, 350, 0, owned)
+	return {"map": map, "rng": rng, "route": route, "party": party, "carry": carry,
+		"deck": deck, "owned": owned, "candidates": candidates, "drops": drops,
+		"owner": owner, "ledger": ledger}
+
+
+func _typed_oracle(rng: RandomNumberGenerator, candidates: Array, elite: bool) -> Dictionary:
+	var award := rng.randi_range(25, 35) if elite else rng.randi_range(10, 20)
+	var pool: Array = candidates.duplicate()
+	pool.sort()
+	var offers: Array = []
+	var catalog := StarterCards.new()
+	for i in range(3):
+		var id: String = pool.pop_at(rng.randi_range(0, pool.size() - 1))
+		offers.append({"id": id, "owner": catalog.get_definition(id).owner})
+	var drop := ""
+	if elite:
+		var unowned := ["spool_pendant", "thread_token"]
+		drop = unowned[rng.randi_range(0, unowned.size() - 1)]
+	return {"ok": true, "gold_award": award, "offers": offers, "trinket_drop_id": drop}
+
+
+func _reject_typed(f: Dictionary, id: Variant, settled: Variant, label: String) -> void:
+	var ledger: RunShopVisit = f.ledger
+	var before := ledger.get_state()
+	var owner_state: Dictionary = f.owner.read_state()
+	var carry_state: Dictionary = f.carry.read_state()
+	var route: Array = f.map.get_route()
+	var rng_state: int = f.rng.state
+	var input_before: Variant = settled.duplicate(true) if settled is Dictionary else settled
+	var deck_before: Array = f.deck.duplicate(true)
+	var owned_before: Array = f.owned.duplicate(true)
+	var candidates_before: Array = f.candidates.duplicate(true)
+	var drops_before: Array = f.drops.duplicate(true)
+	_check(not ledger.apply_battle_reward(id, settled), label + " rejects typed admission")
+	_check(ledger.get_state() == before and f.owner.read_state() == owner_state
+		and f.carry.read_state() == carry_state and f.map.get_route() == route
+		and f.rng.state == rng_state, label + " complete Shop/source/map/RNG unchanged")
+	_check(settled == input_before and f.deck == deck_before and f.owned == owned_before
+		and f.candidates == candidates_before and f.drops == drops_before,
+		label + " original receipt and source inventory detached")
+
+
+func _typed_battle_sequence(fight_pick: bool) -> Dictionary:
+	var f := _typed_battle_fixture()
+	if f.is_empty():
+		return {}
+	var ledger: RunShopVisit = f.ledger
+	_check(ledger.has_method("apply_battle_reward"), "typed battle admission public API exists")
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = f.rng.seed
+	oracle.state = f.rng.state
+	var receipts: Array = []
+	var timeline: Array = [ledger.get_state()]
+	for index in range(2):
+		var id: String = f.route[index]
+		_check(f.map.get_legal_choices().has(id) and f.map.choose_node(id),
+			"actual reachable reward node is chosen")
+		if index == 1:
+			f.party = f.carry.create_next_fight_party()
+			_check(f.party != null and f.party.is_valid(), "Elite party hydrated from real Fight carryover")
+			if f.party == null:
+				return {}
+		var party: CombatParty = f.party
+		var enemies := CombatEnemies.new([{"id": "ragling", "max_hp": 8}])
+		var battle := CombatBattleResult.new(party, enemies)
+		_check(battle.get_outcome() == CombatBattleResult.ACTIVE, "observed battle starts ACTIVE")
+		_check(enemies.apply_damage(1, 8) and battle.get_outcome() == CombatBattleResult.ACTIVE,
+			"unobserved terminal damage is not a victory receipt")
+		_check(battle.evaluate() == CombatBattleResult.VICTORY, "witness actual combat VICTORY")
+		var pre_reward: Dictionary = f.owner.read_state()
+		var expected_offer := _typed_oracle(oracle, f.candidates, index == 1)
+		var prepared: Dictionary = f.owner.prepare(id, battle, party)
+		_check(prepared == expected_offer and f.rng.state == oracle.state,
+			"Fight/Elite gold, offers, drop, and run RNG exactly match seeded oracle")
+		var choice: String = ""
+		if (index == 0 and fight_pick) or (index == 1 and not fight_pick):
+			choice = expected_offer.offers[0].id
+		var settled: Dictionary = f.owner.choose(id, choice)
+		var typed := {"node_id": id, "node_kind": "Fight" if index == 0 else "Elite",
+			"trinket_drop_id": expected_offer.trinket_drop_id}
+		_check(settled.ok and settled.receipt == typed
+			and settled.skipped == choice.is_empty() and settled.selected_id == choice,
+			"real settled receipt binds chosen card and canonical seeded node/drop")
+		var expected_run: Dictionary = pre_reward.duplicate(true)
+		expected_run.gold += expected_offer.gold_award
+		if not choice.is_empty():
+			expected_run.deck.append(choice)
+		if index == 1:
+			expected_run.trinkets.append(expected_offer.trinket_drop_id)
+		var carried: Array = party.get_heroes()
+		for hero in carried:
+			hero.block = 0
+		expected_run.party = f.carry.read_state()
+		_check(settled.state == expected_run and f.owner.read_state() == expected_run,
+			"complete authoritative pre/post reward snapshot matches exact delta")
+		var original: Dictionary = settled.duplicate(true)
+		for bad_id in [null, 5, "", " wrong", id + "_foreign"]:
+			_reject_typed(f, bad_id, settled, "missing/foreign/noncanonical node")
+		for bad in [null, {}, {"ok": false}, {"ok": true}, []]:
+			_reject_typed(f, id, bad, "missing or unsuccessful settlement")
+		for field in ["ok", "skipped", "selected_id", "state", "receipt"]:
+			var changed := settled.duplicate(true)
+			changed.erase(field)
+			_reject_typed(f, id, changed, "missing settlement " + field)
+		for kind in ["Boss", "Shop", "Rest", "Event", "", "elite"]:
+			var changed := settled.duplicate(true)
+			changed.receipt.node_kind = kind
+			_reject_typed(f, id, changed, "invalid typed node kind " + kind)
+		for field in ["node_id", "node_kind", "trinket_drop_id"]:
+			var changed := settled.duplicate(true)
+			changed.receipt.erase(field)
+			_reject_typed(f, id, changed, "missing receipt " + field)
+		var wrong := settled.duplicate(true)
+		wrong.receipt.node_id = f.route[1 - index]
+		_reject_typed(f, id, wrong, "wrong receipt node")
+		wrong = settled.duplicate(true)
+		wrong.receipt.node_kind = "Elite" if index == 0 else "Fight"
+		_reject_typed(f, id, wrong, "wrong actual node kind")
+		wrong = settled.duplicate(true)
+		wrong.skipped = not settled.skipped
+		_reject_typed(f, id, wrong, "tampered Skip pairing")
+		wrong = settled.duplicate(true)
+		wrong.selected_id = "invented_card"
+		_reject_typed(f, id, wrong, "unoffered/unknown appended selection")
+		wrong = settled.duplicate(true)
+		wrong.state.deck.append("invented_card")
+		_reject_typed(f, id, wrong, "unexpected deck append")
+		wrong = settled.duplicate(true)
+		wrong.state.deck[0] = "invented_card"
+		_reject_typed(f, id, wrong, "mutated existing deck prefix")
+		wrong = settled.duplicate(true)
+		wrong.state.gold = pre_reward.gold + (24 if index == 1 else 9)
+		_reject_typed(f, id, wrong, "under-range gold award")
+		wrong = settled.duplicate(true)
+		wrong.state.gold = pre_reward.gold + (36 if index == 1 else 21)
+		_reject_typed(f, id, wrong, "over-range gold award")
+		wrong = settled.duplicate(true)
+		wrong.state.gold = -1
+		_reject_typed(f, id, wrong, "negative gold")
+		wrong = settled.duplicate(true)
+		wrong.state.gold = 9223372036854775807
+		_reject_typed(f, id, wrong, "MAX_INT cannot spoof excess gold")
+		wrong = settled.duplicate(true)
+		wrong.state.party.completed_fights.clear()
+		_reject_typed(f, id, wrong, "uncommitted carryover history")
+		wrong = settled.duplicate(true)
+		wrong.receipt.trinket_drop_id = "button_charm"
+		_reject_typed(f, id, wrong, "wrong or already-owned trinket drop")
+		wrong = settled.duplicate(true)
+		wrong.state.trinkets.clear()
+		_reject_typed(f, id, wrong, "missing or changed trinket inventory")
+		wrong = settled.duplicate(true)
+		wrong.state.trinkets.append("extra")
+		_reject_typed(f, id, wrong, "extra trinket appended")
+		_check(ledger.apply_battle_reward(id, settled), "valid real typed receipt succeeds after all negative retries")
+		var expected_ledger: Dictionary = timeline.back().duplicate(true)
+		expected_ledger.deck = expected_run.deck.duplicate(true)
+		expected_ledger.gold = expected_run.gold
+		expected_ledger.trinkets = expected_run.trinkets.duplicate(true)
+		expected_ledger.claimed_fight_ids.append(id)
+		_check(ledger.get_state() == expected_ledger, "exact atomic deck/gold/trinket/claim snapshot")
+		_check(settled == original, "successful typed bridge never changes caller receipt")
+		_reject_typed(f, id, settled, "typed duplicate claim")
+		var legacy := {"ok": true, "skipped": true, "selected_id": "",
+			"deck": ledger.get_state().deck, "gold": ledger.get_state().gold + 10}
+		var unchanged := ledger.get_state()
+		_check(not ledger.apply_fight_reward(id, legacy) and ledger.get_state() == unchanged,
+			"legacy API cannot replay a typed claim")
+		var copied := ledger.get_state()
+		copied.deck.clear()
+		copied.trinkets.clear()
+		copied.claimed_fight_ids.clear()
+		_check(ledger.get_state() == expected_ledger, "detached Shop snapshots protect accepted reward")
+		receipts.append(settled.duplicate(true))
+		timeline.append(ledger.get_state())
+	# A legacy claim likewise blocks typed replay of the same real Fight receipt.
+	var old_ledger := RunShopVisit.new(f.deck, 350, 0, f.owned)
+	var fight_claim: Dictionary = receipts[0]
+	var flat := {"ok": true, "skipped": fight_claim.skipped,
+		"selected_id": fight_claim.selected_id,
+		"deck": fight_claim.state.deck, "gold": fight_claim.state.gold}
+	_check(old_ledger.apply_fight_reward(f.route[0], flat), "legacy normal Fight claim stays operational")
+	var old_before := old_ledger.get_state()
+	_check(not old_ledger.apply_battle_reward(f.route[0], fight_claim)
+		and old_ledger.get_state() == old_before, "typed API cannot replay a legacy claim")
+	var before_shops := ledger.get_state()
+	_check(f.map.get_legal_choices().has(f.route[2]) and f.map.choose_node(f.route[2]),
+		"real first Shop follows Elite")
+	_check(ledger.open_visit(f.route[2]), "first canonical Shop visit opens")
+	var shop := _paid_shop(ledger.get_state())
+	_paid_transaction(ledger, shop, "card", "warden_brace", 25, "reward-funded first Shop card")
+	_paid_transaction(ledger, shop, "trinket", "t_spool", 40, "reward-funded first Shop trinket")
+	var before_remove := ledger.get_state()
+	var removed := ledger.remove_card("warden_strike")
+	_check(removed.ok and removed.price == 75 and removed.prior_removals == 1,
+		"first Shop removes at base 75 after real purchases")
+	var after_remove := before_remove.duplicate(true)
+	after_remove.deck.erase("warden_strike")
+	after_remove.gold -= 75
+	after_remove.prior_removals = 1
+	after_remove.price = 100
+	after_remove.removal_available = false
+	after_remove.status = "used"
+	_check(ledger.get_state() == after_remove, "first paid removal exact snapshot")
+	_check(ledger.close_visit(), "first real Shop closes")
+	_check(f.map.get_legal_choices().has(f.route[3]) and f.map.choose_node(f.route[3]),
+		"connected later Shop choice is genuinely legal")
+	_check(ledger.open_visit(f.route[3]), "second distinct connected Shop opens")
+	var before_second := ledger.get_state()
+	var second_remove := ledger.remove_card("seamstress_prick")
+	_check(second_remove.ok and second_remove.price == 100 and second_remove.prior_removals == 2,
+		"second Shop removal rises to 75 + 25")
+	var after_second := before_second.duplicate(true)
+	after_second.deck.erase("seamstress_prick")
+	after_second.gold -= 100
+	after_second.price = 125
+	after_second.prior_removals = 2
+	after_second.removal_available = false
+	after_second.status = "used"
+	_check(ledger.get_state() == after_second, "second removal exact preserved inventory and claims")
+	var next_shop := _paid_shop(ledger.get_state())
+	_paid_transaction(ledger, next_shop, "card", "seamstress_mend", 15, "later Shop purchase after removal")
+	_paid_transaction(ledger, next_shop, "trinket", "t_pocket", 20, "later Shop trinket after removal")
+	_check(ledger.close_visit(), "second Shop closes with rewards and paid purchases")
+	var final_state := ledger.get_state()
+	_check(final_state.status == "closed" and final_state.prior_removals == 2
+		and final_state.visited_ids == [f.route[2], f.route[3]]
+		and final_state.claimed_fight_ids == [f.route[0], f.route[1]]
+		and final_state.trinkets == before_shops.trinkets + ["t_spool", "t_pocket"]
+		and final_state.deck.has("seamstress_mend") and final_state.gold >= 0,
+		"second Shop conserves both Fight/Elite claims, drop, and complete purchase inventory")
+	_check(f.owner.read_state() == receipts[1].state
+		and f.deck == _starter_deck() and f.owned == ["button_charm"]
+		and f.rng.state == oracle.state, "Shop bridge never mutates actual reward source or run RNG")
+	timeline.append(final_state)
+	return {"timeline": timeline, "receipts": receipts, "rng": f.rng.state,
+		"route": f.route, "final": final_state}
+
+
+func _test_typed_battle_bridge() -> void:
+	seed(82179)
+	var expected_global := randi()
+	seed(82179)
+	var picked_fight := _typed_battle_sequence(true)
+	_check(not picked_fight.is_empty(), "pick Fight / Skip Elite real bridge is exercised")
+	_check(randi() == expected_global, "typed Fight pick / Elite Skip draws no global RNG")
+	seed(82179)
+	var replay := _typed_battle_sequence(true)
+	_check(randi() == expected_global and picked_fight == replay,
+		"identical seeded real Fight/Elite/Shop full trace replays exactly")
+	seed(82179)
+	var picked_elite := _typed_battle_sequence(false)
+	_check(not picked_elite.is_empty() and randi() == expected_global,
+		"Fight Skip / Elite pick exercises other choices without global RNG")
 
 
 func _fight_reward(deck: Array, gold: int, selected: String = "") -> Dictionary:

@@ -92,7 +92,9 @@ func _reject(f: Dictionary, action: Callable, message: String) -> void:
 	var heroes: Array = f.party.get_heroes()
 	var route: Array = f.map.get_route()
 	var rng_state: int = f.rng.state
-	_check(action.call().get("ok") == false, message + " rejects")
+	var rejected: Dictionary = action.call()
+	_check(rejected.get("ok") == false, message + " rejects")
+	_check(not rejected.has("receipt"), message + " has no usable receipt")
 	_check(f.owner.read_state() == state and f.carry.read_state() == ledger
 		and f.party.get_heroes() == heroes and f.map.get_route() == route
 		and f.rng.state == rng_state, message + " preserves all authoritative state and RNG")
@@ -157,6 +159,10 @@ func _replay() -> Dictionary:
 			hero["block"] = 0
 		var settled := owner.choose(id, selected)
 		_check(settled.get("ok") == true and settled.get("skipped") == (index == 1), "pick then explicit Skip settle")
+		var receipt := {"node_id": id, "node_kind": "Fight" if index == 0 else "Elite",
+			"trinket_drop_id": expected.trinket_drop_id}
+		_check(settled.get("receipt") == receipt and settled.get("selected_id") == selected,
+			"successful receipt binds exact seeded Fight/Elite node and cached trinket")
 		var state := owner.read_state()
 		_check(state.deck == expected_deck and state.gold == expected_gold and state.party.heroes == carried
 			and f.carry.read_state() == state.party and f.rng.state == oracle.state, "atomic cumulative state and zero transit Block")
@@ -173,7 +179,11 @@ func _replay() -> Dictionary:
 		snapshot.trinkets.clear()
 		snapshot.party.heroes[0].hp = 999
 		settled.state.party.heroes.clear()
+		settled.receipt.node_id = "corrupted"
+		settled.receipt.trinket_drop_id = "corrupted"
 		_check(owner.read_state() == state, "nested run and returned settlement snapshots detached")
+		_check(f.carry.read_state().completed_fights.back() == id and
+			f.map.get_current_node_id() == id, "mutated receipt cannot alter authoritative claim or route")
 		outputs.append({"state": state, "battle": result})
 	_check(owner.read_state().party.heroes[1].hp == 37
 		and owner.read_state().party.heroes[0].hp == 27
@@ -185,7 +195,7 @@ func _test_rejections() -> void:
 	seed(3812)
 	var next_global := randi()
 	seed(3812)
-	for scenario in ["active", "defeat", "foreign", "route", "pending_other", "party_changed", "ledger_changed", "consumed", "consumed_pending", "identities", "enemies_changed", "no_selection", "rest", "bad_pool"]:
+	for scenario in ["active", "defeat", "foreign", "route", "map_regenerated", "pending_other", "party_changed", "ledger_changed", "consumed", "consumed_pending", "identities", "enemies_changed", "no_selection", "rest", "bad_pool"]:
 		var f := _fixture()
 		var owner: RunMultiFightRewards = f.owner
 		var id: String = f.path[0]
@@ -239,6 +249,14 @@ func _test_rejections() -> void:
 		if scenario in ["route", "pending_other"]:
 			_check(f.map.choose_node(f.path[1]), "advance to connected Elite while pending")
 			_reject(f, func(): return owner.prepare(f.path[1], result, party), "other node blocked by pending")
+		elif scenario == "map_regenerated":
+			var rebuilt_rng := RandomNumberGenerator.new()
+			rebuilt_rng.seed = f.rng.seed
+			# Regenerate the SAME layout and route: only the revision distinguishes it.
+			_check(f.map.generate(rebuilt_rng) and f.map.get_floors() == owner._graph,
+				"stale fixture regenerated identical real map")
+			_check(f.map.choose_node(id) and f.map.get_route() == owner._route,
+				"stale fixture restores identical selected route")
 		elif scenario == "party_changed":
 			_check(party.apply_damage(1, 1), "change authoritative party after prepare")
 		elif scenario == "consumed_pending":
