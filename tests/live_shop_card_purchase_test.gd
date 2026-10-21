@@ -218,13 +218,16 @@ func _run() -> void:
 			await _click(app.shop_remove_button)
 			_check(app.run_deck == expected_deck and app.session_gold == 200 - offer.price - 75
 				and app.run_removal_count == 1 and visit.get_state().status == "used", "Buy then Remove charges unchanged quote and retains bought card")
-			_check(app.shop_buy_button.disabled and app.shop_offers.disabled, "removal disables buying")
-			after = _purchase_state()
+			_check(app.shop_buy_button.disabled and not app.shop_offers.disabled, "sold selection stays disabled while post-removal stock remains reachable")
 			app.shop_buy_button.disabled = false
 			app.shop_offers.disabled = false
 			app.shop_offers.select(2)
+			# Deliberately stale service state must still reject after legal removal.
+			purchases._state.gold += 1
+			after = _purchase_state()
 			buy.call()
 			_check(_purchase_state() == after, "post-removal unsold listing cannot publish stale purchase snapshot")
+			purchases._state.gold -= 1
 		stale = [buy, app.shop_back_button.pressed.get_connections()[0].callable]
 		await _click(app.shop_back_button)
 		for callback in stale:

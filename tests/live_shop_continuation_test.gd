@@ -46,6 +46,34 @@ func _bounds(view: Control) -> void:
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "every mounted visit control fits viewport")
 
 
+func _paid_card(index: int, keyboard: bool) -> void:
+	var stock: Dictionary = app.shop_purchases.get_stock()
+	var offer: Dictionary = stock.cards[index]
+	var expected: Array = app.run_deck.duplicate()
+	expected.append(offer.id)
+	var gold: int = app.session_gold - offer.price
+	var rng: int = app.run_rng.state
+	_check(not offer.sold and gold >= 0, "post-removal purchase fixture is unsold and affordable")
+	app.shop_offers.select(index)
+	app.shop_offers.item_selected.emit(index)
+	_check(not app.shop_offers.disabled and not app.shop_buy_button.disabled, "valid visit keeps selected affordable stock enabled")
+	if keyboard:
+		app.shop_offers.grab_focus()
+		await _key(KEY_TAB)
+		_check(app.shop_buy_button.has_focus(), "Tab reaches Buy from stock after removal")
+		await _key(KEY_ENTER)
+	else:
+		await _click(app.shop_buy_button)
+	stock.cards[index].sold = true
+	_check(app.run_deck == expected and app.session_gold == gold and app.run_rng.state == rng and app.shop_purchases.get_stock() == stock, "live purchase charges exact price, appends one card and changes only selected sold marker without RNG")
+	var ledger: Dictionary = app.shop_visit.get_state()
+	var purchases: Dictionary = app.shop_purchases.get_state()
+	_check(ledger.deck == expected and purchases.deck == expected and ledger.gold == gold and purchases.gold == gold and ledger.trinkets == purchases.trinkets, "live purchase and visit ledgers agree exactly")
+	var before := _continuation_state()
+	app.shop_buy_button.pressed.emit()
+	_check(_continuation_state() == before, "sold live purchase cannot replay or spend again")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -76,8 +104,7 @@ func _run() -> void:
 			if entry == null:
 				break
 			# Funding is injected solely to exercise real purchase/removal transactions.
-			if kind == "Shop":
-				app.session_gold = 300
+			app.session_gold = 400
 			var first_oracle := _stock_oracle()
 			await _click(entry)
 			_check(app.shop_visit != null and is_instance_valid(app.shop_continue_button), "first Shop mounts ledger and Continue")
@@ -85,6 +112,11 @@ func _run() -> void:
 				break
 			_check(app.shop_purchases.get_stock() == first_oracle.stock and app.run_rng.state == first_oracle.state,
 				"first connected Shop matches pre-entry stock and RNG oracle")
+			app.shop_purchases._state.gold += 1
+			var desynchronized := _continuation_state()
+			app.shop_remove_button.pressed.emit()
+			_check(_continuation_state() == desynchronized, "removal rejects stale purchase ledger before committing visit or spending")
+			app.shop_purchases._state.gold -= 1
 			if kind == "Shop":
 				var deck_before: Array = app.run_deck.duplicate()
 				var gold_before: int = app.session_gold
@@ -96,6 +128,23 @@ func _run() -> void:
 				gold_before = app.session_gold
 				await _click(app.shop_remove_button)
 				_check(app.run_deck == deck_before and app.session_gold == gold_before - 75 and app.run_removal_count == 1, "real first Shop removal commits exact cost, deck and rising count")
+			else:
+				var deck_before: Array = app.run_deck.duplicate()
+				deck_before.erase(app.run_deck[app.shop_cards.selected])
+				var gold_before: int = app.session_gold
+				await _click(app.shop_remove_button)
+				_check(app.run_deck == deck_before and app.session_gold == gold_before - 75 and app.run_removal_count == 1 and app.shop_visit.get_state().status == "used", "removal-first ordering charges exact gold and removes one card")
+			var expected_stock: Dictionary = first_oracle.stock.duplicate(true)
+			if kind == "Shop":
+				expected_stock.cards[0].sold = true
+			_check(app.shop_purchases.get_stock() == expected_stock and app.run_rng.state == first_oracle.state, "removal preserves every stock identity, price and sold flag without rolling RNG")
+			_check(app.shop_back_button.has_focus(), "removal moves focus to visible Return")
+			_check(app.shop_remove_button.disabled and app.shop_cards.disabled and not app.shop_offers.disabled, "removal stays disabled while stock remains reachable")
+			var after_removal := _continuation_state()
+			app.shop_remove_button.pressed.emit()
+			_check(_continuation_state() == after_removal, "first Shop duplicate removal cannot spend again")
+			await _paid_card(1 if kind == "Shop" else 0, session == 1)
+			_check(app.shop_remove_button.disabled and app.run_removal_count == 1, "post-removal buying never enables a second removal")
 			var visit: RunShopVisit = app.shop_visit
 			var live_map: RunMap = app.run_map
 			var prior: Array[String] = live_map.get_route()
@@ -164,7 +213,7 @@ func _run() -> void:
 					if button.has_focus():
 						break
 					await _key(KEY_TAB)
-				_check(button.has_focus(), "Tab navigation reaches Continue even after removal disables transactions")
+				_check(button.has_focus(), "Tab navigation reaches Continue after removal and continued buying")
 				await _key(KEY_SPACE)
 			_check(app.route_view != null and not app.shop_view.visible and not app.title_view.visible, "physical Continue opens connected choices without returning or selecting")
 			if app.route_view == null:

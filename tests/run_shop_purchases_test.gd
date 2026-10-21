@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_rejected_attempts()
 	_test_invalid_visits()
 	_test_replay_and_rng()
+	_test_removal_rebase()
 	if failures.is_empty():
 		print("run_shop_purchases_test: PASS (", checks, " checks)")
 	else:
@@ -92,6 +93,87 @@ func _assert_result(result: Dictionary, ok: bool, expected_state: Dictionary,
 		expected["receipt"] = receipt
 	_check(result == expected, label + " complete detached transaction result")
 	_check(result.has("receipt") == ok, label + " success-only receipt")
+
+
+func _test_removal_rebase() -> void:
+	seed(730073)
+	var expected_draw := randi()
+	seed(730073)
+	for purchase_first in [false, true]:
+		var f := _fixture()
+		f.gold = 300
+		var shop := _shop(f)
+		var cards: Array[String] = []
+		cards.assign(f.deck)
+		var owned: Array[String] = []
+		owned.assign(f.trinkets)
+		var visit := RunShopVisit.new(cards, f.gold, 0, owned)
+		_check(visit.open_visit("first_shop"), "removal fixture opens real visit")
+		var receipt: Dictionary = {}
+		if purchase_first:
+			receipt = shop.buy("card", "c_exact")
+			_check(receipt.ok and visit.reconcile_purchase(receipt), "paid purchase reconciles before removal")
+		var before := visit.get_state()
+		cards.assign(before.deck)
+		var result := RunShopCardRemoval.try_remove(cards, before.gold, before.prior_removals, "w_start")
+		var stock := shop.get_stock()
+		var state := shop.get_state()
+		for field in ["ok", "price", "deck", "gold", "prior_removals"]:
+			var malformed := result.duplicate(true)
+			malformed[field] = false if field == "ok" else ( [] if field == "deck" else result[field] + 1 )
+			_check(not shop.rebase_removal(before, malformed, "w_start"), "reject altered removal " + field)
+			_assert_model(shop, state, stock, "malformed removal leaves all state")
+		for field in ["price", "gold", "prior_removals"]:
+			var malformed := result.duplicate(true)
+			malformed[field] = float(result[field])
+			_check(not shop.rebase_removal(before, malformed, "w_start"), "numeric type mismatch rejects " + field)
+			_assert_model(shop, state, stock, "numeric mismatch leaves all state")
+		for field in ["deck", "gold", "trinkets", "prior_removals", "status"]:
+			var stale := before.duplicate(true)
+			stale[field] = [] if field in ["deck", "trinkets"] else ("closed" if field == "status" else -1)
+			_check(not shop.rebase_removal(stale, result, "w_start"), "reject stale before " + field)
+			_assert_model(shop, state, stock, "stale removal leaves all state")
+		_check(not shop.rebase_removal(before, result, "absent"), "foreign removal ID rejected")
+		_check(not shop.rebase_removal(null, result, "w_start") and not shop.rebase_removal(before, [], "w_start"), "malformed containers reject")
+		_check(shop.can_rebase_removal(before, result, "w_start"), "valid removal preflight")
+		_assert_model(shop, state, stock, "preflight is read only")
+		_check(visit.remove_card("w_start") == result and shop.rebase_removal(before, result, "w_start"), "exact helper transition committed by both ledgers")
+		state.deck = result.deck.duplicate()
+		state.gold = result.gold
+		_assert_model(shop, state, stock, "removal changes only exact deck and gold")
+		_check(not shop.rebase_removal(before, result, "w_start"), "removal replay rejects")
+		var next_before := visit.get_state()
+		next_before.status = "available"
+		next_before.removal_available = true
+		cards.assign(next_before.deck)
+		var next_result := RunShopCardRemoval.try_remove(cards, next_before.gold, next_before.prior_removals, "s_start")
+		_check(next_result.ok and not shop.rebase_removal(next_before, next_result, "s_start"), "second otherwise legal removal cannot rebase same stock")
+		_assert_model(shop, state, stock, "replays leave complete state")
+		if purchase_first:
+			_check(not visit.reconcile_purchase(receipt), "pre-removal receipt replay rejected")
+			_check(not shop.buy("card", "c_exact").ok, "sold stock stays sold after removal")
+		var paid := shop.buy("card", "c_more")
+		_check(paid.ok and paid.receipt.price == 10 and visit.reconcile_purchase(paid), "distinct paid purchase works after removal")
+		state.deck.append("c_more")
+		state.gold -= 10
+		stock.cards[3].sold = true
+		_assert_model(shop, state, stock, "post-removal purchase exact full state")
+		var ledger := visit.get_state()
+		_check(ledger.deck == state.deck and ledger.gold == state.gold and ledger.trinkets == state.trinkets and ledger.prior_removals == 1 and ledger.status == "used", "both ledgers agree exactly")
+		_check(not visit.reconcile_purchase(paid) and visit.get_state() == ledger, "post-removal receipt replay leaves ledger unchanged")
+		var poor_fixture := _fixture()
+		poor_fixture.gold = 74
+		var poor := _shop(poor_fixture)
+		cards.assign(poor_fixture.deck)
+		var poor_visit := RunShopVisit.new(cards, 74, 0, owned)
+		_check(poor_visit.open_visit("poor_shop"), "unaffordable removal has an otherwise valid visit")
+		var poor_before := poor_visit.get_state()
+		var denied := RunShopCardRemoval.try_remove(cards, 74, 0, "w_start")
+		_check(not denied.ok and not poor.rebase_removal(poor_before, denied, "w_start"), "unaffordable helper removal rejects")
+		denied.ok = true
+		_check(not poor.rebase_removal(poor_before, denied, "w_start"), "forged unaffordable success rejects")
+		_assert_model(poor, {"party_ids": poor_fixture.party_ids, "deck": poor_fixture.deck, "trinkets": poor_fixture.trinkets, "gold": 74}, _stock(), "unaffordable rebase leaves complete state")
+	_check(randi() == expected_draw, "removal rebases and purchases consume no global RNG")
 
 
 func _test_contract_initial_snapshots() -> void:

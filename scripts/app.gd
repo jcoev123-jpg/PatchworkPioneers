@@ -1332,9 +1332,9 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 		return
 	var ledger := visit.get_state()
 	var state := purchases.get_state()
-	if not ledger.removal_available or ledger.shop_node_id != run_map.get_current_node_id() \
+	if not ledger.valid or ledger.status not in ["available", "used"] or ledger.shop_node_id != run_map.get_current_node_id() \
 		or ledger.deck != run_deck or ledger.gold != session_gold or ledger.prior_removals != run_removal_count \
-		or state.deck != run_deck or state.gold != session_gold:
+		or state.deck != run_deck or state.gold != session_gold or state.trinkets != ledger.trinkets:
 		return
 	var index := shop_offers.selected
 	var stock: Array = purchases.get_stock().cards
@@ -1374,9 +1374,14 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 	var index := shop_cards.selected
 	if index >= run_deck.size() or shop_cards.get_item_text(index) != run_deck[index]:
 		return
-	var result := visit.remove_card(shop_cards.get_item_text(index))
+	var card_id: String = shop_cards.get_item_text(index)
+	var expected := RunShopCardRemoval.try_remove(run_deck, session_gold, run_removal_count, card_id)
+	if shop_purchases == null or not shop_purchases.can_rebase_removal(state, expected, card_id):
+		return
+	var result := visit.remove_card(card_id)
 	if not result.ok:
 		return
+	shop_purchases.rebase_removal(state, result, card_id)
 	run_deck.assign(result.deck)
 	session_gold = result.gold
 	run_removal_count = result.prior_removals
@@ -1395,8 +1400,10 @@ func _refresh_shop() -> void:
 		shop_offers.add_item(_shop_offer_text(offer))
 		shop_offers.set_item_metadata(shop_offers.item_count - 1, offer.id)
 	shop_offers.select(selected)
-	shop_offers.disabled = shop_remove_button.disabled
-	shop_buy_button.disabled = shop_remove_button.disabled or stock[selected].sold or session_gold < stock[selected].price
+	var ledger := shop_visit.get_state()
+	var valid_visit: bool = ledger.valid and ledger.status in ["available", "used"]
+	shop_offers.disabled = not valid_visit
+	shop_buy_button.disabled = not valid_visit or stock[selected].sold or session_gold < stock[selected].price
 
 
 func _focus_visit(view: VBoxContainer) -> void:

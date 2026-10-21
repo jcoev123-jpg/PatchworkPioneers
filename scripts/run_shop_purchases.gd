@@ -17,6 +17,7 @@ extends RefCounted
 var _valid: bool = false
 var _state: Dictionary = {}
 var _stock: Dictionary = {}
+var _removal_rebased: bool = false
 
 
 func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Variant,
@@ -110,6 +111,37 @@ func get_stock() -> Dictionary:
 
 func get_state() -> Dictionary:
 	return _state.duplicate(true)
+
+
+## Preflight the exact helper transition against this purchase ledger. A visit
+## can rebase once; no caller-supplied price or partial snapshot is trusted.
+func can_rebase_removal(before: Variant, result: Variant, card_id: Variant) -> bool:
+	if not _valid or _removal_rebased or not before is Dictionary or not result is Dictionary or not _is_id(card_id):
+		return false
+	if not before.get("valid") is bool or before.get("valid") != true \
+		or before.get("status") != "available" or not before.get("removal_available") is bool or before.get("removal_available") != true:
+		return false
+	if not before.get("gold") is int or before.get("deck") != _state.deck or before.get("gold") != _state.gold or before.get("trinkets") != _state.trinkets:
+		return false
+	if not result.get("ok") is bool or not result.get("price") is int \
+		or not result.get("gold") is int or not result.get("prior_removals") is int:
+		return false
+	var count: Variant = before.get("prior_removals")
+	if not count is int or count < 0:
+		return false
+	var cards: Array[String] = []
+	cards.assign(_state.deck)
+	var expected := RunShopCardRemoval.try_remove(cards, _state.gold, count, card_id)
+	return expected.ok and result == expected
+
+
+func rebase_removal(before: Variant, result: Variant, card_id: Variant) -> bool:
+	if not can_rebase_removal(before, result, card_id):
+		return false
+	_state.deck = result.deck.duplicate(true)
+	_state.gold = result.gold
+	_removal_rebased = true
+	return true
 
 
 func buy(kind: String, id: String) -> Dictionary:
