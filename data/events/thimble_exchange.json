@@ -1,0 +1,9 @@
+{
+  "id": "thimble_exchange",
+  "title": "The Thimble Exchange",
+  "description": "A thimble merchant offers coins for loose thread beside a basket of cast-off stitching.",
+  "choices": [
+    { "id": "gather_thread", "text": "Gather loose thread (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+    { "id": "trade_scrap", "text": "Trade 1 scrap for 10 gold", "outcome": { "gold": 10, "scraps": -1 } }
+  ]
+}
