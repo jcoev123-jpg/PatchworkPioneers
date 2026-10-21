@@ -25,6 +25,18 @@ func _set_actions(app, first: Dictionary, second: Dictionary) -> void:
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
 
+
+## The live hero meters the player sees: one Incoming line per presented slot.
+func _incoming(app) -> Array:
+	var texts: Array = []
+	var presenter = app.get_node_or_null("LiveCombatMeters")
+	if presenter == null or presenter.row == null or presenter.row.get_child_count() < CombatParty.PARTY_SIZE:
+		return texts
+	for index in range(CombatParty.PARTY_SIZE):
+		var line = presenter.row.get_child(index).get_node_or_null("Padding/Content/IncomingForecast")
+		texts.append("" if line == null else line.text)
+	return texts
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var app = load("res://scenes/app.tscn").instantiate()
@@ -84,6 +96,20 @@ func _run() -> void:
 					and badge.icon_mode == cues[index].icon_key, "typed readable badge")
 				_check(Rect2(0, 0, 1280, 720).encloses(badge.get_global_rect()), "badge fits viewport")
 			_check(Rect2(0, 0, 1280, 720).encloses(app.end_turn_button.get_global_rect()), "End Turn fits viewport")
+			await process_frame
+			var incoming := _incoming(app)
+			_check(incoming.size() == CombatParty.PARTY_SIZE
+				and not incoming.has("Incoming: unavailable"),
+				"mounted mixed kinds never fall back to unavailable: turn " + str(turn))
+			if turn == 0:
+				_check(incoming == ["Incoming: none", "Incoming: none", "Incoming: none"],
+					"mounted shove and Exposed turn forecasts no hero attack damage")
+			elif turn == 1:
+				_check(incoming == ["Incoming: 0 Block, 7 HP", "Incoming: none", "Incoming: none"],
+					"mounted buff and attack forecast the shove moved Exposed front hero only")
+			elif turn == 3:
+				_check(incoming == ["Incoming: none", "Incoming: none", "Incoming: 0 Block, 4 HP"],
+					"mounted Weak and attack forecast the fixed back hero only")
 			var before := _snapshot(app)
 			app.end_turn_button.pressed.emit()
 			_check(app.enemy_intents._turn_index == turn + 1, "phase commits and advances once")
