@@ -6,11 +6,14 @@ const SOURCES := [
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
     "res://data/enemies/boss.json",
+    "res://data/enemies/m04_elites.json",
     "res://data/encounters/starter_attacks.json",
     "res://data/encounters/bobbin_skirmish.json",
     "res://data/encounters/buttonhole_holdout.json",
     "res://data/encounters/guard_counterattack.json",
     "res://data/encounters/thimble_crossfire.json",
+    "res://data/encounters/needle_marshal_elite.json",
+    "res://data/encounters/spool_hexer_elite.json",
     "res://data/encounters/patchwork_behemoth.json",
     "res://data/encounters/triple_spool_pinch.json",
     "res://data/encounters/double_hem_siege.json",
@@ -19,7 +22,26 @@ const SOURCES := [
 const HP := {
     "ragling": 12, "ragling_guard": 12, "fray_scavenger": 14,
     "spool_stalker": 14, "button_guard": 16, "seam_ripper": 18,
+    "needle_marshal": 28, "spool_hexer": 24,
     "patchwork_behemoth": 42,
+}
+const NAMES := {
+    "ragling": "Ragling", "ragling_guard": "Guard Ragling",
+    "fray_scavenger": "Fray Scavenger", "spool_stalker": "Spool Stalker",
+    "button_guard": "Button Guard", "seam_ripper": "Seam Ripper",
+    "needle_marshal": "Needle Marshal", "spool_hexer": "Spool Hexer",
+    "patchwork_behemoth": "Patchwork Behemoth",
+}
+const ART_PATHS := {
+    "ragling": "res://assets/paper/enemies/ragling.png",
+    "ragling_guard": "res://assets/paper/enemies/ragling.png",
+    "fray_scavenger": "res://assets/paper/enemies/fray_scavenger.png",
+    "spool_stalker": "res://assets/paper/enemies/spool_stalker.png",
+    "button_guard": "res://assets/paper/enemies/button_guard.png",
+    "seam_ripper": "res://assets/paper/enemies/seam_ripper.png",
+    "needle_marshal": "res://assets/paper/enemies/needle_marshal.png",
+    "spool_hexer": "res://assets/paper/enemies/spool_hexer.png",
+    "patchwork_behemoth": "res://assets/paper/enemies/patchwork_behemoth.png",
 }
 const BINDINGS := {
     "Fight": {
@@ -31,7 +53,11 @@ const BINDINGS := {
         "double_hem_siege": ["fray_scavenger", "seam_ripper"],
         "seamshift_tripwire": ["seam_ripper", "spool_stalker", "fray_scavenger"],
     },
-    "Elite": {"thimble_crossfire": ["button_guard", "seam_ripper"]},
+    "Elite": {
+        "thimble_crossfire": ["button_guard", "seam_ripper"],
+        "needle_marshal_elite": ["needle_marshal", "ragling_guard"],
+        "spool_hexer_elite": ["spool_hexer", "spool_stalker"],
+    },
     "Boss": {"patchwork_behemoth": ["patchwork_behemoth"]},
 }
 const SEAMSHIFT := "seamshift_tripwire"
@@ -60,6 +86,10 @@ var failures: Array[String] = []
 
 func _initialize() -> void:
     _test_authored_bindings()
+    _test_m04_elite_pool_bindings()
+    _test_m04_elite_direct_entries()
+    _test_m04_elite_full_pool_selection()
+    _test_m04_elite_rejections_and_isolation()
     _test_triple_spool_pinch_content()
     _test_seamshift_tripwire_content()
     _test_seamshift_full_pool_entry()
@@ -179,6 +209,23 @@ func _expected_actions() -> Dictionary:
             [{"type": "attack", "amount": 1, "target_position": 1},
              {"type": "block", "amount": 1}],
         ],
+        "needle_marshal_elite": [
+            [{"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "buff", "amount": 3},
+             {"type": "shove", "amount": 0, "target_position": 2, "direction": 1},
+             {"type": "attack", "amount": 4, "target_position": 2}],
+            [{"type": "block", "amount": 2},
+             {"type": "attack", "amount": 1, "target_position": 3}],
+        ],
+        "spool_hexer_elite": [
+            [{"type": "debuff", "amount": 1, "target_position": 1, "status": "exposed"},
+             {"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "debuff", "amount": 1, "target_position": 3, "status": "weak"},
+             {"type": "attack", "amount": 3, "target_position": 2}],
+            [{"type": "attack", "amount": 1, "target_position": 3},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 1, "target_position": 2}],
+        ],
         "patchwork_behemoth": [
             [{"type": "attack", "amount": 2, "target_position": 1},
              {"type": "block", "amount": 3},
@@ -262,9 +309,11 @@ func _verify_entry(result: Dictionary, kind: String, expected_id: String,
         label + " every authored source maps one-to-one to actor")
     for i in range(ids.size()):
         var enemy: Dictionary = enemies.get_enemy(i + 1)
-        _check(enemy.get("id") == ids[i] and enemy.get("position") == i + 1 and
+        _check(enemy.get("id") == ids[i] and enemy.get("name") == NAMES[ids[i]] and
+            enemy.get("position") == i + 1 and
             enemy.get("max_hp") == HP[ids[i]] and enemy.get("hp") == HP[ids[i]] and
-            enemy.get("block") == 0 and enemy.get("art_path", "").begins_with(
+            enemy.get("block") == 0 and enemy.get("art_path") == ART_PATHS[ids[i]] and
+            enemy.get("art_path", "").begins_with(
             "res://assets/paper/enemies/"), label + " real slot %d identity/HP/Block/art" % (i+1))
     var snapshots := []
     var cycles: Array = _expected_actions()[expected_id]
@@ -1107,3 +1156,498 @@ func _test_seamshift_full_pool_entry() -> void:
             "earlier full-pool Fight").is_empty(),
             "real selection still reaches and fully verifies earlier Fight")
     _check(_sources() == sources_before, "Seamshift selection never mutates source JSON")
+
+
+## AC1: inspect per-ID Elite bindings, schedules and four-catalog enemy records
+## without asserting a fixed total or complete ordered ID list.
+func _test_m04_elite_pool_bindings() -> void:
+    _check(RunAuthoredBattleEntry.CATALOG_PATHS == [
+        "res://data/enemies/starter_enemies.json",
+        "res://data/enemies/run_enemies.json",
+        "res://data/enemies/boss.json",
+        "res://data/enemies/m04_elites.json",
+    ], "RunAuthoredBattleEntry loads all four enemy catalogs with boss.json at index 2")
+    var pools := _registry()
+    _check(pools.get("Elite") is Dictionary, "typed Elite pool is a Dictionary")
+    if not pools.get("Elite") is Dictionary:
+        return
+    var elite_pool: Dictionary = pools["Elite"]
+    var expected_elites := {
+        "thimble_crossfire": ["button_guard", "seam_ripper"],
+        "needle_marshal_elite": ["needle_marshal", "ragling_guard"],
+        "spool_hexer_elite": ["spool_hexer", "spool_stalker"],
+    }
+    for elite_id in expected_elites:
+        _check(elite_pool.has(elite_id), "Elite/" + elite_id + " present by ID")
+        if not elite_pool.has(elite_id):
+            continue
+        var binding: Variant = elite_pool[elite_id]
+        var expected_roster: Array = expected_elites[elite_id]
+        _check(binding is Dictionary and binding.size() == 2 and
+            binding.get("schedule") == "res://data/encounters/%s.json" % elite_id and
+            binding.get("enemy_ids") == expected_roster,
+            "Elite/" + elite_id + " canonical schedule and ordered two-enemy roster")
+        if not binding is Dictionary:
+            continue
+        var roster: Variant = binding.get("enemy_ids")
+        _check(roster is Array and roster.size() == 2 and roster[0] != roster[1],
+            "Elite/" + elite_id + " holds two distinct enemy IDs")
+        var text := FileAccess.get_file_as_string(binding.get("schedule", ""))
+        _check(not text.is_empty(), "Elite/" + elite_id + " schedule readable on disk")
+        var definitions := RunFightEncounterSelection._parse_schedule_text(text)
+        _check(definitions.size() == 2, "Elite/" + elite_id + " has two source records")
+        var expected_defs := []
+        for pos in [1, 2]:
+            var matches: Array = definitions.filter(
+                func(rec: Dictionary) -> bool: return rec.get("enemy_position") == pos)
+            _check(matches.size() == 1,
+                "Elite/%s has one source at enemy_position %d" % [elite_id, pos])
+            expected_defs.append({
+                "enemy_position": pos,
+                "pattern": _expected_actions()[elite_id][pos - 1],
+            })
+        _check(definitions == expected_defs and CombatEnemyIntents.new(definitions).is_valid(),
+            "Elite/" + elite_id + " matches full authored action cycles and passes validator")
+
+    var catalog_checks := [
+        ["res://data/enemies/m04_elites.json", "needle_marshal", "Needle Marshal", 28,
+            "res://assets/paper/enemies/needle_marshal.png"],
+        ["res://data/enemies/m04_elites.json", "spool_hexer", "Spool Hexer", 24,
+            "res://assets/paper/enemies/spool_hexer.png"],
+        ["res://data/enemies/starter_enemies.json", "ragling_guard", "Guard Ragling", 12,
+            "res://assets/paper/enemies/ragling.png"],
+        ["res://data/enemies/run_enemies.json", "spool_stalker", "Spool Stalker", 14,
+            "res://assets/paper/enemies/spool_stalker.png"],
+    ]
+    for spec in catalog_checks:
+        var parsed := RunTypedBattleRoster._parse_catalog_text(
+            FileAccess.get_file_as_string(spec[0]))
+        _check(not parsed.is_empty(), "catalog parses cleanly: " + spec[0])
+        var matches: Array = parsed.filter(
+            func(rec: Dictionary) -> bool: return rec.get("id") == spec[1])
+        _check(matches.size() == 1, "exactly one record for " + spec[1] + " in " + spec[0])
+        if matches.size() == 1:
+            var rec: Dictionary = matches[0]
+            _check(rec.get("name") == spec[2] and rec.get("max_hp") is int and
+                rec.get("max_hp") == spec[3] and rec.get("art_path") == spec[4],
+                "exact identity, integral HP, and art_path for " + spec[1])
+
+
+## Deterministically find a seed and legal connected path ending at a committed
+## RunMap Elite node within a bounded seed search.
+func _find_committed_elite_fixture() -> Dictionary:
+    for seed_value in range(1, 129):
+        var rng := _rng(seed_value)
+        var map := RunMap.new()
+        if not map.generate(rng):
+            continue
+        for node_id in map.get_legal_choices():
+            if map.get_node(node_id).get("type") == "Elite":
+                return {"seed": seed_value, "path": [node_id]}
+        var frontier := []
+        for node_id in map.get_legal_choices():
+            frontier.append([node_id])
+        while not frontier.is_empty():
+            var path: Array = frontier.pop_front()
+            var last_id: String = path.back()
+            if map.get_node(last_id).get("type") == "Elite":
+                return {"seed": seed_value, "path": path}
+            for next_id in map.get_node(last_id).get("outgoing", []):
+                var next_path: Array = path.duplicate()
+                next_path.append(next_id)
+                frontier.append(next_path)
+    return {}
+
+
+func _elite_setup(seed_value: int, path: Array) -> Dictionary:
+    var rng := _rng(seed_value)
+    var oracle := _rng(seed_value)
+    var map := RunMap.new()
+    var oracle_map := RunMap.new()
+    _check(map.generate(rng) and oracle_map.generate(oracle) and
+        map.get_floors() == oracle_map.get_floors(),
+        "Elite setup: identical generated graphs for seed %d" % seed_value)
+    var expected_route: Array[String] = []
+    for step_id in path:
+        _check(map.get_legal_choices().has(step_id) and
+            oracle_map.get_legal_choices().has(step_id) and
+            map.choose_node(step_id) and oracle_map.choose_node(step_id),
+            "Elite setup: commits legal connected node " + str(step_id))
+        expected_route.append(step_id)
+    var current_id := map.get_current_node_id()
+    _check(not current_id.is_empty() and current_id == path.back() and
+        map.get_node(current_id).get("type") == "Elite" and
+        map.get_route() == expected_route and
+        oracle_map.get_route() == expected_route and
+        rng.state == oracle.state,
+        "Elite setup: current committed node is a genuine RunMap Elite")
+    return {
+        "map": map,
+        "oracle_map": oracle_map,
+        "rng": rng,
+        "oracle": oracle,
+        "node": current_id,
+        "route": expected_route,
+        "after_choose": rng.state,
+        "selector": RunFightEncounterSelection.new(),
+    }
+
+
+## AC2/AC3: direct typed-entry test for each of needle_marshal_elite and
+## spool_hexer_elite on a true committed RunMap Elite node using an otherwise
+## copied production registry containing only the target Elite candidate.
+func _test_m04_elite_direct_entries() -> void:
+    var fixture := _find_committed_elite_fixture()
+    _check(not fixture.is_empty(), "bounded seed search finds a legal RunMap Elite path")
+    if fixture.is_empty():
+        return
+    var seed_value: int = fixture["seed"]
+    var path: Array = fixture["path"]
+    var base_registry := _registry()
+    if not base_registry.get("Elite") is Dictionary:
+        return
+
+    for elite_id in ["needle_marshal_elite", "spool_hexer_elite"]:
+        _check(base_registry["Elite"].has(elite_id),
+            "production registry contains " + elite_id)
+        if not base_registry["Elite"].has(elite_id):
+            continue
+        var focused := base_registry.duplicate(true)
+        focused["Elite"] = {elite_id: base_registry["Elite"][elite_id].duplicate(true)}
+        var sources_before := _sources()
+        var setup := _elite_setup(seed_value, path)
+        var service := RunAuthoredBattleEntry.new()
+        seed(515015)
+        var global_next := randi()
+        seed(515015)
+        var first := service._entry_from_data(
+            setup["map"], setup["rng"], setup["selector"], focused)
+        _check(randi() == global_next, elite_id + " direct entry consumes no global RNG")
+        setup["oracle"].randi_range(0, 0)
+        _check(first.get("success") == true and first.get("node_type") == "Elite" and
+            first.get("encounter_id") == elite_id,
+            elite_id + " direct entry selects target Elite encounter")
+        _check(setup["rng"].state == setup["after_choose"] and
+            setup["rng"].state == setup["oracle"].state and
+            setup["map"].get_route() == setup["route"],
+            elite_id + " spends exactly the one single-candidate draw and preserves route")
+
+        var expected_ids: Array = BINDINGS["Elite"][elite_id]
+        var enemies: CombatEnemies = first.get("enemies")
+        var intents: CombatEnemyIntents = first.get("intents")
+        _check(enemies is CombatEnemies and enemies.is_valid() and
+            enemies.get_enemies().size() == 2 and
+            intents is CombatEnemyIntents and intents.is_valid(),
+            elite_id + " produces valid two-source CombatEnemies and CombatEnemyIntents")
+        if enemies is CombatEnemies and enemies.is_valid():
+            for slot in [1, 2]:
+                var actor: Dictionary = enemies.get_enemy(slot)
+                var expected_enemy_id: String = expected_ids[slot - 1]
+                _check(actor.get("id") == expected_enemy_id and
+                    actor.get("name") == NAMES[expected_enemy_id] and
+                    actor.get("position") == slot and
+                    actor.get("max_hp") == HP[expected_enemy_id] and
+                    actor.get("hp") == HP[expected_enemy_id] and
+                    actor.get("block") == 0 and
+                    actor.get("art_path") == ART_PATHS[expected_enemy_id],
+                    "%s slot %d exact ID/name/position/HP/zero Block/art" % [elite_id, slot])
+
+        # Verify full joint cycle including wraparound on a fresh intent scheduler.
+        var period := 4 if elite_id == "needle_marshal_elite" else 12
+        var full_cycle := CombatEnemyIntents.new(first["definitions"])
+        _check(full_cycle.is_valid(), elite_id + " detached definitions build valid intents")
+        for step in range(period + 1):
+            _check(full_cycle.get_intents() == _expected_actions_beat(elite_id, step),
+                "%s full cycle beat %d (including wraparound)" % [elite_id, step])
+            _check(full_cycle.advance_turn(), "%s advances at step %d" % [elite_id, step])
+
+        var snapshot := _verify_entry(first, "Elite", elite_id, "focused Elite " + elite_id)
+        if snapshot.is_empty():
+            continue
+
+        # Verify detached copies and cached re-entry with zero extra RNG draws.
+        var cache_before: Dictionary = setup["selector"]._selected.duplicate(true)
+        var cached_rng_state: int = setup["rng"].state
+        first["definitions"][0]["pattern"][0]["amount"] = 888
+        first["definitions"][0]["pattern"].clear()
+        first["enemies"].apply_damage(1, 5)
+        first["enemies"].gain_block(2, 4)
+        first["encounter_id"] = "tampered"
+        var second := service._entry_from_data(
+            setup["map"], setup["rng"], setup["selector"], focused)
+        _check(second.get("success") == true and second.get("node_type") == "Elite" and
+            second.get("encounter_id") == elite_id and
+            setup["rng"].state == cached_rng_state and
+            setup["selector"]._selected == cache_before,
+            elite_id + " cached re-entry succeeds with no extra RNG draw or cache drift")
+        _check(first["enemies"] != second["enemies"] and
+            first["intents"] != second["intents"] and
+            second["enemies"].get_enemy(1)["hp"] == HP[expected_ids[0]] and
+            second["enemies"].get_enemy(2)["block"] == 0 and
+            second["intents"].get_intents() == _expected_actions_beat(elite_id, 0),
+            elite_id + " mutated first result cannot affect fresh actors or intents")
+        var second_snapshot := _verify_entry(
+            second, "Elite", elite_id, "cached Elite " + elite_id)
+        _check(not second_snapshot.is_empty() and second_snapshot == snapshot,
+            elite_id + " cached re-entry produces identical independent snapshot")
+
+        # Independent replay with the same seed matches RNG, graph, route, cache and actors.
+        var replay := _elite_setup(seed_value, path)
+        var replay_first := RunAuthoredBattleEntry.new()._entry_from_data(
+            replay["map"], replay["rng"], replay["selector"], focused)
+        replay["oracle"].randi_range(0, 0)
+        _check(replay_first.get("success") == true and
+            replay_first.get("encounter_id") == elite_id and
+            replay["rng"].state == cached_rng_state and
+            replay["rng"].state == replay["oracle"].state and
+            replay["map"].get_floors() == setup["map"].get_floors() and
+            replay["map"].get_route() == setup["map"].get_route() and
+            replay["selector"]._selected == setup["selector"]._selected,
+            elite_id + " independent same-seed replay matches RNG, graph, route and cache")
+        var replay_snapshot := _verify_entry(
+            replay_first, "Elite", elite_id, "replayed Elite " + elite_id)
+        _check(not replay_snapshot.is_empty() and replay_snapshot == snapshot,
+            elite_id + " independent same-seed replay matches actors and timeline")
+
+        # Verify authoritative CombatEnemyPhase execution on assembled Elite actors/intents.
+        var combat_entry := service._entry_from_data(
+            setup["map"], setup["rng"], setup["selector"], focused)
+        _check(combat_entry.get("success") == true and
+            setup["rng"].state == cached_rng_state,
+            elite_id + " phase fixture reuses cached selection without extra RNG")
+        if combat_entry.get("success", false):
+            var party := _triple_party()
+            _check(CombatStartingBlock.new(party).apply() and
+                party.get_hero(1).get("block") == 6,
+                elite_id + " Warden starts with 6 opening Block")
+            var phase := CombatEnemyPhase.new()
+            var phase_enemies: CombatEnemies = combat_entry["enemies"]
+            var phase_intents: CombatEnemyIntents = combat_entry["intents"]
+            for step in range(4):
+                var announced: Array = phase_intents.get_intents()
+                _check(announced == _expected_actions_beat(elite_id, step),
+                    "%s phase announces beat %d" % [elite_id, step])
+                var res := phase.execute_phase(party, phase_enemies, announced)
+                _check(res.get("ok") == true and res.get("events", []).size() == 2,
+                    "%s phase resolves beat %d" % [elite_id, step])
+                _check(phase_intents.advance_turn(),
+                    "%s phase advances beat %d" % [elite_id, step])
+            if elite_id == "needle_marshal_elite":
+                _check(party.get_hero(1).get("id") == "warden" and
+                    party.get_hero(1).get("hp") == 40 and party.get_hero(1).get("block") == 3 and
+                    party.get_hero(2).get("id") == "tinker" and party.get_hero(2).get("hp") == 21 and
+                    party.get_hero(3).get("id") == "seamstress" and party.get_hero(3).get("hp") == 29 and
+                    phase_enemies.get_enemy(1).get("hp") == 28 and phase_enemies.get_enemy(1).get("block") == 3 and
+                    phase_enemies.get_enemy(2).get("hp") == 12 and phase_enemies.get_enemy(2).get("block") == 4,
+                    "needle_marshal_elite four-beat phase applies attack, buff, shove swap 2/3, and escort block/attack")
+            else:
+                _check(party.get_hero(1).get("id") == "warden" and
+                    party.get_hero(1).get("hp") == 40 and party.get_hero(1).get("block") == 2 and
+                    party.get_hero(1).get("statuses", {}) == {"exposed": 1} and
+                    party.get_hero(2).get("id") == "seamstress" and party.get_hero(2).get("hp") == 26 and
+                    party.get_hero(3).get("id") == "tinker" and party.get_hero(3).get("hp") == 24 and
+                    party.get_hero(3).get("statuses", {}) == {"weak": 1} and
+                    CombatStatuses.new().adjusted_attack_damage(4,
+                        party.get_hero(3).get("statuses", {}), {}) == 3 and
+                    phase_enemies.get_enemy(1).get("hp") == 24 and phase_enemies.get_enemy(1).get("block") == 0 and
+                    phase_enemies.get_enemy(2).get("hp") == 14 and phase_enemies.get_enemy(2).get("block") == 2,
+                    "spool_hexer_elite four-beat phase applies Exposed +50% incoming, Weak -25% outgoing, and escort cycle")
+
+        _check(_sources() == sources_before,
+            elite_id + " direct entry and replay leave all source JSON unchanged")
+
+
+## AC3: production full-pool seeded Elite selection reads the actual registered
+## Elite IDs, sorts them before the single RNG draw, caches without redraw, and
+## replays identically from the same seed.
+func _test_m04_elite_full_pool_selection() -> void:
+    var fixture := _find_committed_elite_fixture()
+    _check(not fixture.is_empty(), "full-pool Elite test has a legal Elite route")
+    if fixture.is_empty():
+        return
+    var seed_value: int = fixture["seed"]
+    var path: Array = fixture["path"]
+    var pools := _registry()
+    if not pools.get("Elite") is Dictionary:
+        return
+    for required_id in ["thimble_crossfire", "needle_marshal_elite", "spool_hexer_elite"]:
+        _check(pools["Elite"].has(required_id),
+            "full Elite pool includes " + required_id)
+    var sorted_ids: Array = pools["Elite"].keys()
+    sorted_ids.sort()
+    var sources_before := _sources()
+    var setup := _elite_setup(seed_value, path)
+    var expected_id: String = sorted_ids[setup["oracle"].randi_range(0, sorted_ids.size() - 1)]
+    var service := RunAuthoredBattleEntry.new()
+    seed(515015)
+    var global_next := randi()
+    seed(515015)
+    var first := service.entry_current_battle(
+        setup["map"], setup["rng"], setup["selector"])
+    _check(randi() == global_next, "production Elite selection consumes no global RNG")
+    _check(first.get("success") == true and first.get("node_type") == "Elite" and
+        first.get("encounter_id") == expected_id and
+        setup["rng"].state == setup["oracle"].state,
+        "production Elite selection draws once from sorted Elite IDs")
+    var snapshot := _verify_entry(first, "Elite", expected_id, "production full-pool Elite")
+    if snapshot.is_empty():
+        return
+    var cache_before: Dictionary = setup["selector"]._selected.duplicate(true)
+    var cached_rng_state: int = setup["rng"].state
+    first["definitions"][0]["pattern"][0]["amount"] = 777
+    first["definitions"][0]["pattern"].clear()
+    first["enemies"].apply_damage(1, 6)
+    first["enemies"].gain_block(2, 3)
+    first["encounter_id"] = "tampered"
+    var second := service.entry_current_battle(
+        setup["map"], setup["rng"], setup["selector"])
+    _check(second.get("success") == true and second.get("encounter_id") == expected_id and
+        setup["rng"].state == cached_rng_state and
+        setup["selector"]._selected == cache_before and
+        first["enemies"] != second["enemies"] and first["intents"] != second["intents"],
+        "cached production Elite selection consumes no extra RNG and returns fresh instances")
+    var second_snapshot := _verify_entry(
+        second, "Elite", expected_id, "cached production full-pool Elite")
+    _check(not second_snapshot.is_empty() and second_snapshot == snapshot,
+        "cached production Elite selection matches original unmodified snapshot")
+
+    var replay := _elite_setup(seed_value, path)
+    var replay_entry := RunAuthoredBattleEntry.new().entry_current_battle(
+        replay["map"], replay["rng"], replay["selector"])
+    _check(replay_entry.get("success") == true and
+        replay_entry.get("encounter_id") == expected_id and
+        replay["rng"].state == cached_rng_state and
+        replay["map"].get_floors() == setup["map"].get_floors() and
+        replay["map"].get_route() == setup["map"].get_route() and
+        replay["selector"]._selected == cache_before,
+        "independent same-seed production Elite selection replays identically")
+    var replay_snapshot := _verify_entry(
+        replay_entry, "Elite", expected_id, "replayed production full-pool Elite")
+    _check(not replay_snapshot.is_empty() and replay_snapshot == snapshot,
+        "independent same-seed production Elite replay matches actors and timeline")
+    _check(_sources() == sources_before,
+        "production full-pool Elite selection leaves all source JSON unchanged")
+
+
+## AC3/AC4: malformed Elite candidates fail closed before RNG/cache/map mutation;
+## a malformed other-kind pool remains isolated; an Elite enemy ID cannot be
+## assembled as a Boss catalog entry.
+func _test_m04_elite_rejections_and_isolation() -> void:
+    var fixture := _find_committed_elite_fixture()
+    _check(not fixture.is_empty(), "Elite rejection test has a legal Elite route")
+    if fixture.is_empty():
+        return
+    var seed_value: int = fixture["seed"]
+    var path: Array = fixture["path"]
+    var registry := _registry()
+    var setup := _elite_setup(seed_value, path)
+    var map: RunMap = setup["map"]
+    var rng: RandomNumberGenerator = setup["rng"]
+    var selector: RunFightEncounterSelection = setup["selector"]
+
+    _reject(map, rng, selector, {}, "Elite missing current kind")
+    _reject(map, rng, selector, {"Elite": {}}, "Elite empty pool")
+    var null_entry := registry.duplicate(true)
+    null_entry["Elite"]["needle_marshal_elite"] = null
+    _reject(map, rng, selector, null_entry, "Elite null candidate entry")
+
+    var unknown_marshal := registry.duplicate(true)
+    unknown_marshal["Elite"]["needle_marshal_elite"]["enemy_ids"][0] = "unknown_elite"
+    _reject(map, rng, selector, unknown_marshal, "unknown Elite enemy ID in needle_marshal_elite")
+
+    var unknown_escort := registry.duplicate(true)
+    unknown_escort["Elite"]["spool_hexer_elite"]["enemy_ids"][1] = "unknown_escort"
+    _reject(map, rng, selector, unknown_escort, "unknown escort enemy ID in spool_hexer_elite")
+
+    var boss_in_elite := registry.duplicate(true)
+    boss_in_elite["Elite"]["needle_marshal_elite"]["enemy_ids"][0] = "patchwork_behemoth"
+    _reject(map, rng, selector, boss_in_elite, "Boss catalog ID in Elite roster")
+
+    var dup_marshal := registry.duplicate(true)
+    dup_marshal["Elite"]["needle_marshal_elite"]["enemy_ids"] = [
+        "needle_marshal", "needle_marshal"]
+    _reject(map, rng, selector, dup_marshal, "duplicate roster ID in needle_marshal_elite")
+
+    var dup_hexer := registry.duplicate(true)
+    dup_hexer["Elite"]["spool_hexer_elite"]["enemy_ids"] = [
+        "spool_hexer", "spool_hexer"]
+    _reject(map, rng, selector, dup_hexer, "duplicate roster ID in spool_hexer_elite")
+
+    var short_marshal := registry.duplicate(true)
+    short_marshal["Elite"]["needle_marshal_elite"]["enemy_ids"] = ["needle_marshal"]
+    _reject(map, rng, selector, short_marshal, "wrong arity (1) in needle_marshal_elite")
+
+    var long_marshal := registry.duplicate(true)
+    long_marshal["Elite"]["needle_marshal_elite"]["enemy_ids"] = [
+        "needle_marshal", "ragling_guard", "spool_stalker"]
+    _reject(map, rng, selector, long_marshal, "wrong arity (3) in needle_marshal_elite")
+
+    var short_hexer := registry.duplicate(true)
+    short_hexer["Elite"]["spool_hexer_elite"]["enemy_ids"] = ["spool_hexer"]
+    _reject(map, rng, selector, short_hexer, "wrong arity (1) in spool_hexer_elite")
+
+    var missing_schedule := registry.duplicate(true)
+    missing_schedule["Elite"]["absent_elite"] = {
+        "schedule": "res://data/encounters/absent_elite.json",
+        "enemy_ids": ["needle_marshal", "ragling_guard"],
+    }
+    _reject(map, rng, selector, missing_schedule, "missing Elite schedule file")
+
+    var mismatched_schedule := registry.duplicate(true)
+    mismatched_schedule["Elite"]["needle_marshal_elite"]["schedule"] = (
+        "res://data/encounters/spool_hexer_elite.json")
+    _reject(map, rng, selector, mismatched_schedule, "mismatched Elite schedule path")
+
+    var traversal_schedule := registry.duplicate(true)
+    traversal_schedule["Elite"]["spool_hexer_elite"]["schedule"] = (
+        "res://data/encounters/../encounters/spool_hexer_elite.json")
+    _reject(map, rng, selector, traversal_schedule, "noncanonical Elite schedule path")
+
+    var bad_schedule := registry.duplicate(true)
+    bad_schedule["Elite"]["m03_typed_battle_pools"] = {
+        "schedule": "res://data/encounters/m03_typed_battle_pools.json",
+        "enemy_ids": ["needle_marshal", "ragling_guard"],
+    }
+    _reject(map, rng, selector, bad_schedule, "bad non-schedule JSON in Elite pool")
+
+    _check(rng.state == setup["after_choose"] and selector._selected.is_empty(),
+        "no RNG draw or selector cache entry spent across all Elite rejections")
+
+    # Malformed Fight and Boss pools remain isolated when entering a valid Elite node.
+    var other_kind_broken := registry.duplicate(true)
+    other_kind_broken["Fight"] = {"broken_fight": null}
+    other_kind_broken["Boss"] = {"broken_boss": null}
+    var sorted_ids: Array = registry["Elite"].keys()
+    sorted_ids.sort()
+    var expected_id: String = sorted_ids[setup["oracle"].randi_range(0, sorted_ids.size() - 1)]
+    var isolated_ok := RunAuthoredBattleEntry.new()._entry_from_data(
+        map, rng, selector, other_kind_broken)
+    _check(isolated_ok.get("success") == true and
+        isolated_ok.get("node_type") == "Elite" and
+        isolated_ok.get("encounter_id") == expected_id and
+        rng.state == setup["oracle"].state,
+        "malformed Fight/Boss pools do not block valid Elite entry; retry spends one draw")
+    _check(not _verify_entry(isolated_ok, "Elite", expected_id,
+        "Elite retry after rejections").is_empty(),
+        "Elite retry after rejections produces valid actors and intents")
+
+    # An Elite enemy ID cannot be assembled as a Boss catalog entry.
+    var boss_map := RunMap.new()
+    var boss_rng := _rng(4103)
+    boss_map.generate(boss_rng)
+    for floor_idx in range(12):
+        var legal := boss_map.get_legal_choices()
+        _check(not legal.is_empty() and boss_map.choose_node(legal[0]),
+            "Elite-as-Boss negative fixture commits floor %d" % (floor_idx + 1))
+    var boss_selector := RunFightEncounterSelection.new()
+    for elite_enemy_id in ["needle_marshal", "spool_hexer"]:
+        var elite_in_boss := registry.duplicate(true)
+        elite_in_boss["Boss"]["patchwork_behemoth"]["enemy_ids"] = [elite_enemy_id]
+        _reject(boss_map, boss_rng, boss_selector, elite_in_boss,
+            "Elite enemy ID " + elite_enemy_id + " rejected in Boss pool")
+    var valid_boss := RunAuthoredBattleEntry.new().entry_current_battle(
+        boss_map, boss_rng, boss_selector)
+    _check(not _verify_entry(valid_boss, "Boss", "patchwork_behemoth",
+        "Boss entry after Elite-in-Boss rejections").is_empty(),
+        "Boss entry still succeeds after rejecting Elite IDs in Boss pool")
+

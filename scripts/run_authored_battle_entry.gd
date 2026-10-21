@@ -14,6 +14,7 @@ const CATALOG_PATHS := [
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
     "res://data/enemies/boss.json",
+    "res://data/enemies/m04_elites.json",
 ]
 
 
