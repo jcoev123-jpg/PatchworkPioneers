@@ -1,8 +1,10 @@
 extends SceneTree
 
-## Paired M03 positional Fights: fixed authored beats, ordered real combat,
-## deterministic map selection and atomic rejection. No live pool registration.
+## Paired M03 positional Fights: published M03 typed-pool bindings, fixed authored
+## beats, ordered real combat, deterministic RunAuthoredBattleEntry selection and
+## atomic rejection. Data/service only; scripts/app.gd is outside scope.
 
+const POOLS_PATH := "res://data/encounters/m03_typed_battle_pools.json"
 const FRONT := "res://data/encounters/front_hem_pivot.json"
 const REAR := "res://data/encounters/rear_spool_reversal.json"
 const STARTER := "res://data/encounters/starter_attacks.json"
@@ -16,11 +18,14 @@ var phase := CombatEnemyPhase.new()
 
 
 func _initialize() -> void:
+	_test_published_registry()
 	_test_schedules()
 	_test_three_phases("front_hem_pivot", ["button_guard", "fray_scavenger"])
 	_test_three_phases("rear_spool_reversal", ["spool_stalker", "seam_ripper"])
 	_test_selection()
+	_test_published_entry_and_replay()
 	_test_rejections()
+	_test_published_rejections_and_retry()
 	if failures.is_empty():
 		print("m03_pivot_reversal_encounters_test: PASS (", checks, " checks)")
 	else:
@@ -60,6 +65,88 @@ func _expected(name: String) -> Array:
 
 func _path(name: String) -> String:
 	return FRONT if name == "front_hem_pivot" else REAR
+
+
+func _published_pools() -> Dictionary:
+	_check(FileAccess.file_exists(POOLS_PATH), POOLS_PATH + ": published pool JSON exists")
+	var file := FileAccess.open(POOLS_PATH, FileAccess.READ)
+	_check(file != null, POOLS_PATH + ": published pool JSON is readable")
+	if file == null:
+		return {}
+	var parser := JSON.new()
+	var err := parser.parse(file.get_as_text())
+	file.close()
+	_check(err == OK and parser.data is Dictionary, POOLS_PATH + ": parses as Dictionary")
+	return parser.data if err == OK and parser.data is Dictionary else {}
+
+
+func _test_published_registry() -> void:
+	var pools := _published_pools()
+	for kind in ["Fight", "Elite", "Boss"]:
+		_check(pools.get(kind) is Dictionary, "published registry has " + kind + " Dictionary")
+	if not (pools.get("Fight") is Dictionary and pools.get("Elite") is Dictionary
+			and pools.get("Boss") is Dictionary):
+		return
+	var expected_fight := {
+		"front_hem_pivot": ["button_guard", "fray_scavenger"],
+		"rear_spool_reversal": ["spool_stalker", "seam_ripper"],
+		"starter_attacks": ["ragling", "ragling_guard"],
+		"bobbin_skirmish": ["fray_scavenger", "spool_stalker"],
+		"buttonhole_holdout": ["button_guard", "seam_ripper"],
+		"guard_counterattack": ["ragling_guard", "button_guard"],
+		"double_hem_siege": ["fray_scavenger", "seam_ripper"],
+		"triple_spool_pinch": ["fray_scavenger", "button_guard", "spool_stalker"],
+		"seamshift_tripwire": ["seam_ripper", "spool_stalker", "fray_scavenger"],
+	}
+	var expected_elite := {
+		"thimble_crossfire": ["button_guard", "seam_ripper"],
+		"needle_marshal_elite": ["needle_marshal", "ragling_guard"],
+		"spool_hexer_elite": ["spool_hexer", "spool_stalker"],
+	}
+	var expected_boss := {
+		"patchwork_behemoth": ["patchwork_behemoth"],
+	}
+	var expected_by_kind := {
+		"Fight": expected_fight,
+		"Elite": expected_elite,
+		"Boss": expected_boss,
+	}
+	for kind in expected_by_kind:
+		var kind_pool: Dictionary = pools[kind]
+		var mappings: Dictionary = expected_by_kind[kind]
+		for id in mappings:
+			_check(kind_pool.has(id), kind + "/" + id + ": present in published registry")
+			if not kind_pool.has(id):
+				continue
+			var entry: Variant = kind_pool[id]
+			var expected_schedule := "res://data/encounters/%s.json" % id
+			var expected_ids: Array = mappings[id]
+			_check(entry is Dictionary and entry.size() == 2
+				and entry.has("schedule") and entry.has("enemy_ids")
+				and entry.get("schedule") == expected_schedule
+				and entry.get("enemy_ids") == expected_ids,
+				kind + "/" + id + ": exact schedule and enemy_ids mapping")
+			if entry is Dictionary and entry.get("schedule") is String:
+				var schedule_data := _parsed(entry["schedule"])
+				_check(schedule_data.size() == expected_ids.size()
+					and CombatEnemyIntents.new(schedule_data).is_valid(),
+					kind + "/" + id + ": referenced schedule parses and matches roster arity")
+				if id in ["front_hem_pivot", "rear_spool_reversal"]:
+					_check(schedule_data == _expected(id),
+						id + ": published schedule path resolves to exact unchanged authored beats")
+	var catalog := _json_actors(ROSTER_PATH)
+	var expected_actors := {
+		"button_guard": ["Button Guard", 16, "res://assets/paper/enemies/button_guard.png"],
+		"fray_scavenger": ["Fray Scavenger", 14, "res://assets/paper/enemies/fray_scavenger.png"],
+		"spool_stalker": ["Spool Stalker", 14, "res://assets/paper/enemies/spool_stalker.png"],
+		"seam_ripper": ["Seam Ripper", 18, "res://assets/paper/enemies/seam_ripper.png"],
+	}
+	for actor_id in expected_actors:
+		var spec: Array = expected_actors[actor_id]
+		var rec := _record(catalog, actor_id)
+		_check(rec.get("name") == spec[0] and rec.get("max_hp") == spec[1]
+			and rec.get("max_hp") is int and rec.get("art_path") == spec[2],
+			actor_id + ": exact catalog name, integral HP, and art_path")
 
 
 func _parsed(path: String) -> Array:
@@ -242,10 +329,12 @@ func _test_schedules() -> void:
 				"backstitch_displacement unchanged complete action cycles")
 
 
-func _play(name: String, ids: Array) -> Dictionary:
+func _play(name: String, ids: Array, provided_enemies: CombatEnemies = null,
+		provided_scheduler: CombatEnemyIntents = null) -> Dictionary:
 	var party := _party()
-	var enemies := _enemies(ids)
-	var scheduler := CombatEnemyIntents.new(_parsed(_path(name)))
+	var enemies := provided_enemies if provided_enemies != null else _enemies(ids)
+	var scheduler := (provided_scheduler if provided_scheduler != null
+		else CombatEnemyIntents.new(_parsed(_path(name))))
 	_check(scheduler.is_valid() and party.is_valid() and enemies.is_valid(),
 		name + ": full valid real service preconditions")
 	var hp := [40, 30, 26]
@@ -423,6 +512,127 @@ func _test_selection() -> void:
 	_check(randi() == expected_global, "map, selector, replay and cache never draw global RNG")
 
 
+func _test_published_entry_and_replay() -> void:
+	var pools := _published_pools()
+	_check(pools.get("Fight") is Dictionary, "published Fight pool available for entry search")
+	if not pools.get("Fight") is Dictionary:
+		return
+	var fight_pool: Dictionary = pools["Fight"]
+	var sorted_ids: Array = fight_pool.keys()
+	sorted_ids.sort()
+	var found: Dictionary = {}
+	var service := RunAuthoredBattleEntry.new()
+	_check(service.has_method("entry_current_battle"),
+		"RunAuthoredBattleEntry exposes entry_current_battle")
+	seed(918273)
+	var expected_global := randi()
+	seed(918273)
+	for seed_value in range(1, 257):
+		var rng := _rng(seed_value)
+		var replay_rng := _rng(seed_value)
+		var oracle_rng := _rng(seed_value)
+		var map := RunMap.new()
+		var replay_map := RunMap.new()
+		var oracle_map := RunMap.new()
+		_check(map.generate(rng) and replay_map.generate(replay_rng)
+			and oracle_map.generate(oracle_rng),
+			"published search seed %d: real RunMap generated" % seed_value)
+		_check(map.get_floors() == replay_map.get_floors()
+			and map.get_floors() == oracle_map.get_floors(),
+			"published search seed %d: identical generated floors" % seed_value)
+		var node_id := _opening(map)
+		_check(not node_id.is_empty() and map.get_legal_choices().has(node_id)
+			and map.get_node(node_id).get("type") == "Fight",
+			"published search seed %d: legal opening Fight exists" % seed_value)
+		if node_id.is_empty():
+			continue
+		_check(map.choose_node(node_id) and replay_map.choose_node(node_id)
+			and oracle_map.choose_node(node_id),
+			"published search seed %d: legal opening Fight committed" % seed_value)
+		var picked: String = sorted_ids[oracle_rng.randi_range(0, sorted_ids.size() - 1)]
+		var expected_state := oracle_rng.state
+		var selector := RunFightEncounterSelection.new()
+		var replay_selector := RunFightEncounterSelection.new()
+		var entry := service.entry_current_battle(map, rng, selector)
+		var replay := RunAuthoredBattleEntry.new().entry_current_battle(
+			replay_map, replay_rng, replay_selector)
+		_check(entry.get("success") == true and entry.get("node_type") == "Fight"
+			and entry.get("encounter_id") == picked and rng.state == expected_state,
+			"published search seed %d: entry_current_battle matches sorted-ID oracle" % seed_value)
+		_check(map.get_route() == [node_id] and map.get_current_node_id() == node_id,
+			"published search seed %d: map route unchanged by entry" % seed_value)
+		_check(replay.get("success") == true and replay.get("node_type") == "Fight"
+			and replay.get("encounter_id") == picked and replay_rng.state == expected_state
+			and replay.get("definitions") == entry.get("definitions")
+			and replay_selector._selected == selector._selected,
+			"published search seed %d: independent replay matches selection and RNG" % seed_value)
+		if entry.get("enemies") is CombatEnemies and replay.get("enemies") is CombatEnemies \
+				and entry.get("intents") is CombatEnemyIntents \
+				and replay.get("intents") is CombatEnemyIntents:
+			_check(entry["enemies"] != replay["enemies"]
+				and entry["intents"] != replay["intents"]
+				and entry["enemies"].get_enemies() == replay["enemies"].get_enemies()
+				and entry["intents"].get_intents() == replay["intents"].get_intents(),
+				"published search seed %d: replay builds fresh equal models" % seed_value)
+		if picked in ["front_hem_pivot", "rear_spool_reversal"] and not found.has(picked):
+			found[picked] = seed_value
+			var expected_ids := (["button_guard", "fray_scavenger"]
+				if picked == "front_hem_pivot" else ["spool_stalker", "seam_ripper"])
+			var expected_names := (["Button Guard", "Fray Scavenger"]
+				if picked == "front_hem_pivot" else ["Spool Stalker", "Seam Ripper"])
+			var expected_hp := [16, 14] if picked == "front_hem_pivot" else [14, 18]
+			_check(entry.get("definitions") == _expected(picked),
+				picked + ": entry_current_battle returns exact two-source schedule")
+			var enemies: CombatEnemies = entry.get("enemies")
+			var intents: CombatEnemyIntents = entry.get("intents")
+			_check(enemies is CombatEnemies and enemies.is_valid()
+				and enemies.get_enemies().size() == 2
+				and intents is CombatEnemyIntents and intents.is_valid(),
+				picked + ": entry_current_battle returns valid CombatEnemies and CombatEnemyIntents")
+			if enemies is CombatEnemies and enemies.is_valid():
+				_check(_enemy_rows(enemies) == [
+					[expected_ids[0], expected_hp[0], 0, 1],
+					[expected_ids[1], expected_hp[1], 0, 2]],
+					picked + ": exact ordered enemy IDs, starting HP, zero Block and slots")
+				for slot in range(1, 3):
+					var actor: Dictionary = enemies.get_enemy(slot)
+					_check(actor.get("name") == expected_names[slot - 1]
+						and actor.get("max_hp") == expected_hp[slot - 1]
+						and actor.get("art_path") == "res://assets/paper/enemies/%s.png" % expected_ids[slot - 1],
+						picked + ": slot %d name, max_hp and art_path" % slot)
+			var cache_before := selector._selected.duplicate(true)
+			entry["definitions"][0]["pattern"][0]["amount"] = 888
+			entry["definitions"][1]["pattern"].clear()
+			entry["encounter_id"] = "mutated_id"
+			enemies.apply_damage(1, 5)
+			enemies.gain_block(2, 3)
+			intents.advance_turn()
+			var cached := service.entry_current_battle(map, rng, selector)
+			_check(cached.get("success") == true and cached.get("node_type") == "Fight"
+				and cached.get("encounter_id") == picked
+				and cached.get("definitions") == _expected(picked)
+				and rng.state == expected_state
+				and selector._selected == cache_before,
+				picked + ": cached same-node entry spends no RNG and preserves cache")
+			_check(cached["enemies"] != enemies and cached["intents"] != intents
+				and _enemy_rows(cached["enemies"]) == [
+					[expected_ids[0], expected_hp[0], 0, 1],
+					[expected_ids[1], expected_hp[1], 0, 2]]
+				and cached["intents"].get_intents() == _announced(_expected(picked), 0),
+				picked + ": cached entry returns fresh unmodified enemies and turn-0 intents")
+			# Drive the actual three-beat combat phases using the entry's real models.
+			var entered_play := _play(picked, expected_ids, cached["enemies"], cached["intents"])
+			var baseline_play := _play(picked, expected_ids)
+			_check(entered_play == baseline_play,
+				picked + ": published entry models execute identical three-beat shove timeline")
+		if found.size() == 2:
+			break
+	_check(found.has("front_hem_pivot") and found.has("rear_spool_reversal"),
+		"bounded deterministic seed search selects both front_hem_pivot and rear_spool_reversal")
+	_check(randi() == expected_global,
+		"published entry search, replay, cache and phases consume no global RNG")
+
+
 func _with_replaced(name: String, position: int, action: Dictionary) -> Array:
 	var result := _expected(name)
 	result[position - 1]["pattern"][0] = action
@@ -512,3 +722,146 @@ func _test_rejections() -> void:
 			and party.get_hero(2).get("id") ==
 				("warden" if name == "front_hem_pivot" else "tinker"),
 			name + ": live adjacent shove succeeds when both occupants are living")
+
+
+func _entry_snapshot(map: RunMap, rng: RandomNumberGenerator,
+		selector: RunFightEncounterSelection, party: CombatParty,
+		enemies: CombatEnemies) -> Dictionary:
+	return {
+		"floors": map.get_floors(),
+		"route": map.get_route(),
+		"current": map.get_current_node_id(),
+		"choices": map.get_legal_choices(),
+		"floor": map.get_current_floor(),
+		"rng": rng.state,
+		"cache": selector._selected.duplicate(true),
+		"bound": selector._bound_map,
+		"heroes": party.get_heroes(),
+		"enemies": enemies.get_enemies(),
+	}
+
+
+func _reject_registry(map: RunMap, rng: RandomNumberGenerator,
+		selector: RunFightEncounterSelection, party: CombatParty,
+		enemies: CombatEnemies, bad_registry: Variant, label: String) -> void:
+	var before := _entry_snapshot(map, rng, selector, party, enemies)
+	var registry_copy = bad_registry.duplicate(true) if bad_registry is Dictionary else bad_registry
+	seed(654321)
+	var expected_global := randi()
+	seed(654321)
+	var result := RunAuthoredBattleEntry.new()._entry_from_data(
+		map, rng, selector, bad_registry)
+	_check(result == {"success": false}, label + ": _entry_from_data rejects whole Fight pool")
+	_check(randi() == expected_global, label + ": rejection consumes no global RNG")
+	_check(_entry_snapshot(map, rng, selector, party, enemies) == before
+		and bad_registry == registry_copy,
+		label + ": map route, RNG, selector cache, actors and input registry unchanged")
+
+
+func _test_published_rejections_and_retry() -> void:
+	var registry := _published_pools()
+	if not registry.get("Fight") is Dictionary:
+		return
+	var disk_before := [
+		FileAccess.get_file_as_string(POOLS_PATH),
+		FileAccess.get_file_as_string(FRONT),
+		FileAccess.get_file_as_string(REAR),
+		FileAccess.get_file_as_string(STARTER),
+		FileAccess.get_file_as_string(BACKSTITCH),
+	]
+	_check(registry["Fight"].has("starter_attacks")
+		and registry["Fight"].has("front_hem_pivot")
+		and registry["Fight"].has("rear_spool_reversal"),
+		"rejection base registry contains valid earlier candidate and both new Fights")
+	var rng := _rng(4103)
+	var oracle_rng := _rng(4103)
+	var map := RunMap.new()
+	var oracle_map := RunMap.new()
+	_check(map.generate(rng) and oracle_map.generate(oracle_rng)
+		and map.get_floors() == oracle_map.get_floors(),
+		"rejection fixture generates identical seeded maps")
+	var node_id := _opening(map)
+	_check(not node_id.is_empty() and map.get_legal_choices().has(node_id)
+		and map.choose_node(node_id) and oracle_map.choose_node(node_id),
+		"rejection fixture commits legal opening Fight node")
+	if node_id.is_empty():
+		return
+	var selector := RunFightEncounterSelection.new()
+	var party := _party()
+	var enemies := _enemies(["button_guard", "fray_scavenger"])
+	_check(CombatStartingBlock.new(party).apply(), "rejection fixture party has Warden opening Block")
+	for name in ["front_hem_pivot", "rear_spool_reversal"]:
+		var bad_missing := registry.duplicate(true)
+		bad_missing["Fight"][name]["schedule"] = "res://data/encounters/absent.json"
+		_reject_registry(map, rng, selector, party, enemies, bad_missing,
+			name + " missing schedule path")
+		var bad_other := registry.duplicate(true)
+		bad_other["Fight"][name]["schedule"] = STARTER
+		_reject_registry(map, rng, selector, party, enemies, bad_other,
+			name + " mismatched schedule path")
+		var bad_traversal := registry.duplicate(true)
+		bad_traversal["Fight"][name]["schedule"] = (
+			"res://data/encounters/../encounters/%s.json" % name)
+		_reject_registry(map, rng, selector, party, enemies, bad_traversal,
+			name + " noncanonical traversal schedule path")
+		var bad_ext := registry.duplicate(true)
+		bad_ext["Fight"][name]["schedule"] = "res://data/encounters/%s.gd" % name
+		_reject_registry(map, rng, selector, party, enemies, bad_ext,
+			name + " wrong schedule extension")
+		var bad_short := registry.duplicate(true)
+		bad_short["Fight"][name]["enemy_ids"] = ["button_guard"]
+		_reject_registry(map, rng, selector, party, enemies, bad_short,
+			name + " short 1-enemy roster mismatch")
+		var bad_long := registry.duplicate(true)
+		bad_long["Fight"][name]["enemy_ids"] = [
+			"button_guard", "fray_scavenger", "spool_stalker"]
+		_reject_registry(map, rng, selector, party, enemies, bad_long,
+			name + " long 3-enemy roster mismatch")
+		var bad_dup := registry.duplicate(true)
+		bad_dup["Fight"][name]["enemy_ids"] = ["button_guard", "button_guard"]
+		_reject_registry(map, rng, selector, party, enemies, bad_dup,
+			name + " duplicate enemy ID in roster")
+		var bad_unknown := registry.duplicate(true)
+		bad_unknown["Fight"][name]["enemy_ids"] = ["button_guard", "unknown_normal"]
+		_reject_registry(map, rng, selector, party, enemies, bad_unknown,
+			name + " unknown enemy ID in roster")
+		var bad_boss_id := registry.duplicate(true)
+		bad_boss_id["Fight"][name]["enemy_ids"] = ["patchwork_behemoth", "fray_scavenger"]
+		_reject_registry(map, rng, selector, party, enemies, bad_boss_id,
+			name + " boss catalog ID in normal Fight roster")
+		var bad_empty_ids := registry.duplicate(true)
+		bad_empty_ids["Fight"][name]["enemy_ids"] = []
+		_reject_registry(map, rng, selector, party, enemies, bad_empty_ids,
+			name + " empty enemy_ids array")
+		var pair_pool := {
+			"Fight": {
+				"starter_attacks": registry["Fight"]["starter_attacks"].duplicate(true),
+				name: {
+					"schedule": _path(name),
+					"enemy_ids": ["button_guard"],
+				},
+			},
+		}
+		_reject_registry(map, rng, selector, party, enemies, pair_pool,
+			name + " mismatched roster alongside valid starter_attacks")
+	_check(rng.state == oracle_rng.state and selector._selected.is_empty()
+		and selector._bound_map == null,
+		"all _entry_from_data rejections spent zero RNG and left selector unbound")
+	var sorted_ids: Array = registry["Fight"].keys()
+	sorted_ids.sort()
+	var expected_id: String = sorted_ids[oracle_rng.randi_range(0, sorted_ids.size() - 1)]
+	var recovered := RunAuthoredBattleEntry.new()._entry_from_data(
+		map, rng, selector, registry)
+	_check(recovered.get("success") == true and recovered.get("node_type") == "Fight"
+		and recovered.get("encounter_id") == expected_id
+		and rng.state == oracle_rng.state
+		and recovered.get("enemies") is CombatEnemies and recovered["enemies"].is_valid()
+		and recovered.get("intents") is CombatEnemyIntents and recovered["intents"].is_valid(),
+		"restoring valid registry after rejections succeeds with one sorted RNG draw")
+	_check(disk_before == [
+		FileAccess.get_file_as_string(POOLS_PATH),
+		FileAccess.get_file_as_string(FRONT),
+		FileAccess.get_file_as_string(REAR),
+		FileAccess.get_file_as_string(STARTER),
+		FileAccess.get_file_as_string(BACKSTITCH),
+	], "all on-disk fixtures remain untouched by rejection and retry tests")

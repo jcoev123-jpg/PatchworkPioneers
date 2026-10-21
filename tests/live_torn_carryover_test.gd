@@ -30,8 +30,27 @@ func _tear_fixture(kind: String) -> Dictionary:
 						continue
 					for last in map.get_node(rest).outgoing:
 						if map.get_node(last).type == "Fight":
-							return {"seed": value, "fight": first, "second": second, "rest": rest, "last": last}
+							if _two_enemy_second(value, first, second):
+								return {"seed": value, "fight": first, "second": second, "rest": rest, "last": last}
 	return {}
+
+
+func _two_enemy_second(seed_value: int, first: String, second: String) -> bool:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var map := RunMap.new()
+	map.generate(rng)
+	map.choose_node(first)
+	var selector := RunFightEncounterSelection.new()
+	selector.select_current_battle(map, rng, {"Fight": app.FIGHT_ENCOUNTER_PATHS})
+	CombatDeck.new(app._load_starter_deck(), rng)
+	rng.randi_range(10, 20)
+	var pool_size := catalog.get_all_card_ids().size()
+	for pick in range(3):
+		rng.randi_range(0, pool_size - 1 - pick)
+	map.choose_node(second)
+	var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+	return entry.get("success", false) and entry.enemies.get_enemies().size() == 2
 
 
 func _activate(button: Button, keyboard: bool) -> void:

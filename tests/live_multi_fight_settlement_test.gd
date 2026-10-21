@@ -19,10 +19,85 @@ func _multi_fixture() -> Dictionary:
 				continue
 			map.choose_node(id)
 			var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
-			if selected.get("encounter_id") == "starter_attacks":
+			if selected.get("encounter_id") == "starter_attacks" and _two_enemy_multi(value, id, second, third):
 				return {"seed": value, "fight": id, "paths": [second, third]}
 			map.undo_choice(id, [])
 	return {}
+
+
+func _two_enemy_multi(seed_value: int, first: String, second: Array, third: Array) -> bool:
+	if second.size() != 1 or third.size() != 1:
+		return false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var map := RunMap.new()
+	map.generate(rng)
+	map.choose_node(first)
+	var selector := RunFightEncounterSelection.new()
+	selector.select_current_battle(map, rng, {"Fight": app.FIGHT_ENCOUNTER_PATHS})
+	var party := CombatParty.new(app._load_party_definitions())
+	var enemies := CombatEnemies.new(app._load_enemy_definitions())
+	var intents := CombatEnemyIntents.new(app._load_enemy_schedule())
+	var run_deck: Array[String] = app._load_starter_deck()
+	var deck := CombatDeck.new(run_deck, rng)
+	var result := CombatBattleResult.new(party, enemies)
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result)
+	flow.begin_fight()
+	var attack_play := CombatAttackCards.new()
+	var targeting := CombatAttackTargeting.new()
+	for turn in range(20):
+		attack_play.start_player_turn()
+		for play in range(3):
+			var chosen := ""
+			var target := 0
+			for held in deck.hand:
+				var preview := targeting.get_preview(deck, party, enemies, held)
+				if preview.playable and preview.requires_selection:
+					chosen = held
+					target = preview.target_positions.back()
+					break
+			if chosen.is_empty():
+				break
+			var owner: String = catalog.get_definition(chosen).get("owner", "")
+			var owner_statuses := {}
+			for hero in party.get_heroes():
+				if hero.id == owner:
+					owner_statuses = hero.get("statuses", {})
+			var enemy_statuses := {}
+			for enemy in enemies.get_enemies():
+				enemy_statuses[enemy.position] = enemy.get("statuses", {})
+			attack_play.play_attack(deck, party, enemies, chosen, target, owner_statuses, enemy_statuses)
+			if result.evaluate() != CombatBattleResult.ACTIVE:
+				break
+		if result.evaluate() != CombatBattleResult.ACTIVE:
+			break
+		flow.end_turn()
+	if result.evaluate() != CombatBattleResult.VICTORY:
+		return false
+	var rewards := RunFightVictoryRewards.new(result, rng, ["warden", "seamstress", "tinker"], catalog.get_all_card_ids(), run_deck, 0, false)
+	var prepared := rewards.prepare()
+	if not prepared.ok:
+		return false
+	run_deck.append(prepared.offers[0].id)
+	for fight_index in range(2):
+		var next_id: String = second[0] if fight_index == 0 else third[0]
+		if not map.choose_node(next_id):
+			return false
+		var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
+		if not entry.get("success", false) or entry.enemies.get_enemies().size() != 2:
+			return false
+		if fight_index == 0:
+			CombatDeck.new(run_deck, rng)
+			rng.randi_range(10, 20)
+			var pool: Array[String] = catalog.get_all_card_ids()
+			pool.sort()
+			var first_offer := ""
+			for pick in range(3):
+				var cid: String = pool.pop_at(rng.randi_range(0, pool.size() - 1))
+				if pick == 0:
+					first_offer = cid
+			run_deck.append(first_offer)
+	return true
 
 
 func _settlement_state() -> Array:
