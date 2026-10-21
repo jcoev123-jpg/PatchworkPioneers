@@ -16,12 +16,24 @@ var _valid: bool = false
 var _consumed: bool = false
 
 
-func _init(deck_ids: Variant = null, permitted_upgrades: Variant = null) -> void:
+## Optional registry and allocator cursor admit a genuine stitched ledger. Passing
+## neither preserves the legacy catalog-only transaction exactly. A supplied
+## ledger must pass the SAME complete validation as Rest stitching; naming an
+## ID "stitched_*" does not create authorization for that ID.
+func _init(deck_ids: Variant = null, permitted_upgrades: Variant = null,
+		descriptors: Variant = null, next_stitch_id: Variant = null) -> void:
 	_catalog = StarterCards.new()
 	if typeof(deck_ids) == TYPE_ARRAY:
 		# Deep copy: later caller mutation cannot change this visit's snapshot.
 		_source = deck_ids.duplicate(true)
-	_valid = _is_valid_deck(_source)
+	if descriptors == null and next_stitch_id == null:
+		_valid = _is_valid_deck(_source)
+	elif typeof(descriptors) == TYPE_DICTIONARY:
+		# Do not retain a caller-owned nested half definition. Delegate ALL mixed
+		# ledger coherence, ownership and allocator checks to the stitch service.
+		var registry: Dictionary = descriptors.duplicate(true)
+		var cursor: Variant = 1 if next_stitch_id == null else next_stitch_id
+		_valid = RunRestStitchCards.new(_source, registry, 0, cursor).is_valid()
 	if _valid:
 		for entry in _source:
 			var card_id: String = entry
@@ -73,7 +85,7 @@ func is_consumed() -> bool:
 func _failure() -> Dictionary:
 	return {
 		"ok": false,
-		"deck": _source.duplicate(),
+		"deck": _source.duplicate(true),
 		"original_id": "",
 		"upgraded_id": "",
 	}
