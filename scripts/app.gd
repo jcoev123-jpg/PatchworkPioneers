@@ -31,6 +31,10 @@ var start_button: Button
 var route_button: Button
 var route_view: VBoxContainer
 var route_back_button: Button
+var route_map_button: Button
+var route_atlas_overlay: Control
+var route_atlas: RunRouteAtlas
+var route_atlas_close: Button
 var route_buttons: Array[Button] = []
 var run_map: RunMap
 var fight_encounter_paths: Dictionary = FIGHT_ENCOUNTER_PATHS.duplicate()
@@ -285,6 +289,12 @@ func _open_route() -> void:
 		route_buttons.append(button)
 		if not button.disabled:
 			actions.append(button)
+	route_map_button = Button.new()
+	route_map_button.text = "View full map"
+	route_view.add_child(route_map_button)
+	route_map_button.pressed.connect(_open_route_atlas.bind(
+		weakref(run_map), weakref(route_view), weakref(route_map_button)))
+	actions.append(route_map_button)
 	route_back_button = Button.new()
 	route_back_button.text = "Back"
 	route_back_button.pressed.connect(_cancel_route)
@@ -326,12 +336,74 @@ func _choose_route(id: String, source_map: WeakRef = null) -> bool:
 	return true
 
 
+func _route_atlas_source(source_map: WeakRef, source_view: WeakRef, source_action: WeakRef) -> bool:
+	return source_map != null and source_map.get_ref() == run_map and run_map != null \
+		and run_map.get_route().is_empty() and deck == null \
+		and is_instance_valid(route_view) and source_view != null and source_view.get_ref() == route_view \
+		and route_view.get_parent() == self and is_instance_valid(route_map_button) \
+		and source_action != null and source_action.get_ref() == route_map_button \
+		and route_map_button.get_parent() == route_view
+
+
+func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action: WeakRef) -> void:
+	if not _route_atlas_source(source_map, source_view, source_action) \
+		or not route_view.is_visible_in_tree() or is_instance_valid(route_atlas_overlay):
+		return
+	route_atlas_overlay = Control.new()
+	route_atlas_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(route_atlas_overlay)
+	var background := ColorRect.new()
+	background.color = Color("2b3135")
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	route_atlas_overlay.add_child(background)
+	route_atlas = RunRouteAtlas.new()
+	route_atlas.position = Vector2(20, 20)
+	route_atlas.bind_map(run_map)
+	route_atlas_overlay.add_child(route_atlas)
+	route_atlas_close = Button.new()
+	route_atlas_close.text = "Close map"
+	route_atlas_close.position = Vector2(520, 640)
+	route_atlas_close.size = Vector2(240, 48)
+	route_atlas_overlay.add_child(route_atlas_close)
+	route_atlas_close.focus_next = NodePath(".")
+	route_atlas_close.focus_previous = NodePath(".")
+	route_atlas_close.pressed.connect(_close_route_atlas.bind(source_map, source_view,
+		source_action, weakref(route_atlas_overlay)))
+	route_view.hide()
+	route_atlas_close.grab_focus()
+
+
+func _close_route_atlas(source_map: WeakRef, source_view: WeakRef,
+		source_action: WeakRef, source_overlay: WeakRef) -> void:
+	if not _route_atlas_source(source_map, source_view, source_action) \
+		or route_view.visible or not is_instance_valid(route_atlas_overlay) \
+		or source_overlay == null or source_overlay.get_ref() != route_atlas_overlay \
+		or route_atlas_overlay.get_parent() != self:
+		return
+	_clear_route_atlas()
+	route_view.show()
+	route_map_button.grab_focus()
+
+
+func _clear_route_atlas() -> void:
+	if is_instance_valid(route_atlas):
+		route_atlas.bind_map(null)
+	if is_instance_valid(route_atlas_overlay):
+		route_atlas_overlay.get_parent().remove_child(route_atlas_overlay)
+		route_atlas_overlay.queue_free()
+	route_atlas_overlay = null
+	route_atlas = null
+	route_atlas_close = null
+
+
 func _clear_route_view() -> void:
+	_clear_route_atlas()
 	if is_instance_valid(route_view):
 		remove_child(route_view)
 		route_view.queue_free()
 	route_view = null
 	route_back_button = null
+	route_map_button = null
 	route_buttons.clear()
 
 
@@ -1464,6 +1536,9 @@ func _return_from_battle(button) -> void:
 
 func _return_to_title() -> void:
 	if battle_view == null:
+		if is_instance_valid(route_view):
+			_cancel_route()
+			start_button.grab_focus()
 		return
 	for action in reward_buttons:
 		action.disabled = true
