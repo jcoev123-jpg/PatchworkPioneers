@@ -142,8 +142,19 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")
 				and child.get_theme_stylebox("panel").bg_color == (RunRouteAtlas.LEGAL_BG if legal else RunRouteAtlas.OTHER_BG),
 				"visible legal highlight: " + id)
+			var action_button: Button = child.get_node_or_null("Action") as Button
 			if legal:
 				highlighted.append(id)
+				_check(action_button != null, "live legal marker has button: " + id)
+				if action_button != null:
+					_check(action_button.focus_mode == Control.FOCUS_ALL
+						and action_button.mouse_filter == Control.MOUSE_FILTER_STOP
+						and child.get_global_rect().encloses(action_button.get_global_rect()),
+						"live legal button is focused/clickable inside paper: " + id)
+			else:
+				_check(action_button == null and child.focus_mode == Control.FOCUS_NONE
+						and child.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+						"live future/inaccessible marker is not interactive: " + id)
 		elif child is Line2D:
 			var source: String = child.get_meta("from_id")
 			var target: String = child.get_meta("to_id")
@@ -174,10 +185,25 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	app._close_route_atlas(weakref(app.run_map), weakref(chooser), weakref(action), weakref(chooser))
 	_check(app.route_atlas_overlay == overlay, "duplicate open and foreign close sources rejected")
 	_check(not app._choose_route("f01_n0"), "hidden chooser rejects legal Fight")
-	await _click_point(nodes["f01_n0"].get_global_rect().get_center())
-	await _key(KEY_RIGHT)
-	await _key(KEY_TAB)
-	_check(app.route_atlas_close.has_focus() and _snapshot(app) == hidden, "map input inert; focus stays on close")
+	var requests: Array[String] = []
+	_check(atlas.node_requested.get_connections().is_empty(), "live app has no route request listener yet")
+	atlas.node_requested.connect(func(id: String): requests.append(id))
+	var legal_button: Button = nodes["f01_n0"].get_node_or_null("Action") as Button
+	_check(legal_button != null and legal_button.is_visible_in_tree(), "mounted Fight request button exists")
+	if legal_button != null:
+		await _click_point(legal_button.get_global_rect().get_center())
+		_check(requests == ["f01_n0"] and _snapshot(app) == hidden,
+			"live mouse click emits only one request; hidden chooser and session untouched")
+		for keycode in [KEY_ENTER, KEY_SPACE]:
+			requests.clear()
+			legal_button.grab_focus()
+			_check(legal_button.has_focus(), "live Fight marker receives keyboard focus")
+			await _key(keycode)
+			_check(requests == ["f01_n0"] and _snapshot(app) == hidden,
+				"live keyboard emits only one request without bypassing chooser")
+	app.route_atlas_close.grab_focus()
+	_check(app.route_atlas_close.has_focus() and _snapshot(app) == hidden,
+		"close remains accessible after legal node input")
 	var atlas_id := atlas.get_instance_id()
 	var overlay_id: int = overlay.get_instance_id()
 	var cleared: Array = []

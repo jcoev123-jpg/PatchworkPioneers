@@ -22,6 +22,7 @@ const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]
 var _floor_ids: Array = []
 var _nodes: Dictionary = {}
 var _route: Array[String] = []
+var _generation_revision := 0
 
 
 func generate(rng: RandomNumberGenerator) -> bool:
@@ -82,6 +83,7 @@ func generate(rng: RandomNumberGenerator) -> bool:
 	_floor_ids = new_floors
 	_nodes = new_nodes
 	_route.clear()
+	_generation_revision += 1
 	return true
 
 
@@ -90,6 +92,12 @@ static func _add_edge(nodes: Dictionary, source_id: String, target_id: String) -
 	var edges: Array = source["outgoing"]
 	if not edges.has(target_id):
 		edges.append(target_id)
+
+
+## Changes on every successful generation, even when the same seed rebuilds
+## an identical graph. Views use this to invalidate old requests.
+func get_generation_revision() -> int:
+	return _generation_revision
 
 
 func is_generated() -> bool:

@@ -2,6 +2,7 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+var requests: Array[String] = []
 
 
 func _initialize() -> void:
@@ -148,8 +149,19 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				label + ": complete marker rectangle inside view " + id)
 			_check(marker.size.x >= 80 and marker.size.y >= 55,
 				label + ": legible compact marker dimensions " + id)
-			_check(marker.mouse_filter == Control.MOUSE_FILTER_IGNORE
-				and marker.focus_mode == Control.FOCUS_NONE, label + ": no marker input " + id)
+			_check(marker.focus_mode == Control.FOCUS_NONE, label + ": decorative panel cannot take focus " + id)
+			var action: Button = marker.get_node_or_null("Action") as Button
+			if legal.has(id) and not chosen.has(id):
+				_check(action != null, label + ": legal ID owns a real button " + id)
+				if action != null:
+					_check(action.focus_mode == Control.FOCUS_ALL and not action.disabled
+						and action.mouse_filter == Control.MOUSE_FILTER_STOP
+						and _inside(Rect2(action.position, action.size), Rect2(Vector2.ZERO, marker.size))
+						and action.size.x >= 70 and action.size.y >= 48,
+						label + ": legal button is mouse/keyboard actionable within marker " + id)
+			else:
+				_check(action == null and marker.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+					label + ": chosen/inaccessible node has no actionable button or focus " + id)
 			var identity: Label = marker.get_node_or_null("Identity") as Label
 			_check(identity != null, label + ": visible marker identity exists " + id)
 			if identity != null and expected_nodes.has(id):
@@ -243,11 +255,82 @@ func _crossing_present(view: RunRouteAtlas, map: RunMap, label: String) -> void:
 			label + ": actual link coordinates geometrically cross")
 
 
+func _record_request(id: String) -> void:
+	requests.append(id)
+
+
+func _action(view: RunRouteAtlas, id: String) -> Button:
+	for child in view.get_children():
+		if child is PanelContainer and child.get_meta("route_id") == id:
+			return child.get_node_or_null("Action") as Button
+	return null
+
+
+func _click_action(action: Button) -> void:
+	_check(action != null and action.is_visible_in_tree(), "mouse target is a mounted actionable button")
+	if action == null or not action.is_visible_in_tree():
+		return
+	var point := action.get_global_rect().get_center()
+	_check(root.get_visible_rect().has_point(point), "click point lies within viewport")
+	var move := InputEventMouseMotion.new()
+	move.position = point
+	root.push_input(move, true)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = point
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+
+
+func _key_action(action: Button, code: Key) -> void:
+	_check(action != null and action.is_visible_in_tree(), "keyboard target is a mounted actionable button")
+	if action == null or not action.is_visible_in_tree():
+		return
+	action.grab_focus()
+	_check(action.has_focus(), "real legal marker receives focus")
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+
+
+func _exercise_requests(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		label: String) -> void:
+	var legal := map.get_legal_choices()
+	_check(not legal.is_empty(), label + ": real legal choices before input")
+	if legal.is_empty():
+		return
+	var before := _state(map, rng)
+	seed(87001)
+	var expected_global := randi()
+	seed(87001)
+	for id in legal:
+		var action := _action(view, id)
+		_check(action != null, label + ": expected mounted action " + id)
+		if action == null:
+			continue
+		for mode in ["mouse", "enter", "space"]:
+			requests.clear()
+			if mode == "mouse":
+				await _click_action(action)
+			else:
+				await _key_action(action, KEY_ENTER if mode == "enter" else KEY_SPACE)
+			_check(requests == [id], label + ": " + mode + " emits exactly canonical " + id)
+			_check(_state(map, rng) == before, label + ": " + mode + " never changes route/RNG")
+	_check(randi() == expected_global, label + ": all inputs avoid global RNG")
+	requests.clear()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var first := RunRouteAtlas.new()
 	first.position = Vector2(20, 40)
 	root.add_child(first)
+	first.node_requested.connect(_record_request)
 	await process_frame
 	_check(first.is_inside_tree(), "read-only Control actually mounted in window")
 
@@ -281,6 +364,8 @@ func _run() -> void:
 			and _signature(first) == _signature(other),
 			"identical seed renders byte-for-byte comparable children and never alters graph/route/RNG")
 		_check(randi() == expected_global, "atlas does not consume global RNG for seed %d" % seed_value)
+		other.hide()
+		await _exercise_requests(first, map, rng, "seed %d opening" % seed_value)
 		var original_signature := _signature(first)
 		var read_graph := map.get_floors()
 		var original_floors := map.get_floors()
@@ -312,6 +397,9 @@ func _run() -> void:
 		first.refresh()
 		_verify(first, map, rng, "rejected opening seed %d" % seed_value)
 
+		var old_action := _action(first, map.get_legal_choices()[0])
+		_check(old_action != null, "old legal callback exists before advancing")
+		var stale: Callable = old_action.pressed.get_connections()[0].callable if old_action != null else Callable()
 		for floor_number in range(1, 13):
 			var legal := map.get_legal_choices()
 			var replay_legal := replay.get_legal_choices()
@@ -323,12 +411,19 @@ func _run() -> void:
 			var previous := _state(map, rng)
 			_check(map.choose_node(chosen) and replay.choose_node(chosen),
 				"real legal step committed on floor %d" % floor_number)
+			if stale.is_valid():
+				requests.clear()
+				stale.call()
+				_check(requests.is_empty(), "external progression blocks prior marker callback")
 			_check(map.get_route().size() == floor_number
 				and map.get_current_node_id() == chosen and rng.state == previous["rng"],
 				"only RunMap legal choice advances floor and spends no RNG")
 			first.refresh()
 			other.refresh()
 			_verify(first, map, rng, "seed %d floor %d" % [seed_value, floor_number])
+			_check(_action(first, chosen) == null, "selected node loses action after progression")
+			if floor_number < 12 and floor_number in [1, 6]:
+				await _exercise_requests(first, map, rng, "seed %d floor %d" % [seed_value, floor_number])
 			_check(_signature(first) == _signature(other) and _state(map, rng) == _state(replay, replay_rng),
 				"same seeded replay produces identical nodes, threads, highlights, graph and RNG")
 			var route_copy := map.get_route()
@@ -337,6 +432,10 @@ func _run() -> void:
 			var legal_copy := map.get_legal_choices()
 			legal_copy.clear()
 			legal_copy.append("forged")
+			if stale.is_valid():
+				requests.clear()
+				stale.call()
+				_check(requests.is_empty(), "external progression blocks prior marker callback")
 			_check(map.get_route().size() == floor_number
 				and not map.get_route().has("forged") and not map.get_legal_choices().has("forged"),
 				"route/legal defensive snapshots isolated after every move")
@@ -366,13 +465,21 @@ func _run() -> void:
 		key.pressed = true
 		Input.parse_input_event(key)
 		await process_frame
-		_check(_state(map, rng) == end_state and not first.has_focus(),
-			"mounted mouse/keyboard cannot select map nodes or focus atlas")
+		_check(_state(map, rng) == end_state and requests.is_empty() and not first.has_focus(),
+			"finished map mouse/keyboard is inert and has no node buttons")
 		first.bind_map(replay)
+		requests.clear()
+		if stale.is_valid():
+			stale.call()
+		_check(requests.is_empty(), "old callback rejects rebind")
 		_verify(first, replay, replay_rng, "second map rebound")
 		var replay_trace := _signature(other)
 		_check(_signature(first) == replay_trace, "new map rebind has only its own node/edge state")
 		first.bind_map(null)
+		requests.clear()
+		if stale.is_valid():
+			stale.call()
+		_check(requests.is_empty(), "old callback rejects null binding")
 		_check(first.get_child_count() == 0 and _state(map, rng) == end_state,
 			"null rebind immediately clears children, does not change former map")
 		first.refresh()
@@ -398,8 +505,40 @@ func _run() -> void:
 		"second graph has distinct real kind/edge content, stale first graph absent")
 	first.bind_map(a)
 	_check(_signature(first) == a_signature, "same first map is restorable without duplicates")
+	var old_button := _action(first, a.get_legal_choices()[0])
+	_check(old_button != null, "regeneration fixture has mounted legal button")
+	var old_callback: Callable = old_button.pressed.get_connections()[0].callable if old_button != null else Callable()
+	var prior_generation := a.get_generation_revision()
+	var prior_state := _state(a, a_rng)
+	requests.clear()
+	first._request_node("unknown", a, first._revision)
+	first._request_node(a.get_floors()[3][0]["id"], a, first._revision)
+	_check(requests.is_empty() and _state(a, a_rng) == prior_state,
+		"unknown and nonlegal direct request callbacks reject without RNG use")
+	var identical_rng := _rng(6)
+	_check(a.generate(identical_rng) and a.get_floors() == prior_state.floors
+		and a.get_generation_revision() == prior_generation + 1,
+		"same seed regeneration recreates identical atlas data with fresh generation identity")
+	var regenerated := _state(a, identical_rng)
+	if old_callback.is_valid():
+		old_callback.call()
+	_check(requests.is_empty() and _state(a, identical_rng) == regenerated,
+		"old callback rejects same-seed regeneration even when IDs and route are unchanged")
+	first.refresh()
+	_verify(first, a, identical_rng, "same-seed regenerated view")
+	if old_callback.is_valid():
+		old_callback.call()
+	_check(requests.is_empty(), "refresh invalidates all prior generation callbacks")
+	first.bind_map(b)
+	if old_callback.is_valid():
+		old_callback.call()
+	_check(requests.is_empty(), "rebind rejects retained callback from old map")
 	first.bind_map(null)
-	_check(first.get_child_count() == 0, "last null clears every edge, header and marker")
+	if old_callback.is_valid():
+		old_callback.call()
+	first._request_node("f01_n0", null, first._revision)
+	_check(requests.is_empty() and first.get_child_count() == 0,
+		"last null rejects stale and null callbacks, clears edges, headers and markers")
 	first.queue_free()
 	await process_frame
 	if failures.is_empty():

@@ -1,6 +1,7 @@
 class_name RunRouteAtlas
 extends Control
-## Standalone, inert read-only preview: RunMap remains the only graph and route authority.
+## Standalone node request view: RunMap remains the only graph and route authority.
+## The view emits requests, never commits a choice or draws from any RNG.
 ## bind_map(null) clears everything. refresh() always rebuilds from defensive snapshots.
 ## All positions are local to the 1240 x 600 preview; a parent may center it in 1280 x 720.
 
@@ -17,7 +18,14 @@ const CHOSEN_THREAD := Color("#a6e4c5")
 const LEGAL_THREAD := Color("#efd6a0")
 const OTHER_THREAD := Color("#837886")
 
+signal node_requested(id: String)
+
 var _map: RunMap = null
+var _revision := 0
+var _rendered_generation := 0
+var _rendered_graph: Array = []
+var _rendered_route: Array[String] = []
+var _rendered_legal: Array[String] = []
 
 
 func _init() -> void:
@@ -35,6 +43,13 @@ func bind_map(map: RunMap) -> void:
 
 
 func refresh() -> void:
+	# Each rebuild invalidates every previous marker callback, including callbacks
+	# retained by a caller after a Control has been detached or freed.
+	_revision += 1
+	_rendered_graph = []
+	_rendered_generation = 0
+	_rendered_route.clear()
+	_rendered_legal.clear()
 	# Synchronous removal avoids stale, queued-for-deletion duplicates on repeated refresh.
 	for child in get_children():
 		remove_child(child)
@@ -44,6 +59,10 @@ func refresh() -> void:
 	var floors: Array = _map.get_floors()
 	var chosen: Array[String] = _map.get_route()
 	var legal: Array[String] = _map.get_legal_choices()
+	_rendered_generation = _map.get_generation_revision()
+	_rendered_graph = floors.duplicate(true)
+	_rendered_route = chosen.duplicate()
+	_rendered_legal = legal.duplicate()
 	var positions: Dictionary = {}
 	for floor_index in range(floors.size()):
 		var floor_nodes: Array = floors[floor_index]
@@ -157,7 +176,38 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	caption.add_theme_color_override("font_color", Color("#fff8e9"))
 	_inert(caption)
 	marker.add_child(caption)
+	if state == "legal":
+		# Only a legal marker owns an actionable Control; its transparent face
+		# preserves the original paper style and visible ID.
+		var action := Button.new()
+		action.name = "Action"
+		action.flat = true
+		action.focus_mode = Control.FOCUS_ALL
+		action.mouse_filter = Control.MOUSE_FILTER_STOP
+		action.position = Vector2(2, 2)
+		action.size = NODE_SIZE - Vector2(4, 4)
+		action.tooltip_text = "Request " + kind + " " + id
+		action.pressed.connect(_request_node.bind(id, _map, _revision))
+		marker.add_child(action)
 	add_child(marker)
+
+
+func _request_node(id: String, source_map: RunMap, revision: int) -> void:
+	# A stale callback is invalid even if the old Control has been removed.
+	# Check model snapshots too: external progress and regeneration can happen
+	# before a caller refreshes the view.
+	if source_map == null or _map != source_map or revision != _revision:
+		return
+	if not _map.is_generated() or _map.is_complete():
+		return
+	if _map.get_generation_revision() != _rendered_generation:
+		return
+	if _map.get_floors() != _rendered_graph or _map.get_route() != _rendered_route:
+		return
+	var legal := _map.get_legal_choices()
+	if legal != _rendered_legal or not legal.has(id):
+		return
+	node_requested.emit(id)
 
 
 func _inert(control: Control) -> void:
