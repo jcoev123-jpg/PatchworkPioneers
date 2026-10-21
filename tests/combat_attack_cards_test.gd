@@ -10,6 +10,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_strike_plus()
 	_test_contract_and_five_attacks()
 	_test_modifier_math_and_first_attack()
 	_test_bomb_roster_shapes()
@@ -31,6 +32,45 @@ func _check(condition: bool, label: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(label)
+
+
+func _plus_deck() -> CombatDeck:
+	var cards := StarterCards.new().get_starting_deck()
+	var index := cards.find("warden_strike")
+	var upgraded := RunRestCardUpgrade.new(cards, {"warden_strike": "warden_strike_plus"}).choose_upgrade(index)
+	_check(upgraded.ok, "real upgrade transaction supplies attack fixture")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 78
+	var deck := CombatDeck.new(upgraded.deck, rng)
+	_check(deck.start_turn(), "upgraded deck starts real turn")
+	while not deck.hand.has("warden_strike_plus") and not deck.draw_pile.is_empty():
+		deck.draw_extra(1)
+	_check(deck.hand.has("warden_strike_plus"), "actual upgraded copy held")
+	return deck
+
+
+func _test_strike_plus() -> void:
+	for position in [1, 2]:
+		_accept(CombatAttackCards.new(), _plus_deck(), _party(), _enemies(),
+			"warden_strike_plus", position, [_hit(position, 7, 0, 7)], 1, "Strike+ normal hit")
+	_reject(CombatAttackCards.new(), _plus_deck(), _party(["seamstress", "tinker", "warden"]), _enemies(),
+		"warden_strike_plus", 1, "Strike+ Warden at back")
+	var empty_energy := _plus_deck()
+	_check(empty_energy.try_spend_energy(3), "spend all energy before rejection")
+	_reject(CombatAttackCards.new(), empty_energy, _party(), _enemies(), "warden_strike_plus", 1, "Strike+ no energy")
+	for target in [0, 3, 4]:
+		_reject(CombatAttackCards.new(), _plus_deck(), _party(), _enemies(), "warden_strike_plus", target, "Strike+ unavailable target")
+	var enemies := _enemies()
+	_check(enemies.apply_damage(1, 999), "slain target fixture")
+	_reject(CombatAttackCards.new(), _plus_deck(), _party(), enemies, "warden_strike_plus", 1, "Strike+ slain target")
+	_reject(CombatAttackCards.new(), _plus_deck(), _party(), _enemies([20]), "warden_strike_plus", 2, "Strike+ absent slot")
+	var absent := _plus_deck()
+	_check(absent.discard_played("warden_strike_plus"), "remove held upgraded copy")
+	_reject(CombatAttackCards.new(), absent, _party(), _enemies(), "warden_strike_plus", 1, "Strike+ absent from hand")
+	var basic := _plus_deck()
+	var roster := _enemies()
+	_check(CombatBasicAttacks.new().play(basic, _party(), roster, "warden_strike_plus", 1)
+		and roster.get_enemy(1).hp == 11 and basic.energy == 2 and basic.discard_pile.has("warden_strike_plus"), "basic resolver also reads seven damage from catalog")
 
 
 func _test_area_bridge_atomicity() -> void:

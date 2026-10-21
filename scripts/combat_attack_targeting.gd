@@ -4,6 +4,7 @@ extends RefCounted
 ## The eventual play resolver must independently validate its committed target.
 
 const ATTACK_IDS := [
+	"warden_strike_plus",
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
 	"tinker_pop_shot", "tinker_scrap_bomb"
 ]

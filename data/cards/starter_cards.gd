@@ -22,6 +22,18 @@ var _definitions: Dictionary = {}
 
 func _init() -> void:
 	_definitions = {
+		"warden_strike_plus": {
+			"id": "warden_strike_plus",
+			"display_name": "Strike+",
+			"owner": "warden",
+			"cost": 1,
+			"from_positions": [1, 2],
+			"target_kind": "enemy_single",
+			"to_positions": [1, 2],
+			"effects": {"damage": 7},
+			"illustration_path": "res://assets/paper/cards/warden_strike.png",
+			"starting_copies": 0
+		},
 		"warden_strike": {
 			"id": "warden_strike",
 			"display_name": "Strike",

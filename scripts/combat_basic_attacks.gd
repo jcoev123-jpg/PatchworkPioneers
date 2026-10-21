@@ -4,7 +4,7 @@ extends RefCounted
 ## real shared CombatDeck, CombatParty and CombatEnemies state. No RNG usage.
 
 
-const SUPPORTED_CARD_IDS := ["warden_strike", "tinker_pop_shot"]
+const SUPPORTED_CARD_IDS := ["warden_strike", "warden_strike_plus", "tinker_pop_shot"]
 
 
 func play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String,

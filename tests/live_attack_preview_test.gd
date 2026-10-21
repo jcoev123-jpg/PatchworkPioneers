@@ -72,20 +72,33 @@ func _snapshot() -> Array:
 func _seed_for(id: String) -> int:
 	var cards: Array[String] = []
 	cards.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
+	# Zero-starter-copy upgrades use a held original for this preview fixture.
+	var opening_id := "warden_strike" if id == "warden_strike_plus" else id
 	for candidate in range(1000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = candidate
 		var deck := CombatDeck.new(cards, rng)
 		deck.start_turn()
-		if id in deck.hand:
+		if opening_id in deck.hand:
 			return candidate
 	_check(false, "seeded opening found: " + id)
 	return -1
 
 
-func _start(seed_value: int) -> bool:
+func _start(seed_value: int, held_id: String = "") -> bool:
 	app.run_seed = seed_value
 	await _click(app.start_button)
+	# Keep every preview/status/replay assertion for upgraded attacks too. The
+	# connected Rest -> real next-battle draw is covered by live_rest_upgrade_choice_test.
+	if held_id == "warden_strike_plus" and app.deck != null:
+		var upgrade := RunRestCardUpgrade.new(app.deck.hand, {"warden_strike": "warden_strike_plus"})
+		var result := upgrade.choose_upgrade(app.deck.hand.find("warden_strike"))
+		_check(result.ok, "preview fixture upgrades an actual held Strike copy")
+		if not result.ok:
+			return false
+		app.deck.hand.assign(result.deck)
+		app._refresh_hand()
+		await _frames()
 	var valid: bool = app.deck != null and app.party != null and app.enemies != null \
 		and app.battle_result != null and is_instance_valid(presenter.cue)
 	_check(valid, "actual title start mounts cue with complete models")
@@ -158,7 +171,7 @@ func _run() -> void:
 	for id in CombatAttackTargeting.ATTACK_IDS:
 		var replay: Array = []
 		for session in range(2):
-			if not await _start(_seed_for(id)):
+			if not await _start(_seed_for(id), id):
 				app.free()
 				_finish()
 				return
@@ -767,7 +780,7 @@ func _forecast_statuses() -> void:
 	for id in CombatAttackTargeting.ATTACK_IDS:
 		var replay: Array = []
 		for keyboard in [false, true]:
-			if not await _start(_seed_for(id)):
+			if not await _start(_seed_for(id), id):
 				return
 			for hero in app.party._heroes:
 				if hero.id == catalog.get_definition(id).owner:

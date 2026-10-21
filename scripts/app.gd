@@ -81,6 +81,19 @@ var rest_continue_button: Button
 var rest_back_button: Button
 var rest_hp_label: Label
 var rest_recovery: RunRestRecovery
+var rest_upgrade: RunRestCardUpgrade
+var rest_upgrade_cards: OptionButton
+var rest_upgrade_button: Button
+var _rest_deck: Array[String] = []
+var _rest_committed_deck: Array[String] = []
+var _rest_floors: Array = []
+var _rest_revision := 0
+var _rest_inventory: Array = []
+var _rest_ledger: Dictionary = {}
+var _rest_carry: RunPartyCarryover
+var _rest_rng: RandomNumberGenerator
+var _rest_gold := 0
+var _rest_rng_state := 0
 var _rest_route: Array[String] = []
 var _rest_heroes: Array = []
 var _rest_committed_heroes: Array = []
@@ -1127,12 +1140,97 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 
 
 func _current_completed_rest() -> bool:
-	return rest_recovery != null and rest_recovery.is_consumed() \
+	return rest_recovery != null and ((rest_recovery.is_consumed() and _rest_committed_deck.is_empty()) or _completed_rest_upgrade()) \
 		and run_map != null and _rest_map != null and _rest_map.get_ref() == run_map \
 		and not _rest_route.is_empty() and run_map.get_route() == _rest_route \
 		and run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest" \
 		and not _rest_committed_heroes.is_empty() and run_heroes == _rest_committed_heroes \
 		and RunRestRecovery._is_valid_roster(run_heroes)
+
+
+func _rest_upgrade_context() -> bool:
+	return run_map != null and _rest_map != null and _rest_map.get_ref() == run_map \
+		and not _rest_route.is_empty() and run_map.get_route() == _rest_route \
+		and run_map.get_current_node_id() == _rest_route.back() \
+		and run_map.get_node(_rest_route.back()).get("type") == "Rest" \
+		and run_map.get_floors() == _rest_floors and run_map.get_generation_revision() == _rest_revision \
+		and run_heroes == _rest_heroes and RunRestRecovery._is_valid_roster(run_heroes) \
+		and party_carryover != null and party_carryover == _rest_carry \
+		and _carryover_map != null and _carryover_map.get_ref() == run_map \
+		and party_carryover.read_state() == _rest_ledger and _rest_ledger.get("ok", false) \
+		and _rest_ledger.get("heroes") == run_heroes \
+		and not _rest_ledger.get("completed_rests", []).has(_rest_route.back()) \
+		and run_rng != null and run_rng == _rest_rng and run_rng.state == _rest_rng_state \
+		and session_gold == _rest_gold and [run_trinkets, run_removal_count] == _rest_inventory
+
+
+func _completed_rest_upgrade() -> bool:
+	return rest_upgrade != null and rest_upgrade.is_consumed() \
+		and rest_recovery != null and not rest_recovery.is_consumed() \
+		and not _rest_committed_deck.is_empty() and run_deck == _rest_committed_deck \
+		and _rest_upgrade_context()
+
+
+func _upgrade_at_rest(visit: RunRestCardUpgrade, button, choices) -> void:
+	if visit == null or visit != rest_upgrade or visit.is_consumed() \
+		or rest_recovery == null or rest_recovery.is_consumed() or not rest_recovery._valid \
+		or rest_recovery._roster != _rest_heroes or not _rest_upgrade_context() \
+		or not _rest_committed_heroes.is_empty() or not _rest_committed_deck.is_empty() or run_deck != _rest_deck \
+		or not visit._valid or visit._source != _rest_deck or visit._deck != _rest_deck \
+		or visit._upgrades != {"warden_strike": "warden_strike_plus"} \
+		or not is_instance_valid(rest_view) or rest_view.get_parent() != self or not rest_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button != rest_upgrade_button or button.get_parent() != rest_view \
+		or button.disabled or not button.is_visible_in_tree() \
+		or not is_instance_valid(choices) or choices != rest_upgrade_cards or choices.get_parent() != rest_view \
+		or choices.disabled or not choices.is_visible_in_tree():
+		return
+	# Validate the complete visible index list, not just the selected display name.
+	var indices: Array[int] = []
+	for index in range(_rest_deck.size()):
+		if _rest_deck[index] == "warden_strike":
+			indices.append(index)
+	if choices.item_count != indices.size() or choices.selected < 0 or choices.selected >= indices.size():
+		return
+	for item in range(indices.size()):
+		if typeof(choices.get_item_metadata(item)) != TYPE_INT \
+			or choices.get_item_metadata(item) != indices[item] or choices.is_item_disabled(item) \
+			or choices.get_item_text(item) != _rest_upgrade_text(indices[item]):
+			return
+	var catalog := StarterCards.new()
+	var original := catalog.get_definition("warden_strike")
+	var replacement := catalog.get_definition("warden_strike_plus")
+	if replacement.get("id") != "warden_strike_plus" or replacement.get("effects") != {"damage": 7} \
+		or replacement.get("cost") != 1 or replacement.get("display_name") != "Strike+":
+		return
+	for field in ["owner", "from_positions", "to_positions", "target_kind"]:
+		if replacement.get(field) != original.get(field):
+			return
+	for card_id in _rest_deck:
+		if not catalog.has_card(card_id):
+			return
+	var result := visit.choose_upgrade(indices[choices.selected])
+	if not result.ok:
+		return
+	run_deck.assign(result.deck)
+	_rest_committed_deck = run_deck.duplicate()
+	_rest_committed_heroes = run_heroes.duplicate(true)
+	_finish_rest_choice()
+
+
+func _rest_upgrade_text(index: int) -> String:
+	return "Deck #%d: Warden Strike -> Strike+ (7 damage, 1 energy)" % (index + 1)
+
+
+func _finish_rest_choice() -> void:
+	rest_heal_button.disabled = true
+	rest_upgrade_button.disabled = true
+	rest_upgrade_cards.disabled = true
+	rest_continue_button.disabled = false
+	rest_continue_button.focus_next = rest_continue_button.get_path_to(rest_back_button)
+	rest_continue_button.focus_previous = rest_continue_button.get_path_to(rest_back_button)
+	rest_back_button.focus_next = rest_back_button.get_path_to(rest_continue_button)
+	rest_back_button.focus_previous = rest_back_button.get_path_to(rest_continue_button)
+	rest_back_button.grab_focus()
 
 
 func _continue_from_rest(visit: RunRestRecovery, source_map: WeakRef, prior: Array[String], button) -> void:
@@ -1175,7 +1273,8 @@ func _continue_from_shop(visit: RunShopVisit, source_map: WeakRef, prior: Array[
 
 
 func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
-	if not _can_choose_connected_route() or source_map == null or source_map.get_ref() != run_map \
+	if not _can_choose_connected_route() or run_rng == null or party_carryover == null \
+		or source_map == null or source_map.get_ref() != run_map \
 		or run_map.get_route() != prior or not is_instance_valid(route_view) \
 		or not route_view.is_visible_in_tree() or not is_instance_valid(button) \
 		or button not in route_buttons or button.disabled or not button.is_visible_in_tree() \
@@ -1189,7 +1288,18 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		rest_view.queue_free()
 	rest_continue_button = null
 	_rest_committed_heroes.clear()
+	_rest_committed_deck.clear()
 	rest_recovery = RunRestRecovery.new(run_heroes)
+	rest_upgrade = RunRestCardUpgrade.new(run_deck, {"warden_strike": "warden_strike_plus"})
+	_rest_deck = run_deck.duplicate()
+	_rest_floors = run_map.get_floors()
+	_rest_revision = run_map.get_generation_revision()
+	_rest_gold = session_gold
+	_rest_rng = run_rng
+	_rest_rng_state = run_rng.state
+	_rest_inventory = [run_trinkets.duplicate(), run_removal_count]
+	_rest_carry = party_carryover
+	_rest_ledger = party_carryover.read_state()
 	_rest_heroes = run_heroes.duplicate(true)
 	_rest_route = run_map.get_route()
 	_rest_map = weakref(run_map)
@@ -1209,6 +1319,20 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_heal_button.custom_minimum_size = Vector2(480, 56)
 	rest_heal_button.pressed.connect(_heal_at_rest.bind(rest_recovery, rest_heal_button))
 	rest_view.add_child(rest_heal_button)
+	rest_upgrade_cards = OptionButton.new()
+	rest_upgrade_cards.custom_minimum_size = Vector2(480, 40)
+	for index in range(run_deck.size()):
+		if run_deck[index] == "warden_strike":
+			rest_upgrade_cards.add_item(_rest_upgrade_text(index))
+			rest_upgrade_cards.set_item_metadata(rest_upgrade_cards.item_count - 1, index)
+	rest_view.add_child(rest_upgrade_cards)
+	rest_upgrade_button = Button.new()
+	rest_upgrade_button.text = "Upgrade selected Strike (instead of Heal)"
+	rest_upgrade_button.custom_minimum_size = Vector2(480, 48)
+	rest_upgrade_button.disabled = rest_upgrade_cards.item_count == 0
+	rest_upgrade_cards.disabled = rest_upgrade_button.disabled
+	rest_upgrade_button.pressed.connect(_upgrade_at_rest.bind(rest_upgrade, rest_upgrade_button, rest_upgrade_cards))
+	rest_view.add_child(rest_upgrade_button)
 	rest_continue_button = Button.new()
 	rest_continue_button.text = "Continue"
 	rest_continue_button.custom_minimum_size = Vector2(480, 48)
@@ -1220,11 +1344,17 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_back_button.pressed.connect(_return_from_visit.bind(rest_view))
 	rest_view.add_child(rest_back_button)
 	_focus_visit(rest_view)
+	if not rest_upgrade_button.disabled:
+		var actions: Array[Control] = [rest_heal_button, rest_upgrade_cards, rest_upgrade_button, rest_back_button]
+		for index in range(actions.size()):
+			actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+			actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
 	return true
 
 
 func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 	if visit == null or visit != rest_recovery or visit.is_consumed() \
+		or (rest_upgrade != null and rest_upgrade.is_consumed()) or not _rest_committed_deck.is_empty() \
 		or not is_instance_valid(rest_view) or not rest_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != rest_heal_button \
 		or button.disabled or not button.is_visible_in_tree() or run_map == null \
@@ -1254,12 +1384,7 @@ func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 		return
 	run_heroes = result.heroes.duplicate(true)
 	_rest_committed_heroes = run_heroes.duplicate(true)
-	button.disabled = true
-	rest_continue_button.disabled = false
-	rest_continue_button.focus_next = rest_continue_button.get_path_to(rest_back_button)
-	rest_continue_button.focus_previous = rest_continue_button.get_path_to(rest_back_button)
-	rest_back_button.focus_next = rest_back_button.get_path_to(rest_continue_button)
-	rest_back_button.focus_previous = rest_back_button.get_path_to(rest_continue_button)
+	_finish_rest_choice()
 	_refresh_rest_hp()
 	rest_back_button.grab_focus()
 
@@ -1634,6 +1759,19 @@ func _return_to_title() -> void:
 	rest_back_button = null
 	rest_hp_label = null
 	rest_recovery = null
+	rest_upgrade = null
+	rest_upgrade_cards = null
+	rest_upgrade_button = null
+	_rest_deck.clear()
+	_rest_committed_deck.clear()
+	_rest_floors.clear()
+	_rest_inventory.clear()
+	_rest_ledger.clear()
+	_rest_carry = null
+	_rest_rng = null
+	_rest_gold = 0
+	_rest_rng_state = 0
+	_rest_revision = 0
 	_rest_route.clear()
 	_rest_heroes.clear()
 	_rest_committed_heroes.clear()

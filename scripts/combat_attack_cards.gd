@@ -4,6 +4,7 @@ extends RefCounted
 ## Damage reads current actor records; confirmed hits persist on the enemy roster.
 
 const ATTACK_IDS := [
+	"warden_strike_plus",
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
 	"tinker_pop_shot", "tinker_scrap_bomb"
 ]

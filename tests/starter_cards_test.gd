@@ -7,6 +7,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_definitions_exist()
 	_test_warden_cards()
+	_test_strike_plus()
 	_test_seamstress_cards()
 	_test_tinker_cards()
 	_test_starting_deck_multiplicities()
@@ -31,6 +32,19 @@ func _check(condition: bool, message: String) -> void:
 func _get_catalog():
 	var script = load("res://data/cards/starter_cards.gd")
 	return script.new()
+
+
+func _test_strike_plus() -> void:
+	var catalog := StarterCards.new()
+	var upgraded := catalog.get_definition("warden_strike_plus")
+	var original := catalog.get_definition("warden_strike")
+	_check(upgraded.get("id") == "warden_strike_plus", "Strike+ authored ID")
+	_check(upgraded.get("display_name") == "Strike+", "Strike+ visible name")
+	_check(upgraded.get("effects") == {"damage": 7}, "Strike+ exactly seven base damage")
+	_check(upgraded.get("starting_copies") == 0 and not catalog.get_starting_deck().has("warden_strike_plus"), "upgrade adds no starter copies")
+	for field in ["owner", "cost", "from_positions", "target_kind", "to_positions"]:
+		_check(upgraded.get(field) == original.get(field), "Strike+ retains " + field)
+	_check(catalog.get_starting_deck() == JSON.parse_string(FileAccess.get_file_as_string("res://data/cards/starter_deck.json")), "exact twelve-card starter membership and order retained")
 
 
 func _test_definitions_exist() -> void:
