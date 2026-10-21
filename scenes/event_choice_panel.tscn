@@ -1,0 +1,71 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/live_event_choice_panel.gd" id="1_panel"]
+
+[node name="EventChoicePanel" type="Control"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_panel")
+
+[node name="SlateBackdrop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.094, 0.141, 0.172, 1)
+
+[node name="PaperPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchor_left = 0.125
+anchor_top = 0.1
+anchor_right = 0.875
+anchor_bottom = 0.9
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ContentMargin" type="MarginContainer" parent="PaperPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 42
+theme_override_constants/margin_top = 26
+theme_override_constants/margin_right = 42
+theme_override_constants/margin_bottom = 24
+
+[node name="EventContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+layout_mode = 2
+text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
+horizontal_alignment = 1
+
+[node name="EventTitle" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+custom_minimum_size = Vector2(0, 58)
+layout_mode = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="EventDescription" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+custom_minimum_size = Vector2(0, 114)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3
+
+[node name="Choices" type="VBoxContainer" parent="PaperPanel/ContentMargin/EventContent"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="BottomStitches" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
+layout_mode = 2
+text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
+horizontal_alignment = 1
