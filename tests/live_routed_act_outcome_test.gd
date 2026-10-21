@@ -15,14 +15,21 @@ func _snapshot() -> Array:
 			app.fight_rewards._choice.get_offers(), app.fight_rewards._choice.is_claimed()])
 	if app.multi_fight_rewards != null:
 		result.append(app.multi_fight_rewards.read_state())
+	var panel: LiveRunTerminalResultPanel = app.terminal_result_panel
+	result.append([panel, panel.get_presented_status() if panel != null else "",
+		panel.visible if panel != null else false,
+		panel.return_button.disabled if panel != null else true])
 	return result
 
 
 func _click(control: Control) -> void:
-	var returning: bool = control == app.return_button and is_instance_valid(control)
+	var returning: bool = is_instance_valid(control) and (control == app.return_button
+		or (app.terminal_result_panel != null and control == app.terminal_result_panel.return_button))
+	var terminal_return: bool = returning and app.terminal_result_panel != null \
+		and control == app.terminal_result_panel.return_button
 	var latch: RunActBattleOutcome = app.act_outcome
 	var saved := latch.get_state() if latch != null else {}
-	if returning and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT:
+	if terminal_return and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT:
 		_check(latch != null and saved.run_status == RunActBattleOutcome.DEFEAT
 			and saved.settled_node_ids == app.run_map.get_route() and saved.pending_node_id == "",
 			"enemy-phase defeat settles exact selected Fight as run DEFEAT")
@@ -31,9 +38,22 @@ func _click(control: Control) -> void:
 			and app.reward_buttons.is_empty(), "routed defeat cue, frozen hand and no rewards")
 		var before := _snapshot()
 		app.end_turn_button.pressed.emit()
+		app.return_button.pressed.emit()
 		app.return_button.release_focus()
-		await _key(KEY_SPACE)
-		_check(_snapshot() == before, "closed defeat ignores mouse callback and keyboard action")
+		app._mount_terminal_result()
+		var callback: Callable = app._terminal_return_connection
+		callback.call()
+		_check(_snapshot() == before, "closed defeat ignores old Return, forged signal callback and duplicate mount")
+		_check(app.terminal_result_panel.return_button.has_focus(),
+			"Defeat Return has keyboard focus")
+		# A focused terminal button must be the only valid keyboard action.
+		await _key(KEY_ENTER)
+		_check(app.title_view.is_visible_in_tree() and app.act_outcome == null,
+			"physical Enter accepts genuine terminal Return")
+		# Keyboard consumed this terminal; the caller's old mouse click no longer applies.
+		if latch != null:
+			_check(latch.get_state() == saved, "keyboard Return preserves detached settled latch")
+		return
 	await super._click(control)
 	if returning:
 		_check(app.act_outcome == null and app.title_view.is_visible_in_tree(), "Return disposes latch and shows title")
@@ -50,7 +70,8 @@ func _click(control: Control) -> void:
 			"settled_node_ids": []}, "fresh routed battle has fresh ACTIVE latch")
 		var before := _snapshot()
 		_check(not last_latch.settle_current_battle() and app._observe_battle_result(), "ACTIVE cannot settle")
-		_check(_snapshot() == before, "ACTIVE observation conserves complete state and RNG")
+		_check(_snapshot() == before and app.terminal_result_panel == null,
+			"ACTIVE observation conserves complete state and has no terminal panel")
 		var detached := last_latch.get_state()
 		detached.settled_node_ids.append("forged")
 		detached.run_status = "DEFEAT"
@@ -95,6 +116,8 @@ func _run() -> void:
 		var latch: RunActBattleOutcome = app.act_outcome
 		_check(latch != previous and latch.get_state() == {"run_status": "ACTIVE",
 			"pending_node_id": "", "settled_node_ids": [fixture.fight]}, "held-card Fight victory settles once and run stays ACTIVE")
+		_check(app.terminal_result_panel == null,
+			"settled ordinary Fight remains ACTIVE with no terminal screen")
 		_check(app.run_heroes == _block_free_party() and app.fight_rewards != null
 			and app.reward_buttons.size() == 4 and not app.fight_reward_claimed,
 			"carryover precedes existing unclaimed authored rewards")
@@ -119,9 +142,20 @@ func _run() -> void:
 	await _regeneration_rejections(fixture)
 	await _identity_rejections(fixture)
 	await _enter(fixture)
-	# In-place map drift must reject before evaluate can witness lethal actors.
+	# An active bound run cannot publish merely from a direct mount request,
+	# even with lethal-looking actors that combat has not observed.
+	var active_before := _snapshot()
+	app._mount_terminal_result()
+	_check(app.terminal_result_panel == null and _snapshot() == active_before,
+		"ACTIVE routed battle refuses direct terminal publication")
 	for enemy in app.enemies.get_enemies():
 		app.enemies.apply_damage(enemy.position, 999)
+	var lethal_before := _snapshot()
+	app._mount_terminal_result()
+	_check(app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
+		and app.terminal_result_panel == null and _snapshot() == lethal_before,
+		"unobserved lethal actors cannot open panel, settle or spend RNG")
+	# In-place map drift must reject before evaluate can witness lethal actors.
 	var node: Dictionary = app.run_map._nodes[fixture.fight]
 	var old_outgoing: Array = node.outgoing.duplicate()
 	node.outgoing.append("stale-edge")
@@ -175,6 +209,7 @@ func _stale_mounted_actions(label: String) -> void:
 	if is_instance_valid(app.continue_button):
 		app.continue_button.pressed.emit()
 	await _frames()
+	_check(app.terminal_result_panel == null, label + " never opens a terminal panel")
 	_check(_snapshot() == before and app.route_view == null and app.battle_view.is_visible_in_tree(),
 		label + " preserves full combat, terminal, route, ledger, inventory, rewards and RNG state")
 

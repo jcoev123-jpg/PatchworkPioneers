@@ -136,6 +136,8 @@ var reward_buttons: Array[Button] = []
 const INTERIM_REWARD_IDS := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
 var result_label: Label
 var _battle_closed := false
+var terminal_result_panel: LiveRunTerminalResultPanel
+var _terminal_return_connection: Callable
 var swap_preview_buttons: Array[Button] = []
 var swap_preview_cue: Label
 var _swap_preview_pair := 0
@@ -203,8 +205,73 @@ func _observe_battle_result() -> bool:
 		if not fight_reward_trinket.is_empty():
 			result_label.text += " | Trinket: " + fight_reward_trinket
 		result_label.show()
-		return_button.grab_focus()
+		if _terminal_result_is_current():
+			_mount_terminal_result()
+		else:
+			return_button.grab_focus()
 	return false
+
+
+## Present only the settled witness for this same mounted routed combat.
+func _terminal_result_is_current() -> bool:
+	if not _battle_closed or not _current_act_battle() or not _current_carryover_fight() \
+		or not is_instance_valid(battle_view) or not battle_view.is_visible_in_tree() \
+		or battle_result == null or act_outcome == null or run_map == null:
+		return false
+	var state := act_outcome.get_state()
+	var status: String = state.get("run_status", "")
+	if status not in [RunActBattleOutcome.VICTORY, RunActBattleOutcome.DEFEAT] \
+		or state.get("pending_node_id") != "" or state.get("settled_node_ids", []).is_empty() \
+		or state.settled_node_ids.back() != _carryover_node:
+		return false
+	if status == RunActBattleOutcome.DEFEAT:
+		return battle_result.get_outcome() == CombatBattleResult.DEFEAT
+	return battle_result.get_outcome() == CombatBattleResult.VICTORY \
+		and run_map.get_current_floor() == RunMap.FLOOR_COUNT \
+		and run_map.get_node(_carryover_node).get("type") == "Boss"
+
+
+func _mount_terminal_result() -> void:
+	if is_instance_valid(terminal_result_panel) or not _terminal_result_is_current():
+		return
+	var panel := load("res://scenes/run_terminal_result_panel.tscn").instantiate() as LiveRunTerminalResultPanel
+	if panel == null:
+		return
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if not panel.open_result(act_outcome):
+		remove_child(panel)
+		panel.queue_free()
+		return
+	terminal_result_panel = panel
+	_terminal_return_connection = _return_from_terminal.bind(weakref(panel), act_outcome, run_map)
+	panel.return_to_title_requested.connect(_terminal_return_connection)
+	# The routed terminal view owns navigation, never the old battle Return.
+	return_button.disabled = true
+	return_button.release_focus()
+	panel.return_button.grab_focus()
+
+
+func _return_from_terminal(source: WeakRef, latch: RunActBattleOutcome, source_map: RunMap) -> void:
+	var panel := source.get_ref() as LiveRunTerminalResultPanel if source != null else null
+	if panel == null or panel != terminal_result_panel or latch != act_outcome \
+		or source_map != run_map or not panel.has_open_result() \
+		or not panel.is_visible_in_tree() or not panel._return_requested \
+		or not _terminal_result_is_current():
+		return
+	_return_to_title()
+
+
+func _clear_terminal_result() -> void:
+	if is_instance_valid(terminal_result_panel):
+		if _terminal_return_connection.is_valid() \
+			and terminal_result_panel.return_to_title_requested.is_connected(_terminal_return_connection):
+			terminal_result_panel.return_to_title_requested.disconnect(_terminal_return_connection)
+		terminal_result_panel.close_result()
+		remove_child(terminal_result_panel)
+		terminal_result_panel.queue_free()
+	terminal_result_panel = null
+	_terminal_return_connection = Callable()
 
 
 func _current_act_battle() -> bool:
@@ -1874,12 +1941,14 @@ func _refresh_enemy_roster() -> void:
 
 
 func _return_from_battle(button) -> void:
-	if is_instance_valid(button) and button == return_button and not button.disabled \
+	if not is_instance_valid(terminal_result_panel) \
+		and is_instance_valid(button) and button == return_button and not button.disabled \
 		and button.is_visible_in_tree():
 		_return_to_title()
 
 
 func _return_to_title() -> void:
+	_clear_terminal_result()
 	if battle_view == null:
 		if is_instance_valid(route_view):
 			_cancel_route()
