@@ -221,8 +221,16 @@ func _run() -> void:
 				_reject_rest(callback, "post-title input")
 			_check(app.run_map == null and app.run_rng == null and app.title_view.visible, "post-title callbacks inert")
 			_check(randi() == global_next, "entire continued run consumes no global RNG")
-	await _click(app.start_button)
-	_check(app.deck != null and app.run_map == null and app.rest_recovery == null, "title restart mounts independent direct battle")
+	_check(app._start_battle(), "explicit standalone M01 fixture starts")
+	await _frames()
+	_check(app.deck != null and app.run_map == null and app.rest_recovery == null, "standalone M01 fixture mounts independent battle")
+	_check(not stale.is_empty(), "continued visit supplies retained callbacks for standalone fixture")
+	var standalone := _state()
+	for callback in stale:
+		_reject_rest(callback, "old visit input against standalone M01 fixture")
+	_check(_state() == standalone and app.run_map == null and app.rest_recovery == null
+		and app.shop_visit == null and app.shop_purchases == null and app.party_carryover == null,
+		"retained inputs preserve standalone combat without reviving map, Rest, Shop or torn state")
 	await _click(app.return_button)
 	app.free()
 	await _frames()

@@ -167,12 +167,13 @@ func _run() -> void:
 			callback.call()
 		_check(app.party_carryover == null and app.run_map == null, "post-Return callbacks cannot revive session")
 		_check(randi() == global_next, "all Rest paths preserve global RNG")
-	await _click(app.start_button)
+	_check(app._start_battle(), "explicit standalone M01 fixture starts")
+	await _frames()
 	_check(app.deck != null and app.party_carryover == null and app.run_map == null and app.run_heroes.is_empty(),
-		"direct Start resets independently of Rest ledger")
+		"standalone M01 fixture resets independently of Rest ledger")
 	for callback in stale:
 		callback.call()
-	_check(app.party_carryover == null and app.run_map == null, "old Rest inputs preserve direct Start")
+	_check(app.party_carryover == null and app.run_map == null, "old Rest inputs preserve standalone M01 fixture")
 	await _click(app.return_button)
 	await _finish_ledger()
 

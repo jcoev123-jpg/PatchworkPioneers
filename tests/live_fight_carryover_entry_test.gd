@@ -107,9 +107,10 @@ func _run() -> void:
 	_check(pointer_plays > 0 and key_plays > 0, "victories use both mouse and keyboard held-card input")
 	await _identity_rejections(fixture)
 	await _defeat(fixture)
-	await _click(app.start_button)
+	_check(app._start_battle(), "explicit standalone M01 fixture starts")
+	await _frames()
 	_check(app.deck != null and app.run_map == null and app.party_carryover == null
-		and app.run_heroes.is_empty(), "direct Start is independent")
+		and app.run_heroes.is_empty(), "standalone M01 fixture is independent")
 	await _click(app.return_button)
 	await _finish_carryover()
 
