@@ -263,3 +263,19 @@ func get_state() -> Dictionary:
 		"visited_ids": ids_copy,
 		"claimed_fight_ids": _claimed_fight_ids.duplicate(),
 	}
+
+
+## Mirror a destroyed old owned patch after a reconciled Shop purchase and
+## authentic wardrobe sew. The confirmed visit, gold and deck stay unchanged.
+func settle_displaced_patch(displaced_id: Variant, purchased_id: Variant,
+		expected_state: Variant) -> bool:
+	if not _valid or (_status != "available" and _status != "used") \
+			or not (expected_state is Dictionary) or expected_state != get_state() \
+			or not (displaced_id is String) or displaced_id.is_empty() \
+			or not (purchased_id is String) or purchased_id.is_empty() \
+			or displaced_id == purchased_id:
+		return false
+	if not _trinkets.has(displaced_id) or not _trinkets.has(purchased_id):
+		return false
+	_trinkets.erase(displaced_id)
+	return true

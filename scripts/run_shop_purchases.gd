@@ -170,3 +170,24 @@ func _result(success: bool, paid_receipt: Dictionary = {}) -> Dictionary:
 	if success:
 		result["receipt"] = paid_receipt.duplicate(true)
 	return result
+
+
+## After a genuine wardrobe replacement, reconcile the destroyed old patch.
+## The new paid listing remains sold; no gold, deck or stock is reset.
+## The coordinator calls this only with a freshly reconciled paid receipt.
+func settle_displaced_patch(displaced_id: Variant, purchased_id: Variant,
+		expected_state: Variant) -> bool:
+	if not _valid or not (expected_state is Dictionary) or expected_state != get_state() \
+			or not _is_id(displaced_id) or not _is_id(purchased_id) \
+			or displaced_id == purchased_id:
+		return false
+	if not _state.trinkets.has(displaced_id) or not _state.trinkets.has(purchased_id):
+		return false
+	var matching_paid := false
+	for listing in _stock.trinkets:
+		if listing.id == purchased_id and listing.sold:
+			matching_paid = true
+	if not matching_paid:
+		return false
+	_state.trinkets.erase(displaced_id)
+	return true
