@@ -146,21 +146,25 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.add_child(margin)
 	var content := VBoxContainer.new()
 	content.name = "CardContent"
-	content.add_theme_constant_override("separation", 8)
+	content.add_theme_constant_override("separation", 5)
 	margin.add_child(content)
 	var owner_label := _card_label("OwnerLabel", offer["owner"].capitalize(), 19)
 	content.add_child(owner_label)
-	var name_label := _card_label("NameLabel", definition["display_name"], 25)
+	var name_label := _card_label("NameLabel", definition["display_name"], 21)
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.custom_minimum_size = Vector2(0, 108)
+	name_label.custom_minimum_size = Vector2(0, 70)
 	content.add_child(name_label)
 	var id_label := _card_label("IdLabel", offer["id"], 16)
 	id_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(id_label)
 	var cost_label := _card_label("CostLabel", "%d energy" % definition["cost"], 19)
 	content.add_child(cost_label)
+	var rules_label := _card_label("RulesLabel", _format_rules(definition), 16)
+	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rules_label.custom_minimum_size = Vector2(0, 60)
+	content.add_child(rules_label)
 	var action := Button.new()
 	action.name = "ChooseButton"
 	action.text = "Choose card"
@@ -170,6 +174,49 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	_style_button(action, OWNER_COLORS[offer["owner"]])
 	content.add_child(action)
 	return card
+
+
+## A detached catalog card is the sole source of the preview, never battle
+## passives, receipt/offer data, RNG or current combat availability.
+func _format_rules(definition: Dictionary) -> String:
+	var from_positions: Array = definition.get("from_positions", [])
+	var from_text := ""
+	match from_positions:
+		[1]: from_text = "1 (front)"
+		[3]: from_text = "3 (back)"
+		[1, 2]: from_text = "1-2 (front/middle)"
+		[2, 3]: from_text = "2-3 (middle/back)"
+		[1, 2, 3]: from_text = "1-3 (front to back)"
+	var target_text := ""
+	var target_positions: Array = definition.get("to_positions", [])
+	var slots := ""
+	match target_positions:
+		[1]: slots = "1 (front)"
+		[1, 2]: slots = "1-2"
+		[2, 3]: slots = "2-3"
+		[1, 2, 3]: slots = "1-3"
+	match definition.get("target_kind", ""):
+		"enemy_single": target_text = "pick 1 living enemy " + slots
+		"enemy_all": target_text = "all living enemies " + slots
+		"self": target_text = "self"
+		"ally_single": target_text = "1 living ally 1-3"
+		"none": target_text = "none"
+	var effects: Dictionary = definition.get("effects", {})
+	var copy: Array[String] = []
+	if effects.has("damage"):
+		copy.append("Deal %d damage%s" % [effects["damage"],
+			" EACH" if definition.get("target_kind") == "enemy_all" else ""])
+	if effects.has("block"):
+		copy.append("Gain %d Block" % effects["block"])
+	if effects.has("heal"):
+		copy.append("Heal %d HP" % effects["heal"])
+	if effects.has("draw"):
+		copy.append("Draw %d card%s" % [effects["draw"], "" if effects["draw"] == 1 else "s"])
+	if effects.has("weak"):
+		copy.append("Weak %d" % effects["weak"])
+	if effects.has("bleed"):
+		copy.append("Bleed %d" % effects["bleed"])
+	return "From: %s\nTarget: %s\n%s" % [from_text, target_text, ", ".join(copy)]
 
 
 func _card_label(label_name: String, value: String, point_size: int) -> Label:
