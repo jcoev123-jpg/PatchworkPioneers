@@ -14,6 +14,8 @@ func _initialize() -> void:
 	_test_rng_and_equal_replay()
 	_test_purchase_reconciliation()
 	_test_removal_before_purchase_reconciliation()
+	_test_fight_reward_sequences()
+	_test_fight_reward_rejections()
 	if failures.is_empty():
 		print("run_shop_visit_test: PASS (", checks, " checks)")
 	else:
@@ -183,13 +185,14 @@ func _test_contract_and_source_fixture() -> void:
 	for id in ["warden_brace", "warden_shield_bash", "seamstress_mend", "seamstress_stitch_up", "tinker_scrap_bomb", "tinker_tune_up"]:
 		_check(source.count(id) == 1, "source fixture has one " + id)
 	var ledger := RunShopVisit.new(source, 200, 0)
-	for method in ["open_visit", "remove_card", "close_visit", "get_state", "quote"]:
+	for method in ["open_visit", "remove_card", "close_visit", "get_state", "quote", "apply_fight_reward"]:
 		_check(ledger.has_method(method), "public visit contract exposes " + method)
 	var initial := ledger.get_state()
 	_check(initial["valid"] == true and initial["status"] == "inactive", "fresh ledger is valid and inactive")
 	_check(initial["removal_available"] == false and initial["visited_ids"].is_empty(), "fresh ledger has no active option or visits")
 	_check(initial["gold"] == 200 and initial["prior_removals"] == 0 and initial["price"] == 75, "initial gold/count/price exact")
 	_check(initial["deck"] == source, "fresh ledger contains starter deck in original order")
+	_check(initial["claimed_fight_ids"] == [], "fresh ledger has no Fight claims")
 	_check(ledger.quote() == 75, "quote delegated for the first removal")
 	_check(ledger.remove_card("warden_strike")["ok"] == false, "cannot buy before opening")
 	_check_state_unchanged(ledger, initial, "buying before a visit")
@@ -386,3 +389,164 @@ func _test_rng_and_equal_replay() -> void:
 	_check(first["state"]["gold"] == 55 and first["state"]["prior_removals"] == 2, "replay applied exactly two valid removals and two purchases")
 	_check(first["state"]["status"] == "closed" and first["state"]["deck"].size() == 12, "replay ends closed with one appended card per purchased offer")
 	_check(first["responses"] == [false, true, false, true, true, false, false, true, true, true, true, true, true, false, true], "replay exercises purchases before and after removal plus their rejections")
+
+
+func _fight_reward(deck: Array, gold: int, selected: String = "") -> Dictionary:
+	var cards: Array[String] = []
+	cards.assign(deck)
+	if selected != "":
+		cards.append(selected)
+	return {"ok": true, "skipped": selected == "", "selected_id": selected, "deck": cards, "gold": gold}
+
+
+func _fight_sequence() -> Array:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick", "warden_strike"]
+	var ledger := RunShopVisit.new(deck, 200, 0)
+	var expected := {"valid": true, "status": "inactive", "shop_node_id": "",
+		"removal_available": false, "price": 75, "deck": deck.duplicate(), "gold": 200,
+		"prior_removals": 0, "visited_ids": [], "claimed_fight_ids": []}
+	_check(ledger.get_state() == expected, "Fight sequence exact initial snapshot")
+	var timeline: Array = [ledger.get_state()]
+	_check(ledger.apply_fight_reward("fight-0", _fight_reward(deck, 210)), "inactive Fight skip accepted")
+	expected.gold = 210
+	expected.claimed_fight_ids.append("fight-0")
+	_check(ledger.get_state() == expected, "inactive skip changes only gold and claims")
+	timeline.append(ledger.get_state())
+	_check(ledger.open_visit("shop-1"), "first Shop opens")
+	_check(ledger.remove_card("warden_strike").ok, "first Shop removal succeeds")
+	_check(ledger.close_visit(), "first paid Shop closes")
+	expected.status = "closed"
+	expected.shop_node_id = "shop-1"
+	expected.visited_ids.append("shop-1")
+	expected.deck = ["seamstress_prick", "warden_strike"]
+	expected.gold = 135
+	expected.prior_removals = 1
+	expected.price = 100
+	_check(ledger.get_state() == expected, "first removal exact snapshot")
+	timeline.append(ledger.get_state())
+	var reward := _fight_reward(expected.deck, 155, "tinker_pop_shot")
+	var caller_before := reward.duplicate(true)
+	_check(ledger.apply_fight_reward("fight-1", reward), "closed Shop accepts chosen Fight card")
+	_check(reward == caller_before, "Fight input remains unchanged")
+	expected.deck.append("tinker_pop_shot")
+	expected.gold = 155
+	expected.claimed_fight_ids.append("fight-1")
+	_check(ledger.get_state() == expected, "chosen Fight changes only deck gold and claims")
+	reward.deck.clear()
+	var detached := ledger.get_state()
+	var independent := ledger.get_state()
+	detached.claimed_fight_ids.clear()
+	detached.deck.clear()
+	_check(independent == expected and ledger.get_state() == expected, "Fight history and deck snapshots are defensive")
+	timeline.append(ledger.get_state())
+	_check(ledger.apply_fight_reward("fight-2", _fight_reward(expected.deck, 170)), "distinct closed-Shop skip accepted")
+	expected.gold = 170
+	expected.claimed_fight_ids.append("fight-2")
+	_check(ledger.get_state() == expected, "closed skip preserves deck and both histories")
+	timeline.append(ledger.get_state())
+	_check(ledger.open_visit("shop-2"), "distinct later Shop opens")
+	var purchase := {"ok": true, "state": {"deck": ["seamstress_prick", "warden_strike", "tinker_pop_shot", "warden_brace"], "gold": 130}}
+	_check(ledger.reconcile_purchase(purchase), "later purchase uses rewarded deck and gold")
+	expected.status = "available"
+	expected.removal_available = true
+	expected.shop_node_id = "shop-2"
+	expected.visited_ids.append("shop-2")
+	expected.deck = purchase.state.deck.duplicate()
+	expected.gold = 130
+	_check(ledger.get_state() == expected, "later purchase exact snapshot preserves Fight claims")
+	timeline.append(ledger.get_state())
+	var removal := ledger.remove_card("tinker_pop_shot")
+	_check(removal.ok and removal.price == 100, "later removal retains cumulative 75 + 25 quote")
+	expected.status = "used"
+	expected.removal_available = false
+	expected.deck = ["seamstress_prick", "warden_strike", "warden_brace"]
+	expected.gold = 30
+	expected.prior_removals = 2
+	expected.price = 125
+	_check(ledger.get_state() == expected, "later removal exact snapshot preserves all histories")
+	_check(not ledger.remove_card("warden_strike").ok, "Fight rewards never restore used removal")
+	_check_state_unchanged(ledger, expected, "used later Shop")
+	_check(ledger.close_visit(), "later Shop closes")
+	expected.status = "closed"
+	_check(ledger.get_state() == expected, "final closed exact snapshot")
+	timeline.append(ledger.get_state())
+	return timeline
+
+
+func _test_fight_reward_sequences() -> void:
+	seed(61001)
+	var next_draw := randi()
+	seed(61001)
+	var first := _fight_sequence()
+	_check(randi() == next_draw, "successful Fight/Shop sequence consumes no global RNG")
+	seed(61001)
+	var second := _fight_sequence()
+	_check(randi() == next_draw, "replayed Fight/Shop sequence consumes no global RNG")
+	_check(first == second, "complete Fight/Shop timeline replays identically")
+
+
+func _reject_fight(ledger: RunShopVisit, id: Variant, reward: Variant, label: String) -> void:
+	var before := ledger.get_state()
+	var input_before: Variant = reward.duplicate(true) if reward is Dictionary else reward
+	seed(61002)
+	var next_draw := randi()
+	seed(61002)
+	_check(not ledger.apply_fight_reward(id, reward), label + " rejects")
+	_check(randi() == next_draw, label + " consumes no global RNG")
+	_check_state_unchanged(ledger, before, label)
+	_check(reward == input_before, label + " preserves caller input")
+
+
+func _test_fight_reward_rejections() -> void:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick"]
+	var ledger := RunShopVisit.new(deck, 100, 0)
+	var valid := _fight_reward(deck, 110, "warden_brace")
+	for id in [null, 7, true, &"fight", "", "  ", " fight", "fight "]:
+		_reject_fight(ledger, id, valid, "noncanonical Fight ID")
+	for reward in [null, true, 1, [], {}, {"ok": true}]:
+		_reject_fight(ledger, "fight", reward, "malformed reward")
+	for field in ["ok", "skipped", "selected_id", "deck", "gold"]:
+		var missing := valid.duplicate(true)
+		missing.erase(field)
+		_reject_fight(ledger, "fight", missing, "missing " + field)
+	var bad_values := {"ok": [false, 1, "true"], "skipped": [0, "false", null],
+		"selected_id": [1, &"warden_brace", null, "", "invented", " warden_brace"],
+		"deck": [null, "cards", PackedStringArray(deck), ["warden_strike", 1, "warden_brace"],
+			["seamstress_prick", "warden_strike", "warden_brace"], ["warden_strike", "seamstress_prick"],
+			["warden_strike", "seamstress_prick", "tinker_pop_shot"],
+			["warden_strike", "seamstress_prick", "warden_brace", "warden_brace"]],
+		"gold": [null, true, "110", 110.0, -1, 99, 100, 109, 121, 9223372036854775807]}
+	for field in bad_values:
+		for value in bad_values[field]:
+			var bad := valid.duplicate(true)
+			bad[field] = value
+			_reject_fight(ledger, "fight", bad, "invalid " + field)
+	var invented := _fight_reward(deck, 110, "invented")
+	_reject_fight(ledger, "fight", invented, "invented appended catalog card")
+	var skip := _fight_reward(deck, 110)
+	skip.selected_id = "warden_brace"
+	_reject_fight(ledger, "fight", skip, "skip with selection")
+	skip = _fight_reward(deck, 110, "warden_brace")
+	skip.skipped = true
+	skip.selected_id = ""
+	_reject_fight(ledger, "fight", skip, "skip with changed deck")
+	_check(ledger.open_visit("shop"), "active rejection fixture opens")
+	_reject_fight(ledger, "fight", valid, "available Shop reward")
+	_check(ledger.remove_card("warden_strike").ok, "active rejection fixture uses removal")
+	_reject_fight(ledger, "fight", _fight_reward(ledger.get_state().deck, 35), "used Shop reward")
+	_check(ledger.close_visit(), "active rejection fixture closes")
+	_reject_fight(ledger, "fight", valid, "stale pre-removal reward")
+	var corrected := _fight_reward(ledger.get_state().deck, 35, "warden_brace")
+	_check(ledger.apply_fight_reward("fight", corrected), "corrected same-ID retry succeeds after all failures")
+	_reject_fight(ledger, "fight", corrected, "duplicate Fight snapshot")
+	_reject_fight(ledger, "fight", _fight_reward(ledger.get_state().deck, 45), "duplicate ID with fresh snapshot")
+	_check(ledger.apply_fight_reward("fight-next", _fight_reward(ledger.get_state().deck, 45)), "distinct ID succeeds after duplicate rejection")
+	for start in [9223372036854775802, 9223372036854775807]:
+		var overflow := RunShopVisit.new(deck, start, 0)
+		_reject_fight(overflow, "overflow", _fight_reward(deck, -9223372036854775807), "wrapped gold")
+		_reject_fight(overflow, "overflow", _fight_reward(deck, 9223372036854775807), "insufficient representable headroom")
+	var boundary := RunShopVisit.new(deck, 9223372036854775797, 0)
+	_reject_fight(boundary, "boundary", _fight_reward(deck, -9223372036854775807), "overflow before boundary retry")
+	_check(boundary.apply_fight_reward("boundary", _fight_reward(deck, 9223372036854775807)), "exact MAX_INT corrected retry succeeds")
+	for pair in [[-1, 0], [100, -1]]:
+		_reject_fight(RunShopVisit.new(deck, pair[0], pair[1]), "fight", valid, "invalid ledger")

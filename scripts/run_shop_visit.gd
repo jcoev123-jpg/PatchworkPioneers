@@ -11,6 +11,7 @@ var _valid: bool = false
 var _status: String = "inactive"
 var _shop_node_id: String = ""
 var _visited_ids: Array[String] = []
+var _claimed_fight_ids: Array[String] = []
 
 
 func _init(deck_ids: Array[String], gold: int, prior_removals: int) -> void:
@@ -85,6 +86,44 @@ func quote() -> int:
 	return RunShopCardRemoval.try_remove(_deck, _gold, _prior_removals, "")["price"]
 
 
+## Accept a completed normal Fight reward between visits. Validate the entire
+## snapshot before committing anything; IDs must already be canonical.
+func apply_fight_reward(fight_node_id: Variant, reward: Variant) -> bool:
+	if not _valid or (_status != "inactive" and _status != "closed"):
+		return false
+	if not fight_node_id is String or fight_node_id.is_empty() \
+			or fight_node_id != fight_node_id.strip_edges() \
+			or _claimed_fight_ids.has(fight_node_id):
+		return false
+	if not reward is Dictionary or not reward.get("ok") is bool or reward.get("ok") != true:
+		return false
+	var skipped: Variant = reward.get("skipped")
+	var selected: Variant = reward.get("selected_id")
+	var cards: Variant = reward.get("deck")
+	var gold: Variant = reward.get("gold")
+	if not skipped is bool or not selected is String or not cards is Array or not gold is int:
+		return false
+	# Both operands are nonnegative before subtraction, so even MAX_INT is safe.
+	if gold < _gold or gold - _gold < 10 or gold - _gold > 20:
+		return false
+	for card in cards:
+		if not card is String:
+			return false
+	if skipped:
+		if selected != "" or cards != _deck:
+			return false
+	else:
+		if selected.is_empty() or StarterCards.new().get_definition(selected).is_empty():
+			return false
+		if cards.size() != _deck.size() + 1 or cards.slice(0, _deck.size()) != _deck \
+				or cards.back() != selected:
+			return false
+	_deck.assign(cards)
+	_gold = gold
+	_claimed_fight_ids.append(fight_node_id)
+	return true
+
+
 ## Every returned container is independent of the run's internal ledger.
 func get_state() -> Dictionary:
 	var deck_copy: Array[String] = _deck.duplicate()
@@ -99,4 +138,5 @@ func get_state() -> Dictionary:
 		"gold": _gold,
 		"prior_removals": _prior_removals,
 		"visited_ids": ids_copy,
+		"claimed_fight_ids": _claimed_fight_ids.duplicate(),
 	}
