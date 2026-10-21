@@ -820,6 +820,7 @@ func _build_battle() -> void:
 		hero_panels.append(panel)
 		var label := Label.new()
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.add_theme_font_size_override("font_size", 22)
 		panel.add_child(label)
 	intent_label = Label.new()

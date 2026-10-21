@@ -41,12 +41,14 @@ func _sync_battle() -> void:
 		column.add_theme_constant_override("separation", 6)
 		column.add_child(row)
 		column.move_child(row, app.intent_label.get_index())
+		var actor_count := CombatParty.PARTY_SIZE + _enemies.get_enemies().size()
+		var meter_width := mini(224, floori((1216.0 - (actor_count - 1) * 8) / actor_count))
 		for side in ["hero", "enemy"]:
 			var count: int = CombatParty.PARTY_SIZE if side == "hero" else _enemies.get_enemies().size()
 			for position in range(1, count + 1):
 				var meter := CombatActorMeter.new()
 				meter.name = "%s%d" % [side, position]
-				meter.custom_minimum_size = Vector2(224, 106)
+				meter.custom_minimum_size = Vector2(meter_width, 106)
 				meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				var padding := meter.get_node("Padding") as MarginContainer
 				for edge in ["left", "right", "top", "bottom"]:
@@ -56,13 +58,13 @@ func _sync_battle() -> void:
 					label.add_theme_font_size_override("font_size", 12)
 				meter.status_text.add_theme_font_size_override("font_size", 10)
 				meter.modifier_explanation.add_theme_font_size_override("font_size", 9)
-				meter.modifier_explanation.custom_minimum_size = Vector2(200, 0)
+				meter.modifier_explanation.custom_minimum_size = Vector2(meter_width - 24, 0)
 				meter.modifier_explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				meter.bleed_warning.add_theme_font_size_override("font_size", 9)
-				meter.bleed_warning.custom_minimum_size = Vector2(200, 0)
+				meter.bleed_warning.custom_minimum_size = Vector2(meter_width - 24, 0)
 				meter.bleed_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				for bar in [meter.hp_bar, meter.block_bar]:
-					bar.custom_minimum_size = Vector2(200, 8)
+					bar.custom_minimum_size = Vector2(meter_width - 24, 8)
 				if side == "hero":
 					var incoming := Label.new()
 					incoming.name = "IncomingForecast"
