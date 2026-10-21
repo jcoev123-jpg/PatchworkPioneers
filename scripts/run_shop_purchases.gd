@@ -42,9 +42,11 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 	for card_id in deck_card_ids:
 		if not _is_id(card_id):
 			return
+	var owned_seen := {}
 	for trinket_id in owned_trinket_ids:
-		if not _is_id(trinket_id):
+		if not _is_id(trinket_id) or owned_seen.has(trinket_id):
 			return
+		owned_seen[trinket_id] = true
 
 	var copied_cards: Array = []
 	var card_seen := {}

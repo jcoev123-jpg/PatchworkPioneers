@@ -26,6 +26,7 @@ var _rendered_generation := 0
 var _rendered_graph: Array = []
 var _rendered_route: Array[String] = []
 var _rendered_legal: Array[String] = []
+var _rendered_shortcuts: Array[String] = []
 
 
 func _init() -> void:
@@ -33,7 +34,8 @@ func _init() -> void:
 	size = ATLAS_SIZE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	focus_mode = Control.FOCUS_NONE
-	set_process_input(false)
+	# _input covers the initial atlas opening even when another Control owns focus.
+	set_process_input(true)
 	set_process_unhandled_input(false)
 
 
@@ -50,6 +52,7 @@ func refresh() -> void:
 	_rendered_generation = 0
 	_rendered_route.clear()
 	_rendered_legal.clear()
+	_rendered_shortcuts.clear()
 	# Synchronous removal avoids stale, queued-for-deletion duplicates on repeated refresh.
 	for child in get_children():
 		remove_child(child)
@@ -63,6 +66,16 @@ func refresh() -> void:
 	_rendered_graph = floors.duplicate(true)
 	_rendered_route = chosen.duplicate()
 	_rendered_legal = legal.duplicate()
+	# Number only live choices, not all nodes or Dictionary insertion order.
+	# Source floor rows are explicitly sorted by their model position.
+	for floor_nodes in floors:
+		var ordered: Array = floor_nodes.duplicate()
+		ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["position"]) < int(b["position"]))
+		for node in ordered:
+			var id: String = node["id"]
+			if legal.has(id) and not chosen.has(id):
+				_rendered_shortcuts.append(id)
 	var positions: Dictionary = {}
 	for floor_index in range(floors.size()):
 		var floor_nodes: Array = floors[floor_index]
@@ -91,7 +104,8 @@ func refresh() -> void:
 		add_child(floor_header)
 		for node in floors[floor_index]:
 			var id: String = node["id"]
-			_add_marker(id, String(node["type"]), positions[id], chosen, legal)
+			var shortcut := _rendered_shortcuts.find(id) + 1
+			_add_marker(id, String(node["type"]), positions[id], chosen, legal, shortcut)
 
 
 func _node_position(floor_index: int, row_index: int) -> Vector2:
@@ -137,7 +151,7 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 
 
 func _add_marker(id: String, kind: String, at: Vector2,
-		chosen: Array[String], legal: Array[String]) -> void:
+		chosen: Array[String], legal: Array[String], shortcut: int) -> void:
 	var marker := PanelContainer.new()
 	marker.name = "Node_" + id
 	marker.set_meta("route_id", id)
@@ -169,7 +183,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	_inert(marker)
 	var caption := Label.new()
 	caption.name = "Identity"
-	caption.text = kind + "\n" + id
+	caption.text = (str(shortcut) + "\n" if state == "legal" and shortcut > 0 else "") + kind + "\n" + id
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	caption.add_theme_font_size_override("font_size", 12)
@@ -192,22 +206,45 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	add_child(marker)
 
 
-func _request_node(id: String, source_map: RunMap, revision: int) -> void:
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key: InputEventKey = event
+	if not key.pressed or key.echo or not is_inside_tree() or not is_visible_in_tree():
+		return
+	var index := -1
+	match key.keycode:
+		KEY_1:
+			index = 0
+		KEY_2:
+			index = 1
+		KEY_3:
+			index = 2
+		KEY_4:
+			index = 3
+	if index < 0 or index >= _rendered_shortcuts.size():
+		return
+	if _request_node(_rendered_shortcuts[index], _map, _revision):
+		get_viewport().set_input_as_handled()
+
+
+func _request_node(id: String, source_map: RunMap, revision: int) -> bool:
 	# A stale callback is invalid even if the old Control has been removed.
 	# Check model snapshots too: external progress and regeneration can happen
 	# before a caller refreshes the view.
 	if source_map == null or _map != source_map or revision != _revision:
-		return
+		return false
 	if not _map.is_generated() or _map.is_complete():
-		return
+		return false
 	if _map.get_generation_revision() != _rendered_generation:
-		return
+		return false
 	if _map.get_floors() != _rendered_graph or _map.get_route() != _rendered_route:
-		return
+		return false
 	var legal := _map.get_legal_choices()
 	if legal != _rendered_legal or not legal.has(id):
-		return
+		return false
 	node_requested.emit(id)
+	return true
 
 
 func _inert(control: Control) -> void:
