@@ -1,10 +1,10 @@
 extends SceneTree
 ## Deterministic headless test for RunEventChoice (M04 authored event selector).
 ## Covers the six authored events in data/events/m04_events.json (looked up by
-## ID, never by catalog size/order/index), Button Trail, Needle Gate and Quiet
-## Spool wallets, detached snapshots, one-claim semantics, fail-closed invalid
-## records and outcomes, recovery after failed preflight, replay rejection and
-## zero RNG use.
+## ID, never by catalog size/order/index), Button Trail, Loose Seam, Needle
+## Gate and Quiet Spool wallets, detached snapshots, one-claim semantics,
+## fail-closed invalid records and outcomes, recovery after failed preflight,
+## replay rejection and zero RNG use.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 
@@ -21,7 +21,11 @@ const REQUIRED := {
 	"loose_seam": {
 		"title": "The Loose Seam",
 		"description": "A strip of patched ground has come unstitched.",
-		"choices": {"mend": "Inspect the loose stitching", "bypass": "Walk around the seam"},
+		"choices": {"mend": "Sew the seam (spend 1 scrap; recover 15 gold)", "bypass": "Walk around and gather loose thread (+1 scrap)"},
+		"outcomes": {
+			"mend": {"gold": 15, "scraps": -1},
+			"bypass": {"gold": 0, "scraps": 1},
+		},
 	},
 	"thimble_well": {
 		"title": "The Thimble Well",
@@ -63,6 +67,7 @@ func _initialize() -> void:
 	_test_catalog_content()
 	_test_authored_claim_flow()
 	_test_button_trail_wallet_settlement()
+	_test_loose_seam_wallet_settlement()
 	_test_needle_gate_wallet_settlement()
 	_test_quiet_spool_wallet_settlement()
 	_test_signed_scraps_boundaries()
@@ -401,6 +406,233 @@ func _test_button_trail_wallet_settlement() -> void:
 	_check(int_res == float_res and _wallet_exact_int(float_res.get("wallet"), 17, 0),
 		"JSON float outcome values normalize to exact ints matching integer outcomes")
 
+
+func _test_loose_seam_wallet_settlement() -> void:
+	# The authored Loose Seam record settles through the same one-shot wallet
+	# service: mend spends one scrap and pays fifteen gold, bypass salvages one
+	# scrap and leaves the gold untouched.
+	var matches := _matching("loose_seam")
+	_check(matches.size() == 1, "exactly one authored loose_seam record for wallet settlement")
+	if matches.size() != 1:
+		return
+	var authored: Dictionary = matches[0]
+	var original: Dictionary = authored.duplicate(true)
+
+	# The file-loaded record keeps its authored identity, both choice IDs and
+	# their exact authored texts and outcomes.
+	_check(authored.get("id") == "loose_seam"
+		and authored.get("title") == "The Loose Seam"
+		and authored.get("description") == "A strip of patched ground has come unstitched.",
+		"loose_seam keeps its authored id, title and description")
+	var authored_choices: Array = authored.get("choices", [])
+	_check(authored_choices.size() == 2, "loose_seam keeps exactly its two authored choices")
+	var by_id := {}
+	for entry in authored_choices:
+		if entry is Dictionary:
+			by_id[entry.get("id", "")] = entry
+	_check(by_id.has("mend") and by_id.has("bypass"), "loose_seam offers both authored choice IDs")
+	if not (by_id.has("mend") and by_id.has("bypass")):
+		return
+	var mend_choice: Dictionary = by_id["mend"]
+	var bypass_choice: Dictionary = by_id["bypass"]
+	_check(mend_choice.get("text", "") == "Sew the seam (spend 1 scrap; recover 15 gold)",
+		"loose_seam mend keeps its exact authored text")
+	_check(bypass_choice.get("text", "") == "Walk around and gather loose thread (+1 scrap)",
+		"loose_seam bypass keeps its exact authored text")
+	var mend_outcome: Variant = mend_choice.get("outcome", {})
+	var bypass_outcome: Variant = bypass_choice.get("outcome", {})
+	_check(mend_outcome is Dictionary and bypass_outcome is Dictionary,
+		"loose_seam keeps an authored outcome object on both choices")
+	if mend_outcome is Dictionary and bypass_outcome is Dictionary:
+		var mend_values: Dictionary = mend_outcome
+		var bypass_values: Dictionary = bypass_outcome
+		_check(_is_integral_json_number(mend_values.get("gold"))
+			and _is_integral_json_number(mend_values.get("scraps"), true)
+			and int(mend_values.get("gold", 0)) == 15 and int(mend_values.get("scraps", 0)) == -1,
+			"loose_seam mend keeps its exact authored gold/scraps outcome")
+		_check(_is_integral_json_number(bypass_values.get("gold"))
+			and _is_integral_json_number(bypass_values.get("scraps"), true)
+			and int(bypass_values.get("gold", 0)) == 0 and int(bypass_values.get("scraps", 0)) == 1,
+			"loose_seam bypass keeps its exact authored gold/scraps outcome")
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 64700
+	var local_state: int = local_rng.state
+
+	# 1. A fresh visit with one scrap sews the seam: one scrap is spent and
+	#    fifteen gold is recovered in a detached wallet.
+	var mend_event: Dictionary = authored.duplicate(true)
+	var mend_wallet := {"gold": 4, "scraps": 1}
+	var mend_rng := _rng_start(64701)
+	var mend_service := RunEventChoice.new(mend_event)
+	_check(mend_service.is_valid() and not mend_service.is_claimed(),
+		"fresh loose_seam selector is valid and unclaimed before mend")
+	var mend_result := mend_service.choose_with_wallet("mend", mend_wallet)
+	_check(_wallet_shape_ok(mend_result) and mend_result.get("ok", false) == true
+		and mend_result.get("event_id", "") == "loose_seam"
+		and mend_result.get("choice_id", "") == "mend"
+		and _wallet_exact_int(mend_result.get("wallet"), 19, 0),
+		"mend spends one scrap and pays fifteen gold")
+	_check(_wallet_exact_int(mend_wallet, 4, 1) and mend_event == original
+		and mend_service.get_event() == original,
+		"mend leaves the caller wallet, the caller event and the selector snapshot unchanged")
+	_check(mend_service.is_claimed() and not mend_service.is_valid(),
+		"mend latches exactly one claim on its visit")
+	_check(randi() == mend_rng, "mend settlement spends no global RNG")
+
+	# 2. A fresh visit that walks around salvages one scrap and keeps the gold.
+	var bypass_event: Dictionary = authored.duplicate(true)
+	var bypass_wallet := {"gold": 4, "scraps": 1}
+	var bypass_rng := _rng_start(64702)
+	var bypass_service := RunEventChoice.new(bypass_event)
+	_check(bypass_service.is_valid() and not bypass_service.is_claimed(),
+		"fresh loose_seam selector is valid and unclaimed before bypass")
+	var bypass_result := bypass_service.choose_with_wallet("bypass", bypass_wallet)
+	_check(_wallet_shape_ok(bypass_result) and bypass_result.get("ok", false) == true
+		and bypass_result.get("event_id", "") == "loose_seam"
+		and bypass_result.get("choice_id", "") == "bypass"
+		and _wallet_exact_int(bypass_result.get("wallet"), 4, 2),
+		"bypass salvages one scrap and keeps the gold")
+	_check(_wallet_exact_int(bypass_wallet, 4, 1) and bypass_event == original
+		and bypass_service.get_event() == original,
+		"bypass leaves the caller wallet, the caller event and the selector snapshot unchanged")
+	_check(bypass_service.is_claimed() and not bypass_service.is_valid(),
+		"bypass latches exactly one claim on its visit")
+	_check(randi() == bypass_rng, "bypass settlement spends no global RNG")
+
+	# 3. Without a scrap the mend is refused without claiming or spending
+	#    anything, and the same visit still offers the free salvage.
+	var poor_event: Dictionary = authored.duplicate(true)
+	var poor_wallet := {"gold": 4, "scraps": 0}
+	var poor_rng := _rng_start(64703)
+	var poor_service := RunEventChoice.new(poor_event)
+	_check(poor_service.is_valid() and not poor_service.is_claimed(),
+		"fresh loose_seam selector is valid and unclaimed before the refused mend")
+	var refusal := poor_service.choose_with_wallet("mend", poor_wallet)
+	_check(_wallet_shape_ok(refusal) and refusal.get("ok", true) == false
+		and refusal.get("event_id", "") == "" and refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(refusal.get("wallet"), 4, 0),
+		"a mend without a scrap is refused with the exact unchanged wallet")
+	_check(poor_service.is_valid() and not poor_service.is_claimed()
+		and _wallet_exact_int(poor_wallet, 4, 0)
+		and poor_service.get_event() == original and poor_event == original,
+		"the refused mend consumes no visit and keeps both event snapshots")
+	(refusal["wallet"] as Dictionary)["gold"] = 999
+	_check(_wallet_exact_int(poor_wallet, 4, 0),
+		"mutating the refused wallet cannot change the caller wallet")
+	var salvage := poor_service.choose_with_wallet("bypass", poor_wallet)
+	_check(_wallet_shape_ok(salvage) and salvage.get("ok", false) == true
+		and salvage.get("event_id", "") == "loose_seam"
+		and salvage.get("choice_id", "") == "bypass"
+		and _wallet_exact_int(salvage.get("wallet"), 4, 1),
+		"bypass salvages one scrap on the SAME visit after the refused mend")
+	_check(_wallet_exact_int(poor_wallet, 4, 0) and poor_event == original
+		and poor_service.get_event() == original,
+		"the salvaging bypass leaves the caller wallet and event unchanged")
+	_check(poor_service.is_claimed() and not poor_service.is_valid(),
+		"the salvage latches exactly one claim on the visit")
+	_check(randi() == poor_rng, "the refused mend and the salvage spend no global RNG")
+
+	# 4. One charge only: a claimed visit pays or debits nothing a second time.
+	for replay_choice in ["mend", "bypass"]:
+		var replay := mend_service.choose_with_wallet(replay_choice, {"gold": 19, "scraps": 0})
+		_check(_wallet_shape_ok(replay) and replay.get("ok", true) == false
+			and replay.get("event_id", "") == "" and replay.get("choice_id", "") == ""
+			and _wallet_exact_int(replay.get("wallet"), 19, 0),
+			"a repeated loose_seam choice after the claim is rejected with the unchanged wallet: "
+				+ replay_choice)
+	_check(mend_service.is_claimed() and mend_service.get_event() == original,
+		"the replayed visit keeps its claim latched and its snapshot unchanged")
+	(mend_result["wallet"] as Dictionary)["gold"] = 999
+	(mend_result["wallet"] as Dictionary)["scraps"] = 999
+	_check(_wallet_exact_int(mend_wallet, 4, 1) and mend_service.get_event() == original,
+		"mutating the settled wallet cannot change the caller wallet or the snapshot")
+
+	# 5. Unknown choices and malformed wallets fail closed and leave the visit
+	#    claimable.
+	var reject_service := RunEventChoice.new(authored.duplicate(true))
+	var valid_wallet := {"gold": 4, "scraps": 1}
+	var bad_choices: Array = ["", "   ", "unoffered", "Mend", "mend ", null, 7, ["mend"], {"id": "mend"}]
+	for bad_choice in bad_choices:
+		var rng_expected := _rng_start(64704)
+		var rejected := reject_service.choose_with_wallet(bad_choice, valid_wallet)
+		_check(_wallet_shape_ok(rejected) and rejected.get("ok", true) == false
+			and rejected.get("event_id", "") == "" and rejected.get("choice_id", "") == ""
+			and _wallet_exact_int(rejected.get("wallet"), 4, 1),
+			"loose_seam rejects an illegal choice ID: " + str(bad_choice))
+		_check(not reject_service.is_claimed() and reject_service.is_valid()
+			and _wallet_exact_int(valid_wallet, 4, 1),
+			"an illegal choice ID consumes no visit and spends nothing: " + str(bad_choice))
+		_check(reject_service.get_event() == original,
+			"an illegal choice ID leaves the selector snapshot unchanged: " + str(bad_choice))
+		_check(randi() == rng_expected, "an illegal choice ID spends no RNG: " + str(bad_choice))
+
+	var bad_wallets: Array[Dictionary] = [
+		{"gold": -1, "scraps": 1},
+		{"gold": 4, "scraps": -1},
+		{"gold": 4.5, "scraps": 1},
+		{"gold": "4", "scraps": 1},
+		{"gold": true, "scraps": 1},
+		{"gold": 4},
+		{"scraps": 1},
+		{"gold": 4, "scraps": 1, "hp": 5},
+	]
+	for bad_wallet in bad_wallets:
+		var rng_expected := _rng_start(64705)
+		var wallet_before: Dictionary = (bad_wallet as Dictionary).duplicate(true)
+		var rejected := reject_service.choose_with_wallet("mend", bad_wallet)
+		_check(_wallet_shape_ok(rejected) and rejected.get("ok", true) == false
+			and rejected.get("event_id", "") == "" and rejected.get("choice_id", "") == ""
+			and (rejected.get("wallet") as Dictionary).is_empty(),
+			"loose_seam rejects an invalid wallet: " + str(bad_wallet))
+		_check(bad_wallet == wallet_before,
+			"an invalid wallet rejection never mutates the caller wallet: " + str(bad_wallet))
+		_check(not reject_service.is_claimed() and reject_service.is_valid(),
+			"an invalid wallet consumes no visit: " + str(bad_wallet))
+		_check(randi() == rng_expected, "an invalid wallet spends no RNG: " + str(bad_wallet))
+
+	for bad_value in [null, "4", 4, [4, 1]]:
+		var rng_expected := _rng_start(64706)
+		var rejected := reject_service.choose_with_wallet("mend", bad_value)
+		_check(_wallet_shape_ok(rejected) and rejected.get("ok", true) == false
+			and (rejected.get("wallet") as Dictionary).is_empty(),
+			"loose_seam rejects a non-dictionary wallet: " + str(bad_value))
+		_check(not reject_service.is_claimed() and reject_service.is_valid(),
+			"a non-dictionary wallet consumes no visit: " + str(bad_value))
+		_check(randi() == rng_expected, "a non-dictionary wallet spends no RNG: " + str(bad_value))
+
+	# A scrap balance that cannot absorb the salvage is refused as well.
+	var overflow_wallet := {"gold": 4, "scraps": RunEventChoice.MAX_INT}
+	var overflow := reject_service.choose_with_wallet("bypass", overflow_wallet)
+	_check(_wallet_shape_ok(overflow) and overflow.get("ok", true) == false
+		and overflow.get("event_id", "") == "" and overflow.get("choice_id", "") == ""
+		and _wallet_exact_int(overflow.get("wallet"), 4, RunEventChoice.MAX_INT),
+		"a max-int scrap balance cannot settle the salvage")
+	_check(not reject_service.is_claimed() and reject_service.is_valid()
+		and _wallet_exact_int(overflow_wallet, 4, RunEventChoice.MAX_INT)
+		and reject_service.get_event() == original,
+		"the overflow refusal consumes no visit and keeps both snapshots")
+
+	# 6. The same visit still settles an affordable authored choice afterwards.
+	var recovered := reject_service.choose_with_wallet("mend", valid_wallet)
+	_check(_wallet_shape_ok(recovered) and recovered.get("ok", false) == true
+		and recovered.get("event_id", "") == "loose_seam"
+		and recovered.get("choice_id", "") == "mend"
+		and _wallet_exact_int(recovered.get("wallet"), 19, 0),
+		"loose_seam settles the mend on the same visit after rejected attempts")
+	_check(reject_service.is_claimed() and not reject_service.is_valid()
+		and _wallet_exact_int(valid_wallet, 4, 1) and reject_service.get_event() == original,
+		"the recovered visit latches exactly one claim and spends nothing")
+
+	# 7. Two independent fresh visits settle the same authored choice identically.
+	var traces: Array = []
+	for attempt in range(2):
+		var fresh := RunEventChoice.new(authored.duplicate(true))
+		traces.append(fresh.choose_with_wallet("bypass", {"gold": 4, "scraps": 1}))
+	_check(traces.size() == 2 and traces[0] == traces[1]
+		and _wallet_exact_int((traces[0] as Dictionary).get("wallet"), 4, 2),
+		"two fresh loose_seam visits settle identical results")
+	_check(local_rng.state == local_state, "loose_seam settlement spends no local seeded RNG")
 
 
 func _test_needle_gate_wallet_settlement() -> void:
@@ -807,9 +1039,9 @@ func _test_wallet_preflight_rejections_and_recovery() -> void:
 	_check(service.is_claimed() and not service.is_valid(),
 		"recovered claim latches after preflight rejections")
 
-	# 2. The outcome-less placeholder events (loose_seam, thimble_well,
-	#    frayed_signpost) reject choose_with_wallet without claiming, then still
-	#    accept legacy choose().
+	# 2. The outcome-less placeholder events (thimble_well, frayed_signpost)
+	#    reject choose_with_wallet without claiming, then still accept legacy
+	#    choose(). loose_seam now carries authored outcomes and settles above.
 	for event_id in REQUIRED:
 		var expected_event: Dictionary = REQUIRED[event_id]
 		if expected_event.has("outcomes"):

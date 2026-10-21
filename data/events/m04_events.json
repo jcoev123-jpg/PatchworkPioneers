@@ -14,8 +14,8 @@
       "title": "The Loose Seam",
       "description": "A strip of patched ground has come unstitched.",
       "choices": [
-        { "id": "mend", "text": "Inspect the loose stitching" },
-        { "id": "bypass", "text": "Walk around the seam" }
+        { "id": "mend", "text": "Sew the seam (spend 1 scrap; recover 15 gold)", "outcome": { "gold": 15, "scraps": -1 } },
+        { "id": "bypass", "text": "Walk around and gather loose thread (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } }
       ]
     },
     {
