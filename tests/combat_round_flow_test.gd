@@ -310,11 +310,22 @@ func _test_rejections() -> void:
 	_check(alternate["party"].is_valid() and alternate["party"].get_hero(1)["id"] == "alternate_front",
 		"replacement-front negative remains otherwise structurally valid")
 	_reject_invalid(alternate, "substituted Warden cannot start authored initial trio")
-	for slots in [[1, 0, 2], [0, 2, 1]]:
+	for slots in [[1, 0, 2], [0, 2, 1], [2, 1, 0]]:
 		var authored := _load_json(HEROES_PATH)
-		var misplaced := _fight(39, [authored[slots[0]], authored[slots[1]], authored[slots[2]]])
-		_check(misplaced["party"].is_valid(), "misplaced authored party otherwise valid")
-		_reject_invalid(misplaced, "misplaced authored heroes")
+		var reordered := _fight(39, [authored[slots[0]], authored[slots[1]], authored[slots[2]]])
+		var warden_slot: int = slots.find(0) + 1
+		_check(reordered["party"].is_valid() and reordered["party"].get_hero(warden_slot)["id"] == "warden",
+			"permutation contains the authored Warden at his present slot")
+		var oracle := CombatDeck.new(reordered["cards"], _rng(39))
+		_check(reordered["flow"].begin_fight() and oracle.start_turn(),
+			"unique authored permutation starts successfully")
+		for position in range(1, 4):
+			_check(reordered["party"].get_hero(position)["block"] == (6 if position == warden_slot else 0),
+				"only current Warden position receives six Block")
+		_check(reordered["deck"].hand == oracle.hand and reordered["deck"].energy == 3
+			and _deck_snapshot(reordered["deck"]) == _deck_snapshot(oracle),
+			"permuted opening uses the same seeded draw and three energy")
+		_reject(reordered, reordered["flow"].begin_fight, "permuted repeat opening")
 	var mismatched := _fight(40, [], [], [
 		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 1, "target_position": 1}]}])
 	_check(mismatched["intents"].is_valid() and mismatched["enemies"].get_enemies().size() == 2,
@@ -325,13 +336,6 @@ func _test_rejections() -> void:
 		{"enemy_position": 3, "pattern": [{"type": "block", "amount": 1}]}])
 	_check(phantom["intents"].is_valid(), "phantom-slot schedule independently valid")
 	_reject_invalid(phantom, "gap and phantom enemy 3")
-	var reversed_party := _load_json(HEROES_PATH)
-	reversed_party.reverse()
-	var wrong_owner := _fight(42, reversed_party)
-	_check(wrong_owner["party"].is_valid() and
-		wrong_owner["party"].get_hero(1)["id"] == "tinker",
-		"wrong-slot Warden negative has three otherwise-valid heroes")
-	_reject_invalid(wrong_owner, "wrong owner at first position")
 	var invalid_schedule := _fight(43, [], [], [
 		{"enemy_position": 1, "pattern": []}])
 	_check(not invalid_schedule["intents"].is_valid(), "invalid scheduler is really invalid")
@@ -776,7 +780,18 @@ func _test_additional_boundaries() -> void:
 		and not down_party.is_defeated()
 		and down_warden["result"].can_continue(),
 		"downed Warden pre-start has other living heroes and an ACTIVE result")
-	_reject_invalid(down_warden, "downed Warden cannot receive one-time opening Block")
+	var down_oracle := CombatDeck.new(down_warden["cards"], _rng(62))
+	_check(down_warden["flow"].begin_fight() and down_oracle.start_turn(),
+		"downed Warden with living allies starts a fresh fight")
+	_check(down_party.get_hero(1)["hp"] == 0 and down_party.get_hero(1)["block"] == 0
+		and down_warden["deck"].energy == 3 and down_warden["deck"].hand.size() == 5
+		and _deck_snapshot(down_warden["deck"]) == _deck_snapshot(down_oracle)
+		and not down_warden["flow"]._opening_block._consumed,
+		"downed Warden stays at zero and gets no passive, with exact seeded draw")
+	_reject(down_warden, down_warden["flow"].begin_fight, "downed Warden repeat opening")
+	_check(down_warden["flow"].end_turn() and down_party.get_hero(1)["hp"] == 0
+		and down_party.get_hero(1)["block"] == 0,
+		"later turn cannot grant belated Warden Block or revive downed occupant")
 
 	var invalid_heroes := _fight(60, [{"id": "warden", "max_hp": 0}])
 	_check(not invalid_heroes["party"].is_valid()
