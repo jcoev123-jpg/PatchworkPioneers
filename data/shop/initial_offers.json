@@ -8,6 +8,7 @@
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
-    {"id": "spare_spool", "price": 100}
+    {"id": "spare_spool", "price": 100},
+    {"id": "quilted_coat", "price": 100}
   ]
 }

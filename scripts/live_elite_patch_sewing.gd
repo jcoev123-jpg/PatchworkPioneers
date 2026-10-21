@@ -11,6 +11,7 @@ var _claim_context: Array = []
 var _service: RunMultiFightRewards
 var _drop := ""
 var _token := 0
+var _bound_carry: RunTornCarryover
 
 
 func _ready() -> void:
@@ -35,6 +36,9 @@ func _sync_run() -> void:
 	var app = get_parent()
 	if app.run_map != _map or app.run_rng != _rng:
 		_clear_choices()
+		if _bound_carry != null:
+			_bound_carry.clear_wardrobe(wardrobe)
+		_bound_carry = null
 		wardrobe = null
 		_map = app.run_map
 		_rng = app.run_rng
@@ -85,6 +89,12 @@ func observe_claim(offering, result: Dictionary) -> void:
 		return
 	var definitions: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/patches/initial_patch_slots.json"))
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	if not definitions is Array or not coats is Array or not RunPatchCoatRules._valid_authored(coats):
+		return
+	for coat in coats:
+		definitions.append({"id": coat.id, "slot": coat.slot})
 	if wardrobe == null:
 		var candidate := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
 			app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
@@ -121,6 +131,7 @@ func observe_claim(offering, result: Dictionary) -> void:
 		var button := Button.new()
 		button.text = hero.id.capitalize()
 		button.set_meta("hero_id", hero.id)
+		button.disabled = hero.hp == 0
 		button.custom_minimum_size = Vector2(150, 40)
 		_choices.add_child(button)
 		hero_buttons.append(button)
@@ -169,11 +180,17 @@ func _sew(hero_id: String, button, token: int, expected: Dictionary) -> void:
 		or button.disabled or not button.is_visible_in_tree() \
 		or button.get_meta("hero_id", "") != hero_id:
 		return
+	var carry := get_parent().party_carryover as RunTornCarryover
+	if carry == null or not carry.can_bind_wardrobe(wardrobe, carry.torn, expected) \
+		or not expected.heroes.any(func(hero): return hero.id == hero_id and hero.hp > 0):
+		return
 	var slot: Variant = expected.definitions.get(_drop)
 	var result := wardrobe.sew(_drop, hero_id, slot,
 		"elite:%s:%s" % [_map.get_current_node_id(), _drop], expected)
 	if not result.ok:
 		return
+	carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot())
+	_bound_carry = carry
 	for action in hero_buttons:
 		action.disabled = true
 	_update_summary()

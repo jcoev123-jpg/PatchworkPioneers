@@ -17,6 +17,7 @@ func _initialize() -> void:
 	_test_failed_and_foreign_results()
 	_test_invalid_and_defeated()
 	_test_seeded_replay_and_rng()
+	_test_coat_torn_carryover()
 	_finish()
 
 
@@ -732,3 +733,94 @@ func _test_seeded_replay_and_rng() -> void:
 		and not carry.choose_rest_heal("rest")["ok"]
 		and carry.read_state() == after, "RNG test also includes duplicate rejects")
 	_check(randi() == expected_next, "success and rejection consume no global RNG")
+
+
+func _test_coat_torn_carryover() -> void:
+	var carry := RunTornCarryover.new(_party().get_heroes())
+	var coats: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m04_coat_patches.json"))
+	var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/initial_patch_slots.json"))
+	for coat in coats:
+		definitions.append({"id": coat.id, "slot": coat.slot})
+	definitions.append({"id": "replacement", "slot": "COAT"})
+	var wardrobe := RunPatchWardrobe.new(carry.get_next_fight_heroes(),
+		["quilted_coat", "replacement"], definitions, 0, 0, [], 97, true)
+	_check(wardrobe.is_valid() and carry.is_valid(), "coat fixture uses real valid ledgers")
+	_check(wardrobe.sew("quilted_coat", "warden", "COAT", "sew", wardrobe.get_snapshot()).ok,
+		"owned authored coat sews before binding")
+	var before := [carry.read_state(), carry.torn.read_state(), wardrobe.get_snapshot()]
+	var foreign_owner := RunTornMending.new(_party().get_heroes())
+	_check(not carry.bind_wardrobe(wardrobe, foreign_owner, wardrobe.get_snapshot())
+		and carry._wardrobe == null, "equivalent but foreign torn owner cannot bind")
+	var stale := wardrobe.get_snapshot()
+	stale.gold += 1
+	_check(not carry.bind_wardrobe(wardrobe, carry.torn, stale)
+		and [carry.read_state(), carry.torn.read_state(), wardrobe.get_snapshot()] == before,
+		"stale binding preserves all ledgers")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()), "exact live wardrobe binds")
+	var other := RunPatchWardrobe.new(carry.get_next_fight_heroes(), ["quilted_coat"], definitions, 0, 0, [], 97, true)
+	_check(not carry.bind_wardrobe(other, carry.torn, other.get_snapshot()) and carry._wardrobe == wardrobe,
+		"foreign wardrobe cannot replace live binding")
+	seed(970097)
+	var next_random := randi()
+	seed(970097)
+	for battle_index in range(4):
+		var party := carry.create_next_fight_party()
+		_check(party != null and party.is_valid(), "coat continuation creates actual party %d" % battle_index)
+		if party == null:
+			return
+		var held := carry.read_state()
+		var expected: Array = held.heroes.duplicate(true)
+		if battle_index in [0, 2]:
+			expected[0].max_hp += 6
+		_check(party.get_heroes() == expected, "projection is exact, no healing or stacked cap %d" % battle_index)
+		var enemies := CombatEnemies.new([{"id": "coat_target", "max_hp": 1}])
+		var result := CombatBattleResult.new(party, enemies)
+		var node := "coat_battle_%d" % battle_index
+		party._heroes[0].max_hp += 1
+		_check(not carry.begin_battle(node, result, party) and carry.read_state() == held,
+			"forged admission cap fails without mutation")
+		party._heroes[0].max_hp -= 1
+		_check(carry.begin_battle(node, result, party), "repaired admission succeeds")
+		if battle_index == 0:
+			_check(party.apply_damage(1, 999), "wearer really becomes torn in combat")
+		elif battle_index == 1:
+			_check(party.get_hero(1).hp == 0 and party.get_hero(1).max_hp == 37
+				and not party.heal(1, 999), "torn coat is inactive and combat heal cannot revive")
+		elif battle_index == 2:
+			_check(party.heal(1, 999) and party.get_hero(1).hp == 43,
+				"legitimate revived wearer heals only to torn base plus six")
+			var moved := CombatPositionSwaps.preview_adjacent_swap(party, 1, 1)
+			_check(moved.ok, "coat fixture actually permutes wearer")
+			if moved.ok:
+				party._heroes.assign(moved.heroes)
+		_check(enemies.apply_damage(1, 1) and result.evaluate() == CombatBattleResult.VICTORY,
+			"coat battle witnesses real surviving victory")
+		var foreign_party := carry.create_next_fight_party()
+		_check(carry.preview_reward(node, result, foreign_party) == null
+			and not carry.commit_victory(node, result, foreign_party).ok, "foreign battle party cannot settle")
+		var raw := party.get_heroes()
+		party._heroes[0].max_hp += 1
+		_check(carry.preview_reward(node, result, party) == null
+			and not carry.commit_victory(node, result, party).ok and carry.read_state() == held,
+			"forged terminal cap fails before commit")
+		party._heroes.assign(raw)
+		_check(carry.preview_reward(node, result, party) != null
+			and carry.commit_victory(node, result, party).ok
+			and carry.apply_reward(node, result, party).ok, "valid settlement retry publishes base torn state")
+		var settled := [carry.read_state(), carry.torn.read_state(), carry._receipts.duplicate(true)]
+		_check(not carry.commit_victory(node, result, party).ok and not carry.apply_reward(node, result, party).ok
+			and [carry.read_state(), carry.torn.read_state(), carry._receipts] == settled,
+			"repeated callbacks cannot stack bonus or tear")
+		var wearer: Dictionary = carry.get_next_fight_heroes().filter(func(h): return h.id == "warden")[0]
+		_check(wearer.max_hp == 37 and carry.torn.read_state().tear_counts.warden == 1,
+			"base tear counted once, coat never persisted")
+		if battle_index == 1:
+			_check(carry.choose_rest_heal("coat_rest").ok, "authoritative Rest legitimately revives wearer")
+		elif battle_index == 2:
+			_check(wearer.hp == 37 and wearer.position == 2, "settlement clamps over-base HP by moved identity")
+			_check(wardrobe.sew("replacement", "warden", "COAT", "replace", wardrobe.get_snapshot()).ok,
+				"legitimate replacement removes worn coat")
+	_check(randi() == next_random, "projection, battle admission, settlement and rejection use no global RNG")
+	carry.clear_wardrobe(wardrobe)
+	_check(carry._wardrobe == null and carry.create_next_fight_party().get_heroes() == carry.get_next_fight_heroes(),
+		"clearing binding removes projection entirely")

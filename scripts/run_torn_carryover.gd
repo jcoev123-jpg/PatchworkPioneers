@@ -9,6 +9,62 @@ var _start: Array = []
 var _node := ""
 var _party: CombatParty
 var _result: CombatBattleResult
+var _wardrobe: RunPatchWardrobe
+
+
+func clear_wardrobe(value: RunPatchWardrobe) -> void:
+	if value == _wardrobe:
+		_wardrobe = null
+
+
+func can_bind_wardrobe(value: RunPatchWardrobe, owner: RunTornMending, expected: Dictionary) -> bool:
+	return _valid and owner == torn and value != null and value.is_valid() \
+		and (_wardrobe == null or _wardrobe == value) and value.get_snapshot() == expected \
+		and expected.get("heroes") == _heroes and torn.read_state().heroes == _heroes \
+		and _observer() != null
+
+
+func bind_wardrobe(value: RunPatchWardrobe, owner: RunTornMending, expected: Dictionary) -> bool:
+	if not can_bind_wardrobe(value, owner, expected):
+		return false
+	_wardrobe = value
+	return true
+
+
+func _projected_heroes() -> Array:
+	if _wardrobe == null:
+		return _heroes.duplicate(true)
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	if not coats is Array:
+		return []
+	var projected := RunPatchCoatRules.project_health(torn.read_state(), _wardrobe, coats)
+	return projected.heroes
+
+
+func _refresh_wardrobe() -> void:
+	if _wardrobe != null:
+		var state := _wardrobe.get_snapshot()
+		_wardrobe.refresh_run_context(_heroes, state.owned, state.scraps, state.gold, state.cards, state)
+
+
+## Reconcile against the admitted effective cap by ID, never the current slot.
+## HP above the base cap is combat-only and cannot become permanent healing.
+func _base_snapshot(raw: Array) -> Array:
+	if not _valid_roster(raw, true) or not _valid_roster(_start, true):
+		return []
+	var caps := {}
+	for hero in _start:
+		caps[hero.id] = hero
+	var normalized := raw.duplicate(true)
+	for hero in normalized:
+		if not caps.has(hero.id) or not _max_hp_by_id.has(hero.id) \
+			or hero.max_hp != caps[hero.id].max_hp \
+			or (caps[hero.id].hp == 0 and hero.hp != 0):
+			return []
+		hero.max_hp = _max_hp_by_id[hero.id]
+		hero.hp = mini(hero.hp, hero.max_hp)
+	return normalized
 
 
 func _init(initial_heroes: Variant = null) -> void:
@@ -25,7 +81,9 @@ func begin_battle(node: String, result: CombatBattleResult, party: CombatParty) 
 		or not _valid_id(node) or _fight_ids.has(node) or torn.read_state().heroes != _heroes:
 		return false
 	var observed: Array = party.get_heroes()
-	var expected: Array = _heroes.duplicate(true)
+	var expected: Array = _projected_heroes()
+	if not _valid_roster(observed, true) or expected.size() != observed.size():
+		return false
 	for i in range(expected.size()):
 		expected[i].block = observed[i].block
 	if observed != expected:
@@ -35,6 +93,29 @@ func begin_battle(node: String, result: CombatBattleResult, party: CombatParty) 
 	_result = result
 	_start = observed.duplicate(true)
 	return true
+
+
+func can_commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatParty) -> bool:
+	if not _valid or not _valid_id(node_id) or node_id != _node or _fight_ids.has(node_id) \
+		or result == null or result != _result or party == null or party != _party \
+		or result._party != party or result._enemies == null or not party.is_valid() \
+		or result.get_outcome() != CombatBattleResult.VICTORY or party.is_defeated() \
+		or not result._enemies.is_valid() or not result._enemies.is_victorious() \
+		or torn.read_state().heroes != _heroes or not _same_identities(_heroes):
+		return false
+	var proposal := _observer()
+	return proposal != null and proposal.observe_battle_end(node_id,
+		_base_snapshot(_start), _base_snapshot(party.get_heroes())).ok
+
+
+func commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatParty) -> Dictionary:
+	if not can_commit_victory(node_id, result, party):
+		return _rejected()
+	_heroes = _base_snapshot(party.get_heroes())
+	for hero in _heroes:
+		hero.block = 0
+	_fight_ids.append(node_id)
+	return {"ok": true, "heroes": _heroes.duplicate(true)}
 
 
 ## Rebuild detached proposals through the service's public receipt API. Invalid
@@ -61,15 +142,16 @@ func preview_reward(node: String, result: CombatBattleResult, party: CombatParty
 		or torn.read_state().completed_battles.has(node):
 		return null
 	if _fight_ids.has(node):
-		var raw: Array = party.get_heroes()
+		var raw: Array = _base_snapshot(party.get_heroes())
 		for hero in raw:
 			hero.block = 0
 		if raw != _heroes:
 			return null
-	elif not super.can_commit_victory(node, result, party):
+	elif not can_commit_victory(node, result, party):
 		return null
 	var proposal := _observer()
-	if proposal == null or not proposal.observe_battle_end(node, _start, party.get_heroes()).ok:
+	if proposal == null or not proposal.observe_battle_end(node,
+		_base_snapshot(_start), _base_snapshot(party.get_heroes())).ok:
 		return null
 	return proposal
 
@@ -80,11 +162,12 @@ func apply_reward(node: String, result: CombatBattleResult, party: CombatParty) 
 	var proposal := preview_reward(node, result, party)
 	if proposal == null:
 		return _rejected()
-	_receipts.append({"node": node, "start": _start.duplicate(true), "end": party.get_heroes()})
+	_receipts.append({"node": node, "start": _base_snapshot(_start), "end": _base_snapshot(party.get_heroes())})
 	torn = proposal
 	_heroes = torn.read_state().heroes
 	for hero in _heroes:
 		_max_hp_by_id[hero.id] = hero.max_hp
+	_refresh_wardrobe()
 	return {"ok": true, "heroes": _heroes.duplicate(true)}
 
 
@@ -97,6 +180,7 @@ func choose_rest_heal(node: Variant) -> Dictionary:
 		return recovered
 	torn = proposal
 	_receipts.append({"node": node})
+	_refresh_wardrobe()
 	return recovered
 
 
@@ -107,6 +191,9 @@ func create_next_fight_party() -> CombatParty:
 	for hero in _heroes:
 		if hero.block != 0:
 			return null
-	var party := CombatParty.new(_heroes)
-	party._heroes.assign(_heroes.duplicate(true))
+	var projected := _projected_heroes()
+	if not _valid_roster(projected, true):
+		return null
+	var party := CombatParty.new(projected)
+	party._heroes.assign(projected)
 	return party

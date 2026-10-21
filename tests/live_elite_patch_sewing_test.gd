@@ -50,7 +50,7 @@ func _run() -> void:
 		_check(sewing.wardrobe == null and sewing.hero_buttons.is_empty(), "fresh replay has no assignments or choices")
 		for callback in retained:
 			_reject_patch(callback, "prior session callback")
-		await _click(app.reward_buttons[3])
+		await _click(app.reward_buttons[0])
 		await _click(app.continue_button)
 		var observations: Array = []
 		var first_worn := {}
@@ -64,6 +64,15 @@ func _run() -> void:
 			if index == 1:
 				_check(sewing.wardrobe.get_snapshot().worn == first_worn and not sewing.summary.text.is_empty(),
 					"ownership stays displayed through Continue and next connected battle")
+				var base: Array = app.party_carryover.read_state().heroes
+				var effective: Array = app.party.get_heroes()
+				for i in range(3):
+					_check(effective[i].hp == base[i].hp and effective[i].max_hp == base[i].max_hp + (6 if effective[i].id == "warden" else 0),
+						"connected real battle projects +6 only on wearer without healing")
+				_check(app.party.heal(1, 999) and app.party.get_hero(1).hp == 46,
+					"real combat healing reaches effective coat cap")
+				_check(app.party.apply_damage(1, app.party.get_hero(1).block + 2)
+					and app.party.get_hero(1).hp == 44, "real damage uses effective HP")
 			for callback in retained:
 				_reject_patch(callback, "wrong battle callback")
 			if index == 1:
@@ -81,6 +90,8 @@ func _run() -> void:
 			if service == null:
 				break
 			var drop: String = app.fight_reward_trinket
+			if index == 0:
+				_check(drop == "quilted_coat", "fixed seed %s actually earns coat first (got %s)" % [fixture.seed, drop])
 			_check(not app.run_trinkets.has(drop), "pending drop is not yet owned")
 			var forged := {"ok": true, "receipt": {"node_id": elite,
 				"node_kind": "Elite", "trinket_drop_id": drop}}
@@ -88,6 +99,11 @@ func _run() -> void:
 			_reject_patch(sewing._sew.bind("warden", app.reward_buttons[0], sewing._token, {}), "pre-claim sew")
 			_check(sewing.hero_buttons.is_empty() or not sewing._eligible(), "no eligible pre-claim hero input")
 			var reward_state := _reward_oracle_after_prepare(service)
+			if index == 1:
+				var reward_callback: Callable = app.reward_buttons[0 if index == 0 else 3].pressed.get_connections()[0].callable
+				app.party._heroes[1].max_hp += 1
+				_reject_patch(reward_callback, "invalid effective battle cap rejects claim")
+				app.party._heroes[1].max_hp -= 1
 			if session == 0:
 				await _click(app.reward_buttons[0 if index == 0 else 3])
 			else:
@@ -95,6 +111,10 @@ func _run() -> void:
 				await _key(KEY_ENTER)
 			_check(app.fight_reward_claimed and app.run_trinkets.has(drop)
 				and service._paid_battles.has(app.battle_result), "physical pick/skip commits the genuine drop once")
+			if index == 1:
+				var wearer: Dictionary = app.run_heroes.filter(func(h): return h.id == "warden")[0]
+				_check(wearer.max_hp == 40 and wearer.hp == 40,
+					"settlement clamps above-base HP and never persists derived +6")
 			_check(sewing.wardrobe != null and sewing.hero_buttons.size() == 3, "owned authored drop exposes all three hero choices")
 			if sewing.wardrobe == null or sewing.hero_buttons.size() != 3:
 				break
@@ -122,6 +142,7 @@ func _run() -> void:
 			await _key(KEY_TAB)
 			_check(app.continue_button.has_focus(), "physical Tab exits choices to Continue")
 			_reject_patch(sewing._sew.bind("foreign", button, sewing._token, state), "forged hero")
+			_reject_patch(sewing._sew.bind(hero, button, sewing._token, {}), "malformed wardrobe guard")
 			_reject_patch(sewing._sew.bind(hero, app.return_button, sewing._token, state), "foreign button")
 			var forged_state := state.duplicate(true)
 			forged_state.scraps += 1
@@ -161,6 +182,8 @@ func _run() -> void:
 				_check(button.has_focus(), "physical Tab reaches selected hero")
 				await _key(KEY_SPACE if index == 0 else KEY_ENTER)
 			var after: Dictionary = sewing.wardrobe.get_snapshot()
+			_check(app.party_carryover._wardrobe == sewing.wardrobe,
+				"successful sewing binds the exact live carryover wardrobe")
 			var slot: String = after.definitions[drop]
 			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), drop, slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
@@ -189,7 +212,9 @@ func _run() -> void:
 		else:
 			_check(observations == replay, "same-seed replay reproduces complete wardrobe and reward state")
 		# Existing Elite suite independently verifies exact Shop stock and RNG.
+		var old_carry: RunTornCarryover = app.party_carryover
 		await _click(app.route_back_button)
+		_check(old_carry._wardrobe == null, "return clears even the retained carryover binding")
 		_check(sewing.wardrobe == null and sewing.hero_buttons.is_empty() and sewing.summary.text.is_empty(), "title resets companion completely")
 		for callback in retained:
 			callback.call()
