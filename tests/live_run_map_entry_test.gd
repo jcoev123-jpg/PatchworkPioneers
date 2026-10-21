@@ -28,6 +28,10 @@ func _click(button: Button) -> void:
 	if not is_instance_valid(button):
 		return
 	var point := button.get_global_rect().get_center()
+	await _click_point(point)
+
+
+func _click_point(point: Vector2) -> void:
 	_check(root.get_visible_rect().has_point(point), "mouse target inside viewport")
 	var motion := InputEventMouseMotion.new()
 	motion.position = point
@@ -76,6 +80,123 @@ func _reject(app, id: String, reason: String) -> void:
 			and app.victory_gold == null, reason + " leaves no battle services or actor controls")
 
 
+func _preview(app, keyboard: bool, stale: Array = []) -> Array:
+	var before := _snapshot(app)
+	var chooser = app.route_view
+	var action: Button = app.route_map_button
+	_check(is_instance_valid(action) and action.is_visible_in_tree(), "real map action mounted")
+	if not is_instance_valid(action):
+		return []
+	var open: Callable = action.pressed.get_connections()[0].callable
+	var foreign := RunMap.new()
+	var foreign_rng := RandomNumberGenerator.new()
+	foreign_rng.seed = 6
+	_check(foreign.generate(foreign_rng), "foreign map fixture generated")
+	app._open_route_atlas(weakref(foreign), weakref(chooser), weakref(action))
+	app._open_route_atlas(weakref(app.run_map), weakref(action), weakref(action))
+	app._open_route_atlas(weakref(app.run_map), weakref(chooser), weakref(app.route_back_button))
+	_check(app.route_atlas_overlay == null and _snapshot(app) == before, "foreign open sources rejected")
+	if keyboard:
+		app.route_buttons[0].grab_focus()
+		await _key(KEY_TAB)
+		_check(action.has_focus(), "Tab skips disabled openings to map action")
+		await _key(KEY_ENTER)
+	else:
+		await _click(action)
+	var atlas: RunRouteAtlas = app.route_atlas
+	_check(is_instance_valid(atlas) and is_instance_valid(app.route_atlas_close), "real atlas and close mounted")
+	if not is_instance_valid(atlas) or not is_instance_valid(app.route_atlas_close):
+		return []
+	var overlay = app.route_atlas_overlay
+	var close: Callable = app.route_atlas_close.pressed.get_connections()[0].callable
+	_check(app.route_view == chooser and not chooser.visible and app.route_atlas_close.has_focus(),
+		"same chooser hidden; close focused")
+	_check(atlas._map == app.run_map and atlas.global_position == Vector2(20, 20)
+		and atlas.size == Vector2(1240, 600), "real map bound at readable preview bounds")
+	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	_check(viewport.encloses(atlas.get_global_rect()) and viewport.encloses(app.route_atlas_close.get_global_rect())
+		and app.route_atlas_close.global_position.y >= atlas.get_global_rect().end.y, "atlas and reachable close fully fit")
+	var expected_nodes := {}
+	var expected_edges := {}
+	var floors: Array = app.run_map.get_floors()
+	_check(floors.size() == 12, "live map has twelve floors")
+	for floor_nodes in floors:
+		for node in floor_nodes:
+			expected_nodes[node.id] = node
+			for target in node.outgoing:
+				expected_edges[node.id + "->" + target] = true
+	var nodes := {}
+	var edges := {}
+	var highlighted: Array = []
+	for child in atlas.get_children():
+		if child is PanelContainer:
+			var id: String = child.get_meta("route_id")
+			_check(expected_nodes.has(id) and not nodes.has(id), "unique actual marker: " + id)
+			nodes[id] = child
+			if not expected_nodes.has(id):
+				continue
+			var node: Dictionary = expected_nodes[id]
+			_check(child.get_node("Identity").text == node.type + "\n" + id
+				and atlas.get_global_rect().encloses(child.get_global_rect()), "readable mounted identity: " + id)
+			var legal: bool = app.run_map.get_legal_choices().has(id)
+			_check(child.get_meta("route_state") == ("legal" if legal else "other")
+				and child.get_theme_stylebox("panel").bg_color == (RunRouteAtlas.LEGAL_BG if legal else RunRouteAtlas.OTHER_BG),
+				"visible legal highlight: " + id)
+			if legal:
+				highlighted.append(id)
+		elif child is Line2D:
+			var source: String = child.get_meta("from_id")
+			var target: String = child.get_meta("to_id")
+			var pair := source + "->" + target
+			_check(expected_edges.has(pair) and not edges.has(pair), "actual directed link: " + pair)
+			edges[pair] = true
+			if expected_nodes.has(source) and expected_nodes.has(target):
+				var from: Dictionary = expected_nodes[source]
+				var to: Dictionary = expected_nodes[target]
+				_check(child.points.size() >= 13, "drawn link endpoints exist")
+				if child.points.size() >= 13:
+					_check(child.points[0] == Vector2(30 + (from.floor - 1) * 99 + 84, 130 + from.position * 106 + 29)
+						and child.points[12] == Vector2(30 + (to.floor - 1) * 99, 130 + to.position * 106 + 29),
+						"drawn endpoints match model: " + pair)
+	_check(nodes.size() == expected_nodes.size() and edges == expected_edges and not edges.is_empty(),
+		"all actual nodes and links rendered")
+	_check(highlighted == app.run_map.get_legal_choices(), "exact legal opening IDs highlighted")
+	var hidden := _snapshot(app)
+	_check(hidden.slice(0, 6) == before.slice(0, 6), "opening spends no graph/route/legal/encounter/RNG/combat state")
+	for callback in stale:
+		callback.call()
+	_check(app.route_atlas_overlay == overlay and _snapshot(app) == hidden,
+		"old preview callbacks cannot close or replace new overlay")
+	open.call()
+	app._close_route_atlas(weakref(foreign), weakref(chooser), weakref(action), weakref(overlay))
+	app._close_route_atlas(weakref(app.run_map), weakref(action), weakref(action), weakref(overlay))
+	app._close_route_atlas(weakref(app.run_map), weakref(chooser), weakref(app.route_back_button), weakref(overlay))
+	app._close_route_atlas(weakref(app.run_map), weakref(chooser), weakref(action), weakref(chooser))
+	_check(app.route_atlas_overlay == overlay, "duplicate open and foreign close sources rejected")
+	_check(not app._choose_route("f01_n0"), "hidden chooser rejects legal Fight")
+	await _click_point(nodes["f01_n0"].get_global_rect().get_center())
+	await _key(KEY_RIGHT)
+	await _key(KEY_TAB)
+	_check(app.route_atlas_close.has_focus() and _snapshot(app) == hidden, "map input inert; focus stays on close")
+	var atlas_id := atlas.get_instance_id()
+	var overlay_id: int = overlay.get_instance_id()
+	var cleared: Array = []
+	atlas.tree_exiting.connect(func(): cleared.append(atlas._map == null))
+	if keyboard:
+		await _key(KEY_SPACE)
+	else:
+		await _click(app.route_atlas_close)
+	_check(cleared == [true], "closing clears binding before detach")
+	await process_frame
+	_check(not is_instance_id_valid(atlas_id) and not is_instance_id_valid(overlay_id)
+		and app.route_atlas == null and app.route_atlas_overlay == null and app.route_atlas_close == null,
+		"close disposes preview")
+	_check(_snapshot(app) == before and app.route_view == chooser and action.has_focus(), "close restores exact state and action focus")
+	close.call()
+	_check(_snapshot(app) == before, "repeated stale close inert")
+	return [open, close]
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	# Seed 6 originally generated Rest, Rest, Treasure (pinned before the fix).
@@ -107,6 +228,7 @@ func _run() -> void:
 	_check(app.run_map.get_floors() == reference.get_floors() and
 		app.run_rng.state == reference_rng.state, "map generation matches reference stream")
 	_check(app.deck == null and app.run_map.get_route().is_empty(), "chooser has not started combat or committed")
+	var stale_atlas: Array = await _preview(app, true)
 	_check(app.route_buttons.size() == reference.get_legal_choices().size(), "one control per actual legal opening")
 	if "--inject-wrong-type" in OS.get_cmdline_user_args():
 		app.route_buttons[0].text = "incorrect"
@@ -143,6 +265,18 @@ func _run() -> void:
 	var old_view: int = app.route_view.get_instance_id()
 	var old_selector: WeakRef = weakref(app.fight_selection)
 	var stale_callback: Callable = app.route_buttons[0].pressed.get_connections()[0].callable
+	# Cancellation must also dispose an actively mounted preview.
+	await _click(app.route_map_button)
+	var cancelled_atlas: RunRouteAtlas = app.route_atlas
+	_check(is_instance_valid(cancelled_atlas), "preview reopened before cancellation")
+	var cancelled_id: int = cancelled_atlas.get_instance_id()
+	var cancelled_close: Callable = app.route_atlas_close.pressed.get_connections()[0].callable
+	app._cancel_route()
+	_check(cancelled_atlas._map == null and app.route_atlas_overlay == null, "cancel clears mounted preview binding")
+	await process_frame
+	_check(not is_instance_id_valid(cancelled_id), "cancel frees mounted atlas")
+	# Repeat Back through actual input on the restarted chooser.
+	await _click(app.route_button)
 	app.route_back_button.grab_focus()
 	await _key(KEY_ENTER)
 	await process_frame
@@ -164,7 +298,12 @@ func _run() -> void:
 			break
 		var before_stale := _snapshot(app)
 		stale_callback.call()
+		for callback in stale_atlas:
+			callback.call()
+		cancelled_close.call()
 		_check(_snapshot(app) == before_stale, "old chooser callback cannot affect restarted route")
+		var preview_callbacks: Array = await _preview(app, session == 1, stale_atlas + [cancelled_close])
+		stale_atlas.append_array(preview_callbacks)
 		var same_rng = app.run_rng
 		var same_map = app.run_map
 		var fight: Button = null
@@ -191,6 +330,12 @@ func _run() -> void:
 		_check(app.run_map.get_route() == [fight_id] and app.run_map.get_current_floor() == 1,
 			"successful combat commits exactly one node")
 		_check(app.route_view == null and app.route_buttons.is_empty(), "chooser removed during battle")
+		_check(app.route_atlas == null and app.route_atlas_overlay == null and app.route_map_button == null,
+			"Fight entry has no preview state")
+		var battle_before_stale := _snapshot(app)
+		for callback in stale_atlas:
+			callback.call()
+		_check(_snapshot(app) == battle_before_stale, "stale atlas callbacks cannot alter Fight")
 		_check(app.deck.energy == 3 and app.deck.hand.size() == 5 and app.deck.turn_active,
 			"M01 opens at three energy and five cards")
 		var cards: Array[String] = app._load_starter_deck()
@@ -394,10 +539,22 @@ func _run() -> void:
 			and app.run_map.get_floors()[0][2].type == "Treasure",
 			"fallback preserves unsupported kinds")
 		await _key(KEY_TAB)
-		_check(app.route_back_button.has_focus(), "Tab skips disabled choices to Back")
+		_check(app.route_map_button.has_focus(), "Tab skips disabled choices to full map")
+		await _key(KEY_TAB)
+		_check(app.route_back_button.has_focus(), "Tab reaches Back after map action")
 		await _click(app.route_back_button)
 		_check(app.run_map == null and app.run_rng == null and app.deck == null,
 			"formerly blocked seed Back clears session")
+	await _click(app.route_button)
+	await _click(app.route_map_button)
+	var reset_atlas: RunRouteAtlas = app.route_atlas
+	_check(is_instance_valid(reset_atlas), "title reset fixture has mounted atlas")
+	var reset_atlas_id: int = reset_atlas.get_instance_id()
+	app._return_to_title()
+	_check(reset_atlas._map == null and app.route_atlas_overlay == null and app.run_map == null,
+		"title reset clears preview and map binding")
+	await process_frame
+	_check(not is_instance_id_valid(reset_atlas_id), "title reset frees preview")
 	app.run_seed = fixture_seed
 	await _click(app.start_button)
 	_check(app.deck != null and app.run_map == null and app.route_view == null, "original direct start preserved")
