@@ -63,6 +63,12 @@ func end_turn() -> bool:
 	# The phase adjusts each base attack at its execution point, after earlier
 	# swaps/debuffs and the hero owner tick, while enemy Weak still applies.
 	var effective := _intents.get_intents().duplicate(true)
+	# An announced status cannot affect a hero already down at this turn's
+	# boundary. Omit that beat without retargeting, so surviving allies can
+	# finish the fight. The phase still rejects a target downed by an earlier
+	# action in the SAME batch, preserving its transactional validation.
+	effective = effective.filter(func(action: Dictionary) -> bool:
+		return not (action.type == "debuff" and _party.is_downed(action.target_position)))
 	if not _phase_is_executable(tick["actors"], effective):
 		return false
 	# Preflight succeeded for the complete transition. Preserve authoritative

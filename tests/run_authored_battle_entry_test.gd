@@ -230,7 +230,8 @@ func _expected_actions() -> Dictionary:
             [{"type": "attack", "amount": 2, "target_position": 1},
              {"type": "block", "amount": 3},
              {"type": "attack", "amount": 2, "target_position": 3},
-             {"type": "debuff", "amount": 1, "target_position": 2, "status": "weak"}],
+             {"type": "debuff", "amount": 1, "target_position": 2, "status": "weak"},
+             {"type": "attack", "amount": 2, "target_position": 2}],
         ],
     }
 

@@ -6,6 +6,7 @@ const EXPECTED := [
 	{"type": "block", "amount": 3},
 	{"type": "attack", "amount": 2, "target_position": 3},
 	{"type": "debuff", "amount": 1, "target_position": 2, "status": "weak"},
+	{"type": "attack", "amount": 2, "target_position": 2},
 ]
 var failures: Array[String] = []
 var checks := 0
@@ -15,6 +16,7 @@ var catalog: Array = []
 func _initialize() -> void:
 	_test_catalogs()
 	_test_cycle()
+	_test_typed_boss_defeat()
 	_test_inert_and_invalid()
 	_test_earlier_encounter()
 	for failure in failures:
@@ -136,8 +138,8 @@ func _test_cycle() -> void:
 		var expected_enemies := enemies.get_enemies()
 		var observed: Array = []
 		var rng_expected := _rng_start()
-		for step in range(8):
-			var expected: Dictionary = EXPECTED[step % 4].duplicate(true)
+		for step in range(10):
+			var expected: Dictionary = EXPECTED[step % 5].duplicate(true)
 			expected.enemy_position = 1
 			var announced := scheduler.get_intents()
 			_check(announced == [expected], "exact announcement at step %d" % step)
@@ -149,22 +151,128 @@ func _test_cycle() -> void:
 			event.erase("amount")
 			event.applied = true
 			_check(result == {"ok": true, "events": [event]}, "exact ordered phase event at step %d" % step)
-			match step % 4:
+			match step % 5:
 				0: expected_heroes[0].hp -= 2
 				1: expected_enemies[0].block += 3
 				2: expected_heroes[2].hp -= 2
-				3: expected_heroes[1]["statuses"] = {"weak": int(step / 4) + 1}
+				3: expected_heroes[1]["statuses"] = {"weak": int(step / 5) + 1}
+				4: expected_heroes[1].hp -= 2
 			_check(party.get_heroes() == expected_heroes, "complete expected party transition at step %d" % step)
 			_check(enemies.get_enemies() == expected_enemies, "complete expected boss transition at step %d" % step)
 			_check(scheduler.get_intents() == announced, "executor does not advance timeline")
 			observed.append([announced, result, party.get_heroes(), enemies.get_enemies()])
 			_check(scheduler.advance_turn(), "advance one beat")
 		_check(randi() == rng_expected, "entire boss timeline consumes no RNG")
-		_check(scheduler.get_intents()[0].amount == 2, "wraparound after eight steps")
+		var opening: Dictionary = EXPECTED[0].duplicate(true)
+		opening.enemy_position = 1
+		_check(scheduler.get_intents() == [opening], "exact wraparound after ten steps")
 		if replay == 0:
 			history = observed
 		else:
-			_check(observed == history, "independent deterministic eight-step replay")
+			_check(observed == history, "independent deterministic ten-step replay")
+
+
+func _battle_snapshot(party: CombatParty, enemies: CombatEnemies, deck: CombatDeck,
+		intents: CombatEnemyIntents, flow: CombatRoundFlow, rng: RandomNumberGenerator) -> Dictionary:
+	return {"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
+		"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(),
+		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
+		"turn_active": deck.turn_active, "intents": intents.get_intents(),
+		"turn_index": intents._turn_index, "outcome": flow.get_outcome(), "rng": rng.state}
+
+
+func _play_typed_boss() -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 83003
+	var map := RunMap.new()
+	map.generate(rng)
+	for floor_index in range(12):
+		var legal := map.get_legal_choices()
+		_check(not legal.is_empty(), "Boss route has a legal next floor")
+		if legal.is_empty():
+			return {}
+		_check(map.choose_node(legal[0]), "public map choice commits floor %d" % (floor_index + 1))
+	_check(map.get_current_floor() == 12 and map.get_node(map.get_current_node_id()).get("type") == "Boss",
+		"real seeded map reaches the typed floor-12 Boss")
+	var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+	_check(entry.get("success") == true and entry.get("node_type") == "Boss"
+		and entry.get("encounter_id") == "patchwork_behemoth", "public typed entry selects the shipped Boss")
+	if not entry.get("success", false):
+		return {}
+	var enemies: CombatEnemies = entry.enemies
+	var intents: CombatEnemyIntents = entry.intents
+	_check(enemies.is_valid() and intents.is_valid() and entry.definitions == _schedule(),
+		"typed entry provides real valid actors and exact five-beat schedule")
+	var party := _party()
+	var initial := party.get_heroes()
+	for index in range(3):
+		_check(initial[index].hp == [40, 30, 26][index] and initial[index].hp == initial[index].max_hp
+			and initial[index].block == 0, "authored hero starts at unmodified full HP")
+	var cards: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/cards/starter_deck.json"))
+	_check(cards is Array and cards.size() >= CombatDeck.TURN_DRAW, "real authored starter deck can deal a hand")
+	if not cards is Array or cards.size() < CombatDeck.TURN_DRAW:
+		return {}
+	var card_ids: Array[String] = []
+	card_ids.assign(cards)
+	var deck := CombatDeck.new(card_ids, rng)
+	var result := CombatBattleResult.new(party, enemies)
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result)
+	_check(flow.begin_fight(), "real seeded deck/round flow begins Boss fight")
+	_check(party.get_hero(1).block == 6 and deck.hand.size() == CombatDeck.TURN_DRAW
+		and deck.turn_active and result.can_continue(), "opening hand and one-shot Warden Block are live")
+	var trace: Array = [_battle_snapshot(party, enemies, deck, intents, flow, rng)]
+	var turns := 0
+	var skipped_downed_weak := false
+	while result.can_continue() and turns < 160:
+		var announced := intents.get_intents()
+		var before := party.get_heroes()
+		var expected_hp: Array = [before[0].hp, before[1].hp, before[2].hp]
+		var action: Dictionary = announced[0]
+		if action.type == "attack":
+			var index: int = action.target_position - 1
+			expected_hp[index] = maxi(0, expected_hp[index] - maxi(0, 2 - int(before[index].block)))
+		var downed_weak: bool = action.type == "debuff" and party.is_downed(2)
+		_check(deck.turn_active and deck.energy == CombatState.TURN_ENERGY
+			and deck.hand.size() == CombatDeck.TURN_DRAW, "no-card turn retains full energy and real dealt hand")
+		var ended := flow.end_turn()
+		_check(ended, "legal no-card End Turn succeeds at turn %d" % (turns + 1))
+		if not ended:
+			break
+		turns += 1
+		for index in range(3):
+			_check(party.get_hero(index + 1).hp == expected_hp[index],
+				"only announced attack changes HP at turn %d slot %d" % [turns, index + 1])
+		_check(enemies.get_enemy(1).hp == 42, "no-card run never damages the Boss")
+		if downed_weak:
+			skipped_downed_weak = true
+			_check(party.get_hero(2).hp == 0 and party.get_hero(2).get("statuses", {}) == {},
+				"Weak on an already downed middle hero is inert without stalling the round")
+		trace.append(_battle_snapshot(party, enemies, deck, intents, flow, rng))
+	_check(turns == 101 and turns <= 160 and skipped_downed_weak,
+		"authored full-HP party naturally falls in 101 End Turns, including downed Weak beats")
+	_check(party.is_defeated() and party.is_downed(1) and party.is_downed(2) and party.is_downed(3)
+		and flow.get_outcome() == CombatBattleResult.DEFEAT and result.is_finished()
+		and not result.can_continue(), "authoritative result latches party DEFEAT")
+	_check(not deck.turn_active and deck.hand.is_empty() and deck.energy == 0
+		and intents._turn_index == turns - 1, "lethal End Turn closes hand without advancing or dealing another turn")
+	var terminal := _battle_snapshot(party, enemies, deck, intents, flow, rng)
+	for attempt in range(2):
+		_check(not flow.end_turn() and not flow.begin_fight(), "terminal flow rejects continuation and restart")
+		_check(flow.observe_result() == CombatBattleResult.DEFEAT
+			and _battle_snapshot(party, enemies, deck, intents, flow, rng) == terminal,
+			"terminal calls preserve all actors, deck piles, energy, scheduler, outcome and RNG")
+	return {"trace": trace, "floors": map.get_floors(), "route": map.get_route(), "rng": rng.state}
+
+
+func _test_typed_boss_defeat() -> void:
+	var expected_global := _rng_start()
+	var first := _play_typed_boss()
+	_check(randi() == expected_global, "entire typed Boss no-card run uses no global RNG")
+	expected_global = _rng_start()
+	var second := _play_typed_boss()
+	_check(randi() == expected_global, "fresh Boss replay uses no global RNG")
+	_check(not first.is_empty() and first.get("trace", []).size() == 102
+		and second == first, "fresh seeded run repeats every authoritative turn, deck and RNG state")
 
 
 func _assert_phase_unchanged(party: CombatParty, enemies: CombatEnemies, actions: Array, expected: Dictionary) -> void:
@@ -246,7 +354,7 @@ func _test_inert_and_invalid() -> void:
 		event.erase("amount")
 		event.applied = false
 		_assert_phase_unchanged(party, boss, [announced], {"ok": true, "events": [event]})
-	for beat in [0, 2, 3]:
+	for beat in [0, 2, 3, 4]:
 		var downed_party := _party()
 		var action: Dictionary = EXPECTED[beat].duplicate(true)
 		var target: int = action.target_position
