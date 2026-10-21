@@ -41,8 +41,8 @@
       "title": "The Quiet Spool",
       "description": "An abandoned spool spins without a breeze.",
       "choices": [
-        { "id": "watch", "text": "Watch the thread unwind" },
-        { "id": "ignore", "text": "Leave the spool alone" }
+        { "id": "watch", "text": "Watch the thread unwind", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "ignore", "text": "Leave the spool alone", "outcome": { "gold": 0, "scraps": 0 } }
       ]
     },
     {

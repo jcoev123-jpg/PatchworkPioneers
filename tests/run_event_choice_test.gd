@@ -1,9 +1,10 @@
 extends SceneTree
 ## Deterministic headless test for RunEventChoice (M04 authored event selector).
 ## Covers the six authored events in data/events/m04_events.json (looked up by
-## ID, never by catalog size/order/index), Button Trail and Needle Gate wallets,
-## detached snapshots, one-claim semantics, fail-closed invalid records and
-## outcomes, recovery after failed preflight, replay rejection and zero RNG use.
+## ID, never by catalog size/order/index), Button Trail, Needle Gate and Quiet
+## Spool wallets, detached snapshots, one-claim semantics, fail-closed invalid
+## records and outcomes, recovery after failed preflight, replay rejection and
+## zero RNG use.
 
 const EVENTS_PATH := "res://data/events/m04_events.json"
 
@@ -36,6 +37,10 @@ const REQUIRED := {
 		"title": "The Quiet Spool",
 		"description": "An abandoned spool spins without a breeze.",
 		"choices": {"watch": "Watch the thread unwind", "ignore": "Leave the spool alone"},
+		"outcomes": {
+			"watch": {"gold": 0, "scraps": 1},
+			"ignore": {"gold": 0, "scraps": 0},
+		},
 	},
 	"needle_gate": {
 		"title": "The Needle Gate",
@@ -59,6 +64,7 @@ func _initialize() -> void:
 	_test_authored_claim_flow()
 	_test_button_trail_wallet_settlement()
 	_test_needle_gate_wallet_settlement()
+	_test_quiet_spool_wallet_settlement()
 	_test_signed_scraps_boundaries()
 	_test_wallet_preflight_rejections_and_recovery()
 	_test_invalid_records()
@@ -463,6 +469,159 @@ func _test_needle_gate_wallet_settlement() -> void:
 		"refused debit, free pass, replay spend no RNG or authored event state")
 
 
+func _test_quiet_spool_wallet_settlement() -> void:
+	# The authored Quiet Spool record settles through the same one-shot wallet
+	# service: watch grants one scrap, ignore leaves both balances untouched.
+	var matches := _matching("quiet_spool")
+	_check(matches.size() == 1, "exactly one authored quiet_spool record for wallet settlement")
+	if matches.size() != 1:
+		return
+	var authored: Dictionary = matches[0]
+	var original: Dictionary = authored.duplicate(true)
+
+	var cases: Array[Dictionary] = [
+		{"label": "watch from 0 scraps", "choice": "watch", "scraps": 0, "expected": 1},
+		{"label": "watch from 4 scraps", "choice": "watch", "scraps": 4, "expected": 5},
+		{"label": "ignore from 0 scraps", "choice": "ignore", "scraps": 0, "expected": 0},
+		{"label": "ignore from 4 scraps", "choice": "ignore", "scraps": 4, "expected": 4},
+	]
+	for case_record in cases:
+		var probe: Dictionary = case_record
+		var choice_id: String = probe["choice"]
+		var start_scraps: int = probe["scraps"]
+		var expected_scraps: int = probe["expected"]
+		var caller_event: Dictionary = authored.duplicate(true)
+		var wallet := {"gold": 13, "scraps": start_scraps}
+		var local_rng := RandomNumberGenerator.new()
+		local_rng.seed = 515151
+		var local_state: int = local_rng.state
+		var expected_global := _rng_start(515151)
+		var service := RunEventChoice.new(caller_event)
+		_check(service.is_valid() and not service.is_claimed(),
+			"fresh quiet_spool selector before the claim: " + probe["label"])
+		var result := service.choose_with_wallet(choice_id, wallet)
+		_check(_wallet_shape_ok(result) and result.get("ok", false) == true
+			and result.get("event_id", "") == "quiet_spool"
+			and result.get("choice_id", "") == choice_id
+			and _wallet_exact_int(result.get("wallet"), 13, expected_scraps),
+			"quiet_spool settles the exact detached wallet: " + probe["label"])
+		_check(_wallet_exact_int(wallet, 13, start_scraps),
+			"quiet_spool leaves the caller wallet unchanged: " + probe["label"])
+		_check(caller_event == original and service.get_event() == original,
+			"quiet_spool leaves the caller event and the selector snapshot unchanged: " + probe["label"])
+		_check(service.is_claimed() and not service.is_valid(),
+			"quiet_spool consumes exactly one claim per visit: " + probe["label"])
+		# The approved one-shot service must agree on the same authored IDs.
+		var reference := RunQuietSpoolOutcome.new()
+		var reference_result := reference.choose("quiet_spool", choice_id, start_scraps)
+		_check(reference_result.get("ok", false) == true
+			and reference_result.get("event_id", "") == "quiet_spool"
+			and reference_result.get("choice_id", "") == choice_id
+			and reference_result.get("scraps", -1) == expected_scraps,
+			"the approved Quiet Spool service agrees on the same inputs: " + probe["label"])
+		_check(local_rng.state == local_state and randi() == expected_global,
+			"quiet_spool settlement spends no local or global RNG: " + probe["label"])
+
+	# Illegal IDs, malformed and negative wallets and a max-int overflow all
+	# reject on one visit without consuming it.
+	var reject_service := RunEventChoice.new(authored.duplicate(true))
+	var valid_wallet := {"gold": 13, "scraps": 4}
+	var bad_choices: Array = ["", "   ", "unoffered", "Watch", "watch ", null, 12, ["watch"], {"id": "watch"}]
+	for bad_choice in bad_choices:
+		var rng_expected := _rng_start(51601)
+		var rejected := reject_service.choose_with_wallet(bad_choice, valid_wallet)
+		_check(_wallet_shape_ok(rejected) and rejected.get("ok", true) == false
+			and rejected.get("event_id", "") == "" and rejected.get("choice_id", "") == ""
+			and _wallet_exact_int(rejected.get("wallet"), 13, 4),
+			"quiet_spool rejects an illegal choice ID: " + str(bad_choice))
+		_check(not reject_service.is_claimed() and reject_service.is_valid()
+			and _wallet_exact_int(valid_wallet, 13, 4),
+			"illegal choice ID consumes no visit and spends nothing: " + str(bad_choice))
+		_check(reject_service.get_event() == original,
+			"illegal choice ID leaves the selector snapshot unchanged: " + str(bad_choice))
+		_check(randi() == rng_expected, "illegal choice ID spends no RNG: " + str(bad_choice))
+
+	var bad_wallets: Array[Dictionary] = [
+		{"gold": -1, "scraps": 0},
+		{"gold": 13, "scraps": -1},
+		{"gold": 13.5, "scraps": 0},
+		{"gold": "13", "scraps": 0},
+		{"gold": true, "scraps": 0},
+		{"gold": 13},
+		{"scraps": 0},
+		{"gold": 13, "scraps": 0, "hp": 5},
+	]
+	for bad_wallet in bad_wallets:
+		var rng_expected := _rng_start(51602)
+		var wallet_before: Dictionary = (bad_wallet as Dictionary).duplicate(true)
+		var rejected := reject_service.choose_with_wallet("watch", bad_wallet)
+		_check(_wallet_shape_ok(rejected) and rejected.get("ok", true) == false
+			and rejected.get("event_id", "") == "" and rejected.get("choice_id", "") == ""
+			and (rejected.get("wallet") as Dictionary).is_empty(),
+			"quiet_spool rejects an invalid wallet: " + str(bad_wallet))
+		_check(bad_wallet == wallet_before,
+			"invalid wallet rejection never mutates the caller wallet: " + str(bad_wallet))
+		_check(not reject_service.is_claimed() and reject_service.is_valid(),
+			"invalid wallet consumes no visit: " + str(bad_wallet))
+		_check(randi() == rng_expected, "invalid wallet spends no RNG: " + str(bad_wallet))
+
+	for bad_value in [null, "13", 13, [13, 0]]:
+		var rng_expected := _rng_start(51603)
+		var rejected := reject_service.choose_with_wallet("watch", bad_value)
+		_check(_wallet_shape_ok(rejected) and rejected.get("ok", true) == false
+			and (rejected.get("wallet") as Dictionary).is_empty(),
+			"quiet_spool rejects a non-dictionary wallet: " + str(bad_value))
+		_check(not reject_service.is_claimed() and reject_service.is_valid(),
+			"non-dictionary wallet consumes no visit: " + str(bad_value))
+		_check(randi() == rng_expected, "non-dictionary wallet spends no RNG: " + str(bad_value))
+
+	# watch grants one scrap, so a max-int scrap balance cannot settle.
+	var overflow_wallet := {"gold": 13, "scraps": RunEventChoice.MAX_INT}
+	var overflow := reject_service.choose_with_wallet("watch", overflow_wallet)
+	_check(_wallet_shape_ok(overflow) and overflow.get("ok", true) == false
+		and overflow.get("event_id", "") == "" and overflow.get("choice_id", "") == ""
+		and _wallet_exact_int(overflow.get("wallet"), 13, RunEventChoice.MAX_INT),
+		"max-int scrap overflow rejects without claiming")
+	_check(not reject_service.is_claimed() and reject_service.is_valid()
+		and _wallet_exact_int(overflow_wallet, 13, RunEventChoice.MAX_INT)
+		and reject_service.get_event() == original,
+		"overflow refusal consumes no visit, spends nothing and keeps both snapshots")
+
+	# The same visit still accepts an affordable authored choice afterwards.
+	var recovered := reject_service.choose_with_wallet("watch", valid_wallet)
+	_check(_wallet_shape_ok(recovered) and recovered.get("ok", false) == true
+		and recovered.get("event_id", "") == "quiet_spool"
+		and recovered.get("choice_id", "") == "watch"
+		and _wallet_exact_int(recovered.get("wallet"), 13, 5),
+		"quiet_spool recovers on the same visit after rejected attempts")
+	_check(reject_service.is_claimed() and not reject_service.is_valid()
+		and _wallet_exact_int(valid_wallet, 13, 4),
+		"the recovered visit latches exactly one claim and spends nothing")
+
+	# Repeat watch, repeat ignore and cross-choice replay all fail closed.
+	for replay_choice in ["watch", "ignore"]:
+		var replay := reject_service.choose_with_wallet(replay_choice, {"gold": 13, "scraps": 5})
+		_check(_wallet_shape_ok(replay) and replay.get("ok", true) == false
+			and replay.get("event_id", "") == "" and replay.get("choice_id", "") == ""
+			and _wallet_exact_int(replay.get("wallet"), 13, 5),
+			"quiet_spool rejects a replayed choice after the claim: " + replay_choice)
+	_check(reject_service.is_claimed() and reject_service.get_event() == original,
+		"replay attempts leave the claim latched and the snapshot unchanged")
+	(recovered["wallet"] as Dictionary)["gold"] = 999
+	(recovered["wallet"] as Dictionary)["scraps"] = 999
+	_check(_wallet_exact_int(valid_wallet, 13, 4),
+		"mutating a returned wallet cannot change the caller wallet")
+
+	# Two independent fresh selectors settle the same authored choice identically.
+	var traces: Array = []
+	for attempt in range(2):
+		var fresh := RunEventChoice.new(authored.duplicate(true))
+		traces.append(fresh.choose_with_wallet("watch", {"gold": 13, "scraps": 4}))
+	_check(traces.size() == 2 and traces[0] == traces[1]
+		and _wallet_exact_int((traces[0] as Dictionary).get("wallet"), 13, 5),
+		"two fresh quiet_spool selectors settle identical results")
+
+
 func _test_signed_scraps_boundaries() -> void:
 	var matches := _matching("needle_gate")
 	_check(matches.size() == 1, "exactly one Needle Gate for signed amount probes")
@@ -648,9 +807,12 @@ func _test_wallet_preflight_rejections_and_recovery() -> void:
 	_check(service.is_claimed() and not service.is_valid(),
 		"recovered claim latches after preflight rejections")
 
-	# 2. The four placeholder events reject choose_with_wallet without claiming, then still accept legacy choose().
+	# 2. The outcome-less placeholder events (loose_seam, thimble_well,
+	#    frayed_signpost) reject choose_with_wallet without claiming, then still
+	#    accept legacy choose().
 	for event_id in REQUIRED:
-		if event_id in ["button_trail", "needle_gate"]:
+		var expected_event: Dictionary = REQUIRED[event_id]
+		if expected_event.has("outcomes"):
 			continue
 		var event_matches := _matching(event_id)
 		if event_matches.size() != 1:
