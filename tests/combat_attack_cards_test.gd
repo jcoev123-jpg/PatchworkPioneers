@@ -25,6 +25,8 @@ func _initialize() -> void:
 	_test_patch_bomb_and_status_overflow()
 	_test_patch_torn_mend_and_transfer()
 	_test_patch_rejections_and_replay()
+	_test_real_shop_coat_wardrobes()
+	_test_malformed_patch_wardrobes()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -736,6 +738,119 @@ func _test_forecast_overflow_choice() -> void:
 		"remaining forecast choice matches successful actual hit")
 
 ## Real M04 authoring, starter-party ledger, and legal sewing for each combat.
+
+func _shop_coat_context(mode: String) -> Dictionary:
+	var hero_records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/starter_party.json"))
+	_check(hero_records is Array and not hero_records.is_empty(), "real hero catalog loaded")
+	var hero_defs := []
+	for record in hero_records:
+		hero_defs.append({"id": record.id, "max_hp": int(record.max_hp)})
+	var party := CombatParty.new(hero_defs)
+	var definitions := []
+	for path in ["res://data/patches/initial_patch_slots.json",
+			"res://data/patches/m04_coat_patches.json"]:
+		var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		_check(records is Array and not records.is_empty(), "real patch catalog loaded: " + path)
+		for record in records:
+			definitions.append({"id": record.id, "slot": record.slot})
+	for id in ["stitched_badge", "spare_spool", "quilted_coat"]:
+		_check(definitions.filter(func(record): return record.id == id).size() == 1,
+			"genuine wardrobe definition present exactly once: " + id)
+	var owned := ["stitched_badge", "spare_spool"]
+	if mode != "shop":
+		owned.append("quilted_coat")
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, definitions,
+		4, 117, StarterCards.new().get_starting_deck(), 920151)
+	var torn := RunTornMending.new(party.get_heroes())
+	_check(party.is_valid() and wardrobe.is_valid() and torn.is_valid(),
+		"genuine Shop/Elite fixture uses valid real services")
+	for assignment in [{"id": "stitched_badge", "owner": "warden", "slot": "HEAD"},
+			{"id": "spare_spool", "owner": "seamstress", "slot": "ARM"}]:
+		_check(wardrobe.sew(assignment.id, assignment.owner, assignment.slot,
+			"sew_" + assignment.id, wardrobe.get_snapshot()).ok, "real Shop patch sewn")
+	if mode != "shop":
+		_check(wardrobe.sew("quilted_coat", "warden", "COAT", "sew_coat",
+			wardrobe.get_snapshot()).ok, "real Quilted Coat sewn")
+	if mode == "torn":
+		var start: Array = torn.read_state().heroes
+		_check(party.apply_damage(1, 999) and party.is_downed(1), "actual wearer downed")
+		_check(torn.observe_battle_end("shop_tear", start, party.get_heroes()).ok,
+			"real torn ledger observes downed Shop/Coat wearer")
+		_check(wardrobe.project_active(torn.read_state()).active.warden.is_empty(),
+			"torn wearer has no active patches")
+	var state := wardrobe.get_snapshot()
+	_check(state.owned == owned and state.definitions.size() == definitions.size(),
+		"wardrobe has only supplied ownership and projected slot metadata")
+	for id in ["button_eye", "pincushion_arm"]:
+		_check(not state.owned.has(id) and not state.definitions.has(id),
+			"real Shop/Elite wardrobe neither owns nor defines " + id)
+	return {"party": party, "wardrobe": wardrobe, "torn": torn}
+
+
+func _test_real_shop_coat_wardrobes() -> void:
+	for mode in ["shop", "coat", "torn"]:
+		var replays := []
+		for replay in range(2):
+			var ctx := _shop_coat_context(mode)
+			var ledger_before := [ctx.wardrobe.get_snapshot(), ctx.torn.read_state()]
+			var service := _patch_service(ctx)
+			var deck := _deck(["seamstress_prick", "tinker_pop_shot"], 920151)
+			var foes := _enemies([40, 40])
+			_check(foes.gain_block(1, 2), "real target Block precondition")
+			var latch := service._patches.latch_snapshot()
+			_accept(service, deck, ctx.party, foes, "seamstress_prick", 1,
+				[_hit(1, 3, 2, 1, {"bleed": 3})], 1, mode + ": ordinary Prick")
+			_accept(service, deck, ctx.party, foes, "tinker_pop_shot", 2,
+				[_hit(2, 8, 0, 8)], 1, mode + ": ordinary first Pop Shot")
+			_check(foes.get_enemy(1).statuses == {"bleed": 3}
+				and foes.get_enemy(2).get("statuses", {}) == {}
+				and service._patches.latch_snapshot() == latch,
+				mode + ": no invented attack-patch status or latch power")
+			_check([ctx.wardrobe.get_snapshot(), ctx.torn.read_state()] == ledger_before
+				and ctx.wardrobe.get_snapshot().seed == 920151,
+				mode + ": combat preserves complete run ledgers and seed")
+			replays.append([_snapshot(deck, ctx.party, foes),
+				service._patches.active_snapshot(), service._patches.latch_snapshot(),
+				service._tinker._consumed, ctx.wardrobe.get_snapshot(), ctx.torn.read_state()])
+		_check(replays[0] == replays[1], mode + ": independent seeded bound attacks replay all state")
+
+
+func _test_malformed_patch_wardrobes() -> void:
+	for id in ["button_eye", "pincushion_arm"]:
+		for fault in ["missing_owned", "wrong_slot", "wrong_slot_unowned",
+				"forged_absent", "forged_owned", "duplicate"]:
+			var ctx := _shop_coat_context("shop")
+			var w: RunPatchWardrobe = ctx.wardrobe
+			var slot: String = CombatPatchAttackRules.EFFECTS[id].slot
+			if fault not in ["forged_absent", "wrong_slot_unowned"]:
+				w._owned.append(id)
+			if fault in ["wrong_slot", "wrong_slot_unowned"]:
+				w._definitions[id] = "COAT"
+			elif fault == "forged_owned":
+				w._definitions[id] = slot
+				w._worn.tinker.COAT = id
+			elif fault == "duplicate":
+				w._definitions[id] = slot
+				w._worn.warden[slot] = id
+				w._worn.tinker[slot] = id
+			elif fault == "forged_absent":
+				w._worn.tinker[slot] = id
+			_check(w.is_valid() and ctx.torn.is_valid(), "otherwise valid malformed ledger fixture")
+			var service := CombatAttackCards.new()
+			var deck := _deck(["warden_strike"])
+			var foes := _enemies([30])
+			var before := [_snapshot(deck, ctx.party, foes), w.get_snapshot(), ctx.torn.read_state()]
+			seed(9981)
+			var next_global := randi()
+			seed(9981)
+			_check(not service.bind_patch_wardrobe(w, ctx.torn) and not service._patches.is_valid(),
+				id + " " + fault + ": malformed binding fails closed")
+			_check([_snapshot(deck, ctx.party, foes), w.get_snapshot(), ctx.torn.read_state()] == before
+				and randi() == next_global, "failed binding preserves all models and RNG")
+			_patch_reject(service, deck, ctx.party, foes, "warden_strike", 1, ctx,
+				id + " " + fault + ": failed bind cannot attack or spend")
+
 
 func _patch_context(assignments: Array, scraps: int = 4) -> Dictionary:
 

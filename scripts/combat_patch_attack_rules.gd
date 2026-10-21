@@ -105,9 +105,13 @@ func _valid_projection(state: Dictionary, torn_state: Dictionary, projection: Di
 	if worn.size() != RunPatchWardrobe.HERO_IDS.size() or active.size() != worn.size():
 		return false
 	for id in EFFECTS:
-		if definitions.get(id) != EFFECTS[id]["slot"]:
+		if not definitions.has(id):
+			if owned.has(id):
+				return false
+		elif definitions[id] != EFFECTS[id]["slot"]:
 			return false
 	var seen := {}
+	var seen_worn := {}
 	for hero in heroes:
 		if typeof(hero) != TYPE_DICTIONARY:
 			return false
@@ -128,8 +132,9 @@ func _valid_projection(state: Dictionary, torn_state: Dictionary, projection: Di
 				return false
 			if id == "":
 				continue
-			if not owned.has(id) or definitions.get(id) != slot:
+			if not owned.has(id) or definitions.get(id) != slot or seen_worn.has(id):
 				return false
+			seen_worn[id] = true
 			if hero.get("hp", 0) > 0:
 				expected_active.append(id)
 		if projected != expected_active:
