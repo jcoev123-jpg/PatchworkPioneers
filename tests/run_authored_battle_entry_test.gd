@@ -13,6 +13,7 @@ const SOURCES := [
     "res://data/encounters/thimble_crossfire.json",
     "res://data/encounters/patchwork_behemoth.json",
     "res://data/encounters/triple_spool_pinch.json",
+    "res://data/encounters/double_hem_siege.json",
 ]
 const HP := {
     "ragling": 12, "ragling_guard": 12, "fray_scavenger": 14,
@@ -26,6 +27,7 @@ const BINDINGS := {
         "buttonhole_holdout": ["button_guard", "seam_ripper"],
         "guard_counterattack": ["ragling_guard", "button_guard"],
         "triple_spool_pinch": ["fray_scavenger", "button_guard", "spool_stalker"],
+        "double_hem_siege": ["fray_scavenger", "seam_ripper"],
     },
     "Elite": {"thimble_crossfire": ["button_guard", "seam_ripper"]},
     "Boss": {"patchwork_behemoth": ["patchwork_behemoth"]},
@@ -134,6 +136,16 @@ func _expected_actions() -> Dictionary:
              {"type": "attack", "amount": 1, "target_position": 1}],
             [{"type": "attack", "amount": 1, "target_position": 3},
              {"type": "block", "amount": 1}],
+        ],
+        "double_hem_siege": [
+            [{"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 2, "target_position": 3},
+             {"type": "attack", "amount": 2, "target_position": 2}],
+            [{"type": "attack", "amount": 3, "target_position": 1},
+             {"type": "attack", "amount": 2, "target_position": 2},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 2, "target_position": 3}],
         ],
         "triple_spool_pinch": [
             [{"type": "attack", "amount": 1, "target_position": 2},
