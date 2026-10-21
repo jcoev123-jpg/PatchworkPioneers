@@ -6,6 +6,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_tear_and_replay()
+	_test_reordered_battle_end()
 	_test_mend_guards()
 	_test_rest_and_new_tear()
 	_test_tinker_floor()
@@ -140,6 +141,145 @@ func _test_tear_and_replay() -> void:
 	_check(service.read_state()["heroes"] == expected
 		and service.read_state()["tear_counts"]["warden"] == 1,
 		"returned/source nested structures never alias stored snapshots")
+
+
+
+func _test_reordered_battle_end() -> void:
+	var service := _new_service()
+	if not service.is_valid():
+		return
+	var start: Array = service.read_state()["heroes"]
+	var party := CombatParty.new(start)
+	_check(party.is_valid() and party.get_heroes() == start,
+		"move test uses an actual CombatParty holding the witnessed starter roster")
+	if not party.is_valid() or party.get_heroes() != start:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 67219
+	var cards: Array[String] = ["witnessed_swap"]
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn() and deck.hand.has("witnessed_swap"),
+		"witnessed movement card is really held during an active turn")
+	var preview := CombatPositionSwaps.preview_adjacent_swap(party, 1, 1)
+	_check(preview["ok"] and preview["heroes"][0]["id"] == "seamstress"
+		and preview["heroes"][1]["id"] == "warden" and party.get_heroes() == start,
+		"actual position-swap preview reorders without touching its combat party")
+	var move_definition := {"id": "witnessed_swap", "owner": "warden", "cost": 1,
+		"from_positions": [1], "action_kind": "adjacent_swap", "direction": 1}
+	var played := CombatPositionSwaps.play_move_card(deck, party, "witnessed_swap", move_definition)
+	_check(played and deck.energy == 2 and deck.discard_pile == ["witnessed_swap"],
+		"real paid movement card commits one adjacent hero swap")
+	if not played:
+		return
+	_check(party.get_heroes() == preview["heroes"] and party.get_hero(2)["id"] == "warden",
+		"real combat party has the same moved actor records as the preview")
+	_check(party.apply_damage(2, 40) and party.is_downed(2),
+		"real CombatParty damage downs Warden at his new slot 2")
+	party._heroes[1]["statuses"]["bleed"] = 4
+	party._heroes[1]["block"] = 7
+	var ending: Array = party.get_heroes()
+	var original_end: Array = ending.duplicate(true)
+	var expected: Array = ending.duplicate(true)
+	expected[1]["max_hp"] = 37
+	for hero in expected:
+		hero["block"] = 0
+
+	var foreign: Array = ending.duplicate(true)
+	foreign[0]["id"] = "interloper"
+	var duplicate: Array = ending.duplicate(true)
+	duplicate[0]["id"] = "warden"
+	var wrong_slot: Array = ending.duplicate(true)
+	wrong_slot[0]["position"] = 2
+	var wrong_max: Array = ending.duplicate(true)
+	wrong_max[0]["max_hp"] = 31
+	var wrong_moved_max: Array = ending.duplicate(true)
+	wrong_moved_max[1]["max_hp"] = 39
+	var unordered_without_positions: Array = start.duplicate(true)
+	unordered_without_positions[0] = ending[0].duplicate(true)
+	unordered_without_positions[1] = ending[1].duplicate(true)
+	unordered_without_positions[0]["position"] = 2
+	unordered_without_positions[1]["position"] = 1
+	for malformed in [foreign, duplicate, wrong_slot, wrong_max,
+			wrong_moved_max, unordered_without_positions]:
+		_reject(service, "malformed moved roster",
+			func(): return service.observe_battle_end("moved_fight", start, malformed))
+	var moved_start: Array = start.duplicate(true)
+	moved_start[0] = preview["heroes"][0].duplicate(true)
+	moved_start[1] = preview["heroes"][1].duplicate(true)
+	_reject(service, "battle start must still equal witnessed held order",
+		func(): return service.observe_battle_end("moved_fight", moved_start, ending))
+	var result := service.observe_battle_end("moved_fight", start, ending)
+	_check(result["ok"] and result["heroes"] == expected,
+		"real moved battle accepted: exact ordered roster, only Warden -3 and all Block reset")
+	_check(service.read_state()["tear_counts"] == {"warden": 1, "seamstress": 0, "tinker": 0}
+		and result["heroes"][0]["id"] == "seamstress"
+		and result["heroes"][1]["id"] == "warden"
+		and result["heroes"][1]["position"] == 2
+		and result["heroes"][1]["hp"] == 0
+		and result["heroes"][1]["statuses"]["bleed"] == 4
+		and result["heroes"][1]["metadata"] == start[0]["metadata"],
+		"the tear and statuses/metadata stay with Warden's ID, now at position 2")
+	_check(start[0]["hp"] == 40 and ending == original_end,
+		"witnessed start and ending snapshots are unmodified")
+	var prior: Dictionary = service.read_state()
+	_check(service.observe_battle_end("moved_fight", start, ending)["ok"]
+		and service.read_state() == prior, "replayed reordered battle cannot tear twice")
+	_reject(service, "reused moved battle node with changed HP",
+		func(): return service.observe_battle_end("moved_fight", start, start))
+	_reject(service, "wrong old slot used for moved Warden Mend",
+		func(): return service.choose_mend("after_move", "move_receipt",
+			"warden", 1, 2, prior["heroes"], true),
+		{"ok": false, "heroes": [], "remaining_scraps": 2})
+	var mended := service.choose_mend("after_move", "move_receipt", "warden",
+		2, 2, prior["heroes"], true)
+	_check(mended["ok"] and mended["remaining_scraps"] == 0
+		and mended["heroes"][1]["id"] == "warden"
+		and mended["heroes"][1]["hp"] == 9 and mended["heroes"][1]["max_hp"] == 37
+		and mended["heroes"][0] == expected[0],
+		"map Mend locates newly slotted torn Warden and revives 37/0 to 37/9")
+	var down_again := _down(service, "after_move_again", 1)
+	_check(down_again["ok"] and down_again["heroes"][1]["id"] == "warden"
+		and down_again["heroes"][1]["max_hp"] == 34
+		and service.read_state()["tear_counts"]["warden"] == 2,
+		"new battle tears the moved and mended Warden a second time, not his old neighbor")
+	var before_rest: Array = service.read_state()["heroes"]
+	var oracle := RunRestRecovery.new(before_rest).choose_heal()
+	var rested := service.apply_rest("moved_rest", before_rest, true)
+	_check(oracle["ok"] and rested["ok"] and rested["heroes"] == oracle["heroes"]
+		and rested["heroes"][1]["id"] == "warden"
+		and rested["heroes"][1]["position"] == 2
+		and rested["heroes"][1]["max_hp"] == 34
+		and rested["heroes"][1]["hp"] == 11,
+		"Rest delegates real recovery at moved position 2, retaining both tears")
+
+	var shoved_service := _new_service()
+	if not shoved_service.is_valid():
+		return
+	var shove_start: Array = shoved_service.read_state()["heroes"]
+	var shoved_party := CombatParty.new(shove_start)
+	var enemies := CombatEnemies.new([{"id": "shover", "max_hp": 8}])
+	_check(shoved_party.is_valid() and enemies.is_valid()
+		and shoved_party.get_heroes() == shove_start,
+		"enemy shove test uses real healthy starter combat party and live enemy")
+	if not shoved_party.is_valid() or not enemies.is_valid():
+		return
+	var shove := CombatEnemySpecialActions.new().execute_actions(shoved_party, enemies,
+		[{"type": "shove", "enemy_position": 1, "amount": 0,
+			"target_position": 1, "direction": 1}])
+	_check(shove["ok"] and shove["events"].size() == 1
+		and shove["events"][0]["applied"] and shoved_party.get_hero(2)["id"] == "warden",
+		"real enemy shove commits Warden from slot 1 to slot 2")
+	_check(shoved_party.apply_damage(2, 40) and shoved_party.is_downed(2),
+		"real post-shove damage downs the actor now in slot 2")
+	var shoved_end := shoved_party.get_heroes()
+	var shove_result := shoved_service.observe_battle_end("enemy_shove", shove_start, shoved_end)
+	var shove_expected: Array = shoved_end.duplicate(true)
+	shove_expected[1]["max_hp"] = 37
+	for hero in shove_expected:
+		hero["block"] = 0
+	_check(shove_result["ok"] and shove_result["heroes"] == shove_expected
+		and shoved_service.read_state()["tear_counts"] == {"warden": 1, "seamstress": 0, "tinker": 0},
+		"actual enemy shove is an accepted witnessed battle and tears Warden by ID")
 
 
 func _test_mend_guards() -> void:

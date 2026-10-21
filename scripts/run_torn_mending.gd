@@ -48,9 +48,10 @@ func read_state() -> Dictionary:
 
 
 ## Accept one genuine battle's start and end observations. The start must
-## match the held run state except for opening combat Block; an actor cannot
-## change ID, slot or max HP in combat, or revive during a battle. End-of-
-## battle statuses are retained; Block is discarded at the node boundary.
+## match the held run state except for opening combat Block. Heroes may
+## change slots during combat, but their unique IDs and max HP stay attached
+## to the same actor, and a downed hero cannot revive. End-of-battle statuses
+## are retained; Block is discarded at the node boundary.
 ## Exact repeat observations are idempotent, but a reused node carrying a
 ## different observation is stale and refused.
 func observe_battle_end(node_id: Variant, battle_start: Variant, battle_end: Variant) -> Dictionary:
@@ -63,26 +64,33 @@ func observe_battle_end(node_id: Variant, battle_start: Variant, battle_end: Var
 		return _rejected()
 	if _used_nodes.has(node_id) or not _valid_roster(battle_start) or not _valid_roster(battle_end):
 		return _rejected()
+	var starting_by_id: Dictionary = {}
 	for i in range(PARTY_SIZE):
 		var held: Dictionary = _heroes[i]
 		var starting: Dictionary = battle_start[i]
-		var ending: Dictionary = battle_end[i]
 		var expected_start: Dictionary = held.duplicate(true)
 		expected_start["block"] = starting["block"]
 		if starting != expected_start:
 			return _rejected()
-		if ending["id"] != held["id"] or ending["position"] != held["position"]:
+		starting_by_id[starting["id"]] = starting
+	# Both rosters have exactly three distinct IDs and positions 1..3.
+	# Membership against the witnessed start permits only a whole-party
+	# permutation, never a foreign/duplicated actor or an invented slot.
+	for ending in battle_end:
+		var hero_id: String = ending["id"]
+		if not starting_by_id.has(hero_id):
 			return _rejected()
-		if ending["max_hp"] != held["max_hp"]:
+		var starting: Dictionary = starting_by_id[hero_id]
+		if ending["max_hp"] != starting["max_hp"]:
 			return _rejected()
 		if starting["hp"] == 0 and ending["hp"] != 0:
 			return _rejected()
 	var next_heroes: Array = battle_end.duplicate(true)
 	var next_counts := _tear_counts.duplicate(true)
 	var any_living := false
-	for i in range(PARTY_SIZE):
-		var hero: Dictionary = next_heroes[i]
-		if battle_start[i]["hp"] > 0 and hero["hp"] == 0:
+	for hero in next_heroes:
+		var prior: Dictionary = starting_by_id[hero["id"]]
+		if prior["hp"] > 0 and hero["hp"] == 0:
 			hero["max_hp"] = maxi(MIN_MAX_HP, int(hero["max_hp"]) - TEAR_LOSS)
 			next_counts[hero["id"]] += 1
 		hero["block"] = 0
