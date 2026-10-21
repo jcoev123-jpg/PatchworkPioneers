@@ -320,6 +320,19 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 		_play = CombatAttackCards.new()
+		# Capture the genuine run's sewn wearer projection at battle entry only.
+		# An invalid present binding must reject attacks, not fall back to vanilla.
+		var carry := app.party_carryover as RunTornCarryover
+		if carry != null and carry._wardrobe != null:
+			var wardrobe: RunPatchWardrobe = carry._wardrobe
+			var current: Dictionary = wardrobe.get_snapshot()
+			if carry.can_bind_wardrobe(wardrobe, carry.torn, current) \
+					and current.heroes == app.run_heroes and current.owned == app.run_trinkets \
+					and current.cards == app.run_deck and current.scraps == app.run_scraps \
+					and current.gold == app.session_gold and current.seed == app.run_seed:
+				_play.bind_patch_wardrobe(wardrobe, carry.torn)
+			else:
+				_play.bind_patch_wardrobe(null, null)
 		last_event = {}
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		cue = Label.new()
@@ -411,6 +424,10 @@ func _refresh() -> void:
 	# forecast. The adapter describes a *conditional* confirmed hit, not a
 	# future mutation or a promise that the player will cast this card.
 	var additions: Dictionary = _on_hit.status_for_confirmed_hit(id, true) if preview.playable else {}
+	if preview.playable and _play._patches != null:
+		var patch_statuses: Dictionary = _play._patches.exposed_for_first_hit(definition.get("owner", ""))
+		for status in patch_statuses:
+			additions[status] = additions.get(status, 0) + patch_statuses[status]
 	for hit in preview.hits:
 		var detail := "%d: %d damage" % [hit.position, hit.damage]
 		var enemy: Dictionary = app.enemies.get_enemy(hit.position)
@@ -456,4 +473,5 @@ func _clear() -> void:
 	_battle = null
 	_deck = null
 	_session = []
+	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_selected = null
