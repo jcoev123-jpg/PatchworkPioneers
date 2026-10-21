@@ -63,11 +63,13 @@ var run_heroes: Array = []
 var continue_button: Button
 var rest_view: VBoxContainer
 var rest_heal_button: Button
+var rest_continue_button: Button
 var rest_back_button: Button
 var rest_hp_label: Label
 var rest_recovery: RunRestRecovery
 var _rest_route: Array[String] = []
 var _rest_heroes: Array = []
+var _rest_committed_heroes: Array = []
 var _rest_map: WeakRef
 var shop_view: VBoxContainer
 var shop_cards: OptionButton
@@ -809,7 +811,31 @@ func _can_choose_connected_route() -> bool:
 		return false
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Fight":
 		return _can_leave_fight()
+	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
+		return _current_completed_rest() and is_instance_valid(rest_view) and not rest_view.visible \
+			and is_instance_valid(rest_continue_button) and rest_continue_button.disabled
 	return _current_shop_ledger("closed")
+
+
+func _current_completed_rest() -> bool:
+	return rest_recovery != null and rest_recovery.is_consumed() \
+		and run_map != null and _rest_map != null and _rest_map.get_ref() == run_map \
+		and not _rest_route.is_empty() and run_map.get_route() == _rest_route \
+		and run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest" \
+		and not _rest_committed_heroes.is_empty() and run_heroes == _rest_committed_heroes \
+		and RunRestRecovery._is_valid_roster(run_heroes)
+
+
+func _continue_from_rest(visit: RunRestRecovery, source_map: WeakRef, prior: Array[String], button) -> void:
+	if visit == null or visit != rest_recovery or not _current_completed_rest() \
+		or source_map == null or source_map.get_ref() != run_map or prior != _rest_route \
+		or not is_instance_valid(rest_view) or not rest_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button != rest_continue_button or button.disabled \
+		or not button.is_visible_in_tree() or is_instance_valid(route_view):
+		return
+	button.disabled = true
+	rest_view.hide()
+	_present_connected_route(source_map)
 
 
 func _current_shop_ledger(status: String = "") -> bool:
@@ -849,6 +875,11 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		return false
 	if not run_map.choose_node(id):
 		return false
+	if is_instance_valid(rest_view):
+		remove_child(rest_view)
+		rest_view.queue_free()
+	rest_continue_button = null
+	_rest_committed_heroes.clear()
 	rest_recovery = RunRestRecovery.new(run_heroes)
 	_rest_heroes = run_heroes.duplicate(true)
 	_rest_route = run_map.get_route()
@@ -869,6 +900,12 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_heal_button.custom_minimum_size = Vector2(480, 56)
 	rest_heal_button.pressed.connect(_heal_at_rest.bind(rest_recovery, rest_heal_button))
 	rest_view.add_child(rest_heal_button)
+	rest_continue_button = Button.new()
+	rest_continue_button.text = "Continue"
+	rest_continue_button.custom_minimum_size = Vector2(480, 48)
+	rest_continue_button.disabled = true
+	rest_continue_button.pressed.connect(_continue_from_rest.bind(rest_recovery, _rest_map, _rest_route.duplicate(), rest_continue_button))
+	rest_view.add_child(rest_continue_button)
 	rest_back_button = Button.new()
 	rest_back_button.text = "Return to title"
 	rest_back_button.pressed.connect(_return_from_visit.bind(rest_view))
@@ -891,7 +928,13 @@ func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 	if not result.ok:
 		return
 	run_heroes = result.heroes.duplicate(true)
+	_rest_committed_heroes = run_heroes.duplicate(true)
 	button.disabled = true
+	rest_continue_button.disabled = false
+	rest_continue_button.focus_next = rest_continue_button.get_path_to(rest_back_button)
+	rest_continue_button.focus_previous = rest_continue_button.get_path_to(rest_back_button)
+	rest_back_button.focus_next = rest_back_button.get_path_to(rest_continue_button)
+	rest_back_button.focus_previous = rest_back_button.get_path_to(rest_continue_button)
 	_refresh_rest_hp()
 	rest_back_button.grab_focus()
 
@@ -1243,11 +1286,13 @@ func _return_to_title() -> void:
 		rest_view.queue_free()
 	rest_view = null
 	rest_heal_button = null
+	rest_continue_button = null
 	rest_back_button = null
 	rest_hp_label = null
 	rest_recovery = null
 	_rest_route.clear()
 	_rest_heroes.clear()
+	_rest_committed_heroes.clear()
 	_rest_map = null
 	run_heroes.clear()
 	continue_button = null
