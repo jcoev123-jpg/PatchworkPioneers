@@ -177,6 +177,10 @@ func _run() -> void:
 			_check(not service.choose("foreign_node", "").ok, "coordinator rejects wrong node")
 			_check(_settlement_state() == before, "all rejected inputs preserve original complete state")
 			var survivors := _block_free_party()
+			for hero in survivors:
+				for previous in ledger.heroes:
+					if previous.id == hero.id and previous.hp > 0 and hero.hp == 0:
+						hero.max_hp = maxi(10, previous.max_hp - 3)
 			var selected: String = expected.offers[0].id if fight_index == 0 else ""
 			if not selected.is_empty():
 				owned.append(selected)

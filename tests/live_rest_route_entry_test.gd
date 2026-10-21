@@ -108,8 +108,10 @@ func _run() -> void:
 		_check(app.run_heroes == _block_free_party() and app.run_heroes.size() == 3,
 			"routed victory saves complete independent three-hero run snapshot")
 		var copy: Array = app.run_heroes.duplicate(true)
+		var combat_copy: Array = app.party.get_heroes()
 		_check(app.party.apply_damage(1, 1), "probe combat snapshot independence")
 		_check(app.run_heroes == copy and app.party.get_heroes() != copy, "combat mutation cannot alias run heroes")
+		app.party._heroes.assign(combat_copy)
 		var before := _persistent()
 		app._continue_to_rest_route(app.fight_rewards, weakref(app.run_map), null)
 		_check(_persistent() == before and app.continue_button == null, "unclaimed reward offers no Continue")
@@ -121,6 +123,8 @@ func _run() -> void:
 		_check(app.fight_reward_claimed and is_instance_valid(app.continue_button), "claim or Skip exposes Continue")
 		if not is_instance_valid(app.continue_button):
 			break
+		copy = app.run_heroes.duplicate(true)
+		_check(copy[2].max_hp == (23 if session == 1 else 26), "reward applies a tear only to newly downed Tinker")
 		before = _persistent()
 		for stale in [old_continue, old_route, old_heal, old_back]:
 			if stale.is_valid():
