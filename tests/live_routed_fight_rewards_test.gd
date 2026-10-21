@@ -87,7 +87,7 @@ func _run() -> void:
 			_check(button.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()),
 				"all reward controls fit viewport")
 			if index < 3:
-				_check(button.text == "%s\n%s" % [expected_offers[index].owner, expected_offers[index].id],
+				_check(button.get_parent().get_node("OwnerLabel").text == expected_offers[index].owner.capitalize() and button.get_parent().get_node("IdLabel").text == expected_offers[index].id,
 					"visible actual authored ID and owner")
 		var before := _persistent()
 		var service: RunFightVictoryRewards = app.fight_rewards

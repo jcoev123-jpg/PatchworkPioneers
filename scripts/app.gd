@@ -133,6 +133,8 @@ var fight_reward_gold := 0
 var fight_reward_claimed := false
 var _reward_map: WeakRef
 var reward_buttons: Array[Button] = []
+var reward_choice_panel: LiveRunCardRewardChoicePanel
+var _reward_return_parent: WeakRef
 const INTERIM_REWARD_IDS := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
 var result_label: Label
 var _battle_closed := false
@@ -398,6 +400,7 @@ func _open_route() -> void:
 		var button := Button.new()
 		button.text = "%s: %s" % [id, node.type]
 		button.set_meta("route_id", id)
+		button.set_meta("route_kind", node.type)
 		button.disabled = node.type not in RunMap.NORMAL_TYPES
 		if button.disabled:
 			button.text += " (unavailable)"
@@ -438,21 +441,29 @@ func _choose_route(id: String, source_map: WeakRef = null) -> bool:
 			continue
 		var prior := run_map.get_route()
 		var source: WeakRef = weakref(run_map)
-		match run_map.get_node(id).get("type"):
-			"Fight", "Elite":
-				return _choose_battle_route(id, source, prior, button)
-			"Rest":
-				return _choose_rest_route(id, source, prior, button)
-			"Shop":
-				return _choose_shop_route(id, source, prior, button)
-			"Event", "Treasure":
-				return _choose_placeholder_route(id, source, prior, button)
+		return _dispatch_route(id, source, prior, button)
+	return false
+
+
+func _dispatch_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
+	if run_map == null or not is_instance_valid(button) \
+		or button.get_meta("route_kind", "") != run_map.get_node(id).get("type"):
+		return false
+	match run_map.get_node(id).get("type"):
+		"Fight", "Elite", "Boss":
+			return _choose_battle_route(id, source, prior, button)
+		"Rest":
+			return _choose_rest_route(id, source, prior, button)
+		"Shop":
+			return _choose_shop_route(id, source, prior, button)
+		"Event", "Treasure":
+			return _choose_placeholder_route(id, source, prior, button)
 	return false
 
 
 func _route_atlas_source(source_map: WeakRef, source_view: WeakRef, source_action: WeakRef) -> bool:
 	return source_map != null and source_map.get_ref() == run_map and run_map != null \
-		and run_map.get_route().is_empty() and deck == null \
+		and _can_choose_connected_route() \
 		and is_instance_valid(route_view) and source_view != null and source_view.get_ref() == route_view \
 		and route_view.get_parent() == self and is_instance_valid(route_map_button) \
 		and source_action != null and source_action.get_ref() == route_map_button \
@@ -480,7 +491,7 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 	# Admission clears marker controls; wait until the emitting Button has finished its signal.
 	route_atlas.node_requested.connect(_choose_atlas_opening.bind(source_map, source_view,
 		source_action, weakref(route_atlas_overlay), weakref(route_atlas),
-		run_map.get_generation_revision(), run_map.get_floors(), choices), CONNECT_DEFERRED)
+		run_map.get_generation_revision(), run_map.get_floors(), choices, run_map.get_route()), CONNECT_DEFERRED)
 	route_atlas_close = Button.new()
 	route_atlas_close.text = "Close map"
 	route_atlas_close.position = Vector2(520, 640)
@@ -496,7 +507,7 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 
 func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef,
 		source_action: WeakRef, source_overlay: WeakRef, source_atlas: WeakRef,
-		generation: int, graph: Array, choices: Dictionary) -> bool:
+		generation: int, graph: Array, choices: Dictionary, prior: Array[String]) -> bool:
 	if not _route_atlas_source(source_map, source_view, source_action) \
 		or route_view.visible or route_map_button.disabled \
 		or not is_instance_valid(route_atlas_overlay) or source_overlay == null \
@@ -507,8 +518,9 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 		or not route_atlas.is_visible_in_tree() or route_atlas._map != run_map:
 		return false
 	if run_map.get_generation_revision() != generation or run_map.get_floors() != graph \
+		or run_map.get_route() != prior \
 		or not run_map.get_legal_choices().has(id) or not choices.has(id) \
-		or run_map.get_node(id).get("type") not in RunMap.NORMAL_TYPES:
+		or run_map.get_node(id).get("type") not in RunMap.NORMAL_TYPES + ["Boss"]:
 		return false
 	var button = choices[id].get_ref()
 	if not is_instance_valid(button) or not route_buttons.has(button) \
@@ -518,7 +530,7 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 	_clear_route_atlas()
 	route_view.show()
 	button.grab_focus()
-	return _choose_route(id, source_map)
+	return _dispatch_route(id, source_map, prior, button)
 
 
 func _close_route_atlas(source_map: WeakRef, source_view: WeakRef,
@@ -537,7 +549,8 @@ func _clear_route_atlas() -> void:
 	if is_instance_valid(route_atlas):
 		route_atlas.bind_map(null)
 	if is_instance_valid(route_atlas_overlay):
-		route_atlas_overlay.get_parent().remove_child(route_atlas_overlay)
+		if route_atlas_overlay.get_parent() != null:
+			route_atlas_overlay.get_parent().remove_child(route_atlas_overlay)
 		route_atlas_overlay.queue_free()
 	route_atlas_overlay = null
 	route_atlas = null
@@ -965,9 +978,8 @@ func _build_card_reward() -> void:
 		fight_reward_gold = prepared.gold_award
 		fight_reward_trinket = prepared.trinket_drop_id
 		_reward_map = weakref(run_map)
-		ids = []
-		for offer in fight_reward_offers:
-			ids.append(offer.id)
+		_mount_reward_choice(prepared)
+		return
 	for id in ids:
 		var definition := catalog.get_definition(id)
 		if definition.get("id") != id or not party_ids.has(definition.get("owner")):
@@ -1005,6 +1017,72 @@ func _build_card_reward() -> void:
 		button.pressed.connect(_claim_card_reward.bind(id, button, _routed_reward_service() if run_map != null else card_reward))
 
 
+func _mount_reward_choice(prepared: Dictionary) -> void:
+	reward_choice_panel = load("res://scenes/run_card_reward_choice_panel.tscn").instantiate()
+	add_child(reward_choice_panel)
+	if not reward_choice_panel.open_rewards(_carryover_node,
+		run_map.get_node(_carryover_node).type, prepared):
+		_clear_reward_choice()
+		return
+	reward_buttons = reward_choice_panel.get_choice_buttons()
+	for button in reward_buttons:
+		var callback: Callable = button.pressed.get_connections()[0].callable
+		button.pressed.disconnect(callback)
+		button.pressed.connect(_forward_reward_choice.bind(weakref(reward_choice_panel), callback))
+	# Existing post-claim Elite presentation mounts beside this empty reward slot.
+	var slot := HBoxContainer.new()
+	slot.name = "CardReward"
+	slot.add_child(Label.new())
+	hand_view.add_child(slot)
+	reward_choice_panel.choice_requested.connect(_request_routed_reward.bind(
+		weakref(reward_choice_panel), _routed_reward_service()))
+	_reward_return_parent = weakref(return_button.get_parent())
+	return_button.reparent(reward_choice_panel)
+	return_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	return_button.custom_minimum_size = Vector2(240, 48)
+	return_button.position = Vector2(20, 666)
+	return_button.size = Vector2(240, 48)
+	return_button.focus_next = return_button.get_path_to(reward_buttons[0])
+	return_button.focus_previous = return_button.get_path_to(reward_buttons[3])
+
+
+func _forward_reward_choice(source: WeakRef, callback: Callable) -> void:
+	if source != null and source.get_ref() == reward_choice_panel \
+		and is_instance_valid(reward_choice_panel) and reward_choice_panel.get_parent() == self \
+		and reward_choice_panel.is_visible_in_tree() and callback.is_valid():
+		callback.call()
+
+
+func _request_routed_reward(node_id: String, id: String, source: WeakRef, offering) -> void:
+	if not is_instance_valid(reward_choice_panel) or source == null \
+		or source.get_ref() != reward_choice_panel or reward_choice_panel.get_parent() != self \
+		or not reward_choice_panel.is_visible_in_tree() or not reward_choice_panel._awaiting_ack \
+		or reward_choice_panel._accepted:
+		return
+	var accepted: bool = node_id == _carryover_node and reward_choice_panel._node_id == node_id \
+		and _settle_routed_reward(id, offering)
+	reward_choice_panel.acknowledge(accepted)
+	if accepted:
+		reward_choice_panel.paper_panel.hide()
+		reward_choice_panel.get_node("SlateBackdrop").hide()
+		reward_choice_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func _clear_reward_choice() -> void:
+	if is_instance_valid(reward_choice_panel):
+		if is_instance_valid(return_button) and return_button.get_parent() == reward_choice_panel \
+			and _reward_return_parent != null and is_instance_valid(_reward_return_parent.get_ref()):
+			return_button.reparent(_reward_return_parent.get_ref())
+		reward_choice_panel.close_rewards()
+		if reward_choice_panel.get_parent() != null:
+			reward_choice_panel.get_parent().remove_child(reward_choice_panel)
+		reward_choice_panel.queue_free()
+	reward_choice_panel = null
+	_reward_return_parent = null
+	if run_map != null:
+		reward_buttons.clear()
+
+
 ## Elite drops use the existing Shop catalog; no separate reward pool.
 func _catalog_trinket_ids() -> Array:
 	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
@@ -1022,48 +1100,54 @@ func _routed_reward_service():
 	return multi_fight_rewards if multi_fight_rewards != null else fight_rewards
 
 
+func _settle_routed_reward(id: String, offering) -> bool:
+	if offering != _routed_reward_service() or fight_reward_claimed or _reward_map == null \
+		or _reward_map.get_ref() != run_map or run_map == null or not _battle_closed \
+		or not _current_carryover_fight() \
+		or battle_result == null or battle_result._party != party or battle_result._enemies != enemies \
+		or battle_result.get_outcome() != CombatBattleResult.VICTORY \
+		or party == null or not party.is_valid() or party.is_defeated() \
+		or not is_instance_valid(reward_choice_panel) or not reward_choice_panel._awaiting_ack:
+		return false
+	if fight_reward_offers.size() != 3 or (not id.is_empty() and not fight_reward_offers.any(
+		func(offer: Dictionary) -> bool: return offer.id == id)):
+		return false
+	if offering is RunFightVictoryRewards:
+		if offering._battle != battle_result or offering._rng != run_rng \
+			or offering._source_deck != run_deck or offering._starting_gold != session_gold \
+			or offering._owned_trinket_ids != run_trinkets:
+			return false
+	if offering is RunMultiFightRewards:
+		if offering._map != run_map or offering._rng != run_rng or offering._carry != party_carryover \
+			or offering.read_state().deck != run_deck or offering.read_state().gold != session_gold \
+			or offering.read_state().party.heroes != run_heroes \
+			or offering.read_state().trinkets != run_trinkets:
+			return false
+	var torn_carry := party_carryover as RunTornCarryover
+	if torn_carry == null or torn_carry.read_state().heroes != run_heroes \
+		or torn_carry.preview_reward(_carryover_node, battle_result, party) == null:
+		return false
+	var result: Dictionary = offering.choose(_carryover_node, id) if offering is RunMultiFightRewards else offering.choose(id)
+	if not result.ok:
+		return false
+	var carried := torn_carry.apply_reward(_carryover_node, battle_result, party)
+	if not carried.ok:
+		return false
+	var settled: Dictionary = result.state if offering is RunMultiFightRewards else result
+	run_deck.assign(settled.deck)
+	session_gold = settled.gold
+	if offering is RunMultiFightRewards:
+		run_trinkets.assign(settled.trinkets)
+	run_heroes = carried.heroes.duplicate(true)
+	run_scraps += 2 if run_map.get_node(_carryover_node).get("type") == "Elite" else 1
+	fight_reward_claimed = true
+	result_label.text = "Battle result: victory | Gold: %d" % session_gold
+	_finish_card_reward(offering)
+	$LiveElitePatchSewing.observe_claim(offering, result)
+	return true
+
 func _claim_card_reward(id: String, button, offering) -> void:
 	if offering is RunFightVictoryRewards or offering is RunMultiFightRewards:
-		if offering != _routed_reward_service() or fight_reward_claimed or _reward_map == null \
-			or _reward_map.get_ref() != run_map or run_map == null or not _battle_closed \
-			or not _current_carryover_fight() \
-			or battle_result == null or battle_result._party != party or battle_result._enemies != enemies \
-			or battle_result.get_outcome() != CombatBattleResult.VICTORY \
-			or party == null or not party.is_valid() or party.is_defeated() \
-			or not is_instance_valid(button) or button not in reward_buttons \
-			or button.disabled or not button.is_visible_in_tree():
-			return
-		var index := reward_buttons.find(button)
-		if fight_reward_offers.size() != 3 or index > 3 \
-			or id != (fight_reward_offers[index].id if index < 3 else ""):
-			return
-		if offering is RunMultiFightRewards:
-			if offering._map != run_map or offering._rng != run_rng or offering._carry != party_carryover \
-				or offering.read_state().deck != run_deck or offering.read_state().gold != session_gold \
-				or offering.read_state().party.heroes != run_heroes \
-				or offering.read_state().trinkets != run_trinkets:
-				return
-		var torn_carry := party_carryover as RunTornCarryover
-		if torn_carry == null or torn_carry.read_state().heroes != run_heroes \
-			or torn_carry.preview_reward(_carryover_node, battle_result, party) == null:
-			return
-		var result: Dictionary = offering.choose(_carryover_node, id) if offering is RunMultiFightRewards else offering.choose(id)
-		if not result.ok:
-			return
-		var carried := torn_carry.apply_reward(_carryover_node, battle_result, party)
-		if not carried.ok:
-			return
-		var settled: Dictionary = result.state if offering is RunMultiFightRewards else result
-		run_deck.assign(settled.deck)
-		session_gold = settled.gold
-		if offering is RunMultiFightRewards:
-			run_trinkets.assign(settled.trinkets)
-		run_heroes = carried.heroes.duplicate(true)
-		run_scraps += 2 if run_map.get_node(_carryover_node).get("type") == "Elite" else 1
-		fight_reward_claimed = true
-		result_label.text = "Battle result: victory | Gold: %d" % session_gold
-		_finish_card_reward(offering)
-		$LiveElitePatchSewing.observe_claim(offering, result)
 		return
 	if offering == null or offering != card_reward or not _battle_closed \
 			or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY \
@@ -1095,9 +1179,13 @@ func _finish_card_reward(offering) -> void:
 	if run_map != null:
 		continue_button = Button.new()
 		continue_button.text = "Continue"
-		continue_button.custom_minimum_size = Vector2(160, 56)
+		continue_button.custom_minimum_size = Vector2(160, 48)
 		return_button.get_parent().add_child(continue_button)
 		continue_button.pressed.connect(_continue_to_rest_route.bind(offering, weakref(run_map), continue_button))
+		continue_button.position = Vector2(1000, 666)
+		continue_button.size = Vector2(240, 48)
+		continue_button.focus_next = continue_button.get_path_to(return_button)
+		return_button.focus_next = return_button.get_path_to(continue_button)
 	_refresh_swap_preview()
 	return_button.grab_focus()
 
@@ -1125,6 +1213,7 @@ func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
 		or is_instance_valid(route_view) or (is_instance_valid(rest_view) and rest_view.visible):
 		return
 	button.disabled = true
+	_clear_reward_choice()
 	battle_view.hide()
 	_present_connected_route(source_map)
 
@@ -1145,20 +1234,19 @@ func _present_connected_route(source_map: WeakRef) -> void:
 		var action := Button.new()
 		action.text = "%s: %s" % [id, node.type]
 		action.set_meta("route_id", id)
+		action.set_meta("route_kind", node.type)
 		action.disabled = node.type not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]
 		if action.disabled:
 			action.text += " (unavailable)"
 		action.custom_minimum_size = Vector2(440, 48)
-		if node.type in ["Fight", "Elite", "Boss"]:
-			action.pressed.connect(_choose_battle_route.bind(id, source_map, prior, action))
-		elif node.type == "Shop":
-			action.pressed.connect(_choose_shop_route.bind(id, source_map, prior, action))
-		elif node.type in ["Event", "Treasure"]:
-			action.pressed.connect(_choose_placeholder_route.bind(id, source_map, prior, action))
-		else:
-			action.pressed.connect(_choose_rest_route.bind(id, source_map, prior, action))
+		action.pressed.connect(_dispatch_route.bind(id, source_map, prior, action))
 		route_view.add_child(action)
 		route_buttons.append(action)
+	route_map_button = Button.new()
+	route_map_button.text = "View full map"
+	route_view.add_child(route_map_button)
+	route_map_button.pressed.connect(_open_route_atlas.bind(
+		weakref(run_map), weakref(route_view), weakref(route_map_button)))
 	route_back_button = Button.new()
 	route_back_button.text = "Return to title"
 	route_back_button.pressed.connect(_return_from_visit.bind(route_view))
@@ -2008,6 +2096,7 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	_clear_reward_choice()
 	_clear_terminal_result()
 	for action in reward_buttons:
 		action.disabled = true

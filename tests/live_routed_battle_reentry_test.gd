@@ -124,6 +124,7 @@ func _formation_win(fixture: Dictionary) -> bool:
 	for enemy in app.enemies.get_enemies():
 		_check(app.enemies.apply_damage(enemy.position, 999), "fixture defeats each actual enemy")
 	app._observe_battle_result()
+	await _frames()
 	_check(app._battle_closed and app.fight_rewards != null, "legal predecessor victory recorded by app")
 	return app._battle_closed and app.fight_rewards != null
 

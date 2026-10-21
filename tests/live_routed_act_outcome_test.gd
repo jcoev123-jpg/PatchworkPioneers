@@ -122,6 +122,8 @@ func _run() -> void:
 		_check(app.terminal_result_panel == null,
 			"settled ordinary Fight remains ACTIVE with no terminal screen")
 		_check(app.run_heroes == _block_free_party() and app.fight_rewards != null
+			and app.reward_choice_panel != null and app.reward_choice_panel.has_open_rewards()
+			and app.reward_choice_panel.get_choice_buttons() == app.reward_buttons
 			and app.reward_buttons.size() == 4 and not app.fight_reward_claimed,
 			"carryover precedes existing unclaimed authored rewards")
 		var before := _snapshot()
@@ -218,7 +220,7 @@ func _stale_mounted_actions(label: String) -> void:
 	_check(not app._commit_fight_carryover(), label + " rejects carryover")
 	app._build_card_reward()
 	for button in app.reward_buttons:
-		_check(is_instance_valid(button) and button.is_visible_in_tree(), label + " reward control is mounted")
+		_check(is_instance_valid(button) and (button.is_visible_in_tree() or app.fight_reward_claimed), label + " reward control is mounted or accepted")
 		button.pressed.emit()
 	if is_instance_valid(app.continue_button):
 		app.continue_button.pressed.emit()

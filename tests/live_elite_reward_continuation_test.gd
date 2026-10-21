@@ -128,7 +128,7 @@ func _run() -> void:
 				var button: Button = app.reward_buttons[index]
 				_check(not button.disabled and button.is_visible_in_tree()
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "live reward fits viewport")
-				_check(button.text == ("%s\n%s" % [expected.offers[index].owner, expected.offers[index].id] if index < 3 else "Skip"), "actual offer/Skip visible")
+				_check((button.get_parent().get_node("OwnerLabel").text == expected.offers[index].owner.capitalize() and button.get_parent().get_node("IdLabel").text == expected.offers[index].id if index < 3 else button.text == "Skip \u2014 take no card"), "actual offer/Skip visible")
 			var before := _settlement_state()
 			for repeat in range(3):
 				app._observe_battle_result()
@@ -222,7 +222,14 @@ func _run() -> void:
 			detached.deck.clear()
 			detached.party.heroes[0].hp = 0
 			_check(service.read_state().deck == owned and app.run_heroes == survivors, "published resources are detached")
-			await _click(button)
+			_check(button.disabled and not button.is_visible_in_tree(), "accepted panel retires its choices")
+			for pressed in [true, false]:
+				var duplicate := InputEventMouseButton.new()
+				duplicate.position = button.get_global_rect().get_center()
+				duplicate.button_index = MOUSE_BUTTON_LEFT
+				duplicate.pressed = pressed
+				root.push_input(duplicate, true)
+			await _frames()
 			_check(app.run_trinkets == inventory + [expected.drop] and app.session_gold == gold + expected.award, "double click never pays twice")
 			var after := _settlement_state()
 			var continue_callback: Callable = app.continue_button.pressed.get_connections()[0].callable

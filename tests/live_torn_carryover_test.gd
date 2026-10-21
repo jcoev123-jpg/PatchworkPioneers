@@ -68,6 +68,7 @@ func _win_fixture() -> void:
 	for enemy in app.enemies.get_enemies():
 		_check(app.enemies.apply_damage(enemy.position, 9999), "defeat real mounted enemy")
 	app._observe_battle_result()
+	await _frames()
 	_check(app.battle_result.get_outcome() == CombatBattleResult.VICTORY and app.reward_buttons.size() == 4, "witnessed victory mounts actual rewards")
 
 

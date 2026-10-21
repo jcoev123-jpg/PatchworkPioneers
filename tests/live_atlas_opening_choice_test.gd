@@ -145,7 +145,7 @@ func _legal_openings(app) -> void:
 	for fixture in cases:
 		var kind: String = fixture[0]
 		var replay: Array = []
-		for mode in range(4):
+		for mode in range(5):
 			app.run_seed = fixture[1]
 			await _click(app.route_button)
 			_check(app.run_map != null and app.route_view != null
@@ -179,6 +179,16 @@ func _legal_openings(app) -> void:
 				continue
 			if mode == 1:
 				await _click(marker)
+			elif mode == 4:
+				var shortcut: int = app.route_atlas._rendered_shortcuts.find(fixture[2])
+				_check(shortcut >= 0 and shortcut < 4, "legal opening has a physical number shortcut")
+				for down in [true, false]:
+					var event := InputEventKey.new()
+					event.keycode = (KEY_1 + shortcut) as Key
+					event.physical_keycode = event.keycode
+					event.pressed = down
+					root.push_input(event, true)
+					await process_frame
 			else:
 				marker.grab_focus()
 				_check(marker.has_focus(), "actual atlas marker keyboard focus: " + kind)

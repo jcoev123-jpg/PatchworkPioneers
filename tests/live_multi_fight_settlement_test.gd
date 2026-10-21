@@ -192,7 +192,7 @@ func _run() -> void:
 				var button: Button = app.reward_buttons[index]
 				_check(not button.disabled and button.is_visible_in_tree()
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "live reward fits viewport")
-				_check(button.text == ("%s\n%s" % [expected.offers[index].owner, expected.offers[index].id] if index < 3 else "Skip"), "actual offer/Skip visible")
+				_check((button.get_parent().get_node("OwnerLabel").text == expected.offers[index].owner.capitalize() and button.get_parent().get_node("IdLabel").text == expected.offers[index].id if index < 3 else button.text == "Skip \u2014 take no card"), "actual offer/Skip visible")
 			var before := _settlement_state()
 			for repeat in range(3):
 				app._observe_battle_result()

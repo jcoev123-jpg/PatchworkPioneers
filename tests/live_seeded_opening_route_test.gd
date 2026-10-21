@@ -242,6 +242,9 @@ func _run() -> void:
 			for enemy in app.enemies.get_enemies():
 				_check(app.enemies.apply_damage(enemy.position, 999), "victory fixture damages each real typed enemy")
 			app._observe_battle_result()
+			# Let the mounted reward panel finish container layout and deferred focus.
+			await process_frame
+			await process_frame
 			_check(app._battle_closed and app.reward_buttons.size() == 4,
 				"first typed battle exposes real rewards after every opening kind")
 			if app.reward_buttons.size() == 4:
