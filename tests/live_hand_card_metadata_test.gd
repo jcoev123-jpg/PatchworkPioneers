@@ -307,7 +307,7 @@ func _find(card_id: String) -> Control:
 
 func _start() -> bool:
 	app.run_seed = 42
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	await _frames()
 	var ready: bool = app.deck is CombatDeck and app.party is CombatParty and app.run_rng != null 		and is_instance_valid(app.battle_view) and is_instance_valid(app.hand_view)
 	_check(ready, "real Start Run creates complete seeded M01 battle")
@@ -516,3 +516,12 @@ func _finish() -> void:
 	print("live_hand_card_metadata_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

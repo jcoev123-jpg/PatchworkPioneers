@@ -102,7 +102,7 @@ func _run() -> void:
 	app.run_seed = chosen
 	var replay: Dictionary = {}
 	for mode in ["mouse", "enter", "space"]:
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		await _frames()
 		var panel = _panel()
 		_check(panel != null and app.deck.energy == 3 and app.deck.turn_active
@@ -170,3 +170,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_area_attack_bridge_test: %d checks, %d failures" % [checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

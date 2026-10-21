@@ -170,7 +170,7 @@ func _observe_battle_result() -> bool:
 	var outcome := battle_result.evaluate()
 	if outcome == CombatBattleResult.ACTIVE:
 		return true
-	if not _battle_closed and outcome == CombatBattleResult.VICTORY and run_map != null and _carryover_route.size() == 1:
+	if not _battle_closed and outcome == CombatBattleResult.VICTORY and run_map != null and _carryover_route.size() == 1 and run_map.get_node(_carryover_node).get("type") == "Fight":
 		if not _commit_fight_carryover():
 			return false
 	if not _battle_closed and act_outcome != null:
@@ -351,24 +351,46 @@ func _build_title() -> void:
 func _start_run() -> void:
 	if deck != null or run_map != null:
 		return
-	_start_battle()
+	_open_route()
 
 
 func _open_route() -> void:
 	if deck != null or run_map != null:
 		return
+	var cards := _load_starter_deck()
+	var initial_party := CombatParty.new(_load_party_definitions())
+	if cards.is_empty() or not initial_party.is_valid():
+		return
+	var carry := RunTornCarryover.new(initial_party.get_heroes())
+	if not carry.is_valid() or carry.create_next_fight_party() == null:
+		return
+	var owners: Array = []
+	for hero in initial_party.get_heroes():
+		owners.append(hero.id)
+	for card in cards:
+		if not owners.has(StarterCards.new().get_definition(card).get("owner")):
+			return
 	run_rng = RandomNumberGenerator.new()
 	run_rng.seed = run_seed
 	run_map = RunMap.new()
 	run_map.generate(run_rng)
 	fight_selection = RunFightEncounterSelection.new()
+	run_deck = cards.duplicate()
+	run_heroes = carry.read_state().heroes
+	party_carryover = carry
+	_carryover_map = weakref(run_map)
+	_carryover_revision = run_map.get_generation_revision()
+	_carryover_floors = run_map.get_floors()
+	act_outcome = RunActBattleOutcome.new(run_map)
+	_connected_map = weakref(run_map)
+	_connected_route = []
 	title_view.hide()
 	route_view = VBoxContainer.new()
 	route_view.set_anchors_preset(Control.PRESET_CENTER)
 	route_view.add_theme_constant_override("separation", 16)
 	add_child(route_view)
 	var heading := Label.new()
-	heading.text = "Opening route - choose a Fight"
+	heading.text = "Opening route - choose your first node"
 	route_view.add_child(heading)
 	var actions: Array[Button] = []
 	for id in run_map.get_legal_choices():
@@ -376,7 +398,7 @@ func _open_route() -> void:
 		var button := Button.new()
 		button.text = "%s: %s" % [id, node.type]
 		button.set_meta("route_id", id)
-		button.disabled = node.type != "Fight"
+		button.disabled = node.type not in RunMap.NORMAL_TYPES
 		if button.disabled:
 			button.text += " (unavailable)"
 		button.custom_minimum_size = Vector2(340, 48)
@@ -393,7 +415,7 @@ func _open_route() -> void:
 	actions.append(route_map_button)
 	route_back_button = Button.new()
 	route_back_button.text = "Back"
-	route_back_button.pressed.connect(_cancel_route)
+	route_back_button.pressed.connect(_cancel_opening.bind(weakref(run_map), weakref(route_view)))
 	route_view.add_child(route_back_button)
 	actions.append(route_back_button)
 	for index in range(actions.size()):
@@ -409,27 +431,23 @@ func _choose_route(id: String, source_map: WeakRef = null) -> bool:
 		return false
 	if source_map != null and source_map.get_ref() != run_map:
 		return false
-	if not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Fight":
+	if not run_map.get_legal_choices().has(id):
 		return false
-	if run_rng == null or fight_selection == null:
-		return false
-	var rng_before := run_rng.state
-	var route_before := run_map.get_route()
-	if not run_map.choose_node(id):
-		return false
-	var selected := fight_selection.select_current_battle(run_map, run_rng, {"Fight": fight_encounter_paths})
-	var assembled := RunTypedBattleRoster.new().assemble(selected, fight_rosters,
-		[starter_enemies_path, run_enemies_path])
-	if not assembled.get("ok", false) or not _start_battle(run_rng,
-			assembled.get("definitions", []), assembled.get("enemies")):
-		run_map.undo_choice(id, route_before)
-		run_rng.state = rng_before
-		fight_selection = RunFightEncounterSelection.new()
-		encounter_id = ""
-		return false
-	encounter_id = selected.encounter_id
-	_clear_route_view()
-	return true
+	for button in route_buttons:
+		if button.get_meta("route_id") != id:
+			continue
+		var prior := run_map.get_route()
+		var source: WeakRef = weakref(run_map)
+		match run_map.get_node(id).get("type"):
+			"Fight", "Elite":
+				return _choose_battle_route(id, source, prior, button)
+			"Rest":
+				return _choose_rest_route(id, source, prior, button)
+			"Shop":
+				return _choose_shop_route(id, source, prior, button)
+			"Event", "Treasure":
+				return _choose_placeholder_route(id, source, prior, button)
+	return false
 
 
 func _route_atlas_source(source_map: WeakRef, source_view: WeakRef, source_action: WeakRef) -> bool:
@@ -489,8 +507,8 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 		or not route_atlas.is_visible_in_tree() or route_atlas._map != run_map:
 		return false
 	if run_map.get_generation_revision() != generation or run_map.get_floors() != graph \
-		or not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Fight" \
-		or not choices.has(id):
+		or not run_map.get_legal_choices().has(id) or not choices.has(id) \
+		or run_map.get_node(id).get("type") not in RunMap.NORMAL_TYPES:
 		return false
 	var button = choices[id].get_ref()
 	if not is_instance_valid(button) or not route_buttons.has(button) \
@@ -540,18 +558,20 @@ func _clear_route_view() -> void:
 func _cancel_route() -> void:
 	if deck != null or route_view == null:
 		return
-	_clear_route_view()
-	act_outcome = null
-	run_map = null
-	run_rng = null
-	fight_selection = null
-	encounter_id = ""
-	title_view.show()
-	route_button.grab_focus()
+	_return_to_title()
+
+
+func _cancel_opening(source_map: WeakRef, source_view: WeakRef) -> void:
+	if source_map.get_ref() == run_map and source_view.get_ref() == route_view \
+		and run_map != null and run_map.get_route().is_empty() \
+		and is_instance_valid(route_view) and route_view.is_visible_in_tree():
+		_cancel_route()
 
 
 func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitions: Array = [],
 		selected_enemies: CombatEnemies = null) -> bool:
+	if deck != null or (shared_rng == null and run_map != null):
+		return false
 	var cards := _load_starter_deck()
 	if cards.is_empty():
 		push_warning("Starter deck is invalid or unreadable; run was not started")
@@ -927,7 +947,7 @@ func _build_card_reward() -> void:
 	var ids: Array = INTERIM_REWARD_IDS
 	if run_map != null:
 		var prepared: Dictionary
-		if _carryover_route.size() == 1:
+		if _carryover_route.size() == 1 and run_map.get_node(_carryover_node).get("type") == "Fight":
 			if not party_carryover.read_state().completed_fights.has(_carryover_node):
 				return
 			fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
@@ -1102,7 +1122,7 @@ func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
 	if not _can_leave_fight() or offering != _routed_reward_service() or source_map == null \
 		or source_map.get_ref() != run_map or not is_instance_valid(button) \
 		or button != continue_button or button.disabled or not button.is_visible_in_tree() \
-		or is_instance_valid(route_view) or is_instance_valid(rest_view):
+		or is_instance_valid(route_view) or (is_instance_valid(rest_view) and rest_view.visible):
 		return
 	button.disabled = true
 	battle_view.hide()
@@ -1146,13 +1166,44 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	_focus_visit(route_view)
 
 
+## Zero completed fights is legal only for this run's witnessed noncombat prefix.
+func _unfought_run() -> bool:
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or not carry.is_valid() or run_map == null or run_rng == null \
+		or _carryover_map == null or _carryover_map.get_ref() != run_map \
+		or _carryover_revision != run_map.get_generation_revision() \
+		or _carryover_floors != run_map.get_floors() or deck != null or battle_result != null \
+		or is_instance_valid(battle_view) or not carry._node.is_empty() \
+		or carry.read_state().heroes != run_heroes or not carry.read_state().completed_fights.is_empty() \
+		or carry._observer() == null or act_outcome == null or act_outcome._map != run_map \
+		or act_outcome.get_state() != {"run_status": RunActBattleOutcome.ACTIVE,
+			"pending_node_id": "", "settled_node_ids": []} or act_outcome._pending_result != null:
+		return false
+	for id in run_map.get_route():
+		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure"]:
+			return false
+	if run_map.get_route().is_empty():
+		return run_deck == _load_starter_deck() and run_heroes == carry._initial \
+			and carry.read_state().completed_rests.is_empty() and session_gold == 0 \
+			and run_trinkets.is_empty() and run_removal_count == 0 and run_scraps == 0 \
+			and run_stitch_descriptors.is_empty() and run_next_stitch_id == 1
+	return true
+
+
 func _can_choose_connected_route() -> bool:
 	if run_map == null or _connected_map == null or _connected_map.get_ref() != run_map \
 		or run_map.get_route() != _connected_route or not RunRestRecovery._is_valid_roster(run_heroes) \
 		or act_outcome == null or act_outcome._map != run_map \
 		or act_outcome.get_state().run_status != RunActBattleOutcome.ACTIVE \
-		or not act_outcome.get_state().pending_node_id.is_empty():
+		or not act_outcome.get_state().pending_node_id.is_empty() or act_outcome._pending_result != null:
 		return false
+	if party_carryover == null or not party_carryover.is_valid() \
+		or party_carryover.read_state().heroes != run_heroes:
+		return false
+	if party_carryover.read_state().completed_fights.is_empty() and not _unfought_run():
+		return false
+	if run_map.get_route().is_empty():
+		return _unfought_run()
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"]:
 		return _can_leave_fight()
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
@@ -1178,7 +1229,8 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		or _carryover_map == null or _carryover_map.get_ref() != run_map:
 		return false
 	var ledger := party_carryover.read_state()
-	if not ledger.ok or ledger.heroes != run_heroes or ledger.completed_fights.is_empty() \
+	if not ledger.ok or ledger.heroes != run_heroes or (ledger.completed_fights.is_empty() and not _unfought_run()) \
+		or act_outcome.get_state().settled_node_ids.has(id) \
 		or ledger.completed_fights.has(id) or run_deck.size() < CombatDeck.TURN_DRAW:
 		return false
 	var catalog := StarterCards.new()
@@ -1191,6 +1243,10 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	var rng_before := run_rng.state
 	var bound_before := fight_selection._bound_map
 	var selected_before := fight_selection._selected.duplicate(true)
+	var torn_carry := party_carryover as RunTornCarryover
+	if torn_carry == null:
+		return false
+	var witness_before := [torn_carry._node, torn_carry._result, torn_carry._party, torn_carry._start.duplicate(true)]
 	if not run_map.choose_node(id):
 		return false
 	var entry := RunAuthoredBattleEntry.new().entry_current_battle(run_map, run_rng, fight_selection)
@@ -1204,19 +1260,23 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
 		staged = next_flow.begin_fight()
 		if staged:
-			var torn_carry := party_carryover as RunTornCarryover
-			staged = torn_carry != null and torn_carry.begin_battle(id, next_result, next_party)
+			staged = torn_carry.begin_battle(id, next_result, next_party)
 	if not staged or not act_outcome.begin_current_battle(next_result):
 		run_map.undo_choice(id, prior)
 		run_rng.state = rng_before
 		fight_selection._bound_map = bound_before
 		fight_selection._selected = selected_before
+		torn_carry._node = witness_before[0]
+		torn_carry._result = witness_before[1]
+		torn_carry._party = witness_before[2]
+		torn_carry._start = witness_before[3]
 		return false
 	# No fallible model work remains. Detach old controls before mounting fresh ones.
 	$LiveSupportHand._cancel_pending()
 	_clear_route_view()
-	remove_child(battle_view)
-	battle_view.queue_free()
+	if is_instance_valid(battle_view):
+		remove_child(battle_view)
+		battle_view.queue_free()
 	hero_panels.clear()
 	swap_preview_buttons.clear()
 	_swap_preview_pair = 0
@@ -1949,17 +2009,14 @@ func _return_from_battle(button) -> void:
 
 func _return_to_title() -> void:
 	_clear_terminal_result()
-	if battle_view == null:
-		if is_instance_valid(route_view):
-			_cancel_route()
-			start_button.grab_focus()
-		return
 	for action in reward_buttons:
 		action.disabled = true
 	if is_instance_valid(continue_button):
 		continue_button.disabled = true
-	end_turn_button.disabled = true
-	return_button.disabled = true
+	if is_instance_valid(end_turn_button):
+		end_turn_button.disabled = true
+	if is_instance_valid(return_button):
+		return_button.disabled = true
 	if shop_visit != null:
 		shop_visit.close_visit()
 	if is_instance_valid(shop_view):
@@ -2025,8 +2082,9 @@ func _return_to_title() -> void:
 	_carryover_result = null
 	continue_button = null
 	round_flow = null
-	remove_child(battle_view)
-	battle_view.queue_free()
+	if is_instance_valid(battle_view):
+		remove_child(battle_view)
+		battle_view.queue_free()
 	battle_view = null
 	hand_view = null
 	pile_label = null

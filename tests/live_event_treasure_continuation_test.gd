@@ -31,7 +31,7 @@ func _placeholder_fixture(visit: String, kind: String) -> Dictionary:
 		if path.is_empty():
 			continue
 		map.choose_node(path[0])
-		var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 		if selected.get("encounter_id") == "starter_attacks":
 			return {"seed": value, "fight": path[0], "path": path.slice(1)}
 	return {}

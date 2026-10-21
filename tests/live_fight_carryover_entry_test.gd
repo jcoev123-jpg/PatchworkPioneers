@@ -23,14 +23,14 @@ func _choose(id: String, keyboard: bool) -> bool:
 
 func _click(control: Control) -> void:
 	await super._click(control)
-	if app.party_carryover == null or exercised_entry:
+	if app.party_carryover == null or app.battle_result == null or exercised_entry:
 		return
 	exercised_entry = true
 	entry = app.party_carryover.read_state()
 	_check(entry.ok and entry.completed_fights.is_empty() and entry.completed_rests.is_empty(),
 		"real Fight entry initializes a valid empty ledger")
-	_check(entry.heroes == _block_free_party() and app.run_heroes.is_empty(),
-		"ledger starts from actual party before any fixture mutation; no published victory")
+	_check(entry.heroes == _block_free_party() and app.run_heroes == entry.heroes,
+		"initialized run ledger and actual party agree before any fixture mutation or victory")
 	var before := _snapshot()
 	_check(not app._commit_fight_carryover(), "active result cannot commit")
 	app._observe_battle_result()
@@ -177,7 +177,7 @@ func _reject_unchanged(label: String) -> void:
 	app._observe_battle_result()
 	app._build_card_reward()
 	_check(_snapshot() == before and app.party_carryover.read_state().completed_fights.is_empty()
-		and app.run_heroes.is_empty() and app.fight_rewards == null, label + " preserves entire uncommitted run")
+		and app.run_heroes == app.party_carryover.read_state().heroes and app.fight_rewards == null, label + " preserves entire initialized uncommitted run")
 
 
 func _defeat(fixture: Dictionary) -> void:
@@ -213,7 +213,7 @@ func _defeat(fixture: Dictionary) -> void:
 	app._observe_battle_result()
 	for callback in old_callbacks:
 		callback.call()
-	_check(_snapshot() == before and ledger.read_state() == initial and app.run_heroes.is_empty()
+	_check(_snapshot() == before and ledger.read_state() == initial and app.run_heroes == initial.heroes
 		and app.run_deck == owned and app.run_map.get_route() == route and app.session_gold == 0
 		and app.fight_rewards == null and app.reward_buttons.is_empty(), "defeat and stale callbacks never publish, pay or complete")
 	if panel != null:

@@ -61,7 +61,7 @@ func _click(control: Control) -> void:
 			_check(latch.get_state() == saved, "Return preserves detached outcome snapshot")
 			if not saved.settled_node_ids.is_empty():
 				_check(not latch.settle_current_battle(), "disposed settled latch cannot settle twice")
-	elif app.act_outcome != null and app.act_outcome != last_latch:
+	elif app.battle_result != null and app.act_outcome != null and app.act_outcome != last_latch:
 		last_latch = app.act_outcome
 		_check(last_latch._map == app.run_map and last_latch._pending_result == app.battle_result
 			and app.battle_result._party == app.party and app.battle_result._enemies == app.enemies,
@@ -103,8 +103,10 @@ func _run() -> void:
 	_check(not app._start_battle(app.run_rng, app._load_enemy_schedule(),
 		CombatEnemies.new(app._load_enemy_definitions())), "unselected routed admission rejects")
 	_check(app.run_rng.state == rng_before and app.run_map.get_route() == route_before
-		and app.deck == null and app.battle_result == null and app.act_outcome == null
-		and app.party_carryover == null and app.battle_view == null, "failed admission publishes and spends nothing")
+		and app.deck == null and app.battle_result == null and app.act_outcome != null
+		and app.act_outcome.get_state().pending_node_id == ""
+		and app.party_carryover != null and app.party_carryover.read_state().completed_fights.is_empty()
+		and app.battle_view == null, "failed admission publishes and spends nothing")
 	await _click(app.route_back_button)
 	_check(app.act_outcome == null, "cancel has no outcome latch")
 	var replay: Array = []

@@ -266,8 +266,8 @@ func _run() -> void:
 		presenter.enemies == null and presenter.panel == null, "title is actionable without premature roster")
 	var first_trace: Array = []
 	for session in range(2):
-		app.start_button.pressed.emit()
-		reference.start_button.pressed.emit()
+		_fixture_start(app)
+		_fixture_start(reference)
 		await process_frame
 		await process_frame
 		_check(app.deck is CombatDeck and app.party is CombatParty and app.run_rng != null,
@@ -312,7 +312,7 @@ func _run() -> void:
 		var row_id: int = presenter.battle_row.get_instance_id()
 		var panel_id: int = presenter.panel.get_instance_id() if is_instance_valid(presenter.panel) else 0
 		var before := _snapshot(app)
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		await process_frame
 		_check(presenter.enemies == roster_ref.get_ref() and is_instance_valid(presenter.panel) and
 			presenter.panel.get_instance_id() == panel_id, "duplicate Start Run retains same roster and panel")
@@ -387,7 +387,7 @@ func _run() -> void:
 		{"id": "second", "name": "Second", "max_hp": 7, "art_path": "unused"}]))
 	file.close()
 	app.starter_enemies_path = FIXTURE
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	await process_frame
 	_check(presenter.enemies != null and presenter.enemies.get_enemy(2).get("id") == "second",
 		"complete valid list creates later enemy")
@@ -435,9 +435,10 @@ func _invalid_sources(app, reference, presenter) -> void:
 			file.store_string(fixtures[index - 1])
 			file.close()
 		app.starter_enemies_path = paths[index]
-		reference.start_button.pressed.emit()
+		_fixture_start(reference)
 		app.start_button.grab_focus()
-		app.start_button.pressed.emit()
+		_fixture_start(app)
+		await process_frame
 		await process_frame
 		_check(app.deck == null and app.party == null and app.run_rng == null and app.enemies == null,
 			"bad roster rejects every run object atomically")
@@ -452,7 +453,8 @@ func _invalid_sources(app, reference, presenter) -> void:
 		_check(app.deck == null and app.party == null and app.enemies == null, "invalid roster End Turn remains inert")
 		# Correcting the source permits a fresh start, with no leaked state from rejection.
 		app.starter_enemies_path = SOURCE
-		app.start_button.pressed.emit()
+		_fixture_start(app)
+		await process_frame
 		await process_frame
 		_check(app.deck != null and app.enemies != null and presenter.enemies == app.enemies,
 			"corrected source starts complete shared model")
@@ -473,3 +475,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_enemy_roster_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

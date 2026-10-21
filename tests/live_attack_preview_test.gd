@@ -87,7 +87,8 @@ func _seed_for(id: String) -> int:
 
 func _start(seed_value: int, held_id: String = "") -> bool:
 	app.run_seed = seed_value
-	await _click(app.start_button)
+	_fixture_start(app)
+	await _frames()
 	# Keep every preview/status/replay assertion for upgraded attacks too. The
 	# connected Rest -> real next-battle draw is covered by live_rest_upgrade_choice_test.
 	if held_id == "warden_strike_plus" and app.deck != null:
@@ -989,3 +990,12 @@ func _paid_move_refresh() -> void:
 		else:
 			_check(trace == replay, "same-seed paid move and refreshed attack rejection replay")
 		await _return()
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

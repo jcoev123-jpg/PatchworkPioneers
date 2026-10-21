@@ -81,7 +81,7 @@ func _live() -> Array:
 
 
 func _start() -> bool:
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	await _frames()
 	if "--inject-missing-action" in OS.get_cmdline_user_args() and is_instance_valid(_panel()):
 		_panel().free()
@@ -592,3 +592,12 @@ func _finish() -> void:
 		printerr("FAIL: " + failure)
 	print("live_area_attack_action_test: %d checks, %d failures" % [checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

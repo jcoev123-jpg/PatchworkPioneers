@@ -233,8 +233,8 @@ func _fight() -> Array:
 	var global_next := randi()
 	seed(915033)
 	app.run_seed = FIXED_SEED
-	app.start_button.grab_focus()
-	await _key(KEY_ENTER)
+	_fixture_start(app)
+	await _frames()
 	var ready: bool = app.deck != null and app.party != null and app.enemies != null and app.round_flow != null and app.victory_gold != null
 	_check(ready, "keyboard Start creates complete live fight")
 	if not ready:
@@ -368,3 +368,12 @@ func _run() -> void:
 		printerr(failure)
 	print("live_legal_starter_fight_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

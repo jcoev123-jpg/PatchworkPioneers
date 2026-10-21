@@ -18,7 +18,7 @@ func _fixture() -> Dictionary:
 				unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop", "Event", "Treasure"]
 			if rest and unsupported:
 				map.choose_node(id)
-				var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+				var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 				if selected.get("encounter_id") == "starter_attacks":
 					return {"seed": value, "fight": id}
 	return {}

@@ -3,8 +3,8 @@ extends "res://tests/live_legal_starter_fight_test.gd"
 
 
 func _win() -> Array:
-	app.start_button.grab_focus()
-	await _key(KEY_ENTER)
+	_fixture_start(app)
+	await _frames()
 	_check(app.deck != null and app.party.is_valid() and app.enemies.is_valid(), "title starts valid live fight")
 	if app.deck == null:
 		return []
@@ -138,7 +138,8 @@ func _run() -> void:
 		_check(randi() == global_next, "whole run and reward path preserve global RNG")
 	_check(previous_service != null and not previous_service.is_claimed(), "post-return callback cannot consume even an unclaimed old offer")
 	# A valid defeat has no reward entry, including when owners are downed.
-	await _click(app.start_button)
+	_fixture_start(app)
+	await _frames()
 	for position in [1, 2, 3]:
 		_check(app.party.apply_damage(position, 999), "defeat fixture downs actual party hero")
 	await _frames()
@@ -146,7 +147,8 @@ func _run() -> void:
 		and app.reward_buttons.is_empty() and app.hand_view.get_child_count() == 0, "DEFEAT has no reward service or controls")
 	await _click(app.return_button)
 	# Downed owners remain legitimate members of a victorious party.
-	await _click(app.start_button)
+	_fixture_start(app)
+	await _frames()
 	_check(app.party.apply_damage(1, 999), "downed-owner victory has an actual downed hero")
 	for position in [1, 2]:
 		_check(app.enemies.apply_damage(position, 999), "downed-owner victory slays actual enemy")

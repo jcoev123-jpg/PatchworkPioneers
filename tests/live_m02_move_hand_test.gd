@@ -164,7 +164,8 @@ func _status_backstep_turn() -> void:
 	var replay: Array = []
 	for session in range(2):
 		app.run_seed = 42
-		await _click(app.start_button)
+		_fixture_start(app)
+		await _frames()
 		var ready: bool = app.deck != null and app.party != null and app.round_flow != null
 		_check(ready, "status backstep has real session services")
 		if not ready:
@@ -228,7 +229,8 @@ func _run() -> void:
 	await _status_backstep_turn()
 	var replay: Array = []
 	for session in range(2):
-		await _click(app.start_button)
+		_fixture_start(app)
+		await _frames()
 		_check(app.deck != null and app.deck.turn_active and app.party.is_valid()
 			and app.battle_result.can_continue(), "real active battle preconditions")
 		if app.deck == null:
@@ -341,7 +343,8 @@ func _run() -> void:
 		_check(_snapshot() == before, "terminal stale callback inert")
 		await _click(app.return_button)
 		_check(app.deck == null and app.start_button.has_focus(), "real Return releases session")
-		await _click(app.start_button)
+		_fixture_start(app)
+		await _frames()
 		before = _snapshot()
 		callback.call(event)
 		_check(_snapshot() == before, "restarted session rejects old callback")
@@ -351,3 +354,12 @@ func _run() -> void:
 		printerr(failure)
 	print("live_m02_move_hand_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

@@ -164,7 +164,8 @@ func _run() -> void:
 	_check(app.title_view.is_visible_in_tree() and app.enemy_buff_forecast_label == null, "title has no forecast")
 	var replay: Array = []
 	for session in range(2):
-		_mouse(app.start_button)
+		_fixture_start(app)
+		await process_frame
 		await process_frame
 		await process_frame
 		var ready: bool = app.party != null and app.enemies != null and app.deck != null \
@@ -233,3 +234,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_enemy_buff_forecast_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

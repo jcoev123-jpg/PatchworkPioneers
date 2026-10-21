@@ -46,7 +46,7 @@ func _run() -> void:
 	var replay: Array = []
 	for session in range(2):
 		app.run_seed = 54054
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		await process_frame
 		_check(app.party != null and app.enemies != null and app.round_flow != null
 			and app.deck.turn_active and app.end_turn_button.is_visible_in_tree(), "real mixed fight mounted")
@@ -141,7 +141,7 @@ func _run() -> void:
 
 func _rejections(app) -> void:
 	for mode in ["late_shove", "late_debuff", "overflow", "status_overflow", "stale", "roster", "dead"]:
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		await process_frame
 		_check(app.party != null and app.deck.turn_active, "negative fixture mounted active")
 		var attack := {"type": "attack", "amount": 5, "target_position": 1}
@@ -174,3 +174,12 @@ func _rejections(app) -> void:
 			_check(_snapshot(app) == before and not app.end_turn_button.disabled, "full atomic rejection: " + mode)
 		app.return_button.pressed.emit()
 		await process_frame
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

@@ -18,7 +18,7 @@ func _multi_fixture() -> Dictionary:
 			if third.is_empty():
 				continue
 			map.choose_node(id)
-			var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+			var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 			if selected.get("encounter_id") == "starter_attacks" and _two_enemy_multi(value, id, second, third):
 				return {"seed": value, "fight": id, "paths": [second, third]}
 			map.undo_choice(id, [])
@@ -34,7 +34,7 @@ func _two_enemy_multi(seed_value: int, first: String, second: Array, third: Arra
 	map.generate(rng)
 	map.choose_node(first)
 	var selector := RunFightEncounterSelection.new()
-	selector.select_current_battle(map, rng, {"Fight": app.FIGHT_ENCOUNTER_PATHS})
+	RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
 	var party := CombatParty.new(app._load_party_definitions())
 	var enemies := CombatEnemies.new(app._load_enemy_definitions())
 	var intents := CombatEnemyIntents.new(app._load_enemy_schedule())

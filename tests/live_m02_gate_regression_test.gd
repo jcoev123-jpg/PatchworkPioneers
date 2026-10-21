@@ -251,7 +251,8 @@ func _pure_proof() -> void:
 func _timeline(alternate: bool) -> Array:
 	trace = []
 	app.run_seed = 42
-	await _click(app.start_button)
+	_fixture_start(app)
+	await _frames()
 	_check(app.deck != null and app.party != null and app.enemies != null and app.round_flow != null,
 		"seed 42 title creates actual session services")
 	if app.deck == null:
@@ -353,3 +354,12 @@ func _run() -> void:
 		printerr(failure)
 	print("live_m02_gate_regression_test: %d checks, %d failures" % [checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

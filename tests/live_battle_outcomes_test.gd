@@ -59,8 +59,8 @@ func _key(code: Key) -> void:
 
 
 func _start() -> bool:
-	app.start_button.grab_focus()
-	await _key(KEY_ENTER)
+	_fixture_start(app)
+	await _frames()
 	var valid: bool = app.deck != null and app.party != null and app.enemies != null \
 		and app.battle_result != null and is_instance_valid(app.result_label)
 	_check(valid, "keyboard Start constructs all live models and result")
@@ -109,7 +109,7 @@ func _closed(outcome: String) -> void:
 func _inert() -> void:
 	var before := _state()
 	for repeat in range(3):
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		app._process(0.0)
 		app._reenable_end_turn(app.end_turn_button)
 		app.end_turn_button.pressed.emit()
@@ -151,7 +151,7 @@ func _victory() -> void:
 		var trace: Array = [_state()]
 		var result: WeakRef = weakref(app.battle_result)
 		var gold: WeakRef = weakref(app.victory_gold)
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		await _frames()
 		_check(app.battle_result == result.get_ref() and app.victory_gold == gold.get_ref()
 			and _state() == trace[0], "duplicate Start preserves single result, claim latch and state")
@@ -367,7 +367,8 @@ func _run() -> void:
 		_check(app.title_view.is_visible_in_tree() and app.battle_result == null
 			and app.result_label == null and app.victory_gold == null and app.session_gold == 0, "title has no result or payout")
 		app.starter_party_path = "user://missing_outcomes_party.json"
-		await _mouse(app.start_button)
+		_fixture_start(app)
+		await _frames()
 		_check(app.deck == null and app.party == null and app.enemies == null
 			and app.battle_result == null and app.title_view.is_visible_in_tree()
 			and app.victory_gold == null and app.session_gold == 0
@@ -397,3 +398,12 @@ func _run() -> void:
 		printerr(failure)
 	print("live_battle_outcomes_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

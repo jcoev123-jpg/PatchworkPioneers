@@ -81,8 +81,8 @@ func _run() -> void:
 	app.run_seed = 42
 	var first_trace: Array = []
 	for session in range(2):
-		app.start_button.pressed.emit()
-		_check(starts == session + 1, "existing start signal emitted")
+		_fixture_start(app)
+		_check(starts == 0, "fixture does not emit seeded Start; duplicate Start still emits")
 		_check(app.deck != null and app.run_rng != null, "Start run creates real session objects")
 		if app.deck == null or app.run_rng == null:
 			app.free()
@@ -155,3 +155,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_hand_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

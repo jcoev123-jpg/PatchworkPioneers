@@ -18,7 +18,7 @@ func _continuation_fixture(kind: String) -> Dictionary:
 					if map.get_node(next).type != kind:
 						continue
 					map.choose_node(fight)
-					var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+					var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 					if selected.get("encounter_id") == "starter_attacks":
 						return {"seed": value, "fight": fight, "shop": shop, "next": next}
 	return {}

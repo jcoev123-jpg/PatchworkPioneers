@@ -42,7 +42,7 @@ func _two_enemy_second(seed_value: int, first: String, second: String) -> bool:
 	map.generate(rng)
 	map.choose_node(first)
 	var selector := RunFightEncounterSelection.new()
-	selector.select_current_battle(map, rng, {"Fight": app.FIGHT_ENCOUNTER_PATHS})
+	RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
 	CombatDeck.new(app._load_starter_deck(), rng)
 	rng.randi_range(10, 20)
 	var pool_size := catalog.get_all_card_ids().size()

@@ -77,10 +77,8 @@ func _run() -> void:
 	var stale: Callable
 	# Initial battle plus two same-seed title restarts.
 	for session in range(3):
-		if session == 1:
-			await _key(KEY_ENTER)
-		else:
-			await _click(app.start_button)
+		_fixture_start(app)
+		await _frames()
 		_check(app.deck != null and app.party != null and app.enemies != null
 			and app.deck.turn_active and app.battle_result.can_continue(), "title creates real active seeded battle")
 		_check(app.swap_preview_buttons.size() == 2 and is_instance_valid(app.swap_preview_cue), "both buttons and cue mounted")
@@ -205,3 +203,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_position_swap_preview_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

@@ -705,7 +705,7 @@ func _test_mounted_enemy_status_turn() -> void:
 	root.add_child(app)
 	await process_frame
 	app.run_seed = 3030
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	await process_frame
 	var bound: bool = app.round_flow != null and app.enemies != null \
 		and app.round_flow._enemies == app.enemies and app.round_flow._deck == app.deck \
@@ -822,3 +822,12 @@ func _test_special_round_atomicity() -> void:
 	_check(fight.flow.end_turn() and fight.party.get_hero(1).id == "seamstress"
 		and fight.party.get_hero(1).statuses == {"bleed": 2} and fight.intents._turn_index == 1,
 		"coordinator commits swap and new-occupant debuff before next draw")
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

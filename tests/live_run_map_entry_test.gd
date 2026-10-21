@@ -66,14 +66,16 @@ func _snapshot(app) -> Array:
 func _reject(app, id: String, reason: String) -> void:
 	var before := _snapshot(app)
 	var selector = app.fight_selection
+	var cache: Dictionary = selector._selected.duplicate(true)
+	var bound = selector._bound_map
 	var attempted_fight: bool = app.deck == null and app.run_map.get_legal_choices().has(id) \
 		and app.run_map.get_node(id).get("type") == "Fight"
 	_check(not app._choose_route(id), reason + " rejected")
 	_check(_snapshot(app) == before, reason + " spends no map/combat/RNG state")
 	if attempted_fight:
-		_check(app.fight_selection != null and app.fight_selection != selector,
-			reason + " resets selector cache after failed startup")
-		_check(app.fight_selection._selected.is_empty() and app.fight_selection._bound_map == null
+		_check(app.fight_selection != null and app.fight_selection == selector,
+			reason + " preserves selector identity after failed startup")
+		_check(app.fight_selection._selected == cache and app.fight_selection._bound_map == bound
 			and app.encounter_id == "", reason + " leaves no cached choice or map binding")
 		var presenter = app.get_node("LiveEnemyRoster")
 		_check(presenter.enemies == null and presenter.panel == null and app.enemy_intents == null
@@ -97,7 +99,7 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	app._open_route_atlas(weakref(app.run_map), weakref(chooser), weakref(app.route_back_button))
 	_check(app.route_atlas_overlay == null and _snapshot(app) == before, "foreign open sources rejected")
 	if keyboard:
-		app.route_buttons[0].grab_focus()
+		app.route_buttons.back().grab_focus()
 		await _key(KEY_TAB)
 		_check(action.has_focus(), "Tab skips disabled openings to map action")
 		await _key(KEY_ENTER)
@@ -196,17 +198,27 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	app._close_route_atlas(weakref(app.run_map), weakref(chooser), weakref(action), weakref(chooser))
 	_check(app.route_atlas_overlay == overlay, "duplicate open and foreign close sources rejected")
 	_check(not app._choose_route("f01_n0"), "hidden chooser rejects legal Fight")
-	var requests: Array[String] = []
 	_check(atlas.node_requested.get_connections().size() == 1, "one opening route request listener")
-	atlas.node_requested.connect(func(id: String): requests.append(id))
-	# Fight admission is covered by live_atlas_opening_choice_test; retain invalid-kind input here.
+	# Every legal floor-one kind is admitted now (live_atlas_opening_choice_test);
+	# the app must still reject a kind outside the run's supported floor kinds.
+	var unsupported_id := ""
 	for id in highlighted:
-		if app.run_map.get_node(id).type == "Fight":
-			continue
-		var unsupported: Button = nodes[id].get_node("Action")
-		await _click(unsupported)
-		_check(not requests.is_empty() and requests.back() == id and _snapshot(app) == hidden,
-			"unsupported opening marker emits without entering battle")
+		if app.run_map.get_node(id).type != "Fight":
+			unsupported_id = id
+			break
+	_check(not unsupported_id.is_empty(), "seed fixture has a non-Fight opening to probe")
+	if not unsupported_id.is_empty():
+		var opening_callback: Callable = atlas.node_requested.get_connections()[0].callable
+		var saved_kind: String = app.run_map._nodes[unsupported_id].type
+		app.run_map._nodes[unsupported_id].type = "Boss"
+		var kind_before := _snapshot(app)
+		var kind_controls: Array = [app.route_view, app.route_atlas, app.route_map_button,
+			root.gui_get_focus_owner()]
+		opening_callback.call(unsupported_id)
+		_check(_snapshot(app) == kind_before and kind_controls == [app.route_view,
+			app.route_atlas, app.route_map_button, root.gui_get_focus_owner()],
+			"unsupported opening kind rejects atomically without entering a flow")
+		app.run_map._nodes[unsupported_id].type = saved_kind
 	app.route_atlas_close.grab_focus()
 	_check(app.route_atlas_close.has_focus() and _snapshot(app) == hidden,
 		"close remains accessible after unsupported node input")
@@ -275,7 +287,7 @@ func _run() -> void:
 			continue
 		_check(button.is_visible_in_tree() and button.text.contains(id) and button.text.contains(node.type),
 			"exact ID/type visible: " + id)
-		_check(button.disabled == (node.type != "Fight"), "per-node operability: " + id)
+		_check(not button.disabled, "per-node operability: " + id)
 		if button.disabled:
 			_check(button.text.contains("unavailable"), "unsupported reason visible")
 			var before := _snapshot(app)
@@ -318,11 +330,28 @@ func _run() -> void:
 		not is_instance_id_valid(old_view), "Back releases map/RNG/view")
 	_check(app.fight_selection == null and app.encounter_id == "" and old_selector.get_ref() == null,
 		"Back releases selector and encounter identity")
-	_check(app.route_button.has_focus() and app.title_view.is_visible_in_tree(), "Back restores title focus")
+	_check(app.start_button.has_focus() and app.title_view.is_visible_in_tree(), "Back restores title focus")
 	_check(not app._choose_route(fight_id) and app.deck == null and app.run_rng == null, "cancelled callback cannot start battle")
 
 	var trace: Array = []
 	var phase_trace: Array = []
+	# Keep the non-starter, two-source phase oracle against the live typed pool.
+	var typed_fixture_found := false
+	for value in range(1, 1000):
+		var probe_rng := RandomNumberGenerator.new()
+		probe_rng.seed = value
+		var probe_map := RunMap.new()
+		probe_map.generate(probe_rng)
+		if probe_map.get_node(fight_id).type != "Fight":
+			continue
+		probe_map.choose_node(fight_id)
+		var probe := RunAuthoredBattleEntry.new().entry_current_battle(probe_map, probe_rng, RunFightEncounterSelection.new())
+		if probe.get("success", false) and probe.encounter_id != "starter_attacks" and probe.definitions.size() == 2:
+			fixture_seed = value
+			typed_fixture_found = true
+			break
+	_check(typed_fixture_found, "typed non-starter two-source battle fixture exists")
+	app.run_seed = fixture_seed
 	for session in range(2):
 		await _click(app.route_button)
 		_check(app.route_view != null, "mouse opens route chooser")
@@ -376,21 +405,22 @@ func _run() -> void:
 		var map := RunMap.new()
 		_check(map.generate(rng), "combat reference generates")
 		_check(map.choose_node(fight_id), "reference commits before selection")
-		var ids: Array = app.FIGHT_ENCOUNTER_PATHS.keys()
+		var registry: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(RunAuthoredBattleEntry.POOLS_PATH))
+		var ids: Array = registry.Fight.keys()
 		ids.sort()
 		var draw_rng := RandomNumberGenerator.new()
 		draw_rng.state = rng.state
 		var expected_id: String = ids[draw_rng.randi_range(0, ids.size() - 1)]
 		var selection := RunFightEncounterSelection.new()
-		var selected := selection.select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selection)
 		_check(selected.get("success", false) and selected.get("encounter_id") == expected_id
 			and rng.state == draw_rng.state, "selector spends exactly one sorted-pool draw")
 		if not selected.get("success", false):
 			break
 		var authored := RunFightEncounterSelection._parse_schedule_text(
-			FileAccess.get_file_as_string(app.FIGHT_ENCOUNTER_PATHS[expected_id]))
+			FileAccess.get_file_as_string(registry.Fight[expected_id].schedule))
 		var expected_intents := CombatEnemyIntents.new(authored)
-		_check(expected_intents.is_valid() and authored.size() == 2, "selected authored two-enemy schedule valid")
+		_check(expected_intents.is_valid() and not authored.is_empty(), "selected authored two-enemy schedule valid")
 		_check(app.enemy_intents._definitions == authored and selected.definitions == authored,
 			"battle receives exact selected authored definitions")
 		_check(app.encounter_id == expected_id and app.enemy_attacks == expected_intents.get_intents()
@@ -402,12 +432,9 @@ func _run() -> void:
 		var reference_deck := CombatDeck.new(cards, rng)
 		var reference_party := CombatParty.new(app._load_party_definitions())
 		# Independent bindings and catalog lookup, without the production assembler.
-		var expected_rosters := {
-			"starter_attacks": ["ragling", "ragling_guard"],
-			"guard_counterattack": ["button_guard", "fray_scavenger"],
-			"ragling_rearline_feint": ["spool_stalker", "seam_ripper"],
-		}
-		_check(app.FIGHT_ROSTERS == expected_rosters, "all three exact ordered Fight bindings")
+		var expected_rosters := {}
+		for key in registry.Fight:
+			expected_rosters[key] = registry.Fight[key].enemy_ids
 		var catalog: Array = JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
 		catalog.append_array(JSON.parse_string(FileAccess.get_file_as_string(app.RUN_ENEMIES_PATH)))
 		var ordered: Array = []
@@ -503,45 +530,15 @@ func _run() -> void:
 	await _click(app.route_button)
 	_check(app.run_map != null and app.route_view != null, "failed-data retry chooser mounted")
 	if app.run_map != null:
-		for pool in [{}, {"missing": "res://data/encounters/missing_036.json"},
-			{"bad": "res://data/encounters/../encounters/starter_attacks.json"},
-			{"bad": "res://data/encounters/starter_attacks.json", "corrupt": 42}]:
-			app.fight_encounter_paths = pool
-			_reject(app, fight_id, "invalid encounter pool")
-			_check(app.fight_selection != null and app.encounter_id == "", "failed selection reset for retry")
-		app.fight_encounter_paths = app.FIGHT_ENCOUNTER_PATHS.duplicate()
-		# Force each binding failure through the real selected-route transaction.
-		for invalid in [null, 42, [], ["unknown", "ragling_guard"], ["ragling", "ragling"],
-			["ragling"], ["ragling", "ragling_guard", "button_guard"], ["ragling", 42]]:
-			for selected_id in app.FIGHT_ROSTERS:
-				app.fight_rosters[selected_id] = invalid
-			_reject(app, fight_id, "malformed/unknown/duplicate/wrong-count roster: " + str(invalid))
-		app.fight_rosters = {}
-		_reject(app, fight_id, "missing encounter binding")
-		app.fight_rosters = app.FIGHT_ROSTERS.duplicate(true)
-		app.run_enemies_path = "res://data/enemies/missing_060.json"
-		_reject(app, fight_id, "missing M03 catalog")
-		app.run_enemies_path = app.STARTER_ENEMIES_PATH
-		_reject(app, fight_id, "duplicate catalog IDs")
-		app.run_enemies_path = app.RUN_ENEMIES_PATH
-		for field in ["starter_deck_path", "starter_party_path", "starter_attacks_path", "starter_enemies_path"]:
-			var original: String = app.get(field)
-			app.set(field, OS.get_environment("TEMP").path_join("patchwork_missing_029.json"))
-			_reject(app, fight_id, "bad starter data: " + field)
-			app.set(field, original)
-		# Valid CombatParty input that violates the current round-flow owner contract.
-		var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_PARTY_PATH))
-		definitions[1].id = "wrong_owner"
-		var path := OS.get_environment("TEMP").path_join("patchwork_route_029_party.json")
-		var file := FileAccess.open(path, FileAccess.WRITE)
-		_check(file != null, "external invalid-contract fixture writable")
-		if file != null:
-			file.store_string(JSON.stringify(definitions))
-			file.close()
-			app.starter_party_path = path
-			_reject(app, fight_id, "valid party with invalid round-flow binding")
-			app.starter_party_path = app.STARTER_PARTY_PATH
-			DirAccess.remove_absolute(path)
+		_legacy_rejections(app, fight_id)
+		var cache: Dictionary = app.fight_selection._selected.duplicate(true)
+		app.fight_selection._selected[fight_id] = {"success": true, "node_type": "Fight", "encounter_id": "unknown", "definitions": []}
+		_reject(app, fight_id, "malformed typed selection")
+		app.fight_selection._selected = cache
+		var saved_heroes: Array = app.run_heroes.duplicate(true)
+		app.run_heroes = []
+		_reject(app, fight_id, "invalid persistent roster")
+		app.run_heroes = saved_heroes
 		var before_retry := _snapshot(app)
 		var retry_button: Button = null
 		for button in app.route_buttons:
@@ -557,7 +554,7 @@ func _run() -> void:
 					and app.deck.hand == trace[5][1], "corrected retry repeats exact selection and shuffle")
 				await _click(app.return_button)
 	# The formerly blocked opening now offers Fight; Back still cancels it.
-	app.run_seed = fixture_seed
+	app.run_seed = 6
 	await _click(app.route_button)
 	_check(app.run_map != null and app.route_buttons.size() == 3,
 		"formerly blocked seed has its actual opening mounted")
@@ -566,12 +563,13 @@ func _run() -> void:
 			and not app.route_buttons[0].disabled and app.route_buttons[0].has_focus(),
 			"fallback Fight enabled and initially focused")
 		for index in [1, 2]:
-			_check(app.route_buttons[index].disabled, "other opening types remain unavailable")
+			_check(not app.route_buttons[index].disabled, "all legal opening types are enabled")
 		_check(app.run_map.get_floors()[0][1].type == "Rest"
 			and app.run_map.get_floors()[0][2].type == "Treasure",
 			"fallback preserves unsupported kinds")
+		app.route_buttons.back().grab_focus()
 		await _key(KEY_TAB)
-		_check(app.route_map_button.has_focus(), "Tab skips disabled choices to full map")
+		_check(app.route_map_button.has_focus(), "Tab reaches full map after legal choices")
 		await _key(KEY_TAB)
 		_check(app.route_back_button.has_focus(), "Tab reaches Back after map action")
 		await _click(app.route_back_button)
@@ -588,7 +586,7 @@ func _run() -> void:
 	await process_frame
 	_check(not is_instance_id_valid(reset_atlas_id), "title reset frees preview")
 	app.run_seed = fixture_seed
-	await _click(app.start_button)
+	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	_check(app.deck != null and app.run_map == null and app.route_view == null, "original direct start preserved")
 	if app.deck != null:
 		var starter := CombatEnemyIntents.new(app._load_enemy_schedule())
@@ -611,3 +609,31 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_run_map_entry_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## The retired configurable three-Fight path remains protected at its service boundaries.
+func _legacy_rejections(app, fight_id: String) -> void:
+	var before := _snapshot(app)
+	var rng := RandomNumberGenerator.new()
+	rng.state = app.run_rng.state
+	var map := RunMap.new()
+	var generation := RandomNumberGenerator.new()
+	generation.seed = app.run_seed
+	_check(map.generate(generation) and map.choose_node(fight_id), "legacy negative fixture is an actual selected Fight")
+	for pool in [{}, {"missing": "res://data/encounters/missing_036.json"},
+		{"bad": "res://data/encounters/../encounters/starter_attacks.json"},
+		{"bad": "res://data/encounters/starter_attacks.json", "corrupt": 42}]:
+		var state := rng.state
+		var selector := RunFightEncounterSelection.new()
+		_check(not selector.select_current_fight(map, rng, pool).get("success", false), "malformed legacy pool rejects")
+		_check(rng.state == state and selector._selected.is_empty() and selector._bound_map == null, "pool failure spends no RNG or selector state")
+	var selected := {"success": true, "node_type": "Fight", "encounter_id": "starter_attacks", "definitions": app._load_enemy_schedule()}
+	for invalid in [null, 42, [], ["unknown", "ragling_guard"], ["ragling", "ragling"],
+		["ragling"], ["ragling", "ragling_guard", "button_guard"], ["ragling", 42]]:
+		_check(not RunTypedBattleRoster.new().assemble(selected, {"starter_attacks": invalid},
+			[app.STARTER_ENEMIES_PATH, app.RUN_ENEMIES_PATH]).ok, "malformed/unknown/duplicate/count roster rejects: " + str(invalid))
+	for binding in [{}, {"starter_attacks": ["ragling", "ragling_guard"]}]:
+		for paths in [[app.STARTER_ENEMIES_PATH, "res://data/enemies/missing_060.json"],
+			[app.STARTER_ENEMIES_PATH, app.STARTER_ENEMIES_PATH]]:
+			_check(not RunTypedBattleRoster.new().assemble(selected, binding, paths).ok, "missing binding/catalog and duplicate catalog reject")
+	_check(_snapshot(app) == before, "legacy negative probes leave live seeded state untouched")

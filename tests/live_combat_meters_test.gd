@@ -353,7 +353,8 @@ func _run() -> void:
 		return
 	_check(app.title_view.is_visible_in_tree() and _meters(app).is_empty(), "title has no meters")
 	app.starter_party_path = "user://missing_meter_party/invalid.json"
-	await _mouse(app.start_button)
+	_fixture_start(app)
+	await _frames()
 	_check(app.deck == null and app.party == null and app.enemies == null and presenter.row == null,
 		"failed actual Start Run creates no partial meters or rules")
 	app._end_turn()
@@ -362,8 +363,8 @@ func _run() -> void:
 	app.starter_party_path = app.STARTER_PARTY_PATH
 	var replay: Array = []
 	for session in range(2):
-		app.start_button.grab_focus()
-		await _key(KEY_ENTER)
+		_fixture_start(app)
+		await _frames()
 		_check(app.deck is CombatDeck and app.party is CombatParty and app.enemies is CombatEnemies
 			and app.run_rng != null and is_instance_valid(app.battle_view), "real keyboard Start Run constructs battle")
 		if app.deck == null or app.party == null or app.enemies == null:
@@ -433,7 +434,8 @@ func _run() -> void:
 		var ids: Array[int] = []
 		for meter in _meters(app):
 			ids.append(meter.get_instance_id())
-		app.start_button.pressed.emit()
+		_fixture_start(app)
+		await _frames()
 		for frame in range(8):
 			presenter._sync_battle()
 			await process_frame
@@ -544,7 +546,8 @@ func _status_end_turns(app, presenter) -> void:
 	for scenario in ["weak", "exposed2", "exposed1", "combined", "bleed_slot", "lethal_bleed"]:
 		var replay: Array = []
 		for session in range(2):
-			await _mouse(app.start_button)
+			_fixture_start(app)
+			await _frames()
 			_check(app.party != null and app.round_flow != null and app.deck.turn_active
 				and _meters(app).size() == 5, scenario + ": actual Start mounts authoritative active fight")
 			if app.party == null or app.round_flow == null:
@@ -611,3 +614,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_combat_meters_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

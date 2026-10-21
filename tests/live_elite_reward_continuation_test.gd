@@ -18,7 +18,7 @@ func _multi_fixture() -> Dictionary:
 			if third.is_empty() or _path_to(map, third.back(), "Shop").is_empty():
 				continue
 			map.choose_node(id)
-			var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+			var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 			if selected.get("encounter_id") == "starter_attacks":
 				return {"seed": value, "fight": id, "paths": [second, third], "shop_path": _path_to(map, third.back(), "Shop")}
 			map.undo_choice(id, [])

@@ -68,8 +68,8 @@ func _party_visible() -> void:
 func _session() -> Array:
 	_check(app.title_view.is_visible_in_tree() and not app.start_button.disabled,
 		"real title Start is reachable")
-	app.start_button.grab_focus()
-	await _key(KEY_ENTER)
+	_fixture_start(app)
+	await _frames()
 	var bound: bool = app.deck != null and app.party != null and app.enemies != null \
 		and app.round_flow != null and app.battle_result != null and app.run_rng != null
 	_check(bound, "title activation constructs real battle services")
@@ -196,3 +196,12 @@ func _run() -> void:
 			printerr(failure)
 		print("live_authored_starter_defeat_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

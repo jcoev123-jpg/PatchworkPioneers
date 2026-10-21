@@ -109,7 +109,7 @@ func _run() -> void:
 	root.add_child(app)
 	await process_frame
 	var presenter = app.get_node("LiveEnemyRoster")
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	await process_frame
 	await process_frame
 	_check(app.deck != null and app.party != null and app.run_rng != null and app.enemies != null
@@ -218,7 +218,7 @@ func _run() -> void:
 	await process_frame
 	_freed(old_ids)
 	_check(not is_instance_id_valid(hero_id) and app.title_view.is_visible_in_tree(), "title frees app-owned old battle heroes")
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	await process_frame
 	await process_frame
 	_check(app.enemies != null and is_instance_valid(presenter.panel) and presenter.enemies == app.enemies
@@ -236,3 +236,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_enemy_roster_rebind_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

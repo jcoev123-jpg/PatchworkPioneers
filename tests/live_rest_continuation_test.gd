@@ -23,7 +23,7 @@ func _rest_fixture(kind: String) -> Dictionary:
 				if not unsupported or next_id.is_empty():
 					continue
 				map.choose_node(fight)
-				var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+				var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 				if selected.get("encounter_id") == "starter_attacks":
 					return {"seed": value, "fight": fight, "rest": rest, "next": next_id}
 	return {}

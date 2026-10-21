@@ -132,11 +132,11 @@ func _invalid_sources(app) -> void:
 		file.store_string(source)
 		file.close()
 		app.starter_attacks_path = path
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		_rejected(app)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	app.starter_attacks_path = path
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	_rejected(app)
 	app.starter_attacks_path = app.STARTER_ATTACKS_PATH
 	# Individually valid but incomplete schedules also reject atomically.
@@ -144,7 +144,7 @@ func _invalid_sources(app) -> void:
 	file.store_string(JSON.stringify([valid]))
 	file.close()
 	app.starter_attacks_path = path
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	_rejected(app)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	app.starter_attacks_path = app.STARTER_ATTACKS_PATH
@@ -179,7 +179,7 @@ func _run() -> void:
 	source.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
 	var first_trace: Array = []
 	for session in range(2):
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		_check(app.party is CombatParty and app.deck is CombatDeck and app.run_rng != null,
 			"real Start Run creates complete session")
 		_check(is_instance_valid(app.end_turn_button) and is_instance_valid(app.return_button), "real battle controls exist")
@@ -228,7 +228,7 @@ func _run() -> void:
 		_check(_snapshot(app) == before and not app.end_turn_button.disabled,
 			"coordinator rejection restores button and preserves all session state")
 		flow._started = true
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		_check(_snapshot(app) == before, "duplicate Start Run cannot execute attacks or replace session")
 		for turn in range(12):
 			_check(app.deck.try_spend_energy(2) and reference.try_spend_energy(2), "spend actual shared energy")
@@ -344,7 +344,7 @@ func _run() -> void:
 
 func _slain_sources(app) -> void:
 	for slain in [1, 2]:
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		_check(app.enemies != null and app.party != null and app.deck != null, "slain-source case starts real session")
 		if app.enemies == null or app.party == null or app.deck == null:
 			return
@@ -398,7 +398,7 @@ func _slain_sources(app) -> void:
 
 
 func _cue_refresh(app) -> void:
-	app.start_button.pressed.emit()
+	_fixture_start(app)
 	_check(app.enemies != null and app.enemy_intents != null and is_instance_valid(app.intent_label),
 		"cue refresh has real mounted roster, selector and label")
 	if app.enemies == null or app.enemy_intents == null or not is_instance_valid(app.intent_label):
@@ -451,7 +451,7 @@ func _status_damage(app) -> void:
 		var replay: Array = []
 		for session in range(2):
 			app.run_seed = 35035
-			app.start_button.pressed.emit()
+			_fixture_start(app)
 			await process_frame
 			var bound: bool = app.party != null and app.enemies != null and app.deck != null \
 				and app.round_flow != null and is_instance_valid(app.end_turn_button) \
@@ -522,7 +522,7 @@ func _mixed_rejection_replay(app) -> void:
 	var replay: Array = []
 	for session in range(2):
 		app.run_seed = 56056
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		await process_frame
 		var bound: bool = app.party != null and app.enemies != null and app.deck != null \
 			and app.enemy_intents != null and app.round_flow != null \
@@ -578,3 +578,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_enemy_phase_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")

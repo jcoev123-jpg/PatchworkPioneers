@@ -19,7 +19,7 @@ func _upgrade_fixture() -> Dictionary:
 						continue
 					var selector := RunFightEncounterSelection.new()
 					map.choose_node(fight)
-					var selected := selector.select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
+					var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
 					map.undo_choice(fight, [])
 					if selected.get("encounter_id") == "starter_attacks":
 						return {"seed": value, "fight": fight, "rest": rest, "next": next}

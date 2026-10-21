@@ -107,8 +107,8 @@ func _panel(id: String) -> Control:
 
 func _start(seed_value: int) -> bool:
 	app.run_seed = seed_value
-	app.start_button.grab_focus()
-	await _keyboard(KEY_ENTER)
+	_fixture_start(app)
+	await _frames()
 	var ready: bool = app.deck is CombatDeck and app.party is CombatParty and app.party.is_valid() \
 		and app.run_rng != null and is_instance_valid(app.battle_view)
 	_check(ready, "real focused title button starts complete session")
@@ -200,7 +200,7 @@ func _run() -> void:
 			_finish()
 			return
 		var before := _live()
-		app.start_button.pressed.emit()
+		_fixture_start(app)
 		presenter._sync_battle()
 		presenter._sync_battle()
 		_check(_live() == before, "duplicate start and sync never play")
@@ -726,3 +726,12 @@ func _finish() -> void:
 		printerr(failure)
 	print("live_support_hand_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
+func _fixture_start(target) -> void:
+	if target.deck != null:
+		target.start_button.pressed.emit()
+		return
+	var started: bool = target._start_battle()
+	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
