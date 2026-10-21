@@ -158,6 +158,87 @@ func apply_fight_reward(fight_node_id: Variant, reward: Variant) -> bool:
 	return true
 
 
+## Admit the complete, already-settled RunMultiFightRewards.choose() reply.
+## Its typed receipt comes from the authoritative map and cached reward. This
+## reconciles against our OWN ledger, never a caller-supplied pre-reward state.
+## The caller must have checked the real committed outcome: this snapshot is
+## not cryptographic proof of a battle, and the bridge never draws RNG.
+func apply_battle_reward(node_id: Variant, settled: Variant) -> bool:
+	if not _valid or (_status != "inactive" and _status != "closed"):
+		return false
+	if not node_id is String or node_id.is_empty() \
+			or node_id != node_id.strip_edges() or _claimed_fight_ids.has(node_id):
+		return false
+	if not settled is Dictionary or settled.get("ok") != true \
+			or not settled.get("ok") is bool:
+		return false
+	var receipt: Variant = settled.get("receipt")
+	var state: Variant = settled.get("state")
+	var skipped: Variant = settled.get("skipped")
+	var selected: Variant = settled.get("selected_id")
+	if not receipt is Dictionary or not state is Dictionary \
+			or not skipped is bool or not selected is String:
+		return false
+	if receipt.size() != 3 or not receipt.has("node_id") \
+			or not receipt.has("node_kind") or not receipt.has("trinket_drop_id"):
+		return false
+	var receipt_node: Variant = receipt["node_id"]
+	var kind: Variant = receipt["node_kind"]
+	var drop: Variant = receipt["trinket_drop_id"]
+	if not receipt_node is String or receipt_node != node_id \
+			or not kind is String or kind not in ["Fight", "Elite"] \
+			or not drop is String:
+		return false
+	var cards: Variant = state.get("deck")
+	var gold: Variant = state.get("gold")
+	var trinkets: Variant = state.get("trinkets")
+	var party: Variant = state.get("party")
+	if not cards is Array or not gold is int or not trinkets is Array \
+			or not party is Dictionary:
+		return false
+	# The actual carryover settlement records this node at the end of its
+	# fight history. It cannot be a reward prepared but not yet chosen.
+	var completed: Variant = party.get("completed_fights")
+	if party.get("ok") != true or not completed is Array \
+			or completed.is_empty() or completed.back() != node_id \
+			or not party.get("heroes") is Array or not party.get("completed_rests") is Array:
+		return false
+	# Nonnegative operands make subtraction safe even at signed MAX_INT.
+	if gold < _gold:
+		return false
+	var delta: int = gold - _gold
+	if kind == "Fight":
+		if delta < 10 or delta > 20 or drop != "" or trinkets != _trinkets:
+			return false
+	else:
+		if delta < 25 or delta > 35 or drop.is_empty() \
+				or drop != drop.strip_edges() or _trinkets.has(drop):
+			return false
+		if trinkets.size() != _trinkets.size() + 1 \
+				or trinkets.slice(0, _trinkets.size()) != _trinkets \
+				or trinkets.back() != drop:
+			return false
+	for card in cards:
+		if not card is String:
+			return false
+	if skipped:
+		if selected != "" or cards != _deck:
+			return false
+	else:
+		if selected.is_empty() or StarterCards.new().get_definition(selected).is_empty():
+			return false
+		if cards.size() != _deck.size() + 1 \
+				or cards.slice(0, _deck.size()) != _deck \
+				or cards.back() != selected:
+			return false
+	# Atomic publication, including the shared legacy/typed claim history.
+	_deck.assign(cards)
+	_trinkets.assign(trinkets)
+	_gold = gold
+	_claimed_fight_ids.append(node_id)
+	return true
+
+
 ## Every returned container is independent of the run's internal ledger.
 func get_state() -> Dictionary:
 	var deck_copy: Array[String] = _deck.duplicate()

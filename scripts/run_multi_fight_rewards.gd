@@ -15,6 +15,7 @@ var _candidates: Array
 var _trinket_candidates: Array
 var _ledger: Dictionary
 var _graph: Array
+var _map_revision: int = 0
 var _pending: RunFightVictoryRewards
 var _node := ""
 var _route: Array
@@ -38,6 +39,7 @@ func _init(map: RunMap, rng: RandomNumberGenerator, carry: RunPartyCarryover,
 	_trinket_candidates = trinket_candidates.duplicate(true)
 	_ledger = {} if carry == null else carry.read_state()
 	_graph = [] if map == null else map.get_floors()
+	_map_revision = 0 if map == null else map.get_generation_revision()
 
 
 func read_state() -> Dictionary:
@@ -84,6 +86,10 @@ func choose(node_id: Variant, selected_id: Variant) -> Dictionary:
 			offered = true
 	if not offered:
 		return {"ok": false}
+	# These typed fields are bound to the cached winning node and seeded
+	# preparation, not supplied by the choice caller.
+	var node_kind: String = _map.get_node(_node)["type"]
+	var trinket_drop_id: String = _pending.prepare()["trinket_drop_id"]
 	var resolved := _pending.choose(selected_id)
 	if not resolved["ok"]:
 		return {"ok": false}
@@ -97,7 +103,9 @@ func choose(node_id: Variant, selected_id: Variant) -> Dictionary:
 	_paid_battles.append(_battle)
 	_pending = null
 	return {"ok": true, "skipped": resolved["skipped"],
-		"selected_id": selected_id, "state": read_state()}
+		"selected_id": selected_id, "state": read_state(),
+		"receipt": {"node_id": _node, "node_kind": node_kind,
+			"trinket_drop_id": trinket_drop_id}}
 
 
 func _eligible(node_id: Variant, battle: CombatBattleResult, party: CombatParty) -> bool:
@@ -105,7 +113,8 @@ func _eligible(node_id: Variant, battle: CombatBattleResult, party: CombatParty)
 		return false
 	if not _map.is_generated() or _map.get_current_node_id() != node_id:
 		return false
-	if _map.get_floors() != _graph or _carry.read_state() != _ledger:
+	if _map.get_generation_revision() != _map_revision \
+			or _map.get_floors() != _graph or _carry.read_state() != _ledger:
 		return false
 	if not _map.get_node(node_id).get("type") in ["Fight", "Elite"]:
 		return false
