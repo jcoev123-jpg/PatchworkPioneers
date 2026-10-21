@@ -1,10 +1,12 @@
 class_name RunFightVictoryRewards
 extends RefCounted
-## One pending post-victory Fight/Elite reward: gold and one card (or skip).
+## One pending post-victory Fight/Elite reward: gold and one card (or skip), plus
+## one seeded trinket drop for an Elite.
 ## The *only* run RNG consumption is during the first successful prepare:
-## 1 gold randi_range draw, followed by 3 sorted-pool offer draws.
-## Work on a cloned seed/state and publish that state atomically only after
-## both existing services succeed and the final gold sum is representable.
+## 1 gold randi_range draw, 3 sorted-pool offer draws, then (Elite only) 1
+## sorted unowned trinket draw.
+## Work on a cloned seed/state and publish that state atomically only after the
+## reward transaction and Elite selection succeed.
 
 const MAX_INT := 9223372036854775807
 
@@ -15,15 +17,19 @@ var _candidate_ids: Variant
 var _source_deck: Variant
 var _starting_gold: Variant
 var _elite: bool
+var _trinket_candidates: Variant
+var _owned_trinket_ids: Variant
 var _choice: RunCardRewardChoice = null
 var _gold_service: RunVictoryGold = null
 var _award: int = 0
+var _trinket_drop_id: String = ""
 var _prepared: bool = false
 
 
 func _init(battle: CombatBattleResult, run_rng: Variant, party_ids: Variant,
 		candidate_ids: Variant, run_deck: Variant, current_gold: Variant,
-		is_elite: bool) -> void:
+		is_elite: bool, trinket_candidates: Variant = [],
+		owned_trinket_ids: Variant = []) -> void:
 	_battle = battle
 	_rng = run_rng
 	_party_ids = party_ids.duplicate(true) if party_ids is Array else party_ids
@@ -31,12 +37,14 @@ func _init(battle: CombatBattleResult, run_rng: Variant, party_ids: Variant,
 	_source_deck = run_deck.duplicate(true) if run_deck is Array else run_deck
 	_starting_gold = current_gold
 	_elite = is_elite
+	_trinket_candidates = trinket_candidates.duplicate(true) if trinket_candidates is Array else trinket_candidates
+	_owned_trinket_ids = owned_trinket_ids.duplicate(true) if owned_trinket_ids is Array else owned_trinket_ids
 
 
 func prepare() -> Dictionary:
 	if _prepared:
-		return {"ok": true, "gold_award": _award, "offers": _choice.get_offers()}
-	var rejected := {"ok": false, "gold_award": 0, "offers": []}
+		return _prepared_response()
+	var rejected := {"ok": false, "gold_award": 0, "offers": [], "trinket_drop_id": ""}
 	# Observe only previously evaluated battles; never call evaluate() here.
 	if _battle == null or not is_instance_valid(_battle) \
 			or _battle.get_outcome() != CombatBattleResult.VICTORY:
@@ -58,6 +66,14 @@ func prepare() -> Dictionary:
 		var definition: Dictionary = catalog.get_definition(card_id)
 		if definition.is_empty() or not _party_ids.has(definition.get("owner")):
 			return rejected
+	# Validate the supplier-owned trinket lists and filter already-owned IDs
+	# before the staged RNG is cloned or drawn from.
+	var eligible_trinkets: Array[String] = []
+	if _elite:
+		var eligible: Variant = _eligible_trinket_ids()
+		if eligible == null or eligible.is_empty():
+			return rejected
+		eligible_trinkets.assign(eligible)
 
 	var staged_rng := RandomNumberGenerator.new()
 	staged_rng.seed = _rng.seed
@@ -73,17 +89,23 @@ func prepare() -> Dictionary:
 		staged_rng, _party_ids, _candidate_ids)
 	if not choice.is_valid():
 		return rejected
+	var trinket_drop_id := ""
+	if _elite:
+		var index: int = staged_rng.randi_range(0, eligible_trinkets.size() - 1)
+		trinket_drop_id = eligible_trinkets[index]
 
 	_gold_service = gold_service
 	_choice = choice
 	_award = award
+	_trinket_drop_id = trinket_drop_id
 	_prepared = true
 	_rng.state = staged_rng.state
-	return {"ok": true, "gold_award": _award, "offers": _choice.get_offers()}
+	return _prepared_response()
 
 
 ## Empty String means explicit skip. A stale offered ID leaves the choice open.
-## Failed or repeated calls never pay and return a detached base-deck snapshot.
+## Failed or repeated calls never pay and return detached snapshots. A successful
+## Elite claim returns the existing owned IDs plus the one cached drop.
 func choose(selected_id: Variant) -> Dictionary:
 	var original_deck: Array[String] = []
 	if _source_deck is Array:
@@ -92,7 +114,8 @@ func choose(selected_id: Variant) -> Dictionary:
 				original_deck.append(card_id)
 	var rejected := {
 		"ok": false, "skipped": false, "selected_id": "",
-		"deck": original_deck, "gold": _starting_gold if _starting_gold is int else 0
+		"deck": original_deck, "gold": _starting_gold if _starting_gold is int else 0,
+		"trinkets": _owned_inventory()
 	}
 	if not _prepared or _choice == null or _choice.is_claimed():
 		return rejected
@@ -101,9 +124,54 @@ func choose(selected_id: Variant) -> Dictionary:
 	var result: Dictionary = _choice.claim(original_deck, selected_id)
 	if not result.get("ok", false):
 		return rejected
+	var trinkets := _owned_inventory()
+	if not _trinket_drop_id.is_empty():
+		trinkets.append(_trinket_drop_id)
 	return {
 		"ok": true, "skipped": result["skipped"],
 		"selected_id": result["selected_id"],
 		"deck": result["deck"].duplicate(),
-		"gold": _starting_gold + _award
+		"gold": _starting_gold + _award,
+		"trinkets": trinkets
 	}
+
+
+func _prepared_response() -> Dictionary:
+	return {
+		"ok": true, "gold_award": _award, "offers": _choice.get_offers(),
+		"trinket_drop_id": _trinket_drop_id
+	}
+
+
+## A detached copy of the caller's owned trinket inventory, never internal state.
+func _owned_inventory() -> Array:
+	var inventory: Array = []
+	if _owned_trinket_ids is Array:
+		inventory = _owned_trinket_ids.duplicate(true)
+	return inventory
+
+
+## Null for a malformed candidate/owned list, else the sorted, unowned IDs.
+## An empty returned array means every candidate is already owned.
+func _eligible_trinket_ids() -> Variant:
+	if not _trinket_candidates is Array or not _owned_trinket_ids is Array:
+		return null
+	var owned := {}
+	for owned_id in _owned_trinket_ids:
+		if not owned_id is String or owned_id.is_empty():
+			return null
+		if owned.has(owned_id):
+			return null
+		owned[owned_id] = true
+	var seen := {}
+	var eligible: Array[String] = []
+	for candidate in _trinket_candidates:
+		if not candidate is String or candidate.is_empty():
+			return null
+		if seen.has(candidate):
+			return null
+		seen[candidate] = true
+		if not owned.has(candidate):
+			eligible.append(candidate)
+	eligible.sort()
+	return eligible
