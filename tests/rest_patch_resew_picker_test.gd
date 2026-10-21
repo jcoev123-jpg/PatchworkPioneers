@@ -225,7 +225,7 @@ func _positive(f: Dictionary) -> void:
 	picker.re_sew_requested.connect(_owner.bind(f))
 	_pick("button_eye", "seamstress")
 	_check(picker.selected_option().get("kind") == "SWAP"
-		and picker.preview_label.text.contains("Swap")
+		and picker.preview_label.text.contains("SWAP")
 		and picker.preview_label.text.contains("stitched_badge"), "HEAD swap preview visible")
 	picker.confirm_button.pressed.emit()
 	var first := w.get_snapshot()
@@ -246,8 +246,8 @@ func _positive(f: Dictionary) -> void:
 		"ARM swapped through owner callback exactly once")
 	_pick("quilted_coat", "tinker")
 	_check(picker.selected_option().get("kind") == "MOVE"
-		and picker.preview_label.text.contains("Move")
-		and picker.preview_label.text.contains("Empty destination"), "COAT move preview visible")
+		and picker.preview_label.text.contains("MOVE")
+		and picker.preview_label.text.contains("empty destination"), "COAT move preview visible")
 	picker.confirm_button.pressed.emit()
 	var after := w.get_snapshot()
 	_check(f.receipts.size() == 3 and f.receipts[2].receipt.exchanged_id == ""
@@ -456,7 +456,7 @@ func _torn_preview_active() -> void:
 		"two-scrap torn wearer still has all valid re-sew choices")
 	_pick("spare_spool", "warden")
 	_check(picker.source_selector.get_item_text(picker.source_selector.selected).contains("torn/inactive")
-		and picker.preview_label.text.contains("source torn/inactive")
+		and picker.preview_label.text.contains("Tinker BEFORE") and picker.preview_label.text.contains("dormant")
 		and picker.scraps_label.text == "Scraps: 2",
 		"torn/inactive explicitly visible on source selector and preview")
 	_check(w.get_snapshot() == before and t.read_state().heroes[2].hp == 0,

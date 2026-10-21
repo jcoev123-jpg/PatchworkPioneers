@@ -77,3 +77,87 @@ static func _alive(heroes: Array, hero_id: String) -> bool:
 		if hero["id"] == hero_id:
 			return hero["hp"] > 0
 	return false
+
+
+## Detached wearer forecast for an EXACT, currently legal option. This does
+## not reserve scraps, change HP, spend a Rest action or commit re_sew().
+static func forecast(wardrobe: RunPatchWardrobe, torn: RunTornMending,
+		exact_snapshot: Variant, rest_node_id: Variant, option: Variant) -> Dictionary:
+	var rejected := {"ok": false}
+	if typeof(option) != TYPE_DICTIONARY:
+		return rejected
+	var model := project(wardrobe, torn, exact_snapshot, rest_node_id)
+	if model.get("ok") != true or not model["options"].has(option):
+		return rejected
+	var torn_state := torn.read_state()
+	if not RunPatchCoatRules._valid_heroes(torn_state.get("heroes"),
+			torn_state.get("tear_counts")):
+		return rejected
+	var attack_rules: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatPatchAttackRules.CATALOG))
+	var coat_rules: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	if not CombatPatchAttackRules.new()._valid_catalog(attack_rules) \
+			or typeof(coat_rules) != TYPE_ARRAY \
+			or not RunPatchCoatRules._valid_authored(coat_rules):
+		return rejected
+	var definitions: Dictionary = exact_snapshot["definitions"]
+	# Known authored IDs must not be mis-slotted in a caller-supplied ledger.
+	for id in CombatPatchAttackRules.EFFECTS:
+		if definitions.has(id) and definitions[id] != CombatPatchAttackRules.EFFECTS[id]["slot"]:
+			return rejected
+	if definitions.has(RunPatchCoatRules.BONUS_ID) \
+			and definitions[RunPatchCoatRules.BONUS_ID] != "COAT":
+		return rejected
+	var source_id: String = option["from_hero"]
+	var destination_id: String = option["to_hero"]
+	var slot: String = option["slot"]
+	var before_worn: Dictionary = exact_snapshot["worn"]
+	var after_worn: Dictionary = before_worn.duplicate(true)
+	after_worn[source_id][slot] = option["exchanged_id"]
+	after_worn[destination_id][slot] = option["patch_id"]
+	var source_hero: Dictionary = {}
+	var destination_hero: Dictionary = {}
+	for hero in torn_state["heroes"]:
+		if hero["id"] == source_id:
+			source_hero = hero
+		elif hero["id"] == destination_id:
+			destination_hero = hero
+	if source_hero.is_empty() or destination_hero.is_empty():
+		return rejected
+	return {
+		"ok": true, "kind": option["kind"], "slot": slot,
+		"patch_id": option["patch_id"], "exchanged_id": option["exchanged_id"],
+		"cost": option["cost"],
+		"source": {
+			"hero_id": source_id,
+			"before": _wearer(source_hero, before_worn[source_id]),
+			"after": _wearer(source_hero, after_worn[source_id])
+		},
+		"destination": {
+			"hero_id": destination_id,
+			"before": _wearer(destination_hero, before_worn[destination_id]),
+			"after": _wearer(destination_hero, after_worn[destination_id])
+		}
+	}
+
+
+static func _wearer(hero: Dictionary, assignments: Dictionary) -> Dictionary:
+	var hp: int = hero["hp"]
+	var base_max: int = hero["max_hp"]
+	var slots := {}
+	for slot in SLOTS:
+		var id: String = assignments[slot]
+		var effect := ""
+		# Only authoritative documented rules get a power description.
+		if id == "button_eye" and slot == CombatPatchAttackRules.EFFECTS[id]["slot"]:
+			effect = "first attack each combat: Exposed %d" % CombatPatchAttackRules.EFFECTS[id]["amount"]
+		elif id == "pincushion_arm" and slot == CombatPatchAttackRules.EFFECTS[id]["slot"]:
+			effect = "damage-dealing cards: +%d damage" % CombatPatchAttackRules.EFFECTS[id]["amount"]
+		elif id == RunPatchCoatRules.BONUS_ID and slot == "COAT":
+			effect = "+%d effective max HP (no heal)" % RunPatchCoatRules.BONUS
+		slots[slot] = {"id": id, "active": id != "" and hp > 0, "effect": effect}
+	var coat_active: bool = slots["COAT"]["id"] == RunPatchCoatRules.BONUS_ID and hp > 0
+	return {"hp": hp, "base_max_hp": base_max,
+		"effective_max_hp": base_max + (RunPatchCoatRules.BONUS if coat_active else 0),
+		"slots": slots}

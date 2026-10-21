@@ -83,14 +83,18 @@ func selected_option() -> Dictionary:
 
 
 func _request_selected() -> void:
-	if _pending:
+	if _pending or not is_visible_in_tree() or not confirm_button.is_visible_in_tree() \
+			or confirm_button.disabled or source_selector.disabled or destination_selector.disabled:
 		return
 	var option := selected_option()
 	if option.is_empty():
 		return
-	# Re-check the live sources at send time, not only when the panel opened.
+	# Only the ledger can commit; revalidate both legality and authored powers.
 	var model := RunRestPatchResewOptions.project(_wardrobe, _torn, _snapshot, _node_id)
-	if model.get("ok") != true or not model["options"].has(option):
+	var forecast := RunRestPatchResewOptions.forecast(
+		_wardrobe, _torn, _snapshot, _node_id, option)
+	if model.get("ok") != true or not model["options"].has(option) \
+			or forecast.get("ok") != true:
 		_clear("Choice expired: refresh the Rest before trying again")
 		return
 	_pending = true
@@ -124,15 +128,43 @@ func _update_preview(_unused: int = 0) -> void:
 	var option := selected_option()
 	if option.is_empty():
 		preview_label.text = "No eligible re-sew choices"
-	else:
-		var direction := "%s → %s" % [_nice(option["from_hero"]), _nice(option["to_hero"])]
-		var exchange := "Empty destination" if option["kind"] == "MOVE" else (
-			"Exchange for %s" % option["exchanged_id"])
-		preview_label.text = "%s  |  %s  |  %s\n%s  •  Cost: 1 scrap%s" % [
-			option["kind"].capitalize(), option["slot"], direction, exchange,
-			"  •  source torn/inactive" if not option["source_active"] else ""]
-	confirm_button.disabled = _pending or option.is_empty()
+		confirm_button.disabled = true
+		destination_selector.disabled = _pending or _destinations.is_empty()
+		return
+	var estimate := RunRestPatchResewOptions.forecast(
+		_wardrobe, _torn, _snapshot, _node_id, option)
+	if estimate.get("ok") != true:
+		_clear("Preview expired: refresh the Rest before trying again")
+		return
+	var exchange := "empty destination" if estimate["kind"] == "MOVE" else (
+		"swap with %s" % estimate["exchanged_id"])
+	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap\n%s\n%s\n%s\n%s" % [
+		estimate["kind"], estimate["slot"], _nice(estimate["source"]["hero_id"]),
+		_nice(estimate["destination"]["hero_id"]), exchange, estimate["cost"],
+		_wearer_preview(estimate["source"], "before"),
+		_wearer_preview(estimate["source"], "after"),
+		_wearer_preview(estimate["destination"], "before"),
+		_wearer_preview(estimate["destination"], "after")]
+	confirm_button.disabled = _pending
 	destination_selector.disabled = _pending or _destinations.is_empty()
+
+
+static func _wearer_preview(wearer: Dictionary, phase: String) -> String:
+	var state: Dictionary = wearer[phase]
+	var summary := []
+	for slot in RunRestPatchResewOptions.SLOTS:
+		var patch: Dictionary = state["slots"][slot]
+		var id: String = patch["id"]
+		if id == "":
+			summary.append("%s empty" % slot)
+		else:
+			var activity := "active" if patch["active"] else "dormant"
+			var power: String = " — " + patch["effect"] if not patch["effect"].is_empty() else ""
+			summary.append("%s %s (%s)%s" % [slot, id, activity, power])
+	return "%s %s • HP %d/%d, effective cap %d • %s" % [
+		_nice(wearer["hero_id"]), phase.to_upper(),
+		state["hp"], state["base_max_hp"], state["effective_max_hp"],
+		" | ".join(summary)]
 
 
 func _clear(message: String) -> void:
@@ -169,50 +201,50 @@ func _build() -> void:
 	panel.offset_bottom = 310
 	add_child(panel)
 	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 18)
+	body.add_theme_constant_override("separation", 8)
 	panel.add_child(body)
 	var padding := MarginContainer.new()
 	padding.add_theme_constant_override("margin_left", 24)
 	padding.add_theme_constant_override("margin_right", 24)
-	padding.add_theme_constant_override("margin_top", 18)
-	padding.add_theme_constant_override("margin_bottom", 18)
+	padding.add_theme_constant_override("margin_top", 12)
+	padding.add_theme_constant_override("margin_bottom", 12)
 	panel.remove_child(body)
 	panel.add_child(padding)
 	padding.add_child(body)
-	var title := _label("REST  /  RE-SEW PATCHES", 27)
+	var title := _label("REST  /  RE-SEW PATCHES", 23)
 	body.add_child(title)
-	var rule := _label("Each transfer costs 1 scrap. Your Heal / Upgrade / Stitch choice stays available.", 15)
+	var rule := _label("Each transfer costs 1 scrap. Your Heal / Upgrade / Stitch choice stays available.", 13)
 	body.add_child(rule)
-	scraps_label = _label("Scraps: --", 23)
+	scraps_label = _label("Scraps: --", 18)
 	body.add_child(scraps_label)
-	body.add_child(_label("Worn patch / source hero", 18))
+	body.add_child(_label("Worn patch / source hero", 15))
 	source_selector = OptionButton.new()
 	source_selector.name = "SourcePatch"
-	source_selector.custom_minimum_size = Vector2(0, 48)
+	source_selector.custom_minimum_size = Vector2(0, 40)
 	source_selector.focus_mode = Control.FOCUS_ALL
 	source_selector.item_selected.connect(_refresh_destinations)
 	_style_button(source_selector)
 	body.add_child(source_selector)
-	body.add_child(_label("Destination hero (same slot only)", 18))
+	body.add_child(_label("Destination hero (same slot only)", 15))
 	destination_selector = OptionButton.new()
 	destination_selector.name = "DestinationHero"
-	destination_selector.custom_minimum_size = Vector2(0, 48)
+	destination_selector.custom_minimum_size = Vector2(0, 40)
 	destination_selector.focus_mode = Control.FOCUS_ALL
 	destination_selector.item_selected.connect(_update_preview)
 	_style_button(destination_selector)
 	body.add_child(destination_selector)
-	preview_label = _label("No eligible re-sew choices", 19)
-	preview_label.custom_minimum_size = Vector2(0, 62)
+	preview_label = _label("No eligible re-sew choices", 14)
+	preview_label.custom_minimum_size = Vector2(0, 190)
 	body.add_child(preview_label)
 	confirm_button = Button.new()
 	confirm_button.name = "ConfirmResew"
 	confirm_button.text = "Re-sew (1 scrap)"
-	confirm_button.custom_minimum_size = Vector2(0, 55)
+	confirm_button.custom_minimum_size = Vector2(0, 47)
 	confirm_button.focus_mode = Control.FOCUS_ALL
 	_style_button(confirm_button)
 	confirm_button.pressed.connect(_request_selected)
 	body.add_child(confirm_button)
-	feedback_label = _label("", 15)
+	feedback_label = _label("", 13)
 	body.add_child(feedback_label)
 
 
