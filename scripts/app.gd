@@ -83,6 +83,12 @@ var _carryover_party: CombatParty
 var _carryover_result: CombatBattleResult
 var continue_button: Button
 var rest_view: VBoxContainer
+var rest_patch_button: Button
+var rest_patch_overlay: Control
+var rest_patch_picker: LiveRestPatchResewPicker
+var _rest_wardrobe: RunPatchWardrobe
+var _rest_patch_context: Array = []
+var _rest_patch_serial := 0
 var rest_heal_button: Button
 var rest_continue_button: Button
 var rest_back_button: Button
@@ -1533,7 +1539,8 @@ func _current_completed_rest() -> bool:
 
 
 func _rest_upgrade_context() -> bool:
-	return run_map != null and _rest_map != null and _rest_map.get_ref() == run_map \
+	return (_rest_wardrobe == null or _rest_patch_current(not rest_view.visible)) \
+		and run_map != null and _rest_map != null and _rest_map.get_ref() == run_map \
 		and not _rest_route.is_empty() and run_map.get_route() == _rest_route \
 		and run_map.get_current_node_id() == _rest_route.back() \
 		and run_map.get_node(_rest_route.back()).get("type") == "Rest" \
@@ -1560,7 +1567,7 @@ func _completed_rest_upgrade() -> bool:
 
 
 func _upgrade_at_rest(visit: RunRestCardUpgrade, button, choices) -> void:
-	if visit == null or visit != rest_upgrade or visit.is_consumed() \
+	if is_instance_valid(rest_patch_overlay) or visit == null or visit != rest_upgrade or visit.is_consumed() \
 		or rest_stitch == null or rest_stitch.is_consumed() or _stitch_snapshot() != _rest_stitch_source \
 		or rest_recovery == null or rest_recovery.is_consumed() or not rest_recovery._valid \
 		or rest_recovery._roster != _rest_heroes or not _rest_upgrade_context() \
@@ -1624,7 +1631,7 @@ func _completed_rest_stitch() -> bool:
 
 
 func _stitch_at_rest(visit: RunRestStitchCards, button, first, second) -> void:
-	if visit == null or visit != rest_stitch or not visit.is_valid() or visit.is_consumed() \
+	if is_instance_valid(rest_patch_overlay) or visit == null or visit != rest_stitch or not visit.is_valid() or visit.is_consumed() \
 		or rest_recovery == null or not rest_recovery._valid or rest_recovery.is_consumed() \
 		or rest_recovery._roster != _rest_heroes or rest_upgrade == null or rest_upgrade.is_consumed() \
 		or not _rest_committed_deck.is_empty() or not _rest_committed_heroes.is_empty() \
@@ -1669,6 +1676,7 @@ func _rest_upgrade_text(index: int) -> String:
 
 
 func _finish_rest_choice() -> void:
+	_sync_rest_patches()
 	rest_heal_button.disabled = true
 	rest_stitch_button.disabled = true
 	rest_stitch_first.disabled = true
@@ -1681,15 +1689,158 @@ func _finish_rest_choice() -> void:
 	rest_back_button.focus_next = rest_back_button.get_path_to(rest_continue_button)
 	rest_back_button.focus_previous = rest_back_button.get_path_to(rest_continue_button)
 	rest_back_button.grab_focus()
+	if not rest_patch_button.disabled:
+		var actions := [rest_continue_button, rest_patch_button, rest_back_button]
+		for index in range(actions.size()):
+			actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+			actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
+
+
+func _rest_patch_snapshot() -> Array:
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or _rest_wardrobe == null or run_map == null or run_rng == null:
+		return []
+	return [run_map, run_map.get_route(), run_map.get_floors(), run_map.get_generation_revision(),
+		run_rng, run_rng.state, run_seed, carry, carry.read_state(), carry.torn, carry.torn.read_state(),
+		carry._wardrobe, _rest_wardrobe, _rest_wardrobe.get_snapshot(),
+		run_heroes.duplicate(true), run_deck.duplicate(), run_trinkets.duplicate(), session_gold,
+		run_scraps, run_removal_count, _stitch_snapshot(), rest_recovery, rest_recovery.is_consumed(),
+		rest_upgrade, rest_upgrade.is_consumed(), rest_stitch, rest_stitch.get_snapshot(), rest_stitch.is_consumed()]
+
+
+func _rest_patch_current(closed: bool = false) -> bool:
+	if _rest_patch_context.is_empty() or _rest_patch_snapshot() != _rest_patch_context:
+		return false
+	var carry := party_carryover as RunTornCarryover
+	var state := _rest_wardrobe.get_snapshot()
+	return _rest_map != null and _rest_map.get_ref() == run_map and run_map.get_route() == _rest_route \
+		and state.rest_id == ("" if closed else _rest_route.back()) and carry._wardrobe == _rest_wardrobe \
+		and state.heroes == run_heroes and state.cards == run_deck and state.owned == run_trinkets \
+		and state.scraps == run_scraps and state.gold == session_gold and state.seed == run_seed \
+		and carry.can_bind_wardrobe(_rest_wardrobe, carry.torn, state)
+
+
+func _sync_rest_patches() -> void:
+	# Only called after an authorized primary choice commits.
+	if _rest_wardrobe == null:
+		return
+	_rest_wardrobe.refresh_run_context(run_heroes, run_trinkets, run_scraps,
+		session_gold, run_deck, _rest_wardrobe.get_snapshot())
+	_rest_patch_context = _rest_patch_snapshot()
+
+
+func _open_rest_patches(button) -> void:
+	if not is_instance_valid(button) or button != rest_patch_button or button.disabled \
+		or not button.is_visible_in_tree() or not _rest_patch_current() \
+		or is_instance_valid(rest_patch_overlay):
+		return
+	rest_patch_overlay = Control.new()
+	add_child(rest_patch_overlay)
+	rest_patch_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var shade := ColorRect.new()
+	shade.color = Color(0, 0, 0, 0.8)
+	rest_patch_overlay.add_child(shade)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rest_patch_picker = LiveRestPatchResewPicker.new()
+	rest_patch_overlay.add_child(rest_patch_picker)
+	rest_patch_picker.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var close := Button.new()
+	close.name = "DismissResew"
+	close.text = "Back to Rest"
+	close.position = Vector2(960, 12)
+	close.size = Vector2(180, 36)
+	rest_patch_overlay.add_child(close)
+	close.pressed.connect(_dismiss_rest_patches.bind(rest_patch_overlay, close))
+	var carry := party_carryover as RunTornCarryover
+	rest_patch_picker.present(_rest_wardrobe, carry.torn, _rest_wardrobe.get_snapshot(), _rest_route.back())
+	rest_patch_picker.re_sew_requested.connect(_resew_at_rest.bind(rest_patch_picker, _rest_wardrobe, carry))
+	var controls := [rest_patch_picker.source_selector, rest_patch_picker.destination_selector,
+		rest_patch_picker.confirm_button, close]
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
+	close.grab_focus()
+
+
+func _dismiss_rest_patches(overlay, button) -> void:
+	if is_instance_valid(overlay) and overlay == rest_patch_overlay and overlay.is_visible_in_tree() \
+		and is_instance_valid(button) and button.get_parent() == overlay and not button.disabled:
+		_clear_rest_patch_overlay()
+		rest_patch_button.grab_focus()
+
+
+func _clear_rest_patch_overlay() -> void:
+	if is_instance_valid(rest_patch_picker):
+		for connection in rest_patch_picker.re_sew_requested.get_connections():
+			rest_patch_picker.re_sew_requested.disconnect(connection.callable)
+	if is_instance_valid(rest_patch_overlay):
+		remove_child(rest_patch_overlay)
+		rest_patch_overlay.queue_free()
+	rest_patch_overlay = null
+	rest_patch_picker = null
+
+
+func _resew_at_rest(patch_id: String, from_hero: String, to_hero: String,
+		node: String, expected: Dictionary, picker, wardrobe, carry) -> void:
+	if not is_instance_valid(picker) or picker != rest_patch_picker or not picker.is_visible_in_tree() \
+		or not is_instance_valid(rest_patch_overlay) or picker.get_parent() != rest_patch_overlay \
+		or not is_instance_valid(rest_view) or not rest_view.is_visible_in_tree() \
+		or wardrobe != _rest_wardrobe or carry != party_carryover or not _rest_patch_current() \
+		or node != _rest_route.back() or expected != wardrobe.get_snapshot() \
+		or not picker._pending or picker._snapshot != expected or picker._node_id != node:
+		return
+	var selected: int = picker.destination_selector.selected
+	if selected < 0 or selected >= picker._destinations.size() \
+		or not picker.confirm_button.is_visible_in_tree() \
+		or not picker.source_selector.is_visible_in_tree() or not picker.destination_selector.is_visible_in_tree():
+		return
+	var choice: Dictionary = picker._destinations[selected]
+	if [choice.patch_id, choice.from_hero, choice.to_hero] != [patch_id, from_hero, to_hero]:
+		return
+	var options := RunRestPatchResewOptions.project(wardrobe, carry.torn, expected, node)
+	if not options.ok or not options.options.any(func(option): return option.patch_id == patch_id \
+		and option.from_hero == from_hero and option.to_hero == to_hero):
+		return
+	var result: Dictionary = wardrobe.re_sew(patch_id, from_hero, to_hero, node,
+		"rest:%s:resew:%d" % [node, _rest_patch_serial], expected)
+	if not result.ok:
+		return
+	_rest_patch_serial += 1
+	run_scraps = result.state.scraps
+	carry.bind_wardrobe(wardrobe, carry.torn, result.state)
+	# Rebase the live purse guard without replacing completed primary receipts.
+	if rest_stitch.is_consumed():
+		_rest_stitch_committed = _stitch_snapshot()
+	else:
+		if _rest_committed_deck.is_empty():
+			rest_stitch = RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id)
+			for connection in rest_stitch_button.pressed.get_connections():
+				rest_stitch_button.pressed.disconnect(connection.callable)
+			rest_stitch_button.pressed.connect(_stitch_at_rest.bind(rest_stitch, rest_stitch_button, rest_stitch_first, rest_stitch_second))
+			if not rest_recovery.is_consumed():
+				rest_stitch_button.disabled = run_scraps < RunRestStitchCards.SCRAP_COST
+				rest_stitch_first.disabled = rest_stitch_button.disabled
+				rest_stitch_second.disabled = rest_stitch_button.disabled
+		# Upgrade changes the deck, so retain its original source deck in this guard.
+		_rest_stitch_source = RunRestStitchCards.new(_rest_stitch_source.deck,
+			_rest_stitch_source.descriptors, run_scraps, _rest_stitch_source.next_stitch_id).get_snapshot()
+	_rest_patch_context = _rest_patch_snapshot()
+	rest_view.get_node("RestStitchCost").text = "Stitch two different owners: 3 scraps (owned: %d)" % run_scraps
+	picker.present(wardrobe, carry.torn, result.state, node, "Re-sewn for 1 scrap.")
 
 
 func _continue_from_rest(visit: RunRestRecovery, source_map: WeakRef, prior: Array[String], button) -> void:
-	if visit == null or visit != rest_recovery or not _current_completed_rest() \
+	if is_instance_valid(rest_patch_overlay) or visit == null or visit != rest_recovery or not _current_completed_rest() \
 		or source_map == null or source_map.get_ref() != run_map or prior != _rest_route \
 		or not is_instance_valid(rest_view) or not rest_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != rest_continue_button or button.disabled \
 		or not button.is_visible_in_tree() or is_instance_valid(route_view):
 		return
+	if _rest_wardrobe != null:
+		if not _rest_patch_current() or not _rest_wardrobe.end_rest(_rest_route.back(), _rest_wardrobe.get_snapshot()).ok:
+			return
+		_clear_rest_patch_overlay()
+		_rest_patch_context = _rest_patch_snapshot()
 	button.disabled = true
 	rest_view.hide()
 	_present_connected_route(source_map)
@@ -1731,8 +1882,21 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") != "Rest":
 		return false
+	var carry := party_carryover as RunTornCarryover
+	var wardrobe := carry._wardrobe if carry != null else null
+	if wardrobe != null:
+		var state := wardrobe.get_snapshot()
+		if state.heroes != run_heroes or state.owned != run_trinkets or state.scraps != run_scraps \
+			or state.gold != session_gold or state.cards != run_deck or state.seed != run_seed \
+			or state.rest_id != "" or state.rest_ids.has(id) \
+			or not carry.can_bind_wardrobe(wardrobe, carry.torn, state):
+			return false
 	if not run_map.choose_node(id):
 		return false
+	_rest_wardrobe = wardrobe
+	_rest_patch_serial = 0
+	if wardrobe != null:
+		wardrobe.start_rest(id, wardrobe.get_snapshot())
 	if is_instance_valid(rest_view):
 		remove_child(rest_view)
 		rest_view.queue_free()
@@ -1768,6 +1932,7 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_view.add_child(rest_hp_label)
 	_refresh_rest_hp()
 	var stitch_label := Label.new()
+	stitch_label.name = "RestStitchCost"
 	stitch_label.text = "Stitch two different owners: 3 scraps (owned: %d)" % run_scraps
 	rest_view.add_child(stitch_label)
 	rest_stitch_first = OptionButton.new()
@@ -1812,6 +1977,11 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_continue_button.disabled = true
 	rest_continue_button.pressed.connect(_continue_from_rest.bind(rest_recovery, _rest_map, _rest_route.duplicate(), rest_continue_button))
 	rest_view.add_child(rest_continue_button)
+	rest_patch_button = Button.new()
+	rest_patch_button.text = "Re-sew patches (1 scrap per transfer)"
+	rest_patch_button.disabled = _rest_wardrobe == null
+	rest_patch_button.pressed.connect(_open_rest_patches.bind(rest_patch_button))
+	rest_view.add_child(rest_patch_button)
 	rest_back_button = Button.new()
 	rest_back_button.text = "Return to title"
 	rest_back_button.pressed.connect(_return_from_visit.bind(rest_view))
@@ -1821,15 +1991,18 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		var actions: Array[Control] = [rest_heal_button, rest_upgrade_cards, rest_upgrade_button]
 		if not rest_stitch_button.disabled:
 			actions.append_array([rest_stitch_first, rest_stitch_second, rest_stitch_button])
+		if not rest_patch_button.disabled:
+			actions.append(rest_patch_button)
 		actions.append(rest_back_button)
 		for index in range(actions.size()):
 			actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 			actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
+	_rest_patch_context = _rest_patch_snapshot()
 	return true
 
 
 func _heal_at_rest(visit: RunRestRecovery, button) -> void:
-	if visit == null or visit != rest_recovery or visit.is_consumed() \
+	if is_instance_valid(rest_patch_overlay) or visit == null or visit != rest_recovery or visit.is_consumed() \
 		or rest_stitch == null or rest_stitch.is_consumed() or _stitch_snapshot() != _rest_stitch_source \
 		or not _rest_upgrade_context() \
 		or (rest_upgrade != null and rest_upgrade.is_consumed()) or not _rest_committed_deck.is_empty() \
@@ -2324,6 +2497,11 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	_clear_rest_patch_overlay()
+	_rest_wardrobe = null
+	_rest_patch_context.clear()
+	rest_patch_button = null
+	_rest_patch_serial = 0
 	_clear_reward_choice()
 	_clear_terminal_result()
 	for action in reward_buttons:
