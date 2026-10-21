@@ -33,6 +33,35 @@ func start_player_turn() -> void:
 	_tinker.start_player_turn()
 
 
+## Detached passive state for an atomic multi-effect transaction. The caller
+## resolves against detached rosters and publishes only after every half succeeds.
+func stage_transaction() -> CombatAttackCards:
+	var staged := CombatAttackCards.new()
+	staged._tinker._consumed = _tinker._consumed
+	if _patches != null:
+		staged._patches = CombatPatchAttackRules.new()
+		staged._patches._valid = _patches._valid
+		staged._patches._active = _patches._active.duplicate(true)
+		staged._patches._consumed = _patches._consumed.duplicate(true)
+	return staged
+
+
+func commit_transaction(staged: CombatAttackCards) -> void:
+	_tinker._consumed = staged._tinker._consumed
+	if _patches != null:
+		_patches._consumed = staged._patches._consumed.duplicate(true)
+
+
+## Reuse full authored attack validation/effects without charging a composite's
+## real deck for this half. No RNG or synthetic half enters the shared piles.
+func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int) -> Dictionary:
+	var eligibility := CombatDeck.new([], RandomNumberGenerator.new())
+	eligibility.hand.append(card_id)
+	eligibility.combat_state.start_player_turn()
+	return play_attack(eligibility, party, enemies, card_id, target_position)
+
+
 ## Rejects every invalid selection, recipient and status snapshot before mutating
 ## any real combat state. Target positions are original roster slots, never indices
 ## compacted after deaths. Supplied status snapshots are never mutated.

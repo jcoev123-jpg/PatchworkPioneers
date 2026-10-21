@@ -5,6 +5,18 @@ extends RefCounted
 
 
 func play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary, target_position: int = 0) -> bool:
+	return _play_support(deck, party, definition, target_position, true)
+
+
+## Only for a detached transaction: all ordinary validation/effects, but the
+## enclosing composite owns its single charge/discard after both halves resolve.
+func resolve_staged_half(deck: CombatDeck, party: CombatParty,
+		definition: Dictionary, target_position: int = 0) -> bool:
+	return _play_support(deck, party, definition, target_position, false)
+
+
+func _play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary,
+		target_position: int, consume_card: bool) -> bool:
 	if deck == null or party == null or not deck.turn_active or not party.is_valid():
 		return false
 
@@ -61,7 +73,7 @@ func play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary, 
 
 	# After prevalidation all following operations are guaranteed by the
 	# existing deck/party APIs to succeed; charge exactly once.
-	if not deck.try_spend_energy(cost):
+	if consume_card and not deck.try_spend_energy(cost):
 		return false
 	match effect:
 		"self_block", "ally_block":
@@ -72,5 +84,6 @@ func play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary, 
 			# This card is still in hand, hence cannot enter the reshuffle
 			# during its own draw (important for zero-cost self-draw cards).
 			deck.draw_extra(amount)
-	deck.discard_played(card_id)
+	if consume_card:
+		deck.discard_played(card_id)
 	return true
