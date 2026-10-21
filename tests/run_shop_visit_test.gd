@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_removal_before_purchase_reconciliation()
 	_test_paid_trinket_transactions()
 	_test_paid_receipt_rejections()
+	_test_duplicate_trinket_recovery()
 	_test_fight_reward_sequences()
 	_test_fight_reward_rejections()
 	if failures.is_empty():
@@ -422,6 +423,74 @@ func _test_paid_receipt_rejections() -> void:
 	_check(ledger.close_visit(), "forgery fixture closes")
 	_reject_paid(ledger, shop, genuine, "closed Shop")
 	_check(ledger.get_state().trinkets == ["old_badge", "t_spool"], "closed Shop inventory remains owned")
+
+
+func _duplicate_trinket_sequence(remove_first: bool) -> Array:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick", "warden_strike"]
+	var owned: Array[String] = ["old_badge"]
+	var ledger := RunShopVisit.new(deck, 360, 0, owned)
+	var timeline: Array = [ledger.get_state()]
+	for i in range(2):
+		var node := "duplicate-shop-%d" % i
+		_check(ledger.open_visit(node), "duplicate recovery opens distinct Shop")
+		if remove_first:
+			var removal := ledger.remove_card("warden_strike")
+			_check(removal.ok and removal.price == 75 + 25 * i,
+				"duplicate recovery uses real removal at cumulative price")
+		var before := ledger.get_state()
+		var duplicate_id := "old_badge" if i == 0 else "t_spool"
+		_check(before.trinkets.has(duplicate_id) and before.gold >= 40
+			and before.status == ("used" if remove_first else "available"),
+			"duplicate fixture owns ID with sufficient funds in active visit")
+		var shop := _paid_shop(before)
+		_check(shop.is_valid(), "duplicate recovery has live-style purchase service")
+		var appended: Array = before.trinkets.duplicate()
+		appended.append(duplicate_id)
+		var duplicate := {"ok": true,
+			"receipt": {"kind": "trinket", "id": duplicate_id, "price": 40},
+			"state": {"deck": before.deck.duplicate(), "trinkets": appended,
+				"gold": before.gold - 40}}
+		_reject_paid(ledger, shop, duplicate, "pre-owned or prior-Shop duplicate")
+		timeline.append(ledger.get_state())
+		var fresh_id := "t_spool" if i == 0 else "t_pocket"
+		var price := 40 if i == 0 else 20
+		_check(not before.trinkets.has(fresh_id), "recovery trinket is unowned")
+		seed(71831)
+		var next_draw := randi()
+		seed(71831)
+		_paid_transaction(ledger, shop, "trinket", fresh_id, price,
+			"fresh trinket after rejected duplicate")
+		_check(randi() == next_draw, "legitimate recovery consumes no global RNG")
+		var paid_state := shop.get_state()
+		var paid_stock := shop.get_stock()
+		var committed := ledger.get_state()
+		_check(not shop.buy("trinket", fresh_id).ok, "recovery stock sells only once")
+		_check(shop.get_state() == paid_state and shop.get_stock() == paid_stock,
+			"second buy preserves exact service state and sold stock")
+		_check_state_unchanged(ledger, committed, "service retry leaves visit intact")
+		timeline.append({"state": ledger.get_state(), "stock": shop.get_stock()})
+		_check(ledger.close_visit(), "duplicate recovery visit remains closable")
+		timeline.append(ledger.get_state())
+	_check(ledger.open_visit("duplicate-shop-2"), "subsequent separate Shop opens")
+	var later := ledger.get_state()
+	_check(later.trinkets == ["old_badge", "t_spool", "t_pocket"]
+		and later.deck == (["seamstress_prick"] if remove_first else deck)
+		and later.gold == (125 if remove_first else 300)
+		and later.prior_removals == (2 if remove_first else 0)
+		and later.status == "available" and later.removal_available
+		and later.shop_node_id == "duplicate-shop-2"
+		and later.visited_ids == ["duplicate-shop-0", "duplicate-shop-1", "duplicate-shop-2"],
+		"later Shop retains all ownership, exact charges, removal count and history")
+	_check(ledger.close_visit(), "subsequent Shop closes")
+	timeline.append(ledger.get_state())
+	return timeline
+
+
+func _test_duplicate_trinket_recovery() -> void:
+	for remove_first in [false, true]:
+		var first := _duplicate_trinket_sequence(remove_first)
+		var replay := _duplicate_trinket_sequence(remove_first)
+		_check(first == replay, "duplicate rejection and recovery replay complete ledger/stock timeline")
 
 
 func _starter_deck() -> Array[String]:

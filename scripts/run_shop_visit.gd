@@ -102,6 +102,8 @@ func reconcile_purchase(result: Dictionary) -> bool:
 		if has_receipt and last_card != purchased_id:
 			return false
 	else:
+		if _trinkets.has(purchased_id):
+			return false
 		if cards != _deck or trinkets.size() != _trinkets.size() + 1 or trinkets.slice(0, _trinkets.size()) != _trinkets:
 			return false
 		if trinkets.back() != purchased_id:
