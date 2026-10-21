@@ -1,0 +1,375 @@
+extends SceneTree
+## Deterministic Rest stitch transactions and pure dual-owner hand-legality preview.
+
+const PRICK := "seamstress_prick"
+const POP := "tinker_pop_shot"
+const BOMB := "tinker_scrap_bomb"
+const STRIKE := "warden_strike"
+const STRIKE_PLUS := "warden_strike_plus"
+var failures: Array[String] = []
+var checks := 0
+
+
+func _initialize() -> void:
+	_test_original_transaction_and_rng()
+	_test_eligibility_order_and_isolation()
+	_test_negative_matrix_and_retry()
+	_test_two_visits_upgrade_and_shop()
+	_test_invalid_ledgers()
+	if failures.is_empty():
+		print("run_rest_stitch_cards_test: PASS (", checks, " checks)")
+	else:
+		for failure in failures:
+			printerr(failure)
+		print("run_rest_stitch_cards_test: FAIL (", failures.size(), " failures)")
+	quit(0 if failures.is_empty() else 1)
+
+
+func _check(condition: bool, message: String) -> void:
+	checks += 1
+	if not condition:
+		failures.append(message)
+
+
+func _json(path: String) -> Variant:
+	var file := FileAccess.open(path, FileAccess.READ)
+	_check(file != null, "open shipped JSON " + path)
+	if file == null:
+		return null
+	var data: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	_check(data is Array, "shipped JSON array " + path)
+	return data
+
+
+func _deck() -> Array[String]:
+	var content: Variant = _json("res://data/cards/starter_deck.json")
+	var result: Array[String] = []
+	if content is Array:
+		for id in content:
+			_check(id is String, "starting deck contains string-only IDs")
+			if id is String:
+				result.append(id)
+	return result
+
+
+func _party() -> Array[Dictionary]:
+	var definitions: Variant = _json("res://data/heroes/starter_party.json")
+	if not definitions is Array:
+		return []
+	for definition in definitions:
+		if definition is Dictionary and typeof(definition.get("max_hp")) == TYPE_FLOAT:
+			_check(definition["max_hp"] == floor(definition["max_hp"]), "shipped max_hp is integral")
+			definition["max_hp"] = int(definition["max_hp"])
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid(), "real CombatParty created from shipped hero definitions")
+	return party.get_heroes()
+
+
+func _index(deck: Array, card: String, nth: int = 0) -> int:
+	var count := 0
+	for i in range(deck.size()):
+		if deck[i] == card:
+			if count == nth:
+				return i
+			count += 1
+	return -1
+
+
+func _is_success(result: Variant) -> bool:
+	return result is Dictionary and result.get("ok") == true
+
+
+func _reject(service: RunRestStitchCards, a: Variant, b: Variant, expected: Variant, label: String) -> void:
+	var before := service.get_snapshot()
+	var used := service.is_consumed()
+	var result := service.choose_stitch(a, b, expected)
+	_check(result.get("ok", true) == false, label + " rejected")
+	_check(service.get_snapshot() == before and service.is_consumed() == used, label + " entire ledger/latch unchanged")
+	_check(result.get("deck") == before["deck"] and result.get("descriptors") == before["descriptors"]
+		and result.get("remaining_scraps") == before["remaining_scraps"]
+		and result.get("next_stitch_id") == before["next_stitch_id"]
+		and result.get("receipt") == before["receipt"], label + " rejected receipt/state preserved")
+	_check(result.get("stitched_id") == "" and result.get("consumed_ids") == []
+		and result.get("consumed_indices") == [] and result.get("descriptor") == {},
+		label + " creates no phantom stitched ID, consumption or descriptor")
+
+
+func _test_original_transaction_and_rng() -> void:
+	var source := _deck()
+	var catalog := StarterCards.new()
+	_check(source.size() >= 12, "real shared deck has starter instances")
+	_check(source.count(PRICK) == 2 and source.count(POP) == 2, "real repeated Prick and Pop copies exist")
+	_check(catalog.get_definition(PRICK).get("owner") == "seamstress"
+		and catalog.get_definition(POP).get("owner") == "tinker", "real cross-owner pair")
+	var a := _index(source, PRICK)
+	var b := _index(source, POP)
+	_check(a >= 0 and b >= 0 and a != b, "distinct real starter indices")
+	if a < 0 or b < 0:
+		return
+	var before := source.duplicate()
+	var visit := RunRestStitchCards.new(source, {}, 3)
+	_check(visit.is_valid() and not visit.is_consumed(), "valid Rest visit ready")
+	_check(visit.has_method("choose_stitch") and visit.has_method("preview_play") and visit.has_method("get_snapshot"), "public transaction and preview methods")
+	var snapshot := visit.get_snapshot()
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 20261021
+	var rng_state := local_rng.state
+	seed(20261021)
+	var global_next := randi()
+	seed(20261021)
+	var result := visit.choose_stitch(a, b, snapshot)
+	_check(randi() == global_next and local_rng.state == rng_state, "no global or injected RNG draw")
+	_check(_is_success(result) and visit.is_consumed(), "accepted Rest stitch consumes exactly one choice")
+	if not _is_success(result):
+		return
+	_check(source == before and snapshot["deck"] == before, "caller deck and submitted snapshot untouched")
+	_check(result["deck"].size() == before.size() - 1 and result["remaining_scraps"] == 0,
+		"12-to-11 shared-deck transition and 3-to-0 scraps")
+	var id: String = result["stitched_id"]
+	_check(id == "stitched_000001" and result["next_stitch_id"] == 2,
+		"first deterministic durable ID and advanced cursor")
+	_check(result["deck"].count(id) == 1 and result["deck"].count(PRICK) == 1
+		and result["deck"].count(POP) == 1, "exactly one copy of each consumed, one stitch inserted")
+	var expected := before.duplicate()
+	expected.remove_at(maxi(a, b))
+	expected.remove_at(mini(a, b))
+	expected.insert(mini(a, b), id)
+	_check(result["deck"] == expected, "untouched survivors remain in original deck order")
+	_check(result["consumed_indices"] == [a, b] and result["consumed_ids"] == [PRICK, POP],
+		"receipt identifies ordered selected instances")
+	_check(result["source_receipt"] == snapshot["receipt"] and result["receipt"] != snapshot["receipt"],
+		"source receipt preserved; crafted ledger has new receipt")
+	var desc: Dictionary = result["descriptors"][id].duplicate(true)
+	_check(desc == result["descriptor"] and desc["display_name"] == "Prick / Pop Shot" and desc["cost"] == 2,
+		"authored joined name, computed capped cost, registry receipt")
+	_check(desc["half_ids"] == [PRICK, POP] and desc["owners"] == ["seamstress", "tinker"]
+		and not desc["can_upgrade"] and not desc["can_stitch"], "halves and permanent nonupgrade/nonrestitch flags")
+	_check(desc["first_half"] == catalog.get_definition(PRICK)
+		and desc["second_half"] == catalog.get_definition(POP), "entire canonical definitions retained in order")
+	_check(desc["first_half"]["effects"] == {"damage": 3, "bleed": 2}
+		and desc["second_half"]["effects"] == {"damage": 5}, "authored effects unchanged; no passive applied")
+	var rerun := RunRestStitchCards.new(before, {}, 3)
+	var replay := rerun.choose_stitch(a, b, rerun.get_snapshot())
+	_check(replay == result, "fresh independent run deterministically reproduces complete receipt")
+	_reject(visit, a, b, snapshot, "second choice after successful visit")
+	_check(visit.get_snapshot()["deck"] == result["deck"], "repeat rejection cannot undo committed card")
+	result["descriptors"][id]["first_half"]["effects"]["damage"] = 999
+	result["deck"].clear()
+	result["descriptor"]["second_half"]["effects"]["damage"] = 777
+	var intact := visit.get_snapshot()
+	_check(intact["deck"] == expected and intact["descriptors"][id] == desc,
+		"all returned receipt containers are deep detached")
+	intact["descriptors"][id]["first_half"]["effects"]["damage"] = 500
+	_check(visit.get_snapshot()["descriptors"][id]["first_half"]["effects"]["damage"] == 3,
+		"two consecutive service reads are independently detached")
+
+
+func _test_eligibility_order_and_isolation() -> void:
+	var deck := _deck()
+	var a := _index(deck, PRICK)
+	var b := _index(deck, BOMB)
+	_check(a >= 0 and b >= 0, "actual Prick and Scrap Bomb in shipped deck")
+	if a < 0 or b < 0:
+		return
+	var visit := RunRestStitchCards.new(deck, {}, 3)
+	var result := visit.choose_stitch(a, b, visit.get_snapshot())
+	_check(_is_success(result), "Prick / Scrap Bomb crafted")
+	if not _is_success(result):
+		return
+	var id: String = result["stitched_id"]
+	_check(result["descriptor"]["cost"] == 3 and result["descriptor"]["display_name"] == "Prick / Scrap Bomb",
+		"max(1,2)+1 capped at 3")
+	var heroes := _party()
+	if heroes.size() != 3:
+		return
+	_check(heroes[0]["id"] == "warden" and heroes[0]["position"] == 1 and heroes[0]["hp"] == 40
+		and heroes[1]["id"] == "seamstress" and heroes[1]["position"] == 2 and heroes[1]["hp"] == 30
+		and heroes[2]["id"] == "tinker" and heroes[2]["position"] == 3 and heroes[2]["hp"] == 26,
+		"real party includes all three alive owners in authored slots")
+	var original_heroes := heroes.duplicate(true)
+	var initial := visit.get_snapshot()
+	var legal := visit.preview_play(id, heroes)
+	_check(legal.get("ok") == true and legal.get("cost") == 3, "two real living, positioned owners eligible")
+	var catalog := StarterCards.new()
+	_check(legal["first_half"] == catalog.get_definition(PRICK)
+		and legal["second_half"] == catalog.get_definition(BOMB)
+		and legal["halves"] == [catalog.get_definition(PRICK), catalog.get_definition(BOMB)],
+		"ordered, independent exact authored halves with individual targets")
+	_check(legal["first_half"]["target_kind"] == "enemy_single"
+		and legal["second_half"]["target_kind"] == "enemy_all"
+		and legal["second_half"]["from_positions"] == [3], "per-half targeting and from positions remain distinct")
+	heroes[1]["position"] = 3
+	heroes[2]["position"] = 2
+	var moved := heroes.duplicate(true)
+	var illegal := visit.preview_play(id, heroes)
+	_check(illegal["ok"] == false and illegal["halves"] == [], "Tinker at 2 fails Scrap Bomb position 3 even though Prick is legal")
+	_check(heroes == moved, "preview cannot correct or move actors")
+	heroes = original_heroes.duplicate(true)
+	for downed in [1, 2]:
+		var fixture := heroes.duplicate(true)
+		fixture[downed]["hp"] = 0
+		var rejected := visit.preview_play(id, fixture)
+		_check(rejected["ok"] == false and rejected["first_half"] == {} and rejected["second_half"] == {},
+			"downed owner index %d prevents dual-owner play" % downed)
+	var restored := visit.preview_play(id, heroes)
+	_check(restored == legal, "restored real owner snapshots regain ordered eligibility")
+	legal["first_half"]["effects"]["bleed"] = 999
+	legal["halves"][1]["effects"]["damage"] = 999
+	_check(visit.preview_play(id, heroes)["first_half"]["effects"]["bleed"] == 2
+		and visit.preview_play(id, heroes)["second_half"]["effects"]["damage"] == 4,
+		"preview definitions detached from owned registry and each other")
+	_check(heroes == original_heroes and visit.get_snapshot() == initial,
+		"all legality checks pure, no combat/party/deck/currency/receipt mutations")
+	_check(not visit.preview_play("not_real", heroes)["ok"]
+		and not visit.preview_play(id, [heroes[0]])["ok"], "unknown IDs and incomplete real roster fail closed")
+
+
+func _test_negative_matrix_and_retry() -> void:
+	var deck := _deck()
+	var a := _index(deck, PRICK)
+	var b := _index(deck, POP)
+	var w1 := _index(deck, STRIKE)
+	var w2 := _index(deck, STRIKE, 1)
+	_check(a >= 0 and b >= 0 and w1 >= 0 and w2 >= 0 and w1 != w2,
+		"negative matrix has two genuine Warden Strike copies")
+	if a < 0 or b < 0 or w1 < 0 or w2 < 0:
+		return
+	var visit := RunRestStitchCards.new(deck, {}, 3)
+	var receipt := visit.get_snapshot()
+	for pair in [[a,a], [w1,w2], [-1,b], [a,deck.size()], [null,b], [1.5,b], ["0",b]]:
+		_reject(visit, pair[0], pair[1], receipt, "bad pair " + str(pair))
+	var wrong_deck := receipt.duplicate(true)
+	wrong_deck["deck"][w1] = "warden_brace"
+	_reject(visit, a, b, wrong_deck, "stale original deck")
+	var wrong_registry := receipt.duplicate(true)
+	wrong_registry["descriptors"]["stitched_999999"] = {}
+	_reject(visit, a, b, wrong_registry, "stale descriptor ledger")
+	var wrong_receipt := receipt.duplicate(true)
+	wrong_receipt["receipt"] = "stale receipt"
+	_reject(visit, a, b, wrong_receipt, "stale receipt token")
+	var wrong_scraps := receipt.duplicate(true)
+	wrong_scraps["remaining_scraps"] = 4
+	_reject(visit, a, b, wrong_scraps, "stale currency")
+	var wrong_cursor := receipt.duplicate(true)
+	wrong_cursor["next_stitch_id"] = 9
+	_reject(visit, a, b, wrong_cursor, "stale allocator cursor")
+	_reject(visit, a, b, {}, "missing snapshot")
+	_reject(visit, a, b, null, "null snapshot")
+	var poor := RunRestStitchCards.new(deck, {}, 2)
+	_reject(poor, a, b, poor.get_snapshot(), "insufficient scraps")
+	_check(not poor.is_consumed(), "unaffordable visit remains open, never charged")
+	for bad in [-1, -3, 0.5]:
+		var invalid := RunRestStitchCards.new(deck, {}, bad)
+		_check(not invalid.is_valid(), "negative or fractional currency invalid at construction")
+		_reject(invalid, a, b, invalid.get_snapshot(), "invalid currency " + str(bad))
+	var ok := visit.choose_stitch(a, b, receipt)
+	_check(_is_success(ok) and ok["stitched_id"] == "stitched_000001" and ok["remaining_scraps"] == 0,
+		"valid retry after ALL rejected attempts uses first ID and spends exactly three")
+	if not _is_success(ok):
+		return
+	_reject(visit, w1, w2, receipt, "repeated submission in consumed visit")
+	var next_visit := RunRestStitchCards.new(ok["deck"], ok["descriptors"], 4, ok["next_stitch_id"])
+	_check(next_visit.is_valid(), "later visit can load an actual owned stitched descriptor")
+	var stitched_index := _index(ok["deck"], ok["stitched_id"])
+	_reject(next_visit, stitched_index, _index(ok["deck"], STRIKE), next_visit.get_snapshot(), "already stitched half")
+	_check(next_visit.choose_stitch(_index(ok["deck"], STRIKE), _index(ok["deck"], POP), next_visit.get_snapshot())["ok"],
+		"valid retry after already-stitched rejection remains possible")
+
+
+func _test_two_visits_upgrade_and_shop() -> void:
+	var deck := _deck()
+	var strike := _index(deck, STRIKE)
+	var pop := _index(deck, POP)
+	if strike < 0 or pop < 0:
+		_check(false, "authored Strike / Pop Shot present")
+		return
+	var upgraded := RunRestCardUpgrade.new(deck, {STRIKE: STRIKE_PLUS}).choose_upgrade(strike)
+	_check(upgraded.get("ok") == true, "existing Rest upgrade turns one real Strike into Strike+ before stitch")
+	if not _is_success(upgraded):
+		return
+	var run_deck: Array = upgraded["deck"]
+	_check(run_deck[strike] == STRIKE_PLUS and run_deck.count(STRIKE) >= 1, "only selected Strike copy upgraded")
+	var first := RunRestStitchCards.new(run_deck, {}, 6)
+	var one := first.choose_stitch(strike, pop, first.get_snapshot())
+	_check(_is_success(one), "first upgraded-half stitch succeeds")
+	if not _is_success(one):
+		return
+	var id1: String = one["stitched_id"]
+	var desc1: Dictionary = one["descriptor"]
+	_check(desc1["display_name"] == "Strike+ / Pop Shot" and desc1["cost"] == 2
+		and desc1["first_half"] == StarterCards.new().get_definition(STRIKE_PLUS)
+		and desc1["first_half"]["effects"]["damage"] == 7, "upgraded half stored with complete authentic authored effect")
+	var later := RunRestStitchCards.new(one["deck"], one["descriptors"], one["remaining_scraps"], one["next_stitch_id"])
+	_check(later.is_valid(), "next Rest loads committed deck/descriptor/cursor")
+	var one_again := later.get_snapshot()
+	var two := later.choose_stitch(_index(one["deck"], PRICK), _index(one["deck"], POP), one_again)
+	_check(_is_success(two), "second visit still has a cross-owner pair")
+	if not _is_success(two):
+		return
+	var id2: String = two["stitched_id"]
+	_check(id2 != id1 and two["descriptors"].size() == 2 and two["deck"].count(id1) == 1
+		and two["deck"].count(id2) == 1 and two["remaining_scraps"] == 0, "unique IDs and surviving first stitched descriptor")
+	var replay := RunRestStitchCards.new(one["deck"], one["descriptors"], 3, one["next_stitch_id"])
+	_check(replay.choose_stitch(_index(one["deck"], PRICK), _index(one["deck"], POP), replay.get_snapshot())["stitched_id"] == id2,
+		"second visit allocation reproducible")
+	# Existing upgrade rejects stitched IDs rather than authoring an upgrade.
+	var upgrading_composite := RunRestCardUpgrade.new(two["deck"], {id1: "forged_composite_plus"})
+	_check(not upgrading_composite.choose_upgrade(_index(two["deck"], id1))["ok"],
+		"existing Rest upgrader rejects stitched deck instead of upgrading a composite")
+	var owned: Array[String] = []
+	owned.assign(two["deck"])
+	var removed := RunShopCardRemoval.try_remove(owned, 175, 0, id1)
+	_check(removed["ok"] and removed["price"] == 75 and removed["gold"] == 100
+		and removed["prior_removals"] == 1, "Shop preserves 75-gold first removal cost")
+	_check(removed["deck"].size() == owned.size() - 1 and removed["deck"].count(id1) == 0
+		and removed["deck"].count(id2) == 1 and owned.count(id1) == 1,
+		"Shop removes the composite as precisely one ID, with another preserved")
+	var second_remove := RunShopCardRemoval.try_remove(removed["deck"], removed["gold"], removed["prior_removals"], id2)
+	_check(second_remove["ok"] and second_remove["price"] == 100 and second_remove["gold"] == 0
+		and second_remove["deck"].count(id2) == 0, "existing Shop +25 pricing and whole stitched card removal")
+	var third := RunRestStitchCards.new(two["deck"], two["descriptors"], 3, two["next_stitch_id"])
+	_check(third.is_valid(), "owned descriptor registry survives multiple visits")
+	var duplicate_deck: Array = _deck()
+	var p1 := _index(duplicate_deck, PRICK)
+	var t1 := _index(duplicate_deck, POP)
+	var repeated_first := RunRestStitchCards.new(duplicate_deck, {}, 6)
+	var pair1 := repeated_first.choose_stitch(p1, t1, repeated_first.get_snapshot())
+	var repeated_second := RunRestStitchCards.new(pair1["deck"], pair1["descriptors"], 3, pair1["next_stitch_id"])
+	var pair2 := repeated_second.choose_stitch(_index(pair1["deck"], PRICK), _index(pair1["deck"], POP), repeated_second.get_snapshot())
+	_check(pair1["ok"] and pair2["ok"] and pair1["stitched_id"] != pair2["stitched_id"]
+		and pair2["descriptors"][pair1["stitched_id"]]["half_ids"] == [PRICK, POP]
+		and pair2["descriptors"][pair2["stitched_id"]]["half_ids"] == [PRICK, POP],
+		"two identical ordered pairs still get independent durable entries")
+
+
+func _test_invalid_ledgers() -> void:
+	var deck := _deck()
+	var a := _index(deck, PRICK)
+	var b := _index(deck, POP)
+	for bad_deck in [[], ["unknown_hero_card"], [PRICK, "fake_stitched_id"], [12, POP]]:
+		var invalid := RunRestStitchCards.new(bad_deck, {}, 3)
+		_check(not invalid.is_valid(), "unknown, missing or non-string catalog entry cannot initialize")
+		_reject(invalid, 0, 1, invalid.get_snapshot(), "untrusted deck " + str(bad_deck))
+	var invalid_registry := RunRestStitchCards.new([PRICK, "stitched_000001"], {}, 3, 2)
+	_check(not invalid_registry.is_valid(), "stitched ID without registry is invalid")
+	_reject(invalid_registry, 0, 1, invalid_registry.get_snapshot(), "fabricated composite without halves")
+	var base := RunRestStitchCards.new(deck, {}, 3)
+	var made := base.choose_stitch(a, b, base.get_snapshot())
+	if not _is_success(made):
+		_check(false, "fixture descriptor constructed from two actual cards")
+		return
+	var forged: Dictionary = made["descriptors"].duplicate(true)
+	forged[made["stitched_id"]]["first_half"]["effects"]["damage"] = 999
+	_check(not RunRestStitchCards.new(made["deck"], forged, 5, made["next_stitch_id"]).is_valid(),
+		"forged half effect cannot be persisted as authored definition")
+	var wrong_owner: Dictionary = made["descriptors"].duplicate(true)
+	wrong_owner[made["stitched_id"]]["owners"] = ["warden", "tinker"]
+	_check(not RunRestStitchCards.new(made["deck"], wrong_owner, 5, made["next_stitch_id"]).is_valid(),
+		"forged owner data fails closed")
+	_check(not RunRestStitchCards.new(made["deck"], made["descriptors"], 3, 1).is_valid(),
+		"stale serial cursor cannot overwrite existing registry ID")
+	var orphan: Array = made["deck"].duplicate()
+	orphan.erase(made["stitched_id"])
+	_check(not RunRestStitchCards.new(orphan, made["descriptors"], 3, made["next_stitch_id"]).is_valid(),
+		"descriptor cannot silently remain as an unowned deck entry")
