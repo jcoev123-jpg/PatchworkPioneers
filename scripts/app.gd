@@ -36,6 +36,9 @@ var route_atlas_overlay: Control
 var route_atlas: RunRouteAtlas
 var route_atlas_close: Button
 var route_buttons: Array[Button] = []
+var map_mend_buttons: Array[Button] = []
+var _map_mend_serial := 0
+var _mended_route_context: Array = []
 var run_map: RunMap
 var fight_encounter_paths: Dictionary = FIGHT_ENCOUNTER_PATHS.duplicate()
 var fight_rosters: Dictionary = FIGHT_ROSTERS.duplicate(true)
@@ -559,6 +562,7 @@ func _clear_route_atlas() -> void:
 
 func _clear_route_view() -> void:
 	_clear_route_atlas()
+	map_mend_buttons.clear()
 	if is_instance_valid(route_view):
 		remove_child(route_view)
 		route_view.queue_free()
@@ -1222,6 +1226,13 @@ func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
 func _present_connected_route(source_map: WeakRef) -> void:
 	_connected_map = source_map
 	_connected_route = run_map.get_route()
+	# Only legitimate visit completion refreshes committed run resources. Rejected
+	# input callbacks must never repair a drifted wardrobe or roster.
+	var carry := party_carryover as RunTornCarryover
+	if carry != null and carry._wardrobe != null and _can_choose_connected_route():
+		var wardrobe := carry._wardrobe
+		wardrobe.refresh_run_context(run_heroes, run_trinkets, run_scraps,
+			session_gold, run_deck, wardrobe.get_snapshot())
 	route_view = VBoxContainer.new()
 	route_view.set_anchors_preset(Control.PRESET_CENTER)
 	route_view.add_theme_constant_override("separation", 16)
@@ -1229,6 +1240,9 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	var heading := Label.new()
 	heading.text = "Connected route - choose your next node"
 	route_view.add_child(heading)
+	var wallet := Label.new()
+	wallet.text = "Gold: %d | Scraps: %d | Mend: 2 scraps" % [session_gold, run_scraps]
+	route_view.add_child(wallet)
 	var prior := run_map.get_route()
 	for id in run_map.get_legal_choices():
 		var node := run_map.get_node(id)
@@ -1243,6 +1257,26 @@ func _present_connected_route(source_map: WeakRef) -> void:
 		action.pressed.connect(_dispatch_route.bind(id, source_map, prior, action))
 		route_view.add_child(action)
 		route_buttons.append(action)
+	var context := _map_mend_context()
+	for hero in run_heroes:
+		if hero.hp != 0:
+			continue
+		var mend := Button.new()
+		mend.text = "Mend %s (position %d) - 2 scraps" % [hero.id.capitalize(), hero.position]
+		mend.set_meta("hero_id", hero.id)
+		mend.set_meta("hero_position", hero.position)
+		mend.custom_minimum_size = Vector2(440, 40)
+		mend.disabled = run_scraps < 2 or carry == null or not _can_choose_connected_route()
+		route_view.add_child(mend)
+		map_mend_buttons.append(mend)
+		mend.pressed.connect(_choose_map_mend.bind(hero.id, hero.position,
+			weakref(mend), weakref(route_view), context))
+	if map_mend_buttons.is_empty():
+		var unavailable := Button.new()
+		unavailable.text = "Mend unavailable - no torn heroes"
+		unavailable.disabled = true
+		route_view.add_child(unavailable)
+		map_mend_buttons.append(unavailable)
 	route_map_button = Button.new()
 	route_map_button.text = "View full map"
 	route_view.add_child(route_map_button)
@@ -1253,6 +1287,49 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	route_back_button.pressed.connect(_return_from_visit.bind(route_view))
 	route_view.add_child(route_back_button)
 	_focus_visit(route_view)
+
+
+func _map_mend_context() -> Array:
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or run_map == null or run_rng == null:
+		return []
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route(),
+		run_rng, run_rng.state, carry, carry.read_state(), carry.torn.read_state(),
+		run_heroes.duplicate(true), run_scraps, session_gold, run_deck.duplicate(),
+		run_trinkets.duplicate(), carry._wardrobe,
+		null if carry._wardrobe == null else carry._wardrobe.get_snapshot(),
+		fight_reward_claimed, _routed_reward_service(), act_outcome.get_state(),
+		run_stitch_descriptors.duplicate(true), run_next_stitch_id, run_removal_count, _map_mend_serial]
+
+
+func _choose_map_mend(hero: Variant, position: Variant, source_action: WeakRef,
+		source_view: WeakRef, expected: Array) -> void:
+	if not _can_choose_connected_route() or not is_instance_valid(route_view) \
+		or source_view == null or source_view.get_ref() != route_view \
+		or route_view.get_parent() != self or not route_view.is_visible_in_tree() \
+		or source_action == null or not is_instance_valid(source_action.get_ref()) \
+		or expected.is_empty() or _map_mend_context() != expected:
+		return
+	var button = source_action.get_ref()
+	if button not in map_mend_buttons or button.get_parent() != route_view \
+		or button.disabled or not button.is_visible_in_tree() \
+		or button.get_meta("hero_id", "") != hero or button.get_meta("hero_position", 0) != position:
+		return
+	var carry := party_carryover as RunTornCarryover
+	var operation := "map_mend:%d" % _map_mend_serial
+	var result := carry.choose_mend(operation, operation + ":receipt", hero, position,
+		run_scraps, expected[7], expected[15], true)
+	if not result.ok:
+		return
+	run_heroes = result.heroes
+	run_scraps = result.remaining_scraps
+	_map_mend_serial += 1
+	# The completed visit's original wallet/hero guards describe its own
+	# transaction. Preserve admission for this exact subsequent map transaction.
+	_mended_route_context = _map_mend_context()
+	var source := _connected_map
+	_clear_route_view()
+	_present_connected_route(source)
 
 
 ## Zero completed fights is legal only for this run's witnessed noncombat prefix.
@@ -1289,6 +1366,8 @@ func _can_choose_connected_route() -> bool:
 	if party_carryover == null or not party_carryover.is_valid() \
 		or party_carryover.read_state().heroes != run_heroes:
 		return false
+	if not _mended_route_context.is_empty() and _mended_route_context == _map_mend_context():
+		return true
 	if party_carryover.read_state().completed_fights.is_empty() and not _unfought_run():
 		return false
 	if run_map.get_route().is_empty():
@@ -2207,6 +2286,8 @@ func _return_to_title() -> void:
 	run_stitch_descriptors.clear()
 	run_next_stitch_id = 1
 	_battle_closed = false
+	_map_mend_serial = 0
+	_mended_route_context.clear()
 	enemy_attacks.clear()
 	enemy_intents = null
 	party = null
