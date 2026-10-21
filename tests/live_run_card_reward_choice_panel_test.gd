@@ -127,6 +127,77 @@ func _snapshot(fixture: Dictionary) -> Dictionary:
 	}
 
 
+## Independent, explicit authored contract: protect against a formatter and
+## catalog drifting together. Additional catalog entries may coexist.
+func _expected_cards() -> Dictionary:
+	return {
+		"warden_strike": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
+			"effects": {"damage": 6}, "text": "From: 1-2 (front/middle)\nTarget: pick 1 living enemy 1-2\nDeal 6 damage"},
+		"warden_strike_plus": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
+			"effects": {"damage": 7}, "text": "From: 1-2 (front/middle)\nTarget: pick 1 living enemy 1-2\nDeal 7 damage"},
+		"warden_brace": {"from": [1, 2, 3], "to": [], "kind": "self",
+			"effects": {"block": 7}, "text": "From: 1-3 (front to back)\nTarget: self\nGain 7 Block"},
+		"warden_shield_bash": {"from": [1], "to": [1], "kind": "enemy_single",
+			"effects": {"damage": 8, "weak": 1}, "text": "From: 1 (front)\nTarget: pick 1 living enemy 1 (front)\nDeal 8 damage, Weak 1"},
+		"seamstress_prick": {"from": [1, 2, 3], "to": [1, 2, 3], "kind": "enemy_single",
+			"effects": {"damage": 3, "bleed": 2}, "text": "From: 1-3 (front to back)\nTarget: pick 1 living enemy 1-3\nDeal 3 damage, Bleed 2"},
+		"seamstress_mend": {"from": [2, 3], "to": [], "kind": "ally_single",
+			"effects": {"heal": 5}, "text": "From: 2-3 (middle/back)\nTarget: 1 living ally 1-3\nHeal 5 HP"},
+		"seamstress_stitch_up": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
+			"effects": {"block": 5}, "text": "From: 1-3 (front to back)\nTarget: 1 living ally 1-3\nGain 5 Block"},
+		"tinker_pop_shot": {"from": [2, 3], "to": [1, 2, 3], "kind": "enemy_single",
+			"effects": {"damage": 5}, "text": "From: 2-3 (middle/back)\nTarget: pick 1 living enemy 1-3\nDeal 5 damage"},
+		"tinker_scrap_bomb": {"from": [3], "to": [1, 2, 3], "kind": "enemy_all",
+			"effects": {"damage": 4}, "text": "From: 3 (back)\nTarget: all living enemies 1-3\nDeal 4 damage EACH"},
+		"tinker_tune_up": {"from": [1, 2, 3], "to": [], "kind": "none",
+			"effects": {"draw": 1}, "text": "From: 1-3 (front to back)\nTarget: none\nDraw 1 card"},
+	}
+
+
+func _test_all_catalog_rules(base: Dictionary) -> void:
+	var catalog := StarterCards.new()
+	var expected := _expected_cards()
+	var original := base.duplicate(true)
+	var authored_before := {}
+	for card_id in expected:
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty(), "required catalog ID exists: " + card_id)
+		if definition.is_empty():
+			continue
+		authored_before[card_id] = definition.duplicate(true)
+		var case: Dictionary = expected[card_id]
+		_check(definition.get("from_positions") == case["from"]
+			and definition.get("to_positions") == case["to"]
+			and definition.get("target_kind") == case["kind"]
+			and definition.get("effects") == case["effects"],
+			"independent authored fields and base effects: " + card_id)
+		var detached: Dictionary = definition.duplicate(true)
+		_check(panel._format_rules(detached) == case["text"],
+			"three-line formatter exactly matches authored targeting/effects: " + card_id)
+		_check(detached == definition, "formatter never mutates detached catalog card: " + card_id)
+	# Mount valid three-offer groups through the same live receipt path. No
+	# synthetic service or selection logic, and the final short group reuses
+	# two other distinct IDs as legal fillers.
+	var ids := expected.keys()
+	for offset in range(0, ids.size(), 3):
+		var receipt := base.duplicate(true)
+		for slot in range(3):
+			var id: String = ids[(offset + slot) % ids.size()]
+			receipt["offers"][slot] = {"id": id, "owner": catalog.get_definition(id)["owner"]}
+		var before := receipt.duplicate(true)
+		_check(panel.open_rewards("catalog_preview", "Fight", receipt),
+			"valid catalog-backed three-offer variant mounts " + str(offset))
+		await _frames()
+		_validate(receipt, "Fight", "catalog_preview")
+		_check(receipt == before, "preview leaves variant receipt intact " + str(offset))
+		panel.close_rewards()
+		await _frames()
+	_check(base == original, "authoritative prepared receipt unchanged by every variant")
+	for card_id in authored_before:
+		_check(catalog.get_definition(card_id) == authored_before[card_id],
+			"authored catalog unchanged by formatter/mount: " + card_id)
+
+
 func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "actual scene mounted: " + kind)
 	_check(panel.title_label.text.contains(kind) and panel.title_label.text.contains(node_id),
@@ -165,12 +236,36 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var name_label := content.get_node("NameLabel") as Label
 		var id_label := content.get_node("IdLabel") as Label
 		var cost_label := content.get_node("CostLabel") as Label
+		var rules_label := content.get_node_or_null("RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real action bound to card " + str(index))
 		_check(owner_label.text == offer["owner"].capitalize()
 			and name_label.text == definition["display_name"]
 			and id_label.text == offer["id"] and cost_label.text == "%d energy" % definition["cost"],
 			"exact owner, name, ID and cost visible: " + str(index))
+		var expected := _expected_cards()
+		_check(rules_label != null, "RulesLabel exists on live card " + str(index))
+		if rules_label != null:
+			_check(expected.has(offer["id"]), "prepared card has independent rule expectations " + offer["id"])
+			if expected.has(offer["id"]):
+				var authored: Dictionary = expected[offer["id"]]
+				_check(definition["from_positions"] == authored["from"]
+					and definition["to_positions"] == authored["to"]
+					and definition["target_kind"] == authored["kind"]
+					and definition["effects"] == authored["effects"],
+					"authoritative definition matches displayed positional/effect contract " + offer["id"])
+				_check(rules_label.text == authored["text"],
+					"mounted card shows exact authored rules (including amounts) " + offer["id"])
+			_check(rules_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
+				and rules_label.get_theme_font_size("font_size") >= 15
+				and rules_label.get_line_count() <= 3
+				and rules_label.get_visible_line_count() == rules_label.get_line_count(),
+				"rules are readable in at most three complete rendered lines " + offer["id"])
+			_check(card.get_global_rect().encloses(rules_label.get_global_rect())
+				and screen.encloses(rules_label.get_global_rect())
+				and cost_label.get_global_rect().end.y <= rules_label.get_global_rect().position.y
+				and rules_label.get_global_rect().end.y <= action.get_global_rect().position.y,
+				"rules label fits card and never overlaps cost or button " + offer["id"])
 		_check(name_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
 			and name_label.size_flags_vertical == Control.SIZE_EXPAND_FILL,
 			"long valid display name supports robust wrapping")
@@ -375,7 +470,8 @@ func _replay_and_stale(base: Dictionary) -> void:
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
 			ui.append([content.get_node("OwnerLabel").text, content.get_node("NameLabel").text,
-				content.get_node("IdLabel").text, content.get_node("CostLabel").text])
+				content.get_node("IdLabel").text, content.get_node("CostLabel").text,
+				content.get_node("RulesLabel").text])
 		independent.append(ui)
 		buttons[0].pressed.emit()
 		_check(requests.size() == 1 and requests[0] == {"node": "same_node",
@@ -416,6 +512,7 @@ func _run() -> void:
 	var original_fight: Dictionary = fight["receipt"].duplicate(true)
 	await _exercise(fight, "Fight", 0)
 	await _exercise(elite, "Elite", 1)
+	await _test_all_catalog_rules(original_fight)
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
 	# Fresh global seeded stream must also survive panel interactions.
