@@ -14,6 +14,7 @@ const SOURCES := [
     "res://data/encounters/patchwork_behemoth.json",
     "res://data/encounters/triple_spool_pinch.json",
     "res://data/encounters/double_hem_siege.json",
+    "res://data/encounters/seamshift_tripwire.json",
 ]
 const HP := {
     "ragling": 12, "ragling_guard": 12, "fray_scavenger": 14,
@@ -28,10 +29,13 @@ const BINDINGS := {
         "guard_counterattack": ["ragling_guard", "button_guard"],
         "triple_spool_pinch": ["fray_scavenger", "button_guard", "spool_stalker"],
         "double_hem_siege": ["fray_scavenger", "seam_ripper"],
+        "seamshift_tripwire": ["seam_ripper", "spool_stalker", "fray_scavenger"],
     },
     "Elite": {"thimble_crossfire": ["button_guard", "seam_ripper"]},
     "Boss": {"patchwork_behemoth": ["patchwork_behemoth"]},
 }
+const SEAMSHIFT := "seamshift_tripwire"
+const SEAMSHIFT_ROSTER := ["seam_ripper", "spool_stalker", "fray_scavenger"]
 const TRIPLE := "triple_spool_pinch"
 const TRIPLE_ROSTER := ["fray_scavenger", "button_guard", "spool_stalker"]
 const PARTY_PATH := "res://data/heroes/starter_party.json"
@@ -57,6 +61,8 @@ var failures: Array[String] = []
 func _initialize() -> void:
     _test_authored_bindings()
     _test_triple_spool_pinch_content()
+    _test_seamshift_tripwire_content()
+    _test_seamshift_full_pool_entry()
     _test_seeded_fight_and_isolation()
     _test_triple_spool_pinch_entry()
     _test_triple_spool_pinch_phase()
@@ -154,6 +160,17 @@ func _expected_actions() -> Dictionary:
              {"type": "attack", "amount": 1, "target_position": 1}],
             [{"type": "attack", "amount": 1, "target_position": 3},
              {"type": "attack", "amount": 1, "target_position": 2}],
+        ],
+        "seamshift_tripwire": [
+            [{"type": "shove", "amount": 0, "target_position": 1, "direction": 1},
+             {"type": "attack", "amount": 2, "target_position": 2},
+             {"type": "block", "amount": 2}],
+            [{"type": "debuff", "amount": 1, "target_position": 2, "status": "exposed"},
+             {"type": "attack", "amount": 2, "target_position": 3},
+             {"type": "buff", "amount": 2}],
+            [{"type": "attack", "amount": 4, "target_position": 2},
+             {"type": "block", "amount": 1},
+             {"type": "attack", "amount": 2, "target_position": 1}],
         ],
         "thimble_crossfire": [
             [{"type": "attack", "amount": 1, "target_position": 3},
@@ -927,3 +944,166 @@ func _enemy_ledger(enemies: CombatEnemies) -> Array:
         var enemy: Dictionary = enemies.get_enemy(position)
         ledger.append([enemy.get("hp"), enemy.get("block")])
     return ledger
+
+
+## AC1: bind the shipped positional schedule without changing the other typed
+## encounters; per-name assertions in _test_authored_bindings cover every prior
+## Fight/Elite/Boss source and all authored beats without fixed pool totals.
+func _test_seamshift_tripwire_content() -> void:
+    var pools := _registry()
+    _check(pools.get("Fight") is Dictionary and pools["Fight"].has(SEAMSHIFT),
+        "Fight/seamshift_tripwire has an explicit live registry binding")
+    if not pools.get("Fight") is Dictionary or not pools["Fight"].has(SEAMSHIFT):
+        return
+    var binding: Variant = pools["Fight"][SEAMSHIFT]
+    _check(binding is Dictionary and binding.size() == 2 and
+        binding.get("schedule") == "res://data/encounters/seamshift_tripwire.json" and
+        binding.get("enemy_ids") == SEAMSHIFT_ROSTER,
+        "Seamshift canonical schedule and ordered three-slot unique enemy roster")
+    if not binding is Dictionary:
+        return
+    var definitions := RunFightEncounterSelection._parse_schedule_text(
+        FileAccess.get_file_as_string(binding["schedule"]))
+    var expected := []
+    for position in [1, 2, 3]:
+        var matches: Array = definitions.filter(
+            func(record: Dictionary) -> bool: return record.get("enemy_position") == position)
+        _check(matches.size() == 1, "Seamshift has one source at slot %d" % position)
+        expected.append({"enemy_position": position,
+            "pattern": _expected_actions()[SEAMSHIFT][position - 1]})
+    _check(definitions == expected and CombatEnemyIntents.new(definitions).is_valid(),
+        "Seamshift exact shove/Exposed/attack and subsequent full three-beat cycles")
+    var catalog: Variant = JSON.parse_string(
+        FileAccess.get_file_as_string("res://data/enemies/run_enemies.json"))
+    _check(catalog is Array, "Seamshift normal-enemy catalog parses")
+    if catalog is Array:
+        for enemy_id in SEAMSHIFT_ROSTER:
+            var matches: Array = catalog.filter(
+                func(record: Dictionary) -> bool: return record.get("id") == enemy_id)
+            _check(matches.size() == 1, "Seamshift authored actor appears once: " + enemy_id)
+            if matches.size() == 1:
+                var record: Dictionary = matches[0]
+                _check(RunFightEncounterSelection._coerce_integral_field(record, "max_hp")
+                    and record["max_hp"] == HP[enemy_id],
+                    "Seamshift authored actor %s has exact HP %d" % [enemy_id, HP[enemy_id]])
+
+
+## Find a reproducible seed for the ACTUAL entire on-disk Fight pool by
+## replaying generation, legal opening choice, and exactly one sorted draw.
+## Never substitute a one-entry registry for this public live selection test.
+func _find_full_pool_seed_for(target_id: String) -> int:
+    var pools := _registry()
+    if not pools.get("Fight") is Dictionary or not pools["Fight"].has(target_id):
+        return -1
+    var ids: Array = pools["Fight"].keys()
+    ids.sort()
+    for seed_value in range(1, 257):
+        var rng := _rng(seed_value)
+        var map := RunMap.new()
+        if not map.generate(rng):
+            continue
+        var node := _opening(map)
+        if node.is_empty() or not map.choose_node(node):
+            continue
+        if ids[rng.randi_range(0, ids.size() - 1)] == target_id:
+            return seed_value
+    return -1
+
+
+## AC2/AC3: a real chosen Fight, real on-disk full-pool entry, and real combat
+## services, not just a synthetic selector result or an in-memory encounter.
+func _test_seamshift_full_pool_entry() -> void:
+    var seed_value := _find_full_pool_seed_for(SEAMSHIFT)
+    _check(seed_value > 0, "a reproducible generated Fight selects Seamshift from full disk pool")
+    if seed_value < 0:
+        return
+    var sources_before := _sources()
+    var setup := _focused_setup(seed_value)
+    var map: RunMap = setup["map"]
+    var rng: RandomNumberGenerator = setup["rng"]
+    var selector: RunFightEncounterSelection = setup["selector"]
+    var pool := _registry()
+    var invalid := pool.duplicate(true)
+    invalid["Fight"][SEAMSHIFT]["enemy_ids"] = ["seam_ripper", "spool_stalker"]
+    _reject(map, rng, selector, invalid, "invalid Seamshift binding fails full pool before RNG")
+    var ids: Array = pool["Fight"].keys()
+    ids.sort()
+    var oracle_id: String = ids[setup["oracle"].randi_range(0, ids.size() - 1)]
+    _check(oracle_id == SEAMSHIFT and map.get_node(setup["node"]).get("type") == "Fight",
+        "one sorted oracle draw on legitimate selected Fight predicts Seamshift")
+    var service := RunAuthoredBattleEntry.new()
+    seed(515015)
+    var global_next := randi()
+    seed(515015)
+    var first := service.entry_current_battle(map, rng, selector)
+    _check(randi() == global_next and rng.state == setup["oracle"].state,
+        "public full-pool entry spends one run draw and no global RNG")
+    var snapshot := _verify_entry(first, "Fight", SEAMSHIFT, "public Seamshift Fight")
+    if snapshot.is_empty():
+        return
+    var cache_before := selector._selected.duplicate(true)
+    var cached_rng_state := rng.state
+    _check(selector._selected.has(setup["node"]) and
+        selector._selected[setup["node"]]["encounter_id"] == SEAMSHIFT,
+        "public selector caches the chosen Seamshift node by ID")
+    first["definitions"][0]["pattern"][0]["amount"] = 777
+    first["definitions"][0]["pattern"].clear()
+    first["enemies"].gain_block(1, 5)
+    first["enemies"].apply_damage(3, 4)
+    first["encounter_id"] = "tampered"
+    var again := service.entry_current_battle(map, rng, selector)
+    _check(again.get("success") == true and again.get("encounter_id") == SEAMSHIFT and
+        rng.state == cached_rng_state and selector._selected == cache_before and
+        first["enemies"] != again["enemies"] and first["intents"] != again["intents"],
+        "public cached replay returns detached actors/intents with zero extra draws")
+    var again_snapshot := _verify_entry(again, "Fight", SEAMSHIFT, "cached Seamshift Fight")
+    _check(not again_snapshot.is_empty() and again_snapshot == snapshot,
+        "mutated public result cannot poison any actor or the nine-beat authored cycle")
+    var replay := _focused_setup(seed_value)
+    var replay_entry := RunAuthoredBattleEntry.new().entry_current_battle(
+        replay["map"], replay["rng"], replay["selector"])
+    _check(replay_entry.get("success") and replay_entry.get("encounter_id") == SEAMSHIFT and
+        replay["rng"].state == cached_rng_state and
+        replay["selector"]._selected == cache_before,
+        "independent same-seed public entry repeats selection, cache and RNG")
+    _check(_verify_entry(replay_entry, "Fight", SEAMSHIFT, "replayed Seamshift Fight") == snapshot,
+        "independent run repeats exact three actors and nine ordered announcements")
+
+    # Phase uses a fresh public entry's authoritative actors and intents.
+    var combat := service.entry_current_battle(map, rng, selector)
+    _check(combat.get("success") and combat.get("encounter_id") == SEAMSHIFT,
+        "real typed entry supplies the actors to the combat phase")
+    if not combat.get("success", false):
+        return
+    var party := _triple_party()
+    _check(CombatStartingBlock.new(party).apply() and
+        party.get_hero(1).get("block") == 6, "Warden receives exact opening six Block")
+    var announced: Array = combat["intents"].get_intents()
+    _check(announced == _expected_actions_beat(SEAMSHIFT, 0),
+        "public entry announces shove, Exposed, attack in enemy-source order")
+    var resolved := CombatEnemyPhase.new().execute_phase(party, combat["enemies"], announced)
+    _check(resolved.get("ok") == true and resolved.get("events") == [
+        {"type": "shove", "enemy_position": 1, "target_position": 1,
+            "direction": 1, "applied": true},
+        {"type": "debuff", "enemy_position": 2, "target_position": 2,
+            "status": "exposed", "applied": true},
+        {"type": "attack", "enemy_position": 3, "target_position": 2, "applied": true}],
+        "public actors resolve shove then Exposed 1 then six-damage attack")
+    _check(party.get_hero(1).get("id") == "seamstress" and
+        party.get_hero(2).get("id") == "warden" and
+        party.get_hero(2).get("hp") == 40 and party.get_hero(2).get("block") == 0 and
+        party.get_hero(2).get("statuses", {}) == {"exposed": 1} and
+        party.get_hero(3).get("id") == "tinker" and
+        _enemy_ledger(combat["enemies"]) == [[18, 0], [14, 0], [14, 0]],
+        "Warden displaced to middle, marked Exposed, loses six Block not HP")
+
+    var prior_seed := _find_full_pool_seed_for("starter_attacks")
+    _check(prior_seed > 0, "an earlier Fight remains selectable through full disk pool")
+    if prior_seed > 0:
+        var prior := _focused_setup(prior_seed)
+        var prior_entry := service.entry_current_battle(
+            prior["map"], prior["rng"], prior["selector"])
+        _check(not _verify_entry(prior_entry, "Fight", "starter_attacks",
+            "earlier full-pool Fight").is_empty(),
+            "real selection still reaches and fully verifies earlier Fight")
+    _check(_sources() == sources_before, "Seamshift selection never mutates source JSON")
