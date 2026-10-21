@@ -76,32 +76,41 @@ func create_next_fight_party() -> CombatParty:
 ## with slain enemies and a surviving party. Never call evaluate() here or
 ## accept a client-supplied outcome string. Do not tick statuses between nodes.
 func commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatParty) -> Dictionary:
-	if not _valid or not _valid_id(node_id) or _fight_ids.has(node_id):
+	if not can_commit_victory(node_id, result, party):
 		return _rejected()
-	if result == null or party == null or not party.is_valid():
-		return _rejected()
-	if result._party != party or result._enemies == null:
-		return _rejected()
-	if result.get_outcome() != CombatBattleResult.VICTORY:
-		return _rejected()
-	if not result._enemies.is_valid() or not result._enemies.is_victorious() or party.is_defeated():
-		return _rejected()
-
-	var proposed: Array = party.get_heroes()
-	if not _valid_roster(proposed, true) or not _same_identities(proposed):
-		return _rejected()
-	# Downed heroes remain down until a legitimate Rest choice. The party's
-	# public combat heal API cannot revive them during a battle.
-	for hero in proposed:
-		for previous in _heroes:
-			if hero["id"] == previous["id"] and previous["hp"] == 0 and hero["hp"] > 0:
-				return _rejected()
-	var persisted: Array = proposed.duplicate(true)
+	var persisted: Array = party.get_heroes()
 	for hero in persisted:
 		hero["block"] = 0
 	_heroes = persisted
 	_fight_ids.append(node_id)
 	return {"ok": true, "heroes": _heroes.duplicate(true)}
+
+
+## Read-only admission for coordinators staging a larger atomic transaction.
+func can_commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatParty) -> bool:
+	if not _valid or not _valid_id(node_id) or _fight_ids.has(node_id):
+		return false
+	if not _valid_roster(_heroes, true) or not _same_identities(_heroes):
+		return false
+	if result == null or party == null or not party.is_valid():
+		return false
+	if result._party != party or result._enemies == null:
+		return false
+	if result.get_outcome() != CombatBattleResult.VICTORY:
+		return false
+	if not result._enemies.is_valid() or not result._enemies.is_victorious() or party.is_defeated():
+		return false
+
+	var proposed: Array = party.get_heroes()
+	if not _valid_roster(proposed, true) or not _same_identities(proposed):
+		return false
+	# Downed heroes remain down until a legitimate Rest choice. The party's
+	# public combat heal API cannot revive them during a battle.
+	for hero in proposed:
+		for previous in _heroes:
+			if hero["id"] == previous["id"] and previous["hp"] == 0 and hero["hp"] > 0:
+				return false
+	return true
 
 
 ## Delegate revive-at-one, floor(30%) and HP caps to the authoritative
