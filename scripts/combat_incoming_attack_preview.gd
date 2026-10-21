@@ -2,6 +2,8 @@ class_name CombatIncomingAttackPreview
 extends RefCounted
 ## Pure End Turn attack forecast after hero owner ticks. HP loss excludes Bleed;
 ## remaining HP includes it. Block reset belongs to the NEXT player turn.
+## Every announced enemy kind is forecast from the real phase rules; a roster
+## the committed phase would reject fails closed instead of inventing damage.
 
 const MAX_INT := 9223372036854775807
 
@@ -14,71 +16,122 @@ func forecast(heroes: Array, enemies: Array, intents: Array) -> Dictionary:
 	var tick := batch.tick_side("heroes", heroes)
 	if not tick["ok"] or not batch.tick_side("enemies", enemies)["ok"]:
 		return invalid
-	var next_heroes: Array = tick["actors"]
-	var result: Array[Dictionary] = []
 	for index in range(heroes.size()):
-		var record = next_heroes[index]
-		if not _valid_actor(record, index + 1):
+		if not _valid_actor(heroes[index], index + 1):
 			return invalid
-		result.append({"position": index + 1, "downed": record["hp"] == 0,
-			"incoming": 0, "block_absorbed": 0, "hp_lost": 0,
-			"hp_remaining": record["hp"], "block_remaining": record["block"]})
 	for index in range(enemies.size()):
 		if not _valid_actor(enemies[index], index + 1):
 			return invalid
+	var ordered := _validated_actions(enemies.size(), intents)
+	if ordered.is_empty():
+		return invalid
+	# The committed phase is the sole authority on whether the complete roster
+	# is legal, including effects that depend on an earlier source.
+	if not CombatEnemyPhase.new().execute_phase(_detached_party(tick["actors"]),
+			_detached_enemies(enemies), ordered)["ok"]:
+		return invalid
+	# A shove changes positions, so every total follows the original actor id:
+	# the returned rows stay on each actor's currently presented slot.
+	return _simulate(_detached_party(tick["actors"]), _detached_enemies(enemies), ordered, heroes)
+
+
+## The caller's schedule must be complete: exactly one announcement per source.
+func _validated_actions(enemy_count: int, intents: Array) -> Array[Dictionary]:
 	var seen: Array[int] = []
 	var ordered: Array[Dictionary] = []
 	for raw_intent in intents:
 		if not raw_intent is Dictionary:
-			return invalid
-		for key in ["type", "enemy_position", "amount"]:
-			if not raw_intent.has(key):
-				return invalid
-		var kind = raw_intent["type"]
-		var source = raw_intent["enemy_position"]
-		var amount = raw_intent["amount"]
-		if not kind is String or (kind != "attack" and kind != "block") or not source is int or source < 1 or source > enemies.size() or source in seen or not amount is int or amount < 0:
-			return invalid
-		if kind == "attack":
-			if raw_intent.size() != 4 or not raw_intent.has("target_position"):
-				return invalid
-			var target = raw_intent["target_position"]
-			if not target is int or target < 1 or target > CombatParty.PARTY_SIZE:
-				return invalid
-		else:
-			if raw_intent.size() != 3:
-				return invalid
-			var enemy: Dictionary = enemies[source - 1]
-			if enemy["hp"] > 0 and amount > MAX_INT - enemy["block"]:
-				return invalid
+			return []
+		var source = raw_intent.get("enemy_position")
+		if not source is int or source < 1 or source > enemy_count or source in seen:
+			return []
+		var action: Dictionary = raw_intent.duplicate(true)
+		action.erase("enemy_position")
+		# Exactly the committed phase's action contract: type, amount, target,
+		# status and direction keys, ranges and exact dictionary shapes.
+		if not CombatEnemyIntents.valid_action(action):
+			return []
 		seen.append(source)
-		ordered.append(raw_intent)
-	if seen.size() != enemies.size():
-		return invalid
+		ordered.append(raw_intent.duplicate(true))
+	if seen.size() != enemy_count:
+		return []
 	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a["enemy_position"] < b["enemy_position"])
+	return ordered
 
-	for intent in ordered:
-		var source: int = intent["enemy_position"]
-		if enemies[source - 1]["hp"] == 0 or intent["type"] != "attack":
-			continue
-		var target: int = intent["target_position"]
-		var hero: Dictionary = result[target - 1]
-		# A downed slot remains empty, even if an earlier hit downed it.
-		if hero["hp_remaining"] == 0:
-			continue
-		var amount := CombatStatuses.new().adjusted_attack_damage(intent["amount"],
-			enemies[source - 1].get("statuses", {}), next_heroes[target - 1]["statuses"])
-		if amount > MAX_INT - hero["incoming"]:
-			return invalid
-		hero["incoming"] += amount
-		var absorbed: int = mini(hero["block_remaining"], amount)
-		hero["block_remaining"] -= absorbed
-		hero["block_absorbed"] += absorbed
-		var loss: int = mini(hero["hp_remaining"], amount - absorbed)
-		hero["hp_remaining"] -= loss
-		hero["hp_lost"] += loss
-	return {"ok": true, "heroes": result}
+
+## Replays the committed phase's source order on detached actors and keeps the
+## hero-local attack totals, so swaps never move a total onto another actor.
+func _simulate(party: CombatParty, enemies: CombatEnemies,
+		ordered: Array[Dictionary], presented: Array) -> Dictionary:
+	var invalid := {"ok": false, "heroes": []}
+	var totals: Dictionary = {}
+	for hero in party._heroes:
+		totals[hero["id"]] = {"incoming": 0, "block_absorbed": 0, "hp_lost": 0}
+	for action in ordered:
+		var source: int = action["enemy_position"]
+		var before := _hp_block(party)
+		if not enemies.is_slain(source):
+			if action["type"] == "attack":
+				var target: int = action["target_position"]
+				var damage := CombatStatuses.new().adjusted_attack_damage(action["amount"],
+					enemies.get_enemy(source).get("statuses", {}),
+					party.get_hero(target).get("statuses", {}))
+				var attack: Dictionary = action.duplicate(true)
+				attack.erase("type")
+				attack.amount = damage
+				var hit := CombatEnemyAttacks.new().execute_attacks(party, [attack])
+				if not hit["ok"]:
+					return invalid
+				if hit["events"][0]["applied"]:
+					var id: String = party.get_hero(target)["id"]
+					if damage > MAX_INT - totals[id]["incoming"]:
+						return invalid
+					totals[id]["incoming"] += damage
+			elif action["type"] == "block":
+				var block := CombatEnemyBlocks.execute_blocks(enemies, [action])
+				if not block["ok"]:
+					return invalid
+			else:
+				var special := CombatEnemySpecialActions.new().execute_actions(party, enemies, [action])
+				if not special["ok"]:
+					return invalid
+		var after := _hp_block(party)
+		for id in after:
+			totals[id]["block_absorbed"] += before[id]["block"] - after[id]["block"]
+			totals[id]["hp_lost"] += before[id]["hp"] - after[id]["hp"]
+	var final: Dictionary = {}
+	for hero in party._heroes:
+		final[hero["id"]] = hero
+	var rows: Array[Dictionary] = []
+	for index in range(presented.size()):
+		var id: String = presented[index]["id"]
+		var actor: Dictionary = final[id]
+		var total: Dictionary = totals[id]
+		rows.append({"position": index + 1, "downed": actor["hp"] == 0,
+			"incoming": total["incoming"], "block_absorbed": total["block_absorbed"],
+			"hp_lost": total["hp_lost"], "hp_remaining": actor["hp"],
+			"block_remaining": actor["block"]})
+	return {"ok": true, "heroes": rows}
+
+
+func _hp_block(party: CombatParty) -> Dictionary:
+	var snapshot: Dictionary = {}
+	for hero in party._heroes:
+		snapshot[hero["id"]] = {"hp": hero["hp"], "block": hero["block"]}
+	return snapshot
+
+
+func _detached_party(actors: Array) -> CombatParty:
+	var party := CombatParty.new(actors)
+	party._heroes.assign(actors.duplicate(true))
+	return party
+
+
+func _detached_enemies(roster: Array) -> CombatEnemies:
+	var enemies := CombatEnemies.new(roster)
+	enemies._enemies.assign(roster.duplicate(true))
+	return enemies
 
 
 func _valid_actor(actor: Variant, expected_position: int) -> bool:
