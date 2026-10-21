@@ -8,6 +8,7 @@ func _upgrade_fixture() -> Dictionary:
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
+		var opening_rng := rng.state
 		for fight in map.get_legal_choices():
 			if map.get_node(fight).type != "Fight":
 				continue
@@ -18,6 +19,7 @@ func _upgrade_fixture() -> Dictionary:
 					if map.get_node(next).type != "Fight":
 						continue
 					var selector := RunFightEncounterSelection.new()
+					rng.state = opening_rng
 					map.choose_node(fight)
 					var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, selector)
 					map.undo_choice(fight, [])
@@ -239,7 +241,7 @@ func _run() -> void:
 			var enemy: Dictionary = app.enemies.get_enemy(target)
 			_check(app.party.get_hero(1).get("statuses", {}).is_empty() and enemy.get("statuses", {}).is_empty(), "seven-damage base case has no modifiers")
 			if await _choose("warden_strike_plus", session == 1):
-				await _key(KEY_1 if target == 1 else KEY_2)
+				await _key([KEY_1, KEY_2, KEY_3][target - 1])
 			var expected_hand: Array = combat.hand.duplicate()
 			expected_hand.erase("warden_strike_plus")
 			_check(presenter.last_event.ok and presenter.last_event.hits[0].damage == 7,

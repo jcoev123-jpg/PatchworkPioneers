@@ -2,12 +2,13 @@ extends "res://tests/live_shop_route_entry_test.gd"
 ## Real seeded Fight -> reward -> Shop -> connected noncombat visit.
 
 
-func _continuation_fixture(kind: String) -> Dictionary:
-	for value in range(1, 1000):
+func _continuation_fixture(kind: String, first_seed: int = 1) -> Dictionary:
+	for value in range(first_seed, 1000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
+		var opening_rng := rng.state
 		for fight in map.get_legal_choices():
 			if map.get_node(fight).type != "Fight":
 				continue
@@ -17,10 +18,12 @@ func _continuation_fixture(kind: String) -> Dictionary:
 				for next in map.get_node(shop).outgoing:
 					if map.get_node(next).type != kind:
 						continue
+					rng.state = opening_rng
 					map.choose_node(fight)
 					var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 					if selected.get("encounter_id") == "starter_attacks":
 						return {"seed": value, "fight": fight, "shop": shop, "next": next}
+					map.undo_choice(fight, [])
 	return {}
 
 

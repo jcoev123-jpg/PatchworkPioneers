@@ -214,7 +214,7 @@ func _expected_victory() -> void:
 
 func _choose(id: String, keyboard: bool) -> bool:
 	if keyboard:
-		for attempt in range(6):
+		for attempt in range(maxi(6, app.hand_view.get_child_count())):
 			await _key(KEY_P)
 			if presenter._card_id(presenter._armed) == id:
 				break

@@ -8,6 +8,7 @@ func _fixture() -> Dictionary:
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
+		var opening_rng := rng.state
 		for id in map.get_legal_choices():
 			if map.get_node(id).type != "Fight":
 				continue
@@ -17,10 +18,12 @@ func _fixture() -> Dictionary:
 				rest = rest or map.get_node(next).type == "Rest"
 				unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop", "Event", "Treasure"]
 			if rest and unsupported:
+				rng.state = opening_rng
 				map.choose_node(id)
 				var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 				if selected.get("encounter_id") == "starter_attacks":
 					return {"seed": value, "fight": id}
+				map.undo_choice(id, [])
 	return {}
 
 
@@ -95,6 +98,8 @@ func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = fals
 	app._continue_to_rest_route(null, weakref(app.run_map), null)
 	_check(_persistent() == before and app.route_view == null, "active combat cannot continue or heal")
 	for turn in range(20):
+		if app._battle_closed:
+			break
 		if capped_survivor:
 			_check(app.party.heal(2, 999), "fixture tops up living survivor before final card inputs")
 			app.party._heroes[1].statuses = {"exposed": 2}
@@ -102,6 +107,10 @@ func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = fals
 			var id := ""
 			var target := 0
 			for held in app.deck.hand:
+				# This recovery fixture needs its capped/status witness at the
+				# final card action, before an owner-turn tick can change it.
+				if capped_survivor and catalog.get_definition(held).effects.has("bleed"):
+					continue
 				var preview := CombatAttackTargeting.new().get_preview(app.deck, app.party, app.enemies, held)
 				if preview.playable and preview.requires_selection:
 					id = held

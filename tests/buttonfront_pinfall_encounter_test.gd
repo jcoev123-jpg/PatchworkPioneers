@@ -5,8 +5,7 @@ extends SceneTree
 ## slot 2 Fray Scavenger strikes that same hero for a base 4 that Exposed turns
 ## into 6. Beats 2 and 3 cycle through Block, a rear strike, a middle strike
 ## and a rear self buff.
-## Data/service only: this file never registers the encounter in the shared
-## typed pool and never wires it into live play.
+## Authored service coverage plus the shared Fight registration contract.
 
 const ENCOUNTER_PATH := "res://data/encounters/buttonfront_pinfall.json"
 const ENCOUNTER_ID := "buttonfront_pinfall"
@@ -326,25 +325,28 @@ func _test_authored_schedule_and_parser() -> void:
 			and choice.get("definitions") == _expected_definitions(),
 			"the real Fight loader returns this encounter's exact authored schedule")
 
-	# The encounter is standalone: the shared typed pool does not register it,
-	# so nothing claims live availability for it yet.
+	# The live entry consumes this exact shared Fight binding.
 	_check(FileAccess.file_exists(TYPED_POOL_PATH),
 		"the shared typed battle pool file exists, so its contents can be inspected")
-	_check(not _shared_pool_registers_encounter(),
-		"this encounter stays out of the shared typed battle pool")
+	_check(_shared_pool_registers_encounter(),
+		"this encounter has its singular, exact Fight registration")
 
 
-## True only when the shared typed pool registers this encounter by its own ID
-## or by its schedule path. The pool is a shared catalog other lanes append to,
-## so this looks the encounter up by its own identity, never by a total.
+## Validate this binding and preserve named earlier entries without catalog totals.
 func _shared_pool_registers_encounter() -> bool:
 	var file := FileAccess.open(TYPED_POOL_PATH, FileAccess.READ)
 	if file == null:
 		return false
-	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	var text := file.get_as_text()
+	var parsed: Variant = JSON.parse_string(text)
 	file.close()
 	if not parsed is Dictionary:
 		return false
+	_check(text.count('"' + ENCOUNTER_ID + '"') == 1,
+		"raw catalog contains exactly one encounter ID, including duplicate JSON keys")
+	_check(text.count('"' + ENCOUNTER_PATH + '"') == 1,
+		"raw catalog contains exactly one schedule binding")
+	var matches := 0
 	for kind in parsed:
 		var group = parsed[kind]
 		if not group is Dictionary:
@@ -354,8 +356,38 @@ func _shared_pool_registers_encounter() -> bool:
 			if not entry is Dictionary:
 				continue
 			if encounter_id == ENCOUNTER_ID or entry.get("schedule") == ENCOUNTER_PATH:
-				return true
-	return false
+				matches += 1
+				_check(kind == "Fight" and encounter_id == ENCOUNTER_ID
+					and entry == {"schedule": ENCOUNTER_PATH,
+						"enemy_ids": ["button_guard", "fray_scavenger"]},
+					"exact Fight ID, schedule and ordered enemy binding")
+	# Named earlier bindings remain intact; additional entries are welcome.
+	var earlier := {
+		"Fight": {
+			"starter_attacks": ["ragling", "ragling_guard"],
+			"bobbin_skirmish": ["fray_scavenger", "spool_stalker"],
+			"buttonhole_holdout": ["button_guard", "seam_ripper"],
+			"guard_counterattack": ["ragling_guard", "button_guard"],
+			"double_hem_siege": ["fray_scavenger", "seam_ripper"],
+			"triple_spool_pinch": ["fray_scavenger", "button_guard", "spool_stalker"],
+			"seamshift_tripwire": ["seam_ripper", "spool_stalker", "fray_scavenger"],
+			"front_hem_pivot": ["button_guard", "fray_scavenger"],
+			"rear_spool_reversal": ["spool_stalker", "seam_ripper"],
+			"rearline_needlemark": ["fray_scavenger", "seam_ripper"],
+			"middlemark_clamp": ["spool_stalker", "seam_ripper"],
+			"backhem_pinwheel": ["fray_scavenger", "button_guard", "spool_stalker"],
+			"hemdrag_relay": ["seam_ripper", "button_guard"]},
+		"Elite": {
+			"thimble_crossfire": ["button_guard", "seam_ripper"],
+			"needle_marshal_elite": ["needle_marshal", "ragling_guard"],
+			"spool_hexer_elite": ["spool_hexer", "spool_stalker"]},
+		"Boss": {"patchwork_behemoth": ["patchwork_behemoth"]}}
+	for kind in earlier:
+		for id in earlier[kind]:
+			_check(parsed.get(kind, {}).get(id) == {
+				"schedule": "res://data/encounters/%s.json" % id,
+				"enemy_ids": earlier[kind][id]}, "earlier binding preserved: " + id)
+	return matches == 1
 
 
 ## AC1: the real typed roster bridge binds this encounter's two named enemies.

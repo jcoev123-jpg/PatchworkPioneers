@@ -1,5 +1,9 @@
 {
   "Fight": {
+    "buttonfront_pinfall": {
+      "schedule": "res://data/encounters/buttonfront_pinfall.json",
+      "enemy_ids": ["button_guard", "fray_scavenger"]
+    },
     "starter_attacks": {
       "schedule": "res://data/encounters/starter_attacks.json",
       "enemy_ids": [

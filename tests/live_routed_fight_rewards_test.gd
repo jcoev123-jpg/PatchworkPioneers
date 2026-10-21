@@ -13,7 +13,10 @@ func _persistent() -> Array:
 
 
 func _click(control: Control) -> void:
+	var was_active: bool = app.battle_result != null and not app._battle_closed
+	var rng_before: int = app.run_rng.state if was_active else 0
 	await super._click(control)
+	_capture_reward_oracle(was_active, rng_before)
 	if not active_checked and app.battle_result != null and not app._battle_closed:
 		active_checked = true
 		var before := _persistent()
@@ -34,6 +37,10 @@ func _key(code: Key) -> void:
 	if was_active:
 		rng_before = app.run_rng.state
 	await super._key(code)
+	_capture_reward_oracle(was_active, rng_before)
+
+
+func _capture_reward_oracle(was_active: bool, rng_before: int) -> void:
 	if was_active and app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY:
 		var oracle := RandomNumberGenerator.new()
 		oracle.seed = app.run_rng.seed
