@@ -19,6 +19,8 @@ func _initialize() -> void:
 	_test_draw_order()
 	_test_rejections()
 	_test_replay()
+	_test_spare_spool()
+	_test_bound_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_support_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -315,3 +317,122 @@ func _test_replay() -> void:
 		_check(first.size() == 7 and second.size() == 7,
 			"replay includes seven actual full snapshots")
 		_check(first == second, "identical injected cards, party and seed replay exactly")
+
+
+func _spool_fixture(mode: String, seed_value: int = 42) -> Dictionary:
+	var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in definitions:
+		_check(hero.max_hp == floor(hero.max_hp), "authored HP is integral")
+		hero.max_hp = int(hero.max_hp)
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(2).id == "seamstress", "authored Mend owner exists")
+	var torn := RunTornMending.new(party.get_heroes())
+	var slots: Array = JSON.parse_string(FileAccess.get_file_as_string(CombatShopPatchRules.SLOTS_CATALOG))
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), [] if mode == "absent" else ["spare_spool"], slots, 5)
+	_check(wardrobe.is_valid() and torn.is_valid(), "valid real patch ledgers")
+	if mode not in ["absent", "unsewn"]:
+		_check(wardrobe.sew("spare_spool", "tinker" if mode == "wrong" else "seamstress", "ARM", "sew", wardrobe.get_snapshot()).ok, "real Spool sew")
+	if mode == "moved":
+		_check(wardrobe.start_rest("rest", wardrobe.get_snapshot()).ok, "Rest opens for move")
+		_check(wardrobe.re_sew("spare_spool", "seamstress", "tinker", "rest", "move", wardrobe.get_snapshot()).ok, "real Spool moves away from Mend owner")
+		_check(wardrobe.end_rest("rest", wardrobe.get_snapshot()).ok, "Rest closes")
+	if mode == "torn":
+		var start: Array = torn.read_state().heroes
+		var finish: Array = start.duplicate(true)
+		finish[1].hp = 0
+		_check(torn.observe_battle_end("fight", start, finish).ok, "actual owner tear")
+		var state := wardrobe.get_snapshot()
+		_check(wardrobe.refresh_run_context(torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "wardrobe reconciles tear")
+		party._heroes.assign(torn.read_state().heroes)
+	var resolver := CombatSupportCards.new()
+	if mode != "unbound":
+		_check(resolver.bind_patch_wardrobe(wardrobe, torn), "explicit real Spool binding")
+	var deck := _deck(["seamstress_mend"], seed_value)
+	_check(party.apply_damage(1, 12) and party.get_hero(1).hp == 28, "eligible wounded ally")
+	return {"party": party, "deck": deck, "service": resolver, "wardrobe": wardrobe, "torn": torn}
+
+
+func _bound_reject(c: Dictionary, definition: Dictionary, target: int, label: String) -> void:
+	var before := _snapshot(c.deck, c.party)
+	var ledgers := [c.wardrobe.get_snapshot(), c.torn.read_state()]
+	_check(not c.service.play_support(c.deck, c.party, definition, target), label + " rejects")
+	_check(_snapshot(c.deck, c.party) == before and ledgers == [c.wardrobe.get_snapshot(), c.torn.read_state()], label + " pristine combat/ledgers/RNG")
+
+
+func _spool_sequence(seed_value: int) -> Array:
+	var c := _spool_fixture("sewn", seed_value)
+	var trace: Array = [_snapshot(c.deck, c.party)]
+	_bound_reject(c, MEND, 0, "missing target before patched heal")
+	_check(c.service.play_support(c.deck, c.party, MEND, 1), "bound canonical Mend commits")
+	_check(c.party.get_hero(1).hp == 35 and c.deck.energy == 2 and c.deck.hand.is_empty()
+		and c.deck.discard_pile == ["seamstress_mend"], "actual seven HP, one energy and discard")
+	trace.append(_snapshot(c.deck, c.party))
+	return trace
+
+
+func _test_spare_spool() -> void:
+	_check(StarterCards.new().get_definition("seamstress_mend").effects.heal == MEND.amount, "canonical five-heal precondition")
+	for seed_value in [0, 42, 987654]:
+		_check(_spool_sequence(seed_value) == _spool_sequence(seed_value), "bound seeded replay")
+	for mode in ["absent", "unsewn", "wrong", "moved", "unbound"]:
+		var c := _spool_fixture(mode)
+		var before := _snapshot(c.deck, c.party)
+		_check(c.service.play_support(c.deck, c.party, MEND, 1), mode + " remains ordinary Mend")
+		_check(_snapshot(c.deck, c.party) == _expected(before, MEND, 1) and c.party.get_hero(1).hp == 33, mode + " exactly five, normal piles/energy/RNG")
+	var c := _spool_fixture("sewn")
+	_check(c.party.heal(1, 10) and c.party.get_hero(1).hp == 38, "two missing HP cap fixture")
+	_check(c.service.play_support(c.deck, c.party, MEND, 1) and c.party.get_hero(1).hp == 40, "seven healing clamps at max HP")
+	c = _spool_fixture("sewn")
+	var heroes: Array = c.party.get_heroes()
+	c.party = CombatParty.new([heroes[0], heroes[2], heroes[1]])
+	_check(c.party.apply_damage(1, 12) and c.party.get_hero(3).id == "seamstress", "living wearer moved to legal back slot")
+	_check(c.service.play_support(c.deck, c.party, MEND, 1) and c.party.get_hero(1).hp == 35, "bonus follows owner identity across slots")
+	c = _spool_fixture("torn")
+	_check(c.party.is_downed(2) and c.torn.read_state().tear_counts.seamstress == 1, "torn owner truly downed")
+	_bound_reject(c, MEND, 1, "torn owner cannot play or grant phantom healing")
+
+
+func _test_bound_rejections() -> void:
+	var c := _spool_fixture("sewn")
+	for change in [{"amount": 7}, {"amount": 0}, {"amount": 999}, {"owner_id": "tinker"},
+		{"id": "fake_mend"}, {"from_positions": [1, 2, 3]}, {"cost": 0}, {"effect": "ally_block"}]:
+		var forged := MEND.duplicate(true)
+		for key in change:
+			forged[key] = change[key]
+		if change.has("id"):
+			c.deck.hand.append("fake_mend")
+		_bound_reject(c, forged, 1, "spoofed heal " + str(change))
+	for target in [-1, 0, 4]:
+		_bound_reject(c, MEND, target, "illegal patched target")
+	_check(c.party.apply_damage(3, 26), "downed target prepared")
+	_bound_reject(c, MEND, 3, "patched Mend cannot revive")
+	c = _spool_fixture("sewn")
+	_check(c.deck.try_spend_energy(3), "energy exhausted")
+	_bound_reject(c, MEND, 1, "patched no energy")
+	for mode in ["null", "invalid", "stale_wardrobe", "stale_torn", "drift", "unreconciled"]:
+		c = _spool_fixture("sewn")
+		var w: Dictionary = c.wardrobe.get_snapshot()
+		var t: Dictionary = c.torn.read_state()
+		match mode:
+			"null":
+				_check(not c.service.bind_patch_wardrobe(null, c.torn), "null explicit binding fails")
+			"invalid":
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, RunTornMending.new()), "invalid authority fails binding")
+			"stale_wardrobe":
+				w.scraps += 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t), "stale expected wardrobe fails")
+			"stale_torn":
+				t.heroes[0].hp -= 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t), "stale expected torn fails")
+			"drift":
+				_check(c.wardrobe.start_rest("later", w).ok, "ledger really advances after binding")
+			"unreconciled":
+				var finish: Array = t.heroes.duplicate(true)
+				finish[0].hp -= 1
+				_check(c.torn.observe_battle_end("later_fight", t.heroes, finish).ok, "torn ledger really advances")
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "inconsistent authoritative ledgers reject binding")
+		_bound_reject(c, MEND, 1, mode + " explicit binding never becomes neutral")
+		if mode == "unreconciled":
+			_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, w.owned, w.scraps, w.gold, w.cards, w), "reconcile authority before recovery")
+		_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "fresh binding recovers explicitly")
+		_check(c.service.play_support(c.deck, c.party, MEND, 1) and c.party.get_hero(1).hp == 35, "fresh valid binding restores seven heal")

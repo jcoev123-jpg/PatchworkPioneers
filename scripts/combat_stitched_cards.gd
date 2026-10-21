@@ -12,11 +12,18 @@ func _init(attacks: CombatAttackCards = null) -> void:
 	_attacks = attacks if attacks != null else CombatAttackCards.new()
 
 
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
+		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	return _support.bind_patch_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn)
+
+
 func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		run_cards: RunRestStitchCards, stitched_id: String,
 		first_target: int = 0, second_target: int = 0) -> Dictionary:
 	var failure := {"ok": false, "halves": []}
 	if deck == null or party == null or enemies == null or run_cards == null:
+		return failure
+	if not _support.is_patch_binding_valid():
 		return failure
 	if not deck.turn_active or not deck.hand.has(stitched_id):
 		return failure
@@ -72,7 +79,7 @@ func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			var normalized := {"id": stitched_id, "owner_id": half.owner,
 				"cost": 0, "from_positions": half.from_positions,
 				"effect": effect, "amount": amount}
-			if not _support.resolve_staged_half(staged_deck, staged_party, normalized, target):
+			if not _support.resolve_staged_half(staged_deck, staged_party, normalized, target, half.id):
 				return failure
 			results.append({"ok": true, "effect": effect, "amount": amount})
 	staged_deck.try_spend_energy(preview.cost)

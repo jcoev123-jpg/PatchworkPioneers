@@ -13,6 +13,8 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_passives_and_statuses()
 	_test_draw_rollback_and_replay()
+	_test_spare_spool()
+	_test_spool_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -294,3 +296,114 @@ func _test_draw_rollback_and_replay() -> void:
 	c.deck.draw_pile.assign(["warden_brace"])
 	_check(_play(c, 3, 0).ok and c.party.get_hero(3).block == 5
 		and c.deck.hand == ["warden_brace"] and c.deck.discard_pile == [c.id], "Stitch/Tune reverse order draws from existing pile")
+
+
+func _bind_spool(c: Dictionary, mode: String = "sewn") -> void:
+	var slots: Array = JSON.parse_string(FileAccess.get_file_as_string(CombatShopPatchRules.SLOTS_CATALOG))
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), [] if mode == "absent" else ["spare_spool"], slots, 5)
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	_check(c.wardrobe.is_valid() and c.torn.is_valid(), "real valid stitched wardrobe/torn authorities")
+	if mode not in ["absent", "unsewn"]:
+		_check(c.wardrobe.sew("spare_spool", "tinker" if mode == "wrong" else "seamstress", "ARM", "sew", c.wardrobe.get_snapshot()).ok, "stitched fixture actually sews Spool")
+	if mode == "moved":
+		_check(c.wardrobe.start_rest("rest", c.wardrobe.get_snapshot()).ok, "real Rest opens")
+		_check(c.wardrobe.re_sew("spare_spool", "seamstress", "tinker", "rest", "move", c.wardrobe.get_snapshot()).ok, "stitched Spool moves to other owner")
+		_check(c.wardrobe.end_rest("rest", c.wardrobe.get_snapshot()).ok, "real Rest closes")
+	if mode == "torn":
+		var start: Array = c.torn.read_state().heroes
+		var finish := start.duplicate(true)
+		finish[1].hp = 0
+		_check(c.torn.observe_battle_end("tear", start, finish).ok, "actual stitched Mend owner tear")
+		var state: Dictionary = c.wardrobe.get_snapshot()
+		_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "stitched wardrobe refreshes torn owner")
+		c.party._heroes.assign(c.torn.read_state().heroes)
+	if mode != "unbound":
+		_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "stitched explicit Spool binding")
+
+
+func _spool_sequence(seed_value: int, reverse: bool) -> Array:
+	var c := _fixture(POP if reverse else "seamstress_mend", "seamstress_mend" if reverse else POP, seed_value)
+	_bind_spool(c)
+	_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28, "real stitched wound")
+	var ledger := [c.wardrobe.get_snapshot(), c.torn.read_state()]
+	var before := _snapshot(c)
+	_reject(c, 2 if reverse else 1, 0, "later half fails after patched heal or Tinker attack")
+	var expected := before.duplicate(true)
+	expected[1] = []
+	expected[2] = [c.id]
+	expected[3] = 1
+	expected[6][0].hp = 35
+	expected[7][1].hp = 4
+	expected[8] = true
+	_check(_play(c, 2 if reverse else 1, 1 if reverse else 2).ok, "bound Mend composite commits either order")
+	_check(_snapshot(c) == expected, "seven real healing, eight Pop damage, exact one charge/discard/latch and no RNG draw")
+	_check(ledger == [c.wardrobe.get_snapshot(), c.torn.read_state()], "composite leaves authoritative ledgers pristine")
+	return [before, _snapshot(c), ledger]
+
+
+func _test_spare_spool() -> void:
+	for seed_value in [0, 83, 9741]:
+		for reverse in [false, true]:
+			_check(_spool_sequence(seed_value, reverse) == _spool_sequence(seed_value, reverse), "bound composite exact seeded replay in each order")
+	for reverse in [false, true]:
+		for mode in ["absent", "unsewn", "wrong", "moved", "unbound", "sewn"]:
+			var c := _fixture("warden_brace" if reverse else "seamstress_mend", "seamstress_mend" if reverse else "warden_brace")
+			_bind_spool(c, mode)
+			_check(c.party.apply_damage(3, 12), "wounded stitched ally")
+			var before := _snapshot(c)
+			var expected := before.duplicate(true)
+			expected[1] = []
+			expected[2] = [c.id]
+			expected[3] = 1
+			expected[6][0].block = 7
+			expected[6][2].hp += 7 if mode == "sewn" else 5
+			_check(_play(c, 0 if reverse else 3, 3 if reverse else 0).ok, mode + " Mend/Brace commits both orders")
+			_check(_snapshot(c) == expected, mode + " exact five/seven HP, piles/energy and no phantom bonus")
+		var capped := _fixture("warden_brace" if reverse else "seamstress_mend", "seamstress_mend" if reverse else "warden_brace")
+		_bind_spool(capped)
+		_check(capped.party.apply_damage(3, 2), "stitched cap precondition")
+		_check(_play(capped, 0 if reverse else 3, 3 if reverse else 0).ok and capped.party.get_hero(3).hp == 26, "patched composite clamps at real maximum")
+	var torn := _fixture("seamstress_mend", POP)
+	_bind_spool(torn, "torn")
+	_check(torn.party.is_downed(2) and torn.torn.read_state().tear_counts.seamstress == 1, "stitched owner truly torn")
+	_reject(torn, 1, 2, "torn wearer cannot grant healing or play composite")
+
+
+func _test_spool_rejections() -> void:
+	for mode in ["null", "invalid", "stale_wardrobe", "stale_torn", "drift"]:
+		var c := _fixture("seamstress_mend", POP)
+		_bind_spool(c)
+		_check(c.party.apply_damage(1, 12), "rejection fixture wound")
+		var w: Dictionary = c.wardrobe.get_snapshot()
+		var t: Dictionary = c.torn.read_state()
+		match mode:
+			"null":
+				_check(not c.service.bind_patch_wardrobe(null, c.torn), "stitched null binding rejects")
+			"invalid":
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, RunTornMending.new()), "stitched invalid authority rejects")
+			"stale_wardrobe":
+				w.scraps += 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t), "stitched stale wardrobe snapshot rejects")
+			"stale_torn":
+				t.heroes[0].hp -= 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t), "stitched stale torn snapshot rejects")
+			"drift":
+				_check(c.wardrobe.start_rest("later", w).ok, "stitched bound ledger actually advances")
+		var ledgers := [c.wardrobe.get_snapshot(), c.torn.read_state()]
+		_reject(c, 1, 2, mode + " stitched binding fails closed")
+		_check(ledgers == [c.wardrobe.get_snapshot(), c.torn.read_state()], "rejected composite preserves ledgers")
+	var c := _fixture("seamstress_mend", POP)
+	_bind_spool(c)
+	var forged: Dictionary = c.rest.get_snapshot()
+	forged.descriptors[c.id].first_half.effects.heal = 7
+	c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors, 0, 2)
+	_check(not c.rest.is_valid(), "preinflated Mend descriptor truly invalid")
+	_reject(c, 1, 2, "forged stitched heal cannot earn another bonus")
+	# Draw first really refills/shuffles before the invalid Mend selection.
+	c = _fixture("tinker_tune_up", "seamstress_mend")
+	_bind_spool(c)
+	c.deck.discard_pile.assign(["warden_strike", "warden_brace", PRICK])
+	_check(c.party.apply_damage(1, 12), "draw/heal rollback wound")
+	_reject(c, 0, 0, "bound draw RNG and piles roll back on missing second heal target")
+	_check(_play(c, 0, 1).ok and c.party.get_hero(1).hp == 35 and c.deck.energy == 1
+		and c.deck.discard_pile == [c.id] and c.deck.hand.size() == 1, "draw/heal retry commits once with seven HP")
