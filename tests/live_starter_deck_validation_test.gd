@@ -45,8 +45,8 @@ func _reject(app, path: String) -> void:
 	seed(1827)
 	var expected := randi()
 	seed(1827)
-	app.start_button.pressed.emit()
-	_check(randi() == expected, "rejected Start does not consume global RNG")
+	_check(not app._start_battle(), "invalid or missing deck rejects standalone M01 start")
+	_check(randi() == expected, "rejected M01 start does not consume global RNG")
 	_clear_session(app)
 
 
@@ -56,11 +56,11 @@ func _snapshot(deck: CombatDeck, rng: RandomNumberGenerator) -> Array:
 
 
 func _session(app, source: Array[String]) -> Array:
-	app.start_button.pressed.emit()
+	_check(app._start_battle(), "standalone M01 deck fixture starts successfully")
 	_check(app.deck != null and app.run_rng != null and app.party != null and app.enemies != null
-		and app.enemy_intents != null and app.battle_result != null, "real Start creates all session models")
+		and app.enemy_intents != null and app.battle_result != null, "M01 fixture creates all session models")
 	_check(is_instance_valid(app.battle_view) and is_instance_valid(app.return_button)
-		and is_instance_valid(app.end_turn_button), "real Start mounts battle and Return actions")
+		and is_instance_valid(app.end_turn_button), "M01 fixture mounts battle and Return actions")
 	if app.deck == null or app.run_rng == null or app.party == null or app.enemies == null \
 		or not is_instance_valid(app.return_button) or not is_instance_valid(app.end_turn_button):
 		return []

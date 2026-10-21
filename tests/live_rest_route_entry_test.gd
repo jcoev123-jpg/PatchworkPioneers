@@ -272,9 +272,10 @@ func _run() -> void:
 		_check(app.title_view.visible and app.run_heroes.is_empty() and app.run_map == null
 			and app.rest_recovery == null and app.rest_view == null and app.deck == null, "Return clears run and post-Return inputs are inert")
 		_check(randi() == global_next, "entire route/rest path leaves global RNG unchanged")
-	await _click(app.start_button)
+	_check(app._start_battle(), "explicit standalone M01 fixture starts")
+	await _frames()
 	_check(app.deck != null and app.run_map == null and app.run_heroes.is_empty() and app.rest_recovery == null,
-		"fresh direct Start remains independent after Rest Return")
+		"standalone M01 fixture remains independent after Rest Return")
 	await _click(app.return_button)
 	_finish_rest()
 

@@ -50,7 +50,7 @@ func _visible(app) -> void:
 
 
 func _fresh(app) -> void:
-	_check(app.party is CombatParty and app.party.is_valid(), "Start Run creates valid actual party")
+	_check(app.party is CombatParty and app.party.is_valid(), "M01 fixture creates valid actual party")
 	if app.party == null or not app.party.is_valid():
 		return
 	var heroes: Array = app.party.get_heroes()
@@ -89,13 +89,21 @@ func _invalid_sources(app) -> void:
 		file.store_string(source)
 		file.close()
 		app.starter_party_path = path
-		app.start_button.pressed.emit()
+		seed(1827)
+		var expected := randi()
+		seed(1827)
+		_check(not app._start_battle(), "invalid party fixture rejects standalone M01 start")
+		_check(randi() == expected, "invalid party start does not consume global RNG")
 		_check(app.party == null and app.deck == null and app.run_rng == null and app.battle_view == null,
 			"invalid definitions fail closed without partial session")
 		_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "invalid data retains focused title")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	app.starter_party_path = path # The fixture has now been removed.
-	app.start_button.pressed.emit()
+	seed(1827)
+	var expected := randi()
+	seed(1827)
+	_check(not app._start_battle(), "missing party fixture rejects standalone M01 start")
+	_check(randi() == expected, "missing party start does not consume global RNG")
 	_check(app.party == null and app.deck == null and app.run_rng == null and app.battle_view == null,
 		"missing definitions fail closed")
 	app.starter_party_path = app.STARTER_PARTY_PATH
@@ -124,7 +132,7 @@ func _run() -> void:
 	source.assign(JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_DECK_PATH)))
 	var first_trace: Array = []
 	for session in range(2):
-		app.start_button.pressed.emit()
+		_check(app._start_battle(), "standalone M01 party fixture starts successfully")
 		_fresh(app)
 		_check(app.deck != null and app.run_rng != null and is_instance_valid(app.end_turn_button)
 			and is_instance_valid(app.return_button), "real session and battle actions created")

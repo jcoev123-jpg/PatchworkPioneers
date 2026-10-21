@@ -109,6 +109,7 @@ func _run() -> void:
 	_check(app.act_outcome == null, "cancel has no outcome latch")
 	var replay: Array = []
 	var previous: RunActBattleOutcome
+	var retained: Array[Callable] = []
 	for session in range(2):
 		exercised_entry = false
 		if not await _routed_win(fixture, false):
@@ -136,6 +137,8 @@ func _run() -> void:
 		_check(_snapshot() == before, "settled snapshot remains independent")
 		await _click(app.reward_buttons[3])
 		_check(app.fight_reward_claimed and app.continue_button != null, "existing Skip reward flow survives")
+		retained = [app.reward_buttons[3].pressed.get_connections()[0].callable,
+			app.continue_button.pressed.get_connections()[0].callable]
 		previous = latch
 		await _click(app.return_button)
 	_check(pointer_plays > 0 and key_plays > 0, "victories exercise held cards by mouse and keyboard")
@@ -170,8 +173,17 @@ func _run() -> void:
 	_check(app.act_outcome != previous and app.act_outcome.get_state().run_status == "ACTIVE",
 		"restart after defeat creates fresh ACTIVE latch")
 	await _click(app.return_button)
-	await _click(app.start_button)
-	_check(app.deck != null and app.run_map == null and app.act_outcome == null, "standalone Start has no run latch")
+	_check(app._start_battle(), "explicit standalone M01 fixture starts")
+	await _frames()
+	_check(app.deck != null and app.run_map == null and app.act_outcome == null, "standalone M01 fixture has no run latch")
+	_check(not retained.is_empty(), "routed victory supplies retained reward and Continue callbacks")
+	var standalone := _state()
+	for callback in retained:
+		callback.call()
+	_check(_state() == standalone and app.run_map == null and app.act_outcome == null
+		and app.party_carryover == null and app.rest_recovery == null and app.shop_visit == null
+		and app.route_view == null and app.terminal_result_panel == null,
+		"post-title callbacks preserve standalone combat without reviving routed session")
 	await _click(app.return_button)
 	await _finish_carryover()
 
