@@ -41,6 +41,21 @@ func _idx(deck: Array, id: String, nth: int = 0) -> int:
 	return -1
 
 
+func _assert_authored(preview: Dictionary, first_id: String, second_id: String, label: String) -> void:
+	_check(not preview.is_empty(), label + " yields a real preview")
+	if preview.is_empty():
+		return
+	for half_name in ["first_half", "second_half"]:
+		var id: String = first_id if half_name == "first_half" else second_id
+		var half: Dictionary = preview.get(half_name, {})
+		var authored := catalog.get_definition(id)
+		_check(not authored.is_empty() and half == authored,
+			label + " " + half_name + " matches every shipped definition field")
+		for field in ["id", "display_name", "owner", "cost", "from_positions",
+				"target_kind", "to_positions", "effects"]:
+			_check(half.get(field) == authored.get(field), label + " " + half_name + " " + field)
+
+
 func _take(a: int, b: int, snapshot: Dictionary) -> void:
 	received.append({"first": a, "second": b, "source": snapshot.duplicate(true)})
 
@@ -140,8 +155,17 @@ func _run() -> void:
 		for item in seconds:
 			actual.append(item["index"])
 		_check(actual == wanted, "each second index is precisely an other-owner original at %d" % i)
-	_check(firsts[0]["index"] != firsts[1]["index"] and firsts[4]["index"] != firsts[5]["index"]
-		and firsts[8]["index"] != firsts[9]["index"], "duplicates are distinct copies")
+	_check(_idx(deck, "warden_strike", 0) != _idx(deck, "warden_strike", 1)
+		and _idx(deck, "seamstress_prick", 0) != _idx(deck, "seamstress_prick", 1)
+		and _idx(deck, "tinker_pop_shot", 0) != _idx(deck, "tinker_pop_shot", 1),
+		"real duplicate originals occupy different source indices")
+	# Each legally selectable instance pair must retain both entire shipped
+	# definitions, including targeting and nested status/effect fields.
+	for i in range(deck.size()):
+		for second in model.second_options(i):
+			var j: int = second["index"]
+			_assert_authored(model.preview(i, j), deck[i], deck[j],
+				"eligible source indices %d -> %d" % [i, j])
 	var examples := [
 		["seamstress_prick", "tinker_pop_shot", 2],
 		["warden_shield_bash", "tinker_scrap_bomb", 3],
@@ -162,7 +186,9 @@ func _run() -> void:
 			and preview.get("second_cost") == catalog.get_definition(sample[1])["cost"]
 			and preview.get("source_snapshot") == receipt and preview.get("source_receipt") == receipt["receipt"],
 			"exact authored cost, identity, ordered names, source and three-scrap preview " + sample[0])
+		_assert_authored(preview, sample[0], sample[1], "named pair " + sample[0])
 		var swapped := model.preview(b, a)
+		_assert_authored(swapped, sample[1], sample[0], "reversed named pair " + sample[0])
 		_check(swapped.get("first_id") == sample[1] and swapped.get("second_id") == sample[0]
 			and swapped.get("energy_cost") == sample[2] and swapped.get("display_name") != preview.get("display_name"),
 			"reverse order swaps halves without changing cost")
@@ -175,11 +201,17 @@ func _run() -> void:
 	var intact := receipt.duplicate(true)
 	var tampered := model.preview(prick, pop)
 	tampered["source_snapshot"]["deck"].clear()
+	tampered["first_half"]["effects"]["bleed"] = 999
+	tampered["first_half"]["from_positions"].clear()
+	tampered["second_half"]["to_positions"].clear()
 	tampered["first_name"] = "forgery"
 	firsts[0]["name"] = "forgery"
 	model.source_snapshot()["deck"].clear()
 	_check(model.preview(prick, pop)["first_name"] == "Prick" and model.source_snapshot() == intact
-		and model.first_options()[0]["name"] == "Strike", "all model outputs deeply detached")
+		and model.first_options()[0]["name"] == "Strike"
+		and model.preview(prick, pop)["first_half"] == catalog.get_definition("seamstress_prick")
+		and model.preview(prick, pop)["second_half"] == catalog.get_definition("tinker_pop_shot"),
+		"nested effects, position arrays, receipts and model outputs deeply detached")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 10406
 	var state := rng.state
@@ -245,6 +277,12 @@ func _run() -> void:
 	_check(plus.get("first_name") == "Strike+" and plus.get("first_id") == "warden_strike_plus"
 		and plus.get("energy_cost") == 2 and plus.get("first_cost") == 1,
 		"upgraded authored original stays eligible and cost is accurate")
+	_assert_authored(plus, "warden_strike_plus", "seamstress_prick", "upgraded Strike+")
+	var upgraded_pop := upgrade_model.preview(0, _idx(upgraded["deck"], "tinker_pop_shot"))
+	_assert_authored(upgraded_pop, "warden_strike_plus", "tinker_pop_shot",
+		"upgraded Strike+ / Pop Shot")
+	_check(upgraded_pop.get("first_half", {}).get("effects", {}).get("damage") == 7,
+		"upgraded half shows seven damage, not Strike's six")
 
 	picker = LiveRestStitchPairPicker.new()
 	picker.name = "DetachedRestStitchPairPicker"
@@ -259,11 +297,80 @@ func _run() -> void:
 	_bounds(picker.second_selector)
 	_bounds(picker.confirm_button)
 	_bounds(picker.summary_label)
+	_bounds(picker.first_half_label)
+	_bounds(picker.second_half_label)
+	_check(picker.first_half_label.get_global_rect().end.y <
+		picker.second_half_label.get_global_rect().position.y
+		and picker.second_half_label.get_global_rect().end.y <
+		picker.confirm_button.get_global_rect().position.y,
+		"first and second three-line rules never overlap each other or confirm")
 	_check(picker.first_selector.item_count == deck.size() and picker.second_selector.item_count == 0
 		and picker.confirm_button.disabled, "picker starts without synthetic second selection")
 	for i in range(deck.size()):
 		_check(picker.first_selector.get_item_metadata(i) == i, "UI first duplicate-instance metadata %d" % i)
-	var first_item := 4
+	# A separate area/Weak pair must show its independent front-only and
+	# all-enemy rules, without inventing Warden's opening Block as an effect.
+	var bash_index := _idx(deck, "warden_shield_bash")
+	var bomb_index := _idx(deck, "tinker_scrap_bomb")
+	picker.first_selector.select(bash_index)
+	picker.first_selector.item_selected.emit(bash_index)
+	var bomb_row := -1
+	for i in range(picker.second_selector.item_count):
+		if picker.second_selector.get_item_metadata(i) == bomb_index:
+			bomb_row = i
+	_check(bomb_row >= 0, "authored Shield Bash / Scrap Bomb can be selected")
+	if bomb_row >= 0:
+		picker.second_selector.select(bomb_row)
+		picker.second_selector.item_selected.emit(bomb_row)
+		_check(picker.summary_label.text.contains("Shield Bash / Scrap Bomb • 3 energy • 3 scraps")
+			and picker.first_half_label.text ==
+				"First: Shield Bash — Warden (2 energy)\nFrom hero positions 1; choose one enemy in positions 1\n8 damage; Weak 1"
+			and picker.second_half_label.text ==
+				"Second: Scrap Bomb — Tinker (2 energy)\nFrom hero positions 3; all eligible enemies in positions 1-3\n4 damage to each eligible enemy (first Tinker attack this turn: +3 damage)",
+			"mounted area/Weak pair displays exact separate legality and conditional attack")
+	# Self-only Brace must not invent an enemy selection or the Warden's
+	# unrelated start-of-combat passive; living ally Block is separate.
+	for support in ["warden_brace", "seamstress_stitch_up"]:
+		var support_index := _idx(deck, support)
+		picker.first_selector.select(support_index)
+		picker.first_selector.item_selected.emit(support_index)
+		var support_pop_row := -1
+		for i in range(picker.second_selector.item_count):
+			if picker.second_selector.get_item_metadata(i) == pop:
+				support_pop_row = i
+		_check(support_pop_row >= 0, support + " can display a cross-hero second half")
+		if support_pop_row >= 0:
+			picker.second_selector.select(support_pop_row)
+			picker.second_selector.item_selected.emit(support_pop_row)
+			var expected_support := (
+				"First: Brace — Warden (1 energy)\nFrom hero positions 1-3; self (no chosen target)\nBlock 7"
+				if support == "warden_brace" else
+				"First: Stitch Up — Seamstress (1 energy)\nFrom hero positions 1-3; choose one living ally in positions 1-3\nBlock 5")
+			_check(picker.first_half_label.text == expected_support,
+				support + " shows authored self/living-ally Block, without combat-start passive")
+	picker.bind(upgrade_ledger, upgrade_ledger.get_snapshot())
+	picker.first_selector.select(0)
+	picker.first_selector.item_selected.emit(0)
+	var upgrade_pop_row := -1
+	for i in range(picker.second_selector.item_count):
+		if picker.second_selector.get_item_metadata(i) == _idx(upgraded["deck"], "tinker_pop_shot"):
+			upgrade_pop_row = i
+	_check(upgrade_pop_row >= 0, "mounted upgraded Strike+ can pair with Pop Shot")
+	if upgrade_pop_row >= 0:
+		picker.second_selector.select(upgrade_pop_row)
+		picker.second_selector.item_selected.emit(upgrade_pop_row)
+		_check(picker.first_half_label.text.contains("First: Strike+")
+			and picker.first_half_label.text.contains("7 damage")
+			and not picker.first_half_label.text.contains("6 damage"),
+			"mounted Strike+ uses the authored upgraded damage, not base Strike")
+	picker.bind(ledger, receipt)
+	var ui_rng := RandomNumberGenerator.new()
+	ui_rng.seed = 1080701
+	var ui_rng_before := ui_rng.state
+	seed(1080701)
+	var ui_global_next := randi()
+	seed(1080701)
+	var first_item := prick
 	await _select_mouse(picker.first_selector, first_item)
 	_check(picker.second_selector.item_count > 0 and picker.confirm_button.disabled,
 		"mouse first change filters second and blocks premature submit")
@@ -277,17 +384,37 @@ func _run() -> void:
 		_check(not picker.confirm_button.disabled and picker.summary_label.text.contains("Prick / Pop Shot")
 			and picker.summary_label.text.contains("2 energy") and picker.summary_label.text.contains("3 scraps"),
 			"visible paper summary has correct joined name, energy and scraps")
+		_check(picker.first_half_label.text ==
+			"First: Prick — Seamstress (1 energy)\nFrom hero positions 1-3; choose one enemy in positions 1-3\n3 damage; Bleed 2 (+1 Bleed if applied: Seamstress passive)",
+			"mouse-visible first half spells out exact authored Bleed and conditional Seamstress bonus")
+		_check(picker.second_half_label.text ==
+			"Second: Pop Shot — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n5 damage (first Tinker attack this turn: +3 damage)",
+			"mouse-visible second half spells out target, damage and conditional first attack")
+		_check(picker.first_half_label.get_line_count() <= 4
+			and picker.second_half_label.get_line_count() <= 4,
+			"both detailed half readouts stay unclipped at 1280x720")
 		var selected_metadata: int = picker.second_selector.get_item_metadata(second_item)
 		picker.second_selector.set_item_metadata(second_item, _idx(deck, "tinker_scrap_bomb"))
 		await _click(picker.confirm_button)
 		_check(received.is_empty() and picker.confirm_button.disabled,
 			"metadata remap to another otherwise-valid index cannot request a phantom visual pair")
-		picker.second_selector.set_item_metadata(second_item, selected_metadata)
-		picker.second_selector.item_selected.emit(second_item)
-		_check(not picker.confirm_button.disabled, "valid second selection recovers after forged row")
+		_check(picker.first_half_label.text.is_empty() and picker.second_half_label.text.is_empty()
+			and picker.summary_label.text.contains("Not available"),
+			"forged row clears stale authored rules as well as disabling confirmation")
+		picker.first_selector.item_selected.emit(first_item)
+		second_item = -1
+		for i in range(picker.second_selector.item_count):
+			if picker.second_selector.get_item_metadata(i) == pop:
+				second_item = i
+		if second_item >= 0:
+			picker.second_selector.select(second_item)
+			picker.second_selector.item_selected.emit(second_item)
+		_check(not picker.confirm_button.disabled, "reselecting a genuine pair recovers after forged row")
 		await _click(picker.confirm_button)
 	_check(received.size() == 1 and received[0]["first"] == prick and received[0]["second"] == pop
 		and received[0]["source"] == receipt, "physical mouse emitted exactly one exact original pair/receipt")
+	_check(picker.confirm_button.disabled and picker.first_half_label.text.is_empty()
+		and picker.second_half_label.text.is_empty(), "one-shot request hides resolved pair until rebind")
 	_check(ledger.get_snapshot() == receipt and not ledger.is_consumed(),
 		"mouse choice did not commit deck, receipt, descriptor, scraps or latch")
 	var oracle := ledger.choose_stitch(received[0]["first"], received[0]["second"], received[0]["source"])
@@ -316,24 +443,51 @@ func _run() -> void:
 	picker.first_selector.item_selected.emit(0)
 	_check(picker.second_selector.item_count > 0 and picker.second_selector.selected == -1
 		and picker.confirm_button.disabled, "first-half switch rebuilds other-owner list without preselection")
+	# Keyboard uses a different pair: Tune Up draws without a target, then
+	# Mend chooses a living ally. The half order is not cosmetic.
 	picker.first_selector.select(-1)
-	await _select_keyboard(picker.first_selector, first_item)
+	var tune_index := _idx(deck, "tinker_tune_up")
+	var mend_index := _idx(deck, "seamstress_mend")
+	await _select_keyboard(picker.first_selector, tune_index)
 	var keyboard_second := -1
 	for i in range(picker.second_selector.item_count):
-		if picker.second_selector.get_item_metadata(i) == pop:
+		if picker.second_selector.get_item_metadata(i) == mend_index:
 			keyboard_second = i
-	_check(keyboard_second >= 0, "keyboard first change exposes Pop Shot")
+	_check(keyboard_second >= 0, "keyboard first change exposes Mend")
 	if keyboard_second >= 0:
 		await _select_keyboard(picker.second_selector, keyboard_second)
+		_check(picker.summary_label.text.contains("Tune Up / Mend • 2 energy • 3 scraps")
+			and picker.first_half_label.text ==
+				"First: Tune Up — Tinker (0 energy)\nFrom hero positions 1-3; no target to choose\ndraw 1"
+			and picker.second_half_label.text ==
+				"Second: Mend — Seamstress (1 energy)\nFrom hero positions 2-3; choose one living ally in positions 1-3\nheal 5",
+			"keyboard-visible draw and targeted living-ally heal are exact and ordered")
 		picker.second_selector.grab_focus()
 		await _key(KEY_TAB)
 		_check(picker.confirm_button.has_focus(), "keyboard Tab reaches confirmation")
 		await _key(KEY_ENTER)
 	_check(received.size() == signals_before + 1
-		and received.back() == {"first":prick,"second":pop,"source":fresh.get_snapshot()},
-		"physical keyboard emits same exact pair/receipt, only once")
+		and received.back() == {"first":tune_index,"second":mend_index,"source":fresh.get_snapshot()},
+		"physical keyboard emits Tune Up / Mend exact indices/receipt, only once")
 	_check(fresh.get_snapshot() == receipt and not fresh.is_consumed(),
 		"keyboard selection only requests, does not pay")
+	_check(ui_rng.state == ui_rng_before and randi() == ui_global_next,
+		"mouse/keyboard, previews and authoritative receipt never draw local/global RNG")
+	# Re-arm a genuinely selected pair before making its authoritative source
+	# stale: this tests removal of *visible* stale rules, not an empty panel.
+	picker.bind(fresh, fresh.get_snapshot())
+	picker.first_selector.select(prick)
+	picker.first_selector.item_selected.emit(prick)
+	var stale_pop_row := -1
+	for i in range(picker.second_selector.item_count):
+		if picker.second_selector.get_item_metadata(i) == pop:
+			stale_pop_row = i
+	if stale_pop_row >= 0:
+		picker.second_selector.select(stale_pop_row)
+		picker.second_selector.item_selected.emit(stale_pop_row)
+	_check(stale_pop_row >= 0 and not picker.confirm_button.disabled
+		and not picker.first_half_label.text.is_empty()
+		and not picker.second_half_label.text.is_empty(), "real pair visibly armed before stale receipt")
 	var refusal_rng := RandomNumberGenerator.new()
 	refusal_rng.seed = 104061
 	var local_before := refusal_rng.state
@@ -345,7 +499,9 @@ func _run() -> void:
 	fresh._source_snapshot["receipt"] = "stale"
 	picker._confirm_callback.call()
 	_check(received.size() == signals_before + 1 and fresh.get_snapshot() == before_refusal
-		and not fresh.is_consumed(), "stale authoritative source refuses without ledger/signal mutation")
+		and not fresh.is_consumed() and picker.confirm_button.disabled
+		and picker.first_half_label.text.is_empty() and picker.second_half_label.text.is_empty(),
+		"stale authoritative source refuses without ledger/signal or stale-preview mutation")
 	fresh._source_snapshot = original_source
 	picker.hide()
 	picker._confirm_callback.call()

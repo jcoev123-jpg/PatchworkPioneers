@@ -90,6 +90,11 @@ func preview(first_index: Variant, second_index: Variant) -> Dictionary:
 		"second_name": second["name"],
 		"first_cost": first["cost"],
 		"second_cost": second["cost"],
+		# Return the complete original catalog definitions in play order. Each
+		# lookup gives a fresh, deep-detached copy (including arrays/effects);
+		# the authoritative Rest service alone performs the transaction.
+		"first_half": _catalog.get_definition(first["id"]),
+		"second_half": _catalog.get_definition(second["id"]),
 		"display_name": first["name"] + " / " + second["name"],
 		"energy_cost": cost,
 		"scrap_cost": RunRestStitchCards.SCRAP_COST,

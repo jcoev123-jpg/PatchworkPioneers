@@ -15,6 +15,8 @@ var first_selector: OptionButton
 var second_selector: OptionButton
 var confirm_button: Button
 var summary_label: Label
+var first_half_label: Label
+var second_half_label: Label
 var _left_edge: ColorRect
 var _right_edge: ColorRect
 var _model := RunRestStitchPairOptions.new()
@@ -29,9 +31,9 @@ func _ready() -> void:
 	# while constructing controls, then connect this UI session normally.
 	var early_service: RunRestStitchCards = _model._service
 	var early_source: Dictionary = _model._source.duplicate(true)
-	custom_minimum_size = Vector2(600, 355)
-	if size.x < 600 or size.y < 355:
-		size = Vector2(600, 355)
+	custom_minimum_size = Vector2(710, 500)
+	if size.x < 710 or size.y < 500:
+		size = Vector2(710, 500)
 	var paper := PanelContainer.new()
 	paper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var style := StyleBoxFlat.new()
@@ -45,18 +47,18 @@ func _ready() -> void:
 	_left_edge = ColorRect.new()
 	_left_edge.color = OWNER_COLORS["warden"]
 	_left_edge.position = Vector2(7, 7)
-	_left_edge.size = Vector2(8, 340)
+	_left_edge.size = Vector2(8, 486)
 	_left_edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_left_edge)
 	_right_edge = ColorRect.new()
 	_right_edge.color = OWNER_COLORS["tinker"]
-	_right_edge.position = Vector2(585, 7)
-	_right_edge.size = Vector2(8, 340)
+	_right_edge.position = Vector2(695, 7)
+	_right_edge.size = Vector2(8, 486)
 	_right_edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_right_edge)
 	# Tiny cream thread dashes on both owner-coloured felt seams.
-	for y in range(15, 340, 17):
-		for x in [9, 587]:
+	for y in range(15, 489, 17):
+		for x in [9, 697]:
 			var thread := ColorRect.new()
 			thread.color = Color("#f9edd2")
 			thread.position = Vector2(x, y)
@@ -67,7 +69,7 @@ func _ready() -> void:
 	var title := Label.new()
 	title.text = "REST • STITCH TWO ORIGINAL CARDS"
 	title.position = Vector2(27, 15)
-	title.size = Vector2(545, 30)
+	title.size = Vector2(650, 30)
 	title.add_theme_color_override("font_color", INK)
 	title.add_theme_font_size_override("font_size", 20)
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -76,9 +78,9 @@ func _ready() -> void:
 	first_selector = _option(Vector2(30, 60), "Choose first original card")
 	second_selector = _option(Vector2(30, 117), "Choose other-hero card")
 
-	var preview_panel := PanelContainer.new()
-	preview_panel.position = Vector2(30, 175)
-	preview_panel.size = Vector2(540, 113)
+	var preview_panel := Panel.new()
+	preview_panel.position = Vector2(30, 174)
+	preview_panel.size = Vector2(650, 248)
 	var inset := StyleBoxFlat.new()
 	inset.bg_color = Color("#fff8e9")
 	inset.border_color = Color("#968c7e")
@@ -89,17 +91,18 @@ func _ready() -> void:
 	add_child(preview_panel)
 	summary_label = Label.new()
 	summary_label.position = Vector2(14, 10)
-	summary_label.size = Vector2(510, 94)
-	summary_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	summary_label.size = Vector2(622, 35)
 	summary_label.add_theme_color_override("font_color", INK)
-	summary_label.add_theme_font_size_override("font_size", 17)
+	summary_label.add_theme_font_size_override("font_size", 18)
 	summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	preview_panel.add_child(summary_label)
+	first_half_label = _detail_label(preview_panel, Vector2(14, 51))
+	second_half_label = _detail_label(preview_panel, Vector2(14, 144))
 
 	confirm_button = Button.new()
 	confirm_button.text = "Confirm Stitch • 3 scraps"
-	confirm_button.position = Vector2(30, 302)
-	confirm_button.size = Vector2(540, 42)
+	confirm_button.position = Vector2(30, 440)
+	confirm_button.size = Vector2(650, 44)
 	confirm_button.focus_mode = Control.FOCUS_ALL
 	add_child(confirm_button)
 	if early_service != null:
@@ -111,7 +114,7 @@ func _ready() -> void:
 func _option(at: Vector2, placeholder: String) -> OptionButton:
 	var result := OptionButton.new()
 	result.position = at
-	result.size = Vector2(540, 45)
+	result.size = Vector2(650, 45)
 	result.focus_mode = Control.FOCUS_ALL
 	result.add_theme_font_size_override("font_size", 17)
 	result.add_theme_color_override("font_color", INK)
@@ -120,6 +123,19 @@ func _option(at: Vector2, placeholder: String) -> OptionButton:
 	result.select(-1)
 	add_child(result)
 	return result
+
+
+func _detail_label(parent: Control, at: Vector2) -> Label:
+	var label := Label.new()
+	label.position = at
+	label.size = Vector2(622, 89)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_color_override("font_color", INK)
+	label.add_theme_font_size_override("font_size", 16)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(label)
+	return label
 
 
 func bind(service: RunRestStitchCards, source_snapshot: Variant) -> void:
@@ -154,7 +170,9 @@ func clear() -> void:
 		first_selector.disabled = true
 		second_selector.disabled = true
 		confirm_button.disabled = true
-		summary_label.text = "Choose two originals from different heroes.\nStitching costs 3 scraps; no scraps are spent in this preview."
+		summary_label.text = "Not available — choose two originals (3 scraps)."
+		first_half_label.text = ""
+		second_half_label.text = ""
 		_left_edge.color = OWNER_COLORS["warden"]
 		_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -167,7 +185,9 @@ func refresh() -> void:
 	first_selector.disabled = true
 	second_selector.disabled = true
 	confirm_button.disabled = true
-	summary_label.text = "No eligible Rest stitching pair (3 scraps required)."
+	summary_label.text = "Not available — no eligible pair (3 scraps required)."
+	first_half_label.text = ""
+	second_half_label.text = ""
 	if not is_inside_tree() or not _model.is_available():
 		return
 	for entry in _model.first_options():
@@ -175,7 +195,7 @@ func refresh() -> void:
 		first_selector.set_item_metadata(first_selector.item_count - 1, entry["index"])
 	first_selector.select(-1)
 	first_selector.disabled = first_selector.item_count == 0
-	summary_label.text = "Pick an original card, then a card owned by another hero.\nStitch price: 3 scraps. No Rest choice has been spent."
+	summary_label.text = "Choose the first original, then another hero's card • 3 scraps."
 
 
 func _entry_text(entry: Dictionary) -> String:
@@ -192,13 +212,18 @@ func _on_first_changed(item: int, epoch: int) -> void:
 	if item < 0 or item >= first_selector.item_count:
 		_disable_choice()
 		return
-	var index: int = first_selector.get_item_metadata(item)
+	var index: Variant = first_selector.get_item_metadata(item)
+	if typeof(index) != TYPE_INT:
+		_disable_choice()
+		return
 	for entry in _model.second_options(index):
 		second_selector.add_item(_entry_text(entry))
 		second_selector.set_item_metadata(second_selector.item_count - 1, entry["index"])
 	second_selector.select(-1)
 	second_selector.disabled = second_selector.item_count == 0
-	summary_label.text = "Choose a different hero's original card.\nScrap cost: 3."
+	summary_label.text = "Choose the second original from a different hero • 3 scraps."
+	first_half_label.text = ""
+	second_half_label.text = ""
 	_left_edge.color = _color_for_index(index)
 	_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -213,20 +238,83 @@ func _update_preview() -> void:
 	confirm_button.disabled = true
 	var pair := _current_pair()
 	if pair.is_empty():
-		summary_label.text = "Select two originals from different heroes."
+		_disable_choice()
 		return
-	summary_label.text = "%s\n%s (%d) + %s (%d) → %d energy\nRest stitch: %d scraps (confirmation requests only)" % [
-		pair["display_name"], pair["first_name"], pair["first_cost"], pair["second_name"],
-		pair["second_cost"], pair["energy_cost"], pair["scrap_cost"]]
+	summary_label.text = "%s • %d energy • %d scraps (request only)" % [
+		pair["display_name"], pair["energy_cost"], pair["scrap_cost"]]
+	first_half_label.text = _half_lines("First", pair["first_half"])
+	second_half_label.text = _half_lines("Second", pair["second_half"])
 	_left_edge.color = OWNER_COLORS.get(pair["first_owner"], INK)
 	_right_edge.color = OWNER_COLORS.get(pair["second_owner"], INK)
 	confirm_button.disabled = false
 
 
+func _positions(positions: Array) -> String:
+	if positions.is_empty():
+		return "none"
+	var values: Array[String] = []
+	for pos in positions:
+		values.append(str(pos))
+	if positions.size() > 1 and positions == range(int(positions[0]), int(positions.back()) + 1):
+		return "%s-%s" % [values.front(), values.back()]
+	return ", ".join(PackedStringArray(values))
+
+
+func _target(half: Dictionary) -> String:
+	var positions: Array = half["to_positions"]
+	match half["target_kind"]:
+		"enemy_single":
+			return "choose one enemy in positions %s" % _positions(positions)
+		"enemy_all":
+			return "all eligible enemies in positions %s" % _positions(positions)
+		"ally_single":
+			return "choose one living ally in positions %s" % _positions(
+				[1, 2, 3] if positions.is_empty() else positions)
+		"self":
+			return "self (no chosen target)"
+		"none":
+			return "no target to choose"
+	return "target unavailable"
+
+
+func _effects(half: Dictionary) -> String:
+	var effects: Dictionary = half["effects"]
+	var words: Array[String] = []
+	for key in ["damage", "bleed", "weak", "heal", "block", "draw"]:
+		if not effects.has(key):
+			continue
+		match key:
+			"damage":
+				words.append("%d damage%s" % [effects[key],
+					" to each eligible enemy" if half["target_kind"] == "enemy_all" else ""])
+			"bleed":
+				words.append("Bleed %d" % effects[key])
+			"weak":
+				words.append("Weak %d" % effects[key])
+			"heal":
+				words.append("heal %d" % effects[key])
+			"block":
+				words.append("Block %d" % effects[key])
+			"draw":
+				words.append("draw %d" % effects[key])
+	var text := "; ".join(PackedStringArray(words))
+	if half["owner"] == "seamstress" and effects.has("bleed"):
+		text += " (+1 Bleed if applied: Seamstress passive)"
+	if half["owner"] == "tinker" and effects.has("damage"):
+		text += " (first Tinker attack this turn: +3 damage)"
+	return text
+
+
+func _half_lines(order: String, half: Dictionary) -> String:
+	return "%s: %s — %s (%d energy)\nFrom hero positions %s; %s\n%s" % [
+		order, half["display_name"], String(half["owner"]).capitalize(),
+		half["cost"], _positions(half["from_positions"]), _target(half), _effects(half)]
+
+
 func _current_pair() -> Dictionary:
 	if not is_inside_tree() or not is_visible_in_tree() or not _model.is_available():
 		return {}
-	if first_selector.selected < 0 or second_selector.selected < 0:
+	if first_selector.disabled or second_selector.disabled or first_selector.selected < 0 or second_selector.selected < 0:
 		return {}
 	if first_selector.selected >= first_selector.item_count or second_selector.selected >= second_selector.item_count:
 		return {}
@@ -261,6 +349,9 @@ func _disable_choice() -> void:
 	second_selector.clear()
 	second_selector.disabled = true
 	confirm_button.disabled = true
+	summary_label.text = "Not available — select a current eligible pair (3 scraps)."
+	first_half_label.text = ""
+	second_half_label.text = ""
 
 
 func _on_confirm(epoch: int) -> void:
@@ -268,9 +359,13 @@ func _on_confirm(epoch: int) -> void:
 		return
 	var pair := _current_pair()
 	if pair.is_empty():
-		confirm_button.disabled = true
+		_disable_choice()
 		return
 	stitch_requested.emit(pair["first_index"], pair["second_index"], pair["source_snapshot"].duplicate(true))
+	# This session emits at most one request. The Rest owner decides whether
+	# to transact; a fresh binding is needed for any subsequent choice.
+	_disable_choice()
+	summary_label.text = "Stitch requested — awaiting Rest confirmation."
 
 
 func _exit_tree() -> void:
