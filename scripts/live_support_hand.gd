@@ -225,7 +225,7 @@ func _choose_target() -> void:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.get_child(0).mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var cue := Label.new()
-		cue.text = "Choose ally: Click / Enter / Space"
+		cue.text = "Choose ally:\nClick / Enter /\nSpace"
 		cue.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		cue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cue.mouse_filter = Control.MOUSE_FILTER_IGNORE
