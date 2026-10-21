@@ -10,7 +10,8 @@ extends RefCounted
 ## get_state(): {"party_ids": Array, "deck": Array, "trinkets": Array, "gold": int}
 ## get_stock(): {"cards": Array[{"id", "owner", "price", "sold"}],
 ##               "trinkets": Array[{"id", "price", "sold"}]}
-## buy(kind, id): {"ok": bool, "state": get_state(), "stock": get_stock()}
+## buy(kind, id): {"ok": bool, "state": get_state(), "stock": get_stock(),
+##                  "receipt": {"kind", "id", "price"} on success only}
 ## Every result/read is detached, including rejected transactions.
 
 var _valid: bool = false
@@ -126,9 +127,12 @@ func buy(kind: String, id: String) -> Dictionary:
 		_state["gold"] -= listing["price"]
 		_state[destination].append(id)
 		listing["sold"] = true
-		return _result(true)
+		return _result(true, {"kind": kind, "id": id, "price": listing["price"]})
 	return _result(false)
 
 
-func _result(success: bool) -> Dictionary:
-	return {"ok": success, "state": get_state(), "stock": get_stock()}
+func _result(success: bool, paid_receipt: Dictionary = {}) -> Dictionary:
+	var result := {"ok": success, "state": get_state(), "stock": get_stock()}
+	if success:
+		result["receipt"] = paid_receipt.duplicate(true)
+	return result
