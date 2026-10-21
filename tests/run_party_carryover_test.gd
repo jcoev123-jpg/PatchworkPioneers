@@ -11,6 +11,7 @@ func _initialize() -> void:
 		_finish()
 		return
 	_test_public_contract_and_detachment()
+	_test_legal_opening_rest()
 	_test_witnessed_victory_and_rest()
 	_test_failed_and_foreign_results()
 	_test_invalid_and_defeated()
@@ -127,6 +128,88 @@ func _test_public_contract_and_detachment() -> void:
 		and carry.read_state()["completed_fights"].is_empty()
 		and carry.read_state()["completed_rests"].is_empty(),
 		"read_state, visit lists and next-fight arrays are independently detached")
+
+
+func _test_legal_opening_rest() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 6
+	var map := RunMap.new()
+	_check(map.generate(rng) and map.get_route().is_empty(),
+		"seed 6 generates an untraversed real map")
+	var rest_id := ""
+	for node_id in map.get_legal_choices():
+		if map.get_node(node_id).get("type") == "Rest":
+			rest_id = node_id
+			break
+	_check(not rest_id.is_empty(), "seed 6 offers a genuinely legal opening Rest")
+	if rest_id.is_empty():
+		return
+	var rng_before := rng.state
+	seed(74006)
+	var expected_random := randi()
+	seed(74006)
+	var source := _party()
+	_check(source.is_valid(), "opening Rest starts from authored valid heroes")
+	var initial := source.get_heroes()
+	initial[0]["statuses"] = {"bleed": 2, "weak": 1}
+	initial[2]["statuses"] = {"exposed": 3}
+	var carry := RunPartyCarryover.new(initial)
+	_check(carry.is_valid() and carry.create_next_fight_party() == null,
+		"authored carry cannot hydrate before any completed node")
+	for bad_id in ["", "   ", " bad", "bad ", 5, null, [], {}]:
+		_assert_rejected(carry, "opening malformed Rest " + str(bad_id),
+			func(): return carry.choose_rest_heal(bad_id))
+		_check(carry.create_next_fight_party() == null,
+			"malformed Rest does not authorize initial hydration")
+	_check(map.choose_node(rest_id) and map.get_route() == [rest_id]
+		and map.get_current_node_id() == rest_id,
+		"opening Rest is chosen through authoritative map traversal")
+	var oracle := RunRestRecovery.new(initial)
+	var expected_rest := oracle.choose_heal()
+	_check(expected_rest["ok"] and oracle.is_consumed(),
+		"authoritative Rest oracle successfully settles authored roster")
+	var settled := carry.choose_rest_heal(rest_id)
+	_check(settled["ok"] and settled["heroes"] == expected_rest["heroes"],
+		"legal opening Rest settles via carryover Rest transaction")
+	var ledger := carry.read_state()
+	_check(ledger["completed_fights"].is_empty()
+		and ledger["completed_rests"] == [rest_id]
+		and ledger["heroes"] == expected_rest["heroes"],
+		"successful opening Rest records exactly its ID with no completed Fight")
+	_assert_rejected(carry, "opening duplicate Rest",
+		func(): return carry.choose_rest_heal(rest_id))
+	var first := carry.create_next_fight_party()
+	var second := carry.create_next_fight_party()
+	_check(first != null and second != null and first != second
+		and first.is_valid() and second.is_valid(),
+		"Rest alone permits two distinct valid three-hero combat parties")
+	if first == null or second == null:
+		return
+	var expected: Array = expected_rest["heroes"]
+	_check(first.get_heroes() == expected and second.get_heroes() == expected,
+		"both Rest-only hydrations retain exact HP, positions, statuses and metadata")
+	for hero in expected:
+		_check(hero["block"] == 0, "Rest-only hydration has no transit Block")
+	var opening := CombatStartingBlock.new(first)
+	var opened := expected.duplicate(true)
+	opened[0]["block"] = 6
+	_check(opening.apply() and first.get_heroes() == opened
+		and not opening.apply() and first.get_heroes() == opened
+		and second.get_heroes() == expected and carry.read_state() == ledger,
+		"combat startup alone grants once-only Warden +6, preserving other party and ledger")
+	first._heroes[0]["statuses"]["bleed"] = 99
+	first._heroes[0]["metadata"]["tags"][1]["weave"].clear()
+	var first_before := first.get_heroes()
+	_check(second.get_heroes() == expected and carry.read_state() == ledger,
+		"first hydrated party nested mutations cannot alias second or ledger")
+	_check(second.apply_damage(2, 1), "second hydrated party accepts real combat damage")
+	second._heroes[2]["statuses"]["exposed"] = 99
+	second._heroes[1]["metadata"]["tags"].clear()
+	_check(first.get_heroes() == first_before and carry.read_state() == ledger,
+		"second hydrated party HP and nested mutations cannot alias first or ledger")
+	_check(map.get_route() == [rest_id] and rng.state == rng_before
+		and randi() == expected_random,
+		"Rest-only hydration, rejection and opening Block preserve route and run/global RNG")
 
 
 func _test_witnessed_victory_and_rest() -> void:
@@ -391,6 +474,8 @@ func _test_invalid_and_defeated() -> void:
 		var invalid := RunPartyCarryover.new(bad_cases[i])
 		_check(not invalid.is_valid() and invalid.get_next_fight_heroes().is_empty(),
 			"malformed or defeated initial roster %d fails closed" % i)
+		_check(invalid.create_next_fight_party() == null,
+			"malformed initial roster %d cannot hydrate" % i)
 		_check(invalid.read_state()["ok"] == false
 			and invalid.choose_rest_heal("rest")["ok"] == false,
 			"rejected initial roster has no usable continuation %d" % i)
@@ -425,6 +510,12 @@ func _test_invalid_and_defeated() -> void:
 	# Even after a witnessed victory, corrupt persisted actors must never
 	# produce a partial or reset CombatParty, or change the visit ledger.
 	var safe_held := mcarry.get_next_fight_heroes()
+	var rest_carry := RunPartyCarryover.new(base)
+	_check(rest_carry.choose_rest_heal("rest_only")["ok"]
+		and rest_carry.read_state()["completed_fights"].is_empty()
+		and rest_carry.create_next_fight_party() != null,
+		"malformed Rest-only fixture first proves valid hydration without a Fight")
+	var rest_safe := rest_carry.get_next_fight_heroes()
 	var malformed_held: Array = []
 	var changed_id := safe_held.duplicate(true)
 	changed_id[0]["id"] = "intruder"
@@ -446,6 +537,14 @@ func _test_invalid_and_defeated() -> void:
 		hero["hp"] = 0
 	malformed_held.append(all_downed)
 	for i in range(malformed_held.size()):
+		rest_carry._heroes = malformed_held[i].duplicate(true)
+		var rest_before := rest_carry.read_state()
+		_check(rest_carry.create_next_fight_party() == null
+			and rest_carry.read_state() == rest_before,
+			"invalid persisted Rest-only state %d rejects hydration without mutation" % i)
+		if malformed_held[i] != stale_block: # Positive Block is rejected by hydration, not Rest.
+			_assert_rejected(rest_carry, "malformed Rest-only roster %d" % i,
+				func(): return rest_carry.choose_rest_heal("another_rest"))
 		mcarry._heroes = malformed_held[i].duplicate(true)
 		var held_before := mcarry.read_state()
 		var observed_before: String = (mismatched["result"] as CombatBattleResult).get_outcome()
@@ -455,6 +554,9 @@ func _test_invalid_and_defeated() -> void:
 			and mismatched["result"].get_outcome() == observed_before
 			and mparty.get_heroes() == combat_before,
 			"invalid persisted hero state %d rejects hydration without mutation" % i)
+	rest_carry._heroes = rest_safe.duplicate(true)
+	_check(rest_carry.create_next_fight_party() != null,
+		"repairing Rest-only persisted roster restores hydration")
 	mcarry._heroes = safe_held.duplicate(true)
 	_check(mcarry.create_next_fight_party() != null
 		and mcarry.get_next_fight_heroes() == safe_held,
