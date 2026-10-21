@@ -241,6 +241,14 @@ func create_next_fight_party() -> CombatParty:
 	var projected := _projected_heroes()
 	if not _valid_roster(projected, true):
 		return null
+	var patches: CombatShopPatchRules
+	if _wardrobe != null:
+		patches = CombatShopPatchRules.new()
+		if not patches.bind_wardrobe(_wardrobe, torn):
+			return null
 	var party := CombatParty.new(projected)
 	party._heroes.assign(projected)
+	if patches != null:
+		party.set_meta("shop_patch_projection", {
+			"rules": patches, "heroes": projected.duplicate(true)})
 	return party

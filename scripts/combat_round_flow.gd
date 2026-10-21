@@ -24,7 +24,8 @@ func _init(deck: CombatDeck = null, party: CombatParty = null,
 
 
 ## Begin exactly once: clear inherited hero Block, deal the first hand, then
-## grant the Warden's one-shot +6. The turn-zero intents are not advanced.
+## grant base opening Block and the optional worn Badge bonus once.
+## The turn-zero intents are not advanced.
 func begin_fight() -> bool:
 	if _started or not _valid_bindings():
 		return false
@@ -36,10 +37,26 @@ func begin_fight() -> bool:
 	# A downed Warden can be carried with living allies; the one-shot helper skips him.
 	if _party.is_defeated() or _enemies.is_victorious() or not _result.can_continue():
 		return false
+	# The optional battle-local projection is detached from the run wardrobe.
+	# Reject a malformed binding or a roster changed since its admission before
+	# clearing Block, dealing cards, or consuming the shared run RNG.
+	var patches: CombatShopPatchRules
+	if _party.has_meta("shop_patch_projection"):
+		var projection: Variant = _party.get_meta("shop_patch_projection")
+		if not projection is Dictionary or not projection.get("rules") is CombatShopPatchRules:
+			return false
+		patches = projection.rules
+		if not patches.is_valid() or projection.get("heroes") != _party.get_heroes():
+			return false
 	# Validated services make all three operations total for this initial state.
 	_party.start_player_turn()
 	_deck.start_turn()
 	_opening_block.apply()
+	if patches != null:
+		for hero in _party.get_heroes():
+			var bonus := patches.opening_block_bonus(hero.id)
+			if bonus > 0:
+				_party.gain_block(hero.position, bonus)
 	_started = true
 	return true
 
