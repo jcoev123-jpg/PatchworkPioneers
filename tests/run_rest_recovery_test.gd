@@ -29,6 +29,9 @@ func _initialize() -> void:
 	_test_replay_and_rng()
 	_test_snapshot_and_result_isolation()
 	_test_invalid_and_defeated()
+	_test_preview_authored_and_caps()
+	_test_preview_determinism_and_isolation()
+	_test_preview_rejections()
 	_finish()
 
 
@@ -234,3 +237,144 @@ func _test_invalid_and_defeated() -> void:
 	stale[1]["hp"] = 18
 	_check(not stale_visit.choose_heal().get("ok"), "invalid bound visit cannot be repaired by mutating caller")
 	_check(not stale_visit.is_consumed(), "invalid snapshot stays unconsumed")
+
+## Compare the complete preview to an independent authoritative Rest visit,
+## rather than duplicating recovery arithmetic in the test.
+func _assert_preview_matches_service(snapshot: Array, expected_hps: Array, label: String) -> Dictionary:
+	var before: Array = snapshot.duplicate(true)
+	var oracle := RunRestRecovery.new(snapshot)
+	_check(not oracle.is_consumed(), label + ": oracle starts unconsumed")
+	var committed: Dictionary = oracle.choose_heal()
+	_check(committed.get("ok") == true, label + ": recovery oracle accepts the roster")
+	if committed.get("ok") != true:
+		return {}
+	var predicted: Dictionary = RunRestHealPreview.preview(snapshot)
+	_check(predicted.get("ok") == true, label + ": preview accepted")
+	_check(predicted.get("heroes") == committed["heroes"], label + ": entire forecast roster equals the authoritative service")
+	_check(snapshot == before, label + ": caller snapshot unchanged")
+	_check(oracle.is_consumed(), label + ": only the oracle's own visit was consumed")
+	if typeof(predicted.get("heroes")) != TYPE_ARRAY or typeof(predicted.get("forecasts")) != TYPE_ARRAY:
+		_check(false, label + ": both return collections are arrays")
+		return predicted
+	var heroes: Array = predicted["heroes"]
+	var forecasts: Array = predicted["forecasts"]
+	_check(heroes.size() == 3 and forecasts.size() == 3, label + ": three heroes and three forecasts")
+	if heroes.size() != 3 or forecasts.size() != 3:
+		return predicted
+	for i in range(3):
+		var expected_actor: Dictionary = before[i].duplicate(true)
+		expected_actor["hp"] = expected_hps[i]
+		_check(heroes[i] == expected_actor, label + ": actor %d preserves all non-HP fields" % i)
+		_check(int(heroes[i]["hp"]) <= int(heroes[i]["max_hp"]), label + ": actor %d never exceeds current max" % i)
+		var expected_record := {
+			"id": before[i]["id"],
+			"hp_before": int(before[i]["hp"]),
+			"hp_after": int(committed["heroes"][i]["hp"]),
+			"hp_delta": int(committed["heroes"][i]["hp"]) - int(before[i]["hp"]),
+			"revived": int(before[i]["hp"]) == 0,
+		}
+		_check(forecasts[i] == expected_record, label + ": full per-hero record %d" % i)
+		_check(int(heroes[i]["hp"]) == int(expected_hps[i]), label + ": expected HP %d" % i)
+	return predicted
+
+
+func _test_preview_authored_and_caps() -> void:
+	var authored := _party([35, 18, 0])
+	var forecast := _assert_preview_matches_service(authored, [40, 27, 8], "preview starter maxima 35/18/0")
+	if forecast.get("ok") == true:
+		_check(forecast["forecasts"].map(func(f): return f["hp_delta"]) == [5, 9, 8],
+			"capped Warden +5, Seamstress +9, revived Tinker +8")
+		_check(forecast["forecasts"].map(func(f): return f["revived"]) == [false, false, true],
+			"only Tinker is marked revived")
+	_assert_preview_matches_service(_party([0, 0, 1]), [13, 10, 8], "preview two downed")
+	_assert_preview_matches_service(_party([1, 1, 1]), [13, 10, 8], "preview uncapped 12/9/7 healing")
+	_assert_preview_matches_service(_party([40, 30, 26]), [40, 30, 26], "preview full HP capped")
+	_assert_preview_matches_service(_party([39, 29, 25]), [40, 30, 26], "preview near-full capped")
+	var lower := _party([0, 15, 2])
+	lower[0]["max_hp"] = 9
+	lower[1]["max_hp"] = 23
+	lower[2]["max_hp"] = 17
+	_assert_preview_matches_service(lower, [3, 21, 7], "preview current lowered maxima and floor")
+	var max_one := _party([0, 1, 1])
+	max_one[0]["max_hp"] = 1
+	max_one[1]["max_hp"] = 1
+	max_one[2]["max_hp"] = 1
+	_assert_preview_matches_service(max_one, [1, 1, 1], "preview minimum valid max HP")
+
+
+func _test_preview_determinism_and_isolation() -> void:
+	var snapshot := _party([35, 18, 0])
+	var original: Array = snapshot.duplicate(true)
+	var real_visit := RunRestRecovery.new(snapshot)
+	_check(not real_visit.is_consumed(), "real Rest visit starts open before any previews")
+	# Exercise the SAME global RNG stream used by accidental randi() calls.
+	seed(74213)
+	var expected_random := randi()
+	seed(74213)
+	var first := _assert_preview_matches_service(snapshot, [40, 27, 8], "first preview")
+	var second := RunRestHealPreview.preview(snapshot)
+	_check(first == second, "two identical previews replay exactly")
+	_check(snapshot == original, "replayed preview does not modify input")
+	_check(randi() == expected_random, "preview and independent Rest oracle do not draw global RNG")
+	if first.get("ok") != true or second.get("ok") != true:
+		return
+	_check(not real_visit.is_consumed(), "real Rest visit remains open after previews")
+	var real_result := real_visit.choose_heal()
+	_check(real_result.get("ok") == true and real_result.get("heroes") == first["heroes"],
+		"real visit independently heals to the exact preview")
+	_check(real_visit.is_consumed(), "real visit latches after its own successful heal")
+	_check(real_visit.choose_heal() == {"ok": false, "heroes": []},
+		"real visit refuses a second HEAL after its own claim")
+	_check(snapshot == original, "preview and real visit left original party unchanged")
+
+	# Mutate both nested returned data and forecast scalar records: neither
+	# another result nor the original caller may follow these changes.
+	first["heroes"][0]["statuses"]["bleed"]["stacks"] = 999
+	first["heroes"][1]["metadata"]["tags"][0]["label"] = "changed"
+	first["heroes"][2]["metadata"]["colours"][1]["accent"] = "red"
+	first["heroes"][2]["hp"] = -100
+	first["forecasts"][0]["hp_after"] = -100
+	first["forecasts"][1]["id"] = "invalid"
+	_check(snapshot == original, "mutating preview return never changes caller's nested data")
+	_check(second == RunRestHealPreview.preview(original), "another returned preview remains independent")
+	_check(second["heroes"][0]["statuses"]["bleed"]["stacks"] == 1,
+		"another result's nested statuses are detached")
+	_check(second["forecasts"][0]["hp_after"] == 40 and second["forecasts"][1]["id"] == "seamstress",
+		"another result's forecast records are detached")
+
+	var held := RunRestHealPreview.preview(snapshot)
+	snapshot[0]["statuses"]["bleed"]["stacks"] = -999
+	snapshot[1]["metadata"]["tags"][0]["label"] = "caller-mutated"
+	snapshot[2]["hp"] = 26
+	_check(held == second, "preview retains its own roster and forecasts after caller mutates")
+	_check(real_result["heroes"] == second["heroes"], "real committed result remains detached")
+
+
+func _test_preview_rejections() -> void:
+	var bad_position := _party([35, 18, 0])
+	bad_position[1]["position"] = 3
+	var impossible_hp := _party([35, 18, 0])
+	impossible_hp[1]["hp"] = 31
+	var fractional_hp := _party([35, 18, 0])
+	fractional_hp[1]["hp"] = 1.5
+	var missing_id := _party([35, 18, 0])
+	missing_id[1].erase("id")
+	var duplicate_id := _party([35, 18, 0])
+	duplicate_id[1]["id"] = "warden"
+	var non_dict := _party([35, 18, 0])
+	non_dict[1] = null
+	var all_refusals: Array = [
+		null, "not a roster", [], _party([0, 0, 0]),
+		_party([35, 18, 0]).slice(0, 2),
+		bad_position, impossible_hp, fractional_hp, missing_id, duplicate_id, non_dict,
+	]
+	for i in range(all_refusals.size()):
+		var candidate: Variant = all_refusals[i]
+		var saved: Variant = candidate.duplicate(true) if typeof(candidate) == TYPE_ARRAY or typeof(candidate) == TYPE_DICTIONARY else candidate
+		_check(RunRestRecovery.new(candidate).choose_heal().get("ok") == false,
+			"rejection %d is refused by the underlying service" % i)
+		for attempt in range(2):
+			var prediction: Dictionary = RunRestHealPreview.preview(candidate)
+			_check(prediction == {"ok": false, "heroes": [], "forecasts": []},
+				"rejection %d attempt %d gives no partial promises" % [i, attempt])
+		_check(candidate == saved, "rejection %d keeps complete invalid input unchanged" % i)
