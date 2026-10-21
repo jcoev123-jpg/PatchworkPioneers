@@ -9,6 +9,11 @@ func _initialize() -> void:
 	var global_next := randi()
 	seed(99119)
 	_negatives()
+	_map_projection_negative()
+	var map_bound := _map_paid_timeline(true)
+	_check(map_bound == _map_paid_timeline(true), "independent bound map choice timelines replay")
+	var map_unbound := _map_paid_timeline(false)
+	_check(map_unbound == _map_paid_timeline(false), "independent unbound map choice timelines replay")
 	var first := _timeline(true)
 	_check(first == _timeline(true), "two independent seeded bound timelines replay exactly")
 	var unbound := _timeline(false)
@@ -231,4 +236,213 @@ func _timeline(bound: bool) -> Array:
 		if cycle == 3:
 			_check(c.choose_rest_heal("middle_rest").ok and c.create_next_fight_party() != null,
 				"mixed battle mend and Rest replay stays admissible")
+	return history
+
+
+
+func _map_args(f: Dictionary, option: Variant, node: String = "map_new",
+		receipt: String = "choice_new") -> Array:
+	return [option, node, receipt, f.carry.read_state(),
+		null if f.wardrobe == null else f.wardrobe.get_snapshot(),
+		f.scraps, true]
+
+
+func _map_select(f: Dictionary, args: Array) -> Dictionary:
+	return RunMapMendChoices.choose(f.carry, args[0], args[1], args[2],
+		args[3], args[4], args[5], args[6])
+
+
+func _map_view(f: Dictionary, scraps: Variant = null, between: Variant = true) -> Dictionary:
+	return RunMapMendChoices.project(f.carry, f.carry.read_state(),
+		null if f.wardrobe == null else f.wardrobe.get_snapshot(),
+		f.scraps if scraps == null else scraps, between)
+
+
+func _map_reject(f: Dictionary, args: Array, label: String) -> void:
+	var before := _snapshot(f)
+	var result := _map_select(f, args)
+	_check(result == {"ok": false, "heroes": [], "remaining_scraps": args[5]},
+		label + " refuses transaction without claiming payment")
+	_check(_snapshot(f) == before,
+		label + " preserves both ledgers, receipts, purse, gold, deck and RNG")
+
+
+func _map_projection_negative() -> void:
+	var f := _fixture()
+	var untouched := _snapshot(f)
+	_check(_map_view(f) == {"ok": true, "options": []},
+		"healthy authentic roster has zero Mend options")
+	_check(_snapshot(f) == untouched, "healthy projection is read-only")
+	var no_tear := _map_args(f, {"hero_id": "warden", "position": 1,
+		"base_max_hp": 40, "cost": 2, "post_mend_hp": 10, "affordable": true})
+	_map_reject(f, no_tear, "fabricated initial Mend")
+
+	_win(f, "map_prior", true, true)
+	var good := _map_view(f)
+	_check(good.ok and good.options.size() == 2 and good.options[0].affordable,
+		"real settled Elite permits actual torn choices")
+	untouched = _snapshot(f)
+	for context in [false, "true", 1, null]:
+		_check(not _map_view(f, null, context).ok and _map_view(f, null, context).options == [],
+			"invalid non-map context never projects: " + str(context))
+	for purse in [-1, 2.5, true, 1]:
+		var view := _map_view(f, purse)
+		_check(not view.ok and view.options.is_empty(),
+			"invalid/mismatched bound purse cannot forge map choices: " + str(purse))
+	var stale: Dictionary = f.carry.read_state()
+	stale.heroes[0].statuses = {"weak": 99}
+	_check(not RunMapMendChoices.project(f.carry, stale, f.wardrobe.get_snapshot(),
+		f.scraps, true).ok, "stale carryover snapshot cannot project")
+	var drift: Dictionary = f.wardrobe.get_snapshot()
+	drift.worn.tinker.HEAD = ""
+	_check(not RunMapMendChoices.project(f.carry, f.carry.read_state(), drift,
+		f.scraps, true).ok, "forged wardrobe receipt cannot project")
+	_check(_snapshot(f) == untouched, "all invalid projections leave original receipts and RNG untouched")
+
+	var old := _map_args(f, good.options[0])
+	_check(f.wardrobe.start_rest("map_rest", f.wardrobe.get_snapshot()).ok,
+		"genuine Rest opens before map presentation")
+	_check(not _map_view(f).ok, "Rest-open wardrobe suppresses Mend options")
+	_map_reject(f, _map_args(f, good.options[0]), "Rest-open adapter")
+	_check(f.wardrobe.end_rest("map_rest", f.wardrobe.get_snapshot()).ok,
+		"Rest closes without spending or mending")
+	_map_reject(f, old, "stale pre-Rest wardrobe receipt")
+
+	var unclaimed := _fixture(false)
+	_win(unclaimed, "map_claimed")
+	_win(unclaimed, "map_unclaimed", false)
+	_check(not _map_view(unclaimed).ok, "committed but unclaimed battle is not a map")
+	_map_reject(unclaimed, _map_args(unclaimed, {"hero_id": "tinker", "position": 3,
+		"base_max_hp": 23, "cost": 2, "post_mend_hp": 5, "affordable": true}),
+		"unclaimed adapter")
+	var active := _fixture(false)
+	_win(active, "map_first")
+	var combat: CombatParty = active.carry.create_next_fight_party()
+	var enemies := CombatEnemies.new([{"id": "dummy", "max_hp": 8}])
+	_check(combat != null and active.carry.begin_battle(
+		"map_live", CombatBattleResult.new(combat, enemies), combat),
+		"real active battle exists for map rejection")
+	_check(not _map_view(active).ok, "active battle excludes map Mend choices")
+	_map_reject(active, _map_args(active, {"hero_id": "tinker", "position": 3,
+		"base_max_hp": 23, "cost": 2, "post_mend_hp": 5, "affordable": true}),
+		"active-battle adapter")
+
+	var terminal := _fixture(false)
+	var t: RunTornMending = terminal.carry.torn
+	var before: Array = t.read_state().heroes
+	var down: Array = before.duplicate(true)
+	for hero in down:
+		hero.hp = 0
+	_check(t.observe_battle_end("lost_battle", before, down).ok and t.read_state().defeated,
+		"real torn ledger terminal defeat precondition")
+	_check(not _map_view(terminal).ok, "defeated run cannot project actionable Mend")
+	_check(_map_view(terminal).options.is_empty(), "defeated projection never returns choices")
+
+
+func _map_paid_timeline(bound: bool) -> Array:
+	var f := _fixture(bound)
+	var history := []
+	_win(f, "map_fight", true, false, true)
+	var first := _map_view(f)
+	_check(f.scraps == 1 and first.ok and first.options.size() == 2,
+		"genuine swapped Fight earns one scrap with two actual torn actors")
+	_check(first.options[0] == {"hero_id": "warden", "position": 2,
+		"base_max_hp": 37, "cost": 2, "post_mend_hp": 9, "affordable": false}
+		and first.options[1] == {"hero_id": "tinker", "position": 3,
+		"base_max_hp": 23, "cost": 2, "post_mend_hp": 5, "affordable": false},
+		"swapped Warden at position two has 37 max / 9 Mend HP and disabled 1-scrap choice")
+	var zero := _fixture(false)
+	_win(zero, "map_zero", true, false, true)
+	var zero_view := _map_view(zero, 0)
+	_check(zero_view.ok and zero_view.options.size() == 2
+		and not zero_view.options[0].affordable and not zero_view.options[1].affordable,
+		"unbound 0 scraps shows genuine disabled options")
+	_map_reject(f, _map_args(f, first.options[0], "low_node", "low_receipt"),
+		"1 scrap disabled selection")
+	var zero_args := _map_args(zero, zero_view.options[0], "zero_node", "zero_receipt")
+	zero_args[5] = 0
+	_map_reject(zero, zero_args, "0 scraps disabled selection")
+	if bound:
+		_check(f.wardrobe.project_active(f.carry.torn.read_state()).active.tinker == [],
+			"genuine sewn patch is inactive on torn wearer before a paid Mend")
+	_win(f, "map_elite_a", true, true)
+	_win(f, "map_elite_b", true, true)
+	var prior := _snapshot(f)
+	var projected := _map_view(f)
+	_check(f.scraps == 5 and projected.ok and projected.options.size() == 2
+		and projected.options[0].affordable and projected.options[1].affordable,
+		"settled Fight plus two Elites leave exactly five scraps and both choices enabled")
+	_check(projected.options[0].hero_id == "warden" and projected.options[0].position == 2
+		and projected.options[1].hero_id == "tinker",
+		"line order derives from current true slots after combat swap")
+	var independent := _map_view(f)
+	projected.options[0].post_mend_hp = 999
+	projected.options[0].hero_id = "seamstress"
+	projected.options.clear()
+	_check(_map_view(f) == independent and _snapshot(f) == prior,
+		"returned projection is detached and no hidden currency or RNG changed")
+
+	var warden: Dictionary = independent.options[0]
+	var tinker: Dictionary = independent.options[1]
+	var bogus := warden.duplicate(true)
+	bogus.cost = 1
+	_map_reject(f, _map_args(f, bogus), "forged cheaper price")
+	bogus = warden.duplicate(true)
+	bogus.position = 1
+	_map_reject(f, _map_args(f, bogus), "forged old Warden slot")
+	bogus = warden.duplicate(true)
+	bogus.post_mend_hp = 10
+	_map_reject(f, _map_args(f, bogus), "forged healing amount")
+	var stale := _map_args(f, tinker)
+	stale[3].heroes[1].statuses.weak = 100
+	_map_reject(f, stale, "stale hero snapshot")
+	if bound:
+		stale = _map_args(f, tinker)
+		stale[4].receipt = "forged"
+		_map_reject(f, stale, "stale wardrobe receipt")
+	var nonmap := _map_args(f, tinker)
+	nonmap[6] = false
+	_map_reject(f, nonmap, "non-map selection")
+	var warden_before := _map_args(f, warden)
+	var snapshot: Dictionary = f.carry.read_state()
+	var expected: Array = snapshot.heroes.duplicate(true)
+	expected[2].hp = 5
+	var result := _map_select(f, _map_args(f, tinker, "map_tinker", "mend_tinker"))
+	_check(result.ok and result.heroes == expected and result.remaining_scraps == 3,
+		"real delegated Tinker Mend spends exactly two and only changes torn wearer's HP")
+	f.scraps = result.remaining_scraps
+	_check(f.carry.read_state().heroes == expected and f.carry.torn.read_state().completed_mends.has("mend_tinker"),
+		"successful receipt published by authoritative torn ledger")
+	if bound:
+		_check(f.wardrobe.get_snapshot().scraps == 3 and f.wardrobe.get_snapshot().heroes == expected
+			and f.wardrobe.project_active(f.carry.torn.read_state()).active.tinker == ["stitched_badge"],
+			"actual bound wardrobe spends once and reactivates Tinker's sewn HEAD patch")
+		for key in ["owned", "worn", "definitions", "gold", "cards", "seed", "rest_id", "rest_ids", "operation_ids"]:
+			_check(f.wardrobe.get_snapshot()[key] == prior[4][key],
+				"paid Mend preserves wardrobe " + key)
+	_check(f.gold == prior[6] and f.deck == prior[7] and f.rewards == prior[8]
+		and f.rng.state == prior[9], "Mend does not touch gold, deck, rewards or RNG")
+	_map_reject(f, _map_args(f, _map_view(f).options[0], "map_tinker", "other_receipt"),
+		"reused map node")
+	_map_reject(f, _map_args(f, _map_view(f).options[0], "another_map", "mend_tinker"),
+		"reused Mend receipt")
+	_map_reject(f, warden_before, "stale affordable option with changed wallet")
+	var next := _map_view(f)
+	_check(next.ok and next.options.size() == 1 and next.options[0].hero_id == "warden"
+		and next.options[0].position == 2 and next.options[0].post_mend_hp == 9
+		and next.options[0].affordable, "fresh projection retains only moved Warden with true remaining purse")
+	var after_tinker: Array = f.carry.read_state().heroes
+	after_tinker[1].hp = 9
+	var mend_warden := _map_select(f, _map_args(f, next.options[0], "map_warden", "mend_warden"))
+	_check(mend_warden.ok and mend_warden.heroes == after_tinker
+		and mend_warden.remaining_scraps == 1, "Warden mends in swapped slot for exact 9 HP, 2 scraps")
+	f.scraps = mend_warden.remaining_scraps
+	_check(f.carry.create_next_fight_party().get_heroes() == after_tinker,
+		"future party hydration preserves current positions, metadata, statuses and both repairs")
+	_check(_map_view(f) == {"ok": true, "options": []},
+		"fully recovered party projects no Mend option")
+	mend_warden.heroes[1].statuses.clear()
+	_check(f.carry.read_state().heroes == after_tinker, "delegated response is deeply detached")
+	history.append(_snapshot(f))
+	history.append(after_tinker)
 	return history
