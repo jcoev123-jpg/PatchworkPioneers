@@ -1,0 +1,4 @@
+[
+  {"id": "needle_marshal", "name": "Needle Marshal", "max_hp": 28, "art_path": "res://assets/paper/enemies/needle_marshal.png"},
+  {"id": "spool_hexer", "name": "Spool Hexer", "max_hp": 24, "art_path": "res://assets/paper/enemies/spool_hexer.png"}
+]
