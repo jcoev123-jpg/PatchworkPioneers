@@ -78,8 +78,8 @@ func _visible() -> void:
 		var id: String = panel.get_child(0).text
 		ids.append(id)
 		if id in presenter.SUPPORT_IDS:
-			_check(panel.focus_mode == Control.FOCUS_ALL and panel.get_child_count() == 2,
-				"support has focus and visible action hint")
+			_check(panel.focus_mode == Control.FOCUS_ALL and panel.get_child_count() == 1,
+				"support keeps focus and its original ID without overprinted hints")
 			_check(panel.gui_input.get_connections().size() == 1, "exactly one input binding")
 		else:
 			var attack: bool = StarterCards.new().get_definition(id).get("target_kind") in ["enemy_single", "enemy_all"]
@@ -90,7 +90,16 @@ func _visible() -> void:
 		"mounted pile counts exact")
 	_check(is_instance_valid(presenter.energy_label) and presenter.energy_label.is_visible_in_tree(), "energy mounted")
 	if is_instance_valid(presenter.energy_label):
-		_check(presenter.energy_label.text.begins_with("Energy: %d |" % app.deck.energy), "visible energy exact")
+		_check(presenter.energy_label.text == "Energy\n%d" % app.deck.energy, "visible energy exact")
+	_check(is_instance_valid(presenter.energy_orb) and presenter.energy_label.get_parent() == presenter.energy_orb
+		and presenter.energy_orb.is_visible_in_tree(), "energy belongs to the mounted drawn orb")
+	_check(presenter.energy_orb.focus_mode == Control.FOCUS_NONE
+		and presenter.energy_orb.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and presenter.energy_orb.gui_input.get_connections().is_empty(), "energy orb is inert")
+	_check(presenter.help_label.text == "Up: cards | Click / Enter / Space: play", "general help exact outside card names")
+	_check(app.battle_view.find_children("SupportHandEnergyOrb", "Control", true, false).size() == 1
+		and app.battle_view.find_children("SupportHandHelp", "Label", true, false).size() == 1,
+		"repeated sync leaves exactly one orb and help control")
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
 		_check(app.hero_panels[index].get_child(0).text == "%d - %s\nHP: %d/%d | Block: %d%s" % [
@@ -282,7 +291,9 @@ func _run() -> void:
 		app.return_button.pressed.emit()
 		_check(presenter._bindings.is_empty() and presenter._deck == null, "Return immediately disconnects session")
 		await _frames()
-		_check(app.deck == null and presenter.energy_label == null, "title removes support presentation")
+		_check(app.deck == null and presenter.energy_label == null and presenter.energy_orb == null
+			and presenter.help_label == null and presenter.cancel_button == null, "title removes all support presentation")
+		_check(app.find_children("SupportHandEnergyOrb", "Control", true, false).is_empty(), "Return leaves no orphan orb")
 	await _ally_cases()
 	await _ally_move_cases()
 	await _stale_restart(seed_value)
@@ -425,7 +436,9 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(_live() == before, "pending ally choice never charges or changes rules")
 	var choosing: bool = presenter._pending.get("choosing", false)
 	_check(choosing and presenter.cancel_button.is_visible_in_tree(), "target mode and cancel visible")
-	_check(presenter.energy_label.text.contains("choose a living ally"), "visible targeting instruction")
+	_check(presenter.help_label.text == "%s: choose a living ally | Esc: cancel" % StarterCards.new().get_definition(id).display_name,
+		"exact targeting help separate from energy")
+	_check(presenter.energy_label.text == "Energy\n%d" % app.deck.energy, "target mode retains authoritative orb energy")
 	_check(root.get_visible_rect().encloses(presenter.cancel_button.get_global_rect()), "cancel fits 1280x720 viewport")
 	for index in range(3):
 		var hero: Control = app.hero_panels[index]
