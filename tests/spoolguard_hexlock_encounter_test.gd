@@ -10,6 +10,8 @@ const BINDINGS := {
 }
 const CATALOGS := ["res://data/enemies/m04_elites.json",
 	"res://data/enemies/run_enemies.json"]
+const HEXER_NAME := "Spool Hexer"
+const GUARD_NAME := "Button Guard"
 
 var failures: Array[String] = []
 var checks := 0
@@ -57,9 +59,20 @@ func _content() -> void:
 	positions.sort()
 	_check(positions == [1, 2], "exact unique positions 1 and 2")
 
+	# Locate each authored source by its stable position key; a missing or
+	# duplicated source must fail closed instead of indexing an empty result.
+	var pos1_matches: Array = definitions.filter(
+		func(d): return d.get("enemy_position") == 1)
+	var pos2_matches: Array = definitions.filter(
+		func(d): return d.get("enemy_position") == 2)
+	_check(pos1_matches.size() == 1, "exactly one authored source at position 1")
+	_check(pos2_matches.size() == 1, "exactly one authored source at position 2")
+	if pos1_matches.size() != 1 or pos2_matches.size() != 1:
+		return
+
 	# Verify patterns: position 1 has four beats; position 2 has four beats.
-	var pos1_def: Dictionary = definitions.filter(func(d): return d.get("enemy_position") == 1)[0]
-	var pos2_def: Dictionary = definitions.filter(func(d): return d.get("enemy_position") == 2)[0]
+	var pos1_def: Dictionary = pos1_matches[0]
+	var pos2_def: Dictionary = pos2_matches[0]
 	_check(pos1_def.get("pattern") is Array and pos1_def.get("pattern").size() == 4,
 		"position 1 has four-intent pattern")
 	_check(pos2_def.get("pattern") is Array and pos2_def.get("pattern").size() == 4,
@@ -67,6 +80,9 @@ func _content() -> void:
 
 	# Verify exact authored intents for position 1.
 	var p1: Array = pos1_def.get("pattern")
+	_check(p1.size() == 4, "position 1 pattern holds four actions")
+	if p1.size() != 4:
+		return
 	_check(p1[0] == {"type":"debuff","amount":1,"target_position":3,"status":"weak"},
 		"position 1 beat 0: debuff weak 1 on rear")
 	_check(p1[1] == {"type":"attack","amount":3,"target_position":2},
@@ -78,6 +94,9 @@ func _content() -> void:
 
 	# Verify exact authored intents for position 2.
 	var p2: Array = pos2_def.get("pattern")
+	_check(p2.size() == 4, "position 2 pattern holds four actions")
+	if p2.size() != 4:
+		return
 	_check(p2[0] == {"type":"block","amount":3},
 		"position 2 beat 0: block 3")
 	_check(p2[1] == {"type":"attack","amount":2,"target_position":1},
@@ -87,21 +106,37 @@ func _content() -> void:
 	_check(p2[3] == {"type":"attack","amount":2,"target_position":3},
 		"position 2 beat 3: attack 2 on rear")
 
-	# Verify CombatEnemyIntents validates and announces all beats plus wrap.
+	# Verify CombatEnemyIntents validates and announces the exact two-source
+	# action set at every beat of the four-beat cycle, plus the wrap.
 	var scheduler := CombatEnemyIntents.new(definitions)
 	_check(scheduler.is_valid(), "production intent scheduler validates authored schedule")
-	var announced_beat0 := scheduler.get_intents()
-	var expected0: Array = [
-		{"type":"debuff","amount":1,"target_position":3,"status":"weak","enemy_position":1},
-		{"type":"block","amount":3,"enemy_position":2}
+	var expected_beats: Array = [
+		[
+			{"type":"debuff","amount":1,"target_position":3,"status":"weak","enemy_position":1},
+			{"type":"block","amount":3,"enemy_position":2}
+		],
+		[
+			{"type":"attack","amount":3,"target_position":2,"enemy_position":1},
+			{"type":"attack","amount":2,"target_position":1,"enemy_position":2}
+		],
+		[
+			{"type":"debuff","amount":1,"target_position":1,"status":"exposed","enemy_position":1},
+			{"type":"buff","amount":2,"enemy_position":2}
+		],
+		[
+			{"type":"attack","amount":3,"target_position":1,"enemy_position":1},
+			{"type":"attack","amount":2,"target_position":3,"enemy_position":2}
+		],
+		[
+			{"type":"debuff","amount":1,"target_position":3,"status":"weak","enemy_position":1},
+			{"type":"block","amount":3,"enemy_position":2}
+		]
 	]
-	_check(announced_beat0 == expected0, "beat 0 announced exact actions sorted by position")
-
-	# Advance and verify beats 1-3, then wrap back to beat 0.
-	for beat in range(4):
-		_check(scheduler.advance_turn(), "advance turn %d succeeds" % (beat + 1))
-	var announced_beat4 := scheduler.get_intents()
-	_check(announced_beat4 == expected0, "wraparound at beat 4 returns exact beat 0")
+	for beat in range(expected_beats.size()):
+		var announced: Array = scheduler.get_intents()
+		_check(announced == expected_beats[beat],
+			"beat %d announces both exact source actions" % beat)
+		_check(scheduler.advance_turn(), "advance past beat %d succeeds" % beat)
 
 	# Verify the definitions array is never edited by the scheduler.
 	_check(definitions == RunFightEncounterSelection._parse_schedule_text(text),
@@ -162,19 +197,21 @@ func _build(seed_value: int) -> Dictionary:
 	_check(enemies.is_valid() and enemies.get_enemies().size() == 2,
 		"assembled battle has two enemy slots")
 
-	# Verify exact enemy IDs/HP/art paths.
+	# Verify exact enemy IDs/HP/names/art paths.
 	var en1 := enemies.get_enemy(1)
 	var en2 := enemies.get_enemy(2)
 	_check(en1.get("id") == "spool_hexer" and en1.get("position") == 1
 		and en1.get("max_hp") == 24 and en1.get("hp") == 24
+		and en1.get("name") == HEXER_NAME
 		and en1.get("art_path") == "res://assets/paper/enemies/spool_hexer.png"
 		and en1.get("block") == 0,
-		"enemy 1: spool_hexer at position 1, HP 24, correct art, zero Block")
+		"enemy 1: spool_hexer at position 1, HP 24, Spool Hexer, correct art, zero Block")
 	_check(en2.get("id") == "button_guard" and en2.get("position") == 2
 		and en2.get("max_hp") == 16 and en2.get("hp") == 16
+		and en2.get("name") == GUARD_NAME
 		and en2.get("art_path") == "res://assets/paper/enemies/button_guard.png"
 		and en2.get("block") == 0,
-		"enemy 2: button_guard at position 2, HP 16, correct art, zero Block")
+		"enemy 2: button_guard at position 2, HP 16, Button Guard, correct art, zero Block")
 
 	return {"map": map, "rng": route.rng, "selector": picker, "choice": choice,
 		"enemies": enemies, "definitions": choice.get("definitions"),
@@ -240,38 +277,48 @@ func _party() -> CombatParty:
 	return party
 
 
-func _phases() -> void:
-	var seed_value := _elite_seed()
-	if seed_value < 0:
-		return
+## Runs the real first two enemy beats on a fresh same-seed party and roster.
+## `reverse_input` flips the announced intent order handed to the engine so the
+## trace also proves that input order never changes positional resolution.
+func _phase_trace(seed_value: int, reverse_input: bool) -> Dictionary:
 	var game := _build(seed_value)
 	if game.is_empty():
-		return
+		return {}
 
 	var party: CombatParty = _party()
 	var enemies: CombatEnemies = game.enemies
 	var intents: CombatEnemyIntents = CombatEnemyIntents.new(game.definitions)
+	var rng_before: int = game.rng.state
+	var start_heroes := party.get_heroes()
+	var start_enemies := enemies.get_enemies()
 
 	# First beat announced (position 1 then 2): debuff weak rear, block 3 guard.
 	var first_intents: Array = intents.get_intents()
-	var reversed_first := first_intents.duplicate(true)
-	reversed_first.reverse()
+	_check(first_intents == [
+			{"type":"debuff","amount":1,"target_position":3,"status":"weak","enemy_position":1},
+			{"type":"block","amount":3,"enemy_position":2}],
+		"first announced beat: hexer weakens rear, guard blocks")
+	var ordered_first: Array = first_intents.duplicate(true)
+	if reverse_input:
+		ordered_first.reverse()
 
-	# Execute with reversed input to verify engine resolves position 1 then 2.
-	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, reversed_first)
-	_check(result.get("ok") == true, "first phase succeeds")
-	_check(result.get("events", []).size() == 2, "first phase has two events")
+	# Execute with the (possibly reversed) input; the engine must still
+	# resolve position 1 before position 2.
+	seed(60291)
+	var expected_global: int = randi()
+	seed(60291)
+	var first_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		party, enemies, ordered_first)
+	_check(first_result.get("ok") == true, "first phase succeeds")
+	var events0: Array = first_result.get("events", [])
 
 	# Verify exact first-beat events in source order (1 then 2).
-	var events0: Array = result.get("events")
-	_check(events0[0].get("type") == "debuff" and events0[0].get("enemy_position") == 1
-		and events0[0].get("applied") == true
-		and events0[0].get("target_position") == 3
-		and events0[0].get("status") == "weak",
-		"first event: hexer debuff weak 1 on Tinker (position 3)")
-	_check(events0[1].get("type") == "block" and events0[1].get("enemy_position") == 2
-		and events0[1].get("applied") == true,
-		"second event: guard gains 3 Block")
+	_check(events0.size() == 2, "first phase has two events")
+	_check(events0 == [
+			{"type":"debuff","enemy_position":1,"applied":true,
+				"target_position":3,"status":"weak"},
+			{"type":"block","enemy_position":2,"applied":true}],
+		"first phase events in source order: hexer weak rear, guard block 3")
 
 	# Verify no HP damage occurred to any hero.
 	_check(party.get_hero(1).hp == 40 and party.get_hero(2).hp == 30
@@ -283,6 +330,8 @@ func _phases() -> void:
 		"Tinker gained Weak 1")
 	_check(enemies.get_enemy(2).get("block") == 3,
 		"Button Guard gained Block 3")
+	_check(enemies.get_enemy(1).get("block") == 0,
+		"Spool Hexer gained no Block")
 	_check(party.get_hero(1).get("block") == 6,
 		"Warden Block unchanged at 6 (not yet reset by turn boundary)")
 
@@ -301,30 +350,73 @@ func _phases() -> void:
 	]
 	_check(second_intents == expected_second,
 		"second announced beat: hexer attacks middle, guard attacks front")
+	var ordered_second: Array = second_intents.duplicate(true)
+	if reverse_input:
+		ordered_second.reverse()
 
 	# Execute second beat.
-	var second_result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, second_intents)
+	var second_result: Dictionary = CombatEnemyPhase.new().execute_phase(
+		party, enemies, ordered_second)
 	_check(second_result.get("ok") == true, "second phase succeeds")
+	var events1: Array = second_result.get("events", [])
+	_check(events1.size() == 2, "second phase has two events")
+	_check(events1 == [
+			{"type":"attack","enemy_position":1,"applied":true,"target_position":2},
+			{"type":"attack","enemy_position":2,"applied":true,"target_position":1}],
+		"second phase events in source order: hexer hits middle, guard hits front")
 
-	# After second beat: hexer attacks middle for 3; Warden Block absorbs first 6.
-	# But Block was reset by start_player_turn? No - the brief says avoid assuming.
-	# Let's just assert the actual state from the phase result.
+	# After second beat: hexer attacks middle for 3; the guard's 2 damage on the
+	# front is fully absorbed by the Warden's remaining 6 Block, which falls to 4.
 	var heroes_after: Array = party.get_heroes()
 	var enemies_after: Array = enemies.get_enemies()
-
-	# Warden should have taken 2 damage (attack 2 from guard, Block absorbed 3 of 3? Wait...)
-	# Actually Warden has Block 6 from opening. First beat: guard gets 3 Block.
-	# Second beat: hexer attacks middle (Seamstress) for 3. Guard attacks front (Warden) for 2.
-	# Warden Block is 6, so 2 is fully absorbed. So Warden HP should still be 40, Block = 4.
-	# Seamstress takes 3 damage, HP = 27.
-	_check(party.get_hero(1).hp == 40,
+	_check(heroes_after[0].get("hp") == 40,
 		"Warden HP unchanged after 2 damage fully absorbed by remaining Block")
-	_check(party.get_hero(2).hp == 27,
+	_check(heroes_after[0].get("block") == 4,
+		"Warden Block spent from 6 to 4 by the guard's 2 damage")
+	_check(heroes_after[1].get("hp") == 27,
 		"Seamstress HP 27 after taking 3 damage from hexer")
-	_check(party.get_hero(3).hp == 26,
+	_check(heroes_after[2].get("hp") == 26,
 		"Tinker HP unchanged (only Weak applied, no direct damage)")
-	_check(party.get_hero(3).get("statuses", {}).get("weak") == 1,
+	_check(heroes_after[2].get("statuses", {}).get("weak") == 1,
 		"Tinker Weak 1 still active before turn boundary expiration")
+	_check(enemies_after[1].get("block") == 3,
+		"Button Guard keeps its Block 3 through the second beat")
+	_check(enemies_after[0].get("block") == 0,
+		"Spool Hexer keeps Block 0 through the second beat")
+
+	# Neither the run RNG nor the global RNG may be spent by enemy phases.
+	_check(game.rng.state == rng_before,
+		"both real enemy phases never spend the run RNG")
+	_check(randi() == expected_global,
+		"both real enemy phases never spend the global RNG")
+
+	return {"first_intents": first_intents, "first_events": events0,
+		"second_intents": second_intents, "second_events": events1,
+		"start_heroes": start_heroes, "start_enemies": start_enemies,
+		"heroes": heroes_after, "enemies": enemies_after,
+		"rng": game.rng.state}
+
+
+func _phases() -> void:
+	var seed_value := _elite_seed()
+	if seed_value < 0:
+		return
+
+	var reversed_trace := _phase_trace(seed_value, true)
+	var replay_trace := _phase_trace(seed_value, true)
+	var natural_trace := _phase_trace(seed_value, false)
+	_check(not reversed_trace.is_empty() and not replay_trace.is_empty()
+		and not natural_trace.is_empty(), "both real phase traces executed")
+	if reversed_trace.is_empty() or replay_trace.is_empty() or natural_trace.is_empty():
+		return
+
+	# Fresh same-seed party and roster instances replay both real phases to
+	# the same complete outcome, including the unchanged run RNG.
+	_check(reversed_trace == replay_trace,
+		"fresh same-seed party and roster replay both real phases identically")
+	# Reversing the announced input order must not change the outcome.
+	_check(reversed_trace == natural_trace,
+		"reversed intent input does not change enemy positional resolution")
 
 
 func _negative() -> void:
@@ -396,14 +488,32 @@ func _negative() -> void:
 	_check(killed_result.get("ok") == true, "killed-phase succeeds with living guard")
 	var killed_events: Array = killed_result.get("events", [])
 	_check(killed_events.size() == 2, "two events even with one slain source")
-	_check(killed_events[0].get("type") == "debuff"
+	_check(killed_events.size() == 2
+		and killed_events[0].get("type") == "debuff"
 		and killed_events[0].get("enemy_position") == 1
 		and killed_events[0].get("applied") == false,
 		"slain hexer skips its debuff; event records false applied")
-	_check(killed_events[1].get("type") == "block"
+	_check(killed_events.size() == 2
+		and killed_events[1].get("type") == "block"
 		and killed_events[1].get("enemy_position") == 2
 		and killed_events[1].get("applied") == true,
 		"living guard executes legal Block 3")
+
+	# The living guard's own Block must really be 3 after the skipped beat.
+	_check(enemies.get_enemy(2).get("block") == 3,
+		"living guard Block is 3 after the slain hexer skipped its own action")
+	_check(enemies.get_enemy(1).get("block") == 0,
+		"slain hexer keeps Block 0")
+	_check(enemies.get_enemy(1).get("hp") == 0
+		and enemies.get_enemy(2).get("hp") == 16,
+		"slain hexer stays at 0 HP and the living guard stays at 16 HP")
+	_check(party.get_hero(3).hp == 26
+		and party.get_hero(3).get("statuses", {}).is_empty(),
+		"skipped hexer debuff left the rear hero unharmed")
+	_check(scheduler.get_intents() == killed_intents,
+		"killed-source phase did not spend the scheduled beat")
+	_check(game.rng.state == killed_rng_state,
+		"killed-source phase never spent the run RNG")
 
 	# Verify no mutation of file-backed catalog.
 	var catalog_text := FileAccess.get_file_as_string("res://data/enemies/m04_elites.json")
