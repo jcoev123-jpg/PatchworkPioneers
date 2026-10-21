@@ -28,6 +28,13 @@
         "button_guard"
       ]
     },
+    "double_hem_siege": {
+      "schedule": "res://data/encounters/double_hem_siege.json",
+      "enemy_ids": [
+        "fray_scavenger",
+        "seam_ripper"
+      ]
+    },
     "triple_spool_pinch": {
       "schedule": "res://data/encounters/triple_spool_pinch.json",
       "enemy_ids": [
