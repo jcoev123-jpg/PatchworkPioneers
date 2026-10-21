@@ -26,15 +26,14 @@ func _process(_delta: float) -> void:
 
 func _sync_battle() -> void:
 	var app = get_parent()
-	if app.deck == null or not is_instance_valid(app.battle_view) \
+	if app.deck == null or app.enemies == null or not is_instance_valid(app.battle_view) \
 			or not is_instance_valid(app.hero_view):
 		_clear()
 		return
-	if _battle == app.battle_view and is_instance_valid(battle_row) and is_instance_valid(panel):
+	if _battle == app.battle_view and enemies == app.enemies and _heroes == app.hero_view \
+			and is_instance_valid(battle_row) and is_instance_valid(panel):
 		return
 	_clear()
-	if app.enemies == null:
-		return
 	_battle = app.battle_view
 	_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 	enemies = app.enemies

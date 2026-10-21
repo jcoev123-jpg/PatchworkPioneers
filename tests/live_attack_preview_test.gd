@@ -441,6 +441,8 @@ func _rejections() -> void:
 			await _hover(panel)
 		elif scenario != "unselected":
 			await _choose(id, false)
+		# Null-model cleanup removes enemy controls; keep the former physical target for that rejection.
+		var target_point: Vector2 = app.get_node("LiveEnemyRoster")._labels[0].get_global_rect().get_center()
 		if scenario == "energy":
 			app.deck.combat_state.energy = 0
 		elif scenario == "status_overflow":
@@ -491,7 +493,21 @@ func _rejections() -> void:
 		var global_next := randi()
 		seed(2345)
 		await _key(KEY_2 if scenario == "wrong" else KEY_3 if scenario == "range" else KEY_1)
-		if scenario != "range":
+		if scenario == "invalid_enemies":
+			var roster = app.get_node("LiveEnemyRoster")
+			_check(roster._labels.is_empty() and roster._badges.is_empty() and roster.panel == null,
+				"null authoritative enemies remove stale pointer targets")
+			var motion := InputEventMouseMotion.new()
+			motion.position = target_point
+			root.push_input(motion, true)
+			for pressed in [true, false]:
+				var event := InputEventMouseButton.new()
+				event.position = target_point
+				event.button_index = MOUSE_BUTTON_LEFT
+				event.pressed = pressed
+				root.push_input(event, true)
+			await _frames()
+		elif scenario != "range":
 			await _click(app.get_node("LiveEnemyRoster")._labels[1 if scenario == "wrong" else 0])
 		_check(_snapshot() == before, "complete no-spend snapshot " + scenario)
 		_check(presenter._play._tinker._consumed == latch, "rejection preserves first-attack latch " + scenario)
