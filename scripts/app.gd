@@ -976,6 +976,7 @@ func _claim_card_reward(id: String, button, offering) -> void:
 		fight_reward_claimed = true
 		result_label.text = "Battle result: victory | Gold: %d" % session_gold
 		_finish_card_reward(offering)
+		$LiveElitePatchSewing.observe_claim(offering, result)
 		return
 	if offering == null or offering != card_reward or not _battle_closed \
 			or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY \

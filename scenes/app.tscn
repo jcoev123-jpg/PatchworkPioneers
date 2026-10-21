@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/app.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/live_enemy_roster.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/live_support_hand.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/live_combat_meters.gd" id="4"]
 [ext_resource type="Script" path="res://scripts/live_area_attack_action.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/live_elite_patch_sewing.gd" id="6"]
 
 [node name="App" type="Control"]
 layout_mode = 3
@@ -26,3 +27,6 @@ script = ExtResource("4")
 
 [node name="LiveAreaAttackAction" type="Node" parent="."]
 script = ExtResource("5")
+
+[node name="LiveElitePatchSewing" type="Node" parent="."]
+script = ExtResource("6")

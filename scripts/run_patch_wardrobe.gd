@@ -30,8 +30,9 @@ var _operations: Array[String] = []
 
 func _init(heroes: Variant = null, owned_trinket_ids: Variant = null,
 		patch_definitions: Variant = null, scraps: Variant = null,
-		gold: Variant = 0, cards: Variant = [], run_seed: Variant = 0) -> void:
-	if not _valid_roster(heroes, true) or typeof(owned_trinket_ids) != TYPE_ARRAY:
+		gold: Variant = 0, cards: Variant = [], run_seed: Variant = 0,
+		current_run: bool = false) -> void:
+	if not _valid_roster(heroes, not current_run) or typeof(owned_trinket_ids) != TYPE_ARRAY:
 		return
 	if typeof(patch_definitions) != TYPE_ARRAY or typeof(scraps) != TYPE_INT or scraps < 0:
 		return
@@ -72,6 +73,34 @@ func _init(heroes: Variant = null, owned_trinket_ids: Variant = null,
 
 func is_valid() -> bool:
 	return _valid
+
+
+## The run owner supplies newly committed context, never a pending reward.
+## Refresh is atomic and retains worn slots and operation receipts.
+func refresh_run_context(heroes: Variant, owned: Variant, scraps: Variant,
+		gold: Variant, cards: Variant, expected: Variant) -> bool:
+	if not _matches(expected):
+		return false
+	var candidate := RunPatchWardrobe.new(heroes, owned, _definition_records(),
+		scraps, gold, cards, _seed, true)
+	if not candidate.is_valid():
+		return false
+	for id in _owned:
+		if not candidate._owned.has(id):
+			return false
+	_heroes = candidate._heroes
+	_owned = candidate._owned
+	_scraps = candidate._scraps
+	_gold = candidate._gold
+	_cards = candidate._cards
+	return true
+
+
+func _definition_records() -> Array:
+	var records := []
+	for id in _definitions:
+		records.append({"id": id, "slot": _definitions[id]})
+	return records
 
 
 ## Detached state includes the full unchanged non-patch run context, Rest
