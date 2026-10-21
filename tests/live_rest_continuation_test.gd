@@ -161,7 +161,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = map.get_node(id).type
 				shown.append(id)
-				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure"]), "only supported true adjacent ID/type enabled")
+				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "only supported true adjacent ID/type enabled")
 				if action.disabled:
 					var rejected := _rest_state()
 					await _click(action)

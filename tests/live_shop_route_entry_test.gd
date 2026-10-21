@@ -103,7 +103,7 @@ func _run() -> void:
 			var id: String = button.get_meta("route_id")
 			var kind: String = app.run_map.get_node(id).type
 			shown.append(id)
-			_check(button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure"]), "only connected noncombat controls enabled")
+			_check(button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "only supported connected controls enabled")
 			if kind == "Shop":
 				shop = button
 			if button.disabled:
@@ -167,6 +167,7 @@ func _run() -> void:
 		rejecting._floor_ids = original_map._floor_ids.duplicate(true)
 		rejecting._route.assign(prior)
 		app.run_map = rejecting
+		app.act_outcome._map = rejecting
 		app._connected_map = weakref(rejecting)
 		app._reward_map = weakref(rejecting)
 		invalid_before = _persistent()
@@ -175,6 +176,7 @@ func _run() -> void:
 		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
 			"rejected map choice restores RNG and publishes no ledger or stock")
 		app.run_map = original_map
+		app.act_outcome._map = original_map
 		app._connected_map = weakref(original_map)
 		app._reward_map = weakref(original_map)
 		# A connected whitespace node reaches open_visit, which rejects its ID.

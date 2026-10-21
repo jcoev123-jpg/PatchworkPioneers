@@ -378,6 +378,8 @@ func _rejections() -> void:
 			"rejection preserves pending bonus and global RNG: " + mode)
 		if mode == "presenter_missing":
 			app.add_child(attack_presenter)
+		# Restore the hidden fixture before activating the guarded title control.
+		app.battle_view.show()
 		app.return_button.pressed.emit()
 		await _frames()
 	# Duplicates must be gated even if another copy and sufficient energy remain.

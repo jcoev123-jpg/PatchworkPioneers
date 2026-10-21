@@ -439,6 +439,8 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 
 
 func _ally_return() -> void:
+	# Negative hidden-battle input checks have finished; make cleanup reachable.
+	app.battle_view.show()
 	app.return_button.pressed.emit()
 	_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "Return clears all target state immediately")
 	await _frames()

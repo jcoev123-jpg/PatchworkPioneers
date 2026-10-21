@@ -179,7 +179,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = live_map.get_node(id).type
 				shown.append(id)
-				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure"]), "exact adjacent ID/type with only noncombat enabled")
+				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
 				if action.disabled:
 					await _click(action)
 					action.pressed.emit()
