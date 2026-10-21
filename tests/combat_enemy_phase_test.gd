@@ -7,6 +7,7 @@ var phase := CombatEnemyPhase.new()
 
 func _initialize() -> void:
 	_test_ordered_specials()
+	_test_status_sensitive_attacks()
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
 	_test_rejections()
@@ -326,6 +327,56 @@ func _test_replay_and_empty() -> void:
 			and enemies.get_enemies() == snapshot_enemies
 			and scheduler.get_intents() == snapshot_schedule,
 			"empty valid batch is harmless and never advances scheduler")
+
+
+func _test_status_sensitive_attacks() -> void:
+	for special in ["shove", "debuff"]:
+		var party := _party()
+		var enemies := CombatEnemies.new([
+			{"id": "first", "max_hp": 12}, {"id": "second", "max_hp": 15},
+			{"id": "third", "max_hp": 10}])
+		_check(enemies.is_valid() and enemies.get_enemies().size() == 3,
+			"status fixture has three living ordered sources")
+		var warden: Dictionary = party._heroes[0]
+		var seamstress: Dictionary = party._heroes[1]
+		var blocker: Dictionary = enemies._enemies[2]
+		warden["statuses"] = {"weak": 2}
+		seamstress["statuses"] = {"exposed": 2}
+		enemies._enemies[1]["statuses"] = {"weak": 2}
+		_check(party.gain_block(1, 2) and party.gain_block(2, 2), "status fixture has real absorption")
+		var first := {"type": "shove", "enemy_position": 1, "amount": 0,
+			"target_position": 1, "direction": 1} if special == "shove" else {
+			"type": "debuff", "enemy_position": 1, "amount": 2,
+			"target_position": 1, "status": "exposed"}
+		var actions := [_block(3, 4), _attack(2, 5, 1), first]
+		var input := actions.duplicate(true)
+		var result := phase.execute_phase(party, enemies, actions)
+		var first_event := first.duplicate(true)
+		first_event.erase("amount")
+		first_event["applied"] = true
+		_check(result == {"ok": true, "events": [first_event,
+			_event("attack", 2, true, 1), _event("block", 3, true)]},
+			"special, adjusted attack and Block preserve exact public event order")
+		# floor(5 * 3/4 * 3/2) = 5, rather than floor(floor(5 * 3/4) * 3/2) = 4.
+		_check(party.get_hero(1).hp == (27 if special == "shove" else 37)
+			and party.get_hero(1).block == 0 and party.get_hero(2).block == 2
+			and party.get_hero(2).hp == (40 if special == "shove" else 30)
+			and party.get_hero(3).hp == 26 and enemies.get_enemy(3).block == 4,
+			"attack uses current actor statuses after " + special + " and floors once through two Block")
+		_check(is_same(party._heroes[0], seamstress if special == "shove" else warden)
+			and is_same(party._heroes[1], warden if special == "shove" else seamstress)
+			and is_same(enemies._enemies[2], blocker), "successful commit preserves original actor dictionaries")
+		_check(warden.statuses == ({"weak": 2} if special == "shove" else {"weak": 2, "exposed": 2})
+			and seamstress.statuses == {"exposed": 2} and actions == input,
+			"statuses stay actor-bound and caller intents remain unchanged")
+		# Fail after a staged special and attack, not just during up-front validation.
+		_check(enemies.gain_block(3, CombatEnemies.MAX_INT - 4), "later Block reaches exact capacity")
+		var before := [party.get_heroes(), enemies.get_enemies()]
+		_check(phase.execute_phase(party, enemies, actions) == {"ok": false, "events": []}
+			and [party.get_heroes(), enemies.get_enemies()] == before,
+			"late delegated overflow rolls back staged special, statuses, positions and damage")
+		_check(is_same(party._heroes[0], seamstress if special == "shove" else warden)
+			and is_same(enemies._enemies[2], blocker), "rejection retains dictionary identity")
 
 
 func _test_ordered_specials() -> void:

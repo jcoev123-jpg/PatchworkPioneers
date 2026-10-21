@@ -43,11 +43,18 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array) -
 				var damage := CombatStatuses.new().adjusted_attack_damage(action.amount,
 					staged_enemies.get_enemy(source).get("statuses", {}),
 					staged_party.get_hero(action.target_position).get("statuses", {}))
-				event.applied = staged_party.apply_damage(action.target_position, damage)
-			elif action.type == "block":
-				if not staged_enemies.gain_block(source, action.amount):
+				var attack: Dictionary = action.duplicate(true)
+				attack.erase("type")
+				attack.amount = damage
+				var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
+				if not result.ok:
 					return failure
-				event.applied = true
+				event.applied = result.events[0].applied
+			elif action.type == "block":
+				var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [action])
+				if not result.ok:
+					return failure
+				event.applied = result.events[0].applied
 			else:
 				var result := CombatEnemySpecialActions.new().execute_actions(staged_party, staged_enemies, [action])
 				if not result.ok:

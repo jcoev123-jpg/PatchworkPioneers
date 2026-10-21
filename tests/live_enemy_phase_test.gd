@@ -337,6 +337,7 @@ func _run() -> void:
 	await _slain_sources(app)
 	await _cue_refresh(app)
 	await _status_damage(app)
+	await _mixed_rejection_replay(app)
 	app.free()
 	_finish()
 
@@ -515,6 +516,61 @@ func _status_damage(app) -> void:
 				_check(trace == replay, "mounted status actor/deck/intent/result snapshots replay exactly")
 			app.return_button.pressed.emit()
 			await process_frame
+
+
+func _mixed_rejection_replay(app) -> void:
+	var replay: Array = []
+	for session in range(2):
+		app.run_seed = 56056
+		app.start_button.pressed.emit()
+		await process_frame
+		var bound: bool = app.party != null and app.enemies != null and app.deck != null \
+			and app.enemy_intents != null and app.round_flow != null \
+			and is_instance_valid(app.end_turn_button) and app.end_turn_button.is_visible_in_tree() \
+			and not app.end_turn_button.disabled
+		_check(bound, "mixed rejection starts a complete mounted seeded fight")
+		if not bound:
+			return
+		_check(app.party.start_player_turn(), "clear opening protection to expose actual mixed attack HP loss")
+		app.party._heroes[0]["statuses"] = {"exposed": 2}
+		app.enemies._enemies[0]["statuses"] = {"weak": 2}
+		app._refresh_party()
+		_visible(app)
+		var first: Dictionary = app.party._heroes[0]
+		var guard: Dictionary = app.enemies._enemies[1]
+		var legal: Dictionary = app.enemy_intents._definitions[1].pattern[0].duplicate(true)
+		var trace: Array = [_snapshot(app)]
+		for rejection in ["malformed", "overflow"]:
+			if rejection == "malformed":
+				app.enemy_intents._definitions[1].pattern[0]["extra"] = true
+			else:
+				_check(app.enemies.gain_block(2, CombatEnemies.MAX_INT), "living later Block source is at capacity")
+			var before := _snapshot(app)
+			app.end_turn_button.pressed.emit()
+			_check(_snapshot(app) == before and not app.end_turn_button.disabled,
+				"actual End Turn rejects later " + rejection + " without actor, deck, selector or RNG changes")
+			_check(is_same(app.party._heroes[0], first) and is_same(app.enemies._enemies[1], guard),
+				"mounted rejected mixed phase retains actor dictionaries")
+			trace.append(_snapshot(app))
+			if rejection == "malformed":
+				app.enemy_intents._definitions[1].pattern[0] = legal.duplicate(true)
+			else:
+				guard.block = 3
+			await process_frame
+		app.end_turn_button.pressed.emit()
+		_check(app.party.get_hero(1).hp == first.max_hp - 1 and app.party.get_hero(1).block == 0
+			and app.enemies.get_enemy(2).block == 4 and app.enemies.get_enemy(1).block == 0
+			and app.enemy_intents._turn_index == 1,
+			"legal mixed End Turn after both rejections attacks and grants Block exactly once")
+		await process_frame
+		_visible(app, 2)
+		trace.append(_snapshot(app))
+		if session == 0:
+			replay = trace.duplicate(true)
+		else:
+			_check(trace == replay, "seeded mounted rejection/recovery phase, party, enemy and hand replay exactly")
+		app.return_button.pressed.emit()
+		await process_frame
 
 
 func _finish() -> void:
