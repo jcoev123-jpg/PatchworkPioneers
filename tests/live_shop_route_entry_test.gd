@@ -173,7 +173,9 @@ func _run() -> void:
 		rejecting._nodes = original_map._nodes.duplicate(true)
 		rejecting._floor_ids = original_map._floor_ids.duplicate(true)
 		rejecting._route.assign(prior)
+		rejecting._generation_revision = original_map.get_generation_revision()
 		app.run_map = rejecting
+		app._carryover_map = weakref(rejecting)
 		app.act_outcome._map = rejecting
 		app._connected_map = weakref(rejecting)
 		app._reward_map = weakref(rejecting)
@@ -183,12 +185,16 @@ func _run() -> void:
 		_check(_persistent() == invalid_before and app.shop_visit == null and app.shop_purchases == null,
 			"rejected map choice restores RNG and publishes no ledger or stock")
 		app.run_map = original_map
+		app._carryover_map = weakref(original_map)
 		app.act_outcome._map = original_map
 		app._connected_map = weakref(original_map)
 		app._reward_map = weakref(original_map)
 		# A connected whitespace node reaches open_visit, which rejects its ID.
 		original_map._nodes[" "] = original_map._nodes[id].duplicate(true)
 		original_map._nodes[parent].outgoing.append(" ")
+		# Align the deliberately altered graph binding to reach visit rollback,
+		# rather than failing the stale-battle guard before stock generation.
+		app._carryover_floors = original_map.get_floors()
 		shop.set_meta("route_id", " ")
 		_check(app._can_choose_connected_route() and original_map.get_legal_choices().has(" ")
 			and original_map.get_node(" ").type == "Shop" and _stock_oracle().stock.cards.size() == 5,
@@ -199,6 +205,7 @@ func _run() -> void:
 			"failed visit opening rolls back committed map and generated RNG")
 		original_map._nodes.erase(" ")
 		original_map._nodes[parent].outgoing = outgoing
+		app._carryover_floors = original_map.get_floors()
 		shop.set_meta("route_id", id)
 		if session in [1, 2]:
 			app.session_gold = 200

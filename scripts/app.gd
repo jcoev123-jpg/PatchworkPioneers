@@ -72,6 +72,7 @@ var fight_reward_trinket := ""
 var run_heroes: Array = []
 var party_carryover: RunPartyCarryover
 var _carryover_map: WeakRef
+var _carryover_revision := 0
 var _carryover_node := ""
 var _carryover_route: Array[String] = []
 var _carryover_floors: Array = []
@@ -220,6 +221,7 @@ func _current_act_battle() -> bool:
 func _current_carryover_fight() -> bool:
 	return party_carryover != null and _carryover_map != null \
 		and run_map != null and _carryover_map.get_ref() == run_map \
+		and run_map.get_generation_revision() == _carryover_revision \
 		and run_map.get_route() == _carryover_route and run_map.get_floors() == _carryover_floors \
 		and run_map.get_current_node_id() == _carryover_node \
 		and run_map.get_node(_carryover_node).get("type") in ["Fight", "Elite", "Boss"] \
@@ -550,6 +552,7 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	party_carryover = starting_carryover
 	if party_carryover != null:
 		_carryover_map = weakref(run_map)
+		_carryover_revision = run_map.get_generation_revision()
 		_carryover_node = run_map.get_current_node_id()
 		_carryover_route = run_map.get_route()
 		_carryover_floors = run_map.get_floors()
@@ -1013,7 +1016,7 @@ func _finish_card_reward(offering) -> void:
 
 ## The terminal Fight stays separate from persistent run data and future encounters.
 func _can_leave_fight() -> bool:
-	return run_map != null and (run_map.get_route().size() == 1 if multi_fight_rewards == null else _current_carryover_fight()) \
+	return _current_carryover_fight() \
 		and run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"] \
 		and _battle_closed and battle_result != null \
 		and battle_result._party == party and battle_result._enemies == enemies \
@@ -1169,6 +1172,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	encounter_id = entry.encounter_id
 	victory_gold = RunVictoryGold.new(battle_result)
 	_carryover_node = id
+	_carryover_revision = run_map.get_generation_revision()
 	_carryover_route = run_map.get_route()
 	_carryover_floors = run_map.get_floors()
 	_carryover_party = party
@@ -1943,6 +1947,7 @@ func _return_to_title() -> void:
 	run_heroes.clear()
 	party_carryover = null
 	_carryover_map = null
+	_carryover_revision = 0
 	_carryover_node = ""
 	_carryover_route.clear()
 	_carryover_floors.clear()

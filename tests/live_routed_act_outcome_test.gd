@@ -7,6 +7,14 @@ var last_latch: RunActBattleOutcome
 func _snapshot() -> Array:
 	var result := super._snapshot()
 	result.append(app.act_outcome.get_state() if app.act_outcome != null else {})
+	result.append([app.run_scraps, app.run_trinkets.duplicate(),
+		app.run_stitch_descriptors.duplicate(true), app.run_next_stitch_id,
+		app.fight_reward_trinket])
+	if app.fight_rewards != null:
+		result.append([app.fight_rewards._prepared, app.fight_rewards._award,
+			app.fight_rewards._choice.get_offers(), app.fight_rewards._choice.is_claimed()])
+	if app.multi_fight_rewards != null:
+		result.append(app.multi_fight_rewards.read_state())
 	return result
 
 
@@ -108,6 +116,7 @@ func _run() -> void:
 		previous = latch
 		await _click(app.return_button)
 	_check(pointer_plays > 0 and key_plays > 0, "victories exercise held cards by mouse and keyboard")
+	await _regeneration_rejections(fixture)
 	await _identity_rejections(fixture)
 	await _enter(fixture)
 	# In-place map drift must reject before evaluate can witness lethal actors.
@@ -131,6 +140,98 @@ func _run() -> void:
 	_check(app.deck != null and app.run_map == null and app.act_outcome == null, "standalone Start has no run latch")
 	await _click(app.return_button)
 	await _finish_carryover()
+
+
+func _regenerate_selected() -> void:
+	var live_map: RunMap = app.run_map
+	var graph := live_map.get_floors()
+	var route := live_map.get_route()
+	var revision := live_map.get_generation_revision()
+	var rng_before: int = app.run_rng.state
+	var independent := RandomNumberGenerator.new()
+	independent.seed = app.run_seed
+	_check(live_map.generate(independent), "same object regenerates successfully")
+	_check(app.run_map == live_map and live_map.get_floors() == graph
+		and live_map.get_generation_revision() != revision, "same object and graph have a new generation")
+	for id in route:
+		_check(live_map.choose_node(id), "original route node can be reselected: " + id)
+	_check(live_map.get_route() == route and app.run_rng.state == rng_before,
+		"regenerated selected route matches without spending run RNG")
+	_check(not app._current_carryover_fight() and not app._can_leave_fight(),
+		"generation mismatch invalidates combat and continuation binding")
+
+
+func _stale_mounted_actions(label: String) -> void:
+	_check(app.battle_view.is_visible_in_tree() and is_instance_valid(app.end_turn_button),
+		label + " has mounted battle controls")
+	var before := _snapshot()
+	app.end_turn_button.pressed.emit()
+	_check(not app._observe_battle_result(), label + " rejects result observation")
+	_check(not app._commit_fight_carryover(), label + " rejects carryover")
+	app._build_card_reward()
+	for button in app.reward_buttons:
+		_check(is_instance_valid(button) and button.is_visible_in_tree(), label + " reward control is mounted")
+		button.pressed.emit()
+	if is_instance_valid(app.continue_button):
+		app.continue_button.pressed.emit()
+	await _frames()
+	_check(_snapshot() == before and app.route_view == null and app.battle_view.is_visible_in_tree(),
+		label + " preserves full combat, terminal, route, ledger, inventory, rewards and RNG state")
+
+
+func _regeneration_rejections(fixture: Dictionary) -> void:
+	await _enter(fixture)
+	_check(app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
+		and app.deck.turn_active and not app.end_turn_button.disabled, "opening probe starts in actionable combat")
+	_regenerate_selected()
+	await _stale_mounted_actions("regenerated active opening Fight")
+	# A stale observer must not even evaluate actors that now look terminal.
+	for enemy in app.enemies.get_enemies():
+		_check(app.enemies.apply_damage(enemy.position, 999), "stale result fixture defeats real enemy")
+	await _stale_mounted_actions("regenerated opening with lethal actors")
+	_check(app.battle_result.get_outcome() == CombatBattleResult.ACTIVE,
+		"generation rejection occurs before evaluating lethal actors")
+	await _click(app.return_button)
+	_check(app._carryover_revision == 0, "title clears generation token")
+	for claimed in [false, true]:
+		exercised_entry = false
+		if not await _routed_win(fixture, false):
+			return
+		_check(app.reward_buttons.size() == 4 and not app.fight_reward_claimed
+			and app.battle_result.get_outcome() == CombatBattleResult.VICTORY,
+			"regeneration probe has real held-card victory and unclaimed rewards")
+		if claimed:
+			await _click(app.reward_buttons[0])
+			_check(app.fight_reward_claimed and is_instance_valid(app.continue_button)
+				and not app.continue_button.disabled and app._can_leave_fight(),
+				"valid pick exposes actionable Continue before regeneration")
+		_regenerate_selected()
+		await _stale_mounted_actions("regenerated victory claimed=" + str(claimed))
+		await _click(app.return_button)
+	# Untouched Skip/Continue must still admit an actual connected Fight or Elite.
+	exercised_entry = false
+	if not await _routed_win(fixture, false):
+		return
+	await _click(app.reward_buttons[3])
+	_check(app._can_leave_fight(), "untouched Skip permits Continue")
+	await _click(app.continue_button)
+	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree(),
+		"untouched Continue mounts connected route")
+	var next: Button
+	for button in app.route_buttons:
+		if app.run_map.get_node(button.get_meta("route_id")).type in ["Fight", "Elite"]:
+			next = button
+			break
+	_check(next != null and not next.disabled, "fixture has an actionable connected battle")
+	if next != null:
+		await _click(next)
+		_check(app.run_map.get_route().size() == 2 and app._current_carryover_fight()
+			and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
+			and app.deck.turn_active and not app.end_turn_button.disabled,
+			"connected admission publishes valid current generation and real active combat")
+		_regenerate_selected()
+		await _stale_mounted_actions("regenerated active connected battle")
+	await _click(app.return_button)
 
 
 func _finish_carryover() -> void:
