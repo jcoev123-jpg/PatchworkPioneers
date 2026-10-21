@@ -59,6 +59,20 @@
         "button_guard",
         "seam_ripper"
       ]
+    },
+    "needle_marshal_elite": {
+      "schedule": "res://data/encounters/needle_marshal_elite.json",
+      "enemy_ids": [
+        "needle_marshal",
+        "ragling_guard"
+      ]
+    },
+    "spool_hexer_elite": {
+      "schedule": "res://data/encounters/spool_hexer_elite.json",
+      "enemy_ids": [
+        "spool_hexer",
+        "spool_stalker"
+      ]
     }
   },
   "Boss": {
