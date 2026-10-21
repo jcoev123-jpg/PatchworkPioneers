@@ -1,5 +1,5 @@
 extends "res://tests/live_legal_starter_fight_test.gd"
-## Drive the shipped scene with physical inputs; only the downed-hero case is injected.
+## Drive the shipped scene with physical inputs; recovery edge cases use combat fixtures.
 
 
 func _fixture() -> Dictionary:
@@ -36,7 +36,7 @@ func _block_free_party() -> Array:
 	return heroes
 
 
-func _routed_win(fixture: Dictionary, downed: bool) -> bool:
+func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = false) -> bool:
 	app.run_seed = fixture.seed
 	await _click(app.route_button)
 	var fight: Button
@@ -56,6 +56,9 @@ func _routed_win(fixture: Dictionary, downed: bool) -> bool:
 	app._continue_to_rest_route(null, weakref(app.run_map), null)
 	_check(_persistent() == before and app.route_view == null, "active combat cannot continue or heal")
 	for turn in range(20):
+		if capped_survivor:
+			_check(app.party.heal(2, 999), "fixture tops up living survivor before final card inputs")
+			app.party._heroes[1].statuses = {"exposed": 2}
 		for play in range(3):
 			var id := ""
 			var target := 0
@@ -245,6 +248,9 @@ func _run() -> void:
 			await _key(KEY_ENTER)
 		_check(visit.is_consumed() and app.rest_heal_button.disabled and app.run_heroes == expected_heal.heroes,
 			"visible Heal commits service exact result once")
+		var ledger: Dictionary = app.party_carryover.read_state()
+		_check(ledger.ok and ledger.heroes == expected_heal.heroes and ledger.completed_rests == [rest_id],
+			"mounted Heal also commits exact heroes and current Rest once to persistent ledger")
 		for index in range(3):
 			var hero: Dictionary = app.run_heroes[index]
 			_check(hero.hp == mini(hero.max_hp, (1 if copy[index].hp == 0 else copy[index].hp) + int(hero.max_hp * 0.3)), "exact capped 30% and revive arithmetic")

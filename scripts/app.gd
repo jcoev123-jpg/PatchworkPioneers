@@ -964,11 +964,27 @@ func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 		or button.disabled or not button.is_visible_in_tree() or run_map == null \
 		or _rest_map == null or _rest_map.get_ref() != run_map \
 		or run_map.get_route() != _rest_route or _rest_route.is_empty() \
+		or run_map.get_current_node_id() != _rest_route.back() \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Rest" \
 		or run_heroes != _rest_heroes or not RunRestRecovery._is_valid_roster(run_heroes):
 		return
+	# Preflight both scene-free transactions before consuming either. These
+	# synchronous services cannot fail after their complete source validation.
+	if not visit._valid or visit._roster != _rest_heroes \
+		or party_carryover == null or _carryover_map == null or _carryover_map.get_ref() != run_map:
+		return
+	var ledger := party_carryover.read_state()
+	var current_id: String = run_map.get_current_node_id()
+	if not ledger.ok or ledger.heroes != _rest_heroes or ledger.completed_rests.has(current_id) \
+		or not RunPartyCarryover._valid_roster(ledger.heroes, true) \
+		or not party_carryover._same_identities(ledger.heroes):
+		return
+	for hero in ledger.heroes:
+		if hero.block != 0:
+			return
+	var committed := party_carryover.choose_rest_heal(current_id)
 	var result := visit.choose_heal()
-	if not result.ok:
+	if not committed.ok or not result.ok or committed.heroes != result.heroes:
 		return
 	run_heroes = result.heroes.duplicate(true)
 	_rest_committed_heroes = run_heroes.duplicate(true)
