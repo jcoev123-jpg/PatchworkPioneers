@@ -7,6 +7,11 @@ var _catalog := StarterCards.new()
 var _support := CombatSupportCards.new()
 
 
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
+		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	return _support.bind_patch_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn)
+
+
 func play_card(deck: CombatDeck, party: CombatParty, card_id: String, target_position: int = 0) -> bool:
 	if deck == null or party == null:
 		return false

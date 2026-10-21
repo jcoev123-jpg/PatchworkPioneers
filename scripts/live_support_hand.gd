@@ -41,6 +41,15 @@ func _sync_battle() -> void:
 		_battle = app.battle_view
 		_deck = app.deck
 		_party = app.party
+		_play = CombatStarterSupportPlay.new()
+		var carry = app.party_carryover
+		if carry is RunTornCarryover and carry._wardrobe != null:
+			var state: Dictionary = carry._wardrobe.get_snapshot()
+			if app._current_carryover_fight() and carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
+				_play.bind_patch_wardrobe(carry._wardrobe, carry.torn, state, carry.torn.read_state())
+			else:
+				# Explicit invalid run authority must never fall back to unbound play.
+				_play.bind_patch_wardrobe(null, null)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		energy_label = Label.new()
 		energy_label.name = "SupportHandEnergy"
@@ -339,3 +348,4 @@ func _clear() -> void:
 	_battle = null
 	_deck = null
 	_party = null
+	_play = null
