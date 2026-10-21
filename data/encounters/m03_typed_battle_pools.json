@@ -42,6 +42,14 @@
         "button_guard",
         "spool_stalker"
       ]
+    },
+    "seamshift_tripwire": {
+      "schedule": "res://data/encounters/seamshift_tripwire.json",
+      "enemy_ids": [
+        "seam_ripper",
+        "spool_stalker",
+        "fray_scavenger"
+      ]
     }
   },
   "Elite": {
