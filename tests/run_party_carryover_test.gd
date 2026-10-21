@@ -11,6 +11,7 @@ func _initialize() -> void:
 		_finish()
 		return
 	_test_public_contract_and_detachment()
+	_test_legal_opening_fight()
 	_test_legal_opening_rest()
 	_test_witnessed_victory_and_rest()
 	_test_failed_and_foreign_results()
@@ -108,8 +109,7 @@ func _test_public_contract_and_detachment() -> void:
 	var expected := initial.duplicate(true)
 	var carry := RunPartyCarryover.new(initial)
 	_check(carry.is_valid(), "initialization from real CombatParty snapshot succeeds")
-	_check(carry.create_next_fight_party() == null and carry.read_state()["completed_fights"].is_empty(),
-		"unwitnessed initial roster cannot claim a carried Fight")
+	_check_initial_hydrations(carry, expected, "public initial contract")
 	_check(carry.read_state()["heroes"] == expected
 		and carry.get_next_fight_heroes() == expected, "initial identities, order, HP and metadata retained")
 	initial[0]["hp"] = 1
@@ -128,6 +128,98 @@ func _test_public_contract_and_detachment() -> void:
 		and carry.read_state()["completed_fights"].is_empty()
 		and carry.read_state()["completed_rests"].is_empty(),
 		"read_state, visit lists and next-fight arrays are independently detached")
+
+
+func _check_initial_hydrations(carry: RunPartyCarryover, expected: Array, context: String) -> Array:
+	var before := carry.read_state()
+	var first := carry.create_next_fight_party()
+	var second := carry.create_next_fight_party()
+	_check(first != null and second != null and first != second
+		and first.is_valid() and second.is_valid(), context + ": two distinct valid initial parties")
+	if first == null or second == null:
+		return []
+	_check(first.get_heroes() == expected and second.get_heroes() == expected
+		and not first.is_defeated() and not second.is_defeated(),
+		context + ": both parties retain exact healthy Block-free carry state")
+	_check(carry.read_state() == before and before["completed_fights"].is_empty()
+		and before["completed_rests"].is_empty(), context + ": no visit is recorded")
+	return [first, second]
+
+
+func _test_legal_opening_fight() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4103
+	var map := RunMap.new()
+	_check(map.generate(rng) and map.get_route().is_empty(), "opening Fight map is generated and unvisited")
+	var fight_id := ""
+	for node_id in map.get_legal_choices():
+		if map.get_node(node_id).get("type") == "Fight":
+			fight_id = node_id
+			break
+	_check(not fight_id.is_empty(), "seed 4103 offers a legal opening Fight")
+	if fight_id.is_empty():
+		return
+	var source := _party()
+	_check(source.is_valid(), "opening Fight uses actual authored starter party")
+	var expected := source.get_heroes()
+	var carry := RunPartyCarryover.new(expected)
+	var ledger := carry.read_state()
+	var rng_before := rng.state
+	seed(74090)
+	var expected_random := randi()
+	seed(74090)
+	var parties := _check_initial_hydrations(carry, expected, "before opening Fight admission")
+	_check(rng.state == rng_before and map.get_route().is_empty(),
+		"initial hydration neither consumes run RNG nor chooses a map node")
+	if parties.size() != 2:
+		return
+	var entry := RunAuthoredBattleEntry.new()
+	var selector := RunFightEncounterSelection.new()
+	_check(entry.entry_current_battle(map, rng, selector) == {"success": false}
+		and rng.state == rng_before and carry.read_state() == ledger
+		and map.get_route().is_empty(),
+		"hydrated initial parties do not bypass route admission or spend on failed entry")
+	_check(map.choose_node(fight_id) and map.get_route() == [fight_id],
+		"opening Fight is committed through legal map traversal")
+	var opened := expected.duplicate(true)
+	opened[0]["block"] = 6
+	for party: CombatParty in parties:
+		var battle := entry.entry_current_battle(map, rng, selector)
+		_check(battle.get("success") == true and battle.get("node_type") == "Fight",
+			"real authored opening Fight admits each hydrated party")
+		if not battle.get("success", false):
+			return
+		var enemies: CombatEnemies = battle["enemies"]
+		var intents: CombatEnemyIntents = battle["intents"]
+		var result := CombatBattleResult.new(party, enemies)
+		var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+		var flow := CombatRoundFlow.new(deck, party, enemies, intents, result)
+		_check(enemies.is_valid() and intents.is_valid()
+			and result.get_outcome() == CombatBattleResult.ACTIVE and flow.begin_fight(),
+			"each fresh party starts a real round with authored enemies, intents and starter deck")
+		_check(party.get_heroes() == opened and not flow._opening_block.apply()
+			and not flow.begin_fight() and party.get_heroes() == opened,
+			"each battle grants exactly one Warden +6 via CombatStartingBlock")
+	var first: CombatParty = parties[0]
+	var second: CombatParty = parties[1]
+	rng_before = rng.state
+	_check(first.apply_damage(1, 7) and first.get_hero(1)["hp"] == 39,
+		"first battle really loses HP after absorbing its six Block")
+	first._heroes[0]["statuses"] = {"bleed": 2}
+	first._heroes[0]["metadata"]["tags"][1]["weave"].clear()
+	_check(second.get_heroes() == opened and source.get_heroes() == expected
+		and carry.read_state() == ledger, "first party HP/status/nested mutations leave peer, source and carry intact")
+	var first_before := first.get_heroes()
+	_check(second.apply_damage(2, 1) and second.get_hero(2)["hp"] == 29,
+		"second battle really loses HP independently")
+	second._heroes[1]["statuses"] = {"weak": 3}
+	second._heroes[1]["metadata"]["tags"].clear()
+	_check(first.get_heroes() == first_before and carry.read_state() == ledger
+		and source.get_heroes() == expected and rng.state == rng_before,
+		"second party HP/status/nested mutations preserve peer, carry, source and run RNG")
+	_check_initial_hydrations(carry, expected, "after both initial battles mutate")
+	_check(rng.state == rng_before and randi() == expected_random,
+		"initial hydration, opening Block and mutations consume no global RNG; rehydration spends no run RNG")
 
 
 func _test_legal_opening_rest() -> void:
@@ -154,13 +246,12 @@ func _test_legal_opening_rest() -> void:
 	initial[0]["statuses"] = {"bleed": 2, "weak": 1}
 	initial[2]["statuses"] = {"exposed": 3}
 	var carry := RunPartyCarryover.new(initial)
-	_check(carry.is_valid() and carry.create_next_fight_party() == null,
-		"authored carry cannot hydrate before any completed node")
+	_check(carry.is_valid(), "authored opening Rest carry is valid")
+	_check_initial_hydrations(carry, initial, "before opening Rest")
 	for bad_id in ["", "   ", " bad", "bad ", 5, null, [], {}]:
 		_assert_rejected(carry, "opening malformed Rest " + str(bad_id),
 			func(): return carry.choose_rest_heal(bad_id))
-		_check(carry.create_next_fight_party() == null,
-			"malformed Rest does not authorize initial hydration")
+		_check_initial_hydrations(carry, initial, "after malformed opening Rest")
 	_check(map.choose_node(rest_id) and map.get_route() == [rest_id]
 		and map.get_current_node_id() == rest_id,
 		"opening Rest is chosen through authoritative map traversal")
@@ -537,6 +628,12 @@ func _test_invalid_and_defeated() -> void:
 		hero["hp"] = 0
 	malformed_held.append(all_downed)
 	for i in range(malformed_held.size()):
+		var initial_carry := RunPartyCarryover.new(base)
+		initial_carry._heroes = malformed_held[i].duplicate(true)
+		var initial_before := initial_carry.read_state()
+		_check(initial_carry.create_next_fight_party() == null
+			and initial_carry.read_state() == initial_before,
+			"invalid persisted initial state %d rejects hydration without mutation" % i)
 		rest_carry._heroes = malformed_held[i].duplicate(true)
 		var rest_before := rest_carry.read_state()
 		_check(rest_carry.create_next_fight_party() == null

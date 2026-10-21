@@ -50,11 +50,11 @@ func get_next_fight_heroes() -> Array:
 	return _heroes.duplicate(true)
 
 
-## Restore a detached live party after a witnessed victory or recorded Rest. Construct a
+## Restore a detached live party from initial carry, a witnessed victory or recorded Rest. Construct a
 ## canonical CombatParty first, then replace its full-HP actor snapshots.
 ## The one-shot Warden Block belongs to later combat startup, never transit.
 func create_next_fight_party() -> CombatParty:
-	if not _valid or (_fight_ids.is_empty() and _rest_ids.is_empty()) or not _valid_roster(_heroes, true) or not _same_identities(_heroes):
+	if not _valid or not _valid_roster(_heroes, true) or not _same_identities(_heroes):
 		return null
 	if _max_hp_by_id.size() != STARTING_HP.size():
 		return null
