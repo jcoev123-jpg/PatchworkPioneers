@@ -1,0 +1,58 @@
+{
+  "events": [
+    {
+      "id": "button_trail",
+      "title": "The Button Trail",
+      "description": "Mismatched buttons form a trail across the grass.",
+      "choices": [
+        { "id": "follow", "text": "Follow the button trail" },
+        { "id": "leave", "text": "Leave the buttons untouched" }
+      ]
+    },
+    {
+      "id": "loose_seam",
+      "title": "The Loose Seam",
+      "description": "A strip of patched ground has come unstitched.",
+      "choices": [
+        { "id": "mend", "text": "Inspect the loose stitching" },
+        { "id": "bypass", "text": "Walk around the seam" }
+      ]
+    },
+    {
+      "id": "thimble_well",
+      "title": "The Thimble Well",
+      "description": "A silver thimble rests beside a dry stone well.",
+      "choices": [
+        { "id": "listen", "text": "Listen at the well" },
+        { "id": "depart", "text": "Continue along the road" }
+      ]
+    },
+    {
+      "id": "frayed_signpost",
+      "title": "The Frayed Signpost",
+      "description": "Three cloth arrows flap from a crooked signpost.",
+      "choices": [
+        { "id": "read", "text": "Read the faded arrows" },
+        { "id": "choose", "text": "Choose the clearer path" }
+      ]
+    },
+    {
+      "id": "quiet_spool",
+      "title": "The Quiet Spool",
+      "description": "An abandoned spool spins without a breeze.",
+      "choices": [
+        { "id": "watch", "text": "Watch the thread unwind" },
+        { "id": "ignore", "text": "Leave the spool alone" }
+      ]
+    },
+    {
+      "id": "needle_gate",
+      "title": "The Needle Gate",
+      "description": "Crossed needles mark a narrow wooden gate.",
+      "choices": [
+        { "id": "examine", "text": "Examine the gate" },
+        { "id": "pass", "text": "Pass without stopping" }
+      ]
+    }
+  ]
+}
