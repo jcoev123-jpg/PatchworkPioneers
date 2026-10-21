@@ -45,7 +45,9 @@ func _entry_state() -> Array:
 		app.act_outcome.get_state(), app.fight_rewards, app.fight_reward_claimed,
 		app.run_removal_count, app.shop_visit.get_state() if app.shop_visit != null else {},
 		app.rest_recovery.is_consumed() if app.rest_recovery != null else false,
-		app.get_node("LiveEnemyRoster").panel]
+		app.get_node("LiveEnemyRoster").panel, app.terminal_result_panel,
+		app.terminal_result_panel.get_presented_status() if app.terminal_result_panel != null else "",
+		app.terminal_result_panel.return_button.disabled if app.terminal_result_panel != null else true]
 
 
 func _reject_entry(callback: Callable, reason: String) -> void:
@@ -125,6 +127,12 @@ func _formation_win(fixture: Dictionary) -> bool:
 	_check(app._battle_closed and app.fight_rewards != null, "legal predecessor victory recorded by app")
 	return app._battle_closed and app.fight_rewards != null
 
+
+func _click(control: Control) -> void:
+	if is_instance_valid(control):
+		_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
+			"routed mouse action fits viewport: %s %s" % [control.name, control.get_global_rect()])
+	await super._click(control)
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
@@ -267,6 +275,7 @@ func _run() -> void:
 				for enemy in app.enemies.get_enemies():
 					app.enemies.apply_damage(enemy.position, 9999)
 			app._observe_battle_result()
+			await _frames()
 			_check(app._battle_closed and app.end_turn_button.disabled and app.result_label.visible, "true terminal battle result closes controls")
 			var outcome: String = CombatBattleResult.DEFEAT if session == 1 else CombatBattleResult.VICTORY
 			_check(app.battle_result.get_outcome() == outcome and app.result_label.text.contains(outcome), "visible true result")
@@ -274,6 +283,37 @@ func _run() -> void:
 			_check(app.act_outcome.get_state().run_status == run_status and app.act_outcome.get_state().settled_node_ids.count(id) == 1, "run defeat/Boss victory latched once")
 			if run_status != RunActBattleOutcome.ACTIVE:
 				_check(app.result_label.text.contains("Run defeat" if session == 1 else "Run victory"), "visible run defeat or Boss victory")
+				var panel: LiveRunTerminalResultPanel = app.terminal_result_panel
+				var title: String = "Victory" if run_status == RunActBattleOutcome.VICTORY else "Defeat"
+				var description: String = ("The final boss has fallen. The run is complete."
+					if title == "Victory" else "The party has fallen. The run has ended.")
+				var panels: Array = app.find_children("*", "LiveRunTerminalResultPanel", true, false)
+				_check(panel != null and panel.get_parent() == app and panel.is_visible_in_tree()
+					and panel.has_open_result() and panels.size() == 1 and panels[0] == panel,
+					"terminal outcome mounts exactly one top-level panel")
+				_check(panel != null and panel.title_label.text == title
+					and panel.description_label.text == description
+					and panel.get_presented_status() == run_status
+					and panel.return_button.has_focus() and not panel.return_button.disabled
+					and app.return_button.disabled and app.end_turn_button.disabled,
+					"witnessed " + title + " has real distinct screen and sole focused Return")
+				_check(app.act_outcome.get_state().pending_node_id == ""
+					and not app.act_outcome.get_state().settled_node_ids.is_empty()
+					and app.act_outcome.get_state().settled_node_ids.back() == id
+					and (title != "Victory" or (map.get_current_floor() == 12
+						and map.get_node(id).type == "Boss")),
+					"terminal screen follows settled authoritative chosen node")
+				var terminal_before := _entry_state()
+				app._terminal_return_connection.call()
+				app.return_button.pressed.emit()
+				app._mount_terminal_result()
+				_check(_entry_state() == terminal_before and app.terminal_result_panel == panel
+					and app.find_children("*", "LiveRunTerminalResultPanel", true, false).size() == 1,
+					"forged callback, legacy Return and repeat mount are inert")
+			else:
+				_check(app.terminal_result_panel == null
+					and app.find_children("*", "LiveRunTerminalResultPanel", true, false).is_empty(),
+					"settled nonterminal Fight/Elite never publishes panel")
 			if kind in ["Fight", "Elite"] and outcome == CombatBattleResult.VICTORY:
 				_check(app.multi_fight_rewards != null and app.reward_buttons.size() == 4 and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "later Fight/Elite prepares rewards without payment")
 			else:
@@ -284,8 +324,25 @@ func _run() -> void:
 			app._observe_battle_result()
 			_check(_entry_state() == before, "duplicate terminal observation is inert")
 			retained = [callback, old_end, old_return, old_reward, old_continue]
-			await _click(app.return_button)
+			if run_status == RunActBattleOutcome.ACTIVE:
+				await _click(app.return_button)
+			else:
+				var terminal_request: Callable = app._terminal_return_connection
+				var old_panel: LiveRunTerminalResultPanel = app.terminal_result_panel
+				if session == 1:
+					await _key(KEY_SPACE)
+				else:
+					await _click(old_panel.return_button)
+				_check(not is_instance_valid(old_panel) and app.terminal_result_panel == null
+					and not app._terminal_return_connection.is_valid(),
+					"terminal screen and host callback removed after real Return")
+				retained.append(terminal_request)
 			_check(app.title_view.visible and app.run_map == null and app.deck == null and app.run_rng == null and app.fight_selection == null and app.run_heroes.is_empty() and app._carryover_route.is_empty(), "clean title and restart state")
+			_check(app.session_gold == 0 and app.run_deck.is_empty() and app.run_trinkets.is_empty()
+				and app.card_reward == null and app.multi_fight_rewards == null
+				and app.act_outcome == null and app.party_carryover == null
+				and app.route_view == null and app.terminal_result_panel == null,
+				"terminal/title cleanup leaves no inventory, reward, ledger or overlay")
 			_check(randi() == global_next, "connected battle never consumes global RNG")
 	app.free()
 	await _frames()

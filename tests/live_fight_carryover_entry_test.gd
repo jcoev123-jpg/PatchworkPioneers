@@ -196,6 +196,17 @@ func _defeat(fixture: Dictionary) -> void:
 		await _click(app.end_turn_button)
 	_check(app.battle_result.get_outcome() == CombatBattleResult.DEFEAT and app._battle_closed,
 		"mounted End Turn inputs reach an actual defeat")
+	var panel: LiveRunTerminalResultPanel = app.terminal_result_panel
+	_check(panel != null and panel.has_open_result() and panel.is_visible_in_tree()
+		and panel.title_label.text == "Defeat"
+		and panel.description_label.text == "The party has fallen. The run has ended."
+		and app.act_outcome.get_state().run_status == RunActBattleOutcome.DEFEAT
+		and app.act_outcome.get_state().pending_node_id == ""
+		and app.act_outcome.get_state().settled_node_ids == route,
+		"enemy-phase routed wipe settles and mounts genuine Defeat screen")
+	_check(panel != null and panel.return_button.has_focus()
+		and app.return_button.disabled and app.end_turn_button.disabled,
+		"terminal panel owns focus and old battle actions are closed")
 	var before := _snapshot()
 	_check(not app._commit_fight_carryover(), "defeat cannot commit")
 	app._observe_battle_result()
@@ -204,7 +215,15 @@ func _defeat(fixture: Dictionary) -> void:
 	_check(_snapshot() == before and ledger.read_state() == initial and app.run_heroes.is_empty()
 		and app.run_deck == owned and app.run_map.get_route() == route and app.session_gold == 0
 		and app.fight_rewards == null and app.reward_buttons.is_empty(), "defeat and stale callbacks never publish, pay or complete")
-	await _click(app.return_button)
+	if panel != null:
+		app.return_button.pressed.emit()
+		app._mount_terminal_result()
+		_check(app.terminal_result_panel == panel and panel.get_parent() == app
+			and app.get_children().count(panel) == 1 and _snapshot() == before,
+			"stale battle Return and repeat mount cannot bypass or duplicate Defeat")
+		await _click(panel.return_button)
+		_check(app.terminal_result_panel == null and app.act_outcome == null
+			and app.title_view.is_visible_in_tree(), "genuine Defeat panel Return tears down session")
 
 
 func _finish_carryover() -> void:
