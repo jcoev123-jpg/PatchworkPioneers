@@ -101,7 +101,7 @@ func choose_rest_heal(node: Variant) -> Dictionary:
 
 
 func create_next_fight_party() -> CombatParty:
-	if not _valid or _fight_ids.is_empty() or not _valid_roster(_heroes, true) \
+	if not _valid or not _valid_roster(_heroes, true) \
 		or not _same_identities(_heroes) or _observer() == null or torn.read_state().heroes != _heroes:
 		return null
 	for hero in _heroes:

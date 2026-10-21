@@ -71,7 +71,110 @@ func _win_fixture() -> void:
 	_check(app.battle_result.get_outcome() == CombatBattleResult.VICTORY and app.reward_buttons.size() == 4, "witnessed victory mounts actual rewards")
 
 
+func _fresh_torn_opening(seed_value: int) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var map := RunMap.new()
+	_check(map.generate(rng) and map.get_route().is_empty(), "fresh seeded map is unvisited")
+	var fight := ""
+	for node in map.get_legal_choices():
+		if map.get_node(node).type == "Fight":
+			fight = node
+			break
+	_check(not fight.is_empty(), "generated seed offers legal opening Fight")
+	if fight.is_empty():
+		return []
+	var source := CombatParty.new(app._load_party_definitions())
+	_check(source.is_valid() and source.get_hero(1).id == "warden"
+		and source.get_hero(2).id == "seamstress" and source.get_hero(3).id == "tinker",
+		"fresh ledger uses authored starter heroes")
+	var initial := source.get_heroes()
+	for hero in initial:
+		hero.statuses = {"weak": 1}
+		hero.metadata = {"stitches": [["felt", "paper"]]}
+	var carry := RunTornCarryover.new(initial)
+	_check(carry.is_valid(), "fresh torn ledger is valid")
+	var before := [carry.read_state(), carry.torn.read_state(), carry._receipts.duplicate(true)]
+	var rng_before := rng.state
+	var first := carry.create_next_fight_party()
+	var second := carry.create_next_fight_party()
+	_check(first != null and second != null and first != second, "fresh torn ledger hydrates two distinct parties")
+	if first == null or second == null:
+		return []
+	_check(first.is_valid() and second.is_valid() and not first.is_defeated()
+		and first.get_heroes() == initial and second.get_heroes() == initial,
+		"initial copies preserve exact positions, statuses, metadata and zero Block")
+	_check(carry.read_state().completed_fights.is_empty() and carry.read_state().completed_rests.is_empty()
+		and carry.torn.read_state().completed_battles.is_empty() and carry._receipts.is_empty()
+		and [carry.read_state(), carry.torn.read_state(), carry._receipts] == before
+		and rng.state == rng_before and map.get_route().is_empty(),
+		"first hydration consumes neither RNG, route, receipt nor either ledger")
+	_check(map.choose_node(fight), "opening Fight chosen through legal route")
+	var opened := initial.duplicate(true)
+	opened[0].block = 6
+	for party: CombatParty in [first, second]:
+		var battle := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+		_check(battle.get("success", false) and battle.get("node_type") == "Fight", "real authored opening Fight admitted")
+		if not battle.get("success", false):
+			return []
+		var result := CombatBattleResult.new(party, battle.enemies)
+		_check(result.get_outcome() == CombatBattleResult.ACTIVE and result._party == party
+			and carry.begin_battle(fight, result, party), "each initial copy binds an actual ACTIVE opening battle")
+		var deck := CombatDeck.new(app._load_starter_deck(), rng)
+		var flow := CombatRoundFlow.new(deck, party, battle.enemies, battle.intents, result)
+		_check(flow.begin_fight() and party.get_heroes() == opened, "combat start grants only Warden six Block")
+		_check(not flow.begin_fight() and not flow._opening_block.apply()
+			and party.get_heroes() == opened, "opening Block applies exactly once per combat")
+		_check([carry.read_state(), carry.torn.read_state(), carry._receipts] == before,
+			"combat start leaves both carryover ledgers and receipts unchanged")
+	rng_before = rng.state
+	_check(first.apply_damage(1, 7) and first.get_hero(1).hp == 39, "first hydrated party independently takes damage")
+	first._heroes[0].statuses.weak = 9
+	first._heroes[0].metadata.stitches[0].clear()
+	_check(second.get_heroes() == opened and [carry.read_state(), carry.torn.read_state(), carry._receipts] == before,
+		"first copy's HP, nested statuses and metadata cannot alias peer or ledgers")
+	var first_before := first.get_heroes()
+	_check(second.apply_damage(2, 1) and second.get_hero(2).hp == 29, "second hydrated party independently takes damage")
+	second._heroes[1].statuses.weak = 8
+	second._heroes[1].metadata.stitches[0].append("changed")
+	_check(first.get_heroes() == first_before and [carry.read_state(), carry.torn.read_state(), carry._receipts] == before
+		and initial == before[0].heroes and rng.state == rng_before, "second copy mutations preserve peer, source, ledgers and RNG")
+	var third := carry.create_next_fight_party()
+	_check(third != null and third.get_heroes() == initial and rng.state == rng_before,
+		"mutated combat copies leave pristine fresh hydration available without RNG")
+	return [first.get_heroes(), second.get_heroes(), carry.read_state(), carry.torn.read_state(), rng.state]
+
+
+func _invalid_initial_torn() -> void:
+	var initial := CombatParty.new(app._load_party_definitions()).get_heroes()
+	for kind in ["invalid", "malformed", "downed", "identity", "block", "torn", "receipt"]:
+		var carry := RunTornCarryover.new(initial if kind != "invalid" else null)
+		if kind != "invalid":
+			_check(carry.is_valid() and carry.create_next_fight_party() != null, "negative fixture begins otherwise valid: " + kind)
+		match kind:
+			"malformed": carry._heroes[0].statuses = {"weak": -1}
+			"downed":
+				for hero in carry._heroes:
+					hero.hp = 0
+				for hero in carry.torn._heroes:
+					hero.hp = 0
+			"identity": carry._heroes[0].id = "foreign"
+			"block":
+				carry._heroes[0].block = 1
+				carry.torn._heroes[0].block = 1
+				carry._initial[0].block = 1
+			"torn": carry.torn._tear_counts.warden = 1
+			"receipt": carry._receipts.append({"node": "unobserved_rest"})
+		var before := [carry.read_state(), carry.torn.read_state(), carry._initial.duplicate(true), carry._receipts.duplicate(true)]
+		_check(carry.create_next_fight_party() == null, "invalid initial hydration rejects: " + kind)
+		_check([carry.read_state(), carry.torn.read_state(), carry._initial, carry._receipts] == before,
+			"invalid initial hydration preserves both ledgers and receipts: " + kind)
+
+
 func _service_checks() -> void:
+	var opening := _fresh_torn_opening(4103)
+	_check(not opening.is_empty() and _fresh_torn_opening(4103) == opening, "fresh torn opening replay preserves full heroes, ledgers and seeded RNG")
+	_invalid_initial_torn()
 	var party := CombatParty.new(app._load_party_definitions())
 	var carry := RunTornCarryover.new(party.get_heroes())
 	_check(carry.is_valid(), "canonical service fixture valid")
