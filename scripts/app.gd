@@ -64,6 +64,8 @@ var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
 var session_gold := 0
 var run_deck: Array[String] = []
+var run_trinkets: Array[String] = []
+var fight_reward_trinket := ""
 var run_heroes: Array = []
 var party_carryover: RunPartyCarryover
 var _carryover_map: WeakRef
@@ -162,7 +164,7 @@ func _observe_battle_result() -> bool:
 			deck.end_turn()
 		$LiveSupportHand._cancel_pending()
 		_refresh_hand()
-		if outcome == CombatBattleResult.VICTORY and (run_map == null or run_map.get_node(_carryover_node).get("type") == "Fight"):
+		if outcome == CombatBattleResult.VICTORY and (run_map == null or run_map.get_node(_carryover_node).get("type") in ["Fight", "Elite"]):
 			_build_card_reward()
 		if party.is_valid():
 			_refresh_party()
@@ -173,8 +175,10 @@ func _observe_battle_result() -> bool:
 			result_label.text += " | Run defeat"
 		if act_outcome != null and act_outcome.get_state().run_status == RunActBattleOutcome.VICTORY:
 			result_label.text += " | Run victory"
-		if outcome == CombatBattleResult.VICTORY and (run_map == null or run_map.get_node(_carryover_node).get("type") == "Fight"):
+		if outcome == CombatBattleResult.VICTORY and (run_map == null or run_map.get_node(_carryover_node).get("type") in ["Fight", "Elite"]):
 			result_label.text += " | Pending gold: %d" % fight_reward_gold if run_map != null else " | Gold: %d" % session_gold
+		if not fight_reward_trinket.is_empty():
+			result_label.text += " | Trinket: " + fight_reward_trinket
 		result_label.show()
 		return_button.grab_focus()
 	return false
@@ -779,7 +783,7 @@ func _build_card_reward() -> void:
 	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
 		return
 	if run_map != null and (not _current_carryover_fight() \
-		or run_map.get_node(_carryover_node).get("type") != "Fight"):
+		or run_map.get_node(_carryover_node).get("type") not in ["Fight", "Elite"]):
 		return
 	if run_map != null and (fight_rewards != null or multi_fight_rewards != null):
 		return
@@ -799,12 +803,15 @@ func _build_card_reward() -> void:
 			prepared = fight_rewards.prepare()
 		else:
 			multi_fight_rewards = RunMultiFightRewards.new(run_map, run_rng, party_carryover,
-				run_deck, session_gold, [], catalog.get_all_card_ids())
+				run_deck, session_gold, run_trinkets, catalog.get_all_card_ids(), _catalog_trinket_ids())
 			prepared = multi_fight_rewards.prepare(_carryover_node, battle_result, party)
 		if not prepared.ok:
+			fight_rewards = null
+			multi_fight_rewards = null
 			return
 		fight_reward_offers = prepared.offers
 		fight_reward_gold = prepared.gold_award
+		fight_reward_trinket = prepared.trinket_drop_id
 		_reward_map = weakref(run_map)
 		ids = []
 		for offer in fight_reward_offers:
@@ -846,6 +853,19 @@ func _build_card_reward() -> void:
 		button.pressed.connect(_claim_card_reward.bind(id, button, _routed_reward_service() if run_map != null else card_reward))
 
 
+## Elite drops use the existing Shop catalog; no separate reward pool.
+func _catalog_trinket_ids() -> Array:
+	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	if not catalog is Dictionary or not catalog.get("trinkets") is Array:
+		return []
+	var ids: Array = []
+	for entry in catalog.trinkets:
+		if not entry is Dictionary or not entry.get("id") is String:
+			return []
+		ids.append(entry.id)
+	return ids
+
+
 func _routed_reward_service():
 	return multi_fight_rewards if multi_fight_rewards != null else fight_rewards
 
@@ -868,7 +888,8 @@ func _claim_card_reward(id: String, button, offering) -> void:
 		if offering is RunMultiFightRewards:
 			if offering._map != run_map or offering._rng != run_rng or offering._carry != party_carryover \
 				or offering.read_state().deck != run_deck or offering.read_state().gold != session_gold \
-				or offering.read_state().party.heroes != run_heroes:
+				or offering.read_state().party.heroes != run_heroes \
+				or offering.read_state().trinkets != run_trinkets:
 				return
 		var result: Dictionary = offering.choose(_carryover_node, id) if offering is RunMultiFightRewards else offering.choose(id)
 		if not result.ok:
@@ -878,6 +899,7 @@ func _claim_card_reward(id: String, button, offering) -> void:
 		session_gold = settled.gold
 		if offering is RunMultiFightRewards:
 			run_heroes = settled.party.heroes.duplicate(true)
+			run_trinkets.assign(settled.trinkets)
 		fight_reward_claimed = true
 		result_label.text = "Battle result: victory | Gold: %d" % session_gold
 		_finish_card_reward(offering)
@@ -922,14 +944,15 @@ func _finish_card_reward(offering) -> void:
 ## The terminal Fight stays separate from persistent run data and future encounters.
 func _can_leave_fight() -> bool:
 	return run_map != null and (run_map.get_route().size() == 1 if multi_fight_rewards == null else _current_carryover_fight()) \
-		and run_map.get_node(run_map.get_current_node_id()).get("type") == "Fight" \
+		and run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"] \
 		and _battle_closed and battle_result != null \
 		and battle_result._party == party and battle_result._enemies == enemies \
 		and battle_result.get_outcome() == CombatBattleResult.VICTORY \
 		and party != null and party.is_valid() and not party.is_defeated() \
 		and _routed_reward_service() != null and fight_reward_claimed \
 		and (multi_fight_rewards == null or (party_carryover.read_state().completed_fights.has(_carryover_node) \
-			and party_carryover.read_state().heroes == run_heroes)) \
+			and party_carryover.read_state().heroes == run_heroes \
+			and multi_fight_rewards.read_state().trinkets == run_trinkets)) \
 		and RunRestRecovery._is_valid_roster(run_heroes)
 
 
@@ -988,7 +1011,7 @@ func _can_choose_connected_route() -> bool:
 		or act_outcome.get_state().run_status != RunActBattleOutcome.ACTIVE \
 		or not act_outcome.get_state().pending_node_id.is_empty():
 		return false
-	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Fight":
+	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"]:
 		return _can_leave_fight()
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
 		return _current_completed_rest() and is_instance_valid(rest_view) and not rest_view.visible \
@@ -1059,6 +1082,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	multi_fight_rewards = null
 	fight_reward_offers.clear()
 	fight_reward_gold = 0
+	fight_reward_trinket = ""
 	fight_reward_claimed = false
 	_reward_map = null
 	party = next_party
@@ -1131,7 +1155,7 @@ func _current_shop_ledger(status: String = "") -> bool:
 	var ledger := shop_visit.get_state()
 	return ledger.valid and ledger.shop_node_id == run_map.get_current_node_id() \
 		and ledger.deck == run_deck and ledger.gold == session_gold \
-		and ledger.prior_removals == run_removal_count \
+		and ledger.trinkets == run_trinkets and ledger.prior_removals == run_removal_count \
 		and (ledger.status == status if not status.is_empty() else ledger.status in ["available", "used"])
 
 
@@ -1255,7 +1279,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") != "Shop":
 		return false
-	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count)
+	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count, run_trinkets)
 	var offers: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
 	if not (offers is Dictionary) or not (offers.get("cards") is Array) \
 		or not (offers.get("trinkets") is Array) or run_rng == null:
@@ -1266,11 +1290,11 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 			return false
 		party_ids.append(hero.id)
 	var rng_before := run_rng.state
-	var stock := RunShopStockOffers.generate(run_rng, party_ids, offers.cards, offers.trinkets, [])
+	var stock := RunShopStockOffers.generate(run_rng, party_ids, offers.cards, offers.trinkets, run_trinkets)
 	if not stock.ok:
 		run_rng.state = rng_before
 		return false
-	var purchases := RunShopPurchases.new(party_ids, run_deck, [], session_gold, stock.cards, stock.trinkets)
+	var purchases := RunShopPurchases.new(party_ids, run_deck, run_trinkets, session_gold, stock.cards, stock.trinkets)
 	if not purchases.is_valid():
 		run_rng.state = rng_before
 		return false
@@ -1359,7 +1383,7 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 	var state := purchases.get_state()
 	if not ledger.valid or ledger.status not in ["available", "used"] or ledger.shop_node_id != run_map.get_current_node_id() \
 		or ledger.deck != run_deck or ledger.gold != session_gold or ledger.prior_removals != run_removal_count \
-		or state.deck != run_deck or state.gold != session_gold or state.trinkets != ledger.trinkets:
+		or state.deck != run_deck or state.gold != session_gold or state.trinkets != ledger.trinkets or ledger.trinkets != run_trinkets:
 		return
 	var index := shop_offers.selected
 	var stock: Array = purchases.get_stock().cards
@@ -1394,7 +1418,8 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 		return
 	var state := visit.get_state()
 	if not state.removal_available or state.shop_node_id != run_map.get_current_node_id() \
-		or state.deck != run_deck or state.gold != session_gold or state.prior_removals != run_removal_count:
+		or state.deck != run_deck or state.gold != session_gold or state.prior_removals != run_removal_count \
+		or state.trinkets != run_trinkets:
 		return
 	var index := shop_cards.selected
 	if index >= run_deck.size() or shop_cards.get_item_text(index) != run_deck[index]:
@@ -1646,10 +1671,12 @@ func _return_to_title() -> void:
 	multi_fight_rewards = null
 	fight_reward_offers.clear()
 	fight_reward_gold = 0
+	fight_reward_trinket = ""
 	fight_reward_claimed = false
 	_reward_map = null
 	reward_buttons.clear()
 	run_deck.clear()
+	run_trinkets.clear()
 	session_gold = 0
 	_battle_closed = false
 	enemy_attacks.clear()

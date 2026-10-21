@@ -274,10 +274,11 @@ func _run() -> void:
 			_check(app.act_outcome.get_state().run_status == run_status and app.act_outcome.get_state().settled_node_ids.count(id) == 1, "run defeat/Boss victory latched once")
 			if run_status != RunActBattleOutcome.ACTIVE:
 				_check(app.result_label.text.contains("Run defeat" if session == 1 else "Run victory"), "visible run defeat or Boss victory")
-			if kind == "Fight" and outcome == CombatBattleResult.VICTORY:
-				_check(app.multi_fight_rewards != null and app.reward_buttons.size() == 4 and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "later normal Fight prepares rewards without payment")
+			if kind in ["Fight", "Elite"] and outcome == CombatBattleResult.VICTORY:
+				_check(app.multi_fight_rewards != null and app.reward_buttons.size() == 4 and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "later Fight/Elite prepares rewards without payment")
 			else:
-				_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.multi_fight_rewards == null and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "Elite/Boss/defeat gain no invented rewards or continuation")
+				_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.multi_fight_rewards == null and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "Boss/defeat gain no rewards or continuation")
+				_check(app.run_trinkets.is_empty(), "Boss/defeat never grants an Elite trinket")
 			before = _entry_state()
 			app._observe_battle_result()
 			app._observe_battle_result()
