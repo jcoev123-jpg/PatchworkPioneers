@@ -26,17 +26,15 @@ func _init(deck: CombatDeck = null, party: CombatParty = null,
 ## Begin exactly once: clear inherited hero Block, deal the first hand, then
 ## grant the Warden's one-shot +6. The turn-zero intents are not advanced.
 func begin_fight() -> bool:
-	if _started or not _valid_bindings() or not _valid_opening_formation():
+	if _started or not _valid_bindings():
 		return false
 	if _deck.turn_active or _deck.energy != 0 or not _deck.hand.is_empty():
 		return false
 	# A first fight must not begin from a previously used shared deck.
 	if not _deck.discard_pile.is_empty() or _deck.draw_pile.size() < CombatDeck.TURN_DRAW:
 		return false
-	# Starting Block cannot be granted to a downed Warden; fail before
-	# resetting any Block or dealing cards, even if other heroes still live.
-	if _party.is_downed(1) or _party.is_defeated() \
-			or _enemies.is_victorious() or not _result.can_continue():
+	# A downed Warden can be carried with living allies; the one-shot helper skips him.
+	if _party.is_defeated() or _enemies.is_victorious() or not _result.can_continue():
 		return false
 	# Validated services make all three operations total for this initial state.
 	_party.start_player_turn()
@@ -155,14 +153,6 @@ func _valid_bindings() -> bool:
 		if announcements[index].get("enemy_position") != index + 1:
 			return false
 	return true
-
-
-## A strict one-time opening: only the authored Warden, Seamstress, Tinker
-## formation can start the fight and receive the original Warden passive.
-func _valid_opening_formation() -> bool:
-	return _party.get_hero(1).get("id") == "warden" \
-		and _party.get_hero(2).get("id") == "seamstress" \
-		and _party.get_hero(3).get("id") == "tinker"
 
 
 func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:

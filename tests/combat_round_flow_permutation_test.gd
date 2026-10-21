@@ -155,8 +155,9 @@ func _ids(party: CombatParty) -> Array:
 
 
 func _test_opening_rejections() -> void:
-	for scenario in ["swap12", "swap23", "reverse", "substitute",
-			"missing_id", "duplicate_id", "position", "status", "downed_warden"]:
+	# Valid adjacency swaps, full reversal, and a downed Warden are genuine
+	# carryover openings. Use the real starter models and a separate deck oracle.
+	for scenario in ["swap12", "swap23", "reverse", "downed_warden"]:
 		var fight := _fight(830)
 		match scenario:
 			"swap12": _exchange(fight.party, 1)
@@ -165,17 +166,74 @@ func _test_opening_rejections() -> void:
 				_exchange(fight.party, 1)
 				_exchange(fight.party, 2)
 				_exchange(fight.party, 1)
+			"downed_warden":
+				_check(fight.party.apply_damage(1, 40) and not fight.party.is_defeated(),
+					"downed Warden has two actual living allies before the opening")
+		var order := _ids(fight.party)
+		var warden_slot := order.find("warden") + 1
+		_check(warden_slot >= 1 and fight.result.can_continue(),
+			"legal opening has exactly one Warden and an active outcome")
+		for index in range(1, 4):
+			if not fight.party.is_downed(index):
+				_check(fight.party.gain_block(index, index + 2),
+					"legal opening begins with stale Block to clear")
+		var before_heroes: Array = fight.party.get_heroes()
+		var expected: Array = before_heroes.duplicate(true)
+		for hero in expected:
+			hero["block"] = 0
+		if scenario != "downed_warden":
+			expected[warden_slot - 1]["block"] = 6
+		var deck_oracle := CombatDeck.new(fight.cards, _rng(830))
+		_check(fight.flow.begin_fight() and deck_oracle.start_turn(),
+			"permuted or downed Warden opening succeeds: " + scenario)
+		_check(fight.party.get_heroes() == expected,
+			"full HP/order/status/positions stay and only living Warden gains Block: " + scenario)
+		_check(fight.flow._opening_block._consumed == (scenario != "downed_warden"),
+			"passive consumed only when Warden is alive: " + scenario)
+		_check(fight.deck.hand.size() == 5 and fight.deck.energy == 3
+			and fight.deck.hand == deck_oracle.hand
+			and fight.deck.draw_pile == deck_oracle.draw_pile
+			and fight.deck.discard_pile == deck_oracle.discard_pile
+			and fight.deck._rng.state == deck_oracle._rng.state,
+			"independent seeded deck oracle matches active opening: " + scenario)
+		_reject(fight, true, "repeat opening remains inert: " + scenario)
+
+	# Keep malformed identities, positions, statuses, bindings, previously
+	# used decks, and terminal fights fail-closed with full state snapshots.
+	for scenario in ["substitute", "missing_id", "duplicate_id", "position",
+			"missing_position", "status", "status_type", "invalid_scheduler",
+			"wrong_result_binding", "spent_deck", "all_downed", "terminal_result"]:
+		var fight := _fight(830)
+		match scenario:
 			"substitute": fight.party._heroes[0]["id"] = "outsider"
 			"missing_id": fight.party._heroes[1].erase("id")
 			"duplicate_id": fight.party._heroes[2]["id"] = "warden"
 			"position": fight.party._heroes[1]["position"] = 1
+			"missing_position": fight.party._heroes[1].erase("position")
 			"status": fight.party._heroes[0]["statuses"] = {"bleed": 1.5}
-			"downed_warden":
-				_check(fight.party.apply_damage(1, 40)
-					and not fight.party.is_defeated(), "opening downed Warden has living allies")
-		_reject(fight, true, "prestart malformed or nonopening: " + scenario)
+			"status_type": fight.party._heroes[0]["statuses"] = []
+			"invalid_scheduler": fight.intents._definitions.clear()
+			"wrong_result_binding":
+				var other := _fight(830)
+				fight.flow._result = other.result
+			"spent_deck":
+				_check(fight.deck.start_turn() and fight.deck.end_turn(),
+					"negative deck really starts and ends a prior hand")
+			"all_downed":
+				for position in range(1, 4):
+					_check(fight.party.apply_damage(position, fight.party.get_hero(position)["hp"]),
+						"defeated opening has a truly downed occupant")
+				_check(fight.party.is_defeated(), "no living hero remains")
+			"terminal_result":
+				for position in range(1, 3):
+					_check(fight.enemies.apply_damage(position, 12),
+						"terminal fixture kills the real final enemy")
+				_check(fight.result.evaluate() == CombatBattleResult.VICTORY,
+					"pre-start terminal fixture has witnessed VICTORY")
+		_reject(fight, true, "prestart malformed or terminal: " + scenario)
 		_check(not fight.flow._opening_block._consumed,
-			"no rejected opening consumes one-time passive")
+			"rejected opening never consumes passive")
+
 	var fight := _fight(830)
 	var deck_oracle := CombatDeck.new(fight.cards, _rng(830))
 	_check(fight.flow.begin_fight() and deck_oracle.start_turn(),
