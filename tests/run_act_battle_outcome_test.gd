@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_boss_replay()
 	_test_all_kind_defeats()
 	_test_rejections_and_stale_binding()
+	_test_same_seed_regeneration()
 	if failures.is_empty():
 		print("run_act_battle_outcome_test: PASS (", checks, " checks)")
 	else:
@@ -99,6 +100,9 @@ func _snapshot(ctx: Dictionary, battle: Dictionary = {}) -> Dictionary:
 		"node": map.get_current_node_id(),
 		"floor": map.get_current_floor(),
 		"complete": map.is_complete(),
+		"generation_revision": map.get_generation_revision(),
+		"generated": map.is_generated(),
+		"rng_seed": rng.seed,
 		"rng": rng.state,
 	}
 	if not battle.is_empty():
@@ -421,6 +425,53 @@ func _test_all_kind_defeats() -> void:
 			kind + " DEFEAT is terminal with exact settled node")
 		_reject_settle(ctx, battle, kind + " duplicate defeat")
 		_reject_begin(ctx, _fight([8])["result"], battle, kind + " terminal cannot restart")
+
+
+func _test_same_seed_regeneration() -> void:
+	for kind in ["Fight", "Elite", "Boss"]:
+		var ctx := _context_for_kind(kind, 912)
+		var map: RunMap = ctx["map"]
+		var rng: RandomNumberGenerator = ctx["rng"]
+		var service: RunActBattleOutcome = ctx["service"]
+		var original_seed := rng.seed
+		var path := _path_to(map, kind)
+		_choose_path(ctx, path)
+		var node_id := map.get_current_node_id()
+		_check(not node_id.is_empty() and map.get_node(node_id).get("type") == kind,
+			kind + " regeneration fixture selects a real battle node")
+		if kind == "Boss":
+			_check(path.size() == 12 and map.get_current_floor() == 12 and map.is_complete(),
+				"regeneration fixture reaches the real floor-12 Boss")
+		var old_floors := map.get_floors()
+		var old_route := map.get_route()
+		var old_revision := map.get_generation_revision()
+		_check(old_revision == 1, kind + " original map has generation revision 1")
+		var battle := _fight([8, 13])
+		_check(service.begin_current_battle(battle["result"]),
+			kind + " binds ACTIVE result before regeneration")
+		_observe_victory(battle, kind + " before same-seed regeneration")
+		var pending_state := service.get_state()
+		_check(pending_state == {"run_status": "ACTIVE", "pending_node_id": node_id,
+			"settled_node_ids": []}, kind + " witnessed victory is still pending")
+		var original_rng_state := rng.state
+		# Regenerate the SAME map using the SAME injected RNG and original seed.
+		rng.seed = original_seed
+		_check(map.generate(rng), kind + " same-seed regeneration succeeds")
+		_check(map.get_generation_revision() == 2
+			and map.get_generation_revision() == old_revision + 1,
+			kind + " same map advances exactly from revision 1 to 2")
+		_check(map.get_floors() == old_floors and map.get_route().is_empty(),
+			kind + " regenerated twelve-floor graph is identical and route resets")
+		_choose_path(ctx, old_route)
+		_check(map.get_route() == old_route and map.get_floors() == old_floors
+			and map.get_current_node_id() == node_id and rng.state == original_rng_state,
+			kind + " reselection restores identical IDs, legal route, floors and RNG")
+		_reject_settle(ctx, battle, kind + " old witnessed victory on identical regenerated route")
+		_check(service.get_state() == pending_state,
+			kind + " stale result cannot end run, settle node or discard pending binding")
+		_reject_settle(ctx, battle, kind + " repeated stale generation settlement")
+		_reject_begin(ctx, _fight([7])["result"], battle,
+			kind + " rejected stale binding cannot be replaced")
 
 
 func _test_rejections_and_stale_binding() -> void:

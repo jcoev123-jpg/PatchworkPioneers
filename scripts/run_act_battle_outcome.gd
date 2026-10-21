@@ -23,6 +23,7 @@ var _pending_node_id: String = ""
 var _pending_result: CombatBattleResult
 var _pending_route: Array[String] = []
 var _pending_floors: Array = []
+var _pending_generation_revision: int = 0
 var _settled_node_ids: Array[String] = []
 
 
@@ -55,6 +56,7 @@ func begin_current_battle(result: CombatBattleResult) -> bool:
 	_pending_result = result
 	_pending_route = _map.get_route()
 	_pending_floors = _map.get_floors()
+	_pending_generation_revision = _map.get_generation_revision()
 	return true
 
 
@@ -62,6 +64,10 @@ func settle_current_battle() -> bool:
 	if _map == null or _run_status != ACTIVE:
 		return false
 	if _pending_result == null or _pending_node_id.is_empty():
+		return false
+	# Identical seeded graphs/routes still belong to distinct generations.
+	# Reject before observing the result or changing any pending/run state.
+	if _map.get_generation_revision() != _pending_generation_revision:
 		return false
 	if not _map.is_generated() or _map.get_current_node_id() != _pending_node_id:
 		return false
@@ -96,6 +102,7 @@ func settle_current_battle() -> bool:
 	_pending_result = null
 	_pending_route.clear()
 	_pending_floors.clear()
+	_pending_generation_revision = 0
 	return true
 
 
