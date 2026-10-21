@@ -1,5 +1,7 @@
 extends SceneTree
-## Spoolhex Bleed-and-Shift standalone M04 Elite: AC1-AC3.
+## Spoolhex Bleed-and-Shift standalone M04 Elite: exact data, parser, typed selection,
+## real three-beat phase results, downed-neighbor atomic rejection,
+## replay isolation, and zero RNG mutation.
 
 const ENCOUNTER_ID := "spoolhex_bleed_shift"
 const ENCOUNTER_PATH := "res://data/encounters/spoolhex_bleed_shift.json"
@@ -21,6 +23,7 @@ func _initialize() -> void:
 	_content()
 	_selection()
 	_phases()
+	_replays()
 	_negative()
 	_report()
 
@@ -93,31 +96,61 @@ func _content() -> void:
 	_check(scheduler.is_valid(), "new schedule validates with CombatEnemyIntents")
 
 
-func _selection() -> void:
-	# Build roster with local Elite mapping (no live pool hookup).
-	var choice := {
-		"success": true,
-		"node_type": "Elite",
-		"encounter_id": ENCOUNTER_ID,
-		"definitions": RunFightEncounterSelection._parse_schedule_text(
-			FileAccess.get_file_as_string(ENCOUNTER_PATH))
-	}
-	var built := RunTypedBattleRoster.new().assemble(
-		choice, BINDINGS, CATALOGS)
-	_check(built.get("ok") == true,
-		"typed roster assembles spoolhex_bleed_shift")
+func _elite_seed() -> int:
+	for value in range(1, 129):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if map.generate(rng):
+			for node_id in map.get_legal_choices():
+				if map.get_node(node_id).get("type") == "Elite" and map.choose_node(node_id):
+					return value
+	return -1
+
+
+func _route(seed_value: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var map := RunMap.new()
+	if not map.generate(rng):
+		return {}
+	for node_id in map.get_legal_choices():
+		if map.get_node(node_id).get("type") == "Elite" and map.choose_node(node_id):
+			return {"map": map, "rng": rng, "node": node_id}
+	return {}
+
+
+func _build(seed_value: int) -> Dictionary:
+	var route := _route(seed_value)
+	_check(not route.is_empty(), "generated legal Elite path")
+	if route.is_empty():
+		return {}
+	var map: RunMap = route.map
+	_check(map.get_node(route.node).get("type") == "Elite"
+		and map.get_route() == [route.node] and map.get_current_floor() == 1,
+		"selector input is actual chosen Elite node")
+
+	var picker := RunFightEncounterSelection.new()
+	var local_pool := {"Elite": {ENCOUNTER_ID: ENCOUNTER_PATH}}
+	var choice := picker.select_current_battle(map, route.rng, local_pool)
+	_check(choice.get("success") == true and choice.get("node_type") == "Elite"
+		and choice.get("encounter_id") == ENCOUNTER_ID,
+		"typed selector selected spoolhex_bleed_shift Elite")
+	if not choice.get("success", false):
+		return {}
+
+	var roster_bindings := BINDINGS
+	var built := RunTypedBattleRoster.new().assemble(choice, roster_bindings, CATALOGS)
+	_check(built.get("ok") == true and built.get("node_type") == "Elite"
+		and built.get("encounter_id") == ENCOUNTER_ID,
+		"typed roster assembled spoolhex_bleed_shift")
 	if not built.get("ok", false):
-		return
-
-	_check(built.get("encounter_id") == ENCOUNTER_ID,
-		"assembled encounter ID matches")
-	_check(built.get("node_type") == "Elite",
-		"assembled node type is Elite")
-
-	var enemies: CombatEnemies = built.get("enemies")
+		return {}
+	var enemies: CombatEnemies = built.enemies
 	_check(enemies.is_valid() and enemies.get_enemies().size() == 2,
-		"roster has two enemy slots")
+		"assembled battle has two enemy slots")
 
+	# Verify exact enemy IDs/HP/names/art paths.
 	var en1 := enemies.get_enemy(1)
 	var en2 := enemies.get_enemy(2)
 	_check(en1.get("id") == "spool_hexer" and en1.get("position") == 1
@@ -125,18 +158,57 @@ func _selection() -> void:
 		and en1.get("name") == HEXER_NAME
 		and en1.get("art_path") == "res://assets/paper/enemies/spool_hexer.png"
 		and en1.get("block") == 0,
-		"enemy 1: spool_hexer at 1, HP 24, correct art")
+		"enemy 1: spool_hexer at position 1, HP 24, Spool Hexer, correct art, zero Block")
 	_check(en2.get("id") == "button_guard" and en2.get("position") == 2
 		and en2.get("max_hp") == 16 and en2.get("hp") == 16
 		and en2.get("name") == GUARD_NAME
 		and en2.get("art_path") == "res://assets/paper/enemies/button_guard.png"
 		and en2.get("block") == 0,
-		"enemy 2: button_guard at 2, HP 16, correct art")
+		"enemy 2: button_guard at position 2, HP 16, Button Guard, correct art, zero Block")
+
+	return {"map": map, "rng": route.rng, "selector": picker, "choice": choice,
+		"enemies": enemies, "definitions": choice.get("definitions"),
+		"roster_bindings": roster_bindings}
+
+
+func _selection() -> void:
+	var seed_value := _elite_seed()
+	_check(seed_value > 0, "bounded seed search found actual legal Elite")
+	if seed_value < 0:
+		return
+
+	var a := _build(seed_value)
+	var b := _build(seed_value)
+	_check(not a.is_empty() and not b.is_empty(),
+		"independent same-seed builds succeed")
+	if a.is_empty() or b.is_empty():
+		return
+
+	_check(a.map.get_floors() == b.map.get_floors()
+		and a.map.get_route() == b.map.get_route()
+		and a.rng.state == b.rng.state and a.choice == b.choice,
+		"two independent same-seed Elite selections replay exactly")
+
+	_check(a.choice.get("encounter_id") == ENCOUNTER_ID,
+		"selected encounter ID matches spoolhex_bleed_shift")
+	_check(a.definitions == b.definitions,
+		"definitions identical across replay")
+
+	_check(a.enemies.get_enemies() == b.enemies.get_enemies()
+		and a.enemies != b.enemies,
+		"independent rosters same state but different objects")
+
+	var before_rng: int = a.rng.state
+	var replay_choice: Dictionary = a.selector.select_current_battle(a.map, a.rng,
+		{"Elite": {ENCOUNTER_ID: ENCOUNTER_PATH}})
+	_check(replay_choice == a.choice and a.rng.state == before_rng,
+		"cached retry retains route, pool claim and RNG state")
 
 
 func _party() -> CombatParty:
 	var records := RunTypedBattleRoster._parse_catalog_text(
 		FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	_check(not records.is_empty(), "starter hero catalog parses")
 	var heroes: Array = []
 	for id in ["warden", "seamstress", "tinker"]:
 		var match := records.filter(func(r): return r.get("id") == id)
@@ -192,6 +264,7 @@ func _phases() -> void:
 	# Apply Warden opening block per starter rules.
 	var opening := CombatStartingBlock.new(party)
 	_check(opening.apply(), "Warden opening block applied")
+	_check(party.get_hero(1).get("block") == 6, "Warden starting block is 6")
 
 	# Beat 1.
 	var beat1 := scheduler.get_intents()
@@ -313,108 +386,292 @@ func _phases() -> void:
 		"beat 4 wraps exactly to beat 1")
 
 
-func _negative() -> void:
-	# AC3: invalid actions fail before mutation; replay; downed-neighbor shove rejected.
+func _phase_trace(seed_value: int, reverse_input: bool = false) -> Dictionary:
+	var game := _build(seed_value)
+	if game.is_empty():
+		return {}
 
-	# Replay from fresh fixtures.
-	var replay_party := _party()
-	var replay_definitions := RunFightEncounterSelection._parse_schedule_text(
-		FileAccess.get_file_as_string(ENCOUNTER_PATH))
-	var replay_scheduler := CombatEnemyIntents.new(replay_definitions)
-	var replay_choice := {
-		"success": true, "node_type": "Elite",
-		"encounter_id": ENCOUNTER_ID, "definitions": replay_definitions
+	var party := _party()
+	var opening := CombatStartingBlock.new(party)
+	_check(opening.apply(), "Warden opening block applied in trace")
+
+	var enemies: CombatEnemies = game.enemies
+	var intents := CombatEnemyIntents.new(game.definitions)
+	_check(intents.is_valid(), "intents scheduler valid in phase trace")
+
+	var rng_before: int = game.rng.state
+
+	seed(51839)
+	var expected_global: int = randi()
+	seed(51839)
+
+	var announcements: Array = []
+	var receipts: Array = []
+
+	# Beat 1: Debuff bleed 2 on Tinker at position 3, attack 4 on Tinker at position 3.
+	var announced1: Array = intents.get_intents()
+	announcements.append(announced1)
+	var input1: Array = announced1.duplicate(true)
+	if reverse_input:
+		input1.reverse()
+	var res1: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input1)
+	_check(res1.get("ok") == true, "trace beat 1 phase succeeds")
+	receipts.append(res1.get("events", []))
+	_check(intents.advance_turn(), "trace advance to beat 2")
+
+	# Beat 2: Shove position 2 direction 1 (swap Seamstress/Tinker), debuff weak 1 on position 3 (now Seamstress).
+	var announced2: Array = intents.get_intents()
+	announcements.append(announced2)
+	var input2: Array = announced2.duplicate(true)
+	if reverse_input:
+		input2.reverse()
+	var res2: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input2)
+	_check(res2.get("ok") == true, "trace beat 2 phase succeeds")
+	receipts.append(res2.get("events", []))
+	_check(intents.advance_turn(), "trace advance to beat 3")
+
+	# Beat 3: Enemy 1 buff 3 Block, enemy 2 attack 3 on position 1 (Warden).
+	var announced3: Array = intents.get_intents()
+	announcements.append(announced3)
+	var input3: Array = announced3.duplicate(true)
+	if reverse_input:
+		input3.reverse()
+	var res3: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input3)
+	_check(res3.get("ok") == true, "trace beat 3 phase succeeds")
+	receipts.append(res3.get("events", []))
+	_check(intents.advance_turn(), "trace advance to beat 4")
+
+	# Beat 4 wrap check.
+	var announced4: Array = intents.get_intents()
+	announcements.append(announced4)
+	_check(announced4 == announced1, "trace beat 4 wraps to beat 1")
+
+	# Capture and assert unchanged run RNG state and expected global RNG draw across phase execution.
+	_check(game.rng.state == rng_before,
+		"three-beat phase cycle never spends run RNG")
+	_check(randi() == expected_global,
+		"three-beat phase cycle never spends global RNG")
+
+	return {
+		"announcements": announcements,
+		"receipts": receipts,
+		"heroes": party.get_heroes(),
+		"enemies": enemies.get_enemies(),
+		"rng_state": game.rng.state,
 	}
-	var replay_built := RunTypedBattleRoster.new().assemble(
-		replay_choice, BINDINGS, CATALOGS)
-	var replay_enemies: CombatEnemies = replay_built.get("enemies")
 
-	var replay_beat1: Array = []
-	if replay_party.is_valid() and replay_enemies.is_valid():
-		replay_beat1 = replay_scheduler.get_intents()
-		var original_beat1 := replay_beat1.duplicate(true)
-		var replay_result := CombatEnemyPhase.new().execute_phase(
-			replay_party, replay_enemies, replay_beat1)
-		_check(replay_result.get("ok") == true,
-			"replay beat 1 succeeds on fresh fixtures")
 
-	# Negative: bad shove direction on beat 2 (where shove actually occurs).
-	var replay_scheduler2 := CombatEnemyIntents.new(replay_definitions)
-	replay_scheduler2.advance_turn()  # move to beat 2
-	var replay_beat2: Array = replay_scheduler2.get_intents()
-	var bad_shove: Array = replay_beat2.duplicate(true)
-	for action in bad_shove:
+func _replays() -> void:
+	var seed_value := _elite_seed()
+	_check(seed_value > 0, "bounded seed found for replays")
+	if seed_value < 0:
+		return
+
+	var trace1 := _phase_trace(seed_value, false)
+	var trace2 := _phase_trace(seed_value, false)
+	var trace_rev := _phase_trace(seed_value, true)
+
+	_check(not trace1.is_empty() and not trace2.is_empty() and not trace_rev.is_empty(),
+		"two independent seeded replays and reversed input trace ran successfully")
+	if trace1.is_empty() or trace2.is_empty() or trace_rev.is_empty():
+		return
+
+	# Assert equal announcements across the three-beat cycle.
+	_check(trace1.announcements == trace2.announcements,
+		"replays announce identical intent batches across all three beats")
+
+	# Assert ordered phase event receipts across all three beats.
+	_check(trace1.receipts == trace2.receipts,
+		"replays produce identical ordered phase event receipts")
+
+	# Assert full final hero/enemy states.
+	_check(trace1.heroes == trace2.heroes,
+		"replays produce identical full final hero states")
+	_check(trace1.enemies == trace2.enemies,
+		"replays produce identical full final enemy states")
+
+	# Assert unchanged run RNG state.
+	_check(trace1.rng_state == trace2.rng_state,
+		"replays maintain identical run RNG state")
+
+	# Complete equality of the two traces.
+	_check(trace1 == trace2,
+		"two independent same-seed three-beat replays match completely")
+
+	# Input order invariance.
+	_check(trace1 == trace_rev,
+		"reversed announced intent order yields identical phase receipts and actor state")
+
+	# Explicit verification of final hero states after the three-beat cycle:
+	var heroes: Array = trace1.heroes
+	_check(heroes[0].get("id") == "warden" and heroes[0].get("position") == 1
+		and heroes[0].get("hp") == 40 and heroes[0].get("block") == 3
+		and heroes[0].get("statuses", {}).is_empty(),
+		"final hero 1: Warden HP 40, Block 3 (absorbed 3 from attack 3)")
+	_check(heroes[1].get("id") == "tinker" and heroes[1].get("position") == 2
+		and heroes[1].get("hp") == 22 and heroes[1].get("block") == 0
+		and heroes[1].get("statuses", {}).get("bleed") == 2,
+		"final hero 2: Tinker at position 2, HP 22 (took 4 from beat 1), Bleed 2 follows")
+	_check(heroes[2].get("id") == "seamstress" and heroes[2].get("position") == 3
+		and heroes[2].get("hp") == 30 and heroes[2].get("block") == 0
+		and heroes[2].get("statuses", {}).get("weak") == 1,
+		"final hero 3: Seamstress at position 3, HP 30, Weak 1 from beat 2")
+
+	# Explicit verification of final enemy states after the three-beat cycle:
+	var enemies: Array = trace1.enemies
+	_check(enemies[0].get("id") == "spool_hexer" and enemies[0].get("position") == 1
+		and enemies[0].get("hp") == 24 and enemies[0].get("block") == 3,
+		"final enemy 1: Spool Hexer HP 24, Block 3 from beat 3 buff")
+	_check(enemies[1].get("id") == "button_guard" and enemies[1].get("position") == 2
+		and enemies[1].get("hp") == 16 and enemies[1].get("block") == 0,
+		"final enemy 2: Button Guard HP 16, Block 0")
+
+
+func _negative() -> void:
+	var definitions := RunFightEncounterSelection._parse_schedule_text(
+		FileAccess.get_file_as_string(ENCOUNTER_PATH))
+	var scheduler := CombatEnemyIntents.new(definitions)
+
+	# Beat 1 announced intents.
+	var beat1_intents: Array = scheduler.get_intents()
+	_check(scheduler.advance_turn(), "advance to beat 2 for negative fixtures")
+	# Beat 2 announced intents: shove target 2 direction 1, debuff weak 1 target 3.
+	var beat2_intents: Array = scheduler.get_intents()
+
+	# Scenario 1: Bad shove target outside 1..3 on beat 2 (target_position = 4).
+	var party_bad_target := _party()
+	var built_bad_target := RunTypedBattleRoster.new().assemble(
+		{"success": true, "node_type": "Elite",
+		 "encounter_id": ENCOUNTER_ID, "definitions": definitions},
+		BINDINGS, CATALOGS)
+	var enemies_bad_target: CombatEnemies = built_bad_target.get("enemies")
+	var before_party_bad_target := party_bad_target.get_heroes()
+	var before_enemies_bad_target := enemies_bad_target.get_enemies()
+
+	var bad_target_shove := beat2_intents.duplicate(true)
+	for action in bad_target_shove:
+		if action.get("type") == "shove":
+			action["target_position"] = 4
+
+	var bad_target_res := CombatEnemyPhase.new().execute_phase(
+		party_bad_target, enemies_bad_target, bad_target_shove)
+	_check(bad_target_res == {"ok": false, "events": []},
+		"shove target 4 outside 1..3 rejected atomically")
+	_check(party_bad_target.get_heroes() == before_party_bad_target
+		and enemies_bad_target.get_enemies() == before_enemies_bad_target,
+		"shove bad target: complete party and enemy snapshots unchanged")
+
+	# Also test target_position = 0 (outside 1..3).
+	var bad_zero_shove := beat2_intents.duplicate(true)
+	for action in bad_zero_shove:
+		if action.get("type") == "shove":
+			action["target_position"] = 0
+	var bad_zero_res := CombatEnemyPhase.new().execute_phase(
+		party_bad_target, enemies_bad_target, bad_zero_shove)
+	_check(bad_zero_res == {"ok": false, "events": []},
+		"shove target 0 outside 1..3 rejected atomically")
+	_check(party_bad_target.get_heroes() == before_party_bad_target
+		and enemies_bad_target.get_enemies() == before_enemies_bad_target,
+		"shove target 0: complete party and enemy snapshots unchanged")
+
+	# Scenario 2: Separately tested bad shove direction on beat 2 (direction = 2).
+	var party_bad_dir := _party()
+	var built_bad_dir := RunTypedBattleRoster.new().assemble(
+		{"success": true, "node_type": "Elite",
+		 "encounter_id": ENCOUNTER_ID, "definitions": definitions},
+		BINDINGS, CATALOGS)
+	var enemies_bad_dir: CombatEnemies = built_bad_dir.get("enemies")
+	var before_party_bad_dir := party_bad_dir.get_heroes()
+	var before_enemies_bad_dir := enemies_bad_dir.get_enemies()
+
+	var bad_dir_shove := beat2_intents.duplicate(true)
+	for action in bad_dir_shove:
 		if action.get("type") == "shove":
 			action["direction"] = 2
-	# The phase should reject atomically.
-	var fresh_party_bad := _party()
-	var fresh_built_bad := RunTypedBattleRoster.new().assemble(
+
+	var bad_dir_res := CombatEnemyPhase.new().execute_phase(
+		party_bad_dir, enemies_bad_dir, bad_dir_shove)
+	_check(bad_dir_res == {"ok": false, "events": []},
+		"bad shove direction 2 rejected atomically")
+	_check(party_bad_dir.get_heroes() == before_party_bad_dir
+		and enemies_bad_dir.get_enemies() == before_enemies_bad_dir,
+		"bad shove direction: complete party and enemy snapshots unchanged")
+
+	# Scenario 3: Invalid debuff status on beat 1.
+	var party_bad_debuff := _party()
+	var built_bad_debuff := RunTypedBattleRoster.new().assemble(
 		{"success": true, "node_type": "Elite",
-		 "encounter_id": ENCOUNTER_ID, "definitions": replay_definitions},
+		 "encounter_id": ENCOUNTER_ID, "definitions": definitions},
 		BINDINGS, CATALOGS)
-	var fresh_enemies_bad: CombatEnemies = fresh_built_bad.get("enemies")
-	var before_bad_party := fresh_party_bad.get_heroes()
-	var before_bad_enemies := fresh_enemies_bad.get_enemies()
+	var enemies_bad_debuff: CombatEnemies = built_bad_debuff.get("enemies")
+	var before_party_bad_debuff := party_bad_debuff.get_heroes()
+	var before_enemies_bad_debuff := enemies_bad_debuff.get_enemies()
 
-	var bad_result := CombatEnemyPhase.new().execute_phase(
-		fresh_party_bad, fresh_enemies_bad, bad_shove)
-	_check(bad_result == {"ok": false, "events": []},
-		"bad shove direction rejected atomically")
-	_check(fresh_party_bad.get_heroes() == before_bad_party
-		and fresh_enemies_bad.get_enemies() == before_bad_enemies,
-		"bad shove: no partial mutation")
-
-	# Negative: invalid debuff status on beat 1 (where debuff actually occurs).
-	var replay_beat1_for_debuff: Array = replay_scheduler.get_intents()
-	var bad_debuff: Array = replay_beat1_for_debuff.duplicate(true)
+	var bad_debuff := beat1_intents.duplicate(true)
 	for action in bad_debuff:
 		if action.get("type") == "debuff" and action.get("status") == "bleed":
 			action["status"] = "unknown_status"
-	var fresh_party_bad2 := _party()
-	var fresh_built_bad2 := RunTypedBattleRoster.new().assemble(
-		{"success": true, "node_type": "Elite",
-		 "encounter_id": ENCOUNTER_ID, "definitions": replay_definitions},
-		BINDINGS, CATALOGS)
-	var fresh_enemies_bad2: CombatEnemies = fresh_built_bad2.get("enemies")
-	var before_bad2_party := fresh_party_bad2.get_heroes()
-	var before_bad2_enemies := fresh_enemies_bad2.get_enemies()
 
-	var bad_debuff_result := CombatEnemyPhase.new().execute_phase(
-		fresh_party_bad2, fresh_enemies_bad2, bad_debuff)
-	_check(bad_debuff_result == {"ok": false, "events": []},
+	var bad_debuff_res := CombatEnemyPhase.new().execute_phase(
+		party_bad_debuff, enemies_bad_debuff, bad_debuff)
+	_check(bad_debuff_res == {"ok": false, "events": []},
 		"invalid debuff status rejected atomically")
-	_check(fresh_party_bad2.get_heroes() == before_bad2_party
-		and fresh_enemies_bad2.get_enemies() == before_bad2_enemies,
-		"invalid debuff: no partial mutation")
+	_check(party_bad_debuff.get_heroes() == before_party_bad_debuff
+		and enemies_bad_debuff.get_enemies() == before_enemies_bad_debuff,
+		"invalid debuff: complete party and enemy snapshots unchanged")
 
-	# Negative: downed hero blocks adjacent swap.
-	var down_party := _party()
-	# Make Seamstress (position 2) downed before attempting shove.
-	_check(down_party.apply_damage(2, 30) and down_party.is_downed(2),
-		"precondition: Seamstress downed at position 2")
-	var down_built := RunTypedBattleRoster.new().assemble(
+	# Scenario 4: Downed destination neighbor blocks shove on beat 2.
+	# Authored shove targets position 2 (Seamstress) with direction 1 toward destination position 3 (Tinker).
+	# Leave Seamstress at position 2 alive (HP 30), and down Tinker at destination position 3 (HP 0).
+	var down_neighbor_party := _party()
+	var built_down := RunTypedBattleRoster.new().assemble(
 		{"success": true, "node_type": "Elite",
-		 "encounter_id": ENCOUNTER_ID, "definitions": replay_definitions},
+		 "encounter_id": ENCOUNTER_ID, "definitions": definitions},
 		BINDINGS, CATALOGS)
-	var down_enemies: CombatEnemies = down_built.get("enemies")
+	var down_neighbor_enemies: CombatEnemies = built_down.get("enemies")
 
-	var down_intents := replay_scheduler.get_intents()
-	# The shove on beat 2 targets position 2 (Seamstress) with direction 1.
-	# Since Seamstress is downed, the swap should fail.
-	# But note: on beat 1, the first source applies debuff/attack first, then source 2.
-	# Let's test specifically with beat 2, since that's when shove occurs.
-	_check(replay_scheduler.advance_turn(), "advance to beat 2 for down test")
-	var beat2_down := replay_scheduler.get_intents()
+	_check(not down_neighbor_party.is_downed(2) and down_neighbor_party.get_hero(2).get("hp") == 30,
+		"precondition: Seamstress is alive at mover position 2")
+	_check(down_neighbor_party.apply_damage(3, 26) and down_neighbor_party.is_downed(3),
+		"precondition: Tinker is downed at destination position 3")
 
-	var before_down_party := down_party.get_heroes()
-	var before_down_enemies := down_enemies.get_enemies()
-	var down_result := CombatEnemyPhase.new().execute_phase(
-		down_party, down_enemies, beat2_down)
-	_check(down_result == {"ok": false, "events": []},
-		"downed neighbor blocks shove: phase rejected atomically")
-	_check(down_party.get_heroes() == before_down_party
-		and down_enemies.get_enemies() == before_down_enemies,
-		"downed neighbor: no partial mutation")
+	var before_down_party := down_neighbor_party.get_heroes()
+	var before_down_enemies := down_neighbor_enemies.get_enemies()
+
+	seed(42819)
+	var global_before := randi()
+	seed(42819)
+
+	var down_neighbor_res := CombatEnemyPhase.new().execute_phase(
+		down_neighbor_party, down_neighbor_enemies, beat2_intents)
+	_check(down_neighbor_res == {"ok": false, "events": []},
+		"downed destination neighbor blocks shove: phase rejected atomically")
+	_check(down_neighbor_party.get_heroes() == before_down_party,
+		"downed neighbor: complete party snapshot unchanged (no partial publication)")
+	_check(down_neighbor_enemies.get_enemies() == before_down_enemies,
+		"downed neighbor: complete enemies snapshot unchanged")
+	_check(randi() == global_before,
+		"downed neighbor rejection never spends global RNG")
+
+	# Scenario 5: Downed target for debuff on beat 1.
+	var down_target_party := _party()
+	var built_down_target := RunTypedBattleRoster.new().assemble(
+		{"success": true, "node_type": "Elite",
+		 "encounter_id": ENCOUNTER_ID, "definitions": definitions},
+		BINDINGS, CATALOGS)
+	var down_target_enemies: CombatEnemies = built_down_target.get("enemies")
+	_check(down_target_party.apply_damage(3, 26) and down_target_party.is_downed(3),
+		"precondition: Tinker is downed at position 3 for beat-1 debuff")
+	var before_down_target_party := down_target_party.get_heroes()
+	var before_down_target_enemies := down_target_enemies.get_enemies()
+
+	var down_target_res := CombatEnemyPhase.new().execute_phase(
+		down_target_party, down_target_enemies, beat1_intents)
+	_check(down_target_res == {"ok": false, "events": []},
+		"downed target for debuff rejected atomically")
+	_check(down_target_party.get_heroes() == before_down_target_party
+		and down_target_enemies.get_enemies() == before_down_target_enemies,
+		"downed target debuff: complete party and enemy snapshots unchanged")
 
 
 func _report() -> void:
