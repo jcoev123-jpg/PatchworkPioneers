@@ -141,7 +141,7 @@ func _run() -> void:
 		for index in range(app.run_deck.size()):
 			_check(app.shop_cards.get_item_text(index) == app.run_deck[index], "owned ID order is visible")
 		_check(app.shop_purchases.is_valid() and app.shop_offers.item_count == 5, "routed Shop includes valid card buying stock")
-		for control in [app.shop_view, app.shop_label, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_back_button]:
+		for control in [app.shop_view, app.shop_label, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_continue_button, app.shop_back_button]:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "Shop control fits 1280x720")
 		before = _shop_state()
 		route_callback.call()
@@ -243,6 +243,7 @@ func _run() -> void:
 			_check(after[0][0] == before[0][0] and after[0][3] == before[0][3]
 				and after[0][4] == before[0][4], "removal preserves heroes, seeded RNG and route")
 		stale = [route_callback, back_callback, remove_callback,
+			app.shop_continue_button.pressed.get_connections()[0].callable,
 			app.shop_back_button.pressed.get_connections()[0].callable]
 		if session % 2 == 0:
 			app.shop_back_button.grab_focus()
@@ -254,6 +255,7 @@ func _run() -> void:
 		_check(visit.get_state().status == "closed" and app.title_view.visible and app.shop_visit == null
 			and app.shop_view == null and app.shop_cards == null and app.shop_remove_button == null
 			and app.shop_back_button == null and app.run_map == null and app.run_deck.is_empty()
+			and app.shop_continue_button == null
 			and app.shop_purchases == null and app.shop_offers == null and app.shop_buy_button == null
 			and app.session_gold == 0 and app.run_removal_count == 0, "skip/Return closes ledger, clears run and rejects stale inputs")
 		_check(randi() == global_next, "complete physical route/Shop leaves global RNG untouched")

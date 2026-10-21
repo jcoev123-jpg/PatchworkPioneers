@@ -65,6 +65,7 @@ var shop_view: VBoxContainer
 var shop_cards: OptionButton
 var shop_remove_button: Button
 var shop_back_button: Button
+var shop_continue_button: Button
 var shop_label: Label
 var shop_visit: RunShopVisit
 var shop_purchases: RunShopPurchases
@@ -73,6 +74,8 @@ var shop_buy_button: Button
 var run_removal_count := 0
 var _shop_map: WeakRef
 var _shop_route: Array[String] = []
+var _connected_map: WeakRef
+var _connected_route: Array[String] = []
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var fight_reward_offers: Array = []
@@ -746,6 +749,12 @@ func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
 		return
 	button.disabled = true
 	battle_view.hide()
+	_present_connected_route(source_map)
+
+
+func _present_connected_route(source_map: WeakRef) -> void:
+	_connected_map = source_map
+	_connected_route = run_map.get_route()
 	route_view = VBoxContainer.new()
 	route_view.set_anchors_preset(Control.PRESET_CENTER)
 	route_view.add_theme_constant_override("separation", 16)
@@ -776,8 +785,44 @@ func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
 	_focus_visit(route_view)
 
 
+func _can_choose_connected_route() -> bool:
+	if run_map == null or _connected_map == null or _connected_map.get_ref() != run_map \
+		or run_map.get_route() != _connected_route or not RunRestRecovery._is_valid_roster(run_heroes):
+		return false
+	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Fight":
+		return _can_leave_fight()
+	return _current_shop_ledger("closed")
+
+
+func _current_shop_ledger(status: String = "") -> bool:
+	if shop_visit == null or run_map == null or _shop_map == null or _shop_map.get_ref() != run_map \
+		or run_map.get_route() != _shop_route or _shop_route.is_empty() \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Shop":
+		return false
+	var ledger := shop_visit.get_state()
+	return ledger.valid and ledger.shop_node_id == run_map.get_current_node_id() \
+		and ledger.deck == run_deck and ledger.gold == session_gold \
+		and ledger.prior_removals == run_removal_count \
+		and (ledger.status == status if not status.is_empty() else ledger.status in ["available", "used"])
+
+
+func _continue_from_shop(visit: RunShopVisit, source_map: WeakRef, prior: Array[String], button) -> void:
+	if visit == null or visit != shop_visit or not _current_shop_ledger() \
+		or source_map == null or source_map.get_ref() != run_map or prior != _shop_route \
+		or not RunRestRecovery._is_valid_roster(run_heroes) \
+		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button != shop_continue_button or button.disabled \
+		or not button.is_visible_in_tree() or is_instance_valid(route_view):
+		return
+	if not visit.close_visit():
+		return
+	button.disabled = true
+	shop_view.hide()
+	_present_connected_route(source_map)
+
+
 func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
-	if not _can_leave_fight() or source_map == null or source_map.get_ref() != run_map \
+	if not _can_choose_connected_route() or source_map == null or source_map.get_ref() != run_map \
 		or run_map.get_route() != prior or not is_instance_valid(route_view) \
 		or not route_view.is_visible_in_tree() or not is_instance_valid(button) \
 		or button not in route_buttons or button.disabled or not button.is_visible_in_tree() \
@@ -820,7 +865,7 @@ func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 		or not is_instance_valid(button) or button != rest_heal_button \
 		or button.disabled or not button.is_visible_in_tree() or run_map == null \
 		or _rest_map == null or _rest_map.get_ref() != run_map \
-		or run_map.get_route() != _rest_route or _rest_route.size() != 2 \
+		or run_map.get_route() != _rest_route or _rest_route.is_empty() \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Rest" \
 		or run_heroes != _rest_heroes or not RunRestRecovery._is_valid_roster(run_heroes):
 		return
@@ -841,12 +886,12 @@ func _refresh_rest_hp() -> void:
 
 
 func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
-	if not _can_leave_fight() or source_map == null or source_map.get_ref() != run_map \
+	if not _can_choose_connected_route() or source_map == null or source_map.get_ref() != run_map \
 		or run_map.get_route() != prior or not is_instance_valid(route_view) \
 		or not route_view.is_visible_in_tree() or not is_instance_valid(button) \
 		or button not in route_buttons or button.disabled or not button.is_visible_in_tree() \
 		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
-		or run_map.get_node(id).get("type") != "Shop" or shop_visit != null:
+		or run_map.get_node(id).get("type") != "Shop":
 		return false
 	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count)
 	var offers: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
@@ -872,6 +917,9 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	_shop_map = weakref(run_map)
 	_shop_route = run_map.get_route()
 	_clear_route_view()
+	if is_instance_valid(shop_view):
+		remove_child(shop_view)
+		shop_view.queue_free()
 	shop_view = VBoxContainer.new()
 	shop_view.set_anchors_preset(Control.PRESET_CENTER)
 	shop_view.add_theme_constant_override("separation", 12)
@@ -900,13 +948,18 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_remove_button.custom_minimum_size = Vector2(440, 56)
 	shop_remove_button.pressed.connect(_remove_at_shop.bind(visit, shop_remove_button))
 	shop_view.add_child(shop_remove_button)
+	shop_continue_button = Button.new()
+	shop_continue_button.text = "Continue"
+	shop_continue_button.custom_minimum_size = Vector2(440, 48)
+	shop_continue_button.pressed.connect(_continue_from_shop.bind(visit, _shop_map, _shop_route.duplicate(), shop_continue_button))
+	shop_view.add_child(shop_continue_button)
 	shop_back_button = Button.new()
 	shop_back_button.text = "Return to title (skip remaining removal)"
 	shop_back_button.pressed.connect(_return_from_visit.bind(shop_view))
 	shop_view.add_child(shop_back_button)
 	_refresh_shop()
 	_focus_visit(shop_view)
-	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_back_button]
+	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_continue_button, shop_back_button]
 	for index in range(actions.size()):
 		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
@@ -926,7 +979,7 @@ func _select_shop_offer(_index: int) -> void:
 func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
 	if visit == null or visit != shop_visit or purchases == null or purchases != shop_purchases \
 		or run_map == null or _shop_map == null or _shop_map.get_ref() != run_map \
-		or run_map.get_route() != _shop_route or _shop_route.size() != 2 \
+		or run_map.get_route() != _shop_route or _shop_route.is_empty() \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Shop" \
 		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != shop_buy_button or button.disabled \
@@ -963,7 +1016,7 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 func _remove_at_shop(visit: RunShopVisit, button) -> void:
 	if visit == null or visit != shop_visit or run_map == null \
 		or _shop_map == null or _shop_map.get_ref() != run_map \
-		or run_map.get_route() != _shop_route or _shop_route.size() != 2 \
+		or run_map.get_route() != _shop_route or _shop_route.is_empty() \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Shop" \
 		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != shop_remove_button \
@@ -1149,6 +1202,7 @@ func _return_to_title() -> void:
 	shop_cards = null
 	shop_remove_button = null
 	shop_back_button = null
+	shop_continue_button = null
 	shop_label = null
 	shop_visit = null
 	shop_purchases = null
@@ -1156,6 +1210,8 @@ func _return_to_title() -> void:
 	shop_buy_button = null
 	_shop_map = null
 	_shop_route.clear()
+	_connected_map = null
+	_connected_route.clear()
 	run_removal_count = 0
 	if is_instance_valid(rest_view):
 		remove_child(rest_view)
