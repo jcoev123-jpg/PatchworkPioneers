@@ -20,6 +20,8 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_real_mixed_upgrade_and_composite_rejection()
+	_test_mixed_invalid_ledgers_and_isolation()
 	_test_public_contract()
 	_test_one_copy_replacement()
 	_test_replay_identical_results()
@@ -610,3 +612,162 @@ func _test_run_state_untouched() -> void:
 	_check(_decks_equal(source, source_copy), "run deck untouched by rejected flows")
 	_check(success.is_consumed() and not rejected.is_consumed() and not empty.is_consumed(),
 		"latch state matches exactly one successful selection")
+
+
+## Real Rest stitch receipt, never a fabricated stitched name or descriptor.
+func _earned_mixed_ledger() -> Dictionary:
+	var starting := _load_starter_deck()
+	var prick := starting.find(PRICK_ID)
+	var pop := starting.find("tinker_pop_shot")
+	_check(prick >= 0 and pop >= 0 and prick != pop, "mixed fixture uses real different-owner source indices")
+	if prick < 0 or pop < 0 or prick == pop:
+		return {}
+	var stitch := RunRestStitchCards.new(starting, {}, 3)
+	_check(stitch.is_valid(), "actual Rest stitch admits authored starter deck")
+	var result := stitch.choose_stitch(prick, pop, stitch.get_snapshot())
+	_check(result.get("ok") == true and stitch.is_consumed(), "real Rest stitches two ordinary copies for three scraps")
+	_check(result.get("remaining_scraps") == 0 and result.get("next_stitch_id") == 2
+		and result.get("stitched_id") == "stitched_000001", "authentic ledger and cursor")
+	return result
+
+
+func _test_real_mixed_upgrade_and_composite_rejection() -> void:
+	var earned := _earned_mixed_ledger()
+	if not earned.get("ok", false):
+		return
+	var ledger: Array = earned["deck"].duplicate(true)
+	var registry: Dictionary = earned["descriptors"].duplicate(true)
+	var cursor: int = earned["next_stitch_id"]
+	var id: String = earned["stitched_id"]
+	var desc: Dictionary = registry[id].duplicate(true)
+	var strike_indices := _strike_indices(ledger)
+	var stitched_index := ledger.find(id)
+	_check(strike_indices.size() == 2 and stitched_index >= 0,
+		"two independently upgradable Warden Strikes survive genuine stitch")
+	_check(ledger.count(PRICK_ID) == 1 and ledger.count("tinker_pop_shot") == 1,
+		"only one of each stitched half was consumed")
+	_check(desc["half_ids"] == [PRICK_ID, "tinker_pop_shot"]
+		and desc["owners"] == ["seamstress", "tinker"]
+		and desc["cost"] == 2 and not desc["can_upgrade"] and not desc["can_stitch"],
+		"authentic composite owns canonical halves and immutable restrictions")
+	if strike_indices.size() != 2 or stitched_index < 0:
+		return
+	var mapping := {STRIKE_ID: "warden_strike_plus", id: "hostile_composite_plus"}
+	var visit := RunRestCardUpgrade.new(ledger, mapping, registry, cursor)
+	_assert_rejected(visit, stitched_index, ledger, "genuine composite cannot upgrade even with hostile mapping")
+	_assert_rejected(visit, stitched_index, ledger, "repeat hostile composite attempt leaves visit open")
+	_assert_rejected(visit, -1, ledger, "invalid index before legitimate mixed selection")
+	var selected: int = strike_indices[1]
+	var expected := _expected_replaced(ledger, selected, "warden_strike_plus")
+	var result := visit.choose_upgrade(selected)
+	_check(_is_ok(result) and visit.is_consumed(), "one legal ordinary copy can upgrade in a mixed ledger")
+	_check(_decks_equal(result.get("deck"), expected) and result.get("original_id") == STRIKE_ID
+		and result.get("upgraded_id") == "warden_strike_plus", "exact selected Strike and order changed")
+	_check(result["deck"][strike_indices[0]] == STRIKE_ID and result["deck"][stitched_index] == id,
+		"other Strike and composite retained in place")
+	_check(_decks_equal(ledger, earned["deck"]) and registry == earned["descriptors"]
+		and cursor == earned["next_stitch_id"] and registry[id] == desc,
+		"upgrade cannot mutate original deck, descriptors, allocator or halves")
+	_assert_rejected_while_used(visit, strike_indices[0], ledger, "mixed visit second ordinary selection")
+	var fresh := RunRestStitchCards.new(result["deck"], registry, 3, cursor)
+	_check(fresh.is_valid() and fresh.get_snapshot()["descriptors"][id] == desc
+		and fresh.get_snapshot()["next_stitch_id"] == cursor, "stitched owner ledger survives successful upgrade")
+	var replay := RunRestCardUpgrade.new(earned["deck"], mapping, earned["descriptors"], earned["next_stitch_id"])
+	_check(replay.choose_upgrade(selected) == result, "independent mixed upgrade replays exactly")
+
+
+func _test_mixed_invalid_ledgers_and_isolation() -> void:
+	var earned := _earned_mixed_ledger()
+	if not earned.get("ok", false):
+		return
+	var deck: Array = earned["deck"].duplicate(true)
+	var descriptors: Dictionary = earned["descriptors"].duplicate(true)
+	var cursor: int = earned["next_stitch_id"]
+	var id: String = earned["stitched_id"]
+	var strike: int = deck.find(STRIKE_ID)
+	_check(strike >= 0 and deck.has(id), "malformed probes start from real mixed ownership")
+	if strike < 0:
+		return
+	var altered_half := descriptors.duplicate(true)
+	altered_half[id]["first_half"]["effects"]["damage"] = 1234
+	var malformed_registry := descriptors.duplicate(true)
+	malformed_registry[id] = ["not", "a", "descriptor"]
+	var orphan_deck := deck.duplicate(true)
+	orphan_deck.erase(id)
+	var duplicate_deck := deck.duplicate(true)
+	duplicate_deck.append(id)
+	var unknown_deck := deck.duplicate(true)
+	unknown_deck[deck.find(id)] = "stitched_777777"
+	var alien_registry := descriptors.duplicate(true)
+	alien_registry["stitched_000009"] = descriptors[id].duplicate(true)
+	var probes := [
+		{"name": "missing registry", "deck": deck, "registry": {}, "cursor": cursor},
+		{"name": "null registry", "deck": deck, "registry": null, "cursor": cursor},
+		{"name": "forged half", "deck": deck, "registry": altered_half, "cursor": cursor},
+		{"name": "malformed descriptor", "deck": deck, "registry": malformed_registry, "cursor": cursor},
+		{"name": "orphan descriptor", "deck": orphan_deck, "registry": descriptors, "cursor": cursor},
+		{"name": "duplicate composite", "deck": duplicate_deck, "registry": descriptors, "cursor": cursor},
+		{"name": "unknown stitched ID", "deck": unknown_deck, "registry": descriptors, "cursor": cursor},
+		{"name": "extra descriptor", "deck": deck, "registry": alien_registry, "cursor": cursor},
+		{"name": "stale cursor", "deck": deck, "registry": descriptors, "cursor": 1},
+		{"name": "fractional cursor", "deck": deck, "registry": descriptors, "cursor": 2.5},
+		{"name": "string cursor", "deck": deck, "registry": descriptors, "cursor": "2"},
+		{"name": "invalid deck input", "deck": "not an array", "registry": descriptors, "cursor": cursor},
+	]
+	for probe in probes:
+		var bad_deck: Variant = probe["deck"].duplicate(true) if probe["deck"] is Array else probe["deck"]
+		var bad_registry: Variant = probe["registry"].duplicate(true) if probe["registry"] is Dictionary else probe["registry"]
+		var before_deck: Variant = bad_deck.duplicate(true) if bad_deck is Array else bad_deck
+		var before_registry: Variant = bad_registry.duplicate(true) if bad_registry is Dictionary else bad_registry
+		var service := RunRestCardUpgrade.new(bad_deck, {STRIKE_ID: "warden_strike_plus"},
+			bad_registry, probe["cursor"])
+		var attempt := service.choose_upgrade(strike)
+		_check(_is_rejected(attempt) and not service.is_consumed(),
+			probe["name"] + " fails closed even when selected Strike is ordinary")
+		_check(_decks_equal(attempt.get("deck"), before_deck if before_deck is Array else []),
+			probe["name"] + " failure returns complete input deck without edits")
+		_check(bad_deck == before_deck and bad_registry == before_registry,
+			probe["name"] + " caller input unchanged")
+		_check(_is_rejected(service.choose_upgrade(strike)) and not service.is_consumed(),
+			probe["name"] + " repeated construction failure never latches")
+	# A valid ledger is captured deeply, including the nested canonical half.
+	var captured_deck := deck.duplicate(true)
+	var captured_registry := descriptors.duplicate(true)
+	var mapping := {STRIKE_ID: "warden_strike_plus"}
+	var captured := RunRestCardUpgrade.new(deck, mapping, descriptors, cursor)
+	deck[strike] = "tinker_tune_up"
+	descriptors[id]["first_half"]["effects"]["damage"] = 555
+	descriptors.clear()
+	mapping[STRIKE_ID] = "malicious_after_construction"
+	var accepted := captured.choose_upgrade(strike)
+	_check(_is_ok(accepted) and _decks_equal(accepted["deck"],
+		_expected_replaced(captured_deck, strike, "warden_strike_plus")),
+		"post-construction mutation of deck, mapping or nested registry cannot alter captured visit")
+	_check(captured_registry[id]["first_half"]["effects"]["damage"] == 3,
+		"pristine nested descriptor snapshot retained")
+	# Real ledger constructions, rejections and acceptance never draw RNG.
+	seed(RNG_SEED)
+	var expected_global := randi()
+	seed(RNG_SEED)
+	var untouched := RunRestCardUpgrade.new(captured_deck, {STRIKE_ID: "warden_strike_plus"},
+		captured_registry, cursor)
+	untouched.choose_upgrade(captured_deck.find(id))
+	var success := untouched.choose_upgrade(strike)
+	var invalid := RunRestCardUpgrade.new(captured_deck, {STRIKE_ID: "warden_strike_plus"}, {}, cursor)
+	invalid.choose_upgrade(strike)
+	_check(_is_ok(success) and not invalid.is_consumed() and randi() == expected_global,
+		"all mixed construction, rejection and success paths leave global RNG stream unconsumed")
+
+	# Even malformed nested inputs must not leak a writable reference through
+	# detached failure returns (a second rejection must stay pristine).
+	var malformed_nested: Array = [STRIKE_ID, {"id": "not_a_card", "parts": [PRICK_ID]}]
+	var malformed_original := malformed_nested.duplicate(true)
+	var nested_visit := RunRestCardUpgrade.new(malformed_nested, _fixture_mapping())
+	var nested_rejected := nested_visit.choose_upgrade(0)
+	_check(_is_rejected(nested_rejected) and not nested_visit.is_consumed(),
+		"malformed nested plain input cannot upgrade an otherwise legal first Strike")
+	nested_rejected["deck"][1]["parts"].append("tinker_pop_shot")
+	var independent := nested_visit.choose_upgrade(0)
+	_check(independent["deck"] == malformed_original and malformed_nested == malformed_original
+		and not nested_visit.is_consumed(),
+		"nested failure returns are deep detached from caller and subsequent rejection")
