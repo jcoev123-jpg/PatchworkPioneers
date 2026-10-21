@@ -5,8 +5,8 @@
       "title": "The Button Trail",
       "description": "Mismatched buttons form a trail across the grass.",
       "choices": [
-        { "id": "follow", "text": "Follow the button trail" },
-        { "id": "leave", "text": "Leave the buttons untouched" }
+        { "id": "follow", "text": "Follow the button trail", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave", "text": "Leave the buttons untouched", "outcome": { "gold": 5, "scraps": 0 } }
       ]
     },
     {

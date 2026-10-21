@@ -3,10 +3,15 @@ extends RefCounted
 ## One-visit authored M04 event choice service.
 ## Each instance holds a single authored event record; the first offered choice
 ## that validates is claimed exactly once and every later choice is rejected.
-## No scene dependencies, no RNG use, and no outcome effects: a claim only
-## commits the opaque authored choice ID (no healing, gold, card or trinket
-## results). Like RunCardRewardChoice, a consumed instance reports
-## is_valid() == false while is_claimed() stays true.
+## No scene dependencies, no RNG use, and no outcome effects on choose(): a
+## legacy claim only commits the opaque authored choice ID (no healing, gold,
+## card or trinket results), while choose_with_wallet() validates and settles
+## authored gold/scraps choice outcomes into a detached wallet dictionary. Like
+## RunCardRewardChoice, a consumed instance reports is_valid() == false while
+## is_claimed() stays true.
+
+const MAX_INT := 9223372036854775807
+const MAX_SAFE_FLOAT_INT := 9007199254740992.0
 
 var _event: Dictionary = {}
 var _valid: bool = false
@@ -77,8 +82,117 @@ func choose(choice_id: String) -> Dictionary:
 	return _rejection()
 
 
+## Attempts the single allowed claim with caller wallet settlement.
+## Validates the wallet, selector state, choice ID and authored choice outcome
+## before latching the claim.
+## Returns {"ok": bool, "event_id": String, "choice_id": String, "wallet": Dictionary}
+## where success contains exact updated integer gold/scraps and rejection carries
+## a detached unchanged valid wallet (or an empty wallet on malformed input).
+func choose_with_wallet(choice_id: Variant, wallet: Variant = null) -> Dictionary:
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return _wallet_rejection({})
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	if not _valid or _claimed:
+		return _wallet_rejection(base_wallet)
+	if not _is_nonblank_string(choice_id):
+		return _wallet_rejection(base_wallet)
+	var target_id: String = choice_id
+	var matched_choice: Variant = null
+	var choices: Array = _event.get("choices", [])
+	for choice in choices:
+		if choice is Dictionary and (choice as Dictionary).get("id") == target_id:
+			matched_choice = choice
+			break
+	if not matched_choice is Dictionary:
+		return _wallet_rejection(base_wallet)
+	var parsed_outcome: Dictionary = _parse_choice_outcome(matched_choice as Dictionary)
+	if not parsed_outcome.get("ok", false):
+		return _wallet_rejection(base_wallet)
+	var gold_delta: int = parsed_outcome["gold"]
+	var scraps_delta: int = parsed_outcome["scraps"]
+	var base_gold: int = base_wallet["gold"]
+	var base_scraps: int = base_wallet["scraps"]
+	if gold_delta > MAX_INT - base_gold or scraps_delta > MAX_INT - base_scraps:
+		return _wallet_rejection(base_wallet)
+	_claimed = true
+	return {
+		"ok": true,
+		"event_id": _event.get("id", ""),
+		"choice_id": target_id,
+		"wallet": {
+			"gold": base_gold + gold_delta,
+			"scraps": base_scraps + scraps_delta,
+		},
+	}
+
+
 func _rejection() -> Dictionary:
 	return {"ok": false, "event_id": "", "choice_id": ""}
+
+
+func _wallet_rejection(wallet: Dictionary) -> Dictionary:
+	return {
+		"ok": false,
+		"event_id": "",
+		"choice_id": "",
+		"wallet": wallet.duplicate(true),
+	}
+
+
+func _parse_wallet(wallet: Variant) -> Dictionary:
+	if typeof(wallet) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var dict: Dictionary = wallet
+	if dict.size() != 2 or not dict.has("gold") or not dict.has("scraps"):
+		return {"ok": false}
+	var gold: Variant = dict.get("gold")
+	var scraps: Variant = dict.get("scraps")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return {"ok": false}
+	var gold_int: int = gold
+	var scraps_int: int = scraps
+	if gold_int < 0 or scraps_int < 0:
+		return {"ok": false}
+	return {
+		"ok": true,
+		"wallet": {
+			"gold": gold_int,
+			"scraps": scraps_int,
+		},
+	}
+
+
+func _parse_choice_outcome(choice: Dictionary) -> Dictionary:
+	if choice.size() != 3 or not choice.has("id") or not choice.has("text") or not choice.has("outcome"):
+		return {"ok": false}
+	var raw_outcome: Variant = choice.get("outcome")
+	if typeof(raw_outcome) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var outcome: Dictionary = raw_outcome
+	if outcome.size() != 2 or not outcome.has("gold") or not outcome.has("scraps"):
+		return {"ok": false}
+	var gold: int = _read_outcome_amount(outcome.get("gold"))
+	var scraps: int = _read_outcome_amount(outcome.get("scraps"))
+	if gold < 0 or scraps < 0:
+		return {"ok": false}
+	return {
+		"ok": true,
+		"gold": gold,
+		"scraps": scraps,
+	}
+
+
+func _read_outcome_amount(value: Variant) -> int:
+	if typeof(value) == TYPE_INT:
+		var amount: int = value
+		return amount if amount >= 0 else -1
+	if typeof(value) == TYPE_FLOAT:
+		var number: float = value
+		if not is_finite(number) or number < 0.0 or number > MAX_SAFE_FLOAT_INT or floor(number) != number:
+			return -1
+		return int(number)
+	return -1
 
 
 func _is_nonblank_string(value: Variant) -> bool:
