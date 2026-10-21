@@ -17,7 +17,7 @@ func _rest_fixture(kind: String) -> Dictionary:
 				var unsupported := false
 				var next_id := ""
 				for next in map.get_node(rest).outgoing:
-					unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop"]
+					unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop", "Event", "Treasure"]
 					if map.get_node(next).type == kind:
 						next_id = next
 				if not unsupported or next_id.is_empty():
@@ -161,7 +161,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = map.get_node(id).type
 				shown.append(id)
-				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop"]), "only supported true adjacent ID/type enabled")
+				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure"]), "only supported true adjacent ID/type enabled")
 				if action.disabled:
 					var rejected := _rest_state()
 					await _click(action)

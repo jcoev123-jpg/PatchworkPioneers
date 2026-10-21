@@ -37,7 +37,7 @@ func _fixture() -> Dictionary:
 			var unsupported := false
 			for next in map.get_node(id).outgoing:
 				shop = shop or map.get_node(next).type == "Shop"
-				unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop"]
+				unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop", "Event", "Treasure"]
 			if shop and unsupported:
 				map.choose_node(id)
 				var selected := RunFightEncounterSelection.new().select_current_fight(map, rng, app.FIGHT_ENCOUNTER_PATHS)
@@ -103,7 +103,7 @@ func _run() -> void:
 			var id: String = button.get_meta("route_id")
 			var kind: String = app.run_map.get_node(id).type
 			shown.append(id)
-			_check(button.disabled == (kind not in ["Rest", "Shop"]), "only connected Rest/Shop controls enabled")
+			_check(button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure"]), "only connected noncombat controls enabled")
 			if kind == "Shop":
 				shop = button
 			if button.disabled:

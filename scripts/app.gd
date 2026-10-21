@@ -92,6 +92,8 @@ var _shop_map: WeakRef
 var _shop_route: Array[String] = []
 var _connected_map: WeakRef
 var _connected_route: Array[String] = []
+var _placeholder_map: WeakRef
+var _placeholder_route: Array[String] = []
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var fight_reward_offers: Array = []
@@ -848,7 +850,7 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	route_view.add_theme_constant_override("separation", 16)
 	add_child(route_view)
 	var heading := Label.new()
-	heading.text = "Connected route - choose Rest or Shop"
+	heading.text = "Connected route - choose Rest, Shop, Event or Treasure"
 	route_view.add_child(heading)
 	var prior := run_map.get_route()
 	for id in run_map.get_legal_choices():
@@ -856,12 +858,14 @@ func _present_connected_route(source_map: WeakRef) -> void:
 		var action := Button.new()
 		action.text = "%s: %s" % [id, node.type]
 		action.set_meta("route_id", id)
-		action.disabled = node.type not in ["Rest", "Shop"]
+		action.disabled = node.type not in ["Rest", "Shop", "Event", "Treasure"]
 		if action.disabled:
 			action.text += " (unavailable)"
 		action.custom_minimum_size = Vector2(440, 48)
 		if node.type == "Shop":
 			action.pressed.connect(_choose_shop_route.bind(id, source_map, prior, action))
+		elif node.type in ["Event", "Treasure"]:
+			action.pressed.connect(_choose_placeholder_route.bind(id, source_map, prior, action))
 		else:
 			action.pressed.connect(_choose_rest_route.bind(id, source_map, prior, action))
 		route_view.add_child(action)
@@ -882,7 +886,28 @@ func _can_choose_connected_route() -> bool:
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
 		return _current_completed_rest() and is_instance_valid(rest_view) and not rest_view.visible \
 			and is_instance_valid(rest_continue_button) and rest_continue_button.disabled
+	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Event", "Treasure"]:
+		return _placeholder_map != null and _placeholder_map.get_ref() == run_map \
+			and not _placeholder_route.is_empty() and run_map.get_route() == _placeholder_route
 	return _current_shop_ledger("closed")
+
+
+func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
+	if not _can_choose_connected_route() or run_rng == null or run_deck.is_empty() \
+		or source_map == null or source_map.get_ref() != run_map or run_map.get_route() != prior \
+		or not is_instance_valid(route_view) or not route_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button not in route_buttons \
+		or button.get_parent() != route_view or button.disabled or not button.is_visible_in_tree() \
+		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") not in ["Event", "Treasure"]:
+		return false
+	if not run_map.choose_node(id):
+		return false
+	_placeholder_map = source_map
+	_placeholder_route = run_map.get_route()
+	_clear_route_view()
+	_present_connected_route(source_map)
+	return true
 
 
 func _current_completed_rest() -> bool:
@@ -1364,6 +1389,8 @@ func _return_to_title() -> void:
 	_shop_route.clear()
 	_connected_map = null
 	_connected_route.clear()
+	_placeholder_map = null
+	_placeholder_route.clear()
 	run_removal_count = 0
 	if is_instance_valid(rest_view):
 		remove_child(rest_view)
