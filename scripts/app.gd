@@ -1261,7 +1261,7 @@ func _present_connected_route(source_map: WeakRef) -> void:
 			session_gold, run_deck, wardrobe.get_snapshot())
 	route_view = VBoxContainer.new()
 	route_view.set_anchors_preset(Control.PRESET_CENTER)
-	route_view.add_theme_constant_override("separation", 16)
+	route_view.add_theme_constant_override("separation", 8)
 	add_child(route_view)
 	var heading := Label.new()
 	heading.text = "Connected route - choose your next node"
@@ -1269,6 +1269,7 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	var wallet := Label.new()
 	wallet.text = "Gold: %d | Scraps: %d | Mend: 2 scraps" % [session_gold, run_scraps]
 	route_view.add_child(wallet)
+	_present_route_patch_summary(carry)
 	var prior := run_map.get_route()
 	for id in run_map.get_legal_choices():
 		var node := run_map.get_node(id)
@@ -1313,6 +1314,57 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	route_back_button.pressed.connect(_return_from_visit.bind(route_view))
 	route_view.add_child(route_back_button)
 	_focus_visit(route_view)
+
+
+func _present_route_patch_summary(carry: RunTornCarryover) -> void:
+	var readout := HBoxContainer.new()
+	readout.name = "PatchWearerSummary"
+	readout.add_theme_constant_override("separation", 12)
+	route_view.add_child(readout)
+	var unavailable := ""
+	var summary: Dictionary = {}
+	if carry == null:
+		unavailable = "Patches unavailable - no carryover"
+	elif carry.torn == null:
+		unavailable = "Patches unavailable - invalid source"
+	elif carry._wardrobe == null:
+		# A pre-Shop run legitimately owns nothing yet. Owned patches without a
+		# bound wardrobe, or a corrupted ledger, must never look empty.
+		if not run_trinkets.is_empty():
+			unavailable = "Patches unavailable - no wardrobe bound"
+		elif not carry.is_valid() or carry._observer() == null:
+			unavailable = "Patches unavailable - invalid source"
+		else:
+			var empty_message := Label.new()
+			empty_message.text = "No patches sewn"
+			readout.add_child(empty_message)
+			return
+	else:
+		summary = RunPatchWearerSummary.summarize(carry._wardrobe, carry.torn.read_state())
+		if not summary.ok:
+			unavailable = "Patches unavailable - invalid source"
+	if not unavailable.is_empty():
+		var message := Label.new()
+		message.text = unavailable
+		readout.add_child(message)
+		return
+	for hero in summary.heroes:
+		var status := Label.new()
+		status.set_meta("hero_id", hero.id)
+		status.custom_minimum_size.x = 300
+		status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		status.add_theme_font_size_override("font_size", 14)
+		status.text = "%s - patches" % hero.id.capitalize()
+		for slot in hero.slots:
+			var worn: String = "empty"
+			if not slot.patch_id.is_empty():
+				worn = "%s (%s)" % [slot.patch_id, "active" if slot.active else "inactive"]
+				# Only the validated, nonempty text supplied by the service is
+				# shown; slot-only patches never gain invented rules.
+				if not slot.rules_text.is_empty():
+					worn += " - %s" % slot.rules_text
+			status.text += "\n%s: %s" % [slot.slot, worn]
+		readout.add_child(status)
 
 
 func _map_mend_context() -> Array:
