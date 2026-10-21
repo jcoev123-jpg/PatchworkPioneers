@@ -39,8 +39,8 @@ func _run() -> void:
 	_check(app.start_button.is_visible_in_tree() and not app.start_button.disabled,
 		"Start run is available")
 	_check(app.deck == null, "no deck before Start run")
-	app.start_button.pressed.emit()
-	_check(app.deck is CombatDeck and app.run_rng != null, "button creates live deck and run RNG")
+	_check(app._start_battle(), "standalone M01 fixture starts successfully")
+	_check(app.deck is CombatDeck and app.run_rng != null, "fixture creates live deck and run RNG")
 	_check(is_instance_valid(app.end_turn_button), "End Turn button exists")
 	if app.deck == null or app.run_rng == null or not is_instance_valid(app.end_turn_button):
 		app.free()
