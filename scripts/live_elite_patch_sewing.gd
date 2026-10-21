@@ -95,6 +95,14 @@ func observe_claim(offering, result: Dictionary) -> void:
 		return
 	for coat in coats:
 		definitions.append({"id": coat.id, "slot": coat.slot})
+	var carry := app.party_carryover as RunTornCarryover
+	if carry == null or (_bound_carry != null and carry._wardrobe != null and wardrobe != carry._wardrobe):
+		return
+	# An earlier skipped Elite may have an unbound, unworn presentation ledger.
+	# A subsequently committed Shop wardrobe is the run's authoritative owner.
+	if carry._wardrobe != null:
+		wardrobe = carry._wardrobe
+		_bound_carry = carry
 	if wardrobe == null:
 		var candidate := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
 			app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)

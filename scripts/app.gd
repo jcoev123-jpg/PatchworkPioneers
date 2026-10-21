@@ -121,6 +121,11 @@ var shop_visit: RunShopVisit
 var shop_purchases: RunShopPurchases
 var shop_offers: OptionButton
 var shop_buy_button: Button
+var shop_patch_offers: OptionButton
+var shop_patch_heroes: OptionButton
+var shop_patch_buy_button: Button
+var _shop_wardrobe: RunPatchWardrobe
+var _shop_patch_context: Array = []
 var run_removal_count := 0
 var _shop_map: WeakRef
 var _shop_route: Array[String] = []
@@ -1145,11 +1150,26 @@ func _settle_routed_reward(id: String, offering) -> bool:
 		run_trinkets.assign(settled.trinkets)
 	run_heroes = carried.heroes.duplicate(true)
 	run_scraps += 2 if run_map.get_node(_carryover_node).get("type") == "Elite" else 1
+	_sync_bound_wardrobe(torn_carry)
 	fight_reward_claimed = true
 	result_label.text = "Battle result: victory | Gold: %d" % session_gold
 	_finish_card_reward(offering)
 	$LiveElitePatchSewing.observe_claim(offering, result)
 	return true
+
+## A confirmed routed reward publishes new run resources. A wardrobe bound at an
+## earlier routed Shop receives exactly those committed values through its own
+## snapshot guard, so the same object, worn slots and operation IDs carry on
+## while unsolicited ledger drift still fails closed.
+func _sync_bound_wardrobe(carry: RunTornCarryover) -> void:
+	if carry == null:
+		return
+	var wardrobe := carry._wardrobe
+	if wardrobe == null or not wardrobe.is_valid():
+		return
+	wardrobe.refresh_run_context(run_heroes, run_trinkets, run_scraps,
+		session_gold, run_deck, wardrobe.get_snapshot())
+
 
 func _claim_card_reward(id: String, button, offering) -> void:
 	if offering is RunFightVictoryRewards or offering is RunMultiFightRewards:
@@ -1924,6 +1944,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_remove_button.custom_minimum_size = Vector2(440, 56)
 	shop_remove_button.pressed.connect(_remove_at_shop.bind(visit, shop_remove_button))
 	shop_view.add_child(shop_remove_button)
+	_mount_shop_patches()
 	shop_continue_button = Button.new()
 	shop_continue_button.text = "Continue"
 	shop_continue_button.custom_minimum_size = Vector2(440, 48)
@@ -1935,11 +1956,12 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_view.add_child(shop_back_button)
 	_refresh_shop()
 	_focus_visit(shop_view)
-	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_continue_button, shop_back_button]
+	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_patch_offers, shop_patch_heroes, shop_patch_buy_button, shop_continue_button, shop_back_button]
 	for index in range(actions.size()):
 		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
 	shop_offers.grab_focus()
+	_shop_patch_context = _shop_patch_snapshot()
 	return true
 
 
@@ -1976,6 +1998,8 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 	if offer.sold or session_gold < offer.price or shop_offers.get_item_metadata(index) != offer.id \
 		or shop_offers.get_item_text(index) != _shop_offer_text(offer):
 		return
+	if not _shop_patch_current():
+		return
 	var result := purchases.buy("card", offer.id)
 	if not result.ok:
 		return
@@ -1986,6 +2010,7 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 	shop_cards.clear()
 	for card_id in run_deck:
 		shop_cards.add_item(card_id)
+	_sync_shop_wardrobe()
 	_refresh_shop()
 
 
@@ -2011,6 +2036,8 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 	var expected := RunShopCardRemoval.try_remove(run_deck, session_gold, run_removal_count, card_id)
 	if shop_purchases == null or not shop_purchases.can_rebase_removal(state, expected, card_id):
 		return
+	if not _shop_patch_current():
+		return
 	var result := visit.remove_card(card_id)
 	if not result.ok:
 		return
@@ -2018,6 +2045,7 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 	run_deck.assign(result.deck)
 	session_gold = result.gold
 	run_removal_count = result.prior_removals
+	_sync_shop_wardrobe()
 	_refresh_shop()
 	shop_back_button.grab_focus()
 
@@ -2037,6 +2065,126 @@ func _refresh_shop() -> void:
 	var valid_visit: bool = ledger.valid and ledger.status in ["available", "used"]
 	shop_offers.disabled = not valid_visit
 	shop_buy_button.disabled = not valid_visit or stock[selected].sold or session_gold < stock[selected].price
+	_refresh_shop_patches()
+
+
+func _mount_shop_patches() -> void:
+	var carry := party_carryover as RunTornCarryover
+	_shop_wardrobe = carry._wardrobe if carry != null else null
+	if _shop_wardrobe == null:
+		var definitions: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/initial_patch_slots.json"))
+		var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/m04_coat_patches.json"))
+		if definitions is Array and coats is Array and RunPatchCoatRules._valid_authored(coats):
+			for coat in coats:
+				definitions.append({"id": coat.id, "slot": coat.slot})
+			_shop_wardrobe = RunPatchWardrobe.new(run_heroes, run_trinkets, definitions,
+				run_scraps, session_gold, run_deck, run_seed, true)
+	var row := HBoxContainer.new()
+	row.name = "ShopPatchSewing"
+	shop_view.add_child(row)
+	shop_patch_offers = OptionButton.new()
+	shop_patch_offers.custom_minimum_size = Vector2(300, 40)
+	row.add_child(shop_patch_offers)
+	shop_patch_heroes = OptionButton.new()
+	row.add_child(shop_patch_heroes)
+	for hero in run_heroes:
+		shop_patch_heroes.add_item(hero.id.capitalize())
+		shop_patch_heroes.set_item_metadata(shop_patch_heroes.item_count - 1, hero.id)
+	shop_patch_buy_button = Button.new()
+	shop_patch_buy_button.text = "Buy + sew (free)"
+	row.add_child(shop_patch_buy_button)
+	shop_patch_offers.item_selected.connect(func(_index): _refresh_shop_patches())
+	shop_patch_buy_button.pressed.connect(_buy_shop_patch.bind(shop_visit, shop_purchases, shop_patch_buy_button))
+
+
+func _shop_patch_snapshot() -> Array:
+	var carry := party_carryover as RunTornCarryover
+	if run_map == null or run_rng == null or carry == null or _shop_wardrobe == null \
+		or shop_visit == null or shop_purchases == null:
+		return []
+	return [run_map, run_rng, run_rng.state, run_seed, run_map.get_generation_revision(),
+		run_map.get_floors(), run_map.get_route(), party_carryover, party_carryover.read_state(),
+		carry.torn.read_state(), carry._wardrobe,
+		run_heroes.duplicate(true), run_trinkets.duplicate(), run_scraps, session_gold,
+		run_deck.duplicate(), run_removal_count, shop_visit, shop_visit.get_state(),
+		shop_purchases, shop_purchases.get_state(), shop_purchases.get_stock(),
+		_shop_wardrobe, _shop_wardrobe.get_snapshot(), shop_view, shop_patch_offers, shop_patch_heroes, shop_patch_buy_button]
+
+
+func _shop_patch_current() -> bool:
+	if _shop_wardrobe == null or _shop_patch_context.is_empty() \
+		or _shop_patch_snapshot() != _shop_patch_context:
+		return false
+	var w := _shop_wardrobe.get_snapshot()
+	return w.heroes == run_heroes and w.owned == run_trinkets and w.scraps == run_scraps \
+		and w.gold == session_gold and w.cards == run_deck and w.seed == run_seed and w.rest_id == ""
+
+
+func _sync_shop_wardrobe() -> void:
+	# Called only after a legitimate committed card purchase/removal.
+	if _shop_wardrobe != null:
+		_shop_wardrobe.refresh_run_context(run_heroes, run_trinkets, run_scraps,
+			session_gold, run_deck, _shop_wardrobe.get_snapshot())
+	_shop_patch_context = _shop_patch_snapshot()
+
+
+func _refresh_shop_patches() -> void:
+	if not is_instance_valid(shop_patch_offers):
+		return
+	var selected := maxi(0, shop_patch_offers.selected)
+	shop_patch_offers.clear()
+	var stock: Array = shop_purchases.get_stock().trinkets
+	for offer in stock:
+		shop_patch_offers.add_item(_shop_offer_text(offer))
+		shop_patch_offers.set_item_metadata(shop_patch_offers.item_count - 1, offer.id)
+	shop_patch_offers.select(selected)
+	shop_patch_buy_button.disabled = _shop_wardrobe == null or selected >= stock.size() \
+		or stock[selected].sold or session_gold < stock[selected].price
+
+
+func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
+	if visit == null or visit != shop_visit or purchases == null or purchases != shop_purchases \
+		or not _current_shop_ledger() or not _shop_patch_current() \
+		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button != shop_patch_buy_button \
+		or button.disabled or not button.is_visible_in_tree():
+		return
+	for picker in [shop_patch_offers, shop_patch_heroes]:
+		if not is_instance_valid(picker) or picker.disabled or not picker.is_visible_in_tree():
+			return
+	var index := shop_patch_offers.selected
+	var hero_index := shop_patch_heroes.selected
+	var stock: Array = purchases.get_stock().trinkets
+	if index < 0 or index >= stock.size() or index >= shop_patch_offers.item_count \
+		or hero_index < 0 or hero_index >= run_heroes.size() or hero_index >= shop_patch_heroes.item_count:
+		return
+	var offer: Dictionary = stock[index]
+	var hero: Dictionary = run_heroes[hero_index]
+	if not shop_patch_offers.get_item_metadata(index) is String \
+		or not shop_patch_heroes.get_item_metadata(hero_index) is String \
+		or shop_patch_offers.get_item_metadata(index) != offer.id \
+		or shop_patch_offers.get_item_text(index) != _shop_offer_text(offer) \
+		or shop_patch_heroes.get_item_metadata(hero_index) != hero.id \
+		or shop_patch_heroes.get_item_text(hero_index) != hero.id.capitalize():
+		return
+	var expected := _shop_wardrobe.get_snapshot()
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or not carry.can_bind_wardrobe(_shop_wardrobe, carry.torn, expected):
+		return
+	var result := RunShopPatchSewing.purchase_and_sew(purchases, visit, _shop_wardrobe,
+		run_map.get_current_node_id(), offer.id, hero.id, expected.definitions.get(offer.id),
+		"shop:%s:%s" % [run_map.get_current_node_id(), offer.id],
+		purchases.get_state(), purchases.get_stock(), visit.get_state(), expected)
+	if not result.ok:
+		return
+	run_trinkets.assign(result.wardrobe_state.owned)
+	run_scraps = result.wardrobe_state.scraps
+	session_gold = result.wardrobe_state.gold
+	carry.bind_wardrobe(_shop_wardrobe, carry.torn, result.wardrobe_state)
+	_shop_patch_context = _shop_patch_snapshot()
+	_refresh_shop()
 
 
 func _focus_visit(view: VBoxContainer) -> void:
@@ -2201,6 +2349,11 @@ func _return_to_title() -> void:
 	shop_purchases = null
 	shop_offers = null
 	shop_buy_button = null
+	shop_patch_offers = null
+	shop_patch_heroes = null
+	shop_patch_buy_button = null
+	_shop_wardrobe = null
+	_shop_patch_context.clear()
 	_shop_map = null
 	_shop_route.clear()
 	_connected_map = null

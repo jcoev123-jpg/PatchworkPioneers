@@ -209,7 +209,7 @@ func _run() -> void:
 				app.shop_back_button.grab_focus()
 				await _key(KEY_TAB)
 				_check(app.shop_offers.has_focus(), "Shop focus wraps after Return")
-				for step in range(5):
+				for step in range(8):
 					if button.has_focus():
 						break
 					await _key(KEY_TAB)
