@@ -378,6 +378,13 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 	route_atlas.position = Vector2(20, 20)
 	route_atlas.bind_map(run_map)
 	route_atlas_overlay.add_child(route_atlas)
+	var choices := {}
+	for button in route_buttons:
+		choices[button.get_meta("route_id")] = weakref(button)
+	# Admission clears marker controls; wait until the emitting Button has finished its signal.
+	route_atlas.node_requested.connect(_choose_atlas_opening.bind(source_map, source_view,
+		source_action, weakref(route_atlas_overlay), weakref(route_atlas),
+		run_map.get_generation_revision(), run_map.get_floors(), choices), CONNECT_DEFERRED)
 	route_atlas_close = Button.new()
 	route_atlas_close.text = "Close map"
 	route_atlas_close.position = Vector2(520, 640)
@@ -389,6 +396,33 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 		source_action, weakref(route_atlas_overlay)))
 	route_view.hide()
 	route_atlas_close.grab_focus()
+
+
+func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef,
+		source_action: WeakRef, source_overlay: WeakRef, source_atlas: WeakRef,
+		generation: int, graph: Array, choices: Dictionary) -> bool:
+	if not _route_atlas_source(source_map, source_view, source_action) \
+		or route_view.visible or route_map_button.disabled \
+		or not is_instance_valid(route_atlas_overlay) or source_overlay == null \
+		or source_overlay.get_ref() != route_atlas_overlay \
+		or route_atlas_overlay.get_parent() != self or not route_atlas_overlay.is_visible_in_tree() \
+		or not is_instance_valid(route_atlas) or source_atlas == null \
+		or source_atlas.get_ref() != route_atlas or route_atlas.get_parent() != route_atlas_overlay \
+		or not route_atlas.is_visible_in_tree() or route_atlas._map != run_map:
+		return false
+	if run_map.get_generation_revision() != generation or run_map.get_floors() != graph \
+		or not run_map.get_legal_choices().has(id) or run_map.get_node(id).get("type") != "Fight" \
+		or not choices.has(id):
+		return false
+	var button = choices[id].get_ref()
+	if not is_instance_valid(button) or not route_buttons.has(button) \
+		or button.get_parent() != route_view or button.get_meta("route_id") != id \
+		or button.disabled or not button.visible:
+		return false
+	_clear_route_atlas()
+	route_view.show()
+	button.grab_focus()
+	return _choose_route(id, source_map)
 
 
 func _close_route_atlas(source_map: WeakRef, source_view: WeakRef,
