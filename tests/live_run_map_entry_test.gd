@@ -69,6 +69,11 @@ func _reject(app, id: String, reason: String) -> void:
 	if attempted_fight:
 		_check(app.fight_selection != null and app.fight_selection != selector,
 			reason + " resets selector cache after failed startup")
+		_check(app.fight_selection._selected.is_empty() and app.fight_selection._bound_map == null
+			and app.encounter_id == "", reason + " leaves no cached choice or map binding")
+		var presenter = app.get_node("LiveEnemyRoster")
+		_check(presenter.enemies == null and presenter.panel == null and app.enemy_intents == null
+			and app.victory_gold == null, reason + " leaves no battle services or actor controls")
 
 
 func _run() -> void:
@@ -219,7 +224,38 @@ func _run() -> void:
 			"both initial announcements mounted")
 		var reference_deck := CombatDeck.new(cards, rng)
 		var reference_party := CombatParty.new(app._load_party_definitions())
-		var reference_enemies := CombatEnemies.new(app._load_enemy_definitions())
+		# Independent bindings and catalog lookup, without the production assembler.
+		var expected_rosters := {
+			"starter_attacks": ["ragling", "ragling_guard"],
+			"guard_counterattack": ["button_guard", "fray_scavenger"],
+			"ragling_rearline_feint": ["spool_stalker", "seam_ripper"],
+		}
+		_check(app.FIGHT_ROSTERS == expected_rosters, "all three exact ordered Fight bindings")
+		var catalog: Array = JSON.parse_string(FileAccess.get_file_as_string(app.STARTER_ENEMIES_PATH))
+		catalog.append_array(JSON.parse_string(FileAccess.get_file_as_string(app.RUN_ENEMIES_PATH)))
+		var ordered: Array = []
+		for enemy_id in expected_rosters[expected_id]:
+			var matches: Array = catalog.filter(func(record): return record.id == enemy_id)
+			_check(matches.size() == 1, "unique authored enemy ID: " + enemy_id)
+			if matches.size() == 1:
+				var record: Dictionary = matches[0].duplicate(true)
+				record.max_hp = int(record.max_hp)
+				ordered.append(record)
+		var reference_enemies := CombatEnemies.new(ordered)
+		_check(reference_enemies.is_valid() and app.enemies.get_enemies() == reference_enemies.get_enemies(),
+			"selected catalog IDs, HP, names and source slots match independent roster")
+		var presenter = app.get_node("LiveEnemyRoster")
+		_check(presenter.enemies == app.enemies and is_instance_valid(presenter.panel)
+			and presenter.panel.is_visible_in_tree() and presenter._labels.size() == ordered.size(),
+			"real selected enemy panels mounted")
+		for index in range(ordered.size()):
+			var label: Label = presenter._labels[index]
+			_check(label.is_visible_in_tree() and label.text == "Enemy %d - %s\nHP: %d/%d | Block: 0" % [
+				index + 1, ordered[index].name, ordered[index].max_hp, ordered[index].max_hp],
+				"visible selected actor name and HP by slot")
+			var initial_action: Dictionary = authored[index].pattern[0].duplicate(true)
+			initial_action.enemy_position = index + 1
+			_check(app.enemy_attacks[index] == initial_action, "source-ordered authored initial intent")
 		var reference_result := CombatBattleResult.new(reference_party, reference_enemies)
 		var reference_flow := CombatRoundFlow.new(reference_deck, reference_party, reference_enemies,
 			expected_intents, reference_result)
@@ -244,13 +280,20 @@ func _run() -> void:
 		_check(_snapshot(app) == before, "other starts and stale Back preserve battle")
 		_check(reference_flow.end_turn(), "reference executes selected enemy phase")
 		var heroes_before_phase: Array = app.party.get_heroes()
-		await _click(app.end_turn_button)
+		if session == 0:
+			await _click(app.end_turn_button)
+		else:
+			app.end_turn_button.grab_focus()
+			await _key(KEY_ENTER)
 		_check(app.party.get_heroes() != heroes_before_phase, "selected phase causes real hero damage")
 		_check(app.party.get_heroes() == reference_party.get_heroes()
 			and app.enemies.get_enemies() == reference_enemies.get_enemies()
 			and app.enemy_attacks == expected_intents.get_intents()
 			and app.deck.hand == reference_deck.hand and app.deck.draw_pile == reference_deck.draw_pile
-			and app.deck.discard_pile == reference_deck.discard_pile and app.run_rng.state == rng.state,
+			and app.deck.discard_pile == reference_deck.discard_pile and app.run_rng.state == rng.state
+			and app.deck.energy == reference_deck.energy and app.deck.turn_active == reference_deck.turn_active
+			and app.enemy_intents._turn_index == expected_intents._turn_index
+			and app.battle_result.evaluate() == reference_result.evaluate(),
 			"mounted End Turn executes selected attacks/block, advances schedule and deals exact next hand")
 		_check(app.enemy_intents.get_intents() == expected_intents.get_intents(), "next phase follows selected schedule")
 		for definition in authored:
@@ -290,6 +333,20 @@ func _run() -> void:
 			_reject(app, fight_id, "invalid encounter pool")
 			_check(app.fight_selection != null and app.encounter_id == "", "failed selection reset for retry")
 		app.fight_encounter_paths = app.FIGHT_ENCOUNTER_PATHS.duplicate()
+		# Force each binding failure through the real selected-route transaction.
+		for invalid in [null, 42, [], ["unknown", "ragling_guard"], ["ragling", "ragling"],
+			["ragling"], ["ragling", "ragling_guard", "button_guard"], ["ragling", 42]]:
+			for selected_id in app.FIGHT_ROSTERS:
+				app.fight_rosters[selected_id] = invalid
+			_reject(app, fight_id, "malformed/unknown/duplicate/wrong-count roster: " + str(invalid))
+		app.fight_rosters = {}
+		_reject(app, fight_id, "missing encounter binding")
+		app.fight_rosters = app.FIGHT_ROSTERS.duplicate(true)
+		app.run_enemies_path = "res://data/enemies/missing_060.json"
+		_reject(app, fight_id, "missing M03 catalog")
+		app.run_enemies_path = app.STARTER_ENEMIES_PATH
+		_reject(app, fight_id, "duplicate catalog IDs")
+		app.run_enemies_path = app.RUN_ENEMIES_PATH
 		for field in ["starter_deck_path", "starter_party_path", "starter_attacks_path", "starter_enemies_path"]:
 			var original: String = app.get(field)
 			app.set(field, OS.get_environment("TEMP").path_join("patchwork_missing_029.json"))
@@ -348,6 +405,8 @@ func _run() -> void:
 		var starter := CombatEnemyIntents.new(app._load_enemy_schedule())
 		_check(app.enemy_attacks == starter.get_intents() and app.fight_selection == null
 			and app.encounter_id == "", "direct start keeps starter schedule without routed selector")
+		_check(app.enemies.get_enemies() == CombatEnemies.new(app._load_enemy_definitions()).get_enemies(),
+			"direct Start run retains original starter pair")
 		var rng := RandomNumberGenerator.new()
 		rng.seed = fixture_seed
 		var direct := CombatDeck.new(app._load_starter_deck(), rng)

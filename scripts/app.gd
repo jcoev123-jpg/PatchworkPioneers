@@ -8,6 +8,12 @@ const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const STARTER_PARTY_PATH := "res://data/heroes/starter_party.json"
 const STARTER_ATTACKS_PATH := "res://data/encounters/starter_attacks.json"
 const STARTER_ENEMIES_PATH := "res://data/enemies/starter_enemies.json"
+const RUN_ENEMIES_PATH := "res://data/enemies/run_enemies.json"
+const FIGHT_ROSTERS := {
+	"starter_attacks": ["ragling", "ragling_guard"],
+	"guard_counterattack": ["button_guard", "fray_scavenger"],
+	"ragling_rearline_feint": ["spool_stalker", "seam_ripper"],
+}
 const FIGHT_ENCOUNTER_PATHS := {
 	"starter_attacks": STARTER_ATTACKS_PATH,
 	"guard_counterattack": "res://data/encounters/guard_counterattack.json",
@@ -28,6 +34,8 @@ var route_back_button: Button
 var route_buttons: Array[Button] = []
 var run_map: RunMap
 var fight_encounter_paths: Dictionary = FIGHT_ENCOUNTER_PATHS.duplicate()
+var fight_rosters: Dictionary = FIGHT_ROSTERS.duplicate(true)
+var run_enemies_path: String = RUN_ENEMIES_PATH
 var fight_selection: RunFightEncounterSelection
 var encounter_id := ""
 var title_view: VBoxContainer
@@ -247,8 +255,11 @@ func _choose_route(id: String, source_map: WeakRef = null) -> bool:
 	var route_before := run_map.get_route()
 	if not run_map.choose_node(id):
 		return false
-	var selected := fight_selection.select_current_fight(run_map, run_rng, fight_encounter_paths)
-	if not selected.get("success", false) or not _start_battle(run_rng, selected.get("definitions", [])):
+	var selected := fight_selection.select_current_battle(run_map, run_rng, {"Fight": fight_encounter_paths})
+	var assembled := RunTypedBattleRoster.new().assemble(selected, fight_rosters,
+		[starter_enemies_path, run_enemies_path])
+	if not assembled.get("ok", false) or not _start_battle(run_rng,
+			assembled.get("definitions", []), assembled.get("enemies")):
 		run_map.undo_choice(id, route_before)
 		run_rng.state = rng_before
 		fight_selection = RunFightEncounterSelection.new()
@@ -280,7 +291,8 @@ func _cancel_route() -> void:
 	route_button.grab_focus()
 
 
-func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitions: Array = []) -> bool:
+func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitions: Array = [],
+		selected_enemies: CombatEnemies = null) -> bool:
 	var cards := _load_starter_deck()
 	if cards.is_empty():
 		push_warning("Starter deck is invalid or unreadable; run was not started")
@@ -291,6 +303,12 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	if shared_rng != null:
 		selector = CombatEnemyIntents.new(encounter_definitions)
 	var starting_enemies := CombatEnemies.new(_load_enemy_definitions())
+	if not starting_enemies.is_valid():
+		return false
+	if shared_rng != null:
+		if selected_enemies == null:
+			return false
+		starting_enemies = selected_enemies
 	if not selector.is_valid() or not starting_enemies.is_valid() or not _positions_align(selector, starting_enemies):
 		push_warning("Starter enemies or schedule are invalid; run was not started")
 		return false
