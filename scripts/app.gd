@@ -1436,8 +1436,8 @@ func _unfought_run() -> bool:
 			return false
 	if run_map.get_route().is_empty():
 		return run_deck == _load_starter_deck() and run_heroes == carry._initial \
-			and carry.read_state().completed_rests.is_empty() and session_gold == 0 \
-			and run_trinkets.is_empty() and run_removal_count == 0 and run_scraps == 0 \
+			and carry.read_state().completed_rests.is_empty() and LiveWebPlaytestBoot.has_opening_wallet(self) \
+			and run_trinkets.is_empty() and run_removal_count == 0 \
 			and run_stitch_descriptors.is_empty() and run_next_stitch_id == 1
 	return true
 

@@ -14,6 +14,10 @@ config/name="Patchwork Pioneers"
 run/main_scene="res://scenes/app.tscn"
 config/features=PackedStringArray("4.7")
 
+[autoload]
+
+LiveWebPlaytestBoot="*res://scripts/live_web_playtest_boot.gd"
+
 [display]
 
 window/size/viewport_width=1280
