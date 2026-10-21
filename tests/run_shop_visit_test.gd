@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_three_distinct_purchases()
 	_test_first_duplicate_and_alias_isolation()
 	_test_invalid_initial_state()
+	_test_duplicate_owned_admission()
 	_test_rng_and_equal_replay()
 	_test_purchase_reconciliation()
 	_test_removal_before_purchase_reconciliation()
@@ -34,6 +35,39 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _test_duplicate_owned_admission() -> void:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick", "warden_strike"]
+	var distinct: Array[String] = ["old_badge", "other_badge"]
+	var control := RunShopVisit.new(deck, 300, 1, distinct)
+	_check(control.open_visit("control-shop"), "distinct ownership admits real visit with repeated deck cards")
+	var shop := _paid_shop(control.get_state())
+	_check(shop.is_valid(), "duplicate admission control has a valid purchase service")
+	var paid := shop.buy("card", "warden_brace")
+	_check(paid.ok and paid.has("receipt") and control.reconcile_purchase(paid),
+		"duplicate admission control produces and reconciles a real paid receipt")
+	seed(76004)
+	var expected_draw := randi()
+	seed(76004)
+	for inventory in [["old_badge", "old_badge"], ["old_badge", "other_badge", "old_badge"]]:
+		var owned: Array[String] = []
+		owned.assign(inventory)
+		var before_owned := owned.duplicate()
+		var visit := RunShopVisit.new(deck, 300, 1, owned)
+		var expected := {"valid": false, "status": "inactive", "shop_node_id": "",
+			"removal_available": false, "price": 100, "deck": deck.duplicate(),
+			"trinkets": owned.duplicate(), "gold": 300, "prior_removals": 1,
+			"visited_ids": [], "claimed_fight_ids": []}
+		_check(visit.get_state() == expected, "duplicate inventory publishes exact invalid visit snapshot")
+		_check(not visit.open_visit("duplicate-shop"), "duplicate inventory cannot open a Shop")
+		var paid_before := paid.duplicate(true)
+		_check(not visit.reconcile_purchase(paid), "duplicate inventory rejects actual paid receipt")
+		_check(not visit.remove_card("warden_strike").ok and not visit.close_visit(),
+			"duplicate inventory cannot spend gold or close an unopened visit")
+		_check(visit.get_state() == expected and paid == paid_before and owned == before_owned,
+			"duplicate admission failures preserve complete ledger and caller inputs")
+	_check(randi() == expected_draw, "duplicate visit admission and failures consume no global RNG")
 
 
 func _test_purchase_reconciliation() -> void:
@@ -475,6 +509,16 @@ func _duplicate_trinket_sequence(remove_first: bool) -> Array:
 		timeline.append(ledger.get_state())
 	_check(ledger.open_visit("duplicate-shop-2"), "subsequent separate Shop opens")
 	var later := ledger.get_state()
+	var later_shop := _paid_shop(later)
+	_check(later_shop.is_valid() and later_shop.get_state().trinkets == ["old_badge", "t_spool", "t_pocket"],
+		"later purchase ledger admits one copy of each previously purchased ID in order")
+	var later_stock := later_shop.get_stock()
+	for id in ["t_spool", "t_pocket"]:
+		var denied := later_shop.buy("trinket", id)
+		_check(not denied.ok and not denied.has("receipt") and not ledger.reconcile_purchase(denied),
+			"later Shop cannot resell a previously purchased trinket")
+	_check(later_shop.get_stock() == later_stock and later_shop.get_state().gold == later.gold
+		and ledger.get_state() == later, "later duplicate attempts preserve stock, gold and removal accounting")
 	_check(later.trinkets == ["old_badge", "t_spool", "t_pocket"]
 		and later.deck == (["seamstress_prick"] if remove_first else deck)
 		and later.gold == (125 if remove_first else 300)

@@ -63,7 +63,7 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 		if not (trinket_id is String):
 			return rejected
 		var owned_id: String = trinket_id
-		if owned_id.strip_edges().is_empty():
+		if owned_id.strip_edges().is_empty() or owned.has(owned_id):
 			return rejected
 		owned[owned_id] = true
 
