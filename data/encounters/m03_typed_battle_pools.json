@@ -50,6 +50,20 @@
         "spool_stalker",
         "fray_scavenger"
       ]
+    },
+    "front_hem_pivot": {
+      "schedule": "res://data/encounters/front_hem_pivot.json",
+      "enemy_ids": [
+        "button_guard",
+        "fray_scavenger"
+      ]
+    },
+    "rear_spool_reversal": {
+      "schedule": "res://data/encounters/rear_spool_reversal.json",
+      "enemy_ids": [
+        "spool_stalker",
+        "seam_ripper"
+      ]
     }
   },
   "Elite": {
