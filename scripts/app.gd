@@ -830,7 +830,7 @@ func _build_battle() -> void:
 		battle_view.add_theme_constant_override("margin_" + side, 32)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 16)
+	column.add_theme_constant_override("separation", 10)
 	battle_view.add_child(column)
 	hero_view = HBoxContainer.new()
 	hero_view.add_theme_constant_override("separation", 16)
