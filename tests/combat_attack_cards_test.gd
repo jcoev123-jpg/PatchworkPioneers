@@ -21,6 +21,10 @@ func _initialize() -> void:
 	_test_forecast_rejections()
 	_test_forecast_matrix()
 	_test_forecast_overflow_choice()
+	_test_patch_bound_attacks()
+	_test_patch_bomb_and_status_overflow()
+	_test_patch_torn_mend_and_transfer()
+	_test_patch_rejections_and_replay()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -730,3 +734,589 @@ func _test_forecast_overflow_choice() -> void:
 	var actual := service.play_attack(deck, party, enemies, "seamstress_prick", 2)
 	_check(actual.ok and actual.hits[0].position == 2 and actual.hits[0].damage == forecast.hits[0].damage,
 		"remaining forecast choice matches successful actual hit")
+
+## Real M04 authoring, starter-party ledger, and legal sewing for each combat.
+
+func _patch_context(assignments: Array, scraps: int = 4) -> Dictionary:
+
+	var heroes: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+
+	_check(heroes is Array and heroes.size() == 3, "real starter party JSON exists")
+
+	var party_defs := []
+
+	for hero in heroes:
+
+		party_defs.append({"id": hero.id, "max_hp": int(hero.max_hp)})
+
+	var party := CombatParty.new(party_defs)
+
+	_check(party.is_valid() and party.get_hero(1).id == "warden"
+
+		and party.get_hero(2).id == "seamstress" and party.get_hero(3).id == "tinker",
+
+		"real hero party identities and slots")
+
+	var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+
+		"res://data/patches/m04_attack_patches.json"))
+
+	_check(records is Array and records.size() == 2, "own attack patch catalog parses")
+
+	for id in ["button_eye", "pincushion_arm"]:
+
+		var matching: Array = records.filter(func(record): return record.get("id") == id)
+
+		_check(matching.size() == 1, "own M04 ID exists " + id)
+
+		if matching.size() == 1:
+
+			_check(matching[0].slot == ("HEAD" if id == "button_eye" else "ARM")
+
+				and matching[0].effect == ("first_attack_exposed" if id == "button_eye"
+
+					else "card_attack_bonus") and matching[0].amount == 1,
+
+				"own M04 slot, power and amount " + id)
+
+	var old: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+
+		"res://data/patches/initial_patch_slots.json"))
+
+	for id in ["stitched_badge", "spare_spool"]:
+
+		_check(old.any(func(record): return record.get("id") == id),
+
+			"old Shop patch ID remains " + id)
+
+	var definitions := []
+
+	for record in records:
+
+		definitions.append({"id": record.id, "slot": record.slot})
+
+	definitions.append_array(old)
+
+	var torn := RunTornMending.new(party.get_heroes())
+
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+
+		["button_eye", "pincushion_arm", "stitched_badge", "spare_spool"],
+
+		definitions, scraps)
+
+	_check(torn.is_valid() and wardrobe.is_valid(), "real wardrobe and torn state are valid")
+
+	for assignment in assignments:
+
+		var result := wardrobe.sew(assignment.id, assignment.hero, assignment.slot,
+
+			"sew_" + assignment.id, wardrobe.get_snapshot())
+
+		_check(result.ok and result.receipt.hero_id == assignment.hero,
+
+			"real legal sewing assigns " + assignment.id)
+
+	return {"party": party, "wardrobe": wardrobe, "torn": torn}
+
+
+
+
+
+func _patch_service(context: Dictionary) -> CombatAttackCards:
+
+	var service := CombatAttackCards.new()
+
+	_check(service.bind_patch_wardrobe(context.wardrobe, context.torn)
+
+		and service._patches.is_valid(), "battle binds genuine wearer projection")
+
+	var projection: Dictionary = context.wardrobe.project_active(context.torn.read_state())
+
+	_check(service._patches.active_snapshot() == projection.active
+
+		and service._patches.latch_snapshot() == {
+
+			"warden": false, "seamstress": false, "tinker": false},
+
+		"binding freezes the genuine detached active roster and fresh combat latch")
+
+	return service
+
+
+
+
+
+func _test_patch_bound_attacks() -> void:
+
+	var ctx := _patch_context([
+
+		{"id": "button_eye", "hero": "warden", "slot": "HEAD"},
+
+		{"id": "pincushion_arm", "hero": "seamstress", "slot": "ARM"}])
+
+	var service := _patch_service(ctx)
+
+	var copy := service._patches.active_snapshot()
+
+	copy.warden.clear()
+
+	_check(service._patches.active_snapshot().warden == ["button_eye"],
+
+		"projected wearer snapshot is detached from returned copy")
+
+	var deck := _deck(["warden_strike", "warden_strike", "seamstress_prick"])
+
+	var foes := _enemies([60, 60, 60])
+
+	_check(foes.gain_block(3, 2), "real block before ARM Prick")
+
+	_accept(service, deck, ctx.party, foes, "seamstress_prick", 3,
+
+		[_hit(3, 4, 2, 2, {"bleed": 3})], 1, "ARM Prick: damage 4, Bleed 3")
+
+	_check(not service._patches.latch_snapshot().warden,
+
+		"Seamstress action does not spend Warden's HEAD latch")
+
+	_accept(service, deck, ctx.party, foes, "warden_strike", 1,
+
+		[_hit(1, 6, 0, 6, {"exposed": 1})], 1, "first Strike does not amplify itself")
+
+	_accept(service, deck, ctx.party, foes, "warden_strike", 1,
+
+		[_hit(1, 9, 0, 9)], 1, "second Strike uses prior Exposed +50%")
+
+	_check(foes.get_enemy(1).statuses == {"exposed": 1}
+
+		and foes.get_enemy(3).statuses == {"bleed": 3},
+
+		"Exposed and Bleed counters persist independently")
+
+	_check(CombatStatuses.new().end_owner_turn(10, 7, {"bleed": 3})
+
+		== {"ok": true, "hp": 7, "block": 7, "statuses": {"bleed": 2}, "bleed_hp_loss": 3},
+
+		"ARM never modifies direct Bleed or Block bypass")
+
+	service.start_player_turn()
+
+	_check(service._patches.latch_snapshot().warden,
+
+		"turn reset does not restore Button Eye")
+
+	var fresh := _patch_service(ctx)
+
+	var bash := _deck(["warden_shield_bash", "warden_strike"])
+
+	var enemies := _enemies([60])
+
+	_accept(fresh, bash, ctx.party, enemies, "warden_shield_bash", 1,
+
+		[_hit(1, 8, 0, 8, {"weak": 1, "exposed": 1})], 2,
+
+		"fresh first Shield Bash merges Weak and Exposed")
+
+	_accept(fresh, bash, ctx.party, enemies, "warden_strike", 1,
+
+		[_hit(1, 9, 0, 9)], 1, "later Strike keeps Weak and Exposed counters")
+
+	_check(enemies.get_enemy(1).statuses == {"weak": 1, "exposed": 1},
+
+		"Button Eye only adds Exposed once this combat")
+
+	var unbound := _patch_context([])
+
+	_accept(_patch_service(unbound), _deck(["warden_strike"]), unbound.party,
+
+		_enemies([30]), "warden_strike", 1, [_hit(1, 6, 0, 6)], 1,
+
+		"not wearing a patch means no attack bonus")
+
+
+
+
+
+## Validate all actors, RNG, patch latch and run ledgers for every refusal.
+
+func _patch_reject(service: CombatAttackCards, deck: CombatDeck, party: CombatParty,
+
+		foes: CombatEnemies, id: String, target: int, ctx: Dictionary, label: String,
+
+		owner_statuses: Dictionary = {}, target_statuses: Dictionary = {}) -> void:
+
+	var before := _snapshot(deck, party, foes)
+
+	var patch_before := [service._patches.active_snapshot(), service._patches.latch_snapshot()]
+
+	var ledger_before := [ctx.wardrobe.get_snapshot(), ctx.torn.read_state()]
+
+	seed(88712)
+
+	var next_global := randi()
+
+	seed(88712)
+
+	var forecast := service.forecast_attack(deck, party, foes, id, owner_statuses, target_statuses)
+
+	_check(not forecast.playable or (forecast.requires_selection and target == 0)
+
+		or (not forecast.requires_selection and target != 0)
+
+		or (forecast.requires_selection and not forecast.hits.any(
+
+			func(hit): return hit.position == target)),
+
+		label + ": forecast cannot authorize invalid selection")
+
+	_check(service.play_attack(deck, party, foes, id, target,
+
+		owner_statuses, target_statuses) == {"ok": false, "hits": []},
+
+		label + ": attempt rejects")
+
+	_check(_snapshot(deck, party, foes) == before
+
+		and [service._patches.active_snapshot(), service._patches.latch_snapshot()] == patch_before
+
+		and [ctx.wardrobe.get_snapshot(), ctx.torn.read_state()] == ledger_before
+
+		and randi() == next_global, label + ": no deck/actor/RNG/latch/ledger mutation")
+
+
+
+
+
+func _test_patch_bomb_and_status_overflow() -> void:
+
+	var ctx := _patch_context([
+
+		{"id": "button_eye", "hero": "tinker", "slot": "HEAD"},
+
+		{"id": "pincushion_arm", "hero": "tinker", "slot": "ARM"}])
+
+	var service := _patch_service(ctx)
+
+	_accept(service, _deck(["tinker_pop_shot"]), ctx.party, _enemies([40]),
+
+		"tinker_pop_shot", 1, [_hit(1, 9, 0, 9, {"exposed": 1})], 1,
+
+		"Tinker Pop Shot 5+3+1 and first HEAD Exposed")
+
+	_check(service._patches.latch_snapshot().tinker,
+
+		"Pop Shot consumes Tinker's battle HEAD latch")
+
+	var bomb := _patch_service(ctx)
+
+	var foes := _enemies([40, 40, 40])
+
+	_check(foes.apply_damage(2, 40) and foes.is_slain(2),
+
+		"middle Bomb recipient truly slain")
+
+	_seed_modifiers(ctx.party, foes, "tinker_scrap_bomb", {"weak": 1},
+
+		{1: {"exposed": 1}})
+
+	# Base 8; Weak+Exposed gives 9 at position 1; only Weak gives 6 at 3.
+
+	_accept(bomb, _deck(["tinker_scrap_bomb"]), ctx.party, foes,
+
+		"tinker_scrap_bomb", 0,
+
+		[_hit(1, 9, 0, 9, {"exposed": 1}), _hit(3, 6, 0, 6, {"exposed": 1})],
+
+		2, "first Bomb: living slots, Weak/Exposed one floor, late new Exposed",
+
+		{"weak": 1}, {1: {"exposed": 1}})
+
+	_check(foes.get_enemy(1).statuses == {"exposed": 2}
+
+		and foes.get_enemy(2).get("statuses", {}).is_empty()
+
+		and foes.get_enemy(3).statuses == {"exposed": 1},
+
+		"Bomb effects do not touch dead slot and add after preexisting counters")
+
+	# Clear the deliberate Weak fixture before unmodified Bombs.
+	ctx.party._heroes[2]["statuses"] = {}
+	bomb.start_player_turn()
+
+	_check(bomb._patches.latch_snapshot().tinker and not bomb._tinker._consumed,
+
+		"new turn restores +3 but never first-combat Exposed")
+
+	_accept(_patch_service(ctx), _deck(["tinker_scrap_bomb"]), ctx.party,
+
+		_enemies([40, 40]), "tinker_scrap_bomb", 0,
+
+		[_hit(1, 8, 0, 8, {"exposed": 1}),
+
+			_hit(2, 8, 0, 8, {"exposed": 1})], 2,
+
+		"first unmodified Bomb deals 8 to each living target")
+
+	var guard := _patch_service(ctx)
+
+	var guarded_deck := _deck(["tinker_scrap_bomb"])
+
+	var guarded_foes := _enemies([40, 40])
+
+	guarded_foes._enemies[1]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+
+	_patch_reject(guard, guarded_deck, ctx.party, guarded_foes,
+
+		"tinker_scrap_bomb", 0, ctx, "late HEAD status overflow")
+
+	guarded_foes._enemies[1]["statuses"] = {}
+
+	_accept(guard, guarded_deck, ctx.party, guarded_foes, "tinker_scrap_bomb", 0,
+
+		[_hit(1, 8, 0, 8, {"exposed": 1}),
+
+			_hit(2, 8, 0, 8, {"exposed": 1})], 2,
+
+		"valid Bomb after overflow still has first HEAD effect")
+
+
+
+
+
+func _test_patch_torn_mend_and_transfer() -> void:
+
+	var ctx := _patch_context([
+
+		{"id": "pincushion_arm", "hero": "seamstress", "slot": "ARM"},
+
+		{"id": "button_eye", "hero": "warden", "slot": "HEAD"}])
+
+	var prior := _patch_service(ctx)
+
+	var battle_start: Array = ctx.torn.read_state().heroes
+
+	var battle_end := battle_start.duplicate(true)
+
+	battle_end[1]["hp"] = 0
+
+	_check(ctx.torn.observe_battle_end("tear_01", battle_start, battle_end).ok,
+
+		"real torn service observes downed Seamstress")
+
+	var masked: Dictionary = ctx.wardrobe.project_active(ctx.torn.read_state())
+
+	_check(masked.ok and masked.worn.seamstress.ARM == "pincushion_arm"
+
+		and masked.active.seamstress.is_empty(),
+
+		"downed wearer retains sewn patch but activation is masked")
+
+	_check(prior._patches.damage_bonus("seamstress") == 1,
+
+		"earlier battle snapshot remains detached from subsequent tear")
+
+	var torn_combat := _patch_service(ctx)
+
+	_check(torn_combat._patches.damage_bonus("seamstress") == 0,
+
+		"downed owner gets no ARM power in fresh combat")
+
+	var down_party := _party()
+
+	_check(down_party.apply_damage(2, 999), "actual party has downed owner")
+
+	_patch_reject(torn_combat, _deck(["seamstress_prick"]), down_party,
+
+		_enemies([30]), "seamstress_prick", 1, ctx, "downed patched attack")
+
+	var state: Dictionary = ctx.torn.read_state()
+
+	var mend: Dictionary = ctx.torn.choose_mend("mend_node", "mend_receipt", "seamstress", 2,
+
+		2, state.heroes, true)
+
+	_check(mend.ok and mend.remaining_scraps == 0
+
+		and mend.heroes[1].max_hp == 27 and mend.heroes[1].hp == 6,
+
+		"real two-scrap map mend revives at floor 25 percent of reduced max HP")
+
+	var healed := _patch_service(ctx)
+
+	_check(healed._patches.damage_bonus("seamstress") == 1,
+
+		"revival unlocks ARM on a separately bound battle")
+
+	_accept(healed, _deck(["seamstress_prick"]), ctx.party, _enemies([30]),
+
+		"seamstress_prick", 1, [_hit(1, 4, 0, 4, {"bleed": 3})], 1,
+
+		"map-mended wearer deals ARM bonus damage")
+
+	_check(ctx.wardrobe.start_rest("rest_move", ctx.wardrobe.get_snapshot()).ok,
+
+		"real Rest context opens")
+
+	var moved: Dictionary = ctx.wardrobe.re_sew("pincushion_arm", "seamstress", "tinker",
+
+		"rest_move", "move_arm", ctx.wardrobe.get_snapshot())
+
+	_check(moved.ok and moved.receipt.scrap_delta == -1
+
+		and ctx.wardrobe.get_snapshot().worn.tinker.ARM == "pincushion_arm",
+
+		"paid Rest re-sew moves ARM to Tinker")
+
+	_check(ctx.wardrobe.end_rest("rest_move", ctx.wardrobe.get_snapshot()).ok,
+
+		"real Rest closes")
+
+	_check(healed._patches.damage_bonus("seamstress") == 1
+
+		and healed._patches.damage_bonus("tinker") == 0,
+
+		"earlier combat cannot steal ARM after transfer")
+
+	var renewed := _patch_service(ctx)
+
+	_check(renewed._patches.damage_bonus("seamstress") == 0
+
+		and renewed._patches.damage_bonus("tinker") == 1,
+
+		"new combat recognizes only ARM's current wearer")
+
+	_accept(renewed, _deck(["tinker_pop_shot"]), ctx.party, _enemies([30]),
+
+		"tinker_pop_shot", 1, [_hit(1, 9, 0, 9)], 1,
+
+		"transferred ARM adds +1 to Tinker's initial Pop Shot")
+
+
+
+
+
+func _test_patch_rejections_and_replay() -> void:
+
+	var ctx := _patch_context([{"id": "button_eye", "hero": "warden", "slot": "HEAD"}])
+
+	var service := _patch_service(ctx)
+
+	var deck := _deck(["warden_strike", "warden_strike"])
+
+	var foes := _enemies([60, 60, 60])
+
+	_patch_reject(service, deck, ctx.party, foes, "warden_strike", 3, ctx, "wrong target")
+
+	_patch_reject(service, deck, ctx.party, foes, "warden_strike", 0, ctx, "no selection")
+
+	_patch_reject(service, deck, ctx.party, foes, "warden_strike", 1, ctx,
+
+		"malformed owner status", {"weak": -1})
+
+	_patch_reject(service, deck, ctx.party, foes, "warden_strike", 1, ctx,
+
+		"malformed late target status", {}, {3: {"exposed": -1}})
+
+	var exhausted := _deck(["warden_strike"])
+
+	_check(exhausted.try_spend_energy(3), "no-energy precondition")
+
+	_patch_reject(service, exhausted, ctx.party, foes, "warden_strike", 1,
+
+		ctx, "unaffordable")
+
+	var unheld := _deck(["warden_strike"])
+
+	_check(unheld.discard_played("warden_strike") and not unheld.hand.has("warden_strike"),
+
+		"unheld patch attack precondition")
+
+	_patch_reject(service, unheld, ctx.party, foes, "warden_strike", 1, ctx, "unheld")
+
+	var slain := _enemies([12])
+
+	_check(slain.apply_damage(1, 12), "slain target precondition")
+
+	_patch_reject(service, deck, ctx.party, slain, "warden_strike", 1, ctx, "slain")
+
+	_patch_reject(service, _deck(["warden_strike"]),
+
+		_party(["seamstress", "tinker", "warden"]), foes, "warden_strike", 1,
+
+		ctx, "invalid Warden position")
+
+	var malformed := _enemies([30, 30, 30])
+
+	malformed._enemies[2]["statuses"] = {"weak": -1}
+
+	_patch_reject(service, deck, ctx.party, malformed, "warden_strike", 1,
+
+		ctx, "malformed authoritative enemy status")
+
+	_accept(service, deck, ctx.party, foes, "warden_strike", 1,
+
+		[_hit(1, 6, 0, 6, {"exposed": 1})], 1,
+
+		"first valid hit after all rejections still triggers Button Eye")
+
+	var shop := _patch_context([{"id": "stitched_badge", "hero": "warden", "slot": "HEAD"}])
+
+	_accept(_patch_service(shop), _deck(["warden_strike"]), shop.party,
+
+		_enemies([30]), "warden_strike", 1, [_hit(1, 6, 0, 6)], 1,
+
+		"old sewn Shop HEAD ID never gains invented M04 power")
+
+	var invalid := RunPatchWardrobe.new(ctx.party.get_heroes(),
+
+		["button_eye", "pincushion_arm"],
+
+		[{"id": "button_eye", "slot": "ARM"},
+
+			{"id": "pincushion_arm", "slot": "HEAD"}], 4)
+
+	_check(invalid.is_valid(), "forged swapped-slot ledger otherwise valid")
+
+	var failed := CombatAttackCards.new()
+
+	_check(not failed.bind_patch_wardrobe(invalid, ctx.torn)
+
+		and not failed._patches.is_valid(),
+
+		"wrong authored patch slots fail closed before granting powers")
+
+	_reject(failed, _deck(["warden_strike"]), ctx.party, _enemies([30]),
+
+		"warden_strike", 1, "invalid attempted binding cannot fall back to unbound")
+
+	var a := _patch_service(ctx)
+
+	var b := _patch_service(ctx)
+
+	var da := _deck(["warden_strike", "warden_strike"], 9271)
+
+	var db := _deck(["warden_strike", "warden_strike"], 9271)
+
+	var ea := _enemies([60])
+
+	var eb := _enemies([60])
+
+	var events_a := [a.play_attack(da, ctx.party, ea, "warden_strike", 1),
+
+		a.play_attack(da, ctx.party, ea, "warden_strike", 1)]
+
+	var events_b := [b.play_attack(db, ctx.party, eb, "warden_strike", 1),
+
+		b.play_attack(db, ctx.party, eb, "warden_strike", 1)]
+
+	_check(events_a == events_b and events_a == [
+
+		{"ok": true, "hits": [_hit(1, 6, 0, 6, {"exposed": 1})]},
+
+		{"ok": true, "hits": [_hit(1, 9, 0, 9)]}]
+
+		and _snapshot(da, ctx.party, ea) == _snapshot(db, ctx.party, eb)
+
+		and a._patches.latch_snapshot() == b._patches.latch_snapshot(),
+
+		"identical seeded real decks, events and patch latches replay exactly")

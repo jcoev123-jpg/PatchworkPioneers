@@ -1,0 +1,4 @@
+[
+  {"id":"button_eye","slot":"HEAD","effect":"first_attack_exposed","amount":1},
+  {"id":"pincushion_arm","slot":"ARM","effect":"card_attack_bonus","amount":1}
+]

@@ -16,6 +16,15 @@ var _on_hit := CombatOnHitStatuses.new()
 var _tinker := CombatTinkerFirstAttack.new()
 var _basic := CombatBasicAttacks.new()
 var _statuses := CombatStatuses.new()
+var _patches: CombatPatchAttackRules = null
+
+
+## A failed explicit binding fails closed; an untouched service stays unbound.
+## Binding again starts a new combat with a fresh wearer snapshot and latch.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
+
 
 
 ## The live turn coordinator must call this once per new player turn.
@@ -40,6 +49,7 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var cost_value: int = plan.cost
 	var owner_statuses: Dictionary = plan.owner_statuses
 	var target_statuses: Dictionary = plan.target_statuses
+	var owner_id: String = plan.owner_id
 	if card_id in CombatBasicAttacks.SUPPORTED_CARD_IDS:
 		var final_damage := _statuses.adjusted_attack_damage(attack_damage,
 			owner_statuses, target_statuses[target_position])
@@ -49,12 +59,14 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		var after := enemies.get_enemy(target_position)
 		enemies.apply_statuses(applications)
 		_tinker.record_successful_attack(card_id)
+		if _patches != null:
+			_patches.record_successful_attack(owner_id)
 		return {"ok": true, "hits": [{
 			"position": target_position,
 			"damage": final_damage,
 			"block_absorbed": before["block"] - after["block"],
 			"hp_loss": before["hp"] - after["hp"],
-			"statuses": _on_hit.status_for_confirmed_hit(card_id, true)
+			"statuses": applications[target_position]
 		}]}
 	# All downstream operations are now guaranteed by the real models and
 	# immutable preflight. The existing status bridge owns final-floor rounding.
@@ -71,7 +83,7 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			var event := _damage.resolve_vs_enemy(enemies, position, attack_damage,
 				owner_statuses, target_statuses[position])
 			# The validated living recipient guarantees this bridge succeeds.
-			var statuses := _on_hit.status_for_confirmed_hit(card_id, event["ok"])
+			var statuses: Dictionary = applications[position]
 			hits.append({
 				"position": position,
 				"damage": event["damage"],
@@ -82,6 +94,8 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	deck.discard_played(card_id)
 	enemies.apply_statuses(applications)
 	_tinker.record_successful_attack(card_id)
+	if _patches != null:
+		_patches.record_successful_attack(owner_id)
 	return {"ok": true, "hits": hits}
 
 
@@ -90,6 +104,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, attacker_statuses: Dictionary,
 		enemy_statuses_by_position: Dictionary, select_target: bool) -> Dictionary:
 	if deck == null or party == null or enemies == null:
+		return _failure()
+	if _patches != null and not _patches.is_valid():
 		return _failure()
 	if not ATTACK_IDS.has(card_id) or not enemies.can_apply_statuses({}):
 		return _failure()
@@ -147,6 +163,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			owner_statuses = hero.get("statuses", {})
 	if owner_count != 1:
 		return _failure()
+	var patch_statuses := {} if _patches == null else _patches.exposed_for_first_hit(owner_id)
+	var patch_damage := 0 if _patches == null else _patches.damage_bonus(owner_id)
 
 	# Verify the entire batch before the first mutation (including late targets).
 	var target_statuses: Dictionary = {}
@@ -163,7 +181,10 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var applications := {}
 	var eligible: Array[int] = []
 	for position in positions:
-		var application := {position: _on_hit.status_for_confirmed_hit(card_id, true)}
+		var additions := _on_hit.status_for_confirmed_hit(card_id, true)
+		for status in patch_statuses:
+			additions[status] = additions.get(status, 0) + patch_statuses[status]
+		var application := {position: additions}
 		# A single-target forecast lists independently playable choices. One
 		# overflowing on-hit status must not hide another valid destination.
 		if not select_target and preview["requires_selection"] and not enemies.can_apply_statuses(application):
@@ -176,13 +197,16 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not enemies.can_apply_statuses(applications):
 		return _failure()
 	var bonus := _tinker.bonus_for_attack(card_id)
-	var attack_damage: int = damage_value + bonus
+	if damage_value > CombatStatuses.MAX_INT - bonus - patch_damage:
+		return _failure()
+	var attack_damage: int = damage_value + bonus + patch_damage
 	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID and not _area.can_resolve(
 			enemies, attack_damage, owner_statuses, target_statuses):
 		return _failure()
 	return {"ok": true, "positions": positions, "applications": applications,
 		"attack_damage": attack_damage, "cost": cost_value,
 		"requires_selection": preview["requires_selection"],
+		"owner_id": owner_id,
 		"owner_statuses": owner_statuses, "target_statuses": target_statuses}
 
 
