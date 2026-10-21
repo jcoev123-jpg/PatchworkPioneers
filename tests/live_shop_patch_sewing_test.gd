@@ -4,8 +4,8 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 var wardrobe: RunPatchWardrobe
 
 
-func _sequence_fixture(kinds: Array) -> Dictionary:
-	for value in range(1, 3000):
+func _sequence_fixture(kinds: Array, first_seed: int = 1, direct_last: bool = false) -> Dictionary:
+	for value in range(first_seed, 3000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -22,6 +22,8 @@ func _sequence_fixture(kinds: Array) -> Dictionary:
 				paths.append(path)
 				source = path.back()
 			if paths.size() != kinds.size():
+				continue
+			if direct_last and paths.back().size() != 1:
 				continue
 			map.choose_node(first)
 			var entry := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
@@ -160,14 +162,16 @@ func _negative_inputs(callback: Callable) -> void:
 	carry._wardrobe = previous
 
 
-func _purchase(index: int, keyboard: bool) -> void:
+func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
+	if wearer < 0:
+		wearer = index
 	var before := _patch_state()
 	var stock: Dictionary = app.shop_purchases.get_stock()
 	var offer: Dictionary = stock.trinkets[index]
 	_check(not offer.sold and offer.price == 100 and app.session_gold >= 100,
 		"selected genuine 100 gold offer is affordable and unsold")
 	await _pick(app.shop_patch_offers, index, keyboard)
-	await _pick(app.shop_patch_heroes, index, keyboard)
+	await _pick(app.shop_patch_heroes, wearer, keyboard)
 	if keyboard:
 		app.shop_patch_heroes.grab_focus()
 		await _key(KEY_TAB)
@@ -176,7 +180,7 @@ func _purchase(index: int, keyboard: bool) -> void:
 	else:
 		await _click(app.shop_patch_buy_button)
 	var state := wardrobe.get_snapshot()
-	_check(state.worn[app.run_heroes[index].id][state.definitions[offer.id]] == offer.id,
+	_check(state.worn[app.run_heroes[wearer].id][state.definitions[offer.id]] == offer.id,
 		"paid patch is immediately sewn into selected hero authored slot")
 	_check(app.session_gold == before[3] - 100 and state.gold == app.session_gold
 		and app.run_deck == before[1] and app.run_rng.state == before[6]
@@ -551,7 +555,183 @@ func _run() -> void:
 	await _poor_and_replacement()
 	await _unsewn_elite_before_shop()
 	await _shop_fight_shop()
+	await _badge_fights()
 	await _finish_patches()
+
+
+func _badge_service_checks() -> void:
+	var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/starter_party.json"))
+	for hero in definitions:
+		hero.max_hp = int(hero.max_hp)
+	var heroes := CombatParty.new(definitions).get_heroes()
+	var slots: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	for owned in [[], ["stitched_badge"]]:
+		var carry := RunTornCarryover.new(heroes)
+		var clothes := RunPatchWardrobe.new(heroes, owned, slots, 0)
+		_check(carry.bind_wardrobe(clothes, carry.torn, clothes.get_snapshot()),
+			"scene-free unowned/unsewn wardrobe genuinely binds")
+		var before := [carry.read_state(), carry.torn.read_state(), clothes.get_snapshot()]
+		var party := carry.create_next_fight_party()
+		_check(party != null and party.has_meta("shop_patch_projection"), "bound party carries optional projection")
+		if party == null:
+			continue
+		var rules: CombatShopPatchRules = party.get_meta("shop_patch_projection").rules
+		for hero in party.get_heroes():
+			_check(rules.opening_block_bonus(hero.id) == 0, "unowned/unsewn grants no Badge bonus")
+		_check([carry.read_state(), carry.torn.read_state(), clothes.get_snapshot()] == before,
+			"party creation never mutates persistent ledgers")
+		var fight := _badge_flow(party)
+		var projection: Dictionary = party.get_meta("shop_patch_projection")
+		var mismatched := projection.duplicate(true)
+		mismatched.heroes[1].hp -= 1
+		for invalid in [[], {}, {"rules": 3}, {"rules": CombatShopPatchRules.new(), "heroes": heroes}, mismatched]:
+			party.set_meta("shop_patch_projection", invalid)
+			var state := _badge_flow_state(fight)
+			_check(not fight.flow.begin_fight() and _badge_flow_state(fight) == state,
+				"invalid optional projection rejects before deck, RNG, actors or one-shot mutations")
+		party.set_meta("shop_patch_projection", projection)
+		_check(fight.flow.begin_fight() and party.get_hero(1).block == 6
+			and party.get_hero(2).block == 0 and party.get_hero(3).block == 0,
+			"unowned/unsewn battle begins with base Block only after rejected starts")
+		if not owned.is_empty():
+			_check(clothes.sew("stitched_badge", "warden", "HEAD", "after-projection", clothes.get_snapshot()).ok,
+				"wardrobe can sew after old party projection was made")
+			_check(rules.opening_block_bonus("warden") == 0
+				and carry.create_next_fight_party().get_meta("shop_patch_projection").rules.opening_block_bonus("warden") == 3,
+				"battle projection stays detached while next factory freshly binds current sewing")
+		var another := carry.create_next_fight_party()
+		party.get_meta("shop_patch_projection").heroes[0].hp -= 1
+		_check(another.get_meta("shop_patch_projection").heroes == heroes
+			and carry.create_next_fight_party().get_meta("shop_patch_projection").heroes == heroes,
+			"each factory projection is detached from other parties and ledgers")
+		clothes._heroes[0].hp -= 1
+		var stale := [carry.read_state(), carry.torn.read_state(), clothes.get_snapshot()]
+		_check(carry.create_next_fight_party() == null
+			and [carry.read_state(), carry.torn.read_state(), clothes.get_snapshot()] == stale,
+			"stale wardrobe rejects party creation without repairing either ledger")
+		clothes._heroes[0].hp += 1
+		carry.torn._heroes[0].hp -= 1
+		var torn_stale := [carry.read_state(), carry.torn.read_state(), clothes.get_snapshot()]
+		_check(carry.create_next_fight_party() == null
+			and [carry.read_state(), carry.torn.read_state(), clothes.get_snapshot()] == torn_stale,
+			"torn drift rejects without mutating either ledger")
+	var unbound := RunTornCarryover.new(heroes).create_next_fight_party()
+	_check(unbound != null and not unbound.has_meta("shop_patch_projection"), "unbound runs retain absent projection")
+	var vanilla := _badge_flow(unbound)
+	_check(vanilla.flow.begin_fight() and unbound.get_hero(1).block == 6,
+		"unbound combat preserves existing opening Block")
+
+
+func _badge_flow(party: CombatParty) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 107
+	var deck := CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
+	var enemies := CombatEnemies.new([{"id": "opening_probe", "max_hp": 20}])
+	var intents := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 0}]}])
+	var result := CombatBattleResult.new(party, enemies)
+	return {"party": party, "deck": deck, "enemies": enemies, "intents": intents,
+		"result": result, "rng": rng, "flow": CombatRoundFlow.new(deck, party, enemies, intents, result)}
+
+
+func _badge_flow_state(f: Dictionary) -> Array:
+	return [f.party.get_heroes(), f.enemies.get_enemies(), f.deck.draw_pile.duplicate(),
+		f.deck.hand.duplicate(), f.deck.discard_pile.duplicate(), f.deck.energy, f.deck.turn_active,
+		f.rng.state, f.intents.get_intents(), f.intents._turn_index, f.result.get_outcome(),
+		f.flow._started, f.flow._opening_block._consumed]
+
+
+func _badge_fights() -> void:
+	_badge_service_checks()
+	var fixture := {}
+	var next_seed := 1
+	var badge := -1
+	# Find a real generated route whose real stock contains the Badge. Never
+	# replace stock or patch definitions to manufacture a positive case.
+	for attempt in range(20):
+		fixture = _sequence_fixture(["Shop", "Fight", "Fight"], next_seed, true)
+		_check(not fixture.is_empty(), "generated route supports Badge and inactive follow-up Fight")
+		if fixture.is_empty() or not await _routed_win(fixture, false):
+			return
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		app.session_gold = 500
+		await _reach(fixture.paths[0], false)
+		for i in range(app.shop_patch_offers.item_count):
+			if app.shop_purchases.get_stock().trinkets[i].id == "stitched_badge":
+				badge = i
+		next_seed = fixture.seed + 1
+		await _click(app.shop_back_button)
+		if badge >= 0:
+			break
+	_check(badge >= 0, "real seeded Shop stock guarantees a purchasable Stitched Badge")
+	if badge < 0:
+		return
+	for wearer in [0, 1]:
+		var replay: Array = []
+		for keyboard in [false, true]:
+			if not await _routed_win(fixture, false):
+				return
+			await _activate(app.reward_buttons[3], keyboard)
+			await _activate(app.continue_button, keyboard)
+			app.session_gold = 500
+			await _reach(fixture.paths[0], keyboard)
+			wardrobe = app._shop_wardrobe
+			await _purchase(badge, keyboard, wearer)
+			var persistent := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
+				app.run_trinkets.duplicate(), app.session_gold, app.run_scraps]
+			await _activate(app.shop_continue_button, keyboard)
+			# The route callback must fail closed on a stale bound wardrobe.
+			var transit: Array = fixture.paths[1].duplicate()
+			var destination: String = transit.pop_back()
+			await _visit_path(transit, keyboard)
+			var action: Button = _route_action(destination)
+			var callback: Callable = action.pressed.get_connections()[0].callable
+			wardrobe._heroes[wearer].hp -= 1
+			_reject_entry(callback, "stale wardrobe rejects real Fight entry")
+			var stale := _patch_state()
+			_check(app.party_carryover.create_next_fight_party() == null and _patch_state() == stale,
+				"stale factory leaves run RNG and every persistent ledger unchanged")
+			wardrobe._heroes[wearer].hp += 1
+			var oracle := _oracle(destination)
+			await _activate(action, keyboard)
+			_check(app.party != null and app.round_flow._started and _mounted_state() == oracle,
+				"real mounted Fight starts with exact seeded entry state")
+			for hero in app.party.get_heroes():
+				var expected := (6 if hero.id == "warden" else 0) + (3 if hero.position == wearer + 1 else 0)
+				_check(hero.block == expected, "Badge adds exactly 3 only to its wearer at first entry")
+			_check([app.run_heroes, app.run_deck, app.run_trinkets, app.session_gold, app.run_scraps] == persistent,
+				"opening Badge preserves persistent heroes, deck, ownership and currency")
+			var live := {"party": app.party, "enemies": app.enemies, "deck": app.deck,
+				"rng": app.run_rng, "intents": app.enemy_intents, "result": app.battle_result,
+				"flow": app.round_flow}
+			var trace := [_badge_flow_state(live)]
+			var duplicate := _badge_flow_state(live)
+			_check(not app.round_flow.begin_fight() and _badge_flow_state(live) == duplicate,
+				"duplicate begin cannot stack Badge, change actors or consume RNG")
+			_check(app.round_flow.end_turn(), "real Badge battle advances through enemy phase")
+			for hero in app.party.get_heroes():
+				_check(hero.block == 0, "normal next-turn reset removes all opening Block")
+			trace.append(_badge_flow_state(live))
+			await _settle_battle(keyboard, wearer + 1)
+			await _activate(app.continue_button, keyboard)
+			await _reach(fixture.paths[2], keyboard)
+			var down: Dictionary = app.party.get_hero(wearer + 1)
+			_check(down.hp == 0 and down.block == 0
+				and wardrobe.get_snapshot().worn[down.id].HEAD == "stitched_badge",
+				"next mounted Fight grants zero to genuinely downed inactive Badge wearer")
+			trace.append(_mounted_state())
+			trace.append([app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.run_trinkets.duplicate(),
+				app.session_gold, app.run_scraps, wardrobe.get_snapshot()])
+			if keyboard:
+				_check(trace == replay, "Badge mouse/keyboard replay agrees on full combat and persistent state")
+			else:
+				replay = trace
+			await _settle_battle(keyboard)
+			await _activate(app.continue_button, keyboard)
+			await _activate(app.route_back_button, keyboard)
 
 
 func _finish_patches() -> void:
