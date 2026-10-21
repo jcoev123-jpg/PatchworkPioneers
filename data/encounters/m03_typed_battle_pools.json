@@ -1,0 +1,49 @@
+{
+  "Fight": {
+    "starter_attacks": {
+      "schedule": "res://data/encounters/starter_attacks.json",
+      "enemy_ids": [
+        "ragling",
+        "ragling_guard"
+      ]
+    },
+    "bobbin_skirmish": {
+      "schedule": "res://data/encounters/bobbin_skirmish.json",
+      "enemy_ids": [
+        "fray_scavenger",
+        "spool_stalker"
+      ]
+    },
+    "buttonhole_holdout": {
+      "schedule": "res://data/encounters/buttonhole_holdout.json",
+      "enemy_ids": [
+        "button_guard",
+        "seam_ripper"
+      ]
+    },
+    "guard_counterattack": {
+      "schedule": "res://data/encounters/guard_counterattack.json",
+      "enemy_ids": [
+        "ragling_guard",
+        "button_guard"
+      ]
+    }
+  },
+  "Elite": {
+    "thimble_crossfire": {
+      "schedule": "res://data/encounters/thimble_crossfire.json",
+      "enemy_ids": [
+        "button_guard",
+        "seam_ripper"
+      ]
+    }
+  },
+  "Boss": {
+    "patchwork_behemoth": {
+      "schedule": "res://data/encounters/patchwork_behemoth.json",
+      "enemy_ids": [
+        "patchwork_behemoth"
+      ]
+    }
+  }
+}
