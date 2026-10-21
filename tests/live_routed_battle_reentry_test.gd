@@ -274,7 +274,10 @@ func _run() -> void:
 			_check(app.act_outcome.get_state().run_status == run_status and app.act_outcome.get_state().settled_node_ids.count(id) == 1, "run defeat/Boss victory latched once")
 			if run_status != RunActBattleOutcome.ACTIVE:
 				_check(app.result_label.text.contains("Run defeat" if session == 1 else "Run victory"), "visible run defeat or Boss victory")
-			_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "no invented later rewards or continuation")
+			if kind == "Fight" and outcome == CombatBattleResult.VICTORY:
+				_check(app.multi_fight_rewards != null and app.reward_buttons.size() == 4 and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "later normal Fight prepares rewards without payment")
+			else:
+				_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.multi_fight_rewards == null and app.continue_button == null and app.session_gold == persistent[2] and app.run_deck == persistent[1], "Elite/Boss/defeat gain no invented rewards or continuation")
 			before = _entry_state()
 			app._observe_battle_result()
 			app._observe_battle_result()

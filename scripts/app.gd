@@ -102,6 +102,7 @@ var _placeholder_map: WeakRef
 var _placeholder_route: Array[String] = []
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
+var multi_fight_rewards: RunMultiFightRewards
 var fight_reward_offers: Array = []
 var fight_reward_gold := 0
 var fight_reward_claimed := false
@@ -161,7 +162,7 @@ func _observe_battle_result() -> bool:
 			deck.end_turn()
 		$LiveSupportHand._cancel_pending()
 		_refresh_hand()
-		if outcome == CombatBattleResult.VICTORY and (run_map == null or _carryover_route.size() == 1):
+		if outcome == CombatBattleResult.VICTORY and (run_map == null or run_map.get_node(_carryover_node).get("type") == "Fight"):
 			_build_card_reward()
 		if party.is_valid():
 			_refresh_party()
@@ -172,7 +173,7 @@ func _observe_battle_result() -> bool:
 			result_label.text += " | Run defeat"
 		if act_outcome != null and act_outcome.get_state().run_status == RunActBattleOutcome.VICTORY:
 			result_label.text += " | Run victory"
-		if outcome == CombatBattleResult.VICTORY and (run_map == null or _carryover_route.size() == 1):
+		if outcome == CombatBattleResult.VICTORY and (run_map == null or run_map.get_node(_carryover_node).get("type") == "Fight"):
 			result_label.text += " | Pending gold: %d" % fight_reward_gold if run_map != null else " | Gold: %d" % session_gold
 		result_label.show()
 		return_button.grab_focus()
@@ -778,9 +779,9 @@ func _build_card_reward() -> void:
 	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
 		return
 	if run_map != null and (not _current_carryover_fight() \
-		or not party_carryover.read_state().completed_fights.has(_carryover_node)):
+		or run_map.get_node(_carryover_node).get("type") != "Fight"):
 		return
-	if run_map != null and fight_rewards != null:
+	if run_map != null and (fight_rewards != null or multi_fight_rewards != null):
 		return
 	var offers: Array = []
 	var party_ids: Array[String] = []
@@ -789,9 +790,17 @@ func _build_card_reward() -> void:
 	var catalog := StarterCards.new()
 	var ids: Array = INTERIM_REWARD_IDS
 	if run_map != null:
-		fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
-			catalog.get_all_card_ids(), run_deck, session_gold, false)
-		var prepared := fight_rewards.prepare()
+		var prepared: Dictionary
+		if _carryover_route.size() == 1:
+			if not party_carryover.read_state().completed_fights.has(_carryover_node):
+				return
+			fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
+				catalog.get_all_card_ids(), run_deck, session_gold, false)
+			prepared = fight_rewards.prepare()
+		else:
+			multi_fight_rewards = RunMultiFightRewards.new(run_map, run_rng, party_carryover,
+				run_deck, session_gold, [], catalog.get_all_card_ids())
+			prepared = multi_fight_rewards.prepare(_carryover_node, battle_result, party)
 		if not prepared.ok:
 			return
 		fight_reward_offers = prepared.offers
@@ -834,13 +843,18 @@ func _build_card_reward() -> void:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		choices.add_child(button)
 		reward_buttons.append(button)
-		button.pressed.connect(_claim_card_reward.bind(id, button, fight_rewards if run_map != null else card_reward))
+		button.pressed.connect(_claim_card_reward.bind(id, button, _routed_reward_service() if run_map != null else card_reward))
+
+
+func _routed_reward_service():
+	return multi_fight_rewards if multi_fight_rewards != null else fight_rewards
 
 
 func _claim_card_reward(id: String, button, offering) -> void:
-	if offering is RunFightVictoryRewards:
-		if offering != fight_rewards or fight_reward_claimed or _reward_map == null \
+	if offering is RunFightVictoryRewards or offering is RunMultiFightRewards:
+		if offering != _routed_reward_service() or fight_reward_claimed or _reward_map == null \
 			or _reward_map.get_ref() != run_map or run_map == null or not _battle_closed \
+			or not _current_carryover_fight() \
 			or battle_result == null or battle_result._party != party or battle_result._enemies != enemies \
 			or battle_result.get_outcome() != CombatBattleResult.VICTORY \
 			or party == null or not party.is_valid() or party.is_defeated() \
@@ -851,11 +865,19 @@ func _claim_card_reward(id: String, button, offering) -> void:
 		if fight_reward_offers.size() != 3 or index > 3 \
 			or id != (fight_reward_offers[index].id if index < 3 else ""):
 			return
-		var result: Dictionary = offering.choose(id)
+		if offering is RunMultiFightRewards:
+			if offering._map != run_map or offering._rng != run_rng or offering._carry != party_carryover \
+				or offering.read_state().deck != run_deck or offering.read_state().gold != session_gold \
+				or offering.read_state().party.heroes != run_heroes:
+				return
+		var result: Dictionary = offering.choose(_carryover_node, id) if offering is RunMultiFightRewards else offering.choose(id)
 		if not result.ok:
 			return
-		run_deck.assign(result.deck)
-		session_gold = result.gold
+		var settled: Dictionary = result.state if offering is RunMultiFightRewards else result
+		run_deck.assign(settled.deck)
+		session_gold = settled.gold
+		if offering is RunMultiFightRewards:
+			run_heroes = settled.party.heroes.duplicate(true)
 		fight_reward_claimed = true
 		result_label.text = "Battle result: victory | Gold: %d" % session_gold
 		_finish_card_reward(offering)
@@ -899,18 +921,20 @@ func _finish_card_reward(offering) -> void:
 
 ## The terminal Fight stays separate from persistent run data and future encounters.
 func _can_leave_fight() -> bool:
-	return run_map != null and run_map.get_route().size() == 1 \
+	return run_map != null and (run_map.get_route().size() == 1 if multi_fight_rewards == null else _current_carryover_fight()) \
 		and run_map.get_node(run_map.get_current_node_id()).get("type") == "Fight" \
 		and _battle_closed and battle_result != null \
 		and battle_result._party == party and battle_result._enemies == enemies \
 		and battle_result.get_outcome() == CombatBattleResult.VICTORY \
 		and party != null and party.is_valid() and not party.is_defeated() \
-		and fight_rewards != null and fight_reward_claimed \
+		and _routed_reward_service() != null and fight_reward_claimed \
+		and (multi_fight_rewards == null or (party_carryover.read_state().completed_fights.has(_carryover_node) \
+			and party_carryover.read_state().heroes == run_heroes)) \
 		and RunRestRecovery._is_valid_roster(run_heroes)
 
 
 func _continue_to_rest_route(offering, source_map: WeakRef, button) -> void:
-	if not _can_leave_fight() or offering != fight_rewards or source_map == null \
+	if not _can_leave_fight() or offering != _routed_reward_service() or source_map == null \
 		or source_map.get_ref() != run_map or not is_instance_valid(button) \
 		or button != continue_button or button.disabled or not button.is_visible_in_tree() \
 		or is_instance_valid(route_view) or is_instance_valid(rest_view):
@@ -1032,6 +1056,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	continue_button = null
 	card_reward = null
 	fight_rewards = null
+	multi_fight_rewards = null
 	fight_reward_offers.clear()
 	fight_reward_gold = 0
 	fight_reward_claimed = false
@@ -1618,6 +1643,7 @@ func _return_to_title() -> void:
 	victory_gold = null
 	card_reward = null
 	fight_rewards = null
+	multi_fight_rewards = null
 	fight_reward_offers.clear()
 	fight_reward_gold = 0
 	fight_reward_claimed = false
