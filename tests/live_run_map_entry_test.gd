@@ -186,24 +186,19 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	_check(app.route_atlas_overlay == overlay, "duplicate open and foreign close sources rejected")
 	_check(not app._choose_route("f01_n0"), "hidden chooser rejects legal Fight")
 	var requests: Array[String] = []
-	_check(atlas.node_requested.get_connections().is_empty(), "live app has no route request listener yet")
+	_check(atlas.node_requested.get_connections().size() == 1, "one opening route request listener")
 	atlas.node_requested.connect(func(id: String): requests.append(id))
-	var legal_button: Button = nodes["f01_n0"].get_node_or_null("Action") as Button
-	_check(legal_button != null and legal_button.is_visible_in_tree(), "mounted Fight request button exists")
-	if legal_button != null:
-		await _click_point(legal_button.get_global_rect().get_center())
-		_check(requests == ["f01_n0"] and _snapshot(app) == hidden,
-			"live mouse click emits only one request; hidden chooser and session untouched")
-		for keycode in [KEY_ENTER, KEY_SPACE]:
-			requests.clear()
-			legal_button.grab_focus()
-			_check(legal_button.has_focus(), "live Fight marker receives keyboard focus")
-			await _key(keycode)
-			_check(requests == ["f01_n0"] and _snapshot(app) == hidden,
-				"live keyboard emits only one request without bypassing chooser")
+	# Fight admission is covered by live_atlas_opening_choice_test; retain invalid-kind input here.
+	for id in highlighted:
+		if app.run_map.get_node(id).type == "Fight":
+			continue
+		var unsupported: Button = nodes[id].get_node("Action")
+		await _click(unsupported)
+		_check(not requests.is_empty() and requests.back() == id and _snapshot(app) == hidden,
+			"unsupported opening marker emits without entering battle")
 	app.route_atlas_close.grab_focus()
 	_check(app.route_atlas_close.has_focus() and _snapshot(app) == hidden,
-		"close remains accessible after legal node input")
+		"close remains accessible after unsupported node input")
 	var atlas_id := atlas.get_instance_id()
 	var overlay_id: int = overlay.get_instance_id()
 	var cleared: Array = []
