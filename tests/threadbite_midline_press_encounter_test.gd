@@ -496,8 +496,8 @@ func _test_owner_turn_tick() -> void:
 	_check(party.get_hero(1).get("block") == 0 and party.get_hero(2).get("block") == 0
 		and party.get_hero(3).get("block") == 0,
 		"the player-turn reset clears every hero's Block")
-	_check(party.get_hero(2).get("hp") == 25
-		and party.get_hero(2).get("statuses") == {"bleed": 1},
+	_check(party.get_hero(2).get("hp") == 27
+		and party.get_hero(2).get("statuses") == {"bleed": 2},
 		"the player-turn reset does not touch HP or Bleed")
 	_check(scheduler._turn_index == 0 and scheduler.get_intents() == _intents_for(0),
 		"owner ticks do not advance the intent cycle")
