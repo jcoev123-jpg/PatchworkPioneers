@@ -134,6 +134,9 @@ static func _parse_schedule_text(json_text: String) -> Array:
 			if action.has("target_position") \
 					and not _coerce_integral_field(action, "target_position"):
 				return []
+			if action.has("direction") \
+					and not _coerce_integral_field(action, "direction"):
+				return []
 	var validator := CombatEnemyIntents.new(definitions)
 	if not validator.is_valid():
 		return []
