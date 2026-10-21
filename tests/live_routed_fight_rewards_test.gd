@@ -132,7 +132,7 @@ func _run() -> void:
 			await _click(app.reward_buttons[0])
 			owned.append(expected_offers[0].id)
 		_check(app.fight_reward_claimed and app.run_deck == owned and app.session_gold == expected_award
-			and app.run_heroes == app.party.get_heroes() and app.run_rng.state == expected_rng,
+			and app.run_heroes == _block_free_party() and app.run_rng.state == expected_rng,
 			"physical choice/Skip publishes exactly owned deck and one award; heroes/RNG preserved")
 		_check(is_instance_valid(app.continue_button), "successful transaction creates Continue")
 		if not is_instance_valid(app.continue_button):

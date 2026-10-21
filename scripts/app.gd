@@ -60,6 +60,11 @@ var victory_gold: RunVictoryGold
 var session_gold := 0
 var run_deck: Array[String] = []
 var run_heroes: Array = []
+var party_carryover: RunPartyCarryover
+var _carryover_map: WeakRef
+var _carryover_node := ""
+var _carryover_party: CombatParty
+var _carryover_result: CombatBattleResult
 var continue_button: Button
 var rest_view: VBoxContainer
 var rest_heal_button: Button
@@ -121,9 +126,14 @@ func _process(_delta: float) -> void:
 func _observe_battle_result() -> bool:
 	if battle_result == null:
 		return false
+	if party_carryover != null and not _current_carryover_fight():
+		return false
 	var outcome := battle_result.evaluate()
 	if outcome == CombatBattleResult.ACTIVE:
 		return true
+	if not _battle_closed and outcome == CombatBattleResult.VICTORY and run_map != null:
+		if not _commit_fight_carryover():
+			return false
 	if is_instance_valid(enemy_buff_forecast_label):
 		enemy_buff_forecast_label.text = ""
 		enemy_buff_forecast_label.hide()
@@ -132,8 +142,6 @@ func _observe_battle_result() -> bool:
 		if outcome == CombatBattleResult.VICTORY:
 			if run_map == null:
 				session_gold = victory_gold.claim_gold(false, run_rng)
-			if run_map != null:
-				run_heroes = party.get_heroes()
 		# Enemy phases have already ended the turn; external/card damage may not have.
 		if deck.turn_active:
 			deck.end_turn()
@@ -151,6 +159,27 @@ func _observe_battle_result() -> bool:
 		result_label.show()
 		return_button.grab_focus()
 	return false
+
+
+func _current_carryover_fight() -> bool:
+	return party_carryover != null and _carryover_map != null \
+		and run_map != null and _carryover_map.get_ref() == run_map \
+		and run_map.get_route() == [_carryover_node] \
+		and run_map.get_current_node_id() == _carryover_node \
+		and run_map.get_node(_carryover_node).get("type") == "Fight" \
+		and party == _carryover_party and battle_result == _carryover_result \
+		and battle_result != null and battle_result._party == party and battle_result._enemies == enemies
+
+
+func _commit_fight_carryover() -> bool:
+	if not _current_carryover_fight() or _battle_closed \
+		or party_carryover.read_state().completed_fights.has(_carryover_node):
+		return false
+	var committed := party_carryover.commit_victory(_carryover_node, battle_result, party)
+	if not committed.ok:
+		return false
+	run_heroes = committed.heroes
+	return true
 
 
 func _build_title() -> void:
@@ -331,6 +360,11 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	if not starting_flow._valid_bindings():
 		push_warning("Starter combat bindings are invalid; run was not started")
 		return false
+	var starting_carryover: RunPartyCarryover
+	if shared_rng != null:
+		starting_carryover = RunPartyCarryover.new(starting_party.get_heroes())
+		if not starting_carryover.is_valid():
+			return false
 	var rng_before := starting_rng.state
 	starting_deck.draw_pile.assign(cards)
 	starting_deck._shuffle_draw_pile()
@@ -346,6 +380,12 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	deck = starting_deck
 	run_deck = cards.duplicate()
 	battle_result = starting_result
+	party_carryover = starting_carryover
+	if party_carryover != null:
+		_carryover_map = weakref(run_map)
+		_carryover_node = run_map.get_current_node_id()
+		_carryover_party = party
+		_carryover_result = battle_result
 	round_flow = starting_flow
 	victory_gold = RunVictoryGold.new(battle_result)
 	session_gold = 0
@@ -631,6 +671,9 @@ func _refresh_swap_preview() -> void:
 ## Routed rewards are prepared once; the standalone demo keeps its fixed offering.
 func _build_card_reward() -> void:
 	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
+		return
+	if run_map != null and (not _current_carryover_fight() \
+		or not party_carryover.read_state().completed_fights.has(_carryover_node)):
 		return
 	if run_map != null and fight_rewards != null:
 		return
@@ -1295,6 +1338,11 @@ func _return_to_title() -> void:
 	_rest_committed_heroes.clear()
 	_rest_map = null
 	run_heroes.clear()
+	party_carryover = null
+	_carryover_map = null
+	_carryover_node = ""
+	_carryover_party = null
+	_carryover_result = null
 	continue_button = null
 	round_flow = null
 	remove_child(battle_view)
