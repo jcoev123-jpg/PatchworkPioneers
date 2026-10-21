@@ -80,6 +80,7 @@ func _run() -> void:
 		var next: Callable = app.rest_continue_button.pressed.get_connections()[0].callable
 		var source: Array = app.run_deck.duplicate()
 		var heroes: Array = app.run_heroes.duplicate(true)
+		_check(app.rest_hp_label.text.contains(" -> "), "eligible Upgrade visit initially shows pending Heal forecast")
 		var ledger: Dictionary = app.party_carryover.read_state()
 		var indices: Array[int] = []
 		for index in range(source.size()):
@@ -202,6 +203,12 @@ func _run() -> void:
 				"one selected duplicate replaced exactly once without consuming Heal service")
 			_check(_persistent().slice(2) == before.slice(2) and app.run_heroes == heroes
 				and app.party_carryover.read_state() == ledger, "Upgrade preserves heroes, gold, RNG, route, combat and carryover ledger")
+			var hp_lines: PackedStringArray = []
+			for hero in heroes:
+				hp_lines.append("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp])
+			_check(app.rest_hp_label.text == "\n".join(hp_lines), "Upgrade removes forecast and keeps exact current HP rows")
+			app._refresh_rest_hp()
+			_check(app.rest_hp_label.text == "\n".join(hp_lines), "refresh cannot restore forecast after Upgrade")
 			_check(app.rest_heal_button.disabled and button.disabled and choices.disabled
 				and not app.rest_continue_button.disabled, "exclusive consumed upgrade enables Continue")
 			_reject_upgrade(upgrade, "duplicate Upgrade")

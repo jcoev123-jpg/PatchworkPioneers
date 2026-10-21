@@ -1682,6 +1682,7 @@ func _finish_rest_choice() -> void:
 	rest_stitch_second.disabled = true
 	rest_upgrade_button.disabled = true
 	rest_upgrade_cards.disabled = true
+	_refresh_rest_hp()
 	rest_continue_button.disabled = false
 	rest_continue_button.focus_next = rest_continue_button.get_path_to(rest_back_button)
 	rest_continue_button.focus_previous = rest_continue_button.get_path_to(rest_back_button)
@@ -2035,14 +2036,25 @@ func _heal_at_rest(visit: RunRestRecovery, button) -> void:
 	run_heroes = result.heroes.duplicate(true)
 	_rest_committed_heroes = run_heroes.duplicate(true)
 	_finish_rest_choice()
-	_refresh_rest_hp()
 	rest_back_button.grab_focus()
 
 
 func _refresh_rest_hp() -> void:
+	var preview: Dictionary = {}
+	if rest_recovery != null and not rest_recovery.is_consumed() \
+		and rest_upgrade != null and not rest_upgrade.is_consumed() \
+		and rest_stitch != null and not rest_stitch.is_consumed() \
+		and _rest_committed_heroes.is_empty() and _rest_committed_deck.is_empty():
+		preview = RunRestHealPreview.preview(run_heroes)
 	var lines: PackedStringArray = []
-	for hero in run_heroes:
-		lines.append("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp])
+	for index in range(run_heroes.size()):
+		var hero: Dictionary = run_heroes[index]
+		var line := "%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp]
+		if preview.get("ok") == true:
+			var forecast: Dictionary = preview.forecasts[index]
+			line += " -> %d/%d (+%d)%s" % [forecast.hp_after, preview.heroes[index].max_hp,
+				forecast.hp_delta, " Revive" if forecast.revived else ""]
+		lines.append(line)
 	rest_hp_label.text = "\n".join(lines)
 
 

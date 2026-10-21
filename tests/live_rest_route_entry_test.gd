@@ -36,6 +36,45 @@ func _block_free_party() -> Array:
 	return heroes
 
 
+func _rest_preview_state() -> Array:
+	return [_persistent(), app.party_carryover.read_state(), app.rest_recovery._roster.duplicate(true),
+		app.rest_recovery.is_consumed(), app.rest_upgrade.is_consumed(), app.rest_stitch.get_snapshot(),
+		app.rest_stitch.is_consumed(), app._rest_committed_heroes.duplicate(true),
+		app._rest_committed_deck.duplicate()]
+
+
+func _check_rest_forecast() -> void:
+	var before := _rest_preview_state()
+	var oracle := RunRestHealPreview.preview(app.run_heroes)
+	_check(oracle.ok and oracle.forecasts.size() == 3, "real eligible Rest has three oracle forecasts")
+	var lines: PackedStringArray = app.rest_hp_label.text.split("\n")
+	_check(lines.size() == oracle.forecasts.size(), "visible rows cover every forecast exactly once")
+	if not oracle.ok or lines.size() != oracle.forecasts.size():
+		return
+	for index in range(oracle.forecasts.size()):
+		var forecast: Dictionary = oracle.forecasts[index]
+		var hero: Dictionary = oracle.heroes[index]
+		_check(lines[index] == "%s: HP %d/%d -> %d/%d (+%d)%s" % [forecast.id.capitalize(),
+			forecast.hp_before, hero.max_hp, forecast.hp_after, hero.max_hp, forecast.hp_delta,
+			" Revive" if forecast.revived else ""], "visible current/result/delta/revive matches oracle exactly")
+	for repeat in range(3):
+		app._refresh_rest_hp()
+		_check(app.rest_hp_label.text.split("\n") == lines, "repeated preview remains fresh and identical")
+	_check(_rest_preview_state() == before, "preview preserves models, ledger, services, RNG and choice eligibility")
+	for control in [app.rest_view] + app.rest_view.get_children():
+		if control is Control:
+			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "forecast and every Rest control fit viewport")
+	_check(app.rest_hp_label.size.x >= app.rest_hp_label.get_minimum_size().x,
+		"complete forecast text fits label without clipping")
+
+
+func _check_rest_hp_only() -> void:
+	var expected: PackedStringArray = []
+	for hero in app.run_heroes:
+		expected.append("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp])
+	_check(app.rest_hp_label.text == "\n".join(expected), "completed or rejected forecast shows current HP only")
+
+
 func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = false) -> bool:
 	app.run_seed = fixture.seed
 	await _click(app.route_button)
@@ -99,7 +138,8 @@ func _run() -> void:
 	var old_heal: Callable
 	var old_back: Callable
 	var replay: Array = []
-	for session in range(3):
+	var replay_forecast := ""
+	for session in range(4):
 		seed(380038)
 		var global_next := randi()
 		seed(380038)
@@ -216,6 +256,14 @@ func _run() -> void:
 		_check(app.rest_view != null and app.run_map.get_route() == [fixture.fight, rest_id], "Rest advances map exactly once")
 		if app.rest_view == null:
 			break
+		_check_rest_forecast()
+		if session == 0:
+			replay_forecast = app.rest_hp_label.text
+		elif session == 3:
+			_check(app.rest_hp_label.text == replay_forecast, "returned run replays fresh identical forecasts")
+		_check(app.rest_hp_label.text.contains("Revive") == (session == 1), "downed visit revives; fresh living visit has no stale revival")
+		_check(RunRestHealPreview.preview(copy).forecasts[2].hp_delta == 0 if session != 1 else
+			RunRestHealPreview.preview(copy).forecasts[2].revived, "mounted cases cover full-HP cap and downed recovery")
 		before = _persistent()
 		old_route.call()
 		old_back.call()
@@ -238,9 +286,13 @@ func _run() -> void:
 		_check(_persistent() == before and not visit.is_consumed(), "wrong visit rejects without consumption")
 		app.run_heroes = _defeated(copy)
 		var invalid_before := _persistent()
+		app._refresh_rest_hp()
+		_check_rest_hp_only()
 		old_heal.call()
 		_check(_persistent() == invalid_before and not visit.is_consumed(), "changed defeated snapshot cannot heal")
 		app.run_heroes = copy.duplicate(true)
+		app._refresh_rest_hp()
+		_check_rest_forecast()
 		var expected_heal := RunRestRecovery.new(copy).choose_heal()
 		_check(expected_heal.ok, "independent service oracle is valid")
 		if "--inject-wrong-hp" in OS.get_cmdline_user_args():
@@ -252,6 +304,9 @@ func _run() -> void:
 			await _key(KEY_ENTER)
 		_check(visit.is_consumed() and app.rest_heal_button.disabled and app.run_heroes == expected_heal.heroes,
 			"visible Heal commits service exact result once")
+		_check_rest_hp_only()
+		app._refresh_rest_hp()
+		_check_rest_hp_only()
 		var ledger: Dictionary = app.party_carryover.read_state()
 		_check(ledger.ok and ledger.heroes == expected_heal.heroes and ledger.completed_rests == [rest_id],
 			"mounted Heal also commits exact heroes and current Rest once to persistent ledger")
@@ -270,7 +325,8 @@ func _run() -> void:
 		for stale in [old_continue, old_route, old_heal, old_back]:
 			stale.call()
 		_check(app.title_view.visible and app.run_heroes.is_empty() and app.run_map == null
-			and app.rest_recovery == null and app.rest_view == null and app.deck == null, "Return clears run and post-Return inputs are inert")
+			and app.rest_recovery == null and app.rest_view == null and app.rest_hp_label == null
+			and app.deck == null, "Return clears run and forecast and post-Return inputs are inert")
 		_check(randi() == global_next, "entire route/rest path leaves global RNG unchanged")
 	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	await _frames()
