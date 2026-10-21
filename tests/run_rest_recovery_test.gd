@@ -266,12 +266,20 @@ func _assert_preview_matches_service(snapshot: Array, expected_hps: Array, label
 		expected_actor["hp"] = expected_hps[i]
 		_check(heroes[i] == expected_actor, label + ": actor %d preserves all non-HP fields" % i)
 		_check(int(heroes[i]["hp"]) <= int(heroes[i]["max_hp"]), label + ": actor %d never exceeds current max" % i)
+		var max_hp_before: int = int(before[i].get("max_hp", 0))
+		var base_heal: int = (max_hp_before * 3) / 10
+		var revive_hp: int = 1 if int(before[i]["hp"]) == 0 else 0
+		var wasted_heal: int = max(0, int(before[i]["hp"]) + revive_hp + base_heal - int(committed["heroes"][i]["hp"]))
 		var expected_record := {
 			"id": before[i]["id"],
 			"hp_before": int(before[i]["hp"]),
 			"hp_after": int(committed["heroes"][i]["hp"]),
 			"hp_delta": int(committed["heroes"][i]["hp"]) - int(before[i]["hp"]),
 			"revived": int(before[i]["hp"]) == 0,
+			"max_hp": max_hp_before,
+			"base_heal": base_heal,
+			"revive_hp": revive_hp,
+			"wasted_heal": wasted_heal,
 		}
 		_check(forecasts[i] == expected_record, label + ": full per-hero record %d" % i)
 		_check(int(heroes[i]["hp"]) == int(expected_hps[i]), label + ": expected HP %d" % i)
@@ -286,6 +294,25 @@ func _test_preview_authored_and_caps() -> void:
 			"capped Warden +5, Seamstress +9, revived Tinker +8")
 		_check(forecast["forecasts"].map(func(f): return f["revived"]) == [false, false, true],
 			"only Tinker is marked revived")
+		_check(forecast["forecasts"][0]["max_hp"] == 40 and forecast["forecasts"][0]["base_heal"] == 12 and forecast["forecasts"][0]["revive_hp"] == 0 and forecast["forecasts"][0]["wasted_heal"] == 7,
+			"Warden 35/40 -> 40 base 12 revive 0 wasted 7")
+		_check(forecast["forecasts"][1]["max_hp"] == 30 and forecast["forecasts"][1]["base_heal"] == 9 and forecast["forecasts"][1]["revive_hp"] == 0 and forecast["forecasts"][1]["wasted_heal"] == 0,
+			"Seamstress 18/30 -> 27 base 9 revive 0 wasted 0")
+		_check(forecast["forecasts"][2]["max_hp"] == 26 and forecast["forecasts"][2]["base_heal"] == 7 and forecast["forecasts"][2]["revive_hp"] == 1 and forecast["forecasts"][2]["wasted_heal"] == 0,
+			"Tinker 0/26 -> 8 base 7 revive 1 wasted 0")
+	# Tear-reduced-cap fixture: max 37/27/23, HP 0/26/20 -> 12/27/23
+	var torn := _party([0, 26, 20])
+	torn[0]["max_hp"] = 37
+	torn[1]["max_hp"] = 27
+	torn[2]["max_hp"] = 23
+	var torn_forecast := _assert_preview_matches_service(torn, [12, 27, 23], "torn cap 37/27/23 HP 0/26/20")
+	if torn_forecast.get("ok") == true:
+		_check(torn_forecast["forecasts"][0]["max_hp"] == 37 and torn_forecast["forecasts"][0]["base_heal"] == 11 and torn_forecast["forecasts"][0]["revive_hp"] == 1 and torn_forecast["forecasts"][0]["wasted_heal"] == 0,
+			"torn Warden 0/37 -> 12 base 11 revive 1 wasted 0")
+		_check(torn_forecast["forecasts"][1]["max_hp"] == 27 and torn_forecast["forecasts"][1]["base_heal"] == 8 and torn_forecast["forecasts"][1]["revive_hp"] == 0 and torn_forecast["forecasts"][1]["wasted_heal"] == 7,
+			"torn Seamstress 26/27 -> 27 base 8 revive 0 wasted 7")
+		_check(torn_forecast["forecasts"][2]["max_hp"] == 23 and torn_forecast["forecasts"][2]["base_heal"] == 6 and torn_forecast["forecasts"][2]["revive_hp"] == 0 and torn_forecast["forecasts"][2]["wasted_heal"] == 3,
+			"torn Tinker 20/23 -> 23 base 6 revive 0 wasted 3")
 	_assert_preview_matches_service(_party([0, 0, 1]), [13, 10, 8], "preview two downed")
 	_assert_preview_matches_service(_party([1, 1, 1]), [13, 10, 8], "preview uncapped 12/9/7 healing")
 	_assert_preview_matches_service(_party([40, 30, 26]), [40, 30, 26], "preview full HP capped")
