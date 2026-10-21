@@ -90,6 +90,14 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	var last_thread_index := -1
 	var chosen: Array[String] = map.get_route()
 	var legal: Array[String] = map.get_legal_choices()
+	var ordered_legal: Array[String] = []
+	for floor_nodes in floors:
+		var sorted_nodes: Array = floor_nodes.duplicate()
+		sorted_nodes.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["position"]) < int(b["position"]))
+		for node in sorted_nodes:
+			if legal.has(node["id"]) and not chosen.has(node["id"]):
+				ordered_legal.append(node["id"])
 	var bounding := Rect2(Vector2.ZERO, view.size)
 	_check(view.is_inside_tree() and view.size == RunRouteAtlas.ATLAS_SIZE,
 		label + ": actual 1240x600 mounted preview")
@@ -167,9 +175,11 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 			if identity != null and expected_nodes.has(id):
 				var kind: String = expected_nodes[id]["type"]
 				var expected_state := "chosen" if chosen.has(id) else ("legal" if legal.has(id) else "other")
+				var number := ordered_legal.find(id) + 1
+				var expected_caption := (str(number) + "\n" if expected_state == "legal" else "") + kind + "\n" + id
 				var panel_style := marker.get_theme_stylebox("panel") as StyleBoxFlat
 				_check(marker.get_meta("route_kind") == kind
-					and identity.text == kind + "\n" + id
+					and identity.text == expected_caption
 					and marker.get_meta("route_state") == expected_state,
 					label + ": correct actual kind, ID and three-state highlights " + id)
 				_check(panel_style != null and panel_style.bg_color == _expected_style(expected_state),

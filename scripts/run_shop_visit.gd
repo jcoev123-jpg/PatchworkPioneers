@@ -22,6 +22,12 @@ func _init(deck_ids: Array[String], gold: int, prior_removals: int,
 	_gold = gold
 	_prior_removals = prior_removals
 	_valid = gold >= 0 and prior_removals >= 0
+	var owned_seen := {}
+	for trinket_id in owned_trinket_ids:
+		if owned_seen.has(trinket_id):
+			_valid = false
+			return
+		owned_seen[trinket_id] = true
 
 
 ## Only a caller-confirmed Shop node ID may be submitted. Each ID can open
