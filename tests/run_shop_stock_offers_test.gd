@@ -40,6 +40,7 @@ func _initialize() -> void:
 	if party.size() == 3 and deck.size() > 0:
 		_test_generated_stock(party, deck, catalog)
 		_test_seeded_replay(party, catalog)
+		_test_owned_fallback(party, deck, catalog)
 		_test_purchases(party, deck, catalog)
 		_test_rejections(party, catalog)
 	else:
@@ -204,13 +205,65 @@ func _oracle(catalog: StarterCards, party: Array[String], card_pool: Array, trin
 		if not owned.has(trinket_id):
 			trinket_ids.append(trinket_id)
 	trinket_ids.sort()
+	var owned_ids: Array[String] = []
+	for entry in trinket_pool:
+		if owned.has(entry["id"]):
+			owned_ids.append(entry["id"])
+	owned_ids.sort()
 	var trinkets: Array = []
-	for _pick in range(2):
-		var index: int = rng.randi_range(0, trinket_ids.size() - 1)
-		var trinket_id: String = trinket_ids[index]
-		trinket_ids.remove_at(index)
-		trinkets.append({"id": trinket_id, "price": _pool_price(trinket_pool, trinket_id)})
+	for tier in [trinket_ids, owned_ids]:
+		while not tier.is_empty() and trinkets.size() < 2:
+			var index: int = rng.randi_range(0, tier.size() - 1)
+			var trinket_id: String = tier.pop_at(index)
+			trinkets.append({"id": trinket_id, "price": _pool_price(trinket_pool, trinket_id)})
 	return {"cards": cards, "trinkets": trinkets}
+
+
+func _test_owned_fallback(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var cards := _card_pool(catalog, party, authored)
+	var pool: Array = authored.get("trinkets", [])
+	_check(pool.size() >= 2, "authored pool supplies two fallback candidates")
+	if pool.size() < 2:
+		return
+	# Two total IDs must succeed with zero, one or both already owned.
+	var two := pool.slice(0, 2)
+	for owned in [[], [two[0].id], [two[1].id], [two[0].id, two[1].id]]:
+		for candidates in [two, _trinket_pool(authored)]:
+			var before: Array = candidates.duplicate(true)
+			var reversed: Array = candidates.duplicate(true)
+			reversed.reverse()
+			var rng := _rng()
+			var replay_rng := _rng()
+			var oracle_rng := _rng()
+			var result := RunShopStockOffers.generate(rng, party, cards, candidates, owned)
+			var replay := RunShopStockOffers.generate(replay_rng, party, cards, reversed, owned)
+			var expected := _oracle(catalog, party, cards, candidates, owned, oracle_rng)
+			_check(result.ok and result.cards.size() == 5 and result.trinkets.size() == 2,
+				"owned authored stock retains five cards and two trinkets")
+			if not result.ok:
+				continue
+			_check(result.cards == expected.cards and result.trinkets == expected.trinkets,
+				"ownership tiers match independent oracle")
+			_check(result == replay and rng.state == replay_rng.state and rng.state == oracle_rng.state,
+				"ownership fallback replays offers and RNG across reordered pools")
+			_check(result.trinkets[0].id != result.trinkets[1].id, "fallback listings remain unique")
+			var unowned_count := 0
+			for entry in candidates:
+				if not owned.has(entry.id):
+					unowned_count += 1
+			for index in range(mini(unowned_count, 2)):
+				_check(not owned.has(result.trinkets[index].id), "unowned tier always precedes owned tier")
+			var shop := RunShopPurchases.new(party, deck, owned, 400, result.cards, result.trinkets)
+			_check(shop.is_valid(), "fallback stock admits real purchase service")
+			for listing in shop.get_stock().get("trinkets", []):
+				_check(listing.sold == owned.has(listing.id), "only already-owned fallback listings start sold")
+			_check(candidates == before, "fallback leaves candidate inputs unchanged")
+	# Validation must include owned candidates even when two unowned ones exist.
+	var malformed := _trinket_pool(authored)
+	malformed.append({"id": "owned_bad_price", "price": 1.5})
+	_reject("malformed owned fallback", _rng(), party, cards, malformed, ["owned_bad_price"])
+	_reject("single unowned candidate", _rng(), party, cards, [two[0]], [])
 
 
 func _test_generated_stock(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
@@ -542,8 +595,8 @@ func _test_rejections(party: Array[String], catalog: StarterCards) -> void:
 	for price in [-1, 12.5, "50", true, null]:
 		_reject("invalid trinket price " + str(price), _rng(), party, card_pool,
 			_with_trinket(trinket_pool, 0, {"id": trinket_pool[0]["id"], "price": price}), owned)
-	_reject("too few unowned trinkets", _rng(), party, card_pool,
-		[{"id": "fixture_pin_badge", "price": 50}, {"id": "fixture_owned_charm", "price": 60}], owned)
+	_reject("fewer than two total trinkets", _rng(), party, card_pool,
+		[{"id": "fixture_owned_charm", "price": 60}], owned)
 	_reject("empty trinket pool", _rng(), party, card_pool, [], owned)
 
 	_reject("null owned trinkets", _rng(), party, card_pool, trinket_pool, null)

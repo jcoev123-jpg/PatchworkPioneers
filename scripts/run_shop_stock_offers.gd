@@ -1,8 +1,8 @@
 class_name RunShopStockOffers
 extends RefCounted
 ## Scene-free, seeded construction of one Shop visit's stock: five distinct
-## party-owned card offers and two distinct trinket offers the party does not
-## own yet.
+## party-owned card offers and two distinct trinket offers, preferring unowned
+## trinkets and filling any remaining listings with owned ones.
 ##
 ## The caller owns the one seeded run RNG and supplies the priced candidate
 ## pools. This helper only selects offers: it never invents prices, catalog
@@ -17,8 +17,7 @@ extends RefCounted
 ## owner is the authored catalog owner, and a candidate that also carries
 ## "owner" must agree with that catalog. trinket_candidates are
 ## {"id": String, "price": int} entries. owned_trinket_ids lists the trinkets
-## the party already owns: those are excluded from the offers instead of
-## failing the whole call.
+## the party already owns: those are fallback listings, sold on admission.
 ##
 ## Every rejection happens before the first RNG draw: a failed call returns
 ## empty offers, leaves the caller's arrays untouched and consumes no RNG.
@@ -58,7 +57,7 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 	if party_set.size() != 3:
 		return rejected
 
-	# Trinkets the party already owns are excluded, never offered again.
+	# Validate ownership before any draws.
 	var owned := {}
 	for trinket_id in owned_trinket_ids:
 		if not (trinket_id is String):
@@ -104,6 +103,7 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 	# Trinket candidates only need a unique id and a whole non-negative price.
 	var trinket_prices := {}
 	var eligible_trinket_ids: Array[String] = []
+	var owned_candidate_ids: Array[String] = []
 	for candidate in trinket_candidates:
 		if not (candidate is Dictionary):
 			return rejected
@@ -120,9 +120,10 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 			return rejected
 		trinket_prices[trinket_id] = price
 		if owned.has(trinket_id):
+			owned_candidate_ids.append(trinket_id)
 			continue
 		eligible_trinket_ids.append(trinket_id)
-	if eligible_trinket_ids.size() < TRINKET_OFFER_COUNT:
+	if trinket_prices.size() < TRINKET_OFFER_COUNT:
 		return rejected
 
 	# Sort both pools so the same candidates in a different order always draw
@@ -130,6 +131,7 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 	# replacement: seven randi_range draws from the caller's run RNG.
 	eligible_card_ids.sort()
 	eligible_trinket_ids.sort()
+	owned_candidate_ids.sort()
 
 	var cards: Array = []
 	for _pick in range(CARD_OFFER_COUNT):
@@ -141,6 +143,9 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 
 	var trinkets: Array = []
 	for _pick in range(TRINKET_OFFER_COUNT):
+		if eligible_trinket_ids.is_empty():
+			eligible_trinket_ids.assign(owned_candidate_ids)
+			owned_candidate_ids.clear()
 		var index: int = rng.randi_range(0, eligible_trinket_ids.size() - 1)
 		var trinket_id: String = eligible_trinket_ids[index]
 		eligible_trinket_ids.remove_at(index)

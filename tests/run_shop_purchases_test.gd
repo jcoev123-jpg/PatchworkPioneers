@@ -8,6 +8,7 @@ func _initialize() -> void:
 	_test_contract_initial_snapshots()
 	_test_reads_and_inputs_are_detached()
 	_test_purchase_sequence()
+	_test_owned_listings()
 	_test_price_boundaries()
 	_test_rejected_attempts()
 	_test_invalid_visits()
@@ -221,6 +222,47 @@ func _test_reads_and_inputs_are_detached() -> void:
 	denied["state"]["gold"] = -1
 	denied["stock"]["cards"][0]["sold"] = true
 	_assert_model(shop, _state(), _stock(), "mutated rejected result")
+
+
+func _test_owned_listings() -> void:
+	seed(76001)
+	var expected_draw := randi()
+	seed(76001)
+	for count in [1, 2]:
+		var fixture := _fixture()
+		for index in range(count):
+			fixture.trinkets.append(fixture.offers_trinkets[index].id)
+		# Even a free owned listing must remain unavailable.
+		fixture.offers_trinkets[0].price = 0
+		var shop := _shop(fixture)
+		_check(shop.is_valid(), "owned listings admit a valid visit")
+		var state := _state()
+		state.trinkets = fixture.trinkets.duplicate()
+		var stock := _stock()
+		stock.trinkets[0].price = 0
+		for index in range(count):
+			stock.trinkets[index].sold = true
+		_assert_model(shop, state, stock, "owned listings initially sold")
+		for index in range(count):
+			var denied := shop.buy("trinket", fixture.offers_trinkets[index].id)
+			_assert_result(denied, false, state, stock, "owned purchase denied without receipt")
+			denied.state.trinkets.clear()
+			denied.stock.trinkets[index].sold = false
+			_assert_model(shop, state, stock, "denied owned result remains detached")
+		if count == 1:
+			state.trinkets.append("t_pocket")
+			state.gold -= 20
+			stock.trinkets[1].sold = true
+			_assert_result(shop.buy("trinket", "t_pocket"), true, state, stock,
+				"unowned listing sells once", {"kind": "trinket", "id": "t_pocket", "price": 20})
+			_assert_result(shop.buy("trinket", "t_pocket"), false, state, stock, "resale rejected")
+		state.deck.append("c_exact")
+		state.gold -= 60
+		stock.cards[1].sold = true
+		_assert_result(shop.buy("card", "c_exact"), true, state, stock,
+			"card purchases remain intact", {"kind": "card", "id": "c_exact", "price": 60})
+		_assert_model(shop, state, stock, "owned and available purchase final state")
+	_check(randi() == expected_draw, "owned admission and all purchase attempts consume no global RNG")
 
 
 func _test_purchase_sequence() -> void:

@@ -80,7 +80,7 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 			return
 		trinket_seen[offer["id"]] = true
 		copied_trinkets.append({
-			"id": offer["id"], "price": offer["price"], "sold": false
+			"id": offer["id"], "price": offer["price"], "sold": owned_trinket_ids.has(offer["id"])
 		})
 
 	_state = {

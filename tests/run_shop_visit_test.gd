@@ -17,6 +17,7 @@ func _initialize() -> void:
 	_test_paid_trinket_transactions()
 	_test_paid_receipt_rejections()
 	_test_duplicate_trinket_recovery()
+	_test_owned_stock_reconciliation()
 	_test_fight_reward_sequences()
 	_test_fight_reward_rejections()
 	if failures.is_empty():
@@ -484,6 +485,71 @@ func _duplicate_trinket_sequence(remove_first: bool) -> Array:
 	_check(ledger.close_visit(), "subsequent Shop closes")
 	timeline.append(ledger.get_state())
 	return timeline
+
+
+func _test_owned_stock_reconciliation() -> void:
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var pool: Array = authored.get("trinkets", [])
+	_check(pool.size() >= 2 and authored.get("cards", []).size() >= 5,
+		"owned visit uses real authored priced pools")
+	if pool.size() < 2 or authored.get("cards", []).size() < 5:
+		return
+	seed(76002)
+	var expected_draw := randi()
+	seed(76002)
+	for count in [1, 2]:
+		for remove_first in [false, true]:
+			var deck: Array[String] = ["warden_strike", "seamstress_prick", "warden_strike"]
+			var owned: Array[String] = []
+			for index in range(count):
+				owned.append(pool[index].id)
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 76002
+			var offers := RunShopStockOffers.generate(rng, ["warden", "seamstress", "tinker"], authored.cards, pool, owned)
+			_check(offers.ok, "owned visit stock generates")
+			if not offers.ok:
+				continue
+			var rng_after := rng.state
+			var shop := RunShopPurchases.new(["warden", "seamstress", "tinker"], deck, owned, 500, offers.cards, offers.trinkets)
+			var visit := RunShopVisit.new(deck, 500, 0, owned)
+			_check(shop.is_valid() and visit.open_visit("owned-shop"), "owned stocked visit admits both real services")
+			var expected := visit.get_state()
+			for listing in shop.get_stock().trinkets:
+				_check(listing.sold == owned.has(listing.id), "owned visit listing availability matches inventory")
+				if listing.sold:
+					var before := shop.get_state()
+					var stock := shop.get_stock()
+					var denied := shop.buy("trinket", listing.id)
+					_check(not denied.ok and not denied.has("receipt") and not visit.reconcile_purchase(denied), "owned stock cannot produce a paid receipt")
+					_check(shop.get_state() == before and shop.get_stock() == stock and visit.get_state() == expected, "owned rejection preserves both full ledgers and stock")
+			for step in (["remove", "buy"] if remove_first else ["buy", "remove"]):
+				if step == "remove":
+					var before := visit.get_state()
+					var removed := visit.remove_card("warden_strike")
+					_check(removed.ok and removed.price == 75 and shop.rebase_removal(before, removed, "warden_strike"), "owned visit removal rebases purchases")
+					expected.deck.remove_at(0)
+					expected.gold -= 75
+					expected.prior_removals = 1
+					expected.price = 100
+					expected.status = "used"
+					expected.removal_available = false
+				else:
+					for listing in shop.get_stock().trinkets:
+						if not listing.sold:
+							var paid := shop.buy("trinket", listing.id)
+							_check(paid.ok and visit.reconcile_purchase(paid), "available trinket reconciles alongside owned stock")
+							expected.trinkets.append(listing.id)
+							expected.gold -= listing.price
+							_check(not shop.buy("trinket", listing.id).ok and not visit.reconcile_purchase(paid), "sold stock and receipt replay reject")
+					var card: Dictionary = offers.cards[0]
+					var paid := shop.buy("card", card.id)
+					_check(paid.ok and visit.reconcile_purchase(paid), "card reconciles with owned stock")
+					expected.deck.append(card.id)
+					expected.gold -= card.price
+				_check(visit.get_state() == expected, "owned visit exact deck gold inventory removal and history")
+				_check(shop.get_state() == {"party_ids": ["warden", "seamstress", "tinker"], "deck": expected.deck, "gold": expected.gold, "trinkets": expected.trinkets}, "purchase ledger matches exact expected visit state")
+			_check(rng.state == rng_after, "purchase and removal leave run RNG unchanged")
+	_check(randi() == expected_draw, "owned stock visits leave global RNG untouched")
 
 
 func _test_duplicate_trinket_recovery() -> void:
