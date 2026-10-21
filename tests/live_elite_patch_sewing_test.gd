@@ -27,6 +27,30 @@ func _reject_patch(callback: Callable, message: String) -> void:
 	_check(_complete_state() == before, message + ": complete run/wardrobe unchanged")
 
 
+func _coat_multi_fixture() -> Dictionary:
+	var first_seed := 1
+	for attempt in range(32):
+		var fixture := _multi_fixture(first_seed)
+		if fixture.is_empty() or not await _routed_win(fixture, false):
+			return {}
+		await _click(app.reward_buttons[0])
+		await _click(app.continue_button)
+		var path: Array = fixture.paths[0].duplicate()
+		var elite: String = path.pop_back()
+		await _visit_path(path, false)
+		await _click(_route_action(elite))
+		for enemy in app.enemies.get_enemies():
+			_check(app.enemies.apply_damage(enemy.position, 9999), "discover coat using real Elite roster")
+		app._observe_battle_result()
+		await _frames()
+		var found: bool = app.fight_reward_trinket == "quilted_coat"
+		await _click(app.return_button)
+		if found:
+			return fixture
+		first_seed = fixture.seed + 1
+	return {}
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -34,7 +58,7 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	sewing = app.get_node("LiveElitePatchSewing")
-	var fixture := _multi_fixture()
+	var fixture := await _coat_multi_fixture()
 	_check(not fixture.is_empty(), "real seeded route reaches two Elites and Shop")
 	if fixture.is_empty():
 		await _finish_sewing()

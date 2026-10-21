@@ -225,6 +225,9 @@ func _run() -> void:
 				_check(_record(app) == shop_before, "zero-gold Shop cannot spend or remove")
 				await _activate(app.shop_continue_button, mode == 1)
 			elif kind in ["Event", "Treasure"]:
+				if kind == "Event":
+					_check(app.route_view == null and app.quiet_spool_panel != null, "first Event requires authored choice")
+					await _activate(app.quiet_spool_panel.get_choice_buttons()[1], mode == 1)
 				_check(app.route_view != null and app._placeholder_route == [fixture[2]]
 					and app.run_heroes == heroes and app.run_deck == cards and shared.state == start_rng,
 					"placeholder has no effects and mounts actual connected choices")
@@ -261,6 +264,8 @@ func _run() -> void:
 			await _activate(app.start_button, mode == 0)
 			if fixture[0] not in ["Fight", "Elite"]:
 				await _activate(_button(app, fixture[2]), mode == 0)
+				if fixture[0] == "Event":
+					await _activate(app.quiet_spool_panel.get_choice_buttons()[1], mode == 1)
 				var back: Button = app.rest_back_button if fixture[0] == "Rest" else app.shop_back_button if fixture[0] == "Shop" else app.route_back_button
 				await _activate(back, mode == 1)
 			else:

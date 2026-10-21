@@ -715,10 +715,12 @@ func _badge_fights() -> void:
 			for hero in app.party.get_heroes():
 				_check(hero.block == 0, "normal next-turn reset removes all opening Block")
 			trace.append(_badge_flow_state(live))
-			await _settle_battle(keyboard, wearer + 1)
+			var badge_owner: String = persistent[0][wearer].id
+			var current_wearer: Dictionary = app.party.get_heroes().filter(func(hero): return hero.id == badge_owner)[0]
+			await _settle_battle(keyboard, current_wearer.position)
 			await _activate(app.continue_button, keyboard)
 			await _reach(fixture.paths[2], keyboard)
-			var down: Dictionary = app.party.get_hero(wearer + 1)
+			var down: Dictionary = app.party.get_heroes().filter(func(hero): return hero.id == badge_owner)[0]
 			_check(down.hp == 0 and down.block == 0
 				and wardrobe.get_snapshot().worn[down.id].HEAD == "stitched_badge",
 				"next mounted Fight grants zero to genuinely downed inactive Badge wearer")

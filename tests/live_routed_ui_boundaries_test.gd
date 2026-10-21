@@ -200,6 +200,19 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 			await _click(app.rest_continue_button)
 		"Shop":
 			await _click(app.shop_continue_button)
+		"Event":
+			if is_instance_valid(app.quiet_spool_panel):
+				_check(app.route_view == null and not app._can_choose_connected_route(),
+					"pending Event blocks connected atlas until choice")
+				var scraps: int = app.run_scraps
+				var ignore: Button = app.quiet_spool_panel.get_choice_buttons()[1]
+				if mode == 2:
+					ignore.grab_focus()
+					await _key(KEY_SPACE)
+				else:
+					await _click(ignore)
+				_check(app.run_scraps == scraps and app.quiet_spool_panel == null,
+					"Ignore completes Event without changing scraps")
 	departed[kind] = true
 	_check(app.route_view != null and app.route_view.is_visible_in_tree(), "completed node exposes connected atlas entry")
 

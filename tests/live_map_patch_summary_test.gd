@@ -123,27 +123,24 @@ func _summary_negatives() -> void:
 	_assert_summary()
 
 
-## Seed 271's genuine Fight -> Shop -> Rest graph generates the authored
-## quilted_coat trinket in its seeded Shop stock (asserted in `_run`).
+## Discover genuine seeded stock through the mounted route, without pinning a seed.
 func _coat_fixture() -> Dictionary:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 271
-	var map := RunMap.new()
-	map.generate(rng)
-	for fight in map.get_legal_choices():
-		if map.get_node(fight).type != "Fight":
-			continue
-		for shop in map.get_node(fight).outgoing:
-			if map.get_node(shop).type != "Shop":
-				continue
-			for next in map.get_node(shop).outgoing:
-				if map.get_node(next).type != "Rest":
-					continue
-				map.choose_node(fight)
-				var selected := RunAuthoredBattleEntry.new().entry_current_battle(
-					map, rng, RunFightEncounterSelection.new())
-				if selected.get("encounter_id") == "starter_attacks":
-					return {"seed": 271, "fight": fight, "shop": shop, "next": next}
+	var first_seed := 1
+	for attempt in range(32):
+		var fixture := _continuation_fixture("Rest", first_seed)
+		if fixture.is_empty() or not await _routed_win(fixture, true):
+			return {}
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		app.session_gold = 400
+		await _click(_route_action(fixture.shop))
+		var found := false
+		for offer in app.shop_purchases.get_stock().trinkets:
+			found = found or offer.id == "quilted_coat"
+		await _click(app.shop_back_button)
+		if found:
+			return fixture
+		first_seed = fixture.seed + 1
 	return {}
 
 
@@ -171,7 +168,16 @@ func _run() -> void:
 				app.session_gold = 400 # Funding only; stock, sewing and route are real.
 				await _activate_summary(_route_action(fixture.shop), keyboard)
 				_check(app.shop_patch_offers.item_count > 0 and not app.shop_patch_buy_button.disabled, "real Shop offers affordable patch")
-				var id: String = app.shop_patch_offers.get_item_metadata(0)
+				var slot_only := -1
+				for index in range(app.shop_patch_offers.item_count):
+					if app.shop_patch_offers.get_item_metadata(index) in ["stitched_badge", "spare_spool"]:
+						slot_only = index
+				_check(slot_only >= 0, "real stock contains a slot-only patch")
+				if slot_only < 0:
+					break
+				app.shop_patch_offers.select(slot_only)
+				app.shop_patch_offers.item_selected.emit(slot_only)
+				var id: String = app.shop_patch_offers.get_item_metadata(slot_only)
 				app.shop_patch_heroes.select(2)
 				app.shop_patch_heroes.item_selected.emit(2)
 				await _activate_summary(app.shop_patch_buy_button, keyboard)
@@ -212,7 +218,7 @@ func _run() -> void:
 				await _activate_summary(app.route_back_button, keyboard)
 				_check(randi() == global_next, "readout and continuation consume no global RNG")
 	# Real seeded stock that genuinely offers the authored coat patch.
-	var coat_fixture := _coat_fixture()
+	var coat_fixture := await _coat_fixture()
 	_check(not coat_fixture.is_empty(), "seeded real graph supports a coat-patch Shop")
 	if not coat_fixture.is_empty():
 		seed(108108)

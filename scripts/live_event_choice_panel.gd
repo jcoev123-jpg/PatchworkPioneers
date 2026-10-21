@@ -19,6 +19,7 @@ var _generation: int = 0
 var _is_open: bool = false
 var _choice_buttons: Array[Button] = []
 var _bound_choices: Dictionary = {}
+var _committed_choice: Dictionary = {}
 
 
 func _ready() -> void:
@@ -64,6 +65,7 @@ func open_event(event_record: Dictionary) -> bool:
 ## Discards the selector, removes the currently active buttons and invalidates
 ## all prior callback generations before another event can be opened.
 func close_event() -> void:
+	_committed_choice.clear()
 	_generation += 1
 	_is_open = false
 	_selector = null
@@ -106,6 +108,7 @@ func _on_choice_pressed(offered: RunEventChoice, choice_id: String, generation: 
 	var result: Dictionary = offered.choose(choice_id)
 	if result.get("ok", false) != true:
 		return
+	_committed_choice = result.duplicate(true)
 	for current in _choice_buttons:
 		current.disabled = true
 		current.release_focus()

@@ -2,12 +2,13 @@ extends "res://tests/live_routed_battle_reentry_test.gd"
 ## Mounted opening Fight -> two Elites -> Shop; exact drops, rejection and replay.
 
 
-func _multi_fixture() -> Dictionary:
-	for value in range(1, 3000):
+func _multi_fixture(first_seed: int = 1) -> Dictionary:
+	for value in range(first_seed, 3000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
+		var opening_rng := rng.state
 		for id in map.get_legal_choices():
 			if map.get_node(id).type != "Fight":
 				continue
@@ -17,6 +18,7 @@ func _multi_fixture() -> Dictionary:
 			var third := _path_to(map, second.back(), "Elite")
 			if third.is_empty() or _path_to(map, third.back(), "Shop").is_empty():
 				continue
+			rng.state = opening_rng
 			map.choose_node(id)
 			var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 			if selected.get("encounter_id") == "starter_attacks":

@@ -149,6 +149,11 @@ func _node(id: String, index: int) -> bool:
 		"physical connected selection advances exactly one floor")
 	stale.append(callback)
 	if kind in ["Event", "Treasure"]:
+		if is_instance_valid(app.quiet_spool_panel):
+			_check(app.route_view == null, "first Event blocks next floor until choice")
+			var choice: Callable = app.quiet_spool_panel.choice_committed.get_connections()[0].callable.bind("quiet_spool", "ignore")
+			await _activate(app.quiet_spool_panel.get_choice_buttons()[1], true)
+			stale.append(choice)
 		_check(_inventory() == inventory, "no-effect connected visit preserves inventory, HP, ledger and RNG")
 		no_effect_visits += 1
 	await _reject_stale()
