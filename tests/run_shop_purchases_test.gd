@@ -86,9 +86,12 @@ func _assert_model(shop: RunShopPurchases, expected_state: Dictionary,
 
 
 func _assert_result(result: Dictionary, ok: bool, expected_state: Dictionary,
-		expected_stock: Dictionary, label: String) -> void:
-	_check(result == {"ok": ok, "state": expected_state, "stock": expected_stock},
-		label + " complete detached transaction result")
+		expected_stock: Dictionary, label: String, receipt: Dictionary = {}) -> void:
+	var expected := {"ok": ok, "state": expected_state, "stock": expected_stock}
+	if ok:
+		expected["receipt"] = receipt
+	_check(result == expected, label + " complete detached transaction result")
+	_check(result.has("receipt") == ok, label + " success-only receipt")
 
 
 func _test_contract_initial_snapshots() -> void:
@@ -148,27 +151,32 @@ func _test_purchase_sequence() -> void:
 	state["deck"].append("c_exact")
 	stock["cards"][1]["sold"] = true
 	var first := shop.buy("card", "c_exact")
-	_assert_result(first, true, state, stock, "first paid card")
+	_assert_result(first, true, state, stock, "first paid card", {"kind": "card", "id": "c_exact", "price": 60})
 	_assert_model(shop, state, stock, "first paid card")
 
 	state["gold"] = 20
 	state["trinkets"].append("t_spool")
 	stock["trinkets"][0]["sold"] = true
 	var second := shop.buy("trinket", "t_spool")
-	_assert_result(second, true, state, stock, "paid trinket")
+	_assert_result(second, true, state, stock, "paid trinket", {"kind": "trinket", "id": "t_spool", "price": 50})
 	_assert_model(shop, state, stock, "paid trinket")
 
 	state["gold"] = 10
 	state["deck"].append("c_more")
 	stock["cards"][3]["sold"] = true
 	var third := shop.buy("card", "c_more")
-	_assert_result(third, true, state, stock, "second distinct paid card")
+	_assert_result(third, true, state, stock, "second distinct paid card", {"kind": "card", "id": "c_more", "price": 10})
 	_assert_model(shop, state, stock, "second distinct paid card")
 
 	# A previous result cannot mutate later state or stock.
 	first["state"]["deck"].clear()
 	first["stock"]["cards"][4]["price"] = -99
 	second["state"]["trinkets"].clear()
+	second["receipt"]["id"] = "forged"
+	second["receipt"]["price"] = 1
+	first["receipt"]["kind"] = "trinket"
+	var untouched := shop.buy("trinket", "t_pocket")
+	_check(not untouched.ok and not untouched.has("receipt"), "failed trinket cannot mint receipt")
 	_assert_model(shop, state, stock, "after mutating earlier successful results")
 	_rejected(shop, "card", "c_exact", "already sold card")
 	_rejected(shop, "trinket", "t_spool", "already sold trinket")
@@ -181,7 +189,7 @@ func _test_price_boundaries() -> void:
 	var stock := _stock()
 	state["deck"].append("c_zero")
 	stock["cards"][0]["sold"] = true
-	_assert_result(free_shop.buy("card", "c_zero"), true, state, stock, "zero price card")
+	_assert_result(free_shop.buy("card", "c_zero"), true, state, stock, "zero price card", {"kind": "card", "id": "c_zero", "price": 0})
 	_assert_model(free_shop, state, stock, "zero price card")
 	_rejected(free_shop, "card", "c_zero", "free card cannot be purchased twice")
 
@@ -193,14 +201,14 @@ func _test_price_boundaries() -> void:
 	exact_state["deck"].append("c_final")
 	exact_stock["cards"][4]["sold"] = true
 	_assert_result(exact_shop.buy("card", "c_final"), true, exact_state,
-		exact_stock, "exact affordability")
+		exact_stock, "exact affordability", {"kind": "card", "id": "c_final", "price": 130})
 	_assert_model(exact_shop, exact_state, exact_stock, "exact affordability")
 	_rejected(exact_shop, "trinket", "t_pocket", "no gold remaining")
 	# A free card is still purchasable after exhausting funds.
 	exact_state["deck"].append("c_zero")
 	exact_stock["cards"][0]["sold"] = true
 	_assert_result(exact_shop.buy("card", "c_zero"), true, exact_state,
-		exact_stock, "free after zero gold")
+		exact_stock, "free after zero gold", {"kind": "card", "id": "c_zero", "price": 0})
 
 	var poor_shop := _shop(_fixture())
 	_rejected(poor_shop, "card", "c_costly", "140 price exceeds 130 gold")

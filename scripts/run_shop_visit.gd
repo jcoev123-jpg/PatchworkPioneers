@@ -5,6 +5,7 @@ extends RefCounted
 
 
 var _deck: Array[String] = []
+var _trinkets: Array[String] = []
 var _gold: int = 0
 var _prior_removals: int = 0
 var _valid: bool = false
@@ -14,8 +15,10 @@ var _visited_ids: Array[String] = []
 var _claimed_fight_ids: Array[String] = []
 
 
-func _init(deck_ids: Array[String], gold: int, prior_removals: int) -> void:
+func _init(deck_ids: Array[String], gold: int, prior_removals: int,
+		owned_trinket_ids: Array[String] = []) -> void:
 	_deck.assign(deck_ids)
+	_trinkets.assign(owned_trinket_ids)
 	_gold = gold
 	_prior_removals = prior_removals
 	_valid = gold >= 0 and prior_removals >= 0
@@ -56,27 +59,56 @@ func close_visit() -> bool:
 	return true
 
 
-## Reconcile a successful purchase without reopening or resetting this visit.
-## Card buying is legal before or after the visit's single paid removal, so an
-## untouched "available" visit and a post-removal "used" visit both accept it.
-## Inactive and closed ledgers never reconcile, and a successful reconciliation
-## only commits deck and gold: status, removal count, quote and node history
-## stay exactly as they were.
+## Reconcile one paid stock purchase during an open or post-removal Shop.
+## A receipt is mandatory for trinkets and proves the exact charged price;
+## legacy receipt-less cards retain their original append/nonincreasing-gold
+## contract (with unchanged owned trinkets). No failure commits a partial state.
 func reconcile_purchase(result: Dictionary) -> bool:
 	if not _valid or (_status != "available" and _status != "used"):
 		return false
-	if result.get("ok") != true:
+	if result.get("ok") != true or not result.get("state") is Dictionary:
 		return false
-	var state: Dictionary = result.get("state", {})
+	var state: Dictionary = result["state"]
 	var cards: Variant = state.get("deck")
 	var gold: Variant = state.get("gold")
-	if typeof(cards) != TYPE_ARRAY or typeof(gold) != TYPE_INT or gold < 0 or gold > _gold:
+	var trinkets: Variant = state.get("trinkets", _trinkets.duplicate())
+	if not cards is Array or not trinkets is Array or not gold is int:
 		return false
-	if cards.size() != _deck.size() + 1 or cards.slice(0, _deck.size()) != _deck:
+	if gold < 0 or gold > _gold:
 		return false
-	if typeof(cards.back()) != TYPE_STRING or cards.back().strip_edges().is_empty():
-		return false
+	var has_receipt := result.has("receipt")
+	var kind := "card"
+	var purchased_id: String = ""
+	if has_receipt:
+		if not result["receipt"] is Dictionary or not state.has("trinkets"):
+			return false
+		var receipt: Dictionary = result["receipt"]
+		if receipt.size() != 3 or not receipt.has("kind") or not receipt.has("id") or not receipt.has("price"):
+			return false
+		if not receipt["kind"] is String or not receipt["id"] is String or not receipt["price"] is int:
+			return false
+		kind = receipt["kind"]
+		purchased_id = receipt["id"]
+		if (kind != "card" and kind != "trinket") or purchased_id.strip_edges().is_empty():
+			return false
+		if receipt["price"] < 0 or receipt["price"] > _gold or _gold - gold != receipt["price"]:
+			return false
+	if kind == "card":
+		if trinkets != _trinkets or cards.size() != _deck.size() + 1 or cards.slice(0, _deck.size()) != _deck:
+			return false
+		var last_card: Variant = cards.back()
+		if not last_card is String or last_card.strip_edges().is_empty():
+			return false
+		if has_receipt and last_card != purchased_id:
+			return false
+	else:
+		if cards != _deck or trinkets.size() != _trinkets.size() + 1 or trinkets.slice(0, _trinkets.size()) != _trinkets:
+			return false
+		if trinkets.back() != purchased_id:
+			return false
+	# Both ledgers are committed only after the whole snapshot is validated.
 	_deck.assign(cards)
+	_trinkets.assign(trinkets)
 	_gold = gold
 	return true
 
@@ -127,6 +159,7 @@ func apply_fight_reward(fight_node_id: Variant, reward: Variant) -> bool:
 ## Every returned container is independent of the run's internal ledger.
 func get_state() -> Dictionary:
 	var deck_copy: Array[String] = _deck.duplicate()
+	var trinket_copy: Array[String] = _trinkets.duplicate()
 	var ids_copy: Array[String] = _visited_ids.duplicate()
 	return {
 		"valid": _valid,
@@ -135,6 +168,7 @@ func get_state() -> Dictionary:
 		"removal_available": _valid and _status == "available",
 		"price": quote(),
 		"deck": deck_copy,
+		"trinkets": trinket_copy,
 		"gold": _gold,
 		"prior_removals": _prior_removals,
 		"visited_ids": ids_copy,

@@ -14,6 +14,8 @@ func _initialize() -> void:
 	_test_rng_and_equal_replay()
 	_test_purchase_reconciliation()
 	_test_removal_before_purchase_reconciliation()
+	_test_paid_trinket_transactions()
+	_test_paid_receipt_rejections()
 	_test_fight_reward_sequences()
 	_test_fight_reward_rejections()
 	if failures.is_empty():
@@ -158,6 +160,270 @@ func _test_removal_before_purchase_reconciliation() -> void:
 	_check_state_unchanged(visit, closed, "reopening after removal-first close")
 
 
+
+## These are supplied Shop prices/IDs, not a trinket catalog or passive rules.
+## The service is rebuilt after removal so its purchase state starts with the
+## new ledger's deck/gold while the visit itself stays open and unchanged.
+func _paid_shop(state: Dictionary) -> RunShopPurchases:
+	return RunShopPurchases.new(
+		["warden", "seamstress", "tinker"], state.deck, state.trinkets, state.gold,
+		[
+			{"id": "warden_brace", "owner": "warden", "price": 25},
+			{"id": "tinker_pop_shot", "owner": "tinker", "price": 30},
+			{"id": "seamstress_mend", "owner": "seamstress", "price": 15},
+			{"id": "tinker_scrap_bomb", "owner": "tinker", "price": 20},
+			{"id": "warden_shield_bash", "owner": "warden", "price": 10}
+		],
+		[
+			{"id": "t_spool", "price": 40},
+			{"id": "t_pocket", "price": 20}
+		]
+	)
+
+
+func _paid_transaction(visit: RunShopVisit, shop: RunShopPurchases,
+		kind: String, id: String, price: int, label: String) -> void:
+	var before := visit.get_state()
+	var stock_before := shop.get_stock()
+	var service_before := shop.get_state()
+	_check(shop.is_valid() and stock_before.cards.size() == 5 and stock_before.trinkets.size() == 2,
+		label + " real five-card/two-trinket service exists")
+	_check(service_before.deck == before.deck and service_before.trinkets == before.trinkets
+		and service_before.gold == before.gold, label + " service seeded from live ledger")
+	var result := shop.buy(kind, id)
+	_check(result.ok and result.receipt == {"kind": kind, "id": id, "price": price},
+		label + " paid receipt is exact and real")
+	var stock_after := stock_before.duplicate(true)
+	var key := "cards" if kind == "card" else "trinkets"
+	var sold_count := 0
+	for item in stock_after[key]:
+		if item.id == id:
+			item.sold = true
+			sold_count += 1
+	_check(sold_count == 1 and result.stock == stock_after and shop.get_stock() == stock_after,
+		label + " exactly one offered item sold")
+	var expected := before.duplicate(true)
+	expected.gold -= price
+	if kind == "card":
+		expected.deck.append(id)
+	else:
+		expected.trinkets.append(id)
+	_check(result.state.deck == expected.deck and result.state.trinkets == expected.trinkets
+		and result.state.gold == expected.gold and expected.gold >= 0,
+		label + " service state deducted exact price and appended once")
+	_check(visit.reconcile_purchase(result), label + " real receipt reconciles")
+	_check(visit.get_state() == expected, label + " exact complete ledger snapshot")
+	var committed := visit.get_state()
+	_check(not visit.reconcile_purchase(result), label + " replayed receipt rejects")
+	_check_state_unchanged(visit, committed, label + " replay leaves ledger identical")
+	result.receipt.id = "tampered"
+	result.state.trinkets.clear()
+	result.stock[key].clear()
+	_check_state_unchanged(visit, committed, label + " mutating returned copies never aliases ledger")
+	_check(shop.get_stock() == stock_after and shop.get_state().gold == expected.gold,
+		label + " mutating result never aliases purchase service")
+
+
+func _paid_sequence(reverse_order: bool) -> Dictionary:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
+	var owned: Array[String] = ["old_badge"]
+	var ledger := RunShopVisit.new(deck, 360, 0, owned)
+	owned.append("forged")
+	_check(ledger.get_state().trinkets == ["old_badge"], "initial owned array is detached")
+	var initial := ledger.get_state()
+	_check(initial.deck == deck and initial.gold == 360 and initial.prior_removals == 0
+		and initial.trinkets == ["old_badge"] and initial.price == 75
+		and initial.status == "inactive", "exact pre-open ledger snapshot")
+	_check(ledger.open_visit("shop-A"), "first confirmed Shop opens")
+	var open := ledger.get_state()
+	_check(open.visited_ids == ["shop-A"] and open.shop_node_id == "shop-A"
+		and open.status == "available" and open.price == 75, "first node/quote exact")
+	var first := _paid_shop(open)
+	_check(first.is_valid(), "first Shop prices supplied to real purchase service")
+	if reverse_order:
+		_paid_transaction(ledger, first, "card", "warden_brace", 25, "card then trinket first")
+		_paid_transaction(ledger, first, "trinket", "t_spool", 40, "card then trinket second")
+	else:
+		_paid_transaction(ledger, first, "trinket", "t_spool", 40, "trinket then card first")
+		_paid_transaction(ledger, first, "card", "warden_brace", 25, "trinket then card second")
+	var paid := ledger.get_state()
+	_check(paid.deck == deck + ["warden_brace"] and paid.trinkets == ["old_badge", "t_spool"]
+		and paid.gold == 295 and paid.prior_removals == 0 and paid.price == 75
+		and paid.status == "available" and paid.visited_ids == ["shop-A"],
+		"two distinct paid kinds conserve order and exact 65 gold without spending removal option")
+	var removed := ledger.remove_card("warden_strike")
+	_check(removed.ok and removed.price == 75 and removed.gold == 220
+		and removed.prior_removals == 1, "removal after two purchases charges original 75 once")
+	var used := ledger.get_state()
+	_check(used.deck == ["seamstress_prick", "tinker_pop_shot", "warden_brace"]
+		and used.trinkets == paid.trinkets and used.gold == 220 and used.price == 100
+		and used.status == "used" and not used.removal_available and used.prior_removals == 1,
+		"removal preserves purchased inventory and increases next quote by 25")
+	var post := _paid_shop(used)
+	_check(post.is_valid(), "post-removal purchase service re-seeded from actual spent state")
+	if reverse_order:
+		_paid_transaction(ledger, post, "trinket", "t_pocket", 20, "post-removal trinket")
+		_paid_transaction(ledger, post, "card", "tinker_pop_shot", 30, "post-removal card")
+	else:
+		_paid_transaction(ledger, post, "card", "tinker_pop_shot", 30, "post-removal card")
+		_paid_transaction(ledger, post, "trinket", "t_pocket", 20, "post-removal trinket")
+	var finished := ledger.get_state()
+	_check(finished.gold == 170 and finished.trinkets == ["old_badge", "t_spool", "t_pocket"]
+		and finished.deck == ["seamstress_prick", "tinker_pop_shot", "warden_brace", "tinker_pop_shot"]
+		and finished.prior_removals == 1 and finished.status == "used" and finished.price == 100,
+		"before/after removal buys conserve every trinket, card, gold and quote")
+	_check(not ledger.remove_card("warden_brace").ok, "cannot remove twice despite later buying")
+	_check_state_unchanged(ledger, finished, "second removal rejected")
+	_check(ledger.close_visit(), "first Shop closes after all transactions")
+	var closed := ledger.get_state()
+	_check(not ledger.reconcile_purchase(post.buy("card", "seamstress_mend")),
+		"closed Shop rejects even a freshly successful service receipt")
+	_check_state_unchanged(ledger, closed, "closed receipt cannot change ledger")
+	_check(not ledger.open_visit("shop-A"), "same Shop node never reopens")
+	_check_state_unchanged(ledger, closed, "same-node attempt is inert")
+	_check(ledger.open_visit("shop-B"), "different confirmed Shop node opens")
+	var another := ledger.get_state()
+	_check(another.trinkets == finished.trinkets and another.deck == finished.deck
+		and another.gold == 170 and another.price == 100 and another.prior_removals == 1
+		and another.visited_ids == ["shop-A", "shop-B"] and another.shop_node_id == "shop-B",
+		"persistent trinket inventory and gold survive into distinct Shop")
+	var later := _paid_shop(another)
+	_paid_transaction(ledger, later, "card", "seamstress_mend", 15, "second Shop bought card")
+	var final := ledger.get_state()
+	_check(final.trinkets == finished.trinkets and final.gold == 155
+		and final.visited_ids == ["shop-A", "shop-B"], "later Shop leaves trinkets intact")
+	_check(ledger.close_visit(), "second Shop closes")
+	return {"state": ledger.get_state(), "first_stock": first.get_stock(),
+		"post_stock": post.get_stock(), "later_stock": later.get_stock()}
+
+
+func _test_paid_trinket_transactions() -> void:
+	seed(81462)
+	var expected_rng := randi()
+	seed(81462)
+	var one := _paid_sequence(false)
+	_check(randi() == expected_rng, "paid Shop sequence never uses global RNG")
+	seed(81462)
+	var two := _paid_sequence(false)
+	_check(randi() == expected_rng, "replayed paid Shop sequence never uses global RNG")
+	_check(one == two, "two independent seeded Shops replay exact state and sold-stock flags")
+	seed(81462)
+	var reverse := _paid_sequence(true)
+	_check(randi() == expected_rng, "reverse receipt ordering never uses global RNG")
+	_check(reverse.state == one.state and reverse.first_stock == one.first_stock
+		and reverse.post_stock == one.post_stock,
+		"reversed purchase order leads to same complete ledger and sold stock")
+
+
+func _reject_paid(visit: RunShopVisit, shop: RunShopPurchases,
+		result: Dictionary, label: String) -> void:
+	var before := visit.get_state()
+	var state_before := shop.get_state()
+	var stock_before := shop.get_stock()
+	var input_before := result.duplicate(true)
+	seed(551224)
+	var expected_rng := randi()
+	seed(551224)
+	_check(not visit.reconcile_purchase(result), label + " rejects forged purchase")
+	_check(visit.get_state() == before and shop.get_state() == state_before
+		and shop.get_stock() == stock_before, label + " complete ledger/state/stock unchanged")
+	_check(result == input_before, label + " receipt input not mutated")
+	_check(randi() == expected_rng, label + " rejected transaction uses no global RNG")
+
+
+func _test_paid_receipt_rejections() -> void:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick"]
+	var owned: Array[String] = ["old_badge"]
+	var ledger := RunShopVisit.new(deck, 150, 0, owned)
+	var shop := _paid_shop(ledger.get_state())
+	_check(shop.is_valid(), "rejection fixture has valid supplied stock")
+	var genuine := shop.buy("trinket", "t_spool")
+	_check(genuine.ok and genuine.receipt == {"kind": "trinket", "id": "t_spool", "price": 40}
+		and genuine.state.gold == 110 and genuine.state.trinkets == ["old_badge", "t_spool"],
+		"rejection fixture uses an actual paid trinket receipt")
+	_reject_paid(ledger, shop, genuine, "inactive visit")
+	_check(ledger.open_visit("forgery-shop"), "forgery visit opens")
+	for invalid in [
+		{"ok": false, "state": genuine.state, "receipt": genuine.receipt},
+		{"ok": true},
+		{"ok": true, "state": null},
+		{"ok": true, "state": genuine.state},
+		{"ok": true, "state": genuine.state, "receipt": {}}
+	]:
+		_reject_paid(ledger, shop, invalid, "failed, stale or receipt-less trinket")
+	for field in ["kind", "id", "price"]:
+		var missing := genuine.duplicate(true)
+		missing.receipt.erase(field)
+		_reject_paid(ledger, shop, missing, "missing receipt " + field)
+	for wrong in [
+		{"kind": "card", "id": "t_spool", "price": 40},
+		{"kind": "trinket", "id": "t_pocket", "price": 40},
+		{"kind": "trinket", "id": "t_spool", "price": 39},
+		{"kind": "trinket", "id": "t_spool", "price": 151},
+		{"kind": "trinket", "id": "t_spool", "price": -1},
+		{"kind": "trinket", "id": "t_spool", "price": 40.0},
+		{"kind": "trinket", "id": "t_spool", "price": "40"},
+		{"kind": "trinket", "id": 14, "price": 40},
+		{"kind": "other", "id": "t_spool", "price": 40}
+	]:
+		var wrong_receipt := genuine.duplicate(true)
+		wrong_receipt.receipt = wrong
+		_reject_paid(ledger, shop, wrong_receipt, "wrong receipt fields")
+	var extra := genuine.duplicate(true)
+	extra.receipt["extra"] = true
+	_reject_paid(ledger, shop, extra, "extra receipt field")
+	for bad_inventory in [
+		["old_badge"],
+		["t_spool", "old_badge"],
+		[],
+		["old_badge", "t_spool", "t_pocket"],
+		["foreign", "t_spool"],
+		["old_badge", "t_pocket"]
+	]:
+		var changed := genuine.duplicate(true)
+		changed.state.trinkets = bad_inventory
+		_reject_paid(ledger, shop, changed, "invalid trinket append or prefix")
+	for bad_deck in [["warden_strike"], ["seamstress_prick", "warden_strike"],
+		["warden_strike", "seamstress_prick", "warden_brace"]]:
+		var changed := genuine.duplicate(true)
+		changed.state.deck = bad_deck
+		_reject_paid(ledger, shop, changed, "changed deck with trinket receipt")
+	for bad_gold in [-1, 151, 150, 109, 111, 110.0, "110"]:
+		var changed := genuine.duplicate(true)
+		changed.state.gold = bad_gold
+		_reject_paid(ledger, shop, changed, "mismatched, increased or invalid gold")
+	var no_trinkets := genuine.duplicate(true)
+	no_trinkets.state.erase("trinkets")
+	_reject_paid(ledger, shop, no_trinkets, "missing trinket state for paid receipt")
+	var nil_receipt := genuine.duplicate(true)
+	nil_receipt.receipt = null
+	_reject_paid(ledger, shop, nil_receipt, "null receipt")
+	var card_shop := _paid_shop(ledger.get_state())
+	var actual_card := card_shop.buy("card", "warden_brace")
+	_check(actual_card.ok and actual_card.receipt == {"kind": "card", "id": "warden_brace", "price": 25},
+		"card receipt comes from real Shop stock")
+	var altered_card := actual_card.duplicate(true)
+	altered_card.receipt.id = "seamstress_mend"
+	_reject_paid(ledger, card_shop, altered_card, "wrong card receipt ID")
+	altered_card = actual_card.duplicate(true)
+	altered_card.state.trinkets.append("t_spool")
+	_reject_paid(ledger, card_shop, altered_card, "card cannot modify inventory")
+	altered_card = actual_card.duplicate(true)
+	altered_card.state.deck.append("another_card")
+	_reject_paid(ledger, card_shop, altered_card, "card cannot append twice")
+	_check(ledger.reconcile_purchase(genuine), "actual paid receipt accepted after all forged failures")
+	var accepted := ledger.get_state()
+	_check(accepted.trinkets == ["old_badge", "t_spool"] and accepted.gold == 110
+		and accepted.deck == deck and accepted.status == "available", "exact acceptance state")
+	_reject_paid(ledger, shop, genuine, "replayed purchased state")
+	var stale := genuine.duplicate(true)
+	stale.receipt.id = "t_pocket"
+	_reject_paid(ledger, shop, stale, "stale receipt with new ID")
+	_check(ledger.close_visit(), "forgery fixture closes")
+	_reject_paid(ledger, shop, genuine, "closed Shop")
+	_check(ledger.get_state().trinkets == ["old_badge", "t_spool"], "closed Shop inventory remains owned")
+
+
 func _starter_deck() -> Array[String]:
 	var path := "res://data/cards/starter_deck.json"
 	_check(FileAccess.file_exists(path), "the source starter deck exists")
@@ -185,7 +451,7 @@ func _test_contract_and_source_fixture() -> void:
 	for id in ["warden_brace", "warden_shield_bash", "seamstress_mend", "seamstress_stitch_up", "tinker_scrap_bomb", "tinker_tune_up"]:
 		_check(source.count(id) == 1, "source fixture has one " + id)
 	var ledger := RunShopVisit.new(source, 200, 0)
-	for method in ["open_visit", "remove_card", "close_visit", "get_state", "quote", "apply_fight_reward"]:
+	for method in ["open_visit", "remove_card", "close_visit", "get_state", "quote", "apply_fight_reward", "reconcile_purchase"]:
 		_check(ledger.has_method(method), "public visit contract exposes " + method)
 	var initial := ledger.get_state()
 	_check(initial["valid"] == true and initial["status"] == "inactive", "fresh ledger is valid and inactive")
@@ -403,7 +669,7 @@ func _fight_sequence() -> Array:
 	var deck: Array[String] = ["warden_strike", "seamstress_prick", "warden_strike"]
 	var ledger := RunShopVisit.new(deck, 200, 0)
 	var expected := {"valid": true, "status": "inactive", "shop_node_id": "",
-		"removal_available": false, "price": 75, "deck": deck.duplicate(), "gold": 200,
+		"removal_available": false, "price": 75, "deck": deck.duplicate(), "trinkets": [], "gold": 200,
 		"prior_removals": 0, "visited_ids": [], "claimed_fight_ids": []}
 	_check(ledger.get_state() == expected, "Fight sequence exact initial snapshot")
 	var timeline: Array = [ledger.get_state()]
