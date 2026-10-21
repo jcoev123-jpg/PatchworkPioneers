@@ -126,6 +126,10 @@ func _observer() -> RunTornMending:
 		if receipt.has("start"):
 			if not proposal.observe_battle_end(receipt.node, receipt.start, receipt.end).ok:
 				return null
+		elif receipt.has("mend"):
+			if not proposal.choose_mend(receipt.node, receipt.mend, receipt.hero,
+				receipt.position, receipt.scraps, proposal.read_state().heroes, true).ok:
+				return null
 		elif not proposal.apply_rest(receipt.node, proposal.read_state().heroes, true).ok:
 			return null
 	if proposal.read_state() != torn.read_state():
@@ -169,6 +173,49 @@ func apply_reward(node: String, result: CombatBattleResult, party: CombatParty) 
 		_max_hp_by_id[hero.id] = hero.max_hp
 	_refresh_wardrobe()
 	return {"ok": true, "heroes": _heroes.duplicate(true)}
+
+
+## Map-only transaction. An unbound run owner must commit remaining_scraps
+## with these heroes; a bound wardrobe supplies the authoritative purse.
+## Both expected snapshots are exact concurrency guards, never new state.
+func choose_mend(node: Variant, receipt: Variant, hero: Variant, position: Variant,
+		available_scraps: Variant, expected_carryover: Variant,
+		expected_wardrobe: Variant, between_nodes: Variant) -> Dictionary:
+	var rejected := {"ok": false, "heroes": [], "remaining_scraps": available_scraps}
+	if not _valid or expected_carryover != read_state() \
+		or torn.read_state().heroes != _heroes or not _same_identities(_heroes):
+		return rejected
+	# A claimed reward must have published the admitted battle before a mend.
+	if _node != "" and not torn.read_state().completed_battles.has(_node):
+		return rejected
+	if _wardrobe == null:
+		if expected_wardrobe != null:
+			return rejected
+	elif not _wardrobe.is_valid() or expected_wardrobe != _wardrobe.get_snapshot() \
+		or expected_wardrobe.heroes != _heroes \
+		or expected_wardrobe.scraps != available_scraps or expected_wardrobe.rest_id != "":
+		return rejected
+	if _wardrobe != null and _projected_heroes().is_empty():
+		return rejected
+	var proposal := _observer()
+	if proposal == null:
+		return rejected
+	var mended := proposal.choose_mend(node, receipt, hero, position,
+		available_scraps, _heroes, between_nodes)
+	if not mended.ok:
+		return rejected
+	# Refresh validates the entire replacement before mutating any wardrobe
+	# field. Nothing in the carryover is published until that commit succeeds.
+	if _wardrobe != null and not _wardrobe.refresh_run_context(mended.heroes,
+		expected_wardrobe.owned, mended.remaining_scraps, expected_wardrobe.gold,
+		expected_wardrobe.cards, expected_wardrobe):
+		return rejected
+	torn = proposal
+	_heroes = mended.heroes.duplicate(true)
+	_receipts.append({"node": node, "mend": receipt, "hero": hero,
+		"position": position, "scraps": available_scraps})
+	return {"ok": true, "heroes": _heroes.duplicate(true),
+		"remaining_scraps": mended.remaining_scraps}
 
 
 func choose_rest_heal(node: Variant) -> Dictionary:
