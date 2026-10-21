@@ -1,0 +1,269 @@
+extends SceneTree
+
+const BOSS_PATH := "res://data/encounters/patchwork_behemoth.json"
+const EXPECTED := [
+	{"type": "attack", "amount": 2, "target_position": 1},
+	{"type": "block", "amount": 3},
+	{"type": "attack", "amount": 2, "target_position": 3},
+	{"type": "debuff", "amount": 1, "target_position": 2, "status": "weak"},
+]
+var failures: Array[String] = []
+var checks := 0
+var catalog: Array = []
+
+
+func _initialize() -> void:
+	_test_catalogs()
+	_test_cycle()
+	_test_inert_and_invalid()
+	_test_earlier_encounter()
+	for failure in failures:
+		printerr(failure)
+	print("run_m03_enemy_content_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
+	quit(0 if failures.is_empty() else 1)
+
+
+func _check(condition: bool, message: String) -> void:
+	checks += 1
+	if not condition:
+		failures.append(message)
+
+
+func _load_records(path: String) -> Array:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check(parsed is Array and not parsed.is_empty(), "nonempty authored array: " + path)
+	if not parsed is Array:
+		return []
+	for record in parsed:
+		if record is Dictionary:
+			_check(RunFightEncounterSelection._coerce_integral_field(record, "max_hp"), "integral authored HP")
+	return parsed
+
+
+func _record(id: String) -> Dictionary:
+	var matches: Array = catalog.filter(func(entry: Dictionary) -> bool: return entry.get("id") == id)
+	_check(matches.size() == 1, "exactly one catalog record: " + id)
+	return matches[0].duplicate(true) if matches.size() == 1 else {}
+
+
+func _boss() -> CombatEnemies:
+	var enemies := CombatEnemies.new([_record("patchwork_behemoth")])
+	_check(enemies.is_valid(), "authored boss is a valid roster")
+	return enemies
+
+
+func _party() -> CombatParty:
+	var records := _load_records("res://data/heroes/starter_party.json")
+	var ordered: Array = []
+	for id in ["warden", "seamstress", "tinker"]:
+		var matches: Array = records.filter(func(entry: Dictionary) -> bool: return entry.get("id") == id)
+		_check(matches.size() == 1, "unique authored hero " + id)
+		if matches.size() == 1:
+			ordered.append(matches[0])
+	var party := CombatParty.new(ordered)
+	_check(party.is_valid(), "valid three-hero fixture")
+	return party
+
+
+func _schedule() -> Array:
+	var result := RunFightEncounterSelection._parse_schedule_text(FileAccess.get_file_as_string(BOSS_PATH))
+	_check(result == [{"enemy_position": 1, "pattern": EXPECTED}], "on-disk single-source exact boss cycle")
+	return result
+
+
+func _rng_start() -> int:
+	seed(58003)
+	var expected := randi()
+	seed(58003)
+	return expected
+
+
+func _test_catalogs() -> void:
+	var required_by_path := {
+		"starter_enemies": ["ragling", "ragling_guard"],
+		"run_enemies": ["fray_scavenger", "button_guard", "spool_stalker", "seam_ripper"],
+		"boss": ["patchwork_behemoth"],
+	}
+	for path in ["starter_enemies", "run_enemies", "boss"]:
+		var records := _load_records("res://data/enemies/" + path + ".json")
+		for id in required_by_path[path]:
+			_check(records.filter(func(entry: Dictionary) -> bool: return entry.get("id") == id).size() == 1,
+				"required ID appears exactly once in its authored file: " + id)
+		catalog.append_array(records)
+	var before := catalog.duplicate(true)
+	var ids: Array = []
+	var names: Array = []
+	for entry in catalog:
+		_check(entry.get("id") is String and not entry.id.is_empty() and entry.id not in ids, "unique nonempty enemy ID")
+		_check(entry.get("name") is String and not entry.name.is_empty() and entry.name not in names, "unique readable enemy name")
+		ids.append(entry.get("id"))
+		names.append(entry.get("name"))
+	var required := {
+		"ragling": ["Ragling", 12], "ragling_guard": ["Guard Ragling", 12],
+		"fray_scavenger": ["Fray Scavenger", 14], "button_guard": ["Button Guard", 16],
+		"spool_stalker": ["Spool Stalker", 14], "seam_ripper": ["Seam Ripper", 18],
+		"patchwork_behemoth": ["Patchwork Behemoth", 42],
+	}
+	for id in required:
+		var entry := _record(id)
+		_check(entry.get("name") == required[id][0] and entry.get("max_hp") == required[id][1]
+			and entry.get("max_hp") is int, "authored identity and integer HP: " + id)
+		var rng_expected := _rng_start()
+		var first := CombatEnemies.new([entry])
+		var second := CombatEnemies.new([entry])
+		_check(first.is_valid() and second.is_valid(), "construct independent rosters: " + id)
+		var original := first.get_enemies()
+		var copy := first.get_enemies()
+		copy[0].hp = 0
+		entry.max_hp = 999
+		_check(first.get_enemies() == original and second.get_enemies() == original, "constructor/read snapshot isolation: " + id)
+		_check(first.apply_damage(1, 1), "first instance takes damage")
+		_check(second.get_enemies() == original, "other instance unaffected")
+		_check(randi() == rng_expected, "construction and reads use no RNG")
+	_check(catalog == before, "complete old/new catalogs remain unchanged")
+
+
+func _test_cycle() -> void:
+	var history: Array = []
+	for replay in range(2):
+		var party := _party()
+		var enemies := _boss()
+		var definitions := _schedule()
+		var scheduler := CombatEnemyIntents.new(definitions)
+		_check(scheduler.is_valid(), "boss scheduler validates")
+		definitions[0].pattern[0].amount = 999
+		var expected_heroes := party.get_heroes()
+		var expected_enemies := enemies.get_enemies()
+		var observed: Array = []
+		var rng_expected := _rng_start()
+		for step in range(8):
+			var expected: Dictionary = EXPECTED[step % 4].duplicate(true)
+			expected.enemy_position = 1
+			var announced := scheduler.get_intents()
+			_check(announced == [expected], "exact announcement at step %d" % step)
+			var copy := scheduler.get_intents()
+			copy[0].amount = 999
+			_check(scheduler.get_intents() == announced, "announcement isolation")
+			var result := CombatEnemyPhase.new().execute_phase(party, enemies, announced)
+			var event := expected.duplicate(true)
+			event.erase("amount")
+			event.applied = true
+			_check(result == {"ok": true, "events": [event]}, "exact ordered phase event at step %d" % step)
+			match step % 4:
+				0: expected_heroes[0].hp -= 2
+				1: expected_enemies[0].block += 3
+				2: expected_heroes[2].hp -= 2
+				3: expected_heroes[1]["statuses"] = {"weak": int(step / 4) + 1}
+			_check(party.get_heroes() == expected_heroes, "complete expected party transition at step %d" % step)
+			_check(enemies.get_enemies() == expected_enemies, "complete expected boss transition at step %d" % step)
+			_check(scheduler.get_intents() == announced, "executor does not advance timeline")
+			observed.append([announced, result, party.get_heroes(), enemies.get_enemies()])
+			_check(scheduler.advance_turn(), "advance one beat")
+		_check(randi() == rng_expected, "entire boss timeline consumes no RNG")
+		_check(scheduler.get_intents()[0].amount == 2, "wraparound after eight steps")
+		if replay == 0:
+			history = observed
+		else:
+			_check(observed == history, "independent deterministic eight-step replay")
+
+
+func _assert_phase_unchanged(party: CombatParty, enemies: CombatEnemies, actions: Array, expected: Dictionary) -> void:
+	var heroes_before := party.get_heroes()
+	var enemies_before := enemies.get_enemies()
+	var input_before := actions.duplicate(true)
+	var rng_expected := _rng_start()
+	_check(CombatEnemyPhase.new().execute_phase(party, enemies, actions) == expected, "inert/rejected phase result")
+	_check(party.get_heroes() == heroes_before and enemies.get_enemies() == enemies_before, "entire authoritative actors unchanged")
+	_check(actions == input_before, "caller actions unchanged")
+	_check(randi() == rng_expected, "inert/rejected phase consumes no RNG")
+
+
+func _test_inert_and_invalid() -> void:
+	var party := _party()
+	var boss := _boss()
+	var heroes_before := party.get_heroes()
+	var valid_before := boss.get_enemies()
+	# Verify the global-stream sentinel detects a deliberately injected draw.
+	var sentinel := _rng_start()
+	randi()
+	_check(randi() != sentinel, "RNG sentinel detects an extra global draw")
+	for bad in [{"id": "", "max_hp": 42}, {"id": 7, "max_hp": 42},
+		{"id": "bad", "max_hp": 0}, {"id": "bad", "max_hp": 42.5},
+		{"name": "missing ID", "max_hp": 42}]:
+		var input: Array = [_record("patchwork_behemoth"), bad]
+		var before := input.duplicate(true)
+		var rng_expected := _rng_start()
+		var invalid := CombatEnemies.new(input)
+		_check(not invalid.is_valid() and invalid.get_enemies().is_empty(), "invalid enemy definition rejected atomically")
+		_check(input == before and boss.get_enemies() == valid_before, "invalid construction leaves inputs/actors unchanged")
+		_check(randi() == rng_expected, "invalid enemy construction consumes no RNG")
+	var duplicate := [_record("patchwork_behemoth"), _record("patchwork_behemoth")]
+	var rng_expected := _rng_start()
+	var invalid := CombatEnemies.new(duplicate)
+	_check(not invalid.is_valid() and invalid.get_enemies().is_empty(), "duplicate enemy IDs rejected")
+	_check(randi() == rng_expected, "duplicate enemy IDs consume no RNG")
+	_check(duplicate == [_record("patchwork_behemoth"), _record("patchwork_behemoth")]
+		and party.get_heroes() == heroes_before and boss.get_enemies() == valid_before,
+		"duplicate rejection preserves definitions and all surviving actors")
+	_assert_phase_unchanged(party, invalid, [], {"ok": false, "events": []})
+	for text in ["{", "{}", "[]",
+		'[{"enemy_position":1.5,"pattern":[{"type":"block","amount":3}]}]',
+		JSON.stringify(_schedule() + _schedule())]:
+		rng_expected = _rng_start()
+		_check(RunFightEncounterSelection._parse_schedule_text(text).is_empty(), "invalid source schedule rejected")
+		_check(randi() == rng_expected and party.get_heroes() == heroes_before
+			and boss.get_enemies() == valid_before, "source schedule rejection preserves actors/RNG")
+	for bad_action in [
+		{"type": "attack", "amount": 2.5, "target_position": 1},
+		{"type": "block", "amount": -1}, {"type": "block", "amount": "3"},
+		{"type": "attack", "amount": 2, "target_position": 1.5},
+		{"type": "attack", "amount": 2, "target_position": 0},
+		{"type": "debuff", "amount": 1, "target_position": 2, "status": "invented"},
+		{"type": "debuff", "amount": 0, "target_position": 2, "status": "weak"},
+		{"type": "block", "amount": 3, "target_position": 1},
+		{"type": "unknown", "amount": 2}, {"type": "attack", "target_position": 1},
+	]:
+		var schedule := _schedule()
+		schedule[0].pattern.append(bad_action)
+		var before := schedule.duplicate(true)
+		rng_expected = _rng_start()
+		_check(RunFightEncounterSelection._parse_schedule_text(JSON.stringify(schedule)).is_empty(), "malformed/fractional JSON schedule rejected")
+		var rejected := CombatEnemyIntents.new(schedule)
+		_check(not rejected.is_valid() and rejected.get_intents().is_empty() and not rejected.advance_turn(), "invalid scheduler inert")
+		_check(schedule == before and randi() == rng_expected, "rejected schedule unchanged and no RNG spent")
+		var malformed: Dictionary = bad_action.duplicate(true)
+		malformed.enemy_position = 1
+		_assert_phase_unchanged(party, boss, [malformed], {"ok": false, "events": []})
+		# A valid staged Block must also roll back when a later source is malformed.
+		var pair := CombatEnemies.new([_record("patchwork_behemoth"), _record("ragling")])
+		malformed.enemy_position = 2
+		_assert_phase_unchanged(party, pair, [{"enemy_position": 1, "type": "block", "amount": 3}, malformed], {"ok": false, "events": []})
+	_check(boss.apply_damage(1, 42) and boss.is_slain(1), "real authored boss slain")
+	for action in EXPECTED:
+		var announced: Dictionary = action.duplicate(true)
+		announced.enemy_position = 1
+		var event := announced.duplicate(true)
+		event.erase("amount")
+		event.applied = false
+		_assert_phase_unchanged(party, boss, [announced], {"ok": true, "events": [event]})
+	for beat in [0, 2, 3]:
+		var downed_party := _party()
+		var action: Dictionary = EXPECTED[beat].duplicate(true)
+		var target: int = action.target_position
+		_check(downed_party.apply_damage(target, 100) and downed_party.is_downed(target), "target actually downed")
+		action.enemy_position = 1
+		var result := {"ok": false, "events": []}
+		if action.type == "attack":
+			result = {"ok": true, "events": [{"type": "attack", "enemy_position": 1, "target_position": target, "applied": false}]}
+		_assert_phase_unchanged(downed_party, _boss(), [action], result)
+
+
+func _test_earlier_encounter() -> void:
+	var definitions := RunFightEncounterSelection._parse_schedule_text(FileAccess.get_file_as_string("res://data/encounters/bobbin_skirmish.json"))
+	var expected := [
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 1, "target_position": 2}, {"type": "block", "amount": 1}, {"type": "attack", "amount": 1, "target_position": 3}]},
+		{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 1, "target_position": 1}, {"type": "block", "amount": 1}]},
+	]
+	_check(definitions == expected, "Bobbin Skirmish complete ordered source cycles preserved")
+	_check(CombatEnemyIntents.new(definitions).is_valid(), "Bobbin Skirmish still validates")
+	_check(CombatEnemies.new([_record("ragling"), _record("ragling_guard")]).is_valid(), "both named earlier Raglings still validate")
