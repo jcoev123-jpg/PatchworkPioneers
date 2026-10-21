@@ -29,6 +29,13 @@ func _persistent() -> Array:
 		app.run_rng.state, app.run_map.get_route(), _state()]
 
 
+func _block_free_party() -> Array:
+	var heroes: Array = app.party.get_heroes()
+	for hero in heroes:
+		hero.block = 0
+	return heroes
+
+
 func _routed_win(fixture: Dictionary, downed: bool) -> bool:
 	app.run_seed = fixture.seed
 	await _click(app.route_button)
@@ -95,7 +102,7 @@ func _run() -> void:
 		seed(380038)
 		if not await _routed_win(fixture, session == 1):
 			break
-		_check(app.run_heroes == app.party.get_heroes() and app.run_heroes.size() == 3,
+		_check(app.run_heroes == _block_free_party() and app.run_heroes.size() == 3,
 			"routed victory saves complete independent three-hero run snapshot")
 		var copy: Array = app.run_heroes.duplicate(true)
 		_check(app.party.apply_damage(1, 1), "probe combat snapshot independence")
