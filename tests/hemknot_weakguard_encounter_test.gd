@@ -357,6 +357,23 @@ func _test_real_phase_sequence() -> void:
 	_check_hero(party, 1, 40, 0, "T2 opening")
 	_check(party.get_hero(3).get("statuses", {}) == {"weak": 1},
 		"player Block reset does not consume Weak status")
+	# Weak 1 remains active during Tinker's next player turn and modifies outgoing damage.
+	_check(CombatStatuses.new().adjusted_attack_damage(8,
+		party.get_hero(3).get("statuses", {}), {}) == 6,
+		"Weak 1 modifies Tinker outgoing damage while active (8 -> 6)")
+
+	# End of that owner turn: simulate CombatRoundFlow hero-status tick before the next enemy phase.
+	var owner_tick_t2 := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+	_check(owner_tick_t2.get("ok", false), "hero owner tick before T2 phase succeeds")
+	if owner_tick_t2.get("ok", false):
+		var ticked: Array = owner_tick_t2.get("actors", [])
+		for i in range(3):
+			party._heroes[i]["hp"] = ticked[i]["hp"]
+			party._heroes[i]["block"] = ticked[i]["block"]
+			party._heroes[i]["statuses"] = ticked[i]["statuses"].duplicate(true)
+	_check(party.get_hero(3).get("statuses", {}) == {},
+		"Weak 1 expires at Tinker's owner-turn boundary before T2 enemy phase")
+	_check(party.get_hero(1).get("block") == 0, "owner tick keeps reset Block at 0")
 
 	# Turn 2
 	var turn2 := phase.execute_phase(party, enemies, scheduler.get_intents())
@@ -374,6 +391,16 @@ func _test_real_phase_sequence() -> void:
 
 	_check(scheduler.advance_turn(), "explicit advance to turn 3")
 	_check(party.start_player_turn(), "second player turn resets hero Block")
+
+	# End of that owner turn: tick before T3 enemy phase.
+	var owner_tick_t3 := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+	_check(owner_tick_t3.get("ok", false), "hero owner tick before T3 phase succeeds")
+	if owner_tick_t3.get("ok", false):
+		var ticked3: Array = owner_tick_t3.get("actors", [])
+		for i in range(3):
+			party._heroes[i]["hp"] = ticked3[i]["hp"]
+			party._heroes[i]["block"] = ticked3[i]["block"]
+			party._heroes[i]["statuses"] = ticked3[i]["statuses"].duplicate(true)
 
 	# Turn 3
 	var turn3 := phase.execute_phase(party, enemies, scheduler.get_intents())
@@ -394,18 +421,37 @@ func _test_real_phase_sequence() -> void:
 
 
 func _play_three_turns() -> Dictionary:
+	seed(20261021)
 	var party := _build_authored_party()
 	var enemies := _build_authored_enemies()
 	var opening := CombatStartingBlock.new(party)
 	_check(opening.apply(), "replay precondition: Warden opening Block applies")
 	var scheduler := CombatEnemyIntents.new(_parsed())
 	var events: Array = []
+	var announced: Array = []
+	var hero_snapshots: Array = []
+	var enemy_snapshots: Array = []
 	for turn in range(3):
-		events.append(phase.execute_phase(party, enemies, scheduler.get_intents()))
+		if turn > 0:
+			var owner_tick := CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+			_check(owner_tick.get("ok", false), "replay owner tick before turn %d succeeds" % (turn + 1))
+			if owner_tick.get("ok", false):
+				var ticked: Array = owner_tick.get("actors", [])
+				for i in range(3):
+					party._heroes[i]["hp"] = ticked[i]["hp"]
+					party._heroes[i]["block"] = ticked[i]["block"]
+					party._heroes[i]["statuses"] = ticked[i]["statuses"].duplicate(true)
+		announced.append(scheduler.get_intents().duplicate(true))
+		var result := phase.execute_phase(party, enemies, scheduler.get_intents())
+		events.append(result)
+		hero_snapshots.append(party.get_heroes().duplicate(true))
+		enemy_snapshots.append(enemies.get_enemies().duplicate(true))
 		_check(scheduler.advance_turn(), "replay advance after turn %d" % (turn + 1))
 		if turn < 2:
 			_check(party.start_player_turn(), "replay player reset after turn %d" % (turn + 1))
-	return {"events": events, "heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
+	return {"events": events, "announced": announced,
+		"hero_snapshots": hero_snapshots, "enemy_snapshots": enemy_snapshots,
+		"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
 		"repeating": scheduler.get_intents()}
 
 
@@ -414,10 +460,74 @@ func _test_double_replay() -> void:
 	var expected_rng := randi()
 	seed(20261021)
 	var first := _play_three_turns()
-	_check(randi() == expected_rng, "three real authored phases draw no global RNG")
+	var first_post_rng := randi()
+	seed(20261021)
+	var baseline_rng := randi()
+	_check(first_post_rng == baseline_rng,
+		"first replay draws no global RNG (post-run RNG matches seeded baseline)")
 	var second := _play_three_turns()
+	var second_post_rng := randi()
+	seed(20261021)
+	var baseline_rng2 := randi()
+	_check(second_post_rng == baseline_rng2,
+		"second replay draws no global RNG (post-run RNG matches seeded baseline)")
+	_check(first_post_rng == second_post_rng,
+		"both replays leave identical post-run RNG state")
 	_check(first["events"].size() == 3 and second["events"].size() == 3,
 		"each replay resolved exactly three enemy phases")
+	_check(first["announced"].size() == 3 and second["announced"].size() == 3,
+		"each replay recorded three announced intent arrays")
+	_check(first["hero_snapshots"].size() == 3 and first["enemy_snapshots"].size() == 3,
+		"each replay recorded three per-beat snapshots")
+	# independent oracles for announced intents
+	_check(first["announced"][0] == _first_intents() and second["announced"][0] == _first_intents(),
+		"both replays announce first-turn intents on beat 1")
+	_check(first["announced"][1] == _second_intents() and second["announced"][1] == _second_intents(),
+		"both replays announce second-turn intents on beat 2")
+	_check(first["announced"][2] == _third_intents() and second["announced"][2] == _third_intents(),
+		"both replays announce third-turn intents on beat 3")
+	_check(first["announced"] == second["announced"],
+		"two independently constructed copies announce identical intents")
+	# independent oracles for phase events
+	_check(first["events"][0].get("events") == [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true},
+		{"type": "debuff", "enemy_position": 2, "target_position": 3, "status": "weak", "applied": true}],
+		"replay beat 1 events match the literal first-turn oracle")
+	_check(first["events"][1].get("events") == [
+		{"type": "block", "enemy_position": 1, "applied": true},
+		{"type": "attack", "enemy_position": 2, "target_position": 3, "applied": true}],
+		"replay beat 2 events match the literal second-turn oracle")
+	_check(first["events"][2].get("events") == [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": true},
+		{"type": "buff", "enemy_position": 2, "applied": true}],
+		"replay beat 3 events match the literal third-turn oracle")
+	_check(first["events"] == second["events"],
+		"two independently constructed copies produce identical phase results")
+	# per-beat hero/enemy snapshots
+	_check(first["hero_snapshots"][0][0]["hp"] == 40 and first["hero_snapshots"][0][0]["block"] == 2
+		and first["hero_snapshots"][0][0].get("statuses", {}) == {},
+		"replay beat 1: Warden 40/2")
+	_check(first["hero_snapshots"][0][2]["hp"] == 26 and first["hero_snapshots"][0][2]["block"] == 0
+		and first["hero_snapshots"][0][2].get("statuses", {}) == {"weak": 1},
+		"replay beat 1: Tinker 26/0 Weak 1")
+	_check(first["enemy_snapshots"][0][0]["block"] == 0 and first["enemy_snapshots"][0][1]["block"] == 0,
+		"replay beat 1: enemies 0 Block")
+	_check(first["hero_snapshots"][1][0]["hp"] == 40 and first["hero_snapshots"][1][0]["block"] == 0,
+		"replay beat 2: Warden 40/0 after owner tick")
+	_check(first["hero_snapshots"][1][2]["hp"] == 23 and first["hero_snapshots"][1][2]["block"] == 0
+		and first["hero_snapshots"][1][2].get("statuses", {}) == {},
+		"replay beat 2: Tinker 23/0, Weak expired")
+	_check(first["enemy_snapshots"][1][0]["block"] == 3,
+		"replay beat 2: Button Guard 3 Block")
+	_check(first["hero_snapshots"][2][1]["hp"] == 27 and first["hero_snapshots"][2][1]["block"] == 0,
+		"replay beat 3: Seamstress 27/0")
+	_check(first["enemy_snapshots"][2][1]["block"] == 2,
+		"replay beat 3: Seam Ripper 2 Block")
+	_check(first["hero_snapshots"] == second["hero_snapshots"],
+		"two independently constructed copies have identical per-beat hero snapshots")
+	_check(first["enemy_snapshots"] == second["enemy_snapshots"],
+		"two independently constructed copies have identical per-beat enemy snapshots")
+	# final state
 	_check(first["heroes"].size() == 3 and first["enemies"].size() == 2,
 		"each replay ends with the complete authored formation")
 	_check(first["heroes"][0]["hp"] == 40 and first["heroes"][0]["block"] == 0
@@ -425,8 +535,8 @@ func _test_double_replay() -> void:
 		and first["heroes"][1]["hp"] == 27 and first["heroes"][1]["block"] == 0
 		and first["heroes"][1].get("statuses", {}) == {}
 		and first["heroes"][2]["hp"] == 23 and first["heroes"][2]["block"] == 0
-		and first["heroes"][2].get("statuses", {}) == {"weak": 1},
-		"replay end state is Warden 40/0, Seamstress 27/0, Tinker 23/0 Weak 1")
+		and first["heroes"][2].get("statuses", {}) == {},
+		"replay end state is Warden 40/0, Seamstress 27/0, Tinker 23/0, no Weak")
 	_check(first["enemies"][0]["id"] == "button_guard" and first["enemies"][0]["hp"] == 16
 		and first["enemies"][0]["block"] == 3
 		and first["enemies"][1]["id"] == "seam_ripper" and first["enemies"][1]["hp"] == 18
@@ -434,8 +544,6 @@ func _test_double_replay() -> void:
 		"replay end state is Button Guard 16/3 and Seam Ripper 18/2")
 	_check(first["repeating"] == _first_intents() and second["repeating"] == _first_intents(),
 		"both copies return to the first announced intents on turn 4")
-	_check(first["events"] == second["events"],
-		"two independently constructed copies produce identical phase results")
 	_check(first["heroes"] == second["heroes"] and first["enemies"] == second["enemies"],
 		"two independently constructed copies end in identical party and enemy state")
 
