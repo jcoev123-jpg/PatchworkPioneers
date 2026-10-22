@@ -63,7 +63,19 @@ func _load_starter_deck() -> Array[String]:
 		for id in authored:
 			if typeof(id) == TYPE_STRING:
 				deck.append(id)
-	_check(deck.size() == 12, "shipped starter deck has 12 cards")
+	_check(not deck.is_empty(), "shipped starter deck is non-empty")
+	_check(deck.has("warden_strike"), "shipped starter deck contains warden_strike")
+	_check(deck.has("seamstress_prick"), "shipped starter deck contains seamstress_prick")
+	_check(deck.has("seamstress_mend"), "shipped starter deck contains seamstress_mend")
+	_check(deck.has("tinker_pop_shot"), "shipped starter deck contains tinker_pop_shot")
+	var idx_w: int = deck.find("warden_strike")
+	var idx_s: int = deck.find("seamstress_prick")
+	var idx_m: int = deck.find("seamstress_mend")
+	var idx_t: int = deck.find("tinker_pop_shot")
+	_check(idx_w >= 0 and idx_s >= 0 and idx_m >= 0 and idx_t >= 0,
+		"shipped starter deck has usable indices for stitch candidates")
+	_check(idx_w != idx_s and idx_w != idx_m and idx_w != idx_t and idx_s != idx_m and idx_s != idx_t and idx_m != idx_t,
+		"shipped starter deck has distinct usable indices for stitch candidates")
 	return deck
 
 
@@ -78,59 +90,96 @@ func _authored_patch_definitions() -> Array:
 
 
 func _test_two_legal_stitches_and_wardrobe_summary() -> void:
-	var heroes: Array = _load_party()
 	var starter_deck: Array[String] = _load_starter_deck()
-	if heroes.is_empty() or starter_deck.size() != 12:
+	var idx_warden: int = starter_deck.find("warden_strike")
+	var idx_seamstress: int = starter_deck.find("seamstress_prick")
+	var idx_mend: int = starter_deck.find("seamstress_mend")
+	var idx_tinker: int = starter_deck.find("tinker_pop_shot")
+	_check(idx_warden >= 0, "starter deck contains warden_strike")
+	_check(idx_seamstress >= 0, "starter deck contains seamstress_prick")
+	_check(idx_mend >= 0, "starter deck contains seamstress_mend")
+	_check(idx_tinker >= 0, "starter deck contains tinker_pop_shot")
+	_check(idx_warden != idx_seamstress and idx_warden != idx_mend and idx_warden != idx_tinker \
+		and idx_seamstress != idx_mend and idx_seamstress != idx_tinker and idx_mend != idx_tinker,
+		"starter deck has distinct usable indices for stitch candidates")
+	if idx_warden < 0 or idx_seamstress < 0 or idx_mend < 0 or idx_tinker < 0 or idx_warden == idx_seamstress:
+		return
+
+	_assert_ac1_scenario(starter_deck, "shipped starter deck")
+
+	# Test-only fixture with legal extra starter card to verify catalog-growth tolerance.
+	var expanded_deck: Array[String] = starter_deck.duplicate()
+	expanded_deck.append("warden_strike")
+	_assert_ac1_scenario(expanded_deck, "expanded starter deck fixture")
+
+
+func _assert_ac1_scenario(deck: Array[String], scenario_name: String) -> void:
+	var heroes: Array = _load_party()
+	var idx_warden: int = deck.find("warden_strike")
+	var idx_seamstress: int = deck.find("seamstress_prick")
+	var idx_mend: int = deck.find("seamstress_mend")
+	var idx_tinker: int = deck.find("tinker_pop_shot")
+	_check(idx_warden >= 0, scenario_name + ": deck contains warden_strike")
+	_check(idx_seamstress >= 0, scenario_name + ": deck contains seamstress_prick")
+	_check(idx_mend >= 0, scenario_name + ": deck contains seamstress_mend")
+	_check(idx_tinker >= 0, scenario_name + ": deck contains tinker_pop_shot")
+	_check(idx_warden != idx_seamstress and idx_warden != idx_mend and idx_warden != idx_tinker \
+		and idx_seamstress != idx_mend and idx_seamstress != idx_tinker and idx_mend != idx_tinker,
+		scenario_name + ": deck has distinct usable indices for stitch candidates")
+	if heroes.is_empty() or idx_warden < 0 or idx_seamstress < 0 or idx_mend < 0 or idx_tinker < 0 \
+			or idx_warden == idx_seamstress:
 		return
 
 	# Visit 1: Stitch warden_strike and seamstress_prick.
 	var scraps_initial: int = 6
-	var stitch_1 := RunRestStitchCards.new(starter_deck, {}, scraps_initial, 1)
-	_check(stitch_1.is_valid(), "first stitch service instance is valid")
+	var stitch_1 := RunRestStitchCards.new(deck, {}, scraps_initial, 1)
+	_check(stitch_1.is_valid(), scenario_name + ": first stitch service instance is valid")
 	var snapshot_1: Dictionary = stitch_1.get_snapshot()
-	var idx_warden: int = starter_deck.find("warden_strike")
-	var idx_seamstress: int = starter_deck.find("seamstress_prick")
-	_check(idx_warden >= 0 and idx_seamstress >= 0 and idx_warden != idx_seamstress, "found distinct starter cards")
 
 	var result_1: Dictionary = stitch_1.choose_stitch(idx_warden, idx_seamstress, snapshot_1)
-	_check(result_1.get("ok") == true, "first stitch transaction succeeded")
+	_check(result_1.get("ok") == true, scenario_name + ": first stitch transaction succeeded")
 	var deck_after_1: Array[String] = []
 	deck_after_1.assign(result_1.get("deck", []))
 	var desc_after_1: Dictionary = result_1.get("descriptors", {}).duplicate(true)
 	var scraps_after_1: int = result_1.get("remaining_scraps", 0)
 	var next_id_after_1: int = result_1.get("next_stitch_id", 1)
-	_check(scraps_after_1 == 3, "scraps decremented by 3 after first stitch")
-	_check(next_id_after_1 == 2, "next_stitch_id advanced to 2")
-	_check(desc_after_1.has("stitched_000001"), "descriptors contains stitched_000001")
+	_check(scraps_after_1 == 3, scenario_name + ": scraps decremented by 3 after first stitch")
+	_check(next_id_after_1 == 2, scenario_name + ": next_stitch_id advanced to 2")
+	_check(desc_after_1.has("stitched_000001"), scenario_name + ": descriptors contains stitched_000001")
 
 	# Visit 2: Stitch seamstress_mend and tinker_pop_shot.
 	var stitch_2 := RunRestStitchCards.new(deck_after_1, desc_after_1, scraps_after_1, next_id_after_1)
-	_check(stitch_2.is_valid(), "second stitch service instance is valid")
+	_check(stitch_2.is_valid(), scenario_name + ": second stitch service instance is valid")
 	var snapshot_2: Dictionary = stitch_2.get_snapshot()
 	var idx_seamstress_2: int = deck_after_1.find("seamstress_mend")
 	var idx_tinker_2: int = deck_after_1.find("tinker_pop_shot")
-	_check(idx_seamstress_2 >= 0 and idx_tinker_2 >= 0, "found distinct second-pair cards")
+	_check(idx_seamstress_2 >= 0 and idx_tinker_2 >= 0 and idx_seamstress_2 != idx_tinker_2,
+		scenario_name + ": found distinct second-pair cards")
+	if idx_seamstress_2 < 0 or idx_tinker_2 < 0 or idx_seamstress_2 == idx_tinker_2:
+		return
 
 	var result_2: Dictionary = stitch_2.choose_stitch(idx_seamstress_2, idx_tinker_2, snapshot_2)
-	_check(result_2.get("ok") == true, "second stitch transaction succeeded")
+	_check(result_2.get("ok") == true, scenario_name + ": second stitch transaction succeeded")
 	var deck_after_2: Array[String] = []
 	deck_after_2.assign(result_2.get("deck", []))
 	var desc_after_2: Dictionary = result_2.get("descriptors", {}).duplicate(true)
 	var next_id_after_2: int = result_2.get("next_stitch_id", 1)
-	_check(next_id_after_2 == 3, "next_stitch_id advanced to 3")
-	_check(desc_after_2.has("stitched_000001") and desc_after_2.has("stitched_000002"), "descriptors contains both stitched cards")
+	_check(next_id_after_2 == 3, scenario_name + ": next_stitch_id advanced to 3")
+	_check(desc_after_2.has("stitched_000001") and desc_after_2.has("stitched_000002"),
+		scenario_name + ": descriptors contains both stitched cards")
 
 	# Construct valid RunPatchWardrobe against resulting deck.
 	var defs: Array = _authored_patch_definitions()
 	var owned: Array = ["button_eye", "stitched_badge", "pincushion_arm", "spare_spool", "quilted_coat"]
 	var wardrobe := RunPatchWardrobe.new(heroes, owned, defs, 3, 100, deck_after_2, 777)
-	_check(wardrobe.is_valid(), "wardrobe constructed against resulting deck is valid")
+	_check(wardrobe.is_valid(), scenario_name + ": wardrobe constructed against resulting deck is valid")
 
 	# Sew HEAD to Warden, ARM to Seamstress, COAT to Tinker.
 	var sew_1: Dictionary = wardrobe.sew("button_eye", "warden", "HEAD", "op_1", wardrobe.get_snapshot())
 	var sew_2: Dictionary = wardrobe.sew("pincushion_arm", "seamstress", "ARM", "op_2", wardrobe.get_snapshot())
 	var sew_3: Dictionary = wardrobe.sew("quilted_coat", "tinker", "COAT", "op_3", wardrobe.get_snapshot())
-	_check(sew_1.get("ok") == true and sew_2.get("ok") == true and sew_3.get("ok") == true, "all 3 sew operations succeeded")
+	_check(sew_1.get("ok") == true and sew_2.get("ok") == true and sew_3.get("ok") == true,
+		scenario_name + ": all 3 sew operations succeeded")
 
 	# Snapshot source state and RNG before projection.
 	var wardrobe_snap_before: Dictionary = wardrobe.get_snapshot()
@@ -146,44 +195,48 @@ func _test_two_legal_stitches_and_wardrobe_summary() -> void:
 	# Execute RunSignatureSummary.summarize
 	var summary: Dictionary = RunSignatureSummary.summarize(deck_after_2, desc_after_2, next_id_after_2, wardrobe)
 
-	_check(summary.get("ok") == true, "AC1: summary reports ok == true")
-	_check(summary.get("stitched_created") == 2, "AC1: stitched_created == 2 historical allocations")
-	_check(summary.get("stitched_current") == 2, "AC1: stitched_current == 2 currently owned")
+	_check(summary.get("ok") == true, scenario_name + " AC1: summary reports ok == true")
+	_check(summary.get("stitched_created") == 2, scenario_name + " AC1: stitched_created == 2 historical allocations")
+	_check(summary.get("stitched_current") == 2, scenario_name + " AC1: stitched_current == 2 currently owned")
 	var summary_descriptors: Variant = summary.get("descriptors")
-	_check(typeof(summary_descriptors) == TYPE_DICTIONARY and summary_descriptors.size() == 2, "AC1: 2 live descriptors in summary")
-	_check(summary.get("worn_total") == 3, "AC1: worn_total == 3 for three sewn slot placements")
+	_check(typeof(summary_descriptors) == TYPE_DICTIONARY and summary_descriptors.size() == 2,
+		scenario_name + " AC1: 2 live descriptors in summary")
+	_check(summary.get("worn_total") == 3, scenario_name + " AC1: worn_total == 3 for three sewn slot placements")
 
 	var worn_ids_val: Variant = summary.get("worn_ids")
-	_check(typeof(worn_ids_val) == TYPE_ARRAY and worn_ids_val.size() == 3, "AC1: three worn IDs returned")
+	_check(typeof(worn_ids_val) == TYPE_ARRAY and worn_ids_val.size() == 3,
+		scenario_name + " AC1: three worn IDs returned")
 	if typeof(worn_ids_val) == TYPE_ARRAY:
-		_check(worn_ids_val == ["button_eye", "pincushion_arm", "quilted_coat"], "AC1: exact worn IDs in exact HERO_IDS/SLOTS order")
+		_check(worn_ids_val == ["button_eye", "pincushion_arm", "quilted_coat"],
+			scenario_name + " AC1: exact worn IDs in exact HERO_IDS/SLOTS order")
 
 	var heroes_val: Variant = summary.get("heroes")
-	_check(typeof(heroes_val) == TYPE_ARRAY and heroes_val.size() == 3, "AC1: 3 hero rows in Warden/Seamstress/Tinker order")
+	_check(typeof(heroes_val) == TYPE_ARRAY and heroes_val.size() == 3,
+		scenario_name + " AC1: 3 hero rows in Warden/Seamstress/Tinker order")
 	if typeof(heroes_val) == TYPE_ARRAY and heroes_val.size() == 3:
 		var h0: Dictionary = heroes_val[0]
 		var h1: Dictionary = heroes_val[1]
 		var h2: Dictionary = heroes_val[2]
 		_check(h0.get("hero_id") == "warden" and h0.get("HEAD") == "button_eye" and h0.get("ARM") == "" and h0.get("COAT") == "",
-			"AC1: Warden wears button_eye on HEAD")
+			scenario_name + " AC1: Warden wears button_eye on HEAD")
 		_check(h1.get("hero_id") == "seamstress" and h1.get("HEAD") == "" and h1.get("ARM") == "pincushion_arm" and h1.get("COAT") == "",
-			"AC1: Seamstress wears pincushion_arm on ARM")
+			scenario_name + " AC1: Seamstress wears pincushion_arm on ARM")
 		_check(h2.get("hero_id") == "tinker" and h2.get("HEAD") == "" and h2.get("ARM") == "" and h2.get("COAT") == "quilted_coat",
-			"AC1: Tinker wears quilted_coat on COAT")
+			scenario_name + " AC1: Tinker wears quilted_coat on COAT")
 		# Check slot-indexed dictionary access.
 		var slots0: Dictionary = h0.get("slots", {})
 		var slots1: Dictionary = h1.get("slots", {})
 		var slots2: Dictionary = h2.get("slots", {})
 		_check(slots0.get("HEAD") == "button_eye" and slots1.get("ARM") == "pincushion_arm" and slots2.get("COAT") == "quilted_coat",
-			"AC1: slot-indexed dictionary access on hero rows matches")
+			scenario_name + " AC1: slot-indexed dictionary access on hero rows matches")
 
 	# Assert caller state and RNG unchanged.
-	_check(wardrobe.get_snapshot() == wardrobe_snap_before, "wardrobe state unchanged after summary")
-	_check(wardrobe.get_snapshot().get("receipt") == wardrobe_snap_before.get("receipt"), "wardrobe receipt unchanged")
-	_check(deck_after_2 == deck_snapshot_before, "deck argument unchanged after summary")
-	_check(desc_after_2 == desc_snapshot_before, "descriptors argument unchanged after summary")
-	_check(test_rng.state == rng_state_before, "seeded RNG state unchanged after summary")
-	_check(randi() == global_sample_before, "global RNG state unchanged after summary")
+	_check(wardrobe.get_snapshot() == wardrobe_snap_before, scenario_name + ": wardrobe state unchanged after summary")
+	_check(wardrobe.get_snapshot().get("receipt") == wardrobe_snap_before.get("receipt"), scenario_name + ": wardrobe receipt unchanged")
+	_check(deck_after_2 == deck_snapshot_before, scenario_name + ": deck argument unchanged after summary")
+	_check(desc_after_2 == desc_snapshot_before, scenario_name + ": descriptors argument unchanged after summary")
+	_check(test_rng.state == rng_state_before, scenario_name + ": seeded RNG state unchanged after summary")
+	_check(randi() == global_sample_before, scenario_name + ": global RNG state unchanged after summary")
 
 
 func _test_shop_removal_and_wardrobe_updates() -> void:
