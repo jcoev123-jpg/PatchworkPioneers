@@ -8,6 +8,15 @@ const TINKER := Color("#c49a3a")
 const CREAM := Color("#ece0c8")
 const RUST := Color("#9e6f58")
 const INK := Color("#3d3440")
+## Every effect key this display formatter understands. Anything else stays
+## undescribed and is flagged honestly instead of being interpreted as a number.
+const KNOWN_EFFECT_KEYS := [
+	"damage", "hits", "hit_count", "block", "other_ally_block", "block_all",
+	"heal", "exposed", "weak", "bleed", "unravel", "bleed_multiplier", "pinned",
+	"guarding", "thorns", "draw", "energy", "gain_energy", "self_hp_loss",
+	"conditional_damage", "random_target_each_hit", "rng_source",
+	"living_targets_only", "duration",
+]
 
 var _catalog := StarterCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -30,6 +39,10 @@ func _ledger() -> RunRestStitchCards:
 		_app.run_scraps, _app.run_next_stitch_id)
 
 
+## Authored display knowledge only. Starter and movement records keep priority,
+## then every reward-pool record (base and '+' upgrade) is a verified catalog
+## lookup. Whether a recognized card may be played is a separate live decision
+## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
 	var move := M02PositionCards.new().get_definition(card_id)
 	if not move.is_empty():
@@ -37,24 +50,13 @@ func _definition(card_id: String) -> Dictionary:
 	var starter := _catalog.get_definition(card_id)
 	if not starter.is_empty():
 		return starter
-	# Reward-pool records are a separate authored catalog; lookup stays read-only.
 	var warden_definition := _warden_pool.get_definition(card_id)
 	if not warden_definition.is_empty():
 		return warden_definition
-	# Only the playable energy utilities, Spare Parts and Sight Glass are
-	# advertised; all other Tinker/Seamstress pool records remain unknown.
-	if CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id) or card_id in [
-			"tinker_spare_parts", "tinker_spare_parts_plus",
-			"tinker_sight_glass", "tinker_sight_glass_plus"]:
-		if card_id.begins_with("tinker_"):
-			var tinker_definition := _tinker_pool.get_definition(card_id)
-			if not tinker_definition.is_empty():
-				return tinker_definition
-		elif card_id.begins_with("seamstress_"):
-			var seamstress_definition := _seamstress_pool.get_definition(card_id)
-			if not seamstress_definition.is_empty():
-				return seamstress_definition
-	return {}
+	var seamstress_definition := _seamstress_pool.get_definition(card_id)
+	if not seamstress_definition.is_empty():
+		return seamstress_definition
+	return _tinker_pool.get_definition(card_id)
 
 
 ## Public read-only lookup shared by the mounted hand admission checks.
@@ -69,75 +71,245 @@ func base_effect_text(card_id: String) -> String:
 	var display_name: String = definition.get("display_name", card_id)
 	var owner: String = definition.get("owner", "")
 	var cost: int = int(definition.get("cost", -1))
-	var effects: Dictionary = definition.get("effects", {})
-	# Derive complete target description from catalog target_kind and positions.
-	var target_kind: String = definition.get("target_kind", "")
-	var to_positions: Array = definition.get("to_positions", [])
-	var target_text := ""
-	match target_kind:
-		"enemy_single":
-			target_text = "To one selected enemy"
-			if not to_positions.is_empty():
-				target_text += " " + _positions(to_positions)
-		"enemy_all":
-			target_text = "All enemies"
-			if not to_positions.is_empty():
-				target_text += " " + _positions(to_positions)
-		"self":
-			target_text = "Self"
-		"ally_single":
-			target_text = "Choose one living ally"
-		"party_all":
-			target_text = "All living heroes"
-		"none":
-			target_text = "No target"
-		_:
-			target_text = "Unknown target"
-	# Describe only effects backed by the real confirmed-hit adapter; an
-	# authored counter by itself is not a promise of an applied status.
 	var from_text: String = describe(card_id).get("from_text", "From ?")
-	var effect_parts: Array[String] = []
-	if definition.get("action_kind") == "adjacent_swap":
-		effect_parts.append("Swap with the living adjacent ally %s" % ("behind" if definition.direction == 1 else "ahead"))
-	if effects.has("damage"):
-		effect_parts.append("BASE deal %d damage" % int(effects["damage"]))
-	if effects.has("block"):
-		effect_parts.append("BASE gain %d Block" % int(effects["block"]))
-	# Hold the Line and Bastion Quilt pay other recipients too; never hide them.
-	if effects.has("other_ally_block"):
-		effect_parts.append("BASE each other living ally gains %d Block" % int(effects["other_ally_block"]))
-	if effects.has("block_all"):
-		effect_parts.append("BASE each living hero gains %d Block" % int(effects["block_all"]))
-	if effects.has("heal"):
-		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
-	if effects.has("exposed") and card_id in ["tinker_sight_glass", "tinker_sight_glass_plus"]:
-		effect_parts.append("Apply Exposed %d to the selected enemy" % int(effects["exposed"]))
-	if effects.has("draw"):
-		effect_parts.append("BASE draw %d card" % int(effects["draw"]))
-	if effects.has("gain_energy"):
-		effect_parts.append("BASE gain %d energy" % int(effects["gain_energy"]))
-	if effects.has("energy") and not effects.has("gain_energy"):
-		effect_parts.append("BASE gain %d energy" % int(effects["energy"]))
-	if effects.has("self_hp_loss"):
-		effect_parts.append("BASE self-damage %d" % int(effects["self_hp_loss"]))
-	var on_hit := CombatOnHitStatuses.new().status_for_confirmed_hit(card_id, true)
-	for status in ["bleed", "weak"]:
-		if not on_hit.has(status):
-			continue
-		var addition: int = on_hit[status]
-		var rule := "ON CONFIRMED HIT add %s %d" % [status.capitalize(), addition]
-		if status == "bleed" and owner == "seamstress":
-			var authored: int = int(effects.get("bleed", 0))
-			rule += " (authored Bleed %d + Seamstress passive %d)" % [authored, addition - authored]
-		effect_parts.append(rule)
 	var parts: Array[String] = ["%s; %s; %d energy" % [display_name, owner.capitalize(), cost], from_text]
-	if target_text != "No target" and target_text != "Unknown target" and not target_text.is_empty():
-		parts.append(target_text)
-	elif target_text == "No target":
+	var target_text: String = _target_text(definition, true)
+	if target_text == "No target":
 		parts.append("No target")
-	if effect_parts.size() > 0:
+	elif not target_text.is_empty() and target_text != "Unknown target":
+		parts.append(target_text)
+	var effect_parts: Array[String] = _effect_lines(card_id, definition, true)
+	if not effect_parts.is_empty():
 		parts.append("; ".join(effect_parts))
 	return "\n".join(parts)
+
+
+## One catalog-derived target sentence for both the compact badge line and the
+## precise tooltip. A target kind this formatter does not know stays "Unknown
+## target" rather than guessing at legal recipients.
+func _target_text(definition: Dictionary, precise: bool) -> String:
+	var target_kind: String = str(definition.get("target_kind", ""))
+	var to_positions: Array = definition.get("to_positions", [])
+	var positions: String = _positions(to_positions)
+	match target_kind:
+		"enemy_single":
+			return ("To one selected enemy " if precise else "To enemy ") + positions
+		"enemy_all":
+			return "All enemies " + positions
+		"enemy_random":
+			if precise:
+				return "A random living enemy per hit (%s)" % positions
+			return "Random enemy " + positions
+		"self":
+			return "Self"
+		"ally_single":
+			return "Choose one living ally" if precise else "Ally"
+		"party_all":
+			return "All living heroes"
+		"adjacent_ally":
+			var behind: bool = int(definition.get("direction", 0)) == 1
+			if precise:
+				return "Swap with the living adjacent ally %s" % ("behind" if behind else "ahead")
+			return "Swap with ally " + ("behind" if behind else "ahead")
+		"none":
+			return "No target"
+	return "Unknown target"
+
+
+## The authored recipient phrase used by effect sentences; never a promise about
+## a card whose target kind is unrecognized.
+func _recipient(definition: Dictionary) -> String:
+	match str(definition.get("target_kind", "")):
+		"enemy_all":
+			return "each living enemy"
+		"enemy_random":
+			return "the struck enemy"
+		"party_all":
+			return "each living hero"
+		"ally_single":
+			return "the chosen ally"
+		"self":
+			return "this hero"
+	return "the target"
+
+
+## Authored effect sentences, short on the card face and precise in the tooltip.
+## No resolution is predicted: only catalog fields and the real confirmed-hit
+## starter adapter are described, and any unrecognized effect key is flagged
+## instead of being rendered as an invented value.
+func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Array[String]:
+	var parts: Array[String] = []
+	var raw_effects: Variant = definition.get("effects", {})
+	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
+	var recipient: String = _recipient(definition)
+	if definition.get("action_kind") == "adjacent_swap":
+		parts.append("Swap with the living adjacent ally %s" % ("behind" if int(definition.get("direction", 0)) == 1 else "ahead"))
+	if effects.has("damage"):
+		var damage: int = int(effects["damage"])
+		var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
+		if precise:
+			var line := "BASE deal %d damage" % damage
+			if hits > 1:
+				line += " in %d hits" % hits
+			parts.append(line)
+		else:
+			var line := "%d dmg" % damage
+			if hits > 1:
+				line += " x%d" % hits
+			parts.append(line)
+	if bool(effects.get("random_target_each_hit", false)):
+		parts.append("BASE each hit picks a random living enemy" if precise else "random each hit")
+	if effects.has("block"):
+		parts.append("BASE gain %d Block" % int(effects["block"]) if precise else "%d Block" % int(effects["block"]))
+	# Hold the Line and Bastion Quilt pay other recipients too; never hide them.
+	if effects.has("other_ally_block"):
+		parts.append("BASE each other living ally gains %d Block" % int(effects["other_ally_block"])
+			if precise else "%d Block to other allies" % int(effects["other_ally_block"]))
+	if effects.has("block_all"):
+		parts.append("BASE each living hero gains %d Block" % int(effects["block_all"])
+			if precise else "%d Block to all heroes" % int(effects["block_all"]))
+	if effects.has("heal"):
+		parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"])
+			if precise else "heal %d" % int(effects["heal"]))
+	if effects.has("exposed"):
+		var exposed: int = int(effects["exposed"])
+		if card_id in CombatAttackTargeting.SIGHT_GLASS_IDS:
+			parts.append("Apply Exposed %d to the selected enemy" % exposed)
+		elif precise:
+			parts.append("BASE apply Exposed %d to %s" % [exposed, recipient])
+		else:
+			parts.append("Exposed %d" % exposed)
+	# The starter adapter is the authority for starter confirmed-hit statuses;
+	# an authored status it already covers is never counted twice.
+	var confirmed: Dictionary = _on_hit.status_for_confirmed_hit(card_id, true)
+	if effects.has("bleed") and not confirmed.has("bleed"):
+		var authored_bleed: int = int(effects["bleed"])
+		var applied_bleed: int = authored_bleed
+		var passive_bleed: bool = CombatSeamstressPoolBleed.SUPPORTED_IDS.has(card_id)
+		if passive_bleed:
+			applied_bleed += 1
+		if precise:
+			var bleed_line := "BASE apply Bleed %d to %s" % [applied_bleed, recipient]
+			if passive_bleed:
+				bleed_line += " (authored %d + Seamstress passive 1)" % authored_bleed
+			parts.append(bleed_line)
+		elif passive_bleed:
+			parts.append("Bleed %d (%d+1)" % [applied_bleed, authored_bleed])
+		else:
+			parts.append("Bleed %d" % applied_bleed)
+	if effects.has("weak") and not confirmed.has("weak"):
+		parts.append("BASE apply Weak %d to %s" % [int(effects["weak"]), recipient]
+			if precise else "Weak %d" % int(effects["weak"]))
+	if effects.has("unravel"):
+		parts.append("BASE add %d Unravel to %s" % [int(effects["unravel"]), recipient]
+			if precise else "Unravel %d" % int(effects["unravel"]))
+	if effects.has("bleed_multiplier"):
+		var multiplier: int = int(effects["bleed_multiplier"])
+		if precise:
+			parts.append("BASE double the target's current Bleed" if multiplier == 2
+				else "BASE multiply the target's current Bleed by %d" % multiplier)
+		else:
+			parts.append("double Bleed" if multiplier == 2 else "x%d Bleed" % multiplier)
+	if effects.has("pinned"):
+		var pin_bonus := 5
+		var pin_rule: Variant = effects["pinned"]
+		if pin_rule is Dictionary and pin_rule.get("bonus_damage") is int:
+			pin_bonus = int(pin_rule["bonus_damage"])
+		parts.append("BASE Pin %s: a different hero's next attack gets +%d damage" % [recipient, pin_bonus]
+			if precise else "Pin")
+	if effects.has("guarding"):
+		parts.append("BASE Guard: enemy attacks are redirected to this hero" if precise else "Guard")
+	if effects.has("thorns"):
+		parts.append("BASE gain %d Thorns until your next turn" % int(effects["thorns"])
+			if precise else "Thorns %d" % int(effects["thorns"]))
+	if effects.has("draw"):
+		var draw_count: int = int(effects["draw"])
+		parts.append("BASE draw %d card%s" % [draw_count, "" if draw_count == 1 else "s"]
+			if precise else "draw %d" % draw_count)
+	if effects.has("gain_energy"):
+		parts.append("BASE gain %d energy" % int(effects["gain_energy"])
+			if precise else "+%d energy" % int(effects["gain_energy"]))
+	if effects.has("energy") and not effects.has("gain_energy"):
+		parts.append("BASE gain %d energy" % int(effects["energy"])
+			if precise else "+%d energy" % int(effects["energy"]))
+	if effects.has("self_hp_loss"):
+		parts.append("BASE self-damage %d" % int(effects["self_hp_loss"])
+			if precise else "-%d HP" % int(effects["self_hp_loss"]))
+	if effects.has("conditional_damage"):
+		var condition: Variant = effects["conditional_damage"]
+		if condition is Dictionary and condition.get("damage") is int:
+			var empowered: int = int(condition["damage"])
+			var clauses: Array[String] = _condition_clauses(condition)
+			if precise:
+				var condition_line := "BASE deal %d damage instead" % empowered
+				if not clauses.is_empty():
+					condition_line += " if " + _join_conditions(condition, clauses)
+				parts.append(condition_line)
+			else:
+				var short_conditions := _short_conditions(condition)
+				parts.append("%d dmg if %s" % [empowered, short_conditions] if not short_conditions.is_empty()
+					else "%d conditional dmg" % empowered)
+		else:
+			parts.append("BASE an additional conditional damage effect" if precise else "conditional damage")
+	if precise:
+		for status in ["bleed", "weak"]:
+			if not confirmed.has(status):
+				continue
+			var addition: int = int(confirmed[status])
+			var rule := "ON CONFIRMED HIT add %s %d" % [status.capitalize(), addition]
+			if status == "bleed" and str(definition.get("owner", "")) == "seamstress":
+				var authored: int = int(effects.get("bleed", 0))
+				rule += " (authored Bleed %d + Seamstress passive %d)" % [authored, addition - authored]
+			parts.append(rule)
+	else:
+		for status in ["bleed", "weak"]:
+			if confirmed.has(status):
+				parts.append("%d %s on hit" % [int(confirmed[status]), status.capitalize()])
+	for key in effects:
+		if str(key) not in KNOWN_EFFECT_KEYS:
+			parts.append("BASE another authored effect is not described" if precise else "other effects")
+			break
+	return parts
+
+
+## Readable clauses for the authored conditional-damage predicates. Unrecognized
+## predicates contribute nothing rather than a guessed rule.
+func _condition_clauses(condition: Dictionary) -> Array[String]:
+	var clauses: Array[String] = []
+	var authored: Variant = condition.get("conditions", [])
+	if not authored is Array:
+		return clauses
+	for entry in authored:
+		if not entry is Dictionary:
+			continue
+		if entry.has("status") and str(entry["status"]) == "unravelled":
+			clauses.append("the target is Unravelled")
+		elif entry.has("gauge") and str(entry["gauge"]) == "unravel" \
+				and str(entry.get("comparison", "")) == "at_least_half":
+			clauses.append("its Unravel gauge is at least half")
+	return clauses
+
+
+func _join_conditions(condition: Dictionary, clauses: Array[String]) -> String:
+	var joiner := " or " if str(condition.get("operator", "or")) == "or" else " and "
+	return joiner.join(clauses)
+
+
+## Compact form of the same predicates for the narrow card-face rule line.
+func _short_conditions(condition: Dictionary) -> String:
+	var keys: Array[String] = []
+	var authored: Variant = condition.get("conditions", [])
+	if authored is Array:
+		for entry in authored:
+			if not entry is Dictionary:
+				continue
+			if entry.has("status") and str(entry["status"]) == "unravelled":
+				keys.append("Unravelled")
+			elif entry.has("gauge") and str(entry["gauge"]) == "unravel" \
+					and str(entry.get("comparison", "")) == "at_least_half":
+				keys.append("half gauge")
+	# Authored conditions are alternatives today; the card line stays one short row.
+	return "/".join(keys)
 
 
 ## The complete two-part tooltip for a stitched card. Each half is named from
@@ -155,39 +327,29 @@ func describe(card_id: String) -> Dictionary:
 		if ledger.is_valid() and ledger.get_snapshot() == _app._stitch_snapshot():
 			definition = ledger.get_snapshot().descriptors.get(card_id, {})
 			if not definition.is_empty():
-				return {"id": card_id, "known": true, "owner": "", "owner_text": "Stitched", "cost": definition.cost, "cost_text": "Cost %d" % definition.cost, "from_text": "Ordered halves", "target_text": "Independent targets", "halves": definition.half_ids.duplicate()}
+				return {"id": card_id, "known": true, "owner": "", "owner_text": "Stitched",
+					"display_name": str(definition.get("display_name", card_id)),
+					"cost": definition.cost, "cost_text": "Cost %d" % definition.cost,
+					"from_text": "Ordered halves", "target_text": "Independent targets",
+					"rules": "Two ordered halves",
+					"halves": definition.half_ids.duplicate()}
 	if definition.is_empty():
 		return {
 			"id": card_id, "known": false, "owner": "", "owner_text": "Unknown",
-			"cost_text": "Cost ?", "from_text": "Rules unknown",
-			"target_text": "", "cost": -1,
+			"display_name": "", "cost_text": "Cost ?", "from_text": "Rules unknown",
+			"target_text": "", "rules": "", "cost": -1,
 		}
-	var owner: String = definition.get("owner", "")
+	var owner: String = str(definition.get("owner", ""))
 	var from_positions: Array = definition.get("from_positions", [])
-	var to_positions: Array = definition.get("to_positions", [])
-	var target_kind: String = definition.get("target_kind", "")
-	var target_text := "Unknown target"
-	match target_kind:
-		"enemy_single":
-			target_text = "To enemy " + _positions(to_positions)
-		"enemy_all":
-			target_text = "All enemies " + _positions(to_positions)
-		"self":
-			target_text = "Self"
-		"ally_single":
-			target_text = "Ally"
-		"party_all":
-			target_text = "All living heroes"
-		"none":
-			target_text = "No target"
-		"adjacent_ally":
-			target_text = "Swap with ally " + ("behind" if definition.direction == 1 else "ahead")
 	return {
 		"id": card_id, "known": true, "owner": owner,
-		"owner_text": owner.capitalize(), "cost": int(definition.get("cost", -1)),
+		"owner_text": owner.capitalize(),
+		"display_name": str(definition.get("display_name", card_id)),
+		"cost": int(definition.get("cost", -1)),
 		"cost_text": "Cost %d" % int(definition.get("cost", -1)),
 		"from_text": "From " + _positions(from_positions),
-		"target_text": target_text,
+		"target_text": _target_text(definition, false),
+		"rules": _rules(card_id),
 	}
 
 
@@ -348,11 +510,31 @@ func visual_state(panel) -> Dictionary:
 		"aim": visual[2] if visual[2] is Vector2 else Vector2.ZERO, "aiming": bool(visual[3])}
 
 
+## A recognized catalog record is display knowledge, never play admission. Only a
+## panel a live presenter has actually wired for play (its own gui_input handler on
+## the real hand panel, with the untouched identity label agreeing) may be drawn as
+## an enabled card. An unwired pool card keeps its honest face but stays dim.
+func _wired(panel: Control, card_id: String) -> bool:
+	if _app == null or not is_instance_valid(panel):
+		return false
+	var hand = _app.hand_view
+	if hand == null or panel.get_parent() != hand:
+		return false
+	if panel.gui_input.get_connections().is_empty():
+		return false
+	if panel.get_child_count() < 1 or not panel.get_child(0) is Label:
+		return false
+	return (panel.get_child(0) as Label).text == card_id
+
+
 func _update_visual(panel: Control) -> void:
 	var playable := false
 	var id: String = _bindings[panel].id
-	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null:
-		if id in CombatAttackTargeting.ATTACK_IDS or _targeting.is_sight_glass(id):
+	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null \
+			and _wired(panel, id):
+		if _targeting.supports(id):
+			# Starter, plain-strike, heavy and Sight Glass attacks share their own
+			# read-only preview; no catalog record alone can claim a legal target.
 			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id).get("playable", false))
 		elif id.begins_with(RunRestStitchCards.ID_PREFIX):
 			playable = bool(_stitched_preview.get_preview(_ledger(), _app._stitch_snapshot(), _app.deck, _app.party, _app.enemies, id).get("playable", false))
@@ -363,7 +545,7 @@ func _update_visual(panel: Control) -> void:
 				and CombatPositionSwaps.preview_adjacent_swap(_app.party, _owner_position(move.get("owner", "")), move.get("direction", 0)).get("ok", false)
 		else:
 			var support := _definition(id)
-			var position := _owner_position(support.get("owner", ""))
+			var position := _owner_position(str(support.get("owner", "")))
 			playable = not support.is_empty() and _app.deck.turn_active and _app.deck.energy >= int(support.get("cost", -1)) \
 				and position in support.get("from_positions", []) and not _app.party.is_downed(position)
 	var hovered := false
@@ -421,36 +603,10 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## Human-readable rules from the authored effect fields plus the real
 ## confirmed-hit adapter; no resolved or promised value is invented.
 func _rules(id: String) -> String:
-	var definition := _definition(id)
+	var definition: Dictionary = _definition(id)
 	if definition.is_empty():
 		return ""
-	var effects: Dictionary = definition.get("effects", {}) if definition.get("effects", {}) is Dictionary else {}
-	var parts: PackedStringArray = []
-	if effects.has("damage"):
-		parts.append("%d damage" % int(effects["damage"]))
-	if effects.has("block"):
-		parts.append("%d Block" % int(effects["block"]))
-	if effects.has("other_ally_block"):
-		parts.append("%d Block to other living allies" % int(effects["other_ally_block"]))
-	if effects.has("block_all"):
-		parts.append("%d Block to all living heroes" % int(effects["block_all"]))
-	if effects.has("heal"):
-		parts.append("heal %d HP" % int(effects["heal"]))
-	if effects.has("exposed") and id in ["tinker_sight_glass", "tinker_sight_glass_plus"]:
-		parts.append("apply Exposed %d" % int(effects["exposed"]))
-	if effects.has("draw"):
-		parts.append("draw %d card" % int(effects["draw"]))
-	if effects.has("gain_energy"):
-		parts.append("gain %d energy" % int(effects["gain_energy"]))
-	if effects.has("energy") and not effects.has("gain_energy"):
-		parts.append("gain %d energy" % int(effects["energy"]))
-	if effects.has("self_hp_loss"):
-		parts.append("self-damage %d" % int(effects["self_hp_loss"]))
-	var statuses: Dictionary = _on_hit.status_for_confirmed_hit(id, true)
-	for status in ["bleed", "weak"]:
-		if statuses.has(status):
-			parts.append("%d %s on hit" % [int(statuses[status]), status.capitalize()])
-	return ", ".join(parts)
+	return ", ".join(_effect_lines(id, definition, false))
 
 
 ## Filled felt pips mark authored source slots; outlined squares mark authored
@@ -537,7 +693,8 @@ func _title(facts: Dictionary) -> String:
 	var names: PackedStringArray = []
 	for half in facts.get("halves", []):
 		var authored := _definition(half)
-		names.append(authored.get("display_name", str(half)))
+		# A stale half contributes an honest placeholder, never its raw ID.
+		names.append(authored.get("display_name", "Unknown half"))
 	return " + ".join(names) if not names.is_empty() else "Unknown card"
 
 
