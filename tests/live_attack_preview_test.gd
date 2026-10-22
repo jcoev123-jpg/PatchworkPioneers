@@ -105,6 +105,8 @@ func _start(seed_value: int, held_id: String = "") -> bool:
 	_check(valid, "actual title start mounts cue with complete models")
 	if valid:
 		_check(app.deck.turn_active and not presenter._bindings.is_empty(), "real active opening with bound attacks")
+		_check(presenter.cue.text == "" and not presenter.cue.is_visible_in_tree(),
+			"fresh battle cue is empty and collapsed")
 		var count := 0
 		for child in app.hand_view.get_parent().get_children():
 			if child.name == "AttackPreviewCue":
@@ -224,6 +226,7 @@ func _run() -> void:
 	await _duplicate_instances()
 	await _drawn_drag_cards()
 	await _paid_move_refresh()
+	await _cue_strip()
 	await _negative_cases()
 	await _attacks()
 	await _status_lifecycle()
@@ -992,6 +995,98 @@ func _paid_move_refresh() -> void:
 		else:
 			_check(trace == replay, "same-seed paid move and refreshed attack rejection replay")
 		await _return()
+
+
+## The idle attack strip is a collapsed row, not an empty label holding a fixed
+## height. A hovered, armed or P-selected attack still owns a readable forecast;
+## Esc, a stale card, Return to title and a fresh battle all restore the collapsed
+## lower third without a leftover forecast, extra cue or spent model.
+func _cue_strip() -> void:
+	var id := "warden_shield_bash"
+	var seed_value := _seed_for(id)
+	_check(seed_value >= 0, "collapse fixture finds a seeded held attack")
+	if seed_value < 0:
+		return
+	if not await _start(seed_value):
+		return
+	var column := app.hand_view.get_parent() as Control
+	var initial := _snapshot()
+	var idle_min: float = column.get_combined_minimum_size().y
+	var idle_stage: float = app.hero_view.size.y
+	var idle_hand: float = app.hand_view.get_global_rect().position.y
+	var strip: float = presenter.cue.custom_minimum_size.y
+	_check(strip >= 44.0, "cue still declares its readable authored height")
+	_check(presenter.cue.text == "" and not presenter.cue.is_visible_in_tree()
+		and presenter.current_forecast.is_empty(),
+		"eligible held attacks still leave the idle cue empty and collapsed")
+	_check(not presenter.cue.text.contains("Attack preview"), "no persistent debug sentence")
+	var panel = _panel(id)
+	_check(panel != null and presenter._bindings.has(panel), "collapse fixture holds the real attack panel")
+	if panel == null:
+		await _return()
+		return
+	await _hover(panel)
+	_assert_preview(id)
+	var active_min: float = column.get_combined_minimum_size().y
+	_check(presenter.cue.is_visible_in_tree() and active_min >= idle_min + strip,
+		"hovered attack re-owns a complete cue strip")
+	_check(app.hero_view.size.y <= idle_stage - strip, "stage yields the strip height only while forecasting")
+	_check(app.hand_view.get_global_rect().position.y == idle_hand, "card row never jumps for a forecast")
+	await _key(KEY_ESCAPE)
+	_check(presenter._selected == null and presenter.current_forecast.is_empty()
+		and presenter.cue.text == "" and not presenter.cue.is_visible_in_tree(),
+		"Esc retires the forecast and collapses the cue")
+	_check(column.get_combined_minimum_size().y == idle_min and app.hero_view.size.y == idle_stage,
+		"Esc restores the collapsed lower third")
+	# Click arms the same attack: the forecast stays readable until cancellation.
+	await _click(panel)
+	_check(presenter._armed == panel and presenter.cue.is_visible_in_tree(),
+		"clicked armed attack keeps its forecast strip")
+	await _key(KEY_ESCAPE)
+	_check(not presenter.cue.is_visible_in_tree() and presenter.cue.text == ""
+		and column.get_combined_minimum_size().y == idle_min and app.hero_view.size.y == idle_stage,
+		"cancelled armed attack collapses the cue and layout again")
+	# Losing eligibility (the real held card leaves the authoritative hand).
+	await _hover(panel)
+	_check(presenter.cue.is_visible_in_tree(), "hover before the stale removal shows the cue")
+	_check(app.deck.discard_played(id), "stale fixture removes the selected real card")
+	await _frames()
+	_check(presenter._selected == null and presenter.current_forecast.is_empty()
+		and presenter.cue.text == "" and not presenter.cue.is_visible_in_tree()
+		and column.get_combined_minimum_size().y == idle_min and app.hero_view.size.y == idle_stage,
+		"lost eligibility retires cue, forecast and reserved strip")
+	var before_return := _snapshot()
+	_check(before_return[0] != initial[0], "stale fixture really changed the prior battle hand")
+	await _return()
+	if not await _start(seed_value):
+		return
+	_check(_cue_count() == 1, "fresh battle mounts exactly one cue")
+	_check(presenter.cue.text == "" and not presenter.cue.is_visible_in_tree()
+		and presenter.current_forecast.is_empty(),
+		"fresh battle cue starts empty and collapsed")
+	var fresh_column := app.hand_view.get_parent() as Control
+	_check(fresh_column.get_combined_minimum_size().y == idle_min and app.hero_view.size.y == idle_stage,
+		"fresh battle reserves no cue strip")
+	_check(_snapshot() == initial, "Return and fresh battle reproduce the seeded opening untouched")
+	var fresh := _snapshot()
+	await _choose(id, true)
+	_check(presenter._armed == presenter._selected and presenter.cue.is_visible_in_tree(),
+		"P-selected attack still shows the readable forecast after re-entry")
+	_assert_preview(id)
+	await _key(KEY_ESCAPE)
+	_check(presenter.current_forecast.is_empty() and presenter.cue.text == ""
+		and not presenter.cue.is_visible_in_tree(),
+		"Esc after re-entry again leaves no stale forecast")
+	_check(_snapshot() == fresh, "P forecast and Esc in the fresh battle spend nothing and keep the seeded RNG")
+	await _return()
+
+
+func _cue_count() -> int:
+	var count := 0
+	for child in app.hand_view.get_parent().get_children():
+		if child.name == "AttackPreviewCue":
+			count += 1
+	return count
 
 
 ## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.

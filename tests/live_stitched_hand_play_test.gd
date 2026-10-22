@@ -32,6 +32,97 @@ func _panel(id: String):
 	return null
 
 
+## The real presenter must name both ledger halves, in order, on its compact
+## battle-hand face while keeping the shared cost, two-part tooltip and input.
+func _stitched_face(id: String, pair: Array, metadata) -> void:
+	var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+	_check(ledger.is_valid(), "held composite is backed by the real Rest ledger")
+	if not ledger.is_valid():
+		return
+	var descriptor: Dictionary = ledger.get_snapshot().descriptors.get(id, {})
+	_check(descriptor.get("half_ids", []) == pair and int(descriptor.get("cost", -1)) >= 0,
+		"real ledger preserves authored half order and shared cost")
+	var first: Dictionary = metadata.definition(str(pair[0]))
+	var second: Dictionary = metadata.definition(str(pair[1]))
+	var first_name: String = str(first.get("display_name", ""))
+	var second_name: String = str(second.get("display_name", ""))
+	_check(not first.is_empty() and not second.is_empty() and not first_name.is_empty()
+		and not second_name.is_empty() and first.get("owner") != second.get("owner"),
+		"both authored halves have names and different owners")
+	var first_colour: Color = metadata._owner_color(str(first.get("owner", "")))
+	var second_colour: Color = metadata._owner_color(str(second.get("owner", "")))
+	_check(first_colour != second_colour and first_colour != metadata.INK and second_colour != metadata.INK,
+		"each authored half keeps its own distinct owner colour")
+	var panel = _panel(id)
+	_check(panel != null and is_instance_valid(panel) and metadata._bindings.has(panel),
+		"genuine composite panel is bound before any play")
+	if panel == null or not is_instance_valid(panel) or not metadata._bindings.has(panel):
+		return
+	var facts: Dictionary = metadata.get_facts(panel)
+	_check(facts.get("halves", []) == pair and facts.get("cost") == descriptor.get("cost"),
+		"bound face facts carry the ledger's ordered halves and shared cost")
+	var tooltip: String = panel.tooltip_text
+	_check(tooltip.begins_with("1. " + first_name + ";") and tooltip.contains("\n2. " + second_name + ";"),
+		"two-part tooltip names each authored half in resolution order")
+	_check(tooltip.contains(metadata.base_effect_text(str(pair[0])))
+		and tooltip.contains(metadata.base_effect_text(str(pair[1]))),
+		"each tooltip part keeps that half's complete authored rules")
+	# Compact battle-hand face: the same bound panel and real draw callback.
+	var min_size: Vector2 = panel.custom_minimum_size
+	var tall_height: float = panel.size.y
+	var draws: int = int(metadata._bindings[panel]["draw_count"])
+	panel.custom_minimum_size = Vector2(min_size.x, 96.0)
+	await _frames()
+	var geometry: Dictionary = metadata.get_geometry(panel)
+	_check(panel.size.y < 120.0 and bool(geometry.get("compact", false)),
+		"real hand panel reaches the compact battle-hand face")
+	var rows: Array = geometry.get("halves", [])
+	var bounds := Rect2(Vector2.ZERO, panel.size)
+	_check(rows.size() == 2, "compact face reserves one sewn row per authored half")
+	if rows.size() == 2:
+		_check(rows[0].position.y < rows[1].position.y and rows[0].end.y <= rows[1].position.y
+			and rows[1].end.y <= geometry["footer"].end.y + 0.01
+			and rows[0].size.y >= 20.0 and bounds.encloses(rows[0]) and bounds.encloses(rows[1]),
+			"both sewn rows fit the real face in first then second order")
+	_check(metadata.get_facts(panel).get("halves", []) == pair, "compact face keeps the ledger half order")
+	var binding: Dictionary = metadata._bindings[panel]
+	_check(binding["id"] == id and panel.draw.is_connected(binding["draw"])
+		and panel.draw.get_connections().size() == 1, "compact face keeps the single draw callback")
+	_check(int(binding["draw_count"]) > draws, "real CanvasItem actually redrew the compact face")
+	_check(panel.gui_input.get_connections().size() == 1 and not panel.get_child(0).visible,
+		"compact face keeps one gameplay handler and the hidden identity")
+	panel.custom_minimum_size = min_size
+	await _frames()
+	_check(is_equal_approx(panel.size.y, tall_height) and not bool(metadata.get_geometry(panel).get("compact", true)),
+		"real hand layout restores its tall face after the compact check")
+
+
+## Faces and tooltips take each half's authored catalog name, so a Rest-upgraded
+## half keeps its "+" instead of degrading to a base name or a raw ID.
+func _authored_upgrade_names() -> void:
+	var metadata = app.get_node("LiveSupportHand")._metadata
+	var upgraded: Dictionary = metadata.definition("warden_strike_plus")
+	_check(upgraded.get("display_name") == "Strike+" and metadata.base_effect_text("warden_strike_plus").begins_with("Strike+; Warden; 1 energy"),
+		"authored '+' upgrade half keeps its authored name and cost")
+	var deck: Array[String] = ["warden_strike_plus", "seamstress_prick", "tinker_pop_shot"]
+	var ledger := RunRestStitchCards.new(deck, {}, 3, 1)
+	_check(ledger.is_valid(), "authored upgraded-half fixture is a valid Rest ledger")
+	if not ledger.is_valid():
+		return
+	var made := ledger.choose_stitch(0, 1, ledger.get_snapshot())
+	var made_descriptor: Dictionary = made.get("descriptor", {})
+	_check(bool(made.get("ok", false))
+		and made_descriptor.get("half_ids", []) == ["warden_strike_plus", "seamstress_prick"],
+		"real stitched ledger preserves an upgraded first half")
+	if not bool(made.get("ok", false)):
+		return
+	var tooltip: String = metadata.stitched_tooltip(made_descriptor.get("half_ids", []))
+	_check(tooltip.begins_with("1. Strike+; Warden; 1 energy") and tooltip.contains("\n2. Prick; Seamstress; 1 energy"),
+		"two-part stitched tooltip keeps upgraded and base half names in order")
+	_check(tooltip.contains("BASE deal 7 damage") and tooltip.contains("BASE deal 3 damage")
+		and not tooltip.contains("BASE deal 6 damage"), "stitched tooltip states each half's own authored effect")
+
+
 func _hover(control: Control) -> void:
 	for point in [Vector2(2, 2), control.get_global_rect().get_center()]:
 		var motion := InputEventMouseMotion.new()
@@ -113,6 +204,7 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool) -> String:
 	app._refresh_hand()
 	await _frames()
 	_check(_panel(id) != null and presenter._bindings.has(_panel(id)), "held ordered panel bound to production presenter")
+	await _stitched_face(id, pair, app.get_node("LiveSupportHand")._metadata)
 	if _stale_card_input.is_valid():
 		var before := _complete_state()
 		var event := InputEventMouseButton.new()
@@ -252,6 +344,13 @@ func _rejections(id: String) -> void:
 		var before := _complete_state()
 		await _key(KEY_1)
 		_check(_complete_state() == before, reason + " rejects without partial effects, spend, RNG or passive drift")
+		if reason in ["forged", "unowned"]:
+			var stale_panel = _panel(id)
+			var stale_metadata = app.get_node("LiveSupportHand")._metadata
+			_check(stale_panel != null and stale_metadata.get_facts(stale_panel).get("known", true) == false,
+				"stale " + reason + " descriptor rebinds the held card to the honest unknown face")
+			_check(stale_panel != null and stale_panel.tooltip_text == "Unknown card",
+				"stale " + reason + " descriptor tooltip invents no rules")
 		app.deck.combat_state.energy = energy
 		app.deck.combat_state.player_turn_active = true
 		app.party._heroes.assign(heroes)
@@ -287,6 +386,7 @@ func _run() -> void:
 	if fixture.is_empty():
 		await _finish_hand()
 		return
+	_authored_upgrade_names()
 	for pair in [["warden_shield_bash", "seamstress_prick"], ["seamstress_mend", "tinker_pop_shot"], ["seamstress_stitch_up", "tinker_scrap_bomb"], ["warden_brace", "tinker_tune_up"], ["tinker_pop_shot", "seamstress_prick"], ["tinker_scrap_bomb", "seamstress_mend"]]:
 		var replay: Array = []
 		for keyboard in [false, true]:

@@ -185,7 +185,7 @@ func apply_fight_reward(fight_node_id: Variant, reward: Variant) -> bool:
 		if selected != "" or cards != _deck:
 			return false
 	else:
-		if selected.is_empty() or StarterCards.new().get_definition(selected).is_empty():
+		if selected.is_empty() or RunPoolCardRewardOffers.resolve_reward_definition(selected).is_empty():
 			return false
 		if cards.size() != _deck.size() + 1 or cards.slice(0, _deck.size()) != _deck \
 				or cards.back() != selected:
@@ -265,7 +265,7 @@ func apply_battle_reward(node_id: Variant, settled: Variant) -> bool:
 		if selected != "" or cards != _deck:
 			return false
 	else:
-		if selected.is_empty() or StarterCards.new().get_definition(selected).is_empty():
+		if selected.is_empty() or RunPoolCardRewardOffers.resolve_reward_definition(selected).is_empty():
 			return false
 		if cards.size() != _deck.size() + 1 \
 				or cards.slice(0, _deck.size()) != _deck \

@@ -260,14 +260,23 @@ func _format_rules(definition: Dictionary) -> String:
 					dealt += _conditional_damage_hint(effects["conditional_damage"])
 				copy.append(dealt)
 			"block":
-				copy.append("Gain %d Block" % int(effects[key]))
+				if kind == "ally_single":
+					copy.append("Chosen ally gains %d Block" % int(effects[key]))
+				elif kind == "self":
+					copy.append("Gain %d Block" % int(effects[key]))
+				else:
+					copy.append("Gain %d Block" % int(effects[key]))
 			"block_all":
-				copy.append("Gain %d Block each" % int(effects[key]))
+				copy.append("All allies gain %d Block each" % int(effects[key]))
 			"other_ally_block":
-				copy.append("Give another ally %d Block" % int(effects[key]))
+				copy.append("Every other ally gains %d Block" % int(effects[key]))
 			"heal":
-				copy.append("Heal %d HP%s" % [int(effects[key]),
-					" each" if kind == "party_all" else ""])
+				if kind == "ally_single":
+					copy.append("Chosen ally heals %d HP" % int(effects[key]))
+				elif kind == "party_all":
+					copy.append("All allies heal %d HP each" % int(effects[key]))
+				else:
+					copy.append("Heal %d HP" % int(effects[key]))
 			"draw":
 				var drawn: int = int(effects[key])
 				copy.append("Draw %d card%s" % [drawn, "" if drawn == 1 else "s"])

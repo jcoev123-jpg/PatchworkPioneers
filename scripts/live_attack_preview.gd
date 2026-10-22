@@ -484,6 +484,8 @@ func _sync_battle() -> void:
 		cue.add_theme_font_size_override("font_size", 18)
 		cue.custom_minimum_size.y = 44
 		cue.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		# Mount idle: only a real forecast should claim the lower-third strip.
+		cue.visible = false
 		var column: Node = app.hand_view.get_parent()
 		column.add_child(cue)
 		column.move_child(cue, app.hand_view.get_index())
@@ -529,14 +531,28 @@ func _leave(panel: Control) -> void:
 		_refresh()
 
 
+## No hovered, armed or P-selected attack: retire the strip completely. An empty
+## label that keeps its authored minimum height would still hold 44 px of the
+## lower third, so idle also hides the cue and the container drops it.
+func _idle_cue() -> void:
+	cue.text = ""
+	cue.visible = false
+
+
+## Any live forecast owns the strip, so reveal it before writing the reading.
+func _show_cue() -> void:
+	cue.visible = true
+
+
 func _refresh() -> void:
 	current_forecast = {}
 	if not is_instance_valid(cue):
 		return
 	if not _bindings.has(_selected) or not _eligible(_selected):
 		_selected = null
-		cue.text = "" if _bindings.is_empty() else "Attack preview: hover an attack | P: cycle held attacks"
+		_idle_cue()
 		return
+	_show_cue()
 	var app = get_parent()
 	var id := _card_id(_selected)
 	if _is_stitched(_selected):

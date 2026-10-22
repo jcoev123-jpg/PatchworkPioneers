@@ -62,6 +62,8 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		var position: int = planned_position
 		if plan["target_kind"] == "enemy_random":
 			var living: Array[int] = _living_positions(enemies.get_enemies(), to_positions)
+			if living.is_empty():
+				break
 			position = living[deck._rng.randi_range(0, living.size() - 1)]
 		var defender: Dictionary = enemies.get_enemy(position)
 		var pin_bonus: int = 0
@@ -203,8 +205,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if expected_kind == "enemy_all":
 			positions.assign(living)
 		else:
-			# Simulation is deliberately detached: if early hits kill every
-			# enemy, reject before charging or consuming the real RNG.
+			# Simulation plans up to hit_count random selections sequentially.
+			# If early hits slay every enemy, stop remaining hits without rejection.
 			var simulated: Array[Dictionary] = roster.duplicate(true)
 			var rng_copy := RandomNumberGenerator.new()
 			rng_copy.state = deck._rng.state
@@ -218,7 +220,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			for hit in range(effects["hit_count"]):
 				var candidates: Array[int] = _living_positions(simulated, to_value)
 				if candidates.is_empty():
-					return _failure()
+					break
 				var picked: int = candidates[rng_copy.randi_range(0, candidates.size() - 1)]
 				positions.append(picked)
 				var actor: Dictionary = simulated[picked - 1]
@@ -232,6 +234,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				var absorbed: int = mini(actor["block"], adjusted)
 				actor["block"] -= absorbed
 				actor["hp"] = maxi(0, actor["hp"] - (adjusted - absorbed))
+			if positions.is_empty():
+				return _failure()
 	var bonus: int = _first_attack.bonus_for_attack(card_id)
 	if damage_value > CombatStatuses.MAX_INT - bonus - 5:
 		return _failure()
