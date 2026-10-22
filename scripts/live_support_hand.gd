@@ -361,7 +361,9 @@ func _sync_battle() -> void:
 		var cue: Label = _targets[panel].cue
 		cue.position = panel.global_position - Vector2(0, 16)
 		cue.size = Vector2(panel.size.x, 16)
-	energy_label.text = "Energy\n%d" % _deck.energy
+	# The spool is only 76 px across: the left-over charge alone sits inside its disc,
+	# never a wrapped "Energy" word that would spill past the inset rim.
+	energy_label.text = "%d" % _deck.energy
 	# Idle: one short sewn cue, no stretch. Targeting: the full card-name prompt takes the row.
 	var choosing: bool = _pending.get("choosing", false)
 	var help_text: String = TABLE_HELP

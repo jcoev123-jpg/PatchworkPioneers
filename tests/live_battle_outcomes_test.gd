@@ -310,8 +310,9 @@ func _status_turns() -> void:
 			"mounted End Turn commits one hero tick and retains enemy/hand cadence")
 		app.get_node("LiveCombatMeters")._sync_battle()
 		var label := app.get_node("LiveCombatMeters").row.get_child(0).hp_text as Label
-		_check(label != null and label.is_visible_in_tree() and label.text.contains("HP: 38/40"),
-			"mounted hero label refreshes authoritative Bleed HP")
+		_check(label != null and label.is_visible_in_tree() and label.text == "38/40"
+			and label.get_parent() is ProgressBar,
+			"mounted hero numbers on the bar refresh authoritative Bleed HP")
 		var trace: Array = [_state()]
 		_check(app.party.apply_damage(1, 999) and app.party.apply_damage(2, 999),
 			"live terminal fixture has exactly one living hero")

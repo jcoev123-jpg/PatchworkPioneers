@@ -463,8 +463,11 @@ func _run() -> void:
 			_check(label.is_visible_in_tree() and label.text == String(ordered[index].name),
 				"visible selected actor name tag by slot")
 			var meter = app.get_node("LiveCombatMeters").row.get_child(3 + index)
-			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [ordered[index].max_hp, ordered[index].max_hp]
-				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: 0", "visible selected actor HP and Block by slot")
+			var live_block: int = app.enemies.get_enemy(index + 1).block
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "%d/%d" % [ordered[index].max_hp, ordered[index].max_hp]
+				and meter.block_badge.visible == (live_block > 0)
+				and meter.block_text.text == ("%d" % live_block if live_block > 0 else ""),
+				"visible selected actor HP and Block by slot")
 			var initial_action: Dictionary = authored[index].pattern[0].duplicate(true)
 			initial_action.enemy_position = index + 1
 			_check(app.enemy_attacks[index] == initial_action, "source-ordered authored initial intent")

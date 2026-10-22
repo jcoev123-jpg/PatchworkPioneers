@@ -374,9 +374,9 @@ func _attacks() -> void:
 				_check(roster._labels[position - 1].text == String(enemy.name),
 					"mounted enemy name tag reflects hit")
 				var meter = app.get_node("LiveCombatMeters").row.get_child(3 + position - 1)
-				_check(meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp] and meter.block_text.text == "Block: 0" and meter.hp_bar.value == enemy.hp, "mounted meters reflect service hit")
+				_check(meter.hp_text.text == "%d/%d" % [enemy.hp, enemy.max_hp] and meter.block_badge.visible == (enemy.block > 0) and meter.block_text.text == ("%d" % enemy.block if enemy.block > 0 else "") and meter.hp_bar.value == enemy.hp, "mounted meters reflect service hit")
 				_check(app.hand_view.get_child_count() == app.deck.hand.size() and app.pile_label.text.contains("Discard: 1"), "mounted hand and piles refresh")
-				_check(app.get_node("LiveSupportHand").energy_label.text == "Energy\n%d" % app.deck.energy, "mounted energy refresh")
+				_check(app.get_node("LiveSupportHand").energy_label.text == "%d" % app.deck.energy, "mounted energy refresh")
 				var after := _snapshot()
 				await _key(KEY_1)
 				await _click(roster._labels[position - 1])

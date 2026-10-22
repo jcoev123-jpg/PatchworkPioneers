@@ -98,7 +98,10 @@ func _visible() -> void:
 		"mounted pile counts exact")
 	_check(is_instance_valid(presenter.energy_label) and presenter.energy_label.is_visible_in_tree(), "energy mounted")
 	if is_instance_valid(presenter.energy_label):
-		_check(presenter.energy_label.text == "Energy\n%d" % app.deck.energy, "visible energy exact")
+		_check(presenter.energy_label.text == "%d" % app.deck.energy, "visible energy exact")
+		_check(presenter.energy_label.text.is_valid_int()
+			and not presenter.energy_label.text.contains("Energy"),
+			"spool shows the amount alone, never a wrapped Energy word")
 	_check(is_instance_valid(presenter.energy_orb) and presenter.energy_label.get_parent() == presenter.energy_orb
 		and presenter.energy_orb.is_visible_in_tree(), "energy belongs to the mounted drawn orb")
 	_check(presenter.energy_orb.focus_mode == Control.FOCUS_NONE
@@ -113,6 +116,9 @@ func _visible() -> void:
 		"drawn energy spool is inset inside its control instead of touching the footer edge")
 	_check(orb.draw_count > 0 and orb.disc_radius() < minf(orb.size.x, orb.size.y) * 0.5,
 		"energy fabric and radial stitches are drawn inside the control")
+	_check(presenter.energy_label.get_minimum_size().x <= disc.size.x
+		and presenter.energy_label.get_minimum_size().y <= disc.size.y,
+		"the amount alone stays inside the inset disc without overflowing the spool")
 	_check(root.get_visible_rect().encloses(Rect2(orb.get_global_rect().position + disc.position, disc.size)),
 		"the whole energy disc clears the 1280x720 viewport edges")
 	_check(not orb.get_global_rect().intersects(app.hand_view.get_global_rect())
@@ -573,7 +579,7 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(presenter.help_label.size_flags_horizontal == Control.SIZE_EXPAND_FILL
 		and not presenter.footer_spring.visible,
 		"target prompt expands to the available footer width while the idle cue shrinks")
-	_check(presenter.energy_label.text == "Energy\n%d" % app.deck.energy, "target mode retains authoritative orb energy")
+	_check(presenter.energy_label.text == "%d" % app.deck.energy, "target mode retains authoritative orb energy")
 	_check(root.get_visible_rect().encloses(presenter.cancel_button.get_global_rect()), "cancel fits 1280x720 viewport")
 	for index in range(3):
 		var hero: Control = app.hero_panels[index]

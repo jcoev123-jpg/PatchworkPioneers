@@ -91,7 +91,7 @@ func _boundary(label: String) -> void:
 		_check(app.hand_view.get_child(index).get_child(0).text == app.deck.hand[index], "mounted card order: " + label)
 	_check(app.pile_label.text.contains("Draw: %d" % app.deck.draw_pile.size())
 		and app.pile_label.text.contains("Discard: %d" % app.deck.discard_pile.size()), "visible pile counts: " + label)
-	_check(app.get_node("LiveSupportHand").energy_label.text == "Energy\n%d" % app.deck.energy, "visible energy: " + label)
+	_check(app.get_node("LiveSupportHand").energy_label.text == "%d" % app.deck.energy, "visible energy: " + label)
 
 
 func _shuffle() -> void:

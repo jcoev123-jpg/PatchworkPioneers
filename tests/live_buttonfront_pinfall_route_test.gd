@@ -106,8 +106,9 @@ func _run() -> void:
 				== String(enemies[index].name),
 				"real target name tag displays exact identity")
 			var meter = app.get_node("LiveCombatMeters").row.get_child(3 + index)
-			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [enemies[index].hp, enemies[index].max_hp]
-				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: 0",
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "%d/%d" % [enemies[index].hp, enemies[index].max_hp]
+				and meter.block_badge.visible == (enemies[index].block > 0)
+				and (enemies[index].block == 0 or meter.block_text.text == "%d" % enemies[index].block),
 				"real enemy meter displays exact HP and Block")
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 6,
 			"ordinary Warden opening Block absorbs exactly the Exposed-enhanced six damage")

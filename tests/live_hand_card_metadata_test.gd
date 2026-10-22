@@ -252,7 +252,7 @@ func _validate_display(observed: Dictionary) -> void:
 		and app.return_button.focus_mode == Control.FOCUS_ALL,
 		"End Turn/Return keyboard activation remains available")
 	_check(is_instance_valid(presenter.energy_label) and
-		presenter.energy_label.text == "Energy\n%d" % app.deck.energy,
+		presenter.energy_label.text == "%d" % app.deck.energy,
 		"energy/action controls remain visible and authoritative")
 
 
