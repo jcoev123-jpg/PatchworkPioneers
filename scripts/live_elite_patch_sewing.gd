@@ -31,7 +31,7 @@ func _process(_delta: float) -> void:
 	_sync_run()
 	if is_instance_valid(_choices):
 		_choices.visible = _eligible()
-		if _choices.visible and not hero_buttons.is_empty() and not hero_buttons[0].disabled:
+		if _choices.visible:
 			_wire_focus()
 	_update_summary()
 
@@ -218,15 +218,22 @@ func _show_preview(hero_id: String, token: int) -> void:
 
 func _wire_focus() -> void:
 	var app = get_parent()
+	var available: Array[Button] = []
+	for button in hero_buttons:
+		if is_instance_valid(button) and not button.disabled and button.is_visible_in_tree():
+			available.append(button)
+	if available.is_empty():
+		return
 	# The app rebuilds its action cycle each frame; extend it after that refresh.
-	app.return_button.focus_next = app.return_button.get_path_to(hero_buttons[0])
-	hero_buttons[0].focus_previous = hero_buttons[0].get_path_to(app.return_button)
-	for index in range(hero_buttons.size()):
-		var next: Control = hero_buttons[index + 1] if index < 2 else app.continue_button
-		hero_buttons[index].focus_next = hero_buttons[index].get_path_to(next)
-		if index > 0:
-			hero_buttons[index].focus_previous = hero_buttons[index].get_path_to(hero_buttons[index - 1])
-	app.continue_button.focus_previous = app.continue_button.get_path_to(hero_buttons[2])
+	# Use only living, visible recipients, even when the first hero is torn.
+	app.return_button.focus_next = app.return_button.get_path_to(available[0])
+	for index in range(available.size()):
+		var button: Button = available[index]
+		var previous: Control = app.return_button if index == 0 else available[index - 1]
+		var next: Control = app.continue_button if index == available.size() - 1 else available[index + 1]
+		button.focus_previous = button.get_path_to(previous)
+		button.focus_next = button.get_path_to(next)
+	app.continue_button.focus_previous = app.continue_button.get_path_to(available.back())
 
 
 func _confirmed(service: RunMultiFightRewards) -> bool:
