@@ -6,7 +6,8 @@
       "description": "Mismatched buttons form a trail across the grass.",
       "choices": [
         { "id": "follow", "text": "Follow the button trail", "outcome": { "gold": 0, "scraps": 1 } },
-        { "id": "leave", "text": "Leave the buttons untouched", "outcome": { "gold": 5, "scraps": 0 } }
+        { "id": "leave", "text": "Leave the buttons untouched", "outcome": { "gold": 5, "scraps": 0 } },
+        { "id": "sell_buttons", "text": "Sell a button bundle (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } }
       ]
     },
     {
@@ -15,7 +16,8 @@
       "description": "A strip of patched ground has come unstitched.",
       "choices": [
         { "id": "mend", "text": "Sew the seam (spend 1 scrap; recover 15 gold)", "outcome": { "gold": 15, "scraps": -1 } },
-        { "id": "bypass", "text": "Walk around and gather loose thread (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } }
+        { "id": "bypass", "text": "Walk around and gather loose thread (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "reinforce", "text": "Reinforce the long tear (spend 2 scraps; gain 32 gold)", "outcome": { "gold": 32, "scraps": -2 } }
       ]
     },
     {
