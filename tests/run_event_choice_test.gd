@@ -946,6 +946,16 @@ func _test_thimble_well_wallet_settlement() -> void:
 		"recovered listen latches exactly one claim and spends nothing")
 	_check(randi() == poor_lower_rng, "refused lower_spool and recovery spend no global RNG")
 
+	# Post-success replay rejection on the same selector after recovery.
+	var poor_listen_replay := poor_lower_service.choose_with_wallet("listen", {"gold": 4, "scraps": 1})
+	_check(_wallet_shape_ok(poor_listen_replay) and poor_listen_replay.get("ok", true) == false
+		and poor_listen_replay.get("event_id", "") == "" and poor_listen_replay.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_listen_replay.get("wallet"), 4, 1),
+		"replay after recovered listen is rejected with unchanged wallet")
+	_check(poor_lower_service.is_claimed() and not poor_lower_service.is_valid()
+		and poor_lower_service.get_event() == original_event,
+		"replayed listen keeps claim latched and snapshot unchanged")
+
 	var trace_a := RunEventChoice.new(authored_record.duplicate(true)).choose_with_wallet("listen", {"gold": 7, "scraps": 0})
 	var trace_b := RunEventChoice.new(authored_record.duplicate(true)).choose_with_wallet("listen", {"gold": 7, "scraps": 0})
 	_check(trace_a == trace_b and _wallet_exact_int(trace_a.get("wallet"), 7, 1),
@@ -1196,6 +1206,29 @@ func _test_needle_gate_wallet_settlement() -> void:
 	(poor_cut_zero_refusal["wallet"] as Dictionary)["gold"] = 999
 	_check(_wallet_exact_int(poor_cut_zero_wallet, 4, 0),
 		"mutating refused wallet cannot change caller wallet")
+	_check(randi() == poor_cut_zero_rng, "zero-scrap cut_bindings refusal spends no global RNG")
+
+	# pass recovers on SAME selector after refused cut_bindings (zero scraps)
+	var pass_recovery_zero := poor_cut_zero_service.choose_with_wallet("pass", poor_cut_zero_wallet)
+	_check(_wallet_shape_ok(pass_recovery_zero) and pass_recovery_zero.get("ok", false) == true
+		and pass_recovery_zero.get("event_id", "") == "needle_gate"
+		and pass_recovery_zero.get("choice_id", "") == "pass"
+		and _wallet_exact_int(pass_recovery_zero.get("wallet"), 4, 0),
+		"pass recovers on SAME selector after refused cut_bindings with zero scraps")
+	_check(poor_cut_zero_service.is_claimed() and not poor_cut_zero_service.is_valid()
+		and _wallet_exact_int(poor_cut_zero_wallet, 4, 0) and poor_cut_zero_event == original
+		and poor_cut_zero_service.get_event() == original,
+		"recovered pass latches exactly one claim and spends nothing (zero scrap)")
+
+	# Post-success replay rejection on the same selector after recovery.
+	var pass_replay_zero := poor_cut_zero_service.choose_with_wallet("pass", {"gold": 4, "scraps": 0})
+	_check(_wallet_shape_ok(pass_replay_zero) and pass_replay_zero.get("ok", true) == false
+		and pass_replay_zero.get("event_id", "") == "" and pass_replay_zero.get("choice_id", "") == ""
+		and _wallet_exact_int(pass_replay_zero.get("wallet"), 4, 0),
+		"replay after recovered pass (zero scrap) is rejected with unchanged wallet")
+	_check(poor_cut_zero_service.is_claimed() and not poor_cut_zero_service.is_valid()
+		and poor_cut_zero_service.get_event() == original,
+		"replayed pass keeps claim latched and snapshot unchanged (zero scrap)")
 
 	# One scrap (still insufficient, needs 2)
 	var poor_cut_one_event: Dictionary = authored.duplicate(true)
@@ -1230,6 +1263,16 @@ func _test_needle_gate_wallet_settlement() -> void:
 		and poor_cut_one_service.get_event() == original,
 		"recovered pass latches exactly one claim and spends nothing")
 	_check(randi() == poor_cut_one_rng, "refused cut_bindings and recovery spend no global RNG")
+
+	# Post-success replay rejection on the same selector after recovery.
+	var pass_replay_one := poor_cut_one_service.choose_with_wallet("pass", {"gold": 4, "scraps": 1})
+	_check(_wallet_shape_ok(pass_replay_one) and pass_replay_one.get("ok", true) == false
+		and pass_replay_one.get("event_id", "") == "" and pass_replay_one.get("choice_id", "") == ""
+		and _wallet_exact_int(pass_replay_one.get("wallet"), 4, 1),
+		"replay after recovered pass (one scrap) is rejected with unchanged wallet")
+	_check(poor_cut_one_service.is_claimed() and not poor_cut_one_service.is_valid()
+		and poor_cut_one_service.get_event() == original,
+		"replayed pass keeps claim latched and snapshot unchanged (one scrap)")
 
 
 func _test_quiet_spool_wallet_settlement() -> void:
