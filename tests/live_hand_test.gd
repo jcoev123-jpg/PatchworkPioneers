@@ -441,6 +441,12 @@ func _pool_admitted(card_id: String) -> bool:
 			or card_id in CombatSeamstressPoolControl.SNAG_IDS \
 			or card_id in CombatSeamstressPoolControl.UNPICK_IDS:
 		return true
+	# D2-1 enemy-single Bleed variants are now admitted by the mounted
+	# LiveAreaAttackAction child, not by a separate combat button.
+	if card_id in ["seamstress_running_stitch", "seamstress_running_stitch_plus",
+			"seamstress_hemorrhage_hem", "seamstress_hemorrhage_hem_plus",
+			"seamstress_red_thread", "seamstress_red_thread_plus"]:
+		return true
 	return _area_card(card_id)
 
 

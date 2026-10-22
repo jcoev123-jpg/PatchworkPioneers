@@ -234,8 +234,9 @@ func _display(card_id: String, stage: String) -> void:
 	# No parallel combat control of any kind is mounted for this card.
 	_check(adapter.button == null and app.get_node("LiveAreaAttackAction").button == null,
 		"no separate area combat button exists: " + card_id)
-	_check(app.get_node("LiveAreaAttackAction").get_child_count() == 0,
-		"adapter mounts no extra control: " + card_id)
+	_check(app.get_node("LiveAreaAttackAction").get_child_count() == 1
+		and app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand") != null,
+		"area adapter mounts only the single-enemy child, not a competing control: " + card_id)
 	_check(app.get_node("LiveSupportHand").energy_label.text == "%d" % app.deck.energy,
 		"shared energy display is authoritative: " + stage)
 	_check(not panel.focus_neighbor_bottom.is_empty()

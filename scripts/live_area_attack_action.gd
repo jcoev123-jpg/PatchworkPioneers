@@ -23,6 +23,8 @@ const TINKER := Color("#c49a3a")
 ## Retained mount handle. This adapter never creates a separate action control.
 var button: Button
 
+const SINGLE_BLEED_ADAPTER = preload("res://scripts/live_seamstress_single_bleed_hand.gd")
+
 var _service := CombatSeamstressPoolBleed.new()
 var _catalog := SeamstressPoolCards.new()
 var _tinker_catalog := TinkerPoolCards.new()
@@ -38,6 +40,15 @@ var _bindings: Dictionary = {}
 var _pending: Dictionary = {}
 var _turn := -1
 var _token := 0
+
+
+func _ready() -> void:
+	# This action is already scene-mounted. One idempotent child handles only
+	# held enemy-single Bleed cards, leaving every target-free binding intact.
+	if get_node_or_null("LiveSeamstressSingleBleedHand") == null:
+		var single = SINGLE_BLEED_ADAPTER.new()
+		single.name = "LiveSeamstressSingleBleedHand"
+		add_child(single)
 
 
 func _process(_delta: float) -> void:
