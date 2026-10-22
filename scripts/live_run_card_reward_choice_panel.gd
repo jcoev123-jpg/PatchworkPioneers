@@ -41,6 +41,9 @@ var _node_kind: String = ""
 var _receipt: Dictionary = {}
 var _choice_buttons: Array[Button] = []
 var _bound_choices: Dictionary = {}
+var _card_panels: Array[PanelContainer] = []
+var _card_hovered: Array[bool] = []
+var _card_focused: Array[bool] = []
 
 
 func _ready() -> void:
@@ -61,6 +64,9 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	_is_open = true
 	_awaiting_ack = false
 	_accepted = false
+	_card_panels.clear()
+	_card_hovered = [false, false, false]
+	_card_focused = [false, false, false]
 	title_label.text = "%s reward" % node_kind
 	gold_label.text = "Pending gold: +%d" % snapshot["gold_award"]
 	trinket_label.visible = node_kind == "Elite"
@@ -69,6 +75,7 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 		var offered: Dictionary = snapshot["offers"][index]
 		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offered["id"])
 		var card_panel := _mount_card(index, offered, definition)
+		_card_panels.append(card_panel)
 		choices_container.add_child(card_panel)
 		var button := card_panel.get_node("CardMargin/CardContent/ChooseButton") as Button
 		_choice_buttons.append(button)
@@ -141,23 +148,18 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.size_flags_stretch_ratio = 1.0
 	card.custom_minimum_size = Vector2(0, 300)
-	var patch := StyleBoxFlat.new()
-	patch.bg_color = Color("#f1e5cd")
-	patch.border_color = OWNER_COLORS[offer["owner"]]
-	patch.set_border_width_all(5)
-	patch.set_corner_radius_all(10)
-	patch.content_margin_left = 10
-	patch.content_margin_right = 10
-	patch.content_margin_top = 12
-	patch.content_margin_bottom = 12
-	card.add_theme_stylebox_override("panel", patch)
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.focus_mode = Control.FOCUS_NONE
+	_style_card(card, String(offer["owner"]), false)
 	var margin := MarginContainer.new()
 	margin.name = "CardMargin"
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_theme_constant_override("margin_left", 10)
 	margin.add_theme_constant_override("margin_right", 10)
 	card.add_child(margin)
 	var content := VBoxContainer.new()
 	content.name = "CardContent"
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_theme_constant_override("separation", 5)
 	margin.add_child(content)
 	var owner_label := _card_label("OwnerLabel", offer["owner"].capitalize(), 19)
@@ -221,8 +223,15 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	action.focus_mode = Control.FOCUS_ALL
 	action.custom_minimum_size = Vector2(0, 52)
 	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action.mouse_filter = Control.MOUSE_FILTER_STOP
 	_style_button(action, OWNER_COLORS[offer["owner"]])
 	content.add_child(action)
+	var offered_id := String(offer["id"])
+	card.gui_input.connect(_on_card_gui_input.bind(index, offered_id, action))
+	card.mouse_entered.connect(_on_card_mouse_entered.bind(index))
+	card.mouse_exited.connect(_on_card_mouse_exited.bind(index))
+	action.focus_entered.connect(_on_card_focus_entered.bind(index))
+	action.focus_exited.connect(_on_card_focus_exited.bind(index))
 	return card
 
 
@@ -357,6 +366,7 @@ func _card_label(label_name: String, value: String, point_size: int) -> Label:
 	var label := Label.new()
 	label.name = label_name
 	label.text = value
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_color_override("font_color", Color("#263137"))
 	label.add_theme_font_size_override("font_size", point_size)
@@ -403,6 +413,9 @@ func close_rewards() -> void:
 		card.queue_free()
 	_choice_buttons.clear()
 	_bound_choices.clear()
+	_card_panels.clear()
+	_card_hovered.clear()
+	_card_focused.clear()
 	skip_button.disabled = true
 	skip_button.release_focus()
 
@@ -439,6 +452,78 @@ func _on_choice_pressed(generation: int, node_id: String, selected_card_id: Stri
 	for choice in _choice_buttons:
 		choice.disabled = true
 	choice_requested.emit(_node_id, selected_card_id)
+
+
+func _style_card(card: PanelContainer, owner: String, active: bool) -> void:
+	var patch := StyleBoxFlat.new()
+	patch.bg_color = Color("#f7efdf") if active else Color("#f1e5cd")
+	if OWNER_COLORS.has(owner):
+		patch.border_color = OWNER_COLORS[owner]
+	else:
+		patch.border_color = Color("#736451")
+	patch.set_border_width_all(8 if active else 5)
+	patch.set_corner_radius_all(10)
+	patch.content_margin_left = 10
+	patch.content_margin_right = 10
+	patch.content_margin_top = 12
+	patch.content_margin_bottom = 12
+	patch.shadow_color = Color(0.03, 0.06, 0.07, 0.8)
+	patch.shadow_size = 18 if active else 12
+	patch.shadow_offset = Vector2(0, 4) if active else Vector2.ZERO
+	card.add_theme_stylebox_override("panel", patch)
+
+
+func _on_card_gui_input(event: InputEvent, index: int, card_id: String, button: Button) -> void:
+	if not _is_open or _accepted or _awaiting_ack:
+		return
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.pressed:
+		return
+	_on_choice_pressed(_generation, _node_id, card_id, button)
+
+
+func _on_card_mouse_entered(index: int) -> void:
+	if index < 0 or index >= _card_hovered.size():
+		return
+	_card_hovered[index] = true
+	_update_card_style(index)
+
+
+func _on_card_mouse_exited(index: int) -> void:
+	if index < 0 or index >= _card_hovered.size():
+		return
+	_card_hovered[index] = false
+	_update_card_style(index)
+
+
+func _on_card_focus_entered(index: int) -> void:
+	if index < 0 or index >= _card_focused.size():
+		return
+	_card_focused[index] = true
+	_update_card_style(index)
+
+
+func _on_card_focus_exited(index: int) -> void:
+	if index < 0 or index >= _card_focused.size():
+		return
+	_card_focused[index] = false
+	_update_card_style(index)
+
+
+func _update_card_style(index: int) -> void:
+	if not _is_open or index < 0 or index >= _card_panels.size():
+		return
+	var card := _card_panels[index]
+	if not is_instance_valid(card):
+		return
+	var owner := ""
+	if index < _receipt.get("offers", []).size():
+		owner = String((_receipt["offers"][index] as Dictionary).get("owner", ""))
+	if owner.is_empty():
+		return
+	_style_card(card, owner, _card_hovered[index] or _card_focused[index])
 
 
 func _apply_patchwork_style() -> void:

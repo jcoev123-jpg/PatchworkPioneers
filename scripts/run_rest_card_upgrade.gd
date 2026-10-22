@@ -43,6 +43,57 @@ func _init(deck_ids: Variant = null, permitted_upgrades: Variant = null,
 		_upgrades = permitted_upgrades.duplicate(true)
 
 
+## Read-only query that validates a deck and optional stitched ledger, then
+## projects the canonical Rest upgrade options for every eligible owned card.
+## Each choice records the card's original zero-based deck index, source ID,
+## canonical plus ID, owner, and display metadata. The companion
+## permitted_upgrades dictionary maps each base ID to its canonical plus ID and
+## can be passed directly to RunRestCardUpgrade.new().
+## Invalid deck/ledger input returns ok: false with empty collections.
+static func list_authored_choices(deck_ids: Variant = null, descriptors: Variant = null,
+		next_stitch_id: Variant = null) -> Dictionary:
+	if not _validate_deck_and_ledger(deck_ids, descriptors, next_stitch_id):
+		return {
+			"ok": false,
+			"choices": [],
+			"permitted_upgrades": {},
+		}
+
+	var source: Array = deck_ids
+	var choices: Array = []
+	var permitted_upgrades: Dictionary = {}
+
+	for i in range(source.size()):
+		var card_id: String = source[i]
+		var info: Dictionary = _get_canonical_upgrade_info(card_id)
+		if info.is_empty():
+			continue
+
+		var choice: Dictionary = {
+			"index": i,
+			"source_id": card_id,
+			"original_id": card_id,
+			"base_id": card_id,
+			"plus_id": String(info.get("plus_id", "")),
+			"upgraded_id": String(info.get("plus_id", "")),
+			"owner": String(info.get("owner", "")),
+			"display_name": String(info.get("display_name", "")),
+			"plus_display_name": String(info.get("plus_display_name", "")),
+			"cost": int(info.get("cost", 0)),
+			"plus_cost": int(info.get("plus_cost", 0)),
+			"effects": info.get("effects", {}).duplicate(true),
+			"plus_effects": info.get("plus_effects", {}).duplicate(true),
+		}
+		choices.append(choice)
+		permitted_upgrades[card_id] = String(info.get("plus_id", ""))
+
+	return {
+		"ok": true,
+		"choices": choices,
+		"permitted_upgrades": permitted_upgrades,
+	}
+
+
 ## Attempts the visit's single upgrade. index selects one position in the
 ## ORIGINAL deck snapshot; a card-name search is not offered. A rejected call
 ## returns a detached copy of the original snapshot, mutates nothing and keeps
@@ -95,10 +146,26 @@ func _failure() -> Dictionary:
 	}
 
 
+static func _validate_deck_and_ledger(deck_ids: Variant, descriptors: Variant = null,
+		next_stitch_id: Variant = null) -> bool:
+	if typeof(deck_ids) != TYPE_ARRAY:
+		return false
+	var source: Array = deck_ids
+	if source.is_empty():
+		return false
+	if descriptors == null and next_stitch_id == null:
+		return _is_valid_deck(source)
+	elif typeof(descriptors) == TYPE_DICTIONARY:
+		var registry: Dictionary = descriptors.duplicate(true)
+		var cursor: Variant = 1 if next_stitch_id == null else next_stitch_id
+		return RunRestStitchCards.new(source, registry, 0, cursor).is_valid()
+	return false
+
+
 ## Fail-closed: only starter IDs, reward-eligible pool bases, and genuine
 ## non-reward pool plus IDs belong in a plain deck. Composites require a
 ## separately verified descriptor ledger at construction.
-func _is_valid_deck(deck: Array) -> bool:
+static func _is_valid_deck(deck: Array) -> bool:
 	if deck.is_empty():
 		return false
 	for entry in deck:
@@ -113,7 +180,7 @@ func _is_valid_deck(deck: Array) -> bool:
 	return true
 
 
-func _is_canonical_pool_upgrade(original_id: String, upgraded_id: String) -> bool:
+static func _is_canonical_pool_upgrade(original_id: String, upgraded_id: String) -> bool:
 	# Look up the source through the reward-base catalog, not by an ID suffix.
 	# Every pool has its own schema, so validate the canonical pair in BOTH
 	# directions and require the same authored owner and definition.
@@ -122,16 +189,70 @@ func _is_canonical_pool_upgrade(original_id: String, upgraded_id: String) -> boo
 			or original.get("upgrade_id") != upgraded_id \
 			or not RunRestStitchCards.is_authored_pool_plus(upgraded_id):
 		return false
-	var upgraded: Dictionary = {}
-	match original.get("owner"):
-		"warden":
-			upgraded = WardenPoolCards.new().get_definition(upgraded_id)
-		"seamstress":
-			upgraded = SeamstressPoolCards.new().get_definition(upgraded_id)
-		"tinker":
-			upgraded = TinkerPoolCards.new().get_definition(upgraded_id)
-		_:
-			return false
+	var owner: String = String(original.get("owner", ""))
+	var upgraded: Dictionary = _resolve_pool_card_definition(owner, upgraded_id)
 	return not upgraded.is_empty() and upgraded.get("id") == upgraded_id \
-		and upgraded.get("owner") == original.get("owner") \
+		and upgraded.get("owner") == owner \
 		and upgraded.get("upgrade_of", upgraded.get("base_id", "")) == original_id
+
+
+static func _resolve_pool_card_definition(owner: String, card_id: String) -> Dictionary:
+	match owner:
+		"warden":
+			return WardenPoolCards.new().get_definition(card_id)
+		"seamstress":
+			return SeamstressPoolCards.new().get_definition(card_id)
+		"tinker":
+			return TinkerPoolCards.new().get_definition(card_id)
+		_:
+			return {}
+
+
+static func _get_canonical_upgrade_info(card_id: String) -> Dictionary:
+	if card_id == "warden_strike":
+		var starter := StarterCards.new()
+		var base_def: Dictionary = starter.get_definition("warden_strike")
+		var plus_def: Dictionary = starter.get_definition("warden_strike_plus")
+		if base_def.is_empty() or plus_def.is_empty():
+			return {}
+		return {
+			"plus_id": "warden_strike_plus",
+			"owner": "warden",
+			"display_name": String(base_def.get("display_name", "Strike")),
+			"plus_display_name": String(plus_def.get("display_name", "Strike+")),
+			"cost": int(base_def.get("cost", 1)),
+			"plus_cost": int(plus_def.get("cost", 1)),
+			"effects": base_def.get("effects", {}).duplicate(true),
+			"plus_effects": plus_def.get("effects", {}).duplicate(true),
+		}
+
+	var starter := StarterCards.new()
+	if starter.has_card(card_id):
+		return {}
+
+	var pool_def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	if pool_def.is_empty() or pool_def.get("id") != card_id:
+		return {}
+
+	var plus_id: String = String(pool_def.get("upgrade_id", ""))
+	if plus_id.is_empty():
+		return {}
+
+	if not _is_canonical_pool_upgrade(card_id, plus_id):
+		return {}
+
+	var owner: String = String(pool_def.get("owner", ""))
+	var plus_def: Dictionary = _resolve_pool_card_definition(owner, plus_id)
+	if plus_def.is_empty():
+		return {}
+
+	return {
+		"plus_id": plus_id,
+		"owner": owner,
+		"display_name": String(pool_def.get("display_name", "")),
+		"plus_display_name": String(plus_def.get("display_name", "")),
+		"cost": int(pool_def.get("cost", 0)),
+		"plus_cost": int(plus_def.get("cost", 0)),
+		"effects": pool_def.get("effects", {}).duplicate(true),
+		"plus_effects": plus_def.get("effects", {}).duplicate(true),
+	}

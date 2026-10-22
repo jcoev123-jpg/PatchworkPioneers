@@ -48,6 +48,20 @@ func _mouse(button: Button) -> void:
 	await _frames()
 
 
+func _click(control: Control) -> void:
+	var point := control.get_global_rect().get_center()
+	var move := InputEventMouseMotion.new()
+	move.position = point
+	root.push_input(move, true)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.pressed = pressed
+		event.button_index = MOUSE_BUTTON_LEFT
+		root.push_input(event, true)
+	await _frames()
+
+
 func _on_choice(node_id: String, selected_card_id: String) -> void:
 	requests.append({"node": node_id, "card": selected_card_id})
 
@@ -357,6 +371,40 @@ func _exercise(fixture: Dictionary, kind: String, physical: int) -> void:
 	rogue.queue_free()
 	_check(requests.is_empty() and not panel._awaiting_ack,
 		"forged card/button bindings reject without consuming offer")
+	# Full-card paper/label clicks route through the same guarded action.
+	requests.clear()
+	var full_card := panel.choices_container.get_child(0) as PanelContainer
+	var full_name := full_card.get_node("CardMargin/CardContent/NameLabel") as Label
+	await _click(full_name)
+	_check(requests == [{"node": node_id, "card": original["offers"][0]["id"]}],
+		kind + " full-card label click requests exact offer once")
+	for button in actions:
+		_check(button.disabled, "full-card request disables all choices")
+		button.pressed.emit()
+	_check(requests.size() == 1, "duplicate pending requests rejected after full-card click")
+	panel.acknowledge(false)
+	_check(actions.all(func(button: Button) -> bool: return not button.disabled),
+		"rejection re-enables after full-card click")
+	# Paper-area click on another card.
+	requests.clear()
+	var second_card := panel.choices_container.get_child(1) as PanelContainer
+	var paper_point := second_card.get_global_rect().position + Vector2(6, 6)
+	var motion := InputEventMouseMotion.new()
+	motion.position = paper_point
+	root.push_input(motion, true)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = paper_point
+		event.pressed = pressed
+		event.button_index = MOUSE_BUTTON_LEFT
+		root.push_input(event, true)
+	await _frames()
+	_check(requests == [{"node": node_id, "card": original["offers"][1]["id"]}],
+		kind + " full-card paper click requests exact offer once")
+	panel.acknowledge(false)
+	_check(actions.all(func(button: Button) -> bool: return not button.disabled),
+		"rejection re-enables after paper click")
+	requests.clear()
 	# Physical pointer on Fight, physical Enter on Elite.
 	var selected_index := 1 if kind == "Fight" else 2
 	if physical == 0:
@@ -807,6 +855,17 @@ func _exercise_pool(fixture: Dictionary, kind: String) -> void:
 	if actions.size() != 4:
 		panel.close_rewards()
 		return
+	# Full-card click on a pool card label routes through the same guard.
+	requests.clear()
+	var pool_card := panel.choices_container.get_child(0) as PanelContainer
+	var pool_name := pool_card.get_node("CardMargin/CardContent/NameLabel") as Label
+	await _click(pool_name)
+	_check(requests == [{"node": node_id, "card": receipt["offers"][0]["id"]}],
+		"pool full-card label click requests exact offer once")
+	panel.acknowledge(false)
+	_check(actions.all(func(button: Button) -> bool: return not button.disabled),
+		"pool rejection re-enables after full-card click")
+	requests.clear()
 	var target: int = 1 if kind == "Fight" else 2
 	await _mouse(actions[target])
 	_check(requests == [{"node": node_id, "card": receipt["offers"][target]["id"]}],

@@ -41,9 +41,11 @@ func _definition(card_id: String) -> Dictionary:
 	var warden_definition := _warden_pool.get_definition(card_id)
 	if not warden_definition.is_empty():
 		return warden_definition
-	# Only the four D2-1 pool energy IDs are advertised from the Tinker/Seamstress
-	# catalogs; other pool effects stay unadvertised.
-	if CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id):
+	# Only the playable energy utilities, Spare Parts and Sight Glass are
+	# advertised; all other Tinker/Seamstress pool records remain unknown.
+	if CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id) or card_id in [
+			"tinker_spare_parts", "tinker_spare_parts_plus",
+			"tinker_sight_glass", "tinker_sight_glass_plus"]:
 		if card_id.begins_with("tinker_"):
 			var tinker_definition := _tinker_pool.get_definition(card_id)
 			if not tinker_definition.is_empty():
@@ -108,6 +110,8 @@ func base_effect_text(card_id: String) -> String:
 		effect_parts.append("BASE each living hero gains %d Block" % int(effects["block_all"]))
 	if effects.has("heal"):
 		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
+	if effects.has("exposed") and card_id in ["tinker_sight_glass", "tinker_sight_glass_plus"]:
+		effect_parts.append("Apply Exposed %d to the selected enemy" % int(effects["exposed"]))
 	if effects.has("draw"):
 		effect_parts.append("BASE draw %d card" % int(effects["draw"]))
 	if effects.has("gain_energy"):
@@ -348,7 +352,7 @@ func _update_visual(panel: Control) -> void:
 	var playable := false
 	var id: String = _bindings[panel].id
 	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null:
-		if id in CombatAttackTargeting.ATTACK_IDS:
+		if id in CombatAttackTargeting.ATTACK_IDS or _targeting.is_sight_glass(id):
 			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id).get("playable", false))
 		elif id.begins_with(RunRestStitchCards.ID_PREFIX):
 			playable = bool(_stitched_preview.get_preview(_ledger(), _app._stitch_snapshot(), _app.deck, _app.party, _app.enemies, id).get("playable", false))
@@ -432,6 +436,8 @@ func _rules(id: String) -> String:
 		parts.append("%d Block to all living heroes" % int(effects["block_all"]))
 	if effects.has("heal"):
 		parts.append("heal %d HP" % int(effects["heal"]))
+	if effects.has("exposed") and id in ["tinker_sight_glass", "tinker_sight_glass_plus"]:
+		parts.append("apply Exposed %d" % int(effects["exposed"]))
 	if effects.has("draw"):
 		parts.append("draw %d card" % int(effects["draw"]))
 	if effects.has("gain_energy"):

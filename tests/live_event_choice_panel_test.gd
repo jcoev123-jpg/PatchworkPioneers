@@ -154,11 +154,13 @@ func _test_authored() -> void:
 			await _key(KEY_ENTER)
 		elif step == 3:
 			# Native keyboard focus traversal, then physical Space.
+			# Select buttons[1] for focus traversal test, adjust expected index accordingly.
 			buttons[0].grab_focus()
 			await _frames()
 			await _key(KEY_TAB)
 			_check(buttons[1].has_focus(), "Tab moves focus between real authored buttons")
 			selected = buttons[1]
+			desired_index = 1
 			await _key(KEY_SPACE)
 		else:
 			selected.pressed.emit()

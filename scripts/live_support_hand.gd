@@ -2,6 +2,7 @@ extends Node
 ## Input/presentation only. Support and movement services own effects and charges.
 
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
+const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus"]
 const TABLE_ID := "SupportTableBacking"
 ## Visible idle cue only: the complete mouse/keyboard instructions live in TABLE_HELP_DETAIL,
@@ -29,6 +30,7 @@ var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
 var _energy_cards := CombatPoolEnergyCards.new()
+var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 
 
@@ -248,11 +250,13 @@ func _is_energy_card(card_id: String) -> bool:
 	return CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id)
 
 func _is_actionable(card_id: String) -> bool:
-	return card_id in SUPPORT_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id)
+	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id)
 
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int) -> bool:
+	if card_id in SPARE_PARTS_IDS:
+		return _tinker_gadgets != null and bool(_tinker_gadgets.resolve_spare_parts(deck, party, card_id, position).get("ok", false))
 	if _is_block_card(card_id):
 		if _block_cards == null:
 			return false
@@ -277,6 +281,7 @@ func _sync_battle() -> void:
 		_play = CombatStarterSupportPlay.new()
 		_block_cards = CombatWardenPoolBlockCards.new()
 		_energy_cards = CombatPoolEnergyCards.new()
+		_tinker_gadgets = CombatTinkerPoolGadgets.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
 			var state: Dictionary = carry._wardrobe.get_snapshot()
@@ -458,7 +463,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			or app.enemies == null or not app.enemies.is_valid() \
 			or party.is_defeated() or app.enemies.is_victorious():
 			return false
-	if _is_energy_card(card_id):
+	if _is_energy_card(card_id) or card_id in SPARE_PARTS_IDS:
 		# Presentation preflight only: the pool resolver revalidates and commits.
 		if app._battle_closed or not deck.turn_active or app.battle_result == null \
 			or not app.battle_result.can_continue() or app.battle_result._party != party \
@@ -507,6 +512,9 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if token != _token or _pending.is_empty():
 		return
 	if not _eligible(panel, card_id, deck, party, battle):
+		_cancel_pending()
+		return
+	if card_id in SPARE_PARTS_IDS and not _selection_valid():
 		_cancel_pending()
 		return
 	if card_id in ALLY_IDS:
@@ -709,3 +717,4 @@ func _clear() -> void:
 	_play = null
 	_block_cards = null
 	_energy_cards = null
+	_tinker_gadgets = null
