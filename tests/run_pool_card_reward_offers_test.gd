@@ -13,6 +13,8 @@ func _initialize() -> void:
 	_test_weighted_oracle_replay()
 	_test_depletion_and_sparse_tiers()
 	_test_fail_closed_rejections()
+	_test_authored_candidate_aggregation()
+	_test_authored_pool_roll()
 
 	if failures.is_empty():
 		print("run_pool_card_reward_offers_test: PASS (", checks, " checks)")
@@ -416,3 +418,193 @@ func _test_fail_closed_rejections() -> void:
 		{"id": "o3", "owner": "fixture_nonparty", "rarity": "common"}
 	]
 	_assert_rejected("fewer than 3 eligible party cards despite 5 total candidates", test_rng, valid_party, mostly_outsiders)
+
+
+## Authored catalog aggregation (AC1): every real base ID yields one faithful candidate.
+func _test_authored_candidate_aggregation() -> void:
+	var party: Array[String] = ["warden", "seamstress", "tinker"]
+	var warden_catalog: WardenPoolCards = WardenPoolCards.new()
+	var seamstress_catalog: SeamstressPoolCards = SeamstressPoolCards.new()
+	var tinker_catalog: TinkerPoolCards = TinkerPoolCards.new()
+	var starter_catalog: StarterCards = StarterCards.new()
+
+	var candidates_before: Array[Dictionary] = RunPoolCardRewardOffers.get_authored_base_candidates()
+	var catalog_ids_before: Array[String] = warden_catalog.get_base_ids()
+	var seam_ids_before: Array[String] = seamstress_catalog.get_base_ids()
+	var tinker_ids_before: Array[String] = tinker_catalog.get_pool_card_ids()
+
+	# Each source base ID appears exactly once with matching owner/rarity.
+	var seen: Dictionary = {}
+
+	for base_id: String in warden_catalog.get_base_ids():
+		var def: Dictionary = warden_catalog.get_definition(base_id)
+		var matches: Array[Dictionary] = []
+		for cand: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+			if String(cand.get("id", "")) == base_id:
+				matches.append(cand)
+		_check(matches.size() == 1, "warden base id appears exactly once: " + base_id)
+		if matches.size() == 1:
+			_check(String(matches[0].get("owner", "")) == String(def.get("owner", "")),
+				"warden candidate owner matches definition: " + base_id)
+			_check(String(matches[0].get("rarity", "")) == String(def.get("rarity", "")),
+				"warden candidate rarity matches definition: " + base_id)
+			_check(not String(matches[0].get("id", "")).ends_with("_plus"),
+				"warden candidate is not an upgrade: " + base_id)
+		_check(not seen.has(base_id), "no duplicate candidate id: " + base_id)
+		seen[base_id] = true
+
+	for base_id: String in seamstress_catalog.get_base_ids():
+		var def: Dictionary = seamstress_catalog.get_definition(base_id)
+		var matches: Array[Dictionary] = []
+		for cand: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+			if String(cand.get("id", "")) == base_id:
+				matches.append(cand)
+		_check(matches.size() == 1, "seamstress base id appears exactly once: " + base_id)
+		if matches.size() == 1:
+			_check(String(matches[0].get("owner", "")) == String(def.get("owner", "")),
+				"seamstress candidate owner matches definition: " + base_id)
+			_check(String(matches[0].get("rarity", "")) == String(def.get("rarity", "")),
+				"seamstress candidate rarity matches definition: " + base_id)
+			_check(not String(matches[0].get("id", "")).ends_with("_plus"),
+				"seamstress candidate is not an upgrade: " + base_id)
+		_check(not seen.has(base_id), "no duplicate candidate id: " + base_id)
+		seen[base_id] = true
+
+	for base_id: String in tinker_catalog.get_pool_card_ids():
+		var def: Dictionary = tinker_catalog.get_definition(base_id)
+		var matches: Array[Dictionary] = []
+		for cand: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+			if String(cand.get("id", "")) == base_id:
+				matches.append(cand)
+		_check(matches.size() == 1, "tinker base id appears exactly once: " + base_id)
+		if matches.size() == 1:
+			_check(String(matches[0].get("owner", "")) == String(def.get("owner", "")),
+				"tinker candidate owner matches definition: " + base_id)
+			_check(String(matches[0].get("rarity", "")) == String(def.get("rarity", "")),
+				"tinker candidate rarity matches definition: " + base_id)
+			_check(not String(matches[0].get("id", "")).ends_with("_plus"),
+				"tinker candidate is not an upgrade: " + base_id)
+		_check(not seen.has(base_id), "no duplicate candidate id: " + base_id)
+		seen[base_id] = true
+
+	# Upgrades excluded: no candidate id ends with _plus.
+	for cand: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		_check(not String(cand.get("id", "")).ends_with("_plus"),
+			"no upgrade candidate: " + String(cand.get("id", "")))
+
+	# Named spot checks.
+	var named_expected: Dictionary = {
+		"warden_hold_the_line": {"owner": "warden", "rarity": "common"},
+		"warden_draw_fire": {"owner": "warden", "rarity": "uncommon"},
+		"warden_bastion_quilt": {"owner": "warden", "rarity": "rare"},
+		"seamstress_running_stitch": {"owner": "seamstress", "rarity": "common"},
+		"seamstress_hemorrhage_hem": {"owner": "seamstress", "rarity": "uncommon"},
+		"seamstress_red_thread": {"owner": "seamstress", "rarity": "rare"},
+		"tinker_rivet_shot": {"owner": "tinker", "rarity": "common"},
+		"tinker_overclock": {"owner": "tinker", "rarity": "uncommon"},
+		"tinker_bobbin_cannon": {"owner": "tinker", "rarity": "rare"},
+	}
+	for id: String in named_expected:
+		var found: bool = false
+		for cand: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+			if String(cand.get("id", "")) == id:
+				found = true
+				var exp: Dictionary = named_expected[id]
+				_check(String(cand.get("owner", "")) == String(exp["owner"]),
+					"named candidate owner: " + id)
+				_check(String(cand.get("rarity", "")) == String(exp["rarity"]),
+					"named candidate rarity: " + id)
+		_check(found, "named candidate present: " + id)
+
+	# Source catalogs unchanged.
+	_check(warden_catalog.get_base_ids() == catalog_ids_before, "warden base ids unchanged")
+	_check(seamstress_catalog.get_base_ids() == seam_ids_before, "seamstress base ids unchanged")
+	_check(tinker_catalog.get_pool_card_ids() == tinker_ids_before, "tinker pool ids unchanged")
+
+	# Candidate list is detached: mutating returned array does not affect next call.
+	var first_call: Array[Dictionary] = RunPoolCardRewardOffers.get_authored_base_candidates()
+	var second_call: Array[Dictionary] = RunPoolCardRewardOffers.get_authored_base_candidates()
+	if first_call.size() > 0:
+		first_call[0]["id"] = "__mutated__"
+	_check(second_call[0]["id"] != "__mutated__", "authored candidates are detached across calls")
+
+	# Starter deck not mutated by catalog reads.
+	var starter_before: Array[String] = starter_catalog.get_starting_deck()
+	var _candidates: Array[Dictionary] = RunPoolCardRewardOffers.get_authored_base_candidates()
+	var starter_after: Array[String] = starter_catalog.get_starting_deck()
+	_check(starter_before == starter_after, "starter deck unchanged by authored candidate lookup")
+
+
+## Authored pool roll delegates to generate() (AC2/AC3).
+func _test_authored_pool_roll() -> void:
+	var party: Array[String] = ["warden", "seamstress", "tinker"]
+
+	# Compare adapter to direct generate() with same real candidates and seed.
+	var candidates: Array[Dictionary] = RunPoolCardRewardOffers.get_authored_base_candidates()
+	var rng_adapter: RandomNumberGenerator = _rng(TEST_SEED)
+	var rng_direct: RandomNumberGenerator = _rng(TEST_SEED)
+	var rng_oracle: RandomNumberGenerator = _rng(TEST_SEED)
+
+	var adapter_result: Dictionary = RunPoolCardRewardOffers.generate_from_authored_pools(rng_adapter, party)
+	var direct_result: Dictionary = RunPoolCardRewardOffers.generate(rng_direct, party, candidates)
+	var oracle_expected: Array = _oracle(party, candidates, rng_oracle)
+
+	_check(adapter_result.get("ok", false) == true, "authored adapter succeeds")
+	_check(direct_result.get("ok", false) == true, "direct generate succeeds")
+	_check(adapter_result.get("offers", []) == direct_result.get("offers", []),
+		"adapter offers match direct generate offers")
+	_check(adapter_result.get("offers", []) == oracle_expected,
+		"authored adapter offers match oracle")
+	_check(rng_adapter.state == rng_direct.state, "adapter and direct RNG state match")
+	_check(rng_adapter.state == rng_oracle.state, "adapter and oracle RNG state match")
+
+	# Six successful RNG draws consumed: verify continuation matches.
+	var next_adapter: int = rng_adapter.randi()
+	var next_direct: int = rng_direct.randi()
+	var next_oracle: int = rng_oracle.randi()
+	_check(next_adapter == next_direct and next_adapter == next_oracle,
+		"post-roll RNG continuation matches (six draws)")
+
+	# Offers are distinct party-owned base IDs.
+	var seen_ids: Dictionary = {}
+	for offer_raw: Variant in adapter_result.get("offers", []):
+		var offer: Dictionary = offer_raw
+		var id: String = String(offer.get("id", ""))
+		var owner: String = String(offer.get("owner", ""))
+		_check(party.has(owner), "adapter offer owner in party: " + owner)
+		_check(not id.ends_with("_plus"), "adapter offer not upgrade: " + id)
+		_check(not seen_ids.has(id), "adapter offer ids distinct: " + id)
+		seen_ids[id] = true
+
+	# Rejected input leaves RNG unchanged.
+	var rng_reject: RandomNumberGenerator = _rng(TEST_SEED)
+	var state_before: int = rng_reject.state
+	var rejected: Dictionary = RunPoolCardRewardOffers.generate_from_authored_pools(rng_reject, ["warden", "seamstress"])
+	_check(rejected.get("ok", true) == false, "rejected authored call ok is false")
+	_check((rejected.get("offers") as Array).is_empty(), "rejected authored call offers empty")
+	_check(rng_reject.state == state_before, "rejected authored call leaves RNG unchanged")
+
+	# Aliases delegate.
+	var rng_alias: RandomNumberGenerator = _rng(TEST_SEED)
+	var alias_result: Dictionary = RunPoolCardRewardOffers.generate_from_pools(rng_alias, party)
+	_check(alias_result.get("offers", []) == oracle_expected,
+		"generate_from_pools alias matches oracle")
+
+	# Catalogs unchanged after roll.
+	var warden_catalog: WardenPoolCards = WardenPoolCards.new()
+	var seamstress_catalog: SeamstressPoolCards = SeamstressPoolCards.new()
+	var tinker_catalog: TinkerPoolCards = TinkerPoolCards.new()
+	var warden_before: Array[String] = warden_catalog.get_base_ids()
+	var seamstress_before: Array[String] = seamstress_catalog.get_base_ids()
+	var tinker_before: Array[String] = tinker_catalog.get_pool_card_ids()
+	var _roll: Dictionary = RunPoolCardRewardOffers.generate_from_authored_pools(_rng(TEST_SEED), party)
+	_check(warden_catalog.get_base_ids() == warden_before, "warden catalog unchanged after roll")
+	_check(seamstress_catalog.get_base_ids() == seamstress_before, "seamstress catalog unchanged after roll")
+	_check(tinker_catalog.get_pool_card_ids() == tinker_before, "tinker catalog unchanged after roll")
+
+	# Starter deck unchanged after roll.
+	var starter: StarterCards = StarterCards.new()
+	var starter_before: Array[String] = starter.get_starting_deck()
+	var _roll2: Dictionary = RunPoolCardRewardOffers.generate_from_authored_pools(_rng(TEST_SEED), party)
+	var starter_after: Array[String] = starter.get_starting_deck()
+	_check(starter_before == starter_after, "starter deck unchanged after authored roll")

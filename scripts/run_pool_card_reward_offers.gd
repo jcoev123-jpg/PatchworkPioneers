@@ -130,3 +130,65 @@ static func generate(run_rng: Variant, party_ids: Variant, base_candidates: Vari
 		})
 
 	return {"ok": true, "offers": offers}
+
+
+## Catalog-backed adapter for the three authored D2-1 hero pools.
+## Enumerates each real catalog's base IDs, looks up the real definition, and
+## returns detached {id, owner, rarity} candidate records. Upgrades/starters are
+## never included because only base IDs are enumerated.
+static func get_authored_base_candidates() -> Array[Dictionary]:
+	var candidates: Array[Dictionary] = []
+	var warden: WardenPoolCards = WardenPoolCards.new()
+	for card_id: String in warden.get_base_ids():
+		var definition: Dictionary = warden.get_definition(card_id)
+		candidates.append({
+			"id": card_id,
+			"owner": String(definition.get("owner", "")),
+			"rarity": String(definition.get("rarity", ""))
+		})
+	var seamstress: SeamstressPoolCards = SeamstressPoolCards.new()
+	for card_id: String in seamstress.get_base_ids():
+		var definition: Dictionary = seamstress.get_definition(card_id)
+		candidates.append({
+			"id": card_id,
+			"owner": String(definition.get("owner", "")),
+			"rarity": String(definition.get("rarity", ""))
+		})
+	var tinker: TinkerPoolCards = TinkerPoolCards.new()
+	for card_id: String in tinker.get_pool_card_ids():
+		var definition: Dictionary = tinker.get_definition(card_id)
+		candidates.append({
+			"id": card_id,
+			"owner": String(definition.get("owner", "")),
+			"rarity": String(definition.get("rarity", ""))
+		})
+	return candidates
+
+
+static func get_authored_candidates() -> Array[Dictionary]:
+	return get_authored_base_candidates()
+
+
+static func get_base_candidates() -> Array[Dictionary]:
+	return get_authored_base_candidates()
+
+
+static func get_pool_base_candidates() -> Array[Dictionary]:
+	return get_authored_base_candidates()
+
+
+## Delegates to generate() with the real authored base candidates.
+static func generate_from_authored_pools(run_rng: Variant, party_ids: Variant) -> Dictionary:
+	return generate(run_rng, party_ids, get_authored_base_candidates())
+
+
+static func generate_from_authored(run_rng: Variant, party_ids: Variant) -> Dictionary:
+	return generate_from_authored_pools(run_rng, party_ids)
+
+
+static func generate_from_pools(run_rng: Variant, party_ids: Variant) -> Dictionary:
+	return generate_from_authored_pools(run_rng, party_ids)
+
+
+static func generate_authored(run_rng: Variant, party_ids: Variant) -> Dictionary:
+	return generate_from_authored_pools(run_rng, party_ids)
