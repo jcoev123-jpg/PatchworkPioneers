@@ -10,6 +10,7 @@ const RUST := Color("#9e6f58")
 const INK := Color("#3d3440")
 
 var _catalog := StarterCards.new()
+var _warden_pool := WardenPoolCards.new()
 var _targeting := CombatAttackTargeting.new()
 var _stitched_preview := CombatStitchedTargetPreview.new()
 var _on_hit := CombatOnHitStatuses.new()
@@ -29,7 +30,18 @@ func _ledger() -> RunRestStitchCards:
 
 func _definition(card_id: String) -> Dictionary:
 	var move := M02PositionCards.new().get_definition(card_id)
-	return _catalog.get_definition(card_id) if move.is_empty() else move
+	if not move.is_empty():
+		return move
+	var starter := _catalog.get_definition(card_id)
+	if not starter.is_empty():
+		return starter
+	# Reward-pool records are a separate authored catalog; lookup stays read-only.
+	return _warden_pool.get_definition(card_id)
+
+
+## Public read-only lookup shared by the mounted hand admission checks.
+func definition(card_id: String) -> Dictionary:
+	return _definition(card_id)
 
 
 func base_effect_text(card_id: String) -> String:
@@ -57,6 +69,8 @@ func base_effect_text(card_id: String) -> String:
 			target_text = "Self"
 		"ally_single":
 			target_text = "Choose one living ally"
+		"party_all":
+			target_text = "All living heroes"
 		"none":
 			target_text = "No target"
 		_:
@@ -71,6 +85,11 @@ func base_effect_text(card_id: String) -> String:
 		effect_parts.append("BASE deal %d damage" % int(effects["damage"]))
 	if effects.has("block"):
 		effect_parts.append("BASE gain %d Block" % int(effects["block"]))
+	# Hold the Line and Bastion Quilt pay other recipients too; never hide them.
+	if effects.has("other_ally_block"):
+		effect_parts.append("BASE each other living ally gains %d Block" % int(effects["other_ally_block"]))
+	if effects.has("block_all"):
+		effect_parts.append("BASE each living hero gains %d Block" % int(effects["block_all"]))
 	if effects.has("heal"):
 		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
 	if effects.has("draw"):
@@ -123,6 +142,8 @@ func describe(card_id: String) -> Dictionary:
 			target_text = "Self"
 		"ally_single":
 			target_text = "Ally"
+		"party_all":
+			target_text = "All living heroes"
 		"none":
 			target_text = "No target"
 		"adjacent_ally":
@@ -374,6 +395,10 @@ func _rules(id: String) -> String:
 		parts.append("%d damage" % int(effects["damage"]))
 	if effects.has("block"):
 		parts.append("%d Block" % int(effects["block"]))
+	if effects.has("other_ally_block"):
+		parts.append("%d Block to other living allies" % int(effects["other_ally_block"]))
+	if effects.has("block_all"):
+		parts.append("%d Block to all living heroes" % int(effects["block_all"]))
 	if effects.has("heal"):
 		parts.append("heal %d HP" % int(effects["heal"]))
 	if effects.has("draw"):
