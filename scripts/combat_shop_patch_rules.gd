@@ -88,13 +88,36 @@ func healing_card_bonus(hero_id: Variant, card_id: Variant) -> int:
 		return 0
 	if not _active.get(hero_id, []).has(SPARE_SPOOL_ID):
 		return 0
-	var catalog := StarterCards.new()
-	if not catalog.has_card(card_id):
+	var definition: Dictionary = _get_authored_heal_definition(card_id, hero_id)
+	if definition.is_empty():
 		return 0
-	var definition: Dictionary = catalog.get_definition(card_id)
 	if not _has_positive_authored_heal(definition, hero_id, card_id):
 		return 0
 	return HEALING_CARD_BONUS
+
+
+static func _get_authored_heal_definition(card_id: Variant, hero_id: Variant) -> Dictionary:
+	if typeof(card_id) != TYPE_STRING or typeof(hero_id) != TYPE_STRING:
+		return {}
+	var starter := StarterCards.new()
+	if starter.has_card(card_id):
+		var def := starter.get_definition(card_id)
+		if not def.is_empty() and def.get("id") == card_id and def.get("owner") == hero_id:
+			var effects: Variant = def.get("effects")
+			if typeof(effects) == TYPE_DICTIONARY:
+				var heal: Variant = effects.get("heal")
+				if typeof(heal) == TYPE_INT and heal > 0:
+					return def
+	var pool := SeamstressPoolCards.new()
+	if pool.has_card(card_id):
+		var def := pool.get_definition(card_id)
+		if not def.is_empty() and def.get("id") == card_id and def.get("owner") == hero_id:
+			var effects: Variant = def.get("effects")
+			if typeof(effects) == TYPE_DICTIONARY:
+				var heal: Variant = effects.get("heal")
+				if typeof(heal) == TYPE_INT and heal > 0:
+					return def
+	return {}
 
 
 func project_opening_block(hero_id: Variant) -> int:
@@ -109,10 +132,9 @@ func project_card_healing(hero_id: Variant, card_id: Variant) -> int:
 		return 0
 	if not _living.get(hero_id, false):
 		return 0
-	var catalog := StarterCards.new()
-	if not catalog.has_card(card_id):
+	var definition: Dictionary = _get_authored_heal_definition(card_id, hero_id)
+	if definition.is_empty():
 		return 0
-	var definition: Dictionary = catalog.get_definition(card_id)
 	if not _has_positive_authored_heal(definition, hero_id, card_id):
 		return 0
 	var base_heal: int = definition["effects"]["heal"]
