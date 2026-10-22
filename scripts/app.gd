@@ -114,6 +114,16 @@ var battle_result: CombatBattleResult
 var act_outcome: RunActBattleOutcome
 var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
+# Battle-local receipt bridge for CombatQuiltBonus. It only reports committed
+# hand-to-discard transactions of the mounted battle and resets on a new turn.
+var _quilt_bonus: CombatQuiltBonus
+var _quilt_deck: CombatDeck
+var _quilt_party: CombatParty
+var _quilt_turn_open := false
+var _quilt_hand_snapshot: Array[String] = []
+var _quilt_draw_snapshot: Array[String] = []
+var _quilt_discard_snapshot: Array[String] = []
+var _quilt_card_total := 0
 var session_gold := 0
 var run_deck: Array[String] = []
 var run_scraps := 0
@@ -2768,7 +2778,173 @@ func _return_from_visit(view) -> void:
 		_return_to_title()
 
 
+## Cycle 138: the app-side receipt bridge for CombatQuiltBonus. It only reports
+## committed hand-to-discard transactions of the mounted battle; the service owns
+## every rule.
+## One tracker per newly admitted battle, bound to the real CombatParty/CombatDeck.
+func _quilt_bind() -> void:
+	_quilt_detach()
+	if deck == null or party == null or deck.combat_state == null or not party.is_valid():
+		return
+	_quilt_bonus = CombatQuiltBonus.new(party, deck)
+	_quilt_deck = deck
+	_quilt_party = party
+	_quilt_turn_open = deck.turn_active and not _battle_closed \
+		and _quilt_bonus.begin_player_turn()
+	_quilt_snapshot_piles()
+
+
+func _quilt_detach() -> void:
+	_quilt_bonus = null
+	_quilt_deck = null
+	_quilt_party = null
+	_quilt_turn_open = false
+	_quilt_hand_snapshot.clear()
+	_quilt_draw_snapshot.clear()
+	_quilt_discard_snapshot.clear()
+	_quilt_card_total = 0
+
+
+func _quilt_snapshot_piles() -> void:
+	_quilt_hand_snapshot.assign(deck.hand)
+	_quilt_draw_snapshot.assign(deck.draw_pile)
+	_quilt_discard_snapshot.assign(deck.discard_pile)
+	_quilt_card_total = deck.hand.size() + deck.draw_pile.size() + deck.discard_pile.size()
+
+
+## Called only from a real End Turn that committed a fresh player turn. A new
+## hand must never inherit the previous turn's receipts or award latch.
+func _quilt_advance_turn() -> void:
+	_quilt_bind()
+
+
+## Compare the hand with this turn's last receipt snapshot. Only a transaction
+## that really moved one held copy into the discard pile is reported; a plain
+## selection, an added card, End Turn disposal or a stale pile state is not.
+func _quilt_sync_hand() -> void:
+	if deck == null or party == null or deck.combat_state == null or not party.is_valid():
+		_quilt_detach()
+		return
+	if _quilt_bonus == null or _quilt_deck != deck or _quilt_party != party:
+		_quilt_bind()
+		return
+	if _battle_closed or not deck.turn_active:
+		_quilt_bonus.end_player_turn()
+		_quilt_turn_open = false
+		_quilt_snapshot_piles()
+		return
+	if not _quilt_turn_open:
+		_quilt_turn_open = _quilt_bonus.begin_player_turn()
+		_quilt_snapshot_piles()
+		return
+	if _quilt_reconcile_play():
+		# The service may have granted Block and drawn a card: use the existing
+		# presenters so the mounted hand, pile counts and meters stay truthful.
+		_refresh_party()
+	_quilt_snapshot_piles()
+
+
+func _quilt_reconcile_play() -> bool:
+	var played := _quilt_committed_card()
+	if played.is_empty():
+		return false
+	var awarded := false
+	for owner_id in _quilt_owners_of(played):
+		var receipt := _quilt_bonus.record_confirmed_play(owner_id)
+		if receipt is Dictionary and bool(receipt.get("triggered", false)):
+			awarded = true
+	return awarded
+
+
+## A committed play removes exactly one held copy from its own slot and may
+## append draws at the end of the hand. Duplicate IDs are disambiguated by
+## position, and the conserved piles plus the appended tail entry must prove the
+## card-to-discard transaction.
+func _quilt_committed_card() -> String:
+	var previous := _quilt_hand_snapshot
+	var current := deck.hand
+	if previous.is_empty():
+		return ""
+	# Nothing moved: this refresh already reconciled the last committed play.
+	if current == previous and deck.draw_pile == _quilt_draw_snapshot \
+			and deck.discard_pile == _quilt_discard_snapshot:
+		return ""
+	if current.size() + deck.draw_pile.size() + deck.discard_pile.size() != _quilt_card_total:
+		return ""
+	if current.size() < previous.size() - 1:
+		return ""
+	var kept := current.slice(0, previous.size() - 1)
+	var found := ""
+	var matches := 0
+	for index in range(previous.size()):
+		var expected := previous.duplicate()
+		expected.remove_at(index)
+		if expected != kept:
+			continue
+		# Identical copies are their own case: whichever slot left the hand, the
+		# committed card identity is the same. Conflicting IDs stay ambiguous.
+		if not found.is_empty() and found != previous[index]:
+			return ""
+		found = previous[index]
+		matches += 1
+	if matches == 0:
+		return ""
+	# A committed play appends its copy to the discard pile last. Draw-before-
+	# discard cards can reshuffle earlier same-ID copies out of discard first, so
+	# the old discard count cannot survive; the appended tail entry and the
+	# conserved totals prove exactly one held copy entered the discard pile.
+	if deck.discard_pile.is_empty() or deck.discard_pile.back() != found:
+		return ""
+	return found
+
+
+## Both owners of a trusted published stitched descriptor, or the catalog owner
+## of an ordinary held card. An unvalidated or forged registry yields nothing.
+func _quilt_owners_of(card_id: String) -> Array[String]:
+	var owners: Array[String] = []
+	if card_id.is_empty():
+		return owners
+	if run_stitch_descriptors.has(card_id):
+		var ledger := RunRestStitchCards.new(run_deck, run_stitch_descriptors,
+			run_scraps, run_next_stitch_id)
+		if not ledger.is_valid():
+			return owners
+		var snapshot := ledger.get_snapshot()
+		var owned: Array = snapshot.get("deck", [])
+		if not owned.has(card_id):
+			return owners
+		var descriptor = snapshot.get("descriptors", {}).get(card_id)
+		if not descriptor is Dictionary:
+			return owners
+		var listed = descriptor.get("owners")
+		if not listed is Array or listed.size() != 2:
+			return owners
+		for owner in listed:
+			if owner is String and owner in CombatQuiltBonus.HERO_IDS \
+					and not owners.has(owner):
+				owners.append(str(owner))
+		return owners
+	var definition := StarterCards.new().get_definition(card_id)
+	if definition.is_empty():
+		definition = M02PositionCards.new().get_definition(card_id)
+	if definition.is_empty():
+		definition = WardenPoolCards.new().get_definition(card_id)
+	if definition.is_empty():
+		definition = SeamstressPoolCards.new().get_definition(card_id)
+	if definition.is_empty():
+		definition = TinkerPoolCards.new().get_definition(card_id)
+	if definition.is_empty() or definition.get("id") != card_id:
+		return owners
+	var owner = definition.get("owner")
+	if owner is String and owner in CombatQuiltBonus.HERO_IDS:
+		owners.append(str(owner))
+	return owners
+
+
 func _refresh_hand() -> void:
+	# Reconcile real committed plays of this battle before the hand is rebuilt,
+	# so any awarded Block and extra draw render through the existing refreshes.
+	_quilt_sync_hand()
 	$LiveSupportHand._cancel_pending()
 	for child in hand_view.get_children():
 		child.free()
@@ -2871,6 +3047,8 @@ func _end_turn(button = null) -> void:
 	if not round_flow.end_turn():
 		button.disabled = false
 		return
+	# A committed End Turn opens the next hand: reset before it can earn receipts.
+	_quilt_advance_turn()
 	if not _observe_battle_result():
 		return
 	enemy_attacks = enemy_intents.get_intents()
@@ -2990,6 +3168,7 @@ func _return_to_title() -> void:
 	_carryover_result = null
 	continue_button = null
 	round_flow = null
+	_quilt_detach()
 	if is_instance_valid(battle_view):
 		remove_child(battle_view)
 		battle_view.queue_free()
