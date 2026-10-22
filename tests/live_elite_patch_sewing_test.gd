@@ -11,6 +11,19 @@ func _click(control: Control) -> void:
 	await super._click(control)
 
 
+func _hover(control: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = Vector2(2, 2)
+	root.push_input(motion, true)
+	await _frames()
+	motion = InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	_check(root.get_visible_rect().has_point(motion.position),
+		"real hover target is in 1280x720 viewport")
+	root.push_input(motion, true)
+	await _frames()
+
+
 func _complete_state() -> Array:
 	return [_settlement_state(), app.run_scraps, app.run_map.get_floors(),
 		app.run_map.get_generation_revision(), app.run_seed,
@@ -25,6 +38,77 @@ func _reject_patch(callback: Callable, message: String) -> void:
 	var before := _complete_state()
 	callback.call()
 	_check(_complete_state() == before, message + ": complete run/wardrobe unchanged")
+
+
+## Inspect the actual mounted reward choice before any activation. Real pointer
+## and keyboard focus must both reveal THIS hero's oracle consequence.
+func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
+	var before := _complete_state()
+	var run_rng: int = app.run_rng.state
+	var torn_state: Dictionary = app.party_carryover.torn.read_state()
+	var entries: Dictionary = {}
+	_check(sewing._eligible() and sewing._claim_context == sewing._context(),
+		"preview is mounted only with the genuinely confirmed Elite claim context")
+	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
+		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
+		and sewing._prompt.text.contains(drop) and sewing._prompt.text.contains(state.definitions[drop]),
+		"visible wrapped keyboard-readable prompt names the exact drop and slot")
+	for button in sewing.hero_buttons:
+		var hero_id: String = button.get_meta("hero_id")
+		var preview: Dictionary = RunPatchWearerSummary.preview_sew(
+			sewing.wardrobe, torn_state, drop, hero_id)
+		_check(preview.get("ok") == true and preview.get("wearer") == hero_id,
+			"real %s button admits genuine read-only choice" % hero_id)
+		if preview.get("ok") != true:
+			continue
+		entries[hero_id] = preview
+		var explanation: String = button.tooltip_text
+		var expected_gain: String = "+1 scrap" if preview.displaced_id != "" else "+0 scrap"
+		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(drop)
+			and explanation.contains(preview.slot) and explanation.contains(expected_gain)
+			and (preview.rules_text.is_empty() or explanation.contains(preview.rules_text))
+			and (preview.displaced_id.is_empty() or explanation.contains(preview.displaced_id))
+			and (preview.displaced_rules_text.is_empty()
+				or explanation.contains(preview.displaced_rules_text)),
+			"mounted %s tooltip describes authoritative power and own displacement" % hero_id)
+		await _hover(button)
+		_check(sewing._prompt.text == explanation,
+			"real mouse hover exposes %s tooltip content visibly" % hero_id)
+		button.grab_focus()
+		await _frames()
+		_check(button.has_focus() and sewing._prompt.text == explanation,
+			"physical keyboard focus reads %s power and replacement in prompt" % hero_id)
+	_check(entries.size() == 3 and sewing.wardrobe.get_snapshot() == state
+		and app.party_carryover.torn.read_state() == torn_state
+		and app.run_rng.state == run_rng and _complete_state() == before,
+		"all three eligible real previews are read-only across full live context and RNG")
+	return entries
+
+
+func _verify_worn_readout() -> void:
+	var oracle := RunPatchWearerSummary.summarize(
+		sewing.wardrobe, app.party_carryover.torn.read_state())
+	_check(oracle.get("ok") == true and oracle.get("heroes", []).size() == 3,
+		"live persistent summary has genuine wearer authority")
+	if oracle.get("ok") != true:
+		return
+	var fragments: Array[String] = []
+	for hero in oracle.heroes:
+		for record in hero.slots:
+			if record.patch_id == "":
+				continue
+			var fragment: String = "%s: %s (%s) [%s]" % [
+				hero.id.capitalize(), record.patch_id, record.slot,
+				"active" if record.active else "inactive"]
+			if not record.rules_text.is_empty():
+				fragment += " - %s" % record.rules_text
+			fragments.append(fragment)
+	var expected: String = "Worn patches: " + " | ".join(fragments) if not fragments.is_empty() else ""
+	_check(sewing.summary.text == expected and not fragments.is_empty(),
+		"persistent mounted readout matches ALL authoritative worn IDs, slots, powers and activity")
+	_check(sewing.summary.autowrap_mode != TextServer.AUTOWRAP_OFF
+		and sewing.summary.size.x <= 1280 and sewing.summary.position.x + sewing.summary.size.x <= 1280,
+		"long worn readout wraps within 1280-wide layout")
 
 
 func _coat_multi_fixture() -> Dictionary:
@@ -49,6 +133,156 @@ func _coat_multi_fixture() -> Dictionary:
 			return fixture
 		first_seed = fixture.seed + 1
 	return {}
+
+
+## Enter through the real map and defeat the actual opening roster with Warden
+## downed. Claiming that predecessor reward publishes a lawful tear BEFORE
+## the later Elite coordinator captures its authoritative run context.
+func _torn_warden_opening_win(fixture: Dictionary) -> bool:
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	await _click(_route_action(fixture.fight))
+	_check(app.party != null and app.party.is_valid()
+		and app.party.get_hero(1).id == "warden", "opening Fight mounts the actual Warden")
+	if app.party == null:
+		return false
+	_check(app.party.apply_damage(1, 999) and app.party.is_downed(1)
+		and app.party.get_hero(2).hp > 0 and app.party.get_hero(3).hp > 0,
+		"actual opening battle damage legitimately downs only Warden")
+	for enemy in app.enemies.get_enemies():
+		_check(app.enemies.apply_damage(enemy.position, 9999),
+			"real opening enemies defeated with living Seamstress/Tinker")
+	app._observe_battle_result()
+	await _frames()
+	_check(app._battle_closed and app.fight_rewards != null
+		and app.battle_result.get_outcome() == CombatBattleResult.VICTORY,
+		"opening victory records a genuine torn-Warden reward")
+	return app._battle_closed and app.fight_rewards != null
+
+
+## A legitimately torn Warden carried from the preceding settled Fight must
+## keep Return -> living recipients -> Continue tabbable after the app
+## repeatedly rebuilds the surrounding action focus chain.
+func _test_torn_warden_focus(fixture: Dictionary) -> void:
+	for chosen_index in [1, 2]:
+		seed(937937)
+		var global_next: int = randi()
+		seed(937937)
+		if not await _torn_warden_opening_win(fixture):
+			return
+		await _click(app.reward_buttons[0])
+		var opening_torn: Dictionary = app.party_carryover.torn.read_state()
+		_check(opening_torn.completed_battles.has(fixture.fight)
+			and opening_torn.tear_counts.get("warden") == 1
+			and opening_torn.heroes[0].hp == 0 and opening_torn.heroes[0].max_hp == 37,
+			"opening reward legitimately publishes Warden tear before Elite entry")
+		await _click(app.continue_button)
+		var path: Array = fixture.paths[0].duplicate()
+		var elite: String = path.pop_back()
+		await _visit_path(path, false)
+		await _click(_route_action(elite))
+		_check(app.run_map.get_node(elite).type == "Elite" and not app._battle_closed
+			and app.party.get_hero(1).id == "warden" and app.party.is_downed(1)
+			and app.party.get_hero(2).hp > 0 and app.party.get_hero(3).hp > 0,
+			"real connected Elite starts with the legitimately carried torn Warden")
+		for enemy in app.enemies.get_enemies():
+			_check(app.enemies.apply_damage(enemy.position, 9999), "torn Elite wins against actual mounted enemies")
+		app._observe_battle_result()
+		await _frames()
+		_check(app.multi_fight_rewards != null and app.reward_buttons.size() == 4
+			and not app.fight_reward_claimed, "genuine torn-Warden Elite reward is unsettled")
+		if app.reward_buttons.size() != 4:
+			return
+		var drop: String = app.fight_reward_trinket
+		_check(not drop.is_empty() and not app.run_trinkets.has(drop),
+			"torn Elite has an unclaimed owned-on-settlement patch drop")
+		await _click(app.reward_buttons[3])
+		var torn: Dictionary = app.party_carryover.torn.read_state()
+		_check(app.fight_reward_claimed and app.run_trinkets.has(drop)
+			and torn.get("ok") == true and torn.completed_battles.has(fixture.fight)
+			and torn.completed_battles.has(elite)
+			and torn.tear_counts.get("warden") == 1
+			and torn.heroes[0].hp == 0 and torn.heroes[0].max_hp == 37
+			and torn.heroes[1].hp > 0 and torn.heroes[2].hp > 0
+			and app.run_heroes == torn.heroes,
+			"actual settled Elite publishes Warden's tear and both living survivors")
+		_check(sewing.hero_buttons.size() == 3 and sewing.wardrobe != null,
+			"settled torn Elite mounts all three recipient controls")
+		if sewing.hero_buttons.size() != 3 or sewing.wardrobe == null:
+			return
+		var buttons: Array[Button] = sewing.hero_buttons
+		_check(buttons[0].disabled and buttons[0].is_visible_in_tree()
+			and not buttons[1].disabled and not buttons[2].disabled
+			and buttons[1].is_visible_in_tree() and buttons[2].is_visible_in_tree(),
+			"torn Warden cannot sew while Seamstress and Tinker remain enabled")
+		var state: Dictionary = sewing.wardrobe.get_snapshot()
+		var before: Array = _complete_state()
+		var rng_before: int = app.run_rng.state
+		var previews: Dictionary = {}
+		for index in [1, 2]:
+			var button: Button = buttons[index]
+			var id: String = button.get_meta("hero_id")
+			var preview: Dictionary = RunPatchWearerSummary.preview_sew(
+				sewing.wardrobe, torn, drop, id)
+			_check(preview.get("ok") == true and preview.get("wearer") == id
+				and button.tooltip_text == sewing._preview_line(preview)
+				and button.focus_mode == Control.FOCUS_ALL,
+				"living torn-party choice has owner-specific real preview: " + id)
+			previews[id] = preview
+		_check(not RunPatchWearerSummary.preview_sew(
+			sewing.wardrobe, torn, drop, "warden").get("ok", false),
+			"torn Warden's preview remains rejected")
+		for frame in range(5):
+			await _frames()
+		_check(sewing._eligible() and sewing._claim_context == sewing._context(),
+			"torn Elite retains authenticated claim context after repeated frame refreshes")
+		app.return_button.grab_focus()
+		await _frames()
+		_check(app.return_button.has_focus(), "real Return focus starts torn-party Tab chain")
+		for index in [1, 2]:
+			await _key(KEY_TAB)
+			_check(buttons[index].has_focus()
+				and sewing._prompt.text == buttons[index].tooltip_text,
+				"physical Tab reaches and previews living %s after recurring app focus refresh" % buttons[index].text)
+		await _key(KEY_TAB)
+		_check(app.continue_button.has_focus(), "physical Tab exits torn-party choices to Continue")
+		_check(_complete_state() == before and sewing.wardrobe.get_snapshot() == state
+			and app.party_carryover.torn.read_state() == torn
+			and app.run_rng.state == rng_before,
+			"torn-party focus previews never mutate run/wardrobe/tear ledgers or RNG")
+		app.return_button.grab_focus()
+		await _frames()
+		for index in range(1, chosen_index + 1):
+			await _key(KEY_TAB)
+		var chosen: Button = buttons[chosen_index]
+		var hero: String = chosen.get_meta("hero_id")
+		var expected: Dictionary = previews.get(hero, {})
+		_check(chosen.has_focus() and expected.get("ok") == true,
+			"torn-party physical keyboard selection has valid focus and preview")
+		var callback: Callable = chosen.pressed.get_connections()[0].callable
+		var settlement: Array = _settlement_state()
+		await _key(KEY_ENTER if chosen_index == 1 else KEY_SPACE)
+		var after: Dictionary = sewing.wardrobe.get_snapshot()
+		_check(after.worn[hero][expected.slot] == drop and after.owned.has(drop)
+			and after.scraps == state.scraps + expected.scrap_delta
+			and after.operation_ids.size() == 1 and app.run_scraps == after.scraps
+			and app.party_carryover._wardrobe == sewing.wardrobe,
+			"Enter/Space sews each eligible torn-party recipient once with matching receipt/scrap")
+		_check(_settlement_state() == settlement and app.run_rng.state == rng_before
+			and app.party_carryover.torn.read_state() == torn,
+			"torn-party sew preserves reward, unrelated run state, RNG and original tear")
+		_verify_worn_readout()
+		_reject_patch(callback, "torn-party duplicate sewing callback")
+		await _click(app.continue_button)
+		_check(app.route_view != null and app.route_view.is_visible_in_tree()
+			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), drop]),
+			"Continue remains usable and wearer summary survives torn-party Elite")
+		_verify_worn_readout()
+		_reject_patch(callback, "torn-party stale callback after Continue")
+		await _click(app.route_back_button)
+		_check(app.title_view.visible and sewing.wardrobe == null
+			and sewing.hero_buttons.is_empty(), "torn-party title reset clears sewing chooser")
+		_check(randi() == global_next, "torn-party replay and input preserve global RNG")
 
 
 func _run() -> void:
@@ -150,8 +384,11 @@ func _run() -> void:
 			for button in sewing.hero_buttons:
 				_check(button.is_visible_in_tree() and not button.disabled and button.focus_mode == Control.FOCUS_ALL
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "each hero choice visible, focusable and in viewport")
+			var previews: Dictionary = await _verify_preview_choice(drop, state)
 			var button: Button = sewing.hero_buttons[index]
 			var hero: String = button.get_meta("hero_id")
+			var chosen_preview: Dictionary = previews.get(hero, {})
+			_check(chosen_preview.get("ok") == true, "physical wearer has pre-sew oracle and real owned slot")
 			var callback: Callable = button.pressed.get_connections()[0].callable
 			button.disabled = true
 			_reject_patch(callback, "disabled hero choice")
@@ -211,8 +448,17 @@ func _run() -> void:
 			var slot: String = after.definitions[drop]
 			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), drop, slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
-			_check(_settlement_state() == unchanged and app.run_scraps == scraps and after.scraps == scraps,
-				"free sewing changes no run, reward, deck, route, gold or RNG state")
+			_check(chosen_preview.get("ok") == true
+				and slot == chosen_preview.get("slot")
+				and after.scraps == scraps + chosen_preview.get("scrap_delta", -100)
+				and (chosen_preview.get("displaced_id", "") == ""
+					or not after.owned.has(chosen_preview.displaced_id))
+				and after.owned.has(drop),
+				"actual free sew has exact previewed scrap delta, ownership and displaced ID")
+			_verify_worn_readout()
+			_check(_settlement_state() == unchanged and app.run_scraps == scraps + chosen_preview.get("scrap_delta", -100)
+				and after.scraps == app.run_scraps,
+				"sewing changes no unrelated run, reward, deck, route, gold or RNG state")
 			_check(after.operation_ids.size() == index + 1, "one successful sew receipt per earned drop")
 			if index == 0:
 				first_worn = after.worn.duplicate(true)
@@ -229,6 +475,7 @@ func _run() -> void:
 			observations.append([after, reward_state, app.run_rng.state, app.run_trinkets.duplicate()])
 			await _click(app.continue_button)
 			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(drop), "Continue retains visible wearer")
+			_verify_worn_readout()
 			_reject_patch(callback, "stale sew after Continue")
 		_check(observations.size() == 2, "both earned drops actually sewn")
 		if session == 0:
@@ -245,6 +492,7 @@ func _run() -> void:
 		_check(sewing.wardrobe == null and app.run_trinkets.is_empty() and app.run_scraps == 0
 			and app.run_map == null and app.title_view.visible, "old callbacks cannot restore a title-state assignment")
 		_check(randi() == global_next, "claim, sewing, negatives and reset preserve global RNG")
+	await _test_torn_warden_focus(fixture)
 	await _finish_sewing()
 
 

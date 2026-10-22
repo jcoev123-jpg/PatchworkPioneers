@@ -7,18 +7,22 @@ var summary: Label
 var _map: RunMap
 var _rng: RandomNumberGenerator
 var _choices: HBoxContainer
+var _prompt: Label
 var _claim_context: Array = []
 var _service: RunMultiFightRewards
 var _drop := ""
 var _token := 0
 var _bound_carry: RunTornCarryover
+var _summary_inputs: Array = []
 
 
 func _ready() -> void:
 	summary = Label.new()
 	summary.name = "WornElitePatches"
 	summary.position = Vector2(24, 2)
-	summary.add_theme_font_size_override("font_size", 14)
+	summary.add_theme_font_size_override("font_size", 12)
+	summary.size = Vector2(1232, 56)
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	get_parent().add_child.call_deferred(summary)
 
@@ -27,7 +31,7 @@ func _process(_delta: float) -> void:
 	_sync_run()
 	if is_instance_valid(_choices):
 		_choices.visible = _eligible()
-		if _choices.visible and not hero_buttons.is_empty() and not hero_buttons[0].disabled:
+		if _choices.visible:
 			_wire_focus()
 	_update_summary()
 
@@ -40,6 +44,7 @@ func _sync_run() -> void:
 			_bound_carry.clear_wardrobe(wardrobe)
 		_bound_carry = null
 		wardrobe = null
+		_summary_inputs.clear()
 		_map = app.run_map
 		_rng = app.run_rng
 	if _map == null:
@@ -51,6 +56,7 @@ func _clear_choices() -> void:
 	if is_instance_valid(_choices):
 		_choices.queue_free()
 	_choices = null
+	_prompt = null
 	hero_buttons.clear()
 	_claim_context.clear()
 	_service = null
@@ -123,42 +129,111 @@ func observe_claim(offering, result: Dictionary) -> void:
 	var reward = app.hand_view.get_node_or_null("CardReward")
 	if reward == null:
 		return
+	if carry.torn == null:
+		return
+	var carry_state: Dictionary = carry.torn.read_state()
+	# The existing chooser only appears once the actual owned drop and
+	# authoritative ledger admit a read-only choice for a living wearer.
+	var previews: Dictionary = {}
+	for hero in app.run_heroes:
+		if hero.hp > 0:
+			var preview: Dictionary = RunPatchWearerSummary.preview_sew(
+				wardrobe, carry_state, drop, hero.id)
+			if preview.get("ok") != true:
+				return
+			previews[hero.id] = preview
+	if previews.is_empty():
+		return
 	var column := VBoxContainer.new()
 	column.name = "ElitePatchReward"
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# Reserve room for the extra reward row within the 720px battle layout.
+	# Preflight the complete actual choice before moving the reward control.
 	app.hand_view.get_parent().add_theme_constant_override("separation", 12)
 	app.hand_view.add_child(column)
 	reward.reparent(column)
+	_prompt = Label.new()
+	_prompt.name = "ElitePatchPowerPreview"
+	_prompt.add_theme_font_size_override("font_size", 13)
+	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(_prompt)
+	var first_preview: Dictionary = previews.values()[0]
+	var power: String = first_preview["rules_text"]
+	if power.is_empty():
+		power = "power not documented"
+	_prompt.text = "%s (%s): %s. Choose a living wearer (free); focus a hero for slot consequences." % [
+		drop, state.definitions[drop], power]
 	_choices = HBoxContainer.new()
 	column.add_child(_choices)
 	var label := Label.new()
-	label.text = "Sew %s (%s), free:" % [drop, state.definitions[drop]]
+	label.text = "Sew to (free):"
 	_choices.add_child(label)
 	for hero in app.run_heroes:
 		var button := Button.new()
 		button.text = hero.id.capitalize()
 		button.set_meta("hero_id", hero.id)
-		button.disabled = hero.hp == 0
+		button.disabled = hero.hp == 0 or not previews.has(hero.id)
 		button.custom_minimum_size = Vector2(150, 40)
+		if previews.has(hero.id):
+			button.tooltip_text = _preview_line(previews[hero.id])
+		else:
+			button.tooltip_text = "%s is torn; mend before sewing." % hero.id.capitalize()
 		_choices.add_child(button)
 		hero_buttons.append(button)
 		button.pressed.connect(_sew.bind(hero.id, button, _token, state))
+		button.focus_entered.connect(_show_preview.bind(hero.id, _token))
+		button.mouse_entered.connect(_show_preview.bind(hero.id, _token))
 	_wire_focus()
 	_update_summary()
 
 
+static func _preview_line(preview: Dictionary) -> String:
+	if preview.get("ok") != true:
+		return ""
+	var power: String = preview["rules_text"]
+	if power.is_empty():
+		power = "power not documented"
+	var displaced: String = "empty %s slot; +0 scrap" % preview["slot"]
+	if preview["displaced_id"] != "":
+		displaced = "replaces %s in %s slot (destroyed); +1 scrap" % [
+			preview["displaced_id"], preview["slot"]]
+		if not preview["displaced_rules_text"].is_empty():
+			displaced += " [old: %s]" % preview["displaced_rules_text"]
+	return "%s: %s (%s) - %s; %s" % [
+		preview["wearer"].capitalize(), preview["patch_id"],
+		preview["slot"], power, displaced]
+
+
+func _show_preview(hero_id: String, token: int) -> void:
+	if token != _token or not is_instance_valid(_prompt) or not _eligible():
+		return
+	var carry := get_parent().party_carryover as RunTornCarryover
+	if carry == null or carry.torn == null:
+		return
+	var preview: Dictionary = RunPatchWearerSummary.preview_sew(
+		wardrobe, carry.torn.read_state(), _drop, hero_id)
+	if preview.get("ok") == true:
+		_prompt.text = _preview_line(preview)
+
+
 func _wire_focus() -> void:
 	var app = get_parent()
+	var available: Array[Button] = []
+	for button in hero_buttons:
+		if is_instance_valid(button) and not button.disabled and button.is_visible_in_tree():
+			available.append(button)
+	if available.is_empty():
+		return
 	# The app rebuilds its action cycle each frame; extend it after that refresh.
-	app.return_button.focus_next = app.return_button.get_path_to(hero_buttons[0])
-	hero_buttons[0].focus_previous = hero_buttons[0].get_path_to(app.return_button)
-	for index in range(hero_buttons.size()):
-		var next: Control = hero_buttons[index + 1] if index < 2 else app.continue_button
-		hero_buttons[index].focus_next = hero_buttons[index].get_path_to(next)
-		if index > 0:
-			hero_buttons[index].focus_previous = hero_buttons[index].get_path_to(hero_buttons[index - 1])
-	app.continue_button.focus_previous = app.continue_button.get_path_to(hero_buttons[2])
+	# Use only living, visible recipients, even when the first hero is torn.
+	app.return_button.focus_next = app.return_button.get_path_to(available[0])
+	for index in range(available.size()):
+		var button: Button = available[index]
+		var previous: Control = app.return_button if index == 0 else available[index - 1]
+		var next: Control = app.continue_button if index == available.size() - 1 else available[index + 1]
+		button.focus_previous = button.get_path_to(previous)
+		button.focus_next = button.get_path_to(next)
+	app.continue_button.focus_previous = app.continue_button.get_path_to(available.back())
 
 
 func _confirmed(service: RunMultiFightRewards) -> bool:
@@ -207,11 +282,31 @@ func _sew(hero_id: String, button, token: int, expected: Dictionary) -> void:
 func _update_summary() -> void:
 	if not is_instance_valid(summary):
 		return
+	if wardrobe == null:
+		summary.text = ""
+		_summary_inputs.clear()
+		return
+	var carry := get_parent().party_carryover as RunTornCarryover
+	var torn_state: Variant = carry.torn.read_state() if carry != null and carry.torn != null else null
+	# Avoid re-reading the three authored catalogs every render frame. Recheck
+	# whenever the actual wardrobe or torn activation changes.
+	var inputs: Array = [wardrobe.get_snapshot(), torn_state]
+	if inputs == _summary_inputs:
+		return
+	_summary_inputs = inputs
+	var readout: Dictionary = RunPatchWearerSummary.summarize(wardrobe, torn_state)
+	if readout.get("ok") != true:
+		summary.text = "Worn patches unavailable"
+		return
 	var lines: Array[String] = []
-	if wardrobe != null:
-		var worn: Dictionary = wardrobe.get_snapshot().worn
-		for hero in worn:
-			for slot in worn[hero]:
-				if worn[hero][slot] != "":
-					lines.append("%s: %s (%s)" % [hero.capitalize(), worn[hero][slot], slot])
+	for hero in readout["heroes"]:
+		for worn in hero["slots"]:
+			if worn["patch_id"] == "":
+				continue
+			var line: String = "%s: %s (%s) [%s]" % [
+				hero["id"].capitalize(), worn["patch_id"], worn["slot"],
+				"active" if worn["active"] else "inactive"]
+			if not worn["rules_text"].is_empty():
+				line += " - %s" % worn["rules_text"]
+			lines.append(line)
 	summary.text = "Worn patches: " + " | ".join(lines) if not lines.is_empty() else ""

@@ -162,6 +162,63 @@ static func summarize(wardrobe: RunPatchWardrobe, torn_state: Variant,
 	return {"ok": true, "heroes": result_heroes}
 
 
+## Preview one FREE Elite sew without reserving, moving or destroying anything.
+## Reuse the full catalog/activation audit, not caller-supplied effect text.
+## Unknown future slot-only definitions can be named, but have no claimed power.
+static func preview_sew(wardrobe: RunPatchWardrobe, torn_state: Variant,
+		patch_id: Variant, hero_id: Variant, catalogs: Variant = {}) -> Dictionary:
+	var rejected := {"ok": false}
+	if typeof(patch_id) != TYPE_STRING or not RunPatchWardrobe._id(patch_id) \
+			or typeof(hero_id) != TYPE_STRING or not HERO_IDS.has(hero_id):
+		return rejected
+	var summary: Dictionary = summarize(wardrobe, torn_state, catalogs)
+	if summary.get("ok") != true:
+		return rejected
+	var snapshot: Dictionary = wardrobe.get_snapshot()
+	# A choice must use this run's current roster, not a detached old one.
+	if snapshot.get("heroes") != torn_state.get("heroes"):
+		return rejected
+	var owned: Array = snapshot["owned"]
+	var definitions: Dictionary = snapshot["definitions"]
+	var slot: Variant = definitions.get(patch_id)
+	if not owned.has(patch_id) or typeof(slot) != TYPE_STRING or not SLOTS.has(slot):
+		return rejected
+	for entry in summary["heroes"]:
+		for worn in entry["slots"]:
+			if worn["patch_id"] == patch_id:
+				return rejected
+	var target: Dictionary = {}
+	for entry in summary["heroes"]:
+		if entry["id"] == hero_id:
+			target = entry
+			break
+	if target.is_empty() or target["hp"] <= 0:
+		return rejected
+	var prior: Dictionary = {}
+	for worn in target["slots"]:
+		if worn["slot"] == slot:
+			prior = worn
+			break
+	if prior.is_empty():
+		return rejected
+	var displaced: String = prior["patch_id"]
+	if displaced != "" and (not owned.has(displaced) or definitions.get(displaced) != slot
+			or snapshot["scraps"] == RunPatchWardrobe.MAX_INT):
+		return rejected
+	var authority: Dictionary = _authority(catalogs)
+	if authority.is_empty():
+		return rejected
+	var authoritative_slots: Dictionary = authority["slots"]
+	# Known items cannot ever be previewed under contradicted definitions.
+	if authoritative_slots.has(patch_id) and authoritative_slots[patch_id] != slot:
+		return rejected
+	return {"ok": true, "patch_id": patch_id, "slot": slot,
+		"rules_text": _resolve_rules_text(patch_id, authoritative_slots),
+		"wearer": hero_id, "displaced_id": displaced,
+		"displaced_rules_text": prior["rules_text"],
+		"scrap_delta": 1 if displaced != "" else 0}
+
+
 ## A detached ledger must be a complete, self-consistent
 ## RunTornMending.read_state() envelope, not only a roster.
 static func _valid_heroes(torn_state: Variant) -> bool:
