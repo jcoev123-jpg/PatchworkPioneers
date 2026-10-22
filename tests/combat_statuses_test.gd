@@ -12,6 +12,10 @@ func _initialize() -> void:
 	_test_owner_windows()
 	_test_invalid_and_snapshots()
 	_test_replay()
+	_test_unravel_bind_and_snapshots()
+	_test_unravel_charge_and_bleed_tick()
+	_test_unravel_consume_skip_and_threshold_rise()
+	_test_unravel_invalid_and_isolation()
 	if failures.is_empty():
 		print("combat_statuses_test: PASS (", checks, " checks)")
 	else:
@@ -185,3 +189,252 @@ func _test_replay() -> void:
 		_check(rules.adjusted_attack_damage(11, a, b) == rules.adjusted_attack_damage(11, a, b),
 			"identical attacker and defender inputs reproduce same damage")
 		_check(a == a_before and b == b_before, "replay leaves both original dictionaries intact")
+
+
+func _make_enemies_fixture() -> CombatEnemies:
+	## Create a CombatEnemies with real enemy IDs from data files, positions 1-3.
+	## Position 1: normal (fray_scavenger, max_hp 14)
+	## Position 2: elite (needle_marshal, max_hp 28)
+	## Position 3: boss (patchwork_behemoth, max_hp 42)
+	return CombatEnemies.new([
+		{"id": "fray_scavenger", "max_hp": 14},
+		{"id": "needle_marshal", "max_hp": 28},
+		{"id": "patchwork_behemoth", "max_hp": 42}
+	])
+
+
+func _test_unravel_bind_and_snapshots() -> void:
+	var unravel := CombatUnravel.new()
+	var enemies := _make_enemies_fixture()
+	var tiers := {1: "normal", 2: "elite", 3: "boss"}
+	_check(unravel.bind_roster(enemies, tiers), "bind_roster succeeds with valid roster and tiers")
+	
+	var snap1 := unravel.get_snapshot(1)
+	_check(snap1 == {"gauge": 0, "threshold": 8, "unravelled": false, "skip_pending": false},
+		"normal starts at 0/8, not unravelled, no skip pending")
+	var snap2 := unravel.get_snapshot(2)
+	_check(snap2 == {"gauge": 0, "threshold": 12, "unravelled": false, "skip_pending": false},
+		"elite starts at 0/12, not unravelled, no skip pending")
+	var snap3 := unravel.get_snapshot(3)
+	_check(snap3 == {"gauge": 0, "threshold": 16, "unravelled": false, "skip_pending": false},
+		"boss starts at 0/16, not unravelled, no skip pending")
+	
+	_check(unravel.get_snapshot(4) == {}, "invalid position returns empty snapshot")
+	_check(unravel.get_snapshot(0) == {}, "zero position returns empty snapshot")
+	
+	# Mutating returned snapshot does not affect internal state
+	snap1["gauge"] = 99
+	snap1["threshold"] = 99
+	snap1["unravelled"] = true
+	snap1["skip_pending"] = true
+	_check(unravel.get_snapshot(1) == {"gauge": 0, "threshold": 8, "unravelled": false, "skip_pending": false},
+		"mutating snapshot does not alter internal state")
+	
+	# Bad bind: missing tier
+	var unravel2 := CombatUnravel.new()
+	var enemies2 := _make_enemies_fixture()
+	_check(not unravel2.bind_roster(enemies2, {1: "normal", 2: "elite"}), "bind_roster rejects missing tier")
+	_check(unravel2.get_snapshot(1) == {}, "failed bind leaves service unbound")
+	
+	# Bad bind: invalid tier
+	var unravel3 := CombatUnravel.new()
+	var enemies3 := _make_enemies_fixture()
+	_check(not unravel3.bind_roster(enemies3, {1: "normal", 2: "elite", 3: "unknown"}), "bind_roster rejects unknown tier")
+	_check(unravel3.get_snapshot(1) == {}, "failed bind leaves service unbound")
+	
+	# Bad bind: wrong roster size
+	var unravel4 := CombatUnravel.new()
+	var enemies4 := CombatEnemies.new([{"id": "fray_scavenger", "max_hp": 14}])
+	_check(not unravel4.bind_roster(enemies4, {1: "normal", 2: "elite"}), "bind_roster rejects tier count mismatch")
+	
+	# Bad bind: invalid roster
+	var unravel5 := CombatUnravel.new()
+	_check(not unravel5.bind_roster(null, {1: "normal"}), "bind_roster rejects null roster")
+	_check(not unravel5.bind_roster(CombatEnemies.new([]), {1: "normal"}), "bind_roster rejects invalid roster")
+	
+	# CombatEnemies roster HP/Block/status unchanged after bind
+	var enemies_before := enemies.get_enemies()
+	var unravel6 := CombatUnravel.new()
+	_check(unravel6.bind_roster(enemies, tiers), "bind succeeds again")
+	_check(enemies.get_enemies() == enemies_before, "bind_roster does not mutate CombatEnemies roster")
+
+
+func _test_unravel_charge_and_bleed_tick() -> void:
+	var unravel := CombatUnravel.new()
+	var enemies := _make_enemies_fixture()
+	var tiers := {1: "normal", 2: "elite", 3: "boss"}
+	_check(unravel.bind_roster(enemies, tiers), "bind succeeds")
+	
+	# Normal: charge 7 then bleed tick reaches 8
+	_check(unravel.apply_unravel(enemies, 1, 7), "apply_unravel 7 on normal succeeds")
+	_check(unravel.get_snapshot(1) == {"gauge": 7, "threshold": 8, "unravelled": false, "skip_pending": false},
+		"normal at 7/8, not yet unravelled")
+	_check(unravel.record_bleed_tick(enemies, 1), "record_bleed_tick on normal succeeds")
+	_check(unravel.get_snapshot(1) == {"gauge": 8, "threshold": 8, "unravelled": true, "skip_pending": true},
+		"normal reaches 8/8, marked unravelled with one skip pending")
+	
+	# Elite: charge 12 reaches threshold
+	var unravel2 := CombatUnravel.new()
+	var enemies2 := _make_enemies_fixture()
+	_check(unravel2.bind_roster(enemies2, tiers), "bind succeeds for elite test")
+	_check(unravel2.apply_unravel(enemies2, 2, 12), "apply_unravel 12 on elite succeeds")
+	_check(unravel2.get_snapshot(2) == {"gauge": 12, "threshold": 12, "unravelled": true, "skip_pending": true},
+		"elite reaches 12/12, marked unravelled with one skip pending")
+	
+	# Boss: charge 16 reaches threshold
+	var unravel3 := CombatUnravel.new()
+	var enemies3 := _make_enemies_fixture()
+	_check(unravel3.bind_roster(enemies3, tiers), "bind succeeds for boss test")
+	_check(unravel3.apply_unravel(enemies3, 3, 16), "apply_unravel 16 on boss succeeds")
+	_check(unravel3.get_snapshot(3) == {"gauge": 16, "threshold": 16, "unravelled": true, "skip_pending": true},
+		"boss reaches 16/16, marked unravelled with one skip pending")
+	
+	# Other slots unchanged during charge
+	_check(unravel.get_snapshot(2) == {"gauge": 0, "threshold": 12, "unravelled": false, "skip_pending": false},
+		"elite slot unchanged during normal charge")
+	_check(unravel.get_snapshot(3) == {"gauge": 0, "threshold": 16, "unravelled": false, "skip_pending": false},
+		"boss slot unchanged during normal charge")
+	
+	# Bleed tick adds exactly 1 regardless of Bleed damage/Block
+	var unravel4 := CombatUnravel.new()
+	var enemies4 := _make_enemies_fixture()
+	_check(unravel4.bind_roster(enemies4, tiers), "bind succeeds for bleed tick test")
+	enemies4.apply_damage(1, 5)
+	enemies4.gain_block(1, 10)
+	enemies4.apply_statuses({1: {"bleed": 5}})
+	_check(unravel4.record_bleed_tick(enemies4, 1), "record_bleed_tick succeeds with Block and Bleed")
+	_check(unravel4.get_snapshot(1) == {"gauge": 1, "threshold": 8, "unravelled": false, "skip_pending": false},
+		"bleed tick adds exactly 1 Unravel regardless of Block/Bleed amount")
+	
+	# No HP/Block/status mutation
+	var enemies_before := enemies4.get_enemies()
+	_check(enemies4.get_enemies() == enemies_before, "record_bleed_tick does not mutate CombatEnemies")
+	
+	# Repeated charges at/above threshold do not stack additional skips
+	var unravel5 := CombatUnravel.new()
+	var enemies5 := _make_enemies_fixture()
+	_check(unravel5.bind_roster(enemies5, tiers), "bind succeeds for repeat charge test")
+	_check(unravel5.apply_unravel(enemies5, 1, 8), "first charge to threshold")
+	_check(unravel5.get_snapshot(1)["skip_pending"], "skip pending after first threshold")
+	_check(unravel5.apply_unravel(enemies5, 1, 5), "second charge above threshold succeeds")
+	_check(unravel5.get_snapshot(1) == {"gauge": 8, "threshold": 8, "unravelled": true, "skip_pending": true},
+		"repeated charge does not stack additional skips, gauge clamped to threshold")
+
+
+func _test_unravel_consume_skip_and_threshold_rise() -> void:
+	var unravel := CombatUnravel.new()
+	var enemies := _make_enemies_fixture()
+	var tiers := {1: "normal", 2: "elite", 3: "boss"}
+	_check(unravel.bind_roster(enemies, tiers), "bind succeeds")
+	
+	# Charge normal to threshold
+	_check(unravel.apply_unravel(enemies, 1, 8), "charge normal to threshold")
+	_check(unravel.get_snapshot(1)["skip_pending"], "skip pending before consume")
+	
+	# Consume skip: resets gauge to 0, raises threshold by 4, clears unravelled/skip_pending
+	_check(unravel.consume_action_skip(enemies, 1), "consume_action_skip succeeds on pending skip")
+	_check(unravel.get_snapshot(1) == {"gauge": 0, "threshold": 12, "unravelled": false, "skip_pending": false},
+		"after consume: gauge 0, threshold 12 (8+4), not unravelled, no skip pending")
+	
+	# Elite consume: threshold 12 -> 16
+	var unravel2 := CombatUnravel.new()
+	var enemies2 := _make_enemies_fixture()
+	_check(unravel2.bind_roster(enemies2, tiers), "bind succeeds for elite consume")
+	_check(unravel2.apply_unravel(enemies2, 2, 12), "charge elite to threshold")
+	_check(unravel2.consume_action_skip(enemies2, 2), "consume elite skip")
+	_check(unravel2.get_snapshot(2) == {"gauge": 0, "threshold": 16, "unravelled": false, "skip_pending": false},
+		"elite after consume: threshold 16 (12+4)")
+	
+	# Boss consume: threshold 16 -> 20
+	var unravel3 := CombatUnravel.new()
+	var enemies3 := _make_enemies_fixture()
+	_check(unravel3.bind_roster(enemies3, tiers), "bind succeeds for boss consume")
+	_check(unravel3.apply_unravel(enemies3, 3, 16), "charge boss to threshold")
+	_check(unravel3.consume_action_skip(enemies3, 3), "consume boss skip")
+	_check(unravel3.get_snapshot(3) == {"gauge": 0, "threshold": 20, "unravelled": false, "skip_pending": false},
+		"boss after consume: threshold 20 (16+4)")
+	
+	# Second consume without pending skip returns false
+	_check(not unravel.consume_action_skip(enemies, 1), "second consume without pending skip returns false")
+	_check(unravel.get_snapshot(1) == {"gauge": 0, "threshold": 12, "unravelled": false, "skip_pending": false},
+		"state unchanged after failed consume")
+	
+	# Charge again to increased threshold (12) creates one further break
+	_check(unravel.apply_unravel(enemies, 1, 12), "charge to new threshold 12")
+	_check(unravel.get_snapshot(1) == {"gauge": 12, "threshold": 12, "unravelled": true, "skip_pending": true},
+		"second break at increased threshold works")
+	_check(unravel.consume_action_skip(enemies, 1), "consume second skip")
+	_check(unravel.get_snapshot(1) == {"gauge": 0, "threshold": 16, "unravelled": false, "skip_pending": false},
+		"threshold rises again to 16 (12+4)")
+	
+	# Already-pending break cannot stack a second skip
+	var unravel4 := CombatUnravel.new()
+	var enemies4 := _make_enemies_fixture()
+	_check(unravel4.bind_roster(enemies4, tiers), "bind for stack test")
+	_check(unravel4.apply_unravel(enemies4, 1, 8), "first threshold")
+	_check(unravel4.apply_unravel(enemies4, 1, 5), "extra charge while pending")
+	_check(unravel4.get_snapshot(1)["skip_pending"], "still only one skip pending")
+	_check(unravel4.consume_action_skip(enemies4, 1), "consume the one skip")
+	_check(not unravel4.get_snapshot(1)["skip_pending"], "skip cleared after consume")
+	_check(unravel4.get_snapshot(1)["threshold"] == 12, "threshold raised once only")
+
+
+func _test_unravel_invalid_and_isolation() -> void:
+	var unravel := CombatUnravel.new()
+	var enemies := _make_enemies_fixture()
+	var tiers := {1: "normal", 2: "elite", 3: "boss"}
+	_check(unravel.bind_roster(enemies, tiers), "bind succeeds")
+	
+	# Slain/missing slots cannot be newly charged
+	_check(enemies.apply_damage(1, 14), "slay position 1")
+	_check(enemies.is_slain(1), "position 1 is slain")
+	_check(not unravel.apply_unravel(enemies, 1, 5), "apply_unravel on slain returns false")
+	_check(unravel.get_snapshot(1) == {"gauge": 0, "threshold": 8, "unravelled": false, "skip_pending": false},
+		"slain slot gauge unchanged")
+	_check(not unravel.record_bleed_tick(enemies, 1), "record_bleed_tick on slain returns false")
+	
+	# Invalid position returns false without changing valid gauges
+	_check(not unravel.apply_unravel(enemies, 4, 5), "apply_unravel on invalid position returns false")
+	_check(unravel.get_snapshot(2) == {"gauge": 0, "threshold": 12, "unravelled": false, "skip_pending": false},
+		"valid slot 2 unchanged after invalid position call")
+	_check(not unravel.apply_unravel(enemies, 0, 5), "apply_unravel on position 0 returns false")
+	
+	# Wrong roster returns false
+	var other_enemies := _make_enemies_fixture()
+	_check(not unravel.apply_unravel(other_enemies, 1, 5), "apply_unravel with different roster returns false")
+	_check(not unravel.record_bleed_tick(other_enemies, 1), "record_bleed_tick with different roster returns false")
+	_check(not unravel.consume_action_skip(other_enemies, 1), "consume_action_skip with different roster returns false")
+	
+	# Unbound service returns false/empty
+	var unbound := CombatUnravel.new()
+	_check(not unbound.apply_unravel(enemies, 1, 5), "unbound apply_unravel returns false")
+	_check(not unbound.record_bleed_tick(enemies, 1), "unbound record_bleed_tick returns false")
+	_check(not unbound.consume_action_skip(enemies, 1), "unbound consume_action_skip returns false")
+	_check(unbound.get_snapshot(1) == {}, "unbound get_snapshot returns empty")
+	
+	# Fresh new-battle bind begins at original threshold
+	var unravel5 := CombatUnravel.new()
+	var enemies5 := _make_enemies_fixture()
+	var full_tiers := {1: "normal", 2: "elite", 3: "boss"}
+	_check(unravel5.bind_roster(enemies5, full_tiers), "bind full roster")
+	_check(unravel5.apply_unravel(enemies5, 1, 8), "charge to threshold")
+	_check(unravel5.consume_action_skip(enemies5, 1), "consume skip, threshold now 12")
+	# New bind with fresh service
+	var unravel6 := CombatUnravel.new()
+	var enemies6 := _make_enemies_fixture()
+	_check(unravel6.bind_roster(enemies6, full_tiers), "fresh bind")
+	_check(unravel6.get_snapshot(1) == {"gauge": 0, "threshold": 8, "unravelled": false, "skip_pending": false},
+		"fresh bind starts at original threshold 8, not increased")
+	
+	# CombatEnemies roster HP/Block/Bleed/Weak/Exposed remains identical before/after all operations
+	var enemies_final := _make_enemies_fixture()
+	var unravel_final := CombatUnravel.new()
+	_check(unravel_final.bind_roster(enemies_final, tiers), "bind for final isolation test")
+	enemies_final.apply_damage(1, 5)
+	enemies_final.gain_block(1, 3)
+	enemies_final.apply_statuses({1: {"bleed": 2, "weak": 1}, 2: {"exposed": 1}})
+	var roster_before := enemies_final.get_enemies()
+	_check(unravel_final.apply_unravel(enemies_final, 1, 8), "charge")
+	_check(unravel_final.record_bleed_tick(enemies_final, 2), "bleed tick")
+	_check(unravel_final.consume_action_skip(enemies_final, 1), "consume")
+	_check(enemies_final.get_enemies() == roster_before, "CombatEnemies roster completely unchanged by Unravel operations")
