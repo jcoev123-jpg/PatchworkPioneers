@@ -15,8 +15,8 @@ const FIXTURE_TRINKETS := {
 	"fixture_brass_button": 120,
 	"fixture_owned_charm": 85,
 }
-## Authored starter cards that the shop has no price for yet get a fixture
-## price in the candidate pool; the generator only ever uses the supplied one.
+## Prices for four starter support/draw cards newly authored into the Shop (M04 D2-1).
+## These were formerly fixture fallback prices; the actual Shop JSON now carries them.
 const FIXTURE_CARD_PRICES := {
 	"warden_brace": 40,
 	"seamstress_mend": 45,
@@ -1046,6 +1046,14 @@ func _test_authored_shop_pool(party: Array[String], catalog: StarterCards) -> vo
 		"warden_strike": 50, "warden_shield_bash": 65, "seamstress_prick": 50,
 		"tinker_pop_shot": 50, "tinker_scrap_bomb": 65
 	}
+	## Four starter support/draw cards newly authored into the Shop (M04 D2-1).
+	## These are base starter IDs, not _plus upgrades; prices are the regression fixture values.
+	var new_starter_prices := {
+		"warden_brace": {"owner": "warden", "price": 40, "cost": 1, "from": [1, 2, 3], "target": "self", "to": [], "effects": {"block": 7}},
+		"seamstress_mend": {"owner": "seamstress", "price": 45, "cost": 1, "from": [2, 3], "target": "ally_single", "to": [], "effects": {"heal": 5}},
+		"seamstress_stitch_up": {"owner": "seamstress", "price": 45, "cost": 1, "from": [1, 2, 3], "target": "ally_single", "to": [], "effects": {"block": 5}},
+		"tinker_tune_up": {"owner": "tinker", "price": 35, "cost": 0, "from": [1, 2, 3], "target": "none", "to": [], "effects": {"draw": 1}}
+	}
 	var old_trinkets := {"stitched_badge": 100, "spare_spool": 100, "quilted_coat": 100}
 	var count_by_id := {}
 	for entry in candidates:
@@ -1085,6 +1093,21 @@ func _test_authored_shop_pool(party: Array[String], catalog: StarterCards) -> vo
 				_check(entry.get("owner") == catalog.get_definition(id).get("owner")
 					and _whole_price(entry.get("price")) == old_prices[id],
 					"original starter candidate unchanged: " + id)
+	for id in new_starter_prices:
+		var expected: Dictionary = new_starter_prices[id]
+		_check(count_by_id.get(id, 0) == 1, "new starter support listed once: " + id)
+		var found: Dictionary = {}
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == id:
+				found = entry
+		_check(found.get("owner") == expected.owner and _whole_price(found.get("price")) == expected.price,
+			"new starter support owner and exact fixed gold price: " + id)
+		var def: Dictionary = catalog.get_definition(id)
+		_check(def.get("id") == id and def.get("owner") == expected.owner
+			and def.get("cost") == expected.cost and def.get("from_positions") == expected["from"]
+			and def.get("to_positions") == expected["to"] and def.get("target_kind") == expected.target
+			and def.get("effects") == expected.effects and def.get("starting_copies") == 1,
+			"new starter support catalog definition matches: " + id)
 	for id in count_by_id:
 		_check(count_by_id[id] == 1, "no duplicate Shop candidate ID: " + id)
 	var trinket_counts := {}
