@@ -25,6 +25,49 @@ const FIXTURE_CARD_PRICES := {
 }
 const DEFAULT_FIXTURE_PRICE := 50
 
+## Pool card prices for the three hero pools (base cards only, not + upgrades).
+const POOL_CARD_PRICES := {
+	# Warden pool
+	"warden_hold_the_line": 55,
+	"warden_pinning_jab": 50,
+	"warden_heavy_thimble": 60,
+	"warden_patch_guard": 45,
+	"warden_quick_darn": 40,
+	"warden_brass_buckle": 55,
+	"warden_draw_fire": 65,
+	"warden_seam_breaker": 70,
+	"warden_iron_hem": 70,
+	"warden_counter_stitch": 65,
+	"warden_bastion_quilt": 90,
+	"warden_pin_and_pound": 85,
+	# Seamstress pool
+	"seamstress_running_stitch": 50,
+	"seamstress_needle_pin": 50,
+	"seamstress_darning": 55,
+	"seamstress_snag": 50,
+	"seamstress_thread_whip": 55,
+	"seamstress_thimble_tea": 40,
+	"seamstress_hemorrhage_hem": 65,
+	"seamstress_unpick": 60,
+	"seamstress_blanket_stitch": 70,
+	"seamstress_field_mend": 75,
+	"seamstress_red_thread": 90,
+	"seamstress_tailors_trance": 85,
+	# Tinker pool
+	"tinker_rivet_shot": 50,
+	"tinker_spring_trap": 50,
+	"tinker_scatter_bolts": 55,
+	"tinker_spare_parts": 45,
+	"tinker_long_barrel": 70,
+	"tinker_spool_launcher": 55,
+	"tinker_overclock": 60,
+	"tinker_shrapnel_seam": 70,
+	"tinker_sight_glass": 65,
+	"tinker_ricochet": 65,
+	"tinker_bobbin_cannon": 90,
+	"tinker_snip_the_seam": 80,
+}
+
 
 func _initialize() -> void:
 	var party := _load_party()
@@ -43,13 +86,16 @@ func _initialize() -> void:
 		_test_owned_fallback(party, deck, catalog)
 		_test_purchases(party, deck, catalog)
 		_test_rejections(party, catalog)
+		_test_mixed_pool_generation(party, deck, catalog)
+		_test_pool_purchase(party, deck, catalog)
+		_test_pool_rejections(party, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
 		print("run_shop_stock_offers_test: PASS (", checks, " checks)")
 	else:
 		for failure in failures:
-			printerr(failure)
+			print("FAILURE: ", failure)
 		print("run_shop_stock_offers_test: FAIL (", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
 
@@ -124,7 +170,7 @@ func _authored_shop_offers() -> Dictionary:
 	return data if data is Dictionary else {}
 
 
-## A priced candidate pool of real authored cards owned by the party.
+## A priced candidate pool of real authored cards owned by the party (starter + pool cards).
 func _card_pool(catalog: StarterCards, party: Array[String], authored: Dictionary) -> Array:
 	var authored_prices := {}
 	for entry in authored.get("cards", []):
@@ -133,12 +179,40 @@ func _card_pool(catalog: StarterCards, party: Array[String], authored: Dictionar
 			if price >= 0:
 				authored_prices[entry["id"]] = price
 	var pool: Array = []
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+	# Starter cards
 	for card_id in catalog.get_all_card_ids():
 		var definition: Dictionary = catalog.get_definition(card_id)
 		var owner: String = definition.get("owner", "")
 		if not party.has(owner):
 			continue
 		var price: int = authored_prices.get(card_id, FIXTURE_CARD_PRICES.get(card_id, DEFAULT_FIXTURE_PRICE))
+		pool.append({"id": card_id, "owner": owner, "price": price})
+	# Warden pool base cards
+	for card_id in warden_pool.get_base_ids():
+		var definition: Dictionary = warden_pool.get_definition(card_id)
+		var owner: String = definition.get("owner", "")
+		if not party.has(owner):
+			continue
+		var price: int = POOL_CARD_PRICES.get(card_id, DEFAULT_FIXTURE_PRICE)
+		pool.append({"id": card_id, "owner": owner, "price": price})
+	# Seamstress pool base cards
+	for card_id in seamstress_pool.get_base_ids():
+		var definition: Dictionary = seamstress_pool.get_definition(card_id)
+		var owner: String = definition.get("owner", "")
+		if not party.has(owner):
+			continue
+		var price: int = POOL_CARD_PRICES.get(card_id, DEFAULT_FIXTURE_PRICE)
+		pool.append({"id": card_id, "owner": owner, "price": price})
+	# Tinker pool base cards
+	for card_id in tinker_pool.get_pool_card_ids():
+		var definition: Dictionary = tinker_pool.get_definition(card_id)
+		var owner: String = definition.get("owner", "")
+		if not party.has(owner):
+			continue
+		var price: int = POOL_CARD_PRICES.get(card_id, DEFAULT_FIXTURE_PRICE)
 		pool.append({"id": card_id, "owner": owner, "price": price})
 	return pool
 
@@ -167,6 +241,13 @@ func _pool_price(pool: Array, id: String) -> int:
 	return -1
 
 
+func _pool_has_id(pool: Array, id: String) -> bool:
+	for entry in pool:
+		if entry is Dictionary and entry.get("id") == id:
+			return true
+	return false
+
+
 ## A copy of the candidate pool with one entry replaced, so a malformed
 ## candidate is the only possible reason the whole call fails.
 func _with_card(pool: Array, index: int, entry: Variant) -> Array:
@@ -185,10 +266,22 @@ func _with_trinket(pool: Array, index: int, entry: Variant) -> Array:
 ## card draws and then two trinket draws, each without replacement.
 func _oracle(catalog: StarterCards, party: Array[String], card_pool: Array, trinket_pool: Array,
 		owned: Array, rng: RandomNumberGenerator) -> Dictionary:
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
 	var card_ids: Array[String] = []
 	for entry in card_pool:
 		var card_id: String = entry["id"]
-		if party.has(catalog.get_definition(card_id).get("owner", "")):
+		var owner: String = ""
+		if catalog.has_card(card_id):
+			owner = catalog.get_definition(card_id).get("owner", "")
+		elif warden_pool.has_card(card_id):
+			owner = warden_pool.get_definition(card_id).get("owner", "")
+		elif seamstress_pool.has_card(card_id):
+			owner = seamstress_pool.get_definition(card_id).get("owner", "")
+		elif tinker_pool.has_card(card_id):
+			owner = tinker_pool.get_definition(card_id).get("owner", "")
+		if party.has(owner):
 			card_ids.append(card_id)
 	card_ids.sort()
 	var cards: Array = []
@@ -196,7 +289,15 @@ func _oracle(catalog: StarterCards, party: Array[String], card_pool: Array, trin
 		var index: int = rng.randi_range(0, card_ids.size() - 1)
 		var card_id: String = card_ids[index]
 		card_ids.remove_at(index)
-		var definition: Dictionary = catalog.get_definition(card_id)
+		var definition: Dictionary = {}
+		if catalog.has_card(card_id):
+			definition = catalog.get_definition(card_id)
+		elif warden_pool.has_card(card_id):
+			definition = warden_pool.get_definition(card_id)
+		elif seamstress_pool.has_card(card_id):
+			definition = seamstress_pool.get_definition(card_id)
+		elif tinker_pool.has_card(card_id):
+			definition = tinker_pool.get_definition(card_id)
 		cards.append({"id": card_id, "owner": definition["owner"], "price": _pool_price(card_pool, card_id)})
 
 	var trinket_ids: Array[String] = []
@@ -271,6 +372,9 @@ func _test_generated_stock(party: Array[String], deck: Array[String], catalog: S
 	var card_pool := _card_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
 	var unowned := 0
 	for entry in trinket_pool:
 		if not owned.has(entry["id"]):
@@ -297,7 +401,16 @@ func _test_generated_stock(party: Array[String], deck: Array[String], catalog: S
 		_check(offer is Dictionary and offer.size() == 3, "card offer holds only id, owner and price")
 		var card_id: String = offer.get("id", "")
 		card_ids.append(card_id)
-		var definition: Dictionary = catalog.get_definition(card_id)
+		# Look up the card definition across all four catalogs.
+		var definition: Dictionary = {}
+		if catalog.has_card(card_id):
+			definition = catalog.get_definition(card_id)
+		elif warden_pool.has_card(card_id):
+			definition = warden_pool.get_definition(card_id)
+		elif seamstress_pool.has_card(card_id):
+			definition = seamstress_pool.get_definition(card_id)
+		elif tinker_pool.has_card(card_id):
+			definition = tinker_pool.get_definition(card_id)
 		_check(not definition.is_empty(), "offered card exists in the authored catalog: " + card_id)
 		_check(offer.get("owner") == definition.get("owner"), "offer uses the catalog owner: " + card_id)
 		_check(party.has(offer.get("owner")), "offered card belongs to the party: " + card_id)
@@ -339,8 +452,9 @@ func _test_generated_stock(party: Array[String], deck: Array[String], catalog: S
 		_check(listed["id"] == offered["id"] and listed["price"] == offered["price"]
 			and listed["sold"] == false,
 			"the shop visit lists the generated trinket offer unchanged: " + str(offered.get("id", "")))
-	_check(purchases.get_state()["deck"] == deck and purchases.get_state()["trinkets"] == owned
-		and purchases.get_state()["gold"] == 400, "the shop visit starts from the supplied run state")
+	var state: Dictionary = purchases.get_state()
+	_check(state.has("deck") and state["deck"] == deck and state.has("trinkets") and state["trinkets"] == owned
+		and state.has("gold") and state["gold"] == 400, "the shop visit starts from the supplied run state")
 
 	_check(catalog_before == _catalog_snapshot(catalog), "the whole authored catalog remains untouched")
 	_check(card_pool == card_pool_before, "the supplied card pool is unchanged")
@@ -409,6 +523,9 @@ func _test_purchases(party: Array[String], deck: Array[String], catalog: Starter
 	var card_pool := _card_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
 	var result: Dictionary = RunShopStockOffers.generate(_rng(SEED + 3), party, card_pool, trinket_pool, owned)
 	_check(result.get("ok", false), "stock generated for the purchase test")
 	if not result.get("ok", false):
@@ -420,7 +537,10 @@ func _test_purchases(party: Array[String], deck: Array[String], catalog: Starter
 
 	var card_offer: Dictionary = cards[0]
 	var trinket_offer: Dictionary = trinkets[0]
-	_check(catalog.has_card(card_offer["id"]), "the bought card offer is an authored card")
+	var card_id: String = card_offer["id"]
+	var in_any_catalog := catalog.has_card(card_id) or warden_pool.has_card(card_id) \
+		or seamstress_pool.has_card(card_id) or tinker_pool.has_card(card_id)
+	_check(in_any_catalog, "the bought card offer is an authored card (starter or pool)")
 
 	# One paid card purchase appends exactly one card and charges its price.
 	var before_state := purchases.get_state()
@@ -617,3 +737,256 @@ func _test_rejections(party: Array[String], catalog: StarterCards) -> void:
 	_check(randi() == expected_global, "duplicate ownership rejection leaves global RNG untouched")
 
 	_check(catalog_before == _catalog_snapshot(catalog), "the whole authored catalog survives every rejection")
+
+
+## AC1: Mixed pool/starter candidate generation with real pool cards.
+func _test_mixed_pool_generation(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var card_pool := _card_pool(catalog, party, authored)
+	var trinket_pool := _trinket_pool(authored)
+	var owned := _owned_trinkets()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+
+	# Verify the three example pool cards are present in the candidate pool.
+	_check(_pool_has_id(card_pool, "warden_hold_the_line"), "warden_hold_the_line present in candidate pool")
+	_check(_pool_has_id(card_pool, "seamstress_darning"), "seamstress_darning present in candidate pool")
+	_check(_pool_has_id(card_pool, "tinker_rivet_shot"), "tinker_rivet_shot present in candidate pool")
+
+	# Generate stock with a seeded RNG.
+	var rng := _rng(SEED + 100)
+	var result: Dictionary = RunShopStockOffers.generate(rng, party, card_pool, trinket_pool, owned)
+	_check(result.get("ok", false), "mixed pool/starter pools generate a stock")
+	var cards: Array = result.get("cards", [])
+	var trinkets: Array = result.get("trinkets", [])
+	_check(cards.size() == 5, "exactly five card offers from mixed pool")
+	_check(trinkets.size() == 2, "exactly two trinket offers")
+
+	# Every offered card must be from the candidate pool, have correct owner and price.
+	for offer in cards:
+		var card_id: String = offer.get("id", "")
+		_check(_pool_has_id(card_pool, card_id), "offered card is from candidate pool: " + card_id)
+		# Verify owner matches the correct catalog
+		var expected_owner: String = ""
+		if catalog.has_card(card_id):
+			expected_owner = catalog.get_definition(card_id).get("owner", "")
+		elif warden_pool.has_card(card_id):
+			expected_owner = warden_pool.get_definition(card_id).get("owner", "")
+		elif seamstress_pool.has_card(card_id):
+			expected_owner = seamstress_pool.get_definition(card_id).get("owner", "")
+		elif tinker_pool.has_card(card_id):
+			expected_owner = tinker_pool.get_definition(card_id).get("owner", "")
+		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id + ": " + offer.get("owner") + " == " + expected_owner)
+		_check(party.has(offer.get("owner")), "offered card belongs to the party: " + card_id)
+		_check(offer.get("price") == _pool_price(card_pool, card_id), "offer keeps the supplied price: " + card_id)
+
+	# All five offered card IDs are distinct.
+	var card_ids: Array[String] = []
+	for offer in cards:
+		card_ids.append(offer.get("id", ""))
+	_check(card_ids.size() == 5 and card_ids[0] != card_ids[1] and card_ids[0] != card_ids[2]
+			and card_ids[0] != card_ids[3] and card_ids[0] != card_ids[4]
+			and card_ids[1] != card_ids[2] and card_ids[1] != card_ids[3] and card_ids[1] != card_ids[4]
+			and card_ids[2] != card_ids[3] and card_ids[2] != card_ids[4] and card_ids[3] != card_ids[4],
+		"all five offered card IDs are distinct")
+
+	# Verify each hero's pool has genuine selectable representation by checking
+	# that the pool contains cards from all three heroes.
+	var warden_offered := false
+	var seamstress_offered := false
+	var tinker_offered := false
+	for offer in cards:
+		if offer.get("owner") == "warden":
+			warden_offered = true
+		elif offer.get("owner") == "seamstress":
+			seamstress_offered = true
+		elif offer.get("owner") == "tinker":
+			tinker_offered = true
+	# At least one card from each hero should be selectable (not guaranteed to appear in 5 draws,
+	# but the candidate pool has them all). We verify the candidate pool has representation.
+	var warden_in_pool := false
+	var seamstress_in_pool := false
+	var tinker_in_pool := false
+	for entry in card_pool:
+		if entry.get("owner") == "warden":
+			warden_in_pool = true
+		elif entry.get("owner") == "seamstress":
+			seamstress_in_pool = true
+		elif entry.get("owner") == "tinker":
+			tinker_in_pool = true
+	_check(warden_in_pool and seamstress_in_pool and tinker_in_pool, "candidate pool has all three hero pool cards")
+
+	# The generated stock has to be a real shop visit, not just data.
+	var purchases := RunShopPurchases.new(party, deck, owned, 400, cards, trinkets)
+	_check(purchases.is_valid(), "generated mixed stock constructs a valid RunShopPurchases visit")
+
+
+## AC2: Oracle match, replay, and real purchase of a pool card.
+func _test_pool_purchase(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var card_pool := _card_pool(catalog, party, authored)
+	var trinket_pool := _trinket_pool(authored)
+	var owned := _owned_trinkets()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+
+	# Use a fixture with exactly five valid candidate card IDs, at least one from each pool,
+	# to guarantee a specific offered base card for RunShopPurchases.buy.
+	# We'll construct a minimal candidate pool.
+	var minimal_cards: Array = [
+		{"id": "warden_hold_the_line", "owner": "warden", "price": 55},
+		{"id": "seamstress_darning", "owner": "seamstress", "price": 55},
+		{"id": "tinker_rivet_shot", "owner": "tinker", "price": 50},
+		{"id": "warden_strike", "owner": "warden", "price": 50},
+		{"id": "seamstress_prick", "owner": "seamstress", "price": 50},
+	]
+	var minimal_trinkets: Array = [
+		{"id": "fixture_pin_badge", "price": 90},
+		{"id": "fixture_spare_spool", "price": 110},
+	]
+
+	# Independent sorted mutable pools and independently seeded RNG.
+	var oracle_rng := _rng(SEED + 200)
+	var rng_a := _rng(SEED + 200)
+	var rng_b := _rng(SEED + 200)
+
+	var card_ids_a: Array[String] = []
+	for entry in minimal_cards:
+		card_ids_a.append(entry["id"])
+	card_ids_a.sort()
+	var cards_a: Array = []
+	for _pick in range(5):
+		var index: int = oracle_rng.randi_range(0, card_ids_a.size() - 1)
+		var card_id: String = card_ids_a[index]
+		card_ids_a.remove_at(index)
+		var owner: String = ""
+		if catalog.has_card(card_id):
+			owner = catalog.get_definition(card_id).get("owner", "")
+		elif warden_pool.has_card(card_id):
+			owner = warden_pool.get_definition(card_id).get("owner", "")
+		elif seamstress_pool.has_card(card_id):
+			owner = seamstress_pool.get_definition(card_id).get("owner", "")
+		elif tinker_pool.has_card(card_id):
+			owner = tinker_pool.get_definition(card_id).get("owner", "")
+		cards_a.append({"id": card_id, "owner": owner, "price": _pool_price(minimal_cards, card_id)})
+
+	var trinket_ids_a: Array[String] = []
+	for entry in minimal_trinkets:
+		if not owned.has(entry["id"]):
+			trinket_ids_a.append(entry["id"])
+	trinket_ids_a.sort()
+	var trinkets_a: Array = []
+	for _pick in range(2):
+		var index: int = oracle_rng.randi_range(0, trinket_ids_a.size() - 1)
+		var trinket_id: String = trinket_ids_a[index]
+		trinket_ids_a.remove_at(index)
+		trinkets_a.append({"id": trinket_id, "price": _pool_price(minimal_trinkets, trinket_id)})
+
+	var oracle := {"cards": cards_a, "trinkets": trinkets_a}
+
+	# Run generation with original order.
+	var result_a: Dictionary = RunShopStockOffers.generate(rng_a, party, minimal_cards, minimal_trinkets, owned)
+	_check(result_a.get("ok", false), "minimal pool generates stock")
+	_check(result_a.get("cards") == oracle["cards"], "card offers match independent oracle")
+	_check(result_a.get("trinkets") == oracle["trinkets"], "trinket offers match independent oracle")
+	_check(rng_a.state == oracle_rng.state, "RNG state matches oracle after five card and two trinket draws")
+
+	# Reverse/reorder inputs and prove the same output.
+	var reversed_cards := minimal_cards.duplicate(true)
+	reversed_cards.reverse()
+	var reversed_trinkets := minimal_trinkets.duplicate(true)
+	reversed_trinkets.reverse()
+	var result_b: Dictionary = RunShopStockOffers.generate(rng_b, party, reversed_cards, reversed_trinkets, owned)
+	_check(result_b.get("ok", false), "reordered minimal pool generates stock")
+	_check(result_a == result_b, "reordered inputs produce identical stock")
+	_check(rng_a.state == rng_b.state, "reordered inputs leave identical RNG state")
+
+	# Now test a real purchase of an actually offered base pool card.
+	# Pick the first offered card (guaranteed to be from minimal_cards).
+	var offered_card_id: String = result_a["cards"][0]["id"]
+	var offered_price: int = result_a["cards"][0]["price"]
+	var purchases := RunShopPurchases.new(party, deck, owned, 400, result_a["cards"], result_a["trinkets"])
+	_check(purchases.is_valid(), "minimal stock admits real purchase service")
+
+	var buy_result := purchases.buy("card", offered_card_id)
+	_check(buy_result.get("ok", false), "offered pool card can be bought: " + offered_card_id)
+	var after_state := purchases.get_state()
+	var after_stock := purchases.get_stock()
+	_check(after_state["deck"].size() == deck.size() + 1, "one card appended to deck")
+	_check(after_state["deck"].back() == offered_card_id, "appended card is the offered pool card: " + offered_card_id)
+	_check(after_state["gold"] == 400 - offered_price, "exact supplied price charged: " + str(offered_price))
+	_check(after_stock["cards"][0]["sold"] == true, "bought card marked sold")
+
+	# Buying again fails.
+	var repeat_buy := purchases.buy("card", offered_card_id)
+	_check(not repeat_buy.get("ok", true), "pool card cannot be bought twice")
+	_check(purchases.get_state() == after_state and purchases.get_stock() == after_stock, "repeated purchase leaves state unchanged")
+
+
+## AC3: Additional rejection cases for pool cards.
+func _test_pool_rejections(party: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var card_pool := _card_pool(catalog, party, authored)
+	var trinket_pool := _trinket_pool(authored)
+	var owned := _owned_trinkets()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+	var catalog_before := _catalog_snapshot(catalog)
+
+	# Forged owner for a valid pool ID.
+	_reject("forged owner on pool card", _rng(), party,
+		_with_card(card_pool, 0, {"id": "warden_hold_the_line", "owner": "seamstress", "price": 55}),
+		trinket_pool, owned)
+
+	# Unknown ID (truly unknown, not a newly legitimate base pool ID).
+	_reject("truly unknown card candidate", _rng(), party,
+		_with_card(card_pool, 0, {"id": "__truly_unknown_card__", "price": 50}),
+		trinket_pool, owned)
+
+	# Extra duplicate in candidate pool.
+	_reject("duplicate pool card candidate", _rng(), party,
+		_with_card(card_pool, 1, {"id": "warden_hold_the_line", "price": 60}),
+		trinket_pool, owned)
+
+	# Pool upgrade used as a new Shop candidate (should be rejected).
+	_reject("pool upgrade card as candidate (warden)", _rng(), party,
+		_with_card(card_pool, 0, {"id": "warden_hold_the_line_plus", "price": 55}),
+		trinket_pool, owned)
+	_reject("pool upgrade card as candidate (seamstress)", _rng(), party,
+		_with_card(card_pool, 0, {"id": "seamstress_darning_plus", "price": 55}),
+		trinket_pool, owned)
+	_reject("pool upgrade card as candidate (tinker)", _rng(), party,
+		_with_card(card_pool, 0, {"id": "tinker_rivet_shot_plus", "price": 50}),
+		trinket_pool, owned)
+
+	# Foreign party (only 2 heroes).
+	_reject("foreign party (two heroes)", _rng(), party.slice(0, 2), card_pool, trinket_pool, owned)
+
+	# Invalid price (negative, fractional, non-numeric).
+	for price in [-1, 12.5, "50", true, null]:
+		_reject("invalid pool card price " + str(price), _rng(), party,
+			_with_card(card_pool, 0, {"id": "warden_hold_the_line", "owner": "warden", "price": price}),
+			trinket_pool, owned)
+
+	# Too few valid candidates (only 4).
+	_reject("too few card candidates with pool cards", _rng(), party,
+		[
+			{"id": "warden_hold_the_line", "owner": "warden", "price": 55},
+			{"id": "seamstress_darning", "owner": "seamstress", "price": 55},
+			{"id": "tinker_rivet_shot", "owner": "tinker", "price": 50},
+			{"id": "warden_strike", "owner": "warden", "price": 50},
+		], trinket_pool, owned)
+
+	# Ensure existing StarterCards entries (including previously permitted versions) still work.
+	var starter_only_cards: Array = []
+	for entry in card_pool:
+		if catalog.has_card(entry["id"]):
+			starter_only_cards.append(entry)
+	_check(starter_only_cards.size() >= 5, "starter-only pool still has enough candidates")
+	var starter_result := RunShopStockOffers.generate(_rng(SEED + 300), party, starter_only_cards, trinket_pool, owned)
+	_check(starter_result.get("ok", false), "starter-only candidate pool still generates")
+
+	_check(catalog_before == _catalog_snapshot(catalog), "catalog survives pool rejection tests")
