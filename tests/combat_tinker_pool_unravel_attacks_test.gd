@@ -12,6 +12,9 @@ func _initialize() -> void:
 	_test_ac3_snip_the_seam()
 	_test_ac4_shared_latch_and_rejections()
 	_test_ac4_replay()
+	_test_pinned_ac1_spool_and_snip()
+	_test_pinned_ac2_shrapnel_seam()
+	_test_pinned_ac3_rejections()
 	for failure: String in failures:
 		printerr(failure)
 	print("combat_tinker_pool_unravel_attacks_test: ",
@@ -75,11 +78,14 @@ func _unravel(enemies: CombatEnemies, tiers: Dictionary = {1: "normal", 2: "norm
 
 
 func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		unravel: CombatUnravel, first: CombatTinkerFirstAttack) -> Dictionary:
+		unravel: CombatUnravel, first: CombatTinkerFirstAttack, pinned: CombatPinned = null) -> Dictionary:
 	var gauges: Dictionary = {}
 	for i: int in range(enemies.get_enemies().size()):
 		var pos: int = i + 1
 		gauges[pos] = unravel.get_snapshot(pos)
+	var pins: Dictionary = {}
+	if pinned != null:
+		pins = pinned._pinner_by_position.duplicate()
 	return {
 		"draw": deck.draw_pile.duplicate(),
 		"hand": deck.hand.duplicate(),
@@ -93,6 +99,7 @@ func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"enemies": enemies.get_enemies(),
 		"gauges": gauges,
 		"consumed": first._consumed,
+		"pins": pins,
 	}
 
 
@@ -512,3 +519,348 @@ func _test_ac4_replay() -> void:
 	var trial_a: Dictionary = run_trial.call(12345)
 	var trial_b: Dictionary = run_trial.call(12345)
 	_check(trial_a == trial_b, "AC4: identical seed yields identical results, snapshots and RNG state")
+
+
+func _test_pinned_ac1_spool_and_snip() -> void:
+	# 1. Spool Launcher base with Warden pin: cost 1, damage 3, unravel 3.
+	# First attack latch active (+3). Pin bonus (+5). Raw damage 3 + 3 + 5 = 11.
+	var first: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	var pinned: CombatPinned = CombatPinned.new()
+	var resolver: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first, pinned)
+	_check(resolver.get_pinned() == pinned, "AC1: get_pinned returns bound CombatPinned")
+	var deck: CombatDeck = _deck(["tinker_spool_launcher", "warden_strike"])
+	var party: CombatParty = _party(["warden", "seamstress", "tinker"])
+	var enemies: CombatEnemies = _enemies([50, 50])
+	var unravel: CombatUnravel = _unravel(enemies, {1: "normal", 2: "normal"})
+	_check(pinned.pin_enemy(enemies, 1, "warden"), "Warden pins enemy 1")
+	_check(enemies.gain_block(1, 4), "enemy 1 gains 4 Block")
+
+	var before_rng: int = deck._rng.state
+
+	var res: Dictionary = resolver.play_attack(deck, party, enemies, "tinker_spool_launcher", 1, unravel)
+	_check(res.get("ok", false) == true, "AC1: Spool Launcher on Warden-pinned target succeeds")
+	_check(res.get("hits", []).size() == 1, "AC1: produces 1 hit")
+	var hit: Dictionary = res["hits"][0]
+	_check(hit.get("position") == 1 and hit.get("damage") == 11
+		and hit.get("block_absorbed") == 4 and hit.get("hp_loss") == 7
+		and hit.get("unravel") == 3,
+		"AC1: Spool Launcher hit deals 11 damage (3 base + 3 first + 5 pin), 4 absorbed, 7 HP loss, 3 unravel")
+	_check(enemies.get_enemy(1)["hp"] == 43 and enemies.get_enemy(1)["block"] == 0,
+		"AC1: enemy 1 HP (43) and Block (0) updated authoritatively")
+	_check(unravel.get_snapshot(1)["gauge"] == 3 and unravel.get_snapshot(1)["threshold"] == 8,
+		"AC1: enemy 1 gauge 3/8")
+	_check(pinned.pinner_for_enemy(1) == "", "AC1: Warden pin on enemy 1 consumed once")
+	_check(deck.energy == 2 and deck.hand == ["warden_strike"]
+		and deck.discard_pile == ["tinker_spool_launcher"],
+		"AC1: spends 1 energy and discards held Spool Launcher")
+	_check(first._consumed == true, "AC1: first attack latch consumed")
+	_check(deck._rng.state == before_rng, "AC1: zero RNG draws")
+
+	# 2. Spool Launcher+ with Seamstress pin and consumed first-attack latch (base 4 + pin 5 = 9)
+	var first_plus: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_plus.record_successful_attack("tinker_pop_shot"), "consume first attack latch")
+	var pinned_plus: CombatPinned = CombatPinned.new()
+	var resolver_plus: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_plus, pinned_plus)
+	var deck_plus: CombatDeck = _deck(["tinker_spool_launcher_plus"])
+	var party_plus: CombatParty = _party(["warden", "tinker", "seamstress"])
+	var enemies_plus: CombatEnemies = _enemies([30])
+	var unravel_plus: CombatUnravel = _unravel(enemies_plus, {1: "normal"})
+	_check(pinned_plus.pin_enemy(enemies_plus, 1, "seamstress"), "Seamstress pins enemy 1")
+	var rng_plus_before: int = deck_plus._rng.state
+
+	var res_plus: Dictionary = resolver_plus.play_attack(deck_plus, party_plus, enemies_plus,
+		"tinker_spool_launcher_plus", 1, unravel_plus)
+	_check(res_plus.get("ok", false) == true, "AC1: Spool Launcher+ play succeeds from slot 2")
+	var hit_plus: Dictionary = res_plus["hits"][0]
+	_check(hit_plus.get("damage") == 9 and hit_plus.get("hp_loss") == 9 and hit_plus.get("unravel") == 4,
+		"AC1: Spool Launcher+ deals 9 damage (4 base + 5 pin) and adds 4 unravel")
+	_check(enemies_plus.get_enemy(1)["hp"] == 21, "AC1: enemy 1 HP reduced to 21")
+	_check(unravel_plus.get_snapshot(1)["gauge"] == 4, "AC1: gauge incremented by 4")
+	_check(pinned_plus.pinner_for_enemy(1) == "", "AC1: Seamstress pin consumed once")
+	_check(deck_plus._rng.state == rng_plus_before, "AC1: zero RNG draws on Spool+")
+
+	# 3. Lethal hit on pinned enemy: consumes pin, 0 unravel applied
+	var first_lethal: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_lethal.record_successful_attack("tinker_pop_shot"), "consume latch")
+	var pinned_lethal: CombatPinned = CombatPinned.new()
+	var resolver_lethal: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_lethal, pinned_lethal)
+	var deck_lethal: CombatDeck = _deck(["tinker_spool_launcher"])
+	var party_lethal: CombatParty = _party()
+	var enemies_lethal: CombatEnemies = _enemies([6])
+	var unravel_lethal: CombatUnravel = _unravel(enemies_lethal, {1: "normal"})
+	_check(pinned_lethal.pin_enemy(enemies_lethal, 1, "warden"), "Warden pins enemy 1")
+
+	var res_lethal: Dictionary = resolver_lethal.play_attack(deck_lethal, party_lethal, enemies_lethal,
+		"tinker_spool_launcher", 1, unravel_lethal)
+	_check(res_lethal.get("ok", false) == true, "AC1: lethal Spool hit succeeds")
+	_check(enemies_lethal.is_slain(1), "AC1: target is slain")
+	_check(pinned_lethal.pinner_for_enemy(1) == "", "AC1: pin consumed on lethal hit")
+	_check(res_lethal["hits"][0]["unravel"] == 0, "AC1: lethal hit reports 0 unravel")
+	_check(unravel_lethal.get_snapshot(1)["gauge"] == 0, "AC1: slain target gauge remains 0")
+
+	# 4. Same-hero pin: Tinker attacks own pin -> 0 bonus and leaves pin in place
+	var first_same: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_same.record_successful_attack("tinker_pop_shot"), "consume latch")
+	var pinned_same: CombatPinned = CombatPinned.new()
+	var resolver_same: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_same, pinned_same)
+	var deck_same: CombatDeck = _deck(["tinker_spool_launcher"])
+	var party_same: CombatParty = _party()
+	var enemies_same: CombatEnemies = _enemies([30])
+	var unravel_same: CombatUnravel = _unravel(enemies_same, {1: "normal"})
+	_check(pinned_same.pin_enemy(enemies_same, 1, "tinker"), "Tinker pins enemy 1")
+
+	var res_same: Dictionary = resolver_same.play_attack(deck_same, party_same, enemies_same,
+		"tinker_spool_launcher", 1, unravel_same)
+	_check(res_same.get("ok", false) == true, "AC1: same-hero pin attack succeeds")
+	_check(res_same["hits"][0]["damage"] == 3, "AC1: same-hero pin grants 0 bonus (deals base 3)")
+	_check(pinned_same.pinner_for_enemy(1) == "tinker", "AC1: same-hero pin is NOT consumed")
+
+	# 5. Snip the Seam base unempowered with Warden pin: base 5 + 5 pin = 10 damage
+	var first_snip1: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_snip1.record_successful_attack("tinker_pop_shot"), "consume latch")
+	var pinned_snip1: CombatPinned = CombatPinned.new()
+	var resolver_snip1: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_snip1, pinned_snip1)
+	var deck_snip1: CombatDeck = _deck(["tinker_snip_the_seam"])
+	var party_snip1: CombatParty = _party()
+	var enemies_snip1: CombatEnemies = _enemies([40])
+	var unravel_snip1: CombatUnravel = _unravel(enemies_snip1, {1: "normal"})
+	_check(unravel_snip1.apply_unravel(enemies_snip1, 1, 3), "gauge 3/8 is below half")
+	_check(pinned_snip1.pin_enemy(enemies_snip1, 1, "warden"), "Warden pins enemy 1")
+
+	var res_snip1: Dictionary = resolver_snip1.play_attack(deck_snip1, party_snip1, enemies_snip1,
+		"tinker_snip_the_seam", 1, unravel_snip1)
+	_check(res_snip1.get("ok", false) == true, "AC1: unempowered Snip with pin succeeds")
+	_check(res_snip1["hits"][0]["damage"] == 10, "AC1: unempowered Snip deals 10 damage (5 base + 5 pin)")
+	_check(pinned_snip1.pinner_for_enemy(1) == "", "AC1: pin consumed")
+	_check(unravel_snip1.get_snapshot(1)["gauge"] == 3, "AC1: Snip leaves gauge untouched at 3/8")
+
+	# 6. Snip the Seam base empowered with Seamstress pin: base 15 + first 3 + pin 5 = 23
+	var first_snip2: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	var pinned_snip2: CombatPinned = CombatPinned.new()
+	var resolver_snip2: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_snip2, pinned_snip2)
+	var deck_snip2: CombatDeck = _deck(["tinker_snip_the_seam"])
+	var party_snip2: CombatParty = _party()
+	var enemies_snip2: CombatEnemies = _enemies([50])
+	var unravel_snip2: CombatUnravel = _unravel(enemies_snip2, {1: "normal"})
+	_check(unravel_snip2.apply_unravel(enemies_snip2, 1, 4), "gauge 4/8 triggers empowered")
+	_check(pinned_snip2.pin_enemy(enemies_snip2, 1, "seamstress"), "Seamstress pins enemy 1")
+
+	var res_snip2: Dictionary = resolver_snip2.play_attack(deck_snip2, party_snip2, enemies_snip2,
+		"tinker_snip_the_seam", 1, unravel_snip2)
+	_check(res_snip2.get("ok", false) == true, "AC1: empowered Snip with pin succeeds")
+	_check(res_snip2["hits"][0]["damage"] == 23,
+		"AC1: empowered Snip deals 23 damage (15 empowered + 3 first + 5 pin)")
+	_check(pinned_snip2.pinner_for_enemy(1) == "", "AC1: Seamstress pin consumed")
+	_check(unravel_snip2.get_snapshot(1)["gauge"] == 4, "AC1: gauge remains 4/8")
+
+	# 7. Snip the Seam empowered with Weak, Exposed and Block:
+	# Raw damage before status: 15 (empowered) + 5 (pin) = 20.
+	# Weak reduces by 25%: 20 * 0.75 = 15.
+	# Exposed increases by 50%: 15 * 1.5 = 22.5 -> floor = 22.
+	# Block 6 absorbs 6, HP loss = 16 (60 -> 44).
+	var first_calc: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_calc.record_successful_attack("tinker_pop_shot"), "consume latch")
+	var pinned_calc: CombatPinned = CombatPinned.new()
+	var resolver_calc: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_calc, pinned_calc)
+	var deck_calc: CombatDeck = _deck(["tinker_snip_the_seam"])
+	var party_calc: CombatParty = _party()
+	party_calc._heroes[2]["statuses"] = {"weak": 1}
+	var enemies_calc: CombatEnemies = _enemies([60])
+	_check(enemies_calc.apply_statuses({1: {"exposed": 1}}), "enemy 1 exposed")
+	_check(enemies_calc.gain_block(1, 6), "enemy 1 gains 6 Block")
+	var unravel_calc: CombatUnravel = _unravel(enemies_calc, {1: "normal"})
+	_check(unravel_calc.apply_unravel(enemies_calc, 1, 4), "gauge 4/8 empowered")
+	_check(pinned_calc.pin_enemy(enemies_calc, 1, "warden"), "Warden pins enemy 1")
+
+	var res_calc: Dictionary = resolver_calc.play_attack(deck_calc, party_calc, enemies_calc,
+		"tinker_snip_the_seam", 1, unravel_calc)
+	_check(res_calc.get("ok", false) == true, "AC1: calculation test succeeds")
+	var h_calc: Dictionary = res_calc["hits"][0]
+	_check(h_calc.get("damage") == 22 and h_calc.get("block_absorbed") == 6 and h_calc.get("hp_loss") == 16,
+		"AC1: +5 pin applied before Weak/Exposed gives floor(floor(20*0.75)*1.5)=22 damage, 6 absorbed, 16 HP loss")
+	_check(enemies_calc.get_enemy(1)["hp"] == 44 and enemies_calc.get_enemy(1)["block"] == 0,
+		"AC1: enemy HP (44) and Block (0) updated")
+	_check(pinned_calc.pinner_for_enemy(1) == "", "AC1: pin consumed")
+
+	# 8. Snip the Seam+ empowered with Warden pin: base 20 + pin 5 = 25
+	var first_snip_p: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_snip_p.record_successful_attack("tinker_pop_shot"), "consume latch")
+	var pinned_snip_p: CombatPinned = CombatPinned.new()
+	var resolver_snip_p: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_snip_p, pinned_snip_p)
+	var deck_snip_p: CombatDeck = _deck(["tinker_snip_the_seam_plus"])
+	var party_snip_p: CombatParty = _party()
+	var enemies_snip_p: CombatEnemies = _enemies([60])
+	var unravel_snip_p: CombatUnravel = _unravel(enemies_snip_p, {1: "normal"})
+	_check(unravel_snip_p.apply_unravel(enemies_snip_p, 1, 4), "gauge 4/8 empowered")
+	_check(pinned_snip_p.pin_enemy(enemies_snip_p, 1, "warden"), "Warden pins enemy 1")
+
+	var res_snip_p: Dictionary = resolver_snip_p.play_attack(deck_snip_p, party_snip_p, enemies_snip_p,
+		"tinker_snip_the_seam_plus", 1, unravel_snip_p)
+	_check(res_snip_p.get("ok", false) == true, "AC1: empowered Snip+ succeeds")
+	_check(res_snip_p["hits"][0]["damage"] == 25, "AC1: empowered Snip+ deals 25 damage (20 base + 5 pin)")
+	_check(pinned_snip_p.pinner_for_enemy(1) == "", "AC1: pin consumed once")
+
+
+func _test_pinned_ac2_shrapnel_seam() -> void:
+	# 1. Shrapnel Seam base: cost 2, damage 5, unravel 2.
+	# Tinker at position 3. Living enemies in 3-enemy roster:
+	# - Slot 1: pinned by Warden (different hero) -> +5 bonus, pin consumed
+	# - Slot 2: pinned by Tinker (same hero) -> 0 bonus, pin preserved
+	# - Slot 3: unpinned -> 0 bonus, remains unpinned
+	# First attack latch active (+3) applies to all hits.
+	var first: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	var pinned: CombatPinned = CombatPinned.new()
+	var resolver: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first, pinned)
+	var deck: CombatDeck = _deck(["tinker_shrapnel_seam", "warden_strike"])
+	var party: CombatParty = _party(["warden", "seamstress", "tinker"])
+	var enemies: CombatEnemies = _enemies([40, 40, 40])
+	var unravel: CombatUnravel = _unravel(enemies, {1: "normal", 2: "normal", 3: "normal"})
+	_check(pinned.pin_enemy(enemies, 1, "warden"), "pin enemy 1 by warden")
+	_check(pinned.pin_enemy(enemies, 2, "tinker"), "pin enemy 2 by tinker")
+
+	var before_rng: int = deck._rng.state
+	var res: Dictionary = resolver.play_attack(deck, party, enemies, "tinker_shrapnel_seam", 0, unravel)
+	_check(res.get("ok", false) == true, "AC2: Shrapnel Seam succeeds")
+	_check(res.get("hits", []).size() == 3, "AC2: exactly hits living slots 1, 2, 3")
+
+	var h1: Dictionary = res["hits"][0]
+	var h2: Dictionary = res["hits"][1]
+	var h3: Dictionary = res["hits"][2]
+	# Slot 1: 5 base + 3 first + 5 warden pin = 13
+	_check(h1.get("position") == 1 and h1.get("damage") == 13 and h1.get("unravel") == 2,
+		"AC2: slot 1 (warden pin) receives 13 damage and 2 unravel")
+	# Slot 2: 5 base + 3 first + 0 tinker pin = 8
+	_check(h2.get("position") == 2 and h2.get("damage") == 8 and h2.get("unravel") == 2,
+		"AC2: slot 2 (tinker pin) receives 8 damage and 2 unravel")
+	# Slot 3: 5 base + 3 first + 0 unpinned = 8
+	_check(h3.get("position") == 3 and h3.get("damage") == 8 and h3.get("unravel") == 2,
+		"AC2: slot 3 (unpinned) receives 8 damage and 2 unravel")
+
+	_check(enemies.get_enemy(1)["hp"] == 27 and enemies.get_enemy(2)["hp"] == 32
+		and enemies.get_enemy(3)["hp"] == 32, "AC2: living enemy HPs updated correctly")
+
+	_check(unravel.get_snapshot(1)["gauge"] == 2 and unravel.get_snapshot(2)["gauge"] == 2
+		and unravel.get_snapshot(3)["gauge"] == 2, "AC2: surviving enemies receive 2 unravel")
+
+	_check(pinned.pinner_for_enemy(1) == "", "AC2: slot 1 Warden pin consumed")
+	_check(pinned.pinner_for_enemy(2) == "tinker", "AC2: slot 2 Tinker pin preserved")
+	_check(pinned.pinner_for_enemy(3) == "", "AC2: slot 3 unpinned remains unpinned")
+
+	_check(deck.energy == 1 and deck.hand == ["warden_strike"]
+		and deck.discard_pile == ["tinker_shrapnel_seam"],
+		"AC2: single 2-energy charge and single discard")
+	_check(first._consumed == true, "AC2: latch consumed once for area attack")
+	_check(deck._rng.state == before_rng, "AC2: zero RNG draws")
+
+	# 2. Shrapnel Seam with slain slot 2: slot 1 (Seamstress pin) and slot 3 (Tinker pin)
+	var first_slain: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	var pinned_slain: CombatPinned = CombatPinned.new()
+	var resolver_slain: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_slain, pinned_slain)
+	var deck_slain: CombatDeck = _deck(["tinker_shrapnel_seam"])
+	var party_slain: CombatParty = _party(["warden", "seamstress", "tinker"])
+	var enemies_slain: CombatEnemies = _enemies([40, 20, 40])
+	var unravel_slain: CombatUnravel = _unravel(enemies_slain, {1: "normal", 2: "normal", 3: "normal"})
+	_check(pinned_slain.pin_enemy(enemies_slain, 1, "seamstress"), "pin 1 by seamstress")
+	_check(pinned_slain.pin_enemy(enemies_slain, 3, "tinker"), "pin 3 by tinker")
+	_check(enemies_slain.apply_damage(2, 20) and enemies_slain.is_slain(2), "slay slot 2")
+
+	var res_slain: Dictionary = resolver_slain.play_attack(deck_slain, party_slain, enemies_slain,
+		"tinker_shrapnel_seam", 0, unravel_slain)
+	_check(res_slain.get("ok", false) == true, "AC2: Shrapnel Seam with slain slot succeeds")
+	_check(res_slain.get("hits", []).size() == 2, "AC2: hits exactly surviving slots 1 and 3")
+	_check(res_slain["hits"][0]["position"] == 1 and res_slain["hits"][0]["damage"] == 13,
+		"AC2: slot 1 (seamstress pin) receives 13 damage")
+	_check(res_slain["hits"][1]["position"] == 3 and res_slain["hits"][1]["damage"] == 8,
+		"AC2: slot 3 (tinker pin) receives 8 damage")
+	_check(enemies_slain.get_enemy(2)["hp"] == 0 and enemies_slain.is_slain(2),
+		"AC2: slain slot 2 remains untouched")
+	_check(unravel_slain.get_snapshot(2)["gauge"] == 0, "AC2: slain slot 2 gauge untouched")
+	_check(pinned_slain.pinner_for_enemy(1) == "", "AC2: slot 1 Seamstress pin consumed")
+	_check(pinned_slain.pinner_for_enemy(3) == "tinker", "AC2: slot 3 Tinker pin preserved")
+
+	# 2. Shrapnel Seam+ with multiple cross-hero pins (Seamstress and Warden)
+	var first_plus: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	_check(first_plus.record_successful_attack("tinker_pop_shot"), "consume latch")
+	var pinned_plus: CombatPinned = CombatPinned.new()
+	var resolver_plus: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_plus, pinned_plus)
+	var deck_plus: CombatDeck = _deck(["tinker_shrapnel_seam_plus"])
+	var party_plus: CombatParty = _party(["warden", "seamstress", "tinker"])
+	var enemies_plus: CombatEnemies = _enemies([50, 50, 50])
+	var unravel_plus: CombatUnravel = _unravel(enemies_plus, {1: "normal", 2: "elite", 3: "normal"})
+	_check(pinned_plus.pin_enemy(enemies_plus, 1, "seamstress"), "pin 1 by seamstress")
+	_check(pinned_plus.pin_enemy(enemies_plus, 2, "warden"), "pin 2 by warden")
+
+	var res_plus: Dictionary = resolver_plus.play_attack(deck_plus, party_plus, enemies_plus,
+		"tinker_shrapnel_seam_plus", 0, unravel_plus)
+	_check(res_plus.get("ok", false) == true, "AC2: Shrapnel+ succeeds")
+	_check(res_plus.get("hits", []).size() == 3, "AC2: hits 3 enemies")
+	_check(res_plus["hits"][0]["damage"] == 12 and res_plus["hits"][0]["unravel"] == 3,
+		"AC2: slot 1 (seamstress pin) deals 12 (7 base + 5 pin)")
+	_check(res_plus["hits"][1]["damage"] == 12 and res_plus["hits"][1]["unravel"] == 3,
+		"AC2: slot 2 (warden pin) deals 12 (7 base + 5 pin)")
+	_check(res_plus["hits"][2]["damage"] == 7 and res_plus["hits"][2]["unravel"] == 3,
+		"AC2: slot 3 (unpinned) deals 7 base")
+	_check(pinned_plus.pinner_for_enemy(1) == "" and pinned_plus.pinner_for_enemy(2) == "",
+		"AC2: both cross-hero pins consumed")
+	_check(deck_plus.energy == 1 and deck_plus.discard_pile == ["tinker_shrapnel_seam_plus"],
+		"AC2: 2 energy spent, 1 discard")
+
+
+func _test_pinned_ac3_rejections() -> void:
+	# 1. Resolver without CombatPinned bound: legacy behavior unchanged
+	var first_leg: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	var resolver_leg: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_leg)
+	_check(resolver_leg.get_pinned() == null, "AC3: get_pinned returns null when unbound")
+	var deck_leg: CombatDeck = _deck(["tinker_spool_launcher"])
+	var party_leg: CombatParty = _party()
+	var enemies_leg: CombatEnemies = _enemies([30])
+	var unravel_leg: CombatUnravel = _unravel(enemies_leg, {1: "normal"})
+	var res_leg: Dictionary = resolver_leg.play_attack(deck_leg, party_leg, enemies_leg,
+		"tinker_spool_launcher", 1, unravel_leg)
+	_check(res_leg.get("ok", false) == true and res_leg["hits"][0]["damage"] == 6,
+		"AC3: unbound resolver deals legacy 6 damage (3 base + 3 first)")
+
+	# 2. Comprehensive fail-closed snapshot tests with active CombatPinned tokens
+	var first_rej: CombatTinkerFirstAttack = CombatTinkerFirstAttack.new()
+	var pinned_rej: CombatPinned = CombatPinned.new()
+	var resolver_rej: CombatTinkerPoolUnravelAttacks = CombatTinkerPoolUnravelAttacks.new(first_rej, pinned_rej)
+
+	var run_rej_case: Callable = func(card_id: String, target: int, mutator: Callable, reason: String) -> void:
+		var d: CombatDeck = _deck(["tinker_spool_launcher", "tinker_shrapnel_seam", "tinker_snip_the_seam"])
+		var p: CombatParty = _party(["warden", "seamstress", "tinker"])
+		var e: CombatEnemies = _enemies([30, 30])
+		var u: CombatUnravel = _unravel(e, {1: "normal", 2: "normal"})
+		_check(pinned_rej.pin_enemy(e, 1, "warden"), "pre-pin enemy 1 by warden")
+		_check(pinned_rej.pin_enemy(e, 2, "tinker"), "pre-pin enemy 2 by tinker")
+		var active_u: CombatUnravel = u
+		var override_u: Variant = mutator.call(d, p, e, u)
+		if override_u != null and override_u is CombatUnravel:
+			active_u = override_u
+
+		var before: Dictionary = _snapshot(d, p, e, u, first_rej, pinned_rej)
+		_check(resolver_rej.can_play(d, p, e, card_id, target, active_u, pinned_rej) == false,
+			"AC3: can_play rejects " + reason)
+		var result: Dictionary = resolver_rej.play_attack(d, p, e, card_id, target, active_u, pinned_rej)
+		_check(result == {"ok": false, "hits": []}, "AC3: play_attack rejects " + reason)
+		_check(_snapshot(d, p, e, u, first_rej, pinned_rej) == before,
+			"AC3: " + reason + " preserves full deck, party, enemy, gauge, latch, pin and RNG snapshots")
+		_check(pinned_rej.pinner_for_enemy(1) == "warden" and pinned_rej.pinner_for_enemy(2) == "tinker",
+			"AC3: pins remain intact after rejection " + reason)
+
+	# Negative cases with pinned state:
+	run_rej_case.call("tinker_spool_launcher_plus", 1, func(d, p, e, u): pass, "missing held copy")
+	run_rej_case.call("tinker_shrapnel_seam", 0, func(d, p, e, u): d.combat_state.energy = 1, "insufficient energy")
+	run_rej_case.call("tinker_spool_launcher", 1, func(d, p, e, u): d.combat_state.player_turn_active = false, "inactive turn")
+	run_rej_case.call("tinker_spool_launcher", 1, func(d, p, e, u): p.apply_damage(3, 26), "downed Tinker")
+	run_rej_case.call("tinker_spool_launcher", 1, func(d, p, e, u):
+		p._heroes[0]["id"] = "tinker"
+		p._heroes[2]["id"] = "warden"
+	, "wrong-slot Tinker at slot 1")
+	run_rej_case.call("tinker_spool_launcher", 0, func(d, p, e, u): pass, "target 0 for single attack")
+	run_rej_case.call("tinker_shrapnel_seam", 1, func(d, p, e, u): pass, "target 1 for area attack")
+	run_rej_case.call("tinker_spool_launcher", 2, func(d, p, e, u): e.apply_damage(2, 30), "slain target")
+	run_rej_case.call("tinker_shrapnel_seam", 0, func(d, p, e, u):
+		e.apply_damage(1, 30)
+		e.apply_damage(2, 30)
+	, "all-dead roster")
+	run_rej_case.call("tinker_spool_launcher", 1, func(d, p, e, u): return CombatUnravel.new(), "unbound unravel")
