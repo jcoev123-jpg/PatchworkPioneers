@@ -1305,7 +1305,8 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	heading.text = "Connected route - choose your next node"
 	route_view.add_child(heading)
 	var wallet := Label.new()
-	wallet.text = "Gold: %d | Scraps: %d | Mend: 2 scraps" % [session_gold, run_scraps]
+	wallet.text = "Gold: %d | Scraps: %d | Mend: %d scraps" % [
+		session_gold, run_scraps, RunMapMendChoices.MEND_COST]
 	route_view.add_child(wallet)
 	_present_route_patch_summary(carry)
 	var prior := run_map.get_route()
@@ -1323,25 +1324,26 @@ func _present_connected_route(source_map: WeakRef) -> void:
 		route_view.add_child(action)
 		route_buttons.append(action)
 	var context := _map_mend_context()
-	for hero in run_heroes:
-		if hero.hp != 0:
-			continue
-		var mend := Button.new()
-		mend.text = "Mend %s (position %d) - 2 scraps" % [hero.id.capitalize(), hero.position]
-		mend.set_meta("hero_id", hero.id)
-		mend.set_meta("hero_position", hero.position)
-		mend.custom_minimum_size = Vector2(440, 40)
-		mend.disabled = run_scraps < 2 or carry == null or not _can_choose_connected_route()
-		route_view.add_child(mend)
-		map_mend_buttons.append(mend)
-		mend.pressed.connect(_choose_map_mend.bind(hero.id, hero.position,
-			weakref(mend), weakref(route_view), context))
-	if map_mend_buttons.is_empty():
-		var unavailable := Button.new()
-		unavailable.text = "Mend unavailable - no torn heroes"
-		unavailable.disabled = true
-		route_view.add_child(unavailable)
-		map_mend_buttons.append(unavailable)
+	var mends := _project_map_mends()
+	if mends.get("ok") == true:
+		for option in mends.options:
+			var mend := Button.new()
+			mend.text = "Mend %s (position %d) - %d scraps, to %d HP" % [
+				String(option.hero_id).capitalize(), option.position,
+				option.cost, option.post_mend_hp]
+			mend.set_meta("hero_id", option.hero_id)
+			mend.set_meta("hero_position", option.position)
+			mend.set_meta("mend_option", option.duplicate(true))
+			mend.custom_minimum_size = Vector2(440, 40)
+			mend.disabled = option.affordable != true or not _can_choose_connected_route()
+			route_view.add_child(mend)
+			map_mend_buttons.append(mend)
+			mend.pressed.connect(_choose_map_mend.bind(option.hero_id, option.position,
+				weakref(mend), weakref(route_view), context))
+		if map_mend_buttons.is_empty():
+			_append_map_mend_unavailable("Mend unavailable - no torn heroes")
+	else:
+		_append_map_mend_unavailable("Mend unavailable - invalid source")
 	route_map_button = Button.new()
 	route_map_button.text = "View full map"
 	route_view.add_child(route_map_button)
@@ -1405,6 +1407,28 @@ func _present_route_patch_summary(carry: RunTornCarryover) -> void:
 		readout.add_child(status)
 
 
+func _append_map_mend_unavailable(message: String) -> void:
+	var unavailable := Button.new()
+	unavailable.text = message
+	unavailable.disabled = true
+	unavailable.custom_minimum_size = Vector2(440, 40)
+	route_view.add_child(unavailable)
+	map_mend_buttons.append(unavailable)
+
+
+## The canonical map Mend projection owns hero, slot, cost and post-Mend HP.
+## The view only renders those values; an invalid live authority yields nothing
+## actionable instead of a re-derived price or healing rule.
+func _project_map_mends() -> Dictionary:
+	var carry := party_carryover as RunTornCarryover
+	if carry == null:
+		return {"ok": false, "options": []}
+	var wardrobe: Variant = null
+	if carry._wardrobe != null:
+		wardrobe = carry._wardrobe.get_snapshot()
+	return RunMapMendChoices.project(carry, carry.read_state(), wardrobe, run_scraps, true)
+
+
 func _map_mend_context() -> Array:
 	var carry := party_carryover as RunTornCarryover
 	if carry == null or run_map == null or run_rng == null:
@@ -1424,7 +1448,8 @@ func _choose_map_mend(hero: Variant, position: Variant, source_action: WeakRef,
 		or source_view == null or source_view.get_ref() != route_view \
 		or route_view.get_parent() != self or not route_view.is_visible_in_tree() \
 		or source_action == null or not is_instance_valid(source_action.get_ref()) \
-		or expected.is_empty() or _map_mend_context() != expected:
+		or expected.is_empty() or _map_mend_context() != expected \
+		or typeof(hero) != TYPE_STRING or typeof(position) != TYPE_INT:
 		return
 	var button = source_action.get_ref()
 	if button not in map_mend_buttons or button.get_parent() != route_view \
@@ -1432,10 +1457,25 @@ func _choose_map_mend(hero: Variant, position: Variant, source_action: WeakRef,
 		or button.get_meta("hero_id", "") != hero or button.get_meta("hero_position", 0) != position:
 		return
 	var carry := party_carryover as RunTornCarryover
+	# Reproject from the live authority: only an exact offered option (identity
+	# AND slot) may name a canonical price or post-Mend HP.
+	var view := _project_map_mends()
+	if carry == null or view.get("ok") != true:
+		return
+	var option: Dictionary = {}
+	for offered in view.options:
+		if offered.get("hero_id") == hero and offered.get("position") == position:
+			option = offered
+			break
+	if option.is_empty() or button.get_meta("mend_option", {}) != option:
+		return
+	var wardrobe: Variant = null
+	if carry._wardrobe != null:
+		wardrobe = carry._wardrobe.get_snapshot()
 	var operation := "map_mend:%d" % _map_mend_serial
-	var result := carry.choose_mend(operation, operation + ":receipt", hero, position,
-		run_scraps, expected[7], expected[15], true)
-	if not result.ok:
+	var result := RunMapMendChoices.choose(carry, option, operation, operation + ":receipt",
+		carry.read_state(), wardrobe, run_scraps, true)
+	if result.get("ok") != true:
 		return
 	run_heroes = result.heroes
 	run_scraps = result.remaining_scraps
