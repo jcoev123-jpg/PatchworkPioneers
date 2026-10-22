@@ -12,6 +12,7 @@ var support
 var catalog := StarterCards.new()
 
 var fixture: Dictionary = {}
+var previous_quilt_row_id := 0
 
 
 func _initialize() -> void:
@@ -57,6 +58,75 @@ func _click(control: Control) -> void:
 	if not is_instance_valid(control):
 		return
 	await _click_point(control.get_global_rect().get_center())
+
+
+## Assert the actual mounted SupportHUD against the detached service read, never
+## deriving expected owners, colours or completion from the presenter itself.
+func _assert_quilt(note: String) -> void:
+	var service: CombatQuiltBonus = app._quilt_bonus
+	_check(service != null and service._deck == app.deck and service._party == app.party,
+		note + ": live Quilt authority is bound to this party and deck")
+	if service == null:
+		return
+	var row: HBoxContainer = support.quilt_row
+	_check(is_instance_valid(row) and row.get_parent() == app.battle_view.find_child(
+		"SupportHUD", true, false) and row.visible and row.get_child_count() == 3,
+		note + ": exactly three mounted patches are visible in SupportHUD")
+	if not is_instance_valid(row):
+		return
+	var snapshot: Dictionary = service.get_patch_progress()
+	_check(snapshot.active and snapshot.patches.size() == 3,
+		note + ": service has three active ID patches")
+	_check(support.quilt_patches.size() == 3, note + ": exactly three indexed reusable squares")
+	var expected_ids := ["warden", "seamstress", "tinker"]
+	for index in range(expected_ids.size()):
+		var owner: String = expected_ids[index]
+		var square = row.get_child(index)
+		var expected: Dictionary = snapshot.patches.get(owner, {})
+		_check(square == support.quilt_patches.get(owner)
+			and square.owner_id == owner and square.name == "QuiltPatch_" + owner,
+			note + ": square order and identity follow " + owner)
+		var color := Color(str(expected.get("color", "#000000")))
+		var fill: Color = color if bool(expected.get("played", false)) else Color("302b26").lerp(color, 0.23)
+		if not bool(expected.get("living", false)):
+			fill = fill.darkened(0.58)
+		_check(square.played == expected.get("played")
+			and square.living == expected.get("living")
+			and square.awarded == snapshot.awarded
+			and square.felt_color == color and square.fill_color == fill,
+			note + ": " + owner + " fill and felt colour mirror the authoritative snapshot")
+		_check(square.tooltip_text.contains(owner.capitalize())
+			and square.tooltip_text.contains("Play cards from all living heroes")
+			and square.tooltip_text.contains("3 Block; draw 1 once per turn")
+			and square.tooltip_text.contains("played" if bool(expected.get("played", false)) else "unplayed")
+			and (bool(expected.get("living", false)) or square.tooltip_text.contains("not required"))
+			and (not snapshot.awarded or square.tooltip_text.contains("awarded this turn")),
+			note + ": " + owner + " hover explains its actual progress and Quilt rule")
+		_check(square.focus_mode == Control.FOCUS_NONE
+			and square.mouse_filter == Control.MOUSE_FILTER_STOP,
+			note + ": " + owner + " is focus-free but hoverable")
+	var rect := row.get_global_rect()
+	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	_check(viewport.encloses(rect) and rect.size.x <= 120 and rect.size.y <= 40
+		and support.backing.covers(row),
+		note + ": sewn squares fit on the real 1280x720 felt-table backing")
+	for other in [support.energy_orb, support.help_label, app.end_turn_button, app.return_button]:
+		if is_instance_valid(other) and other.is_visible_in_tree():
+			_check(not rect.intersects(other.get_global_rect()),
+				note + ": squares do not cover " + other.name)
+
+
+func _assert_quilt_read_only(note: String) -> void:
+	var state_before := _state()
+	var progress_before: Dictionary = app._quilt_bonus.get_patch_progress()
+	var row = support.quilt_row
+	for repetition in range(4):
+		support._sync_battle()
+	_check(_state() == state_before and app._quilt_bonus.get_patch_progress() == progress_before,
+		note + ": repeated passive redraw leaves piles, energy, actors, RNG and receipts unchanged")
+	_check(support.quilt_row == row and row.get_parent().get_children().count(row) == 1,
+		note + ": resync reuses the exact same Quilt row")
+	_assert_quilt(note)
 
 
 func _panel(card_id: String):
@@ -351,6 +421,28 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	var progress: Dictionary = app._quilt_bonus.get_patch_progress()
 	_check(progress.active and not progress.awarded and progress.patches.keys().size() == 3,
 		"fresh battle opens an unawarded three-patch quota")
+	await _frames()
+	_assert_quilt_read_only("new seeded battle before any play")
+	# Even a temporarily invalid app-to-service binding cannot show a plausible stale set.
+	var bound_deck: CombatDeck = app._quilt_deck
+	var before_invalid := _state()
+	app._quilt_deck = null
+	support._sync_battle()
+	_check(not support.quilt_row.visible and _state() == before_invalid,
+		"invalid Quilt-to-deck binding hides all patches without altering combat")
+	app._quilt_deck = bound_deck
+	support._sync_battle()
+	_assert_quilt("restored real binding returns the same unfilled row")
+	var motion := InputEventMouseMotion.new()
+	motion.position = support.quilt_patches["warden"].get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+	_check(root.gui_get_hovered_control() == support.quilt_patches["warden"],
+		"real pointer hit-test reaches the Warden tooltip patch, not an input action")
+	if previous_quilt_row_id != 0:
+		_check(support.quilt_row.get_instance_id() != previous_quilt_row_id,
+			"new battle receives a new row, not the previous fight's stale squares")
+	previous_quilt_row_id = support.quilt_row.get_instance_id()
 
 	var oracle := _oracle()
 	_check(not oracle.is_empty(), "detached Quilt service binds the same real opening state")
@@ -376,6 +468,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	_check(_state() == before, "a selected held card changes no pile, energy, Block or RNG")
 	await _key(KEY_ESCAPE)
 	_check(_state() == before and presenter._armed == null, "cancelled selection invents no receipt")
+	_assert_quilt("selection and Escape leave all three squares unplayed")
 
 	# Capture the real bound callback while the Warden panel is still held, so the
 	# stale-input check after the hand rebuild is never conditional on a missing key.
@@ -389,6 +482,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	_check(app._quilt_bonus.get_patch_progress().patches.warden.played
 		and not app._quilt_bonus.get_patch_progress().awarded,
 		"only the Warden patch fills after one distinct owner")
+	_assert_quilt_read_only("first confirmed Warden owner")
 	# The retained callback of the consumed panel cannot replay the transaction.
 	var after_warden := _state()
 	_check(stale_warden.is_valid(), "the captured Warden callback survives the committed play")
@@ -400,6 +494,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	await _key(KEY_1)
 	_check(_state() == after_warden and not app._quilt_bonus.get_patch_progress().awarded,
 		"stale duplicate input after the first owner invents no receipt or award")
+	_assert_quilt("stale callback leaves only Warden filled")
 
 	await _commit(plan.seamstress, true, 2, oracle)
 	trace.append(_state())
@@ -407,6 +502,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	_check(app._quilt_bonus.get_patch_progress().patches.seamstress.played
 		and not app._quilt_bonus.get_patch_progress().awarded,
 		"two distinct owners still award nothing")
+	_assert_quilt("Warden and Seamstress receipts, no award yet")
 
 	var before_award := _state()
 	var top_card: String = app.deck.draw_pile.back()
@@ -427,6 +523,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 		"the awarded draw consumed the real next pile card")
 	_check(awarded == oracle["quilt"].get_patch_progress(),
 		"mounted patch progress equals the detached service")
+	_assert_quilt_read_only("third owner filled and Quilt awarded")
 	_check(app.deck.energy == before_award[3] - 1 and app.run_rng.state == oracle["deck"]._rng.state,
 		"the award spends no extra energy and preserves the exact seeded RNG")
 
@@ -452,6 +549,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 	_check(_state() == before_spare, "insufficient energy spends nothing and invents no receipt")
 	_check(app._quilt_bonus.get_patch_progress() == awarded,
 		"the rejected attempt leaves the completed quota untouched")
+	_assert_quilt("rejected zero-energy play does not disturb filled squares")
 
 	# A real End Turn advances one turn: receipts and the single-award latch reset.
 	var oracle_deck: CombatDeck = oracle["deck"]
@@ -470,6 +568,7 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 		return trace
 	_check(app._quilt_bonus.get_patch_progress() == mirror["quilt"].get_patch_progress(),
 		"the next turn starts with clean indicators and no carried award")
+	_assert_quilt_read_only("real End Turn resets Quilt squares and award cue")
 	_check(_blocks(app.party.get_heroes()) == {"warden": 0, "seamstress": 0, "tinker": 0},
 		"the new turn starts from reset Block, never a replayed +3")
 	trace.append(_state())
@@ -485,10 +584,17 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 			"one receipt in the next turn does not award")
 		_check(_state() == _oracle_state(mirror),
 			"the next turn's first receipt matches the detached oracle exactly")
+		_assert_quilt("new turn's first committed play fills its real owner only")
 	trace.append(_state())
+	var old_row: Control = support.quilt_row
 	await _click(app.return_button)
+	await _frames()
+	support._sync_battle()
 	_check(app.deck == null and app._quilt_bonus == null,
 		"Return releases the battle and its quota")
+	_check(not is_instance_valid(old_row) and support.quilt_row == null
+		and support.quilt_patches.is_empty(),
+		"Return releases all three patch controls and prevents stale tooltips")
 	return trace
 
 
@@ -533,6 +639,7 @@ func _scenario_reshuffle_duplicate(seed_fixture: Dictionary) -> void:
 	_check(app._quilt_bonus != null and app._quilt_turn_open
 		and not app._quilt_bonus.get_patch_progress().awarded,
 		"the duplicate-ID battle starts with an unawarded bound quota")
+	_assert_quilt_read_only("duplicate-ID battle initial row")
 
 	var oracle := _oracle()
 	_check(not oracle.is_empty(), "detached Quilt service binds the duplicate-ID battle")
@@ -542,9 +649,11 @@ func _scenario_reshuffle_duplicate(seed_fixture: Dictionary) -> void:
 	await _commit("warden_brace", false, 0, oracle)
 	_check(_state() == _oracle_state(oracle),
 		"the Warden receipt matches the detached oracle on the crafted deck")
+	_assert_quilt("duplicate-ID first owner")
 	await _commit("seamstress_prick", true, 1, oracle)
 	_check(_state() == _oracle_state(oracle),
 		"the Seamstress receipt matches the detached oracle on the crafted deck")
+	_assert_quilt("duplicate-ID second owner")
 	_check(app.deck.draw_pile.is_empty() and _count(app.deck.discard_pile, spare) == 1,
 		"the older duplicate still waits in discard before the reshuffling play")
 
@@ -564,6 +673,7 @@ func _scenario_reshuffle_duplicate(seed_fixture: Dictionary) -> void:
 		"the reshuffled duplicate still yields all three owner receipts exactly once")
 	_check(progress == oracle["quilt"].get_patch_progress(),
 		"mounted duplicate-ID progress equals the detached service")
+	_assert_quilt_read_only("duplicate-ID third owner and reshuffle award")
 	var award_delta := {}
 	var after_blocks := _blocks(app.party.get_heroes())
 	for hero_id in after_blocks:
@@ -638,6 +748,8 @@ func _scenario_stitched_owners() -> void:
 	_check(app.party.get_hero(1).id == "seamstress" and app.party.get_hero(1).hp > 0
 		and app.party.get_hero(2).id == "warden" and app.party.get_hero(2).hp > 0,
 		"the two composite owners are living at new positions")
+	await _frames()
+	_assert_quilt_read_only("swapped roster with downed Tinker before any composite play")
 	var foes: Array = app.enemies.get_enemies()
 	for index in range(foes.size()):
 		app.enemies._enemies[index]["max_hp"] = maxi(int(foes[index]["max_hp"]), 60)
@@ -688,6 +800,7 @@ func _scenario_stitched_owners() -> void:
 		and not progress.patches.tinker.living,
 		"two distinct owner identities fill the quota exactly once")
 	_check(progress == quilt.get_patch_progress(), "mounted progress equals the detached service")
+	_assert_quilt_read_only("stitched two-owner award leaves downed patch muted")
 	_check(app.deck.hand.size() == before[0].size()
 		and app.deck.discard_pile.size() == before[2].size() + 1,
 		"the composite moved one copy to discard and the award drew one shared card")
