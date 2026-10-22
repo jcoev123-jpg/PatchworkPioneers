@@ -6,10 +6,12 @@ extends Node
 const SEAMSTRESS_IDS := ["seamstress_blanket_stitch", "seamstress_blanket_stitch_plus"]
 const TINKER_IDS := ["tinker_scatter_bolts", "tinker_scatter_bolts_plus",
 	"tinker_ricochet", "tinker_ricochet_plus"]
+## Target-free area attacks that charge the battle's shared Unravel gauge.
+const UNRAVEL_TINKER_IDS := ["tinker_shrapnel_seam", "tinker_shrapnel_seam_plus"]
 const ENERGY_TINKER_IDS := ["tinker_overclock", "tinker_overclock_plus"]
 const ENERGY_SEAMSTRESS_IDS := ["seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
 const ENERGY_IDS := ENERGY_TINKER_IDS + ENERGY_SEAMSTRESS_IDS
-const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + ENERGY_IDS
+const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + UNRAVEL_TINKER_IDS + ENERGY_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -47,7 +49,9 @@ func _is_card(card_id: String) -> bool:
 
 
 func _definition(card_id: String) -> Dictionary:
-	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS or card_id in ENERGY_TINKER_IDS else _catalog.get_definition(card_id)
+	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS \
+		or card_id in UNRAVEL_TINKER_IDS or card_id in ENERGY_TINKER_IDS \
+		else _catalog.get_definition(card_id)
 
 
 ## Reuse the starter attack presenter's actual session- and turn-matched latch.
@@ -61,6 +65,38 @@ func _live_tinker_latch(app) -> CombatTinkerFirstAttack:
 			or not preview._play is CombatAttackCards:
 		return null
 	return preview._play._tinker
+
+
+## The battle's own Pinned set and Unravel gauge, exactly as the mounted
+## single-target presenter created them for this session. A gauge card fails
+## closed unless that one gauge is bound to this roster and the live round flow
+## either shares it already or is about to. This never creates a second gauge,
+## a second latch or a substitute roster.
+func _live_unravel_authorities(app) -> Dictionary:
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or not preview.is_inside_tree() \
+			or preview._battle != _battle or preview._deck != _deck \
+			or preview._session != [app.party, app.enemies, app.battle_result,
+				app.run_rng, app.enemy_intents] or preview._turn != _turn:
+		return {}
+	var unravel: CombatUnravel = preview._unravel
+	var pinned: CombatPinned = preview._pinned
+	if unravel == null or pinned == null \
+			or not is_instance_valid(unravel) or not is_instance_valid(pinned):
+		return {}
+	if unravel._bound_enemies != _enemies:
+		return {}
+	var flow: CombatRoundFlow = app.round_flow
+	if flow == null or not is_instance_valid(flow) \
+			or flow._deck != _deck or flow._party != _party \
+			or flow._enemies != _enemies or flow._intents != app.enemy_intents \
+			or flow._result != _result:
+		return {}
+	# Another gauge already bound to this fight is a real conflict, not a
+	# fallback: refuse rather than replace or double-charge an authority.
+	if flow._unravel != null and flow._unravel != unravel:
+		return {}
+	return {"unravel": unravel, "pinned": pinned, "flow": flow}
 
 
 ## True only for a real, currently held blank stitch panel whose mounted label,
@@ -203,6 +239,11 @@ func _rule_text(card_id: String) -> String:
 		return "%s | Tinker | %d energy | From %s\nEnemies %s: %s; first attack +3, no target choice" % [
 			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
 			_positions(definition.get("from_positions", [])), _positions(definition.get("to_positions", [])), detail]
+	if card_id in UNRAVEL_TINKER_IDS:
+		return "%s | Tinker | %d energy | From %s\nAll living enemies %s: %d damage each and Unravel %d per survivor; first attack +3, no target choice" % [
+			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
+			_positions(definition.get("from_positions", [])), _positions(definition.get("to_positions", [])),
+			int(effects.get("damage", 0)), int(effects.get("unravel", 0))]
 	var bleed: int = int(effects.get("bleed", 0))
 	return "%s | %d energy | From %s\nAll living enemies %s: Bleed %d (%d + Seamstress passive 1), no target choice" % [
 		String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
@@ -228,7 +269,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 	var definition: Dictionary = _definition(card_id)
 	if definition.get("id") != card_id:
 		return
-	var is_tinker: bool = card_id in TINKER_IDS or card_id in ENERGY_TINKER_IDS
+	var is_tinker: bool = card_id in TINKER_IDS or card_id in UNRAVEL_TINKER_IDS \
+		or card_id in ENERGY_TINKER_IDS
 	var is_energy: bool = card_id in ENERGY_IDS
 	var owner_color: Color = TINKER if is_tinker else SEAMSTRESS
 	for existing in panel.get_children():
@@ -296,6 +338,9 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 	if card_id in ENERGY_TINKER_IDS:
 		detail = "Gain %d energy; %d self-damage (Block first)" % [
 			int(effects.get("gain_energy", 0)), int(effects.get("self_hp_loss", 0))]
+	elif card_id in UNRAVEL_TINKER_IDS:
+		detail = "%d damage each, Unravel %d (+3 first attack)" % [
+			int(effects.get("damage", 0)), int(effects.get("unravel", 0))]
 	elif card_id in ENERGY_SEAMSTRESS_IDS:
 		detail = "Gain %d energy; draw %d cards" % [
 			int(effects.get("energy", 0)), int(effects.get("draw", 0))]
@@ -481,6 +526,22 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 			return
 		event = CombatTinkerPoolAttacks.new(latch).play_attack(receipt.deck,
 			receipt.party, receipt.enemies, card_id, 0)
+	elif card_id in UNRAVEL_TINKER_IDS:
+		# Reuse the starter presenter's latch and this battle's single Pinned
+		# and Unravel authorities. A missing or foreign gauge refuses the cast.
+		var shared_latch: CombatTinkerFirstAttack = _live_tinker_latch(get_parent())
+		var authorities: Dictionary = _live_unravel_authorities(get_parent())
+		if shared_latch == null or authorities.is_empty():
+			_cancel()
+			return
+		event = CombatTinkerPoolUnravelAttacks.new(shared_latch).play_attack(receipt.deck,
+			receipt.party, receipt.enemies, card_id, 0,
+			authorities.unravel, authorities.pinned)
+		if event.get("ok", false):
+			# The real round flow now shares that same gauge, so its turn end
+			# consumes the queued skip. Never a second gauge or a reset.
+			var flow: CombatRoundFlow = authorities["flow"]
+			flow._unravel = authorities["unravel"]
 	else:
 		event = _service.play_card(receipt.deck, receipt.party, receipt.enemies, card_id, 0)
 	if not event.get("ok", false):
