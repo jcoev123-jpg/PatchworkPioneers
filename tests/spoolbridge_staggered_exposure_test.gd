@@ -3,9 +3,9 @@ extends SceneTree
 ## Exposure encounter: slot 1 Spool Stalker shoves the middle hero back and
 ## then tags the displaced rear hero Exposed 1; slot 2 Seam Ripper hits that
 ## rear hero for a base 4, then for a base 5 that Exposed turns into 7.
-## Data/service only: this file never registers the encounter in the shared
-## typed pool and never wires it into live play. The isolated fixture keeps
-## zero hero Block on purpose, so the exact damage numbers are observable
+## Authored-source/phase coverage with the encounter now registered in the
+## real typed Fight pool. The isolated fixture keeps zero hero Block on purpose,
+## so the exact damage numbers are observable
 ## without presuming the Warden's start-of-combat passive.
 
 const ENCOUNTER_PATH := "res://data/encounters/spoolbridge_staggered_exposure.json"
@@ -328,40 +328,21 @@ func _test_authored_schedule_and_parser() -> void:
 			and choice.get("definitions") == _expected_definitions(),
 			"the real Fight loader returns this encounter's exact authored schedule")
 
-	# The encounter is standalone: the shared typed pool does not register it,
-	# so nothing claims live availability for it yet.
+	# The real production Fight pool must bind this ID to its exact schedule
+	# and ordered roster, without depending on any other catalog entries.
 	_check(FileAccess.file_exists(TYPED_POOL_PATH),
-		"the shared typed battle pool file exists, so its contents can be inspected")
-	_check(not _shared_pool_registers_encounter(),
-		"this encounter stays out of the shared typed battle pool")
+		"the shared typed battle pool exists")
+	var pools: Variant = JSON.parse_string(_read_text(TYPED_POOL_PATH))
+	_check(pools is Dictionary and pools.get("Fight") is Dictionary,
+		"production registry exposes a valid Fight pool")
+	if pools is Dictionary and pools.get("Fight") is Dictionary:
+		_check(pools["Fight"].get(ENCOUNTER_ID) == {
+			"schedule": ENCOUNTER_PATH, "enemy_ids": LOCAL_ROSTER_MAP[ENCOUNTER_ID]},
+			"Spoolbridge has the exact live Fight schedule and ordered roster binding")
 
 	# The authored bytes on disk are unchanged by every parser read.
 	_check(_read_text(ENCOUNTER_PATH) == raw_text,
 		"the authored encounter file bytes are unchanged after validation")
-
-
-## True only when the shared typed pool registers this encounter by its own ID
-## or by its schedule path. The pool is a shared catalog other lanes append to,
-## so this looks the encounter up by its own identity, never by a total.
-func _shared_pool_registers_encounter() -> bool:
-	var file := FileAccess.open(TYPED_POOL_PATH, FileAccess.READ)
-	if file == null:
-		return false
-	var parsed: Variant = JSON.parse_string(file.get_as_text())
-	file.close()
-	if not parsed is Dictionary:
-		return false
-	for kind in parsed:
-		var group = parsed[kind]
-		if not group is Dictionary:
-			continue
-		for encounter_id in group:
-			var entry = group[encounter_id]
-			if not entry is Dictionary:
-				continue
-			if encounter_id == ENCOUNTER_ID or entry.get("schedule") == ENCOUNTER_PATH:
-				return true
-	return false
 
 
 ## AC1: the two earlier named encounters still parse and still validate on

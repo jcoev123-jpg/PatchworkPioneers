@@ -1,14 +1,14 @@
 extends SceneTree
 
 ## Deterministic headless coverage for the authored Hemhook Exposed Swap
-## encounter (standalone M04 Fight content; NOT registered in the live pool):
+## encounter (published in the real production M04 Fight pool):
 ##   enemy_position 1 (Spool Stalker): beat 1 shove, beat 2 Block 2, beat 3 attack 3.
 ##   enemy_position 2 (Seam Ripper): beat 1 Exposed 1, beat 2 attack 4, beat 3 self-Block 2.
 ##   enemy_position 3 (Fray Scavenger): beat 1 attack 4, beat 2 attack 3, beat 3 attack 4.
 ## Beat 1 swaps the front Warden (1) with the middle Seamstress (2) BEFORE the
 ## Exposed debuff lands, so the Seamstress - not the Warden - carries Exposed 1
 ## and eats floor(4 * 1.5) = 6 damage while the Warden keeps his opening 6 Block.
-## No live wiring, pool entry or UI here.
+## The source/phase fixture complements real routed production entry coverage.
 
 const ENCOUNTER_PATH := "res://data/encounters/hemhook_exposed_swap.json"
 const ENCOUNTER_ID := "hemhook_exposed_swap"
@@ -153,9 +153,9 @@ func _build_party() -> CombatParty:
 	return party
 
 
-## A real typed Fight selection through the production selector and the
-## production roster bridge. The pool is test-local: registering this
-## encounter in the shipped pool file is a later task.
+## A focused typed Fight selection through the production selector and the
+## roster bridge; the full shipped pool is exercised separately by the
+## published-pressure Fight regression.
 func _typed_choice() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = FIXED_SEED
@@ -247,11 +247,15 @@ func _test_ac1_authored_schedule_and_intents() -> void:
 	_check(intents.advance_turn(), "advance to beat 4")
 	_check(intents.get_intents() == _expected_beat(0), "beat 4 repeats beat 1 exactly")
 
-	# The shipped typed pool file is untouched by this encounter; registering
-	# this Fight there and in the live route is a later task.
+	# Require the exact production binding, not merely a test-local choice.
 	var pools: Variant = JSON.parse_string(_read_text(TYPED_POOLS_PATH))
 	_check(pools is Dictionary and pools.get("Fight") is Dictionary,
-		"the shipped typed battle pool file still parses with a Fight pool")
+		"the shipped typed battle pool parses with a Fight pool")
+	if pools is Dictionary and pools.get("Fight") is Dictionary:
+		_check(pools["Fight"].get(ENCOUNTER_ID) == {
+			"schedule": ENCOUNTER_PATH,
+			"enemy_ids": ["spool_stalker", "seam_ripper", "fray_scavenger"]},
+			"Hemhook has the exact production Fight schedule and ordered roster")
 
 
 ## AC2: the real first enemy phase over the shipped heroes and the shipped

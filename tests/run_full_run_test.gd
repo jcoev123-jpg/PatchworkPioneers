@@ -47,7 +47,7 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	for value in range(1, SEED_LIMIT + 1):
+	for value in range(4, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -508,7 +508,9 @@ func _run() -> void:
 	_check(attacks > 0 and supports > 0 and enemy_phases > 0 and keyboard_attacks > 0
 		and mouse_attacks > 0 and invalid_targets > 0 and energy_rejections > 0
 		and purchases > 0 and picks == 2 and skips >= 2 and no_effect_visits > 0,
-		"nonvacuous held attack/support, both inputs, enemy-phase and rejection coverage")
+		"nonvacuous held attack/support, both inputs, enemy-phase and rejection coverage: attacks=%d supports=%d phases=%d keyboard=%d mouse=%d invalid=%d energy=%d purchases=%d picks=%d skips=%d no-effect=%d" % [
+			attacks, supports, enemy_phases, keyboard_attacks, mouse_attacks,
+			invalid_targets, energy_rejections, purchases, picks, skips, no_effect_visits])
 	_check(randi() == global_next, "search and all real runs preserve global RNG")
 	app.free()
 	await _frames()

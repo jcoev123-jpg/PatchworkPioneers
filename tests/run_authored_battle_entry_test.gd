@@ -2,12 +2,15 @@ extends SceneTree
 
 const POOLS := "res://data/encounters/m03_typed_battle_pools.json"
 const SOURCES := [
+    "res://data/encounters/buttonfront_pinfall.json",
     "res://data/encounters/front_hem_pivot.json",
     "res://data/encounters/rear_spool_reversal.json",
     "res://data/encounters/rearline_needlemark.json",
     "res://data/encounters/middlemark_clamp.json",
     "res://data/encounters/backhem_pinwheel.json",
     "res://data/encounters/hemdrag_relay.json",
+    "res://data/encounters/spoolbridge_staggered_exposure.json",
+    "res://data/encounters/hemhook_exposed_swap.json",
     POOLS,
     "res://data/enemies/starter_enemies.json",
     "res://data/enemies/run_enemies.json",
@@ -51,12 +54,15 @@ const ART_PATHS := {
 }
 const BINDINGS := {
     "Fight": {
+        "buttonfront_pinfall": ["button_guard", "fray_scavenger"],
         "front_hem_pivot": ["button_guard", "fray_scavenger"],
         "rear_spool_reversal": ["spool_stalker", "seam_ripper"],
         "rearline_needlemark": ["fray_scavenger", "seam_ripper"],
         "middlemark_clamp": ["spool_stalker", "seam_ripper"],
         "backhem_pinwheel": ["fray_scavenger", "button_guard", "spool_stalker"],
         "hemdrag_relay": ["seam_ripper", "button_guard"],
+        "spoolbridge_staggered_exposure": ["spool_stalker", "seam_ripper"],
+        "hemhook_exposed_swap": ["spool_stalker", "seam_ripper", "fray_scavenger"],
         "starter_attacks": ["ragling", "ragling_guard"],
         "bobbin_skirmish": ["fray_scavenger", "spool_stalker"],
         "buttonhole_holdout": ["button_guard", "seam_ripper"],
@@ -156,6 +162,14 @@ func _registry() -> Dictionary:
 
 func _expected_actions() -> Dictionary:
     return {
+        "buttonfront_pinfall": [
+            [{"type": "debuff", "amount": 1, "target_position": 1, "status": "exposed"},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 3, "target_position": 2}],
+            [{"type": "attack", "amount": 4, "target_position": 1},
+             {"type": "attack", "amount": 3, "target_position": 3},
+             {"type": "buff", "amount": 2}],
+        ],
         "front_hem_pivot": [
             [{"type": "shove", "amount": 0, "target_position": 1, "direction": 1},
              {"type": "block", "amount": 2},
@@ -206,6 +220,25 @@ func _expected_actions() -> Dictionary:
             [{"type": "block", "amount": 2},
              {"type": "attack", "amount": 3, "target_position": 3},
              {"type": "buff", "amount": 3}],
+        ],
+        "spoolbridge_staggered_exposure": [
+            [{"type": "shove", "amount": 0, "target_position": 2, "direction": 1},
+             {"type": "debuff", "amount": 1, "target_position": 3, "status": "exposed"},
+             {"type": "attack", "amount": 3, "target_position": 2}],
+            [{"type": "attack", "amount": 4, "target_position": 3},
+             {"type": "attack", "amount": 5, "target_position": 3},
+             {"type": "buff", "amount": 2}],
+        ],
+        "hemhook_exposed_swap": [
+            [{"type": "shove", "amount": 0, "target_position": 1, "direction": 1},
+             {"type": "block", "amount": 2},
+             {"type": "attack", "amount": 3, "target_position": 1}],
+            [{"type": "debuff", "amount": 1, "target_position": 1, "status": "exposed"},
+             {"type": "attack", "amount": 4, "target_position": 2},
+             {"type": "buff", "amount": 2}],
+            [{"type": "attack", "amount": 4, "target_position": 1},
+             {"type": "attack", "amount": 3, "target_position": 3},
+             {"type": "attack", "amount": 4, "target_position": 2}],
         ],
         "starter_attacks": [
             [{"type": "attack", "amount": 1, "target_position": 1},

@@ -97,6 +97,14 @@
         "seam_ripper",
         "button_guard"
       ]
+    },
+    "spoolbridge_staggered_exposure": {
+      "schedule": "res://data/encounters/spoolbridge_staggered_exposure.json",
+      "enemy_ids": ["spool_stalker", "seam_ripper"]
+    },
+    "hemhook_exposed_swap": {
+      "schedule": "res://data/encounters/hemhook_exposed_swap.json",
+      "enemy_ids": ["spool_stalker", "seam_ripper", "fray_scavenger"]
     }
   },
   "Elite": {
