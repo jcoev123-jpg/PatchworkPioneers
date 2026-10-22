@@ -320,13 +320,12 @@ func _test_rejections_ac3() -> void:
 	result = resolver.resolve_sight_glass(deck, party, enemies, "tinker_sight_glass", 1)
 	_assert_rejection(result, before, _full_snapshot(deck, party, enemies), "Sight Glass slain target pos1")
 
-	## 7. Nonzero target passed for Spare Parts (should be ignored by design but we test)
+	## 7. Nonzero target passed for Spare Parts (should reject atomically)
 	party = _party(["warden", "tinker", "seamstress"])
 	deck = _deck(["tinker_spare_parts"])
 	before = _full_snapshot(deck, party)
-	result = resolver.resolve_spare_parts(deck, party, "tinker_spare_parts")
-	_check(result["ok"], "Spare Parts accepted with no target param (design)")
-	## The resolver doesn't take a target param for Spare Parts, so this is inherent
+	result = resolver.resolve_spare_parts(deck, party, "tinker_spare_parts", 1)
+	_assert_rejection(result, before, _full_snapshot(deck, party), "Spare Parts nonzero target")
 
 	## 8. Block capacity rejection (Spare Parts)
 	party = _party()
@@ -340,10 +339,12 @@ func _test_rejections_ac3() -> void:
 	party = _party(["warden", "tinker", "seamstress"])
 	enemies = _enemies([50, 50, 50])
 	deck = _deck(["tinker_sight_glass"])
-	## Test that can_apply_statuses rejects overflow
+	## Set enemy at position 1 to have Exposed at MAX_INT - 1 so adding 2 overflows
+	_check(enemies.apply_statuses({1: {"exposed": CombatEnemies.MAX_INT - 1}}), "pre-existing Exposed near MAX_INT")
+	_check(not enemies.can_apply_statuses({1: {"exposed": 2}}), "can_apply_statuses rejects overflow")
 	before = _full_snapshot(deck, party, enemies)
 	result = resolver.resolve_sight_glass(deck, party, enemies, "tinker_sight_glass", 1)
-	_check(result["ok"], "Sight Glass valid play for capacity baseline")
+	_assert_rejection(result, before, _full_snapshot(deck, party, enemies), "Sight Glass status capacity")
 
 	## 10. Equal-seed replay: valid play twice with same seed gives identical outcomes
 	party = _party(["warden", "tinker", "seamstress"])

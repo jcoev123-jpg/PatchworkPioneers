@@ -16,8 +16,12 @@ func _init() -> void:
 ##
 ## Returns {ok: true, block: int, drawn: int} on success,
 ## {ok: false} on rejection (no state changes).
+## Rejects any nonzero target_position (Spare Parts has target_kind self).
 func resolve_spare_parts(deck: CombatDeck, party: CombatParty,
-		card_id: String) -> Dictionary:
+		card_id: String, target_position: int = 0) -> Dictionary:
+	## Reject any nonzero target_position (Spare Parts has target_kind self).
+	if target_position != 0:
+		return _failure()
 	if deck == null or party == null or not deck.turn_active or not party.is_valid():
 		return _failure()
 	if not deck.hand.has(card_id) or deck.energy < 0:
