@@ -280,6 +280,24 @@ func play_from_hand(deck: Variant, party: Variant, card_id: Variant) -> bool:
 	return d.discard_played(id)
 
 
+## Read-only recipient preview shared with the ordered enemy phase so statuses
+## are calculated for the actor who will actually take the hit.
+## A downed announced target remains ineligible even if Guarding is active.
+func preview_actual_recipient(party: CombatParty, target_position: int) -> Dictionary:
+	var failure := {"ok": false, "eligible": false, "actual_target_position": 0, "redirected": false}
+	if party == null or not party.is_valid() \
+			or target_position < 1 or target_position > CombatParty.PARTY_SIZE:
+		return failure
+	if party.is_downed(target_position):
+		return {"ok": true, "eligible": false, "actual_target_position": target_position, "redirected": false}
+	var warden_position: int = _find_warden_position(party)
+	var redirect: bool = guarding and warden_position > 0 \
+		and not party.is_downed(warden_position) and target_position != warden_position
+	return {"ok": true, "eligible": true,
+		"actual_target_position": warden_position if redirect else target_position,
+		"redirected": redirect}
+
+
 ## Resolves an incoming enemy attack against the party and roster.
 ## Validates input, skips slain sources and downed targets, retargets while Guarding,
 ## applies damage, and retaliates with Thorns if Warden was hit.
@@ -364,16 +382,13 @@ func resolve_enemy_attack(party_val: Variant, enemies_val: Variant, attack_val: 
 			"retaliatory_damage": 0,
 		}
 
-	# 3. Determine actual target (Guarding redirection)
+	# 3. Use the same read-only recipient decision the phase used for damage math.
+	var preview: Dictionary = preview_actual_recipient(party, target)
+	if not preview["ok"]:
+		return fail_res
 	var warden_pos: int = _find_warden_position(party)
-	var warden_alive: bool = warden_pos > 0 and not party.is_downed(warden_pos)
-	var actual_target: int = target
-	var redirected: bool = false
-
-	if guarding and warden_alive:
-		if target != warden_pos:
-			actual_target = warden_pos
-			redirected = true
+	var actual_target: int = preview["actual_target_position"]
+	var redirected: bool = preview["redirected"]
 
 	# 4. Apply damage to actual target
 	var applied: bool = party.apply_damage(actual_target, amount)
