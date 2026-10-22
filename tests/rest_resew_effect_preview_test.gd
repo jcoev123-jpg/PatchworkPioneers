@@ -106,6 +106,12 @@ func _forecast_and_commit(f: Dictionary, patch: String, target: String, kind: St
 		"both full projected assignments, effects and active flags match")
 	_check(w.get_snapshot() == original and t.read_state() == torn_before
 		and option == option_before, "pure preview leaves ledger, torn and option untouched")
+	if slot != "COAT":
+		_check(result.source.before.hp == result.source.after.hp
+			and result.destination.before.hp == result.destination.after.hp
+			and result.source.before.effective_max_hp == result.source.after.effective_max_hp
+			and result.destination.before.effective_max_hp == result.destination.after.effective_max_hp,
+			"HEAD/ARM preview preserves HP and effective maximum HP for both wearers")
 	var repeat := RunRestPatchResewOptions.forecast(w, t, original, f.rest, option)
 	_check(result == repeat, "same exact snapshot gives identical detached result")
 	result.source.after.slots[slot].id = "corruption"
@@ -138,6 +144,10 @@ func _expected_slots(assignments: Dictionary, heroes: Array, owner: String) -> D
 			effect = "damage-dealing cards: +1 damage"
 		elif id == "quilted_coat":
 			effect = "+6 effective max HP (no heal)"
+		elif id == CombatShopPatchRules.STITCHED_BADGE_ID:
+			effect = "+%d opening Block to living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
+		elif id == CombatShopPatchRules.SPARE_SPOOL_ID:
+			effect = "+%d healing on positive-heal cards owned by wearer only" % CombatShopPatchRules.HEALING_CARD_BONUS
 		slots[slot] = {"id": id, "active": id != "" and hp > 0, "effect": effect}
 	return slots
 
@@ -147,6 +157,10 @@ func _pure_tests() -> void:
 	_forecast_and_commit(_fixture(), "button_eye", "seamstress", "SWAP")
 	_forecast_and_commit(_fixture(), "pincushion_arm", "warden", "MOVE")
 	_forecast_and_commit(_fixture(), "quilted_coat", "warden", "MOVE")
+	_forecast_and_commit(_fixture(), "stitched_badge", "tinker", "MOVE")
+	_forecast_and_commit(_fixture(), "stitched_badge", "warden", "SWAP")
+	_forecast_and_commit(_fixture(), "spare_spool", "warden", "MOVE")
+	_forecast_and_commit(_fixture(), "spare_spool", "seamstress", "SWAP")
 	var f := _fixture()
 	var choice := _option(f, "quilted_coat", "warden")
 	if choice.is_empty():
@@ -161,9 +175,11 @@ func _pure_tests() -> void:
 		and forecast.destination.after.base_max_hp == 40,
 		"+6 only at active coat wearer; no HP healing or max HP mutation")
 	_check(forecast.source.before.slots.ARM.id == "spare_spool"
-		and forecast.source.before.slots.ARM.effect == ""
+		and forecast.source.before.slots.ARM.effect.contains(
+			str(CombatShopPatchRules.HEALING_CARD_BONUS))
+		and forecast.source.before.slots.ARM.effect.contains("owned by wearer only")
 		and forecast.destination.before.slots.HEAD.id == "button_eye",
-		"unknown Shop ID has no invented rule and unrelated slots remain visible")
+		"Spare Spool accurately previews owned-heal bonus alongside other slots")
 
 
 func _torn_test() -> void:
@@ -204,6 +220,42 @@ func _torn_test() -> void:
 		and not health.destination.after.slots.COAT.active
 		and health.destination.after.slots.COAT.effect.contains("+6"),
 		"torn coat target has dormant +6, effective cap 37 not 43, no revival")
+
+
+func _torn_shop_test() -> void:
+	var f := _fixture()
+	var w: RunPatchWardrobe = f.w
+	var t: RunTornMending = f.t
+	var original: Array = t.read_state().heroes
+	var ending: Array = original.duplicate(true)
+	ending[1].hp = 0
+	ending[2].hp = 0
+	_check(t.observe_battle_end("shop_torn", original, ending).ok,
+		"real battle tears both Shop patch wearers")
+	var stale := w.get_snapshot()
+	_check(w.refresh_run_context(t.read_state().heroes, stale.owned,
+		stale.scraps, stale.gold, stale.cards, stale), "Shop forecast uses exact torn context")
+	for entry in [["stitched_badge", "warden", "HEAD", "seamstress"],
+			["spare_spool", "warden", "ARM", "tinker"]]:
+		var option := _option(f, entry[0], entry[1])
+		_check(not option.is_empty(), "legal move from torn Shop wearer")
+		if option.is_empty():
+			continue
+		var before := w.get_snapshot()
+		var forecast := RunRestPatchResewOptions.forecast(w, t, before, f.rest, option)
+		if not forecast.ok:
+			_check(false, "torn Shop forecast remains available")
+			continue
+		var source_slot: Dictionary = forecast.source.before.slots[entry[2]]
+		var destination_slot: Dictionary = forecast.destination.after.slots[entry[2]]
+		_check(forecast.source.hero_id == entry[3]
+			and forecast.destination.hero_id == "warden"
+			and not source_slot.active and destination_slot.active
+			and source_slot.effect == destination_slot.effect
+			and source_slot.effect.contains(str(CombatShopPatchRules.EFFECTS[entry[0]]["amount"]))
+			and forecast.source.before.hp == 0 and forecast.destination.after.hp == 40
+			and w.get_snapshot() == before,
+			"Shop effect described but dormant on torn wearer; active if moved")
 
 
 func _option_unchecked(f: Dictionary, patch: String, target: String) -> Dictionary:
@@ -306,6 +358,44 @@ func _ui_test(activation: Key) -> void:
 	var calls := []
 	picker.re_sew_requested.connect(func(p, source, dest, node, snap):
 		calls.append([p, source, dest, node, snap]))
+	# Exercise both Shop powers through physical mouse selections; the following
+	# Button Eye selection exercises the keyboard on this same mounted picker.
+	for spec in [
+			["stitched_badge", "tinker", "MOVE", "HEAD", "opening Block",
+				CombatShopPatchRules.OPENING_BLOCK_BONUS],
+			["stitched_badge", "warden", "SWAP", "HEAD", "opening Block",
+				CombatShopPatchRules.OPENING_BLOCK_BONUS],
+			["spare_spool", "warden", "MOVE", "ARM", "positive-heal",
+				CombatShopPatchRules.HEALING_CARD_BONUS],
+			["spare_spool", "seamstress", "SWAP", "ARM", "positive-heal",
+				CombatShopPatchRules.HEALING_CARD_BONUS]]:
+		var source_index := -1
+		for i in range(picker._sources.size()):
+			if picker._sources[i].patch_id == spec[0]:
+				source_index = i
+		_check(source_index >= 0, "Shop patch is a selectable real source: " + spec[0])
+		if source_index < 0:
+			continue
+		await _pick(picker.source_selector, source_index, false)
+		var destination_index := -1
+		for i in range(picker._destinations.size()):
+			if picker._destinations[i].to_hero == spec[1]:
+				destination_index = i
+		_check(destination_index >= 0, "Shop patch has legal same-slot destination: " + str(spec[0]) + " to " + str(spec[1]))
+		if destination_index < 0:
+			continue
+		await _pick(picker.destination_selector, destination_index, false)
+		var preview: String = picker.preview_label.text
+		_check(preview.contains(spec[2]) and preview.contains("BEFORE")
+			and preview.contains("AFTER") and preview.contains("Cost: 1 scrap")
+			and preview.contains(spec[3] + " " + spec[0] + " (active)")
+			and preview.contains(spec[4]) and preview.contains(str(spec[5]))
+			and not picker.confirm_button.disabled,
+			"physical mouse choice shows real Shop MOVE/SWAP and exact active power: "
+			+ spec[0] + " to " + spec[1])
+	_check(picker.present(w, t, original, f.rest),
+		"mounted picker can re-present the same unchanged Rest after Shop inspection")
+	await _frames()
 	var head_index := -1
 	for i in range(picker._sources.size()):
 		if picker._sources[i].patch_id == "button_eye":
@@ -433,6 +523,7 @@ func _deny_test() -> void:
 func _run() -> void:
 	_pure_tests()
 	_torn_test()
+	_torn_shop_test()
 	await _ui_test(KEY_SPACE)
 	await _ui_test(KEY_ENTER)
 	_deny_test()

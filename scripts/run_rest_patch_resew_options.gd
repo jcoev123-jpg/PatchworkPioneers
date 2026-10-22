@@ -97,14 +97,20 @@ static func forecast(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		CombatPatchAttackRules.CATALOG))
 	var coat_rules: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/patches/m04_coat_patches.json"))
+	var shop_slots: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
 	if not CombatPatchAttackRules.new()._valid_catalog(attack_rules) \
 			or typeof(coat_rules) != TYPE_ARRAY \
-			or not RunPatchCoatRules._valid_authored(coat_rules):
+			or not RunPatchCoatRules._valid_authored(coat_rules) \
+			or not CombatShopPatchRules._valid_slot_catalog(shop_slots):
 		return rejected
 	var definitions: Dictionary = exact_snapshot["definitions"]
 	# Known authored IDs must not be mis-slotted in a caller-supplied ledger.
 	for id in CombatPatchAttackRules.EFFECTS:
 		if definitions.has(id) and definitions[id] != CombatPatchAttackRules.EFFECTS[id]["slot"]:
+			return rejected
+	for id in CombatShopPatchRules.EFFECTS:
+		if definitions.has(id) and definitions[id] != CombatShopPatchRules.EFFECTS[id]["slot"]:
 			return rejected
 	if definitions.has(RunPatchCoatRules.BONUS_ID) \
 			and definitions[RunPatchCoatRules.BONUS_ID] != "COAT":
@@ -150,7 +156,13 @@ static func _wearer(hero: Dictionary, assignments: Dictionary) -> Dictionary:
 		var id: String = assignments[slot]
 		var effect := ""
 		# Only authoritative documented rules get a power description.
-		if id == "button_eye" and slot == CombatPatchAttackRules.EFFECTS[id]["slot"]:
+		if id == CombatShopPatchRules.STITCHED_BADGE_ID \
+				and slot == CombatShopPatchRules.EFFECTS[id]["slot"]:
+			effect = "+%d opening Block to living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
+		elif id == CombatShopPatchRules.SPARE_SPOOL_ID \
+				and slot == CombatShopPatchRules.EFFECTS[id]["slot"]:
+			effect = "+%d healing on positive-heal cards owned by wearer only" % CombatShopPatchRules.HEALING_CARD_BONUS
+		elif id == "button_eye" and slot == CombatPatchAttackRules.EFFECTS[id]["slot"]:
 			effect = "first attack each combat: Exposed %d" % CombatPatchAttackRules.EFFECTS[id]["amount"]
 		elif id == "pincushion_arm" and slot == CombatPatchAttackRules.EFFECTS[id]["slot"]:
 			effect = "damage-dealing cards: +%d damage" % CombatPatchAttackRules.EFFECTS[id]["amount"]
