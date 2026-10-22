@@ -1,15 +1,12 @@
 extends Node
-## Compact live adapter for the two authored Blanket Stitch Bleed pool cards.
-## Input and presentation only: CombatSeamstressPoolBleed owns the cost, the
-## Bleed application (including the Seamstress passive) and every rejection, so
-## a refused cast never spends energy or mutates a pile, roster or the RNG.
-## Blanket Stitch is target-free: it hits every living enemy slot. This adapter
-## therefore adds no target picker, no compacted slot and no parallel combat
-## button, and it binds nothing but its own two real held hand panels. The
-## normal attack (LiveAttackPreview) and support (LiveSupportHand) presenters
-## keep owning every card they already own.
+## Mounted input/face adapter for target-free Blanket Stitch, Scatter Bolts and
+## Ricochet. The existing Bleed and Tinker resolvers own every mutation; the
+## starter presenter owns the shared Tinker first-attack latch.
 
-const CARD_IDS := ["seamstress_blanket_stitch", "seamstress_blanket_stitch_plus"]
+const SEAMSTRESS_IDS := ["seamstress_blanket_stitch", "seamstress_blanket_stitch_plus"]
+const TINKER_IDS := ["tinker_scatter_bolts", "tinker_scatter_bolts_plus",
+	"tinker_ricochet", "tinker_ricochet_plus"]
+const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -23,6 +20,8 @@ var button: Button
 
 var _service := CombatSeamstressPoolBleed.new()
 var _catalog := SeamstressPoolCards.new()
+var _tinker_catalog := TinkerPoolCards.new()
+var last_event: Dictionary = {}
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -42,6 +41,23 @@ func _process(_delta: float) -> void:
 
 func _is_card(card_id: String) -> bool:
 	return card_id in CARD_IDS
+
+
+func _definition(card_id: String) -> Dictionary:
+	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS else _catalog.get_definition(card_id)
+
+
+## Reuse the starter attack presenter's actual session- and turn-matched latch.
+## Never synthesize one on a newly bound panel or for a stale presenter.
+func _live_tinker_latch(app) -> CombatTinkerFirstAttack:
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or not preview.is_inside_tree() \
+			or preview._battle != _battle or preview._deck != _deck \
+			or preview._session != [app.party, app.enemies, app.battle_result,
+				app.run_rng, app.enemy_intents] or preview._turn != _turn \
+			or not preview._play is CombatAttackCards:
+		return null
+	return preview._play._tinker
 
 
 ## True only for a real, currently held blank stitch panel whose mounted label,
@@ -84,6 +100,7 @@ func _sync_battle() -> void:
 		_result = app.battle_result
 		_rng = app.run_rng
 		_turn = _turn_index(app)
+		last_event.clear()
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 	elif _turn != _turn_index(app):
 		_turn = _turn_index(app)
@@ -145,10 +162,18 @@ func _bind(panel: Control, card_id: String) -> void:
 
 
 func _rule_text(card_id: String) -> String:
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	if definition.get("id") != card_id:
 		return "Unknown card rules"
 	var effects: Dictionary = definition.get("effects", {})
+	if card_id in TINKER_IDS:
+		var detail: String = ("Scatter each living enemy for %d damage once" % int(effects.get("damage", 0))
+			if definition.get("target_kind") == "enemy_all" else
+			"Ricochet %d random living hits, %d damage each (run RNG)" % [
+				int(effects.get("hit_count", 0)), int(effects.get("damage", 0))])
+		return "%s | Tinker | %d energy | From %s\nEnemies %s: %s; first attack +3, no target choice" % [
+			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
+			_positions(definition.get("from_positions", [])), _positions(definition.get("to_positions", [])), detail]
 	var bleed: int = int(effects.get("bleed", 0))
 	return "%s | %d energy | From %s\nAll living enemies %s: Bleed %d (%d + Seamstress passive 1), no target choice" % [
 		String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
@@ -171,9 +196,11 @@ func _positions(positions: Array) -> String:
 ## face over that placeholder. The original first-child ID Label, the panel's
 ## input routing and every shared control stay exactly as they were.
 func _mount_cue(panel: Control, card_id: String) -> void:
-	var definition: Dictionary = _catalog.get_definition(card_id)
+	var definition: Dictionary = _definition(card_id)
 	if definition.get("id") != card_id:
 		return
+	var is_tinker: bool = card_id in TINKER_IDS
+	var owner_color: Color = TINKER if is_tinker else SEAMSTRESS
 	for existing in panel.get_children():
 		if existing.name == CUE_NAME:
 			panel.remove_child(existing)
@@ -185,7 +212,7 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 	cue.focus_mode = Control.FOCUS_NONE
 	var style := StyleBoxFlat.new()
 	style.bg_color = CREAM
-	style.border_color = TINKER if upgraded else SEAMSTRESS
+	style.border_color = owner_color
 	style.set_border_width_all(2)
 	style.set_corner_radius_all(4)
 	cue.add_theme_stylebox_override("panel", style)
@@ -219,15 +246,24 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 	var bleed: int = int(effects.get("bleed", 0))
 	var from_positions: Array = definition.get("from_positions", [])
 	var to_positions: Array = definition.get("to_positions", [])
-	var variant_label := _cue_label("%s | Seamstress | From %s" % [
-		"Upgraded" if upgraded else "Base", _positions(from_positions)], 9, SEAMSTRESS)
+	var variant_label := _cue_label("%s | %s | From %s" % [
+		"Upgraded" if upgraded else "Base", "Tinker" if is_tinker else "Seamstress",
+		_positions(from_positions)], 9, owner_color)
 	variant_label.name = "Variant"
 	column.add_child(variant_label)
-	var area_label := _cue_label("All enemies %s" % _positions(to_positions), 11, INK)
+	var area_label := _cue_label("%s enemies %s" % [
+		"Random living" if is_tinker and definition.get("target_kind") == "enemy_random" else "All",
+		_positions(to_positions)], 11, INK)
 	area_label.name = "Area"
 	column.add_child(area_label)
-	var bleed_label := _cue_label("Bleed %d (%d + passive 1)" % [bleed + 1, bleed], 11, RUST)
-	bleed_label.name = "Bleed"
+	var detail: String = "Bleed %d (%d + passive 1)" % [bleed + 1, bleed]
+	if is_tinker:
+		detail = ("%d damage each (+3 first attack)" % int(effects.get("damage", 0))
+			if definition.get("target_kind") == "enemy_all" else
+			"%d hits x %d damage (+3 first attack)" % [
+				int(effects.get("hit_count", 0)), int(effects.get("damage", 0))])
+	var bleed_label := _cue_label(detail, 11, RUST)
+	bleed_label.name = "Effect" if is_tinker else "Bleed"
 	column.add_child(bleed_label)
 	var target_label := _cue_label("No target choice", 9, RUST)
 	target_label.name = "Target"
@@ -336,7 +372,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String) -> void:
 func _receipt(panel: Control, card_id: String) -> Dictionary:
 	return {"battle": _battle, "deck": _deck, "party": _party, "enemies": _enemies,
 		"result": _result, "rng": _rng, "turn": _turn, "panel": panel,
-		"index": panel.get_index(), "id": card_id}
+		"index": panel.get_index(), "id": card_id, "intents": get_parent().enemy_intents}
 
 
 func _receipt_valid(receipt: Dictionary) -> bool:
@@ -348,6 +384,8 @@ func _receipt_valid(receipt: Dictionary) -> bool:
 	if receipt.get("battle") != _battle or receipt.get("deck") != _deck \
 			or receipt.get("party") != _party or receipt.get("enemies") != _enemies \
 			or receipt.get("result") != _result or receipt.get("rng") != _rng:
+		return false
+	if app.enemy_intents != receipt.get("intents") or app.enemy_intents == null:
 		return false
 	if app.battle_view != _battle or app.deck != _deck or app.party != _party \
 			or app.enemies != _enemies or app.battle_result != _result or app.run_rng != _rng:
@@ -392,12 +430,21 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	if not _receipt_valid(receipt) or not _eligible(panel, card_id):
 		_cancel()
 		return
-	# The service revalidates everything and never spends on a refusal.
-	var event: Dictionary = _service.play_card(receipt.deck, receipt.party,
-		receipt.enemies, card_id, 0)
+	# The existing resolvers revalidate every condition before mutation.
+	var event: Dictionary
+	if card_id in TINKER_IDS:
+		var latch: CombatTinkerFirstAttack = _live_tinker_latch(get_parent())
+		if latch == null:
+			_cancel()
+			return
+		event = CombatTinkerPoolAttacks.new(latch).play_attack(receipt.deck,
+			receipt.party, receipt.enemies, card_id, 0)
+	else:
+		event = _service.play_card(receipt.deck, receipt.party, receipt.enemies, card_id, 0)
 	if not event.get("ok", false):
 		_cancel()
 		return
+	last_event = event.duplicate(true)
 	_after_cast()
 
 
@@ -434,3 +481,4 @@ func _clear() -> void:
 	_result = null
 	_rng = null
 	_turn = -1
+	last_event.clear()
