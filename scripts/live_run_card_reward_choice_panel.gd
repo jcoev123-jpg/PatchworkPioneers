@@ -25,7 +25,14 @@ const RARITY_STITCH_COLORS := {
 
 const CARD_PAPER := Color("#ece0c8")
 const DARK_INK := Color("#302b29")
+const LIGHT_INK := Color("#fbf3e4")
 const STITCH_THREAD := Color("#c9b996")
+
+## The sewn owner strip only needs to grow enough for a readable hero name;
+## the paper's top and bottom seams give up exactly those pixels (see
+## _apply_patchwork_style), so no card control moves or clips.
+const OWNER_STRIP_HEIGHT := 24
+const OWNER_NAME_FONT_SIZE := 14
 
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/RewardContent/RewardTitle
@@ -89,6 +96,7 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	skip_button.disabled = false
 	skip_button.focus_mode = Control.FOCUS_ALL
 	_style_button(skip_button, Color("#766351"))
+	_add_focus_stitch(skip_button)
 	_choice_buttons.append(skip_button)
 	_bound_choices[skip_button] = ""
 	skip_button.pressed.connect(_on_choice_pressed.bind(_generation, _node_id, "", skip_button))
@@ -167,12 +175,18 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	content.add_theme_constant_override("separation", 4)
 	margin.add_child(content)
 
-	# Owner color patch (sewn stripe at top)
+	# Owner color patch (sewn stripe at top) with the owning hero's name sewn in
+	var owner := String(offer["owner"])
 	var owner_patch := _OwnerPatch.new()
 	owner_patch.name = "OwnerPatch"
-	owner_patch.owner_color = OWNER_COLORS[offer["owner"]]
-	owner_patch.custom_minimum_size = Vector2(0, 18)
+	owner_patch.owner_color = OWNER_COLORS[owner]
+	owner_patch.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
 	content.add_child(owner_patch)
+	var owner_label := _card_label("OwnerLabel", owner.capitalize(), OWNER_NAME_FONT_SIZE)
+	owner_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	owner_label.add_theme_color_override("font_color", owner_ink(owner))
+	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	owner_patch.add_child(owner_label)
 
 	# Name on a pinned torn-paper strip
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
@@ -258,6 +272,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action.mouse_filter = Control.MOUSE_FILTER_STOP
 	_style_button(action, OWNER_COLORS[offer["owner"]])
+	_add_focus_stitch(action)
 	content.add_child(action)
 
 	var offered_id := String(offer["id"])
@@ -569,6 +584,12 @@ func _apply_patchwork_style() -> void:
 	paper.shadow_color = Color(0.03, 0.06, 0.07, 0.8)
 	paper.shadow_size = 12
 	paper_panel.add_theme_stylebox_override("panel", paper)
+	# The readable owner strip is paid for out of the paper's vertical seams so
+	# the three cards keep their name, cost, pips, rules and Choose geometry.
+	var content_margin := get_node_or_null("PaperPanel/ContentMargin") as MarginContainer
+	if content_margin != null:
+		content_margin.add_theme_constant_override("margin_top", 15)
+		content_margin.add_theme_constant_override("margin_bottom", 15)
 	for label in [title_label, gold_label, trinket_label]:
 		label.add_theme_color_override("font_color", Color("#263137"))
 	title_label.add_theme_font_size_override("font_size", 31)
@@ -595,13 +616,54 @@ func _style_button(button: Button, accent: Color) -> void:
 		button.add_theme_stylebox_override(state, box)
 	var focus := StyleBoxFlat.new()
 	focus.bg_color = Color.TRANSPARENT
-	focus.border_color = Color("#fffaf0")
-	focus.set_border_width_all(5)
+	focus.border_color = _FocusStitch.DARK_FOCUS_INK
+	focus.set_border_width_all(3)
 	focus.set_corner_radius_all(7)
 	button.add_theme_stylebox_override("focus", focus)
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
 		button.add_theme_color_override(state, Color("#263137"))
+	# Keyboard focus keeps dark ink on the beige face instead of relying on the
+	# engine default focus colour.
+	button.add_theme_color_override("font_focus_color", DARK_INK)
 	button.add_theme_font_size_override("font_size", 20)
+
+
+## A dark, hand-sewn dashed perimeter that follows this button's keyboard focus.
+## The stitch is decoration only: it takes no focus and ignores the mouse.
+func _add_focus_stitch(button: Button) -> void:
+	if button.get_node_or_null("FocusStitch") != null:
+		return
+	var stitch := _FocusStitch.new()
+	stitch.name = "FocusStitch"
+	stitch.target = button
+	button.add_child(stitch)
+
+
+## WCAG relative luminance of a sRGB colour, used only to pick the readable ink
+## for each owner felt. Pure helper: no palette or layout state.
+static func relative_luminance(color: Color) -> float:
+	var channels: Array[float] = [color.r, color.g, color.b]
+	var linear: Array[float] = []
+	for channel: float in channels:
+		linear.append(channel / 12.92 if channel <= 0.03928
+			else pow((channel + 0.055) / 1.055, 2.4))
+	return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+static func contrast_ratio(first: Color, second: Color) -> float:
+	var first_light: float = relative_luminance(first)
+	var second_light: float = relative_luminance(second)
+	return (maxf(first_light, second_light) + 0.05) / (minf(first_light, second_light) + 0.05)
+
+
+## The hero name sewn on the owner strip must stay legible on that hero's felt,
+## so the better-contrasting ink is chosen per palette colour instead of blindly
+## using dark ink on the dark warden/seamstress felts.
+static func owner_ink(owner: String) -> Color:
+	var felt: Color = OWNER_COLORS.get(owner, Color("#736451"))
+	if contrast_ratio(DARK_INK, felt) >= contrast_ratio(LIGHT_INK, felt):
+		return DARK_INK
+	return LIGHT_INK
 
 
 static func _humanize_patch(id: String) -> String:
@@ -633,6 +695,74 @@ class _OwnerPatch extends Control:
 		# Draw running stitch along top edge
 		y = rect.position.y + 2
 		draw_dashed_line(Vector2(rect.position.x + 8, y), Vector2(rect.end.x - 8, y), STITCH_THREAD, 1.5, 6.0)
+
+
+## Dark, visibly dashed seam that follows one button's keyboard focus. The
+## dashes walk all four sides inside the control's own rect and nothing is
+## filled, so the beige button face and its dark label keep their contrast.
+## Input passes straight through: it takes no focus and ignores the mouse.
+class _FocusStitch extends Control:
+	const DARK_FOCUS_INK := Color("#2b2624")
+	const INSET := 5.0
+	const THICKNESS := 2.0
+	const DASH := 7.0
+	const GAP := 5.0
+
+	@export var target: Control
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+		if target != null:
+			target.focus_entered.connect(queue_redraw)
+			target.focus_exited.connect(queue_redraw)
+
+	## Only a real, focused and enabled button paints the perimeter.
+	func is_stitching() -> bool:
+		if target == null or not is_instance_valid(target):
+			return false
+		if not target.is_visible_in_tree() or not target.has_focus():
+			return false
+		if target is BaseButton and (target as BaseButton).disabled:
+			return false
+		return true
+
+	func perimeter_rect() -> Rect2:
+		var inset := Vector2(INSET, INSET)
+		return Rect2(inset, (size - inset * 2.0).max(Vector2.ZERO))
+
+	## Short dashes walked around the four sides in reading order, so the
+	## perimeter is visibly stitched rather than a solid outline.
+	func stitch_dashes() -> Array[PackedVector2Array]:
+		var rect: Rect2 = perimeter_rect()
+		var dashes: Array[PackedVector2Array] = []
+		_walk(rect.position, Vector2(rect.end.x, rect.position.y), dashes)
+		_walk(Vector2(rect.end.x, rect.position.y), rect.end, dashes)
+		_walk(rect.end, Vector2(rect.position.x, rect.end.y), dashes)
+		_walk(Vector2(rect.position.x, rect.end.y), rect.position, dashes)
+		return dashes
+
+	func _walk(from: Vector2, to: Vector2, dashes: Array[PackedVector2Array]) -> void:
+		var length: float = from.distance_to(to)
+		if length <= 0.0:
+			return
+		var travelled: float = 0.0
+		while travelled < length:
+			var dash_end: float = minf(travelled + DASH, length)
+			if dash_end - travelled >= DASH * 0.5:
+				dashes.append(PackedVector2Array([
+					from.lerp(to, travelled / length),
+					from.lerp(to, dash_end / length),
+				]))
+			travelled = dash_end + GAP
+
+	func _draw() -> void:
+		if not is_stitching():
+			return
+		for dash: PackedVector2Array in stitch_dashes():
+			draw_line(dash[0], dash[1], DARK_FOCUS_INK, THICKNESS, true)
 
 
 ## Round sewn energy coin, drawn exactly like the shared hand's cost coin: a

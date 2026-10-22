@@ -315,6 +315,59 @@ func _check_position_marks(pips: LiveRunCardRewardChoicePanel._PositionPips,
 		"position marks keep the authored target kind: " + card_id)
 
 
+## The sewn owner strip must name the hero who owns the offered card in ink
+## that reads against that hero's felt, without disturbing the bound offer.
+func _check_owner_strip(receipt: Dictionary, slot: int) -> void:
+	var offer: Dictionary = receipt["offers"][slot]
+	var card_id := String(offer.get("id", ""))
+	var owner := String(offer.get("owner", ""))
+	var card := panel.choices_container.get_child(slot) as PanelContainer
+	_check(card != null, "owner strip card is mounted: " + card_id)
+	if card == null:
+		return
+	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+	var patch := content.get_node_or_null("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+	var label: Label = null
+	if patch != null:
+		label = patch.get_node_or_null("OwnerLabel") as Label
+	_check(patch != null and label != null, "owner strip mounts a hero name: " + card_id)
+	if patch == null or label == null:
+		return
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	# The printed name is derived from the receipt's validated owner, and the
+	# stripe behind it paints that same owner's palette.
+	_check(not owner.is_empty() and label.text == owner.capitalize(),
+		"owner strip prints the validated owning hero '%s': %s" % [owner, card_id])
+	_check(label.text.to_lower() == owner and panel.OWNER_COLORS.has(owner),
+		"owner name agrees with the validated owner palette: " + card_id)
+	_check(not label.text.contains("_") and not label.text.contains(card_id),
+		"owner strip never prints a raw identifier: " + card_id)
+	_check(patch.owner_color == panel.OWNER_COLORS[owner],
+		"owner stripe paints the same validated owner: " + card_id)
+	var ink: Color = label.get_theme_color("font_color")
+	_check(ink == LiveRunCardRewardChoicePanel.owner_ink(owner),
+		"owner name uses the readable ink for that felt: " + card_id)
+	_check(ink != patch.owner_color, "owner ink is distinct from the felt behind it: " + card_id)
+	var contrast: float = LiveRunCardRewardChoicePanel.contrast_ratio(ink, patch.owner_color)
+	_check(contrast >= 4.5,
+		"owner name ink passes 4.5:1 contrast on its felt: %s (%.2f:1)" % [card_id, contrast])
+	_check(label.is_visible_in_tree() and patch.is_visible_in_tree(),
+		"owner strip and its name are visibly drawn: " + card_id)
+	_check(label.get_theme_font_size("font_size") >= 13,
+		"owner name is drawn at a legible point size: " + card_id)
+	_check(patch.get_global_rect().size.y >= label.get_global_rect().size.y
+		and patch.get_global_rect().size.y <= 40.0,
+		"owner strip grows only enough for the name: " + card_id)
+	_check(patch.get_global_rect().encloses(label.get_global_rect())
+		and card.get_global_rect().encloses(patch.get_global_rect())
+		and screen.encloses(label.get_global_rect()),
+		"owner name stays inside its strip, card and 1280x720: " + card_id)
+	var action := content.get_node("ChooseButton") as Button
+	_check(panel._bound_choices.get(action) == card_id
+		and String(panel._receipt["offers"][slot]["id"]) == card_id,
+		"owner strip leaves the bound offer ID unchanged: " + card_id)
+
+
 ## The readable target-kind sentence the rules label must spell out; the marks
 ## stay silent so no glyph beyond the project font is required.
 func _kind_phrase(kind: String) -> String:
@@ -332,16 +385,40 @@ func _kind_phrase(kind: String) -> String:
 ## Source slice of one nested renderer class, used for the drawing checks that
 ## a mounted rectangle assertion cannot see.
 func _class_source(class_name_marker: String, next_marker: String) -> String:
+	var start_marker := "class " + class_name_marker
+	var start := _source_slice_position(start_marker)
+	if start < 0:
+		_check(false, "reward renderer source defines class " + class_name_marker)
+		return ""
+	return _source_from(start, next_marker)
+
+
+## Source slice starting at an arbitrary declaration marker (functions, not
+## only nested classes), ended by the next marker or the end of the file.
+func _source_slice(start_marker: String, next_marker: String) -> String:
+	var start := _source_slice_position(start_marker)
+	_check(start >= 0, "reward renderer source defines " + start_marker)
+	if start < 0:
+		return ""
+	return _source_from(start, next_marker)
+
+
+func _source_slice_position(start_marker: String) -> int:
 	var file := FileAccess.open(PANEL_SCRIPT, FileAccess.READ)
 	_check(file != null, "reward renderer source readable for inspection")
+	if file == null:
+		return -1
+	var text := file.get_as_text()
+	file.close()
+	return text.find(start_marker)
+
+
+func _source_from(start: int, next_marker: String) -> String:
+	var file := FileAccess.open(PANEL_SCRIPT, FileAccess.READ)
 	if file == null:
 		return ""
 	var text := file.get_as_text()
 	file.close()
-	var start := text.find("class " + class_name_marker)
-	_check(start >= 0, "reward renderer source defines class " + class_name_marker)
-	if start < 0:
-		return ""
 	var end := text.length()
 	if not next_marker.is_empty():
 		var following := text.find(next_marker, start)
@@ -380,6 +457,126 @@ func _test_renderer_source() -> void:
 	for pictogram in ["→", "←", "↔", "⟲", "↺", "—"]:
 		_check(not marks.contains(pictogram),
 			"position marks never print the removed symbol " + pictogram)
+
+
+## The focus perimeter is real drawing, not a colour swap: dark dashed seams
+## that never fill the face and never take pointer input. The per-owner ink is
+## chosen from measured contrast instead of one ink for every felt.
+func _test_focus_and_ink_sources() -> void:
+	var stitch := _class_source("_FocusStitch", "## Round sewn energy coin")
+	_check(not stitch.is_empty(), "focus stitch drawing source located")
+	_check(stitch.contains("draw_line(") and stitch.contains("DARK_FOCUS_INK"),
+		"focus stitch draws dark seam segments")
+	_check(stitch.contains("stitch_dashes(") and stitch.contains("DASH") and stitch.contains("GAP"),
+		"focus stitch is dashed rather than a solid outline")
+	_check(stitch.contains("MOUSE_FILTER_IGNORE") and stitch.contains("FOCUS_NONE")
+		and not stitch.contains("MOUSE_FILTER_STOP"),
+		"focus stitch cannot block pointer input or take focus")
+	_check(not stitch.contains("draw_rect(") and not stitch.contains("draw_circle("),
+		"focus stitch never fills or covers the button face")
+	var button_style := _source_slice("func _style_button", "## A dark, hand-sewn dashed perimeter")
+	_check(button_style.contains("font_focus_color"),
+		"button styling overrides the focused text ink explicitly")
+	_check(button_style.contains("_FocusStitch.DARK_FOCUS_INK"),
+		"button focus style uses the same dark ink as the stitched perimeter")
+	var expected := {
+		"warden": LiveRunCardRewardChoicePanel.LIGHT_INK,
+		"seamstress": LiveRunCardRewardChoicePanel.LIGHT_INK,
+		"tinker": LiveRunCardRewardChoicePanel.DARK_INK,
+	}
+	for owner: String in expected:
+		var felt: Color = LiveRunCardRewardChoicePanel.OWNER_COLORS[owner]
+		var ink: Color = LiveRunCardRewardChoicePanel.owner_ink(owner)
+		_check(ink == expected[owner],
+			"owner name ink is the documented legible ink for " + owner)
+		var chosen: float = LiveRunCardRewardChoicePanel.contrast_ratio(ink, felt)
+		_check(chosen >= 4.5, "owner name ink has 4.5:1 contrast on %s felt (%.2f)" % [owner, chosen])
+		var rejected: Color = LiveRunCardRewardChoicePanel.DARK_INK \
+			if ink != LiveRunCardRewardChoicePanel.DARK_INK else LiveRunCardRewardChoicePanel.LIGHT_INK
+		_check(chosen >= LiveRunCardRewardChoicePanel.contrast_ratio(rejected, felt),
+			"owner name ink is the better-contrasting choice for " + owner)
+	_check(LiveRunCardRewardChoicePanel.contrast_ratio(Color.WHITE, Color.BLACK) > 20.0,
+		"contrast helper reproduces the WCAG white-on-black extreme")
+
+
+## Focused action: dark ink on beige and a dark, visibly dashed perimeter that
+## follows keyboard focus without blocking the pointer.
+func _check_focus_style(button: Button, label: String) -> void:
+	_check(button.has_focus(), "real keyboard input leaves focus on: " + label)
+	var focus_ink: Color = button.get_theme_color("font_focus_color")
+	_check(focus_ink == panel.DARK_INK and focus_ink.get_luminance() < 0.25,
+		"focused action text stays dark ink: " + label)
+	var beige := Color("#d4bf9e")
+	_check(LiveRunCardRewardChoicePanel.contrast_ratio(focus_ink, beige) >= 4.5,
+		"focused action text stays readable on the beige face: " + label)
+	var focus_box := button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(focus_box != null, "focused action keeps a drawn focus style: " + label)
+	if focus_box != null:
+		_check(focus_box.border_color == LiveRunCardRewardChoicePanel._FocusStitch.DARK_FOCUS_INK
+			and focus_box.border_color.get_luminance() < 0.2,
+			"focus style border is dark ink, not a pale glow: " + label)
+	var stitch := button.get_node_or_null("FocusStitch") as LiveRunCardRewardChoicePanel._FocusStitch
+	_check(stitch != null, "focused action mounts its stitched perimeter: " + label)
+	if stitch == null:
+		return
+	_check(stitch.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and stitch.focus_mode == Control.FOCUS_NONE,
+		"focus perimeter never blocks input or steals focus: " + label)
+	_check(stitch.is_stitching(), "focus perimeter follows the focused action: " + label)
+	_check(LiveRunCardRewardChoicePanel.contrast_ratio(
+		LiveRunCardRewardChoicePanel._FocusStitch.DARK_FOCUS_INK, beige) >= 4.5,
+		"focus perimeter ink is visible on the beige face: " + label)
+	var button_rect := Rect2(Vector2.ZERO, button.size)
+	var rect: Rect2 = stitch.perimeter_rect()
+	_check(button_rect.encloses(rect) and rect.size.x >= button.size.x - 12.0
+		and rect.size.y >= button.size.y - 12.0,
+		"focus perimeter hugs the action inside its own rect: " + label)
+	var dashes: Array[PackedVector2Array] = stitch.stitch_dashes()
+	_check(dashes.size() >= 12, "focus perimeter is stitched from many short dashes: " + label)
+	var stitched_length := 0.0
+	for dash: PackedVector2Array in dashes:
+		_check(dash.size() == 2, "each focus seam is one short dash: " + label)
+		if dash.size() != 2:
+			continue
+		var length: float = dash[0].distance_to(dash[1])
+		stitched_length += length
+		_check(length > 0.5 and length <= stitch.DASH + 0.01,
+			"focus dash length stays short: " + label)
+		_check(rect.grow(0.5).has_point(dash[0]) and rect.grow(0.5).has_point(dash[1]),
+			"focus dash stays on the perimeter: " + label)
+	var perimeter: float = 2.0 * (rect.size.x + rect.size.y)
+	_check(stitched_length > 0.0 and stitched_length < perimeter * 0.8,
+		"focus perimeter is visibly dashed, never a solid outline: " + label)
+
+
+## Real Tab input walks all three Choose actions to Skip and back to the first
+## Choose, where the dark stitched perimeter follows focus; Skip stays usable.
+func _test_focus_navigation(actions: Array[Button], label: String) -> void:
+	requests.clear()
+	_check(actions[0].has_focus(), label + " opens focused on the first Choose")
+	_check_focus_style(actions[0], label + " first Choose")
+	for index in range(1, 4):
+		await _key(KEY_TAB)
+		_check(actions[index].has_focus(), "%s Tab reaches action %d" % [label, index])
+		var stitch := actions[index].get_node_or_null("FocusStitch") \
+			as LiveRunCardRewardChoicePanel._FocusStitch
+		_check(stitch != null and stitch.is_stitching(),
+			"%s focus perimeter follows action %d" % [label, index])
+		var previous := actions[index - 1].get_node_or_null("FocusStitch") \
+			as LiveRunCardRewardChoicePanel._FocusStitch
+		_check(previous != null and not previous.is_stitching(),
+			"%s only the focused action keeps a perimeter" % label)
+	await _key(KEY_TAB)
+	_check(actions[0].has_focus(), label + " Tab wraps from Skip back to the first Choose")
+	_check_focus_style(actions[0], label + " wrapped Choose")
+	_check(actions[3] == panel.skip_button and actions[3].is_visible_in_tree()
+		and not actions[3].disabled and actions[3].focus_mode == Control.FOCUS_ALL
+		and actions[3].text.contains("Skip"),
+		label + " fourth Skip option stays available under keyboard focus")
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	_check(screen.encloses(actions[3].get_global_rect()),
+		label + " Skip stays inside 1280x720")
+	_check(requests.is_empty(), label + " focus navigation never requests a choice")
 
 
 func _test_all_catalog_rules(base: Dictionary) -> void:
@@ -598,6 +795,7 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		_check(owner_patch != null
 			and (owner_patch as LiveRunCardRewardChoicePanel._OwnerPatch).owner_color == panel.OWNER_COLORS.get(offer.get("owner", ""), Color.WHITE),
 			"author patch color matches owner's palette: " + str(index))
+		_check_owner_strip(receipt, index)
 		_check(pips_container != null
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).from_positions == definition.get("from_positions", [])
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).to_positions == definition.get("to_positions", [])
@@ -687,6 +885,7 @@ func _exercise(fixture: Dictionary, kind: String, physical: int) -> void:
 		panel.close_rewards()
 		return
 	_check(actions[0].has_focus(), kind + " first action receives keyboard focus")
+	await _test_focus_navigation(actions, kind + " starter")
 	_check(not panel.open_rewards("replacement", kind, receipt), "cannot replace active prepared reward")
 	_check(panel.title_label.text.contains(kind), "refused overwrite keeps title")
 	# Caller mutation cannot change the displayed choice or callback binding.
@@ -876,7 +1075,9 @@ func _replay_and_stale(base: Dictionary) -> void:
 			var owner_patch_node := content.get_node("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
 			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
 			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+			var owner_name := content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
 			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
+				owner_name.text if owner_name != null else "",
 				content.get_node("NameLabel").text,
 				content.get_node("RarityLabel").text,
 				cost_btn.cost_value if cost_btn != null else -1,
@@ -1148,6 +1349,7 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		_check(owner_patch != null
 			and (owner_patch as LiveRunCardRewardChoicePanel._OwnerPatch).owner_color == panel.OWNER_COLORS.get(owner, Color.WHITE),
 			"pool author patch color matches owner's palette: " + card_id)
+		_check_owner_strip(receipt, index)
 		_check(pips_container != null
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).from_positions == definition.get("from_positions", [])
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).to_positions == definition.get("to_positions", [])
@@ -1227,6 +1429,7 @@ func _exercise_pool(fixture: Dictionary, kind: String) -> void:
 	if actions.size() != 4:
 		panel.close_rewards()
 		return
+	await _test_focus_navigation(actions, kind + " pool")
 	# Full-card click on a pool card label routes through the same guard.
 	requests.clear()
 	var pool_card := panel.choices_container.get_child(0) as PanelContainer
@@ -1279,7 +1482,9 @@ func _test_pool_replay(first: Dictionary) -> void:
 			var owner_patch_node := content.get_node("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
 			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
 			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+			var owner_name := content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
 			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
+				owner_name.text if owner_name != null else "",
 				content.get_node("NameLabel").text,
 				content.get_node("RarityLabel").text,
 				cost_btn.cost_value if cost_btn != null else -1,
@@ -1345,6 +1550,10 @@ func _assert_no_raw_identifiers(card_panel: PanelContainer, card_id: String, nod
 	for child in content.get_children():
 		if child is Label:
 			labels.append(child)
+		# Nested labels (the sewn owner strip's hero name) are player-visible too.
+		for grandchild in child.get_children():
+			if grandchild is Label:
+				labels.append(grandchild)
 	for label: Label in labels:
 		if label.visible and not label.text.is_empty():
 			_check(not label.text.contains(card_id),
@@ -1428,6 +1637,7 @@ func _run() -> void:
 		and panel.has_method("acknowledge") and panel.has_method("get_choice_buttons"),
 		"all four required public methods exist")
 	_check(not panel.visible and panel.get_choice_buttons().is_empty(), "initial panel closed")
+	_test_focus_and_ink_sources()
 	var fight := _prepared(false, 18203)
 	var elite := _prepared(true, 18203)
 	if not fight["receipt"].get("ok", false) or not elite["receipt"].get("ok", false):
