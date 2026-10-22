@@ -22,6 +22,9 @@ func _initialize() -> void:
 	_test_fight_reward_sequences()
 	_test_fight_reward_rejections()
 	_test_typed_battle_bridge()
+	_test_pool_card_fight_reward_sequences()
+	_test_pool_card_typed_battle_bridge()
+	_test_pool_card_rejections()
 	if failures.is_empty():
 		print("run_shop_visit_test: PASS (", checks, " checks)")
 	else:
@@ -1299,3 +1302,386 @@ func _test_fight_reward_rejections() -> void:
 	_check(boundary.apply_fight_reward("boundary", _fight_reward(deck, 9223372036854775807)), "exact MAX_INT corrected retry succeeds")
 	for pair in [[-1, 0], [100, -1]]:
 		_reject_fight(RunShopVisit.new(deck, pair[0], pair[1]), "fight", valid, "invalid ledger")
+
+
+## Pool card reward admission through legacy apply_fight_reward (AC1).
+func _test_pool_card_fight_reward_sequences() -> void:
+	seed(61003)
+	var next_draw := randi()
+	seed(61003)
+	var timeline := _pool_fight_sequence()
+	_check(randi() == next_draw, "pool card Fight/Shop sequence consumes no global RNG")
+	seed(61003)
+	var replay := _pool_fight_sequence()
+	_check(randi() == next_draw and timeline == replay, "replayed pool card Fight/Shop sequence replays identically")
+
+
+## Pool card reward admission through typed apply_battle_reward (AC2).
+func _test_pool_card_typed_battle_bridge() -> void:
+	seed(82180)
+	var expected_global := randi()
+	seed(82180)
+	var picked_fight := _typed_pool_battle_sequence(true)
+	_check(not picked_fight.is_empty(), "pick Fight pool card / Skip Elite real bridge is exercised")
+	_check(randi() == expected_global, "typed Fight pool pick / Elite Skip draws no global RNG")
+	seed(82180)
+	var replay := _typed_pool_battle_sequence(true)
+	_check(randi() == expected_global and picked_fight == replay, "identical seeded pool Fight/Elite/Shop trace replays exactly")
+	seed(82180)
+	var picked_elite := _typed_pool_battle_sequence(false)
+	_check(not picked_elite.is_empty() and randi() == expected_global, "Fight Skip / Elite pool pick exercises other choices without global RNG")
+
+
+## Pool card reward rejections for both entry points (AC3).
+func _test_pool_card_rejections() -> void:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick"]
+	var ledger := RunShopVisit.new(deck, 100, 0)
+	# Pool-plus upgrade posed as a reward
+	var plus_reward := _fight_reward(deck, 110, "warden_hold_the_line_plus")
+	_reject_fight(ledger, "fight", plus_reward, "pool-plus upgrade rejected by legacy")
+	# Unknown ID
+	var unknown_reward := _fight_reward(deck, 110, "invented_card")
+	_reject_fight(ledger, "fight", unknown_reward, "invented ID rejected by legacy")
+	# Valid retry after rejection
+	var valid_pool := _fight_reward(deck, 110, "warden_hold_the_line")
+	_check(ledger.apply_fight_reward("fight-retry", valid_pool), "valid pool retry succeeds after pool-plus rejection")
+	_reject_fight(ledger, "fight-retry", valid_pool, "duplicate pool snapshot rejected")
+	
+	# Now test typed bridge rejections with pool card candidates
+	var f := _typed_pool_battle_fixture()
+	if f.is_empty():
+		return
+	var ledger2: RunShopVisit = f.ledger
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = f.rng.seed
+	oracle.state = f.rng.state
+	
+	# Process Fight node
+	var id: String = f.route[0]
+	_check(f.map.get_legal_choices().has(id) and f.map.choose_node(id), "actual reachable Fight node is chosen")
+	var party: CombatParty = f.party
+	var enemies := CombatEnemies.new([{"id": "ragling", "max_hp": 8}])
+	var battle := CombatBattleResult.new(party, enemies)
+	_check(battle.get_outcome() == CombatBattleResult.ACTIVE, "observed battle starts ACTIVE")
+	_check(enemies.apply_damage(1, 8) and battle.get_outcome() == CombatBattleResult.ACTIVE, "unobserved terminal damage is not a victory receipt")
+	_check(battle.evaluate() == CombatBattleResult.VICTORY, "witness actual combat VICTORY")
+	var pre_reward: Dictionary = f.owner.read_state()
+	var expected_offer := _typed_pool_oracle(oracle, f.candidates, false)
+	var prepared: Dictionary = f.owner.prepare(id, battle, party)
+	_check(prepared == expected_offer and f.rng.state == oracle.state, "Fight gold, offers, drop, and run RNG exactly match seeded oracle")
+	# Choose a pool card from the offers
+	var pool_choice: String = ""
+	for offer in expected_offer.offers:
+		var def := RunPoolCardRewardOffers.resolve_reward_definition(offer.id)
+		if not def.is_empty() and def.owner in ["warden", "seamstress", "tinker"] and (not def.has("rarity") or def.rarity in ["common", "uncommon", "rare"]):
+			pool_choice = offer.id
+			break
+	_check(not pool_choice.is_empty(), "oracle offers at least one pool base card")
+	var settled: Dictionary = f.owner.choose(id, pool_choice)
+	var typed := {"node_id": id, "node_kind": "Fight", "trinket_drop_id": expected_offer.trinket_drop_id}
+	_check(settled.ok and settled.receipt == typed and settled.skipped == false and settled.selected_id == pool_choice, "real settled receipt binds chosen pool card")
+	
+	# Test rejection of pool-plus via typed bridge
+	var plus_settled := settled.duplicate(true)
+	plus_settled.selected_id = "warden_hold_the_line_plus"
+	plus_settled.state.deck = settled.state.deck.duplicate()
+	plus_settled.state.deck.append("warden_hold_the_line_plus")
+	_reject_typed(f, id, plus_settled, "pool-plus upgrade rejected by typed")
+	
+	# Test rejection of invented ID via typed bridge
+	var invented_settled := settled.duplicate(true)
+	invented_settled.selected_id = "invented_card"
+	invented_settled.state.deck = settled.state.deck.duplicate()
+	invented_settled.state.deck.append("invented_card")
+	_reject_typed(f, id, invented_settled, "invented ID rejected by typed")
+	
+	# Valid pool card retry after rejection
+	_check(ledger2.apply_battle_reward(id, settled), "valid pool card retry succeeds after typed rejection")
+	_reject_typed(f, id, settled, "typed duplicate claim")
+	
+	# Process Elite node to reach Shop
+	var elite_id: String = f.route[1]
+	f.party = f.carry.create_next_fight_party()
+	_check(f.party != null and f.party.is_valid(), "Elite party hydrated from real Fight carryover")
+	if f.party == null:
+		return
+	_check(f.map.get_legal_choices().has(elite_id) and f.map.choose_node(elite_id), "actual reachable Elite node is chosen")
+	party = f.party
+	enemies = CombatEnemies.new([{"id": "ragling", "max_hp": 8}])
+	battle = CombatBattleResult.new(party, enemies)
+	_check(battle.get_outcome() == CombatBattleResult.ACTIVE, "observed Elite battle starts ACTIVE")
+	_check(enemies.apply_damage(1, 8) and battle.get_outcome() == CombatBattleResult.ACTIVE, "unobserved terminal damage is not a victory receipt")
+	_check(battle.evaluate() == CombatBattleResult.VICTORY, "witness actual Elite combat VICTORY")
+	pre_reward = f.owner.read_state()
+	expected_offer = _typed_pool_oracle(oracle, f.candidates, true)
+	prepared = f.owner.prepare(elite_id, battle, party)
+	_check(prepared == expected_offer and f.rng.state == oracle.state, "Elite gold, offers, drop, and run RNG exactly match seeded oracle")
+	# Skip Elite reward
+	var elite_settled: Dictionary = f.owner.choose(elite_id, "")
+	var elite_typed := {"node_id": elite_id, "node_kind": "Elite", "trinket_drop_id": expected_offer.trinket_drop_id}
+	_check(elite_settled.ok and elite_settled.receipt == elite_typed and elite_settled.skipped == true, "Elite skip receipt valid")
+	_check(ledger2.apply_battle_reward(elite_id, elite_settled), "Elite skip admitted to ledger")
+	
+	# Continue to Shop and verify pool card retained through purchases
+	var legal_shop: Array[String] = f.map.get_legal_choices()
+	_check(legal_shop.has(f.route[2]) and f.map.choose_node(f.route[2]), "real first Shop follows Elite")
+	_check(ledger2.open_visit(f.route[2]), "first canonical Shop visit opens")
+	var shop := _paid_shop(ledger2.get_state())
+	_paid_transaction(ledger2, shop, "card", "warden_brace", 25, "pool reward-funded first Shop card")
+	var before_remove := ledger2.get_state()
+	var removed := ledger2.remove_card("warden_strike")
+	_check(removed.ok and removed.price == 75 and removed.prior_removals == 1, "first Shop removes at base 75 after real purchases")
+	var after_remove := before_remove.duplicate(true)
+	after_remove.deck.erase("warden_strike")
+	after_remove.gold -= 75
+	after_remove.prior_removals = 1
+	after_remove.price = 100
+	after_remove.removal_available = false
+	after_remove.status = "used"
+	_check(ledger2.get_state() == after_remove, "first paid removal exact snapshot")
+	_check(ledger2.close_visit(), "first real Shop closes")
+	# Verify pool card still in deck
+	var state_after_shop := ledger2.get_state()
+	_check(state_after_shop.deck.has(pool_choice), "pool reward card retained through Shop removal and purchase")
+	
+	# Verify RNG unchanged
+	_check(f.rng.state == oracle.state, "Shop bridge never mutates run RNG")
+
+
+func _pool_fight_reward(deck: Array, gold: int, selected: String = "") -> Dictionary:
+	var cards: Array[String] = []
+	cards.assign(deck)
+	if selected != "":
+		cards.append(selected)
+	return {"ok": true, "skipped": selected == "", "selected_id": selected, "deck": cards, "gold": gold}
+
+
+func _pool_fight_sequence() -> Array:
+	var deck: Array[String] = ["warden_strike", "seamstress_prick", "warden_strike"]
+	var ledger := RunShopVisit.new(deck, 200, 0)
+	var expected := {"valid": true, "status": "inactive", "shop_node_id": "",
+		"removal_available": false, "price": 75, "deck": deck.duplicate(), "trinkets": [], "gold": 200,
+		"prior_removals": 0, "visited_ids": [], "claimed_fight_ids": []}
+	_check(ledger.get_state() == expected, "pool Fight sequence exact initial snapshot")
+	var timeline: Array = [ledger.get_state()]
+	
+	# Test each of the three representative pool base cards
+	var pool_cards: Array[String] = ["warden_hold_the_line", "seamstress_darning", "tinker_rivet_shot"]
+	for i in range(pool_cards.size()):
+		var card := pool_cards[i]
+		var reward := _pool_fight_reward(expected.deck, expected.gold + 10 + i * 5, card)
+		var node_id := "fight-pool-%d" % i
+		_check(ledger.apply_fight_reward(node_id, reward), "inactive pool Fight reward accepted for " + card)
+		expected.gold = reward.gold
+		expected.deck = reward.deck.duplicate()
+		expected.claimed_fight_ids.append(node_id)
+		_check(ledger.get_state() == expected, "pool Fight " + card + " changes only deck gold and claims")
+		timeline.append(ledger.get_state())
+	
+	# Open Shop and verify pool cards retained
+	_check(ledger.open_visit("shop-pool"), "Shop opens after pool rewards")
+	_check(ledger.remove_card("warden_strike").ok, "Shop removal succeeds")
+	_check(ledger.close_visit(), "Shop closes")
+	expected.status = "closed"
+	expected.shop_node_id = "shop-pool"
+	expected.visited_ids.append("shop-pool")
+	expected.deck.erase("warden_strike")
+	expected.gold -= 75
+	expected.prior_removals = 1
+	expected.price = 100
+	_check(ledger.get_state() == expected, "Shop removal exact snapshot with pool cards retained")
+	timeline.append(ledger.get_state())
+	
+	# Verify all three pool cards still present
+	var final_deck: Array[String] = ledger.get_state().deck
+	for card in pool_cards:
+		_check(final_deck.has(card), "pool card " + card + " retained through Shop visit")
+	
+	return timeline
+
+
+func _typed_pool_battle_fixture() -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	var map := RunMap.new()
+	var route: Array[String] = []
+	for map_seed in range(1, 3001):
+		rng.seed = map_seed
+		if not map.generate(rng):
+			continue
+		for fight in map.get_floors()[0]:
+			if fight.type != "Fight":
+				continue
+			for elite_id in fight.outgoing:
+				if map.get_node(elite_id).type != "Elite":
+					continue
+				for shop_id in map.get_node(elite_id).outgoing:
+					if map.get_node(shop_id).type != "Shop":
+						continue
+					for second_id in map.get_node(shop_id).outgoing:
+						if map.get_node(second_id).type == "Shop":
+							route.assign([fight.id, elite_id, shop_id, second_id])
+							break
+					if not route.is_empty():
+						break
+				if not route.is_empty():
+					break
+			if not route.is_empty():
+				break
+		if not route.is_empty():
+			break
+	_check(route.size() == 4, "real map has connected Fight/Elite/Shop/Shop path for pool")
+	if route.size() != 4:
+		return {}
+	var heroes: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in heroes:
+		hero.max_hp = int(hero.max_hp)
+	var party := CombatParty.new(heroes)
+	var carry := RunPartyCarryover.new(party.get_heroes())
+	var deck := _starter_deck()
+	var owned: Array[String] = ["button_charm"]
+	var candidates := RunPoolCardRewardOffers.get_authored_base_candidates()
+	var drops := ["thread_token", "button_charm", "spool_pendant"]
+	_check(party.is_valid() and carry.is_valid() and not deck.is_empty()
+		and candidates.size() >= 3, "typed pool bridge uses real authored pool candidates")
+	var owner := RunMultiFightRewards.new(map, rng, carry, deck, 350, owned, candidates, drops)
+	var ledger := RunShopVisit.new(deck, 350, 0, owned)
+	return {"map": map, "rng": rng, "route": route, "party": party, "carry": carry,
+		"deck": deck, "owned": owned, "candidates": candidates, "drops": drops,
+		"owner": owner, "ledger": ledger}
+
+
+func _typed_pool_oracle(rng: RandomNumberGenerator, candidates: Array, elite: bool) -> Dictionary:
+	var award := rng.randi_range(25, 35) if elite else rng.randi_range(10, 20)
+	var pool: Array = candidates.duplicate()
+	pool.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return String(a.get("id", "")) < String(b.get("id", ""))
+	)
+	var offers: Array = []
+	var party_ids: Array = ["warden", "seamstress", "tinker"]
+	var living_ids: Array = ["warden", "seamstress", "tinker"]
+	var generated := RunPoolCardRewardOffers.generate_for_living(rng, party_ids, living_ids, pool)
+	if not generated.ok:
+		return {"ok": false, "gold_award": 0, "offers": [], "trinket_drop_id": ""}
+	var drop := ""
+	if elite:
+		var unowned := ["spool_pendant", "thread_token"]
+		drop = unowned[rng.randi_range(0, unowned.size() - 1)]
+	return {"ok": true, "gold_award": award, "offers": generated.offers, "trinket_drop_id": drop}
+
+
+func _typed_pool_battle_sequence(fight_pick: bool) -> Dictionary:
+	var f := _typed_pool_battle_fixture()
+	if f.is_empty():
+		return {}
+	var ledger: RunShopVisit = f.ledger
+	_check(ledger.has_method("apply_battle_reward"), "typed battle admission public API exists")
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = f.rng.seed
+	oracle.state = f.rng.state
+	var receipts: Array = []
+	var timeline: Array = [ledger.get_state()]
+	for index in range(2):
+		var id: String = f.route[index]
+		var legal: Array[String] = f.map.get_legal_choices()
+		_check(legal.has(id) and f.map.choose_node(id), "actual reachable reward node is chosen")
+		if index == 1:
+			f.party = f.carry.create_next_fight_party()
+			_check(f.party != null and f.party.is_valid(), "Elite party hydrated from real Fight carryover")
+			if f.party == null:
+				return {}
+		var party: CombatParty = f.party
+		var enemies := CombatEnemies.new([{"id": "ragling", "max_hp": 8}])
+		var battle := CombatBattleResult.new(party, enemies)
+		_check(battle.get_outcome() == CombatBattleResult.ACTIVE, "observed battle starts ACTIVE")
+		_check(enemies.apply_damage(1, 8) and battle.get_outcome() == CombatBattleResult.ACTIVE, "unobserved terminal damage is not a victory receipt")
+		_check(battle.evaluate() == CombatBattleResult.VICTORY, "witness actual combat VICTORY")
+		var pre_reward: Dictionary = f.owner.read_state()
+		var expected_offer := _typed_pool_oracle(oracle, f.candidates, index == 1)
+		var prepared: Dictionary = f.owner.prepare(id, battle, party)
+		_check(prepared == expected_offer and f.rng.state == oracle.state, "Fight/Elite gold, offers, drop, and run RNG exactly match seeded oracle")
+		
+		# Pick a pool base card if available, otherwise skip
+		var choice: String = ""
+		if (index == 0 and fight_pick) or (index == 1 and not fight_pick):
+			for offer in expected_offer.offers:
+				var def := RunPoolCardRewardOffers.resolve_reward_definition(offer.id)
+				if not def.is_empty() and def.owner in ["warden", "seamstress", "tinker"] and (not def.has("rarity") or def.rarity in ["common", "uncommon", "rare"]):
+					choice = offer.id
+					break
+		
+		var settled: Dictionary = f.owner.choose(id, choice)
+		var typed := {"node_id": id, "node_kind": "Fight" if index == 0 else "Elite", "trinket_drop_id": expected_offer.trinket_drop_id}
+		_check(settled.ok and settled.receipt == typed and settled.skipped == choice.is_empty() and settled.selected_id == choice, "real settled receipt binds chosen card and canonical seeded node/drop")
+		
+		var expected_run: Dictionary = pre_reward.duplicate(true)
+		expected_run.gold += expected_offer.gold_award
+		if not choice.is_empty():
+			expected_run.deck.append(choice)
+		if index == 1:
+			expected_run.trinkets.append(expected_offer.trinket_drop_id)
+		var carried: Array = party.get_heroes()
+		for hero in carried:
+			hero.block = 0
+		expected_run.party = f.carry.read_state()
+		_check(settled.state == expected_run and f.owner.read_state() == expected_run, "complete authoritative pre/post reward snapshot matches exact delta")
+		
+		var original: Dictionary = settled.duplicate(true)
+		_check(ledger.apply_battle_reward(id, settled), "valid real typed pool receipt succeeds")
+		var expected_ledger: Dictionary = timeline.back().duplicate(true)
+		expected_ledger.deck = expected_run.deck.duplicate(true)
+		expected_ledger.gold = expected_run.gold
+		expected_ledger.trinkets = expected_run.trinkets.duplicate(true)
+		expected_ledger.claimed_fight_ids.append(id)
+		_check(ledger.get_state() == expected_ledger, "exact atomic deck/gold/trinket/claim snapshot for pool card")
+		_check(settled == original, "successful typed bridge never changes caller receipt")
+		_reject_typed(f, id, settled, "typed duplicate claim")
+		
+		receipts.append(settled.duplicate(true))
+		timeline.append(ledger.get_state())
+	
+	# Continue to Shops
+	var before_shops := ledger.get_state()
+	var legal_shop: Array[String] = f.map.get_legal_choices()
+	_check(legal_shop.has(f.route[2]) and f.map.choose_node(f.route[2]), "real first Shop follows Elite")
+	_check(ledger.open_visit(f.route[2]), "first canonical Shop visit opens")
+	var shop := _paid_shop(ledger.get_state())
+	_paid_transaction(ledger, shop, "card", "warden_brace", 25, "pool reward-funded first Shop card")
+	_paid_transaction(ledger, shop, "trinket", "t_spool", 40, "pool reward-funded first Shop trinket")
+	var before_remove := ledger.get_state()
+	var removed := ledger.remove_card("warden_strike")
+	_check(removed.ok and removed.price == 75 and removed.prior_removals == 1, "first Shop removes at base 75 after real purchases")
+	var after_remove := before_remove.duplicate(true)
+	after_remove.deck.erase("warden_strike")
+	after_remove.gold -= 75
+	after_remove.prior_removals = 1
+	after_remove.price = 100
+	after_remove.removal_available = false
+	after_remove.status = "used"
+	_check(ledger.get_state() == after_remove, "first paid removal exact snapshot")
+	_check(ledger.close_visit(), "first real Shop closes")
+	_check(f.map.get_legal_choices().has(f.route[3]) and f.map.choose_node(f.route[3]), "connected later Shop choice is genuinely legal")
+	_check(ledger.open_visit(f.route[3]), "second distinct connected Shop opens")
+	var before_second := ledger.get_state()
+	var second_remove := ledger.remove_card("seamstress_prick")
+	_check(second_remove.ok and second_remove.price == 100 and second_remove.prior_removals == 2, "second Shop removal rises to 75 + 25")
+	var after_second := before_second.duplicate(true)
+	after_second.deck.erase("seamstress_prick")
+	after_second.gold -= 100
+	after_second.price = 125
+	after_second.prior_removals = 2
+	after_second.removal_available = false
+	after_second.status = "used"
+	_check(ledger.get_state() == after_second, "second removal exact preserved inventory and claims")
+	var next_shop := _paid_shop(ledger.get_state())
+	_paid_transaction(ledger, next_shop, "card", "seamstress_mend", 15, "later Shop purchase after removal")
+	_paid_transaction(ledger, next_shop, "trinket", "t_pocket", 20, "later Shop trinket after removal")
+	_check(ledger.close_visit(), "second Shop closes with rewards and paid purchases")
+	var final_state := ledger.get_state()
+	_check(final_state.status == "closed" and final_state.prior_removals == 2
+		and final_state.visited_ids == [f.route[2], f.route[3]]
+		and final_state.claimed_fight_ids == [f.route[0], f.route[1]]
+		and final_state.trinkets == before_shops.trinkets + ["t_spool", "t_pocket"]
+		and final_state.deck.has("seamstress_mend") and final_state.gold >= 0, "second Shop conserves both Fight/Elite claims, drop, and complete purchase inventory")
+	_check(f.owner.read_state() == receipts[1].state and f.deck == _starter_deck() and f.owned == ["button_charm"] and f.rng.state == oracle.state, "Shop bridge never mutates actual reward source or run RNG")
+	timeline.append(final_state)
+	return {"timeline": timeline, "receipts": receipts, "rng": f.rng.state, "route": f.route, "final": final_state}
