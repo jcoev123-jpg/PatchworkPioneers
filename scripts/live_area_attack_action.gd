@@ -1,12 +1,15 @@
 extends Node
-## Mounted input/face adapter for target-free Blanket Stitch, Scatter Bolts and
-## Ricochet. The existing Bleed and Tinker resolvers own every mutation; the
-## starter presenter owns the shared Tinker first-attack latch.
+## Mounted input/face adapter for held target-free area attacks and self energy
+## utilities. Each original resolver owns its mutation; the attack presenter
+## alone owns Tinker's first-attack latch.
 
 const SEAMSTRESS_IDS := ["seamstress_blanket_stitch", "seamstress_blanket_stitch_plus"]
 const TINKER_IDS := ["tinker_scatter_bolts", "tinker_scatter_bolts_plus",
 	"tinker_ricochet", "tinker_ricochet_plus"]
-const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS
+const ENERGY_TINKER_IDS := ["tinker_overclock", "tinker_overclock_plus"]
+const ENERGY_SEAMSTRESS_IDS := ["seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
+const ENERGY_IDS := ENERGY_TINKER_IDS + ENERGY_SEAMSTRESS_IDS
+const CARD_IDS := SEAMSTRESS_IDS + TINKER_IDS + ENERGY_IDS
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
@@ -44,7 +47,7 @@ func _is_card(card_id: String) -> bool:
 
 
 func _definition(card_id: String) -> Dictionary:
-	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS else _catalog.get_definition(card_id)
+	return _tinker_catalog.get_definition(card_id) if card_id in TINKER_IDS or card_id in ENERGY_TINKER_IDS else _catalog.get_definition(card_id)
 
 
 ## Reuse the starter attack presenter's actual session- and turn-matched latch.
@@ -126,6 +129,7 @@ func _sync_battle() -> void:
 		if index < 0 or index >= _deck.hand.size() or _deck.hand[index] != label.text:
 			continue
 		if _bindings.has(panel):
+			_exclusive_energy_input(panel, label.text)
 			continue
 		_bind(panel, label.text)
 	# Up from the action row may enter this hand only while a held area card exists.
@@ -156,9 +160,24 @@ func _bind(panel: Control, card_id: String) -> void:
 	focus.set_border_width_all(3)
 	panel.add_theme_stylebox_override("focus", focus)
 	panel.tooltip_text = INSTRUCTION + "\n" + _rule_text(card_id)
+	# The shared support presenter already recognizes these four IDs. Keep its
+	# other cards untouched, but route each self card through this ONE mounted
+	# input adapter rather than racing two deferred service transactions.
+	_exclusive_energy_input(panel, card_id)
 	panel.gui_input.connect(callback)
 	_mount_cue(panel, card_id)
 	_focus_chain()
+
+
+func _exclusive_energy_input(panel: Control, card_id: String) -> void:
+	if card_id not in ENERGY_IDS:
+		return
+	var support = get_parent().get_node_or_null("LiveSupportHand")
+	if support == null or not support._bindings.has(panel):
+		return
+	var callback: Callable = support._bindings[panel]
+	if panel.gui_input.is_connected(callback):
+		panel.gui_input.disconnect(callback)
 
 
 func _rule_text(card_id: String) -> String:
@@ -166,6 +185,16 @@ func _rule_text(card_id: String) -> String:
 	if definition.get("id") != card_id:
 		return "Unknown card rules"
 	var effects: Dictionary = definition.get("effects", {})
+	if card_id in ENERGY_TINKER_IDS:
+		return "%s | Tinker | %d energy | From %s\nSelf: Gain %d energy; take %d self-damage (Block absorbs first), no target choice" % [
+			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
+			_positions(definition.get("from_positions", [])), int(effects.get("gain_energy", 0)),
+			int(effects.get("self_hp_loss", 0))]
+	if card_id in ENERGY_SEAMSTRESS_IDS:
+		return "%s | Seamstress | %d energy | From %s\nSelf: Gain %d energy and draw %d cards (after paying cost), no target choice" % [
+			String(definition.get("display_name", card_id)), int(definition.get("cost", -1)),
+			_positions(definition.get("from_positions", [])), int(effects.get("energy", 0)),
+			int(effects.get("draw", 0))]
 	if card_id in TINKER_IDS:
 		var detail: String = ("Scatter each living enemy for %d damage once" % int(effects.get("damage", 0))
 			if definition.get("target_kind") == "enemy_all" else
@@ -199,7 +228,8 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 	var definition: Dictionary = _definition(card_id)
 	if definition.get("id") != card_id:
 		return
-	var is_tinker: bool = card_id in TINKER_IDS
+	var is_tinker: bool = card_id in TINKER_IDS or card_id in ENERGY_TINKER_IDS
+	var is_energy: bool = card_id in ENERGY_IDS
 	var owner_color: Color = TINKER if is_tinker else SEAMSTRESS
 	for existing in panel.get_children():
 		if existing.name == CUE_NAME:
@@ -251,9 +281,10 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 		_positions(from_positions)], 9, owner_color)
 	variant_label.name = "Variant"
 	column.add_child(variant_label)
-	var area_label := _cue_label("%s enemies %s" % [
+	var scope: String = "Self (no enemy target)" if is_energy else "%s enemies %s" % [
 		"Random living" if is_tinker and definition.get("target_kind") == "enemy_random" else "All",
-		_positions(to_positions)], 11, INK)
+		_positions(to_positions)]
+	var area_label := _cue_label(scope, 11, INK)
 	area_label.name = "Area"
 	column.add_child(area_label)
 	var detail: String = "Bleed %d (%d + passive 1)" % [bleed + 1, bleed]
@@ -262,8 +293,14 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 			if definition.get("target_kind") == "enemy_all" else
 			"%d hits x %d damage (+3 first attack)" % [
 				int(effects.get("hit_count", 0)), int(effects.get("damage", 0))])
+	if card_id in ENERGY_TINKER_IDS:
+		detail = "Gain %d energy; %d self-damage (Block first)" % [
+			int(effects.get("gain_energy", 0)), int(effects.get("self_hp_loss", 0))]
+	elif card_id in ENERGY_SEAMSTRESS_IDS:
+		detail = "Gain %d energy; draw %d cards" % [
+			int(effects.get("energy", 0)), int(effects.get("draw", 0))]
 	var bleed_label := _cue_label(detail, 11, RUST)
-	bleed_label.name = "Effect" if is_tinker else "Bleed"
+	bleed_label.name = "Effect" if is_tinker or is_energy else "Bleed"
 	column.add_child(bleed_label)
 	var target_label := _cue_label("No target choice", 9, RUST)
 	target_label.name = "Target"
@@ -432,7 +469,12 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 		return
 	# The existing resolvers revalidate every condition before mutation.
 	var event: Dictionary
-	if card_id in TINKER_IDS:
+	if card_id in ENERGY_IDS:
+		if not CombatPoolEnergyCards.new().play_card(receipt.deck, receipt.party, card_id, 0):
+			_cancel()
+			return
+		event = {"ok": true, "card_id": card_id, "target_kind": "self"}
+	elif card_id in TINKER_IDS:
 		var latch: CombatTinkerFirstAttack = _live_tinker_latch(get_parent())
 		if latch == null:
 			_cancel()
