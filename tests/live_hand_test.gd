@@ -95,8 +95,13 @@ func _run() -> void:
 		_check(app.end_turn_button.focus_mode == Control.FOCUS_ALL and
 			app.return_button.focus_mode == Control.FOCUS_ALL, "battle actions support keyboard and mouse")
 		var actions: Array = [app.end_turn_button, app.return_button]
+		var juice = app.get_node_or_null("LiveCombatJuice")
+		_check(juice != null and is_instance_valid(juice.fast_button),
+			"battle row mounts the Fast animations toggle")
+		if juice != null and is_instance_valid(juice.fast_button):
+			actions.append(juice.fast_button)
 		actions.append_array(app.swap_preview_buttons)
-		_check(actions.size() == 4, "both preview controls join battle actions")
+		_check(actions.size() == 5, "both preview controls and the Fast toggle join battle actions")
 		for index in range(actions.size()):
 			_check(actions[index].get_node(actions[index].focus_next) == actions[(index + 1) % actions.size()] and
 				actions[index].get_node(actions[index].focus_previous) == actions[(index - 1 + actions.size()) % actions.size()],

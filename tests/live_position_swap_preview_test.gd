@@ -92,18 +92,23 @@ func _run() -> void:
 			stale.call()
 			_check(app.swap_preview_cue.text == untouched and _snapshot() == before, "old button callback rejected after restart")
 		var trace: Array = [before]
+		var juice = app.get_node_or_null("LiveCombatJuice")
+		_check(juice != null and is_instance_valid(juice.fast_button),
+			"battle row mounts the Fast animations toggle")
 		var actions: Array = [app.end_turn_button, app.return_button]
+		if juice != null and is_instance_valid(juice.fast_button):
+			actions.append(juice.fast_button)
 		actions.append_array(app.swap_preview_buttons)
 		for control in actions:
 			_check(control.focus_mode == Control.FOCUS_ALL and not control.disabled, "mouse and keyboard action enabled")
 		# Traverse the full loop with real Tab and reverse Tab input.
 		app.end_turn_button.grab_focus()
-		for index in range(1, 5):
+		for index in range(1, actions.size() + 1):
 			await _key(KEY_TAB)
-			_check(actions[index % 4].has_focus(), "forward physical Tab loop")
-		for index in range(1, 5):
+			_check(actions[index % actions.size()].has_focus(), "forward physical Tab loop")
+		for index in range(1, actions.size() + 1):
 			await _key(KEY_TAB, true)
-			_check(actions[(4 - index) % 4].has_focus(), "reverse physical Tab loop")
+			_check(actions[(actions.size() - index) % actions.size()].has_focus(), "reverse physical Tab loop")
 		seed(7123)
 		var global_next := randi()
 		seed(7123)

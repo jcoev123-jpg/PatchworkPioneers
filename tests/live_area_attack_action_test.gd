@@ -184,8 +184,14 @@ func _run() -> void:
 		_visible()
 		await _key(KEY_TAB)
 		_check(app.return_button.has_focus(), "End to Return Tab preserved")
+		var juice = app.get_node_or_null("LiveCombatJuice")
+		_check(juice != null and is_instance_valid(juice.fast_button),
+			"battle row mounts one Fast animations toggle")
 		await _key(KEY_TAB)
-		_check(app.swap_preview_buttons[0].has_focus(), "Return Tab reaches first swap preview")
+		_check(juice != null and is_instance_valid(juice.fast_button) and juice.fast_button.has_focus(),
+			"Return Tab reaches the Fast animations toggle")
+		await _key(KEY_TAB)
+		_check(app.swap_preview_buttons[0].has_focus(), "Tab reaches first swap preview")
 		await _key(KEY_TAB)
 		_check(app.swap_preview_buttons[1].has_focus(), "Tab reaches second swap preview")
 		await _key(KEY_TAB)

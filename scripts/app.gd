@@ -174,6 +174,11 @@ func _ready() -> void:
 	attack_preview.name = "LiveAttackPreview"
 	attack_preview.set_script(preload("res://scripts/live_attack_preview.gd"))
 	add_child(attack_preview)
+	# One battle-independent listener presents committed HP/Block changes (VIS V5).
+	var combat_juice := Node.new()
+	combat_juice.name = "LiveCombatJuice"
+	combat_juice.set_script(preload("res://scripts/live_combat_juice.gd"))
+	add_child(combat_juice)
 
 
 func _process(_delta: float) -> void:
@@ -917,7 +922,15 @@ func _build_battle() -> void:
 	return_button.custom_minimum_size = Vector2(240, 48)
 	return_button.pressed.connect(_return_from_battle.bind(return_button))
 	actions.add_child(return_button)
+	_mount_juice_action(actions)
 	_refresh_swap_preview()
+
+
+## Presentation hook: the battle-independent juice node owns its Fast toggle button.
+func _mount_juice_action(actions: HBoxContainer) -> void:
+	var juice = get_node_or_null("LiveCombatJuice")
+	if juice != null:
+		juice.attach_fast_button(actions)
 
 
 ## Presentation only: never install the copied proposal into the live party.
@@ -948,6 +961,10 @@ func _refresh_swap_preview() -> void:
 	if not end_turn_button.disabled:
 		actions.append(end_turn_button)
 	actions.append(return_button)
+	# End Turn still leads to Return; the Fast toggle follows it during the live turn.
+	var juice = get_node_or_null("LiveCombatJuice")
+	if not _battle_closed and juice != null and is_instance_valid(juice.fast_button):
+		actions.append(juice.fast_button)
 	for button in reward_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			actions.append(button)

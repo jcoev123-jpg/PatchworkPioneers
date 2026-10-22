@@ -1,0 +1,600 @@
+extends SceneTree
+## Cycle 122 (VIS V5): one mounted, presentation-only listener for committed HP/Block.
+## It drives the real title, route, hand, enemy targets and action row; animation
+## timing is asserted as effect contract, never as node geometry.
+
+var failures: Array[String] = []
+var checks := 0
+var app
+var juice
+var fight_seed := 0
+var catalog := StarterCards.new()
+
+
+func _initialize() -> void:
+	_run.call_deferred()
+
+
+func _check(ok: bool, message: String) -> void:
+	checks += 1
+	if not ok:
+		failures.append(message)
+
+
+func _frames() -> void:
+	for frame in range(3):
+		await process_frame
+
+
+func _mouse(control: Control) -> void:
+	if not is_instance_valid(control):
+		return
+	_click_now(control)
+	await _frames()
+
+
+## Press and release without awaiting a frame; the caller watches the result itself.
+func _click_now(control: Control) -> void:
+	if not is_instance_valid(control):
+		return
+	var point := control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = point
+		event.pressed = pressed
+		root.push_input(event, true)
+
+
+func _key(code: Key) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = pressed
+		root.push_input(event, true)
+	await _frames()
+
+
+func _panel(id: String):
+	if not is_instance_valid(app.hand_view):
+		return null
+	for panel in app.hand_view.get_children():
+		if panel.get_child_count() > 0 and panel.get_child(0) is Label and panel.get_child(0).text == id:
+			return panel
+	return null
+
+
+func _enemy_label(position: int) -> Control:
+	var roster = app.get_node("LiveEnemyRoster")
+	if not is_instance_valid(roster) or position < 1 or position > roster._labels.size():
+		return null
+	return roster._labels[position - 1]
+
+
+func _attacks_in_hand() -> Array:
+	var held: Array = []
+	for card in app.deck.hand:
+		if card in CombatAttackTargeting.ATTACK_IDS:
+			held.append(card)
+	return held
+
+
+func _target_position(id: String) -> int:
+	var preview: Dictionary = CombatAttackTargeting.new().get_preview(
+		app.deck, app.party, app.enemies, id)
+	if not preview.get("playable", false):
+		return 0
+	var positions: Array = preview.get("target_positions", [])
+	return int(positions.back()) if not positions.is_empty() else 0
+
+
+## First affordable single-target attack that really has a legal enemy slot.
+func _strike_choice() -> String:
+	for card in app.deck.hand:
+		var definition := catalog.get_definition(card)
+		if definition.is_empty() or definition.get("target_kind") != "enemy_single":
+			continue
+		if int(definition.get("cost", 99)) > 1:
+			continue
+		if _target_position(String(card)) > 0:
+			return String(card)
+	return ""
+
+
+func _fight_choice() -> String:
+	if app.run_map == null:
+		return ""
+	for id in app.run_map.get_legal_choices():
+		if app.run_map.get_node(id).get("type") != "Fight":
+			continue
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == id and not button.disabled:
+				return String(id)
+	return ""
+
+
+## Real path: physical Start -> mounted opening route -> a connected Fight node.
+func _enter_fight(seed_value: int = 0) -> bool:
+	var seeds: Array = [seed_value] if seed_value > 0 else range(1, 25)
+	for candidate in seeds:
+		app.run_seed = int(candidate)
+		await _reset_to_title()
+		await _mouse(app.start_button)
+		await _frames()
+		if app.run_map == null or not is_instance_valid(app.route_view):
+			_check(false, "physical Start mounts the opening route")
+			return false
+		var fight_id := _fight_choice()
+		if fight_id.is_empty():
+			await _reset_to_title()
+			continue
+		var button: Button = null
+		for route in app.route_buttons:
+			if route.get_meta("route_id") == fight_id:
+				button = route
+		await _mouse(button)
+		await _frames()
+		if app.deck != null and app.party != null and app.enemies != null \
+				and is_instance_valid(app.battle_view):
+			fight_seed = int(candidate)
+			if _attacks_in_hand().size() >= 2 and not _strike_choice().is_empty():
+				return true
+		await _reset_to_title()
+	_check(false, "a seeded live fight offers two held attacks")
+	return false
+
+
+## Leaves a mounted fight, a route or the title through the app's own controls.
+func _reset_to_title() -> void:
+	if app.deck == null and app.run_map == null and is_instance_valid(app.title_view) \
+			and app.title_view.is_visible_in_tree():
+		return
+	app._return_to_title()
+	await _frames()
+
+
+func _leave_fight(check_presenter: bool = true) -> void:
+	if not is_instance_valid(app.return_button):
+		return
+	if app.return_button.disabled:
+		app._return_to_title()
+	else:
+		await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and app.deck == null, "Return leaves a clean title")
+	if check_presenter and is_instance_valid(juice):
+		_check(not juice.bound and juice.overlay == null and juice.history.is_empty()
+			and juice.live_cues() == 0, "Return drops the binding and every cue")
+
+
+func _state() -> Array:
+	return [app.party.get_heroes(), app.enemies.get_enemies(), app.deck.hand.duplicate(),
+		app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(), app.deck.energy,
+		app.deck.turn_active, app.run_rng.seed, app.run_rng.state,
+		app.enemy_intents.get_intents(), app.enemy_attacks.duplicate(true),
+		app.enemy_intents._turn_index, app.battle_result.get_outcome(),
+		app.session_gold, app.victory_gold.is_claimed() if app.victory_gold != null else false]
+
+
+func _actors() -> Dictionary:
+	var out := {}
+	for hero in app.party.get_heroes():
+		out["hero:" + String(hero["id"])] = {"side": "hero", "position": int(hero["position"]),
+			"id": String(hero["id"]), "hp": int(hero["hp"]), "block": int(hero["block"])}
+	for enemy in app.enemies.get_enemies():
+		out["enemy:" + String(enemy["id"])] = {"side": "enemy", "position": int(enemy["position"]),
+			"id": String(enemy["id"]), "hp": int(enemy["hp"]), "block": int(enemy["block"])}
+	return out
+
+
+func _changed(before: Dictionary, after: Dictionary) -> Array[Dictionary]:
+	var changed: Array[Dictionary] = []
+	for key in before:
+		if not after.has(key):
+			continue
+		var was: Dictionary = before[key]
+		var now: Dictionary = after[key]
+		var hp_delta: int = int(now["hp"]) - int(was["hp"])
+		var block_delta: int = int(now["block"]) - int(was["block"])
+		if hp_delta == 0 and block_delta == 0:
+			continue
+		changed.append({"side": now["side"], "position": now["position"], "id": now["id"],
+			"hp": hp_delta, "block": block_delta})
+	return changed
+
+
+func _signature(records: Array) -> Array:
+	var out: Array = []
+	for record in records:
+		out.append("%s:%d:%s:%d:%d" % [record["side"], int(record["position"]), record["id"],
+			int(record["hp"]), int(record["block"])])
+	out.sort()
+	return out
+
+
+## Every committed change announced once, and no cue without a matching real change.
+func _assert_cues_match(announced: Array, changed: Array, message: String) -> void:
+	_check(_signature(announced) == _signature(changed), message)
+
+
+func _wait_cues(known: int) -> bool:
+	for attempt in range(120):
+		if juice.history.size() > known:
+			return true
+		await process_frame
+	return false
+
+
+func _run() -> void:
+	root.size = Vector2i(1280, 720)
+	app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await _frames()
+	var listeners: Array = []
+	for child in app.get_children():
+		if child.name == "LiveCombatJuice":
+			listeners.append(child)
+	_check(listeners.size() == 1, "exactly one battle-independent LiveCombatJuice node")
+	if listeners.size() != 1:
+		app.free()
+		_finish()
+		return
+	juice = listeners[0]
+	_check(juice.get_parent() == app and not juice.bound and juice.overlay == null
+		and juice.history.is_empty() and juice.live_cues() == 0,
+		"title has no battle binding, overlay, snapshot or cue")
+	_check(not is_instance_valid(juice.fast_button), "no Fast toggle before a battle mounts")
+	await _commit_attack()
+	await _end_turn()
+	await _fast_mode()
+	await _teardown_and_reentry()
+	await _settlement_parity()
+	if is_instance_valid(app):
+		app.free()
+	_finish()
+
+
+func _assert_presenter_mounted() -> void:
+	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
+	_check(juice.history.is_empty() and juice.live_cues() == 0,
+		"mounting a fight fabricates no cue")
+	_check(is_instance_valid(juice.fast_button) and juice.fast_button.is_visible_in_tree()
+		and juice.fast_button.get_parent() == app.end_turn_button.get_parent(),
+		"themed Fast animations toggle sits in the existing battle action row")
+	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
+		"exactly one Fast animations toggle")
+
+
+## AC1: a legal held attack's committed target HP/Block delta, drawn once, pointer-inert.
+func _commit_attack() -> void:
+	if not await _enter_fight():
+		return
+	_assert_presenter_mounted()
+	var id := _strike_choice()
+	var position := _target_position(id)
+	_check(not id.is_empty() and position > 0, "a held attack has a really legal enemy slot")
+	var panel = _panel(id)
+	_check(panel != null, "the live hand really holds " + id)
+	if panel == null or position <= 0:
+		await _leave_fight()
+		return
+	# Real Block on the target, so one committed hit shows both HP and Block deltas.
+	_check(app.enemies.gain_block(position, 2), "target holds real Block before the strike")
+	await _frames()
+	var known: int = juice.history.size()
+	var before := _actors()
+	seed(8123)
+	var global_next := randi()
+	seed(8123)
+	await _mouse(panel)
+	await _mouse(_enemy_label(position))
+	await _frames()
+	_check(randi() == global_next, "committed play through the listener draws no global RNG")
+	var after := _actors()
+	var changed := _changed(before, after)
+	_check(changed.size() == 1 and changed[0]["side"] == "enemy"
+		and int(changed[0]["position"]) == position and int(changed[0]["block"]) == -2,
+		"the committed strike changes exactly the real target's HP and Block")
+	var announced: Array = juice.history.slice(known)
+	_check(announced.size() == 1, "one committed strike announces exactly one cue")
+	if announced.size() == 1:
+		_assert_cues_match(announced, changed, "the cue repeats the true target HP/Block delta")
+		var cue: Dictionary = announced[0]
+		_check(cue["anchor"] == "presentation", "cue anchors to the current actor presentation")
+		_check(not cue["fast"] and float(cue["duration"]) <= 0.6,
+			"normal cue lasts at most 0.6 s")
+		_check(String(cue["text"]).contains("%d HP" % int(cue["hp"]))
+			and String(cue["text"]).contains("Block %d" % int(cue["block"])),
+			"float text names the exact HP and Block deltas")
+	_check(juice.live_cues() > 0, "the cue is really on screen right after the hit")
+	var roster = app.get_node("LiveEnemyRoster")
+	var puppet = roster.panel.find_child("EnemyPuppet%d" % position, true, false) as Control
+	_check(is_instance_valid(puppet) and juice._cues.back().get("target") == puppet,
+		"the cue is anchored to the target enemy's live presentation")
+	await _assert_inert_cues()
+	# A missing presentation falls back to the matching live combat meter.
+	if is_instance_valid(puppet):
+		puppet.hide()
+		roster._labels[position - 1].hide()
+		_check(app.enemies.gain_block(position, 1), "a real committed Block change for the fallback")
+		await _frames()
+		var fallback: Dictionary = juice.history.back()
+		_check(fallback["anchor"] == "meter" and int(fallback["block"]) == 1,
+			"a missing presentation falls back to the live combat meter")
+		var meter = app.get_node("LiveCombatMeters").row.get_child(CombatParty.PARTY_SIZE + position - 1)
+		_check(juice._cues.back().get("target") == meter,
+			"the fallback cue is anchored to that actor's own meter")
+		puppet.show()
+		roster._labels[position - 1].show()
+		await _frames()
+	# A wholly missing presentation drops the snapshot instead of inventing a cue.
+	var meters = app.get_node("LiveCombatMeters")
+	for slot in app.hero_panels:
+		slot.hide()
+	_check(is_instance_valid(meters.row), "live meter row exists for the missing-presentation case")
+	if is_instance_valid(meters.row):
+		meters.row.hide()
+		var missing_before: int = juice.history.size()
+		_check(app.enemies.gain_block(position, 1), "a committed change while every presentation is hidden")
+		await _frames()
+		_check(juice.history.size() == missing_before and juice.live_cues() == 0,
+			"a missing presentation fabricates no cue")
+		var stored: Dictionary = juice._snapshot.get("enemy:" + String(app.enemies.get_enemy(position)["id"]), {})
+		_check(int(stored.get("block", -1)) == int(app.enemies.get_enemy(position)["block"]),
+			"a missing presentation rebaselines instead of replaying the gap")
+		for slot in app.hero_panels:
+			slot.show()
+		meters.row.show()
+		await _frames()
+	# The listener keeps polling: the same committed state never announces again.
+	known = juice.history.size()
+	var settled := _state()
+	app._refresh_party()
+	app._refresh_intents()
+	app._refresh_enemy_roster()
+	for repeat in range(6):
+		app._process(0.0)
+	await _frames()
+	_check(juice.history.size() == known, "refresh and repeated polling never duplicate a cue")
+	_check(_state() == settled, "presentation polling preserves completely unchanged state")
+	# A failed card play (no energy) must not fabricate a cue.
+	var energy: int = app.deck.energy
+	app.deck.combat_state.energy = 0
+	var held := _attacks_in_hand()
+	_check(not held.is_empty() and _panel(String(held[0])) != null,
+		"a held attack remains for the rejected-play check")
+	var failed_state := _state()
+	await _mouse(_panel(String(held[0])))
+	await _mouse(_enemy_label(_target_position(String(held[0])) if _target_position(String(held[0])) > 0 else 1))
+	await _frames()
+	_check(juice.history.size() == known, "a rejected card play fabricates no cue")
+	_check(_state() == failed_state, "a rejected card play changes no combat value")
+	app.deck.combat_state.energy = energy
+	await _leave_fight()
+
+
+func _assert_inert_cues() -> void:
+	_check(not juice._cues.is_empty(), "a live cue is recorded")
+	if juice._cues.is_empty():
+		return
+	var entry: Dictionary = juice._cues.back()
+	var flash = entry.get("flash")
+	var float_label = entry.get("float")
+	_check(is_instance_valid(flash) and is_instance_valid(float_label), "flash and float are mounted")
+	if not is_instance_valid(flash) or not is_instance_valid(float_label):
+		return
+	_check(flash.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and float_label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and juice.overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"flash, float and overlay never intercept the pointer")
+	_check(flash.focus_mode == Control.FOCUS_NONE and float_label.focus_mode == Control.FOCUS_NONE,
+		"flash and float never take keyboard focus")
+	var motion := InputEventMouseMotion.new()
+	motion.position = float_label.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await process_frame
+	var hovered := root.gui_get_hovered_control()
+	_check(hovered != flash and hovered != float_label and hovered != juice.overlay,
+		"a real hit test passes through the cue to the battle underneath")
+
+
+## AC2: a real End Turn announces exactly the committed HP/Block changes.
+func _end_turn() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	_assert_presenter_mounted()
+	var known: int = juice.history.size()
+	var before := _actors()
+	await _mouse(app.end_turn_button)
+	await _frames()
+	var after := _actors()
+	var changed := _changed(before, after)
+	_check(not changed.is_empty(), "the real End Turn committed HP/Block changes")
+	var announced: Array = juice.history.slice(known)
+	_assert_cues_match(announced, changed,
+		"End Turn announces one cue per committed actor and none for unchanged actors")
+	_check(not announced.is_empty() and announced.size() == changed.size(),
+		"End Turn never invents or repeats a cue")
+	for cue in announced:
+		_check(String(cue["anchor"]) in ["presentation", "meter"],
+			"End Turn cue anchored to the current presentation")
+	# Nothing changed after the phase: polling must stay silent.
+	known = juice.history.size()
+	var settled := _state()
+	for repeat in range(6):
+		app._process(0.0)
+	await _frames()
+	_check(juice.history.size() == known and _state() == settled,
+		"post-phase refresh and polling add no cue and change no state")
+	await _leave_fight()
+
+
+## AC3: mouse and Tab/Space reach a fast mode that really shortens the effect.
+func _fast_mode() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	var button: Button = juice.fast_button
+	_check(not juice.fast_animations and juice.duration_seconds() <= 0.6
+		and button.text == "Fast animations: Off", "normal mode by default")
+	var before_toggle := _state()
+	await _mouse(button)
+	_check(juice.fast_animations and juice.duration_seconds() <= 0.15
+		and button.text == "Fast animations: On", "mouse reaches a fast mode of at most 0.15 s")
+	_check(_state() == before_toggle, "toggling fast changes no combat state")
+	_check(not app.end_turn_button.disabled, "fast mode never locks the End Turn action")
+	# A real attack in fast mode commits normally and keeps its cue for at most 0.15 s.
+	var id := _strike_choice()
+	var position := _target_position(id)
+	var known: int = juice.history.size()
+	await _mouse(_panel(id))
+	_click_now(_enemy_label(position))
+	var fast_started := false
+	for attempt in range(8):
+		await process_frame
+		if juice.history.size() > known:
+			fast_started = true
+			break
+	_check(fast_started and juice.live_cues() > 0,
+		"fast mode still announces the committed hit on screen")
+	var announced: Array = juice.history.slice(known)
+	_check(announced.size() == 1 and bool(announced[0]["fast"])
+		and float(announced[0]["duration"]) <= 0.15, "fast cues are recorded at 0.15 s or less")
+	var cue_nodes: Array = []
+	if not juice._cues.is_empty():
+		cue_nodes = [juice._cues.back().get("float"), juice._cues.back().get("flash")]
+	_check(juice.live_cues() > 0, "the fast cue really starts on screen")
+	await create_timer(0.25).timeout
+	_check(juice.live_cues() == 0, "the fast cue is finished within 0.25 s")
+	for node in cue_nodes:
+		_check(not is_instance_valid(node), "a finished cue frees its nodes")
+	# Keyboard: End Turn still tabs to Return, then the toggle; Space switches back.
+	app.end_turn_button.grab_focus()
+	await _key(KEY_TAB)
+	_check(app.return_button.has_focus(), "End Turn still tabs to Return")
+	await _key(KEY_TAB)
+	_check(button.has_focus(), "Tab reaches the Fast animations toggle")
+	var before_key := _state()
+	await _key(KEY_SPACE)
+	_check(not juice.fast_animations and juice.duration_seconds() <= 0.6
+		and button.text == "Fast animations: Off", "Space returns to normal-speed cues")
+	_check(_state() == before_key, "keyboard toggling changes no combat state")
+	# Normal mode gameplay is not gated by the previous fast cue either.
+	var normal_state := _state()
+	var held := _attacks_in_hand()
+	_check(not held.is_empty(), "a second attack is still held after the toggle")
+	if not held.is_empty() and _target_position(String(held[0])) > 0:
+		await _mouse(_panel(String(held[0])))
+		await _mouse(_enemy_label(_target_position(String(held[0]))))
+		await _frames()
+		_check(_state() != normal_state, "a normal-speed attack still commits immediately")
+	await _leave_fight()
+
+
+## AC3: Return drops every cue and snapshot; a fresh fight rebinds exactly once.
+func _teardown_and_reentry() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	var id := _strike_choice()
+	var known: int = juice.history.size()
+	await _mouse(_panel(id))
+	await _mouse(_enemy_label(_target_position(id)))
+	await _frames()
+	var live := await _wait_cues(known)
+	_check(live and juice.live_cues() > 0, "a cue is live before Return")
+	var serial: int = juice.bind_serial
+	var overlay_id: int = juice.overlay.get_instance_id()
+	var sprite_ids: Array = []
+	for entry in juice._cues:
+		for key in ["float", "flash"]:
+			var node = entry.get(key)
+			if is_instance_valid(node):
+				sprite_ids.append(node.get_instance_id())
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.deck == null and juice.overlay == null and juice.live_cues() == 0
+		and juice.history.is_empty() and not juice.bound and juice._snapshot.is_empty(),
+		"Return clears the snapshot, overlay and every cue")
+	_check(not is_instance_id_valid(overlay_id), "the old overlay is really freed")
+	_check(juice.history.is_empty(), "Return clears the committed cue log")
+	var all_freed := true
+	for instance_id in sprite_ids:
+		if is_instance_id_valid(int(instance_id)):
+			all_freed = false
+	_check(all_freed, "old cue nodes are freed on teardown")
+	_check(not is_instance_valid(juice.fast_button) or not juice.fast_button.is_visible_in_tree(),
+		"the old action row toggle is gone with its battle")
+	if not await _enter_fight(fight_seed):
+		return
+	_check(juice.bind_serial == serial + 1, "a fresh fight rebinds exactly once")
+	_check(juice.history.is_empty() and juice.live_cues() == 0,
+		"fresh reentry starts without a stale cue")
+	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
+		"fresh reentry mounts exactly one Fast animations toggle")
+	await _leave_fight()
+
+
+## AC1: identical combat, deck, RNG and settlement with and without the presenter.
+func _settlement_parity() -> void:
+	var seed_value: int = fight_seed
+	app.free()
+	juice = null
+	app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await _frames()
+	var with_juice := await _scripted_trace(seed_value)
+	app.free()
+	app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await _frames()
+	var listener = app.get_node_or_null("LiveCombatJuice")
+	_check(listener != null, "the real scene mounts the listener")
+	if listener != null:
+		app.remove_child(listener)
+		listener.free()
+	var without := await _scripted_trace(seed_value)
+	_check(not with_juice.is_empty() and with_juice == without,
+		"identical combat, deck, RNG and settlement without the presenter")
+	await _leave_fight(false)
+
+
+func _scripted_trace(seed_value: int) -> Array:
+	var trace: Array = []
+	if not await _enter_fight(seed_value):
+		return trace
+	trace.append(_state())
+	var id := _strike_choice()
+	var position := _target_position(id)
+	if id.is_empty() or position <= 0:
+		return trace
+	await _mouse(_panel(id))
+	await _mouse(_enemy_label(position))
+	await _frames()
+	trace.append(_state())
+	await _mouse(app.end_turn_button)
+	await _frames()
+	trace.append(_state())
+	# The real settlement boundary: the last enemy falls, the app settles gold and
+	# prepares this fight's reward, exactly as a committed lethal card would.
+	for enemy in app.enemies.get_enemies():
+		if int(enemy["hp"]) + int(enemy["block"]) > 0:
+			app.enemies.apply_damage(int(enemy["position"]), int(enemy["hp"]) + int(enemy["block"]))
+	app._observe_battle_result()
+	await _frames()
+	_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.VICTORY,
+		"scripted parity run really settles a victory")
+	_check(is_instance_valid(app.reward_choice_panel) and not app.fight_reward_offers.is_empty(),
+		"scripted parity run prepares the real fight reward")
+	trace.append([_state(), app.fight_reward_gold, app.fight_reward_offers.size(),
+		app.fight_reward_claimed, is_instance_valid(app.reward_choice_panel),
+		app.result_label.text if is_instance_valid(app.result_label) else ""])
+	return trace
+
+
+func _finish() -> void:
+	for failure in failures:
+		printerr(failure)
+	print("live_combat_juice_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
+	quit(0 if failures.is_empty() else 1)
