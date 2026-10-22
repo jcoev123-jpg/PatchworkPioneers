@@ -719,6 +719,10 @@ func _eligible(panel) -> bool:
 	if app.battle_result._party != app.party or app.battle_result._enemies != app.enemies:
 		return false
 	var id := _card_id(panel)
+	# Legal scene-free targeting does not imply an installed live resolver.
+	# These combo attacks must remain unwired until their live adapter lands.
+	if _targeting.is_pool_combo_attack(id):
+		return false
 	var index: int = panel.get_index()
 	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
 

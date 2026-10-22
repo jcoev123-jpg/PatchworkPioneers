@@ -31,6 +31,8 @@ func _initialize() -> void:
 	_test_unsupported_and_invalid()
 	_test_pool_strikes()
 	_test_seamstress_controls()
+	_test_pool_combos_targeting()
+	_test_pool_combo_forecasts()
 	_test_seeded_replay()
 	for failure in failures:
 		printerr(failure)
@@ -576,3 +578,336 @@ func _test_seeded_replay() -> void:
 				"seed " + str(seed_value) + ": repeated " + id + " yields same preview")
 		_check(_snapshot(deck, party, enemies) == before,
 			"seed " + str(seed_value) + ": preview sequence consumes no RNG or model state")
+
+
+const COMBO_IDS := [
+	"warden_pinning_jab", "warden_pinning_jab_plus",
+	"warden_seam_breaker", "warden_seam_breaker_plus",
+	"tinker_spool_launcher", "tinker_spool_launcher_plus",
+	"tinker_snip_the_seam", "tinker_snip_the_seam_plus",
+]
+
+
+func _combo_battle(card_id: String, options: Dictionary = {}) -> Dictionary:
+	var cards: Array[String] = []
+	for i in range(5):
+		cards.append(card_id)
+	var deck := _deck(cards, 6721)
+	_check(deck.hand.has(card_id), card_id + ": real seeded five-card hand")
+	var order: Array[String] = ["warden", "seamstress", "tinker"]
+	if options.has("order"):
+		order.assign(options["order"])
+	var party := _party(order)
+	var definitions: Array = []
+	for i in range(3):
+		definitions.append({"id": "combo_enemy_%d" % (i + 1), "max_hp": 90})
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid(), "three independent living combat enemy slots exist")
+	var pinned := CombatPinned.new()
+	var unravel := CombatUnravel.new()
+	_check(unravel.bind_roster(enemies, {1: "normal", 2: "elite", 3: "boss"}),
+		"genuine three-tier Unravel bound to the exact enemy instance")
+	var first := CombatTinkerFirstAttack.new()
+	var target: int = options.get("target", 1)
+	var charge: int = options.get("charge", 0)
+	if charge > 0:
+		_check(unravel.apply_unravel(enemies, target, charge),
+			"charge seeded with real CombatUnravel.apply_unravel")
+	var owner: String = options.get("pinner", "")
+	if not owner.is_empty():
+		_check(pinned.pin_enemy(enemies, target, owner),
+			"pin owner seeded with real CombatPinned.pin_enemy")
+	if options.get("spent_first", false):
+		_check(first.record_successful_attack("tinker_pop_shot"),
+			"first attack latch consumed by an actual Tinker attack ID")
+	if options.get("weak", false):
+		var owner_position: int = 1 if card_id.begins_with("warden_") else 3
+		for hero in party.get_heroes():
+			if hero["id"] == ("warden" if owner_position == 1 else "tinker"):
+				owner_position = hero["position"]
+		party._heroes[owner_position - 1]["statuses"] = {"weak": 2}
+	if options.get("exposed", false):
+		_check(enemies.apply_statuses({target: {"exposed": 2}}),
+			"Exposed seeded with authoritative enemy status API")
+	if options.get("block", 0) > 0:
+		_check(enemies.gain_block(target, options["block"]),
+			"Block seeded through enemy API")
+	if options.get("hp", 90) < 90:
+		_check(enemies.apply_damage(target, 90 - int(options["hp"])),
+			"near-lethal target seeded through enemy damage API")
+	return {"deck": deck, "party": party, "enemies": enemies,
+		"pinned": pinned, "unravel": unravel, "first": first}
+
+
+func _combo_state(fixture: Dictionary) -> Dictionary:
+	var deck: CombatDeck = fixture["deck"]
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var pinned: CombatPinned = fixture["pinned"]
+	var unravel: CombatUnravel = fixture["unravel"]
+	var first: CombatTinkerFirstAttack = fixture["first"]
+	var gauges: Dictionary = {}
+	for i in range(1, enemies.get_enemies().size() + 1):
+		gauges[i] = unravel.get_snapshot(i)
+	return {
+		"battle": _snapshot(deck, party, enemies),
+		"pinned": pinned._pinner_by_position.duplicate(true),
+		"tiers": unravel._tiers_by_position.duplicate(true),
+		"gauges": gauges,
+		"bound_identity": unravel._bound_enemies == enemies,
+		"first_consumed": first._consumed
+	}
+
+
+func _combo_preview(fixture: Dictionary, id: String, position: int = 0) -> Dictionary:
+	return CombatPoolComboAttackPreview.new().get_preview(
+		fixture["deck"], fixture["party"], fixture["enemies"],
+		fixture["pinned"], fixture["unravel"], fixture["first"], id, position)
+
+
+func _combo_assert_refusal(fixture: Dictionary, id: String, target: int, label: String) -> void:
+	var before: Dictionary = _combo_state(fixture)
+	var forecast: Dictionary = _combo_preview(fixture, id, target)
+	_check(forecast.get("playable") == false and forecast.get("targets", [99]).is_empty()
+		and forecast.get("target_positions", [99]).is_empty(),
+		label + ": unavailable, no advertised hit or slot")
+	_check(_combo_state(fixture) == before, label + ": refusal leaves entire battle and RNG unchanged")
+
+
+func _test_pool_combos_targeting() -> void:
+	var warden_catalog := WardenPoolCards.new()
+	var tinker_catalog := TinkerPoolCards.new()
+	for id in COMBO_IDS:
+		var warden: bool = id.begins_with("warden_")
+		var definition: Dictionary = (warden_catalog.get_definition(id) if warden
+			else tinker_catalog.get_definition(id))
+		_check(not definition.is_empty() and service.is_pool_combo_attack(id)
+			and service.supports(id), id + ": exact supported authored combo ID")
+		_check(service.combo_definition(id) == definition,
+			id + ": picker returns independently copied complete catalog record")
+		_check(not CombatAttackTargeting.ATTACK_IDS.has(id)
+			and not service.is_pool_strike(id) and not service.is_heavy_pool_attack(id),
+			id + ": starter and other pool lists unchanged")
+		var deck_fixture: Dictionary = _combo_battle(id)
+		var targets: Array = [1] if id.begins_with("warden_pinning_jab") else \
+			[1, 2] if id.begins_with("warden_") else [1, 2, 3]
+		_assert_preview(deck_fixture["deck"], deck_fixture["party"], deck_fixture["enemies"],
+			id, true, true, targets, id + ": exact original authored targets")
+		var wrong_order: Array[String] = []
+		wrong_order.assign(["seamstress", "tinker", "warden"] if warden else
+			["tinker", "warden", "seamstress"])
+		var wrong: CombatParty = _party(wrong_order)
+		_reject(deck_fixture["deck"], wrong, deck_fixture["enemies"], id,
+			id + ": owner in forbidden position")
+		var movable_order: Array[String] = []
+		movable_order.assign(["seamstress", "warden", "tinker"] if warden else
+			["warden", "tinker", "seamstress"])
+		_assert_preview(deck_fixture["deck"], _party(movable_order), deck_fixture["enemies"],
+			id, true, true, targets, id + ": legal owner swap")
+		var downed: CombatParty = _party()
+		var owner_position: int = 1 if warden else 3
+		_check(downed.apply_damage(owner_position, 999) and downed.is_downed(owner_position),
+			"actual combo owner downed")
+		_reject(deck_fixture["deck"], downed, deck_fixture["enemies"], id,
+			id + ": downed owner")
+		var poor: Dictionary = _combo_battle(id)
+		var cost: int = definition["cost"]
+		if cost == 2:
+			_check(poor["deck"].try_spend_energy(2) and poor["deck"].energy == 1,
+				"cost two fixture has one energy remaining")
+			_reject(poor["deck"], poor["party"], poor["enemies"], id,
+				id + ": energy one refuses cost two")
+		_check(poor["deck"].try_spend_energy(poor["deck"].energy)
+			and poor["deck"].energy == 0, "cost one/two fixture reaches zero energy")
+		_reject(poor["deck"], poor["party"], poor["enemies"], id,
+			id + ": energy zero refusal")
+		var absent: Dictionary = _combo_battle(id)
+		while absent["deck"].hand.has(id):
+			_check(absent["deck"].discard_played(id), id + ": discarded genuine held card")
+		_reject(absent["deck"], absent["party"], absent["enemies"], id,
+			id + ": no held card")
+		var spent: Dictionary = _combo_battle(id)
+		_check(spent["deck"].end_turn() and not spent["deck"].turn_active,
+			id + ": turn genuinely ended")
+		_reject(spent["deck"], spent["party"], spent["enemies"], id,
+			id + ": ended-turn rejection")
+		var dead: Dictionary = _combo_battle(id)
+		_check(dead["enemies"].apply_damage(1, 999) and dead["enemies"].is_slain(1),
+			id + ": original slot one slain in place")
+		if id.begins_with("warden_pinning_jab"):
+			_reject(dead["deck"], dead["party"], dead["enemies"], id,
+				id + ": only pinned target slain")
+		else:
+			var survivors: Array = [2] if warden else [2, 3]
+			_assert_preview(dead["deck"], dead["party"], dead["enemies"],
+				id, true, true, survivors, id + ": original slots never compact")
+	_check(not service.supports("tinker_shrapnel_seam")
+		and service.combo_definition("tinker_shrapnel_seam").is_empty()
+		and not service.supports("warden_pinning_jab_fake")
+		and not service.supports("unknown_never_authored"),
+		"unrelated area and invented IDs remain unsupported")
+
+
+func _combo_compare_oracle(id: String, options: Dictionary) -> void:
+	var source: Dictionary = _combo_battle(id, options)
+	var oracle: Dictionary = _combo_battle(id, options)
+	var target: int = options.get("target", 1)
+	var label: String = id + " target %d options %s" % [target, str(options)]
+	var actual_before: Dictionary = _combo_state(source)
+	var preflight: bool
+	if id.begins_with("warden_"):
+		preflight = CombatWardenPoolComboAttacks.new().can_play(
+			oracle["deck"], oracle["party"], oracle["enemies"], oracle["pinned"],
+			oracle["unravel"], id, target)
+	else:
+		preflight = CombatTinkerPoolUnravelAttacks.new(
+			oracle["first"], oracle["unravel"], oracle["pinned"]).can_play(
+			oracle["deck"], oracle["party"], oracle["enemies"], id, target)
+	_check(preflight and actual_before["bound_identity"], label + ": actual resolver can-play")
+	var forecast: Dictionary = _combo_preview(source, id, target)
+	_check(forecast.get("playable", false) and forecast.get("requires_selection", false)
+		and forecast.get("targets", []).size() == 1,
+		label + ": one inspectable forecast for chosen legal target")
+	_check(_combo_state(source) == actual_before,
+		label + ": immediately after forecast full deck, actors, pins, gauges, RNG, latch unchanged")
+	if not forecast.get("playable", false) or forecast.get("targets", []).size() != 1:
+		return
+	var predicted: Dictionary = forecast["targets"][0]
+	var before_gauge: Dictionary = oracle["unravel"].get_snapshot(target)
+	var prior_owner: String = oracle["pinned"].pinner_for_enemy(target)
+	var prior_pin_bonus: int = oracle["pinned"].bonus_for_attack(oracle["enemies"],
+		target, "warden" if id.begins_with("warden_") else "tinker")
+	var oracle_result: Dictionary
+	if id.begins_with("warden_"):
+		oracle_result = CombatWardenPoolComboAttacks.new().play_attack(
+			oracle["deck"], oracle["party"], oracle["enemies"], oracle["pinned"],
+			oracle["unravel"], id, target)
+	else:
+		oracle_result = CombatTinkerPoolUnravelAttacks.new(
+			oracle["first"], oracle["unravel"], oracle["pinned"]).play_attack(
+			oracle["deck"], oracle["party"], oracle["enemies"], id, target)
+	_check(oracle_result.get("ok", false), label + ": detached real combat resolver paid and hit")
+	if not oracle_result.get("ok", false):
+		return
+	var hit: Dictionary = oracle_result["hits"][0]
+	var after_enemy: Dictionary = oracle["enemies"].get_enemy(target)
+	_check(predicted["position"] == target and predicted["damage"] == hit["damage"]
+		and predicted["block_absorbed"] == hit["block_absorbed"]
+		and predicted["hp_loss"] == hit["hp_loss"]
+		and predicted["hp_after"] == after_enemy["hp"]
+		and predicted["block_after"] == after_enemy["block"],
+		label + ": exact authoritative damage, absorbed Block, HP loss and final stats")
+	_check(predicted["pin_bonus"] == prior_pin_bonus
+		and predicted["pin_owner_before"] == prior_owner
+		and predicted["pin_owner_after"] == oracle["pinned"].pinner_for_enemy(target)
+		and predicted["pin_consumed"] == (prior_pin_bonus > 0),
+		label + ": genuine Pinned bonus, same-owner persistence, repin or consumption")
+	var charged_by_resolver: int = (hit.get("unravel_added", 0)
+		if id.begins_with("warden_") else hit.get("unravel", 0))
+	_check(predicted["unravel_before"] == before_gauge
+		and predicted["unravel_after"] == oracle["unravel"].get_snapshot(target)
+		and predicted["unravel_added"] == charged_by_resolver,
+		label + ": exact authoritative Unravel gauge charge and snapshot")
+	var actual_first_bonus: int = 0
+	if id.begins_with("tinker_") and not options.get("spent_first", false):
+		actual_first_bonus = 3
+	_check(predicted["tinker_first_attack_bonus"] == actual_first_bonus,
+		label + ": shared Tinker first-attack latch accurately reported")
+	if id.begins_with("tinker_snip_the_seam"):
+		var empowered: bool = before_gauge["unravelled"] or before_gauge["skip_pending"] \
+			or before_gauge["gauge"] * 2 >= before_gauge["threshold"]
+		_check(predicted["conditional_empowered"] == empowered,
+			label + ": Snip half-threshold and Unravelled branch reported")
+	if predicted["unravel_after"]["skip_pending"] and after_enemy["hp"] > 0:
+		_check(oracle["unravel"].consume_action_skip(oracle["enemies"], target)
+			and predicted["after_action_skip"] == oracle["unravel"].get_snapshot(target),
+			label + ": queued skip forecasts exact reset to 0 and threshold +4")
+	else:
+		_check(predicted["after_action_skip"].is_empty(),
+			label + ": no invented skip consumption")
+	var followup: Dictionary = _combo_preview(source, id, target)
+	_check(forecast == followup and _combo_state(source) == actual_before,
+		label + ": deterministic independent repeat, zero live writes")
+	(predicted["unravel_after"] as Dictionary)["gauge"] = -999
+	(forecast["target_positions"] as Array).clear()
+	_check(_combo_preview(source, id, target) == followup
+		and _combo_state(source) == actual_before,
+		label + ": caller corrupting returned nested gauge and slots cannot poison preview")
+
+
+func _test_pool_combo_forecasts() -> void:
+	for id in COMBO_IDS:
+		_combo_compare_oracle(id, {"target": 1})
+		_combo_compare_oracle(id, {"target": 1, "pinner": "tinker" if id.begins_with("warden_")
+			else "warden", "weak": true, "exposed": true, "block": 9})
+		if not id.begins_with("warden_pinning_jab"):
+			_combo_compare_oracle(id, {"target": 2, "charge": 6, "spent_first": true})
+		if id.begins_with("tinker_"):
+			_combo_compare_oracle(id, {"target": 3, "charge": 8, "exposed": true})
+	_combo_compare_oracle("warden_pinning_jab", {"target": 1, "pinner": "warden"})
+	_combo_compare_oracle("warden_pinning_jab_plus", {"target": 1, "pinner": "seamstress"})
+	_combo_compare_oracle("warden_pinning_jab", {"target": 1, "pinner": "tinker", "hp": 1})
+	_combo_compare_oracle("warden_seam_breaker", {"target": 1, "charge": 4})
+	_combo_compare_oracle("warden_seam_breaker_plus", {"target": 2, "charge": 11})
+	_combo_compare_oracle("tinker_spool_launcher_plus", {"target": 3, "charge": 15})
+	_combo_compare_oracle("tinker_spool_launcher", {"target": 1, "charge": 7})
+	_combo_compare_oracle("tinker_spool_launcher", {"target": 1, "hp": 1})
+	# Snip below/at half in each tier, and while already Unravelled.
+	for id in ["tinker_snip_the_seam", "tinker_snip_the_seam_plus"]:
+		for item in [[1, 3], [1, 4], [1, 8], [2, 5], [2, 6], [2, 12],
+				[3, 7], [3, 8], [3, 16]]:
+			_combo_compare_oracle(id, {"target": item[0], "charge": item[1]})
+	var fixture: Dictionary = _combo_battle("tinker_spool_launcher")
+	var first_snapshot: Dictionary = _combo_state(fixture)
+	var all_targets: Dictionary = _combo_preview(fixture, "tinker_spool_launcher")
+	_check(all_targets["playable"] and all_targets["target_positions"] == [1, 2, 3]
+		and all_targets["targets"].size() == 3,
+		"one forecast exposes every living original slot, with distinct per-target details")
+	_check(_combo_state(fixture) == first_snapshot, "full multi-target simulation never commits")
+	_combo_assert_refusal(fixture, "invented_not_a_card", 1, "genuinely unknown ID")
+	_combo_assert_refusal(fixture, "tinker_shrapnel_seam", 1, "unrelated area attack")
+	_combo_assert_refusal(fixture, "tinker_spool_launcher", 4, "illegal target slot")
+	_combo_assert_refusal(fixture, "tinker_spool_launcher", -1, "negative target slot")
+	var other_roster: CombatEnemies = _enemies()
+	var mismatched: CombatUnravel = CombatUnravel.new()
+	_check(mismatched.bind_roster(other_roster, {1: "normal", 2: "elite", 3: "boss"}),
+		"gauge bound to genuinely different roster")
+	var original_unravel: CombatUnravel = fixture["unravel"]
+	fixture["unravel"] = mismatched
+	_combo_assert_refusal(fixture, "tinker_spool_launcher", 1, "mismatched gauge roster")
+	fixture["unravel"] = CombatUnravel.new()
+	_combo_assert_refusal(fixture, "tinker_spool_launcher", 1, "unbound gauge")
+	fixture["unravel"] = original_unravel
+	fixture["unravel"]._gauges.erase(1)
+	_combo_assert_refusal(fixture, "tinker_spool_launcher", 1, "missing current gauge slot")
+	fixture = _combo_battle("warden_pinning_jab")
+	fixture["unravel"]._gauges[1]["threshold"] = 9
+	_combo_assert_refusal(fixture, "warden_pinning_jab", 1, "corrupt non-authoritative threshold")
+	fixture = _combo_battle("warden_seam_breaker")
+	_check(fixture["deck"].try_spend_energy(2) and fixture["deck"].energy == 1,
+		"Seam Breaker insufficient energy precondition")
+	_combo_assert_refusal(fixture, "warden_seam_breaker", 1, "cost-two at one energy")
+	fixture = _combo_battle("tinker_spool_launcher")
+	_check(fixture["party"].apply_damage(3, 999) and fixture["party"].is_downed(3),
+		"Tinker physically downed before effect forecast")
+	_combo_assert_refusal(fixture, "tinker_spool_launcher", 1, "downed source")
+	fixture = _combo_battle("warden_pinning_jab")
+	_check(fixture["enemies"].apply_damage(1, 999) and fixture["enemies"].is_slain(1),
+		"pinned Jab only possible target slain before effect forecast")
+	_combo_assert_refusal(fixture, "warden_pinning_jab", 1, "slain target")
+	fixture = _combo_battle("tinker_snip_the_seam")
+	_check(fixture["deck"].end_turn(), "turn ended through deck API")
+	_combo_assert_refusal(fixture, "tinker_snip_the_seam", 1, "ended player turn")
+	fixture = _combo_battle("tinker_snip_the_seam")
+	while fixture["deck"].hand.has("tinker_snip_the_seam"):
+		_check(fixture["deck"].discard_played("tinker_snip_the_seam"),
+			"all Snips really removed from hand")
+	_combo_assert_refusal(fixture, "tinker_snip_the_seam", 1, "out-of-hand Snip")
+	fixture = _combo_battle("tinker_spool_launcher")
+	var before: Dictionary = _combo_state(fixture)
+	var rejected: Dictionary = CombatPoolComboAttackPreview.new().get_preview(
+		fixture["deck"], fixture["party"], fixture["enemies"],
+		fixture["pinned"], fixture["unravel"], null, "tinker_spool_launcher")
+	_check(not rejected["playable"] and rejected["targets"].is_empty()
+		and _combo_state(fixture) == before,
+		"missing first-attack latch fails closed without side effects")
