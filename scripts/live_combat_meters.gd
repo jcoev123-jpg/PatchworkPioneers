@@ -21,6 +21,9 @@ const STATUS_ORDER := ["bleed", "weak", "exposed"]
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 const CHIP_FONT_SIZES := [11, 10, 9]
 const CHIP_SEPARATION := 2
+const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
+	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
+	"quilted_coat": "Quilted Coat"}
 
 var row: Control
 var _battle: Control
@@ -49,6 +52,8 @@ func _sync_battle() -> void:
 	if _battle != app.battle_view or _deck != app.deck or _party != app.party or _enemies != app.enemies:
 		_clear()
 		_mount(app)
+	var patches := _current_patches(app)
+	var needed_height := RIBBON_HEIGHT
 	var forecast := {"ok": false, "heroes": []}
 	if app.enemy_intents != null and app.enemy_intents.is_valid():
 		forecast = CombatIncomingAttackPreview.new().forecast(
@@ -72,7 +77,15 @@ func _sync_battle() -> void:
 		var width := _ribbon_width(slot)
 		if shown:
 			_sync_status_buttons(meter, snapshot, side, incoming, width)
+		if side == "hero":
+			_sync_patch_buttons(meter, snapshot, patches.get(snapshot.get("id", ""), {}))
+		needed_height = maxf(needed_height, meter.get_combined_minimum_size().y)
 		_place(meter, slot, width)
+	# VBox siblings (including the shared-hand pile counts) must be laid out BELOW
+	# the full optional patch row, not across its hover area.
+	var target_min := Vector2(0, needed_height + 2.0)
+	if row.custom_minimum_size != target_min:
+		row.custom_minimum_size = target_min
 
 
 ## Narrow, unboxed ribbon shell built once per mounted meter.
@@ -129,6 +142,18 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	buttons.hide()
 	for index in range(STATUS_BUTTONS):
 		buttons.add_child(_make_status_button(index))
+	if side == "hero":
+		var patches := HBoxContainer.new()
+		patches.name = "PatchButtons"
+		patches.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		patches.focus_mode = Control.FOCUS_NONE
+		patches.add_theme_constant_override("separation", 2)
+		content.add_child(patches)
+		patches.hide()
+		for slot in RunPatchWardrobe.SLOTS:
+			var chip := _make_status_button(patches.get_child_count())
+			chip.name = "Patch" + slot
+			patches.add_child(chip)
 
 
 ## Small sewn chip: pointer-hoverable for its rules, never focusable or activating.
@@ -215,6 +240,114 @@ func _compact(meter: CombatActorMeter) -> void:
 	meter.block_bar.hide()
 	meter.modifier_explanation.hide()
 	meter.bleed_warning.hide()
+
+
+## Resolve the actual bound run ledgers afresh. The saved torn roster validates ownership,
+## while the live party supplies position and *current* HP (a wearer can fall mid-Fight).
+## No snapshot or projection here is ever written back to a rules service.
+func _current_patches(app) -> Dictionary:
+	var carry := app.party_carryover as RunTornCarryover
+	if carry == null or not carry.is_valid() or carry._wardrobe == null or carry.torn == null:
+		return {}
+	var wardrobe: RunPatchWardrobe = carry._wardrobe
+	if not wardrobe.is_valid() or not carry.torn.is_valid():
+		return {}
+	var state: Dictionary = wardrobe.get_snapshot()
+	var torn_state: Dictionary = carry.torn.read_state()
+	if torn_state.get("ok") != true or carry.read_state().get("heroes") != torn_state.get("heroes"):
+		return {}
+	var shop_slots: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	var attacks: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatPatchAttackRules.CATALOG))
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	if not CombatShopPatchRules._valid_slot_catalog(shop_slots) \
+			or not CombatPatchAttackRules.new()._valid_catalog(attacks) \
+			or not (coats is Array) or not RunPatchCoatRules._valid_authored(coats):
+		return {}
+	var projected: Dictionary = RunPatchCoatRules.project_health(torn_state, wardrobe, coats)
+	if projected.get("ok") != true:
+		return {}
+	var definitions: Dictionary = state.get("definitions", {})
+	for id in CombatShopPatchRules.EFFECTS:
+		if definitions.has(id) and definitions[id] != CombatShopPatchRules.EFFECTS[id]["slot"]:
+			return {}
+	for id in CombatPatchAttackRules.EFFECTS:
+		if definitions.has(id) and definitions[id] != CombatPatchAttackRules.EFFECTS[id]["slot"]:
+			return {}
+	if definitions.has(RunPatchCoatRules.BONUS_ID) \
+			and definitions[RunPatchCoatRules.BONUS_ID] != "COAT":
+		return {}
+	# A position swap is legal, but a borrowed ID, modified effective cap or
+	# resurrection of a persistently torn hero is not evidence of an active patch.
+	var live := _party.get_heroes()
+	var expected_by_id := {}
+	var held_by_id := {}
+	for hero in projected["heroes"]:
+		expected_by_id[hero["id"]] = hero
+	for hero in torn_state["heroes"]:
+		held_by_id[hero["id"]] = hero
+	if live.size() != CombatParty.PARTY_SIZE:
+		return {}
+	var result := {}
+	for hero in live:
+		var id: Variant = hero.get("id")
+		if not expected_by_id.has(id) or result.has(id) \
+				or hero.get("max_hp") != expected_by_id[id]["max_hp"] \
+				or (held_by_id[id]["hp"] == 0 and hero.get("hp", 0) > 0):
+			return {}
+		result[id] = state["worn"][id].duplicate(true)
+	return result if result.size() == CombatParty.PARTY_SIZE else {}
+
+
+func _patch_power(id: String) -> String:
+	match id:
+		CombatShopPatchRules.STITCHED_BADGE_ID:
+			return "+%d Block at combat opening (living wearer; stacks with Warden Block)." % \
+				CombatShopPatchRules.EFFECTS[id]["amount"]
+		CombatShopPatchRules.SPARE_SPOOL_ID:
+			return "+%d positive healing from cards owned by this living wearer." % \
+				CombatShopPatchRules.EFFECTS[id]["amount"]
+		"button_eye":
+			return "First successful attack in this combat also applies Exposed %d." % \
+				CombatPatchAttackRules.EFFECTS[id]["amount"]
+		"pincushion_arm":
+			return "Damage-dealing cards owned by this wearer deal +%d damage." % \
+				CombatPatchAttackRules.EFFECTS[id]["amount"]
+		RunPatchCoatRules.BONUS_ID:
+			return "+%d effective maximum HP while living; no free healing." % \
+				RunPatchCoatRules.BONUS
+	return ""
+
+
+## One optional reusable row on heroes only; each sewn slot has one hover-only
+## button, with a distinct dormant tint. Hidden/invalid bindings leave no tooltip.
+func _sync_patch_buttons(meter: CombatActorMeter, hero: Dictionary, worn: Dictionary) -> void:
+	var buttons := meter.get_node("Padding/Content/PatchButtons") as HBoxContainer
+	var any_worn := false
+	for slot in RunPatchWardrobe.SLOTS:
+		var button := buttons.get_node("Patch" + slot) as Button
+		var id: String = worn.get(slot, "")
+		var present := not id.is_empty()
+		button.visible = present
+		if not present:
+			button.text = ""
+			button.tooltip_text = ""
+			continue
+		any_worn = true
+		var active: bool = hero.get("hp", 0) > 0
+		var name: String = PATCH_LABELS.get(id, id)
+		var power := _patch_power(id)
+		var tooltip := "%s (%s)\n%s (%s) — %s\n%s" % [
+			hero.get("name", String(hero["id"]).capitalize()), hero["id"],
+			name, id, slot, "ACTIVE" if active else "DORMANT"]
+		if not power.is_empty():
+			tooltip += "\n" + power
+		button.text = slot
+		button.tooltip_text = tooltip
+		_set_chip_style(button, not active)
+	buttons.visible = any_worn
 
 
 func _incoming_text(hero: Dictionary, forecast: Dictionary, position: int) -> String:
