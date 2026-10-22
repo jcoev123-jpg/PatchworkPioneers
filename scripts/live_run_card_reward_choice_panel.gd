@@ -23,6 +23,10 @@ const RARITY_STITCH_COLORS := {
 	"rare": Color("#ffd8d0"),
 }
 
+const CARD_PAPER := Color("#ece0c8")
+const DARK_INK := Color("#302b29")
+const STITCH_THREAD := Color("#c9b996")
+
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/RewardContent/RewardTitle
 @onready var gold_label: Label = $PaperPanel/ContentMargin/RewardContent/GoldLabel
@@ -147,7 +151,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.name = "Card_%d" % index
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.size_flags_stretch_ratio = 1.0
-	card.custom_minimum_size = Vector2(0, 300)
+	card.custom_minimum_size = Vector2(0, 320)
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.focus_mode = Control.FOCUS_NONE
 	_style_card(card, String(offer["owner"]), false)
@@ -160,10 +164,17 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	var content := VBoxContainer.new()
 	content.name = "CardContent"
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 5)
+	content.add_theme_constant_override("separation", 4)
 	margin.add_child(content)
-	var owner_label := _card_label("OwnerLabel", offer["owner"].capitalize(), 19)
-	content.add_child(owner_label)
+
+	# Owner color patch (sewn stripe at top)
+	var owner_patch := _OwnerPatch.new()
+	owner_patch.name = "OwnerPatch"
+	owner_patch.owner_color = OWNER_COLORS[offer["owner"]]
+	owner_patch.custom_minimum_size = Vector2(0, 18)
+	content.add_child(owner_patch)
+
+	# Name on a pinned torn-paper strip
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -180,6 +191,8 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	name_box.content_margin_bottom = 4
 	name_label.add_theme_stylebox_override("normal", name_box)
 	content.add_child(name_label)
+
+	# Rarity tag (only for pool cards with authored rarity)
 	var rarity_label := _card_label("RarityLabel", "", 15)
 	rarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var rarity: String = String(definition.get("rarity", "")).strip_edges().to_lower()
@@ -201,22 +214,36 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 		rarity_label.text = ""
 		rarity_label.visible = false
 	content.add_child(rarity_label)
-	var cost_label := _card_label("CostLabel", "%d energy" % definition["cost"], 19)
-	var cost_box := StyleBoxFlat.new()
-	cost_box.bg_color = Color("#d8c4a5")
-	cost_box.border_color = Color("#77624f")
-	cost_box.set_border_width_all(2)
-	cost_box.set_corner_radius_all(6)
-	cost_box.content_margin_left = 8
-	cost_box.content_margin_right = 8
-	cost_box.content_margin_top = 2
-	cost_box.content_margin_bottom = 2
-	cost_label.add_theme_stylebox_override("normal", cost_box)
-	content.add_child(cost_label)
+
+	# Cost as a round sewn button (numeric only)
+	var cost_value: int = definition["cost"]
+	var cost_button := _CostButton.new()
+	cost_button.name = "CostButton"
+	cost_button.cost_value = cost_value
+	cost_button.owner_color = OWNER_COLORS[offer["owner"]]
+	cost_button.custom_minimum_size = Vector2(44, 44)
+	cost_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cost_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_button.focus_mode = Control.FOCUS_NONE
+	content.add_child(cost_button)
+
+	# Position/target pips
+	var pips_container := _PositionPips.new()
+	pips_container.name = "PositionPips"
+	pips_container.from_positions = definition.get("from_positions", [])
+	pips_container.to_positions = definition.get("to_positions", [])
+	pips_container.target_kind = String(definition.get("target_kind", ""))
+	pips_container.owner_color = OWNER_COLORS[offer["owner"]]
+	pips_container.custom_minimum_size = Vector2(0, 28)
+	content.add_child(pips_container)
+
+	# Rules text
 	var rules_label := _card_label("RulesLabel", _format_rules(definition), 16)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rules_label.custom_minimum_size = Vector2(0, 60)
 	content.add_child(rules_label)
+
+	# Choose button
 	var action := Button.new()
 	action.name = "ChooseButton"
 	action.text = "Choose card"
@@ -226,6 +253,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	action.mouse_filter = Control.MOUSE_FILTER_STOP
 	_style_button(action, OWNER_COLORS[offer["owner"]])
 	content.add_child(action)
+
 	var offered_id := String(offer["id"])
 	card.gui_input.connect(_on_card_gui_input.bind(index, offered_id, action))
 	card.mouse_entered.connect(_on_card_mouse_entered.bind(index))
@@ -368,7 +396,7 @@ func _card_label(label_name: String, value: String, point_size: int) -> Label:
 	label.text = value
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_color_override("font_color", Color("#263137"))
+	label.add_theme_color_override("font_color", DARK_INK)
 	label.add_theme_font_size_override("font_size", point_size)
 	return label
 
@@ -456,7 +484,7 @@ func _on_choice_pressed(generation: int, node_id: String, selected_card_id: Stri
 
 func _style_card(card: PanelContainer, owner: String, active: bool) -> void:
 	var patch := StyleBoxFlat.new()
-	patch.bg_color = Color("#f7efdf") if active else Color("#f1e5cd")
+	patch.bg_color = CARD_PAPER
 	if OWNER_COLORS.has(owner):
 		patch.border_color = OWNER_COLORS[owner]
 	else:
@@ -579,3 +607,112 @@ static func _humanize_patch(id: String) -> String:
 		if not part.is_empty():
 			words.append(part.capitalize())
 	return " ".join(words)
+
+
+## Owner color patch (sewn stripe at top of card)
+class _OwnerPatch extends Control:
+	@export var owner_color: Color = Color.WHITE
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	func _draw() -> void:
+		var rect := Rect2(Vector2(0, 0), size)
+		# Draw the patch background
+		draw_rect(rect, owner_color)
+		# Draw running stitch along bottom edge
+		var y := rect.end.y - 2
+		draw_dashed_line(Vector2(rect.position.x + 8, y), Vector2(rect.end.x - 8, y), STITCH_THREAD, 1.5, 6.0)
+		# Draw running stitch along top edge
+		y := rect.position.y + 2
+		draw_dashed_line(Vector2(rect.position.x + 8, y), Vector2(rect.end.x - 8, y), STITCH_THREAD, 1.5, 6.0)
+
+
+## Round sewn cost button (numeric only)
+class _CostButton extends Control:
+	@export var cost_value: int = 0
+	@export var owner_color: Color = Color.WHITE
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+	func _draw() -> void:
+		var radius := minf(size.x, size.y) * 0.5
+		var center := size * 0.5
+		# Cream paper background
+		draw_circle(center, radius, CARD_PAPER)
+		# Sewn border
+		draw_circle(center, radius, owner_color, false, 3.0)
+		# Inner stitch ring
+		draw_dashed_line(center + Vector2(radius - 4, 0), center + Vector2(-radius + 4, 0), STITCH_THREAD, 1.5, 5.0)
+		# Cost number in dark ink
+		var font_size := maxi(18, int(radius * 0.9))
+		var text := str(cost_value)
+		# Use default font with dark ink
+		draw_string(get_theme_default_font(), center - get_theme_default_font().get_string_size(text) * 0.5, text, DARK_INK, font_size)
+
+
+## Position/target pips (from_positions and to_positions)
+class _PositionPips extends Control:
+	@export var from_positions: Array[int] = []
+	@export var to_positions: Array[int] = []
+	@export var target_kind: String = ""
+	@export var owner_color: Color = Color.WHITE
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	func _draw() -> void:
+		var y := size.y * 0.5
+		var spacing := 18.0
+		var pip_radius := 5.0
+		var start_x := (size.x - (max(from_positions.size(), to_positions.size()) - 1) * spacing) * 0.5
+		if start_x < 8:
+			start_x = 8
+
+		# Draw "From" pips (source positions) - small circles with owner color border
+		var x := start_x
+		for pos in from_positions:
+			var pip_center := Vector2(x, y - 12)
+			draw_circle(pip_center, pip_radius, CARD_PAPER)
+			draw_circle(pip_center, pip_radius, owner_color, false, 1.5)
+			# Position number inside
+			var pos_text := str(pos)
+			var font_size := 10
+			draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, DARK_INK, font_size)
+			x += spacing
+
+		# Draw "To" pips (target positions) - different style based on target kind
+		x := start_x
+		var target_label := ""
+		match target_kind:
+			"enemy_single": target_label = "→"
+			"enemy_all": target_label = "→all"
+			"enemy_random": target_label = "→?"
+			"self": target_label = "⟲"
+			"ally_single": target_label = "↔"
+			"party_all": target_label = "↔all"
+			"none": target_label = "—"
+			_: target_label = ""
+
+		if target_label != "":
+			var label_size := get_theme_default_font().get_string_size(target_label)
+			var label_x := (size.x - label_size.x) * 0.5
+			draw_string(get_theme_default_font(), Vector2(label_x, y + 2), target_label, DARK_INK, 12)
+
+		# Also draw to_positions pips for enemy targets
+		if target_kind.begins_with("enemy"):
+			x := start_x
+			for pos in to_positions:
+				var pip_center := Vector2(x, y + 12)
+				draw_circle(pip_center, pip_radius, CARD_PAPER)
+				draw_circle(pip_center, pip_radius, Color("#9e3d30"), false, 1.5) # enemy red
+				var pos_text := str(pos)
+				var font_size := 10
+				draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, DARK_INK, font_size)
+				x += spacing
