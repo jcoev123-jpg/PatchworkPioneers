@@ -220,7 +220,10 @@ func _face(card_id: String) -> void:
 		and cue.get_theme_stylebox("panel").border_color == (Color("#c49a3a") if is_tinker else Color("#6e4f6b")),
 		"cream noninteractive stitched owner-colour face: " + card_id)
 	_check(root.size == Vector2i(1280, 720) and cue.size == panel.size
-		and adapter.button == null and adapter.get_child_count() == 0,
+		and adapter.button == null and adapter.get_child_count() == 1
+		and adapter.get_child(0).name == "LiveSeamstressSingleBleedHand"
+		and not adapter.get_child(0) is Control
+		and app.battle_view.get_node_or_null("SeamstressBleedChoiceOverlay") == null,
 		"1280x720 full-panel cue with no extra controls: " + card_id)
 
 
