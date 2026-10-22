@@ -9,11 +9,39 @@ const TEA_IDS = ["seamstress_thimble_tea", "seamstress_thimble_tea_plus"]
 const FIELD_MEND_IDS = ["seamstress_field_mend", "seamstress_field_mend_plus"]
 
 var _catalog := SeamstressPoolCards.new()
+var _patches: CombatShopPatchRules = null
+var _wardrobe: RunPatchWardrobe
+var _torn: RunTornMending
+var _wardrobe_snapshot: Dictionary = {}
+var _torn_snapshot: Dictionary = {}
+
+
+## An attempted binding remains explicit even on failure. Run ledgers stay at the
+## authenticated combat-start snapshot until a fresh binding is supplied.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
+		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	_patches = CombatShopPatchRules.new()
+	_wardrobe = wardrobe
+	_torn = torn
+	if not _patches.bind_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn):
+		return false
+	_wardrobe_snapshot = wardrobe.get_snapshot()
+	_torn_snapshot = torn.read_state()
+	return true
+
+
+func is_patch_binding_valid() -> bool:
+	if _patches == null:
+		return true
+	return _patches.is_valid() and CombatShopPatchRules.new().bind_wardrobe(
+		_wardrobe, _torn, _wardrobe_snapshot, _torn_snapshot)
 
 
 func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 		target_position: int = 0) -> bool:
 	if deck == null or party == null or not deck.turn_active or not party.is_valid():
+		return false
+	if not is_patch_binding_valid():
 		return false
 	if card_id not in DARNING_IDS and card_id not in TEA_IDS and card_id not in FIELD_MEND_IDS:
 		return false
@@ -48,6 +76,11 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 			return false
 	elif effects.size() != 1:
 		return false
+	# The Spare Spool's authored bonus is read from the same authenticated projection
+	# as starter support. It adds only HP healing, never Block.
+	var applied_heal: int = heal_amount
+	if _patches != null:
+		applied_heal += _patches.healing_card_bonus(definition["owner"], card_id)
 
 	# Hand membership is the actual played copy, never just a catalog lookup.
 	if not deck.hand.has(card_id) or deck.energy < cost:
@@ -81,9 +114,9 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 	if is_field_mend:
 		for position in range(1, CombatParty.PARTY_SIZE + 1):
 			if not party.is_downed(position):
-				party.heal(position, heal_amount)
+				party.heal(position, applied_heal)
 	else:
-		party.heal(target_position, heal_amount)
+		party.heal(target_position, applied_heal)
 		if is_darning:
 			party.gain_block(target_position, block_amount)
 	return deck.discard_played(card_id)

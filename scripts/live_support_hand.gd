@@ -3,7 +3,8 @@ extends Node
 
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
-const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus"]
+const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus",
+	"seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea", "seamstress_thimble_tea_plus"]
 const TABLE_ID := "SupportTableBacking"
 const QUILT_IDS := ["warden", "seamstress", "tinker"]
 const QUILT_RULE := "Play cards from all living heroes: each living hero gains 3 Block; draw 1 once per turn"
@@ -35,6 +36,7 @@ var _play := CombatStarterSupportPlay.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
 var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
+var _heal_cards := CombatSeamstressPoolHeals.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 
 
@@ -324,8 +326,14 @@ func _is_block_card(card_id: String) -> bool:
 func _is_energy_card(card_id: String) -> bool:
 	return CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id)
 
+## True only for the six authored Seamstress healing pool records the resolver owns.
+func _is_heal_card(card_id: String) -> bool:
+	return card_id in CombatSeamstressPoolHeals.DARNING_IDS \
+		or card_id in CombatSeamstressPoolHeals.TEA_IDS \
+		or card_id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
+
 func _is_actionable(card_id: String) -> bool:
-	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id)
+	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id) or _is_heal_card(card_id)
 
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
@@ -340,6 +348,10 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		if _energy_cards == null:
 			return false
 		return bool(_energy_cards.play_card(deck, party, card_id, 0))
+	if _is_heal_card(card_id):
+		if _heal_cards == null:
+			return false
+		return bool(_heal_cards.play_card(deck, party, card_id, position))
 	return _play != null and _play.play_card(deck, party, card_id, position)
 
 
@@ -357,14 +369,17 @@ func _sync_battle() -> void:
 		_block_cards = CombatWardenPoolBlockCards.new()
 		_energy_cards = CombatPoolEnergyCards.new()
 		_tinker_gadgets = CombatTinkerPoolGadgets.new()
+		_heal_cards = CombatSeamstressPoolHeals.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
 			var state: Dictionary = carry._wardrobe.get_snapshot()
 			if app._current_carryover_fight() and carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
 				_play.bind_patch_wardrobe(carry._wardrobe, carry.torn, state, carry.torn.read_state())
+				_heal_cards.bind_patch_wardrobe(carry._wardrobe, carry.torn, state, carry.torn.read_state())
 			else:
 				# Explicit invalid run authority must never fall back to unbound play.
 				_play.bind_patch_wardrobe(null, null)
+				_heal_cards.bind_patch_wardrobe(null, null)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		var hud := _battle.find_child("SupportHUD", true, false) as HBoxContainer
 		energy_orb = EnergyOrb.new()
@@ -586,7 +601,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			or app.enemies == null or not app.enemies.is_valid() \
 			or party.is_defeated() or app.enemies.is_victorious():
 			return false
-	if _is_energy_card(card_id) or card_id in SPARE_PARTS_IDS:
+	if _is_energy_card(card_id) or card_id in SPARE_PARTS_IDS or _is_heal_card(card_id):
 		# Presentation preflight only: the pool resolver revalidates and commits.
 		if app._battle_closed or not deck.turn_active or app.battle_result == null \
 			or not app.battle_result.can_continue() or app.battle_result._party != party \
@@ -845,3 +860,4 @@ func _clear() -> void:
 	_block_cards = null
 	_energy_cards = null
 	_tinker_gadgets = null
+	_heal_cards = null

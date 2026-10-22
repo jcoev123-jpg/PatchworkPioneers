@@ -10,6 +10,11 @@ var reference_enemies: CombatEnemies
 var reference_rng: RandomNumberGenerator
 var service := CombatStarterSupportPlay.new()
 var table_instance := 0
+const POOL_FORMS := [
+	"seamstress_darning", "seamstress_darning_plus",
+	"seamstress_thimble_tea", "seamstress_thimble_tea_plus",
+	"seamstress_field_mend", "seamstress_field_mend_plus",
+]
 
 
 func _initialize() -> void:
@@ -63,6 +68,13 @@ func _hover(control: Control) -> void:
 	motion.position = control.get_global_rect().get_center()
 	root.push_input(motion, true)
 	await _frames()
+
+
+func _press() -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	return event
 
 
 func _snapshot(deck: CombatDeck, party: CombatParty, rng: RandomNumberGenerator) -> Array:
@@ -432,6 +444,7 @@ func _run() -> void:
 	await _ally_cases()
 	await _ally_move_cases()
 	await _stale_restart(seed_value)
+	await _pool_heal_cases()
 	app.free()
 	_finish()
 
@@ -884,6 +897,371 @@ func _ally_move_cases() -> void:
 						if id == "seamstress_mend" else updated.block == old_hero.block + 5), "authored effect applies to new occupant")
 					_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "moved target success clears controls")
 				await _ally_return()
+
+
+## Complete mounted state: every pile, actor, intent and the injected run RNG.
+func _pool_state() -> Array:
+	return [app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
+		app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
+		app.party.get_heroes(), app.enemies.get_enemies(),
+		app.enemy_attacks.duplicate(true), app.enemy_intents.get_intents(),
+		app.intent_label.text, app.run_rng.seed, app.run_rng.state,
+		app.battle_result.get_outcome(), app.session_gold]
+
+
+## Independent catalog-derived expectation: only the authored heal/Block changes.
+func _pool_expected(before: Array, card_id: String, target: int) -> Array:
+	var after: Array = before.duplicate(true)
+	var definition: Dictionary = SeamstressPoolCards.new().get_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	after[3] = int(after[3]) - int(definition.get("cost", -1))
+	after[1].erase(card_id)
+	after[2].append(card_id)
+	var heal: int = int(effects.get("heal", 0))
+	if definition.get("target_kind") == "party_all":
+		for index in range(after[5].size()):
+			var hero: Dictionary = after[5][index]
+			if int(hero["hp"]) > 0:
+				hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+	else:
+		var chosen: Dictionary = after[5][target - 1]
+		chosen["hp"] = mini(int(chosen["max_hp"]), int(chosen["hp"]) + heal)
+		chosen["block"] = int(chosen["block"]) + int(effects.get("block", 0))
+	return after
+
+
+func _pool_panel(card_id: String) -> Control:
+	if not is_instance_valid(app.hand_view):
+		return null
+	for panel in app.hand_view.get_children():
+		if panel.get_child_count() > 0 and panel.get_child(0) is Label \
+				and panel.get_child(0).text == card_id:
+			return panel
+	return null
+
+
+## Real standalone battle plus a real CombatDeck draw of the authored pool copy.
+func _pool_start(card_id: String) -> bool:
+	_check(app.deck == null, "title precedes the pool heal battle: " + card_id)
+	app.run_seed = 4247
+	_fixture_start(app)
+	await _frames()
+	var ready: bool = app.deck is CombatDeck and app.party is CombatParty \
+		and app.enemies != null and app.battle_result != null and app.run_rng != null \
+		and is_instance_valid(app.battle_view) and is_instance_valid(app.hand_view)
+	_check(ready, "real standalone battle starts complete: " + card_id)
+	if not ready:
+		return false
+	app.deck.draw_pile.append(card_id)
+	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.back() == card_id,
+		"real CombatDeck draw supplies the authored copy: " + card_id)
+	app._refresh_hand()
+	await _frames()
+	var panel := _pool_panel(card_id)
+	_check(is_instance_valid(panel), "authored pool heal card is mounted: " + card_id)
+	if panel == null:
+		return false
+	var definition: Dictionary = SeamstressPoolCards.new().get_definition(card_id)
+	var facts: Dictionary = presenter._metadata.get_facts(panel)
+	_check(facts.get("known") == true and facts.get("id") == card_id
+		and facts.get("display_name") == definition.display_name
+		and facts.get("cost") == definition.cost
+		and facts.get("owner") == "seamstress",
+		"mounted face shows the authored name, cost and owner: " + card_id)
+	_check(presenter._heal_cards != null and presenter._is_heal_card(card_id)
+		and presenter._is_actionable(card_id),
+		"mounted presenter routes this authored ID to the pool heal resolver: " + card_id)
+	_check(panel.focus_mode == Control.FOCUS_ALL
+		and panel.gui_input.get_connections().size() == 1,
+		"pool heal card has exactly one live input binding: " + card_id)
+	return true
+
+
+func _pool_return() -> void:
+	if is_instance_valid(app.return_button):
+		app.return_button.pressed.emit()
+	await _frames()
+	_check(app.deck == null and presenter._deck == null and presenter._heal_cards == null,
+		"pool heal return releases every session binding")
+
+
+func _pool_ally_case(card_id: String, target: int, keyboard: bool) -> void:
+	if not await _pool_start(card_id):
+		await _pool_return()
+		return
+	var definition: Dictionary = SeamstressPoolCards.new().get_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	var panel := _pool_panel(card_id)
+	_check(app.party.apply_damage(target, 14), "chosen ally is genuinely wounded: " + card_id)
+	app._refresh_party()
+	await _frames()
+	var before := _pool_state()
+	if keyboard:
+		panel.grab_focus()
+		await _keyboard(KEY_ENTER)
+	else:
+		await _mouse(panel)
+	_check(_pool_state() == before, "arming an ally heal never pre-spends: " + card_id)
+	_check(presenter._pending.get("choosing", false)
+		and presenter.cancel_button.is_visible_in_tree(),
+		"mounted heal opens real living-ally target mode: " + card_id)
+	_check(presenter.help_label.text == "%s: choose a living ally | Esc: cancel" % definition.display_name,
+		"target prompt names the authored card: " + card_id)
+	var hero: Control = app.hero_panels[target - 1]
+	if keyboard:
+		app.hero_panels[0].grab_focus()
+		for step in range(target - 1):
+			await _keyboard(KEY_TAB)
+		_check(hero.has_focus(), "Tab reaches the chosen living ally: " + card_id)
+		root.push_input(_key(KEY_ENTER), true)
+		root.push_input(_key(KEY_ENTER, false), true)
+		await _frames()
+	else:
+		await _mouse(hero)
+	var expected := _pool_expected(before, card_id, target)
+	_check(_pool_state() == expected,
+		"mounted heal matches catalog on party, piles, intents and RNG: " + card_id)
+	var chosen: Dictionary = app.party.get_hero(target)
+	var was: Dictionary = before[5][target - 1]
+	_check(chosen.hp == mini(int(was.max_hp), int(was.hp) + int(effects.heal)),
+		"exact authored heal amount: " + card_id)
+	if effects.has("block"):
+		_check(chosen.block == int(was.block) + int(effects.block),
+			"exact authored Block amount: " + card_id)
+	_check(app.deck.energy == int(before[3]) - int(definition.cost),
+		"exact authored energy cost: " + card_id)
+	_check(app.deck.discard_pile.back() == card_id
+		and app.deck.discard_pile.count(card_id) == int(before[2].count(card_id)) + 1,
+		"exactly one played copy discarded: " + card_id)
+	_check(presenter._pending.is_empty() and presenter._targets.is_empty(),
+		"mounted heal clears target state: " + card_id)
+	await _pool_return()
+
+
+func _pool_field_case(card_id: String, down_position: int, keyboard: bool) -> void:
+	if not await _pool_start(card_id):
+		await _pool_return()
+		return
+	var definition: Dictionary = SeamstressPoolCards.new().get_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	_check(app.party.apply_damage(1, 10) and app.party.apply_damage(2, 10)
+		and app.party.apply_damage(3, 10), "all living heroes are wounded before Field Mend")
+	if down_position > 0:
+		_check(app.party.apply_damage(down_position, 9999)
+			and app.party.is_downed(down_position),
+			"a genuinely downed hero is present for Field Mend")
+	app._refresh_party()
+	await _frames()
+	var panel := _pool_panel(card_id)
+	var before := _pool_state()
+	if keyboard:
+		panel.grab_focus()
+		await _keyboard(KEY_ENTER)
+	else:
+		await _mouse(panel)
+	var expected := _pool_expected(before, card_id, 0)
+	_check(_pool_state() == expected,
+		"Field Mend matches catalog on party, piles, intents and RNG: " + card_id)
+	for index in range(3):
+		var was: Dictionary = before[5][index]
+		var now: Dictionary = app.party.get_hero(index + 1)
+		if int(was.hp) == 0:
+			_check(int(now.hp) == 0, "downed hero stays unchanged: " + card_id)
+		else:
+			_check(int(now.hp) == mini(int(was.max_hp), int(was.hp) + int(effects.heal)),
+				"exact authored heal for every living hero: " + card_id)
+	_check(app.deck.energy == int(before[3]) - int(definition.cost)
+		and app.deck.discard_pile.back() == card_id
+		and app.deck.discard_pile.count(card_id) == int(before[2].count(card_id)) + 1,
+		"Field Mend spends exactly two energy and one copy: " + card_id)
+	_check(presenter._pending.is_empty() and presenter._targets.is_empty(),
+		"Field Mend needs no ally selection: " + card_id)
+	await _pool_return()
+
+
+func _pool_cancel_cases() -> void:
+	for mode in ["escape", "queued_cancel", "cancel_button"]:
+		if not await _pool_start("seamstress_thimble_tea"):
+			await _pool_return()
+			continue
+		var panel := _pool_panel("seamstress_thimble_tea")
+		await _mouse(panel)
+		_check(presenter._pending.get("choosing", false),
+			"cancel case really armed: " + mode)
+		var hero: Control = app.hero_panels[2]
+		var callback: Callable = presenter._targets[hero].callback
+		if mode == "escape":
+			await _keyboard(KEY_ESCAPE)
+		elif mode == "queued_cancel":
+			hero.grab_focus()
+			callback.call(_key(KEY_ENTER))
+			root.push_input(_key(KEY_ESCAPE), true)
+			root.push_input(_key(KEY_ESCAPE, false), true)
+			await _frames()
+		else:
+			await _mouse(presenter.cancel_button)
+		var after := _pool_state()
+		_check(presenter._pending.is_empty() and presenter._targets.is_empty()
+			and not presenter.cancel_button.visible,
+			"cancellation clears every target handler: " + mode)
+		# The detached callback from this canceled choice can never commit later.
+		callback.call(_key(KEY_ENTER))
+		await _frames()
+		_check(_pool_state() == after, "canceled target callback stays inert: " + mode)
+		await _pool_return()
+
+
+func _pool_rejection_cases() -> void:
+	# Insufficient energy: otherwise a real held Darning.
+	if not await _pool_start("seamstress_darning"):
+		await _pool_return()
+		return
+	app.deck.combat_state.energy = 0
+	var before := _pool_state()
+	await _mouse(_pool_panel("seamstress_darning"))
+	_check(_pool_state() == before and presenter._pending.is_empty(),
+		"insufficient energy rejects without target mode or spend")
+	app.deck.combat_state.energy = 3
+	# Absent copy: a stale mounted panel cannot act on a hand without it.
+	var panel := _pool_panel("seamstress_darning")
+	_check(app.deck.discard_played("seamstress_darning"), "held copy genuinely removed")
+	before = _pool_state()
+	await _mouse(panel)
+	_check(_pool_state() == before, "absent copy rejects without spend")
+	await _pool_return()
+
+	# Downed target and then a downed owner.
+	if not await _pool_start("seamstress_darning"):
+		await _pool_return()
+		return
+	_check(app.party.apply_damage(3, 9999) and app.party.is_downed(3),
+		"third ally genuinely downed")
+	app._refresh_party()
+	await _frames()
+	await _mouse(_pool_panel("seamstress_darning"))
+	_check(presenter._pending.get("choosing", false)
+		and not presenter._targets.has(app.hero_panels[2])
+		and app.hero_panels[2].focus_mode == Control.FOCUS_NONE,
+		"downed ally is not offered as a target")
+	before = _pool_state()
+	presenter._on_target_input(_key(KEY_ENTER), app.hero_panels[2], 3, presenter._token)
+	await _frames()
+	_check(_pool_state() == before, "downed ally receipt cannot commit")
+	await _keyboard(KEY_ESCAPE)
+	_check(app.party.apply_damage(2, 9999) and app.party.is_downed(2),
+		"Seamstress owner genuinely downed")
+	app._refresh_party()
+	await _frames()
+	before = _pool_state()
+	await _mouse(_pool_panel("seamstress_darning"))
+	_check(_pool_state() == before and presenter._pending.is_empty(),
+		"downed owner cannot arm or spend")
+	await _pool_return()
+
+	# Authored source slot: Thimble Tea requires Seamstress in the middle or back.
+	if not await _pool_start("seamstress_thimble_tea_plus"):
+		await _pool_return()
+		return
+	var proposal := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
+	_check(proposal.ok and proposal.heroes[0].id == "seamstress",
+		"production preview moves Seamstress to the front")
+	app.party._heroes.assign(proposal.heroes)
+	app._refresh_party()
+	presenter._sync_battle()
+	await _frames()
+	before = _pool_state()
+	await _mouse(_pool_panel("seamstress_thimble_tea_plus"))
+	_check(_pool_state() == before and presenter._pending.is_empty(),
+		"wrong owner slot rejects without spend")
+	await _pool_return()
+
+	# Hidden battle, hidden panel and foreign session objects.
+	if not await _pool_start("seamstress_field_mend"):
+		await _pool_return()
+		return
+	panel = _pool_panel("seamstress_field_mend")
+	before = _pool_state()
+	app.battle_view.hide()
+	presenter._on_card_input(_press(), panel, "seamstress_field_mend",
+		app.deck, app.party, app.battle_view)
+	await _frames()
+	_check(_pool_state() == before, "hidden battle rejects Field Mend")
+	app.battle_view.show()
+	panel.hide()
+	presenter._on_card_input(_press(), panel, "seamstress_field_mend",
+		app.deck, app.party, app.battle_view)
+	await _frames()
+	_check(_pool_state() == before, "hidden panel rejects Field Mend")
+	panel.show()
+	var foreign_party := CombatParty.new(app._load_party_definitions())
+	presenter._on_card_input(null, panel, "seamstress_field_mend",
+		app.deck, app.party, app.battle_view)
+	presenter._on_card_input(_press(), panel, "seamstress_field_mend",
+		app.deck, foreign_party, app.battle_view)
+	presenter._on_card_input(_press(), panel, "seamstress_darning",
+		app.deck, app.party, app.battle_view)
+	await _frames()
+	_check(_pool_state() == before,
+		"null/foreign/wrong-ID input preserves every pool heal field")
+	await _pool_return()
+
+
+func _pool_stale_and_duplicate_cases() -> void:
+	# Repeated zero-cost activation and a captured stale card callback.
+	if not await _pool_start("seamstress_thimble_tea_plus"):
+		await _pool_return()
+		return
+	var panel := _pool_panel("seamstress_thimble_tea_plus")
+	var callback: Callable = presenter._bindings[panel]
+	var before := _pool_state()
+	await _mouse(panel)
+	await _mouse(app.hero_panels[0])
+	var expected := _pool_expected(before, "seamstress_thimble_tea_plus", 1)
+	_check(_pool_state() == expected,
+		"double mouse burst plays a zero-cost Tea+ only once")
+	callback.call(_press())
+	await _frames()
+	_check(_pool_state() == expected and presenter._pending.is_empty(),
+		"stale card callback cannot replay a zero-cost play")
+	await _pool_return()
+
+	# A callback captured in a released session cannot mutate the new battle.
+	if not await _pool_start("seamstress_darning_plus"):
+		await _pool_return()
+		return
+	panel = _pool_panel("seamstress_darning_plus")
+	var stale: Callable = presenter._bindings[panel]
+	var old_deck: CombatDeck = app.deck
+	var old_party: CombatParty = app.party
+	var old_rng: RandomNumberGenerator = app.run_rng
+	var old_snapshot := _snapshot(old_deck, old_party, old_rng)
+	await _pool_return()
+	if not await _pool_start("seamstress_darning_plus"):
+		return
+	var current := _pool_state()
+	stale.call(_press())
+	await _frames()
+	_check(_pool_state() == current and presenter._pending.is_empty(),
+		"stale prior-session card callback cannot play")
+	_check(_snapshot(old_deck, old_party, old_rng) == old_snapshot,
+		"released prior session objects stay unchanged")
+	await _pool_return()
+
+
+func _pool_heal_cases() -> void:
+	for card_id in POOL_FORMS:
+		_check(SeamstressPoolCards.new().has_card(card_id),
+			"required authored pool heal record present: " + card_id)
+	# Alternate real mouse and keyboard input across base and '+' forms.
+	await _pool_ally_case("seamstress_darning", 1, false)
+	await _pool_ally_case("seamstress_darning_plus", 2, true)
+	await _pool_ally_case("seamstress_thimble_tea", 3, false)
+	await _pool_ally_case("seamstress_thimble_tea_plus", 1, true)
+	await _pool_field_case("seamstress_field_mend", 3, false)
+	await _pool_field_case("seamstress_field_mend_plus", 0, true)
+	await _pool_cancel_cases()
+	await _pool_rejection_cases()
+	await _pool_stale_and_duplicate_cases()
 
 
 func _finish() -> void:

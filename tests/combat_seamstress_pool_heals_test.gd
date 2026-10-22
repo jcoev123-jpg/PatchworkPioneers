@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_full_hp_and_two_copies()
 	_test_owner_moves_and_downed_field_mend()
 	_test_atomic_rejections()
+	_test_patch_binding_cases()
 	_test_replay()
 	for failure: String in failures:
 		printerr(failure)
@@ -104,7 +105,7 @@ func _snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
 	}
 
 
-func _expected(before: Dictionary, card_id: String, target: int) -> Dictionary:
+func _expected(before: Dictionary, card_id: String, target: int, bonus: int = 0) -> Dictionary:
 	# Oracle uses named design expectations, not the implementation's effects.
 	var after: Dictionary = before.duplicate(true)
 	var spec: Dictionary = CASES[card_id]
@@ -114,10 +115,10 @@ func _expected(before: Dictionary, card_id: String, target: int) -> Dictionary:
 	if spec["kind"] == "party_all":
 		for hero: Dictionary in after["heroes"]:
 			if hero["hp"] > 0:
-				hero["hp"] = mini(hero["max_hp"], hero["hp"] + effects["heal"])
+				hero["hp"] = mini(hero["max_hp"], hero["hp"] + effects["heal"] + bonus)
 	else:
 		var hero: Dictionary = after["heroes"][target - 1]
-		hero["hp"] = mini(hero["max_hp"], hero["hp"] + effects["heal"])
+		hero["hp"] = mini(hero["max_hp"], hero["hp"] + effects["heal"] + bonus)
 		hero["block"] += effects.get("block", 0)
 	after["hand"].remove_at(after["hand"].find(card_id))
 	after["discard"].append(card_id)
@@ -125,13 +126,14 @@ func _expected(before: Dictionary, card_id: String, target: int) -> Dictionary:
 
 
 func _played(deck: CombatDeck, party: CombatParty, id: String, target: int,
-		label: String) -> void:
+		label: String, bonus: int = 0, service = null) -> void:
 	var before: Dictionary = _snapshot(deck, party)
 	_check(deck.turn_active and party.is_valid() and deck.hand.has(id),
 		label + ": authentic precondition (active hand, valid party)")
 	_check(deck.energy >= CASES[id]["cost"], label + ": affordable before action")
-	var expected: Dictionary = _expected(before, id, target)
-	_check(resolver.play_card(deck, party, id, target), label + ": succeeds")
+	var expected: Dictionary = _expected(before, id, target, bonus)
+	var player = service if service != null else resolver
+	_check(player.play_card(deck, party, id, target), label + ": succeeds")
 	_check(_snapshot(deck, party) == expected,
 		label + ": exact HP, Block, caps, all piles, three-energy budget and RNG")
 	_check(deck.hand.count(id) == before["hand"].count(id) - 1
@@ -140,9 +142,10 @@ func _played(deck: CombatDeck, party: CombatParty, id: String, target: int,
 
 
 func _rejected(deck: CombatDeck, party: CombatParty, id: String, target: int,
-		label: String) -> void:
+		label: String, service = null) -> void:
 	var before: Dictionary = _snapshot(deck, party)
-	_check(not resolver.play_card(deck, party, id, target), label + ": rejects")
+	var player = service if service != null else resolver
+	_check(not player.play_card(deck, party, id, target), label + ": rejects")
 	_check(_snapshot(deck, party) == before,
 		label + ": atomic rejection preserves HP, Block, piles, energy and RNG")
 
@@ -299,6 +302,213 @@ func _test_atomic_rejections() -> void:
 	_check(not resolver.play_card(null, party, "seamstress_darning", 1)
 		and not resolver.play_card(deck, null, "seamstress_darning", 1),
 		"null authorities safely reject")
+
+
+## Real, unmodified ledgers: starter roster, authored patch catalog, one genuine sewing
+## operation. Nothing here replaces stock, definitions or an authored card record.
+func _patch_fixture(wearer: String = "seamstress", sew: bool = true,
+		owned: Array = ["stitched_badge", "spare_spool"]) -> Dictionary:
+	var slots_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	_check(slots_raw is Array and not (slots_raw as Array).is_empty(),
+		"authored patch slot catalog is readable")
+	if not slots_raw is Array:
+		return {}
+	var definitions: Array = []
+	for entry in slots_raw:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var party := _party()
+	var heroes: Array = party.get_heroes()
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, definitions, 0, 0, [], 4242)
+	_check(torn.is_valid() and wardrobe.is_valid(),
+		"real RunTornMending and RunPatchWardrobe initialize validly")
+	if not torn.is_valid() or not wardrobe.is_valid():
+		return {}
+	if sew:
+		var snapshot: Dictionary = wardrobe.get_snapshot()
+		var sewn: Dictionary = wardrobe.sew("spare_spool", wearer, "ARM",
+			"sew_spool_" + wearer, snapshot)
+		_check(sewn.get("ok") == true
+			and wardrobe.get_snapshot().worn[wearer].ARM == "spare_spool",
+			"genuine Spare Spool sews into " + wearer + " ARM")
+	return {"party": party, "torn": torn, "wardrobe": wardrobe}
+
+
+func _patch_wound(party: CombatParty) -> void:
+	_check(party.apply_damage(1, 12) and party.apply_damage(2, 14)
+		and party.apply_damage(3, 10),
+		"all three living heroes have room above the patched heal")
+	_check(party.gain_block(1, 2) and party.gain_block(3, 3),
+		"unrelated preexisting Block belongs to two recipients")
+
+
+## A genuine active Spare Spool read through the same CombatShopPatchRules projection
+## the mounted presenter binds: every heal gains exactly 2, Block is untouched.
+func _test_patch_binding_cases() -> void:
+	for id: String in CASES:
+		var spec: Dictionary = CASES[id]
+		var fixture := _patch_fixture()
+		if fixture.is_empty():
+			return
+		var wardrobe: RunPatchWardrobe = fixture.wardrobe
+		var torn: RunTornMending = fixture.torn
+		var projection: Dictionary = wardrobe.project_active(torn.read_state())
+		_check(projection.get("ok") == true
+			and projection.active.seamstress.has("spare_spool"),
+			id + ": authoritative projection marks Seamstress's Spool active")
+		var service := CombatSeamstressPoolHeals.new()
+		_check(service.bind_patch_wardrobe(wardrobe, torn)
+			and service.is_patch_binding_valid(),
+			id + ": active Spool binds from the real combat-start ledgers")
+		var rules := CombatShopPatchRules.new()
+		_check(rules.bind_wardrobe(wardrobe, torn)
+			and rules.healing_card_bonus("seamstress", id) == 2
+			and rules.project_card_healing("seamstress", id) == spec.effects.heal + 2
+			and rules.project_card_healing("seamstress", "seamstress_running_stitch") == 0
+			and rules.healing_card_bonus("warden", id) == 0,
+			id + ": projection adds exactly 2 HP and no unrelated effect")
+		var party: CombatParty = fixture.party
+		_patch_wound(party)
+		var deck := _deck([id, id, id, id, "filler-a", "filler-b", "filler-c"])
+		var target: int = 0 if spec.kind == "party_all" else (3 if id in [
+			"seamstress_thimble_tea", "seamstress_thimble_tea_plus"] else 1)
+		var block_before: int = party.get_hero(target).block if target > 0 else 0
+		_played(deck, party, id, target, id + " with active Spare Spool", 2, service)
+		if spec.effects.has("block"):
+			_check(party.get_hero(target).block == block_before + spec.effects.block,
+				id + ": authored Block is never inflated by the Spool")
+
+	# Owned but sewn to another hero: no bonus at all.
+	var wrong := _patch_fixture("warden")
+	if wrong.is_empty():
+		return
+	var wrong_service := CombatSeamstressPoolHeals.new()
+	_check(wrong_service.bind_patch_wardrobe(wrong.wardrobe, wrong.torn)
+		and wrong_service.is_patch_binding_valid(),
+		"Spool sewn to Warden binds as the authoritative wardrobe")
+	var wrong_rules := CombatShopPatchRules.new()
+	_check(wrong_rules.bind_wardrobe(wrong.wardrobe, wrong.torn)
+		and wrong_rules.active_snapshot()["warden"] == ["spare_spool"]
+		and wrong_rules.active_snapshot()["seamstress"] == []
+		and wrong_rules.healing_card_bonus("seamstress", "seamstress_darning") == 0
+		and wrong_rules.project_card_healing("seamstress", "seamstress_darning") == 4,
+		"Spool on Warden grants no Seamstress projection")
+	var wrong_party: CombatParty = wrong.party
+	_patch_wound(wrong_party)
+	_played(_deck(["seamstress_darning", "seamstress_darning", "filler-a",
+		"filler-b", "filler-c"]), wrong_party, "seamstress_darning", 1,
+		"wrong-wearer Darning", 0, wrong_service)
+	_patch_wound(wrong_party)
+	_played(_deck(["seamstress_field_mend", "filler-a", "filler-b",
+		"filler-c", "filler-d"]), wrong_party, "seamstress_field_mend", 0,
+		"wrong-wearer Field Mend", 0, wrong_service)
+
+	# Owned and unsewn: the authored assignment exists nowhere, so nothing is active.
+	var unsewn := _patch_fixture("seamstress", false)
+	if unsewn.is_empty():
+		return
+	_check(unsewn.wardrobe.get_snapshot().owned.has("spare_spool")
+		and unsewn.wardrobe.project_active(unsewn.torn.read_state()).active.seamstress.is_empty(),
+		"owned but unsewn Spool has no active projection")
+	var unsewn_service := CombatSeamstressPoolHeals.new()
+	_check(unsewn_service.bind_patch_wardrobe(unsewn.wardrobe, unsewn.torn)
+		and unsewn_service.is_patch_binding_valid(),
+		"unsewn wardrobe still binds without an active patch")
+	var unsewn_rules := CombatShopPatchRules.new()
+	_check(unsewn_rules.bind_wardrobe(unsewn.wardrobe, unsewn.torn)
+		and unsewn_rules.healing_card_bonus("seamstress", "seamstress_thimble_tea_plus") == 0,
+		"unsewn Spool grants no healing bonus")
+	var unsewn_party: CombatParty = unsewn.party
+	_patch_wound(unsewn_party)
+	_played(_deck(["seamstress_thimble_tea_plus", "filler-a", "filler-b",
+		"filler-c", "filler-d"]), unsewn_party, "seamstress_thimble_tea_plus", 1,
+		"unsewn Tea+", 0, unsewn_service)
+
+	# Torn (downed) Seamstress: the worn assignment remains, its benefit does not.
+	var torn_fixture := _patch_fixture()
+	if torn_fixture.is_empty():
+		return
+	var torn_wardrobe: RunPatchWardrobe = torn_fixture.wardrobe
+	var torn: RunTornMending = torn_fixture.torn
+	var start: Array = torn.read_state().heroes
+	var end: Array = start.duplicate(true)
+	end[1].hp = 0
+	_check(torn.observe_battle_end("fight_torn_spool", start, end).get("ok") == true
+		and torn.read_state().heroes[1].hp == 0,
+		"Seamstress is genuinely torn down to zero HP")
+	var refresh: Dictionary = torn_wardrobe.get_snapshot()
+	_check(torn_wardrobe.refresh_run_context(torn.read_state().heroes, refresh.owned,
+		refresh.scraps, refresh.gold, refresh.cards, refresh),
+		"wardrobe adopts the torn roster without losing the sewn assignment")
+	var torn_projection: Dictionary = torn_wardrobe.project_active(torn.read_state())
+	_check(torn_projection.get("ok") == true
+		and torn_projection.worn.seamstress.ARM == "spare_spool"
+		and torn_projection.active.seamstress.is_empty(),
+		"torn Seamstress keeps the Spool sewn but has no active projection")
+	var torn_service := CombatSeamstressPoolHeals.new()
+	_check(torn_service.bind_patch_wardrobe(torn_wardrobe, torn)
+		and torn_service.is_patch_binding_valid(),
+		"torn roster still binds an authenticated projection")
+	var torn_rules := CombatShopPatchRules.new()
+	_check(torn_rules.bind_wardrobe(torn_wardrobe, torn)
+		and torn_rules.healing_card_bonus("seamstress", "seamstress_field_mend_plus") == 0
+		and torn_rules.project_card_healing("seamstress", "seamstress_field_mend_plus") == 0,
+		"torn wearer adds no heal bonus to any authored healing card")
+	var torn_party: CombatParty = torn_fixture.party
+	_check(torn_party.apply_damage(2, 9999) and torn_party.is_downed(2),
+		"combat owner is genuinely downed in the torn fixture")
+	_rejected(_deck(["seamstress_darning", "seamstress_field_mend"]), torn_party,
+		"seamstress_darning", 1, "torn/downed owner", torn_service)
+
+	# Invalid bindings fail closed before spending and never mutate either ledger.
+	var invalid := _patch_fixture()
+	if invalid.is_empty():
+		return
+	var ledger_before: Array = [invalid.wardrobe.get_snapshot(), invalid.torn.read_state()]
+	var invalid_service := CombatSeamstressPoolHeals.new()
+	_check(not invalid_service.bind_patch_wardrobe(null, invalid.torn)
+		and not invalid_service.is_patch_binding_valid(),
+		"null wardrobe binding fails closed")
+	var stale_snapshot: Dictionary = invalid.wardrobe.get_snapshot()
+	invalid.wardrobe._gold += 1
+	var drifted_snapshot: Dictionary = invalid.wardrobe.get_snapshot()
+	var torn_state_before: Dictionary = invalid.torn.read_state()
+	var stale_service := CombatSeamstressPoolHeals.new()
+	_check(not stale_service.bind_patch_wardrobe(invalid.wardrobe, invalid.torn,
+		stale_snapshot, invalid.torn.read_state())
+		and not stale_service.is_patch_binding_valid(),
+		"stale expected wardrobe snapshot rejects binding")
+	_check(not CombatSeamstressPoolHeals.new().bind_patch_wardrobe(invalid.wardrobe,
+		invalid.torn, drifted_snapshot, {})
+		and invalid.wardrobe.get_snapshot() == drifted_snapshot
+		and invalid.torn.read_state() == torn_state_before,
+		"stale expected torn snapshot rejects binding without ledger mutation")
+	invalid.wardrobe._gold -= 1
+	var invalid_party := _party()
+	_patch_wound(invalid_party)
+	var invalid_deck := _deck(["seamstress_darning", "seamstress_field_mend"])
+	_rejected(invalid_deck, invalid_party, "seamstress_darning", 1,
+		"invalid binding Darning", invalid_service)
+	_rejected(invalid_deck, invalid_party, "seamstress_field_mend", 0,
+		"invalid binding Field Mend", stale_service)
+
+	# Drift after admission invalidates the bound projection until a fresh binding.
+	var drift_service := CombatSeamstressPoolHeals.new()
+	_check(drift_service.bind_patch_wardrobe(invalid.wardrobe, invalid.torn)
+		and drift_service.is_patch_binding_valid(),
+		"fresh real ledgers bind and recover")
+	invalid.wardrobe._gold += 1
+	_check(not drift_service.is_patch_binding_valid(),
+		"drifted wardrobe invalidates the already-bound projection")
+	_rejected(invalid_deck, invalid_party, "seamstress_darning", 1,
+		"drifted binding Darning", drift_service)
+	invalid.wardrobe._gold -= 1
+	_check(drift_service.is_patch_binding_valid(),
+		"restored real ledger is current again without silent repair")
+	_check([invalid.wardrobe.get_snapshot(), invalid.torn.read_state()] == ledger_before,
+		"binding attempts and rejections never mutate the authoritative ledgers")
 
 
 func _sequence(seed_value: int) -> Array:

@@ -441,6 +441,12 @@ func _pool_admitted(card_id: String) -> bool:
 			or card_id in CombatSeamstressPoolControl.SNAG_IDS \
 			or card_id in CombatSeamstressPoolControl.UNPICK_IDS:
 		return true
+	# The six authored Seamstress healing variants are live-admitted by the shared
+	# support hand, whose pool resolver is the independent authority here.
+	if card_id in CombatSeamstressPoolHeals.DARNING_IDS \
+			or card_id in CombatSeamstressPoolHeals.TEA_IDS \
+			or card_id in CombatSeamstressPoolHeals.FIELD_MEND_IDS:
+		return true
 	return _area_card(card_id)
 
 
