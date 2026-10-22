@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_ac2_counter_stitch_thorns()
 	_test_ac3_reactions_sequential_and_movement()
 	_test_ac4_lifecycle_and_rejections()
+	_test_hand_spend()
 	_finish()
 
 
@@ -411,3 +412,220 @@ func _test_ac4_lifecycle_and_rejections() -> void:
 			replay_results = rep_pack.duplicate(true)
 		else:
 			_check(rep_pack == replay_results, "AC4: deterministic repeat produces exact identical results")
+
+
+func _rng(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+func _deck(cards: Array[String], seed_value: int = 7, start: bool = true) -> CombatDeck:
+	var deck := CombatDeck.new(cards, _rng(seed_value))
+	if start:
+		_check(deck.start_turn() and deck.turn_active and deck.energy == CombatState.TURN_ENERGY,
+			"hand-spend deck starts turn")
+	return deck
+
+
+## Hand-spend (paid) plays via play_from_hand (D2-1).
+func _test_hand_spend() -> void:
+	var catalog: WardenPoolCards = WardenPoolCards.new()
+
+	# AC1: both Draw Fire variants, Warden at slot 1
+	for variant in ["warden_draw_fire", "warden_draw_fire_plus"]:
+		var expected_block: int = 6 if variant == "warden_draw_fire" else 8
+		var cards: Array[String] = [variant, variant]
+		var deck: CombatDeck = _deck(cards, 11, true)
+		# ensure at least one held copy (hand already has 5 drawn; may or may not include variant)
+		# Arrange: move one copy into hand if absent by direct hand injection? Use real deck: place variant in hand.
+		# We'll rebuild hand deterministically: clear and set hand to include variant.
+		deck.hand.clear()
+		deck.hand.append(variant)
+		deck.hand.append(variant)
+		var party: CombatParty = _party()
+		var reactions: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		var rng_before: int = deck._rng.state
+		var hand_before: Array = deck.hand.duplicate()
+		var discard_before: Array = deck.discard_pile.duplicate()
+		var energy_before: int = deck.energy
+		var warden_block_before: int = party.get_hero(1)["block"]
+		_check(reactions.play_from_hand(deck, party, variant), "HS AC1: " + variant + " plays")
+		_check(party.get_hero(1)["block"] == warden_block_before + expected_block,
+			"HS AC1: " + variant + " exact block")
+		_check(reactions.is_guarding() == true, "HS AC1: " + variant + " guarding")
+		_check(reactions.get_thorns() == 0, "HS AC1: " + variant + " no thorns")
+		_check(deck.energy == energy_before - 1, "HS AC1: " + variant + " energy -1")
+		_check(deck.hand.size() == hand_before.size() - 1, "HS AC1: " + variant + " one copy removed")
+		_check(deck.discard_pile.size() == discard_before.size() + 1, "HS AC1: " + variant + " one discard")
+		_check(deck._rng.state == rng_before, "HS AC1: " + variant + " RNG unchanged")
+		# second copy remains
+		_check(deck.hand.has(variant), "HS AC1: " + variant + " second copy remains")
+
+	# AC2: both Counter-stitch variants at slots 1 and 2
+	for variant in ["warden_counter_stitch", "warden_counter_stitch_plus"]:
+		var expected_block: int = 5 if variant == "warden_counter_stitch" else 7
+		var expected_thorns: int = 3 if variant == "warden_counter_stitch" else 4
+		# slot 1
+		for slot_setup in [1, 2]:
+			var cards2: Array[String] = [variant]
+			var deck2: CombatDeck = _deck(cards2, 13, true)
+			deck2.hand.clear()
+			deck2.hand.append(variant)
+			var party2: CombatParty = _party()
+			var reactions2: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+			if slot_setup == 2:
+				var preview: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party2, 1, 1)
+				var swapped: CombatParty = CombatParty.new(preview.get("heroes", []))
+				party2 = swapped
+			_check(reactions2.play_from_hand(deck2, party2, variant),
+				"HS AC2: " + variant + " plays at slot " + str(slot_setup))
+			var wpos: int = 1 if slot_setup == 1 else 2
+			_check(party2.get_hero(wpos)["block"] == expected_block,
+				"HS AC2: " + variant + " block at slot " + str(slot_setup))
+			_check(reactions2.get_thorns() == expected_thorns,
+				"HS AC2: " + variant + " thorns at slot " + str(slot_setup))
+			_check(reactions2.is_guarding() == false,
+				"HS AC2: " + variant + " no guarding")
+			_check(deck2.energy == CombatState.TURN_ENERGY - 1,
+				"HS AC2: " + variant + " energy -1")
+			# resolve enemy hit
+			var enemies2: CombatEnemies = _enemies()
+			var atk: Dictionary = {"enemy_position": 1, "target_position": wpos, "amount": 1}
+			var res: Dictionary = reactions2.resolve_enemy_attack(party2, enemies2, atk)
+			_check(res.get("retaliation_damage") == expected_thorns,
+				"HS AC2: " + variant + " retaliation")
+			_check(enemies2.get_enemy(1)["hp"] == 12 - expected_thorns,
+				"HS AC2: " + variant + " enemy loses thorns")
+			# begin next turn clears
+			_check(reactions2.begin_player_turn(), "HS AC2: begin turn")
+			_check(reactions2.is_guarding() == false and reactions2.get_thorns() == 0,
+				"HS AC2: " + variant + " cleared")
+
+	# AC3: both cards in one hand, 3 energy
+	var cards3: Array[String] = ["warden_draw_fire", "warden_counter_stitch"]
+	var deck3: CombatDeck = _deck(cards3, 17, true)
+	deck3.hand.clear()
+	deck3.hand.append("warden_draw_fire")
+	deck3.hand.append("warden_counter_stitch")
+	var party3: CombatParty = _party()
+	var reactions3: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	var rng3_before: int = deck3._rng.state
+	_check(reactions3.play_from_hand(deck3, party3, "warden_draw_fire"), "HS AC3: draw fire plays")
+	_check(reactions3.play_from_hand(deck3, party3, "warden_counter_stitch"), "HS AC3: counter stitch plays")
+	_check(party3.get_hero(1)["block"] == 11, "HS AC3: 11 block")
+	_check(reactions3.is_guarding() == true, "HS AC3: guarding")
+	_check(reactions3.get_thorns() == 3, "HS AC3: thorns 3")
+	_check(deck3.energy == 1, "HS AC3: 1 energy left")
+	_check(deck3._rng.state == rng3_before, "HS AC3: RNG unchanged")
+	# enemy aimed at seamstress redirected, retaliates 3
+	var enemies3: CombatEnemies = _enemies()
+	var atk3: Dictionary = {"enemy_position": 1, "target_position": 2, "amount": 2}
+	var res3: Dictionary = reactions3.resolve_enemy_attack(party3, enemies3, atk3)
+	_check(res3.get("redirected") == true, "HS AC3: redirected")
+	_check(res3.get("retaliation_damage") == 3, "HS AC3: retaliation 3")
+	_check(enemies3.get_enemy(1)["hp"] == 9, "HS AC3: enemy loses 3")
+	# next turn clears
+	_check(reactions3.begin_player_turn(), "HS AC3: begin turn")
+	_check(reactions3.is_guarding() == false and reactions3.get_thorns() == 0, "HS AC3: cleared")
+
+	# AC4: negatives
+	var party4: CombatParty = _party()
+	var deck4: CombatDeck = _deck(["warden_draw_fire"], 19, true)
+	deck4.hand.clear()
+	# absent card
+	var reactions4: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	var snap_party: Array = party4.get_heroes()
+	var snap_hand: Array = deck4.hand.duplicate()
+	var snap_discard: Array = deck4.discard_pile.duplicate()
+	var snap_energy: int = deck4.energy
+	var rng4_before: int = deck4._rng.state
+	_check(not reactions4.play_from_hand(deck4, party4, "warden_draw_fire"), "HS AC4: absent card rejects")
+	_check(deck4.hand == snap_hand and deck4.discard_pile == snap_discard, "HS AC4: no hand/discard change")
+	_check(deck4.energy == snap_energy, "HS AC4: no energy change")
+	_check(party4.get_heroes() == snap_party, "HS AC4: no party change")
+	_check(deck4._rng.state == rng4_before, "HS AC4: RNG unchanged")
+
+	# inactive turn
+	var deck5: CombatDeck = CombatDeck.new(["warden_draw_fire"], _rng(21))
+	# not started
+	var party5: CombatParty = _party()
+	var reactions5: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	deck5.hand.clear()
+	deck5.hand.append("warden_draw_fire")
+	_check(not reactions5.play_from_hand(deck5, party5, "warden_draw_fire"), "HS AC4: inactive turn rejects")
+
+	# insufficient energy
+	var deck6: CombatDeck = _deck(["warden_draw_fire"], 23, true)
+	deck6.hand.clear()
+	deck6.hand.append("warden_draw_fire")
+	var party6: CombatParty = _party()
+	var reactions6: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	# spend all energy
+	_check(deck6.try_spend_energy(3), "spend all energy")
+	_check(not reactions6.play_from_hand(deck6, party6, "warden_draw_fire"), "HS AC4: insufficient energy rejects")
+
+	# bad ID
+	var deck7: CombatDeck = _deck(["warden_draw_fire"], 29, true)
+	deck7.hand.clear()
+	deck7.hand.append("warden_draw_fire")
+	var party7: CombatParty = _party()
+	var reactions7: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not reactions7.play_from_hand(deck7, party7, "fake_card"), "HS AC4: bad ID rejects")
+
+	# Warden position 2 for Draw Fire
+	var party8: CombatParty = _party()
+	var preview8: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party8, 1, 1)
+	var swapped8: CombatParty = CombatParty.new(preview8.get("heroes", []))
+	var deck8: CombatDeck = _deck(["warden_draw_fire"], 31, true)
+	deck8.hand.clear()
+	deck8.hand.append("warden_draw_fire")
+	var reactions8: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not reactions8.play_from_hand(deck8, swapped8, "warden_draw_fire"), "HS AC4: DF pos2 rejects")
+
+	# Warden position 3 for Counter-stitch
+	var party9: CombatParty = _party()
+	# move warden to pos3 via two swaps
+	var p9a: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party9, 1, 1)
+	var party9b: CombatParty = CombatParty.new(p9a.get("heroes", []))
+	var p9b: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party9b, 2, 1)
+	var party9c: CombatParty = CombatParty.new(p9b.get("heroes", []))
+	var deck9: CombatDeck = _deck(["warden_counter_stitch"], 37, true)
+	deck9.hand.clear()
+	deck9.hand.append("warden_counter_stitch")
+	var reactions9: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not reactions9.play_from_hand(deck9, party9c, "warden_counter_stitch"), "HS AC4: CS pos3 rejects")
+
+	# downed Warden
+	var party10: CombatParty = _party()
+	_check(party10.apply_damage(1, 40), "down warden")
+	var deck10: CombatDeck = _deck(["warden_draw_fire"], 41, true)
+	deck10.hand.clear()
+	deck10.hand.append("warden_draw_fire")
+	var reactions10: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not reactions10.play_from_hand(deck10, party10, "warden_draw_fire"), "HS AC4: downed warden rejects")
+
+	# Block overflow
+	var party11: CombatParty = _party()
+	party11._heroes[0]["block"] = CombatParty.MAX_INT
+	var deck11: CombatDeck = _deck(["warden_draw_fire"], 43, true)
+	deck11.hand.clear()
+	deck11.hand.append("warden_draw_fire")
+	var reactions11: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not reactions11.play_from_hand(deck11, party11, "warden_draw_fire"), "HS AC4: block overflow rejects")
+
+	# Thorns overflow
+	var party12: CombatParty = _party()
+	var deck12: CombatDeck = _deck(["warden_counter_stitch"], 47, true)
+	deck12.hand.clear()
+	deck12.hand.append("warden_counter_stitch")
+	var reactions12: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	reactions12.thorns = CombatParty.MAX_INT
+	_check(not reactions12.play_from_hand(deck12, party12, "warden_counter_stitch"), "HS AC4: thorns overflow rejects")
+
+	# invalid party
+	var reactions13: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	var deck13: CombatDeck = _deck(["warden_draw_fire"], 53, true)
+	deck13.hand.clear()
+	deck13.hand.append("warden_draw_fire")
+	_check(not reactions13.play_from_hand(deck13, CombatParty.new([]), "warden_draw_fire"), "HS AC4: invalid party rejects")
