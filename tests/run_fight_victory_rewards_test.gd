@@ -44,6 +44,12 @@ func _initialize() -> void:
 		_test_prepare(definitions, ids, deck, candidates, true, 2, TRINKET_POOL, OWNED_TRINKETS)
 		_test_choices(definitions, ids, deck, candidates)
 		_test_weighted_records(definitions, ids, deck)
+		_test_weighted_two_survivors(definitions, ids, deck, false)
+		_test_weighted_two_survivors(definitions, ids, deck, true)
+		_test_weighted_two_survivors_ws(definitions, ids, deck)
+		_test_weighted_one_survivor(definitions, ids, deck, false)
+		_test_weighted_one_survivor(definitions, ids, deck, true)
+		_test_weighted_one_survivor_warden(definitions, ids, deck)
 		_test_rejections(definitions, ids, deck, candidates)
 	else:
 		_check(false, "reward suite cannot run vacuously without valid authored fixtures")
@@ -212,12 +218,9 @@ func _test_prepare(definitions: Array, ids: Array[String], deck: Array[String],
 		var drop: String = published.get("trinket_drop_id", "")
 		_check(trinket_candidates.has(drop) and not owned_trinkets.has(drop)
 			and not drop.is_empty(), "Elite drop is a supplied, unowned candidate ID")
-	# Proving the next value against the oracle consumes it; record the state first
-	# so the repeated prepare below cannot be excused by an already-advanced RNG.
 	_check(rng.state == oracle["rng_state"],
 		"RNG state equals " + ("five" if elite else "four") + " oracle draws")
 	_check(rng.randi() == oracle["next"], "next RNG value matches reference oracle")
-	# Above next draw was for oracle proof; repeated prepare must consume none.
 	var state_before_repeat: int = rng.state
 	var snap := _snapshot(fight, rng, deck, ids, candidates, 78,
 		trinket_candidates, owned_trinkets)
@@ -241,7 +244,6 @@ func _test_prepare(definitions: Array, ids: Array[String], deck: Array[String],
 	_check(offered_ids.size() == 3 and offered_ids[0] != offered_ids[1]
 		and offered_ids[0] != offered_ids[2] and offered_ids[1] != offered_ids[2],
 		"offers are exactly three distinct card IDs")
-	# A rejected pick after preparation must not have handed over the drop yet.
 	var unclaimed := service.choose("__foreign_card__")
 	_check(not unclaimed["ok"] and unclaimed["trinkets"] == owned_trinkets,
 		"prepare alone does not add the Elite drop to the inventory")
@@ -253,7 +255,6 @@ func _test_prepare(definitions: Array, ids: Array[String], deck: Array[String],
 	_check(service.prepare()["offers"] == oracle["offers"]
 		and service.prepare()["trinket_drop_id"] == oracle["trinket_drop_id"],
 		"all prepare return values deep-copy cached offers and drop")
-	# Same seed and data in a different input order must replay exactly.
 	var reversed_cards := candidates.duplicate()
 	reversed_cards.reverse()
 	var reversed_trinkets := trinket_candidates.duplicate()
@@ -361,7 +362,6 @@ func _test_choices(definitions: Array, ids: Array[String], deck: Array[String],
 		_check(before == _snapshot(fight, rng, deck, ids, candidates, 103,
 			TRINKET_POOL, OWNED_TRINKETS),
 			"claim leaves input deck, full rosters, candidates, gold and RNG unchanged")
-		# Real CombatDeck must account for every copied card after a five-card draw.
 		var shuffled: Array[String] = []
 		shuffled.assign(claimed["deck"])
 		var battle_deck := CombatDeck.new(shuffled, _rng(23))
@@ -386,7 +386,6 @@ func _test_choices(definitions: Array, ids: Array[String], deck: Array[String],
 			"post-claim offer read cannot reroll, including after result mutation")
 		_check(service.prepare()["trinket_drop_id"] == oracle["trinket_drop_id"],
 			"edited cached response and returned inventory never alias internal drop")
-	# Constructor detaches supplier-owned trinket arrays from later caller edits.
 	var external_trinkets := TRINKET_POOL.duplicate()
 	var external_owned := OWNED_TRINKETS.duplicate()
 	var external_fight := _fight(definitions, 2)
@@ -440,32 +439,59 @@ func _pool_definition(owner: String, card_id: String) -> Dictionary:
 
 
 ## Independent oracle for the weighted path: one gold draw, then three picks of
-## two draws each (tier roll, card roll) from sorted rarity buckets, then the
-## Elite drop. Never calls the reward services.
+## two draws each (tier roll, card roll) from sorted rarity buckets, using
+## living-owner priority for each living hero, then the union of living owners'
+## remaining cards for any unfilled choices, then the Elite drop.
+## Never calls the reward services.
 func _weighted_oracle(party: Array[String], records: Array[Dictionary], seed_value: int,
-		elite: bool, trinket_candidates: Array = [], owned_trinkets: Array = []) -> Dictionary:
+		elite: bool, trinket_candidates: Array = [], owned_trinkets: Array = [],
+		living_ids: Variant = null) -> Dictionary:
 	var reference := _rng(seed_value)
 	var gold: int = reference.randi_range(25, 35) if elite else reference.randi_range(10, 20)
 	var tiers: Array[String] = ["common", "uncommon", "rare"]
 	var weights := {"common": 60, "uncommon": 30, "rare": 10}
-	var buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+
+	var living_order: Array[String] = []
+	var living_set: Dictionary = {}
+	if living_ids is Array:
+		for lid: Variant in living_ids:
+			if lid is String:
+				living_set[lid] = true
+		for pid: String in party:
+			if living_set.has(pid):
+				living_order.append(pid)
+	else:
+		living_order = party.duplicate()
+		for pid: String in party:
+			living_set[pid] = true
+
+	var hero_buckets: Dictionary = {}
+	for hid: String in living_order:
+		hero_buckets[hid] = {"common": [], "uncommon": [], "rare": []}
+
 	for record: Dictionary in records:
-		var owner := String(record.get("owner", ""))
-		var rarity := String(record.get("rarity", ""))
-		if party.has(owner) and buckets.has(rarity):
-			(buckets[rarity] as Array).append(record)
-	for tier: String in tiers:
-		(buckets[tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return String(a.get("id", "")) < String(b.get("id", "")))
+		var owner: String = String(record.get("owner", ""))
+		var rarity: String = String(record.get("rarity", ""))
+		if hero_buckets.has(owner) and hero_buckets[owner].has(rarity):
+			(hero_buckets[owner][rarity] as Array).append(record)
+
+	for hid: String in living_order:
+		for tier: String in tiers:
+			(hero_buckets[hid][tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return String(a.get("id", "")) < String(b.get("id", "")))
+
 	var offers: Array = []
-	for pick in range(3):
-		var weight_sum := 0
+	for hid: String in living_order:
+		if offers.size() >= 3:
+			break
+		var buckets: Dictionary = hero_buckets[hid]
+		var weight_sum: int = 0
 		for tier: String in tiers:
 			if not (buckets[tier] as Array).is_empty():
 				weight_sum += int(weights[tier])
 		var roll: int = reference.randi_range(1, weight_sum)
-		var chosen := ""
-		var running := 0
+		var chosen: String = ""
+		var running: int = 0
 		for tier: String in tiers:
 			if (buckets[tier] as Array).is_empty():
 				continue
@@ -478,16 +504,52 @@ func _weighted_oracle(party: Array[String], records: Array[Dictionary], seed_val
 		var record: Dictionary = bucket[index]
 		bucket.remove_at(index)
 		offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
-	var drop := ""
+
+	if offers.size() < 3:
+		var union_buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+		for tier: String in tiers:
+			var u_bucket: Array = union_buckets[tier]
+			for hid: String in living_order:
+				var o_bucket: Array = hero_buckets[hid][tier]
+				for record_val: Variant in o_bucket:
+					u_bucket.append(record_val)
+			u_bucket.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return String(a.get("id", "")) < String(b.get("id", "")))
+		while offers.size() < 3:
+			var weight_sum: int = 0
+			for tier: String in tiers:
+				if not (union_buckets[tier] as Array).is_empty():
+					weight_sum += int(weights[tier])
+			var roll: int = reference.randi_range(1, weight_sum)
+			var chosen: String = ""
+			var running: int = 0
+			for tier: String in tiers:
+				if (union_buckets[tier] as Array).is_empty():
+					continue
+				running += int(weights[tier])
+				if roll <= running:
+					chosen = tier
+					break
+			var bucket: Array = union_buckets[chosen]
+			var index: int = reference.randi_range(0, bucket.size() - 1)
+			var record: Dictionary = bucket[index]
+			bucket.remove_at(index)
+			offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
+
+	var drop: String = ""
 	if elite:
 		var trinket_ids: Array[String] = []
-		for trinket_id in trinket_candidates:
-			if not owned_trinkets.has(trinket_id):
+		for trinket_id: Variant in trinket_candidates:
+			if trinket_id is String and not owned_trinkets.has(trinket_id):
 				trinket_ids.append(trinket_id)
 		trinket_ids.sort()
-		drop = trinket_ids[reference.randi_range(0, trinket_ids.size() - 1)]
-	return {"gold": gold, "offers": offers, "trinket_drop_id": drop,
-		"rng_state": reference.state, "next": reference.randi()}
+		if not trinket_ids.is_empty():
+			drop = trinket_ids[reference.randi_range(0, trinket_ids.size() - 1)]
+
+	return {
+		"gold": gold, "offers": offers, "trinket_drop_id": drop,
+		"rng_state": reference.state, "next": reference.randi()
+	}
 
 
 func _pool_snapshot(fight: Dictionary, rng: RandomNumberGenerator, deck: Array[String],
@@ -552,6 +614,9 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 			label + ": weighted preparation mutates no inputs")
 		var offers: Array = published.get("offers", [])
 		var offered_ids: Array = []
+		_check(offers.size() == 3 and offers[0].get("owner") == "warden"
+			and offers[1].get("owner") == "seamstress" and offers[2].get("owner") == "tinker",
+			label + ": one card from each living hero in party order")
 		for offer: Dictionary in offers:
 			offered_ids.append(offer.get("id"))
 			var owner := String(offer.get("owner", ""))
@@ -598,6 +663,17 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 		_check(not upgrade_service.prepare().get("ok", true)
 			and upgrade_rng.state == upgrade_state,
 			label + ": unawarded pool '+' upgrades still fail closed without RNG use")
+	# Replayed seed with reversed records yields identical offers and RNG state
+	var reversed_records := _pool_records()
+	reversed_records.reverse()
+	var rev_fight := _fight(definitions, 1)
+	_win(rev_fight)
+	var rev_rng := _rng(880512)
+	var rev_service := _session(rev_fight, rev_rng, ids, reversed_records, deck, 78, false)
+	var rev_oracle := _weighted_oracle(ids, records, 880512, false)
+	var rev_pub := rev_service.prepare()
+	_check(rev_pub["offers"] == rev_oracle["offers"] and rev_rng.state == rev_oracle["rng_state"],
+		"all-alive reversed candidate order yields identical offers and RNG state")
 	# Constructor detaches the caller's records array.
 	var external := _pool_records()
 	var external_fight := _fight(definitions, 1)
@@ -611,6 +687,179 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 		and detached_result.get("offers") == external_oracle["offers"]
 		and external_rng.state == external_oracle["rng_state"],
 		"constructor detaches caller-owned weighted records")
+
+
+## Two living heroes fixture: drop chosen hero to 0 HP, defeat enemies, evaluate VICTORY,
+## verify living-owner priority and no card owned by the downed hero.
+func _test_weighted_two_survivors(definitions: Array, ids: Array[String], deck: Array[String], elite: bool) -> void:
+	var label: String = "Two-survivors Elite" if elite else "Two-survivors Fight"
+	var records: Array[Dictionary] = _pool_records()
+	var fight: Dictionary = _fight(definitions, 2 if elite else 1)
+	var seamstress_hp: int = fight["party"].get_hero(2)["hp"]
+	_check(fight["party"].apply_damage(2, seamstress_hp) and fight["party"].is_downed(2),
+		label + ": seamstress downed to 0 HP")
+	_check(not fight["party"].is_downed(1) and not fight["party"].is_downed(3),
+		label + ": warden and tinker remain living")
+	_win(fight)
+	_check(fight["battle"].get_outcome() == CombatBattleResult.VICTORY, label + ": battle is VICTORY")
+	var rng: RandomNumberGenerator = _rng(551201)
+	var service: RunFightVictoryRewards
+	if elite:
+		service = _elite_session(fight, rng, ids, records, deck, 50, TRINKET_POOL, OWNED_TRINKETS)
+	else:
+		service = _session(fight, rng, ids, records, deck, 50, false)
+	var oracle: Dictionary = _weighted_oracle(ids, records, 551201, elite, TRINKET_POOL, OWNED_TRINKETS, ["warden", "tinker"])
+	var published: Dictionary = service.prepare()
+	_check(published.get("ok", false), label + ": prepare succeeds")
+	_check(published.get("gold_award") == oracle["gold"], label + ": gold award matches oracle")
+	_check(published.get("offers", []) == oracle["offers"], label + ": offers match two-survivor weighted oracle")
+	_check(published.get("trinket_drop_id", "") == oracle["trinket_drop_id"], label + ": trinket drop matches oracle")
+	_check(rng.state == oracle["rng_state"], label + ": RNG state matches oracle")
+	_check(rng.randi() == oracle["next"], label + ": next RNG value matches oracle")
+	var offers: Array = published.get("offers", [])
+	_check(offers.size() == 3, label + ": exactly three offers")
+	_check(offers[0].get("owner") == "warden" and offers[1].get("owner") == "tinker",
+		label + ": first two offers prioritize living warden and tinker in party order")
+	_check(offers[2].get("owner") in ["warden", "tinker"],
+		label + ": third offer filled from remaining living heroes")
+	var offered_ids: Array[String] = []
+	for offer: Dictionary in offers:
+		var off_id: String = String(offer.get("id", ""))
+		var off_owner: String = String(offer.get("owner", ""))
+		_check(off_owner != "seamstress", label + ": no card owned by downed seamstress")
+		_check(off_owner in ["warden", "tinker"], label + ": card owner is a living hero")
+		_check(_base_pool_ids(off_owner).has(off_id) and not off_id.ends_with("_plus"),
+			label + ": authored base pool card: " + off_id)
+		offered_ids.append(off_id)
+	_check(offered_ids[0] != offered_ids[1] and offered_ids[0] != offered_ids[2] and offered_ids[1] != offered_ids[2],
+		label + ": three distinct card IDs")
+	# Replay with reversed records order
+	var reversed_records: Array[Dictionary] = records.duplicate()
+	reversed_records.reverse()
+	var replay_fight: Dictionary = _fight(definitions, 2 if elite else 1)
+	replay_fight["party"].apply_damage(2, seamstress_hp)
+	_win(replay_fight)
+	var replay_rng: RandomNumberGenerator = _rng(551201)
+	var replay_service: RunFightVictoryRewards
+	if elite:
+		replay_service = _elite_session(replay_fight, replay_rng, ids, reversed_records, deck, 50, TRINKET_POOL, OWNED_TRINKETS)
+	else:
+		replay_service = _session(replay_fight, replay_rng, ids, reversed_records, deck, 50, false)
+	var replay_pub: Dictionary = replay_service.prepare()
+	_check(replay_pub["offers"] == oracle["offers"] and replay_rng.state == oracle["rng_state"],
+		label + ": reversed record order yields identical offers and RNG state")
+	# Test choice: pick first card
+	var claimed: Dictionary = service.choose(offered_ids[0])
+	_check(claimed.get("ok", false) and claimed.get("deck").has(offered_ids[0]),
+		label + ": pick adds chosen card to deck")
+	_check(not service.choose(offered_ids[1])["ok"], label + ": duplicate claim rejected")
+	_check(not service.choose("")["ok"], label + ": skip after claim rejected")
+
+
+## Two survivors with Warden and Seamstress alive, Tinker downed.
+func _test_weighted_two_survivors_ws(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
+	var label: String = "Two-survivors WS Fight"
+	var records: Array[Dictionary] = _pool_records()
+	var fight: Dictionary = _fight(definitions, 1)
+	var tinker_hp: int = fight["party"].get_hero(3)["hp"]
+	_check(fight["party"].apply_damage(3, tinker_hp) and fight["party"].is_downed(3),
+		label + ": tinker downed")
+	_win(fight)
+	var rng: RandomNumberGenerator = _rng(773412)
+	var service: RunFightVictoryRewards = _session(fight, rng, ids, records, deck, 25, false)
+	var oracle: Dictionary = _weighted_oracle(ids, records, 773412, false, [], [], ["warden", "seamstress"])
+	var published: Dictionary = service.prepare()
+	_check(published.get("ok", false), label + ": prepare succeeds")
+	_check(published.get("offers") == oracle["offers"], label + ": offers match oracle")
+	_check(published["offers"][0]["owner"] == "warden" and published["offers"][1]["owner"] == "seamstress",
+		label + ": living warden and seamstress prioritized in party order")
+	for offer: Dictionary in published["offers"]:
+		_check(offer["owner"] != "tinker", label + ": no card from downed tinker")
+	var skipped: Dictionary = service.choose("")
+	_check(skipped.get("ok", false) and skipped.get("skipped", false) and skipped.get("deck") == deck,
+		label + ": skip preserves deck")
+
+
+## One survivor fixture: drop two heroes to 0 HP, verify all offers owned by sole living hero.
+func _test_weighted_one_survivor(definitions: Array, ids: Array[String], deck: Array[String], elite: bool) -> void:
+	var label: String = "One-survivor Elite" if elite else "One-survivor Fight"
+	var records: Array[Dictionary] = _pool_records()
+	var fight: Dictionary = _fight(definitions, 2 if elite else 1)
+	var warden_hp: int = fight["party"].get_hero(1)["hp"]
+	var seamstress_hp: int = fight["party"].get_hero(2)["hp"]
+	_check(fight["party"].apply_damage(1, warden_hp) and fight["party"].is_downed(1),
+		label + ": warden downed to 0 HP")
+	_check(fight["party"].apply_damage(2, seamstress_hp) and fight["party"].is_downed(2),
+		label + ": seamstress downed to 0 HP")
+	_check(not fight["party"].is_downed(3) and fight["party"].get_hero(3)["hp"] > 0,
+		label + ": only tinker living")
+	_win(fight)
+	_check(fight["battle"].get_outcome() == CombatBattleResult.VICTORY, label + ": battle is VICTORY")
+	var rng: RandomNumberGenerator = _rng(662304)
+	var service: RunFightVictoryRewards
+	if elite:
+		service = _elite_session(fight, rng, ids, records, deck, 50, TRINKET_POOL, OWNED_TRINKETS)
+	else:
+		service = _session(fight, rng, ids, records, deck, 50, false)
+	var oracle: Dictionary = _weighted_oracle(ids, records, 662304, elite, TRINKET_POOL, OWNED_TRINKETS, ["tinker"])
+	var published: Dictionary = service.prepare()
+	_check(published.get("ok", false), label + ": prepare succeeds")
+	_check(published.get("gold_award") == oracle["gold"], label + ": gold matches oracle")
+	_check(published.get("offers", []) == oracle["offers"], label + ": offers match one-survivor weighted oracle")
+	_check(published.get("trinket_drop_id", "") == oracle["trinket_drop_id"], label + ": trinket drop matches oracle")
+	_check(rng.state == oracle["rng_state"], label + ": RNG state matches oracle")
+	_check(rng.randi() == oracle["next"], label + ": next RNG value matches oracle")
+	var offers: Array = published.get("offers", [])
+	_check(offers.size() == 3, label + ": exactly three offers")
+	var offered_ids: Array[String] = []
+	for offer: Dictionary in offers:
+		var off_id: String = String(offer.get("id", ""))
+		var off_owner: String = String(offer.get("owner", ""))
+		_check(off_owner == "tinker", label + ": all offers owned by sole living hero tinker")
+		_check(_base_pool_ids("tinker").has(off_id) and not off_id.ends_with("_plus"),
+			label + ": authored tinker base pool card: " + off_id)
+		offered_ids.append(off_id)
+	_check(offered_ids[0] != offered_ids[1] and offered_ids[0] != offered_ids[2] and offered_ids[1] != offered_ids[2],
+		label + ": three distinct card IDs without replacement")
+	var reversed_records: Array[Dictionary] = records.duplicate()
+	reversed_records.reverse()
+	var replay_fight: Dictionary = _fight(definitions, 2 if elite else 1)
+	replay_fight["party"].apply_damage(1, warden_hp)
+	replay_fight["party"].apply_damage(2, seamstress_hp)
+	_win(replay_fight)
+	var replay_rng: RandomNumberGenerator = _rng(662304)
+	var replay_service: RunFightVictoryRewards
+	if elite:
+		replay_service = _elite_session(replay_fight, replay_rng, ids, reversed_records, deck, 50, TRINKET_POOL, OWNED_TRINKETS)
+	else:
+		replay_service = _session(replay_fight, replay_rng, ids, reversed_records, deck, 50, false)
+	var replay_pub: Dictionary = replay_service.prepare()
+	_check(replay_pub["offers"] == oracle["offers"] and replay_rng.state == oracle["rng_state"],
+		label + ": reversed record order yields identical offers and RNG state")
+	var skipped: Dictionary = service.choose("")
+	_check(skipped.get("ok", false) and skipped.get("skipped", false) and skipped.get("selected_id") == ""
+		and skipped.get("deck") == deck, label + ": skip claims no card")
+	_check(not service.choose("")["ok"], label + ": repeated skip rejected")
+
+
+## One survivor with Warden sole survivor.
+func _test_weighted_one_survivor_warden(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
+	var label: String = "One-survivor Warden Fight"
+	var records: Array[Dictionary] = _pool_records()
+	var fight: Dictionary = _fight(definitions, 1)
+	var seamstress_hp: int = fight["party"].get_hero(2)["hp"]
+	var tinker_hp: int = fight["party"].get_hero(3)["hp"]
+	_check(fight["party"].apply_damage(2, seamstress_hp) and fight["party"].apply_damage(3, tinker_hp),
+		label + ": seamstress and tinker downed")
+	_win(fight)
+	var rng: RandomNumberGenerator = _rng(884523)
+	var service: RunFightVictoryRewards = _session(fight, rng, ids, records, deck, 25, false)
+	var oracle: Dictionary = _weighted_oracle(ids, records, 884523, false, [], [], ["warden"])
+	var published: Dictionary = service.prepare()
+	_check(published.get("ok", false), label + ": prepare succeeds")
+	_check(published.get("offers") == oracle["offers"], label + ": offers match oracle")
+	for offer: Dictionary in published["offers"]:
+		_check(offer["owner"] == "warden", label + ": all offers owned by living warden")
 
 
 func _test_pool_rejections(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
@@ -633,6 +882,17 @@ func _test_pool_rejections(definitions: Array, ids: Array[String], deck: Array[S
 		records.slice(0, 5) + ["warden_strike"], deck, 100)
 	_reject("numeric weighted record", win, _rng(), ids, records.slice(0, 5) + [7], deck, 100)
 	_reject("short weighted party", win, _rng(), ids.slice(0, 2), records, deck, 100)
+	_reject("party ID mismatch", win, _rng(), ["warden", "seamstress", "wrong_hero"], records, deck, 100)
+	var no_warden: Array[Dictionary] = []
+	for r: Dictionary in records:
+		if r.get("owner") != "warden":
+			no_warden.append(r)
+	_reject("lack of living hero cards", win, _rng(), ids, no_warden, deck, 100)
+	_reject("fewer than 3 living candidates", win, _rng(), ids, records.slice(0, 2), deck, 100)
+	var all_down := _fight(definitions)
+	for pos in range(1, 4):
+		all_down["party"].apply_damage(pos, all_down["party"].get_hero(pos)["hp"])
+	_reject("all heroes downed", all_down, _rng(), ids, records, deck, 100)
 
 
 func _reject(label: String, fight: Dictionary, rng_input: Variant, party_input: Variant,
@@ -719,13 +979,10 @@ func _test_rejections(definitions: Array, ids: Array[String], deck: Array[String
 	_reject("fractional gold", win, _rng(), ids, candidates, deck, 10.5)
 	_reject("non-number gold", win, _rng(), ids, candidates, deck, "100")
 	_reject("overflowing gold", win, _rng(), ids, candidates, deck, MAX_INT)
-	# Failing overflow must not consume even the would-be first draw.
 	var near_max := _rng(902)
 	var ref := _rng(902)
 	var first: int = ref.randi_range(10, 20)
 	_reject("actual-draw overflow", win, near_max, ids, candidates, deck, MAX_INT - first + 1)
-	# Elite trinket lists: invalid, duplicate, blank, malformed and all-owned
-	# pools all fail closed before any RNG clone or draw.
 	var elite_active := _fight(definitions, 2)
 	_reject("Elite ACTIVE", elite_active, _rng(), ids, candidates, deck, 100, true,
 		TRINKET_POOL, OWNED_TRINKETS)
@@ -761,7 +1018,6 @@ func _test_rejections(definitions: Array, ids: Array[String], deck: Array[String
 		TRINKET_POOL, OWNED_TRINKETS)
 	_reject("Elite overflowing gold", win, _rng(), ids, candidates, deck, MAX_INT, true,
 		TRINKET_POOL, OWNED_TRINKETS)
-	# Input arrays copied at construction: later caller edits cannot alter pending choice.
 	var external_deck := deck.duplicate()
 	var external_party := ids.duplicate()
 	var external_pool := candidates.duplicate()
@@ -781,8 +1037,6 @@ func _test_rejections(definitions: Array, ids: Array[String], deck: Array[String
 	seed(56323)
 	_reject("global RNG isolation", win, _rng(), ids, candidates + ["bad"], deck, 5)
 	_check(randi() == global_first, "failed preparation never draws global RNG")
-	# A rejection leaves no partial transaction: a fresh valid Elite session
-	# (same seed as the normal prepare case) still pays exactly one trinket.
 	var retry_fight := _fight(definitions, 2)
 	_win(retry_fight)
 	var retry_rng := _rng(900423)

@@ -116,22 +116,34 @@ func _reward_oracle() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
 	var award := rng.randi_range(10, 20)
-	var owners: Array = []
-	for hero in app.party.get_heroes():
-		owners.append(hero.id)
+	var party_ids: Array[String] = ["warden", "seamstress", "tinker"]
+	var living_order: Array[String] = []
+	var living_map: Dictionary = {}
+	for hero: Dictionary in app.party.get_heroes():
+		if int(hero.get("hp", 0)) > 0:
+			living_map[String(hero.get("id", ""))] = true
+	for pid: String in party_ids:
+		if living_map.has(pid):
+			living_order.append(pid)
 	var tiers: Array[String] = ["common", "uncommon", "rare"]
 	var weights := {"common": 60, "uncommon": 30, "rare": 10}
-	var buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+	var hero_buckets: Dictionary = {}
+	for hid: String in living_order:
+		hero_buckets[hid] = {"common": [], "uncommon": [], "rare": []}
 	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
 		var owner := String(record.get("owner", ""))
 		var rarity := String(record.get("rarity", ""))
-		if owners.has(owner) and buckets.has(rarity):
-			(buckets[rarity] as Array).append(record)
-	for tier: String in tiers:
-		(buckets[tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return String(a.get("id", "")) < String(b.get("id", "")))
+		if hero_buckets.has(owner) and hero_buckets[owner].has(rarity):
+			(hero_buckets[owner][rarity] as Array).append(record)
+	for hid: String in living_order:
+		for tier: String in tiers:
+			(hero_buckets[hid][tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return String(a.get("id", "")) < String(b.get("id", "")))
 	var offers: Array = []
-	for pick in range(3):
+	for hid: String in living_order:
+		if offers.size() >= 3:
+			break
+		var buckets: Dictionary = hero_buckets[hid]
 		var weight_sum := 0
 		for tier: String in tiers:
 			if not (buckets[tier] as Array).is_empty():
@@ -151,6 +163,35 @@ func _reward_oracle() -> Dictionary:
 		var record: Dictionary = bucket[index]
 		bucket.remove_at(index)
 		offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
+	if offers.size() < 3:
+		var union_buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+		for tier: String in tiers:
+			for hid: String in living_order:
+				for record: Dictionary in hero_buckets[hid][tier]:
+					union_buckets[tier].append(record)
+			(union_buckets[tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return String(a.get("id", "")) < String(b.get("id", ""))
+			)
+		while offers.size() < 3:
+			var weight_sum := 0
+			for tier: String in tiers:
+				if not (union_buckets[tier] as Array).is_empty():
+					weight_sum += int(weights[tier])
+			var roll: int = rng.randi_range(1, weight_sum)
+			var chosen := ""
+			var running := 0
+			for tier: String in tiers:
+				if (union_buckets[tier] as Array).is_empty():
+					continue
+				running += int(weights[tier])
+				if roll <= running:
+					chosen = tier
+					break
+			var bucket: Array = union_buckets[chosen]
+			var index := rng.randi_range(0, bucket.size() - 1)
+			var record: Dictionary = bucket[index]
+			bucket.remove_at(index)
+			offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
 	return {"offers": offers, "award": award, "rng": rng.state}
 
 
