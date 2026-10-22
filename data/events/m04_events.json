@@ -23,8 +23,8 @@
       "title": "The Thimble Well",
       "description": "A silver thimble rests beside a dry stone well.",
       "choices": [
-        { "id": "listen", "text": "Listen at the well" },
-        { "id": "depart", "text": "Continue along the road" }
+        { "id": "listen", "text": "Listen for loose thimbles (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "depart", "text": "Find coins on the roadside (+5 gold)", "outcome": { "gold": 5, "scraps": 0 } }
       ]
     },
     {
@@ -32,8 +32,8 @@
       "title": "The Frayed Signpost",
       "description": "Three cloth arrows flap from a crooked signpost.",
       "choices": [
-        { "id": "read", "text": "Read the faded arrows" },
-        { "id": "choose", "text": "Choose the clearer path" }
+        { "id": "read", "text": "Patch the arrows (1 scrap for 10 gold)", "outcome": { "gold": 10, "scraps": -1 } },
+        { "id": "choose", "text": "Choose the clear path (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } }
       ]
     },
     {
