@@ -21,7 +21,6 @@ const STATUS_ORDER := ["bleed", "weak", "exposed"]
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 const CHIP_FONT_SIZES := [11, 10, 9]
 const CHIP_SEPARATION := 2
-const NEUTRAL_CUE := "—"
 
 var row: Control
 var _battle: Control
@@ -127,6 +126,7 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	buttons.focus_mode = Control.FOCUS_NONE
 	buttons.add_theme_constant_override("separation", 2)
 	content.add_child(buttons)
+	buttons.hide()
 	for index in range(STATUS_BUTTONS):
 		buttons.add_child(_make_status_button(index))
 
@@ -228,7 +228,7 @@ func _incoming_text(hero: Dictionary, forecast: Dictionary, position: int) -> St
 		"Incoming: %d Block, %d HP" % [next["block_absorbed"], next["hp_lost"]])
 
 
-## One chip row per ribbon: authoritative counts, a neutral cue, and a clear fallen badge.
+## One chip row per ribbon: authoritative counts and a clear fallen badge.
 ## Four entries (a fallen actor that keeps all three stacks) use compact labels and the
 ## largest font size whose complete labels fit the ribbon, so nothing is truncated.
 func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: String,
@@ -244,11 +244,11 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 			entries.append({"kind": key,
 				"full": "%s %d" % [String(key).capitalize(), count],
 				"short": "%s %d" % [STATUS_SHORT[key], count]})
-	if entries.is_empty():
-		entries.append({"kind": "neutral", "full": NEUTRAL_CUE, "short": NEUTRAL_CUE})
 	var tooltip := _compose_tooltip(meter, incoming)
 	var buttons := meter.get_node("Padding/Content/StatusButtons") as HBoxContainer
-	var fit := _fit_chips(buttons, entries, ribbon_width)
+	var fit := {"texts": [], "font_size": CHIP_FONT_SIZES[0]}
+	if not entries.is_empty():
+		fit = _fit_chips(buttons, entries, ribbon_width)
 	for index in range(buttons.get_child_count()):
 		var button := buttons.get_child(index) as Button
 		var active := index < entries.size()
@@ -265,6 +265,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 			button.add_theme_font_size_override("font_size", font_size)
 		if active:
 			_set_chip_style(button, entries[index]["kind"] == "fallen")
+	# Collapsing the whole container avoids an empty stitched box or hit target.
+	buttons.visible = not entries.is_empty()
 
 
 ## Four entries can never spell every long status name in one narrow row, so they use
