@@ -15,6 +15,12 @@ const POOL_STRIKE_IDS := [
 const SUPPORT_IDS := [
 	"warden_brace", "seamstress_mend", "seamstress_stitch_up", "tinker_tune_up"
 ]
+const CONTROL_IDS := [
+	"seamstress_needle_pin", "seamstress_needle_pin_plus",
+	"seamstress_snag", "seamstress_snag_plus",
+	"seamstress_unpick", "seamstress_unpick_plus"
+]
+const SNAG_IDS := ["seamstress_snag", "seamstress_snag_plus"]
 
 
 func _initialize() -> void:
@@ -24,6 +30,7 @@ func _initialize() -> void:
 	_test_owner_positions_and_downed()
 	_test_unsupported_and_invalid()
 	_test_pool_strikes()
+	_test_seamstress_controls()
 	_test_seeded_replay()
 	for failure in failures:
 		printerr(failure)
@@ -346,7 +353,7 @@ func _test_pool_strikes() -> void:
 	for id in ATTACK_IDS:
 		_check(service.supports(id) and not service.is_pool_strike(id),
 			id + ": starter attack stays a starter attack")
-	for id in ["warden_hold_the_line", "warden_patch_guard", "seamstress_snag", "tinker_tune_up"]:
+	for id in ["warden_hold_the_line", "warden_patch_guard", "seamstress_darning", "tinker_tune_up"]:
 		_check(not service.is_pool_strike(id) and not service.supports(id)
 			and service.pool_definition(id).is_empty(), id + ": non-strike pool/support card stays rejected")
 
@@ -417,6 +424,130 @@ func _test_pool_strikes() -> void:
 	_assert_preview(deck, party, two, "warden_brass_buckle", true, true, [2],
 		"caller mutation of a pool result cannot poison the next preview")
 	_check(_snapshot(deck, party, two) == before, "pool preview mutation leaves every model and RNG intact")
+
+
+func _control_deck() -> CombatDeck:
+	var cards: Array[String] = []
+	cards.assign(CONTROL_IDS)
+	var deck := _deck(cards, 7331)
+	_check(deck.draw_extra(1) == 1 and deck.hand.size() == CONTROL_IDS.size(),
+		"real seeded draw holds all six authored control variants")
+	for id in CONTROL_IDS:
+		_check(deck.hand.has(id), "real hand holds authored control " + id)
+	return deck
+
+
+## The six authored Seamstress enemy-control variants join the read-only picker
+## through their exact catalog records, while leaving starter-only ATTACK_IDS
+## and every other card family's admission untouched.
+func _test_seamstress_controls() -> void:
+	var control_catalog := SeamstressPoolCards.new()
+	for id in CONTROL_IDS:
+		_check(service.is_seamstress_control(id) and service.supports(id),
+			id + ": recognised as an authored Seamstress control card")
+		_check(not CombatAttackTargeting.ATTACK_IDS.has(id),
+			id + ": never expands the starter ATTACK_IDS enumeration")
+		_check(not service.is_pool_strike(id) and not service.is_heavy_pool_attack(id)
+			and not service.is_sight_glass(id),
+			id + ": keeps its own resolver family")
+		var record := service.control_definition(id)
+		var authored: Dictionary = control_catalog.get_definition(id)
+		_check(record.get("id") == id and record.get("owner") == "seamstress"
+			and record.get("cost") == authored.get("cost")
+			and record.get("target_kind") == "enemy_single"
+			and record.get("to_positions") == [1, 2, 3]
+			and record.get("from_positions") == authored.get("from_positions")
+			and record.get("effects") == authored.get("effects"),
+			id + ": exact authored cost, FROM/TO slots and effects through the picker")
+		_check(record.get("cost") == 1 and not (record.get("effects", {}) as Dictionary).is_empty(),
+			id + ": cost one with its authored effect record")
+
+	var deck := _control_deck()
+	var party := _party()
+	var enemies := _enemies()
+	for id in CONTROL_IDS:
+		_assert_preview(deck, party, enemies, id, true, true, [1, 2, 3],
+			id + ": every living enemy slot is a real choice")
+
+	# Snag is authored from the middle or back hero slot only.
+	for id in SNAG_IDS:
+		_reject(deck, _party(["seamstress", "warden", "tinker"]), enemies, id,
+			id + ": forbidden front Seamstress slot")
+		for owner_slot in [2, 3]:
+			var order: Array[String] = ["warden", "seamstress", "tinker"]
+			if owner_slot == 3:
+				order = ["warden", "tinker", "seamstress"]
+			_assert_preview(deck, _party(order), enemies, id, true, true, [1, 2, 3],
+				id + ": authored slot %d allows the cast" % owner_slot)
+	# Needle Pin and Unpick are authored from every hero slot.
+	for id in [CONTROL_IDS[0], CONTROL_IDS[1], CONTROL_IDS[4], CONTROL_IDS[5]]:
+		for order in [["seamstress", "warden", "tinker"], ["warden", "tinker", "seamstress"]]:
+			var typed_order: Array[String] = []
+			typed_order.assign(order)
+			_assert_preview(deck, _party(typed_order), enemies, id, true, true, [1, 2, 3],
+				id + ": castable from the real owner slot")
+
+	# Missing and downed owners fail closed.
+	for id in CONTROL_IDS:
+		_reject(deck, _party(["warden", "tinker", "outsider"]), enemies, id,
+			id + ": no Seamstress owner in an otherwise valid party")
+		var downed := _party()
+		_check(downed.apply_damage(2, 999) and downed.is_downed(2), "Seamstress truly downed")
+		_reject(deck, downed, enemies, id, id + ": downed Seamstress cannot cast")
+
+	# Cost is paid from the real shared deck.
+	var poor := _control_deck()
+	_check(poor.try_spend_energy(3) and poor.energy == 0, "zero-energy control deck")
+	for id in CONTROL_IDS:
+		_reject(poor, party, enemies, id, id + ": cost one unaffordable at zero energy")
+	var absent := _control_deck()
+	for id in CONTROL_IDS:
+		_check(absent.discard_played(id), "remove actual held " + id)
+		_reject(absent, party, enemies, id, id + ": absent held copy")
+
+	# Slain and absent slots keep their original numbering.
+	_check(enemies.apply_damage(2, 999) and enemies.is_slain(2), "slot two slain in place")
+	for id in CONTROL_IDS:
+		_assert_preview(deck, party, enemies, id, true, true, [1, 3],
+			id + ": slain slot two excluded and never compacted")
+	_check(enemies.apply_damage(1, 999) and enemies.is_slain(1), "slot one also slain")
+	for id in CONTROL_IDS:
+		_assert_preview(deck, party, enemies, id, true, true, [3],
+			id + ": only the surviving back slot is selectable")
+	var lone := _enemies(1)
+	for id in CONTROL_IDS:
+		_assert_preview(deck, party, lone, id, true, true, [1],
+			id + ": lone front enemy stays legal")
+	_check(lone.apply_damage(1, 999) and lone.is_victorious(), "lone enemy truly slain")
+	for id in CONTROL_IDS:
+		_reject(deck, party, lone, id, id + ": no living control target")
+
+	# Snag's Weak preflight excludes an overflowing slot without hiding the rest.
+	var overflow := _enemies()
+	overflow._enemies[0]["statuses"] = {"weak": CombatEnemies.MAX_INT}
+	_assert_preview(deck, party, overflow, "seamstress_snag", true, true, [2, 3],
+		"Snag skips only the Weak-saturated slot")
+	_assert_preview(deck, party, overflow, "seamstress_unpick", true, true, [1, 2, 3],
+		"Unpick never applies Weak and keeps the saturated slot")
+
+	# Returned lists stay detached, exactly like the other picker families.
+	var before := _snapshot(deck, party, overflow)
+	var preview := service.get_preview(deck, party, overflow, "seamstress_unpick")
+	(preview["target_positions"] as Array).clear()
+	(preview["target_positions"] as Array).append(99)
+	_assert_preview(deck, party, overflow, "seamstress_unpick", true, true, [1, 2, 3],
+		"caller mutation of a control result cannot poison the next preview")
+	_check(_snapshot(deck, party, overflow) == before, "control preview mutation leaves models and RNG intact")
+
+	# Other pool families and unknown IDs stay out of control admission.
+	for id in ["seamstress_darning", "seamstress_blanket_stitch", "seamstress_thread_whip",
+			"seamstress_hemorrhage_hem", "tinker_sight_glass", "invented_control"]:
+		_check(not service.is_seamstress_control(id)
+			and service.control_definition(id).is_empty(),
+			id + ": not an authored Seamstress control card")
+	for id in ["seamstress_darning", "seamstress_blanket_stitch", "seamstress_hemorrhage_hem"]:
+		_check(not service.supports(id), id + ": other Seamstress pool card stays unsupported here")
+	_check(service.control_definition("").is_empty(), "empty control ID fails closed")
 
 
 func _pool_strike_deck(seed_value: int = 4211) -> CombatDeck:

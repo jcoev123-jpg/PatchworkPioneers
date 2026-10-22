@@ -4,7 +4,16 @@ extends SceneTree
 
 const IDS := ["tinker_scatter_bolts", "tinker_scatter_bolts_plus",
 	"tinker_ricochet", "tinker_ricochet_plus"]
+const SHRAPNEL := "tinker_shrapnel_seam"
+const SHRAPNEL_PLUS := "tinker_shrapnel_seam_plus"
+const UNRAVEL_IDS := [SHRAPNEL, SHRAPNEL_PLUS]
 const SEED := 42
+const TIER_CATALOGS := [
+	["res://data/enemies/starter_enemies.json", "normal"],
+	["res://data/enemies/run_enemies.json", "normal"],
+	["res://data/enemies/m04_elites.json", "elite"],
+	["res://data/enemies/boss.json", "boss"],
+]
 
 var failures: Array[String] = []
 var checks := 0
@@ -74,6 +83,14 @@ func _panel(id: String) -> Control:
 
 
 func _state() -> Dictionary:
+	var gauges: Dictionary = {}
+	var tiers: Dictionary = {}
+	var pins: Dictionary = {}
+	if preview != null and preview._unravel != null:
+		gauges = preview._unravel._gauges.duplicate(true)
+		tiers = preview._unravel._tiers_by_position.duplicate(true)
+	if preview != null and preview._pinned != null:
+		pins = preview._pinned._pinner_by_position.duplicate(true)
 	return {"draw": app.deck.draw_pile.duplicate(), "hand": app.deck.hand.duplicate(),
 		"discard": app.deck.discard_pile.duplicate(), "energy": app.deck.energy,
 		"active": app.deck.turn_active, "party": app.party.get_heroes(),
@@ -83,7 +100,46 @@ func _state() -> Dictionary:
 		"intents": app.enemy_intents.get_intents(),
 		"turn": app.enemy_intents._turn_index,
 		"outcome": app.battle_result.get_outcome(), "closed": app._battle_closed,
-		"gold": app.session_gold, "first": preview._play._tinker._consumed}
+		"gold": app.session_gold, "first": preview._play._tinker._consumed,
+		"gauges": gauges, "tiers": tiers, "pins": pins,
+		"flow_gauge": app.round_flow._unravel if app.round_flow != null else null}
+
+
+## The live battle's one gauge and pin set, read without copying identities.
+func _gauges() -> Dictionary:
+	return preview._unravel._gauges.duplicate(true) if preview._unravel != null else {}
+
+
+func _pins() -> Dictionary:
+	return preview._pinned._pinner_by_position.duplicate(true) if preview._pinned != null else {}
+
+
+## Independent tier classification from the four shipped catalogs, never from
+## the presenter or the gauge under test.
+func _test_tier_map(enemies: CombatEnemies) -> Dictionary:
+	var table: Dictionary = {}
+	for entry in TIER_CATALOGS:
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string(str(entry[0])))
+		if not parsed is Array:
+			return {}
+		for record in parsed:
+			var enemy_id := str(record.get("id", ""))
+			if enemy_id.is_empty():
+				return {}
+			if table.has(enemy_id) and table[enemy_id] != entry[1]:
+				table[enemy_id] = ""
+			elif not table.has(enemy_id):
+				table[enemy_id] = entry[1]
+	var tiers: Dictionary = {}
+	var roster: Array = enemies.get_enemies()
+	if roster.is_empty():
+		return tiers
+	for index in range(roster.size()):
+		var roster_id := str(roster[index].get("id", ""))
+		if not table.has(roster_id) or str(table[roster_id]).is_empty():
+			return {}
+		tiers[index + 1] = table[roster_id]
+	return tiers
 
 
 func _oracle(before: Dictionary, id: String, is_starter: bool = false) -> Dictionary:
@@ -104,6 +160,14 @@ func _oracle(before: Dictionary, id: String, is_starter: bool = false) -> Dictio
 		definitions.append({"id": enemy.id, "max_hp": enemy.max_hp})
 	var enemies := CombatEnemies.new(definitions)
 	enemies._enemies.assign((before.enemies as Array).duplicate(true))
+	# The battle's single Unravel gauge and Pinned set, replayed independently.
+	var unravel := CombatUnravel.new()
+	if not (before.tiers as Dictionary).is_empty():
+		_check(unravel.bind_roster(enemies, (before.tiers as Dictionary).duplicate(true)),
+			"independent oracle binds the authored tier map")
+		unravel._gauges = (before.gauges as Dictionary).duplicate(true)
+	var pinned := CombatPinned.new()
+	pinned._pinner_by_position = (before.pins as Dictionary).duplicate(true)
 	var first := CombatTinkerFirstAttack.new()
 	first._consumed = before.first
 	var event: Dictionary
@@ -111,12 +175,18 @@ func _oracle(before: Dictionary, id: String, is_starter: bool = false) -> Dictio
 		var starter := CombatAttackCards.new()
 		starter._tinker = first
 		event = starter.play_attack(deck, party, enemies, id, 1)
+	elif id in UNRAVEL_IDS:
+		event = CombatTinkerPoolUnravelAttacks.new(first).play_attack(deck, party,
+			enemies, id, 0, unravel, pinned)
 	else:
 		event = CombatTinkerPoolAttacks.new(first).play_attack(deck, party, enemies, id, 0)
 	return {"event": event, "draw": deck.draw_pile.duplicate(), "hand": deck.hand.duplicate(),
 		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
 		"active": deck.turn_active, "party": party.get_heroes(),
-		"enemies": enemies.get_enemies(), "rng": rng.state, "first": first._consumed}
+		"enemies": enemies.get_enemies(), "rng": rng.state, "first": first._consumed,
+		"gauges": unravel._gauges.duplicate(true),
+		"tiers": unravel._tiers_by_position.duplicate(true),
+		"pins": pinned._pinner_by_position.duplicate(true)}
 
 
 func _same_as_oracle(before: Dictionary, oracle: Dictionary, stage: String) -> void:
@@ -132,6 +202,8 @@ func _same_as_oracle(before: Dictionary, oracle: Dictionary, stage: String) -> v
 		"single seeded run/deck RNG exactly matches independent oracle: " + stage)
 	_check(preview._play._tinker._consumed == oracle.first,
 		"starter presenter owns consumed first-attack latch: " + stage)
+	_check(_gauges() == oracle.gauges and _pins() == oracle.pins,
+		"battle Unravel gauges and Pinned tokens equal detached oracle: " + stage)
 	_check(app.enemy_attacks == before.attacks and app.enemy_intents.get_intents() == before.intents
 		and app.enemy_intents._turn_index == before.turn,
 		"confirmed cast doesn't advance enemy phase or intents: " + stage)
@@ -157,6 +229,11 @@ func _start(id: String) -> bool:
 	_check(ready, "real mounted fight provides combat authority and unused passive")
 	if not ready:
 		return false
+	_check(preview._unravel != null and preview._pinned != null
+		and preview._unravel._bound_enemies == app.enemies,
+		"the battle's single Unravel gauge and Pinned set bind the seeded roster")
+	_check(_test_tier_map(app.enemies) == preview._unravel._tiers_by_position,
+		"independent authored catalog tiers equal the live gauge tiers")
 	# Draw through the genuine shared CombatDeck, then refresh the real hand.
 	app.deck.draw_pile.append(id)
 	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has(id),
@@ -189,7 +266,7 @@ func _face(id: String) -> void:
 		and panel.focus_mode == Control.FOCUS_ALL and panel.mouse_filter == Control.MOUSE_FILTER_STOP,
 		"one callback, keyboard focus and physical mouse input: " + id)
 	_check(face.get("name") == definition.display_name and face.name != "Unknown card"
-		and face.get("cost", "").contains("1 energy"),
+		and face.get("cost", "") == "%d energy" % int(definition.cost),
 		"authored visible name and energy cost, not raw-ID placeholder: " + id)
 	_check(face.get("variant", "").contains("Tinker") and face.variant.contains(
 		adapter._positions(definition.from_positions)),
@@ -201,6 +278,11 @@ func _face(id: String) -> void:
 	_check(effect.contains(str(effects.damage)) and effect.contains("+3 first attack")
 		and (effect.contains("3 hits") if definition.target_kind == "enemy_random" else effect.contains("damage each")),
 		"visible correct damage and authored hit count: " + id)
+	if id in UNRAVEL_IDS:
+		_check(effect.contains("Unravel %d" % int(effects.unravel))
+			and face.get("area", "") == "All enemies %s" % adapter._positions(definition.to_positions)
+			and panel.tooltip_text.contains("Unravel %d" % int(effects.unravel)),
+			"visible Unravel charge and original-position area scope: " + id)
 	_check(panel.tooltip_text.contains(definition.display_name)
 		and panel.tooltip_text.contains("Enter / Space")
 		and panel.tooltip_text.contains("Tinker") and panel.tooltip_text.contains("no target choice"),
@@ -254,9 +336,10 @@ func _case(id: String, by_key: bool, key: Key = KEY_ENTER, hole: bool = false) -
 	_same_as_oracle(before, oracle, id)
 	_check(adapter.last_event == oracle.event,
 		"complete ordered hit positions, damage, Block and HP loss equal resolver: " + id)
-	_check(app.deck.energy == before.energy - 1
+	var cost: int = int(catalog.get_definition(id).get("cost", 1))
+	_check(app.deck.energy == before.energy - cost
 		and app.deck.discard_pile.count(id) == 1 and app.deck.hand.count(id) == 0,
-		"exact one energy and one held copy spent: " + id)
+		"exact %d energy and one held copy spent: %s" % [cost, id])
 	_check(preview._play._tinker.bonus_for_attack(id) == 0,
 		"successful area card consumes the starter presenter's opportunity: " + id)
 	var after := _state()
@@ -321,6 +404,283 @@ func _shared_latch() -> void:
 				and preview._play._tinker.bonus_for_attack(id) == 3,
 				"starter and area share next-turn latch reset, not panel rebind reset")
 		await _return()
+
+
+## AC2: the target-free Shrapnel Seam reads the battle's foreign Pinned token,
+## pays two energy, damages every survivor and charges its authored Unravel.
+func _shrapnel_pinned() -> void:
+	if not await _start(SHRAPNEL_PLUS):
+		await _return()
+		return
+	for enemy in app.enemies._enemies:
+		enemy.max_hp = 60
+		enemy.hp = 60
+	_check(preview._pinned.pin_enemy(app.enemies, 1, "warden"),
+		"a foreign Warden pin waits on the first original slot")
+	var before := _state()
+	var oracle := _oracle(before, SHRAPNEL_PLUS)
+	await _mouse(_panel(SHRAPNEL_PLUS))
+	_same_as_oracle(before, oracle, "Shrapnel Seam+ with a foreign pin")
+	_check(adapter.last_event == oracle.event and adapter.last_event.hits.size() == 2
+		and adapter.last_event.hits[0].position == 1 and adapter.last_event.hits[0].damage == 15
+		and adapter.last_event.hits[1].position == 2 and adapter.last_event.hits[1].damage == 10,
+		"the foreign pin adds five to its own survivor, plus the once-only first attack")
+	_check(app.enemies.get_enemy(1).hp == 45 and app.enemies.get_enemy(2).hp == 50,
+		"both survivors keep their authored per-position damage")
+	_check(_pins().is_empty(), "the cross-hero pin is consumed exactly once")
+	_check(int(preview._unravel.get_snapshot(1).get("gauge", 0)) == 3
+		and int(preview._unravel.get_snapshot(2).get("gauge", 0)) == 3,
+		"Shrapnel Seam+ charges three Unravel on every survivor")
+	_check(app.deck.energy == 1 and app.deck.discard_pile.count(SHRAPNEL_PLUS) == 1,
+		"the paid area cast spends exactly two energy and one held copy")
+	await _return()
+
+
+## The new resolver must spend the starter presenter's one latch, never its own.
+func _shrapnel_latch() -> void:
+	for order in ["starter_first", "area_first"]:
+		if not await _start(SHRAPNEL):
+			await _return()
+			continue
+		app.deck.draw_pile.append("tinker_pop_shot")
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has("tinker_pop_shot"),
+			"authentic Pop Shot held beside Shrapnel Seam: " + order)
+		app._refresh_hand()
+		await _frames()
+		for enemy in app.enemies._enemies:
+			enemy.max_hp = 85
+			enemy.hp = 85
+		var ids: Array = ["tinker_pop_shot", SHRAPNEL] if order == "starter_first" \
+			else [SHRAPNEL, "tinker_pop_shot"]
+		for selected in ids:
+			var before := _state()
+			var oracle := _oracle(before, selected, selected == "tinker_pop_shot")
+			if selected == "tinker_pop_shot":
+				if not await _starter(selected):
+					break
+				_check(preview.last_event == oracle.event,
+					"mounted starter ordered event equals independent starter oracle: " + order)
+			else:
+				await _mouse(_panel(selected))
+				_check(adapter.last_event == oracle.event,
+					"mounted Shrapnel ordered event equals independent pool oracle: " + order)
+			_same_as_oracle(before, oracle, order + " / " + selected)
+			_check(preview._play._tinker._consumed,
+				"only one Tinker first-attack opportunity per turn: " + order)
+		_check(app.deck.energy == 0,
+			"the two-cost Shrapnel and one-cost Pop Shot spend the real turn exactly: " + order)
+		await _return()
+
+
+## AC2: a real paid Shrapnel Seam fills the normal gauge, and the next actual
+## enemy phase consumes the queued skip through the shared round flow.
+func _shrapnel_unravel_skip() -> void:
+	# Baseline: the same announced Block action really executes without a skip.
+	if not await _start(SHRAPNEL):
+		await _return()
+		return
+	_check(int(app.enemies.get_enemy(2).get("block", 0)) == 0,
+		"the second original enemy starts with no Block")
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	_check(app.enemy_intents._turn_index == 1
+		and int(app.enemies.get_enemy(2).get("block", 0)) == 1,
+		"without a pending skip the announced Block action executes")
+	await _return()
+
+	# The battle's own gauge holds a real six-thread charge before the cast.
+	if not await _start(SHRAPNEL):
+		await _return()
+		return
+	_check(preview._unravel.apply_unravel(app.enemies, 2, 6),
+		"the battle's own gauge holds a real six-thread charge on slot 2")
+	_check(app.round_flow._unravel == null,
+		"the live round flow shares no gauge before the first gauge cast")
+	var before := _state()
+	var oracle := _oracle(before, SHRAPNEL)
+	await _mouse(_panel(SHRAPNEL))
+	_same_as_oracle(before, oracle, "Shrapnel Seam fills the normal gauge")
+	var filled: Dictionary = preview._unravel.get_snapshot(2)
+	_check(int(filled.get("gauge", 0)) == 8 and int(filled.get("threshold", 0)) == 8
+		and bool(filled.get("unravelled", false)) and bool(filled.get("skip_pending", false)),
+		"the normal gauge is exactly full with one pending skip")
+	_check(int(preview._unravel.get_snapshot(1).get("gauge", 0)) == 2
+		and int(preview._unravel.get_snapshot(1).get("threshold", 0)) == 8,
+		"the other surviving slot charged only its authored two threads")
+	_check(app.round_flow._unravel == preview._unravel,
+		"the same battle gauge is bound to the live round flow by the real cast")
+	_check(app.enemy_intents.get_intents()[1].get("type") == "block"
+		and int(app.enemy_intents.get_intents()[1].get("amount", 0)) == 1,
+		"the second original enemy has a genuine announced one-Block action")
+	var pre_turn := _state()
+	var hero_hp: Array = []
+	for hero in pre_turn.party:
+		hero_hp.append(int(hero.get("hp", 0)))
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	_check(app.enemy_intents._turn_index == 1 and app.deck.turn_active and app.deck.energy == 3,
+		"the real End Turn opens the next player turn")
+	_check(int(app.enemies.get_enemy(2).get("block", 0)) == 0,
+		"the full gauge skips the announced enemy Block action")
+	_check(app.enemies.get_enemy(1)["hp"] == int(pre_turn.enemies[0]["hp"]),
+		"the skipped source never damages or replaces any enemy")
+	var hp_kept := true
+	for index in range(app.party.get_heroes().size()):
+		if int(app.party.get_heroes()[index].get("hp", -1)) != int(hero_hp[index]):
+			hp_kept = false
+	_check(hp_kept, "hero HP is exactly unchanged through the skipped enemy phase")
+	var reset: Dictionary = preview._unravel.get_snapshot(2)
+	_check(int(reset.get("gauge", -1)) == 0 and int(reset.get("threshold", 0)) == 12
+		and not bool(reset.get("skip_pending", true))
+		and not bool(reset.get("unravelled", true)),
+		"consuming the real skip resets the gauge and raises its threshold by four")
+	_check(int(preview._unravel.get_snapshot(1).get("gauge", -1)) == 2
+		and int(preview._unravel.get_snapshot(1).get("threshold", 0)) == 8,
+		"the untouched first gauge keeps its own threshold and charge")
+	_check(app.round_flow._unravel == preview._unravel,
+		"the next enemy phase still shares the same battle gauge")
+	await _return()
+
+
+## AC3: illegal, absent-authority and title-restarted Shrapnel plays mutate nothing.
+func _shrapnel_refusals() -> void:
+	for mode in ["energy", "position", "removed", "hidden", "wrong_id", "replaced",
+			"party", "rng", "turn", "intents", "result", "end_turn", "unbound_gauge",
+			"foreign_gauge", "missing_pin"]:
+		var id := SHRAPNEL
+		if not await _start(id):
+			await _return()
+			return
+		var panel := _panel(id)
+		var callback: Callable = adapter._bindings[panel]["callback"]
+		if mode == "energy":
+			app.deck.combat_state.energy = 0
+		elif mode == "position":
+			var proposed := CombatPositionSwaps.preview_adjacent_swap(app.party, 3, -1)
+			_check(proposed.ok, "move Tinker into the middle using real swap rules")
+			app.party._heroes.assign(proposed.heroes)
+			proposed = CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
+			_check(proposed.ok, "move Tinker to the front using real swap rules")
+			app.party._heroes.assign(proposed.heroes)
+			_check(app.party.get_hero(1).id == "tinker",
+				"bad Shrapnel Seam owner position really constructed")
+		elif mode == "removed":
+			_check(app.deck.discard_played(id), "held Shrapnel Seam removed before input")
+		elif mode == "hidden":
+			app.battle_view.hide()
+		elif mode == "wrong_id":
+			app.hand_view.get_child(panel.get_index()).get_child(0).text = SHRAPNEL_PLUS
+		elif mode == "replaced":
+			app._refresh_hand()
+			await _frames()
+		elif mode == "party":
+			app.party = CombatParty.new(app._load_party_definitions())
+		elif mode == "rng":
+			app.run_rng = RandomNumberGenerator.new()
+		elif mode == "turn":
+			app.enemy_intents.advance_turn()
+		elif mode == "intents":
+			app.enemy_intents = CombatEnemyIntents.new(app._load_enemy_schedule())
+		elif mode == "result":
+			app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		elif mode == "end_turn":
+			app.deck.end_turn()
+		elif mode == "unbound_gauge":
+			preview._unravel = CombatUnravel.new()
+		elif mode == "foreign_gauge":
+			app.round_flow._unravel = CombatUnravel.new()
+		elif mode == "missing_pin":
+			preview._pinned = null
+		var before := _state()
+		callback.call(_press())
+		await _frames()
+		var after := _state()
+		if after != before:
+			for field in before:
+				if before[field] != after[field]:
+					printerr("Shrapnel refusal drift ", mode, " ", field)
+		_check(after == before and adapter._pending.is_empty(),
+			"refused Shrapnel Seam input is wholly inert, including gauge, pin and RNG: " + mode)
+		app.battle_view.show()
+		await _return()
+
+
+## A Shrapnel receipt that was valid at enqueue must die with the session it saw.
+func _shrapnel_queued_stale() -> void:
+	for mode in ["turn", "party", "rng", "intents", "panel", "result", "hidden"]:
+		if not await _start(SHRAPNEL):
+			await _return()
+			return
+		var panel := _panel(SHRAPNEL)
+		var callback: Callable = adapter._bindings[panel]["callback"]
+		callback.call(_press())
+		_check(not adapter._pending.is_empty(),
+			"valid Shrapnel input queues guarded receipt: " + mode)
+		if mode == "turn":
+			app.enemy_intents.advance_turn()
+		elif mode == "party":
+			app.party = CombatParty.new(app._load_party_definitions())
+		elif mode == "rng":
+			app.run_rng = RandomNumberGenerator.new()
+		elif mode == "intents":
+			app.enemy_intents = CombatEnemyIntents.new(app._load_enemy_schedule())
+		elif mode == "panel":
+			app._refresh_hand()
+		elif mode == "result":
+			app.battle_result = CombatBattleResult.new(app.party, app.enemies)
+		elif mode == "hidden":
+			app.battle_view.hide()
+		var before := _state()
+		await _frames()
+		_check(_state() == before and adapter._pending.is_empty(),
+			"changed battle/turn/identity/panel invalidates queued Shrapnel receipt without spend, gauge, pin or RNG: " + mode)
+		app.battle_view.show()
+		await _return()
+
+
+## AC3: Return retires the battle and a captured Shrapnel callback cannot
+## mutate the old deck, gauge, pins or seeded RNG, nor the next battle.
+func _shrapnel_title_restart() -> void:
+	if not await _start(SHRAPNEL):
+		await _return()
+		return
+	var panel := _panel(SHRAPNEL)
+	var callback: Callable = adapter._bindings[panel]["callback"]
+	var old_deck: CombatDeck = app.deck
+	var old_rng: RandomNumberGenerator = app.run_rng
+	var old_unravel: CombatUnravel = preview._unravel
+	var old_pinned: CombatPinned = preview._pinned
+	_check(preview._pinned.pin_enemy(app.enemies, 1, "warden"),
+		"the old battle holds a real Pinned token before Return")
+	var old_pins: Dictionary = old_pinned._pinner_by_position.duplicate(true)
+	var old_gauges: Dictionary = old_unravel._gauges.duplicate(true)
+	var old_hand: Array = old_deck.hand.duplicate()
+	var old_energy: int = old_deck.energy
+	var old_rng_state: int = old_rng.state
+	await _return()
+	_check(app.deck == null and adapter._bindings.is_empty() and adapter._pending.is_empty(),
+		"Return retires the Shrapnel panel binding and receipt")
+	callback.call(_press())
+	await _frames()
+	_check(old_deck.hand == old_hand and old_deck.energy == old_energy
+		and old_rng.state == old_rng_state,
+		"the captured Shrapnel callback cannot spend the retired deck or move the run RNG")
+	_check(old_unravel._gauges == old_gauges and old_pinned._pinner_by_position == old_pins,
+		"the retired gauge and pin set keep exactly the state they ended with")
+	if not await _start(SHRAPNEL):
+		await _return()
+		return
+	_check(preview._unravel != old_unravel and preview._pinned != old_pinned,
+		"the next battle owns different Unravel and Pinned authorities")
+	_check(app.round_flow._unravel == null,
+		"the old gauge never leaks into the new round flow before a cast")
+	_check(preview._pinned._pinner_by_position.is_empty(),
+		"the next battle starts with no Pinned token")
+	var fresh := _state()
+	callback.call(_press())
+	await _frames()
+	_check(_state() == fresh, "the captured old callback cannot mutate the new battle")
+	await _return()
 
 
 func _refusals() -> void:
@@ -496,6 +856,30 @@ func _routed_three() -> void:
 		and adapter.last_event.hits[1].position == 3
 		and app.enemies.is_slain(2),
 		"Scatter+ strikes living original slots 1,3 in order and leaves hole 2")
+	# The same real routed fight then plays the authored target-free Shrapnel
+	# Seam+ into the remaining original slots, sharing the consumed latch.
+	var area := SHRAPNEL_PLUS
+	app.deck.draw_pile.append(area)
+	_check(app.deck.draw_extra(1) == 1, "routed shared deck drew authored Shrapnel Seam+")
+	app._refresh_hand()
+	await _frames()
+	_face(area)
+	var area_before := _state()
+	var area_oracle := _oracle(area_before, area)
+	_check(preview._play._tinker.bonus_for_attack(area) == 0,
+		"the routed Scatter+ already consumed the shared first-attack bonus")
+	await _mouse(_panel(area))
+	_same_as_oracle(area_before, area_oracle, "routed 3-enemy Shrapnel Seam+")
+	_check(adapter.last_event == area_oracle.event and adapter.last_event.hits.size() == 2
+		and adapter.last_event.hits[0].position == 1
+		and adapter.last_event.hits[1].position == 3
+		and app.enemies.is_slain(2),
+		"Shrapnel Seam+ strikes living original slots 1,3 in order and leaves hole 2")
+	_check(int(preview._unravel.get_snapshot(1).get("gauge", 0)) == 3
+		and int(preview._unravel.get_snapshot(3).get("gauge", 0)) == 3
+		and int(preview._unravel.get_snapshot(2).get("gauge", 0)) == 0,
+		"the routed area cast charges exactly its living original slots")
+	_check(app.deck.energy == 0, "the routed area cast paid exactly its two-energy cost")
 	await _return()
 
 
@@ -603,16 +987,41 @@ func _run() -> void:
 		var def: Dictionary = catalog.get_definition(id)
 		_check(def.get("id") == id and def.get("cost") == 1 and def.get("owner") == "tinker",
 			"authored and upgraded Tinker entries exist: " + id)
+	for id in UNRAVEL_IDS:
+		var area_def: Dictionary = catalog.get_definition(id)
+		var area_effects: Dictionary = area_def.get("effects", {})
+		_check(area_def.get("id") == id and area_def.get("cost") == 2
+			and area_def.get("owner") == "tinker" and area_def.get("target_kind") == "enemy_all"
+			and area_def.get("from_positions") == [3] and area_def.get("to_positions") == [1, 2, 3]
+			and area_effects.get("living_targets_only") == true
+			and int(area_effects.get("damage", 0)) == (7 if id.ends_with("_plus") else 5)
+			and int(area_effects.get("unravel", 0)) == (3 if id.ends_with("_plus") else 2),
+			"authored and upgraded Shrapnel Seam entries exist: " + id)
+		_check(not CombatAttackTargeting.new().supports(id),
+			"Shrapnel Seam stays out of the single-target picker: " + id)
+		_check(CombatTinkerPoolUnravelAttacks.SUPPORTED_CARD_IDS.has(id),
+			"the shared Unravel resolver owns the authored ID: " + id)
 	await _case(IDS[0], false)
 	await _case(IDS[1], true, KEY_ENTER)
 	await _case(IDS[2], true, KEY_SPACE)
 	await _case(IDS[3], false)
 	await _case(IDS[0], false, KEY_ENTER, true)
+	await _case(SHRAPNEL, false)
+	await _case(SHRAPNEL_PLUS, true, KEY_ENTER)
+	await _case(SHRAPNEL, true, KEY_SPACE)
+	await _case(SHRAPNEL_PLUS, false)
+	await _case(SHRAPNEL_PLUS, false, KEY_ENTER, true)
+	await _shrapnel_pinned()
+	await _shrapnel_latch()
+	await _shrapnel_unravel_skip()
 	await _routed_three()
 	await _ricochet_reselect()
 	await _shared_latch()
 	await _queued_and_discard()
 	await _queued_stale_receipts()
+	await _shrapnel_queued_stale()
+	await _shrapnel_refusals()
+	await _shrapnel_title_restart()
 	await _refusals()
 	app.free()
 	_finish()

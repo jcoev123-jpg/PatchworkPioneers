@@ -435,6 +435,12 @@ func _pool_admitted(card_id: String) -> bool:
 		return true
 	if card_id in ["tinker_spare_parts", "tinker_spare_parts_plus"]:
 		return true
+	# The six Seamstress enemy-control variants are live-admitted by the mounted
+	# attack presenter, so this independent expectation must admit them too.
+	if card_id in CombatSeamstressPoolControl.NEEDLE_IDS \
+			or card_id in CombatSeamstressPoolControl.SNAG_IDS \
+			or card_id in CombatSeamstressPoolControl.UNPICK_IDS:
+		return true
 	return _area_card(card_id)
 
 

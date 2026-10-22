@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_torn_suppression_revival_and_reordered_slots()
 	_test_rejections_and_malformed_inputs()
 	_test_coexistence_detachment_and_rng_replay()
+	_test_pool_heal_projection()
 	if failures.is_empty():
 		print("combat_shop_patch_rules_test: PASS (", checks, " checks)")
 	else:
@@ -923,3 +924,118 @@ func _test_coexistence_detachment_and_rng_replay() -> void:
 	_check(local_rng.seed == local_seed and local_rng.state == local_state
 		and randi() == expected_global,
 		"neither bindings nor queries consume local or global RNG")
+
+
+func _test_pool_heal_projection() -> void:
+	# AC1 / AC2: Verify all six D2-1 pool healing definitions recognized with +2 bonus.
+	var f := _build_fixture(["stitched_badge", "spare_spool"], 4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f["wardrobe"]
+	var torn: RunTornMending = f["torn"]
+	_check(_sew(w, "spare_spool", "seamstress", "ARM", "pool_spool").get("ok") == true,
+		"spare_spool sews to Seamstress ARM for pool test")
+
+	var rules := CombatShopPatchRules.new()
+	_check(rules.bind_wardrobe(w, torn) and rules.is_valid(),
+		"pool projection binds with spare_spool on Seamstress ARM")
+
+	# All six canonical base/+ definitions.
+	var pairs: Array = [
+		["seamstress_darning", 4, 6],
+		["seamstress_darning_plus", 6, 8],
+		["seamstress_thimble_tea", 3, 5],
+		["seamstress_thimble_tea_plus", 4, 6],
+		["seamstress_field_mend", 4, 6],
+		["seamstress_field_mend_plus", 6, 8],
+	]
+	for pair in pairs:
+		var card_id: String = pair[0]
+		var base_heal: int = pair[1]
+		var expected_total: int = pair[2]
+		_check(rules.healing_card_bonus("seamstress", card_id) == 2,
+			"spool +2 bonus on " + card_id)
+		_check(rules.project_card_healing("seamstress", card_id) == expected_total,
+			"project_card_healing(" + card_id + ") == " + str(expected_total) + " (base " + str(base_heal) + ")")
+
+	# Unchanged authored payloads preserved: Block and targeting untouched.
+	var pool_catalog := SeamstressPoolCards.new()
+	for card_id in ["seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea",
+		"seamstress_thimble_tea_plus", "seamstress_field_mend", "seamstress_field_mend_plus"]:
+		var def := pool_catalog.get_definition(card_id)
+		_check(not def.is_empty() and def.get("id") == card_id and def.get("owner") == "seamstress",
+			"authored pool definition preserved for " + card_id)
+		if card_id.begins_with("seamstress_darning"):
+			_check(def.get("effects").get("block") > 0,
+				"Darning block unchanged: " + str(def.get("effects").get("block")))
+		if card_id.begins_with("seamstress_field_mend"):
+			_check(def.get("target_kind") == "party_all",
+				"Field Mend party_all targeting unchanged")
+
+	# Starter Mend still gets +2.
+	_check(rules.healing_card_bonus("seamstress", "seamstress_mend") == 2,
+		"starter seamstress_mend keeps +2")
+	_check(rules.project_card_healing("seamstress", "seamstress_mend") == 7,
+		"project_card_healing(seamstress_mend) == 7")
+
+	# Negative checks.
+	# Spool on Tinker -> no bonus.
+	var spool_tinker := rules.healing_card_bonus("tinker", "seamstress_darning") == 0
+	_check(spool_tinker,
+		"tinker claims seamstress_darning with spool on tinker -> 0 bonus")
+
+	# Empty ARM on Seamstress -> no bonus.
+	var f_empty := _build_fixture(["stitched_badge", "spare_spool"], 2)
+	if not f_empty.is_empty():
+		var w_empty: RunPatchWardrobe = f_empty["wardrobe"]
+		var torn_empty: RunTornMending = f_empty["torn"]
+		var empty_rules := CombatShopPatchRules.new()
+		_check(empty_rules.bind_wardrobe(w_empty, torn_empty) and empty_rules.is_valid(),
+			"empty ARM fixture binds")
+		_check(empty_rules.healing_card_bonus("seamstress", "seamstress_darning") == 0,
+			"empty ARM gives 0 bonus for pool card")
+
+	# Torn wearer -> no bonus.
+	var torn_f := _build_fixture(["stitched_badge", "spare_spool"], 4)
+	if not torn_f.is_empty():
+		var tw: RunPatchWardrobe = torn_f["wardrobe"]
+		var ttorn: RunTornMending = torn_f["torn"]
+		_check(_sew(tw, "spare_spool", "seamstress", "ARM", "torn_spool").get("ok") == true,
+			"torn fixture sews spool")
+		var s_start_torn: Array = ttorn.read_state()["heroes"].duplicate(true)
+		var s_end_torn: Array = s_start_torn.duplicate(true)
+		s_end_torn[1]["hp"] = 0
+		_check(ttorn.observe_battle_end("tear_seam", s_start_torn, s_end_torn).get("ok") == true
+			and _refresh_wardrobe(tw, ttorn),
+			"torn seamstress and wardrobe refreshed")
+		var torn_rules := CombatShopPatchRules.new()
+		_check(torn_rules.bind_wardrobe(tw, ttorn) and torn_rules.is_valid(),
+			"torn rules binds")
+		_check(torn_rules.healing_card_bonus("seamstress", "seamstress_darning") == 0
+			and torn_rules.project_card_healing("seamstress", "seamstress_darning") == 0,
+			"torn wearer suppresses pool healing bonus")
+
+	# Unknown card -> 0.
+	_check(rules.healing_card_bonus("seamstress", "unknown_pool") == 0,
+		"unknown pool card returns 0 bonus")
+
+	# Attack-only Seamstress pool card -> 0 (positive heal required).
+	# seamstress_prick has damage/bleed, no heal.
+	_check(rules.healing_card_bonus("seamstress", "seamstress_prick") == 0,
+		"attack-only pool card (prick) returns 0 bonus")
+
+	# Forged ID (wrong owner) -> 0.
+	_check(rules.healing_card_bonus("warden", "seamstress_darning") == 0,
+		"cross-owner request (warden claiming seamstress_darning) returns 0")
+
+	# Forged definition with wrong owner does not pass.
+	_check(not CombatShopPatchRules._has_positive_authored_heal(
+		{"id": "seamstress_darning", "owner": "warden", "effects": {"heal": 4}},
+		"seamstress", "seamstress_darning"),
+		"forged cross-owner definition rejected")
+
+	# Definition payloads not modified by projection.
+	var starter_catalog := StarterCards.new()
+	var starter_before := starter_catalog.get_definition("seamstress_mend")
+	_check(starter_before.get("effects") == {"heal": 5},
+		"starter mend definition unchanged after projection queries")
