@@ -167,6 +167,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 						and _inside(Rect2(action.position, action.size), Rect2(Vector2.ZERO, marker.size))
 						and action.size.x >= 70 and action.size.y >= 48,
 						label + ": legal button is mouse/keyboard actionable within marker " + id)
+					_check(action.tooltip_text.contains(id) and action.tooltip_text.contains(expected_nodes[id]["type"]),
+						label + ": legal action tooltip identifies exact kind and id: " + id)
 			else:
 				_check(action == null and marker.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 					label + ": chosen/inaccessible node has no actionable button or focus " + id)
@@ -176,12 +178,20 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				var kind: String = expected_nodes[id]["type"]
 				var expected_state := "chosen" if chosen.has(id) else ("legal" if legal.has(id) else "other")
 				var number := ordered_legal.find(id) + 1
-				var expected_caption := (str(number) + "\n" if expected_state == "legal" else "") + kind + "\n" + id
+				var expected_caption := (str(number) + "\n" if expected_state == "legal" else "") + kind
 				var panel_style := marker.get_theme_stylebox("panel") as StyleBoxFlat
 				_check(marker.get_meta("route_kind") == kind
+					and marker.get_meta("route_id") == id
 					and identity.text == expected_caption
+					and not identity.text.contains(id)
 					and marker.get_meta("route_state") == expected_state,
-					label + ": correct actual kind, ID and three-state highlights " + id)
+					label + ": correct actual kind, caption without internal ID, and three-state highlights " + id)
+				if expected_state == "legal":
+					_check(identity.text.begins_with(str(number) + "\n"),
+						label + ": legal destination displays sorted 1-4 number: " + id)
+				else:
+					_check(identity.text == kind,
+						label + ": nonlegal marker displays kind without phantom number: " + id)
 				_check(panel_style != null and panel_style.bg_color == _expected_style(expected_state),
 					label + ": highlight is visibly colored, not metadata-only " + id)
 				_check(identity.mouse_filter == Control.MOUSE_FILTER_IGNORE
@@ -190,7 +200,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 					label + ": inert legible label " + id)
 				_check(identity.get_combined_minimum_size().x <= marker.size.x
 					and identity.get_combined_minimum_size().y <= marker.size.y,
-					label + ": full type and ID text fits patch " + id)
+					label + ": readable caption fits patch without spill " + id)
 		elif child is Label:
 			var header: Label = child
 			_check(header.has_meta("floor_number"), label + ": only expected header labels")
