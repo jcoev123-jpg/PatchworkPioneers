@@ -114,9 +114,25 @@ func _mounted(app, presenter) -> bool:
 			and badge.amount == action.amount and badge.target_position == action.target_position
 			and badge.readable_text == "ATK %d > H%d" % [action.amount, action.target_position],
 			"replacement badge announces compatible authoritative source, amount and target")
-		_check(is_instance_valid(puppet) and badge.get_global_rect().size.y >= 36.0
-			and badge.get_global_rect().position.y <= puppet.get_global_rect().position.y + 0.01,
-			"intent badge stays above the replacement actor inside the stage band")
+		# Stable mounted contract: the whole sewn patch, not only the Control, sits clear of
+		# the viewport's upper edge and above its own actor art, and stays pointer/focus inert.
+		var badge_rect: Rect2 = badge.get_global_rect()
+		var actor_rect: Rect2 = puppet.get_global_rect() if is_instance_valid(puppet) else Rect2()
+		var patch_rect: Rect2 = Rect2(badge_rect.position + badge.patch_rect().position,
+			badge.patch_rect().size)
+		_check(is_instance_valid(puppet) and badge.is_visible_in_tree()
+			and badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and badge.focus_mode == Control.FOCUS_NONE
+			and badge_rect.size.x >= badge.custom_minimum_size.x - 0.01
+			and badge_rect.size.y >= badge.custom_minimum_size.y - 0.01
+			and badge_rect.position.y >= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_SAFE_MARGIN - 0.01
+			and badge_rect.end.y <= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_BAND + 0.01
+			and Rect2(0, 0, 1280, 720).encloses(badge_rect),
+			"replacement intent badge keeps its full tag inside the viewport margin above its actor")
+		_check(patch_rect.position.y >= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_SAFE_MARGIN - 0.01
+			and patch_rect.end.y <= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_BAND + 0.01
+			and Rect2(0, 0, 1280, 720).encloses(patch_rect),
+			"drawn intent patch is complete, not cut by the upper edge, and never covers actor art")
 	return true
 
 
@@ -125,6 +141,9 @@ func _assert_stage(app, presenter) -> void:
 	_check(ROSTER_ART.STAGE_ACTOR_HEIGHT >= 180, "shared stage minimum is a large character height")
 	_check(ROSTER_ART.STAGE_INTENT_BAND > 0.0 and ROSTER_ART.STAGE_INTENT_BAND < ROSTER_ART.STAGE_ACTOR_HEIGHT,
 		"stage reserves only a small band above the art for the intent badge")
+	_check(ROSTER_ART.STAGE_INTENT_SAFE_MARGIN > 0.0
+		and ROSTER_ART.STAGE_INTENT_SAFE_MARGIN < ROSTER_ART.STAGE_INTENT_BAND,
+		"intent band keeps a positive viewport-safe margin under the screen's upper edge")
 	var hero_height := 0.0
 	var enemy_height := 0.0
 	for puppet in presenter._puppets:

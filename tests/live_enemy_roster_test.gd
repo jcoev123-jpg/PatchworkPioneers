@@ -154,8 +154,14 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
 			"drawn readable intent fits within its badge")
 		var rect: Rect2 = badge.get_global_rect()
-		_check(rect.size.x >= 192 and rect.size.y >= 36 and
-			Rect2(0, 0, 1280, 720).encloses(rect), "badge has visible area within the viewport")
+		var drawn: Rect2 = Rect2(rect.position + badge.patch_rect().position, badge.patch_rect().size)
+		_check(rect.size.x >= 192 and rect.size.y >= badge.custom_minimum_size.y - 0.01
+			and Rect2(0, 0, 1280, 720).encloses(rect), "badge has visible area within the viewport")
+		# Cycle 127: the control is inset inside the intent band, and the drawn patch is
+		# complete below the viewport's upper edge, so no stitch is sliced off.
+		_check(drawn.position.y >= 8.0 and drawn.end.y <= rect.end.y + 0.01
+			and Rect2(0, 0, 1280, 720).encloses(drawn),
+			"badge's drawn paper patch sits inside the viewport with a safe top margin")
 		_check(not rect.intersects(app.end_turn_button.get_global_rect()) and
 			not rect.intersects(app.return_button.get_global_rect()) and
 			not rect.intersects(app.hand_view.get_global_rect()),
