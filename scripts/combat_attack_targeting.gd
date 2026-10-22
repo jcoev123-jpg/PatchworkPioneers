@@ -30,6 +30,62 @@ func is_heavy_pool_attack(card_id: String) -> bool:
 	return CombatWardenPoolHeavyAttacks.SUPPORTED_CARD_IDS.has(card_id)
 
 
+## Only the authored single-target Pin/Unravel family enters this picker.
+## Shrapnel Seam is an area attack and belongs to a separate integration.
+const TINKER_COMBO_IDS: Array[String] = [
+	"tinker_spool_launcher", "tinker_spool_launcher_plus",
+	"tinker_snip_the_seam", "tinker_snip_the_seam_plus",
+]
+
+
+func is_pool_combo_attack(card_id: String) -> bool:
+	return CombatWardenPoolComboAttacks.SUPPORTED_CARD_IDS.has(card_id) \
+		or (TINKER_COMBO_IDS.has(card_id) \
+		and CombatTinkerPoolUnravelAttacks.SUPPORTED_CARD_IDS.has(card_id))
+
+
+func combo_definition(card_id: String) -> Dictionary:
+	if not is_pool_combo_attack(card_id):
+		return {}
+	var warden: bool = CombatWardenPoolComboAttacks.SUPPORTED_CARD_IDS.has(card_id)
+	var definition: Dictionary = (_warden_pool.get_definition(card_id) if warden \
+		else _tinker_pool.get_definition(card_id))
+	var owner_id: String = "warden" if warden else "tinker"
+	if definition.get("id") != card_id or definition.get("owner") != owner_id \
+			or definition.get("target_kind") != "enemy_single":
+		return {}
+	var cost: Variant = definition.get("cost")
+	var from_slots: Variant = definition.get("from_positions")
+	var to_slots: Variant = definition.get("to_positions")
+	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY \
+			or not from_slots is Array or from_slots.is_empty() \
+			or not to_slots is Array or to_slots.is_empty():
+		return {}
+	for position in from_slots:
+		if not position is int or position < 1 or position > CombatParty.PARTY_SIZE:
+			return {}
+	for position in to_slots:
+		if not position is int or position < 1 or position > CombatEnemies.MAX_ENEMIES:
+			return {}
+	var effects: Variant = definition.get("effects")
+	if not effects is Dictionary or not effects.get("damage") is int or effects["damage"] <= 0:
+		return {}
+	if card_id.begins_with("warden_pinning_jab"):
+		if effects.size() != 2 or effects.get("pinned") != true:
+			return {}
+	elif card_id.begins_with("tinker_snip_the_seam"):
+		var condition: Variant = effects.get("conditional_damage")
+		if effects.size() != 2 or not condition is Dictionary \
+				or not condition.get("damage") is int or condition["damage"] <= 0 \
+				or condition.get("operator") != "or" or not condition.get("conditions") is Array:
+			return {}
+	else:
+		if effects.size() != 2 or not effects.get("unravel") is int \
+				or effects["unravel"] <= 0:
+			return {}
+	return definition
+
+
 ## These two enemy-targeted utilities are not damage attacks, and must not
 ## enter the starter-only ATTACK_IDS. The live picker shares this preview.
 func is_sight_glass(card_id: String) -> bool:
@@ -108,7 +164,7 @@ func sight_glass_definition(card_id: String) -> Dictionary:
 ## True for enemy-targeted actions this read-only preview can describe.
 func supports(card_id: String) -> bool:
 	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id) \
-		or is_sight_glass(card_id) or is_seamstress_control(card_id)
+		or is_sight_glass(card_id) or is_seamstress_control(card_id) or is_pool_combo_attack(card_id)
 
 
 ## Exact authored pool record: catalog ID and owner must agree with the prefix.
@@ -193,10 +249,12 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	var heavy := is_heavy_pool_attack(card_id)
 	var sight := is_sight_glass(card_id)
 	var control := is_seamstress_control(card_id)
+	var combo := is_pool_combo_attack(card_id)
 	var definition: Dictionary = (pool_definition(card_id) if pool else
 		heavy_definition(card_id) if heavy else
 		sight_glass_definition(card_id) if sight else
-		control_definition(card_id) if control else StarterCards.new().get_definition(card_id))
+		control_definition(card_id) if control else
+		combo_definition(card_id) if combo else StarterCards.new().get_definition(card_id))
 	if definition.is_empty():
 		return rejected
 	var owner = definition.get("owner")
