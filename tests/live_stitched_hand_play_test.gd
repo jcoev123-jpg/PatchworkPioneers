@@ -32,7 +32,7 @@ func _panel(id: String):
 	return null
 
 
-## The real presenter must name both ledger halves, in order, on its compact
+## The real presenter must name both ledger halves, in order, on its detailed
 ## battle-hand face while keeping the shared cost, two-part tooltip and input.
 func _stitched_face(id: String, pair: Array, metadata) -> void:
 	var ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
@@ -67,7 +67,25 @@ func _stitched_face(id: String, pair: Array, metadata) -> void:
 	_check(tooltip.contains(metadata.base_effect_text(str(pair[0])))
 		and tooltip.contains(metadata.base_effect_text(str(pair[1]))),
 		"each tooltip part keeps that half's complete authored rules")
-	# Compact battle-hand face: the same bound panel and real draw callback.
+	# The real battle hand keeps the detailed, noncompact face: both ordered halves
+	# get the renderer's three-line geometry instead of the compact one-row fallback.
+	var real_geometry: Dictionary = metadata.get_geometry(panel)
+	var real_rows: Array = real_geometry.get("halves", [])
+	_check(not bool(real_geometry.get("compact", true)) and panel.size.y >= 160.0,
+		"real held stitched panel uses the detailed tall face")
+	_check(is_equal_approx(panel.size.y, app.hand_view.custom_minimum_size.y),
+		"held card height is the hand row's own authoritative height")
+	_check(real_rows.size() == 2, "detailed face keeps one sewn region per authored half")
+	if real_rows.size() == 2:
+		var first_row: Rect2 = real_rows[0]
+		var second_row: Rect2 = real_rows[1]
+		var real_bounds := Rect2(Vector2.ZERO, panel.size)
+		_check(first_row.size.y >= 30.0 and second_row.size.y >= 30.0,
+			"both halves get the renderer's detailed row height, not a compact strip")
+		_check(real_bounds.encloses(first_row) and real_bounds.encloses(second_row)
+			and first_row.position.y < second_row.position.y,
+			"both detailed stitched halves fit the real panel in ledger order")
+	# The compact one-row fallback still exists for shorter mounted panels.
 	var min_size: Vector2 = panel.custom_minimum_size
 	var tall_height: float = panel.size.y
 	var draws: int = int(metadata._bindings[panel]["draw_count"])
@@ -75,7 +93,7 @@ func _stitched_face(id: String, pair: Array, metadata) -> void:
 	await _frames()
 	var geometry: Dictionary = metadata.get_geometry(panel)
 	_check(panel.size.y < 120.0 and bool(geometry.get("compact", false)),
-		"real hand panel reaches the compact battle-hand face")
+		"shorter mounted panel falls back to the compact battle-hand face")
 	var rows: Array = geometry.get("halves", [])
 	var bounds := Rect2(Vector2.ZERO, panel.size)
 	_check(rows.size() == 2, "compact face reserves one sewn row per authored half")

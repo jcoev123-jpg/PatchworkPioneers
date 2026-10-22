@@ -30,6 +30,11 @@ const SECONDARY_ACTION_SIZE := Vector2(128, 40)
 ## The expanding stage gives up exactly this height, so the hand and actions keep their
 ## rows inside 1280x720.
 const BATTLE_TOP_SEAM := 16
+## One held-card height shared by the hand row and every card panel. 120 px clipped the
+## second sewn half of a stitched face; 160 px leaves both halves the noncompact
+## three-line geometry (name, owner/source, target + rules) that
+## live_hand_card_metadata.card_layout draws, and still fits the 1280x720 rows.
+const HAND_CARD_HEIGHT := 160
 
 
 ## One small sewn felt corner beside the prominent End Turn control.
@@ -947,7 +952,7 @@ func _build_battle() -> void:
 	pile_row.add_child(pile_label)
 	hand_view = HBoxContainer.new()
 	hand_view.name = "SharedHand"
-	hand_view.custom_minimum_size.y = 120
+	hand_view.custom_minimum_size.y = HAND_CARD_HEIGHT
 	# The stage above owns the free vertical space; the card row keeps its own height.
 	hand_view.size_flags_vertical = Control.SIZE_FILL
 	hand_view.add_theme_constant_override("separation", 16)
@@ -2952,7 +2957,9 @@ func _refresh_hand() -> void:
 		var panel := PanelContainer.new()
 		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		panel.custom_minimum_size.y = 120
+		# Same authoritative height as the row, so no card is ever shorter than the band
+		# that gives its two sewn halves the detailed geometry.
+		panel.custom_minimum_size.y = HAND_CARD_HEIGHT
 		hand_view.add_child(panel)
 		var label := Label.new()
 		label.text = card_id
