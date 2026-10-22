@@ -20,6 +20,9 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_authored_pool_upgrade_cases()
+	_test_pool_mapping_and_membership_rejections()
+	_test_pool_plus_in_stitched_upgrade_ledger()
 	_test_real_mixed_upgrade_and_composite_rejection()
 	_test_mixed_invalid_ledgers_and_isolation()
 	_test_public_contract()
@@ -771,3 +774,141 @@ func _test_mixed_invalid_ledgers_and_isolation() -> void:
 	_check(independent["deck"] == malformed_original and malformed_nested == malformed_original
 		and not nested_visit.is_consumed(),
 		"nested failure returns are deep detached from caller and subsequent rejection")
+
+
+## Each example uses an actual earned copy, with another copy left in place.
+## The cost/effect assertions use the authored definitions, not a combat proxy.
+func _test_authored_pool_upgrade_cases() -> void:
+	var examples := [
+		{"base": "warden_iron_hem", "plus": "warden_iron_hem_plus", "owner": "warden",
+			"cost": 2, "plus_cost": 1, "effects": {"block": 14}, "plus_effects": {"block": 14}},
+		{"base": "seamstress_running_stitch", "plus": "seamstress_running_stitch_plus",
+			"owner": "seamstress", "cost": 1, "plus_cost": 1,
+			"effects": {"damage": 2, "bleed": 3}, "plus_effects": {"damage": 3, "bleed": 4}},
+		{"base": "tinker_rivet_shot", "plus": "tinker_rivet_shot_plus", "owner": "tinker",
+			"cost": 1, "plus_cost": 1, "effects": {"damage": 4, "exposed": 1},
+			"plus_effects": {"damage": 6, "exposed": 1}},
+	]
+	for example in examples:
+		var original_id: String = example["base"]
+		var upgraded_id: String = example["plus"]
+		var pool: Object
+		match example["owner"]:
+			"warden":
+				pool = WardenPoolCards.new()
+			"seamstress":
+				pool = SeamstressPoolCards.new()
+			"tinker":
+				pool = TinkerPoolCards.new()
+		var original: Dictionary = pool.get_definition(original_id)
+		var upgraded: Dictionary = pool.get_definition(upgraded_id)
+		_check(not original.is_empty() and not upgraded.is_empty(), original_id + ": both canonical definitions exist")
+		if original.is_empty() or upgraded.is_empty():
+			continue
+		_check(original.get("owner") == example["owner"] and upgraded.get("owner") == example["owner"]
+			and original.get("upgrade_id") == upgraded_id
+			and pool.get_upgrade_id(original_id) == upgraded_id, original_id + ": original owns the real plus link")
+		_check(original.get("cost") == example["cost"] and upgraded.get("cost") == example["plus_cost"]
+			and original.get("effects") == example["effects"]
+			and upgraded.get("effects") == example["plus_effects"], original_id + ": unchanged authored costs and effects")
+		_check(original.get("from_positions") == ([2, 3] if example["owner"] == "tinker" else [1, 2, 3])
+			and (original.get("to_positions") == [] if example["owner"] == "warden"
+				else original.get("to_positions") == [1, 2, 3]),
+			original_id + ": original hero and target positions are authored")
+		var source := _load_starter_deck()
+		source.insert(2, original_id)
+		source.append("seamstress_running_stitch_plus")
+		source.append(original_id)
+		var pristine := source.duplicate(true)
+		var target := source.size() - 1
+		var other_copy := 2
+		_check(source.count(original_id) == 2 and source[target] == original_id
+			and source[other_copy] == original_id, original_id + ": two earned copies at distinct real indices")
+		var mapping := {original_id: upgraded_id}
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 1701
+		var state := rng.state
+		seed(RNG_SEED)
+		var next_draw := randi()
+		seed(RNG_SEED)
+		var visit := RunRestCardUpgrade.new(source, mapping)
+		_assert_rejected(visit, source.find("seamstress_running_stitch_plus"), pristine,
+			original_id + ": preexisting pool plus cannot be upgraded")
+		var success := visit.choose_upgrade(target)
+		_check(_is_ok(success) and visit.is_consumed(), original_id + ": earned pool upgrade succeeds")
+		_check(success.get("original_id") == original_id and success.get("upgraded_id") == upgraded_id,
+			original_id + ": receipt identifies canonical pair")
+		_check(_decks_equal(success.get("deck"), _expected_replaced(pristine, target, upgraded_id))
+			and success["deck"][other_copy] == original_id
+			and success["deck"].count("seamstress_running_stitch_plus") >= 1,
+			original_id + ": only selected copy replaced; existing plus and order retained")
+		_check(source == pristine and rng.state == state and randi() == next_draw,
+			original_id + ": caller deck and RNG unchanged")
+		_assert_rejected_while_used(visit, other_copy, pristine, original_id + ": second selection denied")
+		var fresh := RunRestCardUpgrade.new(success["deck"], {upgraded_id: original_id})
+		_assert_rejected(fresh, target, success["deck"], original_id + ": fresh visit cannot re-upgrade a plus")
+		_check(not fresh.is_consumed(), original_id + ": rejected re-upgrade leaves visit open")
+
+
+func _test_pool_mapping_and_membership_rejections() -> void:
+	var deck := _load_starter_deck()
+	deck.append_array(["warden_iron_hem", "tinker_rivet_shot", "seamstress_running_stitch_plus"])
+	var warden_index := deck.find("warden_iron_hem")
+	var tinker_index := deck.find("tinker_rivet_shot")
+	_check(warden_index >= 0 and tinker_index >= 0, "mapping matrix owns both earned originals")
+	if warden_index < 0 or tinker_index < 0:
+		return
+	var mappings := [
+		{"warden_iron_hem": "warden_patch_guard_plus"}, # same owner, wrong pair
+		{"warden_iron_hem": "tinker_rivet_shot_plus"}, # wrong hero
+		{"warden_iron_hem": "warden_iron_hem"}, # base ID, not an upgrade
+		{"warden_iron_hem": "warden_forged_hem_plus"}, # made-up plus
+		{"warden_iron_hem": "seamstress_running_stitch_plus"}, # real other-owner plus
+		{"warden_iron_hem": "warden_strike_plus"}, # starter plus is not a pool partner
+	]
+	for mapping in mappings:
+		mapping["tinker_rivet_shot"] = "tinker_rivet_shot_plus"
+		var visit := RunRestCardUpgrade.new(deck, mapping)
+		_assert_rejected(visit, warden_index, deck, "wrong pool upgrade mapping " + str(mapping["warden_iron_hem"]))
+		var success := visit.choose_upgrade(tinker_index)
+		_check(_is_ok(success) and success["deck"][tinker_index] == "tinker_rivet_shot_plus"
+			and visit.is_consumed(), "invalid pool mapping does not latch a later legal choice")
+		_check(deck[warden_index] == "warden_iron_hem", "rejected mapping never alters caller deck")
+	for forged in ["warden_forged_hem_plus", "tinker_rivet_shot_plus_fake", "seamstress_not_a_card_plus"]:
+		var bad := deck.duplicate(true)
+		bad.append(forged)
+		var rejected := RunRestCardUpgrade.new(bad, {"warden_iron_hem": "warden_iron_hem_plus"})
+		_assert_rejected(rejected, warden_index, bad, "forged plus deck member " + forged)
+	var missing_mapping := RunRestCardUpgrade.new(deck, {})
+	_assert_rejected(missing_mapping, warden_index, deck, "catalog membership does not grant a Rest upgrade")
+	var reupgrade := RunRestCardUpgrade.new(deck,
+		{"seamstress_running_stitch_plus": "seamstress_running_stitch_plus_plus"})
+	_assert_rejected(reupgrade, deck.find("seamstress_running_stitch_plus"), deck,
+		"already upgraded pool card is not an upgrade original")
+
+
+func _test_pool_plus_in_stitched_upgrade_ledger() -> void:
+	var stitched := _earned_mixed_ledger()
+	if not stitched.get("ok", false):
+		return
+	var owned: Array = stitched["deck"].duplicate(true)
+	owned.append_array(["warden_iron_hem_plus", "tinker_rivet_shot", "tinker_rivet_shot_plus"])
+	var before := owned.duplicate(true)
+	var descriptors: Dictionary = stitched["descriptors"].duplicate(true)
+	var cursor: int = stitched["next_stitch_id"]
+	var visit := RunRestCardUpgrade.new(owned, {"tinker_rivet_shot": "tinker_rivet_shot_plus"},
+		descriptors, cursor)
+	_assert_rejected(visit, owned.find("warden_iron_hem_plus"), before,
+		"authentic composite ledger admits plus but never upgrades it")
+	var selected := owned.find("tinker_rivet_shot")
+	var result := visit.choose_upgrade(selected)
+	_check(_is_ok(result) and visit.is_consumed(), "genuine stitched ledger upgrades earned Tinker instance")
+	_check(result.get("deck") == _expected_replaced(before, selected, "tinker_rivet_shot_plus")
+		and result["deck"].count("tinker_rivet_shot_plus") == 2,
+		"stitched ledger retains duplicate plus cards and original ordering")
+	_check(descriptors == stitched["descriptors"] and owned == before
+		and cursor == stitched["next_stitch_id"], "caller composite ledger and cursor unchanged")
+	var later := RunRestStitchCards.new(result["deck"], descriptors, 3, cursor)
+	_check(later.is_valid() and later.get_snapshot()["descriptors"] == descriptors
+		and later.get_snapshot()["next_stitch_id"] == cursor,
+		"upgraded mixed ledger passes a new Rest stitch validator")
