@@ -43,7 +43,9 @@ func _visible(app) -> void:
 	for panel in app.hand_view.get_children():
 		_check(panel is PanelContainer and panel.is_visible_in_tree(), "visible placeholder panel")
 		var label = panel.get_child(0) if panel.get_child_count() > 0 else null
-		_check(label is Label and label.is_visible_in_tree(), "visible card label exists")
+		# The raw-ID label stays as the stable hand identity but is no longer
+		# drawn: the V4 cream card is rendered by the metadata decorator.
+		_check(label is Label and not label.is_visible_in_tree(), "identity label retained, raw ID hidden")
 		if label is Label:
 			ids.append(label.text)
 	_check(ids == app.deck.hand, "visible IDs match actual hand in order")

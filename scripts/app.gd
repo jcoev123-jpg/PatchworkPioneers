@@ -829,10 +829,12 @@ func _build_battle() -> void:
 	for side in ["left", "top", "right", "bottom"]:
 		battle_view.add_theme_constant_override("margin_" + side, 32)
 	for side in ["top", "bottom"]:
-		battle_view.add_theme_constant_override("margin_" + side, 16)
+		battle_view.add_theme_constant_override("margin_" + side, 8)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
+	# Compact rows keep the hero meters, five 160 px cards and the action row
+	# inside 1280x720 even when every meter shows status and Bleed lines.
+	column.add_theme_constant_override("separation", 6)
 	battle_view.add_child(column)
 	hero_view = HBoxContainer.new()
 	hero_view.add_theme_constant_override("separation", 16)
@@ -2677,7 +2679,7 @@ func _refresh_hand() -> void:
 		var panel := PanelContainer.new()
 		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		panel.custom_minimum_size.y = 116
+		panel.custom_minimum_size.y = 160
 		hand_view.add_child(panel)
 		var label := Label.new()
 		label.text = card_id

@@ -11,6 +11,8 @@ var _move_context: Dictionary = {}
 var _pending: Dictionary = {}
 var _targets: Dictionary = {}
 var _token := 0
+var _dragging := false
+var _drag_origin := Vector2.ZERO
 var cancel_button: Button
 var energy_label: Label
 var energy_orb: Control
@@ -45,6 +47,36 @@ func _process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and not _pending.is_empty():
+		var source = _pending.panel
+		if is_instance_valid(source):
+			source.set_meta("aiming", true)
+			source.set_meta("aim_point", event.position)
+			source.queue_redraw()
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and _dragging:
+		_dragging = false
+		if _pending.is_empty() or not _selection_valid():
+			_cancel_pending()
+			return
+		_pending.panel.set_meta("aiming", false)
+		if _pending.id in ALLY_IDS:
+			if not _pending.get("choosing", false):
+				_choose_target()
+			if event.position.distance_to(_drag_origin) > 10:
+				# Drag release uses exactly the same target receipt and deferred commit.
+				for panel in _targets:
+					if panel.get_global_rect().has_point(event.position):
+						var press := InputEventMouseButton.new()
+						press.button_index = MOUSE_BUTTON_LEFT
+						press.pressed = true
+						_on_target_input(press, panel, _targets[panel].position, _token)
+						return
+				_cancel_pending()
+		else:
+			if _pending.panel.get_global_rect().has_point(event.position):
+				_activate.call_deferred(_pending.panel, _pending.id, _deck, _party, _battle, _token)
+			else:
+				_cancel_pending()
 	if not _pending.is_empty() and event.is_action_pressed("ui_cancel"):
 		_cancel_pending()
 		get_viewport().set_input_as_handled()
@@ -112,6 +144,7 @@ func _sync_battle() -> void:
 		if not is_instance_valid(panel) or panel.get_parent() != app.hand_view:
 			_unbind(panel)
 	# Decorate only the exact ordered live cards, without replacing their input panels.
+	_metadata.set_app(app)
 	_metadata.sync(app.hand_view.get_children(), _deck.hand)
 	var actionable: Array[Control] = []
 	for panel in app.hand_view.get_children():
@@ -152,7 +185,7 @@ func _sync_battle() -> void:
 func _current_move_context(panel) -> Array:
 	var app = get_parent()
 	return [app.deck, app.party, app.battle_view, app.enemies, app.battle_result,
-		app.run_rng, app.enemy_intents, app.enemy_intents._turn_index, panel.get_index()]
+		app.run_rng, app.enemy_intents, app.enemy_intents._turn_index if app.enemy_intents != null else -1, panel.get_index()]
 
 
 func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, battle) -> bool:
@@ -192,12 +225,16 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 	if not _pending.is_empty() and _pending.panel == panel:
 		return
 	_cancel_pending()
-	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false}
+	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
 	if card_id in ALLY_IDS and not _selection_valid():
 		_cancel_pending()
 		return
-	# Rebuilding the hand must happen outside the current Control input dispatch.
-	_activate.call_deferred(panel, card_id, deck, party, battle, _token)
+	if click:
+		_dragging = true
+		_drag_origin = panel.get_global_transform() * event.position
+	# Ally selection can arm immediately; target-free mouse casts wait for release.
+	if accept or card_id in ALLY_IDS:
+		_activate.call_deferred(panel, card_id, deck, party, battle, _token)
 
 
 func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, battle, token: int = -1) -> void:
@@ -207,6 +244,8 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		_cancel_pending()
 		return
 	if card_id in ALLY_IDS:
+		if _pending.get("choosing", false):
+			return
 		if _selection_valid():
 			_choose_target()
 		else:
@@ -233,6 +272,8 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 
 func _selection_valid() -> bool:
 	if _pending.is_empty() or not _eligible(_pending.panel, _pending.id, _deck, _party, _battle):
+		return false
+	if _pending.get("context", []) != _current_move_context(_pending.panel):
 		return false
 	if _pending.id not in ALLY_IDS:
 		return true
@@ -336,6 +377,9 @@ func _resolve_target(position: int, token: int) -> void:
 
 
 func _cancel_pending() -> void:
+	_dragging = false
+	if is_instance_valid(_pending.get("panel")):
+		_pending.panel.set_meta("aiming", false)
 	_token += 1
 	var source = _pending.get("panel")
 	_pending.clear()

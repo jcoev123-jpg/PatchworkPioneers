@@ -2,6 +2,15 @@ extends "res://tests/live_rest_stitch_choice_test.gd"
 ## Earn three scraps and stitch through real controls, then draw the owned
 ## composite from the next routed Fight's actual deck. No manufactured IDs.
 var _stale_card_input: Callable
+var captured_forecast: Dictionary = {}
+var forecast_before: Array = []
+
+
+func _capture_forecast() -> void:
+	if presenter.current_forecast.get("playable", false):
+		_check(_complete_state() == forecast_before, "live forecast spends no cards energy passives or RNG before commit")
+		captured_forecast = presenter.current_forecast.duplicate(true)
+		_check(presenter.cue.text.contains("Projected"), "real cue displays current ordered forecast")
 
 
 func _frames() -> void:
@@ -155,6 +164,8 @@ func _deferred_rejections(id: String) -> void:
 		event.pressed = true
 		root.push_input(event, true)
 		_check(presenter._queued, "real second target queued before deferred " + reason)
+		_check(presenter.current_forecast.get("playable", false) and presenter.cue.text.contains("Projected"),
+			"live ordered projection is displayed before the deferred commit: " + reason)
 		var party: CombatParty = app.party
 		var turn: int = app.enemy_intents._turn_index
 		var foes: Array = app.enemies.get_enemies()
@@ -167,6 +178,10 @@ func _deferred_rejections(id: String) -> void:
 		var staged := _complete_state()
 		await _frames()
 		_check(_complete_state() == staged, "deferred " + reason + " revalidated without mutation")
+		_check(presenter.cue != null and not presenter.cue.text.contains("Projected")
+			and not presenter.current_forecast.get("playable", false) and presenter._armed == null
+			and presenter._choices.is_empty() and presenter._receipt.is_empty(),
+			"stale " + reason + " rejection retires the projection and armed cue")
 		app.party = party
 		app.enemy_intents._turn_index = turn
 		app.enemies._enemies.assign(foes)
@@ -338,6 +353,9 @@ func _run() -> void:
 				targets.append((half.target_positions.back() if targets.size() == 1 else half.target_positions[0]) if half.requires_selection else 0)
 			var expected := CombatStitchedCards.new(attacks).play_stitched(deck, party, enemies, ledger, id, targets[0], targets[1])
 			_check(expected.ok, "independent scene-free transaction succeeds")
+			var metadata = app.get_node("LiveSupportHand")._metadata
+			var facts: Dictionary = metadata.get_facts(_panel(id))
+			_check(facts.get("halves", []) == pair and facts.cost == preview.cost and not _panel(id).get_child(0).visible, "mounted cream composite has descriptor-backed ordered halves and hidden identity")
 			await _hover(_panel(id))
 			_check(_panel(id).get_child(0).text == id and presenter.cue.text.contains("%d energy" % preview.cost)
 				and presenter.cue.text.begins_with(catalog.get_definition(pair[0]).display_name + " / " + catalog.get_definition(pair[1]).display_name), "unchanged ID label and ordered names/cost in actual cue")
@@ -346,12 +364,20 @@ func _run() -> void:
 				var half: Dictionary = preview.halves[index]
 				var legal := str(half.target_positions) if half.requires_selection else "automatic (0), slots " + str(half.affected_positions)
 				_check(presenter.cue.text.contains("%d: %s %s" % [index + 1, half.side, legal]), "cue exposes each exact legal per-half target shape")
+			forecast_before = _complete_state()
+			captured_forecast = {}
+			presenter.forecast_updated.connect(_capture_forecast)
 			await _arm(id, keyboard)
 			for index in range(2):
 				if preview.halves[index].requires_selection:
 					await _pick(targets[index], preview.halves[index].side, keyboard)
 			if keyboard and targets == [0, 0]:
 				await _key(KEY_SPACE)
+			presenter.forecast_updated.disconnect(_capture_forecast)
+			_check(captured_forecast.get("playable", false) and captured_forecast.get("halves", []) == expected.halves, "routed live forecast predicts exact ordered committed effects")
+			if captured_forecast.get("playable", false):
+				var projected: Dictionary = captured_forecast.projected
+				_check([projected.hand, projected.draw_pile, projected.discard_pile, projected.energy, projected.heroes, projected.enemies, projected.rng_state, projected.tinker_consumed] == [app.deck.hand, app.deck.draw_pile, app.deck.discard_pile, app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state, presenter._play._tinker._consumed], "live chosen-target projection equals complete actual commit including passive and RNG")
 			_check(presenter.last_event == expected, "physical composite event matches exact ordered oracle")
 			_check([app.deck.hand, app.deck.draw_pile, app.deck.discard_pile, app.deck.energy, app.party.get_heroes(), app.enemies.get_enemies(), app.run_rng.state]
 				== [deck.hand, deck.draw_pile, deck.discard_pile, deck.energy, party.get_heroes(), enemies.get_enemies(), rng.state], "complete HP/Block/Bleed/deck/energy/RNG transition equals oracle")

@@ -10,8 +10,21 @@ const RUST := Color("#9e6f58")
 const INK := Color("#3d3440")
 
 var _catalog := StarterCards.new()
+var _targeting := CombatAttackTargeting.new()
+var _stitched_preview := CombatStitchedTargetPreview.new()
+var _on_hit := CombatOnHitStatuses.new()
 # Key: the ACTUAL hand panel, value: original card ID, facts and signal Callables.
 var _bindings: Dictionary = {}
+var _app
+
+
+func set_app(app) -> void:
+	_app = app
+
+
+func _ledger() -> RunRestStitchCards:
+	return RunRestStitchCards.new(_app.run_deck, _app.run_stitch_descriptors,
+		_app.run_scraps, _app.run_next_stitch_id)
 
 
 func _definition(card_id: String) -> Dictionary:
@@ -84,6 +97,12 @@ func base_effect_text(card_id: String) -> String:
 
 func describe(card_id: String) -> Dictionary:
 	var definition: Dictionary = _definition(card_id)
+	if _app != null and card_id.begins_with(RunRestStitchCards.ID_PREFIX):
+		var ledger := _ledger()
+		if ledger.is_valid() and ledger.get_snapshot() == _app._stitch_snapshot():
+			definition = ledger.get_snapshot().descriptors.get(card_id, {})
+			if not definition.is_empty():
+				return {"id": card_id, "known": true, "owner": "", "owner_text": "Stitched", "cost": definition.cost, "cost_text": "Cost %d" % definition.cost, "from_text": "Ordered halves", "target_text": "Independent targets", "halves": definition.half_ids.duplicate()}
 	if definition.is_empty():
 		return {
 			"id": card_id, "known": false, "owner": "", "owner_text": "Unknown",
@@ -145,7 +164,8 @@ func sync(panels: Array[Node], hand: Array[String]) -> void:
 			continue
 		current[panel] = true
 		var card_id: String = label.text
-		if _bindings.has(panel) and _bindings[panel]["id"] == card_id:
+		if _bindings.has(panel) and _bindings[panel]["id"] == card_id and _bindings[panel].facts == describe(card_id):
+			_update_visual(panel)
 			continue
 		_unbind(panel)
 		_bind(panel, card_id)
@@ -166,7 +186,12 @@ func _bind(panel: Control, card_id: String) -> void:
 		"resize": resize_callback, "exit": exit_callback, "draw_count": 0,
 		"original_tooltip": original_tooltip,
 	}
+	panel.get_child(0).hide()
 	panel.tooltip_text = base_effect_text(card_id)
+	var halves: Array = _bindings[panel].facts.get("halves", [])
+	if not halves.is_empty():
+		panel.tooltip_text = "1. " + base_effect_text(halves[0]) + "\n2. " + base_effect_text(halves[1])
+	_update_visual(panel)
 	panel.draw.connect(draw_callback)
 	panel.resized.connect(resize_callback)
 	panel.tree_exiting.connect(exit_callback)
@@ -193,6 +218,8 @@ func _unbind(panel) -> void:
 			panel.resized.disconnect(binding["resize"])
 		if panel.tree_exiting.is_connected(binding["exit"]):
 			panel.tree_exiting.disconnect(binding["exit"])
+		if panel.get_child_count() > 0:
+			panel.get_child(0).show()
 		# Restore original tooltip so unbind/rebind is clean.
 		if binding.has("original_tooltip"):
 			panel.tooltip_text = binding.get("original_tooltip", "")
@@ -213,29 +240,35 @@ func get_facts(panel: Control) -> Dictionary:
 func get_geometry(panel: Control) -> Dictionary:
 	if not _bindings.has(panel) or not is_instance_valid(panel):
 		return {}
-	return _geometry(panel.size)
+	return card_layout(panel.size)
 
 
-func _geometry(size: Vector2) -> Dictionary:
-	var width := size.x
-	var height := size.y
-	if width < 88.0 or height < 30.0:
+## Single source of truth for the drawn card. Mounted tests check these rects
+## stay inside the real panel; the renderer draws exactly these regions.
+func card_layout(size: Vector2) -> Dictionary:
+	if size.x < 88.0 or size.y < 30.0:
 		return {}
-	# Non-support hands can measure just 34px high. Keep that hitbox:
-	# compact cards use one sewn rules line below the untouched center ID.
-	var compact := height < 68.0
-	var margin := 4.0
-	var cost_width := 52.0
-	var header_height := 11.0 if compact else 22.0
-	var footer_height := 12.0 if compact else 39.0
-	var header_y := 1.0 if compact else margin
-	var footer_y := height - footer_height - (1.0 if compact else margin)
-	return {
-		"compact": compact,
-		"owner": Rect2(margin, header_y, width - cost_width - margin * 3.0, header_height),
-		"cost": Rect2(width - cost_width - margin, header_y, cost_width, header_height),
-		"footer": Rect2(margin, footer_y, width - margin * 2.0, footer_height),
-	}
+	var compact := size.y < 120.0
+	var frame := Rect2(2, 2, size.x - 4, size.y - 4)
+	var inset := 6.0
+	var cost_side := 24.0 if compact else 30.0
+	var cost := Rect2(size.x - inset - cost_side, inset, cost_side, cost_side)
+	var stripe := Rect2(inset, inset + 2, 5, frame.size.y - (inset + 2) * 2)
+	var text_x := stripe.end.x + 3.0
+	var text_width := maxf(24.0, cost.position.x - text_x - 4.0)
+	var owner := Rect2(text_x, inset + (2.0 if compact else 3.0), text_width, 12.0)
+	var title := Rect2(text_x, owner.end.y + 1.0, text_width, 16.0 if compact else 20.0)
+	var body_top := title.end.y + 2.0
+	var body := Rect2(text_x, body_top, maxf(24.0, size.x - text_x - inset), frame.end.y - inset - body_top)
+	var halves: Array[Rect2] = []
+	if not compact:
+		var gap := 6.0
+		var each := floorf((body.size.y - gap) / 2.0)
+		if each >= 30.0:
+			halves = [Rect2(body.position, Vector2(body.size.x, each)),
+				Rect2(body.position + Vector2(0, each + gap), Vector2(body.size.x, each))]
+	return {"compact": compact, "frame": frame, "stripe": stripe, "owner": owner,
+		"cost": cost, "title": title, "footer": body, "halves": halves}
 
 
 func _owner_color(owner: String) -> Color:
@@ -249,6 +282,58 @@ func _owner_color(owner: String) -> Color:
 	return INK
 
 
+## Presentation-only view of what the current live state allows. Read by the
+## renderer and by mounted tests; it never mutates a combat model.
+func visual_state(panel) -> Dictionary:
+	if not _bindings.has(panel):
+		return {}
+	var visual: Array = _bindings[panel].get("visual", [false, false, Vector2.ZERO, false])
+	return {"playable": bool(visual[0]), "hovered": bool(visual[1]),
+		"aim": visual[2] if visual[2] is Vector2 else Vector2.ZERO, "aiming": bool(visual[3])}
+
+
+func _update_visual(panel: Control) -> void:
+	var playable := false
+	var id: String = _bindings[panel].id
+	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null:
+		if id in CombatAttackTargeting.ATTACK_IDS:
+			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id).get("playable", false))
+		elif id.begins_with(RunRestStitchCards.ID_PREFIX):
+			playable = bool(_stitched_preview.get_preview(_ledger(), _app._stitch_snapshot(), _app.deck, _app.party, _app.enemies, id).get("playable", false))
+		elif id in M02PositionCards.IDS:
+			var move := _definition(id)
+			playable = _app.deck.turn_active and _app.deck.energy >= int(move.get("cost", -1)) \
+				and _owner_position(move.get("owner", "")) in move.get("from_positions", []) \
+				and CombatPositionSwaps.preview_adjacent_swap(_app.party, _owner_position(move.get("owner", "")), move.get("direction", 0)).get("ok", false)
+		else:
+			var support := _definition(id)
+			var position := _owner_position(support.get("owner", ""))
+			playable = not support.is_empty() and _app.deck.turn_active and _app.deck.energy >= int(support.get("cost", -1)) \
+				and position in support.get("from_positions", []) and not _app.party.is_downed(position)
+	var hovered := false
+	var viewport := panel.get_viewport()
+	if viewport != null:
+		# The viewport's GUI hover is the same state that routes real mouse
+		# motion (and is deterministic under a pushed event in tests).
+		var under: Control = viewport.gui_get_hovered_control()
+		hovered = under == panel or (under != null and panel.is_ancestor_of(under))
+	var aiming := bool(panel.get_meta("aiming", false))
+	var aim: Vector2 = panel.get_meta("aim_point", Vector2.ZERO) if aiming else Vector2.ZERO
+	var visual := [playable, hovered, aim, aiming]
+	panel.self_modulate = Color.WHITE if playable or _app == null else Color(0.72, 0.70, 0.68)
+	panel.z_index = 3 if hovered or aiming else 0
+	if _bindings[panel].get("visual", []) != visual:
+		_bindings[panel].visual = visual
+		panel.queue_redraw()
+
+
+func _owner_position(owner: String) -> int:
+	for hero in _app.party.get_heroes():
+		if hero.id == owner:
+			return hero.position
+	return 0
+
+
 func _fit(font: Font, value: String, available: float, preferred: int) -> int:
 	var point_size := preferred
 	while point_size > 8 and font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x > available:
@@ -256,59 +341,162 @@ func _fit(font: Font, value: String, available: float, preferred: int) -> int:
 	return point_size
 
 
+func _font(panel: Control) -> Font:
+	var font: Font = panel.get_theme_default_font()
+	return font if font != null else ThemeDB.fallback_font
+
+
+func _text(panel: Control, value: String, rect: Rect2, preferred: int, color: Color = INK) -> void:
+	if value.is_empty() or rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var font := _font(panel)
+	var point_size := _fit(font, value, rect.size.x, preferred)
+	panel.draw_string(font, rect.position + Vector2(0, minf(float(point_size), rect.size.y)),
+		value, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, point_size, color)
+
+
+func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) -> void:
+	var font := _font(panel)
+	var point_size := _fit(font, value, rect.size.x - 4.0, preferred)
+	panel.draw_string(font, rect.position + Vector2(0, rect.size.y * 0.5 + float(point_size) * 0.36),
+		value, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, point_size, INK)
+
+
+## Human-readable rules from the authored effect fields plus the real
+## confirmed-hit adapter; no resolved or promised value is invented.
+func _rules(id: String) -> String:
+	var definition := _definition(id)
+	if definition.is_empty():
+		return ""
+	var effects: Dictionary = definition.get("effects", {}) if definition.get("effects", {}) is Dictionary else {}
+	var parts: PackedStringArray = []
+	if effects.has("damage"):
+		parts.append("%d damage" % int(effects["damage"]))
+	if effects.has("block"):
+		parts.append("%d Block" % int(effects["block"]))
+	if effects.has("heal"):
+		parts.append("heal %d HP" % int(effects["heal"]))
+	if effects.has("draw"):
+		parts.append("draw %d card" % int(effects["draw"]))
+	var statuses: Dictionary = _on_hit.status_for_confirmed_hit(id, true)
+	for status in ["bleed", "weak"]:
+		if statuses.has(status):
+			parts.append("%d %s on hit" % [int(statuses[status]), status.capitalize()])
+	return ", ".join(parts)
+
+
+## Filled felt pips mark authored source slots; outlined squares mark authored
+## legal target slots. Decoration only, never an input or rules authority.
+func _draw_pips(panel: Control, facts: Dictionary, rect: Rect2) -> void:
+	var definition := _definition(facts.get("id", ""))
+	var from_positions: Array = definition.get("from_positions", [])
+	var to_positions: Array = definition.get("to_positions", [])
+	if from_positions.is_empty() and to_positions.is_empty():
+		return
+	var step := 7.0
+	var radius := 2.0
+	var x: float = rect.end.x - step * 5.0 - 4.0
+	var y: float = rect.position.y + rect.size.y * 0.5
+	for index in range(1, 4):
+		var center := Vector2(x + step * (index - 1), y)
+		if from_positions.has(index):
+			panel.draw_circle(center, radius, _owner_color(facts.get("owner", "")))
+		else:
+			panel.draw_arc(center, radius, 0.0, TAU, 12, RUST, 1.0, true)
+	for index in range(1, 4):
+		var center := Vector2(x + step * (2 + index) + 5.0, y)
+		if to_positions.has(index):
+			panel.draw_rect(Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0), INK, true)
+		else:
+			panel.draw_rect(Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0), RUST, false, 1.0)
+
+
+## One authored half (or a whole ordinary card): owner colour, fitted name,
+## source/target rules and effect line. Ordered halves pass a "1." prefix.
+func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> void:
+	var facts := describe(id)
+	var definition := _definition(id)
+	var owner_color := _owner_color(facts.get("owner", ""))
+	var x: float = rect.position.x
+	var width: float = rect.size.x
+	if order.is_empty():
+		_text(panel, facts.get("from_text", ""), Rect2(x, rect.position.y, width - 60.0, 12), 10, RUST)
+		_draw_pips(panel, facts, Rect2(x, rect.position.y, width, 12))
+		_text(panel, facts.get("target_text", ""), Rect2(x, rect.position.y + 16.0, width, 13), 11)
+		var rules := _rules(id)
+		if not rules.is_empty():
+			_text(panel, rules, Rect2(x, rect.position.y + 34.0, width, 15), 12)
+		return
+	panel.draw_rect(Rect2(x - 3.0, rect.position.y + 1.0, 3, rect.size.y - 2.0), owner_color)
+	_text(panel, order + definition.get("display_name", id), Rect2(x, rect.position.y, width, 14), 13)
+	_text(panel, facts.get("owner_text", "") + " | " + facts.get("from_text", ""),
+		Rect2(x, rect.position.y + 14.0, width - 44.0, 11), 9, owner_color)
+	_draw_pips(panel, facts, Rect2(x, rect.position.y + 14.0, width, 11))
+	var detail: String = facts.get("target_text", "")
+	var rules := _rules(id)
+	if not rules.is_empty():
+		detail = rules if detail.is_empty() else "%s · %s" % [detail, rules]
+	_text(panel, detail, Rect2(x, rect.position.y + 27.0, width, 12), 10)
+
+
+func _title(facts: Dictionary) -> String:
+	var definition := _definition(facts.get("id", ""))
+	if not definition.is_empty():
+		return definition.get("display_name", facts.get("id", ""))
+	var names: PackedStringArray = []
+	for half in facts.get("halves", []):
+		var authored := _definition(half)
+		names.append(authored.get("display_name", str(half)))
+	return " + ".join(names) if not names.is_empty() else "Unknown card"
+
+
 func _draw_panel(panel: Control) -> void:
 	if not _bindings.has(panel) or not is_instance_valid(panel):
 		return
-	var geometry := _geometry(panel.size)
-	if geometry.is_empty():
+	var facts: Dictionary = _bindings[panel].facts
+	var visual := visual_state(panel)
+	var layout := card_layout(panel.size)
+	if layout.is_empty():
 		return
-	var facts: Dictionary = _bindings[panel]["facts"]
-	var owner_rect: Rect2 = geometry["owner"]
-	var cost_rect: Rect2 = geometry["cost"]
-	var footer_rect: Rect2 = geometry["footer"]
-	var font: Font = panel.get_theme_default_font()
-	if font == null:
-		font = ThemeDB.fallback_font
-	var owner_color := _owner_color(facts["owner"])
-	var owner_ink := CREAM
-	var owner_label: String = facts["owner_text"]
-	var cost_label: String = facts["cost_text"]
-	# The felt owner tag, paper energy chip, and bottom rule strip never leave
-	# the panel rect and never intercept input.
-	panel.draw_rect(owner_rect, owner_color)
-	panel.draw_rect(cost_rect, CREAM)
-	panel.draw_rect(footer_rect, CREAM)
-	panel.draw_rect(Rect2(footer_rect.position, Vector2(footer_rect.size.x, 2)), RUST)
-	var compact: bool = geometry["compact"]
-	var baseline := 9.0 if compact else 15.0
-	var owner_size := _fit(font, owner_label, owner_rect.size.x - 8, 10 if compact else 12)
-	var cost_size := _fit(font, cost_label, cost_rect.size.x - 6, 9 if compact else 11)
-	panel.draw_string(font, owner_rect.position + Vector2(6, baseline), owner_label,
-		HORIZONTAL_ALIGNMENT_LEFT, owner_rect.size.x - 8, owner_size, owner_ink)
-	panel.draw_string(font, cost_rect.position + Vector2(4, baseline), cost_label,
-		HORIZONTAL_ALIGNMENT_LEFT, cost_rect.size.x - 6, cost_size, INK)
-	var from_text: String = facts["from_text"]
-	var target_text: String = facts["target_text"]
-	var line_width: float = footer_rect.size.x - 13.0
-	if compact:
-		var combined := from_text
-		if not target_text.is_empty():
-			combined += " • " + target_text
-		var rules_size := _fit(font, combined, line_width, 9)
-		panel.draw_string(font, footer_rect.position + Vector2(8, 10), combined,
-			HORIZONTAL_ALIGNMENT_LEFT, line_width, rules_size, INK)
+	# Hover (or an armed drag) lifts the drawn card and enlarges it around its
+	# centre. Only the drawing transforms: the panel hitbox, layout and input
+	# stay untouched.
+	var raised: bool = visual["hovered"] or visual["aiming"]
+	var grow := 1.04 if raised else 1.0
+	var lift := -6.0 if visual["hovered"] else 0.0
+	var centre: Vector2 = panel.size * 0.5
+	panel.draw_set_transform(centre * (1.0 - grow) + Vector2(0, lift), 0.0, Vector2(grow, grow))
+	var frame: Rect2 = layout["frame"]
+	panel.draw_rect(frame, CREAM)
+	panel.draw_rect(frame, RUST, false, 2.0)
+	panel.draw_dashed_line(frame.position + Vector2(5, 5),
+		Vector2(frame.end.x - 5.0, frame.position.y + 5.0), RUST, 1.0, 5.0)
+	panel.draw_dashed_line(Vector2(frame.position.x + 5.0, frame.end.y - 5.0),
+		frame.end - Vector2(5, 5), RUST, 1.0, 5.0)
+	panel.draw_rect(layout["stripe"], _owner_color(facts.get("owner", "")))
+	var cost: Rect2 = layout["cost"]
+	panel.draw_circle(cost.get_center(), cost.size.x * 0.5, TINKER)
+	panel.draw_arc(cost.get_center(), cost.size.x * 0.5 - 1.5, 0.0, TAU, 24, CREAM, 1.5, true)
+	_center_text(panel, str(facts.get("cost", -1)) if int(facts.get("cost", -1)) >= 0 else "?",
+		cost, 14 if not layout["compact"] else 12)
+	_text(panel, facts.get("owner_text", ""), layout["owner"], 11, _owner_color(facts.get("owner", "")))
+	_text(panel, _title(facts), layout["title"], 15 if not layout["compact"] else 13)
+	var halves: Array = layout["halves"]
+	var pair: Array = facts.get("halves", [])
+	if halves.size() == 2 and pair.size() == 2:
+		for index in range(2):
+			_draw_half(panel, pair[index], halves[index], "%d. " % (index + 1))
+		panel.draw_dashed_line(Vector2(halves[1].position.x, halves[0].end.y + 3.0),
+			Vector2(halves[1].end.x, halves[0].end.y + 3.0), RUST, 1.0, 5.0)
 	else:
-		var from_size := _fit(font, from_text, line_width, 12)
-		panel.draw_string(font, footer_rect.position + Vector2(8, 16), from_text,
-			HORIZONTAL_ALIGNMENT_LEFT, line_width, from_size, INK)
-		if not target_text.is_empty():
-			var target_size := _fit(font, target_text, line_width, 12)
-			panel.draw_string(font, footer_rect.position + Vector2(8, 31), target_text,
-				HORIZONTAL_ALIGNMENT_LEFT, line_width, target_size, INK)
-	# Tiny stitches and a felt button/pip inside the footer margin.
-	for index in range(3):
-		var px := footer_rect.end.x - 19.0 + float(index * 5)
-		panel.draw_line(Vector2(px, footer_rect.position.y + 3),
-			Vector2(px + 2, footer_rect.position.y + 6), RUST, 1.0)
-	panel.draw_circle(owner_rect.position + Vector2(owner_rect.size.x - 5, 5), 2.0, CREAM)
-	_bindings[panel]["draw_count"] = int(_bindings[panel]["draw_count"]) + 1
+		_draw_half(panel, _bindings[panel].id, layout["footer"])
+	panel.draw_set_transform(Vector2.ZERO)
+	if visual["aiming"]:
+		var start := Vector2(panel.size.x * 0.5, 0)
+		var end: Vector2 = panel.get_global_transform().affine_inverse() * visual["aim"]
+		var direction := (end - start).normalized()
+		if direction != Vector2.ZERO:
+			panel.draw_line(start, end, TINKER, 3.0, true)
+			panel.draw_colored_polygon(PackedVector2Array([end,
+				end - direction.rotated(0.45) * 14.0, end - direction.rotated(-0.45) * 14.0]), TINKER)
+	_bindings[panel].draw_count = int(_bindings[panel].draw_count) + 1

@@ -62,6 +62,19 @@ func _press() -> InputEventMouseButton:
 	return event
 
 
+## Commit through the live release path: a press arms the panel, a physical
+## left release over that panel queues the real transaction. Pushing the event
+## through the real viewport keeps mouse (and the parallel keyboard) work.
+func _release(panel) -> void:
+	if not is_instance_valid(panel):
+		return
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = false
+	event.position = panel.get_global_rect().get_center()
+	root.push_input(event, true)
+
+
 func _select_bomb() -> void:
 	for index in range(CombatAttackTargeting.ATTACK_IDS.size() + 1):
 		await _key(KEY_P)
@@ -296,6 +309,7 @@ func _rejections() -> void:
 		var original_turn: int = presenter._turn
 		# Queue while valid, then invalidate before the deferred commit.
 		callback.call(_press())
+		_release(panel)
 		_check(presenter._queued, "valid callback queues actual activation: " + mode)
 		var original_party: CombatParty = app.party
 		var original_deck: CombatDeck = app.deck
@@ -389,6 +403,7 @@ func _rejections() -> void:
 		var panel = _panel()
 		var callback: Callable = presenter._bindings[panel].input
 		callback.call(_press())
+		_release(panel)
 		callback.call(_press())
 		await _frames()
 		_check(app.deck.energy == 4 and app.deck.discard_pile == [ID]
@@ -569,6 +584,7 @@ func _stale() -> void:
 	var old_service = app.get_node("LiveAttackPreview")._play
 	var before := _state(deck, party, enemies, rng)
 	callback.call(_press())
+	_release(panel)
 	app.return_button.pressed.emit()
 	_check(presenter.cue == null and presenter._deck == null and presenter._bindings.is_empty(),
 		"Return immediately clears cue, bindings and model references")

@@ -222,6 +222,7 @@ func _run() -> void:
 	await _forecast_statuses()
 	await _exact_on_hit_stacks()
 	await _duplicate_instances()
+	await _drawn_drag_cards()
 	await _paid_move_refresh()
 	await _negative_cases()
 	await _attacks()
@@ -999,3 +1000,58 @@ func _fixture_start(target) -> void:
 		return
 	var started: bool = target._start_battle()
 	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
+
+
+func _drawn_drag_cards() -> void:
+	for id in ["warden_strike", "tinker_scrap_bomb", "seamstress_mend", "warden_brace", "warden_backstep"]:
+		for scenario in ["valid", "escape", "rebuild", "energy", "downed", "wrong"]:
+			if not await _start(_seed_for("warden_strike")):
+				return
+			app.deck.hand.assign([id])
+			app._refresh_hand()
+			await _frames()
+			var card: Control = _panel(id)
+			_check(card != null and not card.get_child(0).visible, "drawn real drag card retains hidden identity: " + id)
+			var from := card.get_global_rect().get_center()
+			var destination := from
+			if id in ["warden_strike", "tinker_scrap_bomb"]:
+				destination = app.get_node("LiveEnemyRoster")._labels[0].get_global_rect().get_center()
+			elif id == "seamstress_mend":
+				app.party.apply_damage(1, 8)
+				destination = app.hero_panels[0].get_global_rect().get_center()
+			var before := _snapshot()
+			var press := InputEventMouseButton.new()
+			press.button_index = MOUSE_BUTTON_LEFT
+			press.pressed = true
+			press.position = from
+			root.push_input(press, true)
+			await _frames()
+			_check(_snapshot() == before, "held mouse press only arms, never spends: " + id)
+			if scenario == "wrong":
+				destination = Vector2(5, 5)
+			var motion := InputEventMouseMotion.new()
+			motion.position = destination
+			root.push_input(motion, true)
+			await _frames()
+			_check(card.get_meta("aiming", false), "live armed card draws drag arrow: " + id)
+			match scenario:
+				"escape": await _key(KEY_ESCAPE)
+				"rebuild": app._refresh_hand()
+				"energy": app.deck.combat_state.energy = 0
+				"downed":
+					var owner: String = (M02PositionCards.new().get_definition(id) if id in M02PositionCards.IDS else catalog.get_definition(id)).owner
+					for hero in app.party._heroes:
+						if hero.id == owner:
+							hero.hp = 0
+			var staged := _snapshot()
+			var release := InputEventMouseButton.new()
+			release.button_index = MOUSE_BUTTON_LEFT
+			release.position = destination
+			release.pressed = false
+			root.push_input(release, true)
+			await _frames()
+			if scenario == "valid":
+				_check(app.deck.hand.is_empty() and app.deck.discard_pile.count(id) == before[2].count(id) + 1 and app.deck.energy == before[3] - (2 if id == "tinker_scrap_bomb" else 1), "legal mouse release commits exactly one card and authored cost: " + id)
+			else:
+				_check(_snapshot() == staged, "cancelled invalid or stale drag has no effect: " + id + " / " + scenario)
+			await _return()

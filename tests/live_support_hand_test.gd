@@ -78,7 +78,7 @@ func _visible() -> void:
 		var id: String = panel.get_child(0).text
 		ids.append(id)
 		if id in presenter.SUPPORT_IDS:
-			_check(panel.focus_mode == Control.FOCUS_ALL and panel.get_child_count() == 1,
+			_check(panel.focus_mode == Control.FOCUS_ALL and panel.get_child_count() == 1 and not panel.get_child(0).visible,
 				"support keeps focus and its original ID without overprinted hints")
 			_check(panel.gui_input.get_connections().size() == 1, "exactly one input binding")
 		else:

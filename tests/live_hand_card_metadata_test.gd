@@ -99,7 +99,7 @@ func _validate_display(observed: Dictionary) -> void:
 			_check(false, "panel's original Label exists")
 			continue
 		var original := panel.get_child(0) as Label
-		_check(original != null and original.is_visible_in_tree(), "first child is visible ID label")
+		_check(original != null and not original.is_visible_in_tree(), "identity child retained but raw ID never rendered")
 		if original == null:
 			continue
 		var card_id: String = original.text
@@ -298,6 +298,91 @@ func _click(panel: Control) -> void:
 	await _frames()
 
 
+## Mounted V4 feedback: live dimming, hover lift and the aiming arrow all come
+## from real state and stay presentation-only (models and hitboxes unchanged).
+func _visual_feedback() -> void:
+	var before := _snapshot()
+	var panels := _panels()
+	var playable: Control = null
+	var energy: int = app.deck.energy
+	for panel in panels:
+		var state: Dictionary = presenter._metadata.visual_state(panel)
+		_check(not state.is_empty() and not state["aiming"] and state["aim"] == Vector2.ZERO,
+			"idle panel reports a complete non-aiming presentation state")
+		if state["playable"]:
+			playable = panel
+	_check(playable != null, "opening hand exposes at least one live-playable card")
+	if playable == null:
+		return
+	_check(playable.self_modulate.is_equal_approx(Color.WHITE), "playable card is drawn at full colour")
+	# Real energy loss dims every now-unaffordable card, then restores.
+	app.deck.combat_state.energy = 0
+	presenter._sync_battle()
+	await _frames()
+	for panel in panels:
+		_check(not presenter._metadata.visual_state(panel)["playable"]
+			and not panel.self_modulate.is_equal_approx(Color.WHITE),
+			"unaffordable card is visibly dimmed")
+	app.deck.combat_state.energy = energy
+	presenter._sync_battle()
+	await _frames()
+	_check(presenter._metadata.visual_state(playable)["playable"]
+		and playable.self_modulate.is_equal_approx(Color.WHITE), "restored energy clears the dim")
+	# Physical hover raises the drawn card without resizing its real hitbox.
+	var hitbox: Rect2 = playable.get_global_rect()
+	var draws: int = presenter._metadata._bindings[playable]["draw_count"]
+	var motion := InputEventMouseMotion.new()
+	motion.position = hitbox.get_center()
+	root.push_input(motion, true)
+	await _frames()
+	var hovered: Dictionary = presenter._metadata.visual_state(playable)
+	_check(hovered["hovered"] and playable.z_index == 3, "physical hover raises the drawn card")
+	_check(presenter._metadata._bindings[playable]["draw_count"] > draws, "hover queues a fresh paper draw")
+	_check(playable.size == hitbox.size and root.get_visible_rect().encloses(playable.get_global_rect()),
+		"hover lift changes only the drawing, never the card size or viewport fit")
+	motion = InputEventMouseMotion.new()
+	motion.position = Vector2(root.size.x - 2, 2)
+	root.push_input(motion, true)
+	await _frames()
+	_check(not presenter._metadata.visual_state(playable)["hovered"] and playable.z_index == 0,
+		"leaving the card drops it back")
+	# A real press arms an attack; the drag arrow follows the pointer until Esc.
+	var attack: Control = null
+	for panel in panels:
+		if panel.get_child(0).text in CombatAttackTargeting.ATTACK_IDS \
+			and presenter._metadata.visual_state(panel)["playable"]:
+			attack = panel
+			break
+	if attack == null:
+		_check(_snapshot() == before, "feedback-only pass leaves every model intact")
+		return
+	var attacks = app.get_node("LiveAttackPreview")
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	attacks._bindings[attack].input.call(press)
+	_check(attacks._armed == attack and attacks._dragging, "mouse press arms the real attack card")
+	var roster = app.get_node("LiveEnemyRoster")
+	var aim: Vector2 = roster._labels[0].get_global_rect().get_center() \
+		if not roster._labels.is_empty() else Vector2(640, 500)
+	motion = InputEventMouseMotion.new()
+	motion.position = aim
+	root.push_input(motion, true)
+	await _frames()
+	var aiming: Dictionary = presenter._metadata.visual_state(attack)
+	_check(aiming["aiming"] and aiming["aim"] == aim, "armed drag tracks the pointer for the aim arrow")
+	_check(attack.z_index == 3, "aiming card stays above its neighbours")
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.pressed = true
+	root.push_input(escape, true)
+	await _frames()
+	_check(not presenter._metadata.visual_state(attack)["aiming"] and attack.z_index == 0,
+		"Escape cancels the arrow without casting")
+	_check(attacks._armed == null and attacks._choices.is_empty(), "Escape leaves no armed attack or half choice")
+	_check(_snapshot() == before, "dimming hover and cancelled aim never touch any model")
+
+
 func _find(card_id: String) -> Control:
 	for panel in _panels():
 		if panel.get_child(0).text == card_id:
@@ -453,6 +538,7 @@ func _run() -> void:
 		_check(app.deck == deck_ref and _snapshot() == before_duplicate,
 			"duplicate Start Run does not replace or alter session")
 		_validate_display(observed)
+		await _visual_feedback()
 		# Compare the same global RNG stream, not a separately seeded RNG instance.
 		seed(8459)
 		var next_global := randi()

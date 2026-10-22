@@ -1,6 +1,8 @@
 extends Node
 ## Live selection only: targeting owns legality and attack cards own mutation.
 
+signal forecast_updated
+
 var cue: Label
 var _battle: Control
 var _deck: CombatDeck
@@ -22,6 +24,9 @@ var _choices: Array[int] = []
 var _receipt: Dictionary = {}
 var _run_map
 var _target_ids: Array[String] = []
+var current_forecast: Dictionary = {}
+var _dragging := false
+var _drag_origin := Vector2.ZERO
 
 
 func _ledger() -> RunRestStitchCards:
@@ -41,6 +46,10 @@ func _is_stitched(panel) -> bool:
 
 
 func _cancel_choice() -> void:
+	if is_instance_valid(_armed):
+		_armed.set_meta("aiming", false)
+	_dragging = false
+	current_forecast.clear()
 	_token += 1
 	_queued = false
 	_armed = null
@@ -93,23 +102,29 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 		return
 	_queued = false
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
+		_reject_stitch()
 		return
 	if app.deck != deck or app.run_map != map or app._stitch_snapshot() != receipt or choices != _choices or ids != _target_ids \
 		or session != [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents] \
 		or app.enemy_intents == null or app.enemy_intents._turn_index != turn or _turn != turn:
+		_reject_stitch()
 		return
 	var preview := _stitch_preview(id)
 	if not preview.playable or choices.size() != 2:
+		_reject_stitch()
 		return
 	for index in range(2):
 		var half: Dictionary = preview.halves[index]
 		if half.requires_selection:
 			if choices[index] not in half.target_positions:
+				_reject_stitch()
 				return
 			var actor: Dictionary = app.party.get_hero(choices[index]) if half.side == "ally" else app.enemies.get_enemy(choices[index])
 			if actor.id != ids[index]:
+				_reject_stitch()
 				return
 		elif choices[index] != 0:
+			_reject_stitch()
 			return
 	last_event = CombatStitchedCards.new(_play).play_stitched(deck, app.party, app.enemies, _ledger(), id, choices[0], choices[1])
 	if last_event.ok:
@@ -117,6 +132,14 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 	else:
 		_cancel_choice()
 		_refresh()
+
+
+## A real, current commit that failed revalidation retires its stale cue so no
+## projection or armed arrow survives the rejection. Obsolete callbacks that
+## arrive before this point return without touching a newer choice.
+func _reject_stitch() -> void:
+	_cancel_choice()
+	_refresh()
 
 
 func _after_attack() -> void:
@@ -141,6 +164,27 @@ func _input(event: InputEvent) -> void:
 		_selected = null
 		_refresh()
 		return
+	if event is InputEventMouseMotion and _bindings.has(_armed):
+		_armed.set_meta("aim_point", event.position)
+		_armed.set_meta("aiming", true)
+		_armed.queue_redraw()
+	if event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _dragging:
+		_dragging = false
+		if is_instance_valid(_armed):
+			_armed.set_meta("aiming", false)
+		if _bindings.has(_armed) and not _single(_armed) and _armed.get_global_rect().has_point(event.position):
+			if _is_stitched(_armed):
+				_choose_stitch(0)
+			else:
+				_queue_attack(0)
+			return
+		if event.position.distance_to(_drag_origin) > 10:
+			var press := InputEventMouseButton.new()
+			press.position = event.position
+			press.button_index = MOUSE_BUTTON_LEFT
+			press.pressed = true
+			_input(press)
+			return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if _bindings.has(_armed) and _is_stitched(_armed):
 			var app = get_parent()
@@ -157,7 +201,7 @@ func _input(event: InputEvent) -> void:
 					if _is_stitched(_armed):
 						_choose_stitch(index + 1, "enemy")
 					else:
-						_queue_attack(index + 1)
+						_queue_attack(index + 1 if _single(_armed) else 0)
 					get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -220,6 +264,8 @@ func _select(event: InputEvent, panel) -> void:
 	_token += 1
 	_queued = false
 	_armed = panel
+	_dragging = true
+	_drag_origin = panel.get_global_transform() * event.position
 	_selected = panel
 	_keyboard = true
 	if _is_stitched(panel):
@@ -227,11 +273,7 @@ func _select(event: InputEvent, panel) -> void:
 	panel.accept_event()
 	_refresh()
 	if _is_stitched(panel):
-		if _choices.size() == 2:
-			_choose_stitch(0)
 		return
-	if not _single(panel):
-		_queue_attack(0)
 
 
 func _queue_attack(position: int) -> void:
@@ -350,12 +392,7 @@ func _sync_battle() -> void:
 	if app.enemy_intents != null and _turn != app.enemy_intents._turn_index:
 		_turn = app.enemy_intents._turn_index
 		_play.start_player_turn()
-		_token += 1
-		_queued = false
-		_armed = null
-		_choices.clear()
-		_target_ids.clear()
-		_receipt.clear()
+		_cancel_choice()
 	if _bindings.has(_armed) and _is_stitched(_armed) and (_receipt != app._stitch_snapshot() or _run_map != app.run_map):
 		_cancel_choice()
 	for panel in _bindings.keys():
@@ -386,12 +423,13 @@ func _hover(panel: Control) -> void:
 
 
 func _leave(panel: Control) -> void:
-	if _selected == panel and not _keyboard:
+	if _selected == panel and not _keyboard and _armed != panel:
 		_selected = null
 		_refresh()
 
 
 func _refresh() -> void:
+	current_forecast = {}
 	if not is_instance_valid(cue):
 		return
 	if not _bindings.has(_selected) or not _eligible(_selected):
@@ -416,6 +454,22 @@ func _refresh() -> void:
 		if _selected == _armed and _choices.size() == 2:
 			controls = "Enter / Space / click card: cast"
 		cue.text = "%s | %d energy | %s\n%s; Esc: cancel" % [" / ".join(names), stitched.cost, "; ".join(details), controls]
+		if _selected == _armed and _choices.size() == 2 and _receipt == app._stitch_snapshot() and _run_map == app.run_map:
+			current_forecast = CombatStitchedEffectForecast.new().get_forecast(_ledger(), _receipt, _deck, app.party, app.enemies, id, _choices[0], _choices[1], CombatStitchedCards.new(_play))
+			if current_forecast.playable:
+				var outcomes: PackedStringArray = []
+				for index in range(2):
+					var half: Dictionary = current_forecast.halves[index]
+					var effects: PackedStringArray = []
+					for hit in half.get("hits", []):
+						effects.append("enemy %d: %d damage" % [hit.position, hit.damage])
+					if half.has("effect"):
+						effects.append("%s %d" % [half.effect.replace("_", " ").capitalize(), half.amount])
+					outcomes.append("%d: %s" % [index + 1, ", ".join(effects)])
+				cue.text = "%s | %d energy\nProjected %s" % [" / ".join(names), stitched.cost, "; ".join(outcomes)]
+				forecast_updated.emit()
+			else:
+				cue.text = "Unavailable stitched outcome; Esc: cancel"
 		return
 	var definition := _catalog.get_definition(id)
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
