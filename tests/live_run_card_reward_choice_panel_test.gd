@@ -251,17 +251,26 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		if card == null:
 			continue
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var owner_label := content.get_node("OwnerLabel") as Label
+		var owner_patch := content.get_node("OwnerPatch") as Control
 		var name_label := content.get_node("NameLabel") as Label
 		var rarity_label := content.get_node("RarityLabel") as Label
-		var cost_label := content.get_node("CostLabel") as Label
+		var cost_button := content.get_node("CostButton") as Control
+		var pips_container := content.get_node("PositionPips") as Control
 		var rules_label := content.get_node_or_null("RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real action bound to card " + str(index))
-		_check(owner_label.text == offer["owner"].capitalize()
-			and name_label.text == definition["display_name"]
-			and cost_label.text == "%d energy" % definition["cost"],
-			"exact owner, name and cost visible: " + str(index))
+		_check(cost_button != null and (cost_button as LiveRunCardRewardChoicePanel._CostButton).cost_value == definition.get("cost", 0),
+			"exact cost value matches authored definition (including 0): " + str(index))
+		_check(name_label.text == definition["display_name"],
+			"exact authored display name: " + str(index))
+		_check(owner_patch != null
+			and (owner_patch as LiveRunCardRewardChoicePanel._OwnerPatch).owner_color == panel.OWNER_COLORS.get(offer.get("owner", ""), Color.WHITE),
+			"author patch color matches owner's palette: " + str(index))
+		_check(pips_container != null
+			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).from_positions == definition.get("from_positions", [])
+			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).to_positions == definition.get("to_positions", [])
+			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).target_kind == String(definition.get("target_kind", "")),
+			"position/target pips match catalog definition: " + str(index))
 		_check(rarity_label != null and (not rarity_label.visible or rarity_label.text.is_empty()),
 			"legacy starter offer receives honest no-rarity presentation: " + str(index))
 		_check(rarity_label != null and rarity_label.text != "Common",
@@ -287,7 +296,7 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 				"rules are readable in at most three complete rendered lines " + offer["id"])
 			_check(card.get_global_rect().encloses(rules_label.get_global_rect())
 				and screen.encloses(rules_label.get_global_rect())
-				and cost_label.get_global_rect().end.y <= rules_label.get_global_rect().position.y
+				and cost_button.get_global_rect().end.y <= rules_label.get_global_rect().position.y
 				and rules_label.get_global_rect().end.y <= action.get_global_rect().position.y,
 				"rules label fits card and never overlaps cost or button " + offer["id"])
 		_check(name_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
@@ -527,9 +536,17 @@ func _replay_and_stale(base: Dictionary) -> void:
 		var ui: Array = []
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
-			ui.append([content.get_node("OwnerLabel").text, content.get_node("NameLabel").text,
-				content.get_node("RarityLabel").text, content.get_node("CostLabel").text,
-				content.get_node("RulesLabel").text])
+			var owner_patch_node := content.get_node("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
+			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
+				content.get_node("NameLabel").text,
+				content.get_node("RarityLabel").text,
+				cost_btn.cost_value if cost_btn != null else -1,
+				content.get_node("RulesLabel").text,
+				pips.from_positions if pips != null else [],
+				pips.to_positions if pips != null else [],
+				pips.target_kind if pips != null else ""])
 		independent.append(ui)
 		buttons[0].pressed.emit()
 		_check(requests.size() == 1 and requests[0] == {"node": "same_node",
@@ -779,17 +796,26 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		if card == null:
 			continue
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var owner_label := content.get_node("OwnerLabel") as Label
+		var owner_patch := content.get_node("OwnerPatch") as Control
 		var name_label := content.get_node("NameLabel") as Label
 		var rarity_label := content.get_node("RarityLabel") as Label
-		var cost_label := content.get_node("CostLabel") as Label
+		var cost_button := content.get_node("CostButton") as Control
+		var pips_container := content.get_node("PositionPips") as Control
 		var rules_label := content.get_node("RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real pool action bound to card " + str(index))
-		_check(owner_label.text == owner.capitalize()
-			and name_label.text == definition["display_name"]
-			and cost_label.text == "%d energy" % definition["cost"],
-			"exact authored pool owner, name and cost visible: " + card_id)
+		_check(cost_button != null and (cost_button as LiveRunCardRewardChoicePanel._CostButton).cost_value == definition.get("cost", 0),
+			"exact pool cost value matches authored definition (including 0): " + card_id)
+		_check(name_label.text == definition["display_name"],
+			"exact pool authored display name: " + card_id)
+		_check(owner_patch != null
+			and (owner_patch as LiveRunCardRewardChoicePanel._OwnerPatch).owner_color == panel.OWNER_COLORS.get(owner, Color.WHITE),
+			"pool author patch color matches owner's palette: " + card_id)
+		_check(pips_container != null
+			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).from_positions == definition.get("from_positions", [])
+			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).to_positions == definition.get("to_positions", [])
+			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).target_kind == String(definition.get("target_kind", "")),
+			"pool position/target pips match catalog definition: " + card_id)
 		var expected_rarity: String = String(definition.get("rarity", "")).capitalize()
 		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_rarity,
 			"RarityLabel matches authored rarity: %s (%s)" % [expected_rarity, card_id])
@@ -828,10 +854,10 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 			and screen.encloses(rules_label.get_global_rect())
 			and screen.encloses(card.get_global_rect()) and screen.encloses(action.get_global_rect()),
 			"pool card, rules and action fit the card and 1280x720 viewport: " + card_id)
-		for label: Label in [owner_label, name_label, rarity_label, cost_label, rules_label]:
-			_check(card.get_global_rect().encloses(label.get_global_rect())
-				and screen.encloses(label.get_global_rect()),
-				"pool label stays visible on the card and in 1280x720: " + card_id)
+		for control: Control in [owner_patch, name_label, rarity_label, cost_button, pips_container, rules_label]:
+			_check(card.get_global_rect().encloses(control.get_global_rect())
+				and screen.encloses(control.get_global_rect()),
+				"pool control stays visible on the card and in 1280x720: " + card_id)
 		var style := card.get_theme_stylebox("panel") as StyleBoxFlat
 		_check(style != null and style.border_color == panel.OWNER_COLORS[owner],
 			"authored pool owner palette visible: " + card_id)
@@ -904,9 +930,17 @@ func _test_pool_replay(first: Dictionary) -> void:
 		var ui: Array = []
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
-			ui.append([content.get_node("OwnerLabel").text, content.get_node("NameLabel").text,
-				content.get_node("RarityLabel").text, content.get_node("CostLabel").text,
-				content.get_node("RulesLabel").text])
+			var owner_patch_node := content.get_node("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
+			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
+				content.get_node("NameLabel").text,
+				content.get_node("RarityLabel").text,
+				cost_btn.cost_value if cost_btn != null else -1,
+				content.get_node("RulesLabel").text,
+				pips.from_positions if pips != null else [],
+				pips.to_positions if pips != null else [],
+				pips.target_kind if pips != null else ""])
 		presentations.append(ui)
 		panel.close_rewards()
 		await _frames()
