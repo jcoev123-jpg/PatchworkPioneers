@@ -13,8 +13,27 @@ var _targets: Dictionary = {}
 var _token := 0
 var cancel_button: Button
 var energy_label: Label
+var energy_orb: Control
+var help_label: Label
 var _play := CombatStarterSupportPlay.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
+
+
+class EnergyOrb extends Control:
+	func _ready() -> void:
+		custom_minimum_size = Vector2(76, 76)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		var center := size * 0.5
+		draw_circle(center, 34, Color("555d48"))
+		draw_arc(center, 34, 0, TAU, 64, Color("ecdfbd"), 2, true)
+		for index in range(16):
+			var angle := TAU * index / 16.0
+			draw_line(center + Vector2.from_angle(angle) * 28,
+				center + Vector2.from_angle(angle + 0.07) * 30, Color("c9b996"), 1, true)
 
 
 func _ready() -> void:
@@ -51,22 +70,44 @@ func _sync_battle() -> void:
 				# Explicit invalid run authority must never fall back to unbound play.
 				_play.bind_patch_wardrobe(null, null)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
+		var hud := _battle.find_child("SupportHUD", true, false) as HBoxContainer
+		energy_orb = EnergyOrb.new()
+		energy_orb.name = "SupportHandEnergyOrb"
+		hud.add_child(energy_orb)
+		hud.move_child(energy_orb, 0)
 		energy_label = Label.new()
 		energy_label.name = "SupportHandEnergy"
-		app.end_turn_button.get_parent().add_child(energy_label)
+		energy_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		energy_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		energy_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		energy_label.add_theme_font_size_override("font_size", 18)
+		energy_orb.add_child(energy_label)
+		energy_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		help_label = Label.new()
+		help_label.name = "SupportHandHelp"
+		help_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		help_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hud.add_child(help_label)
+		hud.move_child(help_label, 1)
 		cancel_button = Button.new()
 		cancel_button.text = "Cancel target (Esc)"
 		cancel_button.pressed.connect(_cancel_pending)
-		app.end_turn_button.get_parent().add_child(cancel_button)
+		hud.add_child(cancel_button)
+		cancel_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		cancel_button.hide()
 	if not _pending.is_empty() and not _selection_valid():
 		_cancel_pending()
 	if not _targets_valid():
 		_cancel_pending()
-	energy_label.text = "Energy: %d | Up: cards | Click / Enter / Space: play" % _deck.energy
+	for panel in _targets:
+		var cue: Label = _targets[panel].cue
+		cue.position = panel.global_position - Vector2(0, 16)
+		cue.size = Vector2(panel.size.x, 16)
+	energy_label.text = "Energy\n%d" % _deck.energy
+	help_label.text = "Up: cards | Click / Enter / Space: play"
 	if _pending.get("choosing", false):
-		energy_label.text = "Energy: %d | %s\nchoose a living ally | Esc: cancel" % [
-			_deck.energy, StarterCards.new().get_definition(_pending.id).display_name]
+		help_label.text = "%s: choose a living ally | Esc: cancel" % StarterCards.new().get_definition(_pending.id).display_name
 	for panel in _bindings.keys():
 		if not is_instance_valid(panel) or panel.get_parent() != app.hand_view:
 			_unbind(panel)
@@ -84,12 +125,6 @@ func _sync_battle() -> void:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.tooltip_text = "Click or focus and press Enter / Space to play\n" + _metadata.base_effect_text(label.text)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var hint := Label.new()
-		hint.text = "Click / Enter / Space"
-		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hint.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-		hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.add_child(hint)
 		var focus := StyleBoxFlat.new()
 		focus.bg_color = Color(0, 0, 0, 0)
 		focus.border_color = Color("ece0c8")
@@ -225,8 +260,10 @@ func _choose_target() -> void:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.get_child(0).mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var cue := Label.new()
-		cue.text = "Choose ally: Click / Enter / Space"
-		cue.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+		cue.text = "Choose ally"
+		# A caption above the existing actor never expands or overprints its state.
+		cue.top_level = true
+		cue.add_theme_font_size_override("font_size", 12)
 		cue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cue.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(cue)
@@ -339,9 +376,13 @@ func _clear() -> void:
 	_pending.clear()
 	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_clear):
 		_battle.tree_exiting.disconnect(_clear)
-	if is_instance_valid(energy_label):
-		energy_label.queue_free()
+	if is_instance_valid(energy_orb):
+		energy_orb.queue_free()
+	energy_orb = null
 	energy_label = null
+	if is_instance_valid(help_label):
+		help_label.queue_free()
+	help_label = null
 	if is_instance_valid(cancel_button):
 		cancel_button.queue_free()
 	cancel_button = null

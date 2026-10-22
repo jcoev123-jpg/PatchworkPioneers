@@ -828,9 +828,11 @@ func _build_battle() -> void:
 	battle_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "top", "right", "bottom"]:
 		battle_view.add_theme_constant_override("margin_" + side, 32)
+	for side in ["top", "bottom"]:
+		battle_view.add_theme_constant_override("margin_" + side, 16)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 16)
+	column.add_theme_constant_override("separation", 8)
 	battle_view.add_child(column)
 	hero_view = HBoxContainer.new()
 	hero_view.add_theme_constant_override("separation", 16)
@@ -869,7 +871,7 @@ func _build_battle() -> void:
 	column.add_child(previews)
 	var heading := Label.new()
 	heading.text = "Shared hand"
-	heading.add_theme_font_size_override("font_size", 32)
+	heading.add_theme_font_size_override("font_size", 24)
 	previews.add_child(heading)
 	for pair in [1, 2]:
 		var button := Button.new()
@@ -888,20 +890,29 @@ func _build_battle() -> void:
 	swap_preview_cue.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	counts_and_preview.add_child(swap_preview_cue)
 	hand_view = HBoxContainer.new()
+	hand_view.name = "SharedHand"
+	hand_view.custom_minimum_size.y = 140
 	hand_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	hand_view.add_theme_constant_override("separation", 16)
+	hand_view.sort_children.connect(_fan_hand, CONNECT_DEFERRED)
 	column.add_child(hand_view)
+	var support_hud := HBoxContainer.new()
+	support_hud.name = "SupportHUD"
+	support_hud.custom_minimum_size.y = 76
+	support_hud.add_theme_constant_override("separation", 16)
+	column.add_child(support_hud)
 	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 24)
-	column.add_child(actions)
+	actions.add_theme_constant_override("separation", 16)
+	support_hud.add_child(actions)
+	actions.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	end_turn_button = Button.new()
 	end_turn_button.text = "End Turn"
-	end_turn_button.custom_minimum_size = Vector2(240, 56)
+	end_turn_button.custom_minimum_size = Vector2(240, 48)
 	end_turn_button.pressed.connect(_end_turn.bind(end_turn_button))
 	actions.add_child(end_turn_button)
 	return_button = Button.new()
 	return_button.text = "Return to title"
-	return_button.custom_minimum_size = Vector2(240, 56)
+	return_button.custom_minimum_size = Vector2(240, 48)
 	return_button.pressed.connect(_return_from_battle.bind(return_button))
 	actions.add_child(return_button)
 	_refresh_swap_preview()
@@ -2665,16 +2676,30 @@ func _refresh_hand() -> void:
 	for card_id in deck.hand:
 		var panel := PanelContainer.new()
 		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		panel.custom_minimum_size.y = 116
 		hand_view.add_child(panel)
 		var label := Label.new()
 		label.text = card_id
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 22)
+		label.add_theme_font_size_override("font_size", 18)
 		panel.add_child(label)
 	pile_label.text = "Draw: %d | Discard: %d" % [deck.draw_pile.size(), deck.discard_pile.size()]
 	$LiveSupportHand._sync_battle()
+
+
+## Container layout and card identities stay authoritative; only the visual tilt changes.
+func _fan_hand() -> void:
+	if not is_instance_valid(hand_view):
+		return
+	var count := hand_view.get_child_count()
+	for index in range(count):
+		var panel := hand_view.get_child(index) as Control
+		var spread := (float(index) - float(count - 1) * 0.5) / maxf(1.0, float(count - 1) * 0.5)
+		panel.pivot_offset = Vector2(panel.size.x * 0.5, panel.size.y + 40)
+		panel.rotation = deg_to_rad(spread * 2.0)
 
 
 func _refresh_party() -> void:
