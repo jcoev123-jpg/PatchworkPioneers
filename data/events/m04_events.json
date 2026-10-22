@@ -36,7 +36,8 @@
       "description": "Three cloth arrows flap from a crooked signpost.",
       "choices": [
         { "id": "read", "text": "Patch the arrows (1 scrap for 10 gold)", "outcome": { "gold": 10, "scraps": -1 } },
-        { "id": "choose", "text": "Choose the clear path (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } }
+        { "id": "choose", "text": "Choose the clear path (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "sell_arrowwork", "text": "Sell the stitched arrowwork (spend 2 scraps; gain 26 gold)", "outcome": { "gold": 26, "scraps": -2 } }
       ]
     },
     {
