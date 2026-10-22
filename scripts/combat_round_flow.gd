@@ -1,7 +1,7 @@
 class_name CombatRoundFlow
 extends RefCounted
-## Scene-free single-fight transition owner. Card plays happen elsewhere; callers
-## must observe the battle result after each completed play.
+## Scene-free single-fight transition owner. Other card plays happen elsewhere;
+## callers must observe the battle result after each completed play.
 
 var _deck: CombatDeck
 var _party: CombatParty
@@ -12,6 +12,12 @@ var _unravel: CombatUnravel
 var _reactions: CombatWardenGuardReactions
 var _opening_block: CombatStartingBlock
 var _started := false
+# Immutable admission identities for the paid-card entry point.
+var _battle_deck: CombatDeck
+var _battle_party: CombatParty
+var _battle_enemies: CombatEnemies
+var _battle_intents: CombatEnemyIntents
+var _battle_result: CombatBattleResult
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
@@ -63,9 +69,47 @@ func begin_fight() -> bool:
 			if bonus > 0:
 				_party.gain_block(hero.position, bonus)
 	_started = true
+	_battle_deck = _deck
+	_battle_party = _party
+	_battle_enemies = _enemies
+	_battle_intents = _intents
+	_battle_result = _result
 	# The initial accepted player turn must not inherit modes from an older fight.
 	if _reactions != null:
 		_reactions.begin_player_turn()
+	return true
+
+
+## Admit one authored Warden reaction from this fight's real shared hand.
+## Stage optional mode authority only for a successful paid play. Refusals
+## never observe/advance the result or alter actors, piles, intents or RNG.
+func play_warden_reaction_card(card_id: Variant) -> bool:
+	if not card_id is String or not CombatWardenGuardReactions.ALLOWED_CARD_IDS.has(card_id):
+		return false
+	if not _started or not _valid_bindings():
+		return false
+	if _deck.combat_state == null or not is_instance_valid(_deck.combat_state) \
+			or not _deck.turn_active:
+		return false
+	# A coordinator may be tampered with after fight admission. Do not let
+	# a newly supplied deck or roster play cards against a different battle.
+	if _deck != _battle_deck or _party != _battle_party \
+			or _enemies != _battle_enemies or _intents != _battle_intents \
+			or _result != _battle_result:
+		return false
+	if _deck.energy < 0 or _deck.energy > CombatState.TURN_ENERGY:
+		return false
+	# Check current actors without calling evaluate(): failed actions must not
+	# latch even a previously unobserved terminal result.
+	if not _result.can_continue() or _party.is_defeated() or _enemies.is_victorious():
+		return false
+	var candidate: CombatWardenGuardReactions = _reactions
+	if candidate == null:
+		candidate = CombatWardenGuardReactions.new()
+	if not candidate.play_from_hand(_deck, _party, card_id):
+		return false
+	if _reactions == null:
+		_reactions = candidate
 	return true
 
 

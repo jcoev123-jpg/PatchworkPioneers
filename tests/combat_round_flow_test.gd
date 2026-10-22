@@ -14,6 +14,9 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_special_round_atomicity()
+	_test_lazy_coordinator_variants()
+	_test_lazy_coordinator_combo()
+	_test_lazy_coordinator_rejections()
 	_test_bound_reaction_rounds()
 	_test_bound_reaction_movement_and_skips()
 	_test_bound_reaction_rejections_and_replay()
@@ -840,7 +843,7 @@ func _fixture_start(target) -> void:
 ## Catalog-derived five-card hand: the turn opener must draw every reaction
 ## through CombatDeck itself, not accept a fabricated post-phase reaction.
 func _warden_reaction_fight(seed_value: int, held: Array[String], schedule: Array,
-		with_unravel: bool = false) -> Dictionary:
+		with_unravel: bool = false, lazy: bool = false) -> Dictionary:
 	_check(held.size() == CombatDeck.TURN_DRAW, "reaction fixture has five genuinely drawn cards")
 	var catalog := WardenPoolCards.new()
 	for id in held:
@@ -855,18 +858,19 @@ func _warden_reaction_fight(seed_value: int, held: Array[String], schedule: Arra
 	var enemies := CombatEnemies.new(_load_json(ENEMIES_PATH))
 	var intents := CombatEnemyIntents.new(schedule)
 	var result := CombatBattleResult.new(party, enemies)
-	var reactions := CombatWardenGuardReactions.new()
+	var reactions: CombatWardenGuardReactions = null if lazy else CombatWardenGuardReactions.new()
 	var unravel: CombatUnravel = null
 	if with_unravel:
 		unravel = CombatUnravel.new()
 		_check(unravel.bind_roster(enemies, {1: "normal", 2: "elite"}),
 			"precondition: real Unravel bound to both original enemy slots")
-	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result, unravel, reactions)
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result, unravel,
+		null if lazy else reactions)
 	_check(party.is_valid() and party.get_hero(1).id == "warden"
 		and party.get_hero(2).id == "seamstress" and party.get_hero(3).id == "tinker"
 		and enemies.is_valid() and enemies.get_enemies().size() == 2
 		and intents.is_valid() and intents.get_intents().size() == 2
-		and result.can_continue() and flow._reactions == reactions,
+		and result.can_continue() and flow._reactions == (null if lazy else reactions),
 		"precondition: bound coordinator owns the exact seeded services and reaction identity")
 	return {"deck": deck, "rng": rng, "party": party, "enemies": enemies,
 		"intents": intents, "result": result, "flow": flow, "cards": held,
@@ -895,8 +899,12 @@ func _warden_paid_card(fight: Dictionary, id: String) -> void:
 	_check(deck.turn_active and deck.hand.has(id) and old_energy >= card.cost
 		and party.get_hero(1).id == "warden" and not party.is_downed(1),
 		"precondition: paid Warden card is held, affordable, alive and legal: " + id)
-	_check(reactions.play_from_hand(deck, party, id),
-		"catalog reaction really paid for and discarded through shared hand: " + id)
+	_check(fight.flow.play_warden_reaction_card(id),
+		"coordinator paid and discarded catalog reaction: " + id)
+	_check(fight.flow._reactions != null
+		and (reactions == null or fight.flow._reactions == reactions),
+		"coordinator retains its first successful battle-local authority")
+	fight["reactions"] = fight.flow._reactions
 	_check(party.get_hero(1).block == old_block + card.effects.block
 		and deck.energy == old_energy - card.cost and not deck.hand.has(id)
 		and deck.discard_pile.size() == old_discard + 1
@@ -1131,3 +1139,234 @@ func _test_bound_reaction_rejections_and_replay() -> void:
 		and plain.party.get_hero(2).hp == 23 and plain.party.get_hero(3).hp == 22
 		and not inert_reactions.is_active(),
 		"unbound phase retains exact original damage and seeded parity with inactive binding")
+
+
+## The default coordinator is intentionally unbound until its first accepted
+## paid reaction. These scenarios must not call the reaction rule service
+## directly; all damage passes through CombatRoundFlow.end_turn.
+func _test_lazy_coordinator_variants() -> void:
+	var ids: Array[String] = ["warden_draw_fire", "warden_draw_fire_plus",
+		"warden_counter_stitch", "warden_counter_stitch_plus"]
+	for index in range(ids.size()):
+		var id: String = ids[index]
+		var is_draw: bool = id.begins_with("warden_draw_fire")
+		var upgraded: bool = id.ends_with("_plus")
+		var block_gain: int = (8 if upgraded else 6) if is_draw else (7 if upgraded else 5)
+		var thorns_gain: int = 0 if is_draw else (4 if upgraded else 3)
+		var seed_value: int = 51000 + index
+		var held: Array[String] = [id, "warden_strike", "seamstress_prick",
+			"tinker_pop_shot", "warden_brace"]
+		var schedule: Array = [
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 9, "target_position": 2}]},
+			{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 20, "target_position": 1}]}]
+		var fight := _warden_reaction_fight(seed_value, held, schedule, false, true)
+		var flow: CombatRoundFlow = fight.flow
+		_check(flow._reactions == null and flow.begin_fight()
+			and flow._reactions == null and fight.deck.hand.size() == 5
+			and fight.deck.hand.has(id) and fight.deck.energy == 3
+			and fight.party.get_hero(1).block == 6,
+			"AC1/2: default coordinator starts with no authority and real seeded held " + id)
+		var rng_before: int = fight.rng.state
+		var unspent: Array = _snapshot(fight)
+		_warden_paid_card(fight, id)
+		var authority: CombatWardenGuardReactions = flow._reactions
+		_check(authority != null and fight.deck.energy == 2
+			and fight.deck.discard_pile == [id] and not fight.deck.hand.has(id)
+			and fight.party.get_hero(1).block == 6 + block_gain
+			and authority.is_guarding() == is_draw and authority.get_thorns() == thorns_gain
+			and fight.rng.state == rng_before
+			and _snapshot(fight) != unspent,
+			"AC1/2: successful first paid " + id + " lazily binds exact Block and mode")
+		# The block on source 2 is consumed by Thorns before enemy HP; no
+		# unrelated attacker is damaged by Counter-stitch without Guarding.
+		_check(fight.enemies.gain_block(2, 2),
+			"AC2 precondition: attacker really owns two Block before retaliation")
+		var oracle := CombatDeck.new(held, _rng(seed_value))
+		_check(oracle.start_turn() and oracle.try_spend_energy(1)
+			and oracle.discard_played(id) and oracle.end_turn()
+			and oracle.start_turn(),
+			"AC1/2: independent same-seed hand and energy oracle completes its turn")
+		_check(flow.end_turn() and flow._reactions == authority
+			and flow.get_outcome() == CombatBattleResult.ACTIVE,
+			"AC1/2: real announced enemy phase completes and same authority is retained")
+		if is_draw:
+			_check(fight.party.get_hero(1).hp == (25 if upgraded else 23)
+				and fight.party.get_hero(2).hp == 30 and fight.party.get_hero(3).hp == 26
+				and fight.enemies.get_enemy(1).hp == 12
+				and fight.enemies.get_enemy(2).hp == 12
+				and fight.enemies.get_enemy(2).block == 2,
+				"AC1: ally's 9 hit redirected; Warden takes both 9+20 after 6+card Block: " + id)
+		else:
+			_check(fight.party.get_hero(1).hp == (33 if upgraded else 31)
+				and fight.party.get_hero(2).hp == 21 and fight.party.get_hero(3).hp == 26
+				and fight.enemies.get_enemy(1).hp == 12
+				and fight.enemies.get_enemy(2).hp == (10 if upgraded else 11)
+				and fight.enemies.get_enemy(2).block == 0,
+				"AC2: ally gets 9, Warden's 6+card Block absorbs 20; only its attacker takes Thorns through 2 Block: " + id)
+		_check(fight.party.get_hero(1).block == 0
+			and not authority.is_active() and not authority.is_guarding()
+			and authority.get_thorns() == 0 and flow._reactions == authority
+			and fight.intents._turn_index == 1 and fight.deck.turn_active
+			and fight.deck.energy == 3 and fight.deck.hand.size() == 5
+			and _deck_snapshot(fight.deck) == _deck_snapshot(oracle),
+			"AC1/2: accepted next turn resets Block and modes; seeded deck/RNG exactly replay: " + id)
+		_conserved(fight)
+
+
+func _test_lazy_coordinator_combo() -> void:
+	var held: Array[String] = ["warden_draw_fire", "warden_counter_stitch",
+		"warden_strike", "seamstress_prick", "tinker_pop_shot"]
+	var schedule: Array = [
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 8, "target_position": 2}]},
+		{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 7, "target_position": 1}]}]
+	var fight := _warden_reaction_fight(52001, held, schedule, false, true)
+	_check(fight.flow.begin_fight() and fight.flow._reactions == null
+		and fight.deck.hand.has("warden_draw_fire")
+		and fight.deck.hand.has("warden_counter_stitch"), "AC3: lazy combo starts fully paid")
+	_warden_paid_card(fight, "warden_draw_fire")
+	var first: CombatWardenGuardReactions = fight.flow._reactions
+	_warden_paid_card(fight, "warden_counter_stitch")
+	_check(fight.flow._reactions == first and first.is_guarding()
+		and first.get_thorns() == 3 and fight.party.get_hero(1).block == 17
+		and fight.deck.energy == 1 and fight.deck.discard_pile.size() == 2,
+		"AC3: second accepted card reuses first battle-local authority, both modes coexist")
+	_check(fight.flow.end_turn() and fight.party.get_hero(1).hp == 40
+		and fight.party.get_hero(1).block == 0
+		and fight.party.get_hero(2).hp == 30 and fight.party.get_hero(3).hp == 26
+		and fight.enemies.get_enemy(1).hp == 9 and fight.enemies.get_enemy(2).hp == 9
+		and not first.is_active() and fight.flow._reactions == first
+		and fight.intents._turn_index == 1,
+		"AC3: guarded 8+7 absorbed before HP, both enemies retaliated, next turn expires both")
+	_check(fight.deck.hand.has("warden_draw_fire") and fight.deck.energy == 3,
+		"AC3 precondition: recycled original card genuinely reappears next turn")
+	_warden_paid_card(fight, "warden_draw_fire")
+	_check(fight.flow._reactions == first and first.is_guarding()
+		and first.get_thorns() == 0 and fight.party.get_hero(1).block == 6,
+		"AC3: same authority accepts following-turn card without inheriting expired Thorns")
+	_check(fight.flow.end_turn() and fight.party.get_hero(1).hp == 31
+		and fight.party.get_hero(2).hp == 30 and fight.enemies.get_enemy(1).hp == 9
+		and fight.enemies.get_enemy(2).hp == 9 and not first.is_active(),
+		"AC3: following phase redirects but has no residual Thorns; next accepted turn expires Guarding")
+	_conserved(fight)
+	var next_fight := _warden_reaction_fight(52002, held, schedule, false, true)
+	_check(next_fight.flow._reactions == null and next_fight.flow.begin_fight()
+		and next_fight.flow._reactions == null and next_fight.party.get_hero(1).block == 6
+		and next_fight.deck.energy == 3,
+		"AC3: independent new fight has no previous battle's mode or authority")
+	_warden_paid_card(next_fight, "warden_counter_stitch")
+	_check(next_fight.flow._reactions != first
+		and next_fight.flow._reactions.get_thorns() == 3
+		and not next_fight.flow._reactions.is_guarding()
+		and not first.is_active(), "AC3: next encounter creates a distinct paid authority")
+
+
+func _lazy_reject(fight: Dictionary, card_id: Variant, name: String) -> void:
+	var flow: CombatRoundFlow = fight.flow
+	var existing: CombatWardenGuardReactions = flow._reactions
+	var modes: Array = [] if existing == null else [existing.is_guarding(), existing.get_thorns()]
+	var before: Array = _snapshot(fight)
+	var schedule: Array = fight.intents._definitions.duplicate(true)
+	for attempt in range(2):
+		_check(not flow.play_warden_reaction_card(card_id),
+			"AC4: " + name + " rejected attempt " + str(attempt + 1))
+		_check(_snapshot(fight) == before and fight.intents._definitions == schedule
+			and flow._reactions == existing
+			and (existing == null or [existing.is_guarding(), existing.get_thorns()] == modes),
+			"AC4: " + name + " preserves authority, both modes, actors, piles, intents, result and RNG")
+
+
+func _test_lazy_coordinator_rejections() -> void:
+	var held: Array[String] = ["warden_draw_fire", "warden_counter_stitch",
+		"warden_backstep", "warden_strike", "seamstress_prick"]
+	var schedule: Array = [
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 4, "target_position": 2}]},
+		{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 3, "target_position": 1}]}]
+	var pre := _warden_reaction_fight(53000, held, schedule, false, true)
+	_lazy_reject(pre, "warden_draw_fire", "never-begun coordinator")
+	var bad := _warden_reaction_fight(53001, held, schedule, false, true)
+	_check(bad.flow.begin_fight() and bad.flow._reactions == null
+		and bad.deck.hand.has("warden_draw_fire") and bad.deck.energy == 3,
+		"AC4: real active lazy rejection fixture starts with eligible held card")
+	_lazy_reject(bad, "warden_iron_hem", "unapproved held/non-reaction card ID")
+	_lazy_reject(bad, "warden_draw_fire_plus", "valid reaction ID absent from hand")
+	_lazy_reject(bad, 17, "non-string ID")
+	_lazy_reject(bad, "", "empty ID")
+	_lazy_reject(bad, null, "null ID")
+	_warden_paid_card(bad, "warden_draw_fire")
+	_lazy_reject(bad, "warden_draw_fire", "stale/repeated already-discarded copy")
+	var authority: CombatWardenGuardReactions = bad.flow._reactions
+	_check(authority.is_guarding() and bad.deck.try_spend_energy(2)
+		and bad.deck.energy == 0 and bad.deck.hand.has("warden_counter_stitch"),
+		"AC4 precondition: valid Guarding remains but second held reaction is unaffordable")
+	_lazy_reject(bad, "warden_counter_stitch", "insufficient energy with existing Guarding")
+	authority.thorns = CombatParty.MAX_INT
+	_lazy_reject(bad, "warden_counter_stitch", "near-capacity reaction authority")
+	authority.thorns = 0
+
+	var moved := _warden_reaction_fight(53002, held, schedule, false, true)
+	_check(moved.flow.begin_fight() and moved.deck.hand.has("warden_backstep")
+		and CombatPositionSwaps.play_move_card(moved.deck, moved.party, "warden_backstep",
+			M02PositionCards.new().get_definition("warden_backstep"))
+		and moved.party.get_hero(2).id == "warden"
+		and moved.party.get_hero(2).block == 6 and moved.deck.energy == 2,
+		"AC4 precondition: authentic paid swap moves living Warden to slot 2")
+	_lazy_reject(moved, "warden_draw_fire", "Draw Fire forbidden at Warden slot 2")
+	_check(moved.flow.play_warden_reaction_card("warden_counter_stitch")
+		and moved.flow._reactions != null and moved.flow._reactions.get_thorns() == 3
+		and moved.party.get_hero(2).block == 11 and moved.deck.energy == 1
+		and moved.deck.discard_pile.has("warden_counter_stitch"),
+		"AC2/4: authentic coordinator Counter-stitch remains legal from slot 2")
+	_lazy_reject(moved, "warden_draw_fire", "Draw Fire still forbidden after paid Thorns")
+
+	var down := _warden_reaction_fight(53003, held, schedule, false, true)
+	_check(down.flow.begin_fight() and down.party.apply_damage(1, 100)
+		and down.party.is_downed(1) and not down.party.is_defeated(),
+		"AC4 precondition: Warden down, two real allies alive")
+	_lazy_reject(down, "warden_draw_fire", "downed card owner")
+
+	var empty_energy := _warden_reaction_fight(53004, held, schedule, false, true)
+	_check(empty_energy.flow.begin_fight() and empty_energy.deck.try_spend_energy(3)
+		and empty_energy.deck.energy == 0, "AC4 precondition: fully spent active turn")
+	_lazy_reject(empty_energy, "warden_draw_fire", "fully spent shared energy")
+
+	var inactive := _warden_reaction_fight(53005, held, schedule, false, true)
+	_check(inactive.flow.begin_fight() and inactive.deck.end_turn()
+		and not inactive.deck.turn_active, "AC4 precondition: hand already closed externally")
+	_lazy_reject(inactive, "warden_draw_fire", "inactive player turn")
+
+	var done := _warden_reaction_fight(53006, held, schedule, false, true)
+	_check(done.flow.begin_fight() and done.enemies.apply_damage(1, 12)
+		and done.enemies.apply_damage(2, 12) and done.enemies.is_victorious()
+		and done.result.get_outcome() == CombatBattleResult.ACTIVE,
+		"AC4 precondition: all enemies slain while result remains unobserved")
+	_lazy_reject(done, "warden_draw_fire", "unobserved terminal battle must not evaluate")
+	_check(done.result.evaluate() == CombatBattleResult.VICTORY,
+		"AC4 precondition: explicitly observed completed battle")
+	_lazy_reject(done, "warden_draw_fire", "latched victory")
+
+	var stale := _warden_reaction_fight(53007, held, schedule, false, true)
+	_check(stale.flow.begin_fight(), "AC4 precondition: valid bound starter fight")
+	var original_deck: CombatDeck = stale.flow._deck
+	var alien_deck := CombatDeck.new(held, _rng(53007))
+	_check(alien_deck.start_turn() and alien_deck.hand.has("warden_draw_fire"),
+		"AC4 precondition: replacement deck itself has a genuine eligible hand")
+	stale.flow._deck = alien_deck
+	_lazy_reject(stale, "warden_draw_fire", "replacement active deck, stale coordinator")
+	stale.flow._deck = original_deck
+	var original_result: CombatBattleResult = stale.flow._result
+	stale.flow._result = CombatBattleResult.new(stale.party,
+		CombatEnemies.new([{"id": "other", "max_hp": 10}]))
+	_lazy_reject(stale, "warden_draw_fire", "battle result bound to other enemy roster")
+	stale.flow._result = original_result
+	var original_intents: CombatEnemyIntents = stale.flow._intents
+	stale.flow._intents = CombatEnemyIntents.new(schedule)
+	_lazy_reject(stale, "warden_draw_fire", "replacement valid intent scheduler")
+	stale.flow._intents = original_intents
+	var malformed := CombatWardenGuardReactions.new()
+	malformed.thorns = -1
+	stale.flow._reactions = malformed
+	_lazy_reject(stale, "warden_draw_fire", "malformed bound Thorns authority")
+	stale.flow._reactions = null
+	_check(stale.flow.play_warden_reaction_card("warden_draw_fire")
+		and stale.flow._reactions != null and stale.flow._reactions.is_guarding(),
+		"AC4: valid state after repaired stale bindings still admits a paid card")
