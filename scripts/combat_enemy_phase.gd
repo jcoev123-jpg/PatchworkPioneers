@@ -2,7 +2,8 @@ class_name CombatEnemyPhase
 extends RefCounted
 ## Stage every source in order, then publish once. No turn or RNG ownership.
 
-func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array) -> Dictionary:
+func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
+		reactions: CombatWardenGuardReactions = null) -> Dictionary:
 	var failure := {"ok": false, "events": []}
 	if party == null or enemies == null or not party.is_valid() or not enemies.is_valid():
 		return failure
@@ -40,16 +41,34 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array) -
 				event[field] = action[field]
 		if not staged_enemies.is_slain(source):
 			if action.type == "attack":
+				var actual_target: int = action.target_position
+				if reactions != null:
+					var preview: Dictionary = reactions.preview_actual_recipient(
+						staged_party, action.target_position)
+					if not preview.get("ok", false):
+						return failure
+					actual_target = preview.actual_target_position
 				var damage := CombatStatuses.new().adjusted_attack_damage(action.amount,
 					staged_enemies.get_enemy(source).get("statuses", {}),
-					staged_party.get_hero(action.target_position).get("statuses", {}))
+					staged_party.get_hero(actual_target).get("statuses", {}))
 				var attack: Dictionary = action.duplicate(true)
 				attack.erase("type")
 				attack.amount = damage
-				var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
-				if not result.ok:
-					return failure
-				event.applied = result.events[0].applied
+				if reactions != null:
+					var reaction_result: Dictionary = reactions.resolve_enemy_attack(
+						staged_party, staged_enemies, attack)
+					if not reaction_result.get("ok", false):
+						return failure
+					event.applied = reaction_result.applied
+					event.actual_target_position = reaction_result.actual_target_position
+					event.redirected = reaction_result.redirected
+					event.retaliation_damage = reaction_result.retaliation_damage
+					event.retaliatory_damage = reaction_result.retaliatory_damage
+				else:
+					var result := CombatEnemyAttacks.new().execute_attacks(staged_party, [attack])
+					if not result.ok:
+						return failure
+					event.applied = result.events[0].applied
 			elif action.type == "block":
 				var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [action])
 				if not result.ok:
@@ -60,6 +79,13 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array) -
 				if not result.ok:
 					return failure
 				event.applied = result.events[0].applied
+		if reactions != null and action.type == "attack" and not event.has("actual_target_position"):
+			# A slain source never enters the resolver, but still has a useful
+			# skipped beat in the reaction-mode trace.
+			event.actual_target_position = action.target_position
+			event.redirected = false
+			event.retaliation_damage = 0
+			event.retaliatory_damage = 0
 		events.append(event)
 	# Preserve dictionaries and unrelated metadata; actor identity follows swaps.
 	var originals: Dictionary = {}
@@ -73,5 +99,8 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array) -
 				original[field] = next[field]
 		party._heroes[index] = original
 	for index in range(roster.size()):
+		# Retaliation can damage an attacker and consume its Block, but slain
+		# sources must remain in the same original enemy slot/dictionary.
+		enemies._enemies[index].hp = staged_enemies._enemies[index].hp
 		enemies._enemies[index].block = staged_enemies._enemies[index].block
 	return {"ok": true, "events": events}

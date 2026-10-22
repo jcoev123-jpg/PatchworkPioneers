@@ -12,6 +12,8 @@ var _keyboard := false
 var _targeting := CombatAttackTargeting.new()
 var _catalog := StarterCards.new()
 var _play := CombatAttackCards.new()
+var _pool_strikes := CombatPoolPlainStrikes.new()
+var _statuses := CombatStatuses.new()
 var _on_hit := CombatOnHitStatuses.new()
 var last_event: Dictionary = {}
 var _armed: Control
@@ -253,7 +255,14 @@ func _input(event: InputEvent) -> void:
 func _single(panel) -> bool:
 	if _is_stitched(panel):
 		return _choices.size() < 2
-	return _catalog.get_definition(_card_id(panel)).get("target_kind") == "enemy_single"
+	return _definition(_card_id(panel)).get("target_kind") == "enemy_single"
+
+
+## Starter attacks and reward-pool strikes have separate authored catalogs.
+func _definition(card_id: String) -> Dictionary:
+	if _targeting.is_pool_strike(card_id):
+		return _targeting.pool_definition(card_id)
+	return _catalog.get_definition(card_id)
 
 
 func _select(event: InputEvent, panel) -> void:
@@ -308,6 +317,13 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _targeting.is_pool_strike(id):
+		# Reward-pool strikes have their own resolver. Starter on-hit counters,
+		# Tinker bonuses, Seamstress passives and worn-patch bonuses must never
+		# be layered onto them.
+		if forecast:
+			return _pool_forecast(party, enemies, id)
+		return _pool_strikes.play_card(_deck, party, enemies, id, position)
 	var owner_statuses: Dictionary = {}
 	var owner: String = _catalog.get_definition(id).get("owner", "")
 	for hero in party.get_heroes():
@@ -322,6 +338,71 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	if forecast:
 		return _play.forecast_attack(_deck, party, enemies, id, owner_statuses, enemy_statuses)
 	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses, enemy_statuses)
+
+
+## Read-only forecast for the four plain pool strikes. It mirrors the resolver's
+## statuses-only damage (real Weak on the owner, real Exposed on each target) and
+## never mutates a card, roster, status or RNG. Brass Buckle's authored Block
+## gain stays a separate self effect, never extra target damage.
+func _pool_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": false, "hits": []}
+	var definition := _definition(id)
+	var preview := _targeting.get_preview(_deck, party, enemies, id)
+	if not preview.get("playable", false) or not preview.get("requires_selection", false):
+		return unavailable
+	var owner: Variant = definition.get("owner")
+	var owner_statuses: Dictionary = {}
+	var owner_count := 0
+	for hero in party.get_heroes():
+		if hero.get("id") == owner:
+			owner_count += 1
+			var statuses: Variant = hero.get("statuses", {})
+			if not statuses is Dictionary or not _valid_statuses(statuses):
+				return unavailable
+			owner_statuses = statuses
+	if owner_count != 1:
+		return unavailable
+	var effects: Variant = definition.get("effects")
+	if not effects is Dictionary:
+		return unavailable
+	var damage: Variant = effects.get("damage")
+	if not damage is int or damage <= 0:
+		return unavailable
+	var hits: Array[Dictionary] = []
+	var positions: Array[int] = preview["target_positions"]
+	for position in positions:
+		var enemy: Dictionary = enemies.get_enemy(position)
+		var defender: Variant = enemy.get("statuses", {})
+		if enemy.is_empty() or enemies.is_slain(position) \
+				or not defender is Dictionary or not _valid_statuses(defender):
+			return unavailable
+		hits.append({"position": position,
+			"damage": _statuses.adjusted_attack_damage(damage, owner_statuses, defender)})
+	return {"playable": true, "requires_selection": true, "hits": hits}
+
+
+## Same shape rules as the shared status services: only known, non-negative ints.
+func _valid_statuses(statuses: Dictionary) -> bool:
+	for name in statuses:
+		if not name is String or name not in ["bleed", "weak", "exposed"]:
+			return false
+		var count: Variant = statuses[name]
+		if not count is int or count < 0:
+			return false
+	return true
+
+
+## Keyboard hint for the legal slots this preview actually offers.
+func _key_hint(positions) -> String:
+	var keys: PackedStringArray = []
+	if positions is Array:
+		for position in positions:
+			keys.append(str(position))
+	if keys.is_empty():
+		return "1-%d" % CombatEnemies.MAX_ENEMIES
+	if keys.size() > 1 and int(positions.back()) - int(positions.front()) == keys.size() - 1:
+		return "%s-%s" % [keys[0], keys[keys.size() - 1]]
+	return ", ".join(keys)
 
 
 func _card_id(panel) -> String:
@@ -348,7 +429,7 @@ func _eligible(panel) -> bool:
 		return false
 	var id := _card_id(panel)
 	var index: int = panel.get_index()
-	return (id in CombatAttackTargeting.ATTACK_IDS or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_targeting.supports(id) or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -471,17 +552,23 @@ func _refresh() -> void:
 			else:
 				cue.text = "Unavailable stitched outcome; Esc: cancel"
 		return
-	var definition := _catalog.get_definition(id)
+	var is_pool := _targeting.is_pool_strike(id)
+	var definition := _definition(id)
+	if definition.is_empty():
+		# Fail closed on an unrecognised record instead of formatting a partial card.
+		cue.text = "Unavailable card rules"
+		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
 	var targets: PackedStringArray = []
-	# Only attach on-hit counters to recipients accepted by the authoritative
-	# forecast. The adapter describes a *conditional* confirmed hit, not a
-	# future mutation or a promise that the player will cast this card.
-	var additions: Dictionary = _on_hit.status_for_confirmed_hit(id, true) if preview.playable else {}
-	if preview.playable and _play._patches != null:
-		var patch_statuses: Dictionary = _play._patches.exposed_for_first_hit(definition.get("owner", ""))
-		for status in patch_statuses:
-			additions[status] = additions.get(status, 0) + patch_statuses[status]
+	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
+	# no starter passive or worn-patch hook of their own.
+	var additions: Dictionary = {}
+	if not is_pool and preview.playable:
+		additions = _on_hit.status_for_confirmed_hit(id, true)
+		if _play._patches != null:
+			var patch_statuses: Dictionary = _play._patches.exposed_for_first_hit(definition.get("owner", ""))
+			for status in patch_statuses:
+				additions[status] = additions.get(status, 0) + patch_statuses[status]
 	for hit in preview.hits:
 		var detail := "%d: %d damage" % [hit.position, hit.damage]
 		var enemy: Dictionary = app.enemies.get_enemy(hit.position)
@@ -494,7 +581,24 @@ func _refresh() -> void:
 	var description := "Unavailable: no legal targets or energy"
 	if preview.playable:
 		description = ("Choose one enemy slot: " if preview.requires_selection else "All enemies in slots: ") + "; ".join(targets)
-	var controls := "P / click card; 1-3 / click enemy" if _single(_selected) else "P: select; Enter / Space / click card: cast"
+		if is_pool:
+			# The Warden's own Block is a self effect; never fold it into damage.
+			var effects: Dictionary = definition.get("effects", {})
+			var block: int = int(effects.get("block", 0))
+			if block > 0:
+				description += " | %s gains %d Block" % [
+					String(definition.get("owner", "")).capitalize(), block]
+	var controls: String
+	if not _single(_selected):
+		controls = "P: select; Enter / Space / click card: cast"
+	elif is_pool:
+		# Report exactly the slots this forecast offers, never a wider key row.
+		var legal: Array[int] = []
+		for hit in preview.hits:
+			legal.append(int(hit.position))
+		controls = "P / click card; %s / click enemy" % _key_hint(legal)
+	else:
+		controls = "P / click card; 1-3 / click enemy"
 	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
 
