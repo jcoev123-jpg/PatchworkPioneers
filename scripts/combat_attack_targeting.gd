@@ -1,8 +1,9 @@
 class_name CombatAttackTargeting
 extends RefCounted
-## Read-only legal-enemy preview for the five authored starter attacks plus the
-## four plain reward-pool strikes. The eventual play resolver must independently
-## validate its committed target.
+## Read-only legal-enemy preview for the five authored starter attacks, the
+## four plain reward-pool strikes and the six authored Seamstress control
+## variants. The eventual play resolver must independently validate its
+## committed target.
 
 const SIGHT_GLASS_IDS := ["tinker_sight_glass", "tinker_sight_glass_plus"]
 
@@ -35,6 +36,66 @@ func is_sight_glass(card_id: String) -> bool:
 	return card_id in SIGHT_GLASS_IDS
 
 
+## The six authored Seamstress enemy-control variants (Needle Pin, Snag and
+## Unpick, each base and '+') stay out of the starter-only ATTACK_IDS too.
+## Their own resolver remains the single authority for effects.
+func is_seamstress_control(card_id: String) -> bool:
+	return card_id in CombatSeamstressPoolControl.NEEDLE_IDS \
+		or card_id in CombatSeamstressPoolControl.SNAG_IDS \
+		or card_id in CombatSeamstressPoolControl.UNPICK_IDS
+
+
+## Exact authored control record: catalog ID, owner, single living enemy target
+## and the effect shape its resolver consumes. A malformed record never
+## previews as playable, so the picker cannot advertise a cast that would fail.
+func control_definition(card_id: String) -> Dictionary:
+	if not is_seamstress_control(card_id):
+		return {}
+	var definition: Dictionary = _seamstress_pool.get_definition(card_id)
+	if definition.get("id") != card_id or definition.get("owner") != "seamstress" \
+			or definition.get("target_kind") != "enemy_single":
+		return {}
+	var cost: Variant = definition.get("cost")
+	if not cost is int or cost < 0:
+		return {}
+	var from_positions: Variant = definition.get("from_positions")
+	var to_positions: Variant = definition.get("to_positions")
+	if not from_positions is Array or from_positions.is_empty() \
+			or not to_positions is Array or to_positions.is_empty():
+		return {}
+	for position in from_positions:
+		if not position is int or position < 1 or position > CombatParty.PARTY_SIZE:
+			return {}
+	for position in to_positions:
+		if not position is int or position < 1 or position > CombatEnemies.MAX_ENEMIES:
+			return {}
+	if not _valid_control_effects(card_id, definition):
+		return {}
+	return definition
+
+
+## Needle Pin is one positive damage packet plus a pin; Snag is one gauge charge
+## plus Weak; Unpick is exactly one gauge charge. No extra fields are admitted.
+func _valid_control_effects(card_id: String, definition: Dictionary) -> bool:
+	var effects: Variant = definition.get("effects")
+	if not effects is Dictionary:
+		return false
+	if card_id in CombatSeamstressPoolControl.NEEDLE_IDS:
+		var damage: Variant = effects.get("damage")
+		var pinned: Variant = effects.get("pinned")
+		return effects.size() == 2 and damage is int and damage > 0 \
+			and pinned is bool and pinned == true
+	if card_id in CombatSeamstressPoolControl.SNAG_IDS:
+		var unravel: Variant = effects.get("unravel")
+		var weak: Variant = effects.get("weak")
+		return effects.size() == 2 and unravel is int and unravel > 0 \
+			and weak is int and weak > 0
+	if card_id in CombatSeamstressPoolControl.UNPICK_IDS:
+		var charge: Variant = effects.get("unravel")
+		return effects.size() == 1 and charge is int and charge > 0
+	return false
+
+
 func sight_glass_definition(card_id: String) -> Dictionary:
 	if not is_sight_glass(card_id):
 		return {}
@@ -46,7 +107,8 @@ func sight_glass_definition(card_id: String) -> Dictionary:
 
 ## True for enemy-targeted actions this read-only preview can describe.
 func supports(card_id: String) -> bool:
-	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id) or is_sight_glass(card_id)
+	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id) \
+		or is_sight_glass(card_id) or is_seamstress_control(card_id)
 
 
 ## Exact authored pool record: catalog ID and owner must agree with the prefix.
@@ -130,9 +192,11 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	var pool := is_pool_strike(card_id)
 	var heavy := is_heavy_pool_attack(card_id)
 	var sight := is_sight_glass(card_id)
+	var control := is_seamstress_control(card_id)
 	var definition: Dictionary = (pool_definition(card_id) if pool else
 		heavy_definition(card_id) if heavy else
-		sight_glass_definition(card_id) if sight else StarterCards.new().get_definition(card_id))
+		sight_glass_definition(card_id) if sight else
+		control_definition(card_id) if control else StarterCards.new().get_definition(card_id))
 	if definition.is_empty():
 		return rejected
 	var owner = definition.get("owner")
@@ -184,6 +248,10 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 		if enemies.get_enemy(position).is_empty() or enemies.is_slain(position):
 			continue
 		if sight and not enemies.can_apply_statuses({position: {"exposed": 2}}):
+			continue
+		if control and card_id in CombatSeamstressPoolControl.SNAG_IDS \
+				and not enemies.can_apply_statuses(
+					{position: {"weak": int(definition["effects"]["weak"])}}):
 			continue
 		target_positions.append(position)
 	if target_positions.is_empty():

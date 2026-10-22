@@ -3,6 +3,15 @@ extends Node
 
 signal forecast_updated
 
+## The four authored enemy catalogs and the tier each one carries. An original
+## enemy ID must map to exactly one tier or the shared gauge is not bound.
+const ENEMY_TIER_CATALOGS := [
+	{"path": "res://data/enemies/starter_enemies.json", "tier": "normal"},
+	{"path": "res://data/enemies/run_enemies.json", "tier": "normal"},
+	{"path": "res://data/enemies/m04_elites.json", "tier": "elite"},
+	{"path": "res://data/enemies/boss.json", "tier": "boss"},
+]
+
 var cue: Label
 var _battle: Control
 var _deck: CombatDeck
@@ -19,6 +28,11 @@ var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _statuses := CombatStatuses.new()
 var _on_hit := CombatOnHitStatuses.new()
+## One Pinned token set and one Unravel gauge per battle session. They survive
+## every hand rebuild and turn refresh, and are never reset by a preview.
+var _controls := CombatSeamstressPoolControl.new()
+var _pinned: CombatPinned
+var _unravel: CombatUnravel
 var last_event: Dictionary = {}
 var _armed: Control
 var _queued := false
@@ -49,6 +63,119 @@ func _stitch_preview(id: String) -> Dictionary:
 
 func _is_stitched(panel) -> bool:
 	return _card_id(panel).begins_with(RunRestStitchCards.ID_PREFIX)
+
+
+## Tier of one authored original enemy ID. Empty means unknown or classified in
+## more than one tier, so the gauge is never bound to a guessed threshold.
+func tier_from_catalogs(enemy_id: String, catalogs: Array) -> String:
+	if not enemy_id is String or enemy_id.is_empty():
+		return ""
+	var found := ""
+	for catalog in catalogs:
+		if not catalog is Dictionary:
+			return ""
+		var tier: Variant = catalog.get("tier")
+		var ids: Variant = catalog.get("ids")
+		if not tier is String or tier not in CombatUnravel.VALID_TIERS \
+				or not ids is Array:
+			return ""
+		if enemy_id in ids:
+			if not found.is_empty() and found != tier:
+				return ""
+			found = tier
+	return found
+
+
+## Load the four authored enemy catalogs as {tier, ids}. Any unreadable or
+## malformed catalog returns empty so an unauthored roster fails closed.
+func authored_enemy_catalogs() -> Array:
+	var catalogs: Array = []
+	for entry in ENEMY_TIER_CATALOGS:
+		var file := FileAccess.open(str(entry["path"]), FileAccess.READ)
+		if file == null:
+			return []
+		var parsed = JSON.parse_string(file.get_as_text())
+		if not parsed is Array:
+			return []
+		var ids: Array[String] = []
+		for record in parsed:
+			if not record is Dictionary or not record.get("id") is String \
+					or String(record["id"]).is_empty():
+				return []
+			ids.append(record["id"])
+		catalogs.append({"tier": entry["tier"], "ids": ids})
+	return catalogs
+
+
+## Original slot -> authored tier for this exact roster. Unknown, ambiguous or
+## empty rosters return empty and therefore bind no gauge.
+func enemy_tier_map(enemies: CombatEnemies) -> Dictionary:
+	var tiers := {}
+	if enemies == null or not enemies.is_valid():
+		return tiers
+	var catalogs := authored_enemy_catalogs()
+	if catalogs.is_empty():
+		return tiers
+	var roster := enemies.get_enemies()
+	if roster.is_empty():
+		return tiers
+	for index in range(roster.size()):
+		var tier := tier_from_catalogs(str(roster[index].get("id", "")), catalogs)
+		if tier.is_empty():
+			return {}
+		tiers[index + 1] = tier
+	return tiers
+
+
+## The live round flow only when it still owns exactly this battle's actors.
+func _matching_flow(app, party: CombatParty, enemies: CombatEnemies) -> CombatRoundFlow:
+	if app == null or app.round_flow == null or app.enemy_intents == null \
+			or app.battle_result == null:
+		return null
+	var flow: CombatRoundFlow = app.round_flow
+	if flow._deck != _deck or flow._party != party or flow._enemies != enemies \
+			or flow._intents != app.enemy_intents or flow._result != app.battle_result:
+		return null
+	return flow
+
+
+## True when this cast's authored effects have their real authorities. A gauge
+## card fails closed unless the battle's shared gauge is bound to this roster,
+## so no cast can succeed while its eventual skip would be ignored.
+func _control_ready(party: CombatParty, enemies: CombatEnemies, card_id: String) -> bool:
+	if _pinned == null or _unravel == null or _deck == null:
+		return false
+	if card_id in CombatSeamstressPoolControl.NEEDLE_IDS:
+		return true
+	if _unravel._bound_enemies != enemies:
+		return false
+	return _matching_flow(get_parent(), party, enemies) != null
+
+
+## Hand the same gauge instance to the live round flow, then allow the cast.
+## Spending, discarding and charging stay entirely with the shared resolver.
+func _share_gauge(party: CombatParty, enemies: CombatEnemies, card_id: String) -> bool:
+	if not _control_ready(party, enemies, card_id):
+		return false
+	if card_id in CombatSeamstressPoolControl.NEEDLE_IDS:
+		return true
+	var flow := _matching_flow(get_parent(), party, enemies)
+	if flow == null:
+		return false
+	flow._unravel = _unravel
+	return true
+
+
+## Scoped picker for the six control variants: targeted legality stays with
+## CombatAttackTargeting, gauge readiness is a live-session concern.
+func _control_preview(id: String) -> Dictionary:
+	var app = get_parent()
+	var preview := _targeting.get_preview(_deck, app.party, app.enemies, id)
+	if not preview.get("playable", false):
+		return preview
+	if not _control_ready(app.party, app.enemies, id):
+		return {"playable": false, "requires_selection": false, "target_positions": []}
+	return preview
 
 
 func _cancel_choice() -> void:
@@ -262,12 +389,15 @@ func _single(panel) -> bool:
 	return _definition(_card_id(panel)).get("target_kind") == "enemy_single"
 
 
-## Starter, plain-strike and heavy-pool attacks use separate authored catalogs.
+## Starter, plain-strike, heavy-pool and Seamstress control attacks use separate
+## authored catalogs.
 func _definition(card_id: String) -> Dictionary:
 	if _targeting.is_pool_strike(card_id):
 		return _targeting.pool_definition(card_id)
 	if _targeting.is_heavy_pool_attack(card_id):
 		return _targeting.heavy_definition(card_id)
+	if _targeting.is_seamstress_control(card_id):
+		return _targeting.control_definition(card_id)
 	if _direct_fire_preview.supports(card_id):
 		return _direct_fire_preview.definition(card_id)
 	if _targeting.is_sight_glass(card_id):
@@ -301,6 +431,8 @@ func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
 	if _direct_fire_preview.supports(id):
 		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire)
+	if _targeting.is_seamstress_control(id):
+		return _control_preview(id)
 	return _targeting.get_preview(_deck, app.party, app.enemies, id)
 
 
@@ -316,7 +448,8 @@ func _queue_attack(position: int) -> void:
 	# A single-target target ID plus the held panel's original hand index
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
-	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id)) and position > 0:
+	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
+			or _targeting.is_seamstress_control(id)) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
 		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
@@ -331,33 +464,38 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		return
 	_queued = false
 	var direct := _direct_fire_preview.supports(id)
+	var control := _targeting.is_seamstress_control(id)
+	var guarded := direct or control
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
-		if direct or _targeting.is_sight_glass(id):
+		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
 	if app.party != party or app.enemies != enemies or app.battle_result != result or app.run_rng != rng \
 			or app.enemy_intents == null or app.enemy_intents._turn_index != turn or _turn != turn \
 			or _session != [party, enemies, result, rng, app.enemy_intents]:
-		if direct or _targeting.is_sight_glass(id):
+		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
-	if direct and (app._battle_closed or target_id.is_empty() or app.deck != queued_deck \
-			or app.deck._rng != rng \
-			or app.run_map != queued_map or panel_index < 0 \
+	if guarded and (app.deck != queued_deck or app.run_map != queued_map or panel_index < 0 \
 			or panel.get_index() != panel_index or app.deck.hand != queued_hand):
+		_reject_stitch()
+		return
+	if direct and (app._battle_closed or target_id.is_empty() or app.deck._rng != rng):
 		_reject_stitch()
 		return
 	var preview := _target_preview(id)
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
-			or ((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
-			or app.enemies.get_enemy(position).get("id") != target_id)):
-		if direct or _targeting.is_sight_glass(id):
+			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
+			or app.enemies.get_enemy(position).get("id") != target_id)) \
+			or (control and (app._battle_closed or target_id.is_empty() \
+			or app.enemies.get_enemy(position).get("id") != target_id))):
+		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
 		_after_attack()
-	elif direct:
+	elif guarded:
 		_reject_stitch()
 
 
@@ -370,6 +508,15 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		if forecast:
 			return _sight_forecast(party, enemies, id)
 		return _tinker_gadgets.resolve_sight_glass(_deck, party, enemies, id, position)
+	if _targeting.is_seamstress_control(id):
+		if forecast:
+			return _control_forecast(party, enemies, id)
+		# The shared resolver owns spending, discarding and every effect; the
+		# battle's own gauge is handed to the round flow first so the queued
+		# skip is consumed by the real enemy phase.
+		if not _share_gauge(party, enemies, id) or _controls == null:
+			return {"ok": false}
+		return _controls.play_card(_deck, party, enemies, _pinned, _unravel, id, position)
 	if _targeting.is_pool_strike(id):
 		# Reward-pool strikes have their own resolver. Starter on-hit counters,
 		# Tinker bonuses, Seamstress passives and worn-patch bonuses must never
@@ -411,6 +558,64 @@ func _sight_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> 
 		hits.append({"position": position, "exposed_before": before,
 			"exposed_after": before + int(effects["exposed"])})
 	return {"playable": true, "requires_selection": true, "hits": hits, "draw": int(effects["draw"])}
+
+
+## Read-only authored control forecast. Needle Pin reports real Weak/Exposed
+## damage plus any cross-hero Pinned bonus; Snag and Unpick report their Weak
+## and per-slot gauge charge. It never spends, discards, pins or charges.
+func _control_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": false, "hits": []}
+	var preview := _control_preview(id)
+	if not preview.get("playable", false) or not preview.get("requires_selection", false):
+		return unavailable
+	var definition: Dictionary = _targeting.control_definition(id)
+	var effects: Variant = definition.get("effects")
+	if not effects is Dictionary:
+		return unavailable
+	var needle := id in CombatSeamstressPoolControl.NEEDLE_IDS
+	var owner_statuses: Dictionary = {}
+	if needle:
+		var owner_count := 0
+		for hero in party.get_heroes():
+			if hero.get("id") == "seamstress":
+				owner_count += 1
+				var statuses: Variant = hero.get("statuses", {})
+				if not statuses is Dictionary or not _valid_statuses(statuses):
+					return unavailable
+				owner_statuses = statuses
+		if owner_count != 1:
+			return unavailable
+	var hits: Array[Dictionary] = []
+	var positions: Array[int] = preview["target_positions"]
+	for position in positions:
+		var enemy: Dictionary = enemies.get_enemy(position)
+		var defender: Variant = enemy.get("statuses", {})
+		if enemy.is_empty() or enemies.is_slain(position) \
+				or not defender is Dictionary or not _valid_statuses(defender):
+			return unavailable
+		var hit: Dictionary = {"position": position}
+		if needle:
+			var bonus := 0
+			if _pinned != null:
+				bonus = _pinned.bonus_for_attack(enemies, position, "seamstress")
+			hit["damage"] = _statuses.adjusted_attack_damage(
+				int(effects["damage"]) + bonus, owner_statuses, defender)
+			hit["pinned_bonus"] = bonus
+		else:
+			var gauge: Dictionary = _unravel.get_snapshot(position) if _unravel != null else {}
+			if gauge.size() != 4:
+				return unavailable
+			var amount: int = int(effects["unravel"])
+			var current: int = int(gauge["gauge"])
+			var threshold: int = int(gauge["threshold"])
+			hit["unravel"] = amount
+			hit["gauge"] = current
+			hit["gauge_after"] = mini(current + amount, threshold)
+			hit["threshold"] = threshold
+			if id in CombatSeamstressPoolControl.SNAG_IDS:
+				hit["weak_applied"] = int(effects["weak"])
+		hits.append(hit)
+	return {"playable": true, "requires_selection": true, "hits": hits}
 
 
 ## Read-only forecast for the four plain pool strikes. It mirrors the resolver's
@@ -544,6 +749,14 @@ func _sync_battle() -> void:
 			else:
 				_play.bind_patch_wardrobe(null, null)
 		last_event = {}
+		# One Pinned set and one Unravel gauge live for this whole battle session.
+		# They are created here and never recreated or reset by a hand refresh.
+		_pinned = CombatPinned.new()
+		_unravel = CombatUnravel.new()
+		var tiers := enemy_tier_map(app.enemies)
+		if tiers.is_empty() or not _unravel.bind_roster(app.enemies, tiers):
+			# Keep the owned gauge unbound: a gauge-card cast then fails closed.
+			_unravel = CombatUnravel.new()
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		cue = Label.new()
 		cue.name = "AttackPreviewCue"
@@ -679,6 +892,31 @@ func _refresh() -> void:
 		cue.text = "%s | %d energy | P / click card; %s / click enemy\n%s" % [
 			definition.display_name, definition.cost, _key_hint(legal), detail]
 		return
+	if _targeting.is_seamstress_control(id):
+		current_forecast = preview.duplicate(true)
+		var details: PackedStringArray = []
+		var legal_slots: Array[int] = []
+		for hit in preview.get("hits", []):
+			legal_slots.append(int(hit.position))
+			if hit.has("damage"):
+				var damage_line := "%d: %d damage" % [int(hit.position), int(hit.damage)]
+				if int(hit.get("pinned_bonus", 0)) > 0:
+					damage_line += " (+%d Pinned)" % int(hit.pinned_bonus)
+				details.append(damage_line)
+			else:
+				var charge_line := "%d: " % int(hit.position)
+				if int(hit.get("weak_applied", 0)) > 0:
+					charge_line += "Weak %d, " % int(hit.weak_applied)
+				charge_line += "Unravel %d → %d/%d%s" % [int(hit.unravel),
+					int(hit.gauge_after), int(hit.threshold),
+					" skip" if int(hit.gauge_after) == int(hit.threshold) else ""]
+				details.append(charge_line)
+		var reading := "Unavailable: no legal target or shared gauge"
+		if preview.playable:
+			reading = "Choose one enemy slot: " + "; ".join(details)
+		cue.text = "%s | %d energy | P / click card; %s / click enemy\n%s" % [
+			definition.display_name, definition.cost, _key_hint(legal_slots), reading]
+		return
 	var targets: PackedStringArray = []
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
@@ -756,6 +994,14 @@ func _clear() -> void:
 	_battle = null
 	_deck = null
 	_session = []
+	# Return/title retires this battle's gauge from its round flow so no old
+	# charge or skip can leak into the next fight.
+	var app = get_parent()
+	if app != null and app.round_flow != null and _unravel != null \
+			and app.round_flow._unravel == _unravel:
+		app.round_flow._unravel = null
+	_pinned = null
+	_unravel = null
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null
