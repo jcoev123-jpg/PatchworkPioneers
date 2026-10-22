@@ -15,7 +15,15 @@
     {"id": "warden_brace", "owner": "warden", "price": 40},
     {"id": "seamstress_mend", "owner": "seamstress", "price": 45},
     {"id": "seamstress_stitch_up", "owner": "seamstress", "price": 45},
-    {"id": "tinker_tune_up", "owner": "tinker", "price": 35}
+    {"id": "tinker_tune_up", "owner": "tinker", "price": 35},
+    {"id": "seamstress_snag", "owner": "seamstress", "price": 50},
+    {"id": "seamstress_unpick", "owner": "seamstress", "price": 60},
+    {"id": "seamstress_tailors_trance", "owner": "seamstress", "price": 85},
+    {"id": "tinker_spare_parts", "owner": "tinker", "price": 45},
+    {"id": "tinker_long_barrel", "owner": "tinker", "price": 70},
+    {"id": "tinker_overclock", "owner": "tinker", "price": 60},
+    {"id": "tinker_sight_glass", "owner": "tinker", "price": 65},
+    {"id": "tinker_bobbin_cannon", "owner": "tinker", "price": 90}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
