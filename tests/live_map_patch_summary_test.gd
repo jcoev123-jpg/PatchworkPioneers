@@ -195,9 +195,21 @@ func _run() -> void:
 					for entry in hero.slots:
 						if entry.patch_id == id:
 							worn_rules = entry.rules_text
-				_check(worn_rules.is_empty()
-					and not str(texts).contains("%s: %s (%s) - " % [slot, id, "inactive" if downed else "active"]),
-					"authored slot-only stock shows no fabricated rules text")
+				# The Shop catalog deliberately stores only ID and slot; player-facing
+				# rules must instead match the real combat authority for that ID.
+				var expected_rule := ""
+				if id == CombatShopPatchRules.STITCHED_BADGE_ID:
+					_check(slot == CombatShopPatchRules.EFFECTS[id]["slot"],
+						"Badge uses the authoritative HEAD slot")
+					expected_rule = "+%d opening Block for this living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
+				elif id == CombatShopPatchRules.SPARE_SPOOL_ID:
+					_check(slot == CombatShopPatchRules.EFFECTS[id]["slot"],
+						"Spool uses the authoritative ARM slot")
+					expected_rule = "+%d healing on positive-heal cards owned by this living wearer only" % CombatShopPatchRules.HEALING_CARD_BONUS
+				_check(not expected_rule.is_empty() and worn_rules == expected_rule
+					and str(texts).contains("%s: %s (%s) - %s" % [
+						slot, id, "inactive" if downed else "active", expected_rule]),
+					"slot-only Shop stock displays its genuine power, even on a torn wearer")
 				for repeat in range(2):
 					await _reopen_summary()
 					_check(_assert_summary() == texts and _summary_state() == before, "reopen is identical and spends nothing across all ledgers/RNG")
