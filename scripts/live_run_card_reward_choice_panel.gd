@@ -34,6 +34,26 @@ const STITCH_THREAD := Color("#c9b996")
 const OWNER_STRIP_HEIGHT := 24
 const OWNER_NAME_FONT_SIZE := 14
 
+## Sewn Flow/ChatGPT art in the heroes' stitched-felt style. Every piece is
+## optional: a missing texture falls back to the flat procedural paper, and the
+## StyleBoxFlat styles stay underneath to carry palette, hover glow and focus.
+const ART_DIR := "res://assets/paper/"
+const CAMP_BACKDROP := ART_DIR + "backgrounds/reward_camp.png"
+const QUILT_PANEL := ART_DIR + "ui/reward_panel.png"
+const TITLE_BANNER := ART_DIR + "ui/reward_banner.png"
+const BURLAP_BUTTON := ART_DIR + "ui/reward_button.png"
+## Unstretched nine-patch edges, in pixels of the installed textures.
+const QUILT_EDGE := 36
+const FRAME_EDGE := 30
+## The ribbon's swallow tails (left) and sewn-on patch (right) stay unstretched.
+const BANNER_LEFT := 64
+const BANNER_RIGHT := 86
+const BANNER_HEIGHT := 72
+const BUTTON_EDGE := 22
+## Room the sewn borders take before any card or panel content starts.
+const QUILT_INSET := 30
+const FRAME_INSET := 28
+
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/RewardContent/RewardTitle
 @onready var gold_label: Label = $PaperPanel/ContentMargin/RewardContent/GoldLabel
@@ -189,6 +209,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	owner_patch.add_child(owner_label)
 
 	# Name on a pinned torn-paper strip
+	var card_art := _card_art_texture(String(offer["id"]), owner)
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -203,7 +224,17 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	name_box.content_margin_right = 6
 	name_box.content_margin_top = 4
 	name_box.content_margin_bottom = 4
-	name_label.add_theme_stylebox_override("normal", name_box)
+	if card_art != null:
+		# The name is sewn across a stitched illustration patch: the card's own
+		# art, else its hero's emblem (a wide band from the middle of it).
+		name_label.add_theme_stylebox_override("normal", _art_band(card_art))
+		name_label.add_theme_color_override("font_color", LIGHT_INK)
+		name_label.add_theme_color_override("font_outline_color", Color("#1d1715"))
+		name_label.add_theme_constant_override("outline_size", 7)
+		name_label.add_theme_font_size_override("font_size", 23)
+		name_label.draw.connect(_draw_art_seam.bind(name_label))
+	else:
+		name_label.add_theme_stylebox_override("normal", name_box)
 	content.add_child(name_label)
 
 	# Rarity tag (only for pool cards with authored rarity)
@@ -235,7 +266,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	cost_button.name = "CostButton"
 	cost_button.cost_value = cost_value
 	cost_button.owner_color = OWNER_COLORS[offer["owner"]]
-	cost_button.custom_minimum_size = Vector2(44, 44)
+	cost_button.custom_minimum_size = Vector2(40, 40)
 	cost_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	cost_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_button.focus_mode = Control.FOCUS_NONE
@@ -254,7 +285,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	pips_container.to_positions = to_positions
 	pips_container.target_kind = String(definition.get("target_kind", ""))
 	pips_container.owner_color = OWNER_COLORS[offer["owner"]]
-	pips_container.custom_minimum_size = Vector2(0, 28)
+	pips_container.custom_minimum_size = Vector2(0, 22)
 	content.add_child(pips_container)
 
 	# Rules text
@@ -268,7 +299,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	action.name = "ChooseButton"
 	action.text = "Choose card"
 	action.focus_mode = Control.FOCUS_ALL
-	action.custom_minimum_size = Vector2(0, 52)
+	action.custom_minimum_size = Vector2(0, 46)
 	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action.mouse_filter = Control.MOUSE_FILTER_STOP
 	_style_button(action, OWNER_COLORS[offer["owner"]])
@@ -519,7 +550,95 @@ func _style_card(card: PanelContainer, owner: String, active: bool) -> void:
 	patch.shadow_color = Color(0.03, 0.06, 0.07, 0.8)
 	patch.shadow_size = 18 if active else 12
 	patch.shadow_offset = Vector2(0, 4) if active else Vector2.ZERO
+	var frame := art_texture(ART_DIR + "ui/card_frame_%s.png" % owner)
+	if frame != null:
+		# The sewn felt frame is painted over this box; the box keeps only its
+		# owner border colour and the hover/focus glow around the frame.
+		patch.bg_color = Color(CARD_PAPER, 0.0)
+		patch.set_border_width_all(0)
+		patch.shadow_color = Color("#f3d58a", 0.75) if active else Color(0.02, 0.03, 0.04, 0.7)
+		patch.shadow_size = 16 if active else 10
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			patch.set_content_margin(side, FRAME_INSET)
+		# Stretch (not tile) so the hero badge is never repeated; the badge
+		# itself is drawn again unstretched by _draw_sewn_frame.
+		card.set_meta("sewn_frame", nine_patch(frame, Vector2(FRAME_EDGE, FRAME_EDGE), false))
+		card.set_meta("frame_badge", art_texture(ART_DIR + "ui/card_badge_%s.png" % owner))
+		if not card.draw.is_connected(_draw_sewn_frame):
+			card.draw.connect(_draw_sewn_frame.bind(card))
 	card.add_theme_stylebox_override("panel", patch)
+	card.queue_redraw()
+
+
+## A reward card's own illustration (assets/paper/cards/<id>.png, upgrades
+## share the base art), else the owning hero's stitched emblem; null keeps the
+## plain linen name box.
+static func _card_art_texture(card_id: String, owner: String) -> Texture2D:
+	var base_id := card_id.trim_suffix("_plus")
+	var own := art_texture(ART_DIR + "cards/%s.png" % base_id)
+	if own != null:
+		return own
+	return art_texture(ART_DIR + "cards/emblem_%s.png" % owner)
+
+
+static func art_texture(path: String) -> Texture2D:
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
+
+
+static func nine_patch(texture: Texture2D, edge: Vector2, tile := true) -> StyleBoxTexture:
+	var box := StyleBoxTexture.new()
+	box.texture = texture
+	box.texture_margin_left = edge.x
+	box.texture_margin_right = edge.x
+	box.texture_margin_top = edge.y
+	box.texture_margin_bottom = edge.y
+	if tile:
+		# Repeat the sewn squares along long edges instead of smearing them.
+		box.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE_FIT
+		box.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE_FIT
+	# Tiled quilts leave their centre to the flat linen underneath (no seams).
+	box.draw_center = not tile
+	return box
+
+
+func _draw_sewn_frame(card: PanelContainer) -> void:
+	var frame: Variant = card.get_meta("sewn_frame", null)
+	if frame is StyleBoxTexture:
+		card.draw_style_box(frame, Rect2(Vector2.ZERO, card.size))
+	var badge: Variant = card.get_meta("frame_badge", null)
+	if badge is Texture2D:
+		card.draw_texture(badge, Vector2(roundf((card.size.x - badge.get_width()) * 0.5), 0.0))
+
+
+static func _art_band(texture: Texture2D) -> StyleBoxTexture:
+	var band := StyleBoxTexture.new()
+	band.texture = texture
+	var size := texture.get_size()
+	var height := size.x * 0.24
+	band.region_rect = Rect2(0, size.y * 0.46 - height * 0.5, size.x, height)
+	band.content_margin_left = 10
+	band.content_margin_right = 10
+	band.content_margin_top = 6
+	band.content_margin_bottom = 6
+	return band
+
+
+## Dark felt edge and a cream running stitch around the illustration patch.
+func _draw_art_seam(art: Control) -> void:
+	var rect := Rect2(Vector2.ZERO, art.size)
+	art.draw_rect(rect, Color("#3b2f2a"), false, 3.0)
+	var inner := rect.grow(-6.0)
+	for edge: Array in [[inner.position, Vector2(inner.end.x, inner.position.y)],
+			[Vector2(inner.end.x, inner.position.y), inner.end],
+			[inner.end, Vector2(inner.position.x, inner.end.y)],
+			[Vector2(inner.position.x, inner.end.y), inner.position]]:
+		art.draw_dashed_line(edge[0], edge[1], Color("#f1e6cf", 0.9), 2.0, 7.0)
+
+
+func _draw_quilt(control: Control, box: StyleBoxTexture) -> void:
+	control.draw_style_box(box, Rect2(Vector2.ZERO, control.size))
 
 
 func _on_card_gui_input(event: InputEvent, index: int, card_id: String, button: Button) -> void:
@@ -598,6 +717,68 @@ func _apply_patchwork_style() -> void:
 	for label in [top_stitches, bottom_stitches]:
 		label.add_theme_color_override("font_color", Color("#77624f"))
 		label.add_theme_font_size_override("font_size", 17)
+	_apply_sewn_art(paper, content_margin)
+
+
+## Lays the Flow/ChatGPT patchwork art over the procedural paper: the stitched
+## tailor's camp behind everything, a quilt border around the reward, and the
+## title sewn onto a felt ribbon. Each piece is skipped when its PNG is absent.
+func _apply_sewn_art(paper: StyleBoxFlat, content_margin: MarginContainer) -> void:
+	var camp := art_texture(CAMP_BACKDROP)
+	if camp != null and get_node_or_null("CampBackdrop") == null:
+		var backdrop := TextureRect.new()
+		backdrop.name = "CampBackdrop"
+		backdrop.texture = camp
+		backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		add_child(backdrop)
+		move_child(backdrop, 1)
+		var shade := ColorRect.new()
+		shade.name = "CampShade"
+		shade.color = Color(0.04, 0.05, 0.08, 0.35)
+		shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		add_child(shade)
+		move_child(shade, 2)
+		# The quilt can now reach almost to the top; the camp shows around it.
+		paper_panel.anchor_top = 0.025
+		paper_panel.anchor_bottom = 0.975
+		paper_panel.anchor_left = 0.02
+		paper_panel.anchor_right = 0.98
+	var quilt := art_texture(QUILT_PANEL)
+	if quilt != null:
+		# Plain linen under the quilt's centre, matching the quilt's own weave.
+		paper.bg_color = Color("#e3d0b5")
+		paper.border_color = Color(paper.border_color, 0.0)
+		paper.shadow_size = 18
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			paper.set_content_margin(side, QUILT_INSET)
+		if content_margin != null:
+			content_margin.add_theme_constant_override("margin_top", 0)
+			content_margin.add_theme_constant_override("margin_bottom", 0)
+			content_margin.add_theme_constant_override("margin_left", 12)
+			content_margin.add_theme_constant_override("margin_right", 12)
+		paper_panel.draw.connect(_draw_quilt.bind(paper_panel,
+			nine_patch(quilt, Vector2(QUILT_EDGE, QUILT_EDGE))))
+		for label in [top_stitches, bottom_stitches]:
+			label.add_theme_font_size_override("font_size", 12)
+	var banner := art_texture(TITLE_BANNER)
+	if banner != null:
+		var ribbon := nine_patch(banner, Vector2.ZERO, false)
+		ribbon.texture_margin_left = BANNER_LEFT
+		ribbon.texture_margin_right = BANNER_RIGHT
+		ribbon.content_margin_left = BANNER_LEFT + 24
+		ribbon.content_margin_right = BANNER_RIGHT + 24
+		ribbon.content_margin_top = 4
+		ribbon.content_margin_bottom = 8
+		title_label.add_theme_stylebox_override("normal", ribbon)
+		title_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		title_label.custom_minimum_size = Vector2(420, BANNER_HEIGHT)
+		title_label.add_theme_color_override("font_color", LIGHT_INK)
+		title_label.add_theme_color_override("font_shadow_color", Color(0.12, 0.05, 0.03, 0.8))
+		title_label.add_theme_constant_override("shadow_offset_y", 2)
 
 
 func _style_button(button: Button, accent: Color) -> void:
@@ -626,6 +807,38 @@ func _style_button(button: Button, accent: Color) -> void:
 	# engine default focus colour.
 	button.add_theme_color_override("font_focus_color", DARK_INK)
 	button.add_theme_font_size_override("font_size", 20)
+	_sew_burlap(button, accent)
+
+
+## Burlap patch sewn behind a button's label; the procedural face above it is
+## made see-through so hover, press and disabled tints still read on top.
+func _sew_burlap(button: Button, accent: Color) -> void:
+	var burlap := art_texture(BURLAP_BUTTON)
+	if burlap == null:
+		return
+	var tints := {"normal": Color(1, 1, 1, 0.0), "hover": Color(1, 0.97, 0.88, 0.22),
+		"pressed": Color(0.2, 0.15, 0.1, 0.2), "disabled": Color(0.35, 0.33, 0.3, 0.45)}
+	for state: String in tints:
+		var box := button.get_theme_stylebox(state) as StyleBoxFlat
+		if box != null:
+			box.bg_color = tints[state]
+			box.border_color = Color(accent, 0.85)
+			box.set_border_width_all(2)
+			box.set_corner_radius_all(10)
+	if button.get_node_or_null("BurlapPatch") != null:
+		return
+	var patch := NinePatchRect.new()
+	patch.name = "BurlapPatch"
+	patch.texture = burlap
+	patch.patch_margin_left = BUTTON_EDGE
+	patch.patch_margin_right = BUTTON_EDGE
+	patch.patch_margin_top = BUTTON_EDGE
+	patch.patch_margin_bottom = BUTTON_EDGE
+	patch.show_behind_parent = true
+	patch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	patch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	button.add_child(patch)
+	button.move_child(patch, 0)
 
 
 ## A dark, hand-sewn dashed perimeter that follows this button's keyboard focus.
