@@ -298,7 +298,10 @@ func _face(id: String) -> void:
 		"hidden original label and usable End Turn focus exit: " + id)
 	_check(root.size == Vector2i(1280, 720) and cue.size == panel.size,
 		"1280x720 headless viewport and legible full-panel sewn face: " + id)
-	_check(adapter.button == null and adapter.get_child_count() == 0,
+	_check(adapter.button == null and adapter.get_child_count() == 1
+		and adapter.get_child(0).name == "LiveSeamstressSingleBleedHand"
+		and not adapter.get_child(0) is Control
+		and app.battle_view.get_node_or_null("SeamstressBleedChoiceOverlay") == null,
 		"no second attack button or overlay node exists: " + id)
 
 
