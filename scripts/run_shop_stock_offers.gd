@@ -37,14 +37,39 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 			or not (trinket_candidates is Array) or not (owned_trinket_ids is Array):
 		return rejected
 
-	var catalog := StarterCards.new()
+	# Build catalog references and known owners from all four catalogs.
+	var starter_catalog := StarterCards.new()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
 	var known_owners := {}
-	for catalog_id in catalog.get_all_card_ids():
-		var definition: Dictionary = catalog.get_definition(catalog_id)
+	for catalog_id in starter_catalog.get_all_card_ids():
+		var definition: Dictionary = starter_catalog.get_definition(catalog_id)
 		if definition.get("owner") is String:
 			known_owners[definition["owner"]] = true
+	for catalog_id in warden_pool.get_all_card_ids():
+		var definition: Dictionary = warden_pool.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	for catalog_id in seamstress_pool.get_all_card_ids():
+		var definition: Dictionary = seamstress_pool.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	# TinkerPoolCards uses get_pool_card_ids() for base cards, but get_all_card_ids() doesn't exist.
+	# We need to check both base and upgrade cards for known owners.
+	for catalog_id in tinker_pool.get_pool_card_ids():
+		var definition: Dictionary = tinker_pool.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	# Also check upgrade cards for owners (they have the same owner).
+	for base_id in tinker_pool.get_pool_card_ids():
+		var upgrade_id: String = tinker_pool.get_upgrade_id(base_id)
+		if upgrade_id:
+			var definition: Dictionary = tinker_pool.get_definition(upgrade_id)
+			if definition.get("owner") is String:
+				known_owners[definition["owner"]] = true
 
-	# The party is exactly three distinct heroes the authored catalog knows.
+	# The party is exactly three distinct heroes the authored catalogs know.
 	var party_set := {}
 	for party_id in party_ids:
 		if not (party_id is String):
@@ -70,6 +95,8 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 	# Every supplied card candidate must be a known, party-owned catalog card
 	# with a whole non-negative price. Unknown, duplicated and wrong-owner
 	# candidates fail the whole call instead of shrinking the pool silently.
+	# Pool upgrade cards (ending in _plus) are not valid Shop candidates.
+	# StarterCards upgrade cards (like warden_strike_plus) ARE valid.
 	var card_prices := {}
 	var eligible_card_ids: Array[String] = []
 	for candidate in card_candidates:
@@ -86,10 +113,34 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 		var price := _read_price(entry["price"])
 		if price < 0:
 			return rejected
-		var definition: Dictionary = catalog.get_definition(card_id)
-		if definition.is_empty() or not (definition.get("owner") is String):
+		# Look up the card definition across all four catalogs.
+		var definition: Dictionary = {}
+		var catalog_owner: String = ""
+		var is_pool_card: bool = false
+		if starter_catalog.has_card(card_id):
+			definition = starter_catalog.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+		elif warden_pool.has_card(card_id):
+			definition = warden_pool.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+			is_pool_card = true
+		elif seamstress_pool.has_card(card_id):
+			definition = seamstress_pool.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+			is_pool_card = true
+		elif tinker_pool.has_card(card_id):
+			definition = tinker_pool.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+			is_pool_card = true
+		else:
 			return rejected
-		var owner: String = definition["owner"]
+		if definition.is_empty() or catalog_owner.is_empty():
+			return rejected
+		# Pool upgrade cards (ending in _plus) are not valid Shop candidates.
+		# StarterCards upgrade cards ARE valid.
+		if is_pool_card and card_id.ends_with("_plus"):
+			return rejected
+		var owner: String = catalog_owner
 		if not party_set.has(owner):
 			return rejected
 		if entry.has("owner"):
@@ -138,8 +189,17 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 		var index: int = rng.randi_range(0, eligible_card_ids.size() - 1)
 		var card_id: String = eligible_card_ids[index]
 		eligible_card_ids.remove_at(index)
-		var definition: Dictionary = catalog.get_definition(card_id)
-		cards.append({"id": card_id, "owner": definition["owner"], "price": card_prices[card_id]})
+		# Look up the card definition across all four catalogs to get the owner.
+		var owner: String = ""
+		if starter_catalog.has_card(card_id):
+			owner = starter_catalog.get_definition(card_id).get("owner", "")
+		elif warden_pool.has_card(card_id):
+			owner = warden_pool.get_definition(card_id).get("owner", "")
+		elif seamstress_pool.has_card(card_id):
+			owner = seamstress_pool.get_definition(card_id).get("owner", "")
+		elif tinker_pool.has_card(card_id):
+			owner = tinker_pool.get_definition(card_id).get("owner", "")
+		cards.append({"id": card_id, "owner": owner, "price": card_prices[card_id]})
 
 	var trinkets: Array = []
 	for _pick in range(TRINKET_OFFER_COUNT):
