@@ -485,6 +485,374 @@ func _replay_and_stale(base: Dictionary) -> void:
 		"two independent seeded presentations produce identical full card text")
 
 
+## A genuine prepared receipt whose offers come from the routed weighted path.
+func _prepared_pool(is_elite: bool, seed_value: int) -> Dictionary:
+	var party := CombatParty.new(_defs(HEROES))
+	var enemies := CombatEnemies.new(_defs(ENEMIES))
+	_check(party.is_valid() and enemies.is_valid(), "authored living battle rosters for pool receipt")
+	var result := CombatBattleResult.new(party, enemies)
+	for slot in range(1, enemies.get_enemies().size() + 1):
+		_check(enemies.apply_damage(slot, enemies.get_enemy(slot).get("hp", 0)),
+			"pool receipt enemy killed")
+	_check(result.evaluate() == CombatBattleResult.VICTORY, "pool receipt witnessed victory")
+	var deck: Array[String] = StarterCards.new().get_starting_deck()
+	var owners: Array[String] = ["warden", "seamstress", "tinker"]
+	var records: Array = RunPoolCardRewardOffers.get_authored_base_candidates()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var service := RunFightVictoryRewards.new(result, rng, owners, records, deck, 97,
+		is_elite, ["button_charm", "thread_token"], ["button_charm"])
+	var receipt := service.prepare()
+	_check(receipt.get("ok", false) and (receipt.get("offers", []) as Array).size() == 3,
+		"weighted pool receipt prepares three distinct offers")
+	for offer: Dictionary in receipt.get("offers", []):
+		var definition := _base_pool_definition(String(offer.get("id", "")))
+		_check(not definition.is_empty() and definition.get("owner") == offer.get("owner"),
+			"weighted receipt offer resolves in its authored base pool: " + String(offer.get("id", "")))
+	return {"receipt": receipt, "service": service, "rng": rng, "deck": deck}
+
+
+## Direct catalog lookup for every reward-eligible D2-1 base card.
+func _base_pool_definition(card_id: String) -> Dictionary:
+	var warden := WardenPoolCards.new()
+	if warden.get_base_ids().has(card_id):
+		return warden.get_definition(card_id)
+	var seamstress := SeamstressPoolCards.new()
+	if seamstress.get_base_ids().has(card_id):
+		return seamstress.get_definition(card_id)
+	var tinker := TinkerPoolCards.new()
+	if tinker.get_pool_card_ids().has(card_id):
+		return tinker.get_definition(card_id)
+	return {}
+
+
+func _authored_base_ids() -> Array[String]:
+	var ids: Array[String] = []
+	ids.append_array(WardenPoolCards.new().get_base_ids())
+	ids.append_array(SeamstressPoolCards.new().get_base_ids())
+	ids.append_array(TinkerPoolCards.new().get_pool_card_ids())
+	return ids
+
+
+## Independent copy of the documented preview contract, written from the
+## authored catalog semantics for EVERY target kind and base-pool effect key.
+## It intentionally does not call the panel formatter or its helpers, so a
+## formatter that drops authored metadata cannot agree with this oracle.
+func _expected_rules(definition: Dictionary) -> String:
+	var kind: String = String(definition.get("target_kind", ""))
+	var from_positions: Array = definition.get("from_positions", [])
+	var from_text := ""
+	match from_positions:
+		[1]: from_text = "1 (front)"
+		[3]: from_text = "3 (back)"
+		[1, 2]: from_text = "1-2 (front/middle)"
+		[2, 3]: from_text = "2-3 (middle/back)"
+		[1, 2, 3]: from_text = "1-3 (front to back)"
+	var target_positions: Array = definition.get("to_positions", [])
+	var slots := ""
+	match target_positions:
+		[1]: slots = "1 (front)"
+		[1, 2]: slots = "1-2"
+		[2, 3]: slots = "2-3"
+		[1, 2, 3]: slots = "1-3"
+	var target_text := ""
+	if kind == "enemy_single":
+		target_text = "pick 1 living enemy " + slots
+	elif kind == "enemy_all":
+		target_text = "all living enemies " + slots
+	elif kind == "enemy_random":
+		target_text = "1 random living enemy per hit " + slots
+	elif kind == "self":
+		target_text = "self"
+	elif kind == "ally_single":
+		target_text = "1 living ally 1-3"
+	elif kind == "party_all":
+		target_text = "all allies"
+	elif kind == "none":
+		target_text = "none"
+	var effects: Dictionary = definition.get("effects", {})
+	var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
+	var until_next_turn: bool = String(effects.get("duration", "")) == "until_next_turn"
+	var copy: Array[String] = []
+	for key: String in effects:
+		if key == "damage":
+			var line := "Deal %d damage" % int(effects["damage"])
+			if hits > 1:
+				line += " ×%d hits" % hits
+			elif kind == "enemy_all":
+				line += " EACH"
+			if bool(effects.get("random_target_each_hit", false)):
+				line += " (random target each hit)"
+			if effects.has("conditional_damage"):
+				var condition: Dictionary = effects["conditional_damage"] if effects["conditional_damage"] is Dictionary else {}
+				var terms: Array[String] = []
+				for item: Variant in condition.get("conditions", []):
+					if not item is Dictionary:
+						continue
+					var part: Dictionary = item
+					if part.has("status"):
+						terms.append(String(part["status"]).capitalize())
+					elif part.has("gauge"):
+						var gauge := String(part["gauge"]).capitalize()
+						terms.append(gauge + (" at half"
+							if String(part.get("comparison", "")) == "at_least_half"
+							else " " + String(part.get("comparison", "")).replace("_", " ")))
+				var join_word := " and " if String(condition.get("operator", "or")) == "and" else " or "
+				line += (" (%d instead under a condition)" % int(condition.get("damage", 0))) \
+					if terms.is_empty() \
+					else (" (%d instead if %s)" % [int(condition.get("damage", 0)), join_word.join(terms)])
+			copy.append(line)
+		elif key == "block":
+			copy.append("Gain %d Block" % int(effects["block"]))
+		elif key == "block_all":
+			copy.append("Gain %d Block each" % int(effects["block_all"]))
+		elif key == "other_ally_block":
+			copy.append("Give another ally %d Block" % int(effects["other_ally_block"]))
+		elif key == "heal":
+			copy.append("Heal %d HP%s" % [int(effects["heal"]), " each" if kind == "party_all" else ""])
+		elif key == "draw":
+			copy.append("Draw %d card%s" % [int(effects["draw"]), "" if int(effects["draw"]) == 1 else "s"])
+		elif key == "weak":
+			copy.append("Weak %d" % int(effects["weak"]))
+		elif key == "bleed":
+			copy.append("Bleed %d%s" % [int(effects["bleed"]), " EACH" if kind == "enemy_all" else ""])
+		elif key == "bleed_multiplier":
+			copy.append("Bleed ×%d" % int(effects["bleed_multiplier"]))
+		elif key == "unravel":
+			copy.append("Unravel %d" % int(effects["unravel"]))
+		elif key == "exposed":
+			copy.append("Exposed %d" % int(effects["exposed"]))
+		elif key == "pinned":
+			var bonus := 5
+			if effects["pinned"] is Dictionary and (effects["pinned"] as Dictionary).get("bonus_damage") is int:
+				bonus = int((effects["pinned"] as Dictionary)["bonus_damage"])
+			copy.append("Pinned (+%d damage on another hero's next attack, once)" % bonus)
+		elif key == "guarding":
+			copy.append("Guarding" + (" until next turn" if until_next_turn else ""))
+		elif key == "thorns":
+			copy.append("Thorns %d%s" % [int(effects["thorns"]),
+				" until next turn" if until_next_turn else ""])
+		elif key == "energy" or key == "gain_energy":
+			copy.append("Gain +%d energy" % int(effects[key]))
+		elif key == "self_hp_loss":
+			copy.append("%d HP lost" % int(effects["self_hp_loss"]))
+		elif key == "conditional_damage" and not effects.has("damage"):
+			var orphan: Dictionary = effects["conditional_damage"] if effects["conditional_damage"] is Dictionary else {}
+			copy.append("Deal %d damage conditionally" % int(orphan.get("damage", 0)))
+	return "From: %s\nTarget: %s\n%s" % [from_text, target_text, ", ".join(copy)]
+
+
+## Structural qualifier keys that never render their own clause; every other
+## authored effect key must produce one, and the oracle above must cover it.
+func _covered_effect_keys() -> Array[String]:
+	return ["damage", "block", "block_all", "other_ally_block", "heal", "draw", "weak",
+		"bleed", "bleed_multiplier", "unravel", "exposed", "pinned", "guarding", "thorns",
+		"energy", "gain_energy", "self_hp_loss", "conditional_damage", "hits", "hit_count",
+		"random_target_each_hit", "rng_source", "living_targets_only", "duration"]
+
+
+## Explicit authored phrases the mounted preview must show, so a shared
+## omission in formatter and oracle cannot pass unnoticed.
+func _required_rule_phrases(card_id: String) -> Array[String]:
+	match card_id:
+		"warden_bastion_quilt":
+			return ["all allies", "10 Block each"]
+		"tinker_overclock":
+			return ["+1 energy", "3 HP lost"]
+		"tinker_ricochet":
+			return ["Deal 4 damage", "×3 hits", "random target each hit"]
+	return []
+
+
+## The mounted card must show the real authored pool card it resolves to.
+func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
+	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "pool reward mounted: " + kind)
+	_check(panel.title_label.text.contains(kind) and panel.title_label.text.contains(node_id),
+		"pool node and kind visible: " + kind)
+	_check(panel.gold_label.text == "Pending gold: +%d" % receipt["gold_award"],
+		"exact prepared pool pending gold visible: " + kind)
+	_check(panel.trinket_label.visible == (kind == "Elite"), "Elite-only pool trinket label visibility")
+	_check(panel.trinket_label.text == ("Prepared trinket: " + receipt["trinket_drop_id"]
+		if kind == "Elite" else ""), "exact prepared pool trinket text")
+	var actions := panel.get_choice_buttons()
+	_check(actions.size() == 4 and panel.choices_container.get_child_count() == 3,
+		"pool reward shows three genuine cards and Skip")
+	if actions.size() != 4:
+		return
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	for index in range(3):
+		var offer: Dictionary = receipt["offers"][index]
+		var card_id := String(offer.get("id", ""))
+		var owner := String(offer.get("owner", ""))
+		var definition := _base_pool_definition(card_id)
+		_check(not definition.is_empty() and definition.get("owner") == owner,
+			"prepared pool offer backed by its authored catalog: " + card_id)
+		if definition.is_empty():
+			continue
+		_check(_authored_base_ids().has(card_id) and not card_id.ends_with("_plus"),
+			"only reward-eligible base pool cards are offered: " + card_id)
+		var card := panel.choices_container.get_child(index) as PanelContainer
+		_check(card != null and card.name == "Card_%d" % index, "stable pool card index")
+		if card == null:
+			continue
+		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+		var owner_label := content.get_node("OwnerLabel") as Label
+		var name_label := content.get_node("NameLabel") as Label
+		var id_label := content.get_node("IdLabel") as Label
+		var cost_label := content.get_node("CostLabel") as Label
+		var rules_label := content.get_node("RulesLabel") as Label
+		var action := content.get_node("ChooseButton") as Button
+		_check(action == actions[index], "real pool action bound to card " + str(index))
+		_check(owner_label.text == owner.capitalize()
+			and name_label.text == definition["display_name"]
+			and id_label.text == card_id and cost_label.text == "%d energy" % definition["cost"],
+			"exact authored pool owner, name, ID and cost visible: " + card_id)
+		_check(rules_label.text == _expected_rules(definition),
+			"pool card rules match its authored catalog definition: " + card_id)
+		var rule_lines := rules_label.text.split("\n")
+		_check(rule_lines.size() == 3 and rule_lines[0].begins_with("From: ")
+			and rule_lines[1].begins_with("Target: ")
+			and not rule_lines[0].substr(6).strip_edges().is_empty()
+			and not rule_lines[1].substr(8).strip_edges().is_empty()
+			and not rule_lines[2].strip_edges().is_empty(),
+			"pool card shows nonblank from, target and effect text: " + card_id)
+		var effects: Dictionary = definition.get("effects", {})
+		for effect_key: String in effects:
+			_check(_covered_effect_keys().has(effect_key),
+				"authored pool effect key is rendered: %s (%s)" % [effect_key, card_id])
+			var value: Variant = effects[effect_key]
+			if value is int:
+				_check(rules_label.text.contains(str(value)),
+					"authored pool value %d visible for %s" % [int(value), card_id])
+		for phrase: String in _required_rule_phrases(card_id):
+			_check(rules_label.text.contains(phrase),
+				"authored rule phrase '%s' visible for %s" % [phrase, card_id])
+		_check(rules_label.get_visible_line_count() == rules_label.get_line_count()
+			and rules_label.get_theme_font_size("font_size") >= 15,
+			"pool rules fully rendered and readable: " + card_id)
+		_check(card.get_global_rect().encloses(rules_label.get_global_rect())
+			and screen.encloses(rules_label.get_global_rect())
+			and screen.encloses(card.get_global_rect()) and screen.encloses(action.get_global_rect()),
+			"pool card, rules and action fit the card and 1280x720 viewport: " + card_id)
+		for label: Label in [owner_label, name_label, id_label, cost_label, rules_label]:
+			_check(card.get_global_rect().encloses(label.get_global_rect())
+				and screen.encloses(label.get_global_rect()),
+				"pool label stays visible on the card and in 1280x720: " + card_id)
+		var style := card.get_theme_stylebox("panel") as StyleBoxFlat
+		_check(style != null and style.border_color == panel.OWNER_COLORS[owner],
+			"authored pool owner palette visible: " + card_id)
+	_check(actions[3] == panel.skip_button and actions[3].text.contains("Skip"),
+		"fourth pool action is Skip, never a card")
+	_check(screen.encloses(panel.skip_button.get_global_rect())
+		and panel.skip_button.is_visible_in_tree() and not panel.skip_button.disabled,
+		"pool Skip control stays visible in 1280x720")
+
+
+func _exercise_pool(fixture: Dictionary, kind: String) -> void:
+	var node_id := "floor_02_elite" if kind == "Elite" else "floor_01_fight"
+	var receipt: Dictionary = fixture["receipt"]
+	var prepared_before: Dictionary = fixture["service"].prepare()
+	var rng_state: int = fixture["rng"].state
+	requests.clear()
+	_check(panel.open_rewards(node_id, kind, receipt), kind + " weighted receipt opens the real panel")
+	await _frames()
+	_validate_pool(receipt, kind, node_id)
+	var actions := panel.get_choice_buttons()
+	if actions.size() != 4:
+		panel.close_rewards()
+		return
+	var target: int = 1 if kind == "Fight" else 2
+	await _mouse(actions[target])
+	_check(requests == [{"node": node_id, "card": receipt["offers"][target]["id"]}],
+		"physical mouse pick requests exactly the weighted pool ID")
+	panel.acknowledge(false)
+	_check(actions.all(func(button: Button) -> bool: return not button.disabled),
+		"rejection re-enables the same pool offers")
+	_validate_pool(receipt, kind, node_id)
+	actions[3].grab_focus()
+	await _frames()
+	_check(actions[3].has_focus(), "pool Skip focused before Space")
+	await _key(KEY_SPACE)
+	_check(requests.size() == 2 and requests[1] == {"node": node_id, "card": ""},
+		"physical keyboard Skip requests the empty skip ID once")
+	panel.acknowledge(true)
+	_check(panel._accepted, "accepted pool claim stays latched")
+	for button in actions:
+		_check(button.disabled, "accepted pool claim locks every action")
+	_check(fixture["service"].prepare() == prepared_before and fixture["rng"].state == rng_state,
+		"panel never rerolls or settles the weighted reward transaction")
+	panel.close_rewards()
+	await _frames()
+	_check(not panel.has_open_rewards() and panel.get_choice_buttons().is_empty(),
+		"weighted pool reward closes cleanly")
+
+
+func _test_pool_replay(first: Dictionary) -> void:
+	var second := _prepared_pool(false, 18203)
+	_check(second["receipt"].get("offers") == first["receipt"].get("offers"),
+		"same seeded stream prepares identical weighted pool offers")
+	var presentations: Array = []
+	for fixture in [first, second]:
+		_check(panel.open_rewards("replay_node", "Fight", fixture["receipt"]),
+			"seeded weighted receipt reopens")
+		await _frames()
+		var ui: Array = []
+		for index in range(3):
+			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
+			ui.append([content.get_node("OwnerLabel").text, content.get_node("NameLabel").text,
+				content.get_node("IdLabel").text, content.get_node("CostLabel").text,
+				content.get_node("RulesLabel").text])
+		presentations.append(ui)
+		panel.close_rewards()
+		await _frames()
+	_check(presentations.size() == 2 and presentations[0] == presentations[1],
+		"same-seed weighted receipts present identical pool card text")
+
+
+## Every authored reward-eligible base card must mount, while upgrades and
+## mislabelled/unknown pool-shaped IDs stay rejected.
+func _test_all_pool_cards(base: Dictionary) -> void:
+	var ids := _authored_base_ids()
+	_check(ids.size() >= 3, "authored reward pools expose base cards")
+	# The three defect cards must really be mounted by the loop below.
+	for required in ["warden_bastion_quilt", "tinker_overclock", "tinker_ricochet"]:
+		_check(ids.has(required), "defect card is an authored reward-eligible base card: " + required)
+	requests.clear()
+	for offset in range(0, ids.size(), 3):
+		var receipt := base.duplicate(true)
+		for slot in range(3):
+			var card_id: String = ids[(offset + slot) % ids.size()]
+			receipt["offers"][slot] = {"id": card_id,
+				"owner": String(_base_pool_definition(card_id).get("owner", ""))}
+		var before := receipt.duplicate(true)
+		_check(panel.open_rewards("pool_preview", "Fight", receipt),
+			"authored base pool cards mount " + str(offset))
+		if not panel.has_open_rewards():
+			continue
+		await _frames()
+		_validate_pool(receipt, "Fight", "pool_preview")
+		_check(receipt == before, "pool preview leaves its receipt intact " + str(offset))
+		panel.close_rewards()
+		await _frames()
+	for plus_id in ["warden_hold_the_line_plus", "seamstress_needle_pin_plus", "tinker_rivet_shot_plus"]:
+		var owner := String(_base_pool_definition(plus_id.trim_suffix("_plus")).get("owner", ""))
+		var receipt := base.duplicate(true)
+		receipt["offers"][0] = {"id": plus_id, "owner": owner}
+		_check(not panel.open_rewards("pool_preview", "Fight", receipt),
+			"pool upgrade is never a reward offer: " + plus_id)
+		_check(not panel.visible and not panel.has_open_rewards(),
+			"rejected pool upgrade mounts no controls: " + plus_id)
+	var mislabelled := base.duplicate(true)
+	mislabelled["offers"][1] = {"id": "warden_hold_the_line", "owner": "tinker"}
+	_check(not panel.open_rewards("pool_preview", "Fight", mislabelled),
+		"pool offer with a wrong owner rejects")
+	var foreign := base.duplicate(true)
+	foreign["offers"][2] = {"id": "warden_bogus_pool_card", "owner": "warden"}
+	_check(not panel.open_rewards("pool_preview", "Fight", foreign),
+		"unknown pool-shaped ID rejects instead of resolving")
+	_check(requests.is_empty(), "pool mount suite never emits a request")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var loaded := load(SCENE) as PackedScene
@@ -515,6 +883,15 @@ func _run() -> void:
 	await _test_all_catalog_rules(original_fight)
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
+	var pool_fight := _prepared_pool(false, 18203)
+	var pool_elite := _prepared_pool(true, 18203)
+	_check(pool_fight["receipt"].get("ok", false) and pool_elite["receipt"].get("ok", false),
+		"live weighted Fight and Elite receipts exist")
+	if pool_fight["receipt"].get("ok", false) and pool_elite["receipt"].get("ok", false):
+		await _exercise_pool(pool_fight, "Fight")
+		await _exercise_pool(pool_elite, "Elite")
+		await _test_pool_replay(pool_fight)
+		await _test_all_pool_cards(original_fight)
 	# Fresh global seeded stream must also survive panel interactions.
 	seed(3941)
 	var expected := randi()

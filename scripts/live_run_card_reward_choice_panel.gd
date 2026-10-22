@@ -42,7 +42,6 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	if _is_open or not is_node_ready() or not _valid_receipt(node_id, node_kind, prepared):
 		return false
 	var snapshot: Dictionary = (prepared as Dictionary).duplicate(true)
-	var catalog := StarterCards.new()
 	_generation += 1
 	_node_id = node_id
 	_node_kind = node_kind
@@ -56,7 +55,7 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	trinket_label.text = ("Prepared trinket: " + snapshot["trinket_drop_id"]) if node_kind == "Elite" else ""
 	for index in range(3):
 		var offered: Dictionary = snapshot["offers"][index]
-		var definition: Dictionary = catalog.get_definition(offered["id"])
+		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offered["id"])
 		var card_panel := _mount_card(index, offered, definition)
 		choices_container.add_child(card_panel)
 		var button := card_panel.get_node("CardMargin/CardContent/ChooseButton") as Button
@@ -100,7 +99,6 @@ func _valid_receipt(node_id: Variant, node_kind: Variant, prepared: Variant) -> 
 	var offers: Variant = prepared.get("offers")
 	if not offers is Array or offers.size() != 3:
 		return false
-	var catalog := StarterCards.new()
 	var ids := {}
 	for offer in offers:
 		if not offer is Dictionary:
@@ -111,7 +109,9 @@ func _valid_receipt(node_id: Variant, node_kind: Variant, prepared: Variant) -> 
 			return false
 		if not owner is String or not OWNER_COLORS.has(owner):
 			return false
-		var definition: Dictionary = catalog.get_definition(id)
+		# Offers resolve against the real starter catalog or the authored D2-1
+		# base pools; pool upgrades and unknown IDs are never valid rewards.
+		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(id)
 		if definition.is_empty() or definition.get("owner") != owner:
 			return false
 		if not definition.get("display_name") is String \
@@ -178,45 +178,120 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 
 ## A detached catalog card is the sole source of the preview, never battle
 ## passives, receipt/offer data, RNG or current combat availability.
+## Every authored target kind and base-pool effect key is summarized here.
 func _format_rules(definition: Dictionary) -> String:
-	var from_positions: Array = definition.get("from_positions", [])
-	var from_text := ""
-	match from_positions:
-		[1]: from_text = "1 (front)"
-		[3]: from_text = "3 (back)"
-		[1, 2]: from_text = "1-2 (front/middle)"
-		[2, 3]: from_text = "2-3 (middle/back)"
-		[1, 2, 3]: from_text = "1-3 (front to back)"
+	var kind: String = String(definition.get("target_kind", ""))
+	var from_text := _position_text(definition.get("from_positions", []), true)
+	var slots := _position_text(definition.get("to_positions", []), false)
 	var target_text := ""
-	var target_positions: Array = definition.get("to_positions", [])
-	var slots := ""
-	match target_positions:
-		[1]: slots = "1 (front)"
-		[1, 2]: slots = "1-2"
-		[2, 3]: slots = "2-3"
-		[1, 2, 3]: slots = "1-3"
-	match definition.get("target_kind", ""):
+	match kind:
 		"enemy_single": target_text = "pick 1 living enemy " + slots
 		"enemy_all": target_text = "all living enemies " + slots
+		"enemy_random": target_text = "1 random living enemy per hit " + slots
 		"self": target_text = "self"
 		"ally_single": target_text = "1 living ally 1-3"
+		"party_all": target_text = "all allies"
 		"none": target_text = "none"
 	var effects: Dictionary = definition.get("effects", {})
 	var copy: Array[String] = []
-	if effects.has("damage"):
-		copy.append("Deal %d damage%s" % [effects["damage"],
-			" EACH" if definition.get("target_kind") == "enemy_all" else ""])
-	if effects.has("block"):
-		copy.append("Gain %d Block" % effects["block"])
-	if effects.has("heal"):
-		copy.append("Heal %d HP" % effects["heal"])
-	if effects.has("draw"):
-		copy.append("Draw %d card%s" % [effects["draw"], "" if effects["draw"] == 1 else "s"])
-	if effects.has("weak"):
-		copy.append("Weak %d" % effects["weak"])
-	if effects.has("bleed"):
-		copy.append("Bleed %d" % effects["bleed"])
+	var until_next_turn: bool = String(effects.get("duration", "")) == "until_next_turn"
+	var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
+	for key: String in effects:
+		match key:
+			"damage":
+				var dealt := "Deal %d damage" % int(effects[key])
+				if hits > 1:
+					dealt += " ×%d hits" % hits
+				elif kind == "enemy_all":
+					dealt += " EACH"
+				if bool(effects.get("random_target_each_hit", false)):
+					dealt += " (random target each hit)"
+				if effects.has("conditional_damage"):
+					dealt += _conditional_damage_hint(effects["conditional_damage"])
+				copy.append(dealt)
+			"block":
+				copy.append("Gain %d Block" % int(effects[key]))
+			"block_all":
+				copy.append("Gain %d Block each" % int(effects[key]))
+			"other_ally_block":
+				copy.append("Give another ally %d Block" % int(effects[key]))
+			"heal":
+				copy.append("Heal %d HP%s" % [int(effects[key]),
+					" each" if kind == "party_all" else ""])
+			"draw":
+				var drawn: int = int(effects[key])
+				copy.append("Draw %d card%s" % [drawn, "" if drawn == 1 else "s"])
+			"weak":
+				copy.append("Weak %d" % int(effects[key]))
+			"bleed":
+				copy.append("Bleed %d%s" % [int(effects[key]),
+					" EACH" if kind == "enemy_all" else ""])
+			"bleed_multiplier":
+				copy.append("Bleed ×%d" % int(effects[key]))
+			"unravel":
+				copy.append("Unravel %d" % int(effects[key]))
+			"exposed":
+				copy.append("Exposed %d" % int(effects[key]))
+			"pinned":
+				copy.append("Pinned " + _pinned_hint(effects[key]))
+			"guarding":
+				copy.append("Guarding" + (" until next turn" if until_next_turn else ""))
+			"thorns":
+				copy.append("Thorns %d%s" % [int(effects[key]),
+					" until next turn" if until_next_turn else ""])
+			"energy", "gain_energy":
+				copy.append("Gain +%d energy" % int(effects[key]))
+			"self_hp_loss":
+				copy.append("%d HP lost" % int(effects[key]))
+			"conditional_damage":
+				# Only reachable when authored without a base damage key.
+				if not effects.has("damage"):
+					var rule: Dictionary = effects[key] if effects[key] is Dictionary else {}
+					copy.append("Deal %d damage conditionally" % int(rule.get("damage", 0)))
+			_:
+				pass
 	return "From: %s\nTarget: %s\n%s" % [from_text, target_text, ", ".join(copy)]
+
+
+func _position_text(positions: Array, is_source: bool) -> String:
+	match positions:
+		[1]: return "1 (front)"
+		[3]: return "3 (back)"
+		[1, 2]: return "1-2 (front/middle)" if is_source else "1-2"
+		[2, 3]: return "2-3 (middle/back)" if is_source else "2-3"
+		[1, 2, 3]: return "1-3 (front to back)" if is_source else "1-3"
+	return ""
+
+
+func _pinned_hint(rule: Variant) -> String:
+	var bonus := 5
+	if rule is Dictionary and (rule as Dictionary).get("bonus_damage") is int:
+		bonus = int((rule as Dictionary)["bonus_damage"])
+	return "(+%d damage on another hero's next attack, once)" % bonus
+
+
+func _conditional_damage_hint(condition: Variant) -> String:
+	if not condition is Dictionary:
+		return ""
+	var rule: Dictionary = condition
+	var empowered: int = int(rule.get("damage", 0))
+	var hints: Array[String] = []
+	for item: Variant in rule.get("conditions", []):
+		if not item is Dictionary:
+			continue
+		var part: Dictionary = item
+		if part.has("status"):
+			hints.append(String(part["status"]).capitalize())
+		elif part.has("gauge"):
+			var gauge := String(part["gauge"]).capitalize()
+			if String(part.get("comparison", "")) == "at_least_half":
+				hints.append(gauge + " at half")
+			else:
+				hints.append(gauge + " " + String(part.get("comparison", "")).replace("_", " "))
+	var joiner := " and " if String(rule.get("operator", "or")) == "and" else " or "
+	if hints.is_empty():
+		return " (%d instead under a condition)" % empowered
+	return " (%d instead if %s)" % [empowered, joiner.join(hints)]
 
 
 func _card_label(label_name: String, value: String, point_size: int) -> Label:

@@ -1009,6 +1009,9 @@ func _refresh_swap_preview() -> void:
 
 
 ## Routed rewards are prepared once; the standalone demo keeps its fixed offering.
+## Both routed services receive the authored D2-1 base records of party-owned
+## heroes, so the live pick is the accepted weighted selector, never a starter
+## fallback.
 func _build_card_reward() -> void:
 	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
 		return
@@ -1024,16 +1027,17 @@ func _build_card_reward() -> void:
 	var catalog := StarterCards.new()
 	var ids: Array = INTERIM_REWARD_IDS
 	if run_map != null:
+		var records := _reward_candidate_records(party_ids)
 		var prepared: Dictionary
 		if _carryover_route.size() == 1 and run_map.get_node(_carryover_node).get("type") == "Fight":
 			if not party_carryover.read_state().completed_fights.has(_carryover_node):
 				return
 			fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
-				catalog.get_all_card_ids(), run_deck, session_gold, false)
+				records, run_deck, session_gold, false)
 			prepared = fight_rewards.prepare()
 		else:
 			multi_fight_rewards = RunMultiFightRewards.new(run_map, run_rng, party_carryover,
-				run_deck, session_gold, run_trinkets, catalog.get_all_card_ids(), _catalog_trinket_ids())
+				run_deck, session_gold, run_trinkets, records, _catalog_trinket_ids())
 			prepared = multi_fight_rewards.prepare(_carryover_node, battle_result, party)
 		if not prepared.ok:
 			fight_rewards = null
@@ -1146,6 +1150,23 @@ func _clear_reward_choice() -> void:
 	_reward_return_parent = null
 	if run_map != null:
 		reward_buttons.clear()
+
+
+## Weighted D2-1 candidates: every authored base (never '+') pool record whose
+## hero is in this party. Empty on malformed catalogs, which fails preparation
+## closed instead of inventing an unweighted starter offering.
+func _reward_candidate_records(party_ids: Array[String]) -> Array:
+	var records: Array = []
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		var id: Variant = record.get("id")
+		var owner: Variant = record.get("owner")
+		var rarity: Variant = record.get("rarity")
+		if not id is String or not owner is String or not rarity is String:
+			return []
+		if not party_ids.has(owner):
+			continue
+		records.append({"id": id, "owner": owner, "rarity": rarity})
+	return records
 
 
 ## Elite drops use the existing Shop catalog; no separate reward pool.

@@ -91,7 +91,9 @@ func _failure() -> Dictionary:
 	}
 
 
-## Fail-closed: a nonempty deck of nonempty, catalog-authored card IDs only.
+## Fail-closed: a nonempty deck of nonempty authored card IDs only. A live run
+## deck may carry reward-eligible D2-1 pool base cards alongside starter cards;
+## only cards with an authored, permitted upgrade can actually be replaced.
 func _is_valid_deck(deck: Array) -> bool:
 	if deck.is_empty():
 		return false
@@ -101,6 +103,6 @@ func _is_valid_deck(deck: Array) -> bool:
 		var card_id: String = entry
 		if card_id.is_empty():
 			return false
-		if not _catalog.has_card(card_id):
+		if RunPoolCardRewardOffers.resolve_reward_definition(card_id).is_empty():
 			return false
 	return true

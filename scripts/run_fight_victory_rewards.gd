@@ -3,8 +3,9 @@ extends RefCounted
 ## One pending post-victory Fight/Elite reward: gold and one card (or skip), plus
 ## one seeded trinket drop for an Elite.
 ## The *only* run RNG consumption is during the first successful prepare:
-## 1 gold randi_range draw, 3 sorted-pool offer draws, then (Elite only) 1
-## sorted unowned trinket draw.
+## 1 gold randi_range draw, then either the three legacy sorted-ID offer draws or
+## the weighted six-draw D2-1 pool selection, then (Elite only) 1 sorted unowned
+## trinket draw.
 ## Work on a cloned seed/state and publish that state atomically only after the
 ## reward transaction and Elite selection succeed.
 
@@ -14,6 +15,7 @@ var _battle: CombatBattleResult
 var _rng: Variant
 var _party_ids: Variant
 var _candidate_ids: Variant
+var _candidate_mode: String = "ids"
 var _source_deck: Variant
 var _starting_gold: Variant
 var _elite: bool
@@ -34,11 +36,32 @@ func _init(battle: CombatBattleResult, run_rng: Variant, party_ids: Variant,
 	_rng = run_rng
 	_party_ids = party_ids.duplicate(true) if party_ids is Array else party_ids
 	_candidate_ids = candidate_ids.duplicate(true) if candidate_ids is Array else candidate_ids
+	_candidate_mode = _classify_candidates(_candidate_ids)
 	_source_deck = run_deck.duplicate(true) if run_deck is Array else run_deck
 	_starting_gold = current_gold
 	_elite = is_elite
 	_trinket_candidates = trinket_candidates.duplicate(true) if trinket_candidates is Array else trinket_candidates
 	_owned_trinket_ids = owned_trinket_ids.duplicate(true) if owned_trinket_ids is Array else owned_trinket_ids
+
+
+## Legacy callers supply authored catalog ID Strings; the routed run supplies
+## D2-1 base records ({id, owner, rarity}). A mixed or otherwise malformed list
+## fails closed instead of silently falling back to an unweighted draw.
+static func _classify_candidates(candidates: Variant) -> String:
+	if not candidates is Array:
+		return "ids"
+	var has_records := false
+	var has_ids := false
+	for candidate: Variant in candidates:
+		if candidate is Dictionary:
+			has_records = true
+		elif candidate is String:
+			has_ids = true
+		else:
+			return "invalid"
+	if has_records and has_ids:
+		return "invalid"
+	return "records" if has_records else "ids"
 
 
 func prepare() -> Dictionary:
@@ -55,15 +78,17 @@ func prepare() -> Dictionary:
 		return rejected
 	if not _party_ids is Array or not _candidate_ids is Array:
 		return rejected
+	if _candidate_mode == "invalid":
+		return rejected
 	if not _source_deck is Array or _source_deck.is_empty():
 		return rejected
-	var catalog := StarterCards.new()
 	# A run deck contains actual party-owned authored card IDs, with duplicates
-	# allowed. Neither invalid entries nor a mutated caller array can leak in.
+	# allowed. Previously awarded D2-1 pool base cards stay valid in later
+	# rewards, while upgrades and unknown IDs still fail closed.
 	for card_id in _source_deck:
 		if not card_id is String or card_id.is_empty():
 			return rejected
-		var definition: Dictionary = catalog.get_definition(card_id)
+		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
 		if definition.is_empty() or not _party_ids.has(definition.get("owner")):
 			return rejected
 	# Validate the supplier-owned trinket lists and filter already-owned IDs
@@ -85,9 +110,13 @@ func prepare() -> Dictionary:
 	# Check the actual award before addition (avoids signed 64-bit wrap).
 	if _starting_gold > MAX_INT - award:
 		return rejected
-	var choice := RunCardRewardChoice.from_seeded_pool(
-		staged_rng, _party_ids, _candidate_ids)
-	if not choice.is_valid():
+	var choice: RunCardRewardChoice
+	if _candidate_mode == "records":
+		choice = _weighted_choice(staged_rng)
+	else:
+		choice = RunCardRewardChoice.from_seeded_pool(
+			staged_rng, _party_ids, _candidate_ids)
+	if choice == null or not choice.is_valid():
 		return rejected
 	var trinket_drop_id := ""
 	if _elite:
@@ -101,6 +130,20 @@ func prepare() -> Dictionary:
 	_prepared = true
 	_rng.state = staged_rng.state
 	return _prepared_response()
+
+
+## Weighted D2-1 selection on the same staged stream as the gold roll, so a
+## failure here leaves the run RNG exactly where it was. Returns null on a
+## rejected selection so prepare can fail closed.
+func _weighted_choice(staged_rng: RandomNumberGenerator) -> RunCardRewardChoice:
+	var generated: Dictionary = RunPoolCardRewardOffers.generate(
+		staged_rng, _party_ids, _candidate_ids)
+	if not generated.get("ok", false):
+		return null
+	var copied_party: Array[String] = []
+	for party_id in _party_ids:
+		copied_party.append(party_id)
+	return RunCardRewardChoice.new(generated["offers"], copied_party)
 
 
 ## Empty String means explicit skip. A stale offered ID leaves the choice open.
