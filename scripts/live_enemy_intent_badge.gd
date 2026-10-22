@@ -6,6 +6,14 @@ const CREAM := Color("#e9dfcb")
 const SLATE := Color("#34444b")
 const RUST := Color("#a55f4b")
 const MUTED := Color("#777a76")
+## Compact sewn tag: the roster mounts it with a viewport-safe margin inside the intent band.
+const BADGE_WIDTH := 192.0
+const BADGE_HEIGHT := 28.0
+## Drawn patch bounds in this badge's own coordinates; the authored patch art spans
+## y=3..42, which the draw scales into this inset box so no stitch touches the edge.
+const PATCH_WIDTH := 55.0
+const PATCH_INSET := 2.0
+const PATCH_CONTENT_HEIGHT := 39.0
 
 var source_position := 0
 var icon_mode := "none"
@@ -15,8 +23,15 @@ var amount := 0
 var target_position := 0
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	custom_minimum_size = Vector2(192, 36)
+	focus_mode = Control.FOCUS_NONE
+	custom_minimum_size = Vector2(BADGE_WIDTH, BADGE_HEIGHT)
 	queue_redraw()
+
+
+## Complete stitched patch this badge draws, used by mounted layout checks.
+func patch_rect() -> Rect2:
+	var height := maxf(1.0, size.y - PATCH_INSET * 2.0)
+	return Rect2(2.0, PATCH_INSET, PATCH_WIDTH, height)
 
 
 func show_intent(action: Dictionary, slain: bool) -> void:
@@ -64,7 +79,11 @@ func _update_visuals() -> void:
 
 
 func _draw() -> void:
-	draw_set_transform(Vector2.ZERO, 0, Vector2(1, 0.8))
+	var patch := patch_rect()
+	# Uniform-height fit of the authored patch art: the stitched outline, icon and
+	# caption all stay inside the visible tag instead of overflowing the top edge.
+	var scale_y := patch.size.y / PATCH_CONTENT_HEIGHT
+	draw_set_transform(Vector2(0.0, patch.position.y - 3.0 * scale_y), 0, Vector2(1.0, scale_y))
 	# Torn-edged paper patch with a hand-stitched perimeter and distinct silhouettes.
 	var paper := PackedVector2Array([
 		Vector2(3, 5), Vector2(52, 3), Vector2(57, 10),
@@ -105,6 +124,6 @@ func _draw() -> void:
 	# Draw text on this noninteractive canvas rather than inserting another Label
 	# into the legacy two-Label enemy roster (its other live consumers expect two).
 	draw_set_transform(Vector2.ZERO)
-	draw_string(get_theme_default_font(), Vector2(62, 24), readable_text,
+	draw_string(get_theme_default_font(), Vector2(62, patch.end.y - 5.0), readable_text,
 		HORIZONTAL_ALIGNMENT_LEFT, size.x - 64, 14,
 		MUTED if icon_mode in ["slain", "none"] else CREAM)
