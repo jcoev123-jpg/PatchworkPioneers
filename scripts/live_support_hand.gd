@@ -25,6 +25,7 @@ var backing: Control
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
+var _energy_cards := CombatPoolEnergyCards.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 
 
@@ -195,8 +196,11 @@ func _is_block_card(card_id: String) -> bool:
 		and (card_id == base_id or card_id == base_id + "_plus")
 
 
+func _is_energy_card(card_id: String) -> bool:
+	return CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id)
+
 func _is_actionable(card_id: String) -> bool:
-	return card_id in SUPPORT_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id)
+	return card_id in SUPPORT_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id)
 
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
@@ -205,6 +209,10 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		if _block_cards == null:
 			return false
 		return bool(_block_cards.play_card(deck, party, card_id, position).get("ok", false))
+	if _is_energy_card(card_id):
+		if _energy_cards == null:
+			return false
+		return bool(_energy_cards.play_card(deck, party, card_id, 0))
 	return _play != null and _play.play_card(deck, party, card_id, position)
 
 
@@ -220,6 +228,7 @@ func _sync_battle() -> void:
 		_party = app.party
 		_play = CombatStarterSupportPlay.new()
 		_block_cards = CombatWardenPoolBlockCards.new()
+		_energy_cards = CombatPoolEnergyCards.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
 			var state: Dictionary = carry._wardrobe.get_snapshot()
@@ -353,6 +362,14 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
 	if _is_block_card(card_id):
+		# Presentation preflight only: the pool resolver revalidates and commits.
+		if app._battle_closed or not deck.turn_active or app.battle_result == null \
+			or not app.battle_result.can_continue() or app.battle_result._party != party \
+			or app.battle_result._enemies != app.enemies or not party.is_valid() \
+			or app.enemies == null or not app.enemies.is_valid() \
+			or party.is_defeated() or app.enemies.is_victorious():
+			return false
+	if _is_energy_card(card_id):
 		# Presentation preflight only: the pool resolver revalidates and commits.
 		if app._battle_closed or not deck.turn_active or app.battle_result == null \
 			or not app.battle_result.can_continue() or app.battle_result._party != party \
@@ -599,3 +616,4 @@ func _clear() -> void:
 	_party = null
 	_play = null
 	_block_cards = null
+	_energy_cards = null

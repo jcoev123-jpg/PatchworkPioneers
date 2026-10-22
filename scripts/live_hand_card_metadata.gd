@@ -11,6 +11,8 @@ const INK := Color("#3d3440")
 
 var _catalog := StarterCards.new()
 var _warden_pool := WardenPoolCards.new()
+var _tinker_pool := TinkerPoolCards.new()
+var _seamstress_pool := SeamstressPoolCards.new()
 var _targeting := CombatAttackTargeting.new()
 var _stitched_preview := CombatStitchedTargetPreview.new()
 var _on_hit := CombatOnHitStatuses.new()
@@ -36,7 +38,21 @@ func _definition(card_id: String) -> Dictionary:
 	if not starter.is_empty():
 		return starter
 	# Reward-pool records are a separate authored catalog; lookup stays read-only.
-	return _warden_pool.get_definition(card_id)
+	var warden_definition := _warden_pool.get_definition(card_id)
+	if not warden_definition.is_empty():
+		return warden_definition
+	# Only the four D2-1 pool energy IDs are advertised from the Tinker/Seamstress
+	# catalogs; other pool effects stay unadvertised.
+	if CombatPoolEnergyCards.SUPPORTED_IDS.has(card_id):
+		if card_id.begins_with("tinker_"):
+			var tinker_definition := _tinker_pool.get_definition(card_id)
+			if not tinker_definition.is_empty():
+				return tinker_definition
+		elif card_id.begins_with("seamstress_"):
+			var seamstress_definition := _seamstress_pool.get_definition(card_id)
+			if not seamstress_definition.is_empty():
+				return seamstress_definition
+	return {}
 
 
 ## Public read-only lookup shared by the mounted hand admission checks.
@@ -94,6 +110,12 @@ func base_effect_text(card_id: String) -> String:
 		effect_parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"]))
 	if effects.has("draw"):
 		effect_parts.append("BASE draw %d card" % int(effects["draw"]))
+	if effects.has("gain_energy"):
+		effect_parts.append("BASE gain %d energy" % int(effects["gain_energy"]))
+	if effects.has("energy") and not effects.has("gain_energy"):
+		effect_parts.append("BASE gain %d energy" % int(effects["energy"]))
+	if effects.has("self_hp_loss"):
+		effect_parts.append("BASE self-damage %d" % int(effects["self_hp_loss"]))
 	var on_hit := CombatOnHitStatuses.new().status_for_confirmed_hit(card_id, true)
 	for status in ["bleed", "weak"]:
 		if not on_hit.has(status):
@@ -403,6 +425,12 @@ func _rules(id: String) -> String:
 		parts.append("heal %d HP" % int(effects["heal"]))
 	if effects.has("draw"):
 		parts.append("draw %d card" % int(effects["draw"]))
+	if effects.has("gain_energy"):
+		parts.append("gain %d energy" % int(effects["gain_energy"]))
+	if effects.has("energy") and not effects.has("gain_energy"):
+		parts.append("gain %d energy" % int(effects["energy"]))
+	if effects.has("self_hp_loss"):
+		parts.append("self-damage %d" % int(effects["self_hp_loss"]))
 	var statuses: Dictionary = _on_hit.status_for_confirmed_hit(id, true)
 	for status in ["bleed", "weak"]:
 		if statuses.has(status):
