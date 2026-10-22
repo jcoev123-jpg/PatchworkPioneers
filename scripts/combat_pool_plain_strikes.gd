@@ -9,10 +9,24 @@ const SUPPORTED_IDS := [
 ]
 
 var _attacks := CombatStatusAttacks.new()
+var _pinned: CombatPinned = null
+
+
+func _init(pinned: CombatPinned = null) -> void:
+	_pinned = pinned
+
+
+func set_pinned(pinned: CombatPinned) -> void:
+	_pinned = pinned
+
+
+func get_pinned() -> CombatPinned:
+	return _pinned
 
 
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int) -> Dictionary:
+		card_id: String, target_position: int, pinned: CombatPinned = null) -> Dictionary:
+	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
 		return _failure()
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
@@ -42,6 +56,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var block_amount: Variant = effects.get("block", 0)
 	if not damage is int or damage <= 0 or not block_amount is int:
 		return _failure()
+	if damage > CombatStatuses.MAX_INT - 5:
+		return _failure()
 	if warden_card and block_amount <= 0:
 		return _failure()
 	if not warden_card and (effects.has("block") or block_amount != 0):
@@ -51,7 +67,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# any debit or hit. Keep their original slots after other actors fall.
 	var heroes: Array[Dictionary] = party.get_heroes()
 	var foes: Array[Dictionary] = enemies.get_enemies()
-	if not CombatStatusTurnBatch.new().tick_side("heroes", heroes)["ok"] 			or not CombatStatusTurnBatch.new().tick_side("enemies", foes)["ok"]:
+	if not CombatStatusTurnBatch.new().tick_side("heroes", heroes)["ok"] \
+			or not CombatStatusTurnBatch.new().tick_side("enemies", foes)["ok"]:
 		return _failure()
 	var owner: Dictionary = {}
 	for hero in heroes:
@@ -77,8 +94,13 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not deck.try_spend_energy(cost):
 		return _failure()
 	deck.discard_played(card_id)
-	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position, damage,
+	var pin_bonus: int = 0
+	if active_pinned != null:
+		pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, owner_id)
+	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position, damage + pin_bonus,
 		owner.get("statuses", {}), target.get("statuses", {}))
+	if active_pinned != null and hit.get("ok", false):
+		active_pinned.consume_after_attack(target_position, owner_id, true)
 	var block_deltas: Dictionary = {}
 	if warden_card:
 		party.gain_block(owner_position, block_amount)
