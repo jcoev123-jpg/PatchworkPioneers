@@ -19,6 +19,9 @@ const FIGHT_ENCOUNTER_PATHS := {
 	"guard_counterattack": "res://data/encounters/guard_counterattack.json",
 	"ragling_rearline_feint": "res://data/encounters/ragling_rearline_feint.json",
 }
+## One stage height shared with the roster presenter, so both lineups stay the same size.
+const STAGE_ROSTER := preload("res://scripts/live_enemy_roster.gd")
+const STAGE_ACTOR_HEIGHT := STAGE_ROSTER.STAGE_ACTOR_HEIGHT
 
 @export var run_seed: int = 42
 @export_file("*.json") var starter_deck_path: String = STARTER_DECK_PATH
@@ -831,23 +834,30 @@ func _normalize_schedule_number(record: Dictionary, field: String, minimum: int 
 func _build_battle() -> void:
 	battle_view = MarginContainer.new()
 	battle_view.set_anchors_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "top", "right", "bottom"]:
+	for side in ["left", "right"]:
 		battle_view.add_theme_constant_override("margin_" + side, 32)
+	# The side-view stage owns the top of the screen edge to edge; the hand and action
+	# bar keep their own rows so nothing is pushed below the 720 px viewport.
 	for side in ["top", "bottom"]:
-		battle_view.add_theme_constant_override("margin_" + side, 8)
+		battle_view.add_theme_constant_override("margin_" + side, 0)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
-	# Compact rows keep the hero meters, five 160 px cards and the action row
-	# inside 1280x720 even when every meter shows status and Bleed lines.
-	column.add_theme_constant_override("separation", 6)
+	# Compact rows keep the large actor stage, the hero meters, five cards and the
+	# action row inside 1280x720 even when every meter shows status and Bleed lines.
+	column.add_theme_constant_override("separation", 2)
 	battle_view.add_child(column)
 	hero_view = HBoxContainer.new()
+	hero_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	hero_view.add_theme_constant_override("separation", 16)
 	column.add_child(hero_view)
 	for index in range(CombatParty.PARTY_SIZE):
 		var panel := PanelContainer.new()
-		panel.custom_minimum_size = Vector2(0, 100)
+		panel.custom_minimum_size = Vector2(0, STAGE_ACTOR_HEIGHT)
 		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		# The battle stage shows unboxed actors: drop the shared framed panel here only,
+		# so the theme keeps its boxed look on every other screen.
+		panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 		hero_view.add_child(panel)
 		hero_panels.append(panel)
 		var label := Label.new()
@@ -882,7 +892,7 @@ func _build_battle() -> void:
 	previews.add_child(heading)
 	for pair in [1, 2]:
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(240, 40)
+		button.custom_minimum_size = Vector2(240, 32)
 		previews.add_child(button)
 		swap_preview_buttons.append(button)
 		button.pressed.connect(_preview_position_swap.bind(pair, button))
@@ -898,8 +908,9 @@ func _build_battle() -> void:
 	counts_and_preview.add_child(swap_preview_cue)
 	hand_view = HBoxContainer.new()
 	hand_view.name = "SharedHand"
-	hand_view.custom_minimum_size.y = 140
-	hand_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	hand_view.custom_minimum_size.y = 120
+	# The stage above owns the free vertical space; the card row keeps its own height.
+	hand_view.size_flags_vertical = Control.SIZE_FILL
 	hand_view.add_theme_constant_override("separation", 16)
 	hand_view.sort_children.connect(_fan_hand, CONNECT_DEFERRED)
 	column.add_child(hand_view)
@@ -2741,7 +2752,7 @@ func _refresh_hand() -> void:
 		var panel := PanelContainer.new()
 		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		panel.custom_minimum_size.y = 160
+		panel.custom_minimum_size.y = 120
 		hand_view.add_child(panel)
 		var label := Label.new()
 		label.text = card_id

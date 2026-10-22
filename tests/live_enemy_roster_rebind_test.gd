@@ -1,6 +1,7 @@
 extends SceneTree
 ## Mounted presenter-only rebinding; battle routing remains outside this contract.
 
+const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
 var failures: Array[String] = []
 var checks := 0
 
@@ -69,6 +70,7 @@ func _mounted(app, presenter) -> bool:
 		"exactly one wrapper and panel in the unchanged battle")
 	_check(app.hero_view.get_parent() == presenter.battle_row and presenter.battle_row.get_child_count() == 2,
 		"app-owned hero targets are one side of the wrapper")
+	_assert_stage(app, presenter)
 	var labels: Array = presenter.panel.find_children("EnemyState*", "Label", true, false)
 	var badges: Array = presenter.panel.find_children("EnemyIntent*", "Control", true, false)
 	var count_matches: bool = labels.size() == roster.size() and badges.size() == roster.size() \
@@ -92,6 +94,12 @@ func _mounted(app, presenter) -> bool:
 		_check(label == labels[index] and label.is_visible_in_tree() and label.name == "EnemyState%d" % enemy.position
 			and label.text == "Enemy %d - %s" % [enemy.position, enemy.name],
 			"replacement target label has exact identity and position")
+		var puppet := presenter.panel.find_child("EnemyPuppet%d" % enemy.position, true, false) as Control
+		_check(is_instance_valid(puppet) and label.get_parent() == puppet
+			and label.get_global_rect().is_equal_approx(puppet.get_global_rect())
+			and label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and label.focus_mode == Control.FOCUS_NONE,
+			"target label is the pointer-inert aiming region over its own actor")
 		var meter = meters.get_child(3 + index)
 		_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
 			and meter.block_text.is_visible_in_tree()
@@ -106,7 +114,74 @@ func _mounted(app, presenter) -> bool:
 			and badge.amount == action.amount and badge.target_position == action.target_position
 			and badge.readable_text == "ATK %d > H%d" % [action.amount, action.target_position],
 			"replacement badge announces compatible authoritative source, amount and target")
+		_check(is_instance_valid(puppet) and badge.get_global_rect().size.y >= 36.0
+			and badge.get_global_rect().position.y <= puppet.get_global_rect().position.y + 0.01,
+			"intent badge stays above the replacement actor inside the stage band")
 	return true
+
+
+## The unboxed stage contract: one shared large actor height, no frames, one quilt backdrop.
+func _assert_stage(app, presenter) -> void:
+	_check(ROSTER_ART.STAGE_ACTOR_HEIGHT >= 180, "shared stage minimum is a large character height")
+	_check(ROSTER_ART.STAGE_INTENT_BAND > 0.0 and ROSTER_ART.STAGE_INTENT_BAND < ROSTER_ART.STAGE_ACTOR_HEIGHT,
+		"stage reserves only a small band above the art for the intent badge")
+	var hero_height := 0.0
+	var enemy_height := 0.0
+	for puppet in presenter._puppets:
+		_check(puppet.custom_minimum_size.y == ROSTER_ART.STAGE_ACTOR_HEIGHT
+			and puppet.size.y >= ROSTER_ART.STAGE_ACTOR_HEIGHT,
+			"mounted puppet keeps the shared large stage height: " + puppet.name)
+		if puppet.facing > 0.0:
+			hero_height = puppet.size.y
+		else:
+			enemy_height = puppet.size.y
+		var texture: Texture2D = puppet.current_texture()
+		if texture == null:
+			_check(puppet.art_band().size.y >= 100.0,
+				"art-missing actor keeps a large drawn fallback stage: " + puppet.name)
+			continue
+		var rect: Rect2 = puppet.image_rect()
+		_check(rect.size.y >= 120.0 and rect.size.y <= puppet.art_band().size.y + 0.01,
+			"shipped art fills the enlarged stage: " + puppet.name)
+		_check(is_equal_approx(rect.size.x / rect.size.y,
+			float(texture.get_width()) / float(texture.get_height())),
+			"enlarged art keeps its own proportions: " + puppet.name)
+		_check(rect.position.y >= ROSTER_ART.STAGE_INTENT_BAND - 0.01
+			and rect.end.y <= puppet.size.y + 0.01,
+			"enlarged art stays below the badge band and inside its stage slot: " + puppet.name)
+	_check(hero_height >= 180.0 and enemy_height >= 180.0 and is_equal_approx(hero_height, enemy_height),
+		"heroes and enemies share the same actual stage height")
+	_check(app.hero_view.get_global_rect().end.x <= presenter.panel.get_global_rect().position.x
+		and not app.hero_view.get_global_rect().intersects(presenter.panel.get_global_rect()),
+		"heroes stay left of the enemy lineup")
+	_check(presenter.panel.get_theme_stylebox("panel") is StyleBoxEmpty,
+		"enemy roster draws no rectangular box")
+	for slot in app.hero_panels:
+		_check(slot.get_theme_stylebox("panel") is StyleBoxEmpty,
+			"hero stage slot draws no rectangular box")
+	_check(app.theme != null and app.theme.get_stylebox("panel", "PanelContainer") is StyleBoxFlat,
+		"the shared theme keeps its framed panel for other screens")
+	_check(is_instance_valid(presenter.backdrop) and presenter.backdrop.name == "BattleStageBackdrop"
+		and presenter.backdrop.get_parent() == app.battle_view and presenter.backdrop.get_index() == 0
+		and app.battle_view.find_children("BattleStageBackdrop", "Control", true, false).size() == 1,
+		"exactly one quilt stage is drawn behind the actors")
+	if not is_instance_valid(presenter.backdrop):
+		return
+	_check(presenter.backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and presenter.backdrop.focus_mode == Control.FOCUS_NONE,
+		"quilt stage never takes pointer or keyboard input")
+	var row: Rect2 = presenter.battle_row.get_global_rect()
+	_check(presenter.backdrop.stage_rect().size.is_equal_approx(row.size)
+		and presenter.backdrop.stage_rect().position.is_equal_approx(
+			row.position - presenter.backdrop.get_global_rect().position),
+		"quilt stage follows the real actor row")
+	_check(presenter.battle_row.get_global_rect().end.y <= app.hand_view.get_global_rect().position.y,
+		"quilt stage stays above the hand")
+	for control in [presenter.battle_row, presenter.panel, app.hand_view,
+			app.end_turn_button, app.return_button]:
+		var rect: Rect2 = control.get_global_rect()
+		_check(rect.size.x > 0.0 and rect.size.y > 0.0 and Rect2(0, 0, 1280, 720).encloses(rect),
+			"large stage keeps this control unclipped at 1280x720: " + control.name)
 
 
 func _run() -> void:
@@ -129,6 +204,19 @@ func _run() -> void:
 		app.free()
 		_finish()
 		return
+	# The seeded starter fight is the real shipped-art battle this stage must present.
+	_assert_stage(app, presenter)
+	var seeded_art := 0
+	for puppet in presenter._puppets:
+		if puppet.current_texture() == null:
+			continue
+		seeded_art += 1
+		_check(puppet.image_rect().size.y >= 180.0,
+			"seeded battle draws shipped art at the full stage height: " + puppet.name)
+	_check(seeded_art == presenter._puppets.size(), "every seeded actor really binds its shipped art")
+	var first_backdrop_id: int = presenter.backdrop.get_instance_id() \
+		if is_instance_valid(presenter.backdrop) else 0
+	_check(first_backdrop_id != 0, "real seeded battle mounts the quilt stage")
 	var battle = app.battle_view
 	var heroes = app.hero_view
 	var slots: Array = app.hero_panels.duplicate()
@@ -173,10 +261,14 @@ func _run() -> void:
 		if not _mounted(app, presenter):
 			break
 		var stable_ids := _ids(_controls(presenter))
+		var stable_backdrop: int = presenter.backdrop.get_instance_id()
 		for refresh in range(4):
 			app._refresh_enemy_roster()
 			await process_frame
 		_check(_ids(_controls(presenter)) == stable_ids, "unchanged models preserve wrapper, panel, labels and badges")
+		_check(is_instance_valid(presenter.backdrop) and presenter.backdrop.get_instance_id() == stable_backdrop
+			and battle.find_children("BattleStageBackdrop", "Control", true, false).size() == 1,
+			"repeated frame refresh never duplicates the quilt stage")
 		_check(_snapshot(app, models, schedules) == before, "repeated frame refresh consumes no state or RNG")
 		_mounted(app, presenter)
 	# A different hero row on the same battle must also invalidate the fast path.
@@ -201,6 +293,8 @@ func _run() -> void:
 	_mounted(app, presenter)
 	old = _controls(presenter)
 	old_ids = _ids(old)
+	var current_backdrop_id: int = presenter.backdrop.get_instance_id() \
+		if is_instance_valid(presenter.backdrop) else 0
 	var active_model = app.enemies
 	app.enemies = null
 	before = _snapshot(app, models, schedules)
@@ -208,11 +302,14 @@ func _run() -> void:
 	_detached(old)
 	_check(presenter.enemies == null and presenter.panel == null and presenter.battle_row == null
 		and presenter._labels.is_empty() and presenter._badges.is_empty(), "null model clears stale roster")
+	_check(presenter.backdrop == null and battle.find_children("BattleStageBackdrop", "Control", true, false).is_empty(),
+		"null model clears the quilt stage with the roster")
 	_check(heroes.get_parent() == hero_parent and heroes.get_index() == hero_index
 		and heroes.size_flags_horizontal == hero_flags and app.hero_panels == slots,
 		"null cleanup returns identical app-owned hero targets with original layout")
 	await process_frame
 	_freed(old_ids)
+	_check(not is_instance_id_valid(current_backdrop_id), "cleared quilt stage is freed, not reused")
 	_check(_snapshot(app, models, schedules) == before, "null observation preserves surviving services and RNG")
 	_check(battle.find_children("BattleActorSides", "HBoxContainer", true, false).is_empty()
 		and battle.find_children("EnemyRosterPanel", "PanelContainer", true, false).is_empty(), "null leaves no stale wrappers")
@@ -221,19 +318,28 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	_mounted(app, presenter)
+	_check(is_instance_valid(presenter.backdrop) and presenter.backdrop.get_instance_id() != current_backdrop_id,
+		"remount builds one fresh quilt stage instead of reusing the removed one")
 	old_ids = _ids(_controls(presenter))
 	var hero_id: int = heroes.get_instance_id()
+	var returned_backdrop_id: int = presenter.backdrop.get_instance_id()
 	app.return_button.pressed.emit()
-	_check(presenter.enemies == null and presenter.panel == null and presenter.battle_row == null,
-		"return-to-title immediately clears rebound presentation")
+	_check(presenter.enemies == null and presenter.panel == null and presenter.battle_row == null
+		and presenter.backdrop == null, "return-to-title immediately clears rebound presentation and stage")
 	await process_frame
 	_freed(old_ids)
+	_check(not is_instance_id_valid(returned_backdrop_id), "return frees the quilt stage")
 	_check(not is_instance_id_valid(hero_id) and app.title_view.is_visible_in_tree(), "title frees app-owned old battle heroes")
 	_fixture_start(app)
 	await process_frame
 	await process_frame
 	_check(app.enemies != null and is_instance_valid(presenter.panel) and presenter.enemies == app.enemies
 		and app.enemies != active_model and app.hero_view != null, "restart mounts fresh authoritative roster and heroes")
+	_check(is_instance_valid(presenter.backdrop) and presenter.backdrop.get_parent() == app.battle_view
+		and presenter.backdrop.get_index() == 0
+		and app.battle_view.find_children("BattleStageBackdrop", "Control", true, false).size() == 1,
+		"restart contains exactly one quilt stage, never a duplicated decoration")
+	_assert_stage(app, presenter)
 	_check(presenter._labels.size() == 2 and presenter._badges.size() == 2
 		and presenter._labels[0].text == "Enemy 1 - Ragling", "restart contains original starter identities only")
 	app.return_button.pressed.emit()

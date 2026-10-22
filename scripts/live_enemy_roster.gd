@@ -19,8 +19,25 @@ const ACTOR_ART := {
 	"patchwork_behemoth": "boss/patchwork_behemoth",
 }
 
+## One large stage for both sides: heroes and enemies share this minimum actor height,
+## so neither lineup is drawn smaller than the other.
+const STAGE_ACTOR_HEIGHT := 180
+## Band above the art on both sides: enemies keep their intent badge there, heroes keep
+## the same empty band so the two lineups render their art at identical scale.
+const STAGE_INTENT_BAND := 36.0
+const STAGE_FELT := Color("37423f")
+const STAGE_HEM := Color("2a3431")
+const STAGE_THREAD := Color("c9b996")
+const STAGE_PATCHES := [
+	[Color("414c48"), [Vector2(0.0, 0.0), Vector2(0.30, 0.05), Vector2(0.27, 0.60), Vector2(0.0, 0.55)]],
+	[Color("4d5a54"), [Vector2(0.36, 0.0), Vector2(0.68, 0.04), Vector2(0.66, 0.62), Vector2(0.33, 0.57)]],
+	[Color("594c48"), [Vector2(0.74, 0.03), Vector2(1.0, 0.0), Vector2(1.0, 0.58), Vector2(0.71, 0.62)]],
+]
+const STAGE_HEM_HEIGHT := 14.0
+
 var enemies: CombatEnemies
 var panel: PanelContainer
+var backdrop: Control
 var _battle: Control
 var _labels: Array[Label] = []
 var _badges: Array[LiveEnemyIntentBadge] = []
@@ -52,11 +69,16 @@ class Puppet extends Control:
 	var idle_texture: Texture2D
 	## Held for the future committed attack event; nothing may switch to it yet.
 	var attack_texture: Texture2D
+	## Presenter-supplied stage metrics, so heroes and enemies are drawn at one scale.
+	var stage_height := 180.0
+	var intent_band := 36.0
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		# Enemies keep the badge row and terminal labels inside 1280x720; heroes fill their panel.
-		custom_minimum_size = Vector2(0, 96 if facing > 0.0 else 42)
+		focus_mode = Control.FOCUS_NONE
+		# Both sides share one large stage height; the row may grow into free space.
+		custom_minimum_size = Vector2(0, stage_height)
+		size_flags_vertical = Control.SIZE_EXPAND_FILL
 		resized.connect(queue_redraw)
 
 	## Binds one authoritative actor ID and its loaded art; a missing texture keeps the fallback.
@@ -69,14 +91,20 @@ class Puppet extends Control:
 	func current_texture() -> Texture2D:
 		return idle_texture
 
+	## The art lives below the shared intent band; the band is empty on the hero side.
+	func art_band() -> Rect2:
+		return Rect2(0.0, intent_band, size.x, maxf(0.0, size.y - intent_band))
+
 	## Uniform, aspect-preserving placement inside this input-inert Control.
 	func image_rect() -> Rect2:
 		var texture := current_texture()
-		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0:
+		var band := art_band()
+		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0 \
+				or band.size.x <= 0.0 or band.size.y <= 0.0:
 			return Rect2()
-		var fit := minf(size.x / float(texture.get_width()), size.y / float(texture.get_height()))
+		var fit := minf(band.size.x / float(texture.get_width()), band.size.y / float(texture.get_height()))
 		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
-		return Rect2((size - drawn) / 2.0, drawn)
+		return Rect2(band.position + (band.size - drawn) / 2.0, drawn)
 
 	func _draw() -> void:
 		var texture := current_texture()
@@ -97,8 +125,12 @@ class Puppet extends Control:
 
 	func _draw_fallback() -> void:
 		var ink := Color("ecdfbd")
-		var puppet_scale := clampf((size.y - 6.0) / 80.0, 0.45, 1.2)
-		draw_set_transform(Vector2(size.x / 2, size.y / 2), -0.7 * facing if fallen else 0.0, Vector2(facing, 1) * puppet_scale)
+		var band := art_band()
+		if band.size.x <= 0.0 or band.size.y <= 0.0:
+			return
+		var puppet_scale := clampf(band.size.y / 130.0, 0.45, 1.8)
+		draw_set_transform(Vector2(size.x / 2, band.position.y + band.size.y / 2),
+			-0.7 * facing if fallen else 0.0, Vector2(facing, 1) * puppet_scale)
 		var cloth := felt.darkened(0.4) if fallen else felt
 		var body := PackedVector2Array([Vector2(-20, -13), Vector2(14, -15), Vector2(25, 25), Vector2(-26, 28)])
 		draw_colored_polygon(body, cloth)
@@ -122,6 +154,55 @@ class Puppet extends Control:
 		draw_set_transform(Vector2.ZERO)
 
 
+## Deterministic quilt stage drawn behind the actor row: sewn patches plus a stitched hem
+## for the ground. Presentation only, so it never takes pointer or keyboard input.
+class StageBackdrop extends Control:
+	var stage_row: Control
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+		if is_instance_valid(stage_row):
+			stage_row.item_rect_changed.connect(queue_redraw)
+
+	## The actor row in this Control's own coordinates, or empty while there is no stage.
+	func stage_rect() -> Rect2:
+		if not is_instance_valid(stage_row) or not stage_row.is_visible_in_tree():
+			return Rect2()
+		var row := stage_row.get_global_rect()
+		if row.size.x <= 0.0 or row.size.y <= 0.0:
+			return Rect2()
+		return Rect2(row.position - get_global_rect().position, row.size)
+
+	func _draw() -> void:
+		var row := stage_rect()
+		if row.size.x <= 0.0 or row.size.y <= 0.0:
+			return
+		var field := Rect2(row.position, row.size + Vector2(0.0, STAGE_HEM_HEIGHT))
+		draw_rect(field, STAGE_FELT)
+		for entry in STAGE_PATCHES:
+			_patch(field, entry[1], entry[0])
+		# Stitched hem as the ground the actors stand on.
+		var hem := Rect2(field.position.x, field.end.y - STAGE_HEM_HEIGHT, field.size.x, STAGE_HEM_HEIGHT)
+		draw_rect(hem, STAGE_HEM)
+		draw_dashed_line(Vector2(hem.position.x + 10.0, hem.position.y),
+			Vector2(hem.end.x - 10.0, hem.position.y), STAGE_THREAD, 2.0, 9.0)
+		var x := hem.position.x + 18.0
+		while x < hem.end.x - 12.0:
+			draw_line(Vector2(x, hem.position.y + 3.0), Vector2(x + 7.0, hem.end.y - 3.0),
+				STAGE_THREAD, 1.5, true)
+			x += 26.0
+
+	func _patch(field: Rect2, fractions: Array, fill: Color) -> void:
+		var points := PackedVector2Array()
+		for fraction: Vector2 in fractions:
+			points.append(field.position + field.size * fraction)
+		draw_colored_polygon(points, fill)
+		for index in range(points.size()):
+			draw_dashed_line(points[index], points[(index + 1) % points.size()], STAGE_THREAD, 1.0, 6.0)
+
+
 func _ready() -> void:
 	# The parent connects its Start Run handler after child _ready, so observe deferred.
 	get_parent().start_run_requested.connect(_sync_battle, CONNECT_DEFERRED)
@@ -139,7 +220,7 @@ func _sync_battle() -> void:
 		_clear()
 		return
 	if _battle == app.battle_view and enemies == app.enemies and _heroes == app.hero_view \
-			and is_instance_valid(battle_row) and is_instance_valid(panel):
+			and is_instance_valid(battle_row) and is_instance_valid(panel) and is_instance_valid(backdrop):
 		return
 	_clear()
 	_battle = app.battle_view
@@ -159,6 +240,8 @@ func _sync_battle() -> void:
 		var puppet := Puppet.new()
 		puppet.name = "HeroPuppet%d" % (hero_panel.get_index() + 1)
 		puppet.slot = hero_panel.get_index() + 1
+		puppet.stage_height = STAGE_ACTOR_HEIGHT
+		puppet.intent_band = STAGE_INTENT_BAND
 		puppet.felt = [Color("719796"), Color("93839e"), Color("b49a55")][puppet.slot - 1]
 		hero_panel.add_child(puppet)
 		_puppets.append(puppet)
@@ -166,6 +249,8 @@ func _sync_battle() -> void:
 	battle_row.name = "BattleActorSides"
 	battle_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	battle_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# The stage is the row that grows when the window has spare height.
+	battle_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	battle_row.add_theme_constant_override("separation", 24)
 	_hero_parent.add_child(battle_row)
 	_hero_parent.move_child(battle_row, _hero_index)
@@ -176,6 +261,8 @@ func _sync_battle() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_stretch_ratio = enemies.get_enemies().size() / 3.0
+	# Unbox the lineup locally: the shared Theme keeps its framed panel for other screens.
+	panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	var rows := HBoxContainer.new()
 	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rows.add_theme_constant_override("separation", 8)
@@ -184,35 +271,56 @@ func _sync_battle() -> void:
 		var column := VBoxContainer.new()
 		column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		column.add_theme_constant_override("separation", 2)
+		column.add_theme_constant_override("separation", 0)
 		rows.add_child(column)
+		var puppet := Puppet.new()
+		puppet.name = "EnemyPuppet%d" % enemy.position
+		puppet.facing = -1.0
+		puppet.slot = enemy.position
+		puppet.stage_height = STAGE_ACTOR_HEIGHT
+		puppet.intent_band = STAGE_INTENT_BAND
+		puppet.felt = [Color("b78373"), Color("8b9470"), Color("93839e")][enemy.position - 1]
+		column.add_child(puppet)
+		_puppets.append(puppet)
+		# The authoritative target label overlays its own actor as an inert nameplate:
+		# aiming anywhere on that enemy still selects that enemy, and the text stays exact.
 		var label := Label.new()
 		label.name = "EnemyState%d" % enemy.position
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.focus_mode = Control.FOCUS_NONE
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		# The separate SLAIN badge already announces a fallen source; capping the label at two
 		# lines keeps a three-enemy roster inside 1280x720 without changing its full text.
 		label.max_lines_visible = 2
 		label.custom_minimum_size.x = 0
 		label.add_theme_font_size_override("font_size", 18)
-		column.add_child(label)
+		# Cream ink with a dark outline stays readable over the actor art.
+		label.add_theme_constant_override("outline_size", 6)
+		label.add_theme_color_override("font_outline_color", Color("1a1d20"))
+		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		puppet.add_child(label)
 		_labels.append(label)
-		var puppet := Puppet.new()
-		puppet.name = "EnemyPuppet%d" % enemy.position
-		puppet.facing = -1.0
-		puppet.slot = enemy.position
-		puppet.felt = [Color("b78373"), Color("8b9470"), Color("93839e")][enemy.position - 1]
-		column.add_child(puppet)
-		_puppets.append(puppet)
 		var badge := LiveEnemyIntentBadge.new()
 		badge.name = "EnemyIntent%d" % enemy.position
 		badge.source_position = enemy.position
-		column.add_child(badge)
+		puppet.add_child(badge)
+		# Intent stays above the enemy actor, inside the shared stage band.
+		badge.anchor_right = 1.0
+		badge.offset_left = 0.0
+		badge.offset_right = 0.0
+		badge.offset_top = 0.0
+		badge.offset_bottom = STAGE_INTENT_BAND
 		_badges.append(badge)
 	panel.custom_minimum_size.x = 300
 	battle_row.add_child(panel)
+	# One deterministic quilt stage behind both lineups, drawn before any actor.
+	backdrop = StageBackdrop.new()
+	backdrop.name = "BattleStageBackdrop"
+	backdrop.stage_row = battle_row
+	_battle.add_child(backdrop)
+	_battle.move_child(backdrop, 0)
 	_refresh()
 
 
@@ -311,4 +419,10 @@ func _clear() -> void:
 			battle_row.get_parent().remove_child(battle_row)
 		battle_row.queue_free()
 	battle_row = null
+	# The quilt stage belongs to this battle only; a later fight builds a fresh one.
+	if is_instance_valid(backdrop):
+		if backdrop.get_parent() != null:
+			backdrop.get_parent().remove_child(backdrop)
+		backdrop.queue_free()
+	backdrop = null
 	_battle = null
