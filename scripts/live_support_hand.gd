@@ -3,6 +3,10 @@ extends Node
 
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up"]
+const TABLE_ID := "SupportTableBacking"
+const TABLE_HELP := "Sewing table: Up/Down, Enter plays"
+const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space to play it. " \
+	+ "Up / Down or Tab moves between cards. Esc or Cancel clears a chosen target."
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -17,8 +21,107 @@ var cancel_button: Button
 var energy_label: Label
 var energy_orb: Control
 var help_label: Label
+var backing: Control
+var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
+
+
+## Presentation only: one stitched felt sewing table drawn behind the mounted piles, hand,
+## energy spool and action row. It is a sibling placed just before the battle column, so it
+## draws behind every real control, never joins the hand container and never changes any
+## container's minimum size. It takes no pointer or keyboard input.
+class FeltTableBacking extends Control:
+	const FELT_DEEP := Color("302b26")
+	const HEM := Color("56483d")
+	const THREAD := Color("c9b996")
+	const PATCHES := [Color("42392f"), Color("473e34"), Color("39312a"), Color("443a31")]
+	const INSET := 4.0
+	var band := Rect2()
+	var draw_count := 0
+	var _content: Array[Control] = []
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(refresh_band)
+
+	## Follow one real mounted control, so the table is always sized from live layout.
+	func attach(control: Control) -> void:
+		if control == null or control in _content:
+			return
+		_content.append(control)
+		control.item_rect_changed.connect(refresh_band)
+		refresh_band()
+
+	## Re-measure the sewn bar from the attached controls; redraw only on a real change.
+	func refresh_band() -> void:
+		var measured := _measure_band()
+		if measured == band:
+			return
+		band = measured
+		queue_redraw()
+
+	func _measure_band() -> Rect2:
+		var frame := Rect2(Vector2.ZERO, size)
+		if not is_inside_tree() or frame.size.x <= 0.0 or frame.size.y <= 0.0:
+			return Rect2()
+		var lower := Rect2()
+		var found := false
+		for control in _content:
+			if not is_instance_valid(control) or not control.is_visible_in_tree():
+				continue
+			var rect := _local_rect(control)
+			if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+				continue
+			lower = rect if not found else lower.merge(rect)
+			found = true
+		if not found:
+			return Rect2()
+		# The bar spans the full table width and clamps to the battle area, so it can never
+		# reach up into the actor stage or draw past the viewport's bottom edge.
+		var top := clampf(lower.position.y, frame.position.y, frame.end.y)
+		var bottom := clampf(lower.end.y, top, frame.end.y)
+		return Rect2(frame.position.x, top, frame.size.x, bottom - top)
+
+	func _local_rect(control: Control) -> Rect2:
+		var rect := control.get_global_rect()
+		return Rect2(rect.position - get_global_rect().position, rect.size)
+
+	## Test hook: does this Control's real rect sit inside the sewn table?
+	func covers(control: Control) -> bool:
+		if not is_instance_valid(control) or band.size.x <= 0.0 or band.size.y <= 0.0:
+			return false
+		return band.encloses(_local_rect(control))
+
+	## Test hook: does the sewn table reach into this Control's real rect?
+	func overlaps(control: Control) -> bool:
+		if not is_instance_valid(control) or band.size.x <= 0.0 or band.size.y <= 0.0:
+			return false
+		return band.intersects(_local_rect(control))
+
+	func _draw() -> void:
+		if band.size.x < 24.0 or band.size.y < 24.0:
+			return
+		draw_count += 1
+		draw_rect(band, FELT_DEEP)
+		var cloth := band.grow_individual(-INSET, -INSET, -INSET, -INSET)
+		# Uneven sewn panels read as one quilted cloth without any texture file.
+		var count := 6
+		for index in range(count):
+			var from := cloth.position.x + cloth.size.x * float(index) / float(count)
+			var to := cloth.position.x + cloth.size.x * float(index + 1) / float(count)
+			draw_rect(Rect2(from, cloth.position.y, to - from - 2.0, cloth.size.y), PATCHES[index % PATCHES.size()])
+		draw_rect(Rect2(cloth.position, Vector2(cloth.size.x, 3.0)), HEM)
+		draw_rect(Rect2(cloth.position.x, cloth.end.y - 3.0, cloth.size.x, 3.0), HEM)
+		for y in [cloth.position.y, cloth.end.y]:
+			draw_dashed_line(Vector2(cloth.position.x, y), Vector2(cloth.end.x, y), THREAD, 1.0, 6.0)
+		for index in range(1, count):
+			var x := cloth.position.x + cloth.size.x * float(index) / float(count)
+			draw_dashed_line(Vector2(x, cloth.position.y), Vector2(x, cloth.end.y), THREAD, 1.0, 5.0)
+			for y in [cloth.position.y + 9.0, cloth.end.y - 9.0]:
+				draw_line(Vector2(x - 3.0, y - 3.0), Vector2(x + 3.0, y + 3.0), THREAD, 1.2, true)
+				draw_line(Vector2(x - 3.0, y + 3.0), Vector2(x + 3.0, y - 3.0), THREAD, 1.2, true)
 
 
 class EnergyOrb extends Control:
@@ -117,7 +220,9 @@ func _sync_battle() -> void:
 		energy_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		help_label = Label.new()
 		help_label.name = "SupportHandHelp"
-		help_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Hoverable so the complete instructions stay reachable without blocking the row.
+		help_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		help_label.tooltip_text = TABLE_HELP_DETAIL
 		help_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		hud.add_child(help_label)
@@ -128,6 +233,8 @@ func _sync_battle() -> void:
 		hud.add_child(cancel_button)
 		cancel_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		cancel_button.hide()
+		_hud = hud
+		_mount_table(app)
 	if not _pending.is_empty() and not _selection_valid():
 		_cancel_pending()
 	if not _targets_valid():
@@ -137,9 +244,12 @@ func _sync_battle() -> void:
 		cue.position = panel.global_position - Vector2(0, 16)
 		cue.size = Vector2(panel.size.x, 16)
 	energy_label.text = "Energy\n%d" % _deck.energy
-	help_label.text = "Up: cards | Click / Enter / Space: play"
+	help_label.text = TABLE_HELP
 	if _pending.get("choosing", false):
 		help_label.text = "%s: choose a living ally | Esc: cancel" % StarterCards.new().get_definition(_pending.id).display_name
+	# The felt table follows the real lower controls, including every resize.
+	if is_instance_valid(backing):
+		backing.refresh_band()
 	for panel in _bindings.keys():
 		if not is_instance_valid(panel) or panel.get_parent() != app.hand_view:
 			_unbind(panel)
@@ -180,6 +290,24 @@ func _sync_battle() -> void:
 	else:
 		app.end_turn_button.focus_neighbor_top = NodePath()
 		app.return_button.focus_neighbor_top = NodePath()
+
+
+func _mount_table(app) -> void:
+	# Exactly one table per battle: a stale one from an earlier mount is dropped first.
+	for stale in _battle.find_children(TABLE_ID, "Control", true, false):
+		stale.free()
+	backing = FeltTableBacking.new()
+	backing.name = TABLE_ID
+	_battle.add_child(backing)
+	# Place it immediately before the battle column, so the accepted actor-stage backdrop and
+	# every existing control keep their own sibling order and draw on top of the table.
+	var column := _hud.get_parent() as Control
+	if column != null and column.get_parent() == _battle:
+		_battle.move_child(backing, column.get_index())
+	var pile_row = app.pile_label.get_parent() if is_instance_valid(app.pile_label) else null
+	for content in [pile_row, app.pile_label, app.hand_view, _hud, app.end_turn_button]:
+		if content is Control:
+			backing.attach(content)
 
 
 func _current_move_context(panel) -> Array:
@@ -430,6 +558,10 @@ func _clear() -> void:
 	if is_instance_valid(cancel_button):
 		cancel_button.queue_free()
 	cancel_button = null
+	if is_instance_valid(backing):
+		backing.queue_free()
+	backing = null
+	_hud = null
 	_battle = null
 	_deck = null
 	_party = null

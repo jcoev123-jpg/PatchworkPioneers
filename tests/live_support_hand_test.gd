@@ -9,6 +9,7 @@ var reference_party: CombatParty
 var reference_enemies: CombatEnemies
 var reference_rng: RandomNumberGenerator
 var service := CombatStarterSupportPlay.new()
+var table_instance := 0
 
 
 func _initialize() -> void:
@@ -96,15 +97,66 @@ func _visible() -> void:
 	_check(presenter.energy_orb.focus_mode == Control.FOCUS_NONE
 		and presenter.energy_orb.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and presenter.energy_orb.gui_input.get_connections().is_empty(), "energy orb is inert")
-	_check(presenter.help_label.text == "Up: cards | Click / Enter / Space: play", "general help exact outside card names")
+	_check(presenter.help_label.text == presenter.TABLE_HELP, "short table guidance exact outside card names")
+	_check(presenter.help_label.tooltip_text == presenter.TABLE_HELP_DETAIL
+		and presenter.help_label.mouse_filter != Control.MOUSE_FILTER_IGNORE,
+		"complete instructions stay reachable on a hoverable help label")
 	_check(app.battle_view.find_children("SupportHandEnergyOrb", "Control", true, false).size() == 1
 		and app.battle_view.find_children("SupportHandHelp", "Label", true, false).size() == 1,
 		"repeated sync leaves exactly one orb and help control")
+	_table_checks("live sync")
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
 		_check(app.hero_panels[index].get_child(0).text == "%d - %s\nHP: %d/%d | Block: %d%s" % [
 			hero.position, hero.name, hero.hp, hero.max_hp, hero.block,
 			"\nDOWNED" if hero.hp == 0 else ""], "visible hero HP/Block exact")
+
+
+## One sewn felt table behind the real lower controls: mounted once, inert, and sized from
+## the live orb, hand, pile row and End Turn rather than fixed pixel positions.
+func _table_checks(stage: String) -> void:
+	var mounted: Array = app.battle_view.find_children(presenter.TABLE_ID, "Control", true, false)
+	_check(mounted.size() == 1, "exactly one stitched table backing: " + stage)
+	if mounted.size() != 1:
+		return
+	var table: Control = mounted[0]
+	_check(presenter.backing == table and table.get_parent() == app.battle_view
+		and table.is_visible_in_tree(), "table is the mounted presenter control: " + stage)
+	var column: Control = app.hand_view.get_parent() as Control
+	_check(column != null and column.get_parent() == app.battle_view
+		and table.get_index() < column.get_index(), "table draws behind every existing battle control: " + stage)
+	_check(table.mouse_filter == Control.MOUSE_FILTER_IGNORE and table.focus_mode == Control.FOCUS_NONE
+		and table.gui_input.get_connections().is_empty() and table.get_child_count() == 0,
+		"table is pointer/focus inert and holds no display controls: " + stage)
+	_check(app.hand_view.find_children(presenter.TABLE_ID, "Control", true, false).is_empty()
+		and app.hand_view.get_child_count() == app.deck.hand.size(),
+		"table never joins the hand container or changes its child count: " + stage)
+	_check(table.band.size.x > 0.0 and table.band.size.y > 0.0
+		and Rect2(Vector2.ZERO, table.size).encloses(table.band),
+		"measured table stays inside the battle area: " + stage)
+	_check(table.covers(app.pile_label) and table.covers(app.hand_view)
+		and table.covers(presenter.energy_orb) and table.covers(presenter.help_label)
+		and table.covers(app.end_turn_button), "table spans the piles, hand, orb, help and End Turn: " + stage)
+	_check(not table.overlaps(app.hero_view), "table never covers the actor stage: " + stage)
+	_check(table.draw_count > 0, "table actually drew its felt and stitches: " + stage)
+	if table_instance == 0:
+		table_instance = table.get_instance_id()
+	else:
+		_check(table.get_instance_id() == table_instance,
+			"the same single table survives repeated frames, plays and turns: " + stage)
+
+
+## A real mounted-battle resize must re-measure the same sewn table, with no second backing.
+func _resize_case() -> void:
+	var before: Rect2 = presenter.backing.band
+	app.battle_view.size = Vector2(1024, 600)
+	await _frames()
+	_table_checks("resized battle area")
+	_check(presenter.backing.band != before and presenter.backing.band.size.y > 0.0,
+		"table follows a live battle-area resize")
+	app.battle_view.size = Vector2(1280, 720)
+	await _frames()
+	_table_checks("restored battle area")
 
 
 func _panel(id: String) -> Control:
@@ -134,6 +186,7 @@ func _start(seed_value: int) -> bool:
 	CombatStartingBlock.new(reference_party).apply()
 	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
 		"no support action before activation; independent opening matches")
+	table_instance = 0
 	_visible()
 	return true
 
@@ -203,17 +256,25 @@ func _run() -> void:
 			break
 	_check(seed_value >= 0, "deterministic Brace opening exists")
 	var trace: Array = []
+	var previous_table := 0
 	for session in range(2):
 		if not await _start(seed_value):
 			app.free()
 			_finish()
 			return
+		var session_table: int = presenter.backing.get_instance_id() if is_instance_valid(presenter.backing) else 0
+		_check(session_table != 0 and (session == 0 or session_table != previous_table),
+			"each Return/start mounts one fresh table instead of a stale one")
+		previous_table = session_table
 		var before := _live()
 		_fixture_start(app)
 		presenter._sync_battle()
 		presenter._sync_battle()
 		_check(_live() == before, "duplicate start and sync never play")
 		_visible()
+		_table_checks("repeated presenter sync")
+		if session == 0:
+			await _resize_case()
 		for inert in app.hand_view.get_children():
 			if inert.get_child(0).text not in presenter.SUPPORT_IDS:
 				before = _live()
@@ -288,12 +349,18 @@ func _run() -> void:
 		else:
 			_check(final == trace, "same-seed return/start replays complete state with no leaked callbacks")
 		await _negative_cases()
+		var closed_table: int = presenter.backing.get_instance_id() if is_instance_valid(presenter.backing) else 0
+		_check(closed_table != 0 and closed_table == table_instance, "session kept its single table through play and turns")
 		app.return_button.pressed.emit()
 		_check(presenter._bindings.is_empty() and presenter._deck == null, "Return immediately disconnects session")
+		_check(presenter.backing == null, "Return drops the table reference immediately")
 		await _frames()
 		_check(app.deck == null and presenter.energy_label == null and presenter.energy_orb == null
 			and presenter.help_label == null and presenter.cancel_button == null, "title removes all support presentation")
 		_check(app.find_children("SupportHandEnergyOrb", "Control", true, false).is_empty(), "Return leaves no orphan orb")
+		_check(app.find_children(presenter.TABLE_ID, "Control", true, false).is_empty()
+			and not is_instance_id_valid(closed_table), "Return frees the felt table instead of reusing it")
+		table_instance = 0
 	await _ally_cases()
 	await _ally_move_cases()
 	await _stale_restart(seed_value)
