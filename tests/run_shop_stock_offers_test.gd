@@ -90,6 +90,7 @@ func _initialize() -> void:
 		_test_mixed_pool_generation(party, deck, catalog)
 		_test_pool_purchase(party, deck, catalog)
 		_test_pool_rejections(party, catalog)
+		_test_new_starter_shop_offers_and_purchases(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -1147,3 +1148,115 @@ func _test_authored_shop_pool(party: Array[String], catalog: StarterCards) -> vo
 			"five distinct party-owned base offers without upgrades")
 		seen[offer.id] = true
 		_check(_pool_price(candidates, offer.id) == offer.price, "selected quote is actual authored price")
+
+
+## AC2: For each of the four new starter support/draw cards, exhibit a seeded
+## Shop offer containing that card and then purchase it via RunShopPurchases at
+## its exact authored price. The search is a short bounded deterministic scan.
+func _test_new_starter_shop_offers_and_purchases(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	# The four new starter support cards with their expected owners and prices.
+	var new_starter_specs := {
+		"warden_brace": {"owner": "warden", "price": 40},
+		"seamstress_mend": {"owner": "seamstress", "price": 45},
+		"seamstress_stitch_up": {"owner": "seamstress", "price": 45},
+		"tinker_tune_up": {"owner": "tinker", "price": 35}
+	}
+	# Bounded seed range for deterministic search. Each seed yields a 7-draw stock.
+	var MAX_SEED_OFFSET := 1000
+	for card_id in new_starter_specs:
+		var expected_owner: String = new_starter_specs[card_id].owner
+		var expected_price: int = new_starter_specs[card_id].price
+		var found_seed: int = -1
+		var found_result: Dictionary = {}
+		# Search a short bounded range of seeds for an offer containing this card.
+		for offset in range(MAX_SEED_OFFSET):
+			var test_rng := _rng(SEED + 400 + offset)
+			var test_result: Dictionary = RunShopStockOffers.generate(test_rng, party, candidates, trinkets, [])
+			if not test_result.get("ok", false):
+				continue
+			var offered_cards: Array = test_result.get("cards", [])
+			for offer in offered_cards:
+				if offer.get("id") == card_id:
+					found_seed = SEED + 400 + offset
+					found_result = test_result
+					break
+			if found_seed >= 0:
+				break
+		_check(found_seed >= 0, "seeded Shop offer found for " + card_id + " within bounded search")
+		if found_seed < 0:
+			continue
+		# Verify the offered owner and exact price match the authored JSON.
+		var matched_offer: Dictionary = {}
+		for offer in found_result.get("cards", []):
+			if offer.get("id") == card_id:
+				matched_offer = offer
+				break
+		_check(matched_offer.get("owner") == expected_owner,
+			card_id + ": offered owner matches authored owner")
+		_check(matched_offer.get("price") == expected_price,
+			card_id + ": offered price matches authored price " + str(expected_price))
+		# Construct a valid affordable RunShopPurchases visit.
+		var purchases := RunShopPurchases.new(party, deck, [], 500, found_result["cards"], found_result["trinkets"])
+		_check(purchases.is_valid(), card_id + ": generated stock admits real purchase service")
+		var before_state: Dictionary = purchases.get_state()
+		var before_stock: Dictionary = purchases.get_stock()
+		var before_deck: Array = before_state["deck"].duplicate()
+		var before_gold: int = before_state["gold"]
+		var before_trinkets: Array = before_state["trinkets"].duplicate()
+		# Buy the card.
+		var buy_result := purchases.buy("card", card_id)
+		_check(buy_result.get("ok", false), card_id + ": card purchase succeeds")
+		var after_state := purchases.get_state()
+		var after_stock := purchases.get_stock()
+		# Assert exact gold deduction.
+		_check(after_state["gold"] == before_gold - expected_price,
+			card_id + ": exact authored price charged (" + str(expected_price) + " gold)")
+		# Assert exactly one card appended with the original deck unchanged.
+		_check(after_state["deck"].size() == before_deck.size() + 1,
+			card_id + ": one card appended to deck")
+		_check(after_state["deck"].back() == card_id,
+			card_id + ": appended card is the purchased card")
+		_check(after_state["deck"].slice(0, before_deck.size()) == before_deck,
+			card_id + ": original deck unchanged")
+		# Assert no trinket changes.
+		_check(after_state["trinkets"] == before_trinkets,
+			card_id + ": trinkets unchanged by card purchase")
+		# Assert the bought card is marked sold.
+		var bought_listing_sold := false
+		for listing in after_stock.get("cards", []):
+			if listing.get("id") == card_id:
+				_check(listing.get("sold") == true, card_id + ": bought card marked sold")
+				bought_listing_sold = true
+				break
+		_check(bought_listing_sold, card_id + ": purchased card listing exists and is sold")
+		# Assert all other card listings are unaffected (unsold, same price/owner).
+		for listing in after_stock.get("cards", []):
+			if listing.get("id") != card_id:
+				_check(listing.get("sold") == false, card_id + ": other card listings remain unsold")
+				# Find the corresponding before listing.
+				var before_listing: Dictionary = {}
+				for bl in before_stock.get("cards", []):
+					if bl.get("id") == listing.get("id"):
+						before_listing = bl
+						break
+				_check(listing.get("owner") == before_listing.get("owner"),
+					card_id + ": other listing owner unchanged")
+				_check(listing.get("price") == before_listing.get("price"),
+					card_id + ": other listing price unchanged")
+		# Assert trinket listings are unaffected.
+		for index in range(after_stock.get("trinkets", []).size()):
+			var after_trinket: Dictionary = after_stock["trinkets"][index]
+			var before_trinket: Dictionary = before_stock["trinkets"][index]
+			_check(after_trinket.get("id") == before_trinket.get("id"),
+				card_id + ": trinket listing ID unchanged")
+			_check(after_trinket.get("price") == before_trinket.get("price"),
+				card_id + ": trinket listing price unchanged")
+			_check(after_trinket.get("sold") == before_trinket.get("sold"),
+				card_id + ": trinket listing sold status unchanged")
+		# Verify the receipt matches.
+		var receipt: Dictionary = buy_result.get("receipt", {})
+		_check(receipt.get("kind") == "card" and receipt.get("id") == card_id and receipt.get("price") == expected_price,
+			card_id + ": receipt matches kind, ID and exact price")
