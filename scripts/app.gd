@@ -25,6 +25,11 @@ const STAGE_ACTOR_HEIGHT := STAGE_ROSTER.STAGE_ACTOR_HEIGHT
 ## Compact secondary actions: End Turn stays the prominent 240x48 control, while
 ## Return and the juice-owned Fast toggle share one small sewn corner beside it.
 const SECONDARY_ACTION_SIZE := Vector2(128, 40)
+## Seam above the battle stage: the sewn intent patches sit at the top of the stage, so a
+## small viewport gutter keeps them clear of the screen edge instead of flush against it.
+## The expanding stage gives up exactly this height, so the hand and actions keep their
+## rows inside 1280x720.
+const BATTLE_TOP_SEAM := 16
 
 
 ## One small sewn felt corner beside the prominent End Turn control.
@@ -876,10 +881,11 @@ func _build_battle() -> void:
 	battle_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right"]:
 		battle_view.add_theme_constant_override("margin_" + side, 32)
-	# The side-view stage owns the top of the screen edge to edge; the hand and action
-	# bar keep their own rows so nothing is pushed below the 720 px viewport.
-	for side in ["top", "bottom"]:
-		battle_view.add_theme_constant_override("margin_" + side, 0)
+	# The side-view stage owns the top of the screen edge to edge, with only a small sewn
+	# seam above it; the hand and action bar keep their own rows so nothing is pushed below
+	# the 720 px viewport.
+	battle_view.add_theme_constant_override("margin_top", BATTLE_TOP_SEAM)
+	battle_view.add_theme_constant_override("margin_bottom", 0)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
 	# Compact rows keep the large actor stage, the hero meters, five cards and the
