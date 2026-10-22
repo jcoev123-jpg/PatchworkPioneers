@@ -12,6 +12,8 @@ var _keyboard := false
 var _targeting := CombatAttackTargeting.new()
 var _catalog := StarterCards.new()
 var _play := CombatAttackCards.new()
+var _direct_fire := CombatTinkerPoolAttacks.new()
+var _direct_fire_preview := CombatTinkerDirectFirePreview.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
@@ -266,6 +268,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _targeting.pool_definition(card_id)
 	if _targeting.is_heavy_pool_attack(card_id):
 		return _targeting.heavy_definition(card_id)
+	if _direct_fire_preview.supports(card_id):
+		return _direct_fire_preview.definition(card_id)
 	if _targeting.is_sight_glass(card_id):
 		return _targeting.sight_glass_definition(card_id)
 	return _catalog.get_definition(card_id)
@@ -291,49 +295,77 @@ func _select(event: InputEvent, panel) -> void:
 		return
 
 
+## Scoped preview keeps CombatAttackTargeting starter-only. The direct-fire
+## service itself validates each original enemy slot before it is offered.
+func _target_preview(id: String) -> Dictionary:
+	var app = get_parent()
+	if _direct_fire_preview.supports(id):
+		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire)
+	return _targeting.get_preview(_deck, app.party, app.enemies, id)
+
+
 func _queue_attack(position: int) -> void:
 	if _queued or not _bindings.has(_armed) or not _eligible(_armed):
 		return
 	var app = get_parent()
-	var preview := _targeting.get_preview(_deck, app.party, app.enemies, _card_id(_armed))
+	var id: String = _card_id(_armed)
+	var preview := _target_preview(id)
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0):
 		return
 	_queued = true
-	var id: String = _card_id(_armed)
-	# Preserve the selected enemy's identity, not just its reusable slot.
-	var target_id: String = str(app.enemies.get_enemy(position).get("id", "")) if _targeting.is_sight_glass(id) else ""
+	# A single-target target ID plus the held panel's original hand index
+	# prevent an enemy replacement or equivalent-copy panel swap at commit.
+	var target_id := ""
+	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id)) and position > 0:
+		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
-		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id)
+		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
+		_armed.get_index(), _deck, _deck.hand.duplicate(), app.run_map)
 
 
-func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng, turn: int, target_id: String = "") -> void:
+func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng,
+		turn: int, target_id: String = "", panel_index: int = -1,
+		queued_deck = null, queued_hand: Array = [], queued_map = null) -> void:
 	var app = get_parent()
 	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
 		return
 	_queued = false
+	var direct := _direct_fire_preview.supports(id)
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
-		if _targeting.is_sight_glass(id):
+		if direct or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
 	if app.party != party or app.enemies != enemies or app.battle_result != result or app.run_rng != rng \
 			or app.enemy_intents == null or app.enemy_intents._turn_index != turn or _turn != turn \
 			or _session != [party, enemies, result, rng, app.enemy_intents]:
-		if _targeting.is_sight_glass(id):
+		if direct or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
-	var preview := _targeting.get_preview(_deck, party, enemies, id)
+	if direct and (app._battle_closed or target_id.is_empty() or app.deck != queued_deck \
+			or app.deck._rng != rng \
+			or app.run_map != queued_map or panel_index < 0 \
+			or panel.get_index() != panel_index or app.deck.hand != queued_hand):
+		_reject_stitch()
+		return
+	var preview := _target_preview(id)
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
-			or (_targeting.is_sight_glass(id) and (app._battle_closed or target_id.is_empty() \
+			or ((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)):
-		if _targeting.is_sight_glass(id):
+		if direct or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
 		_after_attack()
+	elif direct:
+		_reject_stitch()
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _direct_fire_preview.supports(id):
+		if forecast:
+			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire)
+		return _direct_fire.play_attack(_deck, party, enemies, id, position)
 	if _targeting.is_sight_glass(id):
 		if forecast:
 			return _sight_forecast(party, enemies, id)
@@ -483,7 +515,7 @@ func _eligible(panel) -> bool:
 		return false
 	var id := _card_id(panel)
 	var index: int = panel.get_index()
-	return (_targeting.supports(id) or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -497,6 +529,7 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 		_play = CombatAttackCards.new()
+		_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 		# Capture the genuine run's sewn wearer projection at battle entry only.
 		# An invalid present binding must reject attacks, not fall back to vanilla.
 		var carry := app.party_carryover as RunTornCarryover
@@ -624,6 +657,7 @@ func _refresh() -> void:
 		return
 	var is_pool := _targeting.is_pool_strike(id)
 	var is_heavy := _targeting.is_heavy_pool_attack(id)
+	var is_direct := _direct_fire_preview.supports(id)
 	var definition := _definition(id)
 	if definition.is_empty():
 		# Fail closed on an unrecognised record instead of formatting a partial card.
@@ -649,7 +683,7 @@ func _refresh() -> void:
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
 	var additions: Dictionary = {}
-	if not is_pool and not is_heavy and preview.playable:
+	if not is_pool and not is_heavy and not is_direct and preview.playable:
 		additions = _on_hit.status_for_confirmed_hit(id, true)
 		if _play._patches != null:
 			var patch_statuses: Dictionary = _play._patches.exposed_for_first_hit(definition.get("owner", ""))
@@ -664,6 +698,8 @@ func _refresh() -> void:
 			var amount: int = additions[status]
 			var previous: int = current.get(status, 0)
 			detail += " (%s %d → %d on confirmed hit)" % [status.capitalize(), previous, previous + amount]
+		if is_direct and int(hit.get("exposed_added", 0)) > 0:
+			detail += " (Exposed %d → %d after hit)" % [hit.exposed_before, hit.exposed_after]
 		targets.append(detail)
 	var description := "Unavailable: no legal targets or energy"
 	if preview.playable:
@@ -678,7 +714,7 @@ func _refresh() -> void:
 	var controls: String
 	if not _single(_selected):
 		controls = "P: select; Enter / Space / click card: cast"
-	elif is_pool or is_heavy:
+	elif is_pool or is_heavy or is_direct:
 		# Report exactly the slots this forecast offers, never a wider key row.
 		var legal: Array[int] = []
 		for hit in preview.hits:
@@ -686,6 +722,8 @@ func _refresh() -> void:
 		controls = "P / click card; %s / click enemy" % _key_hint(legal)
 	else:
 		controls = "P / click card; 1-3 / click enemy"
+	if is_direct:
+		controls += "; Tinker FROM %s" % _key_hint(definition.from_positions)
 	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
 
 
@@ -719,4 +757,5 @@ func _clear() -> void:
 	_deck = null
 	_session = []
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
+	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null
