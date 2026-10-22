@@ -15,6 +15,7 @@ var purchases := 0
 var picks := 0
 var skips := 0
 var no_effect_visits := 0
+var quilt_awards := 0
 
 
 func _frames() -> void:
@@ -161,6 +162,51 @@ func _node(id: String, index: int) -> bool:
 	return true
 
 
+## True only when this held card supplies the last living owner that has not yet
+## played this turn, so CombatQuiltBonus will award Block and draw one card.
+## The rule stays in the service; the test only reads its public progress.
+func _quilt_award_pending(id: String) -> bool:
+	if app._quilt_bonus == null or not app._quilt_turn_open:
+		return false
+	var progress: Dictionary = app._quilt_bonus.get_patch_progress()
+	if not bool(progress.get("active", false)) or bool(progress.get("awarded", false)):
+		return false
+	var owner: String = str(StarterCards.new().get_definition(id).get("owner", ""))
+	if owner.is_empty():
+		return false
+	var patches: Dictionary = progress.get("patches", {})
+	if not bool(patches.get(owner, {}).get("living", false)):
+		return false
+	for hero_id in patches:
+		if hero_id == owner:
+			continue
+		var patch: Dictionary = patches[hero_id]
+		if bool(patch.get("living", false)) and not bool(patch.get("played", false)):
+			return false
+	return true
+
+
+## Mirrors one committed play's seeded pile transactions without mutating combat:
+## the played copy is discarded, Tune-Up's authored draw happens first, and a
+## third distinct living owner makes the Quilt award draw one shared card.
+func _play_mirror(id: String, award: bool) -> CombatDeck:
+	var rng := RandomNumberGenerator.new()
+	rng.state = app.run_rng.state
+	var mirror := CombatDeck.new([], rng)
+	mirror.hand.assign(app.deck.hand)
+	mirror.draw_pile.assign(app.deck.draw_pile)
+	mirror.discard_pile.assign(app.deck.discard_pile)
+	mirror.combat_state.player_turn_active = app.deck.turn_active
+	mirror.combat_state.energy = app.deck.energy
+	mirror.try_spend_energy(int(StarterCards.new().get_definition(id).get("cost", 0)))
+	if id == "tinker_tune_up":
+		mirror.draw_extra(1)
+	mirror.discard_played(id)
+	if award:
+		mirror.draw_extra(1)
+	return mirror
+
+
 func _play(id: String, target: int, keyboard: bool) -> void:
 	var index: int = app.deck.hand.find(id)
 	_check(index >= 0, "selected card is actually held")
@@ -168,9 +214,9 @@ func _play(id: String, target: int, keyboard: bool) -> void:
 		return
 	var definition := StarterCards.new().get_definition(id)
 	var energy: int = app.deck.energy
-	var hand_size: int = app.deck.hand.size()
-	var pile_size: int = app.deck.discard_pile.size()
 	var rng: int = app.run_rng.state
+	var award := _quilt_award_pending(id)
+	var mirror := _play_mirror(id, award)
 	var panel: Control = app.hand_view.get_child(index)
 	_check(Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect()), "held card fits: %s %s route=%s" % [id, panel.get_global_rect(), app.run_map.get_route()])
 	var attack: bool = id in CombatAttackCards.ATTACK_IDS
@@ -222,10 +268,19 @@ func _play(id: String, target: int, keyboard: bool) -> void:
 	await _frames()
 	_check(app.deck.energy == (0 if app._battle_closed else energy - definition.cost),
 		"held play charges authored energy; terminal closes energy: " + id)
-	# Terminal closure discards the remaining hand, otherwise one copy moves.
-	if not app._battle_closed and id != "tinker_tune_up":
-		_check(app.deck.hand.size() == hand_size - 1 and app.deck.discard_pile.size() == pile_size + 1
-			and app.run_rng.state == rng, "one held copy moves to discard without RNG: " + id)
+	# Terminal closure discards the remaining hand; otherwise one held copy moves.
+	# Tune-Up's authored draw happens before that discard, and a third distinct
+	# living owner makes CombatQuiltBonus draw one shared card, which can reshuffle
+	# older discard cards. Compare the exact seeded piles instead of a fixed delta.
+	if not app._battle_closed:
+		_check(app.deck.hand == mirror.hand and app.deck.draw_pile == mirror.draw_pile
+			and app.deck.discard_pile == mirror.discard_pile and app.deck.energy == mirror.energy
+			and app.run_rng.state == mirror._rng.state,
+			"one held copy moves to discard and any Quilt award draw matches the seeded piles and RNG: " + id)
+		if not award and id != "tinker_tune_up":
+			_check(app.run_rng.state == rng, "an ordinary held play consumes no RNG: " + id)
+		if award and bool(app._quilt_bonus.get_patch_progress().get("awarded", false)):
+			quilt_awards += 1
 	_record(["play", id, target, keyboard])
 	var after := _state()
 	var click := InputEventMouseButton.new()
@@ -516,10 +571,12 @@ func _run() -> void:
 				"independent same-seed wins reproduce route, encounters, cards, rewards, carryover, terminal and RNG")
 	_check(attacks > 0 and supports > 0 and enemy_phases > 0 and keyboard_attacks > 0
 		and mouse_attacks > 0 and invalid_targets > 0 and energy_rejections > 0
-		and purchases > 0 and picks == 2 and skips >= 2 and no_effect_visits > 0,
-		"nonvacuous held attack/support, both inputs, enemy-phase and rejection coverage: attacks=%d supports=%d phases=%d keyboard=%d mouse=%d invalid=%d energy=%d purchases=%d picks=%d skips=%d no-effect=%d" % [
+		and purchases > 0 and picks == 2 and skips >= 2 and no_effect_visits > 0
+		and quilt_awards > 0,
+		"nonvacuous held attack/support, both inputs, enemy-phase, award and rejection coverage: attacks=%d supports=%d phases=%d keyboard=%d mouse=%d invalid=%d energy=%d purchases=%d picks=%d skips=%d no-effect=%d quilt-awards=%d" % [
 			attacks, supports, enemy_phases, keyboard_attacks, mouse_attacks,
-			invalid_targets, energy_rejections, purchases, picks, skips, no_effect_visits])
+			invalid_targets, energy_rejections, purchases, picks, skips, no_effect_visits,
+			quilt_awards])
 	_check(randi() == global_next, "search and all real runs preserve global RNG")
 	app.free()
 	await _frames()

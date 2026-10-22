@@ -11,7 +11,11 @@
     {"id": "warden_brass_buckle", "owner": "warden", "price": 55},
     {"id": "warden_iron_hem", "owner": "warden", "price": 70},
     {"id": "warden_bastion_quilt", "owner": "warden", "price": 90},
-    {"id": "seamstress_thread_whip", "owner": "seamstress", "price": 55}
+    {"id": "seamstress_thread_whip", "owner": "seamstress", "price": 55},
+    {"id": "warden_brace", "owner": "warden", "price": 40},
+    {"id": "seamstress_mend", "owner": "seamstress", "price": 45},
+    {"id": "seamstress_stitch_up", "owner": "seamstress", "price": 45},
+    {"id": "tinker_tune_up", "owner": "tinker", "price": 35}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},

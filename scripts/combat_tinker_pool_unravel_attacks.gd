@@ -26,19 +26,19 @@ const SUPPORTED_CARD_IDS: Array[String] = [
 
 var _first_attack: CombatTinkerFirstAttack
 var _unravel: CombatUnravel = null
+var _pinned: CombatPinned = null
 var _damage := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
 
 
-func _init(arg1: Variant = null, arg2: Variant = null) -> void:
-	if arg1 is CombatTinkerFirstAttack:
-		_first_attack = arg1
-	elif arg1 is CombatUnravel:
-		_unravel = arg1
-	if arg2 is CombatTinkerFirstAttack:
-		_first_attack = arg2
-	elif arg2 is CombatUnravel:
-		_unravel = arg2
+func _init(arg1: Variant = null, arg2: Variant = null, arg3: Variant = null) -> void:
+	for arg: Variant in [arg1, arg2, arg3]:
+		if arg is CombatTinkerFirstAttack:
+			_first_attack = arg
+		elif arg is CombatUnravel:
+			_unravel = arg
+		elif arg is CombatPinned:
+			_pinned = arg
 	if _first_attack == null:
 		_first_attack = CombatTinkerFirstAttack.new()
 
@@ -59,41 +59,50 @@ func get_unravel() -> CombatUnravel:
 	return _unravel
 
 
+func set_pinned(pinned: CombatPinned) -> void:
+	_pinned = pinned
+
+
+func get_pinned() -> CombatPinned:
+	return _pinned
+
+
 func get_first_attack() -> CombatTinkerFirstAttack:
 	return _first_attack
 
 
 func can_play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int = 0, unravel: CombatUnravel = null) -> bool:
-	var unravel_service: CombatUnravel = unravel if unravel != null else _unravel
-	var plan: Dictionary = _prepare(deck, party, enemies, unravel_service, card_id, target_position)
+		card_id: String, target_position: int = 0, arg6: Variant = null, arg7: Variant = null) -> bool:
+	var unravel_service: CombatUnravel = _unravel
+	var active_pinned: CombatPinned = _pinned
+	if arg6 is CombatUnravel:
+		unravel_service = arg6
+	elif arg6 is CombatPinned:
+		active_pinned = arg6
+	elif arg6 != null:
+		return false
+	if arg7 is CombatUnravel:
+		unravel_service = arg7
+	elif arg7 is CombatPinned:
+		active_pinned = arg7
+	elif arg7 != null:
+		return false
+	var plan: Dictionary = _prepare(deck, party, enemies, unravel_service, card_id, target_position, active_pinned)
 	return plan.get("ok", false)
 
 
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		arg4: Variant = "", arg5: Variant = 0, arg6: Variant = null) -> Dictionary:
-	var unravel_service: CombatUnravel = _unravel
-	var card_id: String = ""
-	var target_position: int = 0
+		arg4: Variant = "", arg5: Variant = 0, arg6: Variant = null, arg7: Variant = null) -> Dictionary:
+	var parsed: Dictionary = _parse_play_args(arg4, arg5, arg6, arg7)
+	if not parsed["ok"]:
+		return _failure()
 
-	if arg4 is CombatUnravel:
-		unravel_service = arg4
-		if arg5 is String:
-			card_id = arg5
-		if arg6 is int:
-			target_position = arg6
-	elif arg4 is String:
-		card_id = arg4
-		if arg5 is int:
-			target_position = arg5
-			if arg6 is CombatUnravel:
-				unravel_service = arg6
-		elif arg5 is CombatUnravel:
-			unravel_service = arg5
-			if arg6 is int:
-				target_position = arg6
+	var unravel_service: CombatUnravel = parsed["unravel"]
+	var active_pinned: CombatPinned = parsed["pinned"]
+	var card_id: String = parsed["card_id"]
+	var target_position: int = parsed["target_position"]
 
-	var plan: Dictionary = _prepare(deck, party, enemies, unravel_service, card_id, target_position)
+	var plan: Dictionary = _prepare(deck, party, enemies, unravel_service, card_id, target_position, active_pinned)
 	if not plan.get("ok", false):
 		return _failure()
 
@@ -103,11 +112,18 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var attack_damage: int = plan["attack_damage"]
 	var owner_statuses: Dictionary = plan["owner_statuses"]
 	var unravel_amount: int = plan["unravel_amount"]
+	var pinned_service: CombatPinned = plan.get("active_pinned", null)
 
 	for position in positions:
 		var defender: Dictionary = enemies.get_enemy(position)
+		var pin_bonus: int = 0
+		if pinned_service != null:
+			pin_bonus = pinned_service.bonus_for_attack(enemies, position, "tinker")
+		var hit_damage_before_status: int = attack_damage + pin_bonus
 		var event: Dictionary = _damage.resolve_vs_enemy(enemies, position,
-			attack_damage, owner_statuses, defender.get("statuses", {}))
+			hit_damage_before_status, owner_statuses, defender.get("statuses", {}))
+		if pinned_service != null and event.get("ok", false):
+			pinned_service.consume_after_attack(position, "tinker", true)
 		var applied_unravel: int = 0
 		if not enemies.is_slain(position) and unravel_amount > 0:
 			if unravel_service.apply_unravel(enemies, position, unravel_amount):
@@ -126,11 +142,105 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	return {"ok": true, "hits": hits}
 
 
+func _parse_play_args(arg4: Variant, arg5: Variant, arg6: Variant, arg7: Variant) -> Dictionary:
+	var unravel_service: CombatUnravel = _unravel
+	var active_pinned: CombatPinned = _pinned
+	var card_id: String = ""
+	var target_position: int = 0
+	var invalid: bool = false
+
+	if arg4 is CombatUnravel:
+		unravel_service = arg4
+		if arg5 is String:
+			card_id = arg5
+		else:
+			invalid = true
+		if arg6 is int:
+			target_position = arg6
+		elif arg6 != null:
+			invalid = true
+		if arg7 is CombatPinned:
+			active_pinned = arg7
+		elif arg7 != null:
+			invalid = true
+	elif arg4 is String:
+		card_id = arg4
+		if arg5 is int:
+			target_position = arg5
+			if arg6 is CombatUnravel:
+				unravel_service = arg6
+				if arg7 is CombatPinned:
+					active_pinned = arg7
+				elif arg7 != null:
+					invalid = true
+			elif arg6 is CombatPinned:
+				active_pinned = arg6
+				if arg7 is CombatUnravel:
+					unravel_service = arg7
+				elif arg7 != null:
+					invalid = true
+			elif arg6 != null:
+				invalid = true
+			elif arg7 != null:
+				invalid = true
+		elif arg5 is CombatUnravel:
+			unravel_service = arg5
+			if arg6 is int:
+				target_position = arg6
+				if arg7 is CombatPinned:
+					active_pinned = arg7
+				elif arg7 != null:
+					invalid = true
+			elif arg6 is CombatPinned:
+				active_pinned = arg6
+				if arg7 is int:
+					target_position = arg7
+				elif arg7 != null:
+					invalid = true
+			elif arg6 != null:
+				invalid = true
+			elif arg7 != null:
+				invalid = true
+		elif arg5 is CombatPinned:
+			active_pinned = arg5
+			if arg6 is int:
+				target_position = arg6
+				if arg7 is CombatUnravel:
+					unravel_service = arg7
+				elif arg7 != null:
+					invalid = true
+			elif arg6 is CombatUnravel:
+				unravel_service = arg6
+				if arg7 is int:
+					target_position = arg7
+				elif arg7 != null:
+					invalid = true
+			elif arg6 != null:
+				invalid = true
+			elif arg7 != null:
+				invalid = true
+		else:
+			invalid = true
+	else:
+		invalid = true
+
+	return {
+		"ok": not invalid,
+		"unravel": unravel_service,
+		"pinned": active_pinned,
+		"card_id": card_id,
+		"target_position": target_position,
+	}
+
+
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		unravel: CombatUnravel, card_id: String, target_position: int) -> Dictionary:
+		unravel: CombatUnravel, card_id: String, target_position: int,
+		active_pinned: CombatPinned = null) -> Dictionary:
 	if deck == null or party == null or enemies == null or unravel == null or deck._rng == null:
 		return _failure()
 	if unravel._bound_enemies != enemies or not enemies.is_valid():
+		return _failure()
+	if active_pinned != null and not active_pinned is CombatPinned:
 		return _failure()
 	if not SUPPORTED_CARD_IDS.has(card_id):
 		return _failure()
@@ -234,6 +344,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if unravel.get_snapshot(pos).is_empty():
 			return _failure()
 
+	if not _damage._valid_statuses(owner_statuses):
+		return _failure()
+	for pos in positions:
+		var def_enemy: Dictionary = enemies.get_enemy(pos)
+		if def_enemy.is_empty() or not _damage._valid_statuses(def_enemy.get("statuses", {})):
+			return _failure()
+
 	var raw_damage: int = effects["damage"]
 	var unravel_amount: int = 0
 
@@ -250,7 +367,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel_amount = int(effects.get("unravel", 0))
 
 	var bonus: int = _first_attack.bonus_for_attack(card_id)
-	if raw_damage > CombatStatuses.MAX_INT - bonus:
+	if raw_damage > CombatStatuses.MAX_INT - bonus - 5:
 		return _failure()
 
 	return {
@@ -262,6 +379,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"owner_statuses": owner_statuses,
 		"cost": cost_value,
 		"unravel_amount": unravel_amount,
+		"active_pinned": active_pinned,
 	}
 
 
