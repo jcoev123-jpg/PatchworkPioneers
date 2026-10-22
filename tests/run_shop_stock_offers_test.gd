@@ -68,6 +68,46 @@ const POOL_CARD_PRICES := {
 	"tinker_snip_the_seam": 80,
 }
 
+## The eight new M04 D2-1 pool cards added to the authored Shop JSON.
+const NEW_POOL_SPECS := {
+	"seamstress_snag": {"owner": "seamstress", "price": 50, "cost": 1, "from": [2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"unravel": 3, "weak": 1}, "rarity": "common"},
+	"seamstress_unpick": {"owner": "seamstress", "price": 60, "cost": 1, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"unravel": 5}, "rarity": "uncommon"},
+	"seamstress_tailors_trance": {"owner": "seamstress", "price": 85, "cost": 1, "from": [2, 3], "target": "self", "to": [], "effects": {"energy": 1, "draw": 2}, "rarity": "rare"},
+	"tinker_spare_parts": {"owner": "tinker", "price": 45, "cost": 0, "from": [2, 3], "target": "self", "to": [], "effects": {"block": 3, "draw": 1}, "rarity": "common"},
+	"tinker_long_barrel": {"owner": "tinker", "price": 70, "cost": 2, "from": [3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 12}, "rarity": "common"},
+	"tinker_overclock": {"owner": "tinker", "price": 60, "cost": 0, "from": [1, 2, 3], "target": "self", "to": [], "effects": {"gain_energy": 1, "self_hp_loss": 3}, "rarity": "uncommon"},
+	"tinker_sight_glass": {"owner": "tinker", "price": 65, "cost": 1, "from": [2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"exposed": 2, "draw": 1}, "rarity": "uncommon"},
+	"tinker_bobbin_cannon": {"owner": "tinker", "price": 90, "cost": 3, "from": [3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 20}, "rarity": "rare"},
+}
+
+## Every pre-existing authored card candidate and its established Shop quote.
+## These entries must survive the candidate-pool expansion unchanged.
+const EXISTING_SHOP_CARDS := {
+	"warden_strike": {"owner": "warden", "price": 50},
+	"warden_shield_bash": {"owner": "warden", "price": 65},
+	"seamstress_prick": {"owner": "seamstress", "price": 50},
+	"tinker_pop_shot": {"owner": "tinker", "price": 50},
+	"tinker_scrap_bomb": {"owner": "tinker", "price": 65},
+	"warden_hold_the_line": {"owner": "warden", "price": 55},
+	"warden_patch_guard": {"owner": "warden", "price": 45},
+	"warden_quick_darn": {"owner": "warden", "price": 40},
+	"warden_brass_buckle": {"owner": "warden", "price": 55},
+	"warden_iron_hem": {"owner": "warden", "price": 70},
+	"warden_bastion_quilt": {"owner": "warden", "price": 90},
+	"seamstress_thread_whip": {"owner": "seamstress", "price": 55},
+	"warden_brace": {"owner": "warden", "price": 40},
+	"seamstress_mend": {"owner": "seamstress", "price": 45},
+	"seamstress_stitch_up": {"owner": "seamstress", "price": 45},
+	"tinker_tune_up": {"owner": "tinker", "price": 35},
+}
+
+## Every pre-existing authored trinket candidate and its established price.
+const EXISTING_SHOP_TRINKETS := {
+	"stitched_badge": 100,
+	"spare_spool": 100,
+	"quilted_coat": 100,
+}
+
 
 func _initialize() -> void:
 	var party := _load_party()
@@ -91,6 +131,7 @@ func _initialize() -> void:
 		_test_pool_purchase(party, deck, catalog)
 		_test_pool_rejections(party, catalog)
 		_test_new_starter_shop_offers_and_purchases(party, deck, catalog)
+		_test_new_pool_shop_offers_and_purchases(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -1260,3 +1301,232 @@ func _test_new_starter_shop_offers_and_purchases(party: Array[String], deck: Arr
 		var receipt: Dictionary = buy_result.get("receipt", {})
 		_check(receipt.get("kind") == "card" and receipt.get("id") == card_id and receipt.get("price") == expected_price,
 			card_id + ": receipt matches kind, ID and exact price")
+
+
+## AC1/AC2/AC3: Catalog, bounded seed scan and funded purchase for each
+## of the eight new M04 D2-1 pool cards (seamstress and tinker base IDs).
+func _test_new_pool_shop_offers_and_purchases(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+
+	# AC1: Catalog checks for the eight new IDs, older cards unchanged, no duplicates.
+	var count_by_id := {}
+	for entry in candidates:
+		if entry is Dictionary and entry.get("id") is String:
+			count_by_id[entry.id] = int(count_by_id.get(entry.id, 0)) + 1
+	for card_id in NEW_POOL_SPECS:
+		var spec: Dictionary = NEW_POOL_SPECS[card_id]
+		# Must exist in JSON with exact owner/price.
+		var found_json := false
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				found_json = true
+				_check(entry.get("owner") == spec["owner"],
+					"new pool " + card_id + " authored owner")
+				_check(_whole_price(entry.get("price")) == spec["price"],
+					"new pool " + card_id + " authored price")
+		_check(found_json, "new pool card present in authored JSON: " + card_id)
+		# Must be a base ID (not _plus) and a genuine catalog base card.
+		_check(not String(card_id).ends_with("_plus"),
+			"new pool base ID excludes upgrade: " + card_id)
+		var def: Dictionary = {}
+		var is_pool_base := false
+		if spec["owner"] == "seamstress":
+			is_pool_base = seamstress_pool.get_base_ids().has(card_id)
+			def = seamstress_pool.get_definition(card_id)
+		elif spec["owner"] == "tinker":
+			is_pool_base = tinker_pool.get_pool_card_ids().has(card_id)
+			def = tinker_pool.get_definition(card_id)
+		_check(is_pool_base, "new pool " + card_id + " is authored base pool card")
+		_check(def.get("id") == card_id and def.get("owner") == spec["owner"]
+			and def.get("rarity") == spec["rarity"] and def.get("cost") == spec["cost"]
+			and def.get("from_positions") == spec["from"]
+			and def.get("to_positions") == spec["to"]
+			and def.get("target_kind") == spec["target"]
+			and def.get("effects") == spec["effects"],
+			"new pool " + card_id + " catalog behavior matches authored spec")
+	# All eight must appear exactly once in the authored JSON.
+	for card_id in NEW_POOL_SPECS:
+		_check(count_by_id.get(card_id, 0) == 1,
+			"new pool base ID occurs exactly once in authored pool: " + card_id)
+	# Older named candidates must survive with their previous owner and price.
+	for card_id in EXISTING_SHOP_CARDS:
+		var previous: Dictionary = EXISTING_SHOP_CARDS[card_id]
+		_check(count_by_id.get(card_id, 0) == 1,
+			"older named candidate still present exactly once: " + card_id)
+		var found_older: Dictionary = {}
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				found_older = entry
+		_check(found_older.get("owner") == previous["owner"]
+			and _whole_price(found_older.get("price")) == previous["price"],
+			"older named candidate keeps previous owner and price: " + card_id)
+		var authored_def: Dictionary = catalog.get_definition(card_id)
+		if authored_def.is_empty():
+			authored_def = seamstress_pool.get_definition(card_id)
+		if authored_def.is_empty():
+			authored_def = tinker_pool.get_definition(card_id)
+		if authored_def.is_empty():
+			authored_def = WardenPoolCards.new().get_definition(card_id)
+		_check(authored_def.get("owner") == previous["owner"],
+			"older named candidate owner still matches its catalog: " + card_id)
+	# The authored trinket listings are untouched by the card expansion.
+	var trinket_counts := {}
+	for entry in trinkets:
+		if entry is Dictionary and entry.get("id") is String:
+			trinket_counts[entry.id] = int(trinket_counts.get(entry.id, 0)) + 1
+	for trinket_id in EXISTING_SHOP_TRINKETS:
+		_check(trinket_counts.get(trinket_id, 0) == 1,
+			"authored trinket still listed exactly once: " + trinket_id)
+		var found_trinket: Dictionary = {}
+		for entry in trinkets:
+			if entry is Dictionary and entry.get("id") == trinket_id:
+				found_trinket = entry
+		_check(_whole_price(found_trinket.get("price")) == EXISTING_SHOP_TRINKETS[trinket_id],
+			"authored trinket price unchanged: " + trinket_id)
+	# No duplicate candidate IDs across the expanded pool.
+	for id in count_by_id:
+		_check(count_by_id[id] == 1, "no duplicate Shop candidate ID: " + id)
+
+	# AC2: Bounded seed scan until each new card appears in a genuine
+	# five-card / two-trinket stock; verify order-independent replay and RNG state.
+	var MAX_SEED_OFFSET := 1000
+	for card_id in NEW_POOL_SPECS:
+		var expected_owner: String = NEW_POOL_SPECS[card_id]["owner"]
+		var expected_price: int = NEW_POOL_SPECS[card_id]["price"]
+		var found_seed := -1
+		var found_result: Dictionary = {}
+		for offset in range(MAX_SEED_OFFSET):
+			var test_rng := _rng(SEED + 500 + offset)
+			var test_result := RunShopStockOffers.generate(test_rng, party, candidates, trinkets, [])
+			if not test_result.get("ok", false):
+				continue
+			for offer in test_result.get("cards", []):
+				if offer.get("id") == card_id:
+					found_seed = SEED + 500 + offset
+					found_result = test_result
+					break
+			if found_seed >= 0:
+				break
+		_check(found_seed >= 0, "seeded Shop offer found for new pool " + card_id + " within bounded search")
+		if found_seed < 0:
+			continue
+
+		# Verify the matched offer uses the authored owner and price.
+		var matched_offer := {}
+		for offer in found_result.get("cards", []):
+			if offer.get("id") == card_id:
+				matched_offer = offer
+				break
+		_check(matched_offer.get("owner") == expected_owner,
+			"new pool " + card_id + ": offered owner matches authored owner")
+		_check(matched_offer.get("price") == expected_price,
+			"new pool " + card_id + ": offered price matches authored price")
+		_check(found_result.get("cards", []).size() == 5
+			and found_result.get("trinkets", []).size() == 2,
+			"new pool " + card_id + ": found stock is a genuine five-card/two-patch visit")
+
+		# The genuine stock must match the existing independent sorted-pool
+		# oracle for the same seed, including the next RNG state and draw.
+		var oracle_rng := _rng(found_seed)
+		var oracle := _oracle(catalog, party, candidates, trinkets, [], oracle_rng)
+		var probe_rng := _rng(found_seed)
+		var probe_result := RunShopStockOffers.generate(probe_rng, party, candidates, trinkets, [])
+		_check(probe_result == found_result and found_result.get("cards", []) == oracle.cards
+			and found_result.get("trinkets", []) == oracle.trinkets,
+			"new pool " + card_id + ": found stock matches the independent oracle")
+		_check(probe_rng.state == oracle_rng.state and probe_rng.randi() == oracle_rng.randi(),
+			"new pool " + card_id + ": found stock preserves the next RNG state and draw")
+
+		# Order-independent replay: reverse inputs, same output and same next RNG state.
+		var reversed_cards := candidates.duplicate(true)
+		reversed_cards.reverse()
+		var reversed_trinkets := trinkets.duplicate(true)
+		reversed_trinkets.reverse()
+		var replay_rng := _rng(found_seed)
+		var original_rng := _rng(found_seed)
+		var replay_result := RunShopStockOffers.generate(replay_rng, party, reversed_cards, reversed_trinkets, [])
+		var original_result := RunShopStockOffers.generate(original_rng, party, candidates, trinkets, [])
+		_check(replay_result == original_result and replay_rng.state == original_rng.state,
+			"new pool " + card_id + ": reversed input produces identical stock and same RNG state")
+		_check(original_result == found_result,
+			"new pool " + card_id + ": replayed seed reproduces the found stock")
+
+		# AC3: Real funded purchase with exact gold debit, one appended card,
+		# sold flag set, unchanged other listings/trinkets, valid receipt.
+		var purchases := RunShopPurchases.new(party, deck, [], 500, found_result["cards"], found_result["trinkets"])
+		_check(purchases.is_valid(), "new pool " + card_id + ": generated stock admits real purchase service")
+		var before_state := purchases.get_state()
+		var before_stock := purchases.get_stock()
+		var before_deck: Array = before_state["deck"].duplicate()
+		var before_gold: int = before_state["gold"]
+		var before_trinkets: Array = before_state["trinkets"].duplicate()
+
+		var buy_result := purchases.buy("card", card_id)
+		_check(buy_result.get("ok", false), "new pool " + card_id + ": card purchase succeeds")
+		var after_state := purchases.get_state()
+		var after_stock := purchases.get_stock()
+
+		_check(after_state["deck"].size() == before_deck.size() + 1,
+			"new pool " + card_id + ": exactly one card appended to deck")
+		_check(after_state["deck"].back() == card_id,
+			"new pool " + card_id + ": appended card is the purchased card")
+		_check(after_state["deck"].slice(0, before_deck.size()) == before_deck,
+			"new pool " + card_id + ": original deck unchanged")
+		_check(after_state["gold"] == before_gold - expected_price,
+			"new pool " + card_id + ": exact authored price charged (" + str(expected_price) + " gold)")
+		_check(after_state["trinkets"] == before_trinkets,
+			"new pool " + card_id + ": trinkets unchanged by card purchase")
+
+		# Sold flag only on bought listing; other listings keep their owner and price.
+		var bought_sold := false
+		for listing in after_stock.get("cards", []):
+			if listing.get("id") == card_id:
+				_check(listing.get("sold") == true,
+					"new pool " + card_id + ": bought card marked sold")
+				bought_sold = true
+			else:
+				_check(listing.get("sold") == false,
+					"new pool " + card_id + ": other card listings remain unsold")
+				var matching_before: Dictionary = {}
+				for before_listing in before_stock.get("cards", []):
+					if before_listing.get("id") == listing.get("id"):
+						matching_before = before_listing
+						break
+				_check(listing.get("owner") == matching_before.get("owner")
+					and listing.get("price") == matching_before.get("price"),
+					"new pool " + card_id + ": other card listing owner and price unchanged")
+		_check(bought_sold, "new pool " + card_id + ": purchased card listing exists and is sold")
+
+		# Trinket listings unchanged.
+		for index in range(after_stock.get("trinkets", []).size()):
+			_check(after_stock["trinkets"][index]["id"] == before_stock["trinkets"][index]["id"],
+				"new pool " + card_id + ": trinket listing ID unchanged")
+			_check(after_stock["trinkets"][index]["price"] == before_stock["trinkets"][index]["price"],
+				"new pool " + card_id + ": trinket listing price unchanged")
+			_check(after_stock["trinkets"][index]["sold"] == before_stock["trinkets"][index]["sold"],
+				"new pool " + card_id + ": trinket listing sold status unchanged")
+
+		# Receipt verifies kind, ID, exact price.
+		var receipt: Dictionary = buy_result.get("receipt", {})
+		_check(receipt.get("kind") == "card" and receipt.get("id") == card_id and receipt.get("price") == expected_price,
+			"new pool " + card_id + ": receipt matches kind, ID and exact price")
+
+		# Insufficient funds must reject without mutation.
+		var poor := RunShopPurchases.new(party, deck, [], 0, found_result["cards"], found_result["trinkets"])
+		_check(poor.is_valid(), "new pool " + card_id + ": goldless visit is valid")
+		var poor_state := poor.get_state()
+		var poor_stock := poor.get_stock()
+		var denied := poor.buy("card", card_id)
+		_check(not denied.get("ok", true), "new pool " + card_id + ": unaffordable purchase refused")
+		_check(poor.get_state() == poor_state and poor.get_stock() == poor_stock,
+			"new pool " + card_id + ": refused purchase leaves state and stock unchanged")
+
+		# Second buy must fail and leave everything unchanged.
+		var repeat_buy := purchases.buy("card", card_id)
+		_check(not repeat_buy.get("ok", true), "new pool " + card_id + ": second purchase refused")
+		_check(purchases.get_state() == after_state and purchases.get_stock() == after_stock,
+			"new pool " + card_id + ": repeated purchase leaves state and stock unchanged")
