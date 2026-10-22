@@ -35,6 +35,10 @@ const BATTLE_TOP_SEAM := 16
 ## three-line geometry (name, owner/source, target + rules) that
 ## live_hand_card_metadata.card_layout draws, and still fits the 1280x720 rows.
 const HAND_CARD_HEIGHT := 160
+## One transient, pointer-inert forecast strip for the eight detached combo
+## attacks. It is mounted hidden per battle, so the idle lower third keeps the
+## exact height it had before this cue existed.
+const COMBO_FORECAST_NAME := "ComboForecastCue"
 
 
 ## One small sewn felt corner beside the prominent End Turn control.
@@ -119,6 +123,15 @@ var battle_result: CombatBattleResult
 var act_outcome: RunActBattleOutcome
 var round_flow: CombatRoundFlow
 var victory_gold: RunVictoryGold
+## The app is the live caller for the detached combo-attack oracle. Selection is
+## the mounted hand's own hover / P behaviour; Pinned, Unravel and the Tinker
+## first-attack latch stay the battle-scoped instances owned by LiveAttackPreview.
+var combo_cue: Label
+var _combo_selected: Control
+var _combo_keyboard := false
+var _combo_bindings: Dictionary = {}
+var _combo_targeting := CombatAttackTargeting.new()
+var _combo_preview := CombatPoolComboAttackPreview.new()
 # Battle-local receipt bridge for CombatQuiltBonus. It only reports committed
 # hand-to-discard transactions of the mounted battle and resets on a new turn.
 var _quilt_bonus: CombatQuiltBonus
@@ -249,6 +262,23 @@ func _process(_delta: float) -> void:
 	if is_instance_valid(battle_view) and battle_view.is_visible_in_tree():
 		_refresh_intents()
 		_refresh_action_focus()
+	_sync_combo_forecast()
+
+
+## Keyboard companion to hand hover: P cycles the formed combo cards exactly as
+## the live attack preview cycles attack cards, Esc retires the forecast. When
+## another live selection owns P, this handler stays out of its way.
+func _input(event: InputEvent) -> void:
+	if not event is InputEventKey or not event.pressed or event.echo:
+		return
+	if event.keycode == KEY_ESCAPE:
+		if _combo_selected != null:
+			_combo_selected = null
+			_combo_keyboard = false
+			_sync_combo_forecast()
+		return
+	if event.keycode == KEY_P and not _combo_controls_owned_elsewhere():
+		_combo_cycle()
 
 
 ## Single observation boundary for live updates and resolved phases.
@@ -950,6 +980,9 @@ func _build_battle() -> void:
 	column.add_child(pile_row)
 	pile_label = Label.new()
 	pile_row.add_child(pile_label)
+	# The transient forecast owns the row directly above the hand, so a shown
+	# strip yields stage height without ever moving the card row.
+	_mount_combo_cue(column)
 	hand_view = HBoxContainer.new()
 	hand_view.name = "SharedHand"
 	hand_view.custom_minimum_size.y = HAND_CARD_HEIGHT
@@ -2951,6 +2984,8 @@ func _refresh_hand() -> void:
 	# so any awarded Block and extra draw render through the existing refreshes.
 	_quilt_sync_hand()
 	$LiveSupportHand._cancel_pending()
+	# Rebuilt panels invalidate every previous combo forecast selection/listener.
+	_combo_clear()
 	for child in hand_view.get_children():
 		child.free()
 	for card_id in deck.hand:
@@ -2970,6 +3005,7 @@ func _refresh_hand() -> void:
 		panel.add_child(label)
 	pile_label.text = "Draw: %d | Discard: %d" % [deck.draw_pile.size(), deck.discard_pile.size()]
 	$LiveSupportHand._sync_battle()
+	_sync_combo_forecast()
 
 
 ## Container layout and card identities stay authoritative; only the visual tilt changes.
@@ -2982,6 +3018,299 @@ func _fan_hand() -> void:
 		var spread := (float(index) - float(count - 1) * 0.5) / maxf(1.0, float(count - 1) * 0.5)
 		panel.pivot_offset = Vector2(panel.size.x * 0.5, panel.size.y + 40)
 		panel.rotation = deg_to_rad(spread * 2.0)
+
+
+## One hidden-until-needed strip beneath the hand. It takes no pointer or focus,
+## so a forecast can never intercept a card or enemy click.
+func _mount_combo_cue(column: Node) -> void:
+	_combo_clear(true)
+	combo_cue = Label.new()
+	combo_cue.name = COMBO_FORECAST_NAME
+	combo_cue.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	combo_cue.focus_mode = Control.FOCUS_NONE
+	combo_cue.add_theme_font_size_override("font_size", 18)
+	combo_cue.custom_minimum_size.y = 44
+	combo_cue.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	combo_cue.visible = false
+	column.add_child(combo_cue)
+
+
+## Drop the forecast reading, every hand listener and (on teardown) the cue.
+func _combo_clear(free_cue: bool = false) -> void:
+	_combo_selected = null
+	_combo_keyboard = false
+	for panel in _combo_bindings.keys():
+		_combo_unbind(panel)
+	if is_instance_valid(combo_cue):
+		combo_cue.text = ""
+		combo_cue.visible = false
+		if free_cue:
+			combo_cue.queue_free()
+	if free_cue:
+		combo_cue = null
+
+
+func _combo_unbind(panel) -> void:
+	if not _combo_bindings.has(panel):
+		return
+	var binding: Dictionary = _combo_bindings[panel]
+	if is_instance_valid(panel):
+		if panel.mouse_entered.is_connected(binding.entered):
+			panel.mouse_entered.disconnect(binding.entered)
+		if panel.mouse_exited.is_connected(binding.exited):
+			panel.mouse_exited.disconnect(binding.exited)
+	_combo_bindings.erase(panel)
+	if _combo_selected == panel:
+		_combo_selected = null
+		_combo_keyboard = false
+
+
+## The held card identity is the real hand slot: same panel parent, visible,
+## still at the authoritative hand index and still that exact combo card.
+func _combo_panel_id(panel) -> String:
+	if not is_instance_valid(panel) or not is_instance_valid(hand_view) or deck == null:
+		return ""
+	if panel.get_parent() != hand_view or not panel.is_visible_in_tree() \
+			or not hand_view.is_visible_in_tree() or panel.get_child_count() == 0 \
+			or not panel.get_child(0) is Label:
+		return ""
+	var index: int = panel.get_index()
+	if index < 0 or index >= deck.hand.size():
+		return ""
+	var id := deck.hand[index]
+	if panel.get_child(0).text != id or not _combo_targeting.is_pool_combo_attack(id):
+		return ""
+	return id
+
+
+## An active mounted battle on the current route/encounter and player turn. A
+## standalone title battle owns no route; a routed one must still be current.
+func _combo_battle_current() -> bool:
+	if not is_instance_valid(battle_view) or not battle_view.is_visible_in_tree() \
+			or not is_instance_valid(hand_view) or _battle_closed:
+		return false
+	if deck == null or party == null or enemies == null or battle_result == null \
+			or round_flow == null or enemy_intents == null or run_rng == null:
+		return false
+	if not deck.turn_active or not party.is_valid() or not enemies.is_valid() \
+			or party.is_defeated() or enemies.is_victorious():
+		return false
+	if not battle_result.can_continue() or battle_result._party != party \
+			or battle_result._enemies != enemies:
+		return false
+	if round_flow._deck != deck or round_flow._party != party \
+			or round_flow._enemies != enemies or round_flow._intents != enemy_intents \
+			or round_flow._result != battle_result:
+		return false
+	if run_map != null:
+		return _current_act_battle()
+	return party_carryover == null and _carryover_map == null and encounter_id.is_empty()
+
+
+## The battle-scoped authorities are the presenter's Pinned/Unravel instances
+## and the shared Tinker first-attack latch, never freshly constructed defaults.
+func _combo_authorities() -> Dictionary:
+	var presenter := get_node_or_null("LiveAttackPreview")
+	if presenter == null or not is_instance_valid(presenter) or presenter._deck != deck \
+			or presenter._battle != battle_view or presenter._pinned == null \
+			or presenter._unravel == null or presenter._play == null:
+		return {}
+	var first = presenter._play._tinker
+	if not first is CombatTinkerFirstAttack:
+		return {}
+	return {"pinned": presenter._pinned, "unravel": presenter._unravel, "first": first}
+
+
+## Only one forecast/prompt owns the lower third at a time.
+func _combo_other_owner() -> bool:
+	var presenter := get_node_or_null("LiveAttackPreview")
+	if presenter != null and is_instance_valid(presenter):
+		if is_instance_valid(presenter.cue) and presenter.cue.is_visible_in_tree():
+			return true
+		if presenter._selected != null:
+			return true
+	var support := get_node_or_null("LiveSupportHand")
+	if support != null and not support._pending.is_empty():
+		return true
+	return false
+
+
+## True while P belongs to the live attack preview: it only consumes P when at
+## least one bound, currently eligible attack panel is held.
+func _combo_controls_owned_elsewhere() -> bool:
+	var presenter := get_node_or_null("LiveAttackPreview")
+	if presenter == null or not is_instance_valid(presenter) or not is_instance_valid(hand_view):
+		return false
+	for panel in hand_view.get_children():
+		if presenter._bindings.has(panel) and presenter._eligible(panel):
+			return true
+	return false
+
+
+## Hover listeners mirror the live hand without making combo cards castable:
+## no gui_input handler, no focus mode and no cursor change are added here.
+func _combo_bind_hand() -> void:
+	if not is_instance_valid(hand_view) or deck == null:
+		_combo_clear()
+		return
+	for panel in _combo_bindings.keys():
+		if not is_instance_valid(panel) or _combo_panel_id(panel) != _combo_bindings[panel].id:
+			_combo_unbind(panel)
+	for panel in hand_view.get_children():
+		if _combo_bindings.has(panel):
+			continue
+		var id := _combo_panel_id(panel)
+		if id.is_empty():
+			continue
+		var binding := {"id": id, "entered": _combo_enter.bind(panel),
+			"exited": _combo_exit.bind(panel)}
+		_combo_bindings[panel] = binding
+		panel.mouse_entered.connect(binding.entered)
+		panel.mouse_exited.connect(binding.exited)
+
+
+func _combo_enter(panel) -> void:
+	if _combo_panel_id(panel).is_empty() or not _combo_battle_current() \
+			or _combo_authorities().is_empty() or _combo_other_owner():
+		return
+	_combo_selected = panel
+	_combo_keyboard = false
+	_sync_combo_forecast()
+
+
+func _combo_exit(panel) -> void:
+	if _combo_selected == panel and not _combo_keyboard:
+		_combo_selected = null
+		_sync_combo_forecast()
+
+
+func _combo_cycle() -> void:
+	if not _combo_battle_current() or _combo_authorities().is_empty() \
+			or _combo_other_owner() or not is_instance_valid(hand_view):
+		return
+	var panels: Array[Control] = []
+	for panel in hand_view.get_children():
+		if _combo_bindings.has(panel) and not _combo_panel_id(panel).is_empty():
+			panels.append(panel)
+	if panels.is_empty():
+		return
+	var index := panels.find(_combo_selected)
+	_combo_selected = panels[(index + 1) % panels.size()]
+	_combo_keyboard = true
+	# A forecast-only card must not leave End Turn/Return as the accept target:
+	# Space then cannot end the turn while the player believes a card is selected.
+	get_viewport().gui_release_focus()
+	_sync_combo_forecast()
+
+
+## Per-frame lifecycle: bind real hand panels, then either forecast the selected
+## held combo card through the detached oracle or retire the cue completely.
+func _sync_combo_forecast() -> void:
+	_combo_bind_hand()
+	if not _combo_battle_current():
+		_combo_clear()
+		return
+	if _combo_other_owner():
+		_combo_selected = null
+		_combo_keyboard = false
+	if not is_instance_valid(_combo_selected):
+		_combo_selected = null
+		_combo_keyboard = false
+		_combo_show("")
+		return
+	var id := _combo_panel_id(_combo_selected)
+	var authorities := _combo_authorities()
+	if id.is_empty() or authorities.is_empty():
+		_combo_selected = null
+		_combo_keyboard = false
+		_combo_show("")
+		return
+	var forecast: Dictionary = _combo_preview.get_preview(deck, party, enemies,
+		authorities["pinned"], authorities["unravel"], authorities["first"], id, 0)
+	var text := _combo_forecast_text(id, forecast)
+	if text.is_empty():
+		_combo_selected = null
+		_combo_keyboard = false
+	_combo_show(text)
+
+
+func _combo_show(text: String) -> void:
+	if not is_instance_valid(combo_cue):
+		return
+	combo_cue.text = text
+	combo_cue.visible = not text.is_empty()
+
+
+## One header plus the oracle's own original slots and hit dictionaries. The
+## wording stays a forecast: this cue never spends, discards, casts or claims
+## that a combo attack was played.
+func _combo_forecast_text(id: String, forecast: Dictionary) -> String:
+	var definition: Dictionary = _combo_targeting.combo_definition(id)
+	if definition.is_empty():
+		return ""
+	var reading := "%s | %d energy | Forecast only (nothing played): P / hover selects; Esc cancels" % [
+		str(definition.get("display_name", id)), int(definition.get("cost", 0))]
+	if not forecast.get("playable", false):
+		return reading + "\nForecast unavailable: no legal target, energy, or owner position"
+	var details: PackedStringArray = []
+	for value in forecast.get("targets", []):
+		if not value is Dictionary:
+			return ""
+		var hit: Dictionary = value
+		var detail := "slot %d: %d damage" % [int(hit["position"]), int(hit["damage"])]
+		var absorbed := int(hit.get("block_absorbed", 0))
+		if absorbed > 0:
+			detail += " (%d absorbed)" % absorbed
+		detail += " → %d HP, %d Block" % [int(hit["hp_after"]), int(hit["block_after"])]
+		if not bool(hit.get("survives", true)):
+			detail += ", slain"
+		var pin_bonus := int(hit.get("pin_bonus", 0))
+		if pin_bonus > 0:
+			detail += ", +%d Pinned consumed" % pin_bonus
+		if bool(hit.get("pin_applied", false)):
+			detail += ", Pins it (%s)" % str(hit.get("pin_owner_after", "")).capitalize()
+		elif not str(hit.get("pin_owner_after", "")).is_empty():
+			detail += ", Pinned by %s" % str(hit.get("pin_owner_after", "")).capitalize()
+		var after: Dictionary = {}
+		if hit.get("unravel_after") is Dictionary:
+			after = hit["unravel_after"]
+		var before: Dictionary = {}
+		if hit.get("unravel_before") is Dictionary:
+			before = hit["unravel_before"]
+		if int(hit.get("unravel_added", 0)) > 0:
+			detail += ", Unravel %d→%d/%d" % [int(before.get("gauge", 0)),
+				int(after.get("gauge", 0)), int(after.get("threshold", 0))]
+		elif not after.is_empty():
+			detail += ", gauge %d/%d" % [int(after.get("gauge", 0)), int(after.get("threshold", 0))]
+		var skip: Dictionary = {}
+		if hit.get("after_action_skip") is Dictionary:
+			skip = hit["after_action_skip"]
+		if bool(after.get("skip_pending", false)):
+			if skip.is_empty():
+				detail += ", threshold reached (slain)"
+			else:
+				detail += ", next action skipped → %d/%d" % [int(skip.get("gauge", 0)),
+					int(skip.get("threshold", 0))]
+		if bool(hit.get("conditional_empowered", false)):
+			detail += ", empowered"
+		if int(hit.get("tinker_first_attack_bonus", 0)) > 0:
+			detail += ", +%d Tinker first attack" % int(hit.get("tinker_first_attack_bonus", 0))
+		details.append(detail)
+	if details.is_empty():
+		return ""
+	return reading + "\nOriginal slots %s — %s" % [
+		_combo_slot_text(forecast.get("target_positions", [])), "; ".join(details)]
+
+
+func _combo_slot_text(positions: Array) -> String:
+	var keys: PackedStringArray = []
+	for position in positions:
+		keys.append(str(int(position)))
+	if keys.is_empty():
+		return "none"
+	if keys.size() > 1 and int(positions.back()) - int(positions.front()) == keys.size() - 1:
+		return "%s-%s" % [keys[0], keys[keys.size() - 1]]
+	return ", ".join(keys)
 
 
 func _refresh_party() -> void:
@@ -3176,6 +3505,7 @@ func _return_to_title() -> void:
 	continue_button = null
 	round_flow = null
 	_quilt_detach()
+	_combo_clear(true)
 	if is_instance_valid(battle_view):
 		remove_child(battle_view)
 		battle_view.queue_free()

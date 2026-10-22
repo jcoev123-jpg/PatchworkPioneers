@@ -112,12 +112,22 @@ func _start(seed_value: int, held_id: String = "") -> bool:
 			if child.name == "AttackPreviewCue":
 				count += 1
 		_check(count == 1, "exactly one battle-local cue")
+		var combo_count := 0
+		for child in app.hand_view.get_parent().get_children():
+			if child.name == "ComboForecastCue":
+				combo_count += 1
+		_check(combo_count == 1 and is_instance_valid(app.combo_cue)
+			and app.combo_cue.text == "" and not app.combo_cue.is_visible_in_tree()
+			and app._combo_selected == null and app._combo_bindings.is_empty(),
+			"fresh battle mounts one collapsed, unbound combo forecast cue")
 	return valid
 
 
 func _return() -> void:
 	await _click(app.return_button)
 	_check(app.deck == null and presenter.cue == null and presenter._bindings.is_empty(), "Return clears cue and bindings")
+	_check(app.combo_cue == null and app._combo_selected == null and app._combo_bindings.is_empty(),
+		"Return clears the combo forecast cue and bindings")
 
 
 func _expected(id: String) -> String:
@@ -221,6 +231,11 @@ func _run() -> void:
 			_assert_preview(id)
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
+	await _combo_route_case()
+	await _combo_forecasts()
+	await _combo_live_state()
+	await _combo_rejections()
+	await _combo_other_owner()
 	await _forecast_statuses()
 	await _exact_on_hit_stacks()
 	await _duplicate_instances()
@@ -1087,6 +1102,569 @@ func _cue_count() -> int:
 		if child.name == "AttackPreviewCue":
 			count += 1
 	return count
+
+
+## ---------------------------------------------------------------------------
+## Combo-attack forecast: the app now calls the detached eight-variant oracle
+## from the real shared hand. Pinned/Unravel/Tinker first-attack remain the
+## battle's own instances, and the mounted cue is compared to the same oracle.
+## ---------------------------------------------------------------------------
+
+const COMBO_FAMILIES: Array[String] = [
+	"warden_pinning_jab", "warden_pinning_jab_plus",
+	"warden_seam_breaker", "warden_seam_breaker_plus",
+	"tinker_spool_launcher", "tinker_spool_launcher_plus",
+	"tinker_snip_the_seam", "tinker_snip_the_seam_plus",
+]
+
+
+func _combo_oracle(id: String) -> Dictionary:
+	var live = app.get_node("LiveAttackPreview")
+	return CombatPoolComboAttackPreview.new().get_preview(app.deck, app.party, app.enemies,
+		live._pinned, live._unravel, live._play._tinker, id, 0)
+
+
+## Independent expected reading assembled from the oracle's own slots and hit
+## dictionaries; it never calls the app's formatting routine.
+func _combo_expected(id: String, forecast: Dictionary) -> String:
+	var definition := CombatAttackTargeting.new().combo_definition(id)
+	var reading := "%s | %d energy | Forecast only (nothing played): P / hover selects; Esc cancels" % [
+		str(definition.get("display_name", id)), int(definition.get("cost", 0))]
+	if not forecast.get("playable", false):
+		return reading + "\nForecast unavailable: no legal target, energy, or owner position"
+	var details: PackedStringArray = []
+	for value in forecast["targets"]:
+		var hit: Dictionary = value
+		var detail := "slot %d: %d damage" % [int(hit["position"]), int(hit["damage"])]
+		if int(hit.get("block_absorbed", 0)) > 0:
+			detail += " (%d absorbed)" % int(hit["block_absorbed"])
+		detail += " → %d HP, %d Block" % [int(hit["hp_after"]), int(hit["block_after"])]
+		if not bool(hit.get("survives", true)):
+			detail += ", slain"
+		if int(hit.get("pin_bonus", 0)) > 0:
+			detail += ", +%d Pinned consumed" % int(hit["pin_bonus"])
+		if bool(hit.get("pin_applied", false)):
+			detail += ", Pins it (%s)" % str(hit.get("pin_owner_after", "")).capitalize()
+		elif not str(hit.get("pin_owner_after", "")).is_empty():
+			detail += ", Pinned by %s" % str(hit.get("pin_owner_after", "")).capitalize()
+		var after: Dictionary = hit.get("unravel_after", {})
+		var before: Dictionary = hit.get("unravel_before", {})
+		if int(hit.get("unravel_added", 0)) > 0:
+			detail += ", Unravel %d→%d/%d" % [int(before["gauge"]),
+				int(after["gauge"]), int(after["threshold"])]
+		elif not after.is_empty():
+			detail += ", gauge %d/%d" % [int(after["gauge"]), int(after["threshold"])]
+		var skip: Dictionary = hit.get("after_action_skip", {})
+		if bool(after.get("skip_pending", false)):
+			if skip.is_empty():
+				detail += ", threshold reached (slain)"
+			else:
+				detail += ", next action skipped → %d/%d" % [int(skip["gauge"]),
+					int(skip["threshold"])]
+		if bool(hit.get("conditional_empowered", false)):
+			detail += ", empowered"
+		if int(hit.get("tinker_first_attack_bonus", 0)) > 0:
+			detail += ", +%d Tinker first attack" % int(hit["tinker_first_attack_bonus"])
+		details.append(detail)
+	var keys: PackedStringArray = []
+	for position in forecast["target_positions"]:
+		keys.append(str(int(position)))
+	var slot_text := "none"
+	if keys.size() > 1 and int(forecast["target_positions"].back()) \
+			- int(forecast["target_positions"].front()) == keys.size() - 1:
+		slot_text = "%s-%s" % [keys[0], keys[keys.size() - 1]]
+	elif not keys.is_empty():
+		slot_text = ", ".join(keys)
+	return reading + "\nOriginal slots %s — %s" % [slot_text, "; ".join(details)]
+
+
+## Full mounted battle snapshot plus the three battle-scoped combo authorities
+## and the last committed event, so a pure forecast cannot hide a write.
+func _combo_state() -> Array:
+	var live = app.get_node_or_null("LiveAttackPreview")
+	if live == null:
+		return _snapshot()
+	var pinned = null
+	var bind_identity := false
+	var gauges := {}
+	var latch = null
+	if live._pinned != null:
+		pinned = live._pinned._pinner_by_position.duplicate(true)
+	if live._unravel != null:
+		bind_identity = live._unravel._bound_enemies == app.enemies
+		gauges = live._unravel._gauges.duplicate(true)
+	if live._play != null:
+		latch = live._play._tinker._consumed
+	return _snapshot() + [pinned, bind_identity, gauges, latch, live.last_event.duplicate(true)]
+
+
+func _hold_combo(id: String, extra: Array[String] = []) -> bool:
+	if not await _start(_seed_for("warden_strike")):
+		return false
+	var hand: Array[String] = [id]
+	hand.append_array(extra)
+	app.deck.hand.assign(hand)
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var panel = _panel(id)
+	_check(panel != null and app._combo_bindings.has(panel),
+		"mounted hand holds the actual combo card: " + id)
+	return panel != null
+
+
+## A seeded opening Fight reached through the real title/route controls.
+func _combo_route_fixture() -> Dictionary:
+	for value in range(1, 400):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for id in map.get_legal_choices():
+			if map.get_node(id).type == "Fight":
+				return {"seed": value, "fight": id}
+	return {}
+
+
+## The routed fight must still be this run's current route and encounter.
+func _combo_route_case() -> void:
+	var fixture := _combo_route_fixture()
+	_check(not fixture.is_empty(), "seeded opening offers a real Fight node")
+	if fixture.is_empty():
+		return
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	var fight: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == fixture.fight:
+			fight = button
+	_check(fight != null and not fight.disabled, "seeded opening Fight is an enabled route control")
+	if fight == null:
+		await _return()
+		return
+	await _click(fight)
+	_check(app.deck != null and app.run_map != null and app.party_carryover != null,
+		"real route entry mounts a routed battle with a run ledger")
+	if app.deck == null:
+		return
+	_check(app._current_act_battle(), "mounted routed fight is the current route encounter")
+	var id := "tinker_snip_the_seam"
+	app.deck.hand.assign([id])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var panel = _panel(id)
+	_check(panel != null and app._combo_bindings.has(panel),
+		"routed battle hand holds the actual combo card")
+	if panel == null:
+		await _return()
+		return
+	await _hover(panel)
+	var forecast := _combo_oracle(id)
+	_check(forecast.playable and app.combo_cue.is_visible_in_tree()
+		and app.combo_cue.text == _combo_expected(id, forecast),
+		"routed encounter shows the same oracle forecast")
+	# A route/encounter that no longer matches this battle retires the forecast.
+	var route: Array[String] = app.run_map.get_route().duplicate()
+	app.run_map._route.append("f99_n9")
+	_check(not app._current_act_battle(), "mutated route is no longer the current encounter")
+	var before := _combo_state()
+	await _frames()
+	_check(app._combo_selected == null and not app.combo_cue.is_visible_in_tree()
+		and _combo_state() == before, "stale route retires the cue without touching combat")
+	app.run_map._route.assign(route)
+	await _frames()
+	_check(app._current_act_battle() and not app.combo_cue.is_visible_in_tree(),
+		"restored route keeps the retired cue hidden until a new selection")
+	await _hover(panel)
+	_check(app.combo_cue.is_visible_in_tree()
+		and app.combo_cue.text == _combo_expected(id, _combo_oracle(id)),
+		"restored route re-admits the real forecast")
+	await _return()
+
+
+func _combo_forecasts() -> void:
+	_check(COMBO_FAMILIES.size() == 8, "all eight authored combo variants are covered")
+	for id in COMBO_FAMILIES:
+		var replay: Array = []
+		for session in range(2):
+			if not await _hold_combo(id):
+				return
+			var panel = _panel(id)
+			_check(panel != null, "authored combo card really held: " + id)
+			if panel == null:
+				await _return()
+				continue
+			var definition := CombatAttackTargeting.new().combo_definition(id)
+			_check(not definition.is_empty() and definition.get("id") == id,
+				"authored combo record available: " + id)
+			# A forecast only: no cast handler is added to the shared hand.
+			_check(panel.gui_input.get_connections().is_empty(),
+				"combo card adds no cast input handler: " + id)
+			_check(panel.mouse_entered.get_connections().size() == 1
+				and panel.mouse_exited.get_connections().size() == 1,
+				"one hover enter/leave binding per combo panel: " + id)
+			var before := _combo_state()
+			var idle_min: float = app.hand_view.get_parent().get_combined_minimum_size().y
+			var idle_hand: float = app.hand_view.get_global_rect().position.y
+			_check(not app.combo_cue.is_visible_in_tree() and app.combo_cue.text == "",
+				"idle combo cue reserves no permanent strip: " + id)
+			seed(7411)
+			var global_next := randi()
+			seed(7411)
+			await _hover(panel)
+			var forecast := _combo_oracle(id)
+			_check(forecast.get("playable", false) and not forecast["targets"].is_empty(),
+				"oracle has a real legal forecast: " + id)
+			_check(app._combo_selected == panel,
+				"physical hover selects the real held combo panel: " + id)
+			_check(app.combo_cue.text == _combo_expected(id, forecast),
+				"cue equals the same oracle snapshot: " + id)
+			_check(app.combo_cue.is_visible_in_tree()
+				and root.get_visible_rect().encloses(app.combo_cue.get_global_rect()),
+				"forecast cue readable at 1280x720: " + id)
+			_check(app.hand_view.get_parent().get_combined_minimum_size().y >= idle_min + 44.0
+				and app.hand_view.get_global_rect().position.y == idle_hand,
+				"forecast strip yields the stage and never moves the card row: " + id)
+			_check(app.combo_cue.text.contains("Forecast only (nothing played)"),
+				"cue labels a forecast, not a paid play: " + id)
+			_check(app.combo_cue.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and app.combo_cue.focus_mode == Control.FOCUS_NONE,
+				"cue stays pointer- and focus-inert: " + id)
+			for hit in forecast["targets"]:
+				_check(app.combo_cue.text.contains("slot %d: %d damage" % [
+					int(hit["position"]), int(hit["damage"])])
+					and app.combo_cue.text.contains("→ %d HP, %d Block" % [
+					int(hit["hp_after"]), int(hit["block_after"])]),
+					"slot %d damage and post-hit HP/Block: %s" % [int(hit["position"]), id])
+			if id.begins_with("warden_pinning_jab"):
+				_check(app.combo_cue.text.contains("Pins it (Warden)"),
+					"Pinning Jab forecast reports the real pin: " + id)
+			else:
+				_check(app.combo_cue.text.contains("Unravel") or app.combo_cue.text.contains("gauge"),
+					"Unravel family forecast reports the gauge: " + id)
+			if id.begins_with("tinker_"):
+				_check(app.combo_cue.text.contains("+3 Tinker first attack"),
+					"live first-attack bonus reported: " + id)
+			if id.begins_with("tinker_snip_the_seam"):
+				_check(not app.combo_cue.text.contains("empowered"),
+					"fresh gauge is not empowered: " + id)
+			var held_text: String = app.combo_cue.text
+			_check(_combo_state() == before and randi() == global_next,
+				"hover forecast leaves every model, authority and RNG untouched: " + id)
+			# Keyboard selection of the very same held panel reads identically.
+			app._combo_selected = null
+			await _key(KEY_P)
+			_check(app._combo_selected == panel and app._combo_keyboard,
+				"P selects the held combo card: " + id)
+			_check(app.combo_cue.text == held_text,
+				"keyboard reading equals hover reading: " + id)
+			_check(_combo_state() == before, "keyboard forecast is equally pure: " + id)
+			await _key(KEY_P)
+			_check(app._combo_selected == panel,
+				"single held combo card keeps cycling to itself: " + id)
+			await _key(KEY_ESCAPE)
+			_check(app._combo_selected == null and app.combo_cue.text == ""
+				and not app.combo_cue.is_visible_in_tree(),
+				"Esc retires the combo forecast: " + id)
+			_check(app.hand_view.get_parent().get_combined_minimum_size().y == idle_min,
+				"Esc restores the collapsed lower third: " + id)
+			_check(_combo_state() == before, "cancel alters no combat state: " + id)
+			# Target and cast keys never spend a forecast-only combo.
+			await _key(KEY_1)
+			await _key(KEY_2)
+			await _key(KEY_SPACE)
+			_check(_combo_state() == before and not app.combo_cue.is_visible_in_tree()
+				and app.deck.hand.count(id) == 1 and app.deck.discard_pile.has(id) == false,
+				"no target or cast key spends a forecast-only combo: " + id)
+			var trace := [held_text, app.deck.hand.duplicate()]
+			if replay.is_empty():
+				replay = trace
+			else:
+				_check(trace == replay, "same-seed combo forecast replay: " + id)
+			await _return()
+
+
+## Real battle-local Pinned/Unravel/first-attack changes refresh the cue, and a
+## fresh default service would not carry them.
+func _combo_live_state() -> void:
+	var id := "warden_seam_breaker"
+	if not await _hold_combo(id):
+		return
+	var live = app.get_node("LiveAttackPreview")
+	_check(app.enemies.gain_block(1, 2), "forecast target carries real Block")
+	await _frames()
+	await _hover(_panel(id))
+	var base_forecast := _combo_oracle(id)
+	var base_text: String = app.combo_cue.text
+	_check(base_forecast.get("playable", false)
+		and app.combo_cue.text == _combo_expected(id, base_forecast),
+		"baseline live forecast matches the oracle")
+	_check(app.combo_cue.text.contains(" (2 absorbed)")
+		and int(base_forecast["targets"][0]["hp_after"])
+			== app.enemies.get_enemy(1).hp - int(base_forecast["targets"][0]["hp_loss"])
+		and int(base_forecast["targets"][0]["hp_loss"])
+			== int(base_forecast["targets"][0]["damage"]) - 2,
+		"forecast shows absorbed Block and the post-hit HP")
+	var target: int = int(base_forecast["target_positions"][0])
+	# The battle's own Pinned authority, from a real cross-hero owner.
+	_check(live._pinned.pin_enemy(app.enemies, target, "seamstress"),
+		"battle-local Pinned authority accepts the real pin")
+	await _frames()
+	var pinned_forecast := _combo_oracle(id)
+	var pinned_text: String = app.combo_cue.text
+	_check(pinned_text != base_text
+		and pinned_text == _combo_expected(id, pinned_forecast),
+		"refreshed cue reflects the real battle Pinned token")
+	_check(int(pinned_forecast["targets"][0]["pin_bonus"]) == 5
+		and int(pinned_forecast["targets"][0]["damage"])
+			== int(base_forecast["targets"][0]["damage"]) + 5,
+		"real Pinned +5 reaches the live forecast damage")
+	_check(pinned_text.contains(", +5 Pinned consumed"),
+		"cue reports the consumed cross-hero pin")
+	var fresh_pin := CombatPoolComboAttackPreview.new().get_preview(app.deck, app.party,
+		app.enemies, CombatPinned.new(), live._unravel, live._play._tinker, id, 0)
+	_check(int(fresh_pin["targets"][0]["damage"])
+			== int(base_forecast["targets"][0]["damage"])
+		and int(pinned_forecast["targets"][0]["damage"])
+			!= int(fresh_pin["targets"][0]["damage"]),
+		"forecast uses the battle's Pinned instance, not a fresh default")
+	var settled := _combo_state()
+	await _frames()
+	_check(_combo_state() == settled,
+		"live-state refresh never mutates actors, piles, authorities or RNG")
+	# The battle's own Unravel gauge: charge one short of the skip, then reach it.
+	var added := int(pinned_forecast["targets"][0]["unravel_added"])
+	var threshold := int(pinned_forecast["targets"][0]["unravel_after"]["threshold"])
+	var partial := threshold - added - 1
+	if partial > 0:
+		_check(live._unravel.apply_unravel(app.enemies, target, partial),
+			"battle-local Unravel gauge accepts a real charge")
+		await _frames()
+		var charged_forecast := _combo_oracle(id)
+		var charged_text: String = app.combo_cue.text
+		_check(charged_text != pinned_text
+			and charged_text == _combo_expected(id, charged_forecast),
+			"refreshed cue reflects the real Unravel gauge")
+		_check(int(charged_forecast["targets"][0]["unravel_before"]["gauge"]) == partial
+			and int(charged_forecast["targets"][0]["unravel_after"]["gauge"]) == partial + added
+			and not bool(charged_forecast["targets"][0]["unravel_after"]["skip_pending"]),
+			"live gauge charge and post-hit gauge agree below the threshold")
+		_check(charged_text.contains("Unravel %d→%d/%d" % [partial, partial + added, threshold]),
+			"cue reports the authoritative Unravel charge")
+		_check(live._unravel.apply_unravel(app.enemies, target, 1),
+			"real gauge charge reaches the authored threshold")
+		await _frames()
+	var skip_forecast := _combo_oracle(id)
+	_check(bool(skip_forecast["targets"][0]["unravel_after"]["skip_pending"])
+		and not skip_forecast["targets"][0]["after_action_skip"].is_empty(),
+		"threshold charge queues a real action skip")
+	_check(app.combo_cue.text.contains("next action skipped")
+		and app.combo_cue.text == _combo_expected(id, skip_forecast),
+		"cue reports the queued skip and the reset gauge")
+	var unbound := CombatPoolComboAttackPreview.new().get_preview(app.deck, app.party,
+		app.enemies, live._pinned, CombatUnravel.new(), live._play._tinker, id, 0)
+	_check(not unbound.get("playable", false)
+		and app.combo_cue.text != _combo_expected(id, unbound),
+		"forecast uses the battle's bound Unravel gauge, not a fresh default")
+	await _return()
+	# The battle's shared Tinker first-attack latch.
+	var tinker_id := "tinker_spool_launcher"
+	if not await _hold_combo(tinker_id):
+		return
+	live = app.get_node("LiveAttackPreview")
+	await _hover(_panel(tinker_id))
+	var pending := _combo_oracle(tinker_id)
+	_check(int(pending["targets"][0]["tinker_first_attack_bonus"]) == 3
+		and app.combo_cue.text.contains("+3 Tinker first attack"),
+		"pending shared first-attack bonus is forecast")
+	_check(live._play._tinker.record_successful_attack("tinker_pop_shot"),
+		"the battle's shared first-attack latch consumes a real attack")
+	await _frames()
+	var spent := _combo_oracle(tinker_id)
+	_check(int(spent["targets"][0]["tinker_first_attack_bonus"]) == 0
+		and int(spent["targets"][0]["damage"]) == int(pending["targets"][0]["damage"]) - 3,
+		"consumed latch removes exactly the +3 first-attack bonus")
+	_check(app.combo_cue.text == _combo_expected(tinker_id, spent)
+		and not app.combo_cue.text.contains("Tinker first attack"),
+		"refreshed cue reflects the consumed battle latch")
+	var fresh_latch := CombatPoolComboAttackPreview.new().get_preview(app.deck, app.party,
+		app.enemies, live._pinned, live._unravel, CombatTinkerFirstAttack.new(), tinker_id, 0)
+	_check(int(fresh_latch["targets"][0]["tinker_first_attack_bonus"]) == 3,
+		"a fresh latch default would still advertise +3")
+	settled = _combo_state()
+	await _frames()
+	_check(_combo_state() == settled and app.combo_cue.text == _combo_expected(tinker_id, spent),
+		"consumed-latch forecast is still pure")
+	await _return()
+	# Snip's authored conditional damage follows the battle's own gauge.
+	var snip := "tinker_snip_the_seam_plus"
+	if not await _hold_combo(snip):
+		return
+	live = app.get_node("LiveAttackPreview")
+	await _hover(_panel(snip))
+	var base_snip := _combo_oracle(snip)
+	_check(not bool(base_snip["targets"][0]["conditional_empowered"])
+		and not app.combo_cue.text.contains("empowered"),
+		"fresh gauge forecasts Snip's base damage")
+	var snip_threshold := int(base_snip["targets"][0]["unravel_after"]["threshold"])
+	_check(live._unravel.apply_unravel(app.enemies, 1, snip_threshold / 2),
+		"battle-local Unravel gauge reaches Snip's half-threshold condition")
+	await _frames()
+	var empowered := _combo_oracle(snip)
+	_check(bool(empowered["targets"][0]["conditional_empowered"])
+		and int(empowered["targets"][0]["damage"]) > int(base_snip["targets"][0]["damage"])
+		and app.combo_cue.text.contains(", empowered")
+		and app.combo_cue.text == _combo_expected(snip, empowered),
+		"live gauge change flips Snip to its authored conditional damage")
+	settled = _combo_state()
+	await _frames()
+	_check(_combo_state() == settled,
+		"empowered Snip forecast keeps every model and authority untouched")
+	await _return()
+
+
+func _combo_rejections() -> void:
+	var id := "warden_pinning_jab"
+	var stale_callback: Callable
+	var stale_panel: Control
+	for scenario in ["energy", "downed", "wrong_position", "dead_target",
+			"nonheld", "stale", "hidden", "terminal", "canceled"]:
+		if not await _hold_combo(id):
+			return
+		var panel = _panel(id)
+		await _hover(panel)
+		_check(app.combo_cue.is_visible_in_tree()
+			and app.combo_cue.text == _combo_expected(id, _combo_oracle(id)),
+			"negative scenario starts from a real legal forecast: " + scenario)
+		match scenario:
+			"energy":
+				app.deck.combat_state.energy = 0
+			"downed":
+				_check(app.party.apply_damage(1, 999) and app.party.is_downed(1),
+					"combo owner really downed in the mounted battle")
+			"wrong_position":
+				# Move the Warden to a slot the authored card cannot attack from,
+				# keeping the same party instance and round flow.
+				var heroes: Array = app.party.get_heroes()
+				heroes[0]["position"] = 3
+				heroes[1]["position"] = 1
+				heroes[2]["position"] = 2
+				app.party._heroes.assign([heroes[1], heroes[2], heroes[0]])
+				_check(app.party.get_hero(3).id == "warden"
+					and int(app.party.get_hero(3).position) == 3,
+					"warden really moved to a forbidden position")
+			"dead_target":
+				_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
+					"the only authored target really slain in its original slot")
+			"nonheld":
+				_check(app.deck.discard_played(id),
+					"selected combo card really leaves the hand")
+			"stale":
+				stale_panel = panel
+				stale_callback = app._combo_bindings[panel].entered
+				app.hand_view.remove_child(panel)
+				app._refresh_hand()
+			"hidden":
+				app.battle_view.hide()
+			"terminal":
+				for enemy in app.enemies.get_enemies():
+					app.enemies.apply_damage(enemy.position, 10000)
+			"canceled":
+				await _key(KEY_ESCAPE)
+		# A terminal boundary settles turn/outcome/gold in the next frames; take
+		# the baseline after that real boundary so the check still proves the
+		# forecast refresh itself writes nothing.
+		if scenario == "terminal":
+			await _frames()
+			_check(app.battle_result.is_finished(), "terminal result observed in the actual app")
+		var before := _combo_state()
+		seed(451)
+		var global_next := randi()
+		seed(451)
+		# Let the normal lifecycle observe the change without another input.
+		await _frames()
+		if scenario in ["energy", "downed", "wrong_position", "dead_target"]:
+			_check(app.combo_cue.is_visible_in_tree()
+				and app.combo_cue.text.contains("Forecast unavailable")
+				and not app.combo_cue.text.contains(" damage")
+				and not app.combo_cue.text.contains("Original slots"),
+				"no actionable forecast for an existing but invalid cast: " + scenario)
+		else:
+			_check(app._combo_selected == null and app.combo_cue.text == ""
+				and not app.combo_cue.is_visible_in_tree(),
+				"cue fully retired: " + scenario)
+			if scenario == "stale":
+				stale_callback.call()
+				_check(app._combo_selected == null,
+					"captured obsolete hover cannot select the rebuilt hand")
+				_check(app._combo_bindings.size() == 1
+					and app._combo_bindings.has(_panel(id)),
+					"rebuild leaves exactly one fresh listener on the held card")
+		_check(_combo_state() == before and randi() == global_next,
+			"negative context alters no combat state or global RNG: " + scenario)
+		if scenario == "stale":
+			stale_panel.free()
+		app.battle_view.show()
+		await _return()
+	# A dead slot is excluded without compacting the surviving original slots.
+	if not await _hold_combo("tinker_spool_launcher"):
+		return
+	_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
+		"slot one really slain in place")
+	await _frames()
+	await _hover(_panel("tinker_spool_launcher"))
+	var forecast := _combo_oracle("tinker_spool_launcher")
+	var expected_slots: Array[int] = [2]
+	_check(forecast["target_positions"] == expected_slots
+		and app.combo_cue.text == _combo_expected("tinker_spool_launcher", forecast),
+		"dead slot excluded without compacting original slots")
+	_check(app.combo_cue.text.contains("Original slots 2")
+		and not app.combo_cue.text.contains("slot 1:"),
+		"forecast never advertises the dead slot")
+	await _return()
+
+
+## Only one forecast owns the lower third: the live attack preview keeps P and
+## an armed live attack cannot be replaced by a combo hover.
+func _combo_other_owner() -> void:
+	var id := "warden_seam_breaker"
+	if not await _hold_combo(id, ["warden_shield_bash"]):
+		return
+	var combo = _panel(id)
+	var attack = _panel("warden_shield_bash")
+	_check(combo != null and attack != null,
+		"hand holds one combo and one live attack panel")
+	if combo == null or attack == null:
+		await _return()
+		return
+	await _key(KEY_P)
+	_check(presenter._card_id(presenter._selected) == "warden_shield_bash"
+		and presenter.cue.is_visible_in_tree(),
+		"P stays the live attack preview's selection key")
+	_check(app._combo_selected == null and not app.combo_cue.is_visible_in_tree(),
+		"the live attack forecast is not duplicated by the combo cue")
+	await _key(KEY_ESCAPE)
+	# Arming the live attack keeps its own forecast strip while a combo is hovered.
+	await _click(attack)
+	_check(presenter._armed == attack and presenter.cue.is_visible_in_tree(),
+		"clicked live attack stays armed with its own forecast")
+	var before := _combo_state()
+	await _hover(combo)
+	_check(presenter._armed == attack and presenter._selected == attack,
+		"live attack selection is not stolen by a combo hover")
+	_check(app._combo_selected == null and not app.combo_cue.is_visible_in_tree(),
+		"only one forecast owns the lower third at a time")
+	_check(_combo_state() == before and app.deck.hand.count(id) == 1,
+		"suppressed combo hover changes nothing")
+	await _key(KEY_ESCAPE)
+	_check(presenter._selected == null and presenter._armed == null
+		and app._combo_selected == null, "Esc clears both selections")
+	await _hover(combo)
+	_check(app._combo_selected == combo and app.combo_cue.is_visible_in_tree()
+		and app.combo_cue.text == _combo_expected(id, _combo_oracle(id)),
+		"after the other forecast is cancelled the combo forecast is available")
+	await _return()
 
 
 ## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
