@@ -32,10 +32,11 @@ const REQUIRED := {
 	"thimble_well": {
 		"title": "The Thimble Well",
 		"description": "A silver thimble rests beside a dry stone well.",
-		"choices": {"listen": "Listen for loose thimbles (+1 scrap)", "depart": "Find coins on the roadside (+5 gold)"},
+		"choices": {"listen": "Listen for loose thimbles (+1 scrap)", "depart": "Find coins on the roadside (+5 gold)", "lower_spool": "Lower a spool line (spend 1 scrap; recover 18 gold)"},
 		"outcomes": {
 			"listen": {"gold": 0, "scraps": 1},
 			"depart": {"gold": 5, "scraps": 0},
+			"lower_spool": {"gold": 18, "scraps": -1},
 		},
 	},
 	"frayed_signpost": {
@@ -59,10 +60,11 @@ const REQUIRED := {
 	"needle_gate": {
 		"title": "The Needle Gate",
 		"description": "Crossed needles mark a narrow wooden gate.",
-		"choices": {"examine": "Spend 1 scrap to unpick the gate and claim 12 gold", "pass": "Pass without stopping"},
+		"choices": {"examine": "Spend 1 scrap to unpick the gate and claim 12 gold", "pass": "Pass without stopping", "cut_bindings": "Cut the binding threads (spend 2 scraps; gain 28 gold)"},
 		"outcomes": {
 			"examine": {"gold": 12, "scraps": -1},
 			"pass": {"gold": 0, "scraps": 0},
+			"cut_bindings": {"gold": 28, "scraps": -2},
 		},
 	},
 }
@@ -210,8 +212,9 @@ func _test_catalog_content() -> void:
 		_check((choices as Array).size() >= 2 and (choices as Array).size() <= 3,
 			"2 to 3 choices: " + event_id)
 		if event_id == "needle_gate":
-			_check((choices as Array).size() == 2 and (choices as Array).map(func(c): return c.get("id")) == ["examine", "pass"],
-				"Needle Gate retains exactly examine then pass in authored order")
+			var choice_ids := (choices as Array).map(func(c): return c.get("id"))
+			_check(choice_ids.size() == 3 and choice_ids[0] == "examine" and choice_ids[1] == "pass" and choice_ids[2] == "cut_bindings",
+				"Needle Gate retains examine, pass in authored order with new cut_bindings appended")
 		var seen := {}
 		var by_id := {}
 		var choice_records := {}
@@ -806,7 +809,7 @@ func _test_thimble_well_wallet_settlement() -> void:
 		and authored_record.get("description") == "A silver thimble rests beside a dry stone well.",
 		"thimble_well preserves authored id, title, description")
 	var authored_choices: Array = authored_record.get("choices", [])
-	_check(authored_choices.size() == 2, "thimble_well preserves exactly two authored choices")
+	_check(authored_choices.size() == 3, "thimble_well preserves exactly three authored choices")
 
 	# Branch 1: listen (+0 gold, +1 scrap) from {gold: 7, scraps: 0} -> {gold: 7, scraps: 1}
 	var listen_input_event: Dictionary = authored_record.duplicate(true)
@@ -878,6 +881,80 @@ func _test_thimble_well_wallet_settlement() -> void:
 	_check(_wallet_shape_ok(depart_replay) and depart_replay.get("ok", true) == false
 		and _wallet_exact_int(depart_replay.get("wallet"), 12, 0),
 		"replay after depart claim is rejected with unchanged wallet")
+
+	# Branch 3: lower_spool (+18 gold, -1 scrap) from {gold: 4, scraps: 1} -> {gold: 22, scraps: 0}
+	var lower_input_event: Dictionary = authored_record.duplicate(true)
+	var lower_wallet := {"gold": 4, "scraps": 1}
+	var lower_wallet_before: Dictionary = lower_wallet.duplicate(true)
+	var lower_rng := _rng_start(64803)
+	var lower_service := RunEventChoice.new(lower_input_event)
+	_check(lower_service.is_valid() and not lower_service.is_claimed(),
+		"fresh thimble_well selector valid and unclaimed before lower_spool")
+	var lower_result := lower_service.choose_with_wallet("lower_spool", lower_wallet)
+	_check(_wallet_shape_ok(lower_result), "lower_spool returns 4-key wallet shape")
+	_check(lower_result.get("ok", false) == true, "lower_spool choose_with_wallet succeeds")
+	_check(lower_result.get("event_id", "") == "thimble_well", "lower_spool returns thimble_well event_id")
+	_check(lower_result.get("choice_id", "") == "lower_spool", "lower_spool returns lower_spool choice_id")
+	_check(_wallet_exact_int(lower_result.get("wallet"), 22, 0),
+		"lower_spool settles exact integer wallet {gold: 22, scraps: 0}")
+	_check(_wallet_exact_int(lower_wallet, 4, 1) and lower_wallet == lower_wallet_before,
+		"lower_spool does not mutate caller input wallet")
+	_check(lower_input_event == original_event, "lower_spool does not mutate caller input event")
+	_check(lower_service.get_event() == original_event, "lower_spool does not mutate internal snapshot")
+	_check(lower_service.is_claimed() and not lower_service.is_valid(),
+		"lower_spool latches claim and marks selector consumed")
+	_check(randi() == lower_rng, "lower_spool wallet settlement spends no global RNG")
+
+	(lower_result["wallet"] as Dictionary)["gold"] = 999
+	(lower_result["wallet"] as Dictionary)["scraps"] = 999
+	_check(_wallet_exact_int(lower_wallet, 4, 1), "mutating lower_spool result wallet does not mutate caller wallet")
+
+	var lower_replay := lower_service.choose_with_wallet("listen", {"gold": 22, "scraps": 0})
+	_check(_wallet_shape_ok(lower_replay) and lower_replay.get("ok", true) == false
+		and _wallet_exact_int(lower_replay.get("wallet"), 22, 0),
+		"replay after lower_spool claim is rejected with unchanged wallet")
+
+	# Insufficient scraps for lower_spool (zero scraps) rejects without claiming, then listen succeeds on same selector.
+	var poor_lower_event: Dictionary = authored_record.duplicate(true)
+	var poor_lower_wallet := {"gold": 4, "scraps": 0}
+	var poor_lower_wallet_before: Dictionary = poor_lower_wallet.duplicate(true)
+	var poor_lower_rng := _rng_start(64804)
+	var poor_lower_service := RunEventChoice.new(poor_lower_event)
+	_check(poor_lower_service.is_valid() and not poor_lower_service.is_claimed(),
+		"fresh thimble_well selector valid before refused lower_spool")
+	var poor_lower_refusal := poor_lower_service.choose_with_wallet("lower_spool", poor_lower_wallet)
+	_check(_wallet_shape_ok(poor_lower_refusal) and poor_lower_refusal.get("ok", true) == false
+		and poor_lower_refusal.get("event_id", "") == "" and poor_lower_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_lower_refusal.get("wallet"), 4, 0),
+		"lower_spool without a scrap is refused with exact unchanged wallet")
+	_check(poor_lower_service.is_valid() and not poor_lower_service.is_claimed()
+		and _wallet_exact_int(poor_lower_wallet, 4, 0) and poor_lower_wallet == poor_lower_wallet_before
+		and poor_lower_service.get_event() == original_event and poor_lower_event == original_event,
+		"refused lower_spool consumes no visit and keeps both event snapshots")
+	(poor_lower_refusal["wallet"] as Dictionary)["gold"] = 999
+	_check(_wallet_exact_int(poor_lower_wallet, 4, 0),
+		"mutating refused wallet cannot change caller wallet")
+	var listen_recovery := poor_lower_service.choose_with_wallet("listen", poor_lower_wallet)
+	_check(_wallet_shape_ok(listen_recovery) and listen_recovery.get("ok", false) == true
+		and listen_recovery.get("event_id", "") == "thimble_well"
+		and listen_recovery.get("choice_id", "") == "listen"
+		and _wallet_exact_int(listen_recovery.get("wallet"), 4, 1),
+		"listen recovers on SAME selector after refused lower_spool")
+	_check(poor_lower_service.is_claimed() and not poor_lower_service.is_valid()
+		and _wallet_exact_int(poor_lower_wallet, 4, 0) and poor_lower_event == original_event
+		and poor_lower_service.get_event() == original_event,
+		"recovered listen latches exactly one claim and spends nothing")
+	_check(randi() == poor_lower_rng, "refused lower_spool and recovery spend no global RNG")
+
+	# Post-success replay rejection on the same selector after recovery.
+	var poor_listen_replay := poor_lower_service.choose_with_wallet("listen", {"gold": 4, "scraps": 1})
+	_check(_wallet_shape_ok(poor_listen_replay) and poor_listen_replay.get("ok", true) == false
+		and poor_listen_replay.get("event_id", "") == "" and poor_listen_replay.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_listen_replay.get("wallet"), 4, 1),
+		"replay after recovered listen is rejected with unchanged wallet")
+	_check(poor_lower_service.is_claimed() and not poor_lower_service.is_valid()
+		and poor_lower_service.get_event() == original_event,
+		"replayed listen keeps claim latched and snapshot unchanged")
 
 	var trace_a := RunEventChoice.new(authored_record.duplicate(true)).choose_with_wallet("listen", {"gold": 7, "scraps": 0})
 	var trace_b := RunEventChoice.new(authored_record.duplicate(true)).choose_with_wallet("listen", {"gold": 7, "scraps": 0})
@@ -1044,6 +1121,38 @@ func _test_needle_gate_wallet_settlement() -> void:
 	_check(gate.is_claimed() and not gate.is_valid() and randi() == expected_rng,
 		"trade and replay preserve claim state and global RNG")
 
+	# Branch 2: cut_bindings (+28 gold, -2 scraps) from {gold: 4, scraps: 2} -> {gold: 32, scraps: 0}
+	var cut_input_event: Dictionary = authored.duplicate(true)
+	var cut_wallet := {"gold": 4, "scraps": 2}
+	var cut_wallet_before: Dictionary = cut_wallet.duplicate(true)
+	var cut_rng := _rng_start(64503)
+	var cut_service := RunEventChoice.new(cut_input_event)
+	_check(cut_service.is_valid() and not cut_service.is_claimed(),
+		"fresh needle_gate selector valid and unclaimed before cut_bindings")
+	var cut_result := cut_service.choose_with_wallet("cut_bindings", cut_wallet)
+	_check(_wallet_shape_ok(cut_result), "cut_bindings returns 4-key wallet shape")
+	_check(cut_result.get("ok", false) == true, "cut_bindings choose_with_wallet succeeds")
+	_check(cut_result.get("event_id", "") == "needle_gate", "cut_bindings returns needle_gate event_id")
+	_check(cut_result.get("choice_id", "") == "cut_bindings", "cut_bindings returns cut_bindings choice_id")
+	_check(_wallet_exact_int(cut_result.get("wallet"), 32, 0),
+		"cut_bindings settles exact integer wallet {gold: 32, scraps: 0}")
+	_check(_wallet_exact_int(cut_wallet, 4, 2) and cut_wallet == cut_wallet_before,
+		"cut_bindings does not mutate caller input wallet")
+	_check(cut_input_event == original, "cut_bindings does not mutate caller input event")
+	_check(cut_service.get_event() == original, "cut_bindings does not mutate internal snapshot")
+	_check(cut_service.is_claimed() and not cut_service.is_valid(),
+		"cut_bindings latches claim and marks selector consumed")
+	_check(randi() == cut_rng, "cut_bindings wallet settlement spends no global RNG")
+
+	(cut_result["wallet"] as Dictionary)["gold"] = 999
+	(cut_result["wallet"] as Dictionary)["scraps"] = 999
+	_check(_wallet_exact_int(cut_wallet, 4, 2), "mutating cut_bindings result wallet does not mutate caller wallet")
+
+	var cut_replay := cut_service.choose_with_wallet("examine", {"gold": 32, "scraps": 0})
+	_check(_wallet_shape_ok(cut_replay) and cut_replay.get("ok", true) == false
+		and _wallet_exact_int(cut_replay.get("wallet"), 32, 0),
+		"replay after cut_bindings claim is rejected with unchanged wallet")
+
 	# An unaffordable gate cannot latch; its free pass is still offered on this instance.
 	var empty_wallet := {"gold": 8, "scraps": 0}
 	var empty_caller: Dictionary = authored.duplicate(true)
@@ -1074,6 +1183,96 @@ func _test_needle_gate_wallet_settlement() -> void:
 		"post-pass replay rejects even when the offered trade becomes affordable")
 	_check(randi() == reject_rng and free_gate.get_event() == original,
 		"refused debit, free pass, replay spend no RNG or authored event state")
+
+	# Insufficient scraps for cut_bindings (zero and one scrap) rejects without claiming,
+	# then pass succeeds on SAME selector.
+	# Zero scraps
+	var poor_cut_zero_event: Dictionary = authored.duplicate(true)
+	var poor_cut_zero_wallet := {"gold": 4, "scraps": 0}
+	var poor_cut_zero_wallet_before: Dictionary = poor_cut_zero_wallet.duplicate(true)
+	var poor_cut_zero_rng := _rng_start(64504)
+	var poor_cut_zero_service := RunEventChoice.new(poor_cut_zero_event)
+	_check(poor_cut_zero_service.is_valid() and not poor_cut_zero_service.is_claimed(),
+		"fresh needle_gate selector valid before refused cut_bindings with zero scraps")
+	var poor_cut_zero_refusal := poor_cut_zero_service.choose_with_wallet("cut_bindings", poor_cut_zero_wallet)
+	_check(_wallet_shape_ok(poor_cut_zero_refusal) and poor_cut_zero_refusal.get("ok", true) == false
+		and poor_cut_zero_refusal.get("event_id", "") == "" and poor_cut_zero_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_cut_zero_refusal.get("wallet"), 4, 0),
+		"cut_bindings without scraps is refused with exact unchanged wallet")
+	_check(poor_cut_zero_service.is_valid() and not poor_cut_zero_service.is_claimed()
+		and _wallet_exact_int(poor_cut_zero_wallet, 4, 0) and poor_cut_zero_wallet == poor_cut_zero_wallet_before
+		and poor_cut_zero_service.get_event() == original and poor_cut_zero_event == original,
+		"refused cut_bindings with zero scraps consumes no visit and keeps both event snapshots")
+	(poor_cut_zero_refusal["wallet"] as Dictionary)["gold"] = 999
+	_check(_wallet_exact_int(poor_cut_zero_wallet, 4, 0),
+		"mutating refused wallet cannot change caller wallet")
+	_check(randi() == poor_cut_zero_rng, "zero-scrap cut_bindings refusal spends no global RNG")
+
+	# pass recovers on SAME selector after refused cut_bindings (zero scraps)
+	var pass_recovery_zero := poor_cut_zero_service.choose_with_wallet("pass", poor_cut_zero_wallet)
+	_check(_wallet_shape_ok(pass_recovery_zero) and pass_recovery_zero.get("ok", false) == true
+		and pass_recovery_zero.get("event_id", "") == "needle_gate"
+		and pass_recovery_zero.get("choice_id", "") == "pass"
+		and _wallet_exact_int(pass_recovery_zero.get("wallet"), 4, 0),
+		"pass recovers on SAME selector after refused cut_bindings with zero scraps")
+	_check(poor_cut_zero_service.is_claimed() and not poor_cut_zero_service.is_valid()
+		and _wallet_exact_int(poor_cut_zero_wallet, 4, 0) and poor_cut_zero_event == original
+		and poor_cut_zero_service.get_event() == original,
+		"recovered pass latches exactly one claim and spends nothing (zero scrap)")
+
+	# Post-success replay rejection on the same selector after recovery.
+	var pass_replay_zero := poor_cut_zero_service.choose_with_wallet("pass", {"gold": 4, "scraps": 0})
+	_check(_wallet_shape_ok(pass_replay_zero) and pass_replay_zero.get("ok", true) == false
+		and pass_replay_zero.get("event_id", "") == "" and pass_replay_zero.get("choice_id", "") == ""
+		and _wallet_exact_int(pass_replay_zero.get("wallet"), 4, 0),
+		"replay after recovered pass (zero scrap) is rejected with unchanged wallet")
+	_check(poor_cut_zero_service.is_claimed() and not poor_cut_zero_service.is_valid()
+		and poor_cut_zero_service.get_event() == original,
+		"replayed pass keeps claim latched and snapshot unchanged (zero scrap)")
+
+	# One scrap (still insufficient, needs 2)
+	var poor_cut_one_event: Dictionary = authored.duplicate(true)
+	var poor_cut_one_wallet := {"gold": 4, "scraps": 1}
+	var poor_cut_one_wallet_before: Dictionary = poor_cut_one_wallet.duplicate(true)
+	var poor_cut_one_rng := _rng_start(64505)
+	var poor_cut_one_service := RunEventChoice.new(poor_cut_one_event)
+	_check(poor_cut_one_service.is_valid() and not poor_cut_one_service.is_claimed(),
+		"fresh needle_gate selector valid before refused cut_bindings with one scrap")
+	var poor_cut_one_refusal := poor_cut_one_service.choose_with_wallet("cut_bindings", poor_cut_one_wallet)
+	_check(_wallet_shape_ok(poor_cut_one_refusal) and poor_cut_one_refusal.get("ok", true) == false
+		and poor_cut_one_refusal.get("event_id", "") == "" and poor_cut_one_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_cut_one_refusal.get("wallet"), 4, 1),
+		"cut_bindings with only one scrap is refused with exact unchanged wallet")
+	_check(poor_cut_one_service.is_valid() and not poor_cut_one_service.is_claimed()
+		and _wallet_exact_int(poor_cut_one_wallet, 4, 1) and poor_cut_one_wallet == poor_cut_one_wallet_before
+		and poor_cut_one_service.get_event() == original and poor_cut_one_event == original,
+		"refused cut_bindings with one scrap consumes no visit and keeps both event snapshots")
+	(poor_cut_one_refusal["wallet"] as Dictionary)["gold"] = 999
+	_check(_wallet_exact_int(poor_cut_one_wallet, 4, 1),
+		"mutating refused wallet cannot change caller wallet")
+
+	# pass recovers on SAME selector after refused cut_bindings
+	var pass_recovery := poor_cut_one_service.choose_with_wallet("pass", poor_cut_one_wallet)
+	_check(_wallet_shape_ok(pass_recovery) and pass_recovery.get("ok", false) == true
+		and pass_recovery.get("event_id", "") == "needle_gate"
+		and pass_recovery.get("choice_id", "") == "pass"
+		and _wallet_exact_int(pass_recovery.get("wallet"), 4, 1),
+		"pass recovers on SAME selector after refused cut_bindings")
+	_check(poor_cut_one_service.is_claimed() and not poor_cut_one_service.is_valid()
+		and _wallet_exact_int(poor_cut_one_wallet, 4, 1) and poor_cut_one_event == original
+		and poor_cut_one_service.get_event() == original,
+		"recovered pass latches exactly one claim and spends nothing")
+	_check(randi() == poor_cut_one_rng, "refused cut_bindings and recovery spend no global RNG")
+
+	# Post-success replay rejection on the same selector after recovery.
+	var pass_replay_one := poor_cut_one_service.choose_with_wallet("pass", {"gold": 4, "scraps": 1})
+	_check(_wallet_shape_ok(pass_replay_one) and pass_replay_one.get("ok", true) == false
+		and pass_replay_one.get("event_id", "") == "" and pass_replay_one.get("choice_id", "") == ""
+		and _wallet_exact_int(pass_replay_one.get("wallet"), 4, 1),
+		"replay after recovered pass (one scrap) is rejected with unchanged wallet")
+	_check(poor_cut_one_service.is_claimed() and not poor_cut_one_service.is_valid()
+		and poor_cut_one_service.get_event() == original,
+		"replayed pass keeps claim latched and snapshot unchanged (one scrap)")
 
 
 func _test_quiet_spool_wallet_settlement() -> void:
@@ -1632,11 +1831,11 @@ func _test_seeded_replay_and_wallet_rng() -> void:
 		var authored_record: Dictionary = matches[0]
 		var choices: Array[String] = []
 		if event_id == "button_trail":
-			choices = ["follow", "leave"]
+			choices = ["follow", "leave", "sell_buttons"]
 		elif event_id == "needle_gate":
-			choices = ["examine", "pass"]
+			choices = ["examine", "pass", "cut_bindings"]
 		elif event_id == "thimble_well":
-			choices = ["listen", "depart"]
+			choices = ["listen", "depart", "lower_spool"]
 		elif event_id == "frayed_signpost":
 			choices = ["read", "choose"]
 		for choice_id in choices:
@@ -1650,21 +1849,72 @@ func _test_seeded_replay_and_wallet_rng() -> void:
 				var original_event: Dictionary = caller_event.duplicate(true)
 				var instance := RunEventChoice.new(caller_event)
 				var wallet := {"gold": 12, "scraps": 0}
-				if event_id == "needle_gate":
-					wallet = {"gold": 8, "scraps": 1 if choice_id == "examine" else 0}
+				if event_id == "button_trail":
+					if choice_id == "sell_buttons":
+						wallet = {"gold": 4, "scraps": 1}
+					else:
+						wallet = {"gold": 12, "scraps": 0}
+				elif event_id == "needle_gate":
+					if choice_id == "examine":
+						wallet = {"gold": 8, "scraps": 1}
+					elif choice_id == "cut_bindings":
+						wallet = {"gold": 4, "scraps": 2}
+					else:
+						wallet = {"gold": 8, "scraps": 0}
 				elif event_id == "thimble_well":
-					wallet = {"gold": 7, "scraps": 0}
+					if choice_id == "lower_spool":
+						wallet = {"gold": 4, "scraps": 1}
+					else:
+						wallet = {"gold": 7, "scraps": 0}
 				elif event_id == "frayed_signpost":
 					wallet = {"gold": 7, "scraps": 2 if choice_id == "read" else 0}
 				var wallet_before: Dictionary = wallet.duplicate(true)
 				var preflight_reject := instance.choose_with_wallet("not_a_choice", wallet)
 				var denied_debit: Dictionary = {}
 				if event_id == "needle_gate" and choice_id == "pass":
-					denied_debit = instance.choose_with_wallet("examine", wallet)
+					# Try examine with zero scraps (unaffordable), then pass succeeds
+					var zero_scrap_wallet := {"gold": 8, "scraps": 0}
+					denied_debit = instance.choose_with_wallet("examine", zero_scrap_wallet)
 					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
 						and _wallet_exact_int(denied_debit.get("wallet"), 8, 0)
 						and instance.is_valid() and not instance.is_claimed(),
 						"seeded no-scrap debit refused before free pass")
+				elif event_id == "needle_gate" and choice_id == "examine":
+					# Try cut_bindings with zero scraps (unaffordable), then examine succeeds
+					var zero_scrap_wallet := {"gold": 4, "scraps": 0}
+					denied_debit = instance.choose_with_wallet("cut_bindings", zero_scrap_wallet)
+					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
+						and _wallet_exact_int(denied_debit.get("wallet"), 4, 0)
+						and instance.is_valid() and not instance.is_claimed(),
+						"seeded no-scrap cut_bindings refused before examine")
+				elif event_id == "needle_gate" and choice_id == "cut_bindings":
+					# Try examine with zero scraps (unaffordable), then cut_bindings succeeds
+					var zero_scrap_wallet := {"gold": 8, "scraps": 0}
+					denied_debit = instance.choose_with_wallet("examine", zero_scrap_wallet)
+					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
+						and _wallet_exact_int(denied_debit.get("wallet"), 8, 0)
+						and instance.is_valid() and not instance.is_claimed(),
+						"seeded no-scrap debit refused before cut_bindings")
+				elif event_id == "button_trail" and choice_id == "follow":
+					# Try sell_buttons with zero scraps (unaffordable), then follow succeeds
+					var zero_scrap_wallet := {"gold": 4, "scraps": 0}
+					denied_debit = instance.choose_with_wallet("sell_buttons", zero_scrap_wallet)
+					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
+						and _wallet_exact_int(denied_debit.get("wallet"), 4, 0)
+						and instance.is_valid() and not instance.is_claimed(),
+						"seeded no-scrap sell_buttons refused before follow")
+				elif event_id == "button_trail" and choice_id == "leave":
+					# Try sell_buttons with zero scraps (unaffordable), then leave succeeds
+					var zero_scrap_wallet := {"gold": 4, "scraps": 0}
+					denied_debit = instance.choose_with_wallet("sell_buttons", zero_scrap_wallet)
+					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
+						and _wallet_exact_int(denied_debit.get("wallet"), 4, 0)
+						and instance.is_valid() and not instance.is_claimed(),
+						"seeded no-scrap sell_buttons refused before leave")
+				elif event_id == "thimble_well" and choice_id == "lower_spool":
+					# Try listen with zero scraps (always affordable, but we test the flow)
+					# lower_spool is costly, so no denied_debit needed for it
+					pass
 				elif event_id == "frayed_signpost" and choice_id == "choose":
 					denied_debit = instance.choose_with_wallet("read", wallet)
 					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
