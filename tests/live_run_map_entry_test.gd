@@ -454,8 +454,8 @@ func _run() -> void:
 			"real selected enemy panels mounted")
 		for index in range(ordered.size()):
 			var label: Label = presenter._labels[index]
-			_check(label.is_visible_in_tree() and label.text == "Enemy %d - %s" % [index + 1, ordered[index].name],
-				"visible selected actor name by slot")
+			_check(label.is_visible_in_tree() and label.text == String(ordered[index].name),
+				"visible selected actor name tag by slot")
 			var meter = app.get_node("LiveCombatMeters").row.get_child(3 + index)
 			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [ordered[index].max_hp, ordered[index].max_hp]
 				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: 0", "visible selected actor HP and Block by slot")

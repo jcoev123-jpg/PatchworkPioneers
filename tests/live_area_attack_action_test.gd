@@ -187,15 +187,20 @@ func _run() -> void:
 		var juice = app.get_node_or_null("LiveCombatJuice")
 		_check(juice != null and is_instance_valid(juice.fast_button),
 			"battle row mounts one Fast animations toggle")
+		_check(is_instance_valid(app.action_corner) and app.action_corner.is_ancestor_of(app.return_button)
+			and app.action_corner_row.is_ancestor_of(juice.fast_button)
+			and not app.action_corner.is_ancestor_of(app.end_turn_button),
+			"Return and Fast share one compact sewn corner beside the prominent End Turn")
+		var preview_buttons: Array = []
+		for button in app.find_children("*", "Button", true, false):
+			if String(button.text).to_lower().contains("preview"):
+				preview_buttons.append(button)
+		_check(preview_buttons.is_empty(), "no Preview swap control is mounted in the real battle")
 		await _key(KEY_TAB)
 		_check(juice != null and is_instance_valid(juice.fast_button) and juice.fast_button.has_focus(),
 			"Return Tab reaches the Fast animations toggle")
 		await _key(KEY_TAB)
-		_check(app.swap_preview_buttons[0].has_focus(), "Tab reaches first swap preview")
-		await _key(KEY_TAB)
-		_check(app.swap_preview_buttons[1].has_focus(), "Tab reaches second swap preview")
-		await _key(KEY_TAB)
-		_check(app.end_turn_button.has_focus(), "preview loop returns to End Turn")
+		_check(app.end_turn_button.has_focus(), "compact corner loop returns to End Turn")
 
 		var rng := RandomNumberGenerator.new()
 		rng.seed = chosen
@@ -507,6 +512,8 @@ func _focus_guards() -> void:
 		_check(app.end_turn_button.has_focus(), "battle starts with the inherited button focus")
 		await _select_bomb()
 		_check(root.gui_get_focus_owner() == null, "P attack selection clears the inherited battle focus")
+		# Re-enter the battle's own action loop, then traverse it with real Tab input.
+		app.end_turn_button.grab_focus()
 		await _focus_until(app.return_button)
 		_check(app.return_button.has_focus(), "real Tab sequence reaches Return")
 		await _key(code)
@@ -523,7 +530,15 @@ func _focus_guards() -> void:
 	var before := _live()
 	var event_before: Dictionary = presenter.last_event.duplicate(true)
 	await _select_bomb()
-	await _focus_until(app.end_turn_button)
+	# The compact corner loop is End Turn -> Return -> Fast -> End Turn.
+	app.end_turn_button.grab_focus()
+	await _key(KEY_TAB)
+	_check(app.return_button.has_focus(), "real Tab reaches Return in the compact corner")
+	var fast_toggle = app.get_node("LiveCombatJuice").fast_button
+	await _key(KEY_TAB)
+	_check(is_instance_valid(fast_toggle) and fast_toggle.has_focus(),
+		"real Tab reaches the Fast toggle in the same corner")
+	await _key(KEY_TAB)
 	_check(app.end_turn_button.has_focus(), "real Tab sequence returns focus to End Turn")
 	await _key(KEY_ENTER)
 	_check(app.enemy_intents._turn_index == int(before[3]) + 1, "focused End Turn advances the real round")
@@ -562,7 +577,7 @@ func _focus_guards() -> void:
 	var support_event: Dictionary = presenter.last_event.duplicate(true)
 	var block_before: int = app.party.get_hero(1).block
 	await _select_bomb()
-	await _focus_until(app.end_turn_button)
+	app.end_turn_button.grab_focus()
 	await _key(KEY_UP)
 	_check(app.hand_view.is_ancestor_of(root.gui_get_focus_owner()), "real Up leaves the buttons for the support row")
 	await _focus_until(brace)

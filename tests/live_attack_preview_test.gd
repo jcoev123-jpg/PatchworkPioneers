@@ -368,7 +368,8 @@ func _attacks() -> void:
 					"damage": damage, "block_absorbed": 2, "hp_loss": damage - 2, "statuses": statuses}]}, "authored hit event " + id)
 				var roster = app.get_node("LiveEnemyRoster")
 				var enemy: Dictionary = app.enemies.get_enemy(position)
-				_check(roster._labels[position - 1].text == "Enemy %d - %s" % [position, enemy.name], "mounted enemy reflects hit")
+				_check(roster._labels[position - 1].text == String(enemy.name),
+					"mounted enemy name tag reflects hit")
 				var meter = app.get_node("LiveCombatMeters").row.get_child(3 + position - 1)
 				_check(meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp] and meter.block_text.text == "Block: 0" and meter.hp_bar.value == enemy.hp, "mounted meters reflect service hit")
 				_check(app.hand_view.get_child_count() == app.deck.hand.size() and app.pile_label.text.contains("Discard: 1"), "mounted hand and piles refresh")

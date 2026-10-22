@@ -225,21 +225,23 @@ func _visible(app, presenter) -> void:
 	_check(presenter.panel.is_visible_in_tree() and app.battle_view.is_ancestor_of(presenter.panel),
 		"enemy panel visibly mounted inside battle")
 	var labels: Array[Label] = presenter._labels
-	_check(labels.size() == presenter.enemies.get_enemies().size(), "every roster entry has original readable state label")
+	_check(labels.size() == presenter.enemies.get_enemies().size(), "every roster entry has one pinned name tag")
 	_check(presenter.panel.find_children("*", "Label", true, false).size() == labels.size(),
-		"drawn badges preserve the legacy two original state Labels")
+		"pinned tags stay the only Labels under the enemy roster")
 	_check(not labels.is_empty(), "enemy text exists")
 	if not labels.is_empty():
-		_check(labels[0].is_visible_in_tree() and labels[0].text == "Enemy 1 - Ragling",
-			"visible placeholder identifies ragling and exact HP/Block")
+		_check(labels[0].is_visible_in_tree() and labels[0].text == "Ragling",
+			"pinned tag names the ragling without a long slot sentence")
 		var rect: Rect2 = labels[0].get_global_rect()
 		_check(rect.size.x > 0 and rect.size.y > 0 and Rect2(0, 0, 1280, 720).encloses(rect),
-			"enemy label fits target viewport")
-	_check(labels.size() >= 2, "Guard label exists")
+			"enemy name tag fits target viewport")
+	_check(labels.size() >= 2, "Guard tag exists")
 	if labels.size() >= 2:
-		_check(labels[1].is_visible_in_tree() and labels[1].text == "Enemy 2 - Guard Ragling",
-			"visible Guard placeholder identifies exact HP and Block")
-		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard fits target viewport")
+		_check(labels[1].is_visible_in_tree() and labels[1].text == "Guard Ragling",
+			"pinned tag names the Guard without a long slot sentence")
+		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard tag fits target viewport")
+	_name_tags(app, presenter)
+	_quilt(presenter)
 	_assert_badges(app, presenter, 1)
 	_check(not app.intent_label.visible and not app.intent_label.text.is_empty(), "redundant legacy sentence is hidden while authoritative source remains")
 	_check(presenter._puppets.size() == 3 + presenter.enemies.get_enemies().size(), "one presenter puppet for every actual actor")
@@ -258,6 +260,118 @@ func _visible(app, presenter) -> void:
 		app.return_button.mouse_filter != Control.MOUSE_FILTER_IGNORE,
 		"keyboard and pointer controls still receive input")
 	_geometry(app, presenter)
+
+
+## Small pinned name tags: the authoritative short name, input inert, below the art band
+## and clear of the meter row and the intent badges.
+func _name_tags(app, presenter) -> void:
+	_check(presenter._hero_tags.size() == app.hero_panels.size(),
+		"every mounted hero puppet carries one pinned name tag")
+	var enemies: Array[Dictionary] = presenter.enemies.get_enemies()
+	var troops: Array = presenter._puppets.slice(CombatParty.PARTY_SIZE)
+	_check(troops.size() == enemies.size() and presenter._labels.size() == enemies.size(),
+		"one pinned tag per mounted enemy puppet")
+	for index in range(mini(troops.size(), presenter._labels.size())):
+		var puppet = troops[index]
+		var label: Label = presenter._labels[index]
+		var name: String = enemies[index].get("name", "")
+		_check(not name.is_empty() and label.text == name,
+			"enemy tag is exactly the authoritative short name: " + name)
+		_check(label.mouse_filter == Control.MOUSE_FILTER_IGNORE and label.focus_mode == Control.FOCUS_NONE,
+			"enemy tag stays input inert while the actor keeps its own hit target")
+		_check(label.get_global_rect().position.is_equal_approx(puppet.get_global_rect().position)
+			and label.get_global_rect().size.is_equal_approx(puppet.get_global_rect().size),
+			"enemy tag keeps the complete enemy hit rectangle")
+		_check(puppet.tag_band().size.y > 0.0
+			and puppet.tag_band().end.y <= puppet.size.y + 0.01
+			and puppet.art_band().end.y <= puppet.tag_band().position.y + 0.01,
+			"enemy art band stops above the pinned name tag")
+		_check(puppet.get_theme_default_font().get_string_size(name,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= puppet.size.x - 16.0,
+			"short enemy tag fits its column without clipping: " + name)
+		if index < presenter._badges.size():
+			var tag_band_global := Rect2(puppet.get_global_rect().position + puppet.tag_band().position,
+				puppet.tag_band().size)
+			_check(not tag_band_global.intersects(presenter._badges[index].get_global_rect()),
+				"enemy pinned tag band stays clear of its intent badge")
+	for index in range(presenter._hero_tags.size()):
+		var tag: Label = presenter._hero_tags[index]
+		var puppet = presenter._puppets[index]
+		var hero: Dictionary = app.party.get_hero(index + 1)
+		_check(tag.is_visible_in_tree() and tag.text == hero.get("name", ""),
+			"hero tag is exactly the authoritative short name")
+		_check(tag.mouse_filter == Control.MOUSE_FILTER_IGNORE and tag.focus_mode == Control.FOCUS_NONE,
+			"hero tag stays input inert")
+		_check(tag.get_global_rect().size.y > 0.0
+			and puppet.get_global_rect().encloses(tag.get_global_rect())
+			and puppet.art_band().end.y <= puppet.tag_band().position.y + 0.01,
+			"hero tag sits inside its actor below the stand-in art")
+		_check(puppet.get_theme_default_font().get_string_size(hero.get("name", ""),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= puppet.size.x - 16.0,
+			"short hero tag fits its column without clipping")
+	var meters = app.get_node("LiveCombatMeters")
+	if is_instance_valid(meters.row) and not presenter._labels.is_empty():
+		_check(not presenter._labels[0].get_global_rect().intersects(meters.row.get_global_rect()),
+			"pinned actor tags stay clear of the HP/Block/status meter row")
+
+
+## One continuous quilt: axis-aligned strips sharing every edge, one stitched hem,
+## and no tilted patch polygons left in the stage source.
+func _quilt(presenter) -> void:
+	var backdrop = presenter.backdrop
+	_check(is_instance_valid(backdrop) and backdrop.name == "BattleStageBackdrop"
+		and is_instance_valid(presenter._battle) and backdrop.get_parent() == presenter._battle,
+		"one quilted stage backdrop owns the stage behind both lineups")
+	if not is_instance_valid(backdrop):
+		return
+	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE and backdrop.focus_mode == Control.FOCUS_NONE,
+		"quilted stage never takes pointer or keyboard input")
+	var global_row: Rect2 = presenter.battle_row.get_global_rect()
+	var row: Rect2 = Rect2(global_row.position - backdrop.get_global_rect().position, global_row.size)
+	var cloth: Rect2 = backdrop.quilt_cloth()
+	var patches: Array[Rect2] = backdrop.quilt_rects()
+	var columns: int = presenter.STAGE_QUILT_COLUMNS.size() - 1
+	var rows: int = presenter.STAGE_QUILT_ROWS.size() - 1
+	_check(columns >= 2 and rows >= 1 and patches.size() == columns * rows,
+		"quilt is one continuous field of shared patches")
+	_check(cloth.size.y > 0.0 and is_equal_approx(cloth.position.x, row.position.x)
+		and is_equal_approx(cloth.size.x, row.size.x),
+		"quilted cloth spans the whole actor row edge to edge")
+	var covered := 0.0
+	for index in range(patches.size()):
+		var patch: Rect2 = patches[index]
+		covered += patch.get_area()
+		_check(patch.size.x > 0.0 and patch.size.y > 0.0 and cloth.encloses(patch),
+			"quilt patch is a real axis-aligned piece inside the cloth")
+		if index % columns < columns - 1:
+			var right: Rect2 = patches[index + 1]
+			_check(is_equal_approx(patch.end.x, right.position.x)
+				and is_equal_approx(patch.position.y, right.position.y)
+				and is_equal_approx(patch.size.y, right.size.y),
+				"neighbouring quilt patches share an unbroken vertical seam")
+		if index + columns < patches.size():
+			var below: Rect2 = patches[index + columns]
+			_check(is_equal_approx(patch.end.y, below.position.y)
+				and is_equal_approx(patch.position.x, below.position.x)
+				and is_equal_approx(patch.size.x, below.size.x),
+				"stacked quilt patches share an unbroken horizontal seam")
+	_check(is_equal_approx(covered, cloth.get_area()),
+		"quilt patches tile the cloth with no gap or overlap")
+	var seams: Array[PackedVector2Array] = backdrop.quilt_seams()
+	_check(seams.size() == maxi(0, columns - 1) + maxi(0, rows - 1),
+		"every internal patch edge is stitched exactly once")
+	var stitched := cloth.grow(0.01)
+	for seam in seams:
+		_check(seam.size() == 2 and stitched.has_point(seam[0]) and stitched.has_point(seam[1]),
+			"quilt seam stays inside the continuous cloth")
+	_check(is_equal_approx(cloth.end.y + presenter.STAGE_HEM_HEIGHT, row.end.y),
+		"exactly one stitched hem grounds the quilt")
+	_check(Rect2(0, 0, 1280, 720).encloses(Rect2(backdrop.get_global_rect().position + row.position, row.size)),
+		"whole quilted stage fits 1280x720")
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	_check(not source.contains("STAGE_PATCHES") and not source.contains("func _patch(")
+		and source.contains("func quilt_rects()") and source.contains("func quilt_seams()"),
+		"source draws one quilt instead of three tilted trapezoids")
 
 
 func _geometry(app, presenter) -> void:
@@ -549,7 +663,7 @@ func _typed_stage(app, presenter) -> void:
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)
 		var badge = presenter._badges[index]
 		var action: Dictionary = actions[index]
-		_check(presenter._labels[index].text == "Enemy %d - %s" % [actor.position, actor.name]
+		_check(presenter._labels[index].text == String(actor.get("name", ""))
 			and badge.source_position == actor.position and badge.intent_type == action.type
 			and badge.amount == action.amount and badge.target_position == action.get("target_position", 0),
 			"typed identity and complete authoritative intent survive mounted presentation")

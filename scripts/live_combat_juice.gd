@@ -52,14 +52,14 @@ func toggle_fast() -> void:
 	set_fast(not fast_animations)
 
 
-## One themed action-row button per battle; the row keeps End Turn then Return first.
+## One themed secondary action in the battle's sewn corner, beside the compact Return.
 func attach_fast_button(actions: HBoxContainer) -> Button:
 	if is_instance_valid(fast_button) and fast_button.get_parent() == actions:
 		_sync_button()
 		return fast_button
 	var button := Button.new()
 	button.name = "FastAnimationsButton"
-	button.custom_minimum_size = Vector2(240, 48)
+	button.custom_minimum_size = Vector2(120, 40)
 	button.focus_mode = Control.FOCUS_ALL
 	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	button.tooltip_text = "Fast animations: cues settle in %.2f s instead of %.1f s" % [
@@ -79,7 +79,7 @@ func _sync_button() -> void:
 	if not is_instance_valid(fast_button):
 		fast_button = null
 		return
-	fast_button.text = "Fast animations: %s" % ("On" if fast_animations else "Off")
+	fast_button.text = "Fast: %s" % ("On" if fast_animations else "Off")
 
 
 ## True while a real, still-open battle is mounted with valid, matching models.

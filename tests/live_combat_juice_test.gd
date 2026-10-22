@@ -262,8 +262,11 @@ func _assert_presenter_mounted() -> void:
 	_check(juice.history.is_empty() and juice.live_cues() == 0,
 		"mounting a fight fabricates no cue")
 	_check(is_instance_valid(juice.fast_button) and juice.fast_button.is_visible_in_tree()
-		and juice.fast_button.get_parent() == app.end_turn_button.get_parent(),
-		"themed Fast animations toggle sits in the existing battle action row")
+		and juice.fast_button.get_parent() == app.action_corner_row
+		and app.action_corner.is_ancestor_of(juice.fast_button)
+		and app.action_corner.is_ancestor_of(app.return_button)
+		and not app.action_corner.is_ancestor_of(app.end_turn_button),
+		"Fast keeps its real Button in the compact sewn corner beside Return")
 	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
 		"exactly one Fast animations toggle")
 
@@ -438,11 +441,11 @@ func _fast_mode() -> void:
 		return
 	var button: Button = juice.fast_button
 	_check(not juice.fast_animations and juice.duration_seconds() <= 0.6
-		and button.text == "Fast animations: Off", "normal mode by default")
+		and button.text == "Fast: Off", "normal mode by default")
 	var before_toggle := _state()
 	await _mouse(button)
 	_check(juice.fast_animations and juice.duration_seconds() <= 0.15
-		and button.text == "Fast animations: On", "mouse reaches a fast mode of at most 0.15 s")
+		and button.text == "Fast: On", "mouse reaches a fast mode of at most 0.15 s")
 	_check(_state() == before_toggle, "toggling fast changes no combat state")
 	_check(not app.end_turn_button.disabled, "fast mode never locks the End Turn action")
 	# A real attack in fast mode commits normally and keeps its cue for at most 0.15 s.
@@ -479,7 +482,7 @@ func _fast_mode() -> void:
 	var before_key := _state()
 	await _key(KEY_SPACE)
 	_check(not juice.fast_animations and juice.duration_seconds() <= 0.6
-		and button.text == "Fast animations: Off", "Space returns to normal-speed cues")
+		and button.text == "Fast: Off", "Space returns to normal-speed cues")
 	_check(_state() == before_key, "keyboard toggling changes no combat state")
 	# Normal mode gameplay is not gated by the previous fast cue either.
 	var normal_state := _state()

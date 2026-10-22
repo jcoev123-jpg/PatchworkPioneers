@@ -22,6 +22,47 @@ const FIGHT_ENCOUNTER_PATHS := {
 ## One stage height shared with the roster presenter, so both lineups stay the same size.
 const STAGE_ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const STAGE_ACTOR_HEIGHT := STAGE_ROSTER.STAGE_ACTOR_HEIGHT
+## Compact secondary actions: End Turn stays the prominent 240x48 control, while
+## Return and the juice-owned Fast toggle share one small sewn corner beside it.
+const SECONDARY_ACTION_SIZE := Vector2(128, 40)
+
+
+## One small sewn felt corner beside the prominent End Turn control.
+class ActionCorner extends PanelContainer:
+	func _ready() -> void:
+		var felt := StyleBoxFlat.new()
+		felt.bg_color = Color("42392f")
+		felt.border_color = Color("c9b996")
+		felt.set_border_width_all(1)
+		felt.set_corner_radius_all(8)
+		felt.content_margin_left = 10
+		felt.content_margin_right = 10
+		felt.content_margin_top = 6
+		felt.content_margin_bottom = 6
+		add_theme_stylebox_override("panel", felt)
+
+
+## Dashed thread stitching and cross-stitches; never takes pointer or focus.
+class ActionCornerStitch extends Control:
+	const THREAD := Color("c9b996")
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		if size.x <= 12.0 or size.y <= 12.0:
+			return
+		var inset := Rect2(Vector2(4.5, 4.5), size - Vector2(9.0, 9.0))
+		var corners := [inset.position, Vector2(inset.end.x, inset.position.y), inset.end,
+			Vector2(inset.position.x, inset.end.y)]
+		for index in range(corners.size()):
+			draw_dashed_line(corners[index], corners[(index + 1) % corners.size()], THREAD, 1.0, 5.0)
+		for corner: Vector2 in corners:
+			draw_line(corner + Vector2(-3, -3), corner + Vector2(3, 3), THREAD, 1.0, true)
+			draw_line(corner + Vector2(3, -3), corner + Vector2(-3, 3), THREAD, 1.0, true)
+
 
 @export var run_seed: int = 42
 @export_file("*.json") var starter_deck_path: String = STARTER_DECK_PATH
@@ -165,9 +206,8 @@ var result_label: Label
 var _battle_closed := false
 var terminal_result_panel: LiveRunTerminalResultPanel
 var _terminal_return_connection: Callable
-var swap_preview_buttons: Array[Button] = []
-var swap_preview_cue: Label
-var _swap_preview_pair := 0
+var action_corner: PanelContainer
+var action_corner_row: HBoxContainer
 
 
 func _ready() -> void:
@@ -188,7 +228,7 @@ func _process(_delta: float) -> void:
 	_observe_battle_result()
 	if is_instance_valid(battle_view) and battle_view.is_visible_in_tree():
 		_refresh_intents()
-		_refresh_swap_preview()
+		_refresh_action_focus()
 
 
 ## Single observation boundary for live updates and resolved phases.
@@ -883,29 +923,12 @@ func _build_battle() -> void:
 	result_label.add_theme_font_size_override("font_size", 28)
 	result_label.hide()
 	column.add_child(result_label)
-	var previews := HBoxContainer.new()
-	previews.add_theme_constant_override("separation", 16)
-	column.add_child(previews)
-	var heading := Label.new()
-	heading.text = "Shared hand"
-	heading.add_theme_font_size_override("font_size", 24)
-	previews.add_child(heading)
-	for pair in [1, 2]:
-		var button := Button.new()
-		button.custom_minimum_size = Vector2(240, 32)
-		previews.add_child(button)
-		swap_preview_buttons.append(button)
-		button.pressed.connect(_preview_position_swap.bind(pair, button))
-	var counts_and_preview := HBoxContainer.new()
-	counts_and_preview.add_theme_constant_override("separation", 24)
-	column.add_child(counts_and_preview)
+	var pile_row := HBoxContainer.new()
+	pile_row.name = "PileCounts"
+	pile_row.add_theme_constant_override("separation", 24)
+	column.add_child(pile_row)
 	pile_label = Label.new()
-	counts_and_preview.add_child(pile_label)
-	swap_preview_cue = Label.new()
-	swap_preview_cue.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	swap_preview_cue.add_theme_font_size_override("font_size", 18)
-	swap_preview_cue.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	counts_and_preview.add_child(swap_preview_cue)
+	pile_row.add_child(pile_label)
 	hand_view = HBoxContainer.new()
 	hand_view.name = "SharedHand"
 	hand_view.custom_minimum_size.y = 120
@@ -928,84 +951,60 @@ func _build_battle() -> void:
 	end_turn_button.custom_minimum_size = Vector2(240, 48)
 	end_turn_button.pressed.connect(_end_turn.bind(end_turn_button))
 	actions.add_child(end_turn_button)
+	_build_action_corner(actions)
+	_refresh_action_focus()
+
+
+## Secondary actions share one small sewn felt corner; End Turn stays the large control.
+func _build_action_corner(actions: HBoxContainer) -> void:
+	action_corner = ActionCorner.new()
+	action_corner.name = "BattleActionCorner"
+	action_corner.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	actions.add_child(action_corner)
+	action_corner_row = HBoxContainer.new()
+	action_corner_row.name = "BattleActionCornerRow"
+	action_corner_row.add_theme_constant_override("separation", 8)
+	action_corner.add_child(action_corner_row)
+	var stitch := ActionCornerStitch.new()
+	stitch.name = "BattleActionCornerStitch"
+	action_corner.add_child(stitch)
 	return_button = Button.new()
-	return_button.text = "Return to title"
-	return_button.custom_minimum_size = Vector2(240, 48)
+	return_button.text = "Return"
+	return_button.custom_minimum_size = SECONDARY_ACTION_SIZE
+	return_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return_button.tooltip_text = "Return to title"
 	return_button.pressed.connect(_return_from_battle.bind(return_button))
-	actions.add_child(return_button)
-	_mount_juice_action(actions)
-	_refresh_swap_preview()
+	action_corner_row.add_child(return_button)
+	_mount_juice_action(action_corner_row)
 
 
 ## Presentation hook: the battle-independent juice node owns its Fast toggle button.
-func _mount_juice_action(actions: HBoxContainer) -> void:
+func _mount_juice_action(corner: HBoxContainer) -> void:
 	var juice = get_node_or_null("LiveCombatJuice")
 	if juice != null:
-		juice.attach_fast_button(actions)
+		juice.attach_fast_button(corner)
 
 
-## Presentation only: never install the copied proposal into the live party.
-func _swap_preview_active() -> bool:
-	return is_instance_valid(battle_view) and battle_view.is_visible_in_tree() \
-		and not _battle_closed and deck != null and deck.turn_active \
-		and party != null and party.is_valid() and not party.is_defeated() \
-		and enemies != null and enemies.is_valid() and not enemies.is_victorious() \
-		and battle_result != null and battle_result._party == party \
-		and battle_result._enemies == enemies and battle_result.can_continue()
-
-
-func _preview_position_swap(pair: int, button) -> void:
-	if pair not in [1, 2] or not is_instance_valid(button) \
-			or swap_preview_buttons.size() != 2 or button != swap_preview_buttons[pair - 1] \
-			or not button.is_visible_in_tree():
-		return
-	_swap_preview_pair = pair
-	_refresh_swap_preview()
-
-
-func _refresh_swap_preview() -> void:
-	if not is_instance_valid(swap_preview_cue):
-		return
-	var active := _swap_preview_active()
-	var selected := {"ok": false, "heroes": []}
+## Rebuilds the forward/reverse Tab loops for every mounted action state: the live
+## turn, a won or lost fight, and the routed reward with its Continue control.
+func _refresh_action_focus() -> void:
 	var actions: Array[Button] = []
-	if not end_turn_button.disabled:
+	if is_instance_valid(end_turn_button) and not end_turn_button.disabled:
 		actions.append(end_turn_button)
-	actions.append(return_button)
-	# End Turn still leads to Return; the Fast toggle follows it during the live turn.
+	if is_instance_valid(return_button) and not return_button.disabled:
+		actions.append(return_button)
 	var juice = get_node_or_null("LiveCombatJuice")
-	if not _battle_closed and juice != null and is_instance_valid(juice.fast_button):
+	if not _battle_closed and juice != null and is_instance_valid(juice.fast_button) \
+			and not juice.fast_button.disabled:
 		actions.append(juice.fast_button)
 	for button in reward_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			actions.append(button)
 	if is_instance_valid(continue_button) and not continue_button.disabled:
 		actions.append(continue_button)
-	for index in range(swap_preview_buttons.size()):
-		var pair := index + 1
-		var proposal := CombatPositionSwaps.preview_adjacent_swap(party, pair, 1)
-		var button := swap_preview_buttons[index]
-		button.disabled = not active or not proposal.ok
-		button.text = "Preview swap %d / %d%s" % [pair, pair + 1,
-			" (unavailable)" if button.disabled else ""]
-		if not button.disabled:
-			actions.append(button)
-		if pair == _swap_preview_pair and active:
-			selected = proposal
 	for index in range(actions.size()):
 		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
-	if not active:
-		swap_preview_cue.text = "Swap preview unavailable: battle inactive or invalid."
-	elif _swap_preview_pair == 0:
-		swap_preview_cue.text = "Preview only: choose adjacent living heroes. No movement or cost."
-	elif not selected.ok:
-		swap_preview_cue.text = "Swap preview unavailable: both heroes must be living."
-	else:
-		var positions: PackedStringArray = []
-		for hero in selected.heroes:
-			positions.append("%d: %s" % [hero.position, hero.get("name", hero.id)])
-		swap_preview_cue.text = "Preview only: " + " | ".join(positions) + " (no movement or cost)"
 
 
 ## Routed rewards are prepared once; the standalone demo keeps its fixed offering.
@@ -1108,9 +1107,9 @@ func _mount_reward_choice(prepared: Dictionary) -> void:
 	_reward_return_parent = weakref(return_button.get_parent())
 	return_button.reparent(reward_choice_panel)
 	return_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	return_button.custom_minimum_size = Vector2(240, 48)
+	return_button.custom_minimum_size = SECONDARY_ACTION_SIZE
 	return_button.position = Vector2(20, 666)
-	return_button.size = Vector2(240, 48)
+	return_button.size = SECONDARY_ACTION_SIZE
 	return_button.focus_next = return_button.get_path_to(reward_buttons[0])
 	return_button.focus_previous = return_button.get_path_to(reward_buttons[3])
 
@@ -1287,7 +1286,7 @@ func _finish_card_reward(offering) -> void:
 		continue_button.size = Vector2(240, 48)
 		continue_button.focus_next = continue_button.get_path_to(return_button)
 		return_button.focus_next = return_button.get_path_to(continue_button)
-	_refresh_swap_preview()
+	_refresh_action_focus()
 	return_button.grab_focus()
 
 
@@ -1640,8 +1639,6 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		remove_child(battle_view)
 		battle_view.queue_free()
 	hero_panels.clear()
-	swap_preview_buttons.clear()
-	_swap_preview_pair = 0
 	reward_buttons.clear()
 	continue_button = null
 	card_reward = null
@@ -2799,7 +2796,6 @@ func _fan_hand() -> void:
 
 
 func _refresh_party() -> void:
-	_refresh_swap_preview()
 	for index in range(hero_panels.size()):
 		var hero := party.get_hero(index + 1)
 		var label := hero_panels[index].get_child(0) as Label
@@ -2996,9 +2992,8 @@ func _return_to_title() -> void:
 	pile_label = null
 	end_turn_button = null
 	return_button = null
-	swap_preview_buttons.clear()
-	swap_preview_cue = null
-	_swap_preview_pair = 0
+	action_corner = null
+	action_corner_row = null
 	hero_view = null
 	hero_panels.clear()
 	intent_label = null
