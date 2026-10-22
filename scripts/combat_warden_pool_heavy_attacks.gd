@@ -65,6 +65,7 @@ func can_play(
 	var from_positions: Array = definition.get("from_positions", []) as Array
 	var to_positions: Array = definition.get("to_positions", []) as Array
 
+	var warden_hero: Dictionary = {}
 	var warden_pos: int = 0
 	var warden_count: int = 0
 	var heroes: Array[Dictionary] = party.get_heroes()
@@ -72,10 +73,14 @@ func can_play(
 		if hero.get("id") == WARDEN_ID:
 			warden_count += 1
 			warden_pos = int(hero.get("position", 0))
+			warden_hero = hero
 
 	if warden_count != 1 or warden_pos <= 0:
 		return false
 	if party.is_downed(warden_pos) or not from_positions.has(warden_pos):
+		return false
+	var hero_statuses: Variant = warden_hero.get("statuses", {})
+	if hero_statuses is Dictionary and not _valid_statuses(hero_statuses as Dictionary):
 		return false
 
 	if not to_positions.has(target_position):
@@ -87,6 +92,9 @@ func can_play(
 		return false
 	var enemy_rec: Dictionary = enemies.get_enemy(target_position)
 	if enemy_rec.is_empty() or int(enemy_rec.get("hp", 0)) <= 0:
+		return false
+	var enemy_statuses: Variant = enemy_rec.get("statuses", {})
+	if enemy_statuses is Dictionary and not _valid_statuses(enemy_statuses as Dictionary):
 		return false
 
 	return true
@@ -215,41 +223,29 @@ func play_attack(
 	if target_enemy.is_empty() or int(target_enemy.get("hp", 0)) <= 0:
 		return _failure(card_id, target_position)
 
-	# Validate any caller-supplied statuses
+	# Validate any caller-supplied statuses without letting them determine damage
 	if not _valid_statuses(attacker_statuses):
 		return _failure(card_id, target_position)
-	if not _validate_enemy_statuses(enemy_statuses_by_position):
+	if not _validate_enemy_statuses(enemy_statuses_by_position, enemies):
 		return _failure(card_id, target_position)
 
-	# Source owner statuses (Warden)
+	# Authoritative owner statuses from the unique Warden hero record
 	var owner_statuses: Dictionary = {}
 	var hero_statuses: Variant = warden_hero.get("statuses", {})
 	if hero_statuses is Dictionary:
 		for k: Variant in (hero_statuses as Dictionary):
 			owner_statuses[str(k)] = int(hero_statuses[k])
-	for k: Variant in attacker_statuses:
-		owner_statuses[str(k)] = int(attacker_statuses[k])
+	if not _valid_statuses(owner_statuses):
+		return _failure(card_id, target_position)
 
-	# Source defender statuses (Target Enemy)
-	var target_statuses: Dictionary = {}
-	var foe_statuses: Variant = target_enemy.get("statuses", {})
-	if foe_statuses is Dictionary:
-		for k: Variant in (foe_statuses as Dictionary):
-			target_statuses[str(k)] = int(foe_statuses[k])
-	if enemy_statuses_by_position.has(target_position):
-		var pos_statuses: Variant = enemy_statuses_by_position[target_position]
-		if pos_statuses is Dictionary:
-			for k: Variant in (pos_statuses as Dictionary):
-				target_statuses[str(k)] = int(pos_statuses[k])
-	elif not enemy_statuses_by_position.is_empty():
-		var has_str_keys: bool = false
-		for k: Variant in enemy_statuses_by_position:
-			if k is String:
-				has_str_keys = true
-				break
-		if has_str_keys:
-			for k: Variant in enemy_statuses_by_position:
-				target_statuses[str(k)] = int(enemy_statuses_by_position[k])
+	# Validate authoritative target enemy statuses before debiting
+	var initial_target_statuses: Dictionary = {}
+	var initial_foe_statuses: Variant = target_enemy.get("statuses", {})
+	if initial_foe_statuses is Dictionary:
+		for k: Variant in (initial_foe_statuses as Dictionary):
+			initial_target_statuses[str(k)] = int(initial_foe_statuses[k])
+	if not _valid_statuses(initial_target_statuses):
+		return _failure(card_id, target_position)
 
 	# Commit transaction: debit energy and discard card once
 	if not deck.try_spend_energy(cost):
@@ -262,7 +258,19 @@ func play_attack(
 	var damage_resolver: CombatStatusAttacks = CombatStatusAttacks.new()
 	for i: int in range(hits_count):
 		# If the target was slain by hit 1, skip hit 2 without error or redirect
-		if enemies.is_slain(target_position) or int(enemies.get_enemy(target_position).get("hp", 0)) <= 0:
+		if enemies.is_slain(target_position):
+			break
+		var current_enemy: Dictionary = enemies.get_enemy(target_position)
+		if current_enemy.is_empty() or int(current_enemy.get("hp", 0)) <= 0:
+			break
+
+		# Authoritative defender statuses from the current targeted enemy record
+		var target_statuses: Dictionary = {}
+		var foe_statuses: Variant = current_enemy.get("statuses", {})
+		if foe_statuses is Dictionary:
+			for k: Variant in (foe_statuses as Dictionary):
+				target_statuses[str(k)] = int(foe_statuses[k])
+		if not _valid_statuses(target_statuses):
 			break
 
 		var hit_result: Dictionary = damage_resolver.resolve_vs_enemy(
@@ -323,11 +331,13 @@ func _valid_statuses(statuses: Dictionary) -> bool:
 	return true
 
 
-func _validate_enemy_statuses(statuses_data: Dictionary) -> bool:
+func _validate_enemy_statuses(statuses_data: Dictionary, enemies: CombatEnemies = null) -> bool:
 	for key: Variant in statuses_data:
 		if key is int:
 			var pos: int = int(key)
 			if pos < 1 or pos > CombatEnemies.MAX_ENEMIES:
+				return false
+			if enemies != null and enemies.get_enemy(pos).is_empty():
 				return false
 			var pos_statuses: Variant = statuses_data[key]
 			if not pos_statuses is Dictionary or not _valid_statuses(pos_statuses as Dictionary):
