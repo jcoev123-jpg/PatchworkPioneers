@@ -56,6 +56,7 @@ func _sync_battle() -> void:
 	if _battle != app.battle_view or _deck != app.deck or _party != app.party or _enemies != app.enemies:
 		_clear()
 		_mount(app)
+	var unravel := _bound_unravel(app)
 	var patches := _current_patches(app)
 	var needed_height := RIBBON_HEIGHT
 	var forecast := {"ok": false, "heroes": []}
@@ -71,6 +72,8 @@ func _sync_battle() -> void:
 		var snapshot: Dictionary = _party.get_hero(position) if side == "hero" else _enemies.get_enemy(position)
 		var shown := meter.show_actor(snapshot, side)
 		_compact(meter)
+		if side == "enemy":
+			_sync_unravel_thread(meter, snapshot, position, unravel)
 		# The forecast is written before the tooltip is composed, so a hover can never
 		# show a stale or half-built line; the long paragraph itself stays hidden.
 		var incoming := meter.get_node_or_null("Padding/Content/IncomingForecast") as Label
@@ -90,6 +93,116 @@ func _sync_battle() -> void:
 	var target_min := Vector2(0, needed_height + 2.0)
 	if row.custom_minimum_size != target_min:
 		row.custom_minimum_size = target_min
+
+
+## Only the admission-owned service of the active, still-identical fight is readable.
+## Neither the stage nor its badges may synthesize a replacement gauge.
+func _bound_unravel(app) -> CombatUnravel:
+	if app._battle_closed or app.deck == null or app.party == null or app.enemies == null \
+			or app.enemy_intents == null or app.battle_result == null:
+		return null
+	var flow: CombatRoundFlow = app.round_flow
+	if flow == null or not is_instance_valid(flow) or not flow._started \
+			or flow._deck != app.deck or flow._party != app.party \
+			or flow._enemies != app.enemies or flow._intents != app.enemy_intents \
+			or flow._result != app.battle_result \
+			or flow._battle_deck != app.deck or flow._battle_party != app.party \
+			or flow._battle_enemies != app.enemies or flow._battle_intents != app.enemy_intents \
+			or flow._battle_result != app.battle_result:
+		return null
+	var service: CombatUnravel = flow._unravel
+	if service == null or not is_instance_valid(service) \
+			or service._bound_enemies != app.enemies or not flow._valid_unravel_binding():
+		return null
+	return service
+
+
+## A single slim stitched felt trough immediately below HP, owned by the enemy
+## ribbon alone. A hover-only carrier exposes the truthful tooltip; no gameplay action,
+## focus or target from the authoritative stage slots.
+func _make_unravel_thread(content: VBoxContainer, meter: CombatActorMeter) -> void:
+	var thread := ProgressBar.new()
+	thread.name = "UnravelThread"
+	thread.show_percentage = false
+	thread.custom_minimum_size = Vector2(0, 17)
+	thread.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thread.focus_mode = Control.FOCUS_NONE
+	thread.min_value = 0
+	thread.max_value = 1
+	thread.value = 0
+	var backing := StyleBoxFlat.new()
+	backing.bg_color = Color("192830")
+	backing.border_color = Color("a69a85")
+	backing.set_border_width_all(1)
+	backing.set_corner_radius_all(2)
+	thread.add_theme_stylebox_override("background", backing)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color("b8775c")
+	fill.set_corner_radius_all(2)
+	thread.add_theme_stylebox_override("fill", fill)
+	content.add_child(thread)
+	content.move_child(thread, meter.hp_bar.get_index() + 1)
+	var stitch := CombatActorMeter.BarStitch.new()
+	stitch.name = "ThreadStitch"
+	thread.add_child(stitch)
+	# The decorative ProgressBar ignores input; a transparent, unfocusable
+	# and actionless hover carrier exposes its tooltip without drawing on
+	# the loose-thread fill or issuing any gameplay action.
+	var hover := Button.new()
+	hover.name = "ThreadHover"
+	hover.flat = true
+	hover.mouse_filter = Control.MOUSE_FILTER_STOP
+	hover.focus_mode = Control.FOCUS_NONE
+	hover.mouse_default_cursor_shape = Control.CURSOR_HELP
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		hover.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	thread.add_child(hover)
+	hover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var number := Label.new()
+	number.name = "ThreadFraction"
+	number.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	number.focus_mode = Control.FOCUS_NONE
+	number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	number.add_theme_font_size_override("font_size", 11)
+	number.add_theme_color_override("font_color", Color("eee1ca"))
+	number.add_theme_color_override("font_outline_color", Color("192830"))
+	number.add_theme_constant_override("outline_size", 3)
+	thread.add_child(number)
+	number.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	thread.hide()
+
+
+## Detached snapshots only; a slain, invalid or replaced roster gets neither
+## a stale fraction nor a stray hover target.
+func _sync_unravel_thread(meter: CombatActorMeter, actor: Dictionary, position: int,
+		service: CombatUnravel) -> void:
+	var thread := meter.get_node("Padding/Content/UnravelThread") as ProgressBar
+	var fraction := thread.get_node("ThreadFraction") as Label
+	var state: Dictionary = {}
+	if service != null and actor.get("hp", 0) > 0 and actor.get("position") == position:
+		state = service.get_snapshot(position)
+	if state.is_empty():
+		# Keep the node for this position, but detach every old readout and tooltip.
+		if thread.visible:
+			thread.hide()
+		thread.value = 0
+		thread.max_value = 1
+		thread.tooltip_text = ""
+		(thread.get_node("ThreadHover") as Button).tooltip_text = ""
+		fraction.text = ""
+		return
+	var gauge: int = state["gauge"]
+	var threshold: int = state["threshold"]
+	thread.max_value = threshold
+	thread.value = gauge
+	fraction.text = "%d/%d" % [gauge, threshold]
+	thread.tooltip_text = "Unravel: %d/%d threads — %s" % [
+		gauge, threshold, "UNRAVELLED: next action skipped" if state["skip_pending"]
+			else "next action skipped when full"]
+	(thread.get_node("ThreadHover") as Button).tooltip_text = thread.tooltip_text
+	if not thread.visible:
+		thread.show()
 
 
 ## Narrow, unboxed ribbon shell built once per mounted meter.
@@ -117,6 +230,8 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	meter.hp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	meter.hp_text.autowrap_mode = TextServer.AUTOWRAP_OFF
 	meter.hp_bar.custom_minimum_size = Vector2(0, RIBBON_HP_BAR_HEIGHT)
+	if side == "enemy":
+		_make_unravel_thread(content, meter)
 	meter.block_text.add_theme_font_size_override("font_size", 12)
 	meter.block_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	meter.block_text.autowrap_mode = TextServer.AUTOWRAP_OFF

@@ -167,6 +167,51 @@ func _incoming(app, position: int) -> String:
 	return label.text if label != null else ""
 
 
+## The actual enemy service owns every readout; hero ribbons and fail-closed
+## states must have neither a visible fraction nor an orphan tooltip.
+func _assert_thread(app, meter: CombatActorMeter, actor: Dictionary, side: String) -> void:
+	var content := meter.get_node("Padding/Content") as VBoxContainer
+	var thread := content.get_node_or_null("UnravelThread") as ProgressBar
+	if side == "hero":
+		_check(thread == null, "no Unravel bar or alternate tracker appears on heroes")
+		return
+	_check(thread != null and content.find_children("UnravelThread", "ProgressBar", false, false).size() == 1,
+		"one reusable enemy Unravel bar exists in the original position: " + meter.name)
+	if thread == null:
+		return
+	var number := thread.get_node_or_null("ThreadFraction") as Label
+	var hover := thread.get_node_or_null("ThreadHover") as Button
+	_check(number != null and thread.get_index() == meter.hp_bar.get_index() + 1
+		and thread.custom_minimum_size.y <= 18 and thread.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and thread.focus_mode == Control.FOCUS_NONE and thread.show_percentage == false
+		and thread.get_node_or_null("ThreadStitch") != null and hover != null
+		and hover.mouse_filter == Control.MOUSE_FILTER_STOP and hover.focus_mode == Control.FOCUS_NONE
+		and hover.pressed.get_connections().is_empty()
+		and number.mouse_filter == Control.MOUSE_FILTER_IGNORE and number.focus_mode == Control.FOCUS_NONE,
+		"thin stitched input-inert fraction immediately follows HP in the real enemy ribbon")
+	var service: CombatUnravel = app.round_flow._unravel if app.round_flow != null else null
+	var authorized: bool = service != null and is_instance_valid(service) \
+		and app.round_flow._deck == app.deck and app.round_flow._party == app.party \
+		and app.round_flow._enemies == app.enemies and app.round_flow._intents == app.enemy_intents \
+		and app.round_flow._result == app.battle_result \
+		and service._bound_enemies == app.enemies and not app._battle_closed
+	var snapshot: Dictionary = service.get_snapshot(actor.position) if authorized else {}
+	if actor.hp <= 0 or snapshot.is_empty():
+		_check(not thread.visible and number.text.is_empty() and thread.tooltip_text.is_empty()
+			and thread.value == 0 and thread.max_value == 1,
+			"slain, unbound or foreign-roster slot clears fill, fraction and hover text")
+	else:
+		_check(thread.visible and thread.is_visible_in_tree()
+			and thread.value == snapshot["gauge"] and thread.max_value == snapshot["threshold"]
+			and number.text == "%d/%d" % [snapshot["gauge"], snapshot["threshold"]]
+			and thread.tooltip_text.contains(number.text)
+			and hover.tooltip_text == thread.tooltip_text
+			and thread.tooltip_text.contains("UNRAVELLED") == snapshot["skip_pending"],
+			"source snapshot exactly matches visible enemy fill, fraction and truthful hover")
+		_check(meter.name == "enemy%d" % actor.position,
+			"Unravel bar remains keyed to original roster position")
+
+
 ## One ribbon must show exactly its actor's authoritative values and hover rules.
 func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: String, forecast: Dictionary) -> void:
 	var heading := "%d. %s" % [actor.position, actor.name]
@@ -234,8 +279,9 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and content.find_children("BlockBadge", "HBoxContainer", false, false).size() == 1
 		and meter.hp_text.get_parent() == meter.hp_bar,
 		"the ribbon has one bar-borne HP number and one Block badge, never a second HP row: " + meter.name)
-	_check(content.get_child_count() == (10 if side == "hero" else 8),
-		"a ribbon keeps the preserved snapshot and only the optional hero patch row: " + meter.name)
+	_check(content.get_child_count() == (10 if side == "hero" else 9),
+		"only enemy ribbons gain exactly one UnravelThread directly below HP: " + meter.name)
+	_assert_thread(app, meter, actor, side)
 	var patches := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
 	if side == "hero":
 		_check(patches != null and patches.get_child_count() == 3
@@ -613,7 +659,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 				row_ids.append(child.get_instance_id())
 			_check(meters[index].get_instance_id() == ids[index]
 				and button_ids[index] == row_ids
-				and meters[index].get_node("Padding/Content").get_child_count() == (10 if index < 3 else 8),
+				and meters[index].get_node("Padding/Content").get_child_count() == (10 if index < 3 else 9),
 				"read-only live refresh never allocates another chip, warning or meter")
 	_check(_state(app) == live_before_refresh and randi() == expected_global
 		and incoming_before == [_incoming(app, 1), _incoming(app, 2), _incoming(app, 3)],
@@ -940,11 +986,175 @@ func _run() -> void:
 			and presenter.row == null and _meters(app).is_empty(), "real Return clears presentation and restores focus")
 		for id in final_ids:
 			_check(not is_instance_id_valid(id), "Return frees old meter")
+	await _unravel_bound_fight(app, presenter)
 	await _status_end_turns(app, presenter)
 	await _three_enemy_stage(app, presenter)
 	app.free()
 	await _frames()
 	_finish()
+
+
+## One real mounted fight with a genuine original-position roster binding. Cards
+## are admitted by the existing authored rule resolver from the actual CombatDeck;
+## the separately owned live hand-target adapter is exercised by its own suite.
+func _unravel_bound_fight(app, presenter) -> void:
+	_fixture_start(app)
+	await _frames()
+	_check(app.round_flow != null and app.round_flow._started and app.deck.turn_active
+		and app.enemies.get_enemies().size() == 2 and app.party.get_hero(2).id == "seamstress",
+		"real started battle, living Seamstress and two real source slots precede Unravel")
+	if app.round_flow == null or app.enemies == null:
+		return
+	var authority := CombatUnravel.new()
+	_check(authority.bind_roster(app.enemies, {1: "normal", 2: "normal"}),
+		"real starter-normal roster is bound to one authoritative Unravel service")
+	app.round_flow._unravel = authority
+	var before := _state(app)
+	presenter._sync_battle()
+	_visible(app)
+	_check(_state(app) == before and authority.get_snapshot(1).gauge == 0
+		and authority.get_snapshot(1).threshold == 8,
+		"starting 0/8 is read-only and derives from the real roster")
+	var meters := _meters(app)
+	_check(meters.size() == 5, "real bound fight mounts all five original actor slots")
+	if meters.size() != 5:
+		app.return_button.pressed.emit()
+		return
+	var thread := meters[3].get_node("Padding/Content/UnravelThread") as ProgressBar
+	var thread_id := thread.get_instance_id()
+	await _frames()
+	var hover := thread.get_node("ThreadHover") as Button
+	await _hover(hover)
+	_check(root.gui_get_hovered_control() == hover and hover.tooltip_text.contains("0/8"),
+		"pointer can read the thin live thread tooltip without a focusable/clicking control")
+	_check(not thread.get_global_rect().intersects(app.hand_view.get_global_rect())
+		and not thread.get_global_rect().intersects(app.end_turn_button.get_global_rect())
+		and not thread.get_global_rect().intersects(app.return_button.get_global_rect())
+		and not thread.get_global_rect().intersects(meters[3].hp_bar.get_global_rect()),
+		"visible bound thread remains separate from HP, hand, energy and battle buttons")
+	var intents_before: Array = app.enemy_intents.get_intents()
+	var rng_before: int = app.deck._rng.state
+	for card_id in ["seamstress_snag", "seamstress_unpick"]:
+		_check(SeamstressPoolCards.new().has_card(card_id), "authoritative Snag/Unpick catalog entry exists")
+		app.deck.draw_pile.append(card_id)
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has(card_id),
+			"authored control card drawn into genuine shared combat hand: " + card_id)
+		app._refresh_hand()
+		var previous := authority.get_snapshot(1)
+		var receipt: Dictionary = CombatSeamstressPoolControl.new().play_card(
+			app.deck, app.party, app.enemies, null, authority, card_id, 1)
+		_check(receipt.get("ok", false) and receipt.get("unravel_applied", -1) == (3 if card_id == "seamstress_snag" else 5)
+			and app.deck.discard_pile.has(card_id), "genuine hand transaction commits authored control: " + card_id)
+		presenter._sync_battle()
+		var expected: Dictionary = authority.get_snapshot(1)
+		_check(expected["gauge"] == (3 if card_id == "seamstress_snag" else 8)
+			and thread.value == expected["gauge"] and thread.max_value == expected["threshold"]
+			and (thread.get_node("ThreadFraction") as Label).text == "%d/%d" % [expected.gauge, expected.threshold],
+			"visible 3/8 then 8/8 follows each committed shared-hand rule receipt")
+		_check(app.enemy_intents.get_intents() == intents_before and app.deck._rng.state == rng_before,
+			"Snag/Unpick presentation does not advance scheduler or injected RNG")
+		_check(expected.gauge >= previous.gauge, "authoritative gauge increased only on paid play")
+	var roster = app.get_node("LiveEnemyRoster")
+	roster._refresh()
+	_check(authority.get_snapshot(1).skip_pending and roster._badges[0].readable_text == "UNRAVELLED"
+		and roster._badges[0].icon_mode == "unravelled" and roster._badges[0].amount == 0
+		and roster._badges[0].target_position == 0 and roster._badges[1].icon_mode == "block",
+		"pending skip replaces only the first original-position announcement")
+	_check(app.enemy_intents.get_intents() == intents_before, "badge never mutates authored intents")
+	var state_before_refresh := _state(app)
+	for iteration in range(5):
+		presenter._sync_battle()
+		roster._refresh()
+	_check(_state(app) == state_before_refresh and thread.get_instance_id() == thread_id
+		and meters[3].get_node("Padding/Content").find_children("UnravelThread", "ProgressBar", false, false).size() == 1,
+		"repeated mounted refresh preserves receipt/state/RNG and reuses one thread")
+	var hero_before: Dictionary = app.party.get_hero(1)
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	presenter._sync_battle()
+	roster._refresh()
+	var skipped: Dictionary = authority.get_snapshot(1)
+	_check(skipped.gauge == 0 and skipped.threshold == 12 and not skipped.skip_pending
+		and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2).block == 1,
+		"actual End Turn consumes one skip, raises threshold to 12, other enemy still acts")
+	_check(app.party.get_hero(1).hp == hero_before.hp and app.enemy_intents.get_intents() != intents_before,
+		"the skipped original attack causes no HP loss while scheduler legitimately advances")
+	_check(thread.value == 0 and thread.max_value == 12 and (thread.get_node("ThreadFraction") as Label).text == "0/12"
+		and roster._badges[0].icon_mode == "attack" and roster._badges[0].readable_text.begins_with("ATK "),
+		"after real skipped action gauge resets and next scheduler action resumes")
+	_check(app.enemies.apply_statuses({1: {"bleed": 1}}), "surviving enemy gains real Bleed before owner tick")
+	var before_bleed: Dictionary = authority.get_snapshot(1)
+	var enemy_before: Dictionary = app.enemies.get_enemy(1)
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	presenter._sync_battle()
+	_check(not app.enemies.is_slain(1) and app.enemies.get_enemy(1).hp == enemy_before.hp - 1
+		and authority.get_snapshot(1).gauge == before_bleed.gauge + 1 and thread.value == 1
+		and (thread.get_node("ThreadFraction") as Label).text == "1/12",
+		"positive enemy owner Bleed tick adds exactly one visible Unravel thread")
+	# Upgraded variants use the same real deck admission and a separate living
+	# original source, without borrowing the first enemy's post-skip threshold.
+	var other_thread := meters[4].get_node("Padding/Content/UnravelThread") as ProgressBar
+	_check(authority.get_snapshot(2).gauge == 0 and authority.get_snapshot(2).threshold == 8,
+		"second real normal enemy begins with its independent 0/8 gauge")
+	var before_plus_rng: int = app.deck._rng.state
+	for upgraded in ["seamstress_snag_plus", "seamstress_unpick_plus"]:
+		app.deck.draw_pile.append(upgraded)
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has(upgraded),
+			"genuine shared hand draws upgraded catalog control: " + upgraded)
+		app._refresh_hand()
+		var plus_receipt: Dictionary = CombatSeamstressPoolControl.new().play_card(
+			app.deck, app.party, app.enemies, null, authority, upgraded, 2)
+		_check(plus_receipt.get("ok", false) and plus_receipt.get("unravel_applied", -1)
+			== (4 if upgraded == "seamstress_snag_plus" else 7),
+			"upgraded charged value comes from published Seamstress card effects")
+		presenter._sync_battle()
+		var plus_snapshot: Dictionary = authority.get_snapshot(2)
+		_check(plus_snapshot.gauge == (4 if upgraded == "seamstress_snag_plus" else 8)
+			and other_thread.value == plus_snapshot.gauge
+			and other_thread.max_value == 8
+			and (other_thread.get_node("ThreadFraction") as Label).text == "%d/8" % plus_snapshot.gauge,
+			"Snag+ 4/8 and Unpick+ capped 8/8 both reach their real source gauge")
+	_check(app.deck._rng.state == before_plus_rng and authority.get_snapshot(2).skip_pending,
+		"upgraded charges spend no injected RNG and arm exactly one second-source skip")
+	roster._refresh()
+	_check(roster._badges[1].readable_text == "UNRAVELLED"
+		and roster._badges[0].icon_mode == "attack" and app.enemy_intents.get_intents()[1].type == "block",
+		"only the upgraded target's scheduled Block is visually suppressed, not rewritten")
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	presenter._sync_battle()
+	roster._refresh()
+	_check(authority.get_snapshot(2).gauge == 0 and authority.get_snapshot(2).threshold == 12
+		and roster._badges[1].icon_mode == "block" and other_thread.max_value == 12,
+		"actual next phase skips upgraded target once, resets it to 0/12 and restores Block cue")
+	# Wrong-bound and missing authority are non-mutations and wipe old hover text.
+	var foreign := CombatUnravel.new()
+	var other_enemies := CombatEnemies.new(app.enemies.get_enemies())
+	_check(foreign.bind_roster(other_enemies, {1: "elite", 2: "boss"}),
+		"independent enemy object can never impersonate the mounted roster")
+	var source_state := _state(app)
+	app.round_flow._unravel = foreign
+	presenter._sync_battle()
+	_check(not thread.visible and thread.tooltip_text.is_empty()
+		and (thread.get_node("ThreadFraction") as Label).text.is_empty(),
+		"roster-mismatched elite/boss service is hidden, never guessed from actor names")
+	app.round_flow._unravel = null
+	presenter._sync_battle()
+	_check(not thread.visible and thread.value == 0 and thread.max_value == 1
+		and _state(app) == source_state, "null service hides all old thread numbers without altering battle")
+	app.round_flow._unravel = authority
+	_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
+		"real enemy death retains an original slain slot")
+	presenter._sync_battle()
+	_check(not thread.visible and thread.tooltip_text.is_empty()
+		and (thread.get_node("ThreadFraction") as Label).text.is_empty(),
+		"slain original slot leaves no stale gauge or tooltip")
+	var old_thread_id := thread.get_instance_id()
+	app.return_button.pressed.emit()
+	await _frames()
+	_check(presenter.row == null and not is_instance_id_valid(old_thread_id),
+		"Return disposes the old gauge and its tooltip with the battle")
 
 
 func _status_end_turns(app, presenter) -> void:

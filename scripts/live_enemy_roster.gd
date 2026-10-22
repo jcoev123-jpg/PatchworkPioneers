@@ -424,6 +424,7 @@ func _refresh() -> void:
 	var roster := enemies.get_enemies()
 	var announcements: Dictionary = {}
 	var app = get_parent()
+	var unravel := _bound_unravel(app)
 	if is_instance_valid(app.intent_label):
 		app.intent_label.hide()
 	for puppet in _puppets:
@@ -443,7 +444,32 @@ func _refresh() -> void:
 		var position: int = enemy["position"]
 		# Short pinned name tag; the meter and the SLAIN badge own HP/Block/death readouts.
 		_labels[index].text = String(enemy["name"]) if enemy.get("name") is String else ""
-		_badges[index].show_intent(announcements.get(position, {}), enemies.is_slain(position))
+		var pending := false
+		if unravel != null and not enemies.is_slain(position):
+			pending = unravel.get_snapshot(position).get("skip_pending", false)
+		_badges[index].show_intent(announcements.get(position, {}), enemies.is_slain(position), pending)
+
+
+## Only the admission-owned service of the active, still-identical fight is readable.
+## Neither the stage nor its badges may synthesize a replacement gauge.
+func _bound_unravel(app) -> CombatUnravel:
+	if app._battle_closed or app.deck == null or app.party == null or app.enemies == null \
+			or app.enemy_intents == null or app.battle_result == null:
+		return null
+	var flow: CombatRoundFlow = app.round_flow
+	if flow == null or not is_instance_valid(flow) or not flow._started \
+			or flow._deck != app.deck or flow._party != app.party \
+			or flow._enemies != app.enemies or flow._intents != app.enemy_intents \
+			or flow._result != app.battle_result \
+			or flow._battle_deck != app.deck or flow._battle_party != app.party \
+			or flow._battle_enemies != app.enemies or flow._battle_intents != app.enemy_intents \
+			or flow._battle_result != app.battle_result:
+		return null
+	var service: CombatUnravel = flow._unravel
+	if service == null or not is_instance_valid(service) \
+			or service._bound_enemies != app.enemies or not flow._valid_unravel_binding():
+		return null
+	return service
 
 
 ## Presentation-only resolution: the live actor ID chooses the stand-in resources, fail-closed.
