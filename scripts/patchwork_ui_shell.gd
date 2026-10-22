@@ -4,8 +4,10 @@ extends Control
 const INK := Color("302b29")
 const PAPER := Color("ecdfbd")
 const THREAD := Color("c9b996")
+const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
 var _title: Control
 var _label: Label
+var _backdrop: Texture2D
 
 
 class ButtonStitches extends Control:
@@ -24,9 +26,26 @@ class ButtonStitches extends Control:
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_backdrop = _load_backdrop()
 	get_parent().theme = _build_theme()
 	get_parent().ready.connect(_bind_title, CONNECT_ONE_SHOT)
 	resized.connect(queue_redraw)
+
+
+## A missing owner image leaves the existing drawn backdrop instead of failing boot.
+static func _load_backdrop(path: String = TITLE_BACKDROP) -> Texture2D:
+	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
+		return null
+	return load(path) as Texture2D
+
+
+## Cover the whole shell while preserving the backdrop's proportions.
+func backdrop_rect() -> Rect2:
+	if _backdrop == null or _backdrop.get_width() <= 0 or _backdrop.get_height() <= 0:
+		return Rect2()
+	var texture_size := Vector2(_backdrop.get_width(), _backdrop.get_height())
+	var fit := maxf(size.x / texture_size.x, size.y / texture_size.y)
+	return Rect2((size - texture_size * fit) / 2.0, texture_size * fit)
 
 
 func _panel(fill: Color, edge: Color, border: int = 2) -> StyleBoxFlat:
@@ -113,6 +132,9 @@ func _sewn_patch(points: PackedVector2Array, fill: Color) -> void:
 func _draw() -> void:
 	if not is_instance_valid(_label):
 		return
+	# Owner-supplied paper backdrop first; sewn patches, title and buttons stay on top.
+	if _backdrop != null:
+		draw_texture_rect(_backdrop, backdrop_rect(), false)
 	# Authored, deterministic cut edges: decoration never touches either RNG.
 	var scale_to_view := size / Vector2(1280, 720)
 	draw_set_transform(Vector2.ZERO, 0.0, scale_to_view)

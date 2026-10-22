@@ -19,6 +19,19 @@ func _run() -> void:
 		"existing live label uses dark ink title variation")
 	_check(shell.mouse_filter == Control.MOUSE_FILTER_IGNORE and shell.focus_mode == Control.FOCUS_NONE,
 		"shell cannot intercept pointer or keyboard")
+	_check(shell.TITLE_BACKDROP == "res://assets/paper/backgrounds/title.png"
+		and shell._backdrop is Texture2D and shell._backdrop.resource_path == shell.TITLE_BACKDROP,
+		"title boot mounts the supplied backdrop texture behind its decorations")
+	if shell._backdrop is Texture2D:
+		var cover: Rect2 = shell.backdrop_rect()
+		_check(cover.encloses(Rect2(Vector2.ZERO, shell.size)),
+			"supplied title backdrop covers the whole 1280x720 title")
+		_check(is_equal_approx(cover.size.x / cover.size.y,
+			float(shell._backdrop.get_width()) / float(shell._backdrop.get_height())),
+			"supplied title backdrop keeps its own proportions")
+	_check(shell._load_backdrop("res://assets/paper/backgrounds/fabricated_missing_title.png") == null
+		and shell._load_backdrop("") == null,
+		"a missing title image loads no texture and cannot fail boot")
 	_check(shell.get_index() > 0 and app.get_child(shell.get_index() - 1) is ColorRect
 		and shell.get_index() < app.title_view.get_index(), "decorations between original background and title")
 	var fills: Array[Color] = []

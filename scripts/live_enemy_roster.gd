@@ -1,6 +1,24 @@
 extends Node
 ## Observes the app's authoritative roster; owns only presentation, never combat actions.
 
+## Owner-supplied stand-in art, keyed by authoritative actor ID (never name, slot or screen text).
+## Each base path has a matching "_attack" pose that only a committed animation event may show.
+const ART_ROOT := "res://assets/paper/"
+const ACTOR_ART := {
+	"warden": "heroes/warden",
+	"seamstress": "heroes/seamstress",
+	"tinker": "heroes/tinker",
+	"ragling": "enemies/ragling",
+	"ragling_guard": "enemies/ragling_guard",
+	"fray_scavenger": "enemies/fray_scavenger",
+	"button_guard": "enemies/button_guard",
+	"spool_stalker": "enemies/spool_stalker",
+	"seam_ripper": "enemies/seam_ripper",
+	"needle_marshal": "enemies/needle_marshal",
+	"spool_hexer": "enemies/spool_hexer",
+	"patchwork_behemoth": "boss/patchwork_behemoth",
+}
+
 var enemies: CombatEnemies
 var panel: PanelContainer
 var _battle: Control
@@ -14,6 +32,15 @@ var _hero_flags := 0
 var _hero_fonts: Dictionary = {}
 var _puppets: Array[Control] = []
 var _intent_visible := true
+var _art_cache: Dictionary = {}
+
+
+## Exact stand-in image paths for one authoritative actor ID; empty when no art is mapped.
+static func art_paths(actor_id: String) -> Dictionary:
+	if not ACTOR_ART.has(actor_id):
+		return {}
+	var base: String = ART_ROOT + String(ACTOR_ART[actor_id])
+	return {"idle": base + ".png", "attack": base + "_attack.png"}
 
 
 class Puppet extends Control:
@@ -21,13 +48,54 @@ class Puppet extends Control:
 	var slot := 1
 	var fallen := false
 	var felt := Color("719796")
+	var actor_id := ""
+	var idle_texture: Texture2D
+	## Held for the future committed attack event; nothing may switch to it yet.
+	var attack_texture: Texture2D
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
-		custom_minimum_size = Vector2(0, 40)
+		# Enemies keep the badge row and terminal labels inside 1280x720; heroes fill their panel.
+		custom_minimum_size = Vector2(0, 96 if facing > 0.0 else 42)
 		resized.connect(queue_redraw)
 
+	## Binds one authoritative actor ID and its loaded art; a missing texture keeps the fallback.
+	func bind_actor(id: String, art: Dictionary) -> void:
+		actor_id = id
+		idle_texture = art.get("idle") as Texture2D
+		attack_texture = art.get("attack") as Texture2D
+		queue_redraw()
+
+	func current_texture() -> Texture2D:
+		return idle_texture
+
+	## Uniform, aspect-preserving placement inside this input-inert Control.
+	func image_rect() -> Rect2:
+		var texture := current_texture()
+		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0:
+			return Rect2()
+		var fit := minf(size.x / float(texture.get_width()), size.y / float(texture.get_height()))
+		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
+		return Rect2((size - drawn) / 2.0, drawn)
+
 	func _draw() -> void:
+		var texture := current_texture()
+		if texture != null:
+			_draw_actor(texture)
+			return
+		_draw_fallback()
+
+	func _draw_actor(texture: Texture2D) -> void:
+		var rect := image_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			return
+		# Heroes face right, enemies left; the fallen actor keeps the drawn tilt treatment.
+		draw_set_transform(rect.get_center(), -0.7 * facing if fallen else 0.0, Vector2(facing, 1.0))
+		draw_texture_rect(texture, Rect2(-rect.size / 2.0, rect.size), false,
+			Color("8c8b86") if fallen else Color.WHITE)
+		draw_set_transform(Vector2.ZERO)
+
+	func _draw_fallback() -> void:
 		var ink := Color("ecdfbd")
 		var puppet_scale := clampf((size.y - 6.0) / 80.0, 0.45, 1.2)
 		draw_set_transform(Vector2(size.x / 2, size.y / 2), -0.7 * facing if fallen else 0.0, Vector2(facing, 1) * puppet_scale)
@@ -124,6 +192,9 @@ func _sync_battle() -> void:
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		# The separate SLAIN badge already announces a fallen source; capping the label at two
+		# lines keeps a three-enemy roster inside 1280x720 without changing its full text.
+		label.max_lines_visible = 2
 		label.custom_minimum_size.x = 0
 		label.add_theme_font_size_override("font_size", 18)
 		column.add_child(label)
@@ -157,6 +228,7 @@ func _refresh() -> void:
 		if not is_instance_valid(puppet):
 			continue
 		puppet.fallen = app.party.is_downed(puppet.slot) if puppet.facing > 0 else enemies.is_slain(puppet.slot)
+		_bind_puppet_art(app, puppet)
 		puppet.queue_redraw()
 	if app.enemy_intents != null:
 		for action in app.enemy_intents.get_intents():
@@ -167,6 +239,40 @@ func _refresh() -> void:
 		_labels[index].text = "Enemy %d - %s%s" % [position, enemy["name"],
 			"\nSLAIN" if enemies.is_slain(position) else ""]
 		_badges[index].show_intent(announcements.get(position, {}), enemies.is_slain(position))
+
+
+## Presentation-only resolution: the live actor ID chooses the stand-in resources, fail-closed.
+func art_for(actor_id: String) -> Dictionary:
+	if not ACTOR_ART.has(actor_id):
+		return {}
+	if _art_cache.has(actor_id):
+		return _art_cache[actor_id]
+	var paths: Dictionary = art_paths(actor_id)
+	var art := {"idle": _load_art_texture(String(paths.get("idle", ""))),
+		"attack": _load_art_texture(String(paths.get("attack", "")))}
+	_art_cache[actor_id] = art
+	return art
+
+
+## Follows the authoritative ID at each slot, so a legal position swap also swaps the images.
+func _bind_puppet_art(app, puppet) -> void:
+	var definition: Dictionary = {}
+	if puppet.facing > 0.0:
+		if app.party != null:
+			definition = app.party.get_hero(puppet.slot)
+	elif enemies != null:
+		definition = enemies.get_enemy(puppet.slot)
+	var actor_id: String = definition.get("id") if definition.get("id") is String else ""
+	if actor_id == puppet.actor_id:
+		return
+	puppet.bind_actor(actor_id, art_for(actor_id))
+
+
+static func _load_art_texture(path: String) -> Texture2D:
+	# A missing import or file keeps the drawn fallback instead of failing boot.
+	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
+		return null
+	return load(path) as Texture2D
 
 
 func _clear() -> void:

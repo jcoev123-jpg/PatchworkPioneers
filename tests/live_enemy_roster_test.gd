@@ -4,6 +4,22 @@ var failures: Array[String] = []
 var checks := 0
 const SOURCE := "res://data/enemies/starter_enemies.json"
 const FIXTURE := "user://live_enemy_roster_invalid.json"
+const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+## Supplied owner art by authoritative ID; the view must never choose these by name or slot.
+const IDLE_ART := {
+	"warden": "res://assets/paper/heroes/warden.png",
+	"seamstress": "res://assets/paper/heroes/seamstress.png",
+	"tinker": "res://assets/paper/heroes/tinker.png",
+	"ragling": "res://assets/paper/enemies/ragling.png",
+	"ragling_guard": "res://assets/paper/enemies/ragling_guard.png",
+	"fray_scavenger": "res://assets/paper/enemies/fray_scavenger.png",
+	"button_guard": "res://assets/paper/enemies/button_guard.png",
+	"spool_stalker": "res://assets/paper/enemies/spool_stalker.png",
+	"seam_ripper": "res://assets/paper/enemies/seam_ripper.png",
+	"needle_marshal": "res://assets/paper/enemies/needle_marshal.png",
+	"spool_hexer": "res://assets/paper/enemies/spool_hexer.png",
+	"patchwork_behemoth": "res://assets/paper/boss/patchwork_behemoth.png",
+}
 
 
 func _initialize() -> void:
@@ -45,6 +61,57 @@ func _snapshot(app) -> Array:
 	return [app.party.get_heroes(), app.deck.draw_pile.duplicate(), app.deck.hand.duplicate(),
 		app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
 		app.run_rng.state, app.enemy_intents.get_intents(), app.enemies.get_enemies()]
+
+
+## Every mounted puppet must show the supplied idle art of the authoritative ID currently in its
+## slot, keep the paired attack resource unused, and preserve proportional placement.
+func _assert_actor_art(app, presenter) -> void:
+	var paths: Array[String] = []
+	for puppet in presenter._puppets:
+		var definition: Dictionary = app.party.get_hero(puppet.slot) if puppet.facing > 0.0 \
+			else presenter.enemies.get_enemy(puppet.slot)
+		var actor_id: String = definition.get("id") if definition.get("id") is String else ""
+		_check(not actor_id.is_empty() and puppet.actor_id == actor_id,
+			"puppet binds the authoritative actor ID in its slot, never a name or slot number")
+		if actor_id.is_empty() or not IDLE_ART.has(actor_id):
+			continue
+		var idle_path: String = IDLE_ART[actor_id]
+		var attack_path: String = idle_path.trim_suffix(".png") + "_attack.png"
+		var texture: Texture2D = puppet.current_texture()
+		_check(texture != null and texture.resource_path == idle_path,
+			"mounted actor renders its own supplied idle image: " + actor_id)
+		_check(puppet.attack_texture != null and puppet.attack_texture.resource_path == attack_path,
+			"mounted actor keeps its paired attack-pose resource for a committed future event")
+		_check(texture != null and not paths.has(texture.resource_path),
+			"actors never share another actor's image: " + actor_id)
+		paths.append(texture.resource_path if texture != null else "")
+		var rect: Rect2 = puppet.image_rect()
+		_check(texture != null and rect.size.x > 0.0 and rect.size.y >= 40.0,
+			"supplied art is readable at battle size: " + actor_id)
+		_check(texture != null and is_equal_approx(rect.size.x / rect.size.y,
+			float(texture.get_width()) / float(texture.get_height())),
+			"supplied art keeps its own proportions: " + actor_id)
+		_check(rect.position.x >= 0.0 and rect.position.y >= 0.0 \
+			and rect.end.x <= puppet.size.x + 0.01 and rect.end.y <= puppet.size.y + 0.01,
+			"supplied art stays inside its input-inert control: " + actor_id)
+	# Resolver coverage for IDs that are not in this battle, including the distinct Guard Ragling.
+	for actor_id in ["needle_marshal", "spool_hexer", "patchwork_behemoth", "ragling_guard"]:
+		var resolved: Dictionary = ROSTER_ART.art_paths(actor_id)
+		_check(resolved.get("idle") == IDLE_ART[actor_id]
+			and resolved.get("attack") == IDLE_ART[actor_id].trim_suffix(".png") + "_attack.png",
+			"authoritative ID resolver maps idle and attack paths: " + actor_id)
+		var art: Dictionary = presenter.art_for(actor_id)
+		_check(art.get("idle") is Texture2D and art.idle.resource_path == resolved.idle
+			and art.get("attack") is Texture2D and art.attack.resource_path == resolved.attack,
+			"resolved Elite/Boss art loads both poses: " + actor_id)
+	_check(IDLE_ART["ragling"] != IDLE_ART["ragling_guard"],
+		"Guard Ragling has its own supplied image, not the base ragling")
+	var fabricated := "fabricated_unknown_actor"
+	_check(ROSTER_ART.art_paths(fabricated).is_empty() and presenter.art_for(fabricated).is_empty(),
+		"a fabricated actor ID resolves no art and stays on the drawn fallback")
+	_check(ROSTER_ART._load_art_texture("res://assets/paper/enemies/fabricated_missing.png") == null
+		and ROSTER_ART._load_art_texture("") == null,
+		"missing or empty art paths load no texture and cannot crash presentation")
 
 
 
@@ -169,10 +236,11 @@ func _visible(app, presenter) -> void:
 		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard fits target viewport")
 	_assert_badges(app, presenter, 1)
 	_check(not app.intent_label.visible and not app.intent_label.text.is_empty(), "redundant legacy sentence is hidden while authoritative source remains")
-	_check(presenter._puppets.size() == 3 + presenter.enemies.get_enemies().size(), "one code-drawn puppet for every actual actor")
+	_check(presenter._puppets.size() == 3 + presenter.enemies.get_enemies().size(), "one presenter puppet for every actual actor")
 	for puppet in presenter._puppets:
 		_check(is_instance_valid(puppet) and puppet.is_visible_in_tree() and puppet.mouse_filter == Control.MOUSE_FILTER_IGNORE and puppet.focus_mode == Control.FOCUS_NONE, "mounted puppet is visible and input inert")
 		_check(puppet.facing == (1.0 if puppet.name.begins_with("Hero") else -1.0), "actor puppet faces inward")
+	_assert_actor_art(app, presenter)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -400,6 +468,17 @@ func _run() -> void:
 		presenter._badges.size() == 2 and
 		presenter.panel.find_children("*", "Label", true, false).size() == 2,
 		"multi-entry fixture mounts both original labels and both drawn intent badges")
+	_check(presenter.enemies.get_enemy(1).get("id") == "first"
+		and presenter.enemies.get_enemy(2).get("id") == "second",
+		"fabricated IDs are the authoritative actors of this mounted fixture")
+	var fallback: Array = presenter._puppets.slice(3)
+	_check(fallback.size() == 2, "fabricated-ID battle mounts one puppet per enemy")
+	for index in range(fallback.size()):
+		var puppet = fallback[index]
+		_check(puppet.actor_id == presenter.enemies.get_enemy(index + 1).get("id")
+			and puppet.idle_texture == null and puppet.attack_texture == null
+			and puppet.image_rect() == Rect2(),
+			"an unknown mounted actor ID falls back to the drawn puppet without textures")
 	_assert_badges(app, presenter, 1)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
@@ -424,6 +503,7 @@ func _typed_stage(app, presenter) -> void:
 	var meters = app.get_node("LiveCombatMeters").row
 	_check(presenter._puppets.size() == 6 and presenter._labels.size() == 3
 		and meters.get_child_count() == 6, "mounted typed path has every puppet, target and real meter")
+	_assert_actor_art(app, presenter)
 	var actions: Array = app.enemy_intents.get_intents()
 	for index in range(3):
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)
@@ -455,6 +535,7 @@ func _typed_stage(app, presenter) -> void:
 	presenter._refresh()
 	_check(presenter._puppets[0].fallen and presenter._puppets[4].fallen
 		and presenter._badges[1].icon_mode == "slain", "typed hero and enemy puppets reflect actual fallen state")
+	_assert_actor_art(app, presenter)
 	app.return_button.pressed.emit()
 	await process_frame
 	_check(presenter._puppets.is_empty() and presenter._badges.is_empty() and presenter.battle_row == null,
