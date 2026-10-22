@@ -56,6 +56,51 @@ func _assert_authored(preview: Dictionary, first_id: String, second_id: String, 
 			_check(half.get(field) == authored.get(field), label + " " + half_name + " " + field)
 
 
+func _assert_projection(model: RunRestStitchPairOptions, source: Dictionary,
+		first_index: int, second_index: int, label: String) -> Dictionary:
+	var original_source := source.duplicate(true)
+	var service_before := model._service.get_snapshot()
+	var was_consumed := model._service.is_consumed()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42832
+	var rng_before := rng.state
+	seed(42832)
+	var next_global := randi()
+	seed(42832)
+	var predicted := model.preview(first_index, second_index)
+	var oracle := RunRestStitchCards.new(
+		source["deck"].duplicate(true), source["descriptors"].duplicate(true),
+		source["remaining_scraps"], source["next_stitch_id"])
+	_check(oracle.is_valid() and oracle.get_snapshot() == source, label + " authentic detached oracle")
+	if predicted.is_empty() or not oracle.is_valid():
+		_check(false, label + " nonempty legal preview")
+		return {}
+	var actual := oracle.choose_stitch(first_index, second_index, source.duplicate(true))
+	_check(actual.get("ok", false) and predicted.get("projection") == actual,
+		label + " complete oracle result including full registry, deck, receipts and cursor")
+	_check(predicted["stitched_id"] == actual["stitched_id"]
+		and predicted["descriptor"] == actual["descriptor"]
+		and predicted["resulting_deck"] == actual["deck"]
+		and predicted["remaining_scraps"] == actual["remaining_scraps"]
+		and predicted["next_stitch_id"] == actual["next_stitch_id"]
+		and predicted["consumed_indices"] == [first_index, second_index]
+		and predicted["consumed_ids"] == [source["deck"][first_index], source["deck"][second_index]]
+		and predicted["deck_before_count"] == source["deck"].size()
+		and predicted["deck_after_count"] == actual["deck"].size()
+		and actual["deck"].size() == source["deck"].size() - 1
+		and actual["remaining_scraps"] == source["remaining_scraps"] - 3
+		and actual["next_stitch_id"] == source["next_stitch_id"] + 1
+		and actual["descriptor"]["cost"] == mini(3, maxi(
+			predicted["first_half"]["cost"], predicted["second_half"]["cost"]) + 1)
+		and not actual["descriptor"]["can_upgrade"] and not actual["descriptor"]["can_stitch"],
+		label + " exact instance, canonical descriptor, insertion, cost and economics")
+	_check(source == original_source and model._service.get_snapshot() == service_before
+		and model._service.is_consumed() == was_consumed
+		and rng.state == rng_before and randi() == next_global,
+		label + " preview and oracle do not mutate source, real Rest or either RNG")
+	return predicted
+
+
 func _take(a: int, b: int, snapshot: Dictionary) -> void:
 	received.append({"first": a, "second": b, "source": snapshot.duplicate(true)})
 
@@ -166,6 +211,7 @@ func _run() -> void:
 			var j: int = second["index"]
 			_assert_authored(model.preview(i, j), deck[i], deck[j],
 				"eligible source indices %d -> %d" % [i, j])
+			_assert_projection(model, receipt, i, j, "all legal indices %d -> %d" % [i, j])
 	var examples := [
 		["seamstress_prick", "tinker_pop_shot", 2],
 		["warden_shield_bash", "tinker_scrap_bomb", 3],
@@ -187,13 +233,29 @@ func _run() -> void:
 			and preview.get("source_snapshot") == receipt and preview.get("source_receipt") == receipt["receipt"],
 			"exact authored cost, identity, ordered names, source and three-scrap preview " + sample[0])
 		_assert_authored(preview, sample[0], sample[1], "named pair " + sample[0])
-		var swapped := model.preview(b, a)
+		_assert_projection(model, receipt, a, b, "named pair " + sample[0])
+		var swapped := _assert_projection(model, receipt, b, a, "reversed " + sample[0])
 		_assert_authored(swapped, sample[1], sample[0], "reversed named pair " + sample[0])
 		_check(swapped.get("first_id") == sample[1] and swapped.get("second_id") == sample[0]
 			and swapped.get("energy_cost") == sample[2] and swapped.get("display_name") != preview.get("display_name"),
 			"reverse order swaps halves without changing cost")
 	var prick := _idx(deck, "seamstress_prick")
 	var pop := _idx(deck, "tinker_pop_shot")
+	var second_strike := _idx(deck, "warden_strike", 1)
+	var first_strike := _idx(deck, "warden_strike", 0)
+	var dup_pair := _assert_projection(model, receipt, prick, second_strike,
+		"Prick plus second duplicate Strike only")
+	var reverse_dup := _assert_projection(model, receipt, second_strike, prick,
+		"reversed duplicate Strike plus Prick")
+	_check(not dup_pair.is_empty() and not reverse_dup.is_empty()
+		and dup_pair["resulting_deck"][first_strike] == "warden_strike"
+		and dup_pair["resulting_deck"].count("warden_strike") == 1
+		and dup_pair["resulting_deck"][second_strike] == "stitched_000001"
+		and reverse_dup["resulting_deck"] == dup_pair["resulting_deck"]
+		and reverse_dup["descriptor"]["half_ids"] == ["warden_strike", "seamstress_prick"]
+		and dup_pair["descriptor"]["half_ids"] == ["seamstress_prick", "warden_strike"]
+		and reverse_dup["descriptor"]["display_name"] != dup_pair["descriptor"]["display_name"],
+		"second original instance alone replaced; reverse leaves insertion index but changes ordered halves")
 	_check(model.preview(prick, prick).is_empty()
 		and model.preview(0, 1).is_empty() and model.preview(-1, pop).is_empty()
 		and model.preview(prick, deck.size()).is_empty()
@@ -256,7 +318,15 @@ func _run() -> void:
 	_check(made.get("ok", false), "genuine first stitched descriptor created")
 	if made.get("ok", false):
 		var later := RunRestStitchCards.new(made["deck"], made["descriptors"], 3, made["next_stitch_id"])
-		var later_model := RunRestStitchPairOptions.new(later, later.get_snapshot())
+		var later_source := later.get_snapshot()
+		var later_model := RunRestStitchPairOptions.new(later, later_source)
+		var later_pair := _assert_projection(later_model, later_source,
+			_idx(made["deck"], "warden_strike"), _idx(made["deck"], "seamstress_mend"),
+			"prior composite retained and next serial")
+		_check(not later_pair.is_empty() and later_pair["stitched_id"] == "stitched_000002"
+			and later_pair["projection"]["descriptors"][made["stitched_id"]] == made["descriptor"]
+			and later_pair["next_stitch_id"] == 3 and later.get_snapshot() == later_source,
+			"later forecast leaves old descriptor and allocator untouched")
 		var composite_index := _idx(made["deck"], made["stitched_id"])
 		var all_first := later_model.first_options()
 		_check(later.is_valid() and later_model.is_available(), "later Rest genuine descriptor ledger admitted")
@@ -328,6 +398,9 @@ func _run() -> void:
 			and picker.second_half_label.text ==
 				"Second: Scrap Bomb — Tinker (2 energy)\nFrom hero positions 3; all eligible enemies in positions 1-3\n4 damage to each eligible enemy (first Tinker attack this turn: +3 damage)",
 			"mounted area/Weak pair displays exact separate legality and conditional attack")
+		_check(picker.consequence_label.text == picker._consequence_lines(
+			picker._model.preview(bash_index, bomb_index)),
+			"nontrivial area pair shows exact deck and scrap consequence")
 	# Self-only Brace must not invent an enemy selection or the Warden's
 	# unrelated start-of-combat passive; living ally Block is separate.
 	for support in ["warden_brace", "seamstress_stitch_up"]:
@@ -384,6 +457,16 @@ func _run() -> void:
 		_check(not picker.confirm_button.disabled and picker.summary_label.text.contains("Prick / Pop Shot")
 			and picker.summary_label.text.contains("2 energy") and picker.summary_label.text.contains("3 scraps"),
 			"visible paper summary has correct joined name, energy and scraps")
+		var shown := picker._model.preview(prick, pop)
+		_check(picker.consequence_label.text == picker._consequence_lines(shown)
+			and picker.consequence_label.text.contains("#%d (seamstress_prick)" % prick)
+			and picker.consequence_label.text.contains("#%d (tinker_pop_shot)" % pop)
+			and picker.consequence_label.text.contains("12 → 11 shared cards")
+			and picker.consequence_label.text.contains("3 scraps → 0 remaining")
+			and picker.consequence_label.text.contains("stitched_000001")
+			and picker.consequence_label.text.contains("cannot upgrade or stitch again")
+			and picker.consequence_label.get_line_count() <= 3,
+			"visible prediction names instances, canonical composite, deck count and permanent tradeoff")
 		_check(picker.first_half_label.text ==
 			"First: Prick — Seamstress (1 energy)\nFrom hero positions 1-3; choose one enemy in positions 1-3\n3 damage; Bleed 2 (+1 Bleed if applied: Seamstress passive)",
 			"mouse-visible first half spells out exact authored Bleed and conditional Seamstress bonus")
@@ -399,6 +482,7 @@ func _run() -> void:
 		_check(received.is_empty() and picker.confirm_button.disabled,
 			"metadata remap to another otherwise-valid index cannot request a phantom visual pair")
 		_check(picker.first_half_label.text.is_empty() and picker.second_half_label.text.is_empty()
+			and picker.consequence_label.text.is_empty()
 			and picker.summary_label.text.contains("Not available"),
 			"forged row clears stale authored rules as well as disabling confirmation")
 		picker.first_selector.item_selected.emit(first_item)
@@ -414,7 +498,7 @@ func _run() -> void:
 	_check(received.size() == 1 and received[0]["first"] == prick and received[0]["second"] == pop
 		and received[0]["source"] == receipt, "physical mouse emitted exactly one exact original pair/receipt")
 	_check(picker.confirm_button.disabled and picker.first_half_label.text.is_empty()
-		and picker.second_half_label.text.is_empty(), "one-shot request hides resolved pair until rebind")
+		and picker.second_half_label.text.is_empty() and picker.consequence_label.text.is_empty(), "one-shot request hides resolved pair until rebind")
 	_check(ledger.get_snapshot() == receipt and not ledger.is_consumed(),
 		"mouse choice did not commit deck, receipt, descriptor, scraps or latch")
 	var oracle := ledger.choose_stitch(received[0]["first"], received[0]["second"], received[0]["source"])
@@ -500,10 +584,13 @@ func _run() -> void:
 	picker._confirm_callback.call()
 	_check(received.size() == signals_before + 1 and fresh.get_snapshot() == before_refusal
 		and not fresh.is_consumed() and picker.confirm_button.disabled
-		and picker.first_half_label.text.is_empty() and picker.second_half_label.text.is_empty(),
+		and picker.first_half_label.text.is_empty() and picker.second_half_label.text.is_empty()
+		and picker.consequence_label.text.is_empty(),
 		"stale authoritative source refuses without ledger/signal or stale-preview mutation")
 	fresh._source_snapshot = original_source
 	picker.hide()
+	_check(picker.consequence_label.text.is_empty() and picker.confirm_button.disabled,
+		"hiding picker clears actionable consequence")
 	picker._confirm_callback.call()
 	_check(received.size() == signals_before + 1, "hidden closed picker refuses retained callback")
 	picker.show()
