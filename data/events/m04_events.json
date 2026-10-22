@@ -26,7 +26,8 @@
       "description": "A silver thimble rests beside a dry stone well.",
       "choices": [
         { "id": "listen", "text": "Listen for loose thimbles (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
-        { "id": "depart", "text": "Find coins on the roadside (+5 gold)", "outcome": { "gold": 5, "scraps": 0 } }
+        { "id": "depart", "text": "Find coins on the roadside (+5 gold)", "outcome": { "gold": 5, "scraps": 0 } },
+        { "id": "lower_spool", "text": "Lower a spool line (spend 1 scrap; recover 18 gold)", "outcome": { "gold": 18, "scraps": -1 } }
       ]
     },
     {
@@ -53,7 +54,8 @@
       "description": "Crossed needles mark a narrow wooden gate.",
       "choices": [
         { "id": "examine", "text": "Spend 1 scrap to unpick the gate and claim 12 gold", "outcome": { "gold": 12, "scraps": -1 } },
-        { "id": "pass", "text": "Pass without stopping", "outcome": { "gold": 0, "scraps": 0 } }
+        { "id": "pass", "text": "Pass without stopping", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "cut_bindings", "text": "Cut the binding threads (spend 2 scraps; gain 28 gold)", "outcome": { "gold": 28, "scraps": -2 } }
       ]
     }
   ]
