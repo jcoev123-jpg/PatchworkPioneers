@@ -446,7 +446,10 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 		_check((hero.focus_mode == Control.FOCUS_ALL) == living, "only living ally focusable")
 		_check(presenter._targets.has(hero) == living, "only living ally has input callback")
 		if living:
-			_check(hero.get_child_count() == 2 and hero.get_child(1).text.contains("Choose ally"), "visible hero target cue")
+			_check(hero.get_child_count() == 3 and hero.get_child(2) is Label
+				and hero.get_child(2).is_visible_in_tree() and hero.get_child(2).text.contains("Choose ally")
+				and hero.get_child(1).name.begins_with("HeroPuppet")
+				and hero.get_child(1).mouse_filter == Control.MOUSE_FILTER_IGNORE, "visible hero target cue above inert puppet")
 			_check(hero.has_theme_stylebox_override("focus"), "visible hero focus outline")
 	return choosing
 
@@ -603,7 +606,8 @@ func _ally_cases() -> void:
 			if scenario in ["escape", "queued_cancel", "cancel", "replace", "turn", "hidden", "downed_owner", "downed_after", "zero", "inactive", "absent", "detached"]:
 				_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "cancellation removes queued work and target callbacks: " + scenario)
 				for panel in app.hero_panels:
-					_check(panel.focus_mode == Control.FOCUS_NONE and panel.get_child_count() == 1
+					_check(panel.focus_mode == Control.FOCUS_NONE and panel.get_child_count() == 2
+						and panel.get_child(1).name.begins_with("HeroPuppet")
 						and panel.gui_input.get_connections().is_empty(), "cancel restores inert hero panels")
 			await _ally_return()
 	# Authored from-positions: Mend rejects front, accepts back; Stitch accepts front.
@@ -698,7 +702,8 @@ func _ally_move_cases() -> void:
 				_check(not presenter.cancel_button.visible and _panel(id).has_focus(), "movement hides cancel and restores card focus")
 				for panel in app.hero_panels:
 					_check(panel.focus_mode == Control.FOCUS_NONE and not panel.has_focus()
-						and panel.get_child_count() == 1 and panel.gui_input.get_connections().is_empty()
+						and panel.get_child_count() == 2 and panel.get_child(1).name.begins_with("HeroPuppet")
+						and panel.gui_input.get_connections().is_empty()
 						and not panel.has_theme_stylebox_override("focus")
 						and panel.focus_next.is_empty() and panel.focus_previous.is_empty()
 						and panel.focus_neighbor_bottom.is_empty(), "movement removes target cues, navigation and focus")

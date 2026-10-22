@@ -84,16 +84,16 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 			"drawn badge and text never intercept pointer events")
 		_check(not badge.readable_text.is_empty() and badge.get_theme_default_font() != null and
 			badge.get_theme_default_font().get_string_size(badge.readable_text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= 215,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
 			"drawn readable intent fits within its badge")
 		var rect: Rect2 = badge.get_global_rect()
-		_check(rect.size.x >= 200 and rect.size.y >= 40 and
+		_check(rect.size.x >= 192 and rect.size.y >= 36 and
 			Rect2(0, 0, 1280, 720).encloses(rect), "badge has visible area within the viewport")
 		_check(not rect.intersects(app.end_turn_button.get_global_rect()) and
 			not rect.intersects(app.return_button.get_global_rect()) and
 			not rect.intersects(app.hand_view.get_global_rect()),
 			"roster intent badge does not cover hand or battle controls")
-		_check(rect.size.x >= 64 + 215, "badge's drawn caption area has adequate width")
+		_check(rect.size.x >= 64 + badge.get_theme_default_font().get_string_size(badge.readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, "badge's drawn caption area has adequate width")
 		for meter in meters:
 			_check(not rect.intersects(meter.get_global_rect()), "intent badge does not cover HP/Block meter")
 		if app.enemies.is_slain(position):
@@ -104,13 +104,13 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 			var kind: String = announced["type"]
 			var amount: int = announced["amount"]
 			var target: int = announced.get("target_position", 0)
-			var message := "ATTACK %d -> HERO %d" % [amount, target] if kind == "attack" else "BLOCK +%d" % amount
+			var message := "ATK %d > H%d" % [amount, target] if kind == "attack" else "BLOCK +%d" % amount
 			_check(badge.icon_mode == kind and badge.intent_type == kind and badge.amount == amount and
 				badge.target_position == target and badge.readable_text == message,
 				"badge mode, text, damage/Block and target equal authoritative copied intent")
 			if position == 1 and expected_target != -1:
 				_check(kind == "attack" and amount == 1 and target == expected_target and
-					badge.readable_text == "ATTACK 1 -> HERO %d" % expected_target,
+					badge.readable_text == "ATK 1 > H%d" % expected_target,
 					"ragling next announced target follows real End Turn scheduler")
 			if position == 2:
 				_check(kind == "block" and amount == 1 and target == 0 and
@@ -157,17 +157,22 @@ func _visible(app, presenter) -> void:
 		"drawn badges preserve the legacy two original state Labels")
 	_check(not labels.is_empty(), "enemy text exists")
 	if not labels.is_empty():
-		_check(labels[0].is_visible_in_tree() and labels[0].text == "Enemy 1 - Ragling\nHP: 12/12 | Block: 0",
+		_check(labels[0].is_visible_in_tree() and labels[0].text == "Enemy 1 - Ragling",
 			"visible placeholder identifies ragling and exact HP/Block")
 		var rect: Rect2 = labels[0].get_global_rect()
 		_check(rect.size.x > 0 and rect.size.y > 0 and Rect2(0, 0, 1280, 720).encloses(rect),
 			"enemy label fits target viewport")
 	_check(labels.size() >= 2, "Guard label exists")
 	if labels.size() >= 2:
-		_check(labels[1].is_visible_in_tree() and labels[1].text == "Enemy 2 - Guard Ragling\nHP: 12/12 | Block: 0",
+		_check(labels[1].is_visible_in_tree() and labels[1].text == "Enemy 2 - Guard Ragling",
 			"visible Guard placeholder identifies exact HP and Block")
 		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard fits target viewport")
 	_assert_badges(app, presenter, 1)
+	_check(not app.intent_label.visible and not app.intent_label.text.is_empty(), "redundant legacy sentence is hidden while authoritative source remains")
+	_check(presenter._puppets.size() == 3 + presenter.enemies.get_enemies().size(), "one code-drawn puppet for every actual actor")
+	for puppet in presenter._puppets:
+		_check(is_instance_valid(puppet) and puppet.is_visible_in_tree() and puppet.mouse_filter == Control.MOUSE_FILTER_IGNORE and puppet.focus_mode == Control.FOCUS_NONE, "mounted puppet is visible and input inert")
+		_check(puppet.facing == (1.0 if puppet.name.begins_with("Hero") else -1.0), "actor puppet faces inward")
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -195,14 +200,14 @@ func _geometry(app, presenter) -> void:
 		is_equal_approx(left.position.y, right.position.y), "heroes left and enemies right share one horizontal row")
 	_check(app.hero_panels.size() == 3 and presenter._labels.size() == 2, "five original actor slots exist")
 	var controls: Array[Control] = [app.hero_view, presenter.panel, app.hand_view,
-		app.end_turn_button, app.return_button, app.intent_label, app.pile_label]
+		app.end_turn_button, app.return_button, app.pile_label]
 	for index in range(app.hero_panels.size()):
 		var slot: PanelContainer = app.hero_panels[index]
 		_check(slot.get_parent() == app.hero_view and slot.get_index() == index and
 			slot.get_child(0).text.begins_with("%d - %s" % [index + 1, app.party.get_hero(index + 1).name]),
 			"hero slot retains authoritative ordered identity")
 		controls.append(slot)
-		controls.append(slot.get_child(0))
+		_check(not slot.get_child(0).visible, "legacy hero HP/Block source is hidden, not duplicated")
 	for label in presenter._labels:
 		controls.append(label)
 	for control in controls:
@@ -398,9 +403,62 @@ func _run() -> void:
 	_assert_badges(app, presenter, 1)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+	await process_frame
+	app.starter_enemies_path = SOURCE
+	await _typed_stage(app, presenter)
 	app.free()
 	reference.free()
 	_finish()
+
+
+func _typed_stage(app, presenter) -> void:
+	var boot = root.get_node("LiveWebPlaytestBoot")
+	_check(await boot.enter_preview(app, "battle"), "fixed-seed preview enters the real routed typed fight")
+	await process_frame
+	await process_frame
+	_check(app.enemies != null and app.enemies.get_enemies().size() == 3,
+		"seed-one route exercises three typed enemies, not the standalone fixture")
+	if app.enemies == null or app.enemies.get_enemies().size() != 3:
+		return
+	var before := _snapshot(app)
+	var meters = app.get_node("LiveCombatMeters").row
+	_check(presenter._puppets.size() == 6 and presenter._labels.size() == 3
+		and meters.get_child_count() == 6, "mounted typed path has every puppet, target and real meter")
+	var actions: Array = app.enemy_intents.get_intents()
+	for index in range(3):
+		var actor: Dictionary = app.enemies.get_enemy(index + 1)
+		var badge = presenter._badges[index]
+		var action: Dictionary = actions[index]
+		_check(presenter._labels[index].text == "Enemy %d - %s" % [actor.position, actor.name]
+			and badge.source_position == actor.position and badge.intent_type == action.type
+			and badge.amount == action.amount and badge.target_position == action.get("target_position", 0),
+			"typed identity and complete authoritative intent survive mounted presentation")
+		_check(Rect2(0, 0, 1280, 720).encloses(presenter._labels[index].get_global_rect())
+			and badge.get_theme_default_font().get_string_size(badge.readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
+			"real typed name and short intent are readable inside the stage")
+	# Exercise every distinct symbol and exact destination on a real mounted canvas.
+	var badge = presenter._badges[0]
+	for action in [{"type": "attack", "amount": 7, "target_position": 3},
+		{"type": "block", "amount": 4}, {"type": "buff", "amount": 5},
+		{"type": "debuff", "status": "exposed", "amount": 2, "target_position": 1},
+		{"type": "shove", "amount": 0, "direction": -1, "target_position": 2}]:
+		var original: Dictionary = action.duplicate(true)
+		badge.show_intent(action, false)
+		_check(badge.icon_mode == action.type and badge.intent_type == action.type
+			and badge.amount == action.amount and badge.target_position == action.get("target_position", 0)
+			and action == original, "all intent symbols preserve exact copied kind, amount and destination")
+		_check(badge.get_theme_default_font().get_string_size(badge.readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
+			"each intent caption fits the three-enemy stage")
+	presenter._refresh()
+	_check(_snapshot(app) == before, "typed repeated refresh and every badge kind preserve all models and RNG")
+	_check(app.party.apply_damage(1, 999) and app.enemies.apply_damage(2, 999), "typed fallen rendering has real downed and slain actors")
+	presenter._refresh()
+	_check(presenter._puppets[0].fallen and presenter._puppets[4].fallen
+		and presenter._badges[1].icon_mode == "slain", "typed hero and enemy puppets reflect actual fallen state")
+	app.return_button.pressed.emit()
+	await process_frame
+	_check(presenter._puppets.is_empty() and presenter._badges.is_empty() and presenter.battle_row == null,
+		"routed Return clears every typed puppet and badge")
 
 
 func _invalid_sources(app, reference, presenter) -> void:

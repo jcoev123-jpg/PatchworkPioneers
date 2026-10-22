@@ -57,9 +57,9 @@ func _visible(app, before: int, after: int) -> void:
 	var rect: Rect2 = label.get_global_rect()
 	_check(rect.size.x > 0 and rect.size.y > 0 and Rect2(0, 0, 1280, 720).encloses(rect),
 		"forecast fits viewport")
-	_check(rect.position.y >= app.intent_label.get_global_rect().end.y \
-		and rect.position.y - app.intent_label.get_global_rect().end.y <= 8,
-		"forecast sits near intent text")
+	var meters = app.get_node("LiveCombatMeters").row
+	_check(is_instance_valid(meters) and rect.position.y >= meters.get_global_rect().end.y
+		and not rect.intersects(meters.get_global_rect()), "forecast remains directly below the consolidated actor readouts")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.end_turn_button.get_global_rect()) \
 		and Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()),
 		"battle actions remain inside viewport")

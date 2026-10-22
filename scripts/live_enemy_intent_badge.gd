@@ -15,7 +15,7 @@ var amount := 0
 var target_position := 0
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	custom_minimum_size = Vector2(285, 44)
+	custom_minimum_size = Vector2(192, 36)
 	queue_redraw()
 
 
@@ -32,7 +32,7 @@ func show_intent(action: Dictionary, slain: bool) -> void:
 		intent_type = "attack"
 		amount = action.get("amount", 0)
 		target_position = action.get("target_position", 0)
-		readable_text = "ATTACK %d -> HERO %d" % [amount, target_position]
+		readable_text = "ATK %d > H%d" % [amount, target_position]
 	elif action.get("type") == "block":
 		icon_mode = "block"
 		intent_type = "block"
@@ -45,11 +45,11 @@ func show_intent(action: Dictionary, slain: bool) -> void:
 		amount = action.amount
 		target_position = action.get("target_position", 0)
 		if intent_type == "buff":
-			readable_text = "BUFF BLOCK +%d" % amount
+			readable_text = "BUFF +%d BLK" % amount
 		elif intent_type == "debuff":
-			readable_text = "%s %d -> HERO %d" % [action.status.to_upper(), amount, target_position]
+			readable_text = "%s %d > H%d" % [action.status.to_upper(), amount, target_position]
 		else:
-			readable_text = "SHOVE HERO %d %s" % [target_position, "BACK" if action.direction == 1 else "FRONT"]
+			readable_text = "H%d %s" % [target_position, "PUSH BACK" if action.direction == 1 else "PUSH FRONT"]
 	else:
 		icon_mode = "none"
 		intent_type = ""
@@ -64,6 +64,7 @@ func _update_visuals() -> void:
 
 
 func _draw() -> void:
+	draw_set_transform(Vector2.ZERO, 0, Vector2(1, 0.8))
 	# Torn-edged paper patch with a hand-stitched perimeter and distinct silhouettes.
 	var paper := PackedVector2Array([
 		Vector2(3, 5), Vector2(52, 3), Vector2(57, 10),
@@ -103,6 +104,7 @@ func _draw() -> void:
 		draw_line(Vector2(41, 12), Vector2(18, 32), MUTED, 4.0, true)
 	# Draw text on this noninteractive canvas rather than inserting another Label
 	# into the legacy two-Label enemy roster (its other live consumers expect two).
-	draw_string(get_theme_default_font(), Vector2(64, 28), readable_text,
-		HORIZONTAL_ALIGNMENT_LEFT, 215, 16,
+	draw_set_transform(Vector2.ZERO)
+	draw_string(get_theme_default_font(), Vector2(62, 24), readable_text,
+		HORIZONTAL_ALIGNMENT_LEFT, size.x - 64, 14,
 		MUTED if icon_mode in ["slain", "none"] else CREAM)

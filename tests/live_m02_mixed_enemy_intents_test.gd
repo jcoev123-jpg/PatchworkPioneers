@@ -78,11 +78,11 @@ func _run() -> void:
 			"Intent: Enemy 1 -> Hero 3: Weak 2; Enemy 2 -> Hero 3 (Tinker): 4 damage",
 			"Intent: Enemy 1: Shove Hero 2 front; Enemy 2: 1 Block"]
 		var badges := [
-			["SHOVE HERO 1 BACK", "EXPOSED 2 -> HERO 1"],
-			["BUFF BLOCK +3", "ATTACK 5 -> HERO 1"],
-			["BLOCK +2", "BLEED 2 -> HERO 2"],
-			["WEAK 2 -> HERO 3", "ATTACK 4 -> HERO 3"],
-			["SHOVE HERO 2 FRONT", "BLOCK +1"]]
+			["H1 PUSH BACK", "EXPOSED 2 > H1"],
+			["BUFF +3 BLK", "ATK 5 > H1"],
+			["BLOCK +2", "BLEED 2 > H2"],
+			["WEAK 2 > H3", "ATK 4 > H3"],
+			["H2 PUSH FRONT", "BLOCK +1"]]
 		for turn in range(5):
 			app._refresh_intents()
 			await process_frame

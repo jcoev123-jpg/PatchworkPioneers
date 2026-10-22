@@ -103,9 +103,12 @@ func _run() -> void:
 			"live roster presenter binds the actual two enemies")
 		for index in range(presenter._labels.size()):
 			_check(presenter._labels[index].is_visible_in_tree() and presenter._labels[index].text
-				== "Enemy %d - %s\nHP: %d/%d | Block: 0" % [index + 1,
-					enemies[index].name, enemies[index].hp, enemies[index].max_hp],
-				"real roster label displays exact slot, identity, HP and Block")
+				== "Enemy %d - %s" % [index + 1, enemies[index].name],
+				"real target label displays exact slot and identity")
+			var meter = app.get_node("LiveCombatMeters").row.get_child(3 + index)
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [enemies[index].hp, enemies[index].max_hp]
+				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: 0",
+				"real enemy meter displays exact HP and Block")
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 6,
 			"ordinary Warden opening Block absorbs exactly the Exposed-enhanced six damage")
 		var labels := [
@@ -114,7 +117,7 @@ func _run() -> void:
 			"Intent: Enemy 1 -> Hero 2 (Seamstress): 3 damage; Enemy 2: Buff +2 Block"]
 		var trace: Array = [_values(app)]
 		for turn in range(4):
-			_check(app.intent_label.is_visible_in_tree() and app.intent_label.text == labels[turn % 3],
+			_check(not app.intent_label.visible and app.intent_label.text == labels[turn % 3],
 				"visible exact authored intent beat %d" % (turn + 1))
 			var unchanged := _values(app)
 			stale.call()

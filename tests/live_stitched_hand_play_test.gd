@@ -367,7 +367,11 @@ func _run() -> void:
 				var hero: Dictionary = app.party.get_hero(index + 1)
 				_check(app.hero_panels[index].get_child(0).text.contains("HP: %d/%d | Block: %d" % [hero.hp, hero.max_hp, hero.block]), "exact hero HP and Block refreshed")
 			for enemy in app.enemies.get_enemies():
-				_check(app.get_node("LiveEnemyRoster")._labels[enemy.position - 1].text == "Enemy %d - %s\nHP: %d/%d | Block: %d%s" % [enemy.position, enemy.name, enemy.hp, enemy.max_hp, enemy.block, "\nSLAIN" if enemy.hp == 0 else ""], "exact enemy HP and Block display agrees with resolved oracle")
+				_check(app.get_node("LiveEnemyRoster")._labels[enemy.position - 1].text == "Enemy %d - %s%s" % [enemy.position, enemy.name, "\nSLAIN" if enemy.hp == 0 else ""], "exact enemy identity and slain display agree with resolved oracle")
+				var meter = app.get_node("LiveCombatMeters").row.get_child(2 + enemy.position)
+				_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp]
+					and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % enemy.block,
+					"exact visible enemy HP and Block display agrees with resolved oracle")
 			var trace := [_snapshot(), presenter.last_event.duplicate(true), app._stitch_snapshot()]
 			if replay.is_empty():
 				replay = trace

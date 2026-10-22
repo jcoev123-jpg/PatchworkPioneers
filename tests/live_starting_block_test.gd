@@ -26,6 +26,17 @@ func _snapshot(app) -> Array:
 
 
 func _visible(app, hp: Array, block: Array, target: int) -> void:
+	var meters = app.get_node("LiveCombatMeters")
+	meters._sync_battle()
+	_check(is_instance_valid(meters.row) and meters.row.get_child_count() >= 3, "real hero meters mounted")
+	if is_instance_valid(meters.row) and meters.row.get_child_count() >= 3:
+		for index in range(3):
+			var meter = meters.row.get_child(index)
+			var actor: Dictionary = app.party.get_hero(index + 1)
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
+				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % actor.block,
+				"visible meter retains exact authoritative HP and Block")
+
 	_check(app.hero_panels.size() == 3, "three mounted hero panels")
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
@@ -37,13 +48,13 @@ func _visible(app, hp: Array, block: Array, target: int) -> void:
 		if not is_instance_valid(panel):
 			continue
 		var label = panel.get_child(0) if panel.get_child_count() > 0 else null
-		_check(label is Label and label.is_visible_in_tree(), "mounted hero label visible")
+		_check(label is Label and not label.visible, "mounted hero label visible")
 		if label is Label:
 			_check(label.text == "%d - %s\nHP: %d/%d | Block: %d" % [
 				index + 1, hero.name, hp[index], hero.max_hp, block[index]], "mounted text matches expected HP and Block")
 	_check(is_instance_valid(app.intent_label), "mounted intent exists")
 	if is_instance_valid(app.intent_label):
-		_check(app.intent_label.is_visible_in_tree() and app.battle_view.is_ancestor_of(app.intent_label), "intent mounted and visible")
+		_check(not app.intent_label.visible and app.battle_view.is_ancestor_of(app.intent_label), "intent mounted and visible")
 		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" % [
 			target, ["Warden", "Seamstress", "Tinker"][target - 1]], "authored rotating intent text")
 	_check(app.enemy_attacks == [{"enemy_position": 1, "type": "attack", "amount": 1,

@@ -49,18 +49,29 @@ func _announced(target: int) -> void:
 		{"enemy_position": 2, "type": "block", "amount": 1}]
 	_check(app.enemy_attacks == expected and app.enemy_intents.get_intents() == expected,
 		"current authored announcement targets slot %d" % target)
-	_check(app.intent_label.is_visible_in_tree() and app.intent_label.text ==
+	_check(not app.intent_label.visible and app.intent_label.text ==
 		"Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" %
 		[target, ["Warden", "Seamstress", "Tinker"][target - 1]],
 		"visible announcement includes exact target and unchanged amounts")
 
 
 func _party_visible() -> void:
+	var meters = app.get_node("LiveCombatMeters")
+	meters._sync_battle()
+	_check(is_instance_valid(meters.row) and meters.row.get_child_count() >= 3, "real hero meters mounted")
+	if is_instance_valid(meters.row) and meters.row.get_child_count() >= 3:
+		for index in range(3):
+			var meter = meters.row.get_child(index)
+			var actor: Dictionary = app.party.get_hero(index + 1)
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
+				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % actor.block,
+				"visible meter retains exact authoritative HP and Block")
+
 	_check(app.hero_panels.size() == 3, "three mounted hero panels")
 	for index in range(app.hero_panels.size()):
 		var label := app.hero_panels[index].get_child(0) as Label
 		var hero: Dictionary = app.party.get_hero(index + 1)
-		_check(label != null and label.is_visible_in_tree() and label.text.contains(
+		_check(label != null and not label.visible and label.text.contains(
 			"HP: %d/%d | Block: %d" % [hero.hp, hero.max_hp, hero.block]),
 			"live hero HP/Block match authoritative state")
 

@@ -24,6 +24,17 @@ func _deck_snapshot(deck: CombatDeck) -> Array:
 
 
 func _visible(app) -> void:
+	var meters = app.get_node("LiveCombatMeters")
+	meters._sync_battle()
+	_check(is_instance_valid(meters.row) and meters.row.get_child_count() >= 3, "real hero meters mounted")
+	if is_instance_valid(meters.row) and meters.row.get_child_count() >= 3:
+		for index in range(3):
+			var meter = meters.row.get_child(index)
+			var actor: Dictionary = app.party.get_hero(index + 1)
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
+				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % actor.block,
+				"visible meter retains exact authoritative HP and Block")
+
 	_check(is_instance_valid(app.hero_view) and app.hero_view.is_visible_in_tree(), "hero row visible")
 	if not is_instance_valid(app.hero_view):
 		return
@@ -40,7 +51,7 @@ func _visible(app) -> void:
 		_check(panel is PanelContainer and panel.is_visible_in_tree(), "hero panel visible")
 		_check(index < app.hero_panels.size() and app.hero_panels[index] == panel, "panel reference matches mounted order")
 		var label = panel.get_child(0) if panel.get_child_count() > 0 else null
-		_check(label is Label and label.is_visible_in_tree(), "hero label exists and is visible")
+		_check(label is Label and not label.visible, "hero label exists and is visible")
 		if label is Label:
 			var hero: Dictionary = app.party.get_hero(index + 1)
 			var expected := "%d - %s\nHP: %d/%d | Block: %d%s" % [
