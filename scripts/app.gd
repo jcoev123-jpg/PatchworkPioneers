@@ -1503,8 +1503,10 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 		or ledger.completed_fights.has(id) or run_deck.size() < CombatDeck.TURN_DRAW:
 		return false
 	# Rest composites are run-owned cards, validated against their full ledger.
-	if not RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id).is_valid():
+	var stitch_ledger := RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id)
+	if not stitch_ledger.is_valid():
 		return false
+	var snapshot := stitch_ledger.get_snapshot()
 	var next_party := party_carryover.create_next_fight_party()
 	if next_party == null:
 		return false
@@ -1523,12 +1525,15 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	var next_result: CombatBattleResult
 	var next_flow: CombatRoundFlow
 	if entry.get("success", false):
-		next_deck = CombatDeck.new(run_deck, run_rng)
-		next_result = CombatBattleResult.new(next_party, entry.enemies)
-		next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
-		staged = next_flow.begin_fight()
-		if staged:
-			staged = torn_carry.begin_battle(id, next_result, next_party)
+		var admission := RunStitchedBattleHandEntry.new().admit_next_fight(
+			run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id, snapshot.receipt, run_rng)
+		if admission.get("ok", false) and admission.snapshot == snapshot:
+			next_deck = admission.combat_deck
+			next_result = CombatBattleResult.new(next_party, entry.enemies)
+			next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
+			staged = next_flow.begin_fight()
+			if staged:
+				staged = torn_carry.begin_battle(id, next_result, next_party)
 	if not staged or not act_outcome.begin_current_battle(next_result):
 		run_map.undo_choice(id, prior)
 		run_rng.state = rng_before
