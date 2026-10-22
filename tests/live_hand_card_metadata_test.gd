@@ -111,7 +111,7 @@ func _validate_display(observed: Dictionary) -> void:
 		_check(panel.get_child_count() == 1,
 			"each panel retains only its original ID Label; help lives outside the hand")
 		if support:
-			_check(presenter.help_label.text == "Up: cards | Click / Enter / Space: play",
+			_check(presenter.help_label.text == presenter.TABLE_HELP,
 				"shared visible support action hint survives outside card names")
 			_check(panel.tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support hint preserved")
 			_check(panel.tooltip_text.contains("BASE"), "support tooltip includes base effect detail")
