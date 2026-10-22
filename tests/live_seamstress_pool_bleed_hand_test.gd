@@ -8,7 +8,9 @@ extends SceneTree
 
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const IDS := ["seamstress_blanket_stitch", "seamstress_blanket_stitch_plus"]
-const OTHER_UNKNOWN := "seamstress_needle_pin"
+## A genuinely unauthored ID: since cycle 141 every authored pool record now has a
+## readable shared face, so fail-closed coverage needs an ID no catalog knows.
+const OTHER_UNKNOWN := "seamstress_unreleased_card"
 const SEED := 42
 
 var failures: Array[String] = []
@@ -369,9 +371,9 @@ func _play_from_hand(card_id: String, keyboard: bool, code: Key = KEY_ENTER) -> 
 	await _return()
 
 
-## A real hand holding both authored variants plus a different unadvertised pool
-## card: both Blanket Stitch faces must be readable without hovering, while the
-## third panel keeps the shared presenter's own placeholder untouched.
+## A real hand holding both authored variants plus a genuinely unauthored card:
+## both Blanket Stitch faces must be readable without hovering, while the third
+## panel keeps the shared presenter's own unknown placeholder untouched.
 func _mixed_hand_faces() -> void:
 	if not await _start("seamstress_blanket_stitch"):
 		await _return()
@@ -380,7 +382,7 @@ func _mixed_hand_faces() -> void:
 	app.deck.draw_pile.append(OTHER_UNKNOWN)
 	_check(app.deck.draw_extra(2) == 2 and app.deck.hand.has("seamstress_blanket_stitch_plus")
 		and app.deck.hand.has(OTHER_UNKNOWN),
-		"the real hand also holds the '+' and a different pool card")
+		"the real hand also holds the '+' and a genuinely unauthored card")
 	app._refresh_hand()
 	await _frames()
 	var base_panel := _panel("seamstress_blanket_stitch")
