@@ -6,6 +6,8 @@ const ROSTERS := {
     "middlemark_clamp": ["spool_stalker", "seam_ripper"],
     "backhem_pinwheel": ["fray_scavenger", "button_guard", "spool_stalker"],
     "hemdrag_relay": ["seam_ripper", "button_guard"],
+    "spoolbridge_staggered_exposure": ["spool_stalker", "seam_ripper"],
+    "hemhook_exposed_swap": ["spool_stalker", "seam_ripper", "fray_scavenger"],
 }
 var failures: Array[String] = []
 var checks := 0
