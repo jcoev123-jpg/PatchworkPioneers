@@ -1,6 +1,8 @@
 extends SceneTree
 ## Mounted M03 prepared Fight/Elite reward view: presentation and request only.
 const SCENE := "res://scenes/run_card_reward_choice_panel.tscn"
+const PANEL_SCRIPT := "res://scripts/live_run_card_reward_choice_panel.gd"
+const HAND_SCRIPT := "res://scripts/live_hand_card_metadata.gd"
 const HEROES := "res://data/heroes/starter_party.json"
 const ENEMIES := "res://data/enemies/starter_enemies.json"
 
@@ -8,6 +10,8 @@ var panel: LiveRunCardRewardChoicePanel
 var failures: Array[String] = []
 var checks: int = 0
 var requests: Array[Dictionary] = []
+var _hand_coin := Color.WHITE
+var _hand_coin_ready := false
 
 
 func _initialize() -> void:
@@ -168,6 +172,216 @@ func _expected_cards() -> Dictionary:
 	}
 
 
+## The golden felt the shared hand paints its energy coin with, read from that
+## script so the reward coin cannot silently drift from the hand convention.
+func _hand_coin_color() -> Color:
+	if _hand_coin_ready:
+		return _hand_coin
+	_hand_coin_ready = true
+	var script := load(HAND_SCRIPT) as Script
+	_check(script != null, "shared hand metadata script loads for coin comparison")
+	if script != null:
+		var constants: Dictionary = script.get_script_constant_map()
+		var value: Variant = constants.get("TINKER", null)
+		if value is Color:
+			_hand_coin = value
+			return _hand_coin
+	var file := FileAccess.open(HAND_SCRIPT, FileAccess.READ)
+	_check(file != null, "shared hand metadata source readable")
+	if file != null:
+		var text := file.get_as_text()
+		file.close()
+		var marker := "const TINKER := Color(\"#"
+		var start := text.find(marker)
+		_check(start >= 0, "shared hand source declares its energy coin colour")
+		if start >= 0:
+			var remainder := text.substr(start + marker.length())
+			var closing := remainder.find("\"")
+			_check(closing > 0, "shared hand coin colour literal is closed")
+			if closing > 0:
+				_hand_coin = Color("#" + remainder.substr(0, closing))
+	return _hand_coin
+
+
+## The mounted cost coin must keep the exact catalog cost and paint that numeral
+## centred inside the golden coin, measured from the font actually drawn. No
+## stitch or line may cross the numeral's ink box.
+func _check_cost_coin(cost_button: LiveRunCardRewardChoicePanel._CostButton,
+		definition: Dictionary, card_id: String) -> void:
+	var cost: int = int(definition.get("cost", -1))
+	_check(cost_button.cost_value == cost,
+		"mounted coin keeps exact authored cost %d: %s" % [cost, card_id])
+	_check(cost_button.cost_value >= 0 and cost_button.numeral_text() == str(cost),
+		"coin numeral is the authored cost text: " + card_id)
+	var gold: Color = cost_button.coin_color()
+	_check(gold.r > 0.6 and gold.g > 0.45 and gold.b < gold.g and gold.b < gold.r,
+		"coin fill is the golden felt colour: " + card_id)
+	_check(gold == _hand_coin_color(),
+		"coin fill matches the shared hand energy coin: " + card_id)
+	var font: Font = cost_button.get_theme_default_font()
+	if font == null:
+		font = ThemeDB.fallback_font
+	_check(font != null, "mounted coin resolves a drawable font: " + card_id)
+	if font == null:
+		return
+	var center: Vector2 = cost_button.size * 0.5
+	var radius: float = cost_button.coin_radius()
+	_check(radius >= 18.0, "coin is large enough to read its numeral: " + card_id)
+	_check(cost_button.numeral_font_size() >= 18,
+		"numeral is drawn at a legible point size: " + card_id)
+	var bounds: Rect2 = cost_button.numeral_bounds(font)
+	_check(bounds.size.x > 0.0 and bounds.size.y > 0.0,
+		"numeral reports real measured width and ascent/descent: " + card_id)
+	_check(absf(bounds.get_center().x - center.x) <= 1.0,
+		"numeral width is centred horizontally in the coin: " + card_id)
+	_check(absf(bounds.get_center().y - center.y) <= 1.0,
+		"numeral baseline centres its ink box vertically: " + card_id)
+	var corners: Array[Vector2] = [bounds.position,
+		Vector2(bounds.end.x, bounds.position.y),
+		Vector2(bounds.position.x, bounds.end.y), bounds.end]
+	for corner: Vector2 in corners:
+		_check(corner.distance_to(center) <= radius - 1.5,
+			"numeral ink stays inside the coin rim: " + card_id)
+	var spans: Array[Vector2] = cost_button.stitch_spans()
+	_check(not spans.is_empty(), "coin has a stitched circle, not a bare rim: " + card_id)
+	for span: Vector2 in spans:
+		_check(span.y > span.x and span.y - span.x < TAU * 0.5,
+			"stitch span is a short arc, never a diameter: " + card_id)
+		for fraction: float in [0.0, 0.5, 1.0]:
+			var angle: float = lerpf(span.x, span.y, fraction)
+			var point: Vector2 = center + Vector2(cos(angle), sin(angle)) * cost_button.stitch_radius()
+			_check(not bounds.has_point(point),
+				"no stitch crosses the numeral: " + card_id)
+
+
+## Each mounted offer draws exactly three source circles and three target
+## squares, filled only for the positions the resolved catalog authorises.
+func _check_position_marks(pips: LiveRunCardRewardChoicePanel._PositionPips,
+		definition: Dictionary, card_id: String) -> void:
+	var slots: Array[Dictionary] = pips.slots()
+	_check(slots.size() == 6,
+		"exactly six position slots, three sources and three targets: " + card_id)
+	var circles: int = 0
+	var squares: int = 0
+	var filled_circles: Array[int] = []
+	var filled_squares: Array[int] = []
+	for slot: Dictionary in slots:
+		var shape: String = String(slot.get("shape", ""))
+		var position: int = int(slot.get("position", 0))
+		var filled: bool = bool(slot.get("filled", false))
+		var center: Vector2 = slot.get("center", Vector2.ZERO)
+		var radius: float = float(slot.get("radius", 0.0))
+		_check(position >= 1 and position <= 3, "position slot is numbered 1-3: " + card_id)
+		_check(radius > 0.0 and center.x - radius >= -0.5
+			and center.x + radius <= pips.size.x + 0.5
+			and center.y - radius >= -0.5 and center.y + radius <= pips.size.y + 0.5,
+			"position slot stays drawn inside its control: " + card_id)
+		if shape == "circle":
+			circles += 1
+			if filled:
+				filled_circles.append(position)
+		elif shape == "square":
+			squares += 1
+			if filled:
+				filled_squares.append(position)
+		else:
+			_check(false, "unsupported position slot shape '%s': %s" % [shape, card_id])
+	_check(circles == 3, "three source circle slots are drawn: " + card_id)
+	_check(squares == 3, "three target square slots are drawn: " + card_id)
+	var owner: String = String(definition.get("owner", ""))
+	_check(panel.OWNER_COLORS.has(owner), "authored owner palette exists: " + card_id)
+	if panel.OWNER_COLORS.has(owner):
+		_check(pips.owner_color == panel.OWNER_COLORS[owner],
+			"legal source circles use the owner colour: " + card_id)
+	var expected_from: Array[int] = []
+	for value: Variant in definition.get("from_positions", []):
+		expected_from.append(int(value))
+	expected_from.sort()
+	var expected_to: Array[int] = []
+	for value: Variant in definition.get("to_positions", []):
+		expected_to.append(int(value))
+	expected_to.sort()
+	filled_circles.sort()
+	filled_squares.sort()
+	_check(filled_circles.size() == expected_from.size(),
+		"only authored source positions are filled: " + card_id)
+	_check(filled_squares.size() == expected_to.size(),
+		"only authored target positions are filled: " + card_id)
+	_check(filled_circles == expected_from,
+		"source circles filled exactly for from_positions: " + card_id)
+	_check(filled_squares == expected_to,
+		"target squares filled exactly for to_positions: " + card_id)
+	_check(pips.target_kind == String(definition.get("target_kind", "")),
+		"position marks keep the authored target kind: " + card_id)
+
+
+## The readable target-kind sentence the rules label must spell out; the marks
+## stay silent so no glyph beyond the project font is required.
+func _kind_phrase(kind: String) -> String:
+	match kind:
+		"enemy_single": return "Target: pick 1 living enemy"
+		"enemy_all": return "Target: all living enemies"
+		"enemy_random": return "Target: 1 random living enemy per hit"
+		"self": return "Target: self"
+		"ally_single": return "Target: 1 living ally 1-3"
+		"party_all": return "Target: all allies"
+		"none": return "Target: none"
+	return ""
+
+
+## Source slice of one nested renderer class, used for the drawing checks that
+## a mounted rectangle assertion cannot see.
+func _class_source(class_name_marker: String, next_marker: String) -> String:
+	var file := FileAccess.open(PANEL_SCRIPT, FileAccess.READ)
+	_check(file != null, "reward renderer source readable for inspection")
+	if file == null:
+		return ""
+	var text := file.get_as_text()
+	file.close()
+	var start := text.find("class " + class_name_marker)
+	_check(start >= 0, "reward renderer source defines class " + class_name_marker)
+	if start < 0:
+		return ""
+	var end := text.length()
+	if not next_marker.is_empty():
+		var following := text.find(next_marker, start)
+		if following > start:
+			end = following
+	return text.substr(start, end - start)
+
+
+## Renderer drawing checks: a gold filled coin measured from real font metrics
+## with no line through its numeral, and six plain slots with no pictogram text.
+func _test_renderer_source() -> void:
+	var coin := _class_source("_CostButton", "## Authored position marks")
+	_check(not coin.is_empty(), "cost coin drawing source located")
+	_check(coin.contains("draw_circle("), "cost coin source fills a circle")
+	_check(coin.contains("COIN_GOLD"), "cost coin source paints the golden felt")
+	_check(coin.contains("draw_arc("), "cost coin source stitches a ring")
+	_check(coin.contains("draw_string("), "cost coin source draws the numeral")
+	_check(coin.contains("get_string_size(") and coin.contains("get_ascent(")
+		and coin.contains("get_descent(") and coin.contains("numeral_font_size()"),
+		"cost coin measures width/ascent/baseline at the font size it draws")
+	_check(not coin.contains("draw_dashed_line") and not coin.contains("draw_line("),
+		"cost coin never draws a dashed or straight line through the numeral")
+	var marks := _class_source("_PositionPips", "")
+	_check(not marks.is_empty(), "position mark drawing source located")
+	_check(marks.contains("draw_circle(") and marks.contains("draw_rect("),
+		"position marks draw circles and squares")
+	_check(not marks.contains("draw_string("),
+		"position marks draw no miniature numbers")
+	var ascii_only := true
+	for index in range(marks.length()):
+		if marks.unicode_at(index) > 127:
+			ascii_only = false
+			break
+	_check(ascii_only,
+		"position marks need no unsupported Unicode pictogram")
+	for pictogram in ["→", "←", "↔", "⟲", "↺", "—"]:
+		_check(not marks.contains(pictogram),
+			"position marks never print the removed symbol " + pictogram)
+
+
 func _test_all_catalog_rules(base: Dictionary) -> void:
 	var catalog := StarterCards.new()
 	var expected := _expected_cards()
@@ -210,6 +424,124 @@ func _test_all_catalog_rules(base: Dictionary) -> void:
 	for card_id in authored_before:
 		_check(catalog.get_definition(card_id) == authored_before[card_id],
 			"authored catalog unchanged by formatter/mount: " + card_id)
+
+
+## Explicit mounted cases from the real reward-eligible catalogs: cost 0, 1 and 2
+## with every authored target kind, checked against detached catalog records.
+func _cost_and_target_cases() -> Array[String]:
+	return [
+		"warden_quick_darn",        # cost 0, target self
+		"seamstress_thimble_tea",   # cost 0, target ally_single
+		"seamstress_field_mend",    # cost 2, target party_all
+		"tinker_ricochet",          # cost 1, target enemy_random
+		"tinker_scatter_bolts",     # cost 1, target enemy_all
+		"warden_pinning_jab",       # cost 1, target enemy_single
+	]
+
+
+func _starter_cost_cases() -> Array[String]:
+	return [
+		"tinker_tune_up",     # cost 0, target none
+		"warden_strike",      # cost 1, target enemy_single
+		"warden_shield_bash", # cost 2, target enemy_single
+	]
+
+
+## One mounted offer checked against the resolved catalog definition: exact
+## cost in a centred gold coin, six position slots, readable target sentence.
+func _check_mounted_face(receipt: Dictionary, slot: int) -> void:
+	var offer: Dictionary = receipt["offers"][slot]
+	var card_id := String(offer.get("id", ""))
+	var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	var card := panel.choices_container.get_child(slot) as PanelContainer
+	_check(card != null and not definition.is_empty(),
+		"mounted cost/target face resolves in the catalog: " + card_id)
+	if card == null or definition.is_empty():
+		return
+	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+	var cost_button := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
+	var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
+	var rules_label := content.get_node("RulesLabel") as Label
+	_check(cost_button != null and pips != null and rules_label != null,
+		"cost/target card mounts its coin, marks and rules: " + card_id)
+	if cost_button == null or pips == null or rules_label == null:
+		return
+	_check_cost_coin(cost_button, definition, card_id)
+	_check_position_marks(pips, definition, card_id)
+	var kind: String = String(definition.get("target_kind", ""))
+	var phrase: String = _kind_phrase(kind)
+	_check(not phrase.is_empty(),
+		"authored target kind has a readable sentence: " + card_id)
+	_check(rules_label.text.contains(phrase),
+		"readable rules spell out the authored target kind %s: %s" % [kind, card_id])
+
+
+func _test_cost_and_marks(fight_base: Dictionary, elite_base: Dictionary) -> void:
+	var pool_cases: Array[String] = _cost_and_target_cases()
+	var starter_cases: Array[String] = _starter_cost_cases()
+	var seen_costs: Dictionary = {}
+	var seen_kinds: Dictionary = {}
+	var all_ids: Array[String] = []
+	all_ids.append_array(pool_cases)
+	all_ids.append_array(starter_cases)
+	for card_id: String in all_ids:
+		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+		_check(not definition.is_empty(),
+			"cost/target case is a reward-eligible authored card: " + card_id)
+		if definition.is_empty():
+			continue
+		seen_costs[int(definition.get("cost", -1))] = true
+		seen_kinds[String(definition.get("target_kind", ""))] = true
+	var bases := {"Fight": fight_base, "Elite": elite_base}
+	for kind: String in ["Fight", "Elite"]:
+		var base: Dictionary = bases[kind]
+		for offset in range(0, pool_cases.size(), 3):
+			var receipt := base.duplicate(true)
+			for slot in range(3):
+				var card_id: String = pool_cases[(offset + slot) % pool_cases.size()]
+				var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+				_check(not definition.is_empty(), "cost/target offer resolves in the catalog: " + card_id)
+				if definition.is_empty():
+					continue
+				receipt["offers"][slot] = {"id": card_id,
+					"owner": String(definition.get("owner", ""))}
+			var before := receipt.duplicate(true)
+			_check(panel.open_rewards("cost_marks", kind, receipt),
+				"%s pool cost/target receipt mounts through the real panel %d" % [kind, offset])
+			if not panel.has_open_rewards():
+				continue
+			await _frames()
+			_validate_pool(receipt, kind, "cost_marks")
+			for slot in range(3):
+				_check_mounted_face(receipt, slot)
+			_check(receipt == before,
+				"%s cost/target preview leaves its receipt intact %d" % [kind, offset])
+			panel.close_rewards()
+			await _frames()
+		var starter_receipt := base.duplicate(true)
+		for slot in range(3):
+			var card_id: String = starter_cases[slot]
+			var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+			_check(not definition.is_empty(), "starter cost case resolves in the catalog: " + card_id)
+			starter_receipt["offers"][slot] = {"id": card_id,
+				"owner": String(definition.get("owner", ""))}
+		var starter_before := starter_receipt.duplicate(true)
+		_check(panel.open_rewards("cost_marks", kind, starter_receipt),
+			"%s starter cost/target receipt mounts through the real panel" % kind)
+		if panel.has_open_rewards():
+			await _frames()
+			_validate(starter_receipt, kind, "cost_marks")
+			for slot in range(3):
+				_check_mounted_face(starter_receipt, slot)
+			_check(starter_receipt == starter_before,
+				"%s starter cost/target preview leaves its receipt intact" % kind)
+			panel.close_rewards()
+			await _frames()
+	_check(seen_costs.has(0) and seen_costs.has(1) and seen_costs.has(2),
+		"mounted cases really cover authored costs 0, 1 and 2")
+	for kind in ["enemy_single", "enemy_all", "enemy_random", "self", "ally_single",
+			"party_all", "none"]:
+		_check(seen_kinds.has(kind), "mounted cases really cover target kind " + kind)
 
 
 func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
@@ -271,6 +603,11 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).to_positions == definition.get("to_positions", [])
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).target_kind == String(definition.get("target_kind", "")),
 			"position/target pips match catalog definition: " + str(index))
+		if cost_button != null and pips_container != null:
+			_check_cost_coin(cost_button as LiveRunCardRewardChoicePanel._CostButton,
+				definition, String(offer["id"]))
+			_check_position_marks(pips_container as LiveRunCardRewardChoicePanel._PositionPips,
+				definition, String(offer["id"]))
 		_check(rarity_label != null and (not rarity_label.visible or rarity_label.text.is_empty()),
 			"legacy starter offer receives honest no-rarity presentation: " + str(index))
 		_check(rarity_label != null and rarity_label.text != "Common",
@@ -816,6 +1153,15 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).to_positions == definition.get("to_positions", [])
 			and (pips_container as LiveRunCardRewardChoicePanel._PositionPips).target_kind == String(definition.get("target_kind", "")),
 			"pool position/target pips match catalog definition: " + card_id)
+		if cost_button != null and pips_container != null:
+			_check_cost_coin(cost_button as LiveRunCardRewardChoicePanel._CostButton,
+				definition, card_id)
+			_check_position_marks(pips_container as LiveRunCardRewardChoicePanel._PositionPips,
+				definition, card_id)
+		var kind_phrase: String = _kind_phrase(String(definition.get("target_kind", "")))
+		_check(not kind_phrase.is_empty(), "pool card has a readable target-kind sentence: " + card_id)
+		_check(kind_phrase.is_empty() or rules_label.text.contains(kind_phrase),
+			"pool card rules spell out the authored target kind: " + card_id)
 		var expected_rarity: String = String(definition.get("rarity", "")).capitalize()
 		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_rarity,
 			"RarityLabel matches authored rarity: %s (%s)" % [expected_rarity, card_id])
@@ -1088,9 +1434,12 @@ func _run() -> void:
 		_finish()
 		return
 	var original_fight: Dictionary = fight["receipt"].duplicate(true)
+	var original_elite: Dictionary = elite["receipt"].duplicate(true)
 	await _exercise(fight, "Fight", 0)
 	await _exercise(elite, "Elite", 1)
 	await _test_all_catalog_rules(original_fight)
+	_test_renderer_source()
+	await _test_cost_and_marks(original_fight, original_elite)
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
 	var pool_fight := _prepared_pool(false, 18203)
