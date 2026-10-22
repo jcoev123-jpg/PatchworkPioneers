@@ -230,8 +230,14 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	# Position/target pips
 	var pips_container := _PositionPips.new()
 	pips_container.name = "PositionPips"
-	pips_container.from_positions = definition.get("from_positions", [])
-	pips_container.to_positions = definition.get("to_positions", [])
+	var from_positions: Array[int] = []
+	for pos in definition.get("from_positions", []):
+		from_positions.append(int(pos))
+	var to_positions: Array[int] = []
+	for pos in definition.get("to_positions", []):
+		to_positions.append(int(pos))
+	pips_container.from_positions = from_positions
+	pips_container.to_positions = to_positions
 	pips_container.target_kind = String(definition.get("target_kind", ""))
 	pips_container.owner_color = OWNER_COLORS[offer["owner"]]
 	pips_container.custom_minimum_size = Vector2(0, 28)
@@ -625,7 +631,7 @@ class _OwnerPatch extends Control:
 		var y := rect.end.y - 2
 		draw_dashed_line(Vector2(rect.position.x + 8, y), Vector2(rect.end.x - 8, y), STITCH_THREAD, 1.5, 6.0)
 		# Draw running stitch along top edge
-		y := rect.position.y + 2
+		y = rect.position.y + 2
 		draw_dashed_line(Vector2(rect.position.x + 8, y), Vector2(rect.end.x - 8, y), STITCH_THREAD, 1.5, 6.0)
 
 
@@ -652,7 +658,7 @@ class _CostButton extends Control:
 		var font_size := maxi(18, int(radius * 0.9))
 		var text := str(cost_value)
 		# Use default font with dark ink
-		draw_string(get_theme_default_font(), center - get_theme_default_font().get_string_size(text) * 0.5, text, DARK_INK, font_size)
+		draw_string(get_theme_default_font(), center - get_theme_default_font().get_string_size(text) * 0.5, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, DARK_INK)
 
 
 ## Position/target pips (from_positions and to_positions)
@@ -671,12 +677,12 @@ class _PositionPips extends Control:
 		var y := size.y * 0.5
 		var spacing := 18.0
 		var pip_radius := 5.0
-		var start_x := (size.x - (max(from_positions.size(), to_positions.size()) - 1) * spacing) * 0.5
+		var start_x: float = (size.x - (maxi(from_positions.size(), to_positions.size()) - 1) * spacing) * 0.5
 		if start_x < 8:
 			start_x = 8
 
 		# Draw "From" pips (source positions) - small circles with owner color border
-		var x := start_x
+		var x: float = start_x
 		for pos in from_positions:
 			var pip_center := Vector2(x, y - 12)
 			draw_circle(pip_center, pip_radius, CARD_PAPER)
@@ -684,11 +690,11 @@ class _PositionPips extends Control:
 			# Position number inside
 			var pos_text := str(pos)
 			var font_size := 10
-			draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, DARK_INK, font_size)
+			draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, DARK_INK)
 			x += spacing
 
 		# Draw "To" pips (target positions) - different style based on target kind
-		x := start_x
+		x = start_x
 		var target_label := ""
 		match target_kind:
 			"enemy_single": target_label = "→"
@@ -703,16 +709,16 @@ class _PositionPips extends Control:
 		if target_label != "":
 			var label_size := get_theme_default_font().get_string_size(target_label)
 			var label_x := (size.x - label_size.x) * 0.5
-			draw_string(get_theme_default_font(), Vector2(label_x, y + 2), target_label, DARK_INK, 12)
+			draw_string(get_theme_default_font(), Vector2(label_x, y + 2), target_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, DARK_INK)
 
 		# Also draw to_positions pips for enemy targets
 		if target_kind.begins_with("enemy"):
-			x := start_x
+			x = start_x
 			for pos in to_positions:
 				var pip_center := Vector2(x, y + 12)
 				draw_circle(pip_center, pip_radius, CARD_PAPER)
 				draw_circle(pip_center, pip_radius, Color("#9e3d30"), false, 1.5) # enemy red
 				var pos_text := str(pos)
 				var font_size := 10
-				draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, DARK_INK, font_size)
+				draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, DARK_INK)
 				x += spacing

@@ -257,7 +257,7 @@ func _run() -> void:
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "live reward fits viewport")
 				if index < 3:
 					var def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(expected.offers[index].id)
-					_check(button.get_parent().get_node("OwnerLabel").text == expected.offers[index].owner.capitalize() and button.get_parent().get_node("NameLabel").text == def.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == def.get("rarity", "").capitalize(), "actual offer visible")
+					_check(button.get_parent().get_node("OwnerPatch").get("owner_color") == LiveRunCardRewardChoicePanel.OWNER_COLORS[expected.offers[index].owner] and button.get_parent().get_node("NameLabel").text == def.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == def.get("rarity", "").capitalize(), "actual offer visible")
 				else:
 					_check(button.text == "Skip — take no card", "actual Skip visible")
 			var before := _settlement_state()
