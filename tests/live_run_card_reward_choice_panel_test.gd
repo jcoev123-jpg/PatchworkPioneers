@@ -200,13 +200,18 @@ func _test_all_catalog_rules(base: Dictionary) -> void:
 
 func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "actual scene mounted: " + kind)
-	_check(panel.title_label.text.contains(kind) and panel.title_label.text.contains(node_id),
-		"node and kind visible: " + kind)
+	_check(panel.title_label.text.contains(kind), "reward title contains kind: " + kind)
+	_check(not panel.title_label.text.contains(node_id) and not panel.title_label.text.contains("_"),
+		"reward title is human-readable without raw node ID: " + kind)
 	_check(panel.gold_label.text == "Pending gold: +%d" % receipt["gold_award"],
 		"exact prepared pending gold visible: " + kind)
 	_check(panel.trinket_label.visible == (kind == "Elite"), "Elite-only trinket label visibility")
-	_check(panel.trinket_label.text == ("Prepared trinket: " + receipt["trinket_drop_id"]
-		if kind == "Elite" else ""), "exact prepared trinket text")
+	if kind == "Elite":
+		_check(panel.trinket_label.text.contains("Thread Token"), "human-readable patch name visible: " + kind)
+		_check(not panel.trinket_label.text.contains(receipt["trinket_drop_id"]) and not panel.trinket_label.text.contains("_"),
+			"patch label does not expose raw trinket identifier or underscore")
+	else:
+		_check(panel.trinket_label.text.is_empty(), "non-Elite trinket label is empty")
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
 	_check(paper != null and paper.bg_color.get_luminance() > 0.55
 		and paper.border_width_left >= 4, "cream stitched paper")
@@ -234,15 +239,20 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
 		var owner_label := content.get_node("OwnerLabel") as Label
 		var name_label := content.get_node("NameLabel") as Label
-		var id_label := content.get_node("IdLabel") as Label
+		var rarity_label := content.get_node("RarityLabel") as Label
 		var cost_label := content.get_node("CostLabel") as Label
 		var rules_label := content.get_node_or_null("RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real action bound to card " + str(index))
 		_check(owner_label.text == offer["owner"].capitalize()
 			and name_label.text == definition["display_name"]
-			and id_label.text == offer["id"] and cost_label.text == "%d energy" % definition["cost"],
-			"exact owner, name, ID and cost visible: " + str(index))
+			and cost_label.text == "%d energy" % definition["cost"],
+			"exact owner, name and cost visible: " + str(index))
+		_check(rarity_label != null and (not rarity_label.visible or rarity_label.text.is_empty()),
+			"legacy starter offer receives honest no-rarity presentation: " + str(index))
+		_check(rarity_label != null and rarity_label.text != "Common",
+			"starter offer never receives false Common: " + str(index))
+		_assert_no_raw_identifiers(card, offer["id"], node_id, receipt.get("trinket_drop_id", ""))
 		var expected := _expected_cards()
 		_check(rules_label != null, "RulesLabel exists on live card " + str(index))
 		if rules_label != null:
@@ -318,7 +328,7 @@ func _exercise(fixture: Dictionary, kind: String, physical: int) -> void:
 		return
 	_check(actions[0].has_focus(), kind + " first action receives keyboard focus")
 	_check(not panel.open_rewards("replacement", kind, receipt), "cannot replace active prepared reward")
-	_check(panel.title_label.text.contains(node_id), "refused overwrite keeps node")
+	_check(panel.title_label.text.contains(kind), "refused overwrite keeps title")
 	# Caller mutation cannot change the displayed choice or callback binding.
 	var original := receipt.duplicate(true)
 	receipt["offers"][0]["id"] = "forged"
@@ -470,7 +480,7 @@ func _replay_and_stale(base: Dictionary) -> void:
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
 			ui.append([content.get_node("OwnerLabel").text, content.get_node("NameLabel").text,
-				content.get_node("IdLabel").text, content.get_node("CostLabel").text,
+				content.get_node("RarityLabel").text, content.get_node("CostLabel").text,
 				content.get_node("RulesLabel").text])
 		independent.append(ui)
 		buttons[0].pressed.emit()
@@ -667,13 +677,18 @@ func _required_rule_phrases(card_id: String) -> Array[String]:
 ## The mounted card must show the real authored pool card it resolves to.
 func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "pool reward mounted: " + kind)
-	_check(panel.title_label.text.contains(kind) and panel.title_label.text.contains(node_id),
-		"pool node and kind visible: " + kind)
+	_check(panel.title_label.text.contains(kind), "pool title contains kind: " + kind)
+	_check(not panel.title_label.text.contains(node_id) and not panel.title_label.text.contains("_"),
+		"pool title is human-readable without raw node ID: " + kind)
 	_check(panel.gold_label.text == "Pending gold: +%d" % receipt["gold_award"],
 		"exact prepared pool pending gold visible: " + kind)
 	_check(panel.trinket_label.visible == (kind == "Elite"), "Elite-only pool trinket label visibility")
-	_check(panel.trinket_label.text == ("Prepared trinket: " + receipt["trinket_drop_id"]
-		if kind == "Elite" else ""), "exact prepared pool trinket text")
+	if kind == "Elite":
+		_check(panel.trinket_label.text.contains("Thread Token"), "human-readable pool patch name visible: " + kind)
+		_check(not panel.trinket_label.text.contains(receipt["trinket_drop_id"]) and not panel.trinket_label.text.contains("_"),
+			"pool patch label does not expose raw trinket identifier or underscore")
+	else:
+		_check(panel.trinket_label.text.is_empty(), "non-Elite pool trinket label is empty")
 	var actions := panel.get_choice_buttons()
 	_check(actions.size() == 4 and panel.choices_container.get_child_count() == 3,
 		"pool reward shows three genuine cards and Skip")
@@ -698,15 +713,26 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
 		var owner_label := content.get_node("OwnerLabel") as Label
 		var name_label := content.get_node("NameLabel") as Label
-		var id_label := content.get_node("IdLabel") as Label
+		var rarity_label := content.get_node("RarityLabel") as Label
 		var cost_label := content.get_node("CostLabel") as Label
 		var rules_label := content.get_node("RulesLabel") as Label
 		var action := content.get_node("ChooseButton") as Button
 		_check(action == actions[index], "real pool action bound to card " + str(index))
 		_check(owner_label.text == owner.capitalize()
 			and name_label.text == definition["display_name"]
-			and id_label.text == card_id and cost_label.text == "%d energy" % definition["cost"],
-			"exact authored pool owner, name, ID and cost visible: " + card_id)
+			and cost_label.text == "%d energy" % definition["cost"],
+			"exact authored pool owner, name and cost visible: " + card_id)
+		var expected_rarity: String = String(definition.get("rarity", "")).capitalize()
+		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_rarity,
+			"RarityLabel matches authored rarity: %s (%s)" % [expected_rarity, card_id])
+		var sewn_box := rarity_label.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(sewn_box != null and sewn_box.border_width_left >= 1,
+			"RarityLabel has visible sewn accent border: " + card_id)
+		_check(sewn_box != null and sewn_box.border_color != panel.OWNER_COLORS[owner],
+			"RarityLabel sewn border color distinguishable from owner: " + card_id)
+		_check(sewn_box != null and sewn_box.bg_color != panel.OWNER_COLORS[owner],
+			"RarityLabel sewn tag color distinguishable from owner: " + card_id)
+		_assert_no_raw_identifiers(card, card_id, node_id, receipt.get("trinket_drop_id", ""))
 		_check(rules_label.text == _expected_rules(definition),
 			"pool card rules match its authored catalog definition: " + card_id)
 		var rule_lines := rules_label.text.split("\n")
@@ -734,7 +760,7 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 			and screen.encloses(rules_label.get_global_rect())
 			and screen.encloses(card.get_global_rect()) and screen.encloses(action.get_global_rect()),
 			"pool card, rules and action fit the card and 1280x720 viewport: " + card_id)
-		for label: Label in [owner_label, name_label, id_label, cost_label, rules_label]:
+		for label: Label in [owner_label, name_label, rarity_label, cost_label, rules_label]:
 			_check(card.get_global_rect().encloses(label.get_global_rect())
 				and screen.encloses(label.get_global_rect()),
 				"pool label stays visible on the card and in 1280x720: " + card_id)
@@ -800,7 +826,7 @@ func _test_pool_replay(first: Dictionary) -> void:
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
 			ui.append([content.get_node("OwnerLabel").text, content.get_node("NameLabel").text,
-				content.get_node("IdLabel").text, content.get_node("CostLabel").text,
+				content.get_node("RarityLabel").text, content.get_node("CostLabel").text,
 				content.get_node("RulesLabel").text])
 		presentations.append(ui)
 		panel.close_rewards()
@@ -853,6 +879,77 @@ func _test_all_pool_cards(base: Dictionary) -> void:
 	_check(requests.is_empty(), "pool mount suite never emits a request")
 
 
+
+func _assert_no_raw_identifiers(card_panel: PanelContainer, card_id: String, node_id: String, trinket_id: String) -> void:
+	var labels: Array[Label] = [panel.title_label, panel.gold_label, panel.trinket_label]
+	var content := card_panel.get_node("CardMargin/CardContent")
+	for child in content.get_children():
+		if child is Label:
+			labels.append(child)
+	for label: Label in labels:
+		if label.visible and not label.text.is_empty():
+			_check(not label.text.contains(card_id),
+				"visible label %s never contains raw card id %s" % [label.name, card_id])
+			_check(not label.text.contains(node_id),
+				"visible label %s never contains raw node id %s" % [label.name, node_id])
+			if not trinket_id.is_empty():
+				_check(not label.text.contains(trinket_id),
+					"visible label %s never contains raw trinket id %s" % [label.name, trinket_id])
+
+
+func _test_three_tier_rarities(base: Dictionary) -> void:
+	var common_cand := {}
+	var uncommon_cand := {}
+	var rare_cand := {}
+	for cand in RunPoolCardRewardOffers.get_authored_base_candidates():
+		var r: String = cand.get("rarity", "")
+		var o: String = cand.get("owner", "")
+		if r == "common" and o == "warden" and common_cand.is_empty():
+			common_cand = cand
+		elif r == "uncommon" and o == "tinker" and uncommon_cand.is_empty():
+			uncommon_cand = cand
+		elif r == "rare" and o == "seamstress" and rare_cand.is_empty():
+			rare_cand = cand
+	_check(not common_cand.is_empty() and not uncommon_cand.is_empty() and not rare_cand.is_empty(),
+		"authored catalog provides distinct candidates across all three rarities and heroes")
+	if common_cand.is_empty() or uncommon_cand.is_empty() or rare_cand.is_empty():
+		return
+
+	var receipt: Dictionary = base.duplicate(true)
+	receipt["offers"] = [
+		{"id": common_cand["id"], "owner": common_cand["owner"]},
+		{"id": uncommon_cand["id"], "owner": uncommon_cand["owner"]},
+		{"id": rare_cand["id"], "owner": rare_cand["owner"]},
+	]
+	var node_id := "floor_01_fight"
+	requests.clear()
+	_check(panel.open_rewards(node_id, "Fight", receipt), "three-tier rarity receipt mounts successfully")
+	await _frames()
+	_validate_pool(receipt, "Fight", node_id)
+
+	var expected_tiers := ["Common", "Uncommon", "Rare"]
+	var card_cands := [common_cand, uncommon_cand, rare_cand]
+	for i in range(3):
+		var card := panel.choices_container.get_child(i) as PanelContainer
+		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+		var rarity_label := content.get_node("RarityLabel") as Label
+		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_tiers[i],
+			"card %d displays exact stitched rarity %s" % [i, expected_tiers[i]])
+		var sewn_box := rarity_label.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(sewn_box != null and sewn_box.border_width_left >= 1,
+			"card %d rarity has visible sewn accent border" % i)
+		_check(sewn_box != null and sewn_box.bg_color == panel.RARITY_COLORS[card_cands[i]["rarity"]],
+			"card %d rarity tag uses distinct palette" % i)
+
+	var buttons := panel.get_choice_buttons()
+	await _mouse(buttons[2])
+	_check(requests == [{"node": node_id, "card": rare_cand["id"]}],
+		"physical click emits exact opaque node_id and rare card_id")
+	panel.acknowledge(true)
+	panel.close_rewards()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var loaded := load(SCENE) as PackedScene
@@ -892,6 +989,7 @@ func _run() -> void:
 		await _exercise_pool(pool_elite, "Elite")
 		await _test_pool_replay(pool_fight)
 		await _test_all_pool_cards(original_fight)
+		await _test_three_tier_rarities(original_fight)
 	# Fresh global seeded stream must also survive panel interactions.
 	seed(3941)
 	var expected := randi()

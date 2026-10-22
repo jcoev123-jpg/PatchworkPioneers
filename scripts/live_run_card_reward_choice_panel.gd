@@ -11,6 +11,18 @@ const OWNER_COLORS := {
 	"tinker": Color("#c49a3a"),
 }
 
+const RARITY_COLORS := {
+	"common": Color("#5a625a"),
+	"uncommon": Color("#2d6342"),
+	"rare": Color("#9e3d30"),
+}
+
+const RARITY_STITCH_COLORS := {
+	"common": Color("#dedbd2"),
+	"uncommon": Color("#d2eed8"),
+	"rare": Color("#ffd8d0"),
+}
+
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/RewardContent/RewardTitle
 @onready var gold_label: Label = $PaperPanel/ContentMargin/RewardContent/GoldLabel
@@ -49,10 +61,10 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	_is_open = true
 	_awaiting_ack = false
 	_accepted = false
-	title_label.text = "%s reward  •  %s" % [node_kind, node_id]
+	title_label.text = "%s reward" % node_kind
 	gold_label.text = "Pending gold: +%d" % snapshot["gold_award"]
 	trinket_label.visible = node_kind == "Elite"
-	trinket_label.text = ("Prepared trinket: " + snapshot["trinket_drop_id"]) if node_kind == "Elite" else ""
+	trinket_label.text = ("Patch: " + _humanize_patch(snapshot["trinket_drop_id"])) if node_kind == "Elite" else ""
 	for index in range(3):
 		var offered: Dictionary = snapshot["offers"][index]
 		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offered["id"])
@@ -155,11 +167,49 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_label.custom_minimum_size = Vector2(0, 70)
+	var name_box := StyleBoxFlat.new()
+	name_box.bg_color = Color("#fbf3e4")
+	name_box.border_color = Color("#c7b89f")
+	name_box.set_border_width_all(1)
+	name_box.set_corner_radius_all(4)
+	name_box.content_margin_left = 6
+	name_box.content_margin_right = 6
+	name_box.content_margin_top = 4
+	name_box.content_margin_bottom = 4
+	name_label.add_theme_stylebox_override("normal", name_box)
 	content.add_child(name_label)
-	var id_label := _card_label("IdLabel", offer["id"], 16)
-	id_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	content.add_child(id_label)
+	var rarity_label := _card_label("RarityLabel", "", 15)
+	rarity_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var rarity: String = String(definition.get("rarity", "")).strip_edges().to_lower()
+	if RARITY_COLORS.has(rarity):
+		rarity_label.text = rarity.capitalize()
+		var tag_style := StyleBoxFlat.new()
+		tag_style.bg_color = RARITY_COLORS[rarity]
+		tag_style.border_color = RARITY_STITCH_COLORS[rarity]
+		tag_style.set_border_width_all(2)
+		tag_style.set_corner_radius_all(6)
+		tag_style.content_margin_left = 8
+		tag_style.content_margin_right = 8
+		tag_style.content_margin_top = 2
+		tag_style.content_margin_bottom = 2
+		rarity_label.add_theme_stylebox_override("normal", tag_style)
+		rarity_label.add_theme_color_override("font_color", Color("#fffaf0"))
+		rarity_label.visible = true
+	else:
+		rarity_label.text = ""
+		rarity_label.visible = false
+	content.add_child(rarity_label)
 	var cost_label := _card_label("CostLabel", "%d energy" % definition["cost"], 19)
+	var cost_box := StyleBoxFlat.new()
+	cost_box.bg_color = Color("#d8c4a5")
+	cost_box.border_color = Color("#77624f")
+	cost_box.set_border_width_all(2)
+	cost_box.set_corner_radius_all(6)
+	cost_box.content_margin_left = 8
+	cost_box.content_margin_right = 8
+	cost_box.content_margin_top = 2
+	cost_box.content_margin_bottom = 2
+	cost_label.add_theme_stylebox_override("normal", cost_box)
 	content.add_child(cost_label)
 	var rules_label := _card_label("RulesLabel", _format_rules(definition), 16)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -424,3 +474,14 @@ func _style_button(button: Button, accent: Color) -> void:
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
 		button.add_theme_color_override(state, Color("#263137"))
 	button.add_theme_font_size_override("font_size", 20)
+
+
+static func _humanize_patch(id: String) -> String:
+	if id.is_empty():
+		return ""
+	var parts: PackedStringArray = id.split("_")
+	var words: PackedStringArray = []
+	for part in parts:
+		if not part.is_empty():
+			words.append(part.capitalize())
+	return " ".join(words)
