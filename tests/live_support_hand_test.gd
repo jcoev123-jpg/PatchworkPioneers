@@ -58,6 +58,13 @@ func _mouse(control: Control, button: MouseButton = MOUSE_BUTTON_LEFT) -> void:
 	await _frames()
 
 
+func _hover(control: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+
+
 func _snapshot(deck: CombatDeck, party: CombatParty, rng: RandomNumberGenerator) -> Array:
 	return [deck.draw_pile.duplicate(), deck.hand.duplicate(), deck.discard_pile.duplicate(),
 		deck.energy, deck.turn_active, party.get_heroes(), rng.seed, rng.state]
@@ -97,13 +104,48 @@ func _visible() -> void:
 	_check(presenter.energy_orb.focus_mode == Control.FOCUS_NONE
 		and presenter.energy_orb.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and presenter.energy_orb.gui_input.get_connections().is_empty(), "energy orb is inert")
+	var orb: Control = presenter.energy_orb
+	var disc: Rect2 = orb.disc_rect()
+	_check(orb.custom_minimum_size == Vector2(76, 76) and orb.size.x >= 76.0 and orb.size.y >= 76.0,
+		"energy control keeps its fixed size contract")
+	_check(disc.size.x > 0.0 and disc.size.y > 0.0 and Rect2(Vector2.ZERO, orb.size).encloses(disc)
+		and orb.size.y - disc.size.y >= 8.0,
+		"drawn energy spool is inset inside its control instead of touching the footer edge")
+	_check(orb.draw_count > 0 and orb.disc_radius() < minf(orb.size.x, orb.size.y) * 0.5,
+		"energy fabric and radial stitches are drawn inside the control")
+	_check(root.get_visible_rect().encloses(Rect2(orb.get_global_rect().position + disc.position, disc.size)),
+		"the whole energy disc clears the 1280x720 viewport edges")
+	_check(not orb.get_global_rect().intersects(app.hand_view.get_global_rect())
+		and not orb.get_global_rect().intersects(app.pile_label.get_global_rect())
+		and not orb.get_global_rect().intersects(app.end_turn_button.get_global_rect()),
+		"energy spool never obscures the hand, the piles or End Turn")
 	_check(presenter.help_label.text == presenter.TABLE_HELP, "short table guidance exact outside card names")
+	_check(presenter.TABLE_HELP.length() <= 8 and not presenter.TABLE_HELP.contains("Sewing table")
+		and not presenter.TABLE_HELP.contains("Up/Down") and not presenter.TABLE_HELP.contains("\n"),
+		"idle footer shows a tiny Help cue, never the long idle sentence")
+	_check(presenter.help_label.size_flags_horizontal != Control.SIZE_EXPAND_FILL,
+		"idle Help cue shrinks instead of consuming a stretch row")
+	_check(presenter.help_label.focus_mode == Control.FOCUS_NONE
+		and presenter.help_label.gui_input.get_connections().is_empty(),
+		"Help cue adds no keyboard focus target or input handler")
+	_check(presenter.help_label.has_theme_stylebox_override("normal")
+		and presenter.help_label.get_child_count() == 1
+		and presenter.help_label.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and presenter.help_label.get_child(0).focus_mode == Control.FOCUS_NONE,
+		"Help cue is a sewn patch whose stitch drawing is pointer and focus inert")
+	_check(presenter.help_label.get_line_count() > 0
+		and presenter.help_label.get_visible_line_count() == presenter.help_label.get_line_count(),
+		"Help cue renders every line it wraps")
 	_check(presenter.help_label.tooltip_text == presenter.TABLE_HELP_DETAIL
 		and presenter.help_label.mouse_filter != Control.MOUSE_FILTER_IGNORE,
 		"complete instructions stay reachable on a hoverable help label")
+	_check(presenter.TABLE_HELP_DETAIL.contains("Click") and presenter.TABLE_HELP_DETAIL.contains("Enter / Space")
+		and presenter.TABLE_HELP_DETAIL.contains("Up / Down") and presenter.TABLE_HELP_DETAIL.contains("Esc"),
+		"tooltip keeps the complete mouse and keyboard instructions")
 	_check(app.battle_view.find_children("SupportHandEnergyOrb", "Control", true, false).size() == 1
-		and app.battle_view.find_children("SupportHandHelp", "Label", true, false).size() == 1,
-		"repeated sync leaves exactly one orb and help control")
+		and app.battle_view.find_children("SupportHandHelp", "Label", true, false).size() == 1
+		and app.battle_view.find_children("SupportHandFooterSpring", "Control", true, false).size() == 1,
+		"repeated sync leaves exactly one orb, help cue and inert spring")
 	_table_checks("live sync")
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
@@ -144,6 +186,20 @@ func _table_checks(stage: String) -> void:
 	else:
 		_check(table.get_instance_id() == table_instance,
 			"the same single table survives repeated frames, plays and turns: " + stage)
+
+
+## Real pointer hover over the compact cue: the complete instructions must be reachable from
+## the mounted footer, not merely stored on an inert label.
+func _help_hover_case(stage: String) -> void:
+	await _hover(presenter.help_label)
+	_check(root.gui_get_hovered_control() == presenter.help_label,
+		"real pointer hover reaches the compact Help cue: " + stage)
+	_check(presenter.help_label.tooltip_text == presenter.TABLE_HELP_DETAIL
+		and presenter.help_label.tooltip_text.contains("Enter / Space"),
+		"hovered Help cue exposes the complete sewing-table instructions: " + stage)
+	_check(presenter.help_label.focus_mode == Control.FOCUS_NONE
+		and not app.hand_view.is_ancestor_of(presenter.help_label),
+		"hovering the cue adds no focus target and never enters the hand: " + stage)
 
 
 ## A real mounted-battle resize must re-measure the same sewn table, with no second backing.
@@ -273,6 +329,7 @@ func _run() -> void:
 		_check(_live() == before, "duplicate start and sync never play")
 		_visible()
 		_table_checks("repeated presenter sync")
+		await _help_hover_case("mounted session %d" % session)
 		if session == 0:
 			await _resize_case()
 		for inert in app.hand_view.get_children():
@@ -358,6 +415,11 @@ func _run() -> void:
 		_check(app.deck == null and presenter.energy_label == null and presenter.energy_orb == null
 			and presenter.help_label == null and presenter.cancel_button == null, "title removes all support presentation")
 		_check(app.find_children("SupportHandEnergyOrb", "Control", true, false).is_empty(), "Return leaves no orphan orb")
+		_check(app.find_children("SupportHandHelp", "Label", true, false).is_empty()
+			and app.find_children("SupportHandHelpStitch", "Control", true, false).is_empty()
+			and app.find_children("SupportHandFooterSpring", "Control", true, false).is_empty()
+			and presenter.footer_spring == null,
+			"Return frees the Help cue, its stitches and the inert spring")
 		_check(app.find_children(presenter.TABLE_ID, "Control", true, false).is_empty()
 			and not is_instance_id_valid(closed_table), "Return frees the felt table instead of reusing it")
 		table_instance = 0
@@ -505,6 +567,12 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(choosing and presenter.cancel_button.is_visible_in_tree(), "target mode and cancel visible")
 	_check(presenter.help_label.text == "%s: choose a living ally | Esc: cancel" % StarterCards.new().get_definition(id).display_name,
 		"exact targeting help separate from energy")
+	_check(presenter.help_label.get_line_count() > 0
+		and presenter.help_label.get_visible_line_count() == presenter.help_label.get_line_count(),
+		"target prompt renders every wrapped line without clipping")
+	_check(presenter.help_label.size_flags_horizontal == Control.SIZE_EXPAND_FILL
+		and not presenter.footer_spring.visible,
+		"target prompt expands to the available footer width while the idle cue shrinks")
 	_check(presenter.energy_label.text == "Energy\n%d" % app.deck.energy, "target mode retains authoritative orb energy")
 	_check(root.get_visible_rect().encloses(presenter.cancel_button.get_global_rect()), "cancel fits 1280x720 viewport")
 	for index in range(3):
@@ -672,6 +740,12 @@ func _ally_cases() -> void:
 			_check(_live() == before, "ally rejection preserves full state: " + id + "/" + scenario)
 			if scenario in ["escape", "queued_cancel", "cancel", "replace", "turn", "hidden", "downed_owner", "downed_after", "zero", "inactive", "absent", "detached"]:
 				_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "cancellation removes queued work and target callbacks: " + scenario)
+				_check(presenter.help_label.text == presenter.TABLE_HELP
+					and presenter.help_label.size_flags_horizontal != Control.SIZE_EXPAND_FILL
+					and presenter.footer_spring.visible,
+					"cancellation restores the compact Help cue: " + scenario)
+				if scenario == "escape":
+					await _help_hover_case("after Esc cancellation")
 				for panel in app.hero_panels:
 					_check(panel.focus_mode == Control.FOCUS_NONE and panel.get_child_count() == 2
 						and panel.get_child(1).name.begins_with("HeroPuppet")

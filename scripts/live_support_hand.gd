@@ -4,7 +4,9 @@ extends Node
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus"]
 const TABLE_ID := "SupportTableBacking"
-const TABLE_HELP := "Sewing table: Up/Down, Enter plays"
+## Visible idle cue only: the complete mouse/keyboard instructions live in TABLE_HELP_DETAIL,
+## which the cue exposes as a real hover tooltip instead of stretching across the footer.
+const TABLE_HELP := "Help"
 const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space to play it. " \
 	+ "Up / Down or Tab moves between cards. Esc or Cancel clears a chosen target."
 var _battle: Control
@@ -21,6 +23,7 @@ var cancel_button: Button
 var energy_label: Label
 var energy_orb: Control
 var help_label: Label
+var footer_spring: Control
 var backing: Control
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
@@ -127,20 +130,65 @@ class FeltTableBacking extends Control:
 
 
 class EnergyOrb extends Control:
+	## The spool is drawn inset from the control rect, so the whole disc keeps a clear
+	## margin inside the 76 px footer box and never crowds the battle area's bottom edge.
+	const INSET := 8.0
+	const DISK := Color("555d48")
+	const RIM := Color("ecdfbd")
+	const THREAD := Color("c9b996")
+	var draw_count := 0
+
 	func _ready() -> void:
 		custom_minimum_size = Vector2(76, 76)
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		resized.connect(queue_redraw)
 
+	## Radius of the drawn fabric disc: always inside the control rect, never the rect itself.
+	func disc_radius() -> float:
+		return maxf(minf(size.x, size.y) * 0.5 - INSET, 8.0)
+
+	## Test hook: the sewn disc in this control's local space.
+	func disc_rect() -> Rect2:
+		var radius := disc_radius()
+		return Rect2(size * 0.5 - Vector2(radius, radius), Vector2(radius, radius) * 2.0)
+
 	func _draw() -> void:
 		var center := size * 0.5
-		draw_circle(center, 34, Color("555d48"))
-		draw_arc(center, 34, 0, TAU, 64, Color("ecdfbd"), 2, true)
+		var radius := disc_radius()
+		draw_count += 1
+		draw_circle(center, radius, DISK)
+		draw_arc(center, radius, 0, TAU, 64, RIM, 2, true)
 		for index in range(16):
 			var angle := TAU * index / 16.0
-			draw_line(center + Vector2.from_angle(angle) * 28,
-				center + Vector2.from_angle(angle + 0.07) * 30, Color("c9b996"), 1, true)
+			draw_line(center + Vector2.from_angle(angle) * (radius - 6),
+				center + Vector2.from_angle(angle + 0.07) * (radius - 4), THREAD, 1, true)
+
+
+## Decorative only: a sewn thread border inside the Help patch. It is a child of the real
+## hoverable Label, ignores the mouse and takes no focus, so hovering still reaches the
+## Label's tooltip rather than this inert drawing.
+class HelpStitch extends Control:
+	const THREAD := Color("c9b996")
+	const EDGE := 3.0
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		var cloth := Rect2(Vector2(EDGE, EDGE), size - Vector2(EDGE, EDGE) * 2.0)
+		if cloth.size.x < 12.0 or cloth.size.y < 8.0:
+			return
+		var corners := [cloth.position, Vector2(cloth.end.x, cloth.position.y),
+			cloth.end, Vector2(cloth.position.x, cloth.end.y)]
+		for index in range(corners.size()):
+			draw_dashed_line(corners[index], corners[(index + 1) % corners.size()], THREAD, 1.0, 4.0)
+			var point: Vector2 = corners[index]
+			draw_line(point + Vector2(-2, -2), point + Vector2(2, 2), THREAD, 1.2, true)
+			draw_line(point + Vector2(-2, 2), point + Vector2(2, -2), THREAD, 1.2, true)
 
 
 func _ready() -> void:
@@ -253,13 +301,45 @@ func _sync_battle() -> void:
 		energy_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		help_label = Label.new()
 		help_label.name = "SupportHandHelp"
-		# Hoverable so the complete instructions stay reachable without blocking the row.
-		help_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		# A small sewn patch: the visible cue is one short word, the complete instructions
+		# stay on a real hoverable tooltip and never occupy a stretch row of the footer.
+		help_label.text = TABLE_HELP
+		help_label.mouse_filter = Control.MOUSE_FILTER_STOP
+		help_label.mouse_default_cursor_shape = Control.CURSOR_HELP
+		help_label.focus_mode = Control.FOCUS_NONE
 		help_label.tooltip_text = TABLE_HELP_DETAIL
-		help_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		help_label.custom_minimum_size = Vector2(64, 34)
+		help_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		help_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		help_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		help_label.add_theme_font_size_override("font_size", 15)
+		help_label.add_theme_color_override("font_color", Color("ecdfbd"))
+		var patch := StyleBoxFlat.new()
+		patch.bg_color = Color("42392f")
+		patch.border_color = Color("c9b996")
+		patch.set_border_width_all(1)
+		patch.set_corner_radius_all(6)
+		patch.content_margin_left = 10
+		patch.content_margin_right = 10
+		patch.content_margin_top = 5
+		patch.content_margin_bottom = 5
+		help_label.add_theme_stylebox_override("normal", patch)
+		var stitch := HelpStitch.new()
+		stitch.name = "SupportHandHelpStitch"
+		help_label.add_child(stitch)
 		hud.add_child(help_label)
 		hud.move_child(help_label, 1)
+		# Inert spring: the cue itself no longer stretches, and the accepted End Turn / Return
+		# row keeps its far-right placement. Hidden while a target message needs the room.
+		footer_spring = Control.new()
+		footer_spring.name = "SupportHandFooterSpring"
+		footer_spring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		footer_spring.focus_mode = Control.FOCUS_NONE
+		footer_spring.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hud.add_child(footer_spring)
+		hud.move_child(footer_spring, 2)
 		cancel_button = Button.new()
 		cancel_button.text = "Cancel target (Esc)"
 		cancel_button.pressed.connect(_cancel_pending)
@@ -277,9 +357,18 @@ func _sync_battle() -> void:
 		cue.position = panel.global_position - Vector2(0, 16)
 		cue.size = Vector2(panel.size.x, 16)
 	energy_label.text = "Energy\n%d" % _deck.energy
-	help_label.text = TABLE_HELP
-	if _pending.get("choosing", false):
-		help_label.text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
+	# Idle: one short sewn cue, no stretch. Targeting: the full card-name prompt takes the row.
+	var choosing: bool = _pending.get("choosing", false)
+	var help_text: String = TABLE_HELP
+	if choosing:
+		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
+	if help_label.text != help_text:
+		help_label.text = help_text
+	var help_flags: int = Control.SIZE_EXPAND_FILL if choosing else Control.SIZE_SHRINK_BEGIN
+	if help_label.size_flags_horizontal != help_flags:
+		help_label.size_flags_horizontal = help_flags
+	if is_instance_valid(footer_spring) and footer_spring.visible == choosing:
+		footer_spring.visible = not choosing
 	# The felt table follows the real lower controls, including every resize.
 	if is_instance_valid(backing):
 		backing.refresh_band()
@@ -604,6 +693,9 @@ func _clear() -> void:
 	if is_instance_valid(help_label):
 		help_label.queue_free()
 	help_label = null
+	if is_instance_valid(footer_spring):
+		footer_spring.queue_free()
+	footer_spring = null
 	if is_instance_valid(cancel_button):
 		cancel_button.queue_free()
 	cancel_button = null
