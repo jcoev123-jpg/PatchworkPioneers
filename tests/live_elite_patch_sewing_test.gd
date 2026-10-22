@@ -11,6 +11,19 @@ func _click(control: Control) -> void:
 	await super._click(control)
 
 
+func _hover(control: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = Vector2(2, 2)
+	root.push_input(motion, true)
+	await _frames()
+	motion = InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	_check(root.get_visible_rect().has_point(motion.position),
+		"real hover target is in 1280x720 viewport")
+	root.push_input(motion, true)
+	await _frames()
+
+
 func _complete_state() -> Array:
 	return [_settlement_state(), app.run_scraps, app.run_map.get_floors(),
 		app.run_map.get_generation_revision(), app.run_seed,
@@ -25,6 +38,77 @@ func _reject_patch(callback: Callable, message: String) -> void:
 	var before := _complete_state()
 	callback.call()
 	_check(_complete_state() == before, message + ": complete run/wardrobe unchanged")
+
+
+## Inspect the actual mounted reward choice before any activation. Real pointer
+## and keyboard focus must both reveal THIS hero's oracle consequence.
+func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
+	var before := _complete_state()
+	var run_rng: int = app.run_rng.state
+	var torn_state: Dictionary = app.party_carryover.torn.read_state()
+	var entries: Dictionary = {}
+	_check(sewing._eligible() and sewing._claim_context == sewing._context(),
+		"preview is mounted only with the genuinely confirmed Elite claim context")
+	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
+		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
+		and sewing._prompt.text.contains(drop) and sewing._prompt.text.contains(state.definitions[drop]),
+		"visible wrapped keyboard-readable prompt names the exact drop and slot")
+	for button in sewing.hero_buttons:
+		var hero_id: String = button.get_meta("hero_id")
+		var preview: Dictionary = RunPatchWearerSummary.preview_sew(
+			sewing.wardrobe, torn_state, drop, hero_id)
+		_check(preview.get("ok") == true and preview.get("wearer") == hero_id,
+			"real %s button admits genuine read-only choice" % hero_id)
+		if preview.get("ok") != true:
+			continue
+		entries[hero_id] = preview
+		var explanation: String = button.tooltip_text
+		var expected_gain: String = "+1 scrap" if preview.displaced_id != "" else "+0 scrap"
+		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(drop)
+			and explanation.contains(preview.slot) and explanation.contains(expected_gain)
+			and (preview.rules_text.is_empty() or explanation.contains(preview.rules_text))
+			and (preview.displaced_id.is_empty() or explanation.contains(preview.displaced_id))
+			and (preview.displaced_rules_text.is_empty()
+				or explanation.contains(preview.displaced_rules_text)),
+			"mounted %s tooltip describes authoritative power and own displacement" % hero_id)
+		await _hover(button)
+		_check(sewing._prompt.text == explanation,
+			"real mouse hover exposes %s tooltip content visibly" % hero_id)
+		button.grab_focus()
+		await _frames()
+		_check(button.has_focus() and sewing._prompt.text == explanation,
+			"physical keyboard focus reads %s power and replacement in prompt" % hero_id)
+	_check(entries.size() == 3 and sewing.wardrobe.get_snapshot() == state
+		and app.party_carryover.torn.read_state() == torn_state
+		and app.run_rng.state == run_rng and _complete_state() == before,
+		"all three eligible real previews are read-only across full live context and RNG")
+	return entries
+
+
+func _verify_worn_readout() -> void:
+	var oracle := RunPatchWearerSummary.summarize(
+		sewing.wardrobe, app.party_carryover.torn.read_state())
+	_check(oracle.get("ok") == true and oracle.get("heroes", []).size() == 3,
+		"live persistent summary has genuine wearer authority")
+	if oracle.get("ok") != true:
+		return
+	var fragments: Array[String] = []
+	for hero in oracle.heroes:
+		for record in hero.slots:
+			if record.patch_id == "":
+				continue
+			var fragment: String = "%s: %s (%s) [%s]" % [
+				hero.id.capitalize(), record.patch_id, record.slot,
+				"active" if record.active else "inactive"]
+			if not record.rules_text.is_empty():
+				fragment += " - %s" % record.rules_text
+			fragments.append(fragment)
+	var expected: String = "Worn patches: " + " | ".join(fragments) if not fragments.is_empty() else ""
+	_check(sewing.summary.text == expected and not fragments.is_empty(),
+		"persistent mounted readout matches ALL authoritative worn IDs, slots, powers and activity")
+	_check(sewing.summary.autowrap_mode != TextServer.AUTOWRAP_OFF
+		and sewing.summary.size.x <= 1280 and sewing.summary.position.x + sewing.summary.size.x <= 1280,
+		"long worn readout wraps within 1280-wide layout")
 
 
 func _coat_multi_fixture() -> Dictionary:
@@ -150,8 +234,11 @@ func _run() -> void:
 			for button in sewing.hero_buttons:
 				_check(button.is_visible_in_tree() and not button.disabled and button.focus_mode == Control.FOCUS_ALL
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "each hero choice visible, focusable and in viewport")
+			var previews: Dictionary = await _verify_preview_choice(drop, state)
 			var button: Button = sewing.hero_buttons[index]
 			var hero: String = button.get_meta("hero_id")
+			var chosen_preview: Dictionary = previews.get(hero, {})
+			_check(chosen_preview.get("ok") == true, "physical wearer has pre-sew oracle and real owned slot")
 			var callback: Callable = button.pressed.get_connections()[0].callable
 			button.disabled = true
 			_reject_patch(callback, "disabled hero choice")
@@ -211,8 +298,17 @@ func _run() -> void:
 			var slot: String = after.definitions[drop]
 			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), drop, slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
-			_check(_settlement_state() == unchanged and app.run_scraps == scraps and after.scraps == scraps,
-				"free sewing changes no run, reward, deck, route, gold or RNG state")
+			_check(chosen_preview.get("ok") == true
+				and slot == chosen_preview.get("slot")
+				and after.scraps == scraps + chosen_preview.get("scrap_delta", -100)
+				and (chosen_preview.get("displaced_id", "") == ""
+					or not after.owned.has(chosen_preview.displaced_id))
+				and after.owned.has(drop),
+				"actual free sew has exact previewed scrap delta, ownership and displaced ID")
+			_verify_worn_readout()
+			_check(_settlement_state() == unchanged and app.run_scraps == scraps + chosen_preview.get("scrap_delta", -100)
+				and after.scraps == app.run_scraps,
+				"sewing changes no unrelated run, reward, deck, route, gold or RNG state")
 			_check(after.operation_ids.size() == index + 1, "one successful sew receipt per earned drop")
 			if index == 0:
 				first_worn = after.worn.duplicate(true)
@@ -229,6 +325,7 @@ func _run() -> void:
 			observations.append([after, reward_state, app.run_rng.state, app.run_trinkets.duplicate()])
 			await _click(app.continue_button)
 			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(drop), "Continue retains visible wearer")
+			_verify_worn_readout()
 			_reject_patch(callback, "stale sew after Continue")
 		_check(observations.size() == 2, "both earned drops actually sewn")
 		if session == 0:

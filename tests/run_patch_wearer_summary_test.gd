@@ -32,6 +32,7 @@ func _initialize() -> void:
 	_test_replacement_and_readonly()
 	_test_rest_resew_summary()
 	_test_rejections()
+	_test_sew_previews()
 	_test_detachment_and_isolation()
 	if failures.is_empty():
 		print("run_patch_wearer_summary_test: PASS (", checks, " checks)")
@@ -647,6 +648,148 @@ func _test_rejections() -> void:
 		"an unknown later authored patch leaves the known readout intact")
 	_check(RunPatchWearerSummary.summarize(w, torn_state, {"attack": "nonsense"}) == rejected,
 		"a malformed catalog collection is rejected exactly")
+
+
+## Actual sewn receipts independently check the proposal for every living hero,
+## both with an empty slot and with an owned patch displaced from THAT wearer.
+func _test_sew_previews() -> void:
+	var known := [
+		["stitched_badge", "HEAD", _badge_text()],
+		["spare_spool", "ARM", _spool_text()],
+		["quilted_coat", "COAT", COAT_TEXT],
+		["button_eye", "HEAD", EYE_TEXT],
+		["pincushion_arm", "ARM", ARM_TEXT]
+	]
+	for record in known:
+		var fixture := _fixture()
+		if fixture.is_empty():
+			return
+		var wardrobe: RunPatchWardrobe = fixture.wardrobe
+		var torn := RunTornMending.new(fixture.heroes)
+		var before_w := wardrobe.get_snapshot()
+		var before_t := torn.read_state()
+		var proposal := RunPatchWearerSummary.preview_sew(
+			wardrobe, before_t, record[0], "tinker")
+		_check(proposal.get("ok") == true and proposal.get("patch_id") == record[0]
+			and proposal.get("slot") == record[1] and proposal.get("rules_text") == record[2]
+			and proposal.get("wearer") == "tinker" and proposal.get("displaced_id") == ""
+			and proposal.get("scrap_delta") == 0,
+			"independently authored %s slot and power preview" % record[0])
+		_check(wardrobe.get_snapshot() == before_w and torn.read_state() == before_t,
+			"%s preview changes neither ledger" % record[0])
+
+	for hero_id in RunPatchWearerSummary.HERO_IDS:
+		for occupied in [false, true]:
+			var fixture := _fixture()
+			if fixture.is_empty():
+				return
+			var wardrobe: RunPatchWardrobe = fixture.wardrobe
+			var torn := RunTornMending.new(fixture.heroes)
+			_check(torn.is_valid() and wardrobe.is_valid(), "real preview owners have valid ledgers")
+			if occupied:
+				_check(wardrobe.sew("button_eye", hero_id, "HEAD",
+					"prior_" + hero_id, wardrobe.get_snapshot()).ok,
+					"the chosen hero genuinely wears Button Eye before replacement")
+			var before_w := wardrobe.get_snapshot()
+			var before_t := torn.read_state()
+			var local := RandomNumberGenerator.new()
+			local.seed = 16438
+			var local_rng: int = local.state
+			seed(47001)
+			var global_next: int = randi()
+			seed(47001)
+			var preview := RunPatchWearerSummary.preview_sew(
+				wardrobe, before_t, "stitched_badge", hero_id)
+			var again := RunPatchWearerSummary.preview_sew(
+				wardrobe, before_t, "stitched_badge", hero_id)
+			_check(preview.get("ok") == true and preview == again
+				and preview.get("wearer") == hero_id and preview.get("slot") == "HEAD"
+				and preview.get("rules_text") == _badge_text()
+				and preview.get("displaced_id") == ("button_eye" if occupied else "")
+				and preview.get("displaced_rules_text") == (EYE_TEXT if occupied else "")
+				and preview.get("scrap_delta") == (1 if occupied else 0),
+				"%s exact %s-slot preview matches owned prior patch" % [
+					hero_id, "occupied" if occupied else "empty"])
+			_check(wardrobe.get_snapshot() == before_w and torn.read_state() == before_t
+				and local.state == local_rng and randi() == global_next,
+				"pure choice neither changes wardrobe/torn nor consumes local/global RNG")
+			if preview.get("ok") != true:
+				continue
+			var sewn := wardrobe.sew("stitched_badge", hero_id, "HEAD",
+				"offer_" + hero_id, wardrobe.get_snapshot())
+			var after_w := wardrobe.get_snapshot()
+			_check(sewn.get("ok") == true and sewn.receipt.patch_id == preview.patch_id
+				and sewn.receipt.hero_id == preview.wearer
+				and sewn.receipt.slot == preview.slot
+				and sewn.receipt.displaced_id == preview.displaced_id
+				and sewn.receipt.scrap_delta == preview.scrap_delta
+				and after_w.scraps == before_w.scraps + preview.scrap_delta
+				and after_w.worn[hero_id].HEAD == preview.patch_id
+				and (after_w.owned.has("button_eye") == not occupied),
+				"%s receipt verifies actual empty/replacement economy" % hero_id)
+			_check(RunPatchWearerSummary.preview_sew(wardrobe, before_t,
+				"stitched_badge", hero_id) == {"ok": false},
+				"already-sewn offered patch cannot be previewed again")
+			preview["rules_text"] = "forged effect"
+			preview["displaced_id"] = "forged"
+			_check(wardrobe.get_snapshot() == after_w and torn.read_state() == before_t,
+				"mutating returned preview does not alter services")
+
+	var fixture := _fixture()
+	if fixture.is_empty():
+		return
+	var w: RunPatchWardrobe = fixture.wardrobe
+	var torn := RunTornMending.new(fixture.heroes)
+	var original := w.get_snapshot()
+	var torn_state := torn.read_state()
+	var reject := {"ok": false}
+	_check(RunPatchWearerSummary.preview_sew(w, torn_state, "unowned", "warden") == reject
+		and RunPatchWearerSummary.preview_sew(w, torn_state, "button_eye", "outsider") == reject
+		and RunPatchWearerSummary.preview_sew(w, torn_state, 12, "warden") == reject
+		and RunPatchWearerSummary.preview_sew(w, torn_state, "button_eye", " ") == reject,
+		"unowned, invalid type and foreign wearer are never previewable")
+	var malformed := _with_field(fixture.catalogs, "attack", "button_eye", "amount", 4)
+	_check(RunPatchWearerSummary.preview_sew(w, torn_state,
+		"button_eye", "warden", malformed) == reject,
+		"malformed known record cannot promise a forged amount")
+	var wrong := RunPatchWardrobe.new(fixture.heroes, ["button_eye"],
+		[{"id": "button_eye", "slot": "ARM"}], 2)
+	_check(wrong.is_valid() and RunPatchWearerSummary.preview_sew(
+		wrong, torn_state, "button_eye", "warden") == reject,
+		"mismatched actual catalog slot fails closed")
+	var unknown := RunPatchWardrobe.new(fixture.heroes, ["future_head"],
+		[{"id": "future_head", "slot": "HEAD"}], 2)
+	var future := RunPatchWearerSummary.preview_sew(
+		unknown, torn_state, "future_head", "warden")
+	_check(unknown.is_valid() and future.get("ok") == true
+		and future.get("slot") == "HEAD" and future.get("patch_id") == "future_head"
+		and future.get("rules_text") == "",
+		"unknown legal owned ID keeps slot but gains no fabricated power")
+
+	var ending: Array = torn_state.heroes.duplicate(true)
+	ending[0].hp = 0
+	_check(torn.observe_battle_end("preview_tear", torn_state.heroes, ending).ok,
+		"real torn ledger records an eligible hero becoming torn")
+	var downed := torn.read_state()
+	_check(RunPatchWearerSummary.preview_sew(w, downed,
+		"stitched_badge", "warden") == reject,
+		"stale wardrobe versus torn roster cannot authorize sew")
+	_check(w.refresh_run_context(downed.heroes, original.owned, original.scraps,
+		original.gold, original.cards, original),
+		"torn roster refresh is a legitimate wardrobe context")
+	var refreshed := w.get_snapshot()
+	_check(RunPatchWearerSummary.preview_sew(w, downed,
+		"stitched_badge", "warden") == reject
+		and RunPatchWearerSummary.preview_sew(w, downed,
+			"stitched_badge", "seamstress").get("ok") == true,
+		"torn wearer rejected but living recipient still previews without a mend")
+	var invalid_state: Dictionary = downed.duplicate(true)
+	invalid_state.tear_counts.warden = 0
+	_check(RunPatchWearerSummary.preview_sew(w, invalid_state,
+		"stitched_badge", "seamstress") == reject,
+		"invalid actual tear-count projection never previews")
+	_check(w.get_snapshot() == refreshed and torn.read_state() == downed,
+		"all rejected proposals leave the two genuine ledgers intact")
 
 
 func _test_detachment_and_isolation() -> void:
