@@ -68,8 +68,8 @@ func _visible(app, target: int = 1) -> void:
 		_check(labels.size() == 2, "both enemy controls mounted")
 		for index in range(labels.size()):
 			var enemy: Dictionary = app.enemies.get_enemy(index + 1)
-			_check(labels[index].is_visible_in_tree() and labels[index].text == "Enemy %d - %s" % [
-				enemy.position, enemy.name], "mounted enemy target preserves identity without duplicate HP/Block")
+			_check(labels[index].is_visible_in_tree() and labels[index].text == String(enemy.name),
+				"mounted enemy name tag preserves identity without duplicate HP/Block")
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [
 		app.deck.draw_pile.size(), app.deck.discard_pile.size()], "pile display refreshed")
 
@@ -403,7 +403,10 @@ func _slain_sources(app) -> void:
 		_check(presenter.enemies == app.enemies and is_instance_valid(presenter.panel), "slain source remains in mounted shared roster")
 		if is_instance_valid(presenter.panel):
 			var labels: Array[Node] = presenter.panel.find_children("*", "Label", true, false)
-			_check(labels.size() == 2 and labels[slain - 1].text.ends_with("SLAIN"), "mounted slain label refreshed")
+			_check(labels.size() == 2
+				and labels[slain - 1].text == String(app.enemies.get_enemy(slain).name)
+				and presenter._badges[slain - 1].icon_mode == "slain",
+				"mounted slain actor keeps its short name tag and slain badge")
 		app.return_button.pressed.emit()
 		await process_frame
 

@@ -103,8 +103,8 @@ func _run() -> void:
 			"live roster presenter binds the actual two enemies")
 		for index in range(presenter._labels.size()):
 			_check(presenter._labels[index].is_visible_in_tree() and presenter._labels[index].text
-				== "Enemy %d - %s" % [index + 1, enemies[index].name],
-				"real target label displays exact slot and identity")
+				== String(enemies[index].name),
+				"real target name tag displays exact identity")
 			var meter = app.get_node("LiveCombatMeters").row.get_child(3 + index)
 			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [enemies[index].hp, enemies[index].max_hp]
 				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: 0",

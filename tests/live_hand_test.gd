@@ -100,8 +100,11 @@ func _run() -> void:
 			"battle row mounts the Fast animations toggle")
 		if juice != null and is_instance_valid(juice.fast_button):
 			actions.append(juice.fast_button)
-		actions.append_array(app.swap_preview_buttons)
-		_check(actions.size() == 5, "both preview controls and the Fast toggle join battle actions")
+		_check(actions.size() == 3, "End Turn, Return and the Fast toggle form the battle action loop")
+		_check(is_instance_valid(app.action_corner) and app.action_corner.is_ancestor_of(app.return_button)
+			and app.action_corner_row.is_ancestor_of(juice.fast_button)
+			and not app.action_corner.is_ancestor_of(app.end_turn_button),
+			"Return and Fast share one compact sewn corner beside End Turn")
 		for index in range(actions.size()):
 			_check(actions[index].get_node(actions[index].focus_next) == actions[(index + 1) % actions.size()] and
 				actions[index].get_node(actions[index].focus_previous) == actions[(index - 1 + actions.size()) % actions.size()],

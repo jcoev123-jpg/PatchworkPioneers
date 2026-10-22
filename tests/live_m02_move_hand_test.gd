@@ -141,8 +141,17 @@ func _move(id: String, origin: int, code: Key = KEY_NONE) -> Array:
 	_check(target.get_preview(app.deck, app.party, app.enemies, "warden_shield_bash").playable == (destination == 1), "Shield Bash legality follows new origin")
 	_check(target.get_preview(app.deck, app.party, app.enemies, "warden_strike").playable == (destination in [1, 2]), "Strike legality follows new origin")
 	var unchanged := _snapshot()
-	await _click(app.swap_preview_buttons[0])
-	_check(_snapshot() == unchanged and app.swap_preview_cue.text.begins_with("Preview only:"), "free preview remains read-only after paid move")
+	var proposal := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+	_check(proposal.get("ok") == true and _snapshot() == unchanged,
+		"read-only proposal stays detached and free after the paid move")
+	var preview_controls: Array = []
+	for button in app.find_children("*", "Button", true, false):
+		if String(button.text).to_lower().contains("preview"):
+			preview_controls.append(button)
+	for label in app.find_children("*", "Label", true, false):
+		if String(label.text).begins_with("Preview only:"):
+			preview_controls.append(label)
+	_check(preview_controls.is_empty(), "no debug Preview control is mounted in the real battle")
 	return expected
 
 

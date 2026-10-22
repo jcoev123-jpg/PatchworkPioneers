@@ -92,8 +92,8 @@ func _mounted(app, presenter) -> bool:
 		var label: Label = presenter._labels[index]
 		var badge: LiveEnemyIntentBadge = presenter._badges[index]
 		_check(label == labels[index] and label.is_visible_in_tree() and label.name == "EnemyState%d" % enemy.position
-			and label.text == "Enemy %d - %s" % [enemy.position, enemy.name],
-			"replacement target label has exact identity and position")
+			and label.text == String(enemy.name),
+			"replacement name tag has exact identity and position")
 		var puppet := presenter.panel.find_child("EnemyPuppet%d" % enemy.position, true, false) as Control
 		_check(is_instance_valid(puppet) and label.get_parent() == puppet
 			and label.get_global_rect().is_equal_approx(puppet.get_global_rect())
@@ -360,7 +360,7 @@ func _run() -> void:
 		"restart contains exactly one quilt stage, never a duplicated decoration")
 	_assert_stage(app, presenter)
 	_check(presenter._labels.size() == 2 and presenter._badges.size() == 2
-		and presenter._labels[0].text == "Enemy 1 - Ragling", "restart contains original starter identities only")
+		and presenter._labels[0].text == "Ragling", "restart contains original starter identities only")
 	app.return_button.pressed.emit()
 	await process_frame
 	app.free()

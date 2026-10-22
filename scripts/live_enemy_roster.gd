@@ -28,21 +28,23 @@ const STAGE_INTENT_BAND := 36.0
 ## Viewport-safe gap between the stage's upper edge and every intent badge, so the whole
 ## stitched patch reads as pinned inside 1280x720 instead of hanging off the top edge.
 const STAGE_INTENT_SAFE_MARGIN := 8.0
-const STAGE_FELT := Color("37423f")
 const STAGE_HEM := Color("2a3431")
 const STAGE_THREAD := Color("c9b996")
-const STAGE_PATCHES := [
-	[Color("414c48"), [Vector2(0.0, 0.0), Vector2(0.30, 0.05), Vector2(0.27, 0.60), Vector2(0.0, 0.55)]],
-	[Color("4d5a54"), [Vector2(0.36, 0.0), Vector2(0.68, 0.04), Vector2(0.66, 0.62), Vector2(0.33, 0.57)]],
-	[Color("594c48"), [Vector2(0.74, 0.03), Vector2(1.0, 0.0), Vector2(1.0, 0.58), Vector2(0.71, 0.62)]],
-]
+## One continuous quilt: regular, axis-aligned patches whose edges are shared, so the
+## whole stage reads as a single sewn cloth instead of separate tilted felt pieces.
+const STAGE_QUILT_COLUMNS := [0.0, 0.17, 0.34, 0.5, 0.66, 0.83, 1.0]
+const STAGE_QUILT_ROWS := [0.0, 0.5, 1.0]
+const STAGE_QUILT_TONES := [Color("414c48"), Color("4d5a54"), Color("39443f"), Color("4b443f")]
 const STAGE_HEM_HEIGHT := 14.0
+## Bottom band that pins each actor's short name below (never across) the stand-in art.
+const STAGE_TAG_HEIGHT := 26.0
 
 var enemies: CombatEnemies
 var panel: PanelContainer
 var backdrop: Control
 var _battle: Control
 var _labels: Array[Label] = []
+var _hero_tags: Array[Label] = []
 var _badges: Array[LiveEnemyIntentBadge] = []
 var battle_row: HBoxContainer
 var _heroes: HBoxContainer
@@ -64,6 +66,9 @@ static func art_paths(actor_id: String) -> Dictionary:
 
 
 class Puppet extends Control:
+	const TAG_FELT := Color("2f2a25")
+	const TAG_THREAD := Color("c9b996")
+
 	var facing := 1.0
 	var slot := 1
 	var fallen := false
@@ -75,6 +80,7 @@ class Puppet extends Control:
 	## Presenter-supplied stage metrics, so heroes and enemies are drawn at one scale.
 	var stage_height := 180.0
 	var intent_band := 36.0
+	var tag_height := 26.0
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -94,9 +100,16 @@ class Puppet extends Control:
 	func current_texture() -> Texture2D:
 		return idle_texture
 
-	## The art lives below the shared intent band; the band is empty on the hero side.
+	## The pinned name band at the bottom of the actor; art never reaches into it.
+	func tag_band() -> Rect2:
+		var height := clampf(tag_height, 0.0, size.y)
+		return Rect2(0.0, size.y - height, size.x, height)
+
+	## The art lives between the shared intent band and the pinned name band.
 	func art_band() -> Rect2:
-		return Rect2(0.0, intent_band, size.x, maxf(0.0, size.y - intent_band))
+		var top := clampf(intent_band, 0.0, size.y)
+		var bottom := maxf(top, size.y - clampf(tag_height, 0.0, size.y))
+		return Rect2(0.0, top, size.x, bottom - top)
 
 	## Uniform, aspect-preserving placement inside this input-inert Control.
 	func image_rect() -> Rect2:
@@ -113,8 +126,23 @@ class Puppet extends Control:
 		var texture := current_texture()
 		if texture != null:
 			_draw_actor(texture)
+		else:
+			_draw_fallback()
+		_draw_tag()
+
+	## A small pinned felt tag below the art; its name text is drawn by a child Label.
+	func _draw_tag() -> void:
+		var band := tag_band()
+		if band.size.x <= 24.0 or band.size.y <= 8.0:
 			return
-		_draw_fallback()
+		var tag := Rect2(band.position + Vector2(10.0, 2.0),
+			Vector2(band.size.x - 20.0, band.size.y - 4.0))
+		draw_rect(tag, TAG_FELT)
+		draw_dashed_line(tag.position, Vector2(tag.end.x, tag.position.y), TAG_THREAD, 1.0, 5.0)
+		draw_dashed_line(Vector2(tag.position.x, tag.end.y), tag.end, TAG_THREAD, 1.0, 5.0)
+		# Two sewn pins hold the tag to the quilt.
+		draw_circle(Vector2(tag.position.x + 7.0, tag.get_center().y), 1.6, TAG_THREAD)
+		draw_circle(Vector2(tag.end.x - 7.0, tag.get_center().y), 1.6, TAG_THREAD)
 
 	func _draw_actor(texture: Texture2D) -> void:
 		var rect := image_rect()
@@ -157,8 +185,9 @@ class Puppet extends Control:
 		draw_set_transform(Vector2.ZERO)
 
 
-## Deterministic quilt stage drawn behind the actor row: sewn patches plus a stitched hem
-## for the ground. Presentation only, so it never takes pointer or keyboard input.
+## Deterministic quilt stage drawn behind the actor row: one continuous cloth seamed
+## into axis-aligned patches, plus a stitched hem for the ground. Presentation only,
+## so it never takes pointer or keyboard input.
 class StageBackdrop extends Control:
 	var stage_row: Control
 
@@ -178,16 +207,58 @@ class StageBackdrop extends Control:
 			return Rect2()
 		return Rect2(row.position - get_global_rect().position, row.size)
 
-	func _draw() -> void:
+	## The sewn cloth above the hem that marks the ground.
+	func quilt_cloth() -> Rect2:
 		var row := stage_rect()
 		if row.size.x <= 0.0 or row.size.y <= 0.0:
+			return Rect2()
+		return Rect2(row.position, Vector2(row.size.x, maxf(0.0, row.size.y - STAGE_HEM_HEIGHT)))
+
+	## Every axis-aligned patch of the continuous quilt, left to right, top to bottom.
+	func quilt_rects() -> Array[Rect2]:
+		var cloth := quilt_cloth()
+		var rects: Array[Rect2] = []
+		if cloth.size.x <= 0.0 or cloth.size.y <= 0.0:
+			return rects
+		for row_index in range(STAGE_QUILT_ROWS.size() - 1):
+			for column_index in range(STAGE_QUILT_COLUMNS.size() - 1):
+				var top: float = cloth.position.y + cloth.size.y * float(STAGE_QUILT_ROWS[row_index])
+				var bottom: float = cloth.position.y + cloth.size.y * float(STAGE_QUILT_ROWS[row_index + 1])
+				var left: float = cloth.position.x + cloth.size.x * float(STAGE_QUILT_COLUMNS[column_index])
+				var right: float = cloth.position.x + cloth.size.x * float(STAGE_QUILT_COLUMNS[column_index + 1])
+				rects.append(Rect2(left, top, right - left, bottom - top))
+		return rects
+
+	## The stitched seams between neighbouring patches, as two-point thread runs.
+	func quilt_seams() -> Array[PackedVector2Array]:
+		var seams: Array[PackedVector2Array] = []
+		var cloth := quilt_cloth()
+		if cloth.size.x <= 0.0 or cloth.size.y <= 0.0:
+			return seams
+		for index in range(1, STAGE_QUILT_COLUMNS.size() - 1):
+			var x: float = cloth.position.x + cloth.size.x * float(STAGE_QUILT_COLUMNS[index])
+			seams.append(PackedVector2Array([Vector2(x, cloth.position.y), Vector2(x, cloth.end.y)]))
+		for index in range(1, STAGE_QUILT_ROWS.size() - 1):
+			var y: float = cloth.position.y + cloth.size.y * float(STAGE_QUILT_ROWS[index])
+			seams.append(PackedVector2Array([Vector2(cloth.position.x, y), Vector2(cloth.end.x, y)]))
+		return seams
+
+	func quilt_tone(index: int) -> Color:
+		return STAGE_QUILT_TONES[index % STAGE_QUILT_TONES.size()]
+
+	func _draw() -> void:
+		var cloth := quilt_cloth()
+		if cloth.size.x <= 0.0 or cloth.size.y <= 0.0:
 			return
-		var field := Rect2(row.position, row.size + Vector2(0.0, STAGE_HEM_HEIGHT))
-		draw_rect(field, STAGE_FELT)
-		for entry in STAGE_PATCHES:
-			_patch(field, entry[1], entry[0])
-		# Stitched hem as the ground the actors stand on.
-		var hem := Rect2(field.position.x, field.end.y - STAGE_HEM_HEIGHT, field.size.x, STAGE_HEM_HEIGHT)
+		# One continuous quilt: every patch is axis-aligned and shares its edges, so no
+		# seam can open or tilt across the stage.
+		var patches := quilt_rects()
+		for index in range(patches.size()):
+			draw_rect(patches[index], quilt_tone(index))
+		for seam in quilt_seams():
+			draw_dashed_line(seam[0], seam[1], STAGE_THREAD, 1.0, 7.0)
+		# A single hem of cross-thread stitches marks the ground the actors stand on.
+		var hem := Rect2(cloth.position.x, cloth.end.y, cloth.size.x, STAGE_HEM_HEIGHT)
 		draw_rect(hem, STAGE_HEM)
 		draw_dashed_line(Vector2(hem.position.x + 10.0, hem.position.y),
 			Vector2(hem.end.x - 10.0, hem.position.y), STAGE_THREAD, 2.0, 9.0)
@@ -196,14 +267,6 @@ class StageBackdrop extends Control:
 			draw_line(Vector2(x, hem.position.y + 3.0), Vector2(x + 7.0, hem.end.y - 3.0),
 				STAGE_THREAD, 1.5, true)
 			x += 26.0
-
-	func _patch(field: Rect2, fractions: Array, fill: Color) -> void:
-		var points := PackedVector2Array()
-		for fraction: Vector2 in fractions:
-			points.append(field.position + field.size * fraction)
-		draw_colored_polygon(points, fill)
-		for index in range(points.size()):
-			draw_dashed_line(points[index], points[(index + 1) % points.size()], STAGE_THREAD, 1.0, 6.0)
 
 
 func _ready() -> void:
@@ -245,9 +308,13 @@ func _sync_battle() -> void:
 		puppet.slot = hero_panel.get_index() + 1
 		puppet.stage_height = STAGE_ACTOR_HEIGHT
 		puppet.intent_band = STAGE_INTENT_BAND
+		puppet.tag_height = STAGE_TAG_HEIGHT
 		puppet.felt = [Color("719796"), Color("93839e"), Color("b49a55")][puppet.slot - 1]
 		hero_panel.add_child(puppet)
 		_puppets.append(puppet)
+		var tag := _make_name_tag("HeroNameTag%d" % puppet.slot)
+		puppet.add_child(tag)
+		_hero_tags.append(tag)
 	battle_row = HBoxContainer.new()
 	battle_row.name = "BattleActorSides"
 	battle_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -282,11 +349,12 @@ func _sync_battle() -> void:
 		puppet.slot = enemy.position
 		puppet.stage_height = STAGE_ACTOR_HEIGHT
 		puppet.intent_band = STAGE_INTENT_BAND
+		puppet.tag_height = STAGE_TAG_HEIGHT
 		puppet.felt = [Color("b78373"), Color("8b9470"), Color("93839e")][enemy.position - 1]
 		column.add_child(puppet)
 		_puppets.append(puppet)
-		# The authoritative target label overlays its own actor as an inert nameplate:
-		# aiming anywhere on that enemy still selects that enemy, and the text stays exact.
+		# The authoritative target label still covers its whole actor, so aiming anywhere
+		# on that enemy selects it; its short name is drawn inside the pinned tag band.
 		var label := Label.new()
 		label.name = "EnemyState%d" % enemy.position
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -294,12 +362,10 @@ func _sync_battle() -> void:
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		# The separate SLAIN badge already announces a fallen source; capping the label at two
-		# lines keeps a three-enemy roster inside 1280x720 without changing its full text.
-		label.max_lines_visible = 2
+		label.max_lines_visible = 1
 		label.custom_minimum_size.x = 0
-		label.add_theme_font_size_override("font_size", 18)
-		# Cream ink with a dark outline stays readable over the actor art.
+		label.add_theme_font_size_override("font_size", 16)
+		# Cream ink with a dark outline stays readable over the pinned tag.
 		label.add_theme_constant_override("outline_size", 6)
 		label.add_theme_color_override("font_outline_color", Color("1a1d20"))
 		label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -328,6 +394,30 @@ func _sync_battle() -> void:
 	_refresh()
 
 
+## A short input-inert name Label pinned inside the puppet's bottom tag band.
+func _make_name_tag(tag_name: String) -> Label:
+	var tag := Label.new()
+	tag.name = tag_name
+	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tag.focus_mode = Control.FOCUS_NONE
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tag.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	tag.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tag.max_lines_visible = 1
+	tag.add_theme_font_size_override("font_size", 16)
+	tag.add_theme_constant_override("outline_size", 6)
+	tag.add_theme_color_override("font_outline_color", Color("1a1d20"))
+	tag.anchor_left = 0.0
+	tag.anchor_top = 1.0
+	tag.anchor_right = 1.0
+	tag.anchor_bottom = 1.0
+	tag.offset_left = 0.0
+	tag.offset_right = 0.0
+	tag.offset_top = -STAGE_TAG_HEIGHT
+	tag.offset_bottom = 0.0
+	return tag
+
+
 func _refresh() -> void:
 	if enemies == null or not is_instance_valid(panel):
 		return
@@ -342,14 +432,17 @@ func _refresh() -> void:
 		puppet.fallen = app.party.is_downed(puppet.slot) if puppet.facing > 0 else enemies.is_slain(puppet.slot)
 		_bind_puppet_art(app, puppet)
 		puppet.queue_redraw()
+	for index in range(_hero_tags.size()):
+		var hero: Dictionary = app.party.get_hero(index + 1)
+		_hero_tags[index].text = String(hero.get("name", "")) if hero.get("name") is String else ""
 	if app.enemy_intents != null:
 		for action in app.enemy_intents.get_intents():
 			announcements[action["enemy_position"]] = action
 	for index in range(_labels.size()):
 		var enemy: Dictionary = roster[index]
 		var position: int = enemy["position"]
-		_labels[index].text = "Enemy %d - %s%s" % [position, enemy["name"],
-			"\nSLAIN" if enemies.is_slain(position) else ""]
+		# Short pinned name tag; the meter and the SLAIN badge own HP/Block/death readouts.
+		_labels[index].text = String(enemy["name"]) if enemy.get("name") is String else ""
 		_badges[index].show_intent(announcements.get(position, {}), enemies.is_slain(position))
 
 
@@ -412,6 +505,7 @@ func _clear() -> void:
 		get_parent().intent_label.visible = _intent_visible
 	enemies = null
 	_labels.clear()
+	_hero_tags.clear()
 	_badges.clear()
 	if is_instance_valid(panel):
 		if panel.get_parent() != null:
