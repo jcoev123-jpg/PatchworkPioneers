@@ -100,6 +100,38 @@ func prepare() -> Dictionary:
 			return rejected
 		eligible_trinkets.assign(eligible)
 
+	var living_ids: Array[String] = []
+	if _candidate_mode == "records":
+		var party: CombatParty = _battle._party if ("_party" in _battle) else null
+		if party == null or not is_instance_valid(party) or not party.is_valid():
+			return rejected
+		var battle_heroes: Array[Dictionary] = party.get_heroes()
+		if battle_heroes.size() != 3 or _party_ids.size() != 3:
+			return rejected
+		var battle_ids: Array[String] = []
+		for hero_dict: Dictionary in battle_heroes:
+			var hid_val: Variant = hero_dict.get("id")
+			var hp_val: Variant = hero_dict.get("hp")
+			if not (hid_val is String) or not (hp_val is int):
+				return rejected
+			var hid: String = hid_val
+			var hp: int = hp_val
+			if hid.is_empty() or battle_ids.has(hid):
+				return rejected
+			battle_ids.append(hid)
+			if hp > 0:
+				living_ids.append(hid)
+		if battle_ids.size() != 3:
+			return rejected
+		for pid: Variant in _party_ids:
+			if not (pid is String) or not battle_ids.has(pid):
+				return rejected
+		for bid: String in battle_ids:
+			if not _party_ids.has(bid):
+				return rejected
+		if living_ids.is_empty():
+			return rejected
+
 	var staged_rng := RandomNumberGenerator.new()
 	staged_rng.seed = _rng.seed
 	staged_rng.state = _rng.state
@@ -112,7 +144,7 @@ func prepare() -> Dictionary:
 		return rejected
 	var choice: RunCardRewardChoice
 	if _candidate_mode == "records":
-		choice = _weighted_choice(staged_rng)
+		choice = _weighted_choice(staged_rng, living_ids)
 	else:
 		choice = RunCardRewardChoice.from_seeded_pool(
 			staged_rng, _party_ids, _candidate_ids)
@@ -135,9 +167,9 @@ func prepare() -> Dictionary:
 ## Weighted D2-1 selection on the same staged stream as the gold roll, so a
 ## failure here leaves the run RNG exactly where it was. Returns null on a
 ## rejected selection so prepare can fail closed.
-func _weighted_choice(staged_rng: RandomNumberGenerator) -> RunCardRewardChoice:
-	var generated: Dictionary = RunPoolCardRewardOffers.generate(
-		staged_rng, _party_ids, _candidate_ids)
+func _weighted_choice(staged_rng: RandomNumberGenerator, living_ids: Array[String]) -> RunCardRewardChoice:
+	var generated: Dictionary = RunPoolCardRewardOffers.generate_for_living(
+		staged_rng, _party_ids, living_ids, _candidate_ids)
 	if not generated.get("ok", false):
 		return null
 	var copied_party: Array[String] = []
