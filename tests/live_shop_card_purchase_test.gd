@@ -69,8 +69,13 @@ func _run() -> void:
 			"authored five plus two stock reaches mounted Shop")
 		for index in range(stock.cards.size()):
 			var offer: Dictionary = stock.cards[index]
-			_check(catalog.has_card(offer.id) and catalog.get_definition(offer.id).owner == offer.owner,
-				"each listing is an existing playable card with correct owner")
+			var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offer.id)
+			var is_base: bool = catalog.has_card(offer.id) or WardenPoolCards.new().get_base_ids().has(offer.id) \
+				or SeamstressPoolCards.new().get_base_ids().has(offer.id) \
+				or TinkerPoolCards.new().get_pool_card_ids().has(offer.id)
+			_check(is_base and not definition.is_empty() and definition.get("owner") == offer.owner \
+				and not String(offer.id).ends_with("_plus") and app.run_heroes.any(func(hero): return hero.id == offer.owner),
+				"each listing is an authored party-owned playable base card, never a pool upgrade")
 			_check(not seen.has(offer.id), "generated card offers are distinct")
 			seen[offer.id] = true
 			_check(offer.price == prices.get(offer.id) and not offer.sold
@@ -237,6 +242,8 @@ func _run() -> void:
 			and app.run_map == null and app.run_deck.is_empty() and app.session_gold == 0 and app.run_removal_count == 0,
 			"Return clears purchase controls/service and stale callbacks cannot restore run")
 		_check(randi() == next_global, "routed buy/removal/restart does not consume global RNG")
+	await _test_stocked_pool_buy("warden")
+	await _test_stocked_pool_buy("seamstress_thread_whip")
 	await _finish_purchase()
 
 
@@ -247,3 +254,125 @@ func _finish_purchase() -> void:
 		printerr(failure)
 	print("live_shop_card_purchase_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+## Find qualifying routes by deterministic seed search, but always win the
+## real mounted Fight and inspect the five genuinely displayed Shop offers.
+## No candidate, stock, or post-fight RNG is injected by the fixture.
+func _test_stocked_pool_buy(target: String) -> void:
+	var eligible := WardenPoolCards.new().get_base_ids()
+	var matched := false
+	var attempted := 0
+	for value in range(1, 1000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		var candidate: Dictionary = {}
+		for fight_id in map.get_legal_choices():
+			if map.get_node(fight_id).type != "Fight":
+				continue
+			var shop_id := ""
+			for linked in map.get_node(fight_id).outgoing:
+				if map.get_node(linked).type == "Shop":
+					shop_id = linked
+					break
+			if shop_id.is_empty():
+				continue
+			var check_rng := RandomNumberGenerator.new()
+			check_rng.seed = value
+			var check_map := RunMap.new()
+			check_map.generate(check_rng)
+			if not check_map.choose_node(fight_id):
+				continue
+			var selection := RunAuthoredBattleEntry.new().entry_current_battle(check_map, check_rng, RunFightEncounterSelection.new())
+			if selection.get("encounter_id") == "starter_attacks":
+				candidate = {"seed": value, "fight": fight_id, "shop": shop_id}
+				break
+		if candidate.is_empty():
+			continue
+		attempted += 1
+		if not await _routed_win(candidate, false):
+			_check(false, "pool fixture must win legal routed starter battle")
+			break
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		var route: Button
+		for button in app.route_buttons:
+			if button.get_meta("route_id") == candidate.shop:
+				route = button
+		_check(route != null, "seeded pool route mounts its connected Shop action")
+		if route == null:
+			break
+		app.session_gold = 400
+		var oracle: Dictionary = _stock_oracle()
+		await _click(route)
+		if app.shop_purchases == null or app.shop_visit == null:
+			_check(false, "pool fixture mounts both real Shop ledgers")
+			break
+		var listed: Dictionary = app.shop_purchases.get_stock()
+		_check(listed == oracle.stock and app.run_rng.state == oracle.state,
+			"pool fixture's physical Shop exactly replays authentic RNG stock")
+		var position := -1
+		for index in range(listed.cards.size()):
+			var card_id: String = listed.cards[index].id
+			if (target == "warden" and eligible.has(card_id)) or card_id == target:
+				position = index
+				break
+		if position >= 0:
+			matched = true
+			var paid: Dictionary = listed.cards[position]
+			_check(position < app.shop_offers.item_count and not paid.sold and paid.price <= app.session_gold,
+				"found actual visible, unsold, affordable base pool offer: " + paid.id)
+			_check(not catalog.has_card(paid.id) and not paid.id.ends_with("_plus")
+				and (eligible.has(paid.id) if target == "warden" else
+					SeamstressPoolCards.new().get_base_ids().has(paid.id)),
+				"selected Warden/Thread Whip is an authored nonstarter pool base card")
+			var before: Array = _purchase_state()
+			var prior_scraps: int = app.run_scraps
+			var prior_trinkets: Array = app.run_trinkets.duplicate(true)
+			var prior_removals: int = app.run_removal_count
+			var original_deck: Array = app.run_deck.duplicate(true)
+			var selected_stock: Dictionary = listed.duplicate(true)
+			app.shop_offers.select(position)
+			app.shop_offers.item_selected.emit(position)
+			_check(not app.shop_buy_button.disabled and app.shop_offers.get_item_text(position) ==
+				"%s | %d gold" % [paid.id, paid.price], "real offer selection enables precisely quoted Buy")
+			if target == "warden":
+				await _click(app.shop_buy_button)
+			else:
+				app.shop_offers.grab_focus()
+				await _key(KEY_TAB)
+				_check(app.shop_buy_button.has_focus(), "Thread Whip Buy is keyboard reachable")
+				await _key(KEY_ENTER)
+			var expected_deck: Array = original_deck + [paid.id]
+			selected_stock.cards[position].sold = true
+			_check(app.run_deck == expected_deck and app.session_gold == 400 - paid.price
+				and app.shop_purchases.get_state().deck == expected_deck
+				and app.shop_visit.get_state().deck == expected_deck,
+				"physical Warden/Thread Whip Buy debits authored price and appends exact shared base ID")
+			_check(app.shop_purchases.get_stock() == selected_stock
+				and app.shop_visit.get_state().gold == app.session_gold
+				and app.shop_purchases.get_state().gold == app.session_gold
+				and app.run_rng.state == before[0][0][3]
+				and app.run_heroes == before[0][0][0]
+				and app.run_map.get_route() == before[0][0][4]
+				and app.run_scraps == prior_scraps and app.run_trinkets == prior_trinkets
+				and app.run_removal_count == prior_removals,
+				"paid Shop preserves heroes, route, scraps, trinkets, removal count and RNG; only sold listing changes")
+			var after: Array = _purchase_state()
+			app.shop_buy_button.pressed.emit()
+			_check(_purchase_state() == after, "sold pool listing rejects repeated callback atomically")
+			app.shop_offers.select(-1)
+			app.shop_buy_button.disabled = false
+			app.shop_buy_button.pressed.emit()
+			_check(_purchase_state() == after, "invalid pool selection cannot charge or alter ledgers")
+			_check(app.run_deck.count(paid.id) == original_deck.count(paid.id) + 1,
+				"exactly one physical pool card appended, with no upgrade substitution")
+		await _click(app.shop_back_button)
+		_check(app.title_view.visible and app.run_deck.is_empty() and app.shop_visit == null,
+			"candidate route returns cleanly to title with no stale Shop service")
+		if matched:
+			break
+		if attempted >= 20:
+			break
+	_check(matched, "bounded authentic seeded Shop routes can actually buy " + target)

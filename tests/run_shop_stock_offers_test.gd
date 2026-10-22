@@ -86,6 +86,7 @@ func _initialize() -> void:
 		_test_owned_fallback(party, deck, catalog)
 		_test_purchases(party, deck, catalog)
 		_test_rejections(party, catalog)
+		_test_authored_shop_pool(party, catalog)
 		_test_mixed_pool_generation(party, deck, catalog)
 		_test_pool_purchase(party, deck, catalog)
 		_test_pool_rejections(party, catalog)
@@ -1025,3 +1026,101 @@ func _test_pool_rejections(party: Array[String], catalog: StarterCards) -> void:
 	_check(starter_result.get("ok", false), "starter-only candidate pool still generates")
 
 	_check(catalog_before == _catalog_snapshot(catalog), "catalog survives pool rejection tests")
+
+## The actual shipped JSON, rather than a synthetic wide pool, is the Shop's
+## complete priced candidate source. Check IDs independently of list ordering.
+func _test_authored_shop_pool(party: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	var specs: Dictionary = {
+		"warden_hold_the_line": {"owner": "warden", "price": 55, "cost": 1, "from": [1, 2], "target": "self", "to": [], "effects": {"block": 5, "other_ally_block": 2}, "rarity": "common"},
+		"warden_patch_guard": {"owner": "warden", "price": 45, "cost": 1, "from": [1, 2, 3], "target": "ally_single", "to": [], "effects": {"block": 8}, "rarity": "common"},
+		"warden_quick_darn": {"owner": "warden", "price": 40, "cost": 0, "from": [1, 2], "target": "self", "to": [], "effects": {"block": 4}, "rarity": "common"},
+		"warden_brass_buckle": {"owner": "warden", "price": 55, "cost": 1, "from": [1, 2], "target": "enemy_single", "to": [1, 2], "effects": {"damage": 5, "block": 4}, "rarity": "common"},
+		"warden_iron_hem": {"owner": "warden", "price": 70, "cost": 2, "from": [1, 2, 3], "target": "self", "to": [], "effects": {"block": 14}, "rarity": "uncommon"},
+		"warden_bastion_quilt": {"owner": "warden", "price": 90, "cost": 3, "from": [1, 2, 3], "target": "party_all", "to": [], "effects": {"block_all": 10}, "rarity": "rare"},
+		"seamstress_thread_whip": {"owner": "seamstress", "price": 55, "cost": 1, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2], "effects": {"damage": 6}, "rarity": "common"}
+	}
+	var old_prices := {
+		"warden_strike": 50, "warden_shield_bash": 65, "seamstress_prick": 50,
+		"tinker_pop_shot": 50, "tinker_scrap_bomb": 65
+	}
+	var old_trinkets := {"stitched_badge": 100, "spare_spool": 100, "quilted_coat": 100}
+	var count_by_id := {}
+	for entry in candidates:
+		_check(entry is Dictionary and entry.get("id") is String and entry.get("owner") is String,
+			"every authored card candidate has ID and owner")
+		if not entry is Dictionary or not entry.get("id") is String:
+			continue
+		var id: String = entry.id
+		count_by_id[id] = int(count_by_id.get(id, 0)) + 1
+		_check(not id.ends_with("_plus"), "real Shop candidates exclude upgrades: " + id)
+	for id in specs:
+		var expected: Dictionary = specs[id]
+		_check(count_by_id.get(id, 0) == 1, "required base card occurs once: " + id)
+		var found: Dictionary = {}
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == id:
+				found = entry
+		_check(found.get("owner") == expected.owner and _whole_price(found.get("price")) == expected.price,
+			"authored Shop owner and exact fixed gold price: " + id)
+		var warden := WardenPoolCards.new()
+		var seamstress := SeamstressPoolCards.new()
+		var pool: RefCounted = warden if expected.owner == "warden" else seamstress
+		var base_ids: Array[String] = warden.get_base_ids() if expected.owner == "warden" else seamstress.get_base_ids()
+		var def: Dictionary = pool.get_definition(id)
+		_check(base_ids.has(id) and def.get("id") == id and def.get("owner") == expected.owner
+			and def.get("reward_eligible") == true and not def.has("upgrade_of")
+			and def.get("upgrade_id") == id + "_plus" and def.get("starting_copies") == 0,
+			"catalog resolves eligible base ID with no upgrade substitution: " + id)
+		_check(def.get("cost") == expected.cost and def.get("from_positions") == expected["from"]
+			and def.get("to_positions") == expected["to"] and def.get("target_kind") == expected.target
+			and def.get("effects") == expected.effects and def.get("rarity") == expected.rarity,
+			"authored combat legality, values and rarity remain playable: " + id)
+	for id in old_prices:
+		_check(count_by_id.get(id, 0) == 1, "original starter still listed once: " + id)
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == id:
+				_check(entry.get("owner") == catalog.get_definition(id).get("owner")
+					and _whole_price(entry.get("price")) == old_prices[id],
+					"original starter candidate unchanged: " + id)
+	for id in count_by_id:
+		_check(count_by_id[id] == 1, "no duplicate Shop candidate ID: " + id)
+	var trinket_counts := {}
+	for entry in trinkets:
+		if entry is Dictionary and entry.get("id") is String:
+			trinket_counts[entry.id] = int(trinket_counts.get(entry.id, 0)) + 1
+	for id in old_trinkets:
+		_check(trinket_counts.get(id, 0) == 1, "original trinket survives exactly once: " + id)
+		for entry in trinkets:
+			if entry is Dictionary and entry.get("id") == id:
+				_check(_whole_price(entry.get("price")) == old_trinkets[id],
+					"original trinket price unchanged: " + id)
+	for id in trinket_counts:
+		_check(trinket_counts[id] == 1, "no duplicate Shop trinket: " + id)
+	# Replay the actual, unchanged Shop draw algorithm against an independent
+	# sorted candidate oracle, not the synthetic starter/mixed fixtures.
+	var first_rng := _rng(SEED + 310)
+	var oracle_rng := _rng(SEED + 310)
+	var replay_rng := _rng(SEED + 310)
+	var result: Dictionary = RunShopStockOffers.generate(first_rng, party, candidates, trinkets, [])
+	var oracle: Dictionary = _oracle(catalog, party, candidates, trinkets, [], oracle_rng)
+	var reversed_cards := candidates.duplicate(true)
+	var reversed_trinkets := trinkets.duplicate(true)
+	reversed_cards.reverse()
+	reversed_trinkets.reverse()
+	var replay: Dictionary = RunShopStockOffers.generate(replay_rng, party, reversed_cards, reversed_trinkets, [])
+	_check(result.get("ok", false) and result.get("cards", []).size() == 5
+		and result.get("trinkets", []).size() == 2, "actual Shop generates five cards and two trinkets")
+	_check(result.get("cards", []) == oracle.cards and result.get("trinkets", []) == oracle.trinkets,
+		"actual JSON offers match independent sorted seven-draw oracle")
+	_check(result == replay and first_rng.state == oracle_rng.state
+		and first_rng.state == replay_rng.state and first_rng.randi() == oracle_rng.randi(),
+		"actual JSON stock, reorder and next RNG draw replay exactly")
+	var seen := {}
+	for offer in result.get("cards", []):
+		_check(not seen.has(offer.id) and party.has(offer.owner) and not String(offer.id).ends_with("_plus"),
+			"five distinct party-owned base offers without upgrades")
+		seen[offer.id] = true
+		_check(_pool_price(candidates, offer.id) == offer.price, "selected quote is actual authored price")

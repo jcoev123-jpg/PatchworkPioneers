@@ -146,7 +146,20 @@ func _run() -> void:
 			var after_removal := _continuation_state()
 			app.shop_remove_button.pressed.emit()
 			_check(_continuation_state() == after_removal, "first Shop duplicate removal cannot spend again")
-			await _paid_card(1 if kind == "Shop" else 0, session == 1)
+			var second_offer_index: int = _unsold_pool_offer_index(app.shop_purchases.get_stock())
+			var first_paid_id: String = String(first_oracle.stock.cards[0].id) if kind == "Shop" else ""
+			_check(second_offer_index >= 0 or _is_shop_base_pool(first_paid_id),
+				"authentic continued Shop offers a purchasable Warden/Thread Whip base card")
+			if second_offer_index < 0:
+				second_offer_index = 1 if kind == "Shop" else 0
+			var second_paid_id: String = String(app.shop_purchases.get_stock().cards[second_offer_index].id)
+			await _paid_card(second_offer_index, session == 1)
+			var persisted_pool_id: String = second_paid_id if _is_shop_base_pool(second_paid_id) else first_paid_id
+			_check(_is_shop_base_pool(persisted_pool_id), "paid offer is one of seven authored live Shop pool bases")
+			var pool_count: int = app.run_deck.count(persisted_pool_id)
+			_check(pool_count > 0 and app.shop_visit.get_state().deck == app.run_deck
+				and app.shop_purchases.get_state().deck == app.run_deck,
+				"paid pool card is in single shared deck and both authoritative Shop ledgers")
 			_check(app.shop_remove_button.disabled and app.run_removal_count == 1, "post-removal buying never enables a second removal")
 			var visit: RunShopVisit = app.shop_visit
 			var live_map: RunMap = app.run_map
@@ -222,6 +235,9 @@ func _run() -> void:
 			if app.route_view == null:
 				break
 			_check(visit.get_state().status == "closed" and _persistent() == before[0] and app.run_map == live_map, "Shop exit closes ledger while preserving exact run, actors, map and RNG")
+			_check(app.run_deck.count(persisted_pool_id) == pool_count
+				and visit.get_state().deck == app.run_deck and not persisted_pool_id.ends_with("_plus"),
+				"real Continue retains purchased base ID in shared run deck and closed visit ledger")
 			_bounds(app.route_view)
 			before = _continuation_state()
 			for callback in [exit, remove, buy, back]:
@@ -262,6 +278,13 @@ func _run() -> void:
 				await _key(KEY_ENTER)
 			_check(live_map.get_route() == prior + [fixture.next] and app.run_map == live_map, "following visit advances exactly one connected node on same map")
 			_check(_persistent().slice(0, 3) == before[0].slice(0, 3) and app.run_removal_count == before[1], "entry carries exact heroes, deck, gold and removal count")
+			_check(app.run_deck.count(persisted_pool_id) == pool_count
+				and app.run_deck == before[0][1],
+				"connected next visit retains exact bought base card with no substitution")
+			if kind == "Shop":
+				_check(app.shop_visit.get_state().deck == app.run_deck
+					and app.shop_purchases.get_state().deck == app.run_deck,
+					"fresh routed Shop ledgers carry purchased base card without a second deck")
 			if kind == "Shop":
 				_check(app.shop_purchases.get_stock() == next_oracle.stock and app.run_rng.state == next_oracle.state,
 					"later Shop generates once from ongoing run RNG rather than reseeding")
@@ -313,3 +336,19 @@ func _run() -> void:
 		printerr(failure)
 	print("live_shop_continuation_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+## Only the seven specifically live-wired bases can witness Shop carryover.
+func _is_shop_base_pool(card_id: String) -> bool:
+	return card_id in [
+		"warden_hold_the_line", "warden_patch_guard", "warden_quick_darn",
+		"warden_brass_buckle", "warden_iron_hem", "warden_bastion_quilt",
+		"seamstress_thread_whip"
+	]
+
+
+func _unsold_pool_offer_index(stock: Dictionary) -> int:
+	for index in range(stock.get("cards", []).size()):
+		var offer: Dictionary = stock.cards[index]
+		if not offer.sold and _is_shop_base_pool(String(offer.id)):
+			return index
+	return -1
