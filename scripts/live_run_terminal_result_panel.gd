@@ -9,6 +9,7 @@ signal return_to_title_requested
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultTitle
 @onready var description_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultDescription
+@onready var summary_label: Label = $PaperPanel/ContentMargin/ResultContent/RunSignature
 @onready var return_button: Button = $PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var top_stitches: Label = $PaperPanel/ContentMargin/ResultContent/TopStitches
 @onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ResultContent/BottomStitches
@@ -48,6 +49,7 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	description_label.text = ("The final boss has fallen. The run is complete."
 		if status == RunActBattleOutcome.VICTORY
 		else "The party has fallen. The run has ended.")
+	summary_label.text = _signature_text()
 	return_button.disabled = false
 	return_button.focus_mode = Control.FOCUS_ALL
 	_button_connection = _on_return_pressed.bind(_generation, return_button)
@@ -72,6 +74,58 @@ func close_result() -> void:
 	return_button.release_focus()
 	title_label.text = ""
 	description_label.text = ""
+	summary_label.text = ""
+
+
+## Only the live App-parent's committed, matching ledger can authorize counts.
+## A never-bound wardrobe can be projected with empty wear slots; a stale
+## *bound* wardrobe must not be replaced with that zero-wear projection.
+func _signature_text() -> String:
+	var app: Variant = get_parent()
+	if app == null or app.get_script() == null \
+			or app.get_script().resource_path != "res://scripts/app.gd":
+		return "Summary unavailable"
+	var carry := app.party_carryover as RunTornCarryover
+	if carry == null or not carry.is_valid():
+		return "Summary unavailable"
+	var carry_state: Dictionary = carry.read_state()
+	if carry_state.get("ok") != true or carry_state.get("heroes") != app.run_heroes:
+		return "Summary unavailable"
+	var wardrobe: RunPatchWardrobe = carry._wardrobe
+	if wardrobe == null:
+		# The valid first-run state owns patches but has never sewn one. No
+		# catalog slots or gameplay bindings are inferred or altered here.
+		wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, [],
+			app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	else:
+		if not wardrobe.is_valid():
+			return "Summary unavailable"
+		var snapshot: Dictionary = wardrobe.get_snapshot()
+		if snapshot.get("heroes") != app.run_heroes or snapshot.get("owned") != app.run_trinkets \
+				or snapshot.get("scraps") != app.run_scraps or snapshot.get("gold") != app.session_gold \
+				or snapshot.get("cards") != app.run_deck:
+			return "Summary unavailable"
+	var summary: Dictionary = RunSignatureSummary.summarize(app.run_deck,
+		app.run_stitch_descriptors, app.run_next_stitch_id, wardrobe)
+	if summary.get("ok") != true:
+		return "Summary unavailable"
+	return _format_signature(summary)
+
+
+## Consume the validated projection in its original hero and slot order.
+## Empty cells stay explicitly empty instead of resembling worn inventory.
+func _format_signature(summary: Dictionary) -> String:
+	var lines: Array[String] = [
+		"Stitched: %d made · %d in deck" % [summary.stitched_created, summary.stitched_current],
+		"Patches worn: %d" % summary.worn_total,
+	]
+	for hero in summary.heroes:
+		var slots: Array[String] = []
+		for slot in RunSignatureSummary.SLOTS:
+			var patch_id: String = hero.slots[slot]
+			slots.append("%s %s" % [slot, patch_id.capitalize() if not patch_id.is_empty() else "-"])
+		lines.append("%s  %s" % [str(hero.hero_id).capitalize(), "  ·  ".join(slots)])
+	return "\n".join(lines)
 
 
 func has_open_result() -> bool:
@@ -109,6 +163,8 @@ func _apply_patchwork_style() -> void:
 	title_label.add_theme_font_size_override("font_size", 48)
 	description_label.add_theme_color_override("font_color", Color("#304046"))
 	description_label.add_theme_font_size_override("font_size", 23)
+	summary_label.add_theme_color_override("font_color", Color("#304046"))
+	summary_label.add_theme_font_size_override("font_size", 18)
 	for label in [top_stitches, bottom_stitches]:
 		label.add_theme_color_override("font_color", Color("#85715b"))
 		label.add_theme_font_size_override("font_size", 18)
