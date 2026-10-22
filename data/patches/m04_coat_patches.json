@@ -1,3 +1,5 @@
 [
-  {"id":"quilted_coat","slot":"COAT","max_hp_bonus":6}
+  {"id":"quilted_coat","slot":"COAT","max_hp_bonus":6},
+  {"id":"padded_vest","slot":"COAT","max_hp_bonus":4},
+  {"id":"double_quilt_coat","slot":"COAT","max_hp_bonus":8}
 ]
