@@ -210,10 +210,27 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and content.find_children("ModifierExplanation", "Label", false, false).size() == 1
 		and content.find_children("BleedWarning", "Label", false, false).size() == 1
 		and content.find_children("IncomingForecast", "Label", false, false).size() == (1 if side == "hero" else 0)
-		and content.find_children("StatusButtons", "HBoxContainer", false, false).size() == 1,
+		and content.find_children("StatusButtons", "HBoxContainer", false, false).size() == 1
+		and content.find_children("PatchButtons", "HBoxContainer", false, false).size() == (1 if side == "hero" else 0),
 		"one of each named snapshot child per mounted ribbon: " + meter.name)
-	_check(content.get_child_count() == (10 if side == "hero" else 9),
-		"a ribbon keeps exactly its preserved snapshot content: " + meter.name)
+	_check(content.get_child_count() == (11 if side == "hero" else 9),
+		"a ribbon keeps the preserved snapshot and only the optional hero patch row: " + meter.name)
+	var patches := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+	if side == "hero":
+		_check(patches != null and patches.get_child_count() == 3
+			and not patches.is_visible_in_tree() and not patches.visible
+			and patches.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and patches.focus_mode == Control.FOCUS_NONE,
+			"unpatched standalone hero has one collapsed non-intercepting patch row")
+		if patches != null:
+			for child in patches.get_children():
+				var chip := child as Button
+				_check(chip != null and not chip.visible and chip.text.is_empty()
+					and chip.tooltip_text.is_empty() and chip.focus_mode == Control.FOCUS_NONE
+					and chip.pressed.get_connections().is_empty(),
+					"unpatched hero keeps no fictional sewn tooltip or action")
+	else:
+		_check(patches == null, "enemy never owns a patch row")
 	var buttons := _buttons(meter)
 	_check(buttons != null, "every ribbon owns one status button row: " + meter.name)
 	if buttons == null:
@@ -575,7 +592,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 				row_ids.append(child.get_instance_id())
 			_check(meters[index].get_instance_id() == ids[index]
 				and button_ids[index] == row_ids
-				and meters[index].get_node("Padding/Content").get_child_count() == (10 if index < 3 else 9),
+				and meters[index].get_node("Padding/Content").get_child_count() == (11 if index < 3 else 9),
 				"read-only live refresh never allocates another chip, warning or meter")
 	_check(_state(app) == live_before_refresh and randi() == expected_global
 		and incoming_before == [_incoming(app, 1), _incoming(app, 2), _incoming(app, 3)],
