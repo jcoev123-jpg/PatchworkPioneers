@@ -8,6 +8,10 @@ const ATTACK_IDS := [
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
 	"tinker_pop_shot", "tinker_scrap_bomb"
 ]
+const POOL_STRIKE_IDS := [
+	"warden_brass_buckle", "warden_brass_buckle_plus",
+	"seamstress_thread_whip", "seamstress_thread_whip_plus",
+]
 const SUPPORT_IDS := [
 	"warden_brace", "seamstress_mend", "seamstress_stitch_up", "tinker_tune_up"
 ]
@@ -19,6 +23,7 @@ func _initialize() -> void:
 	_test_hand_energy_and_turn()
 	_test_owner_positions_and_downed()
 	_test_unsupported_and_invalid()
+	_test_pool_strikes()
 	_test_seeded_replay()
 	for failure in failures:
 		printerr(failure)
@@ -323,6 +328,104 @@ func _test_unsupported_and_invalid() -> void:
 		{"id": "warden", "max_hp": 40}, {"id": "warden", "max_hp": 40},
 		{"id": "tinker", "max_hp": 26}
 	]), enemies, "warden_strike", "invalid duplicate-owner party")
+
+
+func _test_pool_strikes() -> void:
+	# The starter enumeration mounted regressions iterate must stay starter-only.
+	for id in POOL_STRIKE_IDS:
+		_check(service.is_pool_strike(id) and service.supports(id),
+			id + ": recognised as an authored pool strike")
+		_check(not CombatAttackTargeting.ATTACK_IDS.has(id),
+			id + ": never expands the starter ATTACK_IDS enumeration")
+		var record := service.pool_definition(id)
+		var owner_id := "warden" if id.begins_with("warden_") else "seamstress"
+		_check(record.get("id") == id and record.get("owner") == owner_id,
+			id + ": exact catalog record through the targeting lookup")
+		_check(record.get("cost") == 1 and record.get("target_kind") == "enemy_single"
+			and record.get("to_positions") == [1, 2], id + ": authored cost, kind and TO slots")
+	for id in ATTACK_IDS:
+		_check(service.supports(id) and not service.is_pool_strike(id),
+			id + ": starter attack stays a starter attack")
+	for id in ["warden_hold_the_line", "warden_patch_guard", "seamstress_snag", "tinker_tune_up"]:
+		_check(not service.is_pool_strike(id) and not service.supports(id)
+			and service.pool_definition(id).is_empty(), id + ": non-strike pool/support card stays rejected")
+
+	var deck := _pool_strike_deck()
+	var party := _party()
+	var enemies := _enemies()
+	for id in POOL_STRIKE_IDS:
+		_assert_preview(deck, party, enemies, id, true, true, [1, 2],
+			id + ": both authored enemy slots selectable")
+
+	# Authored FROM slots: Brass Buckle reaches the front two heroes only.
+	var middle := _party(["seamstress", "warden", "tinker"])
+	for id in ["warden_brass_buckle", "warden_brass_buckle_plus"]:
+		_assert_preview(deck, middle, enemies, id, true, true, [1, 2],
+			id + ": Warden in slot two may play")
+	var back := _party(["seamstress", "tinker", "warden"])
+	for id in ["warden_brass_buckle", "warden_brass_buckle_plus"]:
+		_reject(deck, back, enemies, id, id + ": Warden in forbidden slot three")
+	# Thread Whip is authored from every hero slot.
+	_assert_preview(deck, back, enemies, "seamstress_thread_whip", true, true, [1, 2],
+		"Thread Whip from slot one")
+	var seamstress_back := _party(["warden", "tinker", "seamstress"])
+	_assert_preview(deck, seamstress_back, enemies, "seamstress_thread_whip_plus", true, true, [1, 2],
+		"Thread Whip+ from slot three")
+
+	# Missing and downed owners fail closed.
+	_reject(deck, _party(["seamstress", "tinker", "outsider"]), enemies, "warden_brass_buckle",
+		"no Warden owner for Brass Buckle")
+	_reject(deck, _party(["warden", "tinker", "outsider"]), enemies, "seamstress_thread_whip",
+		"no Seamstress owner for Thread Whip")
+	var downed := _party()
+	_check(downed.apply_damage(1, 999) and downed.is_downed(1), "Warden truly downed")
+	_reject(deck, downed, enemies, "warden_brass_buckle", "downed Warden cannot Brass Buckle")
+	_check(downed.apply_damage(2, 999) and downed.is_downed(2), "Seamstress truly downed")
+	_reject(deck, downed, enemies, "seamstress_thread_whip", "downed Seamstress cannot Thread Whip")
+
+	# Cost is paid from the real shared deck.
+	var poor := _pool_strike_deck()
+	_check(poor.try_spend_energy(3) and poor.energy == 0, "zero-energy pool deck")
+	for id in POOL_STRIKE_IDS:
+		_reject(poor, party, enemies, id, id + ": cost one unaffordable at zero energy")
+	var absent := _pool_strike_deck()
+	for id in POOL_STRIKE_IDS:
+		_check(absent.discard_played(id), "remove actual held " + id)
+		_reject(absent, party, enemies, id, id + ": absent held copy")
+	_reject(deck, party, enemies, "warden_brass_buckle_missing", "unknown pool-like ID fails closed")
+
+	# Slain and absent slots keep their original numbering.
+	_check(enemies.apply_damage(2, 999) and enemies.is_slain(2), "slot two slain in place")
+	for id in POOL_STRIKE_IDS:
+		_assert_preview(deck, party, enemies, id, true, true, [1], id + ": slain slot two excluded")
+	_check(enemies.apply_damage(1, 999) and enemies.is_slain(1), "slot one also slain")
+	for id in POOL_STRIKE_IDS:
+		_reject(deck, party, enemies, id, id + ": only enemy three lies outside the authored TO slots")
+	var lone := _enemies(1)
+	for id in POOL_STRIKE_IDS:
+		_assert_preview(deck, party, lone, id, true, true, [1], id + ": lone front enemy stays legal")
+	var two := _enemies(2)
+	_check(two.apply_damage(1, 999) and not two.is_victorious(), "front enemy slain in a two-enemy roster")
+	for id in POOL_STRIKE_IDS:
+		_assert_preview(deck, party, two, id, true, true, [2], id + ": surviving slot two stays targetable")
+
+	# Returned lists stay detached, exactly like starter previews.
+	var before := _snapshot(deck, party, two)
+	var preview := service.get_preview(deck, party, two, "warden_brass_buckle")
+	(preview["target_positions"] as Array).clear()
+	(preview["target_positions"] as Array).append(99)
+	_assert_preview(deck, party, two, "warden_brass_buckle", true, true, [2],
+		"caller mutation of a pool result cannot poison the next preview")
+	_check(_snapshot(deck, party, two) == before, "pool preview mutation leaves every model and RNG intact")
+
+
+func _pool_strike_deck(seed_value: int = 4211) -> CombatDeck:
+	var cards: Array[String] = []
+	cards.assign(POOL_STRIKE_IDS)
+	var deck := _deck(cards, seed_value)
+	for id in POOL_STRIKE_IDS:
+		_check(deck.hand.has(id), "real seeded draw holds pool strike " + id)
+	return deck
 
 
 func _test_seeded_replay() -> void:
