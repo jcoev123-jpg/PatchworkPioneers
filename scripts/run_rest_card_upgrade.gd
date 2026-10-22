@@ -2,10 +2,10 @@ class_name RunRestCardUpgrade
 extends RefCounted
 ## One Rest visit's scene-free upgrade transaction for the shared run deck:
 ## replace exactly one selected index with a caller-supplied upgraded card ID,
-## exactly once per visit. The upgraded card's definition and statistics are not
-## authored yet, so this class resolves no playability itself: the caller passes
-## an explicit original-ID -> upgraded-ID mapping (a subset of entries is fine)
-## and must validate upgraded IDs before any live wiring. This class references
+## exactly once per visit. The caller must authorize a subset through an
+## explicit original-ID -> upgraded-ID mapping. Authored pool upgrades must
+## also match the real catalog link; legacy starter mappings remain explicit
+## transaction-only replacements, including synthetic fixture IDs. This class references
 ## no scene, no combat transaction and no run state, and takes no randomness.
 
 var _source: Array = []
@@ -57,7 +57,7 @@ func choose_upgrade(index: Variant) -> Dictionary:
 	if selected < 0 or selected >= _deck.size():
 		return _failure()
 	var original_id: String = _deck[selected]
-	if original_id.is_empty() or not _catalog.has_card(original_id):
+	if original_id.is_empty():
 		return _failure()
 	if not _upgrades.has(original_id):
 		return _failure()
@@ -66,6 +66,10 @@ func choose_upgrade(index: Variant) -> Dictionary:
 		return _failure()
 	var upgraded_id: String = replacement
 	if upgraded_id.is_empty() or upgraded_id == original_id:
+		return _failure()
+	# Starter replacements retain the original caller-authorized transaction
+	# semantics. Pool bases, by contrast, require their exact authored plus.
+	if not _catalog.has_card(original_id) and not _is_canonical_pool_upgrade(original_id, upgraded_id):
 		return _failure()
 	_deck[selected] = upgraded_id
 	_consumed = true
@@ -91,9 +95,9 @@ func _failure() -> Dictionary:
 	}
 
 
-## Fail-closed: a nonempty deck of nonempty authored card IDs only. A live run
-## deck may carry reward-eligible D2-1 pool base cards alongside starter cards;
-## only cards with an authored, permitted upgrade can actually be replaced.
+## Fail-closed: only starter IDs, reward-eligible pool bases, and genuine
+## non-reward pool plus IDs belong in a plain deck. Composites require a
+## separately verified descriptor ledger at construction.
 func _is_valid_deck(deck: Array) -> bool:
 	if deck.is_empty():
 		return false
@@ -103,6 +107,31 @@ func _is_valid_deck(deck: Array) -> bool:
 		var card_id: String = entry
 		if card_id.is_empty():
 			return false
-		if RunPoolCardRewardOffers.resolve_reward_definition(card_id).is_empty():
+		if RunPoolCardRewardOffers.resolve_reward_definition(card_id).is_empty() \
+				and not RunRestStitchCards.is_authored_pool_plus(card_id):
 			return false
 	return true
+
+
+func _is_canonical_pool_upgrade(original_id: String, upgraded_id: String) -> bool:
+	# Look up the source through the reward-base catalog, not by an ID suffix.
+	# Every pool has its own schema, so validate the canonical pair in BOTH
+	# directions and require the same authored owner and definition.
+	var original: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(original_id)
+	if original.is_empty() or original.get("id") != original_id \
+			or original.get("upgrade_id") != upgraded_id \
+			or not RunRestStitchCards.is_authored_pool_plus(upgraded_id):
+		return false
+	var upgraded: Dictionary = {}
+	match original.get("owner"):
+		"warden":
+			upgraded = WardenPoolCards.new().get_definition(upgraded_id)
+		"seamstress":
+			upgraded = SeamstressPoolCards.new().get_definition(upgraded_id)
+		"tinker":
+			upgraded = TinkerPoolCards.new().get_definition(upgraded_id)
+		_:
+			return false
+	return not upgraded.is_empty() and upgraded.get("id") == upgraded_id \
+		and upgraded.get("owner") == original.get("owner") \
+		and upgraded.get("upgrade_of", upgraded.get("base_id", "")) == original_id

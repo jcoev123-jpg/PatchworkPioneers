@@ -194,11 +194,11 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 	for id in deck_ids:
 		if typeof(id) != TYPE_STRING or id.is_empty():
 			return false
-		# A live run deck may carry reward-eligible D2-1 pool base cards as well
-		# as starter cards and owned composites. Only authored cards are legal;
-		# pool upgrades and unknown IDs still fail closed.
+		# Pool bases and their canonical plus partners can live beside existing
+		# stitched cards, but only StarterCards entries can become halves.
 		if not _catalog.has_card(id) and not registry.has(id) \
-				and RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty():
+				and RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty() \
+				and not is_authored_pool_plus(id):
 			return false
 		counts[id] = counts.get(id, 0) + 1
 	for id in registry:
@@ -229,3 +229,31 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 		if descriptor != _make_descriptor(id, first, second):
 			return false
 	return true
+
+
+## A pool plus is a legal deck member only when BOTH catalog records and the
+## authored base-to-plus link agree. This never confers stitch-half eligibility.
+static func is_authored_pool_plus(card_id: String) -> bool:
+	for pool in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
+		var upgraded: Dictionary = pool.get_definition(card_id)
+		if upgraded.is_empty():
+			continue
+		var base_id: String = ""
+		if upgraded.get("is_upgrade") == true:
+			base_id = str(upgraded.get("base_id", ""))
+		elif upgraded.get("reward_eligible") == false:
+			base_id = str(upgraded.get("upgrade_of", ""))
+		if base_id.is_empty():
+			return false
+		var base: Dictionary = pool.get_definition(base_id)
+		if base.is_empty() or base.get("id") != base_id or upgraded.get("id") != card_id:
+			return false
+		if base.get("owner") != upgraded.get("owner") or base.get("upgrade_id") != card_id \
+				or pool.get_upgrade_id(base_id) != card_id:
+			return false
+		if upgraded.has("is_upgrade"):
+			return base.get("is_upgrade") == false and upgraded.get("is_upgrade") == true \
+				and upgraded.get("base_id") == base_id
+		return base.get("reward_eligible") == true and upgraded.get("reward_eligible") == false \
+			and upgraded.get("upgrade_of") == base_id
+	return false

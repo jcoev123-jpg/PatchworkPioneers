@@ -11,6 +11,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_pool_plus_mixed_ledger_continuity()
 	_test_original_transaction_and_rng()
 	_test_eligibility_order_and_isolation()
 	_test_negative_matrix_and_retry()
@@ -373,3 +374,130 @@ func _test_invalid_ledgers() -> void:
 	orphan.erase(made["stitched_id"])
 	_check(not RunRestStitchCards.new(orphan, made["descriptors"], 3, made["next_stitch_id"]).is_valid(),
 		"descriptor cannot silently remain as an unowned deck entry")
+
+
+## A reward-base plus is a legal MEMBER of the persisted Rest/Shop ledger,
+## without becoming a playable stitched half or an unregistered composite.
+func _test_pool_plus_mixed_ledger_continuity() -> void:
+	var original := _deck()
+	var first_rest := RunRestStitchCards.new(original, {}, 3)
+	_check(first_rest.is_valid(), "pool-plus fixture starts with valid real starter Rest")
+	var first := first_rest.choose_stitch(_index(original, PRICK), _index(original, POP),
+		first_rest.get_snapshot())
+	_check(_is_success(first), "pool-plus fixture has an authentic first starter composite")
+	if not _is_success(first):
+		return
+	var existing_id: String = first["stitched_id"]
+	var owned: Array = first["deck"].duplicate(true)
+	owned.append_array(["warden_iron_hem", "warden_iron_hem_plus",
+		"seamstress_running_stitch_plus", "tinker_rivet_shot_plus"])
+	var expected_owned := owned.duplicate(true)
+	var descriptors: Dictionary = first["descriptors"].duplicate(true)
+	var cursor: int = first["next_stitch_id"]
+	var visit := RunRestStitchCards.new(owned, descriptors, 3, cursor)
+	_check(visit.is_valid() and not visit.is_consumed(),
+		"mixed pool base, three plus cards and genuine stitched descriptor admitted")
+	if not visit.is_valid():
+		return
+	var opening := visit.get_snapshot()
+	_check(opening["deck"] == expected_owned and opening["descriptors"] == descriptors
+		and opening["next_stitch_id"] == 2 and opening["remaining_scraps"] == 3
+		and not opening["receipt"].is_empty(), "mixed snapshot keeps order, registry, currency, cursor and receipt")
+	var reloaded := RunRestStitchCards.new(opening["deck"], opening["descriptors"],
+		opening["remaining_scraps"], opening["next_stitch_id"])
+	_check(reloaded.is_valid() and reloaded.get_snapshot() == opening,
+		"mixed ledger round-trips through fresh Rest with identical receipt")
+	_check(owned == expected_owned and descriptors == first["descriptors"],
+		"constructor and snapshot do not alter caller ownership")
+	var warden_plus := _index(owned, "warden_iron_hem_plus")
+	var seam_plus := _index(owned, "seamstress_running_stitch_plus")
+	var tinker_plus := _index(owned, "tinker_rivet_shot_plus")
+	var first_index := _index(owned, STRIKE)
+	var second_index := _index(owned, "seamstress_mend")
+	_check(warden_plus >= 0 and seam_plus >= 0 and tinker_plus >= 0
+		and first_index >= 0 and second_index >= 0,
+		"all genuine plus members and permitted starter halves have owned indices")
+	if warden_plus < 0 or seam_plus < 0 or tinker_plus < 0 or first_index < 0 or second_index < 0:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261022
+	var rng_before := rng.state
+	seed(2088)
+	var global_expected := randi()
+	seed(2088)
+	for plus_index in [warden_plus, seam_plus, tinker_plus]:
+		_reject(visit, plus_index, first_index, opening, "pool plus is not stitchable half " + str(plus_index))
+	_reject(visit, _index(owned, existing_id), first_index, opening,
+		"existing composite is not stitchable half")
+	_reject(visit, first_index, _index(owned, STRIKE, 1), opening, "same hero stitch pair")
+	var poor := RunRestStitchCards.new(owned, descriptors, 2, cursor)
+	_check(poor.is_valid(), "mixed ledger with insufficient scraps is otherwise valid")
+	_reject(poor, first_index, second_index, poor.get_snapshot(), "mixed ledger insufficient scraps")
+	var stale := opening.duplicate(true)
+	stale["descriptors"][existing_id]["first_half"]["effects"]["damage"] = 500
+	_reject(visit, first_index, second_index, stale, "mixed ledger forged stale descriptor receipt")
+	var bad_registry := descriptors.duplicate(true)
+	bad_registry[existing_id]["owners"] = ["warden", "warden"]
+	_check(not RunRestStitchCards.new(owned, bad_registry, 3, cursor).is_valid(),
+		"pool plus cannot excuse forged descriptor owners")
+	var orphan := owned.duplicate(true)
+	orphan.erase(existing_id)
+	_check(not RunRestStitchCards.new(orphan, descriptors, 3, cursor).is_valid(),
+		"pool plus cannot excuse orphaned descriptor")
+	for forged in ["warden_iron_hem_plus_plus", "seamstress_unknown_plus", "tinker_rivet_shot_fake_plus"]:
+		var bad := owned.duplicate(true)
+		bad.append(forged)
+		_check(not RunRestStitchCards.new(bad, descriptors, 3, cursor).is_valid(),
+			"forged plus rejected as ordinary deck member: " + forged)
+	var made := visit.choose_stitch(first_index, second_index, opening)
+	_check(_is_success(made) and visit.is_consumed(), "valid starter halves stitch after pool-plus rejections")
+	if not _is_success(made):
+		return
+	var new_id: String = made["stitched_id"]
+	var expected := expected_owned.duplicate()
+	expected.remove_at(maxi(first_index, second_index))
+	expected.remove_at(mini(first_index, second_index))
+	expected.insert(mini(first_index, second_index), new_id)
+	_check(made["deck"] == expected and made["deck"].size() == expected_owned.size() - 1,
+		"mixed-deck stitch alters exactly two chosen starter slots and preserves survivors")
+	_check(made["consumed_indices"] == [first_index, second_index]
+		and made["consumed_ids"] == [STRIKE, "seamstress_mend"],
+		"mixed stitch receipt reports exact original instance indices and IDs")
+	_check(made["remaining_scraps"] == 0 and made["next_stitch_id"] == 3
+		and new_id == "stitched_000002" and made["descriptors"].size() == 2,
+		"three scraps spent exactly once and allocator monotonically advanced")
+	_check(made["descriptors"][existing_id] == descriptors[existing_id]
+		and made["descriptor"]["first_half"] == StarterCards.new().get_definition(STRIKE)
+		and made["descriptor"]["second_half"] == StarterCards.new().get_definition("seamstress_mend"),
+		"both descriptors preserve canonical starter-only halves and original composite")
+	for plus_id in ["warden_iron_hem_plus", "seamstress_running_stitch_plus", "tinker_rivet_shot_plus"]:
+		_check(made["deck"].count(plus_id) == 1 and expected_owned.count(plus_id) == 1,
+			"stitch leaves existing pool plus entry untouched: " + plus_id)
+	_check(made["source_receipt"] == opening["receipt"] and made["receipt"] != opening["receipt"]
+		and rng.state == rng_before and randi() == global_expected,
+		"mixed stitch advances receipt without drawing injected or global RNG")
+	_reject(visit, first_index, second_index, opening, "mixed stitch replay cannot spend again")
+	var later := RunRestStitchCards.new(made["deck"], made["descriptors"], 6, made["next_stitch_id"])
+	_check(later.is_valid() and later.get_snapshot()["deck"] == made["deck"]
+		and later.get_snapshot()["descriptors"] == made["descriptors"]
+		and later.get_snapshot()["next_stitch_id"] == 3, "mixed deck and both descriptors survive later Rest")
+	var owned_shop_deck: Array[String] = []
+	owned_shop_deck.assign(made["deck"])
+	var shop := RunShopVisit.new(owned_shop_deck, 175, 0, [], made["descriptors"], made["next_stitch_id"])
+	_check(shop.get_state()["valid"] and shop.open_visit("pool-plus-mixed-shop"),
+		"real Shop visit accepts mixed plus and stitched ownership")
+	var removed := shop.remove_card(existing_id)
+	var after_remove: Array = made["deck"].duplicate()
+	after_remove.erase(existing_id)
+	var after_descriptors: Dictionary = made["descriptors"].duplicate(true)
+	after_descriptors.erase(existing_id)
+	_check(removed["ok"] and removed["price"] == 75 and removed["gold"] == 100
+		and removed["prior_removals"] == 1 and removed["deck"] == after_remove
+		and removed["descriptors"] == after_descriptors and removed["next_stitch_id"] == 3,
+		"priced Shop composite removal retires only its owned descriptor")
+	_check(shop.get_state()["deck"] == after_remove and shop.get_state()["descriptors"] == after_descriptors,
+		"Shop commits mixed ledger without deleting pool plus cards")
+	_check(shop.close_visit() and RunRestStitchCards.new(after_remove, after_descriptors, 3, 3).is_valid(),
+		"paid Shop result and unchanged allocator survive another Rest visit")
+	_check(owned == expected_owned and descriptors == first["descriptors"],
+		"full mixed Rest to Shop chain leaves original caller ledgers detached")
