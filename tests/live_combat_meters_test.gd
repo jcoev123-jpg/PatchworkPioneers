@@ -2,7 +2,6 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
-const NEUTRAL_CUE := "—"
 ## Four chips must share one narrow ribbon row, so a fallen actor with all three
 ## stacks gets compact-but-complete names; the tooltip keeps the full ones.
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
@@ -143,8 +142,6 @@ func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 	for key in stacks:
 		var count: int = statuses[key]
 		chips.append("%s %d" % [STATUS_SHORT[key] if compact else String(key).capitalize(), count])
-	if chips.is_empty():
-		chips.append(NEUTRAL_CUE)
 	return chips
 
 
@@ -222,6 +219,12 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 	if buttons == null:
 		return
 	var chips := _expected_chips(actor, side)
+	_check(buttons.visible == not chips.is_empty()
+		and buttons.is_visible_in_tree() == not chips.is_empty()
+		and buttons.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and buttons.focus_mode == Control.FOCUS_NONE,
+		"empty status row collapses; real statuses restore it without intercepting input: " + meter.name)
+	_check(buttons.get_child_count() == 4, "one reusable four-button pool: " + meter.name)
 	var expected_tooltip := _expected_tooltip(actor, side, forecast)
 	var texts: Array[String] = []
 	for child in buttons.get_children():
@@ -290,7 +293,11 @@ func _assert_no_duplicate_rule_tooltips(app) -> void:
 		_check(control is Button and control.is_visible_in_tree()
 			and control.get_parent() is HBoxContainer and control.get_parent().name == "StatusButtons",
 			"status rules live only on a visible chip, never a duplicate stage control")
-	_check(carriers > 0, "mounted battle exposes its status rules on hover")
+	var expected_carriers := 0
+	for meter in _meters(app):
+		expected_carriers += _visible_buttons(meter).size()
+	_check(carriers == expected_carriers,
+		"only real mounted status chips carry tooltips, with no neutral or duplicate controls")
 
 
 func _visible(app) -> void:
@@ -345,18 +352,111 @@ func _hover(control: Control) -> void:
 	await _frames()
 
 
-## Real pointer hover over each ribbon's first visible chip, neutral cue included.
+## Real pointer hover over every present ribbon's first positive or fallen chip.
 func _assert_hover(app) -> void:
 	for meter in _meters(app):
 		var shown := _visible_buttons(meter)
-		_check(not shown.is_empty(), "every mounted ribbon shows at least one chip: " + meter.name)
 		if shown.is_empty():
+			_check(not _buttons(meter).visible and not _buttons(meter).is_visible_in_tree(),
+				"empty mounted status row cannot capture pointer events: " + meter.name)
 			continue
 		await _hover(shown[0])
 		_check(root.gui_get_hovered_control() == shown[0],
 			"real pointer hover reaches the visible chip: " + meter.name)
 		_check(shown[0].tooltip_text.contains("Statuses:"),
 			"the hovered chip exposes the exact rules text: " + meter.name)
+
+
+## Real mounted empty -> active -> expired status transitions on the same four controls.
+func _exercise_status_row_transitions(app, presenter) -> void:
+	var meters := _meters(app)
+	_check(meters.size() == 5 and app.enemies.get_enemy(1)["hp"] > 3
+		and app.enemies.get_enemy(1).get("statuses", {}).is_empty(),
+		"status transition starts with a real healthy, stack-free mounted enemy")
+	if meters.size() != 5 or app.enemies.get_enemy(1)["hp"] <= 3:
+		return
+	var before := _state(app)
+	var original_enemies: Array[Dictionary] = app.enemies.get_enemies()
+	var meter := meters[3]
+	var buttons := _buttons(meter)
+	var control_ids: Array[int] = []
+	for child in buttons.get_children():
+		control_ids.append(child.get_instance_id())
+	_check(control_ids.size() == 4 and not buttons.visible and _visible_buttons(meter).is_empty(),
+		"authentic opening has a collapsed status row and four dormant buttons")
+	_check(app.enemies.apply_statuses({1: {"exposed": 2}}),
+		"real enemy API applies Exposed 2 to an initially empty row")
+	await _frames()
+	_check(buttons.is_visible_in_tree() and _visible_buttons(meter).size() == 1
+		and _visible_buttons(meter)[0].text == "Exposed 2",
+		"first positive stack restores the same visible row")
+	_check(app.enemies.apply_statuses({1: {"weak": 1, "bleed": 2}}),
+		"real enemy API adds Bleed and Weak without replacing Exposed")
+	await _frames()
+	_visible(app)
+	var actor: Dictionary = app.enemies.get_enemy(1)
+	var text: Array[String] = []
+	for button in _visible_buttons(meter):
+		text.append(button.text)
+	_check(actor["statuses"] == {"bleed": 2, "weak": 1, "exposed": 2}
+		and text == ["Bleed 2", "Weak 1", "Exposed 2"],
+		"mounted row follows actual Bleed, Weak, Exposed snapshots in stable order")
+	if _visible_buttons(meter).size() == 3:
+		await _hover(_visible_buttons(meter)[1])
+		_check(root.gui_get_hovered_control() == _visible_buttons(meter)[1]
+			and _visible_buttons(meter)[1].tooltip_text == _expected_tooltip(actor, "enemy", _forecast(app)),
+			"live positive chip hover exposes complete ordered stacks and modifier rules")
+	var refreshed := _state(app)
+	seed(93031)
+	var global_draw := randi()
+	seed(93031)
+	for repeat in range(4):
+		presenter._sync_battle()
+		await _frames()
+		var actual_ids: Array[int] = []
+		for child in buttons.get_children():
+			actual_ids.append(child.get_instance_id())
+		_check(actual_ids == control_ids and buttons.get_child_count() == 4
+			and meter == _meters(app)[3], "status refresh reuses four original chips and mounted meter")
+	_check(_state(app) == refreshed and randi() == global_draw,
+		"refresh never changes deck, statuses, intents, combat or seeded/global RNG")
+	var batch := CombatStatusTurnBatch.new()
+	for turn in range(2):
+		var tick: Dictionary = batch.tick_side("enemies", app.enemies.get_enemies())
+		_check(tick["ok"] and tick["actors"].size() == 2,
+			"real owner-turn status batch expires positive stacks")
+		if not tick["ok"] or tick["actors"].size() != 2:
+			break
+		for index in range(2):
+			app.enemies._enemies[index] = tick["actors"][index].duplicate(true)
+		await _frames()
+		_visible(app)
+		actor = app.enemies.get_enemy(1)
+		if turn == 0:
+			_check(actor["statuses"].get("bleed", 0) == 1
+				and actor["statuses"].get("weak", 0) == 0
+				and actor["statuses"].get("exposed", 0) == 1
+				and _visible_buttons(meter).size() == 2
+				and _visible_buttons(meter)[0].text == "Bleed 1"
+				and _visible_buttons(meter)[1].text == "Exposed 1",
+				"first owner turn removes expired Weak, keeps positive Bleed and Exposed")
+		else:
+			_check(_expected_chips(actor, "enemy").is_empty()
+				and _visible_buttons(meter).is_empty() and not buttons.is_visible_in_tree()
+				and meter.status_text.text == "Statuses: none",
+				"final expiry removes all visible chips and collapses row, retaining model text")
+	var ending_ids: Array[int] = []
+	for child in buttons.get_children():
+		ending_ids.append(child.get_instance_id())
+	_check(ending_ids == control_ids and buttons.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"expired status row is pointer inert without stale or duplicated controls")
+	for index in range(original_enemies.size()):
+		app.enemies._enemies[index] = original_enemies[index].duplicate(true)
+	await _frames()
+	_visible(app)
+	_check(_state(app) == before and _visible_buttons(meter).is_empty()
+		and not buttons.is_visible_in_tree(),
+		"status probe restores exact original roster, deck, intents and RNG with hidden row")
 
 
 func _exercise_live_bleed(app, presenter) -> void:
@@ -621,6 +721,7 @@ func _run() -> void:
 			return
 		_visible(app)
 		await _assert_hover(app)
+		await _exercise_status_row_transitions(app, presenter)
 		# Inject only into an existing mounted view: no invented live status persistence.
 		var model_before_status := _state(app)
 		var active_meters := _meters(app)
@@ -653,9 +754,10 @@ func _run() -> void:
 					"invalid mounted status map clears prior positive stack")
 				presenter._sync_battle()
 				_check(meter.visible and meter.status_text.text == "Statuses: none"
+					and _visible_buttons(meter).is_empty() and not _buttons(meter).visible
 					and meter.bleed_warning.text.is_empty() and not meter.bleed_warning.visible
 					and meter.status_text.get_instance_id() == label_id,
-					"next authoritative frame restores honest neutral live fallback")
+					"next authoritative frame restores honest model text without a neutral widget")
 			_check(_state(app) == model_before_status,
 				"mounted synthetic/invalid/authoritative view refresh never mutates models or run RNG")
 			_visible(app)
@@ -746,11 +848,11 @@ func _run() -> void:
 			and _incoming(app, 2) == "DOWNED",
 			"missing intent interface fails closed without believable hero damage")
 		_visible(app)
-		var unavailable_chip: Button = null
-		for button in _visible_buttons(_meters(app)[0]):
-			if button.tooltip_text.contains("Incoming: unavailable"):
-				unavailable_chip = button
-		_check(unavailable_chip != null, "missing intents stay visible on hover instead of inventing damage")
+		_check(_incoming(app, 1) == "Incoming: unavailable"
+			and _meters(app)[0].status_text.text == "Statuses: none"
+			and _visible_buttons(_meters(app)[0]).is_empty()
+			and not _buttons(_meters(app)[0]).visible,
+			"missing intent remains authoritative without inventing a neutral hover chip")
 		app.enemy_intents = valid_intents
 		presenter._sync_battle()
 		# Each source identity change tears down the old presentation, even with identical values.
@@ -947,9 +1049,9 @@ func _three_enemy_stage(app, presenter) -> void:
 	var block_chips: Array[String] = []
 	for button in _visible_buttons(_meters(app)[1]):
 		block_chips.append(button.text)
-	_check(block_chips == [NEUTRAL_CUE]
+	_check(block_chips.is_empty() and not _buttons(_meters(app)[1]).is_visible_in_tree()
 		and _meters(app)[1].block_text.text == "Block: %d" % app.party.get_hero(2)["block"],
-		"a living hero with no debuff still shows a hoverable neutral cue")
+		"Block stays visible while a living hero's empty status row collapses")
 	# Dense four-chip case in the authentic three-enemy fight: slay a fully stacked
 	# source through the real enemy API and keep every name and count on its ribbon.
 	_check(app.enemies.apply_statuses({2: {"bleed": 3}}),
