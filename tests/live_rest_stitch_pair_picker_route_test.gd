@@ -132,7 +132,36 @@ func _run() -> void:
 			break
 		_check(preview.first_half == catalog.get_definition(app.run_deck[a]) and preview.second_half == catalog.get_definition(app.run_deck[b]), "preview preserves complete authored halves")
 		_check(picker.first_half_label.text == picker._half_lines("First", preview.first_half) and picker.second_half_label.text == picker._half_lines("Second", preview.second_half), "mounted labels show selected authored halves")
-		_check(_stitch_state() == before, "opening and physical selections spend nothing or consume RNG")
+		var forecast_source: Dictionary = app._stitch_snapshot()
+		var forecast_oracle := RunRestStitchCards.new(
+			forecast_source["deck"].duplicate(true), forecast_source["descriptors"].duplicate(true),
+			forecast_source["remaining_scraps"], forecast_source["next_stitch_id"])
+		_check(forecast_oracle.is_valid() and forecast_oracle.get_snapshot() == forecast_source,
+			"real route forecast has complete independent authoritative source")
+		var forecast_committed := forecast_oracle.choose_stitch(a, b, forecast_source.duplicate(true))
+		_check(forecast_committed.get("ok", false)
+			and preview["projection"] == forecast_committed
+			and preview["resulting_deck"] == forecast_committed["deck"]
+			and preview["descriptor"] == forecast_committed["descriptor"]
+			and preview["next_stitch_id"] == forecast_committed["next_stitch_id"]
+			and preview["remaining_scraps"] == forecast_committed["remaining_scraps"]
+			and preview["consumed_indices"] == [a, b]
+			and preview["consumed_ids"] == [app.run_deck[a], app.run_deck[b]],
+			"mounted real Rest forecast equals independently committed full ledger and exact duplicate indices")
+		_check(picker.summary_label.text.contains(preview["descriptor"]["display_name"])
+			and picker.summary_label.text.contains("%d energy" % preview["descriptor"]["cost"])
+			and picker.consequence_label.text == picker._consequence_lines(preview)
+			and picker.consequence_label.text.contains("#%d (warden_strike)" % a)
+			and picker.consequence_label.text.contains("#%d (seamstress_prick)" % b)
+			and picker.consequence_label.text.contains("%d → %d shared cards" % [
+				forecast_source["deck"].size(), forecast_committed["deck"].size()])
+			and picker.consequence_label.text.contains("3 scraps → %d remaining" % forecast_committed["remaining_scraps"])
+			and picker.consequence_label.text.contains(forecast_committed["stitched_id"])
+			and picker.consequence_label.text.contains("cannot upgrade or stitch again")
+			and picker.consequence_label.get_line_count() <= 3,
+			"live visible consequence fully describes committed deck, copies, cost and restriction")
+		_check(_stitch_state() == before and app.rest_stitch.get_snapshot() == forecast_source
+			and not app.rest_stitch.is_consumed(), "opening and physical selections spend nothing or consume RNG")
 		var callback: Callable = picker.stitch_requested.get_connections()[0].callable
 		var source: Dictionary = app._stitch_snapshot()
 		var request: Callable = callback.bind(a, b, source)
@@ -170,7 +199,10 @@ func _run() -> void:
 				await _key(KEY_TAB)
 				_check(picker.confirm_button.has_focus(), "Tab reaches guided confirmation")
 				await _key(KEY_ENTER)
-			_check(app._stitch_snapshot() == oracle.get_snapshot() and app.run_scraps == 0, "exact oracle ledger and three scrap transaction")
+			_check(app._stitch_snapshot() == oracle.get_snapshot()
+				and app._stitch_snapshot() == forecast_oracle.get_snapshot()
+				and app.run_scraps == forecast_committed["remaining_scraps"],
+				"forecast displayed before physical input matches exact single real Rest commitment")
 			_check(app.rest_stitch_overlay == null and app.rest_stitch_picker == null and app.rest_stitch.is_consumed(), "successful commit disposes picker")
 			_check(not app.rest_continue_button.disabled and app.rest_stitch_guided_button.disabled, "exclusive choice preserves Continue")
 			_reject_stitch(request, "duplicate guided confirmation")

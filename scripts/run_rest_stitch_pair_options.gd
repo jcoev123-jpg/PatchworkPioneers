@@ -78,8 +78,30 @@ func preview(first_index: Variant, second_index: Variant) -> Dictionary:
 		return {}
 	if first["owner"] == second["owner"]:
 		return {}
-	var cost: int = mini(3, maxi(first["cost"], second["cost"]) + 1)
+	# Ask a throwaway authority to commit against the identical full receipt.
+	# Never call choose_stitch on the bound live Rest visit.
+	var shadow := RunRestStitchCards.new(
+		_source["deck"].duplicate(true), _source["descriptors"].duplicate(true),
+		_source["remaining_scraps"], _source["next_stitch_id"])
+	if not shadow.is_valid() or shadow.get_snapshot() != _source:
+		return {}
+	var projection := shadow.choose_stitch(first_index, second_index, _source.duplicate(true))
+	if not projection.get("ok", false):
+		return {}
+	var descriptor: Dictionary = projection["descriptor"]
 	return {
+		# Exact detached result includes the entire ordered deck, descriptor
+		# registry, allocator cursor, receipts and consumed original instances.
+		"projection": projection.duplicate(true),
+		"stitched_id": projection["stitched_id"],
+		"descriptor": descriptor.duplicate(true),
+		"resulting_deck": projection["deck"].duplicate(),
+		"remaining_scraps": projection["remaining_scraps"],
+		"next_stitch_id": projection["next_stitch_id"],
+		"consumed_indices": projection["consumed_indices"].duplicate(),
+		"consumed_ids": projection["consumed_ids"].duplicate(),
+		"deck_before_count": _source["deck"].size(),
+		"deck_after_count": projection["deck"].size(),
 		"first_index": first_index,
 		"second_index": second_index,
 		"first_id": first["id"],
@@ -96,7 +118,7 @@ func preview(first_index: Variant, second_index: Variant) -> Dictionary:
 		"first_half": _catalog.get_definition(first["id"]),
 		"second_half": _catalog.get_definition(second["id"]),
 		"display_name": first["name"] + " / " + second["name"],
-		"energy_cost": cost,
+		"energy_cost": descriptor["cost"],
 		"scrap_cost": RunRestStitchCards.SCRAP_COST,
 		"source_receipt": _source["receipt"],
 		"source_snapshot": _source.duplicate(true),

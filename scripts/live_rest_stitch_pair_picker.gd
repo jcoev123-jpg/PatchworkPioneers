@@ -17,6 +17,7 @@ var confirm_button: Button
 var summary_label: Label
 var first_half_label: Label
 var second_half_label: Label
+var consequence_label: Label
 var _left_edge: ColorRect
 var _right_edge: ColorRect
 var _model := RunRestStitchPairOptions.new()
@@ -90,14 +91,23 @@ func _ready() -> void:
 	preview_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(preview_panel)
 	summary_label = Label.new()
-	summary_label.position = Vector2(14, 10)
-	summary_label.size = Vector2(622, 35)
+	summary_label.position = Vector2(14, 8)
+	summary_label.size = Vector2(622, 31)
 	summary_label.add_theme_color_override("font_color", INK)
 	summary_label.add_theme_font_size_override("font_size", 18)
 	summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	preview_panel.add_child(summary_label)
-	first_half_label = _detail_label(preview_panel, Vector2(14, 51))
-	second_half_label = _detail_label(preview_panel, Vector2(14, 144))
+	first_half_label = _detail_label(preview_panel, Vector2(14, 41))
+	second_half_label = _detail_label(preview_panel, Vector2(14, 117))
+	consequence_label = Label.new()
+	consequence_label.position = Vector2(14, 194)
+	consequence_label.size = Vector2(622, 52)
+	consequence_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	consequence_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	consequence_label.add_theme_color_override("font_color", INK)
+	consequence_label.add_theme_font_size_override("font_size", 14)
+	consequence_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview_panel.add_child(consequence_label)
 
 	confirm_button = Button.new()
 	confirm_button.text = "Confirm Stitch • 3 scraps"
@@ -128,11 +138,11 @@ func _option(at: Vector2, placeholder: String) -> OptionButton:
 func _detail_label(parent: Control, at: Vector2) -> Label:
 	var label := Label.new()
 	label.position = at
-	label.size = Vector2(622, 89)
+	label.size = Vector2(622, 75)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_color_override("font_color", INK)
-	label.add_theme_font_size_override("font_size", 16)
+	label.add_theme_font_size_override("font_size", 15)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(label)
 	return label
@@ -173,6 +183,7 @@ func clear() -> void:
 		summary_label.text = "Not available — choose two originals (3 scraps)."
 		first_half_label.text = ""
 		second_half_label.text = ""
+		consequence_label.text = ""
 		_left_edge.color = OWNER_COLORS["warden"]
 		_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -188,6 +199,7 @@ func refresh() -> void:
 	summary_label.text = "Not available — no eligible pair (3 scraps required)."
 	first_half_label.text = ""
 	second_half_label.text = ""
+	consequence_label.text = ""
 	if not is_inside_tree() or not _model.is_available():
 		return
 	for entry in _model.first_options():
@@ -224,6 +236,7 @@ func _on_first_changed(item: int, epoch: int) -> void:
 	summary_label.text = "Choose the second original from a different hero • 3 scraps."
 	first_half_label.text = ""
 	second_half_label.text = ""
+	consequence_label.text = ""
 	_left_edge.color = _color_for_index(index)
 	_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -244,9 +257,18 @@ func _update_preview() -> void:
 		pair["display_name"], pair["energy_cost"], pair["scrap_cost"]]
 	first_half_label.text = _half_lines("First", pair["first_half"])
 	second_half_label.text = _half_lines("Second", pair["second_half"])
+	consequence_label.text = _consequence_lines(pair)
 	_left_edge.color = OWNER_COLORS.get(pair["first_owner"], INK)
 	_right_edge.color = OWNER_COLORS.get(pair["second_owner"], INK)
 	confirm_button.disabled = false
+
+
+## One compact, index-exact receipt readout below the two authored halves.
+func _consequence_lines(pair: Dictionary) -> String:
+	return "Replace 0-based originals #%d (%s) + #%d (%s)\n%d → %d shared cards • %d scraps → %d remaining\nNew %s • cannot upgrade or stitch again" % [
+		pair["first_index"], pair["first_id"], pair["second_index"], pair["second_id"],
+		pair["deck_before_count"], pair["deck_after_count"], pair["scrap_cost"],
+		pair["remaining_scraps"], pair["stitched_id"]]
 
 
 func _positions(positions: Array) -> String:
@@ -352,6 +374,7 @@ func _disable_choice() -> void:
 	summary_label.text = "Not available — select a current eligible pair (3 scraps)."
 	first_half_label.text = ""
 	second_half_label.text = ""
+	consequence_label.text = ""
 
 
 func _on_confirm(epoch: int) -> void:
@@ -366,6 +389,11 @@ func _on_confirm(epoch: int) -> void:
 	# to transact; a fresh binding is needed for any subsequent choice.
 	_disable_choice()
 	summary_label.text = "Stitch requested — awaiting Rest confirmation."
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and first_selector != null and not is_visible_in_tree():
+		_disable_choice()
 
 
 func _exit_tree() -> void:
