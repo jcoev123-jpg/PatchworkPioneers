@@ -111,7 +111,7 @@ func _visible() -> void:
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [app.deck.draw_pile.size(), app.deck.discard_pile.size()], "visible piles refreshed")
 	var support = app.get_node("LiveSupportHand")
 	_check(is_instance_valid(support.energy_label) and support.energy_label.is_visible_in_tree()
-		and support.energy_label.text.begins_with("Energy: %d |" % app.deck.energy), "visible shared energy refreshed")
+		and support.energy_label.text == "Energy\n%d" % app.deck.energy, "visible shared energy refreshed")
 	var meters = app.get_node("LiveCombatMeters")
 	_check(is_instance_valid(meters.row), "mounted combat meter row exists")
 	if is_instance_valid(meters.row):

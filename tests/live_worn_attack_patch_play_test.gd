@@ -153,8 +153,8 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 		and app.run_rng.state == before[10],
 		"real HP, Block, and run RNG agree with confirmed attack")
 	_check(app.hand_view.get_child_count() == app.deck.hand.size()
-		and app.get_node("LiveSupportHand").energy_label.text.begins_with(
-			"Energy: %d |" % app.deck.energy), "mounted hand and energy redraw")
+		and app.get_node("LiveSupportHand").energy_label.text ==
+			"Energy\n%d" % app.deck.energy, "mounted hand and energy redraw")
 	_check(presenter.cue != null and presenter.cue.is_visible_in_tree()
 		and Rect2(0, 0, 1280, 720).encloses(presenter.cue.get_global_rect()),
 		"actual attack cue fits 1280x720")

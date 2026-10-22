@@ -59,7 +59,7 @@ func _mend(keyboard: bool, amount: int, damage: int = 12, reject: bool = false) 
 		expected[3].append("seamstress_mend")
 		expected[4] -= 1
 		_check(_support_state() == expected, "Mend heals %d capped HP, charges/discards once, preserves every run ledger and RNG" % amount)
-		_check(support.energy_label.text.begins_with("Energy: %d |" % app.deck.energy), "visible energy matches one charge")
+		_check(support.energy_label.text == "Energy\n%d" % app.deck.energy, "visible energy matches one charge")
 	_meter()
 
 

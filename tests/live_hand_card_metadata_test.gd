@@ -108,11 +108,11 @@ func _validate_display(observed: Dictionary) -> void:
 		_check(index < app.deck.hand.size() and card_id == app.deck.hand[index],
 			"original unchanged ID text equals ordered deck.hand")
 		var support: bool = card_id in SUPPORT_IDS
-		_check(panel.get_child_count() == (2 if support else 1),
-			"support retains exactly two children; other cards exactly one")
-		if support and panel.get_child_count() >= 2:
-			_check(panel.get_child(1) is Label and panel.get_child(1).text == "Click / Enter / Space",
-				"original visible support action hint survives")
+		_check(panel.get_child_count() == 1,
+			"each panel retains only its original ID Label; help lives outside the hand")
+		if support:
+			_check(presenter.help_label.text == "Up: cards | Click / Enter / Space: play",
+				"shared visible support action hint survives outside card names")
 			_check(panel.tooltip_text.begins_with("Click or focus and press Enter / Space to play"), "support hint preserved")
 			_check(panel.tooltip_text.contains("BASE"), "support tooltip includes base effect detail")
 		var attack: bool = catalog.get_definition(card_id).get("target_kind") in ["enemy_single", "enemy_all"]
@@ -252,7 +252,7 @@ func _validate_display(observed: Dictionary) -> void:
 		and app.return_button.focus_mode == Control.FOCUS_ALL,
 		"End Turn/Return keyboard activation remains available")
 	_check(is_instance_valid(presenter.energy_label) and
-		presenter.energy_label.text.begins_with("Energy: %d |" % app.deck.energy),
+		presenter.energy_label.text == "Energy\n%d" % app.deck.energy,
 		"energy/action controls remain visible and authoritative")
 
 
