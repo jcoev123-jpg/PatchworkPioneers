@@ -5,6 +5,16 @@ const PANEL_SCENE := "res://scenes/run_terminal_result_panel.tscn"
 const HEROES := "res://data/heroes/starter_party.json"
 const BOSS := "res://data/enemies/boss.json"
 const FIGHT := "res://data/enemies/starter_enemies.json"
+const STARTER_DECK := "res://data/cards/starter_deck.json"
+## Authored patch metadata for the genuine wardrobe projection; the same
+## fixture shapes used by tests/run_signature_summary_test.gd.
+const PATCH_DEFINITIONS := [
+	{"id": "button_eye", "slot": "HEAD"},
+	{"id": "stitched_badge", "slot": "HEAD"},
+	{"id": "pincushion_arm", "slot": "ARM"},
+	{"id": "spare_spool", "slot": "ARM"},
+	{"id": "quilted_coat", "slot": "COAT"},
+]
 
 var panel: LiveRunTerminalResultPanel
 var failures: Array[String] = []
@@ -79,6 +89,86 @@ func _definitions(path: String) -> Array:
 			definition["max_hp"] = int(hp)
 		defs.append(definition)
 	return defs
+
+
+## Shipped starter deck IDs in authored order. Presence of the stitch halves
+## is asserted, never a catalog size or a complete ordered ID list.
+func _starter_deck() -> Array[String]:
+	var source: String = FileAccess.get_file_as_string(STARTER_DECK)
+	var authored: Variant = JSON.parse_string(source)
+	var deck: Array[String] = []
+	_check(authored is Array and not authored.is_empty(), "shipped starter deck parses nonempty")
+	if authored is Array:
+		for id in authored:
+			if typeof(id) == TYPE_STRING:
+				deck.append(id)
+	for required in ["warden_strike", "warden_brace", "warden_shield_bash",
+			"seamstress_prick", "seamstress_mend", "tinker_pop_shot"]:
+		_check(deck.has(required), "shipped starter deck contains stitch half " + required)
+	return deck
+
+
+## Commits one real Rest stitch per requested different-hero pair, threading the
+## service's own committed deck/descriptor/cursor ledger between visits.
+func _stitch_pairs(deck: Array[String], pairs: Array, scraps: int) -> Dictionary:
+	var current: Array[String] = deck.duplicate()
+	var descriptors: Dictionary = {}
+	var cursor := 1
+	var remaining := scraps
+	for pair in pairs:
+		var first_id: String = pair[0]
+		var second_id: String = pair[1]
+		var first_index: int = current.find(first_id)
+		var second_index: int = current.find(second_id)
+		var label := "%s + %s" % [first_id, second_id]
+		_check(first_index >= 0 and second_index >= 0 and first_index != second_index,
+			"real stitch fixture finds distinct halves: " + label)
+		if first_index < 0 or second_index < 0 or first_index == second_index:
+			return {}
+		var service := RunRestStitchCards.new(current, descriptors, remaining, cursor)
+		_check(service.is_valid(), "real stitch service accepts the current ledger: " + label)
+		if not service.is_valid():
+			return {}
+		var result: Dictionary = service.choose_stitch(first_index, second_index, service.get_snapshot())
+		_check(result.get("ok") == true, "real stitch transaction commits " + label)
+		if result.get("ok") != true:
+			return {}
+		current.assign(result["deck"])
+		descriptors = result["descriptors"].duplicate(true)
+		remaining = result["remaining_scraps"]
+		cursor = result["next_stitch_id"]
+	return {"deck": current, "descriptors": descriptors, "next_stitch_id": cursor}
+
+
+## A genuine RunPatchWardrobe over real party heroes, sewn through its own
+## optimistic-concurrency API in the given [patch, hero, slot, op] order.
+func _wardrobe(deck: Array[String], sew_operations: Array) -> RunPatchWardrobe:
+	var party := CombatParty.new(_definitions(HEROES))
+	_check(party.is_valid(), "authored party is valid for the wardrobe projection")
+	var owned: Array = []
+	for definition in PATCH_DEFINITIONS:
+		owned.append(definition["id"])
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned,
+		PATCH_DEFINITIONS.duplicate(true), 5, 500, deck, 424242)
+	_check(wardrobe.is_valid(), "genuine wardrobe validates against the committed deck")
+	for operation in sew_operations:
+		var receipt: Dictionary = wardrobe.sew(operation[0], operation[1], operation[2],
+			operation[3], wardrobe.get_snapshot())
+		_check(receipt.get("ok") == true,
+			"real sew places %s on %s %s" % [operation[0], operation[1], operation[2]])
+	return wardrobe
+
+
+func _signature(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
+	return RunSignatureSummary.summarize(ledger["deck"], ledger["descriptors"],
+		ledger["next_stitch_id"], wardrobe)
+
+
+func _line_with(lines: PackedStringArray, prefix: String) -> String:
+	for line in lines:
+		if str(line).begins_with(prefix):
+			return line
+	return ""
 
 
 func _battle(enemy_path: String) -> Dictionary:
@@ -422,6 +512,171 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 		"closing final view never modifies older completed Boss run")
 
 
+## M05 craft recap presentation: authored stitched names and readable patch
+## labels, formatted from genuine stitch and wardrobe projections while a
+## settled terminal result is actually open on the shipped view.
+func _test_crafted_recap(defeat: Dictionary) -> void:
+	var starter := _starter_deck()
+	if starter.is_empty():
+		return
+	_check(panel.open_result(defeat["ctx"]["latch"]),
+		"AC1: recap runs against a genuinely settled, accepted terminal result")
+	await _frames()
+	_check(panel.has_open_result() and panel.is_visible_in_tree(),
+		"AC1: the recap formatter runs while the terminal view is mounted and visible")
+
+	# One current stitched card: the authored ordered "First / Second" name.
+	var single := _stitch_pairs(starter, [["warden_strike", "seamstress_prick"]], 3)
+	if single.is_empty():
+		panel.close_result()
+		return
+	var single_wardrobe := _wardrobe(single["deck"], [
+		["button_eye", "warden", "HEAD", "recap_sew_warden"],
+		["pincushion_arm", "seamstress", "ARM", "recap_sew_seamstress"],
+		["quilted_coat", "tinker", "COAT", "recap_sew_tinker"],
+	])
+	var single_summary := _signature(single, single_wardrobe)
+	_check(single_summary.get("ok") == true, "AC1: one-stitch summary projection is authoritative")
+	_check(single_summary.get("stitched_created") == 1 and single_summary.get("stitched_current") == 1,
+		"AC1: one stitch is both made and currently held")
+	_check(single_summary.get("stitched_ids") == ["stitched_000001"],
+		"AC1: exactly one current stitched ID comes from the authentic deck")
+	var single_descriptors: Dictionary = single_summary.get("descriptors", {})
+	var single_descriptor: Dictionary = single_descriptors.get("stitched_000001", {})
+	_check(single_descriptor.get("display_name") == "Strike / Prick",
+		"AC1: the descriptor carries the authored ordered display_name")
+	var single_text := panel._format_signature(single_summary)
+	var single_lines := single_text.split("\n")
+	_check(single_lines.size() == 6, "AC1: two count lines, one craft line and three hero rows")
+	if single_lines.size() == 6:
+		_check(single_lines[0] == "Stitched: 1 made · 1 in deck",
+			"AC1: exact made/in-deck count wording is preserved")
+		_check(single_lines[1] == "Patches worn: 3", "AC2: exact worn count wording is preserved")
+		_check(single_lines[2] == "Crafted: Strike / Prick",
+			"AC1: the recap names the authored pair instead of the stitched ID")
+		_check(single_lines[3] == "Warden  HEAD Button Eye  ·  ARM -  ·  COAT -",
+			"AC2: Warden row keeps HEAD/ARM/COAT order with a dash for empty slots")
+		_check(single_lines[4] == "Seamstress  HEAD -  ·  ARM Pincushion Arm  ·  COAT -",
+			"AC2: pincushion_arm is shown as the readable title-cased Pincushion Arm")
+		_check(single_lines[5] == "Tinker  HEAD -  ·  ARM -  ·  COAT Quilted Coat",
+			"AC2: Tinker row keeps its order with readable coat name and empty dashes")
+	_check(not single_text.contains("stitched_000001"), "AC1: opaque stitched IDs are never shown")
+	_check(not single_text.contains("more"), "AC1: a single current stitched card adds no +N more")
+	_check(not single_text.contains("pincushion_arm") and not single_text.contains("button_eye")
+		and not single_text.contains("quilted_coat"),
+		"AC2: raw worn patch IDs are never shown")
+
+	# Three current stitched cards: exactly two names plus an accurate +1 more.
+	var triple := _stitch_pairs(starter, [
+		["warden_strike", "seamstress_prick"],
+		["warden_brace", "seamstress_mend"],
+		["warden_shield_bash", "tinker_pop_shot"],
+	], 9)
+	if triple.is_empty():
+		panel.close_result()
+		return
+	var triple_wardrobe := _wardrobe(triple["deck"], [
+		["button_eye", "warden", "HEAD", "recap3_sew_warden"],
+		["pincushion_arm", "seamstress", "ARM", "recap3_sew_seamstress"],
+		["quilted_coat", "tinker", "COAT", "recap3_sew_tinker"],
+	])
+	var triple_summary := _signature(triple, triple_wardrobe)
+	_check(triple_summary.get("ok") == true, "AC1: three-stitch summary projection is authoritative")
+	_check(triple_summary.get("stitched_created") == 3 and triple_summary.get("stitched_current") == 3,
+		"AC1: three stitches are all made and held")
+	_check(triple_summary.get("stitched_ids") == ["stitched_000001", "stitched_000002", "stitched_000003"],
+		"AC1: three current stitched IDs are supplied in deck order")
+	var triple_text := panel._format_signature(triple_summary)
+	var triple_lines := triple_text.split("\n")
+	_check(_line_with(triple_lines, "Stitched: ") == "Stitched: 3 made · 3 in deck",
+		"AC1: three-stitch totals keep the preserved wording")
+	_check(_line_with(triple_lines, "Crafted: ") == "Crafted: Strike / Prick  ·  Brace / Mend +1 more",
+		"AC1: at most two authored names appear with an accurate +1 more")
+	_check(not triple_text.contains("Shield Bash") and not triple_text.contains("Pop Shot"),
+		"AC1: the third current name is counted, not listed")
+	_check(not triple_text.contains("+2") and not triple_text.contains("stitched_"),
+		"AC1: the extra count is exact and no opaque IDs appear")
+
+	# Removed-but-previously-made stitches: historical and current stay distinct.
+	var pair := _stitch_pairs(starter, [
+		["warden_strike", "seamstress_prick"],
+		["warden_brace", "seamstress_mend"],
+	], 6)
+	if pair.is_empty():
+		panel.close_result()
+		return
+	var removed_once: Dictionary = RunShopCardRemoval.try_remove_with_stitch_ledger(
+		pair["deck"], pair["descriptors"], pair["next_stitch_id"], 500, 0, "stitched_000001")
+	_check(removed_once.get("ok") == true and removed_once.get("price") == 75
+		and removed_once.get("gold") == 425,
+		"AC3: a genuine shop removal retires the first stitched card for 75 gold")
+	var deck_one: Array[String] = []
+	deck_one.assign(removed_once.get("deck", []))
+	var ledger_one := {
+		"deck": deck_one,
+		"descriptors": removed_once.get("descriptors", {}).duplicate(true),
+		"next_stitch_id": removed_once.get("next_stitch_id", 0),
+	}
+	_check(not deck_one.has("stitched_000001") and deck_one.has("stitched_000002"),
+		"AC3: only the surviving stitched card remains in the deck")
+	var one_wardrobe := _wardrobe(deck_one, [
+		["stitched_badge", "warden", "HEAD", "recap_one_sew_warden"],
+	])
+	var one_summary := _signature(ledger_one, one_wardrobe)
+	_check(one_summary.get("ok") == true, "AC3: post-removal summary projection is authoritative")
+	_check(one_summary.get("stitched_created") == 2 and one_summary.get("stitched_current") == 1,
+		"AC3: made count keeps the retired stitch while the in-deck count falls to one")
+	_check(one_summary.get("stitched_created") != one_summary.get("stitched_current"),
+		"AC3: historical and current stitch totals are genuinely distinct")
+	_check(one_summary.get("stitched_ids") == ["stitched_000002"],
+		"AC3: a removed stitch is never listed as currently held")
+	var one_text := panel._format_signature(one_summary)
+	var one_lines := one_text.split("\n")
+	_check(_line_with(one_lines, "Stitched: ") == "Stitched: 2 made · 1 in deck",
+		"AC3: the removed stitch still counts as made but not in deck")
+	_check(_line_with(one_lines, "Crafted: ") == "Crafted: Brace / Mend",
+		"AC1: the surviving authored name is shown without a +N more suffix")
+	_check(not one_text.contains("Strike") and not one_text.contains("stitched_000001"),
+		"AC3: the retired stitch name and ID are not listed as currently held")
+
+	var removed_twice: Dictionary = RunShopCardRemoval.try_remove_with_stitch_ledger(
+		ledger_one["deck"], ledger_one["descriptors"], ledger_one["next_stitch_id"],
+		425, 1, "stitched_000002")
+	_check(removed_twice.get("ok") == true and removed_twice.get("price") == 100
+		and removed_twice.get("gold") == 325,
+		"AC3: the second genuine removal costs 100 gold")
+	var deck_zero: Array[String] = []
+	deck_zero.assign(removed_twice.get("deck", []))
+	var ledger_zero := {
+		"deck": deck_zero,
+		"descriptors": removed_twice.get("descriptors", {}).duplicate(true),
+		"next_stitch_id": removed_twice.get("next_stitch_id", 0),
+	}
+	var zero_wardrobe := _wardrobe(deck_zero, [
+		["stitched_badge", "warden", "HEAD", "recap_zero_sew_warden"],
+	])
+	var zero_summary := _signature(ledger_zero, zero_wardrobe)
+	_check(zero_summary.get("ok") == true, "AC3: zero-current summary projection is authoritative")
+	_check(zero_summary.get("stitched_created") == 2 and zero_summary.get("stitched_current") == 0,
+		"AC3: both retired stitches still count as made with none in deck")
+	_check(zero_summary.get("stitched_ids") == [],
+		"AC3: zero current stitched cards are actually reported")
+	var zero_text := panel._format_signature(zero_summary)
+	var zero_lines := zero_text.split("\n")
+	_check(zero_lines.size() == 5, "AC3: zero current stitches add no craft line")
+	_check(_line_with(zero_lines, "Stitched: ") == "Stitched: 2 made · 0 in deck",
+		"AC3: historical and current totals stay distinct when the deck holds none")
+	_check(_line_with(zero_lines, "Patches worn: ") == "Patches worn: 1",
+		"AC2: the worn total still reflects the genuine wardrobe")
+	_check(not zero_text.contains("Crafted:") and not zero_text.contains("Strike")
+		and not zero_text.contains("Brace") and not zero_text.contains("stitched_"),
+		"AC3: an empty current stitch recap invents no names or IDs")
+	_check(zero_lines[4] == "Tinker  HEAD -  ·  ARM -  ·  COAT -",
+		"AC2: empty slots remain explicit dashes in the final hero row")
+	panel.close_result()
+	_check(not panel.has_open_result(), "AC3: the recap view closes back to its shipped closed state")
+
+
 func _test_global_rng(defeat: Dictionary) -> void:
 	var ctx: Dictionary = defeat["ctx"]
 	var battle: Dictionary = defeat["battle"]
@@ -461,6 +716,7 @@ func _run() -> void:
 	var defeat := _defeat()
 	if not defeat.is_empty():
 		await _test_terminal_interactions(victory, defeat)
+		await _test_crafted_recap(defeat)
 		_test_global_rng(defeat)
 	_finish()
 

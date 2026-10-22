@@ -114,18 +114,59 @@ func _signature_text() -> String:
 
 ## Consume the validated projection in its original hero and slot order.
 ## Empty cells stay explicitly empty instead of resembling worn inventory.
+## Names and slot labels are presentation only: descriptors are authored, and
+## worn IDs are never recomputed into effects here.
 func _format_signature(summary: Dictionary) -> String:
 	var lines: Array[String] = [
 		"Stitched: %d made · %d in deck" % [summary.stitched_created, summary.stitched_current],
 		"Patches worn: %d" % summary.worn_total,
 	]
+	var crafted := _crafted_cards_line(summary)
+	if not crafted.is_empty():
+		lines.append(crafted)
 	for hero in summary.heroes:
 		var slots: Array[String] = []
 		for slot in RunSignatureSummary.SLOTS:
 			var patch_id: String = hero.slots[slot]
-			slots.append("%s %s" % [slot, patch_id.capitalize() if not patch_id.is_empty() else "-"])
+			slots.append("%s %s" % [slot, _patch_label(patch_id)])
 		lines.append("%s  %s" % [str(hero.hero_id).capitalize(), "  ·  ".join(slots)])
 	return "\n".join(lines)
+
+
+## One compact recap line naming at most two currently held stitched cards in
+## their supplied deck order, using the descriptor's authored display_name.
+## Never falls back to an opaque stitched_ ID; an empty current list adds none.
+func _crafted_cards_line(summary: Dictionary) -> String:
+	var ids: Variant = summary.get("stitched_ids")
+	var descriptors: Variant = summary.get("descriptors")
+	if typeof(ids) != TYPE_ARRAY or ids.is_empty() or typeof(descriptors) != TYPE_DICTIONARY:
+		return ""
+	var names: Array[String] = []
+	for index in range(mini(ids.size(), 2)):
+		var descriptor: Variant = descriptors.get(ids[index])
+		if typeof(descriptor) != TYPE_DICTIONARY:
+			continue
+		var display_name: Variant = descriptor.get("display_name")
+		if typeof(display_name) != TYPE_STRING or display_name.is_empty():
+			continue
+		names.append(display_name)
+	if names.is_empty():
+		return ""
+	var line := "Crafted: " + "  ·  ".join(names)
+	var remaining: int = ids.size() - names.size()
+	if remaining > 0:
+		line += " +%d more" % remaining
+	return line
+
+
+## Readable slot label: underscores become spaces and each word is title-cased.
+func _patch_label(patch_id: String) -> String:
+	if patch_id.is_empty():
+		return "-"
+	var label := patch_id.replace("_", " ").strip_edges()
+	if label.is_empty():
+		return "-"
+	return label.capitalize()
 
 
 func has_open_result() -> bool:

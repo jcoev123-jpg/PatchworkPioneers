@@ -178,17 +178,35 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 		_check(value.contains("Patches worn: %d" % expected.worn_total),
 			"mounted worn total matches oracle, not inventory size")
 		var rows: PackedStringArray = value.split("\n")
-		_check(rows.size() == 5, "mounted signature has two counts and three hero lines")
-		if rows.size() == 5:
-			for i in range(3):
-				var hero: Dictionary = expected.heroes[i]
-				var parts: Array[String] = []
-				for slot in ["HEAD", "ARM", "COAT"]:
-					var id: String = hero.slots[slot]
-					parts.append("%s %s" % [slot, id.capitalize() if not id.is_empty() else "-"])
-				var expected_row: String = "%s  %s" % [
-					str(hero.hero_id).capitalize(), "  ·  ".join(parts)]
-				_check(rows[i + 2] == expected_row, "actual hero/slot row %d matches oracle" % i)
+		# Independent oracle line list: two counts, one optional craft recap of
+		# the first two current stitched names, then the three hero rows.
+		var expected_rows: Array[String] = [
+			"Stitched: %d made · %d in deck" % [expected.stitched_created, expected.stitched_current],
+			"Patches worn: %d" % expected.worn_total,
+		]
+		var stitched_ids: Array = expected.stitched_ids
+		if not stitched_ids.is_empty():
+			var names: Array[String] = []
+			for index in range(mini(stitched_ids.size(), 2)):
+				names.append(expected.descriptors[stitched_ids[index]].display_name)
+			var craft := "Crafted: " + "  ·  ".join(names)
+			if stitched_ids.size() > names.size():
+				craft += " +%d more" % (stitched_ids.size() - names.size())
+			expected_rows.append(craft)
+		for i in range(3):
+			var hero: Dictionary = expected.heroes[i]
+			var parts: Array[String] = []
+			for slot in ["HEAD", "ARM", "COAT"]:
+				var id: String = hero.slots[slot]
+				parts.append("%s %s" % [slot, id.capitalize() if not id.is_empty() else "-"])
+			expected_rows.append("%s  %s" % [
+				str(hero.hero_id).capitalize(), "  ·  ".join(parts)])
+		_check(rows.size() == expected_rows.size(),
+			"mounted signature has two counts, one craft line per nonempty deck and three hero lines")
+		if rows.size() == expected_rows.size():
+			for i in range(expected_rows.size()):
+				_check(rows[i] == expected_rows[i],
+					"actual signature line %d matches the independent oracle" % i)
 	_check(_source(ctx) == before, "opening and painting cannot change source, map, receipt or RNG")
 
 
