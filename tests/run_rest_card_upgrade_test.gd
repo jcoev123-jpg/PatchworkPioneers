@@ -38,6 +38,9 @@ func _initialize() -> void:
 	_test_service_source_boundaries()
 	_test_combat_deck_from_original_unaffected()
 	_test_run_state_untouched()
+	_test_list_authored_choices_plain_and_mixed()
+	_test_choice_map_integration_and_canonical_authoring()
+	_test_list_authored_choices_negative_and_isolation()
 	_finish()
 
 
@@ -169,6 +172,7 @@ func _test_public_contract() -> void:
 	_check(_method_argument_count(service, "is_consumed") == 0, "is_consumed takes no arguments")
 	# Fail-closed default construction: empty deck is an invalid deck.
 	_assert_rejected(RunRestCardUpgrade.new(), 0, [], "no-argument construction")
+	_check(service.has_method("list_authored_choices"), "public list_authored_choices method exists")
 
 
 func _test_one_copy_replacement() -> void:
@@ -912,3 +916,284 @@ func _test_pool_plus_in_stitched_upgrade_ledger() -> void:
 	_check(later.is_valid() and later.get_snapshot()["descriptors"] == descriptors
 		and later.get_snapshot()["next_stitch_id"] == cursor,
 		"upgraded mixed ledger passes a new Rest stitch validator")
+
+
+func _test_list_authored_choices_plain_and_mixed() -> void:
+	var deck: Array[String] = _load_starter_deck()
+	var hem_1: int = deck.size()
+	deck.append("warden_iron_hem")
+	var stitch_idx: int = deck.size()
+	deck.append("seamstress_running_stitch")
+	var rivet_idx: int = deck.size()
+	deck.append("tinker_rivet_shot")
+	var cannon_idx: int = deck.size()
+	deck.append("tinker_bobbin_cannon")
+	var hem_2: int = deck.size()
+	deck.append("warden_iron_hem")
+	deck.append("seamstress_running_stitch_plus")
+	deck.append("warden_strike_plus")
+	var snapshot: Array = deck.duplicate(true)
+
+	var projection: Dictionary = RunRestCardUpgrade.list_authored_choices(deck)
+	_check(_is_ok(projection), "plain deck list_authored_choices succeeds")
+	_check(_decks_equal(deck, snapshot), "list_authored_choices never mutates input deck")
+
+	var choices_raw: Variant = projection.get("choices")
+	var permitted_raw: Variant = projection.get("permitted_upgrades")
+	_check(choices_raw is Array, "projection returns choices array")
+	_check(permitted_raw is Dictionary, "projection returns permitted_upgrades dictionary")
+	if not (choices_raw is Array) or not (permitted_raw is Dictionary):
+		return
+
+	var choices: Array = choices_raw
+	var permitted: Dictionary = permitted_raw
+
+	var strikes: Array[int] = _strike_indices(deck)
+	var found_strikes: Array[int] = []
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		if c.get("source_id") == STRIKE_ID:
+			found_strikes.append(int(c.get("index", -1)))
+			_check(c.get("plus_id") == "warden_strike_plus", "Strike plus ID matches authored")
+			_check(c.get("owner") == "warden", "Strike owner is warden")
+	_check(found_strikes == strikes, "each Strike copy has its own choice matching its deck index")
+
+	var hem_indices: Array[int] = []
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		if c.get("source_id") == "warden_iron_hem":
+			hem_indices.append(int(c.get("index", -1)))
+			_check(c.get("plus_id") == "warden_iron_hem_plus", "Iron Hem plus ID is warden_iron_hem_plus")
+			_check(c.get("owner") == "warden", "Iron Hem owner is warden")
+	_check(hem_indices == [hem_1, hem_2], "duplicate Iron Hem bases appear at distinct indices")
+
+	var stitch_found: bool = false
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		if c.get("source_id") == "seamstress_running_stitch":
+			stitch_found = true
+			_check(c.get("index") == stitch_idx, "Running Stitch at correct index")
+			_check(c.get("plus_id") == "seamstress_running_stitch_plus", "Running Stitch plus ID is seamstress_running_stitch_plus")
+			_check(c.get("owner") == "seamstress", "Running Stitch owner is seamstress")
+	_check(stitch_found, "earned Running Stitch choice present")
+
+	var rivet_found: bool = false
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		if c.get("source_id") == "tinker_rivet_shot":
+			rivet_found = true
+			_check(c.get("index") == rivet_idx, "Rivet Shot at correct index")
+			_check(c.get("plus_id") == "tinker_rivet_shot_plus", "Rivet Shot plus ID is tinker_rivet_shot_plus")
+			_check(c.get("owner") == "tinker", "Rivet Shot owner is tinker")
+	_check(rivet_found, "earned Rivet Shot choice present")
+
+	var cannon_found: bool = false
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		if c.get("source_id") == "tinker_bobbin_cannon":
+			cannon_found = true
+			_check(c.get("index") == cannon_idx, "Bobbin Cannon at correct index")
+			_check(c.get("plus_id") == "tinker_bobbin_cannon_plus", "Bobbin Cannon plus ID is tinker_bobbin_cannon_plus")
+			_check(c.get("owner") == "tinker", "Bobbin Cannon owner is tinker")
+	_check(cannon_found, "earned Bobbin Cannon choice present")
+
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		var sid: String = str(c.get("source_id", ""))
+		_check(sid != "seamstress_running_stitch_plus", "prior pool plus is never an upgrade choice")
+		_check(sid != "warden_strike_plus", "prior starter plus is never an upgrade choice")
+		_check(sid != "warden_brace" and sid != "seamstress_prick" and sid != "tinker_pop_shot",
+			"non-upgradeable starter is never an upgrade choice: " + sid)
+
+	_check(permitted.get(STRIKE_ID) == "warden_strike_plus", "permitted Strike maps to warden_strike_plus")
+	_check(permitted.get("warden_iron_hem") == "warden_iron_hem_plus", "permitted Iron Hem maps to plus")
+	_check(permitted.get("seamstress_running_stitch") == "seamstress_running_stitch_plus", "permitted Running Stitch maps to plus")
+	_check(permitted.get("tinker_rivet_shot") == "tinker_rivet_shot_plus", "permitted Rivet Shot maps to plus")
+	_check(permitted.get("tinker_bobbin_cannon") == "tinker_bobbin_cannon_plus", "permitted Bobbin Cannon maps to plus")
+	_check(not permitted.has("seamstress_running_stitch_plus"), "permitted excludes pre-upgraded plus")
+	_check(not permitted.has("warden_strike_plus"), "permitted excludes starter plus")
+	_check(not permitted.has("warden_brace") and not permitted.has("seamstress_prick"), "permitted excludes non-upgradeable starters")
+
+	var earned: Dictionary = _earned_mixed_ledger()
+	if not earned.get("ok", false):
+		return
+	var mixed_deck: Array = earned["deck"].duplicate(true)
+	var registry: Dictionary = earned["descriptors"].duplicate(true)
+	var cursor: int = earned["next_stitch_id"]
+	var stitched_id: String = earned["stitched_id"]
+	mixed_deck.append("warden_iron_hem")
+	mixed_deck.append("seamstress_running_stitch")
+	mixed_deck.append("tinker_rivet_shot")
+	var mixed_snapshot: Array = mixed_deck.duplicate(true)
+	var reg_snapshot: Dictionary = registry.duplicate(true)
+
+	var mixed_proj: Dictionary = RunRestCardUpgrade.list_authored_choices(mixed_deck, registry, cursor)
+	_check(_is_ok(mixed_proj), "mixed ledger list_authored_choices succeeds")
+	_check(_decks_equal(mixed_deck, mixed_snapshot), "mixed deck untouched by list_authored_choices")
+	_check(registry == reg_snapshot, "mixed descriptors untouched by list_authored_choices")
+
+	var m_choices: Array = mixed_proj.get("choices", [])
+	var m_permitted: Dictionary = mixed_proj.get("permitted_upgrades", {})
+	_check(not m_permitted.has(stitched_id), "stitched composite is never in permitted_upgrades")
+	for c_raw: Variant in m_choices:
+		var c: Dictionary = c_raw
+		_check(c.get("source_id") != stitched_id, "stitched card never appears in choices")
+		_check(c.get("plus_id") != stitched_id, "stitched card never appears as plus")
+
+
+func _test_choice_map_integration_and_canonical_authoring() -> void:
+	var cases: Array = [
+		{
+			"base": "warden_iron_hem", "plus": "warden_iron_hem_plus", "owner": "warden",
+			"cost": 2, "plus_cost": 1, "effects": {"block": 14}, "plus_effects": {"block": 14}
+		},
+		{
+			"base": "seamstress_running_stitch", "plus": "seamstress_running_stitch_plus", "owner": "seamstress",
+			"cost": 1, "plus_cost": 1, "effects": {"damage": 2, "bleed": 3}, "plus_effects": {"damage": 3, "bleed": 4}
+		},
+		{
+			"base": "tinker_rivet_shot", "plus": "tinker_rivet_shot_plus", "owner": "tinker",
+			"cost": 1, "plus_cost": 1, "effects": {"damage": 4, "exposed": 1}, "plus_effects": {"damage": 6, "exposed": 1}
+		},
+		{
+			"base": "tinker_bobbin_cannon", "plus": "tinker_bobbin_cannon_plus", "owner": "tinker",
+			"cost": 3, "plus_cost": 3, "effects": {"damage": 20}, "plus_effects": {"damage": 26}
+		},
+	]
+
+	for tc_raw: Variant in cases:
+		var tc: Dictionary = tc_raw
+		var base_id: String = tc["base"]
+		var plus_id: String = tc["plus"]
+		var owner: String = tc["owner"]
+
+		var stitched: Dictionary = _earned_mixed_ledger()
+		if not stitched.get("ok", false):
+			return
+		var deck: Array = stitched["deck"].duplicate(true)
+		var descriptors: Dictionary = stitched["descriptors"].duplicate(true)
+		var cursor: int = stitched["next_stitch_id"]
+		var comp_id: String = stitched["stitched_id"]
+
+		var idx_first: int = deck.size()
+		deck.append(base_id)
+		deck.append(plus_id)
+		var idx_second: int = deck.size()
+		deck.append(base_id)
+		var pristine_deck: Array = deck.duplicate(true)
+		var pristine_desc: Dictionary = descriptors.duplicate(true)
+
+		var proj: Dictionary = RunRestCardUpgrade.list_authored_choices(deck, descriptors, cursor)
+		_check(_is_ok(proj), base_id + ": projection ok")
+		var choices: Array = proj.get("choices", [])
+		var permitted: Dictionary = proj.get("permitted_upgrades", {})
+
+		var matched_choices: Array = []
+		for c_raw: Variant in choices:
+			var c: Dictionary = c_raw
+			if c.get("source_id") == base_id:
+				matched_choices.append(c)
+				_check(c.get("plus_id") == plus_id, base_id + ": canonical plus ID matches")
+				_check(c.get("owner") == owner, base_id + ": catalog owner matches")
+				_check(c.get("cost") == tc["cost"], base_id + ": authored base cost matches")
+				_check(c.get("plus_cost") == tc["plus_cost"], base_id + ": authored plus cost matches")
+				_check(c.get("effects") == tc["effects"], base_id + ": authored base effects match")
+				_check(c.get("plus_effects") == tc["plus_effects"], base_id + ": authored plus effects match")
+
+		_check(matched_choices.size() == 2, base_id + ": both copies appear as choices")
+		_check(matched_choices[0].get("index") == idx_first and matched_choices[1].get("index") == idx_second,
+			base_id + ": choices record original indices")
+
+		seed(RNG_SEED)
+		var pre_rng: int = randi()
+		seed(RNG_SEED)
+
+		var visit: RunRestCardUpgrade = RunRestCardUpgrade.new(deck, permitted, descriptors, cursor)
+		_check(not visit.is_consumed(), base_id + ": fresh visit starts unconsumed")
+
+		var result: Dictionary = visit.choose_upgrade(idx_second)
+		_check(_is_ok(result), base_id + ": choose_upgrade on second copy succeeds")
+		_check(visit.is_consumed(), base_id + ": visit latches after single choice")
+		_check(result.get("original_id") == base_id and result.get("upgraded_id") == plus_id,
+			base_id + ": result IDs match")
+
+		var res_deck: Array = result.get("deck", [])
+		_check(res_deck[idx_second] == plus_id, base_id + ": chosen index upgraded to plus")
+		_check(res_deck[idx_first] == base_id, base_id + ": unchosen duplicate copy remains base")
+		_check(res_deck[deck.find(comp_id)] == comp_id, base_id + ": stitched composite unchanged")
+		_check(_decks_equal(deck, pristine_deck), base_id + ": caller deck untouched")
+		_check(descriptors == pristine_desc, base_id + ": caller descriptors untouched")
+
+		_assert_rejected_while_used(visit, idx_first, pristine_deck, base_id + ": second selection denied")
+
+		var non_strike: int = _first_non_strike(deck)
+		if non_strike >= 0 and deck[non_strike] != base_id and deck[non_strike] != comp_id:
+			var starter_attempt_visit: RunRestCardUpgrade = RunRestCardUpgrade.new(deck, permitted, descriptors, cursor)
+			_assert_rejected(starter_attempt_visit, non_strike, pristine_deck,
+				base_id + ": non-upgradeable starter cannot be upgraded with canonical map")
+
+		_check(randi() == pre_rng, base_id + ": visit consumed zero RNG draws")
+
+
+func _test_list_authored_choices_negative_and_isolation() -> void:
+	var valid_deck: Array[String] = _load_starter_deck()
+	var valid_copy: Array = valid_deck.duplicate(true)
+
+	var bad_inputs: Array = [
+		{"desc": "null deck", "deck": null, "reg": null, "cursor": null},
+		{"desc": "empty deck", "deck": [], "reg": null, "cursor": null},
+		{"desc": "string deck", "deck": "warden_strike", "reg": null, "cursor": null},
+		{"desc": "integer deck", "deck": 42, "reg": null, "cursor": null},
+		{"desc": "deck with integer element", "deck": [valid_deck[0], 42], "reg": null, "cursor": null},
+		{"desc": "deck with empty string", "deck": [valid_deck[0], ""], "reg": null, "cursor": null},
+		{"desc": "deck with null element", "deck": [valid_deck[0], null], "reg": null, "cursor": null},
+		{"desc": "deck with unknown card ID", "deck": [valid_deck[0], "unauthored_card_xyz"], "reg": null, "cursor": null},
+		{"desc": "deck with forged pool plus", "deck": [valid_deck[0], "warden_forged_hem_plus"], "reg": null, "cursor": null},
+		{"desc": "deck with fake tinker plus", "deck": [valid_deck[0], "tinker_rivet_shot_plus_fake"], "reg": null, "cursor": null},
+		{"desc": "stitched card without descriptors", "deck": [valid_deck[0], "stitched_000001"], "reg": null, "cursor": null},
+		{"desc": "stitched card with empty registry", "deck": [valid_deck[0], "stitched_000001"], "reg": {}, "cursor": 2},
+		{"desc": "stitched card with stale cursor", "deck": [valid_deck[0], "stitched_000001"], "reg": {"stitched_000001": {}}, "cursor": 1},
+		{"desc": "stitched card with float cursor", "deck": [valid_deck[0], "stitched_000001"], "reg": {}, "cursor": 2.5},
+		{"desc": "stitched card with string cursor", "deck": [valid_deck[0], "stitched_000001"], "reg": {}, "cursor": "2"},
+	]
+
+	for bi_raw: Variant in bad_inputs:
+		var bi: Dictionary = bi_raw
+		var res: Dictionary = RunRestCardUpgrade.list_authored_choices(bi["deck"], bi["reg"], bi["cursor"])
+		_check(_is_rejected(res), "negative test (" + str(bi["desc"]) + ") returns rejected")
+		_check(res.get("choices") == [], "negative test (" + str(bi["desc"]) + ") returns empty choices")
+		_check(res.get("permitted_upgrades") == {}, "negative test (" + str(bi["desc"]) + ") returns empty permitted_upgrades")
+
+	var mutable_deck: Array = valid_deck.duplicate(true)
+	mutable_deck.append("warden_iron_hem")
+	var mutable_copy: Array = mutable_deck.duplicate(true)
+
+	var proj_1: Dictionary = RunRestCardUpgrade.list_authored_choices(mutable_deck)
+	_check(_is_ok(proj_1), "isolation base projection succeeds")
+	mutable_deck.append("tinker_bobbin_cannon")
+	mutable_deck[0] = "warden_brace"
+	_check(proj_1.get("choices", []).size() >= 1, "projection retained independent choices")
+
+	var choices_1: Array = proj_1.get("choices", [])
+	choices_1.clear()
+	choices_1.append({"tampered": true})
+	var perm_1: Dictionary = proj_1.get("permitted_upgrades", {})
+	perm_1.clear()
+	perm_1["tampered"] = true
+
+	var proj_2: Dictionary = RunRestCardUpgrade.list_authored_choices(mutable_copy)
+	_check(_is_ok(proj_2), "second independent projection succeeds")
+	_check(not proj_2.get("permitted_upgrades", {}).has("tampered"), "second projection has no tampered key")
+	_check(proj_2.get("choices", []).size() >= 1, "second projection choices not cleared")
+
+	var replay_a: Dictionary = RunRestCardUpgrade.list_authored_choices(valid_deck)
+	var replay_b: Dictionary = RunRestCardUpgrade.list_authored_choices(valid_copy)
+	_check(replay_a == replay_b, "list_authored_choices replays deterministically on identical input")
+
+	seed(RNG_SEED)
+	var exp_rng: int = randi()
+	seed(RNG_SEED)
+	RunRestCardUpgrade.list_authored_choices(valid_deck)
+	RunRestCardUpgrade.list_authored_choices(null)
+	RunRestCardUpgrade.list_authored_choices([])
+	_check(randi() == exp_rng, "list_authored_choices leaves global RNG stream unconsumed")
