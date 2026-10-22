@@ -1,0 +1,12 @@
+[
+  {"enemy_position":1,"pattern":[
+    {"type":"debuff","amount":1,"target_position":3,"status":"exposed"},
+    {"type":"shove","amount":0,"target_position":3,"direction":-1},
+    {"type":"block","amount":3}
+  ]},
+  {"enemy_position":2,"pattern":[
+    {"type":"attack","amount":4,"target_position":3},
+    {"type":"debuff","amount":1,"target_position":2,"status":"weak"},
+    {"type":"attack","amount":3,"target_position":1}
+  ]}
+]
