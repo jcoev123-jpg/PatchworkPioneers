@@ -194,7 +194,11 @@ func _run() -> void:
 				var button: Button = app.reward_buttons[index]
 				_check(not button.disabled and button.is_visible_in_tree()
 					and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "live reward fits viewport")
-				_check((button.get_parent().get_node("OwnerLabel").text == expected.offers[index].owner.capitalize() and button.get_parent().get_node("IdLabel").text == expected.offers[index].id if index < 3 else button.text == "Skip \u2014 take no card"), "actual offer/Skip visible")
+				if index < 3:
+					var def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(expected.offers[index].id)
+					_check(button.get_parent().get_node("OwnerLabel").text == expected.offers[index].owner.capitalize() and button.get_parent().get_node("NameLabel").text == def.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == def.get("rarity", "").capitalize(), "actual offer visible")
+				else:
+					_check(button.text == "Skip — take no card", "actual Skip visible")
 			var before := _settlement_state()
 			for repeat in range(3):
 				app._observe_battle_result()
