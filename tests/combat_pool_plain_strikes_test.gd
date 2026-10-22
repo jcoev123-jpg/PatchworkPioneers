@@ -22,6 +22,8 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_replay()
 	_test_catalog_unchanged()
+	_test_worn_pincushion_plain_strikes()
+	_test_worn_pincushion_plain_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_pool_plain_strikes_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -644,3 +646,140 @@ func _test_catalog_unchanged() -> void:
 	for id in IDS:
 		_check(_definition(id) == _catalog_before[id],
 			id + " unchanged after all real plays and rejected calls")
+
+## Genuine authored ARM metadata and full run wardrobes keep detached combat
+## damage projection independent of the Shop ledger and other patch powers.
+func _pincushion_context(party: CombatParty, wearer: String,
+		owned: bool = true) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array and raw.size() >= 2, "authored patch metadata available")
+	var definitions: Array = []
+	for entry in raw:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+		["pincushion_arm"] if owned else [], definitions, 2)
+	_check(torn.is_valid() and wardrobe.is_valid(), "plain patch genuine run ledgers valid")
+	if owned:
+		var sewn: Dictionary = wardrobe.sew("pincushion_arm", wearer, "ARM",
+			"sew_arm", wardrobe.get_snapshot())
+		_check(sewn.get("ok", false) and sewn["state"]["worn"][wearer]["ARM"] == "pincushion_arm",
+			"valid unique ARM assignment on named real wearer")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _test_worn_pincushion_plain_strikes() -> void:
+	for id in IDS:
+		var owner: String = "warden" if id.begins_with("warden_") else "seamstress"
+		var owner_pos: int = 1 if owner == "warden" else 2
+		var definition: Dictionary = _definition(id)
+		var raw: int = definition["effects"]["damage"]
+		var block: int = definition["effects"].get("block", 0)
+		for mode in ["normal", "weak", "exposed", "pinned", "weak_exposed_pin"]:
+			var party := _party()
+			var ctx := _pincushion_context(party, owner)
+			var resolver := CombatPoolPlainStrikes.new()
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+				and resolver._patches.damage_bonus(owner) == 1
+				and resolver._patches.damage_bonus("tinker") == 0,
+				id + " real sewn projection wearer-only")
+			var pinned := CombatPinned.new()
+			var foes := _enemies([80, 80, 80])
+			if mode in ["weak", "weak_exposed_pin"]:
+				party._heroes[owner_pos - 1]["statuses"] = {"weak": 1}
+			if mode in ["exposed", "weak_exposed_pin"]:
+				foes._enemies[0]["statuses"] = {"exposed": 1}
+			if mode in ["pinned", "weak_exposed_pin"]:
+				var other_owner := "seamstress" if owner == "warden" else "warden"
+				_check(pinned.pin_enemy(foes, 1, other_owner),
+					id + " foreign-source pin active before damage")
+			_check(foes.gain_block(1, 3), id + " enemy starts with actual Block")
+			var deck := _deck([id])
+			var previous := _snapshot(deck, party, foes, pinned)
+			var pinned_bonus: int = 5 if mode in ["pinned", "weak_exposed_pin"] else 0
+			var damage: int = CombatStatuses.new().adjusted_attack_damage(
+				raw + pinned_bonus + 1, party.get_hero(owner_pos).get("statuses", {}),
+				foes.get_enemy(1).get("statuses", {}))
+			var absorbed: int = mini(3, damage)
+			var loss: int = damage - absorbed
+			var result: Dictionary = resolver.play_card(deck, party, foes, id, 1, pinned)
+			var expected_blocks: Dictionary = {}
+			if block > 0:
+				expected_blocks[owner_pos] = block
+			_check(result == {"ok": true, "hits": [{
+				"position": 1, "damage": damage, "block_absorbed": absorbed,
+				"hp_loss": loss, "statuses": {}
+			}], "block_deltas": expected_blocks},
+				id + " " + mode + " exact wearer bonus before status, pin and Block")
+			_check(foes.get_enemy(1)["hp"] == 80 - loss
+				and foes.get_enemy(1)["block"] == 3 - absorbed
+				and party.get_hero(owner_pos)["block"] == block,
+				id + " " + mode + " applies exact HP and unmodified own Block")
+			_check(deck.energy == previous["energy"] - definition["cost"]
+				and deck.discard_pile.has(id) and deck._rng.state == previous["rng_state"]
+				and ctx.wardrobe.get_snapshot()["worn"][owner]["ARM"] == "pincushion_arm",
+				id + " " + mode + " spends only authored energy, no RNG or patch mutation")
+			_check(pinned.pinner_for_enemy(1).is_empty()
+				and party.get_hero(owner_pos).get("statuses", {}) == previous["heroes"][owner_pos - 1].get("statuses", {}),
+				id + " " + mode + " consumed foreign pin if any, preserved owner statuses")
+
+	# A patch sewn on another wearer (including a torn wearer) changes nothing.
+	for owner in ["warden", "seamstress"]:
+		var id := "seamstress_thread_whip" if owner == "warden" else "warden_brass_buckle"
+		for mode in ["other", "unsown", "torn"]:
+			var party := _party()
+			var ctx := _pincushion_context(party, owner, mode != "unsown")
+			if mode == "torn":
+				var start: Array = ctx.torn.read_state()["heroes"]
+				var owner_pos: int = 1 if owner == "warden" else 2
+				_check(party.apply_damage(owner_pos, 999) and party.is_downed(owner_pos),
+					"other wearer truly downed")
+				_check(ctx.torn.observe_battle_end("tear", start, party.get_heroes())["ok"],
+					"run torn ledger records wearer down")
+				_check(ctx.wardrobe.project_active(ctx.torn.read_state())["active"][owner].is_empty(),
+					"torn wearer patch dormant in projection")
+			var resolver := CombatPoolPlainStrikes.new()
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+				and resolver._patches.damage_bonus("warden" if owner == "seamstress" else "seamstress") == 0,
+				mode + " real projection lacks other owner's patch")
+			var deck := _deck([id])
+			var foes := _enemies()
+			var result: Dictionary = resolver.play_card(deck, party, foes, id, 1)
+			_check(result.get("ok", false)
+				and result["hits"][0]["damage"] == _definition(id)["effects"]["damage"],
+				id + " " + mode + " never inherits another wearer's +1")
+
+
+func _test_worn_pincushion_plain_rejections() -> void:
+	for id in ["warden_brass_buckle", "seamstress_thread_whip_plus"]:
+		var owner := "warden" if id.begins_with("warden_") else "seamstress"
+		var party := _party()
+		var ctx := _pincushion_context(party, owner)
+		var resolver := CombatPoolPlainStrikes.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+			id + " initial explicit real binding accepted")
+		var deck := _deck([id])
+		var foes := _enemies()
+		var pin := CombatPinned.new()
+		_check(pin.pin_enemy(foes, 1, "tinker"), id + " real foreign pin established")
+		_check(not resolver.bind_patch_wardrobe(null, ctx.torn)
+			and not resolver._patches.is_valid(), id + " failed explicit binding remains invalid")
+		var before := _snapshot(deck, party, foes, pin)
+		_check(resolver.play_card(deck, party, foes, id, 1, pin)
+			== {"ok": false, "hits": [], "block_deltas": {}}
+			and _snapshot(deck, party, foes, pin) == before,
+			id + " invalid patch binding denies without spending, consuming pin or RNG")
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+			id + " valid rebind restores explicit projected authority")
+		_check(deck.try_spend_energy(3), id + " exhausted energy precondition")
+		before = _snapshot(deck, party, foes, pin)
+		_check(not resolver.play_card(deck, party, foes, id, 1, pin)["ok"]
+			and _snapshot(deck, party, foes, pin) == before,
+			id + " low energy fails closed with patch and pin")
+		deck.energy = 3
+		deck.combat_state.energy = 3
+		before = _snapshot(deck, party, foes, pin)
+		_check(not resolver.play_card(deck, party, foes, id, 3, pin)["ok"]
+			and _snapshot(deck, party, foes, pin) == before,
+			id + " illegal position fails closed with patch and pin")

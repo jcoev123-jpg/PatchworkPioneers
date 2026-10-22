@@ -17,6 +17,9 @@ func _initialize() -> void:
 	_test_cross_owner_follow_up_cases()
 	_test_ricochet_pinned_cases()
 	_test_atomic_rejections()
+	_test_worn_pincushion_attacks()
+	_test_worn_pincushion_ricochet_lethal_and_rejections()
+	_test_worn_pincushion_foreign_pins()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_attacks_test: ",
@@ -962,3 +965,283 @@ func _test_atomic_rejections() -> void:
 		"already victorious before play precondition")
 	_reject_pinned(resolver_pinned, _deck([id]), _party(), empty_pinned_enemies, first, pinned_all,
 		"Ricochet with empty living targets before play", id, 0)
+
+## Construct the real sewn run ledger, not a synthetic or manually populated projection.
+func _pincushion_context(party: CombatParty, wearer: String = "tinker",
+		owned: bool = true) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array and raw.size() >= 2, "authored M04 attack patch metadata parsed")
+	var definitions: Array = []
+	for entry in raw:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+		["pincushion_arm"] if owned else [], definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine three-hero run patch ledgers valid")
+	if owned:
+		var sewn: Dictionary = wardrobe.sew("pincushion_arm", wearer, "ARM",
+			"sew_pincushion", wardrobe.get_snapshot())
+		_check(sewn.get("ok", false) and sewn["state"]["worn"][wearer]["ARM"] == "pincushion_arm",
+			"unique authored ARM patch sewn on actual wearer")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _test_worn_pincushion_attacks() -> void:
+	# Every base and upgrade uses its own catalog damage and applies +1 on every hit.
+	for row in _rows():
+		for upgrade in [false, true]:
+			var id: String = row["base"] + ("_plus" if upgrade else "")
+			var definition: Dictionary = TinkerPoolCards.new().get_definition(id)
+			var raw_damage: int = definition["effects"]["damage"]
+			var first := CombatTinkerFirstAttack.new()
+			var pinned := CombatPinned.new()
+			var resolver := CombatTinkerPoolAttacks.new(first, pinned)
+			var party := _party()
+			var ctx := _pincushion_context(party)
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+				and resolver._patches.damage_bonus("tinker") == 1
+				and resolver._patches.damage_bonus("warden") == 0,
+				id + " binds live-wearer-only patch projection")
+			var foes := _enemies([100, 100, 100])
+			# Weak and Exposed run through the actual authoritative rosters.
+			party._heroes[2]["statuses"] = {"weak": 1}
+			foes._enemies[0]["statuses"] = {"exposed": 1}
+			_check(foes.gain_block(1, 2) and foes.gain_block(2, 3),
+				id + " blocked enemies prepared")
+			var deck := _deck([id], 39)
+			var before := _snapshot(deck, party, foes, first)
+			var expected_roster: Array = before["enemies"].duplicate(true)
+			var positions: Array[int] = []
+			if row["kind"] == "enemy_single":
+				positions.assign([1])
+			elif row["kind"] == "enemy_all":
+				positions.assign([1, 2, 3])
+			else:
+				var random_oracle: Dictionary = _oracle_random(before["rng"], foes.get_enemies(),
+					raw_damage + 3 + 1, {"weak": 1}, 3)
+				positions.assign(random_oracle["positions"])
+			var expected_hits: Array = []
+			for position in positions:
+				var actor: Dictionary = expected_roster[position - 1]
+				var damage: int = CombatStatuses.new().adjusted_attack_damage(raw_damage + 3 + 1,
+					{"weak": 1}, actor.get("statuses", {}))
+				var absorbed: int = mini(actor["block"], damage)
+				var lost: int = mini(actor["hp"], damage - absorbed)
+				actor["block"] -= absorbed
+				actor["hp"] -= lost
+				var applied: Dictionary = {}
+				if row["base"] == "tinker_rivet_shot":
+					applied = {"exposed": 1}
+					actor["statuses"]["exposed"] = actor["statuses"].get("exposed", 0) + 1
+				var hit: Dictionary = {"position": position, "damage": damage,
+					"block_absorbed": absorbed, "hp_loss": lost, "statuses": applied}
+				if row["base"] == "tinker_spring_trap":
+					hit["pinned"] = true
+				expected_hits.append(hit)
+			var result: Dictionary = resolver.play_attack(deck, party, foes, id,
+				1 if row["kind"] == "enemy_single" else 0)
+			_check(result == {"ok": true, "hits": expected_hits},
+				id + " exact patched ordered hit and status arithmetic")
+			_check(foes.get_enemies() == expected_roster and party.get_heroes() == before["party"],
+				id + " patched HP/Block/owner status transition matches independent oracle")
+			_check(deck.energy == 3 - definition["cost"] and deck.discard_pile == [id]
+				and first._consumed and ctx.wardrobe.get_snapshot()["worn"]["tinker"]["ARM"] == "pincushion_arm",
+				id + " single spend, first passive latch and unchanged wardrobe")
+			if row["kind"] == "enemy_random":
+				var oracle: Dictionary = _oracle_random(before["rng"], before["enemies"],
+					raw_damage + 4, {"weak": 1}, 3)
+				_check(deck._rng.state == oracle["state"] and positions == oracle["positions"],
+					id + " seeded Ricochet draws exactly as patched simulation")
+			else:
+				_check(deck._rng.state == before["rng"], id + " patched nonrandom cast draws no RNG")
+			if row["base"] == "tinker_spring_trap":
+				_check(pinned.pinner_for_enemy(1) == "tinker",
+					id + " preserved Spring Trap pin effect")
+
+	# Second Tinker attack in the same turn has +1 patch but no +3 passive.
+	var party := _party()
+	var ctx := _pincushion_context(party)
+	var first := CombatTinkerFirstAttack.new()
+	var resolver := CombatTinkerPoolAttacks.new(first)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "double-attack bind")
+	var deck := _deck(["tinker_long_barrel", "tinker_rivet_shot"])
+	var foes := _enemies([100])
+	var a: Dictionary = resolver.play_attack(deck, party, foes, "tinker_long_barrel", 1)
+	var b: Dictionary = resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 1)
+	_check(a["ok"] and a["hits"][0]["damage"] == 16 and b["ok"]
+		and b["hits"][0]["damage"] == 5 and first._consumed and foes.get_enemy(1)["hp"] == 79,
+		"first +3 applies once, permanent +1 remains on second attack without early Exposed")
+
+	# Different wearer and owned-but-unsown patch never leaks to Tinker.
+	for mode in ["warden", "absent", "torn_warden"]:
+		party = _party()
+		ctx = _pincushion_context(party, "warden", mode != "absent")
+		if mode == "torn_warden":
+			var start: Array = ctx.torn.read_state()["heroes"]
+			_check(party.apply_damage(1, 999) and party.is_downed(1),
+				"torn other-wearer actually downed in CombatParty")
+			_check(ctx.torn.observe_battle_end("tear_warden", start, party.get_heroes())["ok"],
+				"torn ledger records downed other wearer")
+		resolver = CombatTinkerPoolAttacks.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+			and resolver._patches.damage_bonus("tinker") == 0,
+			mode + " valid projection grants no Tinker bonus")
+		deck = _deck(["tinker_long_barrel"])
+		foes = _enemies()
+		var result: Dictionary = resolver.play_attack(deck, party, foes, "tinker_long_barrel", 1)
+		_check(result.get("ok", false) and result["hits"][0]["damage"] == 15,
+			mode + " retains unpatched first-attack +3 damage")
+
+
+func _test_worn_pincushion_ricochet_lethal_and_rejections() -> void:
+	# A +1-patched first hit kills enemy 1 where the unpatched one would not;
+	# preflight must then draw hit 2 from only survivors, with identical run RNG.
+	for upgrade in [false, true]:
+		var id := "tinker_ricochet_plus" if upgrade else "tinker_ricochet"
+		var first_damage: int = 10 if upgrade else 8
+		var selected_seed := -1
+		for trial in range(1, 100):
+			var check_rng := RandomNumberGenerator.new()
+			check_rng.seed = trial
+			if check_rng.randi_range(0, 2) == 0:
+				selected_seed = trial
+				break
+		_check(selected_seed > 0, "seed selects patch-lethal enemy 1 first")
+		var replay: Dictionary = {}
+		for attempt in 2:
+			var party := _party()
+			var ctx := _pincushion_context(party)
+			var first := CombatTinkerFirstAttack.new()
+			var resolver := CombatTinkerPoolAttacks.new(first)
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "Ricochet valid sewn bind")
+			var deck := _deck([id], selected_seed)
+			var foes := _enemies([first_damage, 50, 50])
+			var oracle: Dictionary = _oracle_random(deck._rng.state, foes.get_enemies(),
+				first_damage, {}, 3)
+			var result: Dictionary = resolver.play_attack(deck, party, foes, id)
+			var picks: Array[int] = []
+			for hit in result.get("hits", []):
+				picks.append(hit["position"])
+			_check(result.get("ok", false) and picks == oracle["positions"]
+				and picks.size() == 3 and picks[0] == 1
+				and not picks.slice(1).has(1) and foes.is_slain(1),
+				id + " patched hit-1 lethal recomputes living target pool")
+			_check(foes.get_enemies() == oracle["roster"] and deck._rng.state == oracle["state"]
+				and deck.energy == 2 and first._consumed,
+				id + " preflight and commit share exact patched selection and RNG")
+			var outcome := {"result": result, "foes": foes.get_enemies(), "rng": deck._rng.state}
+			if attempt == 0:
+				replay = outcome
+			else:
+				_check(outcome == replay, id + " patch lethal full seeded replay")
+
+	# A failed explicit binding cannot turn into a playable unpatched resolver.
+	var party := _party()
+	var ctx := _pincushion_context(party)
+	var first := CombatTinkerFirstAttack.new()
+	var resolver := CombatTinkerPoolAttacks.new(first, CombatPinned.new())
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "reject fixture bound initially")
+	var deck := _deck(["tinker_ricochet"])
+	var foes := _enemies()
+	_check(not resolver.bind_patch_wardrobe(null, ctx.torn)
+		and not resolver._patches.is_valid(), "invalid explicit patch binding fails closed")
+	var before := _snapshot(deck, party, foes, first)
+	_check(resolver.play_attack(deck, party, foes, "tinker_ricochet") == {"ok": false, "hits": []}
+		and _snapshot(deck, party, foes, first) == before,
+		"invalid binding preserves cards, RNG, party, foes, pinned and first latch")
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+		"valid rebind can recover explicitly")
+	_check(deck.try_spend_energy(3), "energy-negative precondition really spent energy")
+	before = _snapshot(deck, party, foes, first)
+	_check(not resolver.play_attack(deck, party, foes, "tinker_ricochet")["ok"]
+		and _snapshot(deck, party, foes, first) == before,
+		"patched Ricochet insufficient energy is atomic")
+	deck.energy = 3
+	deck.combat_state.energy = 3
+	before = _snapshot(deck, party, foes, first)
+	_check(not resolver.play_attack(deck, party, foes, "tinker_ricochet", 4)["ok"]
+		and _snapshot(deck, party, foes, first) == before,
+		"patched Ricochet invalid target cannot partially hit or draw RNG")
+
+func _test_worn_pincushion_foreign_pins() -> void:
+	# Patched area damage combines +1 and foreign Pinned +5 before both status floors.
+	var party := _party()
+	var ctx := _pincushion_context(party)
+	var pinned := CombatPinned.new()
+	var first := CombatTinkerFirstAttack.new()
+	var resolver := CombatTinkerPoolAttacks.new(first, pinned)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+		"patched Scatter binds authentic wardrobe")
+	var foes := _enemies([70, 70, 70])
+	var deck := _deck(["tinker_scatter_bolts"])
+	party._heroes[2]["statuses"] = {"weak": 1}
+	foes._enemies[0]["statuses"] = {"exposed": 1}
+	_check(foes.gain_block(1, 3), "foreign-pinned exposed target has 3 Block")
+	_check(pinned.pin_enemy(foes, 1, "warden") and pinned.pin_enemy(foes, 2, "tinker"),
+		"foreign and same-owner pins exist before Scatter")
+	var rng_before: int = deck._rng.state
+	var actual: Dictionary = resolver.play_attack(deck, party, foes, "tinker_scatter_bolts")
+	var expected_first: int = CombatStatuses.new().adjusted_attack_damage(3 + 3 + 1 + 5,
+		{"weak": 1}, {"exposed": 1})
+	var expected_rest: int = CombatStatuses.new().adjusted_attack_damage(3 + 3 + 1,
+		{"weak": 1}, {})
+	_check(actual == {"ok": true, "hits": [
+		{"position": 1, "damage": expected_first, "block_absorbed": 3,
+			"hp_loss": expected_first - 3, "statuses": {}},
+		{"position": 2, "damage": expected_rest, "block_absorbed": 0,
+			"hp_loss": expected_rest, "statuses": {}},
+		{"position": 3, "damage": expected_rest, "block_absorbed": 0,
+			"hp_loss": expected_rest, "statuses": {}}]},
+		"patched Scatter applies +1 per hit and foreign +5 once before Weak/Exposed")
+	_check(pinned.pinner_for_enemy(1).is_empty() and pinned.pinner_for_enemy(2) == "tinker"
+		and deck._rng.state == rng_before and first._consumed,
+		"foreign pin consumed but same-owner pin and RNG preserved")
+	_check(foes.get_enemy(1)["hp"] == 70 - expected_first + 3
+		and foes.get_enemy(2)["hp"] == 70 - expected_rest
+		and foes.get_enemy(3)["hp"] == 70 - expected_rest,
+		"patched Scatter roster matches cross-owner hit arithmetic")
+
+	# Sequential Ricochet preflight also snapshots and consumes foreign Pinned
+	# on its actual picked target, never on an unchosen slot.
+	for id in ["tinker_ricochet", "tinker_ricochet_plus"]:
+		var raw: int = TinkerPoolCards.new().get_definition(id)["effects"]["damage"]
+		var seed := -1
+		for trial in range(1, 100):
+			var rng := RandomNumberGenerator.new()
+			rng.seed = trial
+			if rng.randi_range(0, 2) == 0:
+				seed = trial
+				break
+		_check(seed > 0, "seed picks foreign-pinned slot first")
+		var reference: Dictionary = {}
+		for repeat in 2:
+			party = _party()
+			ctx = _pincushion_context(party)
+			pinned = CombatPinned.new()
+			first = CombatTinkerFirstAttack.new()
+			resolver = CombatTinkerPoolAttacks.new(first, pinned)
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+				id + " worn Ricochet projection accepted")
+			foes = _enemies([100, 100, 100])
+			foes._enemies[0]["statuses"] = {"exposed": 1}
+			party._heroes[2]["statuses"] = {"weak": 1}
+			_check(pinned.pin_enemy(foes, 1, "seamstress")
+				and pinned.pin_enemy(foes, 2, "tinker"), "different/same-owner Ricochet pins active")
+			deck = _deck([id], seed)
+			var oracle: Dictionary = _oracle_random_pinned(deck._rng.state, foes.get_enemies(),
+				raw + 3 + 1, {"weak": 1}, 3, pinned._pinner_by_position)
+			actual = resolver.play_attack(deck, party, foes, id)
+			_check(actual == {"ok": true, "hits": oracle["hits"]}
+				and foes.get_enemies() == oracle["roster"]
+				and deck._rng.state == oracle["state"],
+				id + " exact patched Ricochet + foreign pin ordered hit and replay oracle")
+			_check(pinned._pinner_by_position == oracle["pins"]
+				and pinned.pinner_for_enemy(1).is_empty()
+				and pinned.pinner_for_enemy(2) == "tinker",
+				id + " consumes selected foreign pin only and leaves same-owner pin")
+			var outcome := {"events": actual, "roster": foes.get_enemies(), "rng": deck._rng.state}
+			if repeat == 0:
+				reference = outcome
+			else:
+				_check(reference == outcome, id + " independent patched foreign-pin replay exact")
