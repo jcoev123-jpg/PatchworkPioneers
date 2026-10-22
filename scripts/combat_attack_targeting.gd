@@ -21,9 +21,14 @@ func is_pool_strike(card_id: String) -> bool:
 	return CombatPoolPlainStrikes.SUPPORTED_IDS.has(card_id)
 
 
+## Heavy pool attacks have their own resolver, never the starter or plain-strike list.
+func is_heavy_pool_attack(card_id: String) -> bool:
+	return CombatWardenPoolHeavyAttacks.SUPPORTED_CARD_IDS.has(card_id)
+
+
 ## True for every attack this read-only preview can describe.
 func supports(card_id: String) -> bool:
-	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id)
+	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id)
 
 
 ## Exact authored pool record: catalog ID and owner must agree with the prefix.
@@ -37,6 +42,29 @@ func pool_definition(card_id: String) -> Dictionary:
 	if definition.get("id") != card_id or definition.get("owner") != owner_id:
 		return {}
 	return definition
+
+
+## Authored Warden heavy attacks: one damage packet or exactly two hits.
+func heavy_definition(card_id: String) -> Dictionary:
+	if not is_heavy_pool_attack(card_id):
+		return {}
+	var definition: Dictionary = _warden_pool.get_definition(card_id)
+	if definition.get("id") != card_id or definition.get("owner") != "warden":
+		return {}
+	return definition
+
+
+func _valid_heavy_effects(card_id: String, definition: Dictionary) -> bool:
+	var effects: Variant = definition.get("effects")
+	if not effects is Dictionary:
+		return false
+	var damage: Variant = effects.get("damage")
+	if not damage is int or damage <= 0:
+		return false
+	if card_id in [CombatWardenPoolHeavyAttacks.PIN_AND_POUND_ID,
+			CombatWardenPoolHeavyAttacks.PIN_AND_POUND_PLUS_ID]:
+		return effects.size() == 2 and effects.get("hits") is int and effects["hits"] == 2
+	return effects.size() == 1
 
 
 ## Pool records carry one damage effect and, for Brass Buckle only, its own
@@ -72,8 +100,9 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 
 	# Consult the authored catalog for all card rules, not a parallel rules table.
 	var pool := is_pool_strike(card_id)
-	var definition: Dictionary = pool_definition(card_id) if pool \
-		else StarterCards.new().get_definition(card_id)
+	var heavy := is_heavy_pool_attack(card_id)
+	var definition: Dictionary = (pool_definition(card_id) if pool else
+		heavy_definition(card_id) if heavy else StarterCards.new().get_definition(card_id))
 	if definition.is_empty():
 		return rejected
 	var owner = definition.get("owner")
@@ -92,6 +121,8 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	if target_kind != "enemy_single" and target_kind != "enemy_all":
 		return rejected
 	if pool and not _valid_pool_effects(card_id, definition):
+		return rejected
+	if heavy and not _valid_heavy_effects(card_id, definition):
 		return rejected
 	for position in from_positions:
 		if not position is int or position < 1 or position > CombatParty.PARTY_SIZE:

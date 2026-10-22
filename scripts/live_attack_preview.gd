@@ -13,6 +13,7 @@ var _targeting := CombatAttackTargeting.new()
 var _catalog := StarterCards.new()
 var _play := CombatAttackCards.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
+var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
 var _statuses := CombatStatuses.new()
 var _on_hit := CombatOnHitStatuses.new()
 var last_event: Dictionary = {}
@@ -258,10 +259,12 @@ func _single(panel) -> bool:
 	return _definition(_card_id(panel)).get("target_kind") == "enemy_single"
 
 
-## Starter attacks and reward-pool strikes have separate authored catalogs.
+## Starter, plain-strike and heavy-pool attacks use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
 	if _targeting.is_pool_strike(card_id):
 		return _targeting.pool_definition(card_id)
+	if _targeting.is_heavy_pool_attack(card_id):
+		return _targeting.heavy_definition(card_id)
 	return _catalog.get_definition(card_id)
 
 
@@ -324,6 +327,10 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		if forecast:
 			return _pool_forecast(party, enemies, id)
 		return _pool_strikes.play_card(_deck, party, enemies, id, position)
+	if _targeting.is_heavy_pool_attack(id):
+		if forecast:
+			return _heavy_forecast(party, enemies, id)
+		return _heavy_attacks.play_attack(_deck, party, enemies, id, position)
 	var owner_statuses: Dictionary = {}
 	var owner: String = _catalog.get_definition(id).get("owner", "")
 	for hero in party.get_heroes():
@@ -379,6 +386,19 @@ func _pool_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> D
 		hits.append({"position": position,
 			"damage": _statuses.adjusted_attack_damage(damage, owner_statuses, defender)})
 	return {"playable": true, "requires_selection": true, "hits": hits}
+
+
+## Identical read-only damage preview, but express Pin and Pound as two
+## sequential hits on the chosen target, not a single damage packet.
+func _heavy_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := _pool_forecast(party, enemies, id)
+	if not preview.playable:
+		return preview
+	var effects: Dictionary = _definition(id).get("effects", {})
+	var count: int = int(effects.get("hits", 1))
+	for hit in preview.hits:
+		hit["hit_count"] = count
+	return preview
 
 
 ## Same shape rules as the shared status services: only known, non-negative ints.
@@ -553,6 +573,7 @@ func _refresh() -> void:
 				cue.text = "Unavailable stitched outcome; Esc: cancel"
 		return
 	var is_pool := _targeting.is_pool_strike(id)
+	var is_heavy := _targeting.is_heavy_pool_attack(id)
 	var definition := _definition(id)
 	if definition.is_empty():
 		# Fail closed on an unrecognised record instead of formatting a partial card.
@@ -563,14 +584,15 @@ func _refresh() -> void:
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
 	var additions: Dictionary = {}
-	if not is_pool and preview.playable:
+	if not is_pool and not is_heavy and preview.playable:
 		additions = _on_hit.status_for_confirmed_hit(id, true)
 		if _play._patches != null:
 			var patch_statuses: Dictionary = _play._patches.exposed_for_first_hit(definition.get("owner", ""))
 			for status in patch_statuses:
 				additions[status] = additions.get(status, 0) + patch_statuses[status]
 	for hit in preview.hits:
-		var detail := "%d: %d damage" % [hit.position, hit.damage]
+		var detail := ("%d: 2 hits x %d damage each" % [hit.position, hit.damage]
+			if int(hit.get("hit_count", 1)) == 2 else "%d: %d damage" % [hit.position, hit.damage])
 		var enemy: Dictionary = app.enemies.get_enemy(hit.position)
 		var current: Dictionary = enemy.get("statuses", {})
 		for status in additions:
@@ -591,7 +613,7 @@ func _refresh() -> void:
 	var controls: String
 	if not _single(_selected):
 		controls = "P: select; Enter / Space / click card: cast"
-	elif is_pool:
+	elif is_pool or is_heavy:
 		# Report exactly the slots this forecast offers, never a wider key row.
 		var legal: Array[int] = []
 		for hit in preview.hits:
