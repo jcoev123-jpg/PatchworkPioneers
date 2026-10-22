@@ -2,8 +2,8 @@ extends "res://tests/live_shop_route_entry_test.gd"
 ## Real seeded Fight -> reward -> Shop -> connected noncombat visit.
 
 
-func _continuation_fixture(kind: String, first_seed: int = 1) -> Dictionary:
-	for value in range(first_seed, 1000):
+func _continuation_fixture(kind: String, first_seed: int = 1, last_seed: int = 1000) -> Dictionary:
+	for value in range(first_seed, last_seed):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

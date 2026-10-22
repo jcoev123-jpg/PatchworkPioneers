@@ -48,15 +48,38 @@ func _reward_oracle() -> Dictionary:
 	var owners: Array = []
 	for hero in app.party.get_heroes():
 		owners.append(hero.id)
-	var pool: Array[String] = []
-	for id in catalog.get_all_card_ids():
-		if catalog.get_definition(id).owner in owners:
-			pool.append(id)
-	pool.sort()
+	var tiers: Array[String] = ["common", "uncommon", "rare"]
+	var weights := {"common": 60, "uncommon": 30, "rare": 10}
+	var buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		var owner := String(record.get("owner", ""))
+		var rarity := String(record.get("rarity", ""))
+		if owners.has(owner) and buckets.has(rarity):
+			(buckets[rarity] as Array).append(record)
+	for tier: String in tiers:
+		(buckets[tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return String(a.get("id", "")) < String(b.get("id", "")))
 	var offers: Array = []
 	for pick in range(3):
-		var id: String = pool.pop_at(rng.randi_range(0, pool.size() - 1))
-		offers.append({"id": id, "owner": catalog.get_definition(id).owner})
+		var weight_sum := 0
+		for tier: String in tiers:
+			if not (buckets[tier] as Array).is_empty():
+				weight_sum += int(weights[tier])
+		var roll: int = rng.randi_range(1, weight_sum)
+		var chosen := ""
+		var running := 0
+		for tier: String in tiers:
+			if (buckets[tier] as Array).is_empty():
+				continue
+			running += int(weights[tier])
+			if roll <= running:
+				chosen = tier
+				break
+		var bucket: Array = buckets[chosen]
+		var index := rng.randi_range(0, bucket.size() - 1)
+		var record: Dictionary = bucket[index]
+		bucket.remove_at(index)
+		offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
 	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
 	var eligible: Array[String] = []
 	for entry in authored.trinkets:

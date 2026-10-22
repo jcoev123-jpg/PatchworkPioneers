@@ -349,6 +349,15 @@ func _reward(pick: bool) -> void:
 		"real victory offers three cards and Skip")
 	if app.reward_buttons.size() != 4:
 		return
+	# Live rewards must be the authored weighted D2-1 base pools, never the old
+	# unweighted starter fallback.
+	var authored_bases := {}
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		authored_bases[String(record.get("id", ""))] = String(record.get("owner", ""))
+	for offer: Dictionary in app.fight_reward_offers:
+		_check(authored_bases.get(String(offer.id), "") == String(offer.owner)
+			and not StarterCards.new().has_card(String(offer.id)),
+			"mounted victory offers only authored base pool cards")
 	var expected: Array = app.run_deck.duplicate()
 	var chosen: String = app.fight_reward_offers[0].id if pick else ""
 	if pick:

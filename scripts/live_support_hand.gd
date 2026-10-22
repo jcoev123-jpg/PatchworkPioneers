@@ -2,7 +2,7 @@ extends Node
 ## Input/presentation only. Support and movement services own effects and charges.
 
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
-const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up"]
+const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus"]
 const TABLE_ID := "SupportTableBacking"
 const TABLE_HELP := "Sewing table: Up/Down, Enter plays"
 const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space to play it. " \
@@ -24,6 +24,7 @@ var help_label: Label
 var backing: Control
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
+var _block_cards := CombatWardenPoolBlockCards.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 
 
@@ -185,6 +186,28 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+## True only for the five resolved Warden pure-Block pool records and their '+' forms.
+## The resolver's kind table is the authority, so a future catalog entry cannot be
+## admitted by a stale local list.
+func _is_block_card(card_id: String) -> bool:
+	var base_id := card_id.trim_suffix("_plus")
+	return CombatWardenPoolBlockCards.SUPPORTED_KINDS.has(base_id) \
+		and (card_id == base_id or card_id == base_id + "_plus")
+
+
+func _is_actionable(card_id: String) -> bool:
+	return card_id in SUPPORT_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id)
+
+
+## One entry point keeps starter support and pool Block cards on the same commit path.
+func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int) -> bool:
+	if _is_block_card(card_id):
+		if _block_cards == null:
+			return false
+		return bool(_block_cards.play_card(deck, party, card_id, position).get("ok", false))
+	return _play != null and _play.play_card(deck, party, card_id, position)
+
+
 func _sync_battle() -> void:
 	var app = get_parent()
 	if app.deck == null or not is_instance_valid(app.battle_view):
@@ -196,6 +219,7 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_party = app.party
 		_play = CombatStarterSupportPlay.new()
+		_block_cards = CombatWardenPoolBlockCards.new()
 		var carry = app.party_carryover
 		if carry is RunTornCarryover and carry._wardrobe != null:
 			var state: Dictionary = carry._wardrobe.get_snapshot()
@@ -246,7 +270,7 @@ func _sync_battle() -> void:
 	energy_label.text = "Energy\n%d" % _deck.energy
 	help_label.text = TABLE_HELP
 	if _pending.get("choosing", false):
-		help_label.text = "%s: choose a living ally | Esc: cancel" % StarterCards.new().get_definition(_pending.id).display_name
+		help_label.text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
 	# The felt table follows the real lower controls, including every resize.
 	if is_instance_valid(backing):
 		backing.refresh_band()
@@ -259,7 +283,7 @@ func _sync_battle() -> void:
 	var actionable: Array[Control] = []
 	for panel in app.hand_view.get_children():
 		var label := panel.get_child(0) as Label
-		if label == null or (label.text not in SUPPORT_IDS and label.text not in M02PositionCards.IDS):
+		if label == null or not _is_actionable(label.text):
 			continue
 		actionable.append(panel)
 		if _bindings.has(panel):
@@ -320,7 +344,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	var app = get_parent()
 	if not is_instance_valid(panel) or not is_instance_valid(battle):
 		return false
-	if not _bindings.has(panel) or (card_id not in SUPPORT_IDS and card_id not in M02PositionCards.IDS):
+	if not _bindings.has(panel) or not _is_actionable(card_id):
 		return false
 	if app.deck != deck or app.party != party or app.battle_view != battle:
 		return false
@@ -328,6 +352,14 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 		return false
 	if not panel.is_visible_in_tree() or not battle.is_visible_in_tree() or panel.get_parent() != app.hand_view:
 		return false
+	if _is_block_card(card_id):
+		# Presentation preflight only: the pool resolver revalidates and commits.
+		if app._battle_closed or not deck.turn_active or app.battle_result == null \
+			or not app.battle_result.can_continue() or app.battle_result._party != party \
+			or app.battle_result._enemies != app.enemies or not party.is_valid() \
+			or app.enemies == null or not app.enemies.is_valid() \
+			or party.is_defeated() or app.enemies.is_victorious():
+			return false
 	if card_id in M02PositionCards.IDS:
 		if app.enemy_intents == null or _move_context.get(panel, []) != _current_move_context(panel):
 			return false
@@ -389,7 +421,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			_sync_battle()
 			app.end_turn_button.grab_focus()
 		return
-	if not _play.play_card(deck, party, card_id, 0):
+	if not _play_held(deck, party, card_id, 0):
 		return
 	var app = get_parent()
 	app._refresh_party()
@@ -406,12 +438,12 @@ func _selection_valid() -> bool:
 	if _pending.id not in ALLY_IDS:
 		return true
 	# Presentation preflight only; the support service revalidates and commits.
-	var authored := StarterCards.new().get_definition(_pending.id)
-	if not _party.is_valid() or not _deck.turn_active or _deck.energy < authored.cost:
+	var authored: Dictionary = _metadata.definition(_pending.id)
+	if not _party.is_valid() or not _deck.turn_active or _deck.energy < int(authored.get("cost", -1)):
 		return false
 	for hero in _party.get_heroes():
-		if hero.id == authored.owner:
-			return hero.hp > 0 and hero.position in authored.from_positions
+		if hero.id == authored.get("owner", ""):
+			return hero.hp > 0 and hero.position in authored.get("from_positions", [])
 	return false
 
 
@@ -496,7 +528,7 @@ func _resolve_target(position: int, token: int) -> void:
 		return
 	var id: String = _pending.id
 	_cancel_pending()
-	if _play.play_card(_deck, _party, id, position):
+	if _play_held(_deck, _party, id, position):
 		var app = get_parent()
 		app._refresh_party()
 		app._refresh_hand()
@@ -566,3 +598,4 @@ func _clear() -> void:
 	_deck = null
 	_party = null
 	_play = null
+	_block_cards = null

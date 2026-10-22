@@ -46,19 +46,41 @@ func _capture_reward_oracle(was_active: bool, rng_before: int) -> void:
 		oracle.seed = app.run_rng.seed
 		oracle.state = rng_before
 		expected_award = oracle.randi_range(10, 20)
-		var pool: Array[String] = []
 		var owners: Array = []
 		for hero in app.party.get_heroes():
 			owners.append(hero.id)
-		for id in catalog.get_all_card_ids():
-			if catalog.get_definition(id).owner in owners:
-				pool.append(id)
-		pool.sort()
+		var tiers: Array[String] = ["common", "uncommon", "rare"]
+		var weights := {"common": 60, "uncommon": 30, "rare": 10}
+		var buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+		for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+			var owner := String(record.get("owner", ""))
+			var rarity := String(record.get("rarity", ""))
+			if owners.has(owner) and buckets.has(rarity):
+				(buckets[rarity] as Array).append(record)
+		for tier: String in tiers:
+			(buckets[tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return String(a.get("id", "")) < String(b.get("id", "")))
 		expected_offers = []
 		for pick in range(3):
-			var index := oracle.randi_range(0, pool.size() - 1)
-			var id: String = pool.pop_at(index)
-			expected_offers.append({"id": id, "owner": catalog.get_definition(id).owner})
+			var weight_sum := 0
+			for tier: String in tiers:
+				if not (buckets[tier] as Array).is_empty():
+					weight_sum += int(weights[tier])
+			var roll: int = oracle.randi_range(1, weight_sum)
+			var chosen := ""
+			var running := 0
+			for tier: String in tiers:
+				if (buckets[tier] as Array).is_empty():
+					continue
+				running += int(weights[tier])
+				if roll <= running:
+					chosen = tier
+					break
+			var bucket: Array = buckets[chosen]
+			var index := oracle.randi_range(0, bucket.size() - 1)
+			var record: Dictionary = bucket[index]
+			bucket.remove_at(index)
+			expected_offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
 		expected_rng = oracle.state
 
 
@@ -81,7 +103,7 @@ func _run() -> void:
 			break
 		_check(not expected_offers.is_empty() and app.fight_reward_offers == expected_offers
 			and app.fight_reward_gold == expected_award and expected_award >= 10 and expected_award <= 20
-			and app.run_rng.state == expected_rng, "independent oracle: one gold draw then three distinct sorted-pool draws")
+			and app.run_rng.state == expected_rng, "independent oracle: one gold draw then the weighted six-draw pool selection")
 		_check(app.run_scraps == 0, "new run and pending rewards have no scraps")
 		_check(app.session_gold == 0 and not app.fight_reward_claimed and app.card_reward == null
 			and not app.victory_gold.is_claimed(), "routed prepare never pays or uses separate demo transactions")

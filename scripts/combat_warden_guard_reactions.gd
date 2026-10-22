@@ -134,6 +134,152 @@ func apply_committed_card(arg1: Variant, arg2: Variant) -> bool:
 	return true
 
 
+## Paid shared-hand play: spends energy, commits the card to discard, and applies the
+## reaction effect. All preflight checks run before any mutation. Returns false on
+## any rejection without changing deck/party/mode/RNG state.
+func play_from_hand(deck: Variant, party: Variant, card_id: Variant) -> bool:
+	if deck == null or party == null:
+		return false
+	if not party is CombatParty:
+		return false
+	var p: CombatParty = party as CombatParty
+	if not p.is_valid():
+		return false
+	if not deck is CombatDeck:
+		return false
+	var d: CombatDeck = deck as CombatDeck
+	if d.combat_state == null:
+		return false
+	if not d.turn_active:
+		return false
+	if not card_id is String or (card_id as String).is_empty():
+		return false
+	var id: String = card_id as String
+	if not ALLOWED_CARD_IDS.has(id):
+		return false
+	if not d.hand.has(id):
+		return false
+
+	var catalog: WardenPoolCards = WardenPoolCards.new()
+	var auth_def: Dictionary = catalog.get_definition(id)
+	if auth_def.is_empty() or auth_def.get("id") != id:
+		return false
+
+	var owner_id: String = str(auth_def.get("owner", ""))
+	if owner_id != WARDEN_ID:
+		return false
+
+	var cost_v: Variant = auth_def.get("cost")
+	if not cost_v is int:
+		return false
+	var cost: int = cost_v as int
+	if cost < 0 or cost > CombatState.TURN_ENERGY:
+		return false
+	if cost > d.energy:
+		return false
+
+	var from_v: Variant = auth_def.get("from_positions")
+	if not from_v is Array or (from_v as Array).is_empty():
+		return false
+	var from_positions: Array = from_v as Array
+	for pos_v in from_positions:
+		if not pos_v is int:
+			return false
+		var pos: int = pos_v as int
+		if pos < 1 or pos > CombatParty.PARTY_SIZE:
+			return false
+
+	var target_kind: Variant = auth_def.get("target_kind")
+	if target_kind != "self":
+		return false
+
+	var effects_v: Variant = auth_def.get("effects")
+	if not effects_v is Dictionary:
+		return false
+	var effects: Dictionary = effects_v as Dictionary
+	var block_v: Variant = effects.get("block", 0)
+	if not block_v is int:
+		return false
+	var block_amount: int = block_v as int
+	if block_amount < 0:
+		return false
+
+	var guarding_gain: bool = false
+	if effects.has("guarding"):
+		if not effects["guarding"] is bool:
+			return false
+		guarding_gain = effects["guarding"] as bool
+
+	var thorns_gain: int = 0
+	if effects.has("thorns"):
+		var tg_v: Variant = effects.get("thorns")
+		if not tg_v is int:
+			return false
+		thorns_gain = tg_v as int
+		if thorns_gain < 0:
+			return false
+
+	# Roster integrity (fail-closed) using public snapshots.
+	var heroes_check: Array[Dictionary] = p.get_heroes()
+	if heroes_check.size() != CombatParty.PARTY_SIZE:
+		return false
+	var seen_ids: Array[String] = []
+	for index in range(CombatParty.PARTY_SIZE):
+		var h: Dictionary = heroes_check[index]
+		var hid_v: Variant = h.get("id")
+		var hpos_v: Variant = h.get("position")
+		var hhp_v: Variant = h.get("hp")
+		var hmax_v: Variant = h.get("max_hp")
+		if not hid_v is String or (hid_v as String).is_empty() or seen_ids.has(hid_v as String):
+			return false
+		if not hpos_v is int or (hpos_v as int) != index + 1:
+			return false
+		if not hhp_v is int or not hmax_v is int:
+			return false
+		var hhp: int = hhp_v as int
+		var hmax: int = hmax_v as int
+		if hmax <= 0 or hhp < 0 or hhp > hmax:
+			return false
+		seen_ids.append(hid_v as String)
+
+	# Unique living Warden.
+	var warden_count := 0
+	var warden_position := 0
+	for hero: Dictionary in heroes_check:
+		if hero.get("id") == WARDEN_ID:
+			warden_count += 1
+			warden_position = int(hero.get("position", 0))
+	if warden_count != 1:
+		return false
+	if warden_position <= 0 or not from_positions.has(warden_position):
+		return false
+	if p.is_downed(warden_position):
+		return false
+
+	# Block upper bound before mutation.
+	var warden_hero: Dictionary = p.get_hero(warden_position)
+	var current_block: int = int(warden_hero.get("block", 0))
+	if block_amount > CombatParty.MAX_INT - current_block:
+		return false
+
+	# Remaining Thorns bound before mutation.
+	if thorns_gain > 0:
+		if thorns_gain > CombatParty.MAX_INT - thorns:
+			return false
+
+	# Commit phase: all preflight passed.
+	if not d.try_spend_energy(cost):
+		return false
+	if not p.gain_block(warden_position, block_amount):
+		d.combat_state.energy += cost
+		return false
+	if guarding_gain:
+		guarding = true
+	if thorns_gain > 0:
+		thorns += thorns_gain
+	return d.discard_played(id)
+
+
 ## Resolves an incoming enemy attack against the party and roster.
 ## Validates input, skips slain sources and downed targets, retargets while Guarding,
 ## applies damage, and retaliates with Thorns if Warden was hit.

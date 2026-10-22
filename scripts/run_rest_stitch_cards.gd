@@ -194,7 +194,11 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 	for id in deck_ids:
 		if typeof(id) != TYPE_STRING or id.is_empty():
 			return false
-		if not _catalog.has_card(id) and not registry.has(id):
+		# A live run deck may carry reward-eligible D2-1 pool base cards as well
+		# as starter cards and owned composites. Only authored cards are legal;
+		# pool upgrades and unknown IDs still fail closed.
+		if not _catalog.has_card(id) and not registry.has(id) \
+				and RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty():
 			return false
 		counts[id] = counts.get(id, 0) + 1
 	for id in registry:

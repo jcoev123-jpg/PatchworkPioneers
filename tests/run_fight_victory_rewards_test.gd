@@ -43,6 +43,7 @@ func _initialize() -> void:
 		_test_prepare(definitions, ids, deck, candidates, false, 1, [], [])
 		_test_prepare(definitions, ids, deck, candidates, true, 2, TRINKET_POOL, OWNED_TRINKETS)
 		_test_choices(definitions, ids, deck, candidates)
+		_test_weighted_records(definitions, ids, deck)
 		_test_rejections(definitions, ids, deck, candidates)
 	else:
 		_check(false, "reward suite cannot run vacuously without valid authored fixtures")
@@ -413,6 +414,227 @@ func _test_choices(definitions: Array, ids: Array[String], deck: Array[String],
 	_check(catalog_before == catalog_after, "full authored card catalog remains unchanged")
 
 
+## Authored D2-1 base records: exactly what the routed run supplies.
+func _pool_records() -> Array[Dictionary]:
+	return RunPoolCardRewardOffers.get_authored_base_candidates()
+
+
+func _base_pool_ids(owner: String) -> Array[String]:
+	if owner == "warden":
+		return WardenPoolCards.new().get_base_ids()
+	if owner == "seamstress":
+		return SeamstressPoolCards.new().get_base_ids()
+	if owner == "tinker":
+		return TinkerPoolCards.new().get_pool_card_ids()
+	return []
+
+
+func _pool_definition(owner: String, card_id: String) -> Dictionary:
+	if owner == "warden":
+		return WardenPoolCards.new().get_definition(card_id)
+	if owner == "seamstress":
+		return SeamstressPoolCards.new().get_definition(card_id)
+	if owner == "tinker":
+		return TinkerPoolCards.new().get_definition(card_id)
+	return {}
+
+
+## Independent oracle for the weighted path: one gold draw, then three picks of
+## two draws each (tier roll, card roll) from sorted rarity buckets, then the
+## Elite drop. Never calls the reward services.
+func _weighted_oracle(party: Array[String], records: Array[Dictionary], seed_value: int,
+		elite: bool, trinket_candidates: Array = [], owned_trinkets: Array = []) -> Dictionary:
+	var reference := _rng(seed_value)
+	var gold: int = reference.randi_range(25, 35) if elite else reference.randi_range(10, 20)
+	var tiers: Array[String] = ["common", "uncommon", "rare"]
+	var weights := {"common": 60, "uncommon": 30, "rare": 10}
+	var buckets: Dictionary = {"common": [], "uncommon": [], "rare": []}
+	for record: Dictionary in records:
+		var owner := String(record.get("owner", ""))
+		var rarity := String(record.get("rarity", ""))
+		if party.has(owner) and buckets.has(rarity):
+			(buckets[rarity] as Array).append(record)
+	for tier: String in tiers:
+		(buckets[tier] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return String(a.get("id", "")) < String(b.get("id", "")))
+	var offers: Array = []
+	for pick in range(3):
+		var weight_sum := 0
+		for tier: String in tiers:
+			if not (buckets[tier] as Array).is_empty():
+				weight_sum += int(weights[tier])
+		var roll: int = reference.randi_range(1, weight_sum)
+		var chosen := ""
+		var running := 0
+		for tier: String in tiers:
+			if (buckets[tier] as Array).is_empty():
+				continue
+			running += int(weights[tier])
+			if roll <= running:
+				chosen = tier
+				break
+		var bucket: Array = buckets[chosen]
+		var index: int = reference.randi_range(0, bucket.size() - 1)
+		var record: Dictionary = bucket[index]
+		bucket.remove_at(index)
+		offers.append({"id": String(record["id"]), "owner": String(record["owner"])})
+	var drop := ""
+	if elite:
+		var trinket_ids: Array[String] = []
+		for trinket_id in trinket_candidates:
+			if not owned_trinkets.has(trinket_id):
+				trinket_ids.append(trinket_id)
+		trinket_ids.sort()
+		drop = trinket_ids[reference.randi_range(0, trinket_ids.size() - 1)]
+	return {"gold": gold, "offers": offers, "trinket_drop_id": drop,
+		"rng_state": reference.state, "next": reference.randi()}
+
+
+func _pool_snapshot(fight: Dictionary, rng: RandomNumberGenerator, deck: Array[String],
+		ids: Array[String], records: Array[Dictionary], gold: int,
+		trinket_candidates: Variant = [], owned_trinkets: Variant = []) -> Array:
+	return [fight["party"].get_heroes(), fight["enemies"].get_enemies(),
+		fight["battle"].get_outcome(), rng.seed, rng.state, deck.duplicate(true),
+		ids.duplicate(true), records.duplicate(true), gold,
+		trinket_candidates.duplicate(true) if trinket_candidates is Array else trinket_candidates,
+		owned_trinkets.duplicate(true) if owned_trinkets is Array else owned_trinkets]
+
+
+## The routed run supplies authored base records instead of starter ID strings.
+## Both Fight and Elite must settle weighted offers from the same staged stream,
+## and later rewards must accept an already-awarded pool ID in the run deck.
+func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
+	var records := _pool_records()
+	_check(records.size() >= 3, "authored D2-1 base records exist for the party")
+	for record: Dictionary in records:
+		var def_owner := String(record.get("owner", ""))
+		var def_id := String(record.get("id", ""))
+		_check(_base_pool_ids(def_owner).has(def_id)
+			and not def_id.ends_with("_plus")
+			and String(record.get("rarity", "")) in ["common", "uncommon", "rare"],
+			"authored base record is reward-eligible: " + def_id)
+	for elite in [false, true]:
+		var label := "Elite" if elite else "Fight"
+		var fight := _fight(definitions, 2 if elite else 1)
+		_win(fight)
+		var rng := _rng(880512)
+		var service: RunFightVictoryRewards
+		if elite:
+			service = _elite_session(fight, rng, ids, records, deck, 78,
+				TRINKET_POOL, OWNED_TRINKETS)
+		else:
+			service = _session(fight, rng, ids, records, deck, 78, false)
+		var before := _pool_snapshot(fight, rng, deck, ids, records, 78,
+			TRINKET_POOL, OWNED_TRINKETS)
+		var oracle := _weighted_oracle(ids, records, 880512, elite,
+			TRINKET_POOL, OWNED_TRINKETS)
+		var published := service.prepare()
+		_check(published.get("ok", false), label + ": weighted records prepare succeeds")
+		_check(published.get("gold_award") == oracle["gold"],
+			label + ": weighted path keeps the first gold draw exact")
+		_check(published.get("offers", []) == oracle["offers"],
+			label + ": offers match the independent weighted six-draw oracle")
+		_check(published.get("trinket_drop_id", "") == oracle["trinket_drop_id"],
+			label + ": Elite drop still follows the weighted selection")
+		_check(rng.state == oracle["rng_state"],
+			label + ": RNG state equals gold + six picks + " + ("drop" if elite else "no drop"))
+		_check(rng.randi() == oracle["next"], label + ": next RNG value matches reference")
+		var state_before_repeat := rng.state
+		var replay := service.prepare()
+		_check(replay == published and rng.state == state_before_repeat,
+			label + ": repeated weighted prepare neither rerolls nor advances RNG")
+		var after := _pool_snapshot(fight, rng, deck, ids, records, 78,
+			TRINKET_POOL, OWNED_TRINKETS)
+		_check(before[0] == after[0] and before[1] == after[1] and before[2] == after[2]
+			and before[3] == after[3] and before[5] == after[5] and before[6] == after[6]
+			and before[7] == after[7] and before[8] == after[8] and before[9] == after[9]
+			and before[10] == after[10],
+			label + ": weighted preparation mutates no inputs")
+		var offers: Array = published.get("offers", [])
+		var offered_ids: Array = []
+		for offer: Dictionary in offers:
+			offered_ids.append(offer.get("id"))
+			var owner := String(offer.get("owner", ""))
+			var card_id := String(offer.get("id", ""))
+			var definition := _pool_definition(owner, card_id)
+			_check(not definition.is_empty() and definition.get("id") == card_id
+				and definition.get("owner") == owner and ids.has(owner),
+				label + ": offer is a party-owned authored pool card: " + card_id)
+			_check(_base_pool_ids(owner).has(card_id) and not card_id.ends_with("_plus"),
+				label + ": offer is a base (never '+') reward-eligible record: " + card_id)
+			_check(not StarterCards.new().has_card(card_id),
+				label + ": live weighted offers are not unweighted starter cards")
+		_check(offered_ids.size() == 3 and offered_ids[0] != offered_ids[1]
+			and offered_ids[0] != offered_ids[2] and offered_ids[1] != offered_ids[2],
+			label + ": three distinct weighted offers")
+		var expected_deck := deck.duplicate()
+		expected_deck.append(offered_ids[0])
+		var expected_trinkets: Array = OWNED_TRINKETS.duplicate() if elite else []
+		if elite:
+			expected_trinkets.append(published["trinket_drop_id"])
+		var claimed := service.choose(offered_ids[0])
+		_check(claimed.get("ok", false) and not claimed.get("skipped", true)
+			and claimed.get("selected_id") == offered_ids[0],
+			label + ": weighted pick claims exactly once")
+		_check(claimed.get("deck") == expected_deck and claimed.get("gold") == 78 + oracle["gold"]
+			and claimed.get("trinkets") == expected_trinkets,
+			label + ": weighted claim appends one pool ID, one award, one cached drop")
+		# A later reward must accept the pool ID this transaction awarded.
+		var later := _fight(definitions, 1)
+		_win(later)
+		var later_rng := _rng(311)
+		var later_service := _session(later, later_rng, ids, records, expected_deck, 10, false)
+		var later_prepared := later_service.prepare()
+		_check(later_prepared.get("ok", false),
+			label + ": later reward accepts a previously awarded pool ID in the deck")
+		var upgraded_deck := expected_deck.duplicate()
+		upgraded_deck.append("warden_hold_the_line_plus")
+		var upgrade_fight := _fight(definitions, 1)
+		_win(upgrade_fight)
+		var upgrade_rng := _rng(312)
+		var upgrade_service := _session(upgrade_fight, upgrade_rng, ids, records,
+			upgraded_deck, 10, false)
+		var upgrade_state := upgrade_rng.state
+		_check(not upgrade_service.prepare().get("ok", true)
+			and upgrade_rng.state == upgrade_state,
+			label + ": unawarded pool '+' upgrades still fail closed without RNG use")
+	# Constructor detaches the caller's records array.
+	var external := _pool_records()
+	var external_fight := _fight(definitions, 1)
+	_win(external_fight)
+	var external_rng := _rng(4242)
+	var detached := _session(external_fight, external_rng, ids, external, deck, 10, false)
+	var external_oracle := _weighted_oracle(ids, external, 4242, false)
+	external.clear()
+	var detached_result := detached.prepare()
+	_check(detached_result.get("ok", false)
+		and detached_result.get("offers") == external_oracle["offers"]
+		and external_rng.state == external_oracle["rng_state"],
+		"constructor detaches caller-owned weighted records")
+
+
+func _test_pool_rejections(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
+	var records := _pool_records()
+	var win := _fight(definitions)
+	_win(win)
+	_reject("weighted missing rarity", win, _rng(), ids,
+		records.slice(0, 5) + [{"id": "warden_hold_the_line", "owner": "warden"}], deck, 100)
+	_reject("weighted unknown rarity", win, _rng(), ids,
+		records.slice(0, 5) + [{"id": "fixture_card", "owner": "warden",
+			"rarity": "legendary"}], deck, 100)
+	_reject("weighted blank owner", win, _rng(), ids,
+		records.slice(0, 5) + [{"id": "fixture_card", "owner": "", "rarity": "common"}], deck, 100)
+	_reject("weighted duplicate record", win, _rng(), ids,
+		records + [records[0].duplicate(true)], deck, 100)
+	_reject("weighted pool '+' candidate", win, _rng(), ids,
+		records + [{"id": "warden_hold_the_line_plus", "owner": "warden",
+			"rarity": "common"}], deck, 100)
+	_reject("mixed records and IDs", win, _rng(), ids,
+		records.slice(0, 5) + ["warden_strike"], deck, 100)
+	_reject("numeric weighted record", win, _rng(), ids, records.slice(0, 5) + [7], deck, 100)
+	_reject("short weighted party", win, _rng(), ids.slice(0, 2), records, deck, 100)
+
+
 func _reject(label: String, fight: Dictionary, rng_input: Variant, party_input: Variant,
 		pool_input: Variant, deck_input: Variant, gold_input: Variant,
 		elite: bool = false, trinket_candidates: Variant = [],
@@ -580,3 +802,4 @@ func _test_rejections(definitions: Array, ids: Array[String], deck: Array[String
 	_check(retry_claim["ok"] and retry_claim["trinkets"] == retry_inventory
 		and retry_claim["gold"] == 78 + retry_oracle["gold"],
 		"retried Elite skip awards the same one cached trinket and gold")
+	_test_pool_rejections(definitions, ids, deck)

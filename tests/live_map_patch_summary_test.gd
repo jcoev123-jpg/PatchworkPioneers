@@ -124,10 +124,12 @@ func _summary_negatives() -> void:
 
 
 ## Discover genuine seeded stock through the mounted route, without pinning a seed.
+## The authored stock is drawn from the live run RNG, so the search widens past
+## the first qualifying route instead of assuming one seed always stocks a coat.
 func _coat_fixture() -> Dictionary:
 	var first_seed := 1
-	for attempt in range(32):
-		var fixture := _continuation_fixture("Rest", first_seed)
+	for attempt in range(12):
+		var fixture := _continuation_fixture("Rest", first_seed, 4001)
 		if fixture.is_empty() or not await _routed_win(fixture, true):
 			return {}
 		await _click(app.reward_buttons[3])

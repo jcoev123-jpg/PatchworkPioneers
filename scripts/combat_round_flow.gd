@@ -8,18 +8,20 @@ var _party: CombatParty
 var _enemies: CombatEnemies
 var _intents: CombatEnemyIntents
 var _result: CombatBattleResult
+var _unravel: CombatUnravel
 var _opening_block: CombatStartingBlock
 var _started := false
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
 		enemies: CombatEnemies = null, intents: CombatEnemyIntents = null,
-		result: CombatBattleResult = null) -> void:
+		result: CombatBattleResult = null, unravel: CombatUnravel = null) -> void:
 	_deck = deck
 	_party = party
 	_enemies = enemies
 	_intents = intents
 	_result = result
+	_unravel = unravel
 	_opening_block = CombatStartingBlock.new(party)
 
 
@@ -77,6 +79,14 @@ func end_turn() -> bool:
 	# observing it yet. Never discard/draw or let enemies act on that state.
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return false
+	# Snapshot pending skips before any state is committed. The intent scheduler
+	# keeps all original sources; only this phase's executable subset changes.
+	var skipped: Array[int] = []
+	if _unravel != null:
+		for index in range(_enemies.get_enemies().size()):
+			var position := index + 1
+			if not _enemies.is_slain(position) and _unravel.get_snapshot(position)["skip_pending"]:
+				skipped.append(position)
 	# The phase adjusts each base attack at its execution point, after earlier
 	# swaps/debuffs and the hero owner tick, while enemy Weak still applies.
 	var effective := _intents.get_intents().duplicate(true)
@@ -85,7 +95,8 @@ func end_turn() -> bool:
 	# finish the fight. The phase still rejects a target downed by an earlier
 	# action in the SAME batch, preserving its transactional validation.
 	effective = effective.filter(func(action: Dictionary) -> bool:
-		return not (action.type == "debuff" and _party.is_downed(action.target_position)))
+		return action.enemy_position not in skipped \
+			and not (action.type == "debuff" and _party.is_downed(action.target_position)))
 	if not _phase_is_executable(tick["actors"], effective):
 		return false
 	# Preflight succeeded for the complete transition. Preserve authoritative
@@ -104,6 +115,12 @@ func end_turn() -> bool:
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
+	# A skipped action is consumed only after the actual phase succeeds, and
+	# never for a source that died before its action could occur.
+	if _unravel != null:
+		for position in skipped:
+			if not _enemies.is_slain(position):
+				_unravel.consume_action_skip(_enemies, position)
 	# Latch a phase defeat before enemy Bleed can also kill the last enemy.
 	_result.evaluate()
 	var enemy_tick := batch.tick_side("enemies", _enemies.get_enemies())
@@ -114,6 +131,14 @@ func end_turn() -> bool:
 		enemy["block"] = next["block"]
 		if enemy.has("statuses") or not next["statuses"].is_empty():
 			enemy["statuses"] = next["statuses"]
+	# Bleed is applied at the enemy owner's boundary, AFTER its action/skip.
+	# Charge one Unravel per positive tick only on enemies still alive after
+	# the authoritative HP/status commit, regardless of Bleed magnitude.
+	if _unravel != null:
+		for event in enemy_tick["events"]:
+			var position: int = event["position"]
+			if event["bleed_hp_loss"] > 0 and not _enemies.is_slain(position):
+				_unravel.record_bleed_tick(_enemies, position)
 	if _result.evaluate() == CombatBattleResult.ACTIVE:
 		_intents.advance_turn()
 		_party.start_player_turn()
@@ -152,6 +177,8 @@ func _valid_bindings() -> bool:
 	# separate still-ACTIVE fight that could incorrectly permit more turns.
 	if _result._party != _party or _result._enemies != _enemies:
 		return false
+	if not _valid_unravel_binding():
+		return false
 	# Once begun, position changes are allowed but the original three actor
 	# identities, occupied slot indices, and statuses remain authoritative.
 	# A downed hero stays in their slot; no formation rollback is required.
@@ -174,6 +201,30 @@ func _valid_bindings() -> bool:
 		return false
 	for index in range(roster.size()):
 		if announcements[index].get("enemy_position") != index + 1:
+			return false
+	return true
+
+
+func _valid_unravel_binding() -> bool:
+	if _unravel == null:
+		return true
+	if not is_instance_valid(_unravel) or _unravel._bound_enemies != _enemies:
+		return false
+	# Validate every original slot, including slain slots: a partial or forged
+	# binding must be rejected before any turn/deck/RNG mutation.
+	for index in range(_enemies.get_enemies().size()):
+		var snapshot: Dictionary = _unravel.get_snapshot(index + 1)
+		if snapshot.size() != 4:
+			return false
+		var gauge = snapshot.get("gauge")
+		var threshold = snapshot.get("threshold")
+		var pending = snapshot.get("skip_pending")
+		var unravelled = snapshot.get("unravelled")
+		if not gauge is int or not threshold is int \
+				or not pending is bool or not unravelled is bool:
+			return false
+		if threshold <= 0 or gauge < 0 or gauge > threshold \
+				or pending != unravelled or (gauge == threshold) != pending:
 			return false
 	return true
 

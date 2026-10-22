@@ -177,6 +177,29 @@ static func get_pool_base_candidates() -> Array[Dictionary]:
 	return get_authored_base_candidates()
 
 
+## Resolves a card ID that may legitimately appear in a run deck or a prepared
+## reward receipt: any authored starter card, or a reward-eligible base card
+## from one of the three D2-1 pools. Pool '+' upgrades are never awarded, so they
+## resolve to {} exactly like an unknown ID.
+static func resolve_reward_definition(card_id: Variant) -> Dictionary:
+	if not card_id is String or String(card_id).is_empty():
+		return {}
+	var id: String = card_id
+	var starter: Dictionary = StarterCards.new().get_definition(id)
+	if not starter.is_empty():
+		return starter
+	var warden := WardenPoolCards.new()
+	if warden.get_base_ids().has(id):
+		return warden.get_definition(id)
+	var seamstress := SeamstressPoolCards.new()
+	if seamstress.get_base_ids().has(id):
+		return seamstress.get_definition(id)
+	var tinker := TinkerPoolCards.new()
+	if tinker.get_pool_card_ids().has(id):
+		return tinker.get_definition(id)
+	return {}
+
+
 ## Delegates to generate() with the real authored base candidates.
 static func generate_from_authored_pools(run_rng: Variant, party_ids: Variant) -> Dictionary:
 	return generate(run_rng, party_ids, get_authored_base_candidates())
