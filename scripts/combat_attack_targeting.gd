@@ -4,6 +4,8 @@ extends RefCounted
 ## four plain reward-pool strikes. The eventual play resolver must independently
 ## validate its committed target.
 
+const SIGHT_GLASS_IDS := ["tinker_sight_glass", "tinker_sight_glass_plus"]
+
 const ATTACK_IDS := [
 	"warden_strike_plus",
 	"warden_strike", "warden_shield_bash", "seamstress_prick",
@@ -12,6 +14,7 @@ const ATTACK_IDS := [
 
 var _warden_pool := WardenPoolCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
+var _tinker_pool := TinkerPoolCards.new()
 
 
 ## Reward-pool plain strikes deliberately stay OUT of ATTACK_IDS: mounted
@@ -26,9 +29,24 @@ func is_heavy_pool_attack(card_id: String) -> bool:
 	return CombatWardenPoolHeavyAttacks.SUPPORTED_CARD_IDS.has(card_id)
 
 
-## True for every attack this read-only preview can describe.
+## These two enemy-targeted utilities are not damage attacks, and must not
+## enter the starter-only ATTACK_IDS. The live picker shares this preview.
+func is_sight_glass(card_id: String) -> bool:
+	return card_id in SIGHT_GLASS_IDS
+
+
+func sight_glass_definition(card_id: String) -> Dictionary:
+	if not is_sight_glass(card_id):
+		return {}
+	var definition: Dictionary = _tinker_pool.get_definition(card_id)
+	if definition.get("id") != card_id or definition.get("owner") != "tinker":
+		return {}
+	return definition
+
+
+## True for enemy-targeted actions this read-only preview can describe.
 func supports(card_id: String) -> bool:
-	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id)
+	return ATTACK_IDS.has(card_id) or is_pool_strike(card_id) or is_heavy_pool_attack(card_id) or is_sight_glass(card_id)
 
 
 ## Exact authored pool record: catalog ID and owner must agree with the prefix.
@@ -84,6 +102,16 @@ func _valid_pool_effects(card_id: String, definition: Dictionary) -> bool:
 	return effects.size() == (2 if warden else 1)
 
 
+## The utility has precisely these authored fields; no hit/damage packet.
+func _valid_sight_glass(definition: Dictionary) -> bool:
+	var effects: Variant = definition.get("effects")
+	return definition.get("cost") == 1 and definition.get("target_kind") == "enemy_single" \
+		and definition.get("from_positions") == [2, 3] \
+		and definition.get("to_positions") == [1, 2, 3] \
+		and effects is Dictionary and effects.size() == 2 \
+		and effects.get("exposed") == 2 and effects.get("draw") == 1
+
+
 func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String) -> Dictionary:
 	var target_positions: Array[int] = []
 	var rejected := {
@@ -101,8 +129,10 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	# Consult the authored catalog for all card rules, not a parallel rules table.
 	var pool := is_pool_strike(card_id)
 	var heavy := is_heavy_pool_attack(card_id)
+	var sight := is_sight_glass(card_id)
 	var definition: Dictionary = (pool_definition(card_id) if pool else
-		heavy_definition(card_id) if heavy else StarterCards.new().get_definition(card_id))
+		heavy_definition(card_id) if heavy else
+		sight_glass_definition(card_id) if sight else StarterCards.new().get_definition(card_id))
 	if definition.is_empty():
 		return rejected
 	var owner = definition.get("owner")
@@ -123,6 +153,8 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	if pool and not _valid_pool_effects(card_id, definition):
 		return rejected
 	if heavy and not _valid_heavy_effects(card_id, definition):
+		return rejected
+	if sight and not _valid_sight_glass(definition):
 		return rejected
 	for position in from_positions:
 		if not position is int or position < 1 or position > CombatParty.PARTY_SIZE:
@@ -150,6 +182,8 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 		if not to_positions.has(position):
 			continue
 		if enemies.get_enemy(position).is_empty() or enemies.is_slain(position):
+			continue
+		if sight and not enemies.can_apply_statuses({position: {"exposed": 2}}):
 			continue
 		target_positions.append(position)
 	if target_positions.is_empty():
