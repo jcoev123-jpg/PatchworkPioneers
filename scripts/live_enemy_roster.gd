@@ -25,6 +25,9 @@ const STAGE_ACTOR_HEIGHT := 180
 ## Band above the art on both sides: enemies keep their intent badge there, heroes keep
 ## the same empty band so the two lineups render their art at identical scale.
 const STAGE_INTENT_BAND := 36.0
+## Viewport-safe gap between the stage's upper edge and every intent badge, so the whole
+## stitched patch reads as pinned inside 1280x720 instead of hanging off the top edge.
+const STAGE_INTENT_SAFE_MARGIN := 8.0
 const STAGE_FELT := Color("37423f")
 const STAGE_HEM := Color("2a3431")
 const STAGE_THREAD := Color("c9b996")
@@ -306,11 +309,12 @@ func _sync_battle() -> void:
 		badge.name = "EnemyIntent%d" % enemy.position
 		badge.source_position = enemy.position
 		puppet.add_child(badge)
-		# Intent stays above the enemy actor, inside the shared stage band.
+		# Intent stays above the enemy actor but below the viewport's upper edge, inside
+		# the shared stage band: the patch never touches the screen edge or the art.
 		badge.anchor_right = 1.0
 		badge.offset_left = 0.0
 		badge.offset_right = 0.0
-		badge.offset_top = 0.0
+		badge.offset_top = STAGE_INTENT_SAFE_MARGIN
 		badge.offset_bottom = STAGE_INTENT_BAND
 		_badges.append(badge)
 	panel.custom_minimum_size.x = 300
