@@ -109,29 +109,67 @@ func choose_with_wallet(choice_id: Variant, wallet: Variant = null) -> Dictionar
 	var parsed_outcome: Dictionary = _parse_choice_outcome(matched_choice as Dictionary)
 	if not parsed_outcome.get("ok", false):
 		return _wallet_rejection(base_wallet)
-	var gold_delta: int = parsed_outcome["gold"]
-	var scraps_delta: int = parsed_outcome["scraps"]
-	var base_gold: int = base_wallet["gold"]
-	var base_scraps: int = base_wallet["scraps"]
-	if gold_delta > MAX_INT - base_gold:
-		return _wallet_rejection(base_wallet)
-	if scraps_delta >= 0:
-		if scraps_delta > MAX_INT - base_scraps:
-			return _wallet_rejection(base_wallet)
-	elif base_scraps + scraps_delta < 0:
-		# The sum is safe: base_scraps is nonnegative and scraps_delta is negative,
-		# including the smallest representable integer debit.
+	var settlement: Dictionary = _project_wallet(base_wallet, parsed_outcome["gold"], parsed_outcome["scraps"])
+	if not settlement.get("ok", false):
 		return _wallet_rejection(base_wallet)
 	_claimed = true
 	return {
 		"ok": true,
 		"event_id": _event.get("id", ""),
 		"choice_id": target_id,
-		"wallet": {
-			"gold": base_gold + gold_delta,
-			"scraps": base_scraps + scraps_delta,
-		},
+		"wallet": settlement["wallet"],
 	}
+
+
+## Read-only, ordered affordability forecast for the current authored event.
+## Malformed outcomes keep their choice slot but have null deltas and cannot
+## settle; every returned balance is detached from the caller and its siblings.
+func preview_wallet_choices(wallet: Variant) -> Dictionary:
+	var denied := {"ok": false, "event_id": "", "choices": []}
+	if not _valid or _claimed:
+		return denied
+	var parsed_wallet: Dictionary = _parse_wallet(wallet)
+	if not parsed_wallet.get("ok", false):
+		return denied
+	var base_wallet: Dictionary = parsed_wallet["wallet"]
+	var previews: Array = []
+	var choices: Array = _event.get("choices", [])
+	for choice in choices:
+		var parsed_outcome: Dictionary = _parse_choice_outcome(choice)
+		var affordable := false
+		var balance: Dictionary = base_wallet.duplicate(true)
+		if parsed_outcome.get("ok", false):
+			var settlement: Dictionary = _project_wallet(base_wallet, parsed_outcome["gold"], parsed_outcome["scraps"])
+			if settlement.get("ok", false):
+				affordable = true
+				balance = settlement["wallet"]
+		previews.append({
+			"choice_id": choice["id"],
+			"gold_delta": parsed_outcome.get("gold"),
+			"scraps_delta": parsed_outcome.get("scraps"),
+			"affordable": affordable,
+			"wallet": balance,
+		})
+	return {"ok": true, "event_id": _event["id"], "choices": previews}
+
+
+## Both preview and commit use this exact no-RNG, overflow-safe arithmetic.
+## Call only after strict wallet and outcome parsing.
+func _project_wallet(base_wallet: Dictionary, gold_delta: int, scraps_delta: int) -> Dictionary:
+	var base_gold: int = base_wallet["gold"]
+	var base_scraps: int = base_wallet["scraps"]
+	if gold_delta > MAX_INT - base_gold:
+		return {"ok": false}
+	if scraps_delta >= 0:
+		if scraps_delta > MAX_INT - base_scraps:
+			return {"ok": false}
+	elif base_scraps + scraps_delta < 0:
+		# Safe even for MIN_INT: a nonnegative balance plus a debit cannot underflow.
+		return {"ok": false}
+	return {"ok": true, "wallet": {
+		"gold": base_gold + gold_delta,
+		"scraps": base_scraps + scraps_delta,
+	}}
 
 
 func _rejection() -> Dictionary:

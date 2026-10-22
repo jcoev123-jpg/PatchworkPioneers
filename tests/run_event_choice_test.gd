@@ -86,6 +86,8 @@ func _initialize() -> void:
 	_test_needle_gate_wallet_settlement()
 	_test_quiet_spool_wallet_settlement()
 	_test_signed_scraps_boundaries()
+	_test_wallet_choice_previews()
+	_test_wallet_preview_fail_closed()
 	_test_wallet_preflight_rejections_and_recovery()
 	_test_invalid_records()
 	_test_bad_choice_recovery_and_replay()
@@ -2052,3 +2054,234 @@ func _test_seeded_replay_and_wallet_rng() -> void:
 				})
 			_check(traces.size() == 2 and traces[0] == traces[1],
 				"two independent seeded instances produce identical wallet traces for " + event_id + "/" + choice_id)
+
+
+## Lookup is by authored choice ID; preview order is checked separately against
+## the actual record, never against the catalog's overall size or ordering.
+func _preview_choice(preview: Dictionary, choice_id: String) -> Dictionary:
+	for entry in preview.get("choices", []):
+		if entry is Dictionary and entry.get("choice_id") == choice_id:
+			return entry
+	return {}
+
+
+func _test_wallet_choice_previews() -> void:
+	# Every real authored choice, from scarcity through exact affordability, must
+	# predict what a separate fresh instance actually commits.
+	for event_id in REQUIRED:
+		var matches := _matching(event_id)
+		_check(matches.size() == 1, "preview requires one real authored event: " + event_id)
+		if matches.size() != 1:
+			continue
+		var record: Dictionary = matches[0].duplicate(true)
+		var expected: Dictionary = REQUIRED[event_id]["outcomes"]
+		var source_choices: Array = record["choices"]
+		_check(source_choices.size() >= 2 and source_choices.size() <= 3,
+			"preview nonempty real 2-3 choice fixture: " + event_id)
+		for scraps in [0, 1, 2]:
+			var wallet := {"gold": 9, "scraps": scraps}
+			var wallet_before: Dictionary = wallet.duplicate(true)
+			var event_before: Dictionary = record.duplicate(true)
+			var rng_expected := _rng_start(70000 + scraps)
+			var local_rng := RandomNumberGenerator.new()
+			local_rng.seed = 70000 + scraps
+			var local_state: int = local_rng.state
+			var service := RunEventChoice.new(record)
+			_check(service.is_valid() and not service.is_claimed(),
+				"preview starts with valid, unclaimed real selector: " + event_id)
+			var preview := service.preview_wallet_choices(wallet)
+			_check(preview.size() == 3 and preview.get("ok") == true
+				and preview.get("event_id") == event_id and preview.get("choices") is Array,
+				"preview exact result contract: " + event_id + "/" + str(scraps))
+			var entries: Array = preview.get("choices", [])
+			_check(entries.size() == source_choices.size(),
+				"preview has one entry per real authored choice: " + event_id + "/" + str(scraps))
+			for index in range(source_choices.size()):
+				var choice_id: String = source_choices[index]["id"]
+				var delta: Dictionary = expected[choice_id]
+				var entry := _preview_choice(preview, choice_id)
+				var affordable: bool = scraps + int(delta["scraps"]) >= 0
+				var projected_gold: int = 9 + int(delta["gold"]) if affordable else 9
+				var projected_scraps: int = scraps + int(delta["scraps"]) if affordable else scraps
+				_check(not entry.is_empty() and index < entries.size()
+					and entries[index].get("choice_id") == choice_id,
+					"preview keeps original authored choice order: " + event_id + "/" + choice_id)
+				_check(entry.size() == 5 and entry.get("choice_id") == choice_id
+					and typeof(entry.get("gold_delta")) == TYPE_INT
+					and typeof(entry.get("scraps_delta")) == TYPE_INT
+					and entry.get("gold_delta") == delta["gold"]
+					and entry.get("scraps_delta") == delta["scraps"],
+					"preview exact normalized signed authored deltas: " + event_id + "/" + choice_id)
+				_check(entry.get("affordable") == affordable
+					and _wallet_exact_int(entry.get("wallet"), projected_gold, projected_scraps),
+					"preview affordability and detached projected/unchanged wallet: " + event_id
+					+ "/" + choice_id + "/" + str(scraps))
+				# The choice settlement is the authoritative oracle, not reimplemented
+				# by the preview test as a substitute for a commit.
+				var receipt := RunEventChoice.new(record).choose_with_wallet(choice_id, wallet)
+				_check(receipt.get("ok") == affordable
+					and receipt.get("wallet") == entry.get("wallet")
+					and receipt.get("event_id") == (event_id if affordable else "")
+					and receipt.get("choice_id") == (choice_id if affordable else ""),
+					"preview agrees with independently committed wallet receipt: " + event_id
+					+ "/" + choice_id + "/" + str(scraps))
+			_check(service.is_valid() and not service.is_claimed()
+				and service.get_event() == event_before and record == event_before
+				and wallet == wallet_before,
+				"preview leaves latch, authored event, and caller wallet unchanged: "
+				+ event_id + "/" + str(scraps))
+			var again := service.preview_wallet_choices(wallet)
+			_check(again == preview and service.is_valid() and not service.is_claimed(),
+				"repeated preview deterministic and does not claim: " + event_id + "/" + str(scraps))
+			if entries.size() >= 2:
+				var other_wallet: Dictionary = entries[1]["wallet"]
+				var other_before: Dictionary = other_wallet.duplicate(true)
+				(entries[0]["wallet"] as Dictionary)["gold"] = -500
+				entries[0]["gold_delta"] = -500
+				_check(other_wallet == other_before and service.preview_wallet_choices(wallet) == again
+					and wallet == wallet_before and service.get_event() == event_before,
+					"preview result wallets and metadata detached from siblings and selector: "
+					+ event_id + "/" + str(scraps))
+			# Preview must never make a subsequent legitimate claim or its replay
+			# behave differently from the ordinary wallet transaction.
+			var chosen_id: String = source_choices[0]["id"]
+			var first_entry := _preview_choice(again, chosen_id)
+			if not first_entry.get("affordable", false):
+				chosen_id = source_choices[1]["id"]
+				first_entry = _preview_choice(again, chosen_id)
+			_check(first_entry.get("affordable", false),
+				"fixture has a genuinely claimable choice after preview: " + event_id)
+			if first_entry.get("affordable", false):
+				var committed := service.choose_with_wallet(chosen_id, wallet)
+				_check(committed.get("ok") == true and committed.get("wallet") == first_entry["wallet"]
+					and service.is_claimed() and not service.is_valid(),
+					"post-preview commit matches forecast and claims once: " + event_id)
+				var replay := service.choose_with_wallet(chosen_id, wallet)
+				_check(replay.get("ok") == false and replay.get("event_id") == ""
+					and replay.get("choice_id") == "" and replay.get("wallet") == wallet_before
+					and service.preview_wallet_choices(wallet) == {"ok": false, "event_id": "", "choices": []},
+					"commit consumes preview, and replay rejects unchanged wallet: " + event_id)
+			_check(local_rng.state == local_state and randi() == rng_expected,
+				"repeat preview, wallet oracle, commit and replay leave both RNGs untouched: "
+				+ event_id + "/" + str(scraps))
+
+	# Explicit scarcity gates on all five requested authored spending IDs;
+	# free/gain alternatives must remain available in the very same query.
+	var scarcity := [
+		{"event": "button_trail", "spend": "sell_buttons", "cost": 1, "free": "follow"},
+		{"event": "loose_seam", "spend": "reinforce", "cost": 2, "free": "bypass"},
+		{"event": "thimble_well", "spend": "lower_spool", "cost": 1, "free": "listen"},
+		{"event": "frayed_signpost", "spend": "sell_arrowwork", "cost": 2, "free": "choose"},
+		{"event": "needle_gate", "spend": "cut_bindings", "cost": 2, "free": "pass"},
+	]
+	for case_record in scarcity:
+		var found := _matching(case_record["event"])
+		_check(found.size() == 1, "scarcity case has its real event: " + case_record["event"])
+		if found.size() != 1:
+			continue
+		for scraps in [0, 1, 2]:
+			var preview := RunEventChoice.new(found[0]).preview_wallet_choices({"gold": 4, "scraps": scraps})
+			var spend := _preview_choice(preview, case_record["spend"])
+			var free := _preview_choice(preview, case_record["free"])
+			_check(not spend.is_empty() and not free.is_empty()
+				and spend.get("affordable") == (scraps >= case_record["cost"])
+				and free.get("affordable") == true
+				and (spend.get("wallet") as Dictionary).get("scraps", -1) >= 0,
+				"named authored scarcity/free choice: " + case_record["event"] + "/" + str(scraps))
+
+
+func _test_wallet_preview_fail_closed() -> void:
+	var invalid_result := {"ok": false, "event_id": "", "choices": []}
+	var invalid := RunEventChoice.new({"id": "bad", "choices": []})
+	_check(not invalid.is_valid() and invalid.preview_wallet_choices({"gold": 4, "scraps": 2}) == invalid_result,
+		"invalid event returns no previews")
+	var matches := _matching("needle_gate")
+	_check(matches.size() == 1, "malformed preview cases require real needle_gate event")
+	if matches.size() != 1:
+		return
+	var original: Dictionary = matches[0].duplicate(true)
+	var service := RunEventChoice.new(original)
+	var invalid_wallets: Array = [
+		null, 5, ["wallet"], {}, {"gold": 1}, {"gold": 1, "scraps": 0, "hp": 8},
+		{"gold": -1, "scraps": 2}, {"gold": 2, "scraps": -1},
+		{"gold": 1.0, "scraps": 2}, {"gold": 1, "scraps": 0.0},
+		{"gold": true, "scraps": 2}, {"gold": "1", "scraps": 2},
+	]
+	for wallet in invalid_wallets:
+		var before: Variant = wallet.duplicate(true) if wallet is Array or wallet is Dictionary else wallet
+		var rng_expected := _rng_start(71001)
+		_check(service.preview_wallet_choices(wallet) == invalid_result
+			and wallet == before and not service.is_claimed() and service.is_valid()
+			and service.get_event() == original,
+			"malformed wallet preview fails closed and changes nothing: " + str(wallet))
+		_check(randi() == rng_expected, "invalid preview wallet spends no RNG: " + str(wallet))
+
+	# One malformed outcome denies only its choice; a legal alternate settles.
+	for bad_outcome in [
+		{"gold": "12", "scraps": -1},
+		{"gold": -1, "scraps": -1},
+		{"gold": 0, "scraps": -1.5},
+		{"gold": 0},
+		{"gold": 0, "scraps": -1, "extra": 1},
+	]:
+		var record: Dictionary = original.duplicate(true)
+		record["choices"][0]["outcome"] = bad_outcome
+		var before: Dictionary = record.duplicate(true)
+		var instance := RunEventChoice.new(record)
+		var rng_expected := _rng_start(71002)
+		var preview := instance.preview_wallet_choices({"gold": 4, "scraps": 2})
+		var bad := _preview_choice(preview, "examine")
+		var good := _preview_choice(preview, "pass")
+		_check(preview.get("ok") == true and preview.get("event_id") == "needle_gate"
+			and (preview.get("choices") as Array).size() == (original["choices"] as Array).size()
+			and bad.size() == 5 and bad.get("gold_delta") == null
+			and bad.get("scraps_delta") == null and bad.get("affordable") == false
+			and _wallet_exact_int(bad.get("wallet"), 4, 2)
+			and good.get("affordable") == true and _wallet_exact_int(good.get("wallet"), 4, 2),
+			"malformed authored outcome disables only its own preview: " + str(bad_outcome))
+		var rejected := instance.choose_with_wallet("examine", {"gold": 4, "scraps": 2})
+		_check(rejected.get("ok") == false and _wallet_exact_int(rejected.get("wallet"), 4, 2)
+			and instance.is_valid() and not instance.is_claimed(),
+			"malformed outcome still rejects actual commit without claiming")
+		var recovery := instance.choose_with_wallet("pass", {"gold": 4, "scraps": 2})
+		_check(recovery.get("ok") == true and recovery.get("wallet") == good["wallet"]
+			and instance.is_claimed() and record == before and instance.get_event() == before,
+			"valid authored alternative remains claimable after malformed preview")
+		_check(instance.preview_wallet_choices({"gold": 4, "scraps": 2}) == invalid_result
+			and randi() == rng_expected, "malformed preview and consumed state remain RNG-free")
+
+	# A real spending ID is initially unaffordable; its zero-wallet preview
+	# cannot award gold, and the same selector can still claim its free fallback.
+	var poor := RunEventChoice.new(original)
+	var poor_preview := poor.preview_wallet_choices({"gold": 4, "scraps": 0})
+	var poor_spend := _preview_choice(poor_preview, "cut_bindings")
+	_check(poor_spend.get("gold_delta") == 28 and poor_spend.get("scraps_delta") == -2
+		and poor_spend.get("affordable") == false and _wallet_exact_int(poor_spend.get("wallet"), 4, 0)
+		and poor.is_valid() and not poor.is_claimed(),
+		"unaffordable spending preview grants neither money nor a claim")
+	var recovered := poor.choose_with_wallet("pass", {"gold": 4, "scraps": 0})
+	_check(recovered.get("ok") == true and _wallet_exact_int(recovered.get("wallet"), 4, 0)
+		and poor.is_claimed() and poor.preview_wallet_choices({"gold": 4, "scraps": 0}) == invalid_result,
+		"unaffordable preview keeps same selector available for free fallback")
+
+	# Overflow is per-choice, not a reason to hide a valid remaining option.
+	var gold_preview := RunEventChoice.new(original).preview_wallet_choices(
+		{"gold": RunEventChoice.MAX_INT, "scraps": 2})
+	_check(_preview_choice(gold_preview, "examine").get("affordable") == false
+		and _wallet_exact_int(_preview_choice(gold_preview, "examine").get("wallet"), RunEventChoice.MAX_INT, 2)
+		and _preview_choice(gold_preview, "pass").get("affordable") == true,
+		"gold overflow denies one choice while zero delta remains affordable")
+	var scraps_preview := RunEventChoice.new(original).preview_wallet_choices(
+		{"gold": 4, "scraps": RunEventChoice.MAX_INT})
+	_check(_preview_choice(scraps_preview, "pass").get("affordable") == true
+		and _preview_choice(scraps_preview, "cut_bindings").get("affordable") == true,
+		"max scrap balance safely admits a debit")
+	var gain_matches := _matching("quiet_spool")
+	_check(gain_matches.size() == 1, "scrap overflow uses real quiet_spool")
+	if gain_matches.size() == 1:
+		var gain_preview := RunEventChoice.new(gain_matches[0]).preview_wallet_choices(
+			{"gold": 4, "scraps": RunEventChoice.MAX_INT})
+		_check(_preview_choice(gain_preview, "watch").get("affordable") == false
+			and _wallet_exact_int(_preview_choice(gain_preview, "watch").get("wallet"), 4, RunEventChoice.MAX_INT)
+			and _preview_choice(gain_preview, "ignore").get("affordable") == true,
+			"scrap overflow denies gain without blocking no-op option")
