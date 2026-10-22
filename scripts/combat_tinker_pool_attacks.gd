@@ -12,6 +12,13 @@ var _first_attack: CombatTinkerFirstAttack
 var _pinned: CombatPinned
 var _damage := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
+var _patches: CombatPatchAttackRules = null
+
+
+## Failed explicit binding stays unusable; never fall back to an unpatched cast.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
 
 
 func _init(first_attack: Variant = null, pinned: Variant = null) -> void:
@@ -101,6 +108,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, active_pinned: CombatPinned) -> Dictionary:
 	if deck == null or party == null or enemies == null or deck._rng == null:
 		return _failure()
+	if _patches != null and not _patches.is_valid():
+		return _failure()
 	var base_id: String = card_id.trim_suffix("_plus")
 	if not BASE_IDS.has(base_id) or (card_id != base_id and card_id != base_id + "_plus"):
 		return _failure()
@@ -184,6 +193,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if owner_count != 1:
 		return _failure()
 
+	var patch_damage: int = 0 if _patches == null else _patches.damage_bonus("tinker")
+	var bonus: int = _first_attack.bonus_for_attack(card_id)
+	# Reserve both Pinned's possible +5 and the bound wearer bonus.
+	if damage_value > CombatStatuses.MAX_INT - bonus - 5 - patch_damage:
+		return _failure()
+	var base_damage: int = damage_value + bonus + patch_damage
+
 	var roster: Array[Dictionary] = enemies.get_enemies()
 	for index in range(roster.size()):
 		if roster[index].get("position") != index + 1:
@@ -210,7 +226,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			var simulated: Array[Dictionary] = roster.duplicate(true)
 			var rng_copy := RandomNumberGenerator.new()
 			rng_copy.state = deck._rng.state
-			var base_damage: int = damage_value + _first_attack.bonus_for_attack(card_id)
+			# Ricochet simulation and the real sequential hits use this same raw base.
 			var simulated_pins: Dictionary = {}
 			if active_pinned != null:
 				for pos in range(1, roster.size() + 1):
@@ -236,12 +252,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				actor["hp"] = maxi(0, actor["hp"] - (adjusted - absorbed))
 			if positions.is_empty():
 				return _failure()
-	var bonus: int = _first_attack.bonus_for_attack(card_id)
-	if damage_value > CombatStatuses.MAX_INT - bonus - 5:
-		return _failure()
 	return {"ok": true, "base_id": base_id, "positions": positions, "to_positions": to_value,
-		"target_kind": expected_kind, "base_damage": damage_value + bonus,
-		"attack_damage": damage_value + bonus,
+		"target_kind": expected_kind, "base_damage": base_damage,
+		"attack_damage": base_damage,
 		"owner_statuses": owner_statuses, "cost": cost_value, "exposed": exposed}
 
 

@@ -10,6 +10,13 @@ const SUPPORTED_IDS := [
 
 var _attacks := CombatStatusAttacks.new()
 var _pinned: CombatPinned = null
+var _patches: CombatPatchAttackRules = null
+
+
+## An explicit invalid binding disables casting instead of dropping the bonus.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
 
 
 func _init(pinned: CombatPinned = null) -> void:
@@ -28,6 +35,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, pinned: CombatPinned = null) -> Dictionary:
 	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
+		return _failure()
+	if _patches != null and not _patches.is_valid():
 		return _failure()
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
 		return _failure()
@@ -56,7 +65,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var block_amount: Variant = effects.get("block", 0)
 	if not damage is int or damage <= 0 or not block_amount is int:
 		return _failure()
-	if damage > CombatStatuses.MAX_INT - 5:
+	var patch_damage: int = 0 if _patches == null else _patches.damage_bonus(owner_id)
+	if damage > CombatStatuses.MAX_INT - 5 - patch_damage:
 		return _failure()
 	if warden_card and block_amount <= 0:
 		return _failure()
@@ -97,7 +107,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var pin_bonus: int = 0
 	if active_pinned != null:
 		pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, owner_id)
-	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position, damage + pin_bonus,
+	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position, damage + pin_bonus + patch_damage,
 		owner.get("statuses", {}), target.get("statuses", {}))
 	if active_pinned != null and hit.get("ok", false):
 		active_pinned.consume_after_attack(target_position, owner_id, true)
