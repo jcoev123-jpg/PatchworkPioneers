@@ -4,7 +4,14 @@
     {"id": "warden_shield_bash", "owner": "warden", "price": 65},
     {"id": "seamstress_prick", "owner": "seamstress", "price": 50},
     {"id": "tinker_pop_shot", "owner": "tinker", "price": 50},
-    {"id": "tinker_scrap_bomb", "owner": "tinker", "price": 65}
+    {"id": "tinker_scrap_bomb", "owner": "tinker", "price": 65},
+    {"id": "warden_hold_the_line", "owner": "warden", "price": 55},
+    {"id": "warden_patch_guard", "owner": "warden", "price": 45},
+    {"id": "warden_quick_darn", "owner": "warden", "price": 40},
+    {"id": "warden_brass_buckle", "owner": "warden", "price": 55},
+    {"id": "warden_iron_hem", "owner": "warden", "price": 70},
+    {"id": "warden_bastion_quilt", "owner": "warden", "price": 90},
+    {"id": "seamstress_thread_whip", "owner": "seamstress", "price": 55}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
