@@ -42,10 +42,11 @@ const REQUIRED := {
 	"frayed_signpost": {
 		"title": "The Frayed Signpost",
 		"description": "Three cloth arrows flap from a crooked signpost.",
-		"choices": {"read": "Patch the arrows (1 scrap for 10 gold)", "choose": "Choose the clear path (+1 scrap)"},
+		"choices": {"read": "Patch the arrows (1 scrap for 10 gold)", "choose": "Choose the clear path (+1 scrap)", "sell_arrowwork": "Sell the stitched arrowwork (spend 2 scraps; gain 26 gold)"},
 		"outcomes": {
 			"read": {"gold": 10, "scraps": -1},
 			"choose": {"gold": 0, "scraps": 1},
+			"sell_arrowwork": {"gold": 26, "scraps": -2},
 		},
 	},
 	"quiet_spool": {
@@ -975,7 +976,7 @@ func _test_frayed_signpost_wallet_settlement() -> void:
 		and authored_record.get("description") == "Three cloth arrows flap from a crooked signpost.",
 		"frayed_signpost preserves authored id, title, description")
 	var authored_choices: Array = authored_record.get("choices", [])
-	_check(authored_choices.size() == 2, "frayed_signpost preserves exactly two authored choices")
+	_check(authored_choices.size() >= 2 and authored_choices.size() <= 3, "frayed_signpost has allowed 2-3 choices")
 
 	# 1. Fresh selector: "read" with {gold: 7, scraps: 2} -> {gold: 17, scraps: 1}
 	var read_input_event: Dictionary = authored_record.duplicate(true)
@@ -1085,6 +1086,94 @@ func _test_frayed_signpost_wallet_settlement() -> void:
 	var trace_b := RunEventChoice.new(authored_record.duplicate(true)).choose_with_wallet("read", {"gold": 7, "scraps": 2})
 	_check(trace_a == trace_b and _wallet_exact_int(trace_a.get("wallet"), 17, 1),
 		"independent fresh frayed_signpost selectors produce identical traces")
+
+	# 4. Verified new sell_arrowwork entry: text, outcome, and wallet settlement.
+	# Check authored JSON records the new choice correctly.
+	var by_id := {}
+	for choice in authored_choices:
+		if choice is Dictionary:
+			by_id[choice.get("id", "")] = choice
+	_check(by_id.has("sell_arrowwork"), "new sell_arrowwork choice present in parsed JSON")
+	if by_id.has("sell_arrowwork"):
+		var sell_choice: Dictionary = by_id["sell_arrowwork"]
+		_check(sell_choice.get("text", "") == "Sell the stitched arrowwork (spend 2 scraps; gain 26 gold)",
+			"sell_arrowwork exact authored text")
+		_check(sell_choice.get("outcome", {}).get("gold", 0) == 26
+			and sell_choice.get("outcome", {}).get("scraps", 0) == -2,
+			"sell_arrowwork exact authored signed outcome")
+
+	# Affordable sell_arrowwork: {gold: 7, scraps: 2} -> {gold: 33, scraps: 0}
+	var sell_input_event: Dictionary = authored_record.duplicate(true)
+	var sell_wallet := {"gold": 7, "scraps": 2}
+	var sell_wallet_before: Dictionary = sell_wallet.duplicate(true)
+	var sell_rng := _rng_start(64903)
+	var sell_service := RunEventChoice.new(sell_input_event)
+	_check(sell_service.is_valid() and not sell_service.is_claimed(),
+		"fresh frayed_signpost selector valid before sell_arrowwork")
+	var sell_result := sell_service.choose_with_wallet("sell_arrowwork", sell_wallet)
+	_check(_wallet_shape_ok(sell_result), "sell_arrowwork returns 4-key wallet shape")
+	_check(sell_result.get("ok", false) == true, "sell_arrowwork choose_with_wallet succeeds")
+	_check(sell_result.get("event_id", "") == "frayed_signpost", "sell_arrowwork event_id")
+	_check(sell_result.get("choice_id", "") == "sell_arrowwork", "sell_arrowwork choice_id")
+	_check(_wallet_exact_int(sell_result.get("wallet"), 33, 0),
+		"sell_arrowwork settles exact wallet {gold: 33, scraps: 0}")
+	_check(_wallet_exact_int(sell_wallet, 7, 2) and sell_wallet == sell_wallet_before,
+		"sell_arrowwork does not mutate caller input wallet")
+	_check(sell_service.is_claimed() and not sell_service.is_valid(),
+		"sell_arrowwork latches exactly one claim")
+	_check(randi() == sell_rng, "sell_arrowwork settlement spends no global RNG")
+
+	# Replay after successful sell_arrowwork claim fails.
+	var sell_replay := sell_service.choose_with_wallet("sell_arrowwork", {"gold": 33, "scraps": 0})
+	_check(_wallet_shape_ok(sell_replay) and sell_replay.get("ok", true) == false
+		and sell_replay.get("event_id", "") == "" and sell_replay.get("choice_id", "") == ""
+		and _wallet_exact_int(sell_replay.get("wallet"), 33, 0),
+		"replay after sell_arrowwork claim rejected with unchanged wallet")
+
+	# 5. Failed trade: with 0 or 1 scrap, sell_arrowwork rejected; then existing affordable choice succeeds.
+	# Zero scraps: sell_arrowwork refused; then choose succeeds on same selector.
+	var zero_scrap_service := RunEventChoice.new(authored_record.duplicate(true))
+	var zero_scrap_wallet := {"gold": 7, "scraps": 0}
+	var zero_scrap_rng := _rng_start(64904)
+	_check(zero_scrap_service.is_valid() and not zero_scrap_service.is_claimed(),
+		"fresh selector before refused sell_arrowwork with zero scraps")
+	var zero_refusal := zero_scrap_service.choose_with_wallet("sell_arrowwork", zero_scrap_wallet)
+	_check(_wallet_shape_ok(zero_refusal) and zero_refusal.get("ok", true) == false
+		and zero_refusal.get("event_id", "") == "" and zero_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(zero_refusal.get("wallet"), 7, 0),
+		"sell_arrowwork with zero scraps refused unchanged wallet")
+	_check(zero_scrap_service.is_valid() and not zero_scrap_service.is_claimed(),
+		"refused sell_arrowwork leaves selector unclaimed")
+	var zero_recovery := zero_scrap_service.choose_with_wallet("choose", zero_scrap_wallet)
+	_check(_wallet_shape_ok(zero_recovery) and zero_recovery.get("ok", false) == true
+		and zero_recovery.get("event_id", "") == "frayed_signpost"
+		and zero_recovery.get("choice_id", "") == "choose"
+		and _wallet_exact_int(zero_recovery.get("wallet"), 7, 1),
+		"choose succeeds on same selector after refused sell_arrowwork (0 scraps)")
+	_check(zero_scrap_service.is_claimed() and not zero_scrap_service.is_valid(),
+		"recovered choose latches claim after refused sell_arrowwork")
+	_check(randi() == zero_scrap_rng, "refused sell_arrowwork and recovery spend no RNG")
+
+	# One scrap (still insufficient, needs 2): refused; then read succeeds on same selector.
+	var one_scrap_service := RunEventChoice.new(authored_record.duplicate(true))
+	var one_scrap_wallet := {"gold": 7, "scraps": 1}
+	var one_scrap_rng := _rng_start(64905)
+	var one_refusal := one_scrap_service.choose_with_wallet("sell_arrowwork", one_scrap_wallet)
+	_check(_wallet_shape_ok(one_refusal) and one_refusal.get("ok", true) == false
+		and one_refusal.get("event_id", "") == "" and one_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(one_refusal.get("wallet"), 7, 1),
+		"sell_arrowwork with one scrap refused unchanged wallet")
+	_check(one_scrap_service.is_valid() and not one_scrap_service.is_claimed(),
+		"refused sell_arrowwork with one scrap leaves selector unclaimed")
+	var one_recovery := one_scrap_service.choose_with_wallet("read", one_scrap_wallet)
+	_check(_wallet_shape_ok(one_recovery) and one_recovery.get("ok", false) == true
+		and one_recovery.get("event_id", "") == "frayed_signpost"
+		and one_recovery.get("choice_id", "") == "read"
+		and _wallet_exact_int(one_recovery.get("wallet"), 17, 0),
+		"read succeeds on same selector after refused sell_arrowwork (1 scrap)")
+	_check(one_scrap_service.is_claimed() and not one_scrap_service.is_valid(),
+		"recovered read latches claim after refused sell_arrowwork")
+	_check(randi() == one_scrap_rng, "refused sell_arrowwork with one scrap and recovery spend no RNG")
 
 
 func _test_needle_gate_wallet_settlement() -> void:
@@ -1837,7 +1926,7 @@ func _test_seeded_replay_and_wallet_rng() -> void:
 		elif event_id == "thimble_well":
 			choices = ["listen", "depart", "lower_spool"]
 		elif event_id == "frayed_signpost":
-			choices = ["read", "choose"]
+			choices = ["read", "choose", "sell_arrowwork"]
 		for choice_id in choices:
 			var traces: Array = []
 			for attempt in range(2):
@@ -1867,7 +1956,12 @@ func _test_seeded_replay_and_wallet_rng() -> void:
 					else:
 						wallet = {"gold": 7, "scraps": 0}
 				elif event_id == "frayed_signpost":
-					wallet = {"gold": 7, "scraps": 2 if choice_id == "read" else 0}
+					if choice_id == "read":
+						wallet = {"gold": 7, "scraps": 2}
+					elif choice_id == "sell_arrowwork":
+						wallet = {"gold": 7, "scraps": 2}
+					else:
+						wallet = {"gold": 7, "scraps": 0}
 				var wallet_before: Dictionary = wallet.duplicate(true)
 				var preflight_reject := instance.choose_with_wallet("not_a_choice", wallet)
 				var denied_debit: Dictionary = {}
@@ -1921,6 +2015,13 @@ func _test_seeded_replay_and_wallet_rng() -> void:
 						and _wallet_exact_int(denied_debit.get("wallet"), 7, 0)
 						and instance.is_valid() and not instance.is_claimed(),
 						"seeded no-scrap debit refused before free choose")
+				elif event_id == "frayed_signpost" and choice_id == "sell_arrowwork":
+					var zero_scrap_wallet := {"gold": 7, "scraps": 0}
+					denied_debit = instance.choose_with_wallet("read", zero_scrap_wallet)
+					_check(_wallet_shape_ok(denied_debit) and denied_debit.get("ok") == false
+						and _wallet_exact_int(denied_debit.get("wallet"), 7, 0)
+						and instance.is_valid() and not instance.is_claimed(),
+						"seeded no-scrap debit refused before sell_arrowwork")
 				var claim_result := instance.choose_with_wallet(choice_id, wallet)
 				var replay_reject := instance.choose_with_wallet(choice_id, claim_result["wallet"])
 				_check(_wallet_shape_ok(preflight_reject) and preflight_reject.get("ok") == false

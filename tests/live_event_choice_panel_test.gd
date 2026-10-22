@@ -256,6 +256,67 @@ func _test_three_choice_and_identity() -> void:
 	await _frames()
 
 
+func _test_frayed_new_button() -> void:
+	var record: Dictionary = authored.get("frayed_signpost", {})
+	if record.is_empty():
+		return
+	committed.clear()
+	# Open the authored frayed_signpost (now 3 choices).
+	_check(panel.open_event(record), "author frayed_signpost opens with new third choice")
+	await _frames()
+	_validate_layout(record, "frayed_new_button")
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 3, "frayed_signpost now has three buttons")
+	if buttons.size() != 3:
+		panel.close_event()
+		await _frames()
+		return
+	# The new button is the third option.
+	var new_button: Button = buttons[2]
+	_check(new_button.text == "Sell the stitched arrowwork (spend 2 scraps; gain 26 gold)",
+		"new sell_arrowwork button text readable")
+	_check(new_button.focus_mode == Control.FOCUS_ALL, "new button keyboard reachable")
+	_check(not new_button.disabled and new_button.is_visible_in_tree(),
+		"new button enabled and visible")
+	# Mouse activation of the new choice.
+	committed.clear()
+	await _mouse(new_button)
+	_check(committed.size() == 1, "new choice emits exactly once from mouse")
+	if committed.size() == 1:
+		_check(committed[0] == {"event_id": "frayed_signpost", "choice_id": "sell_arrowwork"},
+			"new choice emits exact event/choice IDs from mouse")
+	for button in buttons:
+		_check(button.disabled, "all buttons disabled after mouse claim")
+	# Close/reopen and verify stale callbacks are invalidated.
+	panel.close_event()
+	await _frames()
+	_check(not panel.has_open_event() and panel.get_choice_buttons().is_empty(),
+		"close releases buttons and selector")
+	committed.clear()
+	# Reopen and activate via keyboard (focus traversal to the new third button).
+	_check(panel.open_event(record.duplicate(true)), "reopen frayed_signpost after close")
+	await _frames()
+	var reopened_buttons := panel.get_choice_buttons()
+	_check(reopened_buttons.size() == 3, "reopened frayed_signpost has three buttons")
+	# Focus traversal to the third button then Space.
+	if reopened_buttons.size() == 3:
+		reopened_buttons[0].grab_focus()
+		await _frames()
+		await _key(KEY_TAB)
+		await _frames()
+		await _key(KEY_TAB)
+		await _frames()
+		var focused: Button = reopened_buttons[2]
+		_check(focused.has_focus(), "tab reaches third new button after reopen")
+		await _key(KEY_SPACE)
+		_check(committed.size() == 1, "new choice emits exactly once from keyboard after reopen")
+		if committed.size() == 1:
+			_check(committed[0] == {"event_id": "frayed_signpost", "choice_id": "sell_arrowwork"},
+				"reopened keyboard claim exact IDs")
+	panel.close_event()
+	await _frames()
+
+
 func _test_invalid_and_replay() -> void:
 	var valid := _fixture_three()
 	var invalids: Array[Dictionary] = []
@@ -357,6 +418,7 @@ func _run() -> void:
 	_read_authored()
 	await _test_authored()
 	await _test_three_choice_and_identity()
+	await _test_frayed_new_button()
 	await _test_invalid_and_replay()
 	_test_rng_zero_draws()
 	_finish()
