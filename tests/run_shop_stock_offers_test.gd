@@ -170,6 +170,26 @@ func _authored_shop_offers() -> Dictionary:
 	return data if data is Dictionary else {}
 
 
+## A priced candidate pool of ONLY starter cards owned by the party (for legacy regression tests).
+func _starter_only_pool(catalog: StarterCards, party: Array[String], authored: Dictionary) -> Array:
+	var authored_prices := {}
+	for entry in authored.get("cards", []):
+		if entry is Dictionary and entry.get("id") is String:
+			var price := _whole_price(entry.get("price"))
+			if price >= 0:
+				authored_prices[entry["id"]] = price
+	var pool: Array = []
+	# Starter cards only
+	for card_id in catalog.get_all_card_ids():
+		var definition: Dictionary = catalog.get_definition(card_id)
+		var owner: String = definition.get("owner", "")
+		if not party.has(owner):
+			continue
+		var price: int = authored_prices.get(card_id, FIXTURE_CARD_PRICES.get(card_id, DEFAULT_FIXTURE_PRICE))
+		pool.append({"id": card_id, "owner": owner, "price": price})
+	return pool
+
+
 ## A priced candidate pool of real authored cards owned by the party (starter + pool cards).
 func _card_pool(catalog: StarterCards, party: Array[String], authored: Dictionary) -> Array:
 	var authored_prices := {}
@@ -322,7 +342,7 @@ func _oracle(catalog: StarterCards, party: Array[String], card_pool: Array, trin
 
 func _test_owned_fallback(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
-	var cards := _card_pool(catalog, party, authored)
+	var cards := _starter_only_pool(catalog, party, authored)
 	var pool: Array = authored.get("trinkets", [])
 	_check(pool.size() >= 2, "authored pool supplies two fallback candidates")
 	if pool.size() < 2:
@@ -369,7 +389,7 @@ func _test_owned_fallback(party: Array[String], deck: Array[String], catalog: St
 
 func _test_generated_stock(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
-	var card_pool := _card_pool(catalog, party, authored)
+	var card_pool := _starter_only_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
 	var warden_pool := WardenPoolCards.new()
@@ -477,7 +497,7 @@ func _test_generated_stock(party: Array[String], deck: Array[String], catalog: S
 
 func _test_seeded_replay(party: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
-	var card_pool := _card_pool(catalog, party, authored)
+	var card_pool := _starter_only_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
 	owned.append(trinket_pool[0].id)
@@ -520,7 +540,7 @@ func _test_seeded_replay(party: Array[String], catalog: StarterCards) -> void:
 
 func _test_purchases(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
-	var card_pool := _card_pool(catalog, party, authored)
+	var card_pool := _starter_only_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
 	var warden_pool := WardenPoolCards.new()
@@ -644,7 +664,7 @@ func _reject(label: String, rng_input: Variant, party_input: Variant, cards_inpu
 
 func _test_rejections(party: Array[String], catalog: StarterCards) -> void:
 	var authored := _authored_shop_offers()
-	var card_pool := _card_pool(catalog, party, authored)
+	var card_pool := _starter_only_pool(catalog, party, authored)
 	var trinket_pool := _trinket_pool(authored)
 	var owned := _owned_trinkets()
 	var catalog_before := _catalog_snapshot(catalog)
@@ -904,9 +924,24 @@ func _test_pool_purchase(party: Array[String], deck: Array[String], catalog: Sta
 	_check(rng_a.state == rng_b.state, "reordered inputs leave identical RNG state")
 
 	# Now test a real purchase of an actually offered base pool card.
-	# Pick the first offered card (guaranteed to be from minimal_cards).
-	var offered_card_id: String = result_a["cards"][0]["id"]
-	var offered_price: int = result_a["cards"][0]["price"]
+	# Select a offered card that is from a pool (Warden/Seamstress/Tinker) and NOT a StarterCard.
+	var pool_card_offer: Dictionary = {}
+	for offer in result_a["cards"]:
+		var card_id: String = offer["id"]
+		var is_pool_card := warden_pool.has_card(card_id) or seamstress_pool.has_card(card_id) or tinker_pool.has_card(card_id)
+		var is_starter_card := catalog.has_card(card_id)
+		if is_pool_card and not is_starter_card:
+			pool_card_offer = offer
+			break
+	_check(pool_card_offer != null, "at least one offered card is from a hero pool (not starter)")
+
+	var offered_card_id: String = pool_card_offer["id"]
+	var offered_price: int = pool_card_offer["price"]
+	# Explicitly assert the purchased card belongs to a hero pool catalog and not StarterCards.
+	_check(warden_pool.has_card(offered_card_id) or seamstress_pool.has_card(offered_card_id) or tinker_pool.has_card(offered_card_id),
+		"purchased card is from WardenPoolCards, SeamstressPoolCards, or TinkerPoolCards: " + offered_card_id)
+	_check(not catalog.has_card(offered_card_id), "purchased card is NOT a StarterCard: " + offered_card_id)
+
 	var purchases := RunShopPurchases.new(party, deck, owned, 400, result_a["cards"], result_a["trinkets"])
 	_check(purchases.is_valid(), "minimal stock admits real purchase service")
 
