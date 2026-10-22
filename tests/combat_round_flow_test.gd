@@ -14,6 +14,9 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_special_round_atomicity()
+	_test_bound_reaction_rounds()
+	_test_bound_reaction_movement_and_skips()
+	_test_bound_reaction_rejections_and_replay()
 	_test_opening_and_rounds()
 	_test_terminal_victory()
 	_test_terminal_defeat()
@@ -831,3 +834,300 @@ func _fixture_start(target) -> void:
 		return
 	var started: bool = target._start_battle()
 	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
+
+
+
+## Catalog-derived five-card hand: the turn opener must draw every reaction
+## through CombatDeck itself, not accept a fabricated post-phase reaction.
+func _warden_reaction_fight(seed_value: int, held: Array[String], schedule: Array,
+		with_unravel: bool = false) -> Dictionary:
+	_check(held.size() == CombatDeck.TURN_DRAW, "reaction fixture has five genuinely drawn cards")
+	var catalog := WardenPoolCards.new()
+	for id in held:
+		if id.begins_with("warden_draw_fire") or id.begins_with("warden_counter_stitch"):
+			var definition: Dictionary = catalog.get_definition(id)
+			_check(not definition.is_empty() and definition.owner == "warden"
+				and definition.cost == 1 and definition.target_kind == "self",
+				"precondition: reaction card comes from real WardenPoolCards: " + id)
+	var rng := _rng(seed_value)
+	var deck := CombatDeck.new(held, rng)
+	var party := CombatParty.new(_load_json(HEROES_PATH))
+	var enemies := CombatEnemies.new(_load_json(ENEMIES_PATH))
+	var intents := CombatEnemyIntents.new(schedule)
+	var result := CombatBattleResult.new(party, enemies)
+	var reactions := CombatWardenGuardReactions.new()
+	var unravel: CombatUnravel = null
+	if with_unravel:
+		unravel = CombatUnravel.new()
+		_check(unravel.bind_roster(enemies, {1: "normal", 2: "elite"}),
+			"precondition: real Unravel bound to both original enemy slots")
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents, result, unravel, reactions)
+	_check(party.is_valid() and party.get_hero(1).id == "warden"
+		and party.get_hero(2).id == "seamstress" and party.get_hero(3).id == "tinker"
+		and enemies.is_valid() and enemies.get_enemies().size() == 2
+		and intents.is_valid() and intents.get_intents().size() == 2
+		and result.can_continue() and flow._reactions == reactions,
+		"precondition: bound coordinator owns the exact seeded services and reaction identity")
+	return {"deck": deck, "rng": rng, "party": party, "enemies": enemies,
+		"intents": intents, "result": result, "flow": flow, "cards": held,
+		"reactions": reactions, "unravel": unravel}
+
+
+func _warden_reaction_snapshot(fight: Dictionary) -> Array:
+	var reactions: CombatWardenGuardReactions = fight.reactions
+	var snapshot: Array = [_snapshot(fight), reactions.is_guarding(), reactions.get_thorns(),
+		fight.intents._definitions.duplicate(true)]
+	var unravel: CombatUnravel = fight.unravel
+	if unravel != null:
+		snapshot.append([unravel.get_snapshot(1), unravel.get_snapshot(2)])
+	return snapshot.duplicate(true)
+
+
+func _warden_paid_card(fight: Dictionary, id: String) -> void:
+	var deck: CombatDeck = fight.deck
+	var party: CombatParty = fight.party
+	var reactions: CombatWardenGuardReactions = fight.reactions
+	var card: Dictionary = WardenPoolCards.new().get_definition(id)
+	var old_block: int = party.get_hero(1).block
+	var old_energy: int = deck.energy
+	var old_rng: int = deck._rng.state
+	var old_discard: int = deck.discard_pile.size()
+	_check(deck.turn_active and deck.hand.has(id) and old_energy >= card.cost
+		and party.get_hero(1).id == "warden" and not party.is_downed(1),
+		"precondition: paid Warden card is held, affordable, alive and legal: " + id)
+	_check(reactions.play_from_hand(deck, party, id),
+		"catalog reaction really paid for and discarded through shared hand: " + id)
+	_check(party.get_hero(1).block == old_block + card.effects.block
+		and deck.energy == old_energy - card.cost and not deck.hand.has(id)
+		and deck.discard_pile.size() == old_discard + 1
+		and deck.discard_pile.back() == id and deck._rng.state == old_rng,
+		"paid card adds exact authored Block, consumes energy/card once, never draws RNG: " + id)
+
+
+func _test_bound_reaction_rounds() -> void:
+	for upgraded in [false, true]:
+		var draw_id := "warden_draw_fire_plus" if upgraded else "warden_draw_fire"
+		var counter_id := "warden_counter_stitch_plus" if upgraded else "warden_counter_stitch"
+		# Announcements deliberately supplied backward, scheduler and phase sort
+		# by original enemy slot. Weak/Exposed affect the *redirected* Warden.
+		var schedule: Array = [
+			{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 10, "target_position": 3}]},
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 20, "target_position": 2}]}]
+		var fight := _warden_reaction_fight(41044 if not upgraded else 41045,
+			[draw_id, counter_id, "warden_strike", "seamstress_prick", "tinker_pop_shot"], schedule)
+		var flow: CombatRoundFlow = fight.flow
+		var party: CombatParty = fight.party
+		var enemies: CombatEnemies = fight.enemies
+		var reactions: CombatWardenGuardReactions = fight.reactions
+		_check(flow.begin_fight() and fight.deck.hand.size() == 5 and fight.deck.energy == 3
+			and party.get_hero(1).block == 6
+			and fight.deck.hand.has(draw_id) and fight.deck.hand.has(counter_id)
+			and fight.intents.get_intents()[0].enemy_position == 1,
+			"real seeded five-card fight opens with both catalog reactions, opening Block and sorted beats")
+		_warden_paid_card(fight, draw_id)
+		_warden_paid_card(fight, counter_id)
+		var thorns := 4 if upgraded else 3
+		var ward_block := 21 if upgraded else 17
+		_check(party.get_hero(1).block == ward_block and reactions.is_guarding()
+			and reactions.get_thorns() == thorns and fight.deck.energy == 1,
+			"both modes coexist after real paid plays with base/upgraded authored Block and Thorns")
+		party._heroes[0]["statuses"] = {"exposed": 2}
+		enemies._enemies[0]["statuses"] = {"weak": 1}
+		_check(enemies.gain_block(1, 2), "first attacker has two real Block before Thorns")
+		var before := _warden_reaction_snapshot(fight)
+		var owner_tick: Dictionary = CombatStatusTurnBatch.new().tick_side("heroes", party.get_heroes())
+		_check(owner_tick.ok and flow._phase_is_executable(owner_tick.actors, fight.intents.get_intents())
+			and _warden_reaction_snapshot(fight) == before,
+			"reaction-aware whole-phase preflight is read-only, including reactions, actors and RNG")
+		_check(flow.end_turn(), "authoritative round commits both redirected enemy attacks and retaliation")
+		_check(party.get_hero(1).hp == (24 if upgraded else 20)
+			and party.get_hero(1).block == 0 and party.get_hero(1).statuses == {"exposed": 1}
+			and party.get_hero(2).hp == 30 and party.get_hero(2).block == 0
+			and party.get_hero(3).hp == 26 and party.get_hero(3).block == 0,
+			"enemy Weak and actual Warden Exposed produce 22 then 15 damage; allies protected, Block spent first")
+		_check(enemies.get_enemy(1).hp == (10 if upgraded else 11)
+			and enemies.get_enemy(1).block == 0 and enemies.get_enemy(1).get("statuses", {}) == {}
+			and enemies.get_enemy(2).hp == (8 if upgraded else 9)
+			and fight.intents._turn_index == 1,
+			"each attacker takes exactly one Thorns hit, first through 2 Block; original slots survive")
+		_check(not reactions.is_guarding() and reactions.get_thorns() == 0
+			and fight.deck.turn_active and fight.deck.energy == 3
+			and fight.deck.hand.size() == 5 and flow.get_outcome() == CombatBattleResult.ACTIVE,
+			"modes expire only at the next successfully opened player turn")
+		_conserved(fight)
+
+
+func _test_bound_reaction_movement_and_skips() -> void:
+	var schedule: Array = [
+		{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]},
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 20, "target_position": 1}]}]
+	var fight := _warden_reaction_fight(41046,
+		["warden_draw_fire", "warden_counter_stitch", "warden_backstep",
+		"warden_strike", "seamstress_prick"], schedule)
+	_check(fight.flow.begin_fight(), "real movement fixture begins")
+	_warden_paid_card(fight, "warden_draw_fire")
+	_warden_paid_card(fight, "warden_counter_stitch")
+	_check(fight.deck.hand.has("warden_backstep") and fight.deck.energy == 1
+		and CombatPositionSwaps.play_move_card(fight.deck, fight.party, "warden_backstep",
+			M02PositionCards.new().get_definition("warden_backstep"))
+		and fight.party.get_hero(2).id == "warden"
+		and fight.party.get_hero(1).id == "seamstress",
+		"paid real adjacent move repositions Warden to 2 before the phase")
+	fight.party._heroes[1]["statuses"] = {"exposed": 2}
+	_check(fight.flow.end_turn() and fight.party.get_hero(2).hp == 27
+		and fight.party.get_hero(2).block == 0
+		and fight.party.get_hero(2).statuses == {"exposed": 1}
+		and fight.party.get_hero(1).hp == 30
+		and fight.enemies.get_enemy(1).hp == 9 and fight.enemies.get_enemy(2).block == 1,
+		"Guarding follows Warden ID into slot 2, applies new owner's Exposed, Thorns and sorted Block")
+	_check(not fight.reactions.is_guarding() and fight.reactions.get_thorns() == 0,
+		"moved owner's reaction modes clear at accepted turn opening")
+	_conserved(fight)
+
+	# An already-downed announced victim remains ineligible; Guarding never
+	# pulls the attack toward Warden, but a later living target still redirects.
+	var skips := _warden_reaction_fight(41047,
+		["warden_draw_fire", "warden_counter_stitch", "warden_strike",
+			"seamstress_prick", "tinker_pop_shot"], [
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 90, "target_position": 2}]},
+			{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 20, "target_position": 3}]}])
+	_check(skips.flow.begin_fight(), "downed victim round fixture begins")
+	_warden_paid_card(skips, "warden_draw_fire")
+	_warden_paid_card(skips, "warden_counter_stitch")
+	_check(skips.party.apply_damage(2, 30) and skips.party.is_downed(2),
+		"precondition: announced Seamstress target is already downed")
+	_check(skips.flow.end_turn() and skips.party.get_hero(1).hp == 37
+		and skips.party.get_hero(1).block == 0 and skips.party.get_hero(2).hp == 0
+		and skips.party.get_hero(3).hp == 26
+		and skips.enemies.get_enemy(1).hp == 12
+		and skips.enemies.get_enemy(2).hp == 9,
+		"first downed target not redirected or retaliated; second living-target attack redirects")
+	_conserved(skips)
+
+	var slain := _warden_reaction_fight(41048,
+		["warden_draw_fire", "warden_counter_stitch", "warden_strike",
+			"seamstress_prick", "tinker_pop_shot"], [
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 20, "target_position": 2}]},
+			{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 99, "target_position": 3}]}])
+	_check(slain.flow.begin_fight(), "slain-source round fixture begins")
+	_warden_paid_card(slain, "warden_draw_fire")
+	_warden_paid_card(slain, "warden_counter_stitch")
+	_check(slain.enemies.apply_damage(2, 12) and slain.enemies.is_slain(2)
+		and not slain.enemies.is_victorious(), "precondition: second original source slain before its announced beat")
+	_check(slain.flow.end_turn() and slain.party.get_hero(1).hp == 37
+		and slain.party.get_hero(3).hp == 26 and slain.enemies.get_enemy(1).hp == 9
+		and slain.enemies.get_enemy(2).hp == 0,
+		"source 1 attacks/retaliates and later slain source 2's 99-point beat is skipped")
+	_conserved(slain)
+
+	var unravel := _warden_reaction_fight(41049,
+		["warden_draw_fire", "warden_counter_stitch", "warden_strike",
+			"seamstress_prick", "tinker_pop_shot"], [
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 60, "target_position": 2}]},
+			{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 20, "target_position": 3}]}], true)
+	_check(unravel.flow.begin_fight(), "bound Unravel reaction round begins")
+	_warden_paid_card(unravel, "warden_draw_fire")
+	_warden_paid_card(unravel, "warden_counter_stitch")
+	_check(unravel.unravel.apply_unravel(unravel.enemies, 1, 8)
+		and unravel.enemies.apply_statuses({2: {"bleed": 1}})
+		and unravel.unravel.get_snapshot(1).skip_pending,
+		"precondition: normal source queued skip and second source has real Bleed")
+	_check(unravel.flow.end_turn() and unravel.party.get_hero(1).hp == 37
+		and unravel.party.get_hero(2).hp == 30 and unravel.party.get_hero(3).hp == 26
+		and unravel.enemies.get_enemy(1).hp == 12
+		and unravel.enemies.get_enemy(2).hp == 8
+		and unravel.unravel.get_snapshot(1).threshold == 12
+		and unravel.unravel.get_snapshot(1).gauge == 0
+		and not unravel.unravel.get_snapshot(1).skip_pending
+		and unravel.unravel.get_snapshot(2).threshold == 12
+		and unravel.unravel.get_snapshot(2).gauge == 1,
+		"Unravel skip avoids first attack, raises normal threshold by 4; second hit retaliates and Bleed +1 gauge")
+	_conserved(unravel)
+
+
+func _test_bound_reaction_rejections_and_replay() -> void:
+	var bad := _warden_reaction_fight(41050,
+		["warden_draw_fire", "warden_counter_stitch", "warden_strike",
+			"seamstress_prick", "tinker_pop_shot"], [
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 60, "target_position": 2}]},
+			{"enemy_position": 2, "pattern": [{"type": "debuff", "amount": 2,
+				"status": "bleed", "target_position": 1}]}])
+	var reactions: CombatWardenGuardReactions = bad.reactions
+	reactions.guarding = true
+	reactions.thorns = 3
+	_check(bad.flow.begin_fight() and not reactions.is_guarding()
+		and reactions.get_thorns() == 0 and bad.party.get_hero(1).block == 6,
+		"first accepted begin clears stale modes and preserves one-shot opening Block")
+	_warden_paid_card(bad, "warden_draw_fire")
+	_warden_paid_card(bad, "warden_counter_stitch")
+	_check(bad.party.get_hero(1).block == 17 and reactions.is_guarding()
+		and reactions.get_thorns() == 3
+		and bad.intents.get_intents()[0].target_position == 2
+		and bad.intents.get_intents()[1].target_position == 1,
+		"precondition: paid Guarding redirects 60 damage onto Warden, making later debuff target downed")
+	var before := _warden_reaction_snapshot(bad)
+	_check(not bad.flow.end_turn() and _warden_reaction_snapshot(bad) == before,
+		"bound whole-phase preflight rejects late downed-target debuff with zero live card/actor/RNG/mode/turn changes")
+	_check(bad.flow.observe_result() == CombatBattleResult.ACTIVE
+		and _warden_reaction_snapshot(bad) == before,
+		"result observation cannot expire either active reaction mode")
+	_check(not bad.flow.end_turn() and _warden_reaction_snapshot(bad) == before,
+		"repeated invalid end turn cannot discard hand, consume RNG or clear Guarding/Thorns")
+	# An invalid reaction authority must fail closed before accepting a turn.
+	reactions.thorns = -1
+	before = _warden_reaction_snapshot(bad)
+	_check(not bad.flow.end_turn() and _warden_reaction_snapshot(bad) == before,
+		"malformed reaction authority rejects turn without mutating any bound state")
+	reactions.thorns = 3
+	bad.intents._definitions[1].pattern[0] = {"type": "block", "amount": 1}
+	_check(bad.flow.end_turn() and bad.party.is_downed(1)
+		and bad.party.get_hero(2).hp == 30 and bad.enemies.get_enemy(1).hp == 9
+		and bad.enemies.get_enemy(2).block == 1 and bad.intents._turn_index == 1
+		and not reactions.is_guarding() and reactions.get_thorns() == 0
+		and bad.deck.turn_active, "once late action is repaired the phase commits, then clears both modes")
+
+	# Two independent replays per fixed seed, including the run RNG, exact
+	# paid hand, both reaction modes, enemy/hero rosters and turn advancement.
+	for seed_value in [41051, 41052]:
+		var baseline: Array = []
+		for session in range(2):
+			var fight := _warden_reaction_fight(seed_value,
+				["warden_counter_stitch_plus", "warden_draw_fire_plus",
+					"warden_strike", "seamstress_prick", "tinker_pop_shot"], [
+					{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 9, "target_position": 3}]},
+					{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 18, "target_position": 2}]}])
+			_check(fight.flow.begin_fight(), "replay fixture begins first seeded turn")
+			_warden_paid_card(fight, "warden_draw_fire_plus")
+			_warden_paid_card(fight, "warden_counter_stitch_plus")
+			var trace: Array = [_warden_reaction_snapshot(fight)]
+			_check(fight.flow.end_turn() and fight.intents._turn_index == 1
+				and fight.party.get_hero(2).hp == 30
+				and fight.enemies.get_enemy(1).hp == 8
+				and fight.enemies.get_enemy(2).hp == 8,
+				"seeded paid replay resolves two ordered redirected hits and upgraded Thorns")
+			trace.append(_warden_reaction_snapshot(fight))
+			if session == 0:
+				baseline = trace
+			else:
+				_check(trace == baseline, "independent same-seed replay matches paid cards, actors, intents, RNG, modes and turns")
+			_conserved(fight)
+
+	# No optional binding is still the original unbound attack path; even a
+	# reaction-free bound flow has the same actor, deck and RNG result.
+	var plain := _fight(41053, [], [], [
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 7, "target_position": 2}]},
+		{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 4, "target_position": 3}]}])
+	var without_modes := _fight(41053, [], [], [
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 7, "target_position": 2}]},
+		{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 4, "target_position": 3}]}])
+	var inert_reactions := CombatWardenGuardReactions.new()
+	without_modes.flow._reactions = inert_reactions
+	_check(plain.flow._reactions == null and without_modes.flow._reactions == inert_reactions
+		and plain.flow.begin_fight() and without_modes.flow.begin_fight(),
+		"legacy constructor remains unbound and optional untouched modes admit same valid fight")
+	_check(plain.flow.end_turn() and without_modes.flow.end_turn()
+		and _snapshot(plain) == _snapshot(without_modes)
+		and plain.party.get_hero(1).hp == 40
+		and plain.party.get_hero(2).hp == 23 and plain.party.get_hero(3).hp == 22
+		and not inert_reactions.is_active(),
+		"unbound phase retains exact original damage and seeded parity with inactive binding")

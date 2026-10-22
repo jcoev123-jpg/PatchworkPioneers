@@ -9,19 +9,22 @@ var _enemies: CombatEnemies
 var _intents: CombatEnemyIntents
 var _result: CombatBattleResult
 var _unravel: CombatUnravel
+var _reactions: CombatWardenGuardReactions
 var _opening_block: CombatStartingBlock
 var _started := false
 
 
 func _init(deck: CombatDeck = null, party: CombatParty = null,
 		enemies: CombatEnemies = null, intents: CombatEnemyIntents = null,
-		result: CombatBattleResult = null, unravel: CombatUnravel = null) -> void:
+		result: CombatBattleResult = null, unravel: CombatUnravel = null,
+		reactions: CombatWardenGuardReactions = null) -> void:
 	_deck = deck
 	_party = party
 	_enemies = enemies
 	_intents = intents
 	_result = result
 	_unravel = unravel
+	_reactions = reactions
 	_opening_block = CombatStartingBlock.new(party)
 
 
@@ -60,6 +63,9 @@ func begin_fight() -> bool:
 			if bonus > 0:
 				_party.gain_block(hero.position, bonus)
 	_started = true
+	# The initial accepted player turn must not inherit modes from an older fight.
+	if _reactions != null:
+		_reactions.begin_player_turn()
 	return true
 
 
@@ -111,7 +117,7 @@ func end_turn() -> bool:
 	_deck.end_turn()
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return true
-	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective)
+	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, _reactions)
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
@@ -143,6 +149,10 @@ func end_turn() -> bool:
 		_intents.advance_turn()
 		_party.start_player_turn()
 		_deck.start_turn()
+		# Retain Guarding and Thorns for the entire enemy phase, then expire
+		# them only after an accepted new player turn has opened.
+		if _reactions != null:
+			_reactions.begin_player_turn()
 	return true
 
 
@@ -177,7 +187,7 @@ func _valid_bindings() -> bool:
 	# separate still-ACTIVE fight that could incorrectly permit more turns.
 	if _result._party != _party or _result._enemies != _enemies:
 		return false
-	if not _valid_unravel_binding():
+	if not _valid_unravel_binding() or not _valid_reactions_binding():
 		return false
 	# Once begun, position changes are allowed but the original three actor
 	# identities, occupied slot indices, and statuses remain authoritative.
@@ -229,6 +239,15 @@ func _valid_unravel_binding() -> bool:
 	return true
 
 
+func _valid_reactions_binding() -> bool:
+	if _reactions == null:
+		return true
+	# Refuse a damaged/expired optional authority before touching any live
+	# deck, actor, phase, result or RNG state.
+	return is_instance_valid(_reactions) and _reactions.get_thorns() >= 0 \
+		and _reactions.get_thorns() <= CombatParty.MAX_INT
+
+
 func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:
 	# Use the actual executor on independent actors to preflight every announced
 	# action, including capacity checks, without touching live actors or RNG.
@@ -237,6 +256,6 @@ func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:
 	var roster := _enemies.get_enemies()
 	var enemies := CombatEnemies.new(roster)
 	enemies._enemies.assign(roster.duplicate(true))
-	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective)["ok"]:
+	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _reactions)["ok"]:
 		return false
 	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]
