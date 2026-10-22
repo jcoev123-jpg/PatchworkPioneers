@@ -225,7 +225,7 @@ func _assert_display(card_id: String, stage: String) -> void:
 	_check(panel.tooltip_text.contains(definition.get("display_name", "")), "catalog display name in tooltip: " + card_id)
 	for phrase in _effect_phrases(definition):
 		_check(panel.tooltip_text.contains(phrase), "tooltip shows every recipient's Block: %s (%s)" % [card_id, phrase])
-	_check(presenter.energy_label.text == "Energy\n%d" % app.deck.energy, "energy orb authoritative: " + card_id)
+	_check(presenter.energy_label.text == "%d" % app.deck.energy, "energy orb authoritative: " + card_id)
 	_check(presenter.help_label.text == presenter.TABLE_HELP, "shared hand help outside targeting: " + stage)
 
 

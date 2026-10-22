@@ -102,10 +102,11 @@ func _mounted(app, presenter) -> bool:
 			"target label is the pointer-inert aiming region over its own actor")
 		var meter = meters.get_child(3 + index)
 		_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
-			and meter.block_text.is_visible_in_tree()
-			and meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp]
+			and meter.hp_text.text == "%d/%d" % [enemy.hp, enemy.max_hp]
 			and meter.hp_bar.value == enemy.hp and meter.hp_bar.max_value == enemy.max_hp
-			and meter.block_text.text == "Block: %d" % enemy.block and meter.block_bar.value == enemy.block,
+			and meter.block_badge.visible == (enemy.block > 0)
+			and meter.block_text.text == ("%d" % enemy.block if enemy.block > 0 else "")
+			and meter.block_bar.value == enemy.block,
 			"replacement meter displays exact authoritative HP and Block")
 		var action: Dictionary = intents[index]
 		_check(badge == badges[index] and badge.is_visible_in_tree()

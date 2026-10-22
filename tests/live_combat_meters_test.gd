@@ -175,12 +175,29 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 	_check(meter.actor_heading.text == heading and not meter.actor_heading.is_visible_in_tree(),
 		"exact actor heading is retained but kept off the ribbon: " + meter.name)
 	_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
-		and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp],
-		"ribbon shows the authoritative HP number: " + meter.name)
+		and meter.hp_text.text == "%d/%d" % [actor.hp, actor.max_hp]
+		and meter.hp_text.get_parent() == meter.hp_bar,
+		"ribbon shows the authoritative HP numbers inside the bar: " + meter.name)
 	_check(meter.hp_bar.is_visible_in_tree() and meter.hp_bar.value == actor.hp
 		and meter.hp_bar.max_value == actor.max_hp, "ribbon HP bar matches the model: " + meter.name)
-	_check(meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % actor.block,
-		"ribbon shows one authoritative Block value: " + meter.name)
+	_check(meter.hp_text.size == meter.hp_bar.size
+		and Rect2(Vector2.ZERO, meter.hp_bar.size).encloses(
+			Rect2(meter.hp_text.position, meter.hp_text.size))
+		and meter.hp_bar.size.y >= meter.hp_text.get_combined_minimum_size().y
+		and meter.hp_bar.custom_minimum_size.y >= meter.hp_text.get_combined_minimum_size().y
+		and meter.hp_text.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER
+		and meter.hp_text.vertical_alignment == VERTICAL_ALIGNMENT_CENTER
+		and meter.hp_text.get_theme_font_size("font_size") >= 12
+		and meter.hp_text.get_theme_constant("outline_size") > 0,
+		"ribbon HP numbers stay centred and wholly inside their tall enough bar: " + meter.name)
+	_check(meter.block_badge.visible == (actor.block > 0)
+		and meter.block_text.text == ("%d" % actor.block if actor.block > 0 else "")
+		and meter.block_shield.custom_minimum_size == CombatActorMeter.BlockShield.GLYPH_SIZE
+		and meter.block_shield.get_combined_minimum_size().x >= 24.0
+		and meter.block_shield.get_combined_minimum_size().y >= 28.0
+		and (actor.block == 0 or (meter.block_text.is_visible_in_tree()
+			and meter.block_shield.is_visible_in_tree())),
+		"ribbon shows one authoritative doubled Block shield and count: " + meter.name)
 	_check(not meter.block_bar.is_visible_in_tree() and meter.block_bar.value == actor.block
 		and meter.block_bar.max_value == maxi(1, maxi(actor.max_hp, actor.block)),
 		"the duplicate Block bar stays exact and hidden: " + meter.name)
@@ -213,7 +230,11 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and content.find_children("StatusButtons", "HBoxContainer", false, false).size() == 1
 		and content.find_children("PatchButtons", "HBoxContainer", false, false).size() == (1 if side == "hero" else 0),
 		"one of each named snapshot child per mounted ribbon: " + meter.name)
-	_check(content.get_child_count() == (11 if side == "hero" else 9),
+	_check(content.find_children("HPText", "Label", false, false).is_empty()
+		and content.find_children("BlockBadge", "HBoxContainer", false, false).size() == 1
+		and meter.hp_text.get_parent() == meter.hp_bar,
+		"the ribbon has one bar-borne HP number and one Block badge, never a second HP row: " + meter.name)
+	_check(content.get_child_count() == (10 if side == "hero" else 8),
 		"a ribbon keeps the preserved snapshot and only the optional hero patch row: " + meter.name)
 	var patches := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
 	if side == "hero":
@@ -571,7 +592,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 		_visible(app)
 		_check(_state(app) == before_swap, "reverse movement restores exact state and RNG")
 	_check(meters[0].bleed_warning.text == "Bleed next: -3 HP (bypasses Block)"
-		and meters[0].block_text.text == "Block: 6"
+		and meters[0].block_text.text == "6" and meters[0].block_badge.visible
 		and meters[3].bleed_warning.text == "Bleed next: -2 HP (bypasses Block) — LETHAL"
 		and meters[2].bleed_warning.text == "Bleed next: -1 HP (bypasses Block)"
 		and meters[4].bleed_warning.text == "Bleed next: -2 HP (bypasses Block)",
@@ -592,7 +613,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 				row_ids.append(child.get_instance_id())
 			_check(meters[index].get_instance_id() == ids[index]
 				and button_ids[index] == row_ids
-				and meters[index].get_node("Padding/Content").get_child_count() == (11 if index < 3 else 9),
+				and meters[index].get_node("Padding/Content").get_child_count() == (10 if index < 3 else 8),
 				"read-only live refresh never allocates another chip, warning or meter")
 	_check(_state(app) == live_before_refresh and randi() == expected_global
 		and incoming_before == [_incoming(app, 1), _incoming(app, 2), _incoming(app, 3)],
@@ -1067,7 +1088,8 @@ func _three_enemy_stage(app, presenter) -> void:
 	for button in _visible_buttons(_meters(app)[1]):
 		block_chips.append(button.text)
 	_check(block_chips.is_empty() and not _buttons(_meters(app)[1]).is_visible_in_tree()
-		and _meters(app)[1].block_text.text == "Block: %d" % app.party.get_hero(2)["block"],
+		and _meters(app)[1].block_badge.visible
+		and _meters(app)[1].block_text.text == str(app.party.get_hero(2)["block"]),
 		"Block stays visible while a living hero's empty status row collapses")
 	# Dense four-chip case in the authentic three-enemy fight: slay a fully stacked
 	# source through the real enemy API and keep every name and count on its ribbon.

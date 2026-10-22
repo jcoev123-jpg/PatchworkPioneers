@@ -234,7 +234,7 @@ func _display(card_id: String, stage: String) -> void:
 		"no separate area combat button exists: " + card_id)
 	_check(app.get_node("LiveAreaAttackAction").get_child_count() == 0,
 		"adapter mounts no extra control: " + card_id)
-	_check(app.get_node("LiveSupportHand").energy_label.text == "Energy\n%d" % app.deck.energy,
+	_check(app.get_node("LiveSupportHand").energy_label.text == "%d" % app.deck.energy,
 		"shared energy display is authoritative: " + stage)
 	_check(not panel.focus_neighbor_bottom.is_empty()
 		and panel.get_node_or_null(panel.focus_neighbor_bottom) == app.end_turn_button,

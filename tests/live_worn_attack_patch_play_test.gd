@@ -264,7 +264,7 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 		"real HP, Block, and run RNG agree with confirmed attack")
 	_check(app.hand_view.get_child_count() == app.deck.hand.size()
 		and app.get_node("LiveSupportHand").energy_label.text ==
-			"Energy\n%d" % app.deck.energy, "mounted hand and energy redraw")
+			"%d" % app.deck.energy, "mounted hand and energy redraw")
 	_check(presenter.cue != null and presenter.cue.text == ""
 		and not presenter.cue.is_visible_in_tree(),
 		"committed attack retires the idle attack cue")

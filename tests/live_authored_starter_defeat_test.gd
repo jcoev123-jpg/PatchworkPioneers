@@ -63,8 +63,10 @@ func _party_visible() -> void:
 		for index in range(3):
 			var meter = meters.row.get_child(index)
 			var actor: Dictionary = app.party.get_hero(index + 1)
-			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
-				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % actor.block,
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "%d/%d" % [actor.hp, actor.max_hp]
+				and meter.block_badge.visible == (actor.block > 0)
+				and (actor.block == 0 or (meter.block_text.is_visible_in_tree()
+					and meter.block_text.text == "%d" % actor.block)),
 				"visible meter retains exact authoritative HP and Block")
 
 	_check(app.hero_panels.size() == 3, "three mounted hero panels")

@@ -124,7 +124,7 @@ func _visible() -> void:
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [app.deck.draw_pile.size(), app.deck.discard_pile.size()], "visible piles refreshed")
 	var support = app.get_node("LiveSupportHand")
 	_check(is_instance_valid(support.energy_label) and support.energy_label.is_visible_in_tree()
-		and support.energy_label.text == "Energy\n%d" % app.deck.energy, "visible shared energy refreshed")
+		and support.energy_label.text == "%d" % app.deck.energy, "visible shared energy refreshed")
 	var meters = app.get_node("LiveCombatMeters")
 	_check(is_instance_valid(meters.row), "mounted combat meter row exists")
 	if is_instance_valid(meters.row):
@@ -134,8 +134,10 @@ func _visible() -> void:
 		for meter in meters.row.get_children():
 			var index: int = meter.get_index()
 			var actor: Dictionary = app.party.get_hero(index + 1) if index < 3 else app.enemies.get_enemy(index - 2)
-			_check(meter.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
-				and meter.block_text.text == "Block: %d" % actor.block
+			_check(meter.is_visible_in_tree() and meter.hp_text.text == "%d/%d" % [actor.hp, actor.max_hp]
+				and meter.hp_text.get_parent() == meter.hp_bar
+				and meter.block_text.text == ("%d" % actor.block if actor.block > 0 else "")
+				and meter.block_badge.visible == (actor.block > 0)
 				and meter.hp_bar.value == actor.hp and meter.block_bar.value == actor.block, "visible HP/Block and bars match models")
 	_check(app.result_label.is_visible_in_tree() == app.battle_result.is_finished(), "visible result follows actual outcome")
 	if app.battle_result.is_finished():

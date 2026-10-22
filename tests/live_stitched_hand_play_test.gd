@@ -517,8 +517,9 @@ func _run() -> void:
 						and roster._badges[enemy.position - 1].readable_text == "SLAIN",
 						"a slain enemy announces its death on the intent badge")
 				var meter = app.get_node("LiveCombatMeters").row.get_child(2 + enemy.position)
-				_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp]
-					and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: %d" % enemy.block,
+				_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "%d/%d" % [enemy.hp, enemy.max_hp]
+					and meter.block_badge.visible == (enemy.block > 0)
+					and meter.block_text.text == ("%d" % enemy.block if enemy.block > 0 else ""),
 					"exact visible enemy HP and Block display agrees with resolved oracle")
 			var trace := [_snapshot(), presenter.last_event.duplicate(true), app._stitch_snapshot()]
 			if replay.is_empty():

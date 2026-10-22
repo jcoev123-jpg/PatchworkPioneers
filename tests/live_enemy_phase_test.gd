@@ -57,9 +57,12 @@ func _visible(app, target: int = 1) -> void:
 		for index in range(actors.size()):
 			var meter = meters.get_child(index)
 			var actor: Dictionary = actors[index]
-			_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree() and meter.block_text.is_visible_in_tree()
-				and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
-				and meter.block_text.text == "Block: %d" % actor.block, "one visible authoritative HP/Block readout per actor")
+			_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
+				and meter.hp_text.text == "%d/%d" % [actor.hp, actor.max_hp]
+				and meter.block_badge.visible == (actor.block > 0)
+				and (actor.block == 0 or meter.block_text.is_visible_in_tree())
+				and meter.block_text.text == ("%d" % actor.block if actor.block > 0 else ""),
+				"one visible authoritative HP/Block readout per actor")
 	_check(app.hand_view.get_child_count() == app.deck.hand.size(), "hand display refreshed")
 	var presenter = app.get_node("LiveEnemyRoster")
 	_check(presenter.enemies == app.enemies and is_instance_valid(presenter.panel), "one shared mounted enemy roster")

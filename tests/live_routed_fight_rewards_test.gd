@@ -160,7 +160,7 @@ func _run() -> void:
 				"all reward controls fit viewport")
 			if index < 3:
 				var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(expected_offers[index].id)
-				_check(button.get_parent().get_node("OwnerLabel").text == expected_offers[index].owner.capitalize() and button.get_parent().get_node("NameLabel").text == definition.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == definition.get("rarity", "").capitalize(),
+				_check(button.get_parent().get_node("OwnerPatch").get("owner_color") == LiveRunCardRewardChoicePanel.OWNER_COLORS[expected_offers[index].owner] and button.get_parent().get_node("NameLabel").text == definition.get("display_name", "") and button.get_parent().get_node("RarityLabel").text == definition.get("rarity", "").capitalize(),
 					"visible actual authored name, owner and rarity")
 		var before := _persistent()
 		var service: RunFightVictoryRewards = app.fight_rewards

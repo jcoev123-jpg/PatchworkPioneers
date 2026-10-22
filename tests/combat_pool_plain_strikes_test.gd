@@ -15,6 +15,10 @@ func _initialize() -> void:
 	_test_brass_buckle()
 	_test_thread_whip()
 	_test_status_damage()
+	_test_pinned_brass_buckle()
+	_test_pinned_thread_whip()
+	_test_pinned_status_damage()
+	_test_pinned_rejections_and_retry()
 	_test_rejections()
 	_test_replay()
 	_test_catalog_unchanged()
@@ -96,8 +100,9 @@ func _has_copies(hand: Array[String], wanted: Array) -> bool:
 	return true
 
 
-func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> Dictionary:
-	return {
+func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		pinned: CombatPinned = null) -> Dictionary:
+	var snap: Dictionary = {
 		"draw": deck.draw_pile.duplicate(true),
 		"hand": deck.hand.duplicate(true),
 		"discard": deck.discard_pile.duplicate(true),
@@ -111,21 +116,25 @@ func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> 
 		"foes": enemies.get_enemies(),
 		"victory": enemies.is_victorious(),
 	}
+	if pinned != null:
+		snap["pins"] = pinned._pinner_by_position.duplicate(true)
+	return snap
 
 
 func _play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		id: String, target: int, damage: int, absorbed: int, loss: int,
-		gain: int, owner_position: int, label: String) -> void:
-	var owner_id := "warden" if id.begins_with("warden_") else "seamstress"
+		gain: int, owner_position: int, label: String, pinned: CombatPinned = null) -> void:
+	var owner_id: String = "warden" if id.begins_with("warden_") else "seamstress"
 	_check(deck.hand.has(id) and deck.turn_active and deck.energy >= 1,
 		label + ": live held hand and energy preconditions")
 	_check(party.get_hero(owner_position).get("id") == owner_id
 		and not party.is_downed(owner_position), label + ": real owner in current slot")
 	_check(not enemies.get_enemy(target).is_empty() and not enemies.is_slain(target),
 		label + ": selected original enemy slot is living")
-	var before := _snapshot(deck, party, enemies)
+	var before: Dictionary = _snapshot(deck, party, enemies, pinned)
+	var before_pinner: String = pinned.pinner_for_enemy(target) if pinned != null else ""
 	var result: Dictionary = CombatPoolPlainStrikes.new().play_card(
-		deck, party, enemies, id, target)
+		deck, party, enemies, id, target, pinned)
 	var block_deltas: Dictionary = {}
 	if gain > 0:
 		block_deltas[owner_position] = gain
@@ -145,22 +154,26 @@ func _play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var foes: Array = expected["foes"]
 	foes[target - 1]["block"] -= absorbed
 	foes[target - 1]["hp"] -= loss
-	var victory := true
+	var victory: bool = true
 	for foe in foes:
 		if foe["hp"] > 0:
 			victory = false
 	expected["victory"] = victory
-	_check(_snapshot(deck, party, enemies) == expected,
+	if pinned != null:
+		var expected_pins: Dictionary = expected["pins"]
+		if not before_pinner.is_empty() and before_pinner != owner_id:
+			expected_pins.erase(target)
+	_check(_snapshot(deck, party, enemies, pinned) == expected,
 		label + ": full hand/piles/energy/seed/RNG/rosters unchanged except one strike")
 
 
 func _reject(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		id: String, target: int, label: String) -> void:
-	var before: Dictionary = _snapshot(deck, party, enemies)
-	_check(CombatPoolPlainStrikes.new().play_card(deck, party, enemies, id, target)
+		id: String, target: int, label: String, pinned: CombatPinned = null) -> void:
+	var before: Dictionary = _snapshot(deck, party, enemies, pinned)
+	_check(CombatPoolPlainStrikes.new().play_card(deck, party, enemies, id, target, pinned)
 		== {"ok": false, "hits": [], "block_deltas": {}},
 		label + ": fail-closed event")
-	_check(_snapshot(deck, party, enemies) == before,
+	_check(_snapshot(deck, party, enemies, pinned) == before,
 		label + ": complete state including RNG identical after rejection")
 
 
@@ -286,6 +299,252 @@ func _test_status_damage() -> void:
 		_check(foes.get_enemy(1)["statuses"] == scenario["defend"]
 			and party.get_hero(owner_pos)["statuses"] == scenario["attack"],
 			"no status application, passive Bleed, or status aging")
+
+
+func _test_pinned_brass_buckle() -> void:
+	# AC1: Brass Buckle (5 + 5 = 10 raw damage) with foreign pin from seamstress
+	var pinned: CombatPinned = CombatPinned.new()
+	var deck: CombatDeck = _deck(["warden_brass_buckle"])
+	var party: CombatParty = _party()
+	var foes: CombatEnemies = _enemies()
+	_check(party.gain_block(1, 6) and foes.gain_block(1, 3), "pre-block party 6 and foe 3")
+	_check(pinned.pin_enemy(foes, 1, "seamstress"), "pin enemy 1 with seamstress")
+	_check(pinned.pin_enemy(foes, 2, "tinker"), "pin enemy 2 with tinker")
+	_play(deck, party, foes, "warden_brass_buckle", 1, 10, 3, 7, 4, 1,
+		"Brass Buckle gains +5 raw on foreign pin and consumes it", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "enemy 1 pin consumed")
+	_check(pinned.pinner_for_enemy(2) == "tinker", "unrelated enemy 2 pin preserved")
+
+	# AC1: Brass Buckle+ (7 + 5 = 12 raw damage) with foreign pin from tinker on shifted Warden
+	pinned = CombatPinned.new()
+	deck = _deck(["warden_brass_buckle_plus"])
+	party = _party(["seamstress", "warden", "tinker"])
+	foes = _enemies()
+	_check(party.gain_block(2, 2) and foes.gain_block(2, 4), "shifted party 2 and foe 4")
+	_check(pinned.pin_enemy(foes, 2, "tinker"), "pin enemy 2 with tinker")
+	_play(deck, party, foes, "warden_brass_buckle_plus", 2, 12, 4, 8, 6, 2,
+		"Brass Buckle+ gains +5 raw on foreign pin for shifted Warden", pinned)
+	_check(pinned.pinner_for_enemy(2).is_empty(), "enemy 2 pin consumed")
+
+	# AC1: Lethal hit with Brass Buckle consumes pin and still awards Warden Block
+	pinned = CombatPinned.new()
+	deck = _deck(["warden_brass_buckle"])
+	party = _party()
+	foes = _enemies([5, 20])
+	_check(pinned.pin_enemy(foes, 1, "seamstress"), "pin enemy 1 for lethal test")
+	_play(deck, party, foes, "warden_brass_buckle", 1, 10, 0, 5, 4, 1,
+		"lethal Brass Buckle consumes pin and awards Warden Block", pinned)
+	_check(foes.is_slain(1), "enemy 1 is slain by lethal hit")
+	_check(pinned.pinner_for_enemy(1).is_empty(), "pin consumed on lethal hit")
+
+	# AC1: Same-owner pin grants NO bonus damage and is NOT consumed
+	pinned = CombatPinned.new()
+	deck = _deck(["warden_brass_buckle"])
+	party = _party()
+	foes = _enemies()
+	_check(pinned.pin_enemy(foes, 1, "warden"), "pin enemy 1 with warden itself")
+	_play(deck, party, foes, "warden_brass_buckle", 1, 5, 0, 5, 4, 1,
+		"Brass Buckle against same-owner pin gets no bonus and preserves token", pinned)
+	_check(pinned.pinner_for_enemy(1) == "warden", "same-owner pin remains on target")
+
+	# AC1: Instance binding via constructor and set_pinned
+	pinned = CombatPinned.new()
+	deck = _deck(["warden_brass_buckle"])
+	party = _party()
+	foes = _enemies()
+	_check(pinned.pin_enemy(foes, 1, "seamstress"), "pin enemy 1 with seamstress for binding")
+	var bound_resolver: CombatPoolPlainStrikes = CombatPoolPlainStrikes.new(pinned)
+	_check(bound_resolver.get_pinned() == pinned, "constructor bound CombatPinned getter agrees")
+	var bound_result: Dictionary = bound_resolver.play_card(deck, party, foes, "warden_brass_buckle", 1)
+	_check(bound_result["ok"] and bound_result["hits"][0]["damage"] == 10,
+		"constructor bound resolver honors pinned token without trailing argument")
+	_check(pinned.pinner_for_enemy(1).is_empty(), "bound resolver consumed pin")
+
+	pinned = CombatPinned.new()
+	deck = _deck(["warden_brass_buckle"])
+	party = _party()
+	foes = _enemies()
+	_check(pinned.pin_enemy(foes, 1, "seamstress"), "pin enemy 1 for set_pinned")
+	var setter_resolver: CombatPoolPlainStrikes = CombatPoolPlainStrikes.new()
+	setter_resolver.set_pinned(pinned)
+	_check(setter_resolver.get_pinned() == pinned, "set_pinned getter agrees")
+	var setter_result: Dictionary = setter_resolver.play_card(deck, party, foes, "warden_brass_buckle", 1)
+	_check(setter_result["ok"] and setter_result["hits"][0]["damage"] == 10,
+		"set_pinned resolver honors pinned token without trailing argument")
+
+
+func _test_pinned_thread_whip() -> void:
+	# AC2: Thread Whip (6 + 5 = 11 raw damage) with foreign pin from warden
+	var pinned: CombatPinned = CombatPinned.new()
+	var deck: CombatDeck = _deck(["seamstress_thread_whip"])
+	var party: CombatParty = _party(["seamstress", "warden", "tinker"])
+	var foes: CombatEnemies = _enemies()
+	_check(foes.gain_block(2, 4), "foe slot 2 starts with 4 block")
+	_check(pinned.pin_enemy(foes, 2, "warden"), "pin enemy 2 with warden")
+	_play(deck, party, foes, "seamstress_thread_whip", 2, 11, 4, 7, 0, 1,
+		"Thread Whip gains +5 raw on foreign pin, consumes it, leaves hero Block 0", pinned)
+	_check(pinned.pinner_for_enemy(2).is_empty(), "enemy 2 pin consumed")
+
+	# AC2: Thread Whip+ (8 + 5 = 13 raw damage) from position 3 with foreign pin from tinker
+	pinned = CombatPinned.new()
+	deck = _deck(["seamstress_thread_whip_plus"])
+	party = _party(["warden", "tinker", "seamstress"])
+	foes = _enemies()
+	_check(foes.gain_block(1, 6), "foe slot 1 starts with 6 block")
+	_check(pinned.pin_enemy(foes, 1, "tinker"), "pin enemy 1 with tinker")
+	_play(deck, party, foes, "seamstress_thread_whip_plus", 1, 13, 6, 7, 0, 3,
+		"Thread Whip+ from slot 3 gains +5 raw on foreign pin and leaves hero Block 0", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "enemy 1 pin consumed")
+
+	# AC2: Overkill lethal hit consumes pin
+	pinned = CombatPinned.new()
+	deck = _deck(["seamstress_thread_whip"])
+	party = _party()
+	foes = _enemies([3, 20])
+	_check(pinned.pin_enemy(foes, 1, "warden"), "pin enemy 1 with warden for overkill")
+	_play(deck, party, foes, "seamstress_thread_whip", 1, 11, 0, 3, 0, 2,
+		"Thread Whip overkill consumes pin and clamps HP loss", pinned)
+	_check(foes.is_slain(1), "enemy 1 slain")
+	_check(pinned.pinner_for_enemy(1).is_empty(), "pin consumed on overkill hit")
+
+	# AC2: Same-owner pin grants NO bonus damage and is NOT consumed
+	pinned = CombatPinned.new()
+	deck = _deck(["seamstress_thread_whip_plus"])
+	party = _party()
+	foes = _enemies()
+	_check(pinned.pin_enemy(foes, 1, "seamstress"), "pin enemy 1 with seamstress herself")
+	_play(deck, party, foes, "seamstress_thread_whip_plus", 1, 8, 0, 8, 0, 2,
+		"Thread Whip+ against same-owner pin gets no bonus and preserves token", pinned)
+	_check(pinned.pinner_for_enemy(1) == "seamstress", "same-owner pin remains on target")
+
+	# AC2: Unpinned target with active CombatPinned returns unchanged unpinned receipts
+	pinned = CombatPinned.new()
+	deck = _deck(["seamstress_thread_whip"])
+	party = _party()
+	foes = _enemies()
+	_play(deck, party, foes, "seamstress_thread_whip", 1, 6, 0, 6, 0, 2,
+		"Thread Whip against unpinned target with CombatPinned present behaves normally", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "no pin on target 1")
+
+
+func _test_pinned_status_damage() -> void:
+	# AC1 & AC2: Weak and Exposed together with foreign pin
+	# Example from brief: foreign pin plus Brass Buckle 5 means raw 10;
+	# with Weak 1 AND Exposed 1 its final damage is floor(10 * 0.75 * 1.5) = floor(10 * 9 / 8) = 11 before enemy Block.
+	var pinned: CombatPinned = CombatPinned.new()
+	var deck: CombatDeck = _deck(["warden_brass_buckle"])
+	var party: CombatParty = _party()
+	var foes: CombatEnemies = _enemies()
+	party._heroes[0]["statuses"] = {"weak": 1}
+	foes._enemies[0]["statuses"] = {"exposed": 1}
+	_check(foes.gain_block(1, 2), "foe block 2")
+	_check(pinned.pin_enemy(foes, 1, "seamstress"), "pin enemy 1 with seamstress")
+	_play(deck, party, foes, "warden_brass_buckle", 1, 11, 2, 9, 4, 1,
+		"Brass Buckle foreign pin Weak 1 + Exposed 1 yields floor(10 * 9/8) = 11", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "pin consumed after status hit")
+
+	# Example from brief: foreign pin plus Thread Whip+ 8 means raw 13;
+	# with those statuses its final damage is floor(13 * 0.75 * 1.5) = floor(13 * 9 / 8) = 14.
+	pinned = CombatPinned.new()
+	deck = _deck(["seamstress_thread_whip_plus"])
+	party = _party()
+	foes = _enemies()
+	party._heroes[1]["statuses"] = {"weak": 1}
+	foes._enemies[0]["statuses"] = {"exposed": 1}
+	_check(foes.gain_block(1, 3), "foe block 3")
+	_check(pinned.pin_enemy(foes, 1, "warden"), "pin enemy 1 with warden")
+	_play(deck, party, foes, "seamstress_thread_whip_plus", 1, 14, 3, 11, 0, 2,
+		"Thread Whip+ foreign pin Weak 1 + Exposed 1 yields floor(13 * 9/8) = 14", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "pin consumed after status hit")
+
+	# Weak only on Brass Buckle+ (7 + 5 = 12 raw; 12 * 0.75 = 9)
+	pinned = CombatPinned.new()
+	deck = _deck(["warden_brass_buckle_plus"])
+	party = _party()
+	foes = _enemies()
+	party._heroes[0]["statuses"] = {"weak": 1}
+	_check(pinned.pin_enemy(foes, 1, "tinker"), "pin enemy 1 with tinker")
+	_play(deck, party, foes, "warden_brass_buckle_plus", 1, 9, 0, 9, 6, 1,
+		"Brass Buckle+ foreign pin Weak 1 yields floor(12 * 0.75) = 9", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "pin consumed")
+
+	# Exposed only on Thread Whip (6 + 5 = 11 raw; floor(11 * 1.5) = 16)
+	pinned = CombatPinned.new()
+	deck = _deck(["seamstress_thread_whip"])
+	party = _party()
+	foes = _enemies()
+	foes._enemies[0]["statuses"] = {"exposed": 1}
+	_check(pinned.pin_enemy(foes, 1, "warden"), "pin enemy 1 with warden")
+	_play(deck, party, foes, "seamstress_thread_whip", 1, 16, 0, 16, 0, 2,
+		"Thread Whip foreign pin Exposed 1 yields floor(11 * 1.5) = 16", pinned)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "pin consumed")
+
+
+func _test_pinned_rejections_and_retry() -> void:
+	# AC3: Negative cases with foreign pin established BEFORE preflight.
+	# Pin, deck, party, enemy and RNG snapshots must remain strictly identical.
+	for scenario in [
+		{"name": "pinned: absent held copy", "kind": "absent"},
+		{"name": "pinned: inactive turn with held copy", "kind": "inactive"},
+		{"name": "pinned: zero energy", "kind": "energy"},
+		{"name": "pinned: downed Warden", "kind": "downed"},
+		{"name": "pinned: Warden in forbidden back row", "kind": "wrong_pos"},
+		{"name": "pinned: target zero", "target": 0},
+		{"name": "pinned: target slot three", "target": 3},
+		{"name": "pinned: target slot four", "target": 4},
+		{"name": "pinned: slain target", "kind": "slain"},
+		{"name": "pinned: missing target slot", "kind": "absent_enemy"},
+		{"name": "pinned: Warden Block overflow", "kind": "overflow"},
+	]:
+		var id: String = "warden_brass_buckle"
+		var deck: CombatDeck = _deck([id])
+		var party: CombatParty = _party()
+		var foes: CombatEnemies = _enemies()
+		if scenario.get("kind") == "absent_enemy":
+			foes = _enemies([20])
+		var target: int = scenario.get("target", 2 if scenario.get("kind") == "absent_enemy" else 1)
+		var pinned: CombatPinned = CombatPinned.new()
+		# Establish foreign pin on the target (or position 1 if out of bounds)
+		var pin_pos: int = target if target >= 1 and target <= foes.get_enemies().size() else 1
+		_check(pinned.pin_enemy(foes, pin_pos, "seamstress"), "foreign pin set before preflight: " + scenario["name"])
+
+		match scenario.get("kind", ""):
+			"absent":
+				_check(deck.discard_played(id), "remove held pool copy")
+			"inactive":
+				_check(deck.combat_state.end_player_turn(), "real state makes turn inactive")
+			"energy":
+				_check(deck.try_spend_energy(3), "exhaust energy")
+			"downed":
+				_check(party.apply_damage(1, 40) and party.is_downed(1), "down Warden")
+			"wrong_pos":
+				party = _party(["seamstress", "tinker", "warden"])
+			"slain":
+				_check(foes.apply_damage(1, 20) and foes.is_slain(1), "slain target")
+			"overflow":
+				party._heroes[0]["block"] = CombatParty.MAX_INT - 3
+
+		_reject(deck, party, foes, id, target, scenario["name"], pinned)
+		_check(pinned.pinner_for_enemy(pin_pos) == "seamstress",
+			"pin strictly preserved after rejection: " + scenario["name"])
+
+	# AC3: A later valid retry CAN still consume the pin!
+	var retry_deck: CombatDeck = _deck(["warden_brass_buckle"])
+	var retry_party: CombatParty = _party()
+	var retry_foes: CombatEnemies = _enemies()
+	var retry_pinned: CombatPinned = CombatPinned.new()
+	_check(retry_pinned.pin_enemy(retry_foes, 1, "seamstress"), "pin set for retry fixture")
+	# First attempt: zero energy fails
+	_check(retry_deck.try_spend_energy(3), "drain energy for rejection")
+	_reject(retry_deck, retry_party, retry_foes, "warden_brass_buckle", 1,
+		"rejection before retry", retry_pinned)
+	_check(retry_pinned.pinner_for_enemy(1) == "seamstress", "pin intact after failed attempt")
+	# Restore energy for retry
+	retry_deck.energy = 3
+	retry_deck.combat_state.energy = 3
+	_play(retry_deck, retry_party, retry_foes, "warden_brass_buckle", 1, 10, 0, 10, 4, 1,
+		"valid retry after rejection consumes foreign pin and adds +5 raw damage", retry_pinned)
+	_check(retry_pinned.pinner_for_enemy(1).is_empty(), "pin consumed on successful retry")
 
 
 func _test_rejections() -> void:

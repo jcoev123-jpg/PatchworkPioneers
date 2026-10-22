@@ -11,6 +11,10 @@ extends Node
 const RIBBON_MAX_WIDTH := 200.0
 const RIBBON_MIN_WIDTH := 84.0
 const RIBBON_HEIGHT := 64.0
+## The HP trough rides under the actor with the number drawn inside it: 14 px numerals
+## measure 20 px, so the bar keeps a 22 px trough and never lets the outlined ink spill
+## outside the stitched fill.
+const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
 ## One chip per Bleed/Weak/Exposed stack plus the downed/slain badge.
 const STATUS_BUTTONS := 4
@@ -112,7 +116,7 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	meter.hp_text.add_theme_font_size_override("font_size", 14)
 	meter.hp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	meter.hp_text.autowrap_mode = TextServer.AUTOWRAP_OFF
-	meter.hp_bar.custom_minimum_size = Vector2(0, 9)
+	meter.hp_bar.custom_minimum_size = Vector2(0, RIBBON_HP_BAR_HEIGHT)
 	meter.block_text.add_theme_font_size_override("font_size", 12)
 	meter.block_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	meter.block_text.autowrap_mode = TextServer.AUTOWRAP_OFF

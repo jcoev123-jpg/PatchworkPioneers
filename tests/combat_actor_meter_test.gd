@@ -46,7 +46,9 @@ func _visual(meter: CombatActorMeter) -> Dictionary:
 		"hp": meter.hp_text.text,
 		"hp_value": meter.hp_bar.value,
 		"hp_max": meter.hp_bar.max_value,
+		"hp_on_bar": meter.hp_text.get_parent() == meter.hp_bar,
 		"block": meter.block_text.text,
+		"block_visible": meter.block_badge.visible,
 		"block_value": meter.block_bar.value,
 		"block_max": meter.block_bar.max_value,
 		"statuses": meter.status_text.text,
@@ -67,29 +69,68 @@ func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: in
 		expected_warning: String = "", expected_explanation: String = "") -> void:
 	_check(meter.visible and meter.is_visible_in_tree(), note + ": mounted and visible")
 	_check(meter.actor_heading.text == heading, note + ": position/name/death heading")
-	_check(meter.hp_text.text == "HP: %d/%d" % [hp, max_hp], note + ": exact HP text")
-	_check(meter.block_text.text == "Block: %d" % block, note + ": exact Block text")
+	_check(meter.hp_text.text == "%d/%d" % [hp, max_hp], note + ": exact current/max numbers")
 	_check(meter.hp_bar.min_value == 0.0 and meter.hp_bar.max_value == float(max_hp)
-		and meter.hp_bar.value == float(hp), note + ": exact HP bar")
-	_check(meter.block_bar.min_value == 0.0
-		and meter.block_bar.max_value == float(maxi(1, maxi(max_hp, block)))
-		and meter.block_bar.value == float(block), note + ": uncapped Block bar")
+		and meter.hp_bar.value == float(hp) and meter.block_bar.is_visible_in_tree(),
+		note + ": exact HP bar range and value")
+	_check(meter.hp_text.get_parent() == meter.hp_bar
+		and meter.get_node("Padding/Content").find_children("HPText", "Label", false, false).is_empty(),
+		note + ": numbers overlay the bar instead of a second HP row")
+	_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.anchor_right == 0.0
+		and meter.hp_text.size == meter.hp_bar.size
+		and Rect2(Vector2.ZERO, meter.hp_bar.size).encloses(
+			Rect2(meter.hp_text.position, meter.hp_text.size))
+		and meter.hp_bar.size.y >= meter.hp_text.get_combined_minimum_size().y
+		and meter.hp_bar.custom_minimum_size.y >= meter.hp_text.get_combined_minimum_size().y
+		and absf((meter.hp_text.position.y + meter.hp_text.size.y * 0.5)
+			- meter.hp_bar.size.y * 0.5) < 0.01
+		and meter.hp_text.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER
+		and meter.hp_text.vertical_alignment == VERTICAL_ALIGNMENT_CENTER,
+		note + ": centred numbers wholly contained inside the stitched bar")
+	_check(meter.hp_text.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and meter.hp_text.focus_mode == Control.FOCUS_NONE
+		and meter.hp_text.get_theme_constant("outline_size") > 0
+		and meter.hp_text.get_theme_font_size("font_size") >= 12,
+		note + ": outlined overlay stays legible and input-inert")
+	_check(meter.hp_bar.get_node_or_null("BarStitch") is Control
+		and meter.hp_bar.get_node("BarStitch").mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		note + ": bar keeps one inert sewn thread overlay")
+	_check(meter.block_badge.visible == (block > 0),
+		note + ": Block badge exists exactly while protected")
+	_check(meter.block_text.text == ("%d" % block if block > 0 else ""),
+		note + ": exact Block count or a cleared hidden badge")
+	_check(meter.block_badge.get_child_count() == 2
+		and meter.block_shield is CombatActorMeter.BlockShield
+		and meter.block_shield == meter.block_badge.get_node("BlockShield")
+		and meter.block_text == meter.block_badge.get_node("BlockText")
+		and meter.block_badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and meter.block_badge.focus_mode == Control.FOCUS_NONE,
+		note + ": one inert shield and one count inside the badge")
+	_check(block == 0 or (meter.block_shield.is_visible_in_tree()
+		and meter.block_text.is_visible_in_tree()),
+		note + ": positive Block draws the shield and its count")
+	_check(meter.block_shield.custom_minimum_size == CombatActorMeter.BlockShield.GLYPH_SIZE
+		and CombatActorMeter.BlockShield.GLYPH_SIZE == Vector2(12, 14) * 2.0
+		and meter.block_shield.get_combined_minimum_size().x >= 24.0
+		and meter.block_shield.get_combined_minimum_size().y >= 28.0,
+		note + ": shield glyph is twice the saved 12x14 badge size")
+	_check(block_bar_holds(meter, max_hp, block), note + ": uncapped Block bar")
 	_check(meter.status_text.text == expected_status, note + ": exact status line")
 	_check(not meter.hp_bar.show_percentage and not meter.block_bar.show_percentage,
-		note + ": readable separately titled bars")
+		note + ": numbers never come from the percent display")
 	_check(meter.actor_heading.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
-		and meter.block_text.is_visible_in_tree() and meter.hp_bar.is_visible_in_tree()
-		and meter.block_bar.is_visible_in_tree(), note + ": all five visible child controls")
+		and meter.hp_bar.is_visible_in_tree(), note + ": header, numbers and bar all visible")
 	_check(meter.status_text.is_visible_in_tree() and meter.status_text.name == "StatusText"
 		and meter.status_text.get_parent() == meter.get_node("Padding/Content")
 		and meter.status_text.focus_mode == Control.FOCUS_NONE
 		and meter.status_text.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		note + ": one inert status label inside existing Content")
-	_check(meter.get_node("Padding/Content").get_child_count() == 8
+	_check(meter.get_node("Padding/Content").get_child_count() == 7
 		and meter.get_node("Padding/Content").find_children("ModifierExplanation", "Label", false, false).size() == 1
 		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1
-		and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1,
-		note + ": original controls plus exactly one status and one Bleed warning label")
+		and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1
+		and meter.get_node("Padding/Content").find_children("BlockBadge", "HBoxContainer", false, false).size() == 1,
+		note + ": one badge, one status and one Bleed label in a single content column")
 	_check(meter.modifier_explanation.text == expected_explanation
 		and meter.modifier_explanation.visible == not expected_explanation.is_empty()
 		and (expected_explanation.is_empty() or meter.modifier_explanation.is_visible_in_tree()),
@@ -111,21 +152,30 @@ func _assert_actor(meter: CombatActorMeter, heading: String, hp: int, max_hp: in
 		note + ": bars have contrasting fill styles")
 
 
+## The Block bar's own scale is unchanged presentation data: zero floor, model cap and value.
+func block_bar_holds(meter: CombatActorMeter, max_hp: int, block: int) -> bool:
+	return (meter.block_bar.min_value == 0.0
+		and meter.block_bar.max_value == float(maxi(1, maxi(max_hp, block)))
+		and meter.block_bar.value == float(block))
+
+
 func _assert_cleared(meter: CombatActorMeter, note: String) -> void:
 	_check(not meter.visible and not meter.is_visible_in_tree(), note + ": invalid actor hidden")
 	_check(meter.actor_heading.text.is_empty() and meter.hp_text.text.is_empty()
-		and meter.block_text.text.is_empty() and meter.status_text.text.is_empty()
+		and meter.block_text.text.is_empty() and not meter.block_badge.visible
+		and not meter.block_badge.is_visible_in_tree() and meter.status_text.text.is_empty()
 		and meter.modifier_explanation.text.is_empty() and not meter.modifier_explanation.visible
 		and meter.bleed_warning.text.is_empty() and not meter.bleed_warning.visible,
-		note + ": all old text, including stale statuses, cleared")
+		note + ": all old text, including stale Block and statuses, cleared")
 	_check(meter.hp_bar.value == 0 and meter.hp_bar.max_value == 1
 		and meter.block_bar.value == 0 and meter.block_bar.max_value == 1,
 		note + ": no old bar value or range remains")
-	_check(meter.get_node("Padding/Content").get_child_count() == 8
+	_check(meter.get_node("Padding/Content").get_child_count() == 7
 		and meter.get_node("Padding/Content").find_children("ModifierExplanation", "Label", false, false).size() == 1
 		and meter.get_node("Padding/Content").find_children("StatusText", "Label", false, false).size() == 1
-		and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1,
-		note + ": invalid source does not append or leak either label")
+		and meter.get_node("Padding/Content").find_children("BleedWarning", "Label", false, false).size() == 1
+		and meter.get_node("Padding/Content").find_children("BlockBadge", "HBoxContainer", false, false).size() == 1,
+		note + ": invalid source does not append or leak either label or the badge")
 
 
 func _run() -> void:
