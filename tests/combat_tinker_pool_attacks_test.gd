@@ -9,7 +9,9 @@ func _initialize() -> void:
 	_test_catalog_and_ten_variants()
 	_test_rivet_order_and_duplicates()
 	_test_area_original_positions()
+	_test_scatter_bolts_lethal_area_victory()
 	_test_ricochet_replay()
+	_test_ricochet_hit2_finish()
 	_test_shared_first_attack()
 	_test_spring_trap_cases()
 	_test_cross_owner_follow_up_cases()
@@ -231,6 +233,36 @@ func _test_area_original_positions() -> void:
 		"dead centre remains dead and third enemy uses original slot number")
 
 
+func _test_scatter_bolts_lethal_area_victory() -> void:
+	for upgrade in [false, true]:
+		var card_id: String = "tinker_scatter_bolts_plus" if upgrade else "tinker_scatter_bolts"
+		var raw_damage: int = 4 if upgrade else 3
+		var first := CombatTinkerFirstAttack.new()
+		var resolver := CombatTinkerPoolAttacks.new(first)
+		var deck := _deck([card_id, "warden_strike"])
+		var party := _party()
+		var enemies := _enemies([5, 6])
+		_check(enemies.gain_block(1, 1), card_id + " enemy 1 gains 1 block")
+		var rng_before: int = deck._rng.state
+		var result: Dictionary = resolver.play_attack(deck, party, enemies, card_id)
+		var expected_dmg: int = raw_damage + 3
+		_check(result.get("ok", false) and result["hits"].size() == 2,
+			card_id + " lethal area attack executes both living enemy hits")
+		_check(result["hits"][0] == {"position": 1, "damage": expected_dmg,
+			"block_absorbed": 1, "hp_loss": 5, "statuses": {}},
+			card_id + " enemy 1 absorbs block and takes lethal HP loss")
+		_check(result["hits"][1] == {"position": 2, "damage": expected_dmg,
+			"block_absorbed": 0, "hp_loss": 6, "statuses": {}},
+			card_id + " enemy 2 takes lethal HP loss")
+		_check(enemies.is_slain(1) and enemies.is_slain(2) and enemies.is_victorious(),
+			card_id + " all enemies slain commits real victory")
+		_check(deck.energy == 2 and deck.hand == ["warden_strike"] and deck.discard_pile == [card_id],
+			card_id + " charges once and discards once")
+		_check(first._consumed, card_id + " consumes first-attack latch")
+		_check(deck._rng.state == rng_before,
+			card_id + " area victory leaves run RNG completely untouched")
+
+
 ## Independent seeded oracle advances a copied RNG, computes current living
 ## selection before EACH hit and simulates Block/HP (without touching service).
 func _oracle_random(state: int, starting: Array[Dictionary], base_damage: int,
@@ -348,12 +380,157 @@ func _test_ricochet_replay() -> void:
 			_check(a == b, card_id + " same seeded real roster/actions replay exactly")
 			witnessed_early_death = witnessed_early_death or a["early_death"]
 	_check(witnessed_early_death, "seeded scenarios include a target slain on hit 1 or 2")
-	var first := CombatTinkerFirstAttack.new()
-	var deck := _deck(["tinker_ricochet"])
-	var party := _party()
-	var enemies := _enemies([1])
-	_reject(CombatTinkerPoolAttacks.new(first), deck, party, enemies,
-		first, "Ricochet cannot promise three living hits after early last kill")
+
+	# Replace obsolete expectation: Ricochet against a single 1-HP enemy must succeed on hit 1,
+	# committing a real victory with 1 spend, 1 discard, 1 RNG selection, and no phantom hits.
+	for upgrade in [false, true]:
+		var card_id: String = "tinker_ricochet_plus" if upgrade else "tinker_ricochet"
+		var base_dmg: int = 6 if upgrade else 4
+		var first := CombatTinkerFirstAttack.new()
+		var deck := _deck([card_id, "warden_strike"])
+		var party := _party()
+		var enemies := _enemies([1])
+		var party_before: Array = party.get_heroes()
+		var rng_clone := RandomNumberGenerator.new()
+		rng_clone.state = deck._rng.state
+		var oracle: Dictionary = _oracle_random(rng_clone.state, enemies.get_enemies(), base_dmg + 3, {}, 3)
+		var oracle_clone := RandomNumberGenerator.new()
+		oracle_clone.state = oracle["state"]
+		var expected_next_randi: int = oracle_clone.randi()
+
+		var result: Dictionary = CombatTinkerPoolAttacks.new(first).play_attack(
+			deck, party, enemies, card_id)
+		_check(result.get("ok", false) and result["hits"].size() == 1,
+			card_id + " terminal stop on single 1-HP enemy commits exactly one hit")
+		_check(result["hits"][0] == {"position": 1, "damage": base_dmg + 3, "block_absorbed": 0,
+			"hp_loss": 1, "statuses": {}},
+			card_id + " first-hit kill applies correct first-attack damage and status receipt")
+		_check(enemies.is_slain(1) and enemies.is_victorious(),
+			card_id + " lone enemy slain and victory committed on hit 1")
+		_check(deck.energy == 2 and deck.hand == ["warden_strike"] and deck.discard_pile == [card_id],
+			card_id + " hit 1 finish spends once and discards once")
+		_check(first._consumed and party.get_heroes() == party_before,
+			card_id + " first-attack latch consumed and party state preserved")
+		_check(deck._rng.state == oracle["state"],
+			card_id + " RNG advanced by precisely one random selection matching oracle")
+		_check(deck._rng.randi() == expected_next_randi,
+			card_id + " subsequent random draws match cloned oracle exactly")
+
+
+func _test_ricochet_hit2_finish() -> void:
+	# Fixture 1: Lone survivor with Block falls on hit 2, hit 3 never executes
+	for upgrade in [false, true]:
+		var card_id: String = "tinker_ricochet_plus" if upgrade else "tinker_ricochet"
+		var base_dmg: int = 6 if upgrade else 4
+		var first := CombatTinkerFirstAttack.new()
+		var deck := _deck([card_id, "warden_brace"])
+		var party := _party()
+		# Base deals 7 dmg (4+3). Enemy has 5 HP and 4 Block:
+		# Hit 1: 4 absorbed, 3 lost -> 2 HP left. Hit 2: 0 absorbed, 2 lost -> dead!
+		# Plus deals 9 dmg (6+3). Enemy has 7 HP and 5 Block:
+		# Hit 1: 5 absorbed, 4 lost -> 3 HP left. Hit 2: 0 absorbed, 3 lost -> dead!
+		var starting_hp: int = 7 if upgrade else 5
+		var starting_block: int = 5 if upgrade else 4
+		var enemies := _enemies([starting_hp])
+		_check(enemies.gain_block(1, starting_block), card_id + " lone enemy has starting block")
+		var party_before: Array = party.get_heroes()
+		var oracle: Dictionary = _oracle_random(deck._rng.state, enemies.get_enemies(), base_dmg + 3, {}, 3)
+		var oracle_clone := RandomNumberGenerator.new()
+		oracle_clone.state = oracle["state"]
+		var exp_next_randi: int = oracle_clone.randi()
+
+		var result: Dictionary = CombatTinkerPoolAttacks.new(first).play_attack(
+			deck, party, enemies, card_id)
+		_check(result.get("ok", false) and result["hits"].size() == 2,
+			card_id + " lone blocked enemy falls on hit 2, stopping before hit 3")
+		_check(result["hits"][0] == {"position": 1, "damage": base_dmg + 3,
+			"block_absorbed": starting_block, "hp_loss": (base_dmg + 3) - starting_block, "statuses": {}},
+			card_id + " hit 1 absorbs block")
+		_check(result["hits"][1] == {"position": 1, "damage": base_dmg + 3,
+			"block_absorbed": 0, "hp_loss": starting_hp - ((base_dmg + 3) - starting_block), "statuses": {}},
+			card_id + " hit 2 is lethal")
+		_check(enemies.is_slain(1) and enemies.is_victorious(),
+			card_id + " enemy slain and victory committed on hit 2")
+		_check(enemies.get_enemies() == oracle["roster"],
+			card_id + " authoritative roster matches oracle on hit 2 finish")
+		_check(deck.energy == 2 and deck.hand == ["warden_brace"] and deck.discard_pile == [card_id],
+			card_id + " spends once and discards once")
+		_check(first._consumed and party.get_heroes() == party_before,
+			card_id + " consumed latch and preserved party")
+		_check(deck._rng.state == oracle["state"],
+			card_id + " RNG advanced by precisely two selections")
+		_check(deck._rng.randi() == exp_next_randi,
+			card_id + " next RNG state matches oracle clone")
+
+	# Fixture 2: Seeded 2-enemy fixture where enemy 1 dies on hit 1, enemy 2 has Block and dies on hit 2
+	var found_seed: int = -1
+	for s in range(1, 100):
+		var test_rng := RandomNumberGenerator.new()
+		test_rng.seed = s
+		if test_rng.randi_range(0, 1) == 0:
+			found_seed = s
+			break
+	_check(found_seed > 0, "found deterministic seed selecting enemy 1 first")
+	for replay_pass in [1, 2]:
+		var first_multi := CombatTinkerFirstAttack.new()
+		var deck_multi := _deck(["tinker_ricochet"], found_seed)
+		var party_multi := _party(["warden", "tinker", "seamstress"])
+		# Enemy 1: 5 HP, 0 Block (dies on hit 1 from 7 damage)
+		# Enemy 2: 2 HP, 4 Block (dies on hit 2: 4 absorbed, 2 lost)
+		var enemies_multi := _enemies([5, 2])
+		_check(enemies_multi.gain_block(2, 4), "enemy 2 has 4 block")
+		var oracle_multi: Dictionary = _oracle_random(deck_multi._rng.state, enemies_multi.get_enemies(), 7, {}, 3)
+		var oracle_multi_clone := RandomNumberGenerator.new()
+		oracle_multi_clone.state = oracle_multi["state"]
+		var exp_multi_next: int = oracle_multi_clone.randi()
+
+		var result_multi: Dictionary = CombatTinkerPoolAttacks.new(first_multi).play_attack(
+			deck_multi, party_multi, enemies_multi, "tinker_ricochet")
+		_check(result_multi.get("ok", false) and result_multi["hits"].size() == 2,
+			"pass %d: 2-enemy Ricochet finishes on hit 2" % replay_pass)
+		var actual_positions: Array[int] = []
+		for h in result_multi["hits"]:
+			actual_positions.append(int(h["position"]))
+		_check(actual_positions == oracle_multi["positions"] and actual_positions == [1, 2],
+			"pass %d: hits selected enemy 1 then enemy 2" % replay_pass)
+		_check(enemies_multi.is_slain(1) and enemies_multi.is_slain(2) and enemies_multi.is_victorious(),
+			"pass %d: both enemies slain on hit 2" % replay_pass)
+		_check(deck_multi.energy == 2 and deck_multi.discard_pile == ["tinker_ricochet"],
+			"pass %d: single spend and single discard" % replay_pass)
+		_check(deck_multi._rng.state == oracle_multi["state"] and deck_multi._rng.randi() == exp_multi_next,
+			"pass %d: exactly 2 RNG draws consumed" % replay_pass)
+
+	# Fixture 3: Hit 2 finish WITHOUT first attack bonus (base 4 damage)
+	var first_unboosted := CombatTinkerFirstAttack.new()
+	first_unboosted.record_successful_attack("tinker_pop_shot")
+	_check(first_unboosted.bonus_for_attack("tinker_ricochet") == 0, "unboosted preview is 0")
+	var deck_unboosted := _deck(["tinker_ricochet"])
+	var party_unboosted := _party()
+	# Enemy: 3 HP, 2 Block. Hit 1 deals 4 (2 absorbed, 2 lost -> 1 HP). Hit 2 deals 4 (0 absorbed, 1 lost -> dead).
+	var enemies_unboosted := _enemies([3])
+	_check(enemies_unboosted.gain_block(1, 2), "enemy has 2 block")
+	var oracle_unb: Dictionary = _oracle_random(deck_unboosted._rng.state, enemies_unboosted.get_enemies(), 4, {}, 3)
+	var res_unb: Dictionary = CombatTinkerPoolAttacks.new(first_unboosted).play_attack(
+		deck_unboosted, party_unboosted, enemies_unboosted, "tinker_ricochet")
+	_check(res_unb.get("ok", false) and res_unb["hits"].size() == 2,
+		"unboosted Ricochet finishes on hit 2")
+	_check(res_unb["hits"][0]["damage"] == 4 and res_unb["hits"][1]["damage"] == 4,
+		"both hits use unboosted base damage 4")
+	_check(enemies_unboosted.is_victorious(), "unboosted victory on hit 2")
+	_check(deck_unboosted._rng.state == oracle_unb["state"], "unboosted RNG matches oracle")
+
+	# Fixture 4: All 3 hits occur when living survivors remain
+	var first_3hits := CombatTinkerFirstAttack.new()
+	var deck_3hits := _deck(["tinker_ricochet"])
+	var party_3hits := _party()
+	var enemies_3hits := _enemies([50, 50, 50])
+	var oracle_3hits: Dictionary = _oracle_random(deck_3hits._rng.state, enemies_3hits.get_enemies(), 7, {}, 3)
+	var res_3hits: Dictionary = CombatTinkerPoolAttacks.new(first_3hits).play_attack(
+		deck_3hits, party_3hits, enemies_3hits, "tinker_ricochet")
+	_check(res_3hits.get("ok", false) and res_3hits["hits"].size() == 3,
+		"when survivors remain all 3 hits resolve")
+	_check(not enemies_3hits.is_victorious(), "enemies survive all 3 hits")
+	_check(deck_3hits._rng.state == oracle_3hits["state"], "3 hits consume 3 RNG selections")
 
 
 func _test_shared_first_attack() -> void:
@@ -629,15 +806,66 @@ func _test_ricochet_pinned_cases() -> void:
 			_check(r["hits"][2]["position"] != 1, "hit 3 did not select slain enemy 1")
 			break
 
-	# Preflight rejection when early hits kill ALL enemies, token remains intact
-	var f_rej := CombatTinkerFirstAttack.new()
-	var p_rej := CombatPinned.new()
-	var d_rej := _deck(["tinker_ricochet"])
-	var pty_rej := _party()
-	var ens_rej := _enemies([5])
-	_check(p_rej.pin_enemy(ens_rej, 1, "warden"), "pinned lone enemy")
-	_reject_pinned(CombatTinkerPoolAttacks.new(f_rej, p_rej), d_rej, pty_rej, ens_rej, f_rej, p_rej,
-		"Ricochet cannot promise three hits when sole enemy dies early", "tinker_ricochet", 0)
+	# Lone pinned enemy killed on hit 1: commits victory, consumes token, stops early
+	var f_pin := CombatTinkerFirstAttack.new()
+	var p_pin := CombatPinned.new()
+	var d_pin := _deck(["tinker_ricochet"])
+	var pty_pin := _party(["warden", "tinker", "seamstress"])
+	var ens_pin := _enemies([5])
+	_check(p_pin.pin_enemy(ens_pin, 1, "warden"), "pinned lone enemy with warden")
+	var oracle_pin: Dictionary = _oracle_random_pinned(d_pin._rng.state, ens_pin.get_enemies(),
+		4 + 3, {}, 3, {1: "warden"})
+	var oracle_pin_clone := RandomNumberGenerator.new()
+	oracle_pin_clone.state = oracle_pin["state"]
+	var exp_pin_next: int = oracle_pin_clone.randi()
+
+	var res_pin: Dictionary = CombatTinkerPoolAttacks.new(f_pin, p_pin).play_attack(
+		d_pin, pty_pin, ens_pin, "tinker_ricochet")
+	_check(res_pin.get("ok", false) and res_pin["hits"].size() == 1,
+		"lone pinned enemy hit 1 kill succeeds with exactly 1 hit")
+	_check(res_pin["hits"] == oracle_pin["hits"],
+		"pinned early kill hit receipt matches oracle")
+	_check(ens_pin.get_enemies() == oracle_pin["roster"] and ens_pin.is_victorious(),
+		"lone pinned enemy is slain and victory committed")
+	_check(p_pin.pinner_for_enemy(1) == "",
+		"cross-owner pin consumed on lethal first hit")
+	_check(d_pin.energy == 2 and d_pin.discard_pile == ["tinker_ricochet"],
+		"lone pinned kill spends once and discards once")
+	_check(d_pin._rng.state == oracle_pin["state"] and d_pin._rng.randi() == exp_pin_next,
+		"lone pinned kill advances RNG by exactly one roll")
+
+	# Pinned 2-hit finish fixture:
+	# Enemy 1 has 10 HP pinned by Warden. First attack already consumed.
+	# Hit 1: 4 (base) + 5 (pinned) = 9 damage -> 1 HP left, pin consumed.
+	# Hit 2: 4 (base) damage -> 1 HP loss -> enemy 1 dies on hit 2!
+	# Hit 3: stops! Total hits: 2.
+	var f_pin2 := CombatTinkerFirstAttack.new()
+	f_pin2.record_successful_attack("tinker_pop_shot")
+	var p_pin2 := CombatPinned.new()
+	var d_pin2 := _deck(["tinker_ricochet"])
+	var pty_pin2 := _party(["warden", "tinker", "seamstress"])
+	var ens_pin2 := _enemies([10])
+	_check(p_pin2.pin_enemy(ens_pin2, 1, "warden"), "pinned enemy with warden for 2-hit finish")
+	var oracle_pin2: Dictionary = _oracle_random_pinned(d_pin2._rng.state, ens_pin2.get_enemies(),
+		4, {}, 3, {1: "warden"})
+	var oracle_pin2_clone := RandomNumberGenerator.new()
+	oracle_pin2_clone.state = oracle_pin2["state"]
+	var exp_pin2_next: int = oracle_pin2_clone.randi()
+
+	var res_pin2: Dictionary = CombatTinkerPoolAttacks.new(f_pin2, p_pin2).play_attack(
+		d_pin2, pty_pin2, ens_pin2, "tinker_ricochet")
+	_check(res_pin2.get("ok", false) and res_pin2["hits"].size() == 2,
+		"pinned 2-hit finish generates exactly 2 hits")
+	_check(res_pin2["hits"] == oracle_pin2["hits"],
+		"pinned 2-hit receipts match oracle exactly")
+	_check(ens_pin2.get_enemies() == oracle_pin2["roster"] and ens_pin2.is_victorious(),
+		"enemy slain on hit 2 and victory committed")
+	_check(p_pin2.pinner_for_enemy(1) == "",
+		"pin consumed after hit 1")
+	_check(d_pin2.energy == 2 and d_pin2.discard_pile == ["tinker_ricochet"],
+		"pinned 2-hit finish spends once and discards once")
+	_check(d_pin2._rng.state == oracle_pin2["state"] and d_pin2._rng.randi() == exp_pin2_next,
+		"pinned 2-hit finish advances RNG by exactly 2 rolls")
 
 
 func _reject(resolver: CombatTinkerPoolAttacks, deck: CombatDeck,
@@ -727,3 +955,10 @@ func _test_atomic_rejections() -> void:
 	_check(enemies_p.apply_damage(3, 100), "kill enemy 3")
 	_reject_pinned(resolver_pinned, deck_p, party_p, enemies_p, first, pinned_all,
 		"Spring Trap with slain position 3", "tinker_spring_trap", 3)
+
+	# Ricochet with Pinned rejects atomically when all targets are dead BEFORE play
+	var empty_pinned_enemies := _enemies([1])
+	_check(empty_pinned_enemies.apply_damage(1, 1) and empty_pinned_enemies.is_victorious(),
+		"already victorious before play precondition")
+	_reject_pinned(resolver_pinned, _deck([id]), _party(), empty_pinned_enemies, first, pinned_all,
+		"Ricochet with empty living targets before play", id, 0)
