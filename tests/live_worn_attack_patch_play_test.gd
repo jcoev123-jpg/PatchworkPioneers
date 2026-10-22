@@ -132,6 +132,9 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 	_check(forecast.playable and position in forecast.hits.map(func(hit): return hit.position),
 		"mounted attack authority forecasts real recipient")
 	_check(await _choose(id, keyboard), "physical hand selection succeeded: " + id)
+	_check(presenter.cue.is_visible_in_tree()
+		and Rect2(0, 0, 1280, 720).encloses(presenter.cue.get_global_rect()),
+		"selected attack cue fits 1280x720")
 	var before := _live_state()
 	var enemy: Dictionary = app.enemies.get_enemy(position)
 	var cost: int = StarterCards.new().get_definition(id).cost
@@ -155,9 +158,9 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 	_check(app.hand_view.get_child_count() == app.deck.hand.size()
 		and app.get_node("LiveSupportHand").energy_label.text ==
 			"Energy\n%d" % app.deck.energy, "mounted hand and energy redraw")
-	_check(presenter.cue != null and presenter.cue.is_visible_in_tree()
-		and Rect2(0, 0, 1280, 720).encloses(presenter.cue.get_global_rect()),
-		"actual attack cue fits 1280x720")
+	_check(presenter.cue != null and presenter.cue.text == ""
+		and not presenter.cue.is_visible_in_tree(),
+		"committed attack retires the idle attack cue")
 
 
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool) -> bool:
