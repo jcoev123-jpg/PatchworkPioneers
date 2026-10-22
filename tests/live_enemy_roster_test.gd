@@ -573,6 +573,7 @@ func _run() -> void:
 		_check(presenter._badges.is_empty() and presenter.panel == null,
 			"no-session refresh cannot resummon stale callbacks or badges")
 		_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus(), "title and keyboard focus restored")
+	await _bound_skip_badges(app, presenter)
 	await _invalid_sources(app, reference, presenter)
 	# A valid multi-entry source proves the whole list is parsed, without fixing catalog totals.
 	var file := FileAccess.open(FIXTURE, FileAccess.WRITE)
@@ -608,6 +609,83 @@ func _run() -> void:
 	app.free()
 	reference.free()
 	_finish()
+
+
+## Pending Unravel replaces only the readout, never the intent scheduler or
+## input target. The original-slot authority is bound to this actual app flow.
+func _bound_skip_badges(app, presenter) -> void:
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	_check(app.round_flow != null and app.round_flow._started and app.enemies.get_enemies().size() == 2
+		and presenter._badges.size() == 2, "mounted original enemy slots exist before Unravel intent exercise")
+	if app.round_flow == null or presenter._badges.size() != 2:
+		return
+	var service := CombatUnravel.new()
+	_check(service.bind_roster(app.enemies, {1: "normal", 2: "normal"}),
+		"active battle service binds original positions, not presented names")
+	app.round_flow._unravel = service
+	var announced: Array[Dictionary] = app.enemy_intents.get_intents()
+	var initial_state := _snapshot(app)
+	presenter._refresh()
+	_check(_snapshot(app) == initial_state and presenter._badges[0].icon_mode == "attack"
+		and presenter._badges[1].icon_mode == "block",
+		"zero-gauge sourced original attacks and Block keep their old badge semantics")
+	_check(service.apply_unravel(app.enemies, 1, 3) and service.apply_unravel(app.enemies, 1, 5)
+		and service.get_snapshot(1).skip_pending, "genuinely roster-bound threshold queues one pending skip")
+	presenter._refresh()
+	var badge = presenter._badges[0]
+	_check(badge.readable_text == "UNRAVELLED" and badge.icon_mode == "unravelled"
+		and badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0,
+		"scheduled attack/target is suppressed only in pending skip presentation")
+	_check(presenter._badges[1].icon_mode == "block"
+		and presenter._badges[1].readable_text == "BLOCK +1",
+		"unskipped second source retains real block intent")
+	var pending_model := _snapshot(app)
+	for step in range(5):
+		presenter._refresh()
+	_check(_snapshot(app) == pending_model and app.enemy_intents.get_intents() == announced
+		and service.get_snapshot(1).skip_pending,
+		"five UI reads cannot consume the pending skip, mutate intents, decks, HP or RNG")
+	_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE and badge.focus_mode == Control.FOCUS_NONE,
+		"the Unravelled mark cannot steal mouse or keyboard target input")
+	await _input_mouse(badge)
+	_check(_snapshot(app) == pending_model and service.get_snapshot(1).skip_pending,
+		"actual pointer clicking the skip badge cannot play a card or consume the skip")
+	var foreign := CombatUnravel.new()
+	_check(foreign.bind_roster(CombatEnemies.new(app.enemies.get_enemies()),
+		{1: "elite", 2: "boss"}), "mismatched roster is genuinely independently bound")
+	app.round_flow._unravel = foreign
+	presenter._refresh()
+	_check(badge.icon_mode == "attack" and badge.readable_text == "ATK 1 > H1",
+		"roster-mismatched pending authority falls back to unchanged scheduler intent")
+	app.round_flow._unravel = null
+	presenter._refresh()
+	_check(badge.icon_mode == "attack" and badge.readable_text == "ATK 1 > H1",
+		"missing authority preserves ordinary attack instead of stale UNRAVELLED")
+	app.round_flow._unravel = service
+	presenter._refresh()
+	_check(badge.icon_mode == "unravelled", "restoring exact roster authority restores skip cue")
+	app.end_turn_button.pressed.emit()
+	await process_frame
+	await process_frame
+	presenter._refresh()
+	_check(not service.get_snapshot(1).skip_pending and service.get_snapshot(1).threshold == 12
+		and badge.icon_mode == "attack" and badge.readable_text.begins_with("ATK ")
+		and app.enemy_intents.get_intents() != announced,
+		"real End Turn consumes pending original slot once and badge re-announces the scheduler")
+	_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
+		"slain slot is an actual CombatEnemies transaction")
+	_check(service.apply_unravel(app.enemies, 1, 8) == false,
+		"service cannot charge an already slain original enemy")
+	presenter._refresh()
+	_check(badge.icon_mode == "slain" and badge.readable_text == "SLAIN",
+		"slain precedence overrides all pending/announced action marks")
+	var badge_id: int = badge.get_instance_id()
+	app.return_button.pressed.emit()
+	await process_frame
+	_check(not is_instance_id_valid(badge_id) and presenter._badges.is_empty()
+		and presenter.panel == null, "Return destroys badge so a new fight cannot inherit skip")
 
 
 func _three_enemy_fixture() -> Dictionary:

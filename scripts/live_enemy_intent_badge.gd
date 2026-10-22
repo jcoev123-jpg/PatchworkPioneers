@@ -34,7 +34,7 @@ func patch_rect() -> Rect2:
 	return Rect2(2.0, PATCH_INSET, PATCH_WIDTH, height)
 
 
-func show_intent(action: Dictionary, slain: bool) -> void:
+func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false) -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	if slain:
 		icon_mode = "slain"
@@ -42,6 +42,12 @@ func show_intent(action: Dictionary, slain: bool) -> void:
 		amount = 0
 		target_position = 0
 		readable_text = "SLAIN"
+	elif skip_pending:
+		icon_mode = "unravelled"
+		intent_type = ""
+		amount = 0
+		target_position = 0
+		readable_text = "UNRAVELLED"
 	elif action.get("type") == "attack":
 		icon_mode = "attack"
 		intent_type = "attack"
@@ -118,6 +124,14 @@ func _draw() -> void:
 		draw_line(Vector2(12, 22), Vector2(44, 22), RUST, 4)
 		draw_line(Vector2(34, 12), Vector2(44, 22), RUST, 4)
 		draw_line(Vector2(34, 32), Vector2(44, 22), RUST, 4)
+	elif icon_mode == "unravelled":
+		# Two separated loose thread ends and crossed scissors, never an attack spear.
+		draw_dashed_line(Vector2(12, 29), Vector2(28, 15), RUST, 2.5, 4.0)
+		draw_dashed_line(Vector2(29, 28), Vector2(45, 13), RUST, 2.5, 4.0)
+		draw_line(Vector2(20, 13), Vector2(40, 33), SLATE, 2.5, true)
+		draw_line(Vector2(40, 13), Vector2(20, 33), SLATE, 2.5, true)
+		draw_arc(Vector2(17, 12), 4.0, 0.0, TAU, 12, RUST, 2.0)
+		draw_arc(Vector2(42, 33), 4.0, 0.0, TAU, 12, RUST, 2.0)
 	elif icon_mode == "slain":
 		draw_line(Vector2(18, 12), Vector2(41, 32), MUTED, 4.0, true)
 		draw_line(Vector2(41, 12), Vector2(18, 32), MUTED, 4.0, true)
