@@ -12,19 +12,21 @@ const REQUIRED := {
 	"button_trail": {
 		"title": "The Button Trail",
 		"description": "Mismatched buttons form a trail across the grass.",
-		"choices": {"follow": "Follow the button trail", "leave": "Leave the buttons untouched"},
+		"choices": {"follow": "Follow the button trail", "leave": "Leave the buttons untouched", "sell_buttons": "Sell a button bundle (spend 1 scrap; gain 18 gold)"},
 		"outcomes": {
 			"follow": {"gold": 0, "scraps": 1},
 			"leave": {"gold": 5, "scraps": 0},
+			"sell_buttons": {"gold": 18, "scraps": -1},
 		},
 	},
 	"loose_seam": {
 		"title": "The Loose Seam",
 		"description": "A strip of patched ground has come unstitched.",
-		"choices": {"mend": "Sew the seam (spend 1 scrap; recover 15 gold)", "bypass": "Walk around and gather loose thread (+1 scrap)"},
+		"choices": {"mend": "Sew the seam (spend 1 scrap; recover 15 gold)", "bypass": "Walk around and gather loose thread (+1 scrap)", "reinforce": "Reinforce the long tear (spend 2 scraps; gain 32 gold)"},
 		"outcomes": {
 			"mend": {"gold": 15, "scraps": -1},
 			"bypass": {"gold": 0, "scraps": 1},
+			"reinforce": {"gold": 32, "scraps": -2},
 		},
 	},
 	"thimble_well": {
@@ -416,6 +418,67 @@ func _test_button_trail_wallet_settlement() -> void:
 	_check(int_res == float_res and _wallet_exact_int(float_res.get("wallet"), 17, 0),
 		"JSON float outcome values normalize to exact ints matching integer outcomes")
 
+	# Branch 3: sell_buttons (+18 gold, -1 scrap) from {gold: 4, scraps: 1} -> {gold: 22, scraps: 0}
+	var sell_input_event: Dictionary = authored_record.duplicate(true)
+	var sell_wallet := {"gold": 4, "scraps": 1}
+	var sell_rng := _rng_start(64003)
+	var sell_service := RunEventChoice.new(sell_input_event)
+	_check(sell_service.is_valid() and not sell_service.is_claimed(),
+		"fresh button_trail selector valid before sell_buttons")
+	var sell_result := sell_service.choose_with_wallet("sell_buttons", sell_wallet)
+	_check(_wallet_shape_ok(sell_result), "sell_buttons choose_with_wallet returns 4-key wallet shape")
+	_check(sell_result.get("ok", false) == true, "sell_buttons choose_with_wallet succeeds")
+	_check(sell_result.get("event_id", "") == "button_trail", "sell_buttons returns button_trail event_id")
+	_check(sell_result.get("choice_id", "") == "sell_buttons", "sell_buttons returns sell_buttons choice_id")
+	_check(_wallet_exact_int(sell_result.get("wallet"), 22, 0),
+		"sell_buttons settles exact integer wallet {gold: 22, scraps: 0}")
+	_check(_wallet_exact_int(sell_wallet, 4, 1), "sell_buttons does not mutate caller input wallet")
+	_check(sell_input_event == original_event, "sell_buttons does not mutate caller input event")
+	_check(sell_service.get_event() == original_event, "sell_buttons does not mutate internal event snapshot")
+	_check(sell_service.is_claimed() and not sell_service.is_valid(),
+		"sell_buttons latches claim and marks selector consumed")
+	_check(randi() == sell_rng, "sell_buttons wallet settlement spends no global RNG")
+
+	# Insufficient scraps for sell_buttons (zero scraps) rejects without claiming, then follow succeeds on same selector.
+	var poor_sell_event: Dictionary = authored_record.duplicate(true)
+	var poor_sell_wallet := {"gold": 4, "scraps": 0}
+	var poor_sell_rng := _rng_start(64004)
+	var poor_sell_service := RunEventChoice.new(poor_sell_event)
+	_check(poor_sell_service.is_valid() and not poor_sell_service.is_claimed(),
+		"fresh button_trail selector valid before refused sell_buttons")
+	var poor_sell_refusal := poor_sell_service.choose_with_wallet("sell_buttons", poor_sell_wallet)
+	_check(_wallet_shape_ok(poor_sell_refusal) and poor_sell_refusal.get("ok", true) == false
+		and poor_sell_refusal.get("event_id", "") == "" and poor_sell_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_sell_refusal.get("wallet"), 4, 0),
+		"sell_buttons without a scrap is refused with exact unchanged wallet")
+	_check(poor_sell_service.is_valid() and not poor_sell_service.is_claimed()
+		and _wallet_exact_int(poor_sell_wallet, 4, 0)
+		and poor_sell_service.get_event() == original_event and poor_sell_event == original_event,
+		"refused sell_buttons consumes no visit and keeps both event snapshots")
+	(poor_sell_refusal["wallet"] as Dictionary)["gold"] = 999
+	_check(_wallet_exact_int(poor_sell_wallet, 4, 0),
+		"mutating refused wallet cannot change caller wallet")
+	var sell_recovery := poor_sell_service.choose_with_wallet("follow", poor_sell_wallet)
+	_check(_wallet_shape_ok(sell_recovery) and sell_recovery.get("ok", false) == true
+		and sell_recovery.get("event_id", "") == "button_trail"
+		and sell_recovery.get("choice_id", "") == "follow"
+		and _wallet_exact_int(sell_recovery.get("wallet"), 4, 1),
+		"follow recovers on SAME selector after refused sell_buttons")
+	_check(poor_sell_service.is_claimed() and not poor_sell_service.is_valid()
+		and _wallet_exact_int(poor_sell_wallet, 4, 0) and poor_sell_event == original_event
+		and poor_sell_service.get_event() == original_event,
+		"recovered follow latches exactly one claim and spends nothing")
+	_check(randi() == poor_sell_rng, "refused sell_buttons and recovery spend no global RNG")
+
+	# Replay rejection after sell_buttons claim.
+	var sell_replay := sell_service.choose_with_wallet("sell_buttons", {"gold": 22, "scraps": 0})
+	_check(_wallet_shape_ok(sell_replay) and sell_replay.get("ok", true) == false
+		and sell_replay.get("event_id", "") == "" and sell_replay.get("choice_id", "") == ""
+		and _wallet_exact_int(sell_replay.get("wallet"), 22, 0),
+		"repeated sell_buttons after claim is rejected with unchanged wallet")
+	_check(sell_service.is_claimed() and sell_service.get_event() == original_event,
+		"replayed sell_buttons keeps claim latched and snapshot unchanged")
+
 
 func _test_loose_seam_wallet_settlement() -> void:
 	# The authored Loose Seam record settles through the same one-shot wallet
@@ -435,27 +498,32 @@ func _test_loose_seam_wallet_settlement() -> void:
 		and authored.get("description") == "A strip of patched ground has come unstitched.",
 		"loose_seam keeps its authored id, title and description")
 	var authored_choices: Array = authored.get("choices", [])
-	_check(authored_choices.size() == 2, "loose_seam keeps exactly its two authored choices")
+	_check(authored_choices.size() == 3, "loose_seam keeps exactly its three authored choices")
 	var by_id := {}
 	for entry in authored_choices:
 		if entry is Dictionary:
 			by_id[entry.get("id", "")] = entry
-	_check(by_id.has("mend") and by_id.has("bypass"), "loose_seam offers both authored choice IDs")
-	if not (by_id.has("mend") and by_id.has("bypass")):
+	_check(by_id.has("mend") and by_id.has("bypass") and by_id.has("reinforce"), "loose_seam offers all three authored choice IDs")
+	if not (by_id.has("mend") and by_id.has("bypass") and by_id.has("reinforce")):
 		return
 	var mend_choice: Dictionary = by_id["mend"]
 	var bypass_choice: Dictionary = by_id["bypass"]
+	var reinforce_choice: Dictionary = by_id["reinforce"]
 	_check(mend_choice.get("text", "") == "Sew the seam (spend 1 scrap; recover 15 gold)",
 		"loose_seam mend keeps its exact authored text")
 	_check(bypass_choice.get("text", "") == "Walk around and gather loose thread (+1 scrap)",
 		"loose_seam bypass keeps its exact authored text")
+	_check(reinforce_choice.get("text", "") == "Reinforce the long tear (spend 2 scraps; gain 32 gold)",
+		"loose_seam reinforce keeps its exact authored text")
 	var mend_outcome: Variant = mend_choice.get("outcome", {})
 	var bypass_outcome: Variant = bypass_choice.get("outcome", {})
-	_check(mend_outcome is Dictionary and bypass_outcome is Dictionary,
-		"loose_seam keeps an authored outcome object on both choices")
-	if mend_outcome is Dictionary and bypass_outcome is Dictionary:
+	var reinforce_outcome: Variant = reinforce_choice.get("outcome", {})
+	_check(mend_outcome is Dictionary and bypass_outcome is Dictionary and reinforce_outcome is Dictionary,
+		"loose_seam keeps an authored outcome object on all three choices")
+	if mend_outcome is Dictionary and bypass_outcome is Dictionary and reinforce_outcome is Dictionary:
 		var mend_values: Dictionary = mend_outcome
 		var bypass_values: Dictionary = bypass_outcome
+		var reinforce_values: Dictionary = reinforce_outcome
 		_check(_is_integral_json_number(mend_values.get("gold"))
 			and _is_integral_json_number(mend_values.get("scraps"), true)
 			and int(mend_values.get("gold", 0)) == 15 and int(mend_values.get("scraps", 0)) == -1,
@@ -464,6 +532,10 @@ func _test_loose_seam_wallet_settlement() -> void:
 			and _is_integral_json_number(bypass_values.get("scraps"), true)
 			and int(bypass_values.get("gold", 0)) == 0 and int(bypass_values.get("scraps", 0)) == 1,
 			"loose_seam bypass keeps its exact authored gold/scraps outcome")
+		_check(_is_integral_json_number(reinforce_values.get("gold"))
+			and _is_integral_json_number(reinforce_values.get("scraps"), true)
+			and int(reinforce_values.get("gold", 0)) == 32 and int(reinforce_values.get("scraps", 0)) == -2,
+			"loose_seam reinforce keeps its exact authored gold/scraps outcome")
 
 	var local_rng := RandomNumberGenerator.new()
 	local_rng.seed = 64700
@@ -510,6 +582,82 @@ func _test_loose_seam_wallet_settlement() -> void:
 		"bypass latches exactly one claim on its visit")
 	_check(randi() == bypass_rng, "bypass settlement spends no global RNG")
 
+	# Branch 3: reinforce (+32 gold, -2 scraps) from {gold: 4, scraps: 2} -> {gold: 36, scraps: 0}
+	var reinforce_input_event: Dictionary = authored.duplicate(true)
+	var reinforce_wallet := {"gold": 4, "scraps": 2}
+	var reinforce_rng := _rng_start(64708)
+	var reinforce_service := RunEventChoice.new(reinforce_input_event)
+	_check(reinforce_service.is_valid() and not reinforce_service.is_claimed(),
+		"fresh loose_seam selector valid before reinforce")
+	var reinforce_result := reinforce_service.choose_with_wallet("reinforce", reinforce_wallet)
+	_check(_wallet_shape_ok(reinforce_result) and reinforce_result.get("ok", false) == true
+		and reinforce_result.get("event_id", "") == "loose_seam"
+		and reinforce_result.get("choice_id", "") == "reinforce"
+		and _wallet_exact_int(reinforce_result.get("wallet"), 36, 0),
+		"reinforce spends two scraps and pays thirty-two gold")
+	_check(_wallet_exact_int(reinforce_wallet, 4, 2) and reinforce_input_event == original
+		and reinforce_service.get_event() == original,
+		"reinforce leaves the caller wallet, the caller event and the selector snapshot unchanged")
+	_check(reinforce_service.is_claimed() and not reinforce_service.is_valid(),
+		"reinforce latches exactly one claim on its visit")
+	_check(randi() == reinforce_rng, "reinforce settlement spends no global RNG")
+
+	# Insufficient scraps for reinforce (zero scraps) rejects without claiming, then mend succeeds on same selector.
+	var poor_reinforce_event: Dictionary = authored.duplicate(true)
+	var poor_reinforce_wallet := {"gold": 4, "scraps": 0}
+	var poor_reinforce_rng := _rng_start(64709)
+	var poor_reinforce_service := RunEventChoice.new(poor_reinforce_event)
+	_check(poor_reinforce_service.is_valid() and not poor_reinforce_service.is_claimed(),
+		"fresh loose_seam selector valid before refused reinforce")
+	var poor_reinforce_refusal := poor_reinforce_service.choose_with_wallet("reinforce", poor_reinforce_wallet)
+	_check(_wallet_shape_ok(poor_reinforce_refusal) and poor_reinforce_refusal.get("ok", true) == false
+		and poor_reinforce_refusal.get("event_id", "") == "" and poor_reinforce_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_reinforce_refusal.get("wallet"), 4, 0),
+		"reinforce without scraps is refused with exact unchanged wallet")
+	_check(poor_reinforce_service.is_valid() and not poor_reinforce_service.is_claimed()
+		and _wallet_exact_int(poor_reinforce_wallet, 4, 0)
+		and poor_reinforce_service.get_event() == original and poor_reinforce_event == original,
+		"refused reinforce consumes no visit and keeps both event snapshots")
+	(poor_reinforce_refusal["wallet"] as Dictionary)["gold"] = 999
+	_check(_wallet_exact_int(poor_reinforce_wallet, 4, 0),
+		"mutating refused wallet cannot change caller wallet")
+	# One scrap is still insufficient for reinforce (needs 2).
+	var poor_reinforce_one_scrap_event: Dictionary = authored.duplicate(true)
+	var poor_reinforce_one_scrap_wallet := {"gold": 4, "scraps": 1}
+	var poor_reinforce_one_scrap_rng := _rng_start(64710)
+	var poor_reinforce_one_scrap_service := RunEventChoice.new(poor_reinforce_one_scrap_event)
+	_check(poor_reinforce_one_scrap_service.is_valid() and not poor_reinforce_one_scrap_service.is_claimed(),
+		"fresh loose_seam selector valid before refused reinforce with one scrap")
+	var poor_reinforce_one_scrap_refusal := poor_reinforce_one_scrap_service.choose_with_wallet("reinforce", poor_reinforce_one_scrap_wallet)
+	_check(_wallet_shape_ok(poor_reinforce_one_scrap_refusal) and poor_reinforce_one_scrap_refusal.get("ok", true) == false
+		and poor_reinforce_one_scrap_refusal.get("event_id", "") == "" and poor_reinforce_one_scrap_refusal.get("choice_id", "") == ""
+		and _wallet_exact_int(poor_reinforce_one_scrap_refusal.get("wallet"), 4, 1),
+		"reinforce with only one scrap is refused with exact unchanged wallet")
+	_check(poor_reinforce_one_scrap_service.is_valid() and not poor_reinforce_one_scrap_service.is_claimed()
+		and _wallet_exact_int(poor_reinforce_one_scrap_wallet, 4, 1)
+		and poor_reinforce_one_scrap_service.get_event() == original and poor_reinforce_one_scrap_event == original,
+		"refused reinforce with one scrap consumes no visit and keeps both event snapshots")
+	var mend_after_poor_reinforce := poor_reinforce_one_scrap_service.choose_with_wallet("mend", poor_reinforce_one_scrap_wallet)
+	_check(_wallet_shape_ok(mend_after_poor_reinforce) and mend_after_poor_reinforce.get("ok", false) == true
+		and mend_after_poor_reinforce.get("event_id", "") == "loose_seam"
+		and mend_after_poor_reinforce.get("choice_id", "") == "mend"
+		and _wallet_exact_int(mend_after_poor_reinforce.get("wallet"), 19, 0),
+		"mend recovers on SAME selector after refused reinforce")
+	_check(poor_reinforce_one_scrap_service.is_claimed() and not poor_reinforce_one_scrap_service.is_valid()
+		and _wallet_exact_int(poor_reinforce_one_scrap_wallet, 4, 1) and poor_reinforce_one_scrap_event == original
+		and poor_reinforce_one_scrap_service.get_event() == original,
+		"recovered mend latches exactly one claim and spends nothing")
+	_check(randi() == poor_reinforce_one_scrap_rng, "refused reinforce with one scrap and recovery spend no global RNG")
+
+	# Replay rejection after reinforce claim.
+	var reinforce_replay := reinforce_service.choose_with_wallet("reinforce", {"gold": 36, "scraps": 0})
+	_check(_wallet_shape_ok(reinforce_replay) and reinforce_replay.get("ok", true) == false
+		and reinforce_replay.get("event_id", "") == "" and reinforce_replay.get("choice_id", "") == ""
+		and _wallet_exact_int(reinforce_replay.get("wallet"), 36, 0),
+		"repeated reinforce after claim is rejected with unchanged wallet")
+	_check(reinforce_service.is_claimed() and reinforce_service.get_event() == original,
+		"replayed reinforce keeps claim latched and snapshot unchanged")
+
 	# 3. Without a scrap the mend is refused without claiming or spending
 	#    anything, and the same visit still offers the free salvage.
 	var poor_event: Dictionary = authored.duplicate(true)
@@ -544,7 +692,7 @@ func _test_loose_seam_wallet_settlement() -> void:
 	_check(randi() == poor_rng, "the refused mend and the salvage spend no global RNG")
 
 	# 4. One charge only: a claimed visit pays or debits nothing a second time.
-	for replay_choice in ["mend", "bypass"]:
+	for replay_choice in ["mend", "bypass", "reinforce"]:
 		var replay := mend_service.choose_with_wallet(replay_choice, {"gold": 19, "scraps": 0})
 		_check(_wallet_shape_ok(replay) and replay.get("ok", true) == false
 			and replay.get("event_id", "") == "" and replay.get("choice_id", "") == ""
