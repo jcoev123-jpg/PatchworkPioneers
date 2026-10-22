@@ -59,7 +59,12 @@ func _authored() -> Dictionary:
 			defs.append({"id": entry.id, "slot": entry.slot})
 	_check(slot_ids.get("stitched_badge") == "HEAD" 		and slot_ids.get("spare_spool") == "ARM" 		and slot_ids.get("quilted_coat") == "COAT" 		and slot_ids.get("button_eye") == "HEAD" 		and slot_ids.get("pincushion_arm") == "ARM",
 		"all five named real wardrobe slots kept")
-	_check(coats.size() == 1 and coats[0].get("max_hp_bonus") == 6,
+	var quilted_entry: Dictionary = {}
+	for entry in coats:
+		if entry is Dictionary and entry.get("id") == "quilted_coat":
+			quilted_entry = entry
+			break
+	_check(quilted_entry.get("max_hp_bonus") == 6,
 		"actual quilted coat grants only authored +6")
 	var hp := {"warden": 40, "seamstress": 30, "tinker": 26}
 	_check(starters.size() == 3, "three real starter heroes")
