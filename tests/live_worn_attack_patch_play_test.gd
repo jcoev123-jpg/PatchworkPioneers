@@ -64,8 +64,16 @@ func _bind_authored(owner: String, torn_owner: bool = false) -> bool:
 			return false
 		definitions.append({"id": entry.id, "slot": slot})
 		owned.append(entry.id)
-	_check(owned.has("button_eye") and owned.has("pincushion_arm"),
-		"both required authored patches are present without assuming a catalog size")
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	_check(coats is Array and RunPatchCoatRules._valid_authored(coats),
+		"authoritative authored COAT catalog has the real max-HP power")
+	if coats is Array and RunPatchCoatRules._valid_authored(coats):
+		definitions.append({"id": RunPatchCoatRules.BONUS_ID, "slot": "COAT"})
+		owned.append(RunPatchCoatRules.BONUS_ID)
+	_check(owned.has("button_eye") and owned.has("pincushion_arm")
+		and owned.has(RunPatchCoatRules.BONUS_ID),
+		"all required HEAD/ARM/COAT IDs are authored without catalog-size assumptions")
 	if not owned.has("button_eye") or not owned.has("pincushion_arm"):
 		return false
 	for id in owned:
@@ -92,6 +100,13 @@ func _bind_authored(owner: String, torn_owner: bool = false) -> bool:
 	if not second.ok:
 		return false
 	expected = worn_wardrobe.get_snapshot()
+	var coat := worn_wardrobe.sew(RunPatchCoatRules.BONUS_ID, owner,
+		"COAT", "owned-coat", expected)
+	_check(coat.ok and coat.receipt.patch_id == RunPatchCoatRules.BONUS_ID,
+		"genuine authored COAT receipt")
+	if not coat.ok:
+		return false
+	expected = worn_wardrobe.get_snapshot()
 	_check(carry.can_bind_wardrobe(worn_wardrobe, carry.torn, expected)
 		and carry.bind_wardrobe(worn_wardrobe, carry.torn, expected)
 		and carry._wardrobe == worn_wardrobe,
@@ -102,6 +117,98 @@ func _bind_authored(owner: String, torn_owner: bool = false) -> bool:
 		and projection.active[owner] == ([] if torn_owner else owned),
 		"real sewn slots project only the living wearer")
 	return carry._wardrobe == worn_wardrobe
+
+
+## Inspect the real mounted CombatMeters controls, not a detached presenter service.
+## Expected ownership comes from the bound ledger; current HP and position from battle.
+func _assert_worn_chips(owner: String) -> void:
+	var meter_node = app.get_node("LiveCombatMeters")
+	_check(meter_node.row != null and meter_node.row.get_child_count() >= 5,
+		"routed battle has physically mounted combat ribbons")
+	if meter_node.row == null:
+		return
+	var snapshot: Dictionary = worn_wardrobe.get_snapshot() if worn_wardrobe != null else {}
+	var owner_slots: Dictionary = snapshot.get("worn", {}).get(owner, {})
+	var current: Array[Dictionary] = app.party.get_heroes()
+	var expected_effects := {
+		"button_eye": "First successful attack in this combat also applies Exposed %d." % CombatPatchAttackRules.EFFECTS["button_eye"]["amount"],
+		"pincushion_arm": "Damage-dealing cards owned by this wearer deal +%d damage." % CombatPatchAttackRules.EFFECTS["pincushion_arm"]["amount"],
+		RunPatchCoatRules.BONUS_ID: "+%d effective maximum HP while living; no free healing." % RunPatchCoatRules.BONUS}
+	var expected_names := {"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
+		RunPatchCoatRules.BONUS_ID: "Quilted Coat"}
+	var seen_ids := {}
+	for position in range(1, 4):
+		var hero: Dictionary = current[position - 1]
+		var meter := meter_node.row.get_child(position - 1) as CombatActorMeter
+		var row := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+		var expected: bool = owner == hero["id"] and not owner_slots.is_empty()
+		_check(row != null and row.visible == expected and row.get_child_count() == 3,
+			"only actual patched wearer has a visible row at current position %d" % position)
+		if row == null:
+			continue
+		var slots: Dictionary = snapshot.get("worn", {}).get(hero["id"], {})
+		for slot in RunPatchWardrobe.SLOTS:
+			var chip := row.get_node("Patch" + slot) as Button
+			var id: String = slots.get(slot, "")
+			_check(chip.visible == not id.is_empty() and chip.text == (slot if not id.is_empty() else ""),
+				"sewn %s slot and no empty slot follow hero %s" % [slot, hero["id"]])
+			if id.is_empty():
+				_check(chip.tooltip_text.is_empty(), "empty slot has no stale tooltip")
+				continue
+			seen_ids[id] = true
+			var tooltip: String = chip.tooltip_text
+			var condition := "ACTIVE" if hero["hp"] > 0 else "DORMANT"
+			var exact := "%s (%s)\n%s (%s) — %s\n%s\n%s" % [
+				hero["name"], hero["id"], expected_names.get(id, id), id, slot,
+				condition, expected_effects.get(id, "")]
+			_check(tooltip == exact,
+				"hover exactly names %s, %s, %s and authored power" % [hero["id"], id, condition])
+			_check(chip.is_visible_in_tree() and chip.focus_mode == Control.FOCUS_NONE
+				and chip.mouse_filter == Control.MOUSE_FILTER_STOP
+				and chip.mouse_default_cursor_shape == Control.CURSOR_HELP
+				and chip.pressed.get_connections().is_empty()
+				and Rect2(0, 0, 1280, 720).encloses(chip.get_global_rect()),
+				"routed sewn chip is visible, in viewport, hover-only and keyboard inert")
+			await _hover(chip)
+			_check(chip.get_global_rect().end.y <= app.find_child("PileCounts", true, false).get_global_rect().position.y,
+				"patch chip never occupies the pile-count/hand HUD band")
+			_check(root.gui_get_hovered_control() == chip,
+				"physical pointer hits actual sewn %s patch on %s" % [slot, hero["id"]])
+	for index in range(3, meter_node.row.get_child_count()):
+		var enemy_meter := meter_node.row.get_child(index) as CombatActorMeter
+		_check(enemy_meter.get_node_or_null("Padding/Content/PatchButtons") == null,
+			"enemy ribbon never receives a patch chip row")
+	if owner != "":
+		_check(seen_ids.has("button_eye") and seen_ids.has("pincushion_arm")
+			and seen_ids.has(RunPatchCoatRules.BONUS_ID) and seen_ids.size() == 3,
+			"genuine HEAD, ARM, COAT are visible exactly once")
+
+
+func _probe_patch_refresh(owner: String) -> void:
+	var meter_node = app.get_node("LiveCombatMeters")
+	var initial := _live_state()
+	var ids := []
+	for meter in meter_node.row.get_children():
+		if not meter is CombatActorMeter:
+			continue
+		var row := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+		if row != null:
+			ids.append([row.get_instance_id(), row.get_child(0).get_instance_id(),
+				row.get_child(1).get_instance_id(), row.get_child(2).get_instance_id()])
+	for repeat in range(4):
+		meter_node._sync_battle()
+		await _frames()
+	_check(_live_state() == initial, "multiple mounted patch refreshes leave full combat, ledger and RNG alone")
+	var after := []
+	for meter in meter_node.row.get_children():
+		if not meter is CombatActorMeter:
+			continue
+		var row := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+		if row != null:
+			after.append([row.get_instance_id(), row.get_child(0).get_instance_id(),
+				row.get_child(1).get_instance_id(), row.get_child(2).get_instance_id()])
+	_check(ids == after, "repeated sync reuses each patch row and every chip")
+	await _assert_worn_chips(owner)
 
 
 func _ensure_held(id: String) -> bool:
@@ -229,6 +336,7 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool) ->
 			and patches.active_snapshot() == projection.active
 			and patches.latch_snapshot().get(owner) == false,
 			"connected presenter's single attack service sees exact sewn wearer projection")
+	await _probe_patch_refresh(owner)
 	return true
 
 
@@ -274,6 +382,39 @@ func _run() -> void:
 				_check(false, "connected fixture mounted: " + scenario)
 				break
 			var patches: CombatPatchAttackRules = presenter._play._patches
+			if scenario == "seamstress":
+				var original := _live_state()
+				var movement := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+				_check(movement.ok and movement.heroes[0].id == "seamstress",
+					"authentic legal swap moves sewn Seamstress from middle to front")
+				if movement.ok:
+					for index in range(3):
+						app.party._heroes[index] = movement.heroes[index].duplicate(true)
+					await _frames()
+					await _assert_worn_chips(owner)
+					var backward := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
+					_check(backward.ok, "genuine reverse swap is legal")
+					if backward.ok:
+						for index in range(3):
+							app.party._heroes[index] = backward.heroes[index].duplicate(true)
+					await _frames()
+					_check(_live_state() == original,
+						"two real legal position changes restore full ledger and RNG")
+					await _assert_worn_chips(owner)
+				# Invalid authored metadata in a bound ledger fails closed, then recovers.
+				var unchanged := _live_state()
+				worn_wardrobe._definitions["button_eye"] = "ARM"
+				var forged := _live_state()
+				await _frames()
+				for index in range(3):
+					_check(not app.get_node("LiveCombatMeters").row.get_child(index)
+						.get_node("Padding/Content/PatchButtons").visible,
+						"invalid bound patch definition hides every hero patch row")
+				_check(_live_state() == forged, "invalid snapshot rejection has no game-state effects")
+				worn_wardrobe._definitions["button_eye"] = "HEAD"
+				await _frames()
+				_check(_live_state() == unchanged, "restoring source also restores exact run state")
+				await _assert_worn_chips(owner)
 			seed(408040)
 			var global_next := randi()
 			seed(408040)
@@ -359,6 +500,21 @@ func _run() -> void:
 					await _click(app.end_turn_button)
 					_check(patches.latch_snapshot().seamstress,
 						"new owner turn does not refresh combat-long Button Eye latch")
+			if scenario in ["seamstress", "tinker"]:
+				var wearer_position := 0
+				for hero in app.party.get_heroes():
+					if hero.id == owner:
+						wearer_position = hero.position
+				_check(wearer_position > 0 and not app.party.is_downed(wearer_position),
+					"living sewn wearer can be downed in this same live fight")
+				if wearer_position > 0 and not app.party.is_downed(wearer_position):
+					_check(app.party.apply_damage(wearer_position, 9999),
+						"real CombatParty damage downs previously active sewn wearer")
+					var fallen := _live_state()
+					await _frames()
+					await _assert_worn_chips(owner)
+					_check(_live_state() == fallen,
+						"mid-combat downing suppresses visible powers with no presenter mutation")
 			_check(randi() == global_next, "all patches and physical inputs avoid global RNG")
 			var observation := _live_state()
 			if not replay.is_empty():
@@ -366,6 +522,9 @@ func _run() -> void:
 			else:
 				replay = observation
 			await _click(app.return_button)
+			_check(app.get_node("LiveCombatMeters").row == null
+				and app.find_children("PatchButtons", "HBoxContainer", true, false).is_empty(),
+				"Return destroys sewn rows and their hover bindings")
 			_check(presenter._battle == null and presenter._bindings.is_empty()
 				and presenter._play._patches == null and not presenter._play._tinker._consumed
 				and app.party_carryover == null and app.deck == null,
