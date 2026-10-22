@@ -142,9 +142,9 @@ func _expected_cards() -> Dictionary:
 		"seamstress_prick": {"from": [1, 2, 3], "to": [1, 2, 3], "kind": "enemy_single",
 			"effects": {"damage": 3, "bleed": 2}, "text": "From: 1-3 (front to back)\nTarget: pick 1 living enemy 1-3\nDeal 3 damage, Bleed 2"},
 		"seamstress_mend": {"from": [2, 3], "to": [], "kind": "ally_single",
-			"effects": {"heal": 5}, "text": "From: 2-3 (middle/back)\nTarget: 1 living ally 1-3\nHeal 5 HP"},
+			"effects": {"heal": 5}, "text": "From: 2-3 (middle/back)\nTarget: 1 living ally 1-3\nChosen ally heals 5 HP"},
 		"seamstress_stitch_up": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
-			"effects": {"block": 5}, "text": "From: 1-3 (front to back)\nTarget: 1 living ally 1-3\nGain 5 Block"},
+			"effects": {"block": 5}, "text": "From: 1-3 (front to back)\nTarget: 1 living ally 1-3\nChosen ally gains 5 Block"},
 		"tinker_pop_shot": {"from": [2, 3], "to": [1, 2, 3], "kind": "enemy_single",
 			"effects": {"damage": 5}, "text": "From: 2-3 (middle/back)\nTarget: pick 1 living enemy 1-3\nDeal 5 damage"},
 		"tinker_scrap_bomb": {"from": [3], "to": [1, 2, 3], "kind": "enemy_all",
@@ -613,13 +613,23 @@ func _expected_rules(definition: Dictionary) -> String:
 					else (" (%d instead if %s)" % [int(condition.get("damage", 0)), join_word.join(terms)])
 			copy.append(line)
 		elif key == "block":
-			copy.append("Gain %d Block" % int(effects["block"]))
+			if kind == "ally_single":
+				copy.append("Chosen ally gains %d Block" % int(effects["block"]))
+			elif kind == "self":
+				copy.append("Gain %d Block" % int(effects["block"]))
+			else:
+				copy.append("Gain %d Block" % int(effects["block"]))
 		elif key == "block_all":
-			copy.append("Gain %d Block each" % int(effects["block_all"]))
+			copy.append("All allies gain %d Block each" % int(effects["block_all"]))
 		elif key == "other_ally_block":
-			copy.append("Give another ally %d Block" % int(effects["other_ally_block"]))
+			copy.append("Every other ally gains %d Block" % int(effects["other_ally_block"]))
 		elif key == "heal":
-			copy.append("Heal %d HP%s" % [int(effects["heal"]), " each" if kind == "party_all" else ""])
+			if kind == "ally_single":
+				copy.append("Chosen ally heals %d HP" % int(effects["heal"]))
+			elif kind == "party_all":
+				copy.append("All allies heal %d HP each" % int(effects["heal"]))
+			else:
+				copy.append("Heal %d HP" % int(effects["heal"]))
 		elif key == "draw":
 			copy.append("Draw %d card%s" % [int(effects["draw"]), "" if int(effects["draw"]) == 1 else "s"])
 		elif key == "weak":
@@ -667,6 +677,16 @@ func _required_rule_phrases(card_id: String) -> Array[String]:
 	match card_id:
 		"warden_bastion_quilt":
 			return ["all allies", "10 Block each"]
+		"warden_hold_the_line":
+			return ["Every other ally gains 2 Block"]
+		"seamstress_darning":
+			return ["Chosen ally heals 4 HP", "Chosen ally gains 3 Block"]
+		"seamstress_stitch_up":
+			return ["Chosen ally gains 5 Block"]
+		"tinker_sight_glass":
+			return ["Exposed 2", "Draw 1 card"]
+		"seamstress_red_thread":
+			return ["Bleed 6", "Exposed 1"]
 		"tinker_overclock":
 			return ["+1 energy", "3 HP lost"]
 		"tinker_ricochet":
