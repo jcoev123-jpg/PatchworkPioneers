@@ -136,6 +136,14 @@ func base_effect_text(card_id: String) -> String:
 	return "\n".join(parts)
 
 
+## The complete two-part tooltip for a stitched card. Each half is named from
+## its authored catalog definition, so an upgraded half keeps its "+" name.
+func stitched_tooltip(halves: Array) -> String:
+	if halves.size() != 2:
+		return ""
+	return "1. " + base_effect_text(str(halves[0])) + "\n2. " + base_effect_text(str(halves[1]))
+
+
 func describe(card_id: String) -> Dictionary:
 	var definition: Dictionary = _definition(card_id)
 	if _app != null and card_id.begins_with(RunRestStitchCards.ID_PREFIX):
@@ -232,8 +240,8 @@ func _bind(panel: Control, card_id: String) -> void:
 	panel.get_child(0).hide()
 	panel.tooltip_text = base_effect_text(card_id)
 	var halves: Array = _bindings[panel].facts.get("halves", [])
-	if not halves.is_empty():
-		panel.tooltip_text = "1. " + base_effect_text(halves[0]) + "\n2. " + base_effect_text(halves[1])
+	if halves.size() == 2:
+		panel.tooltip_text = stitched_tooltip(halves)
 	_update_visual(panel)
 	panel.draw.connect(draw_callback)
 	panel.resized.connect(resize_callback)
@@ -303,13 +311,14 @@ func card_layout(size: Vector2) -> Dictionary:
 	var title := Rect2(text_x, owner.end.y + 1.0, text_width, 16.0 if compact else 20.0)
 	var body_top := title.end.y + 2.0
 	var body := Rect2(text_x, body_top, maxf(24.0, size.x - text_x - inset), frame.end.y - inset - body_top)
+	# Both faces reserve one row per ordered half: the compact hand gets two short
+	# sewn rows, taller panels keep the detailed three-line halves.
 	var halves: Array[Rect2] = []
-	if not compact:
-		var gap := 6.0
-		var each := floorf((body.size.y - gap) / 2.0)
-		if each >= 30.0:
-			halves = [Rect2(body.position, Vector2(body.size.x, each)),
-				Rect2(body.position + Vector2(0, each + gap), Vector2(body.size.x, each))]
+	var gap := 4.0 if compact else 6.0
+	var each := floorf((body.size.y - gap) / 2.0)
+	if each >= (20.0 if compact else 30.0):
+		halves = [Rect2(body.position, Vector2(body.size.x, each)),
+			Rect2(body.position + Vector2(0, each + gap), Vector2(body.size.x, each))]
 	return {"compact": compact, "frame": frame, "stripe": stripe, "owner": owner,
 		"cost": cost, "title": title, "footer": body, "halves": halves}
 
@@ -492,6 +501,29 @@ func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> 
 	_text(panel, detail, Rect2(x, rect.position.y + 27.0, width, 12), 10)
 
 
+## True only when both ledger halves are real authored definitions; an unknown
+## half must fall back to the honest placeholder instead of invented rules.
+func _halves_known(pair: Array) -> bool:
+	if pair.size() != 2:
+		return false
+	return not _definition(str(pair[0])).is_empty() and not _definition(str(pair[1])).is_empty()
+
+
+## One short sewn row of a compact stitched card: the authored half name in
+## resolution order plus that half's own owner colour and label.
+func _draw_sewn_half(panel: Control, id: String, rect: Rect2, order: int) -> void:
+	var facts := describe(id)
+	var definition := _definition(id)
+	if definition.is_empty() or rect.size.y <= 12.0:
+		return
+	var owner_color := _owner_color(facts.get("owner", ""))
+	panel.draw_rect(Rect2(rect.position.x - 3.0, rect.position.y + 1.0, 3.0, rect.size.y - 2.0), owner_color)
+	_text(panel, "%d. %s" % [order, definition.get("display_name", id)],
+		Rect2(rect.position, Vector2(rect.size.x, minf(14.0, rect.size.y))), 11)
+	_text(panel, facts.get("owner_text", ""),
+		Rect2(rect.position.x, rect.position.y + 12.0, rect.size.x, maxf(6.0, rect.size.y - 12.0)), 9, owner_color)
+
+
 func _title(facts: Dictionary) -> String:
 	var definition := _definition(facts.get("id", ""))
 	if not definition.is_empty():
@@ -536,9 +568,12 @@ func _draw_panel(panel: Control) -> void:
 	_text(panel, _title(facts), layout["title"], 15 if not layout["compact"] else 13)
 	var halves: Array = layout["halves"]
 	var pair: Array = facts.get("halves", [])
-	if halves.size() == 2 and pair.size() == 2:
+	if halves.size() == 2 and _halves_known(pair):
 		for index in range(2):
-			_draw_half(panel, pair[index], halves[index], "%d. " % (index + 1))
+			if layout["compact"]:
+				_draw_sewn_half(panel, str(pair[index]), halves[index], index + 1)
+			else:
+				_draw_half(panel, str(pair[index]), halves[index], "%d. " % (index + 1))
 		panel.draw_dashed_line(Vector2(halves[1].position.x, halves[0].end.y + 3.0),
 			Vector2(halves[1].end.x, halves[0].end.y + 3.0), RUST, 1.0, 5.0)
 	else:
