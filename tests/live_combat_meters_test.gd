@@ -85,7 +85,8 @@ func _visible(app) -> void:
 			if mods.get("exposed", 0) > 0:
 				expected_rules.append("Exposed: +50% attack damage taken")
 		if modifier != null:
-			_check(modifier.text == "\n".join(expected_rules) and modifier.visible == not expected_rules.is_empty(),
+			_check(modifier.text == "\n".join(expected_rules) and not modifier.visible
+				and status.tooltip_text == "\n".join(expected_rules),
 				"slot-local rules match only the living authoritative actor")
 			_check(modifier.focus_mode == Control.FOCUS_NONE and modifier.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 				"modifier line cannot receive input")
@@ -124,15 +125,14 @@ func _visible(app) -> void:
 			controls.append(line)
 		if status != null:
 			controls.append(status)
-		if modifier != null and modifier.visible:
-			controls.append(modifier)
-			_check(meter.get_global_rect().encloses(modifier.get_global_rect())
-				and modifier.size.x >= 180 and modifier.size.y >= 9,
-				"modifier line fits compact card at legible size")
-			_check(not modifier.get_global_rect().intersects(meter.hp_bar.get_global_rect())
-				and not modifier.get_global_rect().intersects(meter.block_bar.get_global_rect())
-				and (line == null or not modifier.get_global_rect().intersects(line.get_global_rect())),
-				"modifier line does not obscure bars or incoming forecast")
+		if modifier != null and status != null:
+			var host: Control = app.hero_panels[index] if index < 3 else app.get_node("LiveEnemyRoster")._labels[index - 3]
+			_check(host.is_visible_in_tree() and host.tooltip_text == status.text + "\n" + modifier.text,
+				"original actor control exposes exact status and modifier rules without duplicate stage text")
+			if index >= 3:
+				_check(host.mouse_filter == Control.MOUSE_FILTER_IGNORE and host.focus_mode == Control.FOCUS_NONE,
+					"enemy target label stays pointer-inert so target selection is untouched")
+			_check(meter.get_global_rect().encloses(status.get_global_rect()), "visible status counts fit the actor meter")
 		if warning != null and warning.visible:
 			controls.append(warning)
 			_check(meter.get_global_rect().encloses(warning.get_global_rect())
@@ -148,8 +148,16 @@ func _visible(app) -> void:
 				"meter controls visibly mounted")
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
 				"meter controls fit viewport: %s %s at %s" % [meter.name, control.name, control.get_global_rect()])
-			_check(control.mouse_filter == Control.MOUSE_FILTER_IGNORE and control.focus_mode == Control.FOCUS_NONE,
-				"meters never intercept mouse or keyboard")
+			if control == status:
+				# The single status line is the rules cue: pointer-hoverable only
+				# while it has rules, and never keyboard-focusable.
+				_check(control.focus_mode == Control.FOCUS_NONE
+					and control.mouse_filter == (Control.MOUSE_FILTER_STOP
+						if not control.tooltip_text.is_empty() else Control.MOUSE_FILTER_IGNORE),
+					"status rule cue is hoverable only with rules and keyboard-inert")
+			else:
+				_check(control.mouse_filter == Control.MOUSE_FILTER_IGNORE and control.focus_mode == Control.FOCUS_NONE,
+					"meters never intercept mouse or keyboard")
 		for control in [app.hero_view, app.hand_view, app.end_turn_button, app.return_button]:
 			_check(not meter.get_global_rect().intersects(control.get_global_rect()), "meters do not obstruct controls")
 		for other in meters:
@@ -182,6 +190,13 @@ func _mouse(control: Control) -> void:
 		event.pressed = pressed
 		root.push_input(event, true)
 		await _frames()
+
+
+func _hover(control: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
 
 
 func _exercise_live_bleed(app, presenter) -> void:
@@ -225,6 +240,24 @@ func _exercise_live_bleed(app, presenter) -> void:
 		and meters[3].modifier_explanation.text == meters[0].modifier_explanation.text
 		and meters[4].modifier_explanation.text == meters[1].modifier_explanation.text,
 		"all five live status lines follow their own actors")
+	# The enemy rules must be reachable from the mounted stage, not just stored
+	# on a pointer-inert roster label: hover the actual visible status cue.
+	for index in [3, 4]:
+		var cue: Label = meters[index].status_text
+		_check(cue.mouse_filter == Control.MOUSE_FILTER_STOP
+			and cue.mouse_default_cursor_shape == Control.CURSOR_HELP
+			and cue.focus_mode == Control.FOCUS_NONE,
+			"enemy status cue accepts pointer hover while staying keyboard-inert")
+		await _hover(cue)
+		_check(root.gui_get_hovered_control() == cue,
+			"real pointer hover reaches the visible enemy status line")
+		_check(cue.tooltip_text == meters[index].modifier_explanation.text
+			and not cue.tooltip_text.is_empty(),
+			"hovered enemy status line exposes its exact explanation")
+	_check(meters[3].status_text.tooltip_text == "Weak: -25% attack damage\nExposed: +50% attack damage taken"
+		and meters[4].status_text.tooltip_text == "Exposed: +50% attack damage taken"
+		and app.get_node("LiveEnemyRoster")._labels[0].mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"enemy Weak and Exposed rules are exact and reachable without touching target labels")
 	var before_swap := _state(app)
 	var preview := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
 	_check(preview["ok"] and preview["heroes"].size() == 3 and _state(app) == before_swap,

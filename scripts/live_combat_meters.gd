@@ -6,6 +6,7 @@ var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
 var _enemies: CombatEnemies
+var _tooltips: Dictionary = {}
 
 
 func _ready() -> void:
@@ -48,19 +49,19 @@ func _sync_battle() -> void:
 			for position in range(1, count + 1):
 				var meter := CombatActorMeter.new()
 				meter.name = "%s%d" % [side, position]
-				meter.custom_minimum_size = Vector2(meter_width, 106)
+				meter.custom_minimum_size = Vector2(meter_width, 0)
 				meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				var padding := meter.get_node("Padding") as MarginContainer
 				for edge in ["left", "right", "top", "bottom"]:
 					padding.add_theme_constant_override("margin_" + edge, 2 if edge in ["top", "bottom"] else 4)
 				meter.get_node("Padding/Content").add_theme_constant_override("separation", 0)
-				for label in [meter.actor_heading, meter.hp_text, meter.block_text]:
-					label.add_theme_font_size_override("font_size", 12)
-				meter.status_text.add_theme_font_size_override("font_size", 10)
-				meter.modifier_explanation.add_theme_font_size_override("font_size", 9)
+				for label in [meter.actor_heading, meter.hp_text, meter.block_text, meter.status_text]:
+					label.add_theme_font_size_override("font_size", 16)
+					label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				meter.modifier_explanation.add_theme_font_size_override("font_size", 14)
 				meter.modifier_explanation.custom_minimum_size = Vector2(meter_width - 24, 0)
 				meter.modifier_explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				meter.bleed_warning.add_theme_font_size_override("font_size", 9)
+				meter.bleed_warning.add_theme_font_size_override("font_size", 14)
 				meter.bleed_warning.custom_minimum_size = Vector2(meter_width - 24, 0)
 				meter.bleed_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				for bar in [meter.hp_bar, meter.block_bar]:
@@ -70,7 +71,8 @@ func _sync_battle() -> void:
 					incoming.name = "IncomingForecast"
 					incoming.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					incoming.focus_mode = Control.FOCUS_NONE
-					incoming.add_theme_font_size_override("font_size", 11)
+					incoming.add_theme_font_size_override("font_size", 14)
+					incoming.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 					incoming.add_theme_color_override("font_color", CombatActorMeter.INK)
 					meter.get_node("Padding/Content").add_child(incoming)
 				row.add_child(meter)
@@ -82,6 +84,23 @@ func _sync_battle() -> void:
 		var side := "hero" if meter.get_index() < CombatParty.PARTY_SIZE else "enemy"
 		var position: int = meter.get_index() + 1 if side == "hero" else meter.get_index() - CombatParty.PARTY_SIZE + 1
 		meter.show_actor(_party.get_hero(position) if side == "hero" else _enemies.get_enemy(position), side)
+		# Keep the snapshot API intact and the meter compact. The single visible
+		# status line becomes the hover cue for its rules, so a player can
+		# retrieve them from the mounted meter without moving the pointer-inert
+		# puppet or the original enemy target label.
+		var rules: String = meter.modifier_explanation.text
+		meter.status_text.tooltip_text = rules
+		meter.status_text.mouse_filter = Control.MOUSE_FILTER_STOP if not rules.is_empty() else Control.MOUSE_FILTER_IGNORE
+		meter.status_text.mouse_default_cursor_shape = Control.CURSOR_HELP if not rules.is_empty() else Control.CURSOR_ARROW
+		meter.modifier_explanation.hide()
+		var target: Control = app.hero_panels[position - 1] if side == "hero" else null
+		var roster = app.get_node_or_null("LiveEnemyRoster")
+		if side == "enemy" and roster != null and roster._labels.size() >= position:
+			target = roster._labels[position - 1]
+		if is_instance_valid(target):
+			if not _tooltips.has(target):
+				_tooltips[target] = target.tooltip_text
+			target.tooltip_text = meter.status_text.text + "\n" + meter.modifier_explanation.text
 		if side == "hero":
 			var incoming := meter.get_node("Padding/Content/IncomingForecast") as Label
 			var hero: Dictionary = _party.get_hero(position)
@@ -97,6 +116,10 @@ func _sync_battle() -> void:
 
 
 func _clear() -> void:
+	for target in _tooltips:
+		if is_instance_valid(target):
+			target.tooltip_text = _tooltips[target]
+	_tooltips.clear()
 	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_clear):
 		_battle.tree_exiting.disconnect(_clear)
 	if is_instance_valid(row):

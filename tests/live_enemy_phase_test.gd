@@ -26,10 +26,11 @@ func _snapshot(app) -> Array:
 
 
 func _visible(app, target: int = 1) -> void:
+	app.get_node("LiveCombatMeters")._sync_battle()
 	_check(is_instance_valid(app.intent_label), "mounted intent label exists")
 	if is_instance_valid(app.intent_label):
-		_check(app.intent_label.is_visible_in_tree() and app.battle_view.is_ancestor_of(app.intent_label),
-			"intent is mounted and visible in battle")
+		_check(not app.intent_label.visible and app.battle_view.is_ancestor_of(app.intent_label),
+			"legacy intent source remains mounted without a duplicate sentence")
 		_check(app.intent_label.text == "Intent: Enemy 1 -> Hero %d (%s): 1 damage; Enemy 2: 1 Block" % [
 			target, ["Warden", "Seamstress", "Tinker"][target - 1]],
 			"visible intent accurately describes authored source, target and damage")
@@ -45,10 +46,20 @@ func _visible(app, target: int = 1) -> void:
 			continue
 		var label = panel.get_child(0)
 		var hero: Dictionary = app.party.get_hero(index + 1)
-		_check(label is Label and label.is_visible_in_tree(), "hero text is visible")
+		_check(label is Label and not label.visible and panel.is_visible_in_tree(), "hero source text is retained behind the visible puppet and meter")
 		if label is Label:
 			_check(label.text.contains("HP: %d/%d | Block: %d" % [hero.hp, hero.max_hp, hero.block]),
 				"hero display reflects actual HP and Block")
+	var meters = app.get_node("LiveCombatMeters").row
+	_check(is_instance_valid(meters) and meters.get_child_count() == 3 + app.enemies.get_enemies().size(), "actual meters mounted for every actor")
+	if is_instance_valid(meters):
+		var actors: Array = app.party.get_heroes() + app.enemies.get_enemies()
+		for index in range(actors.size()):
+			var meter = meters.get_child(index)
+			var actor: Dictionary = actors[index]
+			_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree() and meter.block_text.is_visible_in_tree()
+				and meter.hp_text.text == "HP: %d/%d" % [actor.hp, actor.max_hp]
+				and meter.block_text.text == "Block: %d" % actor.block, "one visible authoritative HP/Block readout per actor")
 	_check(app.hand_view.get_child_count() == app.deck.hand.size(), "hand display refreshed")
 	var presenter = app.get_node("LiveEnemyRoster")
 	_check(presenter.enemies == app.enemies and is_instance_valid(presenter.panel), "one shared mounted enemy roster")
@@ -57,8 +68,8 @@ func _visible(app, target: int = 1) -> void:
 		_check(labels.size() == 2, "both enemy controls mounted")
 		for index in range(labels.size()):
 			var enemy: Dictionary = app.enemies.get_enemy(index + 1)
-			_check(labels[index].is_visible_in_tree() and labels[index].text == "Enemy %d - %s\nHP: %d/%d | Block: %d" % [
-				enemy.position, enemy.name, enemy.hp, enemy.max_hp, enemy.block], "mounted enemy HP/Block reflect result")
+			_check(labels[index].is_visible_in_tree() and labels[index].text == "Enemy %d - %s" % [
+				enemy.position, enemy.name], "mounted enemy target preserves identity without duplicate HP/Block")
 	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [
 		app.deck.draw_pile.size(), app.deck.discard_pile.size()], "pile display refreshed")
 
@@ -352,7 +363,7 @@ func _slain_sources(app) -> void:
 		var before_frame := _snapshot(app)
 		await process_frame
 		await process_frame
-		_check(is_instance_valid(app.intent_label) and app.intent_label.is_visible_in_tree(),
+		_check(is_instance_valid(app.intent_label) and not app.intent_label.visible,
 			"slain-source intent remains mounted before End Turn")
 		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
 			else "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage"),
