@@ -148,8 +148,12 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				continue
 			var node: Dictionary = expected_nodes[id]
 			var number := numbered_legal.find(id)
-			var expected_caption := (str(number + 1) + "\n" if number >= 0 else "") + String(node.type) + "\n" + id
-			_check(child.get_node("Identity").text == expected_caption
+			var expected_caption := (str(number + 1) + "\n" if number >= 0 else "") + String(node.type)
+			var identity_label: Label = child.get_node("Identity") as Label
+			_check(identity_label.text == expected_caption
+				and not identity_label.text.contains(id)
+				and child.get_meta("route_id") == id
+				and child.get_meta("route_kind") == String(node.type)
 				and atlas.get_global_rect().encloses(child.get_global_rect()), "readable mounted identity: " + id)
 			var legal: bool = app.run_map.get_legal_choices().has(id)
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")
@@ -162,6 +166,8 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				if action_button != null:
 					_check(action_button.focus_mode == Control.FOCUS_ALL
 						and action_button.mouse_filter == Control.MOUSE_FILTER_STOP
+						and action_button.tooltip_text.contains(id)
+						and action_button.tooltip_text.contains(String(node.type))
 						and child.get_global_rect().encloses(action_button.get_global_rect()),
 						"live legal button is focused/clickable inside paper: " + id)
 			else:

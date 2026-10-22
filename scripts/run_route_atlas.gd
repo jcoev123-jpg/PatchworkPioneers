@@ -183,7 +183,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	_inert(marker)
 	var caption := Label.new()
 	caption.name = "Identity"
-	caption.text = (str(shortcut) + "\n" if state == "legal" and shortcut > 0 else "") + kind + "\n" + id
+	caption.text = (str(shortcut) + "\n" if state == "legal" and shortcut > 0 else "") + kind
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	caption.add_theme_font_size_override("font_size", 12)
@@ -192,7 +192,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.add_child(caption)
 	if state == "legal":
 		# Only a legal marker owns an actionable Control; its transparent face
-		# preserves the original paper style and visible ID.
+		# preserves the original paper style. Canonical ID is in Action tooltip and metadata.
 		var action := Button.new()
 		action.name = "Action"
 		action.flat = true

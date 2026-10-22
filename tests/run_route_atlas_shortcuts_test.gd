@@ -82,9 +82,11 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 			var identity := marker.get_node_or_null("Identity") as Label
 			var action := marker.get_node_or_null("Action") as Button
 			var index := ordered.find(id)
-			var expected_caption := (str(index + 1) + "\n" if index >= 0 else "") + String(node["type"]) + "\n" + id
-			_check(identity != null and identity.text == expected_caption,
-				where + ": exact numbered kind and canonical ID for " + id)
+			var expected_caption := (str(index + 1) + "\n" if index >= 0 else "") + String(node["type"])
+			_check(identity != null and identity.text == expected_caption and not identity.text.contains(id),
+				where + ": exact numbered kind without raw ID for " + id)
+			_check(marker.get_meta("route_id") == id and marker.get_meta("route_kind") == String(node["type"]),
+				where + ": marker metadata retains canonical route_id and route_kind " + id)
 			if identity != null:
 				captions.append(identity.text)
 				_check(identity.get_combined_minimum_size().x <= marker.size.x
@@ -96,10 +98,15 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 			if index >= 0:
 				button_count += 1
 				_check(action != null and action.focus_mode == Control.FOCUS_ALL
-					and action.is_visible_in_tree(),
-					where + ": numbered destination owns mounted keyboard/mouse button " + id)
+					and action.is_visible_in_tree()
+					and action.tooltip_text.contains(id)
+					and action.tooltip_text.contains(String(node["type"])),
+					where + ": numbered destination owns mounted button with truthful tooltip " + id)
+				_check(identity.text.begins_with(str(index + 1) + "\n"),
+					where + ": legal destination displays sorted 1-4 number: " + id)
 			else:
-				_check(action == null, where + ": no inactive numbered/actionable marker " + id)
+				_check(action == null and identity.text == String(node["type"]),
+					where + ": no inactive numbered/actionable marker " + id)
 	_check(button_count == ordered.size() and captions.size() >= 36,
 		where + ": exactly N legal Action buttons across complete graph")
 	_check(_state(map, rng) == before, where + ": display verification leaves graph, route and RNG intact")
