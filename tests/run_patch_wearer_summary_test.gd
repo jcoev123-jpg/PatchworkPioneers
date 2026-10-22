@@ -14,10 +14,20 @@ const ARM_TEXT := "+1 damage on that wearer's damaging cards"
 const COAT_TEXT := "+6 maximum HP"
 
 
+func _badge_text() -> String:
+	return "+%d opening Block for this living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
+
+
+func _spool_text() -> String:
+	return "+%d healing on positive-heal cards owned by this living wearer only" % CombatShopPatchRules.HEALING_CARD_BONUS
+
+
 func _initialize() -> void:
 	_test_catalog_backed_definitions()
 	_test_full_summary()
 	_test_slot_only_patches()
+	_test_shop_torn_activation()
+	_test_unknown_patch()
 	_test_torn_and_active_flags()
 	_test_replacement_and_readonly()
 	_test_rest_resew_summary()
@@ -187,6 +197,15 @@ func _test_catalog_backed_definitions() -> void:
 			_check(not record.has("effect") and not record.has("amount")
 				and not record.has("max_hp_bonus"),
 				id + " ships slot metadata only")
+	# Shop powers come from combat rules, not the slot-only authored records.
+	_check(CombatShopPatchRules.EFFECTS["stitched_badge"] == {
+		"slot": "HEAD", "effect": "opening_block_bonus",
+		"amount": CombatShopPatchRules.OPENING_BLOCK_BONUS},
+		"combat authority specifies the badge slot and opening Block")
+	_check(CombatShopPatchRules.EFFECTS["spare_spool"] == {
+		"slot": "ARM", "effect": "healing_card_bonus",
+		"amount": CombatShopPatchRules.HEALING_CARD_BONUS},
+		"combat authority specifies the spool slot and healing")
 	# The wardrobe records are projected from those shipped catalogs.
 	var definitions := _projected_definitions(catalogs)
 	_check(definitions.size() >= 5, "the shipped catalogs project the named records")
@@ -274,12 +293,87 @@ func _test_slot_only_patches() -> void:
 		return
 	var badge: Dictionary = result.heroes[0]["slots"][0]
 	_check(badge["slot"] == "HEAD" and badge["patch_id"] == "stitched_badge"
-		and badge["active"] == true and badge["rules_text"] == "",
-		"Stitched Badge stays visible with no invented effect text")
+		and badge["active"] == true and badge["rules_text"] == _badge_text(),
+		"badge shows the genuine +3 opening Block")
 	var spool: Dictionary = result.heroes[1]["slots"][1]
 	_check(spool["slot"] == "ARM" and spool["patch_id"] == "spare_spool"
-		and spool["active"] == true and spool["rules_text"] == "",
-		"Spare Spool stays visible with no invented effect text")
+		and spool["active"] == true and spool["rules_text"] == _spool_text(),
+		"spool shows genuine +2 owned positive-heal card effect")
+	var combat := CombatShopPatchRules.new()
+	_check(combat.bind_wardrobe(w, torn, w.get_snapshot(), torn.read_state()),
+		"actual combat authority binds to same live wardrobe")
+	_check(combat.project_opening_block("warden") == CombatStartingBlock.BLOCK_AMOUNT
+			+ CombatShopPatchRules.OPENING_BLOCK_BONUS
+		and combat.opening_block_bonus("seamstress") == 0
+		and combat.healing_card_bonus("seamstress", "seamstress_mend")
+			== CombatShopPatchRules.HEALING_CARD_BONUS
+		and combat.healing_card_bonus("seamstress", "seamstress_prick") == 0
+		and combat.healing_card_bonus("seamstress", "tinker_tune_up") == 0
+		and combat.healing_card_bonus("warden", "seamstress_mend") == 0,
+		"real bonus is Warden 6+3 and positive owner-heal only")
+
+
+func _test_unknown_patch() -> void:
+	var f := _fixture()
+	if f.is_empty():
+		return
+	var w := RunPatchWardrobe.new(f.heroes, ["future_unwritten_patch"],
+		[{"id": "future_unwritten_patch", "slot": "ARM"}], 2, 170,
+		["warden_strike"], 8197)
+	_check(w.is_valid() and w.sew("future_unwritten_patch", "tinker", "ARM",
+		"future_sew", w.get_snapshot()).ok, "unknown-but-owned patch sewn in real ledger")
+	var torn := RunTornMending.new(f.heroes)
+	var result := RunPatchWearerSummary.summarize(w, torn.read_state())
+	_check(result.ok and result.heroes[2].slots[1].patch_id == "future_unwritten_patch"
+		and result.heroes[2].slots[1].active
+		and result.heroes[2].slots[1].rules_text == "",
+		"genuinely unknown patch remains visible without invented power")
+
+
+func _test_shop_torn_activation() -> void:
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	_check(w.sew("stitched_badge", "warden", "HEAD", "shop_badge", w.get_snapshot()).ok
+		and w.sew("spare_spool", "seamstress", "ARM", "shop_spool", w.get_snapshot()).ok,
+		"both Shop patches equipped before battle")
+	var torn := RunTornMending.new(f.heroes)
+	var original: Array = torn.read_state().heroes
+	var ending: Array = original.duplicate(true)
+	ending[0].hp = 0
+	ending[1].hp = 0
+	_check(torn.observe_battle_end("shop_tear", original, ending).ok,
+		"actual tear records both Shop wearers downed")
+	var prior_w := w.get_snapshot()
+	var before_t := torn.read_state()
+	_check(w.refresh_run_context(before_t.heroes, prior_w.owned,
+		prior_w.scraps, prior_w.gold, prior_w.cards, prior_w),
+		"wardrobe is refreshed to the genuine torn roster")
+	var before_w := w.get_snapshot()
+	var result := RunPatchWearerSummary.summarize(w, before_t)
+	_check(result.ok and result.heroes[0].hp == 0 and result.heroes[1].hp == 0
+		and not result.heroes[0].slots[0].active
+		and result.heroes[0].slots[0].rules_text == _badge_text()
+		and not result.heroes[1].slots[1].active
+		and result.heroes[1].slots[1].rules_text == _spool_text(),
+		"torn wearers retain descriptions but both Shop powers are dormant")
+	var rules := CombatShopPatchRules.new()
+	_check(rules.bind_wardrobe(w, torn, before_w, before_t)
+		and rules.opening_block_bonus("warden") == 0
+		and rules.healing_card_bonus("seamstress", "seamstress_mend") == 0,
+		"real combat rule confirms no bonuses on torn wearers")
+	_check(w.get_snapshot() == before_w and torn.read_state() == before_t,
+		"summary and combat rule leave full snapshots unchanged")
+	var mend := torn.choose_mend("shop_mend", "shop_mend_receipt", "warden", 1, 2,
+		before_t.heroes, true)
+	_check(mend.ok, "real mend restores Warden")
+	var restored := RunPatchWearerSummary.summarize(w, torn.read_state())
+	_check(restored.ok and restored.heroes[0].slots[0].active
+		and not restored.heroes[1].slots[1].active
+		and restored.heroes[0].slots[0].rules_text == _badge_text()
+		and restored.heroes[1].slots[1].rules_text == _spool_text(),
+		"only mended wearer has active Shop power")
 
 
 func _test_torn_and_active_flags() -> void:
@@ -374,8 +468,8 @@ func _test_replacement_and_readonly() -> void:
 	if after_summary.get("ok") == true:
 		var head: Dictionary = after_summary.heroes[0]["slots"][0]
 		_check(head["patch_id"] == "stitched_badge" and head["active"] == true
-			and head["rules_text"] == "",
-			"the fresh summary shows the new patch and no longer promises the displaced one")
+			and head["rules_text"] == _badge_text(),
+			"the new Shop power replaces the displaced patch text")
 	_check(before_summary.get("ok") == true
 		and before_summary.heroes[0]["slots"][0]["patch_id"] == "button_eye",
 		"the earlier summary keeps its own detached patch identity")
@@ -433,7 +527,7 @@ func _test_rest_resew_summary() -> void:
 		and swapped_summary.heroes[1]["slots"][0]["patch_id"] == "button_eye"
 		and swapped_summary.heroes[1]["slots"][0]["rules_text"] == EYE_TEXT
 		and swapped_summary.heroes[2]["slots"][0]["patch_id"] == "stitched_badge"
-		and swapped_summary.heroes[2]["slots"][0]["rules_text"] == "",
+		and swapped_summary.heroes[2]["slots"][0]["rules_text"] == _badge_text(),
 		"the summary shows the swapped wearers with their authored texts")
 	_check(before.get("ok") == true
 		and before.heroes[0]["slots"][0]["patch_id"] == "button_eye"
@@ -508,6 +602,11 @@ func _test_rejections() -> void:
 		_check(RunPatchWearerSummary.summarize(wrong_slot, torn_state) == rejected,
 			"a known patch in the wrong authored slot is rejected exactly")
 
+	# Shop slot contradictions fail closed even before a patch is equipped.
+	var wrong_shop := RunPatchWardrobe.new(f.heroes, ["spare_spool"],
+		[{"id": "spare_spool", "slot": "HEAD"}], 2, 170, ["warden_strike"], 8197)
+	_check(wrong_shop.is_valid() and RunPatchWearerSummary.summarize(
+		wrong_shop, torn_state) == rejected, "wrong Shop slot fails closed")
 	# Malformed authored catalog records fail closed.
 	var broken := [
 		["a known attack record with the wrong amount", "attack", "button_eye",
@@ -532,6 +631,9 @@ func _test_rejections() -> void:
 	var missing_amount := _without_field(catalogs, "attack", "button_eye", "amount")
 	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_amount) == rejected,
 		"a known attack record without its amount is rejected exactly")
+	var missing_shop := _without_record(catalogs, "initial", "spare_spool")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_shop) == rejected,
+		"missing Shop identity fails closed")
 	var missing_record := _without_record(catalogs, "attack", "button_eye")
 	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_record) == rejected,
 		"a missing known catalog record is rejected exactly")

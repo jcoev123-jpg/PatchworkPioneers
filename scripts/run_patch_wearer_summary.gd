@@ -29,8 +29,7 @@ const KNOWN_ATTACK_POWERS := {
 const KNOWN_COAT_POWERS := {
 	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6},
 }
-## Shipped slot-only records stay visible when worn but never gain a power.
-const KNOWN_SLOT_ONLY := {"stitched_badge": "HEAD", "spare_spool": "ARM"}
+## Shop catalogs author slot identity alone; CombatShopPatchRules owns their powers.
 ## Descriptions of the already authored rules, never new effect calculations.
 const KNOWN_TEXTS := {
 	"button_eye": "first successful attack each combat also applies Exposed 1",
@@ -273,7 +272,7 @@ static func _authority(catalogs: Variant) -> Dictionary:
 	for id in KNOWN_COAT_POWERS:
 		if not slots.has(id):
 			return {}
-	for id in KNOWN_SLOT_ONLY:
+	for id in CombatShopPatchRules.EFFECTS:
 		if not slots.has(id):
 			return {}
 	return {"slots": slots}
@@ -328,16 +327,17 @@ static func _collect(entries: Array, kind: String, slots: Dictionary) -> bool:
 				return false
 			slots[id] = expected["slot"]
 		else:
-			if not KNOWN_SLOT_ONLY.has(id):
+			if not CombatShopPatchRules.EFFECTS.has(id):
 				continue
 			if slots.has(id):
 				return false
-			if entry.get("slot") != KNOWN_SLOT_ONLY[id]:
+			var shop_slot: String = CombatShopPatchRules.EFFECTS[id]["slot"]
+			if entry.get("slot") != shop_slot:
 				return false
-			# A slot-only record must not smuggle an authored power.
+			# Shop powers belong to CombatShopPatchRules, never metadata fields.
 			if entry.has("effect") or entry.has("amount") or entry.has("max_hp_bonus"):
 				return false
-			slots[id] = KNOWN_SLOT_ONLY[id]
+			slots[id] = shop_slot
 	return true
 
 
@@ -345,6 +345,10 @@ static func _collect(entries: Array, kind: String, slots: Dictionary) -> bool:
 static func _resolve_rules_text(patch_id: String, catalog_slots: Dictionary) -> String:
 	if not catalog_slots.has(patch_id):
 		return ""
+	if patch_id == CombatShopPatchRules.STITCHED_BADGE_ID:
+		return "+%d opening Block for this living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
+	if patch_id == CombatShopPatchRules.SPARE_SPOOL_ID:
+		return "+%d healing on positive-heal cards owned by this living wearer only" % CombatShopPatchRules.HEALING_CARD_BONUS
 	return KNOWN_TEXTS.get(patch_id, "")
 
 
