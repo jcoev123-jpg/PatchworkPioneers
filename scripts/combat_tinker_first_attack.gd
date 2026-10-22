@@ -30,8 +30,9 @@ func record_successful_attack(card_id: String) -> bool:
 func _is_eligible_tinker_attack(card_id: String) -> bool:
 	if card_id.is_empty():
 		return false
-	var catalog := StarterCards.new()
-	var definition: Dictionary = catalog.get_definition(card_id)
+	var definition: Dictionary = StarterCards.new().get_definition(card_id)
+	if definition.is_empty():
+		definition = TinkerPoolCards.new().get_definition(card_id)
 	if definition.is_empty():
 		return false
 	if definition.get("id") != card_id:
@@ -39,7 +40,8 @@ func _is_eligible_tinker_attack(card_id: String) -> bool:
 	if definition.get("owner") != "tinker":
 		return false
 	var target_kind := str(definition.get("target_kind", ""))
-	if target_kind != "enemy_single" and target_kind != "enemy_all":
+	if target_kind != "enemy_single" and target_kind != "enemy_all" \
+			and target_kind != "enemy_random":
 		return false
 	var effects = definition.get("effects")
 	if not (effects is Dictionary):
