@@ -5,6 +5,8 @@ const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seam
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus"]
 const TABLE_ID := "SupportTableBacking"
+const QUILT_IDS := ["warden", "seamstress", "tinker"]
+const QUILT_RULE := "Play cards from all living heroes: each living hero gains 3 Block; draw 1 once per turn"
 ## Visible idle cue only: the complete mouse/keyboard instructions live in TABLE_HELP_DETAIL,
 ## which the cue exposes as a real hover tooltip instead of stretching across the footer.
 const TABLE_HELP := "Help"
@@ -26,6 +28,8 @@ var energy_orb: Control
 var help_label: Label
 var footer_spring: Control
 var backing: Control
+var quilt_row: HBoxContainer
+var quilt_patches: Dictionary = {}
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
@@ -193,6 +197,77 @@ class HelpStitch extends Control:
 			draw_line(point + Vector2(-2, 2), point + Vector2(2, -2), THREAD, 1.2, true)
 
 
+## A passive, ID-keyed felt square. Nothing here can arm a card or award a receipt.
+## Tooltip mouse hover is the only input accepted; no keyboard focus or button action.
+class QuiltPatch extends Control:
+	const THREAD := Color("c9b996")
+	const DARK := Color("302b26")
+	var owner_id := ""
+	var living := false
+	var played := false
+	var awarded := false
+	var felt_color := Color("302b26")
+	var fill_color := Color("302b26")
+
+	func _ready() -> void:
+		custom_minimum_size = Vector2(34, 34)
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		mouse_default_cursor_shape = Control.CURSOR_HELP
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	func display(owner: String, snapshot: Dictionary, has_award: bool) -> void:
+		var next_living: bool = bool(snapshot.get("living", false))
+		var next_played: bool = bool(snapshot.get("played", false))
+		var next_color := Color(str(snapshot.get("color", "#302b26")))
+		var changed := owner_id != owner or living != next_living or played != next_played \
+			or awarded != has_award or felt_color != next_color
+		owner_id = owner
+		living = next_living
+		played = next_played
+		awarded = has_award
+		felt_color = next_color
+		fill_color = felt_color if played else DARK.lerp(felt_color, 0.23)
+		if not living:
+			fill_color = fill_color.darkened(0.58)
+		var state := "played" if played else "unplayed"
+		if not living:
+			state += ", downed (not required)"
+		elif not played:
+			state += ", needed"
+		if awarded:
+			state += ", Quilt awarded this turn"
+		tooltip_text = "%s — %s\n%s" % [owner.capitalize(), state, QUILT_RULE]
+		if changed:
+			queue_redraw()
+
+	func _draw() -> void:
+		var rect := Rect2(Vector2(2, 2), size - Vector2(4, 4))
+		if rect.size.x < 16 or rect.size.y < 16:
+			return
+		draw_rect(rect, fill_color)
+		var thread := THREAD if living else THREAD.darkened(0.58)
+		for y in [rect.position.y, rect.end.y]:
+			draw_dashed_line(Vector2(rect.position.x, y), Vector2(rect.end.x, y), thread, 1.0, 3.0)
+		for x in [rect.position.x, rect.end.x]:
+			draw_dashed_line(Vector2(x, rect.position.y), Vector2(x, rect.end.y), thread, 1.0, 3.0)
+		var letter := owner_id.substr(0, 1).to_upper()
+		draw_string(get_theme_default_font(), Vector2(size.x * 0.5 - 5, size.y * 0.5 + 6),
+			letter, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, thread)
+		if played:
+			# A completed stitch is separate from the owner's unplayed dark fill.
+			draw_line(Vector2(5, size.y - 8), Vector2(9, size.y - 4), thread, 1.5)
+			draw_line(Vector2(9, size.y - 4), Vector2(15, size.y - 12), thread, 1.5)
+		if not living:
+			draw_line(Vector2(5, 5), size - Vector2(5, 5), thread.darkened(0.3), 1.5)
+		if awarded:
+			# Small golden award knot, not a fourth patch or a new action.
+			var knot := Vector2(size.x - 7, 7)
+			var gold := Color("f2d58e")
+			draw_colored_polygon(PackedVector2Array([knot + Vector2(0, -4),
+				knot + Vector2(4, 0), knot + Vector2(0, 4), knot + Vector2(-4, 0)]), gold)
+
+
 func _ready() -> void:
 	get_parent().start_run_requested.connect(_sync_battle, CONNECT_DEFERRED)
 
@@ -345,6 +420,22 @@ func _sync_battle() -> void:
 		footer_spring.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		hud.add_child(footer_spring)
 		hud.move_child(footer_spring, 2)
+		# Owner identity follows the Quilt service, never hero slots or card indices.
+		quilt_row = HBoxContainer.new()
+		quilt_row.name = "SupportHandQuiltPatches"
+		quilt_row.add_theme_constant_override("separation", 4)
+		quilt_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		quilt_row.focus_mode = Control.FOCUS_NONE
+		quilt_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		for owner_id in QUILT_IDS:
+			var square := QuiltPatch.new()
+			square.name = "QuiltPatch_" + owner_id
+			square.owner_id = owner_id
+			quilt_row.add_child(square)
+			quilt_patches[owner_id] = square
+		hud.add_child(quilt_row)
+		hud.move_child(quilt_row, 2)
+		quilt_row.hide()
 		cancel_button = Button.new()
 		cancel_button.text = "Cancel target (Esc)"
 		cancel_button.pressed.connect(_cancel_pending)
@@ -376,6 +467,7 @@ func _sync_battle() -> void:
 		help_label.size_flags_horizontal = help_flags
 	if is_instance_valid(footer_spring) and footer_spring.visible == choosing:
 		footer_spring.visible = not choosing
+	_sync_quilt(app, choosing)
 	# The felt table follows the real lower controls, including every resize.
 	if is_instance_valid(backing):
 		backing.refresh_band()
@@ -419,6 +511,35 @@ func _sync_battle() -> void:
 	else:
 		app.end_turn_button.focus_neighbor_top = NodePath()
 		app.return_button.focus_neighbor_top = NodePath()
+
+
+## Only the already bound live CombatQuiltBonus may supply display state.
+## A preview, stale battle, closed turn or mismatched authority has no visible row.
+func _sync_quilt(app, choosing: bool) -> void:
+	if not is_instance_valid(quilt_row):
+		return
+	var service = app._quilt_bonus
+	var valid: bool = service is CombatQuiltBonus and app._quilt_turn_open \
+		and app._quilt_deck == _deck and app._quilt_party == _party \
+		and service._deck == _deck and service._party == _party \
+		and not app._battle_closed and _deck != null and _deck.turn_active \
+		and _party != null and _party.is_valid() and service._bindings_valid()
+	if not valid or choosing:
+		quilt_row.hide()
+		return
+	var snapshot: Dictionary = service.get_patch_progress()
+	var patches: Dictionary = snapshot.get("patches", {})
+	if not bool(snapshot.get("active", false)) or patches.size() != QUILT_IDS.size():
+		quilt_row.hide()
+		return
+	for owner_id in QUILT_IDS:
+		if not patches.get(owner_id) is Dictionary or not quilt_patches.has(owner_id):
+			quilt_row.hide()
+			return
+	for owner_id in QUILT_IDS:
+		var square: QuiltPatch = quilt_patches[owner_id]
+		square.display(owner_id, patches[owner_id], bool(snapshot.get("awarded", false)))
+	quilt_row.show()
 
 
 func _mount_table(app) -> void:
@@ -706,6 +827,10 @@ func _clear() -> void:
 	if is_instance_valid(footer_spring):
 		footer_spring.queue_free()
 	footer_spring = null
+	if is_instance_valid(quilt_row):
+		quilt_row.queue_free()
+	quilt_row = null
+	quilt_patches.clear()
 	if is_instance_valid(cancel_button):
 		cancel_button.queue_free()
 	cancel_button = null
