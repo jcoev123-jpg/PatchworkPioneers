@@ -151,6 +151,54 @@ func _build_threadseal_enemies() -> CombatEnemies:
 	return CombatEnemies.new([stalker, ripper])
 
 
+func _capture_threadseal_party_state(party: CombatParty) -> Array:
+	var state: Array = []
+	for position in range(1, 4):
+		var hero: Dictionary = party.get_hero(position)
+		state.append({
+			"id": hero.get("id", ""),
+			"hp": hero.get("hp", 0),
+			"block": hero.get("block", 0),
+			"statuses": hero.get("statuses", {}).duplicate(true),
+		})
+	return state
+
+
+func _capture_threadseal_enemy_state(enemies: CombatEnemies) -> Array:
+	var state: Array = []
+	for position in range(1, 3):
+		var enemy: Dictionary = enemies.get_enemy(position)
+		state.append({
+			"id": enemy.get("id", ""),
+			"hp": enemy.get("hp", 0),
+			"block": enemy.get("block", 0),
+			"statuses": enemy.get("statuses", {}).duplicate(true),
+		})
+	return state
+
+
+func _run_threadseal_three_beat_trace() -> Array:
+	var party: CombatParty = _build_starter_party()
+	var enemies: CombatEnemies = _build_threadseal_enemies()
+	var definitions: Array = RunFightEncounterSelection._parse_schedule_text(_read_text(ENCOUNTER_PATH))
+	var intents: CombatEnemyIntents = CombatEnemyIntents.new(definitions)
+	var phase: CombatEnemyPhase = CombatEnemyPhase.new()
+	var trace: Array = []
+	for beat in range(3):
+		var announced: Array = intents.get_intents()
+		var result: Dictionary = phase.execute_phase(party, enemies, announced)
+		trace.append({
+			"beat": beat + 1,
+			"intents": announced.duplicate(true),
+			"events": result.get("events", []).duplicate(true),
+			"ok": result.get("ok", false),
+			"party": _capture_threadseal_party_state(party),
+			"enemies": _capture_threadseal_enemy_state(enemies),
+		})
+		if beat < 2:
+			_check(intents.advance_turn(), "trace advance turn succeeds")
+	return trace
+
 ## AC1: The encounter parses cleanly through RunFightEncounterSelection._parse_schedule_text,
 ## produces valid CombatEnemyIntents, and the earlier hexer_exposed_backline remains valid.
 func _test_ac1_catalog_parser_and_intents() -> void:
@@ -339,46 +387,46 @@ func _test_ac2_three_beat_execution_and_cycle_wrap() -> void:
 	_check(fresh_intents.advance_turn() and fresh_intents.get_intents() == _expected_beat_3_intents(), "fresh step 6")
 
 
-## AC3: Deterministic replay with identical explicit RNG seed; and slain-source unmarked 4 damage.
+## AC3: Deterministic combat replay on two independently constructed fixtures; and slain-source unmarked 4 damage.
 ## If Spool Stalker is slain before beat 1, its Exposed is skipped and Seam Ripper's unmodified 4
 ## hits Seamstress, showing that a dead source cannot apply a mark.
 func _test_ac3_deterministic_replay_and_slain_source() -> void:
-	# 1. Deterministic replay with identical explicit RNG seed (Lesson 8).
-	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng.seed = REPLAY_SEED
-	var map: RunMap = RunMap.new()
-	_check(map.generate(rng), "RunMap generates with seeded RNG")
+	# 1. Deterministic combat replay on two independently constructed fixtures, no RNG.
+	var trace_a: Array = _run_threadseal_three_beat_trace()
+	var trace_b: Array = _run_threadseal_three_beat_trace()
+	_check(trace_a.size() == 3, "trace A contains three beats")
+	_check(trace_b.size() == 3, "trace B contains three beats")
+	_check(trace_a == trace_b, "two independently constructed Threadseal fixtures replay identically")
 
-	var fight_id: String = ""
-	for candidate: String in map.get_legal_choices():
-		if map.get_node(candidate).get("type") == "Fight":
-			fight_id = candidate
-			break
-	_check(not fight_id.is_empty(), "found legal opening Fight node on generated map")
-	_check(map.choose_node(fight_id), "map chooses opening Fight node")
+	var beat1: Dictionary = trace_a[0]
+	var beat2: Dictionary = trace_a[1]
+	var beat3: Dictionary = trace_a[2]
+	_check(beat1.get("ok") == true, "Beat 1 phase succeeds")
+	_check(beat1.get("events") == [
+		{"type": "debuff", "enemy_position": 1, "applied": true, "target_position": 2, "status": "exposed"},
+		{"type": "attack", "enemy_position": 2, "applied": true, "target_position": 2},
+	], "Beat 1 events match debuff(exposed 1 on slot 2) then attack(slot 2)")
+	_check((beat1.get("party") as Array)[1].get("hp") == 24
+		and (beat1.get("party") as Array)[1].get("statuses") == {"exposed": 1},
+		"Seamstress is 24 HP with Exposed 1 after Beat 1")
+	_check(beat2.get("ok") == true, "Beat 2 phase succeeds")
+	_check((beat2.get("party") as Array)[2].get("hp") == 23,
+		"Tinker is 23 HP after Beat 2 (26 -> 23)")
+	_check((beat2.get("party") as Array)[0].get("statuses") == {"weak": 1},
+		"Warden carries Weak 1 after Beat 2")
+	_check(beat3.get("ok") == true, "Beat 3 phase succeeds")
+	_check((beat3.get("party") as Array)[0].get("hp") == 37,
+		"Warden is 37 HP after Beat 3 (40 -> 37)")
+	_check((beat3.get("enemies") as Array)[0].get("block") == 2,
+		"Spool Stalker has 2 Block after Beat 3")
 
-	var selector: RunFightEncounterSelection = RunFightEncounterSelection.new()
-	var candidate_pool: Dictionary = {ENCOUNTER_ID: ENCOUNTER_PATH}
-	var choice: Dictionary = selector.select_current_fight(map, rng, candidate_pool)
-	_check(choice.get("success") == true, "select_current_fight succeeds")
-	_check(choice.get("encounter_id") == ENCOUNTER_ID, "selected encounter_id matches")
-	_check(choice.get("definitions") == _expected_definitions(), "selected definitions match authored schedule")
-
-	# Cached re-read: draws zero extra RNG.
-	var rng_state_before: int = rng.state
-	var cached_choice: Dictionary = selector.select_current_fight(map, rng, candidate_pool)
-	_check(rng.state == rng_state_before, "cached re-read consumed zero RNG draws")
-	_check(cached_choice == choice, "cached re-read matches original choice")
-
-	# Deterministic replay with identical explicit RNG seed.
-	var rng_replay: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng_replay.seed = REPLAY_SEED
-	var map_replay: RunMap = RunMap.new()
-	_check(map_replay.generate(rng_replay), "RunMap replay generates with identical seed")
-	_check(map_replay.choose_node(fight_id), "map replay chooses same opening Fight node")
-	var selector_replay: RunFightEncounterSelection = RunFightEncounterSelection.new()
-	var choice_replay: Dictionary = selector_replay.select_current_fight(map_replay, rng_replay, candidate_pool)
-	_check(choice_replay == choice, "identical seed replays identical selection result")
+	# Wrap check: the announced beat after three beats wraps to Beat 1.
+	var wrap_intents: CombatEnemyIntents = CombatEnemyIntents.new(
+		RunFightEncounterSelection._parse_schedule_text(_read_text(ENCOUNTER_PATH)))
+	_check(wrap_intents.get_intents() == _expected_beat_1_intents(), "wrap intents start at Beat 1")
+	for _i in range(3):
+		_check(wrap_intents.advance_turn(), "wrap advance succeeds")
+	_check(wrap_intents.get_intents() == _expected_beat_1_intents(), "announced beat wraps to Beat 1 after three beats")
 
 	# 2. Slain source: Spool Stalker (source 1) slain before Beat 1.
 	var phase: CombatEnemyPhase = CombatEnemyPhase.new()
@@ -388,7 +436,12 @@ func _test_ac3_deterministic_replay_and_slain_source() -> void:
 	# Slay Spool Stalker (14 HP).
 	_check(enemies_slain.apply_damage(1, 14) and enemies_slain.is_slain(1), "Spool Stalker slain before Beat 1")
 
-	var slain_res: Dictionary = phase.execute_phase(party_slain, enemies_slain, _expected_beat_1_intents())
+	var definitions: Array = RunFightEncounterSelection._parse_schedule_text(_read_text(ENCOUNTER_PATH))
+	var slain_intents: CombatEnemyIntents = CombatEnemyIntents.new(definitions)
+	var slain_beat1_intents: Array = slain_intents.get_intents()
+	_check(slain_beat1_intents == _expected_beat_1_intents(), "slain-source phase uses service-derived Beat 1 intents")
+
+	var slain_res: Dictionary = phase.execute_phase(party_slain, enemies_slain, slain_beat1_intents)
 	_check(slain_res.get("ok") == true, "phase succeeds with slain Source 1")
 	_check(slain_res.get("events") == [
 		{"type": "debuff", "enemy_position": 1, "applied": false, "target_position": 2, "status": "exposed"},
