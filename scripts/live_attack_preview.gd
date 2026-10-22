@@ -14,6 +14,7 @@ var _catalog := StarterCards.new()
 var _play := CombatAttackCards.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
+var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _statuses := CombatStatuses.new()
 var _on_hit := CombatOnHitStatuses.new()
 var last_event: Dictionary = {}
@@ -265,6 +266,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _targeting.pool_definition(card_id)
 	if _targeting.is_heavy_pool_attack(card_id):
 		return _targeting.heavy_definition(card_id)
+	if _targeting.is_sight_glass(card_id):
+		return _targeting.sight_glass_definition(card_id)
 	return _catalog.get_definition(card_id)
 
 
@@ -296,23 +299,34 @@ func _queue_attack(position: int) -> void:
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0):
 		return
 	_queued = true
-	_commit.call_deferred(_armed, _card_id(_armed), position, _token,
-		app.party, app.enemies, app.battle_result, app.run_rng, _turn)
+	var id: String = _card_id(_armed)
+	# Preserve the selected enemy's identity, not just its reusable slot.
+	var target_id: String = str(app.enemies.get_enemy(position).get("id", "")) if _targeting.is_sight_glass(id) else ""
+	_commit.call_deferred(_armed, id, position, _token,
+		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id)
 
 
-func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng, turn: int) -> void:
+func _commit(panel, id: String, position: int, token: int, party, enemies, result, rng, turn: int, target_id: String = "") -> void:
 	var app = get_parent()
 	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
 		return
 	_queued = false
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
+		if _targeting.is_sight_glass(id):
+			_reject_stitch()
 		return
 	if app.party != party or app.enemies != enemies or app.battle_result != result or app.run_rng != rng \
 			or app.enemy_intents == null or app.enemy_intents._turn_index != turn or _turn != turn \
 			or _session != [party, enemies, result, rng, app.enemy_intents]:
+		if _targeting.is_sight_glass(id):
+			_reject_stitch()
 		return
 	var preview := _targeting.get_preview(_deck, party, enemies, id)
-	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0):
+	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
+			or (_targeting.is_sight_glass(id) and (app._battle_closed or target_id.is_empty() \
+			or app.enemies.get_enemy(position).get("id") != target_id)):
+		if _targeting.is_sight_glass(id):
+			_reject_stitch()
 		return
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
@@ -320,6 +334,10 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _targeting.is_sight_glass(id):
+		if forecast:
+			return _sight_forecast(party, enemies, id)
+		return _tinker_gadgets.resolve_sight_glass(_deck, party, enemies, id, position)
 	if _targeting.is_pool_strike(id):
 		# Reward-pool strikes have their own resolver. Starter on-hit counters,
 		# Tinker bonuses, Seamstress passives and worn-patch bonuses must never
@@ -345,6 +363,22 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	if forecast:
 		return _play.forecast_attack(_deck, party, enemies, id, owner_statuses, enemy_statuses)
 	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses, enemy_statuses)
+
+
+## Nonattack utility forecast: status stacks and draw only, never a hit or
+## starter passive. Every target comes from the same read-only legal picker.
+func _sight_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var unavailable := {"playable": false, "requires_selection": false, "hits": []}
+	var preview := _targeting.get_preview(_deck, party, enemies, id)
+	if not preview.get("playable", false) or not preview.get("requires_selection", false):
+		return unavailable
+	var effects: Dictionary = _targeting.sight_glass_definition(id).get("effects", {})
+	var hits: Array[Dictionary] = []
+	for position in preview.target_positions:
+		var before: int = int(enemies.get_enemy(position).get("statuses", {}).get("exposed", 0))
+		hits.append({"position": position, "exposed_before": before,
+			"exposed_after": before + int(effects["exposed"])})
+	return {"playable": true, "requires_selection": true, "hits": hits, "draw": int(effects["draw"])}
 
 
 ## Read-only forecast for the four plain pool strikes. It mirrors the resolver's
@@ -596,6 +630,21 @@ func _refresh() -> void:
 		cue.text = "Unavailable card rules"
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
+	if _targeting.is_sight_glass(id):
+		current_forecast = preview.duplicate(true)
+		var descriptions: PackedStringArray = []
+		for target in preview.get("hits", []):
+			descriptions.append("%d: Exposed %d → %d; draw %d card" % [
+				target.position, target.exposed_before, target.exposed_after, int(preview.draw)])
+		var detail := "Unavailable: no legal targets or energy"
+		if preview.playable:
+			detail = "Choose one enemy slot: " + "; ".join(descriptions)
+		var legal: Array[int] = []
+		for target in preview.get("hits", []):
+			legal.append(int(target.position))
+		cue.text = "%s | %d energy | P / click card; %s / click enemy\n%s" % [
+			definition.display_name, definition.cost, _key_hint(legal), detail]
+		return
 	var targets: PackedStringArray = []
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
