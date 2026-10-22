@@ -490,13 +490,47 @@ func _run() -> void:
 	_finish()
 
 
+func _three_enemy_fixture() -> Dictionary:
+	for value in range(1, 1025):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		var opening_rng: int = rng.state
+		for id in map.get_legal_choices():
+			if map.get_node(id).get("type") != "Fight":
+				continue
+			rng.state = opening_rng
+			if not map.choose_node(id):
+				continue
+			var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+			map.undo_choice(id, [])
+			if selected.get("success", false) and selected["enemies"].get_enemies().size() == 3:
+				return {"seed": value, "fight": id, "encounter": selected["encounter_id"]}
+	return {}
+
+
 func _typed_stage(app, presenter) -> void:
-	var boot = root.get_node("LiveWebPlaytestBoot")
-	_check(await boot.enter_preview(app, "battle"), "fixed-seed preview enters the real routed typed fight")
+	var fixture := _three_enemy_fixture()
+	_check(not fixture.is_empty(), "live seeded Fight rotation includes an authentic three-enemy roster")
+	if fixture.is_empty():
+		return
+	app.run_seed = fixture.seed
+	app.start_button.pressed.emit()
+	await process_frame
+	var route_button: Button = null
+	for candidate in app.route_buttons:
+		if candidate.get_meta("route_id") == fixture.fight:
+			route_button = candidate
+			break
+	_check(route_button != null and not route_button.disabled, "three-enemy Fight has a real enabled route control")
+	if route_button == null:
+		return
+	route_button.pressed.emit()
 	await process_frame
 	await process_frame
 	_check(app.enemies != null and app.enemies.get_enemies().size() == 3,
-		"seed-one route exercises three typed enemies, not the standalone fixture")
+		"seeded production Fight exercises three typed enemies, not the standalone fixture")
 	if app.enemies == null or app.enemies.get_enemies().size() != 3:
 		return
 	var before := _snapshot(app)

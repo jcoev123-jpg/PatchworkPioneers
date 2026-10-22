@@ -3,29 +3,33 @@ extends "res://tests/live_shop_continuation_test.gd"
 
 
 func _rest_fixture(kind: String) -> Dictionary:
-	for value in range(1, 1000):
+	for value in range(1, 8000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
+		var opening_rng: int = rng.state
 		for fight in map.get_legal_choices():
 			if map.get_node(fight).type != "Fight":
 				continue
 			for rest in map.get_node(fight).outgoing:
 				if map.get_node(rest).type != "Rest":
 					continue
-				var unsupported := false
 				var next_id := ""
+				var has_combat_choice := false
 				for next in map.get_node(rest).outgoing:
-					unsupported = unsupported or map.get_node(next).type not in ["Rest", "Shop", "Event", "Treasure"]
+					has_combat_choice = has_combat_choice or map.get_node(next).type in ["Fight", "Elite", "Boss"]
 					if map.get_node(next).type == kind:
 						next_id = next
-				if not unsupported or next_id.is_empty():
+				if not has_combat_choice or next_id.is_empty():
 					continue
-				map.choose_node(fight)
+				rng.state = opening_rng
+				if not map.choose_node(fight):
+					continue
 				var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
 				if selected.get("encounter_id") == "starter_attacks":
 					return {"seed": value, "fight": fight, "rest": rest, "next": next_id}
+				map.undo_choice(fight, [])
 	return {}
 
 
@@ -57,7 +61,7 @@ func _run() -> void:
 	var stale: Array[Callable] = []
 	for kind in ["Rest", "Shop"]:
 		var fixture := _rest_fixture(kind)
-		_check(not fixture.is_empty(), "real seeded graph supports Rest -> " + kind + " and unsupported outgoing nodes")
+		_check(not fixture.is_empty(), "real seeded graph supports Rest -> " + kind + " alongside a combat outgoing choice")
 		if fixture.is_empty():
 			continue
 		var replay: Array = []

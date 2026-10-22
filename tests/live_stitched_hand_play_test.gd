@@ -301,6 +301,21 @@ func _run() -> void:
 			if pair[0] == "warden_shield_bash":
 				await _rejections(id)
 				await _deferred_rejections(id)
+				# Hemhook can shove the Warden out of the opening slot on the real End Turn.
+				# A position-restricted stitch must then reject; restore a legal adjacent
+				# party ordering for the subsequent complete two-half transaction oracle.
+				if app.party.get_hero(1).get("id") != "warden":
+					var displaced: Array[Dictionary] = app.party.get_heroes()
+					var displaced_ledger := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+					var displaced_preview := CombatStitchedTargetPreview.new().get_preview(displaced_ledger, app._stitch_snapshot(), app.deck, app.party, app.enemies, id)
+					_check(not displaced_preview.playable, "authored enemy shove makes the front-owner stitch unplayable")
+					var restore := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+					_check(restore.ok and displaced[0].id == "seamstress" and displaced[1].id == "warden", "real enemy shove has two living adjacent heroes that may legally swap back")
+					if restore.ok:
+						app.party._heroes.assign(restore.heroes)
+						app._refresh_party()
+						await _frames()
+						_check(app.party.get_hero(1).id == "warden" and app.party.get_hero(2).id == "seamstress" and app.party.get_hero(1).hp == displaced[1].hp and app.party.get_hero(2).hp == displaced[0].hp, "restoring legal positions retains each displaced hero's HP")
 			_check(app.party.apply_damage(1, 7), "healing has real missing HP")
 			app._refresh_party()
 			for enemy in app.enemies.get_enemies():
