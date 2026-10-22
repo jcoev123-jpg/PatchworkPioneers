@@ -1,0 +1,10 @@
+[
+ {"enemy_position":1,"pattern":[
+  {"type":"debuff","amount":2,"target_position":1,"status":"bleed"},
+  {"type":"attack","amount":3,"target_position":3},
+  {"type":"debuff","amount":1,"target_position":2,"status":"exposed"}]},
+ {"enemy_position":2,"pattern":[
+  {"type":"block","amount":4},
+  {"type":"attack","amount":4,"target_position":1},
+  {"type":"attack","amount":4,"target_position":2}]}
+]
