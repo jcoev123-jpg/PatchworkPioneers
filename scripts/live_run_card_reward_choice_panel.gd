@@ -635,90 +635,156 @@ class _OwnerPatch extends Control:
 		draw_dashed_line(Vector2(rect.position.x + 8, y), Vector2(rect.end.x - 8, y), STITCH_THREAD, 1.5, 6.0)
 
 
-## Round sewn cost button (numeric only)
+## Round sewn energy coin, drawn exactly like the shared hand's cost coin: a
+## golden felt disc with a pale rim and a stitched ring around a centred numeral.
+## Decoration only; the authored cost text is drawn from the coin's own font
+## metrics so 0, 1 and 2 stay centred inside their glyph bounds.
 class _CostButton extends Control:
 	@export var cost_value: int = 0
+	## Kept because every mounted offer records its owner palette here; the coin
+	## itself matches the hand's gold regardless of owner.
 	@export var owner_color: Color = Color.WHITE
+
+	## Same golden felt the live hand paints its energy coin with.
+	const COIN_GOLD := Color("#c49a3a")
+	const COIN_RIM := Color("#ece0c8")
+	const STITCH_COUNT := 12
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		resized.connect(queue_redraw)
+
+	func coin_color() -> Color:
+		return COIN_GOLD
+
+	func coin_radius() -> float:
+		return minf(size.x, size.y) * 0.5
+
+	## One font size for every numeral, decided once from the coin's own size.
+	func numeral_font_size() -> int:
+		return maxi(18, int(coin_radius() * 0.9))
+
+	func numeral_text() -> String:
+		return str(cost_value)
+
+	## The exact baseline origin draw_string() needs: the advance width comes
+	## from the drawn point size and the baseline is offset by half the real
+	## ascent/descent so the numeral's ink box sits on the coin's centre.
+	func numeral_origin(font: Font) -> Vector2:
+		var point_size: int = numeral_font_size()
+		var advance: Vector2 = font.get_string_size(numeral_text(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, point_size)
+		var ascent: float = font.get_ascent(point_size)
+		var descent: float = font.get_descent(point_size)
+		var center: Vector2 = size * 0.5
+		return Vector2(center.x - advance.x * 0.5, center.y + (ascent - descent) * 0.5)
+
+	## Measured ink box of the numeral at the font size actually drawn.
+	func numeral_bounds(font: Font) -> Rect2:
+		var point_size: int = numeral_font_size()
+		var origin: Vector2 = numeral_origin(font)
+		var advance: Vector2 = font.get_string_size(numeral_text(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, point_size)
+		var ascent: float = font.get_ascent(point_size)
+		var descent: float = font.get_descent(point_size)
+		return Rect2(origin.x, origin.y - ascent, advance.x, ascent + descent)
+
+	## Ring radius for the stitches: inside the rim, outside every numeral bound.
+	func stitch_radius() -> float:
+		return maxf(0.0, coin_radius() - 4.0)
+
+	## Dashed ring spans, as (start_angle, end_angle). Never a diameter line.
+	func stitch_spans() -> Array[Vector2]:
+		var spans: Array[Vector2] = []
+		var step: float = TAU / float(STITCH_COUNT)
+		for index in range(STITCH_COUNT):
+			var start: float = step * float(index) + step * 0.15
+			spans.append(Vector2(start, start + step * 0.55))
+		return spans
 
 	func _draw() -> void:
-		var radius := minf(size.x, size.y) * 0.5
-		var center := size * 0.5
-		# Cream paper background
-		draw_circle(center, radius, CARD_PAPER)
-		# Sewn border
-		draw_circle(center, radius, owner_color, false, 3.0)
-		# Inner stitch ring
-		draw_dashed_line(center + Vector2(radius - 4, 0), center + Vector2(-radius + 4, 0), STITCH_THREAD, 1.5, 5.0)
-		# Cost number in dark ink
-		var font_size := maxi(18, int(radius * 0.9))
-		var text := str(cost_value)
-		# Use default font with dark ink
-		draw_string(get_theme_default_font(), center - get_theme_default_font().get_string_size(text) * 0.5, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, DARK_INK)
+		var center: Vector2 = size * 0.5
+		var radius: float = coin_radius()
+		var font: Font = get_theme_default_font()
+		if font == null:
+			font = ThemeDB.fallback_font
+		draw_circle(center, radius, COIN_GOLD)
+		draw_arc(center, maxf(0.0, radius - 1.0), 0.0, TAU, 32, COIN_RIM, 1.5, true)
+		for span: Vector2 in stitch_spans():
+			draw_arc(center, stitch_radius(), span.x, span.y, 6, STITCH_THREAD, 2.0, true)
+		draw_string(font, numeral_origin(font), numeral_text(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, numeral_font_size(), DARK_INK)
 
 
-## Position/target pips (from_positions and to_positions)
+## Authored position marks, identical in convention to the shared hand's pips:
+## three source circles (owner-colour filled when legal, outlined when not) and
+## three target squares (ink filled when legal, outlined when not). Slot 1 is
+## always the front. The readable target kind lives in RulesLabel; this control
+## draws no glyph and no miniature number.
 class _PositionPips extends Control:
 	@export var from_positions: Array[int] = []
 	@export var to_positions: Array[int] = []
 	@export var target_kind: String = ""
 	@export var owner_color: Color = Color.WHITE
 
+	const SLOT_COUNT := 3
+	const SLOT_RADIUS := 6.0
+	const SLOT_GAP := 15.0
+	const GROUP_GAP := 24.0
+	const OUTLINE := Color("#9e6f58")
+
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+
+	## Exactly six drawable slots in a stable order: three circles (source
+	## positions 1..3) then three squares (target positions 1..3). Filled only
+	## when the resolved definition authorises that position.
+	func slots() -> Array[Dictionary]:
+		var markers: Array[Dictionary] = []
+		var radius: float = SLOT_RADIUS
+		var group_width: float = float(SLOT_COUNT - 1) * SLOT_GAP + radius * 2.0
+		var total_width: float = group_width * 2.0 + GROUP_GAP
+		var first_x: float = maxf(radius + 2.0, (size.x - total_width) * 0.5 + radius)
+		var y: float = size.y * 0.5
+		for index in range(1, SLOT_COUNT + 1):
+			markers.append({
+				"shape": "circle",
+				"position": index,
+				"center": Vector2(first_x + SLOT_GAP * float(index - 1), y),
+				"radius": radius,
+				"filled": from_positions.has(index),
+			})
+		var square_x: float = first_x + group_width + GROUP_GAP
+		for index in range(1, SLOT_COUNT + 1):
+			markers.append({
+				"shape": "square",
+				"position": index,
+				"center": Vector2(square_x + SLOT_GAP * float(index - 1), y),
+				"radius": radius,
+				"filled": to_positions.has(index),
+			})
+		return markers
 
 	func _draw() -> void:
-		var y := size.y * 0.5
-		var spacing := 18.0
-		var pip_radius := 5.0
-		var start_x: float = (size.x - (maxi(from_positions.size(), to_positions.size()) - 1) * spacing) * 0.5
-		if start_x < 8:
-			start_x = 8
-
-		# Draw "From" pips (source positions) - small circles with owner color border
-		var x: float = start_x
-		for pos in from_positions:
-			var pip_center := Vector2(x, y - 12)
-			draw_circle(pip_center, pip_radius, CARD_PAPER)
-			draw_circle(pip_center, pip_radius, owner_color, false, 1.5)
-			# Position number inside
-			var pos_text := str(pos)
-			var font_size := 10
-			draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, DARK_INK)
-			x += spacing
-
-		# Draw "To" pips (target positions) - different style based on target kind
-		x = start_x
-		var target_label := ""
-		match target_kind:
-			"enemy_single": target_label = "→"
-			"enemy_all": target_label = "→all"
-			"enemy_random": target_label = "→?"
-			"self": target_label = "⟲"
-			"ally_single": target_label = "↔"
-			"party_all": target_label = "↔all"
-			"none": target_label = "—"
-			_: target_label = ""
-
-		if target_label != "":
-			var label_size := get_theme_default_font().get_string_size(target_label)
-			var label_x := (size.x - label_size.x) * 0.5
-			draw_string(get_theme_default_font(), Vector2(label_x, y + 2), target_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, DARK_INK)
-
-		# Also draw to_positions pips for enemy targets
-		if target_kind.begins_with("enemy"):
-			x = start_x
-			for pos in to_positions:
-				var pip_center := Vector2(x, y + 12)
-				draw_circle(pip_center, pip_radius, CARD_PAPER)
-				draw_circle(pip_center, pip_radius, Color("#9e3d30"), false, 1.5) # enemy red
-				var pos_text := str(pos)
-				var font_size := 10
-				draw_string(get_theme_default_font(), pip_center - get_theme_default_font().get_string_size(pos_text) * 0.5, pos_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, DARK_INK)
-				x += spacing
+		for marker: Dictionary in slots():
+			var center: Vector2 = marker["center"]
+			var radius: float = marker["radius"]
+			var filled: bool = marker["filled"]
+			if String(marker["shape"]) == "circle":
+				if filled:
+					draw_circle(center, radius, owner_color)
+					draw_arc(center, radius, 0.0, TAU, 16, STITCH_THREAD, 1.0, true)
+				else:
+					draw_arc(center, radius, 0.0, TAU, 16, OUTLINE, 1.5, true)
+			else:
+				var box := Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0)
+				if filled:
+					draw_rect(box, DARK_INK, true)
+				else:
+					draw_rect(box, CARD_PAPER, true)
+					draw_rect(box, OUTLINE, false, 1.5)
