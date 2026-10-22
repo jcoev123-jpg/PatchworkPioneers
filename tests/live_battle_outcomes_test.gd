@@ -308,7 +308,8 @@ func _status_turns() -> void:
 			and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2)["block"] == 1
 			and app.deck.energy == 3 and app.deck.hand.size() == 5,
 			"mounted End Turn commits one hero tick and retains enemy/hand cadence")
-		var label := app.hero_panels[0].get_child(0) as Label
+		app.get_node("LiveCombatMeters")._sync_battle()
+		var label := app.get_node("LiveCombatMeters").row.get_child(0).hp_text as Label
 		_check(label != null and label.is_visible_in_tree() and label.text.contains("HP: 38/40"),
 			"mounted hero label refreshes authoritative Bleed HP")
 		var trace: Array = [_state()]

@@ -454,9 +454,11 @@ func _run() -> void:
 			"real selected enemy panels mounted")
 		for index in range(ordered.size()):
 			var label: Label = presenter._labels[index]
-			_check(label.is_visible_in_tree() and label.text == "Enemy %d - %s\nHP: %d/%d | Block: 0" % [
-				index + 1, ordered[index].name, ordered[index].max_hp, ordered[index].max_hp],
-				"visible selected actor name and HP by slot")
+			_check(label.is_visible_in_tree() and label.text == "Enemy %d - %s" % [index + 1, ordered[index].name],
+				"visible selected actor name by slot")
+			var meter = app.get_node("LiveCombatMeters").row.get_child(3 + index)
+			_check(meter.hp_text.is_visible_in_tree() and meter.hp_text.text == "HP: %d/%d" % [ordered[index].max_hp, ordered[index].max_hp]
+				and meter.block_text.is_visible_in_tree() and meter.block_text.text == "Block: 0", "visible selected actor HP and Block by slot")
 			var initial_action: Dictionary = authored[index].pattern[0].duplicate(true)
 			initial_action.enemy_position = index + 1
 			_check(app.enemy_attacks[index] == initial_action, "source-ordered authored initial intent")

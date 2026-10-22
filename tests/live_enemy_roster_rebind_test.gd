@@ -80,20 +80,31 @@ func _mounted(app, presenter) -> bool:
 	_check(intents.size() == roster.size(), "matching real scheduler supplies every replacement source")
 	if intents.size() != roster.size():
 		return false
+	var meters = app.get_node("LiveCombatMeters").row
+	_check(is_instance_valid(meters) and meters.get_child_count() == 3 + roster.size(),
+		"replacement roster retains exactly its real hero and enemy meters")
+	if not is_instance_valid(meters) or meters.get_child_count() != 3 + roster.size():
+		return false
 	for index in range(roster.size()):
 		var enemy: Dictionary = roster[index]
 		var label: Label = presenter._labels[index]
 		var badge: LiveEnemyIntentBadge = presenter._badges[index]
 		_check(label == labels[index] and label.is_visible_in_tree() and label.name == "EnemyState%d" % enemy.position
-			and label.text == "Enemy %d - %s\nHP: %d/%d | Block: %d" % [
-				enemy.position, enemy.name, enemy.hp, enemy.max_hp, enemy.block],
-			"replacement label has exact identity, position, HP and Block")
+			and label.text == "Enemy %d - %s" % [enemy.position, enemy.name],
+			"replacement target label has exact identity and position")
+		var meter = meters.get_child(3 + index)
+		_check(meter.is_visible_in_tree() and meter.hp_text.is_visible_in_tree()
+			and meter.block_text.is_visible_in_tree()
+			and meter.hp_text.text == "HP: %d/%d" % [enemy.hp, enemy.max_hp]
+			and meter.hp_bar.value == enemy.hp and meter.hp_bar.max_value == enemy.max_hp
+			and meter.block_text.text == "Block: %d" % enemy.block and meter.block_bar.value == enemy.block,
+			"replacement meter displays exact authoritative HP and Block")
 		var action: Dictionary = intents[index]
 		_check(badge == badges[index] and badge.is_visible_in_tree()
 			and badge.name == "EnemyIntent%d" % enemy.position and badge.source_position == enemy.position
 			and action.enemy_position == enemy.position and badge.intent_type == "attack"
 			and badge.amount == action.amount and badge.target_position == action.target_position
-			and badge.readable_text == "ATTACK %d -> HERO %d" % [action.amount, action.target_position],
+			and badge.readable_text == "ATK %d > H%d" % [action.amount, action.target_position],
 			"replacement badge announces compatible authoritative source, amount and target")
 	return true
 
@@ -224,7 +235,7 @@ func _run() -> void:
 	_check(app.enemies != null and is_instance_valid(presenter.panel) and presenter.enemies == app.enemies
 		and app.enemies != active_model and app.hero_view != null, "restart mounts fresh authoritative roster and heroes")
 	_check(presenter._labels.size() == 2 and presenter._badges.size() == 2
-		and presenter._labels[0].text.begins_with("Enemy 1 - Ragling\n"), "restart contains original starter identities only")
+		and presenter._labels[0].text == "Enemy 1 - Ragling", "restart contains original starter identities only")
 	app.return_button.pressed.emit()
 	await process_frame
 	app.free()
