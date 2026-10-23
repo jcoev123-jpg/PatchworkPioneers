@@ -80,6 +80,16 @@ const NEW_POOL_SPECS := {
 	"tinker_bobbin_cannon": {"owner": "tinker", "price": 90, "cost": 3, "from": [3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 20}, "rarity": "rare"},
 }
 
+## The four playable Warden pool base cards newly authored into the Shop (M04 D2-1).
+## Rules copied from data/cards/warden_pool_cards.gd; prices are the established
+## Warden candidate quotes. Only base IDs are stocked, never _plus upgrades.
+const WARDEN_STOCK_SPECS := {
+	"warden_heavy_thimble": {"owner": "warden", "price": 60, "cost": 2, "from": [1], "target": "enemy_single", "to": [1, 2], "effects": {"damage": 11}, "rarity": "common"},
+	"warden_pin_and_pound": {"owner": "warden", "price": 85, "cost": 2, "from": [1], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 9, "hits": 2}, "rarity": "rare"},
+	"warden_draw_fire": {"owner": "warden", "price": 65, "cost": 1, "from": [1], "target": "self", "to": [], "effects": {"block": 6, "guarding": true, "duration": "until_next_turn"}, "rarity": "uncommon"},
+	"warden_counter_stitch": {"owner": "warden", "price": 65, "cost": 1, "from": [1, 2], "target": "self", "to": [], "effects": {"block": 5, "thorns": 3, "duration": "until_next_turn"}, "rarity": "uncommon"},
+}
+
 ## Every pre-existing authored card candidate and its established Shop quote.
 ## These entries must survive the candidate-pool expansion unchanged.
 const EXISTING_SHOP_CARDS := {
@@ -132,6 +142,7 @@ func _initialize() -> void:
 		_test_pool_rejections(party, catalog)
 		_test_new_starter_shop_offers_and_purchases(party, deck, catalog)
 		_test_new_pool_shop_offers_and_purchases(party, deck, catalog)
+		_test_warden_pool_shop_offers_and_purchases(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -1530,3 +1541,198 @@ func _test_new_pool_shop_offers_and_purchases(party: Array[String], deck: Array[
 		_check(not repeat_buy.get("ok", true), "new pool " + card_id + ": second purchase refused")
 		_check(purchases.get_state() == after_state and purchases.get_stock() == after_stock,
 			"new pool " + card_id + ": repeated purchase leaves state and stock unchanged")
+
+
+## AC1/AC2/AC3: the four playable Warden pool base cards (Heavy Thimble,
+## Pin and Pound, Draw Fire, Counter-stitch) are authored at their established
+## quotes, appear in genuine seeded five-card/two-trinket visits that replay,
+## and can be bought once through the real RunShopPurchases service.
+func _test_warden_pool_shop_offers_and_purchases(party: Array[String], deck: Array[String],
+		catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	var warden_pool := WardenPoolCards.new()
+
+	# AC1: each new base ID is authored exactly once at its Warden quote and
+	# matches the real playable catalog definition.
+	var count_by_id := {}
+	for entry in candidates:
+		if entry is Dictionary and entry.get("id") is String:
+			count_by_id[entry.id] = int(count_by_id.get(entry.id, 0)) + 1
+	for card_id in WARDEN_STOCK_SPECS:
+		var spec: Dictionary = WARDEN_STOCK_SPECS[card_id]
+		_check(not String(card_id).ends_with("_plus"),
+			"warden stock candidate is a base ID: " + card_id)
+		_check(count_by_id.get(card_id, 0) == 1,
+			"warden stock card occurs exactly once in authored pool: " + card_id)
+		var found_json := false
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				found_json = true
+				_check(entry.get("owner") == spec["owner"],
+					"warden stock authored owner: " + card_id)
+				_check(_whole_price(entry.get("price")) == spec["price"],
+					"warden stock authored price: " + card_id)
+		_check(found_json, "warden stock card present in authored JSON: " + card_id)
+		_check(warden_pool.get_base_ids().has(card_id),
+			"warden stock card is a real Warden pool base ID: " + card_id)
+		var def: Dictionary = warden_pool.get_definition(card_id)
+		_check(def.get("id") == card_id and def.get("owner") == spec["owner"]
+			and def.get("rarity") == spec["rarity"] and def.get("cost") == spec["cost"]
+			and def.get("from_positions") == spec["from"]
+			and def.get("to_positions") == spec["to"]
+			and def.get("target_kind") == spec["target"]
+			and def.get("effects") == spec["effects"]
+			and def.get("reward_eligible") == true
+			and def.get("upgrade_id") == card_id + "_plus"
+			and def.get("starting_copies") == 0,
+			"warden stock catalog definition matches authored rules: " + card_id)
+	# The earlier authored card and trinket records are untouched by the append.
+	for card_id in EXISTING_SHOP_CARDS:
+		var previous: Dictionary = EXISTING_SHOP_CARDS[card_id]
+		_check(count_by_id.get(card_id, 0) == 1,
+			"earlier Shop candidate still listed exactly once: " + card_id)
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				_check(entry.get("owner") == previous["owner"]
+					and _whole_price(entry.get("price")) == previous["price"],
+					"earlier Shop candidate keeps its owner and quote: " + card_id)
+	var trinket_counts := {}
+	for entry in trinkets:
+		if entry is Dictionary and entry.get("id") is String:
+			trinket_counts[entry.id] = int(trinket_counts.get(entry.id, 0)) + 1
+	for trinket_id in EXISTING_SHOP_TRINKETS:
+		_check(trinket_counts.get(trinket_id, 0) == 1,
+			"earlier Shop trinket still listed exactly once: " + trinket_id)
+		for entry in trinkets:
+			if entry is Dictionary and entry.get("id") == trinket_id:
+				_check(_whole_price(entry.get("price")) == EXISTING_SHOP_TRINKETS[trinket_id],
+					"earlier Shop trinket keeps its price: " + trinket_id)
+
+	# AC2: a bounded deterministic seed sweep finds each new card in a genuine
+	# five-card/two-trinket visit; replaying that seed reproduces the stock and
+	# the next RNG state.
+	var max_seed_offset := 1000
+	for card_id in WARDEN_STOCK_SPECS:
+		var expected_owner: String = WARDEN_STOCK_SPECS[card_id]["owner"]
+		var expected_price: int = WARDEN_STOCK_SPECS[card_id]["price"]
+		var found_seed := -1
+		var found_result: Dictionary = {}
+		for offset in range(max_seed_offset):
+			var test_rng := _rng(SEED + 600 + offset)
+			var test_result := RunShopStockOffers.generate(test_rng, party, candidates, trinkets, [])
+			if not test_result.get("ok", false):
+				continue
+			for offer in test_result.get("cards", []):
+				if offer.get("id") == card_id:
+					found_seed = SEED + 600 + offset
+					found_result = test_result
+					break
+			if found_seed >= 0:
+				break
+		_check(found_seed >= 0,
+			"seeded Shop offer found for warden stock card: " + card_id)
+		if found_seed < 0:
+			continue
+		var found_cards: Array = found_result.get("cards", [])
+		var found_trinkets: Array = found_result.get("trinkets", [])
+		_check(found_cards.size() == 5 and found_trinkets.size() == 2,
+			"warden stock " + card_id + ": found visit holds five cards and two trinkets")
+		var matched_offer := {}
+		var offered_ids: Array[String] = []
+		var distinct := {}
+		for offer in found_cards:
+			var offered_id: String = offer.get("id", "")
+			offered_ids.append(offered_id)
+			distinct[offered_id] = true
+			_check(not offered_id.ends_with("_plus"),
+				"warden stock " + card_id + ": no upgrade is ever offered")
+			if offered_id == card_id:
+				matched_offer = offer
+		_check(offered_ids.size() == 5 and distinct.size() == 5,
+			"warden stock " + card_id + ": five distinct card offers")
+		_check(matched_offer.get("owner") == expected_owner,
+			"warden stock " + card_id + ": offered owner matches catalog")
+		_check(matched_offer.get("price") == expected_price,
+			"warden stock " + card_id + ": offered price matches authored quote")
+		# Repeating the found seed reproduces the offers and leaves the same
+		# run RNG state, independently checked against the sorted-pool oracle.
+		var replay_rng := _rng(found_seed)
+		var replay_result := RunShopStockOffers.generate(replay_rng, party, candidates, trinkets, [])
+		var oracle_rng := _rng(found_seed)
+		var oracle := _oracle(catalog, party, candidates, trinkets, [], oracle_rng)
+		_check(replay_result == found_result,
+			"warden stock " + card_id + ": repeated seed reproduces the offers")
+		_check(replay_result.get("cards", []) == oracle.cards
+			and replay_result.get("trinkets", []) == oracle.trinkets,
+			"warden stock " + card_id + ": offers match the independent oracle")
+		_check(replay_rng.state == oracle_rng.state and replay_rng.randi() == oracle_rng.randi(),
+			"warden stock " + card_id + ": replay preserves the next RNG state and draw")
+
+		# AC3: a funded visit buys the exact base ID once at the authored quote.
+		var purchases := RunShopPurchases.new(party, deck, [], 500, found_result["cards"],
+			found_result["trinkets"])
+		_check(purchases.is_valid(),
+			"warden stock " + card_id + ": generated stock admits real purchase service")
+		var before_state := purchases.get_state()
+		var before_stock := purchases.get_stock()
+		var buy_result := purchases.buy("card", card_id)
+		_check(buy_result.get("ok", false),
+			"warden stock " + card_id + ": card purchase succeeds")
+		var after_state := purchases.get_state()
+		var after_stock := purchases.get_stock()
+		_check(after_state["deck"].size() == before_state["deck"].size() + 1,
+			"warden stock " + card_id + ": exactly one card appended")
+		_check(after_state["deck"].back() == card_id,
+			"warden stock " + card_id + ": appended card is the exact base ID")
+		_check(after_state["deck"].slice(0, before_state["deck"].size()) == before_state["deck"],
+			"warden stock " + card_id + ": original deck unchanged")
+		_check(after_state["gold"] == before_state["gold"] - expected_price,
+			"warden stock " + card_id + ": exact authored price charged once")
+		_check(after_state["trinkets"] == before_state["trinkets"],
+			"warden stock " + card_id + ": card purchase adds no trinket")
+		var bought_sold := false
+		for listing in after_stock.get("cards", []):
+			if listing.get("id") == card_id:
+				_check(listing.get("sold") == true,
+					"warden stock " + card_id + ": bought card marked sold")
+				bought_sold = true
+			else:
+				_check(listing.get("sold") == false,
+					"warden stock " + card_id + ": other card listings remain unsold")
+		_check(bought_sold,
+			"warden stock " + card_id + ": purchased listing exists and is sold")
+		var receipt: Dictionary = buy_result.get("receipt", {})
+		_check(receipt.get("kind") == "card" and receipt.get("id") == card_id
+			and receipt.get("price") == expected_price,
+			"warden stock " + card_id + ": receipt matches kind, ID and exact price")
+
+		# An unaffordable attempt is a genuine boundary: one gold short.
+		var poor := RunShopPurchases.new(party, deck, [], expected_price - 1,
+			found_result["cards"], found_result["trinkets"])
+		_check(poor.is_valid(), "warden stock " + card_id + ": near-funds visit is valid")
+		var poor_state := poor.get_state()
+		var poor_stock := poor.get_stock()
+		var denied := poor.buy("card", card_id)
+		_check(not denied.get("ok", true),
+			"warden stock " + card_id + ": unaffordable purchase refused")
+		_check(poor.get_state() == poor_state and poor.get_stock() == poor_stock,
+			"warden stock " + card_id + ": refused purchase leaves gold, deck and stock unchanged")
+
+		# A second purchase of the same sold listing refuses without mutation.
+		var repeat_buy := purchases.buy("card", card_id)
+		_check(not repeat_buy.get("ok", true),
+			"warden stock " + card_id + ": second purchase refused")
+		_check(purchases.get_state() == after_state and purchases.get_stock() == after_stock,
+			"warden stock " + card_id + ": repeated purchase leaves state and stock unchanged")
+
+	# AC3: the _plus upgrades never enter Shop stock for these base IDs.
+	for card_id in WARDEN_STOCK_SPECS:
+		var upgrade_id: String = card_id + "_plus"
+		_check(warden_pool.has_card(upgrade_id), "real upgrade exists: " + upgrade_id)
+		_check(_pool_has_id(candidates, upgrade_id) == false,
+			"no warden upgrade listing in the authored Shop pool: " + upgrade_id)
+		_reject("warden upgrade as Shop candidate " + upgrade_id, _rng(), party,
+			_with_card(candidates, 0, {"id": upgrade_id, "price": WARDEN_STOCK_SPECS[card_id]["price"]}),
+			trinkets, [])

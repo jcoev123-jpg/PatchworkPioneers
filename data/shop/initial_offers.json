@@ -23,7 +23,11 @@
     {"id": "tinker_long_barrel", "owner": "tinker", "price": 70},
     {"id": "tinker_overclock", "owner": "tinker", "price": 60},
     {"id": "tinker_sight_glass", "owner": "tinker", "price": 65},
-    {"id": "tinker_bobbin_cannon", "owner": "tinker", "price": 90}
+    {"id": "tinker_bobbin_cannon", "owner": "tinker", "price": 90},
+    {"id": "warden_heavy_thimble", "owner": "warden", "price": 60},
+    {"id": "warden_pin_and_pound", "owner": "warden", "price": 85},
+    {"id": "warden_draw_fire", "owner": "warden", "price": 65},
+    {"id": "warden_counter_stitch", "owner": "warden", "price": 65}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
