@@ -50,6 +50,7 @@ func _initialize() -> void:
 		_test_weighted_one_survivor(definitions, ids, deck, false)
 		_test_weighted_one_survivor(definitions, ids, deck, true)
 		_test_weighted_one_survivor_warden(definitions, ids, deck)
+		_test_stitched_rewards(definitions, ids, deck)
 		_test_rejections(definitions, ids, deck, candidates)
 	else:
 		_check(false, "reward suite cannot run vacuously without valid authored fixtures")
@@ -127,15 +128,18 @@ func _win(fight: Dictionary) -> void:
 
 ## Today's seven-argument call stays the normal-Fight path.
 func _session(fight: Dictionary, rng: Variant, ids: Variant, candidates: Variant,
-		deck: Variant, gold: Variant, elite: bool) -> RunFightVictoryRewards:
-	return RunFightVictoryRewards.new(fight["battle"], rng, ids, candidates, deck, gold, elite)
+		deck: Variant, gold: Variant, elite: bool, stitched_descriptors: Variant = {},
+		next_stitch_id: Variant = 1) -> RunFightVictoryRewards:
+	return RunFightVictoryRewards.new(fight["battle"], rng, ids, candidates, deck, gold, elite,
+		[], [], stitched_descriptors, next_stitch_id)
 
 
 func _elite_session(fight: Dictionary, rng: Variant, ids: Variant, candidates: Variant,
 		deck: Variant, gold: Variant, trinket_candidates: Variant,
-		owned_trinkets: Variant) -> RunFightVictoryRewards:
+		owned_trinkets: Variant, stitched_descriptors: Variant = {},
+		next_stitch_id: Variant = 1) -> RunFightVictoryRewards:
 	return RunFightVictoryRewards.new(fight["battle"], rng, ids, candidates, deck, gold, true,
-		trinket_candidates, owned_trinkets)
+		trinket_candidates, owned_trinkets, stitched_descriptors, next_stitch_id)
 
 
 ## Independent oracle: gold draw, three sorted card-offer draws, then (Elite only)
@@ -948,6 +952,206 @@ func _test_weighted_one_survivor_warden(definitions: Array, ids: Array[String], 
 		_check(offer["owner"] == "warden", label + ": all offers owned by living warden")
 
 
+## An authentic Rest composite is issued by the canonical Rest transaction, then
+## carried into a won Fight/Elite exactly as the routed run does.
+func _stitched_ledger(deck: Array[String]) -> Dictionary:
+	var source := RunRestStitchCards.new(deck, {}, RunRestStitchCards.SCRAP_COST, 1)
+	_check(source.is_valid(), "funded authentic Rest ledger admits a stitch")
+	if not source.is_valid():
+		return {}
+	var first: int = deck.find("seamstress_prick")
+	var second: int = deck.find("tinker_pop_shot")
+	_check(first >= 0 and second >= 0 and first != second,
+		"authored cross-owner originals are owned instances")
+	if first < 0 or second < 0 or first == second:
+		return {}
+	var made: Dictionary = source.choose_stitch(first, second, source.get_snapshot())
+	_check(made.get("ok", false) and made.get("stitched_id") == "stitched_000001"
+		and made.get("next_stitch_id") == 2 and made.get("remaining_scraps") == 0,
+		"canonical Rest transaction issues one composite and advances the cursor")
+	if not made.get("ok", false):
+		return {}
+	return {"deck": made["deck"].duplicate(), "descriptors": made["descriptors"].duplicate(true),
+		"next_stitch_id": made["next_stitch_id"], "id": made["stitched_id"]}
+
+
+func _stitched_snapshot(fight: Dictionary, rng: RandomNumberGenerator, ledger: Dictionary,
+		ids: Array[String], records: Array[Dictionary], gold: int) -> Array:
+	return [fight["party"].get_heroes(), fight["enemies"].get_enemies(),
+		fight["battle"].get_outcome(), rng.seed, ledger["deck"].duplicate(),
+		ledger["descriptors"].duplicate(true), ledger["next_stitch_id"],
+		records.duplicate(true), ids.duplicate(true), gold]
+
+
+## A composite already owned at Rest is one ordinary run deck member: both Fight
+## and Elite still prepare the normal seeded reward, pick and Skip keep it exactly
+## once, and every malformed ledger fails closed before any RNG draw or payout.
+func _test_stitched_rewards(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
+	var records: Array[Dictionary] = _pool_records()
+	var ledger := _stitched_ledger(deck)
+	if ledger.is_empty():
+		return
+	var composite: String = ledger["id"]
+	var source_deck: Array = ledger["deck"].duplicate()
+	var source_descriptors: Dictionary = ledger["descriptors"].duplicate(true)
+	_check(ledger["deck"].count(composite) == 1 and ledger["deck"].size() == deck.size() - 1
+		and ledger["descriptors"].has(composite),
+		"authentic composite replaces exactly the two consumed originals")
+	for elite in [false, true]:
+		var label: String = "Elite" if elite else "Fight"
+		var count: int = 2 if elite else 1
+		var fight := _fight(definitions, count)
+		_win(fight)
+		var rng := _rng(615223)
+		var service: RunFightVictoryRewards
+		if elite:
+			service = _elite_session(fight, rng, ids, records, ledger["deck"], 64,
+				TRINKET_POOL, OWNED_TRINKETS, ledger["descriptors"], ledger["next_stitch_id"])
+		else:
+			service = _session(fight, rng, ids, records, ledger["deck"], 64, false,
+				ledger["descriptors"], ledger["next_stitch_id"])
+		var before := _stitched_snapshot(fight, rng, ledger, ids, records, 64)
+		var oracle := _weighted_oracle(ids, records, 615223, elite, TRINKET_POOL, OWNED_TRINKETS)
+		var published := service.prepare()
+		_check(published.get("ok", false),
+			label + ": authentic composite prepares the normal seeded reward")
+		_check(published.get("gold_award") == oracle["gold"]
+			and published.get("offers") == oracle["offers"]
+			and published.get("trinket_drop_id", "") == oracle["trinket_drop_id"],
+			label + ": composite deck keeps the exact gold, offers and drop")
+		_check(rng.state == oracle["rng_state"],
+			label + ": composite deck consumes exactly the normal staged draws")
+		var held_state: int = rng.state
+		_check(service.prepare() == published and rng.state == held_state,
+			label + ": repeated composite prepare never rerolls")
+		_check(_stitched_snapshot(fight, rng, ledger, ids, records, 64) == before,
+			label + ": preparation mutates no actors, deck, ledger, records or gold")
+		var offered: String = published["offers"][0]["id"]
+		var expected_deck: Array = ledger["deck"].duplicate()
+		expected_deck.append(offered)
+		var claimed := service.choose(offered)
+		_check(claimed.get("ok", false) and claimed.get("deck") == expected_deck
+			and claimed.get("gold") == 64 + oracle["gold"],
+			label + ": composite deck still claims one offered card and one award")
+		_check(claimed.get("deck").count(composite) == 1,
+			label + ": claimed deck keeps the composite exactly once")
+		_check(not service.choose(offered).get("ok") and not service.choose("").get("ok"),
+			label + ": composite reward cannot pay twice")
+		_check(service.prepare() == published and rng.state == held_state,
+			label + ": settled composite reward replays nothing")
+		_check(rng.randi() == oracle["next"], label + ": next RNG value matches the oracle")
+		var skip_fight := _fight(definitions, count)
+		_win(skip_fight)
+		var skip_rng := _rng(615223)
+		var skip_service: RunFightVictoryRewards
+		if elite:
+			skip_service = _elite_session(skip_fight, skip_rng, ids, records, ledger["deck"], 64,
+				TRINKET_POOL, OWNED_TRINKETS, ledger["descriptors"], ledger["next_stitch_id"])
+		else:
+			skip_service = _session(skip_fight, skip_rng, ids, records, ledger["deck"], 64, false,
+				ledger["descriptors"], ledger["next_stitch_id"])
+		var skip_published := skip_service.prepare()
+		var skipped := skip_service.choose("")
+		var expected_skip_trinkets: Array = OWNED_TRINKETS.duplicate() if elite else []
+		if elite:
+			expected_skip_trinkets.append(skip_published["trinket_drop_id"])
+		_check(skip_published.get("ok", false) and skipped.get("ok", false)
+			and skipped.get("skipped", false) and skipped.get("deck") == ledger["deck"]
+			and skipped.get("deck").count(composite) == 1
+			and skipped.get("gold") == 64 + skip_published["gold_award"]
+			and skipped.get("trinkets") == expected_skip_trinkets,
+			label + ": explicit Skip keeps the composite once and pays exactly once")
+		_check(ledger["deck"] == source_deck and ledger["descriptors"] == source_descriptors,
+			label + ": settlements never rewrite the source run ledger")
+
+	# Malformed ledgers must reject before any draw, payout or ledger edit.
+	var win := _fight(definitions)
+	_win(win)
+	var tampered_effect: Dictionary = source_descriptors.duplicate(true)
+	tampered_effect[composite]["first_half"]["effects"]["damage"] = 999
+	_reject("stitched tampered half effect", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], tampered_effect, ledger["next_stitch_id"])
+	var tampered_cost: Dictionary = source_descriptors.duplicate(true)
+	tampered_cost[composite]["cost"] = 0
+	_reject("stitched tampered shared cost", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], tampered_cost, ledger["next_stitch_id"])
+	var swapped: Dictionary = source_descriptors.duplicate(true)
+	var first_half: Dictionary = swapped[composite]["first_half"].duplicate(true)
+	swapped[composite]["first_half"] = swapped[composite]["second_half"].duplicate(true)
+	swapped[composite]["second_half"] = first_half
+	_reject("stitched swapped authored halves", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], swapped, ledger["next_stitch_id"])
+	var forged_owners: Dictionary = source_descriptors.duplicate(true)
+	forged_owners[composite]["owners"] = ["warden", "warden"]
+	_reject("stitched same-owner half pair", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], forged_owners, ledger["next_stitch_id"])
+	var orphan: Dictionary = source_descriptors.duplicate(true)
+	var orphan_copy: Dictionary = source_descriptors[composite].duplicate(true)
+	orphan_copy["id"] = "stitched_000002"
+	orphan["stitched_000002"] = orphan_copy
+	_reject("stitched registry entry without a deck member", win, _rng(), ids, records,
+		source_deck, 100, false, [], [], orphan, 3)
+	var forged_deck: Array = source_deck.duplicate()
+	forged_deck.append("stitched_000009")
+	_reject("stitched_ prefix ID outside the registry", win, _rng(), ids, records,
+		forged_deck, 100, false, [], [], source_descriptors, ledger["next_stitch_id"])
+	var duplicate_deck: Array = source_deck.duplicate()
+	duplicate_deck.append(composite)
+	_reject("duplicate stitched deck copy", win, _rng(), ids, records, duplicate_deck, 100,
+		false, [], [], source_descriptors, ledger["next_stitch_id"])
+	_reject("stitched cursor before the owned serial", win, _rng(), ids, records, source_deck,
+		100, false, [], [], source_descriptors, 1)
+	var numeric_registry: Dictionary = source_descriptors.duplicate(true)
+	numeric_registry[7] = source_descriptors[composite].duplicate(true)
+	_reject("stitched numeric registry key", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], numeric_registry, ledger["next_stitch_id"])
+	_reject("stitched null descriptors", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], null, ledger["next_stitch_id"])
+	_reject("stitched wrong descriptor type", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], "stitched_000001", ledger["next_stitch_id"])
+	_reject("stitched array descriptors", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], [source_descriptors[composite]], ledger["next_stitch_id"])
+	_reject("stitched string cursor", win, _rng(), ids, records, source_deck, 100,
+		false, [], [], source_descriptors, "2")
+	_check(tampered_effect != source_descriptors and tampered_cost != source_descriptors
+		and swapped != source_descriptors and forged_owners != source_descriptors
+		and orphan != source_descriptors and numeric_registry != source_descriptors,
+		"every malformed ledger fixture genuinely differs from the canonical ledger")
+	_check(forged_deck != source_deck and duplicate_deck != source_deck,
+		"both malformed deck fixtures genuinely differ from the canonical deck")
+	# The same valid composite still rewards normally after every rejection.
+	var retry_fight := _fight(definitions)
+	_win(retry_fight)
+	var retry_rng := _rng(615223)
+	var retry := _session(retry_fight, retry_rng, ids, records, ledger["deck"], 64, false,
+		ledger["descriptors"], ledger["next_stitch_id"])
+	var retry_oracle := _weighted_oracle(ids, records, 615223, false, [], [])
+	var retried := retry.prepare()
+	_check(retried.get("ok", false) and retried.get("offers") == retry_oracle["offers"]
+		and retried.get("gold_award") == retry_oracle["gold"]
+		and retry_rng.state == retry_oracle["rng_state"],
+		"fresh valid composite transaction succeeds after every rejection")
+	# A stitched deck without its ledger keeps failing closed: the new inputs are
+	# optional for legacy ordinary decks, never a way to admit an unknown member.
+	_reject("stitched deck without its ledger", win, _rng(), ids, records, source_deck, 100)
+	# Constructor copies the ledger: a caller edit after construction cannot
+	# rewrite what this reward source admitted.
+	var frozen_descriptors: Dictionary = source_descriptors.duplicate(true)
+	var frozen_fight := _fight(definitions)
+	_win(frozen_fight)
+	var frozen_rng := _rng(615223)
+	var frozen := _session(frozen_fight, frozen_rng, ids, records, ledger["deck"], 64, false,
+		frozen_descriptors, ledger["next_stitch_id"])
+	frozen_descriptors.clear()
+	var frozen_oracle := _weighted_oracle(ids, records, 615223, false, [], [])
+	var frozen_prepared := frozen.prepare()
+	_check(frozen_prepared.get("ok", false)
+		and frozen_prepared.get("offers") == frozen_oracle["offers"]
+		and frozen_prepared.get("gold_award") == frozen_oracle["gold"]
+		and frozen_rng.state == frozen_oracle["rng_state"],
+		"constructor freezes the composite ledger beside the run deck")
+
+
 func _test_pool_rejections(definitions: Array, ids: Array[String], deck: Array[String]) -> void:
 	var records := _pool_records()
 	var win := _fight(definitions)
@@ -984,10 +1188,13 @@ func _test_pool_rejections(definitions: Array, ids: Array[String], deck: Array[S
 func _reject(label: String, fight: Dictionary, rng_input: Variant, party_input: Variant,
 		pool_input: Variant, deck_input: Variant, gold_input: Variant,
 		elite: bool = false, trinket_candidates: Variant = [],
-		owned_trinkets: Variant = []) -> void:
+		owned_trinkets: Variant = [], stitched_descriptors: Variant = {},
+		next_stitch_id: Variant = 1) -> void:
 	var ids_before = party_input.duplicate(true) if party_input is Array else party_input
 	var pool_before = pool_input.duplicate(true) if pool_input is Array else pool_input
 	var deck_before = deck_input.duplicate(true) if deck_input is Array else deck_input
+	var descriptors_before = (stitched_descriptors.duplicate(true)
+		if stitched_descriptors is Dictionary else stitched_descriptors)
 	var trinkets_before = (trinket_candidates.duplicate(true)
 		if trinket_candidates is Array else trinket_candidates)
 	var owned_before = (owned_trinkets.duplicate(true)
@@ -998,10 +1205,11 @@ func _reject(label: String, fight: Dictionary, rng_input: Variant, party_input: 
 	var service: RunFightVictoryRewards
 	if elite:
 		service = _elite_session(fight, rng_input, party_input, pool_input, deck_input,
-			gold_input, trinket_candidates, owned_trinkets)
+			gold_input, trinket_candidates, owned_trinkets, stitched_descriptors,
+			next_stitch_id)
 	else:
 		service = _session(fight, rng_input, party_input, pool_input, deck_input,
-			gold_input, false)
+			gold_input, false, stitched_descriptors, next_stitch_id)
 	var failed := service.prepare()
 	_check(not failed.get("ok", true) and failed.get("gold_award", -1) == 0
 		and failed.get("offers", [1]).is_empty()
@@ -1017,6 +1225,8 @@ func _reject(label: String, fight: Dictionary, rng_input: Variant, party_input: 
 	_check(ids_before == party_input and pool_before == pool_input and deck_before == deck_input
 		and trinkets_before == trinket_candidates and owned_before == owned_trinkets,
 		label + ": original ordered inputs unchanged")
+	_check(descriptors_before == stitched_descriptors,
+		label + ": original stitch ledger unchanged")
 	if rng_input is RandomNumberGenerator:
 		_check(rng_input.state == state_before, label + ": run RNG untouched")
 	_check(not service.prepare()["ok"], label + ": repeated failure remains inert")

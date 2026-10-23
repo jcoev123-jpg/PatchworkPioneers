@@ -8,6 +8,8 @@ extends RefCounted
 ## trinket draw.
 ## Work on a cloned seed/state and publish that state atomically only after the
 ## reward transaction and Elite selection succeed.
+## An optional Rest stitch ledger (owned descriptors plus allocator cursor) is
+## frozen beside the run deck so an authentic composite is an accepted party card.
 
 const MAX_INT := 9223372036854775807
 
@@ -19,6 +21,8 @@ var _candidate_mode: String = "ids"
 var _source_deck: Variant
 var _starting_gold: Variant
 var _elite: bool
+var _stitched_descriptors: Variant
+var _next_stitch_id: Variant
 var _trinket_candidates: Variant
 var _owned_trinket_ids: Variant
 var _choice: RunCardRewardChoice = null
@@ -31,7 +35,8 @@ var _prepared: bool = false
 func _init(battle: CombatBattleResult, run_rng: Variant, party_ids: Variant,
 		candidate_ids: Variant, run_deck: Variant, current_gold: Variant,
 		is_elite: bool, trinket_candidates: Variant = [],
-		owned_trinket_ids: Variant = []) -> void:
+		owned_trinket_ids: Variant = [], stitched_descriptors: Variant = {},
+		next_stitch_id: Variant = 1) -> void:
 	_battle = battle
 	_rng = run_rng
 	_party_ids = party_ids.duplicate(true) if party_ids is Array else party_ids
@@ -42,6 +47,12 @@ func _init(battle: CombatBattleResult, run_rng: Variant, party_ids: Variant,
 	_elite = is_elite
 	_trinket_candidates = trinket_candidates.duplicate(true) if trinket_candidates is Array else trinket_candidates
 	_owned_trinket_ids = owned_trinket_ids.duplicate(true) if owned_trinket_ids is Array else owned_trinket_ids
+	# The run's stitch ledger is frozen beside the deck: a composite that was
+	# owned when the reward was prepared keeps its exact authored halves, so a
+	# later registry edit can never rewrite what this reward source admitted.
+	_stitched_descriptors = (stitched_descriptors.duplicate(true)
+		if stitched_descriptors is Dictionary else stitched_descriptors)
+	_next_stitch_id = next_stitch_id
 
 
 ## Legacy callers supply authored catalog ID Strings; the routed run supplies
@@ -82,17 +93,34 @@ func prepare() -> Dictionary:
 		return rejected
 	if not _source_deck is Array or _source_deck.is_empty():
 		return rejected
+	# The run's stitch ledger must be authentic before anything is drawn:
+	# RunRestStitchCards is the canonical structural admission for a deck plus
+	# its owned composites. A malformed registry, cursor, descriptor or card ID
+	# fails closed here, and no forged "stitched_*" name can pass by prefix.
+	var stitch_ledger := RunRestStitchCards.new(_source_deck, _stitched_descriptors, 0,
+		_next_stitch_id)
+	if not stitch_ledger.is_valid():
+		return rejected
 	# A run deck contains actual party-owned authored card IDs, with duplicates
 	# allowed. Previously awarded D2-1 pool base cards and authentic canonical
-	# pool plus cards acquired at Rest stay valid in later rewards, while
-	# stitched IDs and unknown IDs still fail closed.
+	# pool plus cards acquired at Rest stay valid in later rewards; a genuine
+	# Rest composite is one deck member whose two different authored half owners
+	# are both in this party. Unknown IDs still fail closed.
 	for card_id in _source_deck:
 		if not card_id is String or card_id.is_empty():
 			return rejected
-		var definition: Dictionary = {}
-		var stitch_script: Script = load("res://scripts/run_rest_stitch_cards.gd")
-		if stitch_script:
-			definition = stitch_script.call("resolve_card_definition", card_id)
+		if _stitched_descriptors.has(card_id):
+			var descriptor: Dictionary = _stitched_descriptors[card_id]
+			var first_half: Dictionary = descriptor.get("first_half", {})
+			var second_half: Dictionary = descriptor.get("second_half", {})
+			var first_owner: Variant = first_half.get("owner")
+			var second_owner: Variant = second_half.get("owner")
+			if not first_owner is String or not second_owner is String \
+					or first_owner == second_owner \
+					or not _party_ids.has(first_owner) or not _party_ids.has(second_owner):
+				return rejected
+			continue
+		var definition: Dictionary = RunRestStitchCards.resolve_card_definition(card_id)
 		if definition.is_empty() or not _party_ids.has(definition.get("owner")):
 			return rejected
 	# Validate the supplier-owned trinket lists and filter already-owned IDs
