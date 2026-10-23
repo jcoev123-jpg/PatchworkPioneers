@@ -44,6 +44,14 @@ func _key(key: Key) -> void:
 	await _frames()
 
 
+func _mouse_motion(button: Button) -> void:
+	var point := button.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await _frames()
+
+
 func _mouse(button: Button) -> void:
 	var point := button.get_global_rect().get_center()
 	var motion := InputEventMouseMotion.new()
@@ -84,6 +92,26 @@ func _wallet_record(path: String, event_id: String) -> Dictionary:
 	return value
 
 
+## Independent oracle for the third ticket line, from the exact caller wallet
+## and the service row's own deltas (never from the panel's helper).
+func _expected_forecast(row: Dictionary, wallet: Dictionary) -> String:
+	if row["affordable"]:
+		var after: Dictionary = row["wallet"]
+		return "After: %d gold | %d scraps" % [after["gold"], after["scraps"]]
+	return "   •   ".join(_expected_needs(row, wallet))
+
+
+func _expected_needs(row: Dictionary, wallet: Dictionary) -> Array[String]:
+	var needs: Array[String] = []
+	var missing_gold: int = -(int(wallet["gold"]) + int(row["gold_delta"])) if typeof(row["gold_delta"]) == TYPE_INT else 0
+	var missing_scraps: int = -(int(wallet["scraps"]) + int(row["scraps_delta"])) if typeof(row["scraps_delta"]) == TYPE_INT else 0
+	if missing_gold > 0:
+		needs.append("Need %d gold" % missing_gold)
+	if missing_scraps > 0:
+		needs.append("Need %d scraps" % missing_scraps)
+	return needs
+
+
 func _wallet_index(record: Dictionary, choice_id: String) -> int:
 	var choices: Array = record.get("choices", [])
 	for i in range(choices.size()):
@@ -115,11 +143,22 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 	for i in range(buttons.size()):
 		var button: Button = buttons[i]
 		var row: Dictionary = rows[i]
-		var expected := "%s\nGold %s   |   Scraps %s" % [
-			choices[i]["text"], panel._delta_label(row["gold_delta"]), panel._delta_label(row["scraps_delta"])]
-		if not row["affordable"]:
-			expected += "   •   UNAVAILABLE"
-		_check(button.text == expected, label + " original text, precise signed deltas and unavailable flag " + str(i))
+		var expected := "%s\nGold %s   |   Scraps %s\n%s" % [
+			choices[i]["text"], panel._delta_label(row["gold_delta"]), panel._delta_label(row["scraps_delta"]),
+			_expected_forecast(row, wallet)]
+		_check(button.text == expected, label + " authored text, signed deltas and exact service forecast " + str(i))
+		var lines := button.text.split("\n")
+		_check(lines.size() == 3, label + " ticket carries name, deltas and forecast lines " + str(i))
+		if row["affordable"]:
+			var after: Dictionary = row["wallet"]
+			_check(lines[2] == "After: %d gold | %d scraps" % [after["gold"], after["scraps"]],
+				label + " affordable choice shows exact after totals " + str(i))
+		else:
+			var needs := _expected_needs(row, wallet)
+			_check(not needs.is_empty(), label + " unaffordable choice really lacks a resource " + str(i))
+			_check(lines[2] == "   •   ".join(needs),
+				label + " unaffordable choice names exactly the missing resource " + str(i))
+			_check(not lines[2].contains("After:"), label + " unaffordable choice shows no after totals " + str(i))
 		_check(button.disabled == not row["affordable"] and
 			button.focus_mode == (Control.FOCUS_ALL if row["affordable"] else Control.FOCUS_NONE),
 			label + " affordability disables and skips focus for unavailable choice " + str(i))
@@ -197,9 +236,15 @@ func _wallet_denied_then_recover(record: Dictionary, wallet: Dictionary, denied_
 		return
 	await _frames()
 	_check_wallet_layout(record, wallet, label)
+	var rows: Array = RunEventChoice.new(record).preview_wallet_choices(wallet).get("choices", [])
+	_check(rows.size() == (record["choices"] as Array).size(), label + " oracle preview rows available")
 	var denied_index := _wallet_index(record, denied_id)
 	var recovery_index := _wallet_index(record, recovery_id)
 	var buttons := panel.get_choice_buttons()
+	if rows.size() != buttons.size():
+		panel.close_event()
+		await _frames()
+		return
 	_check(denied_index >= 0 and recovery_index >= 0, label + " both choices actually present")
 	if denied_index < 0 or recovery_index < 0:
 		panel.close_event()
@@ -209,6 +254,22 @@ func _wallet_denied_then_recover(record: Dictionary, wallet: Dictionary, denied_
 	var recovery: Button = buttons[recovery_index]
 	_check(disabled.disabled and disabled.focus_mode == Control.FOCUS_NONE, label + " inaccessible and unfocusable")
 	_check(not recovery.disabled and recovery.focus_mode == Control.FOCUS_ALL, label + " recovery option available")
+	# Exact shortfall, derived independently from the wallet and service deltas.
+	var denied_row: Dictionary = rows[denied_index]
+	var needs := _expected_needs(denied_row, snapshot)
+	_check(not needs.is_empty(), label + " denied choice really is missing a resource")
+	for need in needs:
+		_check(disabled.text.contains(need), label + " denied ticket states exact " + need)
+	_check(not disabled.text.contains("After:"), label + " denied ticket shows no after totals")
+	var recovery_row: Dictionary = rows[recovery_index]
+	_check(recovery.text.contains("After: %d gold | %d scraps" % [
+		expected_wallet["gold"], expected_wallet["scraps"]]),
+		label + " recovery ticket shows exact service after totals")
+	# Hovering a ticket alone must not settle, mutate or consume RNG.
+	await _mouse_motion(recovery)
+	await _mouse_motion(disabled)
+	_check(wallet_committed.is_empty() and committed.is_empty(), label + " hover alone commits nothing")
+	_check(wallet == snapshot, label + " hover leaves caller wallet unchanged")
 	disabled.pressed.emit()
 	panel._on_choice_pressed(panel._selector, denied_id, panel._generation, disabled)
 	panel._on_choice_pressed(panel._selector, "unoffered", panel._generation, recovery)
@@ -253,6 +314,66 @@ func _test_wallet_authored() -> void:
 		{"gold": 32, "scraps": 0})
 	await _wallet_success(bee.duplicate(true), {"gold": 15, "scraps": 0}, "buy_thread",
 		{"gold": 0, "scraps": 2})
+
+
+## Reopening the same authored record with a different wallet must refresh every
+## ticket's forecast line to that wallet's exact service projection.
+func _test_wallet_reopen_refresh() -> void:
+	var bee: Dictionary = authored.get("quilting_bee", {})
+	var estate := _wallet_record("res://data/events/estate_sale.json", "estate_sale")
+	_check(not bee.is_empty() and not estate.is_empty(), "reopen refresh fixtures are authored events")
+	if bee.is_empty() or estate.is_empty():
+		return
+	var wallets: Array = [{"gold": 0, "scraps": 2}, {"gold": 15, "scraps": 0}, {"gold": 0, "scraps": 0}]
+	var snapshots: Array = []
+	for wallet in wallets:
+		_check(panel.open_event_with_wallet(bee, wallet),
+			"quilting bee opens at " + str(wallet))
+		if not panel.has_open_event():
+			return
+		await _frames()
+		_check_wallet_layout(bee, wallet, "reopen bee @ " + str(wallet))
+		var texts: Array[String] = []
+		for button in panel.get_choice_buttons():
+			texts.append(button.text)
+		snapshots.append(texts)
+		panel.close_event()
+		await _frames()
+	_check(snapshots.size() == 3, "three quilting bee wallet snapshots captured")
+	if snapshots.size() == 3:
+		_check(snapshots[0] != snapshots[1] and snapshots[1] != snapshots[2]
+			and snapshots[0] != snapshots[2],
+			"different wallets refresh every ticket for the same authored event")
+		_check((snapshots[0] as Array)[0].ends_with("After: 32 gold | 0 scraps"),
+			"2 scraps wallet previews sew_panel after totals")
+		_check((snapshots[1] as Array)[0].ends_with("Need 2 scraps"),
+			"15 gold wallet ticket names the missing scraps for sew_panel")
+		_check((snapshots[1] as Array)[1].ends_with("After: 0 gold | 2 scraps"),
+			"15 gold wallet previews buy_thread after totals")
+		_check((snapshots[2] as Array)[1].ends_with("Need 15 gold"),
+			"0 gold wallet ticket names the missing gold for buy_thread")
+	# Estate Sale at a contrasting wallet must reuse the same authoritative path.
+	_check(panel.open_event_with_wallet(estate, {"gold": 20, "scraps": 0}),
+		"estate sale reopens at 20 gold")
+	await _frames()
+	_check_wallet_layout(estate, {"gold": 20, "scraps": 0}, "reopen estate @ 20 gold")
+	var estate_buttons := panel.get_choice_buttons()
+	var buy_index := _wallet_index(estate, "buy_thread")
+	var sell_index := _wallet_index(estate, "sell_fabric")
+	var leave_index := _wallet_index(estate, "leave")
+	if buy_index >= 0 and sell_index >= 0 and leave_index >= 0:
+		_check(estate_buttons[buy_index].text.ends_with("After: 5 gold | 2 scraps"),
+			"estate buy_thread shows exact after totals")
+		_check(estate_buttons[sell_index].text.ends_with("Need 2 scraps")
+			and estate_buttons[sell_index].disabled
+			and estate_buttons[sell_index].focus_mode == Control.FOCUS_NONE,
+			"estate sell_fabric names missing scraps and cannot be selected")
+		_check(estate_buttons[leave_index].text.ends_with("After: 20 gold | 0 scraps"),
+			"estate leave shows unchanged exact after totals")
+	else:
+		_check(false, "estate sale choice IDs offered for reopen refresh")
+	panel.close_event()
+	await _frames()
 
 
 func _test_wallet_keyboard() -> void:
@@ -333,6 +454,7 @@ func _test_wallet_rejection_and_generation() -> void:
 	var bad: Button = panel.get_choice_buttons()[idx]
 	_check(bad.disabled and bad.text.contains("UNAVAILABLE") and bad.text.contains("Gold —"),
 		"malformed outcome never appears affordable")
+	_check(bad.focus_mode == Control.FOCUS_NONE, "malformed outcome is unfocusable")
 	bad.pressed.emit()
 	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
 		"malformed outcome cannot spend visit")
@@ -748,6 +870,7 @@ func _run() -> void:
 	await _test_invalid_and_replay()
 	_test_rng_zero_draws()
 	await _test_wallet_authored()
+	await _test_wallet_reopen_refresh()
 	await _test_wallet_keyboard()
 	await _test_wallet_rejection_and_generation()
 	_finish()
