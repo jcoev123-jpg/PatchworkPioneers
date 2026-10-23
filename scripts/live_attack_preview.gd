@@ -35,6 +35,7 @@ var _combo_oracle := CombatPoolComboAttackPreview.new()
 var _warden_combo := CombatWardenPoolComboAttacks.new()
 var _pinned: CombatPinned
 var _unravel: CombatUnravel
+var _routed_gauge_shared := false
 var last_event: Dictionary = {}
 var _armed: Control
 var _queued := false
@@ -151,7 +152,10 @@ func _control_ready(party: CombatParty, enemies: CombatEnemies, card_id: String)
 		return true
 	if _unravel._bound_enemies != enemies:
 		return false
-	return _matching_flow(get_parent(), party, enemies) != null
+	var flow := _matching_flow(get_parent(), party, enemies)
+	# Never replace a different authority installed on this round flow.
+	# Only an unbound flow, or the exact battle gauge, can accept a cast.
+	return flow != null and (flow._unravel == null or flow._unravel == _unravel)
 
 
 ## Hand the same gauge instance to the live round flow, then allow the cast.
@@ -789,6 +793,7 @@ func _sync_battle() -> void:
 		# They are created here and never recreated or reset by a hand refresh.
 		_pinned = CombatPinned.new()
 		_unravel = CombatUnravel.new()
+		_routed_gauge_shared = false
 		var tiers := enemy_tier_map(app.enemies)
 		if tiers.is_empty() or not _unravel.bind_roster(app.enemies, tiers):
 			# Keep the owned gauge unbound: a gauge-card cast then fails closed.
@@ -830,12 +835,12 @@ func _sync_battle() -> void:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.mouse_entered.connect(entered)
 		panel.mouse_exited.connect(exited)
-	# Enemy Bleed can tick before ANY combo card is played. At live battle
-	# admission, share this roster-bound gauge with the matching round flow,
-	# including when the Spool/Snip card is only drawn on a later turn.
-	# _share_gauge retains the unbound/foreign-roster fail-closed checks.
-	if app._combo_battle_current():
-		_share_gauge(app.party, app.enemies, "")
+	# Real routed fights can accrue Unravel from enemy Bleed before the first
+	# combo cast. Share once on route admission, never replace a foreign gauge
+	# or rebind a deliberately cleared flow on a later hover/hand refresh.
+	# Standalone battles bind on their first successful gauge-bearing cast.
+	if not _routed_gauge_shared and app.run_map != null and app._combo_battle_current():
+		_routed_gauge_shared = _share_gauge(app.party, app.enemies, "")
 	_refresh()
 
 
@@ -1053,6 +1058,7 @@ func _clear() -> void:
 		app.round_flow._unravel = null
 	_pinned = null
 	_unravel = null
+	_routed_gauge_shared = false
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null
