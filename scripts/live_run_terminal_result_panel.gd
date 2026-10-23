@@ -13,10 +13,15 @@ signal return_to_title_requested
 @onready var return_button: Button = $PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var top_stitches: Label = $PaperPanel/ContentMargin/ResultContent/TopStitches
 @onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ResultContent/BottomStitches
+@onready var stitched_section: PanelContainer = $PaperPanel/ContentMargin/ResultContent/StitchedSection
+@onready var stitched_heading: Label = $PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/DetailTitle
+@onready var stitched_scroll: ScrollContainer = $PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll
+@onready var stitched_rows: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll/StitchedRows
 
 var _generation: int = 0
 var _is_open: bool = false
 var _return_requested: bool = false
+var _can_return: bool = false
 var _presented_status: String = ""
 var _button_connection: Callable
 
@@ -50,11 +55,18 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 		if status == RunActBattleOutcome.VICTORY
 		else "The party has fallen. The run has ended.")
 	var battles_resolved: int = (settled as Array).size()
-	summary_label.text = "Battles resolved: %d\n%s" % [battles_resolved, _signature_text()]
-	return_button.disabled = false
-	return_button.focus_mode = Control.FOCUS_ALL
-	_button_connection = _on_return_pressed.bind(_generation, return_button)
-	return_button.pressed.connect(_button_connection)
+	var signature: Dictionary = _validated_signature()
+	_can_return = signature.get("ok") == true
+	var signature_text := _format_signature(signature) if _can_return else "Summary unavailable"
+	summary_label.text = "Battles resolved: %d\n%s" % [battles_resolved, signature_text]
+	_clear_details()
+	if _can_return:
+		_populate_details(signature)
+	return_button.disabled = not _can_return
+	return_button.focus_mode = Control.FOCUS_ALL if _can_return else Control.FOCUS_NONE
+	if _can_return:
+		_button_connection = _on_return_pressed.bind(_generation, return_button)
+		return_button.pressed.connect(_button_connection)
 	visible = true
 	return true
 
@@ -64,6 +76,7 @@ func close_result() -> void:
 	_generation += 1
 	_is_open = false
 	_return_requested = false
+	_can_return = false
 	_presented_status = ""
 	visible = false
 	if not is_node_ready():
@@ -72,7 +85,9 @@ func close_result() -> void:
 		return_button.pressed.disconnect(_button_connection)
 	_button_connection = Callable()
 	return_button.disabled = true
+	return_button.focus_mode = Control.FOCUS_NONE
 	return_button.release_focus()
+	_clear_details()
 	title_label.text = ""
 	description_label.text = ""
 	summary_label.text = ""
@@ -81,17 +96,17 @@ func close_result() -> void:
 ## Only the live App-parent's committed, matching ledger can authorize counts.
 ## A never-bound wardrobe can be projected with empty wear slots; a stale
 ## *bound* wardrobe must not be replaced with that zero-wear projection.
-func _signature_text() -> String:
+func _validated_signature() -> Dictionary:
 	var app: Variant = get_parent()
 	if app == null or app.get_script() == null \
 			or app.get_script().resource_path != "res://scripts/app.gd":
-		return "Summary unavailable"
+		return {}
 	var carry := app.party_carryover as RunTornCarryover
 	if carry == null or not carry.is_valid():
-		return "Summary unavailable"
+		return {}
 	var carry_state: Dictionary = carry.read_state()
 	if carry_state.get("ok") != true or carry_state.get("heroes") != app.run_heroes:
-		return "Summary unavailable"
+		return {}
 	var wardrobe: RunPatchWardrobe = carry._wardrobe
 	if wardrobe == null:
 		# The valid first-run state owns patches but has never sewn one. No
@@ -100,17 +115,81 @@ func _signature_text() -> String:
 			app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
 	else:
 		if not wardrobe.is_valid():
-			return "Summary unavailable"
+			return {}
 		var snapshot: Dictionary = wardrobe.get_snapshot()
 		if snapshot.get("heroes") != app.run_heroes or snapshot.get("owned") != app.run_trinkets \
 				or snapshot.get("scraps") != app.run_scraps or snapshot.get("gold") != app.session_gold \
 				or snapshot.get("cards") != app.run_deck:
-			return "Summary unavailable"
+			return {}
 	var summary: Dictionary = RunSignatureSummary.summarize(app.run_deck,
 		app.run_stitch_descriptors, app.run_next_stitch_id, wardrobe)
 	if summary.get("ok") != true:
-		return "Summary unavailable"
-	return _format_signature(summary)
+		return {}
+	return summary
+
+
+## This is a read-only view of the signature's current deck-ordered cards.
+## Resolve each authored half by ID, with its original owner/order; never
+## invent half names from stitched IDs or recalculate any combat effects.
+func _populate_details(summary: Dictionary) -> void:
+	var cards: Array = summary.get("current_stitched_cards", [])
+	if cards.is_empty():
+		return
+	for index in range(cards.size()):
+		var descriptor: Dictionary = cards[index]
+		var owners: Array = descriptor["owners"]
+		var halves: Array = descriptor["half_ids"]
+		var first: Dictionary = RunRestStitchCards.resolve_card_definition(halves[0])
+		var second: Dictionary = RunRestStitchCards.resolve_card_definition(halves[1])
+		if first.is_empty() or second.is_empty():
+			_clear_details()
+			return
+		var row := PanelContainer.new()
+		row.name = "KeptCard%d" % index
+		var felt := StyleBoxFlat.new()
+		felt.bg_color = Color("#f2e5cb")
+		felt.border_color = Color("#8d7560")
+		felt.set_border_width_all(1)
+		felt.set_corner_radius_all(5)
+		row.add_theme_stylebox_override("panel", felt)
+		var inset := MarginContainer.new()
+		inset.name = "CardInset"
+		for side in ["left", "right"]:
+			inset.add_theme_constant_override("margin_" + side, 10)
+		for side in ["top", "bottom"]:
+			inset.add_theme_constant_override("margin_" + side, 5)
+		row.add_child(inset)
+		var stack := VBoxContainer.new()
+		stack.name = "CardLines"
+		stack.add_theme_constant_override("separation", 2)
+		inset.add_child(stack)
+		var name_label := Label.new()
+		name_label.name = "Composite"
+		name_label.text = "%s  ·  %d energy" % [descriptor["display_name"], descriptor["cost"]]
+		name_label.add_theme_color_override("font_color", Color("#28363c"))
+		name_label.add_theme_font_size_override("font_size", 16)
+		stack.add_child(name_label)
+		var halves_label := Label.new()
+		halves_label.name = "Halves"
+		halves_label.text = "1 · %s (%s)    →    2 · %s (%s)" % [
+			first["display_name"], str(owners[0]).capitalize(),
+			second["display_name"], str(owners[1]).capitalize()]
+		halves_label.add_theme_color_override("font_color", Color("#334750"))
+		halves_label.add_theme_font_size_override("font_size", 14)
+		halves_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		stack.add_child(halves_label)
+		stitched_rows.add_child(row)
+	stitched_section.show()
+
+
+func _clear_details() -> void:
+	if not is_node_ready():
+		return
+	stitched_section.hide()
+	stitched_scroll.scroll_vertical = 0
+	for row in stitched_rows.get_children():
+		stitched_rows.remove_child(row)
+		row.queue_free()
 
 
 ## Consume the validated projection in its original hero and slot order.
@@ -180,7 +259,7 @@ func get_presented_status() -> String:
 
 
 func _on_return_pressed(generation: int, button: Button) -> void:
-	if not _is_open or _return_requested or generation != _generation:
+	if not _is_open or not _can_return or _return_requested or generation != _generation:
 		return
 	if not is_visible_in_tree() or not is_instance_valid(button) or button != return_button:
 		return
@@ -206,7 +285,25 @@ func _apply_patchwork_style() -> void:
 	description_label.add_theme_color_override("font_color", Color("#304046"))
 	description_label.add_theme_font_size_override("font_size", 23)
 	summary_label.add_theme_color_override("font_color", Color("#304046"))
-	summary_label.add_theme_font_size_override("font_size", 18)
+	summary_label.add_theme_font_size_override("font_size", 17)
+	stitched_heading.add_theme_color_override("font_color", Color("#28363c"))
+	stitched_heading.add_theme_font_size_override("font_size", 16)
+	var detail_paper := StyleBoxFlat.new()
+	detail_paper.bg_color = Color("#e9dabc")
+	detail_paper.border_color = Color("#78614e")
+	detail_paper.set_border_width_all(3)
+	detail_paper.set_corner_radius_all(7)
+	stitched_section.add_theme_stylebox_override("panel", detail_paper)
+	var scrollbar := stitched_scroll.get_v_scroll_bar()
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color("#d1bc99")
+	track.set_corner_radius_all(3)
+	scrollbar.add_theme_stylebox_override("scroll", track)
+	for state in ["grabber", "grabber_highlight", "grabber_pressed"]:
+		var grip := StyleBoxFlat.new()
+		grip.bg_color = Color("#75614f")
+		grip.set_corner_radius_all(3)
+		scrollbar.add_theme_stylebox_override(state, grip)
 	for label in [top_stitches, bottom_stitches]:
 		label.add_theme_color_override("font_color", Color("#85715b"))
 		label.add_theme_font_size_override("font_size", 18)

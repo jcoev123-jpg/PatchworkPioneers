@@ -40,7 +40,7 @@ theme_override_constants/margin_bottom = 20
 
 [node name="ResultContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
 alignment = 1
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
@@ -49,28 +49,60 @@ text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
 
 [node name="ResultTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 76)
+custom_minimum_size = Vector2(0, 58)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="ResultDescription" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 84)
+custom_minimum_size = Vector2(0, 48)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 
 [node name="RunSignature" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 150)
+custom_minimum_size = Vector2(0, 132)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 mouse_filter = 2
 
+[node name="StitchedSection" type="PanelContainer" parent="PaperPanel/ContentMargin/ResultContent"]
+visible = false
+custom_minimum_size = Vector2(0, 144)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="DetailMargin" type="MarginContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 6
+
+[node name="DetailContent" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="DetailTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent"]
+layout_mode = 2
+text = "KEPT SEWN CARDS"
+
+[node name="StitchedScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent"]
+custom_minimum_size = Vector2(0, 94)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="StitchedRows" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+
 [node name="ReturnButton" type="Button" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 66)
+custom_minimum_size = Vector2(0, 54)
 layout_mode = 2
 size_flags_horizontal = 4
 focus_mode = 2
