@@ -156,7 +156,7 @@ func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
 		return false
 	var source: String = quote.get("source", "")
 	var before: Variant = quote.get("before")
-	if typeof(before) != TYPE_DICTIONARY or not _transition_matches(quote, receipt):
+	if typeof(before) != TYPE_DICTIONARY or not _transition_matches(quote, receipt, run_cards):
 		return false
 	if source == "stitched":
 		if run_cards == null or not run_cards.is_valid():
@@ -164,9 +164,23 @@ func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
 		if run_cards.get_snapshot().receipt != quote.get("run_receipt"):
 			return false
 		var next_half: int = _stitched_sequence.get(quote.card_id, 0)
+		# A genuine support first half cannot be quoted as an attack, but
+		# its verified successful receipt advances the composite's order.
+		# Never skip an attack, including an unpatched/zero-bonus attack.
+		var descriptor: Dictionary = run_cards.get_snapshot().descriptors.get(quote.card_id, {})
+		if next_half == 0 and quote.half_index == 1:
+			var first: Dictionary = descriptor.get("first_half", {})
+			if first.get("target_kind") in ["enemy_single", "enemy_all"]:
+				return false
+			next_half = 1
 		if quote.half_index != next_half:
 			return false
-		_stitched_sequence[quote.card_id] = next_half + 1
+		next_half += 1
+		if next_half == 1:
+			var second: Dictionary = descriptor.get("second_half", {})
+			if second.get("target_kind") not in ["enemy_single", "enemy_all"]:
+				next_half = 2
+		_stitched_sequence[quote.card_id] = next_half
 	elif source != "starter":
 		return false
 	# A confirmed unpatched/low-gauge first stitched half advances the ordered
@@ -221,11 +235,16 @@ func _quote(definition: Dictionary, card_id: String, target: int, hit_number: in
 	return quote
 
 
-func _transition_matches(quote: Dictionary, receipt: Dictionary) -> bool:
+func _transition_matches(quote: Dictionary, receipt: Dictionary,
+		run_cards: RunRestStitchCards) -> bool:
 	if receipt.get("ok") != true or not quote.has("before"):
 		return false
 	var before: Dictionary = quote.before
 	var after := _battle_snapshot()
+	if quote.source == "stitched":
+		return _verified_stitched_transition(quote, receipt, run_cards, before, after)
+	if quote.source != "starter":
+		return false
 	if before.get("party") != after.party or before.get("rng") != after.rng:
 		return false
 	if before.get("draw") != after.draw:
@@ -242,32 +261,13 @@ func _transition_matches(quote: Dictionary, receipt: Dictionary) -> bool:
 	discard.append(quote.card_id)
 	if discard != after.discard:
 		return false
-	var hits: Array = []
-	if quote.source == "starter":
-		hits = receipt.get("hits", [])
-		if typeof(hits) != TYPE_ARRAY or hits.size() != 1:
-			return false
-	elif quote.source == "stitched":
-		var halves: Variant = receipt.get("halves")
-		if typeof(halves) != TYPE_ARRAY or halves.size() != 2:
-			return false
-		for i in range(2):
-			if typeof(halves[i]) != TYPE_DICTIONARY or halves[i].get("ok") != true:
-				return false
-			var events: Variant = halves[i].get("hits")
-			if typeof(events) != TYPE_ARRAY or events.size() != 1:
-				return false
-			if i == quote.half_index and events[0].get("position") != quote.target:
-				return false
-			hits.append(events[0])
-	else:
+	var hits: Variant = receipt.get("hits")
+	if typeof(hits) != TYPE_ARRAY or hits.size() != 1:
 		return false
-	if quote.source == "starter" and hits[0].get("position") != quote.target:
+	if typeof(hits[0]) != TYPE_DICTIONARY or hits[0].get("position") != quote.target:
 		return false
 	var expected_damage := {}
 	for event in hits:
-		if typeof(event) != TYPE_DICTIONARY:
-			return false
 		var position: Variant = event.get("position")
 		if typeof(position) != TYPE_INT or position < 1 or position > before.enemies.size():
 			return false
@@ -290,6 +290,104 @@ func _transition_matches(quote: Dictionary, receipt: Dictionary) -> bool:
 			return false
 	return true
 
+
+## Prove the WHOLE committed stitched receipt by replaying the two authentic
+## Rest halves against detached copies of the quoted pre-commit authorities.
+## Support halves have no hits: they may change HP/Block, draw/hand/discard and
+## advance the shared RNG on shuffle. A damage-only tally cannot authenticate
+## such a transaction. No replay object is ever the live deck or roster.
+func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
+		run_cards: RunRestStitchCards, before: Dictionary, after: Dictionary) -> bool:
+	if run_cards == null or not run_cards.is_valid():
+		return false
+	var ledger := run_cards.get_snapshot()
+	if ledger.get("receipt") != quote.get("run_receipt"):
+		return false
+	var verified := RunRestStitchCards.new(ledger.get("deck"), ledger.get("descriptors"),
+		ledger.get("remaining_scraps"), ledger.get("next_stitch_id"))
+	if not verified.is_valid() or verified.get_snapshot() != ledger:
+		return false
+	var preview := verified.preview_play(quote.card_id, before.party)
+	if not preview.get("ok", false) or preview.cost != quote.cost:
+		return false
+	var halves: Variant = receipt.get("halves")
+	if typeof(halves) != TYPE_ARRAY or halves.size() != 2:
+		return false
+	for result in halves:
+		if typeof(result) != TYPE_DICTIONARY or result.get("ok") != true:
+			return false
+	var selected: Dictionary = preview.halves[quote.half_index]
+	if selected.get("owner") != quote.owner or selected.get("target_kind") != "enemy_single":
+		return false
+	var hit_events: Variant = halves[quote.half_index].get("hits")
+	if typeof(hit_events) != TYPE_ARRAY or hit_events.size() != 1:
+		return false
+	if typeof(hit_events[0]) != TYPE_DICTIONARY or hit_events[0].get("position") != quote.target:
+		return false
+	var first_targets := _receipt_targets(preview.halves[0], halves[0], before)
+	var second_targets := _receipt_targets(preview.halves[1], halves[1], before)
+	if first_targets.is_empty() or second_targets.is_empty():
+		return false
+	for first_target in first_targets:
+		for second_target in second_targets:
+			# The ordinary resolver may run with or without independently bound
+			# M04 attack and support patches. Replay both legal binding modes;
+			# never infer effects from untrusted receipt fields alone.
+			for attack_patches in [false, true]:
+				for support_patches in [false, true]:
+					var rng := RandomNumberGenerator.new()
+					rng.state = before.rng
+					var deck := CombatDeck.new([], rng)
+					deck.draw_pile.assign(before.draw)
+					deck.hand.assign(before.hand)
+					deck.discard_pile.assign(before.discard)
+					deck.combat_state.player_turn_active = true
+					deck.combat_state.energy = before.energy
+					var party := CombatParty.new(before.party)
+					party._heroes.assign(before.party)
+					var enemies := CombatEnemies.new(before.enemies)
+					enemies._enemies.assign(before.enemies)
+					var attacks := CombatAttackCards.new()
+					if attack_patches and not attacks.bind_patch_wardrobe(_wardrobe, _torn):
+						continue
+					var resolver := CombatStitchedCards.new(attacks)
+					if support_patches and not resolver.bind_patch_wardrobe(_wardrobe, _torn):
+						continue
+					var played := resolver.play_stitched(deck, party, enemies,
+						verified, quote.card_id, first_target, second_target)
+					if played != receipt:
+						continue
+					if party.get_heroes() == after.party and enemies.get_enemies() == after.enemies \
+							and deck.draw_pile == after.draw and deck.hand == after.hand \
+							and deck.discard_pile == after.discard and deck.energy == after.energy \
+							and rng.state == after.rng:
+						return true
+	return false
+
+
+## Authoritative descriptor restricts the target shape. Receipts only narrow
+## enemy hit positions; support recipients are tried against the real resolver,
+## which checks owner, live HP, authored positions and all effects.
+func _receipt_targets(half: Dictionary, outcome: Dictionary, before: Dictionary) -> Array[int]:
+	var targets: Array[int] = []
+	var kind: String = half.get("target_kind", "")
+	if kind == "enemy_single":
+		var events: Variant = outcome.get("hits")
+		if typeof(events) != TYPE_ARRAY or events.size() != 1:
+			return targets
+		if typeof(events[0]) != TYPE_DICTIONARY:
+			return targets
+		var position: Variant = events[0].get("position")
+		if typeof(position) == TYPE_INT and position >= 1 and position <= before.enemies.size():
+			targets.append(position)
+	elif kind == "ally_single":
+		var allowed: Array = half.get("to_positions", [])
+		for hero in before.party:
+			if hero.hp > 0 and (allowed.is_empty() or allowed.has(hero.position)):
+				targets.append(hero.position)
+	elif kind in ["self", "none", "enemy_all", "party_all"]:
+		targets.append(0)
+	return targets
 
 func _battle_snapshot() -> Dictionary:
 	return {"party": _party.get_heroes(), "enemies": _enemies.get_enemies(),

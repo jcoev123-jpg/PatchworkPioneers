@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_negative_attempts()
 	_torn_and_mended()
 	_stitched_halves()
+	_mixed_stitched_halves()
 	for failure in failures:
 		printerr(failure)
 	print("mpw_frayfinder_mitt_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -328,3 +329,91 @@ func _stitched_halves() -> void:
 			and deck.energy == pre[2] - stitched.descriptor.cost
 			and deck.hand.is_empty() and deck.discard_pile == [stitched.stitched_id],
 			"service itself has no energy/pile/RNG/party effects; resolver owns commit")
+
+func _mixed_stitched_halves() -> void:
+	for pair in [
+		["warden_strike", "seamstress_mend", "ally_heal"],
+		["warden_strike", "seamstress_stitch_up", "ally_block"],
+		["tinker_tune_up", "warden_strike", "draw"]
+	]:
+		var label: String = str(pair[0]) + "/" + str(pair[1])
+		var attack_index := 0 if pair[0] == "warden_strike" else 1
+		var support_index := 1 - attack_index
+		var rest := RunRestStitchCards.new([pair[0], pair[1], "warden_strike"], {}, 3)
+		_check(rest.is_valid(), label + ": authentic Rest authority")
+		var stitched := rest.choose_stitch(0, 1, rest.get_snapshot())
+		_check(stitched.ok and stitched.descriptor.owners.size() == 2
+			and stitched.descriptor.owners[0] != stitched.descriptor.owners[1],
+			label + ": real distinct-owner ordered descriptor")
+		var id: String = stitched.stitched_id
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 4901
+		var deck := CombatDeck.new([id, "warden_strike"], rng)
+		_check(deck.start_turn() and deck.energy == 3 and deck.hand.has(id)
+			and deck.hand.has("warden_strike"), label + ": real active hand and follow-up card")
+		deck.discard_pile.assign(["seamstress_prick", "warden_brace"])
+		var party := CombatParty.new(_party_defs())
+		_check(party.apply_damage(3, 9), label + ": wounded ally")
+		var enemies := CombatEnemies.new([{"id": "ragling", "max_hp": 80}])
+		var gauge := CombatUnravel.new()
+		_check(gauge.bind_roster(enemies, {1: "normal"})
+			and gauge.apply_unravel(enemies, 1, 4), label + ": real 4/8 Unravel gauge")
+		var torn := RunTornMending.new(CombatParty.new(_party_defs()).get_heroes())
+		var wardrobe := RunPatchWardrobe.new(CombatParty.new(_party_defs()).get_heroes(),
+			["frayfinder_mitt"], [{"id": "frayfinder_mitt", "slot": "ARM"}], 0)
+		_check(wardrobe.sew("frayfinder_mitt", "warden", "ARM", "mixed_sew",
+			wardrobe.get_snapshot()).ok, label + ": real sewn Warden ARM")
+		var rule := CombatFrayfinderMitt.new()
+		_check(rule.bind_battle(deck, party, enemies, gauge, wardrobe, torn)
+			and rule.begin_player_turn(), label + ": bound live model instances")
+		var support: Dictionary = rest.preview_play(id, party.get_heroes()).halves[support_index]
+		_check(support.target_kind not in ["enemy_single", "enemy_all"],
+			label + ": genuine support half")
+		var quote := rule.quote_stitched_half(rest, id, attack_index, 1)
+		_check(quote.get("bonus") == 2 and quote.get("owner") == "warden"
+			and quote.has("seal"), label + ": actual attack quoted +2")
+		_check(not rule.quote_stitched_half(rest, id, support_index, 3).has("seal"),
+			label + ": support cannot invent attack quote")
+		var prior := party.get_hero(3)
+		var rng_before := rng.state
+		var hand_before := deck.hand.size()
+		var first_target := 1 if attack_index == 0 else 0
+		var second_target := 3 if attack_index == 0 else 1
+		var played := CombatStitchedCards.new().play_stitched(deck, party, enemies,
+			rest, id, first_target, second_target)
+		_check(played.ok and played.halves.size() == 2
+			and played.halves[attack_index].hits.size() == 1
+			and played.halves[attack_index].hits[0].position == 1,
+			label + ": true successful mixed stitched commit")
+		_check(played.halves[support_index].get("effect") == pair[2]
+			and not played.halves[support_index].has("hits"),
+			label + ": successful support reports an effect, not attack hits")
+		match pair[2]:
+			"ally_heal":
+				_check(party.get_hero(3).hp == prior.hp + 5, label + ": real healing")
+			"ally_block":
+				_check(party.get_hero(3).block == prior.block + 5, label + ": real Block")
+			"draw":
+				_check(deck.hand.size() == hand_before and rng.state != rng_before,
+					label + ": genuine draw and seeded shuffle advance RNG")
+		var tampered := played.duplicate(true)
+		tampered.halves[support_index].amount += 1
+		var unchanged := [party.get_heroes(), enemies.get_enemies(), deck.hand.duplicate(),
+			deck.draw_pile.duplicate(), deck.discard_pile.duplicate(), deck.energy,
+			rng.state, rule.latch_snapshot()]
+		_check(not rule.consume_confirmed_hit(quote, tampered, rest)
+			and unchanged == [party.get_heroes(), enemies.get_enemies(), deck.hand,
+			deck.draw_pile, deck.discard_pile, deck.energy, rng.state, rule.latch_snapshot()],
+			label + ": counterfeit support receipt preserves all authorities")
+		_check(rule.consume_confirmed_hit(quote, played, rest)
+			and rule.latch_snapshot() == {"warden": true}
+			and rule._stitched_sequence.get(id) == 2,
+			label + ": authentic support advances sequence and attack spends once")
+		_check(not rule.consume_confirmed_hit(quote, played, rest),
+			label + ": replay denied")
+		_check(rule.quote_starter_hit("warden_strike", 1).get("bonus") == 0,
+			label + ": already-spent wearer cannot claim follow-up +2")
+		var next := CombatAttackCards.new().play_attack(deck, party, enemies,
+			"warden_strike", 1)
+		_check(next.ok and next.hits.size() == 1 and rule.latch_snapshot() == {"warden": true},
+			label + ": same-owner follow-up really commits without resetting latch")
