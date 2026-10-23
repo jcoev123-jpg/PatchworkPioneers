@@ -9,6 +9,31 @@ const SUPPORTED_CARD_IDS: Array[String] = [
 	"warden_seam_breaker", "warden_seam_breaker_plus",
 ]
 
+var _patches: CombatPatchAttackRules = null
+
+
+func _init(patches: Variant = null) -> void:
+	if patches is CombatPatchAttackRules:
+		_patches = patches
+
+
+## Failed explicit binding stays unusable; never fall back to an unpatched play.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
+
+
+func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	return bind_patch_wardrobe(wardrobe, torn)
+
+
+func get_patches() -> CombatPatchAttackRules:
+	return _patches
+
+
+func set_patches(patches: CombatPatchAttackRules) -> void:
+	_patches = patches
+
 
 func is_supported_card(card_id: String) -> bool:
 	return SUPPORTED_CARD_IDS.has(card_id)
@@ -21,7 +46,10 @@ func get_supported_card_ids() -> Array[String]:
 ## Read-only admission: no energy, card, HP, Block, gauge, pin or RNG mutation.
 func can_play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pinned: CombatPinned, unravel: CombatUnravel, card_id: String,
-		target_position: int) -> bool:
+		target_position: int, patches: CombatPatchAttackRules = null) -> bool:
+	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+	if active_patches != null and not active_patches.is_valid():
+		return false
 	if deck == null or party == null or enemies == null or pinned == null or unravel == null:
 		return false
 	if not deck.turn_active or not party.is_valid() or not enemies.is_valid():
@@ -36,6 +64,9 @@ func can_play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var effects: Dictionary = definition.get("effects", {})
 	var base_damage: int = effects.get("damage", -1)
 	if cost < 0 or cost > CombatState.TURN_ENERGY or base_damage <= 0:
+		return false
+	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
+	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage:
 		return false
 	if card_id.begins_with("warden_pinning_jab"):
 		if effects.get("pinned") != true:
@@ -69,15 +100,24 @@ func can_play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return false
 	if not _valid_gauge(unravel.get_snapshot(target_position)):
 		return false
+
+	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
+	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
+	if patch_exposed > 0 and not enemies.can_apply_statuses({target_position: {"exposed": patch_exposed}}):
+		return false
+
 	return true
 
 
 ## One paid hit, then pin consumption and the surviving target's new effect.
 ## Existing Pinned +5 is calculated BEFORE Weak/Exposed final-floor arithmetic.
+## M04: optional bound CombatPatchAttackRules adds wearer-only Pincushion Arm +1 damage
+## and Button Eye Exposed 1 on the first successful attack each combat.
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pinned: CombatPinned, unravel: CombatUnravel, card_id: String,
-		target_position: int) -> Dictionary:
-	if not can_play(deck, party, enemies, pinned, unravel, card_id, target_position):
+		target_position: int, patches: CombatPatchAttackRules = null) -> Dictionary:
+	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+	if not can_play(deck, party, enemies, pinned, unravel, card_id, target_position, active_patches):
 		return _failure(card_id, target_position)
 	var definition: Dictionary = WardenPoolCards.new().get_definition(card_id)
 	var effects: Dictionary = definition["effects"]
@@ -89,7 +129,11 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			break
 	var defender: Dictionary = enemies.get_enemy(target_position)
 	var bonus: int = pinned.bonus_for_attack(enemies, target_position, WARDEN_ID)
-	var base_damage: int = effects["damage"] + bonus
+	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
+	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
+	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
+
+	var base_damage: int = effects["damage"] + bonus + patch_damage
 	var attacker_statuses: Dictionary = attacker.get("statuses", {})
 	var defender_statuses: Dictionary = defender.get("statuses", {})
 
@@ -114,6 +158,18 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		else:
 			charged = effects["unravel"]
 			unravel.apply_unravel(enemies, target_position, charged)
+
+	# Button Eye: once-per-combat rider applied after all hits of the first successful attack.
+	# CombatEnemies permits a confirmed lethal attack's status application to the original slain slot.
+	if patch_exposed > 0:
+		enemies.apply_statuses({target_position: {"exposed": patch_exposed}})
+	if active_patches != null:
+		active_patches.record_successful_attack(WARDEN_ID)
+
+	var hit_statuses: Dictionary = {}
+	if patch_exposed > 0:
+		hit_statuses["exposed"] = patch_exposed
+
 	return {
 		"ok": true,
 		"card_id": card_id,
@@ -128,14 +184,15 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"pin_applied": applied_pin,
 			"unravel_added": charged,
 			"unravel_snapshot": unravel.get_snapshot(target_position),
+			"statuses": hit_statuses,
 		}],
 	}
 
 
 func play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pinned: CombatPinned, unravel: CombatUnravel, card_id: String,
-		target_position: int) -> Dictionary:
-	return play_attack(deck, party, enemies, pinned, unravel, card_id, target_position)
+		target_position: int, patches: CombatPatchAttackRules = null) -> Dictionary:
+	return play_attack(deck, party, enemies, pinned, unravel, card_id, target_position, patches)
 
 
 func _valid_actor_statuses(actor: Dictionary) -> bool:
