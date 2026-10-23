@@ -87,6 +87,9 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 	title_label.text = snapshot["title"]
 	description_label.text = snapshot["description"]
 	if wallet_mode:
+		# Three-line wallet tickets need a tighter text budget so the paper
+		# card keeps every choice onscreen at 1280x720.
+		description_label.custom_minimum_size = Vector2(0.0, 56.0)
 		_wallet_label = Label.new()
 		_wallet_label.name = "WalletBalance"
 		_wallet_label.text = "Wallet  •  %d gold   /   %d scraps" % [_offered_wallet["gold"], _offered_wallet["scraps"]]
@@ -114,8 +117,11 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 				_delta_label(forecast.get("gold_delta")),
 				_delta_label(forecast.get("scraps_delta")),
 			]
-			button.text += "\n" + cost_text + ("   •   UNAVAILABLE" if not can_pay else "")
-			button.custom_minimum_size.y = 70.0
+			# Third line is the authoritative forecast: the exact projected
+			# after-wallet for affordable choices, or the exact shortfall that
+			# makes a priced choice unavailable.
+			button.text += "\n" + cost_text + "\n" + _forecast_line(forecast, _offered_wallet)
+			button.custom_minimum_size.y = 78.0
 			button.add_theme_font_size_override("font_size", 18)
 			button.disabled = not can_pay
 			button.focus_mode = Control.FOCUS_ALL if can_pay else Control.FOCUS_NONE
@@ -134,6 +140,33 @@ func _delta_label(amount: Variant) -> String:
 	return "%+d" % amount
 
 
+## One forecast line for a service preview row, derived only from the exact
+## caller wallet and the row's own deltas — never invented arithmetic.
+## Affordable rows print the service-projected after-balance; unaffordable rows
+## print the exact missing amount per resource. Unknown/malformed deltas fall
+## back to the neutral "UNAVAILABLE" flag.
+func _forecast_line(forecast: Dictionary, wallet: Dictionary) -> String:
+	if forecast.get("affordable", false) == true:
+		var after: Variant = forecast.get("wallet")
+		if after is Dictionary:
+			return "After: %d gold | %d scraps" % [after["gold"], after["scraps"]]
+		return "UNAVAILABLE"
+	var needs := PackedStringArray()
+	var gold_delta: Variant = forecast.get("gold_delta")
+	var scraps_delta: Variant = forecast.get("scraps_delta")
+	if typeof(gold_delta) == TYPE_INT and wallet.has("gold"):
+		var missing_gold: int = -(int(wallet["gold"]) + gold_delta)
+		if missing_gold > 0:
+			needs.append("Need %d gold" % missing_gold)
+	if typeof(scraps_delta) == TYPE_INT and wallet.has("scraps"):
+		var missing_scraps: int = -(int(wallet["scraps"]) + scraps_delta)
+		if missing_scraps > 0:
+			needs.append("Need %d scraps" % missing_scraps)
+	if needs.is_empty():
+		return "UNAVAILABLE"
+	return "   •   ".join(needs)
+
+
 ## Discards selector, previews and any wallet snapshot, and invalidates
 ## all prior callback generations before another event can be opened.
 func close_event() -> void:
@@ -148,6 +181,7 @@ func close_event() -> void:
 	if is_node_ready():
 		title_label.text = ""
 		description_label.text = ""
+		description_label.custom_minimum_size = Vector2(0.0, 114.0)
 	for button in _choice_buttons:
 		if not is_instance_valid(button):
 			continue
