@@ -32,6 +32,57 @@ func _run() -> void:
 	_check(shell._load_backdrop("res://assets/paper/backgrounds/fabricated_missing_title.png") == null
 		and shell._load_backdrop("") == null,
 		"a missing title image loads no texture and cannot fail boot")
+	# The picture stays scenery: only two compact sewn backings follow the live controls.
+	var viewport := Rect2(Vector2.ZERO, shell.size)
+	var title_back: Rect2 = shell.title_backing_rect()
+	var action_back: Rect2 = shell.action_backing_rect()
+	_check(title_back.has_area() and viewport.encloses(title_back)
+		and title_back.encloses(Rect2(app.title_label.global_position, app.title_label.size)),
+		"compact paper backing follows the live title label inside the viewport")
+	var frames_actions := action_back.has_area() and viewport.encloses(action_back)
+	for button in [app.start_button, app.route_button, app.base_button]:
+		frames_actions = frames_actions and action_back.encloses(button.get_global_rect())
+	_check(frames_actions, "one compact felt backing frames all three original actions")
+	_check(is_equal_approx(action_back.position.x, title_back.position.x)
+		and is_equal_approx(action_back.size.x, title_back.size.x)
+		and action_back.position.y <= title_back.end.y,
+		"the sewn menu is one aligned stack, not a full-screen patch")
+	var coverage := (title_back.get_area() + action_back.get_area()) / viewport.get_area()
+	_check(coverage > 0.0 and coverage <= shell.MENU_COVERAGE_LIMIT,
+		"sewn menu covers only a compact share of the title picture")
+	if shell._backdrop is Texture2D:
+		var picture: Rect2 = shell.backdrop_rect()
+		var scenery := true
+		for point in [Vector2(60, 60), Vector2(1220, 60), Vector2(60, 660), Vector2(1220, 660)]:
+			scenery = scenery and picture.has_point(point) \
+				and not title_back.has_point(point) and not action_back.has_point(point)
+		_check(scenery, "supplied scenery is drawn outside the compact sewn menu")
+		_check(shell.get_child_count() == 0 and shell.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+			"the picture and its backings are drawn, never a capturing node")
+	# A missing picture must repaint the same readable menu from code alone.
+	var draws := [0]
+	var count_draw := func(): draws[0] += 1
+	shell.draw.connect(count_draw)
+	var mounted_backdrop: Texture2D = shell._backdrop
+	shell._backdrop = null
+	_check(shell.backdrop_rect() == Rect2(), "a missing picture has no cover rect instead of a broken one")
+	_check(shell.title_backing_rect() == title_back and shell.action_backing_rect() == action_back,
+		"the same compact sewn menu survives a missing picture")
+	shell.queue_redraw()
+	await process_frame
+	await process_frame
+	_check(draws[0] > 0, "the null-backdrop fallback actually repaints")
+	_check(is_instance_valid(app.title_label) and app.title_label.is_visible_in_tree() and shell.visible
+		and shell.PAPER.get_luminance() - shell.INK.get_luminance() > 0.5
+		and shell.PAPER.get_luminance() - shell.FALLBACK_STAGE.get_luminance() > 0.3
+		and shell.THREAD.get_luminance() > shell.ACTION_BACKING.get_luminance(),
+		"fallback keeps the dark ink title readable on paper above its felt menu")
+	shell._backdrop = mounted_backdrop
+	shell.queue_redraw()
+	await process_frame
+	shell.draw.disconnect(count_draw)
+	_check(shell._backdrop == mounted_backdrop and shell.backdrop_rect().has_area(),
+		"the supplied picture is restored for the live title")
 	_check(shell.get_index() > 0 and app.get_child(shell.get_index() - 1) is ColorRect
 		and shell.get_index() < app.title_view.get_index(), "decorations between original background and title")
 	var fills: Array[Color] = []
@@ -62,6 +113,25 @@ func _run() -> void:
 	_check(not shell.visible and _snapshot(app) == before, "decoration visibility leaves real run and RNG unchanged")
 	await _click(app.route_back_button)
 	_check(app.run_map == null and shell.visible and app.start_button.has_focus(), "physical Back restores title and focus")
+	# The third original action still opens the village and returns to this title.
+	await _click(app.base_button)
+	var village = app.base_screen
+	_check(is_instance_valid(village) and village.has_open_village() and not shell.visible
+		and not app.title_view.is_visible_in_tree(), "physical Quilt village hides the sewn title")
+	if is_instance_valid(village):
+		await _click(village.back_button)
+	_check(app.base_screen == null and shell.visible and app.title_view.is_visible_in_tree()
+		and app.base_button.has_focus() and app.run_map == null and app.run_rng == null,
+		"village Back restores the focused title without starting a run")
+	# Focus cycles over all three original actions with the picture mounted.
+	app.base_button.grab_focus()
+	await _key(KEY_TAB)
+	_check(app.start_button.has_focus(), "Tab wraps from Quilt village to Start run")
+	await _key(KEY_TAB)
+	_check(app.route_button.has_focus(), "Tab reaches Choose a route on the sewn title")
+	await _key(KEY_TAB)
+	_check(app.base_button.has_focus(), "Tab reaches Quilt village on the sewn title")
+	app.start_button.grab_focus()
 	await _click(app.start_button)
 	_check(app.route_view != null and not app.route_buttons.is_empty() and not shell.visible, "physical Start reaches real map")
 	var fight: Button
