@@ -147,8 +147,6 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 			choices[i]["text"], panel._delta_label(row["gold_delta"]), panel._delta_label(row["scraps_delta"]),
 			_expected_forecast(row, wallet)]
 		_check(button.text == expected, label + " authored text, signed deltas and exact service forecast " + str(i))
-		# Independent oracle: the third line must carry the service's own
-		# projected after-wallet (affordable) or exact required amount.
 		var lines := button.text.split("\n")
 		_check(lines.size() == 3, label + " ticket carries name, deltas and forecast lines " + str(i))
 		if row["affordable"]:
@@ -166,60 +164,10 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 			label + " affordability disables and skips focus for unavailable choice " + str(i))
 		_check(button.get_parent() == panel.choices_container and button.is_visible_in_tree(),
 			label + " actual mounted choice button " + str(i))
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
-=======
 		_check(button.get_theme_stylebox("normal") is StyleBoxFlat and
 			button.get_theme_stylebox("disabled") is StyleBoxFlat and
 			button.get_theme_stylebox("focus") is StyleBoxFlat,
 			label + " paper/cardboard/focus styling intact " + str(i))
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
-=======
-			label + " paper/cardboard/focus styling intact " + str(i))
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-=======
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
-	var label := str(record.get("id", "")) + "/" + choice_id + " @ " + str(wallet)
-=======
-		_check(button.get_theme_stylebox("normal") is StyleBoxFlat and
-			button.get_theme_stylebox("disabled") is StyleBoxFlat and
-			button.get_theme_stylebox("focus") is StyleBoxFlat,
-			label + " paper/cardboard/focus styling intact " + str(i))
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
-	var label := str(record.get("id", "")) + "/" + choice_id + " @ " + str(wallet)
-=======
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
-=======
-		_check(button.get_theme_stylebox("normal") is StyleBoxFlat and
-			button.get_theme_stylebox("disabled") is StyleBoxFlat and
-			button.get_theme_stylebox("focus") is StyleBoxFlat,
-			label + " paper/cardboard/focus styling intact " + str(i))
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
-=======
-			label + " paper/cardboard/focus styling intact " + str(i))
-
-
-func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
-=======
 
 
 func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
