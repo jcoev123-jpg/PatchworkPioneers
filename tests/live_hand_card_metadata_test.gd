@@ -18,6 +18,28 @@ const TARGET_LINES := {
 	"self": "Self", "ally_single": "Ally", "none": "No target",
 }
 const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
+const PINNED_FACTS := [
+	"PINNED: one pin per enemy",
+	"storing the hero who applied it",
+	"DIFFERENT hero's next attack",
+	"+5 damage",
+	"BEFORE Weak/Exposed",
+	"consumes it once",
+	"same-hero attacks do not",
+	"A new pin replaces it",
+	"lasts to combat end",
+]
+const UNRAVEL_FACTS := [
+	"UNRAVEL:",
+	"Unravel N adds N",
+	"each Bleed tick adds 1",
+	"normal 8 / elite 12 / boss 16",
+	"becomes Unravelled",
+	"skips its next enemy action",
+	"resets to 0",
+	"threshold rises by 4",
+	"rest of combat",
+]
 
 var failures: Array[String] = []
 var checks := 0
@@ -36,6 +58,34 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _occurrences(text: String, needle: String) -> int:
+	return text.count(needle)
+
+
+func _authored_number(metadata, card_id: String, key: String) -> int:
+	var effects: Dictionary = metadata.definition(card_id).get("effects", {})
+	return int(effects.get(key, -1))
+
+
+func _authored_conditional_damage(metadata, card_id: String) -> int:
+	var effects: Dictionary = metadata.definition(card_id).get("effects", {})
+	var condition: Variant = effects.get("conditional_damage")
+	return int(condition.get("damage", -1)) if condition is Dictionary else -1
+
+
+## Every keyword card keeps the ordinary header, source range and enemy target
+## that were already printed before the appended explanation.
+func _assert_keyword_frame(text: String, definition: Dictionary, label: String) -> void:
+	var lines := text.split("\n")
+	var header := "%s; %s; %d energy" % [str(definition.get("display_name", "")),
+		str(definition.get("owner", "")).capitalize(), int(definition.get("cost", -1))]
+	_check(lines.has(header), "keyword card keeps exact cost header: " + label)
+	_check(lines.has("From " + _expected_positions(definition.get("from_positions", []))),
+		"keyword card keeps exact source positions: " + label)
+	_check(lines.has("To one selected enemy " + _expected_positions(definition.get("to_positions", []))),
+		"keyword card keeps exact enemy target: " + label)
 
 
 func _frames() -> void:
@@ -426,6 +476,157 @@ func _play_support(card_id: String, observed: Dictionary) -> bool:
 	return true
 
 
+## The tooltip formatter teaches only authored Pinned/Unravel rules. Each shared
+## catalog value is read through the real metadata lookup, never a fixture copy.
+func _keyword_explanations(metadata) -> void:
+	var before := _snapshot()
+	var pinned_cases := [
+		["warden_pinning_jab", "warden_pinning_jab_plus", 4, 6],
+		["seamstress_needle_pin", "seamstress_needle_pin_plus", 3, 4],
+		["tinker_spring_trap", "tinker_spring_trap_plus", 3, 4],
+	]
+	for entry in pinned_cases:
+		var base_id: String = str(entry[0])
+		var plus_id: String = str(entry[1])
+		var base_definition: Dictionary = metadata.definition(base_id)
+		var plus_definition: Dictionary = metadata.definition(plus_id)
+		_check(not base_definition.is_empty() and not plus_definition.is_empty(),
+			"Pinned catalog and upgrade exist: " + base_id)
+		var base_effects: Dictionary = base_definition.get("effects", {})
+		var plus_effects: Dictionary = plus_definition.get("effects", {})
+		_check(base_effects.has("pinned") and plus_effects.has("pinned"),
+			"Pinned catalogs really author pinned on base and +: " + base_id)
+		_check(int(base_effects.get("damage", -1)) == int(entry[2])
+			and int(plus_effects.get("damage", -1)) == int(entry[3]),
+			"Pinned base/+ damage comes from the catalogs: " + base_id)
+		for pair in [[base_id, base_definition, entry[2]], [plus_id, plus_definition, entry[3]]]:
+			var card_id: String = str(pair[0])
+			var definition: Dictionary = pair[1]
+			var expected_damage: int = int(pair[2])
+			var text: String = metadata.base_effect_text(card_id)
+			_check(_occurrences(text, "PINNED:") == 1, "one Pinned glossary: " + card_id)
+			_check(not text.contains("UNRAVEL:"), "Pinned card gains no Unravel glossary: " + card_id)
+			_check(text.contains("BASE deal %d damage" % expected_damage),
+				"Pinned card keeps its exact authored damage: " + card_id)
+			_check(text.contains("BASE Pin the target"), "Pinned card keeps its base pin effect: " + card_id)
+			_check(not text.contains("every attack"), "Pinned card never claims every attack pins: " + card_id)
+			for fact in PINNED_FACTS:
+				_check(text.contains(fact), "%s explains %s" % [card_id, fact])
+			_assert_keyword_frame(text, definition, card_id)
+	var unravel_cases := [
+		["warden_seam_breaker", "warden_seam_breaker_plus"],
+		["seamstress_snag", "seamstress_snag_plus"],
+		["seamstress_unpick", "seamstress_unpick_plus"],
+		["tinker_spool_launcher", "tinker_spool_launcher_plus"],
+		["tinker_snip_the_seam", "tinker_snip_the_seam_plus"],
+	]
+	for entry in unravel_cases:
+		var base_id: String = str(entry[0])
+		var plus_id: String = str(entry[1])
+		var base_definition: Dictionary = metadata.definition(base_id)
+		var plus_definition: Dictionary = metadata.definition(plus_id)
+		_check(not base_definition.is_empty() and not plus_definition.is_empty(),
+			"Unravel catalog and upgrade exist: " + base_id)
+		var base_effects: Dictionary = base_definition.get("effects", {})
+		var plus_effects: Dictionary = plus_definition.get("effects", {})
+		_check(base_effects.has("unravel") or base_effects.has("conditional_damage"),
+			"Unravel catalog really authors the mechanic: " + base_id)
+		_check(plus_effects.has("unravel") or plus_effects.has("conditional_damage"),
+			"Unravel upgrade really authors the mechanic: " + plus_id)
+		for pair in [[base_id, base_definition], [plus_id, plus_definition]]:
+			var card_id: String = str(pair[0])
+			var definition: Dictionary = pair[1]
+			var effects: Dictionary = definition.get("effects", {})
+			var text: String = metadata.base_effect_text(card_id)
+			_check(_occurrences(text, "UNRAVEL:") == 1, "one Unravel glossary: " + card_id)
+			_check(not text.contains("PINNED:"), "Unravel card gains no Pinned glossary: " + card_id)
+			for fact in UNRAVEL_FACTS:
+				_check(text.contains(fact), "%s explains %s" % [card_id, fact])
+			_assert_keyword_frame(text, definition, card_id)
+			if effects.has("unravel"):
+				_check(text.contains("BASE add %d Unravel" % int(effects["unravel"])),
+					"Unravel card keeps its exact authored addition: " + card_id)
+				_check(not text.contains("instead if"),
+					"plain Unravel card invents no conditional damage: " + card_id)
+			else:
+				var condition: Variant = effects.get("conditional_damage")
+				var base_damage: int = int(effects.get("damage", -1))
+				var empowered: int = int(condition.get("damage", -1)) if condition is Dictionary else -1
+				_check(text.contains("BASE deal %d damage; BASE deal %d damage instead if the target is Unravelled or its Unravel gauge is at least half" % [base_damage, empowered]),
+					"Snip keeps its exact base/empowered half-gauge wording: " + card_id)
+	# + variants read their own catalog numbers; upgrades do not all add one.
+	_check(_authored_number(metadata, "warden_seam_breaker", "unravel") == 4
+		and _authored_number(metadata, "warden_seam_breaker_plus", "unravel") == 6
+		and _authored_number(metadata, "warden_seam_breaker_plus", "damage") == 10,
+		"Seam Breaker+ keeps its catalog 10 damage / 6 Unravel")
+	_check(metadata.base_effect_text("warden_seam_breaker").contains("BASE deal 7 damage; BASE add 4 Unravel to the target")
+		and metadata.base_effect_text("warden_seam_breaker_plus").contains("BASE deal 10 damage; BASE add 6 Unravel to the target"),
+		"Seam Breaker base and + show their own damage and Unravel lines")
+	_check(_authored_number(metadata, "seamstress_snag", "unravel") == 3
+		and _authored_number(metadata, "seamstress_snag_plus", "unravel") == 4
+		and _authored_number(metadata, "seamstress_snag_plus", "weak") == 1,
+		"Snag+ keeps its catalog 4 Unravel and unchanged Weak 1")
+	_check(metadata.base_effect_text("seamstress_snag").contains("BASE apply Weak 1 to the target")
+		and metadata.base_effect_text("seamstress_snag").contains("BASE add 3 Unravel to the target")
+		and metadata.base_effect_text("seamstress_snag_plus").contains("BASE apply Weak 1 to the target")
+		and metadata.base_effect_text("seamstress_snag_plus").contains("BASE add 4 Unravel to the target"),
+		"Snag base and + keep authored Weak and Unravel additions")
+	_check(_authored_number(metadata, "seamstress_unpick", "unravel") == 5
+		and _authored_number(metadata, "seamstress_unpick_plus", "unravel") == 7,
+		"Unpick+ keeps its catalog 7 Unravel")
+	_check(metadata.base_effect_text("seamstress_unpick").contains("BASE add 5 Unravel to the target")
+		and metadata.base_effect_text("seamstress_unpick_plus").contains("BASE add 7 Unravel to the target"),
+		"Unpick base and + show their own Unravel lines")
+	_check(_authored_number(metadata, "tinker_spool_launcher", "unravel") == 3
+		and _authored_number(metadata, "tinker_spool_launcher", "damage") == 3
+		and _authored_number(metadata, "tinker_spool_launcher_plus", "unravel") == 4
+		and _authored_number(metadata, "tinker_spool_launcher_plus", "damage") == 4,
+		"Spool Launcher+ keeps its catalog 4 damage / 4 Unravel")
+	_check(metadata.base_effect_text("tinker_spool_launcher").contains("BASE deal 3 damage; BASE add 3 Unravel to the target")
+		and metadata.base_effect_text("tinker_spool_launcher_plus").contains("BASE deal 4 damage; BASE add 4 Unravel to the target"),
+		"Spool Launcher base and + show their own damage and Unravel lines")
+	_check(_authored_number(metadata, "tinker_snip_the_seam", "damage") == 5
+		and _authored_conditional_damage(metadata, "tinker_snip_the_seam") == 15
+		and _authored_number(metadata, "tinker_snip_the_seam_plus", "damage") == 7
+		and _authored_conditional_damage(metadata, "tinker_snip_the_seam_plus") == 20,
+		"Snip the Seam+ keeps its catalog 7/20 conditional numbers")
+	_check(metadata.base_effect_text("tinker_snip_the_seam").contains("BASE deal 5 damage; BASE deal 15 damage instead if the target is Unravelled or its Unravel gauge is at least half")
+		and metadata.base_effect_text("tinker_snip_the_seam_plus").contains("BASE deal 7 damage; BASE deal 20 damage instead if the target is Unravelled or its Unravel gauge is at least half"),
+		"Snip base and + keep the 5-or-15 / 7-or-20 half-threshold wording")
+	# Stitched tooltips inherit each half's own glossary in numbered order.
+	var pinned_first: String = metadata.stitched_tooltip(["warden_pinning_jab", "tinker_spool_launcher"])
+	var halves := pinned_first.split("\n2. ")
+	_check(halves.size() == 2 and pinned_first.find("1. ") < pinned_first.find("\n2. "),
+		"stitched tooltip keeps two numbered halves in order")
+	if halves.size() == 2:
+		_check(halves[0].begins_with("1. Pinning Jab; Warden; 1 energy")
+			and halves[0].contains("PINNED:") and not halves[0].contains("UNRAVEL:"),
+			"Pinned-first stitched half carries only the Pinned glossary")
+		_check(halves[1].begins_with("Spool Launcher; Tinker; 1 energy")
+			and halves[1].contains("UNRAVEL:") and not halves[1].contains("PINNED:"),
+			"Unravel-second stitched half carries only the Unravel glossary")
+	var unravel_first: String = metadata.stitched_tooltip(["tinker_spool_launcher", "warden_pinning_jab"])
+	var reversed_halves := unravel_first.split("\n2. ")
+	_check(reversed_halves.size() == 2, "reversed stitched tooltip keeps two numbered halves")
+	if reversed_halves.size() == 2:
+		_check(reversed_halves[0].begins_with("1. Spool Launcher; Tinker; 1 energy")
+			and reversed_halves[0].contains("UNRAVEL:") and not reversed_halves[0].contains("PINNED:"),
+			"reversed order puts the Unravel glossary in the first half")
+		_check(reversed_halves[1].begins_with("Pinning Jab; Warden; 1 energy")
+			and reversed_halves[1].contains("PINNED:") and not reversed_halves[1].contains("UNRAVEL:"),
+			"reversed order puts the Pinned glossary in the second half")
+	# A plain damage card and an unknown ID stay free of invented keywords.
+	var neutral: String = metadata.base_effect_text("tinker_long_barrel")
+	_check(_occurrences(neutral, "PINNED:") == 0 and _occurrences(neutral, "UNRAVEL:") == 0,
+		"ordinary damage card gains neither keyword glossary")
+	_check(_authored_number(metadata, "tinker_long_barrel", "damage") == 12
+		and neutral.contains("BASE deal 12 damage"),
+		"ordinary damage card keeps its exact authored damage")
+	_check(metadata.base_effect_text("unreleased_card") == "Unknown card",
+		"unknown ID stays the exact 'Unknown card' placeholder")
+	_check(_snapshot() == before, "keyword tooltip formatting mutates no live model")
+
+
 func _unknown_check() -> void:
 	var metadata = load("res://scripts/live_hand_card_metadata.gd").new()
 	var unknown: Dictionary = metadata.describe("unreleased_card")
@@ -538,6 +739,8 @@ func _run() -> void:
 		_check(app.deck == deck_ref and _snapshot() == before_duplicate,
 			"duplicate Start Run does not replace or alter session")
 		_validate_display(observed)
+		if session == 0:
+			_keyword_explanations(presenter._metadata)
 		await _visual_feedback()
 		# Compare the same global RNG stream, not a separately seeded RNG instance.
 		seed(8459)
