@@ -64,7 +64,7 @@ func present(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 			continue
 		_sources.append({"patch_id": option["patch_id"], "from_hero": option["from_hero"]})
 		source_selector.add_item("%s • %s • %s%s" % [
-			_nice(option["from_hero"]), option["slot"], option["patch_id"],
+			_nice(option["from_hero"]), option["slot"], _nice(option["patch_id"]),
 			" (torn/inactive)" if not option["source_active"] else ""])
 	source_selector.disabled = _sources.is_empty()
 	if not _sources.is_empty():
@@ -137,7 +137,7 @@ func _update_preview(_unused: int = 0) -> void:
 		_clear("Preview expired: refresh the Rest before trying again")
 		return
 	var exchange := "empty destination" if estimate["kind"] == "MOVE" else (
-		"swap with %s" % estimate["exchanged_id"])
+		"swap with %s" % _nice(estimate["exchanged_id"]))
 	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap\n%s\n%s\n%s\n%s" % [
 		estimate["kind"], estimate["slot"], _nice(estimate["source"]["hero_id"]),
 		_nice(estimate["destination"]["hero_id"]), exchange, estimate["cost"],
@@ -160,7 +160,7 @@ static func _wearer_preview(wearer: Dictionary, phase: String) -> String:
 		else:
 			var activity := "active" if patch["active"] else "dormant"
 			var power: String = " — " + patch["effect"] if not patch["effect"].is_empty() else ""
-			summary.append("%s %s (%s)%s" % [slot, id, activity, power])
+			summary.append("%s %s (%s)%s" % [slot, _nice(id), activity, power])
 	return "%s %s • HP %d/%d, effective cap %d • %s" % [
 		_nice(wearer["hero_id"]), phase.to_upper(),
 		state["hp"], state["base_max_hp"], state["effective_max_hp"],
@@ -269,4 +269,4 @@ func _style_button(button: Control) -> void:
 
 
 static func _nice(id: String) -> String:
-	return id.capitalize()
+	return id.replace("_", " ").capitalize()
