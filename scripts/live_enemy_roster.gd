@@ -1253,7 +1253,17 @@ func _refresh() -> void:
 		var pending := false
 		if unravel != null and not enemies.is_slain(position):
 			pending = unravel.get_snapshot(position).get("skip_pending", false)
-		_badges[index].show_intent(announcements.get(position, {}), enemies.is_slain(position), pending)
+		# A read-only tag only for the actual battle-bound weighted scheduler,
+		# with one original source per badge. Legacy fixtures keep their old caption.
+		var policy := ""
+		var action: Dictionary = announcements.get(position, {})
+		if unravel != null and app.enemy_intents != null and app.enemy_intents.is_bound() \
+				and enemies == app.enemies and _battle == app.battle_view \
+				and roster.size() == _badges.size() and position == index + 1 \
+				and _badges[index].source_position == position \
+				and action.get("enemy_position") == position:
+			policy = CombatEnemyIntents.policy_for(enemies, position)
+		_badges[index].show_intent(action, enemies.is_slain(position), pending, policy)
 
 
 ## Only the admission-owned service of the active, still-identical fight is readable.
