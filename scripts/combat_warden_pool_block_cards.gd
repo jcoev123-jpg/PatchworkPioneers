@@ -11,10 +11,87 @@ const SUPPORTED_KINDS := {
 	"warden_bastion_quilt": "party_all",
 }
 
+var _binding_attempted: bool = false
+var _binding_valid: bool = false
+var _wardrobe: RunPatchWardrobe = null
+var _torn: RunTornMending = null
+var _wardrobe_snapshot: Dictionary = {}
+var _torn_snapshot: Dictionary = {}
+var _patch_rules: CombatPatchAttackRules = null
+
+
+## Authenticates and snapshots a genuine wardrobe and torn ledger for wearer effects.
+func bind_patch_wardrobe(wardrobe: Variant, torn: Variant,
+		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	_binding_attempted = true
+	_binding_valid = false
+	_wardrobe = null
+	_torn = null
+	_wardrobe_snapshot = {}
+	_torn_snapshot = {}
+	_patch_rules = null
+
+	if not (wardrobe is RunPatchWardrobe) or not (torn is RunTornMending):
+		return false
+	if not wardrobe.is_valid() or not torn.is_valid():
+		return false
+
+	var snap: Dictionary = wardrobe.get_snapshot()
+	var torn_state: Dictionary = torn.read_state()
+
+	if expected_wardrobe != null:
+		if typeof(expected_wardrobe) != TYPE_DICTIONARY or expected_wardrobe != snap:
+			return false
+	if expected_torn != null:
+		if typeof(expected_torn) != TYPE_DICTIONARY or expected_torn != torn_state:
+			return false
+
+	var rules := CombatPatchAttackRules.new()
+	if not rules.bind_wardrobe(wardrobe, torn):
+		return false
+
+	_wardrobe = wardrobe
+	_torn = torn
+	_wardrobe_snapshot = snap.duplicate(true)
+	_torn_snapshot = torn_state.duplicate(true)
+	_patch_rules = rules
+	_binding_valid = true
+	return true
+
+
+func is_patch_binding_valid() -> bool:
+	if not _binding_attempted:
+		return true
+	if not _binding_valid or _wardrobe == null or _torn == null:
+		return false
+	if not _wardrobe.is_valid() or not _torn.is_valid():
+		return false
+	if _wardrobe.get_snapshot() != _wardrobe_snapshot:
+		return false
+	if _torn.read_state() != _torn_snapshot:
+		return false
+	if _patch_rules == null or not _patch_rules.is_valid():
+		return false
+	return true
+
+
+func get_patches() -> CombatPatchAttackRules:
+	return _patch_rules
+
+
+func get_wardrobe() -> RunPatchWardrobe:
+	return _wardrobe
+
+
+func get_torn() -> RunTornMending:
+	return _torn
+
 
 func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 		target_position: int = 0) -> Dictionary:
 	var rejected := {"ok": false}
+	if _binding_attempted and not is_patch_binding_valid():
+		return rejected
 	if deck == null or party == null or not party.is_valid():
 		return rejected
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
@@ -95,12 +172,24 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 	if heroes[owner_position - 1]["hp"] == 0:
 		return rejected
 
+	var bonus := 0
+	if _binding_attempted and _patch_rules != null:
+		bonus = _patch_rules.card_block_bonus("warden", card_id)
+		if bonus < 0:
+			return rejected
+
+	var final_block_amount := block_amount
+	if bonus > 0 and effects.has("block"):
+		if final_block_amount > CombatParty.MAX_INT - bonus:
+			return rejected
+		final_block_amount += bonus
+
 	var recipients: Dictionary = {}  # current position -> Block gained
 	match kind:
 		"self":
 			if target_position != 0:
 				return rejected
-			recipients[owner_position] = block_amount
+			recipients[owner_position] = final_block_amount
 			if base_id == "warden_hold_the_line":
 				for hero in heroes:
 					if hero["id"] != "warden" and hero["hp"] > 0:
@@ -110,13 +199,13 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 				return rejected
 			if heroes[target_position - 1]["hp"] == 0:
 				return rejected
-			recipients[target_position] = block_amount
+			recipients[target_position] = final_block_amount
 		"party_all":
 			if target_position != 0:
 				return rejected
 			for hero in heroes:
 				if hero["hp"] > 0:
-					recipients[hero["position"]] = block_amount
+					recipients[hero["position"]] = final_block_amount
 		_:
 			return rejected
 

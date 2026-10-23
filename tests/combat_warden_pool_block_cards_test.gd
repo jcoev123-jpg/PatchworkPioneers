@@ -25,6 +25,29 @@ const CASES := [
 		"effects": {"block_all": 13}, "delta": [13, 13, 13], "target": 0},
 ]
 
+const CUFF_CASES := [
+	{"id": "warden_hold_the_line", "cost": 1, "kind": "self",
+		"target": 0, "delta": [7, 2, 2]},
+	{"id": "warden_hold_the_line_plus", "cost": 1, "kind": "self",
+		"target": 0, "delta": [9, 3, 3]},
+	{"id": "warden_patch_guard", "cost": 1, "kind": "ally_single",
+		"target": 3, "delta": [0, 0, 10]},
+	{"id": "warden_patch_guard_plus", "cost": 1, "kind": "ally_single",
+		"target": 3, "delta": [0, 0, 13]},
+	{"id": "warden_quick_darn", "cost": 0, "kind": "self",
+		"target": 0, "delta": [6, 0, 0]},
+	{"id": "warden_quick_darn_plus", "cost": 0, "kind": "self",
+		"target": 0, "delta": [8, 0, 0]},
+	{"id": "warden_iron_hem", "cost": 2, "kind": "self",
+		"target": 0, "delta": [16, 0, 0]},
+	{"id": "warden_iron_hem_plus", "cost": 1, "kind": "self",
+		"target": 0, "delta": [16, 0, 0]},
+	{"id": "warden_bastion_quilt", "cost": 3, "kind": "party_all",
+		"target": 0, "delta": [10, 10, 10]},
+	{"id": "warden_bastion_quilt_plus", "cost": 3, "kind": "party_all",
+		"target": 0, "delta": [13, 13, 13]},
+]
+
 var failures: Array[String] = []
 var checks := 0
 var service := CombatWardenPoolBlockCards.new()
@@ -37,6 +60,9 @@ func _initialize() -> void:
 	_test_fail_closed()
 	_test_energy_and_capacity()
 	_test_seeded_replay()
+	_test_cuff_binding_ac1()
+	_test_cuff_all_ten_ac2()
+	_test_cuff_negative_and_stale_ac3()
 	for failure in failures:
 		printerr(failure)
 	print("combat_warden_pool_block_cards_test: ",
@@ -66,6 +92,23 @@ func _party() -> CombatParty:
 		and party.get_hero(3).get("id") == "tinker",
 		"valid real CombatParty with expected stable hero IDs")
 	return party
+
+
+func _raw_heroes() -> Array:
+	return _party().get_heroes()
+
+
+func _wardrobe_fixture(owned: Array = ["hemguard_cuff", "pincushion_arm", "button_eye"],
+		defs: Array = [
+			{"id": "hemguard_cuff", "slot": "ARM"},
+			{"id": "pincushion_arm", "slot": "ARM"},
+			{"id": "button_eye", "slot": "HEAD"}
+		]) -> Dictionary:
+	var heroes := _raw_heroes()
+	var torn := RunTornMending.new(heroes)
+	var cards := ["warden_brace", "seamstress_prick", "tinker_spool_launcher"]
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, defs, 5, 100, cards, 8812)
+	return {"wardrobe": wardrobe, "torn": torn, "heroes": heroes}
 
 
 func _rng(seed_value: int) -> RandomNumberGenerator:
@@ -116,13 +159,18 @@ func _expected(before: Dictionary, card_id: String, cost: int, delta: Array) -> 
 
 func _accepted(deck: CombatDeck, party: CombatParty, id: String, cost: int,
 		target: int, delta: Array, label: String) -> void:
+	_accepted_with(service, deck, party, id, cost, target, delta, label)
+
+
+func _accepted_with(svc: CombatWardenPoolBlockCards, deck: CombatDeck, party: CombatParty,
+		id: String, cost: int, target: int, delta: Array, label: String) -> void:
 	var before := _snapshot(deck, party)
 	_check(deck.hand.has(id) and not party.is_downed(1) and deck.energy >= cost,
 		label + ": genuine active hand, living Warden and affordable cost")
 	var original_count: int = deck.hand.count(id)
 	var discarded_count: int = deck.discard_pile.count(id)
 	var expected: Dictionary = _expected(before, id, cost, delta)
-	var response: Dictionary = service.play_card(deck, party, id, target)
+	var response: Dictionary = svc.play_card(deck, party, id, target)
 	_check(response.get("ok") == true, label + ": authorized play")
 	_check(_snapshot(deck, party) == expected,
 		label + ": full exact actors, piles, energy and injected RNG")
@@ -142,8 +190,13 @@ func _accepted(deck: CombatDeck, party: CombatParty, id: String, cost: int,
 
 func _rejected(deck: CombatDeck, party: CombatParty, id: String,
 		target: int, label: String) -> void:
+	_rejected_with(service, deck, party, id, target, label)
+
+
+func _rejected_with(svc: CombatWardenPoolBlockCards, deck: CombatDeck, party: CombatParty,
+		id: String, target: int, label: String) -> void:
 	var before := _snapshot(deck, party)
-	var result: Dictionary = service.play_card(deck, party, id, target)
+	var result: Dictionary = svc.play_card(deck, party, id, target)
 	_check(result.get("ok") == false, label + ": rejected")
 	_check(_snapshot(deck, party) == before,
 		label + ": atomic rejection leaves complete party/deck/seed unchanged")
@@ -321,3 +374,238 @@ func _test_seeded_replay() -> void:
 		[7, 3, 3], "seeded right replay")
 	_check(_snapshot(left, left_party) == _snapshot(right, right_party),
 		"replay matches complete party, piles and RNG state")
+
+
+func _test_cuff_binding_ac1() -> void:
+	var ctx := _wardrobe_fixture()
+	var wardrobe: RunPatchWardrobe = ctx["wardrobe"]
+	var torn: RunTornMending = ctx["torn"]
+	_check(wardrobe.is_valid() and torn.is_valid(), "AC1: wardrobe and torn are valid")
+
+	var snap_before: Dictionary = wardrobe.get_snapshot()
+	var sew: Dictionary = wardrobe.sew("hemguard_cuff", "warden", "ARM", "op-ac1-sew", snap_before)
+	_check(sew.get("ok") == true, "AC1: genuine owned hemguard_cuff sewn to Warden ARM")
+
+	var w_snap: Dictionary = wardrobe.get_snapshot()
+	var t_snap: Dictionary = torn.read_state()
+	var patched_svc := CombatWardenPoolBlockCards.new()
+	var bound: bool = patched_svc.bind_patch_wardrobe(wardrobe, torn, w_snap, t_snap)
+	_check(bound, "AC1: explicit successful binding assertion with matching snapshots")
+	_check(patched_svc.is_patch_binding_valid(), "AC1: resolver binding is currently valid")
+	_check(patched_svc.get_patches() != null and patched_svc.get_patches().is_valid(),
+		"AC1: resolver holds valid CombatPatchAttackRules")
+	_check(patched_svc.get_wardrobe() == wardrobe, "AC1: get_wardrobe returns bound instance")
+	_check(patched_svc.get_torn() == torn, "AC1: get_torn returns bound instance")
+	_check(wardrobe.get_snapshot() == w_snap, "AC1: resolver does not mutate wardrobe ledger")
+	_check(torn.read_state() == t_snap, "AC1: resolver does not mutate torn ledger")
+
+
+func _test_cuff_all_ten_ac2() -> void:
+	var ctx := _wardrobe_fixture()
+	var wardrobe: RunPatchWardrobe = ctx["wardrobe"]
+	var torn: RunTornMending = ctx["torn"]
+	var sew: Dictionary = wardrobe.sew("hemguard_cuff", "warden", "ARM", "op-ac2-sew", wardrobe.get_snapshot())
+	_check(sew.get("ok") == true, "AC2: sew cuff onto Warden")
+	var patched_svc := CombatWardenPoolBlockCards.new()
+	_check(patched_svc.bind_patch_wardrobe(wardrobe, torn), "AC2: bind wardrobe to resolver")
+
+	for spec in CUFF_CASES:
+		var id: String = spec["id"]
+		var party := _party()
+		_check(party.apply_damage(2, 3) and party.gain_block(3, 4),
+			id + ": prior wound and Block distinguish untouched state")
+		var deck := _deck(id)
+		_accepted_with(patched_svc, deck, party, id, spec["cost"], spec["target"],
+			spec["delta"], "AC2 " + id)
+
+	# Additional checks for AC2:
+	# Patch Guard targeting Warden herself as ally: 8+2 = 10 to slot 1
+	var party := _party()
+	var deck := _deck("warden_patch_guard")
+	_accepted_with(patched_svc, deck, party, "warden_patch_guard", 1, 1,
+		[10, 0, 0], "AC2 Patch Guard targeting living Warden gets +2")
+
+	# Hold the Line with downed Seamstress (slot 2): excludes downed hero, 5+2=7 for Warden, 2 for Tinker
+	party = _party()
+	_check(party.apply_damage(2, 30) and party.is_downed(2), "AC2 Seamstress downed")
+	deck = _deck("warden_hold_the_line")
+	_accepted_with(patched_svc, deck, party, "warden_hold_the_line", 1, 0,
+		[7, 0, 2], "AC2 Hold the Line excludes downed hero while granting +2 to Warden")
+	_check(party.get_hero(2).hp == 0, "AC2 Hold the Line keeps downed hero at 0 HP")
+
+	# Bastion Quilt+ with downed Seamstress: 13 for living heroes, unaffected by cuff
+	party = _party()
+	_check(party.apply_damage(2, 30) and party.is_downed(2), "AC2 Seamstress downed for Bastion+")
+	deck = _deck("warden_bastion_quilt_plus")
+	_accepted_with(patched_svc, deck, party, "warden_bastion_quilt_plus", 3, 0,
+		[13, 0, 13], "AC2 Bastion Quilt+ unaffected by cuff and skips downed hero")
+	_check(party.get_hero(2).hp == 0, "AC2 Bastion+ does not revive downed ally")
+
+
+func _test_cuff_negative_and_stale_ac3() -> void:
+	# 1. Another hero wearing the cuff: grants no bonus to Warden cards
+	var tinker_ctx := _wardrobe_fixture()
+	var tinker_w: RunPatchWardrobe = tinker_ctx["wardrobe"]
+	var tinker_t: RunTornMending = tinker_ctx["torn"]
+	_check(tinker_w.sew("hemguard_cuff", "tinker", "ARM", "op-tinker-cuff",
+		tinker_w.get_snapshot()).get("ok") == true, "AC3: sew cuff to Tinker ARM")
+	var tinker_svc := CombatWardenPoolBlockCards.new()
+	_check(tinker_svc.bind_patch_wardrobe(tinker_w, tinker_t), "AC3: bind Tinker cuff")
+	var party := _party()
+	var deck := _deck("warden_hold_the_line")
+	_accepted_with(tinker_svc, deck, party, "warden_hold_the_line", 1, 0,
+		[5, 2, 2], "AC3: Hold the Line has no bonus when Tinker wears cuff")
+	party = _party()
+	deck = _deck("warden_patch_guard")
+	_accepted_with(tinker_svc, deck, party, "warden_patch_guard", 1, 3,
+		[0, 0, 8], "AC3: Patch Guard has no bonus when Tinker wears cuff")
+
+	# 2. A different ARM patch on Warden: grants no bonus to Warden Block cards
+	var pin_ctx := _wardrobe_fixture()
+	var pin_w: RunPatchWardrobe = pin_ctx["wardrobe"]
+	var pin_t: RunTornMending = pin_ctx["torn"]
+	_check(pin_w.sew("pincushion_arm", "warden", "ARM", "op-warden-pin",
+		pin_w.get_snapshot()).get("ok") == true, "AC3: sew pincushion to Warden ARM")
+	var pin_svc := CombatWardenPoolBlockCards.new()
+	_check(pin_svc.bind_patch_wardrobe(pin_w, pin_t), "AC3: bind Pincushion Arm")
+	party = _party()
+	deck = _deck("warden_hold_the_line")
+	_accepted_with(pin_svc, deck, party, "warden_hold_the_line", 1, 0,
+		[5, 2, 2], "AC3: Hold the Line has no bonus when Warden wears Pincushion Arm")
+	party = _party()
+	deck = _deck("warden_iron_hem")
+	_accepted_with(pin_svc, deck, party, "warden_iron_hem", 2, 0,
+		[14, 0, 0], "AC3: Iron Hem has no bonus when Warden wears Pincushion Arm")
+
+	# 3. Torn Warden in run torn ledger: bonus is suppressed
+	var torn_ctx := _wardrobe_fixture()
+	var torn_ledger: RunTornMending = torn_ctx["torn"]
+	var b_heroes: Array = _raw_heroes()
+	var b_end_w: Array = _raw_heroes()
+	b_end_w[0]["hp"] = 0 # Warden drops to 0 HP (torn) in run ledger
+	_check(torn_ledger.observe_battle_end("node-warden-torn", b_heroes, b_end_w).get("ok") == true,
+		"AC3: battle end observed: Warden torn")
+	var torn_w: RunPatchWardrobe = torn_ctx["wardrobe"]
+	_check(torn_w.sew("hemguard_cuff", "warden", "ARM", "op-torn-warden-cuff",
+		torn_w.get_snapshot()).get("ok") == true, "AC3: sew cuff on torn Warden")
+	var torn_svc := CombatWardenPoolBlockCards.new()
+	_check(torn_svc.bind_patch_wardrobe(torn_w, torn_ledger), "AC3: bind torn ledger")
+	party = _party() # living combat party
+	deck = _deck("warden_hold_the_line")
+	_accepted_with(torn_svc, deck, party, "warden_hold_the_line", 1, 0,
+		[5, 2, 2], "AC3: torn Warden in ledger suppresses cuff bonus")
+
+	# 4. Downed Warden in combat party: rejected
+	var valid_ctx := _wardrobe_fixture()
+	var val_w: RunPatchWardrobe = valid_ctx["wardrobe"]
+	var val_t: RunTornMending = valid_ctx["torn"]
+	_check(val_w.sew("hemguard_cuff", "warden", "ARM", "op-val-cuff",
+		val_w.get_snapshot()).get("ok") == true, "AC3: sew cuff")
+	var cuff_svc := CombatWardenPoolBlockCards.new()
+	_check(cuff_svc.bind_patch_wardrobe(val_w, val_t), "AC3: bind valid cuff")
+	party = _party()
+	_check(party.apply_damage(1, 40) and party.is_downed(1), "AC3: Warden downed in combat")
+	_rejected_with(cuff_svc, _deck("warden_quick_darn"), party,
+		"warden_quick_darn", 0, "AC3: downed Warden in combat cannot play")
+
+	# 5. Stale binding by wardrobe replacement / re-sew: rejects play, leaves state untouched
+	var replace_ctx := _wardrobe_fixture()
+	var rep_w: RunPatchWardrobe = replace_ctx["wardrobe"]
+	var rep_t: RunTornMending = replace_ctx["torn"]
+	_check(rep_w.sew("hemguard_cuff", "warden", "ARM", "op-rep-cuff",
+		rep_w.get_snapshot()).get("ok") == true, "AC3: initial sew cuff")
+	var stale_svc := CombatWardenPoolBlockCards.new()
+	_check(stale_svc.bind_patch_wardrobe(rep_w, rep_t), "AC3: bind initial")
+	# Now mutate wardrobe via legitimate replacement:
+	var rep_op: Dictionary = rep_w.sew("pincushion_arm", "warden", "ARM", "op-legit-replace", rep_w.get_snapshot())
+	_check(rep_op.get("ok") == true, "AC3: legitimate replacement executed")
+	_check(not stale_svc.is_patch_binding_valid(), "AC3: binding is stale after replace")
+	party = _party()
+	deck = _deck("warden_hold_the_line")
+	_rejected_with(stale_svc, deck, party, "warden_hold_the_line", 0,
+		"AC3: stale binding rejects play instead of unpatched fallback")
+	# Rebind after replacement:
+	_check(stale_svc.bind_patch_wardrobe(rep_w, rep_t), "AC3: rebind after replace")
+	_check(stale_svc.is_patch_binding_valid(), "AC3: valid after rebind")
+	_accepted_with(stale_svc, deck, party, "warden_hold_the_line", 1, 0,
+		[5, 2, 2], "AC3: play succeeds after rebind with new ARM patch (pincushion -> unboosted Block)")
+
+	# 6. Stale binding by torn ledger mutation:
+	var torn_mut_ctx := _wardrobe_fixture()
+	var tm_w: RunPatchWardrobe = torn_mut_ctx["wardrobe"]
+	var tm_t: RunTornMending = torn_mut_ctx["torn"]
+	_check(tm_w.sew("hemguard_cuff", "warden", "ARM", "op-tm-cuff",
+		tm_w.get_snapshot()).get("ok") == true, "AC3: sew cuff for torn mutation test")
+	var tm_svc := CombatWardenPoolBlockCards.new()
+	_check(tm_svc.bind_patch_wardrobe(tm_w, tm_t), "AC3: bind tm_svc")
+	# Legitimate torn ledger mutation (battle end observed):
+	var b_heroes_tm: Array = _raw_heroes()
+	var b_end: Array = _raw_heroes()
+	b_end[1]["hp"] = 0 # Seamstress torn
+	_check(tm_t.observe_battle_end("node-mut", b_heroes_tm, b_end).get("ok") == true,
+		"AC3: battle end observed in torn ledger")
+	_check(not tm_svc.is_patch_binding_valid(), "AC3: binding stale after torn ledger mutation")
+	party = _party()
+	deck = _deck("warden_hold_the_line")
+	_rejected_with(tm_svc, deck, party, "warden_hold_the_line", 0,
+		"AC3: stale binding from torn ledger rejects play")
+	# Rebind after torn ledger change:
+	_check(tm_svc.bind_patch_wardrobe(tm_w, tm_t), "AC3: rebind after torn change")
+	party = _party()
+	deck = _deck("warden_hold_the_line")
+	_accepted_with(tm_svc, deck, party, "warden_hold_the_line", 1, 0,
+		[7, 2, 2], "AC3: play succeeds after rebind with cuff bonus")
+
+	# 7. Forged / failed bindings:
+	var bad_svc := CombatWardenPoolBlockCards.new()
+	_check(not bad_svc.bind_patch_wardrobe(null, null), "AC3: null wardrobe binding rejected")
+	_check(not bad_svc.is_patch_binding_valid(), "AC3: null binding is invalid")
+	party = _party()
+	deck = _deck("warden_hold_the_line")
+	_rejected_with(bad_svc, deck, party, "warden_hold_the_line", 0,
+		"AC3: attempted null binding rejects play")
+
+	var bad_snap_svc := CombatWardenPoolBlockCards.new()
+	_check(not bad_snap_svc.bind_patch_wardrobe(tm_w, tm_t, {"forged": 1}, null),
+		"AC3: wrong expected wardrobe snapshot rejected")
+	_check(not bad_snap_svc.is_patch_binding_valid(), "AC3: bad snapshot binding invalid")
+	_rejected_with(bad_snap_svc, deck, party, "warden_hold_the_line", 0,
+		"AC3: failed expected snapshot binding rejects play")
+
+	_check(not bad_snap_svc.bind_patch_wardrobe(tm_w, tm_t, null, {"forged": 1}),
+		"AC3: wrong expected torn state rejected")
+	_rejected_with(bad_snap_svc, deck, party, "warden_hold_the_line", 0,
+		"AC3: failed expected torn binding rejects play")
+
+	_check(not bad_snap_svc.bind_patch_wardrobe("forged", tm_t), "AC3: non-wardrobe rejected")
+	_check(not bad_snap_svc.bind_patch_wardrobe(tm_w, "forged"), "AC3: non-torn rejected")
+
+	# 8. Negative combat checks with bound service:
+	# Insufficient energy
+	var no_energy_deck := _deck("warden_iron_hem")
+	_check(no_energy_deck.try_spend_energy(3) and no_energy_deck.energy == 0, "AC3: spend all energy")
+	_rejected_with(cuff_svc, no_energy_deck, party, "warden_iron_hem", 0,
+		"AC3: bound cuff cannot play 2-cost iron hem at 0 energy")
+	# Wrong target for self card
+	_rejected_with(cuff_svc, _deck("warden_hold_the_line"), party,
+		"warden_hold_the_line", 1, "AC3: hold the line target must be 0")
+	# Wrong target for ally_single
+	_rejected_with(cuff_svc, _deck("warden_patch_guard"), party,
+		"warden_patch_guard", 0, "AC3: patch guard target cannot be 0")
+	_rejected_with(cuff_svc, _deck("warden_patch_guard"), party,
+		"warden_patch_guard", 4, "AC3: patch guard target cannot be 4")
+	# Target downed ally
+	var downed_ally_party := _party()
+	_check(downed_ally_party.apply_damage(3, 26) and downed_ally_party.is_downed(3),
+		"AC3: down hero 3")
+	_rejected_with(cuff_svc, _deck("warden_patch_guard"), downed_ally_party,
+		"warden_patch_guard", 3, "AC3: cannot target downed ally")
+	# Moved party from rear (position 3)
+	var rear_party := _moved_party(3)
+	_rejected_with(cuff_svc, _deck("warden_hold_the_line"), rear_party,
+		"warden_hold_the_line", 0, "AC3: hold the line illegal from rear")
+	# Overflow preflight
+	var ov_party := _party()
+	_check(ov_party.gain_block(1, CombatParty.MAX_INT - 5), "AC3: overflow fixture")
+	_rejected_with(cuff_svc, _deck("warden_hold_the_line"), ov_party,
+		"warden_hold_the_line", 0, "AC3: recipient would overflow with cuff bonus")
