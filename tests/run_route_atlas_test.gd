@@ -465,6 +465,323 @@ func _exercise_requests(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGener
 	requests.clear()
 
 
+# ---------------------------------------------------------------------------
+# Progressive reveal of newly legal stitches (presentation only).
+# ---------------------------------------------------------------------------
+
+func _ordered_legal(map: RunMap) -> Array[String]:
+	var result: Array[String] = []
+	var legal := map.get_legal_choices()
+	for floor_nodes in map.get_floors():
+		var by_position: Array = floor_nodes.duplicate()
+		by_position.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["position"]) < int(b["position"]))
+		for node in by_position:
+			var id: String = node["id"]
+			if legal.has(id) and not map.get_route().has(id):
+				result.append(id)
+	return result
+
+
+## Directed edges the authoritative map paints as visited-to-legal, sorted canonically.
+func _legal_edge_keys(map: RunMap) -> Array[String]:
+	var keys: Array[String] = []
+	var route := map.get_route()
+	var legal := map.get_legal_choices()
+	for floor_nodes in map.get_floors():
+		for node in floor_nodes:
+			var source: String = node["id"]
+			if not route.has(source):
+				continue
+			for target in node["outgoing"]:
+				if legal.has(target):
+					keys.append(source + "->" + str(target))
+	keys.sort()
+	return keys
+
+
+func _line_for(view: RunRouteAtlas, key: String) -> Line2D:
+	for child in view.get_children():
+		if child is Line2D \
+				and str(child.get_meta("from_id")) + "->" + str(child.get_meta("to_id")) == key:
+			return child as Line2D
+	return null
+
+
+func _no_masks(view: RunRouteAtlas) -> bool:
+	return _mask_count(view) == 0
+
+
+func _mask_count(view: RunRouteAtlas) -> int:
+	var count := 0
+	for child in view.get_children():
+		if child is Line2D and child.gradient != null:
+			count += 1
+	return count
+
+
+## Offset of the sewing front: the first sampled position the mask leaves transparent.
+func _reveal_front(mask: Gradient) -> float:
+	if mask == null:
+		return 1.0
+	for step in range(1, 101):
+		var offset := float(step) / 100.0
+		if mask.sample(offset).a < 0.5:
+			return offset
+	return 1.0
+
+
+## Behind the front the installed gradient is the only colour Godot draws, because setting
+## Line2D.gradient replaces default_color. Those pixels must be the legal thread, not white,
+## and everything ahead of the moving front must still be transparent.
+func _verify_reveal_colour(line: Line2D, label: String) -> void:
+	var key := "unknown"
+	if line != null and line.has_meta("from_id") and line.has_meta("to_id"):
+		key = str(line.get_meta("from_id")) + "->" + str(line.get_meta("to_id"))
+	var mask: Gradient = line.gradient if line != null else null
+	_check(mask != null, label + ": sewing stitch still carries its reveal mask: " + key)
+	if mask == null:
+		return
+	var front := _reveal_front(mask)
+	var sewn := mask.sample(clampf(front - 0.01, 0.0, 1.0))
+	var unsewn := mask.sample(clampf(front + 0.01, 0.0, 1.0))
+	var transparent_legal := Color(RunRouteAtlas.LEGAL_THREAD.r, RunRouteAtlas.LEGAL_THREAD.g,
+		RunRouteAtlas.LEGAL_THREAD.b, 0.0)
+	_check(sewn.is_equal_approx(RunRouteAtlas.LEGAL_THREAD)
+		and is_equal_approx(sewn.a, RunRouteAtlas.LEGAL_THREAD.a)
+		and not (is_equal_approx(sewn.r, 1.0) and is_equal_approx(sewn.g, 1.0)
+			and is_equal_approx(sewn.b, 1.0)),
+		label + ": sewn pixels behind the front sample the legal thread colour: " + key)
+	_check(unsewn.is_equal_approx(transparent_legal) and is_zero_approx(unsewn.a),
+		label + ": pixels ahead of the front stay transparent: " + key)
+
+
+## Select one real legal node, then confirm only its newly legal stitches are masking.
+func _reveal_step(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		label: String) -> Array[String]:
+	var legal := map.get_legal_choices()
+	_check(not legal.is_empty(), label + ": real legal node before the step")
+	if legal.is_empty():
+		return []
+	var before := _state(map, rng)
+	_check(map.choose_node(legal[0]), label + ": real node selected")
+	_check(_state(map, rng)["rng"] == before["rng"], label + ": progression spends no run RNG")
+	view.refresh()
+	var expected := _legal_edge_keys(map)
+	_check(not expected.is_empty(), label + ": selected node exposes visited-to-legal stitches")
+	_check(view.revealing_edges() == expected, label + ": exactly the new legal stitches reveal")
+	var masked := 0
+	for child in view.get_children():
+		if not (child is Line2D):
+			continue
+		var line: Line2D = child
+		if line.gradient == null:
+			continue
+		masked += 1
+		var key := str(line.get_meta("from_id")) + "->" + str(line.get_meta("to_id"))
+		_check(expected.has(key) and line.default_color == RunRouteAtlas.LEGAL_THREAD
+			and line.points.size() == 16,
+			label + ": masked thread is a new legal stitch on its canonical path: " + key)
+		_verify_reveal_colour(line, label)
+	_check(masked == expected.size(), label + ": every and only new legal stitch carries a mask")
+	_check(_state(map, rng)["rng"] == before["rng"], label + ": refresh during a reveal spends no run RNG")
+	return expected
+
+
+## Real seeded selected nodes must sew their new legal stitches in, then settle.
+func _exercise_reveal(seed_value: int) -> void:
+	var rng := _rng(seed_value)
+	var map := RunMap.new()
+	_check(map.generate(rng), "reveal fixture generated from a real seed")
+	var view := RunRouteAtlas.new()
+	view.position = Vector2(20, 40)
+	root.add_child(view)
+	view.node_requested.connect(_record_request)
+	await process_frame
+	requests.clear()
+	seed(99013)
+	var expected_global := randi()
+	seed(99013)
+	var opening := _state(map, rng)
+	view.bind_map(map)
+	_check(not view.is_revealing() and view.revealing_edges().is_empty() and _no_masks(view),
+		"opening snapshot has no visited-to-legal stitch to reveal")
+	_check(view.reveal_duration() == RunRouteAtlas.REVEAL_DURATION
+		and is_equal_approx(RunRouteAtlas.REVEAL_DURATION, 0.6)
+		and is_equal_approx(RunRouteAtlas.REVEAL_FAST_DURATION, 0.15),
+		"normal reveal is bounded to 0.6 s and fast mode to 0.15 s")
+	_check(_state(map, rng) == opening, "binding an unvisited map starts no reveal or model change")
+	_verify(view, map, rng, "reveal opening seed %d" % seed_value)
+
+	# Normal presentation: the first real selected node exposes new legal stitches.
+	view.set_reveal_fast(false)
+	var first_keys := await _reveal_step(view, map, rng, "seed %d slow reveal" % seed_value)
+	_check(first_keys.size() >= 2, "selected node exposes several legal stitches")
+	var probe: Line2D = _line_for(view, first_keys[0]) if not first_keys.is_empty() else null
+	_check(probe != null and probe.gradient != null
+		and probe.get_meta("route_state") == "legal"
+		and probe.default_color == RunRouteAtlas.LEGAL_THREAD and probe.points.size() == 16,
+		"newly legal stitch keeps canonical state, colour and path under its mask")
+	var mask: Gradient = null
+	if probe != null:
+		mask = probe.gradient
+	_check(_reveal_front(mask) <= 0.02, "stitch starts hidden at its source end")
+	# Exact graph, geometry and colour checks while the reveal is still animating.
+	_verify(view, map, rng, "seed %d mid reveal" % seed_value)
+	await create_timer(0.15).timeout
+	_check(view.is_revealing(), "stitch is still sewing shortly after progression")
+	var first_front := _reveal_front(mask)
+	_check(first_front > 0.05 and first_front < 0.95,
+		"stitch partially reveals from its source end")
+	_check(probe != null and probe.default_color == RunRouteAtlas.LEGAL_THREAD
+		and probe.points.size() == 16,
+		"partial reveal leaves the canonical colour and geometry alone")
+	_verify_reveal_colour(probe, "seed %d mid reveal" % seed_value)
+	await create_timer(0.1).timeout
+	_check(probe != null and probe.gradient != null
+		and _reveal_front(probe.gradient) > first_front,
+		"sewing front advances further along the same thread")
+	_verify_reveal_colour(probe, "seed %d advanced reveal" % seed_value)
+	await create_timer(0.45).timeout
+	_check(not view.is_revealing() and _no_masks(view),
+		"reveal settles within 0.6 s and drops every temporary mask")
+	for key in first_keys:
+		var line: Line2D = _line_for(view, key)
+		_check(line != null and line.gradient == null
+			and line.default_color == RunRouteAtlas.LEGAL_THREAD and line.points.size() == 16,
+			"settled stitch keeps its full authoritative colour: " + key)
+	_verify(view, map, rng, "seed %d revealed floor" % seed_value)
+	# Repeated viewing of an unchanged snapshot never replays the reveal.
+	var settled_floors := map.get_floors()
+	view.refresh()
+	_check(not view.is_revealing() and _no_masks(view),
+		"repeated refresh does not replay a settled reveal")
+	view.refresh()
+	_check(not view.is_revealing() and _no_masks(view)
+		and map.get_floors() == settled_floors,
+		"second repeat refresh stays inert and leaves the canonical graph alone")
+
+	# Inputs must never wait for the reveal.
+	var second_keys := await _reveal_step(view, map, rng, "seed %d input reveal" % seed_value)
+	_check(view.is_revealing() and not second_keys.is_empty(),
+		"input probe runs on an actively revealing atlas")
+	var ordered := _ordered_legal(map)
+	var key_down := InputEventKey.new()
+	key_down.keycode = KEY_1
+	key_down.pressed = true
+	root.push_input(key_down, true)
+	_check(not ordered.is_empty() and requests == [ordered[0]],
+		"numeric shortcut emits its request synchronously during a reveal")
+	_check(view.is_revealing(), "a running reveal never delays a keyboard request")
+	var key_up := InputEventKey.new()
+	key_up.keycode = KEY_1
+	key_up.pressed = false
+	root.push_input(key_up, true)
+	requests.clear()
+	var before_click := _state(map, rng)
+	var action: Button = _action(view, ordered[0]) if not ordered.is_empty() else null
+	_check(action != null, "input probe action is really mounted")
+	if action != null:
+		await _click_action(action)
+		_check(requests == [ordered[0]], "mouse request is admitted during a reveal")
+		_check(view.is_revealing(), "a running reveal never delays a mouse request")
+	_check(_state(map, rng) == before_click, "inputs during a reveal spend no map or RNG state")
+	requests.clear()
+
+	# Teardown and rebind must release the tween and masks before children go.
+	view.bind_map(null)
+	_check(not view.is_revealing() and view.get_child_count() == 0,
+		"null bind mid-reveal releases tween and masks with its threads")
+	await process_frame
+	await process_frame
+	_check(view.get_child_count() == 0 and not view.is_revealing(),
+		"no orphan tween or mask resurrects after a null bind")
+	view.bind_map(map)
+	var rebind_keys := _legal_edge_keys(map)
+	_check(view.revealing_edges() == rebind_keys,
+		"rebind re-arms exactly the visited-to-legal stitches, without duplicates")
+	_verify(view, map, rng, "seed %d rebind reveal" % seed_value)
+	var other_rng := _rng(seed_value + 1)
+	var other := RunMap.new()
+	_check(other.generate(other_rng), "replacement map fixture generated")
+	view.bind_map(other)
+	_check(not view.is_revealing() and _no_masks(view),
+		"replacement bind mid-reveal tears the old mask down")
+	_verify(view, other, other_rng, "seed %d replacement bind" % seed_value)
+
+	# Fast presentation: the same reveal in 0.15 s.
+	view.bind_map(map)
+	_check(view.is_revealing(), "progressed map re-arms a reveal on rebind")
+	view.set_reveal_fast(true)
+	var fast_keys := await _reveal_step(view, map, rng, "seed %d fast reveal" % seed_value)
+	_check(view.reveal_duration() == RunRouteAtlas.REVEAL_FAST_DURATION
+		and is_equal_approx(RunRouteAtlas.REVEAL_FAST_DURATION, 0.15),
+		"fast presentation switch shortens the reveal to 0.15 s")
+	_check(not fast_keys.is_empty() and view.revealing_edges() == fast_keys,
+		"fast mode reveals each new legal stitch")
+	for key in fast_keys:
+		_verify_reveal_colour(_line_for(view, key), "seed %d fast reveal" % seed_value)
+	await create_timer(0.2).timeout
+	_check(not view.is_revealing() and _no_masks(view),
+		"fast reveal settles within 0.15 s")
+	for key in fast_keys:
+		var line: Line2D = _line_for(view, key)
+		_check(line != null and line.gradient == null
+			and line.default_color == RunRouteAtlas.LEGAL_THREAD and line.points.size() == 16,
+			"fast settled stitch keeps its authoritative colour: " + key)
+	_verify(view, map, rng, "seed %d fast revealed floor" % seed_value)
+	view.set_reveal_fast(false)
+	_check(view.reveal_duration() == RunRouteAtlas.REVEAL_DURATION,
+		"normal reveal duration is restored")
+
+	# The live overlay binds its map before mounting the view, so a queued reveal
+	# must start on the first mounted frame instead of being dropped.
+	var queued_rng := _rng(seed_value + 2)
+	var queued_map := RunMap.new()
+	_check(queued_map.generate(queued_rng), "queued-reveal fixture generated")
+	var queued_id: String = queued_map.get_legal_choices()[0]
+	_check(queued_map.choose_node(queued_id), "queued-reveal fixture has one visited node")
+	var queued_view := RunRouteAtlas.new()
+	queued_view.position = Vector2(20, 40)
+	queued_view.bind_map(queued_map)
+	_check(not queued_view.is_inside_tree() and queued_view.is_revealing()
+		and _mask_count(queued_view) == _legal_edge_keys(queued_map).size()
+		and _mask_count(queued_view) > 0,
+		"binding before mounting queues the reveal like the live overlay does")
+	root.add_child(queued_view)
+	_check(queued_view.is_revealing(), "queued reveal is retained once the view is mounted")
+	await create_timer(0.15).timeout
+	_check(queued_view.is_revealing() and not _no_masks(queued_view),
+		"queued reveal sews in on the mounted view")
+	await create_timer(0.5).timeout
+	_check(not queued_view.is_revealing() and _no_masks(queued_view),
+		"queued reveal settles within 0.6 s")
+	_verify(queued_view, queued_map, queued_rng, "seed %d queued reveal" % seed_value)
+	queued_view.queue_free()
+	await process_frame
+
+	# A completed run map is inert: no legal stitch exists to reveal.
+	var done_rng := _rng(seed_value)
+	var done := RunMap.new()
+	_check(done.generate(done_rng), "completed-map fixture generated")
+	for step in range(12):
+		var choices := done.get_legal_choices()
+		if choices.is_empty() or not done.choose_node(choices[0]):
+			break
+	_check(done.is_complete() and done.get_legal_choices().is_empty(), "fixture reaches the boss")
+	view.bind_map(done)
+	_check(not view.is_revealing() and _no_masks(view),
+		"completed maps stay inert with no reveal or mask")
+	_verify(view, done, done_rng, "seed %d completed reveal" % seed_value)
+	_check(rng.state == opening["rng"], "the whole reveal sequence spends no run RNG")
+	_check(randi() == expected_global, "progressive reveals never consume the global RNG")
+	view.bind_map(null)
+	_check(not view.is_revealing() and view.get_child_count() == 0,
+		"final null bind leaves the reveal machinery empty")
+	view.queue_free()
+	await process_frame
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var first := RunRouteAtlas.new()
@@ -681,6 +998,8 @@ func _run() -> void:
 	first._request_node("f01_n0", null, first._revision)
 	_check(requests.is_empty() and first.get_child_count() == 0,
 		"last null rejects stale and null callbacks, clears edges, headers and markers")
+	# Progressive reveal of newly legal stitches on a real seeded route.
+	await _exercise_reveal(6)
 	first.queue_free()
 	await process_frame
 	if failures.is_empty():
