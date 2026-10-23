@@ -21,6 +21,8 @@ class CorruptedWardrobe extends RunPatchWardrobe:
 func _initialize() -> void:
 	_test_two_legal_stitches_and_wardrobe_summary()
 	_test_shop_removal_and_wardrobe_updates()
+	_test_current_stitched_cards_readout()
+	_test_upgraded_half_in_stitched_card()
 	_test_negative_matrix_detachment_and_rng()
 	if failures.is_empty():
 		print("run_signature_summary_test: PASS (", checks, " checks)")
@@ -239,6 +241,159 @@ func _assert_ac1_scenario(deck: Array[String], scenario_name: String) -> void:
 	_check(randi() == global_sample_before, scenario_name + ": global RNG state unchanged after summary")
 
 
+func _test_current_stitched_cards_readout() -> void:
+	var heroes: Array = _load_party()
+	var starter_deck: Array[String] = _load_starter_deck()
+
+	# Create two stitched cards.
+	var stitch_1 := RunRestStitchCards.new(starter_deck, {}, 6, 1)
+	var res_1: Dictionary = stitch_1.choose_stitch(starter_deck.find("warden_strike"), starter_deck.find("seamstress_prick"), stitch_1.get_snapshot())
+	var deck_1: Array[String] = []
+	deck_1.assign(res_1.get("deck", []))
+	var desc_1: Dictionary = res_1.get("descriptors", {}).duplicate(true)
+
+	var stitch_2 := RunRestStitchCards.new(deck_1, desc_1, 3, 2)
+	var res_2: Dictionary = stitch_2.choose_stitch(deck_1.find("seamstress_mend"), deck_1.find("tinker_pop_shot"), stitch_2.get_snapshot())
+	var deck_2: Array[String] = []
+	deck_2.assign(res_2.get("deck", []))
+	var desc_2: Dictionary = res_2.get("descriptors", {}).duplicate(true)
+	var cursor: int = res_2.get("next_stitch_id", 3)
+
+	# Build wardrobe.
+	var defs: Array = _authored_patch_definitions()
+	var owned: Array = ["button_eye", "stitched_badge", "pincushion_arm", "spare_spool", "quilted_coat"]
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, defs, 3, 100, deck_2, 777)
+	wardrobe.sew("button_eye", "warden", "HEAD", "op_sew_w", wardrobe.get_snapshot())
+	wardrobe.sew("pincushion_arm", "seamstress", "ARM", "op_sew_s", wardrobe.get_snapshot())
+	wardrobe.sew("quilted_coat", "tinker", "COAT", "op_sew_t", wardrobe.get_snapshot())
+
+	# Execute RunSignatureSummary.summarize
+	var summary: Dictionary = RunSignatureSummary.summarize(deck_2, desc_2, cursor, wardrobe)
+
+	_check(summary.get("ok") == true, "AC1: summary reports ok == true")
+
+	# Check current_stitched_cards field exists and is an array of 2 items
+	var current_stitched: Variant = summary.get("current_stitched_cards")
+	_check(typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 2,
+		"AC1: current_stitched_cards is an array of 2 items")
+
+	if typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 2:
+		# Check first stitched card (stitched_000001: warden_strike + seamstress_prick)
+		var card_1: Dictionary = current_stitched[0]
+		_check(card_1.get("id") == "stitched_000001", "AC1: first card id is stitched_000001")
+		_check(card_1.get("display_name") == "Strike / Prick", "AC1: first card display_name is 'Strike / Prick'")
+		_check(card_1.get("cost") == 2, "AC1: first card cost is 2 (min(3, max(1,1)+1))")
+		var owners_1: Array = card_1.get("owners", [])
+		_check(typeof(owners_1) == TYPE_ARRAY and owners_1.size() == 2 and owners_1 == ["warden", "seamstress"],
+			"AC1: first card owners are ['warden', 'seamstress'] in order")
+		var half_ids_1: Array = card_1.get("half_ids", [])
+		_check(typeof(half_ids_1) == TYPE_ARRAY and half_ids_1.size() == 2 and half_ids_1 == ["warden_strike", "seamstress_prick"],
+			"AC1: first card half_ids are ['warden_strike', 'seamstress_prick'] in order")
+
+		# Check second stitched card (stitched_000002: seamstress_mend + tinker_pop_shot)
+		var card_2: Dictionary = current_stitched[1]
+		_check(card_2.get("id") == "stitched_000002", "AC1: second card id is stitched_000002")
+		_check(card_2.get("display_name") == "Mend / Pop Shot", "AC1: second card display_name is 'Mend / Pop Shot'")
+		_check(card_2.get("cost") == 2, "AC1: second card cost is 2 (min(3, max(1,1)+1))")
+		var owners_2: Array = card_2.get("owners", [])
+		_check(typeof(owners_2) == TYPE_ARRAY and owners_2.size() == 2 and owners_2 == ["seamstress", "tinker"],
+			"AC1: second card owners are ['seamstress', 'tinker'] in order")
+		var half_ids_2: Array = card_2.get("half_ids", [])
+		_check(typeof(half_ids_2) == TYPE_ARRAY and half_ids_2.size() == 2 and half_ids_2 == ["seamstress_mend", "tinker_pop_shot"],
+			"AC1: second card half_ids are ['seamstress_mend', 'tinker_pop_shot'] in order")
+
+	# Verify existing fields unchanged
+	_check(summary.get("stitched_created") == 2, "AC1: stitched_created == 2 historical allocations")
+	_check(summary.get("stitched_current") == 2, "AC1: stitched_current == 2 currently owned")
+	_check(summary.get("stitched_ids") == ["stitched_000001", "stitched_000002"], "AC1: stitched_ids matches current_stitched_cards ids")
+
+	# Test detachment: mutate returned nested arrays and verify re-run is unchanged
+	var card_1_mutated: Dictionary = current_stitched[0]
+	card_1_mutated["owners"] = ["MUTATED", "OWNER"]
+	card_1_mutated["half_ids"] = ["MUTATED", "HALF"]
+
+	var summary_rerun: Dictionary = RunSignatureSummary.summarize(deck_2, desc_2, cursor, wardrobe)
+	var rerun_current: Variant = summary_rerun.get("current_stitched_cards")
+	_check(typeof(rerun_current) == TYPE_ARRAY and rerun_current.size() == 2, "AC3: re-run current_stitched_cards still has 2 items")
+	if typeof(rerun_current) == TYPE_ARRAY and rerun_current.size() == 2:
+		var rerun_card_1: Dictionary = rerun_current[0]
+		_check(rerun_card_1.get("owners") == ["warden", "seamstress"], "AC3: re-run card 1 owners unchanged after mutation")
+		_check(rerun_card_1.get("half_ids") == ["warden_strike", "seamstress_prick"], "AC3: re-run card 1 half_ids unchanged after mutation")
+
+	# Verify failure case returns empty current_stitched_cards
+	var failure_summary: Dictionary = RunSignatureSummary.summarize([], {}, 1, wardrobe)
+	var failure_current: Variant = failure_summary.get("current_stitched_cards")
+	_check(typeof(failure_current) == TYPE_ARRAY and failure_current.size() == 0, "AC3: failure returns empty current_stitched_cards")
+
+
+func _test_upgraded_half_in_stitched_card() -> void:
+	# This test uses a canonical upgraded half from the pool cards.
+	# We need to find an upgraded card in the pool to use.
+	var heroes: Array = _load_party()
+	var starter_deck: Array[String] = _load_starter_deck()
+
+	# Check what upgraded cards are available in the pool
+	var warden_pool := WardenPoolCards.new()
+
+	# Find an upgraded warden card from the pool (e.g., warden_hold_the_line_plus)
+	var upgraded_warden_id: String = ""
+	if warden_pool.has_card("warden_hold_the_line_plus"):
+		upgraded_warden_id = "warden_hold_the_line_plus"
+	elif warden_pool.has_card("warden_pinning_jab_plus"):
+		upgraded_warden_id = "warden_pinning_jab_plus"
+	elif warden_pool.has_card("warden_heavy_thimble_plus"):
+		upgraded_warden_id = "warden_heavy_thimble_plus"
+
+	_check(not upgraded_warden_id.is_empty(), "AC1: found an upgraded warden pool card for test")
+
+	# Create a new deck with the upgraded card (pool cards are valid for stitching)
+	var deck_with_upgrade: Array[String] = starter_deck.duplicate()
+	deck_with_upgrade.append(upgraded_warden_id)
+
+	# Stitch upgraded_warden_id with seamstress_mend
+	var stitch_2 := RunRestStitchCards.new(deck_with_upgrade, {}, 6, 1)
+	var idx_upgraded: int = deck_with_upgrade.find(upgraded_warden_id)
+	var idx_mend: int = deck_with_upgrade.find("seamstress_mend")
+	_check(idx_upgraded >= 0 and idx_mend >= 0 and idx_upgraded != idx_mend, "AC1: found distinct cards for upgraded stitch")
+	if idx_upgraded < 0 or idx_mend < 0 or idx_upgraded == idx_mend:
+		return
+
+	var res_2: Dictionary = stitch_2.choose_stitch(idx_upgraded, idx_mend, stitch_2.get_snapshot())
+	var deck_2: Array[String] = []
+	deck_2.assign(res_2.get("deck", []))
+	var desc_2: Dictionary = res_2.get("descriptors", {}).duplicate(true)
+	var cursor: int = res_2.get("next_stitch_id", 2)
+
+	# Build wardrobe
+	var defs: Array = _authored_patch_definitions()
+	var owned: Array = ["button_eye", "pincushion_arm", "quilted_coat"]
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, defs, 0, 50, deck_2, 999)
+
+	# Execute summary
+	var summary: Dictionary = RunSignatureSummary.summarize(deck_2, desc_2, cursor, wardrobe)
+	_check(summary.get("ok") == true, "AC1 upgraded: summary ok")
+
+	var current_stitched: Variant = summary.get("current_stitched_cards")
+	_check(typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 1, "AC1 upgraded: current_stitched_cards has 1 item")
+
+	if typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 1:
+		var card: Dictionary = current_stitched[0]
+		_check(card.get("id") == "stitched_000001", "AC1 upgraded: card id is stitched_000001")
+		# The display name should include the upgraded half's actual display name (e.g., "Hold the Line+ / Mend")
+		var display_name: String = card.get("display_name", "")
+		_check(display_name.contains("+"), "AC1 upgraded: display_name contains upgraded half marker: " + display_name)
+		var half_ids: Array = card.get("half_ids", [])
+		_check(typeof(half_ids) == TYPE_ARRAY and half_ids.size() == 2, "AC1 upgraded: half_ids has 2 items")
+		_check(half_ids.has(upgraded_warden_id), "AC1 upgraded: half_ids contains upgraded card id: " + upgraded_warden_id)
+		_check(half_ids.has("seamstress_mend"), "AC1 upgraded: half_ids contains seamstress_mend")
+		var owners: Array = card.get("owners", [])
+		_check(typeof(owners) == TYPE_ARRAY and owners.size() == 2 and owners == ["warden", "seamstress"],
+			"AC1 upgraded: owners are ['warden', 'seamstress'] in order")
+
+	# Verify stitched_created still counts correctly
+	_check(summary.get("stitched_created") == 1, "AC1 upgraded: stitched_created == 1")
+
+
 func _test_shop_removal_and_wardrobe_updates() -> void:
 	var heroes: Array = _load_party()
 	var starter_deck: Array[String] = _load_starter_deck()
@@ -359,6 +514,7 @@ func _test_negative_matrix_detachment_and_rng() -> void:
 		"descriptors": {},
 		"worn_ids": [],
 		"stitched_ids": [],
+		"current_stitched_cards": [],
 	}
 
 	# RNG setups
