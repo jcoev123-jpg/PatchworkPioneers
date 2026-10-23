@@ -25,11 +25,20 @@ const STATUS_ORDER := ["bleed", "weak", "exposed"]
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 const CHIP_FONT_SIZES := [11, 10, 9]
 const CHIP_SEPARATION := 2
+## Bounded, presentation-only readable names for known authored patch IDs. The M05
+## HEAD/ARM entries only name already-prepared catalog patches; their live rules are
+## wired by separate tasks, so `_patch_power` still adds no effect sentence for them.
+## An unknown ID keeps its raw authored ID and is never given a power line.
 const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
 	"quilted_coat": "Quilted Coat", "padded_vest": "Padded Vest",
 	"double_quilt_coat": "Double Quilt Coat", "scrap_lined_vest": "Scrap Lined Vest",
-	"wool_patch_cloak": "Wool Patch Cloak", "chain_stitched_coat": "Chain Stitched Coat"}
+	"wool_patch_cloak": "Wool Patch Cloak", "chain_stitched_coat": "Chain Stitched Coat",
+	"reinforced_patchcoat": "Reinforced Patchcoat", "thick_felt_mantle": "Thick Felt Mantle",
+	"bloodstitch_bonnet": "Bloodstitch Bonnet", "button_glass_visor": "Button Glass Visor",
+	"stern_seam_cap": "Stern Seam Cap", "reinforced_browband": "Reinforced Browband",
+	"hemguard_cuff": "Hemguard Cuff", "red_bobbin_cuff": "Red Bobbin Cuff",
+	"loose_thread_glove": "Loose Thread Glove", "frayfinder_mitt": "Frayfinder Mitt"}
 ## Committed Block icon, painted inside the meter's existing sewn glyph. Optional: a
 ## missing image leaves the drawn shield in place, so protection is always readable.
 const UI_ART_DIR := "res://assets/paper/ui/"
