@@ -58,6 +58,16 @@
         { "id": "pass", "text": "Pass without stopping", "outcome": { "gold": 0, "scraps": 0 } },
         { "id": "cut_bindings", "text": "Cut the binding threads (spend 2 scraps; gain 28 gold)", "outcome": { "gold": 28, "scraps": -2 } }
       ]
+    },
+    {
+      "id": "quilting_bee",
+      "title": "The Quilting Bee",
+      "description": "Neighbours gather around a half-sewn patchwork quilt, offering coins for help and spare thread for travellers.",
+      "choices": [
+        { "id": "sew_panel", "text": "Sew a communal panel (spend 2 scraps; gain 32 gold)", "outcome": { "gold": 32, "scraps": -2 } },
+        { "id": "buy_thread", "text": "Buy two thread bundles (spend 15 gold; gain 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
+        { "id": "watch", "text": "Watch the neighbours stitch (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } }
+      ]
     }
   ]
 }
