@@ -1022,6 +1022,7 @@ func _run() -> void:
 	await _three_enemy_stage(app, presenter)
 	await _block_art_case(app, presenter)
 	await _worn_coat_ribbons_test(app, presenter)
+	await _m05_patch_ribbons_test(app, presenter)
 	app.free()
 	await _frames()
 	_finish()
@@ -1575,6 +1576,280 @@ func _worn_coat_ribbons_test(app, presenter) -> void:
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
 		"worn coat ribbons test cleans up and returns to title")
+
+
+## The mounted patch chip for one authored slot on a hero ribbon.
+func _patch_chip(meter: CombatActorMeter, slot: String) -> Button:
+	var row := meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+	if row == null:
+		return null
+	return row.get_node_or_null("Patch" + slot) as Button
+
+
+## Exact wearer/id/slot/state tooltip the mounted ribbon composes for one sewn patch.
+func _patch_tooltip(hero: Dictionary, label: String, patch_id: String, slot: String,
+		active: bool) -> String:
+	return "%s (%s)\n%s (%s) — %s\n%s" % [
+		hero.get("name", String(hero["id"]).capitalize()), hero["id"],
+		label, patch_id, slot, "ACTIVE" if active else "DORMANT"]
+
+
+## A named but unwired HEAD/ARM patch: readable name, authored ID, real wearer and
+## slot, and exactly one status line — never a fabricated live-power sentence.
+func _assert_named_chip(button: Button, hero: Dictionary, label: String,
+		patch_id: String, slot: String, active: bool) -> void:
+	_check(button != null and button.visible and button.text == slot
+		and button.focus_mode == Control.FOCUS_NONE
+		and button.mouse_filter == Control.MOUSE_FILTER_STOP
+		and button.mouse_default_cursor_shape == Control.CURSOR_HELP
+		and button.pressed.get_connections().is_empty(),
+		"sewn %s chip is a visible, hover-only, actionless slot label: %s" % [slot, patch_id])
+	if button == null:
+		return
+	var expected := _patch_tooltip(hero, label, patch_id, slot, active)
+	_check(button.tooltip_text == expected,
+		"%s keeps its readable name, authored ID, wearer and slot: %s" % [patch_id, button.tooltip_text])
+	_check(button.tooltip_text.split("\n").size() == 3,
+		"unwired patch tooltip invents no effect line: " + patch_id)
+
+
+## Build a genuine wardrobe/carryover exactly like real play, sew the supplied
+## [patch_id, hero_id, slot] triples, mount the real combat party and return the
+## live meters plus the authoritative ledgers. Returns {} on any setup failure.
+func _m05_worn_fixture(app, presenter, sewn: Array) -> Dictionary:
+	_fixture_start(app)
+	await _frames()
+	if app.party == null or not is_instance_valid(app.battle_view):
+		return {}
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/starter_party.json"))
+	if typeof(raw) != TYPE_ARRAY or raw.size() != 3:
+		return {}
+	var combat_defs: Array = raw.duplicate(true)
+	for record in combat_defs:
+		record["max_hp"] = int(record["max_hp"])
+	var raw_heroes: Array = CombatParty.new(combat_defs).get_heroes()
+	var definitions := []
+	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches",
+			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches"]:
+		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/%s.json" % catalog))
+		if entries is Array:
+			for entry in entries:
+				definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = []
+	for entry in sewn:
+		owned.append(entry[0])
+	var carry := RunTornCarryover.new(raw_heroes)
+	var wardrobe := RunPatchWardrobe.new(raw_heroes, owned, definitions, 6, 50,
+		["warden_strike"], 93811, true)
+	_check(carry.is_valid() and wardrobe.is_valid(),
+		"M05 worn case: real carryover and wardrobe are valid")
+	if not carry.is_valid() or not wardrobe.is_valid():
+		return {}
+	for index in range(sewn.size()):
+		var receipt: Dictionary = wardrobe.sew(sewn[index][0], sewn[index][1],
+			sewn[index][2], "sew:m05:%d" % index, wardrobe.get_snapshot())
+		_check(receipt.get("ok", false), "M05 worn case sews " + sewn[index][0])
+		if not receipt.get("ok", false):
+			return {}
+	_check(carry.can_bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"M05 worn case: carryover accepts the authored wardrobe")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"M05 worn case: carryover binds the wardrobe")
+	app.party_carryover = carry
+	var combat_party: CombatParty = carry.create_next_fight_party()
+	_check(combat_party != null and combat_party.is_valid(),
+		"M05 worn case: the real combat party carries the authored patch projections")
+	if combat_party == null:
+		return {}
+	app.party = combat_party
+	presenter._sync_battle()
+	await _frames()
+	var meters := _meters(app)
+	_check(meters.size() >= 5, "M05 worn case: mounted hero ribbons exist")
+	if meters.size() < 5:
+		return {}
+	return {"meters": meters, "carry": carry, "wardrobe": wardrobe, "party": combat_party}
+
+
+## M05: the live worn chip names each newly sewn patch, and the two newly authored
+## coats show the authoritative RunPatchCoatRules power they already provide.
+func _m05_patch_ribbons_test(app, presenter) -> void:
+	# AC1: bounded known-ID labels, with the previously accepted names intact.
+	var labels := {
+		"bloodstitch_bonnet": "Bloodstitch Bonnet", "button_glass_visor": "Button Glass Visor",
+		"stern_seam_cap": "Stern Seam Cap", "reinforced_browband": "Reinforced Browband",
+		"hemguard_cuff": "Hemguard Cuff", "red_bobbin_cuff": "Red Bobbin Cuff",
+		"loose_thread_glove": "Loose Thread Glove", "frayfinder_mitt": "Frayfinder Mitt",
+		"reinforced_patchcoat": "Reinforced Patchcoat", "thick_felt_mantle": "Thick Felt Mantle",
+		"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
+		"quilted_coat": "Quilted Coat", "stitched_badge": "Stitched Badge",
+		"spare_spool": "Spare Spool"}
+	for id in labels:
+		_check(presenter.PATCH_LABELS.get(id, "") == labels[id],
+			"authored readable patch label stays intact: " + id)
+	# Case A: both new COAT options plus representative HEAD/ARM labels.
+	var case_a := await _m05_worn_fixture(app, presenter, [
+		["bloodstitch_bonnet", "warden", "HEAD"],
+		["hemguard_cuff", "warden", "ARM"],
+		["reinforced_patchcoat", "warden", "COAT"],
+		["thick_felt_mantle", "seamstress", "COAT"],
+		["button_glass_visor", "tinker", "HEAD"],
+		["loose_thread_glove", "tinker", "ARM"]])
+	_check(not case_a.is_empty(), "M05 case A: real wardrobe, carryover and live meters")
+	if case_a.is_empty():
+		return
+	var meters: Array = case_a["meters"]
+	var carry: RunTornCarryover = case_a["carry"]
+	var wardrobe: RunPatchWardrobe = case_a["wardrobe"]
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	var projected: Dictionary = RunPatchCoatRules.project_health(
+		carry.torn.read_state(), wardrobe, coats)
+	_check(projected.get("ok") == true, "M05 case A: authoritative coat projection is valid")
+	if projected.get("ok") != true:
+		return
+	var by_id := {}
+	for hero in projected["heroes"]:
+		by_id[hero["id"]] = hero
+	# AC2: real authored +9/+10 caps from the genuine carryover party, no free heal.
+	_check(app.party.get_hero(1)["max_hp"] == 49 and app.party.get_hero(1)["hp"] == 40
+		and app.party.get_hero(1)["max_hp"] == by_id["warden"]["max_hp"],
+		"Warden wears reinforced_patchcoat for the authoritative +9 cap without a heal")
+	_check(app.party.get_hero(2)["max_hp"] == 40 and app.party.get_hero(2)["hp"] == 30
+		and app.party.get_hero(2)["max_hp"] == by_id["seamstress"]["max_hp"],
+		"Seamstress wears thick_felt_mantle for the authoritative +10 cap without a heal")
+	_check(meters[0].hp_text.text == "40/49" and meters[1].hp_text.text == "30/40"
+		and meters[2].hp_text.text == "26/26",
+		"M05 case A: the visible HP numbers carry the real coat caps")
+	var warden_coat := _patch_chip(meters[0], "COAT")
+	_check(warden_coat != null and warden_coat.visible and warden_coat.text == "COAT"
+		and warden_coat.focus_mode == Control.FOCUS_NONE
+		and warden_coat.pressed.get_connections().is_empty(),
+		"M05 case A: Warden COAT chip is a visible, actionless slot label")
+	_check(warden_coat != null and warden_coat.tooltip_text
+		== _patch_tooltip(app.party.get_hero(1), "Reinforced Patchcoat", "reinforced_patchcoat",
+			"COAT", true) + "\n+9 effective maximum HP while living; no free healing.",
+		"Warden COAT chip names Reinforced Patchcoat, its real +9 and no free healing")
+	var seamstress_coat := _patch_chip(meters[1], "COAT")
+	_check(seamstress_coat != null and seamstress_coat.visible and seamstress_coat.text == "COAT",
+		"M05 case A: Seamstress COAT chip is a visible slot label")
+	_check(seamstress_coat != null and seamstress_coat.tooltip_text
+		== _patch_tooltip(app.party.get_hero(2), "Thick Felt Mantle", "thick_felt_mantle",
+			"COAT", true) + "\n+10 effective maximum HP while living; no free healing.",
+		"Seamstress COAT chip names Thick Felt Mantle, its real +10 and no free healing")
+	# AC1/AC3: named HEAD/ARM patches with no invented live power.
+	_assert_named_chip(_patch_chip(meters[0], "HEAD"), app.party.get_hero(1),
+		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", true)
+	_assert_named_chip(_patch_chip(meters[0], "ARM"), app.party.get_hero(1),
+		"Hemguard Cuff", "hemguard_cuff", "ARM", true)
+	_assert_named_chip(_patch_chip(meters[2], "HEAD"), app.party.get_hero(3),
+		"Button Glass Visor", "button_glass_visor", "HEAD", true)
+	_assert_named_chip(_patch_chip(meters[2], "ARM"), app.party.get_hero(3),
+		"Loose Thread Glove", "loose_thread_glove", "ARM", true)
+	var tinker_coat := _patch_chip(meters[2], "COAT")
+	_check(tinker_coat != null and not tinker_coat.visible and tinker_coat.text.is_empty()
+		and tinker_coat.tooltip_text.is_empty(),
+		"an unsewn COAT slot stays hidden with no invented bonus")
+	var before := _state(app)
+	var ledger: Dictionary = wardrobe.get_snapshot()
+	seed(61017)
+	var expected_global := randi()
+	seed(61017)
+	for repeat in range(4):
+		presenter._sync_battle()
+		await _frames()
+	# AC3: real pointer hover and repeated refresh spend nothing and mutate nothing.
+	await _hover(warden_coat)
+	_check(root.gui_get_hovered_control() == warden_coat
+		and warden_coat.tooltip_text.contains("+9 effective maximum HP while living; no free healing."),
+		"real pointer hover reads the mounted COAT power without an action")
+	_check(_state(app) == before and randi() == expected_global
+		and wardrobe.get_snapshot() == ledger and app.party_carryover == carry
+		and carry._wardrobe == wardrobe,
+		"M05 case A: repeated hover/refresh never spends, changes HP/Block/ownership or advances RNG")
+	# Neutral unknown ID and empty slots through the mounted presenter itself.
+	var tinker: Dictionary = app.party.get_hero(3)
+	presenter._sync_patch_buttons(meters[2], tinker,
+		{"HEAD": "mystery_m05_patch", "ARM": "", "COAT": ""})
+	var unknown := _patch_chip(meters[2], "HEAD")
+	_check(unknown != null and unknown.visible and unknown.text == "HEAD"
+		and unknown.tooltip_text == _patch_tooltip(tinker, "mystery_m05_patch",
+			"mystery_m05_patch", "HEAD", true)
+		and unknown.tooltip_text.split("\n").size() == 3,
+		"an unknown patch ID keeps its raw authored ID and invents no power line")
+	_check(not _patch_chip(meters[2], "ARM").visible
+		and _patch_chip(meters[2], "ARM").tooltip_text.is_empty()
+		and not _patch_chip(meters[2], "COAT").visible
+		and _patch_chip(meters[2], "COAT").tooltip_text.is_empty(),
+		"empty HEAD/ARM/COAT slots never gain a fictional bonus")
+	_check(_state(app) == before and wardrobe.get_snapshot() == ledger,
+		"inspecting an unknown ID or empty slot changes no combat, wallet or ledger state")
+	presenter._sync_battle()
+	await _frames()
+	_check(_patch_chip(meters[2], "HEAD").tooltip_text.contains(
+			"Button Glass Visor (button_glass_visor) — HEAD")
+		and not _patch_chip(meters[2], "COAT").visible,
+		"the next authoritative frame restores the real sewn chips")
+	# AC2: the same worn COAT chip goes DORMANT once its wearer is torn.
+	_check(app.party.apply_damage(1, 999) and app.party.is_downed(1),
+		"M05 case A: the real party API downs the reinforced-patchcoat wearer")
+	presenter._sync_battle()
+	await _frames()
+	_check(meters[0].hp_text.text == "0/49", "the torn wearer keeps its real +9 cap at zero HP")
+	_check(warden_coat.visible and warden_coat.text == "COAT"
+		and warden_coat.tooltip_text
+			== _patch_tooltip(app.party.get_hero(1), "Reinforced Patchcoat", "reinforced_patchcoat",
+				"COAT", false) + "\n+9 effective maximum HP while living; no free healing."
+		and not warden_coat.tooltip_text.contains("ACTIVE")
+		and bool(warden_coat.get_meta("fallen_chip")) == true,
+		"the worn COAT chip reads DORMANT with no false active bonus once its wearer is torn")
+	_assert_named_chip(_patch_chip(meters[0], "HEAD"), app.party.get_hero(1),
+		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", false)
+	_check(_patch_chip(meters[1], "COAT").tooltip_text.contains("ACTIVE")
+		and _patch_chip(meters[1], "COAT").tooltip_text.contains("+10 effective maximum HP"),
+		"the other living wearer's COAT stays ACTIVE with its own +10")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
+		"M05 case A: real Return clears the ribbon row")
+	# Case B: the remaining new HEAD/ARM labels on a genuine second wardrobe.
+	var case_b := await _m05_worn_fixture(app, presenter, [
+		["stern_seam_cap", "warden", "HEAD"],
+		["red_bobbin_cuff", "warden", "ARM"],
+		["reinforced_browband", "seamstress", "HEAD"],
+		["frayfinder_mitt", "seamstress", "ARM"]])
+	_check(not case_b.is_empty(), "M05 case B: real wardrobe, carryover and live meters")
+	if case_b.is_empty():
+		return
+	var b_meters: Array = case_b["meters"]
+	_assert_named_chip(_patch_chip(b_meters[0], "HEAD"), app.party.get_hero(1),
+		"Stern Seam Cap", "stern_seam_cap", "HEAD", true)
+	_assert_named_chip(_patch_chip(b_meters[0], "ARM"), app.party.get_hero(1),
+		"Red Bobbin Cuff", "red_bobbin_cuff", "ARM", true)
+	_assert_named_chip(_patch_chip(b_meters[1], "HEAD"), app.party.get_hero(2),
+		"Reinforced Browband", "reinforced_browband", "HEAD", true)
+	_assert_named_chip(_patch_chip(b_meters[1], "ARM"), app.party.get_hero(2),
+		"Frayfinder Mitt", "frayfinder_mitt", "ARM", true)
+	_check(app.party.get_hero(1)["max_hp"] == 40 and app.party.get_hero(2)["max_hp"] == 30
+		and app.party.get_hero(3)["max_hp"] == 26 and b_meters[0].hp_text.text == "40/40",
+		"M05 case B: HEAD/ARM patches never invent a maximum-HP change")
+	for index in range(3):
+		var chip := _patch_chip(b_meters[index], "COAT")
+		_check(chip != null and not chip.visible and chip.text.is_empty()
+			and chip.tooltip_text.is_empty(),
+			"an empty COAT slot stays hidden on hero %d" % (index + 1))
+	var arm_chip := _patch_chip(b_meters[1], "ARM")
+	await _hover(arm_chip)
+	_check(root.gui_get_hovered_control() == arm_chip
+		and arm_chip.tooltip_text == _patch_tooltip(app.party.get_hero(2), "Frayfinder Mitt",
+			"frayfinder_mitt", "ARM", true),
+		"real pointer hover reads Frayfinder Mitt's name with no unwired power claim")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
+		"M05 patch ribbons test cleans up and returns to title")
 func _finish() -> void:
 	for failure in failures:
 		printerr(failure)
