@@ -37,6 +37,49 @@ func _key(code: Key) -> void:
 	await _frames()
 
 
+func _hover(control: Control) -> void:
+	var point := control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await _frames()
+
+
+func _outcome_text(forecast: Dictionary) -> String:
+	if not forecast.get("ok", false):
+		return ""
+	var now := "Now: 0 damage"
+	if forecast.damage > 0:
+		now = "Now: %d damage (%d Block, %d HP)" % [
+			forecast.damage, forecast.block_absorbed, forecast.hp_loss]
+	var message := "%s  |  Bleed: %d -> %d (future)" % [
+		now, forecast.bleed_before, forecast.bleed_after]
+	if forecast.exposed_before != forecast.exposed_after:
+		message += "\nExposed: %d -> %d" % [
+			forecast.exposed_before, forecast.exposed_after]
+	return message
+
+
+func _preview_at(id: String, position: int, state_before: Array) -> void:
+	var forecast := CombatSeamstressPoolBleed.new().forecast_single(
+		app.deck, app.party, app.enemies, id, position)
+	var label := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(forecast.get("ok", false) and label != null,
+		"real held card has pure forecast and mounted embroidered outcome")
+	if not forecast.get("ok", false) or label == null:
+		return
+	_check(label.text == _outcome_text(forecast)
+		and label.text.contains("future") and label.is_visible_in_tree(),
+		"mounted target %d shows exact future Bleed separate from immediate hit: %s" % [position, id])
+	_check(label.get_global_rect().position.x >= 0
+		and label.get_global_rect().end.x <= root.size.x
+		and label.get_global_rect().end.y <= root.size.y
+		and label.get_global_rect().position.y >= 0,
+		"preview and target controls stay in the 1280x720 viewport")
+	_check(_state() == state_before and not adapter._choice.get("queued", false),
+		"focus/hover forecast is transaction-free, RNG-free and latch-free")
+
+
 func _mouse(control: Control) -> void:
 	if not is_instance_valid(control):
 		_check(false, "mouse recipient still exists")
@@ -132,8 +175,9 @@ func _return() -> void:
 	if is_instance_valid(app.return_button):
 		app.return_button.pressed.emit()
 	await _frames()
-	_check(adapter._bindings.is_empty() and adapter._battle == null 		and adapter._choice.is_empty() and adapter.target_strip == null,
-		"Return releases every binding and target strip")
+	_check(adapter._bindings.is_empty() and adapter._battle == null 		and adapter._choice.is_empty() and adapter.target_strip == null
+		and adapter._preview == null,
+		"Return releases every binding, target strip and forecast")
 
 
 func _face(id: String) -> void:
@@ -244,6 +288,9 @@ func _play(id: String, mode: String, zero_bleed: bool = false) -> void:
 		_check(app.enemies.apply_statuses({1: {"bleed": 3, "exposed": 1}}),
 			"live enemy carries existing Bleed and Exposed")
 	_check(app.enemies.gain_block(1, 2), "live enemy has Block")
+	_check(app.enemies.apply_statuses({2: {"bleed": 1}})
+		and app.enemies.gain_block(2, 1),
+		"second genuine enemy has a distinct Block/Bleed profile")
 	app._refresh_enemy_roster()
 	var before := _state()
 	var panel := _panel(id)
@@ -252,8 +299,20 @@ func _play(id: String, mode: String, zero_bleed: bool = false) -> void:
 	if adapter.target_strip == null:
 		await _return()
 		return
-	_check(adapter._targets.has(1), "first original target is live and actionable")
+	var first_forecast: Dictionary = CombatSeamstressPoolBleed.new().forecast_single(
+		app.deck, app.party, app.enemies, id, 1)
+	_check(adapter._targets.has(1) and adapter._targets.has(2),
+		"two original targets are live and actionable")
+	_preview_at(id, 1, before)
 	var button: Button = adapter._targets[1]
+	await _hover(adapter._targets[2])
+	_preview_at(id, 2, before)
+	await _hover(button)
+	button.grab_focus()
+	await _frames()
+	_preview_at(id, 1, before)
+	_check(first_forecast.get("ok", false) and first_forecast.position == 1,
+		"before-commit selected enemy forecast has the original slot")
 	if mode == "mouse":
 		await _mouse(button)
 	else:
@@ -262,9 +321,14 @@ func _play(id: String, mode: String, zero_bleed: bool = false) -> void:
 		_check(button.has_focus(), "keyboard starts at first living enemy target")
 		await _key(KEY_TAB)
 		_check(adapter._targets[2].has_focus(), "Tab traverses stitched enemy slots")
+		_preview_at(id, 2, before)
 		button.grab_focus()
+		await _frames()
+		_preview_at(id, 1, before)
 		await _key(KEY_ENTER if mode == "enter" else KEY_SPACE)
 	_success(id, 1, before, mode)
+	_check(adapter._preview == null and adapter.target_strip == null,
+		"committed choice clears prior mounted projection")
 	var after := _state()
 	callback.call(_press())
 	await _frames()
@@ -278,8 +342,9 @@ func _cancel_and_reject() -> void:
 		var before := _state()
 		await _arm(id, false)
 		await _key(KEY_ESCAPE)
-		_check(_state() == before and adapter._choice.is_empty() 			and adapter.target_strip == null and adapter._targets.is_empty(),
-			"Escape cancels without any mutation")
+		_check(_state() == before and adapter._choice.is_empty() 			and adapter.target_strip == null and adapter._targets.is_empty()
+			and adapter._preview == null,
+			"Escape cancels without any mutation or stale preview")
 		await _return()
 	# All six share legal source positions 1..3; a fourth position is illegal.
 	for reason in ["wrong_source", "downed", "energy", "inactive", "hidden"]:
@@ -335,8 +400,9 @@ func _cancel_and_reject() -> void:
 		if reason != "duplicate":
 			callback.call()
 		await _frames()
-		_check(_state() == changed and adapter.last_event.is_empty(),
-			"stale %s choice cannot mutate committed state" % reason)
+		_check(_state() == changed and adapter.last_event.is_empty()
+			and adapter.target_strip == null and adapter._preview == null,
+			"stale %s choice cannot mutate or retain outcome" % reason)
 		await _return()
 	# A valid queued choice invalidated by turn-end must not commit.
 	if await _start(id):
@@ -347,8 +413,9 @@ func _cancel_and_reject() -> void:
 		_check(app.deck.end_turn(), "the real player turn ends before deferred commit")
 		var before := _state()
 		await _frames()
-		_check(_state() == before and adapter._choice.is_empty(),
-			"queued stale turn rejects before any cast")
+		_check(_state() == before and adapter._choice.is_empty()
+			and adapter.target_strip == null and adapter._preview == null,
+			"queued stale turn rejects and clears outcome before any cast")
 		await _return()
 	# Returning with an armed choice disconnects the strip and callbacks.
 	if await _start(id):
@@ -457,6 +524,8 @@ func _three_enemy_case() -> void:
 	_check(slain != null and slain.disabled and String(slain.text).contains("Slain"),
 		"slain middle slot is visibly disabled, not compacted")
 	if adapter._targets.has(3):
+		await _hover(adapter._targets[3])
+		_preview_at(id, 3, before)
 		await _mouse(adapter._targets[3])
 		_success(id, 3, before, "routed outer slot mouse")
 	await _return()
