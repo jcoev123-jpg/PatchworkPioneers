@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_forecast_parity()
 	_test_forecast_rejections()
 	_test_worn_attack_patches()
+	_test_m05_head_patches()
 	_test_ac1_bloodline_and_unselected_parity()
 	_test_ac2_unpicker_all_eight_cards()
 	_test_ac3_unpicker_thresholds_skips_and_forecast()
@@ -656,6 +657,9 @@ func _test_worn_attack_patches() -> void:
 	_check(party_torn.apply_damage(2, 999) and party_torn.is_downed(2), "down seamstress to record tear")
 	_check(ctx_torn.torn.observe_battle_end("seamstress_tear_check", start_torn, party_torn.get_heroes()).ok,
 		"torn ledger records downed seamstress")
+	var ts_torn = ctx_torn.torn.read_state()
+	var ws_torn = ctx_torn.wardrobe.get_snapshot()
+	ctx_torn.wardrobe.refresh_run_context(ts_torn.heroes, ws_torn.owned, ws_torn.scraps, ws_torn.gold, ws_torn.cards, ws_torn)
 	# Heal in combat party so she can legally act in the test
 	party_torn.heal(2, 30)
 	var resolver_torn := CombatSeamstressPoolBleed.new()
@@ -737,6 +741,63 @@ func _accept_unpicker(resolver: CombatSeamstressPoolBleed, unravel: CombatUnrave
 		_check(after_gauges[pos]["unravelled"] == exp_unravelled
 			and after_gauges[pos]["skip_pending"] == exp_unravelled,
 			label + ": position %d threshold reached flags" % pos)
+
+
+func _test_m05_head_patches() -> void:
+	# AC1/AC2: bloodstitch_bonnet gives +1 Bleed, button_glass_visor gives +1 Exposed.
+	var party := _party(2)
+	var ctx_bonnet := _head_context(party, "seamstress", "bloodstitch_bonnet")
+	var w_bonnet: RunPatchWardrobe = ctx_bonnet.wardrobe
+
+	var ctx_visor := _head_context(party, "seamstress", "button_glass_visor")
+	var w_visor: RunPatchWardrobe = ctx_visor.wardrobe
+
+	var resolver_bonnet := CombatSeamstressPoolBleed.new()
+	resolver_bonnet.bind_patch_wardrobe(w_bonnet, ctx_bonnet.torn)
+	
+	var resolver_visor := CombatSeamstressPoolBleed.new()
+	resolver_visor.bind_patch_wardrobe(w_visor, ctx_visor.torn)
+
+	# 1. Running Stitch base
+	var f1 := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_bonnet, f1, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 5})], 1, "bonnet adds +1 bleed to running stitch (3 + 1 passive + 1 bonnet)")
+	var f2 := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_visor, f2, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, "visor adds 0 exposed to running stitch (has none)")
+
+	# 2. Red Thread base
+	var f3 := _fixture("seamstress_red_thread", 2)
+	_accept_custom(resolver_bonnet, f3, "seamstress_red_thread", 1,
+		[_hit(1, 0, 0, 0, {"bleed": 8, "exposed": 1})], 2, "bonnet adds +1 bleed to red thread (6 + 1 passive + 1 bonnet)")
+	var f4 := _fixture("seamstress_red_thread", 2)
+	_accept_custom(resolver_visor, f4, "seamstress_red_thread", 1,
+		[_hit(1, 0, 0, 0, {"bleed": 7, "exposed": 2})], 2, "visor adds +1 exposed to red thread (1 + 1 visor)")
+
+	# 3. Combined ARM + HEAD
+	var party_comb := _party(2)
+	var ctx_comb := _head_context(party_comb, "seamstress", "bloodstitch_bonnet")
+	var w_comb: RunPatchWardrobe = ctx_comb.wardrobe
+	var r = w_comb.sew("red_bobbin_cuff", "seamstress", "ARM", "sew_cuff_comb", w_comb.get_snapshot())
+	_check(r.get("ok", false), "sew cuff on combined")
+	var resolver_comb := CombatSeamstressPoolBleed.new()
+	resolver_comb.bind_patch_wardrobe(w_comb, ctx_comb.torn)
+	
+	var f5 := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_comb, f5, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 6})], 1, "bonnet + cuff adds +2 bleed to running stitch (3 + 1 passive + 1 cuff + 1 bonnet)")
+
+	# 4. Unpicker + Bonnet
+	var choice := RunSeamstressPathChoice.new()
+	var receipt := choice.choose("unpicker")
+	var resolver_unp := CombatSeamstressPoolBleed.new(receipt)
+	resolver_unp.bind_patch_wardrobe(w_bonnet, ctx_bonnet.torn)
+	
+	var f6 := _fixture("seamstress_running_stitch", 2)
+	var unravel := _unravel_fixture(f6.enemies)
+	resolver_unp.bind_unravel(unravel)
+	_accept_unpicker(resolver_unp, unravel, f6, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, {1: 2, 2: 0, 3: 0}, "unpicker bonnet gives 4 bleed (3 + 1 bonnet, no passive) and +2 unravel")
 
 
 func _test_ac1_bloodline_and_unselected_parity() -> void:
@@ -1120,6 +1181,28 @@ func _test_ac4_unpicker_rejections_and_fail_closed() -> void:
 		"unpicker with button eye applies exposed 1 on first hit")
 
 
+func _head_context(party: CombatParty, wearer: String = "seamstress",
+		head_patch_id: String = "bloodstitch_bonnet") -> Dictionary:
+	var raw_head: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m05_head_patches.json"))
+	var raw_arm: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m05_arm_support_patches.json"))
+	var raw_atk: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m04_attack_patches.json"))
+	var definitions: Array[Dictionary] = []
+	for entry in raw_head:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	for entry in raw_arm:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	for entry in raw_atk:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = [head_patch_id, "red_bobbin_cuff"]
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, definitions, 3)
+	wardrobe.sew(head_patch_id, wearer, "HEAD", "sew_" + head_patch_id, wardrobe.get_snapshot())
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
 func _cuff_context(party: CombatParty, wearer: String = "seamstress",
 		sew_cuff: bool = true, arm_patch_id: String = "red_bobbin_cuff") -> Dictionary:
 	var raw_attacks: Variant = JSON.parse_string(FileAccess.get_file_as_string(
@@ -1417,6 +1500,9 @@ func _test_red_bobbin_cuff_ac4_negatives() -> void:
 	_check(party_t.apply_damage(2, 999) and party_t.is_downed(2), "down seamstress to record tear")
 	_check(ctx_t.torn.observe_battle_end("seamstress_cuff_tear", start_torn, party_t.get_heroes()).ok,
 		"record torn seamstress")
+	var ts_t = ctx_t.torn.read_state()
+	var ws_t = ctx_t.wardrobe.get_snapshot()
+	ctx_t.wardrobe.refresh_run_context(ts_t.heroes, ws_t.owned, ws_t.scraps, ws_t.gold, ws_t.cards, ws_t)
 	party_t.heal(2, 30) # restore hp so she can legally play
 	var resolver_t := CombatSeamstressPoolBleed.new()
 	_check(resolver_t.bind_patch_wardrobe(ctx_t.wardrobe, ctx_t.torn), "bind torn wardrobe")
