@@ -15,6 +15,10 @@ func _initialize() -> void:
 	_test_forecast_parity()
 	_test_forecast_rejections()
 	_test_worn_attack_patches()
+	_test_ac1_bloodline_and_unselected_parity()
+	_test_ac2_unpicker_all_eight_cards()
+	_test_ac3_unpicker_thresholds_skips_and_forecast()
+	_test_ac4_unpicker_rejections_and_fail_closed()
 	for failure in failures:
 		printerr(failure)
 	print("combat_seamstress_pool_bleed_test: ",
@@ -669,3 +673,446 @@ func _test_worn_attack_patches() -> void:
 	_reject_custom(bad_resolver, f_bad, "seamstress_running_stitch", 1, "invalid binding play fails closed")
 	_check(not bad_resolver.forecast_single(f_bad.deck, f_bad.party, f_bad.enemies, "seamstress_running_stitch", 1).ok,
 		"invalid binding forecast fails closed")
+
+
+func _unravel_fixture(enemies: CombatEnemies, default_tier: String = "normal") -> CombatUnravel:
+	var unravel := CombatUnravel.new()
+	var tiers := {}
+	for i in range(enemies.get_enemies().size()):
+		tiers[i + 1] = default_tier
+	var ok: bool = unravel.bind_roster(enemies, tiers)
+	_check(ok, "unravel roster bound successfully")
+	return unravel
+
+
+func _gauge_snapshot(unravel: CombatUnravel, enemy_count: int = 3) -> Dictionary:
+	if unravel == null:
+		return {}
+	var out := {}
+	for pos in range(1, enemy_count + 1):
+		out[pos] = unravel.get_snapshot(pos)
+	return out
+
+
+func _accept_unpicker(resolver: CombatSeamstressPoolBleed, unravel: CombatUnravel,
+		f: Dictionary, id: String, target: int, hits: Array, cost: int,
+		expected_deltas: Dictionary, label: String) -> void:
+	var deck: CombatDeck = f.deck
+	var party: CombatParty = f.party
+	var enemies: CombatEnemies = f.enemies
+	var before := _snapshot(deck, party, enemies)
+	var before_gauges := _gauge_snapshot(unravel, enemies.get_enemies().size())
+	_check(before.turn and before.energy == 3 and before.hand.has(id)
+		and before.party.size() == 3 and before.enemies.size() > 0,
+		label + ": actual playable preconditions")
+	var result := resolver.play_card(deck, party, enemies, id, target)
+	_check(result == {"ok": true, "hits": hits}, label + ": exact emitted hits")
+	var expected: Dictionary = before.duplicate(true)
+	expected.hand.erase(id)
+	expected.discard.append(id)
+	expected.energy -= cost
+	expected.combat_energy -= cost
+	for hit in hits:
+		var enemy: Dictionary = expected.enemies[hit.position - 1]
+		enemy["hp"] -= hit.hp_loss
+		enemy["block"] -= hit.block_absorbed
+		for status in hit.statuses:
+			if hit.statuses[status] == 0:
+				continue
+			if not enemy.has("statuses"):
+				enemy["statuses"] = {}
+			enemy["statuses"][status] = enemy["statuses"].get(status, 0) + hit.statuses[status]
+	_check(_snapshot(deck, party, enemies) == expected,
+		label + ": exact full piles, energy, RNG, party and enemy snapshot")
+	var after_gauges := _gauge_snapshot(unravel, enemies.get_enemies().size())
+	for pos in before_gauges:
+		var delta: int = expected_deltas.get(pos, 0)
+		var exp_g: int = mini(before_gauges[pos]["threshold"], before_gauges[pos]["gauge"] + delta)
+		_check(after_gauges[pos]["gauge"] == exp_g,
+			label + ": position %d gauge %d -> %d (expected %d)" % [pos, before_gauges[pos]["gauge"], after_gauges[pos]["gauge"], exp_g])
+		var exp_unravelled: bool = exp_g >= before_gauges[pos]["threshold"]
+		_check(after_gauges[pos]["unravelled"] == exp_unravelled
+			and after_gauges[pos]["skip_pending"] == exp_unravelled,
+			label + ": position %d threshold reached flags" % pos)
+
+
+func _test_ac1_bloodline_and_unselected_parity() -> void:
+	# AC1: Bloodline preserves +1 Bleed on positive printed Bleed, exactly matching unselected baseline.
+	var choice := RunSeamstressPathChoice.new()
+	var receipt := choice.choose("bloodline")
+	_check(receipt.get("ok") == true, "bloodline receipt created")
+	var resolver := CombatSeamstressPoolBleed.new()
+	_check(resolver.bind_choice(receipt), "bind_choice returns true for valid bloodline receipt")
+	_check(resolver.is_valid_choice(), "is_valid_choice is true for bloodline")
+	_check(resolver.get_path_id() == "bloodline", "get_path_id returns bloodline")
+
+	# Test all 8 card IDs across both baseline service and bloodline resolver
+	for upgraded in [false, true]:
+		var r_id := "seamstress_running_stitch" + ("_plus" if upgraded else "")
+		var r_dmg := 3 if upgraded else 2
+		var r_bleed := 5 if upgraded else 4
+		var f_r := _fixture(r_id, 2)
+		_accept_custom(resolver, f_r, r_id, 1, [_hit(1, r_dmg, 0, r_dmg, {"bleed": r_bleed})], 1,
+			r_id + " bloodline +1 bleed parity")
+
+		var h_id := "seamstress_hemorrhage_hem" + ("_plus" if upgraded else "")
+		var h_cost := 1 if upgraded else 2
+		var f_h := _fixture(h_id, 2)
+		_check(f_h.enemies.apply_statuses({1: {"bleed": 3}}), h_id + " bloodline seed bleed")
+		_accept_custom(resolver, f_h, h_id, 1, [_hit(1, 0, 0, 0, {"bleed": 3})], h_cost,
+			h_id + " bloodline doubles 3 to 6 without +1")
+
+		var b_id := "seamstress_blanket_stitch" + ("_plus" if upgraded else "")
+		var b_bleed := 4 if upgraded else 3
+		var f_b := _fixture(b_id, 2, 3)
+		var b_hits: Array = [
+			_hit(1, 0, 0, 0, {"bleed": b_bleed}),
+			_hit(2, 0, 0, 0, {"bleed": b_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": b_bleed}),
+		]
+		_accept_custom(resolver, f_b, b_id, 0, b_hits, 2, b_id + " bloodline area +1 bleed parity")
+
+		var t_id := "seamstress_red_thread" + ("_plus" if upgraded else "")
+		var t_bleed := 9 if upgraded else 7
+		var f_t := _fixture(t_id, 2)
+		_accept_custom(resolver, f_t, t_id, 1, [_hit(1, 0, 0, 0, {"bleed": t_bleed, "exposed": 1})], 2,
+			t_id + " bloodline single +1 bleed parity")
+
+
+func _test_ac2_unpicker_all_eight_cards() -> void:
+	# AC2: Unpicker applies raw printed Bleed and adds +2 Unravel to each living enemy receiving positive Bleed.
+	var choice := RunSeamstressPathChoice.new()
+	var receipt := choice.choose("unpicker")
+	_check(receipt.get("ok") == true, "unpicker receipt created")
+
+	# 1. Running Stitch & Running Stitch+
+	for upgraded in [false, true]:
+		var id := "seamstress_running_stitch" + ("_plus" if upgraded else "")
+		var base_dmg := 3 if upgraded else 2
+		var printed_bleed := 4 if upgraded else 3
+
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		_check(resolver.get_path_id() == "unpicker", id + ": resolver has unpicker path")
+		var f := _fixture(id, 2)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		_accept_unpicker(resolver, unravel, f, id, 1,
+			[_hit(1, base_dmg, 0, base_dmg, {"bleed": printed_bleed})],
+			1, {1: 2, 2: 0, 3: 0}, id + " unpicker printed bleed +2 unravel")
+
+	# 2. Hemorrhage Hem & Hemorrhage Hem+ (Positive Bleed)
+	for upgraded in [false, true]:
+		var id := "seamstress_hemorrhage_hem" + ("_plus" if upgraded else "")
+		var cost := 1 if upgraded else 2
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		var f := _fixture(id, 2)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		_check(f.enemies.apply_statuses({2: {"bleed": 4}}), id + " unpicker preloaded bleed 4")
+		_accept_unpicker(resolver, unravel, f, id, 2,
+			[_hit(2, 0, 0, 0, {"bleed": 4})],
+			cost, {1: 0, 2: 2, 3: 0}, id + " unpicker doubles 4 to 8 and +2 unravel")
+		_check(f.enemies.get_enemy(2)["statuses"]["bleed"] == 8, id + " enemy has doubled bleed 8")
+
+	# 3. Hemorrhage Hem & Hemorrhage Hem+ (Zero Bleed -> N = 0 grants 0 Unravel)
+	for upgraded in [false, true]:
+		var id := "seamstress_hemorrhage_hem" + ("_plus" if upgraded else "")
+		var cost := 1 if upgraded else 2
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		var f := _fixture(id, 2)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		_accept_unpicker(resolver, unravel, f, id, 1,
+			[_hit(1, 0, 0, 0, {"bleed": 0})],
+			cost, {1: 0, 2: 0, 3: 0}, id + " zero bleed grants 0 unravel")
+		_check(f.enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 0, id + " bleed remains 0")
+
+	# 4. Blanket Stitch & Blanket Stitch+
+	for upgraded in [false, true]:
+		var id := "seamstress_blanket_stitch" + ("_plus" if upgraded else "")
+		var printed_bleed := 3 if upgraded else 2
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		var f := _fixture(id, 2, 3)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		var hits: Array = [
+			_hit(1, 0, 0, 0, {"bleed": printed_bleed}),
+			_hit(2, 0, 0, 0, {"bleed": printed_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": printed_bleed}),
+		]
+		_accept_unpicker(resolver, unravel, f, id, 0, hits,
+			2, {1: 2, 2: 2, 3: 2}, id + " unpicker area printed bleed and +2 unravel to all 3")
+
+	# 5. Red Thread & Red Thread+
+	for upgraded in [false, true]:
+		var id := "seamstress_red_thread" + ("_plus" if upgraded else "")
+		var printed_bleed := 8 if upgraded else 6
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		var f := _fixture(id, 2)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		_accept_unpicker(resolver, unravel, f, id, 3,
+			[_hit(3, 0, 0, 0, {"bleed": printed_bleed, "exposed": 1})],
+			2, {1: 0, 2: 0, 3: 2}, id + " unpicker red thread printed bleed 6/8 and +2 unravel")
+
+
+func _test_ac3_unpicker_thresholds_skips_and_forecast() -> void:
+	var choice := RunSeamstressPathChoice.new()
+	var receipt := choice.choose("unpicker")
+
+	# 1. Blanket Stitch with dead middle slot (at least two living enemies and dead middle slot)
+	for upgraded in [false, true]:
+		var b_id := "seamstress_blanket_stitch" + ("_plus" if upgraded else "")
+		var printed_bleed := 3 if upgraded else 2
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		var f := _fixture(b_id, 2, 3)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		# Slain middle slot (slot 2)
+		_check(f.enemies.apply_damage(2, 999) and f.enemies.is_slain(2), "middle slot slain")
+		var expected_hits: Array = [
+			_hit(1, 0, 0, 0, {"bleed": printed_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": printed_bleed}),
+		]
+		_accept_unpicker(resolver, unravel, f, b_id, 0, expected_hits,
+			2, {1: 2, 2: 0, 3: 2}, b_id + " dead middle slot gets 0 bleed and 0 unravel")
+		_check(f.enemies.get_enemy(2).get("statuses", {}).get("bleed", 0) == 0, "slain slot got no bleed")
+		_check(unravel.get_snapshot(2)["gauge"] == 0, "slain slot gauge unchanged")
+
+	# 2. Normal (8), Elite (12), Boss (16) thresholds just below threshold
+	var tiers := ["normal", "elite", "boss"]
+	var initial_thresholds := [8, 12, 16]
+	for idx in range(3):
+		var tier: String = tiers[idx]
+		var thresh: int = initial_thresholds[idx]
+		var below: int = thresh - 2 # just 2 below threshold, so +2 reaches it exactly
+
+		var f := _fixture("seamstress_running_stitch", 2, 1)
+		var unravel := CombatUnravel.new()
+		_check(unravel.bind_roster(f.enemies, {1: tier}), "bind " + tier + " roster")
+		_check(unravel.apply_unravel(f.enemies, 1, below), "set gauge to " + str(below))
+		_check(unravel.get_snapshot(1)["gauge"] == below, "gauge is just below threshold")
+
+		var resolver := CombatSeamstressPoolBleed.new(receipt, unravel)
+		var pre_snap := _snapshot(f.deck, f.party, f.enemies)
+		var res: Dictionary = resolver.play_card(f.deck, f.party, f.enemies, "seamstress_running_stitch", 1)
+		_check(res.get("ok", false), tier + " card play succeeded")
+
+		var snap := unravel.get_snapshot(1)
+		_check(snap["gauge"] == thresh and snap["unravelled"] == true and snap["skip_pending"] == true,
+			tier + " gauge reached threshold, queued skip")
+
+		# Assert one skip queued and consumed:
+		_check(unravel.consume_action_skip(f.enemies, 1) == true, tier + " consume skip returns true")
+		var post_consume := unravel.get_snapshot(1)
+		_check(post_consume["gauge"] == 0 and post_consume["threshold"] == thresh + 4
+			and post_consume["unravelled"] == false and post_consume["skip_pending"] == false,
+			tier + " skip consumed resets gauge to 0, clears unravelled, threshold +4")
+		# Only one skip was queued:
+		_check(unravel.consume_action_skip(f.enemies, 1) == false, tier + " second skip consume returns false")
+
+		# Assert no immediate extra bleed tick at card resolution
+		var enemy_statuses: Dictionary = f.enemies.get_enemy(1).get("statuses", {})
+		_check(enemy_statuses.get("bleed", 0) == 3, tier + " bleed is exactly printed 3, not decremented by tick")
+		_check(f.enemies.get_enemy(1)["hp"] == 12 - 2, tier + " HP lost only attack damage, no bleed tick")
+		_check(f.deck._rng.state == pre_snap.rng, tier + " no RNG change")
+
+	# 3. Forecast before play is side-effect-free and path-correct
+	for slug in ["running_stitch", "hemorrhage_hem", "red_thread"]:
+		for upgraded in [false, true]:
+			var id: String = "seamstress_" + slug + ("_plus" if upgraded else "")
+			var def: Dictionary = SeamstressPoolCards.new().get_definition(id)
+			var f := _fixture(id, 2)
+			var committed := _fixture(id, 2)
+			_forecast_seed(f, 1)
+			_forecast_seed(committed, 1)
+
+			var unravel_f := _unravel_fixture(f.enemies)
+			var unravel_c := _unravel_fixture(committed.enemies)
+			var resolver_f := CombatSeamstressPoolBleed.new(receipt, unravel_f)
+			var resolver_c := CombatSeamstressPoolBleed.new(receipt, unravel_c)
+
+			var snap_before := _snapshot(f.deck, f.party, f.enemies)
+			var gauge_before := _gauge_snapshot(unravel_f)
+
+			var base_dmg: int = int(def.effects.get("damage", 0))
+			@warning_ignore("integer_division")
+			var adj_dmg: int = base_dmg * 9 / 8
+			var abs_dmg: int = mini(2, adj_dmg)
+			var hp_loss: int = mini(12, adj_dmg - abs_dmg)
+
+			var exp_bleed: int
+			if slug == "hemorrhage_hem":
+				exp_bleed = 6 # 3 doubled
+			else:
+				# raw printed bleed without +1
+				exp_bleed = 3 + int(def.effects.get("bleed", 0))
+			var exp_exp: int = 2 if slug == "red_thread" else 1
+
+			var expected_fc := {
+				"ok": true, "position": 1, "cost": def.cost,
+				"damage": adj_dmg, "block_absorbed": abs_dmg, "hp_loss": hp_loss,
+				"bleed_before": 3, "bleed_after": exp_bleed,
+				"exposed_before": 1, "exposed_after": exp_exp
+			}
+
+			# Assert forecast output matches expected path-dependent bleed
+			var fc := resolver_f.forecast_single(f.deck, f.party, f.enemies, id, 1)
+			_check(fc == expected_fc, id + " unpicker forecast reflects raw bleed " + str(exp_bleed))
+
+			# Assert forecast was side-effect-free (no deck, party, enemy, gauge, or RNG mutation)
+			_check(_snapshot(f.deck, f.party, f.enemies) == snap_before, id + " forecast mutated no state")
+			_check(_gauge_snapshot(unravel_f) == gauge_before, id + " forecast mutated no gauges")
+
+			# Commit on committed fixture and check parity
+			var event := resolver_c.play_card(committed.deck, committed.party, committed.enemies, id, 1)
+			_check(event.get("ok", false) and event.hits.size() == 1, id + " matching play succeeded")
+			var enemy_c: Dictionary = committed.enemies.get_enemy(1)
+			_check(enemy_c.get("statuses", {}).get("bleed", 0) == exp_bleed, id + " committed bleed parity")
+			_check(enemy_c.get("statuses", {}).get("exposed", 0) == exp_exp, id + " committed exposed parity")
+			_check(unravel_c.get_snapshot(1)["gauge"] == 2, id + " committed gauge +2")
+
+
+func _test_ac4_unpicker_rejections_and_fail_closed() -> void:
+	var choice := RunSeamstressPathChoice.new()
+	var receipt_u: Dictionary = choice.choose("unpicker")
+
+	# 1. Missing or invalid path selection
+	var r_null := CombatSeamstressPoolBleed.new()
+	_check(not r_null.bind_choice(null), "null choice returns false")
+	_check(not r_null.is_valid_choice(), "is_valid_choice false on null")
+	var f1 := _fixture("seamstress_running_stitch", 2)
+	_reject_custom(r_null, f1, "seamstress_running_stitch", 1, "null choice fails closed")
+	_check(not r_null.forecast_single(f1.deck, f1.party, f1.enemies, "seamstress_running_stitch", 1).ok,
+		"null choice forecast fails closed")
+
+	var r_empty := CombatSeamstressPoolBleed.new()
+	_check(not r_empty.bind_choice({}), "empty dict choice returns false")
+	_reject_custom(r_empty, f1, "seamstress_running_stitch", 1, "empty choice fails closed")
+
+	var r_bogus := CombatSeamstressPoolBleed.new()
+	_check(not r_bogus.bind_choice({"path_id": "bogus"}), "bogus dict choice returns false")
+	_reject_custom(r_bogus, f1, "seamstress_running_stitch", 1, "bogus choice fails closed")
+
+	var r_unclaimed := CombatSeamstressPoolBleed.new()
+	var unclaimed := RunSeamstressPathChoice.new()
+	_check(not r_unclaimed.bind_choice(unclaimed), "unclaimed choice returns false")
+	_reject_custom(r_unclaimed, f1, "seamstress_running_stitch", 1, "unclaimed choice fails closed")
+
+	# 2. Retry after unsuccessful selection
+	var retry_resolver := CombatSeamstressPoolBleed.new()
+	_check(not retry_resolver.bind_choice("not_a_choice"), "initial bad binding fails")
+	var f_retry := _fixture("seamstress_running_stitch", 2)
+	var u_retry := _unravel_fixture(f_retry.enemies)
+	retry_resolver.bind_unravel(u_retry)
+	_reject_custom(retry_resolver, f_retry, "seamstress_running_stitch", 1, "failed selection play rejected")
+	# Now retry with valid selection:
+	_check(retry_resolver.bind_choice(receipt_u), "retry with valid unpicker receipt succeeds")
+	_check(retry_resolver.is_valid_choice(), "is_valid_choice is now true")
+	_accept_unpicker(retry_resolver, u_retry, f_retry, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 3})], 1, {1: 2, 2: 0, 3: 0}, "retried play succeeds")
+
+	# 3. Unpicker with unbound or wrong-roster CombatUnravel
+	# a) No unravel bound at all
+	var r_nounravel := CombatSeamstressPoolBleed.new(receipt_u)
+	var f_no_u := _fixture("seamstress_running_stitch", 2)
+	_reject_custom(r_nounravel, f_no_u, "seamstress_running_stitch", 1, "unpicker without unravel fails closed")
+	_check(not r_nounravel.forecast_single(f_no_u.deck, f_no_u.party, f_no_u.enemies, "seamstress_running_stitch", 1).ok,
+		"unpicker without unravel forecast fails closed")
+
+	# b) Unravel with no roster bound
+	var r_unbound_u := CombatSeamstressPoolBleed.new(receipt_u, CombatUnravel.new())
+	var f_unbound_u := _fixture("seamstress_running_stitch", 2)
+	_reject_custom(r_unbound_u, f_unbound_u, "seamstress_running_stitch", 1, "unbound unravel roster fails closed")
+	_check(not r_unbound_u.forecast_single(f_unbound_u.deck, f_unbound_u.party, f_unbound_u.enemies, "seamstress_running_stitch", 1).ok,
+		"unbound unravel forecast fails closed")
+
+	# c) Unravel bound to DIFFERENT CombatEnemies roster
+	var r_wrong_roster := CombatSeamstressPoolBleed.new(receipt_u)
+	var other_enemies := _enemies(3)
+	var other_unravel := _unravel_fixture(other_enemies)
+	r_wrong_roster.bind_unravel(other_unravel)
+	var f_wrong := _fixture("seamstress_running_stitch", 2)
+	_reject_custom(r_wrong_roster, f_wrong, "seamstress_running_stitch", 1, "wrong roster unravel fails closed")
+	_check(not r_wrong_roster.forecast_single(f_wrong.deck, f_wrong.party, f_wrong.enemies, "seamstress_running_stitch", 1).ok,
+		"wrong roster forecast fails closed")
+
+	# 4. Illegal held-card conditions under Unpicker (fail-closed, no mutation)
+	var u_resolver := CombatSeamstressPoolBleed.new(receipt_u)
+	var f_active := _fixture("seamstress_running_stitch", 2)
+	var u_active := _unravel_fixture(f_active.enemies)
+	u_resolver.bind_unravel(u_active)
+
+	# Missing card from hand
+	_reject_custom(u_resolver, f_active, "seamstress_red_thread", 1, "unheld card rejected")
+
+	# Insufficient energy
+	var f_energy := _fixture("seamstress_red_thread", 2)
+	var u_energy := _unravel_fixture(f_energy.enemies)
+	var r_energy := CombatSeamstressPoolBleed.new(receipt_u, u_energy)
+	_check(f_energy.deck.try_spend_energy(2), "spend 2 energy")
+	_reject_custom(r_energy, f_energy, "seamstress_red_thread", 1, "underfunded rejected")
+
+	# Downed Seamstress
+	var f_dead := _fixture("seamstress_running_stitch", 2)
+	var u_dead := _unravel_fixture(f_dead.enemies)
+	var r_dead := CombatSeamstressPoolBleed.new(receipt_u, u_dead)
+	_check(f_dead.party.apply_damage(2, 999), "down seamstress")
+	_reject_custom(r_dead, f_dead, "seamstress_running_stitch", 1, "downed owner rejected")
+
+	# Misplaced Seamstress (Blanket Stitch from pos 1 is illegal)
+	var f_pos := _fixture("seamstress_blanket_stitch", 1)
+	var u_pos := _unravel_fixture(f_pos.enemies)
+	var r_pos := CombatSeamstressPoolBleed.new(receipt_u, u_pos)
+	_reject_custom(r_pos, f_pos, "seamstress_blanket_stitch", 0, "out of position rejected")
+
+	# Slain chosen target
+	var f_slain := _fixture("seamstress_running_stitch", 2)
+	var u_slain := _unravel_fixture(f_slain.enemies)
+	var r_slain := CombatSeamstressPoolBleed.new(receipt_u, u_slain)
+	_check(f_slain.enemies.apply_damage(1, 999), "kill target 1")
+	_reject_custom(r_slain, f_slain, "seamstress_running_stitch", 1, "slain target rejected")
+
+	# Out of bounds target (target 4)
+	_reject_custom(u_resolver, f_active, "seamstress_running_stitch", 4, "out of bounds target rejected")
+
+	# Status overflow
+	var f_of := _fixture("seamstress_running_stitch", 2)
+	var u_of := _unravel_fixture(f_of.enemies)
+	var r_of := CombatSeamstressPoolBleed.new(receipt_u, u_of)
+	_check(f_of.enemies.apply_statuses({1: {"bleed": CombatEnemies.MAX_INT - 2}}), "preload max bleed")
+	_reject_custom(r_of, f_of, "seamstress_running_stitch", 1, "status overflow rejected")
+
+	# Lethal Running Stitch: target is slain by damage, receives bleed status on slain slot, but gets NO unravel
+	var f_lethal := _fixture("seamstress_running_stitch", 2, 1, 2) # 2 HP enemy
+	var u_lethal := _unravel_fixture(f_lethal.enemies)
+	var r_lethal := CombatSeamstressPoolBleed.new(receipt_u, u_lethal)
+	var lethal_res := r_lethal.play_card(f_lethal.deck, f_lethal.party, f_lethal.enemies, "seamstress_running_stitch", 1)
+	_check(lethal_res.get("ok", false) and f_lethal.enemies.is_slain(1), "target was slain by running stitch")
+	_check(f_lethal.enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 3, "slain slot got bleed 3")
+	_check(u_lethal.get_snapshot(1)["gauge"] == 0, "slain slot got no unravel gauge delta")
+
+	# 5. Attack patches under Unpicker
+	# Pincushion Arm +1 damage
+	var party_p := _party(2)
+	var ctx_p := _patch_context(party_p, "seamstress", false, true)
+	var resolver_p := CombatSeamstressPoolBleed.new(receipt_u)
+	_check(resolver_p.bind_patch_wardrobe(ctx_p.wardrobe, ctx_p.torn), "bind wardrobe")
+	var f_p := _fixture("seamstress_running_stitch", 2)
+	var u_p := _unravel_fixture(f_p.enemies)
+	resolver_p.bind_unravel(u_p)
+	_accept_unpicker(resolver_p, u_p, f_p, "seamstress_running_stitch", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 3})], 1, {1: 2, 2: 0, 3: 0}, "unpicker with pincushion arm deals 3 damage and +2 unravel")
+
+	# Button Eye Exposed 1 on first hit
+	var party_be := _party(2)
+	var ctx_be := _patch_context(party_be, "seamstress", true, false)
+	var resolver_be := CombatSeamstressPoolBleed.new(receipt_u)
+	_check(resolver_be.bind_patch_wardrobe(ctx_be.wardrobe, ctx_be.torn), "bind button eye")
+	var f_be := _fixture("seamstress_running_stitch", 2)
+	var u_be := _unravel_fixture(f_be.enemies)
+	resolver_be.bind_unravel(u_be)
+	_accept_unpicker(resolver_be, u_be, f_be, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 3, "exposed": 1})], 1, {1: 2, 2: 0, 3: 0},
+		"unpicker with button eye applies exposed 1 on first hit")
+
