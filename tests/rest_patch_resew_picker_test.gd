@@ -226,7 +226,7 @@ func _positive(f: Dictionary) -> void:
 	_pick("button_eye", "seamstress")
 	_check(picker.selected_option().get("kind") == "SWAP"
 		and picker.preview_label.text.contains("SWAP")
-		and picker.preview_label.text.contains("stitched_badge"), "HEAD swap preview visible")
+		and picker.preview_label.text.contains("Stitched Badge"), "HEAD swap preview visible")
 	picker.confirm_button.pressed.emit()
 	var first := w.get_snapshot()
 	_check(f.receipts.size() == 1 and f.receipts[0].receipt.exchanged_id == "stitched_badge"
@@ -236,7 +236,7 @@ func _positive(f: Dictionary) -> void:
 		"HEAD swapped through UI signal, fresh operation and rerendered exact scraps")
 	_pick("pincushion_arm", "tinker")
 	_check(picker.selected_option().get("kind") == "SWAP"
-		and picker.preview_label.text.contains("spare_spool"), "ARM swap preview visible")
+		and picker.preview_label.text.contains("Spare Spool"), "ARM swap preview visible")
 	picker.confirm_button.pressed.emit()
 	var second := w.get_snapshot()
 	_check(f.receipts.size() == 2 and f.receipts[1].receipt.exchanged_id == "spare_spool"
