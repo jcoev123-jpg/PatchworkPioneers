@@ -652,33 +652,84 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 		var later_prepared := later_service.prepare()
 		_check(later_prepared.get("ok", false),
 			label + ": later reward accepts a previously awarded pool ID in the deck")
-		var upgrade_choices: Dictionary = RunRestCardUpgrade.list_authored_choices(expected_deck)
-		var permitted_upgrades: Dictionary = upgrade_choices.get("permitted_upgrades", {})
-		var upgrade_transaction := RunRestCardUpgrade.new(expected_deck, permitted_upgrades)
-		var base_index: int = -1
-		var choices: Array = upgrade_choices.get("choices", [])
-		for choice: Dictionary in choices:
-			if choice.get("source_id") == "warden_hold_the_line":
-				base_index = choice.get("index")
-				break
-		
-		if base_index != -1:
+		for owner in HERO_IDS:
+			var base_id := ""
+			for record: Dictionary in records:
+				if record.get("owner") == owner:
+					base_id = record.get("id")
+					break
+			var pre_upgrade_deck := deck.duplicate()
+			pre_upgrade_deck.append(base_id)
+			var upgrade_choices: Dictionary = RunRestCardUpgrade.list_authored_choices(pre_upgrade_deck)
+			var permitted_upgrades: Dictionary = upgrade_choices.get("permitted_upgrades", {})
+			var upgrade_transaction := RunRestCardUpgrade.new(pre_upgrade_deck, permitted_upgrades)
+			var base_index: int = -1
+			var choices: Array = upgrade_choices.get("choices", [])
+			for choice: Dictionary in choices:
+				if choice.get("source_id") == base_id:
+					base_index = choice.get("index")
+					break
+			_check(base_index != -1, label + ": authored pool base appears in upgrade choices for " + owner)
 			var valid_upgrade: Dictionary = upgrade_transaction.choose_upgrade(base_index)
-			_check(valid_upgrade.get("ok", false), label + ": rest upgrade choice succeeded")
-			var upgrade_fight := _fight(definitions, 1)
+			_check(valid_upgrade.get("ok", false), label + ": rest upgrade choice succeeded for " + owner)
+			var upgraded_deck: Array = valid_upgrade.get("deck", [])
+			
+			var upgrade_fight := _fight(definitions, 2 if elite else 1)
 			_win(upgrade_fight)
 			var upgrade_rng := _rng(312)
-			var valid_upgrade_deck: Array = valid_upgrade.get("deck", [])
-			var upgrade_service := _session(upgrade_fight, upgrade_rng, ids, records,
-				valid_upgrade_deck, 10, false)
+			var upgrade_service: RunFightVictoryRewards
+			if elite:
+				upgrade_service = _elite_session(upgrade_fight, upgrade_rng, ids, records,
+					upgraded_deck, 10, TRINKET_POOL, OWNED_TRINKETS)
+			else:
+				upgrade_service = _session(upgrade_fight, upgrade_rng, ids, records,
+					upgraded_deck, 10, false)
+			
+			var upgrade_oracle := _weighted_oracle(ids, records, 312, elite,
+				TRINKET_POOL, OWNED_TRINKETS)
 			var upgrade_prepared: Dictionary = upgrade_service.prepare()
 			_check(upgrade_prepared.get("ok", false),
-				label + ": authentic Rest upgraded '+' members survive into later reward sources")
+				label + ": authentic Rest upgraded '+' members survive into later reward sources for " + owner)
+			_check(upgrade_prepared.get("gold_award") == upgrade_oracle["gold"], label + ": upgraded gold matches oracle")
+			_check(upgrade_prepared.get("offers", []) == upgrade_oracle["offers"], label + ": upgraded offers match oracle")
+			_check(upgrade_prepared.get("trinket_drop_id", "") == upgrade_oracle["trinket_drop_id"], label + ": upgraded drop matches oracle")
+			_check(upgrade_rng.state == upgrade_oracle["rng_state"], label + ": upgraded RNG state matches oracle")
+			
 			var upgrade_offers: Array = upgrade_prepared.get("offers", [])
+			var upgrade_offered_ids: Array = []
 			for upgrade_offer: Dictionary in upgrade_offers:
+				upgrade_offered_ids.append(upgrade_offer.get("id"))
 				_check(not String(upgrade_offer.get("id", "")).ends_with("_plus"),
 					label + ": offers themselves remain unupgraded base IDs")
+			_check(upgrade_offered_ids.size() == 3 and upgrade_offered_ids[0] != upgrade_offered_ids[1]
+				and upgrade_offered_ids[0] != upgrade_offered_ids[2] and upgrade_offered_ids[1] != upgrade_offered_ids[2],
+				label + ": three distinct legal base offers from upgraded prepare")
+				
+			var expected_chosen_deck := upgraded_deck.duplicate()
+			expected_chosen_deck.append(upgrade_offered_ids[0])
+			var expected_chosen_trinkets := OWNED_TRINKETS.duplicate() if elite else []
+			if elite:
+				expected_chosen_trinkets.append(upgrade_prepared["trinket_drop_id"])
+				
+			var chosen := upgrade_service.choose(upgrade_offered_ids[0])
+			_check(chosen.get("ok", false) and chosen.get("deck") == expected_chosen_deck, label + ": upgraded chosen deck keeps base/+ IDs")
+			_check(chosen.get("gold") == 10 + upgrade_oracle["gold"] and chosen.get("trinkets") == expected_chosen_trinkets, label + ": upgraded choose pays exactly once")
 			
+			var skip_fight := _fight(definitions, 2 if elite else 1)
+			_win(skip_fight)
+			var skip_rng := _rng(312)
+			var skip_service: RunFightVictoryRewards
+			if elite:
+				skip_service = _elite_session(skip_fight, skip_rng, ids, records,
+					upgraded_deck, 10, TRINKET_POOL, OWNED_TRINKETS)
+			else:
+				skip_service = _session(skip_fight, skip_rng, ids, records,
+					upgraded_deck, 10, false)
+			skip_service.prepare()
+			var skipped := skip_service.choose("")
+			_check(skipped.get("ok", false) and skipped.get("deck") == upgraded_deck, label + ": upgraded skipped deck keeps base/+ IDs")
+			_check(skipped.get("gold") == 10 + upgrade_oracle["gold"] and skipped.get("trinkets") == expected_chosen_trinkets, label + ": upgraded skip pays exactly once")
+
 		var fake_plus_deck := expected_deck.duplicate()
 		fake_plus_deck.append("warden_fake_card_plus")
 		var fake_fight := _fight(definitions, 1)
