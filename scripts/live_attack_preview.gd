@@ -146,7 +146,8 @@ func _matching_flow(app, party: CombatParty, enemies: CombatEnemies) -> CombatRo
 ## card fails closed unless the battle's shared gauge is bound to this roster,
 ## so no cast can succeed while its eventual skip would be ignored.
 func _control_ready(party: CombatParty, enemies: CombatEnemies, card_id: String) -> bool:
-	if _pinned == null or _unravel == null or _deck == null:
+	if _pinned == null or _unravel == null or _deck == null \
+			or not _controls.needle_patch_preview().get("ok", false):
 		return false
 	if card_id in CombatSeamstressPoolControl.NEEDLE_IDS:
 		return true
@@ -191,6 +192,14 @@ func _control_preview(id: String) -> Dictionary:
 		return preview
 	if not _control_ready(app.party, app.enemies, id):
 		return {"playable": false, "requires_selection": false, "target_positions": []}
+	if id in CombatSeamstressPoolControl.NEEDLE_IDS:
+		var patch := _controls.needle_patch_preview()
+		var filtered: Array[int] = []
+		for position in preview.target_positions:
+			if app.enemies.can_apply_statuses({position: patch.statuses}):
+				filtered.append(position)
+		preview["target_positions"] = filtered
+		preview["playable"] = not filtered.is_empty()
 	return preview
 
 
@@ -608,6 +617,9 @@ func _control_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -
 	if not effects is Dictionary:
 		return unavailable
 	var needle := id in CombatSeamstressPoolControl.NEEDLE_IDS
+	var patch := _controls.needle_patch_preview()
+	if not patch.get("ok", false):
+		return unavailable
 	var owner_statuses: Dictionary = {}
 	if needle:
 		var owner_count := 0
@@ -634,8 +646,12 @@ func _control_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -
 			if _pinned != null:
 				bonus = _pinned.bonus_for_attack(enemies, position, "seamstress")
 			hit["damage"] = _statuses.adjusted_attack_damage(
-				int(effects["damage"]) + bonus, owner_statuses, defender)
+				int(effects["damage"]) + int(patch.damage_bonus) + bonus, owner_statuses, defender)
 			hit["pinned_bonus"] = bonus
+			if not patch.statuses.is_empty():
+				hit["exposed_applied"] = int(patch.statuses.get("exposed", 0))
+				hit["exposed_before"] = int(defender.get("exposed", 0))
+				hit["exposed_after"] = int(defender.get("exposed", 0)) + int(patch.statuses.get("exposed", 0))
 		else:
 			var gauge: Dictionary = _unravel.get_snapshot(position) if _unravel != null else {}
 			if gauge.size() != 4:
@@ -774,6 +790,7 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 		_play = CombatAttackCards.new()
+		_controls = CombatSeamstressPoolControl.new()
 		_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 		# Capture the genuine run's sewn wearer projection at battle entry only.
 		# An invalid present binding must reject attacks, not fall back to vanilla.
@@ -788,6 +805,9 @@ func _sync_battle() -> void:
 				_play.bind_patch_wardrobe(wardrobe, carry.torn)
 			else:
 				_play.bind_patch_wardrobe(null, null)
+		# Needle Pin shares the exact starter attack object and once-per-combat
+		# latch, including an explicitly failed wardrobe admission.
+		_controls.bind_patch_rules(_play._patches)
 		last_event = {}
 		# One Pinned set and one Unravel gauge live for this whole battle session.
 		# They are created here and never recreated or reset by a hand refresh.
@@ -958,6 +978,9 @@ func _refresh() -> void:
 				var damage_line := "%d: %d damage" % [int(hit.position), int(hit.damage)]
 				if int(hit.get("pinned_bonus", 0)) > 0:
 					damage_line += " (+%d Pinned)" % int(hit.pinned_bonus)
+				if int(hit.get("exposed_applied", 0)) > 0:
+					damage_line += " (Exposed %d → %d after hit)" % [
+						int(hit.exposed_before), int(hit.exposed_after)]
 				details.append(damage_line)
 			else:
 				var charge_line := "%d: " % int(hit.position)

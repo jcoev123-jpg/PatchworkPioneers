@@ -257,6 +257,7 @@ func _run() -> void:
 	await _kills()
 	await _stale_restart()
 	await _controls()
+	await _control_attack_patches()
 	app.free()
 	_finish()
 
@@ -2184,3 +2185,173 @@ func _drawn_drag_cards() -> void:
 			else:
 				_check(_snapshot() == staged, "cancelled invalid or stale drag has no effect: " + id + " / " + scenario)
 			await _return()
+
+## Find a genuinely traversable Treasure → Fight; admission, not this
+## test, binds the real run's sewn wardrobe and live first-attack latch.
+func _control_patch_route_fixture() -> Dictionary:
+	for value in range(1, 1500):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for first in map.get_legal_choices():
+			if map.get_node(first).type != "Treasure":
+				continue
+			var probe := RunMap.new()
+			var same_rng := RandomNumberGenerator.new()
+			same_rng.seed = value
+			probe.generate(same_rng)
+			if not probe.choose_node(first):
+				continue
+			for second in probe.get_legal_choices():
+				if probe.get_node(second).type == "Fight":
+					return {"seed": value, "treasure": first, "fight": second}
+	return {}
+
+
+## The physical routed hand exercises the SAME patch projection through the
+## live forecast and settled control resolver, not a detached card imitation.
+func _control_attack_patches() -> void:
+	var fixture := _control_patch_route_fixture()
+	_check(not fixture.is_empty(), "seeded authored Treasure → Fight route exists")
+	if fixture.is_empty():
+		return
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	var treasure: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == fixture.treasure:
+			treasure = button
+	_check(treasure != null and not treasure.disabled, "Treasure route control really offered")
+	if treasure == null:
+		await _return()
+		return
+	await _click(treasure)
+	_check(app.run_map.get_route() == [fixture.treasure] and app.route_buttons.size() > 0,
+		"real Treasure visit retains live onward route controls")
+	# Supply a genuine run-owned sewn wardrobe during the noncombat prefix,
+	# while the fight does not yet exist. Its contents match run ledger exactly.
+	app.run_trinkets.assign(["button_eye", "pincushion_arm"])
+	var definitions := [
+		{"id": "button_eye", "slot": "HEAD"},
+		{"id": "pincushion_arm", "slot": "ARM"}]
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck,
+		app.run_seed, true)
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and wardrobe.is_valid(), "real route-bound wardrobe ledger prepared")
+	if carry == null or not wardrobe.is_valid():
+		await _return()
+		return
+	_check(wardrobe.sew("button_eye", "seamstress", "HEAD", "head",
+		wardrobe.get_snapshot()).ok, "real Button Eye sewn on Seamstress")
+	_check(wardrobe.sew("pincushion_arm", "seamstress", "ARM", "arm",
+		wardrobe.get_snapshot()).ok, "real Pincushion Arm sewn on Seamstress")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"authentic run carryover binds actual wearable patch ledger before Fight")
+	var choice: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == fixture.fight:
+			choice = button
+	_check(choice != null and not choice.disabled and app._can_choose_connected_route(),
+		"real next Fight remains actionable after sewn run ledger binding")
+	if choice == null:
+		await _return()
+		return
+	await _click(choice)
+	_check(app._current_act_battle() and app.deck != null and app.round_flow != null,
+		"real routed battle admits sewn wearer and combat round flow")
+	if app.deck == null:
+		return
+	var shared = presenter._play._patches
+	_check(shared != null and shared.is_valid() and presenter._controls._patches == shared
+		and shared.active_snapshot().seamstress.has("button_eye")
+		and shared.active_snapshot().seamstress.has("pincushion_arm"),
+		"battle entry itself binds the identical valid starter/control patch state")
+	_check(shared != null and presenter._controls._patches == shared
+		and shared.latch_snapshot().seamstress == false,
+		"mounted control and starter attacks share exact fresh latch instance")
+	# Durable original target slot survives both variants; keep pre-existing
+	# Block and statuses available for exact rounded forecasts.
+	app.enemies._enemies[0]["max_hp"] = 200
+	app.enemies._enemies[0]["hp"] = 200
+	_check(app.enemies.gain_block(1, 6) and app.enemies.apply_statuses({1: {"exposed": 1}})
+		and presenter._pinned.pin_enemy(app.enemies, 1, "warden"),
+		"actual mounted enemy has cross-owner Pinned, Block and Exposed")
+	for hero in app.party._heroes:
+		if hero.id == "seamstress":
+			hero["statuses"] = {"weak": 1}
+	var base := "seamstress_needle_pin"
+	var plus := "seamstress_needle_pin_plus"
+	app.deck.hand.assign([base, plus])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var initial := _snapshot()
+	var pin_before = presenter._pinned._pinner_by_position.duplicate(true)
+	var gauge_before = presenter._unravel._gauges.duplicate(true)
+	var latch_before = shared.latch_snapshot()
+	_check(_panel(base) != null and _panel(plus) != null
+		and presenter._bindings.has(_panel(base)) and presenter._bindings.has(_panel(plus)),
+		"physical hand contains both eligible sewn attack variants")
+	if _panel(base) == null or _panel(plus) == null:
+		await _return()
+		return
+	await _hover(_panel(base))
+	var forecast: Dictionary = presenter.current_forecast.duplicate(true)
+	var expected: Dictionary = {}
+	for hit in forecast.get("hits", []):
+		if hit.position == 1:
+			expected = hit
+	_check(forecast.get("playable", false) and expected.damage == 10
+		and expected.pinned_bonus == 5 and expected.exposed_applied == 1
+		and expected.exposed_before == 1 and expected.exposed_after == 2
+		and presenter.cue.text.contains("1: 10 damage (+5 Pinned)")
+		and presenter.cue.text.contains("Exposed 1 → 2 after hit"),
+		"real held Pin forecasts ARM + cross-pin + Weak/Exposed and after-hit Eye")
+	_check(_snapshot() == initial and shared.latch_snapshot() == latch_before
+		and presenter._pinned._pinner_by_position == pin_before
+		and presenter._unravel._gauges == gauge_before,
+		"real physical hover remains pure across deck, enemies, RNG, pin, gauge and latch")
+	await _click(_panel(base))
+	await _click(app.get_node("LiveEnemyRoster")._labels[0])
+	var event: Dictionary = presenter.last_event.duplicate(true)
+	_check(event.get("ok", false) and event.damage == expected.damage
+		and event.block_absorbed == 6 and event.hp_loss == 4
+		and event.pinned_bonus == 5 and app.enemies.get_enemy(1).hp == 196
+		and app.enemies.get_enemy(1).statuses.exposed == 2,
+		"physical mouse hit equals forecast and applies Eye only after damage")
+	_check(app.deck.energy == 2 and not app.deck.hand.has(base)
+		and app.deck.hand.has(plus) and app.deck.discard_pile.count(base) == initial[2].count(base) + 1
+		and shared.latch_snapshot().seamstress
+		and presenter._pinned.pinner_for_enemy(1) == "seamstress",
+		"one real cost/discard, pin replacement and shared first-attack consumption")
+	# Rebuilding the held hand must never replace the shared rules or reset
+	# its consumed Eye; further attacks still get the ARM bonus.
+	app._refresh_hand()
+	await _frames()
+	_check(presenter._controls._patches == shared and presenter._play._patches == shared
+		and shared.latch_snapshot().seamstress, "real hand rebuild retains exact used latch")
+	var refreshed := _snapshot()
+	await _key(KEY_P)
+	_check(presenter._armed != null and presenter._card_id(presenter._armed) == plus,
+		"P physically arms remaining Needle Pin+ panel")
+	forecast = presenter.current_forecast.duplicate(true)
+	expected = {}
+	for hit in forecast.get("hits", []):
+		if hit.position == 1:
+			expected = hit
+	# Exposed stacks affect duration, not magnitude: floor((4 + ARM 1) * 9/8) = 5.
+	_check(forecast.get("playable", false) and expected.damage == 5
+		and expected.pinned_bonus == 0 and not expected.has("exposed_applied")
+		and _snapshot() == refreshed and shared.latch_snapshot().seamstress,
+		"post-refresh Needle Pin+ forecast reads used Eye and same-owner pin")
+	await _key(KEY_1)
+	event = presenter.last_event.duplicate(true)
+	_check(event.get("ok", false) and event.damage == expected.damage
+		and app.deck.energy == 1 and not app.deck.hand.has(plus)
+		and app.deck.discard_pile.count(plus) == initial[2].count(plus) + 1
+		and shared.latch_snapshot().seamstress
+		and app.enemies.get_enemy(1).statuses.exposed == 2,
+		"physical keyboard Needle Pin+ commits once without repeated Eye")
+	await _return()
