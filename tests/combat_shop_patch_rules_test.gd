@@ -317,13 +317,14 @@ func _test_distinct_wearer_powers_and_assignments() -> void:
 		and rules1.project_opening_block("seamstress") == 0
 		and rules1.project_opening_block("tinker") == 0,
 		"Warden base 6 + Stitched Badge 3 projects 9 total opening Block")
+	var authored_heal_totals := {"seamstress_mend": 5, "seamstress_mend_plus": 7}
 	for hero_id in ["warden", "seamstress", "tinker"]:
 		for cid in cards_catalog.get_all_card_ids():
 			var bonus := rules1.healing_card_bonus(hero_id, cid)
 			var total_heal := rules1.project_card_healing(hero_id, cid)
-			if hero_id == "seamstress" and cid == "seamstress_mend":
-				_check(bonus == 2 and total_heal == 7,
-					"Spare Spool on Seamstress grants +2 (total 7) to seamstress_mend")
+			if hero_id == "seamstress" and authored_heal_totals.has(cid):
+				_check(bonus == 2 and total_heal == authored_heal_totals[cid] + 2,
+					"Spare Spool on Seamstress grants +2 to authored heal " + cid)
 			else:
 				_check(bonus == 0 and total_heal == 0,
 					"no healing_card_bonus for " + hero_id + " + " + cid)
@@ -735,7 +736,7 @@ func _test_rejections_and_malformed_inputs() -> void:
 			and check_rules.project_card_healing(bad_hero, "seamstress_mend") == 0,
 			"invalid hero_id returns 0 for all queries")
 	for bad_card in [
-		null, "", " ", "unknown_card", "seamstress_mend_plus", "SEAMSTRESS_MEND",
+		null, "", " ", "unknown_card", "seamstress_mend_plus_unknown", "SEAMSTRESS_MEND",
 		"warden_strike", "warden_brace", "warden_shield_bash",
 		"seamstress_prick", "seamstress_stitch_up",
 		"tinker_pop_shot", "tinker_scrap_bomb", "tinker_tune_up",
@@ -745,6 +746,12 @@ func _test_rejections_and_malformed_inputs() -> void:
 		_check(check_rules.healing_card_bonus("seamstress", bad_card) == 0
 			and check_rules.project_card_healing("seamstress", bad_card) == 0,
 			"unknown/non-heal/forged card argument returns 0")
+
+	# Mend+ is now an authored positive-heal starter card, so the same bound
+	# spare spool projects its own base seven plus the existing +2.
+	_check(check_rules.healing_card_bonus("seamstress", "seamstress_mend_plus") == 2
+		and check_rules.project_card_healing("seamstress", "seamstress_mend_plus") == 9,
+		"authored Mend+ reads its own base seven through the spare spool")
 
 	# Direct probes of _has_positive_authored_heal against non-positive/float/forged definitions.
 	for bad_def in [

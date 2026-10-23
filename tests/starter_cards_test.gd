@@ -8,6 +8,7 @@ func _initialize() -> void:
 	_test_definitions_exist()
 	_test_warden_cards()
 	_test_strike_plus()
+	_test_support_plus()
 	_test_seamstress_cards()
 	_test_tinker_cards()
 	_test_starting_deck_multiplicities()
@@ -45,6 +46,51 @@ func _test_strike_plus() -> void:
 	for field in ["owner", "cost", "from_positions", "target_kind", "to_positions"]:
 		_check(upgraded.get(field) == original.get(field), "Strike+ retains " + field)
 	_check(catalog.get_starting_deck() == JSON.parse_string(FileAccess.get_file_as_string("res://data/cards/starter_deck.json")), "exact twelve-card starter membership and order retained")
+
+
+func _test_support_plus() -> void:
+	var catalog := StarterCards.new()
+	var expectations := {
+		"warden_brace_plus": ["Brace+", "warden", "self", "block", 10, [1, 2, 3]],
+		"seamstress_mend_plus": ["Mend+", "seamstress", "ally_single", "heal", 7, [2, 3]],
+		"seamstress_stitch_up_plus": ["Stitch Up+", "seamstress", "ally_single", "block", 7, [1, 2, 3]],
+	}
+	var starter_deck := catalog.get_starting_deck()
+	var authored = JSON.parse_string(FileAccess.get_file_as_string("res://data/cards/starter_deck.json"))
+	for card_id: String in expectations:
+		var expected: Array = expectations[card_id]
+		var plus: Dictionary = catalog.get_definition(card_id)
+		var base: Dictionary = catalog.get_definition(card_id.trim_suffix("_plus"))
+		_check(plus.get("id") == card_id and not plus.is_empty(), card_id + " authored ID")
+		_check(plus.get("display_name") == expected[0], card_id + " visible name")
+		_check(plus.get("owner") == expected[1], card_id + " owner")
+		_check(plus.get("cost") == 1, card_id + " cost")
+		_check(plus.get("from_positions") == expected[5], card_id + " from_positions")
+		_check(plus.get("target_kind") == expected[2], card_id + " target_kind")
+		_check(plus.get("to_positions") == [], card_id + " to_positions empty")
+		_check(plus.get("effects") == {expected[3]: expected[4]}, card_id + " sole intended effect")
+		_check(plus.get("starting_copies") == 0, card_id + " adds no starter copies")
+		_check(not starter_deck.has(card_id), card_id + " absent from the starting deck")
+		_check(plus.get("illustration_path") == base.get("illustration_path")
+			and plus.get("illustration_path") == "res://assets/paper/cards/" + base.get("id", "") + ".png",
+			card_id + " reuses its base illustration path")
+		for field in ["owner", "cost", "from_positions", "target_kind", "to_positions"]:
+			_check(plus.get(field) == base.get(field), card_id + " retains base " + field)
+	# Base starters and the earlier numeric upgrade keep their authored numbers.
+	_check(catalog.get_definition("warden_brace").get("effects") == {"block": 7},
+		"original Warden Brace remains seven Block")
+	_check(catalog.get_definition("seamstress_mend").get("effects") == {"heal": 5},
+		"original Seamstress Mend remains five heal")
+	_check(catalog.get_definition("seamstress_stitch_up").get("effects") == {"block": 5},
+		"original Seamstress Stitch Up remains five Block")
+	_check(catalog.get_definition("warden_strike_plus").get("effects") == {"damage": 7},
+		"existing Strike+ remains seven damage")
+	_check(catalog.get_definition("tinker_tune_up").get("effects") == {"draw": 1},
+		"original Tune Up remains draw one")
+	_check(not catalog.has_card("tinker_tune_up_plus"),
+		"no Tune Up+ is authored without a specified draw upgrade")
+	_check(starter_deck == authored and starter_deck.size() == 12,
+		"exact twelve-card starter membership and order retained")
 
 
 func _test_definitions_exist() -> void:
