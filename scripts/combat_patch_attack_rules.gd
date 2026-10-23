@@ -1,7 +1,7 @@
 class_name CombatPatchAttackRules
 extends RefCounted
 ## A single battle's detached wearer projection. No mutation of run ledgers.
-## Only the two documented, authored M04 powers are recognized.
+## Authoritative M04 attack powers and M05 wearer-only ARM support patches.
 
 const CATALOG := "res://data/patches/m04_attack_patches.json"
 const EFFECTS := {
@@ -9,19 +9,45 @@ const EFFECTS := {
 	"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1}
 }
 
+const SUPPORT_CATALOG := "res://data/patches/m05_arm_support_patches.json"
+const SUPPORT_EFFECTS := {
+	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
+	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1}
+}
+
 var _valid := false
 var _active: Dictionary = {}
 var _consumed: Dictionary = {}
+var _worn: Dictionary = {}
+var _living: Dictionary = {}
+
+var _starter_cards: StarterCards = null
+var _warden_cards: WardenPoolCards = null
+var _seamstress_cards: SeamstressPoolCards = null
+var _tinker_cards: TinkerPoolCards = null
+
+
+func _init() -> void:
+	_starter_cards = StarterCards.new()
+	_warden_cards = WardenPoolCards.new()
+	_seamstress_cards = SeamstressPoolCards.new()
+	_tinker_cards = TinkerPoolCards.new()
 
 
 func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	_valid = false
 	_active.clear()
 	_consumed.clear()
+	_worn.clear()
+	_living.clear()
 	if wardrobe == null or torn == null or not wardrobe.is_valid() or not torn.is_valid():
 		return false
 	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG))
 	if not _valid_catalog(catalog):
+		return false
+	var support_catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string(SUPPORT_CATALOG))
+	if not _valid_support_catalog(support_catalog):
 		return false
 	var state := wardrobe.get_snapshot()
 	var torn_state := torn.read_state()
@@ -29,6 +55,10 @@ func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	if not _valid_projection(state, torn_state, projection):
 		return false
 	_active = projection["active"].duplicate(true)
+	_worn = state.get("worn", {}).duplicate(true)
+	for hero in torn_state.get("heroes", []):
+		if typeof(hero) == TYPE_DICTIONARY and hero.has("id") and hero.has("hp"):
+			_living[hero["id"]] = hero["hp"] > 0
 	for owner in RunPatchWardrobe.HERO_IDS:
 		_consumed[owner] = false
 	_valid = true
@@ -47,6 +77,10 @@ func latch_snapshot() -> Dictionary:
 	return _consumed.duplicate(true)
 
 
+func worn_snapshot() -> Dictionary:
+	return _worn.duplicate(true)
+
+
 func damage_bonus(owner: String) -> int:
 	if not _valid:
 		return 0
@@ -62,6 +96,102 @@ func exposed_for_first_hit(owner: String) -> Dictionary:
 func record_successful_attack(owner: String) -> void:
 	if _valid and _consumed.has(owner) and _active.get(owner, []).has("button_eye"):
 		_consumed[owner] = true
+
+
+func card_support_bonuses(owner_id: Variant, card_id: Variant) -> Dictionary:
+	var detached_zero := {"block": 0, "bleed": 0, "unravel": 0}
+	if not _valid:
+		return detached_zero
+	if typeof(owner_id) != TYPE_STRING or typeof(card_id) != TYPE_STRING:
+		return detached_zero
+	var owner: String = owner_id
+	var card: String = card_id
+	if not RunPatchWardrobe.HERO_IDS.has(owner):
+		return detached_zero
+	if not _living.get(owner, false):
+		return detached_zero
+
+	var active_arm: String = _worn.get(owner, {}).get("ARM", "")
+	if active_arm.is_empty():
+		return detached_zero
+	var active_patches: Array = _active.get(owner, [])
+	if not active_patches.has(active_arm):
+		return detached_zero
+	if not SUPPORT_EFFECTS.has(active_arm):
+		return detached_zero
+
+	var def := _get_canonical_card_definition(card)
+	if def.is_empty():
+		return detached_zero
+	if def.get("owner") != owner:
+		return detached_zero
+
+	var effects: Variant = def.get("effects")
+	if typeof(effects) != TYPE_DICTIONARY:
+		return detached_zero
+
+	var result := {"block": 0, "bleed": 0, "unravel": 0}
+	match active_arm:
+		"hemguard_cuff":
+			var val: Variant = effects.get("block")
+			if (typeof(val) == TYPE_INT or typeof(val) == TYPE_FLOAT) and int(val) > 0:
+				result["block"] = SUPPORT_EFFECTS["hemguard_cuff"]["amount"]
+		"red_bobbin_cuff":
+			var val: Variant = effects.get("bleed")
+			if (typeof(val) == TYPE_INT or typeof(val) == TYPE_FLOAT) and int(val) > 0:
+				result["bleed"] = SUPPORT_EFFECTS["red_bobbin_cuff"]["amount"]
+		"loose_thread_glove":
+			var val: Variant = effects.get("unravel")
+			if (typeof(val) == TYPE_INT or typeof(val) == TYPE_FLOAT) and int(val) > 0:
+				result["unravel"] = SUPPORT_EFFECTS["loose_thread_glove"]["amount"]
+
+	return result
+
+
+func card_block_bonus(owner_id: Variant, card_id: Variant) -> int:
+	return int(card_support_bonuses(owner_id, card_id).get("block", 0))
+
+
+func card_bleed_bonus(owner_id: Variant, card_id: Variant) -> int:
+	return int(card_support_bonuses(owner_id, card_id).get("bleed", 0))
+
+
+func card_unravel_bonus(owner_id: Variant, card_id: Variant) -> int:
+	return int(card_support_bonuses(owner_id, card_id).get("unravel", 0))
+
+
+func project_card_support(owner_id: Variant, card_id: Variant) -> Dictionary:
+	if typeof(card_id) != TYPE_STRING:
+		return {}
+	var def := _get_canonical_card_definition(str(card_id))
+	if def.is_empty() or def.get("owner") != owner_id:
+		return {}
+	var bonuses := card_support_bonuses(owner_id, card_id)
+	var projected: Dictionary = def.get("effects", {}).duplicate(true)
+	for key in bonuses:
+		if bonuses[key] > 0 and projected.has(key):
+			projected[key] += bonuses[key]
+	return projected
+
+
+func _get_canonical_card_definition(card_id: String) -> Dictionary:
+	if _starter_cards == null:
+		_starter_cards = StarterCards.new()
+	if _warden_cards == null:
+		_warden_cards = WardenPoolCards.new()
+	if _seamstress_cards == null:
+		_seamstress_cards = SeamstressPoolCards.new()
+	if _tinker_cards == null:
+		_tinker_cards = TinkerPoolCards.new()
+	if _starter_cards.has_card(card_id):
+		return _starter_cards.get_definition(card_id)
+	if _warden_cards.has_card(card_id):
+		return _warden_cards.get_definition(card_id)
+	if _seamstress_cards.has_card(card_id):
+		return _seamstress_cards.get_definition(card_id)
+	if _tinker_cards.has_card(card_id):
+		return _tinker_cards.get_definition(card_id)
+	return {}
 
 
 func _valid_catalog(raw: Variant) -> bool:
@@ -88,6 +218,36 @@ func _valid_catalog(raw: Variant) -> bool:
 	return seen.size() == EFFECTS.size()
 
 
+static func _valid_support_catalog(raw: Variant) -> bool:
+	if typeof(raw) != TYPE_ARRAY:
+		return false
+	var seen := {}
+	for entry in raw:
+		if typeof(entry) != TYPE_DICTIONARY or entry.size() != 4:
+			return false
+		var id: Variant = entry.get("id")
+		if typeof(id) != TYPE_STRING:
+			return false
+		if not SUPPORT_EFFECTS.has(id):
+			continue
+		if seen.has(id):
+			return false
+		var expected: Dictionary = SUPPORT_EFFECTS[id]
+		for key in expected:
+			if not entry.has(key) or entry[key] != expected[key]:
+				return false
+			if key == "amount":
+				if typeof(entry[key]) not in [TYPE_FLOAT, TYPE_INT]:
+					return false
+			elif typeof(entry[key]) != typeof(expected[key]):
+				return false
+		seen[id] = true
+	for id in SUPPORT_EFFECTS:
+		if not seen.has(id):
+			return false
+	return true
+
+
 func _valid_projection(state: Dictionary, torn_state: Dictionary, projection: Dictionary) -> bool:
 	if state.get("valid") != true or torn_state.get("ok") != true or projection.get("ok") != true:
 		return false
@@ -109,6 +269,12 @@ func _valid_projection(state: Dictionary, torn_state: Dictionary, projection: Di
 			if owned.has(id):
 				return false
 		elif definitions[id] != EFFECTS[id]["slot"]:
+			return false
+	for id in SUPPORT_EFFECTS:
+		if not definitions.has(id):
+			if owned.has(id):
+				return false
+		elif definitions[id] != SUPPORT_EFFECTS[id]["slot"]:
 			return false
 	var seen := {}
 	var seen_worn := {}
