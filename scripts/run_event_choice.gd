@@ -158,7 +158,10 @@ func preview_wallet_choices(wallet: Variant) -> Dictionary:
 func _project_wallet(base_wallet: Dictionary, gold_delta: int, scraps_delta: int) -> Dictionary:
 	var base_gold: int = base_wallet["gold"]
 	var base_scraps: int = base_wallet["scraps"]
-	if gold_delta > MAX_INT - base_gold:
+	if gold_delta > 0:
+		if gold_delta > MAX_INT - base_gold:
+			return {"ok": false}
+	elif base_gold + gold_delta < 0:
 		return {"ok": false}
 	if scraps_delta >= 0:
 		if scraps_delta > MAX_INT - base_scraps:
@@ -217,7 +220,7 @@ func _parse_choice_outcome(choice: Dictionary) -> Dictionary:
 	var outcome: Dictionary = raw_outcome
 	if outcome.size() != 2 or not outcome.has("gold") or not outcome.has("scraps"):
 		return {"ok": false}
-	var gold: Dictionary = _read_outcome_amount(outcome.get("gold"), false)
+	var gold: Dictionary = _read_outcome_amount(outcome.get("gold"), true)
 	var scraps: Dictionary = _read_outcome_amount(outcome.get("scraps"), true)
 	if not gold.get("ok", false) or not scraps.get("ok", false):
 		return {"ok": false}
