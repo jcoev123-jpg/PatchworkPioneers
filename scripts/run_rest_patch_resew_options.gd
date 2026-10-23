@@ -104,19 +104,18 @@ static func forecast(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 			or not RunPatchCoatRules._valid_authored(coat_rules) \
 			or not CombatShopPatchRules._valid_slot_catalog(shop_slots):
 		return rejected
+	var authority := RunPatchWearerSummary._authority({})
+	if authority.is_empty():
+		return rejected
+	var catalog_slots: Dictionary = authority["slots"]
 	var definitions: Dictionary = exact_snapshot["definitions"]
 	# Known authored IDs must not be mis-slotted in a caller-supplied ledger.
-	for id in CombatPatchAttackRules.EFFECTS:
-		if definitions.has(id) and definitions[id] != CombatPatchAttackRules.EFFECTS[id]["slot"]:
-			return rejected
-	for id in CombatShopPatchRules.EFFECTS:
-		if definitions.has(id) and definitions[id] != CombatShopPatchRules.EFFECTS[id]["slot"]:
+	for id in catalog_slots:
+		if definitions.has(id) and definitions[id] != catalog_slots[id]:
 			return rejected
 	var coat_bonuses := {}
 	for entry in coat_rules:
 		var coat_id: String = entry["id"]
-		if definitions.has(coat_id) and definitions[coat_id] != "COAT":
-			return rejected
 		coat_bonuses[coat_id] = int(entry["max_hp_bonus"])
 	var source_id: String = option["from_hero"]
 	var destination_id: String = option["to_hero"]
@@ -171,6 +170,10 @@ static func _wearer(hero: Dictionary, assignments: Dictionary, coat_bonuses: Dic
 			effect = "damage-dealing cards: +%d damage" % CombatPatchAttackRules.EFFECTS[id]["amount"]
 		elif slot == "COAT" and coat_bonuses.has(id):
 			effect = "+%d effective max HP (no heal)" % coat_bonuses[id]
+		elif RunPatchWearerSummary.KNOWN_M05_HEAD_POWERS.has(id) and slot == "HEAD":
+			effect = RunPatchWearerSummary.KNOWN_TEXTS.get(id, "")
+		elif (RunPatchWearerSummary.KNOWN_M05_ARM_POWERS.has(id) or RunPatchWearerSummary.KNOWN_M05_ATTACK_POWERS.has(id)) and slot == "ARM":
+			effect = RunPatchWearerSummary.KNOWN_TEXTS.get(id, "")
 		slots[slot] = {"id": id, "active": id != "" and hp > 0, "effect": effect}
 	var coat_id: String = slots["COAT"]["id"]
 	var coat_active: bool = hp > 0 and coat_bonuses.has(coat_id)
