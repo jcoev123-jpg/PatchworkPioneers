@@ -7,13 +7,31 @@ const NEEDLE_IDS := ["seamstress_needle_pin", "seamstress_needle_pin_plus"]
 const SNAG_IDS := ["seamstress_snag", "seamstress_snag_plus"]
 const UNPICK_IDS := ["seamstress_unpick", "seamstress_unpick_plus"]
 
+## Optional battle-scoped reference, shared with CombatAttackCards. A present
+## but invalid binding rejects every cast instead of silently going vanilla.
+var _patches: CombatPatchAttackRules = null
+
+
+func bind_patch_rules(patches: CombatPatchAttackRules) -> void:
+	_patches = patches
+
+
+## Read-only projection for the live forecast. Never consumes the shared latch.
+func needle_patch_preview() -> Dictionary:
+	if _patches != null and not _patches.is_valid():
+		return {"ok": false}
+	return {"ok": true,
+		"damage_bonus": 0 if _patches == null else _patches.damage_bonus("seamstress"),
+		"statuses": {} if _patches == null else _patches.exposed_for_first_hit("seamstress")}
+
 
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pinned: CombatPinned, unravel: CombatUnravel, card_id: String,
 		target_position: int) -> Dictionary:
 	# Validate every authority, including all status records, before spending
 	# energy or moving the single played card to the discard pile.
-	if deck == null or party == null or enemies == null:
+	if deck == null or party == null or enemies == null \
+			or (_patches != null and not _patches.is_valid()):
 		return {"ok": false}
 	if not party.is_valid() or not enemies.is_valid():
 		return {"ok": false}
@@ -61,8 +79,20 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			return {"ok": false}
 
 	var pin_bonus := 0
+	var patch_damage := 0
+	var patch_statuses: Dictionary = {}
 	if is_needle:
+		var projection := needle_patch_preview()
+		if not projection.ok:
+			return {"ok": false}
+		patch_damage = projection.damage_bonus
+		patch_statuses = projection.statuses
+		# Confirm first-hit Exposed capacity before any damage, spend or pin.
+		if not enemies.can_apply_statuses({target_position: patch_statuses}):
+			return {"ok": false}
 		pin_bonus = pinned.bonus_for_attack(enemies, target_position, "seamstress")
+		if int(effects["damage"]) > CombatStatuses.MAX_INT - patch_damage - pin_bonus:
+			return {"ok": false}
 
 	# Both operations are guaranteed by the preflight, and neither draws cards
 	# nor touches the caller's run RNG.
@@ -77,7 +107,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	}
 	if is_needle:
 		var attack: Dictionary = CombatStatusAttacks.new().resolve_vs_enemy(
-			enemies, target_position, int(effects["damage"]) + pin_bonus,
+			enemies, target_position, int(effects["damage"]) + patch_damage + pin_bonus,
 			actor.get("statuses", {}), enemies.get_enemy(target_position).get("statuses", {}))
 		result["damage"] = attack["damage"]
 		result["block_absorbed"] = attack["block_absorbed"]
@@ -88,6 +118,11 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not enemies.is_slain(target_position):
 			pinned.pin_enemy(enemies, target_position, "seamstress")
 		result["pinner"] = pinned.pinner_for_enemy(target_position)
+		# Post-hit: the new Exposed cannot amplify this attack itself.
+		if not patch_statuses.is_empty():
+			enemies.apply_statuses({target_position: patch_statuses})
+		if _patches != null:
+			_patches.record_successful_attack("seamstress")
 	else:
 		var added: int = int(effects["unravel"])
 		unravel.apply_unravel(enemies, target_position, added)
