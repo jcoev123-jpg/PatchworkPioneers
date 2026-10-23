@@ -57,11 +57,12 @@ func commit_transaction(staged: CombatAttackCards) -> void:
 ## Reuse full authored attack validation/effects without charging a composite's
 ## real deck for this half. No RNG or synthetic half enters the shared piles.
 func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int) -> Dictionary:
+		card_id: String, target_position: int, base_bonus: int = 0) -> Dictionary:
 	var eligibility := CombatDeck.new([], RandomNumberGenerator.new())
 	eligibility.hand.append(card_id)
 	eligibility.combat_state.start_player_turn()
-	return play_attack(eligibility, party, enemies, card_id, target_position)
+	return _play_attack(eligibility, party, enemies, card_id, target_position,
+		{}, {}, 0, base_bonus)
 
 
 ## Rejects every invalid selection, recipient and status snapshot before mutating
@@ -71,9 +72,25 @@ func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
 ## one Clockwork point) applied to the real charge exactly once, before spending.
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, attacker_statuses: Dictionary = {},
-		enemy_statuses_by_position: Dictionary = {}, cost_discount: int = 0) -> Dictionary:
+		enemy_statuses_by_position: Dictionary = {}, cost_discount: int = 0,
+		mitt: CombatFrayfinderMitt = null, quote: Dictionary = {}) -> Dictionary:
+	var bonus := 0
+	if mitt != null and quote.get("bonus") == 2:
+		bonus = mitt.authorize_starter_hit(quote, deck, party, enemies, card_id,
+			target_position, cost_discount)
+		if bonus != 2:
+			return _failure()
+	return _play_attack(deck, party, enemies, card_id, target_position,
+		attacker_statuses, enemy_statuses_by_position, cost_discount, bonus)
+
+
+## Internal damage seam: only an authenticated starter quote or a stitched
+## transaction's validated per-half authorization reaches this base bonus.
+func _play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int, attacker_statuses: Dictionary,
+		enemy_statuses_by_position: Dictionary, cost_discount: int, base_bonus: int) -> Dictionary:
 	var plan := _prepare(deck, party, enemies, card_id, target_position,
-		attacker_statuses, enemy_statuses_by_position, true, cost_discount)
+		attacker_statuses, enemy_statuses_by_position, true, cost_discount, base_bonus)
 	if not plan.ok:
 		return _failure()
 	var positions: Array[int] = plan.positions
@@ -136,7 +153,9 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, attacker_statuses: Dictionary,
 		enemy_statuses_by_position: Dictionary, select_target: bool,
-		cost_discount: int = 0) -> Dictionary:
+		cost_discount: int = 0, base_bonus: int = 0) -> Dictionary:
+	if base_bonus not in [0, 2]:
+		return _failure()
 	if deck == null or party == null or enemies == null:
 		return _failure()
 	if _patches != null and not _patches.is_valid():
@@ -199,6 +218,10 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	var patch_statuses := {} if _patches == null else _patches.exposed_for_first_hit(owner_id)
 	var patch_damage := 0 if _patches == null else _patches.damage_bonus(owner_id)
+	# Frayfinder is one base hit, never an area, later hit, or support cast.
+	if base_bonus > 0 and (definition.get("target_kind") != "enemy_single"
+			or not select_target or positions.size() != 1):
+		return _failure()
 
 	# Verify the entire batch before the first mutation (including late targets).
 	var target_statuses: Dictionary = {}
@@ -231,9 +254,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not enemies.can_apply_statuses(applications):
 		return _failure()
 	var bonus := _tinker.bonus_for_attack(card_id)
-	if damage_value > CombatStatuses.MAX_INT - bonus - patch_damage:
+	if damage_value > CombatStatuses.MAX_INT - bonus - patch_damage - base_bonus:
 		return _failure()
-	var attack_damage: int = damage_value + bonus + patch_damage
+	var attack_damage: int = damage_value + bonus + patch_damage + base_bonus
 	if card_id == CombatAreaAttacks.SCRAP_BOMB_ID and not _area.can_resolve(
 			enemies, attack_damage, owner_statuses, target_statuses):
 		return _failure()

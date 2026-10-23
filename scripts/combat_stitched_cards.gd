@@ -18,10 +18,48 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 	return _support.bind_patch_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn)
 
 
+## The optional Frayfinder service authenticates its own half quotes against
+## the real deck/party/roster before the atomic staged transaction starts.
 func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		run_cards: RunRestStitchCards, stitched_id: String,
-		first_target: int = 0, second_target: int = 0) -> Dictionary:
+		first_target: int = 0, second_target: int = 0,
+		mitt: CombatFrayfinderMitt = null) -> Dictionary:
+	var bonuses := [0, 0]
+	var quotes := [{}, {}]
+	if mitt != null:
+		if deck == null or party == null or enemies == null or run_cards == null:
+			return {"ok": false, "halves": []}
+		var preview := run_cards.preview_play(stitched_id, party.get_heroes())
+		if not preview.get("ok", false) or not deck.hand.has(stitched_id):
+			return {"ok": false, "halves": []}
+		for index in range(2):
+			if preview.halves[index].get("target_kind") != "enemy_single":
+				continue
+			var target: int = first_target if index == 0 else second_target
+			var quote := mitt.quote_stitched_half(run_cards, stitched_id, index, target)
+			if quote.get("bonus") == 2:
+				if mitt.authorize_stitched_half(quote, deck, party, enemies,
+						run_cards, stitched_id, index, target) != 2:
+					return {"ok": false, "halves": []}
+				bonuses[index] = 2
+			quotes[index] = quote
+	var receipt := _play_with_bonuses(deck, party, enemies, run_cards,
+		stitched_id, first_target, second_target, bonuses)
+	if receipt.get("ok", false) and mitt != null:
+		for quote in quotes:
+			if quote.has("seal"):
+				mitt.consume_confirmed_hit(quote, receipt, run_cards)
+	return receipt
+
+
+## Replay seam also runs ONLY on detached authorities during receipt verification.
+## Public play_stitched never takes a caller-supplied numerical bonus.
+func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		run_cards: RunRestStitchCards, stitched_id: String,
+		first_target: int, second_target: int, bonuses: Array) -> Dictionary:
 	var failure := {"ok": false, "halves": []}
+	if bonuses.size() != 2 or bonuses[0] not in [0, 2] or bonuses[1] not in [0, 2]:
+		return failure
 	if deck == null or party == null or enemies == null or run_cards == null:
 		return failure
 	if not _support.is_patch_binding_valid():
@@ -64,7 +102,8 @@ func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if kind in ["enemy_single", "ally_single"] and not half.to_positions.is_empty() and not half.to_positions.has(target):
 			return failure
 		if kind in ["enemy_single", "enemy_all"]:
-			var result := attacks.resolve_staged_half(staged_party, staged_enemies, half.id, target)
+			var result := attacks.resolve_staged_half(staged_party, staged_enemies,
+				half.id, target, bonuses[index])
 			if not result.ok:
 				return failure
 			results.append(result)
