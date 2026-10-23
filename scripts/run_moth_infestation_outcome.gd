@@ -54,6 +54,16 @@ func is_consumed() -> bool:
 	return _consumed
 
 
+## Detached authored choice/ordinary-occurrence forecast for this visit only.
+## A claimed or malformed ledger never produces actionable menu entries.
+func preview_choices() -> Dictionary:
+	if not is_valid() or not _has_ledger:
+		return {"ok": false, "event_id": "", "choices": [], "sacrifice_cards": []}
+	return RunMothInfestationChoiceOptions.build(
+		_deck.duplicate(), _descriptors.duplicate(true), _scraps,
+		MAX_INT, SACRIFICE_SCRAP_GAIN, FUMIGATE_SCRAP_COST)
+
+
 func has_ledger() -> bool:
 	return _has_ledger
 
