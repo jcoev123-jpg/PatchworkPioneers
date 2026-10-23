@@ -9,6 +9,7 @@ const REQUIRED := {
 	"frayed_signpost": "The Frayed Signpost",
 	"quiet_spool": "The Quiet Spool",
 	"needle_gate": "The Needle Gate",
+	"quilting_bee": "The Quilting Bee",
 }
 
 var panel: LiveEventChoicePanel
@@ -16,6 +17,7 @@ var failures: Array[String] = []
 var checks: int = 0
 var committed: Array[Dictionary] = []
 var authored: Dictionary = {}
+var wallet_committed: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -58,6 +60,329 @@ func _mouse(button: Button) -> void:
 
 func _on_choice_committed(event_id: String, choice_id: String) -> void:
 	committed.append({"event_id": event_id, "choice_id": choice_id})
+
+
+func _on_wallet_choice_committed(result: Dictionary) -> void:
+	wallet_committed.append(result.duplicate(true))
+
+
+func _wallet_record(path: String, event_id: String) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	_check(file != null, event_id + " genuine JSON opens")
+	if file == null:
+		return {}
+	var parser := JSON.new()
+	var error := parser.parse(file.get_as_text())
+	file.close()
+	_check(error == OK, event_id + " genuine JSON parses")
+	if error != OK:
+		return {}
+	var value: Variant = parser.data
+	_check(value is Dictionary and value.get("id") == event_id, event_id + " exact authored ID")
+	if not value is Dictionary:
+		return {}
+	return value
+
+
+func _wallet_index(record: Dictionary, choice_id: String) -> int:
+	var choices: Array = record.get("choices", [])
+	for i in range(choices.size()):
+		if choices[i] is Dictionary and choices[i].get("id") == choice_id:
+			return i
+	return -1
+
+
+func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String) -> void:
+	_check(panel.has_open_event() and panel.is_visible_in_tree(), label + " mounted visible event")
+	_check(panel.title_label.text == record["title"] and panel.description_label.text == record["description"],
+		label + " authored title and description visible")
+	var balance := panel.choices_container.get_parent().get_node_or_null("WalletBalance") as Label
+	_check(balance != null, label + " visible balance label")
+	if balance != null:
+		_check(balance.is_visible_in_tree() and balance.text == "Wallet  •  %d gold   /   %d scraps" % [wallet["gold"], wallet["scraps"]],
+			label + " current exact gold and scraps")
+	var preview := RunEventChoice.new(record).preview_wallet_choices(wallet)
+	_check(preview.get("ok", false) == true, label + " valid RunEventChoice preview")
+	var buttons := panel.get_choice_buttons()
+	var choices: Array = record["choices"]
+	var rows: Array = preview.get("choices", [])
+	_check(buttons.size() == choices.size() and rows.size() == choices.size(),
+		label + " authentic offered choice count")
+	if buttons.size() != choices.size() or rows.size() != choices.size():
+		return
+	var viewport := Rect2(Vector2.ZERO, Vector2(root.size))
+	_check(viewport.encloses(panel.paper_panel.get_global_rect()), label + " paper card within 1280x720")
+	for i in range(buttons.size()):
+		var button: Button = buttons[i]
+		var row: Dictionary = rows[i]
+		var expected := "%s\nGold %s   |   Scraps %s" % [
+			choices[i]["text"], panel._delta_label(row["gold_delta"]), panel._delta_label(row["scraps_delta"])]
+		if not row["affordable"]:
+			expected += "   •   UNAVAILABLE"
+		_check(button.text == expected, label + " original text, precise signed deltas and unavailable flag " + str(i))
+		_check(button.disabled == not row["affordable"] and
+			button.focus_mode == (Control.FOCUS_ALL if row["affordable"] else Control.FOCUS_NONE),
+			label + " affordability disables and skips focus for unavailable choice " + str(i))
+		_check(button.get_parent() == panel.choices_container and button.is_visible_in_tree(),
+			label + " actual mounted choice button " + str(i))
+		_check(viewport.encloses(button.get_global_rect()), label + " full choice onscreen " + str(i))
+		_check(button.get_theme_stylebox("normal") is StyleBoxFlat and
+			button.get_theme_stylebox("disabled") is StyleBoxFlat and
+			button.get_theme_stylebox("focus") is StyleBoxFlat,
+			label + " paper/cardboard/focus styling intact " + str(i))
+
+
+func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
+		expected_wallet: Dictionary, mouse_activation: bool = false) -> void:
+	var label := str(record.get("id", "")) + "/" + choice_id + " @ " + str(wallet)
+	var original_record := record.duplicate(true)
+	var original_wallet := wallet.duplicate(true)
+	wallet_committed.clear()
+	committed.clear()
+	_check(panel.open_event_with_wallet(record, wallet), label + " opens fresh wallet panel")
+	if not panel.has_open_event():
+		return
+	await _frames()
+	_check_wallet_layout(original_record, original_wallet, label)
+	var index := _wallet_index(original_record, choice_id)
+	_check(index >= 0 and index < panel.get_choice_buttons().size(), label + " desired choice is offered")
+	if index < 0 or index >= panel.get_choice_buttons().size():
+		panel.close_event()
+		await _frames()
+		return
+	var button: Button = panel.get_choice_buttons()[index]
+	_check(not button.disabled, label + " target really affordable and enabled")
+	# Mutation after mounting cannot influence the detached, authoritative
+	# transaction, even when the same caller Dictionary is reused elsewhere.
+	wallet["gold"] = 777
+	wallet["scraps"] = 777
+	record["title"] = "forged title"
+	record["choices"][index]["outcome"]["gold"] = 999
+	if mouse_activation:
+		await _mouse(button)
+	else:
+		button.pressed.emit()
+	_check(wallet_committed.size() == 1, label + " emits exactly one wallet receipt")
+	var expected := {"ok": true, "event_id": original_record["id"],
+		"choice_id": choice_id, "wallet": expected_wallet}
+	if wallet_committed.size() == 1:
+		_check(wallet_committed[0] == expected, label + " exact ID-specific settled wallet")
+		(wallet_committed[0]["wallet"] as Dictionary)["gold"] = -999
+		_check(panel._committed_choice == expected, label + " emitted result detached from panel receipt")
+	_check(committed.is_empty(), label + " never emits legacy choice_committed in wallet mode")
+	_check(panel._selector.is_claimed(), label + " selector claimed exactly once")
+	for current in panel.get_choice_buttons():
+		_check(current.disabled, label + " all choices disabled after claim")
+		current.pressed.emit()
+	_check(wallet_committed.size() == 1, label + " duplicate input cannot settle twice")
+	_check(wallet == {"gold": 777, "scraps": 777} and record["title"] == "forged title",
+		label + " panel selection never mutates caller wallet or event")
+	panel.close_event()
+	await _frames()
+	_check(panel.choices_container.get_parent().get_node_or_null("WalletBalance") == null,
+		label + " close removes balance caption")
+
+
+func _wallet_denied_then_recover(record: Dictionary, wallet: Dictionary, denied_id: String,
+		recovery_id: String, expected_wallet: Dictionary) -> void:
+	var label := str(record.get("id", "")) + "/" + denied_id + " insufficient"
+	var snapshot := wallet.duplicate(true)
+	wallet_committed.clear()
+	committed.clear()
+	seed(913417)
+	var expected_rng := randi()
+	seed(913417)
+	_check(panel.open_event_with_wallet(record, wallet), label + " event opens for refused choice")
+	if not panel.has_open_event():
+		return
+	await _frames()
+	_check_wallet_layout(record, wallet, label)
+	var denied_index := _wallet_index(record, denied_id)
+	var recovery_index := _wallet_index(record, recovery_id)
+	var buttons := panel.get_choice_buttons()
+	_check(denied_index >= 0 and recovery_index >= 0, label + " both choices actually present")
+	if denied_index < 0 or recovery_index < 0:
+		panel.close_event()
+		await _frames()
+		return
+	var disabled: Button = buttons[denied_index]
+	var recovery: Button = buttons[recovery_index]
+	_check(disabled.disabled and disabled.focus_mode == Control.FOCUS_NONE, label + " inaccessible and unfocusable")
+	_check(not recovery.disabled and recovery.focus_mode == Control.FOCUS_ALL, label + " recovery option available")
+	disabled.pressed.emit()
+	panel._on_choice_pressed(panel._selector, denied_id, panel._generation, disabled)
+	panel._on_choice_pressed(panel._selector, "unoffered", panel._generation, recovery)
+	panel._on_choice_pressed(panel._selector, denied_id, panel._generation, recovery)
+	_check(wallet_committed.is_empty() and committed.is_empty() and panel._selector.is_valid(),
+		label + " forced unaffordable/unoffered/mismatched activation fails before claim")
+	_check(wallet == snapshot, label + " refused action leaves caller wallet unchanged")
+	_check(randi() == expected_rng, label + " refusal, preview and opening use zero RNG")
+	recovery.pressed.emit()
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": record["id"], "choice_id": recovery_id, "wallet": expected_wallet},
+		label + " same selector recovers and settles exactly once")
+	panel.close_event()
+	await _frames()
+
+
+func _test_wallet_authored() -> void:
+	var estate := _wallet_record("res://data/events/estate_sale.json", "estate_sale")
+	var needle := _wallet_record("res://data/events/needle_gate.json", "needle_gate")
+	var exchange := _wallet_record("res://data/events/thimble_exchange.json", "thimble_exchange")
+	var bee: Dictionary = authored.get("quilting_bee", {})
+	for record in [estate, needle, exchange, bee]:
+		_check(not record.is_empty() and RunEventChoice.new(record).is_valid(),
+			"wallet fixture is a genuine valid authored event " + str(record.get("id", "")))
+	if estate.is_empty() or needle.is_empty() or exchange.is_empty() or bee.is_empty():
+		return
+	await _wallet_success(estate.duplicate(true), {"gold": 20, "scraps": 0}, "buy_thread",
+		{"gold": 5, "scraps": 2}, true)
+	await _wallet_denied_then_recover(estate, {"gold": 14, "scraps": 0}, "buy_thread", "leave",
+		{"gold": 14, "scraps": 0})
+	await _wallet_success(needle.duplicate(true), {"gold": 0, "scraps": 2}, "cut_bindings",
+		{"gold": 28, "scraps": 0})
+	await _wallet_denied_then_recover(needle, {"gold": 0, "scraps": 1}, "cut_bindings", "pass",
+		{"gold": 0, "scraps": 1})
+	await _wallet_success(exchange.duplicate(true), {"gold": 0, "scraps": 0}, "gather_thread",
+		{"gold": 0, "scraps": 2})
+	await _wallet_denied_then_recover(exchange, {"gold": 0, "scraps": 0}, "trade_scrap", "gather_thread",
+		{"gold": 0, "scraps": 2})
+	await _wallet_success(exchange.duplicate(true), {"gold": 0, "scraps": 1}, "trade_scrap",
+		{"gold": 10, "scraps": 0})
+	await _wallet_success(bee.duplicate(true), {"gold": 0, "scraps": 2}, "sew_panel",
+		{"gold": 32, "scraps": 0})
+	await _wallet_success(bee.duplicate(true), {"gold": 15, "scraps": 0}, "buy_thread",
+		{"gold": 0, "scraps": 2})
+
+
+func _test_wallet_keyboard() -> void:
+	var exchange := _wallet_record("res://data/events/thimble_exchange.json", "thimble_exchange")
+	if exchange.is_empty():
+		return
+	wallet_committed.clear()
+	_check(panel.open_event_with_wallet(exchange, {"gold": 0, "scraps": 1}),
+		"wallet keyboard exchange opens with two affordable choices")
+	await _frames()
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 2 and not buttons[0].disabled and not buttons[1].disabled,
+		"wallet keyboard has two real affordable buttons")
+	if buttons.size() == 2:
+		buttons[0].grab_focus()
+		await _frames()
+		_check(buttons[0].has_focus(), "wallet keyboard first choice focused")
+		await _key(KEY_TAB)
+		_check(buttons[1].has_focus(), "wallet keyboard Tab reaches next affordable button")
+		await _key(KEY_SPACE)
+		_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+			"ok": true, "event_id": "thimble_exchange", "choice_id": "trade_scrap",
+			"wallet": {"gold": 10, "scraps": 0}},
+			"wallet keyboard Space commits the actual focused choice once")
+	panel.close_event()
+	await _frames()
+	var estate := _wallet_record("res://data/events/estate_sale.json", "estate_sale")
+	if estate.is_empty():
+		return
+	wallet_committed.clear()
+	_check(panel.open_event_with_wallet(estate, {"gold": 14, "scraps": 0}),
+		"wallet keyboard unaffordable estate opens")
+	await _frames()
+	var leave_index := _wallet_index(estate, "leave")
+	var buy_index := _wallet_index(estate, "buy_thread")
+	var estate_buttons := panel.get_choice_buttons()
+	if leave_index < 0 or buy_index < 0:
+		_check(false, "wallet keyboard estate choice IDs offered")
+		panel.close_event()
+		return
+	_check(estate_buttons[buy_index].focus_mode == Control.FOCUS_NONE and
+		estate_buttons[buy_index].disabled, "wallet keyboard unaffordable choice cannot receive focus")
+	estate_buttons[leave_index].grab_focus()
+	await _frames()
+	_check(estate_buttons[leave_index].has_focus(), "wallet keyboard affordable Leave focused")
+	await _key(KEY_ENTER)
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": "estate_sale", "choice_id": "leave",
+		"wallet": {"gold": 14, "scraps": 0}},
+		"wallet keyboard Enter settles affordable option at insufficient gold")
+	panel.close_event()
+	await _frames()
+
+
+func _test_wallet_rejection_and_generation() -> void:
+	var record: Dictionary = authored.get("quilting_bee", {})
+	if record.is_empty():
+		_check(false, "quilting bee available for wallet negative tests")
+		return
+	for invalid in [
+		null, {"gold": 3}, {"gold": 3, "scraps": 0, "extra": 1},
+		{"gold": -1, "scraps": 0}, {"gold": 1.0, "scraps": 0},
+		{"gold": 1, "scraps": "0"}, {"gold": 1, "scraps": -1},
+	]:
+		var original: Variant = invalid.duplicate(true) if invalid is Dictionary else invalid
+		_check(not panel.open_event_with_wallet(record, invalid),
+			"invalid wallet rejected before opening: " + str(invalid))
+		_check(not panel.has_open_event() and panel.get_choice_buttons().is_empty(),
+			"invalid wallet never mounts choice: " + str(invalid))
+		_check(invalid == original, "invalid wallet never mutated: " + str(invalid))
+	var malformed := record.duplicate(true)
+	var idx := _wallet_index(malformed, "sew_panel")
+	malformed["choices"][idx]["outcome"]["gold"] = "not coins"
+	wallet_committed.clear()
+	_check(panel.open_event_with_wallet(malformed, {"gold": 0, "scraps": 2}),
+		"malformed authored outcome visible but disabled")
+	await _frames()
+	var bad: Button = panel.get_choice_buttons()[idx]
+	_check(bad.disabled and bad.text.contains("UNAVAILABLE") and bad.text.contains("Gold —"),
+		"malformed outcome never appears affordable")
+	bad.pressed.emit()
+	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
+		"malformed outcome cannot spend visit")
+	panel.get_choice_buttons()[_wallet_index(record, "watch")].pressed.emit()
+	_check(wallet_committed.size() == 1 and wallet_committed[0]["choice_id"] == "watch",
+		"valid alternative after malformed outcome settles")
+	panel.close_event()
+	await _frames()
+	var wallet := {"gold": 15, "scraps": 0}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 918273
+	var state := rng.state
+	seed(918273)
+	var next_global := randi()
+	seed(918273)
+	wallet_committed.clear()
+	_check(panel.open_event_with_wallet(record, wallet), "stale test first wallet offer opens")
+	await _frames()
+	var old_selector := panel._selector
+	var old_gen := panel._generation
+	var old_buttons := panel.get_choice_buttons()
+	var old_callable: Callable = old_buttons[1].pressed.get_connections()[0]["callable"]
+	_check(not panel.open_event_with_wallet(record, wallet), "active offer cannot be overwritten")
+	panel._on_choice_pressed(RunEventChoice.new(record), "buy_thread", old_gen, old_buttons[1])
+	var outsider := Button.new()
+	panel.choices_container.add_child(outsider)
+	panel._on_choice_pressed(old_selector, "buy_thread", old_gen, outsider)
+	outsider.queue_free()
+	_check(wallet_committed.is_empty() and old_selector.is_valid(), "foreign selectors/buttons cannot claim")
+	panel.close_event()
+	_check(panel.open_event_with_wallet(record, {"gold": 0, "scraps": 2}),
+		"new wallet selector opens after close")
+	var new_selector := panel._selector
+	if is_instance_valid(old_buttons[1]):
+		old_callable.call()
+		panel._on_choice_pressed(old_selector, "buy_thread", old_gen, old_buttons[1])
+	_check(wallet_committed.is_empty() and new_selector.is_valid(),
+		"stale callback cannot operate reopened wallet offering")
+	await _frames()
+	panel.get_choice_buttons()[_wallet_index(record, "sew_panel")].pressed.emit()
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": "quilting_bee", "choice_id": "sew_panel",
+		"wallet": {"gold": 32, "scraps": 0}},
+		"reopened selector settles fresh original balance once")
+	_check(wallet == {"gold": 15, "scraps": 0},
+		"wallet supplied to closed selector untouched by later offer")
+	_check(rng.state == state and randi() == next_global,
+		"rejected and accepted wallet UI operations consume no RNG")
+	panel.close_event()
+	await _frames()
 
 
 func _fixture_three() -> Dictionary:
@@ -411,6 +736,7 @@ func _run() -> void:
 		return
 	root.add_child(panel)
 	panel.choice_committed.connect(_on_choice_committed)
+	panel.wallet_choice_committed.connect(_on_wallet_choice_committed)
 	await _frames()
 	_check(not panel.visible and not panel.has_open_event(), "initially closed")
 	_check(panel.has_method("open_event") and panel.has_method("close_event"),
@@ -421,6 +747,9 @@ func _run() -> void:
 	await _test_frayed_new_button()
 	await _test_invalid_and_replay()
 	_test_rng_zero_draws()
+	await _test_wallet_authored()
+	await _test_wallet_keyboard()
+	await _test_wallet_rejection_and_generation()
 	_finish()
 
 
