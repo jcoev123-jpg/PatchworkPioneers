@@ -8,11 +8,16 @@ var checks: int = 0
 
 
 func _initialize() -> void:
+	call_deferred("_run_all_suites")
+
+
+func _run_all_suites() -> void:
 	_test_ac1_draw_fire_guarding()
 	_test_ac2_counter_stitch_thorns()
 	_test_ac3_reactions_sequential_and_movement()
 	_test_ac4_lifecycle_and_rejections()
 	_test_hand_spend()
+	await _test_real_mounted_hand()
 	_finish()
 
 
@@ -629,3 +634,561 @@ func _test_hand_spend() -> void:
 	deck13.hand.clear()
 	deck13.hand.append("warden_draw_fire")
 	_check(not reactions13.play_from_hand(deck13, CombatParty.new([]), "warden_draw_fire"), "HS AC4: invalid party rejects")
+
+
+
+
+# =============================================================================
+# Mounted Real-Hand Integration Suite (D2-1 AC1-AC4)
+# =============================================================================
+
+func _frames() -> void:
+	await process_frame
+	await process_frame
+
+
+func _key(code: Key, pressed: bool = true, echo: bool = false) -> InputEventKey:
+	var event := InputEventKey.new()
+	event.keycode = code
+	event.pressed = pressed
+	event.echo = echo
+	return event
+
+
+func _key_press(code: Key) -> void:
+	root.push_input(_key(code, true), true)
+	root.push_input(_key(code, false), true)
+	await _frames()
+
+
+func _mouse_click(control: Control) -> void:
+	var point: Vector2 = control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for pressed: bool in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		root.push_input(event, true)
+		if pressed:
+			root.push_input(event, true)
+	await _frames()
+
+
+func _mouse_drag_cancel(control: Control) -> void:
+	var point: Vector2 = control.get_global_rect().get_center()
+	var down := InputEventMouseButton.new()
+	down.position = point
+	down.button_index = MOUSE_BUTTON_LEFT
+	down.pressed = true
+	root.push_input(down, true)
+	var motion := InputEventMouseMotion.new()
+	motion.position = Vector2.ZERO
+	root.push_input(motion, true)
+	var up := InputEventMouseButton.new()
+	up.position = Vector2.ZERO
+	up.button_index = MOUSE_BUTTON_LEFT
+	up.pressed = false
+	root.push_input(up, true)
+	await _frames()
+
+
+func _panel_for(app: Control, card_id: String) -> Control:
+	if not is_instance_valid(app.hand_view):
+		return null
+	for panel: Node in app.hand_view.get_children():
+		if panel is Control and panel.get_child_count() > 0 and panel.get_child(0) is Label:
+			if (panel.get_child(0) as Label).text == card_id:
+				return panel as Control
+	return null
+
+
+func _find_starter_attacks_fixture() -> Dictionary:
+	for value in range(1, 1025):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var opening_rng: int = rng.state
+		for id: String in map.get_legal_choices():
+			if map.get_node(id).get("type") != "Fight":
+				continue
+			rng.state = opening_rng
+			if not map.choose_node(id):
+				continue
+			var selected: Dictionary = RunAuthoredBattleEntry.new().entry_current_battle(
+				map, rng, RunFightEncounterSelection.new())
+			map.undo_choice(id, [])
+			if selected.get("success", false) and selected.get("encounter_id") == "starter_attacks":
+				return {"seed": value, "fight": id}
+	return {}
+
+
+func _start_battle_in_app(app: Control, target_fight_id: String = "") -> bool:
+	if app.deck != null:
+		return true
+	_check(is_instance_valid(app.start_button) and app.start_button.is_visible_in_tree() \
+		and not app.start_button.disabled, "real title Start run button exists and is actionable")
+	if not is_instance_valid(app.start_button) or not app.start_button.is_visible_in_tree() or app.start_button.disabled:
+		return false
+	app.start_button.grab_focus()
+	await _frames()
+	await _mouse_click(app.start_button)
+	if not is_instance_valid(app.route_view) or not app.route_view.is_visible_in_tree():
+		app.start_button.pressed.emit()
+		await _frames()
+	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree(),
+		"opening route view is mounted and visible after Start run")
+	if not is_instance_valid(app.route_view) or not app.route_view.is_visible_in_tree():
+		return false
+	var chosen_button: Button = null
+	for btn: Button in app.route_buttons:
+		if not is_instance_valid(btn) or btn.disabled:
+			continue
+		if not target_fight_id.is_empty():
+			if btn.get_meta("route_id", "") == target_fight_id:
+				chosen_button = btn
+				break
+		elif btn.get_meta("route_kind", "") == "Fight":
+			chosen_button = btn
+			break
+	_check(chosen_button != null and not chosen_button.disabled,
+		"legal Fight route action button exists in route view")
+	if chosen_button == null:
+		return false
+	chosen_button.grab_focus()
+	await _frames()
+	await _mouse_click(chosen_button)
+	if app.deck == null and is_instance_valid(chosen_button):
+		chosen_button.pressed.emit()
+		await _frames()
+	return app.deck != null and app.round_flow != null
+
+
+func _return_to_title(app: Control) -> void:
+	if is_instance_valid(app.return_button) and app.return_button.is_visible_in_tree() and not app.return_button.disabled:
+		app.return_button.grab_focus()
+		await _frames()
+		await _mouse_click(app.return_button)
+		if app.title_view == null or not app.title_view.is_visible_in_tree():
+			app.return_button.pressed.emit()
+	await _frames()
+
+
+func _app_snapshot(app: Control) -> Array:
+	return [
+		app.deck.draw_pile.duplicate(),
+		app.deck.hand.duplicate(),
+		app.deck.discard_pile.duplicate(),
+		app.deck.energy,
+		app.deck.turn_active,
+		app.party.get_heroes(),
+		app.enemies.get_enemies(),
+		app.enemy_attacks.duplicate(true),
+		app.enemy_intents.get_intents(),
+		app.run_rng.seed,
+		app.deck._rng.state,
+		app.battle_result.get_outcome(),
+	]
+
+
+func _test_real_mounted_hand() -> void:
+	var fixture: Dictionary = _find_starter_attacks_fixture()
+	_check(not fixture.is_empty(), "AC1: bounded seed search discovers authored starter_attacks Fight")
+	if fixture.is_empty():
+		return
+
+	root.size = Vector2i(1280, 720)
+	var scene: PackedScene = load("res://scenes/app.tscn") as PackedScene
+	_check(scene != null, "AC1: real scenes/app.tscn loads")
+	if scene == null:
+		return
+	var app: Control = scene.instantiate() as Control
+	root.add_child(app)
+	await _frames()
+
+	var presenter: Node = app.get_node_or_null("LiveWardenReactionHand")
+	_check(presenter != null, "AC1: LiveWardenReactionHand is mounted in scene")
+	_check(app.deck == null, "AC1: scene starts on title without active battle")
+
+	# =========================================================================
+	# AC1: Draw Fire (base and +) mounted hand plays, Block delta, Guarding, End Turn redirect
+	# =========================================================================
+	# AC1.1: Draw Fire base (mouse confirmation)
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC1: battle starts from title")
+	_check(app.deck != null and app.party != null and app.enemies != null \
+		and app.battle_result != null and app.round_flow != null and is_instance_valid(app.hand_view),
+		"AC1: authoritative fight coordinator and presenter live")
+	_check(app.round_flow._deck == app.deck and app.round_flow._party == app.party \
+		and app.round_flow._enemies == app.enemies and app.round_flow._result == app.battle_result,
+		"AC1: round_flow bound to current app models")
+	_check(app.encounter_id == "starter_attacks",
+		"AC1: route-selected fight is authentic authored starter_attacks")
+
+	var warden_initial_block: int = int(app.party.get_hero(1).block)
+	_check(warden_initial_block == 6, "AC1: Warden starts with 6 passive opening block")
+
+	app.deck.draw_pile.append("warden_draw_fire")
+	_check(app.deck.draw_extra(1) == 1, "AC1: drew warden_draw_fire")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_df: Control = _panel_for(app, "warden_draw_fire")
+	_check(panel_df != null, "AC1: mounted panel exists for warden_draw_fire")
+	var idx_df: int = panel_df.get_index()
+	_check(idx_df >= 0 and idx_df < app.deck.hand.size() and app.deck.hand[idx_df] == "warden_draw_fire",
+		"AC1: panel index matches hand index")
+	_check(panel_df.get_child(0) is Label and (panel_df.get_child(0) as Label).text == "warden_draw_fire",
+		"AC1: panel first child retains card ID label")
+
+	var before_df: Array = _app_snapshot(app)
+	await _mouse_click(panel_df)
+
+	_check(app.deck.energy == int(before_df[3]) - 1, "AC1: spent exactly 1 energy")
+	_check(app.deck.hand.size() == (before_df[1] as Array).size() - 1, "AC1: hand count decremented by 1")
+	_check(not app.deck.hand.has("warden_draw_fire"), "AC1: warden_draw_fire removed from hand")
+	_check(app.deck.discard_pile.back() == "warden_draw_fire", "AC1: warden_draw_fire in discard pile")
+	_check(app.party.get_hero(1).block == warden_initial_block + 6, "AC1: Warden gained authored 6 block (total 12)")
+	_check(app.party.get_hero(1).hp == 40, "AC1: Warden HP untouched")
+	_check(app.party.get_hero(2).block == 0 and app.party.get_hero(3).block == 0, "AC1: allies gained no block")
+	_check(app.round_flow._reactions != null and app.round_flow._reactions.is_guarding() == true,
+		"AC1: Guarding mode is true")
+	_check(app.deck._rng.state == before_df[10], "AC1: run RNG untouched by play")
+
+	# Enemy 1 announced attack targets ally 2 (Seamstress)
+	app.enemy_intents._turn_index = 1
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	_check(int(app.enemy_attacks[0].get("target_position", 0)) == 2, "AC1: announced enemy attack targets ally 2")
+	_check(int(app.enemy_attacks[0].get("amount", 0)) == 1, "AC1: announced attack amount is 1")
+	var seamstress_hp_before: int = int(app.party.get_hero(2).hp)
+	_check(seamstress_hp_before == 30, "AC1: Seamstress starts at 30 HP")
+
+	app.end_turn_button.pressed.emit()
+	await _frames()
+
+	# Redirected hit: Seamstress unharmed at 30 HP, Warden absorbed 1 damage without HP loss (40 HP)
+	_check(app.party.get_hero(2).hp == seamstress_hp_before, "AC1: Seamstress HP completely unharmed by redirected attack")
+	_check(app.party.get_hero(2).block == 0, "AC1: Seamstress Block remains 0")
+	_check(app.party.get_hero(1).hp == 40, "AC1: Warden HP untouched after absorbed redirect")
+
+	await _return_to_title(app)
+	_check(presenter._bindings.is_empty() and presenter._battle == null,
+		"AC3: Return to title clears presenter bindings")
+
+	# AC1.2: Draw Fire+ (keyboard Enter confirmation)
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC1: start battle for Draw Fire+")
+	app.deck.draw_pile.append("warden_draw_fire_plus")
+	_check(app.deck.draw_extra(1) == 1, "AC1: drew warden_draw_fire_plus")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_dfp: Control = _panel_for(app, "warden_draw_fire_plus")
+	_check(panel_dfp != null, "AC1: mounted panel exists for Draw Fire+")
+	panel_dfp.grab_focus()
+	_check(panel_dfp.has_focus(), "AC1: Draw Fire+ panel grabbed focus")
+	await _key_press(KEY_ENTER)
+
+	_check(app.deck.discard_pile.back() == "warden_draw_fire_plus", "AC1: Draw Fire+ discarded")
+	_check(app.party.get_hero(1).block == 6 + 8, "AC1: Warden gained authored 8 block from Draw Fire+ (total 14)")
+	_check(app.round_flow._reactions != null and app.round_flow._reactions.is_guarding() == true,
+		"AC1: Draw Fire+ activated Guarding mode")
+
+	await _return_to_title(app)
+
+	# =========================================================================
+	# AC2: Counter-stitch (base and +) mounted hand plays, Block, Thorns, retaliation
+	# =========================================================================
+	# AC2.1: Counter-stitch base (mouse confirmation)
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC2: start battle for Counter-stitch")
+	app.deck.draw_pile.append("warden_counter_stitch")
+	_check(app.deck.draw_extra(1) == 1, "AC2: drew warden_counter_stitch")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_cs: Control = _panel_for(app, "warden_counter_stitch")
+	_check(panel_cs != null, "AC2: mounted panel exists for warden_counter_stitch")
+	var before_cs: Array = _app_snapshot(app)
+	await _mouse_click(panel_cs)
+
+	_check(app.deck.energy == int(before_cs[3]) - 1, "AC2: spent exactly 1 energy")
+	_check(app.deck.discard_pile.back() == "warden_counter_stitch", "AC2: warden_counter_stitch discarded")
+	_check(app.party.get_hero(1).block == 6 + 5, "AC2: Warden gained authored 5 block (total 11)")
+	_check(app.round_flow._reactions != null and app.round_flow._reactions.get_thorns() == 3,
+		"AC2: Thorns mode is 3")
+	_check(app.round_flow._reactions.is_guarding() == false, "AC2: Guarding mode is false")
+
+	app.enemy_intents._turn_index = 0
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	_check(int(app.enemy_attacks[0].get("target_position", 0)) == 1, "AC2: enemy 1 attacks Warden")
+	var enemy1_hp_before: int = int(app.enemies.get_enemy(1).hp)
+	var enemy2_hp_before: int = int(app.enemies.get_enemy(2).hp)
+	_check(enemy1_hp_before == 12 and enemy2_hp_before == 12, "AC2: enemy starting HPs are 12 and 12")
+
+	app.end_turn_button.pressed.emit()
+	await _frames()
+
+	_check(app.enemies.get_enemy(1).hp == enemy1_hp_before - 3, "AC2: attacking Enemy 1 took 3 Thorns retaliation (12 -> 9)")
+	_check(app.enemies.get_enemy(2).hp == enemy2_hp_before, "AC2: non-attacking Enemy 2 took NO Thorns retaliation")
+
+	await _return_to_title(app)
+
+	# AC2.2: Counter-stitch+ (keyboard Space confirmation)
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC2: start battle for Counter-stitch+")
+	app.deck.draw_pile.append("warden_counter_stitch_plus")
+	_check(app.deck.draw_extra(1) == 1, "AC2: drew warden_counter_stitch_plus")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_csp: Control = _panel_for(app, "warden_counter_stitch_plus")
+	_check(panel_csp != null, "AC2: mounted panel exists for Counter-stitch+")
+	panel_csp.grab_focus()
+	_check(panel_csp.has_focus(), "AC2: Counter-stitch+ panel grabbed focus")
+	await _key_press(KEY_SPACE)
+
+	_check(app.deck.discard_pile.back() == "warden_counter_stitch_plus", "AC2: Counter-stitch+ discarded")
+	_check(app.party.get_hero(1).block == 6 + 7, "AC2: Warden gained authored 7 block from Counter-stitch+ (total 13)")
+	_check(app.round_flow._reactions != null and app.round_flow._reactions.get_thorns() == 4,
+		"AC2: Counter-stitch+ activated Thorns 4")
+
+	app.enemy_intents._turn_index = 0
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	var enemy1_hp_before_csp: int = int(app.enemies.get_enemy(1).hp)
+	app.end_turn_button.pressed.emit()
+	await _frames()
+
+	_check(app.enemies.get_enemy(1).hp == enemy1_hp_before_csp - 4,
+		"AC2: attacking Enemy 1 took 4 Thorns retaliation from Counter-stitch+")
+
+	await _return_to_title(app)
+
+	# =========================================================================
+	# AC3: Both reactions in same turn, coexistence, redirect + thorns, expiry, seed replay
+	# =========================================================================
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC3: start battle for coexistence")
+	app.deck.draw_pile.append("warden_draw_fire")
+	app.deck.draw_pile.append("warden_counter_stitch")
+	_check(app.deck.draw_extra(2) == 2, "AC3: drew both reaction cards")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_both_df: Control = _panel_for(app, "warden_draw_fire")
+	_check(panel_both_df != null, "AC3: Draw Fire panel mounted")
+
+	await _mouse_click(panel_both_df)
+	_check(app.deck.energy == 2, "AC3: 1 energy paid for Draw Fire, 2 remaining")
+	_check(app.round_flow._reactions.is_guarding() == true, "AC3: Guarding mode enabled")
+
+	# Re-acquire panel_both_cs since hand was refreshed
+	var panel_both_cs: Control = _panel_for(app, "warden_counter_stitch")
+	_check(panel_both_cs != null, "AC3: Counter-stitch panel found in rebuilt hand")
+	panel_both_cs.grab_focus()
+	await _key_press(KEY_ENTER)
+	_check(app.deck.energy == 1, "AC3: 1 energy paid for Counter-stitch, 1 remaining")
+	_check(app.round_flow._reactions.is_guarding() == true, "AC3: Guarding still active")
+	_check(app.round_flow._reactions.get_thorns() == 3, "AC3: Thorns 3 active simultaneously")
+	_check(app.party.get_hero(1).block == 6 + 6 + 5, "AC3: Warden has 17 block (6 passive + 6 + 5)")
+
+	app.enemy_intents._turn_index = 1
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	var e1_hp_before_ac3: int = int(app.enemies.get_enemy(1).hp)
+	var seamstress_hp_before_ac3: int = int(app.party.get_hero(2).hp)
+
+	app.end_turn_button.pressed.emit()
+	await _frames()
+
+	_check(app.party.get_hero(2).hp == seamstress_hp_before_ac3, "AC3: Seamstress took NO damage due to redirect")
+	_check(app.enemies.get_enemy(1).hp == e1_hp_before_ac3 - 3, "AC3: Enemy 1 suffered 3 Thorns retaliation from redirected hit")
+
+	_check(app.round_flow._reactions.is_guarding() == false, "AC3: Guarding expired at start of new player turn")
+	_check(app.round_flow._reactions.get_thorns() == 0, "AC3: Thorns expired at start of new player turn")
+
+	app.enemy_intents._turn_index = 1
+	app.enemy_attacks = app.enemy_intents.get_intents()
+	app._refresh_intents()
+	var e1_hp_before_next: int = int(app.enemies.get_enemy(1).hp)
+	var seamstress_hp_before_next: int = int(app.party.get_hero(2).hp)
+	app.end_turn_button.pressed.emit()
+	await _frames()
+
+	_check(app.party.get_hero(2).hp == seamstress_hp_before_next - 1, "AC3: following turn has NO redirect (Seamstress took damage)")
+	_check(app.enemies.get_enemy(1).hp == e1_hp_before_next, "AC3: following turn has NO retaliation (Enemy 1 took no damage)")
+
+	await _return_to_title(app)
+	app.run_seed = 123
+	_check(await _start_battle_in_app(app), "AC3: start battle for seed replay 1")
+	var snap1: Array = _app_snapshot(app)
+	_check(app.round_flow._reactions == null or not app.round_flow._reactions.is_active(),
+		"AC3: fresh battle has no inherited reaction modes")
+	await _return_to_title(app)
+
+	app.run_seed = 123
+	_check(await _start_battle_in_app(app), "AC3: start battle for seed replay 2")
+	var snap2: Array = _app_snapshot(app)
+	_check(snap1 == snap2, "AC3: replaying fixed seed yields identical battle snapshot")
+
+	await _return_to_title(app)
+
+	# =========================================================================
+	# AC4: Rejections, negatives, fail-closed, invariants & retry
+	# =========================================================================
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC4: start battle for negatives")
+
+	# 1. Insufficient energy
+	app.deck.draw_pile.append("warden_draw_fire")
+	app.deck.draw_extra(1)
+	app._refresh_hand()
+	await _frames()
+	var panel_neg_df: Control = _panel_for(app, "warden_draw_fire")
+	_check(panel_neg_df != null, "AC4: Draw Fire drawn")
+
+	app.deck.combat_state.energy = 0
+	var snap_insufficient: Array = _app_snapshot(app)
+	await _mouse_click(panel_neg_df)
+	_check(_app_snapshot(app) == snap_insufficient, "AC4: insufficient energy rejects; state completely unchanged")
+	_check(app.deck._rng.state == snap_insufficient[10], "AC4: insufficient energy leaves deck RNG untouched")
+
+	# Drag to invalid target (outside panel) cancels without spend
+	app.deck.combat_state.energy = 3
+	var snap_drag_cancel: Array = _app_snapshot(app)
+	await _mouse_drag_cancel(panel_neg_df)
+	_check(_app_snapshot(app) == snap_drag_cancel, "AC4: drag outside panel cancels without spend")
+
+	# Right-click is inert
+	var snap_rc: Array = _app_snapshot(app)
+	var rc_point: Vector2 = panel_neg_df.get_global_rect().get_center()
+	var rc_down := InputEventMouseButton.new()
+	rc_down.position = rc_point
+	rc_down.button_index = MOUSE_BUTTON_RIGHT
+	rc_down.pressed = true
+	root.push_input(rc_down, true)
+	await _frames()
+	_check(_app_snapshot(app) == snap_rc, "AC4: right click is inert")
+
+	# Accepted retry after restoring energy
+	await _mouse_click(panel_neg_df)
+	_check(app.deck.energy == 2, "AC4: accepted retry after restoring energy succeeds (spent 1)")
+	_check(app.round_flow._reactions != null and app.round_flow._reactions.is_guarding() == true,
+		"AC4: Guarding active after accepted retry")
+
+	await _return_to_title(app)
+
+	# 2. Downed Warden
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC4: start battle for downed Warden")
+	app.deck.draw_pile.append("warden_draw_fire")
+	app.deck.draw_extra(1)
+	app._refresh_hand()
+	await _frames()
+	var panel_downed: Control = _panel_for(app, "warden_draw_fire")
+	_check(panel_downed != null, "AC4: Draw Fire panel ready")
+
+	app.party.apply_damage(1, 50)
+	_check(app.party.is_downed(1), "AC4: Warden is downed")
+	var snap_downed: Array = _app_snapshot(app)
+	await _mouse_click(panel_downed)
+	_check(_app_snapshot(app) == snap_downed, "AC4: downed Warden rejects play; state completely unchanged")
+
+	await _return_to_title(app)
+
+	# 3. Wrong Warden position
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC4: start battle for wrong position")
+	var swap_preview: Dictionary = CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+	_check(swap_preview.get("ok", false), "AC4: swap preview valid")
+	app.party._heroes.assign(swap_preview["heroes"])
+	app._refresh_party()
+	_check(app.party.get_hero(2)["id"] == "warden", "AC4: Warden moved to position 2")
+
+	app.deck.draw_pile.append("warden_draw_fire")
+	app.deck.draw_extra(1)
+	app._refresh_hand()
+	await _frames()
+	var panel_wrong_pos: Control = _panel_for(app, "warden_draw_fire")
+	_check(panel_wrong_pos != null, "AC4: Draw Fire drawn while Warden at position 2")
+	var snap_wrong_pos: Array = _app_snapshot(app)
+	await _mouse_click(panel_wrong_pos)
+	_check(_app_snapshot(app) == snap_wrong_pos, "AC4: Draw Fire rejects when Warden is at position 2")
+
+	# Counter-stitch is FROM [1, 2] only. Move Warden to position 3.
+	var swap_preview2: Dictionary = CombatPositionSwaps.preview_adjacent_swap(app.party, 2, 1)
+	_check(swap_preview2.get("ok", false), "AC4: swap preview to position 3 valid")
+	app.party._heroes.assign(swap_preview2["heroes"])
+	app._refresh_party()
+	_check(app.party.get_hero(3)["id"] == "warden", "AC4: Warden moved to position 3")
+
+	app.deck.draw_pile.append("warden_counter_stitch")
+	app.deck.draw_extra(1)
+	app._refresh_hand()
+	await _frames()
+	var panel_cs_pos3: Control = _panel_for(app, "warden_counter_stitch")
+	_check(panel_cs_pos3 != null, "AC4: Counter-stitch drawn while Warden at position 3")
+	var snap_pos3: Array = _app_snapshot(app)
+	await _mouse_click(panel_cs_pos3)
+	_check(_app_snapshot(app) == snap_pos3, "AC4: Counter-stitch rejects when Warden is at position 3")
+
+	await _return_to_title(app)
+
+	# 4. Hidden panel & synthetic panel & captured callback
+	app.run_seed = int(fixture.seed)
+	_check(await _start_battle_in_app(app, fixture.fight), "AC4: start battle for panel controls")
+	app.deck.draw_pile.append("warden_draw_fire")
+	app.deck.draw_extra(1)
+	app._refresh_hand()
+	await _frames()
+	var panel_ctl: Control = _panel_for(app, "warden_draw_fire")
+	_check(panel_ctl != null, "AC4: panel ready for panel checks")
+	var adapter: LiveWardenReactionHand = app.get_node("LiveWardenReactionHand") as LiveWardenReactionHand
+	_check(adapter._bindings.has(panel_ctl), "AC4: panel bound by adapter")
+	var captured_callback: Callable = adapter._bindings[panel_ctl]["callback"]
+
+	panel_ctl.hide()
+	await _frames()
+	var snap_hidden: Array = _app_snapshot(app)
+	captured_callback.call(_key(KEY_ENTER))
+	await _frames()
+	_check(_app_snapshot(app) == snap_hidden, "AC4: hidden panel rejected; state completely unchanged")
+	panel_ctl.show()
+	await _frames()
+
+	# Synthetic panel outside hand_view
+	var synthetic := PanelContainer.new()
+	var synth_label := Label.new()
+	synth_label.text = "warden_draw_fire"
+	synthetic.add_child(synth_label)
+	app.add_child(synthetic)
+	await _frames()
+	_check(not adapter._bindings.has(synthetic), "AC4: synthetic panel outside hand_view is never bound")
+	synthetic.queue_free()
+	await _frames()
+
+	# Other card families not bound
+	for panel: Node in app.hand_view.get_children():
+		if panel is Control and panel.get_child_count() > 0 and panel.get_child(0) is Label:
+			var label := panel.get_child(0) as Label
+			if not CombatWardenGuardReactions.ALLOWED_CARD_IDS.has(label.text):
+				_check(not adapter._bindings.has(panel), "AC4: adapter never binds non-reaction card: " + label.text)
+
+	# Advance turn to make captured callback stale
+	app.end_turn_button.pressed.emit()
+	await _frames()
+	var snap_stale: Array = _app_snapshot(app)
+	captured_callback.call(_key(KEY_ENTER))
+	await _frames()
+	_check(_app_snapshot(app) == snap_stale, "AC4: captured callback across turns is inert; state unchanged")
+
+	await _return_to_title(app)
+	app.queue_free()
+	await _frames()
