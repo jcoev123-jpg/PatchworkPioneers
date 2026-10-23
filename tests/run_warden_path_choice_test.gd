@@ -39,6 +39,7 @@ func _initialize() -> void:
 	_test_invalid_and_replay()
 	_test_bad_source_inputs()
 	_test_tampering_isolation()
+	_test_receipt_authentication()
 	_test_no_rng()
 	_check(authored == source_snapshot, "authored source file unchanged across all flows")
 	_check(deck == deck_snapshot, "starter deck file unchanged across all flows")
@@ -569,3 +570,108 @@ func _test_no_rng() -> void:
 	service.get_base_deck()
 	service.get_authored_paths()
 	_check(local.state == state_before, "a seeded local RNG is untouched by the projector")
+
+## Full typed receipts are compared to an independently minted authored claim.
+## Neither a validation nor mutations of its result may consume the caller's
+## own choice or change its private snapshots.
+func _test_receipt_authentication() -> void:
+	for path_id in ["bulwark", "vanguard"]:
+		var selector := RunWardenPathChoice.new()
+		_check(selector.is_valid() and not selector.is_claimed(),
+			"%s authentication starts with an unclaimed selector" % path_id)
+		var before_paths := selector.get_authored_paths()
+		var before_deck := selector.get_base_deck()
+		var from_other := RunWardenPathChoice.new()
+		var genuine := from_other.choose(path_id)
+		var pristine := genuine.duplicate(true)
+		_check(genuine.get("ok") == true and from_other.is_claimed(),
+			"%s genuine receipt comes from a successful single claim" % path_id)
+		var proof := RunWardenPathChoice.authenticate_receipt(genuine)
+		_check(proof.get("ok") == true and proof.get("path_id") == path_id
+			and proof.get("card_id") == genuine.card.id and proof.get("receipt") == genuine,
+			"%s authentic full claim identifies only its own card" % path_id)
+		_check(selector.is_valid() and not selector.is_claimed()
+			and selector.get_receipt().is_empty() and selector.get_authored_paths() == before_paths
+			and selector.get_base_deck() == before_deck,
+			"%s receipt authentication never selects or changes a caller's state" % path_id)
+		_check(from_other.get_receipt() == pristine and genuine == pristine,
+			"%s authentication leaves claimed source and detached input untouched" % path_id)
+		proof["receipt"]["card"]["effects"].clear()
+		_check(from_other.get_receipt() == pristine and genuine == pristine,
+			"%s authentication returns an independent deep receipt copy" % path_id)
+
+		var tamper_cases: Array[Dictionary] = []
+		var wrong_owner := pristine.duplicate(true)
+		wrong_owner["owner"] = "seamstress"
+		tamper_cases.append({"label": "forged owner", "receipt": wrong_owner})
+		var swapped := pristine.duplicate(true)
+		swapped["path_id"] = "vanguard" if path_id == "bulwark" else "bulwark"
+		tamper_cases.append({"label": "cross-Path claim", "receipt": swapped})
+		var changed_name := pristine.duplicate(true)
+		changed_name["display_name"] = "False Choice"
+		tamper_cases.append({"label": "display name", "receipt": changed_name})
+		var passive := pristine.duplicate(true)
+		passive["passive"]["kind"] = "invented"
+		tamper_cases.append({"label": "passive kind", "receipt": passive})
+		var passive_field := pristine.duplicate(true)
+		if path_id == "bulwark":
+			passive_field["passive"]["starting_block"] = 16
+		else:
+			passive_field["passive"]["once_per_turn"] = 1
+		tamper_cases.append({"label": "passive value/type", "receipt": passive_field})
+		var card_id := pristine.duplicate(true)
+		card_id["card"]["id"] = "warden_lance_pin" if path_id == "bulwark" else "warden_bulwark_brace"
+		tamper_cases.append({"label": "swapped Path card", "receipt": card_id})
+		var card_effect := pristine.duplicate(true)
+		card_effect["card"]["effects"] = {"block": 10} if path_id == "bulwark" else {"damage": 8, "pinned": true}
+		tamper_cases.append({"label": "card effect", "receipt": card_effect})
+		var card_cost := pristine.duplicate(true)
+		card_cost["card"]["cost"] = true
+		tamper_cases.append({"label": "bool in place of card cost", "receipt": card_cost})
+		var bad_deck_order := pristine.duplicate(true)
+		var proposed: Array = bad_deck_order["starter_deck"]
+		var first: Variant = proposed[0]
+		proposed[0] = proposed[4]
+		proposed[4] = first
+		tamper_cases.append({"label": "altered starter order", "receipt": bad_deck_order})
+		var missing_copy := pristine.duplicate(true)
+		missing_copy["starter_deck"].remove_at(0)
+		tamper_cases.append({"label": "missing starter copy", "receipt": missing_copy})
+		var extra_copy := pristine.duplicate(true)
+		extra_copy["starter_deck"].append("warden_strike")
+		tamper_cases.append({"label": "extra starter copy", "receipt": extra_copy})
+		var bad_path_card := pristine.duplicate(true)
+		bad_path_card["starter_deck"][-1] = "warden_strike"
+		tamper_cases.append({"label": "wrong final Path card", "receipt": bad_path_card})
+		var extra_key := pristine.duplicate(true)
+		extra_key["claimed_twice"] = false
+		tamper_cases.append({"label": "extra receipt key", "receipt": extra_key})
+		var missing_key := pristine.duplicate(true)
+		missing_key.erase("passive")
+		tamper_cases.append({"label": "missing receipt key", "receipt": missing_key})
+		var extra_nested := pristine.duplicate(true)
+		extra_nested["card"]["unexpected"] = 0
+		tamper_cases.append({"label": "extra nested key", "receipt": extra_nested})
+		var wrong_ok := pristine.duplicate(true)
+		wrong_ok["ok"] = 1
+		tamper_cases.append({"label": "bool versus int", "receipt": wrong_ok})
+		var wrong_card_type := pristine.duplicate(true)
+		wrong_card_type["card"]["cost"] = 1.0
+		tamper_cases.append({"label": "int versus float", "receipt": wrong_card_type})
+		var failed_claim := RunWardenPathChoice.new()
+		_check(failed_claim.choose(path_id).get("ok", false),
+			"%s failed-claim fixture first claim succeeds" % path_id)
+		tamper_cases.append({"label": "refused replay", "receipt": failed_claim.choose(path_id)})
+		for case in tamper_cases:
+			var forged: Dictionary = case["receipt"]
+			var copy_before := forged.duplicate(true)
+			_check(RunWardenPathChoice.authenticate_receipt(forged) == {"ok": false},
+				"%s rejects %s" % [path_id, case["label"]])
+			_check(forged == copy_before, "%s %s receipt unchanged" % [path_id, case["label"]])
+		_check(RunWardenPathChoice.authenticate_receipt(null) == {"ok": false}
+			and RunWardenPathChoice.authenticate_receipt([]) == {"ok": false},
+			"%s rejects non-dictionary receipts" % path_id)
+		_check(RunWardenPathChoice.authenticate_receipt(pristine).get("ok") == true
+			and selector.is_valid() and not selector.is_claimed()
+			and selector.get_base_deck() == before_deck,
+			"%s genuine receipt remains reusable only as a read-only proof" % path_id)

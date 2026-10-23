@@ -7,6 +7,7 @@ extends RefCounted
 var _attacks: CombatAttackCards
 var _support := CombatSupportCards.new()
 var _pool := SeamstressPoolCards.new()
+var _energy := CombatPoolEnergyCards.new()
 
 
 func _init(attacks: CombatAttackCards = null) -> void:
@@ -115,6 +116,16 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not pool_result.ok:
 				return failure
 			results.append(pool_result)
+		elif _energy.is_supported_card(half.id):
+			# Overclock and Tailor's Trance carry printed energy/draw/self-damage
+			# effects the generic draw/Block fallback would silently drop. The
+			# staged half neither holds, charges nor discards; the enclosing
+			# transaction owns the one capped cost and the single discard.
+			var energy_result := _energy.resolve_staged_half(
+				staged_deck, staged_party, half.id, target)
+			if not energy_result.get("ok", false):
+				return failure
+			results.append(energy_result)
 		else:
 			var effect := "draw"
 			var amount: int = half.effects.get("draw", 0)

@@ -20,6 +20,12 @@ func _check(ok: bool, message: String) -> void:
 		failures.append(message)
 
 
+## A detached card definition wrapping caller-authored effects, so fixtures are
+## shaped exactly like a catalog definition without touching the real catalog.
+func _shape(effects: Dictionary) -> Dictionary:
+	return {"effects": effects.duplicate(true)}
+
+
 func _frames() -> void:
 	for i in range(4):
 		await process_frame
@@ -66,7 +72,8 @@ func _defs(path: String) -> Array:
 	return result
 
 
-func _prepared(kind: String, seed_value: int, use_pool: bool = true) -> Dictionary:
+func _prepared(kind: String, seed_value: int, use_pool: bool = true,
+		candidates_override: Array = []) -> Dictionary:
 	var party := CombatParty.new(_defs(HEROES))
 	var enemies := CombatEnemies.new(_defs(ENEMIES))
 	_check(party.is_valid() and enemies.is_valid(), "genuine combat roster is valid")
@@ -79,8 +86,10 @@ func _prepared(kind: String, seed_value: int, use_pool: bool = true) -> Dictiona
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var deck: Array[String] = StarterCards.new().get_starting_deck()
-	var candidates: Array = RunPoolCardRewardOffers.get_authored_base_candidates() \
-		if use_pool else StarterCards.new().get_all_card_ids()
+	var candidates: Array = candidates_override
+	if candidates.is_empty():
+		candidates = RunPoolCardRewardOffers.get_authored_base_candidates() \
+			if use_pool else StarterCards.new().get_all_card_ids()
 	var service := RunFightVictoryRewards.new(result, rng,
 		["warden", "seamstress", "tinker"], candidates, deck, 97,
 		kind == "Elite", ["button_charm", "thread_token"], ["button_charm"])
@@ -119,6 +128,16 @@ func _catalog_test() -> void:
 		[tinker, "tinker_spring_trap", ["Pinned"], ["DIFFERENT hero", "+5", "before Weak/Exposed"]],
 		[tinker, "tinker_rivet_shot", ["Exposed 1"], ["50%", "minimum 0"]],
 		[tinker, "tinker_spool_launcher", ["Unravel 3"], ["gauge", "normal 8"]],
+		[tinker, "tinker_snip_the_seam", ["Conditional damage"],
+			["Deal 5 damage", "15 instead", "Unravelled", " or ", "current threshold",
+				"8 normal, 12 elite, 16 boss", "rises by 4"]],
+		[tinker, "tinker_snip_the_seam_plus", ["Conditional damage"],
+			["Deal 7 damage", "20 instead", "Unravelled", "current threshold"]],
+		[tinker, "tinker_ricochet", ["Random hits"],
+			["3 separate hits of 4 damage each", "random living enemy", "seeded RNG",
+				"more than once"]],
+		[tinker, "tinker_ricochet_plus", ["Random hits"],
+			["3 separate hits of 6 damage each", "random living enemy", "single seeded RNG"]],
 		[starter, "warden_strike", [], []],
 	]
 	for case in cases:
@@ -126,7 +145,8 @@ func _catalog_test() -> void:
 		var id: String = case[1]
 		var ids: Array[String] = catalog.get_all_card_ids() if catalog is StarterCards \
 			else (catalog.get_pool_card_ids() if catalog is TinkerPoolCards else catalog.get_base_ids())
-		_check(ids.has(id), "required ID present in independent stable catalog " + id)
+		var present: bool = catalog.has_card(id) if catalog is TinkerPoolCards else ids.has(id)
+		_check(present, "required ID present in independent stable catalog " + id)
 		var def: Dictionary = catalog.get_definition(id)
 		_check(not def.is_empty() and def.get("id") == id, "actual definition " + id)
 		if def.is_empty():
@@ -165,6 +185,126 @@ func _catalog_test() -> void:
 		and CardKeywordGlossary.describe({}).is_empty()
 		and CardKeywordGlossary.describe(null).is_empty(),
 		"empty and invalid effects produce no help")
+	# The documented D2-1 numbers straight from the real Tinker catalog, and the
+	# Help rows must repeat exactly those authored amounts, never guesses.
+	var snip_base: Dictionary = tinker.get_definition("tinker_snip_the_seam").get("effects", {})
+	var snip_plus: Dictionary = tinker.get_definition("tinker_snip_the_seam_plus").get("effects", {})
+	var ricochet_base: Dictionary = tinker.get_definition("tinker_ricochet").get("effects", {})
+	var ricochet_plus: Dictionary = tinker.get_definition("tinker_ricochet_plus").get("effects", {})
+	_check(int(snip_base.get("damage", 0)) == 5
+		and int((snip_base.get("conditional_damage", {}) as Dictionary).get("damage", 0)) == 15
+		and int(snip_plus.get("damage", 0)) == 7
+		and int((snip_plus.get("conditional_damage", {}) as Dictionary).get("damage", 0)) == 20,
+		"catalog Snip numbers are 5/15 base and 7/20 plus")
+	_check(int(ricochet_base.get("hit_count", 0)) == 3 and int(ricochet_base.get("damage", 0)) == 4
+		and int(ricochet_plus.get("hit_count", 0)) == 3 and int(ricochet_plus.get("damage", 0)) == 6,
+		"catalog Ricochet numbers are 3x4 base and 3x6 plus")
+	var snip_rows := CardKeywordGlossary.describe(tinker.get_definition("tinker_snip_the_seam"))
+	var snip_plus_rows := CardKeywordGlossary.describe(tinker.get_definition("tinker_snip_the_seam_plus"))
+	_check(not snip_rows.is_empty() and not snip_plus_rows.is_empty()
+		and String(snip_rows[0]["explanation"]).contains("Deal %d damage" % int(snip_base["damage"]))
+		and String(snip_rows[0]["explanation"]).contains("%d instead"
+			% int(snip_base["conditional_damage"]["damage"]))
+		and String(snip_plus_rows[0]["explanation"]).contains("Deal %d damage" % int(snip_plus["damage"]))
+		and String(snip_plus_rows[0]["explanation"]).contains("%d instead"
+			% int(snip_plus["conditional_damage"]["damage"])),
+		"Snip Help repeats the authored base and empowered damage for base and plus")
+	var ricochet_rows := CardKeywordGlossary.describe(tinker.get_definition("tinker_ricochet"))
+	var ricochet_plus_rows := CardKeywordGlossary.describe(tinker.get_definition("tinker_ricochet_plus"))
+	_check(not ricochet_rows.is_empty() and not ricochet_plus_rows.is_empty()
+		and String(ricochet_rows[0]["explanation"]).contains("%d separate hits of %d damage"
+			% [int(ricochet_base["hit_count"]), int(ricochet_base["damage"])])
+		and String(ricochet_plus_rows[0]["explanation"]).contains("%d separate hits of %d damage"
+			% [int(ricochet_plus["hit_count"]), int(ricochet_plus["damage"])]),
+		"Ricochet Help repeats the authored hits and per-hit damage for base and plus")
+	# Ordinary authored cards that only share one descriptor key never gain a
+	# fabricated special rule (Scatter Bolts authors living_targets_only alone).
+	for ordinary_id: String in ["tinker_scatter_bolts", "tinker_long_barrel"]:
+		_check(CardKeywordGlossary.describe(tinker.get_definition(ordinary_id)).is_empty(),
+			"ordinary authored %s never gains a special-rule row" % ordinary_id)
+	# Exact authored shapes are explained; every unknown, malformed or partial
+	# variant stays silent and leaves the caller's definition untouched. These
+	# effect fixtures mirror the catalog descriptors but are built independently.
+	var snip_effects := {"damage": 5, "conditional_damage": {
+		"damage": 15, "operator": "or",
+		"conditions": [{"status": "unravelled"},
+			{"gauge": "unravel", "comparison": "at_least_half",
+				"threshold": "current_target_threshold"}]}}
+	var ricochet_effects := {"damage": 4, "hit_count": 3, "random_target_each_hit": true,
+		"rng_source": "run", "living_targets_only": true}
+	_check(CardKeywordGlossary.describe(_shape(snip_effects)).size() == 1
+		and CardKeywordGlossary.describe(_shape(ricochet_effects)).size() == 1,
+		"exact authored special descriptor shapes are explained")
+	var malformed: Array = []
+	var bad_snip_condition := _shape(snip_effects)
+	bad_snip_condition["effects"]["conditional_damage"]["conditions"].append({"status": "invented"})
+	malformed.append(["unknown extra predicate", bad_snip_condition])
+	var missing_conditions := _shape(snip_effects)
+	missing_conditions["effects"]["conditional_damage"].erase("conditions")
+	malformed.append(["missing conditions", missing_conditions])
+	var empty_conditions := _shape(snip_effects)
+	empty_conditions["effects"]["conditional_damage"]["conditions"] = []
+	malformed.append(["empty conditions", empty_conditions])
+	var unknown_operator := _shape(snip_effects)
+	unknown_operator["effects"]["conditional_damage"]["operator"] = "xor"
+	malformed.append(["unknown operator", unknown_operator])
+	var no_gain := _shape(snip_effects)
+	no_gain["effects"]["conditional_damage"]["damage"] = 5
+	malformed.append(["no damage gain", no_gain])
+	var text_condition := _shape(snip_effects)
+	text_condition["effects"]["conditional_damage"]["conditions"] = "unravelled"
+	malformed.append(["unreadable condition list", text_condition])
+	var wrong_threshold := _shape(snip_effects)
+	wrong_threshold["effects"]["conditional_damage"]["conditions"][1]["threshold"] = "starting_threshold"
+	malformed.append(["unknown threshold source", wrong_threshold])
+	var wrong_status := _shape(snip_effects)
+	wrong_status["effects"]["conditional_damage"]["conditions"][0]["status"] = "bleeding"
+	malformed.append(["unknown status", wrong_status])
+	var extra_predicate_key := _shape(snip_effects)
+	extra_predicate_key["effects"]["conditional_damage"]["conditions"][0]["invented"] = true
+	malformed.append(["partial status predicate", extra_predicate_key])
+	var unseeded_rng := _shape(ricochet_effects)
+	unseeded_rng["effects"]["rng_source"] = "wall_clock"
+	malformed.append(["unseeded rng source", unseeded_rng])
+	var single_hit := _shape(ricochet_effects)
+	single_hit["effects"]["hit_count"] = 1
+	malformed.append(["single hit", single_hit])
+	var missing_living := _shape(ricochet_effects)
+	missing_living["effects"].erase("living_targets_only")
+	malformed.append(["living targets not stated", missing_living])
+	var non_living_flag := _shape(ricochet_effects)
+	non_living_flag["effects"]["living_targets_only"] = false
+	malformed.append(["non-living random flag", non_living_flag])
+	var missing_damage := _shape(ricochet_effects)
+	missing_damage["effects"].erase("damage")
+	malformed.append(["no per-hit damage", missing_damage])
+	for case in malformed:
+		var broken: Dictionary = case[1]
+		var broken_before: Dictionary = broken.duplicate(true)
+		_check(CardKeywordGlossary.describe(broken).is_empty(),
+			"%s never fabricates special-rule Help" % String(case[0]))
+		_check(broken == broken_before, "%s leaves the definition untouched" % String(case[0]))
+	_check(snip_effects == {"damage": 5, "conditional_damage": {
+		"damage": 15, "operator": "or",
+		"conditions": [{"status": "unravelled"},
+			{"gauge": "unravel", "comparison": "at_least_half",
+				"threshold": "current_target_threshold"}]}}
+		and ricochet_effects == {"damage": 4, "hit_count": 3, "random_target_each_hit": true,
+			"rng_source": "run", "living_targets_only": true},
+		"negative special cases never mutate the positive fixtures")
+	# Special rows always follow the seven keyword rows, in a stable order.
+	var combined := {"effects": {
+		"bleed": 1, "damage": 4, "hit_count": 3, "random_target_each_hit": true,
+		"rng_source": "run", "living_targets_only": true,
+		"conditional_damage": {"damage": 9, "operator": "or",
+			"conditions": [{"status": "unravelled"}]}}}
+	var combined_original: Dictionary = combined.duplicate(true)
+	var combined_keywords: Array[String] = []
+	for entry: Dictionary in CardKeywordGlossary.describe(combined):
+		combined_keywords.append(String(entry["keyword"]))
+	_check(combined_keywords == ["Bleed 1", "Conditional damage", "Random hits"],
+		"special rows follow the fixed keyword rows in a stable order")
+	_check(combined == combined_original, "combined special input untouched")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
@@ -303,6 +443,104 @@ func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
 	await _frames()
 
 
+## Genuine authored candidate records: every warden/seamstress base card plus
+## only the two special-rule Tinker base cards, so the real weighted selector
+## always offers Snip or Ricochet to the Tinker slot. The receipt itself is
+## produced by RunFightVictoryRewards.prepare and never edited afterwards.
+func _special_candidates() -> Array:
+	var special_ids := ["tinker_ricochet", "tinker_snip_the_seam"]
+	var candidates: Array = []
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if String(record.get("owner", "")) == "tinker" \
+				and not special_ids.has(String(record.get("id", ""))):
+			continue
+		candidates.append(record)
+	return candidates
+
+
+func _special_slot(receipt: Dictionary) -> int:
+	for i in range(3):
+		var offered_id: String = String(receipt["offers"][i]["id"])
+		if offered_id == "tinker_snip_the_seam" or offered_id == "tinker_ricochet":
+			return i
+	return -1
+
+
+## The mounted Help path for a genuinely offered special-rule card: the live
+## popup must show the catalog's exact amounts and wording, open by mouse and
+## keyboard, and change nothing (no request, RNG, receipt or model mutation).
+func _special_help(fixture: Dictionary, slot: int) -> void:
+	var receipt: Dictionary = fixture["receipt"]
+	if not receipt.get("ok", false):
+		return
+	var offered_id: String = String(receipt["offers"][slot]["id"])
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(offered_id)
+	_check(definition.get("id") == offered_id, "reward resolves authored special card " + offered_id)
+	var node_id := "reward_special_%s" % offered_id
+	_check(panel.open_rewards(node_id, "Fight", receipt), "mounted genuine %s receipt" % offered_id)
+	await _frames()
+	if not panel.has_open_rewards():
+		return
+	var before := _snapshot(fixture)
+	var card := panel.choices_container.get_child(slot) as PanelContainer
+	var help := card.get_node_or_null("HelpCorner/HelpButton") as Button
+	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+		"%s offer gains an authored Help tab" % offered_id)
+	if help == null:
+		panel.close_rewards()
+		return
+	await _mouse(help)
+	var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+	_check(overlay != null and panel._help_overlay == overlay,
+		"mouse Help opens the %s special-rule popup" % offered_id)
+	if overlay == null:
+		panel.close_rewards()
+		return
+	var entries := CardKeywordGlossary.describe(definition)
+	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	_check(entries.size() == 1 and list.get_child_count() == entries.size(),
+		"%s Help shows exactly its authored special rule" % offered_id)
+	var text := ""
+	if list.get_child_count() > 0:
+		text = (list.get_child(0) as Label).text
+	var effects: Dictionary = definition.get("effects", {})
+	if offered_id == "tinker_snip_the_seam":
+		var rule: Dictionary = effects.get("conditional_damage", {})
+		var empowered: int = int(rule.get("damage", 0))
+		_check(text.contains("Deal %d damage" % int(effects.get("damage", 0)))
+			and text.contains("%d instead" % empowered)
+			and text.contains("Unravelled") and text.contains(" or ")
+			and text.contains("current threshold")
+			and text.contains("8 normal, 12 elite, 16 boss and rises by 4"),
+			"live Snip Help states %d/%d, the OR condition and the current threshold"
+				% [int(effects.get("damage", 0)), empowered])
+		_check(not text.contains("different enem"),
+			"live Snip Help never promises unrelated targets")
+	else:
+		_check(text.contains("%d separate hits of %d damage each"
+				% [int(effects.get("hit_count", 0)), int(effects.get("damage", 0))])
+			and text.contains("random living enemy") and text.contains("seeded RNG")
+			and text.contains("can be hit more than once"),
+			"live Ricochet Help states %dx%d, seeded living targets and possible repeats"
+				% [int(effects.get("hit_count", 0)), int(effects.get("damage", 0))])
+		_check(not text.contains("three different") and not text.contains("different enem"),
+			"live Ricochet Help never promises three different enemies")
+	_check(_snapshot(fixture) == before and requests.is_empty()
+		and not panel._awaiting_ack and not panel._accepted,
+		"opening %s Help stays read-only with zero requests" % offered_id)
+	await _key(KEY_ESCAPE)
+	_check(panel._help_overlay == null and help.has_focus(),
+		"Escape closes %s Help and restores its Help tab" % offered_id)
+	await _key(KEY_ENTER)
+	_check(panel._help_overlay != null, "keyboard Enter reopens %s Help" % offered_id)
+	await _key(KEY_ESCAPE)
+	_check(panel._help_overlay == null and requests.is_empty(),
+		"keyboard closes %s Help without requesting the card" % offered_id)
+	panel.close_rewards()
+	_check(not panel.has_open_rewards() and panel._help_overlay == null,
+		"special Help closes with its receipt")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_catalog_test()
@@ -359,6 +597,26 @@ func _run() -> void:
 					"real mounted no-keyword Strike has no Help control")
 		_check(requests.is_empty(), "no-keyword Help inspection does not request reward")
 		panel.close_rewards()
+	# The seeded offered Snip and Ricochet cards now explain their special rule in
+	# the same live panel, reachable by mouse and keyboard, without any request.
+	requests.clear()
+	var mounted: Dictionary = {}
+	for seed_value in range(18250, 18290):
+		var special := _prepared("Fight", seed_value, true, _special_candidates())
+		var slot := _special_slot(special["receipt"])
+		_check(slot >= 0, "genuine special receipt offers Snip or Ricochet (seed %d)" % seed_value)
+		if slot < 0:
+			continue
+		var offered_id: String = String(special["receipt"]["offers"][slot]["id"])
+		if mounted.has(offered_id):
+			continue
+		mounted[offered_id] = true
+		await _special_help(special, slot)
+		if mounted.size() == 2:
+			break
+	_check(mounted.has("tinker_snip_the_seam") and mounted.has("tinker_ricochet"),
+		"seeded Fight rewards really offered both special-rule Tinker cards")
+	_check(requests.is_empty(), "special-rule Help never requests a reward")
 	_finish()
 
 
