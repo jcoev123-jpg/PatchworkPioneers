@@ -6,7 +6,7 @@
       "description": "Mismatched buttons form a trail across the grass.",
       "choices": [
         { "id": "follow", "text": "Follow the button trail", "outcome": { "gold": 0, "scraps": 1 } },
-        { "id": "leave", "text": "Leave the buttons untouched", "outcome": { "gold": 5, "scraps": 0 } },
+        { "id": "leave", "text": "Leave 12 gold for two bundles of thread (+2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
         { "id": "sell_buttons", "text": "Sell a button bundle (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } }
       ]
     },

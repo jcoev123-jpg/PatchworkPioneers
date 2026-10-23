@@ -97,12 +97,27 @@ static func crop_rect(view: Rect2, texture_size: Vector2) -> Rect2:
 class Puppet extends Control:
 	const TAG_FELT := Color("2f2a25")
 	const TAG_THREAD := Color("c9b996")
+	## Idle presentation only: the drawn artwork breathes about one percent and bobs a
+	## couple of pixels, each actor at its own stable phase. The pose lives in the draw
+	## transform, so the Control, its pinned name tag and its intent badge never move and
+	## every target rectangle stays exactly where combat put it.
+	const IDLE_BOB_PIXELS := 1.25
+	const IDLE_BREATHE := 0.01
+	const IDLE_BOB_RATE := 1.7
+	const IDLE_BREATHE_RATE := 1.15
+	const IDLE_SLOT_OFFSET := 0.9
+	const IDLE_SIDE_OFFSET := 0.55
+	## The drawn fallback's own local extents before the pose transform: body, head, legs
+	## and the slot-specific sewn prop, including stroke width.
+	const FALLBACK_EXTENTS := Rect2(-26.0, -43.0, 73.0, 85.5)
 
 	var facing := 1.0
 	var slot := 1
 	var fallen := false
 	var felt := Color("719796")
 	var actor_id := ""
+	## Seconds of idle presentation this instance has run. A fresh puppet starts at rest.
+	var idle_phase := 0.0
 	var idle_texture: Texture2D
 	## Held for the future committed attack event; nothing may switch to it yet.
 	var attack_texture: Texture2D
@@ -118,6 +133,45 @@ class Puppet extends Control:
 		custom_minimum_size = Vector2(0, stage_height)
 		size_flags_vertical = Control.SIZE_EXPAND_FILL
 		resized.connect(queue_redraw)
+
+	func _process(delta: float) -> void:
+		advance_idle(delta)
+
+	## Idle motion advances with real frame time only while the actor stands; a fallen
+	## actor keeps the existing still tilt, and nothing is scheduled outside the frame.
+	func advance_idle(delta: float) -> void:
+		if fallen or delta <= 0.0:
+			return
+		idle_phase += delta
+		queue_redraw()
+
+	## A stable per-puppet phase from this actor's side and slot; never wall-clock or RNG.
+	func idle_offset() -> float:
+		return float(slot) * IDLE_SLOT_OFFSET + (0.0 if facing > 0.0 else IDLE_SIDE_OFFSET)
+
+	## Vertical bob in pixels for the current phase; a fallen actor does not bob.
+	func idle_bob() -> float:
+		if fallen:
+			return 0.0
+		return sin(idle_phase * IDLE_BOB_RATE + idle_offset()) * IDLE_BOB_PIXELS
+
+	## Breathing factor applied only to drawn height: about one percent either way.
+	func idle_breath() -> float:
+		if fallen:
+			return 1.0
+		return 1.0 + sin(idle_phase * IDLE_BREATHE_RATE + idle_offset()) * IDLE_BREATHE
+
+	## Space reserved at the edge of the art band for the bob and the breathing swell, so
+	## animated artwork never crosses its band.
+	func art_safety_inset() -> float:
+		return IDLE_BOB_PIXELS + art_band().size.y * IDLE_BREATHE / 2.0 + 1.0
+
+	## One pose shared by both draw paths: inward facing, the existing fallen tilt, the
+	## breathing height and the bob, applied about `anchor` at `base_scale`.
+	func idle_transform(anchor: Vector2, base_scale: float) -> Transform2D:
+		return Transform2D(-0.7 * facing if fallen else 0.0,
+			Vector2(facing, idle_breath()) * base_scale, 0.0,
+			anchor + Vector2(0.0, idle_bob()))
 
 	## Binds one authoritative actor ID and its loaded art; a missing texture keeps the fallback.
 	func bind_actor(id: String, art: Dictionary) -> void:
@@ -140,16 +194,63 @@ class Puppet extends Control:
 		var bottom := maxf(top, size.y - clampf(tag_height, 0.0, size.y))
 		return Rect2(0.0, top, size.x, bottom - top)
 
-	## Uniform, aspect-preserving placement inside this input-inert Control.
+	## Uniform, aspect-preserving placement inside this input-inert Control. The pose's
+	## bob and breathing room is reserved up front, so animated art stays in its band.
 	func image_rect() -> Rect2:
 		var texture := current_texture()
 		var band := art_band()
+		var inset := minf(art_safety_inset(), minf(band.size.x, band.size.y) / 4.0)
+		var fit_band := band.grow(-inset)
 		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0 \
-				or band.size.x <= 0.0 or band.size.y <= 0.0:
+				or fit_band.size.x <= 0.0 or fit_band.size.y <= 0.0:
 			return Rect2()
-		var fit := minf(band.size.x / float(texture.get_width()), band.size.y / float(texture.get_height()))
+		var fit := minf(fit_band.size.x / float(texture.get_width()), fit_band.size.y / float(texture.get_height()))
 		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
-		return Rect2(band.position + (band.size - drawn) / 2.0, drawn)
+		return Rect2(fit_band.position + (fit_band.size - drawn) / 2.0, drawn)
+
+	## The bounding rectangle the bound texture covers after the current idle pose.
+	func posed_image_rect() -> Rect2:
+		var rect := image_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			return Rect2()
+		return _posed_rect(Rect2(-rect.size / 2.0, rect.size), rect.get_center(), 1.0)
+
+	## The bounding rectangle the drawn fallback covers after the current idle pose.
+	func posed_fallback_rect() -> Rect2:
+		if art_band().size.x <= 0.0 or art_band().size.y <= 0.0:
+			return Rect2()
+		return _posed_rect(FALLBACK_EXTENTS, fallback_anchor(), fallback_scale())
+
+	## Whichever actor artwork this puppet draws now, after the current idle pose.
+	func posed_actor_rect() -> Rect2:
+		return posed_image_rect() if current_texture() != null else posed_fallback_rect()
+
+	## Uniform fallback scale fitted inside the band minus the pose's safety inset, so the
+	## drawn puppet cannot cross its band either.
+	func fallback_scale() -> float:
+		var band := art_band()
+		var inset := art_safety_inset()
+		var fit := Rect2(band.position + Vector2(inset, inset),
+			Vector2(maxf(0.0, band.size.x - inset * 2.0), maxf(0.0, band.size.y - inset * 2.0)))
+		var staged := clampf(band.size.y / 130.0, 0.45, 1.8)
+		if fit.size.x <= 0.0 or fit.size.y <= 0.0:
+			return staged
+		return minf(staged, minf(fit.size.y / FALLBACK_EXTENTS.size.y, fit.size.x / FALLBACK_EXTENTS.size.x))
+
+	## The painted fallback's own centre inside the art band.
+	func fallback_anchor() -> Vector2:
+		var band := art_band()
+		return Vector2(size.x / 2.0, band.position.y + band.size.y / 2.0)
+
+	func _posed_rect(local: Rect2, anchor: Vector2, base_scale: float) -> Rect2:
+		var pose := idle_transform(anchor, base_scale)
+		var points: Array[Vector2] = [pose * local.position,
+			pose * Vector2(local.end.x, local.position.y), pose * local.end,
+			pose * Vector2(local.position.x, local.end.y)]
+		var bounds := Rect2(points[0], Vector2.ZERO)
+		for index in range(1, points.size()):
+			bounds = bounds.expand(points[index])
+		return bounds
 
 	func _draw() -> void:
 		var texture := current_texture()
@@ -178,7 +279,7 @@ class Puppet extends Control:
 		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 			return
 		# Heroes face right, enemies left; the fallen actor keeps the drawn tilt treatment.
-		draw_set_transform(rect.get_center(), -0.7 * facing if fallen else 0.0, Vector2(facing, 1.0))
+		draw_set_transform_matrix(idle_transform(rect.get_center(), 1.0))
 		draw_texture_rect(texture, Rect2(-rect.size / 2.0, rect.size), false,
 			Color("8c8b86") if fallen else Color.WHITE)
 		draw_set_transform(Vector2.ZERO)
@@ -188,9 +289,7 @@ class Puppet extends Control:
 		var band := art_band()
 		if band.size.x <= 0.0 or band.size.y <= 0.0:
 			return
-		var puppet_scale := clampf(band.size.y / 130.0, 0.45, 1.8)
-		draw_set_transform(Vector2(size.x / 2, band.position.y + band.size.y / 2),
-			-0.7 * facing if fallen else 0.0, Vector2(facing, 1) * puppet_scale)
+		draw_set_transform_matrix(idle_transform(fallback_anchor(), fallback_scale()))
 		var cloth := felt.darkened(0.4) if fallen else felt
 		var body := PackedVector2Array([Vector2(-20, -13), Vector2(14, -15), Vector2(25, 25), Vector2(-26, 28)])
 		draw_colored_polygon(body, cloth)
