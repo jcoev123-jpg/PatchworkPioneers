@@ -82,6 +82,18 @@ func _init() -> void:
 			"illustration_path": "res://assets/paper/cards/warden_shield_bash.png",
 			"starting_copies": 1
 		},
+		"warden_shield_bash_plus": {
+			"id": "warden_shield_bash_plus",
+			"display_name": "Shield Bash+",
+			"owner": "warden",
+			"cost": 2,
+			"from_positions": [1],
+			"target_kind": "enemy_single",
+			"to_positions": [1],
+			"effects": {"damage": 11, "weak": 1},
+			"illustration_path": "res://assets/paper/cards/warden_shield_bash.png",
+			"starting_copies": 0
+		},
 		"seamstress_prick": {
 			"id": "seamstress_prick",
 			"display_name": "Prick",
@@ -93,6 +105,18 @@ func _init() -> void:
 			"effects": {"damage": 3, "bleed": 2},
 			"illustration_path": "res://assets/paper/cards/seamstress_prick.png",
 			"starting_copies": 2
+		},
+		"seamstress_prick_plus": {
+			"id": "seamstress_prick_plus",
+			"display_name": "Prick+",
+			"owner": "seamstress",
+			"cost": 1,
+			"from_positions": [1, 2, 3],
+			"target_kind": "enemy_single",
+			"to_positions": [1, 2, 3],
+			"effects": {"damage": 4, "bleed": 3},
+			"illustration_path": "res://assets/paper/cards/seamstress_prick.png",
+			"starting_copies": 0
 		},
 		"seamstress_mend": {
 			"id": "seamstress_mend",
@@ -154,6 +178,18 @@ func _init() -> void:
 			"illustration_path": "res://assets/paper/cards/tinker_pop_shot.png",
 			"starting_copies": 2
 		},
+		"tinker_pop_shot_plus": {
+			"id": "tinker_pop_shot_plus",
+			"display_name": "Pop Shot+",
+			"owner": "tinker",
+			"cost": 1,
+			"from_positions": [2, 3],
+			"target_kind": "enemy_single",
+			"to_positions": [1, 2, 3],
+			"effects": {"damage": 7},
+			"illustration_path": "res://assets/paper/cards/tinker_pop_shot.png",
+			"starting_copies": 0
+		},
 		"tinker_scrap_bomb": {
 			"id": "tinker_scrap_bomb",
 			"display_name": "Scrap Bomb",
@@ -165,6 +201,18 @@ func _init() -> void:
 			"effects": {"damage": 4},
 			"illustration_path": "res://assets/paper/cards/tinker_scrap_bomb.png",
 			"starting_copies": 1
+		},
+		"tinker_scrap_bomb_plus": {
+			"id": "tinker_scrap_bomb_plus",
+			"display_name": "Scrap Bomb+",
+			"owner": "tinker",
+			"cost": 2,
+			"from_positions": [3],
+			"target_kind": "enemy_all",
+			"to_positions": [1, 2, 3],
+			"effects": {"damage": 6},
+			"illustration_path": "res://assets/paper/cards/tinker_scrap_bomb.png",
+			"starting_copies": 0
 		},
 		"tinker_tune_up": {
 			"id": "tinker_tune_up",
