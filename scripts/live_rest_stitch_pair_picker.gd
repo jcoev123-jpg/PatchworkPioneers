@@ -43,6 +43,7 @@ var _left_edge: ColorRect
 var _right_edge: ColorRect
 var _model := RunRestStitchPairOptions.new()
 var _epoch := 0
+var _submitted := false
 var _first_callback: Callable
 var _second_callback: Callable
 var _confirm_callback: Callable
@@ -530,6 +531,10 @@ func _on_tile_focus_entered(tile: Button, scroll: ScrollContainer) -> void:
 
 # --- Public Selection Query and Interaction Helpers ---
 
+func is_submitted() -> bool:
+	return _submitted
+
+
 func selected_first_index() -> int:
 	return _selected_first_index
 
@@ -553,16 +558,20 @@ func second_tile_for_index(deck_index: int) -> Button:
 
 
 func select_first_tile(deck_index: int) -> void:
+	if _submitted:
+		return
 	var tile := first_tile_for_index(deck_index)
-	if tile != null:
+	if tile != null and not tile.disabled:
 		tile.pressed.emit()
 	elif _model.is_available():
 		_on_first_tile_pressed(deck_index)
 
 
 func select_second_tile(deck_index: int) -> void:
+	if _submitted:
+		return
 	var tile := second_tile_for_index(deck_index)
-	if tile != null:
+	if tile != null and not tile.disabled:
 		tile.pressed.emit()
 	elif _model.is_available() and _selected_first_index >= 0:
 		_on_second_tile_pressed(deck_index)
@@ -574,6 +583,32 @@ func _rebuild_focus_chain() -> void:
 	var dismiss: Button = null
 	if get_parent() != null:
 		dismiss = get_parent().get_node_or_null("DismissStitch") as Button
+
+	if _submitted:
+		if first_selector != null:
+			first_selector.disabled = true
+			first_selector.focus_mode = Control.FOCUS_NONE
+		if second_selector != null:
+			second_selector.disabled = true
+			second_selector.focus_mode = Control.FOCUS_NONE
+		if confirm_button != null:
+			confirm_button.disabled = true
+			confirm_button.focus_mode = Control.FOCUS_NONE
+		for tile in first_tiles:
+			if is_instance_valid(tile):
+				tile.disabled = true
+				tile.focus_mode = Control.FOCUS_NONE
+		for tile in second_tiles:
+			if is_instance_valid(tile):
+				tile.disabled = true
+				tile.focus_mode = Control.FOCUS_NONE
+		if is_instance_valid(change_first_button):
+			change_first_button.disabled = true
+			change_first_button.focus_mode = Control.FOCUS_NONE
+		if dismiss != null:
+			dismiss.focus_next = dismiss.get_path_to(dismiss)
+			dismiss.focus_previous = dismiss.get_path_to(dismiss)
+		return
 
 	first_selector.focus_mode = Control.FOCUS_ALL
 	second_selector.focus_mode = Control.FOCUS_ALL
@@ -663,6 +698,8 @@ func _rebuild_focus_chain() -> void:
 
 
 func _focus_tile(tile: Button) -> void:
+	if _submitted:
+		return
 	if is_instance_valid(tile) and tile.is_inside_tree() and tile.visible and not tile.disabled:
 		tile.grab_focus()
 
@@ -671,6 +708,7 @@ func _focus_tile(tile: Button) -> void:
 
 func bind(service: RunRestStitchCards, source_snapshot: Variant) -> void:
 	clear()
+	_submitted = false
 	_model.bind(service, source_snapshot)
 	_first_callback = _on_first_changed.bind(_epoch)
 	_second_callback = _on_second_changed.bind(_epoch)
@@ -695,6 +733,7 @@ func clear() -> void:
 	_second_callback = Callable()
 	_confirm_callback = Callable()
 	_model.clear()
+	_submitted = false
 	_selected_first_index = -1
 	_selected_second_index = -1
 	first_tiles.clear()
@@ -750,13 +789,13 @@ func refresh() -> void:
 	second_selector.disabled = true
 	confirm_button.disabled = true
 	if step_label != null:
-		step_label.text = "Rest Stitch unavailable"
-	summary_label.text = "Not available — no eligible pair (3 scraps required)."
+		step_label.text = "Stitch requested — awaiting Rest confirmation." if _submitted else "Rest Stitch unavailable"
+	summary_label.text = "Stitch requested — awaiting Rest confirmation." if _submitted else "Not available — no eligible pair (3 scraps required)."
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
 	_clear_thumbnails()
-	if not is_inside_tree() or not _model.is_available():
+	if _submitted or not is_inside_tree() or not _model.is_available():
 		return
 
 	for entry in _model.first_options():
@@ -782,7 +821,7 @@ func _entry_text(entry: Dictionary) -> String:
 # --- Tile and Selector Interaction Handlers ---
 
 func _on_first_tile_pressed(index: int) -> void:
-	if not _model.is_available() or not is_inside_tree():
+	if _submitted or not _model.is_available() or not is_inside_tree():
 		_disable_choice()
 		return
 	_selected_first_index = index
@@ -798,6 +837,9 @@ func _on_first_tile_pressed(index: int) -> void:
 
 
 func _populate_second_options(first_idx: int) -> void:
+	if _submitted:
+		_disable_choice()
+		return
 	second_selector.clear()
 	second_selector.disabled = true
 	confirm_button.disabled = true
@@ -838,7 +880,7 @@ func _populate_second_options(first_idx: int) -> void:
 
 
 func _on_second_tile_pressed(index: int) -> void:
-	if not _model.is_available() or not is_inside_tree() or _selected_first_index < 0:
+	if _submitted or not _model.is_available() or not is_inside_tree() or _selected_first_index < 0:
 		_disable_choice()
 		return
 	_selected_second_index = index
@@ -857,6 +899,8 @@ func _on_second_tile_pressed(index: int) -> void:
 
 
 func _return_to_first_choice() -> void:
+	if _submitted:
+		return
 	_selected_first_index = -1
 	_selected_second_index = -1
 	second_tile_scroll.visible = false
@@ -884,7 +928,7 @@ func _return_to_first_choice() -> void:
 
 
 func _on_first_changed(item: int, epoch: int) -> void:
-	if epoch != _epoch or not _model.is_available() or not is_inside_tree():
+	if _submitted or epoch != _epoch or not _model.is_available() or not is_inside_tree():
 		_disable_choice()
 		return
 	second_selector.clear()
@@ -903,7 +947,7 @@ func _on_first_changed(item: int, epoch: int) -> void:
 
 
 func _on_second_changed(item: int, epoch: int) -> void:
-	if epoch != _epoch:
+	if _submitted or epoch != _epoch:
 		return
 	if item < 0 or item >= second_selector.item_count:
 		return
@@ -1135,12 +1179,29 @@ func _disable_choice() -> void:
 		second_selector.disabled = true
 	if first_selector != null:
 		first_selector.select(-1)
+		if _submitted:
+			first_selector.disabled = true
+			first_selector.focus_mode = Control.FOCUS_NONE
 	if confirm_button != null:
 		confirm_button.disabled = true
+		if _submitted:
+			confirm_button.focus_mode = Control.FOCUS_NONE
+	if _submitted:
+		for tile in first_tiles:
+			if is_instance_valid(tile):
+				tile.disabled = true
+				tile.focus_mode = Control.FOCUS_NONE
+		for tile in second_tiles:
+			if is_instance_valid(tile):
+				tile.disabled = true
+				tile.focus_mode = Control.FOCUS_NONE
+		if is_instance_valid(change_first_button):
+			change_first_button.disabled = true
+			change_first_button.focus_mode = Control.FOCUS_NONE
 	if step_label != null:
-		step_label.text = "Rest Stitch unavailable"
+		step_label.text = "Stitch requested — awaiting Rest confirmation." if _submitted else "Rest Stitch unavailable"
 	if summary_label != null:
-		summary_label.text = "Not available — select a current eligible pair (3 scraps)."
+		summary_label.text = "Stitch requested — awaiting Rest confirmation." if _submitted else "Not available — select a current eligible pair (3 scraps)."
 	if first_half_label != null:
 		first_half_label.text = ""
 	if second_half_label != null:
@@ -1152,12 +1213,13 @@ func _disable_choice() -> void:
 
 
 func _on_confirm(epoch: int) -> void:
-	if epoch != _epoch or confirm_button.disabled:
+	if _submitted or epoch != _epoch or confirm_button.disabled:
 		return
 	var pair := _current_pair()
 	if pair.is_empty():
 		_disable_choice()
 		return
+	_submitted = true
 	stitch_requested.emit(pair["first_index"], pair["second_index"], pair["source_snapshot"].duplicate(true))
 	# This session emits at most one request. The Rest owner decides whether
 	# to transact; a fresh binding is needed for any subsequent choice.
