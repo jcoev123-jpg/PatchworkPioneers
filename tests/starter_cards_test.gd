@@ -9,6 +9,7 @@ func _initialize() -> void:
 	_test_warden_cards()
 	_test_strike_plus()
 	_test_support_plus()
+	_test_offensive_plus()
 	_test_seamstress_cards()
 	_test_tinker_cards()
 	_test_starting_deck_multiplicities()
@@ -46,6 +47,35 @@ func _test_strike_plus() -> void:
 	for field in ["owner", "cost", "from_positions", "target_kind", "to_positions"]:
 		_check(upgraded.get(field) == original.get(field), "Strike+ retains " + field)
 	_check(catalog.get_starting_deck() == JSON.parse_string(FileAccess.get_file_as_string("res://data/cards/starter_deck.json")), "exact twelve-card starter membership and order retained")
+
+
+func _test_offensive_plus() -> void:
+	var catalog := StarterCards.new()
+	var expectations := {
+		"warden_shield_bash_plus": ["Shield Bash+", {"damage": 11, "weak": 1}],
+		"seamstress_prick_plus": ["Prick+", {"damage": 4, "bleed": 3}],
+		"tinker_pop_shot_plus": ["Pop Shot+", {"damage": 7}],
+		"tinker_scrap_bomb_plus": ["Scrap Bomb+", {"damage": 6}],
+	}
+	var starter_deck := catalog.get_starting_deck()
+	
+	for plus_id: String in expectations:
+		var expected_name: String = expectations[plus_id][0]
+		var expected_effects: Dictionary = expectations[plus_id][1]
+		var base_id: String = plus_id.trim_suffix("_plus")
+		
+		var plus_def: Dictionary = catalog.get_definition(plus_id)
+		var base_def: Dictionary = catalog.get_definition(base_id)
+		
+		_check(not plus_def.is_empty(), plus_id + " is authored")
+		_check(plus_def.get("id") == plus_id, plus_id + " ID matches")
+		_check(plus_def.get("display_name") == expected_name, plus_id + " display name")
+		_check(plus_def.get("effects") == expected_effects, plus_id + " effects match exact requirements")
+		_check(plus_def.get("starting_copies") == 0, plus_id + " starts with 0 copies")
+		_check(not starter_deck.has(plus_id), plus_id + " is absent from starting deck")
+		
+		for field in ["owner", "cost", "from_positions", "target_kind", "to_positions", "illustration_path"]:
+			_check(plus_def.get(field) == base_def.get(field), plus_id + " retains base " + field)
 
 
 func _test_support_plus() -> void:
