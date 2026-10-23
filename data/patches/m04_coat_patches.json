@@ -4,5 +4,7 @@
   {"id":"double_quilt_coat","slot":"COAT","max_hp_bonus":8},
   {"id":"scrap_lined_vest","slot":"COAT","max_hp_bonus":3},
   {"id":"wool_patch_cloak","slot":"COAT","max_hp_bonus":5},
-  {"id":"chain_stitched_coat","slot":"COAT","max_hp_bonus":7}
+  {"id":"chain_stitched_coat","slot":"COAT","max_hp_bonus":7},
+  {"id":"reinforced_patchcoat","slot":"COAT","max_hp_bonus":9},
+  {"id":"thick_felt_mantle","slot":"COAT","max_hp_bonus":10}
 ]
