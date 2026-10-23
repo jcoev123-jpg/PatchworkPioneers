@@ -71,6 +71,16 @@ func consume_after_attack(position: int, attacker_id: String, hit_confirmed: boo
 	return true
 
 
+## Removes any token on the given position. A lethal confirmed attack clears the
+## pin it would otherwise leave on a slain enemy. Returns true when a token was
+## removed; missing tokens are a no-op.
+func clear_pin(position: int) -> bool:
+	if not _pinner_by_position.has(position):
+		return false
+	_pinner_by_position.erase(position)
+	return true
+
+
 ## Clears all pinned tokens. Called at combat end.
 func reset_combat() -> void:
 	_pinner_by_position.clear()
