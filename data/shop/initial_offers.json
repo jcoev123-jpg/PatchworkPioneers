@@ -27,7 +27,14 @@
     {"id": "warden_heavy_thimble", "owner": "warden", "price": 60},
     {"id": "warden_pin_and_pound", "owner": "warden", "price": 85},
     {"id": "warden_draw_fire", "owner": "warden", "price": 65},
-    {"id": "warden_counter_stitch", "owner": "warden", "price": 65}
+    {"id": "warden_counter_stitch", "owner": "warden", "price": 65},
+    {"id": "seamstress_running_stitch", "owner": "seamstress", "price": 50},
+    {"id": "seamstress_darning", "owner": "seamstress", "price": 55},
+    {"id": "seamstress_thimble_tea", "owner": "seamstress", "price": 40},
+    {"id": "seamstress_hemorrhage_hem", "owner": "seamstress", "price": 65},
+    {"id": "seamstress_blanket_stitch", "owner": "seamstress", "price": 70},
+    {"id": "seamstress_field_mend", "owner": "seamstress", "price": 75},
+    {"id": "seamstress_red_thread", "owner": "seamstress", "price": 90}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
