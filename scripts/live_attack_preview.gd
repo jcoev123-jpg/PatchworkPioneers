@@ -35,6 +35,10 @@ var _combo_oracle := CombatPoolComboAttackPreview.new()
 var _warden_combo := CombatWardenPoolComboAttacks.new()
 var _pinned: CombatPinned
 var _unravel: CombatUnravel
+## The selected Seamstress Path card of THIS routed battle: its genuine receipt,
+## deck, party, roster and the one gauge shared with the round flow.
+var _path_cards: CombatSeamstressPathCards
+var _path_card: Dictionary = {}
 var _routed_gauge_shared := false
 var last_event: Dictionary = {}
 var _armed: Control
@@ -171,6 +175,127 @@ func _share_gauge(party: CombatParty, enemies: CombatEnemies, card_id: String) -
 		return false
 	flow._unravel = _unravel
 	return true
+
+
+## Bind this battle's selected Path card to the genuine receipt, deck, party,
+## roster and the one gauge already shared with the round flow. Only a receipt
+## the combat resolver authenticates can name a Path card.
+func _bind_path_cards(app) -> void:
+	_path_cards = null
+	_path_card.clear()
+	if app == null or _deck == null or _unravel == null:
+		return
+	var receipt: Variant = app.run_seamstress_path_receipt
+	if not receipt is Dictionary or (receipt as Dictionary).is_empty():
+		return
+	var resolver := CombatSeamstressPathCards.new(receipt, _unravel)
+	if not resolver.is_valid_choice():
+		return
+	var path: Dictionary = RunSeamstressPathChoice.new().get_path(resolver.get_path_id())
+	var card: Variant = path.get("card")
+	if not card is Dictionary or str((card as Dictionary).get("id", "")) != resolver.get_card_id():
+		return
+	_path_cards = resolver
+	_path_card = (card as Dictionary).duplicate(true)
+
+
+func _is_path_card(card_id: String) -> bool:
+	return not _path_card.is_empty() and card_id == str(_path_card.get("id", ""))
+
+
+## True only while this battle really holds exactly one copy of the selected
+## Path card and no copy of the other Path's card.
+func path_ready() -> bool:
+	if _path_cards == null or _path_card.is_empty() or _deck == null:
+		return false
+	var app = get_parent()
+	if app == null or app.deck != _deck or not _path_cards.is_valid_choice():
+		return false
+	var card_id: String = str(_path_card["id"])
+	var other_id: String = CombatSeamstressPathCards.FRAY_ID \
+		if card_id == CombatSeamstressPathCards.LEECH_STITCH_ID \
+		else CombatSeamstressPathCards.LEECH_STITCH_ID
+	var occurrences := 0
+	for pile in [_deck.draw_pile, _deck.hand, _deck.discard_pile]:
+		if (pile as Array).has(other_id):
+			return false
+		occurrences += (pile as Array).count(card_id)
+	return occurrences == 1
+
+
+## Legal original enemy slots, straight from the shared resolver's own preview.
+## Presentation never simulates Bleed, the heal or the Unravel charge itself.
+func _path_positions(card_id: String) -> Array[int]:
+	var positions: Array[int] = []
+	if not _is_path_card(card_id) or not path_ready():
+		return positions
+	var app = get_parent()
+	for position in range(1, CombatEnemies.MAX_ENEMIES + 1):
+		if bool(_path_cards.preview(_deck, app.party, app.enemies, card_id, position).get("ok", false)):
+			positions.append(position)
+	return positions
+
+
+## Public read-only admission for the mounted hand face and tests.
+func path_preview(card_id: String) -> Dictionary:
+	var positions := _path_positions(card_id)
+	return {"playable": not positions.is_empty(), "requires_selection": true,
+		"target_positions": positions}
+
+
+func _path_quote(card_id: String, position: int) -> Dictionary:
+	if not _is_path_card(card_id) or not path_ready():
+		return {"ok": false}
+	var app = get_parent()
+	return _path_cards.preview(_deck, app.party, app.enemies, card_id, position)
+
+
+## Fray's skipped action is consumed by this battle's own enemy phase, so the
+## battle gauge is handed to the matching round flow before the commit.
+func _share_path_gauge() -> bool:
+	var app = get_parent()
+	if _unravel == null or app == null or app.enemies == null:
+		return false
+	if _unravel._bound_enemies != app.enemies:
+		return false
+	var flow := _matching_flow(app, app.party, app.enemies)
+	if flow == null:
+		return false
+	if flow._unravel != null and flow._unravel != _unravel:
+		return false
+	flow._unravel = _unravel
+	return true
+
+
+## One exact projection of a Path card's own committed effects on an original
+## enemy slot: Bleed before/after, Unravel gauge before/after and the weak ally
+## heal. Nothing here resolves the later turn-end Bleed tick.
+func _path_quote_text(position: int, quote: Dictionary) -> String:
+	if not quote.get("ok", false):
+		return "%d: unavailable" % position
+	var app = get_parent()
+	var parts: PackedStringArray = []
+	var bleed: int = int(quote.get("bleed_applied", 0))
+	if bleed > 0:
+		var enemy: Dictionary = app.enemies.get_enemy(position)
+		var bleed_before: int = int(enemy.get("statuses", {}).get("bleed", 0))
+		parts.append("Bleed %d → %d" % [bleed_before, bleed_before + bleed])
+	var unravel: int = int(quote.get("unravel_applied", 0))
+	if unravel > 0 and _unravel != null:
+		var gauge: Dictionary = _unravel.get_snapshot(position)
+		if gauge.size() == 4:
+			var gauge_after: int = mini(int(gauge["gauge"]) + unravel, int(gauge["threshold"]))
+			parts.append("Unravel %d → %d/%d%s" % [unravel, gauge_after,
+				int(gauge["threshold"]), " skip" if gauge_after == int(gauge["threshold"]) else ""])
+	if int(quote.get("healed_slot", 0)) > 0:
+		var hero: Dictionary = app.party.get_hero(int(quote["healed_slot"]))
+		if not hero.is_empty():
+			var healed: int = int(quote.get("healed_amount", 0))
+			parts.append("heal %s %d → %d/%d" % [str(hero.get("id", "")).capitalize(), healed,
+				int(hero.get("hp", 0)) + healed, int(hero.get("max_hp", 0))])
+	if parts.is_empty():
+		return "%d: no effect" % position
+	return "%d: %s" % [position, ", ".join(parts)]
 
 
 ## A selectable combo must belong to this actual routed battle, with the
@@ -414,9 +539,11 @@ func _single(panel) -> bool:
 	return _definition(_card_id(panel)).get("target_kind") == "enemy_single"
 
 
-## Starter, plain-strike, heavy-pool and Seamstress control attacks use separate
-## authored catalogs.
+## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
+## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if _is_path_card(card_id):
+		return _path_card
 	if _targeting.is_pool_strike(card_id):
 		return _targeting.pool_definition(card_id)
 	if _targeting.is_heavy_pool_attack(card_id):
@@ -456,6 +583,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if _is_path_card(id):
+		return path_preview(id)
 	if _direct_fire_preview.supports(id):
 		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire)
 	if _targeting.is_seamstress_control(id):
@@ -482,7 +611,7 @@ func _queue_attack(position: int) -> void:
 	var target_id := ""
 	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
-			or _targeting.is_pool_combo_attack(id)) and position > 0:
+			or _targeting.is_pool_combo_attack(id) or _is_path_card(id)) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
 		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
@@ -499,7 +628,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var direct := _direct_fire_preview.supports(id)
 	var control := _targeting.is_seamstress_control(id)
 	var combo := _targeting.is_pool_combo_attack(id)
-	var guarded := direct or control or combo
+	var path := _is_path_card(id)
+	var guarded := direct or control or combo or path
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -514,7 +644,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 			or panel.get_index() != panel_index or app.deck.hand != queued_hand):
 		_reject_stitch()
 		return
-	if (direct or combo) and (app._battle_closed or target_id.is_empty() \
+	if (direct or combo or path) and (app._battle_closed or target_id.is_empty() \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
 		return
@@ -522,7 +652,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((control or combo) and (app._battle_closed or target_id.is_empty() \
+			or ((control or combo or path) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -535,6 +665,17 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _is_path_card(id):
+		if forecast:
+			return _path_quote(id, position)
+		if not path_ready():
+			return {"ok": false}
+		# Unpicker's skip is only real when this battle's enemy phase owns the
+		# gauge, so the handoff happens inside the same commit boundary.
+		if _path_cards.get_path_id() == CombatSeamstressPathCards.UNPICKER_PATH \
+				and not _share_path_gauge():
+			return {"ok": false}
+		return _path_cards.play_card(_deck, party, enemies, id, position)
 	if _direct_fire_preview.supports(id):
 		if forecast:
 			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire)
@@ -776,7 +917,8 @@ func _eligible(panel) -> bool:
 			or not _control_ready(app.party, app.enemies, id)):
 		return false
 	var index: int = panel.get_index()
-	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
+	var path_ok: bool = _is_path_card(id) and not _path_positions(id).is_empty()
+	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -818,6 +960,9 @@ func _sync_battle() -> void:
 		if tiers.is_empty() or not _unravel.bind_roster(app.enemies, tiers):
 			# Keep the owned gauge unbound: a gauge-card cast then fails closed.
 			_unravel = CombatUnravel.new()
+		# The selected Path card is bound only to this battle's genuine receipt,
+		# deck, party, roster and the one gauge shared with its round flow.
+		_bind_path_cards(app)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		cue = Label.new()
 		cue.name = "AttackPreviewCue"
@@ -942,6 +1087,20 @@ func _refresh() -> void:
 	if definition.is_empty():
 		# Fail closed on an unrecognised record instead of formatting a partial card.
 		cue.text = "Unavailable card rules"
+		return
+	if _is_path_card(id):
+		# The resolver's per-slot previews are the only Path forecast: no Bleed
+		# tick or Unravel charge is simulated here, only the projected card.
+		var path_slots := _path_positions(id)
+		var path_details: PackedStringArray = []
+		for position in path_slots:
+			path_details.append(_path_quote_text(position, _path_quote(id, position)))
+		var path_reading := "Unavailable: no legal target, receipt or shared gauge"
+		if not path_slots.is_empty():
+			path_reading = "Choose one enemy slot: " + "; ".join(path_details)
+			current_forecast = {"ok": true, "card_id": id, "target_positions": path_slots}
+		cue.text = "%s | %d energy | P / click card; %s / click enemy\n%s" % [
+			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
 	if _targeting.is_pool_combo_attack(id):
@@ -1081,6 +1240,8 @@ func _clear() -> void:
 		app.round_flow._unravel = null
 	_pinned = null
 	_unravel = null
+	_path_cards = null
+	_path_card.clear()
 	_routed_gauge_shared = false
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)

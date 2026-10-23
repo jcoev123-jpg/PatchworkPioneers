@@ -82,6 +82,11 @@ const AREA_BANDS := [
 ## read as group captions over either the drawn pages or the owner board image.
 const AREA_LABEL_TOP := 98.0
 const AREA_LABEL_HEIGHT := 24.0
+## Inert sewn status tab in the free top-left of PAGE_LEFT, above the floor-number row
+## at y=64 and the area captions at y=98. It names the area and floor the NEXT legal
+## map choice visits; it is never a map node and never takes pointer or keyboard input.
+const NEXT_AREA_TAB_RECT := Rect2(30.0, 30.0, 320.0, 29.0)
+const NEXT_AREA_TAB_FONT_SIZE := 16
 
 signal node_requested(id: String)
 
@@ -384,6 +389,8 @@ func refresh() -> void:
 					_add_thread(source_id, target_id, positions, chosen, legal, reveal_keys)
 	# Inert area captions name each floor group over the book, before any marker mounts.
 	_add_area_labels()
+	# The inert status tab names the next area/floor from the same authored bands.
+	_add_next_area_tab()
 	for floor_index in range(floors.size()):
 		var floor_header := Label.new()
 		floor_header.name = "Floor%02d" % (floor_index + 1)
@@ -569,6 +576,86 @@ func _add_area_labels() -> void:
 		label.add_theme_color_override("font_outline_color", PAPER)
 		_inert(label)
 		add_child(label)
+
+
+## Inert sewn-paper status tab: cream paper, dark ink caption and a small running-stitch
+## border. It draws itself so it needs no new image or font, and never takes input.
+class NextAreaTab extends Control:
+	var text := ""
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		if size.x <= 0.0 or size.y <= 0.0:
+			return
+		var paper := Rect2(Vector2.ZERO, size)
+		draw_rect(paper, RunRouteAtlas.PAPER)
+		draw_rect(paper, RunRouteAtlas.INK, false, 1.5)
+		draw_dashed_line(Vector2(5.0, 5.0), Vector2(size.x - 5.0, 5.0),
+			RunRouteAtlas.THREAD, 1.0, 5.0)
+		draw_dashed_line(Vector2(5.0, size.y - 5.0), Vector2(size.x - 5.0, size.y - 5.0),
+			RunRouteAtlas.THREAD, 1.0, 5.0)
+		var font := get_theme_default_font()
+		if font == null or text.is_empty():
+			return
+		var font_size := RunRouteAtlas.NEXT_AREA_TAB_FONT_SIZE
+		var baseline := (size.y + font.get_ascent(font_size) - font.get_descent(font_size)) * 0.5
+		draw_string(font, Vector2(12.0, baseline), text, HORIZONTAL_ALIGNMENT_LEFT,
+			size.x - 20.0, font_size, RunRouteAtlas.INK)
+
+
+## Total authored floors, derived from the AREA_BANDS table rather than a second ladder.
+static func total_floors() -> int:
+	if AREA_BANDS.is_empty():
+		return 0
+	return int(AREA_BANDS[AREA_BANDS.size() - 1]["last_floor"])
+
+
+## Authored area name whose floor span contains the given floor, or "" when none does.
+static func area_for_floor(floor_number: int) -> String:
+	for band in AREA_BANDS:
+		if floor_number >= int(band["first_floor"]) and floor_number <= int(band["last_floor"]):
+			return String(band["name"])
+	return ""
+
+
+## Presentation-only caption for a generated map: the area and floor the NEXT legal
+## choice visits, or the terminal line once floor 12 is complete. Never a floor 13.
+static func next_area_caption(map: RunMap) -> String:
+	if map == null or not map.is_generated():
+		return ""
+	var total := total_floors()
+	var current := map.get_current_floor()
+	if map.is_complete():
+		return "Route complete · Floor %d/%d" % [total, total]
+	var next_floor := current + 1
+	var area := area_for_floor(next_floor)
+	if area.is_empty():
+		return ""
+	return "Next: %s · Floor %d/%d" % [area, next_floor, total]
+
+
+## The mounted inert status tab, or null when no generated map is bound.
+func next_area_tab() -> NextAreaTab:
+	return get_node_or_null("NextArea") as NextAreaTab
+
+
+func _add_next_area_tab() -> void:
+	var caption := next_area_caption(_map)
+	if caption.is_empty():
+		return
+	var tab := NextAreaTab.new()
+	tab.name = "NextArea"
+	tab.text = caption
+	tab.set_meta("next_area_tab", true)
+	tab.position = NEXT_AREA_TAB_RECT.position
+	tab.size = NEXT_AREA_TAB_RECT.size
+	tab.custom_minimum_size = NEXT_AREA_TAB_RECT.size
+	_inert(tab)
+	add_child(tab)
 
 
 func _node_position(floor_index: int, row_index: int) -> Vector2:

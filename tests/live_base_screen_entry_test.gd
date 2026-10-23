@@ -317,12 +317,16 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 				and app.run_seamstress_path_receipt == expected,
 				"the Path receipt survives into the live battle: " + path_id)
 			var total := 0
+			var path_cards := 0
 			var leaked := false
 			for pile in [app.deck.draw_pile, app.deck.hand, app.deck.discard_pile]:
 				total += (pile as Array).size()
-				leaked = leaked or (pile as Array).has(card_id)
-			_check(total == 12 and not leaked,
-				"the live hand, draw and discard hold only the twelve authored cards: " + path_id)
+				path_cards += (pile as Array).count(card_id)
+				for other in ["seamstress_leech_stitch", "seamstress_fray"]:
+					if other != card_id:
+						leaked = leaked or (pile as Array).has(other)
+			_check(total == 13 and path_cards == 1 and not leaked,
+				"the live hand, draw and discard hold the twelve authored cards plus exactly this Path card: " + path_id)
 			await _click(app.return_button)
 			await process_frame
 			_check(app.title_view.is_visible_in_tree() and app.deck == null

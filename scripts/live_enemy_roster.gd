@@ -209,6 +209,19 @@ class Puppet extends Control:
 	const ATTACK_LUNGE_MAX := 26.0
 	const ATTACK_STRETCH := 0.1
 	const ATTACK_SQUASH := 0.06
+	## One committed HP loss also shakes that actor: a short damped horizontal wobble
+	## applied to the same drawing transform as the idle bob and the attack lunge, so the
+	## Control, its pinned name tag and every target rectangle keep their exact place. The
+	## span is bounded here as well as by the listener, it settles exactly at zero, and it
+	## never creates a tween, a timer or a gameplay wait.
+	const RECOIL_MAX_SECONDS := 0.6
+	const RECOIL_AMPLITUDE_RATIO := 0.08
+	const RECOIL_AMPLITUDE_MAX := 10.0
+	## A shake is always readable, even when the drawn actor already fills its band. It is
+	## still small enough that two neighbouring columns' artwork never touch.
+	const RECOIL_MIN_PIXELS := 6.0
+	## One full wobble: pushed back first, one damped overshoot, then exactly at rest.
+	const RECOIL_WAVES := 2.0
 
 	var facing := 1.0
 	var slot := 1
@@ -223,6 +236,9 @@ class Puppet extends Control:
 	## Seconds left of the one bounded committed attack pose; zero means plain idle.
 	var attack_remaining := 0.0
 	var attack_span := 0.0
+	## Seconds left of the one bounded committed-hit recoil; zero means no shake at all.
+	var recoil_remaining := 0.0
+	var recoil_span := 0.0
 	## Presenter-supplied stage metrics, so heroes and enemies are drawn at one scale.
 	var stage_height := 180.0
 	var intent_band := 36.0
@@ -237,9 +253,11 @@ class Puppet extends Control:
 		resized.connect(queue_redraw)
 
 	func _process(delta: float) -> void:
-		# The committed attack pose settles first, so a fallen or finished actor is
-		# already back at its plain idle pose before the idle bob advances.
+		# The committed attack pose and the hit recoil settle first, so a fallen or
+		# finished actor is already back at its plain idle pose before the idle bob
+		# advances.
 		advance_attack(delta)
+		advance_recoil(delta)
 		advance_idle(delta)
 
 	## Idle motion advances with real frame time only while the actor stands; a fallen
@@ -312,6 +330,87 @@ class Puppet extends Control:
 	func attack_squash() -> float:
 		return 1.0 - ATTACK_SQUASH * attack_shape()
 
+	## Starts the one short recoil of an actor that really lost HP. A fallen, detached or
+	## otherwise absent actor, or a non-positive span, stays exactly at rest: presentation
+	## never fabricates a shake that combat did not commit.
+	func trigger_recoil(seconds: float) -> bool:
+		if fallen or not is_inside_tree() or seconds <= 0.0:
+			return false
+		recoil_span = clampf(seconds, 0.001, RECOIL_MAX_SECONDS)
+		recoil_remaining = recoil_span
+		queue_redraw()
+		return true
+
+	## Ends a recoil immediately, leaving the drawn artwork exactly at its idle pose.
+	func cancel_recoil() -> void:
+		if recoil_remaining <= 0.0 and recoil_span <= 0.0:
+			return
+		recoil_remaining = 0.0
+		recoil_span = 0.0
+		queue_redraw()
+
+	## The recoil settles itself with real frame deltas; a fallen actor never keeps one.
+	func advance_recoil(delta: float) -> void:
+		if recoil_remaining <= 0.0:
+			return
+		if fallen:
+			cancel_recoil()
+			return
+		if delta <= 0.0:
+			return
+		recoil_remaining = maxf(0.0, recoil_remaining - delta)
+		if recoil_remaining <= 0.0:
+			recoil_span = 0.0
+		queue_redraw()
+
+	## True only while this actor is really mid-recoil.
+	func recoiling() -> bool:
+		return recoil_remaining > 0.0 and not fallen
+
+	## Zero at rest, one full damped wobble in between and zero again at the end, so a
+	## recoil both starts and finishes exactly at the idle pose.
+	func recoil_shape() -> float:
+		if not recoiling() or recoil_span <= 0.0:
+			return 0.0
+		var progress := clampf(1.0 - recoil_remaining / recoil_span, 0.0, 1.0)
+		return sin(progress * PI * RECOIL_WAVES) * (1.0 - progress)
+
+	## The rest placement of whichever artwork is drawn now, before the pose transform.
+	func rest_drawn_rect() -> Rect2:
+		var rect := image_rect()
+		if rect.size.x > 0.0 and rect.size.y > 0.0:
+			return rect
+		var band := art_band()
+		if band.size.x <= 0.0 or band.size.y <= 0.0:
+			return Rect2()
+		var scale := fallback_scale()
+		return Rect2(fallback_anchor() + FALLBACK_EXTENTS.position * scale,
+			FALLBACK_EXTENTS.size * scale)
+
+	## Horizontal room the drawn artwork leaves inside its own art band, so a shake can be
+	## kept to its actor's column instead of crossing into a neighbour.
+	func recoil_slack() -> float:
+		var band := art_band()
+		var rest := rest_drawn_rect()
+		if band.size.x <= 0.0 or rest.size.x <= 0.0:
+			return 0.0
+		return maxf(0.0, minf(rest.position.x - band.position.x, band.end.x - rest.end.x))
+
+	## How far this actor is shoved: a share of its own drawn width, capped by the room its
+	## artwork has inside the band, and never below a few readable pixels.
+	func recoil_back_pixels() -> float:
+		var rest := rest_drawn_rect()
+		if rest.size.x <= 0.0:
+			return 0.0
+		var wanted := clampf(rest.size.x * RECOIL_AMPLITUDE_RATIO,
+			RECOIL_MIN_PIXELS, RECOIL_AMPLITUDE_MAX)
+		return maxf(RECOIL_MIN_PIXELS, minf(wanted, recoil_slack()))
+
+	## The recoil applied to the drawn transform: away from this actor's facing first, then
+	## one damped overshoot back toward it.
+	func recoil_pixels() -> float:
+		return -facing * recoil_back_pixels() * recoil_shape()
+
 	## A stable per-puppet phase from this actor's side and slot; never wall-clock or RNG.
 	func idle_offset() -> float:
 		return float(slot) * IDLE_SLOT_OFFSET + (0.0 if facing > 0.0 else IDLE_SIDE_OFFSET)
@@ -346,19 +445,22 @@ class Puppet extends Control:
 		return art_band().end.y - art_inset()
 
 	## One pose shared by both draw paths: inward facing, the existing fallen tilt, the
-	## breathing height, the bob and, only during a committed attack, the forward lunge
-	## with its paper stretch. Applied about `anchor` at `base_scale`, so the Control, its
-	## pinned name tag and every target rectangle keep their exact place.
+	## breathing height, the bob and, during a committed attack or a committed hit, the
+	## forward lunge with its paper stretch and the horizontal recoil. Applied about
+	## `anchor` at `base_scale`, so the Control, its pinned name tag and every target
+	## rectangle keep their exact place.
 	func idle_transform(anchor: Vector2, base_scale: float) -> Transform2D:
 		return Transform2D(-0.7 * facing if fallen else 0.0,
 			Vector2(facing * attack_stretch(), idle_breath() * attack_squash()) * base_scale, 0.0,
-			anchor + Vector2(attack_lunge(), idle_bob()))
+			anchor + Vector2(attack_lunge() + recoil_pixels(), idle_bob()))
 
 	## Binds one authoritative actor ID and its loaded art; a missing texture keeps the fallback.
-	## A rebound slot drops any pose in flight, so one actor never finishes another's lunge.
+	## A rebound slot drops any pose and recoil in flight, so one actor never finishes
+	## another's lunge or shake.
 	func bind_actor(id: String, art: Dictionary) -> void:
 		if id != actor_id:
 			cancel_attack()
+			cancel_recoil()
 		actor_id = id
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
@@ -1130,11 +1232,20 @@ func _bind_puppet_art(app, puppet) -> void:
 ## actor ID. Identity comes from the bound ID, never from a slot or a screen position;
 ## a missing or duplicated owner resolves nothing, so presentation never invents a source.
 func hero_puppet(actor_id: String) -> Control:
-	if actor_id.is_empty():
+	return puppet_for("hero", actor_id)
+
+
+## The one mounted, still-standing and visible puppet of `side` bound to this
+## authoritative actor ID, for a hit reaction that must never land on the wrong actor.
+## Identity comes from the bound side and ID, never from a slot or a screen position; an
+## unknown side, a stale ID or an ambiguous duplicate binding resolves nothing.
+func puppet_for(side: String, actor_id: String) -> Control:
+	if actor_id.is_empty() or (side != "hero" and side != "enemy"):
 		return null
+	var face := 1.0 if side == "hero" else -1.0
 	var found: Control = null
 	for puppet in _puppets:
-		if not is_instance_valid(puppet) or puppet.facing <= 0.0 or puppet.fallen:
+		if not is_instance_valid(puppet) or not is_equal_approx(puppet.facing, face) or puppet.fallen:
 			continue
 		if puppet.actor_id != actor_id:
 			continue
@@ -1146,12 +1257,14 @@ func hero_puppet(actor_id: String) -> Control:
 	return found
 
 
-## Ends every in-flight committed attack pose (battle teardown or a rebind), so no
-## mounted actor is left mid-lunge and the artwork returns exactly to idle.
+## Ends every in-flight committed attack pose and hit recoil (battle teardown or a
+## rebind), so no mounted actor is left mid-lunge or mid-shake and the artwork returns
+## exactly to idle.
 func cancel_poses() -> void:
 	for puppet in _puppets:
 		if is_instance_valid(puppet):
 			puppet.cancel_attack()
+			puppet.cancel_recoil()
 
 
 ## The admitted battle's own route kind. Only a standalone _start_battle (no run map at
@@ -1226,6 +1339,8 @@ static func _load_art_texture(path: String) -> Texture2D:
 func _clear() -> void:
 	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_clear):
 		_battle.tree_exiting.disconnect(_clear)
+	# A closed or replaced battle never keeps a mounted actor mid-lunge or mid-shake.
+	cancel_poses()
 	# Return the app-owned controls before disposing of our temporary container.
 	if is_instance_valid(_heroes) and is_instance_valid(_hero_parent):
 		if _heroes.get_parent() != _hero_parent:

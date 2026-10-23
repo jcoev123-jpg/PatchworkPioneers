@@ -37,6 +37,12 @@ var _seamstress_pool := SeamstressPoolCards.new()
 var _targeting := CombatAttackTargeting.new()
 var _stitched_preview := CombatStitchedTargetPreview.new()
 var _on_hit := CombatOnHitStatuses.new()
+## Authored Seamstress Path card faces, keyed by card ID. Loaded once from the
+## same validated record the run service uses and never mutated afterwards.
+var _path_loaded := false
+var _path_card_definitions: Dictionary = {}
+var _path_passives: Dictionary = {}
+var _path_names: Dictionary = {}
 # Key: the ACTUAL hand panel, value: original card ID, facts and signal Callables.
 var _bindings: Dictionary = {}
 var _app
@@ -59,6 +65,11 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	_load_path_cards()
+	if _path_card_definitions.has(card_id):
+		# Detached like every catalog lookup, so a caller can never alter the
+		# authored Path record other panels read.
+		return (_path_card_definitions[card_id] as Dictionary).duplicate(true)
 	var move := M02PositionCards.new().get_definition(card_id)
 	if not move.is_empty():
 		return move
@@ -77,6 +88,48 @@ func _definition(card_id: String) -> Dictionary:
 ## Public read-only lookup shared by the mounted hand admission checks.
 func definition(card_id: String) -> Dictionary:
 	return _definition(card_id)
+
+
+## The two authored Path cards of the Seamstress record, in authored order. A
+## record that does not validate contributes nothing, so the faces stay unknown
+## and the mounted battle resolver alone can admit a Path card.
+func _load_path_cards() -> void:
+	if _path_loaded:
+		return
+	_path_loaded = true
+	var choice := RunSeamstressPathChoice.new()
+	if not choice.is_valid():
+		return
+	for path in choice.get_paths():
+		if not path is Dictionary:
+			continue
+		var card: Variant = (path as Dictionary).get("card")
+		var passive: Variant = (path as Dictionary).get("passive")
+		if not card is Dictionary or not passive is Dictionary:
+			continue
+		var card_id: String = str((card as Dictionary).get("id", ""))
+		if card_id.is_empty():
+			continue
+		_path_card_definitions[card_id] = (card as Dictionary).duplicate(true)
+		_path_passives[card_id] = (passive as Dictionary).duplicate(true)
+		_path_names[card_id] = str((path as Dictionary).get("display_name", ""))
+
+
+## The extra amount an authored Path passive adds to its own card, e.g. Bleed
+## 3 -> 4 for Bloodline or Unravel 4 -> 6 for Unpicker. Display only: the combat
+## resolver owns the applied value.
+func _path_passive_bonus(card_id: String, status: String) -> int:
+	if not _path_passives.has(card_id):
+		return 0
+	var passive: Dictionary = _path_passives[card_id]
+	if str(passive.get("status", "")) != status:
+		return 0
+	var value: Variant = passive.get("value")
+	return int(value) if value is int else 0
+
+
+func _path_name(card_id: String) -> String:
+	return str(_path_names.get(card_id, ""))
 
 
 ## Cached, optional texture load. A frame or hero emblem that is not on disk
@@ -107,7 +160,13 @@ func _face_assets(card_id: String) -> Dictionary:
 	var picture: Texture2D = null
 	if not authored.is_empty() and not owner.is_empty():
 		frame = _texture(ART_DIR + "ui/card_frame_%s.png" % owner)
-		picture = _texture(ART_DIR + "cards/art/%s.png" % _base_id(card_id))
+		# Authored records that name their own picture use it; every other card
+		# keeps the existing art-then-emblem priority and its drawn fallback.
+		var authored_picture: Variant = authored.get("illustration_path")
+		if authored_picture is String and not (authored_picture as String).is_empty():
+			picture = _texture(authored_picture)
+		if picture == null:
+			picture = _texture(ART_DIR + "cards/art/%s.png" % _base_id(card_id))
 		if picture == null:
 			picture = _texture(ART_DIR + "cards/emblem_%s.png" % owner)
 	return {
@@ -235,8 +294,25 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 		parts.append("BASE each living hero gains %d Block" % int(effects["block_all"])
 			if precise else "%d Block to all heroes" % int(effects["block_all"]))
 	if effects.has("heal"):
-		parts.append("BASE heal %d HP, capped at max HP" % int(effects["heal"])
-			if precise else "heal %d" % int(effects["heal"]))
+		var heal_value: Variant = effects["heal"]
+		if heal_value is Dictionary:
+			# Authored descriptor form: {amount, target, cap}.
+			var heal: Dictionary = heal_value
+			var heal_amount: int = int(heal.get("amount", 0))
+			var heal_target: String = "the weakest living ally" \
+				if str(heal.get("target", "")) == "weakest_living_ally" else recipient
+			var capped: bool = str(heal.get("cap", "")) == "missing_hp"
+			if precise:
+				var heal_line := "BASE heal %d HP to %s" % [heal_amount, heal_target]
+				if capped:
+					heal_line += ", capped at missing HP"
+				parts.append(heal_line)
+			else:
+				parts.append("heal %d%s" % [heal_amount,
+					" (weakest, capped)" if capped else ""])
+		else:
+			parts.append("BASE heal %d HP, capped at max HP" % int(heal_value)
+				if precise else "heal %d" % int(heal_value))
 	if effects.has("exposed"):
 		var exposed: int = int(effects["exposed"])
 		if card_id in CombatAttackTargeting.SIGHT_GLASS_IDS:
@@ -250,25 +326,42 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 	var confirmed: Dictionary = _on_hit.status_for_confirmed_hit(card_id, true)
 	if effects.has("bleed") and not confirmed.has("bleed"):
 		var authored_bleed: int = int(effects["bleed"])
-		var applied_bleed: int = authored_bleed
 		var passive_bleed: bool = CombatSeamstressPoolBleed.SUPPORTED_IDS.has(card_id)
-		if passive_bleed:
-			applied_bleed += 1
+		# A selected Path replaces the Seamstress passive on its own card only;
+		# the applied amount still comes from the combat resolver.
+		var path_bleed: int = _path_passive_bonus(card_id, "bleed")
+		var applied_bleed: int = authored_bleed + (1 if passive_bleed else path_bleed)
 		if precise:
 			var bleed_line := "BASE apply Bleed %d to %s" % [applied_bleed, recipient]
 			if passive_bleed:
 				bleed_line += " (authored %d + Seamstress passive 1)" % authored_bleed
+			elif path_bleed > 0:
+				bleed_line += " (authored %d + %s passive %d)" % [authored_bleed,
+					_path_name(card_id), path_bleed]
 			parts.append(bleed_line)
 		elif passive_bleed:
 			parts.append("Bleed %d (%d+1)" % [applied_bleed, authored_bleed])
+		elif path_bleed > 0:
+			parts.append("Bleed %d (%d+%d)" % [applied_bleed, authored_bleed, path_bleed])
 		else:
 			parts.append("Bleed %d" % applied_bleed)
 	if effects.has("weak") and not confirmed.has("weak"):
 		parts.append("BASE apply Weak %d to %s" % [int(effects["weak"]), recipient]
 			if precise else "Weak %d" % int(effects["weak"]))
 	if effects.has("unravel"):
-		parts.append("BASE add %d Unravel to %s" % [int(effects["unravel"]), recipient]
-			if precise else "Unravel %d" % int(effects["unravel"]))
+		var authored_unravel: int = int(effects["unravel"])
+		var path_unravel: int = _path_passive_bonus(card_id, "unravel")
+		var applied_unravel: int = authored_unravel + path_unravel
+		if precise:
+			var unravel_line := "BASE add %d Unravel to %s" % [applied_unravel, recipient]
+			if path_unravel > 0:
+				unravel_line += " (authored %d + %s passive %d)" % [authored_unravel,
+					_path_name(card_id), path_unravel]
+			parts.append(unravel_line)
+		elif path_unravel > 0:
+			parts.append("Unravel %d (%d+%d)" % [applied_unravel, authored_unravel, path_unravel])
+		else:
+			parts.append("Unravel %d" % applied_unravel)
 	if effects.has("bleed_multiplier"):
 		var multiplier: int = int(effects["bleed_multiplier"])
 		if precise:
@@ -684,12 +777,19 @@ func _wired(panel: Control, card_id: String) -> bool:
 func _update_visual(panel: Control) -> void:
 	var playable := false
 	var id: String = _bindings[panel].id
+	_load_path_cards()
 	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null \
 			and _wired(panel, id):
 		if _targeting.supports(id):
 			# Starter, plain-strike, heavy and Sight Glass attacks share their own
 			# read-only preview; no catalog record alone can claim a legal target.
 			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id).get("playable", false))
+		elif _path_card_definitions.has(id):
+			# A Path card is enable-able only by the genuine battle-bound resolver
+			# of the mounted routed fight, never by its authored face alone.
+			var presenter = _app.get_node_or_null("LiveAttackPreview")
+			playable = presenter != null and is_instance_valid(presenter) \
+				and bool(presenter.path_preview(id).get("playable", false))
 		elif id.begins_with(RunRestStitchCards.ID_PREFIX):
 			playable = bool(_stitched_preview.get_preview(_ledger(), _app._stitch_snapshot(), _app.deck, _app.party, _app.enemies, id).get("playable", false))
 		elif id in M02PositionCards.IDS:

@@ -286,6 +286,46 @@ func _verify_area_labels(view: RunRouteAtlas, label: String) -> void:
 		_check(found.has(area_name), label + ": open book names the " + area_name + " area")
 
 
+# The next-area caption computed from the authored table above and the REAL map floor,
+# independently of the view's own helper.
+func _expected_next_area_text(map: RunMap) -> String:
+	var current := map.get_current_floor()
+	if map.is_complete():
+		return "Route complete · Floor 12/12"
+	var next_floor := current + 1
+	for area_name in AREA_LABELS:
+		var span: Array = AREA_LABELS[area_name]
+		if next_floor >= int(span[0]) and next_floor <= int(span[1]):
+			return "Next: %s · Floor %d/12" % [area_name, next_floor]
+	return ""
+
+
+# The mounted, sewn, inert status tab: exact text from the real snapshot, no floor 13,
+# readable ink, no input, and fully on the left cream page above the floor-number row.
+func _verify_next_area_tab(view: RunRouteAtlas, map: RunMap, tab: Control, label: String) -> void:
+	var status: RunRouteAtlas.NextAreaTab = tab as RunRouteAtlas.NextAreaTab
+	_check(status != null and status.has_meta("next_area_tab"),
+		label + ": next-area status tab is the real mounted inert control")
+	if status == null:
+		return
+	var expected := _expected_next_area_text(map)
+	_check(not expected.is_empty() and status.text == expected,
+		label + ": tab reads the true next area/floor from the map: " + str(status.text))
+	_check(not status.text.contains("Floor 13") and not status.text.contains("14/12"),
+		label + ": tab never advertises a floor past the authored route")
+	_check(status.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and status.focus_mode == Control.FOCUS_NONE,
+		label + ": status tab takes no pointer or keyboard focus")
+	var rect := Rect2(status.position, status.size)
+	_check(_inside(rect, RunRouteAtlas.PAGE_LEFT)
+		and rect.position.y >= RunRouteAtlas.PAGE_LEFT.position.y
+		and rect.end.y <= 64.0 and rect.position.x >= 30.0 and rect.end.x <= 350.0,
+		label + ": status tab sits on the left page above the floor header row")
+	_check(RunRouteAtlas.NEXT_AREA_TAB_FONT_SIZE >= 14
+		and RunRouteAtlas.INK == Color("#4a3f35") and RunRouteAtlas.PAPER == Color("#ecdfbd"),
+		label + ": status tab keeps dark ink on cream paper at readable size")
+
+
 # Inspect actual mounted children, not internal arrays or a view-generated graph oracle.
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
 	var before := _state(map, rng)
@@ -320,6 +360,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	var last_marker_index := -1
 	var pin_ids: Array = []
 	var pin_indices: Array = []
+	var tab_count := 0
 	var chosen: Array[String] = map.get_route()
 	var legal: Array[String] = map.get_legal_choices()
 	var ordered_legal: Array[String] = []
@@ -452,6 +493,9 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and header.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and header.focus_mode == Control.FOCUS_NONE,
 				label + ": header within bounds and inert")
+		elif child is RunRouteAtlas.NextAreaTab:
+			tab_count += 1
+			_verify_next_area_tab(view, map, child, label)
 		elif child is RunRouteAtlas.CurrentPin:
 			var pin: RunRouteAtlas.CurrentPin = child
 			_check(pin.has_meta("pin_node_id"), label + ": pin names its patch")
@@ -485,8 +529,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 		var pin: Control = view.get_child(int(pin_indices[0]))
 		_check(Rect2(pin.position, pin.size).intersects(Rect2(current_marker.position,
 			current_marker.size)), label + ": current pin touches the pinned patch")
+	_check(tab_count == 1, label + ": exactly one inert next-area status tab is mounted")
 	_check(view.get_child_count() == expected_nodes.size() + expected_edges.size() + 12
-		+ AREA_LABELS.size() + expected_pins.size(), label + ": no orphan/duplicate children")
+		+ AREA_LABELS.size() + expected_pins.size() + 1,
+		label + ": no orphan/duplicate children")
 	for id in expected_nodes:
 		_check(seen_nodes.has(id), label + ": missing actual node " + id)
 	for key in expected_edges:
@@ -519,6 +565,9 @@ func _signature(view: RunRouteAtlas) -> Array:
 			else:
 				result.append(["floor", child.get_meta("floor_number"), (child as Label).text,
 					(child as Label).position])
+		elif child is RunRouteAtlas.NextAreaTab:
+			result.append(["next_area", (child as RunRouteAtlas.NextAreaTab).text,
+				child.position, child.size])
 		elif child is RunRouteAtlas.CurrentPin:
 			result.append(["pin", child.get_meta("pin_node_id"), child.position, child.size])
 	return result
@@ -983,6 +1032,79 @@ func _exercise_reveal(seed_value: int) -> void:
 	await process_frame
 
 
+# AC1/AC2: the tab across a genuine legal 12-floor route, teardown and reseeding.
+func _exercise_status_tab(view: RunRouteAtlas) -> void:
+	var rng := _rng(1234)
+	var map := RunMap.new()
+	_check(map.generate(rng), "status tab fixture generated from a real seed")
+	var before := _state(map, rng)
+	view.bind_map(map)
+	var opening := view.next_area_tab()
+	_check(opening != null and opening.text == "Next: Meadow · Floor 1/12"
+		and map.get_current_floor() == 0,
+		"opening tab prompts the authored Meadow floor 1 at current floor 0")
+	_check(_state(map, rng) == before,
+		"mounting the status tab changes no map graph, route, legal choice or RNG state")
+	var required := {
+		3: "Next: Woods · Floor 4/12",
+		6: "Next: Marsh · Floor 7/12",
+		9: "Next: Peaks · Floor 10/12",
+		11: "Next: Boss · Floor 12/12",
+	}
+	for floor_number in range(1, 13):
+		var legal := map.get_legal_choices()
+		_check(not legal.is_empty(), "status tab floor %d offers real legal choices" % floor_number)
+		if legal.is_empty():
+			break
+		var step_before := _state(map, rng)
+		_check(map.choose_node(legal[0]), "status tab commits a real legal node on floor %d" % floor_number)
+		_check(_state(map, rng)["rng"] == step_before["rng"],
+			"real progression under the status tab spends no run RNG")
+		view.refresh()
+		var tab := view.next_area_tab()
+		_check(map.get_current_floor() == floor_number,
+			"real current floor is %d after the commit" % floor_number)
+		_check(tab != null and tab.text == _expected_next_area_text(map),
+			"refreshed tab tracks the real next floor after floor %d" % floor_number)
+		if required.has(floor_number):
+			_check(tab != null and tab.text == required[floor_number],
+				"authored boundary text after floor %d: " % floor_number + str(required[floor_number]))
+		if tab != null:
+			_check(not tab.text.contains("Floor 13"),
+				"no floor 13 caption after floor %d" % floor_number)
+	_check(map.is_complete() and map.get_current_floor() == 12
+		and map.get_legal_choices().is_empty(), "genuine legal route reaches the boss")
+	view.refresh()
+	_check(view.next_area_tab() != null
+		and view.next_area_tab().text == "Route complete · Floor 12/12",
+		"completed route shows the terminal caption instead of a playable prompt")
+	view.bind_map(null)
+	_check(view.next_area_tab() == null and view.get_child_count() == 0,
+		"null bind removes the next-area tab with the map children")
+	var empty := RunMap.new()
+	view.bind_map(empty)
+	_check(view.next_area_tab() == null,
+		"an ungenerated map keeps no prior area or floor caption")
+	view.bind_map(map)
+	_check(view.next_area_tab() != null
+		and view.next_area_tab().text == "Route complete · Floor 12/12",
+		"rebinding the completed map recomputes its terminal caption from scratch")
+	var fresh_rng := _rng(4321)
+	var fresh := RunMap.new()
+	_check(fresh.generate(fresh_rng), "fresh status tab fixture generated")
+	view.bind_map(fresh)
+	_check(view.next_area_tab() != null
+		and view.next_area_tab().text == "Next: Meadow · Floor 1/12",
+		"a freshly generated map returns to the floor-1 Meadow prompt")
+	var frozen := _state(fresh, fresh_rng)
+	view.refresh()
+	_check(_state(fresh, fresh_rng) == frozen
+		and view.next_area_tab() != null
+		and view.next_area_tab().text == "Next: Meadow · Floor 1/12",
+		"refreshing the status tab leaves the seeded map and RNG untouched")
+	view.bind_map(null)
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var first := RunRouteAtlas.new()
@@ -1201,6 +1323,8 @@ func _run() -> void:
 	first._request_node("f01_n0", null, first._revision)
 	_check(requests.is_empty() and first.get_child_count() == 0,
 		"last null rejects stale and null callbacks, clears edges, headers and markers")
+	# AC1/AC2: exact next-area/floor captions across a genuine legal route, plus teardown.
+	_exercise_status_tab(first)
 	# Progressive reveal of newly legal stitches on a real seeded route.
 	await _exercise_reveal(6)
 	first.queue_free()
