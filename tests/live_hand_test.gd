@@ -453,6 +453,11 @@ func _pool_admitted(card_id: String) -> bool:
 			"seamstress_hemorrhage_hem", "seamstress_hemorrhage_hem_plus",
 			"seamstress_red_thread", "seamstress_red_thread_plus"]:
 		return true
+	# Draw Fire and Counter-stitch (base and +) are admitted only while the real
+	# scene mounts the Warden reaction presenter; without it they stay unwired.
+	var reactions = app.get_node_or_null("LiveWardenReactionHand")
+	if reactions != null and card_id in CombatWardenGuardReactions.ALLOWED_CARD_IDS:
+		return true
 	return _area_card(card_id)
 
 
