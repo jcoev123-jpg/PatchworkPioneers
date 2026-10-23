@@ -451,6 +451,12 @@ var quiet_spool_panel: LiveEventChoicePanel
 var _quiet_spool_outcome: RunQuietSpoolOutcome
 var _quiet_spool_context: Array = []
 var _quiet_spool_completed := false
+var moth_catalog_path := "res://data/events/moth_infestation.json"
+var moth_panel: LiveEventChoicePanel
+var _moth_outcome: RunMothInfestationOutcome
+var _moth_context: Array = []
+var _moth_completed := false
+var _moth_picker: ItemList
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var multi_fight_rewards: RunMultiFightRewards
@@ -2037,7 +2043,7 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
-	if is_instance_valid(quiet_spool_panel):
+	if is_instance_valid(quiet_spool_panel) or is_instance_valid(moth_panel):
 		return false
 	if run_map == null or _connected_map == null or _connected_map.get_ref() != run_map \
 		or run_map.get_route() != _connected_route or not RunRestRecovery._is_valid_roster(run_heroes) \
@@ -2175,8 +2181,13 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") not in ["Event", "Treasure"]:
 		return false
-	if run_map.get_node(id).type == "Event" and not _quiet_spool_completed:
-		return _open_quiet_spool(id, source_map)
+	if run_map.get_node(id).type == "Event":
+		# The run's first Event stays Quiet Spool; its second is the accepted
+		# Moth Infestation transaction. Later Events remain no-effect visits.
+		if not _quiet_spool_completed:
+			return _open_quiet_spool(id, source_map)
+		if not _moth_completed:
+			return _open_moth_infestation(id, source_map)
 	if not run_map.choose_node(id):
 		return false
 	_placeholder_map = source_map
@@ -2286,6 +2297,288 @@ func _clear_quiet_spool() -> void:
 		remove_child(quiet_spool_panel)
 		quiet_spool_panel.queue_free()
 	quiet_spool_panel = null
+
+
+## The single authored Moth Infestation record, validated before a visit is
+## mounted. Its three choices are exactly this transaction's supported branches.
+func _load_moth_infestation() -> Dictionary:
+	if not FileAccess.file_exists(moth_catalog_path):
+		return {}
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(moth_catalog_path)) != OK:
+		return {}
+	var record: Variant = parser.data
+	if not record is Dictionary or not RunEventChoice.new(record).is_valid():
+		return {}
+	var event: Dictionary = record
+	if event.get("id") != RunMothInfestationOutcome.EVENT_ID:
+		return {}
+	var choices: Variant = event.get("choices")
+	if not choices is Array or (choices as Array).size() != 3:
+		return {}
+	var authored: Array = [RunMothInfestationOutcome.CHOICE_SACRIFICE,
+		RunMothInfestationOutcome.CHOICE_FUMIGATE, RunMothInfestationOutcome.CHOICE_ESCAPE]
+	var ids: Array = []
+	for choice in choices:
+		if not choice is Dictionary or not (choice as Dictionary).get("outcome") is Dictionary:
+			return {}
+		ids.append((choice as Dictionary).get("id"))
+	if ids != authored:
+		return {}
+	# The authored outcomes must agree with the scene-free transaction amounts.
+	var preview: Dictionary = RunEventChoice.new(event).preview_wallet_choices({"gold": 0, "scraps": 5})
+	if preview.get("ok") != true or not preview.get("choices") is Array \
+		or (preview.get("choices") as Array).size() != 3:
+		return {}
+	for index in range(3):
+		var forecast: Dictionary = preview.choices[index]
+		var expected: int = 0
+		if authored[index] == RunMothInfestationOutcome.CHOICE_SACRIFICE:
+			expected = RunMothInfestationOutcome.SACRIFICE_SCRAP_GAIN
+		elif authored[index] == RunMothInfestationOutcome.CHOICE_FUMIGATE:
+			expected = -RunMothInfestationOutcome.FUMIGATE_SCRAP_COST
+		if forecast.get("choice_id") != authored[index] or forecast.get("affordable") != true \
+			or forecast.get("gold_delta") != 0 or forecast.get("scraps_delta") != expected:
+			return {}
+	return event
+
+
+## Index-accurate ordinary entries: authentic authored, non-composite deck slots.
+## Composite IDs and counterfeit cards are never offered to the player.
+func _moth_ordinary_indices() -> Array[int]:
+	var indices: Array[int] = []
+	for index in range(run_deck.size()):
+		var card_id: String = run_deck[index]
+		if card_id.is_empty() or run_stitch_descriptors.has(card_id) \
+			or card_id.begins_with(RunRestStitchCards.ID_PREFIX):
+			continue
+		if RunRestStitchCards.resolve_card_definition(card_id).is_empty():
+			continue
+		indices.append(index)
+	return indices
+
+
+func _moth_card_text(index: int) -> String:
+	return "Deck #%d: %s" % [index + 1, run_deck[index]]
+
+
+## Mounts the ordinary-card selector above the authored choices. Every item
+## carries its actual run-deck index, so duplicate IDs stay distinct occurrences.
+func _mount_moth_picker(panel: LiveEventChoicePanel) -> bool:
+	var box := VBoxContainer.new()
+	box.name = "MothCardPickerBox"
+	var prompt := Label.new()
+	prompt.name = "MothCardPrompt"
+	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	prompt.add_theme_font_size_override("font_size", 19)
+	box.add_child(prompt)
+	var list := ItemList.new()
+	list.name = "MothCardPicker"
+	list.focus_mode = Control.FOCUS_ALL
+	list.select_mode = ItemList.SELECT_SINGLE
+	list.custom_minimum_size = Vector2(0, 88)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for index in _moth_ordinary_indices():
+		list.add_item(_moth_card_text(index))
+		list.set_item_metadata(list.item_count - 1, index)
+	if list.item_count > 0:
+		list.select(0)
+	box.add_child(list)
+	panel.choices_container.add_child(box)
+	panel.choices_container.move_child(box, 0)
+	_moth_picker = list
+	list.item_selected.connect(_refresh_moth_card_cue.bind(list, prompt))
+	list.item_selected.connect(func(_index): _refresh_moth_choices())
+	_refresh_moth_card_cue(0, list, prompt)
+	return true
+
+
+func _refresh_moth_card_cue(index: int, list: ItemList, prompt: Label) -> void:
+	if not is_instance_valid(list) or not is_instance_valid(prompt) or list != _moth_picker:
+		return
+	if list.item_count == 0:
+		prompt.text = "Feed an ordinary card: none available"
+		return
+	var selected: PackedInt32Array = list.get_selected_items()
+	var row: int = selected[0] if not selected.is_empty() else mini(index, list.item_count - 1)
+	if row < 0 or row >= list.item_count:
+		return
+	prompt.text = "Feed an ordinary card - %s" % list.get_item_text(row)
+
+
+## Reads the chosen occurrence, revalidated against the live deck and this
+## picker's captured items. A composite or forged item never yields an index.
+func _moth_selected_index() -> Variant:
+	if not is_instance_valid(_moth_picker) or _moth_picker.item_count == 0:
+		return null
+	var ordinary := _moth_ordinary_indices()
+	if ordinary.is_empty() or _moth_picker.item_count != ordinary.size():
+		return null
+	var selected: PackedInt32Array = _moth_picker.get_selected_items()
+	if selected.size() != 1:
+		return null
+	var row: int = selected[0]
+	if row < 0 or row >= ordinary.size():
+		return null
+	if typeof(_moth_picker.get_item_metadata(row)) != TYPE_INT \
+		or _moth_picker.get_item_metadata(row) != ordinary[row] \
+		or _moth_picker.get_item_text(row) != _moth_card_text(ordinary[row]):
+		return null
+	return ordinary[row]
+
+
+func _moth_picker_item_indices() -> Array:
+	var indices: Array = []
+	if not is_instance_valid(_moth_picker):
+		return indices
+	for row in range(_moth_picker.item_count):
+		indices.append(_moth_picker.get_item_metadata(row))
+	return indices
+
+
+## Disables exactly the authored branches this run cannot claim, before the
+## panel is allowed to latch a choice.
+func _refresh_moth_choices() -> void:
+	if not is_instance_valid(moth_panel) or not is_instance_valid(_moth_picker):
+		return
+	if moth_panel._selector == null or moth_panel._selector.is_claimed():
+		return
+	var buttons := moth_panel.get_choice_buttons()
+	if buttons.size() != 3:
+		return
+	buttons[0].disabled = _moth_selected_index() == null
+	buttons[1].disabled = run_scraps < RunMothInfestationOutcome.FUMIGATE_SCRAP_COST
+	buttons[2].disabled = false
+
+
+## Selector first, then the three authored choices, both directions wrapping.
+func _moth_focus_order() -> void:
+	if not is_instance_valid(moth_panel) or not is_instance_valid(_moth_picker):
+		return
+	var controls: Array[Control] = [_moth_picker]
+	for button in moth_panel.get_choice_buttons():
+		controls.append(button)
+	if controls.size() < 2:
+		return
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(
+			controls[(index - 1 + controls.size()) % controls.size()])
+	_moth_picker.grab_focus()
+
+
+func _moth_snapshot() -> Array:
+	if run_map == null or run_rng == null or party_carryover == null or act_outcome == null \
+		or not is_instance_valid(moth_panel) or not is_instance_valid(_moth_picker) \
+		or moth_panel._selector == null:
+		return []
+	var carry := party_carryover as RunTornCarryover
+	if carry == null:
+		return []
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(),
+		run_map.get_route(), run_rng, run_rng.state, run_seed, run_deck.duplicate(),
+		run_stitch_descriptors.duplicate(true), run_next_stitch_id,
+		run_heroes.duplicate(true), run_trinkets.duplicate(), session_gold, run_scraps,
+		run_removal_count, carry, carry.read_state(), carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), moth_panel, _moth_outcome, _moth_completed,
+		moth_panel._selector, moth_panel._selector.get_event(), _moth_picker,
+		_moth_picker.get_instance_id(), _moth_picker_item_indices(), _moth_picker.item_count]
+
+
+## The run's second Event presents the accepted Moth Infestation transaction
+## through the live connected route. The first Event stays Quiet Spool.
+func _open_moth_infestation(id: String, source: WeakRef) -> bool:
+	var record := _load_moth_infestation()
+	if record.is_empty() or _moth_completed or is_instance_valid(moth_panel):
+		return false
+	var outcome := RunMothInfestationOutcome.new(run_deck, run_stitch_descriptors,
+		run_next_stitch_id, run_scraps)
+	if not outcome.is_valid():
+		return false
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_event(record):
+		panel.free()
+		return false
+	# The authored Moth description is shorter than Quiet Spool's; this keeps the
+	# selector and all three choices inside the same paper panel.
+	panel.description_label.custom_minimum_size = Vector2(0, 64)
+	moth_panel = panel
+	if not _mount_moth_picker(panel) or not run_map.choose_node(id):
+		_moth_picker = null
+		moth_panel = null
+		panel.free()
+		return false
+	_clear_route_view()
+	_moth_outcome = outcome
+	_moth_context = _moth_snapshot()
+	panel.choice_committed.connect(_commit_moth_infestation.bind(panel, outcome, source))
+	_refresh_moth_choices()
+	_moth_focus_order()
+	return true
+
+
+func _commit_moth_infestation(event_id: String, choice_id: String, panel,
+		outcome: RunMothInfestationOutcome, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != moth_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or outcome == null or outcome != _moth_outcome or outcome.is_consumed() \
+		or _moth_completed or source == null or source.get_ref() != run_map \
+		or _moth_context.is_empty() or _moth_snapshot() != _moth_context \
+		or panel._selector == null or not panel._selector.is_claimed() \
+		or panel._committed_choice != {"ok": true, "event_id": event_id, "choice_id": choice_id} \
+		or event_id != RunMothInfestationOutcome.EVENT_ID \
+		or choice_id not in [RunMothInfestationOutcome.CHOICE_SACRIFICE,
+			RunMothInfestationOutcome.CHOICE_FUMIGATE, RunMothInfestationOutcome.CHOICE_ESCAPE]:
+		return
+	var selected: Variant = null
+	if choice_id == RunMothInfestationOutcome.CHOICE_SACRIFICE:
+		selected = _moth_selected_index()
+		if selected == null:
+			return
+	var receipt := outcome.choose(event_id, choice_id, selected)
+	if receipt.get("ok") != true or receipt.get("event_id") != event_id \
+		or receipt.get("choice_id") != choice_id \
+		or not receipt.get("descriptors") is Dictionary \
+		or typeof(receipt.get("next_stitch_id")) != TYPE_INT \
+		or typeof(receipt.get("scraps")) != TYPE_INT or not receipt.get("deck") is Array:
+		return
+	# The receipt must describe exactly the selected occurrence and wallet.
+	var settled: Array = receipt.get("deck")
+	var scraps: int = receipt.get("scraps")
+	if choice_id == RunMothInfestationOutcome.CHOICE_SACRIFICE:
+		var expected := run_deck.duplicate()
+		expected.remove_at(int(selected))
+		if settled != expected \
+			or scraps != run_scraps + RunMothInfestationOutcome.SACRIFICE_SCRAP_GAIN:
+			return
+	elif choice_id == RunMothInfestationOutcome.CHOICE_FUMIGATE:
+		if settled != run_deck or scraps != run_scraps - RunMothInfestationOutcome.FUMIGATE_SCRAP_COST:
+			return
+	elif settled != run_deck or scraps != run_scraps:
+		return
+	run_deck.assign(settled)
+	run_stitch_descriptors = (receipt.get("descriptors") as Dictionary).duplicate(true)
+	run_next_stitch_id = receipt.get("next_stitch_id")
+	run_scraps = scraps
+	_moth_completed = true
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_moth()
+	_present_connected_route(source)
+
+
+## Releases the panel, selector, transaction and every captured binding.
+func _clear_moth() -> void:
+	_moth_context.clear()
+	_moth_outcome = null
+	_moth_picker = null
+	if is_instance_valid(moth_panel):
+		moth_panel.close_event()
+		remove_child(moth_panel)
+		moth_panel.queue_free()
+	moth_panel = null
 
 
 func _current_completed_rest() -> bool:
@@ -3910,6 +4203,8 @@ func _return_to_title() -> void:
 	_close_base()
 	_clear_quiet_spool()
 	_quiet_spool_completed = false
+	_clear_moth()
+	_moth_completed = false
 	_clear_rest_patch_overlay()
 	_clear_rest_stitch_overlay()
 	rest_stitch_guided_button = null

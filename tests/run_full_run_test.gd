@@ -15,6 +15,7 @@ var purchases := 0
 var picks := 0
 var skips := 0
 var no_effect_visits := 0
+var moth_visits := 0
 var quilt_awards := 0
 
 
@@ -155,6 +156,12 @@ func _node(id: String, index: int) -> bool:
 			var choice: Callable = app.quiet_spool_panel.choice_committed.get_connections()[0].callable.bind("quiet_spool", "ignore")
 			await _activate(app.quiet_spool_panel.get_choice_buttons()[1], true)
 			stale.append(choice)
+		elif is_instance_valid(app.moth_panel):
+			_check(app.route_view == null, "second Event blocks next floor until its Moth choice")
+			var moth_choice: Callable = app.moth_panel.choice_committed.get_connections()[0].callable.bind("moth_infestation", "escape")
+			await _activate(app.moth_panel.get_choice_buttons()[2], true)
+			stale.append(moth_choice)
+			moth_visits += 1
 		_check(_inventory() == inventory, "no-effect connected visit preserves inventory, HP, ledger and RNG")
 		no_effect_visits += 1
 	await _reject_stale()
@@ -572,11 +579,11 @@ func _run() -> void:
 	_check(attacks > 0 and supports > 0 and enemy_phases > 0 and keyboard_attacks > 0
 		and mouse_attacks > 0 and invalid_targets > 0 and energy_rejections > 0
 		and purchases > 0 and picks == 2 and skips >= 2 and no_effect_visits > 0
-		and quilt_awards > 0,
-		"nonvacuous held attack/support, both inputs, enemy-phase, award and rejection coverage: attacks=%d supports=%d phases=%d keyboard=%d mouse=%d invalid=%d energy=%d purchases=%d picks=%d skips=%d no-effect=%d quilt-awards=%d" % [
+		and moth_visits > 0 and quilt_awards > 0,
+		"nonvacuous held attack/support, both inputs, enemy-phase, award and rejection coverage: attacks=%d supports=%d phases=%d keyboard=%d mouse=%d invalid=%d energy=%d purchases=%d picks=%d skips=%d no-effect=%d moth=%d quilt-awards=%d" % [
 			attacks, supports, enemy_phases, keyboard_attacks, mouse_attacks,
 			invalid_targets, energy_rejections, purchases, picks, skips, no_effect_visits,
-			quilt_awards])
+			moth_visits, quilt_awards])
 	_check(randi() == global_next, "search and all real runs preserve global RNG")
 	app.free()
 	await _frames()

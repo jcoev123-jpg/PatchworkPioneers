@@ -214,6 +214,18 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 					await _click(ignore)
 				_check(app.run_scraps == scraps and app.quiet_spool_panel == null,
 					"Ignore completes Event without changing scraps")
+			elif is_instance_valid(app.moth_panel):
+				_check(app.route_view == null and not app._can_choose_connected_route(),
+					"pending Moth Event blocks connected atlas until choice")
+				var moth_scraps: int = app.run_scraps
+				var escape: Button = app.moth_panel.get_choice_buttons()[2]
+				if mode == 2:
+					escape.grab_focus()
+					await _key(KEY_SPACE)
+				else:
+					await _click(escape)
+				_check(app.run_scraps == moth_scraps and app.moth_panel == null,
+					"Escape completes the Moth Event without changing scraps")
 	departed[kind] = true
 	_check(app.route_view != null and app.route_view.is_visible_in_tree(), "completed node exposes connected atlas entry")
 

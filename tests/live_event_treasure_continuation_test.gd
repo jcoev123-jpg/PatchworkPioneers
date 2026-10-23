@@ -174,6 +174,10 @@ func _run() -> void:
 					if is_instance_valid(app.quiet_spool_panel):
 						_check(app.route_view == null, "first Event blocks onward routing")
 						await _click(app.quiet_spool_panel.get_choice_buttons()[1])
+					elif is_instance_valid(app.moth_panel):
+						_check(app.route_view == null, "second Event blocks onward routing")
+						# Escape is the Moth branch that changes no run resource.
+						await _click(app.moth_panel.get_choice_buttons()[2])
 					_check(map.get_route() == prior + [id], "one legal input advances exactly chosen node")
 					_check(_effects() == before, "placeholder changes no actors, resources, services or RNG")
 					_check(not is_instance_valid(old_view), "previous chooser freed")
