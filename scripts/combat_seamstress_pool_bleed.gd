@@ -11,6 +11,13 @@ const SUPPORTED_IDS := [
 ]
 
 var _attacks := CombatStatusAttacks.new()
+var _patches: CombatPatchAttackRules = null
+
+
+## A failed explicit binding fails closed; an untouched service stays unbound.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
 
 
 ## Side-effect-free projection of a legal, genuinely held enemy-single card.
@@ -59,6 +66,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"statuses": plan.applications[position].duplicate(true)})
 	# A lethal Running Stitch still applies to its original slain slot.
 	enemies.apply_statuses(plan.applications)
+	if plan.is_running and _patches != null:
+		_patches.record_successful_attack("seamstress")
 	return {"ok": true, "hits": hits}
 
 
@@ -67,6 +76,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# No mutation until the entire party, enemy roster, target set and status
 	# batch have been validated. Do not substitute caller-supplied status maps.
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
+		return _failure()
+	if _patches != null and not _patches.is_valid():
 		return _failure()
 	if not deck.turn_active or not deck.hand.has(card_id) or not party.is_valid():
 		return _failure()
@@ -121,10 +132,17 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var is_hem := card_id.begins_with("seamstress_hemorrhage_hem")
 	var is_blanket := card_id.begins_with("seamstress_blanket_stitch")
 	var damage_value := 0
+	var patch_exposed := 0
 	if is_running:
 		if target_kind != "enemy_single" or not _valid_effect(effects, ["damage", "bleed"]):
 			return _failure()
 		damage_value = effects["damage"]
+		var patch_damage: int = 0 if _patches == null else _patches.damage_bonus("seamstress")
+		if damage_value > CombatStatuses.MAX_INT - patch_damage:
+			return _failure()
+		damage_value += patch_damage
+		var patch_statuses: Dictionary = {} if _patches == null else _patches.exposed_for_first_hit("seamstress")
+		patch_exposed = patch_statuses.get("exposed", 0)
 	elif is_hem:
 		if target_kind != "enemy_single" or not _valid_effect(effects, ["bleed_multiplier"]) \
 				or effects["bleed_multiplier"] != 2:
@@ -156,6 +174,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			additions["bleed"] = effects["bleed"] + 1 # Seamstress passive.
 			if effects.has("exposed"):
 				additions["exposed"] = effects["exposed"]
+			elif is_running and patch_exposed > 0:
+				additions["exposed"] = patch_exposed
 		applications[position] = additions
 	# Checks every member together, including overflowing later area targets.
 	if not enemies.can_apply_statuses(applications):
