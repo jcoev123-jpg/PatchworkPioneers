@@ -32,7 +32,8 @@ func _fixture(scraps: int = 4) -> Dictionary:
 	var torn := RunTornMending.new(heroes)
 	var definitions := []
 	var known := {}
-	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches"]:
+	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches",
+			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches"]:
 		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 			"res://data/patches/%s.json" % catalog))
 		_check(typeof(entries) == TYPE_ARRAY, catalog + " authored JSON loaded")
@@ -43,8 +44,11 @@ func _fixture(scraps: int = 4) -> Dictionary:
 			known[entry["id"]] = entry["slot"]
 	_check(known.get("button_eye") == "HEAD" and known.get("pincushion_arm") == "ARM"
 		and known.get("quilted_coat") == "COAT" and known.get("stitched_badge") == "HEAD"
-		and known.get("spare_spool") == "ARM", "all five authored slot identities present")
-	var owned := ["button_eye", "pincushion_arm", "quilted_coat", "stitched_badge", "spare_spool"]
+		and known.get("spare_spool") == "ARM" and known.get("bloodstitch_bonnet") == "HEAD"
+		and known.get("frayfinder_mitt") == "ARM", "all required authored slot identities present")
+	var owned := ["button_eye", "pincushion_arm", "quilted_coat", "stitched_badge", "spare_spool",
+		"bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap", "reinforced_browband",
+		"hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove", "frayfinder_mitt"]
 	var w := RunPatchWardrobe.new(heroes, owned, definitions, scraps, 37,
 		["warden_strike"], 93811, true)
 	_check(torn.is_valid() and w.is_valid(), "genuine ledger and torn services")
@@ -167,6 +171,8 @@ func _expected_slots(assignments: Dictionary, heroes: Array, owner: String) -> D
 			effect = "+%d opening Block to living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
 		elif id == CombatShopPatchRules.SPARE_SPOOL_ID:
 			effect = "+%d healing on positive-heal cards owned by wearer only" % CombatShopPatchRules.HEALING_CARD_BONUS
+		elif id != "":
+			effect = RunPatchWearerSummary.KNOWN_TEXTS.get(id, "")
 		slots[slot] = {"id": id, "active": id != "" and hp > 0, "effect": effect}
 	return slots
 
@@ -180,6 +186,14 @@ func _pure_tests() -> void:
 	_forecast_and_commit(_fixture(), "stitched_badge", "warden", "SWAP")
 	_forecast_and_commit(_fixture(), "spare_spool", "warden", "MOVE")
 	_forecast_and_commit(_fixture(), "spare_spool", "seamstress", "SWAP")
+	for head_patch in ["bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap", "reinforced_browband"]:
+		var fh := _fixture()
+		fh.w.sew(head_patch, "tinker", "HEAD", "sew", fh.w.get_snapshot())
+		_forecast_and_commit(fh, head_patch, "warden", "SWAP")
+	for arm_patch in ["hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove", "frayfinder_mitt"]:
+		var fa := _fixture()
+		fa.w.sew(arm_patch, "warden", "ARM", "sew", fa.w.get_snapshot())
+		_forecast_and_commit(fa, arm_patch, "seamstress", "SWAP")
 	var f := _fixture()
 	var choice := _option(f, "quilted_coat", "warden")
 	if choice.is_empty():
@@ -495,6 +509,14 @@ func _deny_test() -> void:
 			"forged exact receipt rejected")
 	_check(not RunRestPatchResewOptions.forecast(w, t, exact, "foreign_rest", option).ok,
 		"foreign Rest node rejected")
+	var counterfeit: Dictionary = exact.duplicate(true)
+	counterfeit["definitions"] = counterfeit["definitions"].duplicate(true)
+	counterfeit["definitions"]["bloodstitch_bonnet"] = "ARM"
+	var counterfeit_option: Dictionary = option.duplicate(true)
+	counterfeit_option["slot"] = "ARM"
+	counterfeit_option["patch_id"] = "bloodstitch_bonnet"
+	_check(not RunRestPatchResewOptions.forecast(w, t, counterfeit, f.rest, counterfeit_option).ok,
+		"counterfeit catalog definitions rejected")
 	var altered := option.duplicate(true)
 	altered["cost"] = 0
 	_check(not RunRestPatchResewOptions.forecast(w, t, exact, f.rest, altered).ok,
