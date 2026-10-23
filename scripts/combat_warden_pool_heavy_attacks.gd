@@ -3,6 +3,8 @@ extends RefCounted
 ## Resolves Warden's two heavy-hit pool attack cards and upgrades (D2-1).
 ## Scene-free, atomic rule service for Heavy Thimble and Pin and Pound plays against
 ## authoritative CombatDeck, CombatParty, and CombatEnemies instances.
+## D2-2: an optional bound CombatPinned grants a cross-hero +5 on the first confirmed
+## hit, added before Weak/Exposed, then consumes that original-slot token exactly once.
 
 const WARDEN_ID: String = "warden"
 
@@ -17,6 +19,22 @@ const SUPPORTED_CARD_IDS: Array[String] = [
 	"warden_pin_and_pound",
 	"warden_pin_and_pound_plus",
 ]
+
+## Optional per-battle Pinned tokens. Null keeps the pre-D2-2 unboosted behaviour.
+var _pinned: CombatPinned = null
+
+
+func _init(pinned: CombatPinned = null) -> void:
+	_pinned = pinned
+
+
+## Binds the shared battle Pinned service; the caller still owns its lifetime.
+func set_pinned(pinned: CombatPinned) -> void:
+	_pinned = pinned
+
+
+func get_pinned() -> CombatPinned:
+	return _pinned
 
 
 ## Returns true if the card ID is one of the four heavy attack cards handled here.
@@ -139,6 +157,8 @@ func get_valid_targets(party: CombatParty, enemies: CombatEnemies, card_id: Stri
 ## Authoritative execution of Heavy Thimble or Pin and Pound card play.
 ## Debits energy and discards precisely once, then applies one or two sequential hits.
 ## If hit 1 kills the enemy, hit 2 is skipped without roll back or retargeting.
+## A bound cross-hero Pinned token adds +5 to the first confirmed hit only and is
+## consumed after that hit succeeds. Rejections never touch deck, actors or tokens.
 func play_attack(
 	deck: CombatDeck,
 	party: CombatParty,
@@ -146,8 +166,10 @@ func play_attack(
 	card_id: String,
 	target_position: int,
 	attacker_statuses: Dictionary = {},
-	enemy_statuses_by_position: Dictionary = {}
+	enemy_statuses_by_position: Dictionary = {},
+	pinned: CombatPinned = null
 ) -> Dictionary:
+	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
 	if deck == null or party == null or enemies == null:
 		return _failure(card_id, target_position)
 	if not deck.turn_active:
@@ -185,6 +207,9 @@ func play_attack(
 		return _failure(card_id, target_position)
 	var hits_count: int = int(effects.get("hits", 1))
 	if hits_count < 1:
+		return _failure(card_id, target_position)
+	# Reserve Pinned's possible +5 before any debit so hit math cannot overflow.
+	if base_damage > CombatStatuses.MAX_INT - 5:
 		return _failure(card_id, target_position)
 
 	# Precondition: held copy in hand and sufficient energy
@@ -273,17 +298,28 @@ func play_attack(
 		if not _valid_statuses(target_statuses):
 			break
 
+		# Read live authoritative Pinned state without mutating it. Only a
+		# cross-owner token on this original slot yields +5, and only on the
+		# first hit of the card (hit 1 consumes it before hit 2 is computed).
+		var pin_bonus: int = 0
+		if active_pinned != null:
+			pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, WARDEN_ID)
+
 		var hit_result: Dictionary = damage_resolver.resolve_vs_enemy(
-			enemies, target_position, base_damage, owner_statuses, target_statuses
+			enemies, target_position, base_damage + pin_bonus, owner_statuses, target_statuses
 		)
 		if not hit_result.get("ok", false):
 			break
+		# A confirmed cross-hero hit consumes the token on that original slot once.
+		if active_pinned != null:
+			active_pinned.consume_after_attack(target_position, WARDEN_ID, true)
 
 		hits.append({
 			"position": target_position,
 			"damage": int(hit_result.get("damage", 0)),
 			"block_absorbed": int(hit_result.get("block_absorbed", 0)),
 			"hp_loss": int(hit_result.get("hp_loss", 0)),
+			"pinned_bonus": pin_bonus,
 			"statuses": {},
 		})
 
@@ -303,9 +339,11 @@ func play(
 	card_id: String,
 	target_position: int,
 	attacker_statuses: Dictionary = {},
-	enemy_statuses_by_position: Dictionary = {}
+	enemy_statuses_by_position: Dictionary = {},
+	pinned: CombatPinned = null
 ) -> Dictionary:
-	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses, enemy_statuses_by_position)
+	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
+		enemy_statuses_by_position, pinned)
 
 
 ## Alias for play_attack.
@@ -316,9 +354,11 @@ func play_card(
 	card_id: String,
 	target_position: int,
 	attacker_statuses: Dictionary = {},
-	enemy_statuses_by_position: Dictionary = {}
+	enemy_statuses_by_position: Dictionary = {},
+	pinned: CombatPinned = null
 ) -> Dictionary:
-	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses, enemy_statuses_by_position)
+	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
+		enemy_statuses_by_position, pinned)
 
 
 func _valid_statuses(statuses: Dictionary) -> bool:
