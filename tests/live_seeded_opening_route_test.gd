@@ -1,6 +1,17 @@
 extends "res://tests/live_run_map_entry_test.gd"
 ## Shipped scene, physical title/route inputs and independent typed data oracle.
 
+## Written out here, not read from App, so the mounted label cannot agree with a broken map.
+const EXPECTED_ROUTE_LABELS := {
+	"Fight": "Fight",
+	"Elite": "Elite fight",
+	"Rest": "Rest stop",
+	"Shop": "Shop",
+	"Event": "Event",
+	"Treasure": "Treasure",
+	"Boss": "Boss fight",
+}
+
 
 func _record(app) -> Array:
 	var carry := app.party_carryover as RunTornCarryover
@@ -39,7 +50,8 @@ func _clean(app) -> void:
 		and app.session_gold == 0 and app.run_removal_count == 0 and app.encounter_id == "",
 		"Return clears all seeded resources and services")
 	_check(app.route_view == null and app.route_buttons.is_empty() and app.route_atlas == null
-		and app.route_atlas_overlay == null and app.battle_view == null and app.rest_view == null
+		and app.route_atlas_overlay == null and app.route_book_backdrop == null
+		and app.battle_view == null and app.rest_view == null
 		and app.shop_view == null and app._connected_map == null and app._placeholder_map == null
 		and app._carryover_map == null and app._rest_map == null and app._shop_map == null
 		and app.title_view.visible and app.start_button.has_focus(), "Return clears every mounted visit and callback source")
@@ -129,6 +141,81 @@ func _typed(app, heroes: Array, cards: Array, rng_state: int, kind: String) -> v
 		"live outcome and torn witness bind the actual selected battle")
 
 
+## Object-free description of the mounted opening book, for a seeded replay comparison.
+func _book_state(app) -> Array:
+	var state: Array = []
+	var book = app.route_book_backdrop
+	if is_instance_valid(book):
+		var cue: Label = book.get_node_or_null("FloorCue")
+		state.append([book.uses_board_texture(), cue.text if cue != null else ""])
+	else:
+		state.append(null)
+	for button in app.route_buttons:
+		var token = button.get_node_or_null("Token")
+		state.append([button.get_meta("route_id"), button.get_meta("route_kind"), button.text,
+			button.disabled, token.art_path if token != null else "",
+			token.uses_drawn_fallback() if token != null else null])
+	return state
+
+
+## Mounted opening book: page backdrop, first-floor cue and one sewn token per legal choice.
+func _opening_book(app) -> void:
+	var book = app.route_book_backdrop
+	_check(is_instance_valid(book) and book.is_visible_in_tree(), "opening chooser mounts its page backdrop")
+	if not is_instance_valid(book):
+		return
+	_check(book.mouse_filter == Control.MOUSE_FILTER_IGNORE and book.focus_mode == Control.FOCUS_NONE,
+		"page backdrop is pointer and keyboard inert")
+	var siblings: Array = app.get_children()
+	_check(siblings.find(book) >= 0 and siblings.find(app.route_view) > siblings.find(book),
+		"page backdrop renders behind every mounted choice")
+	_check(book.uses_board_texture() == ResourceLoader.exists(RunRouteAtlas.MAP_BOARD_PATH, "Texture2D"),
+		"page backdrop mounts the owner board when it exists")
+	var geometry: Dictionary = book.page_geometry()
+	var origin: Vector2 = book.global_position
+	var page := Rect2(origin + geometry.right_page.position, geometry.right_page.size)
+	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	_check(viewport.encloses(app.route_view.get_global_rect()) and page.encloses(app.route_view.get_global_rect()),
+		"the choice column fits inside the right page and viewport")
+	var cue: Label = book.get_node_or_null("FloorCue")
+	_check(cue != null and cue.is_visible_in_tree() and cue.text == "Floor 01"
+		and cue.get_meta("floor_number") == 1
+		and Rect2(origin + geometry.left_page.position, geometry.left_page.size).encloses(
+			Rect2(origin + cue.position, cue.size)),
+		"visible first-floor cue sits on the left page")
+	_check(app.run_map.get_route().is_empty() and app.run_map.get_current_floor() == 0,
+		"the floor cue never invents a committed route")
+	_check(app.route_buttons.size() == app.run_map.get_legal_choices().size(),
+		"exactly one token button per legal opening")
+	for button in app.route_buttons:
+		var kind: String = button.get_meta("route_kind")
+		var id: String = button.get_meta("route_id")
+		var path := RunRouteAtlas.node_token_path(kind)
+		var token = button.get_node_or_null("Token")
+		_check(button.get_meta("route_id") == id and app.run_map.get_legal_choices().has(id)
+			and page.encloses(button.get_global_rect())
+			and button.text == EXPECTED_ROUTE_LABELS.get(kind, kind) and not button.text.contains(id),
+			"readable legal choice inside the page: " + id)
+		_check(token != null and token.get_parent() == button
+			and token.mouse_filter == Control.MOUSE_FILTER_IGNORE and token.focus_mode == Control.FOCUS_NONE,
+			"one inert sewn token per legal choice: " + id)
+		if token == null:
+			continue
+		_check(token.art_path == path and token.get_meta("art_path") == path
+			and token.token_kind == kind, "token keeps its authored kind and art path: " + id)
+		var token_rect: Rect2 = token.token_rect()
+		_check(token_rect.size.x > 0.0 and button.get_global_rect().encloses(
+			Rect2(token.global_position + token_rect.position, token_rect.size)),
+			"mounted token art fits inside its button: " + id)
+		if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
+			_check(token.token_texture != null and token.token_texture == load(path)
+				and not token.uses_drawn_fallback()
+				and token.get_meta("art_backed") == true, "authored sewn token art mounted: " + id)
+		else:
+			_check(token.token_texture == null and token.uses_drawn_fallback()
+				and token.get_meta("art_backed") == false, "kind without art keeps its drawn token: " + id)
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var app = load("res://scenes/app.tscn").instantiate()
@@ -144,6 +231,7 @@ func _run() -> void:
 	var stale: Array[Callable] = []
 	for fixture in cases:
 		var replay: Array = []
+		var replay_book: Array = []
 		for mode in range(2):
 			app.run_seed = fixture[1]
 			await _activate(app.start_button, mode == 1)
@@ -159,6 +247,11 @@ func _run() -> void:
 				and app.run_heroes == CombatParty.new(app._load_party_definitions()).get_heroes()
 				and app.run_deck.size() == 12 and app.party_carryover is RunTornCarryover,
 				"Start publishes canonical seeded map, twelve cards and three heroes before combat")
+			_opening_book(app)
+			var book_id := 0
+			if is_instance_valid(app.route_book_backdrop):
+				book_id = app.route_book_backdrop.get_instance_id()
+			var book_state := _book_state(app)
 			var before := _record(app)
 			for callback in stale:
 				callback.call()
@@ -170,9 +263,11 @@ func _run() -> void:
 				"unknown, future and foreign requests reject atomically")
 			if mode == 0:
 				replay = before
+				replay_book = book_state
 			else:
 				# Object identities differ between sessions; compare authoritative values.
 				_check(before.slice(1, 8) == replay.slice(1, 8), "fresh seed replays every initial ledger")
+				_check(book_state == replay_book, "fresh seed replays the same opening book and tokens")
 			for button in app.route_buttons:
 				_check(not button.disabled, "every actual legal opening enabled")
 			stale.append(app.route_back_button.pressed.get_connections()[0].callable)
@@ -203,6 +298,9 @@ func _run() -> void:
 				app.party_carryover = original
 			await _activate(_button(app, fixture[2]), mode == 1)
 			_check(app.run_map.get_route() == [fixture[2]], "opening commits exactly the selected node")
+			_check(app.route_book_backdrop == null, "committing the opening disposes its book")
+			await process_frame
+			_check(book_id != 0 and not is_instance_id_valid(book_id), "the disposed opening book is freed")
 			if kind == "Rest":
 				_check(app.rest_recovery != null and app.rest_view.is_visible_in_tree()
 					and app.rest_continue_button.disabled, "real Rest visit mounted before any battle")
