@@ -339,8 +339,10 @@ func _assert_control_cue(card_id: String, slots: Array) -> void:
 				"Unravel %d → %d/%d" % [amount, after, threshold]),
 				"live cue shows the serviced gauge charge for slot %d: %s" % [int(position), card_id])
 			if card_id in SNAG_IDS:
-				_check(presenter.cue.text.contains("Weak %d" % int(effects.get("weak", 0))),
-					"live cue states the authored Weak: " + card_id)
+				var projected: Dictionary = resolver.snag_weak_preview(card_id)
+				_check(projected.get("ok", false)
+					and presenter.cue.text.contains("Weak %d" % int(projected.get("weak", -1))),
+					"live cue states the effective real HEAD Weak: " + card_id)
 
 
 func _needle_cases() -> void:
@@ -414,6 +416,179 @@ func _snag_cases() -> void:
 	_check(int(presenter._unravel.get_snapshot(2)["gauge"]) == 4
 		and int(presenter._unravel.get_snapshot(1)["gauge"]) == 0,
 		"Snag+ charges exactly the chosen original slot")
+
+
+## Routed admission uses a completed opening Fight, real reward settlement,
+## the existing run's genuine sewn wardrobe and an onward connected Fight.
+## No fabricated deck, combat receipt or alternate presenter is involved.
+func _head_route_case(card_id: String, keyboard: bool) -> void:
+	if app.deck != null:
+		await _return()
+	_check(app.deck == null and app.run_map == null,
+		"routed HEAD check starts at an actual clean title")
+	var opening_seed := -1
+	var first_fight := ""
+	var second_fight := ""
+	for number in range(1, 400):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = number
+		var generated := RunMap.new()
+		generated.generate(rng)
+		for node_id in generated.get_legal_choices():
+			if generated.get_node(node_id).get("type", "") != "Fight":
+				continue
+			if not generated.choose_node(node_id):
+				continue
+			for next_id in generated.get_legal_choices():
+				if generated.get_node(next_id).get("type", "") == "Fight":
+					opening_seed = number
+					first_fight = node_id
+					second_fight = next_id
+					break
+			if opening_seed >= 0:
+				break
+		if opening_seed >= 0:
+			break
+	_check(opening_seed >= 0 and not second_fight.is_empty(),
+		"seeded authored route connects an opening Fight to another Fight")
+	if opening_seed < 0:
+		return
+	app.run_seed = opening_seed
+	await _mouse(app.route_button)
+	_check(app.run_map != null and app.party_carryover is RunTornCarryover
+		and app.run_map.get_legal_choices().has(first_fight),
+		"real title enters the generated opening route")
+	if app.run_map == null:
+		return
+	_check(app._choose_route(first_fight),
+		"real opening chooser admits first Fight with pristine starter inventory")
+	await _frames()
+	_check(app._current_carryover_fight() and app.enemies != null,
+		"unpatched opening battle is genuinely admitted")
+	if app.enemies == null:
+		return
+	for enemy in app.enemies.get_enemies():
+		_check(app.enemies.apply_damage(enemy.position, 99999),
+			"opening battle enemy is genuinely defeated")
+	app._observe_battle_result()
+	await _frames()
+	_check(app._battle_closed and app.reward_buttons.size() >= 4,
+		"real first Fight victory mounts the reward claim")
+	if app.reward_buttons.size() < 4:
+		return
+	app.reward_buttons[3].pressed.emit()
+	await _frames()
+	_check(is_instance_valid(app.continue_button) and app.fight_reward_claimed,
+		"actual routed reward service accepts the skip receipt")
+	if not is_instance_valid(app.continue_button):
+		return
+	app.continue_button.pressed.emit()
+	await _frames()
+	_check(is_instance_valid(app.route_view)
+		and app.run_map.get_legal_choices().has(second_fight),
+		"first reward settles and connected second Fight is selectable: deck=%s route=%s legal=%s second=%s claimed=%s can_leave=%s pending=%s" % [
+			app.deck != null, is_instance_valid(app.route_view), app.run_map.get_legal_choices(),
+			second_fight, app.fight_reward_claimed, app._can_leave_fight(),
+			app.act_outcome.get_state()])
+	if not is_instance_valid(app.route_view):
+		return
+
+	# Prior-earned M05 ownership is a deterministic inventory fixture. Both
+	# sewing and carryover binding use their actual optimistic ledger APIs.
+	_check(app.run_trinkets.is_empty(), "settled opening run has no owned head patch yet")
+	app.run_trinkets.append("stern_seam_cap")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		[{"id": "stern_seam_cap", "slot": "HEAD"}],
+		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid() and wardrobe.sew("stern_seam_cap", "seamstress", "HEAD",
+		"earned_cap_sew", wardrobe.get_snapshot()).get("ok", false),
+		"real prior-earned cap is sewn to the currently living Seamstress")
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.bind_wardrobe(wardrobe, carry.torn,
+		wardrobe.get_snapshot()) and carry._wardrobe == wardrobe,
+		"run carryover authentically owns this sewn M05 HEAD ledger")
+	var route_action: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == second_fight:
+			route_action = button
+			break
+	_check(is_instance_valid(route_action) and route_action.is_visible_in_tree(),
+		"real connected chooser mounts the second Fight control")
+	if not is_instance_valid(route_action):
+		return
+	# Emitting the actual chooser's signal follows the same connected route
+	# admission as a click; cards below are exercised by physical input.
+	route_action.pressed.emit()
+	await _frames()
+	_check(app._current_carryover_fight() and app.deck is CombatDeck
+		and app.run_map.get_current_node_id() == second_fight
+		and presenter._controls._head_rules != null
+		and presenter._controls.head_binding_valid()
+		and presenter._controls.snag_weak_preview(card_id) == {"ok": true, "weak": 2}
+		and presenter._play._patches != null and presenter._play._patches.is_valid()
+		and carry._wardrobe == wardrobe,
+		"real onward routed battle binds one live HEAD projection to control and attack")
+	if app.deck == null or not presenter._controls.head_binding_valid() \
+			or presenter._controls.snag_weak_preview(card_id).get("weak", 0) != 2:
+		return
+
+	var head := CombatM05HeadPatchRules.new()
+	_check(head.bind_wardrobe(wardrobe, carry.torn) and head.get_bonus(
+		"seamstress", card_id, "weak") == 1,
+		"independent HEAD oracle uses exact living owner and fresh run ledger")
+	resolver.bind_head_patch_rules(head)
+	# Draw through the genuine shared deck; do not replace its hand/turn state.
+	app.deck.draw_pile.append(card_id)
+	_check(app.deck.draw_extra(1) == 1, "authored Snag is drawn by real combat deck")
+	app._refresh_hand()
+	await _frames()
+	var panel := _panel(card_id)
+	_check(panel != null, "new held Snag panel is mounted on routed battle")
+	if panel == null:
+		return
+	_setup_oracle()
+	var pre_hover := _state()
+	var hover := InputEventMouseMotion.new()
+	hover.position = panel.get_global_rect().get_center()
+	root.push_input(hover, true)
+	await _frames()
+	_check(_state() == pre_hover,
+		"moving pointer over a real patched Snag is read-only")
+	_check(await _select(card_id, keyboard), "physical routed patched Snag is aimed")
+	var before := _state()
+	var legal: Array = presenter._control_preview(card_id).get("target_positions", [])
+	_check(not legal.is_empty() and legal.has(1),
+		"routed Snag can aim at a real living enemy in original slot one")
+	if legal.is_empty() or not legal.has(1):
+		return
+	_assert_control_cue(card_id, legal)
+	var forecast_hits: Array = presenter.current_forecast.get("hits", [])
+	_check(presenter.current_forecast.get("playable", false)
+		and not forecast_hits.is_empty()
+		and forecast_hits[0].get("weak_applied", 0) == 2,
+		"HEAD Weak 2 appears in the actual forecast before commitment")
+	for index in range(3):
+		presenter._refresh()
+		await _frames()
+	_check(_state() == before and presenter.cue.text.contains("Weak 2"),
+		"repeated forecast preserves energy, statuses, gauge and seeded RNG")
+	var callback: Callable = presenter._bindings[panel].input
+	await _target(1, keyboard)
+	_assert_cast(card_id, before, 1, "routed HEAD " + card_id)
+	var charge := 3 if card_id == SNAG else 4
+	_check(presenter.last_event.get("weak_applied", -1) == 2
+		and presenter.last_event.get("unravel_applied", -1) == charge
+		and app.enemies.get_enemy(1).get("statuses", {}).get("weak", 0) == 2
+		and presenter._unravel.get_snapshot(1).get("gauge", -1) == charge,
+		"committed routed Snag adds exactly Weak 2 and authored Unravel")
+	var committed := _state()
+	callback.call(_mouse_event())
+	await _key(KEY_1)
+	_check(_state() == committed, "stale routed panel cannot double-charge HEAD")
+	resolver.bind_head_patch_rules(null)
+	await _return()
+	_check(app.deck == null and presenter._controls._head_rules == null,
+		"Return retires old bound HEAD with the battle")
 
 
 func _unpick_cases() -> void:
@@ -809,6 +984,8 @@ func _run() -> void:
 	await _tier_cases()
 	await _rejections()
 	await _return_isolation()
+	await _head_route_case(SNAG, false)
+	await _head_route_case(SNAG_PLUS, true)
 	app.free()
 	_finish()
 

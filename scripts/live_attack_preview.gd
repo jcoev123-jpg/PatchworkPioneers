@@ -156,7 +156,8 @@ func _matching_flow(app, party: CombatParty, enemies: CombatEnemies) -> CombatRo
 ## so no cast can succeed while its eventual skip would be ignored.
 func _control_ready(party: CombatParty, enemies: CombatEnemies, card_id: String) -> bool:
 	if _pinned == null or _unravel == null or _deck == null \
-			or not _controls.needle_patch_preview().get("ok", false):
+			or not _controls.needle_patch_preview().get("ok", false) \
+			or not _controls.head_binding_valid():
 		return false
 	if card_id in CombatSeamstressPoolControl.NEEDLE_IDS:
 		return true
@@ -945,6 +946,11 @@ func _control_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -
 				owner_statuses = statuses
 		if owner_count != 1:
 			return unavailable
+	var snag_weak := {}
+	if id in CombatSeamstressPoolControl.SNAG_IDS:
+		snag_weak = _controls.snag_weak_preview(id)
+		if not snag_weak.get("ok", false):
+			return unavailable
 	var hits: Array[Dictionary] = []
 	var positions: Array[int] = preview["target_positions"]
 	for position in positions:
@@ -977,7 +983,7 @@ func _control_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -
 			hit["gauge_after"] = mini(current + amount, threshold)
 			hit["threshold"] = threshold
 			if id in CombatSeamstressPoolControl.SNAG_IDS:
-				hit["weak_applied"] = int(effects["weak"])
+				hit["weak_applied"] = int(snag_weak["weak"])
 		hits.append(hit)
 	return {"playable": true, "requires_selection": true, "hits": hits}
 
@@ -1106,11 +1112,13 @@ func _sync_battle() -> void:
 		_play = CombatAttackCards.new()
 		_fray = null
 		_controls = CombatSeamstressPoolControl.new()
+		var head_rules: CombatM05HeadPatchRules = null
 		_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 		# Capture the genuine run's sewn wearer projection at battle entry only.
 		# An invalid present binding must reject attacks, not fall back to vanilla.
 		var carry := app.party_carryover as RunTornCarryover
 		if carry != null and carry._wardrobe != null:
+			head_rules = CombatM05HeadPatchRules.new()
 			var wardrobe: RunPatchWardrobe = carry._wardrobe
 			var current: Dictionary = wardrobe.get_snapshot()
 			if carry.can_bind_wardrobe(wardrobe, carry.torn, current) \
@@ -1118,11 +1126,13 @@ func _sync_battle() -> void:
 					and current.cards == app.run_deck and current.scraps == app.run_scraps \
 					and current.gold == app.session_gold and current.seed == app.run_seed:
 				_play.bind_patch_wardrobe(wardrobe, carry.torn)
+				head_rules.bind_wardrobe(wardrobe, carry.torn)
 			else:
 				_play.bind_patch_wardrobe(null, null)
 		# Needle Pin shares the exact starter attack object and once-per-combat
 		# latch, including an explicitly failed wardrobe admission.
 		_controls.bind_patch_rules(_play._patches)
+		_controls.bind_head_patch_rules(head_rules)
 		last_event = {}
 		# One Pinned set and one Unravel gauge live for this whole battle session.
 		# They are created here and never recreated or reset by a hand refresh.
@@ -1444,5 +1454,6 @@ func _clear() -> void:
 	_routed_gauge_shared = false
 	_fray = null
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
+	_controls = CombatSeamstressPoolControl.new()
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null

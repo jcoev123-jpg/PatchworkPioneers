@@ -7,6 +7,9 @@ const NEEDLE_IDS := ["seamstress_needle_pin", "seamstress_needle_pin_plus"]
 const SNAG_IDS := ["seamstress_snag", "seamstress_snag_plus"]
 const UNPICK_IDS := ["seamstress_unpick", "seamstress_unpick_plus"]
 
+## Optional HEAD projection bound to the genuine run ledgers for this battle.
+var _head_rules: CombatM05HeadPatchRules = null
+
 ## Optional battle-scoped reference, shared with CombatAttackCards. A present
 ## but invalid binding rejects every cast instead of silently going vanilla.
 var _patches: CombatPatchAttackRules = null
@@ -14,6 +17,31 @@ var _patches: CombatPatchAttackRules = null
 
 func bind_patch_rules(patches: CombatPatchAttackRules) -> void:
 	_patches = patches
+
+
+## An explicitly invalid/stale HEAD binding is not an unpatched battle.
+func bind_head_patch_rules(rules: CombatM05HeadPatchRules) -> void:
+	_head_rules = rules
+
+
+func head_binding_valid() -> bool:
+	return _head_rules == null or _head_rules.read_projection().get("ok", false) == true
+
+
+## Both the forecast and confirmed play use the same authored-plus-HEAD
+## projection. A tooltip never becomes the authority for status addition.
+func snag_weak_preview(card_id: String) -> Dictionary:
+	if card_id not in SNAG_IDS or not head_binding_valid():
+		return {"ok": false}
+	var definition: Dictionary = SeamstressPoolCards.new().get_definition(card_id)
+	var effects: Variant = definition.get("effects")
+	if definition.get("owner") != "seamstress" or not effects is Dictionary \
+			or not effects.get("weak") is int or int(effects["weak"]) <= 0:
+		return {"ok": false}
+	var amount: int = int(effects["weak"])
+	if _head_rules != null:
+		amount += _head_rules.get_bonus("seamstress", card_id, "weak")
+	return {"ok": true, "weak": amount}
 
 
 ## Read-only projection for the live forecast. Never consumes the shared latch.
@@ -31,7 +59,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# Validate every authority, including all status records, before spending
 	# energy or moving the single played card to the discard pile.
 	if deck == null or party == null or enemies == null \
-			or (_patches != null and not _patches.is_valid()):
+			or (_patches != null and not _patches.is_valid()) or not head_binding_valid():
 		return {"ok": false}
 	if not party.is_valid() or not enemies.is_valid():
 		return {"ok": false}
@@ -66,6 +94,12 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var is_needle: bool = card_id in NEEDLE_IDS
 	var is_snag: bool = card_id in SNAG_IDS
 	var unravel_charge: int = 0
+	var snag_weak: int = 0
+	if is_snag:
+		var head := snag_weak_preview(card_id)
+		if not head.get("ok", false):
+			return {"ok": false}
+		snag_weak = int(head["weak"])
 	# A correctly roster-bound gauge must be preflighted even for Snag:
 	# otherwise a failed charge could leave a Weak-only partial play.
 	if is_needle:
@@ -89,7 +123,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if gauge["gauge"] > CombatStatuses.MAX_INT - unravel_charge:
 			return {"ok": false}
 		if is_snag and not enemies.can_apply_statuses(
-				{target_position: {"weak": int(effects["weak"])}}):
+				{target_position: {"weak": snag_weak}}):
 			return {"ok": false}
 
 	var pin_bonus := 0
@@ -142,7 +176,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel.apply_unravel(enemies, target_position, added)
 		result["unravel_applied"] = added
 		if is_snag:
-			enemies.apply_statuses({target_position: {"weak": int(effects["weak"])}})
-			result["weak_applied"] = int(effects["weak"])
+			enemies.apply_statuses({target_position: {"weak": snag_weak}})
+			result["weak_applied"] = snag_weak
 		result["unravel_snapshot"] = unravel.get_snapshot(target_position)
 	return result
