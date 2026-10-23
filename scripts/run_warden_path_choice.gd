@@ -135,6 +135,33 @@ func choose(path_id: Variant) -> Dictionary:
 	return _receipt.duplicate(true)
 
 
+## Authenticates an untrusted detached choice against an independent, freshly
+## loaded authored selection. This never consumes any caller's choice instance
+## or trusts a claimed card ID without comparing the entire typed receipt.
+## Success exposes only detached canonical battle-admission fields.
+static func authenticate_receipt(candidate: Variant) -> Dictionary:
+	if typeof(candidate) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var receipt: Dictionary = candidate
+	if typeof(receipt.get("path_id")) != TYPE_STRING:
+		return {"ok": false}
+	var path_id: String = receipt["path_id"]
+	if not PATH_IDS.has(path_id):
+		return {"ok": false}
+	var fresh := RunWardenPathChoice.new()
+	if not fresh.is_valid():
+		return {"ok": false}
+	var canonical := fresh.choose(path_id)
+	if not canonical.get("ok", false) or not fresh._exactly_equal(receipt, canonical):
+		return {"ok": false}
+	return {
+		"ok": true,
+		"path_id": path_id,
+		"card_id": canonical["card"]["id"],
+		"receipt": canonical.duplicate(true),
+	}
+
+
 func _rejection() -> Dictionary:
 	return {
 		"ok": false,

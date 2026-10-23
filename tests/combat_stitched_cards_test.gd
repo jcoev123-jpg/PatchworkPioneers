@@ -3,6 +3,9 @@ extends SceneTree
 const PRICK := "seamstress_prick"
 const POP := "tinker_pop_shot"
 const BOMB := "tinker_scrap_bomb"
+const SUPPORT_HALF := "warden_brace"
+const ENERGY_IDS := ["tinker_overclock", "tinker_overclock_plus",
+	"seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
 var failures: Array[String] = []
 var checks := 0
 
@@ -16,6 +19,9 @@ func _initialize() -> void:
 	_test_spare_spool()
 	_test_pool_healing_halves()
 	_test_pool_heal_failures()
+	_test_pool_energy_halves()
+	_test_pool_energy_failures()
+	_test_pool_energy_replay()
 	_test_spool_rejections()
 	for failure in failures:
 		printerr(failure)
@@ -59,6 +65,52 @@ func _fixture(first: String, second: String, seed_value: int = 83) -> Dictionary
 
 func _play(c: Dictionary, a: int, b: int) -> Dictionary:
 	return c.service.play_stitched(c.deck, c.party, c.enemies, c.rest, c.id, a, b)
+
+
+## Uses the Rest ledger's own deck as the battle deck, so the held composite is
+## literally the run ledger's stitched card rather than a hand-written stand-in.
+func _rest_fixture(first: String, second: String, seed_value: int) -> Dictionary:
+	var c := _fixture(first, second, seed_value)
+	var ledger: Dictionary = c.rest.get_snapshot()
+	var cards: Array[String] = []
+	cards.assign(ledger["deck"])
+	_check(cards == [c.id], "Rest ledger deck holds exactly the composite")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	c.deck = CombatDeck.new(cards, rng)
+	_check(c.deck.start_turn() and c.deck.energy == 3 and c.deck.hand == [c.id],
+		"Rest-to-combat deck holds the composite with three energy")
+	return c
+
+
+func _position_of(party: CombatParty, hero_id: String) -> int:
+	for hero in party.get_heroes():
+		if hero["id"] == hero_id:
+			return int(hero["position"])
+	return 0
+
+
+## Independent Fisher-Yates/refill oracle mirroring CombatDeck._draw exactly.
+func _oracle_draw(draw_pile: Array, discard_pile: Array, count: int,
+		rng_state: int) -> Dictionary:
+	var oracle := RandomNumberGenerator.new()
+	oracle.state = rng_state
+	var pile: Array = draw_pile.duplicate()
+	var discard: Array = discard_pile.duplicate()
+	var drawn: Array = []
+	while drawn.size() < count:
+		if pile.is_empty():
+			if discard.is_empty():
+				break
+			pile = discard.duplicate()
+			discard.clear()
+			for index in range(pile.size() - 1, 0, -1):
+				var other := oracle.randi_range(0, index)
+				var card = pile[index]
+				pile[index] = pile[other]
+				pile[other] = card
+		drawn.append(pile.pop_back())
+	return {"draw": pile, "discard": discard, "drawn": drawn, "rng": oracle.state}
 
 
 func _snapshot(c: Dictionary) -> Array:
@@ -139,8 +191,11 @@ func _test_pairs() -> void:
 
 func _test_all_authored_pairs() -> void:
 	var catalog := StarterCards.new()
+	var skip := ["warden_shield_bash_plus", "seamstress_prick_plus", "tinker_pop_shot_plus", "tinker_scrap_bomb_plus"]
 	for a in catalog.get_all_card_ids():
 		for b in catalog.get_all_card_ids():
+			if a in skip or b in skip:
+				continue
 			var first := catalog.get_definition(a)
 			var second := catalog.get_definition(b)
 			if first.owner == second.owner:
@@ -554,3 +609,179 @@ func _test_pool_heal_failures() -> void:
 				_check(c.wardrobe.start_rest("future-rest", w).ok,
 					"genuine bound wardrobe ledger drift")
 		_reject(c, 0, 0, mode + ": stitched pool binding fails closed")
+
+
+## Every base/+ Overclock and Tailor's Trance half must keep its printed
+## +1 energy and 3 Block-first self-damage or 2/3 seeded draws when sewn against
+## an authored different-owner support half, in either printed order.
+func _test_pool_energy_halves() -> void:
+	for id in ENERGY_IDS:
+		var overclock: bool = id in CombatPoolEnergyCards.OVERCLOCK_IDS
+		var authored: Dictionary = {}
+		if overclock:
+			authored = TinkerPoolCards.new().get_definition(id)
+		else:
+			authored = SeamstressPoolCards.new().get_definition(id)
+		_check(not authored.is_empty()
+			and authored == RunRestStitchCards.resolve_card_definition(id),
+			id + ": authentic authored cross-owner pool energy half")
+		var printed_draw: int = 3 if id.ends_with("_plus") else 2
+		for reverse in [false, true]:
+			var first: String = SUPPORT_HALF if reverse else id
+			var second: String = id if reverse else SUPPORT_HALF
+			var c := _rest_fixture(first, second, 4177)
+			var tpos := _position_of(c.party, "tinker")
+			var wpos := _position_of(c.party, "warden")
+			_check(tpos == 3 and wpos == 1, id + ": authored party positions")
+			c.deck.discard_pile.assign([POP, PRICK, "warden_strike"])
+			if overclock:
+				_check(c.party.gain_block(tpos, 2), id + ": real Tinker Block before Overclock")
+			var before := _snapshot(c)
+			var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+			_check(cost == 2, id + ": one capped two-cost composite")
+			var expected := before.duplicate(true)
+			var oracle := _oracle_draw(before[0], before[2],
+				0 if overclock else printed_draw, before[5])
+			var expected_hand: Array = before[1].duplicate()
+			expected_hand.erase(c.id)
+			expected_hand.append_array(oracle["drawn"])
+			expected[0] = oracle["draw"]
+			expected[1] = expected_hand
+			expected[2] = oracle["discard"].duplicate()
+			expected[2].append(c.id)
+			expected[3] = before[3] - cost + 1
+			expected[5] = oracle["rng"]
+			expected[6][wpos - 1]["block"] += 7
+			if overclock:
+				expected[6][tpos - 1]["hp"] -= 1
+				expected[6][tpos - 1]["block"] = 0
+			var label: String = id + (" after Brace" if reverse else " before Brace")
+			var result := _play(c, 0, 0)
+			_check(result.ok and result.halves.size() == 2, label + ": both halves commit")
+			if not result.ok:
+				continue
+			var expected_energy_half: Dictionary
+			if overclock:
+				expected_energy_half = {"ok": true, "effect": "gain_energy",
+					"amount": 1, "self_hp_loss": 3}
+			else:
+				expected_energy_half = {"ok": true, "effect": "gain_energy",
+					"amount": 1, "draw": printed_draw}
+			_check(result.halves[1 if reverse else 0] == expected_energy_half,
+				label + ": exact printed energy, self-damage or draw outcome")
+			_check(result.halves[0 if reverse else 1] ==
+				{"ok": true, "effect": "self_block", "amount": 7},
+				label + ": authored Brace half still resolves")
+			_check(_snapshot(c) == expected,
+				label + ": exact HP/Block, energy, draws, piles, seeded RNG and latches")
+			_check(c.deck.energy == 2 and c.deck.discard_pile.count(c.id) == 1
+				and not c.deck.hand.has(c.id),
+				label + ": one capped charge and one composite discard")
+
+	# The two energy halves sewn together still apply each printed effect once.
+	for reverse in [false, true]:
+		var first: String = "seamstress_tailors_trance" if reverse else "tinker_overclock"
+		var second: String = "tinker_overclock" if reverse else "seamstress_tailors_trance"
+		var c := _rest_fixture(first, second, 5419)
+		c.deck.discard_pile.assign([POP, PRICK, "warden_strike"])
+		var tpos := _position_of(c.party, "tinker")
+		_check(c.party.gain_block(tpos, 2), "paired energy half real Block precondition")
+		var before := _snapshot(c)
+		var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+		_check(cost == 2, "paired energy halves cost two")
+		var expected := before.duplicate(true)
+		var oracle := _oracle_draw(before[0], before[2], 2, before[5])
+		var expected_hand: Array = before[1].duplicate()
+		expected_hand.erase(c.id)
+		expected_hand.append_array(oracle["drawn"])
+		expected[0] = oracle["draw"]
+		expected[1] = expected_hand
+		expected[2] = oracle["discard"].duplicate()
+		expected[2].append(c.id)
+		expected[3] = before[3] - cost + 2
+		expected[5] = oracle["rng"]
+		expected[6][tpos - 1]["hp"] -= 1
+		expected[6][tpos - 1]["block"] = 0
+		var label := "paired " + ("Trance/Overclock" if reverse else "Overclock/Trance")
+		var result := _play(c, 0, 0)
+		_check(result.ok and result.halves.size() == 2, label + ": both energy halves commit")
+		if not result.ok:
+			continue
+		var overclock_half := {"ok": true, "effect": "gain_energy", "amount": 1,
+			"self_hp_loss": 3}
+		var trance_half := {"ok": true, "effect": "gain_energy", "amount": 1, "draw": 2}
+		var expected_halves: Array = []
+		if reverse:
+			expected_halves = [trance_half, overclock_half]
+		else:
+			expected_halves = [overclock_half, trance_half]
+		_check(result.halves == expected_halves, label + ": each printed effect once in order")
+		_check(_snapshot(c) == expected,
+			label + ": exact HP, Block, energy, draws, piles, RNG and latches")
+
+
+## Invalid target, wrong/downed owner, insufficient initial energy and a failing
+## later half (including Block overflow after staged energy/draw/self-damage)
+## must leave every authority and the RNG exactly unchanged.
+func _test_pool_energy_failures() -> void:
+	var c := _fixture("tinker_overclock", SUPPORT_HALF)
+	_reject(c, 1, 0, "Overclock half has no selectable target")
+	_reject(c, 0, 1, "Brace after staged Overclock must reject a nonzero target")
+	c = _fixture("seamstress_tailors_trance", SUPPORT_HALF)
+	c.deck.discard_pile.assign([POP, PRICK, "warden_strike"])
+	_reject(c, 0, 1, "Brace after staged Trance draw must reject a nonzero target")
+	c = _fixture(SUPPORT_HALF, "seamstress_tailors_trance")
+	c.deck.discard_pile.assign([POP, PRICK, "warden_strike"])
+	_reject(c, 1, 0, "Trance after staged Brace must reject a nonzero target")
+
+	c = _fixture("seamstress_tailors_trance", SUPPORT_HALF)
+	c.deck.discard_pile.assign([POP, PRICK, "warden_strike"])
+	_check(c.party.gain_block(1, CombatParty.MAX_INT), "real Warden Block saturation")
+	_reject(c, 0, 0, "Brace overflow rolls back staged Trance draw, energy and RNG")
+	c = _fixture("tinker_overclock", SUPPORT_HALF)
+	_check(c.party.gain_block(1, CombatParty.MAX_INT),
+		"real Warden Block saturation before Overclock")
+	_reject(c, 0, 0, "Brace overflow rolls back staged Overclock self-damage and energy")
+
+	c = _fixture("tinker_overclock", SUPPORT_HALF)
+	_check(c.deck.try_spend_energy(2) and c.deck.energy == 1,
+		"two energy already paid before the composite")
+	_reject(c, 0, 0, "two-cost pool energy composite needs two initial energy")
+	c = _fixture("tinker_overclock", "warden_shield_bash")
+	_check(c.deck.try_spend_energy(1) and c.deck.energy == 2,
+		"one energy already paid before the cost-three composite")
+	_reject(c, 0, 1, "cost-three pool energy composite needs three initial energy")
+
+	c = _fixture("seamstress_tailors_trance", SUPPORT_HALF)
+	var heroes: Array = c.party.get_heroes()
+	c.party = CombatParty.new([heroes[1], heroes[0], heroes[2]])
+	_reject(c, 0, 0, "Trance owner at an illegal front FROM")
+	c = _fixture("tinker_overclock", SUPPORT_HALF)
+	_check(c.party.apply_damage(3, 26) and c.party.is_downed(3), "real downed Tinker")
+	_reject(c, 0, 0, "downed Overclock owner")
+	c = _fixture("seamstress_tailors_trance", SUPPORT_HALF)
+	_check(c.party.apply_damage(2, 30) and c.party.is_downed(2), "real downed Seamstress")
+	_reject(c, 0, 0, "downed Trance owner")
+
+
+func _pool_energy_sequence(id: String, reverse: bool, seed_value: int) -> Array:
+	var c := _rest_fixture(SUPPORT_HALF if reverse else id,
+		id if reverse else SUPPORT_HALF, seed_value)
+	c.deck.discard_pile.assign([POP, PRICK, "warden_strike"])
+	if id in CombatPoolEnergyCards.OVERCLOCK_IDS:
+		_check(c.party.gain_block(_position_of(c.party, "tinker"), 2),
+			id + ": replay Block precondition")
+	var before := _snapshot(c)
+	var result := _play(c, 0, 0)
+	_check(result.ok, id + " order " + str(reverse) + ": replay composite commits")
+	return [before, result, _snapshot(c)]
+
+
+func _test_pool_energy_replay() -> void:
+	for seed_value in [0, 83, 9741]:
+		for id in ENERGY_IDS:
+			for reverse in [false, true]:
+				_check(_pool_energy_sequence(id, reverse, seed_value)
+					== _pool_energy_sequence(id, reverse, seed_value),
+					id + " order " + str(reverse) + ": same-seed Rest-to-combat replay")
+

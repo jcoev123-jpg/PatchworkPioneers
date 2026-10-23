@@ -17,6 +17,8 @@ extends RefCounted
 
 const SEAMSTRESS := "seamstress"
 const TINKER := "tinker"
+const WARDEN := "warden"
+const WARDEN_DATA := "res://data/heroes/warden_paths.json"
 
 
 ## Preview of one presented Seamstress Path option, or {} when it is not exactly
@@ -29,6 +31,11 @@ static func seamstress(option: Variant) -> Dictionary:
 ## genuine authored record.
 static func tinker(option: Variant) -> Dictionary:
 	return _describe(TINKER, option)
+
+
+## Warden records are read from their stable JSON file, without constructing a chooser.
+static func warden(option: Variant) -> Dictionary:
+	return _describe(WARDEN, option)
 
 
 static func _describe(owner_id: String, option: Variant) -> Dictionary:
@@ -44,6 +51,8 @@ static func _describe(owner_id: String, option: Variant) -> Dictionary:
 	var passive: Dictionary = passive_value
 	var card: Dictionary = card_value
 	var path_id := String(record.get("id", ""))
+	if owner_id == WARDEN and not _warden_card_is_authored(path_id, card):
+		return {}
 	var passive_text := _passive_text(owner_id, path_id, passive)
 	var card_text := _card_text(card)
 	var hint := _hint_text(path_id, passive, card)
@@ -51,7 +60,7 @@ static func _describe(owner_id: String, option: Variant) -> Dictionary:
 		return {}
 	var display_name := String(record.get("display_name", ""))
 	var card_name := String(card.get("display_name", ""))
-	var owner_label := "Seamstress" if owner_id == SEAMSTRESS else "Tinker"
+	var owner_label := "Seamstress" if owner_id == SEAMSTRESS else ("Tinker" if owner_id == TINKER else "Warden")
 	return {
 		"ok": true,
 		"owner": owner_id,
@@ -81,6 +90,18 @@ static func _matching_record(owner_id: String, option: Dictionary) -> Dictionary
 		records = RunSeamstressPathChoice.new().get_paths()
 	elif owner_id == TINKER:
 		records = RunTinkerPathChoice.new().get_offers()
+	elif owner_id == WARDEN:
+		var source: Variant = JSON.parse_string(FileAccess.get_file_as_string(WARDEN_DATA))
+		if not source is Dictionary or source.get("id") != WARDEN:
+			return {}
+		var base: Variant = source.get("base_passive")
+		if not base is Dictionary or base.get("kind") != "starting_block" \
+				or not _int_equals(base.get("starting_block"), 6):
+			return {}
+		var paths: Variant = source.get("paths")
+		if not paths is Array:
+			return {}
+		records = paths
 	else:
 		return {}
 	for raw in records:
@@ -100,9 +121,57 @@ static func _matching_record(owner_id: String, option: Dictionary) -> Dictionary
 	return {}
 
 
+## The source file is the authority; these checks only recognize the two
+## shipped Warden card shapes before printing any detailed rules.
+static func _warden_card_is_authored(path_id: String, card: Dictionary) -> bool:
+	if card.get("owner") != WARDEN or not _int_equals(card.get("cost"), 1):
+		return false
+	if path_id == "bulwark":
+		return card.get("id") == "warden_bulwark_brace" \
+			and card.get("display_name") == "Bulwark Brace" \
+			and _positions_match(card.get("from_positions"), [1, 2, 3]) \
+			and card.get("target_kind") == "self" \
+			and _positions_match(card.get("to_positions"), []) \
+			and card.get("effects") is Dictionary \
+			and _effects_text("warden_bulwark_brace", card["effects"]) != ""
+	if path_id == "vanguard":
+		return card.get("id") == "warden_lance_pin" \
+			and card.get("display_name") == "Lance Pin" \
+			and _positions_match(card.get("from_positions"), [1]) \
+			and card.get("target_kind") == "enemy_single" \
+			and _positions_match(card.get("to_positions"), [1, 2]) \
+			and card.get("effects") is Dictionary \
+			and _effects_text("warden_lance_pin", card["effects"]) != ""
+	return false
+
+
+static func _positions_match(value: Variant, expected: Array) -> bool:
+	if not value is Array or value.size() != expected.size():
+		return false
+	for i in expected.size():
+		if not _int_equals(value[i], int(expected[i])):
+			return false
+	return true
+
+
 ## PASSIVE line: only the two authored Seamstress and two authored Tinker passive
 ## contracts are describable; every other shape returns "" and no preview.
 static func _passive_text(owner_id: String, path_id: String, passive: Dictionary) -> String:
+	if owner_id == WARDEN:
+		if path_id == "bulwark" and passive.size() == 5 \
+				and passive.get("kind") == "replaces_starting_block" \
+				and passive.get("replaced_kind") == "starting_block" \
+				and _int_equals(passive.get("replaced_starting_block"), 6) \
+				and _int_equals(passive.get("starting_block"), 10) \
+				and passive.get("stacks") == false:
+			return "Replaces opening 6 Block with 10 Block (not +10 above 6; does not stack)"
+		if path_id == "vanguard" and passive.size() == 5 \
+				and passive.get("kind") == "first_attack_per_turn_pins" \
+				and passive.get("applies_to") == WARDEN \
+				and passive.get("trigger") == "first_confirmed_attack_each_player_turn" \
+				and passive.get("once_per_turn") == true and passive.get("status") == "pinned":
+			return "Replaces opening 6 Block: Warden's first confirmed attack EACH player turn applies Pinned. One pinner; same-hero hits do not consume it. Next DIFFERENT hero attack gets +5 damage before Weak -25% and Exposed +50% (rounded down), then consumes Pinned"
+		return ""
 	if owner_id == SEAMSTRESS:
 		if path_id == "bloodline" and String(passive.get("kind", "")) == "bleed_bonus" \
 				and String(passive.get("status", "")) == "bleed" \
@@ -149,6 +218,11 @@ static func _card_text(card: Dictionary) -> String:
 
 
 static func _effects_text(path_id: String, effects: Dictionary) -> String:
+	if path_id == "warden_bulwark_brace":
+		return "grants 9 Block to SELF" if effects.size() == 1 and _int_equals(effects.get("block"), 9) else ""
+	if path_id == "warden_lance_pin":
+		return "deal 6 damage and apply Pinned" if effects.size() == 2 \
+			and _int_equals(effects.get("damage"), 6) and effects.get("pinned") == true else ""
 	if path_id == "seamstress_leech_stitch":
 		var heal_value: Variant = effects.get("heal")
 		if effects.size() != 2 or not _int_equals(effects.get("bleed"), 3) \
@@ -189,6 +263,10 @@ static func _hint_text(path_id: String, passive: Dictionary, card: Dictionary) -
 	if card_name.strip_edges().is_empty() or cost < 0:
 		return ""
 	match path_id:
+		"bulwark":
+			return "Opening Block 6 → 10 · %s grants 9 Block (%d energy)" % [card_name, cost]
+		"vanguard":
+			return "First attack each turn Pins · %s 6 damage, Pinned (%d energy)" % [card_name, cost]
 		"bloodline":
 			return "Bleed +%d · %s (%d energy)" % [
 				_int_value(passive.get("value")), card_name, cost]
@@ -209,6 +287,10 @@ static func _target_text(kind_value: Variant, positions: Variant) -> String:
 	if not kind_value is String:
 		return ""
 	var kind: String = kind_value
+	if kind == "self":
+		if positions is Array and (positions as Array).is_empty():
+			return "target SELF (no enemy slots)"
+		return ""
 	if kind == "none":
 		if positions is Array and (positions as Array).is_empty():
 			return "no target"
@@ -236,9 +318,9 @@ static func _number_list_text(value: Variant) -> String:
 		return ""
 	var numbers: Array[int] = []
 	for item in positions:
-		if typeof(item) != TYPE_INT:
+		var number := _int_value(item)
+		if number < 0:
 			return ""
-		var number: int = item
 		if number < 1 or number > 3 or numbers.has(number):
 			return ""
 		numbers.append(number)

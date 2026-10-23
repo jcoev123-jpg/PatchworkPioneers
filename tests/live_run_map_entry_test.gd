@@ -301,6 +301,9 @@ func _run() -> void:
 	if "--inject-wrong-type" in OS.get_cmdline_user_args():
 		app.route_buttons[0].text = "incorrect"
 	var seen: Array = []
+	var page: Dictionary = book.page_geometry()
+	var right_page := Rect2(book.global_position + page.right_page.position, page.right_page.size)
+	var spine := Rect2(book.global_position + page.spine.position, page.spine.size)
 	for button in app.route_buttons:
 		var id: String = button.get_meta("route_id")
 		seen.append(id)
@@ -312,6 +315,14 @@ func _run() -> void:
 		_check(button.get_meta("route_id") == id and button.get_meta("route_kind") == node.type
 			and button.text.begins_with(String(node.type)) and not button.text.contains(id)
 			and button.is_visible_in_tree(), "exact ID metadata and readable type label: " + id)
+		# The patch is sewn onto its authored floor position, never a stacked list row.
+		var slot := int(node.get("position", -1))
+		_check(button.position == Vector2(132.0, 74.0 + float(slot) * 86.0)
+			and button.size == Vector2(288.0, 70.0) and button.get_parent() == app.route_view,
+			"patch sits on its authored page slot: " + id)
+		_check(right_page.encloses(button.get_global_rect())
+			and button.get_global_rect().position.x > spine.end.x,
+			"sewn patch clears the spine on the right page: " + id)
 		_check(not button.disabled, "per-node operability: " + id)
 		if button.disabled:
 			_check(button.text.contains("unavailable"), "unsupported reason visible")
@@ -323,6 +334,11 @@ func _run() -> void:
 			_check(_snapshot(app) == before, "disabled keyboard choice is unspent")
 			_reject(app, id, "unsupported callback")
 	_check(seen == reference.get_legal_choices(), "all and only opening IDs displayed in map order")
+	var seam = app.route_view.get_node_or_null("Branches")
+	_check(seam != null and seam.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and seam.focus_mode == Control.FOCUS_NONE
+		and seam.branch_targets.size() == app.route_buttons.size(),
+		"drawn start seam joins every patch without taking pointer or keyboard input")
 	_reject(app, "unknown", "unknown choice")
 	_reject(app, reference.get_floors()[1][0].id, "future unavailable node")
 	var before_direct := _snapshot(app)

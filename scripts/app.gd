@@ -78,11 +78,35 @@ const ROUTE_BOOK_SHADE := Color("#d8c9a2")
 const ROUTE_BOOK_INK := Color("#302b29")
 const ROUTE_BOOK_THREAD := Color("#c9b996")
 const ROUTE_BOOK_FELT := Color("#4f5a47")
+## The authored first area of a run, named on the opening book's left page beside its
+## sewn Floor 01 tab. Presentation only: the authored table stays in RunRouteAtlas.
+const ROUTE_BOOK_AREA := "Meadow"
+## First-floor patch column of the opening book, in coordinates local to the right
+## page's RouteBook.choices_rect(): one sewn patch Button per authored node slot, with
+## an inert stitched start seam in the free lane on their left.
+const ROUTE_PATCH_SIZE := Vector2(288.0, 70.0)
+const ROUTE_PATCH_LEFT := 132.0
+const ROUTE_PATCH_TOP := 74.0
+const ROUTE_PATCH_STEP := 86.0
+## Full map and Back sit at the foot of the right page, under every patch row.
+const ROUTE_ACTION_HEIGHT := 44.0
+const ROUTE_ACTION_TOP := 414.0
+const ROUTE_ACTION_GAP := 12.0
+## The start seam's x inside the patch column's free lane, and its darker thread, so
+## uncommitted branches read on the cream page like the book's own spine stitching.
+const ROUTE_SEAM_X := 48.0
+const ROUTE_SEAM_THREAD := Color("#7d6a4d")
 
 
 ## The readable stop label for an authored node kind; the only name the player sees.
 static func route_kind_label(kind: String) -> String:
 	return str(ROUTE_KIND_LABELS.get(kind, kind))
+
+
+## The page-local top of the patch sewn for one authored node position. Deterministic
+## layout only: it reads no map, RNG or combat state.
+static func route_patch_top(position: int) -> float:
+	return ROUTE_PATCH_TOP + float(maxi(position, 0)) * ROUTE_PATCH_STEP
 
 
 ## Inert sewn route token for one opening choice. The authored kind art is drawn when it
@@ -136,6 +160,74 @@ class RouteToken extends Control:
 			Vector2(rect.end.x - 10.0, rect.position.y + 10.0), thread_colour, 2.0, true)
 
 
+## Dashed running stitch sewn inside one opening patch Button. It draws thread lines
+## near the felt's edge only: the opaque felt and every hover/pressed/disabled surface
+## stay the Button's own styleboxes, so no child paints over the state or its caption.
+class RoutePatchStitch extends Control:
+	var thread_colour := ROUTE_BOOK_THREAD
+
+	func _init() -> void:
+		name = "Stitch"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		if size.x <= 28.0 or size.y <= 20.0:
+			return
+		var frame := Rect2(Vector2(6.0, 5.0), size - Vector2(12.0, 10.0))
+		var corners := [frame.position, Vector2(frame.end.x, frame.position.y), frame.end,
+			Vector2(frame.position.x, frame.end.y)]
+		for index in range(corners.size()):
+			draw_dashed_line(corners[index], corners[(index + 1) % corners.size()],
+				thread_colour, 1.0, 6.0)
+		for corner: Vector2 in corners:
+			draw_line(corner + Vector2(-3, -3), corner + Vector2(3, 3), thread_colour, 1.0, true)
+			draw_line(corner + Vector2(3, -3), corner + Vector2(-3, 3), thread_colour, 1.0, true)
+
+
+## Pointer-inert stitched start seam behind the opening patches: one running stitch down
+## the page's free left lane and one dashed branch to each mounted patch's left edge. It
+## never invents a map node or a pin, so an uncommitted opening shows no committed stop.
+## It only reads the target rects it was handed; drawing never touches RunMap or the RNG.
+class RouteBranches extends Control:
+	var branch_targets: Array[Rect2] = []
+	var seam_x := ROUTE_SEAM_X
+	var thread_colour := ROUTE_SEAM_THREAD
+
+	func _init() -> void:
+		name = "Branches"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		if branch_targets.is_empty() or size.x <= seam_x:
+			return
+		var top := branch_targets[0].get_center().y
+		var bottom := top
+		for target in branch_targets:
+			top = minf(top, target.get_center().y)
+			bottom = maxf(bottom, target.get_center().y)
+		# The seam is a folded page edge, not a node: a capped running stitch.
+		draw_dashed_line(Vector2(seam_x, top - 26.0), Vector2(seam_x, bottom + 26.0),
+			thread_colour, 2.0, 9.0)
+		for cap_y in [top - 26.0, bottom + 26.0]:
+			draw_line(Vector2(seam_x - 8.0, cap_y), Vector2(seam_x + 8.0, cap_y),
+				thread_colour, 1.6, true)
+		for target in branch_targets:
+			var from := Vector2(seam_x, target.get_center().y)
+			var to := Vector2(target.position.x - 6.0, from.y)
+			draw_dashed_line(from, to, thread_colour, 1.8, 7.0)
+			# A sewn knot at the seam and a small thread arrow into the patch.
+			draw_line(from + Vector2(-4, -4), from + Vector2(4, 4), thread_colour, 1.4, true)
+			draw_line(from + Vector2(4, -4), from + Vector2(-4, 4), thread_colour, 1.4, true)
+			draw_line(to + Vector2(-7, -4), to, thread_colour, 1.4, true)
+			draw_line(to + Vector2(-7, 4), to, thread_colour, 1.4, true)
+
+
 ## Pointer-inert open book mounted behind the opening chooser: two cream pages, a stitched
 ## spine, a ribbon bookmark, a page curl and a first-floor tab that names the current floor
 ## without inventing a committed node. The owner board image (RunRouteAtlas.MAP_BOARD_PATH)
@@ -150,6 +242,7 @@ class RouteBook extends Control:
 	const STITCH_INSET := 12.0
 	const BOOKMARK := Rect2(618, 22, 34, 122)
 	const BOOKMARK_FILL := Color("#a2544a")
+	const AREA_TAB := Rect2(206, 62, 210, 48)
 	const FLOOR_TAB := Rect2(206, 118, 210, 66)
 	const FLOOR_HINT := Rect2(206, 196, 210, 64)
 	const FELT_TAB := Color("#8f7a55")
@@ -162,6 +255,16 @@ class RouteBook extends Control:
 		focus_mode = Control.FOCUS_NONE
 		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		resized.connect(queue_redraw)
+		var area := _inert_label("AreaCue", ROUTE_BOOK_AREA, 26)
+		area.position = AREA_TAB.position
+		area.size = AREA_TAB.size
+		area.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		area.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		area.add_theme_color_override("font_color", ROUTE_BOOK_PAPER)
+		area.add_theme_constant_override("outline_size", 4)
+		area.add_theme_color_override("font_outline_color", ROUTE_BOOK_INK)
+		area.set_meta("area_name", ROUTE_BOOK_AREA)
+		add_child(area)
 		var cue := _inert_label("FloorCue", "Floor 01", 26)
 		cue.position = FLOOR_TAB.position
 		cue.size = FLOOR_TAB.size
@@ -199,8 +302,8 @@ class RouteBook extends Control:
 	## Deterministic page geometry, for mounted layout assertions.
 	func page_geometry() -> Dictionary:
 		return {"book": BOOK, "left_page": LEFT_PAGE, "right_page": RIGHT_PAGE,
-			"spine": SPINE, "bookmark": BOOKMARK, "floor_tab": FLOOR_TAB,
-			"choices": choices_rect()}
+			"spine": SPINE, "bookmark": BOOKMARK, "area_tab": AREA_TAB,
+			"floor_tab": FLOOR_TAB, "choices": choices_rect()}
 
 	func _draw() -> void:
 		if board_texture != null:
@@ -208,7 +311,10 @@ class RouteBook extends Control:
 			draw_texture_rect(board_texture, Rect2(Vector2.ZERO, size), false)
 		else:
 			_draw_drawn_book()
-		# The first-floor tab sits on either page pair, so the cue always reads as a sewn tab.
+		# The area and first-floor tabs sit on either page pair, so they always read as
+		# sewn patches naming where the uncommitted opening begins.
+		draw_rect(AREA_TAB, FELT_TAB)
+		_stitch_frame(AREA_TAB.grow(-4.0))
 		draw_rect(FLOOR_TAB, FELT_TAB)
 		_stitch_frame(FLOOR_TAB.grow(-4.0))
 
@@ -320,7 +426,9 @@ var run_tinker_path_receipt: Dictionary = {}
 ## The one validated Tinker setup receipt this village visit produced, detached
 ## from the setup. Empty until a Tinker option is confirmed.
 var _tinker_setup_receipt: Dictionary = {}
-var route_view: VBoxContainer
+## Opening chooser: a plain Control so each first-floor patch Button keeps its own
+## authored page slot; a connected route still fills it with a VBoxContainer.
+var route_view: Control
 var route_back_button: Button
 var route_map_button: Button
 var route_atlas_overlay: Control
@@ -980,44 +1088,61 @@ func _open_route() -> void:
 	title_view.hide()
 	# A pointer-inert page backdrop is mounted first so the chooser draws over its pages.
 	_mount_route_book()
-	route_view = VBoxContainer.new()
+	# The chooser owns the right page's choice rect; every patch is placed on its own
+	# authored node slot instead of a stacked list, and stays a direct child because
+	# the atlas admission re-checks button.get_parent() == route_view.
+	var page := RouteBook.choices_rect()
+	route_view = Control.new()
 	route_view.name = "OpeningBookChoices"
 	route_view.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	route_view.add_theme_constant_override("separation", 10)
+	route_view.position = page.position
+	route_view.size = page.size
 	add_child(route_view)
+	# Branches are mounted before the patches, so stitched thread always sews behind them.
+	var branches := RouteBranches.new()
+	route_view.add_child(branches)
 	var heading := Label.new()
 	heading.name = "Heading"
 	heading.text = "Opening route"
+	heading.position = Vector2(0.0, 34.0)
+	heading.size = Vector2(page.size.x, 30.0)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	heading.focus_mode = Control.FOCUS_NONE
 	heading.add_theme_font_size_override("font_size", 24)
 	heading.add_theme_color_override("font_color", ROUTE_BOOK_INK)
+	heading.add_theme_constant_override("outline_size", 4)
+	heading.add_theme_color_override("font_outline_color", ROUTE_BOOK_PAPER)
 	route_view.add_child(heading)
 	var actions: Array[Button] = []
+	var branch_targets: Array[Rect2] = []
 	for id in run_map.get_legal_choices():
 		var node := run_map.get_node(id)
 		var button := _route_choice_button(id, String(node.type))
+		button.position = Vector2(ROUTE_PATCH_LEFT, route_patch_top(int(node.get("position", 0))))
 		route_view.add_child(button)
+		branch_targets.append(Rect2(button.position, button.size))
 		route_buttons.append(button)
 		if not button.disabled:
 			actions.append(button)
-	route_map_button = _route_book_action("View full map", 48, "Open the optional full map")
+	branches.branch_targets = branch_targets
+	route_map_button = _route_book_action("View full map",
+		Vector2(ROUTE_PATCH_SIZE.x, ROUTE_ACTION_HEIGHT), "Open the optional full map")
+	route_map_button.position = Vector2(ROUTE_PATCH_LEFT, ROUTE_ACTION_TOP)
 	route_view.add_child(route_map_button)
 	route_map_button.pressed.connect(_open_route_atlas.bind(
 		weakref(run_map), weakref(route_view), weakref(route_map_button)))
 	actions.append(route_map_button)
-	route_back_button = _route_book_action("Back", 48, "Cancel this opening")
+	route_back_button = _route_book_action("Back",
+		Vector2(ROUTE_PATCH_SIZE.x, ROUTE_ACTION_HEIGHT), "Cancel this opening")
+	route_back_button.position = Vector2(ROUTE_PATCH_LEFT,
+		ROUTE_ACTION_TOP + ROUTE_ACTION_HEIGHT + ROUTE_ACTION_GAP)
 	route_back_button.pressed.connect(_cancel_opening.bind(weakref(run_map), weakref(route_view)))
 	route_view.add_child(route_back_button)
 	actions.append(route_back_button)
 	for index in range(actions.size()):
 		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
-	# Fit the choice column inside the right page, never over the spine or past the page.
-	var page := RouteBook.choices_rect()
-	var content := route_view.get_combined_minimum_size()
-	route_view.position = Vector2(
-		page.position.x + maxf(0.0, (page.size.x - content.x) * 0.5),
-		page.position.y + maxf(0.0, (page.size.y - content.y) * 0.5))
 	actions[0].grab_focus()
 
 
@@ -1053,14 +1178,17 @@ func _route_token_texture(path: String) -> Texture2D:
 	return _route_tokens.get(path)
 
 
-## One art-backed opening choice: exact ID in metadata, readable kind label, sewn token.
+## One art-backed opening patch: exact ID in metadata, readable kind label, sewn token,
+## a stitched felt face and a readable kind accent. Its page slot is set by the caller
+## from the authored node position, so the patch is never a list row.
 func _route_choice_button(id: String, kind: String) -> Button:
 	var label := route_kind_label(kind)
 	var button := Button.new()
 	button.name = "Opening_" + id
 	button.text = label
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.custom_minimum_size = Vector2(420, 62)
+	button.custom_minimum_size = ROUTE_PATCH_SIZE
+	button.size = ROUTE_PATCH_SIZE
 	button.add_theme_font_size_override("font_size", 20)
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
@@ -1072,15 +1200,17 @@ func _route_choice_button(id: String, kind: String) -> Button:
 		button.tooltip_text = "Choose this %s" % label.to_lower()
 	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
 	button.add_child(_route_token(kind))
+	button.add_child(_route_patch_stitch(kind))
 	button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
 	return button
 
 
-## Full map and Back are themed like the choices but keep the page's centre alignment.
-func _route_book_action(title: String, height: int, tooltip: String) -> Button:
+## Full map and Back are themed like the patches and sit at the foot of the right page.
+func _route_book_action(title: String, action_size: Vector2, tooltip: String) -> Button:
 	var button := Button.new()
 	button.text = title
-	button.custom_minimum_size = Vector2(420, height)
+	button.custom_minimum_size = action_size
+	button.size = action_size
 	button.add_theme_font_size_override("font_size", 18)
 	button.tooltip_text = tooltip
 	_style_route_button(button, ROUTE_BOOK_THREAD, false)
@@ -1141,6 +1271,14 @@ func _route_token(kind: String) -> RouteToken:
 	art.set_meta("art_path", art.art_path)
 	art.set_meta("art_backed", art.token_texture != null)
 	return art
+
+
+## The patch's stitched edge in its own kind thread, mounted behind the caption.
+func _route_patch_stitch(kind: String) -> RoutePatchStitch:
+	var stitch := RoutePatchStitch.new()
+	stitch.thread_colour = ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD)
+	stitch.set_meta("route_kind", kind)
+	return stitch
 
 
 func _choose_route(id: String, source_map: WeakRef = null) -> bool:
@@ -1672,7 +1810,8 @@ func _refresh_action_focus() -> void:
 ## Routed rewards are prepared once; the standalone demo keeps its fixed offering.
 ## Both routed services receive the authored D2-1 base records of party-owned
 ## heroes, so the live pick is the accepted weighted selector, never a starter
-## fallback.
+## fallback, plus the run's current Rest stitch ledger so an authentic composite
+## already owned at a Rest stays a legal run deck member.
 func _build_card_reward() -> void:
 	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
 		return
@@ -1694,11 +1833,13 @@ func _build_card_reward() -> void:
 			if not party_carryover.read_state().completed_fights.has(_carryover_node):
 				return
 			fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
-				records, run_deck, session_gold, false)
+				records, run_deck, session_gold, false, [], [],
+				run_stitch_descriptors, run_next_stitch_id)
 			prepared = fight_rewards.prepare()
 		else:
 			multi_fight_rewards = RunMultiFightRewards.new(run_map, run_rng, party_carryover,
-				run_deck, session_gold, run_trinkets, records, _catalog_trinket_ids())
+				run_deck, session_gold, run_trinkets, records, _catalog_trinket_ids(),
+				run_stitch_descriptors, run_next_stitch_id)
 			prepared = multi_fight_rewards.prepare(_carryover_node, battle_result, party)
 		if not prepared.ok:
 			fight_rewards = null
@@ -1862,13 +2003,17 @@ func _settle_routed_reward(id: String, offering) -> bool:
 	if offering is RunFightVictoryRewards:
 		if offering._battle != battle_result or offering._rng != run_rng \
 			or offering._source_deck != run_deck or offering._starting_gold != session_gold \
-			or offering._owned_trinket_ids != run_trinkets:
+			or offering._owned_trinket_ids != run_trinkets \
+			or offering._stitched_descriptors != run_stitch_descriptors \
+			or offering._next_stitch_id != run_next_stitch_id:
 			return false
 	if offering is RunMultiFightRewards:
 		if offering._map != run_map or offering._rng != run_rng or offering._carry != party_carryover \
 			or offering.read_state().deck != run_deck or offering.read_state().gold != session_gold \
 			or offering.read_state().party.heroes != run_heroes \
-			or offering.read_state().trinkets != run_trinkets:
+			or offering.read_state().trinkets != run_trinkets \
+			or offering._stitched_descriptors != run_stitch_descriptors \
+			or offering._next_stitch_id != run_next_stitch_id:
 			return false
 	var torn_carry := party_carryover as RunTornCarryover
 	if torn_carry == null or torn_carry.read_state().heroes != run_heroes \

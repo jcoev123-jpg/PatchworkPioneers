@@ -34,6 +34,10 @@ var readable_text := "NO ACTION"
 var intent_type := ""
 var amount := 0
 var target_position := 0
+## Empty unless a valid mounted weighted action supplies its real policy.
+var policy_cue := ""
+const POLICY_LABELS := {"front": "FRONT", "lowest_living_hp": "LOW HP",
+	"exposed": "EXPOSED", "random": "RANDOM"}
 ## The committed HUD texture selected for the current mode; null draws the sewn glyph.
 var icon_texture: Texture2D = null
 ## Presentation-only art root. A redirected or unavailable root (missing file or import)
@@ -114,8 +118,14 @@ static func load_icon_texture(path: String) -> Texture2D:
 	return load(path) as Texture2D
 
 
-func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false) -> void:
+func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
+		policy: String = "") -> void:
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
+	# Only targeted, active, authored actions receive the small policy tag.
+	policy_cue = ""
+	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove"] \
+			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
+		policy_cue = POLICY_LABELS[policy]
 	if slain:
 		icon_mode = "slain"
 		intent_type = ""
@@ -197,6 +207,17 @@ func _draw() -> void:
 	draw_string(get_theme_default_font(), Vector2(62, patch.end.y - 5.0), readable_text,
 		HORIZONTAL_ALIGNMENT_LEFT, size.x - 64, 14,
 		MUTED if icon_mode in ["slain", "none"] else CREAM)
+	# Miniature rust-felt ticket in the upper-right strip, clear of the old caption.
+	if not policy_cue.is_empty():
+		var font := get_theme_default_font()
+		var text_width := font.get_string_size(policy_cue, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
+		var x := maxf(64.0, size.x - text_width - 9.0)
+		var tag := Rect2(x - 4.0, 0.5, text_width + 8.0, 10.0)
+		draw_rect(tag, SLATE)
+		draw_line(Vector2(tag.position.x + 2.0, tag.position.y + 1.0),
+			Vector2(tag.end.x - 2.0, tag.position.y + 1.0), RUST, 1.0)
+		draw_string(font, Vector2(x, 8.5), policy_cue,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 9, CREAM)
 
 
 ## Drawn sewn-glyph fallback in the patch's own scaled art coordinates. Used for every

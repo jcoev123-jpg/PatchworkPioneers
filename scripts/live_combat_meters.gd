@@ -91,6 +91,7 @@ func _sync_battle() -> void:
 		_clear()
 		_mount(app)
 	var unravel := _bound_unravel(app)
+	var threats := _announced_threat_counts(app, unravel)
 	var patches := _current_patches(app)
 	var needed_height := RIBBON_HEIGHT
 	var forecast := {"ok": false, "heroes": []}
@@ -108,6 +109,8 @@ func _sync_battle() -> void:
 		var shown := meter.show_actor(snapshot, side)
 		_compact(meter)
 		_sync_block_icon(meter, snapshot)
+		if side == "hero":
+			_sync_threat_pin(meter, threats[position - 1])
 		if side == "enemy":
 			_sync_unravel_thread(meter, snapshot, position, unravel)
 		# The forecast is written before the tooltip is composed, so a hover can never
@@ -268,6 +271,37 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	meter.hp_bar.custom_minimum_size = Vector2(0, RIBBON_HP_BAR_HEIGHT)
 	if side == "enemy":
 		_make_unravel_thread(content, meter)
+	else:
+		# A little felt pin overlays the existing HP trough without taking a row,
+		# changing its forecast, or becoming a gameplay input target.
+		var pin := Panel.new()
+		pin.name = "ThreatPin"
+		pin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pin.focus_mode = Control.FOCUS_NONE
+		pin.anchor_left = 1.0
+		pin.anchor_right = 1.0
+		pin.offset_left = -40.0
+		pin.offset_right = -2.0
+		pin.offset_top = 3.0
+		pin.offset_bottom = 19.0
+		var felt := StyleBoxFlat.new()
+		felt.bg_color = Color("704437")
+		felt.border_color = Color("e9dfcb")
+		felt.set_border_width_all(1)
+		felt.set_corner_radius_all(3)
+		pin.add_theme_stylebox_override("panel", felt)
+		meter.hp_bar.add_child(pin)
+		var text := Label.new()
+		text.name = "Count"
+		text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		text.focus_mode = Control.FOCUS_NONE
+		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		text.add_theme_font_size_override("font_size", 10)
+		text.add_theme_color_override("font_color", Color("e9dfcb"))
+		text.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		pin.add_child(text)
+		pin.hide()
 	meter.block_text.add_theme_font_size_override("font_size", 12)
 	meter.block_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	meter.block_text.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -398,6 +432,45 @@ func _mount(app) -> void:
 			row.add_child(meter)
 			ribbon_height = maxf(ribbon_height, meter.get_combined_minimum_size().y)
 	row.custom_minimum_size = Vector2(0, ribbon_height + 2.0)
+
+
+## Threats are unique *original* living enemy sources aimed at a still-living hero.
+## This reads the complete, bound cached batch; the policy fallback is pure and
+## may change its display target without rerolling or editing the announcement.
+func _announced_threat_counts(app, unravel: CombatUnravel) -> Array[int]:
+	var counts: Array[int] = [0, 0, 0]
+	if unravel == null or app._battle_closed or app.enemy_intents == null \
+			or not app.enemy_intents.is_bound() or app.enemy_intents._party != _party \
+			or app.enemy_intents._rng != app.run_rng or _enemies != app.enemies \
+			or _party != app.party or _battle != app.battle_view:
+		return counts
+	var roster := _enemies.get_enemies()
+	var intents: Array[Dictionary] = app.enemy_intents.get_intents()
+	var ordered := CombatIncomingAttackPreview.new()._validated_actions(roster.size(), intents)
+	if ordered.size() != roster.size():
+		return counts
+	for action in ordered:
+		var source: int = action["enemy_position"]
+		if roster[source - 1].get("position") != source or _enemies.is_slain(source) \
+				or unravel.get_snapshot(source).get("skip_pending", false) \
+				or action.get("type") not in ["attack", "debuff", "shove"] \
+				or CombatEnemyIntents.policy_for(_enemies, source).is_empty():
+			continue
+		var effective := CombatEnemyIntents.resolve_announced_action(_party, action, _enemies)
+		var target = effective.get("target_position")
+		if target is int and target >= 1 and target <= CombatParty.PARTY_SIZE \
+				and not _party.is_downed(target):
+			counts[target - 1] += 1
+	return counts
+
+
+func _sync_threat_pin(meter: CombatActorMeter, count: int) -> void:
+	var pin := meter.hp_bar.get_node_or_null("ThreatPin") as Panel
+	if pin == null:
+		return
+	var label := pin.get_node("Count") as Label
+	label.text = "! %d" % count if count > 0 else ""
+	pin.visible = count > 0
 
 
 ## Hide the long-form paragraphs after each show_actor without deleting or rewriting them.
