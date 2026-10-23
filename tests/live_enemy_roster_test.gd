@@ -87,7 +87,7 @@ func _assert_actor_art(app, presenter) -> void:
 		_check(texture != null and texture.resource_path == idle_path,
 			"mounted actor renders its own supplied idle image: " + actor_id)
 		_check(puppet.attack_texture != null and puppet.attack_texture.resource_path == attack_path,
-			"mounted actor keeps its paired attack-pose resource for a committed future event")
+			"mounted actor keeps its own paired attack-pose image for committed plays")
 		_check(texture != null and not paths.has(texture.resource_path),
 			"actors never share another actor's image: " + actor_id)
 		paths.append(texture.resource_path if texture != null else "")
@@ -280,6 +280,178 @@ func _staging(app, presenter) -> void:
 		"grounding, contact shadow and rim reads change no combat state or RNG")
 
 
+## VIS V5 attack pose: each living mounted actor owns one short, bounded lunge in its own
+## facing direction with its authored `_attack` image when that image exists (the same
+## idle art or the drawn puppet when it does not), then returns exactly to idle. The pose
+## lives only in the drawn transform, so target rectangles, pinned names, intent badges,
+## the hand and the action row stay put and no HP, deck, energy, turn, intent or RNG value
+## moves. A fallen actor and a detached puppet never start one.
+func _attack_pose(app, presenter) -> void:
+	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
+		and not presenter._puppets.is_empty()
+		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
+		"attack-pose checks run on every actual mounted actor")
+	if not is_instance_valid(presenter.panel) or presenter._puppets.is_empty():
+		return
+	var before: Array = _snapshot(app)
+	var tweens: int = get_processed_tweens().size()
+	var puppet_rects: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		puppet_rects.append(puppet.get_global_rect())
+	var tag_rects: Array[Rect2] = []
+	var tag_texts: Array[String] = []
+	for tag in presenter._hero_tags:
+		tag_rects.append(tag.get_global_rect())
+		tag_texts.append(tag.text)
+	for label in presenter._labels:
+		tag_rects.append(label.get_global_rect())
+		tag_texts.append(label.text)
+	var badge_rects: Array[Rect2] = []
+	var badge_texts: Array[String] = []
+	for badge in presenter._badges:
+		badge_rects.append(badge.get_global_rect())
+		badge_texts.append(badge.readable_text)
+	var control_rects: Array[Rect2] = []
+	for control in [app.end_turn_button, app.return_button, app.hand_view, presenter.panel]:
+		control_rects.append(control.get_global_rect())
+	var living: Array = []
+	for puppet in presenter._puppets:
+		if not puppet.fallen:
+			living.append(puppet)
+	_check(not living.is_empty(), "the live battle mounts at least one standing actor")
+	for puppet in living:
+		_check(not puppet.attacking() and is_equal_approx(puppet.attack_shape(), 0.0)
+			and is_equal_approx(puppet.attack_lunge(), 0.0)
+			and puppet.pose_texture() == puppet.current_texture(),
+			"a standing actor starts at plain idle before any committed hit: " + puppet.name)
+		_check(not puppet.trigger_attack(0.0) and not puppet.trigger_attack(-0.5)
+			and not puppet.attacking(), "a zero or negative pose span never starts a lunge: " + puppet.name)
+		_check(puppet.trigger_attack(30.0) and puppet.attacking()
+			and puppet.attack_span <= puppet.ATTACK_MAX_SECONDS,
+			"one committed pose is bounded to the approved span: " + puppet.name)
+		puppet.cancel_attack()
+		_check(not puppet.attacking() and puppet.pose_texture() == puppet.current_texture()
+			and puppet.posed_actor_rect() == (puppet.posed_image_rect()
+				if puppet.current_texture() != null else puppet.posed_fallback_rect()),
+			"cancelling the pose returns the actor exactly to its idle drawing: " + puppet.name)
+		var phase: float = puppet.idle_phase
+		var rest_pose: Rect2 = puppet.posed_actor_rect()
+		var idle_texture: Texture2D = puppet.current_texture()
+		var attack_texture: Texture2D = puppet.attack_texture
+		_check(puppet.trigger_attack(0.6) and puppet.attacking(),
+			"a committed hit starts exactly one attack pose: " + puppet.name)
+		if attack_texture != null:
+			_check(puppet.pose_texture() == attack_texture
+				and puppet.pose_texture().resource_path == idle_texture.resource_path.trim_suffix(".png") + "_attack.png",
+				"the pose draws this actor's own authored attack image: " + puppet.name)
+		else:
+			_check(puppet.pose_texture() == idle_texture,
+				"an actor without attack art keeps its idle drawing during the pose: " + puppet.name)
+		puppet._process(puppet.attack_span * 0.5)
+		var peak: Rect2 = puppet.posed_actor_rect()
+		var pose: Transform2D = puppet.idle_transform(Vector2.ZERO, 1.0)
+		_check(puppet.attacking() and is_equal_approx(puppet.attack_shape(), 1.0)
+			and puppet.attack_lunge() * puppet.facing >= 4.0,
+			"the pose lunges toward the other lineup in this actor's own facing: " + puppet.name)
+		_check(is_equal_approx(pose.x.x, puppet.facing * puppet.attack_stretch())
+			and is_equal_approx(pose.y.y, puppet.idle_breath() * puppet.attack_squash())
+			and puppet.attack_stretch() > 1.0 and puppet.attack_squash() < 1.0,
+			"the drawn pose adds paper stretch and squash to the lunge: " + puppet.name)
+		_check((peak.get_center().x - rest_pose.get_center().x) * puppet.facing
+			>= absf(puppet.attack_lunge()) - 0.01,
+			"the lunge moves only the drawn artwork, not the actor control: " + puppet.name)
+		_check(puppet.get_global_rect() == puppet_rects[presenter._puppets.find(puppet)],
+			"the complete actor target rectangle never moves during a pose: " + puppet.name)
+		puppet._process(puppet.ATTACK_MAX_SECONDS)
+		_check(not puppet.attacking() and is_equal_approx(puppet.attack_span, 0.0)
+			and puppet.pose_texture() == idle_texture,
+			"the pose ends by itself within 0.6 s and returns to idle art: " + puppet.name)
+		puppet.idle_phase = phase
+		_check(puppet.posed_actor_rect() == rest_pose,
+			"after the pose the actor stands exactly where it did before: " + puppet.name)
+		puppet._process(0.1)
+		_check(not puppet.attacking() and is_equal_approx(puppet.attack_shape(), 0.0),
+			"a settled pose never replays on later frames: " + puppet.name)
+		puppet.idle_phase = phase
+	# An actor whose authored attack image is missing keeps its supplied idle art and
+	# still performs the same bounded lunge.
+	var host = living[0]
+	var saved_attack: Texture2D = host.attack_texture
+	var host_phase: float = host.idle_phase
+	host.attack_texture = null
+	var host_rest: Rect2 = host.posed_actor_rect()
+	_check(host.trigger_attack(0.6) and host.pose_texture() == host.current_texture(),
+		"a supplied actor missing only its attack image poses with its idle art")
+	host._process(host.attack_span * 0.5)
+	_check(host.posed_actor_rect() != host_rest and host.attack_lunge() * host.facing >= 4.0,
+		"the missing-attack-image pose still lunges the drawn artwork")
+	host.cancel_attack()
+	host.attack_texture = saved_attack
+	host.idle_phase = host_phase
+	# The drawn puppet (no supplied art at all) owns the same pose.
+	var saved_id: String = host.actor_id
+	var saved_idle: Texture2D = host.idle_texture
+	host.bind_actor("fabricated_pose_actor", {})
+	var drawn_rest: Rect2 = host.posed_fallback_rect()
+	_check(host.current_texture() == null and host.pose_texture() == null
+		and host.trigger_attack(0.6) and host.attacking(),
+		"an actor with no supplied art at all still performs the drawn attack pose")
+	host._process(host.attack_span * 0.5)
+	_check(host.posed_fallback_rect() != drawn_rest and host.attack_lunge() * host.facing >= 4.0,
+		"the drawn fallback puppet lunges exactly like a supplied image")
+	host.cancel_attack()
+	host.bind_actor(saved_id, {"idle": saved_idle, "attack": saved_attack})
+	host.idle_phase = host_phase
+	# Source inspection: the realistic pose is real draw work, with no tween, timer or RNG.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var pose_body := _function_body(source, "func trigger_attack(")
+	var advance_body := _function_body(source, "func advance_attack(")
+	var actor_body := _function_body(source, "func _draw_actor(")
+	var puppet_draw := _function_body(source, "func _draw() -> void:")
+	_check(pose_body.contains("attack_span = clampf(") and pose_body.contains("ATTACK_MAX_SECONDS")
+		and pose_body.contains("if fallen")
+		and advance_body.contains("attack_remaining = maxf(") and advance_body.contains("cancel_attack()")
+		and not pose_body.contains("create_tween") and not advance_body.contains("create_tween")
+		and not pose_body.contains("Timer.new") and not advance_body.contains("Timer.new")
+		and not pose_body.contains("randi(") and not advance_body.contains("randf("),
+		"the pose is a bounded delta-driven state, never a tween, timer or RNG draw")
+	_check(puppet_draw.contains("pose_texture()") and actor_body.contains("pose_rect(")
+		and actor_body.contains("idle_transform(")
+		and actor_body.find("idle_transform(") < actor_body.find("draw_texture_rect("),
+		"the actor draw path uses the pose image and the one shared pose transform")
+	# Every mounted control keeps its exact place, caption and target.
+	var after_puppets: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		after_puppets.append(puppet.get_global_rect())
+	_check(after_puppets == puppet_rects,
+		"no actor target rectangle moves during any pose")
+	var after_tags: Array[Rect2] = []
+	var after_tag_texts: Array[String] = []
+	for tag in presenter._hero_tags:
+		after_tags.append(tag.get_global_rect())
+		after_tag_texts.append(tag.text)
+	for label in presenter._labels:
+		after_tags.append(label.get_global_rect())
+		after_tag_texts.append(label.text)
+	_check(after_tags == tag_rects and after_tag_texts == tag_texts,
+		"pinned hero and enemy names keep their exact place and text during poses")
+	var after_badges: Array[Rect2] = []
+	var after_badge_texts: Array[String] = []
+	for badge in presenter._badges:
+		after_badges.append(badge.get_global_rect())
+		after_badge_texts.append(badge.readable_text)
+	_check(after_badges == badge_rects and after_badge_texts == badge_texts,
+		"intent badges keep their exact place and caption during poses")
+	var after_controls: Array[Rect2] = []
+	for control in [app.end_turn_button, app.return_button, app.hand_view, presenter.panel]:
+		after_controls.append(control.get_global_rect())
+	_check(after_controls == control_rects,
+		"hand, actions and the enemy roster panel stay put during poses")
+	_check(_snapshot(app) == before,
+		"a committed attack pose changes no HP/Block, deck, energy, turn, intent or run RNG")
+	_check(get_processed_tweens().size() == tweens,
+		"the attack pose creates no tween that outlives the frame")
+
 ## Idle presentation: every living actor advances its own subtle bob and breathing pose
 ## inside its art band, while target rectangles, pinned names, intent badges, controls,
 ## combat state and RNG stay exactly as they were.
@@ -454,6 +626,9 @@ func _fallen_stillness(puppets: Array) -> void:
 		puppet._process(1.0)
 		_check(puppet.posed_actor_rect() == pose and is_equal_approx(puppet.idle_phase, phase),
 			"further frame deltas leave the fallen actor motionless: " + puppet.name)
+		_check(not puppet.trigger_attack(0.6) and not puppet.attacking()
+			and puppet.posed_actor_rect() == pose,
+			"a fallen actor never starts a committed attack pose: " + puppet.name)
 
 
 ## A freshly mounted battle builds new puppets that start their idle phase at rest.
@@ -602,6 +777,7 @@ func _visible(app, presenter) -> void:
 	_assert_actor_art(app, presenter)
 	_staging(app, presenter)
 	_idle_motion(app, presenter)
+	_attack_pose(app, presenter)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -1180,6 +1356,7 @@ func _run() -> void:
 	_assert_badges(app, presenter, 1)
 	_staging(app, presenter)
 	_idle_motion(app, presenter, true)
+	_attack_pose(app, presenter)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 	await process_frame
@@ -1348,6 +1525,7 @@ func _typed_stage(app, presenter) -> void:
 	_assert_actor_art(app, presenter)
 	_staging(app, presenter)
 	_idle_motion(app, presenter)
+	_attack_pose(app, presenter)
 	var actions: Array = app.enemy_intents.get_intents()
 	for index in range(3):
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)

@@ -2,7 +2,8 @@ extends Node
 ## Observes the app's authoritative roster; owns only presentation, never combat actions.
 
 ## Owner-supplied stand-in art, keyed by authoritative actor ID (never name, slot or screen text).
-## Each base path has a matching "_attack" pose that only a committed animation event may show.
+## Each base path has a matching "_attack" pose that only this actor's own committed
+## attack play may show, for the short bounded lunge below.
 const ART_ROOT := "res://assets/paper/"
 ## One authored paper scene per battle kind, chosen by the admitted route node type. The
 ## matching drawn quilt stays the fallback whenever an image is absent or the kind unknown.
@@ -199,6 +200,15 @@ class Puppet extends Control:
 	const RIM_ALPHA := 0.75
 	const RIM_RADIUS := 2.5
 	const RIM_SCALE := 1.05
+	## One committed attack pose per actor: a short lunge in the actor's own facing
+	## direction with a little paper stretch, driven by the same per-frame delta as the
+	## idle bob so it never creates a tween, a timer or a gameplay wait. The span is
+	## bounded here as well as by the listener, so no caller can leave a pose running.
+	const ATTACK_MAX_SECONDS := 0.6
+	const ATTACK_LUNGE_RATIO := 0.16
+	const ATTACK_LUNGE_MAX := 26.0
+	const ATTACK_STRETCH := 0.1
+	const ATTACK_SQUASH := 0.06
 
 	var facing := 1.0
 	var slot := 1
@@ -208,8 +218,11 @@ class Puppet extends Control:
 	## Seconds of idle presentation this instance has run. A fresh puppet starts at rest.
 	var idle_phase := 0.0
 	var idle_texture: Texture2D
-	## Held for the future committed attack event; nothing may switch to it yet.
+	## Authored attack pose, drawn only while this actor performs its own committed hit.
 	var attack_texture: Texture2D
+	## Seconds left of the one bounded committed attack pose; zero means plain idle.
+	var attack_remaining := 0.0
+	var attack_span := 0.0
 	## Presenter-supplied stage metrics, so heroes and enemies are drawn at one scale.
 	var stage_height := 180.0
 	var intent_band := 36.0
@@ -224,6 +237,9 @@ class Puppet extends Control:
 		resized.connect(queue_redraw)
 
 	func _process(delta: float) -> void:
+		# The committed attack pose settles first, so a fallen or finished actor is
+		# already back at its plain idle pose before the idle bob advances.
+		advance_attack(delta)
 		advance_idle(delta)
 
 	## Idle motion advances with real frame time only while the actor stands; a fallen
@@ -233,6 +249,68 @@ class Puppet extends Control:
 			return
 		idle_phase += delta
 		queue_redraw()
+
+	## Starts the one short committed attack pose of this actor. A fallen, detached or
+	## otherwise absent actor, or a non-positive span, stays at plain idle: presentation
+	## never fabricates a lunge that combat did not commit.
+	func trigger_attack(seconds: float) -> bool:
+		if fallen or not is_inside_tree() or seconds <= 0.0:
+			return false
+		attack_span = clampf(seconds, 0.001, ATTACK_MAX_SECONDS)
+		attack_remaining = attack_span
+		queue_redraw()
+		return true
+
+	## Ends the committed attack pose immediately, leaving the drawn artwork at rest.
+	func cancel_attack() -> void:
+		if attack_remaining <= 0.0 and attack_span <= 0.0:
+			return
+		attack_remaining = 0.0
+		attack_span = 0.0
+		queue_redraw()
+
+	## The pose settles itself with real frame deltas; a fallen actor never keeps or
+	## finishes a lunge, and a completed span leaves no residual offset.
+	func advance_attack(delta: float) -> void:
+		if attack_remaining <= 0.0:
+			return
+		if fallen:
+			cancel_attack()
+			return
+		if delta <= 0.0:
+			return
+		attack_remaining = maxf(0.0, attack_remaining - delta)
+		if attack_remaining <= 0.0:
+			attack_span = 0.0
+		queue_redraw()
+
+	## True only while this actor is really mid-lunge.
+	func attacking() -> bool:
+		return attack_remaining > 0.0 and not fallen
+
+	## Zero at rest, peaking at one half-way through the pose and back to zero at its end,
+	## so the lunge both starts and ends exactly at the idle pose.
+	func attack_shape() -> float:
+		if not attacking() or attack_span <= 0.0:
+			return 0.0
+		var progress := clampf(1.0 - attack_remaining / attack_span, 0.0, 1.0)
+		return sin(progress * PI)
+
+	## How far this actor lunges forward: a share of its own drawn width, capped so the
+	## pose reads as one step toward the other lineup instead of a teleport.
+	func attack_forward_pixels() -> float:
+		return clampf(actor_art_width() * ATTACK_LUNGE_RATIO, 4.0, ATTACK_LUNGE_MAX)
+
+	## The lunge applied to the drawn transform, in this actor's facing direction.
+	func attack_lunge() -> float:
+		return facing * attack_forward_pixels() * attack_shape()
+
+	## Paper stretch along the lunge, and the matching squash across it.
+	func attack_stretch() -> float:
+		return 1.0 + ATTACK_STRETCH * attack_shape()
+
+	func attack_squash() -> float:
+		return 1.0 - ATTACK_SQUASH * attack_shape()
 
 	## A stable per-puppet phase from this actor's side and slot; never wall-clock or RNG.
 	func idle_offset() -> float:
@@ -268,14 +346,19 @@ class Puppet extends Control:
 		return art_band().end.y - art_inset()
 
 	## One pose shared by both draw paths: inward facing, the existing fallen tilt, the
-	## breathing height and the bob, applied about `anchor` at `base_scale`.
+	## breathing height, the bob and, only during a committed attack, the forward lunge
+	## with its paper stretch. Applied about `anchor` at `base_scale`, so the Control, its
+	## pinned name tag and every target rectangle keep their exact place.
 	func idle_transform(anchor: Vector2, base_scale: float) -> Transform2D:
 		return Transform2D(-0.7 * facing if fallen else 0.0,
-			Vector2(facing, idle_breath()) * base_scale, 0.0,
-			anchor + Vector2(0.0, idle_bob()))
+			Vector2(facing * attack_stretch(), idle_breath() * attack_squash()) * base_scale, 0.0,
+			anchor + Vector2(attack_lunge(), idle_bob()))
 
 	## Binds one authoritative actor ID and its loaded art; a missing texture keeps the fallback.
+	## A rebound slot drops any pose in flight, so one actor never finishes another's lunge.
 	func bind_actor(id: String, art: Dictionary) -> void:
+		if id != actor_id:
+			cancel_attack()
 		actor_id = id
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
@@ -310,12 +393,34 @@ class Puppet extends Control:
 		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
 		return Rect2(Vector2(fit_band.get_center().x - drawn.x / 2.0, fit_band.end.y - drawn.y), drawn)
 
-	## The bounding rectangle the bound texture covers after the current idle pose.
+	## The bounding rectangle the drawn pose covers after the current pose transform.
 	func posed_image_rect() -> Rect2:
-		var rect := image_rect()
+		var rect := pose_rect(pose_texture())
 		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 			return Rect2()
 		return _posed_rect(Rect2(-rect.size / 2.0, rect.size), rect.get_center(), 1.0)
+
+	## Whichever pose artwork this actor draws at this instant: its own authored attack
+	## pose during a committed hit, and otherwise the idle image it always drew. An actor
+	## without an attack image (or without any supplied art at all) keeps its idle drawing
+	## and still performs the same lunge.
+	func pose_texture() -> Texture2D:
+		if attacking() and attack_texture != null:
+			return attack_texture
+		return idle_texture
+
+	## Placement of the drawn pose inside the same art band: fitted at its own
+	## proportions with its bottom edge on the same foot line as the idle artwork, so the
+	## pose can never stretch a shorter attack image or float an actor off the ground.
+	func pose_rect(texture: Texture2D) -> Rect2:
+		var base := image_rect()
+		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0 \
+				or base.size.x <= 0.0 or base.size.y <= 0.0:
+			return Rect2()
+		var fit := minf(base.size.x / float(texture.get_width()),
+			base.size.y / float(texture.get_height()))
+		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
+		return Rect2(Vector2(base.get_center().x - drawn.x / 2.0, base.end.y - drawn.y), drawn)
 
 	## The bounding rectangle the drawn fallback covers after the current idle pose.
 	func posed_fallback_rect() -> Rect2:
@@ -396,9 +501,8 @@ class Puppet extends Control:
 		# shadow and rim add no control and can never take pointer or keyboard input.
 		_draw_contact_shadow()
 		_draw_silhouette()
-		var texture := current_texture()
-		if texture != null:
-			_draw_actor(texture)
+		if current_texture() != null:
+			_draw_actor(pose_texture())
 		else:
 			_draw_fallback()
 		_draw_tag()
@@ -416,13 +520,14 @@ class Puppet extends Control:
 			draw_colored_polygon(oval_points(center, radius),
 				Color(SHADOW_INK, SHADOW_ALPHA / float(SHADOW_RINGS)))
 
-	## A dark low-radius copy of whichever artwork is bound, drawn just before it. The copy
-	## is scaled about the foot line, so the rim grows up and sideways but never floats the
-	## actor off the ground. Draw-only: no target, name or intent changes.
+	## A dark low-radius copy of whichever artwork is drawn, drawn just before it. The copy
+	## follows the same attack pose and is scaled about the foot line, so the rim grows up
+	## and sideways but never floats the actor off the ground. Draw-only: no target, name or
+	## intent changes.
 	func _draw_silhouette() -> void:
-		var texture := current_texture()
+		var texture := pose_texture() if current_texture() != null else null
 		if texture != null:
-			var rect := image_rect()
+			var rect := pose_rect(texture)
 			if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 				return
 			var grown := rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
@@ -454,8 +559,12 @@ class Puppet extends Control:
 		draw_circle(Vector2(tag.position.x + 7.0, tag.get_center().y), 1.6, TAG_THREAD)
 		draw_circle(Vector2(tag.end.x - 7.0, tag.get_center().y), 1.6, TAG_THREAD)
 
+	## Draws the pose artwork (`pose_texture()`) inside the band: the authored attack pose
+	## during a committed hit, otherwise the idle image, both resting on the foot line.
 	func _draw_actor(texture: Texture2D) -> void:
-		var rect := image_rect()
+		if texture == null:
+			return
+		var rect := pose_rect(texture)
 		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 			return
 		# Heroes face right, enemies left; the fallen actor keeps the drawn tilt treatment.
@@ -1015,6 +1124,34 @@ func _bind_puppet_art(app, puppet) -> void:
 	if actor_id == puppet.actor_id:
 		return
 	puppet.bind_actor(actor_id, art_for(actor_id))
+
+
+## The one mounted, still-standing and visible hero puppet bound to this authoritative
+## actor ID. Identity comes from the bound ID, never from a slot or a screen position;
+## a missing or duplicated owner resolves nothing, so presentation never invents a source.
+func hero_puppet(actor_id: String) -> Control:
+	if actor_id.is_empty():
+		return null
+	var found: Control = null
+	for puppet in _puppets:
+		if not is_instance_valid(puppet) or puppet.facing <= 0.0 or puppet.fallen:
+			continue
+		if puppet.actor_id != actor_id:
+			continue
+		if found != null:
+			return null
+		found = puppet
+	if found == null or not found.is_inside_tree() or not found.is_visible_in_tree():
+		return null
+	return found
+
+
+## Ends every in-flight committed attack pose (battle teardown or a rebind), so no
+## mounted actor is left mid-lunge and the artwork returns exactly to idle.
+func cancel_poses() -> void:
+	for puppet in _puppets:
+		if is_instance_valid(puppet):
+			puppet.cancel_attack()
 
 
 ## The admitted battle's own route kind. Only a standalone _start_battle (no run map at

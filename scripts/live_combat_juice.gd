@@ -6,14 +6,20 @@ extends Node
 ## A later *committed* HP or Block change (a resolved attack, an End Turn, a status
 ## tick the rules already applied) draws one short, pointer-inert float plus a hit
 ## flash at that actor's current presentation, falling back to the matching live
-## combat meter. Nothing here awaits or gates input: fast mode only shortens the
-## effects, and returning, a new battle, terminal teardown or a missing anchor
-## presentation drops every cue and rebaselines instead of inventing one.
+## combat meter. A committed held-card play whose single held copy really left the hand,
+## whose authored record is an individually targeted enemy attack and whose only
+## authoritative change was one enemy's HP/Block loss also lets that card's own living
+## hero puppet perform one bounded attack-pose lunge. An area cast that happens to leave
+## only one damaged recipient is never classified as a single hit.
+## Nothing here awaits or gates input: fast mode only shortens the effects, and
+## returning, a new battle, terminal teardown or a missing anchor presentation drops
+## every cue and rebaselines instead of inventing one.
 
 const NORMAL_SECONDS := 0.6
 const FAST_SECONDS := 0.15
 const HISTORY_LIMIT := 64
 const FLIGHT_HISTORY_LIMIT := 64
+const POSE_HISTORY_LIMIT := 64
 const FLIGHT_SIZE := Vector2(126, 64)
 const FLOAT_WIDTH := 120.0
 const FLOAT_HEIGHT := 26.0
@@ -26,6 +32,10 @@ var overlay: Control
 var history: Array[Dictionary] = []
 ## Separate bounded receipts for actually spawned, authoritative discard flights.
 var flight_history: Array[Dictionary] = []
+## Separate bounded receipts for genuinely committed card-attack lunges
+## ({"side","position","id","card_id","target_position","target_id","hp","block",
+## "anchor","fast","duration"}).
+var pose_history: Array[Dictionary] = []
 ## Bumped once per battle binding, so a test or screenshot can prove a single rebind.
 var bind_serial := 0
 var bound := false
@@ -41,6 +51,10 @@ var _held_before: Array[String] = []
 var _discard_before: Array[String] = []
 var _draw_before: Array[String] = []
 var _held_sources: Array[Dictionary] = []
+## The authoritative turn boundary seen at the previous sync. A card play leaves it
+## alone, while a resolved enemy phase advances it, so End Turn damage is never
+## presented as a card attack.
+var _phase_marker: Array = []
 
 
 func _process(_delta: float) -> void:
@@ -115,18 +129,22 @@ func _sync() -> void:
 		overlay = _make_overlay()
 		_snapshot = _read(app)
 		_baseline_cards(app)
+		_baseline_phase(app)
 		return
 	if not _presentation_available(app):
 		# No actor can be anchored at all: drop the cues and rebaseline, never guess.
 		_kill_cues()
 		_snapshot = _read(app)
 		_baseline_cards(app)
+		_baseline_phase(app)
 		return
 	var current := _read(app)
 	_emit_deltas(app, current)
 	_emit_discard_flights(app)
+	_emit_attack_pose(app, current)
 	_snapshot = current
 	_baseline_cards(app)
+	_baseline_phase(app)
 
 
 func _bind(app) -> void:
@@ -141,15 +159,22 @@ func _bind(app) -> void:
 	overlay = _make_overlay()
 	history.clear()
 	flight_history.clear()
+	pose_history.clear()
 	# Mounting only baselines the current HP/Block; it never announces a change.
 	_snapshot = _read(app)
 	_baseline_cards(app)
+	_baseline_phase(app)
 	bound = true
 
 
 ## Title, terminal teardown or a replaced fight: no stale snapshot and no orphan cue.
 func _teardown() -> void:
 	_kill_cues()
+	# A closed or replaced battle never keeps a mounted actor mid-lunge.
+	var app := get_parent()
+	var roster = app.get_node_or_null("LiveEnemyRoster") if app != null else null
+	if roster != null and is_instance_valid(roster) and roster.has_method("cancel_poses"):
+		roster.cancel_poses()
 	if is_instance_valid(_battle) and _battle.tree_exiting.is_connected(_teardown):
 		_battle.tree_exiting.disconnect(_teardown)
 	if is_instance_valid(overlay):
@@ -165,9 +190,11 @@ func _teardown() -> void:
 	_discard_before.clear()
 	_draw_before.clear()
 	_held_sources.clear()
+	_phase_marker.clear()
 	bound = false
 	history.clear()
 	flight_history.clear()
+	pose_history.clear()
 	if not is_instance_valid(fast_button):
 		fast_button = null
 
@@ -213,6 +240,14 @@ func _store(snapshot: Dictionary, side: String, actor: Dictionary) -> void:
 
 ## One cue per actor whose committed HP or Block really changed since the last sync.
 func _emit_deltas(app, current: Dictionary) -> void:
+	for change in _actor_changes(current):
+		_spawn(app, change, int(change["hp"]), int(change["block"]))
+
+
+## Every authoritative actor whose HP or Block really changed since the last sync, with
+## its exact deltas. Read-only: it never reorders, resolves or mutates combat.
+func _actor_changes(current: Dictionary) -> Array[Dictionary]:
+	var changed: Array[Dictionary] = []
 	for key in _snapshot:
 		if not current.has(key):
 			continue
@@ -222,7 +257,9 @@ func _emit_deltas(app, current: Dictionary) -> void:
 		var block_delta: int = int(now["block"]) - int(before["block"])
 		if hp_delta == 0 and block_delta == 0:
 			continue
-		_spawn(app, now, hp_delta, block_delta)
+		changed.append({"side": now["side"], "position": now["position"], "id": now["id"],
+			"hp": hp_delta, "block": block_delta})
+	return changed
 
 
 func _spawn(app, actor: Dictionary, hp_delta: int, block_delta: int) -> void:
@@ -421,6 +458,150 @@ func _baseline_cards(app) -> void:
 	_discard_before.assign(app.deck.discard_pile)
 	_draw_before.assign(app.deck.draw_pile)
 	_held_sources = _read_held_sources(app)
+
+
+## The authoritative turn boundary of this battle: the enemy-phase counter plus whether
+## a player turn is open. Only a resolved enemy phase advances it; a card play does not.
+func _phase_key(app) -> Array:
+	if app == null or app.enemy_intents == null or app.deck == null:
+		return []
+	return [int(app.enemy_intents._turn_index), bool(app.deck.turn_active)]
+
+
+func _baseline_phase(app) -> void:
+	_phase_marker = _phase_key(app)
+
+
+## The exact held copies this sync really committed from the hand to the discard pile,
+## keyed by card ID. A refill, reshuffle or deck-composition change is ambiguous and
+## returns nothing, so no reward, shop or End Turn bookkeeping can look like a play.
+func _committed_hand_loss(app) -> Dictionary:
+	var before_draw := _card_counts(_draw_before)
+	var after_draw := _card_counts(app.deck.draw_pile)
+	# No refill/reshuffle and no deck composition change during an observed commit.
+	for id in after_draw:
+		if int(after_draw[id]) > int(before_draw.get(id, 0)):
+			return {}
+	var before_discard := _card_counts(_discard_before)
+	var after_discard := _card_counts(app.deck.discard_pile)
+	for id in before_discard:
+		if int(after_discard.get(id, 0)) < int(before_discard[id]):
+			return {}
+	var before_hand := _card_counts(_held_before)
+	var after_hand := _card_counts(app.deck.hand)
+	var lost := {}
+	for id in before_hand:
+		var drawn: int = int(before_draw.get(id, 0)) - int(after_draw.get(id, 0))
+		var committed: int = int(before_hand[id]) + drawn - int(after_hand.get(id, 0))
+		var gained: int = int(after_discard.get(id, 0)) - int(before_discard.get(id, 0))
+		if committed < 0 or committed > int(before_hand[id]) or committed > gained:
+			return {}
+		if committed > 0:
+			lost[id] = committed
+	return lost
+
+
+## The one living hero who authored this committed card, matched by authoritative hero
+## ID only. Unknown IDs, stitched halves with two owners, a downed owner or a duplicated
+## owner resolve nothing, so no presentation invents a source position.
+func _attack_source(card_id: String) -> Dictionary:
+	if _party == null or card_id.is_empty():
+		return {}
+	var matches: Array[Dictionary] = []
+	for hero in _party.get_heroes():
+		var id = hero.get("id")
+		if not id is String or id.is_empty() or not card_id.begins_with(id + "_"):
+			continue
+		matches.append(hero)
+	if matches.size() != 1:
+		return {}
+	var hero: Dictionary = matches[0]
+	var position = hero.get("position")
+	if not position is int or position < 1 or _party.is_downed(position):
+		return {}
+	return hero
+
+
+## The committed card's own current authored record, resolved by the mounted live hand's
+## catalog/preview authority (the same one that admits and resolves this cast). An
+## unknown, stitched, replaced or missing record returns empty, so presentation never
+## classifies a card from a substitute table or from an actor-count guess.
+func _authored_definition(app, card_id: String) -> Dictionary:
+	if app == null or card_id.is_empty():
+		return {}
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or not is_instance_valid(preview) or not preview.has_method("_definition"):
+		return {}
+	var definition = preview._definition(card_id)
+	if not definition is Dictionary:
+		return {}
+	return definition
+
+
+## True only for an individually targeted enemy attack authored by this exact living
+## hero: the enemy_single relation the mounted picker itself requires before offering a
+## chosen target. An enemy_all/enemy_random record stays false no matter how many (or
+## few) enemies its committed cast actually damaged.
+func _is_single_target_attack(app, hero: Dictionary, card_id: String) -> bool:
+	var definition := _authored_definition(app, card_id)
+	if definition.get("id") != card_id:
+		return false
+	if String(definition.get("owner", "")) != String(hero.get("id", "")):
+		return false
+	if definition.get("target_kind") != "enemy_single":
+		return false
+	if not definition.get("effects") is Dictionary:
+		return false
+	var damage: Variant = definition["effects"].get("damage")
+	return damage is int and int(damage) > 0
+
+
+## One committed held enemy hit: exactly one held copy really left the hand for the
+## discard, that copy's verified authored record is an individually targeted attack
+## owned by the identified living hero, the only authoritative change in the same step
+## was one enemy losing HP or Block, and no enemy phase resolved. Previews, rejected or
+## repeated clicks, End Turn and status ticks, area or multi-actor effects, stitched
+## casts and closed battles therefore never fabricate a pose.
+func _emit_attack_pose(app, current: Dictionary) -> void:
+	if _phase_key(app) != _phase_marker:
+		return
+	var lost := _committed_hand_loss(app)
+	if lost.size() != 1:
+		return
+	var card_id := String(lost.keys()[0])
+	if int(lost[card_id]) != 1:
+		return
+	var changes := _actor_changes(current)
+	if changes.size() != 1:
+		return
+	var hit: Dictionary = changes[0]
+	if String(hit["side"]) != "enemy":
+		return
+	if int(hit["hp"]) >= 0 and int(hit["block"]) >= 0:
+		return
+	var hero := _attack_source(card_id)
+	if hero.is_empty():
+		return
+	# Never infer the card kind from the number of observed recipients: a real area
+	# cast can legally damage exactly one surviving enemy. Fail closed unless the
+	# committed card's own authored record is a single-target attack by this hero.
+	if not _is_single_target_attack(app, hero, card_id):
+		return
+	var roster = app.get_node_or_null("LiveEnemyRoster")
+	if roster == null or not roster.has_method("hero_puppet"):
+		return
+	var puppet = roster.hero_puppet(String(hero["id"]))
+	if not is_instance_valid(puppet):
+		return
+	if not puppet.trigger_attack(duration_seconds()):
+		return
+	pose_history.append({"side": "hero", "position": int(hero["position"]),
+		"id": String(hero["id"]), "card_id": card_id, "anchor": "presentation",
+		"target_position": int(hit["position"]), "target_id": String(hit["id"]),
+		"hp": int(hit["hp"]), "block": int(hit["block"]), "fast": fast_animations,
+		"duration": float(puppet.attack_span)})
+	if pose_history.size() > POSE_HISTORY_LIMIT:
+		pose_history = pose_history.slice(pose_history.size() - POSE_HISTORY_LIMIT)
 
 
 func _card_counts(cards: Array) -> Dictionary:
