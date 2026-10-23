@@ -266,7 +266,7 @@ func _test_catalog_content() -> void:
 						"authored outcome gold is integral" + (" (negative allowed)" if allow_negative_gold else " nonnegative") + ": " + event_id + "/" + choice_id)
 					_check(_is_integral_json_number(raw_scraps, true),
 						"authored outcome scraps is integral signed: " + event_id + "/" + choice_id)
-					if _is_integral_json_number(raw_gold) and _is_integral_json_number(raw_scraps, true):
+					if _is_integral_json_number(raw_gold, allow_negative_gold) and _is_integral_json_number(raw_scraps, true):
 						_check(int(raw_gold) == expected_outcome["gold"]
 							and int(raw_scraps) == expected_outcome["scraps"],
 							"authored outcome matches exact gold/scraps: " + event_id + "/" + choice_id)
@@ -407,6 +407,89 @@ func _test_button_trail_wallet_settlement() -> void:
 	_check(leave_service.is_claimed() and not leave_service.is_valid(),
 		"leave latches claim and marks selector consumed")
 	_check(randi() == leave_rng, "leave wallet settlement spends no global RNG")
+
+	# Preview leave at 12 gold/0 scraps: affordable, forecast 0 gold/2 scraps.
+	var leave_preview_12_event: Dictionary = authored_record.duplicate(true)
+	var leave_preview_12_wallet := {"gold": 12, "scraps": 0}
+	var leave_preview_12_rng := _rng_start(64010)
+	var leave_preview_12_service := RunEventChoice.new(leave_preview_12_event)
+	_check(leave_preview_12_service.is_valid() and not leave_preview_12_service.is_claimed(),
+		"fresh button_trail selector valid before leave preview at 12 gold")
+	var leave_preview_12 := leave_preview_12_service.preview_wallet_choices(leave_preview_12_wallet)
+	_check(leave_preview_12.get("ok") == true and leave_preview_12.get("event_id") == "button_trail",
+		"leave preview at 12 gold returns ok with button_trail event_id")
+	var leave_preview_entry := {}
+	for entry in leave_preview_12.get("choices", []):
+		if entry.get("choice_id") == "leave":
+			leave_preview_entry = entry
+			break
+	_check(not leave_preview_entry.is_empty(), "leave preview entry present for leave choice")
+	_check(leave_preview_entry.get("gold_delta") == -12 and leave_preview_entry.get("scraps_delta") == 2,
+		"leave preview shows exact signed deltas -12 gold, +2 scraps")
+	_check(leave_preview_entry.get("affordable") == true,
+		"leave preview marks choice affordable at 12 gold")
+	_check(_wallet_exact_int(leave_preview_entry.get("wallet"), 0, 2),
+		"leave preview projects exact wallet {gold: 0, scraps: 2}")
+	_check(leave_preview_12_service.is_valid() and not leave_preview_12_service.is_claimed()
+		and leave_preview_12_service.get_event() == original_event
+		and leave_preview_12_event == original_event
+		and _wallet_exact_int(leave_preview_12_wallet, 12, 0),
+		"leave preview consumes no claim and leaves state unchanged")
+	_check(randi() == leave_preview_12_rng, "leave preview at 12 gold spends no global RNG")
+
+	# Preview leave at 11 gold/0 scraps: unaffordable, unchanged forecast.
+	var leave_preview_11_event: Dictionary = authored_record.duplicate(true)
+	var leave_preview_11_wallet := {"gold": 11, "scraps": 0}
+	var leave_preview_11_rng := _rng_start(64011)
+	var leave_preview_11_service := RunEventChoice.new(leave_preview_11_event)
+	_check(leave_preview_11_service.is_valid() and not leave_preview_11_service.is_claimed(),
+		"fresh button_trail selector valid before leave preview at 11 gold")
+	var leave_preview_11 := leave_preview_11_service.preview_wallet_choices(leave_preview_11_wallet)
+	_check(leave_preview_11.get("ok") == true and leave_preview_11.get("event_id") == "button_trail",
+		"leave preview at 11 gold returns ok with button_trail event_id")
+	var leave_preview_11_entry := {}
+	for entry in leave_preview_11.get("choices", []):
+		if entry.get("choice_id") == "leave":
+			leave_preview_11_entry = entry
+			break
+	_check(not leave_preview_11_entry.is_empty(), "leave preview entry present for leave choice at 11 gold")
+	_check(leave_preview_11_entry.get("gold_delta") == -12 and leave_preview_11_entry.get("scraps_delta") == 2,
+		"leave preview at 11 gold shows exact signed deltas -12 gold, +2 scraps")
+	_check(leave_preview_11_entry.get("affordable") == false,
+		"leave preview marks choice unaffordable at 11 gold")
+	_check(_wallet_exact_int(leave_preview_11_entry.get("wallet"), 11, 0),
+		"leave preview at 11 gold projects unchanged wallet {gold: 11, scraps: 0}")
+	_check(leave_preview_11_service.is_valid() and not leave_preview_11_service.is_claimed()
+		and leave_preview_11_service.get_event() == original_event
+		and leave_preview_11_event == original_event
+		and _wallet_exact_int(leave_preview_11_wallet, 11, 0),
+		"leave preview at 11 gold consumes no claim and leaves state unchanged")
+	_check(randi() == leave_preview_11_rng, "leave preview at 11 gold spends no global RNG")
+
+	# Compare preview forecasts with actual commit/refusal receipts for leave at 12 gold.
+	var leave_commit_12_event: Dictionary = authored_record.duplicate(true)
+	var leave_commit_12_wallet := {"gold": 12, "scraps": 0}
+	var leave_commit_12_service := RunEventChoice.new(leave_commit_12_event)
+	var leave_commit_12_receipt := leave_commit_12_service.choose_with_wallet("leave", leave_commit_12_wallet)
+	_check(leave_commit_12_receipt.get("ok") == true
+		and leave_commit_12_receipt.get("wallet") == leave_preview_entry.get("wallet")
+		and leave_commit_12_receipt.get("event_id") == "button_trail"
+		and leave_commit_12_receipt.get("choice_id") == "leave",
+		"leave commit at 12 gold matches preview forecast exactly")
+	_check(leave_commit_12_service.is_claimed() and not leave_commit_12_service.is_valid(),
+		"leave commit at 12 gold latches claim")
+
+	# Compare preview forecasts with actual refusal receipt for leave at 11 gold.
+	var leave_refuse_11_event: Dictionary = authored_record.duplicate(true)
+	var leave_refuse_11_wallet := {"gold": 11, "scraps": 0}
+	var leave_refuse_11_service := RunEventChoice.new(leave_refuse_11_event)
+	var leave_refuse_11_receipt := leave_refuse_11_service.choose_with_wallet("leave", leave_refuse_11_wallet)
+	_check(leave_refuse_11_receipt.get("ok") == false
+		and leave_refuse_11_receipt.get("wallet") == leave_preview_11_entry.get("wallet")
+		and leave_refuse_11_receipt.get("event_id") == ""
+		and leave_refuse_11_receipt.get("choice_id") == ""
+		and leave_refuse_11_service.is_valid() and not leave_refuse_11_service.is_claimed(),
+		"leave refusal at 11 gold matches preview forecast exactly")
 
 	# Branch 2a: leave with insufficient gold (11) is refused without claiming
 	var poor_leave_event: Dictionary = authored_record.duplicate(true)
@@ -2198,6 +2281,86 @@ func _test_wallet_choice_previews() -> void:
 			_check(local_rng.state == local_state and randi() == rng_expected,
 				"repeat preview, wallet oracle, commit and replay leave both RNGs untouched: "
 				+ event_id + "/" + str(scraps))
+
+	# Explicit Button Trail leave preview at exact affordability boundaries (AC2, AC3).
+	# These are not covered by the gold=9 loop above; leave requires 12 gold.
+	var button_trail_matches := _matching("button_trail")
+	_check(button_trail_matches.size() == 1, "Button Trail event required for leave boundary previews")
+	if button_trail_matches.size() == 1:
+		var bt_record: Dictionary = button_trail_matches[0].duplicate(true)
+		var bt_expected: Dictionary = REQUIRED["button_trail"]["outcomes"]
+		
+		# leave at 12 gold/0 scraps: affordable, forecast 0 gold/2 scraps
+		var bt_wallet_12 := {"gold": 12, "scraps": 0}
+		var bt_wallet_12_before: Dictionary = bt_wallet_12.duplicate(true)
+		var bt_event_12_before: Dictionary = bt_record.duplicate(true)
+		var bt_rng_12 := _rng_start(70100)
+		var bt_local_12 := RandomNumberGenerator.new()
+		bt_local_12.seed = 70100
+		var bt_local_state_12: int = bt_local_12.state
+		var bt_service_12 := RunEventChoice.new(bt_record)
+		_check(bt_service_12.is_valid() and not bt_service_12.is_claimed(),
+			"Button Trail leave preview at 12 gold starts valid and unclaimed")
+		var bt_preview_12 := bt_service_12.preview_wallet_choices(bt_wallet_12)
+		_check(bt_preview_12.get("ok") == true and bt_preview_12.get("event_id") == "button_trail",
+			"Button Trail leave preview at 12 gold returns ok")
+		var bt_leave_entry_12 := _preview_choice(bt_preview_12, "leave")
+		_check(not bt_leave_entry_12.is_empty(), "leave entry present in preview at 12 gold")
+		_check(bt_leave_entry_12.get("gold_delta") == -12 and bt_leave_entry_12.get("scraps_delta") == 2,
+			"leave preview at 12 gold shows exact signed deltas")
+		_check(bt_leave_entry_12.get("affordable") == true,
+			"leave preview at 12 gold marks choice affordable")
+		_check(_wallet_exact_int(bt_leave_entry_12.get("wallet"), 0, 2),
+			"leave preview at 12 gold projects {gold: 0, scraps: 2}")
+		var bt_receipt_12 := RunEventChoice.new(bt_record).choose_with_wallet("leave", bt_wallet_12)
+		_check(bt_receipt_12.get("ok") == true
+			and bt_receipt_12.get("wallet") == bt_leave_entry_12.get("wallet")
+			and bt_receipt_12.get("event_id") == "button_trail"
+			and bt_receipt_12.get("choice_id") == "leave",
+			"leave commit at 12 gold matches preview forecast")
+		_check(bt_service_12.is_valid() and not bt_service_12.is_claimed()
+			and bt_service_12.get_event() == bt_event_12_before
+			and bt_record == bt_event_12_before
+			and bt_wallet_12 == bt_wallet_12_before,
+			"leave preview at 12 gold leaves selector and inputs unchanged")
+		_check(bt_local_12.state == bt_local_state_12 and randi() == bt_rng_12,
+			"leave preview at 12 gold spends no RNG")
+		
+		# leave at 11 gold/0 scraps: unaffordable, unchanged forecast
+		var bt_wallet_11 := {"gold": 11, "scraps": 0}
+		var bt_wallet_11_before: Dictionary = bt_wallet_11.duplicate(true)
+		var bt_event_11_before: Dictionary = bt_record.duplicate(true)
+		var bt_rng_11 := _rng_start(70101)
+		var bt_local_11 := RandomNumberGenerator.new()
+		bt_local_11.seed = 70101
+		var bt_local_state_11: int = bt_local_11.state
+		var bt_service_11 := RunEventChoice.new(bt_record)
+		_check(bt_service_11.is_valid() and not bt_service_11.is_claimed(),
+			"Button Trail leave preview at 11 gold starts valid and unclaimed")
+		var bt_preview_11 := bt_service_11.preview_wallet_choices(bt_wallet_11)
+		_check(bt_preview_11.get("ok") == true and bt_preview_11.get("event_id") == "button_trail",
+			"Button Trail leave preview at 11 gold returns ok")
+		var bt_leave_entry_11 := _preview_choice(bt_preview_11, "leave")
+		_check(not bt_leave_entry_11.is_empty(), "leave entry present in preview at 11 gold")
+		_check(bt_leave_entry_11.get("gold_delta") == -12 and bt_leave_entry_11.get("scraps_delta") == 2,
+			"leave preview at 11 gold shows exact signed deltas")
+		_check(bt_leave_entry_11.get("affordable") == false,
+			"leave preview at 11 gold marks choice unaffordable")
+		_check(_wallet_exact_int(bt_leave_entry_11.get("wallet"), 11, 0),
+			"leave preview at 11 gold projects unchanged wallet {gold: 11, scraps: 0}")
+		var bt_refusal_11 := RunEventChoice.new(bt_record).choose_with_wallet("leave", bt_wallet_11)
+		_check(bt_refusal_11.get("ok") == false
+			and bt_refusal_11.get("wallet") == bt_leave_entry_11.get("wallet")
+			and bt_refusal_11.get("event_id") == ""
+			and bt_refusal_11.get("choice_id") == "",
+			"leave refusal at 11 gold matches preview forecast")
+		_check(bt_service_11.is_valid() and not bt_service_11.is_claimed()
+			and bt_service_11.get_event() == bt_event_11_before
+			and bt_record == bt_event_11_before
+			and bt_wallet_11 == bt_wallet_11_before,
+			"leave preview at 11 gold leaves selector and inputs unchanged")
+		_check(bt_local_11.state == bt_local_state_11 and randi() == bt_rng_11,
+			"leave preview at 11 gold spends no RNG")
 
 	# Explicit scarcity gates on all five requested authored spending IDs;
 	# free/gain alternatives must remain available in the very same query.
