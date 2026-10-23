@@ -41,6 +41,221 @@ const HAND_CARD_HEIGHT := 160
 const COMBO_FORECAST_NAME := "ComboForecastCue"
 ## The pinned Quilt village base between the title and an opening route.
 const BASE_SCREEN_SCENE := "res://scenes/base_screen.tscn"
+## Opening chooser: one readable label per authored node kind, so the raw node ID stays
+## in metadata only. Unknown kinds keep their authored name instead of hiding the stop.
+const ROUTE_KIND_LABELS := {
+	"Fight": "Fight",
+	"Elite": "Elite fight",
+	"Rest": "Rest stop",
+	"Shop": "Shop",
+	"Event": "Event",
+	"Treasure": "Treasure",
+	"Boss": "Boss fight",
+}
+## Felt patch and thread colours of each kind's sewn route token, reused by the drawn
+## no-art fallback (Treasure owns no committed token image yet).
+const ROUTE_KIND_FELT := {
+	"Fight": Color("#8a5a4a"),
+	"Elite": Color("#9a6248"),
+	"Rest": Color("#6d7f63"),
+	"Shop": Color("#7d7150"),
+	"Event": Color("#6c6478"),
+	"Treasure": Color("#9a7c3f"),
+	"Boss": Color("#8a4a4a"),
+}
+const ROUTE_KIND_THREAD := {
+	"Fight": Color("#e8c9a0"),
+	"Elite": Color("#f0d2a0"),
+	"Rest": Color("#c6dcc0"),
+	"Shop": Color("#e4d59a"),
+	"Event": Color("#cfc2e2"),
+	"Treasure": Color("#f2dd9a"),
+	"Boss": Color("#e8b2ae"),
+}
+## Book page colours: cream pages, stitched spine and a ribbon bookmark, cut paper style.
+const ROUTE_BOOK_PAPER := Color("#ecdfbd")
+const ROUTE_BOOK_SHADE := Color("#d8c9a2")
+const ROUTE_BOOK_INK := Color("#302b29")
+const ROUTE_BOOK_THREAD := Color("#c9b996")
+const ROUTE_BOOK_FELT := Color("#4f5a47")
+
+
+## The readable stop label for an authored node kind; the only name the player sees.
+static func route_kind_label(kind: String) -> String:
+	return str(ROUTE_KIND_LABELS.get(kind, kind))
+
+
+## Inert sewn route token for one opening choice. The authored kind art is drawn when it
+## loads; a kind without art (Treasure) or an unreadable token keeps a drawn felt patch, so
+## no PNG is required. Never takes pointer input or keyboard focus: the Button owns the action.
+class RouteToken extends Control:
+	var token_kind := ""
+	var token_texture: Texture2D = null
+	var art_path := ""
+	var patch_colour := Color("#6c6478")
+	var thread_colour := ROUTE_BOOK_THREAD
+
+	func _init() -> void:
+		name = "Token"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+
+	## True when the drawn felt fallback replaces the committed art.
+	func uses_drawn_fallback() -> bool:
+		return token_texture == null
+
+	## Aspect-preserved destination of the token inside the button's left column.
+	func token_rect() -> Rect2:
+		if size.x <= 0.0 or size.y <= 0.0:
+			return Rect2()
+		var box := minf(size.y - 14.0, 46.0)
+		if box <= 0.0:
+			return Rect2()
+		if token_texture != null and token_texture.get_width() > 0 and token_texture.get_height() > 0:
+			var pixels := Vector2(token_texture.get_width(), token_texture.get_height())
+			var fit := minf(box / pixels.x, box / pixels.y)
+			var drawn := pixels * fit
+			return Rect2(Vector2(7.0, (size.y - drawn.y) * 0.5), drawn)
+		return Rect2(Vector2(7.0, (size.y - box) * 0.5), Vector2(box, box))
+
+	func _draw() -> void:
+		var rect := token_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			return
+		if not uses_drawn_fallback():
+			draw_texture_rect(token_texture, rect, false)
+			return
+		# Drawn no-art fallback: a sewn felt patch with a cross stitch.
+		draw_rect(rect, patch_colour)
+		draw_rect(rect, thread_colour, false, 2.0)
+		draw_line(rect.position + Vector2(10.0, 10.0), rect.end - Vector2(10.0, 10.0),
+			thread_colour, 2.0, true)
+		draw_line(Vector2(rect.position.x + 10.0, rect.end.y - 10.0),
+			Vector2(rect.end.x - 10.0, rect.position.y + 10.0), thread_colour, 2.0, true)
+
+
+## Pointer-inert open book mounted behind the opening chooser: two cream pages, a stitched
+## spine, a ribbon bookmark, a page curl and a first-floor tab that names the current floor
+## without inventing a committed node. The owner board image (RunRouteAtlas.MAP_BOARD_PATH)
+## replaces the drawn pages when it loads; a missing image keeps the complete drawn book, so
+## no PNG is required. Presentation only: it never draws randomness or touches RunMap.
+class RouteBook extends Control:
+	const BOOK := Rect2(18, 14, 1244, 692)
+	const LEFT_PAGE := Rect2(152, 56, 470, 588)
+	const RIGHT_PAGE := Rect2(650, 56, 460, 588)
+	const SPINE := Rect2(626, 50, 18, 600)
+	const CURL := 64.0
+	const STITCH_INSET := 12.0
+	const BOOKMARK := Rect2(618, 22, 34, 122)
+	const BOOKMARK_FILL := Color("#a2544a")
+	const FLOOR_TAB := Rect2(206, 118, 210, 66)
+	const FLOOR_HINT := Rect2(206, 196, 210, 64)
+	const FELT_TAB := Color("#8f7a55")
+
+	var board_texture: Texture2D = null
+
+	func _init() -> void:
+		name = "RouteBook"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+		var cue := _inert_label("FloorCue", "Floor 01", 26)
+		cue.position = FLOOR_TAB.position
+		cue.size = FLOOR_TAB.size
+		cue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cue.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		cue.add_theme_color_override("font_color", ROUTE_BOOK_PAPER)
+		cue.add_theme_constant_override("outline_size", 4)
+		cue.add_theme_color_override("font_outline_color", ROUTE_BOOK_INK)
+		cue.set_meta("floor_number", 1)
+		add_child(cue)
+		var hint := _inert_label("FloorHint", "No patch sewn yet\nchoose the first stop", 18)
+		hint.position = FLOOR_HINT.position
+		hint.size = FLOOR_HINT.size
+		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		add_child(hint)
+
+	func _inert_label(node_name: String, text: String, font_size: int) -> Label:
+		var label := Label.new()
+		label.name = node_name
+		label.text = text
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.focus_mode = Control.FOCUS_NONE
+		label.add_theme_font_size_override("font_size", font_size)
+		label.add_theme_color_override("font_color", ROUTE_BOOK_INK)
+		return label
+
+	## The page rect that holds the choice column; drawn and owner art share this layout.
+	static func choices_rect() -> Rect2:
+		return RIGHT_PAGE.grow(-14.0)
+
+	func uses_board_texture() -> bool:
+		return board_texture != null
+
+	## Deterministic page geometry, for mounted layout assertions.
+	func page_geometry() -> Dictionary:
+		return {"book": BOOK, "left_page": LEFT_PAGE, "right_page": RIGHT_PAGE,
+			"spine": SPINE, "bookmark": BOOKMARK, "floor_tab": FLOOR_TAB,
+			"choices": choices_rect()}
+
+	func _draw() -> void:
+		if board_texture != null:
+			# The owner board carries pages, spine, ribbon and bookmark in one image.
+			draw_texture_rect(board_texture, Rect2(Vector2.ZERO, size), false)
+		else:
+			_draw_drawn_book()
+		# The first-floor tab sits on either page pair, so the cue always reads as a sewn tab.
+		draw_rect(FLOOR_TAB, FELT_TAB)
+		_stitch_frame(FLOOR_TAB.grow(-4.0))
+
+	## Complete drawn fallback book: no PNG is required to open this chooser.
+	func _draw_drawn_book() -> void:
+		draw_rect(BOOK, Color("#241f1a"))
+		draw_rect(BOOK.grow(-4.0), ROUTE_BOOK_SHADE)
+		draw_rect(LEFT_PAGE, ROUTE_BOOK_PAPER)
+		draw_rect(RIGHT_PAGE, ROUTE_BOOK_PAPER)
+		draw_rect(SPINE, Color("#b7a276"))
+		var stitch_y := int(SPINE.position.y) + 16
+		while stitch_y < int(SPINE.end.y) - 8:
+			draw_line(Vector2(SPINE.position.x + 4.0, float(stitch_y)),
+				Vector2(SPINE.end.x - 4.0, float(stitch_y)), ROUTE_BOOK_THREAD, 1.0, true)
+			stitch_y += 26
+		_stitch_frame(LEFT_PAGE.grow(-STITCH_INSET))
+		_stitch_frame(RIGHT_PAGE.grow(-STITCH_INSET))
+		var curl := Rect2(RIGHT_PAGE.end - Vector2(CURL, CURL), Vector2(CURL, CURL))
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(curl.end.x - CURL, curl.end.y),
+			curl.end,
+			curl.end - Vector2(CURL * 0.55, CURL * 0.55),
+		]), ROUTE_BOOK_SHADE)
+		draw_dashed_line(Vector2(curl.end.x - CURL, curl.end.y), curl.end,
+			ROUTE_BOOK_THREAD, 1.2, 6.0)
+		draw_colored_polygon(PackedVector2Array([
+			BOOKMARK.position,
+			Vector2(BOOKMARK.end.x, BOOKMARK.position.y),
+			BOOKMARK.end,
+			Vector2(BOOKMARK.position.x + BOOKMARK.size.x * 0.5, BOOKMARK.end.y - 12.0),
+			Vector2(BOOKMARK.position.x, BOOKMARK.end.y),
+		]), BOOKMARK_FILL)
+		# A running stitch points from the floor tab to the first choices on the right page.
+		draw_dashed_line(Vector2(FLOOR_TAB.end.x + 10.0, FLOOR_TAB.get_center().y),
+			Vector2(RIGHT_PAGE.position.x + 22.0, FLOOR_TAB.get_center().y),
+			ROUTE_BOOK_THREAD, 2.0, 10.0)
+
+	func _stitch_frame(rect: Rect2) -> void:
+		var corners := [rect.position, Vector2(rect.end.x, rect.position.y), rect.end,
+			Vector2(rect.position.x, rect.end.y)]
+		for index in range(corners.size()):
+			var from: Vector2 = corners[index]
+			var to: Vector2 = corners[(index + 1) % corners.size()]
+			draw_dashed_line(from, to, ROUTE_BOOK_THREAD, 1.4, 7.0)
+		for corner: Vector2 in corners:
+			draw_line(corner + Vector2(-4, -4), corner + Vector2(4, 4), ROUTE_BOOK_THREAD, 1.2, true)
+			draw_line(corner + Vector2(4, -4), corner + Vector2(-4, 4), ROUTE_BOOK_THREAD, 1.2, true)
 
 
 ## One small sewn felt corner beside the prominent End Turn control.
@@ -99,7 +314,12 @@ var route_map_button: Button
 var route_atlas_overlay: Control
 var route_atlas: RunRouteAtlas
 var route_atlas_close: Button
+## The opening chooser's pointer-inert page backdrop; null for a connected route.
+var route_book_backdrop: Control
 var route_buttons: Array[Button] = []
+## Key: token art path, value: Texture2D or null. A negative entry is cached too, so a
+## missing token is never probed twice and its drawn fallback stays authoritative.
+var _route_tokens: Dictionary = {}
 var map_mend_buttons: Array[Button] = []
 var _map_mend_serial := 0
 var _mended_route_context: Array = []
@@ -595,45 +815,169 @@ func _open_route() -> void:
 	_connected_map = weakref(run_map)
 	_connected_route = []
 	title_view.hide()
+	# A pointer-inert page backdrop is mounted first so the chooser draws over its pages.
+	_mount_route_book()
 	route_view = VBoxContainer.new()
-	route_view.set_anchors_preset(Control.PRESET_CENTER)
-	route_view.add_theme_constant_override("separation", 16)
+	route_view.name = "OpeningBookChoices"
+	route_view.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	route_view.add_theme_constant_override("separation", 10)
 	add_child(route_view)
 	var heading := Label.new()
-	heading.text = "Opening route - choose your first node"
+	heading.name = "Heading"
+	heading.text = "Opening route"
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 24)
+	heading.add_theme_color_override("font_color", ROUTE_BOOK_INK)
 	route_view.add_child(heading)
 	var actions: Array[Button] = []
 	for id in run_map.get_legal_choices():
 		var node := run_map.get_node(id)
-		var button := Button.new()
-		button.text = "%s: %s" % [id, node.type]
-		button.set_meta("route_id", id)
-		button.set_meta("route_kind", node.type)
-		button.disabled = node.type not in RunMap.NORMAL_TYPES
-		if button.disabled:
-			button.text += " (unavailable)"
-		button.custom_minimum_size = Vector2(340, 48)
-		button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
+		var button := _route_choice_button(id, String(node.type))
 		route_view.add_child(button)
 		route_buttons.append(button)
 		if not button.disabled:
 			actions.append(button)
-	route_map_button = Button.new()
-	route_map_button.text = "View full map"
+	route_map_button = _route_book_action("View full map", 48, "Open the optional full map")
 	route_view.add_child(route_map_button)
 	route_map_button.pressed.connect(_open_route_atlas.bind(
 		weakref(run_map), weakref(route_view), weakref(route_map_button)))
 	actions.append(route_map_button)
-	route_back_button = Button.new()
-	route_back_button.text = "Back"
+	route_back_button = _route_book_action("Back", 48, "Cancel this opening")
 	route_back_button.pressed.connect(_cancel_opening.bind(weakref(run_map), weakref(route_view)))
 	route_view.add_child(route_back_button)
 	actions.append(route_back_button)
 	for index in range(actions.size()):
 		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
-	route_view.position -= route_view.get_combined_minimum_size() / 2.0
+	# Fit the choice column inside the right page, never over the spine or past the page.
+	var page := RouteBook.choices_rect()
+	var content := route_view.get_combined_minimum_size()
+	route_view.position = Vector2(
+		page.position.x + maxf(0.0, (page.size.x - content.x) * 0.5),
+		page.position.y + maxf(0.0, (page.size.y - content.y) * 0.5))
 	actions[0].grab_focus()
+
+
+## Mount the inert drawn-or-owner page backdrop of the opening chooser once.
+func _mount_route_book() -> void:
+	if is_instance_valid(route_book_backdrop):
+		return
+	var book := RouteBook.new()
+	book.board_texture = RunRouteAtlas.load_board_texture(RunRouteAtlas.MAP_BOARD_PATH)
+	add_child(book)
+	route_book_backdrop = book
+
+
+## Free the opening chooser's page backdrop synchronously; a connected route has none.
+func _clear_route_book() -> void:
+	if is_instance_valid(route_book_backdrop):
+		if route_book_backdrop.get_parent() != null:
+			route_book_backdrop.get_parent().remove_child(route_book_backdrop)
+		route_book_backdrop.queue_free()
+	route_book_backdrop = null
+
+
+## Cached optional token load; a missing file stays null (and is cached), so the button
+## keeps its drawn felt fallback and no path is probed twice.
+func _route_token_texture(path: String) -> Texture2D:
+	if path.is_empty():
+		return null
+	if not _route_tokens.has(path):
+		var loaded: Texture2D = null
+		if ResourceLoader.exists(path, "Texture2D"):
+			loaded = load(path) as Texture2D
+		_route_tokens[path] = loaded
+	return _route_tokens.get(path)
+
+
+## One art-backed opening choice: exact ID in metadata, readable kind label, sewn token.
+func _route_choice_button(id: String, kind: String) -> Button:
+	var label := route_kind_label(kind)
+	var button := Button.new()
+	button.name = "Opening_" + id
+	button.text = label
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.custom_minimum_size = Vector2(420, 62)
+	button.add_theme_font_size_override("font_size", 20)
+	button.set_meta("route_id", id)
+	button.set_meta("route_kind", kind)
+	button.set_meta("route_label", label)
+	button.disabled = kind not in RunMap.NORMAL_TYPES
+	if button.disabled:
+		button.text = label + " (unavailable)"
+	else:
+		button.tooltip_text = "Choose this %s" % label.to_lower()
+	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
+	button.add_child(_route_token(kind))
+	button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
+	return button
+
+
+## Full map and Back are themed like the choices but keep the page's centre alignment.
+func _route_book_action(title: String, height: int, tooltip: String) -> Button:
+	var button := Button.new()
+	button.text = title
+	button.custom_minimum_size = Vector2(420, height)
+	button.add_theme_font_size_override("font_size", 18)
+	button.tooltip_text = tooltip
+	_style_route_button(button, ROUTE_BOOK_THREAD, false)
+	return button
+
+
+## Felt choice face with the kind's thread colour, plus one opaque keyboard focus ring.
+func _style_route_button(button: Button, accent: Color, token_inset: bool) -> void:
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var paper := StyleBoxFlat.new()
+		match state:
+			"normal":
+				paper.bg_color = ROUTE_BOOK_FELT
+				paper.border_color = accent
+			"hover":
+				paper.bg_color = Color("#657555")
+				paper.border_color = ROUTE_BOOK_PAPER
+			"pressed":
+				paper.bg_color = Color("#3b4538")
+				paper.border_color = Color("#c5ab73")
+			_:
+				paper.bg_color = Color("#45433f")
+				paper.border_color = Color("#777166")
+		paper.set_border_width_all(2)
+		paper.set_corner_radius_all(4)
+		paper.content_margin_left = 60.0 if token_inset else 12.0
+		paper.content_margin_right = 12.0
+		paper.content_margin_top = 6.0
+		paper.content_margin_bottom = 6.0
+		button.add_theme_stylebox_override(state, paper)
+	button.add_theme_color_override("font_color", ROUTE_BOOK_PAPER)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", ROUTE_BOOK_PAPER)
+	button.add_theme_color_override("font_hover_pressed_color", ROUTE_BOOK_PAPER)
+	button.add_theme_color_override("font_disabled_color", Color("#aaa391"))
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = Color.TRANSPARENT
+	focus.border_color = Color("#f5d480")
+	focus.set_border_width_all(3)
+	focus.set_corner_radius_all(4)
+	focus.draw_center = false
+	focus.expand_margin_left = 3
+	focus.expand_margin_right = 3
+	focus.expand_margin_top = 3
+	focus.expand_margin_bottom = 3
+	button.add_theme_stylebox_override("focus", focus)
+
+
+## The kind's sewn token: committed art when it loads, else its drawn felt fallback.
+func _route_token(kind: String) -> RouteToken:
+	var art := RouteToken.new()
+	art.token_kind = kind
+	art.patch_colour = ROUTE_KIND_FELT.get(kind, Color("#6c6478"))
+	art.thread_colour = ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD)
+	art.art_path = RunRouteAtlas.node_token_path(kind)
+	art.token_texture = _route_token_texture(art.art_path)
+	art.set_meta("route_kind", kind)
+	art.set_meta("art_path", art.art_path)
+	art.set_meta("art_backed", art.token_texture != null)
+	return art
 
 
 func _choose_route(id: String, source_map: WeakRef = null) -> bool:
@@ -710,6 +1054,8 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 	route_atlas_close.pressed.connect(_close_route_atlas.bind(source_map, source_view,
 		source_action, weakref(route_atlas_overlay)))
 	route_view.hide()
+	if is_instance_valid(route_book_backdrop):
+		route_book_backdrop.hide()
 	route_atlas_close.grab_focus()
 
 
@@ -737,6 +1083,8 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 		return false
 	_clear_route_atlas()
 	route_view.show()
+	if is_instance_valid(route_book_backdrop):
+		route_book_backdrop.show()
 	button.grab_focus()
 	return _dispatch_route(id, source_map, prior, button)
 
@@ -750,6 +1098,8 @@ func _close_route_atlas(source_map: WeakRef, source_view: WeakRef,
 		return
 	_clear_route_atlas()
 	route_view.show()
+	if is_instance_valid(route_book_backdrop):
+		route_book_backdrop.show()
 	route_map_button.grab_focus()
 
 
@@ -767,6 +1117,7 @@ func _clear_route_atlas() -> void:
 
 func _clear_route_view() -> void:
 	_clear_route_atlas()
+	_clear_route_book()
 	map_mend_buttons.clear()
 	if is_instance_valid(route_view):
 		remove_child(route_view)

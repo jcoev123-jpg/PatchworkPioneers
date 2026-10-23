@@ -55,7 +55,7 @@ func _snapshot(app) -> Array:
 	else:
 		result.append([app.deck, app.party, app.enemies, app.battle_view, app.round_flow, app.battle_result])
 	result.append([app.title_view.visible, app.route_view, app.route_buttons.duplicate(),
-		app.run_deck.duplicate(), app.enemy_attacks.duplicate(true)])
+		app.run_deck.duplicate(), app.enemy_attacks.duplicate(true), app.route_book_backdrop])
 	var controls: Array = []
 	for button in app.route_buttons:
 		controls.append([button.text, button.disabled, button.is_visible_in_tree()])
@@ -113,6 +113,8 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 	var close: Callable = app.route_atlas_close.pressed.get_connections()[0].callable
 	_check(app.route_view == chooser and not chooser.visible and app.route_atlas_close.has_focus(),
 		"same chooser hidden; close focused")
+	_check(app.route_book_backdrop != null and not app.route_book_backdrop.visible,
+		"the full map replaces the opening book")
 	_check(atlas._map == app.run_map and atlas.global_position == Vector2(20, 20)
 		and atlas.size == Vector2(1240, 600), "real map bound at readable preview bounds")
 	# The opening has no committed node, so the live preview never invents a reveal.
@@ -250,6 +252,8 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 		and app.route_atlas == null and app.route_atlas_overlay == null and app.route_atlas_close == null,
 		"close disposes preview")
 	_check(_snapshot(app) == before and app.route_view == chooser and action.has_focus(), "close restores exact state and action focus")
+	_check(app.route_book_backdrop != null and app.route_book_backdrop.is_visible_in_tree(),
+		"closing the full map restores the opening book")
 	close.call()
 	_check(_snapshot(app) == before, "repeated stale close inert")
 	return [open, close]
@@ -286,6 +290,12 @@ func _run() -> void:
 	_check(app.run_map.get_floors() == reference.get_floors() and
 		app.run_rng.state == reference_rng.state, "map generation matches reference stream")
 	_check(app.deck == null and app.run_map.get_route().is_empty(), "chooser has not started combat or committed")
+	var book = app.route_book_backdrop
+	_check(is_instance_valid(book) and book.is_visible_in_tree()
+		and book.mouse_filter == Control.MOUSE_FILTER_IGNORE and book.focus_mode == Control.FOCUS_NONE,
+		"opening chooser mounts its pointer-inert page backdrop")
+	_check(is_instance_valid(book) and app.get_children().find(book) < app.get_children().find(app.route_view),
+		"page backdrop renders behind the mounted choices")
 	var stale_atlas: Array = await _preview(app, true)
 	_check(app.route_buttons.size() == reference.get_legal_choices().size(), "one control per actual legal opening")
 	if "--inject-wrong-type" in OS.get_cmdline_user_args():
@@ -299,8 +309,9 @@ func _run() -> void:
 		_check(not node.is_empty(), "reference node exists: " + id)
 		if node.is_empty():
 			continue
-		_check(button.is_visible_in_tree() and button.text.contains(id) and button.text.contains(node.type),
-			"exact ID/type visible: " + id)
+		_check(button.get_meta("route_id") == id and button.get_meta("route_kind") == node.type
+			and button.text.begins_with(String(node.type)) and not button.text.contains(id)
+			and button.is_visible_in_tree(), "exact ID metadata and readable type label: " + id)
 		_check(not button.disabled, "per-node operability: " + id)
 		if button.disabled:
 			_check(button.text.contains("unavailable"), "unsupported reason visible")
@@ -339,7 +350,8 @@ func _run() -> void:
 	await _key(KEY_ENTER)
 	await process_frame
 	_check(app.run_map == null and app.run_rng == null and app.route_view == null and
-		app.route_buttons.is_empty() and app.route_back_button == null, "Back clears route models and controls")
+		app.route_buttons.is_empty() and app.route_back_button == null
+		and app.route_book_backdrop == null, "Back clears route models and controls")
 	_check(old_rng.get_ref() == null and old_map.get_ref() == null and
 		not is_instance_id_valid(old_view), "Back releases map/RNG/view")
 	_check(app.fight_selection == null and app.encounter_id == "" and old_selector.get_ref() == null,

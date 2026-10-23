@@ -1,0 +1,10 @@
+{
+  "id": "moth_infestation",
+  "title": "Moth Infestation",
+  "description": "Patchwork moths have chewed through a corner of the shared deck, leaving frayed cards and loose scraps.",
+  "choices": [
+    { "id": "sacrifice_card", "text": "Feed one ordinary card to the moths (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+    { "id": "fumigate", "text": "Fumigate the deck (spend 1 scrap)", "outcome": { "gold": 0, "scraps": -1 } },
+    { "id": "escape", "text": "Escape before the moths spread", "outcome": { "gold": 0, "scraps": 0 } }
+  ]
+}

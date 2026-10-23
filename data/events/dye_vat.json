@@ -1,0 +1,10 @@
+{
+  "id": "dye_vat",
+  "title": "The Dye Vat",
+  "description": "A copper vat of indigo dye steams beside the road; loose thread floats on the surface, waiting to be dipped or skimmed.",
+  "choices": [
+    { "id": "immerse", "text": "Immerse one owned pool card in the dye (spend 3 scraps; it becomes its authored + version)", "outcome": { "gold": 0, "scraps": -3 } },
+    { "id": "skim_dye", "text": "Skim the dyed thread from the surface (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+    { "id": "leave", "text": "Leave the vat to its own colours", "outcome": { "gold": 0, "scraps": 0 } }
+  ]
+}

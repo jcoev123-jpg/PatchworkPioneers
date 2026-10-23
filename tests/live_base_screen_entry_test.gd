@@ -218,12 +218,16 @@ func _run() -> void:
 		"Base preserves the authored deck, three heroes, seed and currency")
 	_check(app.route_buttons.size() == app.run_map.get_legal_choices().size(),
 		"one mounted action per legal opening")
+	_check(is_instance_valid(app.route_book_backdrop) and app.route_book_backdrop.is_visible_in_tree()
+		and app.route_book_backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"Set out mounts the book-backed opening chooser")
 	for button in app.route_buttons:
 		var id: String = button.get_meta("route_id")
 		_check(app.run_map.get_legal_choices().has(id)
 			and app.run_map.get_node(id).get("type") == button.get_meta("route_kind")
-			and button.text.contains(id) and button.is_visible_in_tree(),
-			"legal mounted opening ID: " + id)
+			and button.text.begins_with(String(button.get_meta("route_kind")))
+			and not button.text.contains(id) and button.is_visible_in_tree(),
+			"legal mounted opening type label: " + id)
 	# A replayed Base callback cannot replace or re-open the live chooser.
 	var chooser_before := _route_snapshot(app)
 	stale_binding.call()
@@ -237,7 +241,8 @@ func _run() -> void:
 		and app.base_screen.has_open_village() and not app.title_view.is_visible_in_tree(),
 		"keyboard Back from the Base-launched chooser restores the Quilt village")
 	_check(app.run_map == null and app.run_rng == null and app.run_deck.is_empty()
-		and app.party_carryover == null and app.route_view == null and app.deck == null,
+		and app.party_carryover == null and app.route_view == null and app.deck == null
+		and app.route_book_backdrop == null,
 		"restored Base releases the whole opening model")
 	_check(_title_snapshot(app) == pristine, "restored Base spends nothing")
 	view = app.base_screen
