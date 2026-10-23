@@ -153,7 +153,8 @@ func _title_snapshot(app) -> Array:
 	return [app.run_seed, app.session_gold, app.run_scraps, app.run_deck.duplicate(),
 		app.run_heroes.duplicate(true), app.run_map, app.deck, app.run_rng,
 		app.fight_selection, app.encounter_id, app.party_carryover,
-		app.run_seamstress_path_receipt.duplicate(true)]
+		app.run_seamstress_path_receipt.duplicate(true),
+		app.run_tinker_path_receipt.duplicate(true)]
 
 
 ## The seeded opening-route model shared by both entry paths.
@@ -331,7 +332,9 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 			await process_frame
 			_check(app.title_view.is_visible_in_tree() and app.deck == null
 				and app.run_map == null and app.run_seamstress_path_receipt.is_empty()
-				and app.run_seamstress_path_choice == null,
+				and app.run_seamstress_path_choice == null
+				and app.run_tinker_path_receipt.is_empty()
+				and app.run_tinker_path_choice == null,
 				"Return from the live run leaves a fresh title with no Path: " + path_id)
 			app.free()
 			await process_frame
@@ -351,6 +354,7 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 	await process_frame
 	_check(app.base_screen == null and app.title_view.is_visible_in_tree()
 		and app.run_seamstress_path_receipt.is_empty() and app.run_seamstress_path_choice == null
+		and app.run_tinker_path_receipt.is_empty() and app.run_tinker_path_choice == null
 		and app.run_map == null and app.deck == null and app.run_rng == null
 		and app.run_deck.is_empty(), "Back to title leaves no Path or run behind: " + path_id)
 	app.free()
@@ -379,7 +383,16 @@ func _run() -> void:
 		and not standalone.present_path_options([{"id": "bloodline", "display_name": "Bloodline"},
 			{"id": "bloodline", "display_name": "Again"}]),
 		"the view refuses malformed or duplicate Path options")
-	_check(standalone.path_buttons.is_empty() and not standalone.path_panel.visible
+	_check(not standalone.present_tinker_path_options("sharpshot")
+		and not standalone.present_tinker_path_options([{"id": "", "display_name": "Sharpshot",
+			"card_name": "Scope"}])
+		and not standalone.present_tinker_path_options([{"id": "sharpshot", "display_name": "",
+			"card_name": ""}])
+		and not standalone.present_tinker_path_options([{"id": "sharpshot", "display_name": "Sharpshot"},
+			{"id": "sharpshot", "display_name": "Again"}]),
+		"the view refuses malformed or duplicate Tinker options")
+	_check(standalone.path_buttons.is_empty() and standalone.tinker_buttons.is_empty()
+		and not standalone.path_panel.visible and not standalone.tinker_panel.visible
 		and not standalone.has_open_village(), "refused options build nothing on a closed village")
 	_check(standalone.open_village(3, 4), "a standalone village still opens")
 	_check(standalone.present_path_options([
@@ -397,8 +410,25 @@ func _run() -> void:
 		and standalone.selected_path_id() == "bloodline"
 		and not standalone.release_path_choice(),
 		"a confirmed Path in the view cannot be replaced or released")
+	_check(standalone.present_tinker_path_options([
+		{"id": "sharpshot", "display_name": "Sharpshot", "card_name": "Scope"},
+		{"id": "clockwork", "display_name": "Clockwork", "card_name": "Wind-up"}])
+		and standalone.tinker_buttons.size() == 2
+		and standalone.tinker_buttons[0].text == "Sharpshot"
+		and standalone.tinker_buttons[1].text == "Clockwork"
+		and standalone.selected_tinker_path_id() == "",
+		"the view presents exactly the authored Tinker names it was given")
+	_check(standalone.mark_tinker_path_selected("clockwork", "Clockwork")
+		and standalone.selected_tinker_path_id() == "clockwork"
+		and standalone.tinker_buttons[0].disabled and standalone.tinker_buttons[1].disabled
+		and not standalone.mark_tinker_path_selected("sharpshot", "Sharpshot")
+		and standalone.selected_tinker_path_id() == "clockwork"
+		and not standalone.release_tinker_path_choice()
+		and standalone.selected_path_id() == "bloodline",
+		"a confirmed Tinker Path cannot be replaced and leaves the Seamstress board alone")
 	standalone.close_village()
-	_check(standalone.selected_path_id() == "", "closing the view clears its shown Path")
+	_check(standalone.selected_path_id() == "" and standalone.selected_tinker_path_id() == "",
+		"closing the view clears both shown Paths")
 	root.remove_child(standalone)
 	standalone.free()
 	await process_frame
@@ -516,13 +546,39 @@ func _run() -> void:
 		and not panel_rect.intersects(view.back_button.get_global_rect()),
 		"the Path board never covers Set out or Back to title")
 	_check(_title_snapshot(app) == pristine, "presenting both Paths spends no run state")
-	# Real keyboard focus cycle: Back, both Path options, then Set out.
+	# The independent Tinker board offers its own two authored options.
+	var tinker_shown: Array = view.tinker_path_options()
+	_check(tinker_shown.size() == 2 and String(tinker_shown[0].get("id", "")) == "sharpshot"
+		and String(tinker_shown[1].get("id", "")) == "clockwork"
+		and view.tinker_buttons.size() == 2,
+		"the Tinker board offers both authored Tinker Paths in authored order")
+	for index in range(tinker_shown.size()):
+		_check(String(view.tinker_buttons[index].text)
+			== String(tinker_shown[index].get("display_name", ""))
+			and view.tinker_buttons[index].is_visible_in_tree()
+			and not view.tinker_buttons[index].disabled,
+			"readable authored Tinker option: " + String(tinker_shown[index].get("id", "")))
+	var tinker_rect: Rect2 = view.tinker_panel.get_global_rect()
+	_check(view.tinker_panel.visible and tinker_rect.size.x > 0.0 and tinker_rect.size.y > 0.0
+		and viewport.encloses(tinker_rect),
+		"the Tinker board stays on the 1280x720 quilt")
+	_check(not tinker_rect.intersects(panel_rect)
+		and not tinker_rect.intersects(view.set_out_button.get_global_rect())
+		and not tinker_rect.intersects(view.back_button.get_global_rect()),
+		"the Tinker board covers neither the Seamstress board nor the sewn actions")
+	_check(view.selected_tinker_path_id() == "",
+		"the Tinker board starts with no Path chosen")
+	# Real keyboard focus cycle: Back, both Path options, both Tinker options, Set out.
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)
 	_check(view.path_buttons[0].has_focus(), "Tab reaches the first authored Path")
 	await _key(KEY_TAB)
 	_check(view.path_buttons[1].has_focus(), "Tab reaches the second authored Path")
+	await _key(KEY_TAB)
+	_check(view.tinker_buttons[0].has_focus(), "Tab reaches the first Tinker Path")
+	await _key(KEY_TAB)
+	_check(view.tinker_buttons[1].has_focus(), "Tab reaches the second Tinker Path")
 	await _key(KEY_TAB)
 	_check(view.set_out_button.has_focus(), "Tab wraps back to Set out")
 	# Keyboard pick of Bloodline: the host validates it and the village shows it.
@@ -542,9 +598,14 @@ func _run() -> void:
 	_check(view.selected_path_id() == "bloodline"
 		and app.run_seamstress_path_choice.get_receipt()["path_id"] == "bloodline",
 		"repeated or alternate Path callbacks cannot overwrite the pick")
-	# The confirmed Path narrows the sewn loop to Back and Set out.
+	# The confirmed Seamstress Path narrows the sewn loop to Back, the still-open
+	# Tinker options and Set out.
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
+	await _key(KEY_TAB)
+	_check(view.tinker_buttons[0].has_focus(), "Tab reaches the still-open first Tinker Path")
+	await _key(KEY_TAB)
+	_check(view.tinker_buttons[1].has_focus(), "Tab reaches the still-open second Tinker Path")
 	await _key(KEY_TAB)
 	_check(view.set_out_button.has_focus(), "Tab wraps back to Set out")
 	seed(151152)

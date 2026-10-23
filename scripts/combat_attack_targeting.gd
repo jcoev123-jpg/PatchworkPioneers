@@ -230,7 +230,8 @@ func _valid_sight_glass(definition: Dictionary) -> bool:
 		and effects.get("exposed") == 2 and effects.get("draw") == 1
 
 
-func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String) -> Dictionary:
+func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, card_id: String,
+		cost_discount: int = 0) -> Dictionary:
 	var target_positions: Array[int] = []
 	var rejected := {
 		"playable": false,
@@ -264,7 +265,15 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, c
 	var target_kind = definition.get("target_kind")
 	if not owner is String or owner.is_empty():
 		return rejected
-	if not cost is int or cost < 0 or deck.energy < cost:
+	if not cost is int or cost < 0:
+		return rejected
+	# An authored reduction is only ever the one Clockwork point on a card whose
+	# PRINTED cost is at least two. Anything else is a caller bug and fails closed.
+	if cost_discount < 0 or cost_discount > 1 \
+			or (cost_discount > 0 and cost < 2):
+		return rejected
+	var effective_cost: int = cost - cost_discount
+	if deck.energy < effective_cost:
 		return rejected
 	if not from_positions is Array or from_positions.is_empty():
 		return rejected

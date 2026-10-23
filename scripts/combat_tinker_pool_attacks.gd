@@ -52,9 +52,11 @@ func is_supported_card(card_id: String) -> bool:
 
 
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int = 0, pinned: CombatPinned = null) -> Dictionary:
+		card_id: String, target_position: int = 0, pinned: CombatPinned = null,
+		cost_discount: int = 0) -> Dictionary:
 	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
-	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position, active_pinned)
+	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position,
+		active_pinned, cost_discount)
 	if not plan.get("ok", false):
 		return _failure()
 
@@ -115,7 +117,8 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int, active_pinned: CombatPinned) -> Dictionary:
+		card_id: String, target_position: int, active_pinned: CombatPinned,
+		cost_discount: int = 0) -> Dictionary:
 	if deck == null or party == null or enemies == null or deck._rng == null:
 		return _failure()
 	if _patches != null and not _patches.is_valid():
@@ -142,9 +145,17 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var kind_value: Variant = definition.get("target_kind")
 	var effects_value: Variant = definition.get("effects")
 	if definition.get("id") != card_id or definition.get("owner") != "tinker" \
-			or not cost_value is int or cost_value < 0 or cost_value > deck.energy \
+			or not cost_value is int or cost_value < 0 \
 			or not from_value is Array or not to_value is Array \
 			or not kind_value is String or not effects_value is Dictionary:
+		return _failure()
+	# The one authored Clockwork point only ever reduces a PRINTED cost of two or
+	# more; anything else fails closed rather than under-charging the battle.
+	if cost_discount < 0 or cost_discount > 1 \
+			or (cost_discount > 0 and cost_value < 2):
+		return _failure()
+	var effective_cost: int = cost_value - cost_discount
+	if effective_cost > deck.energy:
 		return _failure()
 	var effects: Dictionary = effects_value
 	var damage_value: Variant = effects.get("damage")
@@ -271,7 +282,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"target_kind": expected_kind, "base_damage": base_damage,
 		"attack_damage": base_damage, "first_hit_position": first_position,
 		"patch_exposed": patch_exposed,
-		"owner_statuses": owner_statuses, "cost": cost_value, "exposed": exposed}
+		"owner_statuses": owner_statuses, "cost": effective_cost,
+		"printed_cost": cost_value, "exposed": exposed}
 
 
 func _living_positions(roster: Array[Dictionary], to_positions: Array) -> Array[int]:

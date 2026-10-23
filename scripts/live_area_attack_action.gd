@@ -525,6 +525,7 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 		return
 	# The existing resolvers revalidate every condition before mutation.
 	var event: Dictionary
+	var energy_before: int = receipt.deck.energy
 	if card_id in ENERGY_IDS:
 		if not CombatPoolEnergyCards.new().play_card(receipt.deck, receipt.party, card_id, 0):
 			_cancel()
@@ -536,7 +537,8 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 			_cancel()
 			return
 		event = CombatTinkerPoolAttacks.new(latch).play_attack(receipt.deck,
-			receipt.party, receipt.enemies, card_id, 0)
+			receipt.party, receipt.enemies, card_id, 0, null,
+			_live_tinker_discount(card_id))
 	elif card_id in UNRAVEL_TINKER_IDS:
 		# Reuse the starter presenter's latch and this battle's single Pinned
 		# and Unravel authorities. A missing or foreign gauge refuses the cast.
@@ -545,7 +547,12 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 		if shared_latch == null or authorities.is_empty():
 			_cancel()
 			return
-		event = CombatTinkerPoolUnravelAttacks.new(shared_latch).play_attack(receipt.deck,
+		var resolver := CombatTinkerPoolUnravelAttacks.new(shared_latch)
+		# The authority's authored reduction is charged by the resolver itself.
+		if not resolver.set_cost_discount(_live_tinker_discount(card_id)):
+			_cancel()
+			return
+		event = resolver.play_attack(receipt.deck,
 			receipt.party, receipt.enemies, card_id, 0,
 			authorities.unravel, authorities.pinned)
 		if event.get("ok", false):
@@ -558,8 +565,37 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	if not event.get("ok", false):
 		_cancel()
 		return
+	# A real, successful Tinker cast still feeds the battle's one Path authority,
+	# so its first-hit, Scope and Clockwork state can never drift from combat.
+	_report_tinker_path_play(card_id, energy_before)
 	last_event = event.duplicate(true)
 	_after_cast()
+
+
+## Report one committed Tinker cast to the mounted battle's own Path authority.
+## A missing, stale or foreign presenter contributes nothing.
+func _report_tinker_path_play(card_id: String, energy_before: int) -> void:
+	var app = get_parent()
+	if app == null:
+		return
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or not is_instance_valid(preview) or preview._battle != _battle \
+			or preview._deck != _deck or preview._turn != _turn:
+		return
+	preview.report_tinker_play(card_id, energy_before)
+
+
+## The one Path authority's authored Clockwork reduction for this card, read
+## before the resolver's printed-cost check. Zero for a stale/foreign presenter.
+func _live_tinker_discount(card_id: String) -> int:
+	var app = get_parent()
+	if app == null:
+		return 0
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or not is_instance_valid(preview) or preview._battle != _battle \
+			or preview._deck != _deck or preview._turn != _turn:
+		return 0
+	return int(preview.tinker_cost_discount(card_id))
 
 
 ## Existing app refresh and terminal observation, in the shared attack order.

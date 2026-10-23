@@ -13,7 +13,8 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 	return _support.bind_patch_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn)
 
 
-func play_card(deck: CombatDeck, party: CombatParty, card_id: String, target_position: int = 0) -> bool:
+func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
+		target_position: int = 0, cost_discount: int = 0) -> bool:
 	if deck == null or party == null:
 		return false
 
@@ -96,4 +97,4 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String, target_pos
 	}
 	# One authoritative call: it validates hand/turn/energy/owner/target,
 	# then applies the effect, charge and discard without duplicated rules.
-	return _support.play_support(deck, party, normalized, target_position)
+	return _support.play_support(deck, party, normalized, target_position, cost_discount)
