@@ -8,6 +8,7 @@ const APP_SCENE := "res://scenes/app.tscn"
 const BASE_SCENE := "res://scenes/base_screen.tscn"
 const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const SEAMSTRESS_PATHS_PATH := "res://data/heroes/seamstress_paths.json"
+const TINKER_PATHS_PATH := "res://data/heroes/tinker_paths.json"
 const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
 
 var failures: Array[String] = []
@@ -51,6 +52,25 @@ func _click(button: Button) -> void:
 		await process_frame
 
 
+## Real pointer movement without a click and without changing focus.
+func _move_mouse(point: Vector2) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await process_frame
+
+
+func _hover(button: Button) -> void:
+	_check(is_instance_valid(button) and button.is_visible_in_tree(), "hover target is mounted")
+	if not is_instance_valid(button):
+		return
+	await _move_mouse(button.get_global_rect().get_center())
+
+
+func _unhover() -> void:
+	await _move_mouse(Vector2(8, 8))
+
+
 ## Authored JSON numbers arrive as floats; a validated receipt normalizes them.
 func _norm(value: Variant) -> Variant:
 	if typeof(value) == TYPE_FLOAT:
@@ -73,10 +93,32 @@ func _norm(value: Variant) -> Variant:
 
 ## The exact authored Path record, read here independently of the run service.
 func _authored_path(path_id: String) -> Dictionary:
-	if not FileAccess.file_exists(SEAMSTRESS_PATHS_PATH):
+	return _authored_record(SEAMSTRESS_PATHS_PATH, path_id)
+
+
+## The exact authored Tinker Path record, read independently of the run service.
+func _authored_tinker_path(path_id: String) -> Dictionary:
+	if not FileAccess.file_exists(TINKER_PATHS_PATH):
 		return {}
 	var parser := JSON.new()
-	if parser.parse(FileAccess.get_file_as_string(SEAMSTRESS_PATHS_PATH)) != OK:
+	if parser.parse(FileAccess.get_file_as_string(TINKER_PATHS_PATH)) != OK:
+		return {}
+	if not parser.data is Dictionary:
+		return {}
+	var rows: Variant = (parser.data as Dictionary).get("paths")
+	if not rows is Array:
+		return {}
+	for record in rows:
+		if record is Dictionary and String(record.get("id", "")) == path_id:
+			return _norm(record)
+	return {}
+
+
+func _authored_record(path: String, path_id: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {}
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(path)) != OK:
 		return {}
 	if not parser.data is Array:
 		return {}
@@ -230,6 +272,18 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 			"unknown Path request is refused and claims nothing: " + str(unknown))
 	_check(randi() == expected_global, "refused Path requests spend no global RNG")
 
+	# AC4: a refused request never poisons a later truthful preview.
+	var after_refusal := VillagePathPreview.seamstress(shown[0])
+	await _hover(view.path_buttons[0])
+	_check(not after_refusal.is_empty()
+		and view.path_hint_label.text == String(after_refusal.get("hint", ""))
+		and view.path_hint_label.text.contains(String(shown[0].get("card_name", "")))
+		and view.selected_path_id() == "" and not app.run_seamstress_path_choice.is_claimed(),
+		"a valid authored option still previews after a refused one: " + path_id)
+	await _unhover()
+	_check(view.path_hint_label.text == "Choose one Path for this run",
+		"the preview clears again before the pick: " + path_id)
+
 	if use_mouse:
 		await _mouse_select_path(view, path_id)
 	else:
@@ -361,6 +415,127 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 	await process_frame
 
 
+## AC1/AC2/AC4: the preview formatter prints exactly the validated authored
+## records, keeps PASSIVE and CARD apart, and invents nothing it cannot verify.
+func _check_preview_formatter() -> void:
+	var seamstress := RunSeamstressPathChoice.new()
+	_check(seamstress.is_valid() and not seamstress.is_claimed()
+		and seamstress.get_paths().size() == 2,
+		"the preview check starts from the genuine unclaimed Seamstress setup")
+	var bloodline := VillagePathPreview.seamstress(
+		{"id": "bloodline", "display_name": "Bloodline", "card_name": "Leech Stitch"})
+	var unpicker := VillagePathPreview.seamstress(
+		{"id": "unpicker", "display_name": "Unpicker", "card_name": "Fray"})
+	var sharpshot := VillagePathPreview.tinker(
+		{"id": "sharpshot", "display_name": "Sharpshot", "card_name": "Scope"})
+	var clockwork := VillagePathPreview.tinker(
+		{"id": "clockwork", "display_name": "Clockwork", "card_name": "Wind-up"})
+	for pair in [[bloodline, "bloodline"], [unpicker, "unpicker"]]:
+		var preview: Dictionary = pair[0]
+		var record := _authored_path(String(pair[1]))
+		var card: Dictionary = record.get("card", {})
+		_check(not record.is_empty() and not preview.is_empty() and bool(preview.get("ok", false))
+			and String(preview.get("display_name", "")) == String(record.get("display_name", ""))
+			and String(preview.get("card_name", "")) == String(card.get("display_name", ""))
+			and String(preview.get("hint", "")).contains(String(card.get("display_name", ""))),
+			"a Seamstress preview matches its authored record: " + String(pair[1]))
+		var tooltip := String(preview.get("tooltip", ""))
+		_check(tooltip.contains("PASSIVE: ") and tooltip.contains("CARD: ")
+			and tooltip.contains(String(preview.get("passive_text", "")))
+			and tooltip.contains(String(preview.get("card_text", "")))
+			and not String(preview.get("passive_text", "")).contains(String(card.get("display_name", "")))
+			and not String(preview.get("passive_text", "")).is_empty()
+			and not String(preview.get("card_text", "")).is_empty(),
+			"the tooltip states the PASSIVE and CARD rules separately: " + String(pair[1]))
+		var card_text := String(preview.get("card_text", ""))
+		_check(card_text.contains(String(card.get("display_name", "")))
+			and card_text.contains("cost %d energy" % int(card.get("cost", -1)))
+			and card_text.contains("from positions 1-3")
+			and card_text.contains("target enemy 1-3"),
+			"the card line prints its authored cost, positions and target: " + String(pair[1]))
+	_check(String(bloodline.get("passive_text", "")).contains("Bleed +1")
+		and String(bloodline.get("passive_text", "")).contains("not another stack")
+		and not String(bloodline.get("passive_text", "")).contains("Unravel")
+		and String(bloodline.get("card_text", "")).contains("Bleed 3")
+		and String(bloodline.get("card_text", "")).contains("weakest living ally")
+		and String(bloodline.get("card_text", "")).contains("2 HP")
+		and String(bloodline.get("card_text", "")).contains("missing HP")
+		and String(bloodline.get("hint", "")).contains("Bleed +1"),
+		"Bloodline previews Bleed +1 and Leech Stitch's own effect")
+	_check(String(unpicker.get("passive_text", "")).contains("Replaces")
+		and String(unpicker.get("passive_text", "")).contains("Bleed +1")
+		and String(unpicker.get("passive_text", "")).contains("+2 Unravel")
+		and String(unpicker.get("card_text", "")).contains("Unravel 4")
+		and String(unpicker.get("card_text", "")).contains("Bleed 1")
+		and not String(unpicker.get("passive_text", "")).contains("Bleed 3")
+		and String(unpicker.get("hint", "")).contains("+2 Unravel"),
+		"Unpicker previews the passive it replaces and Fray's own effect")
+	for pair in [[sharpshot, "sharpshot"], [clockwork, "clockwork"]]:
+		var preview: Dictionary = pair[0]
+		var record := _authored_tinker_path(String(pair[1]))
+		var card: Dictionary = record.get("card", {})
+		var positions := "from positions 2-3" if String(pair[1]) == "clockwork" else "from position 3"
+		var tooltip := String(preview.get("tooltip", ""))
+		_check(not record.is_empty() and not preview.is_empty() and bool(preview.get("ok", false))
+			and String(preview.get("display_name", "")) == String(record.get("display_name", ""))
+			and String(preview.get("card_name", "")) == String(card.get("display_name", ""))
+			and String(preview.get("hint", "")).contains(String(card.get("display_name", "")))
+			and tooltip.contains("PASSIVE: ") and tooltip.contains("CARD: "),
+			"a Tinker preview matches its authored record: " + String(pair[1]))
+		_check(String(preview.get("card_text", "")).contains("cost %d energy" % int(card.get("cost", -1)))
+			and String(preview.get("card_text", "")).contains(positions)
+			and String(preview.get("card_text", "")).contains("no target"),
+			"the Tinker card line prints cost, positions and no target: " + String(pair[1]))
+	_check(String(sharpshot.get("passive_text", "")).contains("first attack")
+		and String(sharpshot.get("passive_text", "")).contains("+3")
+		and String(sharpshot.get("passive_text", "")).contains("existing passive")
+		and String(sharpshot.get("card_text", "")).contains("next attack this turn")
+		and String(sharpshot.get("card_text", "")).contains("+4")
+		and String(sharpshot.get("hint", "")).contains("First attack +3"),
+		"Sharpshot previews the first-attack +3 and Scope's +4")
+	_check(String(clockwork.get("passive_text", "")).contains("printed cost 2 or more")
+		and String(clockwork.get("passive_text", "")).contains("1 less")
+		and not String(clockwork.get("passive_text", "")).contains("Wind-up")
+		and String(clockwork.get("card_text", "")).contains("+1 energy next turn"),
+		"Clockwork previews the printed-cost discount and Wind-up's energy")
+	# Unknown, foreign or renamed options never acquire an invented rule.
+	var refused: Array = [
+		VillagePathPreview.seamstress({"id": "bloodline", "display_name": "Bloodline", "card_name": "Fray"}),
+		VillagePathPreview.seamstress({"id": "bloodline", "display_name": "Unpicker", "card_name": "Leech Stitch"}),
+		VillagePathPreview.seamstress({"id": "not_an_authored_path", "display_name": "Bloodline", "card_name": "Leech Stitch"}),
+		VillagePathPreview.seamstress({"id": "bloodline", "display_name": "Bloodline", "card_name": ""}),
+		VillagePathPreview.seamstress({"id": "", "display_name": "", "card_name": ""}),
+		VillagePathPreview.tinker({"id": "sharpshot", "display_name": "Sharpshot", "card_name": "Wind-up"}),
+		VillagePathPreview.tinker({"id": "bloodline", "display_name": "Bloodline", "card_name": "Leech Stitch"}),
+		VillagePathPreview.seamstress({"id": "SharpShot", "display_name": "Sharpshot", "card_name": "Scope"}),
+		VillagePathPreview.seamstress(null),
+		VillagePathPreview.seamstress("bloodline"),
+		VillagePathPreview.seamstress([{"id": "bloodline"}])]
+	var invented := false
+	for entry in refused:
+		var result: Dictionary = entry
+		invented = invented or not result.is_empty() \
+			or not String(result.get("tooltip", "")).is_empty() \
+			or not String(result.get("hint", "")).is_empty()
+	_check(not invented, "unknown, foreign or mismatched options invent no passive or card rule")
+	seed(171171)
+	var expected_global := randi()
+	seed(171171)
+	_check(VillagePathPreview.seamstress({"id": "bloodline", "display_name": "Bloodline",
+		"card_name": "Leech Stitch"}) == bloodline, "repeated previews are identical")
+	_check(randi() == expected_global, "previewing spends no global RNG")
+	var tinker := RunTinkerPathChoice.new()
+	var offers_before: Array = tinker.get_offers()
+	_check(not seamstress.is_claimed() and seamstress.get_receipt().is_empty()
+		and offers_before.size() == 2 and not tinker.has_selection()
+		and tinker.get_offers() == offers_before,
+		"previewing claims no Path and leaves both authored choices untouched")
+	bloodline["passive_text"] = "tampered"
+	_check(String(VillagePathPreview.seamstress({"id": "bloodline", "display_name": "Bloodline",
+		"card_name": "Leech Stitch"}).get("passive_text", "")) != "tampered",
+		"each preview is detached from the returned records")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(APP_SCENE) as PackedScene
@@ -370,6 +545,8 @@ func _run() -> void:
 	if scene == null or base_scene == null:
 		_finish()
 		return
+	# AC1/AC2/AC4: the formatter itself, before any scene is mounted.
+	_check_preview_formatter()
 	# The village itself is presentation-only: it refuses malformed host data and
 	# never resolves a Path ID, authored record or deck on its own.
 	var standalone := base_scene.instantiate() as BaseScreen
@@ -395,6 +572,32 @@ func _run() -> void:
 		and not standalone.path_panel.visible and not standalone.tinker_panel.visible
 		and not standalone.has_open_village(), "refused options build nothing on a closed village")
 	_check(standalone.open_village(3, 4), "a standalone village still opens")
+	# AC4: host options the formatter cannot verify keep the plain host tooltip,
+	# invent no rule, and never block a later truthful preview.
+	_check(standalone.present_path_options([
+		{"id": "bloodline", "display_name": "Bloodline", "card_name": "Fray"},
+		{"id": "not_an_authored_path", "display_name": "Stray", "card_name": "Nothing"}])
+		and standalone.path_buttons.size() == 2,
+		"the view still mounts host options it cannot preview")
+	_check(standalone.path_buttons[0].tooltip_text == "Seamstress Path: Bloodline · card Fray"
+		and standalone.path_buttons[1].tooltip_text == "Seamstress Path: Stray · card Nothing",
+		"an unverifiable option keeps the plain host tooltip")
+	await _hover(standalone.path_buttons[0])
+	_check(standalone.path_hint_label.text == "Choose one Path for this run",
+		"an unverifiable option invents no passive or card hint")
+	await _unhover()
+	_check(standalone.present_tinker_path_options([
+		{"id": "sharpshot", "display_name": "Sharpshot", "card_name": "Wind-up"},
+		{"id": "clockwork", "display_name": "Clockwork", "card_name": "Scope"}])
+		and standalone.tinker_buttons.size() == 2,
+		"the Tinker board mounts unverifiable host options too")
+	_check(standalone.tinker_buttons[0].tooltip_text == "Tinker Path: Sharpshot · card Wind-up"
+		and standalone.tinker_buttons[1].tooltip_text == "Tinker Path: Clockwork · card Scope",
+		"an unverifiable Tinker option keeps the plain host tooltip")
+	await _hover(standalone.tinker_buttons[0])
+	_check(standalone.tinker_hint_label.text == "Choose one Tinker Path for this run",
+		"an unverifiable Tinker option invents no rule")
+	await _unhover()
 	_check(standalone.present_path_options([
 		{"id": "bloodline", "display_name": "Bloodline", "card_name": "Leech Stitch"},
 		{"id": "unpicker", "display_name": "Unpicker", "card_name": "Fray"}])
@@ -403,6 +606,19 @@ func _run() -> void:
 		and standalone.path_buttons[1].text == "Unpicker"
 		and standalone.selected_path_id() == "",
 		"the view presents exactly the authored names it was given")
+	_check(standalone.path_buttons[0].tooltip_text.contains("PASSIVE: ")
+		and standalone.path_buttons[0].tooltip_text.contains("CARD: Leech Stitch")
+		and standalone.path_buttons[1].tooltip_text.contains("CARD: Fray"),
+		"authored options preview fully again after an unverifiable attempt")
+	await _hover(standalone.path_buttons[1])
+	_check(standalone.path_hint_label.text == String(VillagePathPreview.seamstress(
+		{"id": "unpicker", "display_name": "Unpicker", "card_name": "Fray"}).get("hint", ""))
+		and standalone.path_hint_label.text.contains("+2 Unravel"),
+		"a valid option previews normally after an unverifiable one")
+	await _unhover()
+	_check(standalone.path_hint_label.text == "Choose one Path for this run"
+		and standalone.selected_path_id() == "",
+		"leaving that preview claims nothing")
 	_check(standalone.mark_path_selected("bloodline", "Bloodline")
 		and standalone.selected_path_id() == "bloodline"
 		and standalone.path_buttons[0].disabled and standalone.path_buttons[1].disabled
@@ -568,19 +784,96 @@ func _run() -> void:
 		"the Tinker board covers neither the Seamstress board nor the sewn actions")
 	_check(view.selected_tinker_path_id() == "",
 		"the Tinker board starts with no Path chosen")
+	# --- AC1/AC2/AC3: real hover preview of both mounted boards, no pick -----
+	var preview_state := _title_snapshot(app)
+	seed(171172)
+	var hover_global := randi()
+	seed(171172)
+	var path_requests := [0]
+	var tinker_requests := [0]
+	view.path_choice_requested.connect(func(_path_id: String): path_requests[0] += 1)
+	view.tinker_path_choice_requested.connect(func(_path_id: String): tinker_requests[0] += 1)
+	for index in range(shown.size()):
+		var option: Dictionary = shown[index]
+		var button: Button = view.path_buttons[index]
+		var card: Dictionary = (_authored_path(String(option["id"])).get("card", {}) as Dictionary)
+		var preview := VillagePathPreview.seamstress(option)
+		_check(not preview.is_empty() and button.tooltip_text == String(preview.get("tooltip", ""))
+			and button.tooltip_text.contains("PASSIVE: ")
+			and button.tooltip_text.contains("CARD: " + String(card.get("display_name", ""))),
+			"the mounted Seamstress tooltip is the authored passive-and-card preview: "
+				+ String(option["id"]))
+		await _hover(button)
+		_check(view.path_hint_label.text == String(preview.get("hint", ""))
+			and view.path_hint_label.text.contains(String(card.get("display_name", "")))
+			and view.selected_path_id() == "",
+			"real pointer hover previews without choosing: " + String(option["id"]))
+		await _unhover()
+		_check(view.path_hint_label.text == "Choose one Path for this run",
+			"leaving a Seamstress option restores its prompt: " + String(option["id"]))
+	for index in range(tinker_shown.size()):
+		var option: Dictionary = tinker_shown[index]
+		var button: Button = view.tinker_buttons[index]
+		var card: Dictionary = (_authored_tinker_path(String(option["id"])).get("card", {}) as Dictionary)
+		var preview := VillagePathPreview.tinker(option)
+		_check(not preview.is_empty() and button.tooltip_text == String(preview.get("tooltip", ""))
+			and button.tooltip_text.contains("PASSIVE: ")
+			and button.tooltip_text.contains("CARD: " + String(card.get("display_name", ""))),
+			"the mounted Tinker tooltip is the authored passive-and-card preview: "
+				+ String(option["id"]))
+		await _hover(button)
+		_check(view.tinker_hint_label.text == String(preview.get("hint", ""))
+			and view.tinker_hint_label.text.contains(String(card.get("display_name", "")))
+			and view.path_hint_label.text == "Choose one Path for this run"
+			and view.selected_tinker_path_id() == "" and view.selected_path_id() == "",
+			"real Tinker hover previews its own board only: " + String(option["id"]))
+		await _unhover()
+		_check(view.tinker_hint_label.text == "Choose one Tinker Path for this run",
+			"leaving a Tinker option restores its prompt: " + String(option["id"]))
+	_check(path_requests[0] == 0 and tinker_requests[0] == 0,
+		"hover previews request no Path at all")
+	_check(randi() == hover_global, "hover previews spend no global RNG")
+	_check(_title_snapshot(app) == preview_state and view.selected_path_id() == ""
+		and view.selected_tinker_path_id() == ""
+		and app.run_seamstress_path_choice != null
+		and not app.run_seamstress_path_choice.is_claimed()
+		and app.run_tinker_path_choice != null
+		and not app.run_tinker_path_choice.has_selection(),
+		"previewing changes no seeded run, deck, gold, scraps or Path claim")
 	# Real keyboard focus cycle: Back, both Path options, both Tinker options, Set out.
+	seed(171173)
+	var focus_global := randi()
+	seed(171173)
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)
-	_check(view.path_buttons[0].has_focus(), "Tab reaches the first authored Path")
+	_check(view.path_buttons[0].has_focus()
+		and view.path_hint_label.text
+			== String(VillagePathPreview.seamstress(shown[0]).get("hint", "")),
+		"Tab focus previews the first authored Path")
 	await _key(KEY_TAB)
-	_check(view.path_buttons[1].has_focus(), "Tab reaches the second authored Path")
+	_check(view.path_buttons[1].has_focus()
+		and view.path_hint_label.text
+			== String(VillagePathPreview.seamstress(shown[1]).get("hint", "")),
+		"Tab focus previews the second authored Path")
 	await _key(KEY_TAB)
-	_check(view.tinker_buttons[0].has_focus(), "Tab reaches the first Tinker Path")
+	_check(view.tinker_buttons[0].has_focus()
+		and view.tinker_hint_label.text
+			== String(VillagePathPreview.tinker(tinker_shown[0]).get("hint", "")),
+		"Tab focus previews the first Tinker Path")
 	await _key(KEY_TAB)
-	_check(view.tinker_buttons[1].has_focus(), "Tab reaches the second Tinker Path")
+	_check(view.tinker_buttons[1].has_focus()
+		and view.tinker_hint_label.text
+			== String(VillagePathPreview.tinker(tinker_shown[1]).get("hint", "")),
+		"Tab focus previews the second Tinker Path")
 	await _key(KEY_TAB)
-	_check(view.set_out_button.has_focus(), "Tab wraps back to Set out")
+	_check(view.set_out_button.has_focus()
+		and view.path_hint_label.text == "Choose one Path for this run"
+		and view.tinker_hint_label.text == "Choose one Tinker Path for this run",
+		"leaving both boards restores their prompts")
+	_check(path_requests[0] == 0 and tinker_requests[0] == 0,
+		"keyboard focus previews request no Path either")
+	_check(randi() == focus_global, "keyboard previews spend no global RNG")
 	# Keyboard pick of Bloodline: the host validates it and the village shows it.
 	var path_binding: Callable = _app_binding(app, view.path_choice_requested)
 	_check(path_binding.is_valid(), "the app really handles the Base Path signal")
@@ -593,6 +886,30 @@ func _run() -> void:
 		and app.run_seamstress_path_choice.get_receipt() == _expected_receipt("bloodline")
 		and app.run_seamstress_path_receipt.is_empty(),
 		"a confirmed Path is validated by RunSeamstressPathChoice but commits no receipt yet")
+	# AC3: a confirmed Path keeps its sewn hint and status through stale previews.
+	_check(view.path_hint_label.text == "Path sewn for this run",
+		"a confirmed Path keeps its sewn hint")
+	view.path_buttons[0].mouse_exited.emit()
+	view.path_buttons[0].focus_exited.emit()
+	view.path_buttons[1].mouse_exited.emit()
+	_check(view.path_hint_label.text == "Path sewn for this run"
+		and view.path_status_label.text.contains("Bloodline")
+		and view.selected_path_id() == "bloodline",
+		"stale preview exits never reset a confirmed Path")
+	await _hover(view.path_buttons[0])
+	_check(view.path_hint_label.text == "Path sewn for this run"
+		and view.selected_path_id() == "bloodline",
+		"a late hover cannot replace a confirmed Path's hint")
+	await _unhover()
+	await _hover(view.tinker_buttons[0])
+	_check(view.tinker_hint_label.text
+			== String(VillagePathPreview.tinker(tinker_shown[0]).get("hint", ""))
+		and view.path_hint_label.text == "Path sewn for this run",
+		"the independent Tinker board still previews while the Seamstress Path is sewn")
+	await _unhover()
+	_check(view.tinker_hint_label.text == "Choose one Tinker Path for this run"
+		and view.path_hint_label.text == "Path sewn for this run",
+		"leaving the Tinker preview leaves the sewn Seamstress Path alone")
 	path_binding.call("bloodline")
 	path_binding.call("unpicker")
 	_check(view.selected_path_id() == "bloodline"

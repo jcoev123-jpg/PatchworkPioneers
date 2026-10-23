@@ -53,10 +53,16 @@ var _set_out_pending := false
 var _back_pending := false
 var _path_pending := false
 var _path_options: Array = []
+var _path_previews: Dictionary = {}
+var _path_hover_id := ""
+var _path_focus_id := ""
 var _selected_path_id := ""
 var _selected_path_name := ""
 var _tinker_pending := false
 var _tinker_options: Array = []
+var _tinker_previews: Dictionary = {}
+var _tinker_hover_id := ""
+var _tinker_focus_id := ""
 var _selected_tinker_id := ""
 var _selected_tinker_name := ""
 var _backdrop: Texture2D
@@ -237,16 +243,29 @@ func present_path_options(options: Variant) -> bool:
 	_selected_path_id = ""
 	_selected_path_name = ""
 	_path_options = cleaned
+	_path_previews.clear()
+	_path_hover_id = ""
+	_path_focus_id = ""
 	for option in cleaned:
+		var option_id := String(option["id"])
 		var button := Button.new()
-		button.name = "PathChoice_" + String(option["id"])
+		button.name = "PathChoice_" + option_id
 		button.text = String(option["display_name"])
-		button.tooltip_text = "Seamstress Path: " + String(option["display_name"]) \
+		var preview := VillagePathPreview.seamstress(option)
+		var tooltip := "Seamstress Path: " + String(option["display_name"]) \
 			+ (" · card " + String(option["card_name"]) if not String(option["card_name"]).is_empty() else "")
+		if not preview.is_empty():
+			_path_previews[option_id] = preview
+			tooltip = String(preview["tooltip"])
+		button.tooltip_text = tooltip
 		button.custom_minimum_size = Vector2(0, 40)
 		button.add_theme_font_size_override("font_size", 18)
-		button.set_meta("path_id", String(option["id"]))
-		button.pressed.connect(_on_path_pressed.bind(String(option["id"])))
+		button.set_meta("path_id", option_id)
+		button.pressed.connect(_on_path_pressed.bind(option_id))
+		button.focus_entered.connect(_on_path_preview_entered.bind(option_id, true))
+		button.focus_exited.connect(_on_path_preview_exited.bind(option_id, true))
+		button.mouse_entered.connect(_on_path_preview_entered.bind(option_id, false))
+		button.mouse_exited.connect(_on_path_preview_exited.bind(option_id, false))
 		button.add_child(SewnEdge.new())
 		path_option_box.add_child(button)
 		path_buttons.append(button)
@@ -320,7 +339,7 @@ func release_path_choice() -> bool:
 		if is_instance_valid(button):
 			button.disabled = false
 	if is_instance_valid(path_hint_label):
-		path_hint_label.text = "Choose one Path for this run"
+		_refresh_path_hint()
 	_wire_focus()
 	return true
 
@@ -363,16 +382,29 @@ func present_tinker_path_options(options: Variant) -> bool:
 	_selected_tinker_id = ""
 	_selected_tinker_name = ""
 	_tinker_options = cleaned
+	_tinker_previews.clear()
+	_tinker_hover_id = ""
+	_tinker_focus_id = ""
 	for option in cleaned:
+		var option_id := String(option["id"])
 		var button := Button.new()
-		button.name = "TinkerPathChoice_" + String(option["id"])
+		button.name = "TinkerPathChoice_" + option_id
 		button.text = String(option["display_name"])
-		button.tooltip_text = "Tinker Path: " + String(option["display_name"]) \
+		var preview := VillagePathPreview.tinker(option)
+		var tooltip := "Tinker Path: " + String(option["display_name"]) \
 			+ (" · card " + String(option["card_name"]) if not String(option["card_name"]).is_empty() else "")
+		if not preview.is_empty():
+			_tinker_previews[option_id] = preview
+			tooltip = String(preview["tooltip"])
+		button.tooltip_text = tooltip
 		button.custom_minimum_size = Vector2(0, 40)
 		button.add_theme_font_size_override("font_size", 18)
-		button.set_meta("path_id", String(option["id"]))
-		button.pressed.connect(_on_tinker_path_pressed.bind(String(option["id"])))
+		button.set_meta("path_id", option_id)
+		button.pressed.connect(_on_tinker_path_pressed.bind(option_id))
+		button.focus_entered.connect(_on_tinker_preview_entered.bind(option_id, true))
+		button.focus_exited.connect(_on_tinker_preview_exited.bind(option_id, true))
+		button.mouse_entered.connect(_on_tinker_preview_entered.bind(option_id, false))
+		button.mouse_exited.connect(_on_tinker_preview_exited.bind(option_id, false))
 		button.add_child(SewnEdge.new())
 		tinker_option_box.add_child(button)
 		tinker_buttons.append(button)
@@ -446,7 +478,7 @@ func release_tinker_path_choice() -> bool:
 		if is_instance_valid(button):
 			button.disabled = false
 	if is_instance_valid(tinker_hint_label):
-		tinker_hint_label.text = "Choose one Tinker Path for this run"
+		_refresh_tinker_hint()
 	_wire_focus()
 	return true
 
@@ -461,11 +493,17 @@ func _apply_closed_state() -> void:
 	_selected_path_name = ""
 	_selected_tinker_id = ""
 	_selected_tinker_name = ""
+	_path_hover_id = ""
+	_path_focus_id = ""
+	_tinker_hover_id = ""
+	_tinker_focus_id = ""
 	visible = false
 	if is_instance_valid(path_panel):
 		path_panel.visible = false
 	if is_instance_valid(tinker_panel):
 		tinker_panel.visible = false
+	_refresh_path_hint()
+	_refresh_tinker_hint()
 	for button in path_buttons:
 		if is_instance_valid(button):
 			button.disabled = true
@@ -732,6 +770,79 @@ func _tinker_path_button(path_id: String) -> Button:
 		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
 			return button
 	return null
+
+
+## Hover and keyboard focus preview exactly the authored record the button stands
+## for: the PASSIVE and its one CARD, as formatted by VillagePathPreview. This
+## reads no run, deck, currency or RNG state, claims no Path and emits no signal.
+func _on_path_preview_entered(path_id: String, from_focus: bool) -> void:
+	if from_focus:
+		_path_focus_id = path_id
+	else:
+		_path_hover_id = path_id
+	_refresh_path_hint()
+
+
+## Leaving a preview restores the board's own prompt. Once the host has confirmed
+## a Path the selection stays stated, so a late or stale exit resets nothing.
+func _on_path_preview_exited(path_id: String, from_focus: bool) -> void:
+	if from_focus:
+		if _path_focus_id == path_id:
+			_path_focus_id = ""
+	elif _path_hover_id == path_id:
+		_path_hover_id = ""
+	_refresh_path_hint()
+
+
+func _refresh_path_hint() -> void:
+	if not is_instance_valid(path_hint_label):
+		return
+	if not _selected_path_id.is_empty():
+		path_hint_label.text = "Path sewn for this run"
+		return
+	path_hint_label.text = "Choose one Path for this run"
+	var active := _path_focus_id if not _path_focus_id.is_empty() else _path_hover_id
+	if active.is_empty():
+		return
+	var preview: Variant = _path_previews.get(active, {})
+	if preview is Dictionary:
+		var hint := String((preview as Dictionary).get("hint", ""))
+		if not hint.is_empty():
+			path_hint_label.text = hint
+
+
+func _on_tinker_preview_entered(path_id: String, from_focus: bool) -> void:
+	if from_focus:
+		_tinker_focus_id = path_id
+	else:
+		_tinker_hover_id = path_id
+	_refresh_tinker_hint()
+
+
+func _on_tinker_preview_exited(path_id: String, from_focus: bool) -> void:
+	if from_focus:
+		if _tinker_focus_id == path_id:
+			_tinker_focus_id = ""
+	elif _tinker_hover_id == path_id:
+		_tinker_hover_id = ""
+	_refresh_tinker_hint()
+
+
+func _refresh_tinker_hint() -> void:
+	if not is_instance_valid(tinker_hint_label):
+		return
+	if not _selected_tinker_id.is_empty():
+		tinker_hint_label.text = "Tinker Path sewn for this run"
+		return
+	tinker_hint_label.text = "Choose one Tinker Path for this run"
+	var active := _tinker_focus_id if not _tinker_focus_id.is_empty() else _tinker_hover_id
+	if active.is_empty():
+		return
+	var preview: Variant = _tinker_previews.get(active, {})
+	if preview is Dictionary:
+		var hint := String((preview as Dictionary).get("hint", ""))
+		if not hint.is_empty():
+			tinker_hint_label.text = hint
 
 
 ## The view reports the pick; the host validates it and, only on success, calls
