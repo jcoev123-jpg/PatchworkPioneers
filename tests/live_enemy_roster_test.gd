@@ -142,6 +142,63 @@ func _function_body(source: String, signature: String) -> String:
 	return body.left(body.find("\n\tfunc "))
 
 
+## The routed Fight stage advances by the admitted node's own integer floor: meadow 1-3,
+## woods 4-6, marsh 7-9, peaks 10-11. A standalone battle (no map, no floor) keeps the
+## meadow, while an invalid floor or missing file keeps the drawn quilt.
+func _fight_areas(app, presenter, backdrop) -> void:
+	var expected := {
+		"Meadow": "res://assets/paper/backgrounds/battle_meadow.png",
+		"Woods": "res://assets/paper/backgrounds/battle_woods.png",
+		"Marsh": "res://assets/paper/backgrounds/battle_marsh.png",
+		"Peaks": "res://assets/paper/backgrounds/battle_peaks.png",
+	}
+	var bands := [["Meadow", 1, 3], ["Woods", 4, 6], ["Marsh", 7, 9], ["Peaks", 10, 11]]
+	var installed: Dictionary = {}
+	for band in bands:
+		var area_name: String = band[0]
+		for floor_number in range(int(band[1]), int(band[2]) + 1):
+			_check(ROSTER_ART.fight_area_name(floor_number) == area_name
+				and ROSTER_ART.fight_backdrop_path(floor_number) == expected[area_name]
+				and ROSTER_ART.stage_backdrop_path("Fight", floor_number) == expected[area_name],
+				"routed Fight floor %d selects the %s area" % [floor_number, area_name])
+		_check(ResourceLoader.exists(expected[area_name]),
+			"the committed %s landscape really loads" % area_name)
+		var loaded: Texture2D = presenter.stage_texture(expected[area_name])
+		_check(loaded != null and loaded.resource_path == expected[area_name]
+			and not installed.has(loaded.resource_path),
+			"the %s area loads its own distinct committed texture" % area_name)
+		installed[expected[area_name]] = true
+	_check(installed.size() == expected.size(), "all four authored landscapes are distinct")
+	# Standalone: no run map and no floor, so the normal meadow stage stays.
+	_check(ROSTER_ART.stage_backdrop_path("Fight", ROSTER_ART.STANDALONE_FLOOR) == expected["Meadow"]
+		and app.run_map == null and backdrop.battle_kind == "Fight"
+		and backdrop.stage_texture.resource_path == expected["Meadow"],
+		"a standalone battle keeps the meadow without any run map")
+	# Invalid or absent data selects nothing and keeps the quilt, never another area.
+	for floor_number in [ROSTER_ART.INVALID_FLOOR, 12, 13, 99]:
+		_check(ROSTER_ART.fight_area_name(floor_number) == ""
+			and ROSTER_ART.fight_backdrop_path(floor_number) == ""
+			and ROSTER_ART.stage_backdrop_path("Fight", floor_number) == "",
+			"floor %d has no Fight area and keeps the quilt" % floor_number)
+	_check(ROSTER_ART.stage_backdrop_path("Fight", ROSTER_ART.INVALID_FLOOR) == ""
+		and presenter.stage_texture(ROSTER_ART.fight_backdrop_path(ROSTER_ART.INVALID_FLOOR)) == null
+		and presenter.stage_texture("res://assets/paper/backgrounds/fabricated_missing_area.png") == null
+		and presenter.stage_texture("") == null,
+		"invalid floors and missing area files load nothing and cannot crash")
+	# Kind identity is retained: Elite and Boss keep their own scenes on every floor.
+	for kind in ["Elite", "Boss"]:
+		for floor_number in [1, 5, 8, 11, 12]:
+			_check(ROSTER_ART.stage_backdrop_path(kind, floor_number) == BACKDROP_ART[kind],
+				kind + " keeps its own scene on floor %d" % floor_number)
+	# A new Fight on another floor is a new stage selection, not the same kind.
+	_check(ROSTER_ART.stage_key("Fight", 1) != ROSTER_ART.stage_key("Fight", 4)
+		and ROSTER_ART.stage_key("Fight", 4) != ROSTER_ART.stage_key("Fight", 7)
+		and ROSTER_ART.stage_key("Fight", 7) != ROSTER_ART.stage_key("Fight", 10)
+		and ROSTER_ART.stage_key("Fight", 10) == ROSTER_ART.stage_key("Fight", 10)
+		and ROSTER_ART.stage_key("Elite", 5) != ROSTER_ART.stage_key("Fight", 5),
+		"the stage selection key carries the area floor, not only the kind")
+
+
 ## Grounding: whichever artwork an actor draws rests its bottom edge on one shared foot
 ## line above the pinned tag, with a fixed soft contact shadow and a dark rim drawn behind
 ## it. Both are draw calls inside the input-inert puppet, so names, target rectangles and
@@ -634,6 +691,7 @@ func _backdrop(app, presenter) -> void:
 		"unknown or malformed battle kinds select no backdrop")
 	_check(app.run_map == null and backdrop.battle_kind == "Fight",
 		"standalone battle selects the normal Fight backdrop")
+	_fight_areas(app, presenter, backdrop)
 	var fight_path: String = BACKDROP_ART["Fight"]
 	_check(backdrop.has_image() == ResourceLoader.exists(fight_path),
 		"the mounted Fight image is shown only when the authored file is present")
@@ -1253,10 +1311,36 @@ func _typed_stage(app, presenter) -> void:
 	if app.enemies == null or app.enemies.get_enemies().size() != 3:
 		return
 	var route_kind: String = app.run_map.get_node(app.run_map.get_current_node_id()).get("type", "")
+	var route_floor: int = int(app.run_map.get_node(app.run_map.get_current_node_id()).get("floor", 0))
+	var stage_path: String = ROSTER_ART.stage_backdrop_path(route_kind, route_floor)
 	_check(route_kind == "Fight" and is_instance_valid(presenter.backdrop)
 		and presenter.backdrop.battle_kind == route_kind
-		and presenter.backdrop.has_image() == ResourceLoader.exists(BACKDROP_ART["Fight"]),
-		"the seeded routed fight takes its backdrop from its real admitted route node")
+		and stage_path == ROSTER_ART.fight_backdrop_path(route_floor)
+		and presenter.backdrop.has_image() == ResourceLoader.exists(stage_path)
+		and presenter.backdrop.stage_texture.resource_path == stage_path,
+		"the seeded routed fight takes its backdrop from its real admitted floor")
+	# The same one stage refreshes its scene when a new Fight is admitted on another
+	# area floor, instead of comparing only the unchanged kind.
+	var stage_id: int = presenter.backdrop.get_instance_id()
+	var installed: Array[String] = []
+	for floor_number in [4, 7, 10, 1]:
+		app.run_map._nodes[app.run_map.get_current_node_id()].floor = floor_number
+		presenter._sync_battle()
+		var path: String = ROSTER_ART.fight_backdrop_path(floor_number)
+		installed.append(path)
+		_check(presenter.backdrop.get_instance_id() == stage_id
+			and presenter.backdrop.battle_kind == "Fight"
+			and presenter.backdrop.has_image() == ResourceLoader.exists(path)
+			and presenter.backdrop.stage_texture.resource_path == path,
+			"admitted floor %d refreshes the one Fight stage to its own area" % floor_number)
+	app.run_map._nodes[app.run_map.get_current_node_id()].floor = route_floor
+	presenter._sync_battle()
+	_check(presenter.backdrop.get_instance_id() == stage_id
+		and presenter.backdrop.stage_texture.resource_path == stage_path,
+		"restoring the admitted floor returns the same stage to its own scene")
+	_check(installed.size() == 4 and installed[0] != installed[1] and installed[1] != installed[2]
+		and installed[2] != installed[3] and installed[3] == stage_path,
+		"woods, marsh, peaks and its own meadow were really installed in turn")
 	var before := _snapshot(app)
 	var meters = app.get_node("LiveCombatMeters").row
 	_check(presenter._puppets.size() == 6 and presenter._labels.size() == 3

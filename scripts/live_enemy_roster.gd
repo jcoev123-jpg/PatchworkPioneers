@@ -12,8 +12,27 @@ const BATTLE_BACKDROPS := {
 	"Elite": "battle_ruins.png",
 	"Boss": "battle_boss.png",
 }
-## A standalone _start_battle has no run map; it is the normal Fight stage.
+## The routed Fight stage advances through four authored areas: the admitted node's own
+## integer floor picks the landscape, so floors 1-3 keep the meadow, 4-6 the woods, 7-9
+## the marsh and 10-11 the peaks. The Boss floor owns the Boss scene instead.
+const FIGHT_AREA_FLOORS := [
+	{"name": "Meadow", "last_floor": 3, "file": "battle_meadow.png"},
+	{"name": "Woods", "last_floor": 6, "file": "battle_woods.png"},
+	{"name": "Marsh", "last_floor": 9, "file": "battle_marsh.png"},
+	{"name": "Peaks", "last_floor": 11, "file": "battle_peaks.png"},
+]
+## A standalone _start_battle has no run map, so it has no floor and stays the meadow.
 const STANDALONE_BATTLE_KIND := "Fight"
+const STANDALONE_FLOOR := 0
+## A routed battle whose node floor is missing or malformed selects no scene at all.
+const INVALID_FLOOR := -1
+## Owner-supplied art for the three noncombat stops. A missing file keeps the same dark
+## slate behind the same controls, so no PNG is required.
+const VISIT_BACKDROPS := {
+	"Rest": "rest_camp.png",
+	"Shop": "shop_stall.png",
+	"Event": "event_crossroads.png",
+}
 const ACTOR_ART := {
 	"warden": "heroes/warden",
 	"seamstress": "heroes/seamstress",
@@ -76,6 +95,8 @@ var _puppets: Array[Control] = []
 var _intent_visible := true
 var _art_cache: Dictionary = {}
 var _backdrop_kind := ""
+var _backdrop_floor := STANDALONE_FLOOR
+var _backdrop_key := ""
 var _backdrop_cache: Dictionary = {}
 
 
@@ -92,6 +113,50 @@ static func backdrop_path(kind: String) -> String:
 	if not BATTLE_BACKDROPS.has(kind):
 		return ""
 	return BATTLE_BACKDROP_ROOT + String(BATTLE_BACKDROPS[kind])
+
+
+## The authored Fight area record of one admitted floor; empty outside floors 1-11.
+static func fight_area(floor_number: int) -> Dictionary:
+	if floor_number < 1:
+		return {}
+	for area in FIGHT_AREA_FLOORS:
+		if floor_number <= int(area["last_floor"]):
+			return area
+	return {}
+
+
+static func fight_area_name(floor_number: int) -> String:
+	return String(fight_area(floor_number).get("name", ""))
+
+
+## The authored Fight scene of one admitted floor; empty for a floor outside 1-11, which
+## keeps the drawn quilt instead of borrowing another area's landscape.
+static func fight_backdrop_path(floor_number: int) -> String:
+	var file := String(fight_area(floor_number).get("file", ""))
+	return "" if file.is_empty() else BATTLE_BACKDROP_ROOT + file
+
+
+## The exact scene of one admitted battle: a Fight follows its node's area floor, a
+## standalone Fight (floor 0) stays the meadow, and Elite/Boss keep their own scene.
+static func stage_backdrop_path(kind: String, floor_number: int) -> String:
+	if kind != STANDALONE_BATTLE_KIND:
+		return backdrop_path(kind)
+	if floor_number == STANDALONE_FLOOR:
+		return backdrop_path(STANDALONE_BATTLE_KIND)
+	return fight_backdrop_path(floor_number)
+
+
+## Identity of one stage selection. The floor is part of the key, so a new Fight on
+## another area refreshes the same stage instead of only comparing its kind.
+static func stage_key(kind: String, floor_number: int) -> String:
+	return "%s@%d" % [kind, floor_number]
+
+
+## The authored visit scene of one noncombat stop; empty for every other kind.
+static func visit_backdrop_path(kind: String) -> String:
+	if not VISIT_BACKDROPS.has(kind):
+		return ""
+	return BATTLE_BACKDROP_ROOT + String(VISIT_BACKDROPS[kind])
 
 
 ## Cover destination of an image over `view`: as large as the view, aspect preserved.
@@ -654,6 +719,66 @@ class StageBackdrop extends Control:
 			x += 26.0
 
 
+## Inert art bed for one mounted noncombat visit (Rest, Shop or Event). It fills the whole
+## view with the authored scene through the battle stage's own aspect-cover crop, laid
+## over an opaque slate that stays visible when the file is missing, so the same controls
+## keep a readable ground with or without art. Draw-only: no pointer or keyboard input,
+## and it is mounted as a sibling/backdrop, never as a layout child of the visit controls.
+class VisitBackdrop extends Control:
+	const SLATE := Color("18242c")
+	const VEIL_INK := Color("12100e")
+	## A light wash keeps the cream visit labels and felt controls legible over the art.
+	const VEIL_ALPHA := 0.26
+	var visit_kind := ""
+	var visit_texture: Texture2D = null
+
+	func _init() -> void:
+		name = "VisitBackdrop"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+
+	## Binds the scene selected for one stop; a missing image keeps the plain slate.
+	func bind_visit(kind: String, texture: Texture2D) -> void:
+		visit_kind = kind
+		visit_texture = texture
+		queue_redraw()
+
+	func has_image() -> bool:
+		return visit_texture != null and visit_texture.get_width() > 0 \
+			and visit_texture.get_height() > 0
+
+	func slate_color() -> Color:
+		return SLATE
+
+	func veil_color() -> Color:
+		return Color(VEIL_INK, VEIL_ALPHA)
+
+	## The whole screen this visit bed paints, in this Control's own coordinates.
+	func view_rect() -> Rect2:
+		return Rect2(Vector2.ZERO, size)
+
+	func texture_size() -> Vector2:
+		if not has_image():
+			return Vector2.ZERO
+		return Vector2(visit_texture.get_width(), visit_texture.get_height())
+
+	## Cover placement of the visit scene: fills the view, keeping its own proportions.
+	func image_rect() -> Rect2:
+		return StageBackdrop.cover_rect(view_rect(), texture_size())
+
+	## The centred part of the source image a cover draw keeps inside the view.
+	func image_crop() -> Rect2:
+		return StageBackdrop.crop_rect(view_rect(), texture_size())
+
+	func _draw() -> void:
+		draw_rect(view_rect(), SLATE)
+		if has_image():
+			draw_texture_rect_region(visit_texture, image_rect(), image_crop())
+		draw_rect(view_rect(), veil_color())
+
+
 func _ready() -> void:
 	# The parent connects its Start Run handler after child _ready, so observe deferred.
 	get_parent().start_run_requested.connect(_sync_battle, CONNECT_DEFERRED)
@@ -672,8 +797,9 @@ func _sync_battle() -> void:
 		return
 	if _battle == app.battle_view and enemies == app.enemies and _heroes == app.hero_view \
 			and is_instance_valid(battle_row) and is_instance_valid(panel) and is_instance_valid(backdrop):
-		# A changed admitted kind rebinds the same one stage instead of adding another.
-		if _battle_kind(app) != _backdrop_kind:
+		# A changed admitted kind or Fight area floor rebinds the same one stage
+		# instead of adding another; an unchanged selection leaves it alone.
+		if stage_key(_battle_kind(app), _battle_floor(app)) != _backdrop_key:
 			_bind_backdrop(app)
 		return
 	_clear()
@@ -909,16 +1035,43 @@ func _battle_kind(app) -> String:
 	return kind
 
 
-## Binds this battle's single stage to exactly the scene its admitted kind selects.
+## Binds this battle's single stage to exactly the scene its admitted kind and, for a
+## routed Fight, its node floor select.
 func _bind_backdrop(app) -> void:
 	_backdrop_kind = _battle_kind(app)
+	_backdrop_floor = _battle_floor(app)
+	_backdrop_key = stage_key(_backdrop_kind, _backdrop_floor)
 	if is_instance_valid(backdrop) and backdrop is StageBackdrop:
-		backdrop.bind_battle(_backdrop_kind, backdrop_texture(_backdrop_kind))
+		backdrop.bind_battle(_backdrop_kind,
+			stage_texture(stage_backdrop_path(_backdrop_kind, _backdrop_floor)))
 
 
-## Presentation-only scene lookup: an unknown kind or missing file loads nothing.
+## The admitted node's own integer floor. A standalone battle has no map and reports the
+## standalone floor; a routed node with a missing or malformed floor stays invalid, so it
+## keeps the drawn quilt instead of borrowing another area's scene.
+func _battle_floor(app) -> int:
+	if app == null or app.run_map == null:
+		return STANDALONE_FLOOR
+	var current: String = app.run_map.get_current_node_id()
+	if current.is_empty():
+		return INVALID_FLOOR
+	var node = app.run_map.get_node(current)
+	if not node is Dictionary:
+		return INVALID_FLOOR
+	var floor_number = node.get("floor")
+	if not floor_number is int or int(floor_number) < 1:
+		return INVALID_FLOOR
+	return int(floor_number)
+
+
+## Presentation-only scene lookup for one kind; a standalone kind selects its own scene.
 func backdrop_texture(kind: String) -> Texture2D:
-	var path := backdrop_path(kind)
+	return stage_texture(stage_backdrop_path(kind, STANDALONE_FLOOR))
+
+
+## Cached presentation-only lookup for one exact authored path; an empty path or missing
+## file loads nothing.
+func stage_texture(path: String) -> Texture2D:
 	if path.is_empty():
 		return null
 	if not _backdrop_cache.has(path):
@@ -977,4 +1130,6 @@ func _clear() -> void:
 		backdrop.queue_free()
 	backdrop = null
 	_backdrop_kind = ""
+	_backdrop_floor = STANDALONE_FLOOR
+	_backdrop_key = ""
 	_battle = null

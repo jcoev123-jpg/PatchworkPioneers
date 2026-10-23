@@ -48,7 +48,7 @@ func _assert_authored(preview: Dictionary, first_id: String, second_id: String, 
 	for half_name in ["first_half", "second_half"]:
 		var id: String = first_id if half_name == "first_half" else second_id
 		var half: Dictionary = preview.get(half_name, {})
-		var authored := catalog.get_definition(id)
+		var authored := RunRestStitchCards.resolve_card_definition(id)
 		_check(not authored.is_empty() and half == authored,
 			label + " " + half_name + " matches every shipped definition field")
 		for field in ["id", "display_name", "owner", "cost", "from_positions",
@@ -620,6 +620,7 @@ func _run() -> void:
 		and not prebound.first_selector.disabled and prebound.confirm_button.disabled,
 		"binding detached component before mounting preserves genuine source and safe initial selection")
 	prebound.free()
+	await _test_mixed_pool_picker()
 	_finish()
 
 
@@ -629,3 +630,304 @@ func _finish() -> void:
 	print("rest_stitch_pair_picker_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks; ", failures.size(), " failures)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _row_in_first(p: LiveRestStitchPairPicker, deck_index: int) -> int:
+	for i in range(p.first_selector.item_count):
+		if p.first_selector.get_item_metadata(i) == deck_index:
+			return i
+	return -1
+
+
+func _row_in_second(p: LiveRestStitchPairPicker, deck_index: int) -> int:
+	for i in range(p.second_selector.item_count):
+		if p.second_selector.get_item_metadata(i) == deck_index:
+			return i
+	return -1
+
+
+func _test_mixed_pool_picker() -> void:
+	# AC1: Mixed ledger with duplicate starters, pool bases, pool plus, and pre-existing stitched card
+	var mixed_deck: Array[String] = [
+		"warden_strike",             # 0: starter duplicate #1
+		"warden_strike",             # 1: starter duplicate #2
+		"seamstress_prick",          # 2: starter duplicate #1
+		"seamstress_prick",          # 3: starter duplicate #2
+		"tinker_pop_shot",           # 4: starter
+		"warden_pinning_jab",        # 5: authored pool base (Warden)
+		"warden_pinning_jab",        # 6: authored pool duplicate (Warden)
+		"seamstress_snag",           # 7: authored pool base (Seamstress)
+		"tinker_rivet_shot",         # 8: authored pool base (Tinker)
+		"tinker_ricochet",           # 9: authored pool base with enemy_random (Tinker)
+		"seamstress_field_mend",     # 10: authored pool base with party_all (Seamstress)
+		"warden_pinning_jab_plus",   # 11: authored pool plus (Warden)
+		"seamstress_snag_plus",      # 12: authored pool plus (Seamstress)
+		"tinker_rivet_shot_plus",    # 13: authored pool plus (Tinker)
+		"tinker_ricochet_plus",      # 14: authored pool plus (Tinker)
+		"seamstress_field_mend_plus",# 15: authored pool plus (Seamstress)
+		"stitched_000001",           # 16: pre-existing authentic stitched composite
+	]
+	var seed_service := RunRestStitchCards.new(["warden_strike", "tinker_pop_shot"], {}, 3, 1)
+	var seed_result := seed_service.choose_stitch(0, 1, seed_service.get_snapshot())
+	_check(seed_result.get("ok", false), "pre-existing seed stitched card created")
+	var descriptors: Dictionary = {
+		"stitched_000001": seed_result["descriptor"]
+	}
+	var scraps := 5
+	var next_stitch_id := 2
+	var mixed_ledger := RunRestStitchCards.new(mixed_deck, descriptors, scraps, next_stitch_id)
+	_check(mixed_ledger.is_valid() and not mixed_ledger.is_consumed(),
+		"genuine mixed ledger with starters, pool bases, pool plus and existing stitched card is valid")
+
+	var mixed_receipt := mixed_ledger.get_snapshot()
+	var mixed_model := RunRestStitchPairOptions.new(mixed_ledger, mixed_receipt)
+	_check(mixed_model.is_available(), "mixed model accepts genuine receipt")
+	var firsts := mixed_model.first_options()
+	_check(firsts.size() == mixed_deck.size() - 1,
+		"first options include every ordinary occurrence and exclude stitched card")
+	for item in firsts:
+		var idx: int = item["index"]
+		var id: String = item["id"]
+		_check(id != "stitched_000001", "first option never includes stitched card at index %d" % idx)
+		_check(mixed_deck[idx] == id, "first option maintains exact deck index %d for %s" % [idx, id])
+		var def := RunRestStitchCards.resolve_card_definition(id)
+		_check(item["owner"] == def["owner"] and item["name"] == def["display_name"]
+			and item["cost"] == def["cost"], "first option metadata matches authored definition for %s" % id)
+		var seconds := mixed_model.second_options(idx)
+		_check(not seconds.is_empty(), "every ordinary card has cross-owner partners at %d" % idx)
+		for sec in seconds:
+			var s_idx: int = sec["index"]
+			var s_id: String = sec["id"]
+			_check(s_idx != idx, "second option never matches first index at %d" % idx)
+			_check(s_id != "stitched_000001", "second option never includes stitched card")
+			var s_def := RunRestStitchCards.resolve_card_definition(s_id)
+			_check(sec["owner"] != item["owner"], "second option enforces different hero from %s" % item["owner"])
+			_check(sec["owner"] == s_def["owner"] and sec["name"] == s_def["display_name"]
+				and sec["cost"] == s_def["cost"], "second option matches authored definition for %s" % s_id)
+
+	# Distinct duplicate occurrences:
+	_check(mixed_deck[0] == mixed_deck[1] and mixed_deck[0] == "warden_strike", "duplicate starter check")
+	_check(mixed_deck[5] == mixed_deck[6] and mixed_deck[5] == "warden_pinning_jab", "duplicate pool base check")
+	var first_strike_partners := mixed_model.second_options(0)
+	var second_strike_partners := mixed_model.second_options(1)
+	_check(first_strike_partners.size() == second_strike_partners.size(),
+		"duplicate originals share partner counts but separate indices")
+	_check(mixed_model.second_options(16).is_empty(), "stitched card has no second options")
+	_check(mixed_model.preview(16, 0).is_empty() and mixed_model.preview(0, 16).is_empty(),
+		"preview refuses already-stitched card as first or second half")
+
+	# AC2: Cross-owner pool/starter, pool/pool, plus/starter, plus/pool selections:
+	var pairs_to_test := [
+		[5, 2, "pool base / starter (Pinning Jab / Prick)"],
+		[5, 7, "pool base / pool base (Pinning Jab / Snag)"],
+		[11, 4, "pool plus / starter (Pinning Jab+ / Pop Shot)"],
+		[11, 9, "pool plus / pool base (Pinning Jab+ / Ricochet)"],
+		[12, 13, "pool plus / pool plus (Snag+ / Rivet Shot+)"],
+		[10, 0, "pool party_all / starter (Field Mend / Strike)"],
+		[14, 5, "pool plus enemy_random / pool base (Ricochet+ / Pinning Jab)"],
+	]
+	for p in pairs_to_test:
+		var a: int = p[0]
+		var b: int = p[1]
+		var desc: String = p[2]
+		var prev := _assert_projection(mixed_model, mixed_receipt, a, b, desc)
+		_assert_authored(prev, mixed_deck[a], mixed_deck[b], desc)
+		var d_a := RunRestStitchCards.resolve_card_definition(mixed_deck[a])
+		var d_b := RunRestStitchCards.resolve_card_definition(mixed_deck[b])
+		var expected_cost := mini(3, maxi(d_a["cost"], d_b["cost"]) + 1)
+		_check(prev["energy_cost"] == expected_cost, desc + " cost calculation min(3, max+1)")
+		_check(prev["remaining_scraps"] == scraps - 3, desc + " charges exactly 3 scraps")
+		_check(prev["first_half"] == d_a and prev["second_half"] == d_b, desc + " preserves authored halves")
+		var rev := _assert_projection(mixed_model, mixed_receipt, b, a, desc + " (reversed)")
+		_assert_authored(rev, mixed_deck[b], mixed_deck[a], desc + " (reversed)")
+		_check(rev["energy_cost"] == expected_cost, desc + " reversed cost matches")
+		_check(rev["first_id"] == mixed_deck[b] and rev["second_id"] == mixed_deck[a], desc + " reversed halves")
+
+	# AC3: Mounted LiveRestStitchPairPicker bound to mixed visit:
+	var ui := LiveRestStitchPairPicker.new()
+	ui.name = "MixedPoolRestStitchPairPicker"
+	ui.position = Vector2(330, 180)
+	ui.size = Vector2(600, 355)
+	root.add_child(ui)
+	await _frames()
+	ui.stitch_requested.connect(_take)
+	ui.bind(mixed_ledger, mixed_receipt)
+
+	_bounds(ui)
+	_bounds(ui.first_selector)
+	_bounds(ui.second_selector)
+	_bounds(ui.confirm_button)
+	_bounds(ui.summary_label)
+	_bounds(ui.first_half_label)
+	_bounds(ui.second_half_label)
+
+	# 1. Warden Pinning Jab (4 damage; Pinned) and Pinning Jab+ (6 damage; Pinned)
+	var jab_row := _row_in_first(ui, 5)
+	_check(jab_row >= 0, "Pinning Jab selectable in first selector")
+	ui.first_selector.select(jab_row)
+	ui.first_selector.item_selected.emit(jab_row)
+	var prick_partner_row := _row_in_second(ui, 2)
+	_check(prick_partner_row >= 0, "Prick partner selectable")
+	ui.second_selector.select(prick_partner_row)
+	ui.second_selector.item_selected.emit(prick_partner_row)
+	_check(ui.first_half_label.text ==
+		"First: Pinning Jab — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1\n4 damage; Pinned",
+		"Pinning Jab displays authored rules: owner, cost, from 1-2, target 1, 4 damage; Pinned")
+	_check(ui.first_half_label.get_line_count() <= 4, "Pinning Jab unclipped")
+
+	var jab_plus_row := _row_in_first(ui, 11)
+	_check(jab_plus_row >= 0, "Pinning Jab+ selectable in first selector")
+	ui.first_selector.select(jab_plus_row)
+	ui.first_selector.item_selected.emit(jab_plus_row)
+	prick_partner_row = _row_in_second(ui, 2)
+	ui.second_selector.select(prick_partner_row)
+	ui.second_selector.item_selected.emit(prick_partner_row)
+	_check(ui.first_half_label.text ==
+		"First: Pinning Jab+ — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1\n6 damage; Pinned",
+		"Pinning Jab+ displays authored upgraded rules: 6 damage; Pinned")
+	_check(ui.first_half_label.get_line_count() <= 4, "Pinning Jab+ unclipped")
+
+	# 2. Seamstress Snag (Unravel 3; Weak 1) and Snag+ (Unravel 4; Weak 1)
+	var snag_row := _row_in_first(ui, 7)
+	_check(snag_row >= 0, "Snag selectable in first selector")
+	ui.first_selector.select(snag_row)
+	ui.first_selector.item_selected.emit(snag_row)
+	var strike_partner_row := _row_in_second(ui, 0)
+	ui.second_selector.select(strike_partner_row)
+	ui.second_selector.item_selected.emit(strike_partner_row)
+	_check(ui.first_half_label.text ==
+		"First: Snag — Seamstress (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\nUnravel 3; Weak 1",
+		"Snag displays authored rules: owner, cost, from 2-3, target 1-3, Unravel 3; Weak 1")
+	_check(ui.first_half_label.get_line_count() <= 4, "Snag unclipped")
+
+	var snag_plus_row := _row_in_first(ui, 12)
+	ui.first_selector.select(snag_plus_row)
+	ui.first_selector.item_selected.emit(snag_plus_row)
+	strike_partner_row = _row_in_second(ui, 0)
+	ui.second_selector.select(strike_partner_row)
+	ui.second_selector.item_selected.emit(strike_partner_row)
+	_check(ui.first_half_label.text ==
+		"First: Snag+ — Seamstress (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\nUnravel 4; Weak 1",
+		"Snag+ displays authored upgraded rules: Unravel 4; Weak 1")
+	_check(ui.first_half_label.get_line_count() <= 4, "Snag+ unclipped")
+
+	# 3. Tinker Rivet Shot (4 damage; Exposed 1) and Rivet Shot+ (6 damage; Exposed 1)
+	ui.first_selector.select(_row_in_first(ui, 0)) # Strike
+	ui.first_selector.item_selected.emit(_row_in_first(ui, 0))
+	var rivet_row := _row_in_second(ui, 8)
+	_check(rivet_row >= 0, "Rivet Shot selectable in second selector")
+	ui.second_selector.select(rivet_row)
+	ui.second_selector.item_selected.emit(rivet_row)
+	_check(ui.second_half_label.text ==
+		"Second: Rivet Shot — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n4 damage; Exposed 1 (first Tinker attack this turn: +3 damage)",
+		"Rivet Shot displays authored rules: 4 damage; Exposed 1 with Tinker attack passive")
+	_check(ui.second_half_label.get_line_count() <= 4, "Rivet Shot unclipped")
+
+	var rivet_plus_row := _row_in_second(ui, 13)
+	ui.second_selector.select(rivet_plus_row)
+	ui.second_selector.item_selected.emit(rivet_plus_row)
+	_check(ui.second_half_label.text ==
+		"Second: Rivet Shot+ — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n6 damage; Exposed 1 (first Tinker attack this turn: +3 damage)",
+		"Rivet Shot+ displays authored upgraded rules: 6 damage; Exposed 1")
+	_check(ui.second_half_label.get_line_count() <= 4, "Rivet Shot+ unclipped")
+
+	# 4. Tinker Ricochet (enemy_random in 1-3, 4 damage to a random living enemy three times using run RNG)
+	var ricochet_row := _row_in_second(ui, 9)
+	_check(ricochet_row >= 0, "Ricochet selectable in second selector")
+	ui.second_selector.select(ricochet_row)
+	ui.second_selector.item_selected.emit(ricochet_row)
+	_check(ui.second_half_label.text ==
+		"Second: Ricochet — Tinker (1 energy)\nFrom hero positions 2-3; random living enemy in positions 1-3\n4 damage to a random living enemy three times using run RNG (first Tinker attack this turn: +3 damage)",
+		"Ricochet displays authored rules: enemy_random, 4 damage 3 hits run RNG and passive")
+	_check(ui.second_half_label.get_line_count() <= 4, "Ricochet unclipped")
+
+	var ricochet_plus_row := _row_in_second(ui, 14)
+	ui.second_selector.select(ricochet_plus_row)
+	ui.second_selector.item_selected.emit(ricochet_plus_row)
+	_check(ui.second_half_label.text ==
+		"Second: Ricochet+ — Tinker (1 energy)\nFrom hero positions 2-3; random living enemy in positions 1-3\n6 damage to a random living enemy three times using run RNG (first Tinker attack this turn: +3 damage)",
+		"Ricochet+ displays authored upgraded rules: 6 damage 3 hits run RNG")
+	_check(ui.second_half_label.get_line_count() <= 4, "Ricochet+ unclipped")
+
+	# 5. Seamstress Field Mend (party_all, heal every ally 4)
+	var field_mend_row := _row_in_second(ui, 10)
+	_check(field_mend_row >= 0, "Field Mend selectable in second selector")
+	ui.second_selector.select(field_mend_row)
+	ui.second_selector.item_selected.emit(field_mend_row)
+	_check(ui.second_half_label.text ==
+		"Second: Field Mend — Seamstress (2 energy)\nFrom hero positions 2-3; all allies\nheal every ally 4",
+		"Field Mend displays authored rules: party_all, heal every ally 4")
+	_check(ui.second_half_label.get_line_count() <= 4, "Field Mend unclipped")
+
+	var field_mend_plus_row := _row_in_second(ui, 15)
+	ui.second_selector.select(field_mend_plus_row)
+	ui.second_selector.item_selected.emit(field_mend_plus_row)
+	_check(ui.second_half_label.text ==
+		"Second: Field Mend+ — Seamstress (2 energy)\nFrom hero positions 2-3; all allies\nheal every ally 6",
+		"Field Mend+ displays authored upgraded rules: heal every ally 6")
+	_check(ui.second_half_label.get_line_count() <= 4, "Field Mend+ unclipped")
+
+	# Keyboard focus and confirmation on representative pool selection:
+	ui.second_selector.grab_focus()
+	await _key(KEY_TAB)
+	_check(ui.confirm_button.has_focus(), "keyboard Tab reaches confirmation button on pool selection")
+	var sigs_before := received.size()
+	await _key(KEY_ENTER)
+	_check(received.size() == sigs_before + 1 and received.back()["first"] == 0
+		and received.back()["second"] == 15 and received.back()["source"] == mixed_receipt,
+		"keyboard confirmation emits exact indices for Strike / Field Mend+ without mutating visit")
+	_check(mixed_ledger.get_snapshot() == mixed_receipt and not mixed_ledger.is_consumed(),
+		"mounted request only emits intent; Rest ledger remains untouched")
+	ui.free()
+
+	# AC4: Insufficient scraps, forged/stale receipts, invalid indices, same-owner pairs, stitched cards, consumed visit:
+	for scrap_val in [0, 2]:
+		var poor := RunRestStitchCards.new(mixed_deck, descriptors, scrap_val, next_stitch_id)
+		var poor_m := RunRestStitchPairOptions.new(poor, poor.get_snapshot())
+		_check(not poor_m.is_available() and poor_m.first_options().is_empty()
+			and poor_m.second_options(5).is_empty() and poor_m.preview(5, 7).is_empty()
+			and poor.get_snapshot()["remaining_scraps"] == scrap_val and not poor.is_consumed(),
+			"mixed ledger with %d scraps excludes all pairs and spends nothing" % scrap_val)
+
+	# Nonexistent/invalid indices, same-owner pairs, and stitched card as half:
+	_check(mixed_model.preview(-1, 5).is_empty(), "negative index rejected")
+	_check(mixed_model.preview(5, mixed_deck.size()).is_empty(), "out of bounds index rejected")
+	_check(mixed_model.preview(5, 5).is_empty(), "same index twice rejected")
+	_check(mixed_model.preview("5", 7).is_empty(), "string index rejected")
+	_check(mixed_model.preview(0, 5).is_empty(), "same owner Warden/Warden pair rejected")
+	_check(mixed_model.preview(7, 10).is_empty(), "same owner Seamstress/Seamstress pair rejected")
+	_check(mixed_model.preview(8, 9).is_empty(), "same owner Tinker/Tinker pair rejected")
+	_check(mixed_model.preview(16, 5).is_empty() and mixed_model.preview(5, 16).is_empty(),
+		"pre-existing stitched card cannot be used as stitch input")
+
+	# Forged or stale receipts:
+	for key in ["receipt", "deck", "descriptors", "remaining_scraps", "next_stitch_id"]:
+		var forged := mixed_receipt.duplicate(true)
+		match key:
+			"receipt": forged[key] = "forged"
+			"deck": forged[key][0] = "warden_brace"
+			"descriptors": forged[key]["stitched_999999"] = {}
+			"remaining_scraps": forged[key] = 99
+			"next_stitch_id": forged[key] = 9
+		var stale := RunRestStitchPairOptions.new(mixed_ledger, forged)
+		_check(not stale.is_available() and stale.first_options().is_empty() and stale.preview(5, 7).is_empty(),
+			"mixed ledger with tampered " + key + " fails closed")
+
+	# Consumed visit rejection:
+	var commit_oracle := RunRestStitchCards.new(mixed_deck, descriptors, scraps, next_stitch_id)
+	var committed := commit_oracle.choose_stitch(5, 7, commit_oracle.get_snapshot())
+	_check(committed.get("ok", false) and commit_oracle.is_consumed(), "commit oracle consumed successfully")
+	var consumed_m := RunRestStitchPairOptions.new(commit_oracle, commit_oracle.get_snapshot())
+	_check(not consumed_m.is_available() and consumed_m.first_options().is_empty()
+		and consumed_m.second_options(5).is_empty() and consumed_m.preview(5, 7).is_empty(),
+		"consumed mixed visit offers no choices")
+
+	# Deterministic RNG invariance check:
+	var neg_rng := RandomNumberGenerator.new()
+	neg_rng.seed = 991823
+	var neg_state := neg_rng.state
+	seed(991823)
+	var neg_global := randi()
+	seed(991823)
+	_check(neg_rng.state == neg_state and randi() == neg_global,
+		"negative checks on mixed ledger consume no local or global RNG")

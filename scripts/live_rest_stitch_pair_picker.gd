@@ -289,9 +289,13 @@ func _target(half: Dictionary) -> String:
 			return "choose one enemy in positions %s" % _positions(positions)
 		"enemy_all":
 			return "all eligible enemies in positions %s" % _positions(positions)
+		"enemy_random":
+			return "random living enemy in positions %s" % _positions(positions) if not positions.is_empty() else "random living enemy"
 		"ally_single":
 			return "choose one living ally in positions %s" % _positions(
 				[1, 2, 3] if positions.is_empty() else positions)
+		"party_all":
+			return "all allies" if positions.is_empty() else "all allies in positions %s" % _positions(positions)
 		"self":
 			return "self (no chosen target)"
 		"none":
@@ -302,23 +306,54 @@ func _target(half: Dictionary) -> String:
 func _effects(half: Dictionary) -> String:
 	var effects: Dictionary = half["effects"]
 	var words: Array[String] = []
-	for key in ["damage", "bleed", "weak", "heal", "block", "draw"]:
+	for key in ["damage", "bleed", "bleed_multiplier", "unravel", "exposed", "pinned", "weak",
+			"heal", "block", "block_all", "other_ally_block", "guarding", "thorns",
+			"draw", "energy", "gain_energy", "self_hp_loss"]:
 		if not effects.has(key):
 			continue
 		match key:
 			"damage":
-				words.append("%d damage%s" % [effects[key],
-					" to each eligible enemy" if half["target_kind"] == "enemy_all" else ""])
+				if half["target_kind"] == "enemy_random":
+					var times_str := "three times" if effects.get("hit_count") == 3 else ("%d times" % effects.get("hit_count", 1))
+					words.append("%d damage to a random living enemy %s using run RNG" % [effects[key], times_str])
+				elif half.get("effects", {}).has("hits") and int(effects.get("hits", 1)) > 1:
+					words.append("%d damage in %d hits" % [effects[key], effects["hits"]])
+				else:
+					words.append("%d damage%s" % [effects[key],
+						" to each eligible enemy" if half["target_kind"] == "enemy_all" else ""])
 			"bleed":
 				words.append("Bleed %d" % effects[key])
+			"bleed_multiplier":
+				words.append("Bleed ×%d" % effects[key])
+			"unravel":
+				words.append("Unravel %d" % effects[key])
+			"exposed":
+				words.append("Exposed %d" % effects[key])
+			"pinned":
+				words.append("Pinned")
 			"weak":
 				words.append("Weak %d" % effects[key])
 			"heal":
-				words.append("heal %d" % effects[key])
+				if half["target_kind"] == "party_all":
+					words.append("heal every ally %d" % effects[key])
+				else:
+					words.append("heal %d" % effects[key])
 			"block":
 				words.append("Block %d" % effects[key])
+			"block_all":
+				words.append("Block %d to all allies" % effects[key])
+			"other_ally_block":
+				words.append("every other ally gains %d Block" % effects[key])
+			"guarding":
+				words.append("Guarding")
+			"thorns":
+				words.append("Thorns %d" % effects[key])
 			"draw":
 				words.append("draw %d" % effects[key])
+			"energy", "gain_energy":
+				words.append("gain %d energy" % effects[key])
+			"self_hp_loss":
+				words.append("%d HP lost" % effects[key])
 	var text := "; ".join(PackedStringArray(words))
 	if half["owner"] == "seamstress" and effects.has("bleed"):
 		text += " (+1 Bleed if applied: Seamstress passive)"

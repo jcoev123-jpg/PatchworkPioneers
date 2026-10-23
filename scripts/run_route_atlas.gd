@@ -69,6 +69,19 @@ const PIN_SIZE := Vector2(24.0, 30.0)
 ## Normal and presentation-only fast reveal of a newly legal stitch, in seconds.
 const REVEAL_DURATION := 0.6
 const REVEAL_FAST_DURATION := 0.15
+## The authored book areas, in floor order: each label names the floor columns it groups.
+## The four Fight landscapes and the single Boss floor keep their exact spans.
+const AREA_BANDS := [
+	{"name": "Meadow", "first_floor": 1, "last_floor": 3},
+	{"name": "Woods", "first_floor": 4, "last_floor": 6},
+	{"name": "Marsh", "first_floor": 7, "last_floor": 9},
+	{"name": "Peaks", "first_floor": 10, "last_floor": 11},
+	{"name": "Boss", "first_floor": 12, "last_floor": 12},
+]
+## Area names sit just above the first patch row, clear of the floor numbers, so they
+## read as group captions over either the drawn pages or the owner board image.
+const AREA_LABEL_TOP := 98.0
+const AREA_LABEL_HEIGHT := 24.0
 
 signal node_requested(id: String)
 
@@ -369,6 +382,8 @@ func refresh() -> void:
 			for target_id in node["outgoing"]:
 				if positions.has(target_id):
 					_add_thread(source_id, target_id, positions, chosen, legal, reveal_keys)
+	# Inert area captions name each floor group over the book, before any marker mounts.
+	_add_area_labels()
 	for floor_index in range(floors.size()):
 		var floor_header := Label.new()
 		floor_header.name = "Floor%02d" % (floor_index + 1)
@@ -519,6 +534,41 @@ func _stitch_frame(rect: Rect2) -> void:
 	for corner: Vector2 in corners:
 		draw_line(corner + Vector2(-4, -4), corner + Vector2(4, 4), THREAD, 1.2, true)
 		draw_line(corner + Vector2(4, -4), corner + Vector2(-4, 4), THREAD, 1.2, true)
+
+
+## The centred caption band of one area, spanning exactly its floor columns.
+static func area_label_rect(band: Dictionary) -> Rect2:
+	var first := int(band["first_floor"])
+	var last := int(band["last_floor"])
+	var left := FIRST_X + float(first - 1) * FLOOR_STEP
+	var right := FIRST_X + float(last - 1) * FLOOR_STEP + NODE_SIZE.x
+	return Rect2(left, AREA_LABEL_TOP, right - left, AREA_LABEL_HEIGHT)
+
+
+## Inert area caption over its floor group. It is a plain child drawn above the book
+## (drawn or owner image) and below every legal Action, so it never takes input.
+func _add_area_labels() -> void:
+	for band in AREA_BANDS:
+		var area_name := String(band["name"])
+		var label := Label.new()
+		label.name = "Area" + area_name
+		label.text = area_name
+		label.set_meta("area_name", area_name)
+		label.set_meta("first_floor", int(band["first_floor"]))
+		label.set_meta("last_floor", int(band["last_floor"]))
+		var rect := area_label_rect(band)
+		label.position = rect.position
+		label.size = rect.size
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 16)
+		# Dark ink with a cream halo stays legible over the cream pages and over the
+		# owner's busier board image without adding an opaque box.
+		label.add_theme_color_override("font_color", INK)
+		label.add_theme_constant_override("outline_size", 4)
+		label.add_theme_color_override("font_outline_color", PAPER)
+		_inert(label)
+		add_child(label)
 
 
 func _node_position(floor_index: int, row_index: int) -> Vector2:
