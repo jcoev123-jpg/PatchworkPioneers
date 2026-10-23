@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/app.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/live_enemy_roster.gd" id="2"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://scripts/live_area_attack_action.gd" id="5"]
 [ext_resource type="Script" path="res://scripts/live_elite_patch_sewing.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/patchwork_ui_shell.gd" id="7"]
+[ext_resource type="Script" path="res://scripts/live_warden_reaction_hand.gd" id="8"]
 
 [node name="App" type="Control"]
 layout_mode = 3
@@ -32,6 +33,9 @@ script = ExtResource("2")
 
 [node name="LiveSupportHand" type="Node" parent="."]
 script = ExtResource("3")
+
+[node name="LiveWardenReactionHand" type="Node" parent="."]
+script = ExtResource("8")
 
 [node name="LiveCombatMeters" type="Node" parent="."]
 script = ExtResource("4")
