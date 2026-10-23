@@ -10,14 +10,72 @@ const SUPPORTED_IDS := [
 	"seamstress_red_thread", "seamstress_red_thread_plus"
 ]
 
+const BLOODLINE_PATH := "bloodline"
+const UNPICKER_PATH := "unpicker"
+const OWNER_ID := "seamstress"
+
 var _attacks := CombatStatusAttacks.new()
 var _patches: CombatPatchAttackRules = null
+var _receipt: Dictionary = {}
+var _selected_path: String = ""
+var _path_selection_attempted: bool = false
+var _path_selection_valid: bool = false
+var _unravel: CombatUnravel = null
+
+
+func _init(choice_or_receipt: Variant = null, unravel: CombatUnravel = null) -> void:
+	if choice_or_receipt != null:
+		bind_choice(choice_or_receipt)
+	if unravel != null:
+		bind_unravel(unravel)
 
 
 ## A failed explicit binding fails closed; an untouched service stays unbound.
 func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	_patches = CombatPatchAttackRules.new()
 	return _patches.bind_wardrobe(wardrobe, torn)
+
+
+func bind_choice(choice_or_receipt: Variant) -> bool:
+	return bind_path_choice(choice_or_receipt)
+
+
+func bind_path_choice(choice_or_receipt: Variant) -> bool:
+	_path_selection_attempted = true
+	var validated: Dictionary = _validate_choice_or_receipt(choice_or_receipt)
+	if not validated.get("ok", false):
+		_path_selection_valid = false
+		_selected_path = ""
+		_receipt = {}
+		return false
+	_path_selection_valid = true
+	_selected_path = validated["path_id"]
+	_receipt = validated["receipt"]
+	return true
+
+
+func bind_unravel(unravel: CombatUnravel) -> void:
+	_unravel = unravel
+
+
+func set_unravel(unravel: CombatUnravel) -> void:
+	bind_unravel(unravel)
+
+
+func get_receipt() -> Dictionary:
+	return _receipt.duplicate(true)
+
+
+func get_path_id() -> String:
+	return _selected_path
+
+
+func is_valid_choice() -> bool:
+	return _path_selection_valid
+
+
+func get_unravel() -> CombatUnravel:
+	return _unravel
 
 
 ## Side-effect-free projection of a legal, genuinely held enemy-single card.
@@ -66,6 +124,10 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"statuses": plan.applications[position].duplicate(true)})
 	# A lethal Running Stitch still applies to its original slain slot.
 	enemies.apply_statuses(plan.applications)
+	if _selected_path == UNPICKER_PATH and _unravel != null:
+		for position in plan.positions:
+			if not enemies.is_slain(position) and plan.applications[position].get("bleed", 0) > 0:
+				_unravel.apply_unravel(enemies, position, 2)
 	if plan.is_running and _patches != null:
 		_patches.record_successful_attack("seamstress")
 	return {"ok": true, "hits": hits}
@@ -77,12 +139,21 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# batch have been validated. Do not substitute caller-supplied status maps.
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
 		return _failure()
+	if _path_selection_attempted and not _path_selection_valid:
+		return _failure()
 	if _patches != null and not _patches.is_valid():
 		return _failure()
 	if not deck.turn_active or not deck.hand.has(card_id) or not party.is_valid():
 		return _failure()
 	if not enemies.can_apply_statuses({}) or enemies.is_victorious():
 		return _failure()
+
+	if _selected_path == UNPICKER_PATH:
+		if _unravel == null or not (_unravel is CombatUnravel):
+			return _failure()
+		if _unravel._bound_enemies != enemies or not enemies.is_valid():
+			return _failure()
+
 	var definition: Dictionary = SeamstressPoolCards.new().get_definition(card_id)
 	if definition.get("id") != card_id or definition.get("owner") != "seamstress":
 		return _failure()
@@ -128,6 +199,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if positions.is_empty():
 		return _failure()
 
+	if _selected_path == UNPICKER_PATH:
+		for position in positions:
+			if _unravel.get_snapshot(position).is_empty():
+				return _failure()
+
 	var is_running := card_id.begins_with("seamstress_running_stitch")
 	var is_hem := card_id.begins_with("seamstress_hemorrhage_hem")
 	var is_blanket := card_id.begins_with("seamstress_blanket_stitch")
@@ -169,9 +245,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				return _failure()
 			additions["bleed"] = current
 		else:
-			if effects["bleed"] == CombatEnemies.MAX_INT:
+			var bleed_amount: int = effects["bleed"]
+			var passive_bonus: int = 0 if _selected_path == UNPICKER_PATH else 1
+			if bleed_amount > CombatEnemies.MAX_INT - passive_bonus:
 				return _failure()
-			additions["bleed"] = effects["bleed"] + 1 # Seamstress passive.
+			additions["bleed"] = bleed_amount + passive_bonus
 			if effects.has("exposed"):
 				additions["exposed"] = effects["exposed"]
 			elif is_running and patch_exposed > 0:
@@ -197,3 +275,118 @@ func _valid_effect(effects: Dictionary, required: Array[String]) -> bool:
 
 func _failure() -> Dictionary:
 	return {"ok": false, "hits": []}
+
+
+func _validate_choice_or_receipt(candidate: Variant) -> Dictionary:
+	var receipt: Dictionary = {}
+	var choice_instance: RunSeamstressPathChoice = null
+	if candidate is RunSeamstressPathChoice:
+		if not candidate.is_claimed():
+			return {"ok": false}
+		choice_instance = candidate
+		receipt = candidate.get_receipt()
+	elif candidate is Dictionary:
+		receipt = candidate
+	else:
+		return {"ok": false}
+
+	if receipt.is_empty() or receipt.get("ok") != true:
+		return {"ok": false}
+	if receipt.get("owner") != OWNER_ID:
+		return {"ok": false}
+	var path_id = receipt.get("path_id")
+	if not path_id is String:
+		return {"ok": false}
+	if path_id != BLOODLINE_PATH and path_id != UNPICKER_PATH:
+		return {"ok": false}
+
+	var choice := choice_instance if choice_instance != null else RunSeamstressPathChoice.new()
+	if choice_instance == null and not choice.is_valid():
+		return {"ok": false}
+	var expected_path: Dictionary = choice.get_path(path_id)
+	if expected_path.is_empty():
+		return {"ok": false}
+
+	if receipt.get("display_name") != expected_path.get("display_name"):
+		return {"ok": false}
+	if not _deep_equal(receipt.get("passive"), expected_path.get("passive")):
+		return {"ok": false}
+	if not _deep_equal(receipt.get("card"), expected_path.get("card")):
+		return {"ok": false}
+
+	var deck_val: Variant = receipt.get("deck")
+	if not deck_val is Array:
+		return {"ok": false}
+	var candidate_deck: Array = deck_val
+	var base_deck: Array[String] = choice.get_base_deck()
+	if candidate_deck.size() != base_deck.size() + 1:
+		return {"ok": false}
+
+	var card_id: String = String(expected_path.get("card", {}).get("id", ""))
+	var expected_counts: Dictionary = {}
+	for base_id in base_deck:
+		expected_counts[base_id] = int(expected_counts.get(base_id, 0)) + 1
+	expected_counts[card_id] = int(expected_counts.get(card_id, 0)) + 1
+
+	var candidate_counts: Dictionary = {}
+	for item in candidate_deck:
+		if not item is String:
+			return {"ok": false}
+		var item_id: String = item
+		candidate_counts[item_id] = int(candidate_counts.get(item_id, 0)) + 1
+
+	if candidate_counts != expected_counts:
+		return {"ok": false}
+
+	var other_path_card: String = "seamstress_fray" if path_id == BLOODLINE_PATH else "seamstress_leech_stitch"
+	if candidate_counts.get(other_path_card, 0) > 0:
+		return {"ok": false}
+
+	return {"ok": true, "path_id": path_id, "receipt": receipt.duplicate(true)}
+
+
+func _deep_equal(a: Variant, b: Variant) -> bool:
+	var norm_a: Variant = _normalize(a)
+	var norm_b: Variant = _normalize(b)
+	if typeof(norm_a) != typeof(norm_b):
+		return false
+	if norm_a is Array:
+		var arr_a: Array = norm_a
+		var arr_b: Array = norm_b
+		if arr_a.size() != arr_b.size():
+			return false
+		for i in range(arr_a.size()):
+			if not _deep_equal(arr_a[i], arr_b[i]):
+				return false
+		return true
+	if norm_a is Dictionary:
+		var dict_a: Dictionary = norm_a
+		var dict_b: Dictionary = norm_b
+		if dict_a.size() != dict_b.size():
+			return false
+		for key in dict_a:
+			if not dict_b.has(key):
+				return false
+			if not _deep_equal(dict_a[key], dict_b[key]):
+				return false
+		return true
+	return norm_a == norm_b
+
+
+func _normalize(value: Variant) -> Variant:
+	if typeof(value) == TYPE_FLOAT:
+		var f: float = value
+		if is_finite(f) and floor(f) == f:
+			return int(f)
+		return f
+	if value is Array:
+		var res: Array = []
+		for item in value:
+			res.append(_normalize(item))
+		return res
+	if value is Dictionary:
+		var res: Dictionary = {}
+		for k in value:
+			res[k] = _normalize(value[k])
+		return res
+	return value
