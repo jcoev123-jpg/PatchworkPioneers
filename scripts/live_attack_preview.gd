@@ -31,8 +31,11 @@ var _on_hit := CombatOnHitStatuses.new()
 ## One Pinned token set and one Unravel gauge per battle session. They survive
 ## every hand rebuild and turn refresh, and are never reset by a preview.
 var _controls := CombatSeamstressPoolControl.new()
+var _combo_oracle := CombatPoolComboAttackPreview.new()
+var _warden_combo := CombatWardenPoolComboAttacks.new()
 var _pinned: CombatPinned
 var _unravel: CombatUnravel
+var _routed_gauge_shared := false
 var last_event: Dictionary = {}
 var _armed: Control
 var _queued := false
@@ -149,7 +152,10 @@ func _control_ready(party: CombatParty, enemies: CombatEnemies, card_id: String)
 		return true
 	if _unravel._bound_enemies != enemies:
 		return false
-	return _matching_flow(get_parent(), party, enemies) != null
+	var flow := _matching_flow(get_parent(), party, enemies)
+	# Never replace a different authority installed on this round flow.
+	# Only an unbound flow, or the exact battle gauge, can accept a cast.
+	return flow != null and (flow._unravel == null or flow._unravel == _unravel)
 
 
 ## Hand the same gauge instance to the live round flow, then allow the cast.
@@ -164,6 +170,16 @@ func _share_gauge(party: CombatParty, enemies: CombatEnemies, card_id: String) -
 		return false
 	flow._unravel = _unravel
 	return true
+
+
+## A selectable combo must belong to this actual routed battle, with the
+## identical gauge that the enemy phase will consume. The oracle is detached.
+func _combo_preview(id: String) -> Dictionary:
+	var app = get_parent()
+	if not app._combo_battle_current() or not _control_ready(app.party, app.enemies, id):
+		return {"playable": false, "requires_selection": false, "target_positions": [], "targets": []}
+	return _combo_oracle.get_preview(_deck, app.party, app.enemies,
+		_pinned, _unravel, _play._tinker, id, 0)
 
 
 ## Scoped picker for the six control variants: targeted legality stays with
@@ -371,8 +387,8 @@ func _input(event: InputEvent) -> void:
 	var index := panels.find(_selected)
 	_selected = panels[(index + 1) % panels.size()]
 	_armed = _selected
-	if not _single(_armed):
-		# Attack keyboard selection must not inherit End Turn/Return focus.
+	if not _single(_armed) or _targeting.is_pool_combo_attack(_card_id(_armed)):
+		# Combo P-selection must not leave Space bound to End Turn.
 		get_viewport().gui_release_focus()
 	_token += 1
 	_queued = false
@@ -398,6 +414,8 @@ func _definition(card_id: String) -> Dictionary:
 		return _targeting.heavy_definition(card_id)
 	if _targeting.is_seamstress_control(card_id):
 		return _targeting.control_definition(card_id)
+	if _targeting.is_pool_combo_attack(card_id):
+		return _targeting.combo_definition(card_id)
 	if _direct_fire_preview.supports(card_id):
 		return _direct_fire_preview.definition(card_id)
 	if _targeting.is_sight_glass(card_id):
@@ -433,6 +451,11 @@ func _target_preview(id: String) -> Dictionary:
 		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire)
 	if _targeting.is_seamstress_control(id):
 		return _control_preview(id)
+	if _targeting.is_pool_combo_attack(id):
+		var forecast := _combo_preview(id)
+		return {"playable": forecast.get("playable", false),
+			"requires_selection": forecast.get("requires_selection", false),
+			"target_positions": forecast.get("target_positions", [])}
 	return _targeting.get_preview(_deck, app.party, app.enemies, id)
 
 
@@ -449,7 +472,8 @@ func _queue_attack(position: int) -> void:
 	# prevent an enemy replacement or equivalent-copy panel swap at commit.
 	var target_id := ""
 	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
-			or _targeting.is_seamstress_control(id)) and position > 0:
+			or _targeting.is_seamstress_control(id) \
+			or _targeting.is_pool_combo_attack(id)) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
 		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
@@ -465,7 +489,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	_queued = false
 	var direct := _direct_fire_preview.supports(id)
 	var control := _targeting.is_seamstress_control(id)
-	var guarded := direct or control
+	var combo := _targeting.is_pool_combo_attack(id)
+	var guarded := direct or control or combo
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -480,14 +505,15 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 			or panel.get_index() != panel_index or app.deck.hand != queued_hand):
 		_reject_stitch()
 		return
-	if direct and (app._battle_closed or target_id.is_empty() or app.deck._rng != rng):
+	if (direct or combo) and (app._battle_closed or target_id.is_empty() \
+			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
 		return
 	var preview := _target_preview(id)
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or (control and (app._battle_closed or target_id.is_empty() \
+			or ((control or combo) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -504,6 +530,15 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		if forecast:
 			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire)
 		return _direct_fire.play_attack(_deck, party, enemies, id, position)
+	if _targeting.is_pool_combo_attack(id):
+		if forecast:
+			return _combo_preview(id)
+		if not get_parent()._combo_battle_current() or not _share_gauge(party, enemies, id):
+			return {"ok": false}
+		if CombatWardenPoolComboAttacks.SUPPORTED_CARD_IDS.has(id):
+			return _warden_combo.play_attack(_deck, party, enemies, _pinned, _unravel, id, position)
+		return CombatTinkerPoolUnravelAttacks.new(_play._tinker, _unravel, _pinned).play_attack(
+			_deck, party, enemies, id, position)
 	if _targeting.is_sight_glass(id):
 		if forecast:
 			return _sight_forecast(party, enemies, id)
@@ -719,9 +754,10 @@ func _eligible(panel) -> bool:
 	if app.battle_result._party != app.party or app.battle_result._enemies != app.enemies:
 		return false
 	var id := _card_id(panel)
-	# Legal scene-free targeting does not imply an installed live resolver.
-	# These combo attacks must remain unwired until their live adapter lands.
-	if _targeting.is_pool_combo_attack(id):
+	# Combo admission additionally requires a current battle and its real
+	# gauge/round-flow binding, not merely scene-free targeting legality.
+	if _targeting.is_pool_combo_attack(id) and (not app._combo_battle_current() \
+			or not _control_ready(app.party, app.enemies, id)):
 		return false
 	var index: int = panel.get_index()
 	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable) and index < _deck.hand.size() and _deck.hand[index] == id
@@ -757,6 +793,7 @@ func _sync_battle() -> void:
 		# They are created here and never recreated or reset by a hand refresh.
 		_pinned = CombatPinned.new()
 		_unravel = CombatUnravel.new()
+		_routed_gauge_shared = false
 		var tiers := enemy_tier_map(app.enemies)
 		if tiers.is_empty() or not _unravel.bind_roster(app.enemies, tiers):
 			# Keep the owned gauge unbound: a gauge-card cast then fails closed.
@@ -798,6 +835,12 @@ func _sync_battle() -> void:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.mouse_entered.connect(entered)
 		panel.mouse_exited.connect(exited)
+	# Real routed fights can accrue Unravel from enemy Bleed before the first
+	# combo cast. Share once on route admission, never replace a foreign gauge
+	# or rebind a deliberately cleared flow on a later hover/hand refresh.
+	# Standalone battles bind on their first successful gauge-bearing cast.
+	if not _routed_gauge_shared and app.run_map != null and app._combo_battle_current():
+		_routed_gauge_shared = _share_gauge(app.party, app.enemies, "")
 	_refresh()
 
 
@@ -881,6 +924,15 @@ func _refresh() -> void:
 		cue.text = "Unavailable card rules"
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
+	if _targeting.is_pool_combo_attack(id):
+		current_forecast = preview.duplicate(true)
+		# Reuse the existing detailed oracle formatter, but make the live input
+		# affordance explicit: this panel now commits, rather than forecasting only.
+		cue.text = app._combo_forecast_text(id, preview).replace(
+			"Forecast only (nothing played): P / hover selects; Esc cancels",
+			"P / click card; %s / click enemy; Esc cancels" % _key_hint(
+				preview.get("target_positions", [])))
+		return
 	if _targeting.is_sight_glass(id):
 		current_forecast = preview.duplicate(true)
 		var descriptions: PackedStringArray = []
@@ -1006,6 +1058,7 @@ func _clear() -> void:
 		app.round_flow._unravel = null
 	_pinned = null
 	_unravel = null
+	_routed_gauge_shared = false
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null

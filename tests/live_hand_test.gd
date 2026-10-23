@@ -429,6 +429,9 @@ func _pool_admitted(card_id: String) -> bool:
 		return true
 	if CombatWardenPoolHeavyAttacks.SUPPORTED_CARD_IDS.has(card_id):
 		return true
+	# Exactly the single-enemy eight Pin/Unravel combo variants are playable.
+	if CombatAttackTargeting.new().is_pool_combo_attack(card_id):
+		return true
 	if CombatTinkerDirectFirePreview.IDS.has(card_id):
 		return true
 	if card_id in CombatAttackTargeting.SIGHT_GLASS_IDS:
@@ -632,7 +635,7 @@ func _inspect_pool_batch(batch: Array[String]) -> void:
 			var before := _combat_state()
 			await _click_center(panel)
 			_check(_combat_state() == before and app.get_node("LiveSupportHand")._pending.is_empty(),
-				"recognized but unwired pool card rejects real pointer input: " + card_id)
+				"newly wired combo card only arms without a target: " + card_id)
 	_check(app.run_rng.seed == rng_seed and app.run_rng.state == rng_state,
 		"drawing and decorating pool faces consumes no run RNG")
 	_check(app.party.get_heroes() == roster and app.enemies.get_enemies() == enemy_roster,
