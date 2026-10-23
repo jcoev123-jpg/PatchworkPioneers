@@ -59,6 +59,54 @@ func _inside(rect: Rect2, outer: Rect2) -> bool:
 		and rect.end.x <= outer.end.x and rect.end.y <= outer.end.y
 
 
+# The mounted preview must always show a complete open book: owner art or drawing.
+func _verify_book(view: RunRouteAtlas, label: String) -> void:
+	if view.uses_board_texture():
+		var art := view.board_texture()
+		var placed := view.board_texture_rect()
+		_check(art is Texture2D and art.get_width() > 0 and art.get_height() > 0
+			and placed == Rect2(Vector2.ZERO, view.size)
+			and view.drawn_book_geometry().is_empty(),
+			label + ": optional owner board image covers the map in place of the drawing")
+		return
+	var book := view.drawn_book_geometry()
+	_check(book.has("left_page") and book.has("right_page") and book.has("spine")
+		and book.has("curl") and book.has("bookmark") and book.has("paper"),
+		label + ": complete drawn open book behind the map")
+	if not (book.has("left_page") and book.has("right_page") and book.has("spine")
+			and book.has("curl") and book.has("bookmark")):
+		return
+	var left: Rect2 = book["left_page"]
+	var right: Rect2 = book["right_page"]
+	var spine: Rect2 = book["spine"]
+	var curl: Rect2 = book["curl"]
+	var bookmark: Rect2 = book["bookmark"]
+	_check(book["paper"] == RunRouteAtlas.PAPER and left.size.x >= 500.0 and right.size.x >= 500.0
+		and left.end.x <= spine.position.x and spine.end.x <= right.position.x,
+		label + ": two cream pages sit either side of the spine")
+	_check(_inside(left, RunRouteAtlas.BOOK_RECT) and _inside(right, RunRouteAtlas.BOOK_RECT)
+		and _inside(spine, RunRouteAtlas.BOOK_RECT) and left.end.x <= right.position.x,
+		label + ": pages and spine stay inside the book")
+	_check(_inside(curl, right) and is_equal_approx(curl.end.x, right.end.x)
+		and is_equal_approx(curl.end.y, right.end.y) and curl.size.x >= 40.0,
+		label + ": page curl folds the right page's bottom-right corner")
+	_check(bookmark.position.y < RunRouteAtlas.BOOK_RECT.position.y
+		and bookmark.position.x >= spine.position.x and bookmark.end.x <= spine.end.x
+		and bookmark.end.y > spine.position.y,
+		label + ": ribbon bookmark hangs over the spine's top edge")
+	_check(float(book["stitch_inset"]) > 0.0
+		and float(book["stitch_inset"]) * 2.0 < minf(left.size.x, left.size.y),
+		label + ": stitched frame is inset from the torn page edge")
+	# Every header and patch must sit on a page, never on the table or the spine.
+	for index in range(view.get_child_count()):
+		var child: Node = view.get_child(index)
+		if not (child is PanelContainer or child is Label):
+			continue
+		var rect := Rect2(child.position, child.size)
+		_check(_inside(rect, left) or _inside(rect, right),
+			label + ": " + str(child.name) + " is sewn onto a page")
+
+
 # Inspect actual mounted children, not internal arrays or a view-generated graph oracle.
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
 	var before := _state(map, rng)
@@ -88,6 +136,9 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	var seen_floors: Dictionary = {}
 	var first_marker_index := 999999
 	var last_thread_index := -1
+	var last_marker_index := -1
+	var pin_ids: Array = []
+	var pin_indices: Array = []
 	var chosen: Array[String] = map.get_route()
 	var legal: Array[String] = map.get_legal_choices()
 	var ordered_legal: Array[String] = []
@@ -145,6 +196,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 		elif child is PanelContainer:
 			var marker: PanelContainer = child
 			first_marker_index = mini(first_marker_index, index)
+			last_marker_index = maxi(last_marker_index, index)
 			_check(marker.has_meta("route_id") and marker.has_meta("route_kind")
 				and marker.has_meta("route_state"), label + ": marker has real identity/type/state")
 			if not marker.has_meta("route_id"):
@@ -213,6 +265,16 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and header.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and header.focus_mode == Control.FOCUS_NONE,
 				label + ": header within bounds and inert")
+		elif child is RunRouteAtlas.CurrentPin:
+			var pin: RunRouteAtlas.CurrentPin = child
+			_check(pin.has_meta("pin_node_id"), label + ": pin names its patch")
+			pin_ids.append(pin.get_meta("pin_node_id"))
+			pin_indices.append(index)
+			_check(pin.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and pin.focus_mode == Control.FOCUS_NONE,
+				label + ": current pin is decoration, not an input target")
+			_check(_inside(Rect2(pin.position, pin.size), bounding),
+				label + ": current pin fits the preview")
 		else:
 			_check(false, label + ": unexpected rendered child: " + child.name)
 
@@ -223,12 +285,23 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	_check(seen_floors.size() == 12, label + ": all twelve columns headed")
 	_check(last_thread_index < first_marker_index,
 		label + ": every connection is behind every node")
-	_check(view.get_child_count() == expected_nodes.size() + expected_edges.size() + 12,
-		label + ": no orphan/duplicate children")
+	var current_id: String = map.get_current_node_id()
+	var expected_pins: Array = [] if current_id.is_empty() else [current_id]
+	_check(pin_ids == expected_pins, label + ": exactly the party's current patch is pinned")
+	for pin_index in pin_indices:
+		_check(int(pin_index) > last_marker_index, label + ": current pin sits above every patch")
+	if seen_nodes.has(current_id) and not pin_indices.is_empty():
+		var current_marker: PanelContainer = seen_nodes[current_id]
+		var pin: Control = view.get_child(int(pin_indices[0]))
+		_check(Rect2(pin.position, pin.size).intersects(Rect2(current_marker.position,
+			current_marker.size)), label + ": current pin touches the pinned patch")
+	_check(view.get_child_count() == expected_nodes.size() + expected_edges.size() + 12
+		+ expected_pins.size(), label + ": no orphan/duplicate children")
 	for id in expected_nodes:
 		_check(seen_nodes.has(id), label + ": missing actual node " + id)
 	for key in expected_edges:
 		_check(seen_edges.has(key), label + ": missing actual edge " + key)
+	_verify_book(view, label)
 	_check(_state(map, rng) == before, label + ": inspecting preview leaves map and RNG unchanged")
 
 
@@ -247,6 +320,8 @@ func _signature(view: RunRouteAtlas) -> Array:
 				thread.get_meta("route_state"), thread.points, thread.default_color])
 		elif child is Label:
 			result.append(["floor", child.get_meta("floor_number"), (child as Label).text, (child as Label).position])
+		elif child is RunRouteAtlas.CurrentPin:
+			result.append(["pin", child.get_meta("pin_node_id"), child.position, child.size])
 	return result
 
 
@@ -277,6 +352,51 @@ func _crossing_present(view: RunRouteAtlas, map: RunMap, label: String) -> void:
 
 func _record_request(id: String) -> void:
 	requests.append(id)
+
+
+## Both backdrop paths must work for the mounted open book: owner art or drawing.
+func _exercise_board_art(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		label: String) -> void:
+	var before := _state(map, rng)
+	var drawn_signature := _signature(view)
+	var stored_path := view.board_texture_path
+	_check(RunRouteAtlas.MAP_BOARD_PATH == "res://assets/paper/backgrounds/map_board.png",
+		label + ": owner board art path is the paper backdrop folder")
+	_check(RunRouteAtlas.load_board_texture("res://assets/paper/backgrounds/missing_map_board.png") == null
+		and RunRouteAtlas.load_board_texture("") == null,
+		label + ": a missing or blank owner board image is not an error")
+	# Drawn fallback: force the missing-art path even when the owner image exists.
+	view.board_texture_path = "res://assets/paper/backgrounds/missing_map_board.png"
+	view.board_texture_override = null
+	view.refresh()
+	_check(not view.uses_board_texture() and view.board_texture() == null
+		and not view.drawn_book_geometry().is_empty(),
+		label + ": missing art keeps the complete drawn fallback")
+	_verify_book(view, label + " drawn fallback")
+	_check(_signature(view) == drawn_signature and _state(map, rng) == before,
+		label + ": the drawn book leaves nodes, route and RNG alone")
+	# Owner art path: the real image when it exists, else the same in-memory image.
+	var art := RunRouteAtlas.load_board_texture(RunRouteAtlas.MAP_BOARD_PATH)
+	if art == null:
+		var image := Image.create(64, 36, false, Image.FORMAT_RGBA8)
+		image.fill(Color("#e8dcb6"))
+		art = ImageTexture.create_from_image(image)
+	view.board_texture_override = art
+	view.board_texture_path = RunRouteAtlas.MAP_BOARD_PATH
+	view.refresh()
+	_check(view.uses_board_texture() and view.board_texture() == art
+		and view.drawn_book_geometry().is_empty(),
+		label + ": an owner board image replaces the drawing in the same preview")
+	_verify_book(view, label + " owner art")
+	_check(view.board_texture_rect() == Rect2(Vector2.ZERO, view.size),
+		label + ": mounted owner board covers the whole map preview")
+	_check(_signature(view) == drawn_signature and _state(map, rng) == before,
+		label + ": the board image only changes the backdrop, not nodes or route")
+	view.board_texture_override = null
+	view.board_texture_path = stored_path
+	view.refresh()
+	_check(_signature(view) == drawn_signature and _state(map, rng) == before,
+		label + ": restoring the configured board leaves nodes, route and RNG alone")
 
 
 func _action(view: RunRouteAtlas, id: String) -> Button:
@@ -380,6 +500,8 @@ func _run() -> void:
 		_verify(first, map, rng, "opening seed %d" % seed_value)
 		_verify(other, replay, replay_rng, "opening replay seed %d" % seed_value)
 		_crossing_present(first, map, "seed %d crossing" % seed_value)
+		if seed_value == 6:
+			_exercise_board_art(first, map, rng, "seed %d board" % seed_value)
 		_check(_state(map, rng) == before and rng.state == replay_rng.state
 			and _signature(first) == _signature(other),
 			"identical seed renders byte-for-byte comparable children and never alters graph/route/RNG")
