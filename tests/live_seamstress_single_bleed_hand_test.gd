@@ -751,6 +751,292 @@ func _test_mounted_worn_patches() -> void:
 	await _return()
 
 
+func _test_mounted_red_bobbin_cuff() -> void:
+	var fixture := _quick_fight_fixture()
+	_check(not fixture.is_empty(), "mounted red bobbin cuff test: found connected Fight fixture")
+	if fixture.is_empty():
+		return
+
+	app.run_seed = fixture.seed
+	app.route_button.pressed.emit()
+	await _frames()
+
+	var first_btn := _route_action(fixture.fight)
+	_check(first_btn != null and not first_btn.disabled, "cuff test: opening fight button found")
+	if first_btn == null:
+		return
+	first_btn.pressed.emit()
+	await _frames()
+
+	_check(app.deck != null and app.party.is_valid(), "cuff test: predecessor fight started")
+	for enemy in app.enemies.get_enemies():
+		app.enemies.apply_damage(enemy.position, 9999)
+	app._observe_battle_result()
+	await _frames()
+	_check(app.battle_result.get_outcome() == CombatBattleResult.VICTORY
+		and app.reward_buttons.size() == 4, "cuff test: victory settled")
+	if app.reward_buttons.size() != 4:
+		return
+
+	app.reward_buttons[3].pressed.emit()
+	await _frames()
+	app.continue_button.pressed.emit()
+	await _frames()
+
+	_check(app.route_view != null and app.route_view.is_visible_in_tree()
+		and app.party_carryover is RunTornCarryover, "cuff test: connected route chooser open")
+	if app.route_view == null:
+		return
+
+	var records_m04: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	var records_m05: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_arm_support_patches.json"))
+	var definitions: Array[Dictionary] = []
+	for entry in records_m04:
+		if entry is Dictionary and entry.get("id") in ["button_eye", "pincushion_arm"]:
+			var slot: String = "HEAD" if entry.id == "button_eye" else "ARM"
+			definitions.append({"id": entry.id, "slot": slot})
+	for entry in records_m05:
+		if entry is Dictionary and entry.get("id") in ["red_bobbin_cuff", "hemguard_cuff", "loose_thread_glove"]:
+			definitions.append({"id": entry.id, "slot": "ARM"})
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	if coats is Array and RunPatchCoatRules._valid_authored(coats):
+		definitions.append({"id": RunPatchCoatRules.BONUS_ID, "slot": "COAT"})
+
+	app.run_trinkets.clear()
+	app.run_trinkets.append("red_bobbin_cuff")
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid() and carry.torn.is_valid(),
+		"cuff test: carryover valid before next fight")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), "cuff test: wardrobe valid")
+	var expected := wardrobe.get_snapshot()
+	var sew := wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "sew_cuff", expected)
+	expected = wardrobe.get_snapshot()
+	_check(sew.ok, "sew red_bobbin_cuff to seamstress ARM")
+	_check(carry.can_bind_wardrobe(wardrobe, carry.torn, expected)
+		and carry.bind_wardrobe(wardrobe, carry.torn, expected),
+		"bind cuff wardrobe to live carryover")
+
+	var next_btn := _route_action(fixture.next_fight)
+	_check(next_btn != null and not next_btn.disabled, "cuff test: next fight button found")
+	if next_btn == null:
+		return
+	next_btn.pressed.emit()
+	await _frames()
+
+	_check(app.route_view == null and app.battle_view.is_visible_in_tree()
+		and app.party.is_valid() and app.deck != null,
+		"cuff test: second fight mounted successfully")
+
+	# AC3: Both presenters bind valid patch authority on session entry
+	var area_adapter = app.get_node_or_null("LiveAreaAttackAction")
+	_check(area_adapter != null, "LiveAreaAttackAction mounted")
+	_check(adapter._service._patches != null and adapter._service._patches.is_valid(),
+		"single-bleed adapter bound patch authority")
+	_check(area_adapter._service._patches != null and area_adapter._service._patches.is_valid(),
+		"area adapter bound patch authority")
+	_check(adapter._service._patches.card_bleed_bonus("seamstress", "seamstress_running_stitch") == 1,
+		"running stitch has +1 cuff bleed")
+	_check(area_adapter._service._patches.card_bleed_bonus("seamstress", "seamstress_blanket_stitch") == 1,
+		"blanket stitch has +1 cuff bleed")
+	_check(adapter._service._patches.card_bleed_bonus("seamstress", "seamstress_red_thread") == 1,
+		"red thread has +1 cuff bleed")
+	_check(adapter._service._patches.card_bleed_bonus("seamstress", "seamstress_hemorrhage_hem") == 0,
+		"hemorrhage has 0 cuff bleed")
+
+	# 1. Held Running Stitch (keyboard play)
+	var target_pos := 1
+	for enemy in app.enemies.get_enemies():
+		if enemy.hp > 10:
+			target_pos = enemy.position
+			break
+	var id_run := "seamstress_running_stitch"
+	app.deck.draw_pile.append(id_run)
+	_check(app.deck.draw_extra(1) == 1, "draw running stitch")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_run := _panel(id_run)
+	_check(panel_run != null and adapter._bindings.has(panel_run), "running stitch panel bound")
+	await _arm(id_run, true)
+	_check(adapter.target_strip != null and is_instance_valid(adapter.target_strip), "target strip visible")
+	var btn_target: Button = adapter._targets[target_pos]
+	btn_target.grab_focus()
+	await _frames()
+	var lbl_prev := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(lbl_prev != null and lbl_prev.text.contains("5 (future)"),
+		"forecast shows Bleed: 0 -> 5 (3 printed + 1 passive + 1 cuff)")
+	_check(lbl_prev != null and lbl_prev.text.contains("2 damage"),
+		"forecast shows 2 damage")
+
+	var e_before: int = app.deck.energy
+	var discard_before: int = app.deck.discard_pile.count(id_run)
+	var enemy_hp_before: int = app.enemies.get_enemy(target_pos).hp
+	await _key(KEY_ENTER)
+	await _frames()
+
+	_check(adapter.last_event.get("ok", false), "running stitch commit succeeded")
+	_check(app.deck.energy == e_before - 1, "1 energy spent")
+	_check(app.deck.discard_pile.count(id_run) == discard_before + 1, "1 card discarded")
+	var enemy_after: Dictionary = app.enemies.get_enemy(target_pos)
+	_check(enemy_after.hp == enemy_hp_before - 2, "enemy took 2 damage")
+	_check(enemy_after.get("statuses", {}).get("bleed", 0) == 5,
+		"enemy has Bleed 5 from running stitch with cuff")
+
+	# 2. Held Red Thread (mouse play)
+	app.deck.combat_state.energy = 3
+	var id_red := "seamstress_red_thread"
+	app.deck.draw_pile.append(id_red)
+	_check(app.deck.draw_extra(1) == 1, "draw red thread")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_red := _panel(id_red)
+	_check(panel_red != null and adapter._bindings.has(panel_red), "red thread panel bound")
+	await _arm(id_red, false)
+	var btn_target_red: Button = adapter._targets[target_pos]
+	await _hover(btn_target_red)
+	var lbl_prev_red := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(lbl_prev_red != null and lbl_prev_red.text.contains("5 -> 13"),
+		"forecast shows Bleed: 5 -> 13 (5 + 6 printed + 1 passive + 1 cuff)")
+	_check(lbl_prev_red != null and lbl_prev_red.text.contains("Exposed: 0 -> 1"),
+		"forecast shows Exposed 0 -> 1")
+
+	var e_before_red: int = app.deck.energy
+	var discard_before_red: int = app.deck.discard_pile.count(id_red)
+	await _mouse(btn_target_red)
+	await _frames()
+
+	_check(adapter.last_event.get("ok", false), "red thread commit succeeded")
+	_check(app.deck.energy == e_before_red - 2, "2 energy spent")
+	_check(app.deck.discard_pile.count(id_red) == discard_before_red + 1, "1 card discarded")
+	var enemy_after_red: Dictionary = app.enemies.get_enemy(target_pos)
+	_check(enemy_after_red.get("statuses", {}).get("bleed", 0) == 13,
+		"enemy has Bleed 13 from red thread")
+	_check(enemy_after_red.get("statuses", {}).get("exposed", 0) == 1,
+		"enemy has Exposed 1")
+
+	# 3. Held Blanket Stitch (mouse play via LiveAreaAttackAction)
+	app.deck.combat_state.energy = 3
+	var id_blanket := "seamstress_blanket_stitch"
+	app.deck.draw_pile.append(id_blanket)
+	_check(app.deck.draw_extra(1) == 1, "draw blanket stitch")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_blanket := _panel(id_blanket)
+	_check(panel_blanket != null and area_adapter._bindings.has(panel_blanket),
+		"blanket stitch panel bound to area_adapter")
+
+	var e_before_b: int = app.deck.energy
+	var discard_before_b: int = app.deck.discard_pile.count(id_blanket)
+	var living_before: Dictionary = {}
+	for enemy in app.enemies.get_enemies():
+		if enemy.hp > 0:
+			living_before[enemy.position] = int(enemy.get("statuses", {}).get("bleed", 0))
+
+	await _mouse(panel_blanket)
+	await _frames()
+
+	_check(area_adapter.last_event.get("ok", false), "area blanket stitch commit succeeded")
+	_check(app.deck.energy == e_before_b - 2, "exact 2 energy spent on blanket stitch")
+	_check(app.deck.discard_pile.count(id_blanket) == discard_before_b + 1, "1 blanket stitch discarded")
+	for pos in living_before:
+		var after_bleed: int = int(app.enemies.get_enemy(pos).get("statuses", {}).get("bleed", 0))
+		var exp_bleed: int = living_before[pos] + 4 # 2 printed + 1 passive + 1 cuff
+		_check(after_bleed == exp_bleed,
+			"living enemy at pos %d received 4 bleed (was %d, now %d)" % [pos, living_before[pos], after_bleed])
+
+	# 4. Held Blanket Stitch+ (keyboard play via LiveAreaAttackAction)
+	app.deck.combat_state.energy = 3
+	var id_blanket_plus := "seamstress_blanket_stitch_plus"
+	app.deck.draw_pile.append(id_blanket_plus)
+	_check(app.deck.draw_extra(1) == 1, "draw blanket stitch+")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_bp := _panel(id_blanket_plus)
+	_check(panel_bp != null and area_adapter._bindings.has(panel_bp),
+		"blanket stitch+ panel bound to area_adapter")
+
+	var e_before_bp: int = app.deck.energy
+	var discard_before_bp: int = app.deck.discard_pile.count(id_blanket_plus)
+	var living_before_bp: Dictionary = {}
+	for enemy in app.enemies.get_enemies():
+		if enemy.hp > 0:
+			living_before_bp[enemy.position] = int(enemy.get("statuses", {}).get("bleed", 0))
+
+	panel_bp.grab_focus()
+	await _frames()
+	_check(panel_bp.has_focus(), "keyboard focused blanket stitch+ panel")
+	await _key(KEY_ENTER)
+	await _frames()
+
+	_check(area_adapter.last_event.get("ok", false), "keyboard blanket stitch+ commit succeeded")
+	_check(app.deck.energy == e_before_bp - 2, "exact 2 energy spent on blanket stitch+")
+	_check(app.deck.discard_pile.count(id_blanket_plus) == discard_before_bp + 1, "1 blanket stitch+ discarded")
+	for pos in living_before_bp:
+		var after_bleed: int = int(app.enemies.get_enemy(pos).get("statuses", {}).get("bleed", 0))
+		var exp_bleed: int = living_before_bp[pos] + 5 # 3 printed + 1 passive + 1 cuff
+		_check(after_bleed == exp_bleed,
+			"living enemy at pos %d received 5 bleed from plus (was %d, now %d)" % [pos, living_before_bp[pos], after_bleed])
+
+	# 5. Held Hemorrhage Hem (doubles existing bleed, ZERO cuff bonus)
+	app.deck.combat_state.energy = 3
+	var id_hem := "seamstress_hemorrhage_hem"
+	app.deck.draw_pile.append(id_hem)
+	_check(app.deck.draw_extra(1) == 1, "draw hemorrhage hem")
+	app._refresh_hand()
+	await _frames()
+
+	var panel_hem := _panel(id_hem)
+	_check(panel_hem != null and adapter._bindings.has(panel_hem), "hemorrhage panel bound to single adapter")
+	await _arm(id_hem, true)
+	var other_target := -1
+	for enemy in app.enemies.get_enemies():
+		if enemy.position != target_pos and enemy.hp > 0:
+			other_target = enemy.position
+			break
+	if other_target > 0:
+		var btn_other: Button = adapter._targets[other_target]
+		btn_other.grab_focus()
+		await _frames()
+		var bleed_prior: int = int(app.enemies.get_enemy(other_target).get("statuses", {}).get("bleed", 0))
+		var lbl_prev_h := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+		_check(lbl_prev_h != null and lbl_prev_h.text.contains("Bleed: %d -> %d" % [bleed_prior, bleed_prior * 2]),
+			"hemorrhage forecast doubles existing bleed without cuff bonus: %d -> %d" % [bleed_prior, bleed_prior * 2])
+		await _key(KEY_ENTER)
+		await _frames()
+		_check(adapter.last_event.get("ok", false), "hemorrhage commit succeeded")
+		_check(int(app.enemies.get_enemy(other_target).get("statuses", {}).get("bleed", 0)) == bleed_prior * 2,
+			"hemorrhage doubled bleed exactly without cuff bonus")
+
+	# 6. Lifecycle: turn change, sync, return, and title unpatched battle
+	app.enemy_intents._turn_index += 1
+	adapter._sync_battle()
+	area_adapter._sync_battle()
+	_check(adapter._service._patches != null and adapter._service._patches.is_valid(),
+		"turn change preserves single adapter patch service")
+	_check(area_adapter._service._patches != null and area_adapter._service._patches.is_valid(),
+		"turn change preserves area adapter patch service")
+
+	await _return()
+	_check(adapter._service != null and adapter._service._patches == null,
+		"Return resets single resolver to unpatched state")
+	_check(area_adapter._service != null and area_adapter._service._patches == null,
+		"Return resets area resolver to unpatched state")
+
+	_check(app._start_battle(), "unpatched battle starts from title")
+	await _frames()
+	_check(adapter._service._patches == null, "single adapter remains unpatched in normal battle")
+	_check(area_adapter._service._patches == null, "area adapter remains unpatched in normal battle")
+	await _return()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -777,6 +1063,7 @@ func _run() -> void:
 	await _terminal_case()
 	await _three_enemy_case()
 	await _test_mounted_worn_patches()
+	await _test_mounted_red_bobbin_cuff()
 	app.free()
 	_finish()
 

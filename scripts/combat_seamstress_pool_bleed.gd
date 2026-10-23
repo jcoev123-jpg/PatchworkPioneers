@@ -247,9 +247,10 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		else:
 			var bleed_amount: int = effects["bleed"]
 			var passive_bonus: int = 0 if _selected_path == UNPICKER_PATH else 1
-			if bleed_amount > CombatEnemies.MAX_INT - passive_bonus:
+			var patch_bleed: int = 0 if _patches == null else _patches.card_bleed_bonus("seamstress", card_id)
+			if bleed_amount > CombatEnemies.MAX_INT - (passive_bonus + patch_bleed):
 				return _failure()
-			additions["bleed"] = bleed_amount + passive_bonus
+			additions["bleed"] = bleed_amount + passive_bonus + patch_bleed
 			if effects.has("exposed"):
 				additions["exposed"] = effects["exposed"]
 			elif is_running and patch_exposed > 0:

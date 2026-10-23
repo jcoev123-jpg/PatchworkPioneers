@@ -19,6 +19,9 @@ func _initialize() -> void:
 	_test_ac2_unpicker_all_eight_cards()
 	_test_ac3_unpicker_thresholds_skips_and_forecast()
 	_test_ac4_unpicker_rejections_and_fail_closed()
+	_test_ac1_and_ac2_red_bobbin_cuff_bleed()
+	_test_red_bobbin_cuff_unpicker_path()
+	_test_red_bobbin_cuff_ac4_negatives()
 	for failure in failures:
 		printerr(failure)
 	print("combat_seamstress_pool_bleed_test: ",
@@ -1115,4 +1118,372 @@ func _test_ac4_unpicker_rejections_and_fail_closed() -> void:
 	_accept_unpicker(resolver_be, u_be, f_be, "seamstress_running_stitch", 1,
 		[_hit(1, 2, 0, 2, {"bleed": 3, "exposed": 1})], 1, {1: 2, 2: 0, 3: 0},
 		"unpicker with button eye applies exposed 1 on first hit")
+
+
+func _cuff_context(party: CombatParty, wearer: String = "seamstress",
+		sew_cuff: bool = true, arm_patch_id: String = "red_bobbin_cuff") -> Dictionary:
+	var raw_attacks: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	var raw_supports: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_arm_support_patches.json"))
+	_check(raw_attacks is Array and raw_supports is Array, "patch catalogs are arrays")
+	var definitions: Array[Dictionary] = []
+	for entry in raw_attacks:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	for entry in raw_supports:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = []
+	if not arm_patch_id.is_empty():
+		owned.append(arm_patch_id)
+	if arm_patch_id != "red_bobbin_cuff":
+		owned.append("red_bobbin_cuff")
+	if not owned.has("loose_thread_glove"):
+		owned.append("loose_thread_glove")
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine run patch ledgers valid")
+	if sew_cuff and not arm_patch_id.is_empty():
+		var result: Dictionary = wardrobe.sew(arm_patch_id, wearer, "ARM",
+			"sew_" + arm_patch_id, wardrobe.get_snapshot())
+		_check(result.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["ARM"] == arm_patch_id,
+			arm_patch_id + " sewn on " + wearer + " ARM slot")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _test_ac1_and_ac2_red_bobbin_cuff_bleed() -> void:
+	# AC1 & AC2: Under default/Bloodline passive, Red Bobbin Cuff in ARM grants +1 Bleed
+	# to each originally Bleed-positive card (Running Stitch 5/6, Blanket Stitch 4/5 per foe, Red Thread 8/10).
+	# Hemorrhage Hem doubles N -> 2N and gets 0 cuff bonus.
+	var party := _party(2)
+	var ctx := _cuff_context(party, "seamstress", true, "red_bobbin_cuff")
+	var resolver := CombatSeamstressPoolBleed.new()
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+		and resolver._patches.is_valid(), "valid Red Bobbin Cuff binding")
+	_check(resolver._patches.card_bleed_bonus("seamstress", "seamstress_running_stitch") == 1,
+		"cuff grants +1 bleed bonus to running stitch")
+	_check(resolver._patches.card_bleed_bonus("seamstress", "seamstress_blanket_stitch") == 1,
+		"cuff grants +1 bleed bonus to blanket stitch")
+	_check(resolver._patches.card_bleed_bonus("seamstress", "seamstress_red_thread") == 1,
+		"cuff grants +1 bleed bonus to red thread")
+	_check(resolver._patches.card_bleed_bonus("seamstress", "seamstress_hemorrhage_hem") == 0,
+		"cuff grants 0 bleed bonus to hemorrhage hem")
+
+	# 1. Running Stitch base (2 dmg, 5 bleed) and plus (3 dmg, 6 bleed)
+	for upgraded in [false, true]:
+		var id: String = "seamstress_running_stitch" + ("_plus" if upgraded else "")
+		var base_dmg := 3 if upgraded else 2
+		var exp_bleed := 6 if upgraded else 5 # 4/3 printed + 1 passive + 1 cuff
+
+		# Forecast parity
+		var f_fc := _fixture(id, 2)
+		_forecast_seed(f_fc, 1)
+		var snap_fc_before := _snapshot(f_fc.deck, f_fc.party, f_fc.enemies)
+		var exp_fc := {
+			"ok": true, "position": 1, "cost": 1,
+			"damage": 3 if upgraded else 2, # floor(base * 9/8) with Weak on hero and Exposed on enemy
+			"block_absorbed": 2, "hp_loss": 1 if upgraded else 0,
+			"bleed_before": 3, "bleed_after": 3 + exp_bleed,
+			"exposed_before": 1, "exposed_after": 1
+		}
+		for repeat in range(3):
+			var fc := resolver.forecast_single(f_fc.deck, f_fc.party, f_fc.enemies, id, 1)
+			_check(fc == exp_fc, id + " cuff forecast reflects +1 cuff bleed")
+			_check(_snapshot(f_fc.deck, f_fc.party, f_fc.enemies) == snap_fc_before,
+				id + " forecast is side-effect-free")
+
+		# Real play
+		var normal := _fixture(id, 2)
+		_accept_custom(resolver, normal, id, 1,
+			[_hit(1, base_dmg, 0, base_dmg, {"bleed": exp_bleed})], 1,
+			id + " cuff deals %d damage and %d bleed" % [base_dmg, exp_bleed])
+
+		# Block absorbs before HP
+		var blocked := _fixture(id, 2)
+		_check(blocked.enemies.gain_block(2, 2), id + " target has 2 Block")
+		_accept_custom(resolver, blocked, id, 2,
+			[_hit(2, base_dmg, 2, base_dmg - 2, {"bleed": exp_bleed})], 1,
+			id + " cuff hit preserves Block absorbs before HP")
+
+	# 2. Blanket Stitch base (4 bleed per living enemy) and plus (5 bleed per living enemy)
+	for upgraded in [false, true]:
+		var id: String = "seamstress_blanket_stitch" + ("_plus" if upgraded else "")
+		var exp_bleed := 5 if upgraded else 4 # 3/2 printed + 1 passive + 1 cuff
+
+		# Hits all 3 living enemies
+		var f3 := _fixture(id, 2, 3)
+		var hits3: Array = [
+			_hit(1, 0, 0, 0, {"bleed": exp_bleed}),
+			_hit(2, 0, 0, 0, {"bleed": exp_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": exp_bleed})
+		]
+		_accept_custom(resolver, f3, id, 0, hits3, 2,
+			id + " cuff applies %d bleed to all 3 living enemies" % exp_bleed)
+
+		# Dead middle slot skips slain enemy and hits only living slots
+		var f_dead := _fixture(id, 2, 3)
+		_check(f_dead.enemies.apply_damage(2, 999) and f_dead.enemies.is_slain(2), "middle slot slain")
+		var hits_dead: Array = [
+			_hit(1, 0, 0, 0, {"bleed": exp_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": exp_bleed})
+		]
+		_accept_custom(resolver, f_dead, id, 0, hits_dead, 2,
+			id + " cuff skips dead middle enemy")
+		_check(f_dead.enemies.get_enemy(2).get("statuses", {}).get("bleed", 0) == 0,
+			id + " dead enemy received 0 bleed")
+
+	# 3. Red Thread base (8 bleed, Exposed 1) and plus (10 bleed, Exposed 1)
+	for upgraded in [false, true]:
+		var id: String = "seamstress_red_thread" + ("_plus" if upgraded else "")
+		var exp_bleed := 10 if upgraded else 8 # 8/6 printed + 1 passive + 1 cuff
+
+		# Forecast parity
+		var f_rt_fc := _fixture(id, 2)
+		_forecast_seed(f_rt_fc, 1)
+		var exp_rt_fc := {
+			"ok": true, "position": 1, "cost": 2,
+			"damage": 0, "block_absorbed": 0, "hp_loss": 0,
+			"bleed_before": 3, "bleed_after": 3 + exp_bleed,
+			"exposed_before": 1, "exposed_after": 2 # +1 from authored exposed
+		}
+		var fc_rt := resolver.forecast_single(f_rt_fc.deck, f_rt_fc.party, f_rt_fc.enemies, id, 1)
+		_check(fc_rt == exp_rt_fc, id + " cuff forecast reflects %d bleed and +1 exposed" % exp_bleed)
+
+		# Real play
+		var f_rt := _fixture(id, 2)
+		_accept_custom(resolver, f_rt, id, 1,
+			[_hit(1, 0, 0, 0, {"bleed": exp_bleed, "exposed": 1})], 2,
+			id + " cuff applies %d bleed and authored Exposed 1" % exp_bleed)
+
+	# 4. Hemorrhage Hem base and plus: doubles N -> 2N, gets ZERO cuff bonus
+	for upgraded in [false, true]:
+		var id: String = "seamstress_hemorrhage_hem" + ("_plus" if upgraded else "")
+		var cost := 1 if upgraded else 2
+
+		# Target with existing Bleed 3: doubles to 6 (delta 3, no +1 cuff bonus)
+		var f_h := _fixture(id, 2)
+		_check(f_h.enemies.apply_statuses({1: {"bleed": 3}}), id + " seed bleed 3")
+		var fc_h := resolver.forecast_single(f_h.deck, f_h.party, f_h.enemies, id, 1)
+		_check(fc_h.ok and fc_h.bleed_before == 3 and fc_h.bleed_after == 6,
+			id + " forecast doubles 3 -> 6 without cuff bonus")
+		_accept_custom(resolver, f_h, id, 1,
+			[_hit(1, 0, 0, 0, {"bleed": 3})], cost,
+			id + " doubles existing bleed without cuff bonus")
+		_check(f_h.enemies.get_enemy(1)["statuses"]["bleed"] == 6, id + " final bleed is exactly 6")
+
+		# Target with Bleed 0: stays 0
+		var f_zero := _fixture(id, 2)
+		var fc_zero := resolver.forecast_single(f_zero.deck, f_zero.party, f_zero.enemies, id, 1)
+		_check(fc_zero.ok and fc_zero.bleed_before == 0 and fc_zero.bleed_after == 0,
+			id + " forecast 0 remains 0")
+		_accept_custom(resolver, f_zero, id, 1,
+			[_hit(1, 0, 0, 0, {"bleed": 0})], cost,
+			id + " 0 bleed remains 0")
+
+	# 5. Bloodline path: identical +1 Bleed passive preserved alongside cuff
+	var choice := RunSeamstressPathChoice.new()
+	var b_receipt := choice.choose("bloodline")
+	var b_resolver := CombatSeamstressPoolBleed.new(b_receipt)
+	_check(b_resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind wardrobe to bloodline resolver")
+	_check(b_resolver.get_path_id() == "bloodline", "resolver path is bloodline")
+	var f_b_run := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(b_resolver, f_b_run, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 5})], 1, "bloodline with cuff yields 5 bleed")
+	var f_b_blanket := _fixture("seamstress_blanket_stitch", 2, 2)
+	_accept_custom(b_resolver, f_b_blanket, "seamstress_blanket_stitch", 0,
+		[_hit(1, 0, 0, 0, {"bleed": 4}), _hit(2, 0, 0, 0, {"bleed": 4})], 2,
+		"bloodline with cuff yields 4 bleed to both foes")
+
+
+func _test_red_bobbin_cuff_unpicker_path() -> void:
+	# Under Unpicker path: passive +1 Bleed is replaced by +2 Unravel per enemy bled.
+	# Red Bobbin Cuff still adds its +1 Bleed bonus to raw printed Bleed.
+	var choice := RunSeamstressPathChoice.new()
+	var receipt := choice.choose("unpicker")
+	_check(receipt.get("ok") == true, "unpicker receipt created")
+
+	var party := _party(2)
+	var ctx := _cuff_context(party, "seamstress", true, "red_bobbin_cuff")
+
+	# 1. Running Stitch base & plus: printed + 1 cuff, no passive +1, +2 unravel
+	for upgraded in [false, true]:
+		var id: String = "seamstress_running_stitch" + ("_plus" if upgraded else "")
+		var base_dmg := 3 if upgraded else 2
+		var exp_bleed := 5 if upgraded else 4 # 4/3 printed + 1 cuff
+
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind wardrobe")
+		var f := _fixture(id, 2)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		_accept_unpicker(resolver, unravel, f, id, 1,
+			[_hit(1, base_dmg, 0, base_dmg, {"bleed": exp_bleed})],
+			1, {1: 2, 2: 0, 3: 0}, id + " unpicker with cuff gives %d bleed and +2 unravel" % exp_bleed)
+
+	# 2. Blanket Stitch base & plus: printed + 1 cuff to each living foe, +2 unravel to each living foe
+	for upgraded in [false, true]:
+		var id: String = "seamstress_blanket_stitch" + ("_plus" if upgraded else "")
+		var exp_bleed := 4 if upgraded else 3 # 3/2 printed + 1 cuff
+
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind wardrobe")
+		var f := _fixture(id, 2, 3)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		var hits: Array = [
+			_hit(1, 0, 0, 0, {"bleed": exp_bleed}),
+			_hit(2, 0, 0, 0, {"bleed": exp_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": exp_bleed}),
+		]
+		_accept_unpicker(resolver, unravel, f, id, 0, hits,
+			2, {1: 2, 2: 2, 3: 2}, id + " unpicker area with cuff gives %d bleed and +2 unravel" % exp_bleed)
+
+		# Slain middle slot
+		var f_dead := _fixture(id, 2, 3)
+		var u_dead := _unravel_fixture(f_dead.enemies)
+		resolver.bind_unravel(u_dead)
+		_check(f_dead.enemies.apply_damage(2, 999) and f_dead.enemies.is_slain(2), "slain slot 2")
+		var dead_hits: Array = [
+			_hit(1, 0, 0, 0, {"bleed": exp_bleed}),
+			_hit(3, 0, 0, 0, {"bleed": exp_bleed}),
+		]
+		_accept_unpicker(resolver, u_dead, f_dead, id, 0, dead_hits,
+			2, {1: 2, 2: 0, 3: 2}, id + " unpicker area dead middle slot gets 0 bleed and 0 unravel")
+
+	# 3. Red Thread base & plus: printed + 1 cuff, Exposed 1, +2 unravel
+	for upgraded in [false, true]:
+		var id: String = "seamstress_red_thread" + ("_plus" if upgraded else "")
+		var exp_bleed := 9 if upgraded else 7 # 8/6 printed + 1 cuff
+
+		var resolver := CombatSeamstressPoolBleed.new(receipt)
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind wardrobe")
+		var f := _fixture(id, 2)
+		var unravel := _unravel_fixture(f.enemies)
+		resolver.bind_unravel(unravel)
+		_accept_unpicker(resolver, unravel, f, id, 1,
+			[_hit(1, 0, 0, 0, {"bleed": exp_bleed, "exposed": 1})],
+			2, {1: 2, 2: 0, 3: 0}, id + " unpicker red thread with cuff gives %d bleed and +2 unravel" % exp_bleed)
+
+	# 4. Hemorrhage Hem under Unpicker with cuff: doubles N -> 2N, gets 0 cuff bonus
+	var resolver_h := CombatSeamstressPoolBleed.new(receipt)
+	_check(resolver_h.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind wardrobe")
+	var f_h := _fixture("seamstress_hemorrhage_hem", 2)
+	var u_h := _unravel_fixture(f_h.enemies)
+	resolver_h.bind_unravel(u_h)
+	_check(f_h.enemies.apply_statuses({1: {"bleed": 4}}), "preload bleed 4")
+	_accept_unpicker(resolver_h, u_h, f_h, "seamstress_hemorrhage_hem", 1,
+		[_hit(1, 0, 0, 0, {"bleed": 4})], 2, {1: 2, 2: 0, 3: 0},
+		"unpicker hemorrhage doubles 4 -> 8 with +2 unravel and 0 cuff bonus")
+	_check(f_h.enemies.get_enemy(1)["statuses"]["bleed"] == 8, "final bleed 8")
+
+
+func _cuff_trace(seed_val: int) -> Dictionary:
+	var deck := _deck(["seamstress_running_stitch", "seamstress_blanket_stitch"], seed_val)
+	var party := _party(2)
+	var enemies := _enemies(3)
+	var ctx := _cuff_context(party, "seamstress", true, "red_bobbin_cuff")
+	var resolver := CombatSeamstressPoolBleed.new()
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind trace wardrobe")
+	var first := resolver.play_card(deck, party, enemies, "seamstress_running_stitch", 1)
+	var second := resolver.play_card(deck, party, enemies, "seamstress_blanket_stitch", 0)
+	_check(first.get("ok", false) and second.get("ok", false), "trace plays succeeded")
+	return {"first": first, "second": second, "final": _snapshot(deck, party, enemies)}
+
+
+func _test_red_bobbin_cuff_ac4_negatives() -> void:
+	# AC4: Negatives, isolation, fail-closed, not once-per-turn latch, fixed-seed replay.
+	# 1. Cuff on another wearer (Warden wears red_bobbin_cuff in ARM):
+	var party_w := _party(2)
+	var ctx_w := _cuff_context(party_w, "warden", true, "red_bobbin_cuff")
+	var resolver_w := CombatSeamstressPoolBleed.new()
+	_check(resolver_w.bind_patch_wardrobe(ctx_w.wardrobe, ctx_w.torn), "bind warden-worn cuff")
+	_check(resolver_w._patches.card_bleed_bonus("seamstress", "seamstress_running_stitch") == 0,
+		"Warden wearing cuff grants Seamstress 0 bleed bonus")
+	_check(resolver_w._patches.card_bleed_bonus("warden", "seamstress_running_stitch") == 0,
+		"Warden cannot get bonus on Seamstress's card")
+	var f_w := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_w, f_w, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, "unpatched bleed 4 when Warden wears cuff")
+	var f_w_area := _fixture("seamstress_blanket_stitch", 2, 2)
+	_accept_custom(resolver_w, f_w_area, "seamstress_blanket_stitch", 0,
+		[_hit(1, 0, 0, 0, {"bleed": 3}), _hit(2, 0, 0, 0, {"bleed": 3})], 2,
+		"unpatched bleed 3 when Warden wears cuff")
+
+	# 2. Torn Seamstress: patch effects inactive
+	var party_t := _party(2)
+	var ctx_t := _cuff_context(party_t, "seamstress", true, "red_bobbin_cuff")
+	var start_torn: Array = ctx_t.torn.read_state().heroes
+	_check(party_t.apply_damage(2, 999) and party_t.is_downed(2), "down seamstress to record tear")
+	_check(ctx_t.torn.observe_battle_end("seamstress_cuff_tear", start_torn, party_t.get_heroes()).ok,
+		"record torn seamstress")
+	party_t.heal(2, 30) # restore hp so she can legally play
+	var resolver_t := CombatSeamstressPoolBleed.new()
+	_check(resolver_t.bind_patch_wardrobe(ctx_t.wardrobe, ctx_t.torn), "bind torn wardrobe")
+	_check(resolver_t._patches.card_bleed_bonus("seamstress", "seamstress_running_stitch") == 0,
+		"torn seamstress gets 0 cuff bleed bonus")
+	var f_t := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_t, f_t, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, "torn seamstress deals unpatched bleed 4")
+
+	# 3. Downed Seamstress during combat: play fails closed
+	var f_down := _fixture("seamstress_running_stitch", 2)
+	var ctx_down := _cuff_context(f_down.party, "seamstress", true, "red_bobbin_cuff")
+	var resolver_down := CombatSeamstressPoolBleed.new()
+	resolver_down.bind_patch_wardrobe(ctx_down.wardrobe, ctx_down.torn)
+	_check(f_down.party.apply_damage(2, 30) and f_down.party.is_downed(2), "down seamstress in battle")
+	_reject_custom(resolver_down, f_down, "seamstress_running_stitch", 1, "downed seamstress fails closed")
+	_check(not resolver_down.forecast_single(f_down.deck, f_down.party, f_down.enemies, "seamstress_running_stitch", 1).ok,
+		"downed seamstress forecast fails closed")
+
+	# 4. Re-sewn / replaced cuff: loose_thread_glove sewn over ARM slot
+	var party_rep := _party(2)
+	var ctx_rep := _cuff_context(party_rep, "seamstress", true, "red_bobbin_cuff")
+	# Re-sew loose_thread_glove onto ARM
+	var wardrobe_rep: RunPatchWardrobe = ctx_rep.wardrobe
+	var snap_rep: Dictionary = wardrobe_rep.get_snapshot()
+	var resew: Dictionary = wardrobe_rep.sew("loose_thread_glove", "seamstress", "ARM", "resew_glove", snap_rep)
+	_check(resew.get("ok", false) and wardrobe_rep.get_snapshot()["worn"]["seamstress"]["ARM"] == "loose_thread_glove",
+		"loose_thread_glove replaced red_bobbin_cuff on ARM")
+	var resolver_rep := CombatSeamstressPoolBleed.new()
+	_check(resolver_rep.bind_patch_wardrobe(ctx_rep.wardrobe, ctx_rep.torn), "bind updated wardrobe")
+	_check(resolver_rep._patches.card_bleed_bonus("seamstress", "seamstress_running_stitch") == 0,
+		"replaced cuff gives 0 bleed bonus")
+	var f_rep := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_rep, f_rep, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, "replaced cuff results in unpatched 4 bleed")
+
+	# 5. Invalid explicit binding fails closed
+	var resolver_bad := CombatSeamstressPoolBleed.new()
+	_check(not resolver_bad.bind_patch_wardrobe(null, null), "null wardrobe fails binding")
+	_check(resolver_bad._patches != null and not resolver_bad._patches.is_valid(), "patches invalid")
+	var f_bad := _fixture("seamstress_running_stitch", 2)
+	_reject_custom(resolver_bad, f_bad, "seamstress_running_stitch", 1, "invalid binding fails closed")
+	_check(not resolver_bad.forecast_single(f_bad.deck, f_bad.party, f_bad.enemies, "seamstress_running_stitch", 1).ok,
+		"invalid binding forecast fails closed")
+
+	# 6. Not a once-per-turn latch: bonus applies on EVERY cast/recipient
+	var party_rpt := _party(2)
+	var ctx_rpt := _cuff_context(party_rpt, "seamstress", true, "red_bobbin_cuff")
+	var resolver_rpt := CombatSeamstressPoolBleed.new()
+	resolver_rpt.bind_patch_wardrobe(ctx_rpt.wardrobe, ctx_rpt.torn)
+	var f_rpt := _fixture("seamstress_running_stitch", 2, 3)
+	f_rpt.deck.hand.append("seamstress_blanket_stitch")
+	# First cast: Running stitch -> Bleed 5
+	_accept_custom(resolver_rpt, f_rpt, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 5})], 1, "first cast gets cuff bonus")
+	# Second cast in same turn: Blanket stitch -> Bleed 4 to EACH living enemy
+	f_rpt.deck.combat_state.energy = 3
+	var hits_rpt: Array = [
+		_hit(1, 0, 0, 0, {"bleed": 4}),
+		_hit(2, 0, 0, 0, {"bleed": 4}),
+		_hit(3, 0, 0, 0, {"bleed": 4}),
+	]
+	_accept_custom(resolver_rpt, f_rpt, "seamstress_blanket_stitch", 0, hits_rpt, 2,
+		"second cast in same turn retains cuff bonus for all recipients")
+
+	# 7. Seeded replay determinism
+	var t1 := _cuff_trace(777123)
+	var t2 := _cuff_trace(777123)
+	_check(t1 == t2, "seeded traces with cuff match exactly across all fields and RNG")
 
