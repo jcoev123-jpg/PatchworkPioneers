@@ -2,6 +2,7 @@ extends SceneTree
 ## Mounted contract for a standalone, unwired terminal view. Outcomes must be
 ## observed by real combat services and settled by the real run latch.
 const PANEL_SCENE := "res://scenes/run_terminal_result_panel.tscn"
+const APP_SCENE := "res://scenes/app.tscn"
 const HEROES := "res://data/heroes/starter_party.json"
 const BOSS := "res://data/enemies/boss.json"
 const FIGHT := "res://data/enemies/starter_enemies.json"
@@ -17,6 +18,7 @@ const PATCH_DEFINITIONS := [
 ]
 
 var panel: LiveRunTerminalResultPanel
+var app: Variant
 var failures: Array[String] = []
 var checks: int = 0
 var returns: int = 0
@@ -157,6 +159,46 @@ func _wardrobe(deck: Array[String], sew_operations: Array) -> RunPatchWardrobe:
 		_check(receipt.get("ok") == true,
 			"real sew places %s on %s %s" % [operation[0], operation[1], operation[2]])
 	return wardrobe
+
+
+## Publish exactly the ledger against which the real parent App is validated.
+## This is a test-only staging step, never a production mutation by the panel.
+func _install_run(ledger: Dictionary, wardrobe: RunPatchWardrobe = null) -> void:
+	var party := CombatParty.new(_definitions(HEROES))
+	_check(party.is_valid(), "App presentation fixture uses genuine authored party")
+	app.run_heroes = party.get_heroes()
+	app.run_deck.assign(ledger["deck"])
+	app.run_stitch_descriptors = ledger["descriptors"].duplicate(true)
+	app.run_next_stitch_id = ledger["next_stitch_id"]
+	var carry := RunTornCarryover.new(app.run_heroes)
+	_check(carry.is_valid(), "App carryover matches authored party")
+	if wardrobe != null:
+		var snap: Dictionary = wardrobe.get_snapshot()
+		app.run_trinkets.assign(snap.owned)
+		app.run_scraps = snap.scraps
+		app.session_gold = snap.gold
+		_check(carry.bind_wardrobe(wardrobe, carry.torn, snap),
+			"live wardrobe bound to App carryover with genuine snapshot")
+	else:
+		app.run_trinkets.clear()
+		app.run_scraps = 0
+		app.session_gold = 0
+	app.party_carryover = carry
+
+
+func _app_snapshot() -> Dictionary:
+	return {
+		"heroes": app.run_heroes.duplicate(true),
+		"deck": app.run_deck.duplicate(),
+		"descriptors": app.run_stitch_descriptors.duplicate(true),
+		"cursor": app.run_next_stitch_id,
+		"trinkets": app.run_trinkets.duplicate(),
+		"scraps": app.run_scraps,
+		"gold": app.session_gold,
+		"carry": app.party_carryover.read_state(),
+		"wardrobe": app.party_carryover._wardrobe.get_snapshot()
+			if app.party_carryover._wardrobe != null else {},
+	}
 
 
 func _signature(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
@@ -379,8 +421,17 @@ func _validate_view(status: String, label: String) -> void:
 		and button.get_theme_stylebox("focus") is StyleBoxFlat,
 		label + " procedural cardboard button and focus ring")
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
-	for control in [panel.paper_panel, panel.title_label, panel.description_label,
-			panel.top_stitches, panel.bottom_stitches, button]:
+	var controls: Array = [panel.paper_panel, panel.title_label, panel.description_label,
+		panel.top_stitches, panel.bottom_stitches, button, panel.summary_label]
+	if panel.stitched_section.visible:
+		controls.append(panel.stitched_section)
+		controls.append(panel.stitched_heading)
+		controls.append(panel.stitched_scroll)
+		var detail_paper := panel.stitched_section.get_theme_stylebox("panel") as StyleBoxFlat
+		_check(detail_paper != null and detail_paper.bg_color.get_luminance() > 0.5
+			and detail_paper.border_width_left >= 2,
+			label + " bounded sewn-card paper has high contrast and dark stitched border")
+	for control in controls:
 		_check(screen.encloses(control.get_global_rect()) and control.size.x > 0
 			and control.size.y > 0, label + " full rectangle within 1280x720: " + control.name)
 
@@ -405,7 +456,8 @@ func _test_rejection() -> void:
 	var before := _snapshot(ctx, battle)
 	_check(not panel.open_result(latch), "genuine pending ACTIVE latch rejected")
 	_check(not panel.visible and not panel.has_open_result()
-		and panel.get_presented_status() == "" and panel.return_button.disabled,
+		and panel.get_presented_status() == "" and panel.return_button.disabled
+		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
 		"all rejected submissions remain hidden and action disabled")
 	panel.return_button.pressed.emit()
 	_check(returns == 0 and _snapshot(ctx, battle) == before,
@@ -681,6 +733,153 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 		"AC2: empty slots remain explicit dashes in the final hero row")
 	panel.close_result()
 	_check(not panel.has_open_result(), "AC3: the recap view closes back to its shipped closed state")
+	await _mounted_composites(triple, triple_wardrobe, triple_summary, defeat,
+		"three retained composites")
+	await _mounted_composites(ledger_one, one_wardrobe, one_summary, defeat,
+		"Shop single survivor")
+	await _mounted_composites(ledger_zero, zero_wardrobe, zero_summary, defeat,
+		"fully removed composites")
+
+
+## Exercise the actual App-mounted scene, not just a formatting helper.
+## Compare each visible card to the detached canonical projection and scroll
+## through the third row while proving the App, battle and map remain unchanged.
+func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
+		expected: Dictionary, defeat: Dictionary, label: String) -> void:
+	_install_run(ledger, wardrobe)
+	var before: Dictionary = _app_snapshot()
+	var state: Dictionary = _snapshot(defeat["ctx"], defeat["battle"])
+	_check(expected.get("ok") == true, label + " source oracle is authentic")
+	_check(panel.open_result(defeat["ctx"]["latch"]),
+		label + " opens genuine DEFEAT under App")
+	await _frames()
+	_validate_view("Defeat", label)
+	var cards: Array = expected.get("current_stitched_cards", [])
+	_check(panel.stitched_section.visible == not cards.is_empty()
+		and panel.stitched_rows.get_child_count() == cards.size(),
+		label + " detail visibility and exact retained count")
+	for i in range(cards.size()):
+		var card: Dictionary = cards[i]
+		var first: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[0])
+		var second: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[1])
+		_check(not first.is_empty() and not second.is_empty()
+			and card.owners == [first.owner, second.owner]
+			and first.owner != second.owner,
+			label + " authentic first/second owner pairing")
+		var row := panel.stitched_rows.get_child(i)
+		var name_label := row.get_node("CardInset/CardLines/Composite") as Label
+		var halves_label := row.get_node("CardInset/CardLines/Halves") as Label
+		_check(name_label.text == "%s  ·  %d energy" % [card.display_name, card.cost],
+			label + " name and capped cost in deck order")
+		_check(halves_label.text == "1 · %s (%s)    →    2 · %s (%s)" % [
+			first.display_name, str(first.owner).capitalize(),
+			second.display_name, str(second.owner).capitalize()],
+			label + " authored halves and distinct owners in order")
+	if cards.size() >= 3:
+		var bar := panel.stitched_scroll.get_v_scroll_bar()
+		_check(bar.max_value > panel.stitched_scroll.size.y,
+			label + " scroll viewport is shorter than three retained rows")
+		panel.stitched_scroll.scroll_vertical = 99999
+		await _frames()
+		_check(panel.stitched_scroll.scroll_vertical > 0,
+			label + " third retained row is accessible by vertical scrolling")
+	_check(_app_snapshot() == before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
+		label + " open and scroll preserve App, battle, map and seeded RNG")
+	panel.close_result()
+	_check(not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0
+		and panel.stitched_scroll.scroll_vertical == 0,
+		label + " close removes all rows and resets scrolling")
+	_check(_app_snapshot() == before, label + " close preserves full App/wardrobe state")
+
+
+## The full mounted route covers a reordered carried run. Here independently
+## verify that a snapshot-only projection preserves real worn hero slots and
+## stitched receipts without inventing a starter carryover.
+func _test_reordered_heroes() -> void:
+	var sewn := _stitch_pairs(_starter_deck(), [
+		["warden_strike", "seamstress_prick"],
+		["warden_brace", "tinker_pop_shot"],
+	], 6)
+	if sewn.is_empty():
+		return
+	var reordered := _definitions(HEROES)
+	var first: Dictionary = reordered[0]
+	reordered[0] = reordered[1]
+	reordered[1] = first
+	var party := CombatParty.new(reordered)
+	_check(party.is_valid(), "authored CombatParty permits reordered hero positions")
+	if not party.is_valid():
+		return
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+		["button_eye", "pincushion_arm"], PATCH_DEFINITIONS.duplicate(true),
+		4, 35, sewn["deck"], 424242, true)
+	_check(wardrobe.is_valid(), "authentic reordered wardrobe validates")
+	if not wardrobe.is_valid():
+		return
+	_check(wardrobe.sew("button_eye", "warden", "HEAD", "ordered_head",
+		wardrobe.get_snapshot()).get("ok") == true, "genuine reordered HEAD sewing")
+	_check(wardrobe.sew("pincushion_arm", "seamstress", "ARM", "ordered_arm",
+		wardrobe.get_snapshot()).get("ok") == true, "genuine reordered ARM sewing")
+	var before := wardrobe.get_snapshot()
+	var projection: RunPatchWardrobe = panel._canonical_signature_wardrobe(wardrobe)
+	_check(projection != null and projection != wardrobe and projection.is_valid(),
+		"reordered real wardrobe yields an independent valid read-only projection")
+	if projection == null:
+		return
+	var projected := projection.get_snapshot()
+	_check(projected["heroes"][0].id == "warden"
+		and projected["heroes"][1].id == "seamstress"
+		and projected["heroes"][2].id == "tinker",
+		"presentation-only positions are canonical for the signature reader")
+	_check(projected["worn"] == before["worn"] and projected["owned"] == before["owned"]
+		and projected["scraps"] == before["scraps"] and projected["gold"] == before["gold"]
+		and projected["cards"] == before["cards"],
+		"every authored wearer and real deck/currency survives the detached projection")
+	var signature: Dictionary = RunSignatureSummary.summarize(sewn["deck"],
+		sewn["descriptors"], sewn["next_stitch_id"], projection)
+	_check(signature.get("ok") == true and signature.get("stitched_current") == 2
+		and signature.get("worn_total") == 2,
+		"canonical signature validates both real stitched cards and both wear receipts")
+	_check(signature["heroes"][0].slots.HEAD == "button_eye"
+		and signature["heroes"][1].slots.ARM == "pincushion_arm",
+		"summary attributes worn patches to real owners, not physical party order")
+	var kept: Array = signature.get("current_stitched_cards", [])
+	_check(kept.size() == 2 and kept[0].display_name == "Strike / Prick"
+		and kept[1].display_name == "Brace / Pop Shot",
+		"reordered projection keeps authored ordered stitched descriptors unchanged")
+	_check(wardrobe.get_snapshot() == before,
+		"repeated projection and signature reads never alter the actual wardrobe receipt")
+
+
+func _test_invalid_source(defeat: Dictionary) -> void:
+	var before := _app_snapshot()
+	app.run_next_stitch_id = 0
+	_check(panel.open_result(defeat["ctx"]["latch"]),
+		"invalid App ledger still shows authentic terminal outcome")
+	_check(panel.summary_label.text.ends_with("Summary unavailable")
+		and panel.return_button.disabled and not panel.stitched_section.visible
+		and panel.stitched_rows.get_child_count() == 0,
+		"invalid ledger never creates card detail or an enabled Return")
+	var earlier := returns
+	panel.return_button.pressed.emit()
+	_check(returns == earlier, "invalid run source refuses injected Return signal")
+	panel.close_result()
+	app.run_next_stitch_id = before.cursor
+	_check(_app_snapshot() == before, "invalid panel visit cannot mutate or repair source ledger")
+	panel.reparent(root)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_check(panel.open_result(defeat["ctx"]["latch"]),
+		"non-App mounted panel can show terminal sentence without fabricated summary")
+	_check(panel.summary_label.text.ends_with("Summary unavailable")
+		and panel.return_button.disabled and not panel.stitched_section.visible
+		and panel.stitched_rows.get_child_count() == 0,
+		"non-App host cannot authorize sewn detail or Return")
+	panel.return_button.pressed.emit()
+	_check(returns == earlier, "non-App host refuses a forced Return signal")
+	panel.close_result()
+	panel.reparent(app)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_check(_app_snapshot() == before, "non-App rejection preserves source state")
 
 
 func _test_global_rng(defeat: Dictionary) -> void:
@@ -701,8 +900,9 @@ func _test_global_rng(defeat: Dictionary) -> void:
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
-	_check(scene != null, "dedicated terminal PackedScene loads")
-	if scene == null:
+	var app_scene := load(APP_SCENE) as PackedScene
+	_check(scene != null and app_scene != null, "dedicated terminal and App scenes load")
+	if scene == null or app_scene == null:
 		_finish()
 		return
 	panel = scene.instantiate() as LiveRunTerminalResultPanel
@@ -710,9 +910,14 @@ func _run() -> void:
 	if panel == null:
 		_finish()
 		return
-	root.add_child(panel)
+	app = app_scene.instantiate()
+	root.add_child(app)
+	app.add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.return_to_title_requested.connect(_on_return)
 	await _frames()
+	var initial := _starter_deck()
+	_install_run({"deck": initial, "descriptors": {}, "next_stitch_id": 1})
 	_check(panel.has_method("open_result") and panel.has_method("close_result")
 		and panel.has_method("get_presented_status"), "required public panel API exists")
 	_check(not panel.visible and panel.return_button.disabled
@@ -723,7 +928,9 @@ func _run() -> void:
 	if not defeat.is_empty():
 		await _test_terminal_interactions(victory, defeat)
 		await _test_crafted_recap(defeat)
+		_test_reordered_heroes()
 		_test_global_rng(defeat)
+		_test_invalid_source(defeat)
 	_finish()
 
 
