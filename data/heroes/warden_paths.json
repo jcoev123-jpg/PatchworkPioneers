@@ -1,0 +1,60 @@
+{
+  "id": "warden",
+  "display_name": "Warden",
+  "max_hp": 40,
+  "base_passive": {
+    "kind": "starting_block",
+    "starting_block": 6
+  },
+  "palette": {
+    "slate_blue": "#4a5d73",
+    "bone": "#d9cfb8",
+    "rust": "#a4552f"
+  },
+  "paths": [
+    {
+      "id": "bulwark",
+      "display_name": "Bulwark",
+      "passive": {
+        "kind": "replaces_starting_block",
+        "replaced_kind": "starting_block",
+        "replaced_starting_block": 6,
+        "starting_block": 10,
+        "stacks": false
+      },
+      "card": {
+        "id": "warden_bulwark_brace",
+        "display_name": "Bulwark Brace",
+        "owner": "warden",
+        "cost": 1,
+        "from_positions": [1, 2, 3],
+        "target_kind": "self",
+        "to_positions": [],
+        "effects": {"block": 9},
+        "illustration_path": "res://assets/paper/cards/warden_bulwark_brace.png"
+      }
+    },
+    {
+      "id": "vanguard",
+      "display_name": "Vanguard",
+      "passive": {
+        "kind": "first_attack_per_turn_pins",
+        "applies_to": "warden",
+        "trigger": "first_confirmed_attack_each_player_turn",
+        "once_per_turn": true,
+        "status": "pinned"
+      },
+      "card": {
+        "id": "warden_lance_pin",
+        "display_name": "Lance Pin",
+        "owner": "warden",
+        "cost": 1,
+        "from_positions": [1],
+        "target_kind": "enemy_single",
+        "to_positions": [1, 2],
+        "effects": {"damage": 6, "pinned": true},
+        "illustration_path": "res://assets/paper/cards/warden_lance_pin.png"
+      }
+    }
+  ]
+}
