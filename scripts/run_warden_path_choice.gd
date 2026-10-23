@@ -22,6 +22,7 @@ const STARTER_DECK_SIZE := 12
 const MIN_POSITION := 1
 const MAX_POSITION := 3
 const MAX_SAFE_FLOAT_INT := 9007199254740992.0
+const MAX_HP := 40
 const TARGET_KINDS: Array[String] = ["enemy_single", "enemy_all", "self", "ally_single", "none"]
 
 var _paths: Array[Dictionary] = []
@@ -157,14 +158,12 @@ func _build(record: Variant, deck_source: Variant) -> void:
 		return
 	if not _is_nonblank_string(owner_record.get("display_name")):
 		return
-	if not _is_integral_number(owner_record.get("max_hp"), false):
+	if not _exactly_equal(owner_record.get("max_hp"), MAX_HP):
 		return
 	var base_passive: Variant = owner_record.get("base_passive")
 	if not base_passive is Dictionary:
 		return
-	if not _is_nonblank_string((base_passive as Dictionary).get("kind")):
-		return
-	if not _is_integral_number((base_passive as Dictionary).get("starting_block"), false):
+	if not _exactly_equal(base_passive, _expected_base_passive()):
 		return
 	var deck := _validate_deck(deck_source)
 	if deck.is_empty():
@@ -288,6 +287,14 @@ func _validate_path(raw: Variant) -> Dictionary:
 	var art_path: String = art
 	if not art_path.begins_with("res://") or not art_path.ends_with(".png"):
 		return {}
+	# Fail closed unless this record is exactly the authored contract for its ID:
+	# a type-consistent but altered rule value (10 -> 16 Block, once_per_turn
+	# false, Lance Pin damage 8, another warden_-prefixed card ID, ...) is invalid.
+	var path_id: String = record["id"]
+	if not PATH_IDS.has(path_id):
+		return {}
+	if not _exactly_equal(record, _expected_path(path_id)):
+		return {}
 	return record
 
 
@@ -344,3 +351,88 @@ func _is_nonblank_string(value: Variant) -> bool:
 	if not value is String:
 		return false
 	return not (value as String).strip_edges().is_empty()
+
+
+## The exact authored base Warden passive (start combat gain 6 Block).
+func _expected_base_passive() -> Dictionary:
+	return {"kind": "starting_block", "starting_block": 6}
+
+
+## The exact authored Path record for one stable Path ID. Built fresh per call so
+## callers can never mutate a shared expected record.
+func _expected_path(path_id: String) -> Dictionary:
+	if path_id == "bulwark":
+		return {
+			"id": "bulwark",
+			"display_name": "Bulwark",
+			"passive": {
+				"kind": "replaces_starting_block",
+				"replaced_kind": "starting_block",
+				"replaced_starting_block": 6,
+				"starting_block": 10,
+				"stacks": false,
+			},
+			"card": {
+				"id": "warden_bulwark_brace",
+				"display_name": "Bulwark Brace",
+				"owner": OWNER_ID,
+				"cost": 1,
+				"from_positions": [1, 2, 3],
+				"target_kind": "self",
+				"to_positions": [],
+				"effects": {"block": 9},
+				"illustration_path": "res://assets/paper/cards/warden_bulwark_brace.png",
+			},
+		}
+	if path_id == "vanguard":
+		return {
+			"id": "vanguard",
+			"display_name": "Vanguard",
+			"passive": {
+				"kind": "first_attack_per_turn_pins",
+				"applies_to": OWNER_ID,
+				"trigger": "first_confirmed_attack_each_player_turn",
+				"once_per_turn": true,
+				"status": "pinned",
+			},
+			"card": {
+				"id": "warden_lance_pin",
+				"display_name": "Lance Pin",
+				"owner": OWNER_ID,
+				"cost": 1,
+				"from_positions": [1],
+				"target_kind": "enemy_single",
+				"to_positions": [1, 2],
+				"effects": {"damage": 6, "pinned": true},
+				"illustration_path": "res://assets/paper/cards/warden_lance_pin.png",
+			},
+		}
+	return {}
+
+
+## Exact recursive comparison: same keys, same array order, same value types
+## (so JSON true never matches 1), with numbers already normalized to ints.
+func _exactly_equal(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		return false
+	if a is Array:
+		var left_list: Array = a
+		var right_list: Array = b
+		if left_list.size() != right_list.size():
+			return false
+		for index in left_list.size():
+			if not _exactly_equal(left_list[index], right_list[index]):
+				return false
+		return true
+	if a is Dictionary:
+		var left_dict: Dictionary = a
+		var right_dict: Dictionary = b
+		if left_dict.size() != right_dict.size():
+			return false
+		for key in left_dict:
+			if not right_dict.has(key):
+				return false
+			if not _exactly_equal(left_dict[key], right_dict[key]):
+				return false
+		return true
+	return a == b

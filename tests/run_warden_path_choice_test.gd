@@ -412,6 +412,55 @@ func _test_bad_source_inputs() -> void:
 	positions_list[1]["card"]["to_positions"] = [1, 4]
 	bad_positions["paths"] = positions_list
 	_check_invalid_source(bad_positions, deck, "Path card target outside positions 1-3")
+	# Semantically invalid but type-consistent rule values must also fail closed.
+	var bulwark_block: Dictionary = authored.duplicate(true)
+	var block_list: Array = (authored["paths"] as Array).duplicate(true)
+	block_list[0]["passive"]["starting_block"] = 16
+	bulwark_block["paths"] = block_list
+	_check_invalid_source(bulwark_block, deck, "Bulwark starting Block changed to 16")
+	var bulwark_stacks: Dictionary = authored.duplicate(true)
+	var stacks_list: Array = (authored["paths"] as Array).duplicate(true)
+	stacks_list[0]["passive"]["stacks"] = true
+	bulwark_stacks["paths"] = stacks_list
+	_check_invalid_source(bulwark_stacks, deck, "Bulwark stacking with the base 6 Block")
+	var vanguard_once: Dictionary = authored.duplicate(true)
+	var once_list: Array = (authored["paths"] as Array).duplicate(true)
+	once_list[1]["passive"]["once_per_turn"] = false
+	vanguard_once["paths"] = once_list
+	_check_invalid_source(vanguard_once, deck, "Vanguard pins every attack instead of once per turn")
+	var vanguard_trigger: Dictionary = authored.duplicate(true)
+	var trigger_list: Array = (authored["paths"] as Array).duplicate(true)
+	trigger_list[1]["passive"]["trigger"] = "every_confirmed_attack_each_player_turn"
+	vanguard_trigger["paths"] = trigger_list
+	_check_invalid_source(vanguard_trigger, deck, "Vanguard trigger changed to every attack")
+	var lance_damage: Dictionary = authored.duplicate(true)
+	var damage_list: Array = (authored["paths"] as Array).duplicate(true)
+	damage_list[1]["card"]["effects"]["damage"] = 8
+	lance_damage["paths"] = damage_list
+	_check_invalid_source(lance_damage, deck, "Lance Pin damage changed to 8")
+	var lance_effects: Dictionary = authored.duplicate(true)
+	var effects_list: Array = (authored["paths"] as Array).duplicate(true)
+	effects_list[1]["card"]["effects"] = {"damage": 6}
+	lance_effects["paths"] = effects_list
+	_check_invalid_source(lance_effects, deck, "Lance Pin without Pinned")
+	var other_card_id: Dictionary = authored.duplicate(true)
+	var other_id_list: Array = (authored["paths"] as Array).duplicate(true)
+	other_id_list[1]["card"]["id"] = "warden_lance_jab"
+	other_card_id["paths"] = other_id_list
+	_check_invalid_source(other_card_id, deck, "Lance Pin swapped for another warden_ card ID")
+	var brace_cost: Dictionary = authored.duplicate(true)
+	var cost_list: Array = (authored["paths"] as Array).duplicate(true)
+	cost_list[0]["card"]["cost"] = 2
+	brace_cost["paths"] = cost_list
+	_check_invalid_source(brace_cost, deck, "Bulwark Brace cost changed to 2")
+	var brace_positions: Dictionary = authored.duplicate(true)
+	var brace_positions_list: Array = (authored["paths"] as Array).duplicate(true)
+	brace_positions_list[0]["card"]["from_positions"] = [1]
+	brace_positions["paths"] = brace_positions_list
+	_check_invalid_source(brace_positions, deck, "Bulwark Brace restricted to position 1")
+	var base_block: Dictionary = authored.duplicate(true)
+	base_block["base_passive"]["starting_block"] = 9
+	_check_invalid_source(base_block, deck, "base Warden passive changed from 6 Block")
 	# Source that is not an object at all.
 	var not_object := RunWardenPathChoice.new("not a record", deck)
 	_check(not not_object.is_valid() and not not_object.is_claimed(),
