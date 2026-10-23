@@ -58,6 +58,18 @@ func _init() -> void:
 			"illustration_path": "res://assets/paper/cards/warden_brace.png",
 			"starting_copies": 1
 		},
+		"warden_brace_plus": {
+			"id": "warden_brace_plus",
+			"display_name": "Brace+",
+			"owner": "warden",
+			"cost": 1,
+			"from_positions": [1, 2, 3],
+			"target_kind": "self",
+			"to_positions": [],
+			"effects": {"block": 10},
+			"illustration_path": "res://assets/paper/cards/warden_brace.png",
+			"starting_copies": 0
+		},
 		"warden_shield_bash": {
 			"id": "warden_shield_bash",
 			"display_name": "Shield Bash",
@@ -94,6 +106,18 @@ func _init() -> void:
 			"illustration_path": "res://assets/paper/cards/seamstress_mend.png",
 			"starting_copies": 1
 		},
+		"seamstress_mend_plus": {
+			"id": "seamstress_mend_plus",
+			"display_name": "Mend+",
+			"owner": "seamstress",
+			"cost": 1,
+			"from_positions": [2, 3],
+			"target_kind": "ally_single",
+			"to_positions": [],
+			"effects": {"heal": 7},
+			"illustration_path": "res://assets/paper/cards/seamstress_mend.png",
+			"starting_copies": 0
+		},
 		"seamstress_stitch_up": {
 			"id": "seamstress_stitch_up",
 			"display_name": "Stitch Up",
@@ -105,6 +129,18 @@ func _init() -> void:
 			"effects": {"block": 5},
 			"illustration_path": "res://assets/paper/cards/seamstress_stitch_up.png",
 			"starting_copies": 1
+		},
+		"seamstress_stitch_up_plus": {
+			"id": "seamstress_stitch_up_plus",
+			"display_name": "Stitch Up+",
+			"owner": "seamstress",
+			"cost": 1,
+			"from_positions": [1, 2, 3],
+			"target_kind": "ally_single",
+			"to_positions": [],
+			"effects": {"block": 7},
+			"illustration_path": "res://assets/paper/cards/seamstress_stitch_up.png",
+			"starting_copies": 0
 		},
 		"tinker_pop_shot": {
 			"id": "tinker_pop_shot",
