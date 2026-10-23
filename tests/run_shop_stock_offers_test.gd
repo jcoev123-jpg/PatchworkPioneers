@@ -90,6 +90,19 @@ const WARDEN_STOCK_SPECS := {
 	"warden_counter_stitch": {"owner": "warden", "price": 65, "cost": 1, "from": [1, 2], "target": "self", "to": [], "effects": {"block": 5, "thorns": 3, "duration": "until_next_turn"}, "rarity": "uncommon"},
 }
 
+## Seven already-playable Seamstress pool bases newly stocked in the real Shop.
+## Prices are the established POOL_CARD_PRICES quotes. Check both base and
+## Rest-upgraded effects against the independent authored catalog.
+const SEAMSTRESS_STOCK_SPECS := {
+	"seamstress_running_stitch": {"owner": "seamstress", "price": 50, "cost": 1, "plus_cost": 1, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 2, "bleed": 3}, "plus_effects": {"damage": 3, "bleed": 4}, "rarity": "common"},
+	"seamstress_darning": {"owner": "seamstress", "price": 55, "cost": 1, "plus_cost": 1, "from": [1, 2, 3], "target": "ally_single", "to": [], "effects": {"heal": 4, "block": 3}, "plus_effects": {"heal": 6, "block": 4}, "rarity": "common"},
+	"seamstress_thimble_tea": {"owner": "seamstress", "price": 40, "cost": 0, "plus_cost": 0, "from": [2, 3], "target": "ally_single", "to": [], "effects": {"heal": 3}, "plus_effects": {"heal": 4}, "rarity": "common"},
+	"seamstress_hemorrhage_hem": {"owner": "seamstress", "price": 65, "cost": 2, "plus_cost": 1, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"bleed_multiplier": 2}, "plus_effects": {"bleed_multiplier": 2}, "rarity": "uncommon"},
+	"seamstress_blanket_stitch": {"owner": "seamstress", "price": 70, "cost": 2, "plus_cost": 2, "from": [2, 3], "target": "enemy_all", "to": [1, 2, 3], "effects": {"bleed": 2}, "plus_effects": {"bleed": 3}, "rarity": "uncommon"},
+	"seamstress_field_mend": {"owner": "seamstress", "price": 75, "cost": 2, "plus_cost": 2, "from": [2, 3], "target": "party_all", "to": [], "effects": {"heal": 4}, "plus_effects": {"heal": 6}, "rarity": "uncommon"},
+	"seamstress_red_thread": {"owner": "seamstress", "price": 90, "cost": 2, "plus_cost": 2, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"bleed": 6, "exposed": 1}, "plus_effects": {"bleed": 8, "exposed": 1}, "rarity": "rare"},
+}
+
 ## Every pre-existing authored card candidate and its established Shop quote.
 ## These entries must survive the candidate-pool expansion unchanged.
 const EXISTING_SHOP_CARDS := {
@@ -143,6 +156,7 @@ func _initialize() -> void:
 		_test_new_starter_shop_offers_and_purchases(party, deck, catalog)
 		_test_new_pool_shop_offers_and_purchases(party, deck, catalog)
 		_test_warden_pool_shop_offers_and_purchases(party, deck, catalog)
+		_test_seamstress_shop_stock_and_purchases(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -1735,4 +1749,166 @@ func _test_warden_pool_shop_offers_and_purchases(party: Array[String], deck: Arr
 			"no warden upgrade listing in the authored Shop pool: " + upgrade_id)
 		_reject("warden upgrade as Shop candidate " + upgrade_id, _rng(), party,
 			_with_card(candidates, 0, {"id": upgrade_id, "price": WARDEN_STOCK_SPECS[card_id]["price"]}),
+			trinkets, [])
+
+
+## AC1/AC2/AC3: all seven Seamstress D2-1 healing/Bleed Shop bases.
+## Use the *shipped* catalog and candidate JSON, never synthetic stock or a
+## catalog-wide count/index. Independently check each base and its Rest + form.
+func _test_seamstress_shop_stock_and_purchases(party: Array[String], deck: Array[String],
+		catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	var seamstress := SeamstressPoolCards.new()
+	var counts := {}
+	for entry in candidates:
+		if entry is Dictionary and entry.get("id") is String:
+			counts[entry["id"]] = int(counts.get(entry["id"], 0)) + 1
+
+	for card_id in SEAMSTRESS_STOCK_SPECS:
+		var spec: Dictionary = SEAMSTRESS_STOCK_SPECS[card_id]
+		var expected_price: int = spec["price"]
+		var upgrade_id: String = card_id + "_plus"
+		_check(POOL_CARD_PRICES.get(card_id, -1) == expected_price,
+			"seamstress stock " + card_id + ": established pool price matches fixture")
+		_check(counts.get(card_id, 0) == 1,
+			"seamstress stock " + card_id + ": exactly one shipped base offer")
+		_check(counts.get(upgrade_id, 0) == 0 and not deck.has(card_id) and not deck.has(upgrade_id),
+			"seamstress stock " + card_id + ": neither a + listing nor a starter copy")
+		var authored_entry := {}
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				authored_entry = entry
+				break
+		_check(authored_entry.get("owner") == "seamstress"
+			and _whole_price(authored_entry.get("price")) == expected_price,
+			"seamstress stock " + card_id + ": shipped owner and exact quote")
+		var base: Dictionary = seamstress.get_definition(card_id)
+		var plus: Dictionary = seamstress.get_definition(upgrade_id)
+		_check(seamstress.get_base_ids().has(card_id) and not catalog.has_card(card_id)
+			and base.get("id") == card_id and base.get("owner") == "seamstress"
+			and base.get("reward_eligible") == true and base.get("starting_copies") == 0
+			and base.get("upgrade_id") == upgrade_id and not base.has("upgrade_of"),
+			"seamstress stock " + card_id + ": canonical nonstarter reward-eligible base")
+		_check(base.get("rarity") == spec["rarity"]
+			and base.get("cost") == spec["cost"] and base.get("from_positions") == spec["from"]
+			and base.get("target_kind") == spec["target"] and base.get("to_positions") == spec["to"]
+			and base.get("effects") == spec["effects"],
+			"seamstress stock " + card_id + ": exact base cost, targets and effects")
+		_check(plus.get("id") == upgrade_id and plus.get("owner") == "seamstress"
+			and plus.get("rarity") == spec["rarity"] and plus.get("cost") == spec["plus_cost"]
+			and plus.get("from_positions") == spec["from"]
+			and plus.get("target_kind") == spec["target"] and plus.get("to_positions") == spec["to"]
+			and plus.get("effects") == spec["plus_effects"]
+			and plus.get("upgrade_of") == card_id and plus.get("reward_eligible") == false
+			and plus.get("starting_copies") == 0,
+			"seamstress stock " + card_id + ": Rest upgrade catalog rules retained")
+
+		# A fixed and bounded series of seeded *actual* five-plus-two visits,
+		# not a fabricated favorable listing or a fixed global catalog index.
+		var found_seed: int = -1
+		var found: Dictionary = {}
+		for offset in range(1000):
+			var probe_seed: int = SEED + 700 + offset
+			var probe := RunShopStockOffers.generate(_rng(probe_seed), party, candidates, trinkets, [])
+			if not probe.get("ok", false):
+				continue
+			for listing in probe.get("cards", []):
+				if listing.get("id") == card_id:
+					found_seed = probe_seed
+					found = probe
+					break
+			if found_seed >= 0:
+				break
+		_check(found_seed >= 0, "seamstress stock " + card_id + ": real stock found within 1000 fixed seeds")
+		if found_seed < 0:
+			continue
+
+		var cards: Array = found.get("cards", [])
+		var patches: Array = found.get("trinkets", [])
+		_check(cards.size() == 5 and patches.size() == 2,
+			"seamstress stock " + card_id + ": five card and two trinket listings")
+		var card_ids := {}
+		for listing in cards:
+			card_ids[listing.get("id")] = true
+			_check(not String(listing.get("id", "")).ends_with("_plus"),
+				"seamstress stock " + card_id + ": no generated pool upgrade listing")
+		_check(card_ids.size() == 5,
+			"seamstress stock " + card_id + ": five distinct base cards")
+		_check(patches[0].get("id") != patches[1].get("id"),
+			"seamstress stock " + card_id + ": two distinct trinkets")
+		var selected: Dictionary = {}
+		for listing in cards:
+			_check(_whole_price(listing.get("price")) == _pool_price(candidates, listing.get("id", "")),
+				"seamstress stock " + card_id + ": generated card has authored quote")
+			if listing.get("id") == card_id:
+				selected = listing
+		_check(selected.get("owner") == "seamstress" and selected.get("price") == expected_price,
+			"seamstress stock " + card_id + ": canonical selected owner and price")
+		# Independent sorted-pool oracle proves seven draws and the next RNG value.
+		var stock_rng := _rng(found_seed)
+		var oracle_rng := _rng(found_seed)
+		var replay_rng := _rng(found_seed)
+		var oracle: Dictionary = _oracle(catalog, party, candidates, trinkets, [], oracle_rng)
+		var stock: Dictionary = RunShopStockOffers.generate(stock_rng, party, candidates, trinkets, [])
+		var cards_reordered := candidates.duplicate(true)
+		var trinkets_reordered := trinkets.duplicate(true)
+		cards_reordered.reverse()
+		trinkets_reordered.reverse()
+		var replay: Dictionary = RunShopStockOffers.generate(
+			replay_rng, party, cards_reordered, trinkets_reordered, [])
+		_check(stock == found and stock.get("cards", []) == oracle["cards"]
+			and stock.get("trinkets", []) == oracle["trinkets"],
+			"seamstress stock " + card_id + ": independently sorted seeded stock oracle")
+		_check(replay == stock and replay_rng.state == stock_rng.state
+			and stock_rng.state == oracle_rng.state
+			and replay_rng.randi() == stock_rng.randi(),
+			"seamstress stock " + card_id + ": input reorder and RNG replay")
+
+		# The paid purchase uses the *actual generated* five-plus-two stock.
+		var shop := RunShopPurchases.new(party, deck, [], 500, cards, patches)
+		_check(shop.is_valid(), "seamstress stock " + card_id + ": generated visit opens")
+		if not shop.is_valid():
+			continue
+		var before_state: Dictionary = shop.get_state()
+		var before_stock: Dictionary = shop.get_stock()
+		var paid: Dictionary = shop.buy("card", card_id)
+		var after_state: Dictionary = shop.get_state()
+		var after_stock: Dictionary = shop.get_stock()
+		_check(paid.get("ok", false) and paid.get("receipt", {}) ==
+			{"kind": "card", "id": card_id, "price": expected_price},
+			"seamstress stock " + card_id + ": paid receipt exactly matches")
+		_check(after_state["deck"] == before_state["deck"] + [card_id]
+			and after_state["gold"] == before_state["gold"] - expected_price
+			and after_state["trinkets"] == before_state["trinkets"]
+			and after_state["party_ids"] == before_state["party_ids"],
+			"seamstress stock " + card_id + ": exactly one base copy, exact debit and no side effects")
+		var expected_stock: Dictionary = before_stock.duplicate(true)
+		var found_listing := false
+		for listing in expected_stock["cards"]:
+			if listing.get("id") == card_id:
+				listing["sold"] = true
+				found_listing = true
+		_check(found_listing and after_stock == expected_stock,
+			"seamstress stock " + card_id + ": only purchased card sold; other offers and trinkets intact")
+		var repeat: Dictionary = shop.buy("card", card_id)
+		_check(not repeat.get("ok", true)
+			and shop.get_state() == after_state and shop.get_stock() == after_stock,
+			"seamstress stock " + card_id + ": second click refused without mutation")
+
+		var poor := RunShopPurchases.new(party, deck, [], 0, cards, patches)
+		_check(poor.is_valid(), "seamstress stock " + card_id + ": genuine goldless visit opens")
+		if poor.is_valid():
+			var poor_state: Dictionary = poor.get_state()
+			var poor_stock: Dictionary = poor.get_stock()
+			var denied: Dictionary = poor.buy("card", card_id)
+			_check(not denied.get("ok", true) and poor.get_state() == poor_state
+				and poor.get_stock() == poor_stock,
+				"seamstress stock " + card_id + ": zero gold rejects with all state and stock unchanged")
+
+		# A genuine but upgraded pool candidate remains fail-closed, without
+		# drawing the RNG even once or silently shrinking the candidate pool.
+		_reject("seamstress + candidate " + upgrade_id, _rng(found_seed), party,
+			_with_card(candidates, 0, {"id": upgrade_id, "owner": "seamstress", "price": expected_price}),
 			trinkets, [])

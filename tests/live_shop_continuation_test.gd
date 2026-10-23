@@ -149,13 +149,13 @@ func _run() -> void:
 			var second_offer_index: int = _unsold_pool_offer_index(app.shop_purchases.get_stock())
 			var first_paid_id: String = String(first_oracle.stock.cards[0].id) if kind == "Shop" else ""
 			_check(second_offer_index >= 0 or _is_shop_base_pool(first_paid_id),
-				"authentic continued Shop offers a purchasable Warden/Thread Whip base card")
+				"authentic continued Shop offers a purchasable authored pool base card")
 			if second_offer_index < 0:
 				second_offer_index = 1 if kind == "Shop" else 0
 			var second_paid_id: String = String(app.shop_purchases.get_stock().cards[second_offer_index].id)
 			await _paid_card(second_offer_index, session == 1)
 			var persisted_pool_id: String = second_paid_id if _is_shop_base_pool(second_paid_id) else first_paid_id
-			_check(_is_shop_base_pool(persisted_pool_id), "paid offer is one of seven authored live Shop pool bases")
+			_check(_is_shop_base_pool(persisted_pool_id), "paid offer belongs to an eligible authored Shop pool base")
 			var pool_count: int = app.run_deck.count(persisted_pool_id)
 			_check(pool_count > 0 and app.shop_visit.get_state().deck == app.run_deck
 				and app.shop_purchases.get_state().deck == app.run_deck,
@@ -337,12 +337,17 @@ func _run() -> void:
 	print("live_shop_continuation_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
 
-## Only the seven specifically live-wired bases can witness Shop carryover.
+## A purchased base from the previously live Shop pool or the seven newly
+## stocked Seamstress D2-1 bases witnesses real Shop-to-visit deck carryover.
+## Keep this an explicit subset: an arbitrary starter card cannot satisfy it.
 func _is_shop_base_pool(card_id: String) -> bool:
 	return card_id in [
 		"warden_hold_the_line", "warden_patch_guard", "warden_quick_darn",
 		"warden_brass_buckle", "warden_iron_hem", "warden_bastion_quilt",
-		"seamstress_thread_whip"
+		"seamstress_thread_whip", "seamstress_running_stitch",
+		"seamstress_darning", "seamstress_thimble_tea",
+		"seamstress_hemorrhage_hem", "seamstress_blanket_stitch",
+		"seamstress_field_mend", "seamstress_red_thread"
 	]
 
 
