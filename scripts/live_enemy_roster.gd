@@ -4,6 +4,16 @@ extends Node
 ## Owner-supplied stand-in art, keyed by authoritative actor ID (never name, slot or screen text).
 ## Each base path has a matching "_attack" pose that only a committed animation event may show.
 const ART_ROOT := "res://assets/paper/"
+## One authored paper scene per battle kind, chosen by the admitted route node type. The
+## matching drawn quilt stays the fallback whenever an image is absent or the kind unknown.
+const BATTLE_BACKDROP_ROOT := ART_ROOT + "backgrounds/"
+const BATTLE_BACKDROPS := {
+	"Fight": "battle_meadow.png",
+	"Elite": "battle_ruins.png",
+	"Boss": "battle_boss.png",
+}
+## A standalone _start_battle has no run map; it is the normal Fight stage.
+const STANDALONE_BATTLE_KIND := "Fight"
 const ACTOR_ART := {
 	"warden": "heroes/warden",
 	"seamstress": "heroes/seamstress",
@@ -55,6 +65,8 @@ var _hero_fonts: Dictionary = {}
 var _puppets: Array[Control] = []
 var _intent_visible := true
 var _art_cache: Dictionary = {}
+var _backdrop_kind := ""
+var _backdrop_cache: Dictionary = {}
 
 
 ## Exact stand-in image paths for one authoritative actor ID; empty when no art is mapped.
@@ -63,6 +75,23 @@ static func art_paths(actor_id: String) -> Dictionary:
 		return {}
 	var base: String = ART_ROOT + String(ACTOR_ART[actor_id])
 	return {"idle": base + ".png", "attack": base + "_attack.png"}
+
+
+## The authored battle scene of one route node kind; empty for every other kind.
+static func backdrop_path(kind: String) -> String:
+	if not BATTLE_BACKDROPS.has(kind):
+		return ""
+	return BATTLE_BACKDROP_ROOT + String(BATTLE_BACKDROPS[kind])
+
+
+## Cover destination of an image over `view`: as large as the view, aspect preserved.
+static func cover_rect(view: Rect2, texture_size: Vector2) -> Rect2:
+	return StageBackdrop.cover_rect(view, texture_size)
+
+
+## The centred source window of `texture_size` that a cover draw shows inside `view`.
+static func crop_rect(view: Rect2, texture_size: Vector2) -> Rect2:
+	return StageBackdrop.crop_rect(view, texture_size)
 
 
 class Puppet extends Control:
@@ -185,11 +214,18 @@ class Puppet extends Control:
 		draw_set_transform(Vector2.ZERO)
 
 
-## Deterministic quilt stage drawn behind the actor row: one continuous cloth seamed
-## into axis-aligned patches, plus a stitched hem for the ground. Presentation only,
-## so it never takes pointer or keyboard input.
+## Deterministic battle stage behind the actor row: the authored paper scene of this
+## fight when it is available, otherwise one continuous drawn quilt seamed into
+## axis-aligned patches. Both keep the same stitched ground hem. Presentation only, so
+## it never takes pointer or keyboard input.
 class StageBackdrop extends Control:
+	## The battle view this stage paints, so the scene covers the whole battle area
+	## (including its margins) instead of one actor box.
+	var battle_view: Control
 	var stage_row: Control
+	## The authoritative route kind this battle was admitted as, and its loaded scene.
+	var battle_kind := ""
+	var stage_texture: Texture2D
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -197,6 +233,55 @@ class StageBackdrop extends Control:
 		resized.connect(queue_redraw)
 		if is_instance_valid(stage_row):
 			stage_row.item_rect_changed.connect(queue_redraw)
+		if is_instance_valid(battle_view):
+			battle_view.item_rect_changed.connect(queue_redraw)
+
+	## Binds the scene selected for one battle kind; a missing image keeps the quilt.
+	func bind_battle(kind: String, texture: Texture2D) -> void:
+		battle_kind = kind
+		stage_texture = texture
+		queue_redraw()
+
+	func has_image() -> bool:
+		return stage_texture != null and stage_texture.get_width() > 0 \
+			and stage_texture.get_height() > 0
+
+	func texture_size() -> Vector2:
+		if not has_image():
+			return Vector2.ZERO
+		return Vector2(stage_texture.get_width(), stage_texture.get_height())
+
+	## The whole battle view this scene fills, in this Control's own coordinates.
+	func view_rect() -> Rect2:
+		if is_instance_valid(battle_view) and battle_view.is_visible_in_tree():
+			var view := battle_view.get_global_rect()
+			if view.size.x > 0.0 and view.size.y > 0.0:
+				return Rect2(view.position - get_global_rect().position, view.size)
+		return Rect2(Vector2.ZERO, size)
+
+	## Cover placement of the bound scene: fills the view, keeping its own proportions.
+	func image_rect() -> Rect2:
+		return cover_rect(view_rect(), texture_size())
+
+	## The centred part of the source image a cover draw keeps inside the view.
+	func image_crop() -> Rect2:
+		return crop_rect(view_rect(), texture_size())
+
+	static func cover_rect(view: Rect2, texture_size: Vector2) -> Rect2:
+		if view.size.x <= 0.0 or view.size.y <= 0.0 \
+				or texture_size.x <= 0.0 or texture_size.y <= 0.0:
+			return Rect2()
+		var cover := maxf(view.size.x / texture_size.x, view.size.y / texture_size.y)
+		var drawn := texture_size * cover
+		return Rect2(view.position + (view.size - drawn) / 2.0, drawn)
+
+	static func crop_rect(view: Rect2, texture_size: Vector2) -> Rect2:
+		if view.size.x <= 0.0 or view.size.y <= 0.0 \
+				or texture_size.x <= 0.0 or texture_size.y <= 0.0:
+			return Rect2()
+		var cover := maxf(view.size.x / texture_size.x, view.size.y / texture_size.y)
+		var visible := view.size / cover
+		return Rect2((texture_size - visible) / 2.0, visible)
 
 	## The actor row in this Control's own coordinates, or empty while there is no stage.
 	func stage_rect() -> Rect2:
@@ -247,6 +332,17 @@ class StageBackdrop extends Control:
 		return STAGE_QUILT_TONES[index % STAGE_QUILT_TONES.size()]
 
 	func _draw() -> void:
+		if has_image():
+			_draw_backdrop_image()
+		else:
+			_draw_quilt()
+		_draw_ground_hem()
+
+	## The authored paper scene, cover-cropped into the whole battle view.
+	func _draw_backdrop_image() -> void:
+		draw_texture_rect_region(stage_texture, view_rect(), image_crop())
+
+	func _draw_quilt() -> void:
 		var cloth := quilt_cloth()
 		if cloth.size.x <= 0.0 or cloth.size.y <= 0.0:
 			return
@@ -257,8 +353,18 @@ class StageBackdrop extends Control:
 			draw_rect(patches[index], quilt_tone(index))
 		for seam in quilt_seams():
 			draw_dashed_line(seam[0], seam[1], STAGE_THREAD, 1.0, 7.0)
-		# A single hem of cross-thread stitches marks the ground the actors stand on.
-		var hem := Rect2(cloth.position.x, cloth.end.y, cloth.size.x, STAGE_HEM_HEIGHT)
+
+	## The single hem of ground the actors stand on, above either quilt or image.
+	func hem_rect() -> Rect2:
+		var cloth := quilt_cloth()
+		if cloth.size.x <= 0.0 or cloth.size.y <= 0.0:
+			return Rect2()
+		return Rect2(cloth.position.x, cloth.end.y, cloth.size.x, STAGE_HEM_HEIGHT)
+
+	func _draw_ground_hem() -> void:
+		var hem := hem_rect()
+		if hem.size.x <= 0.0 or hem.size.y <= 0.0:
+			return
 		draw_rect(hem, STAGE_HEM)
 		draw_dashed_line(Vector2(hem.position.x + 10.0, hem.position.y),
 			Vector2(hem.end.x - 10.0, hem.position.y), STAGE_THREAD, 2.0, 9.0)
@@ -287,6 +393,9 @@ func _sync_battle() -> void:
 		return
 	if _battle == app.battle_view and enemies == app.enemies and _heroes == app.hero_view \
 			and is_instance_valid(battle_row) and is_instance_valid(panel) and is_instance_valid(backdrop):
+		# A changed admitted kind rebinds the same one stage instead of adding another.
+		if _battle_kind(app) != _backdrop_kind:
+			_bind_backdrop(app)
 		return
 	_clear()
 	_battle = app.battle_view
@@ -385,12 +494,16 @@ func _sync_battle() -> void:
 		_badges.append(badge)
 	panel.custom_minimum_size.x = 300
 	battle_row.add_child(panel)
-	# One deterministic quilt stage behind both lineups, drawn before any actor.
+	# One deterministic stage behind both lineups: the authored scene of this fight when
+	# it is available, otherwise the drawn quilt. It is the first child, so it draws
+	# before every actor target, HP ribbon, intent badge and hand card.
 	backdrop = StageBackdrop.new()
 	backdrop.name = "BattleStageBackdrop"
 	backdrop.stage_row = battle_row
+	backdrop.battle_view = _battle
 	_battle.add_child(backdrop)
 	_battle.move_child(backdrop, 0)
+	_bind_backdrop(app)
 	_refresh()
 
 
@@ -499,6 +612,41 @@ func _bind_puppet_art(app, puppet) -> void:
 	puppet.bind_actor(actor_id, art_for(actor_id))
 
 
+## The admitted battle's own route kind. Only a standalone _start_battle (no run map at
+## all) is the normal Fight stage; a missing or malformed node stays unknown, so it keeps
+## the drawn quilt instead of borrowing another scene.
+func _battle_kind(app) -> String:
+	if app == null or app.run_map == null:
+		return STANDALONE_BATTLE_KIND
+	var current: String = app.run_map.get_current_node_id()
+	if current.is_empty():
+		return ""
+	var node = app.run_map.get_node(current)
+	if not node is Dictionary:
+		return ""
+	var kind = node.get("type")
+	if not kind is String or not BATTLE_BACKDROPS.has(kind):
+		return ""
+	return kind
+
+
+## Binds this battle's single stage to exactly the scene its admitted kind selects.
+func _bind_backdrop(app) -> void:
+	_backdrop_kind = _battle_kind(app)
+	if is_instance_valid(backdrop) and backdrop is StageBackdrop:
+		backdrop.bind_battle(_backdrop_kind, backdrop_texture(_backdrop_kind))
+
+
+## Presentation-only scene lookup: an unknown kind or missing file loads nothing.
+func backdrop_texture(kind: String) -> Texture2D:
+	var path := backdrop_path(kind)
+	if path.is_empty():
+		return null
+	if not _backdrop_cache.has(path):
+		_backdrop_cache[path] = _load_art_texture(path)
+	return _backdrop_cache[path] as Texture2D
+
+
 static func _load_art_texture(path: String) -> Texture2D:
 	# A missing import or file keeps the drawn fallback instead of failing boot.
 	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
@@ -543,10 +691,11 @@ func _clear() -> void:
 			battle_row.get_parent().remove_child(battle_row)
 		battle_row.queue_free()
 	battle_row = null
-	# The quilt stage belongs to this battle only; a later fight builds a fresh one.
+	# The stage belongs to this battle only; a later fight builds a fresh one.
 	if is_instance_valid(backdrop):
 		if backdrop.get_parent() != null:
 			backdrop.get_parent().remove_child(backdrop)
 		backdrop.queue_free()
 	backdrop = null
+	_backdrop_kind = ""
 	_battle = null

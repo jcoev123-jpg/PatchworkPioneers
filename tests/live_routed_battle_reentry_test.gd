@@ -1,6 +1,55 @@
 extends "res://tests/live_shop_continuation_test.gd"
 ## Real connected input, typed-entry oracle, atomic rejection, and terminal latch.
 
+const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+const BATTLE_BACKDROP := {
+	"Fight": "res://assets/paper/backgrounds/battle_meadow.png",
+	"Elite": "res://assets/paper/backgrounds/battle_ruins.png",
+	"Boss": "res://assets/paper/backgrounds/battle_boss.png",
+}
+
+
+## The replacement battle mounts exactly the authored scene of its admitted node type,
+## covers the whole battle view behind every fresh control, and takes no input.
+func _assert_backdrop(roster, kind: String) -> void:
+	var backdrop = roster.backdrop
+	_check(is_instance_valid(backdrop) and roster._battle == app.battle_view
+		and backdrop.get_parent() == app.battle_view and backdrop.get_index() == 0
+		and backdrop.battle_kind == kind,
+		kind + " battle mounts its own single backdrop behind every replacement control")
+	if not is_instance_valid(backdrop):
+		return
+	var expected: String = BATTLE_BACKDROP.get(kind, "")
+	_check(not expected.is_empty() and ROSTER_ART.backdrop_path(kind) == expected,
+		kind + " kind selects its own authored backdrop path")
+	_check(backdrop.has_image() == ResourceLoader.exists(expected),
+		kind + " image is drawn only when the authored file is present")
+	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and backdrop.focus_mode == Control.FOCUS_NONE,
+		kind + " backdrop never takes pointer or keyboard input")
+	var view: Rect2 = backdrop.view_rect()
+	var global_view := Rect2(backdrop.get_global_rect().position + view.position, view.size)
+	_check(global_view.is_equal_approx(app.battle_view.get_global_rect())
+		and Rect2(0, 0, 1280, 720).encloses(global_view),
+		kind + " backdrop fills the whole 1280x720 battle view")
+	_check(global_view.encloses(app.hand_view.get_global_rect())
+		and global_view.encloses(app.hero_view.get_global_rect()),
+		kind + " one backdrop spans the hand and both lineups, not separate actor boxes")
+	if not backdrop.has_image():
+		return
+	_check(backdrop.stage_texture.resource_path == expected,
+		kind + " battle draws its own authored image")
+	var drawn: Rect2 = backdrop.image_rect()
+	var visible: Rect2 = backdrop.image_crop()
+	var texture_size: Vector2 = backdrop.texture_size()
+	_check(drawn.encloses(view)
+		and is_equal_approx(drawn.size.x / drawn.size.y, texture_size.x / texture_size.y),
+		kind + " image covers the view without stretching")
+	_check(visible.position.x >= 0.0 and visible.position.y >= 0.0
+		and visible.end.x <= texture_size.x + 0.01 and visible.end.y <= texture_size.y + 0.01
+		and is_equal_approx(visible.size.x * (drawn.size.x / texture_size.x), view.size.x),
+		kind + " image crops only a centred window that fills the view exactly")
+
 
 func _path_to(map: RunMap, source: String, kind: String) -> Array:
 	for id in map.get_node(source).outgoing:
@@ -250,6 +299,7 @@ func _run() -> void:
 				_check(new_models[index] != old_models[index], "fresh authoritative model " + str(index))
 			var roster = app.get_node("LiveEnemyRoster")
 			_check(roster.enemies == app.enemies and roster.panel.is_visible_in_tree() and roster._labels.size() == app.enemies.get_enemies().size(), "accepted presenter mounts replacement roster")
+			_assert_backdrop(roster, kind)
 			_check(app.deck.hand.size() == 5 and app.deck.energy == 3 and app.deck.turn_active and app.hand_view.get_child_count() == 5, "real playable first hand")
 			if session == 2:
 				_check(app.party.get_hero(2).id == "warden" and app.party.get_hero(2).block == 6 and app.party.get_hero(1).statuses == {"weak": 2, "bleed": 1} and app.party.is_downed(3), "carried formation HP/status/downed and current-slot opening Block")

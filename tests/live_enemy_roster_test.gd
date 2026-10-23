@@ -5,6 +5,12 @@ var checks := 0
 const SOURCE := "res://data/enemies/starter_enemies.json"
 const FIXTURE := "user://live_enemy_roster_invalid.json"
 const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+## Authored battle scene per admitted route kind; selection must never come from screen text.
+const BACKDROP_ART := {
+	"Fight": "res://assets/paper/backgrounds/battle_meadow.png",
+	"Elite": "res://assets/paper/backgrounds/battle_ruins.png",
+	"Boss": "res://assets/paper/backgrounds/battle_boss.png",
+}
 ## Supplied owner art by authoritative ID; the view must never choose these by name or slot.
 const IDLE_ART := {
 	"warden": "res://assets/paper/heroes/warden.png",
@@ -241,7 +247,7 @@ func _visible(app, presenter) -> void:
 			"pinned tag names the Guard without a long slot sentence")
 		_check(Rect2(0, 0, 1280, 720).encloses(labels[1].get_global_rect()), "Guard tag fits target viewport")
 	_name_tags(app, presenter)
-	_quilt(presenter)
+	_backdrop(app, presenter)
 	_assert_badges(app, presenter, 1)
 	_check(not app.intent_label.visible and not app.intent_label.text.is_empty(), "redundant legacy sentence is hidden while authoritative source remains")
 	_check(presenter._puppets.size() == 3 + presenter.enemies.get_enemies().size(), "one presenter puppet for every actual actor")
@@ -315,17 +321,117 @@ func _name_tags(app, presenter) -> void:
 			"pinned actor tags stay clear of the HP/Block/status meter row")
 
 
-## One continuous quilt: axis-aligned strips sharing every edge, one stitched hem,
-## and no tilted patch polygons left in the stage source.
-func _quilt(presenter) -> void:
+## One battle stage: the authored paper scene of this fight covers the whole battle view,
+## and the complete drawn quilt with its ground hem remains whenever no image is available.
+func _backdrop(app, presenter) -> void:
 	var backdrop = presenter.backdrop
 	_check(is_instance_valid(backdrop) and backdrop.name == "BattleStageBackdrop"
-		and is_instance_valid(presenter._battle) and backdrop.get_parent() == presenter._battle,
-		"one quilted stage backdrop owns the stage behind both lineups")
+		and is_instance_valid(presenter._battle) and backdrop.get_parent() == presenter._battle
+		and backdrop.get_index() == 0,
+		"one stage backdrop owns the battle view behind both lineups")
 	if not is_instance_valid(backdrop):
 		return
-	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE and backdrop.focus_mode == Control.FOCUS_NONE,
-		"quilted stage never takes pointer or keyboard input")
+	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and backdrop.focus_mode == Control.FOCUS_NONE,
+		"battle backdrop never takes pointer or keyboard input")
+	# Selection: exactly one authored scene per admitted route kind, none for anything else.
+	_check(ROSTER_ART.backdrop_path("Fight") == BACKDROP_ART["Fight"]
+		and ROSTER_ART.backdrop_path("Elite") == BACKDROP_ART["Elite"]
+		and ROSTER_ART.backdrop_path("Boss") == BACKDROP_ART["Boss"],
+		"each battle kind selects only its own authored backdrop")
+	_check(ROSTER_ART.backdrop_path("Rest") == "" and ROSTER_ART.backdrop_path("") == ""
+		and ROSTER_ART.backdrop_path("Unknown") == "" and ROSTER_ART.backdrop_path("fight") == "",
+		"unknown or malformed battle kinds select no backdrop")
+	_check(app.run_map == null and backdrop.battle_kind == "Fight",
+		"standalone battle selects the normal Fight backdrop")
+	var fight_path: String = BACKDROP_ART["Fight"]
+	_check(backdrop.has_image() == ResourceLoader.exists(fight_path),
+		"the mounted Fight image is shown only when the authored file is present")
+	if backdrop.has_image():
+		_check(backdrop.stage_texture.resource_path == fight_path,
+			"the mounted Fight stage draws its own authored image")
+	_cover(app, presenter, backdrop)
+	_fallback(app, presenter, backdrop)
+
+
+## Cover geometry: one image fills the whole battle view without stretching, and the
+## source it crops is only the centred window that window can show.
+func _cover(app, presenter, backdrop) -> void:
+	var view: Rect2 = backdrop.view_rect()
+	var global_view := Rect2(backdrop.get_global_rect().position + view.position, view.size)
+	_check(view.size.x > 0.0 and view.size.y > 0.0
+		and global_view.is_equal_approx(app.battle_view.get_global_rect()),
+		"the backdrop fills the whole battle view, not one actor box")
+	_check(Rect2(0, 0, 1280, 720).is_equal_approx(global_view),
+		"the battle view fills the 1280x720 screen edge to edge")
+	for control in [app.hero_view, presenter.panel, app.hand_view, app.end_turn_button]:
+		_check(global_view.encloses(control.get_global_rect()),
+			"one stage image spans lineups, meters, hand and actions: " + control.name)
+	_check(backdrop.get_index() == 0 and app.hand_view.get_parent().get_index() > 0,
+		"the stage is drawn before every battle control and the free hand")
+	var column: Node = app.hand_view.get_parent()
+	var meters = app.get_node_or_null("LiveCombatMeters")
+	_check(column.get_index() > backdrop.get_index() and column.is_ancestor_of(app.hero_view)
+		and is_instance_valid(meters) and is_instance_valid(meters.row)
+		and global_view.encloses(meters.row.get_global_rect())
+		and global_view.encloses(presenter._badges[0].get_global_rect()),
+		"actor targets, HP ribbons and intent badges all draw above the same one stage")
+	# Pure cover math, independent of whether the authored files are installed.
+	var square_view := Rect2(0, 0, 1280, 720)
+	var square_cover: Rect2 = ROSTER_ART.cover_rect(square_view, Vector2(1000, 1000))
+	var square_crop: Rect2 = ROSTER_ART.crop_rect(square_view, Vector2(1000, 1000))
+	_check(square_cover.encloses(square_view)
+		and is_equal_approx(square_cover.size.x / square_cover.size.y, 1.0),
+		"cover math fills the view without stretching a square image")
+	_check(square_crop.size.x <= 1000.0 and square_crop.size.y <= 1000.0
+		and square_crop.position.x >= 0.0 and square_crop.position.y >= 0.0
+		and square_crop.end.x <= 1000.01 and square_crop.end.y <= 1000.01
+		and is_equal_approx(square_crop.size.x / square_crop.size.y, 1280.0 / 720.0),
+		"cover crops only a centred window that keeps the view's proportions")
+	var wide_cover: Rect2 = ROSTER_ART.cover_rect(square_view, Vector2(2000, 500))
+	var wide_crop: Rect2 = ROSTER_ART.crop_rect(square_view, Vector2(2000, 500))
+	_check(wide_cover.encloses(square_view)
+		and is_equal_approx(wide_cover.size.x / wide_cover.size.y, 4.0)
+		and wide_crop.size.x <= 2000.01 and wide_crop.size.y <= 500.01
+		and wide_crop.end.x <= 2000.01 and wide_crop.end.y <= 500.01,
+		"a wide image also covers the view by cropping instead of distorting")
+	_check(ROSTER_ART.cover_rect(Rect2(), Vector2(10, 10)) == Rect2()
+		and ROSTER_ART.crop_rect(Rect2(0, 0, 10, 10), Vector2.ZERO) == Rect2(),
+		"an empty view or texture draws no cover image")
+	if not backdrop.has_image():
+		return
+	var texture_size: Vector2 = backdrop.texture_size()
+	var drawn: Rect2 = backdrop.image_rect()
+	var visible: Rect2 = backdrop.image_crop()
+	_check(drawn.encloses(view) and is_equal_approx(drawn.size.x / drawn.size.y,
+		texture_size.x / texture_size.y),
+		"the mounted image covers the battle view at its own proportions")
+	_check(visible.position.x >= 0.0 and visible.position.y >= 0.0
+		and visible.end.x <= texture_size.x + 0.01 and visible.end.y <= texture_size.y + 0.01,
+		"the mounted image crops inside its own texture")
+	var scale: float = drawn.size.x / texture_size.x
+	_check(is_equal_approx(visible.size.x * scale, view.size.x)
+		and is_equal_approx(visible.size.y * scale, view.size.y),
+		"the cropped window is drawn exactly over the whole battle view")
+	var hem: Rect2 = backdrop.hem_rect()
+	_check(hem.size.x > 0.0 and is_equal_approx(hem.size.y, presenter.STAGE_HEM_HEIGHT)
+		and Rect2(0, 0, 1280, 720).encloses(
+			Rect2(backdrop.get_global_rect().position + hem.position, hem.size)),
+		"the quiet ground hem stays above the image inside 1280x720")
+
+
+## Unknown kinds and missing files keep the complete drawn quilt and its sewn hem; the
+## whole fallback is inspected on the real mounted stage and then restored.
+func _fallback(app, presenter, backdrop) -> void:
+	var before: Array = _snapshot(app)
+	backdrop.bind_battle("Unknown", presenter.backdrop_texture("Unknown"))
+	_check(not backdrop.has_image() and backdrop.image_rect() == Rect2()
+		and backdrop.image_crop() == Rect2(),
+		"an unknown battle kind leaves no image and no cover draw")
+	_check(presenter.backdrop_texture("Unknown") == null and presenter.backdrop_texture("") == null
+		and ROSTER_ART._load_art_texture("res://assets/paper/backgrounds/fabricated_missing.png") == null
+		and ROSTER_ART._load_art_texture("") == null,
+		"missing, fabricated or empty backdrop paths load nothing and cannot crash")
 	var global_row: Rect2 = presenter.battle_row.get_global_rect()
 	var row: Rect2 = Rect2(global_row.position - backdrop.get_global_rect().position, global_row.size)
 	var cloth: Rect2 = backdrop.quilt_cloth()
@@ -333,45 +439,67 @@ func _quilt(presenter) -> void:
 	var columns: int = presenter.STAGE_QUILT_COLUMNS.size() - 1
 	var rows: int = presenter.STAGE_QUILT_ROWS.size() - 1
 	_check(columns >= 2 and rows >= 1 and patches.size() == columns * rows,
-		"quilt is one continuous field of shared patches")
+		"the fallback is one continuous field of shared patches")
 	_check(cloth.size.y > 0.0 and is_equal_approx(cloth.position.x, row.position.x)
 		and is_equal_approx(cloth.size.x, row.size.x),
-		"quilted cloth spans the whole actor row edge to edge")
+		"fallback cloth spans the whole actor row edge to edge")
 	var covered := 0.0
 	for index in range(patches.size()):
 		var patch: Rect2 = patches[index]
 		covered += patch.get_area()
 		_check(patch.size.x > 0.0 and patch.size.y > 0.0 and cloth.encloses(patch),
-			"quilt patch is a real axis-aligned piece inside the cloth")
+			"fallback quilt patch is a real axis-aligned piece inside the cloth")
 		if index % columns < columns - 1:
 			var right: Rect2 = patches[index + 1]
 			_check(is_equal_approx(patch.end.x, right.position.x)
 				and is_equal_approx(patch.position.y, right.position.y)
 				and is_equal_approx(patch.size.y, right.size.y),
-				"neighbouring quilt patches share an unbroken vertical seam")
+				"neighbouring fallback patches share an unbroken vertical seam")
 		if index + columns < patches.size():
 			var below: Rect2 = patches[index + columns]
 			_check(is_equal_approx(patch.end.y, below.position.y)
 				and is_equal_approx(patch.position.x, below.position.x)
 				and is_equal_approx(patch.size.x, below.size.x),
-				"stacked quilt patches share an unbroken horizontal seam")
+				"stacked fallback patches share an unbroken horizontal seam")
 	_check(is_equal_approx(covered, cloth.get_area()),
-		"quilt patches tile the cloth with no gap or overlap")
+		"fallback patches tile the cloth with no gap or overlap")
 	var seams: Array[PackedVector2Array] = backdrop.quilt_seams()
 	_check(seams.size() == maxi(0, columns - 1) + maxi(0, rows - 1),
-		"every internal patch edge is stitched exactly once")
+		"every internal fallback patch edge is stitched exactly once")
 	var stitched := cloth.grow(0.01)
 	for seam in seams:
 		_check(seam.size() == 2 and stitched.has_point(seam[0]) and stitched.has_point(seam[1]),
-			"quilt seam stays inside the continuous cloth")
-	_check(is_equal_approx(cloth.end.y + presenter.STAGE_HEM_HEIGHT, row.end.y),
-		"exactly one stitched hem grounds the quilt")
-	_check(Rect2(0, 0, 1280, 720).encloses(Rect2(backdrop.get_global_rect().position + row.position, row.size)),
-		"whole quilted stage fits 1280x720")
+			"fallback quilt seam stays inside the continuous cloth")
+	var hem: Rect2 = backdrop.hem_rect()
+	_check(hem.size.x > 0.0 and is_equal_approx(hem.size.y, presenter.STAGE_HEM_HEIGHT)
+		and is_equal_approx(cloth.end.y, hem.position.y)
+		and is_equal_approx(hem.end.y, row.end.y),
+		"exactly one stitched hem grounds the fallback quilt")
+	_check(Rect2(0, 0, 1280, 720).encloses(
+		Rect2(backdrop.get_global_rect().position + hem.position, hem.size)),
+		"the fallback hem stays inside 1280x720")
+	_check(_snapshot(app) == before,
+		"backdrop selection, fallback and cover calculation change no combat state or RNG")
+	# Source inspection: both branches exist and the quiet hem is drawn above either one.
 	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var stage_source := source.substr(source.find("class StageBackdrop extends Control:"))
+	var draw_body := stage_source.substr(stage_source.find("func _draw() -> void:"))
+	draw_body = draw_body.left(draw_body.find("\n\tfunc "))
+	_check(draw_body.find("_draw_backdrop_image()") >= 0
+		and draw_body.find("_draw_quilt()") >= 0
+		and draw_body.find("_draw_backdrop_image()") < draw_body.find("_draw_ground_hem()")
+		and draw_body.find("_draw_quilt()") < draw_body.find("_draw_ground_hem()"),
+		"source draws the stage scene or the fallback quilt first and the quiet hem above it")
+	_check(source.contains("draw_texture_rect_region(stage_texture, view_rect(), image_crop())"),
+		"source cover-draws the authored image into the whole battle view")
 	_check(not source.contains("STAGE_PATCHES") and not source.contains("func _patch(")
-		and source.contains("func quilt_rects()") and source.contains("func quilt_seams()"),
-		"source draws one quilt instead of three tilted trapezoids")
+		and source.contains("func quilt_rects()") and source.contains("func quilt_seams()")
+		and source.contains("func _draw_ground_hem()"),
+		"source keeps one quilt instead of tilted trapezoids and one shared hem")
+	backdrop.bind_battle("Fight", presenter.backdrop_texture("Fight"))
+	_check(backdrop.battle_kind == "Fight"
+		and backdrop.has_image() == ResourceLoader.exists(BACKDROP_ART["Fight"]),
+		"the live battle restores its own backdrop after the fallback check")
 
 
 func _geometry(app, presenter) -> void:
@@ -504,6 +632,7 @@ func _run() -> void:
 		var roster_ref: WeakRef = weakref(presenter.enemies)
 		var row_id: int = presenter.battle_row.get_instance_id()
 		var panel_id: int = presenter.panel.get_instance_id() if is_instance_valid(presenter.panel) else 0
+		var backdrop_id: int = presenter.backdrop.get_instance_id() if is_instance_valid(presenter.backdrop) else 0
 		var before := _snapshot(app)
 		_fixture_start(app)
 		await process_frame
@@ -512,6 +641,10 @@ func _run() -> void:
 		_check(app.battle_view.find_children("EnemyRosterPanel", "PanelContainer", true, false).size() == 1,
 			"exactly one presenter panel per battle")
 		_check(presenter._badges.size() == 2, "duplicate Start Run cannot add intent badges")
+		_check(backdrop_id != 0 and is_instance_valid(presenter.backdrop)
+			and presenter.backdrop.get_instance_id() == backdrop_id
+			and app.battle_view.find_children("BattleStageBackdrop", "Control", true, false).size() == 1,
+			"duplicate Start Run retains exactly one battle backdrop")
 		_check(presenter.battle_row.get_instance_id() == row_id and
 			app.battle_view.find_children("BattleActorSides", "HBoxContainer", true, false).size() == 1,
 			"duplicate Start retains exactly one horizontal wrapper")
@@ -731,6 +864,11 @@ func _typed_stage(app, presenter) -> void:
 		"seeded production Fight exercises three typed enemies, not the standalone fixture")
 	if app.enemies == null or app.enemies.get_enemies().size() != 3:
 		return
+	var route_kind: String = app.run_map.get_node(app.run_map.get_current_node_id()).get("type", "")
+	_check(route_kind == "Fight" and is_instance_valid(presenter.backdrop)
+		and presenter.backdrop.battle_kind == route_kind
+		and presenter.backdrop.has_image() == ResourceLoader.exists(BACKDROP_ART["Fight"]),
+		"the seeded routed fight takes its backdrop from its real admitted route node")
 	var before := _snapshot(app)
 	var meters = app.get_node("LiveCombatMeters").row
 	_check(presenter._puppets.size() == 6 and presenter._labels.size() == 3
