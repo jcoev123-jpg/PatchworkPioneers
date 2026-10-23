@@ -9,6 +9,9 @@ var checks := 0
 const ATTACK_CATALOG := "res://data/patches/m04_attack_patches.json"
 const COAT_CATALOG := "res://data/patches/m04_coat_patches.json"
 const SLOT_CATALOG := "res://data/patches/initial_patch_slots.json"
+const M05_HEAD_CATALOG := "res://data/patches/m05_head_patches.json"
+const M05_ARM_CATALOG := "res://data/patches/m05_arm_support_patches.json"
+const M05_ATTACK_CATALOG := "res://data/patches/m05_attack_patches.json"
 const EYE_TEXT := "first successful attack each combat also applies Exposed 1"
 const ARM_TEXT := "+1 damage on that wearer's damaging cards"
 const COAT_TEXT := "+6 maximum HP"
@@ -19,6 +22,13 @@ const WOOL_PATCH_CLOAK_TEXT := "+5 maximum HP"
 const CHAIN_STITCHED_COAT_TEXT := "+7 maximum HP"
 const REINFORCED_PATCHCOAT_TEXT := "+9 maximum HP"
 const THICK_FELT_MANTLE_TEXT := "+10 maximum HP"
+const M05_BLEED_TEXT := "+1 Bleed on eligible Bleed cards owned by this living wearer only"
+const M05_EXPOSED_TEXT := "+1 Exposed on eligible Exposed cards owned by this living wearer only"
+const M05_WEAK_TEXT := "+1 Weak on eligible Weak cards owned by this living wearer only"
+const M05_HEAD_BLOCK_TEXT := "+2 Block on eligible Block cards owned by this living wearer only"
+const M05_ARM_BLOCK_TEXT := "+2 Block on eligible Block cards owned by this living wearer only"
+const M05_UNRAVEL_TEXT := "+1 Unravel on eligible Unravel cards owned by this living wearer only"
+const M05_FRAYFINDER_TEXT := "+2 Unravel once per player turn on this living wearer's first single-target attack hit, only against a target already at least 1/2 of its current Unravel threshold (not on every attack)"
 
 
 func _badge_text() -> String:
@@ -44,6 +54,9 @@ func _initialize() -> void:
 	_test_coat_powers_lifecycle_and_previews()
 	_test_new_coat_patches_lifecycle()
 	_test_m05_coat_patches_lifecycle()
+	_test_m05_head_and_arm_summary()
+	_test_m05_torn_and_replacement_previews()
+	_test_m05_authority_fail_closed()
 	if failures.is_empty():
 		print("run_patch_wearer_summary_test: PASS (", checks, " checks)")
 	else:
@@ -71,17 +84,22 @@ func _catalogs() -> Dictionary:
 	var attack: Variant = _json(ATTACK_CATALOG)
 	var coat: Variant = _json(COAT_CATALOG)
 	var initial: Variant = _json(SLOT_CATALOG)
+	var m05_head: Variant = _json(M05_HEAD_CATALOG)
+	var m05_arm: Variant = _json(M05_ARM_CATALOG)
+	var m05_attack: Variant = _json(M05_ATTACK_CATALOG)
 	if typeof(attack) != TYPE_ARRAY or typeof(coat) != TYPE_ARRAY \
-			or typeof(initial) != TYPE_ARRAY:
-		_check(false, "the three shipped patch catalogs are readable arrays")
+			or typeof(initial) != TYPE_ARRAY or typeof(m05_head) != TYPE_ARRAY \
+			or typeof(m05_arm) != TYPE_ARRAY or typeof(m05_attack) != TYPE_ARRAY:
+		_check(false, "the six shipped patch catalogs are readable arrays")
 		return {}
-	return {"attack": attack, "coat": coat, "initial": initial}
+	return {"attack": attack, "coat": coat, "initial": initial,
+		"m05_head": m05_head, "m05_arm": m05_arm, "m05_attack": m05_attack}
 
 
 ## Every shipped record of one ID, so a duplicate can never pass unnoticed.
 func _records(catalogs: Dictionary, id: String) -> Array:
 	var found: Array = []
-	for key in ["attack", "coat", "initial"]:
+	for key in ["attack", "coat", "initial", "m05_head", "m05_arm", "m05_attack"]:
 		for entry in catalogs.get(key, []):
 			if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == id:
 				found.append(entry)
@@ -92,7 +110,7 @@ func _records(catalogs: Dictionary, id: String) -> Array:
 ## from the shipped catalogs instead of hand-written fixture metadata.
 func _projected_definitions(catalogs: Dictionary) -> Array:
 	var definitions: Array = []
-	for key in ["initial", "attack", "coat"]:
+	for key in ["initial", "attack", "coat", "m05_head", "m05_arm", "m05_attack"]:
 		for entry in catalogs.get(key, []):
 			if typeof(entry) != TYPE_DICTIONARY:
 				continue
@@ -200,6 +218,17 @@ func _test_catalog_backed_definitions() -> void:
 		"thick_felt_mantle": {"slot": "COAT", "max_hp_bonus": 10},
 		"stitched_badge": {"slot": "HEAD"},
 		"spare_spool": {"slot": "ARM"},
+		"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1},
+		"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1},
+		"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1},
+		"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2},
+		"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
+		"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
+		"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
+		"frayfinder_mitt": {"slot": "ARM",
+			"effect": "first_single_target_half_unravel_attack_bonus", "amount": 2,
+			"minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2,
+			"once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single"},
 	}
 	for id in expectations:
 		var records := _records(catalogs, id)
@@ -743,7 +772,15 @@ func _test_sew_previews() -> void:
 		["reinforced_patchcoat", "COAT", REINFORCED_PATCHCOAT_TEXT],
 		["thick_felt_mantle", "COAT", THICK_FELT_MANTLE_TEXT],
 		["button_eye", "HEAD", EYE_TEXT],
-		["pincushion_arm", "ARM", ARM_TEXT]
+		["pincushion_arm", "ARM", ARM_TEXT],
+		["bloodstitch_bonnet", "HEAD", M05_BLEED_TEXT],
+		["button_glass_visor", "HEAD", M05_EXPOSED_TEXT],
+		["stern_seam_cap", "HEAD", M05_WEAK_TEXT],
+		["reinforced_browband", "HEAD", M05_HEAD_BLOCK_TEXT],
+		["hemguard_cuff", "ARM", M05_ARM_BLOCK_TEXT],
+		["red_bobbin_cuff", "ARM", M05_BLEED_TEXT],
+		["loose_thread_glove", "ARM", M05_UNRAVEL_TEXT],
+		["frayfinder_mitt", "ARM", M05_FRAYFINDER_TEXT]
 	]
 	for record in known:
 		var fixture := _fixture()
@@ -1596,3 +1633,279 @@ func _test_m05_coat_patches_lifecycle() -> void:
 			and post_move_summary.heroes[2]["slots"][2]["rules_text"] == REINFORCED_PATCHCOAT_TEXT,
 			"Tinker COAT slot now has reinforced_patchcoat active (+9 maximum HP)")
 	_check(w.end_rest("rest_m05_summary_swap", w.get_snapshot()).ok, "Rest ends cleanly")
+
+
+func _m05_expectations() -> Dictionary:
+	return {
+		"bloodstitch_bonnet": {"slot": "HEAD", "text": M05_BLEED_TEXT},
+		"button_glass_visor": {"slot": "HEAD", "text": M05_EXPOSED_TEXT},
+		"stern_seam_cap": {"slot": "HEAD", "text": M05_WEAK_TEXT},
+		"reinforced_browband": {"slot": "HEAD", "text": M05_HEAD_BLOCK_TEXT},
+		"hemguard_cuff": {"slot": "ARM", "text": M05_ARM_BLOCK_TEXT},
+		"red_bobbin_cuff": {"slot": "ARM", "text": M05_BLEED_TEXT},
+		"loose_thread_glove": {"slot": "ARM", "text": M05_UNRAVEL_TEXT},
+		"frayfinder_mitt": {"slot": "ARM", "text": M05_FRAYFINDER_TEXT},
+	}
+
+
+## AC1 and AC2: every shipped M05 HEAD/ARM record described for a genuine
+## sewn living wearer and for an eligible empty-slot sew preview.
+func _test_m05_head_and_arm_summary() -> void:
+	var expectations := _m05_expectations()
+	var slot_index := {"HEAD": 0, "ARM": 1}
+	for id in expectations:
+		var f := _fixture()
+		if f.is_empty():
+			return
+		var w: RunPatchWardrobe = f.wardrobe
+		var slot: String = expectations[id]["slot"]
+		var text: String = expectations[id]["text"]
+		var index: int = slot_index[slot]
+		_check(w.sew(id, "warden", slot, "sew_" + id, w.get_snapshot()).ok,
+			id + " is sewn onto the Warden " + slot)
+		var torn := RunTornMending.new(f.heroes)
+		_check(torn.is_valid(), id + " fixture has a real torn ledger")
+		var torn_state := torn.read_state()
+		var before_w := w.get_snapshot()
+		var summary := RunPatchWearerSummary.summarize(w, torn_state)
+		_check(summary.get("ok") == true, id + " living wearer publishes a summary")
+		if summary.get("ok") != true:
+			continue
+		var worn: Dictionary = summary.heroes[0]["slots"][index]
+		_check(worn["slot"] == slot and worn["patch_id"] == id and worn["active"] == true
+			and worn["rules_text"] == text,
+			id + " publishes its verified slot, active flag and authored effect")
+		for s in range(3):
+			if s == index:
+				continue
+			_check(summary.heroes[0]["slots"][s]["patch_id"] == ""
+				and summary.heroes[0]["slots"][s]["rules_text"] == ""
+				and not summary.heroes[0]["slots"][s]["active"],
+				id + " leaves the Warden's other slots empty")
+		for h in [1, 2]:
+			for s in range(3):
+				_check(summary.heroes[h]["slots"][s]["patch_id"] == ""
+					and summary.heroes[h]["slots"][s]["rules_text"] == "",
+					id + " affects only its own wearer")
+		_check(w.get_snapshot() == before_w and torn.read_state() == torn_state,
+			id + " summarizing changes neither ledger")
+
+		var pf := _fixture()
+		if pf.is_empty():
+			return
+		var pw: RunPatchWardrobe = pf.wardrobe
+		var ptorn := RunTornMending.new(pf.heroes)
+		var ptorn_state := ptorn.read_state()
+		var before_pw := pw.get_snapshot()
+		var preview := RunPatchWearerSummary.preview_sew(pw, ptorn_state, id, "tinker")
+		_check(preview.get("ok") == true and preview.get("patch_id") == id
+			and preview.get("slot") == slot and preview.get("rules_text") == text
+			and preview.get("wearer") == "tinker" and preview.get("displaced_id") == ""
+			and preview.get("displaced_rules_text") == "" and preview.get("scrap_delta") == 0,
+			id + " empty-slot preview publishes the same truthful effect")
+		_check(pw.get_snapshot() == before_pw and ptorn.read_state() == ptorn_state,
+			id + " preview changes neither ledger")
+		var sewn := pw.sew(id, "tinker", slot, "commit_" + id, pw.get_snapshot())
+		_check(sewn.get("ok") == true and sewn.receipt.patch_id == id
+			and sewn.receipt.slot == slot and sewn.receipt.displaced_id == ""
+			and sewn.receipt.scrap_delta == 0,
+			id + " real sew receipt matches the preview")
+		var committed := RunPatchWearerSummary.summarize(pw, ptorn_state)
+		var committed_slot: Dictionary = committed.heroes[2]["slots"][index]
+		_check(committed.get("ok") == true and committed_slot["patch_id"] == id
+			and committed_slot["active"] == true and committed_slot["rules_text"] == text,
+			id + " committed sew then summarizes with the same authored effect")
+
+
+## AC3: torn definitions keep their text but publish active=false, and a
+## replacement preview keeps the exact displaced M05 text and +1 scrap.
+func _test_m05_torn_and_replacement_previews() -> void:
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	_check(w.sew("bloodstitch_bonnet", "warden", "HEAD", "m05_tear_head", w.get_snapshot()).ok
+		and w.sew("frayfinder_mitt", "warden", "ARM", "m05_tear_arm", w.get_snapshot()).ok
+		and w.sew("hemguard_cuff", "seamstress", "ARM", "m05_tear_hem", w.get_snapshot()).ok,
+		"the M05 patches are sewn before the tear")
+	var torn := RunTornMending.new(f.heroes)
+	var torn_state := torn.read_state()
+	var before_summary := RunPatchWearerSummary.summarize(w, torn_state)
+	_check(before_summary.get("ok") == true
+		and before_summary.heroes[0]["slots"][0]["rules_text"] == M05_BLEED_TEXT
+		and before_summary.heroes[0]["slots"][1]["rules_text"] == M05_FRAYFINDER_TEXT
+		and before_summary.heroes[1]["slots"][1]["rules_text"] == M05_ARM_BLOCK_TEXT,
+		"all three living wearers publish their M05 effects")
+	var before_w := w.get_snapshot()
+	var replaced := RunPatchWearerSummary.preview_sew(w, torn_state,
+		"reinforced_browband", "warden")
+	_check(replaced.get("ok") == true and replaced.get("patch_id") == "reinforced_browband"
+		and replaced.get("slot") == "HEAD" and replaced.get("rules_text") == M05_HEAD_BLOCK_TEXT
+		and replaced.get("wearer") == "warden"
+		and replaced.get("displaced_id") == "bloodstitch_bonnet"
+		and replaced.get("displaced_rules_text") == M05_BLEED_TEXT
+		and replaced.get("scrap_delta") == 1,
+		"replacement preview reports the displaced M05 text and exactly one scrap")
+	_check(w.get_snapshot() == before_w and torn.read_state() == torn_state,
+		"the replacement preview changes neither ledger")
+	var start: Array = torn_state.heroes
+	var ending: Array = start.duplicate(true)
+	ending[0]["hp"] = 0
+	_check(torn.observe_battle_end("m05_head_arm_tear", start, ending).ok,
+		"the real ledger witnesses the Warden tear")
+	var downed := torn.read_state()
+	_check(w.refresh_run_context(downed.heroes, before_w.owned, before_w.scraps,
+		before_w.gold, before_w.cards, before_w),
+		"the wardrobe is refreshed to the genuine torn roster")
+	var down_summary := RunPatchWearerSummary.summarize(w, downed)
+	_check(down_summary.get("ok") == true, "the summary survives the tear")
+	if down_summary.get("ok") != true:
+		return
+	var torn_head: Dictionary = down_summary.heroes[0]["slots"][0]
+	_check(torn_head["patch_id"] == "bloodstitch_bonnet" and torn_head["active"] == false
+		and torn_head["rules_text"] == M05_BLEED_TEXT,
+		"torn wearer keeps bloodstitch_bonnet as a definition but inactive")
+	var torn_arm: Dictionary = down_summary.heroes[0]["slots"][1]
+	_check(torn_arm["patch_id"] == "frayfinder_mitt" and torn_arm["active"] == false
+		and torn_arm["rules_text"] == M05_FRAYFINDER_TEXT,
+		"torn wearer keeps the full conditional Frayfinder text but inactive")
+	var living_arm: Dictionary = down_summary.heroes[1]["slots"][1]
+	_check(living_arm["patch_id"] == "hemguard_cuff" and living_arm["active"] == true
+		and living_arm["rules_text"] == M05_ARM_BLOCK_TEXT,
+		"the living Seamstress keeps hemguard_cuff active")
+	var before_downed_preview := w.get_snapshot()
+	_check(RunPatchWearerSummary.preview_sew(w, downed,
+		"reinforced_browband", "warden") == {"ok": false},
+		"a torn wearer cannot be previewed for a new sew")
+	var living := RunPatchWearerSummary.preview_sew(w, downed,
+		"reinforced_browband", "seamstress")
+	_check(living.get("ok") == true and living.get("slot") == "HEAD"
+		and living.get("rules_text") == M05_HEAD_BLOCK_TEXT
+		and living.get("wearer") == "seamstress" and living.get("displaced_id") == ""
+		and living.get("scrap_delta") == 0,
+		"a living wearer still previews the same authored M05 effect after a tear")
+	_check(w.get_snapshot() == before_downed_preview and torn.read_state() == downed,
+		"torn and preview checks leave the torn ledger intact")
+
+
+## AC3: tampered or missing known M05 records fail closed and never invent text.
+func _test_m05_authority_fail_closed() -> void:
+	var f := _fixture(2)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	var torn := RunTornMending.new(f.heroes)
+	var torn_state := torn.read_state()
+	var catalogs: Dictionary = f.catalogs
+	var rejected := {"ok": false, "heroes": []}
+	var reject_preview := {"ok": false}
+	var before_w := w.get_snapshot()
+	var before_t := torn.read_state()
+
+	var broken := [
+		["a bloodstitch_bonnet with a wrong amount", "m05_head",
+			"bloodstitch_bonnet", "amount", 2],
+		["a bloodstitch_bonnet with a wrong slot", "m05_head",
+			"bloodstitch_bonnet", "slot", "ARM"],
+		["a bloodstitch_bonnet with a wrong effect", "m05_head",
+			"bloodstitch_bonnet", "effect", "card_weak_bonus"],
+		["a button_glass_visor with a wrong amount", "m05_head",
+			"button_glass_visor", "amount", 2],
+		["a reinforced_browband with a wrong amount", "m05_head",
+			"reinforced_browband", "amount", 1],
+		["a hemguard_cuff with a wrong amount", "m05_arm",
+			"hemguard_cuff", "amount", 1],
+		["a hemguard_cuff with a wrong slot", "m05_arm",
+			"hemguard_cuff", "slot", "HEAD"],
+		["a red_bobbin_cuff with a wrong effect", "m05_arm",
+			"red_bobbin_cuff", "effect", "card_weak_bonus"],
+		["a loose_thread_glove with a wrong effect", "m05_arm",
+			"loose_thread_glove", "effect", "card_bleed_bonus"],
+		["a frayfinder_mitt with a wrong amount", "m05_attack",
+			"frayfinder_mitt", "amount", 3],
+		["a frayfinder_mitt with a wrong slot", "m05_attack",
+			"frayfinder_mitt", "slot", "HEAD"],
+		["a frayfinder_mitt without once_per_player_turn", "m05_attack",
+			"frayfinder_mitt", "once_per_player_turn", false],
+		["a frayfinder_mitt with a wrong hit_number", "m05_attack",
+			"frayfinder_mitt", "hit_number", 2],
+		["a frayfinder_mitt with a wrong target_kind", "m05_attack",
+			"frayfinder_mitt", "target_kind", "enemy_all"],
+		["a frayfinder_mitt with a wrong threshold numerator", "m05_attack",
+			"frayfinder_mitt", "minimum_unravel_numerator", 2],
+		["a frayfinder_mitt with a wrong threshold denominator", "m05_attack",
+			"frayfinder_mitt", "minimum_unravel_denominator", 3],
+	]
+	for entry in broken:
+		var patched := _with_field(catalogs, entry[1], entry[2], entry[3], entry[4])
+		_check(RunPatchWearerSummary.summarize(w, torn_state, patched) == rejected,
+			str(entry[0]) + " is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(w, torn_state,
+			entry[2], "warden", patched) == reject_preview,
+			str(entry[0]) + " cannot promise a forged preview")
+
+	var missing_fields := [
+		["m05_head", "stern_seam_cap", "amount"],
+		["m05_head", "stern_seam_cap", "effect"],
+		["m05_arm", "red_bobbin_cuff", "effect"],
+		["m05_attack", "frayfinder_mitt", "amount"],
+		["m05_attack", "frayfinder_mitt", "minimum_unravel_numerator"],
+		["m05_attack", "frayfinder_mitt", "minimum_unravel_denominator"],
+		["m05_attack", "frayfinder_mitt", "once_per_player_turn"],
+		["m05_attack", "frayfinder_mitt", "hit_number"],
+		["m05_attack", "frayfinder_mitt", "target_kind"],
+	]
+	for entry in missing_fields:
+		var patched := _without_field(catalogs, entry[0], entry[1], entry[2])
+		_check(RunPatchWearerSummary.summarize(w, torn_state, patched) == rejected,
+			entry[1] + " without " + entry[2] + " is rejected exactly")
+
+	var missing_records := [
+		["m05_head", "button_glass_visor"],
+		["m05_arm", "loose_thread_glove"],
+		["m05_attack", "frayfinder_mitt"],
+	]
+	for pair in missing_records:
+		var patched := _without_record(catalogs, pair[0], pair[1])
+		_check(RunPatchWearerSummary.summarize(w, torn_state, patched) == rejected,
+			"a missing " + pair[1] + " record is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(w, torn_state,
+			pair[1], "warden", patched) == reject_preview,
+			"a missing " + pair[1] + " record cannot be previewed")
+	_check(RunPatchWearerSummary.summarize(w, torn_state,
+		{"m05_arm": "nonsense"}) == rejected,
+		"a malformed M05 catalog collection is rejected exactly")
+
+	# A later authored M05 record this readout cannot describe is tolerated.
+	var extra: Dictionary = catalogs.duplicate(true)
+	var head_extra: Array = extra["m05_head"].duplicate(true)
+	head_extra.append({"id": "future_m05_head", "slot": "HEAD",
+		"effect": "future_effect", "amount": 3})
+	extra["m05_head"] = head_extra
+	_check(RunPatchWearerSummary.summarize(w, torn_state, extra).get("ok") == true,
+		"an unknown later M05 record leaves the known readout intact")
+
+	# A genuinely owned but unknown M05-shaped patch stays visible and blank.
+	var future_w := RunPatchWardrobe.new(f.heroes, ["future_m05_head"],
+		[{"id": "future_m05_head", "slot": "HEAD"}], 2, 170,
+		["warden_strike"], 8197)
+	_check(future_w.is_valid() and future_w.sew("future_m05_head", "tinker",
+		"HEAD", "future_m05_sew", future_w.get_snapshot()).ok,
+		"an unknown M05 patch can be sewn in a real ledger")
+	var future_summary := RunPatchWearerSummary.summarize(future_w, torn_state)
+	_check(future_summary.get("ok") == true
+		and future_summary.heroes[2]["slots"][0]["patch_id"] == "future_m05_head"
+		and future_summary.heroes[2]["slots"][0]["active"] == true
+		and future_summary.heroes[2]["slots"][0]["rules_text"] == "",
+		"an unknown M05 patch stays visible without invented power")
+
+	# A known M05 definition in a contradicting slot fails closed.
+	var wrong_slot := RunPatchWardrobe.new(f.heroes, ["bloodstitch_bonnet"],
+		[{"id": "bloodstitch_bonnet", "slot": "COAT"}], 2, 170,
+		["warden_strike"], 8197)
+	_check(wrong_slot.is_valid()
+		and RunPatchWearerSummary.summarize(wrong_slot, torn_state) == rejected,
+		"a known M05 patch in the wrong authored slot is rejected exactly")
+
+	_check(w.get_snapshot() == before_w and torn.read_state() == before_t,
+		"every M05 rejection leaves both genuine ledgers unchanged")
