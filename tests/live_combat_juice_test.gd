@@ -67,6 +67,18 @@ func _panel(id: String):
 	return null
 
 
+## The last mounted hand panel of one card ID: the copy a real draw appends to the hand.
+func _last_hand_panel(id: String):
+	if not is_instance_valid(app.hand_view):
+		return null
+	var found = null
+	for panel in app.hand_view.get_children():
+		if panel.get_child_count() > 0 and panel.get_child(0) is Label \
+				and panel.get_child(0).text == id:
+			found = panel
+	return found
+
+
 func _enemy_label(position: int) -> Control:
 	var roster = app.get_node("LiveEnemyRoster")
 	if not is_instance_valid(roster) or position < 1 or position > roster._labels.size():
@@ -171,6 +183,8 @@ func _leave_fight(check_presenter: bool = true) -> void:
 			and juice.live_cues() == 0 and juice.flight_history.is_empty()
 			and juice.live_flights() == 0 and juice.pose_history.is_empty()
 			and juice.recoil_history.is_empty()
+			and juice.card_flight_history.is_empty()
+			and juice.live_card_flights() == 0 and juice.fall_history.is_empty()
 			and juice._phase_marker.is_empty(),
 			"Return drops the binding and every cue history")
 
@@ -232,6 +246,19 @@ func _card_counts(cards: Array) -> Dictionary:
 		var id := String(card)
 		counts[id] = int(counts.get(id, 0)) + 1
 	return counts
+
+
+## The authoritative hand multiset after one played copy left for the discard pile and one
+## genuinely drawn copy arrived.
+func _with_drawn(before: Dictionary, discarded_id: String, drawn_id: String) -> Dictionary:
+	var after := before.duplicate()
+	var left: int = int(after.get(discarded_id, 0)) - 1
+	if left <= 0:
+		after.erase(discarded_id)
+	else:
+		after[discarded_id] = left
+	after[drawn_id] = int(after.get(drawn_id, 0)) + 1
+	return after
 
 
 func _has_duplicate(cards: Array) -> bool:
@@ -337,6 +364,20 @@ func _puppet_for(side: String, actor_id: String) -> Control:
 	if roster == null or actor_id.is_empty():
 		return null
 	return roster.puppet_for(side, actor_id) as Control
+
+
+## The mounted puppet of one authoritative side plus ID, including one already fallen, found
+## from the presenter's own live puppet list (never a slot or a screen position).
+func _presented_puppet(side: String, actor_id: String) -> Control:
+	var roster = _roster()
+	if roster == null or actor_id.is_empty():
+		return null
+	var face := 1.0 if side == "hero" else -1.0
+	for puppet in roster._puppets:
+		if is_instance_valid(puppet) and is_equal_approx(puppet.facing, face) \
+				and puppet.actor_id == actor_id:
+			return puppet
+	return null
 
 
 ## A comparable key per committed HP loss or recoil receipt.
@@ -473,6 +514,10 @@ func _run() -> void:
 	await _closed_battle()
 	await _fast_mode()
 	await _teardown_and_reentry()
+	await _card_flights()
+	await _lethal_cast_flight()
+	await _fall_settle()
+	await _screen_fades()
 	await _settlement_parity()
 	if is_instance_valid(app):
 		app.free()
@@ -1054,6 +1099,7 @@ func _end_turn() -> void:
 		"the first enemy phase recoils no actor that did not really lose HP")
 	# A legitimate refill takes cards OUT of discard. It is not a new discard.
 	var prior_flights: int = juice.flight_history.size()
+	var prior_cards: int = juice.card_flight_history.size()
 	var prior_deck: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
 	_check(app.deck.turn_active and not app.deck.discard_pile.is_empty(),
 		"there is an active real turn and a nonempty discard for refill")
@@ -1066,6 +1112,8 @@ func _end_turn() -> void:
 	new_deck.sort()
 	_check(prior_deck == new_deck and juice.flight_history.size() == prior_flights,
 		"a genuine draw/discard reshuffle preserves cards without phantom flights")
+	_check(juice.card_flight_history.size() == prior_cards,
+		"a genuine draw/discard reshuffle flies no card")
 	await _leave_fight()
 
 
@@ -1210,6 +1258,604 @@ func _hidden_discard_destination() -> void:
 	await _leave_fight()
 
 
+## AC1: one real draw and one uniquely held, provably committed single-target play each fly
+## exactly one anchored sewn scrap. Hover, a refused play, an ambiguous duplicate copy and a
+## refill/reshuffle fly none, and the existing discard flight and pose still happen.
+func _card_flights() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	# A real draw: one card leaves the draw pile and arrives in the mounted hand.
+	var hand_before: Array = app.deck.hand.duplicate()
+	var pile_before: Array = app.deck.draw_pile.duplicate()
+	var discard_before: Array = app.deck.discard_pile.duplicate()
+	var draws_before: int = juice.card_flight_history.size()
+	var discards_before: int = juice.flight_history.size()
+	seed(5150)
+	var global_next := randi()
+	seed(5150)
+	_check(app.deck.draw_extra(1) == 1, "the real deck really draws one card")
+	app._refresh_hand()
+	await _frames()
+	_check(randi() == global_next, "drawing through the listener consumes no global RNG")
+	var drawn_id := String(app.deck.hand.back())
+	_check(app.deck.hand.size() == hand_before.size() + 1
+		and app.deck.draw_pile.size() == pile_before.size() - 1
+		and app.deck.discard_pile == discard_before,
+		"the draw moves exactly one card from the draw pile into the hand")
+	_check(juice.card_flight_history.size() == draws_before + 1,
+		"one real draw flies exactly one card")
+	if juice.card_flight_history.size() == draws_before + 1:
+		var draw: Dictionary = juice.card_flight_history.back()
+		_check(String(draw["kind"]) == "draw" and String(draw["card_id"]) == drawn_id
+			and String(draw["source"]) == "draw_pile" and String(draw["destination"]) == "hand"
+			and not bool(draw["fast"]) and float(draw["duration"]) > 0.0
+			and float(draw["duration"]) <= 0.6,
+			"the draw receipt names the drawn copy and stays bounded")
+		_check(_point_in(app.pile_label.get_global_rect(), draw["from"]),
+			"the draw flight starts at the real Draw readout")
+		_check(_mounted_panel_ids(drawn_id).has(int(draw["panel_id"]))
+			and _point_in_hand_copy(draw["to"], drawn_id),
+			"the draw flight is anchored to the drawn copy's mounted panel")
+		_assert_card_flight_art(drawn_id, 0.6)
+	_check(juice.flight_history.size() == discards_before,
+		"a real draw is not a discard flight")
+	# Hover alone flies nothing.
+	var hover_before: int = juice.card_flight_history.size()
+	var hovered_panel = _panel(drawn_id)
+	if is_instance_valid(hovered_panel):
+		var motion := InputEventMouseMotion.new()
+		motion.position = hovered_panel.get_global_rect().get_center()
+		root.push_input(motion, true)
+		await _frames()
+	_check(juice.card_flight_history.size() == hover_before, "hover flies no card")
+	# A real starter Tinker Tune Up draws one card and then discards itself in the same
+	# sync. The genuinely drawn copy must still fly to its newly appended panel, while the
+	# played copy keeps its own discard flight: only a reshuffle or an ambiguous receipt
+	# may suppress such a draw.
+	app.deck.hand.assign(["tinker_tune_up", "warden_brace"])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var tune_panel = _panel("tinker_tune_up")
+	var tune_hand: Array = app.deck.hand.duplicate()
+	var tune_pile: Array = app.deck.draw_pile.duplicate()
+	var tune_discard: Array = app.deck.discard_pile.duplicate()
+	var tune_draws_before: int = juice.card_flight_history.size()
+	var tune_discards_before: int = juice.flight_history.size()
+	_check(tune_panel != null and tune_pile.size() >= 1 and juice._held_sources.size() == 2,
+		"the real starter Tune Up is mounted in a hand with a nonempty draw pile")
+	if tune_panel != null and not tune_pile.is_empty():
+		var expected_draw := String(tune_pile.back())
+		await _mouse(tune_panel)
+		await _frames()
+		_check(app.deck.discard_pile.size() == tune_discard.size() + 1
+			and app.deck.discard_pile.back() == "tinker_tune_up",
+			"the real Tune Up discards the exact copy it played")
+		_check(app.deck.draw_pile.size() == tune_pile.size() - 1
+			and app.deck.hand.back() == expected_draw
+			and _card_counts(app.deck.hand) == _with_drawn(_card_counts(tune_hand),
+				"tinker_tune_up", expected_draw),
+			"the real Tune Up appended the one genuinely drawn copy to the hand")
+		_check(juice.card_flight_history.size() == tune_draws_before + 1,
+			"a confirmed draw sharing a sync with a discard still flies exactly one card")
+		if juice.card_flight_history.size() == tune_draws_before + 1:
+			var tune_draw: Dictionary = juice.card_flight_history.back()
+			_check(String(tune_draw["kind"]) == "draw"
+				and String(tune_draw["card_id"]) == expected_draw
+				and String(tune_draw["source"]) == "draw_pile"
+				and String(tune_draw["destination"]) == "hand"
+				and not bool(tune_draw["fast"])
+				and float(tune_draw["duration"]) > 0.0
+				and float(tune_draw["duration"]) <= 0.6,
+				"the shared-step draw receipt names the copy that really arrived, bounded")
+			var appended = _last_hand_panel(expected_draw)
+			_check(is_instance_valid(appended) and is_instance_valid(juice.overlay)
+				and int(tune_draw["panel_id"]) == appended.get_instance_id()
+				and _point_in(appended.get_global_rect(), tune_draw["to"]),
+				"the shared-step draw is anchored to the newly appended hand copy")
+			_check(_point_in(app.pile_label.get_global_rect(), tune_draw["from"]),
+				"the shared-step draw still starts at the real Draw readout")
+			_assert_card_flight_art(expected_draw, 0.6)
+		_check(juice.flight_history.size() == tune_discards_before + 1
+			and _receipt_counts(juice.flight_history.slice(tune_discards_before))
+				== {"tinker_tune_up": 1},
+			"the played Tune Up keeps its existing discard flight")
+		var settled_draws: int = juice.card_flight_history.size()
+		var settled_discards: int = juice.flight_history.size()
+		await _frames()
+		_check(juice.card_flight_history.size() == settled_draws
+			and juice.flight_history.size() == settled_discards,
+			"the shared-step draw and discard are never presented twice")
+	# One uniquely held, individually targeted attack, mounted on the real shared hand.
+	app.deck.hand.assign(["warden_shield_bash"])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	_check(_card_counts(app.deck.hand) == {"warden_shield_bash": 1},
+		"the fixture holds one unique copy of a targeted attack")
+	var panel = _panel("warden_shield_bash")
+	var position := _target_position("warden_shield_bash")
+	_check(panel != null and position > 0 and juice._held_sources.size() == 1,
+		"the unique copy has exactly one mounted source rectangle")
+	if panel == null or position <= 0:
+		await _leave_fight()
+		return
+	var panel_rect: Rect2 = panel.get_global_rect()
+	_check(int(app.enemies.get_enemy(position)["hp"])
+		+ int(app.enemies.get_enemy(position)["block"]) > 8,
+		"the aimed enemy really survives the committed 8-damage cast")
+	# A refused play: no energy, no cast flight, no discard flight, no pose, no cue.
+	var energy: int = app.deck.energy
+	app.deck.combat_state.energy = 0
+	var refused_casts: int = juice.card_flight_history.size()
+	var refused_discards: int = juice.flight_history.size()
+	var refused_poses: int = juice.pose_history.size()
+	var failed_state := _state()
+	await _mouse(panel)
+	await _mouse(_enemy_label(position))
+	await _frames()
+	_check(juice.card_flight_history.size() == refused_casts,
+		"a refused play flies no card")
+	_check(juice.flight_history.size() == refused_discards
+		and juice.pose_history.size() == refused_poses,
+		"a refused play keeps its existing discard and pose silent")
+	_check(_state() == failed_state, "a refused play changes no combat value")
+	app.deck.combat_state.energy = energy
+	# The same unique copy, really committed: one cast flight anchored on both ends.
+	var casts_before: int = juice.card_flight_history.size()
+	var cast_discards: int = juice.flight_history.size()
+	var cast_poses: int = juice.pose_history.size()
+	var committed_state := _state()
+	await _mouse(panel)
+	_check(juice.card_flight_history.size() == casts_before, "arming a card flies nothing")
+	await _mouse(_enemy_label(position))
+	await _frames()
+	_check(_state() != committed_state, "the uniquely held targeted play really commits")
+	_check(juice.card_flight_history.size() == casts_before + 1,
+		"one committed targeted play flies exactly one card")
+	if juice.card_flight_history.size() == casts_before + 1:
+		var cast: Dictionary = juice.card_flight_history.back()
+		var target_id := String(app.enemies.get_enemy(position)["id"])
+		_check(String(cast["kind"]) == "cast" and String(cast["card_id"]) == "warden_shield_bash"
+			and String(cast["target_id"]) == target_id
+			and int(cast["target_position"]) == position
+			and String(cast["source"]) == "hand" and String(cast["destination"]) == "enemy"
+			and not bool(cast["fast"]) and float(cast["duration"]) <= 0.6,
+			"the cast flight names the exact committed card and the enemy it really hit")
+		_check(_point_in(panel_rect, cast["from"]),
+			"the cast flight starts at the played copy's own mounted panel")
+		var target_puppet := _puppet_for("enemy", target_id)
+		_check(is_instance_valid(target_puppet)
+			and _point_in(target_puppet.get_global_rect(), cast["to"]),
+			"the cast flight lands on the authoritative damaged enemy's own puppet")
+		_assert_card_flight_art("warden_shield_bash", 0.6)
+	_check(juice.flight_history.size() == cast_discards + 1,
+		"the committed play keeps its existing discard flight")
+	_check(juice.pose_history.size() == cast_poses + 1,
+		"the committed play keeps its existing hero pose")
+	# Two identical copies: the committed play is real, but no single source can be proven.
+	app.deck.hand.assign(["warden_strike", "warden_strike"])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var duplicate_position := _target_position("warden_strike")
+	_check(_card_counts(app.deck.hand) == {"warden_strike": 2}
+		and duplicate_position > 0 and juice._held_sources.size() == 2,
+		"the fixture mounts two identical copies with two separate sources")
+	var duplicate_casts: int = juice.card_flight_history.size()
+	var duplicate_discards: int = juice.flight_history.size()
+	var duplicate_hand: Array = app.deck.hand.duplicate()
+	await _mouse(_panel("warden_strike"))
+	await _mouse(_enemy_label(duplicate_position))
+	await _frames()
+	_check(app.deck.hand.size() == duplicate_hand.size() - 1,
+		"the ambiguous play really commits one held copy")
+	_check(juice.flight_history.size() == duplicate_discards + 1,
+		"the ambiguous copy keeps its existing discard flight")
+	_check(juice.card_flight_history.size() == duplicate_casts,
+		"an ambiguous duplicate copy flies no card")
+	# A refill/reshuffle is not a draw.
+	var refill_casts: int = juice.card_flight_history.size()
+	var refill: int = app.deck.draw_extra(app.deck.draw_pile.size() + 1)
+	_check(refill > 0 and app.deck.discard_pile.is_empty(),
+		"the real deck really reshuffles its discard into the draw pile")
+	app._refresh_hand()
+	await _frames()
+	_check(juice.card_flight_history.size() == refill_casts,
+		"a reshuffle refill flies no card")
+	await _leave_fight()
+
+
+## AC1: a uniquely held, provably committed single-target strike that takes one of several
+## enemies from living to zero still flies its cast scrap to that exact still-mounted fallen
+## puppet, while targeting keeps its fail-closed standing-only rule and the fall settles.
+func _lethal_cast_flight() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	var living: Array = []
+	for enemy in app.enemies.get_enemies():
+		if not app.enemies.is_slain(int(enemy["position"])):
+			living.append(enemy)
+	_check(living.size() >= 2, "the lethal cast runs with several living enemies")
+	var card_id := "warden_shield_bash"
+	var owner := _owner_of(card_id)
+	_check(String(catalog.get_definition(card_id).get("target_kind", "")) == "enemy_single"
+		and not owner.is_empty(),
+		"a living hero owns the uniquely held single-target lethal attack")
+	if living.size() < 2 or owner.is_empty():
+		await _leave_fight()
+		return
+	app.deck.hand.assign([card_id])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var panel = _panel(card_id)
+	var position := _target_position(card_id)
+	var victim: Dictionary = app.enemies.get_enemy(position) if position > 0 else {}
+	var victim_id := String(victim.get("id", ""))
+	_check(panel != null and position > 0 and not victim_id.is_empty()
+		and juice._held_sources.size() == 1,
+		"the unique lethal attack has one mounted source and a legal living victim")
+	if panel == null or position <= 0 or victim_id.is_empty():
+		await _leave_fight()
+		return
+	# The combat rules themselves leave the victim one effective HP, so the authored cast
+	# that follows really takes that one enemy to zero.
+	var remaining := 0
+	for enemy in app.enemies.get_enemies():
+		if int(enemy["position"]) != position and not app.enemies.is_slain(int(enemy["position"])):
+			remaining += 1
+	var to_one: int = int(victim["hp"]) + int(victim["block"]) - 1
+	_check(remaining >= 1, "the lethal cast leaves at least one other living enemy in the fight")
+	_check(to_one <= 0 or app.enemies.apply_damage(position, to_one),
+		"a real committed hit leaves the victim at exactly one HP and no Block")
+	await _frames()
+	_check(int(app.enemies.get_enemy(position)["hp"]) == 1
+		and int(app.enemies.get_enemy(position)["block"]) == 0,
+		"the mounted victim really stands at one HP before the lethal cast")
+	var puppet = _presented_puppet("enemy", victim_id)
+	_check(is_instance_valid(puppet) and not puppet.fallen,
+		"the victim is still a standing mounted puppet before the lethal cast")
+	if not is_instance_valid(puppet):
+		await _leave_fight()
+		return
+	var panel_rect: Rect2 = panel.get_global_rect()
+	var casts_before: int = juice.card_flight_history.size()
+	var discards_before: int = juice.flight_history.size()
+	var falls_before: int = juice.fall_history.size()
+	var poses_before: int = juice.pose_history.size()
+	await _mouse(panel)
+	await _mouse(_enemy_label(position))
+	await _frames()
+	_check(app.enemies.is_slain(position) and int(app.enemies.get_enemy(position)["hp"]) == 0,
+		"the uniquely held targeted cast really reduces that enemy to zero")
+	_check(not app._battle_closed
+		and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE,
+		"the nonfinal victim leaves the rest of the fight open")
+	_check(juice.card_flight_history.size() == casts_before + 1,
+		"one confirmed lethal cast flies exactly one card")
+	if juice.card_flight_history.size() == casts_before + 1:
+		var cast: Dictionary = juice.card_flight_history.back()
+		_check(String(cast["kind"]) == "cast" and String(cast["card_id"]) == card_id
+			and String(cast["target_id"]) == victim_id
+			and int(cast["target_position"]) == position
+			and String(cast["source"]) == "hand" and String(cast["destination"]) == "enemy"
+			and not bool(cast["fast"]) and float(cast["duration"]) > 0.0
+			and float(cast["duration"]) <= 0.6,
+			"the lethal cast receipt names the exact committed card and fallen victim")
+		_check(_point_in(panel_rect, cast["from"]),
+			"the lethal cast starts at the played copy's own mounted panel")
+		_check(puppet.fallen and _point_in(puppet.get_global_rect(), cast["to"])
+			and _roster().presented_puppet("enemy", victim_id) == puppet,
+			"the lethal cast lands on the still-mounted puppet its own hit made fallen")
+		_assert_card_flight_art(card_id, 0.6)
+	_check(_roster().puppet_for("enemy", victim_id) == null,
+		"a fallen victim is still never resolved for live targeting")
+	_check(juice.flight_history.size() == discards_before + 1
+		and _receipt_counts(juice.flight_history.slice(discards_before)) == {card_id: 1},
+		"the lethal cast keeps its existing discard flight")
+	_check(juice.pose_history.size() == poses_before + 1
+		and String(juice.pose_history.back()["target_id"]) == victim_id,
+		"the lethal cast keeps its existing single-target hero pose")
+	_check(juice.fall_history.size() == falls_before + 1
+		and String(juice.fall_history.back()["id"]) == victim_id
+		and int(juice.fall_history.back()["hp_after"]) == 0
+		and float(juice.fall_history.back()["duration"]) <= 0.6,
+		"the lethal cast's living-to-zero transition starts exactly one bounded fall")
+	_check(puppet.settling_fall() or is_equal_approx(puppet.fallen_tilt(),
+		-puppet.FALL_TILT * puppet.facing),
+		"the fallen victim's artwork eases into the existing fallen pose")
+	var settled_draws: int = juice.card_flight_history.size()
+	await _frames()
+	_check(juice.card_flight_history.size() == settled_draws,
+		"polling after the lethal cast fabricates no second flight")
+	puppet._process(puppet.FALL_MAX_SECONDS)
+	_check(not puppet.settling_fall()
+		and is_equal_approx(puppet.fallen_tilt(), -puppet.FALL_TILT * puppet.facing),
+		"the lethal victim's fall settles exactly at the existing still fallen pose")
+	await _leave_fight()
+
+
+## AC2: a witnessed living-to-zero HP transition eases only that actor's own puppet into the
+## existing fallen pose, while its hitbox, pinned tag and targeting stay exactly fixed.
+func _fall_settle() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	var living: Array = []
+	for enemy in app.enemies.get_enemies():
+		if not app.enemies.is_slain(int(enemy["position"])):
+			living.append(enemy)
+	_check(living.size() >= 2, "the fall witness runs with several living enemies")
+	if living.size() < 2:
+		await _leave_fight()
+		return
+	var victim: Dictionary = living.back()
+	var position := int(victim["position"])
+	var victim_id := String(victim["id"])
+	var puppet := _puppet_for("enemy", victim_id)
+	var roster = _roster()
+	_check(is_instance_valid(puppet) and not puppet.fallen and roster._labels.size() >= position,
+		"the doomed enemy has its own standing mounted puppet and pinned tag")
+	if not is_instance_valid(puppet):
+		await _leave_fight()
+		return
+	var control: Rect2 = puppet.get_global_rect()
+	var label: Label = roster._labels[position - 1]
+	var tag_rect: Rect2 = label.get_global_rect()
+	var tag_text: String = label.text
+	var falls_before: int = juice.fall_history.size()
+	_check(app.enemies.apply_damage(position,
+		int(victim["hp"]) + int(victim["block"])),
+		"a real committed hit takes that enemy from living to zero")
+	# The real frame order: the roster presents the fallen actor, then the listener witnesses.
+	roster._refresh()
+	juice._sync()
+	var settled_state := _state()
+	_check(juice.fall_history.size() == falls_before + 1,
+		"one witnessed living-to-zero transition starts exactly one settle")
+	_check(puppet.fallen, "the fallen state is authoritative at once")
+	_check(roster.puppet_for("enemy", victim_id) == null,
+		"targeting keeps its fail-closed fallen rule")
+	if juice.fall_history.size() == falls_before + 1:
+		var fall: Dictionary = juice.fall_history.back()
+		_check(String(fall["side"]) == "enemy" and String(fall["id"]) == victim_id
+			and int(fall["position"]) == position and int(fall["hp"]) < 0
+			and int(fall["hp_after"]) == 0 and not bool(fall["fast"])
+			and float(fall["duration"]) > 0.0 and float(fall["duration"]) <= 0.6,
+			"the fall receipt names the exact actor and stays bounded")
+	var settling: Array = []
+	for candidate in roster._puppets:
+		if candidate.settling_fall():
+			settling.append(candidate)
+	_check(settling.size() == 1 and settling[0] == puppet,
+		"only the witness-settled puppet eases into its fallen pose")
+	_check(is_equal_approx(puppet.fallen_tilt(), 0.0),
+		"the settle starts from the upright artwork instead of snapping")
+	puppet._process(puppet.fall_span * 0.5)
+	_check(puppet.settling_fall() and absf(puppet.fallen_tilt()) > 0.0,
+		"the drawn tilt really eases during the bounded span")
+	puppet._process(puppet.FALL_MAX_SECONDS)
+	var settled_pose: Rect2 = puppet.posed_actor_rect()
+	_check(not puppet.settling_fall()
+		and is_equal_approx(puppet.fallen_tilt(), -puppet.FALL_TILT * puppet.facing),
+		"the settle ends exactly at the existing still fallen pose")
+	puppet._process(0.5)
+	_check(puppet.posed_actor_rect() == settled_pose,
+		"a settled fall leaves the artwork perfectly still")
+	_check(puppet.get_global_rect() == control
+		and label.get_global_rect() == tag_rect and label.text == tag_text
+		and label.is_visible_in_tree(),
+		"the hitbox and pinned tag keep their exact place and text through the fall")
+	_check(_state() == settled_state,
+		"settling the fall mutates no HP, deck, energy, RNG, intent or settlement value")
+	_check(not app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE,
+		"the witnessed fall leaves the rest of the fight open")
+	await _leave_fight()
+
+
+## AC3: every real screen transition fades once from one reused, pointer-inert wash, and a
+## return, a replacement or a repeated transition leaves no orphan overlay behind.
+func _screen_fades() -> void:
+	await create_timer(0.75).timeout
+	_check(juice.live_fades() == 0, "a finished screen fade leaves nothing on screen")
+	var layers: Array = app.find_children("ScreenFadeLayer", "Control", true, false)
+	_check(layers.size() == 1 and is_instance_valid(juice.fade_layer)
+		and layers.has(juice.fade_layer) and not juice.fade_layer.visible,
+		"the app keeps exactly one reused fade wash, hidden between transitions")
+	var layer_id: int = juice.fade_layer.get_instance_id()
+	# Title -> map.
+	var fades_before: int = juice.fade_history.size()
+	await _mouse(app.start_button)
+	await _frames()
+	_check(app.run_map != null and is_instance_valid(app.route_view)
+		and app.route_view.is_visible_in_tree() and not app.title_view.is_visible_in_tree(),
+		"the real Start opens the route map")
+	_check(juice.fade_history.size() == fades_before + 1,
+		"leaving the title starts exactly one fade")
+	if juice.fade_history.size() > fades_before:
+		var map_fade: Dictionary = juice.fade_history.back()
+		var screens := _fade_screens(map_fade)
+		_check(screens.get("title") == false and screens.get("map") == true,
+			"the fade names the title leaving and the map appearing")
+		_check(not bool(map_fade["fast"]) and float(map_fade["duration"]) > 0.0
+			and float(map_fade["duration"]) <= 0.6,
+			"a normal screen fade is bounded to at most 0.6 s")
+	_check(juice.live_fades() == 1, "the map fade is really on screen")
+	await _assert_fade_inert()
+	var route_button: Button = null
+	if not app.route_buttons.is_empty():
+		route_button = app.route_buttons[0]
+	if is_instance_valid(route_button):
+		var hover := InputEventMouseMotion.new()
+		hover.position = route_button.get_global_rect().get_center()
+		root.push_input(hover, true)
+		await process_frame
+		_check(root.gui_get_hovered_control() == route_button,
+			"a live fade never covers the real route choice it dims")
+	_check(app.find_children("ScreenFadeLayer", "Control", true, false).size() == 1
+		and juice.fade_layer.get_instance_id() == layer_id,
+		"a transition never adds another overlay")
+	# Map -> battle.
+	fades_before = juice.fade_history.size()
+	if not await _enter_fight(fight_seed):
+		return
+	_check(juice.fade_history.size() > fades_before, "leaving the map for a fight fades")
+	if juice.fade_history.size() > fades_before:
+		var battle_fade := _fade_screens(juice.fade_history.back())
+		_check(battle_fade.get("battle") == true and battle_fade.get("map") == false,
+			"the fade names the map leaving and the battle appearing")
+	await _assert_fade_inert()
+	# Battle -> results: a real routed wipe mounts the settled run result.
+	fades_before = juice.fade_history.size()
+	for position in [1, 2, 3]:
+		var hero: Dictionary = app.party.get_hero(position)
+		_check(app.party.apply_damage(position, int(hero["hp"]) + int(hero["block"])),
+			"a real committed hit takes hero %d to zero" % position)
+	await _frames()
+	_check(app._battle_closed and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT
+		and is_instance_valid(app.terminal_result_panel)
+		and app.terminal_result_panel.is_visible_in_tree(),
+		"the real routed wipe mounts the settled run result screen")
+	_check(juice.fade_history.size() == fades_before + 1,
+		"appearing results start exactly one fade")
+	if juice.fade_history.size() > fades_before:
+		var results_fade := _fade_screens(juice.fade_history.back())
+		_check(results_fade.get("results") == true,
+			"the fade names the results screen appearing")
+	await _assert_fade_inert()
+	# Results -> title.
+	fades_before = juice.fade_history.size()
+	app._return_to_title()
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and app.deck == null,
+		"the return restores the title")
+	_check(juice.fade_history.size() == fades_before + 1,
+		"returning to the title starts exactly one fade")
+	if juice.fade_history.size() > fades_before:
+		var return_fade := _fade_screens(juice.fade_history.back())
+		_check(return_fade.get("title") == true and return_fade.get("battle") == false
+			and return_fade.get("results") == false,
+			"the fade names the result leaving and the title appearing")
+	_check(app.find_children("ScreenFadeLayer", "Control", true, false).size() == 1
+		and juice.fade_layer.get_instance_id() == layer_id,
+		"repeated and replaced transitions reuse the same one wash")
+	# Fast mode shortens the very same fade, and nothing is left behind.
+	if not await _enter_fight(fight_seed):
+		return
+	_check(is_instance_valid(juice.fast_button), "a fight mounts the Fast toggle")
+	await _mouse(juice.fast_button)
+	_check(juice.fast_animations, "Fast is really on for the fade measurement")
+	var fast_before: int = juice.fade_history.size()
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and app.deck == null,
+		"a fast return still restores the title")
+	_check(juice.fade_history.size() == fast_before + 1,
+		"a fast return still fades exactly once")
+	if juice.fade_history.size() > fast_before:
+		_check(bool(juice.fade_history.back()["fast"])
+			and float(juice.fade_history.back()["duration"]) <= 0.15,
+			"a fast screen fade is bounded to 0.15 s")
+	await create_timer(0.3).timeout
+	_check(juice.live_fades() == 0 and not juice.fade_layer.visible,
+		"a fast fade really finishes and hides its wash")
+	juice.set_fast(false)
+	_check(not juice.fast_animations, "the fade check restores normal speed")
+	await _leave_fight(false)
+
+
+## One screen-fade receipt as {screen: visible}.
+func _fade_screens(receipt: Dictionary) -> Dictionary:
+	var out := {}
+	for transition in receipt.get("transitions", []):
+		out[String(transition["screen"])] = bool(transition["visible"])
+	return out
+
+
+## The one live fade wash must never intercept the pointer or take focus.
+func _assert_fade_inert() -> void:
+	if not is_instance_valid(juice.fade_layer):
+		_check(false, "a live screen fade has a mounted wash")
+		return
+	var wash := juice.fade_layer.get_node_or_null("ScreenFadeWash") as ColorRect
+	_check(wash != null and juice.fade_layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and juice.fade_layer.focus_mode == Control.FOCUS_NONE
+		and wash.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and wash.focus_mode == Control.FOCUS_NONE,
+		"the screen fade never takes pointer or keyboard focus")
+	var motion := InputEventMouseMotion.new()
+	motion.position = Vector2(640, 360)
+	root.push_input(motion, true)
+	await process_frame
+	var hovered := root.gui_get_hovered_control()
+	_check(hovered != juice.fade_layer and hovered != wash,
+		"a real hit test passes straight through the screen fade")
+
+
+## A mounted, moving, pointer-inert sewn scrap for one draw or cast flight.
+func _assert_card_flight_art(id: String, duration_limit: float) -> void:
+	_check(juice.live_card_flights() > 0 and not juice._card_flights.is_empty(),
+		"a committed card flight has a mounted, moving scrap")
+	if juice._card_flights.is_empty():
+		return
+	var flight: Dictionary = juice._card_flights.back()
+	var scrap = flight.get("scrap")
+	_check(is_instance_valid(scrap) and scrap.get_parent() == juice.overlay
+		and flight["tween"].is_running(),
+		"the flying card has a running bounded animation on the existing overlay")
+	if not is_instance_valid(scrap):
+		return
+	var name_label := scrap.get_node_or_null("FlightCardName") as Label
+	var felt := scrap.get_node_or_null("OwnerFelt") as ColorRect
+	var stitches: Array = scrap.get_children().filter(func(node: Node) -> bool:
+		return node is Label and String(node.text).contains("×"))
+	_check(name_label != null and name_label.text == id.replace("_", " ").capitalize()
+		and felt != null and felt.color == juice._owner_color(id) and stitches.size() == 2,
+		"the flying card is the same sewn paper/felt scrap as the discard flight")
+	_check(scrap.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and scrap.focus_mode == Control.FOCUS_NONE
+		and name_label != null and name_label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and name_label.focus_mode == Control.FOCUS_NONE
+		and felt != null and felt.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and felt.focus_mode == Control.FOCUS_NONE,
+		"the flying card cannot steal pointer or keyboard focus")
+	_check(float(juice.card_flight_history.back()["duration"]) <= duration_limit,
+		"the committed card flight stays within the bounded cue length")
+
+
+func _point_in(rect: Rect2, point) -> bool:
+	return point is Vector2 and rect.size.x > 0.0 and rect.size.y > 0.0 and rect.has_point(point)
+
+
+## Instance IDs of the hand panels currently mounted for one card ID.
+func _mounted_panel_ids(id: String) -> Array:
+	var ids: Array = []
+	if not is_instance_valid(app.hand_view):
+		return ids
+	for candidate in app.hand_view.get_children():
+		var panel := candidate as Control
+		if panel == null or panel.get_child_count() < 1 or not panel.get_child(0) is Label:
+			continue
+		if String(panel.get_child(0).text) == id:
+			ids.append(panel.get_instance_id())
+	return ids
+
+
+## True when the point lands on one currently mounted panel of that card ID.
+func _point_in_hand_copy(point, id: String) -> bool:
+	if not is_instance_valid(app.hand_view) or not point is Vector2:
+		return false
+	for candidate in app.hand_view.get_children():
+		var panel := candidate as Control
+		if panel == null or panel.get_child_count() < 1 or not panel.get_child(0) is Label:
+			continue
+		if String(panel.get_child(0).text) != id:
+			continue
+		if panel.get_global_rect().has_point(point):
+			return true
+	return false
+
+
 ## AC3: mouse and Tab/Space reach a fast mode that really shortens the effect.
 func _fast_mode() -> void:
 	if not await _enter_fight(fight_seed):
@@ -1228,6 +1874,8 @@ func _fast_mode() -> void:
 	var position := _target_position(id)
 	var known: int = juice.history.size()
 	var known_flights: int = juice.flight_history.size()
+	var cards_before: int = juice.card_flight_history.size()
+	var falls_before: int = juice.fall_history.size()
 	var poses_before: int = juice.pose_history.size()
 	var recoils_before: int = juice.recoil_history.size()
 	await _mouse(_panel(id))
@@ -1269,6 +1917,25 @@ func _fast_mode() -> void:
 		"fast-mode play emits one actual discard flight")
 	if juice.live_flights() > 0:
 		_assert_flight_art(id, 0.15)
+	# AC4: every cue this fast play produced is bounded by the fast span, whatever kind.
+	for receipt in juice.history.slice(known):
+		_check(bool(receipt["fast"]) and float(receipt["duration"]) <= 0.15,
+			"a fast float/flash cue is bounded to 0.15 s")
+	for receipt in juice.flight_history.slice(known_flights):
+		_check(bool(receipt["fast"]) and float(receipt["duration"]) <= 0.15,
+			"a fast discard flight is bounded to 0.15 s")
+	for receipt in juice.card_flight_history.slice(cards_before):
+		_check(bool(receipt["fast"]) and float(receipt["duration"]) <= 0.15,
+			"a fast draw/cast flight is bounded to 0.15 s")
+	for receipt in juice.pose_history.slice(poses_before):
+		_check(bool(receipt["fast"]) and float(receipt["duration"]) <= 0.15,
+			"a fast attack pose is bounded to 0.15 s")
+	for receipt in juice.recoil_history.slice(recoils_before):
+		_check(bool(receipt["fast"]) and float(receipt["duration"]) <= 0.15,
+			"a fast hit recoil is bounded to 0.15 s")
+	for receipt in juice.fall_history.slice(falls_before):
+		_check(bool(receipt["fast"]) and float(receipt["duration"]) <= 0.15,
+			"a fast fall settle is bounded to 0.15 s")
 	var flight_sprite = juice._flights.back().get("scrap") if not juice._flights.is_empty() else null
 	var cue_nodes: Array = []
 	if not juice._cues.is_empty():

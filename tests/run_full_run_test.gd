@@ -516,8 +516,21 @@ func _win(fixture: Dictionary) -> Array:
 			stale.append(callback)
 		elif kind == "Shop":
 			var stock: Array = app.shop_purchases.get_stock().cards
-			var offer: Dictionary = stock[0]
-			if app.session_gold >= offer.price:
+			# Buy the cheapest affordable listing: which card the seeded draw
+			# puts first is not part of this paid-purchase contract.
+			var offer: Dictionary = {}
+			for listing in stock:
+				if app.session_gold >= listing.price \
+						and (offer.is_empty() or listing.price < offer.price):
+					offer = listing
+			if not offer.is_empty():
+				# Select that listing through the mounted picker, as a player does,
+				# so the enabled Buy control targets it.
+				var selected: int = stock.find(offer)
+				if app.shop_offers.selected != selected:
+					app.shop_offers.select(selected)
+					app.shop_offers.item_selected.emit(selected)
+					await _frames()
 				var expected: Array = app.run_deck.duplicate()
 				expected.append(offer.id)
 				var gold: int = app.session_gold

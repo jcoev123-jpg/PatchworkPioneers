@@ -81,6 +81,10 @@ var _bound_choices: Dictionary = {}
 var _card_panels: Array[PanelContainer] = []
 var _card_hovered: Array[bool] = []
 var _card_focused: Array[bool] = []
+var _help_buttons: Array[Button] = []
+var _help_ids: Dictionary = {}
+var _help_overlay: PanelContainer = null
+var _help_invoker: Button = null
 
 
 func _ready() -> void:
@@ -102,6 +106,8 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	_awaiting_ack = false
 	_accepted = false
 	_card_panels.clear()
+	_help_buttons.clear()
+	_help_ids.clear()
 	_card_hovered = [false, false, false]
 	_card_focused = [false, false, false]
 	title_label.text = "%s reward" % node_kind
@@ -112,9 +118,19 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 		var offered: Dictionary = snapshot["offers"][index]
 		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offered["id"])
 		var card_panel := _mount_card(index, offered, definition)
+		var help := card_panel.get_node_or_null("HelpCorner/HelpButton") as Button
+		if help != null:
+			_help_buttons.append(help)
+			_help_ids[help] = offered["id"]
+			help.pressed.connect(_on_help_pressed.bind(_generation, _node_id, index, offered["id"], help))
 		_card_panels.append(card_panel)
 		choices_container.add_child(card_panel)
 		var button := card_panel.get_node("CardMargin/CardContent/ChooseButton") as Button
+		# Right-arrow from Choose reaches this card's Help without changing the
+		# existing Tab circuit through three Choose actions and Skip.
+		if help != null:
+			button.focus_neighbor_right = button.get_path_to(help)
+			help.focus_neighbor_left = help.get_path_to(button)
 		_choice_buttons.append(button)
 		_bound_choices[button] = offered["id"]
 		button.pressed.connect(_on_choice_pressed.bind(_generation, _node_id, offered["id"], button))
@@ -318,6 +334,30 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.mouse_exited.connect(_on_card_mouse_exited.bind(index))
 	action.focus_entered.connect(_on_card_focus_entered.bind(index))
 	action.focus_exited.connect(_on_card_focus_exited.bind(index))
+	# A small sewn corner tab is positioned over the card, never in its VBox:
+	# rules, illustration, cost and Choose keep their existing geometry.
+	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
+	if not keywords.is_empty():
+		var corner := Control.new()
+		corner.name = "HelpCorner"
+		corner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		corner.focus_mode = Control.FOCUS_NONE
+		card.add_child(corner)
+		var help := Button.new()
+		help.name = "HelpButton"
+		help.text = "Help"
+		help.focus_mode = Control.FOCUS_ALL
+		help.mouse_filter = Control.MOUSE_FILTER_STOP
+		corner.add_child(help)
+		help.anchor_left = 1.0
+		help.anchor_right = 1.0
+		help.offset_left = -87.0
+		help.offset_right = -9.0
+		help.offset_top = 29.0
+		help.offset_bottom = 59.0
+		_style_button(help, OWNER_COLORS[owner])
+		help.add_theme_font_size_override("font_size", 15)
+		_add_focus_stitch(help)
 	return card
 
 
@@ -474,6 +514,7 @@ func acknowledge(accepted: bool) -> void:
 
 
 func close_rewards() -> void:
+	_dismiss_help(false)
 	_generation += 1
 	_is_open = false
 	_awaiting_ack = false
@@ -499,6 +540,8 @@ func close_rewards() -> void:
 		card.queue_free()
 	_choice_buttons.clear()
 	_bound_choices.clear()
+	_help_buttons.clear()
+	_help_ids.clear()
 	_card_panels.clear()
 	_card_hovered.clear()
 	_card_focused.clear()
@@ -516,7 +559,7 @@ func get_choice_buttons() -> Array[Button]:
 
 func _focus_first(generation: int) -> void:
 	if _is_open and _generation == generation and not _choice_buttons.is_empty() \
-			and is_visible_in_tree() and not _choice_buttons[0].disabled:
+			and is_visible_in_tree() and _help_overlay == null and not _choice_buttons[0].disabled:
 		_choice_buttons[0].grab_focus()
 
 
@@ -534,10 +577,149 @@ func _on_choice_pressed(generation: int, node_id: String, selected_card_id: Stri
 		return
 	if button == skip_button and selected_card_id != "":
 		return
+	_dismiss_help(false)
 	_awaiting_ack = true
 	for choice in _choice_buttons:
 		choice.disabled = true
 	choice_requested.emit(_node_id, selected_card_id)
+
+
+
+## Help callbacks carry the original generation, node, offer ID and button.
+## An old callable cannot inspect a newly mounted receipt or steal its focus.
+func _on_help_pressed(generation: int, node_id: String, index: int,
+		card_id: String, button: Variant) -> void:
+	if not _is_open or _accepted or _awaiting_ack or _generation != generation \
+			or _node_id != node_id or not is_visible_in_tree():
+		return
+	if not is_instance_valid(button) or not button is Button \
+			or not button.is_inside_tree() or not button.is_visible_in_tree() or button.disabled:
+		return
+	if not _help_buttons.has(button) or _help_ids.get(button, "") != card_id:
+		return
+	if index < 0 or index >= _card_panels.size() or index >= _receipt.get("offers", []).size():
+		return
+	if button.get_parent() == null or button.get_parent().get_parent() != _card_panels[index] \
+			or String(_receipt["offers"][index].get("id", "")) != card_id:
+		return
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
+	if keywords.is_empty():
+		return
+	_dismiss_help(false)
+	_help_invoker = button
+	_mount_help_overlay(definition, keywords, generation, button)
+
+
+func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
+		generation: int, invoker: Button) -> void:
+	var owner: String = String(definition.get("owner", ""))
+	var felt: Color = OWNER_COLORS.get(owner, Color("#736451"))
+	var overlay := PanelContainer.new()
+	overlay.name = "KeywordHelpOverlay"
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.anchor_left = 0.22
+	overlay.anchor_right = 0.78
+	overlay.anchor_top = 0.19
+	overlay.anchor_bottom = 0.81
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = CARD_PAPER
+	paper.border_color = felt
+	paper.set_border_width_all(6)
+	paper.set_corner_radius_all(12)
+	paper.content_margin_left = 20
+	paper.content_margin_right = 20
+	paper.content_margin_top = 15
+	paper.content_margin_bottom = 14
+	paper.shadow_color = Color(0.07, 0.06, 0.07, 0.85)
+	paper.shadow_size = 18
+	overlay.add_theme_stylebox_override("panel", paper)
+	add_child(overlay)
+	_help_overlay = overlay
+	var column := VBoxContainer.new()
+	column.name = "HelpContent"
+	column.add_theme_constant_override("separation", 9)
+	overlay.add_child(column)
+	var title := Label.new()
+	title.name = "HelpTitle"
+	title.text = String(definition["display_name"]) + "  •  Keywords"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", owner_ink(owner))
+	var felt_box := StyleBoxFlat.new()
+	felt_box.bg_color = felt
+	felt_box.content_margin_left = 12
+	felt_box.content_margin_right = 12
+	felt_box.content_margin_top = 8
+	felt_box.content_margin_bottom = 8
+	felt_box.set_corner_radius_all(5)
+	title.add_theme_stylebox_override("normal", felt_box)
+	column.add_child(title)
+	var scroll := ScrollContainer.new()
+	scroll.name = "KeywordScroll"
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.name = "KeywordLines"
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 13)
+	scroll.add_child(list)
+	for item: Dictionary in keywords:
+		var line := Label.new()
+		line.name = "KeywordLine_%d" % list.get_child_count()
+		line.text = "%s — %s" % [item["keyword"], item["explanation"]]
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		line.add_theme_font_size_override("font_size", 17)
+		line.add_theme_color_override("font_color", DARK_INK)
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_child(line)
+	var close := Button.new()
+	close.name = "CloseHelpButton"
+	close.text = "Close help"
+	close.focus_mode = Control.FOCUS_ALL
+	close.custom_minimum_size = Vector2(0, 42)
+	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_style_button(close, felt)
+	close.add_theme_font_size_override("font_size", 18)
+	_add_focus_stitch(close)
+	column.add_child(close)
+	close.pressed.connect(_on_help_close_pressed.bind(generation, invoker, overlay))
+	close.grab_focus()
+
+
+func _on_help_close_pressed(generation: int, invoker: Variant,
+		overlay: Variant) -> void:
+	if not _is_open or _generation != generation or not is_instance_valid(invoker) \
+			or not is_instance_valid(overlay) or _help_overlay != overlay \
+			or _help_invoker != invoker:
+		return
+	_dismiss_help(true)
+
+
+func _input(event: InputEvent) -> void:
+	if _is_open and _help_overlay != null and event is InputEventKey \
+			and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		_dismiss_help(true)
+		get_viewport().set_input_as_handled()
+
+
+func _dismiss_help(restore_focus: bool) -> void:
+	var invoker := _help_invoker
+	_help_invoker = null
+	if _help_overlay != null:
+		var overlay := _help_overlay
+		_help_overlay = null
+		if is_instance_valid(overlay):
+			if overlay.get_parent() == self:
+				remove_child(overlay)
+			overlay.queue_free()
+	if restore_focus and _is_open and is_visible_in_tree() \
+			and is_instance_valid(invoker) and invoker.is_inside_tree() \
+			and invoker.is_visible_in_tree() and not invoker.disabled \
+			and _help_buttons.has(invoker):
+		invoker.grab_focus()
 
 
 func _style_card(card: PanelContainer, owner: String, active: bool) -> void:

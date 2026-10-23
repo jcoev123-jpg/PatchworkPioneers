@@ -17,6 +17,8 @@ const DOUBLE_QUILT_TEXT := "+8 maximum HP"
 const SCRAP_LINED_VEST_TEXT := "+3 maximum HP"
 const WOOL_PATCH_CLOAK_TEXT := "+5 maximum HP"
 const CHAIN_STITCHED_COAT_TEXT := "+7 maximum HP"
+const REINFORCED_PATCHCOAT_TEXT := "+9 maximum HP"
+const THICK_FELT_MANTLE_TEXT := "+10 maximum HP"
 
 
 func _badge_text() -> String:
@@ -41,6 +43,7 @@ func _initialize() -> void:
 	_test_detachment_and_isolation()
 	_test_coat_powers_lifecycle_and_previews()
 	_test_new_coat_patches_lifecycle()
+	_test_m05_coat_patches_lifecycle()
 	if failures.is_empty():
 		print("run_patch_wearer_summary_test: PASS (", checks, " checks)")
 	else:
@@ -193,6 +196,8 @@ func _test_catalog_backed_definitions() -> void:
 		"scrap_lined_vest": {"slot": "COAT", "max_hp_bonus": 3},
 		"wool_patch_cloak": {"slot": "COAT", "max_hp_bonus": 5},
 		"chain_stitched_coat": {"slot": "COAT", "max_hp_bonus": 7},
+		"reinforced_patchcoat": {"slot": "COAT", "max_hp_bonus": 9},
+		"thick_felt_mantle": {"slot": "COAT", "max_hp_bonus": 10},
 		"stitched_badge": {"slot": "HEAD"},
 		"spare_spool": {"slot": "ARM"},
 	}
@@ -652,6 +657,14 @@ func _test_rejections() -> void:
 			"max_hp_bonus", 9],
 		["a known chain_stitched_coat record with the wrong slot", "coat", "chain_stitched_coat",
 			"slot", "ARM"],
+		["a known reinforced_patchcoat record with the wrong bonus", "coat", "reinforced_patchcoat",
+			"max_hp_bonus", 8],
+		["a known reinforced_patchcoat record with the wrong slot", "coat", "reinforced_patchcoat",
+			"slot", "ARM"],
+		["a known thick_felt_mantle record with the wrong bonus", "coat", "thick_felt_mantle",
+			"max_hp_bonus", 11],
+		["a known thick_felt_mantle record with the wrong slot", "coat", "thick_felt_mantle",
+			"slot", "HEAD"],
 		["a known slot-only record with the wrong slot", "initial", "stitched_badge",
 			"slot", "ARM"],
 		["a known slot-only record with an invented effect", "initial", "spare_spool",
@@ -685,6 +698,18 @@ func _test_rejections() -> void:
 	var missing_chain := _without_record(catalogs, "coat", "chain_stitched_coat")
 	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_chain) == rejected,
 		"a missing chain_stitched_coat record is rejected exactly")
+	var missing_reinforced := _without_record(catalogs, "coat", "reinforced_patchcoat")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_reinforced) == rejected,
+		"a missing reinforced_patchcoat record is rejected exactly")
+	var missing_thick := _without_record(catalogs, "coat", "thick_felt_mantle")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_thick) == rejected,
+		"a missing thick_felt_mantle record is rejected exactly")
+	var missing_reinforced_bonus := _without_field(catalogs, "coat", "reinforced_patchcoat", "max_hp_bonus")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_reinforced_bonus) == rejected,
+		"a reinforced_patchcoat record without its bonus is rejected exactly")
+	var missing_thick_bonus := _without_field(catalogs, "coat", "thick_felt_mantle", "max_hp_bonus")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_thick_bonus) == rejected,
+		"a thick_felt_mantle record without its bonus is rejected exactly")
 	var missing_vest_bonus := _without_field(catalogs, "coat", "padded_vest", "max_hp_bonus")
 	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_vest_bonus) == rejected,
 		"a padded_vest record without its bonus is rejected exactly")
@@ -715,6 +740,8 @@ func _test_sew_previews() -> void:
 		["scrap_lined_vest", "COAT", SCRAP_LINED_VEST_TEXT],
 		["wool_patch_cloak", "COAT", WOOL_PATCH_CLOAK_TEXT],
 		["chain_stitched_coat", "COAT", CHAIN_STITCHED_COAT_TEXT],
+		["reinforced_patchcoat", "COAT", REINFORCED_PATCHCOAT_TEXT],
+		["thick_felt_mantle", "COAT", THICK_FELT_MANTLE_TEXT],
 		["button_eye", "HEAD", EYE_TEXT],
 		["pincushion_arm", "ARM", ARM_TEXT]
 	]
@@ -1322,3 +1349,250 @@ func _test_new_coat_patches_lifecycle() -> void:
 		"empty COAT preview for Wool Patch Cloak on Seamstress matches specification")
 	_check(pw.get_snapshot() == pre_snap, "wardrobe snapshot unchanged after new coat previews")
 	_check(ptorn.read_state() == ptorn_state, "torn ledger unchanged after new coat previews")
+
+
+func _test_m05_coat_patches_lifecycle() -> void:
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	var heroes: Array = f.heroes
+	var catalogs: Dictionary = f.catalogs
+	var rejected := {"ok": false, "heroes": []}
+	var reject_preview := {"ok": false}
+
+	# Sew reinforced_patchcoat (+9) on Warden, thick_felt_mantle (+10) on Seamstress, Tinker unpatched
+	_check(w.sew("reinforced_patchcoat", "warden", "COAT", "sew_reinf_m05", w.get_snapshot()).ok,
+		"Reinforced Patchcoat is sewn onto Warden COAT")
+	_check(w.sew("thick_felt_mantle", "seamstress", "COAT", "sew_thick_m05", w.get_snapshot()).ok,
+		"Thick Felt Mantle is sewn onto Seamstress COAT")
+
+	var torn := RunTornMending.new(heroes)
+	_check(torn.is_valid(), "RunTornMending accepts starter party for M05 coat tests")
+	var torn_state := torn.read_state()
+	var summary := RunPatchWearerSummary.summarize(w, torn_state)
+	_check(summary.get("ok") == true, "summarize succeeds with M05 coats sewn")
+	if summary.get("ok") != true:
+		return
+
+	# AC3: summarize shows exact catalog-validated +9/+10 maximum HP rules, COAT slot and proper active flags
+	var warden_coat: Dictionary = summary.heroes[0]["slots"][2]
+	_check(warden_coat["slot"] == "COAT" and warden_coat["patch_id"] == "reinforced_patchcoat"
+		and warden_coat["active"] == true and warden_coat["rules_text"] == REINFORCED_PATCHCOAT_TEXT,
+		"Warden COAT publishes reinforced_patchcoat with +9 maximum HP and active=true")
+
+	var seamstress_coat: Dictionary = summary.heroes[1]["slots"][2]
+	_check(seamstress_coat["slot"] == "COAT" and seamstress_coat["patch_id"] == "thick_felt_mantle"
+		and seamstress_coat["active"] == true and seamstress_coat["rules_text"] == THICK_FELT_MANTLE_TEXT,
+		"Seamstress COAT publishes thick_felt_mantle with +10 maximum HP and active=true")
+
+	var tinker_coat: Dictionary = summary.heroes[2]["slots"][2]
+	_check(tinker_coat["slot"] == "COAT" and tinker_coat["patch_id"] == ""
+		and tinker_coat["active"] == false and tinker_coat["rules_text"] == "",
+		"unpatched Tinker COAT slot is empty, inactive and has no rules text")
+
+	for i in range(3):
+		_check(summary.heroes[i]["slots"][0]["patch_id"] == ""
+			and summary.heroes[i]["slots"][0]["rules_text"] == ""
+			and not summary.heroes[i]["slots"][0]["active"],
+			summary.heroes[i]["id"] + " HEAD slot is empty and inactive")
+		_check(summary.heroes[i]["slots"][1]["patch_id"] == ""
+			and summary.heroes[i]["slots"][1]["rules_text"] == ""
+			and not summary.heroes[i]["slots"][1]["active"],
+			summary.heroes[i]["id"] + " ARM slot is empty and inactive")
+
+	# RunPatchCoatRules effective max HP: Warden 40+9=49, Seamstress 30+10=40, Tinker 26
+	var health_proj := RunPatchCoatRules.project_health(torn_state, w, catalogs["coat"])
+	_check(health_proj.get("ok") == true, "RunPatchCoatRules projects health with M05 coats")
+	if health_proj.get("ok") == true:
+		_check(health_proj.heroes[0]["max_hp"] == 49 and health_proj.heroes[0]["hp"] == 40,
+			"Warden effective max HP projected as 40 + 9 = 49 while stored hp is 40")
+		_check(health_proj.heroes[1]["max_hp"] == 40 and health_proj.heroes[1]["hp"] == 30,
+			"Seamstress effective max HP projected as 30 + 10 = 40 while stored hp is 30")
+		_check(health_proj.heroes[2]["max_hp"] == 26 and health_proj.heroes[2]["hp"] == 26,
+			"unpatched Tinker effective max HP remains 26 while stored hp is 26")
+		_check(torn_state.heroes[0]["max_hp"] == 40 and torn_state.heroes[1]["max_hp"] == 30
+			and torn_state.heroes[2]["max_hp"] == 26,
+			"base max HP in torn state remains 40, 30, 26")
+
+	# AC3: Authoritative catalog validation rejects unsupported advertised powers
+	var corrupted_checks := [
+		["coat", "reinforced_patchcoat", "max_hp_bonus", 8, "reinforced_patchcoat wrong bonus"],
+		["coat", "reinforced_patchcoat", "slot", "ARM", "reinforced_patchcoat wrong slot"],
+		["coat", "thick_felt_mantle", "max_hp_bonus", 12, "thick_felt_mantle wrong bonus"],
+		["coat", "thick_felt_mantle", "slot", "HEAD", "thick_felt_mantle wrong slot"],
+	]
+	for c in corrupted_checks:
+		var corrupted := _with_field(catalogs, c[0], c[1], c[2], c[3])
+		_check(RunPatchWearerSummary.summarize(w, torn_state, corrupted) == rejected,
+			c[4] + " makes summarize refuse")
+		_check(RunPatchWearerSummary.preview_sew(w, torn_state, c[1], "warden", corrupted) == reject_preview,
+			c[4] + " makes preview_sew refuse")
+
+	# AC3: Preview sew on empty slots
+	var prev_f := _fixture(2)
+	if prev_f.is_empty():
+		return
+	var pw: RunPatchWardrobe = prev_f.wardrobe
+	var ptorn := RunTornMending.new(prev_f.heroes)
+	var ptorn_state := ptorn.read_state()
+	var pre_snap := pw.get_snapshot()
+
+	var reinf_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "reinforced_patchcoat", "warden")
+	_check(reinf_prev.get("ok") == true and reinf_prev.get("patch_id") == "reinforced_patchcoat"
+		and reinf_prev.get("slot") == "COAT" and reinf_prev.get("rules_text") == REINFORCED_PATCHCOAT_TEXT
+		and reinf_prev.get("wearer") == "warden" and reinf_prev.get("displaced_id") == ""
+		and reinf_prev.get("displaced_rules_text") == "" and reinf_prev.get("scrap_delta") == 0,
+		"empty COAT preview for reinforced_patchcoat on Warden shows +9 maximum HP, scrap_delta 0")
+
+	var thick_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "thick_felt_mantle", "seamstress")
+	_check(thick_prev.get("ok") == true and thick_prev.get("patch_id") == "thick_felt_mantle"
+		and thick_prev.get("slot") == "COAT" and thick_prev.get("rules_text") == THICK_FELT_MANTLE_TEXT
+		and thick_prev.get("wearer") == "seamstress" and thick_prev.get("displaced_id") == ""
+		and thick_prev.get("displaced_rules_text") == "" and thick_prev.get("scrap_delta") == 0,
+		"empty COAT preview for thick_felt_mantle on Seamstress shows +10 maximum HP, scrap_delta 0")
+
+	_check(pw.get_snapshot() == pre_snap and ptorn.read_state() == ptorn_state,
+		"previews leave wardrobe and torn state completely untouched")
+
+	# Preview sew on occupied slot: displace reinforced_patchcoat with thick_felt_mantle
+	_check(pw.sew("reinforced_patchcoat", "warden", "COAT", "prev_sew_reinf", pw.get_snapshot()).ok,
+		"Warden equips reinforced_patchcoat before displacement preview")
+	var occ_snap := pw.get_snapshot()
+
+	var occ_thick_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "thick_felt_mantle", "warden")
+	_check(occ_thick_prev.get("ok") == true and occ_thick_prev.get("patch_id") == "thick_felt_mantle"
+		and occ_thick_prev.get("slot") == "COAT" and occ_thick_prev.get("rules_text") == THICK_FELT_MANTLE_TEXT
+		and occ_thick_prev.get("wearer") == "warden" and occ_thick_prev.get("displaced_id") == "reinforced_patchcoat"
+		and occ_thick_prev.get("displaced_rules_text") == REINFORCED_PATCHCOAT_TEXT
+		and occ_thick_prev.get("scrap_delta") == 1,
+		"occupied preview: thick_felt_mantle displacing reinforced_patchcoat shows +1 scrap and displaced text")
+	_check(pw.get_snapshot() == occ_snap, "wardrobe unchanged by occupied preview")
+
+	# Commit sew replacement and verify receipt matches preview
+	var commit_thick := pw.sew("thick_felt_mantle", "warden", "COAT", "commit_thick_m05", pw.get_snapshot())
+	_check(commit_thick.get("ok") == true, "commit sew of thick_felt_mantle succeeds")
+	if commit_thick.get("ok") == true:
+		var rc: Dictionary = commit_thick.get("receipt", {})
+		_check(rc.get("patch_id") == "thick_felt_mantle" and rc.get("hero_id") == "warden"
+			and rc.get("slot") == "COAT" and rc.get("displaced_id") == "reinforced_patchcoat"
+			and rc.get("scrap_delta") == 1,
+			"commit receipt matches preview: displaced reinforced_patchcoat for 1 scrap")
+		var post_w := pw.get_snapshot()
+		_check(post_w.scraps == occ_snap.scraps + 1, "scraps increased by 1 upon displacing coat")
+		_check(not post_w.owned.has("reinforced_patchcoat"), "displaced reinforced_patchcoat destroyed")
+		_check(post_w.worn["warden"]["COAT"] == "thick_felt_mantle", "Warden now wears thick_felt_mantle")
+
+	# AC3: Torn suppression: down Warden in battle
+	var b_start: Array = torn_state.heroes
+	var b_end: Array = b_start.duplicate(true)
+	b_end[0]["hp"] = 0
+	_check(torn.observe_battle_end("m05_battle_tear", b_start, b_end).ok,
+		"battle ends with Warden torn")
+	var torn_state2 := torn.read_state()
+	var w_snap := w.get_snapshot()
+	_check(w.refresh_run_context(torn_state2.heroes, w_snap.owned, w_snap.scraps,
+		w_snap.gold, w_snap.cards, w_snap),
+		"wardrobe refreshed after Warden torn")
+	var torn_summary := RunPatchWearerSummary.summarize(w, torn_state2)
+	_check(torn_summary.get("ok") == true, "summarize succeeds after Warden torn")
+	if torn_summary.get("ok") == true:
+		var w_torn_coat: Dictionary = torn_summary.heroes[0]["slots"][2]
+		_check(w_torn_coat["patch_id"] == "reinforced_patchcoat" and w_torn_coat["active"] == false
+			and w_torn_coat["rules_text"] == REINFORCED_PATCHCOAT_TEXT,
+			"torn Warden keeps reinforced_patchcoat visible (+9 maximum HP) but active=false")
+		var s_live_coat: Dictionary = torn_summary.heroes[1]["slots"][2]
+		_check(s_live_coat["patch_id"] == "thick_felt_mantle" and s_live_coat["active"] == true
+			and s_live_coat["rules_text"] == THICK_FELT_MANTLE_TEXT,
+			"living Seamstress keeps thick_felt_mantle active=true and described")
+
+	# AC3: RunPatchCoatRules gives no bonus to torn wearer
+	var torn_proj := RunPatchCoatRules.project_health(torn_state2, w, catalogs["coat"])
+	_check(torn_proj.get("ok") == true, "project_health succeeds on torn roster")
+	if torn_proj.get("ok") == true:
+		_check(torn_proj.heroes[0]["max_hp"] == 37,
+			"torn Warden max HP remains 37 (40-3, no coat bonus)")
+		_check(torn_proj.heroes[1]["max_hp"] == 40,
+			"living Seamstress max HP remains 40 (30+10)")
+		_check(torn_proj.heroes[2]["max_hp"] == 26,
+			"unpatched Tinker max HP remains 26")
+
+	# AC3: Legal map mend on Warden (costs 2 scraps) -> reactivates without healing from coat
+	var mend_w := torn.choose_mend("mend_m05_w", "rc_mend_m05_w", "warden", 1, 4,
+		torn_state2.heroes, true)
+	_check(mend_w.get("ok") == true, "Warden mended successfully")
+	var state_after_mend := torn.read_state()
+	var w_snap2 := w.get_snapshot()
+	_check(w.refresh_run_context(state_after_mend.heroes, w_snap2.owned, w_snap2.scraps,
+		w_snap2.gold, w_snap2.cards, w_snap2),
+		"wardrobe refreshed after Warden mend")
+	var mended_summary := RunPatchWearerSummary.summarize(w, state_after_mend)
+	_check(mended_summary.get("ok") == true, "summarize succeeds after Warden mend")
+	if mended_summary.get("ok") == true:
+		var w_mended_coat: Dictionary = mended_summary.heroes[0]["slots"][2]
+		_check(w_mended_coat["patch_id"] == "reinforced_patchcoat" and w_mended_coat["active"] == true
+			and w_mended_coat["rules_text"] == REINFORCED_PATCHCOAT_TEXT,
+			"mended Warden reactivates reinforced_patchcoat with +9 maximum HP")
+
+	var mended_proj := RunPatchCoatRules.project_health(state_after_mend, w, catalogs["coat"])
+	_check(mended_proj.get("ok") == true, "project_health succeeds after mend")
+	if mended_proj.get("ok") == true:
+		_check(mended_proj.heroes[0]["max_hp"] == 46,
+			"mended Warden max HP is 37 + 9 = 46")
+		_check(mended_proj.heroes[0]["hp"] == state_after_mend.heroes[0]["hp"],
+			"effective max HP projection does not heal HP")
+
+	# AC3: Rest revival route: tear Seamstress in battle
+	var s_start: Array = state_after_mend.heroes
+	var s_end: Array = s_start.duplicate(true)
+	s_end[1]["hp"] = 0
+	_check(torn.observe_battle_end("m05_s_tear", s_start, s_end).ok, "Seamstress torn in battle")
+	var s_down_state := torn.read_state()
+	var w_snap3 := w.get_snapshot()
+	_check(w.refresh_run_context(s_down_state.heroes, w_snap3.owned, w_snap3.scraps,
+		w_snap3.gold, w_snap3.cards, w_snap3),
+		"wardrobe refreshed after Seamstress torn")
+	var s_down_summary := RunPatchWearerSummary.summarize(w, s_down_state)
+	_check(s_down_summary.get("ok") == true, "summarize succeeds when Seamstress torn")
+	if s_down_summary.get("ok") == true:
+		var s_down_coat: Dictionary = s_down_summary.heroes[1]["slots"][2]
+		_check(s_down_coat["patch_id"] == "thick_felt_mantle" and s_down_coat["active"] == false
+			and s_down_coat["rules_text"] == THICK_FELT_MANTLE_TEXT,
+			"torn Seamstress keeps thick_felt_mantle described (+10 maximum HP) but active=false")
+
+	# Rest revival
+	_check(torn.apply_rest("rest_m05_summary_revival", s_down_state.heroes, true).ok,
+		"Rest revival revives Seamstress")
+	var s_revived_state := torn.read_state()
+	var w_snap4 := w.get_snapshot()
+	_check(w.refresh_run_context(s_revived_state.heroes, w_snap4.owned, w_snap4.scraps,
+		w_snap4.gold, w_snap4.cards, w_snap4),
+		"wardrobe refreshed after Rest revival")
+	var s_revived_summary := RunPatchWearerSummary.summarize(w, s_revived_state)
+	_check(s_revived_summary.get("ok") == true, "summarize succeeds after Rest revival")
+	if s_revived_summary.get("ok") == true:
+		var s_rev_coat: Dictionary = s_revived_summary.heroes[1]["slots"][2]
+		_check(s_rev_coat["patch_id"] == "thick_felt_mantle" and s_rev_coat["active"] == true
+			and s_rev_coat["rules_text"] == THICK_FELT_MANTLE_TEXT,
+			"Rest revived Seamstress reactivates thick_felt_mantle (+10 maximum HP)")
+	var s_rev_proj := RunPatchCoatRules.project_health(s_revived_state, w, catalogs["coat"])
+	_check(s_rev_proj.get("ok") == true and s_rev_proj.heroes[1]["max_hp"] == 37,
+		"Rest revived Seamstress max HP is 27 + 10 = 37")
+
+	# AC4: Rest re-sew/swap between living heroes
+	_check(w.start_rest("rest_m05_summary_swap", w.get_snapshot()).ok, "Rest opens for re-sew")
+	var resew_res := w.re_sew("reinforced_patchcoat", "warden", "tinker",
+		"rest_m05_summary_swap", "resew_w_to_t", w.get_snapshot())
+	_check(resew_res.ok and resew_res.receipt.scrap_delta == -1,
+		"moving reinforced_patchcoat from Warden to Tinker costs 1 scrap")
+	var post_move_summary := RunPatchWearerSummary.summarize(w, s_revived_state)
+	_check(post_move_summary.get("ok") == true, "summarize succeeds after Rest move")
+	if post_move_summary.get("ok") == true:
+		_check(post_move_summary.heroes[0]["slots"][2]["patch_id"] == ""
+			and not post_move_summary.heroes[0]["slots"][2]["active"],
+			"Warden COAT slot is now empty and inactive")
+		_check(post_move_summary.heroes[2]["slots"][2]["patch_id"] == "reinforced_patchcoat"
+			and post_move_summary.heroes[2]["slots"][2]["active"] == true
+			and post_move_summary.heroes[2]["slots"][2]["rules_text"] == REINFORCED_PATCHCOAT_TEXT,
+			"Tinker COAT slot now has reinforced_patchcoat active (+9 maximum HP)")
+	_check(w.end_rest("rest_m05_summary_swap", w.get_snapshot()).ok, "Rest ends cleanly")
