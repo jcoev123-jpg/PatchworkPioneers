@@ -99,8 +99,18 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				pin_applied = active_pinned.pin_enemy(enemies, position, "tinker")
 			hit_record["pinned"] = pin_applied
 		hits.append(hit_record)
+	# Button Eye is a once-per-combat rider on the first *confirmed* hit.
+	# Apply only after the entire card: later Ricochet hits must not benefit
+	# from the Exposed this card creates.
+	if plan["patch_exposed"] > 0:
+		var first_position: int = plan["first_hit_position"]
+		enemies.apply_statuses({first_position: {"exposed": plan["patch_exposed"]}})
+		var first_statuses: Dictionary = hits[0]["statuses"]
+		first_statuses["exposed"] = first_statuses.get("exposed", 0) + plan["patch_exposed"]
 	deck.discard_played(card_id)
 	_first_attack.record_successful_attack(card_id)
+	if _patches != null:
+		_patches.record_successful_attack("tinker")
 	return {"ok": true, "hits": hits}
 
 
@@ -194,6 +204,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 
 	var patch_damage: int = 0 if _patches == null else _patches.damage_bonus("tinker")
+	var patch_first_status: Dictionary = {} if _patches == null else _patches.exposed_for_first_hit("tinker")
+	var patch_exposed: int = patch_first_status.get("exposed", 0)
 	var bonus: int = _first_attack.bonus_for_attack(card_id)
 	# Reserve both Pinned's possible +5 and the bound wearer bonus.
 	if damage_value > CombatStatuses.MAX_INT - bonus - 5 - patch_damage:
@@ -212,9 +224,6 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if not living.has(target_position):
 			return _failure()
 		positions.append(target_position)
-		if exposed > 0 and not enemies.can_apply_statuses(
-				{target_position: {"exposed": exposed}}):
-			return _failure()
 	else:
 		if target_position != 0:
 			return _failure()
@@ -252,9 +261,16 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 				actor["hp"] = maxi(0, actor["hp"] - (adjusted - absorbed))
 			if positions.is_empty():
 				return _failure()
+	# Check the combined first-hit additions BEFORE energy, discards, pins or
+	# run RNG move. Rivet must reserve both its authored +1 and Button Eye +1.
+	var first_position: int = positions[0]
+	if exposed + patch_exposed > 0 and not enemies.can_apply_statuses(
+			{first_position: {"exposed": exposed + patch_exposed}}):
+		return _failure()
 	return {"ok": true, "base_id": base_id, "positions": positions, "to_positions": to_value,
 		"target_kind": expected_kind, "base_damage": base_damage,
-		"attack_damage": base_damage,
+		"attack_damage": base_damage, "first_hit_position": first_position,
+		"patch_exposed": patch_exposed,
 		"owner_statuses": owner_statuses, "cost": cost_value, "exposed": exposed}
 
 
