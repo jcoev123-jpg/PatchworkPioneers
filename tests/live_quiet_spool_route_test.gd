@@ -16,7 +16,13 @@ func _effects() -> Array:
 func _event_state() -> Array:
 	return [_effects(), app.run_map.get_floors(), app.run_map.get_route(),
 		app._quiet_spool_completed, app.quiet_spool_panel, app._quiet_spool_outcome,
-		app._quiet_spool_outcome.is_consumed() if app._quiet_spool_outcome != null else false]
+		app._quiet_spool_outcome.is_consumed() if app._quiet_spool_outcome != null else false,
+		app._moth_completed, app.moth_panel, app._moth_outcome,
+		app._moth_outcome.is_consumed() if app._moth_outcome != null else false,
+		app._moth_picker, app._moth_context.duplicate(),
+		app._moth_picker.get_instance_id() if is_instance_valid(app._moth_picker) else 0,
+		app._moth_picker_item_indices(),
+		app._moth_picker.get_selected_items() if is_instance_valid(app._moth_picker) else PackedInt32Array()]
 
 
 func _reject_event(callback: Callable, reason: String) -> void:
@@ -24,6 +30,295 @@ func _reject_event(callback: Callable, reason: String) -> void:
 	if callback.is_valid():
 		callback.call()
 	_check(_event_state() == before, reason + " preserves entire run, map, ownership and RNG")
+
+
+## Real seeded route: starter Fight, then three consecutive Events and a Rest.
+func _moth_fixture() -> Dictionary:
+	var kinds: Array = ["Fight", "Event", "Event", "Event", "Rest"]
+	for value in range(1, 30000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		var path := _find_path(map, map.get_legal_choices(), kinds)
+		if path.is_empty():
+			continue
+		map.choose_node(path[0])
+		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng,
+			RunFightEncounterSelection.new())
+		if selected.get("encounter_id") == "starter_attacks":
+			return {"seed": value, "fight": path[0], "path": path.slice(1)}
+	return {}
+
+
+## Wins the real opening Fight, skips its reward and completes the run's first
+## Event through the mounted Quiet Spool choice.
+func _reach_second_event(fixture: Dictionary) -> bool:
+	app.run_seed = fixture.seed
+	if not await _routed_win(fixture, false):
+		return false
+	await _click(app.reward_buttons[3])
+	await _click(app.continue_button)
+	await _click(_route_action(fixture.path[0]))
+	_check(app.quiet_spool_panel != null and app.quiet_spool_panel.title_label.text == "The Quiet Spool",
+		"first Event remains the Quiet Spool")
+	if not is_instance_valid(app.quiet_spool_panel):
+		return false
+	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
+	_check(app.run_map.get_current_node_id() == fixture.path[0] and app.route_view != null,
+		"Quiet Spool completion restores the connected chooser")
+	return true
+
+
+## Live Moth results on the second genuine Event: exact sacrifice occurrence and
+## scrap gain, exact fumigation cost, composite refusal and later no-effect Events.
+func _moth_outcomes() -> void:
+	var fixture := _moth_fixture()
+	_check(not fixture.is_empty(), "seeded real Fight -> three Events -> Rest")
+	if fixture.is_empty():
+		return
+	if not await _reach_second_event(fixture):
+		return
+	# --- Feed: remove precisely the selected occurrence of a duplicate ID.
+	seed(720072)
+	var global_next := randi()
+	seed(720072)
+	# Move one authentic copy so removing the chosen occurrence is observable.
+	var reordered: Array = app.run_deck.duplicate()
+	var moved: String = reordered[1]
+	reordered.remove_at(1)
+	reordered.append(moved)
+	app.run_deck.assign(reordered)
+	var scraps: int = app.run_scraps
+	var descriptors: Dictionary = app.run_stitch_descriptors.duplicate(true)
+	var cursor: int = app.run_next_stitch_id
+	var gold: int = app.session_gold
+	var heroes: Array = app.run_heroes.duplicate(true)
+	var rng: int = app.run_rng.state
+	var entry: Callable = _route_action(fixture.path[1]).pressed.get_connections()[0].callable
+	# A malformed authored record fails before the node or panel is touched.
+	var broken := OS.get_environment("TEMP").path_join("moth_route_invalid.json")
+	for malformed in ["{}", "not JSON", '{"id":"moth_infestation"}',
+		'{"id":"moth_infestation","title":"Moth","description":"M","choices":[{"id":"escape","text":"E","outcome":{"gold":0,"scraps":0}},{"id":"escape","text":"E","outcome":{"gold":0,"scraps":0}}]}',
+		'{"id":"moth_infestation","title":"Moth","description":"M","choices":[{"id":"sacrifice_card","text":"F","outcome":{"gold":0,"scraps":2}},{"id":"fumigate","text":"F","outcome":{"gold":0,"scraps":-1}},{"id":"leave","text":"E","outcome":{"gold":0,"scraps":0}}]}',
+		'{"id":"moth_infestation","title":"Moth","description":"M","choices":[{"id":"sacrifice_card","text":"F","outcome":{"gold":0,"scraps":3}},{"id":"fumigate","text":"F","outcome":{"gold":0,"scraps":-1}},{"id":"escape","text":"E","outcome":{"gold":0,"scraps":0}}]}']:
+		var file := FileAccess.open(broken, FileAccess.WRITE)
+		_check(file != null, "external malformed Moth fixture writable")
+		if file == null:
+			continue
+		file.store_string(malformed)
+		file.close()
+		app.moth_catalog_path = broken
+		var route_before: Array = app.run_map.get_route()
+		var state_before := _event_state()
+		await _click(_route_action(fixture.path[1]))
+		_check(app.moth_panel == null and app.run_map.get_route() == route_before
+			and _event_state() == state_before and is_instance_valid(app.route_view),
+			"malformed authored Moth record rejects before entry")
+	DirAccess.remove_absolute(broken)
+	app.moth_catalog_path = "res://data/events/moth_infestation.json"
+	await _click(_route_action(fixture.path[1]))
+	var panel: LiveEventChoicePanel = app.moth_panel
+	_check(panel != null and panel.has_open_event() and app.route_view == null
+		and not app._can_choose_connected_route(), "second Event mounts the Moth panel and blocks routing")
+	if panel == null:
+		return
+	_check(panel.title_label.text == "Moth Infestation", "Moth record selected by stable authored ID")
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 3 and buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)"
+		and buttons[1].text == "Fumigate the deck (spend 1 scrap)"
+		and buttons[2].text == "Escape before the moths spread", "three authored Moth choices")
+	_check(app._moth_picker.has_focus(), "the index selector owns initial keyboard focus")
+	var picker: ItemList = app._moth_picker
+	var ordinary: Array = app._moth_ordinary_indices()
+	_check(is_instance_valid(picker) and picker.item_count == ordinary.size(),
+		"selector offers exactly the ordinary deck slots")
+	if not is_instance_valid(picker) or picker.item_count != ordinary.size():
+		return
+	for row in range(picker.item_count):
+		_check(picker.get_item_metadata(row) == ordinary[row]
+			and picker.get_item_text(row) == "Deck #%d: %s" % [ordinary[row] + 1, app.run_deck[ordinary[row]]],
+			"selector row is index-accurate: " + str(row))
+	var copies: Array = []
+	for row in range(picker.item_count):
+		if app.run_deck[picker.get_item_metadata(row)] == moved:
+			copies.append(row)
+	_check(copies.size() == 2 and picker.get_item_metadata(copies[0]) != picker.get_item_metadata(copies[1]),
+		"duplicate IDs stay two distinct occurrences")
+	if copies.size() != 2:
+		return
+	var chosen_row: int = copies[1]
+	var chosen: int = picker.get_item_metadata(chosen_row)
+	var expected: Array = app.run_deck.duplicate()
+	expected.remove_at(chosen)
+	var first_copy: Array = app.run_deck.duplicate()
+	first_copy.remove_at(int(picker.get_item_metadata(copies[0])))
+	_check(expected != first_copy, "fixture distinguishes the two identical copies")
+	var commit: Callable = panel.choice_committed.get_connections()[0].callable
+	var feed_click: Callable = buttons[0].pressed.get_connections()[0].callable
+	var before := _event_state()
+	_reject_event(commit.bind("moth_infestation", "sacrifice_card"), "forged unclaimed Feed signal")
+	_reject_event(commit.bind("moth_infestation", "escape"), "forged unclaimed Escape signal")
+	_check(_event_state() == before, "forged Moth signals change nothing")
+	# Keyboard: arrows pick the later duplicate, Tab reaches Feed, Enter commits.
+	picker.grab_focus()
+	for step in range(chosen_row):
+		await _key(KEY_DOWN)
+	_check(picker.get_selected_items().size() == 1 and picker.get_selected_items()[0] == chosen_row,
+		"physical arrow keys select the later duplicate row")
+	_check(picker.get_item_metadata(picker.get_selected_items()[0]) == chosen,
+		"keyboard selection keeps its exact deck index")
+	await _key(KEY_TAB)
+	_check(buttons[0].has_focus(), "Tab reaches Feed from the selector")
+	await _key(KEY_ENTER)
+	_check(app.moth_panel == null and app._moth_completed and app.route_view != null,
+		"Feed disposes the Moth panel and restores the chooser")
+	_check(app.run_deck == expected and app.run_scraps == scraps + 2,
+		"Feed removes precisely the selected occurrence and grants exactly 2 scraps")
+	_check(app.run_stitch_descriptors == descriptors and app.run_next_stitch_id == cursor
+		and app.session_gold == gold and app.run_heroes == heroes and app.run_rng.state == rng,
+		"Feed preserves descriptors, cursor, gold, heroes and RNG")
+	_check(app.run_deck.count(moved) == reordered.count(moved) - 1,
+		"Feed consumes one copy of the duplicated authored card")
+	var settled := _event_state()
+	for callback in [commit.bind("moth_infestation", "sacrifice_card"), feed_click, entry]:
+		_reject_event(callback, "replayed Moth input after Feed")
+	_check(_event_state() == settled, "duplicate or stale Moth input changes nothing")
+	_check(randi() == global_next, "Feed preserves the actual global RNG")
+	# The run's third Event is still the ordinary no-effect placeholder.
+	var third_deck: Array = app.run_deck.duplicate()
+	var third_route: Array = app.run_map.get_route()
+	await _click(_route_action(fixture.path[2]))
+	_check(app.moth_panel == null and app.quiet_spool_panel == null
+		and app.run_map.get_route() == third_route + [fixture.path[2]] and app.route_view != null
+		and app.run_deck == third_deck, "third Event keeps the no-effect placeholder")
+	app._return_to_title()
+	await _frames()
+	_check(app.moth_panel == null and app._moth_context.is_empty() and not app._moth_completed,
+		"title resets Moth eligibility")
+	# --- Fumigate: exactly one scrap, no card removed.
+	seed(720073)
+	global_next = randi()
+	seed(720073)
+	var funded := _placeholder_fixture("", "Event")
+	_check(not funded.is_empty(), "seeded Fight -> two Events fixture exists")
+	if funded.is_empty():
+		return
+	if not await _reach_second_event(funded):
+		return
+	scraps = app.run_scraps
+	descriptors = app.run_stitch_descriptors.duplicate(true)
+	cursor = app.run_next_stitch_id
+	gold = app.session_gold
+	heroes = app.run_heroes.duplicate(true)
+	rng = app.run_rng.state
+	var funded_deck: Array = app.run_deck.duplicate()
+	_check(scraps >= 1, "the real Fight reward funds one Fumigate")
+	await _click(_route_action(funded.path[1]))
+	panel = app.moth_panel
+	_check(panel != null, "funded run's second Event mounts Moth")
+	if panel == null:
+		return
+	buttons = panel.get_choice_buttons()
+	_check(not buttons[1].disabled, "one-scrap Fumigate is claimable")
+	await _click(buttons[1])
+	_check(app.moth_panel == null and app._moth_completed and app.run_scraps == scraps - 1
+		and app.run_deck == funded_deck, "Fumigate spends exactly one scrap and removes no card")
+	_check(app.run_stitch_descriptors == descriptors and app.run_next_stitch_id == cursor
+		and app.session_gold == gold and app.run_heroes == heroes and app.run_rng.state == rng,
+		"Fumigate preserves descriptors, cursor, gold, heroes and RNG")
+	_check(randi() == global_next, "Fumigate preserves the actual global RNG")
+	app._return_to_title()
+	await _frames()
+	# --- A zero-scrap run cannot claim Fumigate.
+	seed(720074)
+	global_next = randi()
+	seed(720074)
+	app.run_seed = 34
+	await _click(app.start_button)
+	await _click(_route_action("f01_n1"))
+	_check(app.quiet_spool_panel != null, "opening run's first Event is Quiet Spool")
+	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
+	_check(app.run_scraps == 0 and app._quiet_spool_completed, "Ignore leaves a zero-scrap wallet")
+	await _click(_route_action("f02_n0"))
+	panel = app.moth_panel
+	_check(panel != null, "opening run's second Event mounts Moth")
+	if panel == null:
+		return
+	var poor_deck: Array = app.run_deck.duplicate()
+	buttons = panel.get_choice_buttons()
+	_check(buttons[1].disabled and not buttons[0].disabled and not buttons[2].disabled,
+		"zero-scrap Fumigate is disabled while Feed and Escape remain")
+	before = _event_state()
+	await _click(buttons[1])
+	_reject_event(panel.choice_committed.get_connections()[0].callable.bind(
+		"moth_infestation", "fumigate"), "forged Fumigate without its cost")
+	_check(_event_state() == before and not panel._selector.is_claimed(),
+		"zero-scrap Fumigate cannot claim, spend, remove or route")
+	await _click(buttons[2])
+	_check(app.moth_panel == null and app.run_scraps == 0 and app.run_deck == poor_deck
+		and app.route_view != null, "zero-scrap Escape changes nothing and unlocks successors")
+	_check(randi() == global_next, "zero-scrap Moth rejection preserves the actual global RNG")
+	app._return_to_title()
+	await _frames()
+	# --- A genuine composite is never offered and cannot be fed to the moths.
+	seed(720075)
+	global_next = randi()
+	seed(720075)
+	var mixed := _placeholder_fixture("", "Event")
+	_check(not mixed.is_empty(), "seeded Fight -> two Events fixture exists for the composite case")
+	if mixed.is_empty():
+		return
+	if not await _reach_second_event(mixed):
+		return
+	var stitch := RunRestStitchCards.new(app.run_deck, {}, RunRestStitchCards.SCRAP_COST, 1)
+	var stitched: Dictionary = stitch.choose_stitch(0, 4, stitch.get_snapshot())
+	_check(stitched.ok, "genuine stitched ledger fixture")
+	if not stitched.ok:
+		return
+	app.run_deck.assign(stitched.deck)
+	app.run_stitch_descriptors = stitched.descriptors.duplicate(true)
+	app.run_next_stitch_id = stitched.next_stitch_id
+	app.run_scraps = stitched.remaining_scraps
+	var composite: int = app.run_deck.find("stitched_000001")
+	_check(composite >= 0, "the composite occupies a real deck slot")
+	await _click(_route_action(mixed.path[1]))
+	panel = app.moth_panel
+	_check(panel != null, "mixed ordinary/composite ledger still presents Moth")
+	if panel == null:
+		return
+	picker = app._moth_picker
+	var mixed_deck: Array = app.run_deck.duplicate()
+	var mixed_scraps: int = app.run_scraps
+	descriptors = app.run_stitch_descriptors.duplicate(true)
+	cursor = app.run_next_stitch_id
+	_check(picker.item_count == app.run_deck.size() - 1
+		and not app._moth_picker_item_indices().has(composite),
+		"selector admits every ordinary slot and never a composite")
+	var saved_meta: Variant = picker.get_item_metadata(0)
+	picker.set_item_metadata(0, composite)
+	picker.select(0)
+	var forged := _event_state()
+	_reject_event(panel.choice_committed.get_connections()[0].callable.bind(
+		"moth_infestation", "sacrifice_card"), "forged composite Feed selection")
+	_check(app.moth_panel == panel and app.run_deck == mixed_deck
+		and app.run_scraps == mixed_scraps and app.run_stitch_descriptors == descriptors
+		and app.run_next_stitch_id == cursor and _event_state() == forged,
+		"composite selection cannot spend, remove a card or unlock routing")
+	picker.set_item_metadata(0, saved_meta)
+	var mixed_index: int = picker.get_item_metadata(0)
+	_check(mixed_index != composite and app.run_deck[mixed_index] != "stitched_000001",
+		"restored selector points at an ordinary slot")
+	var mixed_expected: Array = app.run_deck.duplicate()
+	mixed_expected.remove_at(mixed_index)
+	await _click(panel.get_choice_buttons()[0])
+	_check(app.moth_panel == null and app.run_deck == mixed_expected
+		and app.run_deck.has("stitched_000001") and app.run_stitch_descriptors == descriptors
+		and app.run_next_stitch_id == cursor and app.run_scraps == mixed_scraps + 2,
+		"mixed-ledger Feed removes the selected ordinary slot and preserves the composite")
+	_check(randi() == global_next, "composite Moth input preserves the actual global RNG")
+	app._return_to_title()
+	await _frames()
 
 
 func _run() -> void:
@@ -131,12 +426,52 @@ func _run() -> void:
 					_check(timeline == replay, "independent same-seed input modes reproduce outcome")
 				await _click(_route_action(fixture.path[1]))
 				_check(app.run_map.get_current_node_id() == fixture.path[1], "completed Event allows actual next node")
-				if won:
-					_check(app.quiet_spool_panel == null and app.route_view != null, "later Event retains no-effect continuation")
+				# The run's second Event is the accepted Moth Infestation visit.
+				if app.run_map.get_node(fixture.path[1]).type == "Event":
+					_check(app.moth_panel != null and app.moth_panel.has_open_event() and app.route_view == null
+						and not app._can_choose_connected_route(), "second Event mounts the authored Moth panel")
+				var moth_panel: LiveEventChoicePanel = app.moth_panel
+				if moth_panel != null:
+					var moth_before := _event_state()
+					var moth_effects := _effects()
+					var moth_deck: Array = app.run_deck.duplicate()
+					var moth_scraps: int = app.run_scraps
+					var moth_buttons := moth_panel.get_choice_buttons()
+					_check(moth_buttons.size() == 3 and moth_buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)"
+						and moth_buttons[1].text == "Fumigate the deck (spend 1 scrap)"
+						and moth_buttons[2].text == "Escape before the moths spread", "three authored Moth controls")
+					var picker: ItemList = app._moth_picker
+					_check(is_instance_valid(picker) and picker.item_count == app._moth_ordinary_indices().size(),
+						"index-accurate ordinary selector covers the live deck")
+					_check(moth_buttons[1].disabled == (moth_scraps < 1),
+						"Fumigate is claimable exactly when one scrap is available")
+					_check(not moth_buttons[0].disabled and not moth_buttons[2].disabled,
+						"Feed and Escape stay available")
+					var moth_commit: Callable = moth_panel.choice_committed.get_connections()[0].callable
+					var escape: Callable = moth_commit.bind("moth_infestation", "escape")
+					var moth_click: Callable = moth_buttons[2].pressed.get_connections()[0].callable
+					_reject_event(escape, "forged unclaimed Moth signal")
+					_reject_event(entry, "duplicate Moth entry request")
+					if moth_buttons[1].disabled:
+						await _click(moth_buttons[1])
+						_check(_event_state() == moth_before and not moth_panel._selector.is_claimed(),
+							"zero-scrap Fumigate input cannot claim, spend or remove")
+						_reject_event(moth_commit.bind("moth_infestation", "fumigate"),
+							"unaffordable Fumigate cannot settle")
+					await _click(moth_buttons[2])
+					_check(app.moth_panel == null and app._moth_completed and app.route_view != null,
+						"Escape disposes the Moth panel and restores the chooser")
+					_check(_effects() == moth_effects and app.run_deck == moth_deck
+						and app.run_scraps == moth_scraps, "Escape preserves every resource and the route")
+					for callback in [escape, moth_click, entry]:
+						_reject_event(callback, "replay after Moth completion")
+						stale.append(callback)
 				_check(randi() == global_next, "entry, rejection and outcome preserve actual global RNG")
 				app._return_to_title()
 				await _frames()
 				_check(app.quiet_spool_panel == null and app._quiet_spool_context.is_empty() and not app._quiet_spool_completed, "title invalidates completed binding")
+				_check(app.moth_panel == null and app._moth_context.is_empty() and app._moth_picker == null
+					and not app._moth_completed, "title invalidates completed Moth binding")
 	# Abandon an unresolved visit, then prove its live callbacks cannot reach a new one.
 	app.run_seed = 7
 	await _click(app.start_button)
@@ -165,6 +500,9 @@ func _run() -> void:
 	await _click(_route_action("f01_n1"))
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	_check(app.run_scraps == 0, "fresh Ignore has independent outcome")
+	app._return_to_title()
+	await _frames()
+	await _moth_outcomes()
 	app.free()
 	await _frames()
 	for failure in failures:

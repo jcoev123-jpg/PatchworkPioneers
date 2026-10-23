@@ -10,6 +10,7 @@ var catalog := StarterCards.new()
 
 func _initialize() -> void:
 	_test_legal_halves()
+	_test_pool_healing_previews()
 	_test_positions_and_recipients()
 	_test_refusals()
 	_test_replay_and_isolation()
@@ -90,11 +91,14 @@ func _enemies(count: int = 3) -> CombatEnemies:
 
 func _pair(first_id: String, second_id: String, run_seed: int = 123456) -> Dictionary:
 	var original := _starter_ids()
+	for card_id in [first_id, second_id]:
+		if not original.has(card_id):
+			original.append(card_id)
 	var first_index := original.find(first_id)
 	var second_index := original.find(second_id)
 	_check(first_index >= 0 and second_index >= 0 and first_index != second_index,
 			"two distinct real card instances: " + first_id + " / " + second_id)
-	_check(catalog.get_definition(first_id).get("owner") != catalog.get_definition(second_id).get("owner"),
+	_check(RunRestStitchCards.resolve_card_definition(first_id).get("owner") != RunRestStitchCards.resolve_card_definition(second_id).get("owner"),
 			"Rest stitch requires two distinct authored owners")
 	if first_index < 0 or second_index < 0 or first_index == second_index:
 		return {}
@@ -112,7 +116,7 @@ func _pair(first_id: String, second_id: String, run_seed: int = 123456) -> Dicti
 	_check(made["consumed_indices"] == [first_index, second_index]
 			and made["consumed_ids"] == [first_id, second_id], "ordered originals captured")
 	var expected_cost: int = mini(3, maxi(
-			catalog.get_definition(first_id)["cost"], catalog.get_definition(second_id)["cost"]) + 1)
+			RunRestStitchCards.resolve_card_definition(first_id)["cost"], RunRestStitchCards.resolve_card_definition(second_id)["cost"]) + 1)
 	_check(made["descriptor"]["cost"] == expected_cost and snapshot["deck"].count(id) == 1,
 			"real descriptor computed cost and single deck instance")
 	var rng := RandomNumberGenerator.new()
@@ -196,7 +200,7 @@ func _guarded_call(s: Dictionary, label: String, snapshot: Variant = null,
 
 func _half(index: int, card_id: String, positions: Array,
 		affected: Array = []) -> Dictionary:
-	var definition := catalog.get_definition(card_id)
+	var definition := RunRestStitchCards.resolve_card_definition(card_id)
 	var kind: String = definition["target_kind"]
 	var side := "enemy" if kind.begins_with("enemy") else "none" if kind == "none" else "ally"
 	var selectable := kind == "enemy_single" or kind == "ally_single"
@@ -459,3 +463,57 @@ func _test_replay_and_isolation() -> void:
 			"independent call result detached from mutated earlier result")
 	_check(_guarded_call(s, "isolated subsequent") == second_read,
 			"mutating earlier preview cannot corrupt ledger or future output")
+
+func _test_pool_healing_previews() -> void:
+	var pool := SeamstressPoolCards.new()
+	for id in CombatStitchedTargetPreview.POOL_HEAL_IDS:
+		var authored: Dictionary = pool.get_definition(id)
+		_check(not authored.is_empty() and authored == RunRestStitchCards.resolve_card_definition(id),
+				id + ": genuine Rest-resolved authored base/+ definition")
+		for reverse in [false, true]:
+			var counterpart := "tinker_pop_shot" if id.contains("field_mend") else "warden_brace"
+			var first: String = counterpart if reverse else id
+			var second: String = id if reverse else counterpart
+			var s := _pair(first, second, 2201)
+			var pool_half := _half(1 if reverse else 0, id,
+				[] if id.contains("field_mend") else [1, 2, 3],
+				[1, 2, 3] if id.contains("field_mend") else [])
+			var other_half := _half(0 if reverse else 1, counterpart,
+				[1, 2, 3] if counterpart == "tinker_pop_shot" else [],
+				[] if counterpart == "tinker_pop_shot" else [1])
+			var result := _accepted(s, other_half if reverse else pool_half,
+					pool_half if reverse else other_half, id + " both orders " + str(reverse))
+			var expected_cost := 3 if id.contains("field_mend") else 2
+			_check(result.get("playable", false) and result.cost == expected_cost
+					and pool_half["owner"] == "seamstress",
+					id + ": authentic receipt, cost and separate owners")
+			if id.contains("field_mend"):
+				_check(not pool_half["requires_selection"] and pool_half["side"] == "ally"
+					and pool_half["target_positions"] == [] and pool_half["affected_positions"] == [1, 2, 3],
+					id + ": automatic all-living party, no extra enemy selection")
+			else:
+				_check(pool_half["requires_selection"] and pool_half["affected_positions"] == [],
+					id + ": single chosen living ally")
+			_check(s["party"].apply_damage(3, 26), "actual Tinker downed for preview")
+			if counterpart == "warden_brace":
+				_accepted(s, other_half if reverse else _half(0, id, [1, 2]),
+					_half(1, id, [1, 2]) if reverse else other_half,
+					id + ": downed ally omitted")
+			else:
+				_rejected(s, id + ": Tinker owner down fails closed")
+	# An unrelated pool card has an authentic Rest receipt but no supported preview.
+	for reversed in [false, true]:
+		var unsupported := _pair("warden_brace" if reversed else "seamstress_tailors_trance",
+				"seamstress_tailors_trance" if reversed else "warden_brace")
+		_check(not unsupported.is_empty() and unsupported["rest"].is_valid(),
+				"unsupported pool half still genuinely authored and stitched")
+		_rejected(unsupported, "nonhealing pool energy/draw must remain unsupported")
+	var field := _pair("seamstress_field_mend", "warden_brace")
+	_check(field["party"].apply_damage(3, 26), "real downed Tinker with living Field Mend owner")
+	_accepted(field, _half(0, "seamstress_field_mend", [], [1, 2]),
+			_half(1, "warden_brace", [], [1]), "Field Mend excludes torn ally, targets nobody manually")
+	field["party"] = _party(["seamstress", "warden", "tinker"])
+	_rejected(field, "Field Mend illegal from front after swap")
+	field["party"] = _party(["warden", "tinker", "seamstress"])
+	_accepted(field, _half(0, "seamstress_field_mend", [], [1, 2, 3]),
+			_half(1, "warden_brace", [], [1]), "Field Mend legal from back")

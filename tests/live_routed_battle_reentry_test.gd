@@ -156,6 +156,14 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 						await _key(KEY_ENTER)
 					else:
 						await _click(ignore)
+				elif is_instance_valid(app.moth_panel):
+					_check(app.route_view == null, "second transit Event requires the Moth choice")
+					var escape: Button = app.moth_panel.get_choice_buttons()[2]
+					if keyboard:
+						escape.grab_focus()
+						await _key(KEY_ENTER)
+					else:
+						await _click(escape)
 			"Rest":
 				await _click(app.rest_heal_button)
 				await _click(app.rest_continue_button)

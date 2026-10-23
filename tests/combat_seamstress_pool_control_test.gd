@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_unpick()
 	_test_rejections()
 	_test_replay()
+	_test_sewn_attack_patches()
 	if failures.is_empty():
 		print("combat_seamstress_pool_control_test: PASS (", checks, " checks)")
 	else:
@@ -92,7 +93,8 @@ func _state(f: Dictionary) -> Dictionary:
 		"tokens": pinned._pinner_by_position.duplicate(true),
 		"gauges": unravel._gauges.duplicate(true),
 		"tiers": unravel._tiers_by_position.duplicate(true),
-		"bound_roster": unravel._bound_enemies
+		"bound_roster": unravel._bound_enemies,
+		"patch_latch": null if resolver._patches == null else resolver._patches.latch_snapshot()
 	}
 
 
@@ -341,3 +343,142 @@ func _test_replay() -> void:
 		return r["ok"]), "independent equal-seed replay matches every resolved event")
 	_check(a == b and a["rng"] == rng_before and b["rng"] == rng_before,
 		"independent replay matches all authoritative snapshots without RNG draws")
+
+
+## Run-ledger projection, intentionally shared with the existing starter service.
+func _sewn_fixture(assignments: Array, torn_seamstress: bool = false) -> Dictionary:
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+		["button_eye", "pincushion_arm"], [
+			{"id": "button_eye", "slot": "HEAD"},
+			{"id": "pincushion_arm", "slot": "ARM"}], 4)
+	var torn := RunTornMending.new(party.get_heroes())
+	_check(wardrobe.is_valid() and torn.is_valid(), "genuine valid run patch ledgers")
+	for record in assignments:
+		_check(wardrobe.sew(record.id, record.hero, record.slot,
+			"sew_" + record.id, wardrobe.get_snapshot()).ok,
+			"genuine sewn patch " + record.id)
+	if torn_seamstress:
+		var ended: Array = party.get_heroes()
+		ended[1]["hp"] = 0
+		_check(torn.observe_battle_end("torn_seamstress", party.get_heroes(), ended).ok,
+			"torn ledger records Seamstress tear")
+	var starter := CombatAttackCards.new()
+	_check(starter.bind_patch_wardrobe(wardrobe, torn) and starter._patches.is_valid(),
+		"starter service binds authentic projection")
+	resolver.bind_patch_rules(starter._patches)
+	_check(resolver._patches == starter._patches, "single exact first-hit latch shared")
+	return {"starter": starter, "wardrobe": wardrobe, "torn": torn}
+
+
+func _test_sewn_attack_patches() -> void:
+	for variant in [PIN, PIN_PLUS]:
+		var ctx := _sewn_fixture([
+			{"id": "button_eye", "hero": "seamstress", "slot": "HEAD"},
+			{"id": "pincushion_arm", "hero": "seamstress", "slot": "ARM"}])
+		var f := _fixture([variant, SNAG, UNPICK], 2)
+		var enemy: CombatEnemies = f.enemies
+		_check(enemy.gain_block(1, 5) and enemy.apply_statuses({1: {"exposed": 1}})
+			and f.pinned.pin_enemy(enemy, 1, "warden"),
+			"patched Pin target has Block, Exposed and cross-owner pin")
+		f.party._heroes[1]["statuses"] = {"weak": 1}
+		var before := _state(f)
+		var expected: int = 10 if variant == PIN else 11
+		var projected := resolver.needle_patch_preview()
+		_check(projected.ok and projected.damage_bonus == 1
+			and projected.statuses == {"exposed": 1}
+			and _state(f) == before, "patch projection pure before confirmed attack")
+		var hit := _play(f, variant, 1)
+		_check(hit.ok and hit.damage == expected and hit.pinned_bonus == 5
+			and hit.block_absorbed == 5 and hit.hp_loss == expected - 5
+			and enemy.get_enemy(1)["hp"] == 18 - (expected - 5)
+			and enemy.get_enemy(1)["statuses"].exposed == 2,
+			"patched " + variant + " adds ARM before pin/Weak/Exposed rounding")
+		_check(f.pinned.pinner_for_enemy(1) == "seamstress"
+			and ctx.starter._patches.latch_snapshot().seamstress,
+			"confirmed Needle Pin repins and consumes shared first-hit latch")
+		_spent_once(before, f, variant, "patched " + variant)
+		_check(resolver.needle_patch_preview().statuses.is_empty(),
+			"Button Eye cannot trigger twice in battle")
+		resolver.bind_patch_rules(null)
+
+	var ctx := _sewn_fixture([
+		{"id": "button_eye", "hero": "seamstress", "slot": "HEAD"},
+		{"id": "pincushion_arm", "hero": "seamstress", "slot": "ARM"}])
+	var f := _fixture([SNAG, UNPICK, PIN], 2)
+	var before := _state(f)
+	_check(_play(f, SNAG, 1).ok and _play(f, UNPICK, 2).ok,
+		"patched wearer can cast nondamaging Snag and Unpick")
+	_check(ctx.starter._patches.latch_snapshot().seamstress == false
+		and f.enemies.get_enemy(1).hp == before.enemies[0].hp
+		and f.enemies.get_enemy(2).hp == before.enemies[1].hp
+		and f.enemies.get_enemy(1).statuses == {"weak": 1}
+		and f.unravel.get_snapshot(1).gauge == 3
+		and f.unravel.get_snapshot(2).gauge == 5,
+		"nonattacks charge statuses/gauge, not damage or Button Eye")
+	_check(_play(f, PIN, 1).ok and f.enemies.get_enemy(1).statuses.exposed == 1
+		and ctx.starter._patches.latch_snapshot().seamstress,
+		"first Needle Pin after controls applies post-hit Exposed")
+	resolver.bind_patch_rules(null)
+
+	ctx = _sewn_fixture([
+		{"id": "button_eye", "hero": "seamstress", "slot": "HEAD"},
+		{"id": "pincushion_arm", "hero": "seamstress", "slot": "ARM"}])
+	f = _fixture([PIN, "seamstress_prick"], 2)
+	_check(ctx.starter.play_attack(f.deck, f.party, f.enemies, "seamstress_prick", 1).ok,
+		"genuinely held Prick is a confirmed starter attack")
+	_check(ctx.starter._patches.latch_snapshot().seamstress,
+		"starter Prick spends SAME Seamstress first-hit latch")
+	var next := _play(f, PIN, 2)
+	_check(next.ok and next.damage == 4
+		and f.enemies.get_enemy(2).get("statuses", {}).get("exposed", 0) == 0,
+		"later Needle Pin still gets ARM but not repeat Exposed")
+	resolver.bind_patch_rules(null)
+
+	for kind in ["other", "torn"]:
+		ctx = _sewn_fixture([
+			{"id": "button_eye", "hero": "warden" if kind == "other" else "seamstress", "slot": "HEAD"},
+			{"id": "pincushion_arm", "hero": "tinker" if kind == "other" else "seamstress", "slot": "ARM"}],
+			kind == "torn")
+		f = _fixture([PIN_PLUS], 2)
+		var before_patch := _state(f)
+		var outcome := _play(f, PIN_PLUS, 1)
+		_check(outcome.ok and outcome.damage == 4
+			and f.enemies.get_enemy(1).get("statuses", {}).is_empty()
+			and not ctx.starter._patches.latch_snapshot().seamstress,
+			kind + " wearer cannot empower Seamstress Needle Pin+")
+		_spent_once(before_patch, f, PIN_PLUS, kind + " unempowered Needle Pin+")
+		resolver.bind_patch_rules(null)
+
+	ctx = _sewn_fixture([
+		{"id": "button_eye", "hero": "seamstress", "slot": "HEAD"},
+		{"id": "pincushion_arm", "hero": "seamstress", "slot": "ARM"}])
+	f = _fixture([PIN, SNAG], 2)
+	for reason in ["unheld", "energy", "position", "slain", "overflow"]:
+		var rejected := _fixture([PIN, SNAG], 2)
+		match reason:
+			"unheld":
+				rejected.deck.hand.erase(PIN)
+			"energy":
+				_check(rejected.deck.try_spend_energy(3), "real zero energy fixture")
+			"position":
+				rejected.party._heroes[1]["position"] = 4
+			"slain":
+				_check(rejected.enemies.apply_damage(1, 18), "slain foe precondition")
+			"overflow":
+				rejected.enemies._enemies[0]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+		var snapshot := _state(rejected)
+		_check(not _play(rejected, PIN, 1).get("ok", false)
+			and _state(rejected) == snapshot
+			and not ctx.starter._patches.latch_snapshot().seamstress,
+			"rejected " + reason + " preserves all actors, deck, statuses and latch")
+	var invalid := CombatPatchAttackRules.new()
+	resolver.bind_patch_rules(invalid)
+	var before_invalid := _state(f)
+	_check(not _play(f, PIN, 1).get("ok", false)
+		and not _play(f, SNAG, 1).get("ok", false)
+		and _state(f) == before_invalid, "explicit failed patch binding is fail-closed")
+	resolver.bind_patch_rules(null)
