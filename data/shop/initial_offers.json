@@ -37,7 +37,10 @@
     {"id": "seamstress_red_thread", "owner": "seamstress", "price": 90},
     {"id": "warden_pinning_jab", "owner": "warden", "price": 50},
     {"id": "seamstress_needle_pin", "owner": "seamstress", "price": 50},
-    {"id": "tinker_spring_trap", "owner": "tinker", "price": 50}
+    {"id": "tinker_spring_trap", "owner": "tinker", "price": 50},
+    {"id": "warden_seam_breaker", "owner": "warden", "price": 70},
+    {"id": "tinker_spool_launcher", "owner": "tinker", "price": 55},
+    {"id": "tinker_snip_the_seam", "owner": "tinker", "price": 80}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},

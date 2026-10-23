@@ -113,6 +113,49 @@ const PINNED_STOCK_SPECS := {
 	"tinker_spring_trap": {"owner": "tinker", "price": 50, "cost": 1, "from": [2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 3, "pinned": {"pinner_identity": "source_hero", "trigger": "next_attack_by_different_hero", "bonus_damage": 5, "bonus_timing": "before_weak_exposed", "consume_once": true, "same_hero_consumes": false}}, "rarity": "common"},
 }
 
+## The three M04 Unravel setup/payoff bases stocked by this task: the Warden
+## Seam Breaker enabler and the Tinker Spool Launcher / Snip the Seam pair.
+## Rules are copied verbatim from data/cards/{warden,tinker}_pool_cards.gd; the
+## Snip half-threshold condition reads the live CombatUnravel target threshold.
+## Only base IDs are stocked, never their _plus upgrades.
+const UNRAVEL_STOCK_SPECS := {
+	"warden_seam_breaker": {
+		"owner": "warden", "price": 70, "rarity": "uncommon",
+		"cost": 2, "plus_cost": 2, "from": [1, 2], "to": [1, 2],
+		"target": "enemy_single",
+		"effects": {"damage": 7, "unravel": 4},
+		"plus_effects": {"damage": 10, "unravel": 6},
+	},
+	"tinker_spool_launcher": {
+		"owner": "tinker", "price": 55, "rarity": "common",
+		"cost": 1, "plus_cost": 1, "from": [2, 3], "to": [1, 2, 3],
+		"target": "enemy_single",
+		"effects": {"damage": 3, "unravel": 3},
+		"plus_effects": {"damage": 4, "unravel": 4},
+	},
+	"tinker_snip_the_seam": {
+		"owner": "tinker", "price": 80, "rarity": "rare",
+		"cost": 1, "plus_cost": 1, "from": [2, 3], "to": [1, 2, 3],
+		"target": "enemy_single",
+		"effects": {"damage": 5, "conditional_damage": {
+			"damage": 15, "operator": "or",
+			"conditions": [
+				{"status": "unravelled"},
+				{"gauge": "unravel", "comparison": "at_least_half",
+					"threshold": "current_target_threshold"},
+			],
+		}},
+		"plus_effects": {"damage": 7, "conditional_damage": {
+			"damage": 20, "operator": "or",
+			"conditions": [
+				{"status": "unravelled"},
+				{"gauge": "unravel", "comparison": "at_least_half",
+					"threshold": "current_target_threshold"},
+			],
+		}},
+	},
+}
+
 ## Every pre-existing authored card candidate and its established Shop quote.
 ## These entries must survive the candidate-pool expansion unchanged.
 const EXISTING_SHOP_CARDS := {
@@ -168,6 +211,7 @@ func _initialize() -> void:
 		_test_warden_pool_shop_offers_and_purchases(party, deck, catalog)
 		_test_seamstress_shop_stock_and_purchases(party, deck, catalog)
 		_test_pinned_enabler_shop_offers_and_purchases(party, deck, catalog)
+		_test_unravel_trio_shop_offers_and_purchases(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -2165,3 +2209,254 @@ func _test_pinned_enabler_shop_offers_and_purchases(party: Array[String],
 		_check(purchase_rng.state == reference_rng.state
 			and purchase_rng.randi() == reference_rng.randi(),
 			"pinned stock " + card_id + ": paid and refused buys consume no run RNG")
+
+
+## AC1/AC2/AC3: the three M04 Unravel trio Shop bases (Warden Seam Breaker and
+## Tinker Spool Launcher / Snip the Seam) are authored exactly once at their
+## established quotes, each is individually selectable by a seeded five-card /
+## two-trinket stock with its authentic base and Rest-upgrade catalog rules, and
+## each buys only its base ID for exactly its quote through RunShopPurchases.
+func _test_unravel_trio_shop_offers_and_purchases(party: Array[String], deck: Array[String],
+		catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	var warden := WardenPoolCards.new()
+	var tinker := TinkerPoolCards.new()
+	var counts := {}
+	for entry in candidates:
+		if entry is Dictionary and entry.get("id") is String:
+			counts[entry["id"]] = int(counts.get(entry["id"], 0)) + 1
+
+	# Snip's half-gauge condition reads the live ordinary Unravel thresholds, so
+	# pin the authored 8/12/16 and +4-after-break rules that make it meaningful.
+	_check(CombatUnravel.THRESHOLD_NORMAL == 8 and CombatUnravel.THRESHOLD_ELITE == 12
+		and CombatUnravel.THRESHOLD_BOSS == 16 and CombatUnravel.THRESHOLD_INCREMENT == 4,
+		"unravel trio: ordinary Unravel thresholds are 8/12/16 and rise by 4 after a break")
+
+	# AC1: one priced base listing per new ID, backed by the genuine unreplaced
+	# catalog definition (base and Rest upgrade), never a _plus Shop entry.
+	for card_id in UNRAVEL_STOCK_SPECS:
+		var spec: Dictionary = UNRAVEL_STOCK_SPECS[card_id]
+		var expected_price: int = spec["price"]
+		var upgrade_id: String = card_id + "_plus"
+		var base_ids: Array[String] = []
+		var base: Dictionary = {}
+		var plus: Dictionary = {}
+		if spec["owner"] == "warden":
+			base_ids = warden.get_base_ids()
+			base = warden.get_definition(card_id)
+			plus = warden.get_definition(upgrade_id)
+		else:
+			base_ids = tinker.get_pool_card_ids()
+			base = tinker.get_definition(card_id)
+			plus = tinker.get_definition(upgrade_id)
+		_check(not String(card_id).ends_with("_plus"),
+			"unravel trio " + card_id + ": stocked as a base ID only")
+		_check(counts.get(card_id, 0) == 1,
+			"unravel trio " + card_id + ": listed exactly once in the authored Shop")
+		_check(counts.get(upgrade_id, 0) == 0,
+			"unravel trio " + card_id + ": no _plus upgrade is ever listed")
+		_check(not deck.has(card_id) and not deck.has(upgrade_id),
+			"unravel trio " + card_id + ": not an owned starter copy")
+		var authored_entry := {}
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				authored_entry = entry
+				break
+		_check(authored_entry.get("owner") == spec["owner"]
+			and _whole_price(authored_entry.get("price")) == expected_price,
+			"unravel trio " + card_id + ": authored owner and exact quote")
+		_check(POOL_CARD_PRICES.get(card_id, -1) == expected_price,
+			"unravel trio " + card_id + ": quote matches the established pool price")
+		var schema_ok: bool = base.get("starting_copies") == 0 \
+			and base.get("upgrade_id") == upgrade_id and not base.has("upgrade_of")
+		if spec["owner"] == "tinker":
+			# TinkerPoolCards keeps its own authored schema (is_upgrade/base_id).
+			schema_ok = schema_ok and base.get("is_upgrade") == false \
+				and base.get("base_id") == card_id
+		else:
+			schema_ok = schema_ok and base.get("reward_eligible") == true
+		_check(base_ids.has(card_id) and base.get("id") == card_id
+			and base.get("owner") == spec["owner"]
+			and base.get("rarity") == spec["rarity"]
+			and base.get("cost") == spec["cost"]
+			and base.get("from_positions") == spec["from"]
+			and base.get("to_positions") == spec["to"]
+			and base.get("target_kind") == spec["target"]
+			and base.get("effects") == spec["effects"]
+			and schema_ok,
+			"unravel trio " + card_id + ": authentic base catalog rules")
+		_check(plus.get("id") == upgrade_id and plus.get("owner") == spec["owner"]
+			and plus.get("rarity") == spec["rarity"] and plus.get("cost") == spec["plus_cost"]
+			and plus.get("from_positions") == spec["from"]
+			and plus.get("to_positions") == spec["to"]
+			and plus.get("target_kind") == spec["target"]
+			and plus.get("effects") == spec["plus_effects"],
+			"unravel trio " + card_id + ": Rest upgrade rules retained")
+
+	# AC1: every earlier named Shop card and all three authored trinkets keep
+	# their own ID, owner and quote after the base-only append.
+	var earlier := {}
+	for group in [EXISTING_SHOP_CARDS, NEW_POOL_SPECS, WARDEN_STOCK_SPECS,
+			SEAMSTRESS_STOCK_SPECS, PINNED_STOCK_SPECS]:
+		for card_id in group:
+			earlier[card_id] = {"owner": group[card_id]["owner"],
+				"price": group[card_id]["price"]}
+	for card_id in earlier:
+		var previous: Dictionary = earlier[card_id]
+		_check(counts.get(card_id, 0) == 1,
+			"unravel trio " + card_id + ": earlier Shop card retained exactly once")
+		var entry := {}
+		for candidate in candidates:
+			if candidate is Dictionary and candidate.get("id") == card_id:
+				entry = candidate
+				break
+		_check(entry.get("owner") == previous["owner"]
+			and _whole_price(entry.get("price")) == previous["price"],
+			"unravel trio " + card_id + ": earlier Shop owner and quote unchanged")
+	var trinket_counts := {}
+	for entry in trinkets:
+		if entry is Dictionary and entry.get("id") is String:
+			trinket_counts[entry["id"]] = int(trinket_counts.get(entry["id"], 0)) + 1
+	for trinket_id in EXISTING_SHOP_TRINKETS:
+		_check(trinket_counts.get(trinket_id, 0) == 1,
+			"unravel trio " + trinket_id + ": authored trinket still listed once")
+		var listed := {}
+		for entry in trinkets:
+			if entry is Dictionary and entry.get("id") == trinket_id:
+				listed = entry
+				break
+		_check(_whole_price(listed.get("price")) == EXISTING_SHOP_TRINKETS[trinket_id],
+			"unravel trio " + trinket_id + ": authored trinket quote unchanged")
+
+	# AC2: a bounded deterministic seed sweep proves each new entry is
+	# individually selectable in a genuine five-card / two-trinket stock.
+	var max_seed_offset := 1000
+	for card_id in UNRAVEL_STOCK_SPECS:
+		var expected_owner: String = UNRAVEL_STOCK_SPECS[card_id]["owner"]
+		var expected_price: int = UNRAVEL_STOCK_SPECS[card_id]["price"]
+		var found_seed := -1
+		var found: Dictionary = {}
+		for offset in range(max_seed_offset):
+			var probe_seed: int = SEED + 900 + offset
+			var probe := RunShopStockOffers.generate(_rng(probe_seed), party, candidates,
+				trinkets, [])
+			if not probe.get("ok", false):
+				continue
+			for listing in probe.get("cards", []):
+				if listing.get("id") == card_id:
+					found_seed = probe_seed
+					found = probe
+					break
+			if found_seed >= 0:
+				break
+		_check(found_seed >= 0,
+			"unravel trio " + card_id + ": seeded stock selects it within 1000 fixed seeds")
+		if found_seed < 0:
+			continue
+		var cards: Array = found.get("cards", [])
+		var patches: Array = found.get("trinkets", [])
+		_check(cards.size() == 5 and patches.size() == 2,
+			"unravel trio " + card_id + ": five card and two trinket listings")
+		var card_ids := {}
+		var selected := {}
+		for listing in cards:
+			card_ids[listing.get("id")] = true
+			_check(_whole_price(listing.get("price")) ==
+				_pool_price(candidates, listing.get("id", "")),
+				"unravel trio " + card_id + ": every listed card keeps its authored quote")
+			if listing.get("id") == card_id:
+				selected = listing
+		_check(card_ids.size() == 5,
+			"unravel trio " + card_id + ": five distinct card listings")
+		_check(patches[0].get("id") != patches[1].get("id"),
+			"unravel trio " + card_id + ": two distinct trinket listings")
+		_check(selected.get("owner") == expected_owner
+			and selected.get("price") == expected_price,
+			"unravel trio " + card_id + ": selected listing is the authored owner and quote")
+		# The same seed replays against the independent sorted-pool oracle,
+		# including the next RNG state and draw.
+		var stock_rng := _rng(found_seed)
+		var oracle_rng := _rng(found_seed)
+		var replay_rng := _rng(found_seed)
+		var oracle: Dictionary = _oracle(catalog, party, candidates, trinkets, [], oracle_rng)
+		var stock: Dictionary = RunShopStockOffers.generate(stock_rng, party, candidates,
+			trinkets, [])
+		var reordered_cards := candidates.duplicate(true)
+		var reordered_trinkets := trinkets.duplicate(true)
+		reordered_cards.reverse()
+		reordered_trinkets.reverse()
+		var replay: Dictionary = RunShopStockOffers.generate(replay_rng, party,
+			reordered_cards, reordered_trinkets, [])
+		_check(stock == found and stock.get("cards", []) == oracle["cards"]
+			and stock.get("trinkets", []) == oracle["trinkets"],
+			"unravel trio " + card_id + ": seeded stock matches the independent oracle")
+		_check(replay == stock and replay_rng.state == stock_rng.state
+			and stock_rng.state == oracle_rng.state
+			and replay_rng.randi() == stock_rng.randi(),
+			"unravel trio " + card_id + ": reorder and RNG replay exactly")
+
+		# AC2: buying the genuinely selected listing spends exactly its quote
+		# once, appends only that base card and touches nothing else.
+		var shop := RunShopPurchases.new(party, deck, [], expected_price, cards, patches)
+		_check(shop.is_valid(),
+			"unravel trio " + card_id + ": exact-quote visit opens")
+		if not shop.is_valid():
+			continue
+		var before_state: Dictionary = shop.get_state()
+		var before_stock: Dictionary = shop.get_stock()
+		var paid: Dictionary = shop.buy("card", card_id)
+		var after_state: Dictionary = shop.get_state()
+		var after_stock: Dictionary = shop.get_stock()
+		_check(paid.get("ok", false) and paid.get("receipt", {}) ==
+			{"kind": "card", "id": card_id, "price": expected_price},
+			"unravel trio " + card_id + ": paid receipt is the exact base ID and quote")
+		_check(after_state["deck"] == before_state["deck"] + [card_id]
+			and after_state["deck"].count(card_id) == before_state["deck"].count(card_id) + 1,
+			"unravel trio " + card_id + ": only that base card is appended")
+		_check(after_state["gold"] == before_state["gold"] - expected_price
+			and after_state["gold"] == 0,
+			"unravel trio " + card_id + ": quoted gold debited exactly once")
+		_check(after_state["trinkets"] == before_state["trinkets"]
+			and after_state["party_ids"] == before_state["party_ids"],
+			"unravel trio " + card_id + ": purchase touches no trinket or hero")
+		var expected_stock: Dictionary = before_stock.duplicate(true)
+		var found_listing := false
+		for listing in expected_stock["cards"]:
+			if listing.get("id") == card_id:
+				listing["sold"] = true
+				found_listing = true
+		_check(found_listing and after_stock == expected_stock,
+			"unravel trio " + card_id + ": only the bought listing becomes sold")
+		var repeat: Dictionary = shop.buy("card", card_id)
+		_check(not repeat.get("ok", true) and not repeat.has("receipt")
+			and shop.get_state() == after_state and shop.get_stock() == after_stock,
+			"unravel trio " + card_id + ": repeat buy refused without mutation")
+		var short := RunShopPurchases.new(party, deck, [], expected_price - 1, cards, patches)
+		var short_state: Dictionary = short.get_state()
+		var short_stock: Dictionary = short.get_stock()
+		var denied: Dictionary = short.buy("card", card_id)
+		_check(short.is_valid() and not denied.get("ok", true) and not denied.has("receipt")
+			and short.get_state() == short_state and short.get_stock() == short_stock
+			and short_state["deck"] == deck,
+			"unravel trio " + card_id + ": one gold short refuses with no copy or spend")
+
+	# AC3: a forged owner, duplicate listing or _plus candidate of each new base
+	# still fails closed before any seeded draw or caller-pool change.
+	for card_id in UNRAVEL_STOCK_SPECS:
+		var spec: Dictionary = UNRAVEL_STOCK_SPECS[card_id]
+		var forged_owner: String = "tinker" if spec["owner"] == "warden" else "warden"
+		_reject("unravel trio " + card_id + ": forged owner", _rng(), party,
+			_with_card(candidates, 0,
+				{"id": card_id, "owner": forged_owner, "price": spec["price"]}),
+			trinkets, [])
+		_reject("unravel trio " + card_id + ": duplicate listing", _rng(), party,
+			_with_card(candidates, 0,
+				{"id": card_id, "owner": spec["owner"], "price": spec["price"]}),
+			trinkets, [])
+		_reject("unravel trio " + card_id + ": _plus candidate", _rng(), party,
+			_with_card(candidates, 0,
+				{"id": card_id + "_plus", "owner": spec["owner"], "price": spec["price"]}),
+			trinkets, [])
+
