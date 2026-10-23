@@ -17,6 +17,14 @@ var _active := false
 var _awarded := false
 var _played: Dictionary = {}
 
+# Opt-in Switchback Button transition tracking
+var _switchback_active := false
+var _switchback_wardrobe: Variant = null
+var _switchback_torn: Variant = null
+var _prev_owner: String = ""
+var _switchback_consumed := false
+var _receipt_ids: Dictionary = {}
+
 
 func _init(party: CombatParty, deck: CombatDeck) -> void:
 	_party = party
@@ -31,6 +39,7 @@ func begin_player_turn() -> bool:
 	_clear_progress()
 	_awarded = false
 	_active = true
+	_reset_switchback()
 	return true
 
 
@@ -184,3 +193,131 @@ func _living_heroes() -> Array[Dictionary]:
 		if hero["hp"] > 0:
 			living.append(hero)
 	return living
+
+
+## Opt-in Switchback Button transition tracking.
+## Only activates when a valid wardrobe and torn state are supplied.
+func enable_switchback(wardrobe: Variant, torn: Variant) -> bool:
+	if wardrobe == null or torn == null or not is_instance_valid(wardrobe) or not is_instance_valid(torn):
+		return false
+	if typeof(wardrobe) != TYPE_OBJECT or not ("project_active" in wardrobe):
+		return false
+	if typeof(torn) != TYPE_OBJECT or not ("read_state" in torn) or not torn.is_valid():
+		return false
+	_switchback_active = true
+	_switchback_wardrobe = wardrobe
+	_switchback_torn = torn
+	_prev_owner = ""
+	_switchback_consumed = false
+	_receipt_ids.clear()
+	return true
+
+
+func disable_switchback() -> void:
+	_switchback_active = false
+	_switchback_wardrobe = null
+	_switchback_torn = null
+	_prev_owner = ""
+	_switchback_consumed = false
+	_receipt_ids.clear()
+
+
+func is_switchback_active() -> bool:
+	return _switchback_active
+
+
+func get_switchback_state() -> Dictionary:
+	return {
+		"active": _switchback_active,
+		"consumed": _switchback_consumed,
+		"prev_owner": _prev_owner,
+		"receipts_observed": _receipt_ids.keys(),
+	}
+
+
+func observe_confirmed_play(receipt_id: String, owner_id: String) -> Dictionary:
+	var rejected := {"ok": false, "triggered": false, "block_granted": 0}
+	if not _switchback_active:
+		return rejected
+	if not _bindings_valid() or not _deck.turn_active:
+		return rejected
+	if receipt_id == null or receipt_id == "" or receipt_id != receipt_id.strip_edges():
+		return rejected
+	if owner_id == null or owner_id == "" or owner_id != owner_id.strip_edges():
+		return rejected
+	if not owner_id in HERO_IDS:
+		return rejected
+	# Deduplication: replayed receipt does not advance previous-owner or spend trigger.
+	if _receipt_ids.has(receipt_id):
+		return rejected
+	# Check if the owner lives and the patch is worn and untorn.
+	var eligible := _switchback_wearer_for(owner_id)
+	if eligible:
+		# If previous owner is set and different from current, and not yet triggered,
+		# and the wearer wears the patch, then trigger 2 Block.
+		if _prev_owner != "" and _prev_owner != owner_id and not _switchback_consumed:
+			_party.gain_block(_hero_position_for(owner_id), 2)
+			_switchback_consumed = true
+			_receipt_ids[receipt_id] = true
+			_prev_owner = owner_id
+			return {"ok": true, "triggered": true, "block_granted": 2}
+	# Even when not triggered, a valid receipt advances the previous-owner pointer.
+	_receipt_ids[receipt_id] = true
+	_prev_owner = owner_id
+	return {"ok": true, "triggered": false, "block_granted": 0}
+
+
+func observe_confirmed_stitched_play(first_receipt_id: String, first_owner_id: String,
+		second_receipt_id: String, second_owner_id: String) -> Array[Dictionary]:
+	# Ordered stitched halves: observe each in sequence independently.
+	var first_result := observe_confirmed_play(first_receipt_id, first_owner_id)
+	var second_result := observe_confirmed_play(second_receipt_id, second_owner_id)
+	return [first_result, second_result]
+
+
+func _switchback_wearer_for(owner_id: String) -> bool:
+	if not _switchback_active or _switchback_wardrobe == null or _switchback_torn == null:
+		return false
+	if not _switchback_torn.is_valid():
+		return false
+	var torn_state: Dictionary = _switchback_torn.read_state()
+	if torn_state == null or typeof(torn_state) != TYPE_DICTIONARY:
+		return false
+	var projection: Dictionary = _switchback_wardrobe.project_active(torn_state)
+	if projection == null or typeof(projection) != TYPE_DICTIONARY:
+		return false
+	if not projection.get("ok", false):
+		return false
+	var active: Dictionary = projection.get("active", {})
+	if not active.has(owner_id):
+		return false
+	# The hero must have switchback_button in HEAD and be untorn (tear count == 0).
+	var equipped: Array = active.get(owner_id, [])
+	if not "switchback_button" in equipped:
+		return false
+	var tear_counts: Dictionary = torn_state.get("tear_counts", {})
+	if tear_counts.get(owner_id, 0) != 0:
+		return false
+	# Additionally confirm the hero is living (project_active filters by hp > 0,
+	# but we also check explicitly for safety).
+	var heroes: Array = torn_state.get("heroes", [])
+	for hero in heroes:
+		if hero.get("id") == owner_id:
+			return hero.get("hp", 0) > 0
+	return false
+
+
+func _hero_position_for(hero_id: String) -> int:
+	if _party == null or not _party.is_valid():
+		return 0
+	var heroes := _party.get_heroes()
+	for index in range(heroes.size()):
+		if heroes[index].get("id") == hero_id:
+			return index + 1
+	return 0
+
+
+func _reset_switchback() -> void:
+	_prev_owner = ""
+	_switchback_consumed = false
+	_receipt_ids.clear()
