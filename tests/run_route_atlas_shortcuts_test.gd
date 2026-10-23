@@ -64,52 +64,61 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 		where: String) -> Array[String]:
 	var before := _state(map, rng)
 	var ordered := _ordered_legal(map)
+	var current_floor := map.get_current_floor()
+	var window: Array[int] = []
+	if not map.is_complete():
+		for f in range(current_floor + 1, mini(current_floor + 3, 12) + 1):
+			window.append(f)
+	var expected: Dictionary = {}
+	for f in window:
+		for node in map.get_floors()[f - 1]:
+			expected[node["id"]] = node
+	if not map.get_current_node_id().is_empty():
+		expected[map.get_current_node_id()] = map.get_node(map.get_current_node_id())
 	_check(view.is_inside_tree() and view.is_visible_in_tree()
 		and view.size == Vector2(1240, 600)
 		and view.position + view.size <= Vector2(1280, 720),
-		where + ": mounted visible atlas fully fits target viewport")
-	_check(ordered.size() <= 4 and ordered == map.get_legal_choices() if map.get_current_floor() == 0 else ordered.size() <= 4,
-		where + ": actual legal destinations fit numeric keys")
+		where + ": mounted route fits 1280x720")
+	_check(ordered.size() <= 4 and ordered == view._rendered_shortcuts
+		and ordered.size() == map.get_legal_choices().size(),
+		where + ": shortcuts exactly match legal authored-position ordering")
 	var button_count := 0
-	var captions: Array[String] = []
-	for floor_nodes in map.get_floors():
-		for node in floor_nodes:
-			var id: String = node["id"]
-			var marker := _marker(view, id)
-			_check(marker != null, where + ": model marker exists " + id)
-			if marker == null:
-				continue
-			var identity := marker.get_node_or_null("Identity") as Label
-			var action := marker.get_node_or_null("Action") as Button
-			var index := ordered.find(id)
-			var expected_caption := (str(index + 1) + "\n" if index >= 0 else "") + String(node["type"])
-			_check(identity != null and identity.text == expected_caption and not identity.text.contains(id),
-				where + ": exact numbered kind without raw ID for " + id)
-			_check(marker.get_meta("route_id") == id and marker.get_meta("route_kind") == String(node["type"]),
-				where + ": marker metadata retains canonical route_id and route_kind " + id)
-			if identity != null:
-				captions.append(identity.text)
-				_check(identity.get_combined_minimum_size().x <= marker.size.x
-					and identity.get_combined_minimum_size().y <= marker.size.y,
-					where + ": complete caption fits stitched marker " + id)
-			_check(marker.get_meta("route_state") == ("legal" if index >= 0 else
-				("chosen" if map.get_route().has(id) else "other")),
-				where + ": state reflects selected/available/inaccessible " + id)
-			if index >= 0:
-				button_count += 1
-				_check(action != null and action.focus_mode == Control.FOCUS_ALL
-					and action.is_visible_in_tree()
-					and action.tooltip_text.contains(id)
-					and action.tooltip_text.contains(String(node["type"])),
-					where + ": numbered destination owns mounted button with truthful tooltip " + id)
-				_check(identity.text.begins_with(str(index + 1) + "\n"),
-					where + ": legal destination displays sorted 1-4 number: " + id)
-			else:
-				_check(action == null and identity.text == String(node["type"]),
-					where + ": no inactive numbered/actionable marker " + id)
-	_check(button_count == ordered.size() and captions.size() >= 36,
-		where + ": exactly N legal Action buttons across complete graph")
-	_check(_state(map, rng) == before, where + ": display verification leaves graph, route and RNG intact")
+	var marker_count := 0
+	for child in view.get_children():
+		if not (child is PanelContainer):
+			continue
+		var marker := child as PanelContainer
+		marker_count += 1
+		var id: String = marker.get_meta("route_id")
+		_check(expected.has(id), where + ": no off-window clickable or hidden node " + id)
+		if not expected.has(id):
+			continue
+		var identity := marker.get_node("Identity") as Label
+		var action := marker.get_node_or_null("Action") as Button
+		var index := ordered.find(id)
+		var expected_caption := (str(index + 1) + " " if index >= 0 else "") + String(expected[id]["type"])
+		_check(identity.text == expected_caption and not identity.text.contains(id)
+			and identity.get_combined_minimum_size().x <= marker.size.x
+			and identity.get_combined_minimum_size().y <= marker.size.y,
+			where + ": next-floor number and kind fit round patch " + id)
+		_check(marker.get_meta("route_state") == ("legal" if index >= 0 else
+			("chosen" if map.get_route().has(id) else "other")),
+			where + ": exact actual legal/chosen/inactive state " + id)
+		if index >= 0:
+			button_count += 1
+			_check(action != null and action.focus_mode == Control.FOCUS_ALL
+				and action.is_visible_in_tree() and not action.disabled
+				and action.tooltip_text.contains(id)
+				and action.tooltip_text.contains(String(expected[id]["type"]))
+				and action.get_meta("route_id") == id,
+				where + ": only legal destination has exact ID mouse/focus button " + id)
+		else:
+			_check(action == null and identity.text == String(expected[id]["type"]),
+				where + ": future and current patches cannot request a choice " + id)
+	_check(button_count == ordered.size() and marker_count == expected.size(),
+		where + ": all and only N legal Action buttons, with no off-window node")
+	_check(_state(map, rng) == before,
+		where + ": display leaves complete seed graph, route and RNG unchanged")
 	return ordered
 
 

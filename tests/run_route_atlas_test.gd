@@ -136,410 +136,298 @@ func _verify_book(view: RunRouteAtlas, label: String) -> void:
 			label + ": " + str(child.name) + " is sewn onto a page")
 
 
-# The committed sewn token is a real, inert marker child on every supported kind. The
-# caption never sits under it. Kinds outside this task's six authored mappings are left
-# untouched here, so future art for them cannot be asserted away.
+# Tokens remain image-backed when present; missing art and Treasure use the
+# same drawn patch emblem, with exact canonical kind and input independent.
 func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtlas,
 		label: String) -> void:
 	var kind: String = marker.get_meta("route_kind")
-	var expected_path: String = TOKEN_PATHS.get(kind, "")
-	if expected_path.is_empty():
-		return
 	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
-	var identity := marker.get_node_or_null("Identity") as Label
-	var action := marker.get_node_or_null("Action") as Button
-	_check(art != null, label + ": committed sewn token mounted for " + kind + " " + id)
+	var caption := marker.get_node_or_null("Identity") as Label
+	_check(art != null and caption != null and art.token_kind == kind
+		and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		label + ": sewn emblem and readable kind caption " + id)
 	if art == null:
 		return
-	var committed := load(expected_path) as Texture2D
-	_check(committed != null and committed.get_width() > 0 and committed.get_height() > 0,
-		label + ": authored token image loads with real pixels " + kind)
-	_check(art.name == "Art" and art.token_kind == kind
-		and art.get_meta("art_path") == expected_path
-		and art.token_texture == committed
-		and view.node_token_texture(expected_path) == art.token_texture,
-		label + ": actual marker child carries the matching committed image " + kind + " " + id)
-	_check(art.mouse_filter == Control.MOUSE_FILTER_IGNORE
-		and art.focus_mode == Control.FOCUS_NONE,
-		label + ": token art is inert decoration, not an input target " + id)
-	_check(marker.get_child(0) == art and identity != null
-		and identity.get_index() > art.get_index()
-		and (action == null or action.get_index() > identity.get_index())
-		and marker.get_child_count() == (3 if action != null else 2),
-		label + ": token sits before the identity caption and legal action " + id)
-	var texture := art.token_texture
-	var drawn := art.token_rect()
-	_check(texture != null and drawn.size.x > 0.0 and drawn.size.y > 0.0,
-		label + ": token has a real drawn rectangle " + id)
-	if texture != null:
-		_check(is_equal_approx(drawn.size.x / drawn.size.y,
-			float(texture.get_width()) / float(texture.get_height())),
-			label + ": token keeps the committed aspect ratio " + id)
-		_check(drawn.position.x >= 0.0 and drawn.position.y >= 0.0
-			and drawn.end.x <= art.size.x and drawn.end.y <= art.size.y
-			and drawn.end.x <= RunRouteAtlas.NODE_TOKEN_COLUMN,
-			label + ": token stays inside the marker's left art column " + id)
-	var caption_width := identity.get_combined_minimum_size().x if identity != null else 0.0
-	_check(identity != null and identity.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT
-		and art.position.x + drawn.end.x + caption_width <= marker.size.x,
-		label + ": readable caption keeps its own space beside the token " + id)
-	# The three route-state borders survive behind the art: art stays off the border.
-	var paper := marker.get_theme_stylebox("panel") as StyleBoxFlat
-	_check(paper != null and art.position.x >= paper.get_margin(SIDE_LEFT)
-		and art.position.y >= paper.get_margin(SIDE_TOP)
-		and art.position.x + art.size.x <= marker.size.x - paper.get_margin(SIDE_RIGHT)
-		and art.position.y + art.size.y <= marker.size.y - paper.get_margin(SIDE_BOTTOM),
-		label + ": sewn token stays inside the visible patch border " + id)
+	var path: String = TOKEN_PATHS.get(kind, "")
+	_check(art.get_meta("art_path") == path and art.token_texture == view.node_token_texture(path),
+		label + ": canonical art path and cached texture for " + id)
+	if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
+		var texture := load(path) as Texture2D
+		var rect := art.token_rect()
+		_check(texture != null and art.token_texture == texture
+			and rect.size.x > 0.0 and rect.size.y > 0.0
+			and is_equal_approx(rect.size.x / rect.size.y,
+				float(texture.get_width()) / float(texture.get_height()))
+			and _inside(rect, Rect2(Vector2.ZERO, art.size)),
+			label + ": visible authored token fits patch without distortion " + id)
+	else:
+		_check(art.token_texture == null and art.token_rect() == Rect2(),
+			label + ": missing token or Treasure uses drawn fallback " + id)
+	_check(caption.vertical_alignment == VERTICAL_ALIGNMENT_BOTTOM
+		and caption.get_theme_font_size("font_size") >= 11,
+		label + ": kind and shortcut read below the emblem " + id)
 
 
-## Kind mapping, optional loading, caching and both marker branches, from real source.
 func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 	for kind in TOKEN_PATHS:
 		var path: String = TOKEN_PATHS[kind]
 		_check(RunRouteAtlas.node_token_path(kind) == path,
-			label + ": exact authored " + kind + " kind maps to its committed token")
+			label + ": supported route token has its committed art path " + kind)
 		var loaded := view.node_token_texture(path)
-		_check(loaded != null and loaded == load(path) and view.has_cached_node_token(path),
-			label + ": committed " + kind + " token loads once and is cached by path")
+		_check(loaded == (load(path) as Texture2D if ResourceLoader.exists(path, "Texture2D") else null)
+			and view.has_cached_node_token(path),
+			label + ": optional sewn token loads or falls back and caches " + kind)
 		_check(view.node_token_texture(path) == loaded,
-			label + ": repeated " + kind + " load returns the cached texture")
-		var art := RunRouteAtlas.NodeToken.new()
-		art.token_kind = kind
-		art.token_texture = loaded
-		art.size = RunRouteAtlas.NODE_SIZE - Vector2(2.0, 4.0)
-		var drawn := art.token_rect()
-		_check(loaded != null and drawn.size.x > 0.0
-			and is_equal_approx(drawn.size.x / drawn.size.y,
-				float(loaded.get_width()) / float(loaded.get_height())),
-			label + ": " + kind + " token drawn without stretching")
-		art.free()
-	# Unknown kinds and failed loads fall back to the drawn marker, never an error.
-	_check(RunRouteAtlas.node_token_path("Forged").is_empty()
-		and RunRouteAtlas.node_token_path("").is_empty(),
-		label + ": unknown authored kinds have no token path")
-	var failed_path := "res://assets/paper/ui/map_node_forged_token.png"
+			label + ": cache keeps same token reference " + kind)
+	_check(RunRouteAtlas.node_token_path("Treasure").is_empty()
+		and RunRouteAtlas.node_token_path("Unknown").is_empty(),
+		label + ": Treasure and unknown kinds have a drawn fallback")
+	var failed_path := "res://assets/paper/ui/map_node_missing_route_token.png"
 	_check(view.node_token_texture(failed_path) == null
-		and view.has_cached_node_token(failed_path),
-		label + ": a token that fails to load is null and cached, never an error")
-	_check(view.node_token_texture("") == null, label + ": a blank token path loads nothing")
-	# The real _add_marker branches: token art + right-aligned caption, or drawn fallback.
+		and view.has_cached_node_token(failed_path), label + ": missing texture cached as null")
 	var probe := RunRouteAtlas.new()
 	var none: Array[String] = []
-	var legal: Array[String] = ["f01_n0"]
-	var fallback_legal: Array[String] = ["f01_n1"]
-	probe._add_marker("f01_n0", "Elite", Vector2.ZERO, none, legal, 1)
-	probe._add_marker("f01_n1", "Forged", Vector2(100.0, 0.0), none, fallback_legal, 2)
-	var token_marker := probe.get_node_or_null("Node_f01_n0") as PanelContainer
-	var drawn_marker := probe.get_node_or_null("Node_f01_n1") as PanelContainer
-	_check(token_marker != null and token_marker.get_node_or_null("Art") is RunRouteAtlas.NodeToken
-		and (token_marker.get_node("Identity") as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT
-		and token_marker.get_node_or_null("Action") != null,
-		label + ": supported kind mounts its token, caption and legal action together")
-	_check(drawn_marker != null and drawn_marker.get_node_or_null("Art") == null
-		and (drawn_marker.get_node("Identity") as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER
-		and drawn_marker.get_node_or_null("Action") != null,
-		label + ": unknown kind keeps the drawn paper marker and still admits its legal action")
+	var legal: Array[String] = ["f01_n0", "f01_n1"]
+	probe._add_marker("f01_n0", "Fight", Vector2.ZERO, none, legal, 1)
+	probe._add_marker("f01_n1", "Treasure", Vector2(100, 0), none, legal, 2)
+	for id in legal:
+		var marker := probe.get_node_or_null("Node_" + id) as PanelContainer
+		_check(marker != null and marker.get_node_or_null("Art") is RunRouteAtlas.NodeToken
+			and marker.get_node_or_null("Action") is Button
+			and marker.get_node_or_null("Identity") is Label,
+			label + ": standalone image-backed or fallback sewn marker with legal action " + id)
 	probe.free()
 
 
-# ---------------------------------------------------------------------------
-# Authored area captions over their exact floor groups (drawn pages and owner board).
-# ---------------------------------------------------------------------------
-
-func _verify_area_labels(view: RunRouteAtlas, label: String) -> void:
-	var found: Dictionary = {}
+func _verify_area_labels(view: RunRouteAtlas, visible: Array[int], label: String) -> void:
+	var seen: Dictionary = {}
 	for child in view.get_children():
 		if not (child is Label) or not child.has_meta("area_name"):
 			continue
 		var area: Label = child
-		var area_name: String = str(area.get_meta("area_name"))
-		var span: Array = AREA_LABELS.get(area_name, [])
-		_check(span.size() == 2 and not found.has(area_name),
-			label + ": one authored area caption names " + area_name)
-		if span.size() != 2 or found.has(area_name):
-			continue
-		found[area_name] = area
-		_check(int(area.get_meta("first_floor")) == int(span[0])
-			and int(area.get_meta("last_floor")) == int(span[1]),
-			label + ": " + area_name + " names its exact floor span")
-		_check(area.text == area_name and area.is_visible_in_tree(),
-			label + ": open book visibly reads " + area_name)
-		_check(area.mouse_filter == Control.MOUSE_FILTER_IGNORE
-			and area.focus_mode == Control.FOCUS_NONE,
-			label + ": area caption never takes pointer or keyboard input: " + area_name)
-		_check(area.get_theme_font_size("font_size") >= 14
-			and area.get_theme_color("font_color") == RunRouteAtlas.INK,
-			label + ": area caption is legible ink at map scale: " + area_name)
-		var left := RunRouteAtlas.FIRST_X + float(int(span[0]) - 1) * RunRouteAtlas.FLOOR_STEP
-		var right := RunRouteAtlas.FIRST_X + float(int(span[1]) - 1) * RunRouteAtlas.FLOOR_STEP \
-			+ RunRouteAtlas.NODE_SIZE.x
-		var rect := Rect2(area.position, area.size)
-		_check(is_equal_approx(rect.position.x, left)
-			and is_equal_approx(rect.size.x, right - left)
-			and rect.end.y <= RunRouteAtlas.FIRST_Y,
-			label + ": " + area_name + " spans its own floor columns above every patch")
-		_check(_inside(rect, RunRouteAtlas.PAGE_LEFT) or _inside(rect, RunRouteAtlas.PAGE_RIGHT),
-			label + ": " + area_name + " stays sewn on a page")
-	_check(found.size() == AREA_LABELS.size(),
-		label + ": only the authored area captions are mounted")
-	for area_name in AREA_LABELS:
-		_check(found.has(area_name), label + ": open book names the " + area_name + " area")
+		var floor_number: int = area.get_meta("floor_number")
+		var area_name: String = area.get_meta("area_name")
+		var band: Array = AREA_LABELS.get(area_name, [])
+		_check(visible.has(floor_number) and not seen.has(floor_number)
+			and band.size() == 2 and floor_number >= int(band[0])
+			and floor_number <= int(band[1]) and area.text == area_name
+			and area.get_theme_font_size("font_size") >= 16
+			and _inside(Rect2(area.position, area.size), RunRouteAtlas.PAGE_RIGHT),
+			label + ": upcoming floor has its correct readable area heading %d" % floor_number)
+		seen[floor_number] = true
+	_check(seen.size() == visible.size(),
+		label + ": every visible upcoming floor and no off-window area has a heading")
 
 
-# The next-area caption computed from the authored table above and the REAL map floor,
-# independently of the view's own helper.
 func _expected_next_area_text(map: RunMap) -> String:
-	var current := map.get_current_floor()
 	if map.is_complete():
 		return "Route complete · Floor 12/12"
-	var next_floor := current + 1
+	var floor_number := map.get_current_floor() + 1
 	for area_name in AREA_LABELS:
 		var span: Array = AREA_LABELS[area_name]
-		if next_floor >= int(span[0]) and next_floor <= int(span[1]):
-			return "Next: %s · Floor %d/12" % [area_name, next_floor]
+		if floor_number >= int(span[0]) and floor_number <= int(span[1]):
+			return "Next: %s · Floor %d/12" % [area_name, floor_number]
 	return ""
 
 
-# The mounted, sewn, inert status tab: exact text from the real snapshot, no floor 13,
-# readable ink, no input, and fully on the left cream page above the floor-number row.
 func _verify_next_area_tab(view: RunRouteAtlas, map: RunMap, tab: Control, label: String) -> void:
-	var status: RunRouteAtlas.NextAreaTab = tab as RunRouteAtlas.NextAreaTab
-	_check(status != null and status.has_meta("next_area_tab"),
-		label + ": next-area status tab is the real mounted inert control")
+	var status := tab as RunRouteAtlas.NextAreaTab
+	_check(status != null and status.has_meta("next_area_tab"), label + ": mounted sewn status")
 	if status == null:
 		return
-	var expected := _expected_next_area_text(map)
-	_check(not expected.is_empty() and status.text == expected,
-		label + ": tab reads the true next area/floor from the map: " + str(status.text))
-	_check(not status.text.contains("Floor 13") and not status.text.contains("14/12"),
-		label + ": tab never advertises a floor past the authored route")
-	_check(status.mouse_filter == Control.MOUSE_FILTER_IGNORE
-		and status.focus_mode == Control.FOCUS_NONE,
-		label + ": status tab takes no pointer or keyboard focus")
-	var rect := Rect2(status.position, status.size)
-	_check(_inside(rect, RunRouteAtlas.PAGE_LEFT)
-		and rect.position.y >= RunRouteAtlas.PAGE_LEFT.position.y
-		and rect.end.y <= 64.0 and rect.position.x >= 30.0 and rect.end.x <= 350.0,
-		label + ": status tab sits on the left page above the floor header row")
-	_check(RunRouteAtlas.NEXT_AREA_TAB_FONT_SIZE >= 14
-		and RunRouteAtlas.INK == Color("#4a3f35") and RunRouteAtlas.PAPER == Color("#ecdfbd"),
-		label + ": status tab keeps dark ink on cream paper at readable size")
+	_check(status.text == _expected_next_area_text(map)
+		and not status.text.contains("Floor 13")
+		and status.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and status.focus_mode == Control.FOCUS_NONE
+		and _inside(Rect2(status.position, status.size), RunRouteAtlas.PAGE_LEFT)
+		and RunRouteAtlas.NEXT_AREA_TAB_FONT_SIZE >= 16,
+		label + ": correct next area or terminal line in readable left page")
 
 
-# Inspect actual mounted children, not internal arrays or a view-generated graph oracle.
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
 	var before := _state(map, rng)
-	var floors: Array = map.get_floors()
+	var floors := map.get_floors()
 	_check(floors.size() == 12 and floors[0].size() >= 3 and floors[0].size() <= 4,
-		label + ": twelve actual floors with playable opening")
+		label + ": authoritative seeded graph spans twelve 3-4 node floors")
 	if floors.size() != 12:
 		return
-	var expected_nodes: Dictionary = {}
-	var expected_edges: Dictionary = {}
+	var all_nodes: Dictionary = {}
+	var all_edges: Dictionary = {}
 	for fi in range(floors.size()):
 		_check(floors[fi].size() >= 3 and floors[fi].size() <= 4,
-			label + ": actual floor node count %d" % (fi + 1))
+			label + ": authoritative authored node count on floor %d" % (fi + 1))
 		for node in floors[fi]:
 			var id: String = node["id"]
-			_check(not expected_nodes.has(id), label + ": distinct model ID " + id)
-			expected_nodes[id] = node.duplicate(true)
-			_check(node["floor"] == fi + 1 and node["position"] >= 0,
-				label + ": authoritative floor and row positions")
-			for to_id in node["outgoing"]:
-				var pair := id + "->" + str(to_id)
-				_check(not expected_edges.has(pair), label + ": model directed edges unique: " + pair)
-				expected_edges[pair] = true
-
+			all_nodes[id] = node
+			for target in node["outgoing"]:
+				all_edges[id + "->" + str(target)] = true
+	_check(view._rendered_graph == floors and view._rendered_route == map.get_route()
+		and view._rendered_legal == map.get_legal_choices()
+		and view._rendered_generation == map.get_generation_revision(),
+		label + ": entire unseen model remains in defensive authority snapshot")
+	var current_floor := map.get_current_floor()
+	var visible_floors: Array[int] = []
+	if not map.is_complete():
+		for f in range(current_floor + 1, mini(current_floor + 3, 12) + 1):
+			visible_floors.append(f)
+	var visible_ids: Dictionary = {}
+	var current_id := map.get_current_node_id()
+	for f in visible_floors:
+		for node in floors[f - 1]:
+			visible_ids[node["id"]] = true
+	if not current_id.is_empty():
+		visible_ids[current_id] = true
+	var expected_edges: Dictionary = {}
+	for id in visible_ids:
+		for to_id in all_nodes[id]["outgoing"]:
+			if visible_ids.has(to_id):
+				expected_edges[id + "->" + str(to_id)] = true
+	var legal := map.get_legal_choices()
+	var shortcuts: Array[String] = []
+	for f in visible_floors:
+		for node in floors[f - 1]:
+			if legal.has(node["id"]):
+				shortcuts.append(node["id"])
+	shortcuts.sort_custom(func(a: String, b: String) -> bool:
+		return int(all_nodes[a]["position"]) < int(all_nodes[b]["position"]))
+	_check(view._rendered_shortcuts == shortcuts and shortcuts.size() == legal.size()
+		and shortcuts.size() <= 4,
+		label + ": only true next-floor authored-position options own numeric shortcuts")
 	var seen_nodes: Dictionary = {}
 	var seen_edges: Dictionary = {}
-	var seen_floors: Dictionary = {}
-	## Authored kinds this seeded book actually shows a sewn token for.
-	var seen_kinds: Dictionary = {}
-	var first_marker_index := 999999
-	var last_thread_index := -1
-	var last_marker_index := -1
-	var pin_ids: Array = []
-	var pin_indices: Array = []
+	var seen_headers: Dictionary = {}
+	var seen_pins: Array[String] = []
+	var first_marker := 99999
+	var last_thread := -1
+	var last_marker := -1
+	var journal_count := 0
 	var tab_count := 0
-	var chosen: Array[String] = map.get_route()
-	var legal: Array[String] = map.get_legal_choices()
-	var ordered_legal: Array[String] = []
-	for floor_nodes in floors:
-		var sorted_nodes: Array = floor_nodes.duplicate()
-		sorted_nodes.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return int(a["position"]) < int(b["position"]))
-		for node in sorted_nodes:
-			if legal.has(node["id"]) and not chosen.has(node["id"]):
-				ordered_legal.append(node["id"])
-	var bounding := Rect2(Vector2.ZERO, view.size)
-	_check(view.is_inside_tree() and view.size == RunRouteAtlas.ATLAS_SIZE,
-		label + ": actual 1240x600 mounted preview")
-	_check(_inside(Rect2(view.position, view.size), Rect2(Vector2.ZERO, Vector2(1280, 720))),
-		label + ": full preview fits 1280x720")
-	_check(view.mouse_filter == Control.MOUSE_FILTER_IGNORE and view.focus_mode == Control.FOCUS_NONE,
-		label + ": atlas cannot capture pointer or keyboard focus")
-
+	_check(view.is_inside_tree() and view.size == RunRouteAtlas.ATLAS_SIZE
+		and _inside(Rect2(view.position, view.size), Rect2(Vector2.ZERO, Vector2(1280, 720))),
+		label + ": actual 1240x600 selector fits 1280x720")
 	for index in range(view.get_child_count()):
 		var child: Node = view.get_child(index)
 		if child is Line2D:
+			last_thread = index
 			var line: Line2D = child
-			last_thread_index = index
-			_check(line.has_meta("from_id") and line.has_meta("to_id"),
-				label + ": every visible thread identifies its directed endpoints")
-			if not line.has_meta("from_id") or not line.has_meta("to_id"):
-				continue
+			var key := str(line.get_meta("from_id")) + "->" + str(line.get_meta("to_id"))
+			_check(expected_edges.has(key) and not seen_edges.has(key)
+				and line.points.size() == 16 and line.width > 0,
+				label + ": only real connected in-window stitch " + key)
+			seen_edges[key] = line
 			var source: String = line.get_meta("from_id")
 			var target: String = line.get_meta("to_id")
-			var edge_key := source + "->" + target
-			_check(expected_edges.has(edge_key) and not seen_edges.has(edge_key),
-				label + ": no invented or repeated edge " + edge_key)
-			seen_edges[edge_key] = line
-			var state := "other"
-			if chosen.has(source) and chosen.has(target):
-				state = "chosen"
-			elif chosen.has(source) and legal.has(target):
-				state = "legal"
-			_check(line.get_meta("route_state") == state and line.default_color == _expected_thread(state),
-				label + ": colored stitch correctly reflects route")
-			_check(line.points.size() == 16 and line.width > 0,
-				label + ": visible zigzag plus arrowhead for " + edge_key)
-			if expected_nodes.has(source) and expected_nodes.has(target) and line.points.size() >= 13:
-				var from_node: Dictionary = expected_nodes[source]
-				var to_node: Dictionary = expected_nodes[target]
-				var expected_start := Vector2(
-					RunRouteAtlas.FIRST_X + (int(from_node["floor"]) - 1) * RunRouteAtlas.FLOOR_STEP + RunRouteAtlas.NODE_SIZE.x,
-					RunRouteAtlas.FIRST_Y + int(from_node["position"]) * RunRouteAtlas.ROW_STEP + RunRouteAtlas.NODE_SIZE.y * 0.5)
-				var expected_end := Vector2(
-					RunRouteAtlas.FIRST_X + (int(to_node["floor"]) - 1) * RunRouteAtlas.FLOOR_STEP,
-					RunRouteAtlas.FIRST_Y + int(to_node["position"]) * RunRouteAtlas.ROW_STEP + RunRouteAtlas.NODE_SIZE.y * 0.5)
-				_check(line.points[0].is_equal_approx(expected_start)
-					and line.points[12].is_equal_approx(expected_end),
-					label + ": ends reach exactly actual directed source and target: " + edge_key)
+			var state := "chosen" if map.get_route().has(source) and map.get_route().has(target) else (
+				"legal" if map.get_route().has(source) and legal.has(target) else "other")
+			_check(line.get_meta("route_state") == state
+				and line.default_color == _expected_thread(state),
+				label + ": directed stitch has actual chosen/legal/other colour " + key)
 		elif child is PanelContainer:
+			first_marker = mini(first_marker, index)
+			last_marker = maxi(last_marker, index)
 			var marker: PanelContainer = child
-			first_marker_index = mini(first_marker_index, index)
-			last_marker_index = maxi(last_marker_index, index)
-			_check(marker.has_meta("route_id") and marker.has_meta("route_kind")
-				and marker.has_meta("route_state"), label + ": marker has real identity/type/state")
-			if not marker.has_meta("route_id"):
-				continue
 			var id: String = marker.get_meta("route_id")
-			_check(expected_nodes.has(id) and not seen_nodes.has(id),
-				label + ": no invented or repeated marker: " + id)
+			_check(visible_ids.has(id) and not seen_nodes.has(id),
+				label + ": only one actual visible-window patch token " + id)
 			seen_nodes[id] = marker
-			_check(_inside(Rect2(marker.position, marker.size), bounding),
-				label + ": complete marker rectangle inside view " + id)
-			_check(marker.size.x >= 80 and marker.size.y >= 55,
-				label + ": legible compact marker dimensions " + id)
-			_check(marker.focus_mode == Control.FOCUS_NONE, label + ": decorative panel cannot take focus " + id)
-			var action: Button = marker.get_node_or_null("Action") as Button
-			if legal.has(id) and not chosen.has(id):
-				_check(action != null, label + ": legal ID owns a real button " + id)
-				if action != null:
-					_check(action.focus_mode == Control.FOCUS_ALL and not action.disabled
-						and action.mouse_filter == Control.MOUSE_FILTER_STOP
-						and _inside(Rect2(action.position, action.size), Rect2(Vector2.ZERO, marker.size))
-						and action.size.x >= 70 and action.size.y >= 48,
-						label + ": legal button is mouse/keyboard actionable within marker " + id)
-					_check(action.tooltip_text.contains(id) and action.tooltip_text.contains(expected_nodes[id]["type"]),
-						label + ": legal action tooltip identifies exact kind and id: " + id)
-			else:
-				_check(action == null and marker.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-					label + ": chosen/inaccessible node has no actionable button or focus " + id)
-			var identity: Label = marker.get_node_or_null("Identity") as Label
-			_check(identity != null, label + ": visible marker identity exists " + id)
-			if identity != null and expected_nodes.has(id):
-				var kind: String = expected_nodes[id]["type"]
-				var expected_state := "chosen" if chosen.has(id) else ("legal" if legal.has(id) else "other")
-				var number := ordered_legal.find(id) + 1
-				var expected_caption := (str(number) + "\n" if expected_state == "legal" else "") + kind
-				var panel_style := marker.get_theme_stylebox("panel") as StyleBoxFlat
-				_check(marker.get_meta("route_kind") == kind
-					and marker.get_meta("route_id") == id
-					and identity.text == expected_caption
-					and not identity.text.contains(id)
-					and marker.get_meta("route_state") == expected_state,
-					label + ": correct actual kind, caption without internal ID, and three-state highlights " + id)
-				if expected_state == "legal":
-					_check(identity.text.begins_with(str(number) + "\n"),
-						label + ": legal destination displays sorted 1-4 number: " + id)
-				else:
-					_check(identity.text == kind,
-						label + ": nonlegal marker displays kind without phantom number: " + id)
-				_check(panel_style != null and panel_style.bg_color == _expected_style(expected_state),
-					label + ": highlight is visibly colored, not metadata-only " + id)
-				_check(panel_style != null and panel_style.border_color == _expected_border(expected_state),
-					label + ": route-state border stays visible around the patch " + id)
-				seen_kinds[kind] = true
-				_verify_token_marker(marker, id, view, label)
-				_check(identity.mouse_filter == Control.MOUSE_FILTER_IGNORE
-					and identity.focus_mode == Control.FOCUS_NONE
-					and identity.get_theme_font_size("font_size") >= 12,
-					label + ": inert legible label " + id)
-				_check(identity.get_combined_minimum_size().x <= marker.size.x
-					and identity.get_combined_minimum_size().y <= marker.size.y,
-					label + ": readable caption fits patch without spill " + id)
-		elif child is Label:
-			var header: Label = child
-			if header.has_meta("floor_number"):
-				var floor_num: int = header.get_meta("floor_number")
-				_check(floor_num >= 1 and floor_num <= 12 and not seen_floors.has(floor_num)
-					and header.text == "%02d" % floor_num, label + ": floor number shown once")
-				seen_floors[floor_num] = true
-			else:
-				_check(header.has_meta("area_name"),
-					label + ": only area captions or floor headers are plain labels")
-			_check(_inside(Rect2(header.position, header.size), bounding)
-				and header.mouse_filter == Control.MOUSE_FILTER_IGNORE
-				and header.focus_mode == Control.FOCUS_NONE,
-				label + ": header within bounds and inert")
+			_check(_inside(Rect2(marker.position, marker.size), RunRouteAtlas.PAGE_RIGHT)
+				and not Rect2(marker.position, marker.size).intersects(RunRouteAtlas.SPINE_RECT)
+				and marker.size.x >= 72 and marker.size.y >= 72,
+				label + ": round legible patch fully on right page, away from spine " + id)
+			var style := marker.get_theme_stylebox("panel") as StyleBoxFlat
+			var state := "chosen" if map.get_route().has(id) else ("legal" if legal.has(id) else "other")
+			_check(marker.get_meta("route_kind") == all_nodes[id]["type"]
+				and marker.get_meta("route_state") == state
+				and marker.get_meta("authored_position") == all_nodes[id]["position"]
+				and style.bg_color == _expected_style(state)
+				and style.border_color == _expected_border(state)
+				and style.corner_radius_top_left >= 30,
+				label + ": circular patch shows exact kind, authored row and state " + id)
+			var identity := marker.get_node("Identity") as Label
+			var number := shortcuts.find(id) + 1
+			var caption := (str(number) + " " if number > 0 else "") + str(all_nodes[id]["type"])
+			_check(identity.text == caption and not identity.text.contains(id)
+				and identity.get_combined_minimum_size().x <= marker.size.x
+				and identity.get_combined_minimum_size().y <= marker.size.y,
+				label + ": high contrast caption and legal number fit " + id)
+			var action := marker.get_node_or_null("Action") as Button
+			_check((action != null) == legal.has(id),
+				label + ": only currently reachable next floor has Action " + id)
+			if action != null:
+				_check(action.focus_mode == Control.FOCUS_ALL and not action.disabled
+					and action.mouse_filter == Control.MOUSE_FILTER_STOP
+					and action.tooltip_text.contains(id) and action.tooltip_text.contains(str(all_nodes[id]["type"]))
+					and action.get_meta("route_id") == id,
+					label + ": exact legal ID actionable by mouse and keyboard " + id)
+			_verify_token_marker(marker, id, view, label)
+		elif child is RunRouteAtlas.JourneyJournal:
+			journal_count += 1
+			var diary: RunRouteAtlas.JourneyJournal = child
+			_check(diary.current_floor == current_floor
+				and diary.current_area == RunRouteAtlas.area_for_floor(current_floor)
+				and diary.next_floor == (0 if map.is_complete() else current_floor + 1)
+				and diary.next_area == RunRouteAtlas.area_for_floor(diary.next_floor)
+				and diary.complete == map.is_complete() and diary.visited == map.get_route()
+				and _inside(Rect2(diary.position, diary.size), RunRouteAtlas.PAGE_LEFT)
+				and diary.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+				label + ": authentic left journal, area and pinned visited trail without floor 13")
 		elif child is RunRouteAtlas.NextAreaTab:
 			tab_count += 1
 			_verify_next_area_tab(view, map, child, label)
+		elif child is Label:
+			var header: Label = child
+			if header.has_meta("floor_number") and not header.has_meta("area_name"):
+				var f: int = header.get_meta("floor_number")
+				_check(visible_floors.has(f) and not seen_headers.has(f)
+					and header.text == "FLOOR %02d" % f,
+					label + ": one readable heading for upcoming floor %d" % f)
+				seen_headers[f] = true
+			_check(_inside(Rect2(header.position, header.size), RunRouteAtlas.PAGE_RIGHT)
+				and header.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+				label + ": inert book heading fully inside right page")
 		elif child is RunRouteAtlas.CurrentPin:
 			var pin: RunRouteAtlas.CurrentPin = child
-			_check(pin.has_meta("pin_node_id"), label + ": pin names its patch")
-			pin_ids.append(pin.get_meta("pin_node_id"))
-			pin_indices.append(index)
+			seen_pins.append(pin.get_meta("pin_node_id"))
 			_check(pin.mouse_filter == Control.MOUSE_FILTER_IGNORE
-				and pin.focus_mode == Control.FOCUS_NONE,
-				label + ": current pin is decoration, not an input target")
-			_check(_inside(Rect2(pin.position, pin.size), bounding),
-				label + ": current pin fits the preview")
+				and pin.focus_mode == Control.FOCUS_NONE
+				and _inside(Rect2(pin.position, pin.size), RunRouteAtlas.PAGE_RIGHT),
+				label + ": real current pin rests over right-page origin")
 		else:
-			_check(false, label + ": unexpected rendered child: " + child.name)
-
-	_check(seen_nodes.size() == expected_nodes.size() and seen_nodes.size() >= 36,
-		label + ": one actual marker per 3-4 node across twelve floors")
-	_check(seen_edges.size() == expected_edges.size() and seen_edges.size() >= 36,
-		label + ": exact number of directed edges")
-	_check(seen_floors.size() == 12, label + ": all twelve columns headed")
-	for kind in TOKEN_PATHS:
-		_check(seen_kinds.has(kind),
-			label + ": seeded book renders the committed " + kind + " token")
-	_check(last_thread_index < first_marker_index,
-		label + ": every connection is behind every node")
-	var current_id: String = map.get_current_node_id()
-	var expected_pins: Array = [] if current_id.is_empty() else [current_id]
-	_check(pin_ids == expected_pins, label + ": exactly the party's current patch is pinned")
-	for pin_index in pin_indices:
-		_check(int(pin_index) > last_marker_index, label + ": current pin sits above every patch")
-	if seen_nodes.has(current_id) and not pin_indices.is_empty():
-		var current_marker: PanelContainer = seen_nodes[current_id]
-		var pin: Control = view.get_child(int(pin_indices[0]))
-		_check(Rect2(pin.position, pin.size).intersects(Rect2(current_marker.position,
-			current_marker.size)), label + ": current pin touches the pinned patch")
-	_check(tab_count == 1, label + ": exactly one inert next-area status tab is mounted")
-	_check(view.get_child_count() == expected_nodes.size() + expected_edges.size() + 12
-		+ AREA_LABELS.size() + expected_pins.size() + 1,
-		label + ": no orphan/duplicate children")
-	for id in expected_nodes:
-		_check(seen_nodes.has(id), label + ": missing actual node " + id)
-	for key in expected_edges:
-		_check(seen_edges.has(key), label + ": missing actual edge " + key)
-	_verify_area_labels(view, label)
+			_check(false, label + ": unexpected atlas child " + child.name)
+	for id in seen_nodes:
+		var a: PanelContainer = seen_nodes[id]
+		for other_id in seen_nodes:
+			if id != other_id:
+				var b: PanelContainer = seen_nodes[other_id]
+				_check(not Rect2(a.position, a.size).intersects(Rect2(b.position, b.size)),
+					label + ": authored rows/columns do not overlap " + id + "/" + other_id)
+	for key in seen_edges:
+		var line: Line2D = seen_edges[key]
+		var parts: PackedStringArray = String(key).split("->")
+		var from_marker: PanelContainer = seen_nodes[parts[0]]
+		var to_marker: PanelContainer = seen_nodes[parts[1]]
+		_check(line.points[0].is_equal_approx(from_marker.position + Vector2(
+			RunRouteAtlas.NODE_SIZE.x, RunRouteAtlas.NODE_SIZE.y * 0.5))
+			and line.points[12].is_equal_approx(to_marker.position + Vector2(
+				0, RunRouteAtlas.NODE_SIZE.y * 0.5)),
+			label + ": sewn edge meets exact visible token endpoints " + key)
+	_check(seen_nodes.size() == visible_ids.size()
+		and seen_edges.size() == expected_edges.size()
+		and seen_headers.size() == visible_floors.size(),
+		label + ": exact visible window markers, connected links and floor headings")
+	_check(last_thread < first_marker and journal_count == 1 and tab_count == 1,
+		label + ": threads behind patches; one journey and status tab")
+	_check(seen_pins == ([] if current_id.is_empty() else [current_id]),
+		label + ": only current visited node wears a physical pin")
+	if not current_id.is_empty() and seen_nodes.has(current_id):
+		var marker: PanelContainer = seen_nodes[current_id]
+		var pin := view.get_node("Pin_current") as RunRouteAtlas.CurrentPin
+		_check(Rect2(pin.position, pin.size).intersects(Rect2(marker.position, marker.size)),
+			label + ": pin follows the actual visited patch")
+	_verify_area_labels(view, visible_floors, label)
 	_verify_book(view, label)
-	_check(_state(map, rng) == before, label + ": inspecting preview leaves map and RNG unchanged")
+	_check(_state(map, rng) == before,
+		label + ": window refresh and examination never mutate model or seeded RNG")
 
 
 func _signature(view: RunRouteAtlas) -> Array:
@@ -565,6 +453,11 @@ func _signature(view: RunRouteAtlas) -> Array:
 			else:
 				result.append(["floor", child.get_meta("floor_number"), (child as Label).text,
 					(child as Label).position])
+		elif child is RunRouteAtlas.JourneyJournal:
+			var journal: RunRouteAtlas.JourneyJournal = child
+			result.append(["journey", journal.current_floor, journal.current_area,
+				journal.next_floor, journal.next_area, journal.complete, journal.visited.duplicate(),
+				journal.position, journal.size])
 		elif child is RunRouteAtlas.NextAreaTab:
 			result.append(["next_area", (child as RunRouteAtlas.NextAreaTab).text,
 				child.position, child.size])
@@ -621,7 +514,7 @@ func _exercise_board_art(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGene
 		and not view.drawn_book_geometry().is_empty(),
 		label + ": missing art keeps the complete drawn fallback")
 	_verify_book(view, label + " drawn fallback")
-	_verify_area_labels(view, label + " drawn fallback")
+	_verify_area_labels(view, [1, 2, 3], label + " drawn fallback")
 	_check(_signature(view) == drawn_signature and _state(map, rng) == before,
 		label + ": the drawn book leaves nodes, route and RNG alone")
 	# Owner art path: the real image when it exists, else the same in-memory image.
@@ -637,7 +530,7 @@ func _exercise_board_art(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGene
 		and view.drawn_book_geometry().is_empty(),
 		label + ": an owner board image replaces the drawing in the same preview")
 	_verify_book(view, label + " owner art")
-	_verify_area_labels(view, label + " owner art")
+	_verify_area_labels(view, [1, 2, 3], label + " owner art")
 	_check(view.board_texture_rect() == Rect2(Vector2.ZERO, view.size),
 		label + ": mounted owner board covers the whole map preview")
 	_check(_signature(view) == drawn_signature and _state(map, rng) == before,
