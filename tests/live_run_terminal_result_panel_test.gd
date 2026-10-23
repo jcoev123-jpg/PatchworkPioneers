@@ -792,6 +792,65 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 	_check(_app_snapshot() == before, label + " close preserves full App/wardrobe state")
 
 
+## The full mounted route covers a reordered carried run. Here independently
+## verify that a snapshot-only projection preserves real worn hero slots and
+## stitched receipts without inventing a starter carryover.
+func _test_reordered_heroes() -> void:
+	var sewn := _stitch_pairs(_starter_deck(), [
+		["warden_strike", "seamstress_prick"],
+		["warden_brace", "tinker_pop_shot"],
+	], 6)
+	if sewn.is_empty():
+		return
+	var reordered := _definitions(HEROES)
+	var first: Dictionary = reordered[0]
+	reordered[0] = reordered[1]
+	reordered[1] = first
+	var party := CombatParty.new(reordered)
+	_check(party.is_valid(), "authored CombatParty permits reordered hero positions")
+	if not party.is_valid():
+		return
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(),
+		["button_eye", "pincushion_arm"], PATCH_DEFINITIONS.duplicate(true),
+		4, 35, sewn["deck"], 424242, true)
+	_check(wardrobe.is_valid(), "authentic reordered wardrobe validates")
+	if not wardrobe.is_valid():
+		return
+	_check(wardrobe.sew("button_eye", "warden", "HEAD", "ordered_head",
+		wardrobe.get_snapshot()).get("ok") == true, "genuine reordered HEAD sewing")
+	_check(wardrobe.sew("pincushion_arm", "seamstress", "ARM", "ordered_arm",
+		wardrobe.get_snapshot()).get("ok") == true, "genuine reordered ARM sewing")
+	var before := wardrobe.get_snapshot()
+	var projection: RunPatchWardrobe = panel._canonical_signature_wardrobe(wardrobe)
+	_check(projection != null and projection != wardrobe and projection.is_valid(),
+		"reordered real wardrobe yields an independent valid read-only projection")
+	if projection == null:
+		return
+	var projected := projection.get_snapshot()
+	_check(projected["heroes"][0].id == "warden"
+		and projected["heroes"][1].id == "seamstress"
+		and projected["heroes"][2].id == "tinker",
+		"presentation-only positions are canonical for the signature reader")
+	_check(projected["worn"] == before["worn"] and projected["owned"] == before["owned"]
+		and projected["scraps"] == before["scraps"] and projected["gold"] == before["gold"]
+		and projected["cards"] == before["cards"],
+		"every authored wearer and real deck/currency survives the detached projection")
+	var signature: Dictionary = RunSignatureSummary.summarize(sewn["deck"],
+		sewn["descriptors"], sewn["next_stitch_id"], projection)
+	_check(signature.get("ok") == true and signature.get("stitched_current") == 2
+		and signature.get("worn_total") == 2,
+		"canonical signature validates both real stitched cards and both wear receipts")
+	_check(signature["heroes"][0].slots.HEAD == "button_eye"
+		and signature["heroes"][1].slots.ARM == "pincushion_arm",
+		"summary attributes worn patches to real owners, not physical party order")
+	var kept: Array = signature.get("current_stitched_cards", [])
+	_check(kept.size() == 2 and kept[0].display_name == "Strike / Prick"
+		and kept[1].display_name == "Brace / Pop Shot",
+		"reordered projection keeps authored ordered stitched descriptors unchanged")
+	_check(wardrobe.get_snapshot() == before,
+		"repeated projection and signature reads never alter the actual wardrobe receipt")
+
+
 func _test_invalid_source(defeat: Dictionary) -> void:
 	var before := _app_snapshot()
 	app.run_next_stitch_id = 0
@@ -869,6 +928,7 @@ func _run() -> void:
 	if not defeat.is_empty():
 		await _test_terminal_interactions(victory, defeat)
 		await _test_crafted_recap(defeat)
+		_test_reordered_heroes()
 		_test_global_rng(defeat)
 		_test_invalid_source(defeat)
 	_finish()

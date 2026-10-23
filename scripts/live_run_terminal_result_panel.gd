@@ -121,11 +121,75 @@ func _validated_signature() -> Dictionary:
 				or snapshot.get("scraps") != app.run_scraps or snapshot.get("gold") != app.session_gold \
 				or snapshot.get("cards") != app.run_deck:
 			return {}
+	var display_wardrobe := _canonical_signature_wardrobe(wardrobe)
+	if display_wardrobe == null:
+		return {}
 	var summary: Dictionary = RunSignatureSummary.summarize(app.run_deck,
-		app.run_stitch_descriptors, app.run_next_stitch_id, wardrobe)
+		app.run_stitch_descriptors, app.run_next_stitch_id, display_wardrobe)
 	if summary.get("ok") != true:
 		return {}
 	return summary
+
+
+## The summary authority requires Warden/Seamstress/Tinker row order, but an
+## authentic run can exchange their battlefield positions. Rebuild a DETACHED
+## presentation-only wardrobe from an already valid and matched source,
+## preserving every named wear slot; never normalize the actual run or its
+## receipts. A malformed source or impossible wear assignment still fails shut.
+func _canonical_signature_wardrobe(source: RunPatchWardrobe) -> RunPatchWardrobe:
+	if source == null or not source.is_valid():
+		return null
+	var state: Dictionary = source.get_snapshot()
+	var heroes: Array = state.get("heroes", [])
+	if heroes.size() != RunSignatureSummary.HERO_IDS.size():
+		return null
+	var by_id: Dictionary = {}
+	for hero in heroes:
+		if not hero is Dictionary or not RunSignatureSummary.HERO_IDS.has(hero.get("id")) \
+				or by_id.has(hero.get("id")):
+			return null
+		by_id[hero["id"]] = hero.duplicate(true)
+	var canonical: Array = []
+	for i in range(RunSignatureSummary.HERO_IDS.size()):
+		var hero_id: String = RunSignatureSummary.HERO_IDS[i]
+		if not by_id.has(hero_id):
+			return null
+		var hero_copy: Dictionary = by_id[hero_id]
+		hero_copy["position"] = i + 1
+		canonical.append(hero_copy)
+	if canonical == heroes:
+		return source
+	var definitions: Variant = state.get("definitions")
+	if not definitions is Dictionary:
+		return null
+	var records: Array = []
+	for patch_id in definitions:
+		records.append({"id": patch_id, "slot": definitions[patch_id]})
+	var projection := RunPatchWardrobe.new(canonical, state.get("owned"),
+		records, state.get("scraps"), state.get("gold"), state.get("cards"),
+		state.get("seed"), true)
+	if not projection.is_valid():
+		return null
+	var worn: Variant = state.get("worn")
+	if not worn is Dictionary or worn.size() != RunSignatureSummary.HERO_IDS.size():
+		return null
+	for hero_id in RunSignatureSummary.HERO_IDS:
+		var slots: Variant = worn.get(hero_id)
+		if not slots is Dictionary or slots.size() != RunSignatureSummary.SLOTS.size():
+			return null
+		for slot in RunSignatureSummary.SLOTS:
+			var patch_id: Variant = slots.get(slot)
+			if typeof(patch_id) != TYPE_STRING:
+				return null
+			if not patch_id.is_empty() and not projection.sew(patch_id, hero_id, slot,
+					"signature_%s_%s" % [hero_id, slot], projection.get_snapshot()).get("ok"):
+				return null
+	var checked: Dictionary = projection.get_snapshot()
+	if checked.get("worn") != worn or checked.get("owned") != state.get("owned") \
+			or checked.get("scraps") != state.get("scraps") or checked.get("gold") != state.get("gold") \
+			or checked.get("cards") != state.get("cards"):
+		return null
+	return projection
 
 
 ## This is a read-only view of the signature's current deck-ordered cards.
