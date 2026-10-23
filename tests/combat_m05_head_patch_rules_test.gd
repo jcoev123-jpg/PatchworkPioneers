@@ -169,7 +169,7 @@ func _test_authored_cards_and_negative_cases() -> void:
 		and rules.get_bonus("seamstress", "warden_shield_bash", "bleed") == 0
 		and rules.get_bonus("tinker", "seamstress_red_thread_plus", "exposed") == 0,
 		"cross-owner cards never earn HEAD powers")
-	_check(rules.get_bonus("seamstress", "seamstress_prick_plus", "bleed") == 0
+	_check(rules.get_bonus("seamstress", "seamstress_prick_plus_plus", "bleed") == 0
 		and rules.get_bonus("seamstress", "fake_seamstress_prick", "bleed") == 0
 		and rules.get_bonus("seamstress", "seamstress_prick", "exposed") == 0
 		and rules.get_bonus("seamstress", "seamstress_prick", "damage") == 0
