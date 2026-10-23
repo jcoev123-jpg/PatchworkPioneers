@@ -1,9 +1,11 @@
 extends Node
 ## Input/presentation only. Support and movement services own effects and charges.
 
-const SUPPORT_IDS := ["warden_brace", "tinker_tune_up", "seamstress_mend", "seamstress_stitch_up"]
+const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up",
+	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
-const ALLY_IDS := ["seamstress_mend", "seamstress_stitch_up", "warden_patch_guard", "warden_patch_guard_plus",
+const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
+	"seamstress_stitch_up_plus", "warden_patch_guard", "warden_patch_guard_plus",
 	"seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea", "seamstress_thimble_tea_plus"]
 const TABLE_ID := "SupportTableBacking"
 const QUILT_IDS := ["warden", "seamstress", "tinker"]

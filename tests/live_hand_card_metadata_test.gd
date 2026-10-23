@@ -2,6 +2,8 @@ extends SceneTree
 ## Real scene, real ordered hand, and a read-only CanvasItem presenter.
 ## Failures collect and exit nonzero; no model fixture replaces the live app.
 
+const HAND_SCRIPT := "res://scripts/live_hand_card_metadata.gd"
+const ART_DIR := "res://assets/paper/"
 const CARD_FACTS := {
 	"warden_strike": ["warden", 1, [1, 2], "enemy_single", [1, 2]],
 	"warden_brace": ["warden", 1, [1, 2, 3], "self", []],
@@ -127,6 +129,165 @@ func _catalog_facts() -> void:
 
 func _panels() -> Array[Node]:
 	return app.hand_view.get_children() if is_instance_valid(app.hand_view) else []
+
+
+## The sewn face of an ordinary known starter card: its owner's felt frame, its
+## own committed picture in the upper face, and every rules row, pip and the
+## cost coin clear of that picture.
+func _assert_sewn_face(metadata, panel: Control, card_id: String, definition: Dictionary,
+		geometry: Dictionary) -> void:
+	var owner: String = str(definition.get("owner", ""))
+	_check(owner in ["warden", "seamstress", "tinker"],
+		"held starter card really has a sewn owner: " + card_id)
+	var frame_path: String = ART_DIR + "ui/card_frame_%s.png" % owner
+	var art_path: String = ART_DIR + "cards/art/%s.png" % card_id
+	var faces: Dictionary = metadata.get_faces(panel)
+	var frame: Variant = faces.get("frame")
+	var picture: Variant = faces.get("picture")
+	_check(frame is Texture2D and faces.get("frame_path") == frame_path,
+		"mounted panel wears its owner's sewn frame: " + card_id)
+	_check(picture is Texture2D and faces.get("picture_path") == art_path,
+		"mounted panel shows its own committed picture: " + card_id)
+	_check(ResourceLoader.exists(frame_path) and ResourceLoader.exists(art_path),
+		"both named sewn assets are real loadable files: " + card_id)
+	_check(frame is Texture2D and frame.get_width() > 0 and frame.get_height() > 0
+		and picture is Texture2D and picture.get_width() > 0 and picture.get_height() > 0,
+		"sewn textures really loaded their pixels: " + card_id)
+	_check(geometry.get("sewn") == true, "real panel measures the sewn face: " + card_id)
+	var bounds := Rect2(Vector2.ZERO, panel.size)
+	var art: Rect2 = geometry.get("art", Rect2())
+	var owner_rect: Rect2 = geometry["owner"]
+	var cost: Rect2 = geometry["cost"]
+	var title: Rect2 = geometry["title"]
+	var footer: Rect2 = geometry["footer"]
+	_check(art.size.x > 0.0 and art.size.y > 0.0 and bounds.encloses(art),
+		"illustration band has real area inside the card: " + card_id)
+	_check(art.end.y <= cost.position.y and art.end.y <= footer.position.y,
+		"illustration sits in the upper face above the cost and the rules: " + card_id)
+	for pair in [["owner tag", owner_rect], ["cost coin", cost], ["name", title], ["rules", footer]]:
+		_check(not art.intersects(pair[1]), "artwork never covers the %s: %s" % [pair[0], card_id])
+	var rows: Dictionary = geometry.get("rows", {})
+	_check(rows.size() == 3, "rules face reserves source, target and rule rows: " + card_id)
+	if rows.size() != 3:
+		return
+	var source: Rect2 = rows["from"]
+	var target: Rect2 = rows["target"]
+	var rules: Rect2 = rows["rules"]
+	_check(footer.encloses(source) and footer.encloses(target) and footer.encloses(rules),
+		"every text row stays inside the lower rules block: " + card_id)
+	_check(source.size.y > 0.0 and target.size.y > 0.0 and rules.size.y > 0.0,
+		"each text row keeps real drawn height: " + card_id)
+	_check(source.end.y <= target.position.y and target.end.y <= rules.position.y,
+		"source and target text rows never overlap: " + card_id)
+	_check(source.size.y >= 8.0 and target.size.y >= 8.0 and rules.size.y >= 8.0,
+		"every refitted text row still has room for its font: " + card_id)
+
+
+## Texture resolution is grounded in the authored catalogs, not in the mounted
+## hand: base art for a '+' upgrade, the owner emblem for a pool card without a
+## bespoke picture, and no borrowed felt or art for stitched/unknown IDs.
+func _art_resolution_check() -> void:
+	var metadata = load(HAND_SCRIPT).new()
+	_check(metadata != null, "shared hand metadata script loads for texture resolution")
+	if metadata == null:
+		return
+	var plus_id := "warden_strike_plus"
+	var plus: Dictionary = metadata.definition(plus_id)
+	_check(not plus.is_empty() and str(plus.get("display_name", "")).ends_with("+"),
+		"chosen upgrade really is a recognized '+' card: " + plus_id)
+	var plus_faces: Dictionary = metadata.face_assets(plus_id)
+	var base_faces: Dictionary = metadata.face_assets("warden_strike")
+	_check(plus_faces.get("picture_path") == ART_DIR + "cards/art/warden_strike.png",
+		"recognized '+' resolves the base card's committed picture: " + plus_id)
+	_check(plus_faces.get("frame_path") == ART_DIR + "ui/card_frame_warden.png",
+		"recognized '+' keeps its owner's sewn frame: " + plus_id)
+	_check(plus_faces.get("picture") is Texture2D and plus_faces.get("picture") == base_faces.get("picture"),
+		"the base and its '+' share the one cached base picture")
+	_check(ResourceLoader.exists(str(plus_faces.get("picture_path"))),
+		"resolved base picture really exists on disk")
+	# Only a final '_plus' is stripped, and every authored upgrade resolves.
+	for entry in [["warden_brace_plus", "warden_brace"], ["seamstress_mend_plus", "seamstress_mend"],
+			["seamstress_stitch_up_plus", "seamstress_stitch_up"]]:
+		var upgraded: Dictionary = metadata.face_assets(str(entry[0]))
+		_check(upgraded.get("picture_path") == ART_DIR + "cards/art/%s.png" % str(entry[1]),
+			"recognized upgrade strips only its final _plus: " + str(entry[0]))
+	# Known pool cards have no bespoke picture: they show their owner's emblem.
+	for entry in [["warden_hold_the_line", "warden"], ["seamstress_needle_pin", "seamstress"],
+			["tinker_ricochet", "tinker"]]:
+		var card_id := str(entry[0])
+		var owner := str(entry[1])
+		var definition: Dictionary = metadata.definition(card_id)
+		_check(not definition.is_empty() and str(definition.get("owner", "")) == owner,
+			"chosen pool card is a known authored record: " + card_id)
+		var faces: Dictionary = metadata.face_assets(card_id)
+		_check(faces.get("frame_path") == ART_DIR + "ui/card_frame_%s.png" % owner,
+			"pool card keeps its owner's sewn frame: " + card_id)
+		_check(faces.get("picture_path") == ART_DIR + "cards/emblem_%s.png" % owner,
+			"pool card without a bespoke picture falls back to the owner emblem: " + card_id)
+		_check(ResourceLoader.exists(str(faces.get("picture_path"))),
+			"owner emblem really exists on disk: " + card_id)
+	# Ordinary starter art is resolved through the same, cached loader.
+	var strike_faces: Dictionary = metadata.face_assets("warden_strike")
+	var cached: Variant = metadata._textures.get(str(strike_faces.get("picture_path")))
+	_check(metadata._textures.has(str(strike_faces.get("picture_path")))
+		and cached == strike_faces.get("picture") and strike_faces.get("picture") is Texture2D,
+		"resolved picture is loaded once and cached by its path")
+	# Stitched and unknown IDs never borrow a single owner's felt or picture.
+	var stitched: Dictionary = metadata.face_assets(RunRestStitchCards.ID_PREFIX + "1")
+	_check(stitched.get("frame") == null and stitched.get("picture") == null
+		and str(stitched.get("frame_path", "x")) == "",
+		"stitched ID keeps the drawn halves face with no false owner")
+	var unknown: Dictionary = metadata.face_assets("unreleased_card")
+	_check(unknown.get("frame") == null and unknown.get("picture") == null,
+		"unknown ID borrows no sewn face at all")
+	var first_owner := str(metadata.definition("warden_brace").get("owner", ""))
+	var second_owner := str(metadata.definition("seamstress_mend").get("owner", ""))
+	_check(first_owner != second_owner
+		and metadata._owner_color(first_owner) != metadata._owner_color(second_owner)
+		and metadata._owner_color(first_owner) != metadata.INK
+		and metadata._owner_color(second_owner) != metadata.INK,
+		"both stitched halves keep distinct honest owner colours")
+	# The drawn two-half face is still exactly what a stitched card measures.
+	var plain: Dictionary = metadata.card_layout(Vector2(230.0, 160.0), false)
+	var plain_rows: Array = plain.get("halves", [])
+	var plain_art: Rect2 = plain.get("art", Rect2())
+	_check(plain.get("sewn") == false and plain_rows.size() == 2
+		and plain_rows[0].size.y >= 30.0 and plain_rows[1].size.y >= 30.0
+		and plain_rows[0].end.y <= plain_rows[1].position.y
+		and plain_art.size.x == 0.0,
+		"stitched card face keeps two ordered, non-overlapping sewn rows and no picture band")
+	var sewn: Dictionary = metadata.card_layout(Vector2(230.0, 160.0), true)
+	var sewn_rows: Array = sewn.get("halves", [])
+	var sewn_art: Rect2 = sewn.get("art", Rect2())
+	_check(bool(sewn.get("sewn", false)) and sewn_rows.is_empty() and sewn_art.size.y > 0.0,
+		"only an ordinary owned card measures the single sewn face with its picture band")
+
+
+## The renderer paints the frame and picture before any text or the cost coin, so
+## the artwork can never obscure what it belongs to, and it names only the
+## ready-made asset paths.
+func _source_check() -> void:
+	var file := FileAccess.open(HAND_SCRIPT, FileAccess.READ)
+	_check(file != null, "shared hand metadata source readable")
+	if file == null:
+		return
+	var text := file.get_as_text()
+	file.close()
+	for marker in ["\"ui/card_frame_%s.png\"", "\"cards/art/%s.png\"", "\"cards/emblem_%s.png\""]:
+		_check(text.contains(marker), "renderer resolves the ready-made asset: " + marker)
+	_check(text.contains("trim_suffix(\"_plus\")"), "only a final _plus suffix is stripped for art")
+	var draw_start := text.find("func _draw_panel(")
+	_check(draw_start >= 0, "renderer defines its panel drawing")
+	if draw_start < 0:
+		return
+	var following := text.find("\nfunc ", draw_start + 1)
+	var draw := text.substr(draw_start, text.length() - draw_start if following < 0 else following - draw_start)
+	var art_at := draw.find("_draw_illustration(")
+	var cost_at := draw.find("panel.draw_circle(cost.get_center()")
+	var owner_at := draw.find("facts.get(\"owner_text\"")
+	_check(art_at >= 0, "panel drawing paints the illustration")
+	_check(cost_at > art_at and owner_at > art_at,
+		"the picture is painted before the cost coin and owner text it must never cover")
 
 
 func _validate_display(observed: Dictionary) -> void:
@@ -293,6 +454,7 @@ func _validate_display(observed: Dictionary) -> void:
 				"owner and cost patches do not overlap")
 			_check(geometry["footer"].position.y > geometry["owner"].end.y,
 				"lower rules do not overlap owner tag")
+			_assert_sewn_face(metadata, panel, card_id, definition, geometry)
 		_check(root.get_visible_rect().encloses(panel.get_global_rect()),
 			"whole card remains within the 1280x720 viewport")
 	_check(ids == app.deck.hand, "all current panel IDs exactly follow deck.hand")
@@ -648,6 +810,14 @@ func _unknown_check() -> void:
 	await _frames()
 	_check(metadata._bindings.size() == 1 and metadata.get_facts(foreign) == unknown,
 		"unknown ID draws only an honest placeholder")
+	# An unknown ID shows neither a borrowed felt frame nor invented card art.
+	var unknown_faces: Dictionary = metadata.get_faces(foreign)
+	_check(unknown_faces.get("frame") == null and unknown_faces.get("picture") == null,
+		"unknown mounted panel wears no borrowed sewn face")
+	var unknown_geometry: Dictionary = metadata.get_geometry(foreign)
+	var unknown_art: Rect2 = unknown_geometry.get("art", Rect2())
+	_check(not bool(unknown_geometry.get("sewn", true)) and unknown_art.size == Vector2.ZERO,
+		"unknown face keeps the drawn paper layout with no illustration band")
 	# Unknown tooltip must not invent any quantity.
 	var unknown_tooltip := foreign.tooltip_text
 	_check(unknown_tooltip == "Unknown card", "unknown tooltip is honest 'Unknown card': got '" + unknown_tooltip + "'")
@@ -692,6 +862,35 @@ func _unknown_check() -> void:
 	var brace_tooltip := rebind_panel.tooltip_text
 	_check(brace_tooltip.contains("BASE gain 7 Block") and brace_tooltip.contains("Self"),
 		"valid rebind tooltip shows exact brace effect and target")
+	# The compact mounted face keeps the artwork too, with the rules, pips and
+	# cost coin refitted below it instead of being covered by it.
+	var compact_geometry: Dictionary = metadata.get_geometry(rebind_panel)
+	_check(bool(compact_geometry.get("compact", false)) and bool(compact_geometry.get("sewn", false)),
+		"compact mounted panel measures the compact sewn face")
+	if not compact_geometry.is_empty() and compact_geometry.has("art"):
+		var compact_bounds := Rect2(Vector2.ZERO, rebind_panel.size)
+		var compact_art: Rect2 = compact_geometry["art"]
+		_check(compact_art.size.x > 0.0 and compact_art.size.y > 0.0
+			and compact_bounds.encloses(compact_art), "compact card still shows its picture band")
+		_check(compact_art.end.y <= compact_geometry["footer"].position.y
+			and compact_art.end.y <= compact_geometry["cost"].position.y
+			and not compact_art.intersects(compact_geometry["footer"])
+			and not compact_art.intersects(compact_geometry["cost"])
+			and not compact_art.intersects(compact_geometry["title"]),
+			"compact artwork stays clear of the rules, name and cost")
+		var compact_rows: Dictionary = compact_geometry.get("rows", {})
+		var compact_footer: Rect2 = compact_geometry["footer"]
+		_check(compact_rows.size() == 3
+			and compact_footer.encloses(compact_rows["from"])
+			and compact_footer.encloses(compact_rows["target"])
+			and compact_footer.encloses(compact_rows["rules"])
+			and compact_rows["from"].end.y <= compact_rows["target"].position.y
+			and compact_rows["target"].end.y <= compact_rows["rules"].position.y,
+			"compact source, target and rule rows sit in order without overlap")
+		_check(compact_bounds.encloses(compact_geometry["owner"])
+			and compact_bounds.encloses(compact_geometry["cost"])
+			and compact_geometry["owner"].end.x < compact_geometry["cost"].position.x,
+			"compact owner tag and cost coin stay apart inside the card")
 	# Replace with another real card on the same panel.
 	real_label.text = "tinker_tune_up"
 	rebind_hand = ["tinker_tune_up"]
@@ -711,6 +910,8 @@ func _unknown_check() -> void:
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_catalog_facts()
+	_art_resolution_check()
+	_source_check()
 	var scene := load("res://scenes/app.tscn") as PackedScene
 	_check(scene != null, "real app scene exists")
 	if scene == null:

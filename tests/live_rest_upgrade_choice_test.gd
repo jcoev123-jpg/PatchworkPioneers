@@ -57,7 +57,9 @@ func _run() -> void:
 		return
 	var replay: Array = []
 	var stale: Callable
-	for session in range(3):
+	# Strike mouse/keyboard replay, Heal exclusion, then independent Rest visits
+	# for each authored support+ card.
+	for session in range(6):
 		seed(780078)
 		var global_next := randi()
 		seed(780078)
@@ -88,13 +90,45 @@ func _run() -> void:
 		for index in range(source.size()):
 			if source[index] == "warden_strike":
 				indices.append(index)
-		_check(indices.size() == 2 and choices.item_count == 2 and not button.disabled,
-			"two actual duplicate Strike indices offered with one visible Upgrade")
-		if indices.size() != 2 or choices.item_count != 2:
+		var canonical := RunRestCardUpgrade.list_authored_choices(source, app.run_stitch_descriptors, app.run_next_stitch_id)
+		var rows: Array = canonical.get("choices", [])
+		_check(canonical.get("ok") == true and indices.size() == 2
+			and choices.item_count == rows.size() and not button.disabled
+			and rows.size() >= 5 and visit._upgrades == canonical.get("permitted_upgrades"),
+			"real Rest presents the complete canonical indexed choice projection")
+		if indices.size() != 2 or rows.size() < 5 or choices.item_count != rows.size():
 			break
-		for item in range(2):
-			_check(choices.get_item_metadata(item) == indices[item]
-				and choices.get_item_text(item).contains("#%d" % (indices[item] + 1)), "each visible choice identifies its deck position")
+		for item in range(rows.size()):
+			var row: Dictionary = rows[item]
+			var index: int = row["index"]
+			_check(choices.get_item_metadata(item) == index
+				and choices.get_item_text(item) == app._rest_upgrade_text(index)
+				and choices.get_item_text(item).contains("#%d" % (index + 1))
+				and choices.get_item_text(item).contains(String(row["plus_display_name"]))
+				and choices.get_item_text(item).contains(str(row["plus_cost"]) + " energy")
+				and choices.get_item_text(item).contains(app._rest_effect_text(row["plus_effects"])),
+				"each mounted row matches canonical deck index, name, cost and effect")
+		var support_ids := ["warden_brace", "seamstress_mend", "seamstress_stitch_up"]
+		for base_id in support_ids:
+			var deck_index: int = source.find(base_id)
+			var found_support := false
+			for row in rows:
+				if row.get("index") == deck_index and row.get("source_id") == base_id \
+						and row.get("plus_id") == base_id + "_plus":
+					found_support = true
+			_check(deck_index >= 0 and found_support,
+				"Rest exposes genuine support choice: " + base_id)
+		var target_base: String = ("warden_strike" if session <= 2 else
+			["", "", "", "warden_brace", "seamstress_mend", "seamstress_stitch_up"][session])
+		var target_deck_index: int = indices[1] if session <= 2 else source.find(target_base)
+		var target_row := -1
+		for row_idx in range(rows.size()):
+			if rows[row_idx].get("index") == target_deck_index:
+				target_row = row_idx
+		_check(target_row >= 0 and target_deck_index >= 0, "chosen authentic deck instance has visible row")
+		if target_row < 0:
+			break
+		var chosen_plus := String(rows[target_row]["plus_id"])
 		_reject_upgrade(next, "premature Continue")
 		app._rest_committed_deck.assign(source)
 		_reject_upgrade(upgrade, "forged partially committed deck")
@@ -107,7 +141,7 @@ func _run() -> void:
 		_reject_upgrade(app._upgrade_at_rest.bind(visit, button, foreign), "foreign selector")
 		foreign.free()
 		# Every rejection starts with otherwise-valid mounted controls and preserves all surviving models.
-		for invalid in [-1, source.size(), "1", 1.5, source.find("warden_brace")]:
+		for invalid in [-1, source.size(), "1", 1.5, source.find("seamstress_prick")]:
 			choices.set_item_metadata(1, invalid)
 			_reject_upgrade(upgrade, "forged index " + str(invalid))
 		choices.set_item_metadata(1, indices[1])
@@ -117,7 +151,11 @@ func _run() -> void:
 		for mapping in [{}, {"warden_strike": "unknown"}, {"warden_brace": "warden_strike_plus"}]:
 			visit._upgrades = mapping
 			_reject_upgrade(upgrade, "unmapped or invalid replacement")
-		visit._upgrades = {"warden_strike": "warden_strike_plus"}
+		visit._upgrades = canonical["permitted_upgrades"].duplicate(true)
+		var stored_row: Dictionary = app._rest_upgrade_choices[1].duplicate(true)
+		app._rest_upgrade_choices[1]["plus_effects"]["forged"] = 99
+		_reject_upgrade(upgrade, "forged stored canonical row")
+		app._rest_upgrade_choices[1] = stored_row
 		visit._valid = false
 		_reject_upgrade(upgrade, "invalid visitor")
 		visit._valid = true
@@ -128,7 +166,7 @@ func _run() -> void:
 		visit._deck[indices[1]] = "warden_brace"
 		_reject_upgrade(upgrade, "forged visitor deck")
 		visit._deck.assign(source)
-		app.run_deck[indices[0]] = "warden_brace"
+		app.run_deck[indices[0]] = "seamstress_prick"
 		_reject_upgrade(upgrade, "changed run deck")
 		app.run_deck.assign(source)
 		app.run_heroes[0].hp -= 1
@@ -167,15 +205,15 @@ func _run() -> void:
 			_check(app.rest_recovery.is_consumed() and app.rest_upgrade_button.disabled, "Heal remains available and excludes Upgrade")
 			_reject_upgrade(upgrade, "Upgrade after Heal")
 		else:
-			# Select the SECOND duplicate with real popup input in both modalities.
-			if session == 0:
+			# Select the intended instance through genuine popup or Tab/Enter.
+			if session in [0, 3]:
 				await _click(choices)
 				var popup := choices.get_popup()
 				_check(popup.visible, "mouse opens eligible index menu")
 				var font := popup.get_theme_font("font")
 				var height := font.get_height(popup.get_theme_font_size("font_size")) + popup.get_theme_constant("v_separation")
 				var margin := popup.get_theme_stylebox("panel").get_content_margin(SIDE_TOP)
-				var point := Vector2(popup.position) + Vector2(30, margin + height * 1.5)
+				var point := Vector2(popup.position) + Vector2(30, margin + height * (float(target_row) + 0.5))
 				for pressed in [true, false]:
 					var event := InputEventMouseButton.new()
 					event.position = point
@@ -188,11 +226,13 @@ func _run() -> void:
 				await _key(KEY_TAB)
 				_check(choices.has_focus(), "Tab reaches card index selector")
 				await _key(KEY_SPACE)
-				await _key(KEY_DOWN)
+				for step in range(target_row):
+					await _key(KEY_DOWN)
 				await _key(KEY_ENTER)
-			_check(choices.selected == 1, "physical input selects second duplicate index")
+			_check(choices.selected == target_row and choices.get_item_metadata(choices.selected) == target_deck_index,
+				"physical input selects exactly the intended authored deck index")
 			var before := _persistent()
-			if session == 0:
+			if session in [0, 3]:
 				await _click(button)
 			else:
 				choices.grab_focus()
@@ -200,9 +240,9 @@ func _run() -> void:
 				_check(button.has_focus(), "Tab reaches Upgrade action")
 				await _key(KEY_ENTER)
 			var upgraded := source.duplicate()
-			upgraded[indices[1]] = "warden_strike_plus"
+			upgraded[target_deck_index] = chosen_plus
 			_check(visit.is_consumed() and not app.rest_recovery.is_consumed() and app.run_deck == upgraded,
-				"one selected duplicate replaced exactly once without consuming Heal service")
+				"exact selected deck instance upgraded once, without consuming Heal")
 			_check(_persistent().slice(2) == before.slice(2) and app.run_heroes == heroes
 				and app.party_carryover.read_state() == ledger, "Upgrade preserves heroes, gold, RNG, route, combat and carryover ledger")
 			var hp_lines: PackedStringArray = []
@@ -215,7 +255,7 @@ func _run() -> void:
 				and not app.rest_continue_button.disabled, "exclusive consumed upgrade enables Continue")
 			_reject_upgrade(upgrade, "duplicate Upgrade")
 			_reject_upgrade(heal, "Heal after Upgrade")
-			app.run_deck[indices[0]] = "warden_brace"
+			app.run_deck[indices[0]] = "seamstress_prick"
 			_reject_upgrade(next, "changed committed deck")
 			app.rest_recovery._consumed = true
 			_reject_upgrade(next, "forged Heal consumption cannot bypass committed upgrade validation")
@@ -230,32 +270,101 @@ func _run() -> void:
 			_check(app.battle_result.get_outcome() == CombatBattleResult.ACTIVE and _mounted_state() == oracle,
 				"next real battle uses upgraded deck and unchanged carried party")
 			# Draw from the real ongoing deck, never inject a held card.
-			while not app.deck.hand.has("warden_strike_plus") and not app.deck.draw_pile.is_empty():
+			while not app.deck.hand.has(chosen_plus) and not app.deck.draw_pile.is_empty():
 				_check(app.deck.draw_extra(1) == 1, "real next-battle draw")
 			app._refresh_hand()
 			await _frames()
-			_check(app.deck.hand.has("warden_strike_plus"), "upgraded copy actually held in next battle")
-			var combat := _state()
-			var target: int = CombatAttackTargeting.new().get_preview(app.deck, app.party, app.enemies, "warden_strike_plus").get("target_positions", [0])[0]
-			_check(target > 0, "living legal recipient exists")
-			var enemy: Dictionary = app.enemies.get_enemy(target)
-			_check(app.party.get_hero(1).get("statuses", {}).is_empty() and enemy.get("statuses", {}).is_empty(), "seven-damage base case has no modifiers")
-			if await _choose("warden_strike_plus", session == 1):
-				await _key([KEY_1, KEY_2, KEY_3][target - 1])
-			var expected_hand: Array = combat.hand.duplicate()
-			expected_hand.erase("warden_strike_plus")
-			_check(presenter.last_event.ok and presenter.last_event.hits[0].damage == 7,
-				"real held-card input resolves exactly seven base damage")
-			_check(app.deck.energy == combat.energy - 1 and app.deck.hand == expected_hand
-				and app.deck.discard_pile == combat.discard + ["warden_strike_plus"]
-				and app.deck.draw_pile == combat.draw and app.run_rng.state == combat.rng,
-				"standard single charge/discard preserves remaining piles and RNG")
-			_check(app.enemies.get_enemy(target).hp == enemy.hp - maxi(0, 7 - enemy.block), "actual recipient loses exact unblocked damage")
-			var state: Array = [_persistent(), app.party_carryover.read_state(), presenter.last_event]
-			if session == 0:
-				replay = state.duplicate(true)
+			_check(app.deck.hand.has(chosen_plus), "upgraded authored copy actually held in next routed battle")
+			if session < 2:
+				var combat := _state()
+				var target: int = CombatAttackTargeting.new().get_preview(app.deck, app.party, app.enemies, "warden_strike_plus").get("target_positions", [0])[0]
+				_check(target > 0, "living legal recipient exists")
+				var enemy: Dictionary = app.enemies.get_enemy(target)
+				_check(app.party.get_hero(1).get("statuses", {}).is_empty() and enemy.get("statuses", {}).is_empty(), "seven-damage base case has no modifiers")
+				if await _choose("warden_strike_plus", session == 1):
+					await _key([KEY_1, KEY_2, KEY_3][target - 1])
+				var expected_hand: Array = combat.hand.duplicate()
+				expected_hand.erase("warden_strike_plus")
+				_check(presenter.last_event.ok and presenter.last_event.hits[0].damage == 7,
+					"real held-card input resolves exactly seven base damage")
+				_check(app.deck.energy == combat.energy - 1 and app.deck.hand == expected_hand
+					and app.deck.discard_pile == combat.discard + ["warden_strike_plus"]
+					and app.deck.draw_pile == combat.draw and app.run_rng.state == combat.rng,
+					"standard single charge/discard preserves remaining piles and RNG")
+				_check(app.enemies.get_enemy(target).hp == enemy.hp - maxi(0, 7 - enemy.block), "actual recipient loses exact unblocked damage")
+				var state: Array = [_persistent(), app.party_carryover.read_state(), presenter.last_event]
+				if session == 0:
+					replay = state.duplicate(true)
+				else:
+					_check(state == replay, "same-seed mouse/keyboard replay matches full next battle and attack")
 			else:
-				_check(state == replay, "same-seed mouse/keyboard replay matches full next battle and attack")
+				# Cast from the actual mounted shared hand, using the Warden or
+				# Seamstress's authored owner/target, never a direct resolver call.
+				var support = app.get_node("LiveSupportHand")
+				var held: Control = null
+				for card_panel in app.hand_view.get_children():
+					if card_panel.get_child_count() > 0 and card_panel.get_child(0) is Label \
+							and card_panel.get_child(0).text == chosen_plus:
+						held = card_panel
+						break
+				_check(held != null and support._bindings.has(held)
+					and support._eligible(held, chosen_plus, app.deck, app.party, app.battle_view),
+					"upgraded support is visible and actionable in the real next-Fight hand")
+				if session == 4:
+					_check(app.party.apply_damage(1, 15), "living Warden genuinely wounded for Mend+")
+					app._refresh_party()
+				var old_heroes: Array = app.party.get_heroes()
+				var old_hand: Array = app.deck.hand.duplicate()
+				var old_draw: Array = app.deck.draw_pile.duplicate()
+				var old_discard: Array = app.deck.discard_pile.duplicate()
+				var old_energy: int = app.deck.energy
+				var old_rng: int = app.run_rng.state
+				var old_enemies: Array = app.enemies.get_enemies()
+				var old_route: Array = app.run_map.get_route()
+				var old_wallet: Array = [app.session_gold, app.run_scraps, app.run_deck.duplicate(),
+					app.run_heroes.duplicate(true), app.party_carryover.read_state()]
+				_check(held != null, "actual held upgraded support panel exists before physical input")
+				if held != null:
+					if session == 3:
+						await _click(held)
+					else:
+						held.grab_focus()
+						await _key(KEY_ENTER)
+					await _frames()
+					if session in [4, 5]:
+						_check(support._pending.get("choosing", false) and support._targets.has(app.hero_panels[0]),
+							"Seamstress support+ opens genuine living ally selection")
+						app.hero_panels[0].grab_focus()
+						await _key(KEY_ENTER)
+						await _frames()
+				var expected_hand: Array = old_hand.duplicate()
+				expected_hand.erase(chosen_plus)
+				_check(app.deck.energy == old_energy - 1 and app.deck.hand == expected_hand
+					and app.deck.draw_pile == old_draw
+					and app.deck.discard_pile == old_discard + [chosen_plus]
+					and app.run_rng.state == old_rng,
+					"mounted support+ costs exactly one energy, hand card and discard, no RNG")
+				var expected_amount: int = 10 if session == 3 else 7
+				var new_heroes: Array = app.party.get_heroes()
+				_check(new_heroes.size() == 3 and old_heroes.size() == 3,
+					"real living three-hero party survives support cast")
+				if session == 3:
+					_check(new_heroes[0].block == old_heroes[0].block + expected_amount
+						and new_heroes[0].hp == old_heroes[0].hp,
+						"Brace+ grants authored ten Block to its living Warden owner")
+				elif session == 4:
+					_check(new_heroes[0].hp == mini(old_heroes[0].max_hp, old_heroes[0].hp + expected_amount)
+						and new_heroes[0].block == old_heroes[0].block,
+						"Mend+ heals actual living target by seven")
+				else:
+					_check(new_heroes[0].block == old_heroes[0].block + expected_amount
+						and new_heroes[0].hp == old_heroes[0].hp,
+						"Stitch Up+ gives actual living ally seven Block")
+				_check(new_heroes.slice(1) == old_heroes.slice(1) and app.enemies.get_enemies() == old_enemies
+					and app.run_map.get_route() == old_route
+					and [app.session_gold, app.run_scraps, app.run_deck, app.run_heroes,
+						app.party_carryover.read_state()] == old_wallet,
+					"support+ preserves unrelated actors, enemy, route, wallet and carried state")
 		stale = upgrade
 		await _click(app.return_button if app.battle_view.visible else app.rest_back_button)
 		_check(app.rest_upgrade == null and app.rest_upgrade_cards == null and app.rest_upgrade_button == null
