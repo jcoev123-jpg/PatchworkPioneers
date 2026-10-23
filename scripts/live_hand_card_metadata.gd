@@ -22,6 +22,13 @@ const KNOWN_EFFECT_KEYS := [
 ## published rule; no card is shown as automatically pinning or unravelling.
 const PINNED_EXPLANATION := "PINNED: one pin per enemy, storing the hero who applied it. A DIFFERENT hero's next attack deals +5 damage BEFORE Weak/Exposed and consumes it once; same-hero attacks do not. A new pin replaces it; an unused pin lasts to combat end."
 const UNRAVEL_EXPLANATION := "UNRAVEL: an Unravel N adds N to that enemy's gauge and each Bleed tick adds 1. At the normal 8 / elite 12 / boss 16 threshold the enemy becomes Unravelled and skips its next enemy action; the gauge then resets to 0 and its threshold rises by 4 for the rest of combat."
+## The ready-made patchwork card art. Every load here is optional and cached:
+## a missing file always leaves the drawn paper face exactly as it was.
+const ART_DIR := "res://assets/paper/"
+## Source corner size of the sewn card frames. Corners are redrawn at their own
+## size while only the frame edges stretch, so the felt buttons and stitches
+## keep their detail on a landscape hand panel.
+const FRAME_SOURCE_EDGE := 34.0
 
 var _catalog := StarterCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -33,6 +40,9 @@ var _on_hit := CombatOnHitStatuses.new()
 # Key: the ACTUAL hand panel, value: original card ID, facts and signal Callables.
 var _bindings: Dictionary = {}
 var _app
+# Key: art path, value: Texture2D or null. A negative entry is cached too, so a
+# missing file is never probed twice.
+var _textures: Dictionary = {}
 
 
 func set_app(app) -> void:
@@ -67,6 +77,55 @@ func _definition(card_id: String) -> Dictionary:
 ## Public read-only lookup shared by the mounted hand admission checks.
 func definition(card_id: String) -> Dictionary:
 	return _definition(card_id)
+
+
+## Cached, optional texture load. A frame or hero emblem that is not on disk
+## stays null, so the renderer keeps its drawn placeholder.
+func _texture(path: String) -> Texture2D:
+	if not _textures.has(path):
+		var loaded: Texture2D = null
+		if ResourceLoader.exists(path):
+			loaded = load(path) as Texture2D
+		_textures[path] = loaded
+	return _textures.get(path)
+
+
+## Only a final '+' suffix shares its base card's picture; longer IDs keep
+## whatever authored art they own.
+func _base_id(card_id: String) -> String:
+	return card_id.trim_suffix("_plus")
+
+
+## The optional sewn face for a card ID: its owner's felt frame and the picture
+## on the upper face. An ordinary known card shows its own illustration; a pool
+## card without one shows its owner's emblem. A stitched card has no single
+## owner and an unknown ID has no facts, so both keep the drawn paper face.
+func _face_assets(card_id: String) -> Dictionary:
+	var authored: Dictionary = _definition(card_id)
+	var owner: String = str(authored.get("owner", ""))
+	var frame: Texture2D = null
+	var picture: Texture2D = null
+	if not authored.is_empty() and not owner.is_empty():
+		frame = _texture(ART_DIR + "ui/card_frame_%s.png" % owner)
+		picture = _texture(ART_DIR + "cards/art/%s.png" % _base_id(card_id))
+		if picture == null:
+			picture = _texture(ART_DIR + "cards/emblem_%s.png" % owner)
+	return {
+		"frame": frame, "picture": picture,
+		"frame_path": frame.resource_path if frame != null else "",
+		"picture_path": picture.resource_path if picture != null else "",
+	}
+
+
+## Public read-only view of the sewn face for mounted checks.
+func face_assets(card_id: String) -> Dictionary:
+	return _face_assets(card_id)
+
+
+func get_faces(panel: Control) -> Dictionary:
+	if not _bindings.has(panel):
+		return {}
+	return _bindings[panel].get("faces", {}).duplicate()
 
 
 func base_effect_text(card_id: String) -> String:
@@ -440,7 +499,7 @@ func _bind(panel: Control, card_id: String) -> void:
 	_bindings[panel] = {
 		"id": card_id, "facts": describe(card_id), "draw": draw_callback,
 		"resize": resize_callback, "exit": exit_callback, "draw_count": 0,
-		"original_tooltip": original_tooltip,
+		"original_tooltip": original_tooltip, "faces": _face_assets(card_id),
 	}
 	panel.get_child(0).hide()
 	panel.tooltip_text = base_effect_text(card_id)
@@ -496,16 +555,22 @@ func get_facts(panel: Control) -> Dictionary:
 func get_geometry(panel: Control) -> Dictionary:
 	if not _bindings.has(panel) or not is_instance_valid(panel):
 		return {}
-	return card_layout(panel.size)
+	return card_layout(panel.size, _bindings[panel].get("faces", {}).get("frame") is Texture2D)
 
 
 ## Single source of truth for the drawn card. Mounted tests check these rects
 ## stay inside the real panel; the renderer draws exactly these regions.
-func card_layout(size: Vector2) -> Dictionary:
+## `framed` asks for the sewn felt face an ordinary known card gets when its
+## owner's frame exists; stitched and unknown cards keep the drawn paper face.
+func card_layout(size: Vector2, framed: bool = false) -> Dictionary:
 	if size.x < 88.0 or size.y < 30.0:
 		return {}
 	var compact := size.y < 120.0
 	var frame := Rect2(2, 2, size.x - 4, size.y - 4)
+	if framed:
+		var sewn := _sewn_layout(frame, compact)
+		if not sewn.is_empty():
+			return sewn
 	var inset := 6.0
 	var cost_side := 24.0 if compact else 30.0
 	var cost := Rect2(size.x - inset - cost_side, inset, cost_side, cost_side)
@@ -524,8 +589,58 @@ func card_layout(size: Vector2) -> Dictionary:
 	if each >= (20.0 if compact else 30.0):
 		halves = [Rect2(body.position, Vector2(body.size.x, each)),
 			Rect2(body.position + Vector2(0, each + gap), Vector2(body.size.x, each))]
-	return {"compact": compact, "frame": frame, "stripe": stripe, "owner": owner,
-		"cost": cost, "title": title, "footer": body, "halves": halves}
+	return {"compact": compact, "sewn": false, "border": 0.0, "frame": frame,
+		"art": Rect2(), "stripe": stripe, "owner": owner, "cost": cost,
+		"title": title, "footer": body, "rows": _text_rows(body), "halves": halves}
+
+
+## The sewn face: the felt frame's border is kept clear, the illustration fills
+## the upper face and the name, cost, pips and rules are refitted underneath it
+## so the artwork can never cover them. Null when the panel is too small.
+func _sewn_layout(frame: Rect2, compact: bool) -> Dictionary:
+	# A thinner felt margin on a short panel leaves the rules room to stay legible;
+	# only the stretchable frame edges change, the corners keep their detail.
+	var border: float = clampf(roundf(minf(frame.size.x, frame.size.y) * (0.10 if compact else 0.115)), 10.0, 26.0)
+	var interior := frame.grow(-border)
+	if interior.size.x < 60.0 or interior.size.y < 44.0:
+		return {}
+	var cost_side := 22.0 if compact else 24.0
+	var art := Rect2(interior.position,
+		Vector2(interior.size.x, clampf(interior.size.y * (0.18 if compact else 0.38), 10.0, 52.0)))
+	var seam := Rect2(interior.position.x, art.end.y, interior.size.x, 3.0)
+	var cost := Rect2(interior.end.x - cost_side, seam.end.y + 1.0, cost_side, cost_side)
+	var text_x: float = interior.position.x
+	var text_width: float = maxf(24.0, cost.position.x - text_x - 4.0)
+	var owner := Rect2(text_x, cost.position.y + 2.0, text_width, 8.0 if compact else 11.0)
+	var title := Rect2(text_x, owner.end.y + 1.0, text_width, 11.0 if compact else 16.0)
+	var footer_top: float = maxf(title.end.y, cost.end.y) + 2.0
+	var footer := Rect2(text_x, footer_top, interior.size.x, interior.end.y - footer_top)
+	if footer.size.y < 18.0:
+		return {}
+	return {"compact": compact, "sewn": true, "border": border, "frame": frame,
+		"art": art, "stripe": seam, "owner": owner, "cost": cost, "title": title,
+		"footer": footer, "rows": _text_rows(footer), "halves": []}
+
+
+## The three text rows of an ordinary card face (source pips, target, rules).
+## A roomy drawn face keeps the original three-line offsets; a refitted sewn
+## face tiles its shorter block proportionally so the rows can neither overlap
+## nor run past the card's lower edge.
+func _text_rows(rect: Rect2) -> Dictionary:
+	if rect.size.y >= 49.0:
+		return {
+			"from": Rect2(rect.position, Vector2(rect.size.x, 12.0)),
+			"target": Rect2(rect.position.x, rect.position.y + 16.0, rect.size.x, 13.0),
+			"rules": Rect2(rect.position.x, rect.position.y + 34.0, rect.size.x, 15.0),
+		}
+	var from_height: float = rect.size.y * 0.31
+	var target_height: float = rect.size.y * 0.32
+	var rules_top: float = rect.position.y + from_height + target_height
+	return {
+		"from": Rect2(rect.position, Vector2(rect.size.x, from_height)),
+		"target": Rect2(rect.position.x, rect.position.y + from_height, rect.size.x, target_height),
+		"rules": Rect2(rect.position.x, rules_top, rect.size.x, maxf(0.0, rect.end.y - rules_top)),
+	}
 
 
 func _owner_color(owner: String) -> Color:
@@ -627,7 +742,9 @@ func _text(panel: Control, value: String, rect: Rect2, preferred: int, color: Co
 	if value.is_empty() or rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return
 	var font := _font(panel)
-	var point_size := _fit(font, value, rect.size.x, preferred)
+	# A row never renders taller than the space the face gives it, so a refitted
+	# compact row cannot bleed into the neighbouring line.
+	var point_size := mini(_fit(font, value, rect.size.x, preferred), maxi(8, int(rect.size.y)))
 	panel.draw_string(font, rect.position + Vector2(0, minf(float(point_size), rect.size.y)),
 		value, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, point_size, color)
 
@@ -683,12 +800,15 @@ func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> 
 	var x: float = rect.position.x
 	var width: float = rect.size.x
 	if order.is_empty():
-		_text(panel, facts.get("from_text", ""), Rect2(x, rect.position.y, width - 60.0, 12), 10, RUST)
-		_draw_pips(panel, facts, Rect2(x, rect.position.y, width, 12))
-		_text(panel, facts.get("target_text", ""), Rect2(x, rect.position.y + 16.0, width, 13), 11)
+		var rows: Dictionary = _text_rows(rect)
+		var from_row: Rect2 = rows["from"]
+		_text(panel, facts.get("from_text", ""),
+			Rect2(from_row.position, Vector2(from_row.size.x - 60.0, from_row.size.y)), 10, RUST)
+		_draw_pips(panel, facts, from_row)
+		_text(panel, facts.get("target_text", ""), rows["target"], 11)
 		var rules := _rules(id)
 		if not rules.is_empty():
-			_text(panel, rules, Rect2(x, rect.position.y + 34.0, width, 15), 12)
+			_text(panel, rules, rows["rules"], 12)
 		return
 	panel.draw_rect(Rect2(x - 3.0, rect.position.y + 1.0, 3, rect.size.y - 2.0), owner_color)
 	_text(panel, order + definition.get("display_name", id), Rect2(x, rect.position.y, width, 14), 13)
@@ -737,12 +857,55 @@ func _title(facts: Dictionary) -> String:
 	return " + ".join(names) if not names.is_empty() else "Unknown card"
 
 
+## The sewn felt frame, drawn as nine slices: the corners keep the felt buttons
+## and stitches at their authored size, only the edges stretch to the panel.
+func _draw_frame_texture(panel: Control, texture: Texture2D, rect: Rect2, border: float) -> void:
+	var source: Vector2 = texture.get_size()
+	var edge: float = minf(FRAME_SOURCE_EDGE, minf(source.x, source.y) * 0.5 - 1.0)
+	if edge <= 0.0:
+		return
+	var inset: float = clampf(border, 1.0, minf(rect.size.x, rect.size.y) * 0.5 - 1.0)
+	var columns: Array = [
+		[rect.position.x, inset, 0.0, edge],
+		[rect.position.x + inset, rect.size.x - inset * 2.0, edge, source.x - edge * 2.0],
+		[rect.end.x - inset, inset, source.x - edge, edge],
+	]
+	var rows: Array = [
+		[rect.position.y, inset, 0.0, edge],
+		[rect.position.y + inset, rect.size.y - inset * 2.0, edge, source.y - edge * 2.0],
+		[rect.end.y - inset, inset, source.y - edge, edge],
+	]
+	for column in columns:
+		for row in rows:
+			panel.draw_texture_rect_region(texture,
+				Rect2(column[0], row[0], column[1], row[1]),
+				Rect2(column[2], row[2], column[3], row[3]))
+
+
+## The card's own picture in the upper face, cropped to the band's aspect so the
+## sewn illustration is never squashed. A seam of felt edges the patch.
+func _draw_illustration(panel: Control, texture: Texture2D, rect: Rect2) -> void:
+	if texture == null or rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var source := Rect2(Vector2.ZERO, texture.get_size())
+	var band_aspect: float = rect.size.x / rect.size.y
+	if source.size.x / source.size.y > band_aspect:
+		var width: float = source.size.y * band_aspect
+		source = Rect2(source.position + Vector2((source.size.x - width) * 0.5, 0), Vector2(width, source.size.y))
+	else:
+		var height: float = source.size.x / band_aspect
+		source = Rect2(source.position + Vector2(0, (source.size.y - height) * 0.42), Vector2(source.size.x, height))
+	panel.draw_texture_rect_region(texture, rect, source)
+	panel.draw_rect(rect, RUST, false, 1.0)
+
+
 func _draw_panel(panel: Control) -> void:
 	if not _bindings.has(panel) or not is_instance_valid(panel):
 		return
 	var facts: Dictionary = _bindings[panel].facts
+	var faces: Dictionary = _bindings[panel].get("faces", {})
 	var visual := visual_state(panel)
-	var layout := card_layout(panel.size)
+	var layout := card_layout(panel.size, faces.get("frame") is Texture2D)
 	if layout.is_empty():
 		return
 	# Hover (or an armed drag) lifts the drawn card and enlarges it around its
@@ -755,11 +918,18 @@ func _draw_panel(panel: Control) -> void:
 	panel.draw_set_transform(centre * (1.0 - grow) + Vector2(0, lift), 0.0, Vector2(grow, grow))
 	var frame: Rect2 = layout["frame"]
 	panel.draw_rect(frame, CREAM)
-	panel.draw_rect(frame, RUST, false, 2.0)
-	panel.draw_dashed_line(frame.position + Vector2(5, 5),
-		Vector2(frame.end.x - 5.0, frame.position.y + 5.0), RUST, 1.0, 5.0)
-	panel.draw_dashed_line(Vector2(frame.position.x + 5.0, frame.end.y - 5.0),
-		frame.end - Vector2(5, 5), RUST, 1.0, 5.0)
+	var frame_texture: Texture2D = faces.get("frame")
+	if frame_texture != null and bool(layout.get("sewn", false)):
+		_draw_frame_texture(panel, frame_texture, frame, float(layout.get("border", 0.0)))
+	else:
+		panel.draw_rect(frame, RUST, false, 2.0)
+		panel.draw_dashed_line(frame.position + Vector2(5, 5),
+			Vector2(frame.end.x - 5.0, frame.position.y + 5.0), RUST, 1.0, 5.0)
+		panel.draw_dashed_line(Vector2(frame.position.x + 5.0, frame.end.y - 5.0),
+			frame.end - Vector2(5, 5), RUST, 1.0, 5.0)
+	# The upper-face illustration always goes down before any text or the cost
+	# coin, so the picture can never cover the rules it belongs to.
+	_draw_illustration(panel, faces.get("picture"), layout["art"])
 	panel.draw_rect(layout["stripe"], _owner_color(facts.get("owner", "")))
 	var cost: Rect2 = layout["cost"]
 	panel.draw_circle(cost.get_center(), cost.size.x * 0.5, TINKER)
