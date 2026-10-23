@@ -11,6 +11,11 @@ extends Control
 ## map-board image (MAP_BOARD_PATH) replaces the drawn pages when ResourceLoader confirms
 ## it exists; a missing image keeps the complete drawn book, so no PNG is required.
 ##
+## Each marker also shows the committed sewn route token for its exact authored kind
+## (NODE_TOKEN_PATHS) in an inert left column, aspect-preserved, behind its Identity
+## caption and legal Action. A kind without authored art (Treasure) or a token whose
+## file cannot be loaded keeps the original drawn paper marker, so no PNG is required.
+##
 ## Presentation only: a stitch that becomes legal because the party just visited its source
 ## sews into view with a transparent-to-coloured gradient mask on the existing full path.
 ## A Line2D gradient REPLACES default_color while installed, so the mask repeats the stitch's
@@ -30,8 +35,22 @@ const OTHER_BG := Color("#484651")
 const CHOSEN_THREAD := Color("#a6e4c5")
 const LEGAL_THREAD := Color("#efd6a0")
 const OTHER_THREAD := Color("#837886")
+const OTHER_BORDER := Color("#938999")
 ## Owner art path, kept in code so the relay's ART phase can drop in the board image.
 const MAP_BOARD_PATH := "res://assets/paper/backgrounds/map_board.png"
+## The six authored sewn route tokens: one committed image per exact authored kind.
+## Kinds without an entry keep the original drawn paper marker, and so does a token
+## whose file cannot be loaded, so a missing PNG never breaks the preview.
+const NODE_TOKEN_PATHS := {
+	"Fight": "res://assets/paper/ui/map_node_fight.png",
+	"Elite": "res://assets/paper/ui/map_node_elite.png",
+	"Event": "res://assets/paper/ui/map_node_event.png",
+	"Shop": "res://assets/paper/ui/map_node_shop.png",
+	"Rest": "res://assets/paper/ui/map_node_rest.png",
+	"Boss": "res://assets/paper/ui/map_node_boss.png",
+}
+## Width of the marker's left token column; the Identity caption keeps the rest.
+const NODE_TOKEN_COLUMN := 36.0
 const BOOK_RECT := Rect2(10.0, 20.0, 1220.0, 564.0)
 ## The gutter falls in the gap between floors 6 and 7, so no patch covers the spine.
 const PAGE_LEFT := Rect2(18.0, 28.0, 591.0, 548.0)
@@ -70,9 +89,42 @@ var _pending_reveals: Array[Line2D] = []
 ## Presentation-only switch: the same reveal at 0.15 s instead of 0.6 s.
 var reveal_fast := false
 var _board_texture: Texture2D = null
+## Key: token art path, value: Texture2D or null. A negative entry is cached too, so
+## a missing token is never probed twice and the drawn marker stays the fallback.
+var _node_tokens: Dictionary = {}
 ## Owner or data may hand the board image in directly; null falls back to the path.
 var board_texture_override: Texture2D = null
 var board_texture_path := MAP_BOARD_PATH
+
+
+## Inert sewn route token mounted in a marker's left column, behind its Identity caption
+## and legal Action. PanelContainer stretches every child to the paper's content rect, so
+## the token draws itself aspect-preserved inside that column instead of stretching the
+## committed art. Never takes pointer input or keyboard focus.
+class NodeToken extends Control:
+	var token_kind := ""
+	var token_texture: Texture2D = null
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	## Aspect-preserved destination of the committed art, centred in the token column.
+	func token_rect() -> Rect2:
+		if token_texture == null or size.x <= 0.0 or size.y <= 0.0:
+			return Rect2()
+		var pixels := Vector2(token_texture.get_width(), token_texture.get_height())
+		if pixels.x <= 0.0 or pixels.y <= 0.0:
+			return Rect2()
+		var fit := minf(minf(RunRouteAtlas.NODE_TOKEN_COLUMN, size.x) / pixels.x, size.y / pixels.y)
+		var drawn := pixels * fit
+		return Rect2(Vector2(0.0, (size.y - drawn.y) * 0.5), drawn)
+
+	func _draw() -> void:
+		var rect := token_rect()
+		if rect.size.x > 0.0 and rect.size.y > 0.0:
+			draw_texture_rect(token_texture, rect, false)
 
 
 ## Inert drawn pushpin over the party's current patch; never takes pointer or focus.
@@ -348,6 +400,29 @@ static func load_board_texture(path: String = MAP_BOARD_PATH) -> Texture2D:
 	return load(path) as Texture2D
 
 
+## Exact authored kind to committed sewn token path; an unknown kind has no token and
+## keeps the original drawn paper marker.
+static func node_token_path(kind: String) -> String:
+	return str(NODE_TOKEN_PATHS.get(kind, ""))
+
+
+## Cached, optional token load. Missing art stays null (and is cached as such), so the
+## marker falls back to its drawn paper face and no file is ever probed twice.
+func node_token_texture(path: String) -> Texture2D:
+	if path.is_empty():
+		return null
+	if not _node_tokens.has(path):
+		var loaded: Texture2D = null
+		if ResourceLoader.exists(path, "Texture2D"):
+			loaded = load(path) as Texture2D
+		_node_tokens[path] = loaded
+	return _node_tokens.get(path)
+
+
+func has_cached_node_token(path: String) -> bool:
+	return _node_tokens.has(path)
+
+
 func uses_board_texture() -> bool:
 	return _board_texture != null
 
@@ -504,7 +579,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.set_meta("route_state", state)
 	var paper := StyleBoxFlat.new()
 	paper.bg_color = OTHER_BG
-	paper.border_color = Color("#938999")
+	paper.border_color = OTHER_BORDER
 	match state:
 		"chosen":
 			paper.bg_color = CHOSEN_BG
@@ -521,10 +596,34 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.custom_minimum_size = NODE_SIZE
 	marker.size = NODE_SIZE
 	_inert(marker)
+	# The sewn token is the marker's first child, so the Identity caption and the legal
+	# Action both draw over it and keep their full own area. Its column leaves the rest
+	# of the patch to the caption, so the art never hides the readable kind/number.
+	var token_path := node_token_path(kind)
+	var token := node_token_texture(token_path)
+	if token != null:
+		var left := paper.get_margin(SIDE_LEFT)
+		var top := paper.get_margin(SIDE_TOP)
+		var art := NodeToken.new()
+		art.name = "Art"
+		art.token_kind = kind
+		art.token_texture = token
+		art.set_meta("route_kind", kind)
+		art.set_meta("art_path", token_path)
+		# PanelContainer stretches this child to the paper's content rect; assigning the
+		# same rect now keeps the token measurable before the container's first sort.
+		art.position = Vector2(left, top)
+		art.size = NODE_SIZE - Vector2(left + paper.get_margin(SIDE_RIGHT),
+			top + paper.get_margin(SIDE_BOTTOM))
+		_inert(art)
+		marker.add_child(art)
 	var caption := Label.new()
 	caption.name = "Identity"
 	caption.text = (str(shortcut) + "\n" if state == "legal" and shortcut > 0 else "") + kind
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# A token keeps the left column, so its caption is right-aligned in the remaining
+	# width; the drawn fallback marker keeps the original centred caption.
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if token != null \
+		else HORIZONTAL_ALIGNMENT_CENTER
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	caption.add_theme_font_size_override("font_size", 12)
 	caption.add_theme_color_override("font_color", Color("#fff8e9"))

@@ -3,6 +3,16 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 var requests: Array[String] = []
+## The six committed sewn tokens, written out independently of the view's own table so
+## this regression cannot silently inherit an omission from the implementation.
+const TOKEN_PATHS := {
+	"Fight": "res://assets/paper/ui/map_node_fight.png",
+	"Elite": "res://assets/paper/ui/map_node_elite.png",
+	"Event": "res://assets/paper/ui/map_node_event.png",
+	"Shop": "res://assets/paper/ui/map_node_shop.png",
+	"Rest": "res://assets/paper/ui/map_node_rest.png",
+	"Boss": "res://assets/paper/ui/map_node_boss.png",
+}
 
 
 func _initialize() -> void:
@@ -52,6 +62,16 @@ func _expected_thread(state: String) -> Color:
 			return RunRouteAtlas.LEGAL_THREAD
 		_:
 			return RunRouteAtlas.OTHER_THREAD
+
+
+func _expected_border(state: String) -> Color:
+	match state:
+		"chosen":
+			return RunRouteAtlas.CHOSEN_THREAD
+		"legal":
+			return RunRouteAtlas.LEGAL_THREAD
+		_:
+			return RunRouteAtlas.OTHER_BORDER
 
 
 func _inside(rect: Rect2, outer: Rect2) -> bool:
@@ -107,6 +127,112 @@ func _verify_book(view: RunRouteAtlas, label: String) -> void:
 			label + ": " + str(child.name) + " is sewn onto a page")
 
 
+# The committed sewn token is a real, inert marker child on every supported kind. The
+# caption never sits under it. Kinds outside this task's six authored mappings are left
+# untouched here, so future art for them cannot be asserted away.
+func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtlas,
+		label: String) -> void:
+	var kind: String = marker.get_meta("route_kind")
+	var expected_path: String = TOKEN_PATHS.get(kind, "")
+	if expected_path.is_empty():
+		return
+	var art := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+	var identity := marker.get_node_or_null("Identity") as Label
+	var action := marker.get_node_or_null("Action") as Button
+	_check(art != null, label + ": committed sewn token mounted for " + kind + " " + id)
+	if art == null:
+		return
+	var committed := load(expected_path) as Texture2D
+	_check(committed != null and committed.get_width() > 0 and committed.get_height() > 0,
+		label + ": authored token image loads with real pixels " + kind)
+	_check(art.name == "Art" and art.token_kind == kind
+		and art.get_meta("art_path") == expected_path
+		and art.token_texture == committed
+		and view.node_token_texture(expected_path) == art.token_texture,
+		label + ": actual marker child carries the matching committed image " + kind + " " + id)
+	_check(art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and art.focus_mode == Control.FOCUS_NONE,
+		label + ": token art is inert decoration, not an input target " + id)
+	_check(marker.get_child(0) == art and identity != null
+		and identity.get_index() > art.get_index()
+		and (action == null or action.get_index() > identity.get_index())
+		and marker.get_child_count() == (3 if action != null else 2),
+		label + ": token sits before the identity caption and legal action " + id)
+	var texture := art.token_texture
+	var drawn := art.token_rect()
+	_check(texture != null and drawn.size.x > 0.0 and drawn.size.y > 0.0,
+		label + ": token has a real drawn rectangle " + id)
+	if texture != null:
+		_check(is_equal_approx(drawn.size.x / drawn.size.y,
+			float(texture.get_width()) / float(texture.get_height())),
+			label + ": token keeps the committed aspect ratio " + id)
+		_check(drawn.position.x >= 0.0 and drawn.position.y >= 0.0
+			and drawn.end.x <= art.size.x and drawn.end.y <= art.size.y
+			and drawn.end.x <= RunRouteAtlas.NODE_TOKEN_COLUMN,
+			label + ": token stays inside the marker's left art column " + id)
+	var caption_width := identity.get_combined_minimum_size().x if identity != null else 0.0
+	_check(identity != null and identity.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT
+		and art.position.x + drawn.end.x + caption_width <= marker.size.x,
+		label + ": readable caption keeps its own space beside the token " + id)
+	# The three route-state borders survive behind the art: art stays off the border.
+	var paper := marker.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(paper != null and art.position.x >= paper.get_margin(SIDE_LEFT)
+		and art.position.y >= paper.get_margin(SIDE_TOP)
+		and art.position.x + art.size.x <= marker.size.x - paper.get_margin(SIDE_RIGHT)
+		and art.position.y + art.size.y <= marker.size.y - paper.get_margin(SIDE_BOTTOM),
+		label + ": sewn token stays inside the visible patch border " + id)
+
+
+## Kind mapping, optional loading, caching and both marker branches, from real source.
+func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
+	for kind in TOKEN_PATHS:
+		var path: String = TOKEN_PATHS[kind]
+		_check(RunRouteAtlas.node_token_path(kind) == path,
+			label + ": exact authored " + kind + " kind maps to its committed token")
+		var loaded := view.node_token_texture(path)
+		_check(loaded != null and loaded == load(path) and view.has_cached_node_token(path),
+			label + ": committed " + kind + " token loads once and is cached by path")
+		_check(view.node_token_texture(path) == loaded,
+			label + ": repeated " + kind + " load returns the cached texture")
+		var art := RunRouteAtlas.NodeToken.new()
+		art.token_kind = kind
+		art.token_texture = loaded
+		art.size = RunRouteAtlas.NODE_SIZE - Vector2(2.0, 4.0)
+		var drawn := art.token_rect()
+		_check(loaded != null and drawn.size.x > 0.0
+			and is_equal_approx(drawn.size.x / drawn.size.y,
+				float(loaded.get_width()) / float(loaded.get_height())),
+			label + ": " + kind + " token drawn without stretching")
+		art.free()
+	# Unknown kinds and failed loads fall back to the drawn marker, never an error.
+	_check(RunRouteAtlas.node_token_path("Forged").is_empty()
+		and RunRouteAtlas.node_token_path("").is_empty(),
+		label + ": unknown authored kinds have no token path")
+	var failed_path := "res://assets/paper/ui/map_node_forged_token.png"
+	_check(view.node_token_texture(failed_path) == null
+		and view.has_cached_node_token(failed_path),
+		label + ": a token that fails to load is null and cached, never an error")
+	_check(view.node_token_texture("") == null, label + ": a blank token path loads nothing")
+	# The real _add_marker branches: token art + right-aligned caption, or drawn fallback.
+	var probe := RunRouteAtlas.new()
+	var none: Array[String] = []
+	var legal: Array[String] = ["f01_n0"]
+	var fallback_legal: Array[String] = ["f01_n1"]
+	probe._add_marker("f01_n0", "Elite", Vector2.ZERO, none, legal, 1)
+	probe._add_marker("f01_n1", "Forged", Vector2(100.0, 0.0), none, fallback_legal, 2)
+	var token_marker := probe.get_node_or_null("Node_f01_n0") as PanelContainer
+	var drawn_marker := probe.get_node_or_null("Node_f01_n1") as PanelContainer
+	_check(token_marker != null and token_marker.get_node_or_null("Art") is RunRouteAtlas.NodeToken
+		and (token_marker.get_node("Identity") as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT
+		and token_marker.get_node_or_null("Action") != null,
+		label + ": supported kind mounts its token, caption and legal action together")
+	_check(drawn_marker != null and drawn_marker.get_node_or_null("Art") == null
+		and (drawn_marker.get_node("Identity") as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER
+		and drawn_marker.get_node_or_null("Action") != null,
+		label + ": unknown kind keeps the drawn paper marker and still admits its legal action")
+	probe.free()
+
+
 # Inspect actual mounted children, not internal arrays or a view-generated graph oracle.
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
 	var before := _state(map, rng)
@@ -134,6 +260,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	var seen_nodes: Dictionary = {}
 	var seen_edges: Dictionary = {}
 	var seen_floors: Dictionary = {}
+	## Authored kinds this seeded book actually shows a sewn token for.
+	var seen_kinds: Dictionary = {}
 	var first_marker_index := 999999
 	var last_thread_index := -1
 	var last_marker_index := -1
@@ -246,6 +374,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 						label + ": nonlegal marker displays kind without phantom number: " + id)
 				_check(panel_style != null and panel_style.bg_color == _expected_style(expected_state),
 					label + ": highlight is visibly colored, not metadata-only " + id)
+				_check(panel_style != null and panel_style.border_color == _expected_border(expected_state),
+					label + ": route-state border stays visible around the patch " + id)
+				seen_kinds[kind] = true
+				_verify_token_marker(marker, id, view, label)
 				_check(identity.mouse_filter == Control.MOUSE_FILTER_IGNORE
 					and identity.focus_mode == Control.FOCUS_NONE
 					and identity.get_theme_font_size("font_size") >= 12,
@@ -283,6 +415,9 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 	_check(seen_edges.size() == expected_edges.size() and seen_edges.size() >= 36,
 		label + ": exact number of directed edges")
 	_check(seen_floors.size() == 12, label + ": all twelve columns headed")
+	for kind in TOKEN_PATHS:
+		_check(seen_kinds.has(kind),
+			label + ": seeded book renders the committed " + kind + " token")
 	_check(last_thread_index < first_marker_index,
 		label + ": every connection is behind every node")
 	var current_id: String = map.get_current_node_id()
@@ -311,9 +446,12 @@ func _signature(view: RunRouteAtlas) -> Array:
 		if child is PanelContainer:
 			var marker: PanelContainer = child
 			var style: StyleBoxFlat = marker.get_theme_stylebox("panel") as StyleBoxFlat
+			var token := marker.get_node_or_null("Art") as RunRouteAtlas.NodeToken
 			result.append(["node", marker.get_meta("route_id"), marker.get_meta("route_kind"),
 				marker.get_meta("route_state"), marker.position, marker.size, style.bg_color,
-				(marker.get_node("Identity") as Label).text])
+				style.border_color, (marker.get_node("Identity") as Label).text,
+				"" if token == null else token.token_kind,
+				"" if token == null else str(token.get_meta("art_path"))])
 		elif child is Line2D:
 			var thread: Line2D = child
 			result.append(["edge", thread.get_meta("from_id"), thread.get_meta("to_id"),
@@ -796,6 +934,8 @@ func _run() -> void:
 	_check(first.get_child_count() == 0, "ungenerated map displays no invented markers")
 	first.bind_map(null)
 	_check(first.get_child_count() == 0, "null map is empty and inert")
+	# Token mapping, optional loading/caching and both marker branches, on the mounted view.
+	_verify_token_sources(first, "token sources")
 
 	for seed_value in [6, 42]:
 		var rng := _rng(seed_value)

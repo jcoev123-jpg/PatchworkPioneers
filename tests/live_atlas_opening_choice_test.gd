@@ -24,6 +24,40 @@ func _inert(app, callback: Callable, id: String, reason: String) -> void:
 		app.route_atlas_overlay, app.route_map_button, root.gui_get_focus_owner()], reason)
 
 
+## The mounted live book must dress every authored kind in its committed sewn token, and
+## keep the original drawn patch for the one kind that has no token.
+func _tokens(atlas: RunRouteAtlas) -> void:
+	var expected := {
+		"Fight": "res://assets/paper/ui/map_node_fight.png",
+		"Elite": "res://assets/paper/ui/map_node_elite.png",
+		"Event": "res://assets/paper/ui/map_node_event.png",
+		"Shop": "res://assets/paper/ui/map_node_shop.png",
+		"Rest": "res://assets/paper/ui/map_node_rest.png",
+		"Boss": "res://assets/paper/ui/map_node_boss.png",
+	}
+	var seen: Dictionary = {}
+	for child in atlas.get_children():
+		if not (child is PanelContainer):
+			continue
+		var kind: String = child.get_meta("route_kind")
+		var art := child.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+		if not expected.has(kind):
+			# Kinds outside these six authored tokens keep a readable drawn identity; this
+			# task adds no art for them, so no arrival of future art is asserted away.
+			_check(child.get_node_or_null("Identity") is Label,
+				"live " + kind + " marker keeps its readable drawn identity")
+			continue
+		seen[kind] = true
+		_check(art != null and art.token_kind == kind
+			and art.token_texture == load(expected[kind])
+			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and art.focus_mode == Control.FOCUS_NONE
+			and (child.get_node("Identity") as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT,
+			"live marker shows the committed " + kind + " sewn token")
+	for kind in expected:
+		_check(seen.has(kind), "seeded live book shows the " + kind + " sewn token")
+
+
 ## Value-only ledger so the direct chooser and every atlas input can be compared.
 func _values(app) -> Array:
 	var carry = app.party_carryover as RunTornCarryover
@@ -178,6 +212,18 @@ func _legal_openings(app) -> void:
 					and marker.mouse_filter == Control.MOUSE_FILTER_STOP
 					and marker.get_parent().get_meta("route_state") == "legal",
 					"newly legal %s marker is clickable and focusable" % kind)
+				# The live legal marker keeps its committed token, or a readable drawn face.
+				if marker != null:
+					var panel := marker.get_parent() as PanelContainer
+					var art := panel.get_node_or_null("Art") as RunRouteAtlas.NodeToken
+					if kind in ["Fight", "Elite", "Event", "Shop", "Rest", "Boss"]:
+						_check(art != null and art.token_kind == kind
+							and art.token_texture == load("res://assets/paper/ui/map_node_"
+								+ kind.to_lower() + ".png"),
+							"live legal %s marker shows its committed sewn token" % kind)
+					else:
+						_check(panel.get_node_or_null("Identity") is Label,
+							"live legal %s marker keeps its readable drawn identity" % kind)
 			if marker == null:
 				continue
 			if mode == 1:
@@ -249,6 +295,7 @@ func _run() -> void:
 			atlas.tree_exiting.connect(func(): cleared.append(atlas._map == null))
 			_check(atlas.node_requested.get_connections().size() == 1, "exactly one app listener")
 			var callback: Callable = atlas.node_requested.get_connections()[0].callable
+			_tokens(atlas)
 			for old in stale:
 				_inert(app, old, id, "old listener cannot affect new mounted overlay")
 			stale.append(callback)
