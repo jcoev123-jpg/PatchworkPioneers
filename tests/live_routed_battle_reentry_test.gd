@@ -135,6 +135,10 @@ func _oracle(id: String) -> Dictionary:
 		return {}
 	var party: CombatParty = app.party_carryover.create_next_fight_party()
 	var deck := CombatDeck.new(app.run_deck, rng)
+	# Mirror the real admission: shuffle first, then bind the weighted intents on
+	# the same carried-party roster and run RNG, then deal the opening hand.
+	_check(entry.intents.bind_battle(entry.enemies, party, rng),
+		"oracle binds the same authored weighted intents")
 	var result := CombatBattleResult.new(party, entry.enemies)
 	var flow := CombatRoundFlow.new(deck, party, entry.enemies, entry.intents, result)
 	_check(flow.begin_fight(), "independent carried-party battle begins")

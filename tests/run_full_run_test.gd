@@ -313,6 +313,15 @@ func _battle(loss: bool = false) -> bool:
 	_check(ids == entry.enemy_ids and not ids.is_empty(), "actual typed enemies mounted")
 	_check(app.enemy_intents._definitions == RunFightEncounterSelection._parse_schedule_text(
 		FileAccess.get_file_as_string(entry.schedule)), "actual authored enemy schedule mounted")
+	# The routed Fight/Elite/Boss admission binds that genuine roster and party to
+	# the run RNG, then announces the authored weighted choice per typed ID.
+	var live_intents: Array = app.enemy_intents.get_intents()
+	_check(app.enemy_intents.is_bound() and app.enemy_attacks == live_intents
+		and live_intents.size() == ids.size(),
+		"routed battle announces one authored weighted action per typed enemy ID")
+	for index in range(ids.size()):
+		_check(not CombatEnemyIntents.policy_for(app.enemies, index + 1).is_empty(),
+			"typed enemy slot keeps its authored target policy")
 	var expected: Array = app.run_heroes.duplicate(true)
 	for hero in expected:
 		hero.block = 6 if hero.id == "warden" else 0

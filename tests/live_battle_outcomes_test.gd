@@ -216,6 +216,13 @@ func _defeat() -> void:
 	for session in range(2):
 		if not await _start():
 			break
+		var legacy := CombatEnemyIntents.new(app._load_enemy_schedule())
+		_check(legacy.is_valid() and not legacy.is_bound(),
+			"independent legacy 999-hit schedule is valid after real admission")
+		app.enemy_intents = legacy
+		app.round_flow._intents = legacy
+		app.enemy_attacks = legacy.get_intents()
+		app._refresh_intents()
 		var trace: Array = [_state()]
 		_check(app.enemies.get_enemies().size() == 2 and app.enemy_attacks[0].amount == 999
 			and app.intent_label.text.contains("999 damage"), "two live enemies announce authored lethal hits")

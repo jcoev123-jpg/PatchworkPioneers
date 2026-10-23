@@ -112,16 +112,15 @@ func _draw() -> void:
 		expected.hand.append(expected.draw.pop_back())
 
 
-func _intents(turn: int) -> Array:
-	var result: Array = []
-	for entry in schedule:
-		var intent: Dictionary = entry.pattern[turn % entry.pattern.size()].duplicate(true)
-		intent.enemy_position = int(entry.enemy_position)
-		intent.amount = int(intent.amount)
-		if intent.has("target_position"):
-			intent.target_position = int(intent.target_position)
-		result.append(intent)
-	return result
+## Authored front policy: the announced attack targets the front living hero.
+func _intents() -> Array:
+	var target := 1
+	for index in range(expected.heroes.size()):
+		if expected.heroes[index].hp > 0:
+			target = index + 1
+			break
+	return [{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": target},
+		{"enemy_position": 2, "type": "block", "amount": 1}]
 
 
 func _opening() -> void:
@@ -130,10 +129,12 @@ func _opening() -> void:
 		"discard": [], "energy": 3, "active": true,
 		"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
 		"enemies": CombatEnemies.new(app._load_enemy_definitions()).get_enemies(),
-		"intents": _intents(0), "attacks": _intents(0), "turn": 0,
+		"intents": [], "attacks": [], "turn": 0,
 		"seed": FIXED_SEED, "rng": 0, "outcome": CombatBattleResult.ACTIVE,
 		"gold": 0, "claimed": false}
 	expected.heroes[0].block = 6
+	expected.intents = _intents()
+	expected.attacks = expected.intents.duplicate(true)
 	_shuffle()
 	_draw()
 
@@ -164,7 +165,7 @@ func _expected_end() -> void:
 	for hero in expected.heroes:
 		hero.block = 0
 	expected.turn += 1
-	expected.intents = _intents(expected.turn)
+	expected.intents = _intents()
 	expected.attacks = expected.intents.duplicate(true)
 	expected.energy = 3
 	_draw()

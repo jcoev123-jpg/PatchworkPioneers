@@ -1356,6 +1356,12 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	var rng_before := starting_rng.state
 	starting_deck.draw_pile.assign(cards)
 	starting_deck._shuffle_draw_pile()
+	# Opt the live fight into the authored weighted intentions and cache the
+	# first announced batch before the opening hand can be played.
+	if not selector.bind_battle(starting_enemies, starting_party, starting_rng):
+		starting_rng.state = rng_before
+		push_warning("Starter enemy intentions are invalid; run was not started")
+		return false
 	if not starting_flow.begin_fight():
 		starting_rng.state = rng_before
 		push_warning("Starter combat bindings are invalid; run was not started")
@@ -2283,11 +2289,21 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 			var path_card_ids := _battle_path_card_ids()
 			if not path_card_ids.is_empty():
 				next_deck = _admit_path_deck(snapshot.deck, path_card_ids, shuffle_state)
-			next_result = CombatBattleResult.new(next_party, entry.enemies)
-			next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
-			staged = next_flow.begin_fight()
-			if staged:
-				staged = torn_carry.begin_battle(id, next_result, next_party)
+			# Bind the genuine roster and party to the run RNG and cache the first
+			# announced batch before the hand is dealt. A refusal rolls back below.
+			var candidate_intents = entry.get("intents")
+			var battle_intents: CombatEnemyIntents = candidate_intents \
+				if candidate_intents is CombatEnemyIntents else null
+			if next_deck == null or battle_intents == null \
+					or not battle_intents.bind_battle(entry.enemies, next_party, run_rng):
+				next_deck = null
+			else:
+				next_result = CombatBattleResult.new(next_party, entry.enemies)
+				next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies,
+					battle_intents, next_result)
+				staged = next_flow.begin_fight()
+				if staged:
+					staged = torn_carry.begin_battle(id, next_result, next_party)
 	if not staged or not act_outcome.begin_current_battle(next_result):
 		run_map.undo_choice(id, prior)
 		run_rng.state = rng_before

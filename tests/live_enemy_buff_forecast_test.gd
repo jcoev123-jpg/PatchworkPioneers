@@ -120,11 +120,11 @@ func _detached_cases(app) -> void:
 	app.enemy_attacks = zero
 	app._refresh_intents()
 	_check(app.enemy_buff_forecast_label.text.is_empty(), "stale announcement clears mounted forecast")
-	app.enemy_intents._definitions[1].pattern[0].amount = 0
+	app.enemy_intents._cache[1]["amount"] = 0
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
 	_check(app.enemy_buff_forecast_label.text.is_empty(), "valid announced zero Block clears mounted forecast")
-	app.enemy_intents._definitions[1].pattern[0].amount = 1
+	app.enemy_intents._cache[1]["amount"] = 1
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app._refresh_intents()
 	_check(_snapshot(app) == before, "zero and stale fixtures restore full original state")

@@ -198,7 +198,9 @@ func _run() -> void:
 			app.end_turn_button.pressed.emit()
 			await process_frame
 			_check(reference.end_turn() and reference.start_turn(), "reference advances")
-			_visible(app, [40, 30 if turn == 0 else 29, 26 if turn < 2 else 25], [0, 0, 0], (turn + 1) % 3 + 1)
+			# The authored front policy always sends the Ragling at the front
+			# living hero; the opening Block absorbs the first hit exactly.
+			_visible(app, [[40, 30, 26], [39, 30, 26], [38, 30, 26]][turn], [0, 0, 0], 1)
 			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state
 				and app.deck.energy == 3, "enemy attack and Block reset preserve deterministic deck, RNG and energy")
 			_duplicate(app)

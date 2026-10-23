@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 ## Deterministic headless coverage for the authored Crossspool Mark Transfer M03 Fight:
 ## slot 1 Fray Scavenger (14 HP), slot 2 Spool Stalker (14 HP), and slot 3 Seam Ripper (18 HP)
@@ -549,7 +550,7 @@ func _verify_ac2_beat_1_mark_transfer_execution(hero_catalog: Array, enemy_catal
 		"Opening party must be Warden (40 HP, 6 Block) at 1, Seamstress (30 HP, 0 Block) at 2, Tinker (26 HP, 0 Block) at 3."
 	)
 	_check(
-		enemies.get_enemy(1) == {
+		WEIGHTED.project(enemies.get_enemy(1)) == {
 			"id": "fray_scavenger",
 			"name": "Fray Scavenger",
 			"max_hp": 14,
@@ -558,7 +559,7 @@ func _verify_ac2_beat_1_mark_transfer_execution(hero_catalog: Array, enemy_catal
 			"hp": 14,
 			"block": 0,
 		}
-		and enemies.get_enemy(2) == {
+		and WEIGHTED.project(enemies.get_enemy(2)) == {
 			"id": "spool_stalker",
 			"name": "Spool Stalker",
 			"max_hp": 14,
@@ -567,7 +568,7 @@ func _verify_ac2_beat_1_mark_transfer_execution(hero_catalog: Array, enemy_catal
 			"hp": 14,
 			"block": 0,
 		}
-		and enemies.get_enemy(3) == {
+		and WEIGHTED.project(enemies.get_enemy(3)) == {
 			"id": "seam_ripper",
 			"name": "Seam Ripper",
 			"max_hp": 18,
@@ -1372,7 +1373,7 @@ func _verify_ac4_map_selection_and_roster_assembly(hero_catalog: Array) -> void:
 		var enemy_list: Array[Dictionary] = assembled_enemies.get_enemies()
 		_check(enemy_list.size() == 3, "Assembled CombatEnemies must contain exactly 3 enemies.")
 		_check(
-			assembled_enemies.get_enemy(1) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(1)) == {
 				"id": "fray_scavenger",
 				"name": "Fray Scavenger",
 				"max_hp": 14,
@@ -1384,7 +1385,7 @@ func _verify_ac4_map_selection_and_roster_assembly(hero_catalog: Array) -> void:
 			"Slot 1 assembled enemy must be Fray Scavenger (14/14 HP, 0 Block)."
 		)
 		_check(
-			assembled_enemies.get_enemy(2) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(2)) == {
 				"id": "spool_stalker",
 				"name": "Spool Stalker",
 				"max_hp": 14,
@@ -1396,7 +1397,7 @@ func _verify_ac4_map_selection_and_roster_assembly(hero_catalog: Array) -> void:
 			"Slot 2 assembled enemy must be Spool Stalker (14/14 HP, 0 Block)."
 		)
 		_check(
-			assembled_enemies.get_enemy(3) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(3)) == {
 				"id": "seam_ripper",
 				"name": "Seam Ripper",
 				"max_hp": 18,

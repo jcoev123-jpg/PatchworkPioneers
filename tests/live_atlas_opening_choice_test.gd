@@ -95,6 +95,27 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 		# Entry legitimately draws the typed encounter and then shuffles the same
 		# RNG for the hand; the mounted deck must match that continuation exactly.
 		var reference := CombatDeck.new(app.run_deck, rng)
+		var chosen: Dictionary = pools[kind][app.encounter_id]
+		var catalog: Array = []
+		for path in RunAuthoredBattleEntry.CATALOG_PATHS:
+			catalog.append_array(RunTypedBattleRoster._parse_catalog_text(FileAccess.get_file_as_string(path)))
+		var definitions: Array = []
+		for enemy_id in chosen.enemy_ids:
+			var matches := catalog.filter(func(record): return record.id == enemy_id)
+			_check(matches.size() == 1, "unique authored weighted enemy: " + enemy_id)
+			if matches.size() == 1:
+				definitions.append(matches[0])
+		var roster := CombatEnemies.new(definitions)
+		var party := CombatParty.new(app.run_heroes)
+		var schedule := RunFightEncounterSelection._parse_schedule_text(
+			FileAccess.get_file_as_string(chosen.schedule))
+		var independent := CombatEnemyIntents.new(schedule)
+		_check(roster.is_valid() and party.is_valid()
+			and independent.bind_battle(roster, party, rng),
+			"authored typed roster, genuine party and run RNG bind first weighted batch")
+		_check(app.enemy_intents.is_bound()
+			and app.enemy_intents.get_intents() == independent.get_intents(),
+			"mounted typed announcement equals independently seeded oracle")
 		_check(reference.start_turn(), "independent deck starts from the seeded selection state")
 		_check(app.deck.hand == reference.hand and app.deck.draw_pile == reference.draw_pile
 			and app.deck.discard_pile == reference.discard_pile

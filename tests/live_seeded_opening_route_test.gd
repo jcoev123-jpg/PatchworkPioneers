@@ -131,6 +131,14 @@ func _typed(app, heroes: Array, cards: Array, rng_state: int, kind: String) -> v
 	ids.sort()
 	_check(app.encounter_id == ids[rng.randi_range(0, ids.size() - 1)], "one sorted typed selection draw")
 	var reference := CombatDeck.new(cards, rng)
+	var independent := CombatEnemyIntents.new(schedule)
+	var roster := CombatEnemies.new(definitions)
+	var party := CombatParty.new(heroes)
+	_check(roster.is_valid() and party.is_valid()
+		and independent.bind_battle(roster, party, rng),
+		"independent typed roster and party bind seeded weighted first announcement")
+	_check(independent.get_intents() == app.enemy_intents.get_intents()
+		and app.enemy_intents.is_bound(), "live typed opening announces the independently drawn batch")
 	_check(reference.start_turn(), "independent persistent deck starts")
 	_check(app.deck.hand == reference.hand and app.deck.draw_pile == reference.draw_pile
 		and app.deck.discard_pile == reference.discard_pile and app.run_rng.state == rng.state

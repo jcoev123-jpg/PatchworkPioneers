@@ -87,7 +87,8 @@ func _sync_battle() -> void:
 	var forecast := {"ok": false, "heroes": []}
 	if app.enemy_intents != null and app.enemy_intents.is_valid():
 		forecast = CombatIncomingAttackPreview.new().forecast(
-			_party.get_heroes(), _enemies.get_enemies(), app.enemy_intents.get_intents())
+			_party.get_heroes(), _enemies.get_enemies(), app.enemy_intents.get_intents(),
+			app.enemy_intents.is_bound())
 	for index in range(row.get_child_count()):
 		var meter := row.get_child(index) as CombatActorMeter
 		if meter == null:

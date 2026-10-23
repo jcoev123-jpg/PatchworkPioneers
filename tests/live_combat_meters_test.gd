@@ -82,7 +82,8 @@ func _slot(app, side: String, position: int) -> Control:
 func _forecast(app) -> Dictionary:
 	if app.enemy_intents != null and app.enemy_intents.is_valid():
 		return CombatIncomingAttackPreview.new().forecast(
-			app.party.get_heroes(), app.enemies.get_enemies(), app.enemy_intents.get_intents())
+			app.party.get_heroes(), app.enemies.get_enemies(), app.enemy_intents.get_intents(),
+			app.enemy_intents.is_bound())
 	return {"ok": false, "heroes": []}
 
 
@@ -905,26 +906,27 @@ func _run() -> void:
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 0
 			and app.enemies.get_enemy(2).block == 1, "actual turn absorbs attack and executes second enemy Block")
 		_visible(app)
-		_check(_incoming(app, 1) == "Incoming: none"
-			and _incoming(app, 2) == "Incoming: 0 Block, 1 HP",
-			"real End Turn reveals next Ragling intent at fixed Seamstress position")
+		_check(_incoming(app, 1) == "Incoming: 0 Block, 1 HP"
+			and _incoming(app, 2) == "Incoming: none",
+			"real End Turn reveals the next front-target Ragling intent on the Warden ribbon")
 		# Direct valid model changes must refresh without app refresh callbacks.
-		_check(app.party.gain_block(2, 7) and app.party.apply_damage(2, 3), "valid hero Block absorption")
+		_check(app.party.gain_block(1, 7) and app.party.apply_damage(1, 3), "valid hero Block absorption")
 		_check(app.party.apply_damage(3, 999) and app.enemies.gain_block(1, 8)
 			and app.enemies.apply_damage(1, 3) and app.enemies.apply_damage(2, 1), "valid HP/Block, enemy Block absorption and zero HP mutations")
 		var before := _state(app)
 		await _frames()
 		_visible(app)
-		_check(_incoming(app, 2) == "Incoming: 1 Block, 0 HP",
-			"real living attacker forecasts against changed Seamstress Block")
+		_check(_incoming(app, 1) == "Incoming: 1 Block, 0 HP"
+			and _incoming(app, 2) == "Incoming: none",
+			"real living attacker forecasts against changed Warden Block")
 		_check(_state(app) == before, "display refresh preserves every model, energy, piles, intents and RNG")
 		_check(app.party.apply_damage(2, 999) and app.party.is_downed(2),
 			"live downed target remains at position two")
 		await _frames()
 		_visible(app)
-		_check(_incoming(app, 2) == "DOWNED" and _incoming(app, 1) == "Incoming: none"
+		_check(_incoming(app, 2) == "DOWNED" and _incoming(app, 1) == "Incoming: 1 Block, 0 HP"
 			and _incoming(app, 3) == "DOWNED",
-			"downed target is not retargeted and never has a plausible incoming line")
+			"downed heroes never show a plausible incoming line while the living target keeps its forecast")
 		var downed_chips: Array[String] = []
 		for button in _visible_buttons(_meters(app)[1]):
 			downed_chips.append(button.text)
@@ -1108,8 +1110,9 @@ func _unravel_bound_fight(app, presenter) -> void:
 	_check(skipped.gauge == 0 and skipped.threshold == 12 and not skipped.skip_pending
 		and app.enemy_intents._turn_index == 1 and app.enemies.get_enemy(2).block == 1,
 		"actual End Turn consumes one skip, raises threshold to 12, other enemy still acts")
-	_check(app.party.get_hero(1).hp == hero_before.hp and app.enemy_intents.get_intents() != intents_before,
-		"the skipped original attack causes no HP loss while scheduler legitimately advances")
+	_check(app.party.get_hero(1).hp == hero_before.hp and app.enemy_intents._turn_index == 1
+		and not app.enemy_intents.get_intents().is_empty(),
+		"the skipped original attack causes no HP loss while the scheduler legitimately advances")
 	_check(thread.value == 0 and thread.max_value == 12 and (thread.get_node("ThreadFraction") as Label).text == "0/12"
 		and roster._badges[0].icon_mode == "attack" and roster._badges[0].readable_text.begins_with("ATK "),
 		"after real skipped action gauge resets and next scheduler action resumes")
@@ -1211,7 +1214,8 @@ func _status_end_turns(app, presenter) -> void:
 			var before := _state(app)
 			var heroes: Array = app.party.get_heroes()
 			var prediction := CombatIncomingAttackPreview.new().forecast(heroes,
-				app.enemies.get_enemies(), app.enemy_intents.get_intents())
+				app.enemies.get_enemies(), app.enemy_intents.get_intents(),
+				app.enemy_intents.is_bound())
 			_check(prediction["ok"], scenario + ": live forecast valid")
 			seed(49099)
 			var expected_global := randi()

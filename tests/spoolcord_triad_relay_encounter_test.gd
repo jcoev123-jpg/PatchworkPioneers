@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 const HERO_CATALOG_PATH := "res://data/heroes/starter_party.json"
 const ENEMY_CATALOG_PATH := "res://data/enemies/run_enemies.json"
@@ -345,7 +346,7 @@ func _verify_ac1_schedule_catalogs_and_typed_roster(hero_catalog: Array, enemy_c
 		var enemy_list: Array[Dictionary] = assembled_enemies.get_enemies()
 		_check(enemy_list.size() == 3, "Assembled CombatEnemies must contain exactly 3 slots.")
 		_check(
-			assembled_enemies.get_enemy(1) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(1)) == {
 				"id": "button_guard",
 				"name": "Button Guard",
 				"max_hp": 16,
@@ -357,7 +358,7 @@ func _verify_ac1_schedule_catalogs_and_typed_roster(hero_catalog: Array, enemy_c
 			"Slot 1 assembled enemy must be Button Guard with 16/16 HP, 0 Block, and exact art_path."
 		)
 		_check(
-			assembled_enemies.get_enemy(2) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(2)) == {
 				"id": "fray_scavenger",
 				"name": "Fray Scavenger",
 				"max_hp": 14,
@@ -369,7 +370,7 @@ func _verify_ac1_schedule_catalogs_and_typed_roster(hero_catalog: Array, enemy_c
 			"Slot 2 assembled enemy must be Fray Scavenger with 14/14 HP, 0 Block, and exact art_path."
 		)
 		_check(
-			assembled_enemies.get_enemy(3) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(3)) == {
 				"id": "spool_stalker",
 				"name": "Spool Stalker",
 				"max_hp": 14,

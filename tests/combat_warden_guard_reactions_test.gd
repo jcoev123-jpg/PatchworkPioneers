@@ -765,7 +765,19 @@ func _start_battle_in_app(app: Control, target_fight_id: String = "") -> bool:
 	if app.deck == null and is_instance_valid(chosen_button):
 		chosen_button.pressed.emit()
 		await _frames()
-	return app.deck != null and app.round_flow != null
+	if app.deck == null or app.round_flow == null:
+		return false
+	# These mounted Warden reaction cases explicitly exercise the legacy
+	# starter_attacks schedule, not the opt-in weighted battle scheduler.
+	var fixture_intents := CombatEnemyIntents.new(app.enemy_intents._definitions)
+	_check(fixture_intents.is_valid() and not fixture_intents.is_bound(),
+		"mounted fixture independently retains the legacy authored schedule")
+	app.enemy_intents = fixture_intents
+	app.round_flow._intents = fixture_intents
+	app.round_flow._battle_intents = fixture_intents
+	app.enemy_attacks = fixture_intents.get_intents()
+	app._refresh_intents()
+	return true
 
 
 func _return_to_title(app: Control) -> void:

@@ -644,6 +644,10 @@ func _mixed_tinker_turns() -> void:
 				var enemies := CombatEnemies.new(app._load_enemy_definitions())
 				var intents := CombatEnemyIntents.new(app._load_enemy_schedule())
 				var result := CombatBattleResult.new(party, enemies)
+				# Mirror the real admission: the same authored roster/party/RNG binds
+				# before the opening deal, so announcements match turn for turn.
+				_check(intents.bind_battle(enemies, party, rng),
+					"independent reference battle binds the same authored intents")
 				var flow := CombatRoundFlow.new(deck, party, enemies, intents, result)
 				_check(flow.begin_fight(), "independent complete seeded fight starts")
 				var oracle := CombatAttackCards.new()

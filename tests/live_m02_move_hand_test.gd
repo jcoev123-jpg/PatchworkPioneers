@@ -211,7 +211,7 @@ func _status_backstep_turn() -> void:
 			expected[0].append(expected[1].pop_back())
 		expected[3] = 3
 		expected[7] = [
-			{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 2},
+			{"enemy_position": 1, "type": "attack", "amount": 1, "target_position": 1},
 			{"enemy_position": 2, "type": "block", "amount": 1}]
 		expected[8] = expected[7].duplicate(true)
 		expected[9] = 1

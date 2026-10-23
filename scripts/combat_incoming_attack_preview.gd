@@ -8,7 +8,8 @@ extends RefCounted
 const MAX_INT := 9223372036854775807
 
 
-func forecast(heroes: Array, enemies: Array, intents: Array) -> Dictionary:
+func forecast(heroes: Array, enemies: Array, intents: Array,
+		policy_targets := false) -> Dictionary:
 	var invalid := {"ok": false, "heroes": []}
 	if heroes.size() != CombatParty.PARTY_SIZE or enemies.is_empty() or enemies.size() > 3 or intents.size() != enemies.size():
 		return invalid
@@ -28,11 +29,12 @@ func forecast(heroes: Array, enemies: Array, intents: Array) -> Dictionary:
 	# The committed phase is the sole authority on whether the complete roster
 	# is legal, including effects that depend on an earlier source.
 	if not CombatEnemyPhase.new().execute_phase(_detached_party(tick["actors"]),
-			_detached_enemies(enemies), ordered)["ok"]:
+			_detached_enemies(enemies), ordered, null, policy_targets)["ok"]:
 		return invalid
 	# A shove changes positions, so every total follows the original actor id:
 	# the returned rows stay on each actor's currently presented slot.
-	return _simulate(_detached_party(tick["actors"]), _detached_enemies(enemies), ordered, heroes)
+	return _simulate(_detached_party(tick["actors"]), _detached_enemies(enemies), ordered,
+		heroes, policy_targets)
 
 
 ## The caller's schedule must be complete: exactly one announcement per source.
@@ -63,21 +65,27 @@ func _validated_actions(enemy_count: int, intents: Array) -> Array[Dictionary]:
 ## Replays the committed phase's source order on detached actors and keeps the
 ## hero-local attack totals, so swaps never move a total onto another actor.
 func _simulate(party: CombatParty, enemies: CombatEnemies,
-		ordered: Array[Dictionary], presented: Array) -> Dictionary:
+		ordered: Array[Dictionary], presented: Array, policy_targets := false) -> Dictionary:
 	var invalid := {"ok": false, "heroes": []}
 	var totals: Dictionary = {}
 	for hero in party._heroes:
 		totals[hero["id"]] = {"incoming": 0, "block_absorbed": 0, "hp_lost": 0}
 	for action in ordered:
 		var source: int = action["enemy_position"]
+		# A battle-bound policy announcement resolves its living-target fallback
+		# exactly as the committed phase will, without drawing any RNG.
+		var policy := CombatEnemyIntents.policy_for(enemies, source) if policy_targets else ""
+		var effective: Dictionary = action
+		if not policy.is_empty():
+			effective = CombatEnemyIntents.resolve_announced_action(party, action, enemies)
 		var before := _hp_block(party)
 		if not enemies.is_slain(source):
-			if action["type"] == "attack":
-				var target: int = action["target_position"]
-				var damage := CombatStatuses.new().adjusted_attack_damage(action["amount"],
+			if effective["type"] == "attack":
+				var target: int = effective["target_position"]
+				var damage := CombatStatuses.new().adjusted_attack_damage(effective["amount"],
 					enemies.get_enemy(source).get("statuses", {}),
 					party.get_hero(target).get("statuses", {}))
-				var attack: Dictionary = action.duplicate(true)
+				var attack: Dictionary = effective.duplicate(true)
 				attack.erase("type")
 				attack.amount = damage
 				var hit := CombatEnemyAttacks.new().execute_attacks(party, [attack])
@@ -88,14 +96,20 @@ func _simulate(party: CombatParty, enemies: CombatEnemies,
 					if damage > MAX_INT - totals[id]["incoming"]:
 						return invalid
 					totals[id]["incoming"] += damage
-			elif action["type"] == "block":
-				var block := CombatEnemyBlocks.execute_blocks(enemies, [action])
+			elif effective["type"] == "block":
+				var block := CombatEnemyBlocks.execute_blocks(enemies, [effective])
 				if not block["ok"]:
 					return invalid
 			else:
-				var special := CombatEnemySpecialActions.new().execute_actions(party, enemies, [action])
-				if not special["ok"]:
-					return invalid
+				var special: Dictionary = effective.duplicate(true)
+				var result := CombatEnemySpecialActions.new().execute_actions(party, enemies, [special])
+				if not result["ok"]:
+					# A policy shove with no living neighbour is an inert beat.
+					if not (special["type"] == "shove"
+							and not policy.is_empty()
+							and not CombatEnemyIntents.shove_is_legal(party,
+								special["target_position"], special["direction"])):
+						return invalid
 		var after := _hp_block(party)
 		for id in after:
 			totals[id]["block_absorbed"] += before[id]["block"] - after[id]["block"]

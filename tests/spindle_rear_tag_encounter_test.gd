@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 ## Deterministic headless coverage for the authored Spindle Rear Tag M03 Fight
 ## encounter: slot 1 Button Guard shoves hero position 2 toward rear (+1), then
@@ -369,7 +370,7 @@ func _test_authored_schedule_and_catalog() -> void:
 	var enemies := _build_enemies()
 	_check(enemies.is_valid() and enemies.get_enemies().size() == 2,
 		"authored two-enemy roster is valid")
-	_check(enemies.get_enemies() == _expected_enemies_with_block(0, 0),
+	_check(WEIGHTED.project(enemies.get_enemies()) == _expected_enemies_with_block(0, 0),
 		"constructed enemy roster matches Button Guard (slot 1, 16 HP) and Spool Stalker (slot 2, 14 HP)")
 	_check_enemy(enemies, 1, "button_guard", "Button Guard", 16, 16, 0, "start")
 	_check_enemy(enemies, 2, "spool_stalker", "Spool Stalker", 14, 14, 0, "start")
@@ -495,7 +496,7 @@ func _test_three_phase_real_execution() -> void:
 	_check(not opening.apply(), "CombatStartingBlock refuses a second apply()")
 	_check(party.get_heroes() == _expected_heroes_opening(),
 		"opening party snapshot is Warden 40/6, Seamstress 30/0, Tinker 26/0")
-	_check(enemies.get_enemies() == _expected_enemies_with_block(0, 0),
+	_check(WEIGHTED.project(enemies.get_enemies()) == _expected_enemies_with_block(0, 0),
 		"opening enemy snapshot is Button Guard 16/0, Spool Stalker 14/0")
 
 	# Verify Exposed math directly: base 3 with Exposed 1 is floor(3 * 1.5) = 4.
@@ -526,7 +527,7 @@ func _test_three_phase_real_execution() -> void:
 	_check_hero(party, 1, "warden", "Warden", 40, 40, 6, {}, "AC2 beat 1")
 	_check_hero(party, 2, "tinker", "Tinker", 26, 26, 0, {}, "AC2 beat 1")
 	_check_hero(party, 3, "seamstress", "Seamstress", 30, 30, 0, {"exposed": 1}, "AC2 beat 1")
-	_check(enemies.get_enemies() == _expected_enemies_with_block(0, 0),
+	_check(WEIGHTED.project(enemies.get_enemies()) == _expected_enemies_with_block(0, 0),
 		"AC2: both enemies remain at 16/0 and 14/0 after beat 1")
 	_check(is_same(party._heroes[0], warden_ref)
 		and is_same(party._heroes[1], tinker_ref)
@@ -551,7 +552,7 @@ func _test_three_phase_real_execution() -> void:
 	_check_hero(party, 1, "warden", "Warden", 40, 40, 6, {}, "AC3 beat 2")
 	_check_hero(party, 2, "tinker", "Tinker", 26, 26, 0, {}, "AC3 beat 2")
 	_check_hero(party, 3, "seamstress", "Seamstress", 26, 30, 0, {"exposed": 1}, "AC3 beat 2")
-	_check(enemies.get_enemies() == _expected_enemies_with_block(3, 0),
+	_check(WEIGHTED.project(enemies.get_enemies()) == _expected_enemies_with_block(3, 0),
 		"AC3: after beat 2, Button Guard has 16 HP / 3 Block and Spool Stalker has 14 HP / 0 Block")
 	_check_enemy(enemies, 1, "button_guard", "Button Guard", 16, 16, 3, "AC3 beat 2")
 	_check_enemy(enemies, 2, "spool_stalker", "Spool Stalker", 14, 14, 0, "AC3 beat 2")
@@ -574,7 +575,7 @@ func _test_three_phase_real_execution() -> void:
 	_check_hero(party, 1, "warden", "Warden", 40, 40, 2, {}, "AC3 beat 3")
 	_check_hero(party, 2, "tinker", "Tinker", 26, 26, 0, {}, "AC3 beat 3")
 	_check_hero(party, 3, "seamstress", "Seamstress", 26, 30, 0, {"exposed": 1}, "AC3 beat 3")
-	_check(enemies.get_enemies() == _expected_enemies_with_block(3, 2),
+	_check(WEIGHTED.project(enemies.get_enemies()) == _expected_enemies_with_block(3, 2),
 		"AC3: after beat 3, Button Guard has 16 HP / 3 Block and Spool Stalker has 14 HP / 2 Block")
 	_check_enemy(enemies, 1, "button_guard", "Button Guard", 16, 16, 3, "AC3 beat 3")
 	_check_enemy(enemies, 2, "spool_stalker", "Spool Stalker", 14, 14, 2, "AC3 beat 3")
@@ -897,7 +898,7 @@ func _test_double_fixture_replay() -> void:
 	_check(replay_a["opening"] == true,
 		"AC5: replay fixture applies Warden opening Block 6 once")
 	_check(replay_a["opening_heroes"] == _expected_heroes_opening()
-		and replay_a["opening_enemies"] == _expected_enemies_with_block(0, 0),
+		and WEIGHTED.project(replay_a["opening_enemies"]) == _expected_enemies_with_block(0, 0),
 		"AC5: replay opening snapshots match explicit literal actors")
 	_check(replay_a["announced"] == [_first_intents(), _second_intents(), _third_intents()],
 		"AC5: replay announcements match all three literal beats")
@@ -911,7 +912,7 @@ func _test_double_fixture_replay() -> void:
 		_expected_heroes_beat_2(),
 		_expected_heroes_beat_3()],
 		"AC5: replay hero snapshots match explicit AC2 (beat 1) and AC3 (beats 2-3) states")
-	_check(replay_a["enemy_snapshots"] == [
+	_check(WEIGHTED.project(replay_a["enemy_snapshots"]) == [
 		_expected_enemies_with_block(0, 0),
 		_expected_enemies_with_block(3, 0),
 		_expected_enemies_with_block(3, 2)],

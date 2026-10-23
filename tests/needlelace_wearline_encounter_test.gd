@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 ## Deterministic headless coverage for the authored Needlelace Wearline M04 Fight:
 ## slot 1 Button Guard (16 HP) and slot 2 Spool Stalker (14 HP) on a three-beat cycle
@@ -520,7 +521,7 @@ func _verify_ac4_roster_assembly_and_companion_parse(hero_catalog: Array, enemy_
 		var enemy_list: Array[Dictionary] = assembled_enemies.get_enemies()
 		_check(enemy_list.size() == 2, "Assembled CombatEnemies must contain exactly 2 enemies.")
 		_check(
-			assembled_enemies.get_enemy(1) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(1)) == {
 				"id": "button_guard", "name": "Button Guard", "max_hp": 16,
 				"art_path": "res://assets/paper/enemies/button_guard.png",
 				"position": 1, "hp": 16, "block": 0,
@@ -528,7 +529,7 @@ func _verify_ac4_roster_assembly_and_companion_parse(hero_catalog: Array, enemy_
 			"Slot 1 assembled enemy must be Button Guard with 16/16 HP, 0 Block."
 		)
 		_check(
-			assembled_enemies.get_enemy(2) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(2)) == {
 				"id": "spool_stalker", "name": "Spool Stalker", "max_hp": 14,
 				"art_path": "res://assets/paper/enemies/spool_stalker.png",
 				"position": 2, "hp": 14, "block": 0,

@@ -449,13 +449,6 @@ func _run() -> void:
 		_check(expected_intents.is_valid() and not authored.is_empty(), "selected authored two-enemy schedule valid")
 		_check(app.enemy_intents._definitions == authored and selected.definitions == authored,
 			"battle receives exact selected authored definitions")
-		_check(app.encounter_id == expected_id and app.enemy_attacks == expected_intents.get_intents()
-			and app.enemy_intents.get_intents() == expected_intents.get_intents(),
-			"real initial intents for both enemies match selector and authored pattern")
-		_check(expected_id != "starter_attacks", "seed exercises a non-starter schedule")
-		_check(app.intent_label.text.contains("Enemy 1") and app.intent_label.text.contains("Enemy 2"),
-			"both initial announcements mounted")
-		var reference_deck := CombatDeck.new(cards, rng)
 		var reference_party := CombatParty.new(app._load_party_definitions())
 		# Independent bindings and catalog lookup, without the production assembler.
 		var expected_rosters := {}
@@ -472,6 +465,17 @@ func _run() -> void:
 				record.max_hp = int(record.max_hp)
 				ordered.append(record)
 		var reference_enemies := CombatEnemies.new(ordered)
+		# Mirror admission order exactly: selector draw, deck shuffle, weighted
+		# binding, then the opening deal.
+		var reference_deck := CombatDeck.new(cards, rng)
+		_check(expected_intents.bind_battle(reference_enemies, reference_party, rng),
+			"reference binds the same authored weighted intents")
+		_check(app.encounter_id == expected_id and app.enemy_attacks == expected_intents.get_intents()
+			and app.enemy_intents.get_intents() == expected_intents.get_intents(),
+			"real initial intents for both enemies match selector and authored weighted announcement")
+		_check(expected_id != "starter_attacks", "seed exercises a non-starter schedule")
+		_check(app.intent_label.text.contains("Enemy 1") and app.intent_label.text.contains("Enemy 2"),
+			"both initial announcements mounted")
 		_check(reference_enemies.is_valid() and app.enemies.get_enemies() == reference_enemies.get_enemies(),
 			"selected catalog IDs, HP, names and source slots match independent roster")
 		var presenter = app.get_node("LiveEnemyRoster")
@@ -488,9 +492,18 @@ func _run() -> void:
 				and meter.block_badge.visible == (live_block > 0)
 				and meter.block_text.text == ("%d" % live_block if live_block > 0 else ""),
 				"visible selected actor HP and Block by slot")
-			var initial_action: Dictionary = authored[index].pattern[0].duplicate(true)
-			initial_action.enemy_position = index + 1
-			_check(app.enemy_attacks[index] == initial_action, "source-ordered authored initial intent")
+			var initial_bodies: Array = []
+			for raw in ordered[index].get("intent", {}).get("actions", []):
+				var candidate: Dictionary = raw.duplicate(true)
+				candidate.erase("weight")
+				candidate["amount"] = int(candidate["amount"])
+				initial_bodies.append(candidate)
+			var initial: Dictionary = app.enemy_attacks[index].duplicate(true)
+			initial.erase("enemy_position")
+			initial.erase("target_position")
+			_check(initial_bodies.has(initial)
+				and not CombatEnemyIntents.policy_for(app.enemies, index + 1).is_empty(),
+				"source-ordered initial announcement is an authored weighted action for its policy")
 		var reference_result := CombatBattleResult.new(reference_party, reference_enemies)
 		var reference_flow := CombatRoundFlow.new(reference_deck, reference_party, reference_enemies,
 			expected_intents, reference_result)
@@ -531,11 +544,18 @@ func _run() -> void:
 			and app.battle_result.evaluate() == reference_result.evaluate(),
 			"mounted End Turn executes selected attacks/block, advances schedule and deals exact next hand")
 		_check(app.enemy_intents.get_intents() == expected_intents.get_intents(), "next phase follows selected schedule")
-		for definition in authored:
-			var action: Dictionary = definition.pattern[1 % definition.pattern.size()].duplicate(true)
-			action.enemy_position = definition.enemy_position
-			_check(app.enemy_attacks[definition.enemy_position - 1] == action,
-				"next announcement matches authored second beat for each enemy")
+		for index in range(ordered.size()):
+			var next_bodies: Array = []
+			for raw in ordered[index].get("intent", {}).get("actions", []):
+				var candidate: Dictionary = raw.duplicate(true)
+				candidate.erase("weight")
+				candidate["amount"] = int(candidate["amount"])
+				next_bodies.append(candidate)
+			var next_action: Dictionary = app.enemy_attacks[index].duplicate(true)
+			next_action.erase("enemy_position")
+			next_action.erase("target_position")
+			_check(next_bodies.has(next_action) and app.enemy_attacks[index].enemy_position == index + 1,
+				"next announcement stays inside the authored weighted actions for each enemy")
 		if session == 0:
 			phase_trace = _snapshot(app)
 		else:

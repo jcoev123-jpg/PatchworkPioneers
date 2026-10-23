@@ -1035,6 +1035,14 @@ func _at_rest(puppets: Array) -> bool:
 	return true
 
 
+## The authored front policy's living target, read from the real party.
+func _front_target(app) -> int:
+	for index in range(CombatParty.PARTY_SIZE):
+		if app.party.get_hero(index + 1).hp > 0:
+			return index + 1
+	return 1
+
+
 func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 	if not is_instance_valid(presenter.panel) or presenter.enemies == null:
 		_check(false, "badge assertions require a mounted real battle")
@@ -1665,7 +1673,7 @@ func _run() -> void:
 			_check(app.enemies.get_enemy(1).hp == 12 and app.enemies.get_enemy(2).hp == 12
 				and app.enemies.get_enemy(1).block == 0 and app.enemies.get_enemy(2).block == turn,
 				"only Guard's announced Block changes the live roster")
-			_assert_badges(app, presenter, turn % 3 + 1)
+			_assert_badges(app, presenter, _front_target(app))
 			trace.append([_snapshot(app), presenter.enemies.get_enemies() if presenter.enemies != null else []])
 			_check(app.deck.try_spend_energy(2) and reference.deck.try_spend_energy(2), "real shared energy spend")
 			if turn == 0:
@@ -1677,7 +1685,7 @@ func _run() -> void:
 				app.end_turn_button.pressed.emit()
 			reference.end_turn_button.pressed.emit()
 			await process_frame
-			_assert_badges(app, presenter, (turn + 1) % 3 + 1)
+			_assert_badges(app, presenter, _front_target(app))
 			_check(_snapshot(app) == _snapshot(reference),
 				"real pointer/keyboard End Turn matches same exact reference state")
 		await _mouse_attack(app, reference, presenter)
@@ -1726,8 +1734,10 @@ func _run() -> void:
 	await _invalid_sources(app, reference, presenter)
 	# A valid multi-entry source proves the whole list is parsed, without fixing catalog totals.
 	var file := FileAccess.open(FIXTURE, FileAccess.WRITE)
-	file.store_string(JSON.stringify([{"id": "first", "name": "First", "max_hp": 3, "art_path": "unused"},
-		{"id": "second", "name": "Second", "max_hp": 7, "art_path": "unused"}]))
+	file.store_string(JSON.stringify([{"id": "first", "name": "First", "max_hp": 3, "art_path": "unused",
+		"intent": {"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 1}]}},
+		{"id": "second", "name": "Second", "max_hp": 7, "art_path": "unused",
+		"intent": {"target": "front", "actions": [{"type": "block", "amount": 1, "weight": 1}]}}]))
 	file.close()
 	app.starter_enemies_path = FIXTURE
 	_fixture_start(app)
@@ -1825,7 +1835,8 @@ func _bound_skip_badges(app, presenter) -> void:
 	presenter._refresh()
 	_check(not service.get_snapshot(1).skip_pending and service.get_snapshot(1).threshold == 12
 		and badge.icon_mode == "attack" and badge.readable_text.begins_with("ATK ")
-		and app.enemy_intents.get_intents() != announced,
+		and app.enemy_intents._turn_index == 1
+		and app.enemy_attacks == app.enemy_intents.get_intents(),
 		"real End Turn consumes pending original slot once and badge re-announces the scheduler")
 	_check(app.enemies.apply_damage(1, 999) and app.enemies.is_slain(1),
 		"slain slot is an actual CombatEnemies transaction")

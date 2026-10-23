@@ -39,11 +39,14 @@ func _canonical_oracle(id: String) -> Dictionary:
 		return {}
 	var party: CombatParty = app.party_carryover.create_next_fight_party()
 	var deck: CombatDeck = admitted.combat_deck
+	var bound_intents := CombatEnemyIntents.new(entry.intents._definitions)
+	_check(bound_intents.bind_battle(entry.enemies, party, rng),
+		"independent canonical roster caches weighted intentions after the deck shuffle")
 	var result := CombatBattleResult.new(party, entry.enemies)
-	var flow := CombatRoundFlow.new(deck, party, entry.enemies, entry.intents, result)
+	var flow := CombatRoundFlow.new(deck, party, entry.enemies, bound_intents, result)
 	_check(flow.begin_fight(), "oracle begins exactly one five-card turn")
 	return {"mounted": {"heroes": party.get_heroes(), "enemies": entry.enemies.get_enemies(),
-		"intents": entry.intents.get_intents(), "encounter": entry.encounter_id,
+		"intents": bound_intents.get_intents(), "encounter": entry.encounter_id,
 		"hand": deck.hand.duplicate(), "draw": deck.draw_pile.duplicate(), "rng": rng.state},
 		"snapshot": admitted.snapshot, "deck": deck, "party": party, "enemies": entry.enemies,
 		"flow": flow, "run_cards": admitted.run_cards}

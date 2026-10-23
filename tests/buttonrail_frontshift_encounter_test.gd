@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 ## Deterministic headless coverage for the authored Buttonrail Frontshift
 ## encounter (standalone M04 Fight content; NOT registered in the live pool):
@@ -544,7 +545,7 @@ func _test_ac3_typed_selection_roster_and_negatives() -> void:
 			and bridged.get_enemy(2).get("hp") == 14
 			and bridged.get_enemy(2).get("position") == 2,
 			"assembled slot 2 is the shipped Spool Stalker with 14 HP")
-		_check(bridged.get_enemies() == _build_enemies().get_enemies(),
+		_check(WEIGHTED.same(bridged.get_enemies(), _build_enemies().get_enemies()),
 			"the bridged roster equals the roster built straight from the shipped catalog")
 
 	# The shipped typed pool stays untouched and readable; no global Fight count

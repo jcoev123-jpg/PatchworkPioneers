@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 const HEMDRAG_PATH := "res://data/encounters/hemdrag_relay.json"
 const STARTER_ATTACKS_PATH := "res://data/encounters/starter_attacks.json"
@@ -244,13 +245,13 @@ func _load_hemdrag_enemy_definitions() -> Array[Dictionary]:
 	var raw_enemies := _load_json_array(RUN_ENEMIES_PATH, "run_enemies.json")
 	var seam_ripper := _find_unique_record_by_id(raw_enemies, "seam_ripper", "run_enemies")
 	var button_guard := _find_unique_record_by_id(raw_enemies, "button_guard", "run_enemies")
-	_check(seam_ripper == {
+	_check(WEIGHTED.project(seam_ripper) == {
 		"id": "seam_ripper",
 		"name": "Seam Ripper",
 		"max_hp": 18,
 		"art_path": "res://assets/paper/enemies/seam_ripper.png",
 	}, "run_enemies: Seam Ripper matches canonical 18 HP and art_path")
-	_check(button_guard == {
+	_check(WEIGHTED.project(button_guard) == {
 		"id": "button_guard",
 		"name": "Button Guard",
 		"max_hp": 16,
@@ -314,7 +315,7 @@ func _test_ac1_catalog_and_schedule_validation() -> void:
 		"AC1: CombatParty valid from starter_party.json")
 	_check(enemies.is_valid() and enemies.get_enemies().size() == 2,
 		"AC1: CombatEnemies valid from run_enemies.json [seam_ripper, button_guard]")
-	_check(enemies.get_enemy(1) == {
+	_check(WEIGHTED.project(enemies.get_enemy(1)) == {
 		"id": "seam_ripper",
 		"name": "Seam Ripper",
 		"max_hp": 18,
@@ -323,7 +324,7 @@ func _test_ac1_catalog_and_schedule_validation() -> void:
 		"position": 1,
 		"art_path": "res://assets/paper/enemies/seam_ripper.png",
 	}, "AC1: slot 1 enemy is Seam Ripper (seam_ripper, 18 HP) with authored art_path")
-	_check(enemies.get_enemy(2) == {
+	_check(WEIGHTED.project(enemies.get_enemy(2)) == {
 		"id": "button_guard",
 		"name": "Button Guard",
 		"max_hp": 16,
@@ -452,7 +453,7 @@ func _test_ac2_three_beat_execution_and_detached_bleed_tick() -> void:
 			"art_path": "res://assets/paper/heroes/tinker.png",
 		},
 	], "AC2 beat 1: Seamstress has 30 HP and Bleed 1 without immediate HP loss; Warden keeps 40 HP/6 Block")
-	_check(enemies.get_enemies() == [
+	_check(WEIGHTED.project(enemies.get_enemies()) == [
 		{
 			"id": "seam_ripper",
 			"name": "Seam Ripper",
@@ -594,7 +595,7 @@ func _test_ac2_three_beat_execution_and_detached_bleed_tick() -> void:
 	]
 	_check(party.get_heroes() == expected_post_beat3_heroes,
 		"AC2 beat 3: Tinker falls 26->23 HP, Seamstress stays 27 HP with Bleed 1 at pos 3, Warden stays 40 HP/6 Block")
-	_check(enemies.get_enemies() == expected_post_beat3_enemies,
+	_check(WEIGHTED.project(enemies.get_enemies()) == expected_post_beat3_enemies,
 		"AC2 beat 3: Button Guard Block increases 2->5; Seam Ripper remains 18 HP/0 Block")
 
 	# Detached CombatStatusTurnBatch hero tick: Seamstress loses 1 HP from Bleed (27->26)
@@ -645,7 +646,7 @@ func _test_ac2_three_beat_execution_and_detached_bleed_tick() -> void:
 	}, "AC2 detached tick: Seamstress Bleed 1 lowers HP 27->26 and expires to {}")
 	_check(caller_heroes == caller_heroes_copy
 		and party.get_heroes() == expected_post_beat3_heroes
-		and enemies.get_enemies() == expected_post_beat3_enemies,
+		and WEIGHTED.project(enemies.get_enemies()) == expected_post_beat3_enemies,
 		"AC2 detached tick: does not mutate caller array or silently publish to CombatParty")
 
 	# Also prove on a detached snapshot with Block on Seamstress that Bleed ignores Block.

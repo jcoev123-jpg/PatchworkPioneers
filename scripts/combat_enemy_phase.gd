@@ -3,7 +3,7 @@ extends RefCounted
 ## Stage every source in order, then publish once. No turn or RNG ownership.
 
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
-		reactions: CombatWardenGuardReactions = null) -> Dictionary:
+		reactions: CombatWardenGuardReactions = null, policy_targets := false) -> Dictionary:
 	var failure := {"ok": false, "events": []}
 	if party == null or enemies == null or not party.is_valid() or not enemies.is_valid():
 		return failure
@@ -35,23 +35,33 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 	var events: Array[Dictionary] = []
 	for action in ordered:
 		var source: int = action.enemy_position
-		var event := {"type": action.type, "enemy_position": source, "applied": false}
+		# A cached policy announcement resolves against the actors as they stand
+		# at its own beat: a hero downed earlier this phase or during the player
+		# turn falls back deterministically to the policy's first living target.
+		# Legacy pattern schedules keep their exact announced target, so only a
+		# caller that passes battle-bound announcements opts into the fallback.
+		var effective: Dictionary = action
+		var policy := CombatEnemyIntents.policy_for(staged_enemies, source) \
+			if policy_targets else ""
+		if not staged_enemies.is_slain(source) and not policy.is_empty():
+			effective = CombatEnemyIntents.resolve_announced_action(staged_party, action, staged_enemies)
+		var event := {"type": effective.type, "enemy_position": source, "applied": false}
 		for field in ["target_position", "status", "direction"]:
-			if action.has(field):
-				event[field] = action[field]
+			if effective.has(field):
+				event[field] = effective[field]
 		if not staged_enemies.is_slain(source):
-			if action.type == "attack":
-				var actual_target: int = action.target_position
+			if effective.type == "attack":
+				var actual_target: int = effective.target_position
 				if reactions != null:
 					var preview: Dictionary = reactions.preview_actual_recipient(
-						staged_party, action.target_position)
+						staged_party, effective.target_position)
 					if not preview.get("ok", false):
 						return failure
 					actual_target = preview.actual_target_position
-				var damage := CombatStatuses.new().adjusted_attack_damage(action.amount,
+				var damage := CombatStatuses.new().adjusted_attack_damage(effective.amount,
 					staged_enemies.get_enemy(source).get("statuses", {}),
 					staged_party.get_hero(actual_target).get("statuses", {}))
-				var attack: Dictionary = action.duplicate(true)
+				var attack: Dictionary = effective.duplicate(true)
 				attack.erase("type")
 				attack.amount = damage
 				if reactions != null:
@@ -69,20 +79,28 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 					if not result.ok:
 						return failure
 					event.applied = result.events[0].applied
-			elif action.type == "block":
-				var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [action])
+			elif effective.type == "block":
+				var result := CombatEnemyBlocks.execute_blocks(staged_enemies, [effective])
 				if not result.ok:
 					return failure
 				event.applied = result.events[0].applied
 			else:
-				var result := CombatEnemySpecialActions.new().execute_actions(staged_party, staged_enemies, [action])
-				if not result.ok:
-					return failure
-				event.applied = result.events[0].applied
-		if reactions != null and action.type == "attack" and not event.has("actual_target_position"):
+				# A policy shove announced before a neighbour fell cannot be
+				# executed; its beat stays inert instead of failing the batch.
+				if effective.type == "shove" and not policy.is_empty() \
+						and not CombatEnemyIntents.shove_is_legal(staged_party,
+							effective.target_position, effective.direction):
+					event.applied = false
+				else:
+					var result := CombatEnemySpecialActions.new().execute_actions(
+						staged_party, staged_enemies, [effective])
+					if not result.ok:
+						return failure
+					event.applied = result.events[0].applied
+		if reactions != null and effective.type == "attack" and not event.has("actual_target_position"):
 			# A slain source never enters the resolver, but still has a useful
 			# skipped beat in the reaction-mode trace.
-			event.actual_target_position = action.target_position
+			event.actual_target_position = effective.target_position
 			event.redirected = false
 			event.retaliation_damage = 0
 			event.retaliatory_damage = 0

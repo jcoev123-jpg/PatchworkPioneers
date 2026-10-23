@@ -190,7 +190,13 @@ func _end(keyboard: bool) -> void:
 		expected.hand.append(expected.draw.pop_back())
 	expected.energy = 3
 	expected.turn += 1
-	expected.intents[0].target_position = expected.turn % 3 + 1
+	# Authored front policy: the next announcement targets the front living hero.
+	var front := 1
+	for index in range(expected.party.size()):
+		if expected.party[index].hp > 0:
+			front = index + 1
+			break
+	expected.intents[0].target_position = front
 	expected.announced = expected.intents.duplicate(true)
 	expected.tinker = false
 	if keyboard:

@@ -142,11 +142,15 @@ func end_turn() -> bool:
 	var effective := _intents.get_intents().duplicate(true)
 	# An announced status cannot affect a hero already down at this turn's
 	# boundary. Omit that beat without retargeting, so surviving allies can
-	# finish the fight. The phase still rejects a target downed by an earlier
-	# action in the SAME batch, preserving its transactional validation.
+	# finish the fight. A battle-bound policy announcement instead resolves its
+	# own deterministic living-target fallback in the executor. The phase still
+	# rejects a target downed by an earlier action in the SAME batch, preserving
+	# its transactional validation.
+	var bound_policies := _intents.is_bound()
 	effective = effective.filter(func(action: Dictionary) -> bool:
 		return action.enemy_position not in skipped \
-			and not (action.type == "debuff" and _party.is_downed(action.target_position)))
+			and not (action.type == "debuff" and _party.is_downed(action.target_position)
+				and not bound_policies))
 	if not _phase_is_executable(tick["actors"], effective):
 		return false
 	# Preflight succeeded for the complete transition. Preserve authoritative
@@ -161,7 +165,8 @@ func end_turn() -> bool:
 	_deck.end_turn()
 	if _result.evaluate() != CombatBattleResult.ACTIVE:
 		return true
-	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, _reactions)
+	var phase := CombatEnemyPhase.new().execute_phase(_party, _enemies, effective, _reactions,
+		_intents.is_bound())
 	# _phase_is_executable prevalidates the entire batch against this roster.
 	if not phase["ok"]:
 		return false
@@ -300,6 +305,7 @@ func _phase_is_executable(next_heroes: Array, effective: Array) -> bool:
 	var roster := _enemies.get_enemies()
 	var enemies := CombatEnemies.new(roster)
 	enemies._enemies.assign(roster.duplicate(true))
-	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _reactions)["ok"]:
+	if not CombatEnemyPhase.new().execute_phase(party, enemies, effective, _reactions,
+			_intents.is_bound())["ok"]:
 		return false
 	return CombatStatusTurnBatch.new().tick_side("enemies", enemies.get_enemies())["ok"]

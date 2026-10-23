@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 ## Standalone M03 authored Fight: Middle-Seam Squeeze.
 ##
 ## Two authored three-beat cycles resolved through the real shared parser,
@@ -342,10 +343,10 @@ func _test_authored_file_and_roster() -> void:
 		"ragling_guard", "starter catalog")
 	var stalker_record := _unique_by(_load_json(RUN_ENEMIES_PATH), "id",
 		"spool_stalker", "run catalog")
-	_check(guard_record == {"id": "ragling_guard", "name": "Guard Ragling",
+	_check(WEIGHTED.project(guard_record) == {"id": "ragling_guard", "name": "Guard Ragling",
 		"max_hp": 12, "art_path": "res://assets/paper/enemies/ragling.png"},
 		"Guard Ragling normalized definition is the unchanged starter record")
-	_check(stalker_record == {"id": "spool_stalker", "name": "Spool Stalker",
+	_check(WEIGHTED.project(stalker_record) == {"id": "spool_stalker", "name": "Spool Stalker",
 		"max_hp": 14, "art_path": "res://assets/paper/enemies/spool_stalker.png"},
 		"Spool Stalker normalized definition is the unchanged run record")
 	_check(guard_record.get("max_hp") is int and stalker_record.get("max_hp") is int,

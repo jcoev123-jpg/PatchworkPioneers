@@ -110,7 +110,12 @@ func _session() -> Array:
 	var trace: Array = [_state()]
 	var turns := 0
 	while app.battle_result.can_continue() and turns < 160:
-		var target := turns % 3 + 1
+		# Authored front policy: the announced target is the front living hero.
+		var target := 1
+		for index in range(3):
+			if app.party.get_hero(index + 1).hp > 0:
+				target = index + 1
+				break
 		_announced(target)
 		_party_visible()
 		_check(app.enemy_intents._turn_index == turns and app.deck.energy == 3
@@ -148,9 +153,9 @@ func _session() -> Array:
 			_check(app.enemy_attacks == before[4] and app.enemy_intents.get_intents() == before[3]
 				and app.run_rng.state == before[2][7], "terminal phase freezes announcement and RNG")
 		trace.append(_state())
-	_check(turns == 121 and app.party.is_defeated()
+	_check(turns == 97 and app.party.is_defeated()
 		and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT,
-		"unmodified authored battle defeats all three heroes on End Turn 121")
+		"unmodified authored front-target battle defeats all three heroes on End Turn %d" % turns)
 	_party_visible()
 	_check(app.result_label.is_visible_in_tree() and app.result_label.text == "Battle result: DEFEAT"
 		and app.end_turn_button.disabled and not app.deck.turn_active
@@ -199,8 +204,8 @@ func _run() -> void:
 			and app.starter_deck_path == app.STARTER_DECK_PATH, "all shipped data paths used")
 		var first := await _session()
 		var second := await _session()
-		_check(first.size() == 122 and second.size() == 122 and first == second,
-			"same seed after Return reproduces complete 121-turn party/enemy/deck/energy/RNG trace")
+		_check(first.size() == 98 and second.size() == 98 and first == second,
+			"same seed after Return reproduces complete 97-turn party/enemy/deck/energy/RNG trace")
 		app.free()
 	if failures.is_empty():
 		print("live_authored_starter_defeat_test: PASS (", checks, " checks)")

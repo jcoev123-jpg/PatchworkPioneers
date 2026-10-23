@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 ## Deterministic headless coverage for the authored Spoolgate Exposed Pivot
 ## encounter (standalone M04 Fight content; NOT registered in the live pool):
@@ -589,7 +590,7 @@ func _test_ac3_typed_selection_and_roster() -> void:
 			"assembled slot 2 is the shipped Button Guard with 16 HP")
 		_check(guard.get("art_path") == "res://assets/paper/enemies/button_guard.png",
 			"assembled slot 2 keeps the shipped Button Guard art path")
-		_check(bridged.get_enemies() == _build_enemies().get_enemies(),
+		_check(WEIGHTED.same(bridged.get_enemies(), _build_enemies().get_enemies()),
 			"the bridged roster equals the roster built straight from the shipped catalog")
 
 	# A mismatched roster mapping fails closed and never mutates the valid choice.

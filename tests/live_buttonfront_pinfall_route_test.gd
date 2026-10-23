@@ -33,6 +33,70 @@ func _values(app) -> Array:
 		app.run_scraps, app.party_carryover.read_state(), app.act_outcome.get_state()]
 
 
+## Build the fight again from its seeded, authored route and run RNG. This
+## oracle never reads mounted actions to choose its weighted batch.
+func _independent(fixture: Dictionary, app) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(fixture.seed)
+	var map := RunMap.new()
+	_check(map.generate(rng) and map.choose_node(fixture.id),
+		"independent seeded map reaches the actual legal Fight node")
+	var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+		map, rng, RunFightEncounterSelection.new())
+	_check(entry.get("success", false) and entry.encounter_id == "buttonfront_pinfall",
+		"independent authored typed choice selects the same encounter")
+	if not entry.get("success", false):
+		return {}
+	var deck := CombatDeck.new([], rng)
+	deck.draw_pile.assign(app.run_deck)
+	deck._shuffle_draw_pile()
+	var party := CombatParty.new(app.run_heroes)
+	var enemies: CombatEnemies = entry.enemies
+	var intents := CombatEnemyIntents.new(entry.intents._definitions)
+	_check(party.is_valid() and enemies.is_valid()
+		and intents.bind_battle(enemies, party, rng),
+		"genuine separate roster and party cache the initial weighted batch after shuffle")
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents,
+		CombatBattleResult.new(party, enemies))
+	_check(flow.begin_fight(), "independent weighted battle deals its opening hand")
+	return {"rng": rng, "deck": deck, "party": party,
+		"enemies": enemies, "intents": intents, "flow": flow}
+
+
+func _oracle_label(oracle: Dictionary) -> String:
+	var cues := CombatIntentCues.new().get_cues(oracle.intents, oracle.enemies)
+	var lines: PackedStringArray = []
+	for cue in cues:
+		if cue.icon_key == "block":
+			lines.append("Enemy %d: %d Block" % [cue.enemy_position, cue.amount])
+		elif cue.icon_key == "buff":
+			lines.append("Enemy %d: Buff +%d Block" % [cue.enemy_position, cue.amount])
+		elif cue.icon_key == "debuff":
+			lines.append("Enemy %d -> Hero %d: %s %d" % [
+				cue.enemy_position, cue.target_position, cue.status.capitalize(), cue.amount])
+		elif cue.icon_key == "shove":
+			lines.append("Enemy %d: Shove Hero %d %s" % [
+				cue.enemy_position, cue.target_position,
+				"back" if cue.direction == 1 else "front"])
+		else:
+			lines.append("Enemy %d -> Hero %d (%s): %d damage" % [
+				cue.enemy_position, cue.target_position,
+				oracle.party.get_hero(cue.target_position).name, cue.amount])
+	return "Intent: " + ("none" if lines.is_empty() else "; ".join(lines))
+
+
+func _matches_oracle(app, oracle: Dictionary) -> bool:
+	return (app.run_rng.state == oracle.rng.state
+		and app.enemy_intents.get_intents() == oracle.intents.get_intents()
+		and app.enemy_intents._turn_index == oracle.intents._turn_index
+		and app.party.get_heroes() == oracle.party.get_heroes()
+		and app.enemies.get_enemies() == oracle.enemies.get_enemies()
+		and app.deck.hand == oracle.deck.hand
+		and app.deck.draw_pile == oracle.deck.draw_pile
+		and app.deck.discard_pile == oracle.deck.discard_pile
+		and app.deck.energy == oracle.deck.energy
+		and app.deck.turn_active == oracle.deck.turn_active)
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var fixture := _fixture()
@@ -112,36 +176,36 @@ func _run() -> void:
 				"real enemy meter displays exact HP and Block")
 		_check(app.party.get_hero(1).hp == 40 and app.party.get_hero(1).block == 6,
 			"ordinary Warden opening Block absorbs exactly the Exposed-enhanced six damage")
-		var labels := [
-			"Intent: Enemy 1 -> Hero 1: Exposed 1; Enemy 2 -> Hero 1 (Warden): 4 damage",
-			"Intent: Enemy 1: 2 Block; Enemy 2 -> Hero 3 (Tinker): 3 damage",
-			"Intent: Enemy 1 -> Hero 2 (Seamstress): 3 damage; Enemy 2: Buff +2 Block"]
+		var oracle := _independent(fixture, app)
+		_check(not oracle.is_empty() and _matches_oracle(app, oracle),
+			"opening roster, weighted intent, HP, Block, full deck and RNG match seeded oracle")
+		if oracle.is_empty():
+			app.free()
+			continue
 		var trace: Array = [_values(app)]
 		for turn in range(4):
-			_check(not app.intent_label.visible and app.intent_label.text == labels[turn % 3],
-				"visible exact authored intent beat %d" % (turn + 1))
+			_check(not app.intent_label.visible and app.intent_label.text == _oracle_label(oracle),
+				"announced exact action, target and authored amount before beat %d" % (turn + 1))
 			var unchanged := _values(app)
+			app._refresh_intents()
+			_check(_values(app) == unchanged and app.intent_label.text == _oracle_label(oracle),
+				"refresh and preview never reroll or spend the run RNG")
 			stale.call()
 			_check(not app._choose_route(fixture.id) and not app._choose_route("f02_n0")
 				and _values(app) == unchanged, "stale and illegal route inputs cannot alter active encounter")
 			_check(app.deck.turn_active and app.deck.energy == 3 and app.deck.hand.size() == 5
 				and not app.end_turn_button.disabled, "legal ordinary End Turn available")
+			_check(oracle.flow.end_turn(),
+				"independent bound scheduler executes one actual weighted phase and next announcement")
 			await _activate(app.end_turn_button, mode == 1)
 			_check(app.enemy_intents._turn_index == turn + 1 and app.deck.turn_active,
 				"real End Turn advances exactly one beat and draws next hand")
-			var expected_hp := [[40, 30, 26], [40, 30, 23], [40, 27, 23], [34, 27, 23]]
-			for position in range(1, 4):
-				var hero: Dictionary = app.party.get_hero(position)
-				_check(hero.hp == expected_hp[turn][position - 1] and hero.block == 0
-					and hero.get("statuses", {}) == ({"exposed": 1} if turn % 3 == 0 and position == 1 else {}),
-					"exact live HP, Block and timed Exposed after beat %d hero %d" % [turn + 1, position])
-			_check(app.enemies.get_enemy(1).hp == 16 and app.enemies.get_enemy(2).hp == 14
-				and app.enemies.get_enemy(1).block == (0 if turn == 0 else 2)
-				and app.enemies.get_enemy(2).block == (2 if turn >= 2 else 0),
-				"exact live enemy HP and authored Block/buff results")
+			_check(_matches_oracle(app, oracle),
+				"exact post-phase HP, statuses, Block, deck, cache and RNG after beat %d" % (turn + 1))
 			trace.append(_values(app))
-		_check(app.party.get_hero(1).hp == 34 and app.intent_label.text == labels[1],
-			"wraparound opening proves Exposed raises base four to six with no opening Block left")
+		_check(app.intent_label.text == _oracle_label(oracle)
+			and _matches_oracle(app, oracle),
+			"fifth announcement and terminal four-beat snapshots match independently drawn cache")
 		if mode == 0:
 			replay = trace
 		else:

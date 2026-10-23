@@ -11,6 +11,11 @@ func _initialize() -> void:
 	_test_copy_isolation_and_replay()
 	_test_no_combat_mutation()
 	_test_invalid_schedules()
+	_test_authored_catalog_intents()
+	_test_weighted_binding_and_policies()
+	_test_weighted_announcement_reads_and_rerolls()
+	_test_weighted_dead_slots_and_legacy_isolation()
+	_test_weighted_rejections()
 	if failures.is_empty():
 		print("combat_enemy_intents_test: PASS (", checks, " checks)")
 	else:
@@ -238,3 +243,328 @@ func _test_special_schema() -> void:
 		{"type": "debuff", "amount": 0, "target_position": 1, "status": "weak"},
 		{"type": "buff", "amount": 0}]:
 		_reject("special range rejection", [_enemy(1, [_block(1), bad])])
+
+
+func _catalog_records(path: String) -> Array:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check(parsed is Array and not parsed.is_empty(), "authored catalog parses: " + path)
+	return parsed if parsed is Array else []
+
+
+func _authored_enemy(path: String, id: String) -> Dictionary:
+	var matches: Array = _catalog_records(path).filter(
+		func(record: Variant) -> bool: return record is Dictionary and record.get("id") == id)
+	_check(matches.size() == 1, "authored enemy present exactly once: " + id)
+	if matches.size() != 1:
+		return {}
+	var record: Dictionary = matches[0].duplicate(true)
+	# JSON decodes whole numbers as floats; mirror the app's numeric normalization.
+	record["max_hp"] = int(record["max_hp"])
+	return record
+
+
+## The nine live enemy IDs each author positive weighted actions and one of the
+## four target policies, while keeping their existing identity, HP and art.
+func _test_authored_catalog_intents() -> void:
+	var authored := {
+		"res://data/enemies/starter_enemies.json": {
+			"ragling": ["Ragling", 12], "ragling_guard": ["Guard Ragling", 12]},
+		"res://data/enemies/run_enemies.json": {
+			"fray_scavenger": ["Fray Scavenger", 14], "button_guard": ["Button Guard", 16],
+			"spool_stalker": ["Spool Stalker", 14], "seam_ripper": ["Seam Ripper", 18]},
+		"res://data/enemies/m04_elites.json": {
+			"needle_marshal": ["Needle Marshal", 28], "spool_hexer": ["Spool Hexer", 24]},
+		"res://data/enemies/boss.json": {
+			"patchwork_behemoth": ["Patchwork Behemoth", 42]},
+	}
+	var policies: Array[String] = []
+	for path in authored:
+		for id in authored[path]:
+			var record := _authored_enemy(path, id)
+			if record.is_empty():
+				continue
+			_check(record.get("name") == authored[path][id][0] and record.get("max_hp") == authored[path][id][1],
+				"authored identity and HP preserved: " + id)
+			_check(record.get("art_path") is String
+				and String(record["art_path"]).begins_with("res://assets/paper/enemies/"),
+				"authored art path preserved: " + id)
+			var spec = record.get("intent")
+			_check(spec is Dictionary and spec.size() == 2 and spec.get("target") is String
+				and spec["target"] in CombatEnemyIntents.TARGET_POLICIES,
+				"authored target policy is one of four: " + id)
+			if spec is Dictionary and spec.get("target") is String \
+					and spec["target"] in CombatEnemyIntents.TARGET_POLICIES \
+					and not policies.has(spec["target"]):
+				policies.append(spec["target"])
+			var actions = spec.get("actions") if spec is Dictionary else null
+			_check(actions is Array and not actions.is_empty(), "authored weighted actions exist: " + id)
+			if not actions is Array:
+				continue
+			for raw in actions:
+				_check(CombatEnemyIntents.positive_weight(raw.get("weight")) > 0
+					if raw is Dictionary else false, "positive integer weight: " + id + " " + str(raw))
+				_check(not CombatEnemyIntents.weighted_action(raw).is_empty(),
+					"authored alternative validates as an executable action: " + id + " " + str(raw))
+	_check(policies.size() == 4, "the nine authored IDs use every target policy")
+	# A real authored roster binds and announces exactly one executed shape per slot.
+	var roster: Array = [_authored_enemy("res://data/enemies/run_enemies.json", "button_guard"),
+		_authored_enemy("res://data/enemies/run_enemies.json", "spool_stalker"),
+		_authored_enemy("res://data/enemies/run_enemies.json", "seam_ripper")]
+	var enemies := CombatEnemies.new(roster)
+	var party := _party_fixture()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 71221
+	var scheduler := CombatEnemyIntents.new([
+		_enemy(1, [_block(1)]), _enemy(2, [_block(1)]), _enemy(3, [_block(1)])])
+	_check(enemies.is_valid() and party.is_valid(), "precondition: real three-enemy authored roster")
+	_check(scheduler.bind_battle(enemies, party, rng), "authored roster and party bind the weighted cache")
+	_check(scheduler.is_bound(), "binding is reported as the weighted mode")
+	var announced := scheduler.get_intents()
+	_check(announced.size() == 3, "one announcement for every original slot")
+	for index in range(announced.size()):
+		var action: Dictionary = announced[index]
+		var copy: Dictionary = action.duplicate(true)
+		_check(copy.get("enemy_position") == index + 1, "announcement keeps its original source slot")
+		copy.erase("enemy_position")
+		_check(CombatEnemyIntents.valid_action(copy), "announcement is an executable action: " + str(action))
+		_check(copy.size() in [2, 3, 4], "announcement keeps the exact published action shape")
+		if action.type in ["attack", "debuff", "shove"]:
+			_check(action.get("target_position") in [1, 2, 3],
+				"targeting announcement names a concrete living target")
+			_check(not CombatEnemyIntents.policy_for(enemies, index + 1).is_empty(),
+				"the original roster slot keeps its authored policy")
+		else:
+			_check(not action.has("target_position"), "self action announces no hero target")
+
+
+func _party_fixture(warden_hp: int = 40, seamstress_hp: int = 30,
+		tinker_hp: int = 26) -> CombatParty:
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	_check(party.is_valid(), "precondition: three living authored heroes")
+	if warden_hp < 40:
+		party.apply_damage(1, 40 - warden_hp)
+	if seamstress_hp < 30:
+		party.apply_damage(2, 30 - seamstress_hp)
+	if tinker_hp < 26:
+		party.apply_damage(3, 26 - tinker_hp)
+	return party
+
+
+func _policy_enemy(policy: String, actions: Array = [{"type": "attack", "amount": 2, "weight": 1}]) -> Dictionary:
+	return {"id": "policy_enemy", "max_hp": 10,
+		"intent": {"target": policy, "actions": actions.duplicate(true)}}
+
+
+func _bound_announcement(policy: String, party: CombatParty, seed_value: int = 900,
+		actions: Array = [{"type": "attack", "amount": 2, "weight": 1}]) -> Dictionary:
+	var enemies := CombatEnemies.new([_policy_enemy(policy, actions)])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	if not enemies.is_valid() or not scheduler.bind_battle(enemies, party, rng):
+		return {}
+	return scheduler.get_intents()[0] if not scheduler.get_intents().is_empty() else {}
+
+
+func _test_weighted_binding_and_policies() -> void:
+	# Priority policies choose living heroes only; ties break to the front slot.
+	var deep_back := _party_fixture(30, 25, 10)
+	_check(_bound_announcement("front", deep_back).get("target_position") == 1,
+		"front policy announces the front-most living hero")
+	_check(_bound_announcement("lowest_living_hp", deep_back).get("target_position") == 3,
+		"lowest-HP policy announces the weakest living hero")
+	deep_back._heroes[2]["hp"] = 25
+	_check(_bound_announcement("lowest_living_hp", deep_back).get("target_position") == 2,
+		"equal lowest HP ties to the front-most living slot")
+	var exposed := _party_fixture(40, 30, 26)
+	exposed._heroes[1]["statuses"] = {"exposed": 2}
+	_check(_bound_announcement("exposed", exposed).get("target_position") == 2,
+		"exposed policy announces the living Exposed hero")
+	_check(_bound_announcement("front", exposed).get("target_position") == 1,
+		"another policy ignores the Exposed hero it did not target")
+	var no_exposed := _party_fixture(40, 30, 26)
+	_check(_bound_announcement("exposed", no_exposed).get("target_position") == 1,
+		"exposed policy falls back to the front living hero when nobody is marked")
+	# A downed hero is never announced by any policy.
+	var wounded := _party_fixture(0, 30, 26)
+	for policy in ["front", "lowest_living_hp", "exposed", "random"]:
+		var target: int = _bound_announcement(policy, wounded).get("target_position", 0)
+		_check(target in [2, 3], "policy " + policy + " skips the downed front hero")
+	# Random policy uses the seeded run RNG but stays stable across reads.
+	var first := _bound_announcement("random", _party_fixture(), 4242)
+	var second := _bound_announcement("random", _party_fixture(), 4242)
+	var other := _bound_announcement("random", _party_fixture(), 4343)
+	_check(first == second, "same seed announces the same random target")
+	_check(first.get("target_position") in [1, 2, 3]
+		and other.get("target_position") in [1, 2, 3], "random target is always a living slot")
+	# A real weighted choice is drawn from the one run RNG on every commit.
+	var choices: Array = [{"type": "attack", "amount": 1, "weight": 3},
+		{"type": "attack", "amount": 2, "weight": 1}]
+	var seen := {}
+	for seed_value in [11, 12, 13, 14, 15, 16]:
+		var announced := _bound_announcement("front", _party_fixture(), seed_value, choices)
+		_check(announced.get("target_position") == 1, "weighted choice keeps the authored policy target")
+		seen[announced.get("amount")] = true
+	_check(seen.has(1) and seen.has(2), "both authored alternatives are announced across seeds")
+	var shove := _bound_announcement("front", _party_fixture(), 7,
+		[{"type": "shove", "amount": 0, "direction": -1, "weight": 1}])
+	_check(shove.get("type") == "shove" and shove.get("target_position") == 1
+		and shove.get("direction") == 1, "a policy shove flips an illegal direction deterministically")
+
+
+func _test_weighted_announcement_reads_and_rerolls() -> void:
+	var enemies := CombatEnemies.new([
+		_authored_enemy("res://data/enemies/run_enemies.json", "button_guard"),
+		_authored_enemy("res://data/enemies/run_enemies.json", "fray_scavenger")])
+	var party := _party_fixture()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5511
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+	_check(scheduler.bind_battle(enemies, party, rng), "real roster binds before any hand")
+	var committed := rng.state
+	var announced := scheduler.get_intents()
+	_check(announced.size() == 2 and announced == scheduler.get_intents(),
+		"repeated reads return the same cached batch")
+	_check(rng.state == committed, "reads never draw from the run RNG")
+	for attempt in range(5):
+		scheduler.get_intents()
+	_check(rng.state == committed and scheduler.get_intents() == announced,
+		"presentation reads never reroll or spend RNG")
+	var hostile := announced.duplicate(true)
+	hostile[0]["amount"] = 999
+	hostile[0]["target_position"] = 3
+	hostile.clear()
+	_check(scheduler.get_intents() == announced, "callers cannot edit the cached batch")
+	_check(scheduler.advance_turn(), "one successful phase advances the cache once")
+	var next := scheduler.get_intents()
+	_check(next.size() == 2 and next == scheduler.get_intents(), "the new batch is a complete cached set")
+	_check(rng.state != committed, "a real weighted choice spends the shared run RNG on commit")
+	var replay_rng := RandomNumberGenerator.new()
+	replay_rng.seed = 5511
+	var replay_enemies := CombatEnemies.new([
+		_authored_enemy("res://data/enemies/run_enemies.json", "button_guard"),
+		_authored_enemy("res://data/enemies/run_enemies.json", "fray_scavenger")])
+	var replay := CombatEnemyIntents.new([_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+	_check(replay.bind_battle(replay_enemies, _party_fixture(), replay_rng),
+		"independent same-seed scheduler binds")
+	_check(replay.get_intents() == announced and replay.advance_turn()
+		and replay.get_intents() == next and replay_rng.state == rng.state,
+		"identical seeds commit identical batches and identical RNG states")
+	# A single authored alternative never needs a draw.
+	var single := CombatEnemies.new([_policy_enemy("front")])
+	var quiet_rng := RandomNumberGenerator.new()
+	quiet_rng.seed = 601
+	var quiet := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(quiet.bind_battle(single, _party_fixture(), quiet_rng), "single-alternative enemy binds")
+	var quiet_state := quiet_rng.state
+	_check(quiet.advance_turn() and quiet_rng.state == quiet_state,
+		"a slot with no choice consumes no randomness")
+
+
+func _test_weighted_dead_slots_and_legacy_isolation() -> void:
+	var enemies := CombatEnemies.new([
+		_authored_enemy("res://data/enemies/run_enemies.json", "button_guard"),
+		_authored_enemy("res://data/enemies/run_enemies.json", "fray_scavenger"),
+		_authored_enemy("res://data/enemies/run_enemies.json", "seam_ripper")])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 8080
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)]), _enemy(2, [_block(1)]),
+		_enemy(3, [_block(1)])])
+	_check(scheduler.bind_battle(enemies, _party_fixture(), rng), "three-slot roster binds")
+	_check(enemies.apply_damage(2, 14) and enemies.is_slain(2), "precondition: middle source slain")
+	_check(scheduler.advance_turn(), "a phase after a death still commits one new batch")
+	var announced := scheduler.get_intents()
+	_check(announced.size() == 3 and announced[0].enemy_position == 1
+		and announced[1].enemy_position == 2 and announced[2].enemy_position == 3,
+		"a slain source keeps its original announcement slot")
+	# The legacy constructor is not a bound fight: it keeps its pattern behavior.
+	var definitions := _three_enemies()
+	var legacy := CombatEnemyIntents.new(definitions)
+	_check(legacy.is_valid() and not legacy.is_bound(), "legacy pattern scheduler stays unbound")
+	_check(legacy.get_intents() == _turns()[0], "binding does not change independent legacy fixtures")
+	_check(legacy.advance_turn() and legacy.get_intents() == _turns()[1],
+		"an unbound legacy scheduler still cycles its authored pattern")
+
+
+func _reject_bind(name: String, spec: Variant) -> void:
+	var record := {"id": "reject_enemy", "max_hp": 10}
+	if spec != null:
+		record["intent"] = spec
+	var enemies := CombatEnemies.new([record])
+	var party := _party_fixture()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 313
+	var before := rng.state
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_attack(2, 1)])])
+	_check(enemies.is_valid(), name + ": fixture roster is structurally valid")
+	_check(not scheduler.bind_battle(enemies, party, rng), name + ": authored intent rejection")
+	_check(rng.state == before, name + ": rejection spends no run RNG")
+	_check(not scheduler.is_bound() and scheduler.get_intents() == [_announced(1, _attack(2, 1))],
+		name + ": rejection keeps the validated legacy schedule intact")
+
+
+func _test_weighted_rejections() -> void:
+	_check(CombatEnemyIntents.weighted_action({"type": "attack", "amount": 1, "weight": 2}).size() == 2,
+		"precondition: a valid weighted action is accepted")
+	for bad in [
+		null, [], "intent", 0, {},
+		{"target": "front"}, {"actions": [{"type": "attack", "amount": 1, "weight": 1}]},
+		{"target": "nearest", "actions": [{"type": "attack", "amount": 1, "weight": 1}]},
+		{"target": 1, "actions": [{"type": "attack", "amount": 1, "weight": 1}]},
+		{"target": "front", "actions": []},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 0}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": -1}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 1.5}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": "1"}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": true}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 1, "target_position": 2}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 1, "extra": 1}]},
+		{"target": "front", "actions": [{"type": "heal", "amount": 1, "weight": 1}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": -1, "weight": 1}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1.5, "weight": 1}]},
+		{"target": "front", "actions": [{"type": "debuff", "amount": 1, "weight": 1}]},
+		{"target": "front", "actions": [{"type": "debuff", "amount": 1, "status": "poison", "weight": 1}]},
+		{"target": "front", "actions": [{"type": "shove", "amount": 0, "weight": 1}]},
+		{"target": "front", "actions": [{"type": "shove", "amount": 1, "direction": 1, "weight": 1}]},
+		{"target": "front", "actions": [{"type": "block", "amount": 1, "weight": 1, "target_position": 1}]},
+		{"target": "front", "actions": [{"type": "buff", "amount": 0, "weight": 1}]},
+		{"target": "front", "actions": [
+			{"type": "attack", "amount": 1, "weight": 9223372036854775807},
+			{"type": "attack", "amount": 1, "weight": 9223372036854775807}]},
+		{"target": "front", "actions": [{"type": "attack", "amount": 1, "weight": 1}], "extra": 1}]:
+		_reject_bind("invalid authored intent " + str(bad), bad)
+	# A roster with any source lacking authored intent fails closed as a whole.
+	var mixed := CombatEnemies.new([
+		_authored_enemy("res://data/enemies/run_enemies.json", "button_guard"),
+		{"id": "unreadable", "max_hp": 10}])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 71
+	var before := rng.state
+	var scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+	_check(mixed.is_valid() and not scheduler.bind_battle(mixed, _party_fixture(), rng),
+		"a roster with one unauthored source rejects the whole binding")
+	_check(rng.state == before and scheduler.get_intents() == [_announced(1, _block(1)), _announced(2, _block(1))],
+		"mixed roster rejection leaves the schedule and RNG untouched")
+	# Null/mismatched collaborators and double binding fail closed.
+	var real := CombatEnemies.new([
+		_authored_enemy("res://data/enemies/run_enemies.json", "button_guard")])
+	var bound := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	var bind_rng := RandomNumberGenerator.new()
+	bind_rng.seed = 88
+	_check(not bound.bind_battle(null, _party_fixture(), bind_rng)
+		and not bound.bind_battle(real, null, bind_rng)
+		and not bound.bind_battle(real, _party_fixture(), null),
+		"missing roster, party or generator is rejected")
+	_check(not CombatEnemyIntents.new([]).bind_battle(real, _party_fixture(), bind_rng),
+		"an invalid legacy schedule cannot bind a fight")
+	var wrong_size := CombatEnemyIntents.new([_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+	_check(not wrong_size.bind_battle(real, _party_fixture(), bind_rng),
+		"a roster whose slot count differs from the validated schedule is rejected")
+	_check(bound.bind_battle(real, _party_fixture(), bind_rng) and bound.is_bound(),
+		"a validated one-slot roster binds")
+	_check(not bound.bind_battle(real, _party_fixture(), bind_rng),
+		"an already bound fight cannot bind twice")
+
+

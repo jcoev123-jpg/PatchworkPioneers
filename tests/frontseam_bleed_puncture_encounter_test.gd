@@ -1,4 +1,5 @@
 extends SceneTree
+const WEIGHTED = preload("res://tests/weighted_roster_assert.gd")
 
 ## Deterministic headless coverage for the authored Frontseam Bleed Puncture encounter:
 ## slot 1 Fray Scavenger (14 HP) and slot 2 Button Guard (16 HP) on a three-beat cycle
@@ -536,7 +537,7 @@ func _verify_ac2_map_selection_and_roster_assembly(hero_catalog: Array) -> void:
 		var enemy_list: Array[Dictionary] = assembled_enemies.get_enemies()
 		_check(enemy_list.size() == 2, "Assembled CombatEnemies must contain exactly 2 enemies.")
 		_check(
-			assembled_enemies.get_enemy(1) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(1)) == {
 				"id": "fray_scavenger",
 				"name": "Fray Scavenger",
 				"max_hp": 14,
@@ -548,7 +549,7 @@ func _verify_ac2_map_selection_and_roster_assembly(hero_catalog: Array) -> void:
 			"Slot 1 assembled enemy must be Fray Scavenger (fray_scavenger) with 14/14 HP, 0 Block, and exact art_path."
 		)
 		_check(
-			assembled_enemies.get_enemy(2) == {
+			WEIGHTED.project(assembled_enemies.get_enemy(2)) == {
 				"id": "button_guard",
 				"name": "Button Guard",
 				"max_hp": 16,

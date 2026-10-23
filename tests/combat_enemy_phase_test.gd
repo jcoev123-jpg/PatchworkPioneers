@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_status_sensitive_attacks()
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
+	_test_policy_targets()
 	_test_rejections()
 	_test_replay_and_empty()
 	if failures.is_empty():
@@ -396,3 +397,110 @@ func _test_ordered_specials() -> void:
 	_check(not phase.execute_phase(party, enemies, [_attack(1, 1, 1), {"type": "shove", "enemy_position": 2,
 		"amount": 0, "target_position": 3, "direction": 1}]).ok
 		and [party.get_heroes(), enemies.get_enemies()] == before, "late illegal shove atomic")
+
+
+## Two authored-policy sources; the executor only retargets when the caller
+## declares the announcements battle-bound, so they keep the exact published
+## action shape.
+func _policy_enemies(policy: String) -> CombatEnemies:
+	var enemies := CombatEnemies.new([
+		{"id": "ragling-a", "max_hp": 12,
+			"intent": {"target": policy, "actions": [{"type": "block", "amount": 1}]}},
+		{"id": "ragling-b", "max_hp": 15,
+			"intent": {"target": policy, "actions": [{"type": "block", "amount": 1}]}}])
+	_check(enemies.is_valid(), "precondition: two authored-policy sources")
+	return enemies
+
+
+## AC3: a cached policy announcement whose hero is down before its beat falls
+## back to a deterministic living target, without fresh RNG. A legacy schedule
+## keeps its exact original inert-target behavior even over the same roster.
+func _test_policy_targets() -> void:
+	var party := _party()
+	var enemies := _policy_enemies("lowest_living_hp")
+	_check(party.apply_damage(2, 30) and party.is_downed(2),
+		"precondition: announced middle hero is already downed")
+	var result := phase.execute_phase(party, enemies, [_attack(1, 5, 2)], null, true)
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 3, "applied": true}]},
+		"downed announced target falls back to the policy`s living choice")
+	_check(party.get_hero(3)["hp"] == 21 and party.get_hero(1)["hp"] == 40,
+		"only the fallback target loses the announced damage")
+	_check(not party.get_hero(3).has("statuses"),
+		"fallback applies no statuses of its own")
+
+	# A hero downed by an earlier action in the same batch also falls back.
+	party = _party()
+	enemies = _policy_enemies("front")
+	result = phase.execute_phase(party, enemies, [_attack(1, 99, 1), _attack(2, 5, 1)], null, true)
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": true},
+		{"type": "attack", "enemy_position": 2, "target_position": 2, "applied": true}]},
+		"same-batch lethal hit makes the later announced target fall back to the next living hero")
+	_check(party.is_downed(1) and party.get_hero(2)["hp"] == 25,
+		"the fallback attack lands on the living middle hero after the lethal hit")
+
+	# An announced debuff retargets the fallen hero instead of failing.
+	party = _party()
+	enemies = _policy_enemies("front")
+	result = phase.execute_phase(party, enemies, [_attack(1, 99, 1),
+		{"type": "debuff", "enemy_position": 2, "amount": 2, "target_position": 1, "status": "weak"}],
+		null, true)
+	_check(result.get("ok") == true and result["events"].size() == 2
+		and result["events"][1]["target_position"] == 2 and result["events"][1]["status"] == "weak",
+		"policy debuff retargets a hero downed earlier in the same batch")
+	_check(party.is_downed(1) and party.get_hero(2).get("statuses", {}) == {"weak": 2},
+		"the status lands on the living fallback hero only")
+
+	# A policy shove keeps its authored push when a living neighbour exists.
+	party = _party()
+	enemies = _policy_enemies("front")
+	_check(party.apply_damage(1, 40), "precondition: only the front hero is downed")
+	result = phase.execute_phase(party, enemies, [{"type": "shove", "enemy_position": 1,
+		"amount": 0, "target_position": 1, "direction": 1}], null, true)
+	_check(result.get("ok") == true and result["events"][0]["applied"] == true
+		and result["events"][0]["target_position"] == 2
+		and result["events"][0]["direction"] == 1,
+		"fallback shove pushes the front living neighbour toward the back")
+	_check(party.get_hero(2)["id"] == "tinker" and party.get_hero(3)["id"] == "seamstress",
+		"the fallback shove swaps the two living heroes and keeps fixed slots")
+	# With no living neighbour at all the announced beat is inert, not a failure.
+	party = _party()
+	enemies = _policy_enemies("front")
+	_check(party.apply_damage(1, 40) and party.apply_damage(2, 30),
+		"precondition: only the back hero still lives")
+	var alone := party.get_heroes()
+	result = phase.execute_phase(party, enemies, [{"type": "shove", "enemy_position": 1,
+		"amount": 0, "target_position": 1, "direction": 1}], null, true)
+	_check(result.get("ok") == true and result["events"][0]["applied"] == false
+		and party.get_heroes() == alone,
+		"a policy shove with no living neighbour stays an inert ordered beat")
+	# A legacy schedule over the same authored roster never retargets: only the
+	# bound scheduler's own announcements opt into the policy fallback.
+	party = _party()
+	enemies = _policy_enemies("front")
+	_check(party.apply_damage(2, 30), "precondition: legacy schedule target downed")
+	var legacy_roster := phase.execute_phase(party, enemies, [_attack(1, 5, 2)])
+	_check(legacy_roster == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": false}]}
+		and party.get_hero(2)["hp"] == 0 and party.get_hero(1)["hp"] == 40,
+		"a legacy schedule keeps its exact announced target on a policy roster")
+	# A roster without authored intentions keeps the exact legacy inert target.
+	party = _party()
+	enemies = _enemies()
+	_check(party.apply_damage(2, 30), "precondition: legacy roster target downed")
+	var legacy := phase.execute_phase(party, _enemies(), [_attack(1, 5, 2)], null, true)
+	_check(legacy == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": false}]},
+		"a roster without an authored policy never retargets")
+	# A forged extra key is still rejected atomically by the action contract.
+	party = _party()
+	enemies = _policy_enemies("front")
+	var heroes_before := party.get_heroes()
+	var enemy_before := enemies.get_enemies()
+	var forged := _attack(1, 5, 1)
+	forged["extra"] = 1
+	_check(phase.execute_phase(party, enemies, [forged], null, true) == {"ok": false, "events": []}
+		and party.get_heroes() == heroes_before and enemies.get_enemies() == enemy_before,
+		"a forged announcement rejects without mutations")
+

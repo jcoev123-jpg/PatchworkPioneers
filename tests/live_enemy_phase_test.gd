@@ -25,7 +25,17 @@ func _snapshot(app) -> Array:
 		app.enemies.get_enemies(), app.enemy_intents._turn_index, app.battle_result.get_outcome()]
 
 
-func _visible(app, target: int = 1) -> void:
+## The authored front policy sends the Ragling at the front living hero.
+func _front_target(app) -> int:
+	for index in range(CombatParty.PARTY_SIZE):
+		if app.party.get_hero(index + 1).hp > 0:
+			return index + 1
+	return 1
+
+
+func _visible(app, target: int = -1) -> void:
+	if target < 1:
+		target = _front_target(app)
 	app.get_node("LiveCombatMeters")._sync_battle()
 	_check(is_instance_valid(app.intent_label), "mounted intent label exists")
 	if is_instance_valid(app.intent_label):
@@ -196,6 +206,10 @@ func _run() -> void:
 		_fixture_start(app)
 		_check(app.party is CombatParty and app.deck is CombatDeck and app.run_rng != null,
 			"real Start Run creates complete session")
+		_check(app.enemy_intents != null and app.enemy_intents.is_bound()
+			and app.enemy_attacks == app.enemy_intents.get_intents()
+			and app.enemy_attacks.size() == app.enemies.get_enemies().size(),
+			"real Start binds one authored weighted announcement per original enemy slot")
 		_check(is_instance_valid(app.end_turn_button) and is_instance_valid(app.return_button), "real battle controls exist")
 		if app.party == null or app.deck == null or app.run_rng == null or not is_instance_valid(app.end_turn_button) or not is_instance_valid(app.return_button):
 			app.free()
@@ -253,7 +267,7 @@ func _run() -> void:
 			if blocked:
 				_check(app.party.gain_block(1, 3) and app.party.gain_block(2, 4) and app.party.gain_block(3, 2), "gain real Block in every target slot")
 				_check(reference_party.gain_block(1, 3) and reference_party.gain_block(2, 4) and reference_party.gain_block(3, 2), "reference Block fixture")
-			var target := turn % 3 + 1
+			var target := _front_target(app)
 			var heroes: Array = app.party.get_heroes()
 			_check(CombatEnemyAttacks.new().execute_attacks(reference_party, [{"enemy_position": 1,
 				"target_position": target, "amount": 1}]).ok, "reference resolves announced Ragling hit first")
@@ -270,7 +284,7 @@ func _run() -> void:
 				and app.enemies.get_enemies() == reference_enemies.get_enemies(), "complete party and enemy transition matches merged services")
 			_check(app.enemies.get_enemy(2).block == turn + 1 and app.enemies.get_enemy(1).block == 0,
 				"living Guard gains exactly one Block per phase; Ragling gains none")
-			_check(app.party.get_hero(target).hp == heroes[target - 1].hp - (0 if blocked else 1), "cycling target takes exactly one hit using Block before HP")
+			_check(app.party.get_hero(target).hp == heroes[target - 1].hp - (0 if blocked else 1), "front living target takes exactly one hit using Block before HP")
 			for position in range(1, 4):
 				_check(app.party.get_hero(position).block == 0, "next player turn clears all Block")
 			for position in range(1, 4):
@@ -279,7 +293,7 @@ func _run() -> void:
 			_check(_deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state,
 				"enemy phase consumes no RNG; deck, discard, draw and three energy cadence unchanged")
 			_check(app.enemy_intents._turn_index == turn + 1, "successful phase advances selector exactly once")
-			_visible(app, (turn + 1) % 3 + 1)
+			_visible(app)
 			trace.append(_snapshot(app))
 		# A stale announcement and an overflowing Block both fail before any hand or attack mutation.
 		before = _snapshot(app)
@@ -394,9 +408,9 @@ func _slain_sources(app) -> void:
 			and _deck(app.deck) == _deck(reference) and app.run_rng.state == rng.state,
 			"slain-source full models, draw/discard, hand, energy and RNG match expected transition")
 		_check(app.enemy_intents._turn_index == 1 and app.enemy_attacks == app.enemy_intents.get_intents()
-			and app.enemy_attacks[0].target_position == 2, "slain-source turn advances intent exactly once")
+			and app.enemy_attacks[0].target_position == 1, "slain-source turn advances intent exactly once")
 		_check(app.intent_label.text == ("Intent: Enemy 2: 1 Block" if slain == 1
-			else "Intent: Enemy 1 -> Hero 2 (Seamstress): 1 damage"), "living source displays exact next intent")
+			else "Intent: Enemy 1 -> Hero 1 (Warden): 1 damage"), "living source displays exact next intent")
 		_check(app.party.get_hero(1).hp == heroes[0].hp - (0 if slain == 1 else 1), "only living Ragling attacks")
 		_check(app.enemies.get_enemy(2).block == (0 if slain == 2 else 1), "only living Guard gains Block")
 		_check(app.enemies.get_enemy(slain).hp == 0 and app.enemies.get_enemy(slain).position == slain,
@@ -476,11 +490,21 @@ func _status_damage(app) -> void:
 			_check(bound, "status damage uses mounted active End Turn and authoritative services")
 			if not bound:
 				return
-			# A five-damage schedule fixture exposes rounding and HP loss through Block;
-			# authored encounter files and the live scene wiring remain unchanged.
-			for action in app.enemy_intents._definitions[0].pattern:
-				action.amount = 5
-			app.enemy_attacks = app.enemy_intents.get_intents()
+			# A five-damage schedule fixture exposes rounding and HP loss through
+			# Block; it is an explicit legacy schedule with no authored policy, so
+			# the mounted battle executes its exact beats.
+			var legacy := CombatEnemyIntents.new([
+				{"enemy_position": 1, "pattern": [
+					{"type": "attack", "amount": 5, "target_position": 1},
+					{"type": "attack", "amount": 5, "target_position": 2},
+					{"type": "attack", "amount": 5, "target_position": 3}]},
+				{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+			_check(legacy.is_valid(), "five-damage status fixture schedule validates")
+			for enemy in app.enemies._enemies:
+				enemy.erase("intent")
+			app.enemy_intents = legacy
+			app.round_flow._intents = legacy
+			app.enemy_attacks = legacy.get_intents()
 			app._refresh_intents()
 			var hero: Dictionary = app.party._heroes[0]
 			hero.block = 2
@@ -555,6 +579,18 @@ func _mixed_rejection_replay(app) -> void:
 		_visible(app)
 		var first: Dictionary = app.party._heroes[0]
 		var guard: Dictionary = app.enemies._enemies[1]
+		# This explicit mixed fixture is a legacy one-beat schedule with no authored
+		# target policy, so every rejection below exercises the phase transaction.
+		var legacy := CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 1, "target_position": 1}]},
+			{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+		_check(legacy.is_valid(), "mixed rejection schedule validates")
+		for enemy in app.enemies._enemies:
+			enemy.erase("intent")
+		app.enemy_intents = legacy
+		app.round_flow._intents = legacy
+		app.enemy_attacks = legacy.get_intents()
+		app._refresh_intents()
 		var legal: Dictionary = app.enemy_intents._definitions[1].pattern[0].duplicate(true)
 		var trace: Array = [_snapshot(app)]
 		for rejection in ["malformed", "overflow"]:
@@ -580,7 +616,7 @@ func _mixed_rejection_replay(app) -> void:
 			and app.enemy_intents._turn_index == 1,
 			"legal mixed End Turn after both rejections attacks and grants Block exactly once")
 		await process_frame
-		_visible(app, 2)
+		_visible(app)
 		trace.append(_snapshot(app))
 		if session == 0:
 			replay = trace.duplicate(true)

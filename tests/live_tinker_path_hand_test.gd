@@ -191,6 +191,10 @@ func _oracle(seed_value: int, node_id: String, path_cards: Array) -> Dictionary:
 	if not admission.get("ok", false):
 		return {}
 	var twelve: CombatDeck = admission.combat_deck
+	var party := CombatParty.new(_norm(JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))))
+	var first_intents := CombatEnemyIntents.new(entry.intents._definitions)
+	_check(party.is_valid() and first_intents.bind_battle(entry.enemies, party, rng),
+		"independent twelve-card shuffle is followed by cached weighted intentions")
 	if not twelve.start_turn():
 		return {}
 	var result := {"encounter_id": String(entry.get("encounter_id", "")),
@@ -206,6 +210,9 @@ func _oracle(seed_value: int, node_id: String, path_cards: Array) -> Dictionary:
 	for card_id in path_cards:
 		ids.append(String(card_id))
 	var deal := CombatDeck.new(ids, rng)
+	var path_intents := CombatEnemyIntents.new(entry.intents._definitions)
+	_check(path_intents.bind_battle(entry.enemies, party, rng),
+		"independent Path deck shuffle is followed by cached weighted intentions")
 	if not deal.start_turn():
 		return {}
 	result["hand"] = deal.hand.duplicate()

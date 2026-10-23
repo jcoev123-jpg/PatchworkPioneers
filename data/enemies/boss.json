@@ -1,3 +1,8 @@
 [
-  {"id": "patchwork_behemoth", "name": "Patchwork Behemoth", "max_hp": 42, "art_path": "res://assets/paper/enemies/patchwork_behemoth.png"}
+  {"id": "patchwork_behemoth", "name": "Patchwork Behemoth", "max_hp": 42, "art_path": "res://assets/paper/enemies/patchwork_behemoth.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "attack", "amount": 2, "weight": 4},
+      {"type": "block", "amount": 3, "weight": 2},
+      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+    ]}}
 ]

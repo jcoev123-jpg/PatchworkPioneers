@@ -130,13 +130,13 @@ func _run() -> void:
 			app.end_turn_button.pressed.emit()
 			_check(_snapshot(app) == after, "duplicate dispatch inert")
 			if turn == 0:
-				_check(app.party.get_hero(1).id == "seamstress" and app.party.get_hero(1).statuses == {"exposed": 2}, "debuff binds new occupant after earlier shove")
-				_check(is_same(app.party._heroes[1], warden) and warden.statuses == {"weak": 2}
+				_check(app.party.get_hero(1).id == "seamstress" and app.party.get_hero(1).get("statuses", {}) == {"exposed": 2}, "debuff binds new occupant after earlier shove")
+				_check(is_same(app.party._heroes[1], warden) and warden.get("statuses", {}) == {"weak": 2}
 					and warden.metadata == {"retained": [1, 2]}, "status and metadata follow original actor identity")
 			if turn == 1:
 				_check(app.enemies.get_enemy(1).block == 3 and app.party.get_hero(1).hp == before[0][0].hp - 7, "buff and Exposed attack resolve original base amount")
 			if turn == 2:
-				_check(app.party.get_hero(2).statuses == {"bleed": 2} and app.enemies.get_enemy(1).block == 5, "Bleed applies after owner tick; Block adds")
+				_check(app.party.get_hero(2).get("statuses", {}) == {"bleed": 2} and app.enemies.get_enemy(1).block == 5, "Bleed applies after owner tick; Block adds")
 			trace.append(after)
 			await process_frame
 		if session == 0:
@@ -182,7 +182,7 @@ func _rejections(app) -> void:
 		var before := _snapshot(app)
 		app.end_turn_button.pressed.emit()
 		if mode == "dead":
-			_check(app.party.get_hero(1).id == "warden" and app.party.get_hero(1).statuses == {"exposed": 2}
+			_check(app.party.get_hero(1).id == "warden" and app.party.get_hero(1).get("statuses", {}) == {"exposed": 2}
 				and app.enemy_intents._turn_index == 1, "slain shove source inert; living debuff still acts")
 		else:
 			_check(_snapshot(app) == before and not app.end_turn_button.disabled, "full atomic rejection: " + mode)
@@ -351,6 +351,14 @@ func _body(source: String, signature: String) -> String:
 func _fixture_start(target) -> void:
 	if target.deck != null:
 		target.start_button.pressed.emit()
-		return
-	var started: bool = target._start_battle()
-	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
+	else:
+		var started: bool = target._start_battle()
+		_check(started == (target.deck != null), "standalone fixture reports admission consistently")
+	if target.deck != null:
+		var legacy := CombatEnemyIntents.new(target._load_enemy_schedule())
+		_check(legacy.is_valid() and not legacy.is_bound(),
+			"live M02 fixture explicitly reinstalls independent legacy schedule")
+		target.enemy_intents = legacy
+		target.round_flow._intents = legacy
+		target.enemy_attacks = legacy.get_intents()
+		target._refresh_intents()

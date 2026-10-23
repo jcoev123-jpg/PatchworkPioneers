@@ -172,11 +172,22 @@ func _oracle() -> Dictionary:
 	var foes: Array[Dictionary] = app.enemies.get_enemies()
 	var enemies := CombatEnemies.new(foes)
 	enemies._enemies.assign(foes)
+	var intents := CombatEnemyIntents.new(app.enemy_intents._definitions)
+	# The opening announcement has already been committed; clone that immutable
+	# batch, then let the independent shared RNG draw subsequent batches.
+	intents._bound = true
+	intents._party = party
+	intents._rng = rng
+	intents._slots = app.enemy_intents._slots.duplicate(true)
+	intents._cache = app.enemy_intents.get_intents()
+	var flow := CombatRoundFlow.new(deck, party, enemies, intents,
+		CombatBattleResult.new(party, enemies))
+	flow._started = true # Detached already-active turn, never a second opening deal.
 	var quilt := CombatQuiltBonus.new(party, deck)
 	if not quilt.begin_player_turn():
 		return {}
 	return {"deck": deck, "party": party, "enemies": enemies, "quilt": quilt,
-		"attacks": CombatAttackCards.new()}
+		"attacks": CombatAttackCards.new(), "flow": flow}
 
 
 func _oracle_state(oracle: Dictionary) -> Array:
@@ -553,12 +564,15 @@ func _scenario_three_owners(seed_fixture: Dictionary) -> Array:
 
 	# A real End Turn advances one turn: receipts and the single-award latch reset.
 	var oracle_deck: CombatDeck = oracle["deck"]
-	oracle_deck.end_turn()
-	oracle_deck.start_turn()
+	_check(oracle["flow"].end_turn(),
+		"independent bound oracle commits real enemy phase, ticks and weighted next cache")
 	await _click(app.end_turn_button)
 	await _frames()
 	_check(app.deck.turn_active and not app._battle_closed, "real End Turn opens the mounted next turn")
-	_check(_deck_state(app.deck) == _deck_state(oracle_deck),
+	_check(_deck_state(app.deck) == _deck_state(oracle_deck)
+		and app.party.get_heroes() == oracle["party"].get_heroes()
+		and app.enemies.get_enemies() == oracle["enemies"].get_enemies()
+		and app.enemy_intents.get_intents() == oracle["flow"]._intents.get_intents(),
 		"next turn matches the oracle's hand, piles, energy and RNG exactly")
 	# A fresh detached mirror of the mounted next-turn state, including the
 	# enemy-phase HP changes the mounted party really took.
