@@ -37,8 +37,8 @@ const OWNER_NAME_FONT_SIZE := 14
 ## The card's own authored picture gets a dedicated, inert illustration window
 ## above the name; the name keeps a plain cream strip of its own instead of
 ## cropping art behind its text.
-const CARD_ART_HEIGHT := 64
-const NAME_STRIP_HEIGHT := 44
+const CARD_ART_HEIGHT := 52
+const NAME_STRIP_HEIGHT := 32
 
 ## Sewn Flow/ChatGPT art in the heroes' stitched-felt style. Every piece is
 ## optional: a missing texture falls back to the flat procedural paper, and the
@@ -58,7 +58,7 @@ const BANNER_HEIGHT := 72
 const BUTTON_EDGE := 22
 ## Room the sewn borders take before any card or panel content starts.
 const QUILT_INSET := 30
-const FRAME_INSET := 28
+const FRAME_INSET := 24
 
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/RewardContent/RewardTitle
@@ -198,7 +198,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	var content := VBoxContainer.new()
 	content.name = "CardContent"
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 4)
+	content.add_theme_constant_override("separation", 2)
 	margin.add_child(content)
 
 	# Owner color patch (sewn stripe at top) with the owning hero's name sewn in
