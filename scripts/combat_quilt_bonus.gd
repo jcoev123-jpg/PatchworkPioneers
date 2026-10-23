@@ -77,6 +77,62 @@ func record_confirmed_play(owner_id: String) -> Dictionary:
 	return {"ok": true, "triggered": true, "drawn": drawn}
 
 
+## Two-owner confirmation for a successfully committed stitched card. Both owners
+## are credited as one boundary; never executes, charges or resolves the card.
+func record_confirmed_stitched_play(first_owner_id: String, second_owner_id: String) -> Dictionary:
+	var rejected := {"ok": false, "triggered": false, "drawn": 0}
+	if not _active or not _bindings_valid() or not _deck.turn_active:
+		return rejected
+	if first_owner_id == second_owner_id:
+		return rejected
+	if not _played.has(first_owner_id) or not _played.has(second_owner_id):
+		return rejected
+	var living := _living_heroes()
+	if living.is_empty():
+		return rejected
+	var first_lives := false
+	var second_lives := false
+	for hero in living:
+		if hero["id"] == first_owner_id:
+			first_lives = true
+		if hero["id"] == second_owner_id:
+			second_lives = true
+	if not first_lives or not second_lives:
+		return rejected
+	if _awarded:
+		return {"ok": true, "triggered": false, "drawn": 0}
+	var mark_first: bool = not _played[first_owner_id]
+	var mark_second: bool = not _played[second_owner_id]
+	if not mark_first and not mark_second:
+		return {"ok": true, "triggered": false, "drawn": 0}
+
+	var completes := true
+	for hero in living:
+		var id: String = hero["id"]
+		var will_be_played: bool = _played.get(id, false)
+		if id == first_owner_id or id == second_owner_id:
+			will_be_played = true
+		if not will_be_played:
+			completes = false
+	if completes:
+		for hero in living:
+			var block = hero.get("block")
+			if not block is int or block < 0 or block > CombatParty.MAX_INT - BLOCK_REWARD:
+				return rejected
+
+	if mark_first:
+		_played[first_owner_id] = true
+	if mark_second:
+		_played[second_owner_id] = true
+	if not completes:
+		return {"ok": true, "triggered": false, "drawn": 0}
+	for hero in living:
+		_party.gain_block(hero["position"], BLOCK_REWARD)
+	var drawn: int = _deck.draw_extra(1)
+	_awarded = true
+	return {"ok": true, "triggered": true, "drawn": drawn}
+
+
 ## Call after CombatDeck.end_turn(); do not close an active hand prematurely.
 func end_player_turn() -> void:
 	if _active and _deck != null and not _deck.turn_active:

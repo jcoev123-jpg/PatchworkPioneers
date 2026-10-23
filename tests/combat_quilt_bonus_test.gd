@@ -10,6 +10,9 @@ func _initialize() -> void:
 	_test_living_roster_and_swaps()
 	_test_turn_boundaries_and_rejections()
 	_test_seeded_refill_replay()
+	_test_stitched_credit_both_owners()
+	_test_stitched_downed_and_repeat()
+	_test_stitched_rejections_and_reset()
 	for failure in failures:
 		printerr(failure)
 	print("combat_quilt_bonus_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -324,3 +327,165 @@ func _test_seeded_refill_replay() -> void:
 		var second := _refill_trace(seed_value)
 		_check(first.size() == 6 and second.size() == 6 and first == second,
 			"identical seed and successful receipts replay hand, piles, energy, Block, patch state and RNG")
+
+
+func _test_stitched_credit_both_owners() -> void:
+	var cards: Array[String] = ["warden_brace", "seamstress_stitch_up",
+		"tinker_tune_up", "warden_strike", "seamstress_prick",
+		"tinker_pop_shot"]
+	var deck: CombatDeck = null
+	for seed_value in range(1, 300):
+		var candidate := _deck(cards, seed_value)
+		if candidate.start_turn() and candidate.hand.has("warden_brace"):
+			deck = candidate
+			break
+	_check(deck != null, "stitched basic: seeded hand contains Warden Brace")
+	if deck == null:
+		return
+	var party := _party()
+	var quilt := CombatQuiltBonus.new(party, deck)
+	_check(quilt.begin_player_turn(), "stitched basic: tracker begins")
+	_check(support.play_card(deck, party, "warden_brace"), "stitched basic: real Warden Brace commits")
+	_check(quilt.record_confirmed_play("warden") == {"ok": true, "triggered": false, "drawn": 0},
+		"stitched basic: Warden receipt fills only his square")
+	var before := _state(deck, party)
+	_check(_blocks(party) == {"warden": 7, "seamstress": 0, "tinker": 0},
+		"stitched basic: only ordinary Warden Block before stitched")
+	var next_card: String = deck.draw_pile.back()
+	var result := quilt.record_confirmed_stitched_play("seamstress", "tinker")
+	var after := _state(deck, party)
+	_check(result == {"ok": true, "triggered": true, "drawn": 1},
+		"stitched basic: different-owner stitched receipt awards once")
+	_check(_blocks(party) == {"warden": 10, "seamstress": 3, "tinker": 3},
+		"stitched basic: every living hero gains exactly 3 Block")
+	_check(after.hand.size() == before.hand.size() + 1
+		and after.hand.back() == next_card
+		and after.draw.size() == before.draw.size() - 1
+		and after.discard == before.discard
+		and after.energy == before.energy
+		and after.rng == before.rng,
+		"stitched basic: one authentic pile card drawn, no energy/discard/RNG drift")
+	var progress := quilt.get_patch_progress()
+	_check(progress.awarded
+		and progress.patches.warden.played
+		and progress.patches.seamstress.played
+		and progress.patches.tinker.played,
+		"stitched basic: all three owner squares filled")
+
+
+func _test_stitched_downed_and_repeat() -> void:
+	var cards: Array[String] = ["warden_brace", "seamstress_stitch_up", "tinker_tune_up",
+		"warden_strike", "seamstress_prick", "tinker_pop_shot"]
+	var deck := _deck(cards, 83)
+	var party := _party()
+	_check(party.apply_damage(1, 40) and party.is_downed(1), "stitched downed: Warden downed")
+	_check(deck.start_turn(), "stitched downed: deck starts")
+	var quilt := CombatQuiltBonus.new(party, deck)
+	_check(quilt.begin_player_turn(), "stitched downed: tracker begins")
+	_check(quilt.record_confirmed_play("seamstress") == {"ok": true, "triggered": false, "drawn": 0},
+		"stitched downed: Seamstress credited without award")
+	var before := _state(deck, party)
+	var next_card: String = deck.draw_pile.back()
+	var result := quilt.record_confirmed_stitched_play("seamstress", "tinker")
+	var after := _state(deck, party)
+	_check(result == {"ok": true, "triggered": true, "drawn": 1},
+		"stitched downed: living pair completes and awards once")
+	_check(_blocks(party) == {"warden": 0, "seamstress": 3, "tinker": 3},
+		"stitched downed: only living heroes gain 3 Block")
+	_check(after.hand.size() == before.hand.size() + 1
+		and after.hand.back() == next_card
+		and after.draw.size() == before.draw.size() - 1
+		and after.discard == before.discard
+		and after.energy == before.energy
+		and after.rng == before.rng,
+		"stitched downed: one authentic draw and no drift")
+	var progress := quilt.get_patch_progress()
+	_check(progress.awarded
+		and not progress.patches.warden.living and not progress.patches.warden.played
+		and progress.patches.seamstress.played and progress.patches.tinker.played,
+		"stitched downed: downed Warden excluded; living pair filled")
+	var awarded_state := _state(deck, party)
+	var repeat := quilt.record_confirmed_stitched_play("seamstress", "tinker")
+	_check(repeat == {"ok": true, "triggered": false, "drawn": 0}
+		and _state(deck, party) == awarded_state
+		and _blocks(party) == {"warden": 0, "seamstress": 3, "tinker": 3},
+		"stitched downed: repeated valid pair does not double-award")
+	var reordered := quilt.record_confirmed_stitched_play("tinker", "seamstress")
+	_check(reordered.triggered == false, "stitched downed: reordered credited pair grants nothing")
+
+
+func _test_stitched_rejections_and_reset() -> void:
+	var party := _party()
+	var deck := _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up",
+		"warden_strike", "tinker_pop_shot"], 71)
+	var quilt := CombatQuiltBonus.new(party, deck)
+	var before := _state(deck, party)
+	var progress_before := quilt.get_patch_progress()
+	_check(not quilt.record_confirmed_stitched_play("warden", "seamstress").ok
+		and _state(deck, party) == before
+		and quilt.get_patch_progress() == progress_before,
+		"stitched reject: inactive turn rejects without changes")
+	_check(deck.start_turn() and quilt.begin_player_turn(), "stitched reject: turn begins")
+	before = _state(deck, party)
+	progress_before = quilt.get_patch_progress()
+	_check(not quilt.record_confirmed_stitched_play("warden", "warden").ok
+		and _state(deck, party) == before
+		and quilt.get_patch_progress() == progress_before,
+		"stitched reject: duplicate ID rejects")
+	_check(not quilt.record_confirmed_stitched_play("warden", "stranger").ok
+		and not quilt.record_confirmed_stitched_play("", "tinker").ok
+		and _state(deck, party) == before
+		and quilt.get_patch_progress() == progress_before,
+		"stitched reject: unknown/empty IDs reject")
+
+	var downed_party := _party()
+	_check(downed_party.apply_damage(1, 40), "stitched reject: down Warden")
+	var downed_deck := _deck(["tinker_tune_up", "warden_strike", "tinker_pop_shot"], 17)
+	var downed_quilt := CombatQuiltBonus.new(downed_party, downed_deck)
+	_check(downed_deck.start_turn() and downed_quilt.begin_player_turn(),
+		"stitched reject: downed fixture turns")
+	before = _state(downed_deck, downed_party)
+	progress_before = downed_quilt.get_patch_progress()
+	_check(not downed_quilt.record_confirmed_stitched_play("warden", "tinker").ok
+		and _state(downed_deck, downed_party) == before
+		and downed_quilt.get_patch_progress() == progress_before,
+		"stitched reject: downed owner rejects without changes")
+
+	var overflow_party := _party()
+	var overflow_deck := _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up",
+		"warden_strike", "tinker_pop_shot"], 19)
+	var overflow_quilt := CombatQuiltBonus.new(overflow_party, overflow_deck)
+	_check(overflow_deck.start_turn() and overflow_quilt.begin_player_turn(),
+		"stitched reject: overflow fixture turns")
+	_check(overflow_quilt.record_confirmed_play("tinker").ok,
+		"stitched reject: tinker credited before overflow pair")
+	_check(overflow_party.gain_block(1, CombatParty.MAX_INT - 2),
+		"stitched reject: overflow block seed")
+	before = _state(overflow_deck, overflow_party)
+	progress_before = overflow_quilt.get_patch_progress()
+	_check(not overflow_quilt.record_confirmed_stitched_play("warden", "seamstress").ok
+		and _state(overflow_deck, overflow_party) == before
+		and overflow_quilt.get_patch_progress() == progress_before
+		and not overflow_quilt.get_patch_progress().patches.warden.played
+		and not overflow_quilt.get_patch_progress().patches.seamstress.played,
+		"stitched reject: failed reward leaves no partial owner progress")
+
+	var reset_party := _party()
+	var reset_deck := _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up",
+		"warden_strike", "seamstress_prick", "tinker_pop_shot"], 26)
+	var reset_quilt := CombatQuiltBonus.new(reset_party, reset_deck)
+	_check(reset_deck.start_turn() and reset_quilt.begin_player_turn(), "reset fixture starts")
+	_check(reset_quilt.record_confirmed_play("warden").ok, "reset: warden credited")
+	var reset_result := reset_quilt.record_confirmed_stitched_play("seamstress", "tinker")
+	_check(reset_result == {"ok": true, "triggered": true, "drawn": 1}, "reset: stitched awards")
+	_check(not reset_quilt.record_confirmed_stitched_play("seamstress", "tinker").triggered,
+		"reset: repeat grants nothing")
+	_check(reset_deck.end_turn(), "reset: end deck turn")
+	reset_quilt.end_player_turn()
+	_check(reset_party.start_player_turn() and reset_deck.start_turn() and reset_quilt.begin_player_turn(),
+		"reset: new player turn starts")
+	var reset_progress := reset_quilt.get_patch_progress()
+	_check(not reset_progress.awarded and not reset_progress.patches.warden.played
+		and not reset_progress.patches.seamstress.played
+		and not reset_progress.patches.tinker.played,
+		"reset: award latch and squares reset")
