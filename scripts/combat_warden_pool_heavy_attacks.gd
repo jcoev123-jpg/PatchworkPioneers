@@ -5,6 +5,8 @@ extends RefCounted
 ## authoritative CombatDeck, CombatParty, and CombatEnemies instances.
 ## D2-2: an optional bound CombatPinned grants a cross-hero +5 on the first confirmed
 ## hit, added before Weak/Exposed, then consumes that original-slot token exactly once.
+## M04: optional bound CombatPatchAttackRules adds wearer-only Pincushion Arm +1 damage
+## to each hit and Button Eye Exposed 1 on the first successful attack each combat.
 
 const WARDEN_ID: String = "warden"
 
@@ -22,10 +24,33 @@ const SUPPORTED_CARD_IDS: Array[String] = [
 
 ## Optional per-battle Pinned tokens. Null keeps the pre-D2-2 unboosted behaviour.
 var _pinned: CombatPinned = null
+## Optional per-battle patch rules. Null keeps the pre-M04 unpatched behaviour.
+var _patches: CombatPatchAttackRules = null
 
 
-func _init(pinned: CombatPinned = null) -> void:
-	_pinned = pinned
+func _init(pinned_or_patches: Variant = null, optional_patches: Variant = null) -> void:
+	if pinned_or_patches is CombatPinned:
+		_pinned = pinned_or_patches
+	elif pinned_or_patches is CombatPatchAttackRules:
+		_patches = pinned_or_patches
+	if optional_patches is CombatPinned:
+		_pinned = optional_patches
+	elif optional_patches is CombatPatchAttackRules:
+		_patches = optional_patches
+
+
+## An explicit invalid binding disables playing instead of dropping the bonus.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
+
+
+func get_patches() -> CombatPatchAttackRules:
+	return _patches
+
+
+func set_patches(patches: CombatPatchAttackRules) -> void:
+	_patches = patches
 
 
 ## Binds the shared battle Pinned service; the caller still owns its lifetime.
@@ -53,8 +78,14 @@ func can_play(
 	party: CombatParty,
 	enemies: CombatEnemies,
 	card_id: String,
-	target_position: int
+	target_position: int,
+	pinned: CombatPinned = null,
+	patches: CombatPatchAttackRules = null
 ) -> bool:
+	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
+	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+	if active_patches != null and not active_patches.is_valid():
+		return false
 	if deck == null or party == null or enemies == null:
 		return false
 	if not deck.turn_active:
@@ -115,12 +146,29 @@ func can_play(
 	if enemy_statuses is Dictionary and not _valid_statuses(enemy_statuses as Dictionary):
 		return false
 
+	var effects: Dictionary = definition.get("effects", {}) as Dictionary
+	if not effects.has("damage"):
+		return false
+	var base_damage: int = int(effects.get("damage", 0))
+	if base_damage <= 0:
+		return false
+	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
+	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage:
+		return false
+
+	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
+	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
+	if patch_exposed > 0 and not enemies.can_apply_statuses({target_position: {"exposed": patch_exposed}}):
+		return false
+
 	return true
 
 
 ## Returns legal living enemy positions for the given card.
 func get_valid_targets(party: CombatParty, enemies: CombatEnemies, card_id: String) -> Array[int]:
 	var targets: Array[int] = []
+	if _patches != null and not _patches.is_valid():
+		return targets
 	if party == null or enemies == null or not party.is_valid() or not enemies.is_valid():
 		return targets
 	if not SUPPORTED_CARD_IDS.has(card_id):
@@ -158,7 +206,10 @@ func get_valid_targets(party: CombatParty, enemies: CombatEnemies, card_id: Stri
 ## Debits energy and discards precisely once, then applies one or two sequential hits.
 ## If hit 1 kills the enemy, hit 2 is skipped without roll back or retargeting.
 ## A bound cross-hero Pinned token adds +5 to the first confirmed hit only and is
-## consumed after that hit succeeds. Rejections never touch deck, actors or tokens.
+## consumed after that hit succeeds.
+## A bound Pincushion Arm adds +1 to each damaging hit.
+## A bound Button Eye applies Exposed 1 after all hits of the first successful attack.
+## Rejections never touch deck, actors, tokens or patch latches.
 func play_attack(
 	deck: CombatDeck,
 	party: CombatParty,
@@ -167,9 +218,13 @@ func play_attack(
 	target_position: int,
 	attacker_statuses: Dictionary = {},
 	enemy_statuses_by_position: Dictionary = {},
-	pinned: CombatPinned = null
+	pinned: CombatPinned = null,
+	patches: CombatPatchAttackRules = null
 ) -> Dictionary:
 	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
+	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+	if active_patches != null and not active_patches.is_valid():
+		return _failure(card_id, target_position)
 	if deck == null or party == null or enemies == null:
 		return _failure(card_id, target_position)
 	if not deck.turn_active:
@@ -208,8 +263,13 @@ func play_attack(
 	var hits_count: int = int(effects.get("hits", 1))
 	if hits_count < 1:
 		return _failure(card_id, target_position)
-	# Reserve Pinned's possible +5 before any debit so hit math cannot overflow.
-	if base_damage > CombatStatuses.MAX_INT - 5:
+
+	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
+	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
+	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
+
+	# Reserve Pinned's possible +5 and patch_damage before any debit so hit math cannot overflow.
+	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage:
 		return _failure(card_id, target_position)
 
 	# Precondition: held copy in hand and sufficient energy
@@ -272,6 +332,10 @@ func play_attack(
 	if not _valid_statuses(initial_target_statuses):
 		return _failure(card_id, target_position)
 
+	# Preflight optional patch status application against authoritative live models BEFORE debiting
+	if patch_exposed > 0 and not enemies.can_apply_statuses({target_position: {"exposed": patch_exposed}}):
+		return _failure(card_id, target_position)
+
 	# Commit transaction: debit energy and discard card once
 	if not deck.try_spend_energy(cost):
 		return _failure(card_id, target_position)
@@ -306,7 +370,7 @@ func play_attack(
 			pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, WARDEN_ID)
 
 		var hit_result: Dictionary = damage_resolver.resolve_vs_enemy(
-			enemies, target_position, base_damage + pin_bonus, owner_statuses, target_statuses
+			enemies, target_position, base_damage + pin_bonus + patch_damage, owner_statuses, target_statuses
 		)
 		if not hit_result.get("ok", false):
 			break
@@ -322,6 +386,16 @@ func play_attack(
 			"pinned_bonus": pin_bonus,
 			"statuses": {},
 		})
+
+	# Button Eye: once-per-combat rider applied after all hits of the first successful attack.
+	# Hit 2 of Pin and Pound does not benefit from this Exposed.
+	if hits.size() > 0:
+		if patch_exposed > 0:
+			enemies.apply_statuses({target_position: {"exposed": patch_exposed}})
+			var first_statuses: Dictionary = hits[0]["statuses"]
+			first_statuses["exposed"] = int(first_statuses.get("exposed", 0)) + patch_exposed
+		if active_patches != null:
+			active_patches.record_successful_attack(WARDEN_ID)
 
 	return {
 		"ok": true,
@@ -340,10 +414,11 @@ func play(
 	target_position: int,
 	attacker_statuses: Dictionary = {},
 	enemy_statuses_by_position: Dictionary = {},
-	pinned: CombatPinned = null
+	pinned: CombatPinned = null,
+	patches: CombatPatchAttackRules = null
 ) -> Dictionary:
 	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
-		enemy_statuses_by_position, pinned)
+		enemy_statuses_by_position, pinned, patches)
 
 
 ## Alias for play_attack.
@@ -355,10 +430,11 @@ func play_card(
 	target_position: int,
 	attacker_statuses: Dictionary = {},
 	enemy_statuses_by_position: Dictionary = {},
-	pinned: CombatPinned = null
+	pinned: CombatPinned = null,
+	patches: CombatPatchAttackRules = null
 ) -> Dictionary:
 	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
-		enemy_statuses_by_position, pinned)
+		enemy_statuses_by_position, pinned, patches)
 
 
 func _valid_statuses(statuses: Dictionary) -> bool:

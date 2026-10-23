@@ -16,6 +16,9 @@ func _initialize() -> void:
 	_test_pinned_ac2_pin_and_pound_single_consumption()
 	_test_pinned_ac3_same_owner_absent_and_unaffected_pins()
 	_test_pinned_ac4_rejections_leave_tokens()
+	_test_patch_ac1_pincushion_arm_damage_bonus()
+	_test_patch_ac2_button_eye_exposed_and_latch()
+	_test_patch_ac3_projection_rejections_and_replay()
 	_finish()
 
 
@@ -1176,3 +1179,664 @@ func _test_pinned_ac4_rejections_leave_tokens() -> void:
 	var i_hit: Dictionary = (i_res.get("hits", []) as Array)[0] as Dictionary
 	_check(int(i_hit.get("damage", 0)) == 16, "P-AC4: rebound token grants the +5 on the next legal play")
 	_check(i_pinned.pinner_for_enemy(1) == "", "P-AC4: rebound token is consumed by the confirmed hit")
+
+
+func _patch_context(party: CombatParty, wearer: String = "warden", sew_arm: bool = false, sew_head: bool = false) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array and raw.size() >= 2, "authored M04 attack patch metadata parsed")
+	var definitions: Array = []
+	for entry in raw:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = []
+	if sew_head:
+		owned.append("button_eye")
+	if sew_arm:
+		owned.append("pincushion_arm")
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine three-hero run patch ledgers valid")
+	if sew_head:
+		var result: Dictionary = wardrobe.sew("button_eye", wearer, "HEAD", "sew_button_eye", wardrobe.get_snapshot())
+		_check(result.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["HEAD"] == "button_eye",
+			"Button Eye sewn on " + wearer + " HEAD slot")
+	if sew_arm:
+		var result: Dictionary = wardrobe.sew("pincushion_arm", wearer, "ARM", "sew_pincushion_arm", wardrobe.get_snapshot())
+		_check(result.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["ARM"] == "pincushion_arm",
+			"Pincushion Arm sewn on " + wearer + " ARM slot")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+## Patch AC1: On a valid wardrobe with Pincushion Arm sewn on Warden ARM slot,
+## exactly +1 is added to EACH damaging hit before Weak/Exposed calculations.
+## Unbound plays retain all existing exact results.
+func _test_patch_ac1_pincushion_arm_damage_bonus() -> void:
+	# 1. Base Heavy Thimble (11 + 1 = 12 damage)
+	var party1 := _party()
+	var ctx1 := _patch_context(party1, "warden", true, false)
+	var enemies1 := _enemies([25, 20])
+	var deck1 := _deck(["warden_heavy_thimble"])
+	var service1 := CombatWardenPoolHeavyAttacks.new()
+	_check(service1.bind_patch_wardrobe(ctx1.wardrobe, ctx1.torn), "AC1: Heavy Thimble bound Pincushion Arm")
+	_check(service1._patches.damage_bonus("warden") == 1, "AC1: Warden has +1 damage bonus")
+	var rng1 := deck1._rng.state
+	_check(service1.can_play(deck1, party1, enemies1, "warden_heavy_thimble", 1), "AC1: can_play legal for target 1")
+	_check(deck1._rng.state == rng1, "AC1: preflight preserved RNG")
+	var res1 := service1.play_attack(deck1, party1, enemies1, "warden_heavy_thimble", 1)
+	_check(res1.get("ok", false), "AC1: Heavy Thimble succeeded")
+	_check(deck1._rng.state == rng1, "AC1: execution preserved RNG")
+	var hits1: Array = res1.get("hits", []) as Array
+	_check(hits1.size() == 1, "AC1: 1 hit produced")
+	var h1: Dictionary = hits1[0] as Dictionary
+	_check(int(h1.get("damage", 0)) == 12, "AC1: 11 base + 1 patch = 12 damage")
+	_check(int(h1.get("block_absorbed", 0)) == 0 and int(h1.get("hp_loss", 0)) == 12, "AC1: 12 HP loss")
+	_check(enemies1.get_enemy(1)["hp"] == 13, "AC1: enemy 1 HP is 25 - 12 = 13")
+	_check(deck1.energy == 1, "AC1: exactly 2 energy spent")
+	_check(not deck1.hand.has("warden_heavy_thimble") and deck1.discard_pile.has("warden_heavy_thimble"), "AC1: card discarded once")
+
+	# 2. Heavy Thimble+ (15 + 1 = 16 damage) with Block absorption
+	var party2 := _party()
+	var ctx2 := _patch_context(party2, "warden", true, false)
+	var enemies2 := _enemies([30, 20])
+	_check(enemies2.gain_block(1, 5), "AC1: set enemy 1 block to 5")
+	var deck2 := _deck(["warden_heavy_thimble_plus"])
+	var service2 := CombatWardenPoolHeavyAttacks.new()
+	_check(service2.bind_patch_wardrobe(ctx2.wardrobe, ctx2.torn), "AC1: Heavy Thimble+ bound Pincushion Arm")
+	var res2 := service2.play_attack(deck2, party2, enemies2, "warden_heavy_thimble_plus", 1)
+	_check(res2.get("ok", false), "AC1: Heavy Thimble+ succeeded")
+	var hits2: Array = res2.get("hits", []) as Array
+	_check(hits2.size() == 1, "AC1: 1 hit produced")
+	var h2: Dictionary = hits2[0] as Dictionary
+	_check(int(h2.get("damage", 0)) == 16, "AC1: 15 base + 1 patch = 16 damage")
+	_check(int(h2.get("block_absorbed", 0)) == 5 and int(h2.get("hp_loss", 0)) == 11, "AC1: 5 block absorbed, 11 HP loss")
+	_check(enemies2.get_enemy(1)["hp"] == 19 and enemies2.get_enemy(1)["block"] == 0, "AC1: enemy 1 HP is 30 - 11 = 19, block 0")
+	_check(deck2.energy == 1, "AC1: 2 energy spent")
+
+	# 3. Pin and Pound (9 + 1 = 10 damage twice) on target 2
+	var party3 := _party()
+	var ctx3 := _patch_context(party3, "warden", true, false)
+	var enemies3 := _enemies([30, 40, 30])
+	var deck3 := _deck(["warden_pin_and_pound"])
+	var service3 := CombatWardenPoolHeavyAttacks.new()
+	_check(service3.bind_patch_wardrobe(ctx3.wardrobe, ctx3.torn), "AC1: Pin and Pound bound Pincushion Arm")
+	var res3 := service3.play_attack(deck3, party3, enemies3, "warden_pin_and_pound", 2)
+	_check(res3.get("ok", false), "AC1: Pin and Pound succeeded")
+	var hits3: Array = res3.get("hits", []) as Array
+	_check(hits3.size() == 2, "AC1: Pin and Pound produced 2 hits")
+	var p3_h1: Dictionary = hits3[0] as Dictionary
+	var p3_h2: Dictionary = hits3[1] as Dictionary
+	_check(int(p3_h1.get("damage", 0)) == 10 and int(p3_h1.get("hp_loss", 0)) == 10, "AC1: Hit 1 dealt 10 damage")
+	_check(int(p3_h2.get("damage", 0)) == 10 and int(p3_h2.get("hp_loss", 0)) == 10, "AC1: Hit 2 dealt 10 damage (+1 on EACH hit)")
+	_check(enemies3.get_enemy(2)["hp"] == 20, "AC1: enemy 2 HP is 40 - 20 = 20")
+	_check(deck3.energy == 1, "AC1: 2 energy spent once")
+	_check(not deck3.hand.has("warden_pin_and_pound") and deck3.discard_pile.has("warden_pin_and_pound"), "AC1: card discarded once")
+
+	# 4. Pin and Pound+ (12 + 1 = 13 damage twice) with Block absorption
+	var party4 := _party()
+	var ctx4 := _patch_context(party4, "warden", true, false)
+	var enemies4 := _enemies([35, 20])
+	_check(enemies4.gain_block(1, 6), "AC1: gave enemy 1 6 block")
+	var deck4 := _deck(["warden_pin_and_pound_plus"])
+	var service4 := CombatWardenPoolHeavyAttacks.new()
+	_check(service4.bind_patch_wardrobe(ctx4.wardrobe, ctx4.torn), "AC1: Pin and Pound+ bound Pincushion Arm")
+	var res4 := service4.play_attack(deck4, party4, enemies4, "warden_pin_and_pound_plus", 1)
+	_check(res4.get("ok", false), "AC1: Pin and Pound+ succeeded")
+	var hits4: Array = res4.get("hits", []) as Array
+	_check(hits4.size() == 2, "AC1: Pin and Pound+ produced 2 hits")
+	var p4_h1: Dictionary = hits4[0] as Dictionary
+	var p4_h2: Dictionary = hits4[1] as Dictionary
+	_check(int(p4_h1.get("damage", 0)) == 13 and int(p4_h1.get("block_absorbed", 0)) == 6 and int(p4_h1.get("hp_loss", 0)) == 7,
+		"AC1: Hit 1 dealt 13, absorbed 6 block, 7 HP loss")
+	_check(int(p4_h2.get("damage", 0)) == 13 and int(p4_h2.get("block_absorbed", 0)) == 0 and int(p4_h2.get("hp_loss", 0)) == 13,
+		"AC1: Hit 2 dealt 13, absorbed 0 block, 13 HP loss")
+	_check(enemies4.get_enemy(1)["hp"] == 15 and enemies4.get_enemy(1)["block"] == 0, "AC1: enemy 1 HP is 35 - 7 - 13 = 15")
+
+	# 5. Weak and Exposed with Pincushion Arm:
+	# Weak Warden: floor(10 * 3 / 4) = 7 per hit. Total 14.
+	var party_w := _party_with_statuses({"weak": 1})
+	var ctx_w := _patch_context(party_w, "warden", true, false)
+	var enemies_w := _enemies([30, 20])
+	var deck_w := _deck(["warden_pin_and_pound"])
+	var service_w := CombatWardenPoolHeavyAttacks.new()
+	_check(service_w.bind_patch_wardrobe(ctx_w.wardrobe, ctx_w.torn), "AC1: Weak Pin and Pound bound")
+	var res_w := service_w.play_attack(deck_w, party_w, enemies_w, "warden_pin_and_pound", 1)
+	_check(res_w.get("ok", false), "AC1: Weak Pin and Pound succeeded")
+	var hits_w: Array = res_w.get("hits", []) as Array
+	_check(int((hits_w[0] as Dictionary).get("damage", 0)) == 7, "AC1: Weak hit 1 is floor(10*3/4) = 7")
+	_check(int((hits_w[1] as Dictionary).get("damage", 0)) == 7, "AC1: Weak hit 2 is floor(10*3/4) = 7")
+	_check(enemies_w.get_enemy(1)["hp"] == 16, "AC1: enemy 1 HP is 30 - 14 = 16")
+
+	# Exposed Enemy: floor(10 * 3 / 2) = 15 per hit. Total 30.
+	var party_e := _party()
+	var ctx_e := _patch_context(party_e, "warden", true, false)
+	var enemies_e := _enemies([40, 20])
+	_check(enemies_e.apply_statuses({1: {"exposed": 1}}), "AC1: applied exposed to enemy 1")
+	var deck_e := _deck(["warden_pin_and_pound"])
+	var service_e := CombatWardenPoolHeavyAttacks.new()
+	_check(service_e.bind_patch_wardrobe(ctx_e.wardrobe, ctx_e.torn), "AC1: Exposed Pin and Pound bound")
+	var res_e := service_e.play_attack(deck_e, party_e, enemies_e, "warden_pin_and_pound", 1)
+	_check(res_e.get("ok", false), "AC1: Exposed Pin and Pound succeeded")
+	var hits_e: Array = res_e.get("hits", []) as Array
+	_check(int((hits_e[0] as Dictionary).get("damage", 0)) == 15, "AC1: Exposed hit 1 is floor(10*3/2) = 15")
+	_check(int((hits_e[1] as Dictionary).get("damage", 0)) == 15, "AC1: Exposed hit 2 is floor(10*3/2) = 15")
+	_check(enemies_e.get_enemy(1)["hp"] == 10, "AC1: enemy 1 HP is 40 - 30 = 10")
+
+	# Weak + Exposed: floor(10 * 9 / 8) = 11 per hit. Total 22.
+	var party_we := _party_with_statuses({"weak": 1})
+	var ctx_we := _patch_context(party_we, "warden", true, false)
+	var enemies_we := _enemies([30, 20])
+	_check(enemies_we.apply_statuses({1: {"exposed": 1}}), "AC1: applied exposed to enemy 1 for we")
+	var deck_we := _deck(["warden_pin_and_pound"])
+	var service_we := CombatWardenPoolHeavyAttacks.new()
+	_check(service_we.bind_patch_wardrobe(ctx_we.wardrobe, ctx_we.torn), "AC1: Weak+Exposed Pin and Pound bound")
+	var res_we := service_we.play_attack(deck_we, party_we, enemies_we, "warden_pin_and_pound", 1)
+	_check(res_we.get("ok", false), "AC1: Weak+Exposed Pin and Pound succeeded")
+	var hits_we: Array = res_we.get("hits", []) as Array
+	_check(int((hits_we[0] as Dictionary).get("damage", 0)) == 11, "AC1: Weak+Exposed hit 1 is floor(10*9/8) = 11")
+	_check(int((hits_we[1] as Dictionary).get("damage", 0)) == 11, "AC1: Weak+Exposed hit 2 is floor(10*9/8) = 11")
+	_check(enemies_we.get_enemy(1)["hp"] == 8, "AC1: enemy 1 HP is 30 - 22 = 8")
+
+	# 6. Pinned token (+5 from different hero) + Pincushion Arm (+1):
+	# Heavy Thimble: 11 base + 5 pin + 1 patch = 17 raw damage.
+	var party_p := _party()
+	var ctx_p := _patch_context(party_p, "warden", true, false)
+	var enemies_p := _enemies([30, 20])
+	var pinned_p := CombatPinned.new()
+	_check(pinned_p.pin_enemy(enemies_p, 1, "seamstress"), "AC1: pinned slot 1 by Seamstress")
+	var service_p := CombatWardenPoolHeavyAttacks.new(pinned_p)
+	_check(service_p.bind_patch_wardrobe(ctx_p.wardrobe, ctx_p.torn), "AC1: Pinned Heavy Thimble bound")
+	var deck_p := _deck(["warden_heavy_thimble"])
+	var res_p := service_p.play_attack(deck_p, party_p, enemies_p, "warden_heavy_thimble", 1)
+	_check(res_p.get("ok", false), "AC1: Pinned Heavy Thimble succeeded")
+	var hits_p: Array = res_p.get("hits", []) as Array
+	_check(int((hits_p[0] as Dictionary).get("damage", 0)) == 17, "AC1: 11 + 5 pin + 1 patch = 17 damage")
+	_check(int((hits_p[0] as Dictionary).get("pinned_bonus", 0)) == 5, "AC1: pinned bonus recorded")
+	_check(enemies_p.get_enemy(1)["hp"] == 13, "AC1: enemy 1 HP is 30 - 17 = 13")
+	_check(pinned_p.pinner_for_enemy(1) == "", "AC1: pin consumed")
+
+	# Pin and Pound with Pinned: hit 1 = 9 + 5 + 1 = 15; hit 2 = 9 + 0 + 1 = 10.
+	var party_p2 := _party()
+	var ctx_p2 := _patch_context(party_p2, "warden", true, false)
+	var enemies_p2 := _enemies([35, 20])
+	var pinned_p2 := CombatPinned.new()
+	_check(pinned_p2.pin_enemy(enemies_p2, 1, "tinker"), "AC1: pinned slot 1 by Tinker")
+	var service_p2 := CombatWardenPoolHeavyAttacks.new(pinned_p2)
+	_check(service_p2.bind_patch_wardrobe(ctx_p2.wardrobe, ctx_p2.torn), "AC1: Pinned Pin and Pound bound")
+	var deck_p2 := _deck(["warden_pin_and_pound"])
+	var res_p2 := service_p2.play_attack(deck_p2, party_p2, enemies_p2, "warden_pin_and_pound", 1)
+	_check(res_p2.get("ok", false), "AC1: Pinned Pin and Pound succeeded")
+	var hits_p2: Array = res_p2.get("hits", []) as Array
+	_check(hits_p2.size() == 2, "AC1: 2 hits produced")
+	_check(int((hits_p2[0] as Dictionary).get("damage", 0)) == 15 and int((hits_p2[0] as Dictionary).get("pinned_bonus", 0)) == 5,
+		"AC1: Hit 1 is 9 + 5 + 1 = 15")
+	_check(int((hits_p2[1] as Dictionary).get("damage", 0)) == 10 and int((hits_p2[1] as Dictionary).get("pinned_bonus", 0)) == 0,
+		"AC1: Hit 2 is 9 + 0 + 1 = 10 (pin consumed on hit 1)")
+	_check(enemies_p2.get_enemy(1)["hp"] == 10, "AC1: enemy 1 HP is 35 - 25 = 10")
+	_check(pinned_p2.pinner_for_enemy(1) == "", "AC1: pin consumed")
+
+	# Pin and Pound+ with Pinned: hit 1 = 12 + 5 + 1 = 18; hit 2 = 12 + 0 + 1 = 13.
+	var party_pp_p := _party()
+	var ctx_pp_p := _patch_context(party_pp_p, "warden", true, false)
+	var enemies_pp_p := _enemies([40, 20])
+	var pinned_pp_p := CombatPinned.new()
+	_check(pinned_pp_p.pin_enemy(enemies_pp_p, 1, "seamstress"), "AC1: pinned slot 1 for Pin and Pound+")
+	var service_pp_p := CombatWardenPoolHeavyAttacks.new(pinned_pp_p)
+	_check(service_pp_p.bind_patch_wardrobe(ctx_pp_p.wardrobe, ctx_pp_p.torn), "AC1: bound for Pinned Pin and Pound+")
+	var deck_pp_p := _deck(["warden_pin_and_pound_plus"])
+	var res_pp_p := service_pp_p.play_attack(deck_pp_p, party_pp_p, enemies_pp_p, "warden_pin_and_pound_plus", 1)
+	_check(res_pp_p.get("ok", false), "AC1: Pinned Pin and Pound+ succeeded")
+	var hits_pp_p: Array = res_pp_p.get("hits", []) as Array
+	_check(int((hits_pp_p[0] as Dictionary).get("damage", 0)) == 18 and int((hits_pp_p[0] as Dictionary).get("pinned_bonus", 0)) == 5,
+		"AC1: Pin and Pound+ hit 1 is 12 + 5 + 1 = 18")
+	_check(int((hits_pp_p[1] as Dictionary).get("damage", 0)) == 13 and int((hits_pp_p[1] as Dictionary).get("pinned_bonus", 0)) == 0,
+		"AC1: Pin and Pound+ hit 2 is 12 + 0 + 1 = 13")
+	_check(enemies_pp_p.get_enemy(1)["hp"] == 9, "AC1: enemy 1 HP is 40 - 31 = 9")
+	_check(pinned_pp_p.pinner_for_enemy(1) == "", "AC1: pin consumed")
+
+	# Heavy Thimble+ with Pinned: 15 + 5 + 1 = 21.
+	var party_tp_p := _party()
+	var ctx_tp_p := _patch_context(party_tp_p, "warden", true, false)
+	var enemies_tp_p := _enemies([30, 20])
+	var pinned_tp_p := CombatPinned.new()
+	_check(pinned_tp_p.pin_enemy(enemies_tp_p, 1, "tinker"), "AC1: pinned slot 1 for Heavy Thimble+")
+	var service_tp_p := CombatWardenPoolHeavyAttacks.new(pinned_tp_p)
+	_check(service_tp_p.bind_patch_wardrobe(ctx_tp_p.wardrobe, ctx_tp_p.torn), "AC1: bound for Pinned Heavy Thimble+")
+	var deck_tp_p := _deck(["warden_heavy_thimble_plus"])
+	var res_tp_p := service_tp_p.play_attack(deck_tp_p, party_tp_p, enemies_tp_p, "warden_heavy_thimble_plus", 1)
+	_check(res_tp_p.get("ok", false), "AC1: Pinned Heavy Thimble+ succeeded")
+	var hits_tp_p: Array = res_tp_p.get("hits", []) as Array
+	_check(int((hits_tp_p[0] as Dictionary).get("damage", 0)) == 21 and int((hits_tp_p[0] as Dictionary).get("pinned_bonus", 0)) == 5,
+		"AC1: Heavy Thimble+ is 15 + 5 + 1 = 21")
+	_check(enemies_tp_p.get_enemy(1)["hp"] == 9, "AC1: enemy 1 HP is 30 - 21 = 9")
+	_check(pinned_tp_p.pinner_for_enemy(1) == "", "AC1: pin consumed")
+
+	# Weak on Heavy Thimble: floor(12 * 3 / 4) = 9
+	var party_tw := _party_with_statuses({"weak": 1})
+	var ctx_tw := _patch_context(party_tw, "warden", true, false)
+	var enemies_tw := _enemies([30, 20])
+	var deck_tw := _deck(["warden_heavy_thimble"])
+	var service_tw := CombatWardenPoolHeavyAttacks.new()
+	_check(service_tw.bind_patch_wardrobe(ctx_tw.wardrobe, ctx_tw.torn), "AC1: Weak Heavy Thimble bound")
+	var res_tw := service_tw.play_attack(deck_tw, party_tw, enemies_tw, "warden_heavy_thimble", 1)
+	_check(res_tw.get("ok", false), "AC1: Weak Heavy Thimble succeeded")
+	_check(int(((res_tw.get("hits", []) as Array)[0] as Dictionary).get("damage", 0)) == 9,
+		"AC1: Weak Heavy Thimble deals floor(12 * 3/4) = 9")
+	_check(enemies_tw.get_enemy(1)["hp"] == 21, "AC1: enemy 1 HP is 30 - 9 = 21")
+
+	# Exposed on Heavy Thimble: floor(12 * 3 / 2) = 18
+	var party_te := _party()
+	var ctx_te := _patch_context(party_te, "warden", true, false)
+	var enemies_te := _enemies([30, 20])
+	_check(enemies_te.apply_statuses({1: {"exposed": 1}}), "AC1: applied exposed to enemy 1")
+	var deck_te := _deck(["warden_heavy_thimble"])
+	var service_te := CombatWardenPoolHeavyAttacks.new()
+	_check(service_te.bind_patch_wardrobe(ctx_te.wardrobe, ctx_te.torn), "AC1: Exposed Heavy Thimble bound")
+	var res_te := service_te.play_attack(deck_te, party_te, enemies_te, "warden_heavy_thimble", 1)
+	_check(res_te.get("ok", false), "AC1: Exposed Heavy Thimble succeeded")
+	_check(int(((res_te.get("hits", []) as Array)[0] as Dictionary).get("damage", 0)) == 18,
+		"AC1: Exposed Heavy Thimble deals floor(12 * 3/2) = 18")
+	_check(enemies_te.get_enemy(1)["hp"] == 12, "AC1: enemy 1 HP is 30 - 18 = 12")
+
+	# Weak on Heavy Thimble+: floor(16 * 3 / 4) = 12
+	var party_tpw := _party_with_statuses({"weak": 1})
+	var ctx_tpw := _patch_context(party_tpw, "warden", true, false)
+	var enemies_tpw := _enemies([30, 20])
+	var deck_tpw := _deck(["warden_heavy_thimble_plus"])
+	var service_tpw := CombatWardenPoolHeavyAttacks.new()
+	_check(service_tpw.bind_patch_wardrobe(ctx_tpw.wardrobe, ctx_tpw.torn), "AC1: Weak Heavy Thimble+ bound")
+	var res_tpw := service_tpw.play_attack(deck_tpw, party_tpw, enemies_tpw, "warden_heavy_thimble_plus", 1)
+	_check(res_tpw.get("ok", false), "AC1: Weak Heavy Thimble+ succeeded")
+	_check(int(((res_tpw.get("hits", []) as Array)[0] as Dictionary).get("damage", 0)) == 12,
+		"AC1: Weak Heavy Thimble+ deals floor(16 * 3/4) = 12")
+	_check(enemies_tpw.get_enemy(1)["hp"] == 18, "AC1: enemy 1 HP is 30 - 12 = 18")
+
+	# Exposed on Heavy Thimble+: floor(16 * 3 / 2) = 24
+	var party_tpe := _party()
+	var ctx_tpe := _patch_context(party_tpe, "warden", true, false)
+	var enemies_tpe := _enemies([40, 20])
+	_check(enemies_tpe.apply_statuses({1: {"exposed": 1}}), "AC1: applied exposed to enemy 1")
+	var deck_tpe := _deck(["warden_heavy_thimble_plus"])
+	var service_tpe := CombatWardenPoolHeavyAttacks.new()
+	_check(service_tpe.bind_patch_wardrobe(ctx_tpe.wardrobe, ctx_tpe.torn), "AC1: Exposed Heavy Thimble+ bound")
+	var res_tpe := service_tpe.play_attack(deck_tpe, party_tpe, enemies_tpe, "warden_heavy_thimble_plus", 1)
+	_check(res_tpe.get("ok", false), "AC1: Exposed Heavy Thimble+ succeeded")
+	_check(int(((res_tpe.get("hits", []) as Array)[0] as Dictionary).get("damage", 0)) == 24,
+		"AC1: Exposed Heavy Thimble+ deals floor(16 * 3/2) = 24")
+	_check(enemies_tpe.get_enemy(1)["hp"] == 16, "AC1: enemy 1 HP is 40 - 24 = 16")
+
+	# Weak on Pin and Pound+: floor(13 * 3 / 4) = 9 per hit. Total 18.
+	var party_ppw := _party_with_statuses({"weak": 1})
+	var ctx_ppw := _patch_context(party_ppw, "warden", true, false)
+	var enemies_ppw := _enemies([30, 20])
+	var deck_ppw := _deck(["warden_pin_and_pound_plus"])
+	var service_ppw := CombatWardenPoolHeavyAttacks.new()
+	_check(service_ppw.bind_patch_wardrobe(ctx_ppw.wardrobe, ctx_ppw.torn), "AC1: Weak Pin and Pound+ bound")
+	var res_ppw := service_ppw.play_attack(deck_ppw, party_ppw, enemies_ppw, "warden_pin_and_pound_plus", 1)
+	_check(res_ppw.get("ok", false), "AC1: Weak Pin and Pound+ succeeded")
+	var hits_ppw: Array = res_ppw.get("hits", []) as Array
+	_check(int((hits_ppw[0] as Dictionary).get("damage", 0)) == 9 and int((hits_ppw[1] as Dictionary).get("damage", 0)) == 9,
+		"AC1: Weak Pin and Pound+ deals floor(13 * 3/4) = 9 per hit")
+	_check(enemies_ppw.get_enemy(1)["hp"] == 12, "AC1: enemy 1 HP is 30 - 18 = 12")
+
+	# Exposed on Pin and Pound+: floor(13 * 3 / 2) = 19 per hit. Total 38.
+	var party_ppe := _party()
+	var ctx_ppe := _patch_context(party_ppe, "warden", true, false)
+	var enemies_ppe := _enemies([50, 20])
+	_check(enemies_ppe.apply_statuses({1: {"exposed": 1}}), "AC1: applied exposed to enemy 1")
+	var deck_ppe := _deck(["warden_pin_and_pound_plus"])
+	var service_ppe := CombatWardenPoolHeavyAttacks.new()
+	_check(service_ppe.bind_patch_wardrobe(ctx_ppe.wardrobe, ctx_ppe.torn), "AC1: Exposed Pin and Pound+ bound")
+	var res_ppe := service_ppe.play_attack(deck_ppe, party_ppe, enemies_ppe, "warden_pin_and_pound_plus", 1)
+	_check(res_ppe.get("ok", false), "AC1: Exposed Pin and Pound+ succeeded")
+	var hits_ppe: Array = res_ppe.get("hits", []) as Array
+	_check(int((hits_ppe[0] as Dictionary).get("damage", 0)) == 19 and int((hits_ppe[1] as Dictionary).get("damage", 0)) == 19,
+		"AC1: Exposed Pin and Pound+ deals floor(13 * 3/2) = 19 per hit")
+	_check(enemies_ppe.get_enemy(1)["hp"] == 12, "AC1: enemy 1 HP is 50 - 38 = 12")
+
+
+## Patch AC2: Button Eye in HEAD applies Exposed 1 to the struck enemy from the first
+## successful heavy card of combat after all hits; consumed once for Warden; Pin and Pound
+## hit two does not benefit from its own newly applied Exposed; lethal short-circuit applies
+## Exposed and consumes latch; rejections do not consume latch.
+func _test_patch_ac2_button_eye_exposed_and_latch() -> void:
+	# 1. Button Eye on Heavy Thimble: applies Exposed 1 and latches; second attack does not apply Exposed
+	var party1 := _party()
+	var ctx1 := _patch_context(party1, "warden", false, true)
+	var enemies1 := _enemies([30, 30])
+	var deck1 := _deck(["warden_heavy_thimble", "warden_pin_and_pound"])
+	var service1 := CombatWardenPoolHeavyAttacks.new()
+	_check(service1.bind_patch_wardrobe(ctx1.wardrobe, ctx1.torn), "AC2: bound Button Eye")
+	_check(service1._patches.exposed_for_first_hit("warden") == {"exposed": 1}, "AC2: Warden has first attack exposed")
+	_check(service1._patches.latch_snapshot().get("warden") == false, "AC2: latch not yet consumed")
+
+	var res1 := service1.play_attack(deck1, party1, enemies1, "warden_heavy_thimble", 1)
+	_check(res1.get("ok", false), "AC2: Heavy Thimble succeeded")
+	var hits1: Array = res1.get("hits", []) as Array
+	_check(int((hits1[0] as Dictionary).get("damage", 0)) == 11, "AC2: 11 damage dealt")
+	_check((hits1[0] as Dictionary).get("statuses", {}) == {"exposed": 1}, "AC2: hit 1 status has exposed 1")
+	_check(enemies1.get_enemy(1)["statuses"].get("exposed", 0) == 1, "AC2: enemy 1 has exposed 1")
+	_check(service1._patches.latch_snapshot().get("warden") == true, "AC2: latch consumed")
+	_check(service1._patches.exposed_for_first_hit("warden") == {}, "AC2: exposed_for_first_hit empty after latch")
+
+	# Second attack in same combat: does NOT apply Exposed
+	deck1.combat_state.energy += 2
+	var res1_2 := service1.play_attack(deck1, party1, enemies1, "warden_pin_and_pound", 2)
+	_check(res1_2.get("ok", false), "AC2: second attack succeeded")
+	var hits1_2: Array = res1_2.get("hits", []) as Array
+	_check((hits1_2[0] as Dictionary).get("statuses", {}) == {}, "AC2: second attack hit 1 has no patch exposed")
+	_check((hits1_2[1] as Dictionary).get("statuses", {}) == {}, "AC2: second attack hit 2 has no patch exposed")
+	_check(not enemies1.get_enemy(2).has("statuses") or enemies1.get_enemy(2)["statuses"].is_empty(),
+		"AC2: enemy 2 has no exposed status")
+
+	# 2. Pin and Pound: hit 2 is NOT amplified by Button Eye's newly applied Exposed
+	var party2 := _party()
+	var ctx2 := _patch_context(party2, "warden", false, true)
+	var enemies2 := _enemies([30, 30])
+	var deck2 := _deck(["warden_pin_and_pound"])
+	var service2 := CombatWardenPoolHeavyAttacks.new()
+	_check(service2.bind_patch_wardrobe(ctx2.wardrobe, ctx2.torn), "AC2: bound Button Eye for Pin and Pound")
+	var res2 := service2.play_attack(deck2, party2, enemies2, "warden_pin_and_pound", 1)
+	_check(res2.get("ok", false), "AC2: Pin and Pound succeeded")
+	var hits2: Array = res2.get("hits", []) as Array
+	_check(hits2.size() == 2, "AC2: 2 hits produced")
+	var p2_h1: Dictionary = hits2[0] as Dictionary
+	var p2_h2: Dictionary = hits2[1] as Dictionary
+	_check(int(p2_h1.get("damage", 0)) == 9, "AC2: hit 1 deals 9 damage")
+	_check(int(p2_h2.get("damage", 0)) == 9, "AC2: hit 2 deals 9 damage (NOT amplified by Exposed!)")
+	_check(enemies2.get_enemy(1)["hp"] == 12, "AC2: enemy 1 HP is 30 - 18 = 12 (not 30 - 22 = 8)")
+	_check(enemies2.get_enemy(1)["statuses"].get("exposed", 0) == 1, "AC2: enemy 1 has exposed 1 after card resolves")
+	_check(p2_h1.get("statuses", {}) == {"exposed": 1}, "AC2: hit 1 records applied exposed 1")
+	_check(p2_h2.get("statuses", {}) == {}, "AC2: hit 2 statuses is empty")
+	_check(service2._patches.latch_snapshot().get("warden") == true, "AC2: latch consumed")
+
+	# 3. Existing enemy Exposed interaction: Enemy 1 already has exposed 1
+	var party3 := _party()
+	var ctx3 := _patch_context(party3, "warden", false, true)
+	var enemies3 := _enemies([40, 30])
+	_check(enemies3.apply_statuses({1: {"exposed": 1}}), "AC2: seeded exposed 1 on enemy 1")
+	var deck3 := _deck(["warden_pin_and_pound"])
+	var service3 := CombatWardenPoolHeavyAttacks.new()
+	_check(service3.bind_patch_wardrobe(ctx3.wardrobe, ctx3.torn), "AC2: bound Button Eye with existing exposed")
+	var res3 := service3.play_attack(deck3, party3, enemies3, "warden_pin_and_pound", 1)
+	_check(res3.get("ok", false), "AC2: Pin and Pound on exposed enemy succeeded")
+	var hits3: Array = res3.get("hits", []) as Array
+	_check(int((hits3[0] as Dictionary).get("damage", 0)) == 13, "AC2: hit 1 deals floor(9 * 3/2) = 13")
+	_check(int((hits3[1] as Dictionary).get("damage", 0)) == 13, "AC2: hit 2 deals floor(9 * 3/2) = 13")
+	_check(enemies3.get_enemy(1)["hp"] == 14, "AC2: enemy 1 HP is 40 - 26 = 14")
+	_check(enemies3.get_enemy(1)["statuses"].get("exposed", 0) == 2, "AC2: enemy 1 exposed increased from 1 to 2")
+	_check((hits3[0] as Dictionary).get("statuses", {}) == {"exposed": 1}, "AC2: hit 1 records applied exposed 1")
+
+	# 4. Existing Pinned interaction
+	var party4 := _party()
+	var ctx4 := _patch_context(party4, "warden", false, true)
+	var enemies4 := _enemies([35, 20])
+	var pinned4 := CombatPinned.new()
+	_check(pinned4.pin_enemy(enemies4, 1, "seamstress"), "AC2: pinned slot 1 by Seamstress")
+	var service4 := CombatWardenPoolHeavyAttacks.new(pinned4)
+	_check(service4.bind_patch_wardrobe(ctx4.wardrobe, ctx4.torn), "AC2: bound Button Eye and Pinned")
+	var deck4 := _deck(["warden_pin_and_pound"])
+	var res4 := service4.play_attack(deck4, party4, enemies4, "warden_pin_and_pound", 1)
+	_check(res4.get("ok", false), "AC2: Pinned + Button Eye succeeded")
+	var hits4: Array = res4.get("hits", []) as Array
+	_check(int((hits4[0] as Dictionary).get("damage", 0)) == 14, "AC2: hit 1 deals 9 + 5 = 14")
+	_check(int((hits4[1] as Dictionary).get("damage", 0)) == 9, "AC2: hit 2 deals 9")
+	_check(enemies4.get_enemy(1)["hp"] == 12, "AC2: enemy 1 HP is 35 - 23 = 12")
+	_check(enemies4.get_enemy(1)["statuses"].get("exposed", 0) == 1, "AC2: exposed 1 applied after all hits")
+	_check(pinned4.pinner_for_enemy(1) == "", "AC2: pin consumed")
+
+	# 5. First-hit lethal short-circuit: Enemy 1 has 6 HP, dies on hit 1
+	var party5 := _party()
+	var ctx5 := _patch_context(party5, "warden", false, true)
+	var enemies5 := _enemies([6, 30])
+	var deck5 := _deck(["warden_pin_and_pound"])
+	var service5 := CombatWardenPoolHeavyAttacks.new()
+	_check(service5.bind_patch_wardrobe(ctx5.wardrobe, ctx5.torn), "AC2: bound Button Eye for lethal short-circuit")
+	var res5 := service5.play_attack(deck5, party5, enemies5, "warden_pin_and_pound", 1)
+	_check(res5.get("ok", false), "AC2: lethal play succeeded")
+	var hits5: Array = res5.get("hits", []) as Array
+	_check(hits5.size() == 1, "AC2: hit 2 skipped on lethal hit 1")
+	_check(enemies5.is_slain(1) and enemies5.get_enemy(1)["hp"] == 0, "AC2: enemy 1 is slain")
+	_check(enemies5.get_enemy(1)["statuses"].get("exposed", 0) == 1, "AC2: exposed 1 applied to slain enemy slot")
+	_check((hits5[0] as Dictionary).get("statuses", {}) == {"exposed": 1}, "AC2: lethal hit 1 records applied exposed")
+	_check(service5._patches.latch_snapshot().get("warden") == true, "AC2: latch consumed on lethal short-circuit")
+
+	# 6. Simultaneous ARM and HEAD patches on Warden
+	var party6 := _party()
+	var ctx6 := _patch_context(party6, "warden", true, true)
+	var enemies6 := _enemies([35, 20])
+	var deck6 := _deck(["warden_pin_and_pound"])
+	var service6 := CombatWardenPoolHeavyAttacks.new()
+	_check(service6.bind_patch_wardrobe(ctx6.wardrobe, ctx6.torn), "AC2: bound both ARM and HEAD")
+	_check(service6._patches.damage_bonus("warden") == 1, "AC2: +1 damage active")
+	_check(service6._patches.exposed_for_first_hit("warden") == {"exposed": 1}, "AC2: exposed 1 active")
+	var res6 := service6.play_attack(deck6, party6, enemies6, "warden_pin_and_pound", 1)
+	_check(res6.get("ok", false), "AC2: simultaneous ARM and HEAD play succeeded")
+	var hits6: Array = res6.get("hits", []) as Array
+	_check(hits6.size() == 2, "AC2: 2 hits")
+	_check(int((hits6[0] as Dictionary).get("damage", 0)) == 10, "AC2: hit 1 deals 9 + 1 = 10")
+	_check(int((hits6[1] as Dictionary).get("damage", 0)) == 10, "AC2: hit 2 deals 9 + 1 = 10")
+	_check(enemies6.get_enemy(1)["hp"] == 15, "AC2: enemy 1 HP is 35 - 20 = 15")
+	_check(enemies6.get_enemy(1)["statuses"].get("exposed", 0) == 1, "AC2: exposed 1 applied after card resolves")
+	_check(service6._patches.latch_snapshot().get("warden") == true, "AC2: latch consumed")
+
+	# 7. Rejections do not consume Button Eye latch
+	var party7 := _party()
+	var ctx7 := _patch_context(party7, "warden", false, true)
+	var enemies7 := _enemies([30, 20])
+	var deck7 := _deck(["warden_heavy_thimble"])
+	var service7 := CombatWardenPoolHeavyAttacks.new()
+	_check(service7.bind_patch_wardrobe(ctx7.wardrobe, ctx7.torn), "AC2: bound Button Eye for rejection check")
+	_check(deck7.try_spend_energy(2), "AC2: spent 2 energy leaving 1")
+	_check(not service7.can_play(deck7, party7, enemies7, "warden_heavy_thimble", 1), "AC2: can_play rejects low energy")
+	var res7 := service7.play_attack(deck7, party7, enemies7, "warden_heavy_thimble", 1)
+	_check(not res7.get("ok", true), "AC2: play_attack rejects low energy")
+	_check(service7._patches.latch_snapshot().get("warden") == false, "AC2: latch stays false on rejected play")
+
+	# 8. Status overflow preflight: enemy at MAX_INT exposed rejects before debit
+	var party8 := _party()
+	var ctx8 := _patch_context(party8, "warden", false, true)
+	var enemies8 := _enemies([30, 20])
+	enemies8._enemies[0]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+	var deck8 := _deck(["warden_heavy_thimble"])
+	var service8 := CombatWardenPoolHeavyAttacks.new()
+	_check(service8.bind_patch_wardrobe(ctx8.wardrobe, ctx8.torn), "AC2: bound Button Eye for overflow check")
+	_check(not service8.can_play(deck8, party8, enemies8, "warden_heavy_thimble", 1), "AC2: can_play rejects exposed overflow")
+	var snap8 := _snapshot(deck8, party8, enemies8)
+	var rng8 := deck8._rng.state
+	var res8 := service8.play_attack(deck8, party8, enemies8, "warden_heavy_thimble", 1)
+	_check(not res8.get("ok", true), "AC2: play_attack rejects exposed overflow")
+	_check(_snapshot(deck8, party8, enemies8) == snap8, "AC2: overflow leaves state untouched")
+	_check(deck8._rng.state == rng8, "AC2: overflow preserves RNG")
+	_check(service8._patches.latch_snapshot().get("warden") == false, "AC2: overflow leaves latch unconsumed")
+
+
+## Patch AC3: RunPatchWardrobe/RunTornMending projection determines effects; torn Warden
+## or patch worn by other hero gives no bonus; invalid explicit binding fails closed;
+## invalid plays change no state, RNG, tokens, or patch latch; deterministic seeded replay.
+func _test_patch_ac3_projection_rejections_and_replay() -> void:
+	# 1. Patch worn by another hero (Tinker wears both Pincushion Arm and Button Eye)
+	var party1 := _party()
+	var ctx1 := _patch_context(party1, "tinker", true, true)
+	var enemies1 := _enemies([30, 30])
+	var deck1 := _deck(["warden_heavy_thimble", "warden_pin_and_pound"])
+	var service1 := CombatWardenPoolHeavyAttacks.new()
+	_check(service1.bind_patch_wardrobe(ctx1.wardrobe, ctx1.torn), "AC3: bound wardrobe worn by Tinker")
+	_check(service1._patches.damage_bonus("warden") == 0, "AC3: Warden gets 0 damage bonus")
+	_check(service1._patches.exposed_for_first_hit("warden") == {}, "AC3: Warden gets no exposed")
+	var res1 := service1.play_attack(deck1, party1, enemies1, "warden_heavy_thimble", 1)
+	_check(res1.get("ok", false), "AC3: Heavy Thimble succeeded")
+	var hits1: Array = res1.get("hits", []) as Array
+	_check(int((hits1[0] as Dictionary).get("damage", 0)) == 11, "AC3: exact 11 damage (no bonus from Tinker's patch)")
+	_check((hits1[0] as Dictionary).get("statuses", {}) == {}, "AC3: no exposed applied from Tinker's patch")
+	_check(enemies1.get_enemy(1)["hp"] == 19, "AC3: enemy 1 HP is 30 - 11 = 19")
+
+	# 2. Torn Warden: in RunTornMending Warden has 0 HP
+	var party_torn := _party()
+	var ctx_torn := _patch_context(party_torn, "warden", true, true)
+	var start_heroes: Array = ctx_torn.torn.read_state()["heroes"]
+	_check(party_torn.apply_damage(1, 999) and party_torn.is_downed(1), "AC3: downed Warden")
+	_check(ctx_torn.torn.observe_battle_end("tear_warden", start_heroes, party_torn.get_heroes()).get("ok", false),
+		"AC3: torn ledger observed downed Warden")
+	var service_torn := CombatWardenPoolHeavyAttacks.new()
+	_check(service_torn.bind_patch_wardrobe(ctx_torn.wardrobe, ctx_torn.torn), "AC3: torn wardrobe bound successfully")
+	_check(service_torn._patches.damage_bonus("warden") == 0, "AC3: torn Warden projected damage bonus is 0")
+	_check(service_torn._patches.exposed_for_first_hit("warden") == {}, "AC3: torn Warden projected exposed is empty")
+
+	# 3. Invalid explicit binding fails closed
+	var invalid_service := CombatWardenPoolHeavyAttacks.new()
+	var party3 := _party()
+	var enemies3 := _enemies([30, 30])
+	var deck3 := _deck(["warden_heavy_thimble"])
+	var snap3 := _snapshot(deck3, party3, enemies3)
+	_check(not invalid_service.bind_patch_wardrobe(null, RunTornMending.new(party3.get_heroes())),
+		"AC3: null wardrobe rejects binding")
+	_check(invalid_service._patches != null and not invalid_service._patches.is_valid(),
+		"AC3: explicit binding failed and is marked invalid")
+	_check(not invalid_service.can_play(deck3, party3, enemies3, "warden_heavy_thimble", 1),
+		"AC3: can_play fails closed on invalid explicit binding")
+	var res3 := invalid_service.play_attack(deck3, party3, enemies3, "warden_heavy_thimble", 1)
+	_check(not res3.get("ok", true), "AC3: play_attack fails closed on invalid explicit binding")
+	_check(_snapshot(deck3, party3, enemies3) == snap3, "AC3: state untouched after invalid binding rejection")
+	_check(invalid_service.get_valid_targets(party3, enemies3, "warden_heavy_thimble").is_empty(),
+		"AC3: get_valid_targets returns empty array on invalid binding")
+
+	# 4. Table of rejections with bound patches leaves state, tokens, RNG and latch unchanged
+	var party4 := _party()
+	var ctx4 := _patch_context(party4, "warden", true, true)
+	var pinned4 := CombatPinned.new()
+	var enemies4 := _enemies([30, 30])
+	_check(pinned4.pin_enemy(enemies4, 1, "seamstress"), "AC3: pin slot 1")
+	var service4 := CombatWardenPoolHeavyAttacks.new(pinned4)
+	_check(service4.bind_patch_wardrobe(ctx4.wardrobe, ctx4.torn), "AC3: bound wardrobe for negative checks")
+
+	# Scenario A: Absent card
+	var deck_a := _deck(["warden_strike"])
+	var rng_a := deck_a._rng.state
+	var snap_a := _snapshot(deck_a, party4, enemies4)
+	var pin_a := _pin_map(pinned4)
+	_check(not service4.can_play(deck_a, party4, enemies4, "warden_heavy_thimble", 1), "AC3: absent card can_play false")
+	var res_a := service4.play_attack(deck_a, party4, enemies4, "warden_heavy_thimble", 1)
+	_check(not res_a.get("ok", true), "AC3: absent card play_attack false")
+	_check(_snapshot(deck_a, party4, enemies4) == snap_a, "AC3: absent card left state untouched")
+	_check(_pin_map(pinned4) == pin_a, "AC3: absent card left pins untouched")
+	_check(deck_a._rng.state == rng_a, "AC3: absent card preserved RNG")
+	_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: absent card left latch untouched")
+
+	# Scenario B: Low energy
+	var deck_b := _deck(["warden_heavy_thimble"])
+	_check(deck_b.try_spend_energy(2), "AC3: spent 2 energy leaving 1")
+	var rng_b := deck_b._rng.state
+	var snap_b := _snapshot(deck_b, party4, enemies4)
+	_check(not service4.can_play(deck_b, party4, enemies4, "warden_heavy_thimble", 1), "AC3: low energy can_play false")
+	var res_b := service4.play_attack(deck_b, party4, enemies4, "warden_heavy_thimble", 1)
+	_check(not res_b.get("ok", true), "AC3: low energy play_attack false")
+	_check(_snapshot(deck_b, party4, enemies4) == snap_b, "AC3: low energy left state untouched")
+	_check(deck_b._rng.state == rng_b, "AC3: low energy preserved RNG")
+	_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: low energy left latch untouched")
+
+	# Scenario C: Inactive turn
+	var deck_c := _deck(["warden_heavy_thimble"])
+	_check(deck_c.end_turn(), "AC3: end turn")
+	var rng_c := deck_c._rng.state
+	var snap_c := _snapshot(deck_c, party4, enemies4)
+	_check(not service4.can_play(deck_c, party4, enemies4, "warden_heavy_thimble", 1), "AC3: inactive turn can_play false")
+	var res_c := service4.play_attack(deck_c, party4, enemies4, "warden_heavy_thimble", 1)
+	_check(not res_c.get("ok", true), "AC3: inactive turn play_attack false")
+	_check(_snapshot(deck_c, party4, enemies4) == snap_c, "AC3: inactive turn left state untouched")
+	_check(deck_c._rng.state == rng_c, "AC3: inactive turn preserved RNG")
+	_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: inactive turn left latch untouched")
+
+	# Scenario D: Downed Warden
+	var party_d := _party()
+	_check(party_d.apply_damage(1, 999), "AC3: downed Warden")
+	var deck_d := _deck(["warden_heavy_thimble"])
+	var rng_d := deck_d._rng.state
+	var snap_d := _snapshot(deck_d, party_d, enemies4)
+	_check(not service4.can_play(deck_d, party_d, enemies4, "warden_heavy_thimble", 1), "AC3: downed Warden can_play false")
+	var res_d := service4.play_attack(deck_d, party_d, enemies4, "warden_heavy_thimble", 1)
+	_check(not res_d.get("ok", true), "AC3: downed Warden play_attack false")
+	_check(_snapshot(deck_d, party_d, enemies4) == snap_d, "AC3: downed Warden left state untouched")
+	_check(deck_d._rng.state == rng_d, "AC3: downed Warden preserved RNG")
+	_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: downed Warden left latch untouched")
+
+	# Scenario E: Warden moved out of position 1
+	var party_e := CombatParty.new([
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "warden", "max_hp": 40},
+		{"id": "tinker", "max_hp": 26},
+	])
+	var deck_e := _deck(["warden_heavy_thimble"])
+	var rng_e := deck_e._rng.state
+	var snap_e := _snapshot(deck_e, party_e, enemies4)
+	_check(not service4.can_play(deck_e, party_e, enemies4, "warden_heavy_thimble", 1), "AC3: moved Warden can_play false")
+	var res_e := service4.play_attack(deck_e, party_e, enemies4, "warden_heavy_thimble", 1)
+	_check(not res_e.get("ok", true), "AC3: moved Warden play_attack false")
+	_check(_snapshot(deck_e, party_e, enemies4) == snap_e, "AC3: moved Warden left state untouched")
+	_check(deck_e._rng.state == rng_e, "AC3: moved Warden preserved RNG")
+	_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: moved Warden left latch untouched")
+
+	# Scenario F: Slain target
+	var enemies_f := _enemies([20, 20])
+	_check(enemies_f.apply_damage(1, 999), "AC3: slew enemy 1")
+	var deck_f := _deck(["warden_heavy_thimble"])
+	var rng_f := deck_f._rng.state
+	var snap_f := _snapshot(deck_f, party4, enemies_f)
+	_check(not service4.can_play(deck_f, party4, enemies_f, "warden_heavy_thimble", 1), "AC3: slain target can_play false")
+	var res_f := service4.play_attack(deck_f, party4, enemies_f, "warden_heavy_thimble", 1)
+	_check(not res_f.get("ok", true), "AC3: slain target play_attack false")
+	_check(_snapshot(deck_f, party4, enemies_f) == snap_f, "AC3: slain target left state untouched")
+	_check(deck_f._rng.state == rng_f, "AC3: slain target preserved RNG")
+	_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: slain target left latch untouched")
+
+	# Scenario G: Bad target slot (target 0, 4, -1)
+	for bad_slot: int in [0, 4, -1]:
+		var deck_g := _deck(["warden_pin_and_pound"])
+		var rng_g := deck_g._rng.state
+		var snap_g := _snapshot(deck_g, party4, enemies4)
+		_check(not service4.can_play(deck_g, party4, enemies4, "warden_pin_and_pound", bad_slot),
+			"AC3: bad slot " + str(bad_slot) + " can_play false")
+		var res_g := service4.play_attack(deck_g, party4, enemies4, "warden_pin_and_pound", bad_slot)
+		_check(not res_g.get("ok", true), "AC3: bad slot " + str(bad_slot) + " play_attack false")
+		_check(_snapshot(deck_g, party4, enemies4) == snap_g, "AC3: bad slot left state untouched")
+		_check(deck_g._rng.state == rng_g, "AC3: bad slot preserved RNG")
+		_check(service4._patches.latch_snapshot().get("warden") == false, "AC3: bad slot left latch untouched")
+
+	# Scenario H: Duplicate / stale play (card already discarded, play attempted again)
+	var deck_h := _deck(["warden_heavy_thimble"])
+	var res_h1 := service4.play_attack(deck_h, party4, enemies4, "warden_heavy_thimble", 1)
+	_check(res_h1.get("ok", false), "AC3: first play succeeded")
+	var snap_h := _snapshot(deck_h, party4, enemies4)
+	var rng_h := deck_h._rng.state
+	_check(not service4.can_play(deck_h, party4, enemies4, "warden_heavy_thimble", 1), "AC3: duplicate play can_play false")
+	var res_h2 := service4.play_attack(deck_h, party4, enemies4, "warden_heavy_thimble", 1)
+	_check(not res_h2.get("ok", true), "AC3: duplicate play rejected")
+	_check(_snapshot(deck_h, party4, enemies4) == snap_h, "AC3: duplicate play left state untouched")
+	_check(deck_h._rng.state == rng_h, "AC3: duplicate play preserved RNG")
+
+	# 5. Seeded replay comparison with patches bound
+	var replay_sequence: Callable = func(seed_val: int) -> Dictionary:
+		var r_party := _party()
+		var r_ctx := _patch_context(r_party, "warden", true, true)
+		var r_enemies := _enemies([40, 40, 40])
+		var r_deck := _deck(["warden_heavy_thimble_plus", "warden_pin_and_pound_plus"], seed_val)
+		var r_service := CombatWardenPoolHeavyAttacks.new()
+		r_service.bind_patch_wardrobe(r_ctx.wardrobe, r_ctx.torn)
+		var rng_start := r_deck._rng.state
+		var e1 := r_service.play_attack(r_deck, r_party, r_enemies, "warden_heavy_thimble_plus", 1)
+		r_deck.combat_state.energy += 2
+		var e2 := r_service.play_attack(r_deck, r_party, r_enemies, "warden_pin_and_pound_plus", 2)
+		var rng_end := r_deck._rng.state
+		_check(rng_end == rng_start, "AC3: replay preserves RNG state across patched plays")
+		return {
+			"events": [e1, e2],
+			"party": r_party.get_heroes(),
+			"enemies": r_enemies.get_enemies(),
+			"deck_hand": r_deck.hand.duplicate(),
+			"deck_discard": r_deck.discard_pile.duplicate(),
+			"deck_energy": r_deck.energy,
+			"rng_state": rng_end,
+			"latches": r_service._patches.latch_snapshot(),
+		}
+
+	var rep1: Dictionary = replay_sequence.call(1234)
+	var rep2: Dictionary = replay_sequence.call(1234)
+	_check(rep1 == rep2, "AC3: patched play sequence is 100% deterministic under identical seed")
