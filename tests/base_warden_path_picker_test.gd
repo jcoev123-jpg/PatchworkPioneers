@@ -1,0 +1,321 @@
+extends SceneTree
+## Standalone view-only Warden Path offers, sourced from the shipped catalog.
+const WARDEN_DATA := "res://data/heroes/warden_paths.json"
+var failures: Array[String] = []
+var checks := 0
+var requests: Array[String] = []
+var set_out_count := 0
+var back_count := 0
+
+
+func _initialize() -> void:
+	_run.call_deferred()
+
+
+func _check(ok: bool, message: String) -> void:
+	checks += 1
+	if not ok:
+		failures.append(message)
+
+
+func _requested(id: String) -> void:
+	requests.append(id)
+
+
+func _on_set_out() -> void:
+	set_out_count += 1
+
+
+func _on_back() -> void:
+	back_count += 1
+
+
+func _key(code: Key) -> void:
+	for down in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
+func _click(button: Button) -> void:
+	_check(button.is_visible_in_tree() and not button.disabled, "mouse action is enabled and visible")
+	var point := button.get_global_rect().get_center()
+	_check(root.get_visible_rect().has_point(point), "mouse action is within viewport")
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for down in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
+func _option(record: Dictionary) -> Dictionary:
+	var card: Dictionary = record.get("card", {})
+	return {"id": record.get("id", ""), "display_name": record.get("display_name", ""),
+		"card_name": card.get("display_name", "")}
+
+
+func _authored_options() -> Array:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(WARDEN_DATA))
+	_check(parsed is Dictionary and parsed.get("id") == "warden",
+		"shipped Warden data is a real readable hero catalog")
+	if not parsed is Dictionary:
+		return []
+	var passive: Variant = parsed.get("base_passive", {})
+	_check(passive is Dictionary and passive.get("kind") == "starting_block"
+		and int(passive.get("starting_block", -1)) == 6,
+		"Warden baseline is 6 opening Block")
+	var paths: Variant = parsed.get("paths", [])
+	_check(paths is Array, "Warden data has authored path records")
+	if not paths is Array:
+		return []
+	var offered: Array = []
+	var seen: Dictionary = {}
+	for raw in paths:
+		if not raw is Dictionary:
+			continue
+		var record: Dictionary = raw
+		var id := String(record.get("id", ""))
+		if id != "bulwark" and id != "vanguard":
+			continue
+		seen[id] = true
+		var option := _option(record)
+		offered.append(option)
+		var preview := VillagePathPreview.warden(option)
+		_check(not preview.is_empty() and preview.get("ok") == true
+			and preview.get("owner") == "warden" and preview.get("path_id") == id
+			and preview.get("display_name") == record.get("display_name")
+			and preview.get("card_name") == option["card_name"],
+			"exact shipped identity creates a Warden preview: " + id)
+		var card: Dictionary = record.get("card", {})
+		var card_line := String(preview.get("card_text", ""))
+		var passive_line := String(preview.get("passive_text", ""))
+		var tooltip := String(preview.get("tooltip", ""))
+		var hint := String(preview.get("hint", ""))
+		_check(card_line.contains(String(card.get("display_name", "")))
+			and card_line.contains("cost %d energy" % int(card.get("cost", -1)))
+			and tooltip.contains("PASSIVE: " + passive_line)
+			and tooltip.contains("CARD: " + card_line)
+			and hint.contains(String(card.get("display_name", ""))) and hint.contains("1 energy"),
+			"Warden preview prints authored cost, named passive and card: " + id)
+		if id == "bulwark":
+			_check(card.get("id") == "warden_bulwark_brace"
+				and card_line.contains("from positions 1-3")
+				and card_line.contains("target SELF (no enemy slots)")
+				and card_line.contains("9 Block")
+				and passive_line.contains("6 Block") and passive_line.contains("10 Block")
+				and passive_line.contains("Replaces") and passive_line.contains("does not stack")
+				and hint.contains("6") and hint.contains("10") and hint.contains("9"),
+				"Bulwark replaces 6 with 10; Brace costs 1, self from 1-3, +9")
+		else:
+			_check(card.get("id") == "warden_lance_pin"
+				and card_line.contains("from position 1") and card_line.contains("target enemy 1-2")
+				and card_line.contains("6 damage") and card_line.contains("Pinned")
+				and passive_line.contains("first confirmed attack EACH player turn")
+				and passive_line.contains("Replaces opening 6 Block")
+				and passive_line.contains("DIFFERENT hero attack")
+				and passive_line.contains("+5") and passive_line.contains("-25%")
+				and passive_line.contains("+50%") and passive_line.contains("rounded down")
+				and hint.contains("6") and hint.contains("Pinned"),
+				"Vanguard's per-turn confirmed Pin and Lance Pin's exact rule")
+		_check(VillagePathPreview.warden({"id": id, "display_name": option["display_name"],
+			"card_name": "Wrong card"}) == {}
+			and VillagePathPreview.warden({"id": id, "display_name": "Wrong Path",
+				"card_name": option["card_name"]}) == {}
+			and VillagePathPreview.warden({"id": "foreign_path",
+				"display_name": option["display_name"], "card_name": option["card_name"]}) == {},
+			"unknown or mismatched Warden tuples do not claim detailed rules")
+	_check(seen.has("bulwark") and seen.has("vanguard")
+		and offered.size() >= 2, "both authored Warden IDs were actually checked")
+	var seam := VillagePathPreview.seamstress({"id": "bloodline",
+		"display_name": "Bloodline", "card_name": "Leech Stitch"})
+	var tinker := VillagePathPreview.tinker({"id": "sharpshot",
+		"display_name": "Sharpshot", "card_name": "Scope"})
+	_check(String(seam.get("card_text", "")).contains("target enemy 1-3")
+		and String(seam.get("passive_text", "")).contains("Bleed +1")
+		and String(tinker.get("card_text", "")).contains("no target")
+		and String(tinker.get("passive_text", "")).contains("+3 damage"),
+		"Seamstress and Tinker previews keep their prior behavior")
+	return offered
+
+
+func _sibling_options(records: Array) -> Array:
+	var offers: Array = []
+	for record in records:
+		var card: Dictionary = record.get("card", {})
+		offers.append({"id": record.get("id", ""),
+			"display_name": record.get("display_name", ""),
+			"card_name": card.get("display_name", "")})
+	return offers
+
+
+func _button(view: BaseScreen, id: String) -> Button:
+	for button in view.warden_buttons:
+		if String(button.get_meta("path_id", "")) == id:
+			return button
+	return null
+
+
+func _focus_loop(view: BaseScreen) -> void:
+	var loop: Array[Button] = [view.back_button]
+	loop.append_array(view.path_buttons)
+	loop.append_array(view.tinker_buttons)
+	loop.append_array(view.warden_buttons)
+	loop.append(view.set_out_button)
+	view.back_button.grab_focus()
+	await process_frame
+	for index in loop.size():
+		_check(loop[index].has_focus(), "Tab loop visits action %d in declared order" % index)
+		_check(loop[index].focus_next == loop[index].get_path_to(loop[(index + 1) % loop.size()]),
+			"next focus path wraps in authored board order")
+		await _key(KEY_TAB)
+	_check(view.back_button.has_focus(), "Tab wraps from Set out to Back")
+
+
+func _fresh_case(chosen: Dictionary, offered: Array, use_mouse: bool) -> void:
+	requests.clear()
+	set_out_count = 0
+	back_count = 0
+	var view := BaseScreen.new()
+	root.add_child(view)
+	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	await process_frame
+	view.warden_path_choice_requested.connect(_requested)
+	view.set_out_requested.connect(_on_set_out)
+	view.back_requested.connect(_on_back)
+	_check(not view.warden_panel.visible and view.warden_path_options().is_empty(),
+		"Warden panel hidden until host supplies real options")
+	_check(view.open_village(7, 3), "fresh village opens with no run")
+	var seam_offers := _sibling_options(RunSeamstressPathChoice.new().get_paths())
+	var tink_offers := _sibling_options(RunTinkerPathChoice.new().get_offers())
+	_check(seam_offers.size() >= 2 and tink_offers.size() >= 2,
+		"existing hero boards have genuine offered data")
+	_check(view.present_path_options(seam_offers)
+		and view.present_tinker_path_options(tink_offers)
+		and view.present_warden_path_options(offered),
+		"all three independent boards accept host-owned offers")
+	await process_frame
+	_check(view.warden_path_options() == offered and view.warden_buttons.size() == offered.size()
+		and view.path_buttons.size() == seam_offers.size()
+		and view.tinker_buttons.size() == tink_offers.size()
+		and view.wallet_label.text == "Gold 7  ·  Scraps 3",
+		"three boards, authored order, and wallet remain independent")
+	var bounds := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	var ward := view.warden_panel.get_global_rect()
+	_check(view.warden_panel.is_visible_in_tree() and bounds.encloses(ward)
+		and ward.position.x >= view.tinker_panel.get_global_rect().end.x + 24
+		and ward.end.y <= view.set_out_button.get_global_rect().position.y,
+		"third stitched parchment fits within village and above actions")
+	for btn in view.warden_buttons:
+		_check(btn.is_visible_in_tree() and not btn.disabled
+			and ward.encloses(btn.get_global_rect()) and btn.get_child_count() == 1
+			and btn.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and btn.get_theme_font_size("font_size") >= 18,
+			"each Warden option is sewn, readable and inside its own patch")
+	_check(ward.encloses(view.warden_status_label.get_global_rect())
+		and view.warden_status_label.get_theme_color("font_color") != view.warden_panel.get_theme_stylebox("panel").bg_color,
+		"selected-card label fits and dark status ink contrasts with paper")
+	await _focus_loop(view)
+	view.warden_buttons[0].grab_focus()
+	await process_frame
+	_check(view.warden_hint_label.text == String(VillagePathPreview.warden(offered[0]).get("hint", ""))
+		and view.warden_buttons[0].tooltip_text == String(VillagePathPreview.warden(offered[0]).get("tooltip", "")),
+		"keyboard focus presents genuine Warden rule hint and detailed tooltip")
+	view.set_out_button.grab_focus()
+	await process_frame
+	_check(view.warden_hint_label.text == "Choose one Warden Path for this run",
+		"leaving Warden focus restores its plain prompt")
+	var id := String(chosen["id"])
+	var target := _button(view, id)
+	_check(target != null and target.is_visible_in_tree(), "chosen Warden ID backed by offered button")
+	if target == null:
+		view.free()
+		return
+	if use_mouse:
+		await _click(target)
+	else:
+		view.back_button.grab_focus()
+		await process_frame
+		for i in range(16):
+			if target.has_focus():
+				break
+			await _key(KEY_TAB)
+		_check(target.has_focus(), "physical Tab reaches Warden choice")
+		await _key(KEY_SPACE)
+	_check(requests == [id] and view.selected_warden_path_id().is_empty()
+		and view.selected_warden_path_name().is_empty()
+		and view.warden_buttons.all(func(btn: Button): return btn.disabled),
+		"mouse/keyboard requests exactly once and awaits host approval")
+	view._on_warden_path_pressed(id, target)
+	_check(requests == [id], "pending duplicate cannot emit")
+	_check(not view.mark_warden_path_selected(id, "Wrong name")
+		and view.selected_warden_path_id().is_empty(), "host cannot confirm wrong offered display")
+	_check(view.release_warden_path_choice() and not target.disabled
+		and not view.path_buttons[0].disabled and not view.tinker_buttons[0].disabled,
+		"host refusal re-enables only Warden")
+	# A stale replaced button with the same ID has no authority.
+	var stale := target
+	_check(view.present_warden_path_options(offered), "new host offer refreshes Warden controls")
+	view._on_warden_path_pressed(id, stale)
+	_check(requests == [id], "stale Warden control cannot submit renewed offer")
+	target = _button(view, id)
+	_check(target != null and not target.disabled, "replacement offered control exists")
+	if target != null:
+		target.pressed.emit()
+	_check(requests == [id, id] and view.selected_warden_path_id() == "",
+		"only current offered control can request again")
+	_check(view.mark_warden_path_selected(id, String(chosen["display_name"]))
+		and view.selected_warden_path_id() == id
+		and view.selected_warden_path_name() == chosen["display_name"]
+		and view.warden_status_label.text.contains(String(chosen["card_name"]))
+		and view.warden_buttons.all(func(btn: Button): return btn.disabled),
+		"host approval sews only selected Path/card and disables both Warden options")
+	_check(not view.mark_warden_path_selected(id, String(chosen["display_name"]))
+		and not view.release_warden_path_choice()
+		and view.selected_path_id() == "" and view.selected_tinker_path_id() == "",
+		"repeat approval/refusal cannot replace confirmed Warden or other heroes")
+	target.pressed.emit()
+	_check(requests == [id, id], "confirmed Warden never emits again")
+	view.close_village()
+	view._on_warden_path_pressed(id, target)
+	_check(requests == [id, id] and not view.warden_panel.visible
+		and view.selected_warden_path_id().is_empty(), "closed village ignores stale requests and clears choice")
+	_check(view.open_village(7, 3) and view.selected_warden_path_id() == ""
+		and view.warden_panel.is_visible_in_tree() and not view.warden_buttons[0].disabled,
+		"reopen restores existing offers without a run or confirmed selection")
+	view._on_warden_path_pressed("unoffered", _button(view, id))
+	_check(requests.size() == 2, "unoffered Warden identity cannot request")
+	view.hide()
+	view._on_warden_path_pressed(id, _button(view, id))
+	_check(requests.size() == 2, "hidden village button cannot send")
+	view.show()
+	view.set_out_button.pressed.emit()
+	view._on_warden_path_pressed(id, _button(view, id))
+	_check(set_out_count == 1 and requests.size() == 2
+		and view.release_set_out(), "Set out pending blocks Warden, then host refusal restores actions")
+	view.back_button.pressed.emit()
+	view._on_warden_path_pressed(id, _button(view, id))
+	_check(back_count == 1 and requests.size() == 2
+		and not view.release_warden_path_choice(), "Back pending blocks Warden request and refusal")
+	view.close_village()
+	view.free()
+	await process_frame
+
+
+func _run() -> void:
+	root.size = Vector2i(1280, 720)
+	var offered := _authored_options()
+	if offered.size() >= 2:
+		for option in offered:
+			await _fresh_case(option, offered, String(option["id"]) == "bulwark")
+	for failure in failures:
+		printerr("FAIL: ", failure)
+	if failures.is_empty():
+		print("PASS base_warden_path_picker_test: %d checks" % checks)
+	quit(0 if failures.is_empty() else 1)
