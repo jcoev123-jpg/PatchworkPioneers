@@ -1,0 +1,10 @@
+{
+  "id": "needle_gate",
+  "title": "The Needle Gate",
+  "description": "Crossed needles mark a narrow wooden gate.",
+  "choices": [
+    { "id": "examine", "text": "Spend 1 scrap to unpick the gate and claim 12 gold", "outcome": { "gold": 12, "scraps": -1 } },
+    { "id": "pass", "text": "Pass without stopping", "outcome": { "gold": 0, "scraps": 0 } },
+    { "id": "cut_bindings", "text": "Cut the binding threads (spend 2 scraps; gain 28 gold)", "outcome": { "gold": 28, "scraps": -2 } }
+  ]
+}
