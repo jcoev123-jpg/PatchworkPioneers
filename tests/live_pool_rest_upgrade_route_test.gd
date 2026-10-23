@@ -239,7 +239,8 @@ func _pool_route_session(chosen: Dictionary, reward_index: int, keyboard: bool) 
 	var rows: Array = canonical.choices
 	var expected_indices: Array = []
 	for index in range(app.run_deck.size()):
-		if app.run_deck[index] == "warden_strike" or app.run_deck[index] == base_id:
+		if app.run_deck[index] in ["warden_strike", "warden_brace", "seamstress_mend",
+				"seamstress_stitch_up", base_id]:
 			expected_indices.append(index)
 	var shown_indices: Array = []
 	var pool_row := -1

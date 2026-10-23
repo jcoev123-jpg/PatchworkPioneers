@@ -39,6 +39,7 @@ func _initialize() -> void:
 	_test_combat_deck_from_original_unaffected()
 	_test_run_state_untouched()
 	_test_list_authored_choices_plain_and_mixed()
+	_test_starter_support_upgrade_pairs()
 	_test_choice_map_integration_and_canonical_authoring()
 	_test_list_authored_choices_negative_and_isolation()
 	_finish()
@@ -1002,8 +1003,9 @@ func _test_list_authored_choices_plain_and_mixed() -> void:
 		var sid: String = str(c.get("source_id", ""))
 		_check(sid != "seamstress_running_stitch_plus", "prior pool plus is never an upgrade choice")
 		_check(sid != "warden_strike_plus", "prior starter plus is never an upgrade choice")
-		_check(sid != "warden_brace" and sid != "seamstress_prick" and sid != "tinker_pop_shot",
-			"non-upgradeable starter is never an upgrade choice: " + sid)
+		_check(sid != "seamstress_prick" and sid != "tinker_pop_shot"
+			and sid != "warden_shield_bash" and sid != "tinker_tune_up",
+			"un-authored starter upgrades remain ineligible: " + sid)
 
 	_check(permitted.get(STRIKE_ID) == "warden_strike_plus", "permitted Strike maps to warden_strike_plus")
 	_check(permitted.get("warden_iron_hem") == "warden_iron_hem_plus", "permitted Iron Hem maps to plus")
@@ -1012,7 +1014,12 @@ func _test_list_authored_choices_plain_and_mixed() -> void:
 	_check(permitted.get("tinker_bobbin_cannon") == "tinker_bobbin_cannon_plus", "permitted Bobbin Cannon maps to plus")
 	_check(not permitted.has("seamstress_running_stitch_plus"), "permitted excludes pre-upgraded plus")
 	_check(not permitted.has("warden_strike_plus"), "permitted excludes starter plus")
-	_check(not permitted.has("warden_brace") and not permitted.has("seamstress_prick"), "permitted excludes non-upgradeable starters")
+	_check(permitted.get("warden_brace") == "warden_brace_plus"
+		and permitted.get("seamstress_mend") == "seamstress_mend_plus"
+		and permitted.get("seamstress_stitch_up") == "seamstress_stitch_up_plus",
+		"authored support upgrades included in genuine permitted map")
+	_check(not permitted.has("seamstress_prick") and not permitted.has("warden_shield_bash")
+		and not permitted.has("tinker_pop_shot"), "unsupported starters remain excluded")
 
 	var earned: Dictionary = _earned_mixed_ledger()
 	if not earned.get("ok", false):
@@ -1126,11 +1133,11 @@ func _test_choice_map_integration_and_canonical_authoring() -> void:
 
 		_assert_rejected_while_used(visit, idx_first, pristine_deck, base_id + ": second selection denied")
 
-		var non_strike: int = _first_non_strike(deck)
-		if non_strike >= 0 and deck[non_strike] != base_id and deck[non_strike] != comp_id:
+		var unsupported: int = deck.find("seamstress_prick")
+		if unsupported >= 0 and unsupported != idx_first and unsupported != idx_second:
 			var starter_attempt_visit: RunRestCardUpgrade = RunRestCardUpgrade.new(deck, permitted, descriptors, cursor)
-			_assert_rejected(starter_attempt_visit, non_strike, pristine_deck,
-				base_id + ": non-upgradeable starter cannot be upgraded with canonical map")
+			_assert_rejected(starter_attempt_visit, unsupported, pristine_deck,
+				base_id + ": non-upgradeable Prick cannot be upgraded with canonical map")
 
 		_check(randi() == pre_rng, base_id + ": visit consumed zero RNG draws")
 
@@ -1197,3 +1204,118 @@ func _test_list_authored_choices_negative_and_isolation() -> void:
 	RunRestCardUpgrade.list_authored_choices(null)
 	RunRestCardUpgrade.list_authored_choices([])
 	_check(randi() == exp_rng, "list_authored_choices leaves global RNG stream unconsumed")
+
+
+## Every authored starter support pair is an indexed, catalog-backed choice,
+## not an inferred suffix; both duplicates remain individually selectable.
+func _test_starter_support_upgrade_pairs() -> void:
+	var cases: Array = [
+		{"base": "warden_brace", "plus": "warden_brace_plus", "owner": "warden",
+			"name": "Brace", "plus_name": "Brace+", "effect": {"block": 7},
+			"plus_effect": {"block": 10}, "positions": [1, 2, 3], "target": "self"},
+		{"base": "seamstress_mend", "plus": "seamstress_mend_plus", "owner": "seamstress",
+			"name": "Mend", "plus_name": "Mend+", "effect": {"heal": 5},
+			"plus_effect": {"heal": 7}, "positions": [2, 3], "target": "ally_single"},
+		{"base": "seamstress_stitch_up", "plus": "seamstress_stitch_up_plus", "owner": "seamstress",
+			"name": "Stitch Up", "plus_name": "Stitch Up+", "effect": {"block": 5},
+			"plus_effect": {"block": 7}, "positions": [1, 2, 3], "target": "ally_single"},
+	]
+	var catalog := StarterCards.new()
+	var earned := _earned_mixed_ledger()
+	_check(earned.get("ok") == true, "support mixed fixture is a real stitched Rest receipt")
+	for raw_case in cases:
+		var tc: Dictionary = raw_case
+		var base_id: String = tc["base"]
+		var plus_id: String = tc["plus"]
+		var base_def := catalog.get_definition(base_id)
+		var plus_def := catalog.get_definition(plus_id)
+		_check(base_def.get("id") == base_id and plus_def.get("id") == plus_id
+			and base_def.get("owner") == tc["owner"] and plus_def.get("owner") == tc["owner"]
+			and base_def.get("cost") == 1 and plus_def.get("cost") == 1
+			and base_def.get("from_positions") == tc["positions"]
+			and plus_def.get("from_positions") == tc["positions"]
+			and base_def.get("target_kind") == tc["target"]
+			and plus_def.get("target_kind") == tc["target"]
+			and base_def.get("to_positions") == [] and plus_def.get("to_positions") == []
+			and plus_def.get("starting_copies") == 0,
+			base_id + ": both authored definitions have exact matching play shape")
+		_check(base_def.get("effects") == tc["effect"]
+			and plus_def.get("effects") == tc["plus_effect"],
+			base_id + ": authored base and plus effects match the supported contract")
+		var deck: Array = [base_id, plus_id, base_id, "seamstress_prick", "tinker_pop_shot", "warden_shield_bash"]
+		var pristine: Array = deck.duplicate(true)
+		var projection := RunRestCardUpgrade.list_authored_choices(deck)
+		_check(_is_ok(projection), base_id + ": genuine plain mixed starter deck projects")
+		var rows: Array = projection.get("choices", [])
+		var permitted: Dictionary = projection.get("permitted_upgrades", {})
+		var found: Array = []
+		for raw_row in rows:
+			var row: Dictionary = raw_row
+			if row.get("source_id") != base_id:
+				continue
+			found.append(row.get("index"))
+			_check(row.get("index") in [0, 2] and row.get("original_id") == base_id
+				and row.get("base_id") == base_id and row.get("upgraded_id") == plus_id
+				and row.get("plus_id") == plus_id and row.get("owner") == tc["owner"]
+				and row.get("display_name") == tc["name"]
+				and row.get("plus_display_name") == tc["plus_name"]
+				and row.get("cost") == 1 and row.get("plus_cost") == 1
+				and row.get("effects") == tc["effect"] and row.get("plus_effects") == tc["plus_effect"],
+				base_id + ": genuine per-copy canonical indexed metadata")
+		_check(found == [0, 2] and permitted.get(base_id) == plus_id,
+			base_id + ": both base copies and only genuine paired plus authorize upgrade")
+		_check(not permitted.has(plus_id) and not permitted.has("seamstress_prick")
+			and not permitted.has("tinker_pop_shot") and not permitted.has("warden_shield_bash"),
+			base_id + ": already-plus and unsupported starters remain unselectable")
+		seed(RNG_SEED)
+		var next_draw := randi()
+		seed(RNG_SEED)
+		var visit := RunRestCardUpgrade.new(deck, permitted)
+		_assert_rejected(visit, 1, pristine, base_id + ": pre-upgraded copy rejected")
+		_assert_rejected(visit, 3, pristine, base_id + ": un-authored Prick upgrade rejected")
+		_assert_rejected(visit, 4, pristine, base_id + ": un-authored Pop Shot upgrade rejected")
+		var result := visit.choose_upgrade(2)
+		_check(_is_ok(result) and visit.is_consumed() and result.get("original_id") == base_id
+			and result.get("upgraded_id") == plus_id
+			and result.get("deck") == [base_id, plus_id, plus_id, "seamstress_prick", "tinker_pop_shot", "warden_shield_bash"],
+			base_id + ": only second copy upgraded once and existing plus stays untouched")
+		_assert_rejected_while_used(visit, 0, pristine, base_id + ": no second Rest upgrade")
+		_check(deck == pristine and randi() == next_draw, base_id + ": no caller mutation or global RNG")
+		# A choice's nested effects are detached from the real catalog and another projection.
+		for raw_row in rows:
+			if raw_row.get("source_id") == base_id:
+				raw_row["effects"]["tampered"] = 999
+				raw_row["plus_effects"]["tampered"] = 999
+		var repeat := RunRestCardUpgrade.list_authored_choices(deck)
+		_check(repeat.get("permitted_upgrades") == permitted
+			and repeat.get("choices", [])[0].get("effects") == tc["effect"]
+			and catalog.get_definition(base_id).get("effects") == tc["effect"],
+			base_id + ": detached nested metadata cannot poison catalog or later projections")
+		if earned.get("ok") != true:
+			continue
+		var mixed: Array = earned["deck"].duplicate(true)
+		var at_first := mixed.size()
+		mixed.append(base_id)
+		var at_second := mixed.size()
+		mixed.append(base_id)
+		mixed.append(plus_id)
+		var registry: Dictionary = earned["descriptors"].duplicate(true)
+		var cursor: int = earned["next_stitch_id"]
+		var mixed_proj := RunRestCardUpgrade.list_authored_choices(mixed, registry, cursor)
+		_check(_is_ok(mixed_proj) and not mixed_proj.get("permitted_upgrades", {}).has(earned["stitched_id"]),
+			base_id + ": valid mixed ledger has inert genuine stitched composite")
+		var support_indices: Array = []
+		for raw_row in mixed_proj.get("choices", []):
+			if raw_row.get("source_id") == base_id:
+				support_indices.append(raw_row["index"])
+			_check(raw_row.get("source_id") != earned["stitched_id"] and raw_row.get("source_id") != plus_id,
+				base_id + ": stitched and plus cards excluded from mixed choices")
+		_check(support_indices.has(at_first) and support_indices.has(at_second),
+			base_id + ": mixed ledger exposes both appended real base indices")
+		var mixed_visit := RunRestCardUpgrade.new(mixed, mixed_proj.get("permitted_upgrades", {}), registry, cursor)
+		var mixed_result := mixed_visit.choose_upgrade(at_second)
+		_check(_is_ok(mixed_result) and mixed_result.get("deck", [])[at_second] == plus_id
+			and mixed_result.get("deck", [])[at_first] == base_id
+			and mixed_result.get("deck", []).has(earned["stitched_id"])
+			and registry == earned["descriptors"],
+			base_id + ": upgrade preserves mixed stitch ledger and separate original")

@@ -8,6 +8,23 @@ extends RefCounted
 ## transaction-only replacements, including synthetic fixture IDs. This class references
 ## no scene, no combat transaction and no run state, and takes no randomness.
 
+# Explicit catalog-backed starter pairs; never infer an upgrade from a suffix.
+# These expected definitions are the same exact semantics resolved by combat.
+const STARTER_UPGRADE_PAIRS := {
+	"warden_strike": {"plus_id": "warden_strike_plus", "owner": "warden",
+		"cost": 1, "from_positions": [1, 2], "target_kind": "enemy_single",
+		"to_positions": [1, 2], "effects": {"damage": 6}, "plus_effects": {"damage": 7}},
+	"warden_brace": {"plus_id": "warden_brace_plus", "owner": "warden",
+		"cost": 1, "from_positions": [1, 2, 3], "target_kind": "self",
+		"to_positions": [], "effects": {"block": 7}, "plus_effects": {"block": 10}},
+	"seamstress_mend": {"plus_id": "seamstress_mend_plus", "owner": "seamstress",
+		"cost": 1, "from_positions": [2, 3], "target_kind": "ally_single",
+		"to_positions": [], "effects": {"heal": 5}, "plus_effects": {"heal": 7}},
+	"seamstress_stitch_up": {"plus_id": "seamstress_stitch_up_plus", "owner": "seamstress",
+		"cost": 1, "from_positions": [1, 2, 3], "target_kind": "ally_single",
+		"to_positions": [], "effects": {"block": 5}, "plus_effects": {"block": 7}},
+}
+
 var _source: Array = []
 var _deck: Array[String] = []
 var _upgrades: Dictionary = {}
@@ -209,21 +226,30 @@ static func _resolve_pool_card_definition(owner: String, card_id: String) -> Dic
 
 
 static func _get_canonical_upgrade_info(card_id: String) -> Dictionary:
-	if card_id == "warden_strike":
+	if STARTER_UPGRADE_PAIRS.has(card_id):
+		var expected: Dictionary = STARTER_UPGRADE_PAIRS[card_id]
 		var starter := StarterCards.new()
-		var base_def: Dictionary = starter.get_definition("warden_strike")
-		var plus_def: Dictionary = starter.get_definition("warden_strike_plus")
-		if base_def.is_empty() or plus_def.is_empty():
+		var plus_id: String = expected["plus_id"]
+		var base_def: Dictionary = starter.get_definition(card_id)
+		var plus_def: Dictionary = starter.get_definition(plus_id)
+		if base_def.is_empty() or plus_def.is_empty() 				or base_def.get("id") != card_id or plus_def.get("id") != plus_id 				or plus_def.get("starting_copies") != 0 				or not base_def.get("display_name") is String or String(base_def["display_name"]).is_empty() 				or not plus_def.get("display_name") is String or String(plus_def["display_name"]).is_empty():
+			return {}
+		# Both real definitions must match the known owner, cost, positions,
+		# target shape and effects. A forged _plus name cannot become eligible.
+		for field in ["owner", "cost", "from_positions", "target_kind", "to_positions"]:
+			if base_def.get(field) != expected[field] or plus_def.get(field) != expected[field]:
+				return {}
+		if base_def.get("effects") != expected["effects"] 				or plus_def.get("effects") != expected["plus_effects"]:
 			return {}
 		return {
-			"plus_id": "warden_strike_plus",
-			"owner": "warden",
-			"display_name": String(base_def.get("display_name", "Strike")),
-			"plus_display_name": String(plus_def.get("display_name", "Strike+")),
-			"cost": int(base_def.get("cost", 1)),
-			"plus_cost": int(plus_def.get("cost", 1)),
-			"effects": base_def.get("effects", {}).duplicate(true),
-			"plus_effects": plus_def.get("effects", {}).duplicate(true),
+			"plus_id": plus_id,
+			"owner": String(base_def["owner"]),
+			"display_name": String(base_def["display_name"]),
+			"plus_display_name": String(plus_def["display_name"]),
+			"cost": int(base_def["cost"]),
+			"plus_cost": int(plus_def["cost"]),
+			"effects": base_def["effects"].duplicate(true),
+			"plus_effects": plus_def["effects"].duplicate(true),
 		}
 
 	var starter := StarterCards.new()
