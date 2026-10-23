@@ -2191,10 +2191,19 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	var next_result: CombatBattleResult
 	var next_flow: CombatRoundFlow
 	if entry.get("success", false):
+		# The state immediately before the admission shuffle, so a Path battle
+		# performs exactly one shuffle: the final thirteen-card deal.
+		var shuffle_state := run_rng.state
 		var admission := RunStitchedBattleHandEntry.new().admit_next_fight(
 			run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id, snapshot.receipt, run_rng)
 		if admission.get("ok", false) and admission.snapshot == snapshot:
 			next_deck = admission.combat_deck
+			# A selected Path adds its one exclusive card to this battle only, never
+			# to the stitchable run ledger. The admission shuffle is rewound so the
+			# thirteen-card deal is the single recorded shuffle of this fight.
+			var path_card_id := _battle_path_card_id()
+			if not path_card_id.is_empty():
+				next_deck = _admit_path_deck(snapshot.deck, path_card_id, shuffle_state)
 			next_result = CombatBattleResult.new(next_party, entry.enemies)
 			next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
 			staged = next_flow.begin_fight()
@@ -2249,6 +2258,33 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	_refresh_enemy_roster()
 	end_turn_button.grab_focus()
 	return true
+
+
+## The exclusive Path card this run's validated receipt carries, or "" when the
+## run has no Path. The receipt is revalidated by the canonical combat resolver;
+## a tampered, stale or unselected record names no card.
+func _battle_path_card_id() -> String:
+	if run_seamstress_path_receipt.is_empty():
+		return ""
+	var resolver := CombatSeamstressPathCards.new()
+	if not resolver.bind_choice(run_seamstress_path_receipt):
+		return ""
+	return resolver.get_card_id()
+
+
+## ONE battle deck for a Path run: the canonical admitted IDs plus that Path's
+## card, shuffled once from the pre-admission run RNG state. An unselected run
+## keeps the admission deck and its RNG untouched.
+func _admit_path_deck(admitted: Array, card_id: String, rng_state: int) -> CombatDeck:
+	if run_rng == null or card_id.is_empty() or admitted.is_empty():
+		return null
+	var card_ids: Array[String] = []
+	card_ids.assign(admitted)
+	if card_ids.has(card_id):
+		return null
+	card_ids.append(card_id)
+	run_rng.state = rng_state
+	return CombatDeck.new(card_ids, run_rng)
 
 
 func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[String], button) -> bool:
@@ -4214,12 +4250,32 @@ func _quilt_owners_of(card_id: String) -> Array[String]:
 		definition = SeamstressPoolCards.new().get_definition(card_id)
 	if definition.is_empty():
 		definition = TinkerPoolCards.new().get_definition(card_id)
+	if definition.is_empty():
+		# A selected Path card is owned by the hero whose Path this run carries.
+		# Only the validated receipt can name that owner.
+		var path_owner := _path_card_owner(card_id)
+		if not path_owner.is_empty():
+			owners.append(path_owner)
+		return owners
 	if definition.is_empty() or definition.get("id") != card_id:
 		return owners
 	var owner = definition.get("owner")
 	if owner is String and owner in CombatQuiltBonus.HERO_IDS:
 		owners.append(str(owner))
 	return owners
+
+
+## The owner of a Path card this run's validated receipt carries. An unselected,
+## forged or tampered Path record names no owner, so it can earn nothing.
+func _path_card_owner(card_id: String) -> String:
+	if card_id.is_empty():
+		return ""
+	var resolver := CombatSeamstressPathCards.new()
+	if not resolver.bind_choice(run_seamstress_path_receipt):
+		return ""
+	if resolver.get_card_id() != card_id:
+		return ""
+	return CombatSeamstressPathCards.OWNER_ID
 
 
 func _refresh_hand() -> void:
