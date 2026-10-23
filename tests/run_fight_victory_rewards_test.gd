@@ -652,27 +652,31 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 		var later_prepared := later_service.prepare()
 		_check(later_prepared.get("ok", false),
 			label + ": later reward accepts a previously awarded pool ID in the deck")
+		var previous_pool_base: String = offered_ids[0]
 		for owner in HERO_IDS:
 			var base_id := ""
 			for record: Dictionary in records:
 				if record.get("owner") == owner:
 					base_id = record.get("id")
 					break
-			var pre_upgrade_deck := deck.duplicate()
+			var pre_upgrade_deck := expected_deck.duplicate()
 			pre_upgrade_deck.append(base_id)
+			var appended_index: int = pre_upgrade_deck.size() - 1
 			var upgrade_choices: Dictionary = RunRestCardUpgrade.list_authored_choices(pre_upgrade_deck)
 			var permitted_upgrades: Dictionary = upgrade_choices.get("permitted_upgrades", {})
 			var upgrade_transaction := RunRestCardUpgrade.new(pre_upgrade_deck, permitted_upgrades)
 			var base_index: int = -1
 			var choices: Array = upgrade_choices.get("choices", [])
 			for choice: Dictionary in choices:
-				if choice.get("source_id") == base_id:
+				if choice.get("source_id") == base_id and choice.get("index") == appended_index:
 					base_index = choice.get("index")
 					break
-			_check(base_index != -1, label + ": authored pool base appears in upgrade choices for " + owner)
+			_check(base_index != -1, label + ": appended authored pool base appears in upgrade choices for " + owner)
 			var valid_upgrade: Dictionary = upgrade_transaction.choose_upgrade(base_index)
 			_check(valid_upgrade.get("ok", false), label + ": rest upgrade choice succeeded for " + owner)
 			var upgraded_deck: Array = valid_upgrade.get("deck", [])
+			_check(upgraded_deck.has(previous_pool_base), label + ": upgraded receipt preserves previously awarded unupgraded pool base")
+			_check(upgraded_deck.has(base_id + "_plus"), label + ": upgraded receipt contains exact newly upgraded plus ID")
 			
 			var upgrade_fight := _fight(definitions, 2 if elite else 1)
 			_win(upgrade_fight)
@@ -713,6 +717,8 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 				
 			var chosen := upgrade_service.choose(upgrade_offered_ids[0])
 			_check(chosen.get("ok", false) and chosen.get("deck") == expected_chosen_deck, label + ": upgraded chosen deck keeps base/+ IDs")
+			_check(chosen.get("deck", []).has(previous_pool_base), label + ": chosen deck contains previously held base")
+			_check(chosen.get("deck", []).has(base_id + "_plus"), label + ": chosen deck contains new plus ID")
 			_check(chosen.get("gold") == 10 + upgrade_oracle["gold"] and chosen.get("trinkets") == expected_chosen_trinkets, label + ": upgraded choose pays exactly once")
 			
 			var skip_fight := _fight(definitions, 2 if elite else 1)
@@ -728,6 +734,8 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 			skip_service.prepare()
 			var skipped := skip_service.choose("")
 			_check(skipped.get("ok", false) and skipped.get("deck") == upgraded_deck, label + ": upgraded skipped deck keeps base/+ IDs")
+			_check(skipped.get("deck", []).has(previous_pool_base), label + ": skipped deck contains previously held base")
+			_check(skipped.get("deck", []).has(base_id + "_plus"), label + ": skipped deck contains new plus ID")
 			_check(skipped.get("gold") == 10 + upgrade_oracle["gold"] and skipped.get("trinkets") == expected_chosen_trinkets, label + ": upgraded skip pays exactly once")
 
 		var fake_plus_deck := expected_deck.duplicate()
