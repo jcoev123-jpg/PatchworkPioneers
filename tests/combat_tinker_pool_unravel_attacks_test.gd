@@ -15,6 +15,9 @@ func _initialize() -> void:
 	_test_pinned_ac1_spool_and_snip()
 	_test_pinned_ac2_shrapnel_seam()
 	_test_pinned_ac3_rejections()
+	_test_patch_damage_all_six()
+	_test_patch_button_eye()
+	_test_patch_suppression_and_rejections()
 	for failure: String in failures:
 		printerr(failure)
 	print("combat_tinker_pool_unravel_attacks_test: ",
@@ -864,3 +867,424 @@ func _test_pinned_ac3_rejections() -> void:
 		e.apply_damage(2, 30)
 	, "all-dead roster")
 	run_rej_case.call("tinker_spool_launcher", 1, func(d, p, e, u): return CombatUnravel.new(), "unbound unravel")
+
+
+## Real run ledger fixture: creates, owns and sews both authored patches.
+## A separate run Torn/Mending record supplies the combat-only projection.
+func _patch_fixture(arm_owner: String = "tinker", head_owner: String = "",
+		torn_tinker: bool = false) -> Dictionary:
+	var heroes: Array[Dictionary] = _party().get_heroes()
+	var torn := RunTornMending.new(heroes)
+	_check(torn.is_valid(), "patch fixture authentic valid Torn/Mending ledger")
+	if torn_tinker:
+		var ending: Array = heroes.duplicate(true)
+		ending[2]["hp"] = 0
+		var result: Dictionary = torn.observe_battle_end("patch_fixture_battle", heroes, ending)
+		_check(result.get("ok") == true and torn.read_state()["heroes"][2]["hp"] == 0,
+			"torn fixture really records Tinker as downed")
+	var owned: Array = ["pincushion_arm", "button_eye"]
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, [
+		{"id": "pincushion_arm", "slot": "ARM"},
+		{"id": "button_eye", "slot": "HEAD"}], 0)
+	_check(wardrobe.is_valid(), "patch fixture authentic valid wardrobe")
+	if arm_owner != "":
+		_check(wardrobe.sew("pincushion_arm", arm_owner, "ARM", "sew_arm",
+			wardrobe.get_snapshot()).get("ok") == true,
+			"pincushion actually sewn to " + arm_owner)
+	if head_owner != "":
+		_check(wardrobe.sew("button_eye", head_owner, "HEAD", "sew_head",
+			wardrobe.get_snapshot()).get("ok") == true,
+			"button eye actually sewn to " + head_owner)
+	var projection: Dictionary = wardrobe.project_active(torn.read_state())
+	_check(projection.get("ok") == true and projection["active"].has("tinker"),
+		"wardrobe authentic wearer projection")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _patch_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		unravel: CombatUnravel, first: CombatTinkerFirstAttack,
+		pinned: CombatPinned, resolver: CombatTinkerPoolUnravelAttacks) -> Dictionary:
+	var state: Dictionary = _snapshot(deck, party, enemies, unravel, first, pinned)
+	state["patch_latch"] = {} if resolver._patches == null else resolver._patches.latch_snapshot()
+	state["patch_active"] = {} if resolver._patches == null else resolver._patches.active_snapshot()
+	return state
+
+
+func _test_patch_damage_all_six() -> void:
+	var expected := {
+		"tinker_spool_launcher": [3, 3, 1],
+		"tinker_spool_launcher_plus": [4, 4, 1],
+		"tinker_shrapnel_seam": [5, 2, 2],
+		"tinker_shrapnel_seam_plus": [7, 3, 2],
+		"tinker_snip_the_seam": [5, 0, 1],
+		"tinker_snip_the_seam_plus": [7, 0, 1],
+	}
+	var catalog := TinkerPoolCards.new()
+	for card_id in expected:
+		var spec: Array = expected[card_id]
+		var def: Dictionary = catalog.get_definition(card_id)
+		_check(not def.is_empty() and def.get("cost") == spec[2]
+			and def.get("effects", {}).get("damage") == spec[0],
+			"AC1: six real catalog definitions and costs: " + card_id)
+		var first := CombatTinkerFirstAttack.new()
+		var pinned := CombatPinned.new()
+		var resolver := CombatTinkerPoolUnravelAttacks.new(first, pinned)
+		var fixture: Dictionary = _patch_fixture("tinker")
+		_check(resolver.bind_patch_wardrobe(fixture["wardrobe"], fixture["torn"]),
+			"AC1: bound genuine Pincushion " + card_id)
+		_check(resolver._patches.damage_bonus("tinker") == 1,
+			"AC1: Tinker is projected actual Pincushion wearer")
+		var deck: CombatDeck = _deck([card_id, "warden_strike"])
+		var party: CombatParty = _party()
+		var enemies: CombatEnemies = _enemies([100, 100, 100])
+		var unravel: CombatUnravel = _unravel(enemies)
+		_check(enemies.gain_block(1, 2), "AC1: enemy 1 real Block 2")
+		_check(pinned.pin_enemy(enemies, 1, "warden"), "AC1: foreign Warden pin")
+		var before_rng: int = deck._rng.state
+		_check(resolver.can_play(deck, party, enemies, card_id, 0 if spec[2] == 2 else 1, unravel),
+			"AC1: patched card preflight succeeds " + card_id)
+		var result: Dictionary = resolver.play_attack(deck, party, enemies, card_id,
+			0 if spec[2] == 2 else 1, unravel)
+		_check(result.get("ok") == true, "AC1: patched " + card_id + " plays")
+		if result.get("ok") != true:
+			continue
+		var expected_hits: int = 3 if spec[2] == 2 else 1
+		_check(result["hits"].size() == expected_hits,
+			"AC1: original living slots hit once " + card_id)
+		for i in range(expected_hits):
+			var h: Dictionary = result["hits"][i]
+			var damage: int = spec[0] + 3 + 1 + (5 if i == 0 else 0)
+			var absorbed: int = 2 if i == 0 else 0
+			_check(h == {"position": i + 1, "damage": damage, "block_absorbed": absorbed,
+				"hp_loss": damage - absorbed, "statuses": {}, "unravel": spec[1]},
+				"AC1: per-hit patch+first+pin/Block receipt " + card_id + " slot " + str(i+1))
+			_check(enemies.get_enemy(i+1)["hp"] == 100 - damage + absorbed
+				and enemies.get_enemy(i+1)["block"] == 0,
+				"AC1: exact resulting HP/Block " + card_id + " slot " + str(i+1))
+			_check(unravel.get_snapshot(i+1)["gauge"] == spec[1],
+				"AC1: exact surviving Unravel gauge " + card_id + " slot " + str(i+1))
+		_check(pinned.pinner_for_enemy(1) == "" and first._consumed,
+			"AC1: foreign pin consumed and first-attack latch set " + card_id)
+		_check(deck.energy == 3 - spec[2] and deck.hand == ["warden_strike"]
+			and deck.discard_pile == [card_id] and deck._rng.state == before_rng,
+			"AC1: exactly one cost/discard with no RNG draws " + card_id)
+		_check(resolver._patches.latch_snapshot().get("tinker") == false,
+			"AC1: no Button Eye means patch latch unused")
+
+	# Empowered Snip is a separate conditional branch, preserved for both variants.
+	for card_id in ["tinker_snip_the_seam", "tinker_snip_the_seam_plus"]:
+		var first := CombatTinkerFirstAttack.new()
+		var pinned := CombatPinned.new()
+		var resolver := CombatTinkerPoolUnravelAttacks.new(first, pinned)
+		var fixture: Dictionary = _patch_fixture()
+		_check(resolver.bind_patch_wardrobe(fixture["wardrobe"], fixture["torn"]),
+			"AC1: conditional Snip patch binding")
+		var deck: CombatDeck = _deck([card_id])
+		var party: CombatParty = _party()
+		party._heroes[2]["statuses"] = {"weak": 1}
+		var enemies: CombatEnemies = _enemies([80])
+		_check(enemies.apply_statuses({1: {"exposed": 1}}), "AC1: real enemy Exposed")
+		_check(enemies.gain_block(1, 6), "AC1: real enemy Block")
+		var unravel: CombatUnravel = _unravel(enemies)
+		_check(unravel.apply_unravel(enemies, 1, 4), "AC1: half threshold reached")
+		_check(pinned.pin_enemy(enemies, 1, "seamstress"), "AC1: foreign pin")
+		var raw: int = 15 if card_id == "tinker_snip_the_seam" else 20
+		var total: int = raw + 3 + 1 + 5
+		var final_damage: int = 27 if raw == 15 else 32
+		_check(total == (24 if raw == 15 else 29),
+			"AC1: independent pre-modifier conditional Snip damage+pin+patch")
+		var result: Dictionary = resolver.play_attack(deck, party, enemies, card_id, 1, unravel)
+		_check(result.get("ok") == true and result["hits"][0] == {
+			"position": 1, "damage": final_damage, "block_absorbed": 6,
+			"hp_loss": final_damage - 6, "statuses": {}, "unravel": 0},
+			"AC1: empowered Snip pin+patch applied before Weak/Exposed " + card_id)
+		_check(enemies.get_enemy(1)["hp"] == 86 - final_damage
+			and unravel.get_snapshot(1)["gauge"] == 4,
+			"AC1: exact empowered HP and unchanged Unravel " + card_id)
+
+
+func _test_patch_button_eye() -> void:
+	var catalog := TinkerPoolCards.new()
+	for card_id in CombatTinkerPoolUnravelAttacks.SUPPORTED_CARD_IDS:
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty(), "AC2: authentic Button Eye card definition " + card_id)
+		var first := CombatTinkerFirstAttack.new()
+		var resolver := CombatTinkerPoolUnravelAttacks.new(first)
+		var fixture: Dictionary = _patch_fixture("", "tinker")
+		_check(resolver.bind_patch_wardrobe(fixture["wardrobe"], fixture["torn"]),
+			"AC2: real Button Eye projection bound")
+		var deck: CombatDeck = _deck([card_id])
+		var party: CombatParty = _party()
+		var enemies: CombatEnemies = _enemies([75, 75])
+		var unravel: CombatUnravel = _unravel(enemies)
+		var is_area: bool = definition["target_kind"] == "enemy_all"
+		var original_damage: int = definition["effects"]["damage"] + 3
+		var before_rng: int = deck._rng.state
+		var result: Dictionary = resolver.play_attack(deck, party, enemies, card_id,
+			0 if is_area else 1, unravel)
+		_check(result.get("ok") == true, "AC2: successful first patched " + card_id)
+		if result.get("ok") != true:
+			continue
+		_check(result["hits"][0]["damage"] == original_damage
+			and result["hits"][0]["statuses"] == {"exposed": 1},
+			"AC2: no same-hit exposed damage boost; receipt exposes slot 1 " + card_id)
+		_check(enemies.get_enemy(1).get("statuses", {}) == {"exposed": 1}
+			and enemies.get_enemy(1)["hp"] == 75 - original_damage,
+			"AC2: Exposed landed after hit " + card_id)
+		if is_area:
+			_check(result["hits"][1]["damage"] == original_damage
+				and result["hits"][1]["statuses"] == {}
+				and enemies.get_enemy(2).get("statuses", {}) == {},
+				"AC2: same Shrapnel card cannot boost later recipient " + card_id)
+		_check(resolver._patches.latch_snapshot()["tinker"] == true
+			and first._consumed and deck._rng.state == before_rng
+			and deck.energy == 3 - definition["cost"] and deck.discard_pile == [card_id],
+			"AC2: patch and passive latches, single spend, no RNG " + card_id)
+
+	# First original living slot (2) is selected although slot 1 was slain.
+	# Two worn patches: Button Eye is independent from per-turn +3.
+	var first := CombatTinkerFirstAttack.new()
+	var resolver := CombatTinkerPoolUnravelAttacks.new(first)
+	var both: Dictionary = _patch_fixture("tinker", "tinker")
+	_check(resolver.bind_patch_wardrobe(both["wardrobe"], both["torn"]),
+		"AC2: simultaneous two-slot binding")
+	var deck: CombatDeck = _deck(["tinker_shrapnel_seam", "tinker_spool_launcher"])
+	var party: CombatParty = _party()
+	var enemies: CombatEnemies = _enemies([40, 40, 40])
+	var unravel: CombatUnravel = _unravel(enemies)
+	_check(enemies.apply_damage(1, 40) and enemies.is_slain(1),
+		"AC2: initially slain original slot 1")
+	_check(enemies.gain_block(2, 2), "AC2: living first slot 2 Block")
+	var before_rng: int = deck._rng.state
+	var first_result: Dictionary = resolver.play_attack(deck, party, enemies,
+		"tinker_shrapnel_seam", 0, unravel)
+	_check(first_result.get("ok") == true and first_result["hits"].size() == 2,
+		"AC2: first Shrapnel with dead original slot")
+	_check(first_result["hits"][0] == {"position": 2, "damage": 9,
+		"block_absorbed": 2, "hp_loss": 7, "statuses": {"exposed": 1}, "unravel": 2}
+		and first_result["hits"][1] == {"position": 3, "damage": 9,
+		"block_absorbed": 0, "hp_loss": 9, "statuses": {}, "unravel": 2},
+		"AC2: both patches +3 first; Exposed applies only after whole area card")
+	_check(enemies.get_enemy(1).get("statuses", {}) == {}
+		and enemies.get_enemy(2).get("statuses", {}) == {"exposed": 1}
+		and enemies.get_enemy(3).get("statuses", {}) == {},
+		"AC2: Button Eye applied to original living slot 2, never dead slot 1")
+	_check(enemies.get_enemy(2)["hp"] == 33 and enemies.get_enemy(3)["hp"] == 31,
+		"AC2: exact first Shrapnel HP after Block")
+	_check(resolver._patches.latch_snapshot()["tinker"] and first._consumed,
+		"AC2: independent latches both set")
+	# A later card in the same turn benefits from prior Exposed, but never reapplies it.
+	var second: Dictionary = resolver.play_attack(deck, party, enemies,
+		"tinker_spool_launcher", 2, unravel)
+	_check(second.get("ok") == true and second["hits"] == [{"position": 2,
+		"damage": 6, "block_absorbed": 0, "hp_loss": 6,
+		"statuses": {}, "unravel": 3}],
+		"AC2: next Spool gets +1 without +3, prior Exposed multiplies 4 into 6")
+	_check(enemies.get_enemy(2)["hp"] == 27
+		and enemies.get_enemy(2)["statuses"]["exposed"] == 1
+		and unravel.get_snapshot(2)["gauge"] == 5
+		and deck.energy == 0 and deck.hand.is_empty()
+		and deck.discard_pile.size() == 2 and deck._rng.state == before_rng,
+		"AC2: patch once per combat, energy/discard/gauge exact across two plays")
+
+	# The patch has a combat latch independent of an already-spent turn passive.
+	var prior_first := CombatTinkerFirstAttack.new()
+	_check(prior_first.record_successful_attack("tinker_pop_shot"),
+		"AC2: Tinker shared first-attack passive already spent")
+	var prior_resolver := CombatTinkerPoolUnravelAttacks.new(prior_first)
+	var prior_fixture: Dictionary = _patch_fixture("", "tinker")
+	_check(prior_resolver.bind_patch_wardrobe(prior_fixture["wardrobe"], prior_fixture["torn"]),
+		"AC2: bound Button Eye despite already consumed passive")
+	var prior_deck: CombatDeck = _deck(["tinker_spool_launcher"])
+	var prior_party: CombatParty = _party()
+	var prior_enemies: CombatEnemies = _enemies([25])
+	var prior_unravel: CombatUnravel = _unravel(prior_enemies)
+	var prior_result: Dictionary = prior_resolver.play_attack(prior_deck, prior_party,
+		prior_enemies, "tinker_spool_launcher", 1, prior_unravel)
+	_check(prior_result.get("ok") == true and prior_result["hits"][0]["damage"] == 3
+		and prior_result["hits"][0]["statuses"] == {"exposed": 1}
+		and prior_resolver._patches.latch_snapshot()["tinker"],
+		"AC2: Button Eye triggers independently when +3 passive unavailable")
+
+	# First actual hit may be lethal; the defeated slot still records Exposed.
+	var lethal_first := CombatTinkerFirstAttack.new()
+	var lethal_resolver := CombatTinkerPoolUnravelAttacks.new(lethal_first)
+	var lethal_fixture: Dictionary = _patch_fixture("", "tinker")
+	_check(lethal_resolver.bind_patch_wardrobe(lethal_fixture["wardrobe"], lethal_fixture["torn"]),
+		"AC2: lethal-case patch binding")
+	var lethal_deck: CombatDeck = _deck(["tinker_shrapnel_seam"])
+	var lethal_party: CombatParty = _party()
+	var lethal_enemies: CombatEnemies = _enemies([10, 1, 30])
+	var lethal_unravel: CombatUnravel = _unravel(lethal_enemies)
+	_check(lethal_enemies.apply_damage(1, 10), "AC2: already dead slot 1")
+	var lethal_result: Dictionary = lethal_resolver.play_attack(lethal_deck, lethal_party,
+		lethal_enemies, "tinker_shrapnel_seam", 0, lethal_unravel)
+	_check(lethal_result.get("ok") == true and lethal_result["hits"][0]["position"] == 2
+		and lethal_result["hits"][0]["damage"] == 8
+		and lethal_result["hits"][0]["statuses"] == {"exposed": 1}
+		and lethal_result["hits"][0]["unravel"] == 0
+		and lethal_result["hits"][1]["position"] == 3
+		and lethal_result["hits"][1]["damage"] == 8
+		and lethal_result["hits"][1]["statuses"] == {},
+		"AC2: lethal first recipient, no same-card Exposed or dead-target Unravel")
+	_check(lethal_enemies.is_slain(2)
+		and lethal_enemies.get_enemy(2).get("statuses", {}) == {"exposed": 1}
+		and lethal_enemies.get_enemy(3).get("statuses", {}) == {}
+		and lethal_unravel.get_snapshot(3)["gauge"] == 2
+		and lethal_resolver._patches.latch_snapshot()["tinker"],
+		"AC2: late Exposed persists on lethal slot 2 and latches")
+
+
+func _test_patch_suppression_and_rejections() -> void:
+	# A patch sewn to another living hero is never a Tinker card bonus.
+	for arm_owner in ["warden", "seamstress"]:
+		var fixture: Dictionary = _patch_fixture(arm_owner, arm_owner if arm_owner == "warden" else "")
+		var first := CombatTinkerFirstAttack.new()
+		var resolver := CombatTinkerPoolUnravelAttacks.new(first)
+		_check(resolver.bind_patch_wardrobe(fixture["wardrobe"], fixture["torn"]),
+			"AC3: foreign patch wearer bound")
+		_check(resolver._patches.damage_bonus("tinker") == 0
+			and resolver._patches.exposed_for_first_hit("tinker") == {},
+			"AC3: foreign owner's sewn patches do not project to Tinker")
+		var deck: CombatDeck = _deck(["tinker_spool_launcher"])
+		var party: CombatParty = _party()
+		var enemies: CombatEnemies = _enemies([30])
+		var unravel: CombatUnravel = _unravel(enemies)
+		var result: Dictionary = resolver.play_attack(deck, party, enemies,
+			"tinker_spool_launcher", 1, unravel)
+		_check(result.get("ok") == true and result["hits"][0]["damage"] == 6
+			and result["hits"][0]["statuses"] == {}
+			and enemies.get_enemy(1).get("statuses", {}) == {}
+			and resolver._patches.latch_snapshot()["tinker"] == false,
+			"AC3: no borrowed Pincushion or Button Eye " + arm_owner)
+
+	# Tinker is torn in the *run* ledger: even a sewn patch becomes inactive.
+	# Combat party is a separate, valid newly mounted session with living Tinker.
+	var torn_fixture: Dictionary = _patch_fixture("tinker", "tinker", true)
+	var torn_resolver := CombatTinkerPoolUnravelAttacks.new()
+	_check(torn_resolver.bind_patch_wardrobe(torn_fixture["wardrobe"], torn_fixture["torn"]),
+		"AC3: torn-ledger projection still safely binds")
+	_check(torn_resolver._patches.active_snapshot()["tinker"] == [],
+		"AC3: sewn patches suppressed for downed run wearer")
+	var torn_deck: CombatDeck = _deck(["tinker_spool_launcher"])
+	var torn_party: CombatParty = _party()
+	var torn_enemies: CombatEnemies = _enemies([30])
+	var torn_unravel: CombatUnravel = _unravel(torn_enemies)
+	var torn_result: Dictionary = torn_resolver.play_attack(torn_deck, torn_party,
+		torn_enemies, "tinker_spool_launcher", 1, torn_unravel)
+	_check(torn_result.get("ok") == true and torn_result["hits"][0]["damage"] == 6
+		and torn_result["hits"][0]["statuses"] == {}
+		and torn_resolver._patches.latch_snapshot()["tinker"] == false,
+		"AC3: torn wearer cannot contribute either patch rider")
+
+	# Failed explicit bind permanently fails closed until a new valid bind succeeds.
+	var invalid := CombatTinkerPoolUnravelAttacks.new()
+	var good: Dictionary = _patch_fixture("tinker", "tinker")
+	_check(not invalid.bind_patch_wardrobe(good["wardrobe"], null),
+		"AC3: explicit null Torn/Mending binding fails")
+	var invalid_deck: CombatDeck = _deck(["tinker_spool_launcher"])
+	var invalid_party: CombatParty = _party()
+	var invalid_enemies: CombatEnemies = _enemies([30])
+	var invalid_unravel: CombatUnravel = _unravel(invalid_enemies)
+	var invalid_first: CombatTinkerFirstAttack = invalid.get_first_attack()
+	var before_invalid: Dictionary = _patch_snapshot(invalid_deck, invalid_party, invalid_enemies,
+		invalid_unravel, invalid_first, null, invalid)
+	_check(not invalid.can_play(invalid_deck, invalid_party, invalid_enemies,
+		"tinker_spool_launcher", 1, invalid_unravel),
+		"AC3: failed explicit bind refuses preview")
+	_check(invalid.play_attack(invalid_deck, invalid_party, invalid_enemies,
+		"tinker_spool_launcher", 1, invalid_unravel) == {"ok": false, "hits": []}
+		and _patch_snapshot(invalid_deck, invalid_party, invalid_enemies,
+		invalid_unravel, invalid_first, null, invalid) == before_invalid,
+		"AC3: failed bind leaves all state and patch latch untouched")
+	_check(invalid.bind_patch_wardrobe(good["wardrobe"], good["torn"])
+		and invalid.can_play(invalid_deck, invalid_party, invalid_enemies,
+			"tinker_spool_launcher", 1, invalid_unravel),
+		"AC3: correct explicit rebind restores legal patched play")
+
+	# Every rejection is tested with both patches genuinely active and a live
+	# foreign pin. Snapshot includes injected RNG, all combat state and patch latch.
+	var negatives := [
+		{"name": "missing held upgrade", "card": "tinker_spool_launcher_plus", "target": 1},
+		{"name": "wrong single target", "card": "tinker_spool_launcher", "target": 0},
+		{"name": "wrong area target", "card": "tinker_shrapnel_seam", "target": 1},
+		{"name": "unaffordable area", "card": "tinker_shrapnel_seam", "target": 0,
+			"kind": "energy"},
+		{"name": "downed Tinker", "card": "tinker_spool_launcher", "target": 1,
+			"kind": "down"},
+		{"name": "Tinker in forbidden slot", "card": "tinker_shrapnel_seam", "target": 0,
+			"kind": "from"},
+		{"name": "dead single target", "card": "tinker_spool_launcher", "target": 2,
+			"kind": "dead_second"},
+		{"name": "all area targets dead", "card": "tinker_shrapnel_seam", "target": 0,
+			"kind": "all_dead"},
+		{"name": "Button Eye status overflow", "card": "tinker_spool_launcher", "target": 1,
+			"kind": "overflow"},
+		{"name": "area first-living status overflow", "card": "tinker_shrapnel_seam", "target": 0,
+			"kind": "area_overflow"},
+		{"name": "malformed gauge", "card": "tinker_snip_the_seam", "target": 1,
+			"kind": "gauge"},
+		{"name": "invalid defender statuses", "card": "tinker_spool_launcher", "target": 1,
+			"kind": "statuses"},
+		{"name": "unbound gauge service", "card": "tinker_spool_launcher", "target": 1,
+			"kind": "unbound"}
+	]
+	for case in negatives:
+		var first := CombatTinkerFirstAttack.new()
+		var pinned := CombatPinned.new()
+		var resolver := CombatTinkerPoolUnravelAttacks.new(first, pinned)
+		var fixture: Dictionary = _patch_fixture("tinker", "tinker")
+		_check(resolver.bind_patch_wardrobe(fixture["wardrobe"], fixture["torn"]),
+			"AC3: active genuine two-patch binding for " + case["name"])
+		var deck: CombatDeck = _deck(["tinker_spool_launcher", "tinker_shrapnel_seam",
+			"tinker_snip_the_seam"])
+		var party: CombatParty = _party()
+		var enemies: CombatEnemies = _enemies([30, 30])
+		var unravel: CombatUnravel = _unravel(enemies)
+		_check(pinned.pin_enemy(enemies, 1, "warden"), "AC3: pinned rejection precondition")
+		var kind: String = case.get("kind", "")
+		match kind:
+			"energy":
+				deck.combat_state.energy = 1
+			"down":
+				party.apply_damage(3, 26)
+			"from":
+				party._heroes[1]["id"] = "tinker"
+				party._heroes[2]["id"] = "seamstress"
+			"dead_second":
+				enemies.apply_damage(2, 30)
+			"all_dead":
+				enemies.apply_damage(1, 30)
+				enemies.apply_damage(2, 30)
+			"overflow":
+				enemies._enemies[0]["statuses"] = {"exposed": CombatStatuses.MAX_INT}
+				_check(not enemies.can_apply_statuses({1: {"exposed": 1}}),
+					"AC3: real Button Eye status-capacity overflow")
+			"area_overflow":
+				enemies.apply_damage(1, 30)
+				enemies._enemies[1]["statuses"] = {"exposed": CombatStatuses.MAX_INT}
+				_check(enemies.is_slain(1) and not enemies.can_apply_statuses(
+					{2: {"exposed": 1}}),
+					"AC3: area first actual slot 2 lacks Exposed capacity")
+			"gauge":
+				unravel._gauges[1]["gauge"] = -1
+				_check(unravel.get_snapshot(1)["gauge"] == -1,
+					"AC3: malformed gauge is actually present")
+			"statuses":
+				enemies._enemies[0]["statuses"] = {"exposed": -1}
+			"unbound":
+				unravel = CombatUnravel.new()
+		var before: Dictionary = _patch_snapshot(deck, party, enemies, unravel,
+			first, pinned, resolver)
+		var before_wardrobe: Dictionary = fixture["wardrobe"].get_snapshot()
+		var before_torn: Dictionary = fixture["torn"].read_state()
+		_check(not resolver.can_play(deck, party, enemies,
+			case["card"], case["target"], unravel),
+			"AC3: can_play rejects patched " + case["name"])
+		_check(resolver.play_attack(deck, party, enemies, case["card"],
+			case["target"], unravel) == {"ok": false, "hits": []},
+			"AC3: patched play rejects " + case["name"])
+		_check(_patch_snapshot(deck, party, enemies, unravel, first, pinned, resolver) == before
+			and fixture["wardrobe"].get_snapshot() == before_wardrobe
+			and fixture["torn"].read_state() == before_torn,
+			"AC3: full atomic no-spend/no-RNG/no-latch/pin state " + case["name"])

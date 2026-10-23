@@ -29,6 +29,13 @@ var _unravel: CombatUnravel = null
 var _pinned: CombatPinned = null
 var _damage := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
+var _patches: CombatPatchAttackRules = null
+
+
+## An explicit failed bind must fail closed, not silently discard the wardrobe.
+func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_patches = CombatPatchAttackRules.new()
+	return _patches.bind_wardrobe(wardrobe, torn)
 
 
 func _init(arg1: Variant = null, arg2: Variant = null, arg3: Variant = null) -> void:
@@ -137,8 +144,17 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			"unravel": applied_unravel,
 		})
 
+	# Commit Button Eye only after all damage and Unravel: later area hits
+	# cannot receive a same-card Exposed bonus, even if the first hit is lethal.
+	if plan["patch_exposed"] > 0:
+		var first_position: int = positions[0]
+		enemies.apply_statuses({first_position: {"exposed": plan["patch_exposed"]}})
+		var first_statuses: Dictionary = hits[0]["statuses"]
+		first_statuses["exposed"] = plan["patch_exposed"]
 	deck.discard_played(card_id)
 	_first_attack.record_successful_attack(card_id)
+	if _patches != null:
+		_patches.record_successful_attack("tinker")
 	return {"ok": true, "hits": hits}
 
 
@@ -237,6 +253,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel: CombatUnravel, card_id: String, target_position: int,
 		active_pinned: CombatPinned = null) -> Dictionary:
 	if deck == null or party == null or enemies == null or unravel == null or deck._rng == null:
+		return _failure()
+	if _patches != null and not _patches.is_valid():
 		return _failure()
 	if unravel._bound_enemies != enemies or not enemies.is_valid():
 		return _failure()
@@ -341,7 +359,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		positions.assign(living)
 
 	for pos in positions:
-		if unravel.get_snapshot(pos).is_empty():
+		var gauge_state: Dictionary = unravel.get_snapshot(pos)
+		if not _valid_gauge(gauge_state):
 			return _failure()
 
 	if not _damage._valid_statuses(owner_statuses):
@@ -366,21 +385,57 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	else:
 		unravel_amount = int(effects.get("unravel", 0))
 
+	var patch_damage: int = 0 if _patches == null else _patches.damage_bonus("tinker")
+	var patch_first_status: Dictionary = {} if _patches == null else _patches.exposed_for_first_hit("tinker")
+	var patch_exposed: int = patch_first_status.get("exposed", 0)
 	var bonus: int = _first_attack.bonus_for_attack(card_id)
-	if raw_damage > CombatStatuses.MAX_INT - bonus - 5:
+	# Preflight maximum possible cross-owner pin bonus and sewn wearer damage.
+	if raw_damage > CombatStatuses.MAX_INT - bonus - 5 - patch_damage:
 		return _failure()
+	# The first actual original slot owns Button Eye, including a lethal hit.
+	# Preflight its status capacity before spending, damage, pins or gauges.
+	if patch_exposed > 0 and not enemies.can_apply_statuses(
+			{positions[0]: {"exposed": patch_exposed}}):
+		return _failure()
+	# Guard real damage capacity with the target's current statuses and any
+	# cross-hero pin before committing; overflow must not resolve as 0 damage.
+	for pos in positions:
+		var pin_bonus: int = 0
+		if active_pinned != null:
+			pin_bonus = active_pinned.bonus_for_attack(enemies, pos, "tinker")
+		var defender: Dictionary = enemies.get_enemy(pos)
+		if _statuses.adjusted_attack_damage(raw_damage + bonus + patch_damage + pin_bonus,
+				owner_statuses, defender.get("statuses", {})) <= 0:
+			return _failure()
+		if unravel_amount > 0:
+			var gauge_state: Dictionary = unravel.get_snapshot(pos)
+			if gauge_state["gauge"] > CombatStatuses.MAX_INT - unravel_amount:
+				return _failure()
 
 	return {
 		"ok": true,
 		"positions": positions,
 		"to_positions": to_value,
 		"target_kind": expected_kind,
-		"attack_damage": raw_damage + bonus,
+		"attack_damage": raw_damage + bonus + patch_damage,
+		"patch_exposed": patch_exposed,
 		"owner_statuses": owner_statuses,
 		"cost": cost_value,
 		"unravel_amount": unravel_amount,
 		"active_pinned": active_pinned,
 	}
+
+
+func _valid_gauge(snapshot: Dictionary) -> bool:
+	if snapshot.is_empty():
+		return false
+	for field in ["gauge", "threshold"]:
+		if not snapshot.get(field) is int:
+			return false
+	if snapshot["threshold"] <= 0 or snapshot["gauge"] < 0 \
+			or snapshot["gauge"] > snapshot["threshold"]:
+		return false
+	return snapshot.get("unravelled") is bool and snapshot.get("skip_pending") is bool
 
 
 func _living_positions(roster: Array[Dictionary], to_positions: Array) -> Array[int]:
