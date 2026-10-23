@@ -225,13 +225,21 @@ func _moth_outcomes() -> void:
 		_reject_event(callback, "replayed Moth input after Feed")
 	_check(_event_state() == settled, "duplicate or stale Moth input changes nothing")
 	_check(randi() == global_next, "Feed preserves the actual global RNG")
-	# The run's third Event is still the ordinary no-effect placeholder.
+	# The run's third Event is the accepted Dye Vat visit; a no-spend Leave still
+	# advances exactly one node with the same deck.
 	var third_deck: Array = app.run_deck.duplicate()
 	var third_route: Array = app.run_map.get_route()
 	await _click(_route_action(fixture.path[2]))
 	_check(app.moth_panel == null and app.quiet_spool_panel == null
-		and app.run_map.get_route() == third_route + [fixture.path[2]] and app.route_view != null
-		and app.run_deck == third_deck, "third Event keeps the no-effect placeholder")
+		and is_instance_valid(app.dye_vat_panel)
+		and app.dye_vat_panel.title_label.text == "The Dye Vat"
+		and app.run_map.get_route() == third_route + [fixture.path[2]] and app.route_view == null,
+		"third Event mounts the Dye Vat and blocks onward routing")
+	if is_instance_valid(app.dye_vat_panel):
+		await _click(app.dye_vat_panel.get_choice_buttons()[2])
+		_check(app.dye_vat_panel == null and app._dye_vat_completed and app.route_view != null
+			and app.run_deck == third_deck,
+			"a no-spend Dye Vat Leave keeps the deck and restores routing")
 	app._return_to_title()
 	await _frames()
 	_check(app.moth_panel == null and app._moth_context.is_empty() and not app._moth_completed,

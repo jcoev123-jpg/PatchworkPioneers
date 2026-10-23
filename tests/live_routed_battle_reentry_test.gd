@@ -177,6 +177,14 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 						await _key(KEY_ENTER)
 					else:
 						await _click(escape)
+				elif is_instance_valid(app.dye_vat_panel):
+					_check(app.route_view == null, "third transit Event requires the Dye Vat choice")
+					var leave: Button = app.dye_vat_panel.get_choice_buttons()[2]
+					if keyboard:
+						leave.grab_focus()
+						await _key(KEY_ENTER)
+					else:
+						await _click(leave)
 			"Rest":
 				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Rest",
 					"Rest visit mounts its own art bed")
