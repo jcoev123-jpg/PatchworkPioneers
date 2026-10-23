@@ -26,6 +26,7 @@ func _initialize() -> void:
 	_test_negative_transitions()
 	_test_failed_cast_never_notifies()
 	_test_downed_and_torn_wearer()
+	_test_torn_healer_still_refused()
 	_test_stitched_half_owners()
 	for failure: String in failures:
 		printerr(failure)
@@ -578,6 +579,75 @@ func _test_downed_and_torn_wearer() -> void:
 	_expect_rejection(healer_helper, healer_fixture, healer_party, healer_deck,
 		"downed healer", ["neg_down_healer", "seamstress", "warden", 30, 31],
 		"downed_healer")
+
+
+## A healer torn at a previous battle end stays 0 HP in the run ledger, while the
+## next CombatParty admits that same hero at its reduced maximum HP. Seat liveness
+## alone must not pay the wearer: the reward belongs to a genuinely untorn healer.
+func _test_torn_healer_still_refused() -> void:
+	var fixture := _fixture()
+	if fixture.is_empty():
+		return
+	var wardrobe: RunPatchWardrobe = fixture.wardrobe
+	var torn: RunTornMending = fixture.torn
+	var start: Array = torn.read_state()["heroes"]
+	var torn_end: Array = start.duplicate(true)
+	torn_end[1]["hp"] = 0
+	_check(torn.observe_battle_end("fight_borrowed_button_torn_healer", start, torn_end).get("ok") == true,
+		"a real battle end tears the Seamstress healer in the run ledger")
+	var torn_state: Dictionary = torn.read_state()
+	_check(torn_state["heroes"][1]["id"] == "seamstress"
+		and torn_state["heroes"][1]["hp"] == 0
+		and torn_state["heroes"][1]["max_hp"] == 27
+		and torn_state["tear_counts"]["seamstress"] == 1,
+		"the torn Seamstress keeps 0 HP and loses exactly 3 maximum HP in the run ledger")
+	var context: Dictionary = wardrobe.get_snapshot()
+	_check(wardrobe.refresh_run_context(torn_state["heroes"], context["owned"],
+		context["scraps"], context["gold"], context["cards"], context),
+		"the wardrobe adopts the torn roster and keeps the sewn Borrowed Button")
+
+	# The fresh battle party is built from the torn ledger's own max HP values, so
+	# the torn Seamstress starts it party-alive despite being run-torn.
+	var definitions: Array = []
+	for hero: Dictionary in torn_state["heroes"]:
+		definitions.append({"id": hero["id"], "max_hp": hero["max_hp"]})
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid(), "the next battle's party accepts the torn roster")
+	_check(party.get_hero(1)["id"] == "warden" and party.get_hero(1)["hp"] == 40
+		and party.get_hero(2)["id"] == "seamstress" and party.get_hero(2)["hp"] == 27
+		and not party.is_downed(2),
+		"the run-torn Seamstress starts the fresh party alive at 27 HP")
+	var helper := CombatBorrowedButton.new()
+	_check(helper.bind_combat(party, wardrobe, torn),
+		"the helper binds the fresh battle party to the torn ledgers")
+	_check(helper.read_state().get("ok") == true,
+		"the torn-healer combat binding is current and authoritative")
+	_check(party.apply_damage(1, 12) and party.get_hero(1)["hp"] == 28,
+		"the living Borrowed Button Warden is genuinely wounded")
+
+	var torn_fixture := {"party": party, "wardrobe": wardrobe, "torn": torn}
+	var deck := _deck(_teas())
+	var commit := _commit_heal(deck, party, 1)
+	_check(commit["before_hp"] == 28 and commit["after_hp"] == 31,
+		"the run-torn Seamstress still commits a real 3 HP Thimble Tea heal")
+	_expect_rejection(helper, torn_fixture, party, deck, "run-torn healer", [
+		"neg_torn_healer", "seamstress", "warden",
+		commit["before_hp"], commit["after_hp"]], "torn_healer")
+	_check(party.get_hero(1)["block"] == 0,
+		"the run-torn healer's committed heal awards zero Block to the wearer")
+	_check(helper.read_state().get("awards") == 0,
+		"the run-torn healer leaves the once-per-combat latch unspent")
+	# A distinct receipt cannot retry the very same torn healer into a payment.
+	var retry_before: Dictionary = _snapshot(deck, party, torn_fixture)
+	var retry := helper.notify_committed_heal("neg_torn_healer_retry", "seamstress",
+		"warden", commit["before_hp"], commit["after_hp"])
+	_check(retry.get("ok") == false and retry.get("awarded") == false
+		and retry.get("block") == 0 and retry.get("reason") == "torn_healer",
+		"a distinct receipt from the same run-torn healer is still refused")
+	_check(_snapshot(deck, party, torn_fixture) == retry_before,
+		"the retried torn-healer refusal leaves party, wardrobe, torn ledger, deck and RNG unchanged")
+	_check(party.get_hero(1)["block"] == 0 and helper.read_state().get("awarded") == false,
+		"no torn-healer path ever pays the wearer")
 
 
 ## AC4: a two-owner stitched play reports one notification per authenticated half,

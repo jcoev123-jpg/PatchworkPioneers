@@ -131,6 +131,11 @@ func read_state() -> Dictionary:
 ## half. `healer_id` is that commit's own owner; a whole stitched card has no owner
 ## and is refused. `before_hp`/`after_hp` are the recipient's real HP around that
 ## commit and `after_hp` must still be the authoritative HP of that hero.
+##
+## Liveness is required on both sides of the heal in BOTH authorities: a hero torn
+## at a previous battle end keeps 0 HP in RunTornMending even though the next
+## CombatParty, built from the reduced-max-HP roster, admits that hero above 0 HP.
+## Such a run-torn healer never pays, exactly like a downed one.
 ## Returns {ok, awarded, block, wearer_id, receipt_id, reason}; a refusal never
 ## changes the party, the ledgers, the deck or any RNG, and it can never pay later.
 func notify_committed_heal(receipt_id: Variant, healer_id: Variant,
@@ -155,6 +160,10 @@ func notify_committed_heal(receipt_id: Variant, healer_id: Variant,
 	var healed_position := _position_of(healed_id)
 	if _party.is_downed(healer_position):
 		return _result(false, false, 0, receipt_id, "downed_healer")
+	# A fresh battle party starts a run-torn hero above 0 HP, so seat liveness alone
+	# is not proof: the bound run ledger must also report this precise healer alive.
+	if _run_hero_hp(healer_id) <= 0:
+		return _result(false, false, 0, receipt_id, "torn_healer")
 	if _party.is_downed(healed_position):
 		return _result(false, false, 0, receipt_id, "downed_recipient")
 	if typeof(before_hp) != TYPE_INT or typeof(after_hp) != TYPE_INT:
@@ -206,10 +215,15 @@ func _wearer_is_active(wearer_id: String) -> bool:
 	var equipped: Variant = active.get(wearer_id)
 	if typeof(equipped) != TYPE_ARRAY or not equipped.has(PATCH_ID):
 		return false
-	for hero: Dictionary in torn_state.get("heroes", []):
-		if hero.get("id") == wearer_id:
-			return int(hero.get("hp", 0)) > 0
-	return false
+	return _run_hero_hp(wearer_id) > 0
+
+
+## HP of this precise hero in the bound run ledger; a missing identity reads as 0.
+func _run_hero_hp(hero_id: String) -> int:
+	for hero: Variant in _torn.read_state().get("heroes", []):
+		if typeof(hero) == TYPE_DICTIONARY and hero.get("id") == hero_id:
+			return int(hero.get("hp", 0))
+	return 0
 
 
 func _position_of(hero_id: String) -> int:
