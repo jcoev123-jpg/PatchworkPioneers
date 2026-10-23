@@ -435,9 +435,12 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	var victory_battle: Dictionary = victory["battle"]
 	var victory_latch: RunActBattleOutcome = victory_ctx["latch"]
 	var preserved := _snapshot(victory_ctx, victory_battle)
+	var victory_settled: int = (victory_latch.get_state().get("settled_node_ids") as Array).size()
 	_check(panel.open_result(victory_latch), "accepts settled Boss VICTORY")
 	await _frames()
 	_validate_view("Victory", "Boss victory")
+	_check(panel.summary_label.text.begins_with("Battles resolved: %d\n" % victory_settled),
+		"Boss victory shows correct battles resolved count")
 	var generation := panel._generation
 	var connections := panel.return_button.pressed.get_connections()
 	_check(connections.size() == 1, "only one callback for Return button")
@@ -477,9 +480,12 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	var defeat_battle: Dictionary = defeat["battle"]
 	var defeat_latch: RunActBattleOutcome = defeat_ctx["latch"]
 	var unchanged := _snapshot(defeat_ctx, defeat_battle)
+	var defeat_settled: int = (defeat_latch.get_state().get("settled_node_ids") as Array).size()
 	_check(panel.open_result(defeat_latch), "new settled DEFEAT opens after close")
 	await _frames()
 	_validate_view("Defeat", "party defeat")
+	_check(panel.summary_label.text.begins_with("Battles resolved: %d\n" % defeat_settled),
+		"Party defeat shows correct battles resolved count")
 	if old_callback.is_valid():
 		old_callback.call()
 	_check(returns == 1 and not panel.return_button.disabled,

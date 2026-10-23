@@ -201,12 +201,12 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 				parts.append("%s %s" % [slot, id.capitalize() if not id.is_empty() else "-"])
 			expected_rows.append("%s  %s" % [
 				str(hero.hero_id).capitalize(), "  ·  ".join(parts)])
-		_check(rows.size() == expected_rows.size(),
-			"mounted signature has two counts, one craft line per nonempty deck and three hero lines")
-		if rows.size() == expected_rows.size():
+		_check(rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"),
+			"mounted signature has battles resolved count, two counts, one craft line per nonempty deck and three hero lines")
+		if rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"):
 			for i in range(expected_rows.size()):
-				_check(rows[i] == expected_rows[i],
-					"actual signature line %d matches the independent oracle" % i)
+				_check(rows[i + 1] == expected_rows[i],
+					"actual signature line %d matches the independent oracle" % (i + 1))
 	_check(_source(ctx) == before, "opening and painting cannot change source, map, receipt or RNG")
 
 
@@ -373,7 +373,7 @@ func _run() -> void:
 	# Invalid history must not be represented by a zero-count story.
 	app.run_next_stitch_id = 0
 	_check(panel.open_result(loss.latch)
-		and panel.summary_label.text == "Summary unavailable",
+		and panel.summary_label.text.ends_with("Summary unavailable"),
 		"bad ledger cursor fails closed")
 	panel.close_result()
 	app.run_next_stitch_id = 1
@@ -387,7 +387,7 @@ func _run() -> void:
 	app.run_deck.append("warden_strike")
 	before = _source(loss)
 	_check(panel.open_result(loss.latch)
-		and panel.summary_label.text == "Summary unavailable",
+		and panel.summary_label.text.ends_with("Summary unavailable"),
 		"stale bound wardrobe fails closed rather than asserting zero worn")
 	_check(panel.title_label.text == "Defeat" and not panel.return_button.disabled,
 		"unavailable signature preserves actual terminal outcome and Return")
