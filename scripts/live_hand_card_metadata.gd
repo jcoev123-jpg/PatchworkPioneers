@@ -17,6 +17,11 @@ const KNOWN_EFFECT_KEYS := [
 	"conditional_damage", "random_target_each_hit", "rng_source",
 	"living_targets_only", "duration",
 ]
+## Plain-text keyword reminders appended to the tooltip (never the card face)
+## for authored cards that actually carry the mechanic. They explain only the
+## published rule; no card is shown as automatically pinning or unravelling.
+const PINNED_EXPLANATION := "PINNED: one pin per enemy, storing the hero who applied it. A DIFFERENT hero's next attack deals +5 damage BEFORE Weak/Exposed and consumes it once; same-hero attacks do not. A new pin replaces it; an unused pin lasts to combat end."
+const UNRAVEL_EXPLANATION := "UNRAVEL: an Unravel N adds N to that enemy's gauge and each Bleed tick adds 1. At the normal 8 / elite 12 / boss 16 threshold the enemy becomes Unravelled and skips its next enemy action; the gauge then resets to 0 and its threshold rises by 4 for the rest of combat."
 
 var _catalog := StarterCards.new()
 var _warden_pool := WardenPoolCards.new()
@@ -81,6 +86,8 @@ func base_effect_text(card_id: String) -> String:
 	var effect_parts: Array[String] = _effect_lines(card_id, definition, true)
 	if not effect_parts.is_empty():
 		parts.append("; ".join(effect_parts))
+	for keyword_line in _keyword_lines(definition):
+		parts.append(keyword_line)
 	return "\n".join(parts)
 
 
@@ -270,6 +277,38 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 			parts.append("BASE another authored effect is not described" if precise else "other effects")
 			break
 	return parts
+
+
+## The keyword glossary is driven only by authored effects, so an ordinary
+## damage card never gains a pin or Unravel paragraph. Unravelled/half-gauge
+## conditionals (Snip the Seam) need the Unravel rules just as an Unravel N does.
+func _keyword_lines(definition: Dictionary) -> Array[String]:
+	var lines: Array[String] = []
+	var raw_effects: Variant = definition.get("effects", {})
+	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
+	if effects.has("pinned"):
+		lines.append(PINNED_EXPLANATION)
+	if effects.has("unravel") or _has_unravel_conditional(effects):
+		lines.append(UNRAVEL_EXPLANATION)
+	return lines
+
+
+func _has_unravel_conditional(effects: Dictionary) -> bool:
+	var condition: Variant = effects.get("conditional_damage")
+	if not condition is Dictionary:
+		return false
+	var authored: Variant = condition.get("conditions", [])
+	if not authored is Array:
+		return false
+	for entry in authored:
+		if not entry is Dictionary:
+			continue
+		if str(entry.get("status", "")) == "unravelled":
+			return true
+		if str(entry.get("gauge", "")) == "unravel" \
+				and str(entry.get("comparison", "")) == "at_least_half":
+			return true
+	return false
 
 
 ## Readable clauses for the authored conditional-damage predicates. Unrecognized
