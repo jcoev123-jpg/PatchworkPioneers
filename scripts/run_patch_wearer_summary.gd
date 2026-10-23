@@ -19,6 +19,9 @@ const STATUS_KEYS := ["bleed", "weak", "exposed"]
 const ATTACK_PATCHES_PATH := "res://data/patches/m04_attack_patches.json"
 const COAT_PATCHES_PATH := "res://data/patches/m04_coat_patches.json"
 const INITIAL_SLOTS_PATH := "res://data/patches/initial_patch_slots.json"
+const M05_HEAD_PATCHES_PATH := "res://data/patches/m05_head_patches.json"
+const M05_ARM_PATCHES_PATH := "res://data/patches/m05_arm_support_patches.json"
+const M05_ATTACK_PATCHES_PATH := "res://data/patches/m05_attack_patches.json"
 
 ## The only authored wearer powers this readout may describe. Each known ID is
 ## checked against its shipped catalog record before any text is published.
@@ -36,6 +39,28 @@ const KNOWN_COAT_POWERS := {
 	"reinforced_patchcoat": {"slot": "COAT", "max_hp_bonus": 9},
 	"thick_felt_mantle": {"slot": "COAT", "max_hp_bonus": 10},
 }
+## M05 HEAD/ARM wearer modifiers. The effect implementation is owned by the
+## combat layer (CombatM05HeadPatchRules, CombatFrayfinderMitt); this readout
+## only authenticates the authored records and describes them truthfully.
+const KNOWN_M05_HEAD_POWERS := {
+	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1},
+	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1},
+	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1},
+	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2},
+}
+const KNOWN_M05_ARM_POWERS := {
+	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
+	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
+}
+## Frayfinder is a conditional first-hit Unravel bonus, never an unconditional
+## +2 to every attack. Every authored condition is part of the identity.
+const KNOWN_M05_ATTACK_POWERS := {
+	"frayfinder_mitt": {"slot": "ARM",
+		"effect": "first_single_target_half_unravel_attack_bonus", "amount": 2,
+		"minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2,
+		"once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single"},
+}
 ## Shop catalogs author slot identity alone; CombatShopPatchRules owns their powers.
 ## Descriptions of the already authored rules, never new effect calculations.
 const KNOWN_TEXTS := {
@@ -49,6 +74,14 @@ const KNOWN_TEXTS := {
 	"chain_stitched_coat": "+7 maximum HP",
 	"reinforced_patchcoat": "+9 maximum HP",
 	"thick_felt_mantle": "+10 maximum HP",
+	"bloodstitch_bonnet": "+1 Bleed on eligible Bleed cards owned by this living wearer only",
+	"button_glass_visor": "+1 Exposed on eligible Exposed cards owned by this living wearer only",
+	"stern_seam_cap": "+1 Weak on eligible Weak cards owned by this living wearer only",
+	"reinforced_browband": "+2 Block on eligible Block cards owned by this living wearer only",
+	"hemguard_cuff": "+2 Block on eligible Block cards owned by this living wearer only",
+	"red_bobbin_cuff": "+1 Bleed on eligible Bleed cards owned by this living wearer only",
+	"loose_thread_glove": "+1 Unravel on eligible Unravel cards owned by this living wearer only",
+	"frayfinder_mitt": "+2 Unravel once per player turn on this living wearer's first single-target attack hit, only against a target already at least 1/2 of its current Unravel threshold (not on every attack)",
 }
 
 
@@ -327,8 +360,12 @@ static func _authority(catalogs: Variant) -> Dictionary:
 	var attack: Variant = _catalog_array(catalogs, "attack", ATTACK_PATCHES_PATH)
 	var coat: Variant = _catalog_array(catalogs, "coat", COAT_PATCHES_PATH)
 	var initial: Variant = _catalog_array(catalogs, "initial", INITIAL_SLOTS_PATH)
+	var m05_head: Variant = _catalog_array(catalogs, "m05_head", M05_HEAD_PATCHES_PATH)
+	var m05_arm: Variant = _catalog_array(catalogs, "m05_arm", M05_ARM_PATCHES_PATH)
+	var m05_attack: Variant = _catalog_array(catalogs, "m05_attack", M05_ATTACK_PATCHES_PATH)
 	if typeof(attack) != TYPE_ARRAY or typeof(coat) != TYPE_ARRAY \
-			or typeof(initial) != TYPE_ARRAY:
+			or typeof(initial) != TYPE_ARRAY or typeof(m05_head) != TYPE_ARRAY \
+			or typeof(m05_arm) != TYPE_ARRAY or typeof(m05_attack) != TYPE_ARRAY:
 		return {}
 	var slots: Dictionary = {}
 	if not _collect(attack, "attack", slots):
@@ -337,6 +374,12 @@ static func _authority(catalogs: Variant) -> Dictionary:
 		return {}
 	if not _collect(initial, "initial", slots):
 		return {}
+	if not _collect(m05_head, "m05_head", slots):
+		return {}
+	if not _collect(m05_arm, "m05_arm", slots):
+		return {}
+	if not _collect(m05_attack, "m05_attack", slots):
+		return {}
 	for id in KNOWN_ATTACK_POWERS:
 		if not slots.has(id):
 			return {}
@@ -344,6 +387,15 @@ static func _authority(catalogs: Variant) -> Dictionary:
 		if not slots.has(id):
 			return {}
 	for id in CombatShopPatchRules.EFFECTS:
+		if not slots.has(id):
+			return {}
+	for id in KNOWN_M05_HEAD_POWERS:
+		if not slots.has(id):
+			return {}
+	for id in KNOWN_M05_ARM_POWERS:
+		if not slots.has(id):
+			return {}
+	for id in KNOWN_M05_ATTACK_POWERS:
 		if not slots.has(id):
 			return {}
 	return {"slots": slots}
@@ -395,6 +447,48 @@ static func _collect(entries: Array, kind: String, slots: Dictionary) -> bool:
 				return false
 			var bonus: Variant = entry.get("max_hp_bonus")
 			if not _integral(bonus) or int(bonus) != int(expected["max_hp_bonus"]):
+				return false
+			slots[id] = expected["slot"]
+		elif kind == "m05_head" or kind == "m05_arm":
+			var table: Dictionary = KNOWN_M05_HEAD_POWERS
+			if kind == "m05_arm":
+				table = KNOWN_M05_ARM_POWERS
+			if not table.has(id):
+				continue
+			if slots.has(id):
+				return false
+			var expected: Dictionary = table[id]
+			if entry.get("slot") != expected["slot"] or entry.get("effect") != expected["effect"]:
+				return false
+			var amount: Variant = entry.get("amount")
+			if not _integral(amount) or int(amount) != int(expected["amount"]):
+				return false
+			slots[id] = expected["slot"]
+		elif kind == "m05_attack":
+			if not KNOWN_M05_ATTACK_POWERS.has(id):
+				continue
+			if slots.has(id):
+				return false
+			var expected: Dictionary = KNOWN_M05_ATTACK_POWERS[id]
+			if entry.get("slot") != expected["slot"] or entry.get("effect") != expected["effect"]:
+				return false
+			var amount: Variant = entry.get("amount")
+			if not _integral(amount) or int(amount) != int(expected["amount"]):
+				return false
+			var numerator: Variant = entry.get("minimum_unravel_numerator")
+			var denominator: Variant = entry.get("minimum_unravel_denominator")
+			if not _integral(numerator) \
+					or int(numerator) != int(expected["minimum_unravel_numerator"]):
+				return false
+			if not _integral(denominator) \
+					or int(denominator) != int(expected["minimum_unravel_denominator"]):
+				return false
+			if entry.get("once_per_player_turn") != true:
+				return false
+			var hit_number: Variant = entry.get("hit_number")
+			if not _integral(hit_number) or int(hit_number) != int(expected["hit_number"]):
+				return false
+			if entry.get("target_kind") != expected["target_kind"]:
 				return false
 			slots[id] = expected["slot"]
 		else:
