@@ -51,7 +51,8 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		"preview is mounted only with the genuinely confirmed Elite claim context")
 	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
 		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
-		and sewing._prompt.text.contains(drop) and sewing._prompt.text.contains(state.definitions[drop]),
+		and sewing._prompt.text.contains(sewing._friendly_label(drop))
+		and sewing._prompt.text.contains(sewing._friendly_label(state.definitions[drop])),
 		"visible wrapped keyboard-readable prompt names the exact drop and slot")
 	for button in sewing.hero_buttons:
 		var hero_id: String = button.get_meta("hero_id")
@@ -64,10 +65,10 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		entries[hero_id] = preview
 		var explanation: String = button.tooltip_text
 		var expected_gain: String = "+1 scrap" if preview.displaced_id != "" else "+0 scrap"
-		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(drop)
+		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(sewing._friendly_label(drop))
 			and explanation.contains(preview.slot) and explanation.contains(expected_gain)
 			and (preview.rules_text.is_empty() or explanation.contains(preview.rules_text))
-			and (preview.displaced_id.is_empty() or explanation.contains(preview.displaced_id))
+			and (preview.displaced_id.is_empty() or explanation.contains(sewing._friendly_label(preview.displaced_id)))
 			and (preview.displaced_rules_text.is_empty()
 				or explanation.contains(preview.displaced_rules_text)),
 			"mounted %s tooltip describes authoritative power and own displacement" % hero_id)
@@ -98,7 +99,7 @@ func _verify_worn_readout() -> void:
 			if record.patch_id == "":
 				continue
 			var fragment: String = "%s: %s (%s) [%s]" % [
-				hero.id.capitalize(), record.patch_id, record.slot,
+				hero.id.capitalize(), sewing._friendly_label(record.patch_id), record.slot,
 				"active" if record.active else "inactive"]
 			if not record.rules_text.is_empty():
 				fragment += " - %s" % record.rules_text
@@ -275,7 +276,7 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 		_reject_patch(callback, "torn-party duplicate sewing callback")
 		await _click(app.continue_button)
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
-			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), drop]),
+			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), sewing._friendly_label(drop)]),
 			"Continue remains usable and wearer summary survives torn-party Elite")
 		_verify_worn_readout()
 		_reject_patch(callback, "torn-party stale callback after Continue")
@@ -446,7 +447,7 @@ func _run() -> void:
 			_check(app.party_carryover._wardrobe == sewing.wardrobe,
 				"successful sewing binds the exact live carryover wardrobe")
 			var slot: String = after.definitions[drop]
-			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), drop, slot]),
+			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), sewing._friendly_label(drop), slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
 			_check(chosen_preview.get("ok") == true
 				and slot == chosen_preview.get("slot")
@@ -474,7 +475,7 @@ func _run() -> void:
 			retained.append(callback)
 			observations.append([after, reward_state, app.run_rng.state, app.run_trinkets.duplicate()])
 			await _click(app.continue_button)
-			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(drop), "Continue retains visible wearer")
+			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(sewing._friendly_label(drop)), "Continue retains visible wearer")
 			_verify_worn_readout()
 			_reject_patch(callback, "stale sew after Continue")
 		_check(observations.size() == 2, "both earned drops actually sewn")

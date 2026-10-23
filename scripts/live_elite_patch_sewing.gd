@@ -15,6 +15,65 @@ var _token := 0
 var _bound_carry: RunTornCarryover
 var _summary_inputs: Array = []
 
+const HERO_COLORS := {
+    "warden": Color("4a5d73"),
+    "seamstress": Color("6e4f6b"),
+    "tinker": Color("c49a3a"),
+}
+
+const FRIENDLY_LABELS := {
+    "button_eye": "Button Eye",
+    "pincushion_arm": "Pincushion Arm",
+    "quilted_coat": "Quilted Coat",
+    "padded_vest": "Padded Vest",
+    "double_quilt_coat": "Double Quilt Coat",
+    "scrap_lined_vest": "Scrap Lined Vest",
+    "wool_patch_cloak": "Wool Patch Cloak",
+    "chain_stitched_coat": "Chain Stitched Coat",
+    "stitched_badge": "Stitched Badge",
+    "spare_spool": "Spare Spool",
+}
+
+static func _friendly_label(id: String) -> String:
+	return FRIENDLY_LABELS.get(id, id)
+
+
+class StitchedTag extends Control:
+	var accent_color: Color = Color("c49a3a")
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
+	func _draw() -> void:
+		var border_color := Color("302b29")
+		var fill_color := Color("ecdfbd")
+		var thread := Color("c9b996")
+		# Draw paper tag background
+		draw_rect(Rect2(Vector2.ZERO, size), fill_color)
+		# Draw dark border
+		draw_rect(Rect2(Vector2.ZERO, size), border_color, false, 2.0)
+		# Draw stitched seams (dashed lines just inside border)
+		var inner := Rect2(Vector2(4, 4), size - Vector2(8, 8))
+		for y in [inner.position.y, inner.end.y - 1]:
+			draw_line(Vector2(inner.position.x, y), Vector2(inner.end.x, y), thread, 1.5)
+			# Small dashes for stitch effect
+			for offset in range(0, int(inner.size.x), 6):
+				var from_x: float = inner.position.x + offset
+				var to_x: float = min(from_x + 3.0, inner.end.x)
+				if to_x > from_x:
+					draw_line(Vector2(from_x, y), Vector2(to_x, y), thread, 1.5)
+		for x in [inner.position.x, inner.end.x - 1]:
+			for offset in range(0, int(inner.size.y), 6):
+				var from_y: float = inner.position.y + offset
+				var to_y: float = min(from_y + 3.0, inner.end.y)
+				if to_y > from_y:
+					draw_line(Vector2(x, from_y), Vector2(x, to_y), thread, 1.5)
+		# Pinned/button motif: small filled circle in accent color at top-left
+		var pin_center := Vector2(16, 16)
+		draw_circle(pin_center, 5, accent_color)
+		# Small dark ring around pin
+		draw_circle(pin_center, 7, border_color, false, 1.0)
+
 
 func _ready() -> void:
 	summary = Label.new()
@@ -153,7 +212,7 @@ func observe_claim(offering, result: Dictionary) -> void:
 	reward.reparent(column)
 	_prompt = Label.new()
 	_prompt.name = "ElitePatchPowerPreview"
-	_prompt.add_theme_font_size_override("font_size", 13)
+	_prompt.add_theme_font_size_override("font_size", 18)
 	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(_prompt)
@@ -162,7 +221,7 @@ func observe_claim(offering, result: Dictionary) -> void:
 	if power.is_empty():
 		power = "power not documented"
 	_prompt.text = "%s (%s): %s. Choose a living wearer (free); focus a hero for slot consequences." % [
-		drop, state.definitions[drop], power]
+		_friendly_label(drop), _friendly_label(state.definitions[drop]), power]
 	_choices = HBoxContainer.new()
 	column.add_child(_choices)
 	var label := Label.new()
@@ -173,7 +232,53 @@ func observe_claim(offering, result: Dictionary) -> void:
 		button.text = hero.id.capitalize()
 		button.set_meta("hero_id", hero.id)
 		button.disabled = hero.hp == 0 or not previews.has(hero.id)
-		button.custom_minimum_size = Vector2(150, 40)
+		button.custom_minimum_size = Vector2(170, 52)
+		# Styled sewn-paper tag appearance (>=18px text, cream fill, stitched seams)
+		button.add_theme_font_size_override("font_size", 18)
+		button.add_theme_color_override("font_color", Color("302b29"))
+		button.add_theme_color_override("font_hover_pressed_color", Color("302b29"))
+		button.add_theme_color_override("font_disabled_color", Color("777166"))
+		# Custom styleboxes for each state
+		var paper_normal := StyleBoxFlat.new()
+		paper_normal.bg_color = Color("ecdfbd")
+		paper_normal.border_color = HERO_COLORS.get(hero.id, Color("777166"))
+		paper_normal.set_border_width_all(3)
+		paper_normal.set_corner_radius_all(4)
+		button.add_theme_stylebox_override("normal", paper_normal)
+		var paper_hover := StyleBoxFlat.new()
+		paper_hover.bg_color = Color("f5f0e6")
+		paper_hover.border_color = Color("302b29")
+		paper_hover.set_border_width_all(3)
+		paper_hover.set_corner_radius_all(4)
+		button.add_theme_stylebox_override("hover", paper_hover)
+		var paper_pressed := StyleBoxFlat.new()
+		paper_pressed.bg_color = Color("dcd8b8")
+		paper_pressed.border_color = Color("302b29")
+		paper_pressed.set_border_width_all(3)
+		paper_pressed.set_corner_radius_all(4)
+		button.add_theme_stylebox_override("pressed", paper_pressed)
+		var paper_disabled := StyleBoxFlat.new()
+		paper_disabled.bg_color = Color("d6d2c8")
+		paper_disabled.border_color = Color("777166")
+		paper_disabled.set_border_width_all(3)
+		paper_disabled.set_corner_radius_all(4)
+		button.add_theme_stylebox_override("disabled", paper_disabled)
+		# Focus ring in dark ink
+		var focus_box := StyleBoxFlat.new()
+		focus_box.bg_color = Color.TRANSPARENT
+		focus_box.border_color = Color("302b29")
+		focus_box.set_border_width_all(3)
+		focus_box.draw_center = false
+		focus_box.expand_margin_left = 3
+		focus_box.expand_margin_right = 3
+		focus_box.expand_margin_top = 3
+		focus_box.expand_margin_bottom = 3
+		button.add_theme_stylebox_override("focus", focus_box)
+		# Add stitched accent control as a child (drawn over button face)
+		var stitch := StitchedTag.new()
+		stitch.accent_color = HERO_COLORS.get(hero.id, Color("c49a3a"))
+		stitch.name = "StitchAccent"
+		button.add_child(stitch)
 		if previews.has(hero.id):
 			button.tooltip_text = _preview_line(previews[hero.id])
 		else:
@@ -196,11 +301,11 @@ static func _preview_line(preview: Dictionary) -> String:
 	var displaced: String = "empty %s slot; +0 scrap" % preview["slot"]
 	if preview["displaced_id"] != "":
 		displaced = "replaces %s in %s slot (destroyed); +1 scrap" % [
-			preview["displaced_id"], preview["slot"]]
+			_friendly_label(preview["displaced_id"]), preview["slot"]]
 		if not preview["displaced_rules_text"].is_empty():
 			displaced += " [old: %s]" % preview["displaced_rules_text"]
 	return "%s: %s (%s) - %s; %s" % [
-		preview["wearer"].capitalize(), preview["patch_id"],
+		preview["wearer"].capitalize(), _friendly_label(preview["patch_id"]),
 		preview["slot"], power, displaced]
 
 
@@ -304,7 +409,7 @@ func _update_summary() -> void:
 			if worn["patch_id"] == "":
 				continue
 			var line: String = "%s: %s (%s) [%s]" % [
-				hero["id"].capitalize(), worn["patch_id"], worn["slot"],
+				hero["id"].capitalize(), _friendly_label(worn["patch_id"]), worn["slot"],
 				"active" if worn["active"] else "inactive"]
 			if not worn["rules_text"].is_empty():
 				line += " - %s" % worn["rules_text"]
