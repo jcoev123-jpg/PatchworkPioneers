@@ -141,11 +141,14 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 		for node in ordered:
 			if choices.has(node["id"]):
 				numbered_legal.append(node["id"])
-	for floor_nodes in floors:
-		for node in floor_nodes:
+	_check(atlas._rendered_graph == floors, "complete twelve-floor graph retained in guarded atlas")
+	# Only the upcoming three floors are drawn; the other nine remain model-owned.
+	for floor_index in range(3):
+		for node in floors[floor_index]:
 			expected_nodes[node.id] = node
-			for target in node.outgoing:
-				expected_edges[node.id + "->" + target] = true
+			if floor_index < 2:
+				for target in node.outgoing:
+					expected_edges[node.id + "->" + target] = true
 	var nodes := {}
 	var edges := {}
 	var highlighted: Array = []
@@ -158,7 +161,7 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				continue
 			var node: Dictionary = expected_nodes[id]
 			var number := numbered_legal.find(id)
-			var expected_caption := (str(number + 1) + "\n" if number >= 0 else "") + String(node.type)
+			var expected_caption := (str(number + 1) + " " if number >= 0 else "") + String(node.type)
 			var identity_label: Label = child.get_node("Identity") as Label
 			_check(identity_label.text == expected_caption
 				and not identity_label.text.contains(id)
@@ -195,11 +198,11 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				var to: Dictionary = expected_nodes[target]
 				_check(child.points.size() >= 13, "drawn link endpoints exist")
 				if child.points.size() >= 13:
-					_check(child.points[0] == Vector2(30 + (from.floor - 1) * 99 + 84, 130 + from.position * 106 + 29)
-						and child.points[12] == Vector2(30 + (to.floor - 1) * 99, 130 + to.position * 106 + 29),
+					_check(child.points[0] == Vector2(755 + (from.floor - 1) * 150 + 80, 145 + from.position * 101 + 40)
+						and child.points[12] == Vector2(755 + (to.floor - 1) * 150, 145 + to.position * 101 + 40),
 						"drawn endpoints match model: " + pair)
 	_check(nodes.size() == expected_nodes.size() and edges == expected_edges and not edges.is_empty(),
-		"all actual nodes and links rendered")
+		"all and only actual in-window nodes and links rendered")
 	_check(highlighted == app.run_map.get_legal_choices(), "exact legal opening IDs highlighted")
 	var hidden := _snapshot(app)
 	_check(hidden.slice(0, 6) == before.slice(0, 6), "opening spends no graph/route/legal/encounter/RNG/combat state")

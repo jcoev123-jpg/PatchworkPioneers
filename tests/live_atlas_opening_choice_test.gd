@@ -24,8 +24,7 @@ func _inert(app, callback: Callable, id: String, reason: String) -> void:
 		app.route_atlas_overlay, app.route_map_button, root.gui_get_focus_owner()], reason)
 
 
-## The mounted live book must dress every authored kind in its committed sewn token, and
-## keep the original drawn patch for the one kind that has no token.
+## Mounted app opens an honest three-floor viewport, not the full distant map.
 func _tokens(atlas: RunRouteAtlas) -> void:
 	var expected := {
 		"Fight": "res://assets/paper/ui/map_node_fight.png",
@@ -35,27 +34,52 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 		"Rest": "res://assets/paper/ui/map_node_rest.png",
 		"Boss": "res://assets/paper/ui/map_node_boss.png",
 	}
-	var seen: Dictionary = {}
+	var floors := atlas._map.get_floors()
+	var actual_ids: Dictionary = {}
+	var legal_buttons := 0
+	var journal := atlas.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+	_check(journal != null and journal.current_floor == 0
+		and journal.current_area.is_empty() and journal.next_floor == 1
+		and journal.next_area == "Meadow" and journal.visited.is_empty()
+		and journal.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"real app mounts left journey journal from actual opening")
 	for child in atlas.get_children():
 		if not (child is PanelContainer):
 			continue
-		var kind: String = child.get_meta("route_kind")
+		var id: String = child.get_meta("route_id")
+		var actual := atlas._map.get_node(id)
+		actual_ids[id] = true
+		_check(actual.floor >= 1 and actual.floor <= 3
+			and child.get_meta("route_kind") == actual.type
+			and Rect2(child.position, child.size).intersects(RunRouteAtlas.PAGE_RIGHT),
+			"real app shows only next three floors on the right page " + id)
 		var art := child.get_node_or_null("Art") as RunRouteAtlas.NodeToken
-		if not expected.has(kind):
-			# Kinds outside these six authored tokens keep a readable drawn identity; this
-			# task adds no art for them, so no arrival of future art is asserted away.
-			_check(child.get_node_or_null("Identity") is Label,
-				"live " + kind + " marker keeps its readable drawn identity")
-			continue
-		seen[kind] = true
-		_check(art != null and art.token_kind == kind
-			and art.token_texture == load(expected[kind])
-			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE
-			and art.focus_mode == Control.FOCUS_NONE
-			and (child.get_node("Identity") as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT,
-			"live marker shows the committed " + kind + " sewn token")
-	for kind in expected:
-		_check(seen.has(kind), "seeded live book shows the " + kind + " sewn token")
+		_check(art != null and art.token_kind == actual.type
+			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+			"real patch carries its sewn kind emblem " + id)
+		if expected.has(actual.type) and ResourceLoader.exists(expected[actual.type], "Texture2D"):
+			_check(art != null and art.token_texture == load(expected[actual.type]),
+				"real app uses original sewn token image for " + id)
+		else:
+			_check(art != null and art.token_texture == null,
+				"real app keeps drawn Treasure or unavailable-art fallback " + id)
+		var action := child.get_node_or_null("Action") as Button
+		if atlas._map.get_legal_choices().has(id):
+			legal_buttons += 1
+			_check(action != null and action.is_visible_in_tree()
+				and action.tooltip_text.contains(id),
+				"real opening has exact canonical legal action " + id)
+		else:
+			_check(action == null, "future off-floor nodes are inert " + id)
+	var node_count := 0
+	for floor_number in range(3):
+		for node in floors[floor_number]:
+			node_count += 1
+			_check(actual_ids.has(node["id"]),
+				"every authored visible floor 1-3 patch appears on the mounted book")
+	_check(actual_ids.size() == node_count
+		and legal_buttons == atlas._map.get_legal_choices().size(),
+		"real app shows exactly the window and all 3-4 opening choices")
 
 
 ## Value-only ledger so the direct chooser and every atlas input can be compared.

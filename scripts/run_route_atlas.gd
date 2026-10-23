@@ -11,10 +11,10 @@ extends Control
 ## map-board image (MAP_BOARD_PATH) replaces the drawn pages when ResourceLoader confirms
 ## it exists; a missing image keeps the complete drawn book, so no PNG is required.
 ##
-## Each marker also shows the committed sewn route token for its exact authored kind
-## (NODE_TOKEN_PATHS) in an inert left column, aspect-preserved, behind its Identity
-## caption and legal Action. A kind without authored art (Treasure) or a token whose
-## file cannot be loaded keeps the original drawn paper marker, so no PNG is required.
+## The left page carries an inert twelve-bead pinned diary. Only the current origin
+## and the next three floors appear on the right page; all legal buttons are in its
+## first column. Each round patch shows its original aspect-preserved token art
+## above its high-contrast caption; Treasure/missing art draws a stitched emblem.
 ##
 ## Presentation only: a stitch that becomes legal because the party just visited its source
 ## sews into view with a transparent-to-coloured gradient mask on the existing full path.
@@ -24,11 +24,12 @@ extends Control
 ## reveal ends (or the view rebuilds), and every request/refresh path stays synchronous.
 
 const ATLAS_SIZE := Vector2(1240.0, 600.0)
-const NODE_SIZE := Vector2(84.0, 58.0)
-const FIRST_X := 30.0
-const FLOOR_STEP := 99.0
-const FIRST_Y := 130.0
-const ROW_STEP := 106.0
+const NODE_SIZE := Vector2(80.0, 80.0)
+const FIRST_X := 755.0
+const FLOOR_STEP := 150.0
+const ORIGIN_X := 636.0
+const FIRST_Y := 145.0
+const ROW_STEP := 101.0
 const CHOSEN_BG := Color("#426458")
 const LEGAL_BG := Color("#887244")
 const OTHER_BG := Color("#484651")
@@ -49,10 +50,10 @@ const NODE_TOKEN_PATHS := {
 	"Rest": "res://assets/paper/ui/map_node_rest.png",
 	"Boss": "res://assets/paper/ui/map_node_boss.png",
 }
-## Width of the marker's left token column; the Identity caption keeps the rest.
-const NODE_TOKEN_COLUMN := 36.0
+## Maximum drawn token image width inside the round patch, above its caption.
+const NODE_TOKEN_COLUMN := 48.0
 const BOOK_RECT := Rect2(10.0, 20.0, 1220.0, 564.0)
-## The gutter falls in the gap between floors 6 and 7, so no patch covers the spine.
+## The two pages are deliberately separated by a gutter no map patch crosses.
 const PAGE_LEFT := Rect2(18.0, 28.0, 591.0, 548.0)
 const PAGE_RIGHT := Rect2(624.0, 28.0, 598.0, 548.0)
 const SPINE_RECT := Rect2(609.0, 24.0, 15.0, 556.0)
@@ -69,8 +70,7 @@ const PIN_SIZE := Vector2(24.0, 30.0)
 ## Normal and presentation-only fast reveal of a newly legal stitch, in seconds.
 const REVEAL_DURATION := 0.6
 const REVEAL_FAST_DURATION := 0.15
-## The authored book areas, in floor order: each label names the floor columns it groups.
-## The four Fight landscapes and the single Boss floor keep their exact spans.
+## Authored floor bands; journal and each visible floor heading use the same mapping.
 const AREA_BANDS := [
 	{"name": "Meadow", "first_floor": 1, "last_floor": 3},
 	{"name": "Woods", "first_floor": 4, "last_floor": 6},
@@ -78,15 +78,12 @@ const AREA_BANDS := [
 	{"name": "Peaks", "first_floor": 10, "last_floor": 11},
 	{"name": "Boss", "first_floor": 12, "last_floor": 12},
 ]
-## Area names sit just above the first patch row, clear of the floor numbers, so they
-## read as group captions over either the drawn pages or the owner board image.
-const AREA_LABEL_TOP := 98.0
+## Per-visible-floor area captions are separated from the floor heading and patches.
+const AREA_LABEL_TOP := 68.0
 const AREA_LABEL_HEIGHT := 24.0
-## Inert sewn status tab in the free top-left of PAGE_LEFT, above the floor-number row
-## at y=64 and the area captions at y=98. It names the area and floor the NEXT legal
-## map choice visits; it is never a map node and never takes pointer or keyboard input.
-const NEXT_AREA_TAB_RECT := Rect2(30.0, 30.0, 320.0, 29.0)
-const NEXT_AREA_TAB_FONT_SIZE := 16
+## Next-floor tab sits on the left page above the journey diary; it has no input.
+const NEXT_AREA_TAB_RECT := Rect2(46.0, 50.0, 500.0, 38.0)
+const NEXT_AREA_TAB_FONT_SIZE := 18
 
 signal node_requested(id: String)
 
@@ -115,10 +112,8 @@ var board_texture_override: Texture2D = null
 var board_texture_path := MAP_BOARD_PATH
 
 
-## Inert sewn route token mounted in a marker's left column, behind its Identity caption
-## and legal Action. PanelContainer stretches every child to the paper's content rect, so
-## the token draws itself aspect-preserved inside that column instead of stretching the
-## committed art. Never takes pointer input or keyboard focus.
+## Inert token art or drawn fallback in the top half of a circular sewn patch.
+## The caption sits along the lower edge, and the transparent Action covers the face.
 class NodeToken extends Control:
 	var token_kind := ""
 	var token_texture: Texture2D = null
@@ -128,21 +123,117 @@ class NodeToken extends Control:
 		focus_mode = Control.FOCUS_NONE
 		resized.connect(queue_redraw)
 
-	## Aspect-preserved destination of the committed art, centred in the token column.
+	## Keep art centred in the upper portion of a circular patch, leaving the
+	## lower row for the readable kind and live shortcut number.
 	func token_rect() -> Rect2:
 		if token_texture == null or size.x <= 0.0 or size.y <= 0.0:
 			return Rect2()
 		var pixels := Vector2(token_texture.get_width(), token_texture.get_height())
 		if pixels.x <= 0.0 or pixels.y <= 0.0:
 			return Rect2()
-		var fit := minf(minf(RunRouteAtlas.NODE_TOKEN_COLUMN, size.x) / pixels.x, size.y / pixels.y)
+		var fit := minf(minf(RunRouteAtlas.NODE_TOKEN_COLUMN, size.x - 10.0) / pixels.x,
+			minf(44.0, size.y - 20.0) / pixels.y)
 		var drawn := pixels * fit
-		return Rect2(Vector2(0.0, (size.y - drawn.y) * 0.5), drawn)
+		return Rect2(Vector2((size.x - drawn.x) * 0.5, 4.0), drawn)
 
 	func _draw() -> void:
 		var rect := token_rect()
 		if rect.size.x > 0.0 and rect.size.y > 0.0:
 			draw_texture_rect(token_texture, rect, false)
+			return
+		# Treasure and unknown/missing textures receive a stitched paper emblem.
+		var middle := Vector2(size.x * 0.5, 26.0)
+		draw_circle(middle, 23.0, Color("#d8c9a2"))
+		draw_arc(middle, 21.0, 0.0, TAU, 32, RunRouteAtlas.INK, 1.6, true)
+		for offset in [-17.0, -5.0, 7.0]:
+			draw_line(middle + Vector2(offset, -18), middle + Vector2(offset + 5, -18),
+				RunRouteAtlas.THREAD, 2.0, true)
+		var font := get_theme_default_font()
+		if font != null:
+			var glyph := "▣" if token_kind == "Treasure" else "?"
+			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
+				20.0, 27, RunRouteAtlas.INK)
+
+## Left-hand travel diary: an inert high-contrast sewn-paper journey and pinned
+## twelve-floor progress trail. It never invents a route choice or reads RNG.
+class JourneyJournal extends Control:
+	var current_floor := 0
+	var current_area := ""
+	var next_floor := 1
+	var next_area := ""
+	var complete := false
+	var visited: Array[String] = []
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		if size.x <= 0.0:
+			return
+		var frame := Rect2(Vector2.ZERO, size)
+		draw_rect(frame, Color("#eee4cb"))
+		draw_rect(frame, RunRouteAtlas.INK, false, 2.0)
+		draw_dashed_line(Vector2(12, 13), Vector2(size.x - 12, 13),
+			RunRouteAtlas.THREAD, 1.5, 7.0)
+		var font := get_theme_default_font()
+		if font == null:
+			return
+		draw_string(font, Vector2(22, 49), "THE SEWN JOURNEY",
+			HORIZONTAL_ALIGNMENT_LEFT, 480.0, 25, RunRouteAtlas.INK)
+		var here := "Trailhead" if current_floor == 0 else current_area
+		draw_string(font, Vector2(22, 94),
+			"Current: %s  ·  Floor %d/12" % [here, current_floor],
+			HORIZONTAL_ALIGNMENT_LEFT, 495.0, 21, RunRouteAtlas.INK)
+		var next_text := "Route complete · The final stitch is tied" if complete else (
+			"Next: %s  ·  Floor %d/12" % [next_area, next_floor])
+		draw_string(font, Vector2(22, 133), next_text,
+			HORIZONTAL_ALIGNMENT_LEFT, 495.0, 18, RunRouteAtlas.INK)
+		draw_dashed_line(Vector2(22, 155), Vector2(size.x - 22, 155),
+			RunRouteAtlas.THREAD, 2.0, 8.0)
+		draw_string(font, Vector2(22, 194), "PINNED FLOOR TRAIL",
+			HORIZONTAL_ALIGNMENT_LEFT, 490.0, 17, RunRouteAtlas.INK)
+		var beads: Array[Vector2] = []
+		for i in range(12):
+			beads.append(Vector2(59.0 + float(i % 4) * 132.0,
+				235.0 + float(i / 4) * 66.0))
+		for i in range(11):
+			draw_dashed_line(beads[i], beads[i + 1], RunRouteAtlas.THREAD, 2.0, 7.0)
+		for i in range(12):
+			var point := beads[i]
+			var done := i < current_floor
+			draw_circle(point, 17.0, RunRouteAtlas.CHOSEN_BG if done else RunRouteAtlas.PAPER_SHADE)
+			draw_arc(point, 17.0, 0.0, TAU, 28,
+				RunRouteAtlas.CHOSEN_THREAD if done else RunRouteAtlas.INK, 2.0, true)
+			draw_string(font, point + Vector2(-10.0, 5.0), "%02d" % (i + 1),
+				HORIZONTAL_ALIGNMENT_CENTER, 20.0, 15,
+				Color("#ffffff") if done else RunRouteAtlas.INK)
+		# The diary's real pushpin points to the latest committed bead.
+		if current_floor > 0:
+			var pin := beads[current_floor - 1] + Vector2(0, -23)
+			draw_line(pin, pin + Vector2(0, 22), RunRouteAtlas.INK, 2.0)
+			draw_circle(pin, 7.0, Color("#bd5149"))
+		draw_string(font, Vector2(22, size.y - 20),
+			"Stitched route  ·  %d of 12 floors visited" % visited.size(),
+			HORIZONTAL_ALIGNMENT_LEFT, 490.0, 16, RunRouteAtlas.INK)
+
+
+func _add_journal(current_floor: int, chosen: Array[String]) -> void:
+	var journal := JourneyJournal.new()
+	journal.name = "JourneyJournal"
+	journal.set_meta("journey_journal", true)
+	journal.current_floor = current_floor
+	journal.current_area = area_for_floor(current_floor)
+	journal.next_floor = 0 if _map.is_complete() else current_floor + 1
+	journal.next_area = area_for_floor(journal.next_floor)
+	journal.complete = _map.is_complete()
+	journal.visited = chosen.duplicate()
+	journal.position = Vector2(46.0, 102.0)
+	journal.size = Vector2(532.0, 442.0)
+	journal.custom_minimum_size = journal.size
+	_inert(journal)
+	add_child(journal)
 
 
 ## Inert drawn pushpin over the party's current patch; never takes pointer or focus.
@@ -374,44 +465,58 @@ func refresh() -> void:
 			var id: String = node["id"]
 			if legal.has(id) and not chosen.has(id):
 				_rendered_shortcuts.append(id)
+	var current_floor := _map.get_current_floor()
+	var current_id := _map.get_current_node_id()
+	var visible_floors: Array[int] = []
+	if not _map.is_complete():
+		for floor_number in range(current_floor + 1, mini(current_floor + 3, floors.size()) + 1):
+			visible_floors.append(floor_number)
+	# Off-window nodes stay in _rendered_graph, not in the visual hit-test geometry.
 	var positions: Dictionary = {}
-	for floor_index in range(floors.size()):
-		var floor_nodes: Array = floors[floor_index]
-		for node in floor_nodes:
-			var id: String = node["id"]
-			positions[id] = _node_position(floor_index, int(node["position"]))
-	# Threads are children before any labels/markers, so they always render behind paper.
+	if not current_id.is_empty():
+		var current_node := _map.get_node(current_id)
+		if not current_node.is_empty():
+			positions[current_id] = _node_position(-1, int(current_node["position"]))
+	for column in range(visible_floors.size()):
+		var floor_number := visible_floors[column]
+		for node in floors[floor_number - 1]:
+			positions[String(node["id"])] = _node_position(column, int(node["position"]))
+	# Only model edges with BOTH visible endpoints are sewn. No fabricated jump
+	# between the journal and future floors, and no off-window invisible hit areas.
 	for floor_nodes in floors:
 		for node in floor_nodes:
 			var source_id: String = node["id"]
+			if not positions.has(source_id):
+				continue
 			for target_id in node["outgoing"]:
 				if positions.has(target_id):
 					_add_thread(source_id, target_id, positions, chosen, legal, reveal_keys)
-	# Inert area captions name each floor group over the book, before any marker mounts.
-	_add_area_labels()
-	# The inert status tab names the next area/floor from the same authored bands.
+	_add_journal(current_floor, chosen)
 	_add_next_area_tab()
-	for floor_index in range(floors.size()):
-		var floor_header := Label.new()
-		floor_header.name = "Floor%02d" % (floor_index + 1)
-		floor_header.set_meta("floor_number", floor_index + 1)
-		floor_header.text = "%02d" % (floor_index + 1)
-		floor_header.position = Vector2(FIRST_X + FLOOR_STEP * floor_index, 64.0)
-		floor_header.size = Vector2(NODE_SIZE.x, 30.0)
-		floor_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		floor_header.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		floor_header.add_theme_font_size_override("font_size", 16)
-		# Dark ink keeps the floor strip readable on the cream page.
-		floor_header.add_theme_color_override("font_color", INK)
-		_inert(floor_header)
-		add_child(floor_header)
-		for node in floors[floor_index]:
+	_add_area_labels(visible_floors)
+	for column in range(visible_floors.size()):
+		var floor_number := visible_floors[column]
+		var header := Label.new()
+		header.name = "Floor%02d" % floor_number
+		header.set_meta("floor_number", floor_number)
+		header.text = "FLOOR %02d" % floor_number
+		header.position = Vector2(FIRST_X + column * FLOOR_STEP - 8.0, 105.0)
+		header.size = Vector2(NODE_SIZE.x + 16.0, 28.0)
+		header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		header.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		header.add_theme_font_size_override("font_size", 16)
+		header.add_theme_color_override("font_color", INK)
+		_inert(header)
+		add_child(header)
+		for node in floors[floor_number - 1]:
 			var id: String = node["id"]
-			var shortcut := _rendered_shortcuts.find(id) + 1
-			_add_marker(id, String(node["type"]), positions[id], chosen, legal, shortcut)
-	# The pin is the last child so it sits on top of its patch, never behind it.
-	var current_id: String = _map.get_current_node_id()
+			_add_marker(id, String(node["type"]), positions[id], chosen, legal,
+				_rendered_shortcuts.find(id) + 1)
+	# The visited patch anchors real connected stitches at the near edge of page two.
 	if not current_id.is_empty() and positions.has(current_id):
+		var current_node := _map.get_node(current_id)
+		_add_marker(current_id, String(current_node["type"]), positions[current_id],
+			chosen, legal, 0)
 		_add_pin(current_id, positions[current_id])
 
 
@@ -545,38 +650,35 @@ func _stitch_frame(rect: Rect2) -> void:
 
 ## The centred caption band of one area, spanning exactly its floor columns.
 static func area_label_rect(band: Dictionary) -> Rect2:
-	var first := int(band["first_floor"])
-	var last := int(band["last_floor"])
-	var left := FIRST_X + float(first - 1) * FLOOR_STEP
-	var right := FIRST_X + float(last - 1) * FLOOR_STEP + NODE_SIZE.x
-	return Rect2(left, AREA_LABEL_TOP, right - left, AREA_LABEL_HEIGHT)
+	# The static reference is the width of one patch's column; placement is
+	# relative to the currently displayed floor, never absolute floor twelve.
+	return Rect2(FIRST_X, AREA_LABEL_TOP, NODE_SIZE.x, AREA_LABEL_HEIGHT)
 
 
-## Inert area caption over its floor group. It is a plain child drawn above the book
-## (drawn or owner image) and below every legal Action, so it never takes input.
-func _add_area_labels() -> void:
-	for band in AREA_BANDS:
-		var area_name := String(band["name"])
+## Print only the area heading above each floor actually inside the viewport.
+func _add_area_labels(visible_floors: Array[int]) -> void:
+	for column in range(visible_floors.size()):
+		var floor_number := visible_floors[column]
+		var area_name := area_for_floor(floor_number)
 		var label := Label.new()
-		label.name = "Area" + area_name
+		label.name = "Area%s%02d" % [area_name, floor_number]
 		label.text = area_name
 		label.set_meta("area_name", area_name)
-		label.set_meta("first_floor", int(band["first_floor"]))
-		label.set_meta("last_floor", int(band["last_floor"]))
-		var rect := area_label_rect(band)
-		label.position = rect.position
-		label.size = rect.size
+		label.set_meta("floor_number", floor_number)
+		for band in AREA_BANDS:
+			if String(band["name"]) == area_name:
+				label.set_meta("first_floor", int(band["first_floor"]))
+				label.set_meta("last_floor", int(band["last_floor"]))
+		label.position = Vector2(FIRST_X + column * FLOOR_STEP - 8.0, AREA_LABEL_TOP)
+		label.size = Vector2(NODE_SIZE.x + 16.0, AREA_LABEL_HEIGHT)
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 16)
-		# Dark ink with a cream halo stays legible over the cream pages and over the
-		# owner's busier board image without adding an opaque box.
+		label.add_theme_font_size_override("font_size", 18)
 		label.add_theme_color_override("font_color", INK)
 		label.add_theme_constant_override("outline_size", 4)
 		label.add_theme_color_override("font_outline_color", PAPER)
 		_inert(label)
 		add_child(label)
-
 
 ## Inert sewn-paper status tab: cream paper, dark ink caption and a small running-stitch
 ## border. It draws itself so it needs no new image or font, and never takes input.
@@ -659,8 +761,8 @@ func _add_next_area_tab() -> void:
 
 
 func _node_position(floor_index: int, row_index: int) -> Vector2:
-	return Vector2(FIRST_X + floor_index * FLOOR_STEP, FIRST_Y + row_index * ROW_STEP)
-
+	var x := ORIGIN_X if floor_index < 0 else FIRST_X + floor_index * FLOOR_STEP
+	return Vector2(x, FIRST_Y + row_index * ROW_STEP)
 
 func _add_thread(source: String, target: String, positions: Dictionary,
 		chosen: Array[String], legal: Array[String], reveal_keys: Dictionary) -> void:
@@ -708,12 +810,9 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.name = "Node_" + id
 	marker.set_meta("route_id", id)
 	marker.set_meta("route_kind", kind)
-	var state := "other"
-	if chosen.has(id):
-		state = "chosen"
-	elif legal.has(id):
-		state = "legal"
+	var state := "chosen" if chosen.has(id) else ("legal" if legal.has(id) else "other")
 	marker.set_meta("route_state", state)
+	marker.set_meta("authored_position", int(_map.get_node(id).get("position", -1)) if _map != null else -1)
 	var paper := StyleBoxFlat.new()
 	paper.bg_color = OTHER_BG
 	paper.border_color = OTHER_BORDER
@@ -724,51 +823,41 @@ func _add_marker(id: String, kind: String, at: Vector2,
 		"legal":
 			paper.bg_color = LEGAL_BG
 			paper.border_color = LEGAL_THREAD
-	paper.set_border_width_all(2)
-	paper.set_corner_radius_all(6)
-	paper.content_margin_left = 1.0
-	paper.content_margin_right = 1.0
+	paper.set_border_width_all(3)
+	paper.set_corner_radius_all(40)
+	paper.content_margin_left = 3.0
+	paper.content_margin_right = 3.0
+	paper.content_margin_top = 3.0
+	paper.content_margin_bottom = 3.0
 	marker.add_theme_stylebox_override("panel", paper)
 	marker.position = at
 	marker.custom_minimum_size = NODE_SIZE
 	marker.size = NODE_SIZE
+	marker.tooltip_text = kind + " · " + id
 	_inert(marker)
-	# The sewn token is the marker's first child, so the Identity caption and the legal
-	# Action both draw over it and keep their full own area. Its column leaves the rest
-	# of the patch to the caption, so the art never hides the readable kind/number.
+	var art := NodeToken.new()
+	art.name = "Art"
+	art.token_kind = kind
 	var token_path := node_token_path(kind)
-	var token := node_token_texture(token_path)
-	if token != null:
-		var left := paper.get_margin(SIDE_LEFT)
-		var top := paper.get_margin(SIDE_TOP)
-		var art := NodeToken.new()
-		art.name = "Art"
-		art.token_kind = kind
-		art.token_texture = token
-		art.set_meta("route_kind", kind)
-		art.set_meta("art_path", token_path)
-		# PanelContainer stretches this child to the paper's content rect; assigning the
-		# same rect now keeps the token measurable before the container's first sort.
-		art.position = Vector2(left, top)
-		art.size = NODE_SIZE - Vector2(left + paper.get_margin(SIDE_RIGHT),
-			top + paper.get_margin(SIDE_BOTTOM))
-		_inert(art)
-		marker.add_child(art)
+	art.token_texture = node_token_texture(token_path)
+	art.set_meta("route_kind", kind)
+	art.set_meta("art_path", token_path)
+	art.position = Vector2(3.0, 3.0)
+	art.size = NODE_SIZE - Vector2(6.0, 6.0)
+	_inert(art)
+	marker.add_child(art)
 	var caption := Label.new()
 	caption.name = "Identity"
-	caption.text = (str(shortcut) + "\n" if state == "legal" and shortcut > 0 else "") + kind
-	# A token keeps the left column, so its caption is right-aligned in the remaining
-	# width; the drawn fallback marker keeps the original centred caption.
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if token != null \
-		else HORIZONTAL_ALIGNMENT_CENTER
-	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	caption.add_theme_font_size_override("font_size", 12)
+	caption.text = (str(shortcut) + " " if state == "legal" and shortcut > 0 else "") + kind
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	caption.add_theme_font_size_override("font_size", 11 if kind == "Treasure" else 12)
 	caption.add_theme_color_override("font_color", Color("#fff8e9"))
+	caption.add_theme_constant_override("outline_size", 3)
+	caption.add_theme_color_override("font_outline_color", Color("#292a2b"))
 	_inert(caption)
 	marker.add_child(caption)
 	if state == "legal":
-		# Only a legal marker owns an actionable Control; its transparent face
-		# preserves the original paper style. Canonical ID is in Action tooltip and metadata.
 		var action := Button.new()
 		action.name = "Action"
 		action.flat = true
@@ -777,10 +866,10 @@ func _add_marker(id: String, kind: String, at: Vector2,
 		action.position = Vector2(2, 2)
 		action.size = NODE_SIZE - Vector2(4, 4)
 		action.tooltip_text = "Request " + kind + " " + id
+		action.set_meta("route_id", id)
 		action.pressed.connect(_request_node.bind(id, _map, _revision))
 		marker.add_child(action)
 	add_child(marker)
-
 
 ## The drawn pin names the party's current patch; it is decoration only.
 func _add_pin(id: String, at: Vector2) -> void:
