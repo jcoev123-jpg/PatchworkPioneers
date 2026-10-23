@@ -4,7 +4,6 @@ extends RefCounted
 
 var _service: RunRestStitchCards
 var _source: Dictionary = {}
-var _catalog := StarterCards.new()
 
 
 func _init(service: RunRestStitchCards = null, source_snapshot: Variant = null) -> void:
@@ -115,8 +114,8 @@ func preview(first_index: Variant, second_index: Variant) -> Dictionary:
 		# Return the complete original catalog definitions in play order. Each
 		# lookup gives a fresh, deep-detached copy (including arrays/effects);
 		# the authoritative Rest service alone performs the transaction.
-		"first_half": _catalog.get_definition(first["id"]),
-		"second_half": _catalog.get_definition(second["id"]),
+		"first_half": RunRestStitchCards.resolve_card_definition(first["id"]).duplicate(true),
+		"second_half": RunRestStitchCards.resolve_card_definition(second["id"]).duplicate(true),
 		"display_name": first["name"] + " / " + second["name"],
 		"energy_cost": descriptor["cost"],
 		"scrap_cost": RunRestStitchCards.SCRAP_COST,
@@ -145,9 +144,7 @@ func _original(index: int) -> Dictionary:
 		return {}
 	var id: String = deck[index]
 	# A stitched ID can be a valid deck member, but is never an original.
-	if not _catalog.has_card(id):
-		return {}
-	var definition := _catalog.get_definition(id)
+	var definition := RunRestStitchCards.resolve_card_definition(id)
 	if definition.is_empty():
 		return {}
 	return {"index": index, "id": id, "owner": definition["owner"],
