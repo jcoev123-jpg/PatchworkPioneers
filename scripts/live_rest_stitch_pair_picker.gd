@@ -10,6 +10,11 @@ const OWNER_COLORS := {
 }
 const CREAM := Color("#f4e9d1")
 const INK := Color("#28313c")
+## The optional authored picture for a stitch half: cards/art/<base_id>.png,
+## with only a final "_plus" sharing its base card's illustration.
+const ART_DIR := "res://assets/paper/cards/art/"
+const FIRST_THUMB_RECT := Rect2(532, 43, 100, 70)
+const SECOND_THUMB_RECT := Rect2(532, 119, 100, 70)
 
 var first_selector: OptionButton
 var second_selector: OptionButton
@@ -18,6 +23,10 @@ var summary_label: Label
 var first_half_label: Label
 var second_half_label: Label
 var consequence_label: Label
+var first_thumbnail: TextureRect
+var second_thumbnail: TextureRect
+var _first_thumb: Dictionary = {}
+var _second_thumb: Dictionary = {}
 var _left_edge: ColorRect
 var _right_edge: ColorRect
 var _model := RunRestStitchPairOptions.new()
@@ -108,6 +117,11 @@ func _ready() -> void:
 	consequence_label.add_theme_font_size_override("font_size", 14)
 	consequence_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	preview_panel.add_child(consequence_label)
+	_first_thumb = _thumbnail_surface(preview_panel, FIRST_THUMB_RECT)
+	_second_thumb = _thumbnail_surface(preview_panel, SECOND_THUMB_RECT)
+	first_thumbnail = _first_thumb["picture"]
+	second_thumbnail = _second_thumb["picture"]
+	_clear_thumbnails()
 
 	confirm_button = Button.new()
 	confirm_button.text = "Confirm Stitch • 3 scraps"
@@ -135,10 +149,104 @@ func _option(at: Vector2, placeholder: String) -> OptionButton:
 	return result
 
 
+## A small inert illustration surface for one stitch half. The flat owner-colour
+## sewn-paper backing plus the card's short name is the placeholder whenever the
+## authored picture is missing; the TextureRect keeps aspect and linear filtering.
+func _thumbnail_surface(parent: Control, at: Rect2) -> Dictionary:
+	var backing := Panel.new()
+	backing.position = at.position
+	backing.size = at.size
+	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(backing)
+	var name_label := Label.new()
+	name_label.position = Vector2(4, 4)
+	name_label.size = at.size - Vector2(8, 8)
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 11)
+	name_label.add_theme_color_override("font_color", Color("#fdf6e5"))
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backing.add_child(name_label)
+	var picture := TextureRect.new()
+	picture.position = at.position
+	picture.size = at.size
+	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	picture.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(picture)
+	return {"backing": backing, "label": name_label, "picture": picture}
+
+
+## Presentation-only lookup; only a final "_plus" reuses its base card's image.
+static func art_path(card_id: String) -> String:
+	return ART_DIR + "%s.png" % card_id.trim_suffix("_plus")
+
+
+static func _texture(path: String) -> Texture2D:
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
+
+
+func _show_thumbnail(state: Dictionary, half: Dictionary) -> void:
+	var card_id: String = str(half.get("id", ""))
+	var owner: String = str(half.get("owner", ""))
+	var backing: Panel = state["backing"]
+	var style := StyleBoxFlat.new()
+	style.bg_color = OWNER_COLORS.get(owner, INK)
+	style.border_color = Color("#f9edd2")
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(3)
+	backing.add_theme_stylebox_override("panel", style)
+	backing.visible = true
+	var picture: TextureRect = state["picture"]
+	picture.texture = _texture(art_path(card_id))
+	picture.visible = picture.texture != null
+	var label: Label = state["label"]
+	label.text = str(half.get("display_name", card_id))
+	label.visible = not picture.visible
+
+
+func _clear_thumbnails() -> void:
+	for state in [_first_thumb, _second_thumb]:
+		if state.is_empty():
+			continue
+		var picture: TextureRect = state["picture"]
+		picture.texture = null
+		picture.visible = false
+		var backing: Panel = state["backing"]
+		backing.visible = false
+		var label: Label = state["label"]
+		label.text = ""
+		label.visible = false
+
+
+## Public read-only view of one half's mounted illustration (tests and audits).
+func thumbnail_state(which: String) -> Dictionary:
+	var state: Dictionary = _first_thumb if which == "first" else _second_thumb
+	if state.is_empty():
+		return {}
+	var picture: TextureRect = state["picture"]
+	var backing: Panel = state["backing"]
+	var label: Label = state["label"]
+	var texture := picture.texture
+	var style := backing.get_theme_stylebox("panel") as StyleBoxFlat
+	return {
+		"visible": picture.visible and picture.is_visible_in_tree(),
+		"placeholder_visible": backing.visible and label.visible and not picture.visible,
+		"path": texture.resource_path if texture != null else "",
+		"texture": texture,
+		"owner_color": style.bg_color if style != null else Color.TRANSPARENT,
+		"name": label.text,
+	}
+
+
 func _detail_label(parent: Control, at: Vector2) -> Label:
 	var label := Label.new()
 	label.position = at
-	label.size = Vector2(622, 75)
+	label.size = Vector2(512, 75)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_color_override("font_color", INK)
@@ -184,6 +292,7 @@ func clear() -> void:
 		first_half_label.text = ""
 		second_half_label.text = ""
 		consequence_label.text = ""
+		_clear_thumbnails()
 		_left_edge.color = OWNER_COLORS["warden"]
 		_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -200,6 +309,7 @@ func refresh() -> void:
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
+	_clear_thumbnails()
 	if not is_inside_tree() or not _model.is_available():
 		return
 	for entry in _model.first_options():
@@ -237,6 +347,7 @@ func _on_first_changed(item: int, epoch: int) -> void:
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
+	_clear_thumbnails()
 	_left_edge.color = _color_for_index(index)
 	_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -258,6 +369,8 @@ func _update_preview() -> void:
 	first_half_label.text = _half_lines("First", pair["first_half"])
 	second_half_label.text = _half_lines("Second", pair["second_half"])
 	consequence_label.text = _consequence_lines(pair)
+	_show_thumbnail(_first_thumb, pair["first_half"])
+	_show_thumbnail(_second_thumb, pair["second_half"])
 	_left_edge.color = OWNER_COLORS.get(pair["first_owner"], INK)
 	_right_edge.color = OWNER_COLORS.get(pair["second_owner"], INK)
 	confirm_button.disabled = false
@@ -410,6 +523,7 @@ func _disable_choice() -> void:
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
+	_clear_thumbnails()
 
 
 func _on_confirm(epoch: int) -> void:

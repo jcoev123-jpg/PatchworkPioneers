@@ -169,6 +169,48 @@ func _bounds(c: Control) -> void:
 		and rect.end.x <= 1280 and rect.end.y <= 720, "visible panel/control fits 1280x720: " + c.name)
 
 
+## The first/second half must mount that original's own illustration (a final
+## "_plus" shares its base picture) on its owner-colour cloth, with no fallback.
+func _thumb_ok(p: LiveRestStitchPairPicker, which: String, card_id: String, owner: String) -> void:
+	var state := p.thumbnail_state(which)
+	var expected_path := LiveRestStitchPairPicker.art_path(card_id)
+	_check(expected_path == "res://assets/paper/cards/art/%s.png" % card_id.trim_suffix("_plus"),
+		"%s %s resolves only the authored base picture path" % [which, card_id])
+	_check(state.get("visible", false) and state.get("texture") != null
+		and state.get("path", "") == expected_path,
+		"%s half physically shows the %s illustration at %s" % [which, card_id, expected_path])
+	_check(not state.get("placeholder_visible", true),
+		"%s half does not show the fallback beside real art" % which)
+	_check(state.get("owner_color") == LiveRestStitchPairPicker.OWNER_COLORS[owner],
+		"%s thumbnail carries the %s owner cloth" % [which, owner])
+	_bounds(p.first_thumbnail)
+	_bounds(p.second_thumbnail)
+
+
+## Either the committed authored picture or the readable owner-colour sewn-paper
+## fallback, never a broken image. Art committed later must not break this check.
+func _thumb_present_or_placeholder(p: LiveRestStitchPairPicker, which: String, card_id: String,
+		display_name: String, owner: String) -> void:
+	var state := p.thumbnail_state(which)
+	if state.get("texture") != null:
+		_check(state.get("visible", false)
+			and state.get("path", "") == LiveRestStitchPairPicker.art_path(card_id),
+			"%s half shows the authored %s picture" % [which, card_id])
+	else:
+		_check(state.get("placeholder_visible", false) and state.get("path", "") == ""
+			and state.get("name", "") == display_name
+			and state.get("owner_color") == LiveRestStitchPairPicker.OWNER_COLORS[owner],
+			"%s half shows a readable %s owner-colour placeholder" % [which, owner])
+
+
+func _thumbs_cleared(p: LiveRestStitchPairPicker, label: String) -> void:
+	for which in ["first", "second"]:
+		var state := p.thumbnail_state(which)
+		_check(state.get("path", "") == "" and state.get("texture") == null
+			and not state.get("visible", true) and not state.get("placeholder_visible", true),
+			label + " clears the " + which + " illustration and fallback")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var deck := _deck()
@@ -436,6 +478,9 @@ func _run() -> void:
 			and picker.first_half_label.text.contains("7 damage")
 			and not picker.first_half_label.text.contains("6 damage"),
 			"mounted Strike+ uses the authored upgraded damage, not base Strike")
+		_thumb_ok(picker, "first", "warden_strike_plus", "warden")
+		_check(picker.thumbnail_state("first")["path"].ends_with("/warden_strike.png"),
+			"upgraded Strike+ mounts the base Strike picture, not a synthetic _plus image")
 	picker.bind(ledger, receipt)
 	var ui_rng := RandomNumberGenerator.new()
 	ui_rng.seed = 1080701
@@ -476,6 +521,35 @@ func _run() -> void:
 		_check(picker.first_half_label.get_line_count() <= 4
 			and picker.second_half_label.get_line_count() <= 4,
 			"both detailed half readouts stay unclipped at 1280x720")
+		_check(picker.first_half_label.get_global_rect().end.x <= picker.first_thumbnail.get_global_rect().position.x
+			and picker.second_half_label.get_global_rect().end.x <= picker.second_thumbnail.get_global_rect().position.x,
+			"both authored rules end before their illustration gutter")
+		_thumb_ok(picker, "first", "seamstress_prick", "seamstress")
+		_thumb_ok(picker, "second", "tinker_pop_shot", "tinker")
+		_check(picker.thumbnail_state("first")["texture"] != picker.thumbnail_state("second")["texture"],
+			"Prick and Pop Shot mount two distinct illustrations")
+		# Reversing the ordered selection swaps the two mounted pictures.
+		picker.first_selector.select(pop)
+		picker.first_selector.item_selected.emit(pop)
+		var reverse_row := -1
+		for i in range(picker.second_selector.item_count):
+			if picker.second_selector.get_item_metadata(i) == prick:
+				reverse_row = i
+		_check(reverse_row >= 0, "reversed Pop Shot / Prick pair is selectable")
+		if reverse_row >= 0:
+			picker.second_selector.select(reverse_row)
+			picker.second_selector.item_selected.emit(reverse_row)
+			_thumb_ok(picker, "first", "tinker_pop_shot", "tinker")
+			_thumb_ok(picker, "second", "seamstress_prick", "seamstress")
+		picker.first_selector.select(prick)
+		picker.first_selector.item_selected.emit(prick)
+		second_item = -1
+		for i in range(picker.second_selector.item_count):
+			if picker.second_selector.get_item_metadata(i) == pop:
+				second_item = i
+		_check(second_item >= 0, "restored Prick / Pop Shot order is selectable")
+		picker.second_selector.select(second_item)
+		picker.second_selector.item_selected.emit(second_item)
 		var selected_metadata: int = picker.second_selector.get_item_metadata(second_item)
 		picker.second_selector.set_item_metadata(second_item, _idx(deck, "tinker_scrap_bomb"))
 		await _click(picker.confirm_button)
@@ -485,6 +559,7 @@ func _run() -> void:
 			and picker.consequence_label.text.is_empty()
 			and picker.summary_label.text.contains("Not available"),
 			"forged row clears stale authored rules as well as disabling confirmation")
+		_thumbs_cleared(picker, "metadata rejection")
 		picker.first_selector.item_selected.emit(first_item)
 		second_item = -1
 		for i in range(picker.second_selector.item_count):
@@ -499,6 +574,7 @@ func _run() -> void:
 		and received[0]["source"] == receipt, "physical mouse emitted exactly one exact original pair/receipt")
 	_check(picker.confirm_button.disabled and picker.first_half_label.text.is_empty()
 		and picker.second_half_label.text.is_empty() and picker.consequence_label.text.is_empty(), "one-shot request hides resolved pair until rebind")
+	_thumbs_cleared(picker, "one-shot request")
 	_check(ledger.get_snapshot() == receipt and not ledger.is_consumed(),
 		"mouse choice did not commit deck, receipt, descriptor, scraps or latch")
 	var oracle := ledger.choose_stitch(received[0]["first"], received[0]["second"], received[0]["source"])
@@ -546,6 +622,8 @@ func _run() -> void:
 			and picker.second_half_label.text ==
 				"Second: Mend — Seamstress (1 energy)\nFrom hero positions 2-3; choose one living ally in positions 1-3\nheal 5",
 			"keyboard-visible draw and targeted living-ally heal are exact and ordered")
+		_thumb_ok(picker, "first", "tinker_tune_up", "tinker")
+		_thumb_ok(picker, "second", "seamstress_mend", "seamstress")
 		picker.second_selector.grab_focus()
 		await _key(KEY_TAB)
 		_check(picker.confirm_button.has_focus(), "keyboard Tab reaches confirmation")
@@ -587,10 +665,12 @@ func _run() -> void:
 		and picker.first_half_label.text.is_empty() and picker.second_half_label.text.is_empty()
 		and picker.consequence_label.text.is_empty(),
 		"stale authoritative source refuses without ledger/signal or stale-preview mutation")
+	_thumbs_cleared(picker, "stale authoritative source")
 	fresh._source_snapshot = original_source
 	picker.hide()
 	_check(picker.consequence_label.text.is_empty() and picker.confirm_button.disabled,
 		"hiding picker clears actionable consequence")
+	_thumbs_cleared(picker, "hiding picker")
 	picker._confirm_callback.call()
 	_check(received.size() == signals_before + 1, "hidden closed picker refuses retained callback")
 	picker.show()
@@ -620,8 +700,98 @@ func _run() -> void:
 		and not prebound.first_selector.disabled and prebound.confirm_button.disabled,
 		"binding detached component before mounting preserves genuine source and safe initial selection")
 	prebound.free()
+	await _test_thumbnail_fallbacks()
 	await _test_mixed_pool_picker()
 	_finish()
+
+
+## A legal original with no committed illustration must keep the owner-colour
+## sewn-paper placeholder with its readable name, and must never leave a
+## previous picture behind after any lifecycle reset.
+func _test_thumbnail_fallbacks() -> void:
+	var fallback_deck: Array[String] = ["seamstress_running_stitch", "warden_strike"]
+	var fallback_ledger := RunRestStitchCards.new(fallback_deck, {}, 3)
+	_check(fallback_ledger.is_valid(), "genuine no-committed-art ledger is valid")
+	var panel := LiveRestStitchPairPicker.new()
+	panel.name = "FallbackRestStitchPairPicker"
+	panel.position = Vector2(330, 180)
+	panel.size = Vector2(600, 355)
+	root.add_child(panel)
+	await _frames()
+	panel.bind(fallback_ledger, fallback_ledger.get_snapshot())
+	_thumbs_cleared(panel, "initial bind")
+	panel.first_selector.select(0)
+	panel.first_selector.item_selected.emit(0)
+	_check(not panel.thumbnail_state("first").get("visible", true)
+		and not panel.thumbnail_state("second").get("visible", true),
+		"first-only selection shows no stale picture on either half")
+	panel.second_selector.select(0)
+	panel.second_selector.item_selected.emit(0)
+	_check(not panel.confirm_button.disabled and panel.first_half_label.text.begins_with("First: Running Stitch"),
+		"no-committed-art original still forms a legal presented pair")
+	var state := panel.thumbnail_state("first")
+	if state.get("texture") != null:
+		# Art may be added later; then the half must show it, never a fake absence.
+		_check(state["path"] == LiveRestStitchPairPicker.art_path("seamstress_running_stitch")
+			and state["visible"], "Running Stitch shows its authored picture when committed")
+	else:
+		_check(state.get("placeholder_visible", false) and state.get("path", "") == ""
+			and state.get("name", "") == "Running Stitch"
+			and state.get("owner_color") == LiveRestStitchPairPicker.OWNER_COLORS["seamstress"],
+			"Running Stitch falls back to a readable owner-colour sewn-paper placeholder")
+	_thumb_ok(panel, "second", "warden_strike", "warden")
+	# Changing only the first half clears both pictures before a new second half.
+	panel.first_selector.select(1)
+	panel.first_selector.item_selected.emit(1)
+	_thumbs_cleared(panel, "first-half change before second selection")
+	_check(panel.second_selector.item_count == 1, "other-owner Running Stitch becomes the new second list")
+	panel.second_selector.select(0)
+	panel.second_selector.item_selected.emit(0)
+	_thumb_ok(panel, "first", "warden_strike", "warden")
+	var reversed_state := panel.thumbnail_state("second")
+	if reversed_state.get("texture") != null:
+		_check(reversed_state["path"] == LiveRestStitchPairPicker.art_path("seamstress_running_stitch"),
+			"reversed fallback half shows authored art when committed")
+	else:
+		_check(reversed_state.get("placeholder_visible", false)
+			and reversed_state.get("name", "") == "Running Stitch",
+			"reversed fallback half keeps the readable sewn-paper placeholder")
+	panel.clear()
+	_thumbs_cleared(panel, "clear")
+	var source: Dictionary = fallback_ledger.get_snapshot()
+	panel.bind(fallback_ledger, source)
+	panel.first_selector.select(0)
+	panel.first_selector.item_selected.emit(0)
+	panel.second_selector.select(0)
+	panel.second_selector.item_selected.emit(0)
+	_check(panel.thumbnail_state("second").get("visible", false), "rebind restores the warden illustration")
+	panel.hide()
+	_thumbs_cleared(panel, "hidden panel")
+	panel.show()
+	panel.bind(fallback_ledger, source)
+	panel.first_selector.select(0)
+	panel.first_selector.item_selected.emit(0)
+	panel.second_selector.select(0)
+	panel.second_selector.item_selected.emit(0)
+	var taken: Array[Dictionary] = []
+	panel.stitch_requested.connect(func(a, b, s): taken.append({"first": a, "second": b, "source": s}))
+	panel._confirm_callback.call()
+	_check(taken.size() == 1 and taken[0]["first"] == 0 and taken[0]["second"] == 1
+		and taken[0]["source"] == source and not fallback_ledger.is_consumed()
+		and fallback_ledger.get_snapshot() == source,
+		"one-shot fallback request emits exact intent only; the Rest owner keeps the ledger")
+	_thumbs_cleared(panel, "fulfilled one-shot request")
+	panel.bind(fallback_ledger, source)
+	panel.first_selector.select(0)
+	panel.first_selector.item_selected.emit(0)
+	panel.second_selector.select(0)
+	panel.second_selector.item_selected.emit(0)
+	var first_state := panel.thumbnail_state("first")
+	_check(panel.thumbnail_state("second").get("visible", false)
+		and (first_state.get("path", "") == LiveRestStitchPairPicker.art_path("seamstress_running_stitch")
+			or first_state.get("placeholder_visible", false)),
+		"re-entry after the one-shot request shows only the current pair's pictures")
+	panel.free()
 
 
 func _finish() -> void:
@@ -866,6 +1036,13 @@ func _test_mixed_pool_picker() -> void:
 		"Second: Field Mend+ — Seamstress (2 energy)\nFrom hero positions 2-3; all allies\nheal every ally 6",
 		"Field Mend+ displays authored upgraded rules: heal every ally 6")
 	_check(ui.second_half_label.get_line_count() <= 4, "Field Mend+ unclipped")
+	_thumb_ok(ui, "first", "warden_strike", "warden")
+	# Field Mend+ has no committed illustration yet: its authored upgraded text
+	# stays beside the owner-colour fallback (or real art once committed).
+	_check(ui.second_half_label.text.contains("Field Mend+")
+		and ui.second_half_label.text.contains("heal every ally 6"),
+		"placeholder half keeps the authored upgraded Field Mend+ rule text")
+	_thumb_present_or_placeholder(ui, "second", "seamstress_field_mend_plus", "Field Mend+", "seamstress")
 
 	# Keyboard focus and confirmation on representative pool selection:
 	ui.second_selector.grab_focus()
