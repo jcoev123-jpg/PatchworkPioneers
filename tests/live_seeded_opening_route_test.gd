@@ -34,6 +34,17 @@ func _activate(button: Button, keyboard: bool) -> void:
 		await _click(button)
 
 
+## Reverse Tab must walk the same mounted patch chain back to the start.
+func _shift_tab() -> void:
+	for down in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = KEY_TAB
+		event.shift_pressed = true
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
 func _button(app, id: String) -> Button:
 	for button in app.route_buttons:
 		if button.get_meta("route_id") == id:
@@ -154,19 +165,24 @@ func _book_state(app) -> Array:
 	var state: Array = []
 	var book = app.route_book_backdrop
 	if is_instance_valid(book):
+		var area: Label = book.get_node_or_null("AreaCue")
 		var cue: Label = book.get_node_or_null("FloorCue")
-		state.append([book.uses_board_texture(), cue.text if cue != null else ""])
+		state.append([book.uses_board_texture(),
+			area.text if area != null else "", cue.text if cue != null else ""])
 	else:
 		state.append(null)
 	for button in app.route_buttons:
 		var token = button.get_node_or_null("Token")
+		var stitch = button.get_node_or_null("Stitch")
 		state.append([button.get_meta("route_id"), button.get_meta("route_kind"), button.text,
 			button.disabled, token.art_path if token != null else "",
-			token.uses_drawn_fallback() if token != null else null])
+			token.uses_drawn_fallback() if token != null else null,
+			button.position, button.size, stitch != null])
 	return state
 
 
-## Mounted opening book: page backdrop, first-floor cue and one sewn token per legal choice.
+## Mounted opening book: page backdrop, Meadow/Floor 01 tabs on the left page and one
+## stitched patch per legal first-floor node on that node's authored page slot.
 func _opening_book(app) -> void:
 	var book = app.route_book_backdrop
 	_check(is_instance_valid(book) and book.is_visible_in_tree(), "opening chooser mounts its page backdrop")
@@ -182,31 +198,75 @@ func _opening_book(app) -> void:
 	var geometry: Dictionary = book.page_geometry()
 	var origin: Vector2 = book.global_position
 	var page := Rect2(origin + geometry.right_page.position, geometry.right_page.size)
+	var left_page := Rect2(origin + geometry.left_page.position, geometry.left_page.size)
+	var spine := Rect2(origin + geometry.spine.position, geometry.spine.size)
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	_check(viewport.encloses(app.route_view.get_global_rect()) and page.encloses(app.route_view.get_global_rect()),
-		"the choice column fits inside the right page and viewport")
+		"the patch page fits inside the right page and viewport")
+	var area: Label = book.get_node_or_null("AreaCue")
+	var area_rect := Rect2(origin + area.position, area.size) if area != null else Rect2()
+	_check(area != null and area.is_visible_in_tree() and area.text == "Meadow"
+		and area.get_meta("area_name") == "Meadow" and left_page.encloses(area_rect),
+		"visible Meadow area caption sits on the left page")
 	var cue: Label = book.get_node_or_null("FloorCue")
+	var cue_rect := Rect2(origin + cue.position, cue.size) if cue != null else Rect2()
 	_check(cue != null and cue.is_visible_in_tree() and cue.text == "Floor 01"
-		and cue.get_meta("floor_number") == 1
-		and Rect2(origin + geometry.left_page.position, geometry.left_page.size).encloses(
-			Rect2(origin + cue.position, cue.size)),
+		and cue.get_meta("floor_number") == 1 and left_page.encloses(cue_rect),
 		"visible first-floor cue sits on the left page")
-	_check(app.run_map.get_route().is_empty() and app.run_map.get_current_floor() == 0,
-		"the floor cue never invents a committed route")
-	_check(app.route_buttons.size() == app.run_map.get_legal_choices().size(),
-		"exactly one token button per legal opening")
+	_check(not area_rect.intersects(cue_rect), "the area and floor patches stay separate on the left page")
+	_check(app.run_map.get_route().is_empty() and app.run_map.get_current_node_id() == ""
+		and app.run_map.get_current_floor() == 0,
+		"the page tabs never invent a committed route")
+	var legal: Array[String] = app.run_map.get_legal_choices()
+	var future: Array = []
+	for floor_nodes in app.run_map.get_floors().slice(1):
+		for node in floor_nodes:
+			future.append(node.id)
+	var branches = app.route_view.get_node_or_null("Branches")
+	_check(branches != null and branches.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and branches.focus_mode == Control.FOCUS_NONE,
+		"the drawn start seam is pointer and keyboard inert")
+	_check(app.route_view.get_node_or_null("Pin_current") == null
+		and book.get_node_or_null("Pin_current") == null,
+		"an uncommitted opening draws no committed pin")
+	_check(app.route_buttons.size() == legal.size(),
+		"exactly one stitched patch per legal opening")
+	var seen: Array = []
+	var patch_rects: Array[Rect2] = []
 	for button in app.route_buttons:
 		var kind: String = button.get_meta("route_kind")
 		var id: String = button.get_meta("route_id")
+		var node: Dictionary = app.run_map.get_node(id)
 		var path := RunRouteAtlas.node_token_path(kind)
 		var token = button.get_node_or_null("Token")
-		_check(button.get_meta("route_id") == id and app.run_map.get_legal_choices().has(id)
-			and page.encloses(button.get_global_rect())
-			and button.text == EXPECTED_ROUTE_LABELS.get(kind, kind) and not button.text.contains(id),
-			"readable legal choice inside the page: " + id)
+		var stitch = button.get_node_or_null("Stitch")
+		seen.append(id)
+		_check(legal.has(id) and not future.has(id) and not node.is_empty()
+			and String(node.id) == id and String(node.type) == kind
+			and button.get_meta("pin_node_id", "") == "",
+			"patch is backed by its actual legal first-floor node: " + id)
+		# Pinned here, not read from App: each patch sits on its authored node slot.
+		var expected_top := 74.0 + float(int(node.position)) * 86.0
+		_check(button.get_parent() == app.route_view
+			and button.position == Vector2(132.0, expected_top)
+			and button.size == Vector2(288.0, 70.0),
+			"patch sits on its authored page slot: " + id)
+		_check(page.encloses(button.get_global_rect())
+			and button.get_global_rect().position.x > spine.end.x,
+			"patch clears the spine and stays inside the right page: " + id)
+		for placed in patch_rects:
+			_check(not placed.intersects(button.get_global_rect()),
+				"sewn patches never overlap: " + id)
+		patch_rects.append(button.get_global_rect())
+		_check(button.text == EXPECTED_ROUTE_LABELS.get(kind, kind) and not button.text.contains(id),
+			"readable kind label on the patch: " + id)
 		_check(token != null and token.get_parent() == button
 			and token.mouse_filter == Control.MOUSE_FILTER_IGNORE and token.focus_mode == Control.FOCUS_NONE,
 			"one inert sewn token per legal choice: " + id)
+		_check(stitch != null and stitch.get_parent() == button
+			and stitch.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and stitch.focus_mode == Control.FOCUS_NONE,
+			"one inert stitched edge per legal patch: " + id)
 		if token == null:
 			continue
 		_check(token.art_path == path and token.get_meta("art_path") == path
@@ -222,6 +282,17 @@ func _opening_book(app) -> void:
 		else:
 			_check(token.token_texture == null and token.uses_drawn_fallback()
 				and token.get_meta("art_backed") == false, "kind without art keeps its drawn token: " + id)
+	_check(seen == legal, "patches appear in authored position order")
+	var targets: Array = branches.branch_targets if branches != null else []
+	_check(targets.size() == app.route_buttons.size(), "one stitched start branch per legal patch")
+	for index in range(mini(targets.size(), app.route_buttons.size())):
+		var patch: Button = app.route_buttons[index]
+		_check(targets[index] == Rect2(patch.position, patch.size),
+			"stitched branch ends at its own patch: " + String(patch.get_meta("route_id")))
+	_check(app.route_back_button.position.y > app.route_map_button.position.y
+		and page.encloses(app.route_back_button.get_global_rect())
+		and page.encloses(app.route_map_button.get_global_rect()),
+		"the map and Back actions stay reachable at the page foot")
 
 
 func _run() -> void:
@@ -256,6 +327,16 @@ func _run() -> void:
 				and app.run_deck.size() == 12 and app.party_carryover is RunTornCarryover,
 				"Start publishes canonical seeded map, twelve cards and three heroes before combat")
 			_opening_book(app)
+			# Every mounted patch is reachable in authored order by Tab and back by
+			# reverse Tab, without spending any route or RNG state.
+			var first_patch: Button = app.route_buttons[0]
+			first_patch.grab_focus()
+			await _key(KEY_TAB)
+			_check(app.route_buttons.size() > 1 and root.gui_get_focus_owner() == app.route_buttons[1],
+				"Tab walks to the next sewn patch")
+			await _shift_tab()
+			_check(root.gui_get_focus_owner() == first_patch,
+				"reverse Tab returns to the first sewn patch")
 			var book_id := 0
 			if is_instance_valid(app.route_book_backdrop):
 				book_id = app.route_book_backdrop.get_instance_id()
