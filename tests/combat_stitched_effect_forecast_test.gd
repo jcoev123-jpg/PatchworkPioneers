@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_draw_and_seeded_replay()
 	_test_rejections()
 	_test_real_torn_and_mend()
+	_test_pool_heal_forecasts()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_effect_forecast_test: ",
@@ -49,8 +50,8 @@ func _authored(path: String) -> Array:
 
 func _fixture(first: String, second: String, seed_value: int = 9527) -> Dictionary:
 	var catalogue := StarterCards.new()
-	var a := catalogue.get_definition(first)
-	var b := catalogue.get_definition(second)
+	var a := RunRestStitchCards.resolve_card_definition(first)
+	var b := RunRestStitchCards.resolve_card_definition(second)
 	_check(not a.is_empty() and not b.is_empty() and a.owner != b.owner,
 		"two genuine cross-owner half definitions")
 	var starter_cards: Array[String] = [first, second, "warden_strike"]
@@ -425,3 +426,103 @@ func _test_real_torn_and_mend() -> void:
 		{"bleed": 3, "exposed": 1}
 		and healed.halves[1].hits[0].damage == 9,
 		"restored Button Eye and ARM powers return on their genuine owners")
+
+func _bind_pool_spool(c: Dictionary, wearer: String) -> void:
+	var slots: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	_check(slots is Array and not slots.is_empty(), "real authored ARM patch slots")
+	var wardrobe := RunPatchWardrobe.new(c.party.get_heroes(), ["spare_spool"], slots, 5)
+	var torn := RunTornMending.new(c.party.get_heroes())
+	_check(wardrobe.is_valid() and torn.is_valid(), "real valid pool forecast patch ledgers")
+	_check(wardrobe.sew("spare_spool", wearer, "ARM", "pool-spool",
+		wardrobe.get_snapshot()).ok, "real owner-specific Spool sew receipt")
+	_check(c.service.bind_patch_wardrobe(wardrobe, torn,
+		wardrobe.get_snapshot(), torn.read_state()),
+		"forecast binds original optimistic wardrobe/torn receipts")
+	c.wardrobe = wardrobe
+	c.torn = torn
+
+
+func _test_pool_heal_forecasts() -> void:
+	var pool := SeamstressPoolCards.new()
+	for id in CombatStitchedTargetPreview.POOL_HEAL_IDS:
+		var definition: Dictionary = pool.get_definition(id)
+		_check(not definition.is_empty() and definition ==
+			RunRestStitchCards.resolve_card_definition(id), "canonical pool base/+ " + id)
+		var field: bool = id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
+		var counterpart: String = POP if field else BRACE
+		for reverse in [false, true]:
+			for mode in ["unbound", "seamstress", "warden"]:
+				var first: String = counterpart if reverse else id
+				var second: String = id if reverse else counterpart
+				var c := _fixture(first, second, 3501)
+				if mode != "unbound":
+					_bind_pool_spool(c, mode)
+				_check(c.party.apply_damage(1, 12)
+					and c.party.apply_damage(2, 9)
+					and c.party.apply_damage(3, 10),
+					id + ": three genuine wounds before forecast")
+				var first_target: int = (2 if field else 0) if reverse else (0 if field else 1)
+				var second_target: int = (0 if field else 1) if reverse else (2 if field else 0)
+				var initial := _whole(c)
+				var result := _compare(c, first_target, second_target,
+					id + " forecast order " + str(reverse) + " wearer " + mode)
+				var healing: int = definition.effects.heal + (2 if mode == "seamstress" else 0)
+				var block: int = definition.effects.get("block", 0)
+				var half: Dictionary = result.halves[1 if reverse else 0] if result.playable else {}
+				var slots: Array = [1, 2, 3] if field else [1]
+				_check(result.playable and half == {
+					"ok": true, "effect": "party_heal" if field else "ally_heal",
+					"amount": healing, "block": block, "affected_positions": slots
+					}, id + ": exact forecast ordered healing effect and patch amount")
+				if not result.playable:
+					continue
+				_check(result.cost == (3 if field else 2)
+					and result.projected.energy == (0 if field else 1)
+					and result.projected.hand.is_empty()
+					and result.projected.discard_pile == [c.id]
+					and result.projected.rng_state == initial.combat.rng_state
+					and result.projected.rng_seed == initial.combat.rng_seed,
+					id + ": identical energy, once-only discard and unadvanced RNG")
+				_check(result.projected.heroes[0].hp == 28 + healing
+					and result.projected.heroes[1].hp == (21 + healing if field else 21)
+					and result.projected.heroes[2].hp == (16 + healing if field else 16)
+					and result.projected.heroes[0].block == (0 if field else 7 + block),
+					id + ": exact healed slots, unaffected recipients, independent Block")
+	# A later failed half must not publish first-half HP/Block, nor a patch
+	# latch, deck spend or seeded RNG movement.
+	var late := _fixture("seamstress_darning_plus", BRACE)
+	_bind_pool_spool(late, "seamstress")
+	_check(late.party.apply_damage(2, 10)
+		and late.party.gain_block(1, CombatParty.MAX_INT),
+		"first heal legal, genuine late Brace overflow precondition")
+	_reject(late, 2, 0, "later Brace overflow rolls back patched Darning+ forecast")
+	var before := _whole(late)
+	_check(_real(late, 2, 0) == {"ok": false, "halves": []}
+		and _whole(late) == before, "same late failure in real committed transaction")
+	_check(late.party.start_player_turn(), "real hero Block reset permits retry")
+	_check(_compare(late, 2, 0, "successful Darning+ retry after late overflow").playable,
+		"no rejected latches poison valid retry")
+	var drawn := _fixture(TUNE, "seamstress_darning")
+	_bind_pool_spool(drawn, "seamstress")
+	drawn.deck.discard_pile.assign(["warden_strike", POP, BRACE])
+	_check(drawn.party.apply_damage(1, 9)
+		and drawn.party.gain_block(1, CombatParty.MAX_INT),
+		"authentic seeded draw first and late Darning overflow")
+	_reject(drawn, 0, 1, "draw/reshuffle then second Darning overflow")
+	before = _whole(drawn)
+	_check(_real(drawn, 0, 1) == {"ok": false, "halves": []}
+		and _whole(drawn) == before,
+		"real second-half failure preserves all piles and seeded RNG")
+	var party_all := _fixture("seamstress_field_mend_plus", BRACE)
+	_bind_pool_spool(party_all, "seamstress")
+	_check(party_all.party.apply_damage(3, 26) and party_all.party.is_downed(3)
+		and party_all.party.apply_damage(1, 8), "Field Mend genuine torn beneficiary")
+	var survived := _compare(party_all, 0, 0, "party-all forecast skips downed Tinker")
+	_check(survived.playable and survived.halves[0].affected_positions == [1, 2]
+		and survived.projected.heroes[2].hp == 0
+		and survived.projected.heroes[0].hp == 40,
+		"Field Mend+ per-recipient patched healing caps HP without revival")
+	var invalid := _fixture("seamstress_field_mend", BRACE)
+	_bind_pool_spool(invalid, "seamstress")
+	_reject(invalid, 1, 0, "party-all nonzero caller target rejected without changes")

@@ -4,7 +4,14 @@ extends RefCounted
 ## These are CURRENT choices, not a promise that half two remains legal after
 ## half one's effects. The later atomic resolver must revalidate both halves.
 
+const POOL_HEAL_IDS = [
+	"seamstress_darning", "seamstress_darning_plus",
+	"seamstress_thimble_tea", "seamstress_thimble_tea_plus",
+	"seamstress_field_mend", "seamstress_field_mend_plus",
+]
+
 var _catalog := StarterCards.new()
+var _pool := SeamstressPoolCards.new()
 
 
 func get_preview(ledger: Variant, ledger_snapshot: Variant, deck: Variant,
@@ -137,6 +144,8 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 	# The Rest validator already checked the full descriptor; read target
 	# shape from the real authored card, never from a caller-supplied half.
 	var authored := _catalog.get_definition(id)
+	if authored.is_empty() and id in POOL_HEAL_IDS:
+		authored = _pool.get_definition(id)
 	if authored.is_empty() or authored != half:
 		return {}
 	var kind: String = authored["target_kind"]
@@ -173,6 +182,13 @@ func _half_preview(half: Dictionary, index: int, party_slots: Array[Dictionary],
 				if hero["hp"] > 0 and (allowed.is_empty() or allowed.has(hero["position"])):
 					choices.append(hero["position"])
 			if choices.is_empty():
+				return {}
+		"party_all":
+			side = "ally"
+			for hero in party_slots:
+				if hero["hp"] > 0:
+					affected.append(hero["position"])
+			if affected.is_empty():
 				return {}
 		"self":
 			side = "ally"
