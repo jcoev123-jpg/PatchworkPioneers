@@ -2,19 +2,25 @@ class_name BaseScreen
 extends Control
 ## The Quilt Village: the patchwork base between the title and a run.
 ## Presentation only. It allocates no run, RNG, deck or currency state and
-## reports exactly two sewn actions, Set out and Back to title, which the host
-## validates by view identity and visibility before acting on them.
+## reports only sewn actions, Set out, the Heroes Path pick and Back to title,
+## which the host validates by view identity and visibility before acting on
+## them. The two Heroes options are authored elsewhere: the host presents their
+## readable names and confirms the pick, so this view owns no Path rules, no
+## authored data and no deck.
 ##
 ## The owner's base_village.png is mounted as a cover backdrop only when
 ## ResourceLoader confirms the art exists. The matte quilt ground, sewn houses
 ## and tents, central spool and running-stitch paths are always drawn, so the
 ## village stays readable and identifiable with or without the optional image.
 
+signal path_choice_requested(path_id: String)
 signal set_out_requested
 signal back_requested
 
 const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
 const DESIGN_SIZE := Vector2(1280.0, 720.0)
+## The Heroes house's pinned Path board sits below it, clear of the Camp tent.
+const HEROES_PANEL_RECT := Rect2(96, 396, 352, 212)
 const INK := Color("#2b3135")
 const PAPER := Color("#ecdfbd")
 const THREAD := Color("#c9b996")
@@ -27,10 +33,19 @@ var set_out_button: Button
 var back_button: Button
 var village_title_label: Label
 var wallet_label: Label
+var path_panel: PanelContainer
+var path_option_box: VBoxContainer
+var path_buttons: Array[Button] = []
+var path_hint_label: Label
+var path_status_label: Label
 
 var _open := false
 var _set_out_pending := false
 var _back_pending := false
+var _path_pending := false
+var _path_options: Array = []
+var _selected_path_id := ""
+var _selected_path_name := ""
 var _backdrop: Texture2D
 var _buildings: Array = []
 var _paths: Array = []
@@ -66,6 +81,7 @@ func _ready() -> void:
 	_build_layout()
 	_backdrop = load_base_backdrop()
 	_build_top_strip()
+	_build_heroes_choice()
 	_build_actions()
 	_wire_focus()
 	resized.connect(queue_redraw)
@@ -153,13 +169,140 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 	_open = true
 	_set_out_pending = false
 	_back_pending = false
+	_path_pending = false
 	set_out_button.disabled = false
 	back_button.disabled = false
+	for button in path_buttons:
+		if is_instance_valid(button):
+			button.disabled = not _selected_path_id.is_empty()
+	if is_instance_valid(path_panel):
+		path_panel.visible = not _path_options.is_empty()
 	if is_instance_valid(wallet_label):
 		wallet_label.text = "Gold %d  ·  Scraps %d" % [gold, scraps]
 	visible = true
 	queue_redraw()
 	set_out_button.grab_focus()
+	return true
+
+
+## Host-supplied authored options: [{id, display_name, card_name}, ...] in
+## authored order. Presentation only; no ID is resolved here. A fresh setup may
+## only be presented before the village's one Path is chosen.
+func present_path_options(options: Variant) -> bool:
+	if not options is Array or not is_instance_valid(path_option_box):
+		return false
+	if not _selected_path_id.is_empty():
+		return false
+	var cleaned: Array = []
+	var seen: Dictionary = {}
+	for raw in options:
+		if not raw is Dictionary:
+			return false
+		var record: Dictionary = raw
+		var path_id := String(record.get("id", ""))
+		var display_name := String(record.get("display_name", ""))
+		if path_id.strip_edges().is_empty() or display_name.strip_edges().is_empty():
+			return false
+		if seen.has(path_id):
+			return false
+		seen[path_id] = true
+		cleaned.append({"id": path_id, "display_name": display_name,
+			"card_name": String(record.get("card_name", ""))})
+	if cleaned.is_empty():
+		return false
+	for button in path_buttons:
+		if is_instance_valid(button):
+			path_option_box.remove_child(button)
+			button.queue_free()
+	path_buttons.clear()
+	_selected_path_id = ""
+	_selected_path_name = ""
+	_path_options = cleaned
+	for option in cleaned:
+		var button := Button.new()
+		button.name = "PathChoice_" + String(option["id"])
+		button.text = String(option["display_name"])
+		button.tooltip_text = "Seamstress Path: " + String(option["display_name"]) \
+			+ (" · card " + String(option["card_name"]) if not String(option["card_name"]).is_empty() else "")
+		button.custom_minimum_size = Vector2(0, 40)
+		button.add_theme_font_size_override("font_size", 18)
+		button.set_meta("path_id", String(option["id"]))
+		button.pressed.connect(_on_path_pressed.bind(String(option["id"])))
+		button.add_child(SewnEdge.new())
+		path_option_box.add_child(button)
+		path_buttons.append(button)
+	if is_instance_valid(path_hint_label):
+		path_hint_label.text = "Choose one Path for this run"
+	if is_instance_valid(path_status_label):
+		path_status_label.text = "No Path chosen yet"
+	if is_instance_valid(path_panel):
+		path_panel.visible = _open
+	_wire_focus()
+	return true
+
+
+## Detached copy of the presented options, in authored order.
+func path_options() -> Array:
+	return _path_options.duplicate(true)
+
+
+## The Path this setup has actually confirmed, or "" before a valid pick.
+func selected_path_id() -> String:
+	return _selected_path_id
+
+
+func selected_path_name() -> String:
+	return _selected_path_name
+
+
+## Host confirmation of a validated pick: show the actual selected Path and keep
+## it; the other option can no longer be chosen. False leaves the view untouched.
+func mark_path_selected(path_id: String, display_name: String) -> bool:
+	if not _open or _set_out_pending or _back_pending:
+		return false
+	if not _selected_path_id.is_empty():
+		return false
+	if path_id.strip_edges().is_empty() or display_name.strip_edges().is_empty():
+		return false
+	var chosen := _path_button(path_id)
+	if chosen == null:
+		return false
+	_selected_path_id = path_id
+	_selected_path_name = display_name
+	var card_name := ""
+	for option in _path_options:
+		if String(option.get("id", "")) == path_id:
+			card_name = String(option.get("card_name", ""))
+	for button in path_buttons:
+		if not is_instance_valid(button):
+			continue
+		button.disabled = true
+		button.release_focus()
+	if is_instance_valid(path_hint_label):
+		path_hint_label.text = "Path sewn for this run"
+	if is_instance_valid(path_status_label):
+		path_status_label.text = "Selected: " + display_name \
+			+ (" · card " + card_name if not card_name.is_empty() else "")
+		path_status_label.show()
+	_wire_focus()
+	if is_instance_valid(set_out_button):
+		set_out_button.grab_focus()
+	return true
+
+
+## Host refusal of a Path request: keep the authored options actionable. A Path
+## that was already confirmed cannot be released or replaced.
+func release_path_choice() -> bool:
+	if not _open or _set_out_pending or _back_pending:
+		return false
+	if not _selected_path_id.is_empty() or _path_options.is_empty():
+		return false
+	for button in path_buttons:
+		if is_instance_valid(button):
+			button.disabled = false
+	if is_instance_valid(path_hint_label):
+		path_hint_label.text = "Choose one Path for this run"
+	_wire_focus()
 	return true
 
 
@@ -171,7 +314,16 @@ func _apply_closed_state() -> void:
 	_open = false
 	_set_out_pending = false
 	_back_pending = false
+	_path_pending = false
+	_selected_path_id = ""
+	_selected_path_name = ""
 	visible = false
+	if is_instance_valid(path_panel):
+		path_panel.visible = false
+	for button in path_buttons:
+		if is_instance_valid(button):
+			button.disabled = true
+			button.release_focus()
 	if is_instance_valid(set_out_button):
 		set_out_button.disabled = true
 		set_out_button.release_focus()
@@ -188,6 +340,10 @@ func release_set_out() -> bool:
 	set_out_button.disabled = false
 	if is_instance_valid(back_button):
 		back_button.disabled = false
+	for button in path_buttons:
+		if is_instance_valid(button):
+			button.disabled = not _selected_path_id.is_empty()
+	_wire_focus()
 	set_out_button.grab_focus()
 	return true
 
@@ -252,6 +408,63 @@ func _build_top_strip() -> void:
 	row.add_child(wallet_label)
 
 
+## Pinned Heroes board under its house: the two authored Path options and the
+## one pick this run carries. Hidden until the host presents real options.
+func _build_heroes_choice() -> void:
+	var panel := PanelContainer.new()
+	panel.name = "HeroesChoice"
+	path_panel = panel
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.position = HEROES_PANEL_RECT.position
+	panel.custom_minimum_size = HEROES_PANEL_RECT.size
+	panel.size = HEROES_PANEL_RECT.size
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = PIN_PAPER
+	paper.border_color = Color("#766351")
+	paper.set_border_width_all(3)
+	paper.set_corner_radius_all(6)
+	paper.content_margin_left = 14.0
+	paper.content_margin_right = 14.0
+	paper.content_margin_top = 10.0
+	paper.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", paper)
+	panel.visible = false
+	add_child(panel)
+
+	var column := VBoxContainer.new()
+	column.name = "HeroesColumn"
+	column.add_theme_constant_override("separation", 6)
+	panel.add_child(column)
+
+	var heading := Label.new()
+	heading.name = "HeroesHeading"
+	heading.text = "Heroes · Seamstress Path"
+	heading.add_theme_color_override("font_color", INK)
+	heading.add_theme_font_size_override("font_size", 20)
+	column.add_child(heading)
+
+	path_hint_label = Label.new()
+	path_hint_label.name = "PathHint"
+	path_hint_label.text = "Choose one Path for this run"
+	path_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	path_hint_label.add_theme_color_override("font_color", Color("#5a5346"))
+	path_hint_label.add_theme_font_size_override("font_size", 14)
+	column.add_child(path_hint_label)
+
+	path_option_box = VBoxContainer.new()
+	path_option_box.name = "PathOptions"
+	path_option_box.add_theme_constant_override("separation", 6)
+	column.add_child(path_option_box)
+
+	path_status_label = Label.new()
+	path_status_label.name = "PathStatus"
+	path_status_label.text = "No Path chosen yet"
+	path_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	path_status_label.add_theme_color_override("font_color", Color("#3f5a3a"))
+	path_status_label.add_theme_font_size_override("font_size", 15)
+	column.add_child(path_status_label)
+
+
 func _build_actions() -> void:
 	var row := HBoxContainer.new()
 	row.name = "SetOutRow"
@@ -274,12 +487,47 @@ func _build_actions() -> void:
 	row.add_child(set_out_button)
 
 
-## Both sewn actions form one forward/reverse Tab loop.
+## Every live sewn action forms one forward/reverse Tab loop: Back, the two
+## authored Path options (while still choosable), then Set out.
 func _wire_focus() -> void:
-	set_out_button.focus_next = set_out_button.get_path_to(back_button)
-	set_out_button.focus_previous = set_out_button.get_path_to(back_button)
-	back_button.focus_next = back_button.get_path_to(set_out_button)
-	back_button.focus_previous = back_button.get_path_to(set_out_button)
+	var loop: Array[Control] = []
+	if is_instance_valid(back_button) and not back_button.disabled:
+		loop.append(back_button)
+	for button in path_buttons:
+		if is_instance_valid(button) and not button.disabled:
+			loop.append(button)
+	if is_instance_valid(set_out_button) and not set_out_button.disabled:
+		loop.append(set_out_button)
+	if loop.is_empty():
+		return
+	for index in range(loop.size()):
+		var node := loop[index]
+		node.focus_next = node.get_path_to(loop[(index + 1) % loop.size()])
+		node.focus_previous = node.get_path_to(loop[(index - 1 + loop.size()) % loop.size()])
+
+
+func _path_button(path_id: String) -> Button:
+	for button in path_buttons:
+		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
+			return button
+	return null
+
+
+## The view reports the pick; the host validates it and, only on success, calls
+## mark_path_selected. A refused request leaves both options actionable.
+func _on_path_pressed(path_id: String) -> void:
+	if not _open or _path_pending or _set_out_pending or _back_pending:
+		return
+	if not _selected_path_id.is_empty():
+		return
+	if not is_inside_tree() or not is_visible_in_tree():
+		return
+	var button := _path_button(path_id)
+	if button == null or button.disabled:
+		return
+	_path_pending = true
+	path_choice_requested.emit(path_id)
+	_path_pending = false
 
 
 func _on_set_out_pressed() -> void:

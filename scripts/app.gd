@@ -308,6 +308,10 @@ var base_button: Button
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
 var _route_from_base := false
+## The Quilt village's one Path setup; null until a village opens or once cleared.
+var run_seamstress_path_choice: RunSeamstressPathChoice
+## Detached receipt of the Path this run carries; empty until a successful Set out.
+var run_seamstress_path_receipt: Dictionary = {}
 var route_view: VBoxContainer
 var route_back_button: Button
 var route_map_button: Button
@@ -740,10 +744,65 @@ func _open_base() -> bool:
 	if not view.open_village(session_gold, run_scraps):
 		_close_base(view)
 		return false
+	# One fresh Path setup per village visit. An unreadable authored record keeps
+	# the village itself usable but offers no Path options (fail closed).
+	var choice := RunSeamstressPathChoice.new()
+	run_seamstress_path_choice = choice if choice.is_valid() else null
+	if run_seamstress_path_choice != null:
+		view.present_path_options(_seamstress_path_options(run_seamstress_path_choice))
+	view.path_choice_requested.connect(_base_path_choice.bind(weakref(view)))
 	view.set_out_requested.connect(_base_set_out.bind(weakref(view)))
 	view.back_requested.connect(_base_back.bind(weakref(view)))
 	title_view.hide()
 	return true
+
+
+## Detached presentation records for the two authored Paths, in authored order.
+func _seamstress_path_options(choice: RunSeamstressPathChoice) -> Array:
+	var options: Array = []
+	for path in choice.get_paths():
+		var card: Dictionary = path.get("card", {})
+		options.append({
+			"id": String(path.get("id", "")),
+			"display_name": String(path.get("display_name", "")),
+			"card_name": String(card.get("display_name", "")),
+		})
+	return options
+
+
+## A Path pick is only live while it is this app's mounted, visible village, the
+## setup still offers it once, and no run receipt was committed yet.
+func _base_path_choice(path_id: String, source: WeakRef) -> void:
+	var view := _live_base(source)
+	if view == null:
+		return
+	if not run_seamstress_path_receipt.is_empty():
+		view.release_path_choice()
+		return
+	var choice := run_seamstress_path_choice
+	if choice == null or not choice.is_valid() or choice.is_claimed():
+		view.release_path_choice()
+		return
+	var receipt := choice.choose(path_id, StarterCards.new().get_starting_deck())
+	if not bool(receipt.get("ok", false)):
+		view.release_path_choice()
+		return
+	view.mark_path_selected(String(receipt["path_id"]), String(receipt["display_name"]))
+
+
+## The validated Path this setup carries, detached from the setup's own copy.
+func _selected_path_receipt(view: BaseScreen) -> Dictionary:
+	if view == null or run_seamstress_path_choice == null \
+		or not run_seamstress_path_choice.is_claimed():
+		return {}
+	var receipt := run_seamstress_path_choice.get_receipt()
+	if not bool(receipt.get("ok", false)):
+		return {}
+	# The committed receipt must be the Path this village actually confirmed.
+	if view.selected_path_id() != String(receipt.get("path_id", "")) \
+		or view.selected_path_name() != String(receipt.get("display_name", "")):
+		return {}
+	return receipt
 
 
 ## A Base action is only live while it is this app's mounted, visible village.
@@ -780,6 +839,8 @@ func _base_set_out(source: WeakRef) -> void:
 	if run_map == null or not is_instance_valid(route_view) or not route_view.is_visible_in_tree():
 		view.release_set_out()
 		return
+	# Only a real opening book commits the setup's Path as this run's detached receipt.
+	run_seamstress_path_receipt = _selected_path_receipt(view)
 	_route_from_base = true
 	_close_base(view)
 
@@ -789,6 +850,9 @@ func _base_back(source: WeakRef) -> void:
 	if view == null:
 		return
 	_close_base(view)
+	# Back to title abandons this visit's Path setup; nothing of it reaches a run.
+	run_seamstress_path_choice = null
+	run_seamstress_path_receipt = {}
 	if is_instance_valid(title_view):
 		title_view.show()
 	if is_instance_valid(base_button):
@@ -804,6 +868,8 @@ func _start_run() -> void:
 func _open_route() -> void:
 	if deck != null or run_map != null:
 		return
+	# A fresh opening starts with no Path receipt; only this Base's Set out commits one.
+	run_seamstress_path_receipt = {}
 	_route_from_base = false
 	var cards := _load_starter_deck()
 	var initial_party := CombatParty.new(_load_party_definitions())
@@ -4596,6 +4662,9 @@ func _return_to_title() -> void:
 	var restore_base: bool = _route_from_base and run_map != null \
 		and run_map.get_route().is_empty()
 	_route_from_base = false
+	# A fresh title owns no Path: an abandoned or finished run drops its receipt.
+	run_seamstress_path_receipt = {}
+	run_seamstress_path_choice = null
 	_close_base()
 	_clear_visit_backdrop()
 	_clear_quiet_spool()
