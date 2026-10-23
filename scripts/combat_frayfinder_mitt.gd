@@ -328,6 +328,12 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 	var second_targets := _receipt_targets(preview.halves[1], halves[1], before)
 	if first_targets.is_empty() or second_targets.is_empty():
 		return false
+	# One sewn Button Eye can be consumed by an earlier real attack.
+	var button_eye_owner := ""
+	for owner in RunPatchWardrobe.HERO_IDS:
+		if _wardrobe_state.worn.get(owner, {}).get("HEAD") == "button_eye":
+			button_eye_owner = owner
+			break
 	for first_target in first_targets:
 		for second_target in second_targets:
 			# The ordinary resolver may run with or without independently bound
@@ -335,33 +341,39 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 			# never infer effects from untrusted receipt fields alone.
 			for attack_patches in [false, true]:
 				for support_patches in [false, true]:
-					var rng := RandomNumberGenerator.new()
-					rng.state = before.rng
-					var deck := CombatDeck.new([], rng)
-					deck.draw_pile.assign(before.draw)
-					deck.hand.assign(before.hand)
-					deck.discard_pile.assign(before.discard)
-					deck.combat_state.player_turn_active = true
-					deck.combat_state.energy = before.energy
-					var party := CombatParty.new(before.party)
-					party._heroes.assign(before.party)
-					var enemies := CombatEnemies.new(before.enemies)
-					enemies._enemies.assign(before.enemies)
-					var attacks := CombatAttackCards.new()
-					if attack_patches and not attacks.bind_patch_wardrobe(_wardrobe, _torn):
-						continue
-					var resolver := CombatStitchedCards.new(attacks)
-					if support_patches and not resolver.bind_patch_wardrobe(_wardrobe, _torn):
-						continue
-					var played := resolver.play_stitched(deck, party, enemies,
-						verified, quote.card_id, first_target, second_target)
-					if played != receipt:
-						continue
-					if party.get_heroes() == after.party and enemies.get_enemies() == after.enemies \
-							and deck.draw_pile == after.draw and deck.hand == after.hand \
-							and deck.discard_pile == after.discard and deck.energy == after.energy \
-							and rng.state == after.rng:
-						return true
+					# Reconstruct both legal pre-commit first-attack latch states.
+					# An exact receipt AND exact post-state must still match.
+					for prior_consumed in [[false, false], [false, true], [true, false], [true, true]]:
+						var rng := RandomNumberGenerator.new()
+						rng.state = before.rng
+						var deck := CombatDeck.new([], rng)
+						deck.draw_pile.assign(before.draw)
+						deck.hand.assign(before.hand)
+						deck.discard_pile.assign(before.discard)
+						deck.combat_state.player_turn_active = true
+						deck.combat_state.energy = before.energy
+						var party := CombatParty.new(before.party)
+						party._heroes.assign(before.party)
+						var enemies := CombatEnemies.new(before.enemies)
+						enemies._enemies.assign(before.enemies)
+						var attacks := CombatAttackCards.new()
+						attacks._tinker._consumed = prior_consumed[0]
+						if attack_patches and not attacks.bind_patch_wardrobe(_wardrobe, _torn):
+							continue
+						if attack_patches and not button_eye_owner.is_empty():
+							attacks._patches._consumed[button_eye_owner] = prior_consumed[1]
+						var resolver := CombatStitchedCards.new(attacks)
+						if support_patches and not resolver.bind_patch_wardrobe(_wardrobe, _torn):
+							continue
+						var played := resolver.play_stitched(deck, party, enemies,
+							verified, quote.card_id, first_target, second_target)
+						if played != receipt:
+							continue
+						if party.get_heroes() == after.party and enemies.get_enemies() == after.enemies \
+								and deck.draw_pile == after.draw and deck.hand == after.hand \
+								and deck.discard_pile == after.discard and deck.energy == after.energy \
+								and rng.state == after.rng:
+							return true
 	return false
 
 

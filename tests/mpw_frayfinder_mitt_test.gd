@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_negative_attempts()
 	_torn_and_mended()
 	_stitched_halves()
+	_prior_shared_passive_stitched()
 	_mixed_stitched_halves()
 	for failure in failures:
 		printerr(failure)
@@ -417,3 +418,91 @@ func _mixed_stitched_halves() -> void:
 			"warden_strike", 1)
 		_check(next.ok and next.hits.size() == 1 and rule.latch_snapshot() == {"warden": true},
 			label + ": same-owner follow-up really commits without resetting latch")
+
+# A prior genuine attack on the SAME CombatAttackCards consumes a passive
+# before the composite is staged. Detached verification must not restore it.
+func _prior_shared_passive_stitched() -> void:
+	for prior_owner in ["tinker", "warden"]:
+		var label: String = "prior " + str(prior_owner) + " passive"
+		var prior_id := "tinker_pop_shot" if prior_owner == "tinker" else "warden_strike"
+		var rest := RunRestStitchCards.new(
+			["warden_strike", "tinker_pop_shot", prior_id, "warden_strike"], {}, 3)
+		_check(rest.is_valid(), label + ": genuine shared Rest deck")
+		var stitched := rest.choose_stitch(0, 1, rest.get_snapshot())
+		_check(stitched.ok and stitched.descriptor.owners == ["warden", "tinker"]
+			and stitched.descriptor.cost == 2, label + ": authentic affordable ordered stitch")
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 7741
+		var deck := CombatDeck.new(rest.get_snapshot().deck, rng)
+		var party := CombatParty.new(_party_defs())
+		var enemies := CombatEnemies.new([{"id": "ragling", "max_hp": 80}])
+		var gauge := CombatUnravel.new()
+		_check(deck.start_turn() and deck.energy == 3 and deck.hand.has(prior_id)
+			and deck.hand.has(stitched.stitched_id) and gauge.bind_roster(
+				enemies, {1: "normal"}) and gauge.apply_unravel(enemies, 1, 4),
+			label + ": real 3-energy turn, held cards and half-charged living enemy")
+		var torn := RunTornMending.new(CombatParty.new(_party_defs()).get_heroes())
+		var wardrobe := RunPatchWardrobe.new(CombatParty.new(_party_defs()).get_heroes(),
+			["frayfinder_mitt", "button_eye"],
+			[{"id": "frayfinder_mitt", "slot": "ARM"},
+			 {"id": "button_eye", "slot": "HEAD"}], 0)
+		_check(wardrobe.sew("frayfinder_mitt", "warden", "ARM", "sew_shared",
+			wardrobe.get_snapshot()).ok, label + ": genuine ARM worn by Warden")
+		if prior_owner == "warden":
+			_check(wardrobe.sew("button_eye", "warden", "HEAD", "sew_eye",
+				wardrobe.get_snapshot()).ok, label + ": genuine Button Eye HEAD worn")
+		var rule := CombatFrayfinderMitt.new()
+		_check(rule.bind_battle(deck, party, enemies, gauge, wardrobe, torn)
+			and rule.begin_player_turn(), label + ": service bound to current authorities")
+		var shared_attacks := CombatAttackCards.new()
+		shared_attacks.start_player_turn()
+		if prior_owner == "warden":
+			_check(shared_attacks.bind_patch_wardrobe(wardrobe, torn),
+				label + ": Button Eye bound to shared attack authority")
+		var earlier := shared_attacks.play_attack(deck, party, enemies, prior_id, 1)
+		_check(earlier.ok and earlier.hits.size() == 1 and deck.energy == 2
+			and deck.discard_pile.has(prior_id),
+			label + ": earlier attack truly commits using shared resolver")
+		_check(shared_attacks._tinker._consumed == (prior_owner == "tinker"),
+			label + ": Tinker first-attack latch matches earlier owner")
+		if prior_owner == "warden":
+			_check(shared_attacks._patches.latch_snapshot().get("warden") == true
+				and enemies.get_enemy(1).statuses.get("exposed", 0) == 1,
+				label + ": prior Warden attack really consumed Button Eye and exposed target")
+		var quote := rule.quote_stitched_half(rest, stitched.stitched_id, 0, 1)
+		_check(quote.get("bonus") == 2 and quote.get("owner") == "warden"
+			and quote.get("cost") == 2 and quote.has("seal"),
+			label + ": qualifying stitched Warden first hit quotes +2")
+		var before_commit := [party.get_heroes(), enemies.get_enemies(),
+			deck.hand.duplicate(), deck.discard_pile.duplicate(), deck.energy, rng.state]
+		var played := CombatStitchedCards.new(shared_attacks).play_stitched(
+			deck, party, enemies, rest, stitched.stitched_id, 1, 1)
+		_check(played.ok and played.halves.size() == 2
+			and played.halves[0].hits[0].position == 1
+			and played.halves[1].hits[0].position == 1 and deck.energy == 0
+			and deck.discard_pile.has(stitched.stitched_id),
+			label + ": two real halves committed through shared attack resolver")
+		_check(party.get_heroes() == before_commit[0] and rng.state == before_commit[5]
+			and deck.discard_pile.size() == before_commit[3].size() + 1,
+			label + ": service does not change party, RNG, or composite discard")
+		if prior_owner == "tinker":
+			_check(played.halves[1].hits[0].damage == earlier.hits[0].damage - 3,
+				label + ": stitched Tinker half correctly has no second +3")
+		else:
+			_check(played.halves[0].hits[0].statuses.get("exposed", 0) == 0,
+				label + ": stitched Warden half does not reapply consumed Button Eye")
+		var fixture := {"deck": deck, "party": party, "enemies": enemies, "gauge": gauge,
+			"wardrobe": wardrobe, "torn": torn, "rule": rule, "rng": rng}
+		var forged := played.duplicate(true)
+		forged.halves[0].hits[0].damage += 1
+		var untouched := _state(fixture)
+		_check(not rule.consume_confirmed_hit(quote, forged, rest)
+			and rule.latch_snapshot().is_empty() and untouched == _state(fixture),
+			label + ": counterfeit receipt rejected without any state mutation")
+		_check(rule.consume_confirmed_hit(quote, played, rest)
+			and rule.latch_snapshot() == {"warden": true},
+			label + ": genuine stitched receipt confirms +2 and spends Warden once")
+		_check(not rule.consume_confirmed_hit(quote, played, rest),
+			label + ": replayed receipt cannot spend again")
+		_check(rule.quote_starter_hit("warden_strike", 1).get("bonus") == 0,
+			label + ": later same-owner quote receives no +2")
