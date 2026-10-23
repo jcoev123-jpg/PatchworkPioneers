@@ -462,6 +462,13 @@ var _moth_outcome: RunMothInfestationOutcome
 var _moth_context: Array = []
 var _moth_completed := false
 var _moth_picker: ItemList
+var dye_vat_catalog_path := "res://data/events/dye_vat.json"
+var dye_vat_panel: LiveEventChoicePanel
+var _dye_vat_outcome: RunDyeVatOutcome
+var _dye_vat_context: Array = []
+var _dye_vat_completed := false
+var _dye_vat_picker: ItemList
+var _dye_vat_node := ""
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var multi_fight_rewards: RunMultiFightRewards
@@ -2048,7 +2055,8 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
-	if is_instance_valid(quiet_spool_panel) or is_instance_valid(moth_panel):
+	if is_instance_valid(quiet_spool_panel) or is_instance_valid(moth_panel) \
+		or is_instance_valid(dye_vat_panel):
 		return false
 	if run_map == null or _connected_map == null or _connected_map.get_ref() != run_map \
 		or run_map.get_route() != _connected_route or not RunRestRecovery._is_valid_roster(run_heroes) \
@@ -2193,6 +2201,8 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 			return _open_quiet_spool(id, source_map)
 		if not _moth_completed:
 			return _open_moth_infestation(id, source_map)
+		if not _dye_vat_completed:
+			return _open_dye_vat(id, source_map)
 	if not run_map.choose_node(id):
 		return false
 	_placeholder_map = source_map
@@ -2586,6 +2596,332 @@ func _clear_moth() -> void:
 		remove_child(moth_panel)
 		moth_panel.queue_free()
 	moth_panel = null
+
+
+## The single authored Dye Vat record, validated before a visit is mounted. Its
+## three choices are exactly this transaction's supported branches and their
+## authored wallet rates must agree with the scene-free service.
+func _load_dye_vat() -> Dictionary:
+	if not FileAccess.file_exists(dye_vat_catalog_path):
+		return {}
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(dye_vat_catalog_path)) != OK:
+		return {}
+	var record: Variant = parser.data
+	if not record is Dictionary or not RunEventChoice.new(record).is_valid():
+		return {}
+	var event: Dictionary = record
+	if event.get("id") != RunDyeVatOutcome.EVENT_ID:
+		return {}
+	var choices: Variant = event.get("choices")
+	if not choices is Array or (choices as Array).size() != 3:
+		return {}
+	var authored: Array = [RunDyeVatOutcome.CHOICE_IMMERSE, RunDyeVatOutcome.CHOICE_SKIM,
+		RunDyeVatOutcome.CHOICE_LEAVE]
+	var ids: Array = []
+	for choice in choices:
+		if not choice is Dictionary or not (choice as Dictionary).get("outcome") is Dictionary:
+			return {}
+		ids.append((choice as Dictionary).get("id"))
+	if ids != authored:
+		return {}
+	# The authored outcomes must agree with the service amounts, and every one of
+	# them is gold-neutral.
+	var preview: Dictionary = RunEventChoice.new(event).preview_wallet_choices(
+		{"gold": 0, "scraps": RunDyeVatOutcome.UPGRADE_SCRAP_COST})
+	if preview.get("ok") != true or not preview.get("choices") is Array \
+		or (preview.get("choices") as Array).size() != 3:
+		return {}
+	for index in range(3):
+		var forecast: Dictionary = preview.choices[index]
+		if forecast.get("choice_id") != authored[index] or forecast.get("affordable") != true \
+			or forecast.get("gold_delta") != RunDyeVatOutcome.EXPECTED_GOLD \
+			or forecast.get("scraps_delta") != int(RunDyeVatOutcome.EXPECTED_SCRAPS[authored[index]]):
+			return {}
+	return event
+
+
+## The service's finalized eligible deck-occurrence projection, labels included.
+func _dye_vat_options() -> Array:
+	if _dye_vat_outcome == null:
+		return []
+	return _dye_vat_outcome.get_immerse_options()
+
+
+func _dye_vat_option_text(option: Dictionary) -> String:
+	return "Deck #%d: %s" % [int(option.get("index", 0)) + 1,
+		String(option.get("display_name", ""))]
+
+
+## Mounts the eligible-occurrence selector above the authored choices. Every item
+## carries its actual run-deck index, so duplicate IDs stay distinct occurrences.
+func _mount_dye_vat_picker(panel: LiveEventChoicePanel) -> bool:
+	var box := VBoxContainer.new()
+	box.name = "DyeVatPickerBox"
+	var prompt := Label.new()
+	prompt.name = "DyeVatPrompt"
+	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	prompt.add_theme_font_size_override("font_size", 19)
+	box.add_child(prompt)
+	var list := ItemList.new()
+	list.name = "DyeVatPicker"
+	list.focus_mode = Control.FOCUS_ALL
+	list.select_mode = ItemList.SELECT_SINGLE
+	list.custom_minimum_size = Vector2(0, 88)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for option in _dye_vat_options():
+		list.add_item(_dye_vat_option_text(option))
+		list.set_item_metadata(list.item_count - 1, int(option.get("index", -1)))
+	if list.item_count > 0:
+		list.select(0)
+	box.add_child(list)
+	panel.choices_container.add_child(box)
+	panel.choices_container.move_child(box, 0)
+	_dye_vat_picker = list
+	list.item_selected.connect(_refresh_dye_vat_card_cue.bind(list, prompt))
+	list.item_selected.connect(func(_index): _refresh_dye_vat_choices())
+	_refresh_dye_vat_card_cue(0, list, prompt)
+	return true
+
+
+func _refresh_dye_vat_card_cue(index: int, list: ItemList, prompt: Label) -> void:
+	if not is_instance_valid(list) or not is_instance_valid(prompt) or list != _dye_vat_picker:
+		return
+	if list.item_count == 0:
+		if run_scraps < RunDyeVatOutcome.UPGRADE_SCRAP_COST:
+			prompt.text = "Immerse needs %d scraps (you have %d)" % [
+				RunDyeVatOutcome.UPGRADE_SCRAP_COST, run_scraps]
+		else:
+			prompt.text = "Immerse a pool card - none eligible in this deck"
+		return
+	var selected: PackedInt32Array = list.get_selected_items()
+	var row: int = selected[0] if not selected.is_empty() else mini(index, list.item_count - 1)
+	if row < 0 or row >= list.item_count:
+		return
+	prompt.text = "Immerse one card - %s" % list.get_item_text(row)
+
+
+## Reads the chosen occurrence, revalidated against the service's current
+## projection and the live run deck. A forged item never yields an index.
+func _dye_vat_selected_index() -> Variant:
+	if not is_instance_valid(_dye_vat_picker) or _dye_vat_outcome == null:
+		return null
+	var options := _dye_vat_options()
+	if options.is_empty() or _dye_vat_picker.item_count != options.size():
+		return null
+	var selected: PackedInt32Array = _dye_vat_picker.get_selected_items()
+	if selected.size() != 1:
+		return null
+	var row: int = selected[0]
+	if row < 0 or row >= options.size():
+		return null
+	var option: Dictionary = options[row]
+	var index := int(option.get("index", -1))
+	if typeof(_dye_vat_picker.get_item_metadata(row)) != TYPE_INT \
+		or _dye_vat_picker.get_item_metadata(row) != index \
+		or _dye_vat_picker.get_item_text(row) != _dye_vat_option_text(option) \
+		or index < 0 or index >= run_deck.size() \
+		or run_deck[index] != String(option.get("card_id", "")) \
+		or String(RunDyeVatOutcome.resolve_authored_pool_upgrade(run_deck[index]).get(
+			"upgrade_id", "")) != String(option.get("upgrade_id", "")):
+		return null
+	return index
+
+
+func _dye_vat_picker_item_indices() -> Array:
+	var indices: Array = []
+	if not is_instance_valid(_dye_vat_picker):
+		return indices
+	for row in range(_dye_vat_picker.item_count):
+		indices.append(_dye_vat_picker.get_item_metadata(row))
+	return indices
+
+
+## Disables exactly the authored branches this run cannot claim, before the
+## panel is allowed to latch a choice. Skim and Leave stay usable.
+func _refresh_dye_vat_choices() -> void:
+	if not is_instance_valid(dye_vat_panel) or not is_instance_valid(_dye_vat_picker):
+		return
+	if dye_vat_panel._selector == null or dye_vat_panel._selector.is_claimed():
+		return
+	var buttons := dye_vat_panel.get_choice_buttons()
+	if buttons.size() != 3:
+		return
+	buttons[0].disabled = _dye_vat_selected_index() == null
+	buttons[1].disabled = false
+	buttons[2].disabled = false
+	_dye_vat_focus_order(false)
+
+
+## Selector first, then every currently enabled authored choice, wrapping both
+## ways. Disabled branches are skipped so Tab never strands on an unusable row.
+func _dye_vat_focus_order(grab: bool) -> void:
+	if not is_instance_valid(dye_vat_panel):
+		return
+	var controls: Array[Control] = []
+	if is_instance_valid(_dye_vat_picker) and _dye_vat_picker.item_count > 0:
+		controls.append(_dye_vat_picker)
+	for button in dye_vat_panel.get_choice_buttons():
+		if not button.disabled:
+			controls.append(button)
+	if controls.is_empty():
+		return
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(
+			controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(
+			controls[(index - 1 + controls.size()) % controls.size()])
+	if grab:
+		controls[0].grab_focus()
+
+
+## Full witness of this exact run map, node, visit and ledger. Selection is not
+## part of it: only the committed account may authorize a claim.
+func _dye_vat_snapshot() -> Array:
+	if run_map == null or run_rng == null or party_carryover == null or act_outcome == null \
+		or not is_instance_valid(dye_vat_panel) or not is_instance_valid(_dye_vat_picker) \
+		or dye_vat_panel._selector == null:
+		return []
+	var carry := party_carryover as RunTornCarryover
+	if carry == null:
+		return []
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(),
+		run_map.get_route(), run_map.get_current_node_id(), _dye_vat_node,
+		run_rng, run_rng.state, run_seed, run_deck.duplicate(),
+		run_stitch_descriptors.duplicate(true), run_next_stitch_id,
+		run_heroes.duplicate(true), run_trinkets.duplicate(), session_gold, run_scraps,
+		run_removal_count, carry, carry.read_state(), carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), dye_vat_panel, _dye_vat_outcome,
+		_dye_vat_completed, dye_vat_panel._selector, dye_vat_panel._selector.get_event(),
+		_dye_vat_picker, _dye_vat_picker.get_instance_id(), _dye_vat_picker_item_indices(),
+		_dye_vat_picker.item_count]
+
+
+## The run's third Event presents the accepted Dye Vat transaction through the
+## live connected route. Later Events keep the no-effect placeholder.
+func _open_dye_vat(id: String, source: WeakRef) -> bool:
+	var record := _load_dye_vat()
+	if record.is_empty() or _dye_vat_completed or is_instance_valid(dye_vat_panel):
+		return false
+	var outcome := RunDyeVatOutcome.new(run_deck, run_stitch_descriptors, run_scraps,
+		run_next_stitch_id, record)
+	if not outcome.is_valid():
+		return false
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_event(record):
+		panel.free()
+		return false
+	_mount_event_backdrop(panel)
+	# The authored Dye Vat description is shorter than Quiet Spool's; this keeps
+	# the selector and all three choices inside the same paper panel.
+	panel.description_label.custom_minimum_size = Vector2(0, 64)
+	dye_vat_panel = panel
+	_dye_vat_outcome = outcome
+	_dye_vat_node = id
+	if not _mount_dye_vat_picker(panel) or not run_map.choose_node(id):
+		_dye_vat_picker = null
+		_dye_vat_outcome = null
+		_dye_vat_node = ""
+		dye_vat_panel = null
+		panel.free()
+		return false
+	_clear_route_view()
+	_dye_vat_context = _dye_vat_snapshot()
+	panel.choice_committed.connect(_commit_dye_vat.bind(panel, outcome, source))
+	_refresh_dye_vat_choices()
+	_dye_vat_focus_order(true)
+	return true
+
+
+func _commit_dye_vat(event_id: String, choice_id: String, panel,
+		outcome: RunDyeVatOutcome, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != dye_vat_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or outcome == null or outcome != _dye_vat_outcome or outcome.is_claimed() \
+		or _dye_vat_completed or _dye_vat_node.is_empty() or source == null \
+		or source.get_ref() != run_map or run_map.get_current_node_id() != _dye_vat_node \
+		or _dye_vat_context.is_empty() or _dye_vat_snapshot() != _dye_vat_context \
+		or panel._selector == null or not panel._selector.is_claimed() \
+		or panel._committed_choice != {"ok": true, "event_id": event_id, "choice_id": choice_id} \
+		or event_id != RunDyeVatOutcome.EVENT_ID \
+		or choice_id not in [RunDyeVatOutcome.CHOICE_IMMERSE, RunDyeVatOutcome.CHOICE_SKIM,
+			RunDyeVatOutcome.CHOICE_LEAVE]:
+		return
+	# The panel latches a choice only from its own enabled, visible control, and
+	# disables every button afterwards; the receipt below is the final arbiter.
+	var buttons: Array[Button] = panel.get_choice_buttons()
+	if buttons.size() != 3:
+		return
+	for choice in panel._selector.get_event().get("choices", []):
+		if not choice is Dictionary or not choice.get("outcome") is Dictionary \
+			or int(choice.outcome.get("gold", -1)) != RunDyeVatOutcome.EXPECTED_GOLD \
+			or int(choice.outcome.get("scraps", 0)) != int(
+				RunDyeVatOutcome.EXPECTED_SCRAPS.get(choice.get("id"), 0)):
+			return
+	var selected: Variant = null
+	if choice_id == RunDyeVatOutcome.CHOICE_IMMERSE:
+		selected = _dye_vat_selected_index()
+		if selected == null:
+			return
+	var receipt := outcome.choose(event_id, choice_id, selected)
+	if receipt.get("ok") != true or receipt.get("event_id") != event_id \
+		or receipt.get("choice_id") != choice_id \
+		or not receipt.get("deck") is Array \
+		or not receipt.get("descriptors") is Dictionary \
+		or typeof(receipt.get("next_stitch_id")) != TYPE_INT \
+		or typeof(receipt.get("scraps")) != TYPE_INT:
+		return
+	# The receipt must describe exactly the selected occurrence, the expected
+	# scraps delta and the untouched descriptors/cursor.
+	var settled: Array = receipt.get("deck")
+	var scraps: int = receipt.get("scraps")
+	if receipt.get("descriptors") != run_stitch_descriptors \
+		or int(receipt.get("next_stitch_id", -1)) != run_next_stitch_id:
+		return
+	if choice_id == RunDyeVatOutcome.CHOICE_IMMERSE:
+		var index := int(selected)
+		if index < 0 or index >= run_deck.size() or receipt.get("selected_index") != index \
+			or String(receipt.get("replaced_card_id", "")) != run_deck[index]:
+			return
+		var upgrade_id := String(receipt.get("upgrade_card_id", ""))
+		if upgrade_id.is_empty() or upgrade_id != String(
+			RunDyeVatOutcome.resolve_authored_pool_upgrade(run_deck[index]).get("upgrade_id", "")):
+			return
+		var expected := run_deck.duplicate()
+		expected[index] = upgrade_id
+		if settled != expected or scraps != run_scraps - RunDyeVatOutcome.UPGRADE_SCRAP_COST:
+			return
+	elif choice_id == RunDyeVatOutcome.CHOICE_SKIM:
+		if settled != run_deck or scraps != run_scraps + RunDyeVatOutcome.SKIM_SCRAP_GAIN:
+			return
+	elif settled != run_deck or scraps != run_scraps + RunDyeVatOutcome.LEAVE_SCRAP_GAIN:
+		return
+	# Every validated receipt is gold-neutral: each authored choice's gold delta
+	# is zero, and the run ledger's gold is never assigned here.
+	run_deck.assign(settled)
+	run_stitch_descriptors = (receipt.get("descriptors") as Dictionary).duplicate(true)
+	run_next_stitch_id = receipt.get("next_stitch_id")
+	run_scraps = scraps
+	_dye_vat_completed = true
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_dye_vat()
+	_present_connected_route(source)
+
+
+## Releases the panel, selector, transaction and every captured binding.
+func _clear_dye_vat() -> void:
+	_dye_vat_context.clear()
+	_dye_vat_outcome = null
+	_dye_vat_picker = null
+	_dye_vat_node = ""
+	if is_instance_valid(dye_vat_panel):
+		dye_vat_panel.close_event()
+		remove_child(dye_vat_panel)
+		dye_vat_panel.queue_free()
+	dye_vat_panel = null
 
 
 func _current_completed_rest() -> bool:
@@ -4266,6 +4602,8 @@ func _return_to_title() -> void:
 	_quiet_spool_completed = false
 	_clear_moth()
 	_moth_completed = false
+	_clear_dye_vat()
+	_dye_vat_completed = false
 	_clear_rest_patch_overlay()
 	_clear_rest_stitch_overlay()
 	rest_stitch_guided_button = null

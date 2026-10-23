@@ -1,0 +1,50 @@
+{
+  "hero_id": "tinker",
+  "paths": [
+    {
+      "id": "sharpshot",
+      "display_name": "Sharpshot",
+      "owner": "tinker",
+      "passive_id": "tinker_first_successful_attack",
+      "passive": {
+        "trigger": "first_successful_tinker_attack_each_player_turn",
+        "bonus_damage": 3
+      },
+      "card": {
+        "id": "tinker_scope",
+        "display_name": "Scope",
+        "owner": "tinker",
+        "cost": 0,
+        "from_positions": [3],
+        "target_kind": "none",
+        "to_positions": [],
+        "effects": {"next_attack_damage_bonus": 4, "expires": "end_of_player_turn"},
+        "illustration_path": "res://assets/paper/cards/tinker_scope.png",
+        "starting_copies": 0
+      }
+    },
+    {
+      "id": "clockwork",
+      "display_name": "Clockwork",
+      "owner": "tinker",
+      "passive_id": "tinker_first_expensive_card_discount",
+      "passive": {
+        "trigger": "first_successful_tinker_card_with_printed_cost_at_least_2_each_player_turn",
+        "minimum_printed_cost": 2,
+        "discount": 1
+      },
+      "card": {
+        "id": "tinker_wind_up",
+        "display_name": "Wind-up",
+        "owner": "tinker",
+        "cost": 1,
+        "from_positions": [2, 3],
+        "target_kind": "none",
+        "to_positions": [],
+        "effects": {"next_turn_energy": 1},
+        "illustration_path": "res://assets/paper/cards/tinker_wind_up.png",
+        "starting_copies": 0
+      }
+    }
+  ]
+}

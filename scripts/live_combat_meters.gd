@@ -30,6 +30,10 @@ const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare
 	"quilted_coat": "Quilted Coat", "padded_vest": "Padded Vest",
 	"double_quilt_coat": "Double Quilt Coat", "scrap_lined_vest": "Scrap Lined Vest",
 	"wool_patch_cloak": "Wool Patch Cloak", "chain_stitched_coat": "Chain Stitched Coat"}
+## Committed Block icon, painted inside the meter's existing sewn glyph. Optional: a
+## missing image leaves the drawn shield in place, so protection is always readable.
+const UI_ART_DIR := "res://assets/paper/ui/"
+const BLOCK_ART := "hud_block.png"
 
 var row: Control
 var _battle: Control
@@ -37,6 +41,10 @@ var _deck: CombatDeck
 var _party: CombatParty
 var _enemies: CombatEnemies
 var _coat_bonuses: Dictionary = {}
+## Presentation-only art root. A redirected or unavailable root (missing file or import)
+## keeps the drawn shield instead of failing, and repaints the same mounted icon.
+var art_root := UI_ART_DIR
+var _art_cache: Dictionary = {}
 
 
 func _ready() -> void:
@@ -45,6 +53,20 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_sync_battle()
+
+
+## Resolved path of the committed Block icon under the current presentation-only root.
+func block_art_path() -> String:
+	return art_root + BLOCK_ART
+
+
+## Cached, optional Block icon. A missing image is cached as null too, so the drawn sewn
+## shield stays the fallback and an unavailable file is never probed twice.
+func block_texture() -> Texture2D:
+	var path := block_art_path()
+	if not _art_cache.has(path):
+		_art_cache[path] = LiveEnemyIntentBadge.load_icon_texture(path)
+	return _art_cache[path] as Texture2D
 
 
 func _sync_battle() -> void:
@@ -75,6 +97,7 @@ func _sync_battle() -> void:
 		var snapshot: Dictionary = _party.get_hero(position) if side == "hero" else _enemies.get_enemy(position)
 		var shown := meter.show_actor(snapshot, side)
 		_compact(meter)
+		_sync_block_icon(meter, snapshot)
 		if side == "enemy":
 			_sync_unravel_thread(meter, snapshot, position, unravel)
 		# The forecast is written before the tooltip is composed, so a hover can never
@@ -240,6 +263,17 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	meter.block_text.autowrap_mode = TextServer.AUTOWRAP_OFF
 	meter.block_bar.custom_minimum_size = Vector2(0, 6)
 	meter.block_bar.hide()
+	# Authored Block icon inside the existing sewn glyph slot. It is a picture only: the
+	# authoritative amount stays the meter's own Block label and the badge keeps its width.
+	var block_icon := TextureRect.new()
+	block_icon.name = "BlockIcon"
+	block_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block_icon.focus_mode = Control.FOCUS_NONE
+	block_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	block_icon.stretch_mode = TextureRect.STRETCH_SCALE
+	block_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	block_icon.visible = false
+	meter.block_shield.add_child(block_icon)
 	meter.status_text.add_theme_font_size_override("font_size", 11)
 	meter.status_text.hide()
 	meter.modifier_explanation.add_theme_font_size_override("font_size", 10)
@@ -362,6 +396,21 @@ func _compact(meter: CombatActorMeter) -> void:
 	meter.block_bar.hide()
 	meter.modifier_explanation.hide()
 	meter.bleed_warning.hide()
+
+
+## The committed Block icon lives inside the meter's own sewn glyph and is only painted
+## while the model value is positive. The amount, tooltip, badge width and every HP/status
+## child of the ribbon are untouched; a missing image falls back to the drawn shield.
+func _sync_block_icon(meter: CombatActorMeter, actor: Dictionary) -> void:
+	var icon := meter.block_shield.get_node_or_null("BlockIcon") as TextureRect
+	if icon == null:
+		return
+	var art := block_texture()
+	if icon.texture != art:
+		icon.texture = art
+	var shown: bool = art != null and int(actor.get("block", 0)) > 0
+	if icon.visible != shown:
+		icon.visible = shown
 
 
 ## Resolve the actual bound run ledgers afresh. The saved torn roster validates ownership,

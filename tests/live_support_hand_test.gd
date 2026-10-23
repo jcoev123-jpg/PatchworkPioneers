@@ -15,6 +15,15 @@ const POOL_FORMS := [
 	"seamstress_thimble_tea", "seamstress_thimble_tea_plus",
 	"seamstress_field_mend", "seamstress_field_mend_plus",
 ]
+## The committed sewn HUD art the real mounted battle must actually display. Every path is
+## checked against the real loaded resource, never against a copied constant alone.
+const HUD_ART := {
+	"tray": "res://assets/paper/ui/hud_hand_tray.png",
+	"draw": "res://assets/paper/ui/hud_draw_pile.png",
+	"discard": "res://assets/paper/ui/hud_discard_pile.png",
+	"energy": "res://assets/paper/ui/hud_energy.png",
+	"end_turn": "res://assets/paper/ui/hud_end_turn.png",
+}
 
 
 func _initialize() -> void:
@@ -165,6 +174,7 @@ func _visible() -> void:
 		and app.battle_view.find_children("SupportHandFooterSpring", "Control", true, false).size() == 1,
 		"repeated sync leaves exactly one orb, help cue and inert spring")
 	_table_checks("live sync")
+	_hud_art_checks("live sync")
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
 		_check(app.hero_panels[index].get_child(0).text == "%d - %s\nHP: %d/%d | Block: %d%s" % [
@@ -206,6 +216,117 @@ func _table_checks(stage: String) -> void:
 			"the same single table survives repeated frames, plays and turns: " + stage)
 
 
+## One control's rect in the mounted table's own coordinates, for band/art geometry.
+func _local_rect(control: Control) -> Rect2:
+	var rect := control.get_global_rect()
+	return Rect2(rect.position - presenter.backing.get_global_rect().position, rect.size)
+
+
+## The authored HUD art must be the really resolved textures, placed from the live layout,
+## while every existing count, focus target and press signal stays exactly as it was.
+func _hud_art_checks(stage: String) -> void:
+	for key in HUD_ART:
+		_check(ResourceLoader.exists(HUD_ART[key], "Texture2D") and load(HUD_ART[key]) is Texture2D,
+			"committed HUD art loads: " + HUD_ART[key])
+	var table: Control = presenter.backing
+	_check(is_instance_valid(table) and table.tray_texture is Texture2D
+		and table.tray_art_path() == HUD_ART["tray"],
+		"mounted table paints the committed hand tray: " + stage)
+	if not is_instance_valid(table):
+		return
+	var hand := _local_rect(app.hand_view)
+	_check(table.tray_rect.size.x > 0.0 and table.tray_rect.size.y > 0.0
+		and table.band.encloses(table.tray_rect) and table.tray_rect.encloses(hand)
+		and table.covers(app.hand_view),
+		"hand tray fills the sewn band behind every mounted card: " + stage)
+	var source: Rect2 = table.tray_source_rect()
+	var pixels: Vector2 = table.tray_texture.get_size()
+	_check(source.size.x > 0.0 and source.size.y > 0.0
+		and Rect2(Vector2.ZERO, pixels).encloses(source)
+		and absf(source.size.x / source.size.y - table.tray_rect.size.x / table.tray_rect.size.y) < 0.02,
+		"tray picture keeps its own proportions inside the live cloth: " + stage)
+	_check(table.tray_draw_count > 0 and table.draw_count > 0,
+		"table actually painted the authored tray and its felt: " + stage)
+	var orb: Control = presenter.energy_orb
+	_check(orb.texture is Texture2D and orb.art_path() == HUD_ART["energy"] and orb.art_draw_count > 0,
+		"energy spool paints the committed energy art inside its inset disc: " + stage)
+	_check(Rect2(Vector2.ZERO, orb.size).encloses(orb.disc_rect())
+		and orb.size.y - orb.disc_rect().size.y >= 8.0,
+		"authored energy spool keeps the present inset disc contract: " + stage)
+	_check(presenter.energy_label.text == "%d" % app.deck.energy
+		and presenter.energy_label.get_theme_constant("outline_size") > 0
+		and presenter.energy_label.get_minimum_size().x <= orb.disc_rect().size.x
+		and presenter.energy_label.get_minimum_size().y <= orb.disc_rect().size.y
+		and presenter.energy_label.is_visible_in_tree(),
+		"the real energy number stays legible over the authored spool: " + stage)
+	_pile_token_checks(stage)
+	var button: Button = app.end_turn_button
+	var face := button.get_theme_stylebox("normal") as StyleBoxTexture
+	_check(face != null and face.texture is Texture2D
+		and face.texture.resource_path == HUD_ART["end_turn"]
+		and button.get_meta("hud_end_turn_art", "") == HUD_ART["end_turn"],
+		"the original End Turn button displays its authored face: " + stage)
+	_check(button.text == "End Turn" and button.pressed.get_connections().size() == 1
+		and button.focus_mode == Control.FOCUS_ALL and not button.disabled
+		and button.focus_next == button.get_path_to(app.return_button)
+		and not button.focus_previous.is_empty()
+		and button.get_node_or_null(button.focus_previous) is Button,
+		"authored face never replaces the pressed signal, focus or Tab cycle: " + stage)
+	_check(button.get_theme_stylebox("hover") is StyleBoxTexture
+		and button.get_theme_stylebox("pressed") is StyleBoxTexture
+		and button.get_theme_stylebox("disabled") is StyleBoxTexture,
+		"hover, pressed and disabled keep the same authored icon: " + stage)
+	_check(root.get_visible_rect().encloses(button.get_global_rect())
+		and button.get_combined_minimum_size() == Vector2(240, 48)
+		and root.get_visible_rect().encloses(app.pile_label.get_parent().get_global_rect()),
+		"the authored face never grows the accepted End Turn control and stays inside 1280x720: " + stage)
+
+
+## Both authored pile pictures sit beside the one existing count Label: no duplicated
+## number, no pointer or keyboard target and no extra control anywhere.
+func _pile_token_checks(stage: String) -> void:
+	var row: Node = app.pile_label.get_parent()
+	_check(row != null and is_instance_valid(presenter.draw_token)
+		and is_instance_valid(presenter.discard_token),
+		"both inert pile tokens are mounted beside the counts: " + stage)
+	if row == null or not is_instance_valid(presenter.draw_token) \
+			or not is_instance_valid(presenter.discard_token):
+		return
+	var draw_token: Control = presenter.draw_token
+	var discard_token: Control = presenter.discard_token
+	_check(row.find_children("SupportHandDrawPile", "Control", true, false).size() == 1
+		and row.find_children("SupportHandDiscardPile", "Control", true, false).size() == 1,
+		"exactly one draw and one discard token: " + stage)
+	_check(draw_token.texture is Texture2D and draw_token.art_path() == HUD_ART["draw"]
+		and discard_token.texture is Texture2D and discard_token.art_path() == HUD_ART["discard"],
+		"pile tokens draw the committed draw and discard art: " + stage)
+	_check(draw_token.get_index() == app.pile_label.get_index() - 1
+		and discard_token.get_index() == app.pile_label.get_index() + 1,
+		"tokens sit immediately beside the one existing pile label: " + stage)
+	for token in [draw_token, discard_token]:
+		_check(token.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and token.focus_mode == Control.FOCUS_NONE
+			and token.gui_input.get_connections().is_empty()
+			and not token is BaseButton and token.get_child_count() == 0,
+			"pile token is pointer/focus inert and owns no control: " + stage)
+		_check(token.art_rect().size.x > 0.0
+			and Rect2(Vector2.ZERO, token.size).grow(0.5).encloses(token.art_rect()),
+			"authored pile token keeps its picture inside its own box: " + stage)
+		_check(token.draw_count > 0 and token.size.x >= 16.0 and token.size.y >= 16.0,
+			"pile token really painted a readable picture: " + stage)
+		_check(root.get_visible_rect().encloses(token.get_global_rect()),
+			"pile token fits the 1280x720 viewport: " + stage)
+	_check(draw_token.get_global_rect().end.x <= app.pile_label.get_global_rect().position.x
+		and discard_token.get_global_rect().position.x >= app.pile_label.get_global_rect().end.x
+		and not draw_token.get_global_rect().intersects(app.pile_label.get_global_rect())
+		and not discard_token.get_global_rect().intersects(app.pile_label.get_global_rect()),
+		"tokens flank the counts without covering a single digit: " + stage)
+	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [
+		app.deck.draw_pile.size(), app.deck.discard_pile.size()]
+		and row.find_children("*", "Label", true, false).size() == 1,
+		"the one existing pile Label keeps the exact current deck counts: " + stage)
+
+
 ## Real pointer hover over the compact cue: the complete instructions must be reachable from
 ## the mounted footer, not merely stored on an inert label.
 func _help_hover_case(stage: String) -> void:
@@ -220,17 +341,120 @@ func _help_hover_case(stage: String) -> void:
 		"hovering the cue adds no focus target and never enters the hand: " + stage)
 
 
-## A real mounted-battle resize must re-measure the same sewn table, with no second backing.
+## A real mounted-battle resize must re-measure the same sewn table and its authored tray,
+## with no second backing and no duplicated HUD art.
 func _resize_case() -> void:
 	var before: Rect2 = presenter.backing.band
+	var tray_before: Rect2 = presenter.backing.tray_rect
+	var orb_id: int = presenter.energy_orb.get_instance_id()
 	app.battle_view.size = Vector2(1024, 600)
 	await _frames()
 	_table_checks("resized battle area")
+	_hud_art_checks("resized battle area")
 	_check(presenter.backing.band != before and presenter.backing.band.size.y > 0.0,
 		"table follows a live battle-area resize")
+	_check(presenter.backing.tray_rect != tray_before and presenter.backing.tray_rect.size.x > 0.0
+		and presenter.backing.band.encloses(presenter.backing.tray_rect),
+		"authored hand tray follows the resized cloth instead of a fixed rect")
+	_check(presenter.energy_orb.get_instance_id() == orb_id
+		and presenter.energy_orb.art_path() == HUD_ART["energy"],
+		"resize repaints the same authored spool without remounting it")
 	app.battle_view.size = Vector2(1280, 720)
 	await _frames()
 	_table_checks("restored battle area")
+	_hud_art_checks("restored battle area")
+
+
+## Dropping the presenter and rebinding the same live battle mounts exactly one set of
+## authored HUD nodes and repaints every committed image on them.
+func _rebind_case() -> void:
+	var table: Control = presenter.backing
+	presenter._clear()
+	_check(presenter.backing == null and presenter.energy_orb == null
+		and presenter.draw_token == null and presenter.discard_token == null,
+		"clearing the presenter drops every authored HUD node")
+	await _frames()
+	presenter._sync_battle()
+	_check(is_instance_valid(presenter.backing) and presenter.backing != table
+		and is_instance_valid(presenter.draw_token) and presenter.energy_orb.texture is Texture2D,
+		"rebinding the live battle mounts one fresh authored HUD")
+	_check(app.battle_view.find_children(presenter.TABLE_ID, "Control", true, false).size() == 1
+		and app.battle_view.find_children("SupportHandEnergyOrb", "Control", true, false).size() == 1
+		and app.find_children("SupportHandDrawPile", "Control", true, false).size() == 1
+		and app.find_children("SupportHandDiscardPile", "Control", true, false).size() == 1,
+		"rebinding never duplicates a tray, pile token or orb")
+	_hud_art_checks("rebound presenter")
+	# The intentional rebind replaces the table once; later checks track the new one.
+	table_instance = presenter.backing.get_instance_id()
+	_visible()
+
+
+## Missing committed art must fall back to the drawn felt, spool, packet and theme button
+## on the SAME mounted nodes, keeping counts, focus and the real turn transaction.
+func _missing_art_case() -> void:
+	var table: Control = presenter.backing
+	var orb: Control = presenter.energy_orb
+	var draw_token: Control = presenter.draw_token
+	var discard_token: Control = presenter.discard_token
+	var button: Button = app.end_turn_button
+	var ids := [table.get_instance_id(), orb.get_instance_id(), draw_token.get_instance_id(),
+		discard_token.get_instance_id(), button.get_instance_id()]
+	var table_draws: int = table.draw_count
+	var orb_draws: int = orb.draw_count
+	var tray_draws: int = table.tray_draw_count
+	var token_draws: int = draw_token.draw_count
+	var counts: String = app.pile_label.text
+	presenter.ui_art_root = "res://assets/paper/ui/absent/"
+	presenter._sync_battle()
+	await _frames()
+	_check(table.tray_texture == null and orb.texture == null
+		and draw_token.texture == null and discard_token.texture == null,
+		"missing HUD art resolves to no texture instead of a broken one")
+	_check(str(button.get_meta("hud_end_turn_art", "")) == ""
+		and not button.has_theme_stylebox_override("normal"),
+		"missing End Turn art restores the existing theme face")
+	_check(presenter.backing == table and presenter.energy_orb == orb
+		and presenter.draw_token == draw_token and presenter.discard_token == discard_token
+		and app.end_turn_button == button
+		and [table.get_instance_id(), orb.get_instance_id(), draw_token.get_instance_id(),
+			discard_token.get_instance_id(), button.get_instance_id()] == ids,
+		"missing art reuses the mounted nodes instead of mounting duplicates")
+	_check(app.battle_view.find_children(presenter.TABLE_ID, "Control", true, false).size() == 1
+		and app.battle_view.find_children("SupportHandEnergyOrb", "Control", true, false).size() == 1
+		and app.find_children("SupportHandDrawPile", "Control", true, false).size() == 1
+		and app.find_children("SupportHandDiscardPile", "Control", true, false).size() == 1,
+		"the fallback leaves exactly one of each mounted HUD node")
+	_check(table.draw_count > table_draws and orb.draw_count > orb_draws
+		and draw_token.draw_count > token_draws and table.tray_draw_count == tray_draws,
+		"drawn felt, spool and pile packet fallbacks are painted instead of the missing art")
+	_check(app.pile_label.text == counts
+		and presenter.energy_label.text == "%d" % app.deck.energy
+		and button.pressed.get_connections().size() == 1
+		and button.focus_mode == Control.FOCUS_ALL and button.text == "End Turn",
+		"fallback keeps the exact counts, the focus and the original press signal")
+	# The unchanged real button still resolves a full turn while the art is missing.
+	_check(reference.end_turn(), "reference ends an art-free turn")
+	_reference_enemy_phase()
+	_check(reference.start_turn() and reference_party.start_player_turn(),
+		"reference starts an art-free turn")
+	await _mouse(button)
+	_check(_snapshot(app.deck, app.party, app.run_rng) == _snapshot(reference, reference_party, reference_rng),
+		"End Turn keeps its real transaction while the authored art is missing")
+	_check(app.pile_label.text == "Draw: %d | Discard: %d" % [
+			app.deck.draw_pile.size(), app.deck.discard_pile.size()]
+		and draw_token.texture == null and discard_token.texture == null
+		and presenter.energy_label.text == "%d" % app.deck.energy,
+		"post-turn counts stay authoritative and the tokens keep the fallback")
+	presenter.ui_art_root = presenter.UI_ART_DIR
+	presenter._sync_battle()
+	await _frames()
+	_check(table.tray_art_path() == HUD_ART["tray"] and orb.art_path() == HUD_ART["energy"]
+		and draw_token.art_path() == HUD_ART["draw"]
+		and discard_token.art_path() == HUD_ART["discard"]
+		and button.get_meta("hud_end_turn_art", "") == HUD_ART["end_turn"],
+		"restoring the art root repaints the committed HUD art on the same nodes")
+	_hud_art_checks("restored art root")
+	_visible()
 
 
 func _panel(id: String) -> Control:
@@ -350,6 +574,7 @@ func _run() -> void:
 		await _help_hover_case("mounted session %d" % session)
 		if session == 0:
 			await _resize_case()
+			await _rebind_case()
 		for inert in app.hand_view.get_children():
 			if inert.get_child(0).text not in presenter.SUPPORT_IDS:
 				before = _live()
@@ -440,13 +665,31 @@ func _run() -> void:
 			"Return frees the Help cue, its stitches and the inert spring")
 		_check(app.find_children(presenter.TABLE_ID, "Control", true, false).is_empty()
 			and not is_instance_id_valid(closed_table), "Return frees the felt table instead of reusing it")
+		_check(presenter.draw_token == null and presenter.discard_token == null
+			and app.find_children("SupportHandDrawPile", "Control", true, false).is_empty()
+			and app.find_children("SupportHandDiscardPile", "Control", true, false).is_empty(),
+			"Return frees both inert pile tokens instead of leaving them on the title")
 		table_instance = 0
 	await _ally_cases()
 	await _ally_move_cases()
 	await _stale_restart(seed_value)
 	await _pool_heal_cases()
+	await _missing_art_session(seed_value)
 	app.free()
 	_finish()
+
+
+## A fresh real session proves the authored art and its fallback on the mounted battle.
+func _missing_art_session(seed_value: int) -> void:
+	if not await _start(seed_value):
+		return
+	await _missing_art_case()
+	app.return_button.pressed.emit()
+	await _frames()
+	_check(app.find_children("SupportHandDrawPile", "Control", true, false).is_empty()
+		and app.find_children("SupportHandDiscardPile", "Control", true, false).is_empty()
+		and presenter.draw_token == null and presenter.discard_token == null,
+		"the art session returns to a title without pile tokens")
 
 
 func _negative_cases() -> void:

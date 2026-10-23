@@ -5,6 +5,8 @@ var checks := 0
 ## Four chips must share one narrow ribbon row, so a fallen actor with all three
 ## stacks gets compact-but-complete names; the tooltip keeps the full ones.
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
+## The committed Block icon the mounted ribbons must display beside a positive amount.
+const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
 
 
 func _initialize() -> void:
@@ -243,6 +245,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and (actor.block == 0 or (meter.block_text.is_visible_in_tree()
 			and meter.block_shield.is_visible_in_tree())),
 		"ribbon shows one authoritative doubled Block shield and count: " + meter.name)
+	_assert_block_icon(meter, actor)
 	_check(not meter.block_bar.is_visible_in_tree() and meter.block_bar.value == actor.block
 		and meter.block_bar.max_value == maxi(1, maxi(actor.max_hp, actor.block)),
 		"the duplicate Block bar stays exact and hidden: " + meter.name)
@@ -338,6 +341,32 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 			actor.position])
 		_check(puppet != null and puppet.actor_id == actor.get("id", ""),
 			"the stage slot draws the same authoritative actor as its ribbon: " + meter.name)
+
+
+## The authored Block icon lives inside the meter's own sewn glyph: present only while the
+## model amount is positive, pointer/keyboard inert, and never part of the amount or layout.
+func _assert_block_icon(meter: CombatActorMeter, actor: Dictionary) -> void:
+	var icon := meter.block_shield.get_node_or_null("BlockIcon") as TextureRect
+	_check(icon != null and icon.get_parent() == meter.block_shield
+		and meter.block_shield.find_children("BlockIcon", "TextureRect", false, false).size() == 1,
+		"the Block badge owns exactly one authored icon slot: " + meter.name)
+	if icon == null:
+		return
+	_check(icon.texture is Texture2D and icon.texture.resource_path == BLOCK_ART,
+		"the mounted badge carries the committed Block art: " + meter.name)
+	var positive: bool = actor.block > 0
+	_check(icon.visible == positive and icon.is_visible_in_tree() == positive,
+		"the authored Block icon appears only while protection is positive: " + meter.name)
+	_check(icon.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and icon.focus_mode == Control.FOCUS_NONE
+		and icon.gui_input.get_connections().is_empty()
+		and icon.get_child_count() == 0 and icon.tooltip_text.is_empty(),
+		"authored Block icon takes no pointer, keyboard or tooltip: " + meter.name)
+	_check(Rect2(Vector2.ZERO, meter.block_shield.size).grow(0.5).encloses(
+		Rect2(icon.position, icon.size)),
+		"authored Block icon stays inside the existing badge slot: " + meter.name)
+	_check(meter.block_text.text == ("%d" % actor.block if positive else ""),
+		"authored icon never stands in for the exact Block amount: " + meter.name)
 
 
 ## Four-chip ribbon: a fallen actor keeps all three stacks, so every chip must show its
@@ -989,6 +1018,7 @@ func _run() -> void:
 	await _unravel_bound_fight(app, presenter)
 	await _status_end_turns(app, presenter)
 	await _three_enemy_stage(app, presenter)
+	await _block_art_case(app, presenter)
 	await _worn_coat_ribbons_test(app, presenter)
 	app.free()
 	await _frames()
@@ -1330,6 +1360,100 @@ func _three_enemy_stage(app, presenter) -> void:
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null and _meters(app).is_empty(),
 		"typed three-enemy Return clears the whole ribbon row")
+
+
+## The authored Block icon follows exact live Block values, hides at zero, survives missing
+## art as the drawn shield and is disposed with its own ribbon on Return.
+func _block_art_case(app, presenter) -> void:
+	_fixture_start(app)
+	await _frames()
+	_check(ResourceLoader.exists(BLOCK_ART, "Texture2D")
+		and presenter.block_texture() is Texture2D
+		and presenter.block_texture().resource_path == BLOCK_ART,
+		"the committed Block art resolves from the mounted presenter")
+	_check(app.party != null and app.party.get_hero(1)["block"] > 0
+		and app.party.get_hero(3)["block"] == 0,
+		"authentic opening has a protected and an unprotected hero")
+	if app.party == null or app.party.get_hero(1)["block"] <= 0:
+		return
+	var opening_block: String = str(app.party.get_hero(1)["block"])
+	var meters := _meters(app)
+	_check(meters.size() == 5, "the Block-art fight mounts all five real ribbons")
+	if meters.size() != 5:
+		return
+	var warden_icon := meters[0].block_shield.get_node_or_null("BlockIcon") as TextureRect
+	var tinker_icon := meters[2].block_shield.get_node_or_null("BlockIcon") as TextureRect
+	_check(warden_icon != null and tinker_icon != null
+		and warden_icon.get_instance_id() != tinker_icon.get_instance_id(),
+		"every mounted ribbon owns its own authored Block icon")
+	if warden_icon == null or tinker_icon == null:
+		return
+	var warden_icon_id := warden_icon.get_instance_id()
+	_check(warden_icon.visible and warden_icon.texture.resource_path == BLOCK_ART
+		and meters[0].block_text.text == opening_block and meters[0].block_badge.visible,
+		"mounted Warden shows the authored Block icon with the exact model amount")
+	_check(not tinker_icon.visible and not tinker_icon.is_visible_in_tree()
+		and meters[2].block_text.text.is_empty() and not meters[2].block_badge.visible,
+		"a hero with zero Block shows no authored icon and no misleading amount")
+	# Real party APIs drive the exact amount the mounted icon follows on the next frame.
+	var before_gain := _state(app)
+	_check(app.party.gain_block(3, 4), "real party API gives the unprotected hero Block")
+	await _frames()
+	_visible(app)
+	_check(app.party.get_hero(3)["block"] == 4 and meters[2].block_text.text == "4"
+		and tinker_icon.visible and tinker_icon.is_visible_in_tree()
+		and tinker_icon.texture.resource_path == BLOCK_ART,
+		"authored Block icon follows a real positive Block amount")
+	_check(_state(app) != before_gain and app.deck.energy == before_gain[5],
+		"only the intended Block gain changed while energy and piles stayed exact")
+	# Missing art keeps the drawn sewn shield and the same nodes, never a broken icon.
+	presenter.art_root = "res://assets/paper/ui/absent/"
+	presenter._sync_battle()
+	await _frames()
+	_check(warden_icon.texture == null and not warden_icon.visible
+		and tinker_icon.texture == null and not tinker_icon.visible,
+		"missing Block art resolves to no icon at all")
+	_check(meters[0].block_shield.is_visible_in_tree() and meters[0].block_shield.draw_count > 0
+		and meters[0].block_text.text == opening_block
+		and meters[0].block_badge.visible
+		and meters[2].block_badge.visible and meters[2].block_text.text == "4"
+		and not meters[1].block_badge.visible and meters[1].block_text.text.is_empty(),
+		"missing Block art keeps the drawn sewn shield and the exact amounts")
+	_check(_meters(app)[0] == meters[0] and _meters(app)[2] == meters[2]
+		and meters[0].block_shield.get_node_or_null("BlockIcon") == warden_icon
+		and warden_icon.get_instance_id() == warden_icon_id,
+		"missing art reuses the mounted icons instead of mounting duplicates")
+	presenter.art_root = presenter.UI_ART_DIR
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	_check(warden_icon.texture is Texture2D and warden_icon.texture.resource_path == BLOCK_ART
+		and warden_icon.visible and warden_icon.get_instance_id() == warden_icon_id,
+		"restored Block art repaints the same mounted icon")
+	# A real turn resets Block: the icon must disappear with the exact zero amount.
+	var before_turn := _state(app)
+	await _mouse(app.end_turn_button)
+	await _frames()
+	_visible(app)
+	_check(_state(app) != before_turn, "the real End Turn actually advanced the fight")
+	_check(app.party.get_hero(1)["block"] == 0 and app.party.get_hero(3)["block"] == 0
+		and meters[0].block_text.text.is_empty() and not meters[0].block_badge.visible
+		and not warden_icon.visible and not warden_icon.is_visible_in_tree()
+		and not tinker_icon.visible,
+		"a real End Turn resets Block and removes the authored icon everywhere")
+	var icon_ids: Array[int] = []
+	for meter in meters:
+		var icon := meter.block_shield.get_node_or_null("BlockIcon") as TextureRect
+		if icon != null:
+			icon_ids.append(icon.get_instance_id())
+	_check(icon_ids.size() == 5 and icon_ids.has(warden_icon_id),
+		"all five ribbons keep one authored icon through the turn")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
+		"Block-art fight returns to the title")
+	for id in icon_ids:
+		_check(not is_instance_id_valid(id), "Return frees the authored Block icon with its ribbon")
 
 
 func _worn_coat_ribbons_test(app, presenter) -> void:
