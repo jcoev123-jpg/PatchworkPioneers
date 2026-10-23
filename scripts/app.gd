@@ -183,6 +183,7 @@ var _rest_stitch_committed: Dictionary = {}
 var rest_upgrade: RunRestCardUpgrade
 var rest_upgrade_cards: OptionButton
 var rest_upgrade_button: Button
+var _rest_upgrade_choices: Array = []
 var _rest_deck: Array[String] = []
 var _rest_committed_deck: Array[String] = []
 var _rest_floors: Array = []
@@ -1896,38 +1897,41 @@ func _upgrade_at_rest(visit: RunRestCardUpgrade, button, choices) -> void:
 		or rest_recovery._roster != _rest_heroes or not _rest_upgrade_context() \
 		or not _rest_committed_heroes.is_empty() or not _rest_committed_deck.is_empty() or run_deck != _rest_deck \
 		or not visit._valid or visit._source != _rest_deck or visit._deck != _rest_deck \
-		or visit._upgrades != {"warden_strike": "warden_strike_plus"} \
 		or not is_instance_valid(rest_view) or rest_view.get_parent() != self or not rest_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != rest_upgrade_button or button.get_parent() != rest_view \
 		or button.disabled or not button.is_visible_in_tree() \
 		or not is_instance_valid(choices) or choices != rest_upgrade_cards or choices.get_parent() != rest_view \
 		or choices.disabled or not choices.is_visible_in_tree():
 		return
-	# Validate the complete visible index list, not just the selected display name.
-	var indices: Array[int] = []
-	for index in range(_rest_deck.size()):
-		if _rest_deck[index] == "warden_strike":
-			indices.append(index)
-	if choices.item_count != indices.size() or choices.selected < 0 or choices.selected >= indices.size():
+	# Recompute the canonical authorized projection from the CURRENT deck and
+	# stitch ledger. The stored rows and the visitor's mapping must both match it
+	# exactly, so forged metadata, an altered ledger or a stale visit cannot spend.
+	var canonical: Dictionary = RunRestCardUpgrade.list_authored_choices(
+		_rest_deck, run_stitch_descriptors, run_next_stitch_id)
+	if canonical.get("ok") != true or not (canonical.get("choices") is Array) \
+			or not (canonical.get("permitted_upgrades") is Dictionary) \
+			or canonical.choices != _rest_upgrade_choices \
+			or canonical.permitted_upgrades != visit._upgrades:
 		return
-	for item in range(indices.size()):
+	var rows: Array = canonical.choices
+	if choices.item_count != rows.size() or choices.selected < 0 or choices.selected >= rows.size():
+		return
+	for item in range(rows.size()):
+		var row: Dictionary = rows[item]
+		var index := int(row.get("index", -1))
 		if typeof(choices.get_item_metadata(item)) != TYPE_INT \
-			or choices.get_item_metadata(item) != indices[item] or choices.is_item_disabled(item) \
-			or choices.get_item_text(item) != _rest_upgrade_text(indices[item]):
+			or choices.get_item_metadata(item) != index \
+			or choices.is_item_disabled(item) \
+			or choices.get_item_text(item) != _rest_upgrade_text(index):
 			return
-	var catalog := StarterCards.new()
-	var original := catalog.get_definition("warden_strike")
-	var replacement := catalog.get_definition("warden_strike_plus")
-	if replacement.get("id") != "warden_strike_plus" or replacement.get("effects") != {"damage": 7} \
-		or replacement.get("cost") != 1 or replacement.get("display_name") != "Strike+":
+	var selected_row: Dictionary = rows[choices.selected]
+	var selected_index := int(selected_row.get("index", -1))
+	# Exact copy identity plus the authored base -> '+' mapping this visit holds.
+	if selected_index < 0 or selected_index >= _rest_deck.size() \
+		or _rest_deck[selected_index] != String(selected_row.get("base_id", "")) \
+		or String(selected_row.get("plus_id", "")) != String(visit._upgrades.get(_rest_deck[selected_index], "")):
 		return
-	for field in ["owner", "from_positions", "to_positions", "target_kind"]:
-		if replacement.get(field) != original.get(field):
-			return
-	for card_id in _rest_deck:
-		if not catalog.has_card(card_id):
-			return
-	var result := visit.choose_upgrade(indices[choices.selected])
+	var result := visit.choose_upgrade(selected_index)
 	if not result.ok:
 		return
 	run_deck.assign(result.deck)
@@ -2088,7 +2092,41 @@ func _guided_stitch_at_rest(first_index: int, second_index: int, expected: Dicti
 
 
 func _rest_upgrade_text(index: int) -> String:
-	return "Deck #%d: Warden Strike -> Strike+ (7 damage, 1 energy)" % (index + 1)
+	var choice := _rest_upgrade_choice(index)
+	if choice.is_empty():
+		return ""
+	return "Deck #%d: %s -> %s (%d energy; %s)" % [index + 1,
+		String(choice.get("display_name", "")), String(choice.get("plus_display_name", "")),
+		int(choice.get("plus_cost", 0)), _rest_effect_text(choice.get("plus_effects", {}))]
+
+
+## The canonical row this visit actually reported for a deck index, else {}.
+func _rest_upgrade_choice(index: int) -> Dictionary:
+	for entry in _rest_upgrade_choices:
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("index") == index:
+			return entry
+	return {}
+
+
+## Authored effect fields in a stable order. Nothing is invented: only keys the
+## card definition carries are shown, and booleans read as their field name.
+func _rest_effect_text(effects: Variant) -> String:
+	if not (effects is Dictionary):
+		return ""
+	var parts: PackedStringArray = []
+	var keys: Array = effects.keys()
+	keys.sort()
+	for key in keys:
+		var value: Variant = effects[key]
+		var label: String = String(key).replace("_", " ")
+		if value is bool:
+			if value:
+				parts.append(label)
+		elif value is int:
+			parts.append("%d %s" % [value, label])
+		elif value is String:
+			parts.append("%s %s" % [label, String(value).replace("_", " ")])
+	return ", ".join(parts)
 
 
 func _finish_rest_choice() -> void:
@@ -2312,6 +2350,18 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 			or state.rest_id != "" or state.rest_ids.has(id) \
 			or not carry.can_bind_wardrobe(wardrobe, carry.torn, state):
 			return false
+	# This visit's upgrade transaction is the canonical authored projection of
+	# the run deck and stitch ledger. A malformed deck or ledger fails closed
+	# before the node is committed, so the selector never shows invented entries.
+	var upgrade_choices: Dictionary = RunRestCardUpgrade.list_authored_choices(
+		run_deck, run_stitch_descriptors, run_next_stitch_id)
+	if upgrade_choices.get("ok") != true or not (upgrade_choices.get("choices") is Array) \
+			or not (upgrade_choices.get("permitted_upgrades") is Dictionary):
+		return false
+	var upgrade_visit := RunRestCardUpgrade.new(run_deck, upgrade_choices.permitted_upgrades,
+		run_stitch_descriptors, run_next_stitch_id)
+	if not upgrade_visit._valid or upgrade_visit._deck != run_deck:
+		return false
 	if not run_map.choose_node(id):
 		return false
 	_clear_rest_stitch_overlay()
@@ -2329,7 +2379,8 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	_rest_stitch_source = _stitch_snapshot()
 	_rest_stitch_committed.clear()
 	rest_recovery = RunRestRecovery.new(run_heroes)
-	rest_upgrade = RunRestCardUpgrade.new(run_deck, {"warden_strike": "warden_strike_plus"})
+	rest_upgrade = upgrade_visit
+	_rest_upgrade_choices = upgrade_choices.choices.duplicate(true)
 	_rest_deck = run_deck.duplicate()
 	_rest_floors = run_map.get_floors()
 	_rest_revision = run_map.get_generation_revision()
@@ -2372,14 +2423,13 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_heal_button.pressed.connect(_heal_at_rest.bind(rest_recovery, rest_heal_button))
 	rest_view.add_child(rest_heal_button)
 	rest_upgrade_cards = OptionButton.new()
-	rest_upgrade_cards.custom_minimum_size = Vector2(480, 40)
-	for index in range(run_deck.size()):
-		if run_deck[index] == "warden_strike":
-			rest_upgrade_cards.add_item(_rest_upgrade_text(index))
-			rest_upgrade_cards.set_item_metadata(rest_upgrade_cards.item_count - 1, index)
+	rest_upgrade_cards.custom_minimum_size = Vector2(640, 40)
+	for choice in _rest_upgrade_choices:
+		rest_upgrade_cards.add_item(_rest_upgrade_text(int(choice.index)))
+		rest_upgrade_cards.set_item_metadata(rest_upgrade_cards.item_count - 1, int(choice.index))
 	rest_view.add_child(rest_upgrade_cards)
 	rest_upgrade_button = Button.new()
-	rest_upgrade_button.text = "Upgrade selected Strike (instead of Heal)"
+	rest_upgrade_button.text = "Upgrade selected card (instead of Heal)"
 	rest_upgrade_button.custom_minimum_size = Vector2(480, 48)
 	rest_upgrade_button.disabled = rest_upgrade_cards.item_count == 0
 	rest_upgrade_cards.disabled = rest_upgrade_button.disabled
@@ -3479,6 +3529,7 @@ func _return_to_title() -> void:
 	rest_upgrade = null
 	rest_upgrade_cards = null
 	rest_upgrade_button = null
+	_rest_upgrade_choices.clear()
 	_rest_deck.clear()
 	_rest_committed_deck.clear()
 	_rest_floors.clear()
