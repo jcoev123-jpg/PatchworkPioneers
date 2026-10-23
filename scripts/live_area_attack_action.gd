@@ -151,6 +151,19 @@ func _sync_battle() -> void:
 		_rng = app.run_rng
 		_turn = _turn_index(app)
 		last_event.clear()
+		_service = CombatSeamstressPoolBleed.new()
+		var carry = app.party_carryover
+		if carry is RunTornCarryover and carry._wardrobe != null:
+			var wardrobe: RunPatchWardrobe = carry._wardrobe
+			var current: Dictionary = wardrobe.get_snapshot() if wardrobe != null else {}
+			if wardrobe != null and carry.torn != null and wardrobe.is_valid() and carry.torn.is_valid() \
+					and carry.can_bind_wardrobe(wardrobe, carry.torn, current) \
+					and current.heroes == app.run_heroes and current.owned == app.run_trinkets \
+					and current.cards == app.run_deck and current.scraps == app.run_scraps \
+					and current.gold == app.session_gold and current.seed == app.run_seed:
+				_service.bind_patch_wardrobe(wardrobe, carry.torn)
+			else:
+				_service.bind_patch_wardrobe(null, null)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 	elif _turn != _turn_index(app):
 		_turn = _turn_index(app)
@@ -631,4 +644,9 @@ func _clear() -> void:
 	_result = null
 	_rng = null
 	_turn = -1
+	_service = CombatSeamstressPoolBleed.new()
 	last_event.clear()
+
+
+func _exit_tree() -> void:
+	_clear()
