@@ -204,6 +204,27 @@ static func resolve_authored_pool_upgrade(card_id: Variant) -> Dictionary:
 	return {}
 
 
+## Read-only enumeration of legal immerse targets: one entry per actual deck
+## occurrence that resolves to an authored pool upgrade. Never mutates state or RNG.
+func get_immerse_options() -> Array[Dictionary]:
+	var options: Array[Dictionary] = []
+	if not _valid or _claimed:
+		return options
+	if _scraps < UPGRADE_SCRAP_COST:
+		return options
+	for index in range(_deck.size()):
+		var upgrade: Dictionary = resolve_authored_pool_upgrade(_deck[index])
+		if upgrade.is_empty():
+			continue
+		options.append({
+			"index": index,
+			"card_id": String(_deck[index]),
+			"upgrade_id": String(upgrade["upgrade_id"]),
+			"display_name": String((upgrade["base"] as Dictionary).get("display_name", "")),
+		})
+	return options
+
+
 func _success_receipt(choice_key: String) -> Dictionary:
 	var plain_deck: Array = []
 	plain_deck.assign(_deck)
