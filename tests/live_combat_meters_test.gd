@@ -1318,6 +1318,7 @@ func _three_enemy_stage(app, presenter) -> void:
 	_visible(app)
 	await _assert_hover(app)
 	_check(_state(app) == before, "three-enemy ribbon layout and hover are entirely read-only")
+	_threat_cue_cases(app, presenter)
 	_check(app.enemies.apply_statuses({1: {"bleed": 2}, 2: {"weak": 1, "exposed": 2},
 		3: {"bleed": 1}}), "real enemy API applies mixed statuses to the three sources")
 	_check(app.party.gain_block(2, 4), "real hero API raises Seamstress Block")
@@ -1369,6 +1370,146 @@ func _three_enemy_stage(app, presenter) -> void:
 
 ## The authored Block icon follows exact live Block values, hides at zero, survives missing
 ## art as the drawn shield and is disposed with its own ribbon on Return.
+## Counts on the actual HP trough of an admitted, seeded three-enemy battle.
+## Each fixture binds one complete real CombatEnemyIntents batch; no redraw is
+## requested by the presenter. Restore every battle object afterwards.
+func _threat_cue_cases(app, presenter) -> void:
+	var flow: CombatRoundFlow = app.round_flow
+	var old_intents: CombatEnemyIntents = app.enemy_intents
+	var old_unravel: CombatUnravel = flow._unravel
+	var old_roster: Array[Dictionary] = app.enemies.get_enemies()
+	var old_party: Array[Dictionary] = app.party.get_heroes()
+	var old_rng: int = app.run_rng.state
+	var before: Array = _state(app)
+	_check(old_intents != null and old_intents.is_bound() and old_roster.size() == 3
+		and presenter.row != null and _meters(app).size() == 6
+		and presenter._bound_unravel(app) != null,
+		"threat fixtures begin in a genuine seeded mounted three-enemy Fight")
+	if not old_intents.is_bound() or old_roster.size() != 3 or presenter._bound_unravel(app) == null:
+		return
+	var patterns: Array = old_intents._definitions.duplicate(true)
+	var scenarios := [
+		[{"target": "front", "actions": [{"type": "attack", "amount": 3, "weight": 1}]},
+		 {"target": "front", "actions": [{"type": "block", "amount": 2, "weight": 1}]},
+		 {"target": "front", "actions": [{"type": "buff", "amount": 1, "weight": 1}]}],
+		[{"target": "front", "actions": [{"type": "attack", "amount": 3, "weight": 1}]},
+		 {"target": "front", "actions": [{"type": "debuff", "status": "weak", "amount": 1, "weight": 1}]},
+		 {"target": "front", "actions": [{"type": "block", "amount": 2, "weight": 1}]}],
+		[{"target": "front", "actions": [{"type": "shove", "direction": 1, "amount": 0, "weight": 1}]},
+		 {"target": "lowest_living_hp", "actions": [{"type": "debuff", "status": "bleed", "amount": 2, "weight": 1}]},
+		 {"target": "random", "actions": [{"type": "attack", "amount": 2, "weight": 1}]}],
+	]
+	for case_index in range(scenarios.size()):
+		for index in range(3):
+			app.enemies._enemies[index]["intent"] = scenarios[case_index][index].duplicate(true)
+		var schedule := CombatEnemyIntents.new(patterns)
+		_check(schedule.bind_battle(app.enemies, app.party, app.run_rng),
+			"three real test-authored weighted actions bind case %d" % case_index)
+		if not schedule.is_bound():
+			continue
+		app.enemy_intents = schedule
+		flow._intents = schedule
+		flow._battle_intents = schedule
+		var cached: Array[Dictionary] = schedule.get_intents()
+		var expected: Array[int] = [0, 0, 0]
+		for action in cached:
+			if action.type not in ["attack", "debuff", "shove"]:
+				continue
+			var effective := CombatEnemyIntents.resolve_announced_action(app.party, action, app.enemies)
+			expected[effective.target_position - 1] += 1
+		var rng_before: int = app.run_rng.state
+		var state_before: Array = _state(app)
+		for read in range(3):
+			presenter._sync_battle()
+			var meters := _meters(app)
+			for position in range(1, 4):
+				var pin := meters[position - 1].hp_bar.get_node_or_null("ThreatPin") as Panel
+				_check(pin != null and pin.mouse_filter == Control.MOUSE_FILTER_IGNORE
+					and pin.focus_mode == Control.FOCUS_NONE,
+					"target pin is mounted on HP and cannot intercept combat input")
+				if pin != null:
+					var label := pin.get_node("Count") as Label
+					_check(pin.visible == (expected[position - 1] > 0)
+						and label.text == ("! %d" % expected[position - 1]
+							if expected[position - 1] > 0 else ""),
+						"read %d of mixed seeded case %d targets hero slot %d exactly" % [read, case_index, position])
+		_check(_state(app) == state_before and schedule.get_intents() == cached
+			and app.run_rng.state == rng_before,
+			"repeated threat displays preserve HP, Block, statuses, deck, energy, cached actions and run RNG")
+		if case_index == 1:
+			_check(expected == [2, 0, 0], "two original living sources pin only the front hero")
+			# Compare the *next* authored announcement to an independent replay
+			# fed the same still-unspent RNG state.
+			var replay_rng := RandomNumberGenerator.new()
+			replay_rng.state = rng_before
+			var expected_next := CombatEnemyIntents._draw_batch(schedule._slots, app.party, replay_rng)
+			_check(schedule.advance_turn() and schedule.get_intents() == expected_next
+				and app.run_rng.state == replay_rng.state,
+				"next-announcement replay is unchanged by read-only threat refresh")
+			# The original announced cache is still our input for fallback checks.
+			schedule._cache.assign(cached.duplicate(true))
+			app.run_rng.state = rng_before
+			_check(app.party.apply_damage(1, 999) and app.party.is_downed(1),
+				"authentic front target is downed after its action was announced")
+			presenter._sync_battle()
+			var fallen_pins := _meters(app)
+			_check(not fallen_pins[0].hp_bar.get_node("ThreatPin").visible
+				and fallen_pins[1].hp_bar.get_node("ThreatPin/Count").text == "! 2"
+				and fallen_pins[1].hp_bar.get_node("ThreatPin").visible,
+				"both policies use deterministic front fallback on living H2 with no RNG reroll")
+			_check(schedule.get_intents() == cached and app.run_rng.state == rng_before,
+				"downed announced target does not replace original cache or consume run RNG")
+			app.party._heroes.assign(old_party.duplicate(true))
+			presenter._sync_battle()
+			_check(_meters(app)[0].hp_bar.get_node("ThreatPin/Count").text == "! 2",
+				"restored first hero recovers the two-source warning")
+		if case_index == 0:
+			_check(expected == [1, 0, 0], "one attack pins one hero; block and buff never count")
+			var skip := CombatUnravel.new()
+			_check(skip.bind_roster(app.enemies, {1: "normal", 2: "normal", 3: "normal"})
+				and skip.apply_unravel(app.enemies, 1, 8), "real Unravel service queues a source skip")
+			flow._unravel = skip
+			presenter._sync_battle()
+			_check(_meters(app)[0].hp_bar.get_node("ThreatPin").visible == false,
+				"pending skip removes its only threat")
+			flow._unravel = old_unravel
+			_check(app.enemies.apply_damage(1, 999), "test kills its only attacking source")
+			presenter._sync_battle()
+			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
+				"slain attacker cannot contribute threats")
+			app.enemies._enemies.assign(old_roster.duplicate(true))
+			presenter._sync_battle()
+			_check(_meters(app)[0].hp_bar.get_node("ThreatPin").visible,
+				"restoring source restores its announced threat")
+			# A closed fight and missing/mismatched scheduler both fail closed.
+			app._battle_closed = true
+			presenter._sync_battle()
+			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
+				"closed fight clears pending warning while ribbon exists")
+			app._battle_closed = false
+			app.enemy_intents = null
+			presenter._sync_battle()
+			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
+				"missing intent authority hides stale target pin")
+			app.enemy_intents = schedule
+			var foreign := CombatEnemyIntents.new(patterns)
+			app.enemy_intents = foreign
+			presenter._sync_battle()
+			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
+				"unbound, mismatched authority cannot fabricate a threat")
+			app.enemy_intents = schedule
+			presenter._sync_battle()
+	app.enemies._enemies.assign(old_roster.duplicate(true))
+	app.party._heroes.assign(old_party.duplicate(true))
+	app.enemy_intents = old_intents
+	flow._intents = old_intents
+	flow._battle_intents = old_intents
+	flow._unravel = old_unravel
+	app.run_rng.state = old_rng
+	presenter._sync_battle()
+	_check(_state(app) == before, "all threat-cue fixture scenarios restore the entire live battle snapshot")
+
+
 func _block_art_case(app, presenter) -> void:
 	_fixture_start(app)
 	await _frames()

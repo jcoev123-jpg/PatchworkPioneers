@@ -1963,6 +1963,7 @@ func _typed_stage(app, presenter) -> void:
 			"each intent caption fits the three-enemy stage")
 	presenter._refresh()
 	_check(_snapshot(app) == before, "typed repeated refresh and every badge kind preserve all models and RNG")
+	_policy_cue_cases(app, presenter)
 	_check(app.party.apply_damage(1, 999) and app.enemies.apply_damage(2, 999), "typed fallen rendering has real downed and slain actors")
 	presenter._refresh()
 	_check(presenter._puppets[0].fallen and presenter._puppets[4].fallen
@@ -1973,6 +1974,114 @@ func _typed_stage(app, presenter) -> void:
 	await process_frame
 	_check(presenter._puppets.is_empty() and presenter._badges.is_empty() and presenter.battle_row == null,
 		"routed Return clears every typed puppet and badge")
+
+
+## Real mounted seeded fight, swapping only test fixture metadata to bind four
+## fresh, deterministic authored policies to the same original enemy slots.
+func _policy_cue_cases(app, presenter) -> void:
+	var old_intents: CombatEnemyIntents = app.enemy_intents
+	var flow: CombatRoundFlow = app.round_flow
+	var old_unravel: CombatUnravel = flow._unravel
+	var old_roster: Array[Dictionary] = app.enemies.get_enemies()
+	var old_rng: int = app.run_rng.state
+	var before: Array = _snapshot(app)
+	_check(old_intents != null and old_intents.is_bound() and old_roster.size() == 3
+		and presenter._badges.size() == 3 and flow._started
+		and presenter._bound_unravel(app) != null,
+		"seeded live-policy fixture has bound scheduler, original slots and gauge")
+	if not old_intents.is_bound() or old_roster.size() != 3 or presenter._bound_unravel(app) == null:
+		return
+	var patterns: Array = old_intents._definitions.duplicate(true)
+	var types := [
+		{"type": "attack", "amount": 4},
+		{"type": "debuff", "amount": 2, "status": "exposed"},
+		{"type": "shove", "amount": 0, "direction": 1},
+		{"type": "attack", "amount": 5},
+	]
+	for policy_index in range(CombatEnemyIntents.TARGET_POLICIES.size()):
+		var policy: String = CombatEnemyIntents.TARGET_POLICIES[policy_index]
+		var first: Dictionary = types[policy_index].duplicate(true)
+		first["weight"] = 1
+		var extras := [
+			{"type": "block", "amount": 2, "weight": 1},
+			{"type": "buff", "amount": 2, "weight": 1},
+		]
+		app.enemies._enemies[0]["intent"] = {"target": policy, "actions": [first]}
+		for index in range(1, 3):
+			app.enemies._enemies[index]["intent"] = {"target": "front", "actions": [extras[index - 1]]}
+		var schedule := CombatEnemyIntents.new(patterns)
+		_check(schedule.bind_battle(app.enemies, app.party, app.run_rng),
+			"test-authored %s schedule binds to the actual mounted roster and run RNG" % policy)
+		if not schedule.is_bound():
+			continue
+		app.enemy_intents = schedule
+		flow._intents = schedule
+		flow._battle_intents = schedule
+		var cached: Array[Dictionary] = schedule.get_intents()
+		var state: int = app.run_rng.state
+		presenter._refresh()
+		for position in range(1, 4):
+			var badge = presenter._badges[position - 1]
+			var action: Dictionary = cached[position - 1]
+			var expected_policy := CombatEnemyIntents.policy_for(app.enemies, position)
+			var target: int = action.get("target_position", 0)
+			var original_caption := ""
+			match action.type:
+				"attack": original_caption = "ATK %d > H%d" % [action.amount, target]
+				"block": original_caption = "BLOCK +%d" % action.amount
+				"buff": original_caption = "BUFF +%d BLK" % action.amount
+				"debuff": original_caption = "%s %d > H%d" % [action.status.to_upper(), action.amount, target]
+				"shove": original_caption = "H%d %s" % [target, "PUSH BACK" if action.direction == 1 else "PUSH FRONT"]
+			var expected_cue: String = LiveEnemyIntentBadge.POLICY_LABELS.get(expected_policy, "") \
+				if action.type in ["attack", "debuff", "shove"] else ""
+			_check(badge.policy_cue == expected_cue and badge.readable_text == original_caption
+				and badge.intent_type == action.type and badge.amount == action.amount
+				and badge.target_position == target and badge.source_position == position,
+				"%s action preserves exact caption/target and policy_for original slot %d" % [policy, position])
+		for repeat in range(4):
+			presenter._refresh()
+		_check(schedule.get_intents() == cached and app.run_rng.state == state,
+			"repeated policy read is cache/RNG-inert for %s" % policy)
+		if policy_index == 0:
+			var skip := CombatUnravel.new()
+			_check(skip.bind_roster(app.enemies, {1: "normal", 2: "normal", 3: "normal"})
+				and skip.apply_unravel(app.enemies, 1, 8), "fixture binds an authentic pending skip")
+			flow._unravel = skip
+			presenter._refresh()
+			_check(presenter._badges[0].policy_cue.is_empty()
+				and presenter._badges[0].readable_text == "UNRAVELLED",
+				"pending skip suppresses both real policy and action")
+			flow._unravel = old_unravel
+			presenter._refresh()
+			_check(presenter._badges[0].policy_cue == "FRONT", "cleared skip restores authored policy")
+			_check(app.enemies.apply_damage(1, 999), "test fixture slays actual original enemy")
+			presenter._refresh()
+			_check(presenter._badges[0].policy_cue.is_empty()
+				and presenter._badges[0].readable_text == "SLAIN",
+				"slain cue overrides bound policy")
+			app.enemies._enemies.assign(old_roster.duplicate(true))
+			app.enemies._enemies[0]["intent"] = {"target": "front", "actions": [first]}
+			presenter._refresh()
+			_check(presenter._badges[0].policy_cue == "FRONT", "restored living source has cue")
+	# An unbound legacy schedule and a missing authority never invent a policy.
+	var legacy := CombatEnemyIntents.new(patterns)
+	app.enemy_intents = legacy
+	flow._intents = legacy
+	flow._battle_intents = legacy
+	presenter._refresh()
+	_check(presenter._badges[0].policy_cue.is_empty(), "unbound fixture has no target-policy cue")
+	app.enemy_intents = null
+	presenter._refresh()
+	_check(presenter._badges[0].policy_cue.is_empty(), "missing scheduler cannot retain a stale cue")
+	app.enemies._enemies.assign(old_roster.duplicate(true))
+	app.enemy_intents = old_intents
+	flow._intents = old_intents
+	flow._battle_intents = old_intents
+	flow._unravel = old_unravel
+	app.run_rng.state = old_rng
+	presenter._refresh()
+	_check(_snapshot(app) == before and app.enemy_intents == old_intents,
+		"policy fixture restores HP, Block, statuses, deck, energy, original cached schedule and RNG")
 
 
 func _invalid_sources(app, reference, presenter) -> void:
