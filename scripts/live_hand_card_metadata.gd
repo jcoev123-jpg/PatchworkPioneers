@@ -48,6 +48,13 @@ var _path_names: Dictionary = {}
 ## offer set the run service uses.
 var _tinker_path_loaded := false
 var _tinker_path_cards: Dictionary = {}
+## Authored Warden Path card faces, keyed by card ID, from the same validated
+## offering set RunWardenPathChoice exposes. Display knowledge only: neither
+## card joins a starter/reward catalog or a run deck from this lookup.
+var _warden_path_loaded := false
+var _warden_path_cards: Dictionary = {}
+var _warden_path_passives: Dictionary = {}
+var _warden_path_names: Dictionary = {}
 # Key: the ACTUAL hand panel, value: original card ID, facts and signal Callables.
 var _bindings: Dictionary = {}
 var _app
@@ -72,12 +79,15 @@ func _ledger() -> RunRestStitchCards:
 func _definition(card_id: String) -> Dictionary:
 	_load_path_cards()
 	_load_tinker_path_cards()
+	_load_warden_path_cards()
 	if _path_card_definitions.has(card_id):
 		# Detached like every catalog lookup, so a caller can never alter the
 		# authored Path record other panels read.
 		return (_path_card_definitions[card_id] as Dictionary).duplicate(true)
 	if _tinker_path_cards.has(card_id):
 		return (_tinker_path_cards[card_id] as Dictionary).duplicate(true)
+	if _warden_path_cards.has(card_id):
+		return (_warden_path_cards[card_id] as Dictionary).duplicate(true)
 	var move := M02PositionCards.new().get_definition(card_id)
 	if not move.is_empty():
 		return move
@@ -158,6 +168,59 @@ func _load_tinker_path_cards() -> void:
 		_tinker_path_cards[card_id] = (card as Dictionary).duplicate(true)
 
 
+## The two authored Warden Path cards, loaded once from the same validated
+## offering set the run service exposes. A record that does not validate
+## contributes no face and no playability. Reading the offerings never claims a
+## Path, so this lazy display cache leaves the run's single claim untouched.
+func _load_warden_path_cards() -> void:
+	if _warden_path_loaded:
+		return
+	_warden_path_loaded = true
+	var choice := RunWardenPathChoice.new()
+	if not choice.is_valid():
+		return
+	for path in choice.get_authored_paths():
+		if not path is Dictionary:
+			continue
+		var card: Variant = (path as Dictionary).get("card")
+		var passive: Variant = (path as Dictionary).get("passive")
+		if not card is Dictionary or not passive is Dictionary:
+			continue
+		var card_id: String = str((card as Dictionary).get("id", ""))
+		if card_id.is_empty():
+			continue
+		_warden_path_cards[card_id] = (card as Dictionary).duplicate(true)
+		_warden_path_passives[card_id] = (passive as Dictionary).duplicate(true)
+		_warden_path_names[card_id] = str((path as Dictionary).get("display_name", ""))
+
+
+## One explanatory Path/passive line, kept separate from the card's own authored
+## effects. Every number comes from the same validated record the battle
+## resolver will use, and no extra live effect is claimed for a cast that has no
+## mounted Warden resolver yet.
+func _warden_path_help(card_id: String) -> String:
+	if not _warden_path_cards.has(card_id):
+		return ""
+	var card: Dictionary = _warden_path_cards[card_id]
+	var passive: Dictionary = _warden_path_passives.get(card_id, {})
+	var path_name: String = str(_warden_path_names.get(card_id, ""))
+	var raw_effects: Variant = card.get("effects", {})
+	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
+	match str(passive.get("kind", "")):
+		"replaces_starting_block":
+			var base_block: int = int(passive.get("replaced_starting_block", 0))
+			var path_block: int = int(passive.get("starting_block", 0))
+			var cast_block: int = int(effects.get("block", 0))
+			return ("PATH %s passive: the Warden opens combat with exactly %d Block, replacing the base %d instead of adding to it (not %d + %d, not %d). This card's own cast grants %d Block to the living Warden and never re-grants the opening Block."
+				% [path_name, path_block, base_block, base_block, path_block,
+					base_block + path_block, cast_block])
+		"first_attack_per_turn_pins":
+			var damage: int = int(effects.get("damage", 0))
+			return ("PATH %s passive: pins only after the Warden's first CONFIRMED attack in each player turn, never every cast and never an unconfirmed preview. This card's own cast deals %d damage and pins a surviving target; a DIFFERENT hero's next attack on it adds +5 damage BEFORE Weak/Exposed and consumes the pin once (see PINNED)."
+				% [path_name, damage])
+	return ""
+
+
 ## Cached, optional texture load. A frame or hero emblem that is not on disk
 ## stays null, so the renderer keeps its drawn placeholder.
 func _texture(path: String) -> Texture2D:
@@ -230,6 +293,11 @@ func base_effect_text(card_id: String) -> String:
 	var effect_parts: Array[String] = _effect_lines(card_id, definition, true)
 	if not effect_parts.is_empty():
 		parts.append("; ".join(effect_parts))
+	# A Warden Path passive belongs to the Path, not to the card's own cast, so
+	# its explanation is one separate line after the authored card effects.
+	var path_help: String = _warden_path_help(card_id)
+	if not path_help.is_empty():
+		parts.append(path_help)
 	for keyword_line in _keyword_lines(definition):
 		parts.append(keyword_line)
 	return "\n".join(parts)
@@ -815,6 +883,7 @@ func _update_visual(panel: Control) -> void:
 	var id: String = _bindings[panel].id
 	_load_path_cards()
 	_load_tinker_path_cards()
+	_load_warden_path_cards()
 	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null \
 			and _wired(panel, id):
 		# The battle's one Tinker Path authority may already have discounted this
@@ -840,6 +909,14 @@ func _update_visual(panel: Control) -> void:
 			var tinker_presenter = _app.get_node_or_null("LiveAttackPreview")
 			playable = tinker_presenter != null and is_instance_valid(tinker_presenter) \
 				and bool(tinker_presenter.tinker_path_playable(id))
+		elif _warden_path_cards.has(id):
+			# No mounted Warden Path battle resolver exists yet. The authored face
+			# stays readable but dim, and only a future genuine presenter that
+			# exposes this exact positive admission method can ever enable a cast.
+			var warden_presenter = _app.get_node_or_null("LiveAttackPreview")
+			playable = warden_presenter != null and is_instance_valid(warden_presenter) \
+				and warden_presenter.has_method("warden_path_playable") \
+				and bool(warden_presenter.warden_path_playable(id))
 		elif id.begins_with(RunRestStitchCards.ID_PREFIX):
 			playable = bool(_stitched_preview.get_preview(_ledger(), _app._stitch_snapshot(), _app.deck, _app.party, _app.enemies, id).get("playable", false))
 		elif id in M02PositionCards.IDS:
