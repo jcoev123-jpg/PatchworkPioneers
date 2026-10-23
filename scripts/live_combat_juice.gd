@@ -13,6 +13,8 @@ extends Node
 const NORMAL_SECONDS := 0.6
 const FAST_SECONDS := 0.15
 const HISTORY_LIMIT := 64
+const FLIGHT_HISTORY_LIMIT := 64
+const FLIGHT_SIZE := Vector2(126, 64)
 const FLOAT_WIDTH := 120.0
 const FLOAT_HEIGHT := 26.0
 
@@ -22,6 +24,8 @@ var overlay: Control
 ## Every committed cue since this battle bound ({"side","position","id","hp","block",
 ## "anchor","fast","duration","text"}), oldest first; bounded, never fabricated.
 var history: Array[Dictionary] = []
+## Separate bounded receipts for actually spawned, authoritative discard flights.
+var flight_history: Array[Dictionary] = []
 ## Bumped once per battle binding, so a test or screenshot can prove a single rebind.
 var bind_serial := 0
 var bound := false
@@ -32,6 +36,11 @@ var _enemies: CombatEnemies
 var _deck: CombatDeck
 var _snapshot: Dictionary = {}
 var _cues: Array[Dictionary] = []
+var _flights: Array[Dictionary] = []
+var _held_before: Array[String] = []
+var _discard_before: Array[String] = []
+var _draw_before: Array[String] = []
+var _held_sources: Array[Dictionary] = []
 
 
 func _process(_delta: float) -> void:
@@ -105,15 +114,19 @@ func _sync() -> void:
 		_kill_cues()
 		overlay = _make_overlay()
 		_snapshot = _read(app)
+		_baseline_cards(app)
 		return
 	if not _presentation_available(app):
 		# No actor can be anchored at all: drop the cues and rebaseline, never guess.
 		_kill_cues()
 		_snapshot = _read(app)
+		_baseline_cards(app)
 		return
 	var current := _read(app)
 	_emit_deltas(app, current)
+	_emit_discard_flights(app)
 	_snapshot = current
+	_baseline_cards(app)
 
 
 func _bind(app) -> void:
@@ -127,8 +140,10 @@ func _bind(app) -> void:
 		_battle.tree_exiting.connect(_teardown, CONNECT_ONE_SHOT)
 	overlay = _make_overlay()
 	history.clear()
+	flight_history.clear()
 	# Mounting only baselines the current HP/Block; it never announces a change.
 	_snapshot = _read(app)
+	_baseline_cards(app)
 	bound = true
 
 
@@ -146,8 +161,13 @@ func _teardown() -> void:
 	_enemies = null
 	_deck = null
 	_snapshot = {}
+	_held_before.clear()
+	_discard_before.clear()
+	_draw_before.clear()
+	_held_sources.clear()
 	bound = false
 	history.clear()
+	flight_history.clear()
 	if not is_instance_valid(fast_button):
 		fast_button = null
 
@@ -365,6 +385,14 @@ func _same_node(a, b) -> bool:
 
 
 func _kill_cues() -> void:
+	for entry in _flights:
+		var flight_tween = entry.get("tween")
+		if flight_tween is Tween and flight_tween.is_valid():
+			flight_tween.kill()
+		var scrap = entry.get("scrap")
+		if is_instance_valid(scrap):
+			scrap.queue_free()
+	_flights.clear()
 	for entry in _cues:
 		var tween = entry.get("tween")
 		if tween is Tween and tween.is_valid():
@@ -381,5 +409,202 @@ func live_cues() -> int:
 	var count := 0
 	for entry in _cues:
 		if is_instance_valid(entry.get("float")) or is_instance_valid(entry.get("flash")):
+			count += 1
+	return count
+
+
+## The deck is the sole authority. A snapshot of already mounted hand panels is
+## kept before the normal app action clears/rebuilds them; duplicates retain
+## separate panel identities and source rectangles. No signal or rules hook.
+func _baseline_cards(app) -> void:
+	_held_before.assign(app.deck.hand)
+	_discard_before.assign(app.deck.discard_pile)
+	_draw_before.assign(app.deck.draw_pile)
+	_held_sources = _read_held_sources(app)
+
+
+func _card_counts(cards: Array) -> Dictionary:
+	var counts := {}
+	for card in cards:
+		var id := String(card)
+		counts[id] = int(counts.get(id, 0)) + 1
+	return counts
+
+
+func _read_held_sources(app) -> Array[Dictionary]:
+	var sources: Array[Dictionary] = []
+	if not is_instance_valid(app.hand_view) or not app.hand_view.is_visible_in_tree():
+		return sources
+	var counts := _card_counts(app.deck.hand)
+	var found := {}
+	for node in app.hand_view.get_children():
+		var panel := node as Control
+		if panel == null or not panel.is_visible_in_tree() or panel.get_child_count() < 1:
+			continue
+		var id_label := panel.get_child(0) as Label
+		if id_label == null:
+			continue
+		var id: String = id_label.text
+		if int(found.get(id, 0)) >= int(counts.get(id, 0)):
+			continue
+		var rect := panel.get_global_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			continue
+		found[id] = int(found.get(id, 0)) + 1
+		sources.append({"card_id": id, "panel_id": panel.get_instance_id(), "rect": rect})
+	return sources
+
+
+## A loss from the previous held multiset AND a gain to the real discard
+## multiset are both mandatory. A pile reshuffle or replacement cannot be
+## treated as a committed discard; uncertain transactions are dropped.
+func _emit_discard_flights(app) -> void:
+	var before_draw := _card_counts(_draw_before)
+	var after_draw := _card_counts(app.deck.draw_pile)
+	# No refill/reshuffle and no deck composition change during an observed flight.
+	for id in after_draw:
+		if int(after_draw[id]) > int(before_draw.get(id, 0)):
+			return
+	var before_discard := _card_counts(_discard_before)
+	var after_discard := _card_counts(app.deck.discard_pile)
+	for id in before_discard:
+		if int(after_discard.get(id, 0)) < int(before_discard[id]):
+			return
+	var before_hand := _card_counts(_held_before)
+	var after_hand := _card_counts(app.deck.hand)
+	# A card genuinely left hand even when a same-ID draw replaced that copy:
+	# previous held + actual draw-pile loss - current held = committed loss.
+	for id in before_hand:
+		var drawn: int = int(before_draw.get(id, 0)) - int(after_draw.get(id, 0))
+		var committed: int = int(before_hand[id]) + drawn - int(after_hand.get(id, 0))
+		if committed < 0 or committed > int(before_hand[id]):
+			return
+	var target := _discard_anchor(app)
+	if target == null:
+		return
+	var used_sources := {}
+	for source in _held_sources:
+		var card_id: String = source["card_id"]
+		var drawn: int = int(before_draw.get(card_id, 0)) - int(after_draw.get(card_id, 0))
+		var lost: int = maxi(0, int(before_hand.get(card_id, 0)) + drawn - int(after_hand.get(card_id, 0)))
+		var gained: int = maxi(0, int(after_discard.get(card_id, 0)) - int(before_discard.get(card_id, 0)))
+		var allowance: int = mini(lost, gained)
+		var already: int = int(used_sources.get(card_id, 0))
+		if already >= allowance:
+			continue
+		if _spawn_discard_flight(source, target, card_id):
+			used_sources[card_id] = already + 1
+
+
+func _discard_anchor(app) -> Control:
+	var label := app.pile_label as Control
+	if not is_instance_valid(label) or not label.is_visible_in_tree():
+		return null
+	var rect := label.get_global_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return null
+	return label
+
+
+func _owner_color(id: String) -> Color:
+	if id.begins_with("warden_"):
+		return Color("#4a5d73")
+	if id.begins_with("seamstress_"):
+		return Color("#6e4f6b")
+	if id.begins_with("tinker_"):
+		return Color("#c49a3a")
+	return Color("#6c6257")
+
+
+func _spawn_discard_flight(source: Dictionary, target: Control, card_id: String) -> bool:
+	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
+		return false
+	var source_rect: Rect2 = source["rect"]
+	var destination := target.get_global_rect()
+	var start := _to_overlay(source_rect.get_center()) - FLIGHT_SIZE * 0.5
+	# The discard count sits at the right end of the existing pile readout.
+	var finish := _to_overlay(destination.position + Vector2(destination.size.x * 0.8,
+		destination.size.y * 0.5)) - FLIGHT_SIZE * 0.5
+	if start.distance_to(finish) < 12.0:
+		return false
+	var owner_tint := _owner_color(card_id)
+	var scrap := Panel.new()
+	scrap.name = "DiscardFlightScrap"
+	scrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scrap.focus_mode = Control.FOCUS_NONE
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = Color("#ece0c8")
+	paper.border_color = owner_tint
+	paper.set_border_width_all(3)
+	paper.set_corner_radius_all(3)
+	scrap.add_theme_stylebox_override("panel", paper)
+	overlay.add_child(scrap)
+	scrap.size = FLIGHT_SIZE
+	scrap.position = start
+	scrap.pivot_offset = FLIGHT_SIZE * 0.5
+
+	var owner_patch := ColorRect.new()
+	owner_patch.name = "OwnerFelt"
+	owner_patch.color = owner_tint
+	owner_patch.position = Vector2(6, 10)
+	owner_patch.size = Vector2(9, FLIGHT_SIZE.y - 20)
+	owner_patch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	owner_patch.focus_mode = Control.FOCUS_NONE
+	scrap.add_child(owner_patch)
+	var title := Label.new()
+	title.name = "FlightCardName"
+	title.text = card_id.replace("_", " ").capitalize()
+	title.position = Vector2(19, 12)
+	title.size = Vector2(FLIGHT_SIZE.x - 25, FLIGHT_SIZE.y - 24)
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color("#282525"))
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title.focus_mode = Control.FOCUS_NONE
+	scrap.add_child(title)
+	# Short cross-stitches on both seams make this a sewn paper/felt scrap.
+	for y in [0.0, FLIGHT_SIZE.y - 12.0]:
+		var stitches := Label.new()
+		stitches.name = "SeamStitches"
+		stitches.text = "×  ×  ×  ×  ×  ×  ×"
+		stitches.add_theme_font_size_override("font_size", 10)
+		stitches.add_theme_color_override("font_color", Color("#51463d"))
+		stitches.position = Vector2(12, y)
+		stitches.size = Vector2(FLIGHT_SIZE.x - 24, 12)
+		stitches.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		stitches.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		stitches.focus_mode = Control.FOCUS_NONE
+		scrap.add_child(stitches)
+
+	var duration := duration_seconds()
+	var tween := scrap.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(scrap, "position", finish, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(scrap, "scale", Vector2(0.35, 0.35), duration)
+	tween.tween_property(scrap, "modulate:a", 0.0, duration)
+	tween.finished.connect(_retire_flight.bind(weakref(scrap)))
+	_flights.append({"scrap": scrap, "tween": tween, "target": target})
+	flight_history.append({"card_id": card_id, "panel_id": source["panel_id"],
+		"owner_color": owner_tint, "destination": "pile_label",
+		"fast": fast_animations, "duration": duration})
+	if flight_history.size() > FLIGHT_HISTORY_LIMIT:
+		flight_history = flight_history.slice(flight_history.size() - FLIGHT_HISTORY_LIMIT)
+	return true
+
+
+func _retire_flight(ref: WeakRef) -> void:
+	var scrap = ref.get_ref()
+	if is_instance_valid(scrap):
+		scrap.queue_free()
+	_flights = _flights.filter(func(entry: Dictionary) -> bool:
+		return not _same_node(entry.get("scrap"), scrap))
+
+
+func live_flights() -> int:
+	var count := 0
+	for entry in _flights:
+		if is_instance_valid(entry.get("scrap")):
 			count += 1
 	return count

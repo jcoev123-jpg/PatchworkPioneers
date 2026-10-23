@@ -140,10 +140,11 @@ func _enter_fight(seed_value: int = 0) -> bool:
 		if app.deck != null and app.party != null and app.enemies != null \
 				and is_instance_valid(app.battle_view):
 			fight_seed = int(candidate)
-			if _attacks_in_hand().size() >= 2 and not _strike_choice().is_empty():
+			if _attacks_in_hand().size() >= 2 and not _strike_choice().is_empty() \
+					and _has_duplicate(app.deck.hand):
 				return true
 		await _reset_to_title()
-	_check(false, "a seeded live fight offers two held attacks")
+	_check(false, "a seeded live fight offers two held attacks and duplicate card copies")
 	return false
 
 
@@ -167,7 +168,8 @@ func _leave_fight(check_presenter: bool = true) -> void:
 	_check(app.title_view.is_visible_in_tree() and app.deck == null, "Return leaves a clean title")
 	if check_presenter and is_instance_valid(juice):
 		_check(not juice.bound and juice.overlay == null and juice.history.is_empty()
-			and juice.live_cues() == 0, "Return drops the binding and every cue")
+			and juice.live_cues() == 0 and juice.flight_history.is_empty()
+			and juice.live_flights() == 0, "Return drops the binding and both cue histories")
 
 
 func _state() -> Array:
@@ -220,6 +222,77 @@ func _assert_cues_match(announced: Array, changed: Array, message: String) -> vo
 	_check(_signature(announced) == _signature(changed), message)
 
 
+
+func _card_counts(cards: Array) -> Dictionary:
+	var counts := {}
+	for card in cards:
+		var id := String(card)
+		counts[id] = int(counts.get(id, 0)) + 1
+	return counts
+
+
+func _has_duplicate(cards: Array) -> bool:
+	for amount in _card_counts(cards).values():
+		if int(amount) >= 2:
+			return true
+	return false
+
+
+func _receipt_counts(receipts: Array) -> Dictionary:
+	var ids: Array = []
+	for receipt in receipts:
+		ids.append(String(receipt["card_id"]))
+	return _card_counts(ids)
+
+
+func _discard_gains(before: Array, after: Array) -> Dictionary:
+	var first := _card_counts(before)
+	var second := _card_counts(after)
+	var gained := {}
+	for id in second:
+		var amount: int = int(second[id]) - int(first.get(id, 0))
+		if amount > 0:
+			gained[id] = amount
+	return gained
+
+
+func _assert_flight_art(id: String, duration_limit: float) -> void:
+	_check(juice.live_flights() > 0 and not juice._flights.is_empty(),
+		"a committed discard has a mounted, moving scrap")
+	if juice._flights.is_empty():
+		return
+	var flight: Dictionary = juice._flights.back()
+	var scrap = flight.get("scrap")
+	_check(is_instance_valid(scrap) and flight.get("target") == app.pile_label
+		and is_instance_valid(app.pile_label) and app.pile_label.is_visible_in_tree(),
+		"the flying card targets the real visible discard readout")
+	if not is_instance_valid(scrap):
+		return
+	var name_label := scrap.get_node_or_null("FlightCardName") as Label
+	var felt := scrap.get_node_or_null("OwnerFelt") as ColorRect
+	var stitches: Array = scrap.get_children().filter(func(node: Node) -> bool:
+		return node is Label and String(node.text).contains("×"))
+	var ink := Color("#282525")
+	_check(name_label != null and name_label.text == id.replace("_", " ").capitalize(),
+		"flight face spells the committed card ID")
+	_check(name_label != null and name_label.get_theme_color("font_color") == ink,
+		"flight face uses readable dark ink")
+	_check(felt != null and felt.color == juice._owner_color(id),
+		"flight face shows its owner's felt palette")
+	_check(stitches.size() == 2, "flight face has two visible cross-stitch seams")
+	_check(scrap.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and scrap.focus_mode == Control.FOCUS_NONE
+		and name_label != null and name_label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and name_label.focus_mode == Control.FOCUS_NONE
+		and felt != null and felt.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and felt.focus_mode == Control.FOCUS_NONE
+		and juice.overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"flying scrap and its contents cannot steal pointer or keyboard focus")
+	_check(scrap.get_parent() == juice.overlay and flight["tween"].is_running()
+		and float(juice.flight_history.back()["duration"]) <= duration_limit,
+		"visible scrap has a running bounded animation on the existing overlay")
+
+
 func _wait_cues(known: int) -> bool:
 	for attempt in range(120):
 		if juice.history.size() > known:
@@ -249,6 +322,7 @@ func _run() -> void:
 	_check(not is_instance_valid(juice.fast_button), "no Fast toggle before a battle mounts")
 	await _commit_attack()
 	await _end_turn()
+	await _hidden_discard_destination()
 	await _fast_mode()
 	await _teardown_and_reentry()
 	await _settlement_parity()
@@ -259,8 +333,9 @@ func _run() -> void:
 
 func _assert_presenter_mounted() -> void:
 	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
-	_check(juice.history.is_empty() and juice.live_cues() == 0,
-		"mounting a fight fabricates no cue")
+	_check(juice.history.is_empty() and juice.live_cues() == 0
+		and juice.flight_history.is_empty() and juice.live_flights() == 0,
+		"mounting a fight fabricates no combat or card-flight cue")
 	_check(is_instance_valid(juice.fast_button) and juice.fast_button.is_visible_in_tree()
 		and juice.fast_button.get_parent() == app.action_corner_row
 		and app.action_corner.is_ancestor_of(juice.fast_button)
@@ -289,14 +364,33 @@ func _commit_attack() -> void:
 	await _frames()
 	var known: int = juice.history.size()
 	var before := _actors()
+	var hand_before: Array = app.deck.hand.duplicate()
+	var discard_before: Array = app.deck.discard_pile.duplicate()
+	var flights_before: int = juice.flight_history.size()
+	_check(juice._held_sources.size() == hand_before.size(),
+		"each held card copy has a mounted cached source before committing")
 	seed(8123)
 	var global_next := randi()
 	seed(8123)
+	var motion := InputEventMouseMotion.new()
+	motion.position = panel.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+	_check(juice.flight_history.size() == flights_before, "hover alone creates no flight")
 	await _mouse(panel)
+	_check(juice.flight_history.size() == flights_before and app.deck.hand == hand_before,
+		"a queued target/preview has no discard flight")
 	await _mouse(_enemy_label(position))
 	await _frames()
 	_check(randi() == global_next, "committed play through the listener draws no global RNG")
 	var after := _actors()
+	_check(hand_before.size() == app.deck.hand.size() + 1
+		and _discard_gains(discard_before, app.deck.discard_pile) == _card_counts([id])
+		and juice.flight_history.size() == flights_before + 1
+		and _receipt_counts(juice.flight_history.slice(flights_before)) == _card_counts([id]),
+		"one genuinely consumed held copy and gained discard yields exactly one receipt")
+	if juice.flight_history.size() > flights_before:
+		_assert_flight_art(id, 0.6)
 	var changed := _changed(before, after)
 	_check(changed.size() == 1 and changed[0]["side"] == "enemy"
 		and int(changed[0]["position"]) == position and int(changed[0]["block"]) == -2,
@@ -374,6 +468,8 @@ func _commit_attack() -> void:
 	await _mouse(_enemy_label(_target_position(String(held[0])) if _target_position(String(held[0])) > 0 else 1))
 	await _frames()
 	_check(juice.history.size() == known, "a rejected card play fabricates no cue")
+	_check(juice.flight_history.size() == flights_before + 1,
+		"no-energy rejected play adds no discard flight")
 	_check(_state() == failed_state, "a rejected card play changes no combat value")
 	app.deck.combat_state.energy = energy
 	await _leave_fight()
@@ -411,9 +507,25 @@ func _end_turn() -> void:
 	_assert_presenter_mounted()
 	var known: int = juice.history.size()
 	var before := _actors()
+	var baseline_flights: int = juice.flight_history.size()
+	_check(app.deck.draw_extra(1) == 1, "the real deck can draw one additional held copy")
+	app._refresh_hand()
+	await _frames()
+	_check(juice.flight_history.size() == baseline_flights and juice._held_sources.size() == app.deck.hand.size(),
+		"extra drawn card and refreshed hand produce no fake flight")
+	var old_hand: Array = app.deck.hand.duplicate()
+	var old_discard: Array = app.deck.discard_pile.duplicate()
+	_check(_has_duplicate(old_hand), "the End Turn really holds multiple copies of a duplicate ID")
 	await _mouse(app.end_turn_button)
 	await _frames()
 	var after := _actors()
+	var gained := _discard_gains(old_discard, app.deck.discard_pile)
+	_check(gained == _card_counts(old_hand),
+		"real End Turn moved each old held ID and its duplicate count to discard")
+	_check(juice.flight_history.size() == baseline_flights + old_hand.size()
+		and _receipt_counts(juice.flight_history.slice(baseline_flights)) == gained,
+		"End Turn flies every truly discarded card copy, duplicates included")
+	_check(juice.live_flights() > 0, "End Turn scraps appear over the mounted battle")
 	var changed := _changed(before, after)
 	_check(not changed.is_empty(), "the real End Turn committed HP/Block changes")
 	var announced: Array = juice.history.slice(known)
@@ -430,8 +542,51 @@ func _end_turn() -> void:
 	for repeat in range(6):
 		app._process(0.0)
 	await _frames()
-	_check(juice.history.size() == known and _state() == settled,
-		"post-phase refresh and polling add no cue and change no state")
+	_check(juice.history.size() == known and _state() == settled
+		and juice.flight_history.size() == baseline_flights + old_hand.size(),
+		"post-phase refresh and polling add no HP/Block or discard replay")
+	# A legitimate refill takes cards OUT of discard. It is not a new discard.
+	var prior_flights: int = juice.flight_history.size()
+	var prior_deck: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
+	_check(app.deck.turn_active and not app.deck.discard_pile.is_empty(),
+		"there is an active real turn and a nonempty discard for refill")
+	var refill: int = app.deck.draw_extra(app.deck.draw_pile.size() + 1)
+	_check(refill > 0, "real CombatDeck draws far enough to reshuffle")
+	app._refresh_hand()
+	await _frames()
+	var new_deck: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
+	prior_deck.sort()
+	new_deck.sort()
+	_check(prior_deck == new_deck and juice.flight_history.size() == prior_flights,
+		"a genuine draw/discard reshuffle preserves cards without phantom flights")
+	await _leave_fight()
+
+
+## Discard commits with a hidden destination stay valid gameplay but cannot fly.
+func _hidden_discard_destination() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	var id := _strike_choice()
+	var position := _target_position(id)
+	_check(not id.is_empty() and position > 0, "a legal held play exists for hidden-target check")
+	if position <= 0:
+		await _leave_fight()
+		return
+	var original_hand: Array = app.deck.hand.duplicate()
+	var original_discard: Array = app.deck.discard_pile.duplicate()
+	app.pile_label.hide()
+	await _frames()
+	await _mouse(_panel(id))
+	await _mouse(_enemy_label(position))
+	await _frames()
+	_check(original_hand.size() == app.deck.hand.size() + 1
+		and _discard_gains(original_discard, app.deck.discard_pile) == _card_counts([id]),
+		"a hidden destination does not cancel or invent the real card transaction")
+	_check(juice.flight_history.is_empty() and juice.live_flights() == 0,
+		"no card flight is fabricated when its discard readout is hidden")
+	app.pile_label.show()
+	await _frames()
+	_check(juice.flight_history.is_empty(), "reappearing discard counter cannot replay a missed cue")
 	await _leave_fight()
 
 
@@ -452,6 +607,7 @@ func _fast_mode() -> void:
 	var id := _strike_choice()
 	var position := _target_position(id)
 	var known: int = juice.history.size()
+	var known_flights: int = juice.flight_history.size()
 	await _mouse(_panel(id))
 	_click_now(_enemy_label(position))
 	var fast_started := false
@@ -465,12 +621,22 @@ func _fast_mode() -> void:
 	var announced: Array = juice.history.slice(known)
 	_check(announced.size() == 1 and bool(announced[0]["fast"])
 		and float(announced[0]["duration"]) <= 0.15, "fast cues are recorded at 0.15 s or less")
+	_check(juice.flight_history.size() == known_flights + 1
+		and juice.live_flights() == 1
+		and _receipt_counts(juice.flight_history.slice(known_flights)) == _card_counts([id])
+		and bool(juice.flight_history.back()["fast"]),
+		"fast-mode play emits one actual discard flight")
+	if juice.live_flights() > 0:
+		_assert_flight_art(id, 0.15)
+	var flight_sprite = juice._flights.back().get("scrap") if not juice._flights.is_empty() else null
 	var cue_nodes: Array = []
 	if not juice._cues.is_empty():
 		cue_nodes = [juice._cues.back().get("float"), juice._cues.back().get("flash")]
 	_check(juice.live_cues() > 0, "the fast cue really starts on screen")
 	await create_timer(0.25).timeout
-	_check(juice.live_cues() == 0, "the fast cue is finished within 0.25 s")
+	_check(juice.live_cues() == 0 and juice.live_flights() == 0,
+		"hit and flying card finish within 0.25 s in Fast mode")
+	_check(not is_instance_valid(flight_sprite), "the fast card's scrap is really freed")
 	for node in cue_nodes:
 		_check(not is_instance_valid(node), "a finished cue frees its nodes")
 	# Keyboard: End Turn still tabs to Return, then the toggle; Space switches back.
@@ -506,10 +672,15 @@ func _teardown_and_reentry() -> void:
 	await _mouse(_enemy_label(_target_position(id)))
 	await _frames()
 	var live := await _wait_cues(known)
-	_check(live and juice.live_cues() > 0, "a cue is live before Return")
+	_check(live and juice.live_cues() > 0 and juice.live_flights() > 0
+		and juice.flight_history.size() == 1, "a hit and one card flight are live before Return")
 	var serial: int = juice.bind_serial
 	var overlay_id: int = juice.overlay.get_instance_id()
 	var sprite_ids: Array = []
+	for entry in juice._flights:
+		var scrap = entry.get("scrap")
+		if is_instance_valid(scrap):
+			sprite_ids.append(scrap.get_instance_id())
 	for entry in juice._cues:
 		for key in ["float", "flash"]:
 			var node = entry.get(key)
@@ -518,6 +689,9 @@ func _teardown_and_reentry() -> void:
 	await _mouse(app.return_button)
 	await _frames()
 	_check(app.deck == null and juice.overlay == null and juice.live_cues() == 0
+		and juice.live_flights() == 0 and juice.flight_history.is_empty()
+		and juice._held_before.is_empty() and juice._discard_before.is_empty()
+		and juice._draw_before.is_empty() and juice._held_sources.is_empty()
 		and juice.history.is_empty() and not juice.bound and juice._snapshot.is_empty(),
 		"Return clears the snapshot, overlay and every cue")
 	_check(not is_instance_id_valid(overlay_id), "the old overlay is really freed")
@@ -532,8 +706,9 @@ func _teardown_and_reentry() -> void:
 	if not await _enter_fight(fight_seed):
 		return
 	_check(juice.bind_serial == serial + 1, "a fresh fight rebinds exactly once")
-	_check(juice.history.is_empty() and juice.live_cues() == 0,
-		"fresh reentry starts without a stale cue")
+	_check(juice.history.is_empty() and juice.live_cues() == 0
+		and juice.flight_history.is_empty() and juice.live_flights() == 0,
+		"fresh reentry starts without any stale hit or card flight")
 	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
 		"fresh reentry mounts exactly one Fast animations toggle")
 	await _leave_fight()
