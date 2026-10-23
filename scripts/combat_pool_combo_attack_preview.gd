@@ -14,11 +14,15 @@ var _targeting := CombatAttackTargeting.new()
 func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pinned: CombatPinned, unravel: CombatUnravel,
 		first_attack: CombatTinkerFirstAttack, card_id: String,
-		requested_position: int = 0) -> Dictionary:
+		requested_position: int = 0,
+		patches: CombatPatchAttackRules = null) -> Dictionary:
 	var refused: Dictionary = _unavailable()
 	if deck == null or party == null or enemies == null or pinned == null \
 			or unravel == null or first_attack == null or deck._rng == null:
 		return refused
+	if patches != null:
+		if not patches is CombatPatchAttackRules or not _valid_patch_authority(patches, party):
+			return refused
 	if unravel._bound_enemies != enemies or not _valid_gauges(enemies, unravel) \
 			or not _valid_pins(pinned):
 		return refused
@@ -35,11 +39,13 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# A partial forecast is misleading. Check all legal targets against the
 	# real resolver before simulating even one; malformed authority fails shut.
 	var warden: bool = definition["owner"] == "warden"
-	var warden_resolver := CombatWardenPoolComboAttacks.new()
+	var check_patches: CombatPatchAttackRules = _clone_patches(patches)
+	var warden_resolver := CombatWardenPoolComboAttacks.new(check_patches)
 	var tinker_resolver := CombatTinkerPoolUnravelAttacks.new(first_attack, unravel, pinned)
+	tinker_resolver._patches = check_patches
 	for position in legal:
 		var permitted: bool = (warden_resolver.can_play(
-			deck, party, enemies, pinned, unravel, card_id, position) if warden
+			deck, party, enemies, pinned, unravel, card_id, position, check_patches) if warden
 			else tinker_resolver.can_play(deck, party, enemies, card_id, position))
 		if not permitted:
 			return refused
@@ -52,7 +58,7 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	for position in requested:
 		var forecast: Dictionary = _detached_hit(
 			deck, party, enemies, pinned, unravel, first_attack,
-			card_id, position, warden)
+			card_id, position, warden, patches)
 		if forecast.is_empty():
 			return refused
 		results.append(forecast)
@@ -69,7 +75,8 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 func _detached_hit(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pinned: CombatPinned, unravel: CombatUnravel,
 		first_attack: CombatTinkerFirstAttack, card_id: String,
-		position: int, warden: bool) -> Dictionary:
+		position: int, warden: bool,
+		patches: CombatPatchAttackRules = null) -> Dictionary:
 	var rng_copy := RandomNumberGenerator.new()
 	rng_copy.seed = deck._rng.seed
 	rng_copy.state = deck._rng.state
@@ -94,6 +101,7 @@ func _detached_hit(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var latch_copy := CombatTinkerFirstAttack.new()
 	latch_copy._consumed = first_attack._consumed
 	latch_copy._path_bonus = first_attack._path_bonus
+	var clone_patches: CombatPatchAttackRules = _clone_patches(patches)
 
 	var gauge_before: Dictionary = unravel.get_snapshot(position)
 	var pin_before: String = pinned.pinner_for_enemy(position)
@@ -101,12 +109,14 @@ func _detached_hit(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var first_bonus: int = 0 if warden else first_attack.bonus_for_attack(card_id)
 	var event: Dictionary
 	if warden:
-		event = CombatWardenPoolComboAttacks.new().play_attack(
+		event = CombatWardenPoolComboAttacks.new(clone_patches).play_attack(
 			deck_copy, party_copy, enemies_copy, pinned_copy, unravel_copy,
-			card_id, position)
+			card_id, position, clone_patches)
 	else:
-		event = CombatTinkerPoolUnravelAttacks.new(
-			latch_copy, unravel_copy, pinned_copy).play_attack(
+		var tinker_resolver := CombatTinkerPoolUnravelAttacks.new(
+			latch_copy, unravel_copy, pinned_copy)
+		tinker_resolver._patches = clone_patches
+		event = tinker_resolver.play_attack(
 			deck_copy, party_copy, enemies_copy, card_id, position)
 	if not event.get("ok", false):
 		return {}
@@ -149,6 +159,41 @@ func _detached_hit(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"target_hp_before": before_enemy["hp"],
 		"target_block_before": before_enemy["block"],
 	}
+
+
+func _clone_patches(patches: CombatPatchAttackRules) -> CombatPatchAttackRules:
+	if patches == null:
+		return null
+	var clone := CombatPatchAttackRules.new()
+	clone._valid = patches._valid
+	clone._active = patches._active.duplicate(true)
+	clone._consumed = patches._consumed.duplicate(true)
+	clone._worn = patches._worn.duplicate(true)
+	clone._living = patches._living.duplicate(true)
+	return clone
+
+
+func _valid_patch_authority(patches: CombatPatchAttackRules, party: CombatParty) -> bool:
+	if patches == null or not patches.is_valid():
+		return false
+	if party == null or not party.is_valid():
+		return false
+	var heroes: Array[Dictionary] = party.get_heroes()
+	if heroes.size() != RunPatchWardrobe.HERO_IDS.size():
+		return false
+	var seen := {}
+	for hero in heroes:
+		var hero_id: Variant = hero.get("id")
+		if not hero_id is String or not RunPatchWardrobe.HERO_IDS.has(hero_id) or seen.has(hero_id):
+			return false
+		seen[hero_id] = true
+		if not patches._worn.has(hero_id) or not patches._living.has(hero_id) \
+				or not patches._active.has(hero_id) or not patches._consumed.has(hero_id):
+			return false
+		if not patches._worn[hero_id] is Dictionary or not patches._active[hero_id] is Array \
+				or not patches._consumed[hero_id] is bool or not patches._living[hero_id] is bool:
+			return false
+	return seen.size() == RunPatchWardrobe.HERO_IDS.size()
 
 
 func _valid_gauges(enemies: CombatEnemies, unravel: CombatUnravel) -> bool:
