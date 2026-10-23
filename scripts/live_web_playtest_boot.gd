@@ -1,7 +1,7 @@
 extends Node
 ## Opt-in exported-web fixtures. Ordinary startup never allocates a run or RNG.
 
-const SCREENS := ["title", "map", "battle", "reward", "shop", "rest", "event", "results"]
+const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results"]
 const GOLD := 100
 const SCRAPS := 10
 var preview_ready := false
@@ -47,7 +47,13 @@ func enter_preview(app, screen: String) -> bool:
 		return false
 	_busy = true
 	preview_ready = false
-	if screen != "title":
+	if screen == "base":
+		# The village preview mounts the real Base and allocates no run at all.
+		app.base_button.pressed.emit()
+		if not _visible(app.base_screen) or not app.base_screen.has_open_village():
+			_busy = false
+			return false
+	elif screen != "title":
 		app.run_seed = {"rest": 2, "shop": 3, "event": 7}.get(screen, 1)
 		app.start_button.pressed.emit()
 		if app.run_map == null or not _visible(app.route_view):
@@ -97,6 +103,10 @@ func _expected_view(app, screen: String) -> bool:
 	match screen:
 		"title":
 			return _visible(app.title_view) and app.run_map == null and app.deck == null
+		"base":
+			return _visible(app.base_screen) and app.base_screen.has_open_village() \
+				and not _visible(app.title_view) and app.run_map == null \
+				and app.deck == null and app.run_rng == null and app.run_deck.is_empty()
 		"map":
 			return _visible(app.route_view) and app.run_map != null and app.run_map.get_route().is_empty()
 		"battle":

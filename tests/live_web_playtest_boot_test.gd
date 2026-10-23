@@ -40,7 +40,9 @@ func _run() -> void:
 	seed(114114)
 	var pristine := _snapshot(app)
 	for query in ["", "?other=map", "?screen", "?screen=", "?screen=unknown", "?screen=Battle",
-		"?screen=map&screen=battle", "?screen=map&screen=map", "?screen=battle%26x", null, 12]:
+		"?screen=map&screen=battle", "?screen=map&screen=map", "?screen=battle%26x", "?screen=Base",
+		"?screen=base&screen=base", "?screen=base&screen=map", "?screen=base%26x", "?screen=village",
+		null, 12]:
 		var parsed: String = boot.screen_from_query(query)
 		_check(parsed == "", "unsupported query rejected: " + str(query))
 		_check(not await boot.enter_preview(app, parsed), "unsupported request cannot start run")
@@ -66,6 +68,16 @@ func _run() -> void:
 			_check(randi() == expected_global, "preview preserves global RNG: " + screen)
 			if screen == "title":
 				_check(app.run_map == null and app.run_rng == null and app.run_deck.is_empty(), "title remains unstarted")
+			elif screen == "base":
+				_check(app.run_map == null and app.run_rng == null and app.run_deck.is_empty()
+					and app.run_heroes.is_empty() and app.session_gold == 0 and app.run_scraps == 0,
+					"village preview allocates no run, RNG, deck or currency")
+				_check(not app.title_view.is_visible_in_tree() and app.base_screen.is_visible_in_tree()
+					and app.base_screen.has_open_village(), "village preview replaces the title")
+				_check(app.base_screen.set_out_button.is_visible_in_tree()
+					and app.base_screen.set_out_button.has_focus()
+					and app.base_screen.back_button.is_visible_in_tree(),
+					"village preview mounts focusable Set out and Back to title")
 			else:
 				_check(app.run_seed == {"rest": 2, "shop": 3, "event": 7}.get(screen, 1), "fixed seed: " + screen)
 				_check(app.session_gold == 100 and app.run_scraps == 10, "consistent currency fixture: " + screen)
@@ -107,7 +119,10 @@ func _run() -> void:
 				replay = snapshot
 			else:
 				_check(snapshot == replay, "independent deterministic model replay: " + screen)
-			if screen != "title":
+			if screen == "base":
+				_check(not await boot.enter_preview(app, "base") and _snapshot(app) == snapshot,
+					"already-open village preview cannot be re-entered")
+			if screen not in ["title", "base"]:
 				_check(not await boot.enter_preview(app, "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
 				app._return_to_title()
 				app.start_button.pressed.emit()

@@ -39,6 +39,8 @@ const HAND_CARD_HEIGHT := 160
 ## attacks. It is mounted hidden per battle, so the idle lower third keeps the
 ## exact height it had before this cue existed.
 const COMBO_FORECAST_NAME := "ComboForecastCue"
+## The pinned Quilt village base between the title and an opening route.
+const BASE_SCREEN_SCENE := "res://scenes/base_screen.tscn"
 
 
 ## One small sewn felt corner beside the prominent End Turn control.
@@ -87,6 +89,10 @@ class ActionCornerStitch extends Control:
 var title_label: Label
 var start_button: Button
 var route_button: Button
+var base_button: Button
+var base_screen: BaseScreen
+## True only while an uncommitted opening chooser was launched from the Base.
+var _route_from_base := false
 var route_view: VBoxContainer
 var route_back_button: Button
 var route_map_button: Button
@@ -463,12 +469,92 @@ func _build_title() -> void:
 	route_button.custom_minimum_size = Vector2(240, 56)
 	route_button.pressed.connect(_open_route)
 	box.add_child(route_button)
+	base_button = Button.new()
+	base_button.text = "Quilt village"
+	base_button.custom_minimum_size = Vector2(240, 56)
+	base_button.tooltip_text = "Visit the Quilt village"
+	base_button.pressed.connect(_open_base)
+	box.add_child(base_button)
 	start_button.focus_next = start_button.get_path_to(route_button)
-	route_button.focus_next = route_button.get_path_to(start_button)
-	start_button.focus_previous = start_button.focus_next
-	route_button.focus_previous = route_button.focus_next
+	route_button.focus_next = route_button.get_path_to(base_button)
+	base_button.focus_next = base_button.get_path_to(start_button)
+	start_button.focus_previous = start_button.get_path_to(base_button)
+	route_button.focus_previous = route_button.get_path_to(start_button)
+	base_button.focus_previous = base_button.get_path_to(route_button)
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
+
+
+## Full-screen Quilt village with no run, RNG, deck or currency allocation.
+func _open_base() -> bool:
+	if deck != null or run_map != null or not is_instance_valid(title_view) \
+		or not title_view.is_visible_in_tree() or is_instance_valid(base_screen):
+		return false
+	var scene := load(BASE_SCREEN_SCENE) as PackedScene
+	if scene == null:
+		return false
+	var view := scene.instantiate() as BaseScreen
+	if view == null:
+		return false
+	base_screen = view
+	add_child(view)
+	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if not view.open_village(session_gold, run_scraps):
+		_close_base(view)
+		return false
+	view.set_out_requested.connect(_base_set_out.bind(weakref(view)))
+	view.back_requested.connect(_base_back.bind(weakref(view)))
+	title_view.hide()
+	return true
+
+
+## A Base action is only live while it is this app's mounted, visible village.
+func _live_base(source: WeakRef) -> BaseScreen:
+	if source == null or not is_instance_valid(base_screen):
+		return null
+	var view := source.get_ref() as BaseScreen
+	if view != base_screen or view.get_parent() != self \
+		or not view.is_visible_in_tree() or not view.has_open_village():
+		return null
+	return view
+
+
+func _close_base(view: BaseScreen = null) -> void:
+	if not is_instance_valid(base_screen):
+		base_screen = null
+		return
+	if view != null and view != base_screen:
+		return
+	var closing := base_screen
+	base_screen = null
+	closing.close_village()
+	if closing.get_parent() == self:
+		remove_child(closing)
+	closing.queue_free()
+
+
+## Set out runs the existing opening once; the Base hides only on a real route.
+func _base_set_out(source: WeakRef) -> void:
+	var view := _live_base(source)
+	if view == null:
+		return
+	_open_route()
+	if run_map == null or not is_instance_valid(route_view) or not route_view.is_visible_in_tree():
+		view.release_set_out()
+		return
+	_route_from_base = true
+	_close_base(view)
+
+
+func _base_back(source: WeakRef) -> void:
+	var view := _live_base(source)
+	if view == null:
+		return
+	_close_base(view)
+	if is_instance_valid(title_view):
+		title_view.show()
+	if is_instance_valid(base_button):
+		base_button.grab_focus()
 
 
 func _start_run() -> void:
@@ -480,6 +566,7 @@ func _start_run() -> void:
 func _open_route() -> void:
 	if deck != null or run_map != null:
 		return
+	_route_from_base = false
 	var cards := _load_starter_deck()
 	var initial_party := CombatParty.new(_load_party_definitions())
 	if cards.is_empty() or not initial_party.is_valid():
@@ -3465,6 +3552,11 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	# Only an uncommitted Base-launched opening returns to the village.
+	var restore_base: bool = _route_from_base and run_map != null \
+		and run_map.get_route().is_empty()
+	_route_from_base = false
+	_close_base()
 	_clear_quiet_spool()
 	_quiet_spool_completed = false
 	_clear_rest_patch_overlay()
@@ -3604,4 +3696,7 @@ func _return_to_title() -> void:
 	encounter_id = ""
 	_clear_route_view()
 	title_view.show()
+	# Base-origin openings restore the village; every other Back keeps the title.
+	if restore_base and _open_base():
+		return
 	start_button.grab_focus()

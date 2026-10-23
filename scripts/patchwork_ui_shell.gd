@@ -103,7 +103,7 @@ func _bind_title() -> void:
 	_label.theme_type_variation = "TitleLabel"
 	_label.add_theme_color_override("font_color", INK)
 	_label.add_theme_constant_override("outline_size", 0)
-	for button in [app.start_button, app.route_button]:
+	for button in [app.start_button, app.route_button, app.base_button]:
 		button.add_child(ButtonStitches.new())
 	_title.visibility_changed.connect(_sync_visibility)
 	_title.resized.connect(queue_redraw)

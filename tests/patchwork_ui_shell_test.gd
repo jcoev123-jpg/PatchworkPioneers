@@ -42,9 +42,13 @@ func _run() -> void:
 	var focus := shared.get_stylebox("focus", "Button") as StyleBoxFlat
 	_check(focus != null and focus.border_width_top >= 3 and focus.border_color.a == 1.0,
 		"opaque keyboard focus border")
-	for button in [app.start_button, app.route_button]:
+	for button in [app.start_button, app.route_button, app.base_button]:
 		_check(button.get_child_count() == 1 and button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"title stitches cannot block original button")
+	_check(app.base_button.get_theme_stylebox("normal") == shared.get_stylebox("normal", "Button")
+		and app.base_button.get_theme_stylebox("hover") == shared.get_stylebox("hover", "Button")
+		and app.base_button.get_theme_stylebox("focus") == shared.get_stylebox("focus", "Button"),
+		"third title action shares the sewn button theme")
 	_check(app.start_button.has_focus() and shell.visible, "initial focused title with backdrop")
 	await _key(KEY_TAB)
 	_check(app.route_button.has_focus(), "physical Tab retains title focus cycle")
