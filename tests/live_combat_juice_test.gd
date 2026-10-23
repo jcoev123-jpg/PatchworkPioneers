@@ -170,6 +170,7 @@ func _leave_fight(check_presenter: bool = true) -> void:
 		_check(not juice.bound and juice.overlay == null and juice.history.is_empty()
 			and juice.live_cues() == 0 and juice.flight_history.is_empty()
 			and juice.live_flights() == 0 and juice.pose_history.is_empty()
+			and juice.recoil_history.is_empty()
 			and juice._phase_marker.is_empty(),
 			"Return drops the binding and every cue history")
 
@@ -329,6 +330,46 @@ func _hero_puppet(actor_id: String) -> Control:
 	return null
 
 
+## The mounted puppet of one authoritative side plus ID, through the presenter's own
+## fail-closed lookup (never a slot or a screen position).
+func _puppet_for(side: String, actor_id: String) -> Control:
+	var roster = _roster()
+	if roster == null or actor_id.is_empty():
+		return null
+	return roster.puppet_for(side, actor_id) as Control
+
+
+## A comparable key per committed HP loss or recoil receipt.
+func _recoil_keys(records: Array) -> Array:
+	var out: Array = []
+	for record in records:
+		out.append("%s:%d:%s:%d" % [record["side"], int(record["position"]),
+			record["id"], int(record["hp"])])
+	out.sort()
+	return out
+
+
+## Only committed HP losses may recoil: every receipt must repeat one of them.
+func _hp_losses(changed: Array) -> Array:
+	return changed.filter(func(entry: Dictionary) -> bool:
+		return int(entry["hp"]) < 0)
+
+
+## True when every recoil receipt repeats a real committed HP loss (and, with `require_all`,
+## when every such loss is represented). A stale, hidden or already-fallen puppet may
+## legitimately stay unshaken, but no receipt may ever name an actor whose HP did not fall.
+func _recoils_only_from_hp_losses(receipts: Array, changed: Array,
+		require_all: bool = false) -> bool:
+	var losses := _recoil_keys(_hp_losses(changed))
+	var named := _recoil_keys(receipts)
+	for key in named:
+		if not losses.has(key):
+			return false
+	if require_all:
+		return named.size() == losses.size()
+	return named.size() <= losses.size()
+
+
 ## Every mounted actor target, pinned name, intent badge and action control rectangle a
 ## committed pose must never move.
 func _presentation() -> Dictionary:
@@ -420,12 +461,14 @@ func _run() -> void:
 		"title has no battle binding, overlay, snapshot or cue")
 	_check(juice.pose_history.is_empty() and juice._phase_marker.is_empty(),
 		"the title owns no pose receipt and no stale turn boundary")
+	_check(juice.recoil_history.is_empty(), "the title owns no stale hit recoil")
 	_check(not is_instance_valid(juice.fast_button), "no Fast toggle before a battle mounts")
 	await _commit_attack()
 	await _keyboard_pose()
 	await _non_damaging_play()
 	await _ambiguous_cast()
 	await _end_turn()
+	await _enemy_phase_recoil()
 	await _hidden_discard_destination()
 	await _closed_battle()
 	await _fast_mode()
@@ -439,8 +482,9 @@ func _run() -> void:
 func _assert_presenter_mounted() -> void:
 	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
-		and juice.flight_history.is_empty() and juice.live_flights() == 0,
-		"mounting a fight fabricates no combat or card-flight cue")
+		and juice.flight_history.is_empty() and juice.live_flights() == 0
+		and juice.recoil_history.is_empty(),
+		"mounting a fight fabricates no combat, card-flight or recoil cue")
 	_check(is_instance_valid(juice.fast_button) and juice.fast_button.is_visible_in_tree()
 		and juice.fast_button.get_parent() == app.action_corner_row
 		and app.action_corner.is_ancestor_of(juice.fast_button)
@@ -472,6 +516,7 @@ func _commit_attack() -> void:
 		"the committed card has one authored, living hero owner with a mounted puppet")
 	var presentation := _presentation()
 	var poses_before: int = juice.pose_history.size()
+	var recoils_before: int = juice.recoil_history.size()
 	var rest_pose: Rect2 = owner_puppet.posed_actor_rect() if is_instance_valid(owner_puppet) else Rect2()
 	var rest_phase: float = owner_puppet.idle_phase if is_instance_valid(owner_puppet) else 0.0
 	_check(not is_instance_valid(owner_puppet) or not owner_puppet.attacking(),
@@ -498,6 +543,8 @@ func _commit_attack() -> void:
 	_check(juice.flight_history.size() == flights_before and app.deck.hand == hand_before,
 		"a queued target/preview has no discard flight")
 	_check(juice.pose_history.size() == poses_before, "a queued target/preview fabricates no hero pose")
+	_check(juice.recoil_history.size() == recoils_before,
+		"a queued target/preview fabricates no hit recoil")
 	await _mouse(_enemy_label(position))
 	await _frames()
 	_check(randi() == global_next, "committed play through the listener draws no global RNG")
@@ -534,6 +581,57 @@ func _commit_attack() -> void:
 	var puppet = roster.panel.find_child("EnemyPuppet%d" % position, true, false) as Control
 	_check(is_instance_valid(puppet) and juice._cues.back().get("target") == puppet,
 		"the cue is anchored to the target enemy's live presentation")
+	# AC1/AC2: only the actor that really lost HP recoils, on its own bound puppet, and
+	# only in the drawn transform: the cue anchors, targets, names and actions stay put.
+	var target_id := String(app.enemies.get_enemy(position)["id"])
+	var target_puppet := _puppet_for("enemy", target_id)
+	_check(juice.recoil_history.size() == recoils_before + 1,
+		"one committed HP loss starts exactly one recoil")
+	if juice.recoil_history.size() == recoils_before + 1:
+		var recoil: Dictionary = juice.recoil_history.back()
+		_check(String(recoil["side"]) == "enemy" and String(recoil["id"]) == target_id
+			and int(recoil["position"]) == position and int(recoil["hp"]) == int(changed[0]["hp"])
+			and int(recoil["hp"]) < 0 and int(recoil["block"]) == int(changed[0]["block"]),
+			"the recoil names the exact authoritative actor that really lost HP")
+		_check(not bool(recoil["fast"]) and float(recoil["duration"]) > 0.0
+			and float(recoil["duration"]) <= 0.6,
+			"a normal committed recoil is bounded to at most 0.6 s")
+		_check(is_instance_valid(target_puppet) and target_puppet.recoiling()
+			and is_equal_approx(target_puppet.recoil_span, float(recoil["duration"])),
+			"the damaged enemy's own mounted puppet really recoils")
+	_check(_puppet_for("hero", owner) == owner_puppet,
+		"the recoil lookup resolves the attacker by its own side and ID")
+	_check(not is_instance_valid(owner_puppet) or not owner_puppet.recoiling(),
+		"the attacking hero's puppet never recoils from its own hit")
+	var recoiling_puppets: Array = []
+	for candidate in roster._puppets:
+		if candidate.recoiling():
+			recoiling_puppets.append(candidate)
+	_check(recoiling_puppets.size() == 1 and is_instance_valid(target_puppet)
+		and recoiling_puppets[0] == target_puppet,
+		"exactly the damaged actor's puppet recoils and no other actor's does")
+	_check(_presentation() == presentation,
+		"the committed recoil moves no actor target, pinned name, badge or action")
+	if is_instance_valid(target_puppet):
+		var target_phase: float = target_puppet.idle_phase
+		var target_control: Rect2 = target_puppet.get_global_rect()
+		var before_recoil_state := _state()
+		_check(target_puppet.recoil_back_pixels() > 0.0
+			and is_equal_approx(target_puppet.recoil_pixels(),
+				-target_puppet.facing * target_puppet.recoil_back_pixels()
+					* target_puppet.recoil_shape())
+			and is_equal_approx(target_puppet.idle_transform(Vector2.ZERO, 1.0).origin.x,
+				target_puppet.recoil_pixels()),
+			"the recoil lives in the shared drawing transform, not in the Control")
+		target_puppet._process(target_puppet.RECOIL_MAX_SECONDS)
+		_check(not target_puppet.recoiling()
+			and is_equal_approx(target_puppet.recoil_pixels(), 0.0)
+			and is_equal_approx(target_puppet.idle_transform(Vector2.ZERO, 1.0).origin.x, 0.0)
+			and target_puppet.get_global_rect() == target_control,
+			"the recoil settles exactly back to idle within 0.6 s without moving the target")
+		_check(_state() == before_recoil_state,
+			"settling the recoil mutates no HP, deck, energy, RNG, intent or settlement value")
+		target_puppet.idle_phase = target_phase
 	await _assert_inert_cues()
 	# A missing presentation falls back to the matching live combat meter.
 	if is_instance_valid(puppet):
@@ -596,12 +694,15 @@ func _commit_attack() -> void:
 		"a held attack remains for the rejected-play check")
 	var failed_state := _state()
 	var poses_before_failure: int = juice.pose_history.size()
+	var recoils_before_failure: int = juice.recoil_history.size()
 	await _mouse(_panel(String(held[0])))
 	await _mouse(_enemy_label(_target_position(String(held[0])) if _target_position(String(held[0])) > 0 else 1))
 	await _frames()
 	_check(juice.history.size() == known, "a rejected card play fabricates no cue")
 	_check(juice.pose_history.size() == poses_before_failure,
 		"a rejected card play fabricates no hero attack pose")
+	_check(juice.recoil_history.size() == recoils_before_failure,
+		"a rejected card play fabricates no hit recoil")
 	_check(juice.flight_history.size() == flights_before + 1,
 		"no-energy rejected play adds no discard flight")
 	_check(_state() == failed_state, "a rejected card play changes no combat value")
@@ -645,13 +746,19 @@ func _keyboard_pose() -> void:
 		await _leave_fight()
 		return
 	var before := _actors()
+	var recoils_before: int = juice.recoil_history.size()
 	await _key([KEY_1, KEY_2, KEY_3][position - 1])
 	await _frames()
 	_check(_actors() != before, "the keyboard target digit commits a real attack")
 	_check(juice.pose_history.size() == poses_before + 1,
 		"a genuinely committed keyboard card play triggers exactly one pose")
+	var keyboard_changed := _changed(before, _actors())
+	var keyboard_losses := _hp_losses(keyboard_changed)
+	_check(keyboard_losses.size() == 1
+		and _recoil_keys(juice.recoil_history.slice(recoils_before)) == _recoil_keys(keyboard_losses),
+		"a keyboard-committed HP loss recoils only the actor it really damaged")
 	if juice.pose_history.size() == poses_before + 1:
-		_assert_committed_pose(id, owner, position, _changed(before, _actors()),
+		_assert_committed_pose(id, owner, position, keyboard_changed,
 			presentation, puppet, rest_pose, rest_phase)
 	await _leave_fight()
 
@@ -686,6 +793,7 @@ func _ambiguous_cast() -> void:
 		await _leave_fight()
 		return
 	var poses_before: int = juice.pose_history.size()
+	var recoils_before: int = juice.recoil_history.size()
 	var cues_before: int = juice.history.size()
 	var hand_before: Array = app.deck.hand.duplicate()
 	var discard_before: Array = app.deck.discard_pile.duplicate()
@@ -701,6 +809,12 @@ func _ambiguous_cast() -> void:
 		"the area cast still announces its own committed HP cues")
 	_check(juice.pose_history.size() == poses_before,
 		"a multi-actor area cast fabricates no single-source attack pose")
+	# Every actor whose HP really fell still recoils, and nothing else does: the hit
+	# reaction follows committed HP loss, not the single-target pose rule.
+	var area_recoils: Array = juice.recoil_history.slice(recoils_before)
+	_check(not _hp_losses(changed).is_empty()
+		and _recoils_only_from_hp_losses(area_recoils, changed),
+		"an area cast recoils only the actors whose committed HP really fell")
 	# A real enemy_all cast can legally damage exactly ONE surviving enemy. The listener
 	# must still fail closed: the card's authored target kind is enemy_all, never the
 	# number of actors its commit happened to change. Keep one enemy alive with enough
@@ -797,6 +911,7 @@ func _non_damaging_play() -> void:
 		return
 	var poses_before: int = juice.pose_history.size()
 	var cues_before: int = juice.history.size()
+	var recoils_before: int = juice.recoil_history.size()
 	var hand_before: Array = app.deck.hand.duplicate()
 	var discard_before: Array = app.deck.discard_pile.duplicate()
 	var before := _actors()
@@ -813,6 +928,8 @@ func _non_damaging_play() -> void:
 		"a non-damaging play still announces its own committed Block cue")
 	_check(juice.pose_history.size() == poses_before,
 		"a non-damaging card play fabricates no attack pose")
+	_check(juice.recoil_history.size() == recoils_before,
+		"a pure Block gain is not a hit and never recoils")
 	await _leave_fight()
 
 
@@ -854,6 +971,8 @@ func _closed_battle() -> void:
 		"a hit that closes the battle fabricates no stale pose")
 	_check(not is_instance_valid(puppet) or not puppet.attacking(),
 		"no mounted hero keeps a lunge after the battle closes")
+	_check(juice.recoil_history.is_empty(),
+		"a hit that closes the battle leaves no stale hit recoil")
 	await _leave_fight()
 
 
@@ -889,6 +1008,7 @@ func _end_turn() -> void:
 	_assert_presenter_mounted()
 	var known: int = juice.history.size()
 	var poses_before: int = juice.pose_history.size()
+	var recoils_before: int = juice.recoil_history.size()
 	var before := _actors()
 	var baseline_flights: int = juice.flight_history.size()
 	_check(app.deck.draw_extra(1) == 1, "the real deck can draw one additional held copy")
@@ -930,6 +1050,8 @@ func _end_turn() -> void:
 		"post-phase refresh and polling add no HP/Block or discard replay")
 	_check(juice.pose_history.size() == poses_before,
 		"a real End Turn enemy phase fabricates no card attack pose")
+	_check(_recoils_only_from_hp_losses(juice.recoil_history.slice(recoils_before), changed),
+		"the first enemy phase recoils no actor that did not really lose HP")
 	# A legitimate refill takes cards OUT of discard. It is not a new discard.
 	var prior_flights: int = juice.flight_history.size()
 	var prior_deck: Array = app.deck.hand + app.deck.draw_pile + app.deck.discard_pile
@@ -944,6 +1066,119 @@ func _end_turn() -> void:
 	new_deck.sort()
 	_check(prior_deck == new_deck and juice.flight_history.size() == prior_flights,
 		"a genuine draw/discard reshuffle preserves cards without phantom flights")
+	await _leave_fight()
+
+
+## AC1/AC3: an enemy-phase HP hit recoils only the hero it really damaged, while the
+## same phase's Block changes, a fully-absorbed hit and a real heal never recoil. It drives
+## the real End Turn control and the authoritative CombatParty transactions the rules use.
+func _enemy_phase_recoil() -> void:
+	if not await _enter_fight(fight_seed):
+		return
+	_assert_presenter_mounted()
+	var damaged_hero := 0
+	var phase_hits := 0
+	# A first enemy phase may be fully absorbed by the party's starting Block, so clear
+	# that Block through the real transaction and take real turns until HP really falls.
+	for turn in range(4):
+		for hero in app.party.get_heroes():
+			var hero_position := int(hero["position"])
+			if int(hero["block"]) > 0 and not app.party.is_downed(hero_position):
+				_check(app.party.apply_damage(hero_position, int(hero["block"])),
+					"a real committed hit clears the hero's Block before the enemy phase")
+		await _frames()
+		var phase_before := _actors()
+		var receipts_before: int = juice.recoil_history.size()
+		var poses_before: int = juice.pose_history.size()
+		await _mouse(app.end_turn_button)
+		await _frames()
+		var phase_changed := _changed(phase_before, _actors())
+		var phase_receipts: Array = juice.recoil_history.slice(receipts_before)
+		_check(not phase_changed.is_empty(), "the real enemy phase commits HP/Block changes")
+		_check(_recoils_only_from_hp_losses(phase_receipts, phase_changed),
+			"an enemy phase recoils only actors whose committed HP really fell")
+		_check(juice.pose_history.size() == poses_before,
+			"an enemy phase HP hit fabricates no card attack pose")
+		if _hp_losses(phase_changed).is_empty():
+			continue
+		phase_hits += 1
+		var losses := _hp_losses(phase_changed)
+		_check(_recoil_keys(phase_receipts) == _recoil_keys(losses),
+			"the enemy phase recoils exactly the actors it really damaged")
+		for loss in losses:
+			damaged_hero = int(loss["position"])
+		for receipt in phase_receipts:
+			_check(String(receipt["side"]) == "hero" and int(receipt["hp"]) < 0
+				and float(receipt["duration"]) > 0.0 and float(receipt["duration"]) <= 0.6,
+				"each enemy-phase recoil repeats a real HP loss and stays bounded")
+		var hero_id := String(app.party.get_hero(damaged_hero)["id"])
+		var hero_puppet := _puppet_for("hero", hero_id)
+		_check(is_instance_valid(hero_puppet) and hero_puppet.recoiling(),
+			"the damaged hero's own puppet really carries the committed recoil")
+		var others: Array = []
+		for candidate in _roster()._puppets:
+			if candidate.recoiling() and candidate != hero_puppet:
+				others.append(String(candidate.name))
+		_check(others.is_empty(),
+			"no other actor's puppet recoils from that committed HP loss")
+		break
+	_check(damaged_hero > 0 and phase_hits >= 1,
+		"a real enemy-phase HP hit really occurs and is covered")
+	# A pure Block gain on a living actor cues as usual but is not evidence of a hit.
+	var block_slot := 0
+	for enemy in app.enemies.get_enemies():
+		if not app.enemies.is_slain(int(enemy["position"])):
+			block_slot = int(enemy["position"])
+			break
+	_check(block_slot > 0, "a living enemy exists for the pure Block check")
+	var recoils_before_block: int = juice.recoil_history.size()
+	var cues_before_block: int = juice.history.size()
+	_check(app.enemies.gain_block(block_slot, 2), "a real committed Block gain exists")
+	await _frames()
+	_check(juice.history.size() == cues_before_block + 1
+		and int(juice.history.back()["hp"]) == 0 and int(juice.history.back()["block"]) == 2,
+		"a pure Block gain still announces its own committed cue")
+	_check(juice.recoil_history.size() == recoils_before_block,
+		"a pure Block change is not a hit and never recoils")
+	# A hit fully absorbed by Block loses only Block: that is not evidence of a hit either.
+	var block_hero := damaged_hero if damaged_hero > 0 else 1
+	_check(app.party.gain_block(block_hero, 3), "a real committed Block gain precedes the absorbed hit")
+	await _frames()
+	var recoils_before_absorbed: int = juice.recoil_history.size()
+	var cues_before_absorbed: int = juice.history.size()
+	var hp_before_absorbed: int = int(app.party.get_hero(block_hero)["hp"])
+	var block_before_absorbed: int = int(app.party.get_hero(block_hero)["block"])
+	_check(hp_before_absorbed > 0 and block_before_absorbed >= 2,
+		"the hero holds real Block before the absorbed hit")
+	_check(app.party.apply_damage(block_hero, 2), "a real committed hit is fully absorbed by Block")
+	await _frames()
+	var absorbed: Dictionary = app.party.get_hero(block_hero)
+	_check(int(absorbed["hp"]) == hp_before_absorbed
+		and int(absorbed["block"]) == block_before_absorbed - 2
+		and juice.history.size() == cues_before_absorbed + 1
+		and int(juice.history.back()["hp"]) == 0
+		and int(juice.history.back()["block"]) == -2,
+		"the absorbed hit really loses only Block and announces only that")
+	_check(juice.recoil_history.size() == recoils_before_absorbed,
+		"pure Block loss is not a HP hit and never recoils")
+	# A real heal is not a hit either: it announces its HP gain and never recoils.
+	if int(app.party.get_hero(block_hero)["hp"]) >= int(app.party.get_hero(block_hero)["max_hp"]):
+		_check(app.party.apply_damage(block_hero, 3), "the heal fixture first damages the hero for real")
+		await _frames()
+	var heal_before: Dictionary = app.party.get_hero(block_hero)
+	_check(int(heal_before["hp"]) < int(heal_before["max_hp"]),
+		"the heal fixture leaves a hero with missing HP")
+	var recoils_before_heal: int = juice.recoil_history.size()
+	var cues_before_heal: int = juice.history.size()
+	_check(app.party.heal(block_hero, 3), "a real committed heal exists")
+	await _frames()
+	var healed: Dictionary = app.party.get_hero(block_hero)
+	_check(int(healed["hp"]) > int(heal_before["hp"])
+		and juice.history.size() == cues_before_heal + 1
+		and int(juice.history.back()["hp"]) > 0,
+		"the heal announces its committed HP gain")
+	_check(juice.recoil_history.size() == recoils_before_heal,
+		"a heal is not a hit and never recoils")
 	await _leave_fight()
 
 
@@ -994,6 +1229,7 @@ func _fast_mode() -> void:
 	var known: int = juice.history.size()
 	var known_flights: int = juice.flight_history.size()
 	var poses_before: int = juice.pose_history.size()
+	var recoils_before: int = juice.recoil_history.size()
 	await _mouse(_panel(id))
 	_click_now(_enemy_label(position))
 	var fast_started := false
@@ -1015,6 +1251,17 @@ func _fast_mode() -> void:
 		if juice.pose_history.size() > poses_before else null
 	_check(not is_instance_valid(pose_puppet) or pose_puppet.attack_span <= 0.15,
 		"the mounted fast pose is bounded by the fast span")
+	var fast_recoil: Control = null
+	_check(juice.recoil_history.size() == recoils_before + 1
+		and bool(juice.recoil_history.back()["fast"])
+		and float(juice.recoil_history.back()["duration"]) <= 0.15,
+		"a fast committed hit recoils its own actor for at most 0.15 s")
+	if juice.recoil_history.size() == recoils_before + 1:
+		var receipt: Dictionary = juice.recoil_history.back()
+		fast_recoil = _puppet_for(String(receipt["side"]), String(receipt["id"]))
+		_check(is_instance_valid(fast_recoil) and fast_recoil.recoiling()
+			and fast_recoil.recoil_span <= 0.15,
+			"the mounted fast recoil is bounded by the fast span")
 	_check(juice.flight_history.size() == known_flights + 1
 		and juice.live_flights() == 1
 		and _receipt_counts(juice.flight_history.slice(known_flights)) == _card_counts([id])
@@ -1032,6 +1279,8 @@ func _fast_mode() -> void:
 		"hit and flying card finish within 0.25 s in Fast mode")
 	_check(not is_instance_valid(pose_puppet) or not pose_puppet.attacking(),
 		"the fast hero pose really ends within 0.25 s")
+	_check(not is_instance_valid(fast_recoil) or not fast_recoil.recoiling(),
+		"the fast hit recoil really settles within 0.25 s")
 	_check(not is_instance_valid(flight_sprite), "the fast card's scrap is really freed")
 	for node in cue_nodes:
 		_check(not is_instance_valid(node), "a finished cue frees its nodes")
@@ -1075,6 +1324,11 @@ func _teardown_and_reentry() -> void:
 		if not juice.pose_history.is_empty() else null
 	_check(is_instance_valid(posed) and posed.attacking(),
 		"the owning hero is really mid-lunge before Return")
+	_check(juice.recoil_history.size() == 1, "a live hit recoil is recorded before Return")
+	var recoiling: Control = _puppet_for(String(juice.recoil_history.back()["side"]),
+		String(juice.recoil_history.back()["id"])) if not juice.recoil_history.is_empty() else null
+	_check(is_instance_valid(recoiling) and recoiling.recoiling(),
+		"the damaged actor is really mid-recoil before Return")
 	var serial: int = juice.bind_serial
 	var overlay_id: int = juice.overlay.get_instance_id()
 	var sprite_ids: Array = []
@@ -1094,10 +1348,13 @@ func _teardown_and_reentry() -> void:
 		and juice._held_before.is_empty() and juice._discard_before.is_empty()
 		and juice._draw_before.is_empty() and juice._held_sources.is_empty()
 		and juice.history.is_empty() and juice.pose_history.is_empty()
+		and juice.recoil_history.is_empty()
 		and juice._phase_marker.is_empty() and not juice.bound and juice._snapshot.is_empty(),
 		"Return clears the snapshot, overlay and every cue")
 	_check(not is_instance_valid(posed) or not posed.attacking(),
 		"Return ends the mounted pose instead of leaving a stale lunge")
+	_check(not is_instance_valid(recoiling) or not recoiling.recoiling(),
+		"Return settles the mounted recoil instead of leaving a stale shake")
 	_check(not is_instance_id_valid(overlay_id), "the old overlay is really freed")
 	_check(juice.history.is_empty(), "Return clears the committed cue log")
 	var all_freed := true
@@ -1112,8 +1369,8 @@ func _teardown_and_reentry() -> void:
 	_check(juice.bind_serial == serial + 1, "a fresh fight rebinds exactly once")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0
-		and juice.pose_history.is_empty(),
-		"fresh reentry starts without any stale hit, card flight or hero pose")
+		and juice.pose_history.is_empty() and juice.recoil_history.is_empty(),
+		"fresh reentry starts without any stale hit, card flight, hero pose or recoil")
 	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
 		"fresh reentry mounts exactly one Fast animations toggle")
 	await _leave_fight()

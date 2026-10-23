@@ -6,7 +6,10 @@ extends Node
 ## A later *committed* HP or Block change (a resolved attack, an End Turn, a status
 ## tick the rules already applied) draws one short, pointer-inert float plus a hit
 ## flash at that actor's current presentation, falling back to the matching live
-## combat meter. A committed held-card play whose single held copy really left the hand,
+## combat meter. A committed HP *loss* also makes only that actor's own visible,
+## standing mounted puppet recoil; pure Block loss/reset and healing are not evidence
+## of a hit, and nothing recoils for an uncommitted preview or a refused play.
+## A committed held-card play whose single held copy really left the hand,
 ## whose authored record is an individually targeted enemy attack and whose only
 ## authoritative change was one enemy's HP/Block loss also lets that card's own living
 ## hero puppet perform one bounded attack-pose lunge. An area cast that happens to leave
@@ -20,6 +23,7 @@ const FAST_SECONDS := 0.15
 const HISTORY_LIMIT := 64
 const FLIGHT_HISTORY_LIMIT := 64
 const POSE_HISTORY_LIMIT := 64
+const RECOIL_HISTORY_LIMIT := 64
 const FLIGHT_SIZE := Vector2(126, 64)
 const FLOAT_WIDTH := 120.0
 const FLOAT_HEIGHT := 26.0
@@ -36,6 +40,9 @@ var flight_history: Array[Dictionary] = []
 ## ({"side","position","id","card_id","target_position","target_id","hp","block",
 ## "anchor","fast","duration"}).
 var pose_history: Array[Dictionary] = []
+## Separate bounded receipts for recoils really started by a committed HP loss
+## ({"side","position","id","hp","block","fast","duration"}).
+var recoil_history: Array[Dictionary] = []
 ## Bumped once per battle binding, so a test or screenshot can prove a single rebind.
 var bind_serial := 0
 var bound := false
@@ -160,6 +167,7 @@ func _bind(app) -> void:
 	history.clear()
 	flight_history.clear()
 	pose_history.clear()
+	recoil_history.clear()
 	# Mounting only baselines the current HP/Block; it never announces a change.
 	_snapshot = _read(app)
 	_baseline_cards(app)
@@ -170,7 +178,7 @@ func _bind(app) -> void:
 ## Title, terminal teardown or a replaced fight: no stale snapshot and no orphan cue.
 func _teardown() -> void:
 	_kill_cues()
-	# A closed or replaced battle never keeps a mounted actor mid-lunge.
+	# A closed or replaced battle never keeps a mounted actor mid-lunge or mid-shake.
 	var app := get_parent()
 	var roster = app.get_node_or_null("LiveEnemyRoster") if app != null else null
 	if roster != null and is_instance_valid(roster) and roster.has_method("cancel_poses"):
@@ -195,6 +203,7 @@ func _teardown() -> void:
 	history.clear()
 	flight_history.clear()
 	pose_history.clear()
+	recoil_history.clear()
 	if not is_instance_valid(fast_button):
 		fast_button = null
 
@@ -238,10 +247,36 @@ func _store(snapshot: Dictionary, side: String, actor: Dictionary) -> void:
 		"hp": hp, "block": block}
 
 
-## One cue per actor whose committed HP or Block really changed since the last sync.
+## One cue per actor whose committed HP or Block really changed since the last sync, plus
+## one recoil for each of those actors that really lost HP.
 func _emit_deltas(app, current: Dictionary) -> void:
 	for change in _actor_changes(current):
-		_spawn(app, change, int(change["hp"]), int(change["block"]))
+		var hp_delta := int(change["hp"])
+		# A committed HP loss is the only evidence of a hit: a pure Block loss or reset and
+		# a heal are not, so they never shake an actor.
+		if hp_delta < 0:
+			_emit_recoil(app, change)
+		_spawn(app, change, hp_delta, int(change["block"]))
+
+
+## One committed HP loss makes only that actor's own visible, standing puppet recoil. The
+## lookup is by authoritative side plus ID and fails closed on a stale, hidden, fallen or
+## ambiguous binding, so presentation never shakes the wrong actor. It starts one bounded,
+## delta-driven draw pose and never awaits, gates or consumes anything.
+func _emit_recoil(app, hit: Dictionary) -> void:
+	var roster = app.get_node_or_null("LiveEnemyRoster")
+	if roster == null or not is_instance_valid(roster) or not roster.has_method("puppet_for"):
+		return
+	var puppet = roster.puppet_for(String(hit["side"]), String(hit["id"]))
+	if not is_instance_valid(puppet):
+		return
+	if not puppet.trigger_recoil(duration_seconds()):
+		return
+	recoil_history.append({"side": String(hit["side"]), "position": int(hit["position"]),
+		"id": String(hit["id"]), "hp": int(hit["hp"]), "block": int(hit["block"]),
+		"fast": fast_animations, "duration": float(puppet.recoil_span)})
+	if recoil_history.size() > RECOIL_HISTORY_LIMIT:
+		recoil_history = recoil_history.slice(recoil_history.size() - RECOIL_HISTORY_LIMIT)
 
 
 ## Every authoritative actor whose HP or Block really changed since the last sync, with

@@ -452,6 +452,228 @@ func _attack_pose(app, presenter) -> void:
 	_check(get_processed_tweens().size() == tweens,
 		"the attack pose creates no tween that outlives the frame")
 
+## Committed-hit recoil: one short, bounded, damped horizontal wobble of the drawn artwork
+## only. It combines with a committed lunge, works for missing art, settles exactly back to
+## idle, cancels on a rebind or a fall, and never moves a target, a pinned name, an intent
+## badge or an action control.
+func _recoil(app, presenter) -> void:
+	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
+		and not presenter._puppets.is_empty()
+		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
+		"recoil checks run on every actual mounted actor")
+	if not is_instance_valid(presenter.panel) or presenter._puppets.is_empty():
+		return
+	var before: Array = _snapshot(app)
+	var tweens: int = get_processed_tweens().size()
+	var puppet_rects: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		puppet_rects.append(puppet.get_global_rect())
+	var tag_rects: Array[Rect2] = []
+	var tag_texts: Array[String] = []
+	for tag in presenter._hero_tags:
+		tag_rects.append(tag.get_global_rect())
+		tag_texts.append(tag.text)
+	for label in presenter._labels:
+		tag_rects.append(label.get_global_rect())
+		tag_texts.append(label.text)
+	var badge_rects: Array[Rect2] = []
+	var badge_texts: Array[String] = []
+	for badge in presenter._badges:
+		badge_rects.append(badge.get_global_rect())
+		badge_texts.append(badge.readable_text)
+	var control_rects: Array[Rect2] = []
+	for control in [app.end_turn_button, app.return_button, app.hand_view, presenter.panel]:
+		control_rects.append(control.get_global_rect())
+	var standing: Array = []
+	for puppet in presenter._puppets:
+		if not puppet.fallen:
+			standing.append(puppet)
+	_check(not standing.is_empty(), "the live battle mounts at least one standing actor for recoil")
+	for puppet in standing:
+		_check(not puppet.recoiling() and is_equal_approx(puppet.recoil_shape(), 0.0)
+			and is_equal_approx(puppet.recoil_pixels(), 0.0),
+			"a standing actor starts at rest with no recoil: " + puppet.name)
+		_check(not puppet.trigger_recoil(0.0) and not puppet.trigger_recoil(-0.5)
+			and not puppet.recoiling(),
+			"a zero or negative recoil span never starts a shake: " + puppet.name)
+		_check(puppet.trigger_recoil(30.0) and puppet.recoiling()
+			and puppet.recoil_span <= puppet.RECOIL_MAX_SECONDS,
+			"one committed HP loss starts a recoil bounded to the approved span: " + puppet.name)
+		puppet.cancel_recoil()
+		var phase: float = puppet.idle_phase
+		var rest_pose: Rect2 = puppet.posed_actor_rect()
+		var idle_texture: Texture2D = puppet.current_texture()
+		_check(not puppet.recoiling() and puppet.posed_actor_rect() == rest_pose,
+			"cancelling a recoil returns the actor exactly to its idle drawing: " + puppet.name)
+		_check(puppet.trigger_recoil(0.6) and puppet.recoiling() and not puppet.attacking(),
+			"a committed HP loss starts exactly one recoil: " + puppet.name)
+		puppet._process(puppet.recoil_span * 0.25)
+		var peak: Rect2 = puppet.posed_actor_rect()
+		var expected: float = -puppet.facing * puppet.recoil_back_pixels() * 0.75
+		_check(puppet.recoiling() and absf(puppet.recoil_pixels() - expected) <= 0.01
+			and absf(puppet.recoil_pixels()) >= 1.5,
+			"the recoil shoves the drawn artwork by its own bounded amplitude: " + puppet.name)
+		_check(absf(peak.get_center().x - rest_pose.get_center().x) >= 1.5
+			and (peak.get_center().x - rest_pose.get_center().x) * puppet.facing < 0.0,
+			"the recoil is kicked away from this actor's own facing: " + puppet.name)
+		_check(puppet.pose_texture() == idle_texture,
+			"a recoil alone draws the actor's own idle artwork: " + puppet.name)
+		_check(puppet.get_global_rect() == puppet_rects[presenter._puppets.find(puppet)],
+			"the complete actor target rectangle never moves during a recoil: " + puppet.name)
+		# It combines with a committed lunge instead of replacing or cancelling it.
+		_check(puppet.trigger_attack(0.6) and puppet.attacking() and puppet.recoiling(),
+			"a recoil can overlap an active committed lunge: " + puppet.name)
+		puppet._process(puppet.ATTACK_MAX_SECONDS / 2.0)
+		var combined: Transform2D = puppet.idle_transform(Vector2.ZERO, 1.0)
+		_check(puppet.attacking() and puppet.recoiling()
+			and is_equal_approx(combined.origin.x, puppet.attack_lunge() + puppet.recoil_pixels())
+			and absf(puppet.attack_lunge()) >= 1.0 and absf(puppet.recoil_pixels()) >= 0.5,
+			"the shared drawing transform carries the lunge and the recoil together: " + puppet.name)
+		puppet._process(puppet.RECOIL_MAX_SECONDS)
+		_check(not puppet.recoiling() and is_equal_approx(puppet.recoil_span, 0.0)
+			and is_equal_approx(puppet.recoil_pixels(), 0.0),
+			"the recoil ends by itself within 0.6 s: " + puppet.name)
+		puppet.cancel_attack()
+		puppet.idle_phase = phase
+		_check(puppet.posed_actor_rect() == rest_pose,
+			"a settled recoil puts the artwork back exactly where it rested: " + puppet.name)
+		puppet._process(0.1)
+		_check(not puppet.recoiling() and is_equal_approx(puppet.recoil_shape(), 0.0),
+			"a settled recoil never replays on later frames: " + puppet.name)
+		puppet.idle_phase = phase
+	# The drawn fallback (no supplied art at all) recoils exactly like supplied art.
+	var host = standing[0]
+	var host_phase: float = host.idle_phase
+	var saved_id: String = host.actor_id
+	var saved_idle: Texture2D = host.idle_texture
+	var saved_attack: Texture2D = host.attack_texture
+	host.bind_actor("fabricated_recoil_actor", {})
+	_check(host.current_texture() == null and not host.recoiling(),
+		"an actor without supplied art starts settled and unshaken")
+	var drawn_rest: Rect2 = host.posed_fallback_rect()
+	_check(host.trigger_recoil(0.6) and host.recoiling(),
+		"an actor with no supplied art at all still performs the drawn recoil")
+	host._process(host.recoil_span * 0.25)
+	var drawn_peak: Rect2 = host.posed_fallback_rect()
+	_check(drawn_peak != drawn_rest and absf(drawn_peak.get_center().x - drawn_rest.get_center().x) >= 1.5
+		and (drawn_peak.get_center().x - drawn_rest.get_center().x) * host.facing < 0.0,
+		"the drawn fallback puppet recoils exactly like a supplied image")
+	host._process(host.RECOIL_MAX_SECONDS)
+	host.idle_phase = host_phase
+	_check(not host.recoiling() and host.posed_fallback_rect() == drawn_rest,
+		"the drawn fallback settles exactly back to its rest pose")
+	# A rebind drops a recoil in flight, so one actor never finishes another's shake.
+	_check(host.trigger_recoil(0.6) and host.recoiling(),
+		"a live recoil is in flight before the rebind")
+	host.bind_actor(saved_id, {"idle": saved_idle, "attack": saved_attack})
+	_check(not host.recoiling() and is_equal_approx(host.recoil_pixels(), 0.0)
+		and host.actor_id == saved_id,
+		"rebinding a different actor ID cancels the recoil in flight")
+	host.idle_phase = host_phase
+	# Presentation teardown settles every recoil immediately.
+	_check(host.trigger_recoil(0.6) and host.recoiling(),
+		"a live recoil is in flight before presentation teardown")
+	presenter.cancel_poses()
+	_check(not host.recoiling() and is_equal_approx(host.recoil_pixels(), 0.0),
+		"presentation teardown settles every recoil immediately")
+	host.idle_phase = host_phase
+	# A fallen actor neither starts nor keeps a recoil.
+	var saved_fallen: bool = host.fallen
+	host.fallen = true
+	_check(not host.trigger_recoil(0.6) and not host.recoiling(),
+		"a fallen actor never starts a hit recoil")
+	host.fallen = false
+	_check(host.trigger_recoil(0.6) and host.recoiling(),
+		"the same actor starts a recoil again once it stands")
+	host.fallen = true
+	host._process(0.1)
+	_check(not host.recoiling() and is_equal_approx(host.recoil_pixels(), 0.0),
+		"falling mid-recoil cancels it instead of leaving a stale shake")
+	host.fallen = saved_fallen
+	host.idle_phase = host_phase
+	# Mounted lookup by side plus authoritative ID; anything else fails closed.
+	var hero_host = presenter._puppets[0]
+	var enemy_host = presenter._puppets[CombatParty.PARTY_SIZE]
+	_check(not hero_host.actor_id.is_empty() and not enemy_host.actor_id.is_empty()
+		and hero_host.actor_id != enemy_host.actor_id,
+		"the live battle binds distinct authoritative hero and enemy IDs")
+	_check(presenter.puppet_for("hero", hero_host.actor_id) == hero_host
+		and presenter.puppet_for("enemy", enemy_host.actor_id) == enemy_host,
+		"the mounted lookup resolves each side's own puppet by authoritative ID")
+	_check(presenter.puppet_for("enemy", hero_host.actor_id) == null
+		and presenter.puppet_for("hero", enemy_host.actor_id) == null
+		and presenter.puppet_for("bogus", hero_host.actor_id) == null
+		and presenter.puppet_for("hero", "") == null
+		and presenter.puppet_for("hero", "fabricated_missing_actor") == null,
+		"the mounted lookup fails closed for the wrong side, an unknown side and a stale ID")
+	_check(presenter.hero_puppet(hero_host.actor_id) == hero_host
+		and presenter.hero_puppet(enemy_host.actor_id) == null,
+		"the existing hero lookup keeps its fail-closed identity")
+	var duplicate = presenter._puppets[1]
+	var duplicate_id: String = duplicate.actor_id
+	duplicate.actor_id = hero_host.actor_id
+	_check(presenter.puppet_for("hero", hero_host.actor_id) == null
+		and presenter.hero_puppet(hero_host.actor_id) == null,
+		"an ambiguous duplicate binding resolves no puppet instead of picking one")
+	duplicate.actor_id = duplicate_id
+	_check(presenter.puppet_for("hero", hero_host.actor_id) == hero_host,
+		"restoring the binding restores the same mounted lookup")
+	enemy_host.fallen = true
+	_check(presenter.puppet_for("enemy", enemy_host.actor_id) == null,
+		"a fallen actor's puppet is never resolved for a hit reaction")
+	enemy_host.fallen = false
+	# Source inspection: a bounded delta-driven draw pose, never a tween, timer or RNG.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var trigger_body := _function_body(source, "func trigger_recoil(")
+	var advance_body := _function_body(source, "func advance_recoil(")
+	var transform_body := _function_body(source, "func idle_transform(")
+	var bind_body := _function_body(source, "func bind_actor(")
+	var cancel_body := _function_body(source, "func cancel_poses() -> void:")
+	_check(trigger_body.contains("recoil_span = clampf(") and trigger_body.contains("RECOIL_MAX_SECONDS")
+		and trigger_body.contains("if fallen")
+		and advance_body.contains("recoil_remaining = maxf(") and advance_body.contains("cancel_recoil()")
+		and not trigger_body.contains("create_tween") and not advance_body.contains("create_tween")
+		and not trigger_body.contains("Timer.new") and not advance_body.contains("Timer.new")
+		and not trigger_body.contains("randi(") and not advance_body.contains("randf("),
+		"the recoil is a bounded delta-driven state, never a tween, timer or RNG draw")
+	_check(transform_body.contains("attack_lunge() + recoil_pixels()")
+		and not transform_body.contains("position =") and not transform_body.contains("offset_"),
+		"the one shared draw transform carries the recoil and never moves the Control")
+	_check(bind_body.contains("cancel_recoil()") and cancel_body.contains("puppet.cancel_recoil()"),
+		"a rebind and presentation teardown both drop a recoil in flight")
+	# Every mounted control keeps its exact place, caption and target.
+	var after_puppets: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		after_puppets.append(puppet.get_global_rect())
+	_check(after_puppets == puppet_rects, "no actor target rectangle moves during any recoil")
+	var after_tags: Array[Rect2] = []
+	var after_tag_texts: Array[String] = []
+	for tag in presenter._hero_tags:
+		after_tags.append(tag.get_global_rect())
+		after_tag_texts.append(tag.text)
+	for label in presenter._labels:
+		after_tags.append(label.get_global_rect())
+		after_tag_texts.append(label.text)
+	_check(after_tags == tag_rects and after_tag_texts == tag_texts,
+		"pinned hero and enemy names keep their exact place and text during recoils")
+	var after_badges: Array[Rect2] = []
+	var after_badge_texts: Array[String] = []
+	for badge in presenter._badges:
+		after_badges.append(badge.get_global_rect())
+		after_badge_texts.append(badge.readable_text)
+	_check(after_badges == badge_rects and after_badge_texts == badge_texts,
+		"intent badges keep their exact place and caption during recoils")
+	var after_controls: Array[Rect2] = []
+	for control in [app.end_turn_button, app.return_button, app.hand_view, presenter.panel]:
+		after_controls.append(control.get_global_rect())
+	_check(after_controls == control_rects,
+		"hand, actions and the enemy roster panel stay put during recoils")
+	_check(_snapshot(app) == before,
+		"a committed hit recoil changes no HP/Block, deck, energy, turn, intent or run RNG")
+	_check(get_processed_tweens().size() == tweens,
+		"the hit recoil creates no tween that outlives the frame")
+
+
 ## Idle presentation: every living actor advances its own subtle bob and breathing pose
 ## inside its art band, while target rectangles, pinned names, intent badges, controls,
 ## combat state and RNG stay exactly as they were.
@@ -629,6 +851,9 @@ func _fallen_stillness(puppets: Array) -> void:
 		_check(not puppet.trigger_attack(0.6) and not puppet.attacking()
 			and puppet.posed_actor_rect() == pose,
 			"a fallen actor never starts a committed attack pose: " + puppet.name)
+		_check(not puppet.trigger_recoil(0.6) and not puppet.recoiling()
+			and puppet.posed_actor_rect() == pose,
+			"a fallen actor never starts a hit recoil: " + puppet.name)
 
 
 ## A freshly mounted battle builds new puppets that start their idle phase at rest.
@@ -778,6 +1003,7 @@ func _visible(app, presenter) -> void:
 	_staging(app, presenter)
 	_idle_motion(app, presenter)
 	_attack_pose(app, presenter)
+	_recoil(app, presenter)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -1526,6 +1752,7 @@ func _typed_stage(app, presenter) -> void:
 	_staging(app, presenter)
 	_idle_motion(app, presenter)
 	_attack_pose(app, presenter)
+	_recoil(app, presenter)
 	var actions: Array = app.enemy_intents.get_intents()
 	for index in range(3):
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)
