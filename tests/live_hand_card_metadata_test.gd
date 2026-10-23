@@ -113,6 +113,42 @@ func _expected_positions(positions: Array) -> String:
 	return "?"
 
 
+## The compact target badge text for a validated Warden Path record.
+func _warden_target_line(card: Dictionary) -> String:
+	match str(card.get("target_kind", "")):
+		"self":
+			return "Self"
+		"enemy_single":
+			return "To enemy " + _expected_positions(card.get("to_positions", []))
+	return "Unknown target"
+
+
+## The precise tooltip target line for a validated Warden Path record.
+func _warden_tooltip_target_line(card: Dictionary) -> String:
+	match str(card.get("target_kind", "")):
+		"self":
+			return "Self"
+		"enemy_single":
+			return "To one selected enemy " + _expected_positions(card.get("to_positions", []))
+	return "Unknown target"
+
+
+## The picture the real loader must pick for a Warden Path record: its authored
+## illustration, then its own card art, then the owner emblem. Read from the
+## actual files so the test never assumes an optional PNG is absent.
+func _expected_warden_picture(card: Dictionary) -> String:
+	var authored := str(card.get("illustration_path", ""))
+	if not authored.is_empty() and ResourceLoader.exists(authored):
+		return authored
+	var own := ART_DIR + "cards/art/%s.png" % str(card.get("id", ""))
+	if ResourceLoader.exists(own):
+		return own
+	var emblem := ART_DIR + "cards/emblem_%s.png" % str(card.get("owner", ""))
+	if ResourceLoader.exists(emblem):
+		return emblem
+	return ""
+
+
 func _catalog_facts() -> void:
 	for card_id in CARD_FACTS:
 		var authored: Array = CARD_FACTS[card_id]
@@ -789,6 +825,220 @@ func _keyword_explanations(metadata) -> void:
 	_check(_snapshot() == before, "keyword tooltip formatting mutates no live model")
 
 
+## The two genuine authored Warden Path records: metadata recognizes exactly the
+## validated offering set (name, owner, 1 cost, FROM/TO, effects and an optional
+## sewn face) and prints the Path passive separately from the card's own effects.
+## No recognition here may ever add a claim, a cast, a card to a deck or a pin.
+func _warden_path_presentation() -> void:
+	var metadata = load(HAND_SCRIPT).new()
+	_check(metadata != null, "shared hand metadata loads for Warden Path faces")
+	if metadata == null:
+		return
+	var before := _snapshot()
+	var cases := [
+		["bulwark", "warden_bulwark_brace"],
+		["vanguard", "warden_lance_pin"],
+	]
+	var receipts := {}
+	for entry in cases:
+		var path_id: String = str(entry[0])
+		var expected_card_id: String = str(entry[1])
+		var choice := RunWardenPathChoice.new()
+		_check(choice.is_valid(), "authored Warden Path record validates: " + path_id)
+		if not choice.is_valid():
+			continue
+		var receipt: Dictionary = choice.choose(path_id)
+		_check(bool(receipt.get("ok", false)), "genuine Warden Path choice succeeds: " + path_id)
+		if not receipt.get("ok", false):
+			continue
+		var card: Dictionary = receipt["card"]
+		var passive: Dictionary = receipt["passive"]
+		var card_id: String = str(card.get("id", ""))
+		_check(card_id == expected_card_id, "receipt carries the authored Path card: " + path_id)
+		receipts[card_id] = receipt
+		var definition: Dictionary = metadata.definition(card_id)
+		_check(definition == card, "detached definition exactly matches the validated record: " + card_id)
+		if definition.is_empty():
+			continue
+		# Mutating a nested value in a returned copy proves the catalog is detached.
+		if definition.get("effects") is Dictionary:
+			(definition["effects"] as Dictionary)["block"] = 99
+			(definition["effects"] as Dictionary)["damage"] = 99
+		_check(metadata.definition(card_id) == card, "recognized Warden Path definition is detached: " + card_id)
+		var facts: Dictionary = metadata.describe(card_id)
+		_check(facts.get("known") == true and facts.get("id") == card_id,
+			"Warden Path card is a known authored face: " + card_id)
+		_check(facts.get("owner") == "warden" and facts.get("owner_text") == "Warden",
+			"Warden Path card keeps the Warden owner: " + card_id)
+		_check(facts.get("display_name") == str(card.get("display_name", "")),
+			"Warden Path face prints the authored name: " + card_id)
+		_check(facts.get("cost") == 1 and facts.get("cost_text") == "Cost 1",
+			"Warden Path card prints its authored 1 cost: " + card_id)
+		_check(facts.get("from_text") == "From " + _expected_positions(card.get("from_positions", [])),
+			"Warden Path face prints its authored FROM range: " + card_id)
+		_check(facts.get("target_text") == _warden_target_line(card),
+			"Warden Path face prints its authored target: " + card_id)
+		var text: String = metadata.base_effect_text(card_id)
+		var lines := text.split("\n")
+		_check(not text.contains("Unknown card"), "recognized Warden Path card is never unknown: " + card_id)
+		_check(lines.has("%s; Warden; %d energy" % [str(card.get("display_name", "")),
+			int(card.get("cost", -1))]), "Warden Path tooltip keeps the exact cost header: " + card_id)
+		_check(lines.has("From " + _expected_positions(card.get("from_positions", []))),
+			"Warden Path tooltip keeps the exact source range: " + card_id)
+		_check(lines.has(_warden_tooltip_target_line(card)),
+			"Warden Path tooltip keeps the exact target line: " + card_id)
+		_check(not catalog.get_all_card_ids().has(card_id),
+			"Warden Path card is never appended to the starter catalog: " + card_id)
+		_check(WardenPoolCards.new().get_definition(card_id).is_empty(),
+			"Warden Path card is never added to the Warden reward pool: " + card_id)
+		_check(not choice.get_base_deck().has(card_id),
+			"Warden Path recognition never mutates the base starter deck: " + card_id)
+		if path_id == "bulwark":
+			_check(str(passive.get("kind", "")) == "replaces_starting_block"
+				and int(passive.get("replaced_starting_block", 0)) == 6
+				and int(passive.get("starting_block", 0)) == 10,
+				"Bulwark receipt replaces opening Block 6 with exactly 10")
+			_check(int((card.get("effects") as Dictionary).get("block", 0)) == 9,
+				"Bulwark Brace authored cast grants exactly 9 Block")
+			var path_line := ("PATH Bulwark passive: the Warden opens combat with exactly 10 Block, "
+				+ "replacing the base 6 instead of adding to it (not 6 + 10, not 16). "
+				+ "This card's own cast grants 9 Block to the living Warden and never re-grants the opening Block.")
+			_check(lines.has(path_line),
+				"Bulwark help separates the 10 opening Block from Brace's own 9 Block")
+			_check(lines.has("BASE gain 9 Block"),
+				"Bulwark Brace keeps its own 9 Block card-effect row")
+			_check(_occurrences(text, "16") == 1 and text.contains("not 16"),
+				"Bulwark help explicitly rejects a 6 + 10 = 16 opening total")
+			_check(not text.contains("gain 10 Block") and not text.contains("BASE gain 10"),
+				"Bulwark help never grants the 10 opening Block on a card play")
+			_check(not path_line.contains("BASE"),
+				"Bulwark Path/passive line is not a card-effect transaction")
+		else:
+			_check(str(passive.get("kind", "")) == "first_attack_per_turn_pins"
+				and str(passive.get("trigger", "")) == "first_confirmed_attack_each_player_turn"
+				and bool(passive.get("once_per_turn", false))
+				and str(passive.get("status", "")) == "pinned"
+				and str(passive.get("applies_to", "")) == "warden",
+				"Vanguard receipt pins after one confirmed Warden attack per turn")
+			var effects: Dictionary = card.get("effects", {})
+			_check(int(effects.get("damage", 0)) == 6 and bool(effects.get("pinned", false)),
+				"Lance Pin authored cast is 6 damage and a pin")
+			var path_line := ("PATH Vanguard passive: pins only after the Warden's first CONFIRMED "
+				+ "attack in each player turn, never every cast and never an unconfirmed preview. "
+				+ "This card's own cast deals 6 damage and pins a surviving target; a DIFFERENT "
+				+ "hero's next attack on it adds +5 damage BEFORE Weak/Exposed and consumes the pin once (see PINNED).")
+			_check(lines.has(path_line),
+				"Vanguard help separates the per-turn passive from Lance Pin's own cast")
+			_check(lines.has("BASE deal 6 damage; BASE Pin the target: a different hero's next attack gets +5 damage"),
+				"Lance Pin keeps its own 6 damage and +5 pin effect row")
+			_check(text.contains("DIFFERENT hero's next attack on it adds +5 damage BEFORE Weak/Exposed"),
+				"Lance Pin help names the different-owner +5 ordering explicitly")
+			_check(_occurrences(text, "PINNED:") == 1 and text.contains("PINNED: one pin per enemy"),
+				"Lance Pin reuses the existing Pinned glossary exactly once")
+			_check(not text.contains("deal 11 damage") and not text.contains("deal 7 damage")
+				and not text.contains("BASE deal %d damage" % (6 + 5)),
+				"Lance Pin never folds the cross-owner +5 into an extra damage transaction")
+			_check(not path_line.contains("BASE"),
+				"Vanguard Path/passive line is not a card-effect transaction")
+		var faces: Dictionary = metadata.face_assets(card_id)
+		var expected_picture := _expected_warden_picture(card)
+		_check(faces.get("frame_path") == ART_DIR + "ui/card_frame_warden.png",
+			"Warden Path face wears the Warden felt frame: " + card_id)
+		_check(faces.get("picture_path") == expected_picture,
+			"Warden Path picture follows authored-then-art-then-emblem priority: " + card_id)
+		_check((expected_picture.is_empty()) == (faces.get("picture") == null),
+			"Warden Path picture is optional and never invented: " + card_id)
+		if faces.get("frame") is Texture2D:
+			_check((faces["frame"] as Texture2D).get_width() > 0
+				and (faces["frame"] as Texture2D).get_height() > 0,
+				"Warden Path felt frame really loaded its pixels: " + card_id)
+	_check(receipts.size() == 2, "both authored Warden Path cards were really exercised")
+	_check(_snapshot() == before, "Warden Path display lookups mutate no live model")
+	if receipts.size() != 2:
+		return
+	# A missing authored illustration keeps the drawn face fallback: the owner
+	# emblem still resolves, and with no owner art at all the renderer keeps the
+	# paper face instead of inventing a file. The probe IDs are synthetic so no
+	# assertion depends on a future optional PNG.
+	var fallback = load(HAND_SCRIPT).new()
+	var unillustrated: Dictionary = (receipts["warden_bulwark_brace"]["card"] as Dictionary).duplicate(true)
+	unillustrated["id"] = "warden_probe_unillustrated"
+	unillustrated["illustration_path"] = "res://assets/paper/cards/warden_probe_unillustrated_missing.png"
+	fallback._warden_path_loaded = true
+	fallback._warden_path_cards[unillustrated["id"]] = unillustrated
+	fallback._warden_path_passives[unillustrated["id"]] = \
+		(receipts["warden_bulwark_brace"]["passive"] as Dictionary).duplicate(true)
+	fallback._warden_path_names[unillustrated["id"]] = "Bulwark"
+	var unillustrated_faces: Dictionary = fallback.face_assets("warden_probe_unillustrated")
+	_check(unillustrated_faces.get("picture_path") == ART_DIR + "cards/emblem_warden.png",
+		"missing Warden Path illustration keeps the owner-emblem fallback")
+	_check(unillustrated_faces.get("frame") is Texture2D,
+		"missing Warden Path illustration keeps the sewn Warden frame")
+	var bare: Dictionary = unillustrated.duplicate(true)
+	bare["id"] = "warden_probe_unsewn"
+	bare["owner"] = "probe_unsewn_owner"
+	fallback._warden_path_cards[bare["id"]] = bare
+	var bare_faces: Dictionary = fallback.face_assets("warden_probe_unsewn")
+	_check(bare_faces.get("frame") == null and bare_faces.get("picture") == null,
+		"missing Warden Path face art borrows no felt frame or picture")
+	var bare_layout: Dictionary = fallback.card_layout(Vector2(230.0, 160.0),
+		bare_faces.get("frame") is Texture2D)
+	_check(not bool(bare_layout.get("sewn", true))
+		and (bare_layout.get("art", Rect2()) as Rect2).size == Vector2.ZERO,
+		"missing Warden Path face art keeps the drawn paper face")
+	# A mounted, labeled Warden Path panel with a real GUI signal still stays
+	# readable-but-nonplayable: metadata alone may never enable, target or commit
+	# a cast, and no model or seeded RNG may change.
+	var probe_metadata = load(HAND_SCRIPT).new()
+	probe_metadata.set_app(app)
+	var probe := PanelContainer.new()
+	probe.custom_minimum_size = Vector2(150, 96)
+	var probe_label := Label.new()
+	probe_label.text = "warden_lance_pin"
+	probe.add_child(probe_label)
+	app.hand_view.add_child(probe)
+	await _frames()
+	var mounted_before := _snapshot()
+	var no_op := func(_event: InputEvent) -> void: pass
+	probe.gui_input.connect(no_op)
+	var probe_panels: Array[Node] = [probe]
+	var probe_hand: Array[String] = ["warden_lance_pin"]
+	probe_metadata.sync(probe_panels, probe_hand)
+	await _frames()
+	_check(probe_metadata._bindings.has(probe), "mounted Warden Path panel binds its authored face")
+	_check(probe_metadata.get_faces(probe).get("frame_path") == ART_DIR + "ui/card_frame_warden.png",
+		"mounted Warden Path panel really wears the Warden felt frame")
+	_check(probe.tooltip_text.contains("PATH Vanguard passive")
+		and probe.tooltip_text.contains("BASE deal 6 damage"),
+		"mounted Warden Path tooltip carries both the Path and card rows")
+	var attacks = app.get_node_or_null("LiveAttackPreview")
+	_check(attacks != null and not attacks.has_method("warden_path_playable"),
+		"no genuine mounted Warden battle resolver exists for these cards yet")
+	_check(not bool(probe_metadata.visual_state(probe).get("playable", true)),
+		"absent Warden battle resolver never enables the mounted face")
+	_check(not probe.self_modulate.is_equal_approx(Color.WHITE),
+		"absent Warden battle resolver leaves the mounted face dim")
+	_check(probe.focus_mode == Control.FOCUS_NONE,
+		"a Warden Path tooltip adds no keyboard commit")
+	_check(probe.gui_input.get_connections().size() == 1,
+		"metadata never attaches a targeting handler to a Warden Path face")
+	await _click(probe)
+	_check(probe_metadata._bindings.has(probe)
+		and not bool(probe_metadata.visual_state(probe).get("playable", true))
+		and probe.tooltip_text.contains("PATH Vanguard passive"),
+		"a click on the illustrated face offers no Warden Path cast")
+	_check(_snapshot() == mounted_before,
+		"Warden Path face recognition never changes hand, deck, party, enemies or seeded RNG")
+	_check(attacks != null and attacks._armed == null and attacks._choices.is_empty(),
+		"no mounted Warden Path card arms an attack or half choice")
+	probe_metadata.clear()
+	probe.free()
+	await _frames()
+	_check(probe_metadata._bindings.is_empty(), "Warden Path mounted face releases cleanly")
+	_validate_display({})
+	_check(_snapshot() == before, "the whole Warden Path presentation pass changes no model")
+
+
 func _unknown_check() -> void:
 	var metadata = load("res://scripts/live_hand_card_metadata.gd").new()
 	var unknown: Dictionary = metadata.describe("unreleased_card")
@@ -942,6 +1192,7 @@ func _run() -> void:
 		_validate_display(observed)
 		if session == 0:
 			_keyword_explanations(presenter._metadata)
+			await _warden_path_presentation()
 		await _visual_feedback()
 		# Compare the same global RNG stream, not a separately seeded RNG instance.
 		seed(8459)
