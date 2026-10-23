@@ -13,6 +13,8 @@ var _enemies: CombatEnemies
 var _unravel: CombatUnravel
 var _wardrobe: RunPatchWardrobe
 var _torn: RunTornMending
+## Live attack authority: authentic pre-commit Scope state for stitched replay.
+var _attacks: CombatAttackCards = null
 var _wardrobe_state: Dictionary = {}
 var _torn_state: Dictionary = {}
 var _active: Dictionary = {}
@@ -24,7 +26,7 @@ var _stitched_sequence: Dictionary = {}
 
 func bind_battle(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel: CombatUnravel, wardrobe: RunPatchWardrobe,
-		torn: RunTornMending) -> bool:
+		torn: RunTornMending, attacks: CombatAttackCards = null) -> bool:
 	# Invalid rebind invalidates any old battle, including all pending quotes.
 	_turn_open = false
 	_generation += 1
@@ -36,6 +38,7 @@ func bind_battle(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	_unravel = null
 	_wardrobe = null
 	_torn = null
+	_attacks = null
 	_active.clear()
 	if deck == null or party == null or enemies == null or unravel == null:
 		return false
@@ -59,6 +62,7 @@ func bind_battle(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	_unravel = unravel
 	_wardrobe = wardrobe
 	_torn = torn
+	_attacks = attacks
 	_wardrobe_state = state
 	_torn_state = run_state
 	_active = projection.active.duplicate(true)
@@ -147,6 +151,8 @@ func quote_stitched_half(run_cards: RunRestStitchCards, stitched_id: String,
 		half_index, run_cards.get_snapshot().receipt)
 	if quote.has("seal"):
 		quote.cost = preview.cost
+		# Seal the real attack authority's pre-commit one-shot Scope state.
+		quote.tinker_path_bonus_before = _attacks._tinker.path_bonus() if _attacks != null else 0
 		quote.seal = _seal(quote)
 	return quote
 
@@ -355,6 +361,10 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 	for result in halves:
 		if typeof(result) != TYPE_DICTIONARY or result.get("ok") != true:
 			return false
+	var path_bonus: Variant = quote.get("tinker_path_bonus_before", 0)
+	# Only the authored zero or one-shot Scope +4 is valid.
+	if typeof(path_bonus) != TYPE_INT or path_bonus not in [0, 4]:
+		return false
 	var selected: Dictionary = preview.halves[quote.half_index]
 	if selected.get("owner") != quote.owner or selected.get("target_kind") != "enemy_single":
 		return false
@@ -416,6 +426,7 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 						enemies._enemies.assign(before.enemies)
 						var attacks := CombatAttackCards.new()
 						attacks._tinker._consumed = prior_consumed[0]
+						attacks._tinker._path_bonus = path_bonus
 						if attack_patches and not attacks.bind_patch_wardrobe(_wardrobe, _torn):
 							continue
 						if attack_patches and not button_eye_owner.is_empty():
@@ -425,7 +436,10 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 							continue
 						var played := resolver._play_with_bonuses(deck, party, enemies,
 							verified, quote.card_id, first_target, second_target, replay_bonuses)
-						if played != receipt:
+						# A +2 quote must be the replayed +2, not a coincidental
+						# matching transition with the Frayfinder bonus absent.
+						if played != receipt or (quote.bonus == 2 \
+								and replay_bonuses[quote.half_index] != 2):
 							continue
 						if party.get_heroes() == after.party and enemies.get_enemies() == after.enemies \
 								and deck.draw_pile == after.draw and deck.hand == after.hand \

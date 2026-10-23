@@ -1139,7 +1139,7 @@ func _sync_battle() -> void:
 				and _play._patches.is_valid() and _unravel._bound_enemies == app.enemies:
 			var mitt := CombatFrayfinderMitt.new()
 			if mitt.bind_battle(_deck, app.party, app.enemies, _unravel,
-					carry._wardrobe, carry.torn):
+					carry._wardrobe, carry.torn, _play):
 				_fray = mitt
 		# The selected Path card is bound only to this battle's genuine receipt,
 		# deck, party, roster and the one gauge shared with its round flow.

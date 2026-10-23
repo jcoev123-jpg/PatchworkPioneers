@@ -27,6 +27,9 @@ func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var bonuses := [0, 0]
 	var quotes := [{}, {}]
 	if mitt != null:
+		# The sealed Scope state must belong to the actual staged resolver.
+		if mitt._attacks != null and mitt._attacks != _attacks:
+			return {"ok": false, "halves": []}
 		if deck == null or party == null or enemies == null or run_cards == null:
 			return {"ok": false, "halves": []}
 		var preview := run_cards.preview_play(stitched_id, party.get_heroes())

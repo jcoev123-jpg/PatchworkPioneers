@@ -42,7 +42,8 @@ func _live_state() -> Array:
 		app.battle_result.get_outcome(), presenter._play._tinker._consumed,
 		active, latch, presenter.last_event.duplicate(true),
 		presenter._fray.latch_snapshot() if presenter._fray != null else null,
-		presenter._unravel.get_snapshot(1) if presenter._unravel != null else {}]
+		presenter._unravel.get_snapshot(1) if presenter._unravel != null else {},
+		presenter._play._tinker.path_bonus()]
 
 
 ## A genuine run-owned ARM receipt, separate from the existing M04 patch
@@ -332,12 +333,31 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 
 
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
-		mitt: bool = false, stitch_pair: Array = []) -> bool:
+		mitt: bool = false, stitch_pair: Array = [], scope: bool = false) -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	if scope:
+		# Make Sharpshot an authentic selected Path from the actual village.
+		await _click(app.base_button)
+		var village: BaseScreen = app.base_screen
+		var sharpshot: Button = null
+		if village != null:
+			for button in village.tinker_buttons:
+				if button.get_meta("path_id", "") == "sharpshot":
+					sharpshot = button
+					break
+		_check(sharpshot != null and not sharpshot.disabled,
+			"real village offers the Sharpshot Scope path")
+		if sharpshot == null:
+			return false
+		await _click(sharpshot)
+		_check(village.selected_tinker_path_id() == "sharpshot",
+			"real village commits Sharpshot before the run")
+		await _click(village.set_out_button)
+	else:
+		await _click(app.route_button)
 	await _click(_route_action(fixture.fight))
 	_check(app.deck != null and app.deck.hand.size() == 5
 		and app.encounter_id == "starter_attacks" and app.party.is_valid(),
@@ -639,6 +659,108 @@ func _mitt_stitched_cases(fixture: Dictionary) -> void:
 		_check(presenter._fray == null, "stitched battle return retires M05 latch")
 
 
+## Sharpshot Scope's genuine +4 survives Frayfinder's authenticated stitched
+## replay: the first sewn Tinker half gains 5 + 3 + 4 + 2, then is latched.
+func _mitt_scope_stitched_case(fixture: Dictionary) -> void:
+	if not await _entry(fixture, "tinker", false, false, true,
+			["tinker_pop_shot", "warden_strike"], true):
+		_check(false, "selected Scope + sewn mitt connected Fight entered")
+		return
+	var stitched_id := ""
+	for id in app.run_stitch_descriptors:
+		stitched_id = id
+	_check(not stitched_id.is_empty() and presenter.tinker_ready()
+		and app.run_tinker_path_receipt.get("path_id") == "sharpshot",
+		"genuine run retains Sharpshot and a sewn Rest descriptor")
+	if stitched_id.is_empty():
+		await _click(app.return_button)
+		return
+	# Use real deck draws, never append synthetic cards to the hand.
+	var held := await _ensure_held("tinker_scope")
+	held = (await _ensure_held(stitched_id)) and held
+	held = (await _ensure_held("tinker_pop_shot")) and held
+	_check(held and app.deck.hand.has("tinker_scope")
+		and app.deck.hand.has(stitched_id) and app.deck.hand.has("tinker_pop_shot"),
+		"Scope, stitched Tinker first half and remaining Tinker hit are held together")
+	if not held or not app.deck.hand.has("tinker_scope") or not app.deck.hand.has(stitched_id) or not app.deck.hand.has("tinker_pop_shot"):
+		await _click(app.return_button)
+		return
+	var mitt: CombatFrayfinderMitt = presenter._fray
+	var gauge: CombatUnravel = presenter._unravel
+	_check(mitt._attacks == presenter._play and app.round_flow._unravel == gauge
+		and gauge.apply_unravel(app.enemies, 1, 4)
+		and gauge.apply_unravel(app.enemies, 2, 4),
+		"one authenticated attack authority and genuine half-Unravel targets")
+	# Play the selected zero-cost Path card through its actual mounted panel.
+	var scope_energy: int = app.deck.energy
+	var scope_rng: int = app.run_rng.state
+	await _click(_panel("tinker_scope"))
+	await _frames()
+	_check(not app.deck.hand.has("tinker_scope")
+		and app.deck.discard_pile.count("tinker_scope") == 1
+		and app.deck.energy == scope_energy and app.run_rng.state == scope_rng
+		and presenter._play._tinker.path_bonus() == 4
+		and presenter._tinker_path.get_rules()._scope_armed,
+		"physical zero-cost Scope arms +4 on the shared combat Tinker latch")
+	var quote: Dictionary = mitt.quote_stitched_half(presenter._ledger(), stitched_id, 0, 1)
+	var sealed: Dictionary = quote.duplicate(true)
+	_check(quote.get("bonus") == 2 and quote.get("tinker_path_bonus_before") == 4
+		and mitt.authorize_stitched_half(quote, app.deck, app.party, app.enemies,
+			presenter._ledger(), stitched_id, 0, 1) == 2,
+		"Frayfinder quote seals the genuine pre-commit +4 Scope state")
+	sealed.tinker_path_bonus_before = 0
+	_check(mitt.authorize_stitched_half(sealed, app.deck, app.party, app.enemies,
+		presenter._ledger(), stitched_id, 0, 1) == 0,
+		"changing the pending Scope bonus without resealing rejects a tampered quote")
+	var before_failure := _live_state()
+	var rollback: Dictionary = CombatStitchedCards.new(presenter._play).play_stitched(
+		app.deck, app.party, app.enemies, presenter._ledger(), stitched_id, 1, 9, mitt)
+	_check(not rollback.get("ok", false) and _live_state() == before_failure
+		and presenter._play._tinker.path_bonus() == 4
+		and mitt.latch_snapshot().is_empty(),
+		"late second-half rejection rolls back both halves and pending Scope")
+	var first_enemy: Dictionary = app.enemies.get_enemy(1)
+	var second_enemy: Dictionary = app.enemies.get_enemy(2)
+	var energy_before: int = app.deck.energy
+	var discard_before: int = app.deck.discard_pile.count(stitched_id)
+	var rng_before: int = app.run_rng.state
+	var turn_before: int = app.enemy_intents._turn_index
+	_check(await _choose(stitched_id, false), "real stitched face arms after Scope")
+	await _key(KEY_1)
+	await _key(KEY_2)
+	var receipt: Dictionary = presenter.last_event
+	_check(receipt.get("ok", false) and receipt.get("halves", []).size() == 2,
+		"real held stitched hit confirms both ordered halves")
+	if receipt.get("ok", false) and receipt.get("halves", []).size() == 2:
+		_check(receipt.halves[0].hits[0].damage == 14
+			and receipt.halves[1].hits[0].damage == 6
+			and receipt.halves[0].hits[0].position == 1
+			and receipt.halves[1].hits[0].position == 2
+			and app.enemies.get_enemy(1).hp == first_enemy.hp - maxi(0, 14 - first_enemy.block)
+			and app.enemies.get_enemy(2).hp == second_enemy.hp - maxi(0, 6 - second_enemy.block),
+			"first sewn Tinker half applies 5 printed +3 native +4 Scope +2 mitt")
+	_check(app.deck.energy == energy_before - 2
+		and app.deck.discard_pile.count(stitched_id) == discard_before + 1
+		and not app.deck.hand.has(stitched_id) and app.run_rng.state == rng_before
+		and presenter._play._tinker._consumed
+		and presenter._play._tinker.path_bonus() == 0
+		and mitt.latch_snapshot() == {"tinker": true},
+		"Scope and mitt spent once, stitched card charges/discards once")
+	_check(not mitt.consume_confirmed_hit(quote, receipt, presenter._ledger()),
+		"sealed stitched receipt cannot latch twice after authentic +14 hit")
+	# Same deck turn, second held eligible Tinker hit earns neither +4 nor +2.
+	_check(app.deck.hand.has("tinker_pop_shot") and app.deck.energy == 1
+		and app.enemies.get_enemy(2).hp > 5, "second wearer hit is really eligible this turn")
+	if app.deck.hand.has("tinker_pop_shot") and app.enemies.get_enemy(2).hp > 5:
+		await _physical_hit("tinker_pop_shot", 2, false, 5, {})
+		_check(app.enemy_intents._turn_index == turn_before
+			and mitt.latch_snapshot() == {"tinker": true}
+			and presenter._play._tinker.path_bonus() == 0,
+			"second same-turn physical wearer hit gets no extra +2 or Scope +4")
+	await _click(app.return_button)
+	_check(presenter._fray == null, "Scope stitched route retires its battle latch")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -808,6 +930,7 @@ func _run() -> void:
 				"Return disconnects battle, wardrobe and the entire per-battle attack latch")
 	await _mitt_starter_cases(fixture)
 	await _mitt_stitched_cases(fixture)
+	await _mitt_scope_stitched_case(fixture)
 	await _finish_patch_play()
 
 
