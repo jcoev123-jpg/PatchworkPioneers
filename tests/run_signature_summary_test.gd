@@ -307,10 +307,19 @@ func _test_current_stitched_cards_readout() -> void:
 	_check(summary.get("stitched_current") == 2, "AC1: stitched_current == 2 currently owned")
 	_check(summary.get("stitched_ids") == ["stitched_000001", "stitched_000002"], "AC1: stitched_ids matches current_stitched_cards ids")
 
-	# Test detachment: mutate returned nested arrays and verify re-run is unchanged
+	# Test detachment: mutate elements of returned nested arrays in place (not just reassign dictionary fields),
+	# then re-run summarize and assert the original values and descriptor registry remain unchanged.
+	# We must mutate the array elements, not replace the arrays themselves.
 	var card_1_mutated: Dictionary = current_stitched[0]
-	card_1_mutated["owners"] = ["MUTATED", "OWNER"]
-	card_1_mutated["half_ids"] = ["MUTATED", "HALF"]
+	var owners_arr_1: Array = card_1_mutated["owners"]
+	var half_ids_arr_1: Array = card_1_mutated["half_ids"]
+	# Mutate elements in place
+	if owners_arr_1.size() == 2:
+		owners_arr_1[0] = "MUTATED_OWNER_0"
+		owners_arr_1[1] = "MUTATED_OWNER_1"
+	if half_ids_arr_1.size() == 2:
+		half_ids_arr_1[0] = "MUTATED_HALF_0"
+		half_ids_arr_1[1] = "MUTATED_HALF_1"
 
 	var summary_rerun: Dictionary = RunSignatureSummary.summarize(deck_2, desc_2, cursor, wardrobe)
 	var rerun_current: Variant = summary_rerun.get("current_stitched_cards")
@@ -359,6 +368,8 @@ func _test_upgraded_half_in_stitched_card() -> void:
 		return
 
 	var res_2: Dictionary = stitch_2.choose_stitch(idx_upgraded, idx_mend, stitch_2.get_snapshot())
+	# Verify the stitch transaction succeeded
+	_check(res_2.get("ok") == true, "AC1 upgraded: stitch transaction succeeded")
 	var deck_2: Array[String] = []
 	deck_2.assign(res_2.get("deck", []))
 	var desc_2: Dictionary = res_2.get("descriptors", {}).duplicate(true)
@@ -379,16 +390,27 @@ func _test_upgraded_half_in_stitched_card() -> void:
 	if typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 1:
 		var card: Dictionary = current_stitched[0]
 		_check(card.get("id") == "stitched_000001", "AC1 upgraded: card id is stitched_000001")
-		# The display name should include the upgraded half's actual display name (e.g., "Hold the Line+ / Mend")
-		var display_name: String = card.get("display_name", "")
-		_check(display_name.contains("+"), "AC1 upgraded: display_name contains upgraded half marker: " + display_name)
-		var half_ids: Array = card.get("half_ids", [])
-		_check(typeof(half_ids) == TYPE_ARRAY and half_ids.size() == 2, "AC1 upgraded: half_ids has 2 items")
-		_check(half_ids.has(upgraded_warden_id), "AC1 upgraded: half_ids contains upgraded card id: " + upgraded_warden_id)
-		_check(half_ids.has("seamstress_mend"), "AC1 upgraded: half_ids contains seamstress_mend")
+		
+		# Compare each projected field to the actual successful res_2 descriptor
+		var expected_desc: Dictionary = desc_2["stitched_000001"]
+		
+		# display_name: exact authored display_name from the descriptor (e.g., "Hold the Line+ / Mend")
+		_check(card.get("display_name") == expected_desc["display_name"],
+			"AC1 upgraded: display_name matches authentic descriptor exactly: " + card.get("display_name"))
+		
+		# cost: exact cost from the descriptor
+		_check(card.get("cost") == expected_desc["cost"],
+			"AC1 upgraded: cost matches authentic descriptor: " + str(card.get("cost")))
+		
+		# owners: exact ordered owners from the descriptor
 		var owners: Array = card.get("owners", [])
-		_check(typeof(owners) == TYPE_ARRAY and owners.size() == 2 and owners == ["warden", "seamstress"],
-			"AC1 upgraded: owners are ['warden', 'seamstress'] in order")
+		_check(typeof(owners) == TYPE_ARRAY and owners.size() == 2 and owners == expected_desc["owners"],
+			"AC1 upgraded: owners match authentic descriptor in order: " + str(owners))
+		
+		# half_ids: exact ordered half_ids from the descriptor (including _plus variant at its exact position)
+		var half_ids: Array = card.get("half_ids", [])
+		_check(typeof(half_ids) == TYPE_ARRAY and half_ids.size() == 2 and half_ids == expected_desc["half_ids"],
+			"AC1 upgraded: half_ids match authentic descriptor in order with upgraded half at correct position: " + str(half_ids))
 
 	# Verify stitched_created still counts correctly
 	_check(summary.get("stitched_created") == 1, "AC1 upgraded: stitched_created == 1")
@@ -486,6 +508,27 @@ func _test_shop_removal_and_wardrobe_updates() -> void:
 			"AC2: Seamstress has stitched_badge on HEAD and pincushion_arm on ARM")
 		_check(heroes_summary[2].get("HEAD") == "" and heroes_summary[2].get("ARM") == "" and heroes_summary[2].get("COAT") == "quilted_coat",
 			"AC2: Tinker has quilted_coat on COAT")
+
+	# AC2: Verify current_stitched_cards readout contains exactly the surviving stitched card
+	# with its authentic descriptor fields in order, while stitched_created remains 2.
+	var current_stitched: Variant = summary.get("current_stitched_cards")
+	_check(typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 1,
+		"AC2: current_stitched_cards has exactly 1 row after removal")
+	if typeof(current_stitched) == TYPE_ARRAY and current_stitched.size() == 1:
+		var surviving_card: Dictionary = current_stitched[0]
+		# The surviving descriptor from desc_removed
+		var expected_desc: Dictionary = desc_removed["stitched_000002"]
+		_check(surviving_card.get("id") == "stitched_000002", "AC2: surviving card id is stitched_000002")
+		_check(surviving_card.get("display_name") == expected_desc["display_name"],
+			"AC2: surviving card display_name matches authentic descriptor: " + surviving_card.get("display_name"))
+		_check(surviving_card.get("cost") == expected_desc["cost"],
+			"AC2: surviving card cost matches authentic descriptor: " + str(surviving_card.get("cost")))
+		var owners: Array = surviving_card.get("owners", [])
+		_check(typeof(owners) == TYPE_ARRAY and owners.size() == 2 and owners == expected_desc["owners"],
+			"AC2: surviving card owners match authentic descriptor in order: " + str(owners))
+		var half_ids: Array = surviving_card.get("half_ids", [])
+		_check(typeof(half_ids) == TYPE_ARRAY and half_ids.size() == 2 and half_ids == expected_desc["half_ids"],
+			"AC2: surviving card half_ids match authentic descriptor in order: " + str(half_ids))
 
 
 func _test_negative_matrix_detachment_and_rng() -> void:
