@@ -1,7 +1,8 @@
 class_name CombatStarterSupportPlay
 extends RefCounted
-## Translates only the four authored starter support cards into the existing
-## shared-hand CombatSupportCards service. This does not own combat state.
+## Translates only the authored starter support cards (their bases and the
+## authored '+' variants) into the existing shared-hand CombatSupportCards
+## service. This does not own combat state.
 
 var _catalog := StarterCards.new()
 var _support := CombatSupportCards.new()
@@ -28,18 +29,36 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String, target_pos
 			effect_key = "block"
 			effect = "self_block"
 			amount = 7
+		"warden_brace_plus":
+			owner_id = "warden"
+			target_kind = "self"
+			effect_key = "block"
+			effect = "self_block"
+			amount = 10
 		"seamstress_mend":
 			owner_id = "seamstress"
 			target_kind = "ally_single"
 			effect_key = "heal"
 			effect = "ally_heal"
 			amount = 5
+		"seamstress_mend_plus":
+			owner_id = "seamstress"
+			target_kind = "ally_single"
+			effect_key = "heal"
+			effect = "ally_heal"
+			amount = 7
 		"seamstress_stitch_up":
 			owner_id = "seamstress"
 			target_kind = "ally_single"
 			effect_key = "block"
 			effect = "ally_block"
 			amount = 5
+		"seamstress_stitch_up_plus":
+			owner_id = "seamstress"
+			target_kind = "ally_single"
+			effect_key = "block"
+			effect = "ally_block"
+			amount = 7
 		"tinker_tune_up":
 			owner_id = "tinker"
 			target_kind = "none"

@@ -2,6 +2,8 @@ extends SceneTree
 
 const SUPPORT_IDS: Array[String] = ["warden_brace", "seamstress_mend",
 	"seamstress_stitch_up", "tinker_tune_up"]
+const PLUS_SUPPORT_IDS: Array[String] = ["warden_brace_plus",
+	"seamstress_mend_plus", "seamstress_stitch_up_plus"]
 const ATTACK_IDS: Array[String] = ["warden_strike", "warden_shield_bash",
 	"seamstress_prick", "tinker_pop_shot", "tinker_scrap_bomb"]
 
@@ -13,10 +15,14 @@ var adapter := CombatStarterSupportPlay.new()
 
 func _initialize() -> void:
 	_test_real_catalog()
+	_test_plus_catalog()
 	_test_brace()
+	_test_brace_plus()
 	_test_heal_and_block()
+	_test_mend_plus_and_stitch_up_plus()
 	_test_tune_up()
 	_test_rejections()
+	_test_plus_rejections()
 	_test_replay()
 	for failure in failures:
 		printerr(failure)
@@ -84,7 +90,7 @@ func _deck(cards: Array[String], seed_value: int = 42) -> CombatDeck:
 
 func _snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
 	var definitions: Dictionary = {}
-	for card_id in SUPPORT_IDS + ATTACK_IDS:
+	for card_id in SUPPORT_IDS + PLUS_SUPPORT_IDS + ATTACK_IDS:
 		definitions[card_id] = catalog.get_definition(card_id)
 	return {
 		"heroes": party.get_heroes(),
@@ -111,13 +117,16 @@ func _expected(before: Dictionary, card_id: String, recipient: int = 0) -> Dicti
 		_oracle_draw(after, 1)
 	else:
 		var hero: Dictionary = after["heroes"][recipient - 1]
-		match card_id:
-			"warden_brace":
-				hero["block"] += 7
-			"seamstress_mend":
-				hero["hp"] = mini(hero["max_hp"], hero["hp"] + 5)
-			"seamstress_stitch_up":
-				hero["block"] += 5
+		# Independent authored amounts, not derived from the definition.
+		var block_amounts := {
+			"warden_brace": 7, "warden_brace_plus": 10,
+			"seamstress_stitch_up": 5, "seamstress_stitch_up_plus": 7,
+		}
+		var heal_amounts := {"seamstress_mend": 5, "seamstress_mend_plus": 7}
+		if block_amounts.has(card_id):
+			hero["block"] += block_amounts[card_id]
+		elif heal_amounts.has(card_id):
+			hero["hp"] = mini(hero["max_hp"], hero["hp"] + heal_amounts[card_id])
 	after["hand"].remove_at(after["hand"].find(card_id))
 	after["discard"].append(card_id)
 	return after
@@ -197,6 +206,59 @@ func _test_real_catalog() -> void:
 			"cost and legal positions read from authored " + card_id)
 
 
+func _test_plus_catalog() -> void:
+	# Exact authored starter membership and order must survive zero-copy adds.
+	var starter_deck := catalog.get_starting_deck()
+	var authored = JSON.parse_string(FileAccess.get_file_as_string("res://data/cards/starter_deck.json"))
+	_check(authored is Array and starter_deck == authored,
+		"exact original twelve-card starter membership and order retained")
+	_check(starter_deck.size() == 12, "catalog still builds exactly twelve starting copies")
+	var plus_fields := {
+		"warden_brace_plus": ["Brace+", "warden", "self", "block", 10, [1, 2, 3]],
+		"seamstress_mend_plus": ["Mend+", "seamstress", "ally_single", "heal", 7, [2, 3]],
+		"seamstress_stitch_up_plus": ["Stitch Up+", "seamstress", "ally_single", "block", 7, [1, 2, 3]],
+	}
+	for card_id in PLUS_SUPPORT_IDS:
+		var definition: Dictionary = catalog.get_definition(card_id)
+		var base: Dictionary = catalog.get_definition(card_id.trim_suffix("_plus"))
+		var expectation: Array = plus_fields[card_id]
+		_check(catalog.has_card(card_id) and definition.get("id") == card_id,
+			"plus catalog contains real authored ID " + card_id)
+		_check(not base.is_empty(), "plus card has an authored base definition: " + card_id)
+		_check(definition.get("display_name") == expectation[0],
+			"plus display name is authored for " + card_id)
+		_check(definition.get("owner") == expectation[1]
+			and definition.get("cost") == 1
+			and definition.get("from_positions") == expectation[5]
+			and definition.get("target_kind") == expectation[2]
+			and definition.get("to_positions") == [],
+			"plus owner, cost, positions and target match the authored rule for " + card_id)
+		_check(definition.get("effects") == {expectation[3]: expectation[4]},
+			"plus carries exactly its intended sole effect for " + card_id)
+		_check(definition.get("starting_copies") == 0 and not starter_deck.has(card_id),
+			"plus adds no starter copies for " + card_id)
+		_check(not base.is_empty()
+			and definition.get("illustration_path") == base.get("illustration_path")
+			and definition.get("illustration_path") == "res://assets/paper/cards/" + base.get("id", "") + ".png",
+			"plus reuses its base illustration path for " + card_id)
+		for field in ["owner", "cost", "from_positions", "target_kind", "to_positions"]:
+			_check(definition.get(field) == base.get(field),
+				"plus retains base " + field + " for " + card_id)
+	# Original records keep their documented numbers.
+	_check(catalog.get_definition("warden_brace")["effects"] == {"block": 7},
+		"original Brace remains Block 7")
+	_check(catalog.get_definition("seamstress_mend")["effects"] == {"heal": 5},
+		"original Mend remains heal 5")
+	_check(catalog.get_definition("seamstress_stitch_up")["effects"] == {"block": 5},
+		"original Stitch Up remains Block 5")
+	_check(catalog.get_definition("warden_strike_plus")["effects"] == {"damage": 7},
+		"existing Strike+ remains damage 7")
+	_check(catalog.get_definition("tinker_tune_up")["effects"] == {"draw": 1},
+		"original Tune Up remains draw 1")
+	_check(not catalog.has_card("tinker_tune_up_plus"),
+		"no Tune Up+ is authored for the unspecified draw upgrade")
+
+
 func _test_brace() -> void:
 	var party := _party()
 	var deck := _deck(["warden_brace", "warden_brace"])
@@ -208,6 +270,41 @@ func _test_brace() -> void:
 	_accepted(deck, party, "warden_brace", 0, 1, "second Brace")
 	_check(party.get_hero(1)["block"] == 14 and deck.energy == 1,
 		"separate Brace copies stack and each costs one energy")
+
+
+func _test_brace_plus() -> void:
+	var party := _party()
+	var deck := _deck(["warden_brace_plus", "warden_brace_plus"])
+	_rejected(deck, party, "warden_brace_plus", 1, "Brace+ rejects nonzero target")
+	_rejected(deck, party, "warden_brace_plus", -1, "Brace+ rejects negative target")
+	_accepted(deck, party, "warden_brace_plus", 0, 1, "first Brace+")
+	_check(party.get_hero(1)["block"] == 10 and party.get_hero(2)["block"] == 0
+		and party.get_hero(3)["block"] == 0, "Brace+ grants ten Block only to Warden")
+	_accepted(deck, party, "warden_brace_plus", 0, 1, "second Brace+")
+	_check(party.get_hero(1)["block"] == 20 and deck.energy == 1,
+		"separate Brace+ copies stack and each costs one energy")
+
+	# Original Brace keeps seven beside a real upgraded copy.
+	party = _party()
+	deck = _deck(["warden_brace", "warden_brace_plus"])
+	_accepted(deck, party, "warden_brace", 0, 1, "original Brace beside Brace+")
+	_check(party.get_hero(1)["block"] == 7, "original Brace still grants seven")
+	_accepted(deck, party, "warden_brace_plus", 0, 1, "Brace+ after original Brace")
+	_check(party.get_hero(1)["block"] == 17 and deck.energy == 1,
+		"Brace+ adds ten on top of the original seven")
+
+	# Brace+ is legal from every authored Warden position.
+	for order_value in [["warden", "seamstress", "tinker"], ["seamstress", "warden", "tinker"],
+			["seamstress", "tinker", "warden"]]:
+		var order: Array[String] = []
+		order.assign(order_value)
+		party = _party(order)
+		var owner_position: int = order.find("warden") + 1
+		deck = _deck(["warden_brace_plus"])
+		_accepted(deck, party, "warden_brace_plus", 0, owner_position,
+			"Brace+ legal with Warden at position " + str(owner_position))
+		_check(party.get_hero(owner_position)["block"] == 10,
+			"Brace+ blocks its own Warden at position " + str(owner_position))
 
 
 func _test_heal_and_block() -> void:
@@ -240,6 +337,47 @@ func _test_heal_and_block() -> void:
 	deck = _deck(["seamstress_stitch_up"])
 	_accepted(deck, party, "seamstress_stitch_up", 3, 3, "Stitch Up other ally")
 	_check(party.get_hero(3)["block"] == 7, "Stitch adds exactly five to existing Block")
+
+
+func _test_mend_plus_and_stitch_up_plus() -> void:
+	var party := _party()
+	_check(party.apply_damage(1, 12) and party.gain_block(3, 2),
+		"wounded Warden and blocked Tinker prepared for plus supports")
+	var deck := _deck(["seamstress_mend_plus", "seamstress_stitch_up_plus"])
+	_accepted(deck, party, "seamstress_mend_plus", 1, 1, "Mend+ wounded ally")
+	_check(party.get_hero(1)["hp"] == 35 and party.get_hero(2)["hp"] == 30
+		and party.get_hero(3)["block"] == 2,
+		"Mend+ heals only the selected living ally by seven")
+	_accepted(deck, party, "seamstress_stitch_up_plus", 3, 3, "Stitch Up+ other ally")
+	_check(party.get_hero(3)["block"] == 9 and party.get_hero(2)["block"] == 0,
+		"Stitch Up+ adds exactly seven to existing Block")
+
+	# Near-max HP is capped rather than overhealed.
+	party = _party()
+	_check(party.apply_damage(3, 3), "Tinker lightly wounded for Mend+ cap")
+	deck = _deck(["seamstress_mend_plus"])
+	_accepted(deck, party, "seamstress_mend_plus", 3, 3, "Mend+ near max HP")
+	_check(party.get_hero(3)["hp"] == 26 and deck.energy == 2,
+		"Mend+ caps at max HP and still costs one energy")
+
+	# Self-targeting as an ally is allowed for both Seamstress supports.
+	party = _party()
+	_check(party.apply_damage(2, 6), "Seamstress wounded for self Mend+")
+	deck = _deck(["seamstress_mend_plus", "seamstress_stitch_up_plus"])
+	_accepted(deck, party, "seamstress_mend_plus", 2, 2, "Mend+ owner as ally")
+	_check(party.get_hero(2)["hp"] == 30, "Mend+ self heals seven to full")
+	_accepted(deck, party, "seamstress_stitch_up_plus", 2, 2, "Stitch Up+ owner as ally")
+	_check(party.get_hero(2)["block"] == 7, "Stitch Up+ blocks its own Seamstress")
+
+	# Original heal and block supports keep their own numbers.
+	party = _party()
+	_check(party.apply_damage(1, 9) and party.gain_block(3, 4),
+		"wounded Warden prepared for original supports")
+	deck = _deck(["seamstress_mend", "seamstress_stitch_up"])
+	_accepted(deck, party, "seamstress_mend", 1, 1, "original Mend beside plus catalog")
+	_check(party.get_hero(1)["hp"] == 36, "original Mend still heals five")
+	_accepted(deck, party, "seamstress_stitch_up", 3, 3, "original Stitch Up beside plus catalog")
+	_check(party.get_hero(3)["block"] == 9, "original Stitch Up still adds five")
 
 
 func _test_tune_up() -> void:
@@ -371,6 +509,95 @@ func _test_rejections() -> void:
 	_rejected(deck, party, "warden_brace", 0, "Block overflow is atomic")
 
 
+func _test_plus_rejections() -> void:
+	var party := _party()
+	var deck := _deck(PLUS_SUPPORT_IDS)
+	_check(deck.hand.size() == PLUS_SUPPORT_IDS.size(), "all three plus supports held together")
+	for card_id in PLUS_SUPPORT_IDS:
+		_check(deck.hand.has(card_id) and catalog.has_card(card_id),
+			"plus support fixture is genuinely held: " + card_id)
+	_rejected(deck, party, "warden_brace_plus", 3, "Brace+ cannot target others")
+	_rejected(deck, party, "warden_brace_plus", -1, "Brace+ rejects negative target")
+	for card_id in ["seamstress_mend_plus", "seamstress_stitch_up_plus"]:
+		for position in [-1, 0, 4, 100]:
+			_rejected(deck, party, card_id, position,
+				card_id + " invalid target " + str(position))
+	_rejected(deck, party, "warden_brace_plus_unit", 0, "unknown near-miss plus ID")
+	_rejected(deck, party, "tinker_tune_up_plus", 0, "unauthored Tune Up+ has no path")
+
+	_check(party.apply_damage(3, 26) and party.is_downed(3), "downed plus recipient prepared")
+	_rejected(deck, party, "seamstress_mend_plus", 3, "Mend+ cannot heal downed ally")
+	_rejected(deck, party, "seamstress_stitch_up_plus", 3, "Stitch Up+ cannot block downed ally")
+	_check(party.apply_damage(2, 30) and party.is_downed(2), "downed Seamstress owner prepared")
+	_rejected(deck, party, "seamstress_mend_plus", 1, "downed Seamstress cannot Mend+")
+	_rejected(deck, party, "seamstress_stitch_up_plus", 1, "downed Seamstress cannot Stitch Up+")
+	_check(party.apply_damage(1, 40) and party.is_downed(1), "downed Warden owner prepared")
+	_rejected(deck, party, "warden_brace_plus", 0, "downed Warden cannot Brace+")
+
+	# Authored source positions: Mend+ is not legal from the front slot.
+	party = _party(["seamstress", "warden", "tinker"])
+	deck = _deck(["seamstress_mend_plus", "seamstress_stitch_up_plus"])
+	_check(party.get_hero(1)["id"] == "seamstress",
+		"authored source fixture actually moves Seamstress to front")
+	_rejected(deck, party, "seamstress_mend_plus", 2,
+		"authored Mend+ from_positions rejects Seamstress in front")
+	_accepted(deck, party, "seamstress_stitch_up_plus", 2, 2,
+		"authored Stitch Up+ still legal from front")
+
+	# Zero energy refuses every plus support.
+	party = _party()
+	deck = _deck(PLUS_SUPPORT_IDS)
+	_check(deck.try_spend_energy(3) and deck.energy == 0,
+		"spent shared energy fixture is zero for plus supports")
+	_rejected(deck, party, "warden_brace_plus", 0, "Brace+ insufficient energy")
+	_rejected(deck, party, "seamstress_mend_plus", 1, "Mend+ insufficient energy")
+	_rejected(deck, party, "seamstress_stitch_up_plus", 1, "Stitch Up+ insufficient energy")
+
+	# Absent upgraded copies are refused even while other cards stay held.
+	party = _party()
+	deck = _deck(["warden_brace_plus", "seamstress_mend_plus"])
+	_check(deck.discard_played("warden_brace_plus"), "missing-hand fixture removes Brace+")
+	_rejected(deck, party, "warden_brace_plus", 0, "Brace+ catalog card missing from hand")
+	_check(deck.hand.has("seamstress_mend_plus"),
+		"missing-hand fixture keeps another real plus card held")
+	_rejected(deck, party, "seamstress_stitch_up_plus", 1,
+		"Stitch Up+ absent while an ally is targetable")
+
+	# Inactive turn with genuinely held plus copies.
+	deck = _deck(["seamstress_mend_plus", "seamstress_stitch_up_plus"])
+	_check(deck.combat_state.end_player_turn() and deck.hand.has("seamstress_mend_plus")
+		and deck.hand.has("seamstress_stitch_up_plus"),
+		"inactive-with-cards fixture retains real held plus supports")
+	_rejected(deck, party, "seamstress_mend_plus", 1, "inactive turn rejects Mend+")
+	_rejected(deck, party, "seamstress_stitch_up_plus", 1, "inactive turn rejects Stitch Up+")
+	deck = _deck(["warden_brace_plus"])
+	_check(deck.end_turn() and not deck.turn_active, "ended turn is inactive")
+	_rejected(deck, party, "warden_brace_plus", 0, "inactive turn rejects Brace+")
+
+	# Null callers leave a real held plus play untouched.
+	deck = _deck(["warden_brace_plus"])
+	var before := _snapshot(deck, party)
+	_check(deck.hand.has("warden_brace_plus") and deck.turn_active,
+		"null-caller fixture has a real held Brace+ and energy")
+	_check(not adapter.play_card(null, party, "warden_brace_plus"),
+		"null deck rejects Brace+")
+	_check(_snapshot(deck, party) == before,
+		"null deck leaves party, deck and catalog intact for plus")
+	_check(not adapter.play_card(deck, null, "warden_brace_plus"),
+		"null party rejects Brace+")
+	_check(_snapshot(deck, party) == before,
+		"null party leaves deck RNG and catalog intact for plus")
+	var invalid_party := CombatParty.new([])
+	_rejected(deck, invalid_party, "warden_brace_plus", 0, "invalid party rejects Brace+")
+
+	# Block overflow is atomic for the upgraded self Block as well.
+	party = _party()
+	deck = _deck(["warden_brace_plus"])
+	_check(party.gain_block(1, CombatParty.MAX_INT),
+		"overflow fixture has max representable Warden Block")
+	_rejected(deck, party, "warden_brace_plus", 0, "Brace+ Block overflow is atomic")
+
+
 func _sequence(seed_value: int) -> Array:
 	var party := _party()
 	var deck := _deck(["warden_brace", "seamstress_mend",
@@ -392,6 +619,26 @@ func _sequence(seed_value: int) -> Array:
 	return trace
 
 
+func _plus_sequence(seed_value: int) -> Array:
+	var party := _party()
+	var deck := _deck(["warden_brace_plus", "seamstress_mend_plus",
+		"seamstress_stitch_up_plus", "seamstress_stitch_up", "warden_strike"], seed_value)
+	_check(deck.hand.size() == 5, "replay all plus supports held in actual shared hand")
+	var trace: Array = [_snapshot(deck, party)]
+	_check(party.apply_damage(1, 9), "plus replay wound prepared")
+	trace.append(_snapshot(deck, party))
+	_check(adapter.play_card(deck, party, "seamstress_mend_plus", 1), "plus replay Mend+")
+	trace.append(_snapshot(deck, party))
+	_check(adapter.play_card(deck, party, "seamstress_stitch_up_plus", 3),
+		"plus replay Stitch Up+")
+	trace.append(_snapshot(deck, party))
+	_check(adapter.play_card(deck, party, "warden_brace_plus"), "plus replay Brace+")
+	trace.append(_snapshot(deck, party))
+	_check(deck.end_turn() and deck.start_turn(), "plus replay next seeded refill turn")
+	trace.append(_snapshot(deck, party))
+	return trace
+
+
 func _test_replay() -> void:
 	for seed_value in [1, 42, 987654]:
 		var first := _sequence(seed_value)
@@ -400,3 +647,9 @@ func _test_replay() -> void:
 			"seven full replay snapshots include seeded refill")
 		_check(first == second,
 			"same real catalog, seed, initial hand, actions give bitwise-identical states")
+		var plus_first := _plus_sequence(seed_value)
+		var plus_second := _plus_sequence(seed_value)
+		_check(plus_first.size() == 6 and plus_second.size() == 6,
+			"six plus-support replay snapshots include seeded refill")
+		_check(plus_first == plus_second,
+			"same real plus catalog, seed and actions replay bitwise-identically")
