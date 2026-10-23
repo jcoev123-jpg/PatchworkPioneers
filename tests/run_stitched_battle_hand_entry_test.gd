@@ -11,6 +11,8 @@ func _initialize() -> void:
     _test_two_target_play()
     _test_rejections()
     _test_paid_removal()
+    _test_optional_path_admission()
+    _test_optional_path_rejections()
     for reason in failures:
         printerr(reason)
     print("run_stitched_battle_hand_entry_test: ",
@@ -274,3 +276,252 @@ func _test_paid_removal() -> void:
         and subsequent.stitched_id == "stitched_000002"
         and subsequent.next_stitch_id == 3,
         "fresh Rest after paid removal allocates next serial, not removed serial")
+
+## A real unchanged run deck and a real Rest-stitched run both admit one
+## selected Path card, without changing the authoritative permanent ledger.
+func _path_receipt(path_id: String) -> Dictionary:
+    var choice := RunWardenPathChoice.new()
+    _check(choice.is_valid() and not choice.is_claimed(),
+        path_id + " choice source is genuine")
+    var selected := choice.choose(path_id)
+    _check(selected.get("ok") == true and choice.is_claimed(),
+        path_id + " selected exactly once")
+    return selected
+
+func _starting_ledger() -> Dictionary:
+    var original := StarterCards.new().get_starting_deck()
+    var ledger := RunRestStitchCards.new(original, {}, 6, 1)
+    _check(ledger.is_valid(), "unmodified twelve-card ledger is genuinely valid")
+    if not ledger.is_valid():
+        return {}
+    return ledger.get_snapshot()
+
+func _counts(ids: Array) -> Dictionary:
+    var result := {}
+    for card_id in ids:
+        result[card_id] = int(result.get(card_id, 0)) + 1
+    return result
+
+func _admit_path(ledger: Dictionary, rng: RandomNumberGenerator,
+        path_receipt: Variant) -> Dictionary:
+    return RunStitchedBattleHandEntry.new().admit_next_fight(
+        ledger.deck, ledger.descriptors, ledger.remaining_scraps,
+        ledger.next_stitch_id, ledger.receipt, rng, path_receipt)
+
+func _test_optional_path_admission() -> void:
+    var original := _starting_ledger()
+    var stitched := _stitch()
+    if original.is_empty() or stitched.is_empty():
+        return
+    for path_id in ["bulwark", "vanguard"]:
+        var path_receipt := _path_receipt(path_id)
+        if path_receipt.get("ok") != true:
+            continue
+        var selected_id: String = path_receipt.card.id
+        var foreign_id := "warden_lance_pin" if path_id == "bulwark" else "warden_bulwark_brace"
+        for ledger in [original, stitched]:
+            var before_ledger: Dictionary = ledger.duplicate(true)
+            var authoritative := RunRestStitchCards.new(
+                ledger.deck, ledger.descriptors, ledger.remaining_scraps, ledger.next_stitch_id)
+            _check(authoritative.is_valid() and authoritative.get_snapshot().receipt == ledger.receipt,
+                "real %s %s ledger is canonical" % [path_id, "stitched" if ledger == stitched else "base"])
+            if not authoritative.is_valid():
+                continue
+            var seed_value := 7133 if ledger == original else 7134
+            var rng_a := _rng(seed_value)
+            var rng_b := _rng(seed_value)
+            var rng_before := rng_a.state
+            var a := _admit_path(ledger, rng_a, path_receipt)
+            var b := _admit_path(ledger, rng_b, path_receipt)
+            _check(a.get("ok") == true and b.get("ok") == true,
+                path_id + " same seed admits two real decks")
+            if a.get("ok") != true or b.get("ok") != true:
+                continue
+            var deck_a: CombatDeck = a.combat_deck
+            var deck_b: CombatDeck = b.combat_deck
+            var expected_counts := _counts(ledger.deck)
+            expected_counts[selected_id] = 1
+            _check(_counts(_all(deck_a)) == expected_counts
+                and _all(deck_a).size() == ledger.deck.size() + 1
+                and _all(deck_a).count(selected_id) == 1
+                and _all(deck_a).count(foreign_id) == 0,
+                path_id + " deck holds run multiset plus exactly its own Path card")
+            _check(a.snapshot == authoritative.get_snapshot()
+                and b.snapshot == authoritative.get_snapshot()
+                and a.run_cards.get_snapshot() == authoritative.get_snapshot()
+                and b.run_cards.get_snapshot() == authoritative.get_snapshot()
+                and ledger == before_ledger
+                and not a.snapshot.deck.has(selected_id)
+                and not a.snapshot.descriptors.has(selected_id),
+                path_id + " preserves authoritative receipt, descriptors and deck")
+            _check(a.has("battle_only_warden_path")
+                and a.battle_only_warden_path.path_id == path_id
+                and a.battle_only_warden_path.card_id == selected_id
+                and a.battle_only_warden_path.receipt == path_receipt,
+                path_id + " result explicitly carries detached battle-only claim")
+            a.battle_only_warden_path.receipt.card.effects["test_mutation"] = 55
+            _check(path_receipt == b.battle_only_warden_path.receipt
+                and b.run_cards.get_snapshot() == authoritative.get_snapshot(),
+                path_id + " battle-only receipt is deeply detached")
+            _check(not deck_a.turn_active and deck_a.energy == 0
+                and deck_a.hand.is_empty() and deck_a.discard_pile.is_empty(),
+                path_id + " admission does not start a turn")
+            _check(deck_a.draw_pile == deck_b.draw_pile
+                and rng_a.state == rng_b.state and rng_a.state != rng_before,
+                path_id + " shuffles reproducibly with only injected RNG")
+            _check(deck_a.start_turn() and deck_b.start_turn()
+                and deck_a.hand.size() == 5 and deck_a.energy == 3
+                and deck_a.hand == deck_b.hand and deck_a.draw_pile == deck_b.draw_pile
+                and rng_a.state == rng_b.state,
+                path_id + " opening draw five, energy three and remaining order match")
+
+            # Keep both turns active. Find the card solely through legitimate
+            # extra draws; never put a test card directly into the shared hand.
+            var drawn := 0
+            while not deck_a.hand.has(selected_id) and drawn < ledger.deck.size() + 1:
+                var next_a := deck_a.draw_extra(1)
+                var next_b := deck_b.draw_extra(1)
+                _check(next_a == 1 and next_b == 1,
+                    path_id + " additional draw advances each real deck by one")
+                drawn += 1
+            _check(deck_a.hand.has(selected_id) and deck_b.hand.has(selected_id)
+                and deck_a.hand == deck_b.hand and deck_a.draw_pile == deck_b.draw_pile
+                and rng_a.state == rng_b.state,
+                path_id + " selected Path card is legitimately held on matching hands")
+            if not deck_a.hand.has(selected_id):
+                continue
+            var party := CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+            var enemies := CombatEnemies.new(_definitions("res://data/enemies/starter_enemies.json"))
+            var pinned := CombatPinned.new()
+            _check(party.is_valid() and enemies.is_valid()
+                and party.get_hero(1).id == "warden"
+                and party.get_hero(1).hp == 40
+                and party.get_hero(2).id == "seamstress"
+                and party.get_hero(3).id == "tinker"
+                and enemies.get_enemy(1).hp == 12
+                and enemies.get_enemy(2).hp == 12,
+                path_id + " living legal party and enemy fixture")
+            if not party.is_valid() or not enemies.is_valid():
+                continue
+            var before_party := party.get_heroes()
+            var before_enemies := enemies.get_enemies()
+            var before_hand := deck_a.hand.duplicate()
+            var before_draw := deck_a.draw_pile.duplicate()
+            var before_discard := deck_a.discard_pile.duplicate()
+            var before_play_rng := rng_a.state
+            var target := 0
+            if path_id == "vanguard":
+                target = 1
+                _check(enemies.gain_block(1, 2),
+                    "Lance Pin target receives real 2 Block before hit")
+            var played := CombatWardenPathCards.new().play(
+                deck_a, party, enemies, selected_id, target, path_receipt, pinned)
+            _check(played.get("ok") == true and played.get("energy_spent") == 1
+                and played.get("discarded") == selected_id
+                and deck_a.energy == 2
+                and deck_a.hand.size() == before_hand.size() - 1
+                and deck_a.hand.count(selected_id) == before_hand.count(selected_id) - 1
+                and deck_a.discard_pile == before_discard + [selected_id]
+                and deck_a.draw_pile == before_draw and rng_a.state == before_play_rng,
+                path_id + " authentic held cast spends one energy/discard, no RNG")
+            if path_id == "bulwark":
+                _check(played.get("block_gained") == 9
+                    and party.get_hero(1).block == 9
+                    and party.get_hero(1).hp == 40
+                    and party.get_hero(2) == before_party[1]
+                    and party.get_hero(3) == before_party[2]
+                    and enemies.get_enemies() == before_enemies
+                    and pinned.pinner_for_enemy(1) == "",
+                    "Bulwark Brace grants only current Warden 9 Block")
+            else:
+                _check(played.get("damage") == 6
+                    and played.get("block_absorbed") == 2
+                    and played.get("hp_loss") == 4
+                    and enemies.get_enemy(1).hp == 8
+                    and enemies.get_enemy(1).block == 0
+                    and enemies.get_enemy(2) == before_enemies[1]
+                    and party.get_heroes() == before_party
+                    and played.get("pinned_applied") == true
+                    and pinned.pinner_for_enemy(1) == "warden"
+                    and pinned.bonus_for_attack(enemies, 1, "seamstress") == 5,
+                    "Lance Pin resolves six damage through Block and leaves cross-owner Pinned")
+            _check(_counts(_all(deck_a)) == expected_counts
+                and a.run_cards.get_snapshot() == authoritative.get_snapshot()
+                and a.snapshot == authoritative.get_snapshot()
+                and ledger == before_ledger and path_receipt == b.battle_only_warden_path.receipt,
+                path_id + " cast retains permanent deck and Rest ledger exactly")
+
+func _reject_path(candidate: Dictionary, rest_receipt: Variant,
+        path_claim: Variant, reason: String) -> void:
+    var before := candidate.duplicate(true)
+    var path_before: Variant = path_claim.duplicate(true) if path_claim is Dictionary else path_claim
+    var rng := _rng(9721)
+    var before_rng := rng.state
+    var result := RunStitchedBattleHandEntry.new().admit_next_fight(
+        candidate.deck, candidate.descriptors, candidate.remaining_scraps,
+        candidate.next_stitch_id, rest_receipt, rng, path_claim)
+    _check(result == {"ok": false} and not result.has("combat_deck"),
+        reason + " rejects without constructing a playable deck")
+    _check(candidate == before and path_claim == path_before and rng.state == before_rng,
+        reason + " leaves complete source ledgers, receipt and RNG unchanged")
+
+func _test_optional_path_rejections() -> void:
+    var ledger := _starting_ledger()
+    if ledger.is_empty():
+        return
+    var bulwark := _path_receipt("bulwark")
+    var vanguard := _path_receipt("vanguard")
+    if bulwark.get("ok") != true or vanguard.get("ok") != true:
+        return
+    _reject_path(ledger, ledger.receipt, {}, "empty supplied Path receipt")
+    _reject_path(ledger, ledger.receipt, [], "array supplied as Path receipt")
+    _reject_path(ledger, ledger.receipt, 0, "integer supplied as Path receipt")
+    _reject_path(ledger, ledger.receipt, false, "boolean supplied as Path receipt")
+    var forged := bulwark.duplicate(true)
+    forged["owner"] = "tinker"
+    _reject_path(ledger, ledger.receipt, forged, "wrong Warden receipt owner")
+    forged = bulwark.duplicate(true)
+    forged["card"]["id"] = vanguard.card.id
+    _reject_path(ledger, ledger.receipt, forged, "wrong selected card for Path")
+    forged = bulwark.duplicate(true)
+    forged["passive"]["starting_block"] = 16
+    _reject_path(ledger, ledger.receipt, forged, "tampered replacement passive")
+    forged = vanguard.duplicate(true)
+    forged["starter_deck"].append("warden_lance_pin")
+    _reject_path(ledger, ledger.receipt, forged, "forged extra Path copy in proposed deck")
+    forged = bulwark.duplicate(true)
+    forged["ok"] = 1
+    _reject_path(ledger, ledger.receipt, forged, "bool versus int supplied claim")
+    forged = bulwark.duplicate(true)
+    forged.erase("display_name")
+    _reject_path(ledger, ledger.receipt, forged, "missing receipt field")
+    var twice := RunWardenPathChoice.new()
+    _check(twice.choose("bulwark").get("ok") == true, "replay fixture claimed once")
+    _reject_path(ledger, ledger.receipt, twice.choose("bulwark"),
+        "unsuccessful duplicate choice receipt")
+    _reject_path(ledger, "stale-receipt", bulwark, "authentic Path with stale Rest receipt")
+    _reject_path(ledger, null, vanguard, "authentic Path with missing Rest receipt")
+    var bad_ledger := ledger.duplicate(true)
+    bad_ledger.deck.append("unknown_card")
+    _reject_path(bad_ledger, bad_ledger.receipt, bulwark,
+        "authentic Path with invalid Rest ledger")
+    for card_id in ["warden_bulwark_brace", "warden_lance_pin"]:
+        bad_ledger = ledger.duplicate(true)
+        bad_ledger.deck.append(card_id)
+        _reject_path(bad_ledger, bad_ledger.receipt, bulwark,
+            "duplicate or foreign Path card already in persistent deck: " + card_id)
+        _reject_path(bad_ledger, bad_ledger.receipt, vanguard,
+            "foreign or duplicate Path card already in persistent deck: " + card_id)
+    bad_ledger = ledger.duplicate(true)
+    bad_ledger.deck.append("warden_bulwark_brace")
+    bad_ledger.deck.append("warden_lance_pin")
+    _reject_path(bad_ledger, bad_ledger.receipt, bulwark,
+        "both Warden Path cards attempted in ledger")
+    var no_rng := RunStitchedBattleHandEntry.new().admit_next_fight(
+        ledger.deck, ledger.descriptors, ledger.remaining_scraps,
+        ledger.next_stitch_id, ledger.receipt, null, bulwark)
+    _check(no_rng == {"ok": false}, "null RNG rejects with authenticated Path receipt")
+    _check(RunWardenPathChoice.authenticate_receipt(bulwark).get("ok") == true
+        and _admit_path(ledger, _rng(9721), bulwark).get("ok") == true
+        and _admit_path(ledger, _rng(9721), vanguard).get("ok") == true,
+        "both authentic claims remain admissible after all failed preflights")
