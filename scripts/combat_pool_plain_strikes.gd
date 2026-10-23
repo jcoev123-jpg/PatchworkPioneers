@@ -19,8 +19,15 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bo
 	return _patches.bind_wardrobe(wardrobe, torn)
 
 
-func _init(pinned: CombatPinned = null) -> void:
-	_pinned = pinned
+func _init(pinned: Variant = null, patches: Variant = null) -> void:
+	if pinned is CombatPinned:
+		_pinned = pinned
+	elif pinned is CombatPatchAttackRules:
+		_patches = pinned
+	if patches is CombatPinned:
+		_pinned = patches
+	elif patches is CombatPatchAttackRules:
+		_patches = patches
 
 
 func set_pinned(pinned: CombatPinned) -> void:
@@ -31,12 +38,22 @@ func get_pinned() -> CombatPinned:
 	return _pinned
 
 
+func set_patches(patches: CombatPatchAttackRules) -> void:
+	_patches = patches
+
+
+func get_patches() -> CombatPatchAttackRules:
+	return _patches
+
+
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int, pinned: CombatPinned = null) -> Dictionary:
+		card_id: String, target_position: int, pinned: CombatPinned = null,
+		patches: CombatPatchAttackRules = null) -> Dictionary:
 	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
+	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
 		return _failure()
-	if _patches != null and not _patches.is_valid():
+	if active_patches != null and not active_patches.is_valid():
 		return _failure()
 	if deck.combat_state == null or deck._rng == null or not deck.turn_active:
 		return _failure()
@@ -65,7 +82,9 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var block_amount: Variant = effects.get("block", 0)
 	if not damage is int or damage <= 0 or not block_amount is int:
 		return _failure()
-	var patch_damage: int = 0 if _patches == null else _patches.damage_bonus(owner_id)
+	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(owner_id)
+	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(owner_id)
+	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
 	if damage > CombatStatuses.MAX_INT - 5 - patch_damage:
 		return _failure()
 	if warden_card and block_amount <= 0:
@@ -98,6 +117,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# Brass Buckle's gain must fit BEFORE damage, energy or card movement.
 	if warden_card and block_amount > CombatParty.MAX_INT - owner["block"]:
 		return _failure()
+	if patch_exposed > 0 and not enemies.can_apply_statuses({target_position: {"exposed": patch_exposed}}):
+		return _failure()
 
 	# Every mutator is now guaranteed to accept its operation.
 	# No shuffle, extra draw, or RNG read occurs on this path.
@@ -109,8 +130,15 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, owner_id)
 	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position, damage + pin_bonus + patch_damage,
 		owner.get("statuses", {}), target.get("statuses", {}))
-	if active_pinned != null and hit.get("ok", false):
-		active_pinned.consume_after_attack(target_position, owner_id, true)
+	var hit_statuses: Dictionary = {}
+	if hit.get("ok", false):
+		if active_pinned != null:
+			active_pinned.consume_after_attack(target_position, owner_id, true)
+		if patch_exposed > 0:
+			enemies.apply_statuses({target_position: {"exposed": patch_exposed}})
+			hit_statuses["exposed"] = patch_exposed
+		if active_patches != null:
+			active_patches.record_successful_attack(owner_id)
 	var block_deltas: Dictionary = {}
 	if warden_card:
 		party.gain_block(owner_position, block_amount)
@@ -118,7 +146,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	return {"ok": true, "hits": [{
 		"position": target_position, "damage": hit["damage"],
 		"block_absorbed": hit["block_absorbed"], "hp_loss": hit["hp_loss"],
-		"statuses": {},
+		"statuses": hit_statuses,
 	}], "block_deltas": block_deltas}
 
 

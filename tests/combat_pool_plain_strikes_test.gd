@@ -24,6 +24,9 @@ func _initialize() -> void:
 	_test_catalog_unchanged()
 	_test_worn_pincushion_plain_strikes()
 	_test_worn_pincushion_plain_rejections()
+	_test_button_eye_ac1_first_hit()
+	_test_button_eye_ac2_latch_second_hit_and_dual_patches()
+	_test_button_eye_ac3_dormant_rejections_and_overflow()
 	for failure in failures:
 		printerr(failure)
 	print("combat_pool_plain_strikes_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -783,3 +786,313 @@ func _test_worn_pincushion_plain_rejections() -> void:
 		_check(not resolver.play_card(deck, party, foes, id, 3, pin)["ok"]
 			and _snapshot(deck, party, foes, pin) == before,
 			id + " illegal position fails closed with patch and pin")
+
+
+func _patch_context(party: CombatParty, wearer: String,
+		sew_head: bool = true, sew_arm: bool = false) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array and raw.size() >= 2, "authored patch metadata available")
+	var definitions: Array = []
+	for entry in raw:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = []
+	if sew_head:
+		owned.append("button_eye")
+	if sew_arm:
+		owned.append("pincushion_arm")
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "plain patch genuine run ledgers valid")
+	if sew_head:
+		var sewn_head: Dictionary = wardrobe.sew("button_eye", wearer, "HEAD",
+			"sew_head", wardrobe.get_snapshot())
+		_check(sewn_head.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["HEAD"] == "button_eye",
+			"valid unique HEAD assignment on named real wearer")
+	if sew_arm:
+		var sewn_arm: Dictionary = wardrobe.sew("pincushion_arm", wearer, "ARM",
+			"sew_arm", wardrobe.get_snapshot())
+		_check(sewn_arm.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["ARM"] == "pincushion_arm",
+			"valid unique ARM assignment on named real wearer")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _test_button_eye_ac1_first_hit() -> void:
+	# AC1: All four IDs with Button Eye in HEAD slot
+	for id in IDS:
+		var owner: String = "warden" if id.begins_with("warden_") else "seamstress"
+		var owner_pos: int = 1 if owner == "warden" else 2
+		var definition: Dictionary = _definition(id)
+		var base_damage: int = definition["effects"]["damage"]
+		var block_gain: int = definition["effects"].get("block", 0)
+
+		# 1. Normal hit with Button Eye worn
+		var party := _party()
+		var ctx := _patch_context(party, owner, true, false)
+		var deck := _deck([id])
+		var foes := _enemies([30, 30])
+		_check(foes.gain_block(1, 4), id + " enemy 1 gains 4 block")
+		var resolver := CombatPoolPlainStrikes.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), id + " bound wardrobe with Button Eye")
+		_check(resolver._patches.latch_snapshot().get(owner) == false, id + " Button Eye latch initially unconsumed")
+		_check(resolver._patches.exposed_for_first_hit(owner) == {"exposed": 1}, id + " prospective exposed 1")
+
+		var before_snap := _snapshot(deck, party, foes)
+		var result: Dictionary = resolver.play_card(deck, party, foes, id, 1)
+		_check(result.get("ok", false), id + " plain strike with Button Eye succeeded")
+
+		# Damage is unmodified by Button Eye's newly applied Exposed
+		var expected_absorbed: int = mini(4, base_damage)
+		var expected_loss: int = base_damage - expected_absorbed
+		var expected_blocks: Dictionary = {}
+		if block_gain > 0:
+			expected_blocks[owner_pos] = block_gain
+
+		_check(result == {
+			"ok": true,
+			"hits": [{
+				"position": 1,
+				"damage": base_damage,
+				"block_absorbed": expected_absorbed,
+				"hp_loss": expected_loss,
+				"statuses": {"exposed": 1},
+			}],
+			"block_deltas": expected_blocks,
+		}, id + " exact hit receipt with exposed: 1 and block deltas")
+
+		# Post-hit enemy state: enemy Block absorbed, HP reduced, Exposed 1 applied AFTER damage
+		_check(foes.get_enemy(1)["block"] == 4 - expected_absorbed, id + " enemy block reduced")
+		_check(foes.get_enemy(1)["hp"] == 30 - expected_loss, id + " enemy hp reduced")
+		_check(foes.get_enemy(1)["statuses"].get("exposed", 0) == 1, id + " enemy 1 has exposed 1 after hit")
+		_check(party.get_hero(owner_pos)["block"] == block_gain, id + " owner gained exact block")
+
+		# Deck and latch state
+		_check(deck.energy == before_snap["energy"] - definition["cost"], id + " energy deducted")
+		_check(deck.discard_pile.has(id), id + " discarded played card")
+		_check(deck._rng.state == before_snap["rng_state"], id + " RNG untouched")
+		_check(resolver._patches.latch_snapshot().get(owner) == true, id + " latch consumed after hit")
+		_check(resolver._patches.exposed_for_first_hit(owner) == {}, id + " exposed_for_first_hit empty after latch")
+
+		# 2. Lethal first hit with Button Eye: enemy HP is low
+		var party_lethal := _party()
+		var ctx_lethal := _patch_context(party_lethal, owner, true, false)
+		var deck_lethal := _deck([id])
+		var foes_lethal := _enemies([2, 30])
+		var resolver_lethal := CombatPoolPlainStrikes.new()
+		_check(resolver_lethal.bind_patch_wardrobe(ctx_lethal.wardrobe, ctx_lethal.torn), id + " bound wardrobe lethal")
+		var lethal_result: Dictionary = resolver_lethal.play_card(deck_lethal, party_lethal, foes_lethal, id, 1)
+		_check(lethal_result.get("ok", false), id + " lethal hit succeeded")
+		_check(foes_lethal.is_slain(1) and foes_lethal.get_enemy(1)["hp"] == 0, id + " target 1 slain")
+		_check(foes_lethal.get_enemy(1)["statuses"].get("exposed", 0) == 1, id + " slain enemy slot 1 retains exposed 1")
+		_check(lethal_result["hits"][0]["statuses"] == {"exposed": 1}, id + " lethal hit receipt records exposed 1")
+		_check(resolver_lethal._patches.latch_snapshot().get(owner) == true, id + " latch consumed on lethal hit")
+		if block_gain > 0:
+			_check(party_lethal.get_hero(owner_pos)["block"] == block_gain, id + " owner gained block on lethal hit")
+
+
+func _test_button_eye_ac2_latch_second_hit_and_dual_patches() -> void:
+	# 1. Second held plain strike in same bound combat: Button Eye already consumed
+	for owner in ["warden", "seamstress"]:
+		var id1: String = "warden_brass_buckle" if owner == "warden" else "seamstress_thread_whip"
+		var id2: String = "warden_brass_buckle_plus" if owner == "warden" else "seamstress_thread_whip_plus"
+		var party := _party()
+		var ctx := _patch_context(party, owner, true, false)
+		var deck := _deck([id1, id2])
+		var foes := _enemies([50, 50])
+		var resolver := CombatPoolPlainStrikes.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), owner + " bind wardrobe")
+
+		# First attack applies Exposed 1
+		var res1: Dictionary = resolver.play_card(deck, party, foes, id1, 1)
+		_check(res1.get("ok", false) and res1["hits"][0]["statuses"] == {"exposed": 1}, owner + " first strike applied exposed")
+		_check(foes.get_enemy(1)["statuses"].get("exposed", 0) == 1, owner + " enemy 1 has exposed 1")
+		_check(resolver._patches.latch_snapshot().get(owner) == true, owner + " latch consumed")
+
+		# Second attack in same combat: does NOT apply Exposed again!
+		# Note: enemy 1 now has Exposed 1, so damage is boosted by 50%!
+		deck.energy = 3
+		deck.combat_state.energy = 3
+		var def2: Dictionary = _definition(id2)
+		var raw2: int = def2["effects"]["damage"]
+		var boosted_dmg: int = CombatStatuses.new().adjusted_attack_damage(raw2, {}, {"exposed": 1})
+		_check(boosted_dmg == int(raw2 * 1.5), owner + " second attack benefits from existing exposed 1")
+
+		var res2: Dictionary = resolver.play_card(deck, party, foes, id2, 1)
+		_check(res2.get("ok", false), owner + " second strike succeeded")
+		_check(res2["hits"][0]["damage"] == boosted_dmg, owner + " second strike dealt boosted damage")
+		_check(res2["hits"][0]["statuses"] == {}, owner + " second strike receipt has no statuses (Button Eye consumed)")
+		# Enemy 1 still has exposed 1, not incremented to 2
+		_check(foes.get_enemy(1)["statuses"].get("exposed", 0) == 1, owner + " enemy 1 exposed remains 1, no duplicate")
+
+	# 2. Rejection does NOT consume Button Eye latch
+	for owner in ["warden", "seamstress"]:
+		var id: String = "warden_brass_buckle" if owner == "warden" else "seamstress_thread_whip"
+		var party := _party()
+		var ctx := _patch_context(party, owner, true, false)
+		var deck := _deck([id])
+		var foes := _enemies([30, 30])
+		var resolver := CombatPoolPlainStrikes.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), owner + " bind for rejection")
+
+		# Drain energy so preflight fails
+		_check(deck.try_spend_energy(3), owner + " exhaust energy")
+		var rej: Dictionary = resolver.play_card(deck, party, foes, id, 1)
+		_check(not rej.get("ok", false), owner + " rejection on 0 energy")
+		_check(resolver._patches.latch_snapshot().get(owner) == false, owner + " latch NOT consumed on rejected play")
+
+		# Restore energy and retry: now succeeds and consumes latch
+		deck.energy = 3
+		deck.combat_state.energy = 3
+		var retry: Dictionary = resolver.play_card(deck, party, foes, id, 1)
+		_check(retry.get("ok", false), owner + " retry succeeded")
+		_check(retry["hits"][0]["statuses"] == {"exposed": 1}, owner + " retry applied exposed 1")
+		_check(resolver._patches.latch_snapshot().get(owner) == true, owner + " latch consumed on successful retry")
+
+	# 3. Dual patches: Pincushion Arm (ARM) AND Button Eye (HEAD) simultaneously
+	for id in ["warden_brass_buckle", "seamstress_thread_whip_plus"]:
+		var owner: String = "warden" if id.begins_with("warden_") else "seamstress"
+		var other_owner: String = "seamstress" if owner == "warden" else "warden"
+		var owner_pos: int = 1 if owner == "warden" else 2
+		var def: Dictionary = _definition(id)
+		var base_dmg: int = def["effects"]["damage"]
+
+		# Variants: normal, weak, exposed, pinned, weak_exposed_pin, same_owner_pin
+		for mode in ["normal", "weak", "exposed", "pinned", "weak_exposed_pin", "same_owner_pin"]:
+			var party := _party()
+			var ctx := _patch_context(party, owner, true, true)
+			var deck := _deck([id])
+			var foes := _enemies([80, 80])
+			var pinned := CombatPinned.new()
+			var resolver := CombatPoolPlainStrikes.new()
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), id + " dual bind " + mode)
+			_check(resolver._patches.damage_bonus(owner) == 1, id + " +1 ARM bonus")
+			_check(resolver._patches.exposed_for_first_hit(owner) == {"exposed": 1}, id + " HEAD exposed 1")
+
+			if mode in ["weak", "weak_exposed_pin"]:
+				party._heroes[owner_pos - 1]["statuses"] = {"weak": 1}
+			if mode in ["exposed", "weak_exposed_pin"]:
+				foes._enemies[0]["statuses"] = {"exposed": 1}
+			if mode in ["pinned", "weak_exposed_pin"]:
+				_check(pinned.pin_enemy(foes, 1, other_owner), id + " foreign pin set")
+			if mode == "same_owner_pin":
+				_check(pinned.pin_enemy(foes, 1, owner), id + " same owner pin set")
+
+			var pin_bonus: int = 5 if mode in ["pinned", "weak_exposed_pin"] else 0
+			var raw_dmg: int = base_dmg + 1 + pin_bonus # Card damage + 1 ARM + pin
+			var expected_damage: int = CombatStatuses.new().adjusted_attack_damage(
+				raw_dmg, party.get_hero(owner_pos).get("statuses", {}), foes.get_enemy(1).get("statuses", {}))
+
+			var res: Dictionary = resolver.play_card(deck, party, foes, id, 1, pinned)
+			_check(res.get("ok", false), id + " dual play " + mode)
+			_check(res["hits"][0]["damage"] == expected_damage, id + " dual " + mode + " damage matches formula")
+			_check(res["hits"][0]["statuses"] == {"exposed": 1}, id + " dual " + mode + " receipt has exposed 1")
+			_check(resolver._patches.latch_snapshot().get(owner) == true, id + " dual " + mode + " latch consumed")
+
+			# Button Eye Exposed is added AFTER damage:
+			var prior_exposed: int = 1 if mode in ["exposed", "weak_exposed_pin"] else 0
+			_check(foes.get_enemy(1)["statuses"].get("exposed", 0) == prior_exposed + 1,
+				id + " dual " + mode + " target exposed increased by exactly 1")
+
+			# Foreign pin consumed; same-owner pin preserved
+			if mode in ["pinned", "weak_exposed_pin"]:
+				_check(pinned.pinner_for_enemy(1) == "", id + " dual " + mode + " foreign pin consumed")
+			elif mode == "same_owner_pin":
+				_check(pinned.pinner_for_enemy(1) == owner, id + " dual same-owner pin preserved")
+
+
+func _test_button_eye_ac3_dormant_rejections_and_overflow() -> void:
+	# 1. Other hero wears Button Eye: no effect on active attacker
+	var party := _party()
+	var ctx_other := _patch_context(party, "seamstress", true, false) # Seamstress wears Button Eye
+	var deck_warden := _deck(["warden_brass_buckle"])
+	var foes := _enemies([30, 30])
+	var resolver_warden := CombatPoolPlainStrikes.new()
+	_check(resolver_warden.bind_patch_wardrobe(ctx_other.wardrobe, ctx_other.torn), "bind other wearer")
+	_check(resolver_warden._patches.exposed_for_first_hit("warden") == {}, "warden has no Button Eye")
+	var res_other: Dictionary = resolver_warden.play_card(deck_warden, party, foes, "warden_brass_buckle", 1)
+	_check(res_other.get("ok", false), "warden play succeeded")
+	_check(res_other["hits"][0]["damage"] == 5, "warden deals unpatched 5 damage")
+	_check(res_other["hits"][0]["statuses"] == {}, "warden receipt has empty statuses")
+	_check(foes.get_enemy(1).get("statuses", {}).get("exposed", 0) == 0, "enemy has no exposed")
+	_check(resolver_warden._patches.latch_snapshot().get("seamstress") == false, "seamstress Button Eye untouched")
+
+	# 2. Torn wearer Button Eye is dormant
+	var party_torn := _party()
+	var ctx_torn := _patch_context(party_torn, "warden", true, false)
+	var start_heroes: Array = ctx_torn.torn.read_state()["heroes"]
+	_check(party_torn.apply_damage(1, 999) and party_torn.is_downed(1), "warden downed for torn test")
+	_check(ctx_torn.torn.observe_battle_end("tear", start_heroes, party_torn.get_heroes())["ok"], "recorded tear")
+	_check(ctx_torn.wardrobe.project_active(ctx_torn.torn.read_state())["active"]["warden"].is_empty(), "warden active empty")
+	var resolver_torn := CombatPoolPlainStrikes.new()
+	_check(resolver_torn.bind_patch_wardrobe(ctx_torn.wardrobe, ctx_torn.torn), "bind torn wardrobe")
+	_check(resolver_torn._patches.exposed_for_first_hit("warden") == {}, "dormant warden has no exposed rider")
+	var party_revived := _party()
+	var deck_torn := _deck(["warden_brass_buckle"])
+	var foes_torn := _enemies([30, 30])
+	var res_torn: Dictionary = resolver_torn.play_card(deck_torn, party_revived, foes_torn, "warden_brass_buckle", 1)
+	_check(res_torn.get("ok", false), "revived living hero with torn ledger play succeeded")
+	_check(res_torn["hits"][0]["damage"] == 5, "deals unpatched 5 damage")
+	_check(res_torn["hits"][0]["statuses"] == {}, "receipt has no exposed from dormant Button Eye")
+	_check(foes_torn.get_enemy(1).get("statuses", {}).get("exposed", 0) == 0, "target has no exposed")
+
+	# 3. Explicit invalid patch binding fails closed
+	var party_inv := _party()
+	var ctx_inv := _patch_context(party_inv, "warden", true, false)
+	var deck_inv := _deck(["warden_brass_buckle"])
+	var foes_inv := _enemies([30, 30])
+	var resolver_inv := CombatPoolPlainStrikes.new()
+	_check(not resolver_inv.bind_patch_wardrobe(null, ctx_inv.torn), "invalid null wardrobe binding rejected")
+	_check(not resolver_inv._patches.is_valid(), "resolver patches marked invalid")
+	var snap_inv := _snapshot(deck_inv, party_inv, foes_inv)
+	var rej_inv: Dictionary = resolver_inv.play_card(deck_inv, party_inv, foes_inv, "warden_brass_buckle", 1)
+	_check(rej_inv == {"ok": false, "hits": [], "block_deltas": {}}, "invalid bind returns failure")
+	_check(_snapshot(deck_inv, party_inv, foes_inv) == snap_inv, "state strictly unchanged on invalid bind")
+
+	# 4. Overflow Exposed application in preflight:
+	# If enemy already has MAX_INT exposed, applying +1 would overflow.
+	var party_ov := _party()
+	var ctx_ov := _patch_context(party_ov, "warden", true, false)
+	var deck_ov := _deck(["warden_brass_buckle"])
+	var foes_ov := _enemies([30, 30])
+	foes_ov._enemies[0]["statuses"] = {"exposed": CombatEnemies.MAX_INT}
+	var resolver_ov := CombatPoolPlainStrikes.new()
+	_check(resolver_ov.bind_patch_wardrobe(ctx_ov.wardrobe, ctx_ov.torn), "bind wardrobe for overflow test")
+	var snap_ov := _snapshot(deck_ov, party_ov, foes_ov)
+	var rej_ov: Dictionary = resolver_ov.play_card(deck_ov, party_ov, foes_ov, "warden_brass_buckle", 1)
+	_check(rej_ov == {"ok": false, "hits": [], "block_deltas": {}}, "overflow exposed fails closed")
+	_check(_snapshot(deck_ov, party_ov, foes_ov) == snap_ov, "state strictly unchanged on overflow rejection")
+	_check(resolver_ov._patches.latch_snapshot().get("warden") == false, "latch untouched on overflow rejection")
+
+	# 5. Full negative rejection matrix with Button Eye bound:
+	# Energy, downed, wrong position, invalid targets, slain targets all fail closed and preserve latch.
+	for rej_case in [
+		{"name": "zero energy", "kind": "energy"},
+		{"name": "downed owner", "kind": "downed"},
+		{"name": "wrong owner position", "kind": "wrong_pos"},
+		{"name": "target 0", "target": 0},
+		{"name": "target 3", "target": 3},
+		{"name": "slain target", "kind": "slain"},
+	]:
+		var party_neg := _party()
+		var ctx_neg := _patch_context(party_neg, "warden", true, false)
+		var deck_neg := _deck(["warden_brass_buckle"])
+		var foes_neg := _enemies([30, 30])
+		var target_neg: int = rej_case.get("target", 1)
+
+		match rej_case.get("kind", ""):
+			"energy":
+				_check(deck_neg.try_spend_energy(3), "exhaust energy")
+			"downed":
+				_check(party_neg.apply_damage(1, 40) and party_neg.is_downed(1), "down warden")
+			"wrong_pos":
+				party_neg = _party(["seamstress", "tinker", "warden"]) # Warden in position 3 (forbidden for brass buckle)
+			"slain":
+				_check(foes_neg.apply_damage(1, 30) and foes_neg.is_slain(1), "slay target 1")
+
+		var resolver_neg := CombatPoolPlainStrikes.new()
+		_check(resolver_neg.bind_patch_wardrobe(ctx_neg.wardrobe, ctx_neg.torn), "bind for " + rej_case["name"])
+		var snap_neg := _snapshot(deck_neg, party_neg, foes_neg)
+		var rej_res: Dictionary = resolver_neg.play_card(deck_neg, party_neg, foes_neg, "warden_brass_buckle", target_neg)
+		_check(rej_res == {"ok": false, "hits": [], "block_deltas": {}}, "fails closed: " + rej_case["name"])
+		_check(_snapshot(deck_neg, party_neg, foes_neg) == snap_neg, "state immutable: " + rej_case["name"])
+		_check(resolver_neg._patches.latch_snapshot().get("warden") == false, "latch preserved: " + rej_case["name"])
