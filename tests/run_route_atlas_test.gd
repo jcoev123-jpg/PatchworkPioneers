@@ -13,6 +13,15 @@ const TOKEN_PATHS := {
 	"Rest": "res://assets/paper/ui/map_node_rest.png",
 	"Boss": "res://assets/paper/ui/map_node_boss.png",
 }
+## The five authored book areas, written out independently of the view's own table:
+## name -> [first floor, last floor].
+const AREA_LABELS := {
+	"Meadow": [1, 3],
+	"Woods": [4, 6],
+	"Marsh": [7, 9],
+	"Peaks": [10, 11],
+	"Boss": [12, 12],
+}
 
 
 func _initialize() -> void:
@@ -233,6 +242,50 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 	probe.free()
 
 
+# ---------------------------------------------------------------------------
+# Authored area captions over their exact floor groups (drawn pages and owner board).
+# ---------------------------------------------------------------------------
+
+func _verify_area_labels(view: RunRouteAtlas, label: String) -> void:
+	var found: Dictionary = {}
+	for child in view.get_children():
+		if not (child is Label) or not child.has_meta("area_name"):
+			continue
+		var area: Label = child
+		var area_name: String = str(area.get_meta("area_name"))
+		var span: Array = AREA_LABELS.get(area_name, [])
+		_check(span.size() == 2 and not found.has(area_name),
+			label + ": one authored area caption names " + area_name)
+		if span.size() != 2 or found.has(area_name):
+			continue
+		found[area_name] = area
+		_check(int(area.get_meta("first_floor")) == int(span[0])
+			and int(area.get_meta("last_floor")) == int(span[1]),
+			label + ": " + area_name + " names its exact floor span")
+		_check(area.text == area_name and area.is_visible_in_tree(),
+			label + ": open book visibly reads " + area_name)
+		_check(area.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and area.focus_mode == Control.FOCUS_NONE,
+			label + ": area caption never takes pointer or keyboard input: " + area_name)
+		_check(area.get_theme_font_size("font_size") >= 14
+			and area.get_theme_color("font_color") == RunRouteAtlas.INK,
+			label + ": area caption is legible ink at map scale: " + area_name)
+		var left := RunRouteAtlas.FIRST_X + float(int(span[0]) - 1) * RunRouteAtlas.FLOOR_STEP
+		var right := RunRouteAtlas.FIRST_X + float(int(span[1]) - 1) * RunRouteAtlas.FLOOR_STEP \
+			+ RunRouteAtlas.NODE_SIZE.x
+		var rect := Rect2(area.position, area.size)
+		_check(is_equal_approx(rect.position.x, left)
+			and is_equal_approx(rect.size.x, right - left)
+			and rect.end.y <= RunRouteAtlas.FIRST_Y,
+			label + ": " + area_name + " spans its own floor columns above every patch")
+		_check(_inside(rect, RunRouteAtlas.PAGE_LEFT) or _inside(rect, RunRouteAtlas.PAGE_RIGHT),
+			label + ": " + area_name + " stays sewn on a page")
+	_check(found.size() == AREA_LABELS.size(),
+		label + ": only the authored area captions are mounted")
+	for area_name in AREA_LABELS:
+		_check(found.has(area_name), label + ": open book names the " + area_name + " area")
+
+
 # Inspect actual mounted children, not internal arrays or a view-generated graph oracle.
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
 	var before := _state(map, rng)
@@ -387,12 +440,14 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 					label + ": readable caption fits patch without spill " + id)
 		elif child is Label:
 			var header: Label = child
-			_check(header.has_meta("floor_number"), label + ": only expected header labels")
 			if header.has_meta("floor_number"):
 				var floor_num: int = header.get_meta("floor_number")
 				_check(floor_num >= 1 and floor_num <= 12 and not seen_floors.has(floor_num)
 					and header.text == "%02d" % floor_num, label + ": floor number shown once")
 				seen_floors[floor_num] = true
+			else:
+				_check(header.has_meta("area_name"),
+					label + ": only area captions or floor headers are plain labels")
 			_check(_inside(Rect2(header.position, header.size), bounding)
 				and header.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and header.focus_mode == Control.FOCUS_NONE,
@@ -431,11 +486,12 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 		_check(Rect2(pin.position, pin.size).intersects(Rect2(current_marker.position,
 			current_marker.size)), label + ": current pin touches the pinned patch")
 	_check(view.get_child_count() == expected_nodes.size() + expected_edges.size() + 12
-		+ expected_pins.size(), label + ": no orphan/duplicate children")
+		+ AREA_LABELS.size() + expected_pins.size(), label + ": no orphan/duplicate children")
 	for id in expected_nodes:
 		_check(seen_nodes.has(id), label + ": missing actual node " + id)
 	for key in expected_edges:
 		_check(seen_edges.has(key), label + ": missing actual edge " + key)
+	_verify_area_labels(view, label)
 	_verify_book(view, label)
 	_check(_state(map, rng) == before, label + ": inspecting preview leaves map and RNG unchanged")
 
@@ -457,7 +513,12 @@ func _signature(view: RunRouteAtlas) -> Array:
 			result.append(["edge", thread.get_meta("from_id"), thread.get_meta("to_id"),
 				thread.get_meta("route_state"), thread.points, thread.default_color])
 		elif child is Label:
-			result.append(["floor", child.get_meta("floor_number"), (child as Label).text, (child as Label).position])
+			if child.has_meta("area_name"):
+				result.append(["area", str(child.get_meta("area_name")), (child as Label).text,
+					(child as Label).position, (child as Label).size])
+			else:
+				result.append(["floor", child.get_meta("floor_number"), (child as Label).text,
+					(child as Label).position])
 		elif child is RunRouteAtlas.CurrentPin:
 			result.append(["pin", child.get_meta("pin_node_id"), child.position, child.size])
 	return result
@@ -511,6 +572,7 @@ func _exercise_board_art(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGene
 		and not view.drawn_book_geometry().is_empty(),
 		label + ": missing art keeps the complete drawn fallback")
 	_verify_book(view, label + " drawn fallback")
+	_verify_area_labels(view, label + " drawn fallback")
 	_check(_signature(view) == drawn_signature and _state(map, rng) == before,
 		label + ": the drawn book leaves nodes, route and RNG alone")
 	# Owner art path: the real image when it exists, else the same in-memory image.
@@ -526,6 +588,7 @@ func _exercise_board_art(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGene
 		and view.drawn_book_geometry().is_empty(),
 		label + ": an owner board image replaces the drawing in the same preview")
 	_verify_book(view, label + " owner art")
+	_verify_area_labels(view, label + " owner art")
 	_check(view.board_texture_rect() == Rect2(Vector2.ZERO, view.size),
 		label + ": mounted owner board covers the whole map preview")
 	_check(_signature(view) == drawn_signature and _state(map, rng) == before,

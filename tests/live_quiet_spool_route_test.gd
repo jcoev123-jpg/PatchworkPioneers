@@ -1,6 +1,43 @@
 extends "res://tests/live_event_treasure_continuation_test.gd"
 
 
+## AC2: every mounted Event choice panel shows the committed crossroads scene above its
+## own opaque slate, behind the paper panel and its usable choices.
+func _check_event_backdrop(panel, label: String) -> int:
+	var bed = panel.get_node_or_null("EventBackdrop")
+	var slate = panel.get_node_or_null("SlateBackdrop")
+	_check(is_instance_valid(bed) and bed.get_parent() == panel
+		and bed.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and bed.focus_mode == Control.FOCUS_NONE,
+		label + " mounts one inert Event art bed")
+	if not is_instance_valid(bed):
+		return panel.get_instance_id()
+	var expected := "res://assets/paper/backgrounds/event_crossroads.png"
+	_check(VISIT_ART.visit_backdrop_path("Event") == expected and bed.visit_kind == "Event"
+		and bed.has_image() == ResourceLoader.exists(expected)
+		and (not bed.has_image() or bed.visit_texture.resource_path == expected),
+		label + " draws the committed crossroads scene, not the plain slate")
+	_check(slate != null and bed.get_index() > slate.get_index()
+		and bed.get_index() < panel.paper_panel.get_index(),
+		label + " art layer sits above the opaque slate and behind the paper choices")
+	var view: Rect2 = bed.view_rect()
+	_check(view.size.x > 0.0 and view.size.y > 0.0
+		and Rect2(Vector2.ZERO, panel.size).is_equal_approx(view)
+		and Rect2(0, 0, 1280, 720).encloses(bed.get_global_rect()),
+		label + " art bed fills the whole Event screen")
+	var drawn: Rect2 = bed.image_rect()
+	var visible: Rect2 = bed.image_crop()
+	var pixels: Vector2 = bed.texture_size()
+	_check(bed.has_image() and drawn.encloses(view)
+		and is_equal_approx(drawn.size.x / drawn.size.y, pixels.x / pixels.y),
+		label + " crossroads scene covers the view without stretching")
+	_check(visible.position.x >= 0.0 and visible.position.y >= 0.0
+		and visible.end.x <= pixels.x + 0.01 and visible.end.y <= pixels.y + 0.01
+		and is_equal_approx(visible.size.x * (drawn.size.x / pixels.x), view.size.x),
+		label + " crossroads scene crops only the centred window that fills the view")
+	return panel.get_instance_id()
+
+
 func _effects() -> Array:
 	var carry := app.party_carryover as RunTornCarryover
 	return [app.run_heroes.duplicate(true), app.run_deck.duplicate(), app.session_gold,
@@ -124,6 +161,7 @@ func _moth_outcomes() -> void:
 	if panel == null:
 		return
 	_check(panel.title_label.text == "Moth Infestation", "Moth record selected by stable authored ID")
+	var moth_panel_id: int = _check_event_backdrop(panel, "second Event")
 	var buttons := panel.get_choice_buttons()
 	_check(buttons.size() == 3 and buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)"
 		and buttons[1].text == "Fumigate the deck (spend 1 scrap)"
@@ -173,6 +211,8 @@ func _moth_outcomes() -> void:
 	await _key(KEY_ENTER)
 	_check(app.moth_panel == null and app._moth_completed and app.route_view != null,
 		"Feed disposes the Moth panel and restores the chooser")
+	_check(not is_instance_id_valid(moth_panel_id),
+		"Feed frees the second Event art bed with its panel")
 	_check(app.run_deck == expected and app.run_scraps == scraps + 2,
 		"Feed removes precisely the selected occurrence and grants exactly 2 scraps")
 	_check(app.run_stitch_descriptors == descriptors and app.run_next_stitch_id == cursor
@@ -219,6 +259,7 @@ func _moth_outcomes() -> void:
 	_check(panel != null, "funded run's second Event mounts Moth")
 	if panel == null:
 		return
+	_check_event_backdrop(panel, "funded second Event")
 	buttons = panel.get_choice_buttons()
 	_check(not buttons[1].disabled, "one-scrap Fumigate is claimable")
 	await _click(buttons[1])
@@ -245,6 +286,7 @@ func _moth_outcomes() -> void:
 	_check(panel != null, "opening run's second Event mounts Moth")
 	if panel == null:
 		return
+	_check_event_backdrop(panel, "opening second Event")
 	var poor_deck: Array = app.run_deck.duplicate()
 	buttons = panel.get_choice_buttons()
 	_check(buttons[1].disabled and not buttons[0].disabled and not buttons[2].disabled,
@@ -287,6 +329,7 @@ func _moth_outcomes() -> void:
 	_check(panel != null, "mixed ordinary/composite ledger still presents Moth")
 	if panel == null:
 		return
+	_check_event_backdrop(panel, "mixed second Event")
 	picker = app._moth_picker
 	var mixed_deck: Array = app.run_deck.duplicate()
 	var mixed_scraps: int = app.run_scraps
@@ -380,6 +423,7 @@ func _run() -> void:
 				_check(app.route_view == null and app.route_buttons.is_empty() and not app._can_choose_connected_route(), "no onward controls before choice")
 				_check(app.run_map.get_route() == prior + [id] and _effects() == effects, "entry changes only selected route")
 				_check(panel.title_label.text == "The Quiet Spool", "record selected by stable authored ID")
+				var event_panel_id: int = _check_event_backdrop(panel, "first Event")
 				var buttons := panel.get_choice_buttons()
 				_check(buttons.size() == 2 and buttons[0].text == "Watch the thread unwind" and buttons[1].text == "Leave the spool alone", "authored Watch and Ignore controls")
 				_check(buttons[0].has_focus(), "Watch receives initial keyboard focus")
@@ -409,6 +453,8 @@ func _run() -> void:
 					_check(selected.has_focus(), "Tab reaches intended choice")
 					await _key(KEY_ENTER if choice_index == 0 else KEY_SPACE)
 				_check(app.quiet_spool_panel == null and app._quiet_spool_completed and app.route_view != null, "commit disposes panel and restores chooser")
+				_check(not is_instance_id_valid(event_panel_id),
+					"commit frees the Event art bed with its panel")
 				_check(app.run_scraps == scraps + (1 if choice_index == 0 else 0), "exact one-scrap Watch or zero-scrap Ignore receipt")
 				# Compare every other resource independently of the intended wallet delta.
 				var settled_scraps: int = app.run_scraps
@@ -432,6 +478,7 @@ func _run() -> void:
 						and not app._can_choose_connected_route(), "second Event mounts the authored Moth panel")
 				var moth_panel: LiveEventChoicePanel = app.moth_panel
 				if moth_panel != null:
+					var moth_panel_id: int = _check_event_backdrop(moth_panel, "second Event")
 					var moth_before := _event_state()
 					var moth_effects := _effects()
 					var moth_deck: Array = app.run_deck.duplicate()
@@ -461,6 +508,8 @@ func _run() -> void:
 					await _click(moth_buttons[2])
 					_check(app.moth_panel == null and app._moth_completed and app.route_view != null,
 						"Escape disposes the Moth panel and restores the chooser")
+					_check(not is_instance_id_valid(moth_panel_id),
+						"Escape frees the second Event art bed with its panel")
 					_check(_effects() == moth_effects and app.run_deck == moth_deck
 						and app.run_scraps == moth_scraps, "Escape preserves every resource and the route")
 					for callback in [escape, moth_click, entry]:
@@ -479,8 +528,12 @@ func _run() -> void:
 	var old_panel: LiveEventChoicePanel = app.quiet_spool_panel
 	var abandoned: Callable = old_panel.choice_committed.get_connections()[0].callable
 	var abandoned_click: Callable = old_panel.get_choice_buttons()[0].pressed.get_connections()[0].callable
+	_check(old_panel.get_node_or_null("EventBackdrop") != null,
+		"abandoned first Event really mounted its art bed")
 	app._return_to_title()
 	await _frames()
+	_check(app.find_children("EventBackdrop", "Control", true, false).is_empty(),
+		"title return releases the abandoned Event art bed")
 	await _click(app.start_button)
 	await _click(_route_action("f01_n1"))
 	_reject_event(abandoned.bind("quiet_spool", "watch"), "abandoned signal in fresh seeded visit")

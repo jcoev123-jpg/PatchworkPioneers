@@ -50,6 +50,41 @@ func _shop_state() -> Array:
 	return [_persistent(), app.run_removal_count, app.shop_visit.get_state()]
 
 
+## AC2: the physical Shop visit displays its committed stall scene behind the same usable
+## controls, with a cover crop and no pointer or keyboard capture.
+func _check_shop_backdrop() -> int:
+	var bed = app.visit_backdrop
+	_check(is_instance_valid(bed) and bed.get_parent() == app
+		and bed.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and bed.focus_mode == Control.FOCUS_NONE,
+		"Shop visit mounts one inert full-screen art bed")
+	if not is_instance_valid(bed):
+		return 0
+	var expected := "res://assets/paper/backgrounds/shop_stall.png"
+	_check(VISIT_ART.visit_backdrop_path("Shop") == expected and bed.visit_kind == "Shop"
+		and bed.has_image() == ResourceLoader.exists(expected)
+		and (not bed.has_image() or bed.visit_texture.resource_path == expected),
+		"Shop visit draws its own committed stall scene")
+	_check(bed.get_index() < app.shop_view.get_index(),
+		"Shop art bed is drawn behind the usable Shop controls")
+	var view: Rect2 = bed.view_rect()
+	_check(view.size.x > 0.0 and view.size.y > 0.0
+		and Rect2(Vector2.ZERO, app.size).is_equal_approx(view)
+		and Rect2(0, 0, 1280, 720).encloses(bed.get_global_rect()),
+		"Shop art bed fills the whole 1280x720 visit, not one control box")
+	var drawn: Rect2 = bed.image_rect()
+	var visible: Rect2 = bed.image_crop()
+	var pixels: Vector2 = bed.texture_size()
+	_check(bed.has_image() and drawn.encloses(view)
+		and is_equal_approx(drawn.size.x / drawn.size.y, pixels.x / pixels.y),
+		"Shop stall scene covers the view without stretching")
+	_check(visible.position.x >= 0.0 and visible.position.y >= 0.0
+		and visible.end.x <= pixels.x + 0.01 and visible.end.y <= pixels.y + 0.01
+		and is_equal_approx(visible.size.x * (drawn.size.x / pixels.x), view.size.x),
+		"Shop stall scene crops only the centred window that fills the view")
+	return bed.get_instance_id()
+
+
 func _popup_key(code: Key) -> void:
 	var popup: PopupMenu = app.shop_cards.get_popup()
 	_check(popup.visible, "owned-card popup is open for physical input")
@@ -218,6 +253,7 @@ func _run() -> void:
 		_check(app.shop_view != null and app.shop_visit != null, "physical Shop entry mounts real ledger and view")
 		if app.shop_view == null or app.shop_visit == null:
 			break
+		var bed_id: int = _check_shop_backdrop()
 		var visit: RunShopVisit = app.shop_visit
 		var state := visit.get_state()
 		_check(app.run_map.get_route() == [fixture.fight, id] and state.visited_ids == [id]
@@ -337,6 +373,8 @@ func _run() -> void:
 			await _key(KEY_ENTER)
 		else:
 			await _click(app.shop_back_button)
+		_check(app.visit_backdrop == null and not is_instance_id_valid(bed_id),
+			"Return releases the Shop art bed with its visit")
 		for callback in stale:
 			callback.call()
 		_check(visit.get_state().status == "closed" and app.title_view.visible and app.shop_visit == null

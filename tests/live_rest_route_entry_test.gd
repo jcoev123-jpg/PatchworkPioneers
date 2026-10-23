@@ -1,6 +1,57 @@
 extends "res://tests/live_legal_starter_fight_test.gd"
 ## Drive the shipped scene with physical inputs; recovery edge cases use combat fixtures.
 
+const VISIT_ART := preload("res://scripts/live_enemy_roster.gd")
+
+
+## AC2: the physical Rest visit displays its committed camp scene behind the same usable
+## controls, with a cover crop and no pointer or keyboard capture.
+func _check_rest_backdrop() -> int:
+	var bed = app.visit_backdrop
+	_check(is_instance_valid(bed) and bed.get_parent() == app
+		and bed.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and bed.focus_mode == Control.FOCUS_NONE,
+		"Rest visit mounts one inert full-screen art bed")
+	if not is_instance_valid(bed):
+		return 0
+	var expected := "res://assets/paper/backgrounds/rest_camp.png"
+	_check(VISIT_ART.visit_backdrop_path("Rest") == expected and bed.visit_kind == "Rest"
+		and bed.has_image() == ResourceLoader.exists(expected)
+		and (not bed.has_image() or bed.visit_texture.resource_path == expected),
+		"Rest visit draws its own committed camp scene")
+	_check(bed.get_index() < app.rest_view.get_index(),
+		"Rest art bed is drawn behind the usable Rest controls")
+	var view: Rect2 = bed.view_rect()
+	_check(view.size.x > 0.0 and view.size.y > 0.0
+		and Rect2(Vector2.ZERO, app.size).is_equal_approx(view)
+		and Rect2(0, 0, 1280, 720).encloses(bed.get_global_rect()),
+		"Rest art bed fills the whole 1280x720 visit, not one control box")
+	var drawn: Rect2 = bed.image_rect()
+	var visible: Rect2 = bed.image_crop()
+	var pixels: Vector2 = bed.texture_size()
+	_check(bed.has_image() and drawn.encloses(view)
+		and is_equal_approx(drawn.size.x / drawn.size.y, pixels.x / pixels.y),
+		"Rest camp scene covers the view without stretching")
+	_check(visible.position.x >= 0.0 and visible.position.y >= 0.0
+		and visible.end.x <= pixels.x + 0.01 and visible.end.y <= pixels.y + 0.01
+		and is_equal_approx(visible.size.x * (drawn.size.x / pixels.x), view.size.x),
+		"Rest camp scene crops only the centred window that fills the view")
+	# Safe missing-art fallback: no image still leaves the opaque slate, never a crash.
+	var missing = VISIT_ART.VisitBackdrop.new()
+	root.add_child(missing)
+	missing.bind_visit("Rest", VISIT_ART._load_art_texture(
+		"res://assets/paper/backgrounds/fabricated_missing_camp.png"))
+	_check(missing.view_rect().size.x > 0.0 and not missing.has_image()
+		and missing.image_rect() == Rect2() and missing.image_crop() == Rect2()
+		and missing.slate_color().a >= 1.0,
+		"missing camp art keeps the opaque slate and draws no cover image")
+	missing.free()
+	_check(VISIT_ART.visit_backdrop_path("Unknown") == ""
+		and app.visit_backdrop_texture("Unknown") == null
+		and VISIT_ART.visit_backdrop_path("") == "",
+		"an unknown visit kind selects no art and cannot crash")
+	return bed.get_instance_id()
+
 
 func _fixture() -> Dictionary:
 	for value in range(1, 1000):
@@ -265,6 +316,7 @@ func _run() -> void:
 		_check(app.rest_view != null and app.run_map.get_route() == [fixture.fight, rest_id], "Rest advances map exactly once")
 		if app.rest_view == null:
 			break
+		var bed_id: int = _check_rest_backdrop()
 		_check_rest_forecast()
 		if session == 0:
 			replay_forecast = app.rest_hp_label.text
@@ -336,6 +388,8 @@ func _run() -> void:
 		_check(app.title_view.visible and app.run_heroes.is_empty() and app.run_map == null
 			and app.rest_recovery == null and app.rest_view == null and app.rest_hp_label == null
 			and app.deck == null, "Return clears run and forecast and post-Return inputs are inert")
+		_check(app.visit_backdrop == null and not is_instance_id_valid(bed_id),
+			"Return releases the Rest art bed with its visit")
 		_check(randi() == global_next, "entire route/rest path leaves global RNG unchanged")
 	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	await _frames()

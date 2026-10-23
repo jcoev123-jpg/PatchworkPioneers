@@ -316,6 +316,11 @@ var route_atlas: RunRouteAtlas
 var route_atlas_close: Button
 ## The opening chooser's pointer-inert page backdrop; null for a connected route.
 var route_book_backdrop: Control
+## The mounted noncombat visit's pointer-inert art bed; null outside a Rest/Shop visit.
+var visit_backdrop: Control
+## Key: visit art path, value: Texture2D or null. A missing file is cached too, so a
+## visit never probes the same absent image twice.
+var _visit_backdrops: Dictionary = {}
 var route_buttons: Array[Button] = []
 ## Key: token art path, value: Texture2D or null. A negative entry is cached too, so a
 ## missing token is never probed twice and its drawn fallback stays authoritative.
@@ -2251,6 +2256,7 @@ func _open_quiet_spool(id: String, source: WeakRef) -> bool:
 	if not panel.open_event(record):
 		panel.free()
 		return false
+	_mount_event_backdrop(panel)
 	if not run_map.choose_node(id):
 		panel.free()
 		return false
@@ -2501,6 +2507,7 @@ func _open_moth_infestation(id: String, source: WeakRef) -> bool:
 	if not panel.open_event(record):
 		panel.free()
 		return false
+	_mount_event_backdrop(panel)
 	# The authored Moth description is shorter than Quiet Spool's; this keeps the
 	# selector and all three choices inside the same paper panel.
 	panel.description_label.custom_minimum_size = Vector2(0, 64)
@@ -3032,6 +3039,7 @@ func _continue_from_rest(visit: RunRestRecovery, source_map: WeakRef, prior: Arr
 		_rest_patch_context = _rest_patch_snapshot()
 	button.disabled = true
 	_clear_rest_stitch_overlay()
+	_clear_visit_backdrop()
 	rest_view.hide()
 	_present_connected_route(source_map)
 
@@ -3059,6 +3067,7 @@ func _continue_from_shop(visit: RunShopVisit, source_map: WeakRef, prior: Array[
 	if not visit.close_visit():
 		return
 	button.disabled = true
+	_clear_visit_backdrop()
 	shop_view.hide()
 	_present_connected_route(source_map)
 
@@ -3129,6 +3138,7 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_view.set_anchors_preset(Control.PRESET_CENTER)
 	rest_view.add_theme_constant_override("separation", 8)
 	add_child(rest_view)
+	_mount_visit_backdrop("Rest", rest_view)
 	var heading := Label.new()
 	heading.text = "Rest - " + id
 	rest_view.add_child(heading)
@@ -3313,6 +3323,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_view.set_anchors_preset(Control.PRESET_CENTER)
 	shop_view.add_theme_constant_override("separation", 12)
 	add_child(shop_view)
+	_mount_visit_backdrop("Shop", shop_view)
 	var heading := Label.new()
 	heading.text = "Shop - " + id
 	shop_view.add_child(heading)
@@ -3578,6 +3589,55 @@ func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -
 	carry.bind_wardrobe(_shop_wardrobe, carry.torn, result.wardrobe_state)
 	_shop_patch_context = _shop_patch_snapshot()
 	_refresh_shop()
+
+
+## Presentation-only visit scene lookup: a missing file, or a kind without authored art,
+## loads nothing and the visit bed keeps its opaque slate.
+func visit_backdrop_texture(kind: String) -> Texture2D:
+	var path := STAGE_ROSTER.visit_backdrop_path(kind)
+	if path.is_empty():
+		return null
+	if not _visit_backdrops.has(path):
+		_visit_backdrops[path] = STAGE_ROSTER._load_art_texture(path)
+	return _visit_backdrops[path] as Texture2D
+
+
+## Mounts the authored art bed of one new Rest/Shop visit as a full-screen sibling placed
+## immediately before the visit view: it is never a layout child, so the view keeps its own
+## rows, and it never takes pointer or keyboard input.
+func _mount_visit_backdrop(kind: String, view: Control) -> void:
+	_clear_visit_backdrop()
+	if not is_instance_valid(view) or view.get_parent() != self:
+		return
+	var bed = STAGE_ROSTER.VisitBackdrop.new()
+	bed.bind_visit(kind, visit_backdrop_texture(kind))
+	add_child(bed)
+	move_child(bed, view.get_index())
+	visit_backdrop = bed
+
+
+## Releases the visit bed with the visit that mounted it; continuation and title return
+## both leave no backdrop behind.
+func _clear_visit_backdrop() -> void:
+	if is_instance_valid(visit_backdrop):
+		if visit_backdrop.get_parent() != null:
+			visit_backdrop.get_parent().remove_child(visit_backdrop)
+		visit_backdrop.queue_free()
+	visit_backdrop = null
+
+
+## Mounts the Event art inside a freshly opened choice panel, directly above its opaque
+## slate so a loaded scene shows while a missing file still leaves the slate. It is a
+## child of the panel, so closing or returning releases it with the visit.
+func _mount_event_backdrop(panel: Control) -> void:
+	if not is_instance_valid(panel):
+		return
+	var slate := panel.get_node_or_null("SlateBackdrop")
+	var bed = STAGE_ROSTER.VisitBackdrop.new()
+	bed.name = "EventBackdrop"
+	bed.bind_visit("Event", visit_backdrop_texture("Event"))
+	panel.add_child(bed)
+	panel.move_child(bed, 0 if slate == null else slate.get_index() + 1)
 
 
 func _focus_visit(view: VBoxContainer) -> void:
@@ -4201,6 +4261,7 @@ func _return_to_title() -> void:
 		and run_map.get_route().is_empty()
 	_route_from_base = false
 	_close_base()
+	_clear_visit_backdrop()
 	_clear_quiet_spool()
 	_quiet_spool_completed = false
 	_clear_moth()

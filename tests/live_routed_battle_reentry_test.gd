@@ -9,19 +9,28 @@ const BATTLE_BACKDROP := {
 }
 
 
-## The replacement battle mounts exactly the authored scene of its admitted node type,
-## covers the whole battle view behind every fresh control, and takes no input.
+## The replacement battle mounts exactly the authored scene of its admitted node type
+## (and, for a Fight, its own area floor), covers the whole battle view behind every
+## fresh control, and takes no input.
 func _assert_backdrop(roster, kind: String) -> void:
 	var backdrop = roster.backdrop
+	var floor_number: int = int(app.run_map.get_node(app.run_map.get_current_node_id()).get("floor", 0))
+	var expected: String = ROSTER_ART.stage_backdrop_path(kind, floor_number)
 	_check(is_instance_valid(backdrop) and roster._battle == app.battle_view
 		and backdrop.get_parent() == app.battle_view and backdrop.get_index() == 0
 		and backdrop.battle_kind == kind,
 		kind + " battle mounts its own single backdrop behind every replacement control")
 	if not is_instance_valid(backdrop):
 		return
-	var expected: String = BATTLE_BACKDROP.get(kind, "")
-	_check(not expected.is_empty() and ROSTER_ART.backdrop_path(kind) == expected,
-		kind + " kind selects its own authored backdrop path")
+	if kind == "Fight":
+		# The Fight stage follows the admitted node's integer floor across four areas.
+		_check(floor_number >= 1 and floor_number <= 11
+			and not ROSTER_ART.fight_area_name(floor_number).is_empty()
+			and expected == ROSTER_ART.fight_backdrop_path(floor_number),
+			"Fight on floor %d selects its own area scene" % floor_number)
+	else:
+		_check(not expected.is_empty() and ROSTER_ART.backdrop_path(kind) == expected,
+			kind + " kind selects its own authored backdrop path")
 	_check(backdrop.has_image() == ResourceLoader.exists(expected),
 		kind + " image is drawn only when the authored file is present")
 	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE
@@ -63,8 +72,9 @@ func _path_to(map: RunMap, source: String, kind: String) -> Array:
 	return []
 
 
-func _battle_fixture(kind: String) -> Dictionary:
-	for value in range(1, 3000):
+func _battle_fixture(kind: String, min_path: int = 0, max_path: int = 0,
+		limit: int = 3000) -> Dictionary:
+	for value in range(1, limit):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -73,7 +83,10 @@ func _battle_fixture(kind: String) -> Dictionary:
 			if map.get_node(id).type != "Fight":
 				continue
 			var path := _path_to(map, id, kind)
-			if kind == "Fight" and path.size() != 1:
+			# A routed Fight can be required on a later area floor (4-6, the woods) so a
+			# mounted stage exercises a scene other than the opening meadow.
+			if kind == "Fight" and min_path > 0 and (path.size() < min_path
+					or (max_path > 0 and path.size() > max_path)):
 				continue
 			if path.is_empty():
 				continue
@@ -165,10 +178,16 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 					else:
 						await _click(escape)
 			"Rest":
+				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Rest",
+					"Rest visit mounts its own art bed")
 				await _click(app.rest_heal_button)
 				await _click(app.rest_continue_button)
+				_check(app.visit_backdrop == null, "Rest continuation releases the visit art bed")
 			"Shop":
+				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Shop",
+					"Shop visit mounts its own art bed")
 				await _click(app.shop_continue_button)
+				_check(app.visit_backdrop == null, "Shop continuation releases the visit art bed")
 		_check(app.route_view != null and app.route_view.is_visible_in_tree(), "completed visit keeps connected chooser live")
 
 
@@ -201,6 +220,50 @@ func _click(control: Control) -> void:
 			"routed mouse action fits viewport: %s %s" % [control.name, control.get_global_rect()])
 	await super._click(control)
 
+## A real routed Fight admitted on a later area floor (4-6, the woods) must mount that
+## floor's own landscape, not the opening meadow. Combat mechanics are covered above, so
+## this fixture only walks the real route and inspects the mounted stage.
+func _deep_area_stage() -> void:
+	var fixture := _battle_fixture("Fight", 3, 5, 20000)
+	_check(not fixture.is_empty(), "seeded connected path reaches a woods-floor Fight")
+	if fixture.is_empty():
+		return
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	await _click(_route_action(fixture.fight))
+	_check(app.deck != null and app.party != null, "deep area fixture starts a real opening battle")
+	if app.deck == null or app.party == null:
+		return
+	for enemy in app.enemies.get_enemies():
+		app.enemies.apply_damage(enemy.position, 9999)
+	app._observe_battle_result()
+	await _frames()
+	await _click(app.reward_buttons[3])
+	await _click(app.continue_button)
+	var transit: Array = fixture.path.duplicate()
+	var deep: String = transit.pop_back()
+	await _visit_path(transit, false)
+	var deep_floor: int = int(app.run_map.get_node(deep).get("floor", 0))
+	_check(app.run_map.get_node(deep).type == "Fight" and deep_floor >= 4 and deep_floor <= 6,
+		"deep fixture target is a genuine woods-floor Fight")
+	var expected: String = ROSTER_ART.fight_backdrop_path(deep_floor)
+	await _click(_route_action(deep))
+	var roster = app.get_node("LiveEnemyRoster")
+	_check(app.run_map.get_current_node_id() == deep and is_instance_valid(roster.backdrop)
+		and roster.backdrop.battle_kind == "Fight"
+		and roster.backdrop.has_image() == ResourceLoader.exists(expected)
+		and roster.backdrop.stage_texture.resource_path == expected,
+		"a mounted Fight on a later area floor draws that area's own landscape")
+	_check(expected == "res://assets/paper/backgrounds/battle_woods.png",
+		"the mounted later-area stage is the committed woods scene, not the meadow")
+	for enemy in app.enemies.get_enemies():
+		app.enemies.apply_damage(enemy.position, 9999)
+	app._observe_battle_result()
+	await _frames()
+	await _click(app.return_button)
+	_check(app.title_view.visible and app.run_map == null, "deep area check returns to a clean title")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -209,7 +272,7 @@ func _run() -> void:
 	presenter = app.get_node("LiveAttackPreview")
 	var retained: Array[Callable] = []
 	for kind in ["Fight", "Elite", "Boss"]:
-		var fixture := _battle_fixture(kind)
+		var fixture := _battle_fixture(kind, 1, 1) if kind == "Fight" else _battle_fixture(kind)
 		_check(not fixture.is_empty(), "generated connected path reaches " + kind)
 		if fixture.is_empty():
 			continue
@@ -412,6 +475,7 @@ func _run() -> void:
 				and app.route_view == null and app.terminal_result_panel == null,
 				"terminal/title cleanup leaves no inventory, reward, ledger or overlay")
 			_check(randi() == global_next, "connected battle never consumes global RNG")
+	await _deep_area_stage()
 	app.free()
 	await _frames()
 	for failure in failures:
