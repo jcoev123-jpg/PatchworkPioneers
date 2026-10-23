@@ -27,13 +27,16 @@ const CHIP_FONT_SIZES := [11, 10, 9]
 const CHIP_SEPARATION := 2
 const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
-	"quilted_coat": "Quilted Coat"}
+	"quilted_coat": "Quilted Coat", "padded_vest": "Padded Vest",
+	"double_quilt_coat": "Double Quilt Coat", "scrap_lined_vest": "Scrap Lined Vest",
+	"wool_patch_cloak": "Wool Patch Cloak", "chain_stitched_coat": "Chain Stitched Coat"}
 
 var row: Control
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
 var _enemies: CombatEnemies
+var _coat_bonuses: Dictionary = {}
 
 
 func _ready() -> void:
@@ -395,9 +398,13 @@ func _current_patches(app) -> Dictionary:
 	for id in CombatPatchAttackRules.EFFECTS:
 		if definitions.has(id) and definitions[id] != CombatPatchAttackRules.EFFECTS[id]["slot"]:
 			return {}
-	if definitions.has(RunPatchCoatRules.BONUS_ID) \
-			and definitions[RunPatchCoatRules.BONUS_ID] != "COAT":
-		return {}
+	if _coat_bonuses.is_empty():
+		for entry in coats:
+			_coat_bonuses[entry["id"]] = int(entry["max_hp_bonus"])
+	for entry in coats:
+		var coat_id: String = entry["id"]
+		if definitions.has(coat_id) and definitions[coat_id] != "COAT":
+			return {}
 	# A position swap is legal, but a borrowed ID, modified effective cap or
 	# resurrection of a persistently torn hero is not evidence of an active patch.
 	var live := _party.get_heroes()
@@ -434,9 +441,14 @@ func _patch_power(id: String) -> String:
 		"pincushion_arm":
 			return "Damage-dealing cards owned by this wearer deal +%d damage." % \
 				CombatPatchAttackRules.EFFECTS[id]["amount"]
-		RunPatchCoatRules.BONUS_ID:
-			return "+%d effective maximum HP while living; no free healing." % \
-				RunPatchCoatRules.BONUS
+	if _coat_bonuses.is_empty():
+		var coats_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/m04_coat_patches.json"))
+		if coats_raw is Array and RunPatchCoatRules._valid_authored(coats_raw):
+			for entry in coats_raw:
+				_coat_bonuses[entry["id"]] = int(entry["max_hp_bonus"])
+	if _coat_bonuses.has(id):
+		return "+%d effective maximum HP while living; no free healing." % _coat_bonuses[id]
 	return ""
 
 
@@ -633,3 +645,4 @@ func _clear() -> void:
 	_deck = null
 	_party = null
 	_enemies = null
+	_coat_bonuses.clear()

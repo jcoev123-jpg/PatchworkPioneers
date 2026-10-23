@@ -989,6 +989,7 @@ func _run() -> void:
 	await _unravel_bound_fight(app, presenter)
 	await _status_end_turns(app, presenter)
 	await _three_enemy_stage(app, presenter)
+	await _worn_coat_ribbons_test(app, presenter)
 	app.free()
 	await _frames()
 	_finish()
@@ -1331,6 +1332,121 @@ func _three_enemy_stage(app, presenter) -> void:
 		"typed three-enemy Return clears the whole ribbon row")
 
 
+func _worn_coat_ribbons_test(app, presenter) -> void:
+	_fixture_start(app)
+	await _frames()
+	_check(app.party != null and is_instance_valid(app.battle_view),
+		"worn coat ribbons: live battle ready")
+	if app.party == null or not is_instance_valid(app.battle_view):
+		return
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/starter_party.json"))
+	if typeof(raw) != TYPE_ARRAY or raw.size() != 3:
+		return
+	var combat_defs: Array = raw.duplicate(true)
+	for record in combat_defs:
+		record["max_hp"] = int(record["max_hp"])
+	var party_template := CombatParty.new(combat_defs)
+	var raw_heroes: Array = party_template.get_heroes()
+	var definitions := []
+	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches"]:
+		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/%s.json" % catalog))
+		if entries is Array:
+			for entry in entries:
+				definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned := ["chain_stitched_coat", "padded_vest", "double_quilt_coat", "button_eye", "pincushion_arm", "quilted_coat"]
+	var carry := RunTornCarryover.new(raw_heroes)
+	_check(carry.is_valid() and carry.torn.is_valid(), "carryover and torn valid")
+	var wardrobe := RunPatchWardrobe.new(raw_heroes, owned, definitions, 6, 50, ["warden_strike"], 93811, true)
+	_check(wardrobe.is_valid(), "wardrobe valid for live coats test")
+	if not carry.is_valid() or not wardrobe.is_valid():
+		return
+	# Sew chain_stitched_coat (+7) on Warden (pos 1), padded_vest (+4) on Seamstress (pos 2)
+	# Tinker (pos 3) has no coat sewn (unworn)
+	_check(wardrobe.sew("chain_stitched_coat", "warden", "COAT", "sew:chain", wardrobe.get_snapshot()).ok,
+		"Warden sews chain_stitched_coat")
+	_check(wardrobe.sew("padded_vest", "seamstress", "COAT", "sew:padded", wardrobe.get_snapshot()).ok,
+		"Seamstress sews padded_vest")
+	_check(carry.can_bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"can_bind_wardrobe is true")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"carryover binds wardrobe with authored coats")
+	app.party_carryover = carry
+	var combat_party: CombatParty = carry.create_next_fight_party()
+	_check(combat_party != null and combat_party.is_valid(),
+		"combat party created with authored coat projections")
+	if combat_party == null:
+		return
+	app.party = combat_party
+	presenter._sync_battle()
+	await _frames()
+	var meters := _meters(app)
+	_check(meters.size() >= 5, "hero and enemy meters mounted for coat test")
+	if meters.size() < 3:
+		return
+	# Hero 1: Warden wearing chain_stitched_coat (+7)
+	var warden_meter: CombatActorMeter = meters[0]
+	_check(warden_meter.hp_text.text == "40/47", "Warden HP text shows 40/47 with +7 coat")
+	var warden_patches := warden_meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+	_check(warden_patches != null and warden_patches.visible, "Warden patch row is visible")
+	var warden_coat_btn := warden_patches.get_node("PatchCOAT") as Button
+	_check(warden_coat_btn != null and warden_coat_btn.visible and warden_coat_btn.text == "COAT",
+		"Warden COAT chip visible with label COAT")
+	_check(warden_coat_btn.tooltip_text.contains("Warden (warden)")
+		and warden_coat_btn.tooltip_text.contains("Chain Stitched Coat (chain_stitched_coat) — COAT")
+		and warden_coat_btn.tooltip_text.contains("ACTIVE")
+		and warden_coat_btn.tooltip_text.contains("+7 effective maximum HP while living; no free healing."),
+		"Warden COAT chip tooltip correctly names Chain Stitched Coat, ACTIVE, and +7 HP bonus")
+	_check(not (warden_patches.get_node("PatchHEAD") as Button).visible
+		and not (warden_patches.get_node("PatchARM") as Button).visible,
+		"unsewn HEAD/ARM slots not mislabeled on Warden")
+	# Hero 2: Seamstress wearing padded_vest (+4)
+	var seamstress_meter: CombatActorMeter = meters[1]
+	_check(seamstress_meter.hp_text.text == "30/34", "Seamstress HP text shows 30/34 with +4 coat")
+	var seamstress_patches := seamstress_meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+	_check(seamstress_patches != null and seamstress_patches.visible, "Seamstress patch row is visible")
+	var seamstress_coat_btn := seamstress_patches.get_node("PatchCOAT") as Button
+	_check(seamstress_coat_btn != null and seamstress_coat_btn.visible and seamstress_coat_btn.text == "COAT",
+		"Seamstress COAT chip visible with label COAT")
+	_check(seamstress_coat_btn.tooltip_text.contains("Seamstress (seamstress)")
+		and seamstress_coat_btn.tooltip_text.contains("Padded Vest (padded_vest) — COAT")
+		and seamstress_coat_btn.tooltip_text.contains("ACTIVE")
+		and seamstress_coat_btn.tooltip_text.contains("+4 effective maximum HP while living; no free healing."),
+		"Seamstress COAT chip tooltip correctly names Padded Vest, ACTIVE, and +4 HP bonus")
+	# Hero 3: Tinker unworn COAT slot
+	var tinker_meter: CombatActorMeter = meters[2]
+	var tinker_patches := tinker_meter.get_node_or_null("Padding/Content/PatchButtons") as HBoxContainer
+	if tinker_patches != null:
+		var tinker_coat_btn := tinker_patches.get_node("PatchCOAT") as Button
+		_check(not tinker_coat_btn.visible and tinker_coat_btn.text.is_empty()
+			and tinker_coat_btn.tooltip_text.is_empty(),
+			"Tinker unworn COAT chip is hidden with no active bonus or tooltip")
+	# Real pointer hover on the active coat button
+	await _hover(warden_coat_btn)
+	_check(root.gui_get_hovered_control() == warden_coat_btn, "real pointer hover reaches Warden COAT chip")
+	await _hover(seamstress_coat_btn)
+	_check(root.gui_get_hovered_control() == seamstress_coat_btn, "real pointer hover reaches Seamstress COAT chip")
+	# Downed wearer test: down Seamstress
+	_check(app.party.apply_damage(2, 999) and app.party.is_downed(2), "Seamstress downed")
+	presenter._sync_battle()
+	await _frames()
+	_check(seamstress_coat_btn.visible and seamstress_coat_btn.text == "COAT",
+		"downed Seamstress keeps sewn COAT chip")
+	_check(seamstress_coat_btn.tooltip_text.contains("DORMANT")
+		and not seamstress_coat_btn.tooltip_text.contains("ACTIVE")
+		and seamstress_coat_btn.tooltip_text.contains("Padded Vest (padded_vest) — COAT")
+		and seamstress_coat_btn.tooltip_text.contains("+4 effective maximum HP while living; no free healing."),
+		"downed wearer chip shows DORMANT condition and no active bonus")
+	_check(bool(seamstress_coat_btn.get_meta("fallen_chip")) == true,
+		"downed wearer chip styled with fallen tint")
+	# Invariant checks: ensure carryover and wardrobe remain valid
+	_check(app.party_carryover == carry and carry._wardrobe == wardrobe,
+		"presentation inspection leaves carryover and wardrobe untouched")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
+		"worn coat ribbons test cleans up and returns to title")
 func _finish() -> void:
 	for failure in failures:
 		printerr(failure)
