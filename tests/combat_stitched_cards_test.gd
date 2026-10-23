@@ -14,6 +14,8 @@ func _initialize() -> void:
 	_test_passives_and_statuses()
 	_test_draw_rollback_and_replay()
 	_test_spare_spool()
+	_test_pool_healing_halves()
+	_test_pool_heal_failures()
 	_test_spool_rejections()
 	for failure in failures:
 		printerr(failure)
@@ -63,7 +65,13 @@ func _snapshot(c: Dictionary) -> Array:
 	return [c.deck.draw_pile.duplicate(), c.deck.hand.duplicate(), c.deck.discard_pile.duplicate(),
 		c.deck.energy, c.deck.turn_active, c.deck._rng.state, c.party.get_heroes(),
 		c.enemies.get_enemies(), c.attacks._tinker._consumed,
-		{} if c.attacks._patches == null else c.attacks._patches.latch_snapshot(), c.rest.get_snapshot()]
+		{} if c.attacks._patches == null else c.attacks._patches.latch_snapshot(), c.rest.get_snapshot(),
+		c.deck._rng.seed, c.rest.is_consumed(),
+		{} if c.get("wardrobe") == null else c.wardrobe.get_snapshot(),
+		{} if c.get("torn") == null else c.torn.read_state(),
+		{} if c.service._support._patches == null else c.service._support._patches.active_snapshot(),
+		c.service._support._wardrobe_snapshot.duplicate(true),
+		c.service._support._torn_snapshot.duplicate(true)]
 
 
 func _reject(c: Dictionary, a: int, b: int, label: String) -> void:
@@ -407,3 +415,142 @@ func _test_spool_rejections() -> void:
 	_reject(c, 0, 0, "bound draw RNG and piles roll back on missing second heal target")
 	_check(_play(c, 0, 1).ok and c.party.get_hero(1).hp == 35 and c.deck.energy == 1
 		and c.deck.discard_pile == [c.id] and c.deck.hand.size() == 1, "draw/heal retry commits once with seven HP")
+
+func _test_pool_healing_halves() -> void:
+	var pool := SeamstressPoolCards.new()
+	for id in CombatStitchedTargetPreview.POOL_HEAL_IDS:
+		var authored: Dictionary = pool.get_definition(id)
+		_check(not authored.is_empty() and authored == RunRestStitchCards.resolve_card_definition(id),
+			id + ": authentic pool base/+ definition")
+		var field: bool = id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
+		var counterpart := POP if field else "warden_brace"
+		for reverse in [false, true]:
+			for mode in ["unbound", "absent", "unsewn", "wrong", "sewn"]:
+				var first: String = counterpart if reverse else id
+				var second: String = id if reverse else counterpart
+				var c := _fixture(first, second, 12030)
+				_bind_spool(c, mode)
+				_check(c.party.apply_damage(1, 12) and c.party.apply_damage(2, 11)
+					and c.party.apply_damage(3, 10), id + ": three real living wounds")
+				var before := _snapshot(c)
+				var expected := before.duplicate(true)
+				expected[1] = []
+				expected[2] = [c.id]
+				expected[3] = 0 if field else 1
+				var heal: int = authored.effects.heal + (2 if mode == "sewn" else 0)
+				var block: int = authored.effects.get("block", 0)
+				var affected: Array[int] = []
+				affected.assign([1, 2, 3] if field else [1])
+				for pos in affected:
+					expected[6][pos - 1].hp += heal
+				if field:
+					expected[7][1].hp -= 8
+					expected[8] = true
+				else:
+					expected[6][0].block = 7 + block
+				var result := _play(c, (2 if field else 0) if reverse else (0 if field else 1),
+					(0 if field else 1) if reverse else (2 if field else 0))
+				var label: String = str(id) + " / " + counterpart + " order " + str(reverse) + " Spool " + mode
+				_check(result.ok and result.halves.size() == 2, label + ": two effects committed")
+				if not result.ok:
+					continue
+				var heal_half: Dictionary = result.halves[1 if reverse else 0]
+				_check(heal_half == {"ok": true, "effect": "party_heal" if field else "ally_heal",
+					"amount": heal, "block": block, "affected_positions": affected},
+					label + ": exact heal, additive Block and recipient outcomes")
+				if field:
+					_check(result.halves[0 if reverse else 1] ==
+						{"ok": true, "hits": [_expected_hit(2, 8)]},
+						label + ": Tinker counterpart attack resolved with first-attack passive")
+				else:
+					_check(result.halves[0 if reverse else 1] ==
+						{"ok": true, "effect": "self_block", "amount": 7},
+						label + ": Warden Brace adds independently to Darning Block")
+				_check(_snapshot(c) == expected,
+					label + ": exact HP/Block, enemy, deck, cost, seeded RNG and patch ledgers")
+	# Full-HP healing remains legal and cannot overflow a hero's maximum.
+	for id in CombatStitchedTargetPreview.POOL_HEAL_IDS:
+		var field: bool = id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
+		var c := _fixture(id, "warden_brace")
+		_check(_play(c, 0 if field else 1, 0).ok, id + ": heal at maximum HP legal")
+		_check(c.party.get_hero(1).hp == 40 and c.party.get_hero(2).hp == 30
+			and c.party.get_hero(3).hp == 26,
+			id + ": full-health recipients capped to three authored maxima")
+	var surviving := _fixture("seamstress_field_mend_plus", "warden_brace")
+	_check(surviving.party.apply_damage(1, 9)
+		and surviving.party.apply_damage(2, 8)
+		and surviving.party.apply_damage(3, 26)
+		and surviving.party.is_downed(3), "Field Mend party includes genuine downed Tinker")
+	var survivor_before := _snapshot(surviving)
+	var all := _play(surviving, 0, 0)
+	_check(all.ok and all.halves[0].affected_positions == [1, 2]
+		and surviving.party.get_hero(1).hp == 37
+		and surviving.party.get_hero(2).hp == 28 and surviving.party.get_hero(3).hp == 0,
+		"Field Mend+ heals only two living heroes, cannot revive torn Tinker")
+	_check(surviving.deck._rng.state == survivor_before[5]
+		and surviving.deck.energy == 0 and surviving.deck.discard_pile == [surviving.id],
+		"Field Mend+ and Brace commit single three-energy discard, no RNG")
+
+
+func _test_pool_heal_failures() -> void:
+	var c := _fixture("seamstress_field_mend", POP)
+	_bind_spool(c)
+	_reject(c, 1, 2, "party_all has no manually selected ally or enemy")
+	c.deck.try_spend_energy(1)
+	_reject(c, 0, 2, "Field Mend stitched cost three must remain affordable")
+	c = _fixture("seamstress_field_mend_plus", "warden_brace")
+	_bind_spool(c)
+	c.deck.discard_played(c.id)
+	_reject(c, 0, 0, "missing authentic held Field Mend composite")
+	c = _fixture("seamstress_thimble_tea", "warden_brace")
+	_bind_spool(c)
+	var swapped: Array[Dictionary] = c.party.get_heroes()
+	c.party = CombatParty.new([swapped[1], swapped[0], swapped[2]])
+	_reject(c, 1, 0, "Tea owner at illegal front FROM")
+	c = _fixture("seamstress_thimble_tea_plus", "warden_brace")
+	_bind_spool(c)
+	_check(c.party.apply_damage(3, 26) and c.party.is_downed(3),
+		"chosen ally is truly downed")
+	_reject(c, 3, 0, "Tea cannot revive downed chosen ally")
+	c = _fixture("seamstress_darning_plus", "warden_brace")
+	_bind_spool(c)
+	_check(c.party.gain_block(2, CombatParty.MAX_INT), "genuine Darning Block overflow precondition")
+	_reject(c, 2, 0, "first Darning overflow rejects before healing or counterpart")
+	c = _fixture("seamstress_darning", "warden_brace")
+	_bind_spool(c)
+	_check(c.party.apply_damage(2, 8) and c.party.gain_block(1, CombatParty.MAX_INT),
+		"wounded Seamstress, Warden at full Block before second half")
+	_reject(c, 2, 0, "second Brace overflow rolls back first Darning heal plus Block")
+	c = _fixture("tinker_tune_up", "seamstress_darning_plus")
+	_bind_spool(c)
+	c.deck.discard_pile.assign(["warden_strike", POP, "warden_brace"])
+	_check(c.party.apply_damage(1, 11)
+		and c.party.gain_block(1, CombatParty.MAX_INT),
+		"real RNG reshuffle and Darning overflow setup")
+	_reject(c, 0, 1, "draw/shuffle first then Darning Block overflow: complete rollback")
+	c = _fixture("seamstress_darning", "warden_brace")
+	_bind_spool(c, "torn")
+	_check(c.party.is_downed(2) and c.wardrobe.project_active(c.torn.read_state()).active.seamstress.is_empty(),
+		"authentic sewn Spare Spool wearer torn and patch inactive")
+	_reject(c, 1, 0, "torn Seamstress cannot use stitched pool card")
+	for mode in ["null", "stale_wardrobe", "stale_torn", "drift"]:
+		c = _fixture("seamstress_field_mend", "warden_brace")
+		_bind_spool(c)
+		var w: Dictionary = c.wardrobe.get_snapshot()
+		var t: Dictionary = c.torn.read_state()
+		match mode:
+			"null":
+				_check(not c.service.bind_patch_wardrobe(null, c.torn),
+					"invalid pool patch binding rejected")
+			"stale_wardrobe":
+				w.scraps += 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t),
+					"stale pool wardrobe receipt rejected")
+			"stale_torn":
+				t.heroes[0].hp -= 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t),
+					"stale pool torn receipt rejected")
+			"drift":
+				_check(c.wardrobe.start_rest("future-rest", w).ok,
+					"genuine bound wardrobe ledger drift")
+		_reject(c, 0, 0, mode + ": stitched pool binding fails closed")
