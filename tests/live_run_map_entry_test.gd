@@ -115,6 +115,14 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 		"same chooser hidden; close focused")
 	_check(atlas._map == app.run_map and atlas.global_position == Vector2(20, 20)
 		and atlas.size == Vector2(1240, 600), "real map bound at readable preview bounds")
+	# The opening has no committed node, so the live preview never invents a reveal.
+	_check(not atlas.is_revealing() and atlas.reveal_duration() == RunRouteAtlas.REVEAL_DURATION,
+		"live opening atlas reveals nothing before its first committed node")
+	var masked_threads := 0
+	for child in atlas.get_children():
+		if child is Line2D and child.gradient != null:
+			masked_threads += 1
+	_check(masked_threads == 0, "live opening threads render with their authoritative colours")
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	_check(viewport.encloses(atlas.get_global_rect()) and viewport.encloses(app.route_atlas_close.get_global_rect())
 		and app.route_atlas_close.global_position.y >= atlas.get_global_rect().end.y, "atlas and reachable close fully fit")

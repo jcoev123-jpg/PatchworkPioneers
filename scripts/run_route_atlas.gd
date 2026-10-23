@@ -10,6 +10,13 @@ extends Control
 ## thread and patch, and a drawn pin marks the party's current patch. The optional owner
 ## map-board image (MAP_BOARD_PATH) replaces the drawn pages when ResourceLoader confirms
 ## it exists; a missing image keeps the complete drawn book, so no PNG is required.
+##
+## Presentation only: a stitch that becomes legal because the party just visited its source
+## sews into view with a transparent-to-coloured gradient mask on the existing full path.
+## A Line2D gradient REPLACES default_color while installed, so the mask repeats the stitch's
+## own legal-thread RGB: opaque behind the sewing front, fully transparent ahead of it.
+## The mask never touches points, default_color, metadata or the model, is removed when the
+## reveal ends (or the view rebuilds), and every request/refresh path stays synchronous.
 
 const ATLAS_SIZE := Vector2(1240.0, 600.0)
 const NODE_SIZE := Vector2(84.0, 58.0)
@@ -40,6 +47,9 @@ const THREAD := Color("#c9b996")
 const INK := Color("#4a3f35")
 const BOOKMARK_FILL := Color("#a2544a")
 const PIN_SIZE := Vector2(24.0, 30.0)
+## Normal and presentation-only fast reveal of a newly legal stitch, in seconds.
+const REVEAL_DURATION := 0.6
+const REVEAL_FAST_DURATION := 0.15
 
 signal node_requested(id: String)
 
@@ -50,6 +60,15 @@ var _rendered_graph: Array = []
 var _rendered_route: Array[String] = []
 var _rendered_legal: Array[String] = []
 var _rendered_shortcuts: Array[String] = []
+## Last map snapshot this view actually rendered, so a repeat refresh never replays.
+var _rendered_map: RunMap = null
+var _has_snapshot := false
+## Running stitch reveals only; every entry is released by the next refresh or teardown.
+var _reveal_masks: Dictionary = {}
+var _reveal_tweens: Array[Tween] = []
+var _pending_reveals: Array[Line2D] = []
+## Presentation-only switch: the same reveal at 0.15 s instead of 0.6 s.
+var reveal_fast := false
 var _board_texture: Texture2D = null
 ## Owner or data may hand the board image in directly; null falls back to the path.
 var board_texture_override: Texture2D = null
@@ -93,6 +112,135 @@ func _ready() -> void:
 	resized.connect(queue_redraw)
 
 
+## A map may be bound before the view enters the tree (the overlay does exactly that),
+## so queued reveals start on the first processed frame instead of being dropped.
+func _process(_delta: float) -> void:
+	if _pending_reveals.is_empty():
+		set_process(false)
+		return
+	if not is_inside_tree():
+		return
+	var queued := _pending_reveals.duplicate()
+	_pending_reveals.clear()
+	for line in queued:
+		var mask: Gradient = _reveal_masks.get(line)
+		if is_instance_valid(line) and mask != null:
+			_start_reveal_tween(line, mask)
+	set_process(false)
+
+
+## Leaving the tree releases every reveal: no tween may outlive its threads.
+func _exit_tree() -> void:
+	_teardown_reveal()
+
+
+## Presentation-only switch: the same reveal settles in 0.15 s instead of 0.6 s.
+func set_reveal_fast(fast: bool) -> void:
+	reveal_fast = fast
+
+
+func reveal_duration() -> float:
+	return REVEAL_FAST_DURATION if reveal_fast else REVEAL_DURATION
+
+
+func is_revealing() -> bool:
+	return not _reveal_masks.is_empty() or not _pending_reveals.is_empty()
+
+
+## Canonical "source->target" keys whose stitch is currently sewing into view.
+func revealing_edges() -> Array[String]:
+	var keys: Array[String] = []
+	for line in _reveal_masks:
+		if is_instance_valid(line) and line.has_meta("from_id") and line.has_meta("to_id"):
+			keys.append(str(line.get_meta("from_id")) + "->" + str(line.get_meta("to_id")))
+	keys.sort()
+	return keys
+
+
+## Directed edges the model currently paints as visited-to-legal stitches.
+static func _legal_edge_keys(graph: Array, route: Array, legal: Array) -> Dictionary:
+	var keys: Dictionary = {}
+	for floor_nodes in graph:
+		for node in floor_nodes:
+			var source: String = node["id"]
+			if not route.has(source):
+				continue
+			for target in node["outgoing"]:
+				if legal.has(target):
+					keys[source + "->" + str(target)] = true
+	return keys
+
+
+## The mask is a hard alpha step that moves from the source end to the target end.
+## Line2D.gradient REPLACES default_color while it is installed, so both stops carry the
+## stitch's own legal-thread RGB: opaque behind the sewing front and fully transparent ahead,
+## which keeps the newly sewn pixels the model-selected colour instead of white.
+static func _new_reveal_mask(thread_color: Color) -> Gradient:
+	var mask := Gradient.new()
+	mask.interpolation_mode = Gradient.GRADIENT_INTERPOLATE_CONSTANT
+	var sewn := Color(thread_color.r, thread_color.g, thread_color.b, thread_color.a)
+	var unsewn := Color(thread_color.r, thread_color.g, thread_color.b, 0.0)
+	mask.set_color(0, sewn)
+	mask.set_color(1, unsewn)
+	mask.set_offset(0, 0.0)
+	mask.set_offset(1, 0.0)
+	return mask
+
+
+static func _set_reveal_front(mask: Gradient, progress: float) -> void:
+	if mask != null:
+		mask.set_offset(1, clampf(progress, 0.0, 1.0))
+
+
+## Attach a hidden-ahead-of-the-front mask to an existing full-path thread.
+func _begin_reveal(line: Line2D) -> void:
+	if not is_instance_valid(line):
+		return
+	var mask := _new_reveal_mask(line.default_color)
+	line.gradient = mask
+	_reveal_masks[line] = mask
+	if is_inside_tree():
+		_start_reveal_tween(line, mask)
+		return
+	if not _pending_reveals.has(line):
+		_pending_reveals.append(line)
+	set_process(true)
+
+
+func _start_reveal_tween(line: Line2D, mask: Gradient) -> void:
+	if not is_inside_tree() or not is_instance_valid(line):
+		return
+	var tween := create_tween()
+	tween.set_trans(Tween.TRANS_LINEAR)
+	tween.tween_method(func(value: float) -> void: _set_reveal_front(mask, value),
+		0.0, 1.0, reveal_duration())
+	tween.tween_callback(_finish_reveal.bind(line, mask))
+	_reveal_tweens.append(tween)
+
+
+## Completion drops the temporary mask so default_color stays authoritative.
+func _finish_reveal(line: Line2D, mask: Gradient) -> void:
+	if not is_instance_valid(line):
+		_reveal_masks.erase(line)
+		return
+	if _reveal_masks.get(line) == mask:
+		line.gradient = null
+		_reveal_masks.erase(line)
+
+
+func _teardown_reveal() -> void:
+	for tween in _reveal_tweens:
+		if is_instance_valid(tween):
+			tween.kill()
+	_reveal_tweens.clear()
+	for line in _reveal_masks:
+		if is_instance_valid(line):
+			line.gradient = null
+	_reveal_masks.clear()
+	_pending_reveals.clear()
+	set_process(false)
+
+
 func bind_map(map: RunMap) -> void:
 	_map = map
 	refresh()
@@ -102,11 +250,21 @@ func refresh() -> void:
 	# Each rebuild invalidates every previous marker callback, including callbacks
 	# retained by a caller after a Control has been detached or freed.
 	_revision += 1
+	# Snapshot what the party already saw before this rebuild releases it.
+	var previous_map := _rendered_map
+	var previous_graph := _rendered_graph
+	var previous_route := _rendered_route.duplicate()
+	var previous_legal := _rendered_legal.duplicate()
+	var had_snapshot := _has_snapshot
+	# Kill and release every prior reveal before its threads are removed.
+	_teardown_reveal()
 	_rendered_graph = []
 	_rendered_generation = 0
 	_rendered_route.clear()
 	_rendered_legal.clear()
 	_rendered_shortcuts.clear()
+	_rendered_map = null
+	_has_snapshot = false
 	# Synchronous removal avoids stale, queued-for-deletion duplicates on repeated refresh.
 	for child in get_children():
 		remove_child(child)
@@ -123,6 +281,19 @@ func refresh() -> void:
 	_rendered_graph = floors.duplicate(true)
 	_rendered_route = chosen.duplicate()
 	_rendered_legal = legal.duplicate()
+	_rendered_map = _map
+	_has_snapshot = true
+	# A visited-to-legal stitch is new only when this exact map never showed it before.
+	# An unchanged snapshot therefore keeps its already-shown stitches still.
+	var previous_edges: Dictionary = {}
+	if had_snapshot and previous_map == _map:
+		previous_edges = _legal_edge_keys(previous_graph, previous_route, previous_legal)
+	var reveal_keys: Dictionary = {}
+	if not _map.is_complete():
+		var current_edges := _legal_edge_keys(_rendered_graph, _rendered_route, _rendered_legal)
+		for key in current_edges:
+			if not previous_edges.has(key):
+				reveal_keys[key] = true
 	# Number only live choices, not all nodes or Dictionary insertion order.
 	# Source floor rows are explicitly sorted by their model position.
 	for floor_nodes in floors:
@@ -145,7 +316,7 @@ func refresh() -> void:
 			var source_id: String = node["id"]
 			for target_id in node["outgoing"]:
 				if positions.has(target_id):
-					_add_thread(source_id, target_id, positions, chosen, legal)
+					_add_thread(source_id, target_id, positions, chosen, legal, reveal_keys)
 	for floor_index in range(floors.size()):
 		var floor_header := Label.new()
 		floor_header.name = "Floor%02d" % (floor_index + 1)
@@ -280,7 +451,7 @@ func _node_position(floor_index: int, row_index: int) -> Vector2:
 
 
 func _add_thread(source: String, target: String, positions: Dictionary,
-		chosen: Array[String], legal: Array[String]) -> void:
+		chosen: Array[String], legal: Array[String], reveal_keys: Dictionary) -> void:
 	var line := Line2D.new()
 	line.name = "Thread_%s_%s" % [source, target]
 	line.set_meta("from_id", source)
@@ -315,6 +486,8 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 		_:
 			line.default_color = OTHER_THREAD
 	add_child(line)
+	if state == "legal" and reveal_keys.has(source + "->" + target):
+		_begin_reveal(line)
 
 
 func _add_marker(id: String, kind: String, at: Vector2,

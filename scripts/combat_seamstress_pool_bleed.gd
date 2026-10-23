@@ -13,7 +13,56 @@ const SUPPORTED_IDS := [
 var _attacks := CombatStatusAttacks.new()
 
 
+## Side-effect-free projection of a legal, genuinely held enemy-single card.
+## Applied Bleed is FUTURE owner-turn-end HP loss; no status ages here.
+func forecast_single(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int) -> Dictionary:
+	if card_id not in SUPPORTED_IDS or card_id.begins_with("seamstress_blanket_stitch"):
+		return {"ok": false}
+	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position)
+	if not plan.get("ok", false) or plan.positions.size() != 1:
+		return {"ok": false}
+	var enemy: Dictionary = enemies.get_enemy(target_position)
+	var current: Dictionary = enemy.get("statuses", {})
+	var additions: Dictionary = plan.applications[target_position]
+	var damage := 0
+	if plan.is_running:
+		damage = CombatStatuses.new().adjusted_attack_damage(
+			plan.damage_value, plan.owner.get("statuses", {}), current)
+	var blocked: int = mini(damage, enemy["block"])
+	var hp_loss: int = mini(enemy["hp"], damage - blocked)
+	return {"ok": true, "position": target_position, "cost": plan.cost,
+		"damage": damage, "block_absorbed": blocked, "hp_loss": hp_loss,
+		"bleed_before": current.get("bleed", 0),
+		"bleed_after": current.get("bleed", 0) + additions.get("bleed", 0),
+		"exposed_before": current.get("exposed", 0),
+		"exposed_after": current.get("exposed", 0) + additions.get("exposed", 0)}
+
+
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		card_id: String, target_position: int = 0) -> Dictionary:
+	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position)
+	if not plan.get("ok", false):
+		return _failure()
+	# From here the authoritative models are guaranteed to accept operations.
+	if not deck.try_spend_energy(plan.cost):
+		return _failure()
+	deck.discard_played(card_id)
+	var hits: Array[Dictionary] = []
+	for position in plan.positions:
+		var event := {"damage": 0, "block_absorbed": 0, "hp_loss": 0}
+		if plan.is_running:
+			event = _attacks.resolve_vs_enemy(enemies, position, plan.damage_value,
+				plan.owner.get("statuses", {}), plan.targets[position])
+		hits.append({"position": position, "damage": event["damage"],
+			"block_absorbed": event["block_absorbed"], "hp_loss": event["hp_loss"],
+			"statuses": plan.applications[position].duplicate(true)})
+	# A lethal Running Stitch still applies to its original slain slot.
+	enemies.apply_statuses(plan.applications)
+	return {"ok": true, "hits": hits}
+
+
+func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0) -> Dictionary:
 	# No mutation until the entire party, enemy roster, target set and status
 	# batch have been validated. Do not substitute caller-supplied status maps.
@@ -112,23 +161,9 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not enemies.can_apply_statuses(applications):
 		return _failure()
 
-	# From here the authoritative models are guaranteed to accept operations.
-	if not deck.try_spend_energy(cost_value):
-		return _failure()
-	deck.discard_played(card_id)
-	var hits: Array[Dictionary] = []
-	for position in positions:
-		var event := {"damage": 0, "block_absorbed": 0, "hp_loss": 0}
-		if is_running:
-			event = _attacks.resolve_vs_enemy(enemies, position, damage_value,
-				owner.get("statuses", {}), targets[position])
-		hits.append({"position": position, "damage": event["damage"],
-			"block_absorbed": event["block_absorbed"], "hp_loss": event["hp_loss"],
-			"statuses": applications[position].duplicate(true)})
-	# A lethal Running Stitch is still an on-hit application to its original
-	# slot; CombatEnemies deliberately retains slain enemies' status records.
-	enemies.apply_statuses(applications)
-	return {"ok": true, "hits": hits}
+	return {"ok": true, "cost": cost_value, "positions": positions,
+		"owner": owner, "is_running": is_running, "damage_value": damage_value,
+		"targets": targets, "applications": applications}
 
 
 func _valid_effect(effects: Dictionary, required: Array[String]) -> bool:

@@ -28,6 +28,7 @@ var _bindings: Dictionary = {}
 var _choice: Dictionary = {}
 var _targets: Dictionary = {}
 var target_strip: PanelContainer
+var _preview: Label
 var _overlay: Control
 var last_event: Dictionary = {}
 
@@ -240,7 +241,7 @@ func _mount_strip(definition: Dictionary, legal: Array[int]) -> void:
 	target_strip.offset_left = -335
 	target_strip.offset_right = 335
 	target_strip.offset_top = 138
-	target_strip.offset_bottom = 238
+	target_strip.offset_bottom = 277
 	var patch := StyleBoxFlat.new()
 	patch.bg_color = CREAM
 	patch.border_color = THREAD
@@ -285,6 +286,8 @@ func _mount_strip(definition: Dictionary, legal: Array[int]) -> void:
 		if not button.disabled:
 			_targets[position] = button
 			button.pressed.connect(_on_target_pressed.bind(position, str(enemy["id"]), _token))
+			button.mouse_entered.connect(_show_preview.bind(position, _token))
+			button.focus_entered.connect(_show_preview.bind(position, _token))
 			chain.append(button)
 	var cancel_button := Button.new()
 	cancel_button.name = "Cancel"
@@ -293,11 +296,42 @@ func _mount_strip(definition: Dictionary, legal: Array[int]) -> void:
 	cancel_button.pressed.connect(_cancel.bind(true))
 	row.add_child(cancel_button)
 	chain.append(cancel_button)
+	_preview = Label.new()
+	_preview.name = "OutcomePreview"
+	_preview.add_theme_color_override("font_color", THREAD)
+	_preview.add_theme_font_size_override("font_size", 12)
+	_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_preview.custom_minimum_size.y = 18
+	column.add_child(_preview)
 	for i in range(chain.size()):
 		chain[i].focus_next = chain[i].get_path_to(chain[(i + 1) % chain.size()])
 		chain[i].focus_previous = chain[i].get_path_to(chain[(i - 1 + chain.size()) % chain.size()])
 	if not chain.is_empty():
 		chain[0].grab_focus()
+		if not _targets.is_empty():
+			_show_preview(legal[0], _token)
+
+
+func _show_preview(position: int, token: int) -> void:
+	if token != _token or not is_instance_valid(_preview):
+		return
+	_preview.text = ""
+	if not _targets.has(position) or not is_instance_valid(_targets[position]) \
+			or _targets[position].disabled or not _selection_valid():
+		return
+	var outcome: Dictionary = _service.forecast_single(
+		_deck, _party, _enemies, str(_choice.id), position)
+	if not outcome.get("ok", false):
+		return
+	var now := "Now: 0 damage"
+	if outcome.damage > 0:
+		now = "Now: %d damage (%d Block, %d HP)" % [
+			outcome.damage, outcome.block_absorbed, outcome.hp_loss]
+	_preview.text = "%s  |  Bleed: %d -> %d (future)" % [
+		now, outcome.bleed_before, outcome.bleed_after]
+	if outcome.exposed_before != outcome.exposed_after:
+		_preview.text += "\nExposed: %d -> %d" % [
+			outcome.exposed_before, outcome.exposed_after]
 
 
 func _on_target_pressed(position: int, enemy_id: String, token: int) -> void:
@@ -348,6 +382,7 @@ func _cancel(restore_focus: bool = false) -> void:
 		_overlay.free()
 	_overlay = null
 	target_strip = null
+	_preview = null
 	if restore_focus and is_instance_valid(panel) and panel.is_inside_tree() 			and panel.is_visible_in_tree():
 		panel.grab_focus()
 

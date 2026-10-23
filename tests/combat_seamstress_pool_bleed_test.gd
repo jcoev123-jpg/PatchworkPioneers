@@ -12,6 +12,8 @@ func _initialize() -> void:
 	_test_blanket_and_red_thread()
 	_test_failed_plays()
 	_test_seeded_trace()
+	_test_forecast_parity()
+	_test_forecast_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_seamstress_pool_bleed_test: ",
@@ -276,3 +278,127 @@ func _test_seeded_trace() -> void:
 	var a := _trace(99421)
 	var b := _trace(99421)
 	_check(a == b, "same seed reproduces all events, full piles, RNG, parties and enemies")
+
+
+## Each candidate is a catalog-defined, held card in an active seeded deck.
+## Independently derive the expected numeric damage/statuses, then compare
+## the projection against a separately prepared authoritative transaction.
+func _forecast_seed(f: Dictionary, position: int) -> void:
+	f.party._heroes[1]["statuses"] = {"weak": 1}
+	_check(f.enemies.apply_statuses({position: {"bleed": 3, "exposed": 1}}),
+		"forecast preloads authentic Bleed and Exposed")
+	_check(f.enemies.gain_block(position, 2),
+		"forecast preloads authentic defender Block")
+
+
+func _test_forecast_parity() -> void:
+	for slug in ["running_stitch", "hemorrhage_hem", "red_thread"]:
+		for upgraded in [false, true]:
+			var id: String = "seamstress_" + slug + ("_plus" if upgraded else "")
+			var definition: Dictionary = SeamstressPoolCards.new().get_definition(id)
+			_check(definition.get("id") == id and definition.target_kind == "enemy_single"
+				and definition.from_positions.has(2) and definition.to_positions.has(1)
+				and definition.to_positions.has(2), "catalog forecast contract " + id)
+			for position in [1, 2]:
+				var f := _fixture(id)
+				var committed := _fixture(id)
+				_forecast_seed(f, position)
+				_forecast_seed(committed, position)
+				var before := _snapshot(f.deck, f.party, f.enemies)
+				_check(before == _snapshot(committed.deck, committed.party, committed.enemies),
+					"independent identical seeded authoritative fixture " + id)
+				var base_damage: int = int(definition.effects.get("damage", 0))
+				@warning_ignore("integer_division")
+				var adjusted: int = base_damage * 9 / 8
+				var absorbed: int = mini(2, adjusted)
+				var hp_loss: int = mini(12, adjusted - absorbed)
+				var next_bleed := 6 if slug == "hemorrhage_hem" else \
+					3 + int(definition.effects.get("bleed", 0)) + 1
+				var next_exposed := 2 if slug == "red_thread" else 1
+				var expected := {"ok": true, "position": position, "cost": definition.cost,
+					"damage": adjusted, "block_absorbed": absorbed, "hp_loss": hp_loss,
+					"bleed_before": 3, "bleed_after": next_bleed,
+					"exposed_before": 1, "exposed_after": next_exposed}
+				for repeat in range(3):
+					_check(service.forecast_single(f.deck, f.party, f.enemies, id, position)
+						== expected, "pure exact catalog forecast " + id + " slot %d" % position)
+					_check(_snapshot(f.deck, f.party, f.enemies) == before,
+						"repeat forecast retains energy, piles, actors, statuses and RNG " + id)
+				var event: Dictionary = service.play_card(
+					committed.deck, committed.party, committed.enemies, id, position)
+				_check(event.get("ok", false) and event.hits.size() == 1,
+					"matching real resolution succeeded " + id)
+				if event.get("ok", false) and event.hits.size() == 1:
+					var hit: Dictionary = event.hits[0]
+					_check(hit.position == expected.position and hit.damage == expected.damage
+						and hit.block_absorbed == expected.block_absorbed
+						and hit.hp_loss == expected.hp_loss,
+						"forecast damage parity vs actual play " + id)
+					var after: Dictionary = committed.enemies.get_enemy(position)
+					_check(after.hp == before.enemies[position - 1].hp - expected.hp_loss
+						and after.block == 2 - expected.block_absorbed
+						and after.get("statuses", {}).get("bleed", 0) == next_bleed
+						and after.get("statuses", {}).get("exposed", 0) == next_exposed,
+						"forecast status, HP and Block parity " + id)
+					_check(committed.party.get_heroes() == before.party
+						and committed.deck.energy == 3 - int(definition.cost)
+						and committed.deck._rng.state == before.rng,
+						"real play ages no statuses and uses no RNG " + id)
+	# Zero Bleed must never gain Seamstress's passive through Hem doubling.
+	for id in ["seamstress_hemorrhage_hem", "seamstress_hemorrhage_hem_plus"]:
+		var zero := _fixture(id)
+		var before := _snapshot(zero.deck, zero.party, zero.enemies)
+		var forecast := service.forecast_single(zero.deck, zero.party, zero.enemies, id, 1)
+		_check(forecast.ok and forecast.bleed_before == 0 and forecast.bleed_after == 0
+			and forecast.damage == 0 and _snapshot(zero.deck, zero.party, zero.enemies) == before,
+			"zero Hem preview stays zero without any passive or mutation " + id)
+		_check(service.play_card(zero.deck, zero.party, zero.enemies, id, 1).ok
+			and zero.enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 0,
+			"zero Hem committed status agrees with forecast " + id)
+
+
+func _forecast_reject(f: Dictionary, id: String, position: int, reason: String) -> void:
+	var before := _snapshot(f.deck, f.party, f.enemies)
+	for repeat in range(2):
+		_check(not service.forecast_single(f.deck, f.party, f.enemies, id, position)
+			.get("ok", false), "forecast rejects " + reason)
+		_check(_snapshot(f.deck, f.party, f.enemies) == before,
+			"rejected forecast never spends or changes statuses/RNG " + reason)
+
+
+func _test_forecast_rejections() -> void:
+	var running := "seamstress_running_stitch"
+	_forecast_reject(_fixture(running), "unknown", 1, "unknown card")
+	_forecast_reject(_fixture(running), "seamstress_needle_pin", 1, "unsupported card")
+	_forecast_reject(_fixture("seamstress_blanket_stitch"),
+		"seamstress_blanket_stitch", 0, "area forecast")
+	_forecast_reject(_fixture("seamstress_red_thread"), running, 1, "card not held")
+	_forecast_reject(_fixture(running), running, 0, "missing position")
+	_forecast_reject(_fixture(running), running, 4, "out-of-range position")
+	_forecast_reject(_fixture(running, 2, 1), running, 2, "absent original slot")
+	var inactive := _fixture(running)
+	_check(inactive.deck.end_turn(), "forecast inactive turn staged")
+	_forecast_reject(inactive, running, 1, "inactive turn")
+	var unaffordable := _fixture("seamstress_red_thread")
+	_check(unaffordable.deck.try_spend_energy(2), "forecast energy exhausted with real spend")
+	_forecast_reject(unaffordable, "seamstress_red_thread", 1, "unaffordable card")
+	var downed := _fixture(running)
+	_check(downed.party.apply_damage(2, 30), "forecast owner downed authentically")
+	_forecast_reject(downed, running, 1, "dead owner")
+	var invalid_source := _fixture(running)
+	invalid_source.party._heroes[1]["position"] = 4
+	_forecast_reject(invalid_source, running, 1, "source position illegal")
+	var slain := _fixture(running)
+	_check(slain.enemies.apply_damage(1, 12), "forecast target slain authentically")
+	_forecast_reject(slain, running, 1, "slain target")
+	var overflow := _fixture("seamstress_red_thread")
+	_check(overflow.enemies.apply_statuses({1: {"bleed": CombatEnemies.MAX_INT - 3}}),
+		"forecast large Bleed stack staged legally")
+	_forecast_reject(overflow, "seamstress_red_thread", 1, "stack overflow")
+	var hem_overflow := _fixture("seamstress_hemorrhage_hem")
+	_check(hem_overflow.enemies.apply_statuses({1: {"bleed": CombatEnemies.MAX_INT}}),
+		"forecast Hem maximum Bleed staged legally")
+	_forecast_reject(hem_overflow, "seamstress_hemorrhage_hem", 1, "double overflow")
+	var bad_status := _fixture(running)
+	bad_status.enemies._enemies[1]["statuses"] = {"exposed": "invalid"}
+	_forecast_reject(bad_status, running, 1, "malformed other enemy status")
