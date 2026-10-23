@@ -106,12 +106,15 @@ func _forecast_and_commit(f: Dictionary, patch: String, target: String, kind: St
 		"both full projected assignments, effects and active flags match")
 	_check(w.get_snapshot() == original and t.read_state() == torn_before
 		and option == option_before, "pure preview leaves ledger, torn and option untouched")
+	_check(result.source.before.hp == result.source.after.hp
+		and result.destination.before.hp == result.destination.after.hp
+		and result.source.before.base_max_hp == result.source.after.base_max_hp
+		and result.destination.before.base_max_hp == result.destination.after.base_max_hp,
+		"preview preserves HP and base maximum HP for both wearers")
 	if slot != "COAT":
-		_check(result.source.before.hp == result.source.after.hp
-			and result.destination.before.hp == result.destination.after.hp
-			and result.source.before.effective_max_hp == result.source.after.effective_max_hp
+		_check(result.source.before.effective_max_hp == result.source.after.effective_max_hp
 			and result.destination.before.effective_max_hp == result.destination.after.effective_max_hp,
-			"HEAD/ARM preview preserves HP and effective maximum HP for both wearers")
+			"HEAD/ARM preview preserves effective maximum HP for both wearers")
 	var repeat := RunRestPatchResewOptions.forecast(w, t, original, f.rest, option)
 	_check(result == repeat, "same exact snapshot gives identical detached result")
 	result.source.after.slots[slot].id = "corruption"
@@ -129,11 +132,27 @@ func _forecast_and_commit(f: Dictionary, patch: String, target: String, kind: St
 		"no HP/heal/torn/seed changes, exactly one new operation")
 
 
+var _cached_coat_amounts := {}
+
+func _load_coat_amounts() -> Dictionary:
+	if not _cached_coat_amounts.is_empty():
+		return _cached_coat_amounts
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	_check(typeof(raw) == TYPE_ARRAY, "m04_coat_patches.json array loaded")
+	if typeof(raw) == TYPE_ARRAY:
+		for entry in raw:
+			if entry is Dictionary and entry.has("id") and entry.has("max_hp_bonus"):
+				_cached_coat_amounts[entry["id"]] = int(entry["max_hp_bonus"])
+	return _cached_coat_amounts
+
+
 func _expected_slots(assignments: Dictionary, heroes: Array, owner: String) -> Dictionary:
 	var hp := 0
 	for hero in heroes:
 		if hero.id == owner:
 			hp = hero.hp
+	var coat_amounts := _load_coat_amounts()
 	var slots := {}
 	for slot in ["HEAD", "ARM", "COAT"]:
 		var id: String = assignments[slot]
@@ -142,8 +161,8 @@ func _expected_slots(assignments: Dictionary, heroes: Array, owner: String) -> D
 			effect = "first attack each combat: Exposed 1"
 		elif id == "pincushion_arm":
 			effect = "damage-dealing cards: +1 damage"
-		elif id == "quilted_coat":
-			effect = "+6 effective max HP (no heal)"
+		elif slot == "COAT" and coat_amounts.has(id):
+			effect = "+%d effective max HP (no heal)" % coat_amounts[id]
 		elif id == CombatShopPatchRules.STITCHED_BADGE_ID:
 			effect = "+%d opening Block to living wearer (stacks with innate Block)" % CombatShopPatchRules.OPENING_BLOCK_BONUS
 		elif id == CombatShopPatchRules.SPARE_SPOOL_ID:
@@ -520,8 +539,206 @@ func _deny_test() -> void:
 		and randi() == expected_global, "rejections preserve torn, caller inputs and both RNGs")
 
 
+func _coat_fixture_with(sewn_coats: Dictionary, torn_hero_ids: Array = []) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/starter_party.json"))
+	if typeof(raw) != TYPE_ARRAY or raw.size() != 3:
+		return {}
+	var combat_defs: Array = raw.duplicate(true)
+	for record in combat_defs:
+		record["max_hp"] = int(record["max_hp"])
+	var party := CombatParty.new(combat_defs)
+	if not party.is_valid():
+		return {}
+	var heroes := party.get_heroes()
+	var torn := RunTornMending.new(heroes)
+	if not torn_hero_ids.is_empty():
+		var old_heroes := heroes.duplicate(true)
+		var damaged := heroes.duplicate(true)
+		for hero in damaged:
+			if torn_hero_ids.has(hero["id"]):
+				hero["hp"] = 0
+		_check(torn.observe_battle_end("test_tear", old_heroes, damaged).ok, "fixture tear observed")
+		heroes = torn.read_state()["heroes"]
+	var definitions := []
+	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches"]:
+		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/%s.json" % catalog))
+		if typeof(entries) == TYPE_ARRAY:
+			for entry in entries:
+				definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned := ["button_eye", "pincushion_arm", "stitched_badge", "spare_spool"]
+	for coat_id in sewn_coats.values():
+		if not owned.has(coat_id):
+			owned.append(coat_id)
+	for coat_id in _load_coat_amounts():
+		if not owned.has(coat_id):
+			owned.append(coat_id)
+	var w := RunPatchWardrobe.new(heroes, owned, definitions, 10, 50,
+		["warden_strike"], 93811, true)
+	if not torn.is_valid() or not w.is_valid():
+		return {}
+	for hero_id in sewn_coats:
+		var coat_id: String = sewn_coats[hero_id]
+		var receipt := w.sew(coat_id, hero_id, "COAT", "sew:" + coat_id, w.get_snapshot())
+		_check(receipt.ok, "fixture coat sewn: " + coat_id)
+	_check(w.start_rest("rest_coats", w.get_snapshot()).ok, "rest started for coat fixture")
+	return {"w": w, "t": torn, "rest": "rest_coats"}
+
+
+func _coat_preview_tests() -> void:
+	var coat_amounts := _load_coat_amounts()
+	_check(coat_amounts.get("scrap_lined_vest") == 3
+		and coat_amounts.get("padded_vest") == 4
+		and coat_amounts.get("wool_patch_cloak") == 5
+		and coat_amounts.get("quilted_coat") == 6
+		and coat_amounts.get("chain_stitched_coat") == 7
+		and coat_amounts.get("double_quilt_coat") == 8,
+		"all six authored coat bonus amounts (+3, +4, +5, +6, +7, +8) present")
+	var coats_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	for coat_id in ["scrap_lined_vest", "padded_vest", "wool_patch_cloak",
+			"quilted_coat", "chain_stitched_coat", "double_quilt_coat"]:
+		var bonus: int = coat_amounts[coat_id]
+		var f := _coat_fixture_with({"tinker": coat_id})
+		var choice := _option(f, coat_id, "warden")
+		_check(not choice.is_empty(), "legal MOVE option for " + coat_id)
+		if choice.is_empty():
+			continue
+		var snap_before: Dictionary = f.w.get_snapshot()
+		var torn_state: Dictionary = f.t.read_state()
+		var forecast := RunRestPatchResewOptions.forecast(f.w, f.t, snap_before, f.rest, choice)
+		_check(forecast.get("ok") == true and forecast.get("kind") == "MOVE"
+			and forecast.get("cost") == 1,
+			"forecast succeeds for " + coat_id)
+		_check(f.w.get_snapshot() == snap_before and f.t.read_state() == torn_state
+			and f.w.get_snapshot().scraps == 10,
+			"detached forecast leaves ledger, scraps and torn untouched for " + coat_id)
+		_check(forecast.source.before.hp == 26 and forecast.source.after.hp == 26
+			and forecast.destination.before.hp == 40 and forecast.destination.after.hp == 40
+			and forecast.source.before.base_max_hp == 26 and forecast.source.after.base_max_hp == 26
+			and forecast.destination.before.base_max_hp == 40 and forecast.destination.after.base_max_hp == 40,
+			"MOVE %s: HP and base_max_hp never mutate or heal in preview" % coat_id)
+		_check(forecast.source.before.effective_max_hp == 26 + bonus
+			and forecast.source.after.effective_max_hp == 26
+			and forecast.destination.before.effective_max_hp == 40
+			and forecast.destination.after.effective_max_hp == 40 + bonus,
+			"MOVE %s: effective max HP correctly shows +%d bonus transfer" % [coat_id, bonus])
+		_check(forecast.source.before.slots.COAT.effect == "+%d effective max HP (no heal)" % bonus
+			and forecast.destination.after.slots.COAT.effect == "+%d effective max HP (no heal)" % bonus,
+			"MOVE %s: coat effect text truthfully describes +%d bonus" % [coat_id, bonus])
+		var proj_before := RunPatchCoatRules.project_health(torn_state, f.w, coats_raw)
+		_check(proj_before.get("ok") == true, "project_health succeeds before commit for " + coat_id)
+		for hero in proj_before.get("heroes", []):
+			if hero["id"] == "tinker":
+				_check(hero["max_hp"] == forecast.source.before.effective_max_hp,
+					"project_health matches source before effective_max_hp for " + coat_id)
+			elif hero["id"] == "warden":
+				_check(hero["max_hp"] == forecast.destination.before.effective_max_hp,
+					"project_health matches dest before effective_max_hp for " + coat_id)
+		var commit: Dictionary = f.w.re_sew(coat_id, "tinker", "warden", f.rest, "commit:" + coat_id, snap_before)
+		_check(commit.ok and f.w.get_snapshot().scraps == snap_before.scraps - 1,
+			"real commit spends exactly 1 scrap for " + coat_id)
+		var proj_after := RunPatchCoatRules.project_health(torn_state, f.w, coats_raw)
+		_check(proj_after.get("ok") == true, "project_health succeeds after commit for " + coat_id)
+		for hero in proj_after.get("heroes", []):
+			if hero["id"] == "tinker":
+				_check(hero["max_hp"] == forecast.source.after.effective_max_hp,
+					"project_health matches source after effective_max_hp for " + coat_id)
+			elif hero["id"] == "warden":
+				_check(hero["max_hp"] == forecast.destination.after.effective_max_hp,
+					"project_health matches dest after effective_max_hp for " + coat_id)
+
+	# Legal SWAP of two different coats: Warden wears double_quilt_coat (+8), Tinker wears padded_vest (+4)
+	var f_swap := _coat_fixture_with({"warden": "double_quilt_coat", "tinker": "padded_vest"})
+	var swap_opt := _option(f_swap, "double_quilt_coat", "tinker")
+	_check(not swap_opt.is_empty() and swap_opt.kind == "SWAP"
+		and swap_opt.exchanged_id == "padded_vest", "legal SWAP option for different coats")
+	if not swap_opt.is_empty():
+		var snap_swap: Dictionary = f_swap.w.get_snapshot()
+		var torn_swap: Dictionary = f_swap.t.read_state()
+		var forecast_swap := RunRestPatchResewOptions.forecast(f_swap.w, f_swap.t, snap_swap, f_swap.rest, swap_opt)
+		_check(forecast_swap.get("ok") == true and forecast_swap.get("kind") == "SWAP",
+			"SWAP forecast succeeds")
+		_check(forecast_swap.source.before.effective_max_hp == 48
+			and forecast_swap.source.after.effective_max_hp == 44
+			and forecast_swap.source.before.hp == 40 and forecast_swap.source.after.hp == 40
+			and forecast_swap.source.before.base_max_hp == 40 and forecast_swap.source.after.base_max_hp == 40,
+			"SWAP source (Warden): +8 before, +4 after, HP unchanged")
+		_check(forecast_swap.destination.before.effective_max_hp == 30
+			and forecast_swap.destination.after.effective_max_hp == 34
+			and forecast_swap.destination.before.hp == 26 and forecast_swap.destination.after.hp == 26
+			and forecast_swap.destination.before.base_max_hp == 26 and forecast_swap.destination.after.base_max_hp == 26,
+			"SWAP destination (Tinker): +4 before, +8 after, HP unchanged")
+		_check(forecast_swap.source.before.slots.COAT.effect == "+8 effective max HP (no heal)"
+			and forecast_swap.source.after.slots.COAT.effect == "+4 effective max HP (no heal)"
+			and forecast_swap.destination.before.slots.COAT.effect == "+4 effective max HP (no heal)"
+			and forecast_swap.destination.after.slots.COAT.effect == "+8 effective max HP (no heal)",
+			"SWAP coat effect descriptions match authored amounts")
+		var swap_proj_before := RunPatchCoatRules.project_health(torn_swap, f_swap.w, coats_raw)
+		for hero in swap_proj_before.get("heroes", []):
+			if hero["id"] == "warden":
+				_check(hero["max_hp"] == forecast_swap.source.before.effective_max_hp, "swap proj before warden")
+			elif hero["id"] == "tinker":
+				_check(hero["max_hp"] == forecast_swap.destination.before.effective_max_hp, "swap proj before tinker")
+		var swap_commit: Dictionary = f_swap.w.re_sew("double_quilt_coat", "warden", "tinker", f_swap.rest, "commit_swap", snap_swap)
+		_check(swap_commit.ok and f_swap.w.get_snapshot().scraps == snap_swap.scraps - 1,
+			"real SWAP commit spends exactly 1 scrap")
+		var swap_proj_after := RunPatchCoatRules.project_health(torn_swap, f_swap.w, coats_raw)
+		for hero in swap_proj_after.get("heroes", []):
+			if hero["id"] == "warden":
+				_check(hero["max_hp"] == forecast_swap.source.after.effective_max_hp, "swap proj after warden")
+			elif hero["id"] == "tinker":
+				_check(hero["max_hp"] == forecast_swap.destination.after.effective_max_hp, "swap proj after tinker")
+
+	# MOVE to a torn/downed recipient with no active bonus: Seamstress is torn (hp = 0, base_max = 27), Tinker wears chain_stitched_coat (+7)
+	var f_torn := _coat_fixture_with({"tinker": "chain_stitched_coat"}, ["seamstress"])
+	var move_torn := _option(f_torn, "chain_stitched_coat", "seamstress")
+	_check(not move_torn.is_empty(), "legal MOVE to torn recipient")
+	if not move_torn.is_empty():
+		var snap_torn: Dictionary = f_torn.w.get_snapshot()
+		var state_torn: Dictionary = f_torn.t.read_state()
+		var forecast_torn := RunRestPatchResewOptions.forecast(f_torn.w, f_torn.t, snap_torn, f_torn.rest, move_torn)
+		_check(forecast_torn.get("ok") == true, "forecast to torn recipient succeeds")
+		_check(forecast_torn.source.before.effective_max_hp == 33
+			and forecast_torn.source.after.effective_max_hp == 26
+			and forecast_torn.source.before.hp == 26 and forecast_torn.source.after.hp == 26,
+			"source living loses bonus on transfer to torn hero")
+		_check(forecast_torn.destination.before.hp == 0 and forecast_torn.destination.after.hp == 0
+			and forecast_torn.destination.before.base_max_hp == 27
+			and forecast_torn.destination.after.base_max_hp == 27
+			and forecast_torn.destination.before.effective_max_hp == 27
+			and forecast_torn.destination.after.effective_max_hp == 27
+			and not forecast_torn.destination.after.slots.COAT.active
+			and forecast_torn.destination.after.slots.COAT.effect == "+7 effective max HP (no heal)",
+			"downed recipient has dormant +7, effective cap 27 not 34, no active bonus or revival")
+		var torn_proj := RunPatchCoatRules.project_health(state_torn, f_torn.w, coats_raw)
+		for hero in torn_proj.get("heroes", []):
+			if hero["id"] == "seamstress":
+				_check(hero["max_hp"] == forecast_torn.destination.before.effective_max_hp,
+					"project_health confirms torn recipient has base max_hp (no coat bonus)")
+		var torn_commit: Dictionary = f_torn.w.re_sew("chain_stitched_coat", "tinker", "seamstress", f_torn.rest, "commit_torn", snap_torn)
+		_check(torn_commit.ok, "re_sew to torn recipient succeeds")
+		var torn_proj_after := RunPatchCoatRules.project_health(state_torn, f_torn.w, coats_raw)
+		for hero in torn_proj_after.get("heroes", []):
+			if hero["id"] == "seamstress":
+				_check(hero["max_hp"] == forecast_torn.destination.after.effective_max_hp,
+					"project_health after commit confirms torn recipient still has base max_hp")
+
+	# Forged coat slot in definitions rejected
+	var f_forge := _coat_fixture_with({"tinker": "padded_vest"})
+	var opt_forge := _option(f_forge, "padded_vest", "warden")
+	if not opt_forge.is_empty():
+		var forged_snap: Dictionary = f_forge.w.get_snapshot().duplicate(true)
+		forged_snap["definitions"]["padded_vest"] = "HEAD"
+		_check(not RunRestPatchResewOptions.forecast(f_forge.w, f_forge.t, forged_snap, f_forge.rest, opt_forge).ok,
+			"forged non-COAT slot definition for coat patch is rejected")
+
+
+
 func _run() -> void:
 	_pure_tests()
+	_coat_preview_tests()
 	_torn_test()
 	_torn_shop_test()
 	await _ui_test(KEY_SPACE)

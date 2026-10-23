@@ -112,9 +112,12 @@ static func forecast(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 	for id in CombatShopPatchRules.EFFECTS:
 		if definitions.has(id) and definitions[id] != CombatShopPatchRules.EFFECTS[id]["slot"]:
 			return rejected
-	if definitions.has(RunPatchCoatRules.BONUS_ID) \
-			and definitions[RunPatchCoatRules.BONUS_ID] != "COAT":
-		return rejected
+	var coat_bonuses := {}
+	for entry in coat_rules:
+		var coat_id: String = entry["id"]
+		if definitions.has(coat_id) and definitions[coat_id] != "COAT":
+			return rejected
+		coat_bonuses[coat_id] = int(entry["max_hp_bonus"])
 	var source_id: String = option["from_hero"]
 	var destination_id: String = option["to_hero"]
 	var slot: String = option["slot"]
@@ -137,18 +140,18 @@ static func forecast(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		"cost": option["cost"],
 		"source": {
 			"hero_id": source_id,
-			"before": _wearer(source_hero, before_worn[source_id]),
-			"after": _wearer(source_hero, after_worn[source_id])
+			"before": _wearer(source_hero, before_worn[source_id], coat_bonuses),
+			"after": _wearer(source_hero, after_worn[source_id], coat_bonuses)
 		},
 		"destination": {
 			"hero_id": destination_id,
-			"before": _wearer(destination_hero, before_worn[destination_id]),
-			"after": _wearer(destination_hero, after_worn[destination_id])
+			"before": _wearer(destination_hero, before_worn[destination_id], coat_bonuses),
+			"after": _wearer(destination_hero, after_worn[destination_id], coat_bonuses)
 		}
 	}
 
 
-static func _wearer(hero: Dictionary, assignments: Dictionary) -> Dictionary:
+static func _wearer(hero: Dictionary, assignments: Dictionary, coat_bonuses: Dictionary = {}) -> Dictionary:
 	var hp: int = hero["hp"]
 	var base_max: int = hero["max_hp"]
 	var slots := {}
@@ -166,10 +169,12 @@ static func _wearer(hero: Dictionary, assignments: Dictionary) -> Dictionary:
 			effect = "first attack each combat: Exposed %d" % CombatPatchAttackRules.EFFECTS[id]["amount"]
 		elif id == "pincushion_arm" and slot == CombatPatchAttackRules.EFFECTS[id]["slot"]:
 			effect = "damage-dealing cards: +%d damage" % CombatPatchAttackRules.EFFECTS[id]["amount"]
-		elif id == RunPatchCoatRules.BONUS_ID and slot == "COAT":
-			effect = "+%d effective max HP (no heal)" % RunPatchCoatRules.BONUS
+		elif slot == "COAT" and coat_bonuses.has(id):
+			effect = "+%d effective max HP (no heal)" % coat_bonuses[id]
 		slots[slot] = {"id": id, "active": id != "" and hp > 0, "effect": effect}
-	var coat_active: bool = slots["COAT"]["id"] == RunPatchCoatRules.BONUS_ID and hp > 0
+	var coat_id: String = slots["COAT"]["id"]
+	var coat_active: bool = hp > 0 and coat_bonuses.has(coat_id)
+	var coat_bonus: int = coat_bonuses.get(coat_id, 0) if coat_active else 0
 	return {"hp": hp, "base_max_hp": base_max,
-		"effective_max_hp": base_max + (RunPatchCoatRules.BONUS if coat_active else 0),
+		"effective_max_hp": base_max + coat_bonus,
 		"slots": slots}
