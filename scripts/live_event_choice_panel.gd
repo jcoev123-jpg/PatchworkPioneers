@@ -1,11 +1,16 @@
 class_name LiveEventChoicePanel
 extends Control
 ## Standalone, unwired presentation for an authored M04 Event.
-## open_event() accepts a RunEventChoice-compatible Dictionary and returns true
-## only when a fresh offering was displayed. close_event() releases that offer.
-## No event outcome, session, deck, gold, trinket or RNG is touched here.
+## open_event() preserves the legacy ID-only signal.
+## open_event_with_wallet() displays an opt-in, detached affordability forecast
+## and emits an uncommitted wallet receipt for the run owner to validate.
+## Neither mode updates the live run, owns RNG, or completes routed Events.
 
 signal choice_committed(event_id: String, choice_id: String)
+## Emits exactly one detached RunEventChoice receipt on a successful wallet
+## selection: {ok: true, event_id: String, choice_id: String,
+## wallet: {gold: int, scraps: int}}. This is NOT a live run commit.
+signal wallet_choice_committed(result: Dictionary)
 
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/EventContent/EventTitle
@@ -20,6 +25,10 @@ var _is_open: bool = false
 var _choice_buttons: Array[Button] = []
 var _bound_choices: Dictionary = {}
 var _committed_choice: Dictionary = {}
+var _wallet_mode: bool = false
+var _offered_wallet: Dictionary = {}
+var _wallet_previews: Dictionary = {}
+var _wallet_label: Label = null
 
 
 func _ready() -> void:
@@ -35,14 +44,59 @@ func open_event(event_record: Dictionary) -> bool:
 	var offered := RunEventChoice.new(event_record)
 	if not offered.is_valid():
 		return false
+	_mount_offering(offered, false, {}, [])
+	return true
+
+
+## Opt-in wallet-aware opening. The wallet must have *exactly* integer,
+## nonnegative gold/scraps. Preview is the authoritative affordability source;
+## a malformed wallet or preview fails before an offering is mounted.
+func open_event_with_wallet(event_record: Dictionary, wallet: Variant) -> bool:
+	if _is_open:
+		return false
+	var offered := RunEventChoice.new(event_record)
+	if not offered.is_valid():
+		return false
+	var preview: Dictionary = offered.preview_wallet_choices(wallet)
+	if not preview.get("ok", false) or preview.get("event_id") != event_record.get("id"):
+		return false
+	var entries: Variant = preview.get("choices")
+	var snapshot := offered.get_event()
+	if not entries is Array or (entries as Array).size() != (snapshot["choices"] as Array).size():
+		return false
+	for i in range((entries as Array).size()):
+		var row: Variant = entries[i]
+		if not row is Dictionary or row.get("choice_id") != snapshot["choices"][i]["id"]:
+			return false
+		if typeof(row.get("affordable")) != TYPE_BOOL:
+			return false
+	# preview_wallet_choices() has already strictly parsed both wallet fields.
+	var clean_wallet := {"gold": wallet["gold"], "scraps": wallet["scraps"]}
+	_mount_offering(offered, true, clean_wallet, entries)
+	return true
+
+
+func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Dictionary, previews: Array) -> void:
 	var snapshot: Dictionary = offered.get_event()
 	_generation += 1
 	_selector = offered
 	_is_open = true
+	_wallet_mode = wallet_mode
+	_offered_wallet = wallet.duplicate(true)
+	_wallet_previews.clear()
 	title_label.text = snapshot["title"]
 	description_label.text = snapshot["description"]
-	for entry in snapshot["choices"]:
-		var choice: Dictionary = entry
+	if wallet_mode:
+		_wallet_label = Label.new()
+		_wallet_label.name = "WalletBalance"
+		_wallet_label.text = "Wallet  •  %d gold   /   %d scraps" % [_offered_wallet["gold"], _offered_wallet["scraps"]]
+		_wallet_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_wallet_label.add_theme_color_override("font_color", Color("#343c3c"))
+		_wallet_label.add_theme_font_size_override("font_size", 20)
+		choices_container.get_parent().add_child(_wallet_label)
+		choices_container.get_parent().move_child(_wallet_label, choices_container.get_index())
+	for i in range(snapshot["choices"].size()):
+		var choice: Dictionary = snapshot["choices"][i]
 		var choice_id: String = choice["id"]
 		var button := Button.new()
 		button.name = "Choice_%d" % _choice_buttons.size()
@@ -52,23 +106,44 @@ func open_event(event_record: Dictionary) -> bool:
 		button.focus_mode = Control.FOCUS_ALL
 		button.mouse_filter = Control.MOUSE_FILTER_STOP
 		_style_choice_button(button)
+		if wallet_mode:
+			var forecast: Dictionary = (previews[i] as Dictionary).duplicate(true)
+			_wallet_previews[choice_id] = forecast
+			var can_pay: bool = forecast["affordable"]
+			var cost_text := "Gold %s   |   Scraps %s" % [
+				_delta_label(forecast.get("gold_delta")),
+				_delta_label(forecast.get("scraps_delta")),
+			]
+			button.text += "\n" + cost_text + ("   •   UNAVAILABLE" if not can_pay else "")
+			button.custom_minimum_size.y = 70.0
+			button.add_theme_font_size_override("font_size", 18)
+			button.disabled = not can_pay
+			button.focus_mode = Control.FOCUS_ALL if can_pay else Control.FOCUS_NONE
 		choices_container.add_child(button)
 		_choice_buttons.append(button)
 		_bound_choices[button] = choice_id
-		# All four bindings are captured at presentation time, never looked up
-		# from mutable caller data when the button is activated.
+		# All bindings are captured at presentation time; caller dictionaries
+		# and closed/reopened offerings cannot redirect an old pressed signal.
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
-	return true
 
 
-## Discards the selector, removes the currently active buttons and invalidates
+func _delta_label(amount: Variant) -> String:
+	if typeof(amount) != TYPE_INT:
+		return "—"
+	return "%+d" % amount
+
+
+## Discards selector, previews and any wallet snapshot, and invalidates
 ## all prior callback generations before another event can be opened.
 func close_event() -> void:
 	_committed_choice.clear()
 	_generation += 1
 	_is_open = false
 	_selector = null
+	_wallet_mode = false
+	_offered_wallet.clear()
+	_wallet_previews.clear()
 	visible = false
 	if is_node_ready():
 		title_label.text = ""
@@ -83,6 +158,10 @@ func close_event() -> void:
 		button.queue_free()
 	_choice_buttons.clear()
 	_bound_choices.clear()
+	if is_instance_valid(_wallet_label):
+		_wallet_label.get_parent().remove_child(_wallet_label)
+		_wallet_label.queue_free()
+	_wallet_label = null
 
 
 func has_open_event() -> bool:
@@ -105,14 +184,26 @@ func _on_choice_pressed(offered: RunEventChoice, choice_id: String, generation: 
 		return
 	if not _choice_buttons.has(button) or _bound_choices.get(button, "") != choice_id:
 		return
-	var result: Dictionary = offered.choose(choice_id)
+	if button.get_parent() != choices_container:
+		return
+	var result: Dictionary
+	if _wallet_mode:
+		var forecast: Dictionary = _wallet_previews.get(choice_id, {})
+		if forecast.get("affordable", false) != true:
+			return
+		result = offered.choose_with_wallet(choice_id, _offered_wallet.duplicate(true))
+	else:
+		result = offered.choose(choice_id)
 	if result.get("ok", false) != true:
 		return
 	_committed_choice = result.duplicate(true)
 	for current in _choice_buttons:
 		current.disabled = true
 		current.release_focus()
-	choice_committed.emit(result["event_id"], result["choice_id"])
+	if _wallet_mode:
+		wallet_choice_committed.emit(result.duplicate(true))
+	else:
+		choice_committed.emit(result["event_id"], result["choice_id"])
 
 
 func _apply_patchwork_style() -> void:
