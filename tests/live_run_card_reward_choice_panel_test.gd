@@ -1624,6 +1624,167 @@ func _test_three_tier_rarities(base: Dictionary) -> void:
 	await _frames()
 
 
+## The reward face must bind the canonical individual card art (cards/art/
+## <base_id>.png), fall back to the hero emblem and then a drawn patch, and keep
+## that illustration in its own inert window above a legible plain name strip.
+func _test_illustration_art(base: Dictionary) -> void:
+	for starter in ["warden_strike", "seamstress_prick", "tinker_pop_shot"]:
+		_check(LiveRunCardRewardChoicePanel.card_art_path(starter)
+			== "res://assets/paper/cards/art/%s.png" % starter,
+			"canonical individual art path for " + starter)
+	for plus_id in ["warden_strike_plus", "seamstress_mend_plus"]:
+		var base_id: String = plus_id.trim_suffix("_plus")
+		_check(LiveRunCardRewardChoicePanel.card_art_path(plus_id)
+			== LiveRunCardRewardChoicePanel.card_art_path(base_id)
+			and LiveRunCardRewardChoicePanel.card_art_path(plus_id)
+			== "res://assets/paper/cards/art/%s.png" % base_id,
+			"upgrade resolves its base picture: " + plus_id)
+	for owner in ["warden", "seamstress", "tinker"]:
+		_check(LiveRunCardRewardChoicePanel.emblem_path(owner)
+			== "res://assets/paper/cards/emblem_%s.png" % owner,
+			"hero emblem fallback path for " + owner)
+	var ids := ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
+	var catalog := StarterCards.new()
+	var receipt := base.duplicate(true)
+	for slot in range(3):
+		var definition := catalog.get_definition(ids[slot])
+		_check(not definition.is_empty(), "illustration case is an authored card: " + ids[slot])
+		receipt["offers"][slot] = {"id": ids[slot],
+			"owner": String(definition.get("owner", ""))}
+	var before := receipt.duplicate(true)
+	requests.clear()
+	_check(panel.open_rewards("art_preview", "Fight", receipt),
+		"illustration receipt mounts through the real panel")
+	if not panel.has_open_rewards():
+		return
+	await _frames()
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	for slot in range(3):
+		var card_id: String = ids[slot]
+		var definition := catalog.get_definition(card_id)
+		var card := panel.choices_container.get_child(slot) as PanelContainer
+		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+		var art := content.get_node_or_null("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+		var name_label := content.get_node("NameLabel") as Label
+		_check(art != null, "illustration window mounts: " + card_id)
+		if art == null:
+			continue
+		_check(art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and art.focus_mode == Control.FOCUS_NONE,
+			"illustration window takes no pointer input or focus: " + card_id)
+		_check(art.get_global_rect().size.y >= 40.0
+			and card.get_global_rect().encloses(art.get_global_rect())
+			and screen.encloses(art.get_global_rect()),
+			"illustration window has a real area inside the card and 1280x720: " + card_id)
+		_check(art.get_global_rect().end.y <= name_label.get_global_rect().position.y + 0.5,
+			"illustration window stays above the name strip: " + card_id)
+		var art_path: String = LiveRunCardRewardChoicePanel.card_art_path(card_id)
+		var emblem: String = LiveRunCardRewardChoicePanel.emblem_path(String(definition.get("owner", "")))
+		if ResourceLoader.exists(art_path):
+			_check(art.has_picture() and art.picture.resource_path == art_path,
+				"committed individual art is bound: " + card_id)
+		elif ResourceLoader.exists(emblem):
+			_check(art.has_picture() and art.picture.resource_path == emblem,
+				"missing art falls back to the hero emblem: " + card_id)
+		else:
+			_check(not art.has_picture(),
+				"unpictured card keeps the drawn paper patch without failing: " + card_id)
+		var strip := name_label.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(strip != null, "name strip uses its own paper style: " + card_id)
+		if strip != null:
+			_check(strip.bg_color == Color("#fbf3e4"),
+				"name keeps its own cream torn-paper strip: " + card_id)
+			_check(LiveRunCardRewardChoicePanel.contrast_ratio(
+				name_label.get_theme_color("font_color"), strip.bg_color) >= 4.5,
+				"name ink stays legible on its own strip: " + card_id)
+		_check(name_label.text == String(definition.get("display_name", "")),
+			"name strip keeps the authored display name: " + card_id)
+		_check(name_label.is_visible_in_tree() and art.is_visible_in_tree(),
+			"illustration and name are both visibly drawn: " + card_id)
+	# A pointer click over the illustration passes through to the card action
+	# exactly once, so the picture never swallows the player's choice.
+	requests.clear()
+	var first_content := (panel.choices_container.get_child(0) as PanelContainer) \
+		.get_node("CardMargin/CardContent") as VBoxContainer
+	var first_art := first_content.get_node("CardArt") as Control
+	await _click(first_art)
+	_check(requests == [{"node": "art_preview", "card": ids[0]}],
+		"illustration click routes to the card action exactly once")
+	panel.acknowledge(false)
+	_check(panel.get_choice_buttons().all(func(button: Button) -> bool: return not button.disabled),
+		"rejection re-enables after illustration click")
+	_check(receipt == before, "illustration preview leaves its receipt intact")
+	panel.close_rewards()
+	await _frames()
+	await _test_illustration_fallback(base)
+
+
+## The reward face resolves art by priority: the card's own authored picture,
+## then the owning hero's stitched emblem, then a drawn paper patch. Any of
+## those is valid, so the expectation is conditional on the actual lookup; we
+## never assert that optional art stays missing.
+func _test_illustration_fallback(base: Dictionary) -> void:
+	var ids := _authored_base_ids()
+	_check(ids.size() >= 3, "authored pool cards exist for the fallback case")
+	if ids.size() < 3:
+		return
+	var receipt := base.duplicate(true)
+	for slot in range(3):
+		var card_id: String = ids[slot]
+		receipt["offers"][slot] = {"id": card_id,
+			"owner": String(_base_pool_definition(card_id).get("owner", ""))}
+	requests.clear()
+	_check(panel.open_rewards("art_fallback", "Fight", receipt),
+		"unpictured pool cards still mount a valid reward offer")
+	if not panel.has_open_rewards():
+		return
+	await _frames()
+	for slot in range(3):
+		var card_id: String = ids[slot]
+		var owner := String((receipt["offers"][slot] as Dictionary).get("owner", ""))
+		var content := panel.choices_container.get_child(slot).get_node("CardMargin/CardContent") as VBoxContainer
+		var art := content.get_node_or_null("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+		_check(art != null, "fallback illustration window mounts: " + card_id)
+		if art == null:
+			continue
+		_check(art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and art.focus_mode == Control.FOCUS_NONE,
+			"fallback illustration stays inert: " + card_id)
+		var art_path: String = LiveRunCardRewardChoicePanel.card_art_path(card_id)
+		var emblem: String = LiveRunCardRewardChoicePanel.emblem_path(owner)
+		# Mounted picture follows the real lookup priority; none of these
+		# branches requires optional art to be absent.
+		if ResourceLoader.exists(art_path):
+			_check(art.has_picture() and art.picture.resource_path == art_path,
+				"authored card picture is bound when present: " + card_id)
+		elif ResourceLoader.exists(emblem):
+			_check(art.has_picture() and art.picture.resource_path == emblem,
+				"hero emblem stands in for absent art: " + card_id)
+		else:
+			_check(not art.has_picture(),
+				"absent art and emblem keep the drawn paper patch: " + card_id)
+		_check((content.get_node("NameLabel") as Label).text
+			== String(_base_pool_definition(card_id).get("display_name", "")),
+			"fallback face keeps its authored name: " + card_id)
+	# Controlled absent-texture case: an impossible id/owner pair deterministically
+	# exercises the ultimate drawn-paper branch (null texture) without relying on
+	# any committed art staying missing forever.
+	var nowhere_id := "zz_no_such_reward_art_card"
+	var nowhere_owner := "zz_no_such_reward_owner"
+	_check(LiveRunCardRewardChoicePanel._card_art_texture(nowhere_id, nowhere_owner) == null,
+		"synthetic id with no picture or emblem falls through to the drawn paper patch")
+	# The drawn/emblem patch is still pointer-inert: a click over it picks the card.
+	requests.clear()
+	var first_art := (panel.choices_container.get_child(0) as PanelContainer) \
+		.get_node("CardMargin/CardContent/CardArt") as Control
+	await _click(first_art)
+	_check(requests == [{"node": "art_fallback", "card": ids[0]}],
+		"fallback illustration click still routes the offer once")
+	panel.acknowledge(false)
+	panel.close_rewards()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var loaded := load(SCENE) as PackedScene
@@ -1656,6 +1817,7 @@ func _run() -> void:
 	await _test_all_catalog_rules(original_fight)
 	_test_renderer_source()
 	await _test_cost_and_marks(original_fight, original_elite)
+	await _test_illustration_art(original_fight)
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
 	var pool_fight := _prepared_pool(false, 18203)
