@@ -10,7 +10,6 @@ const SCRAP_COST := 3
 const ID_PREFIX := "stitched_"
 const MAX_INT := 9223372036854775807
 
-var _catalog := StarterCards.new()
 var _deck: Array[String] = []
 var _descriptors: Dictionary = {}
 var _scraps: int = 0
@@ -83,10 +82,8 @@ func choose_stitch(first_index: Variant, second_index: Variant, expected_snapsho
 	var first_id: String = _deck[first_index]
 	var second_id: String = _deck[second_index]
 	# Stitched IDs are never catalog cards and cannot be stitched again.
-	if not _catalog.has_card(first_id) or not _catalog.has_card(second_id):
-		return _result(false)
-	var first: Dictionary = _catalog.get_definition(first_id)
-	var second: Dictionary = _catalog.get_definition(second_id)
+	var first: Dictionary = resolve_card_definition(first_id)
+	var second: Dictionary = resolve_card_definition(second_id)
 	if first.is_empty() or second.is_empty() or first["owner"] == second["owner"]:
 		return _result(false)
 	var stitched_id := _format_id(_next_id)
@@ -168,11 +165,11 @@ func _result(ok: bool) -> Dictionary:
 	return snapshot
 
 
-func _format_id(number: int) -> String:
+static func _format_id(number: int) -> String:
 	return ID_PREFIX + ("%06d" % number)
 
 
-func _make_descriptor(id: String, first: Dictionary, second: Dictionary) -> Dictionary:
+static func _make_descriptor(id: String, first: Dictionary, second: Dictionary) -> Dictionary:
 	return {
 		"id": id,
 		"display_name": first["display_name"] + " / " + second["display_name"],
@@ -194,11 +191,9 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 	for id in deck_ids:
 		if typeof(id) != TYPE_STRING or id.is_empty():
 			return false
-		# Pool bases and their canonical plus partners can live beside existing
-		# stitched cards, but only StarterCards entries can become halves.
-		if not _catalog.has_card(id) and not registry.has(id) \
-				and RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty() \
-				and not is_authored_pool_plus(id):
+		# Starter cards, pool base cards, and canonical pool plus cards can live
+		# beside existing stitched cards in the deck.
+		if not registry.has(id) and resolve_card_definition(id).is_empty():
 			return false
 		counts[id] = counts.get(id, 0) + 1
 	for id in registry:
@@ -210,7 +205,7 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 		var serial: int = suffix.to_int()
 		if serial < 1 or serial >= next_stitch_id or _format_id(serial) != id:
 			return false
-		if counts.get(id, 0) != 1 or _catalog.has_card(id):
+		if counts.get(id, 0) != 1 or not resolve_card_definition(id).is_empty():
 			return false
 		var descriptor: Variant = registry[id]
 		if typeof(descriptor) != TYPE_DICTIONARY:
@@ -220,10 +215,10 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 			return false
 		if typeof(ids[0]) != TYPE_STRING or typeof(ids[1]) != TYPE_STRING:
 			return false
-		if not _catalog.has_card(ids[0]) or not _catalog.has_card(ids[1]):
+		var first: Dictionary = resolve_card_definition(ids[0])
+		var second: Dictionary = resolve_card_definition(ids[1])
+		if first.is_empty() or second.is_empty():
 			return false
-		var first: Dictionary = _catalog.get_definition(ids[0])
-		var second: Dictionary = _catalog.get_definition(ids[1])
 		if first["owner"] == second["owner"]:
 			return false
 		if descriptor != _make_descriptor(id, first, second):
@@ -231,8 +226,31 @@ func _validate_input(deck_ids: Array, registry: Dictionary, next_stitch_id: int)
 	return true
 
 
-## A pool plus is a legal deck member only when BOTH catalog records and the
-## authored base-to-plus link agree. This never confers stitch-half eligibility.
+## Resolves any authentic stitchable card definition: starter cards (and starter+),
+## reward-eligible pool base cards, and canonical authored pool + cards.
+## Stitched composite IDs and counterfeit/unregistered cards resolve to {}.
+static func resolve_card_definition(card_id: Variant) -> Dictionary:
+	if typeof(card_id) != TYPE_STRING:
+		return {}
+	var id: String = card_id
+	if id.is_empty():
+		return {}
+	var starter := StarterCards.new()
+	if starter.has_card(id):
+		return starter.get_definition(id)
+	var reward_def: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(id)
+	if not reward_def.is_empty():
+		return reward_def
+	if is_authored_pool_plus(id):
+		for pool in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
+			var def: Dictionary = pool.get_definition(id)
+			if not def.is_empty():
+				return def
+	return {}
+
+
+## A pool plus is a legal deck member and stitch half only when BOTH catalog records
+## and the authored base-to-plus link agree.
 static func is_authored_pool_plus(card_id: String) -> bool:
 	for pool in [WardenPoolCards.new(), SeamstressPoolCards.new(), TinkerPoolCards.new()]:
 		var upgraded: Dictionary = pool.get_definition(card_id)

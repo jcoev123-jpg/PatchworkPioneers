@@ -17,6 +17,9 @@ func _initialize() -> void:
 	_test_negative_matrix_and_retry()
 	_test_two_visits_upgrade_and_shop()
 	_test_invalid_ledgers()
+	_test_pool_base_cards_stitch()
+	_test_pool_plus_cards_stitch_and_reload()
+	_test_pool_negative_matrix()
 	if failures.is_empty():
 		print("run_rest_stitch_cards_test: PASS (", checks, " checks)")
 	else:
@@ -377,7 +380,7 @@ func _test_invalid_ledgers() -> void:
 
 
 ## A reward-base plus is a legal MEMBER of the persisted Rest/Shop ledger,
-## without becoming a playable stitched half or an unregistered composite.
+## and a legal stitched half when combined with another hero's card.
 func _test_pool_plus_mixed_ledger_continuity() -> void:
 	var original := _deck()
 	var first_rest := RunRestStitchCards.new(original, {}, 3)
@@ -425,8 +428,35 @@ func _test_pool_plus_mixed_ledger_continuity() -> void:
 	seed(2088)
 	var global_expected := randi()
 	seed(2088)
-	for plus_index in [warden_plus, seam_plus, tinker_plus]:
-		_reject(visit, plus_index, first_index, opening, "pool plus is not stitchable half " + str(plus_index))
+
+	# Same hero pool plus pair remains rejected
+	_reject(visit, warden_plus, first_index, opening, "same hero pool plus pair rejected")
+
+	# Replace old negative expectations with successful legal cross-hero + examples
+	var cross_probe_1 := RunRestStitchCards.new(opening["deck"], opening["descriptors"],
+		opening["remaining_scraps"], opening["next_stitch_id"])
+	var res_plus_starter := cross_probe_1.choose_stitch(seam_plus, first_index, opening)
+	_check(_is_success(res_plus_starter), "legal cross-hero pool plus with starter succeeds")
+	_check(res_plus_starter["descriptor"]["display_name"] == "Running Stitch+ / Strike"
+		and res_plus_starter["descriptor"]["cost"] == 2
+		and res_plus_starter["descriptor"]["half_ids"] == ["seamstress_running_stitch_plus", STRIKE]
+		and res_plus_starter["descriptor"]["owners"] == ["seamstress", "warden"]
+		and not res_plus_starter["descriptor"]["can_upgrade"]
+		and not res_plus_starter["descriptor"]["can_stitch"],
+		"cross-hero pool plus with starter produces correct descriptor")
+
+	var cross_probe_2 := RunRestStitchCards.new(opening["deck"], opening["descriptors"],
+		opening["remaining_scraps"], opening["next_stitch_id"])
+	var res_plus_plus := cross_probe_2.choose_stitch(seam_plus, tinker_plus, opening)
+	_check(_is_success(res_plus_plus), "legal cross-hero pool plus pair succeeds")
+	_check(res_plus_plus["descriptor"]["display_name"] == "Running Stitch+ / Rivet Shot+"
+		and res_plus_plus["descriptor"]["cost"] == 2
+		and res_plus_plus["descriptor"]["half_ids"] == ["seamstress_running_stitch_plus", "tinker_rivet_shot_plus"]
+		and res_plus_plus["descriptor"]["owners"] == ["seamstress", "tinker"]
+		and not res_plus_plus["descriptor"]["can_upgrade"]
+		and not res_plus_plus["descriptor"]["can_stitch"],
+		"cross-hero pool plus pair produces correct descriptor")
+
 	_reject(visit, _index(owned, existing_id), first_index, opening,
 		"existing composite is not stitchable half")
 	_reject(visit, first_index, _index(owned, STRIKE, 1), opening, "same hero stitch pair")
@@ -501,3 +531,297 @@ func _test_pool_plus_mixed_ledger_continuity() -> void:
 		"paid Shop result and unchanged allocator survive another Rest visit")
 	_check(owned == expected_owned and descriptors == first["descriptors"],
 		"full mixed Rest to Shop chain leaves original caller ledgers detached")
+
+
+func _test_pool_base_cards_stitch() -> void:
+	# AC1: valid unconsumed Rest ledger, >= 3 scraps, two owned base pool cards from different heroes.
+	# Original indices selected succeeds: each copy removed, composite at earlier index, 3 scraps spent once,
+	# allocator advanced once, duplicate copy index behavior, exact before/after ledger, unchanged RNG.
+	var deck: Array[String] = [
+		"warden_hold_the_line",      # 0 (Warden base, cost 1)
+		"seamstress_prick",          # 1 (Seamstress starter, cost 1)
+		"tinker_pop_shot",           # 2 (Tinker starter, cost 1)
+		"seamstress_running_stitch", # 3 (Seamstress base, cost 1)
+		"warden_heavy_thimble",      # 4 (Warden base, cost 1)
+		"tinker_rivet_shot",         # 5 (Tinker base, cost 1)
+		"warden_hold_the_line",      # 6 (Warden base duplicate copy)
+	]
+	var initial_scraps := 5
+	var visit := RunRestStitchCards.new(deck, {}, initial_scraps, 1)
+	_check(visit.is_valid() and not visit.is_consumed(), "pool base Rest visit initialized valid")
+	if not visit.is_valid():
+		return
+	var snapshot := visit.get_snapshot()
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 20261023
+	var local_state := local_rng.state
+	seed(20261023)
+	var global_next := randi()
+	seed(20261023)
+
+	# Stitch duplicate copy at index 6 (Warden) with index 3 (Seamstress).
+	# Earlier index is 3. Index 6 is removed; index 0 copy of warden_hold_the_line must remain intact!
+	var result := visit.choose_stitch(6, 3, snapshot)
+	_check(randi() == global_next and local_rng.state == local_state, "no global or local RNG draw during pool base stitch")
+	_check(_is_success(result) and visit.is_consumed(), "pool base stitch succeeds and consumes visit")
+	if not _is_success(result):
+		return
+
+	_check(result["remaining_scraps"] == 2, "exactly 3 scraps spent once (5 -> 2)")
+	_check(result["next_stitch_id"] == 2 and result["stitched_id"] == "stitched_000001",
+		"allocator monotonically advanced once")
+	_check(result["consumed_indices"] == [6, 3] and result["consumed_ids"] == ["warden_hold_the_line", "seamstress_running_stitch"],
+		"consumed indices and IDs recorded in receipt")
+
+	# Expected deck after stitch:
+	# Earlier index 3 replaced by stitched_000001; later index 6 removed.
+	var expected_deck: Array[String] = [
+		"warden_hold_the_line",
+		"seamstress_prick",
+		"tinker_pop_shot",
+		"stitched_000001",
+		"warden_heavy_thimble",
+		"tinker_rivet_shot",
+	]
+	_check(result["deck"] == expected_deck, "exact before/after deck order matches survivor indices")
+	_check(result["deck"].count("warden_hold_the_line") == 1,
+		"unselected duplicate copy at index 0 remains intact in deck")
+
+	var desc: Dictionary = result["descriptor"]
+	var warden_def: Dictionary = WardenPoolCards.new().get_definition("warden_hold_the_line")
+	var seam_def: Dictionary = SeamstressPoolCards.new().get_definition("seamstress_running_stitch")
+	_check(desc["display_name"] == "Hold the Line / Running Stitch", "composite display name")
+	_check(desc["cost"] == 2, "cost is min(3, max(1, 1)+1) = 2")
+	_check(desc["owners"] == ["warden", "seamstress"], "owners in first/second order")
+	_check(desc["half_ids"] == ["warden_hold_the_line", "seamstress_running_stitch"], "half IDs in first/second order")
+	_check(desc["first_half"] == warden_def and desc["second_half"] == seam_def, "exact authored definitions stored")
+	_check(desc["can_upgrade"] == false and desc["can_stitch"] == false, "can_upgrade=false and can_stitch=false")
+	_check(desc["illustration_path"] == warden_def["illustration_path"], "illustration path from first half")
+
+	# Subsequent Rest reload validates descriptor unchanged
+	var reloaded := RunRestStitchCards.new(result["deck"], result["descriptors"], result["remaining_scraps"], result["next_stitch_id"])
+	_check(reloaded.is_valid() and reloaded.get_snapshot() == visit.get_snapshot(),
+		"reloaded Rest visit validates pool base descriptor unchanged")
+
+
+func _test_pool_plus_cards_stitch_and_reload() -> void:
+	# AC2: canonical earned pool + cards (e.g. seamstress_running_stitch_plus and tinker_rivet_shot_plus)
+	# from different owners. Stores exact authored upgraded definitions in first/second order.
+	# Cost: min(3, max(half costs)+1). can_upgrade=false, can_stitch=false.
+	# Subsequent Rest reload validates descriptor unchanged. Prove by catalog-backed tests.
+	var seam_plus_id := "seamstress_running_stitch_plus"
+	var tinker_plus_id := "tinker_rivet_shot_plus"
+	var warden_plus_id := "warden_pin_and_pound_plus"
+	var seam_tea_plus_id := "seamstress_thimble_tea_plus"
+
+	var seam_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+	var warden_pool := WardenPoolCards.new()
+
+	var seam_def := seam_pool.get_definition(seam_plus_id)
+	var tinker_def := tinker_pool.get_definition(tinker_plus_id)
+	var warden_def := warden_pool.get_definition(warden_plus_id)
+	var tea_def := seam_pool.get_definition(seam_tea_plus_id)
+
+	_check(not seam_def.is_empty() and not tinker_def.is_empty() and not warden_def.is_empty(),
+		"catalog definitions exist for pool plus cards")
+	_check(seam_def["cost"] == 1 and tinker_def["cost"] == 1 and warden_def["cost"] == 2 and tea_def["cost"] == 0,
+		"authored costs verified against catalogs")
+
+	# Case A: Seamstress first (cost 1), Tinker second (cost 1)
+	var deck_a: Array[String] = [seam_plus_id, tinker_plus_id, "warden_strike"]
+	var visit_a := RunRestStitchCards.new(deck_a, {}, 3, 1)
+	_check(visit_a.is_valid(), "visit A with canonical plus cards is valid")
+	var res_a := visit_a.choose_stitch(0, 1, visit_a.get_snapshot())
+	_check(_is_success(res_a), "stitch Seamstress+ and Tinker+ succeeds")
+	var desc_a: Dictionary = res_a["descriptor"]
+	_check(desc_a["display_name"] == "Running Stitch+ / Rivet Shot+", "Case A display name")
+	_check(desc_a["cost"] == 2, "Case A cost min(3, max(1,1)+1) = 2")
+	_check(desc_a["owners"] == ["seamstress", "tinker"], "Case A owners in first/second order")
+	_check(desc_a["half_ids"] == [seam_plus_id, tinker_plus_id], "Case A half IDs")
+	_check(desc_a["first_half"] == seam_def, "Case A first half matches catalog upgraded definition")
+	_check(desc_a["second_half"] == tinker_def, "Case A second half matches catalog upgraded definition")
+	_check(desc_a["first_half"]["effects"] == {"damage": 3, "bleed": 4}, "Case A first half authored effects")
+	_check(desc_a["second_half"]["effects"] == {"damage": 6, "exposed": 1}, "Case A second half authored effects")
+	_check(desc_a["can_upgrade"] == false and desc_a["can_stitch"] == false, "Case A flags")
+	_check(desc_a["illustration_path"] == seam_def["illustration_path"], "Case A illustration from first")
+
+	# Case B: Reverse order: Tinker first (cost 1), Seamstress second (cost 1)
+	var deck_b: Array[String] = [tinker_plus_id, seam_plus_id, "warden_strike"]
+	var visit_b := RunRestStitchCards.new(deck_b, {}, 3, 1)
+	var res_b := visit_b.choose_stitch(0, 1, visit_b.get_snapshot())
+	_check(_is_success(res_b), "stitch Tinker+ and Seamstress+ succeeds in reverse order")
+	var desc_b: Dictionary = res_b["descriptor"]
+	_check(desc_b["display_name"] == "Rivet Shot+ / Running Stitch+", "Case B reverse display name")
+	_check(desc_b["cost"] == 2, "Case B cost")
+	_check(desc_b["owners"] == ["tinker", "seamstress"], "Case B owners in reverse order")
+	_check(desc_b["half_ids"] == [tinker_plus_id, seam_plus_id], "Case B half IDs")
+	_check(desc_b["first_half"] == tinker_def and desc_b["second_half"] == seam_def, "Case B exact halves")
+	_check(desc_b["illustration_path"] == tinker_def["illustration_path"], "Case B illustration from first")
+
+	# Case C: Cost capping test: Tinker (cost 1) + Warden Pin and Pound+ (cost 2)
+	# max(1, 2) + 1 = 3, capped at 3
+	var deck_c: Array[String] = [tinker_plus_id, warden_plus_id, "seamstress_prick"]
+	var visit_c := RunRestStitchCards.new(deck_c, {}, 3, 1)
+	var res_c := visit_c.choose_stitch(0, 1, visit_c.get_snapshot())
+	_check(_is_success(res_c), "stitch Tinker+ and Warden+ succeeds")
+	var desc_c: Dictionary = res_c["descriptor"]
+	_check(desc_c["display_name"] == "Rivet Shot+ / Pin and Pound+", "Case C display name")
+	_check(desc_c["cost"] == 3, "Case C cost min(3, max(1, 2)+1) = 3")
+	_check(desc_c["second_half"]["effects"] == {"damage": 12, "hits": 2}, "Case C Warden+ authored hits effect")
+
+	# Case D: Zero-cost test: Seamstress Thimble Tea+ (cost 0) + Tinker Rivet Shot+ (cost 1)
+	# max(0, 1) + 1 = 2
+	var deck_d: Array[String] = [seam_tea_plus_id, tinker_plus_id, "warden_strike"]
+	var visit_d := RunRestStitchCards.new(deck_d, {}, 3, 1)
+	var res_d := visit_d.choose_stitch(0, 1, visit_d.get_snapshot())
+	_check(_is_success(res_d), "stitch 0-cost and 1-cost plus cards succeeds")
+	_check(res_d["descriptor"]["cost"] == 2, "Case D cost min(3, max(0, 1)+1) = 2")
+
+	# Reload test: subsequent Rest visits validate descriptor unchanged
+	var reload_1 := RunRestStitchCards.new(res_a["deck"], res_a["descriptors"], 4, res_a["next_stitch_id"])
+	_check(reload_1.is_valid(), "subsequent Rest reload 1 is valid")
+	_check(reload_1.get_snapshot()["descriptors"] == res_a["descriptors"], "descriptor survives reload unchanged")
+
+	# Perform a second stitch at the reloaded visit with remaining cards
+	var deck_multi: Array[String] = [
+		seam_plus_id, tinker_plus_id, warden_plus_id, "seamstress_mend", "tinker_pop_shot"
+	]
+	var visit_multi_1 := RunRestStitchCards.new(deck_multi, {}, 6, 1)
+	var step1 := visit_multi_1.choose_stitch(0, 1, visit_multi_1.get_snapshot())
+	_check(_is_success(step1), "multi-visit step 1 succeeds")
+	var visit_multi_2 := RunRestStitchCards.new(step1["deck"], step1["descriptors"], step1["remaining_scraps"], step1["next_stitch_id"])
+	_check(visit_multi_2.is_valid(), "multi-visit reload 2 is valid")
+	# Now stitch warden_plus with seamstress_mend
+	var w_idx := _index(step1["deck"], warden_plus_id)
+	var m_idx := _index(step1["deck"], "seamstress_mend")
+	var step2 := visit_multi_2.choose_stitch(w_idx, m_idx, visit_multi_2.get_snapshot())
+	_check(_is_success(step2), "multi-visit step 2 succeeds")
+	_check(step2["descriptors"].size() == 2, "two stitched descriptors coexist in registry")
+	_check(step2["next_stitch_id"] == 3, "allocator cursor reached 3")
+
+	var visit_multi_3 := RunRestStitchCards.new(step2["deck"], step2["descriptors"], 3, step2["next_stitch_id"])
+	_check(visit_multi_3.is_valid(), "multi-visit reload 3 preserves both descriptors")
+	_check(visit_multi_3.get_snapshot()["descriptors"].has("stitched_000001")
+		and visit_multi_3.get_snapshot()["descriptors"].has("stitched_000002"),
+		"both sequential stitched IDs preserved on reload")
+
+
+func _test_pool_negative_matrix() -> void:
+	# AC3: starter-only stitches remain unchanged, while same-owner, re-stitch,
+	# counterfeit pool +, insufficient scraps, invalid indices and stale snapshots
+	# still reject without deck, scraps, receipt, cursor or RNG mutation.
+	var deck: Array[String] = [
+		"warden_hold_the_line",          # 0 (Warden base)
+		"warden_heavy_thimble",          # 1 (Warden base)
+		"warden_iron_hem_plus",          # 2 (Warden plus)
+		"seamstress_running_stitch",     # 3 (Seamstress base)
+		"seamstress_running_stitch_plus",# 4 (Seamstress plus)
+		"seamstress_thimble_tea_plus",   # 5 (Seamstress plus)
+		"tinker_rivet_shot",             # 6 (Tinker base)
+		"tinker_pop_shot",               # 7 (Tinker starter)
+		"warden_strike",                 # 8 (Warden starter)
+	]
+	var visit := RunRestStitchCards.new(deck, {}, 3, 1)
+	_check(visit.is_valid(), "negative matrix visit valid")
+	var snap := visit.get_snapshot()
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 334455
+	var local_state := local_rng.state
+	seed(334455)
+	var global_next := randi()
+	seed(334455)
+
+	# 1. Same-owner rejections
+	_reject(visit, 0, 1, snap, "same hero Warden base + Warden base")
+	_reject(visit, 0, 2, snap, "same hero Warden base + Warden plus")
+	_reject(visit, 0, 8, snap, "same hero Warden base + Warden starter")
+	_reject(visit, 3, 4, snap, "same hero Seamstress base + Seamstress plus")
+	_reject(visit, 4, 5, snap, "same hero Seamstress plus + Seamstress plus")
+	_reject(visit, 6, 7, snap, "same hero Tinker base + Tinker starter")
+
+	# 2. Invalid indices
+	_reject(visit, -1, 3, snap, "negative first index")
+	_reject(visit, 0, deck.size(), snap, "out of bounds second index")
+	_reject(visit, 0, 0, snap, "identical index pair")
+	_reject(visit, null, 3, snap, "null index")
+	_reject(visit, 1.5, 3, snap, "float index")
+	_reject(visit, "0", 3, snap, "string index")
+
+	# 3. Stale snapshots
+	var wrong_deck := snap.duplicate(true)
+	wrong_deck["deck"][0] = "warden_bastion_quilt"
+	_reject(visit, 0, 3, wrong_deck, "stale modified deck")
+	var wrong_currency := snap.duplicate(true)
+	wrong_currency["remaining_scraps"] = 99
+	_reject(visit, 0, 3, wrong_currency, "stale currency")
+	var wrong_cursor := snap.duplicate(true)
+	wrong_cursor["next_stitch_id"] = 5
+	_reject(visit, 0, 3, wrong_cursor, "stale cursor")
+	var wrong_receipt := snap.duplicate(true)
+	wrong_receipt["receipt"] = "tampered"
+	_reject(visit, 0, 3, wrong_receipt, "stale receipt")
+
+	# 4. Insufficient scraps
+	var poor_0 := RunRestStitchCards.new(deck, {}, 0, 1)
+	_reject(poor_0, 0, 3, poor_0.get_snapshot(), "0 scraps rejected")
+	var poor_1 := RunRestStitchCards.new(deck, {}, 1, 1)
+	_reject(poor_1, 0, 3, poor_1.get_snapshot(), "1 scrap rejected")
+	var poor_2 := RunRestStitchCards.new(deck, {}, 2, 1)
+	_reject(poor_2, 0, 3, poor_2.get_snapshot(), "2 scraps rejected")
+
+	# Verify RNG was never touched by any of the rejections above
+	_check(randi() == global_next and local_rng.state == local_state,
+		"all negative rejections left global and local RNG untouched")
+
+	# 5. Counterfeit pool + cards
+	for counterfeit in [
+		"warden_iron_hem_plus_plus",
+		"seamstress_unknown_plus",
+		"tinker_rivet_shot_fake_plus",
+		"warden_fake_plus",
+		"tinker_pop_shot_plus_fake"
+	]:
+		var bad_deck := deck.duplicate()
+		bad_deck.append(counterfeit)
+		var bad_visit := RunRestStitchCards.new(bad_deck, {}, 3, 1)
+		_check(not bad_visit.is_valid(), "counterfeit pool plus rejected at creation: " + counterfeit)
+		_reject(bad_visit, 0, bad_deck.size() - 1, bad_visit.get_snapshot(),
+			"counterfeit plus reject: " + counterfeit)
+
+	# 6. Re-stitch rejection
+	# First perform a valid stitch
+	var ok := visit.choose_stitch(0, 3, snap)
+	_check(_is_success(ok), "valid stitch succeeds")
+	var stitched_idx := _index(ok["deck"], ok["stitched_id"])
+	_check(stitched_idx >= 0, "stitched card present in deck")
+	var next_visit := RunRestStitchCards.new(ok["deck"], ok["descriptors"], 3, ok["next_stitch_id"])
+	_check(next_visit.is_valid(), "next visit valid")
+	var other_idx := _index(ok["deck"], "tinker_rivet_shot")
+	_reject(next_visit, stitched_idx, other_idx, next_visit.get_snapshot(),
+		"re-stitch of composite with pool card rejected")
+	_reject(next_visit, other_idx, stitched_idx, next_visit.get_snapshot(),
+		"re-stitch of pool card with composite rejected")
+
+	# 7. Forged descriptors on reload
+	var forged_desc: Dictionary = ok["descriptors"].duplicate(true)
+	forged_desc[ok["stitched_id"]]["first_half"]["effects"]["block"] = 9999
+	_check(not RunRestStitchCards.new(ok["deck"], forged_desc, 3, ok["next_stitch_id"]).is_valid(),
+		"forged effect in descriptor fails reload")
+
+	var forged_cost: Dictionary = ok["descriptors"].duplicate(true)
+	forged_cost[ok["stitched_id"]]["cost"] = 0
+	_check(not RunRestStitchCards.new(ok["deck"], forged_cost, 3, ok["next_stitch_id"]).is_valid(),
+		"forged cost in descriptor fails reload")
+
+	var forged_owners: Dictionary = ok["descriptors"].duplicate(true)
+	forged_owners[ok["stitched_id"]]["owners"] = ["tinker", "tinker"]
+	_check(not RunRestStitchCards.new(ok["deck"], forged_owners, 3, ok["next_stitch_id"]).is_valid(),
+		"forged same owners in descriptor fails reload")
+
+	var forged_half_id: Dictionary = ok["descriptors"].duplicate(true)
+	forged_half_id[ok["stitched_id"]]["half_ids"] = ["warden_iron_hem_plus_plus", "seamstress_running_stitch"]
+	_check(not RunRestStitchCards.new(ok["deck"], forged_half_id, 3, ok["next_stitch_id"]).is_valid(),
+		"forged counterfeit half_id in descriptor fails reload")
