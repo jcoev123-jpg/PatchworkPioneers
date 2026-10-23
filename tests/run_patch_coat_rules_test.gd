@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_rest_transfer_swap_and_replacement()
 	_test_invalid_transactions_and_projection()
 	_test_rng_and_detachment()
+	_test_m05_reinforced_patchcoat_and_thick_felt_mantle()
 	if failures.is_empty():
 		print("run_patch_coat_rules_test: PASS (", checks, " checks)")
 	else:
@@ -69,6 +70,11 @@ func _fixture(scraps: int = 3, include_coat: bool = true) -> Dictionary:
 		"quilted_coat": 6,
 		"padded_vest": 4,
 		"double_quilt_coat": 8,
+		"scrap_lined_vest": 3,
+		"wool_patch_cloak": 5,
+		"chain_stitched_coat": 7,
+		"reinforced_patchcoat": 9,
+		"thick_felt_mantle": 10,
 	}
 	for cid in expected_coats:
 		var entry: Variant = coat_by_id.get(cid)
@@ -77,7 +83,8 @@ func _fixture(scraps: int = 3, include_coat: bool = true) -> Dictionary:
 			and entry.get("slot") == "COAT"
 			and entry.get("max_hp_bonus") == expected_coats[cid],
 			"authored " + cid + " is valid exact COAT +" + str(expected_coats[cid]))
-	if not (coat_by_id.has("quilted_coat") and coat_by_id.has("padded_vest") and coat_by_id.has("double_quilt_coat")):
+	if not (coat_by_id.has("quilted_coat") and coat_by_id.has("padded_vest") and coat_by_id.has("double_quilt_coat")
+			and coat_by_id.has("reinforced_patchcoat") and coat_by_id.has("thick_felt_mantle")):
 		return {}
 
 	var party_defs: Array = definitions.duplicate(true)
@@ -96,25 +103,24 @@ func _fixture(scraps: int = 3, include_coat: bool = true) -> Dictionary:
 		patch_defs.append({"id": entry["id"], "slot": entry["slot"]})
 	# Project the authored three-field rule down to wardrobe's strict
 	# two-field identity/slot-only constructor, without changing its schema.
-	for cid in ["quilted_coat", "padded_vest", "double_quilt_coat"]:
+	for cid in expected_coats:
 		if coat_by_id.has(cid):
 			patch_defs.append({"id": cid, "slot": "COAT"})
 	patch_defs.append({"id": "coat_extra", "slot": "COAT"})
 	var owned := ["coat_extra", "stitched_badge", "spare_spool"]
 	if include_coat:
-		owned.append("quilted_coat")
-		owned.append("padded_vest")
-		owned.append("double_quilt_coat")
+		for cid in expected_coats:
+			owned.append(cid)
 	var wardrobe := RunPatchWardrobe.new(heroes, owned, patch_defs, scraps,
 		117, ["warden_strike", "seamstress_prick"], 920151)
 	_check(torn.is_valid() and wardrobe.is_valid(),
 		"actual torn/mend and wardrobe services initialize with two-field definitions")
 	if not torn.is_valid() or not wardrobe.is_valid():
 		return {}
-	_check(wardrobe.get_snapshot().definitions.get("quilted_coat") == "COAT"
-		and wardrobe.get_snapshot().definitions.get("padded_vest") == "COAT"
-		and wardrobe.get_snapshot().definitions.get("double_quilt_coat") == "COAT"
-		and not wardrobe.get_snapshot().definitions.has("max_hp_bonus"),
+	for cid in expected_coats:
+		_check(wardrobe.get_snapshot().definitions.get(cid) == "COAT",
+			"definition for " + cid + " is COAT")
+	_check(not wardrobe.get_snapshot().definitions.has("max_hp_bonus"),
 		"bonus field does not leak into RunPatchWardrobe definitions")
 	return {"party": party, "torn": torn, "wardrobe": wardrobe, "coats": authored,
 		"owned": owned, "definitions": patch_defs}
@@ -493,6 +499,12 @@ func _test_invalid_transactions_and_projection() -> void:
 			entry["slot"] = "ARM"
 	_check(not RunPatchCoatRules.project_health(baseline_t, w, bad_authored).ok,
 		"wrong authored coat slot rejects")
+	var bad_authored_m05: Array = f.coats.duplicate(true)
+	for entry in bad_authored_m05:
+		if entry["id"] == "reinforced_patchcoat":
+			entry["slot"] = "ARM"
+	_check(not RunPatchCoatRules.project_health(baseline_t, w, bad_authored_m05).ok,
+		"wrong authored coat slot for reinforced_patchcoat rejects")
 
 	# 4. Missing required prior name
 	for missing_id in ["quilted_coat", "padded_vest", "double_quilt_coat"]:
@@ -522,6 +534,24 @@ func _test_invalid_transactions_and_projection() -> void:
 			entry["max_hp_bonus"] = -8
 	_check(not RunPatchCoatRules.project_health(baseline_t, w, bad_amount).ok,
 		"negative max_hp_bonus rejects")
+	bad_amount = f.coats.duplicate(true)
+	for entry in bad_amount:
+		if entry["id"] == "reinforced_patchcoat":
+			entry["max_hp_bonus"] = 0
+	_check(not RunPatchCoatRules.project_health(baseline_t, w, bad_amount).ok,
+		"zero max_hp_bonus for reinforced_patchcoat rejects")
+	bad_amount = f.coats.duplicate(true)
+	for entry in bad_amount:
+		if entry["id"] == "thick_felt_mantle":
+			entry["max_hp_bonus"] = -10
+	_check(not RunPatchCoatRules.project_health(baseline_t, w, bad_amount).ok,
+		"negative max_hp_bonus for thick_felt_mantle rejects")
+	bad_amount = f.coats.duplicate(true)
+	for entry in bad_amount:
+		if entry["id"] == "thick_felt_mantle":
+			entry["max_hp_bonus"] = 10.5
+	_check(not RunPatchCoatRules.project_health(baseline_t, w, bad_amount).ok,
+		"fractional max_hp_bonus for thick_felt_mantle rejects")
 
 	# 6. Malformed entries
 	var bad_malformed: Array = f.coats.duplicate(true)
@@ -589,3 +619,142 @@ func _test_rng_and_detachment() -> void:
 		"mutating detached nested return never corrupts services or input rules")
 	_check(randi() == expected_draw,
 		"neither fixture nor transactional previews consume global random draws")
+
+
+func _test_m05_reinforced_patchcoat_and_thick_felt_mantle() -> void:
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	var torn: RunTornMending = f.torn
+	var before_t := torn.read_state()
+	var before_w := w.get_snapshot()
+
+	_project(f, [40, 30, 26], "m05 pristine unworn")
+
+	# AC2: Sew reinforced_patchcoat on living Warden (+9) -> 40 + 9 = 49
+	_check(_sew(w, "reinforced_patchcoat", "warden", "sew_warden_reinforced").ok,
+		"reinforced_patchcoat sews to living Warden")
+	# Sew thick_felt_mantle on living Seamstress (+10) -> 30 + 10 = 40
+	_check(_sew(w, "thick_felt_mantle", "seamstress", "sew_seamstress_mantle").ok,
+		"thick_felt_mantle sews to living Seamstress")
+	# Tinker is unpatched (+0) -> 26
+
+	seed(84201)
+	var expected_rng := randi()
+	seed(84201)
+
+	var proj := RunPatchCoatRules.project_health(torn.read_state(), w, f.coats)
+	_check(proj.get("ok") == true, "m05 projection succeeded for living wearers")
+	if proj.get("ok") == true:
+		# Warden 40+9=49, Seamstress 30+10=40, unpatched Tinker 26
+		_check(proj.heroes[0].max_hp == 49 and proj.heroes[0].hp == 40
+			and proj.heroes[0].id == "warden" and proj.heroes[0].position == 1
+			and proj.heroes[0].block == before_t.heroes[0].block
+			and proj.heroes[0].statuses == before_t.heroes[0].statuses,
+			"Warden projects 40+9=49 effective max HP with current HP, block, statuses and position intact")
+		_check(proj.heroes[1].max_hp == 40 and proj.heroes[1].hp == 30
+			and proj.heroes[1].id == "seamstress" and proj.heroes[1].position == 2
+			and proj.heroes[1].block == before_t.heroes[1].block
+			and proj.heroes[1].statuses == before_t.heroes[1].statuses,
+			"Seamstress projects 30+10=40 effective max HP with current HP, block, statuses and position intact")
+		_check(proj.heroes[2].max_hp == 26 and proj.heroes[2].hp == 26
+			and proj.heroes[2].id == "tinker" and proj.heroes[2].position == 3
+			and proj.heroes[2].block == before_t.heroes[2].block
+			and proj.heroes[2].statuses == before_t.heroes[2].statuses,
+			"unpatched Tinker remains 26 max HP and 26 current HP")
+
+	# Base max HP, current HP, wallet, deck, receipts and RNG remain untouched
+	var cur_t := torn.read_state()
+	var cur_w := w.get_snapshot()
+	_check(cur_t.heroes[0].max_hp == 40 and cur_t.heroes[1].max_hp == 30 and cur_t.heroes[2].max_hp == 26,
+		"torn ledger base max HP untouched by projection")
+	_check(cur_t.heroes[0].hp == 40 and cur_t.heroes[1].hp == 30 and cur_t.heroes[2].hp == 26,
+		"torn ledger current HP untouched by projection")
+	_check(cur_w.scraps == 4 and cur_w.gold == before_w.gold and cur_w.cards == before_w.cards
+		and cur_w.seed == before_w.seed,
+		"wardrobe scraps, gold, cards and seed untouched by projection")
+	_check(randi() == expected_rng, "projection leaves global RNG draw untouched")
+
+	# Detachable calculation: repeated projection does not stack bonuses
+	var proj_repeat := RunPatchCoatRules.project_health(torn.read_state(), w, f.coats)
+	_check(proj == proj_repeat, "repeated projection does not stack bonuses")
+	_project(f, [49, 40, 26], "Warden wears +9, Seamstress wears +10, Tinker unpatched")
+
+	# Suppression at HP 0: battle tear on Warden
+	var b_start: Array = torn.read_state().heroes
+	var b_end: Array = b_start.duplicate(true)
+	b_end[0].hp = 0
+	b_end[0].block = 4
+	b_end[0].statuses.bleed = 2
+	_check(torn.observe_battle_end("fight_m05_tear", b_start, b_end).ok,
+		"battle tear drops Warden to HP 0")
+	_check(torn.read_state().heroes[0].hp == 0 and torn.read_state().heroes[0].max_hp == 37
+		and torn.read_state().tear_counts.warden == 1,
+		"Warden base max drops to 37 with 1 recorded tear")
+	_refresh(f, 4)
+	_check(w.project_active(torn.read_state()).active.warden == []
+		and w.get_snapshot().worn.warden.COAT == "reinforced_patchcoat",
+		"torn Warden keeps reinforced_patchcoat sewn but inactive")
+	_project(f, [37, 40, 26], "torn Warden coat suppressed to base 37 while Seamstress keeps +10 (40)")
+
+	# Legal return after map mend (costs 2 scraps, restores floor(37/4) = 9 HP)
+	var mend := torn.choose_mend("map_m05_mend", "mend_rc_1", "warden", 1, 4,
+		torn.read_state().heroes, true)
+	_check(mend.get("ok") == true and mend.get("remaining_scraps") == 2
+		and mend.heroes[0].hp == 9 and mend.heroes[0].max_hp == 37,
+		"legal 2-scrap map mend restores floor(37/4)=9 HP to Warden, base max 37")
+	_refresh(f, mend.remaining_scraps)
+	_check(w.project_active(torn.read_state()).active.warden == ["reinforced_patchcoat"]
+		and w.get_snapshot().scraps == 2,
+		"mended Warden reactivates reinforced_patchcoat without scrap discrepancy")
+	_project(f, [46, 40, 26], "mend reactivates +9 bonus (37+9=46) without extra coat healing")
+	_check(torn.read_state().heroes[0].hp == 9, "Warden current HP remains 9 after projection")
+
+	# Rest revival route: tear Seamstress in battle
+	var s_start: Array = torn.read_state().heroes
+	var s_end: Array = s_start.duplicate(true)
+	s_end[1].hp = 0
+	_check(torn.observe_battle_end("fight_m05_s_tear", s_start, s_end).ok,
+		"battle tear drops Seamstress to HP 0")
+	_check(torn.read_state().heroes[1].hp == 0 and torn.read_state().heroes[1].max_hp == 27
+		and torn.read_state().tear_counts.seamstress == 1,
+		"Seamstress base max drops to 27 with 1 recorded tear")
+	_refresh(f, 2)
+	_project(f, [46, 27, 26], "torn Seamstress thick_felt_mantle suppressed to base 27")
+	_check(torn.apply_rest("rest_m05_revival", torn.read_state().heroes, true).ok,
+		"Rest revival heals party")
+	_refresh(f, 2)
+	_check(torn.read_state().heroes[1].hp == 9, "Rest revived Seamstress to floor(27/3)=9 HP")
+	_project(f, [46, 37, 26], "Rest revival reactivates thick_felt_mantle +10 (27+10=37)")
+
+	# AC4: Rest re-sew/swap (costs 1 scrap)
+	_check(w.start_rest("rest_m05_session", w.get_snapshot()).ok, "Rest session opens")
+	# Swap reinforced_patchcoat on Warden with thick_felt_mantle on Seamstress
+	var swap_res := w.re_sew("reinforced_patchcoat", "warden", "seamstress",
+		"rest_m05_session", "swap_ws_m05", w.get_snapshot())
+	_check(swap_res.ok and swap_res.receipt.exchanged_id == "thick_felt_mantle"
+		and swap_res.receipt.scrap_delta == -1 and w.get_snapshot().scraps == 1,
+		"occupied coat swap costs 1 scrap and preserves both patch IDs")
+	# Warden now wears thick_felt_mantle (+10 -> 37+10=47), Seamstress wears reinforced_patchcoat (+9 -> 27+9=36), Tinker 26
+	_project(f, [47, 36, 26], "after swap Warden +10 (47) and Seamstress +9 (36)")
+
+	# Transfer thick_felt_mantle from Warden to empty Tinker (costs 1 scrap)
+	var move_res := w.re_sew("thick_felt_mantle", "warden", "tinker",
+		"rest_m05_session", "move_wt_m05", w.get_snapshot())
+	_check(move_res.ok and move_res.receipt.exchanged_id == ""
+		and move_res.receipt.scrap_delta == -1 and w.get_snapshot().scraps == 0,
+		"empty coat transfer costs 1 scrap")
+	# Warden has no coat (37), Seamstress wears reinforced_patchcoat (+9 -> 36), Tinker wears thick_felt_mantle (+10 -> 36)
+	_project(f, [37, 36, 36], "Warden empty (37), Seamstress wears +9 (36), Tinker wears +10 (36)")
+	_check(w.end_rest("rest_m05_session", w.get_snapshot()).ok, "Rest session closes")
+
+	# AC4: Sew replacement on Seamstress (occupied sew yields 1 scrap)
+	var replace_res := _sew(w, "coat_extra", "seamstress", "replace_m05_seamstress")
+	_check(replace_res.ok and replace_res.receipt.displaced_id == "reinforced_patchcoat"
+		and replace_res.receipt.scrap_delta == 1 and w.get_snapshot().scraps == 1
+		and not w.get_snapshot().owned.has("reinforced_patchcoat")
+		and w.get_snapshot().worn.seamstress.COAT == "coat_extra",
+		"sewing over reinforced_patchcoat destroys displaced coat and grants 1 scrap")
+	# Warden empty (37), Seamstress coat_extra (+0 -> 27), Tinker thick_felt_mantle (+10 -> 36)
+	_project(f, [37, 27, 36], "replaced coat gives no bonus, Tinker retains +10 (36)")

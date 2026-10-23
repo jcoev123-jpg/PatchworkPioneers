@@ -68,6 +68,16 @@
         { "id": "buy_thread", "text": "Buy two thread bundles (spend 15 gold; gain 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
         { "id": "watch", "text": "Watch the neighbours stitch (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } }
       ]
+    },
+    {
+      "id": "estate_sale",
+      "title": "Estate Sale",
+      "description": "A travelling patchwork estate seller displays folded fabric lots beside a handcart.",
+      "choices": [
+        { "id": "buy_thread", "text": "Buy a two-bundle thread lot (15 gold for 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
+        { "id": "sell_fabric", "text": "Sell two salvaged scraps for 30 gold", "outcome": { "gold": 30, "scraps": -2 } },
+        { "id": "leave", "text": "Leave the estate sale", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }

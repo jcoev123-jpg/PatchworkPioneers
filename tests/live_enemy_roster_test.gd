@@ -674,6 +674,156 @@ func _recoil(app, presenter) -> void:
 		"the hit recoil creates no tween that outlives the frame")
 
 
+## VIS V5 fall settle: a witnessed living-to-zero HP transition eases only that actor's
+## drawn artwork from upright into the existing still fallen pose. `fallen` stays
+## authoritative at once, every control, pinned name, intent badge and target rectangle
+## keeps its exact place, and no combat value, deck, energy, intent or run RNG moves.
+func _fall_settle(app, presenter) -> void:
+	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
+		and not presenter._puppets.is_empty(),
+		"fall settle checks run on every actual mounted actor")
+	if not is_instance_valid(presenter.panel) or presenter.enemies == null or presenter._puppets.is_empty():
+		return
+	var before: Array = _snapshot(app)
+	var tweens: int = get_processed_tweens().size()
+	var host = null
+	for puppet in presenter._puppets:
+		if puppet.facing < 0.0 and not puppet.fallen and not puppet.actor_id.is_empty():
+			host = puppet
+			break
+	_check(host != null, "a living enemy puppet is mounted for the fall settle")
+	if host == null:
+		return
+	var control_rect: Rect2 = host.get_global_rect()
+	var label: Label = host.get_child(0) as Label
+	var tag_rect: Rect2 = label.get_global_rect() if is_instance_valid(label) else Rect2()
+	var tag_text: String = label.text if is_instance_valid(label) else ""
+	var rest: Rect2 = host.posed_actor_rect()
+	_check(not host.fallen and not host.settling_fall()
+		and is_equal_approx(host.fallen_tilt(), 0.0) and is_equal_approx(host.fall_shape(), 1.0),
+		"a standing actor is upright with no fall settle in flight")
+	_check(not host.settle_fall(0.0) and not host.settle_fall(-0.5) and not host.settling_fall(),
+		"a zero or negative fall span never starts a settle")
+	# The transition itself: fallen is authoritative immediately, and the drawn tilt starts
+	# upright so the artwork really eases into the existing fallen pose.
+	var phase: float = host.idle_phase
+	host.fallen = true
+	_check(not host.trigger_attack(0.6) and not host.attacking()
+		and not host.trigger_recoil(0.6) and not host.recoiling(),
+		"a fallen actor rejects a committed pose and a hit recoil at once")
+	_check(host.settle_fall(30.0) and host.settling_fall()
+		and host.fall_span <= host.FALL_MAX_SECONDS and host.fall_span > 0.0,
+		"one witnessed fall starts a settle bounded to the approved span")
+	_check(is_equal_approx(host.fall_shape(), 0.0) and is_equal_approx(host.fallen_tilt(), 0.0)
+		and host.posed_actor_rect().get_center().distance_to(rest.get_center()) <= 2.0,
+		"the settling artwork starts upright, where the standing actor rested")
+	var tilts: Array[float] = [0.0]
+	for step in range(4):
+		host._process(host.fall_span * 0.25 if step == 0 else 0.1)
+		tilts.append(host.fallen_tilt())
+		_check(host.posed_actor_rect().size.x > 0.0 and host.posed_actor_rect().size.y > 0.0,
+			"the settling fall keeps drawing the actor's own artwork: " + host.name)
+		_check(host.get_global_rect() == control_rect,
+			"the settling fall never moves the actor target: " + host.name)
+	var grew := true
+	for index in range(1, tilts.size()):
+		if absf(tilts[index]) <= absf(tilts[index - 1]) or absf(tilts[index]) > host.FALL_TILT + 0.001:
+			grew = false
+	_check(grew, "the drawn tilt eases monotonically into the existing fallen tilt")
+	host._process(host.FALL_MAX_SECONDS)
+	var settled: Rect2 = host.posed_actor_rect()
+	_check(not host.settling_fall()
+		and is_equal_approx(host.fallen_tilt(), -host.FALL_TILT * host.facing)
+		and is_equal_approx(host.idle_bob(), 0.0),
+		"the settled fall matches the existing still fallen tilt exactly")
+	host._process(0.5)
+	_check(host.posed_actor_rect() == settled and is_equal_approx(host.idle_phase, phase),
+		"a settled fall leaves the artwork perfectly still with no idle motion")
+	_check(is_instance_valid(label) and label.get_global_rect() == tag_rect
+		and label.text == tag_text and label.is_visible_in_tree(),
+		"the pinned name keeps its exact place and text through the fall: " + host.name)
+	# The mounted lookup used for targeting keeps its fail-closed fallen rule, while the
+	# fall reaction may still address exactly this actor by its own side and ID.
+	_check(presenter.puppet_for("enemy", host.actor_id) == null
+		and presenter.hero_puppet(host.actor_id) == null,
+		"a fallen actor is still never resolved for targeting")
+	_check(presenter.presented_puppet("enemy", host.actor_id) == host,
+		"presentation still resolves exactly the fallen actor its own hit left mounted")
+	_check(presenter.presented_puppet("hero", host.actor_id) == null
+		and presenter.presented_puppet("bogus", host.actor_id) == null
+		and presenter.presented_puppet("enemy", "") == null
+		and presenter.presented_puppet("enemy", "fabricated_missing_actor") == null,
+		"the presentation lookup fails closed for the wrong side, an unknown side and a stale ID")
+	_check(presenter.presented_puppet("enemy", host.actor_id) == host
+		and presenter.settle_fall("enemy", host.actor_id, 0.6) and host.settling_fall(),
+		"the fall reaction and the presentation lookup agree on the same fallen puppet")
+	_check(not presenter.settle_fall("hero", host.actor_id, 0.6)
+		and not presenter.settle_fall("bogus", host.actor_id, 0.6)
+		and not presenter.settle_fall("enemy", "", 0.6)
+		and not presenter.settle_fall("enemy", "fabricated_missing_actor", 0.6),
+		"the fall lookup fails closed for the wrong side, an unknown side and a stale ID")
+	var duplicate = null
+	for puppet in presenter._puppets:
+		if puppet != host and is_equal_approx(puppet.facing, host.facing):
+			duplicate = puppet
+			break
+	_check(duplicate != null, "a second puppet of the same side exists for the ambiguous binding")
+	if duplicate != null:
+		var duplicate_id: String = duplicate.actor_id
+		duplicate.actor_id = host.actor_id
+		_check(not presenter.settle_fall("enemy", host.actor_id, 0.6)
+			and presenter.presented_puppet("enemy", host.actor_id) == null,
+			"an ambiguous duplicate binding settles and presents no puppet")
+		duplicate.actor_id = duplicate_id
+	host.cancel_fall()
+	_check(not host.settling_fall()
+		and is_equal_approx(host.fallen_tilt(), -host.FALL_TILT * host.facing),
+		"cancelling a settle leaves the existing still fallen pose")
+	# Standing up drops the settle at once and the artwork is upright again.
+	host.fallen = false
+	host._process(0.1)
+	_check(not host.settling_fall() and is_equal_approx(host.fallen_tilt(), 0.0),
+		"a revived actor drops the fall settle and draws upright")
+	host.idle_phase = phase
+	# Rebind: a fresh actor ID never inherits another actor's settle.
+	host.fallen = true
+	_check(host.settle_fall(0.6) and host.settling_fall(),
+		"a live fall settle is in flight before the rebind")
+	host.bind_actor("fabricated_fall_actor", {})
+	_check(not host.settling_fall(),
+		"rebinding a different actor ID cancels the settle in flight")
+	host.fallen = false
+	host.bind_actor(String(presenter.enemies.get_enemy(host.slot).get("id")),
+		presenter.art_for(String(presenter.enemies.get_enemy(host.slot).get("id"))))
+	host.idle_phase = phase
+	_check(is_equal_approx(host.fallen_tilt(), 0.0) and host.posed_actor_rect() != Rect2(),
+		"the restored standing actor draws its own idle pose again")
+	# Source inspection: the tilt is interpolated inside the one shared draw transform, with
+	# no tween, timer, RNG or Control movement, and the fall is a bounded delta-driven state.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var transform_body := _function_body(source, "func idle_transform(")
+	var fall_body := _function_body(source, "func advance_fall(")
+	var tilt_body := _function_body(source, "func fallen_tilt(")
+	var settle_body := _function_body(source, "func settle_fall(")
+	_check(transform_body.contains("fallen_tilt()")
+		and transform_body.contains("attack_lunge() + recoil_pixels()")
+		and not transform_body.contains("position =") and not transform_body.contains("offset_"),
+		"the one shared draw transform carries the settled fall and never moves the Control")
+	_check(settle_body.contains("fall_span = clampf(") and settle_body.contains("FALL_MAX_SECONDS")
+		and fall_body.contains("fall_remaining = maxf(") and fall_body.contains("cancel_fall()")
+		and tilt_body.contains("-FALL_TILT * facing * fall_shape()"),
+		"the fall is a bounded, delta-driven, facing-correct drawing state")
+	_check(not settle_body.contains("create_tween") and not fall_body.contains("create_tween")
+		and not settle_body.contains("Timer.new") and not fall_body.contains("Timer.new")
+		and not settle_body.contains("randi(") and not fall_body.contains("randf(")
+		and not transform_body.contains("create_tween"),
+		"the fall settle draws no tween, timer or RNG")
+	_check(_snapshot(app) == before,
+		"the fall settle changes no HP/Block, deck, energy, turn, intent or run RNG")
+	_check(get_processed_tweens().size() == tweens,
+		"the fall settle creates no tween that outlives the frame")
+
+
 ## Idle presentation: every living actor advances its own subtle bob and breathing pose
 ## inside its art band, while target rectangles, pinned names, intent badges, controls,
 ## combat state and RNG stay exactly as they were.
@@ -830,14 +980,31 @@ func _idle_motion(app, presenter, expect_fallback: bool = false) -> void:
 		"idle animation advances a per-instance delta phase without tweens, timers or RNG")
 
 
-## A downed or slain actor keeps the existing tilt and tint with no idle motion at all.
+## A downed or slain actor is authoritative at once: the existing tilt and tint, no idle
+## motion and every attack/recoil rejection. Only the one bounded settling of the drawn
+## artwork may run; it must end exactly at the existing still fallen pose and every target
+## rectangle must stay fixed.
 func _fallen_stillness(puppets: Array) -> void:
 	for puppet in puppets:
 		_check(puppet.fallen, "fallen stillness runs on a genuinely downed/slain actor: " + puppet.name)
 		if not puppet.fallen:
 			continue
 		var phase: float = puppet.idle_phase
+		var control_rect: Rect2 = puppet.get_global_rect()
+		var immediate: Rect2 = puppet.posed_actor_rect()
+		_check(not puppet.trigger_attack(0.6) and not puppet.attacking()
+			and puppet.posed_actor_rect() == immediate,
+			"a fallen actor never starts a committed attack pose: " + puppet.name)
+		_check(not puppet.trigger_recoil(0.6) and not puppet.recoiling()
+			and puppet.posed_actor_rect() == immediate,
+			"a fallen actor never starts a hit recoil: " + puppet.name)
+		_check(puppet.fall_span <= puppet.FALL_MAX_SECONDS,
+			"a fall settle is bounded to the approved span: " + puppet.name)
+		puppet._process(puppet.FALL_MAX_SECONDS)
 		var pose: Rect2 = puppet.posed_actor_rect()
+		_check(not puppet.settling_fall()
+			and is_equal_approx(puppet.fallen_tilt(), -puppet.FALL_TILT * puppet.facing),
+			"a settled fall ends exactly at the existing still fallen tilt: " + puppet.name)
 		puppet._process(0.5)
 		_check(is_equal_approx(puppet.idle_phase, phase),
 			"fallen actor stops advancing its idle phase: " + puppet.name)
@@ -848,6 +1015,8 @@ func _fallen_stillness(puppets: Array) -> void:
 		puppet._process(1.0)
 		_check(puppet.posed_actor_rect() == pose and is_equal_approx(puppet.idle_phase, phase),
 			"further frame deltas leave the fallen actor motionless: " + puppet.name)
+		_check(puppet.get_global_rect() == control_rect,
+			"falling never moves the actor's own control or target rectangle: " + puppet.name)
 		_check(not puppet.trigger_attack(0.6) and not puppet.attacking()
 			and puppet.posed_actor_rect() == pose,
 			"a fallen actor never starts a committed attack pose: " + puppet.name)
@@ -1004,6 +1173,7 @@ func _visible(app, presenter) -> void:
 	_idle_motion(app, presenter)
 	_attack_pose(app, presenter)
 	_recoil(app, presenter)
+	_fall_settle(app, presenter)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -1583,6 +1753,7 @@ func _run() -> void:
 	_staging(app, presenter)
 	_idle_motion(app, presenter, true)
 	_attack_pose(app, presenter)
+	_fall_settle(app, presenter)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 	await process_frame
@@ -1753,6 +1924,7 @@ func _typed_stage(app, presenter) -> void:
 	_idle_motion(app, presenter)
 	_attack_pose(app, presenter)
 	_recoil(app, presenter)
+	_fall_settle(app, presenter)
 	var actions: Array = app.enemy_intents.get_intents()
 	for index in range(3):
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)

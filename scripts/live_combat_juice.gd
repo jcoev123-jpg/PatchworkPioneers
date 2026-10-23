@@ -14,6 +14,17 @@ extends Node
 ## authoritative change was one enemy's HP/Block loss also lets that card's own living
 ## hero puppet perform one bounded attack-pose lunge. An area cast that happens to leave
 ## only one damaged recipient is never classified as a single hit.
+## A witnessed living-to-zero HP transition, and only that one, eases the actor's own
+## puppet from upright into its existing fallen pose; `fallen` itself stays authoritative
+## at once, so no control, tag or target ever moves.
+## Card movement is drawn from the authoritative piles and the mounted hand panels only:
+## one sewn scrap flies from the Draw readout to each genuinely drawn copy, and one flies
+## from a uniquely held, provably committed single-target play to the exact enemy its own
+## authored cast really hit. Hover, a refused play, an ambiguous duplicate copy or a
+## refill/reshuffle therefore flies nothing.
+## Outside battle the same listener watches the app's real screen roots, so appearance and
+## replacement of the title, the route map, the battle and the settled run result each get
+## one short, pointer-inert fade from a single reused wash that hides again when it ends.
 ## Nothing here awaits or gates input: fast mode only shortens the effects, and
 ## returning, a new battle, terminal teardown or a missing anchor presentation drops
 ## every cue and rebaselines instead of inventing one.
@@ -22,11 +33,19 @@ const NORMAL_SECONDS := 0.6
 const FAST_SECONDS := 0.15
 const HISTORY_LIMIT := 64
 const FLIGHT_HISTORY_LIMIT := 64
+const CARD_FLIGHT_HISTORY_LIMIT := 64
 const POSE_HISTORY_LIMIT := 64
 const RECOIL_HISTORY_LIMIT := 64
+const FALL_HISTORY_LIMIT := 64
+const FADE_HISTORY_LIMIT := 64
 const FLIGHT_SIZE := Vector2(126, 64)
 const FLOAT_WIDTH := 120.0
 const FLOAT_HEIGHT := 26.0
+## A screen transition dims the incoming screen for one short, pointer-inert fade.
+const SCREEN_FADE_ALPHA := 0.55
+const SCREEN_FADE_INK := Color("12100e")
+## The observable full-screen roots of the real app, by the app's own property name.
+const SCREEN_ROOTS := ["title", "map", "battle", "results"]
 
 var fast_animations := false
 var fast_button: Button
@@ -36,6 +55,9 @@ var overlay: Control
 var history: Array[Dictionary] = []
 ## Separate bounded receipts for actually spawned, authoritative discard flights.
 var flight_history: Array[Dictionary] = []
+## Separate bounded receipts for really spawned draw/cast card flights
+## ({"kind","card_id","panel_id","source","destination","fast","duration", ...}).
+var card_flight_history: Array[Dictionary] = []
 ## Separate bounded receipts for genuinely committed card-attack lunges
 ## ({"side","position","id","card_id","target_position","target_id","hp","block",
 ## "anchor","fast","duration"}).
@@ -43,6 +65,13 @@ var pose_history: Array[Dictionary] = []
 ## Separate bounded receipts for recoils really started by a committed HP loss
 ## ({"side","position","id","hp","block","fast","duration"}).
 var recoil_history: Array[Dictionary] = []
+## Separate bounded receipts for fall settles really started by a witnessed HP -> 0.
+var fall_history: Array[Dictionary] = []
+## Separate bounded receipts for real full-screen transitions
+## ({"transitions":[{"screen","visible"}],"fast","duration","alpha"}).
+var fade_history: Array[Dictionary] = []
+## The one reused, pointer-inert full-screen wash; hidden between transitions.
+var fade_layer: Control
 ## Bumped once per battle binding, so a test or screenshot can prove a single rebind.
 var bind_serial := 0
 var bound := false
@@ -54,6 +83,7 @@ var _deck: CombatDeck
 var _snapshot: Dictionary = {}
 var _cues: Array[Dictionary] = []
 var _flights: Array[Dictionary] = []
+var _card_flights: Array[Dictionary] = []
 var _held_before: Array[String] = []
 var _discard_before: Array[String] = []
 var _draw_before: Array[String] = []
@@ -62,6 +92,17 @@ var _held_sources: Array[Dictionary] = []
 ## alone, while a resolved enemy phase advances it, so End Turn damage is never
 ## presented as a card attack.
 var _phase_marker: Array = []
+## The visible screen roots seen at the previous sync, for real transitions only.
+var _screens: Dictionary = {}
+var _screens_baselined := false
+var _fade_tween: Tween
+var _fade_serial := 0
+
+
+## Mounts the one reused, hidden screen wash on the very first frame, so a later screen
+## transition never changes the node shape of the app it presents.
+func _ready() -> void:
+	_make_fade_layer(get_parent())
 
 
 func _process(_delta: float) -> void:
@@ -121,6 +162,11 @@ func _battle_ready(app) -> bool:
 
 func _sync() -> void:
 	var app = get_parent()
+	if app == null:
+		return
+	# Screen transitions are observed even outside battle, so the title, map and the
+	# settled result fade exactly like the fight itself.
+	_observe_screens(app)
 	if not _battle_ready(app):
 		_teardown()
 		return
@@ -147,7 +193,9 @@ func _sync() -> void:
 		return
 	var current := _read(app)
 	_emit_deltas(app, current)
+	_emit_draw_flight(app)
 	_emit_discard_flights(app)
+	_emit_cast_flight(app, current)
 	_emit_attack_pose(app, current)
 	_snapshot = current
 	_baseline_cards(app)
@@ -166,8 +214,10 @@ func _bind(app) -> void:
 	overlay = _make_overlay()
 	history.clear()
 	flight_history.clear()
+	card_flight_history.clear()
 	pose_history.clear()
 	recoil_history.clear()
+	fall_history.clear()
 	# Mounting only baselines the current HP/Block; it never announces a change.
 	_snapshot = _read(app)
 	_baseline_cards(app)
@@ -202,8 +252,10 @@ func _teardown() -> void:
 	bound = false
 	history.clear()
 	flight_history.clear()
+	card_flight_history.clear()
 	pose_history.clear()
 	recoil_history.clear()
+	fall_history.clear()
 	if not is_instance_valid(fast_button):
 		fast_button = null
 
@@ -223,6 +275,119 @@ func _make_overlay() -> Control:
 	# Draw above the battle presentation that was mounted before this listener.
 	app.move_child(control, app.get_child_count() - 1)
 	return control
+
+
+## The one currently visible root Control of a named real screen, or null. It reads the
+## app's own authoritative screen properties, so a freed or hidden screen reports nothing
+## instead of a stale reference.
+func _screen_root(app, screen: String) -> Control:
+	var node = null
+	match screen:
+		"title":
+			node = app.get("title_view")
+		"map":
+			node = app.get("route_view")
+		"battle":
+			node = app.get("battle_view")
+		"results":
+			node = app.get("terminal_result_panel")
+	if node == null or not node is Control:
+		return null
+	var control := node as Control
+	if not is_instance_valid(control) or not control.is_visible_in_tree():
+		return null
+	return control
+
+
+## One fade per observed change of the real visible screen set. The first sync only
+## baselines, so mounting the listener and repeated identical refreshes stay silent.
+func _observe_screens(app) -> void:
+	# The one wash is mounted once and hidden, so a transition never changes the app's
+	# shape and can never leave a second overlay behind.
+	_make_fade_layer(app)
+	var current := {}
+	for screen in SCREEN_ROOTS:
+		current[screen] = _screen_root(app, screen)
+	var transitions: Array[Dictionary] = []
+	if _screens_baselined:
+		for screen in SCREEN_ROOTS:
+			var was = _screens.get(screen)
+			var now = current.get(screen)
+			if was == now:
+				continue
+			transitions.append({"screen": screen, "visible": now != null})
+	_screens = current
+	_screens_baselined = true
+	if transitions.is_empty():
+		return
+	_start_fade(app, transitions)
+
+
+## The one reused full-screen wash. It takes no pointer or keyboard input, is created once
+## and hidden between fades, so repeated, replaced or returned transitions can never leave
+## an orphan overlay behind.
+func _make_fade_layer(app) -> Control:
+	if is_instance_valid(fade_layer) and fade_layer.is_inside_tree():
+		return fade_layer
+	if app == null:
+		return null
+	var layer := Control.new()
+	layer.name = "ScreenFadeLayer"
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.focus_mode = Control.FOCUS_NONE
+	layer.visible = false
+	app.add_child(layer)
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var wash := ColorRect.new()
+	wash.name = "ScreenFadeWash"
+	wash.color = SCREEN_FADE_INK
+	wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wash.focus_mode = Control.FOCUS_NONE
+	layer.add_child(wash)
+	wash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fade_layer = layer
+	return layer
+
+
+## One short bounded fade over whichever screen just appeared or was replaced. A newer
+## transition takes the same wash over, so nothing accumulates.
+func _start_fade(app, transitions: Array[Dictionary]) -> void:
+	var layer := _make_fade_layer(app)
+	if layer == null:
+		return
+	if _fade_tween is Tween and _fade_tween.is_valid():
+		_fade_tween.kill()
+	# Draw above every screen mounted so far, including the one just added.
+	app.move_child(layer, app.get_child_count() - 1)
+	var duration := duration_seconds()
+	_fade_serial += 1
+	var serial := _fade_serial
+	layer.visible = true
+	layer.modulate = Color(1.0, 1.0, 1.0, SCREEN_FADE_ALPHA)
+	var tween := layer.create_tween()
+	tween.tween_property(layer, "modulate:a", 0.0, duration)
+	tween.finished.connect(_retire_fade.bind(weakref(layer), serial))
+	_fade_tween = tween
+	fade_history.append({"transitions": transitions.duplicate(true), "fast": fast_animations,
+		"duration": duration, "alpha": SCREEN_FADE_ALPHA})
+	if fade_history.size() > FADE_HISTORY_LIMIT:
+		fade_history = fade_history.slice(fade_history.size() - FADE_HISTORY_LIMIT)
+
+
+## Only the newest transition may hide the shared wash; a superseded fade leaves it alone.
+func _retire_fade(layer_ref: WeakRef, serial: int) -> void:
+	var layer = layer_ref.get_ref()
+	if not is_instance_valid(layer) or serial != _fade_serial:
+		return
+	layer.visible = false
+	layer.modulate = Color(1.0, 1.0, 1.0, 0.0)
+
+
+## One while a real screen fade is still on screen.
+func live_fades() -> int:
+	if is_instance_valid(fade_layer) and fade_layer.visible and fade_layer.modulate.a > 0.0:
+		return 1
+	return 0
 
 
 ## Authoritative copies only: {side:id -> position/hp/block}; malformed actors are skipped.
@@ -247,8 +412,9 @@ func _store(snapshot: Dictionary, side: String, actor: Dictionary) -> void:
 		"hp": hp, "block": block}
 
 
-## One cue per actor whose committed HP or Block really changed since the last sync, plus
-## one recoil for each of those actors that really lost HP.
+## One cue per actor whose committed HP or Block really changed since the last sync, one
+## recoil for each of those actors that really lost HP, and one fall settle for each of
+## those that the same committed loss took to zero.
 func _emit_deltas(app, current: Dictionary) -> void:
 	for change in _actor_changes(current):
 		var hp_delta := int(change["hp"])
@@ -256,6 +422,9 @@ func _emit_deltas(app, current: Dictionary) -> void:
 		# a heal are not, so they never shake an actor.
 		if hp_delta < 0:
 			_emit_recoil(app, change)
+			# Only a witnessed living-to-zero transition settles a fall.
+			if int(change.get("hp_after", -1)) == 0:
+				_emit_fall(app, change)
 		_spawn(app, change, hp_delta, int(change["block"]))
 
 
@@ -279,8 +448,29 @@ func _emit_recoil(app, hit: Dictionary) -> void:
 		recoil_history = recoil_history.slice(recoil_history.size() - RECOIL_HISTORY_LIMIT)
 
 
+## A witnessed living-to-zero HP transition eases only that actor's own puppet from upright
+## into its existing fallen pose. `fallen` is authoritative the instant combat committed it;
+## the lookup deliberately includes fallen puppets, because the fall is exactly what this
+## cue presents, and it still fails closed on a stale or ambiguous binding. The settle lives
+## in the same draw transform, so no control, tag or target moves.
+func _emit_fall(app, change: Dictionary) -> void:
+	var roster = app.get_node_or_null("LiveEnemyRoster")
+	if roster == null or not is_instance_valid(roster) or not roster.has_method("settle_fall"):
+		return
+	var duration := duration_seconds()
+	if not roster.settle_fall(String(change["side"]), String(change["id"]), duration):
+		return
+	fall_history.append({"side": String(change["side"]), "position": int(change["position"]),
+		"id": String(change["id"]), "hp": int(change["hp"]), "block": int(change["block"]),
+		"hp_before": int(change.get("hp_before", 0)), "hp_after": int(change.get("hp_after", 0)),
+		"fast": fast_animations, "duration": duration})
+	if fall_history.size() > FALL_HISTORY_LIMIT:
+		fall_history = fall_history.slice(fall_history.size() - FALL_HISTORY_LIMIT)
+
+
 ## Every authoritative actor whose HP or Block really changed since the last sync, with
-## its exact deltas. Read-only: it never reorders, resolves or mutates combat.
+## its exact deltas and the absolute HP either side of them. Read-only: it never reorders,
+## resolves or mutates combat.
 func _actor_changes(current: Dictionary) -> Array[Dictionary]:
 	var changed: Array[Dictionary] = []
 	for key in _snapshot:
@@ -293,7 +483,8 @@ func _actor_changes(current: Dictionary) -> Array[Dictionary]:
 		if hp_delta == 0 and block_delta == 0:
 			continue
 		changed.append({"side": now["side"], "position": now["position"], "id": now["id"],
-			"hp": hp_delta, "block": block_delta})
+			"hp": hp_delta, "block": block_delta, "hp_before": int(before["hp"]),
+			"hp_after": int(now["hp"])})
 	return changed
 
 
@@ -465,6 +656,14 @@ func _kill_cues() -> void:
 		if is_instance_valid(scrap):
 			scrap.queue_free()
 	_flights.clear()
+	for entry in _card_flights:
+		var card_tween = entry.get("tween")
+		if card_tween is Tween and card_tween.is_valid():
+			card_tween.kill()
+		var card_scrap = entry.get("scrap")
+		if is_instance_valid(card_scrap):
+			card_scrap.queue_free()
+	_card_flights.clear()
 	for entry in _cues:
 		var tween = entry.get("tween")
 		if tween is Tween and tween.is_valid():
@@ -591,37 +790,49 @@ func _is_single_target_attack(app, hero: Dictionary, card_id: String) -> bool:
 	return damage is int and int(damage) > 0
 
 
-## One committed held enemy hit: exactly one held copy really left the hand for the
-## discard, that copy's verified authored record is an individually targeted attack
-## owned by the identified living hero, the only authoritative change in the same step
-## was one enemy losing HP or Block, and no enemy phase resolved. Previews, rejected or
-## repeated clicks, End Turn and status ticks, area or multi-actor effects, stitched
-## casts and closed battles therefore never fabricate a pose.
-func _emit_attack_pose(app, current: Dictionary) -> void:
+## The one provable committed held enemy hit of this sync, as
+## {"card_id","hero","hit"}: exactly one held copy really left the hand for the discard,
+## that copy's verified authored record is an individually targeted attack owned by the
+## identified living hero, the only authoritative change in the same step was one enemy
+## losing HP or Block, and no enemy phase resolved. An empty dictionary for every preview,
+## rejected or repeated click, End Turn, status tick, area or multi-actor effect, stitched
+## cast and closed battle, so no caller can fabricate a hit from it.
+func _committed_single_hit(app, current: Dictionary) -> Dictionary:
 	if _phase_key(app) != _phase_marker:
-		return
+		return {}
 	var lost := _committed_hand_loss(app)
 	if lost.size() != 1:
-		return
+		return {}
 	var card_id := String(lost.keys()[0])
 	if int(lost[card_id]) != 1:
-		return
+		return {}
 	var changes := _actor_changes(current)
 	if changes.size() != 1:
-		return
+		return {}
 	var hit: Dictionary = changes[0]
 	if String(hit["side"]) != "enemy":
-		return
+		return {}
 	if int(hit["hp"]) >= 0 and int(hit["block"]) >= 0:
-		return
+		return {}
 	var hero := _attack_source(card_id)
 	if hero.is_empty():
-		return
+		return {}
 	# Never infer the card kind from the number of observed recipients: a real area
 	# cast can legally damage exactly one surviving enemy. Fail closed unless the
 	# committed card's own authored record is a single-target attack by this hero.
 	if not _is_single_target_attack(app, hero, card_id):
+		return {}
+	return {"card_id": card_id, "hero": hero, "hit": hit}
+
+
+## One committed hit lets that card's own living hero puppet perform one bounded pose.
+func _emit_attack_pose(app, current: Dictionary) -> void:
+	var committed := _committed_single_hit(app, current)
+	if committed.is_empty():
 		return
+	var card_id := String(committed["card_id"])
+	var hero: Dictionary = committed["hero"]
+	var hit: Dictionary = committed["hit"]
 	var roster = app.get_node_or_null("LiveEnemyRoster")
 	if roster == null or not roster.has_method("hero_puppet"):
 		return
@@ -712,6 +923,8 @@ func _emit_discard_flights(app) -> void:
 			used_sources[card_id] = already + 1
 
 
+## The mounted pile readout both card flights anchor to; it fails closed when the readout is
+## missing or hidden, so no cue is ever invented from a fabricated rectangle.
 func _discard_anchor(app) -> Control:
 	var label := app.pile_label as Control
 	if not is_instance_valid(label) or not label.is_visible_in_tree():
@@ -720,6 +933,158 @@ func _discard_anchor(app) -> Control:
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return null
 	return label
+
+
+## One sewn scrap from the Draw readout to each hand copy this step really drew. The piles
+## are the sole authority, reconciled per card ID: a hand copy's own gain must equal that
+## ID's draw-pile loss minus its discard-pile gain, so a real play that draws before it
+## discards the played copy (Tinker Tune Up) still flies the copy that genuinely arrived.
+## A refill/reshuffle (draw-pile growth or discard-pile loss), a rebuilt hand and any
+## inconsistent or ambiguous transaction fly nothing. The anchored destination is the drawn
+## copy's own currently mounted, newly appended panel, never a fabricated rectangle.
+func _emit_draw_flight(app) -> void:
+	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
+		return
+	var gained := _drawn_copies(app)
+	if gained.is_empty():
+		return
+	var anchor := _discard_anchor(app)
+	if anchor == null:
+		return
+	var panels := _read_held_sources(app)
+	var used := {}
+	# The drawn copy is appended to the hand, so the last mounted copies of that ID are
+	# the ones that just arrived.
+	for index in range(panels.size() - 1, -1, -1):
+		var entry: Dictionary = panels[index]
+		var card_id: String = entry["card_id"]
+		var remaining: int = int(gained.get(card_id, 0)) - int(used.get(card_id, 0))
+		if remaining <= 0:
+			continue
+		used[card_id] = int(used.get(card_id, 0)) + 1
+		_spawn_card_flight("draw", entry, _draw_point(anchor), entry["rect"].get_center(),
+			{"source": "draw_pile", "destination": "hand", "target_position": 0,
+				"target_id": ""})
+
+
+## The copies that provably left the draw pile into the hand during this sync, as
+## {card_id: count}. The authoritative multiset identity
+## hand_after - hand_before == drawn - discarded must hold for every observed ID, the draw
+## pile may only shrink and the discard pile may only grow. A refill/reshuffle, a rebuilt or
+## replaced hand and every inconsistent or ambiguous transaction therefore yield nothing.
+func _drawn_copies(app) -> Dictionary:
+	var before_hand := _card_counts(_held_before)
+	var after_hand := _card_counts(app.deck.hand)
+	var before_draw := _card_counts(_draw_before)
+	var after_draw := _card_counts(app.deck.draw_pile)
+	var before_discard := _card_counts(_discard_before)
+	var after_discard := _card_counts(app.deck.discard_pile)
+	var drawn := {}
+	for id in _observed_card_ids([before_hand, after_hand, before_draw, after_draw,
+			before_discard, after_discard]):
+		var draw_loss: int = int(before_draw.get(id, 0)) - int(after_draw.get(id, 0))
+		var discard_gain: int = int(after_discard.get(id, 0)) - int(before_discard.get(id, 0))
+		if draw_loss < 0 or discard_gain < 0:
+			return {}
+		var hand_gain: int = int(after_hand.get(id, 0)) - int(before_hand.get(id, 0))
+		if hand_gain != draw_loss - discard_gain:
+			return {}
+		if draw_loss > 0:
+			drawn[id] = draw_loss
+	return drawn
+
+
+## Every card ID any observed pile or hand count mentions, once each.
+func _observed_card_ids(count_sets: Array) -> Array:
+	var ids: Array = []
+	for counts in count_sets:
+		for id in counts:
+			if not ids.has(id):
+				ids.append(id)
+	return ids
+
+
+## The Draw count sits at the left end of the existing pile readout.
+func _draw_point(anchor: Control) -> Vector2:
+	var rect := anchor.get_global_rect()
+	return rect.position + Vector2(rect.size.x * 0.2, rect.size.y * 0.5)
+
+
+## One sewn scrap from a uniquely held, provably committed single-target play to the exact
+## enemy that cast really hit. The target comes from the committed delta plus that enemy's
+## authoritative ID, never from hover, a preview or HP alone. A lethal hit leaves that exact
+## still-mounted puppet fallen, so the flight still anchors to it. An ambiguous duplicate
+## copy, a missing mounted target or any refill/reshuffle stays silent.
+func _emit_cast_flight(app, current: Dictionary) -> void:
+	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
+		return
+	var committed := _committed_single_hit(app, current)
+	if committed.is_empty():
+		return
+	var card_id := String(committed["card_id"])
+	# Exactly one held copy and exactly one mounted source rectangle: with two identical
+	# copies there is no way to know which one flew, so nothing flies.
+	if int(_card_counts(_held_before).get(card_id, 0)) != 1:
+		return
+	var sources: Array = []
+	for source in _held_sources:
+		if String(source["card_id"]) == card_id:
+			sources.append(source)
+	if sources.size() != 1:
+		return
+	var hit: Dictionary = committed["hit"]
+	var roster = app.get_node_or_null("LiveEnemyRoster")
+	if roster == null or not is_instance_valid(roster) or not roster.has_method("presented_puppet"):
+		return
+	# A committed lethal hit makes its victim fallen at once while that puppet stays exactly
+	# where combat put it, so the cast anchors to the still-mounted actor its own hit made
+	# fallen. This presentation lookup is used only here, after the committed card and its
+	# authoritative victim are proven; targeting keeps its standing-only rule.
+	var puppet = roster.presented_puppet("enemy", String(hit["id"]))
+	if not is_instance_valid(puppet):
+		return
+	var rect: Rect2 = puppet.get_global_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var source: Dictionary = sources[0]
+	_spawn_card_flight("cast", source, source["rect"].get_center(), rect.get_center(),
+		{"source": "hand", "destination": "enemy", "target_position": int(hit["position"]),
+			"target_id": String(hit["id"]), "hp": int(hit["hp"]), "block": int(hit["block"])})
+
+
+## One bounded, pointer-inert flight of the same sewn scrap the discard uses. It starts at
+## the real source rectangle and lands on the real mounted destination, records exactly one
+## receipt and never awaits anything.
+func _spawn_card_flight(kind: String, source: Dictionary, start_at: Vector2,
+		finish_at: Vector2, extra: Dictionary) -> bool:
+	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
+		return false
+	var start := _to_overlay(start_at) - FLIGHT_SIZE * 0.5
+	var finish := _to_overlay(finish_at) - FLIGHT_SIZE * 0.5
+	if start.distance_to(finish) < 12.0:
+		return false
+	var card_id: String = source["card_id"]
+	var scrap := _make_flight_scrap(card_id, "CardFlightScrap")
+	overlay.add_child(scrap)
+	scrap.position = start
+
+	var duration := duration_seconds()
+	var tween := scrap.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(scrap, "position", finish, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(scrap, "scale", Vector2(0.35, 0.35), duration)
+	tween.tween_property(scrap, "modulate:a", 0.0, duration)
+	tween.finished.connect(_retire_card_flight.bind(weakref(scrap)))
+	_card_flights.append({"scrap": scrap, "tween": tween, "kind": kind})
+	var receipt := {"kind": kind, "card_id": card_id, "panel_id": source["panel_id"],
+		"from": start_at, "to": finish_at, "fast": fast_animations, "duration": duration}
+	for key in extra:
+		receipt[key] = extra[key]
+	card_flight_history.append(receipt)
+	if card_flight_history.size() > CARD_FLIGHT_HISTORY_LIMIT:
+		card_flight_history = card_flight_history.slice(
+			card_flight_history.size() - CARD_FLIGHT_HISTORY_LIMIT)
+	return true
 
 
 func _owner_color(id: String) -> Color:
@@ -732,20 +1097,13 @@ func _owner_color(id: String) -> Color:
 	return Color("#6c6257")
 
 
-func _spawn_discard_flight(source: Dictionary, target: Control, card_id: String) -> bool:
-	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
-		return false
-	var source_rect: Rect2 = source["rect"]
-	var destination := target.get_global_rect()
-	var start := _to_overlay(source_rect.get_center()) - FLIGHT_SIZE * 0.5
-	# The discard count sits at the right end of the existing pile readout.
-	var finish := _to_overlay(destination.position + Vector2(destination.size.x * 0.8,
-		destination.size.y * 0.5)) - FLIGHT_SIZE * 0.5
-	if start.distance_to(finish) < 12.0:
-		return false
+## One sewn paper/felt scrap face for a card in flight: paper, the card's owner felt and two
+## cross-stitch seams. It is a plain Panel plus inert children, so it can never take pointer
+## or keyboard focus from the battle underneath whichever flight uses it.
+func _make_flight_scrap(card_id: String, node_name: String) -> Panel:
 	var owner_tint := _owner_color(card_id)
 	var scrap := Panel.new()
-	scrap.name = "DiscardFlightScrap"
+	scrap.name = node_name
 	scrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scrap.focus_mode = Control.FOCUS_NONE
 	var paper := StyleBoxFlat.new()
@@ -754,9 +1112,7 @@ func _spawn_discard_flight(source: Dictionary, target: Control, card_id: String)
 	paper.set_border_width_all(3)
 	paper.set_corner_radius_all(3)
 	scrap.add_theme_stylebox_override("panel", paper)
-	overlay.add_child(scrap)
 	scrap.size = FLIGHT_SIZE
-	scrap.position = start
 	scrap.pivot_offset = FLIGHT_SIZE * 0.5
 
 	var owner_patch := ColorRect.new()
@@ -793,6 +1149,23 @@ func _spawn_discard_flight(source: Dictionary, target: Control, card_id: String)
 		stitches.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		stitches.focus_mode = Control.FOCUS_NONE
 		scrap.add_child(stitches)
+	return scrap
+
+
+func _spawn_discard_flight(source: Dictionary, target: Control, card_id: String) -> bool:
+	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
+		return false
+	var source_rect: Rect2 = source["rect"]
+	var destination := target.get_global_rect()
+	var start := _to_overlay(source_rect.get_center()) - FLIGHT_SIZE * 0.5
+	# The discard count sits at the right end of the existing pile readout.
+	var finish := _to_overlay(destination.position + Vector2(destination.size.x * 0.8,
+		destination.size.y * 0.5)) - FLIGHT_SIZE * 0.5
+	if start.distance_to(finish) < 12.0:
+		return false
+	var scrap := _make_flight_scrap(card_id, "DiscardFlightScrap")
+	overlay.add_child(scrap)
+	scrap.position = start
 
 	var duration := duration_seconds()
 	var tween := scrap.create_tween()
@@ -803,7 +1176,7 @@ func _spawn_discard_flight(source: Dictionary, target: Control, card_id: String)
 	tween.finished.connect(_retire_flight.bind(weakref(scrap)))
 	_flights.append({"scrap": scrap, "tween": tween, "target": target})
 	flight_history.append({"card_id": card_id, "panel_id": source["panel_id"],
-		"owner_color": owner_tint, "destination": "pile_label",
+		"owner_color": _owner_color(card_id), "destination": "pile_label",
 		"fast": fast_animations, "duration": duration})
 	if flight_history.size() > FLIGHT_HISTORY_LIMIT:
 		flight_history = flight_history.slice(flight_history.size() - FLIGHT_HISTORY_LIMIT)
@@ -818,9 +1191,26 @@ func _retire_flight(ref: WeakRef) -> void:
 		return not _same_node(entry.get("scrap"), scrap))
 
 
+func _retire_card_flight(ref: WeakRef) -> void:
+	var scrap = ref.get_ref()
+	if is_instance_valid(scrap):
+		scrap.queue_free()
+	_card_flights = _card_flights.filter(func(entry: Dictionary) -> bool:
+		return not _same_node(entry.get("scrap"), scrap))
+
+
 func live_flights() -> int:
 	var count := 0
 	for entry in _flights:
+		if is_instance_valid(entry.get("scrap")):
+			count += 1
+	return count
+
+
+## Draw and cast scraps still on screen (a killed or finished flight counts as zero).
+func live_card_flights() -> int:
+	var count := 0
+	for entry in _card_flights:
 		if is_instance_valid(entry.get("scrap")):
 			count += 1
 	return count

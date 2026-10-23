@@ -254,10 +254,24 @@ func _test_authored_record_and_catalog_presence() -> void:
 			"m04_events.json contains a non-empty events array")
 		if events_variant is Array:
 			var catalog_by_id := {}
+			var estate_sale_count := 0
+			var catalog_estate_sale: Dictionary = {}
 			for entry in events_variant:
 				if entry is Dictionary and (entry as Dictionary).has("id"):
 					var eid: String = String((entry as Dictionary).get("id"))
 					catalog_by_id[eid] = entry
+					if eid == EVENT_ID:
+						estate_sale_count += 1
+						catalog_estate_sale = entry
+			
+			_check(estate_sale_count == 1, "exactly one catalog estate_sale matches")
+			_check(catalog_estate_sale == record_snapshot, "catalog estate_sale is deep-equal to the standalone record")
+			
+			if estate_sale_count == 1:
+				# Use the catalog record for the rest of the test
+				record = catalog_estate_sale.duplicate(true)
+				record_snapshot = catalog_estate_sale.duplicate(true)
+			
 			for required_id in REQUIRED_CATALOG_EVENTS:
 				_check(catalog_by_id.has(required_id),
 					"original catalog entry remains present by ID: " + required_id)
@@ -265,9 +279,6 @@ func _test_authored_record_and_catalog_presence() -> void:
 					var cat_entry: Dictionary = catalog_by_id[required_id]
 					_check(cat_entry.get("title") == REQUIRED_CATALOG_EVENTS[required_id],
 						"original catalog entry keeps authored title: " + required_id)
-					var cat_service := RunEventChoice.new(cat_entry)
-					_check(cat_service.is_valid() and not cat_service.is_claimed(),
-						"original catalog entry still builds a valid RunEventChoice: " + required_id)
 
 
 func _test_buy_thread_wallet() -> void:

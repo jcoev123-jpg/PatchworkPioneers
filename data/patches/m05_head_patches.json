@@ -1,0 +1,6 @@
+[
+  {"id": "bloodstitch_bonnet", "slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1},
+  {"id": "button_glass_visor", "slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1},
+  {"id": "stern_seam_cap", "slot": "HEAD", "effect": "card_weak_bonus", "amount": 1},
+  {"id": "reinforced_browband", "slot": "HEAD", "effect": "card_block_bonus", "amount": 2}
+]
