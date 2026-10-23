@@ -1,0 +1,58 @@
+[
+  {
+    "id": "bloodline",
+    "display_name": "Bloodline",
+    "passive": {
+      "id": "seamstress_bleed_bonus",
+      "kind": "bleed_bonus",
+      "applies_to": "seamstress",
+      "status": "bleed",
+      "value": 1,
+      "replaces": "seamstress_base_bleed_bonus",
+      "stacks": false
+    },
+    "card": {
+      "id": "seamstress_leech_stitch",
+      "display_name": "Leech Stitch",
+      "owner": "seamstress",
+      "cost": 1,
+      "from_positions": [1, 2, 3],
+      "target_kind": "enemy_single",
+      "to_positions": [1, 2, 3],
+      "effects": {
+        "bleed": 3,
+        "heal": {
+          "amount": 2,
+          "target": "weakest_living_ally",
+          "cap": "missing_hp"
+        }
+      },
+      "illustration_path": "res://assets/paper/cards/emblem_seamstress.png"
+    }
+  },
+  {
+    "id": "unpicker",
+    "display_name": "Unpicker",
+    "passive": {
+      "id": "seamstress_bleed_adds_unravel",
+      "kind": "bleed_adds_unravel",
+      "applies_to": "seamstress",
+      "status": "unravel",
+      "value": 2,
+      "replaces": "seamstress_bleed_bonus",
+      "replaced_value": 1,
+      "stacks": false
+    },
+    "card": {
+      "id": "seamstress_fray",
+      "display_name": "Fray",
+      "owner": "seamstress",
+      "cost": 1,
+      "from_positions": [1, 2, 3],
+      "target_kind": "enemy_single",
+      "to_positions": [1, 2, 3],
+      "effects": {"unravel": 4, "bleed": 1},
+      "illustration_path": "res://assets/paper/cards/emblem_seamstress.png"
+    }
+  }
+]

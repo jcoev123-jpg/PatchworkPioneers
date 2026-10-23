@@ -15,6 +15,8 @@ func _initialize() -> void:
 	_test_skim_and_leave()
 	_test_rejections_are_retryable()
 	_test_invalid_ledgers_fail_closed()
+	_test_immerse_options_enumeration()
+	_test_immerse_options_receipt_agreement()
 	if failures.is_empty():
 		print("run_dye_vat_outcome_test: PASS (", checks, " checks)")
 	else:
@@ -70,6 +72,9 @@ func _mixed_ledger() -> Dictionary:
 	_check(stitched.get("ok") == true, "genuine stitched ledger built")
 	var deck: Array = (stitched["deck"] as Array).duplicate()
 	deck.append(SPOOL)
+	deck.append(SPOOL)
+	deck.append("warden_hold_the_line")
+	deck.append(SPOOL_PLUS)
 	return {
 		"deck": deck,
 		"descriptors": (stitched["descriptors"] as Dictionary).duplicate(true),
@@ -284,3 +289,295 @@ func _test_invalid_ledgers_fail_closed() -> void:
 	# The shipped file loads when no record is supplied.
 	var shipped := RunDyeVatOutcome.new(ledger["deck"], ledger["descriptors"], 3, ledger["next"])
 	_check(shipped.is_valid(), "shipped dye_vat JSON loads by default")
+
+
+func _test_immerse_options_enumeration() -> void:
+	var ledger := _mixed_ledger()
+	var visit := _fresh(ledger)
+	_check(visit.is_valid() and not visit.is_claimed(), "enumeration visit ready")
+
+	# Read-only enumeration must not modify visit, deck, descriptors, scraps, cursor, or RNG.
+	seed(20261023)
+	var expected_draw_before: int = randi()
+	seed(20261023)
+
+	var snapshot_before: Dictionary = visit.get_snapshot()
+	var options: Array = visit.get_immerse_options()
+	var snapshot_after: Dictionary = visit.get_snapshot()
+
+	_check(options is Array, "get_immerse_options returns an array")
+	_check(options.size() > 0, "options non-empty for valid unclaimed visit with scraps >= 3")
+
+	# Verify snapshot unchanged (read-only).
+	_check(snapshot_after == snapshot_before, "enumeration does not modify visit state")
+	_check(visit.is_valid() and not visit.is_claimed(), "enumeration leaves visit unclaimed")
+	_check(randi() == expected_draw_before, "enumeration does not touch RNG")
+
+	var spool_indices: Array[int] = []
+	var starter_index: int = -1
+	var stitched_index: int = -1
+	var warden_hold_index: int = -1
+
+	for opt_raw in options:
+		_check(opt_raw is Dictionary, "each option is a dictionary")
+		if not opt_raw is Dictionary:
+			continue
+		var opt: Dictionary = opt_raw
+		_check(opt.has("index"), "option has index")
+		_check(opt.has("card_id"), "option has card_id")
+		_check(opt.has("upgrade_id"), "option has upgrade_id")
+		_check(opt.has("display_name"), "option has display_name")
+		var idx: int = int(opt.get("index", -1))
+		var cid: String = String(opt.get("card_id", ""))
+		var upid: String = String(opt.get("upgrade_id", ""))
+		var dname: String = String(opt.get("display_name", ""))
+		_check(idx >= 0, "option index is non-negative")
+		_check(not cid.is_empty(), "option card_id is non-empty")
+		_check(not upid.is_empty(), "option upgrade_id is non-empty")
+		_check(not dname.is_empty(), "option display_name is non-empty")
+		_check(upid != cid, "upgrade_id differs from base card_id")
+		_check(not cid.ends_with("_plus"), "option does not offer already-plus cards")
+
+		if cid == SPOOL:
+			spool_indices.append(idx)
+		elif cid == "warden_hold_the_line":
+			warden_hold_index = idx
+
+	starter_index = _index(ledger["deck"], "warden_strike")
+	stitched_index = _index(ledger["deck"], String(ledger["stitched_id"]))
+
+	# There must be exactly two Spool Launcher base occurrences.
+	_check(spool_indices.size() == 2, "exactly two spool launcher occurrences offered (%d)" % spool_indices.size())
+	# They must have different indices.
+	_check(spool_indices[0] != spool_indices[1], "duplicate spool launcher occurrences have different indices")
+	# They must be in ascending index order.
+	_check(spool_indices[0] < spool_indices[1], "duplicate spool launcher indices in ascending order")
+
+	# Another hero's eligible base (warden_hold_the_line) must appear.
+	_check(warden_hold_index >= 0, "another hero's pool base (warden_hold_the_line) is present in deck")
+	var has_warden_hold_option: bool = false
+	for opt_raw in options:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == "warden_hold_the_line":
+			has_warden_hold_option = true
+			break
+	_check(has_warden_hold_option, "warden_hold_the_line appears in options")
+
+	# Already-plus card must NOT be offered.
+	var has_plus_option: bool = false
+	for opt_raw in options:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == SPOOL_PLUS:
+			has_plus_option = true
+			break
+	_check(not has_plus_option, "already-plus card SPOOL_PLUS excluded from options")
+
+	# Starter cards must NOT appear.
+	var has_starter_option: bool = false
+	for opt_raw in options:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == "warden_strike":
+			has_starter_option = true
+			break
+	_check(not has_starter_option, "starter card excluded from options")
+
+	# Stitched descriptor card must NOT appear.
+	var stitched_id_str: String = String(ledger["stitched_id"])
+	var has_stitched_option: bool = false
+	for opt_raw in options:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == stitched_id_str:
+			has_stitched_option = true
+			break
+	_check(not has_stitched_option, "stitched descriptor card excluded from options")
+
+	# Verify advertised IDs match the real catalog upgrade.
+	var spool_options: Array = []
+	for opt_raw in options:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == SPOOL:
+			spool_options.append(opt_raw)
+	_check(spool_options.size() == 2, "two spool launcher options")
+	for opt in spool_options:
+		_check(String(opt.get("upgrade_id", "")) == SPOOL_PLUS, "spool launcher upgrade is exact authored plus")
+		_check(String(opt.get("display_name", "")) == "Spool Launcher", "display_name is authored base name")
+
+	# Verify ascending original-index order preserved.
+	var indices: Array[int] = []
+	for opt_raw in options:
+		if opt_raw is Dictionary:
+			indices.append(int(opt_raw.get("index", -1)))
+	var sorted_indices := indices.duplicate()
+	sorted_indices.sort()
+	_check(indices == sorted_indices, "options maintain ascending original-index order")
+
+	# Unaffordable visit returns empty array.
+	var poor_ledger := _mixed_ledger()
+	poor_ledger["scraps"] = 2
+	var poor_visit := _fresh(poor_ledger)
+	var poor_options: Array = poor_visit.get_immerse_options()
+	_check(poor_options.size() == 0, "below-3-scraps visit yields empty options")
+	_check(poor_visit.get_snapshot()["remaining_scraps"] == 2, "poor visit scraps unchanged")
+
+	# Claimed visit returns empty array.
+	var claimed_ledger := _mixed_ledger()
+	var claimed_visit := _fresh(claimed_ledger)
+	var skim_result: Dictionary = claimed_visit.choose("dye_vat", "skim_dye")
+	_check(skim_result.get("ok") == true, "claimed visit consumes with skim")
+	_check(claimed_visit.get_immerse_options().size() == 0, "claimed visit yields empty options")
+
+	# Invalid visit yields empty array.
+	var bad_ledger := _mixed_ledger()
+	var bad_visit := RunDyeVatOutcome.new(bad_ledger["deck"], {}, 3, bad_ledger["next"], _event())
+	_check(not bad_visit.is_valid(), "invalid visit rejected")
+	_check(bad_visit.get_immerse_options().size() == 0, "invalid visit yields empty options")
+
+
+func _test_immerse_options_receipt_agreement() -> void:
+	# Two fresh visits from the same genuine mixed ledger, each with two duplicate
+	# Spool Launcher base occurrences.
+	var ledger := _mixed_ledger()
+	var deck_before := (ledger["deck"] as Array).duplicate()
+	var descriptors_before := (ledger["descriptors"] as Dictionary).duplicate(true)
+	var visit_a := _fresh(ledger)
+	var visit_b := _fresh(ledger)
+
+	# Read-only options on visit A must not consume or change anything.
+	seed(20261023)
+	var expected_draw_a: int = randi()
+	seed(20261023)
+	var snap_a_before: Dictionary = visit_a.get_snapshot()
+	var opts_a: Array = visit_a.get_immerse_options()
+	var snap_a_after: Dictionary = visit_a.get_snapshot()
+	_check(snap_a_before == snap_a_after, "visit A options read-only: snapshot unchanged")
+	_check(visit_a.is_valid() and not visit_a.is_claimed(), "visit A still unclaimed after reading options")
+	_check(randi() == expected_draw_a, "visit A options does not touch RNG")
+
+	# Find both Spool Launcher option indices from visit A.
+	var spool_options: Array = []
+	for opt_raw in opts_a:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == SPOOL:
+			spool_options.append(opt_raw as Dictionary)
+	_check(spool_options.size() == 2, "visit A finds both spool launcher occurrences (%d)" % spool_options.size())
+
+	# Sort by index to have deterministic first/second.
+	spool_options.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("index", 0)) < int(b.get("index", 0))
+	)
+
+	var first_opt: Dictionary = spool_options[0]
+	var second_opt: Dictionary = spool_options[1]
+
+	# Verify advertised option data.
+	_check(int(first_opt.get("index", -1)) < int(second_opt.get("index", -1)), "first spool index < second")
+	_check(String(first_opt.get("upgrade_id", "")) == SPOOL_PLUS, "first option upgrade is exact authored plus")
+	_check(String(second_opt.get("upgrade_id", "")) == SPOOL_PLUS, "second option upgrade is exact authored plus")
+	_check(String(first_opt.get("card_id", "")) == SPOOL, "first option base is SPOOL")
+	_check(String(second_opt.get("card_id", "")) == SPOOL, "second option base is SPOOL")
+	_check(String(first_opt.get("display_name", "")) == "Spool Launcher", "first option display_name authored")
+	_check(String(second_opt.get("display_name", "")) == "Spool Launcher", "second option display_name authored")
+
+	# Verify the enumerator reuses resolve_authored_pool_upgrade rather than a guessed suffix.
+	var resolver_result: Dictionary = RunDyeVatOutcome.resolve_authored_pool_upgrade(SPOOL)
+	_check(not resolver_result.is_empty(), "authored resolver finds spool launcher")
+	_check(String(resolver_result.get("upgrade_id", "")) == SPOOL_PLUS, "resolver upgrade is authored plus")
+	_check(String(first_opt.get("upgrade_id", "")) == String(resolver_result.get("upgrade_id", "")), "option upgrade agrees with resolver")
+
+	# Visit A chooses the first occurrence.
+	var result_a: Dictionary = visit_a.choose("dye_vat", "immerse", int(first_opt.get("index", -1)))
+	_check(result_a.get("ok") == true, "visit A immerse succeeds for first spool occurrence")
+	_check(int(result_a.get("scraps", -1)) == 0, "visit A spends exactly 3 scraps (3-3=0)")
+	_check(int(result_a.get("spent_scraps", -1)) == 3, "visit A receipt spent_scraps is 3")
+	_check(result_a.get("selected_index") == int(first_opt.get("index")), "visit A receipt index matches option")
+	_check(String(result_a.get("replaced_card_id", "")) == SPOOL, "visit A receipt replaced_card_id is SPOOL")
+	_check(String(result_a.get("upgrade_card_id", "")) == SPOOL_PLUS, "visit A receipt upgrade_card_id is SPOOL_PLUS")
+
+	var deck_a_before: Array = (ledger["deck"] as Array).duplicate()
+	var next_before: int = int(ledger["next"])
+
+	# Verify only the selected occurrence changed.
+	var deck_a_after: Array = result_a.get("deck", [])
+	_check(deck_a_after is Array, "visit A result deck is array")
+	_check(deck_a_after.size() == deck_a_before.size(), "visit A deck size unchanged")
+	for i in range(deck_a_before.size()):
+		if i == int(first_opt.get("index", -1)):
+			_check(String(deck_a_after[i]) == SPOOL_PLUS, "visit A selected occurrence replaced with plus")
+		else:
+			_check(String(deck_a_after[i]) == String(deck_a_before[i]), "visit A other card at %d unchanged" % i)
+
+	_check(result_a.get("descriptors") == descriptors_before, "visit A descriptors preserved")
+	_check(int(result_a.get("next_stitch_id", -1)) == next_before, "visit A cursor preserved")
+	_check(visit_a.is_claimed() and not visit_a.is_valid(), "visit A claimed after choose")
+
+	# Verify receipt_ids agree with option.
+	var receipt_ids: Array = result_a.get("receipt_ids", [])
+	_check(receipt_ids is Array and receipt_ids.size() == 2, "visit A receipt_ids has two elements")
+	_check(String(receipt_ids[0]) == SPOOL, "visit A receipt_ids[0] is base SPOOL")
+	_check(String(receipt_ids[1]) == SPOOL_PLUS, "visit A receipt_ids[1] is plus SPOOL_PLUS")
+
+	# Visit B chooses the second occurrence (from a fresh visit).
+	var options_b: Array = visit_b.get_immerse_options()
+	var spool_options_b: Array = []
+	for opt_raw in options_b:
+		if opt_raw is Dictionary and String(opt_raw.get("card_id", "")) == SPOOL:
+			spool_options_b.append(opt_raw as Dictionary)
+	spool_options_b.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("index", 0)) < int(b.get("index", 0))
+	)
+	var second_for_b: Dictionary = spool_options_b[1] if spool_options_b.size() >= 2 else spool_options_b[0]
+
+	# Verify visit B's second option index is different from visit A's first option index.
+	_check(int(second_for_b.get("index", -1)) != int(first_opt.get("index", -1)), "visit B second spool index differs from visit A first")
+
+	# Verify visit B's read-only options don't change anything before choose.
+	seed(20261023)
+	var expected_draw_b: int = randi()
+	seed(20261023)
+	var snap_b_before: Dictionary = visit_b.get_snapshot()
+	var opts_b_check: Array = visit_b.get_immerse_options()
+	var snap_b_after: Dictionary = visit_b.get_snapshot()
+	_check(snap_b_before == snap_b_after, "visit B options read-only: snapshot unchanged")
+	_check(visit_b.is_valid() and not visit_b.is_claimed(), "visit B still unclaimed after reading options")
+	_check(randi() == expected_draw_b, "visit B options does not touch RNG")
+
+	var result_b: Dictionary = visit_b.choose("dye_vat", "immerse", int(second_for_b.get("index", -1)))
+	_check(result_b.get("ok") == true, "visit B immerse succeeds for second spool occurrence")
+	_check(int(result_b.get("scraps", -1)) == 0, "visit B spends exactly 3 scraps")
+	_check(int(result_b.get("spent_scraps", -1)) == 3, "visit B receipt spent_scraps is 3")
+	_check(result_b.get("selected_index") == int(second_for_b.get("index")), "visit B receipt index matches option")
+
+	# Only visit B's chosen occurrence changed.
+	var deck_b_before: Array = (ledger["deck"] as Array).duplicate()
+	var deck_b_after: Array = result_b.get("deck", [])
+	_check(deck_b_after.size() == deck_b_before.size(), "visit B deck size unchanged")
+	for i in range(deck_b_before.size()):
+		if i == int(second_for_b.get("index", -1)):
+			_check(String(deck_b_after[i]) == SPOOL_PLUS, "visit B selected occurrence replaced with plus")
+		else:
+			_check(String(deck_b_after[i]) == String(deck_b_before[i]), "visit B other card at %d unchanged" % i)
+
+	# Verify stitched descriptor preserved in visit B receipt.
+	var stitched_id_str: String = String(ledger["stitched_id"])
+	_check(result_b.get("descriptors") == descriptors_before, "visit B descriptors preserved")
+	_check(int(result_b.get("next_stitch_id", -1)) == next_before, "visit B cursor preserved")
+	_check(result_b.get("deck", []).has(stitched_id_str), "visit B stitched descriptor survives in deck")
+	_check(visit_b.is_claimed() and not visit_b.is_valid(), "visit B claimed after choose")
+
+	# Verify source inspection: the enumerator uses resolve_authored_pool_upgrade directly.
+	var resolver_result_b: Dictionary = RunDyeVatOutcome.resolve_authored_pool_upgrade(SPOOL)
+	_check(not resolver_result_b.is_empty(), "source resolver confirms spool launcher upgrade")
+	_check(String(second_for_b.get("upgrade_id", "")) == String(resolver_result_b.get("upgrade_id", "")), "visit B option upgrade equals resolver result")
+
+	# After claim, replay rejects.
+	var replay_a: Dictionary = visit_a.choose("dye_vat", "immerse", int(first_opt.get("index", -1)))
+	_check(replay_a.get("ok") == false, "visit A replay rejected")
+	_check(replay_a.get("deck") == deck_a_before, "visit A replay proposes no upgrade")
+	_check(int(replay_a.get("scraps", -1)) == 3, "visit A replay spends nothing")
+
+	var replay_b: Dictionary = visit_b.choose("dye_vat", "immerse", int(second_for_b.get("index", -1)))
+	_check(replay_b.get("ok") == false, "visit B replay rejected")
+
+	# Confirm that visit A's receipt and visit B's receipt agree with options.
+	_check(String(result_a.get("upgrade_card_id", "")) == String(first_opt.get("upgrade_id", "")), "visit A receipt upgrade matches option")
+	_check(String(result_b.get("upgrade_card_id", "")) == String(second_for_b.get("upgrade_id", "")), "visit B receipt upgrade matches option")
+	_check(String(result_b.get("replaced_card_id", "")) == SPOOL, "visit B receipt replaced is base")
+
+	# Confirm that the original caller inputs were never mutated.
+	_check(ledger["deck"] == deck_before, "original ledger deck untouched by visits")
+	_check(ledger["descriptors"] == descriptors_before, "original ledger descriptors untouched")
+

@@ -10,6 +10,19 @@ const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch
 const TABLE_ID := "SupportTableBacking"
 const QUILT_IDS := ["warden", "seamstress", "tinker"]
 const QUILT_RULE := "Play cards from all living heroes: each living hero gains 3 Block; draw 1 once per turn"
+## Committed sewn HUD art. Every load here is optional and cached: a missing image keeps
+## the drawn felt/spool/packet and the theme button face, so play never depends on art.
+const UI_ART_DIR := "res://assets/paper/ui/"
+const HUD_ART := {
+	"hand_tray": "hud_hand_tray.png",
+	"draw_pile": "hud_draw_pile.png",
+	"discard_pile": "hud_discard_pile.png",
+	"energy": "hud_energy.png",
+	"end_turn": "hud_end_turn.png",
+}
+## The real End Turn button's own visual states; it keeps its signal, focus, text and
+## disabled state, only the sewn face behind them changes.
+const BUTTON_STATES := ["normal", "hover", "pressed", "disabled"]
 ## Visible idle cue only: the complete mouse/keyboard instructions live in TABLE_HELP_DETAIL,
 ## which the cue exposes as a real hover tooltip instead of stretching across the footer.
 const TABLE_HELP := "Help"
@@ -33,6 +46,12 @@ var footer_spring: Control
 var backing: Control
 var quilt_row: HBoxContainer
 var quilt_patches: Dictionary = {}
+var draw_token: Control
+var discard_token: Control
+## Presentation-only art root. A redirected or unavailable root (missing file or import)
+## keeps every drawn fallback instead of failing, and repaints the same mounted nodes.
+var ui_art_root := UI_ART_DIR
+var _ui_art_cache: Dictionary = {}
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
@@ -40,6 +59,24 @@ var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
+
+
+## Resolved path of one committed HUD image under the current presentation-only root.
+func ui_art_path(key: String) -> String:
+	if not HUD_ART.has(key):
+		return ""
+	return ui_art_root + String(HUD_ART[key])
+
+
+## Cached, optional texture: an unavailable image stays null (a negative entry is cached
+## too), so the drawn fallback is never replaced by a failed load and is probed only once.
+func ui_art_texture(key: String) -> Texture2D:
+	var path := ui_art_path(key)
+	if path.is_empty():
+		return null
+	if not _ui_art_cache.has(path):
+		_ui_art_cache[path] = LiveEnemyIntentBadge.load_icon_texture(path)
+	return _ui_art_cache[path] as Texture2D
 
 
 ## Presentation only: one stitched felt sewing table drawn behind the mounted piles, hand,
@@ -54,6 +91,11 @@ class FeltTableBacking extends Control:
 	const INSET := 4.0
 	var band := Rect2()
 	var draw_count := 0
+	## Committed hand-tray art, drawn across the sewn cloth behind every live card.
+	## Optional: while it is missing the drawn panels stay as the fallback.
+	var tray_texture: Texture2D = null
+	var tray_rect := Rect2()
+	var tray_draw_count := 0
 	var _content: Array[Control] = []
 
 	func _ready() -> void:
@@ -75,7 +117,44 @@ class FeltTableBacking extends Control:
 		if measured == band:
 			return
 		band = measured
+		tray_rect = band
 		queue_redraw()
+
+	## Bind (or drop) the committed tray art. Swapping it repaints this same sewn band,
+	## so a missing image can never leave a stale picture behind.
+	func set_tray_texture(texture: Texture2D) -> void:
+		if tray_texture == texture:
+			return
+		tray_texture = texture
+		tray_rect = band
+		queue_redraw()
+
+	## Test hook: the authored tray image now painted here, empty for the drawn fallback.
+	func tray_art_path() -> String:
+		return "" if tray_texture == null else tray_texture.resource_path
+
+	## The drawn cloth panels inside the sewn band: the felt fallback under the tray.
+	func cloth_rect() -> Rect2:
+		if band.size.x < 8.0 or band.size.y < 8.0:
+			return Rect2()
+		return band.grow_individual(-INSET, -INSET, -INSET, -INSET)
+
+	## The source crop of the authored tray. The picture keeps its own proportions and is
+	## cropped (never squashed) to the live cloth, so a resize cannot distort the art.
+	func tray_source_rect() -> Rect2:
+		if tray_texture == null or tray_rect.size.x <= 0.0 or tray_rect.size.y <= 0.0:
+			return Rect2()
+		var source := Rect2(Vector2.ZERO, tray_texture.get_size())
+		if source.size.x <= 0.0 or source.size.y <= 0.0:
+			return Rect2()
+		var target_aspect: float = tray_rect.size.x / tray_rect.size.y
+		if source.size.x / source.size.y > target_aspect:
+			var width: float = source.size.y * target_aspect
+			return Rect2(source.position + Vector2((source.size.x - width) * 0.5, 0),
+				Vector2(width, source.size.y))
+		var height: float = source.size.x / target_aspect
+		return Rect2(source.position + Vector2(0, (source.size.y - height) * 0.5),
+			Vector2(source.size.x, height))
 
 	func _measure_band() -> Rect2:
 		var frame := Rect2(Vector2.ZERO, size)
@@ -120,13 +199,18 @@ class FeltTableBacking extends Control:
 			return
 		draw_count += 1
 		draw_rect(band, FELT_DEEP)
-		var cloth := band.grow_individual(-INSET, -INSET, -INSET, -INSET)
+		var cloth := cloth_rect()
 		# Uneven sewn panels read as one quilted cloth without any texture file.
 		var count := 6
 		for index in range(count):
 			var from := cloth.position.x + cloth.size.x * float(index) / float(count)
 			var to := cloth.position.x + cloth.size.x * float(index + 1) / float(count)
 			draw_rect(Rect2(from, cloth.position.y, to - from - 2.0, cloth.size.y), PATCHES[index % PATCHES.size()])
+		# The committed tray lies over the drawn cloth and behind every real control; the
+		# drawn panels remain the fallback whenever the image is missing.
+		if tray_texture != null and tray_rect.size.x > 0.0 and tray_rect.size.y > 0.0:
+			tray_draw_count += 1
+			draw_texture_rect_region(tray_texture, tray_rect, tray_source_rect())
 		draw_rect(Rect2(cloth.position, Vector2(cloth.size.x, 3.0)), HEM)
 		draw_rect(Rect2(cloth.position.x, cloth.end.y - 3.0, cloth.size.x, 3.0), HEM)
 		for y in [cloth.position.y, cloth.end.y]:
@@ -139,6 +223,9 @@ class FeltTableBacking extends Control:
 				draw_line(Vector2(x - 3.0, y + 3.0), Vector2(x + 3.0, y - 3.0), THREAD, 1.2, true)
 
 
+## The inset spool that carries the live energy number. It paints the committed
+## `hud_energy.png` inside its own disc when available; otherwise it draws the sewn felt
+## spool, and its child Label keeps showing the authoritative amount either way.
 class EnergyOrb extends Control:
 	## The spool is drawn inset from the control rect, so the whole disc keeps a clear
 	## margin inside the 76 px footer box and never crowds the battle area's bottom edge.
@@ -147,6 +234,9 @@ class EnergyOrb extends Control:
 	const RIM := Color("ecdfbd")
 	const THREAD := Color("c9b996")
 	var draw_count := 0
+	## Committed energy-spool art, optional: null keeps the drawn felt disc.
+	var texture: Texture2D = null
+	var art_draw_count := 0
 
 	func _ready() -> void:
 		custom_minimum_size = Vector2(76, 76)
@@ -163,16 +253,80 @@ class EnergyOrb extends Control:
 		var radius := disc_radius()
 		return Rect2(size * 0.5 - Vector2(radius, radius), Vector2(radius, radius) * 2.0)
 
+	## Test hook: the authored spool image now painted here, empty for the drawn fallback.
+	func art_path() -> String:
+		return "" if texture == null else texture.resource_path
+
 	func _draw() -> void:
 		var center := size * 0.5
 		var radius := disc_radius()
 		draw_count += 1
+		if texture != null:
+			art_draw_count += 1
+			draw_texture_rect(texture, disc_rect(), false)
+			return
 		draw_circle(center, radius, DISK)
 		draw_arc(center, radius, 0, TAU, 64, RIM, 2, true)
 		for index in range(16):
 			var angle := TAU * index / 16.0
 			draw_line(center + Vector2.from_angle(angle) * (radius - 6),
 				center + Vector2.from_angle(angle + 0.07) * (radius - 4), THREAD, 1, true)
+
+
+## One inert authored pile token. It is a picture only: the exact draw/discard counts stay
+## in the existing pile Label, so this control never duplicates a number, never takes the
+## pointer or keyboard and never owns a button, handler or tooltip.
+class PileToken extends Control:
+	const SIZE := Vector2(24, 24)
+	const CLOTH := Color("42392f")
+	const THREAD := Color("c9b996")
+	## "draw" or "discard"; only chooses the drawn fallback's arrow direction.
+	var kind := "draw"
+	var texture: Texture2D = null
+	var draw_count := 0
+
+	func _ready() -> void:
+		custom_minimum_size = SIZE
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		resized.connect(queue_redraw)
+
+	## Test hook: the authored pile image now painted here, empty for the drawn packet.
+	func art_path() -> String:
+		return "" if texture == null else texture.resource_path
+
+	## The picture keeps its own proportions inside this token instead of being squashed.
+	func art_rect() -> Rect2:
+		var box := Rect2(Vector2.ZERO, size)
+		if texture == null or box.size.x <= 0.0 or box.size.y <= 0.0:
+			return Rect2()
+		var pixels := Vector2(texture.get_width(), texture.get_height())
+		if pixels.x <= 0.0 or pixels.y <= 0.0:
+			return Rect2()
+		var fit: float = minf(box.size.x / pixels.x, box.size.y / pixels.y)
+		return Rect2(box.get_center() - pixels * fit * 0.5, pixels * fit)
+
+	func _draw() -> void:
+		if size.x < 6.0 or size.y < 6.0:
+			return
+		draw_count += 1
+		if texture != null:
+			draw_texture_rect(texture, art_rect(), false)
+			return
+		# Drawn fallback: a small stitched felt packet with a card leaving or arriving.
+		var box := Rect2(Vector2(2, 2), size - Vector2(4, 4))
+		draw_rect(box, CLOTH)
+		for y in [box.position.y, box.end.y]:
+			draw_dashed_line(Vector2(box.position.x, y), Vector2(box.end.x, y), THREAD, 1.0, 3.0)
+		for x in [box.position.x, box.end.x]:
+			draw_dashed_line(Vector2(x, box.position.y), Vector2(x, box.end.y), THREAD, 1.0, 3.0)
+		var arrow: float = -1.0 if kind == "draw" else 1.0
+		var centre := box.get_center()
+		var tip := Vector2(centre.x + arrow * box.size.x * 0.2, centre.y)
+		draw_line(Vector2(centre.x - arrow * box.size.x * 0.2, centre.y), tip, THREAD, 1.5, true)
+		draw_line(tip, tip + Vector2(-arrow * 3.5, -3.0), THREAD, 1.5, true)
+		draw_line(tip, tip + Vector2(-arrow * 3.5, 3.0), THREAD, 1.5, true)
 
 
 ## Decorative only: a sewn thread border inside the Help patch. It is a child of the real
@@ -385,8 +539,7 @@ func _sync_battle() -> void:
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		var hud := _battle.find_child("SupportHUD", true, false) as HBoxContainer
 		energy_orb = EnergyOrb.new()
-		energy_orb.name = "SupportHandEnergyOrb"
-		hud.add_child(energy_orb)
+		_add_named(hud, energy_orb, "SupportHandEnergyOrb")
 		hud.move_child(energy_orb, 0)
 		energy_label = Label.new()
 		energy_label.name = "SupportHandEnergy"
@@ -394,6 +547,9 @@ func _sync_battle() -> void:
 		energy_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		energy_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		energy_label.add_theme_font_size_override("font_size", 18)
+		# The number must stay legible over the authored spool art, not only the drawn disc.
+		energy_label.add_theme_color_override("font_outline_color", Color("2a2621"))
+		energy_label.add_theme_constant_override("outline_size", 4)
 		energy_orb.add_child(energy_label)
 		energy_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		help_label = Label.new()
@@ -426,7 +582,7 @@ func _sync_battle() -> void:
 		var stitch := HelpStitch.new()
 		stitch.name = "SupportHandHelpStitch"
 		help_label.add_child(stitch)
-		hud.add_child(help_label)
+		_add_named(hud, help_label, "SupportHandHelp")
 		hud.move_child(help_label, 1)
 		# Inert spring: the cue itself no longer stretches, and the accepted End Turn / Return
 		# row keeps its far-right placement. Hidden while a target message needs the room.
@@ -435,7 +591,7 @@ func _sync_battle() -> void:
 		footer_spring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		footer_spring.focus_mode = Control.FOCUS_NONE
 		footer_spring.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		hud.add_child(footer_spring)
+		_add_named(hud, footer_spring, "SupportHandFooterSpring")
 		hud.move_child(footer_spring, 2)
 		# Owner identity follows the Quilt service, never hero slots or card indices.
 		quilt_row = HBoxContainer.new()
@@ -450,7 +606,7 @@ func _sync_battle() -> void:
 			square.owner_id = owner_id
 			quilt_row.add_child(square)
 			quilt_patches[owner_id] = square
-		hud.add_child(quilt_row)
+		_add_named(hud, quilt_row, "SupportHandQuiltPatches")
 		hud.move_child(quilt_row, 2)
 		quilt_row.hide()
 		cancel_button = Button.new()
@@ -461,6 +617,7 @@ func _sync_battle() -> void:
 		cancel_button.hide()
 		_hud = hud
 		_mount_table(app)
+		_mount_pile_tokens(app)
 	if not _pending.is_empty() and not _selection_valid():
 		_cancel_pending()
 	if not _targets_valid():
@@ -485,6 +642,9 @@ func _sync_battle() -> void:
 	if is_instance_valid(footer_spring) and footer_spring.visible == choosing:
 		footer_spring.visible = not choosing
 	_sync_quilt(app, choosing)
+	# The committed HUD art is resolved against the same mounted controls every frame, so a
+	# redirected or missing art root can never leave a stale picture or a duplicate node.
+	_sync_hud_art(app)
 	# The felt table follows the real lower controls, including every resize.
 	if is_instance_valid(backing):
 		backing.refresh_band()
@@ -575,6 +735,90 @@ func _mount_table(app) -> void:
 	for content in [pile_row, app.pile_label, app.hand_view, _hud, app.end_turn_button]:
 		if content is Control:
 			backing.attach(content)
+
+
+## Add one presentation child under a stable authored name. A previous mount's node with
+## the same name is detached first (a same-battle rebind would otherwise make Godot fall
+## back to a generated `@Control@id` name that later name lookups cannot find).
+func _add_named(parent: Node, node: Node, node_name: String) -> void:
+	node.name = node_name
+	if parent != null:
+		for stale in parent.get_children():
+			if stale.name == node_name and stale != node:
+				parent.remove_child(stale)
+				stale.queue_free()
+	parent.add_child(node)
+
+
+## The two authored pile pictures are purely decorative tokens in the EXISTING pile row:
+## the exact counts stay in the one pile Label, and the tokens flank it without covering a
+## digit, taking the pointer, the keyboard or adding a second count.
+func _mount_pile_tokens(app) -> void:
+	if not is_instance_valid(app.pile_label):
+		return
+	var row: Node = app.pile_label.get_parent()
+	if row == null:
+		return
+	draw_token = PileToken.new()
+	_add_named(row, draw_token, "SupportHandDrawPile")
+	draw_token.kind = "draw"
+	row.move_child(draw_token, app.pile_label.get_index())
+	discard_token = PileToken.new()
+	_add_named(row, discard_token, "SupportHandDiscardPile")
+	discard_token.kind = "discard"
+	row.move_child(discard_token, app.pile_label.get_index() + 1)
+
+
+## Resolve the committed HUD art for the mounted controls. Every lookup is cached and
+## optional: a missing image leaves the existing drawn fallback in place, and re-resolving
+## after a redirected art root repaints the SAME nodes instead of mounting duplicates.
+func _sync_hud_art(app) -> void:
+	if is_instance_valid(energy_orb):
+		var spool := ui_art_texture("energy")
+		if energy_orb.texture != spool:
+			energy_orb.texture = spool
+			energy_orb.queue_redraw()
+	if is_instance_valid(backing):
+		backing.set_tray_texture(ui_art_texture("hand_tray"))
+	for token in [draw_token, discard_token]:
+		if not is_instance_valid(token):
+			continue
+		var art := ui_art_texture("draw_pile" if token == draw_token else "discard_pile")
+		if token.texture != art:
+			token.texture = art
+			token.queue_redraw()
+	_paint_end_turn(app.end_turn_button if is_instance_valid(app) else null)
+
+
+## The real End Turn button keeps its own text, pressed signal, focus, Tab cycle and
+## disabled state; only the sewn face behind them is replaced when the art exists.
+func _paint_end_turn(button) -> void:
+	if not is_instance_valid(button):
+		return
+	var art := ui_art_texture("end_turn")
+	var path := "" if art == null else art.resource_path
+	if str(button.get_meta("hud_end_turn_art", "")) == path:
+		return
+	button.set_meta("hud_end_turn_art", path)
+	for state in BUTTON_STATES:
+		button.remove_theme_stylebox_override(state)
+	if art == null:
+		return
+	for state in BUTTON_STATES:
+		var face := StyleBoxTexture.new()
+		face.texture = art
+		face.texture_margin_left = 14.0
+		face.texture_margin_right = 14.0
+		face.texture_margin_top = 10.0
+		face.texture_margin_bottom = 10.0
+		# No extra vertical padding: the sewn face must not grow the accepted 48 px control.
+		face.content_margin_left = 10.0
+		face.content_margin_right = 10.0
+		face.content_margin_top = 0.0
+		face.content_margin_bottom = 0.0
+		if state == "disabled":
+			face.modulate_color = Color(0.62, 0.58, 0.54)
+		button.add_theme_stylebox_override(state, face)
 
 
 func _current_move_context(panel) -> Array:
@@ -854,6 +1098,12 @@ func _clear() -> void:
 	if is_instance_valid(backing):
 		backing.queue_free()
 	backing = null
+	if is_instance_valid(draw_token):
+		draw_token.queue_free()
+	draw_token = null
+	if is_instance_valid(discard_token):
+		discard_token.queue_free()
+	discard_token = null
 	_hud = null
 	_battle = null
 	_deck = null
