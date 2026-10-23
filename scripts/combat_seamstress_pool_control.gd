@@ -65,14 +65,28 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var effects: Dictionary = definition["effects"]
 	var is_needle: bool = card_id in NEEDLE_IDS
 	var is_snag: bool = card_id in SNAG_IDS
+	var unravel_charge: int = 0
 	# A correctly roster-bound gauge must be preflighted even for Snag:
 	# otherwise a failed charge could leave a Weak-only partial play.
 	if is_needle:
 		if pinned == null:
 			return {"ok": false}
 	else:
-		if unravel == null or unravel._bound_enemies != enemies \
-				or unravel.get_snapshot(target_position).is_empty():
+		if unravel == null or not unravel._validate_roster_and_position(enemies, target_position):
+			return {"ok": false}
+		var gauge: Dictionary = unravel.get_snapshot(target_position)
+		if not gauge.get("gauge") is int or not gauge.get("threshold") is int \
+				or gauge["gauge"] < 0 or gauge["threshold"] <= 0 \
+				or gauge["gauge"] > gauge["threshold"] \
+				or not gauge.get("unravelled") is bool \
+				or not gauge.get("skip_pending") is bool:
+			return {"ok": false}
+		if not effects.get("unravel") is int or effects["unravel"] <= 0:
+			return {"ok": false}
+		unravel_charge = int(effects["unravel"])
+		if _patches != null:
+			unravel_charge += _patches.card_unravel_bonus("seamstress", card_id)
+		if gauge["gauge"] > CombatStatuses.MAX_INT - unravel_charge:
 			return {"ok": false}
 		if is_snag and not enemies.can_apply_statuses(
 				{target_position: {"weak": int(effects["weak"])}}):
@@ -124,7 +138,7 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if _patches != null:
 			_patches.record_successful_attack("seamstress")
 	else:
-		var added: int = int(effects["unravel"])
+		var added: int = unravel_charge
 		unravel.apply_unravel(enemies, target_position, added)
 		result["unravel_applied"] = added
 		if is_snag:
