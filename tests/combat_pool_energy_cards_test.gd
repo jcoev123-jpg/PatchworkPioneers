@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_overclock()
 	_test_tailors_trance()
 	_test_failures()
+	_test_staged_half()
 	_test_replay()
 	for failure: String in failures:
 		printerr(failure)
@@ -327,6 +328,144 @@ func _test_failures() -> void:
 	_check(not resolver.play_card(null, party, "seamstress_tailors_trance", 0)
 		and not resolver.play_card(deck, null, "seamstress_tailors_trance", 0),
 		"null authorities reject (trance)")
+
+
+## Detached composite half: the printed half is not in the deck's hand and the
+## enclosing transaction alone charges cost and discards. Every staged refusal
+## must leave the detached authorities and the seeded RNG untouched.
+func _staged_rejected(deck: CombatDeck, party: CombatParty, id: Variant,
+		target: int, label: String) -> void:
+	var before: Dictionary = _snapshot(deck, party)
+	_check(resolver.resolve_staged_half(deck, party, id, target) == {"ok": false},
+		label + ": rejects")
+	_check(_snapshot(deck, party) == before, label + ": preserves state and RNG")
+
+
+## Independent Fisher-Yates/refill oracle mirroring CombatDeck._draw exactly.
+func _oracle_draw(draw_pile: Array, discard_pile: Array, count: int,
+		rng_state: int) -> Dictionary:
+	var oracle := RandomNumberGenerator.new()
+	oracle.state = rng_state
+	var pile: Array = draw_pile.duplicate()
+	var discard: Array = discard_pile.duplicate()
+	var drawn: Array = []
+	while drawn.size() < count:
+		if pile.is_empty():
+			if discard.is_empty():
+				break
+			pile = discard.duplicate()
+			discard.clear()
+			for index in range(pile.size() - 1, 0, -1):
+				var other := oracle.randi_range(0, index)
+				var card = pile[index]
+				pile[index] = pile[other]
+				pile[other] = card
+		drawn.append(pile.pop_back())
+	return {"draw": pile, "discard": discard, "drawn": drawn, "rng": oracle.state}
+
+
+func _test_staged_half() -> void:
+	for id in ["tinker_overclock", "tinker_overclock_plus"]:
+		var party := _party()
+		var tpos: int = _tinker_position(party)
+		_check(tpos == 3 and party.gain_block(tpos, 2), id + ": staged Block precondition")
+		var deck: CombatDeck = _deck(["stitched_000001"], 5)
+		_check(not deck.hand.has(id) and deck.hand == ["stitched_000001"],
+			id + ": printed half genuinely absent from the staged hand")
+		var before: Dictionary = _snapshot(deck, party)
+		var outcome: Dictionary = resolver.resolve_staged_half(deck, party, id, 0)
+		_check(outcome == {"ok": true, "effect": "gain_energy", "amount": 1,
+			"self_hp_loss": 3}, id + ": exact staged energy and self-damage outcome")
+		_check(deck.hand == ["stitched_000001"] and deck.discard_pile.is_empty(),
+			id + ": composite deck keeps its own card, no charge or discard")
+		_check(deck.energy == before["energy"] + 1
+			and deck.combat_state.energy == before["state_energy"] + 1,
+			id + ": exactly one energy")
+		_check(party.get_hero(tpos)["hp"] == before["heroes"][tpos - 1]["hp"] - 1
+			and party.get_hero(tpos)["block"] == 0,
+			id + ": two Block absorbed the self-damage first")
+		_check(deck._rng.state == before["rng"], id + ": no draw RNG")
+		_check(party.get_heroes()[0] == before["heroes"][0]
+			and party.get_heroes()[1] == before["heroes"][1],
+			id + ": collateral heroes unchanged")
+
+	for id in ["seamstress_tailors_trance", "seamstress_tailors_trance_plus"]:
+		var expected_draw: int = 3 if id.ends_with("_plus") else 2
+		var party := _party()
+		_check(_seamstress_position(party) == 2, id + ": seamstress at slot 2")
+		var deck: CombatDeck = _deck(["stitched_000002"], 73)
+		deck.discard_pile.assign(["r-1", "r-2", "r-3"])
+		var before: Dictionary = _snapshot(deck, party)
+		var oracle := _oracle_draw(before["draw"], before["discard"], expected_draw, before["rng"])
+		_check(not deck.hand.has(id), id + ": printed half genuinely absent from hand")
+		var outcome: Dictionary = resolver.resolve_staged_half(deck, party, id, 0)
+		_check(outcome == {"ok": true, "effect": "gain_energy", "amount": 1,
+			"draw": expected_draw}, id + ": exact staged energy and draw outcome")
+		var expected_hand: Array = before["hand"].duplicate()
+		expected_hand.append_array(oracle["drawn"])
+		_check(deck.hand == expected_hand,
+			id + ": exactly " + str(expected_draw) + " seeded draws")
+		_check(deck.draw_pile == oracle["draw"] and deck.discard_pile == oracle["discard"],
+			id + ": exact seeded reshuffle piles")
+		_check(deck.energy == before["energy"] + 1, id + ": exactly one energy")
+		_check(deck._rng.state == oracle["rng"], id + ": exact seeded RNG state")
+		_check(party.get_heroes() == before["heroes"], id + ": party unchanged")
+		_check(deck.hand.count("stitched_000002") == 1 and deck.discard_pile.count(id) == 0,
+			id + ": no charge or discard of the printed half")
+
+	# The enclosing composite owns the cost: a drained staged deck still gains.
+	var drained: CombatDeck = _deck(["stitched_000009"], 37)
+	_check(drained.try_spend_energy(3) and drained.energy == 0, "staged deck fully spent")
+	_check(resolver.resolve_staged_half(drained, _party(),
+		"seamstress_tailors_trance", 0).get("ok", false) and drained.energy == 1,
+		"staged half gains energy without charging its printed cost")
+	_check(resolver.resolve_staged_half(drained, _party(),
+		"tinker_overclock", 0).get("ok", false) and drained.energy == 2,
+		"second staged half gains energy exactly once more")
+
+	# Fail-closed staged refusals.
+	var probe_party := _party()
+	var probe: CombatDeck = _deck(["stitched_000003"], 11)
+	for id in ["tinker_overclock", "seamstress_tailors_trance"]:
+		_staged_rejected(probe, probe_party, id, 1, id + " nonzero staged target")
+		_staged_rejected(probe, probe_party, id, -1, id + " negative staged target")
+		_staged_rejected(probe, probe_party, "not_a_card", 0, id + " counterfeit staged ID")
+		_staged_rejected(probe, probe_party, "tinker_rivet_shot", 0,
+			id + " unsupported staged pool ID")
+		_staged_rejected(probe, probe_party, "", 0, id + " empty staged ID")
+	_staged_rejected(probe, probe_party, 42, 0, "non-string staged ID")
+	_check(resolver.resolve_staged_half(null, probe_party, "tinker_overclock", 0) == {"ok": false}
+		and resolver.resolve_staged_half(probe, null, "tinker_overclock", 0) == {"ok": false},
+		"staged null authorities reject")
+
+	var downed := _party()
+	_check(downed.apply_damage(3, 26) and downed.is_downed(3), "staged downed Tinker owner")
+	_staged_rejected(_deck(["stitched_000004"], 17), downed, "tinker_overclock", 0,
+		"downed Overclock owner")
+	downed = _party()
+	_check(downed.apply_damage(2, 30) and downed.is_downed(2),
+		"staged downed Seamstress owner")
+	_staged_rejected(_deck(["stitched_000005"], 19), downed,
+		"seamstress_tailors_trance", 0, "downed Trance owner")
+	_staged_rejected(_deck(["stitched_000006"], 23),
+		_party(["seamstress", "warden", "tinker"]),
+		"seamstress_tailors_trance", 0, "Trance owner at illegal front slot")
+	var renamed: Array = _party().get_heroes()
+	for index in range(renamed.size()):
+		if renamed[index]["id"] == "seamstress":
+			renamed[index]["id"] = "intruder"
+	var missing := CombatParty.new(renamed)
+	_check(missing.is_valid(), "staged missing-owner party valid")
+	_staged_rejected(_deck(["stitched_000010"], 41), missing,
+		"seamstress_tailors_trance", 0, "missing Seamstress owner")
+
+	var overflow: CombatDeck = _deck(["stitched_000007"], 29)
+	overflow.combat_state.energy = CombatParty.MAX_INT
+	_staged_rejected(overflow, _party(), "tinker_overclock", 0, "staged energy overflow")
+	_staged_rejected(overflow, _party(), "seamstress_tailors_trance", 0,
+		"staged draw energy overflow")
+	_staged_rejected(_deck(["stitched_000008"], 31, false), _party(),
+		"tinker_overclock", 0, "staged inactive turn")
 
 
 func _test_replay() -> void:

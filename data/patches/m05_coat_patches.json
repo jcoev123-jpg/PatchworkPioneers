@@ -1,0 +1,3 @@
+[
+  {"id": "borrowed_button", "slot": "COAT", "effect": "other_hero_committed_heal_block", "heal_threshold": 1, "block": 3, "uses_per_combat": 1}
+]
