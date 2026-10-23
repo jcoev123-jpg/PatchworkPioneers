@@ -426,14 +426,22 @@ func _effects(half: Dictionary) -> String:
 			continue
 		match key:
 			"damage":
+				var damage_text := ""
 				if half["target_kind"] == "enemy_random":
 					var times_str := "three times" if effects.get("hit_count") == 3 else ("%d times" % effects.get("hit_count", 1))
-					words.append("%d damage to a random living enemy %s using run RNG" % [effects[key], times_str])
+					damage_text = "%d damage to a random living enemy %s using run RNG" % [effects[key], times_str]
 				elif half.get("effects", {}).has("hits") and int(effects.get("hits", 1)) > 1:
-					words.append("%d damage in %d hits" % [effects[key], effects["hits"]])
+					damage_text = "%d damage in %d hits" % [effects[key], effects["hits"]]
 				else:
-					words.append("%d damage%s" % [effects[key],
-						" to each eligible enemy" if half["target_kind"] == "enemy_all" else ""])
+					damage_text = "%d damage%s" % [effects[key],
+						" to each eligible enemy" if half["target_kind"] == "enemy_all" else ""]
+				# Snip the Seam authors a conditional REPLACEMENT damage. Describe
+				# the actual authored predicates rather than a fixed half-gauge or
+				# an inferred card ID, so ordinary attacks gain no extra clause.
+				var conditional: Variant = effects.get("conditional_damage")
+				if typeof(conditional) == TYPE_DICTIONARY:
+					damage_text += _conditional_damage_clause(conditional)
+				words.append(damage_text)
 			"bleed":
 				words.append("Bleed %d" % effects[key])
 			"bleed_multiplier":
@@ -473,6 +481,38 @@ func _effects(half: Dictionary) -> String:
 	if half["owner"] == "tinker" and effects.has("damage"):
 		text += " (first Tinker attack this turn: +3 damage)"
 	return text
+
+
+## Reads the authored conditional-damage structure and renders it as a single
+## readable replacement clause. Unknown shapes stay silent rather than guess, so
+## only authored alternatives are described and never a summed value.
+func _conditional_damage_clause(conditional: Dictionary) -> String:
+	var replacement: Variant = conditional.get("damage")
+	if typeof(replacement) != TYPE_INT:
+		return ""
+	if str(conditional.get("operator", "")) != "or":
+		return ""
+	var conditions: Variant = conditional.get("conditions")
+	if typeof(conditions) != TYPE_ARRAY or conditions.is_empty():
+		return ""
+	var predicates: Array[String] = []
+	for condition in conditions:
+		if typeof(condition) != TYPE_DICTIONARY:
+			return ""
+		var predicate := _conditional_predicate(condition as Dictionary)
+		if predicate.is_empty():
+			return ""
+		predicates.append(predicate)
+	return ", or %d instead if %s" % [replacement, " or ".join(PackedStringArray(predicates))]
+
+
+func _conditional_predicate(condition: Dictionary) -> String:
+	if condition.get("status") == "unravelled" and not condition.has("gauge"):
+		return "Unravelled"
+	if condition.get("gauge") == "unravel" and condition.get("comparison") == "at_least_half" \
+			and condition.get("threshold") == "current_target_threshold":
+		return "Unravel is at least half its current threshold"
+	return ""
 
 
 func _half_lines(order: String, half: Dictionary) -> String:

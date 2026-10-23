@@ -702,6 +702,7 @@ func _run() -> void:
 	prebound.free()
 	await _test_thumbnail_fallbacks()
 	await _test_mixed_pool_picker()
+	await _test_snip_conditional_descriptions()
 	_finish()
 
 
@@ -792,6 +793,148 @@ func _test_thumbnail_fallbacks() -> void:
 			or first_state.get("placeholder_visible", false)),
 		"re-entry after the one-shot request shows only the current pair's pictures")
 	panel.free()
+
+
+## AC1/AC2: authentic Snip the Seam base/+ conditional REPLACEMENT damage is
+## described from the authored structure in both half positions, ordinary attacks
+## gain no conditional sentence, and the read-only preview leaves the ledger and
+## RNG untouched.
+func _test_snip_conditional_descriptions() -> void:
+	var snip_deck: Array[String] = [
+		"tinker_snip_the_seam",       # 0 base
+		"tinker_snip_the_seam_plus",  # 1 plus
+		"warden_strike",              # 2 ordinary Warden attack
+		"seamstress_prick",           # 3 ordinary Seamstress attack
+	]
+	var snip_ledger := RunRestStitchCards.new(snip_deck, {}, 3)
+	_check(snip_ledger.is_valid() and not snip_ledger.is_consumed(),
+		"authentic Snip base/+ ledger is valid before display")
+	var snip_receipt := snip_ledger.get_snapshot()
+	var snip_model := RunRestStitchPairOptions.new(snip_ledger, snip_receipt)
+	_check(snip_model.is_available(), "Snip base/+ ledger model available")
+	# The authored definitions keep their real replacement numbers; the display
+	# must never invent a summed value or infer from the card ID.
+	var base_def := RunRestStitchCards.resolve_card_definition("tinker_snip_the_seam")
+	var plus_def := RunRestStitchCards.resolve_card_definition("tinker_snip_the_seam_plus")
+	var base_condition: Dictionary = base_def.get("effects", {}).get("conditional_damage", {})
+	var plus_condition: Dictionary = plus_def.get("effects", {}).get("conditional_damage", {})
+	_check(base_def.get("effects", {}).get("damage") == 5 and base_condition.get("damage") == 15
+		and base_condition.get("operator") == "or" and base_condition.get("conditions", []).size() == 2,
+		"base Snip authors 5 damage and an OR conditional 15")
+	_check(plus_def.get("effects", {}).get("damage") == 7 and plus_condition.get("damage") == 20
+		and plus_condition.get("operator") == "or" and plus_condition.get("conditions", []).size() == 2,
+		"plus Snip authors 7 damage and an OR conditional 20")
+	_check(base_condition["conditions"][0] == {"status": "unravelled"}
+		and base_condition["conditions"][1] == {"gauge": "unravel", "comparison": "at_least_half",
+			"threshold": "current_target_threshold"},
+		"authored Snip predicates are Unravelled OR at_least_half current threshold")
+
+	var base_effect := "5 damage, or 15 instead if Unravelled or Unravel is at least half its current threshold (first Tinker attack this turn: +3 damage)"
+	var plus_effect := "7 damage, or 20 instead if Unravelled or Unravel is at least half its current threshold (first Tinker attack this turn: +3 damage)"
+
+	# Model half_lines describe both orders using the real authored definitions.
+	var base_first := snip_model.preview(0, 2)
+	_check(not base_first.is_empty() and base_first["first_half"] == base_def
+		and base_first["second_half"] == RunRestStitchCards.resolve_card_definition("warden_strike"),
+		"Snip base / Strike preview uses authentic authored halves")
+	if not base_first.is_empty():
+		var first_line := LiveRestStitchPairPicker.new()._half_lines("First", base_first["first_half"])
+		_check(first_line ==
+			"First: Snip the Seam — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n" + base_effect,
+			"_half_lines renders authored 5-vs-15 replacement for the first half")
+		_check(not first_line.contains("5+15") and not first_line.contains("5 + 15")
+			and not first_line.contains("20") and not first_line.contains("7 damage"),
+			"first-half Snip text never sums or borrows the other form")
+		var second_line := LiveRestStitchPairPicker.new()._half_lines("Second", base_first["second_half"])
+		_check(second_line.contains("6 damage") and not second_line.contains("instead")
+			and not second_line.contains("Unravelled") and not second_line.contains("threshold"),
+			"ordinary Warden Strike half gains no conditional clause")
+	var base_second := snip_model.preview(2, 0)
+	_check(not base_second.is_empty() and base_second["second_half"] == base_def,
+		"Strike / Snip base preview keeps Snip as the second half")
+	if not base_second.is_empty():
+		var rev_line := LiveRestStitchPairPicker.new()._half_lines("Second", base_second["second_half"])
+		_check(rev_line ==
+			"Second: Snip the Seam — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n" + base_effect,
+			"_half_lines renders the same authored replacement when Snip is second")
+	var plus_first := snip_model.preview(1, 2)
+	if not plus_first.is_empty():
+		var plus_line := LiveRestStitchPairPicker.new()._half_lines("First", plus_first["first_half"])
+		_check(plus_line.contains("7 damage, or 20 instead") and not plus_line.contains("5 damage"),
+			"plus Snip renders its own 7-vs-20 replacement")
+		_check(not plus_line.contains("7+20") and not plus_line.contains("7 + 20"),
+			"plus Snip text never sums the two damages")
+
+	# Mount the real picker and confirm the visible preview text both ways.
+	var snip_picker := LiveRestStitchPairPicker.new()
+	snip_picker.name = "SnipRestStitchPairPicker"
+	snip_picker.position = Vector2(330, 180)
+	root.add_child(snip_picker)
+	await _frames()
+	snip_picker.bind(snip_ledger, snip_receipt)
+	var ui_rng := RandomNumberGenerator.new()
+	ui_rng.seed = 135791
+	var ui_rng_before := ui_rng.state
+	seed(135791)
+	var ui_global_next := randi()
+	seed(135791)
+	# Base Snip first: visible half and the 3-scrap preview.
+	snip_picker.first_selector.select(_row_in_first(snip_picker, 0))
+	snip_picker.first_selector.item_selected.emit(_row_in_first(snip_picker, 0))
+	var strike_row := _row_in_second(snip_picker, 2)
+	_check(strike_row >= 0, "Warden Strike is a legal second-half partner")
+	if strike_row >= 0:
+		snip_picker.second_selector.select(strike_row)
+		snip_picker.second_selector.item_selected.emit(strike_row)
+		_check(snip_picker.first_half_label.text ==
+			"First: Snip the Seam — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n" + base_effect,
+			"mounted first-half preview shows authored conditional replacement")
+		_check(snip_picker.second_half_label.text ==
+			"Second: Strike — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1-2\n6 damage",
+			"mounted ordinary Strike half stays damage-only")
+		_check(not snip_picker.confirm_button.disabled
+			and snip_picker.summary_label.text.contains("Snip the Seam / Strike")
+			and snip_picker.summary_label.text.contains("3 scraps"),
+			"mounted Snip/Strike preview names the pair and 3-scrap cost before confirm")
+		_check(snip_picker.first_half_label.get_line_count() <= 4,
+			"mounted Snip first-half rule fits the paper strip without clipping")
+	# Reverse: ordinary Strike first, Snip base second.
+	snip_picker.first_selector.select(_row_in_first(snip_picker, 2))
+	snip_picker.first_selector.item_selected.emit(_row_in_first(snip_picker, 2))
+	var snip_second_row := _row_in_second(snip_picker, 0)
+	_check(snip_second_row >= 0, "Snip base is a legal second-half partner for Strike")
+	if snip_second_row >= 0:
+		snip_picker.second_selector.select(snip_second_row)
+		snip_picker.second_selector.item_selected.emit(snip_second_row)
+		_check(snip_picker.second_half_label.text ==
+			"Second: Snip the Seam — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n" + base_effect,
+			"mounted second-half Snip shows the same authored replacement")
+		_check(snip_picker.first_half_label.text ==
+			"First: Strike — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1-2\n6 damage",
+			"mounted ordinary Strike first half stays damage-only")
+		_check(snip_picker.second_half_label.get_line_count() <= 4,
+			"mounted Snip second-half rule fits the paper strip without clipping")
+	# Plus form second: authored 7-vs-20.
+	snip_picker.first_selector.select(_row_in_first(snip_picker, 2))
+	snip_picker.first_selector.item_selected.emit(_row_in_first(snip_picker, 2))
+	var plus_row := _row_in_second(snip_picker, 1)
+	_check(plus_row >= 0, "Snip+ is a legal second-half partner for Strike")
+	if plus_row >= 0:
+		snip_picker.second_selector.select(plus_row)
+		snip_picker.second_selector.item_selected.emit(plus_row)
+		_check(snip_picker.second_half_label.text ==
+			"Second: Snip the Seam+ — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n" + plus_effect,
+			"mounted upgraded Snip+ shows its own authored 7-vs-20 replacement")
+	# Invariants: the choice previews nothing and consumes no ledger or RNG.
+	_check(snip_ledger.get_snapshot() == snip_receipt and not snip_ledger.is_consumed(),
+		"Snip previews leave the real Rest ledger and 3-scrap purse untouched")
+	_check(ui_rng.state == ui_rng_before and randi() == ui_global_next,
+		"Snip previews and mounted selection draw no local or global RNG")
+	var snip_projection := snip_model.preview(0, 2)
+	_check(snip_projection.get("scrap_cost") == 3 and snip_projection.get("remaining_scraps") == 0
+		and snip_projection.get("energy_cost") == 2,
+		"detached Snip/Strike preview charges exactly 3 scraps on commit projection")
+	snip_picker.free()
 
 
 func _finish() -> void:
