@@ -21,6 +21,7 @@ var _keyboard := false
 var _targeting := CombatAttackTargeting.new()
 var _catalog := StarterCards.new()
 var _play := CombatAttackCards.new()
+var _fray: CombatFrayfinderMitt
 var _direct_fire := CombatTinkerPoolAttacks.new()
 var _direct_fire_preview := CombatTinkerDirectFirePreview.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
@@ -556,7 +557,8 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 		elif choices[index] != 0:
 			_reject_stitch()
 			return
-	last_event = CombatStitchedCards.new(_play).play_stitched(deck, app.party, app.enemies, _ledger(), id, choices[0], choices[1])
+	last_event = CombatStitchedCards.new(_play).play_stitched(deck, app.party, app.enemies,
+		_ledger(), id, choices[0], choices[1], _fray)
 	if last_event.ok:
 		_after_attack()
 	else:
@@ -887,8 +889,16 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	if forecast:
 		return _play.forecast_attack(_deck, party, enemies, id, owner_statuses,
 			enemy_statuses, discount)
-	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses,
-		enemy_statuses, discount)
+	# Only an actual selected starter commit may request this sealed quote.
+	# Forecasts and hover never touch Frayfinder's per-turn latch.
+	var mitt_quote := {}
+	if _fray != null and id in CombatAttackCards.ATTACK_IDS:
+		mitt_quote = _fray.quote_starter_hit(id, position, 1, discount)
+	var committed := _play.play_attack(_deck, party, enemies, id, position,
+		owner_statuses, enemy_statuses, discount, _fray, mitt_quote)
+	if committed.get("ok", false) and mitt_quote.get("bonus") == 2:
+		_fray.consume_confirmed_hit(mitt_quote, committed)
+	return committed
 
 
 ## Nonattack utility forecast: status stacks and draw only, never a hit or
@@ -1094,6 +1104,7 @@ func _sync_battle() -> void:
 		_deck = app.deck
 		_session = [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents]
 		_play = CombatAttackCards.new()
+		_fray = null
 		_controls = CombatSeamstressPoolControl.new()
 		_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 		# Capture the genuine run's sewn wearer projection at battle entry only.
@@ -1122,6 +1133,14 @@ func _sync_battle() -> void:
 		if tiers.is_empty() or not _unravel.bind_roster(app.enemies, tiers):
 			# Keep the owned gauge unbound: a gauge-card cast then fails closed.
 			_unravel = CombatUnravel.new()
+		# Frayfinder uses THIS exact Unravel authority, not a parallel gauge.
+		# An unowned/invalid patch run simply plays with no M05 effect.
+		if carry != null and carry._wardrobe != null and _play._patches != null \
+				and _play._patches.is_valid() and _unravel._bound_enemies == app.enemies:
+			var mitt := CombatFrayfinderMitt.new()
+			if mitt.bind_battle(_deck, app.party, app.enemies, _unravel,
+					carry._wardrobe, carry.torn, _play):
+				_fray = mitt
 		# The selected Path card is bound only to this battle's genuine receipt,
 		# deck, party, roster and the one gauge shared with its round flow.
 		_bind_path_cards(app)
@@ -1146,6 +1165,13 @@ func _sync_battle() -> void:
 	if app.enemy_intents != null and _turn != app.enemy_intents._turn_index:
 		_turn = app.enemy_intents._turn_index
 		_play.start_player_turn()
+		# A new intent index is published only by the real round transition.
+		# An old active latch cannot be reset by a hover or a hand redraw.
+		if _fray != null:
+			if _fray._turn_open:
+				_fray.advance_confirmed_turn()
+			else:
+				_fray.begin_player_turn()
 		# The Path authority follows the same genuine player-turn boundary, so an
 		# unspent Scope expires and a queued Wind-up credit is claimed once.
 		_advance_tinker_path_turn()
@@ -1416,6 +1442,7 @@ func _clear() -> void:
 	_path_card.clear()
 	_tinker_path = null
 	_routed_gauge_shared = false
+	_fray = null
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null

@@ -311,8 +311,8 @@ func _stitched_halves() -> void:
 			"ordered halves consult own ARM without borrowing or doubling")
 		var pre := [party.get_heroes(), enemies.get_enemies(), deck.energy,
 			deck.hand.duplicate(), deck.discard_pile.duplicate(), rng.state]
-		var played := CombatStitchedCards.new().play_stitched(deck, party, enemies,
-			rest, stitched.stitched_id, 1, 2)
+		var played := CombatStitchedCards.new()._play_with_bonuses(deck, party, enemies,
+			rest, stitched.stitched_id, 1, 2, [first.bonus, second.bonus])
 		_check(played.ok and played.halves.size() == 2
 			and played.halves[0].hits[0].position == 1
 			and played.halves[1].hits[0].position == 2,
@@ -380,8 +380,10 @@ func _mixed_stitched_halves() -> void:
 		var hand_before := deck.hand.size()
 		var first_target := 1 if attack_index == 0 else 0
 		var second_target := 3 if attack_index == 0 else 1
-		var played := CombatStitchedCards.new().play_stitched(deck, party, enemies,
-			rest, id, first_target, second_target)
+		var bonuses := [0, 0]
+		bonuses[attack_index] = quote.bonus
+		var played := CombatStitchedCards.new()._play_with_bonuses(deck, party, enemies,
+			rest, id, first_target, second_target, bonuses)
 		_check(played.ok and played.halves.size() == 2
 			and played.halves[attack_index].hits.size() == 1
 			and played.halves[attack_index].hits[0].position == 1,
@@ -475,8 +477,8 @@ func _prior_shared_passive_stitched() -> void:
 			label + ": qualifying stitched Warden first hit quotes +2")
 		var before_commit := [party.get_heroes(), enemies.get_enemies(),
 			deck.hand.duplicate(), deck.discard_pile.duplicate(), deck.energy, rng.state]
-		var played := CombatStitchedCards.new(shared_attacks).play_stitched(
-			deck, party, enemies, rest, stitched.stitched_id, 1, 1)
+		var played := CombatStitchedCards.new(shared_attacks)._play_with_bonuses(
+			deck, party, enemies, rest, stitched.stitched_id, 1, 1, [quote.bonus, 0])
 		_check(played.ok and played.halves.size() == 2
 			and played.halves[0].hits[0].position == 1
 			and played.halves[1].hits[0].position == 1 and deck.energy == 0

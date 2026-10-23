@@ -13,6 +13,8 @@ var _enemies: CombatEnemies
 var _unravel: CombatUnravel
 var _wardrobe: RunPatchWardrobe
 var _torn: RunTornMending
+## Live attack authority: authentic pre-commit Scope state for stitched replay.
+var _attacks: CombatAttackCards = null
 var _wardrobe_state: Dictionary = {}
 var _torn_state: Dictionary = {}
 var _active: Dictionary = {}
@@ -24,7 +26,7 @@ var _stitched_sequence: Dictionary = {}
 
 func bind_battle(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel: CombatUnravel, wardrobe: RunPatchWardrobe,
-		torn: RunTornMending) -> bool:
+		torn: RunTornMending, attacks: CombatAttackCards = null) -> bool:
 	# Invalid rebind invalidates any old battle, including all pending quotes.
 	_turn_open = false
 	_generation += 1
@@ -36,6 +38,7 @@ func bind_battle(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	_unravel = null
 	_wardrobe = null
 	_torn = null
+	_attacks = null
 	_active.clear()
 	if deck == null or party == null or enemies == null or unravel == null:
 		return false
@@ -59,6 +62,7 @@ func bind_battle(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	_unravel = unravel
 	_wardrobe = wardrobe
 	_torn = torn
+	_attacks = attacks
 	_wardrobe_state = state
 	_torn_state = run_state
 	_active = projection.active.duplicate(true)
@@ -102,11 +106,22 @@ func end_player_turn() -> bool:
 	return true
 
 
+## Live RoundFlow atomically ends the old deck turn and starts the next one
+## before the presenter can observe an inactive deck. Only the presenter,
+## after witnessing a matching enemy-intents turn-index increment, calls this.
+func advance_confirmed_turn() -> bool:
+	if not _turn_open or not is_valid() or not _deck.turn_active or _deck.energy != 3:
+		return false
+	_turn_open = false
+	return begin_player_turn()
+
+
 func latch_snapshot() -> Dictionary:
 	return _used.duplicate(true)
 
 
-func quote_starter_hit(card_id: String, target_position: int, hit_number: int = 1) -> Dictionary:
+func quote_starter_hit(card_id: String, target_position: int, hit_number: int = 1,
+		cost_discount: int = 0) -> Dictionary:
 	if not _ready() or not _deck.hand.has(card_id):
 		return {"bonus": 0}
 	if card_id not in CombatAttackCards.ATTACK_IDS:
@@ -114,7 +129,8 @@ func quote_starter_hit(card_id: String, target_position: int, hit_number: int = 
 	var definition := StarterCards.new().get_definition(card_id)
 	if definition.get("id") != card_id or definition.get("target_kind") != "enemy_single":
 		return {"bonus": 0}
-	return _quote(definition, card_id, target_position, hit_number, "starter", 0, "")
+	return _quote(definition, card_id, target_position, hit_number, "starter", 0, "",
+		cost_discount)
 
 
 func quote_stitched_half(run_cards: RunRestStitchCards, stitched_id: String,
@@ -135,8 +151,33 @@ func quote_stitched_half(run_cards: RunRestStitchCards, stitched_id: String,
 		half_index, run_cards.get_snapshot().receipt)
 	if quote.has("seal"):
 		quote.cost = preview.cost
+		# Seal the real attack authority's pre-commit one-shot Scope state.
+		quote.tinker_path_bonus_before = _attacks._tinker.path_bonus() if _attacks != null else 0
 		quote.seal = _seal(quote)
 	return quote
+
+
+## A resolver may use +2 only when the complete sealed quote still matches the
+## SAME live authorities immediately before its genuine commit. No caller can
+## supply a free-form damage amount or reuse a quote from an older hand.
+func authorize_starter_hit(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		cost_discount: int = 0) -> int:
+	if deck != _deck or party != _party or enemies != _enemies or quote.get("bonus") != 2:
+		return 0
+	if not quote.has("seal") or quote.get("seal") != _seal(quote):
+		return 0
+	return 2 if quote_starter_hit(card_id, target, 1, cost_discount) == quote else 0
+
+
+func authorize_stitched_half(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, run_cards: RunRestStitchCards,
+		card_id: String, half_index: int, target: int) -> int:
+	if deck != _deck or party != _party or enemies != _enemies or quote.get("bonus") != 2:
+		return 0
+	if not quote.has("seal") or quote.get("seal") != _seal(quote):
+		return 0
+	return 2 if quote_stitched_half(run_cards, card_id, half_index, target) == quote else 0
 
 
 func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
@@ -191,7 +232,8 @@ func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
 
 
 func _quote(definition: Dictionary, card_id: String, target: int, hit_number: int,
-		source: String, half_index: int, run_receipt: String) -> Dictionary:
+		source: String, half_index: int, run_receipt: String,
+		cost_discount: int = 0) -> Dictionary:
 	if hit_number != 1 or definition.get("target_kind") != "enemy_single":
 		return {"bonus": 0}
 	var owner: Variant = definition.get("owner")
@@ -202,7 +244,10 @@ func _quote(definition: Dictionary, card_id: String, target: int, hit_number: in
 		return {"bonus": 0}
 	if typeof(from_positions) != TYPE_ARRAY or typeof(to_positions) != TYPE_ARRAY:
 		return {"bonus": 0}
-	if _deck.energy < cost or not _deck.hand.has(card_id):
+	if cost_discount < 0 or cost_discount > 1 or cost_discount > cost:
+		return {"bonus": 0}
+	var effective_cost: int = cost - cost_discount
+	if _deck.energy < effective_cost or not _deck.hand.has(card_id):
 		return {"bonus": 0}
 	var actor := _hero_for(owner)
 	if actor.is_empty() or actor.hp <= 0 or not from_positions.has(actor.position):
@@ -226,7 +271,7 @@ func _quote(definition: Dictionary, card_id: String, target: int, hit_number: in
 	var quote := {
 		"bonus": bonus, "owner": owner, "card_id": card_id,
 		"source": source, "half_index": half_index, "target": target,
-		"hit_number": hit_number, "cost": cost,
+		"hit_number": hit_number, "cost": effective_cost,
 		"generation": _generation, "battle_id": get_instance_id(),
 		"run_receipt": run_receipt, "gauge_before": gauge.duplicate(true),
 		"before": _battle_snapshot(),
@@ -316,6 +361,10 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 	for result in halves:
 		if typeof(result) != TYPE_DICTIONARY or result.get("ok") != true:
 			return false
+	var path_bonus: Variant = quote.get("tinker_path_bonus_before", 0)
+	# Only the authored zero or one-shot Scope +4 is valid.
+	if typeof(path_bonus) != TYPE_INT or path_bonus not in [0, 4]:
+		return false
 	var selected: Dictionary = preview.halves[quote.half_index]
 	if selected.get("owner") != quote.owner or selected.get("target_kind") != "enemy_single":
 		return false
@@ -343,7 +392,26 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 				for support_patches in [false, true]:
 					# Reconstruct both legal pre-commit first-attack latch states.
 					# An exact receipt AND exact post-state must still match.
-					for prior_consumed in [[false, false], [false, true], [true, false], [true, true]]:
+					for replay_case in range(12):
+						var prior_consumed: Array = [[false, false], [false, true],
+							[true, false], [true, true]][replay_case % 4]
+						var bonus_index := floori(float(replay_case) / 4.0) - 1
+						# Exact replay with ordinary legacy damage, or with
+						# one authorized +2 on either attacking half. Both
+						# receipt AND resulting authorities must still match.
+						var replay_bonuses := [0, 0]
+						if bonus_index >= 0:
+							var bonus_half: Dictionary = preview.halves[bonus_index]
+							var bonus_owner: String = bonus_half.get("owner", "")
+							var bonus_target: int = first_target if bonus_index == 0 else second_target
+							var bonus_gauge := _unravel.get_snapshot(bonus_target)
+							if bonus_half.get("target_kind") != "enemy_single" \
+									or not _active.get(bonus_owner, []).has(PATCH_ID) \
+									or _wardrobe_state.worn.get(bonus_owner, {}).get("ARM") != PATCH_ID \
+									or not _valid_gauge(bonus_gauge) \
+									or bonus_gauge.gauge * 2 < bonus_gauge.threshold:
+								continue
+							replay_bonuses[bonus_index] = 2
 						var rng := RandomNumberGenerator.new()
 						rng.state = before.rng
 						var deck := CombatDeck.new([], rng)
@@ -358,6 +426,7 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 						enemies._enemies.assign(before.enemies)
 						var attacks := CombatAttackCards.new()
 						attacks._tinker._consumed = prior_consumed[0]
+						attacks._tinker._path_bonus = path_bonus
 						if attack_patches and not attacks.bind_patch_wardrobe(_wardrobe, _torn):
 							continue
 						if attack_patches and not button_eye_owner.is_empty():
@@ -365,9 +434,12 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 						var resolver := CombatStitchedCards.new(attacks)
 						if support_patches and not resolver.bind_patch_wardrobe(_wardrobe, _torn):
 							continue
-						var played := resolver.play_stitched(deck, party, enemies,
-							verified, quote.card_id, first_target, second_target)
-						if played != receipt:
+						var played := resolver._play_with_bonuses(deck, party, enemies,
+							verified, quote.card_id, first_target, second_target, replay_bonuses)
+						# A +2 quote must be the replayed +2, not a coincidental
+						# matching transition with the Frayfinder bonus absent.
+						if played != receipt or (quote.bonus == 2 \
+								and replay_bonuses[quote.half_index] != 2):
 							continue
 						if party.get_heroes() == after.party and enemies.get_enemies() == after.enemies \
 								and deck.draw_pile == after.draw and deck.hand == after.hand \
