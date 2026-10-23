@@ -76,14 +76,48 @@ func _atlas_boundaries(id: String) -> Callable:
 	callback.call(id)
 	_check(_state() == advanced, "stale atlas route prefix cannot commit")
 	_check(app.run_map.undo_choice(id, route), "restore legal route prefix")
-	for floor in app.run_map.get_floors():
+	# The 12-floor graph remains authoritative, but only the next three floors
+	# and the current sewn origin are mounted as patches. No off-window hit areas.
+	var floors: Array = app.run_map.get_floors()
+	var next_floor: int = app.run_map.get_current_floor() + 1
+	var visible_ids: Dictionary = {}
+	if not app.run_map.is_complete():
+		for floor_number in range(next_floor, mini(next_floor + 2, floors.size()) + 1):
+			for node in floors[floor_number - 1]:
+				visible_ids[node.id] = true
+	var current_id: String = app.run_map.get_current_node_id()
+	if not current_id.is_empty():
+		visible_ids[current_id] = true
+	var legal: Array[String] = app.run_map.get_legal_choices()
+	_check(not floors.is_empty() and visible_ids.size() >= legal.size()
+		and (legal.is_empty() or next_floor <= floors.size()),
+		"atlas window derives from a real generated graph and includes all legal choices")
+	var seen: Dictionary = {}
+	for floor in floors:
 		for node in floor:
 			var marker := atlas.get_node_or_null("Node_" + node.id) as Control
-			_check(marker != null and Rect2(0, 0, 1280, 720).encloses(marker.get_global_rect()),
-				"every atlas marker fits viewport")
-			var action := marker.get_node_or_null("Action") as Button if marker != null else null
-			_check((action != null) == app.run_map.get_legal_choices().has(node.id),
-				"atlas enables exactly legal route nodes")
+			var expected: bool = visible_ids.has(node.id)
+			_check((marker != null) == expected,
+				"atlas mounts exactly the current and three-upcoming-floor markers: " + node.id)
+			if marker == null:
+				continue
+			var local_rect := Rect2(marker.position, marker.size)
+			_check(Rect2(0, 0, 1280, 720).encloses(marker.get_global_rect())
+				and RunRouteAtlas.PAGE_RIGHT.encloses(local_rect)
+				and not RunRouteAtlas.SPINE_RECT.intersects(local_rect),
+				"every visible atlas marker fits viewport and right page outside spine: " + node.id)
+			seen[node.id] = true
+			var action := marker.get_node_or_null("Action") as Button
+			_check((action != null) == legal.has(node.id)
+				and (action == null or (action.is_visible_in_tree()
+					and action.get_meta("route_id") == node.id)),
+				"atlas enables exactly legal, canonical route nodes: " + node.id)
+	for child in atlas.get_children():
+		if child is PanelContainer:
+			_check(seen.has(str(child.get_meta("route_id"))),
+				"atlas has no extra orphan or off-window patch")
+	_check(seen.size() == visible_ids.size(),
+		"atlas mounts every expected patch, including every legal destination")
 	return callback
 
 
