@@ -222,6 +222,12 @@ class Puppet extends Control:
 	const RECOIL_MIN_PIXELS := 6.0
 	## One full wobble: pushed back first, one damped overshoot, then exactly at rest.
 	const RECOIL_WAVES := 2.0
+	## One witnessed living-to-zero HP transition eases only this actor's drawn artwork from
+	## upright into the existing still fallen tilt. `fallen` itself is authoritative at once,
+	## and the easing lives in the same draw transform, so the Control, its pinned tag and
+	## every target rectangle never move. The span is bounded here as well as by the listener.
+	const FALL_MAX_SECONDS := 0.6
+	const FALL_TILT := 0.7
 
 	var facing := 1.0
 	var slot := 1
@@ -239,6 +245,12 @@ class Puppet extends Control:
 	## Seconds left of the one bounded committed-hit recoil; zero means no shake at all.
 	var recoil_remaining := 0.0
 	var recoil_span := 0.0
+	## Seconds left of the one bounded fall settle; zero means the fallen tilt is already
+	## fully settled (and a standing actor is upright).
+	var fall_remaining := 0.0
+	var fall_span := 0.0
+	## The `fallen` value this puppet last presented, so a transition is witnessed once.
+	var _fall_seen := false
 	## Presenter-supplied stage metrics, so heroes and enemies are drawn at one scale.
 	var stage_height := 180.0
 	var intent_band := 36.0
@@ -253,9 +265,10 @@ class Puppet extends Control:
 		resized.connect(queue_redraw)
 
 	func _process(delta: float) -> void:
-		# The committed attack pose and the hit recoil settle first, so a fallen or
-		# finished actor is already back at its plain idle pose before the idle bob
+		# A witnessed fall settles first, then the committed attack pose and the hit recoil,
+		# so a fallen or finished actor is already back at its plain pose before the idle bob
 		# advances.
+		advance_fall(delta)
 		advance_attack(delta)
 		advance_recoil(delta)
 		advance_idle(delta)
@@ -375,6 +388,68 @@ class Puppet extends Control:
 		var progress := clampf(1.0 - recoil_remaining / recoil_span, 0.0, 1.0)
 		return sin(progress * PI * RECOIL_WAVES) * (1.0 - progress)
 
+	## Starts the one bounded settling of a witnessed fall. `fallen` is already
+	## authoritative; only the drawn tilt eases, and a non-positive span or a detached
+	## puppet reports false so no caller can leave an animation running.
+	func settle_fall(seconds: float) -> bool:
+		if not is_inside_tree() or seconds <= 0.0:
+			return false
+		fall_span = clampf(seconds, 0.001, FALL_MAX_SECONDS)
+		fall_remaining = fall_span
+		_fall_seen = true
+		queue_redraw()
+		return true
+
+	## Ends a fall settle immediately, leaving the drawn artwork exactly at the existing
+	## still fallen pose (or upright while standing).
+	func cancel_fall() -> void:
+		if fall_remaining <= 0.0 and fall_span <= 0.0:
+			return
+		fall_remaining = 0.0
+		fall_span = 0.0
+		queue_redraw()
+
+	## The settle advances with real frame deltas only. A puppet that becomes fallen without
+	## a witnessed settle still eases once, so no actor ever snaps into the fallen pose, and
+	## a standing actor drops the settle immediately.
+	func advance_fall(delta: float) -> void:
+		if not fallen:
+			if _fall_seen:
+				_fall_seen = false
+				cancel_fall()
+			return
+		if not _fall_seen:
+			_fall_seen = true
+			if fall_span <= 0.0:
+				fall_span = FALL_MAX_SECONDS
+				fall_remaining = fall_span
+			queue_redraw()
+		if fall_remaining <= 0.0 or delta <= 0.0:
+			return
+		fall_remaining = maxf(0.0, fall_remaining - delta)
+		if fall_remaining <= 0.0:
+			fall_span = 0.0
+		queue_redraw()
+
+	## True only while the drawn artwork is really easing into the fallen pose.
+	func settling_fall() -> bool:
+		return fall_remaining > 0.0 and fallen
+
+	## Eased progress of a witnessed fall: zero upright, one fully settled. An actor that
+	## never settled (or already finished) reports the existing still fallen pose.
+	func fall_shape() -> float:
+		if fall_span <= 0.0 or fall_remaining <= 0.0:
+			return 1.0
+		var progress := clampf(1.0 - fall_remaining / fall_span, 0.0, 1.0)
+		return progress * progress * (3.0 - 2.0 * progress)
+
+	## The fallen tilt this actor draws now, in its own facing direction. It is the existing
+	## still fallen pose once settled and upright otherwise; a standing actor never tilts.
+	func fallen_tilt() -> float:
+		if not fallen:
+			return 0.0
+		return -FALL_TILT * facing * fall_shape()
+
 	## The rest placement of whichever artwork is drawn now, before the pose transform.
 	func rest_drawn_rect() -> Rect2:
 		var rect := image_rect()
@@ -444,23 +519,25 @@ class Puppet extends Control:
 	func foot_line() -> float:
 		return art_band().end.y - art_inset()
 
-	## One pose shared by both draw paths: inward facing, the existing fallen tilt, the
-	## breathing height, the bob and, during a committed attack or a committed hit, the
-	## forward lunge with its paper stretch and the horizontal recoil. Applied about
-	## `anchor` at `base_scale`, so the Control, its pinned name tag and every target
-	## rectangle keep their exact place.
+	## One pose shared by both draw paths: inward facing, the fallen tilt (eased into by a
+	## witnessed fall), the breathing height, the bob and, during a committed attack or a
+	## committed hit, the forward lunge with its paper stretch and the horizontal recoil.
+	## Applied about `anchor` at `base_scale`, so the Control, its pinned name tag and every
+	## target rectangle keep their exact place.
 	func idle_transform(anchor: Vector2, base_scale: float) -> Transform2D:
-		return Transform2D(-0.7 * facing if fallen else 0.0,
+		return Transform2D(fallen_tilt(),
 			Vector2(facing * attack_stretch(), idle_breath() * attack_squash()) * base_scale, 0.0,
 			anchor + Vector2(attack_lunge() + recoil_pixels(), idle_bob()))
 
 	## Binds one authoritative actor ID and its loaded art; a missing texture keeps the fallback.
-	## A rebound slot drops any pose and recoil in flight, so one actor never finishes
-	## another's lunge or shake.
+	## A rebound slot drops any pose, recoil or fall settle in flight, so one actor never
+	## finishes another's lunge, shake or fall.
 	func bind_actor(id: String, art: Dictionary) -> void:
 		if id != actor_id:
 			cancel_attack()
 			cancel_recoil()
+			cancel_fall()
+		_fall_seen = fallen
 		actor_id = id
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
@@ -1235,17 +1312,45 @@ func hero_puppet(actor_id: String) -> Control:
 	return puppet_for("hero", actor_id)
 
 
-## The one mounted, still-standing and visible puppet of `side` bound to this
-## authoritative actor ID, for a hit reaction that must never land on the wrong actor.
-## Identity comes from the bound side and ID, never from a slot or a screen position; an
-## unknown side, a stale ID or an ambiguous duplicate binding resolves nothing.
+## The one mounted puppet of `side` bound to this authoritative actor ID, for a hit
+## reaction that must never land on the wrong actor. Identity comes from the bound side and
+## ID, never from a slot or a screen position; an unknown side, a stale ID or an ambiguous
+## duplicate binding resolves nothing.
 func puppet_for(side: String, actor_id: String) -> Control:
+	return _bound_puppet(side, actor_id, true)
+
+
+## The one mounted, still visible puppet of `side` bound to this authoritative actor ID,
+## including one that is already fallen because of the very hit being presented. This is a
+## presentation-only identity lookup: it never admits a fallen actor for targeting or any
+## gameplay rule, which keep puppet_for()'s standing-only contract, and it fails closed for
+## an unknown side, a stale ID or an ambiguous duplicate binding.
+func presented_puppet(side: String, actor_id: String) -> Control:
+	return _bound_puppet(side, actor_id, false)
+
+
+## Eases the one mounted puppet of this authoritative actor into its existing fallen pose
+## after a witnessed living-to-zero HP transition. `fallen` itself is already authoritative,
+## so the lookup deliberately includes fallen puppets; it still fails closed for an unknown
+## side, a stale ID or an ambiguous duplicate binding.
+func settle_fall(side: String, actor_id: String, seconds: float) -> bool:
+	var puppet := _bound_puppet(side, actor_id, false)
+	if puppet == null:
+		return false
+	return puppet.settle_fall(seconds)
+
+
+## The one mounted, still visible puppet of `side` bound to this authoritative actor ID.
+## `standing_only` keeps the fail-closed targeting rule; a fall reaction passes false.
+func _bound_puppet(side: String, actor_id: String, standing_only: bool) -> Control:
 	if actor_id.is_empty() or (side != "hero" and side != "enemy"):
 		return null
 	var face := 1.0 if side == "hero" else -1.0
 	var found: Control = null
 	for puppet in _puppets:
-		if not is_instance_valid(puppet) or not is_equal_approx(puppet.facing, face) or puppet.fallen:
+		if not is_instance_valid(puppet) or not is_equal_approx(puppet.facing, face):
+			continue
+		if standing_only and puppet.fallen:
 			continue
 		if puppet.actor_id != actor_id:
 			continue
@@ -1257,14 +1362,15 @@ func puppet_for(side: String, actor_id: String) -> Control:
 	return found
 
 
-## Ends every in-flight committed attack pose and hit recoil (battle teardown or a
-## rebind), so no mounted actor is left mid-lunge or mid-shake and the artwork returns
-## exactly to idle.
+## Ends every in-flight committed attack pose, hit recoil and fall settle (battle teardown
+## or a rebind), so no mounted actor is left mid-lunge, mid-shake or mid-fall and the
+## artwork returns exactly to its own rest or fallen pose.
 func cancel_poses() -> void:
 	for puppet in _puppets:
 		if is_instance_valid(puppet):
 			puppet.cancel_attack()
 			puppet.cancel_recoil()
+			puppet.cancel_fall()
 
 
 ## The admitted battle's own route kind. Only a standalone _start_battle (no run map at
