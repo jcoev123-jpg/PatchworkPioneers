@@ -164,6 +164,7 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 			label + " affordability disables and skips focus for unavailable choice " + str(i))
 		_check(button.get_parent() == panel.choices_container and button.is_visible_in_tree(),
 			label + " actual mounted choice button " + str(i))
+		_check(viewport.encloses(button.get_global_rect()), label + " full choice onscreen " + str(i))
 		_check(button.get_theme_stylebox("normal") is StyleBoxFlat and
 			button.get_theme_stylebox("disabled") is StyleBoxFlat and
 			button.get_theme_stylebox("focus") is StyleBoxFlat,
