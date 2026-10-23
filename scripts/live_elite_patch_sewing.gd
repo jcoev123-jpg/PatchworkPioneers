@@ -15,6 +15,8 @@ var _token := 0
 var _bound_carry: RunTornCarryover
 var _summary_inputs: Array = []
 
+const INK := Color("302b29")
+
 const HERO_COLORS := {
     "warden": Color("4a5d73"),
     "seamstress": Color("6e4f6b"),
@@ -228,10 +230,16 @@ func observe_claim(offering, result: Dictionary) -> void:
 		button.set_meta("hero_id", hero.id)
 		button.disabled = hero.hp == 0 or not previews.has(hero.id)
 		button.custom_minimum_size = Vector2(170, 52)
-		# Styled sewn-paper tag appearance (>=18px text, cream fill, stitched seams)
+		# Styled sewn-paper tag appearance (>=18px text, cream fill, stitched seams).
+		# The shell theme paints cream text for felt buttons, so every drawn state
+		# of this cream tag (normal, focus, hover, pressed, hover+pressed) needs
+		# its own dark-ink text to stay readable against the paper surface.
 		button.add_theme_font_size_override("font_size", 18)
-		button.add_theme_color_override("font_color", Color("302b29"))
-		button.add_theme_color_override("font_hover_pressed_color", Color("302b29"))
+		button.add_theme_color_override("font_color", INK)
+		button.add_theme_color_override("font_hover_pressed_color", INK)
+		button.add_theme_color_override("font_hover_color", INK)
+		button.add_theme_color_override("font_pressed_color", INK)
+		button.add_theme_color_override("font_focus_color", INK)
 		button.add_theme_color_override("font_disabled_color", Color("777166"))
 		# Custom styleboxes for each state
 		var paper_normal := StyleBoxFlat.new()
@@ -248,10 +256,15 @@ func observe_claim(offering, result: Dictionary) -> void:
 		button.add_theme_stylebox_override("hover", paper_hover)
 		var paper_pressed := StyleBoxFlat.new()
 		paper_pressed.bg_color = Color("dcd8b8")
-		paper_pressed.border_color = Color("302b29")
+		paper_pressed.border_color = INK
 		paper_pressed.set_border_width_all(3)
 		paper_pressed.set_corner_radius_all(4)
 		button.add_theme_stylebox_override("pressed", paper_pressed)
+		# The shell theme defines a dark felt "hover_pressed" surface, which the
+		# engine would draw (with font_hover_pressed_color) during shortcut
+		# feedback. Keep that state sewn paper as well so the ink text stays legible.
+		var paper_hover_pressed := paper_pressed.duplicate()
+		button.add_theme_stylebox_override("hover_pressed", paper_hover_pressed)
 		var paper_disabled := StyleBoxFlat.new()
 		paper_disabled.bg_color = Color("d6d2c8")
 		paper_disabled.border_color = Color("777166")

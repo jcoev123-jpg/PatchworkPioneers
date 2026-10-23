@@ -24,6 +24,65 @@ func _hover(control: Control) -> void:
 	await _frames()
 
 
+func _mouse_move(point: Vector2) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await _frames()
+
+
+func _mouse_button_at(point: Vector2, pressed: bool) -> void:
+	var event := InputEventMouseButton.new()
+	event.position = point
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	root.push_input(event, true)
+	await _frames()
+
+
+## WCAG relative luminance contrast, so "readable" is measured rather than assumed.
+func _relative_luminance(color: Color) -> float:
+	var linear := func(value: float) -> float:
+		return value / 12.92 if value <= 0.04045 else pow((value + 0.055) / 1.055, 2.4)
+	return 0.2126 * linear.call(color.r) + 0.7152 * linear.call(color.g) \
+		+ 0.0722 * linear.call(color.b)
+
+
+func _contrast_ratio(foreground: Color, background: Color) -> float:
+	var first := _relative_luminance(foreground)
+	var second := _relative_luminance(background)
+	return (maxf(first, second) + 0.05) / (minf(first, second) + 0.05)
+
+
+## Mirror Button's own colour selection so the assertion matches what it draws.
+func _effective_text_color(button: Button) -> Color:
+	var mode := button.get_draw_mode()
+	if mode == BaseButton.DRAW_DISABLED:
+		return button.get_theme_color("font_disabled_color")
+	if mode == BaseButton.DRAW_HOVER_PRESSED and button.has_theme_stylebox("hover_pressed"):
+		return button.get_theme_color("font_hover_pressed_color")
+	if mode == BaseButton.DRAW_PRESSED:
+		return button.get_theme_color("font_pressed_color")
+	if mode == BaseButton.DRAW_HOVER:
+		return button.get_theme_color("font_hover_color")
+	if button.has_focus():
+		return button.get_theme_color("font_focus_color")
+	return button.get_theme_color("font_color")
+
+
+func _effective_surface_color(button: Button) -> Color:
+	var mode := button.get_draw_mode()
+	if mode == BaseButton.DRAW_DISABLED:
+		return button.get_theme_stylebox("disabled").bg_color
+	if mode == BaseButton.DRAW_HOVER_PRESSED and button.has_theme_stylebox("hover_pressed"):
+		return button.get_theme_stylebox("hover_pressed").bg_color
+	if mode == BaseButton.DRAW_PRESSED:
+		return button.get_theme_stylebox("pressed").bg_color
+	if mode == BaseButton.DRAW_HOVER:
+		return button.get_theme_stylebox("hover").bg_color
+	return button.get_theme_stylebox("normal").bg_color
+
+
 func _complete_state() -> Array:
 	return [_settlement_state(), app.run_scraps, app.run_map.get_floors(),
 		app.run_map.get_generation_revision(), app.run_seed,
@@ -75,10 +134,54 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		await _hover(button)
 		_check(sewing._prompt.text == explanation,
 			"real mouse hover exposes %s tooltip content visibly" % hero_id)
+		# AC1 repair: each drawn text state of this cream tag must use dark ink on
+		# its own paper surface; the shell theme otherwise supplies cream hover,
+		# pressed, focus and hover+pressed text.
+		var normal_bg: Color = button.get_theme_stylebox("normal").bg_color
+		var hover_bg: Color = button.get_theme_stylebox("hover").bg_color
+		var pressed_bg: Color = button.get_theme_stylebox("pressed").bg_color
+		var hover_pressed_box: StyleBoxFlat = button.get_theme_stylebox("hover_pressed") as StyleBoxFlat
+		_check(hover_pressed_box != null
+			and _contrast_ratio(button.get_theme_color("font_hover_pressed_color"),
+				hover_pressed_box.bg_color) >= 4.5,
+			"%s hover+pressed name stays readable on its paper surface" % hero_id)
+		_check(_contrast_ratio(button.get_theme_color("font_color"), normal_bg) >= 4.5
+			and _contrast_ratio(button.get_theme_color("font_focus_color"), normal_bg) >= 4.5
+			and _contrast_ratio(button.get_theme_color("font_hover_color"), hover_bg) >= 4.5
+			and _contrast_ratio(button.get_theme_color("font_pressed_color"), pressed_bg) >= 4.5,
+			"%s normal/focus/hover/pressed ink contrasts with the drawn paper surfaces" % hero_id)
+		if not button.disabled:
+			# Real pointer hover uses the engine's own draw mode and colour choice.
+			_check(button.is_hovered() and button.get_draw_mode() == BaseButton.DRAW_HOVER
+				and _effective_text_color(button) == Color("302b29")
+				and _contrast_ratio(_effective_text_color(button),
+					_effective_surface_color(button)) >= 4.5,
+				"%s real pointer hover keeps the readable name on the hover paper tag" % hero_id)
+			# Real pointer press-and-hold must keep the same tag ink, not cream text.
+			var center: Vector2 = button.get_global_rect().get_center()
+			await _mouse_button_at(center, true)
+			_check(button.get_draw_mode() == BaseButton.DRAW_PRESSED and button.is_pressed()
+				and button.text == hero_id.capitalize()
+				and _effective_text_color(button) == Color("302b29")
+				and _contrast_ratio(_effective_text_color(button),
+					_effective_surface_color(button)) >= 4.5,
+				"%s real pointer press keeps the readable name on pressed paper" % hero_id)
+			# Release outside the tag so this presentation probe never sews.
+			await _mouse_move(Vector2(2, 2))
+			await _mouse_button_at(Vector2(2, 2), false)
+			_check(not button.is_pressed() and not button.is_hovered(),
+				"%s presentation probe releases without sewing" % hero_id)
 		button.grab_focus()
 		await _frames()
 		_check(button.has_focus() and sewing._prompt.text == explanation,
 			"physical keyboard focus reads %s power and replacement in prompt" % hero_id)
+		if not button.disabled:
+			# Keyboard focus draws the normal paper box, so it needs the ink focus colour.
+			_check(button.get_draw_mode() == BaseButton.DRAW_NORMAL
+				and _effective_text_color(button) == Color("302b29")
+				and _contrast_ratio(_effective_text_color(button),
+					_effective_surface_color(button)) >= 4.5,
+				"%s keyboard focus keeps dark ink on the normal paper tag" % hero_id)
 		# Added mounted presentation checks (AC1): size, colour, style states, focus.
 		_check(sewing._prompt.get_theme_font_size("font_size") >= 18,
 			"prompt font size >= 18px")
