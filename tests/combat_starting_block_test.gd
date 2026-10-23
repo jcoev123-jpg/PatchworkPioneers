@@ -8,6 +8,9 @@ func _initialize() -> void:
 	_test_ac1()
 	_test_ac2()
 	_test_ac3()
+	_test_bulwark_replacement()
+	_test_vanguard_contract()
+	_test_receipt_rejections()
 	_test_rng_preservation()
 	var first := _repeated_sequence()
 	var second := _repeated_sequence()
@@ -177,6 +180,321 @@ func _test_ac3() -> void:
 	_check(fresh_party.get_hero(1).get("block") == 6, "fresh grant works")
 
 
+func _test_bulwark_replacement() -> void:
+	var choice := RunWardenPathChoice.new()
+	_check(choice.is_valid(), "fresh RunWardenPathChoice is valid for Bulwark")
+	var bulwark_receipt := choice.choose("bulwark")
+	_check(bulwark_receipt.get("ok") == true, "authored Bulwark choice succeeds")
+	_check(bulwark_receipt.get("path_id") == "bulwark", "receipt path_id is bulwark")
+	_check(bulwark_receipt.get("owner") == "warden", "receipt owner is warden")
+
+	# Position 1 baseline grant: 10 Block instead of 6, never 16
+	var party := CombatParty.new(_defs())
+	_check(party.start_player_turn(), "player turn resets party block")
+	var helper := CombatStartingBlock.new(party, bulwark_receipt)
+	_check(helper.get_path_receipt() == bulwark_receipt, "helper retains Bulwark receipt")
+	_check(not helper.is_consumed(), "helper initially unconsumed")
+	var before := _snap(party)
+	_check(helper.apply(), "Bulwark helper applies once")
+	_check(helper.is_consumed(), "helper consumed after successful apply")
+	var after := _snap(party)
+	_check(party.get_hero(1).get("id") == "warden", "Warden remains at position 1")
+	_check(party.get_hero(1).get("hp") == 40, "Warden HP unchanged at 40")
+	_check(party.get_hero(1).get("block") == 10, "Bulwark grants exactly 10 Block, not 6 and not 16")
+	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(2).get("block") == 0,
+		"Seamstress unchanged with 0 Block under Bulwark")
+	_check(party.get_hero(3).get("hp") == 26 and party.get_hero(3).get("block") == 0,
+		"Tinker unchanged with 0 Block under Bulwark")
+
+	# whole-roster snapshot check
+	var expected_after := before.duplicate(true)
+	expected_after[0]["block"] = 10
+	_check(after == expected_after, "whole-roster snapshot matches exact Bulwark 10 block grant")
+
+	# repeat apply returns false, leaves roster byte-for-byte unchanged
+	var before_repeat := _snap(party)
+	_check(not helper.apply(), "second apply with Bulwark returns false")
+	_check(_snap(party) == before_repeat, "second apply with Bulwark leaves roster unchanged")
+
+	# Existing 2 Block becomes 12 (2 + 10, never 2 + 16 or 2 + 6)
+	var party_existing := CombatParty.new(_defs())
+	party_existing.gain_block(1, 2)
+	var helper_existing := CombatStartingBlock.new(party_existing, bulwark_receipt)
+	_check(helper_existing.apply(), "Bulwark applies with existing 2 block")
+	_check(party_existing.get_hero(1).get("block") == 12, "existing 2 Block becomes 12 (2 + 10, not 18)")
+	_check(party_existing.get_hero(1).get("hp") == 40, "HP unchanged")
+	_check(not helper_existing.apply(), "repeat apply on existing block helper fails")
+	_check(party_existing.get_hero(1).get("block") == 12, "block remains 12 on repeat")
+	_check(party_existing.start_player_turn(), "start_player_turn resets block")
+	_check(not helper_existing.apply(), "same helper does not reapply after reset")
+	_check(party_existing.get_hero(1).get("block") == 0, "block remains 0 after reset")
+
+	# Swapped Warden at position 2
+	var swapped_party := CombatParty.new(_defs())
+	var swap := CombatPositionSwaps.preview_adjacent_swap(swapped_party, 1, 1)
+	_check(swap.get("ok") == true, "legal adjacent Warden swap to slot 2")
+	swapped_party._heroes.assign(swap["heroes"])
+	var swapped_before := _snap(swapped_party)
+	var swapped_helper := CombatStartingBlock.new(swapped_party, bulwark_receipt)
+	_check(swapped_helper.apply(), "Bulwark applies to swapped Warden at slot 2")
+	var swapped_expected := swapped_before.duplicate(true)
+	swapped_expected[1]["block"] = 10
+	_check(_snap(swapped_party) == swapped_expected, "only slot 2 Warden gains 10 Block with Bulwark")
+	_check(not swapped_helper.apply() and _snap(swapped_party) == swapped_expected,
+		"slot 2 Bulwark cannot reapply")
+
+	# Swapped Warden at position 3
+	var third_party := CombatParty.new(_defs())
+	var move1 := CombatPositionSwaps.preview_adjacent_swap(third_party, 1, 1)
+	third_party._heroes.assign(move1["heroes"])
+	var move2 := CombatPositionSwaps.preview_adjacent_swap(third_party, 2, 1)
+	third_party._heroes.assign(move2["heroes"])
+	var third_before := _snap(third_party)
+	var third_helper := CombatStartingBlock.new(third_party, bulwark_receipt)
+	_check(third_helper.apply(), "Bulwark applies to Warden at slot 3")
+	var third_expected := third_before.duplicate(true)
+	third_expected[2]["block"] = 10
+	_check(_snap(third_party) == third_expected, "only slot 3 Warden gains 10 Block with Bulwark")
+	_check(not third_helper.apply() and _snap(third_party) == third_expected,
+		"slot 3 Bulwark cannot reapply")
+
+	# Backward compatible setter usage
+	var party_setter := CombatParty.new(_defs())
+	var helper_setter := CombatStartingBlock.new(party_setter)
+	helper_setter.set_path_receipt(bulwark_receipt)
+	_check(helper_setter.apply(), "helper configured via set_path_receipt applies Bulwark")
+	_check(party_setter.get_hero(1).get("block") == 10, "Bulwark via setter grants 10 Block")
+
+	# Backward compatible apply(receipt) usage
+	var party_override := CombatParty.new(_defs())
+	var helper_override := CombatStartingBlock.new(party_override)
+	_check(helper_override.apply(bulwark_receipt), "helper passed receipt directly in apply()")
+	_check(party_override.get_hero(1).get("block") == 10, "Bulwark via apply arg grants 10 Block")
+
+
+func _test_vanguard_contract() -> void:
+	var choice := RunWardenPathChoice.new()
+	_check(choice.is_valid(), "fresh RunWardenPathChoice is valid for Vanguard")
+	var vanguard_receipt := choice.choose("vanguard")
+	_check(vanguard_receipt.get("ok") == true, "authored Vanguard choice succeeds")
+	_check(vanguard_receipt.get("path_id") == "vanguard", "receipt path_id is vanguard")
+	_check(vanguard_receipt.get("owner") == "warden", "receipt owner is warden")
+
+	var party := CombatParty.new(_defs())
+	_check(party.start_player_turn(), "player turn resets party block")
+	var before := _snap(party)
+	var helper := CombatStartingBlock.new(party, vanguard_receipt)
+	_check(helper.apply(), "Vanguard helper applies successfully")
+	var after := _snap(party)
+	_check(party.get_hero(1).get("hp") == 40, "Warden HP unchanged at 40")
+	_check(party.get_hero(1).get("block") == 6, "Vanguard keeps base 6 Block, NOT 10 and NOT 16")
+	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(2).get("block") == 0, "Seamstress unchanged")
+	_check(party.get_hero(3).get("hp") == 26 and party.get_hero(3).get("block") == 0, "Tinker unchanged")
+
+	# Verify no extra Pinned or status effects applied by this helper
+	for position in range(1, 4):
+		var hero := party.get_hero(position)
+		_check(hero.get("statuses", {}).is_empty(), "Hero %d has no statuses attached by helper" % position)
+		_check(not hero.get("pinned", false), "Hero %d has no pinned flag attached" % position)
+
+	var expected_after := before.duplicate(true)
+	expected_after[0]["block"] = 6
+	_check(after == expected_after, "Vanguard matches exact base 6 block grant")
+	_check(not helper.apply(), "repeat apply with Vanguard returns false")
+	_check(_snap(party) == after, "repeat apply leaves Vanguard party unchanged")
+
+	# Moved Warden with Vanguard receipt in slot 2
+	var swapped_party := CombatParty.new(_defs())
+	var swap := CombatPositionSwaps.preview_adjacent_swap(swapped_party, 1, 1)
+	swapped_party._heroes.assign(swap["heroes"])
+	var swapped_before := _snap(swapped_party)
+	var swapped_helper := CombatStartingBlock.new(swapped_party, vanguard_receipt)
+	_check(swapped_helper.apply(), "Vanguard applies to moved Warden in slot 2")
+	var swapped_expected := swapped_before.duplicate(true)
+	swapped_expected[1]["block"] = 6
+	_check(_snap(swapped_party) == swapped_expected, "slot 2 Warden gets 6 Block with Vanguard")
+	_check(not swapped_helper.apply(), "slot 2 Vanguard cannot reapply")
+
+	# Compare default (+6), Vanguard (+6), and Bulwark (+10) on separate seeded fixtures
+	seed(88101)
+	var party_default := CombatParty.new(_defs())
+	party_default.start_player_turn()
+	var helper_default := CombatStartingBlock.new(party_default)
+	_check(helper_default.apply(), "seeded default helper applies")
+	var snap_default := _snap(party_default)
+
+	seed(88102)
+	var party_vanguard := CombatParty.new(_defs())
+	party_vanguard.start_player_turn()
+	var helper_vanguard := CombatStartingBlock.new(party_vanguard, vanguard_receipt)
+	_check(helper_vanguard.apply(), "seeded Vanguard helper applies")
+	var snap_vanguard := _snap(party_vanguard)
+
+	seed(88103)
+	var bulwark_receipt_fresh := RunWardenPathChoice.new().choose("bulwark")
+	var party_bulwark := CombatParty.new(_defs())
+	party_bulwark.start_player_turn()
+	var helper_bulwark := CombatStartingBlock.new(party_bulwark, bulwark_receipt_fresh)
+	_check(helper_bulwark.apply(), "seeded Bulwark helper applies")
+	var snap_bulwark := _snap(party_bulwark)
+
+	_check(snap_default == snap_vanguard, "Vanguard produces identical roster to default (both 6 Block)")
+	_check(snap_bulwark[0]["block"] == 10 and snap_default[0]["block"] == 6,
+		"Bulwark grants 10 Block vs default 6")
+	_check(snap_bulwark[1] == snap_default[1], "Seamstress identical between Bulwark and default")
+	_check(snap_bulwark[2] == snap_default[2], "Tinker identical between Bulwark and default")
+
+
+func _test_receipt_rejections() -> void:
+	var catalog := StarterCards.new()
+	var base_deck: Array[String] = catalog.get_starting_deck()
+	var bulwark_receipt := RunWardenPathChoice.new().choose("bulwark")
+
+	var party := CombatParty.new(_defs())
+	party.start_player_turn()
+
+	# 1. Unclaimed receipt (empty dict from get_receipt before choose)
+	var unclaimed := RunWardenPathChoice.new().get_receipt()
+	_assert_rejection(party, unclaimed, "unclaimed receipt", base_deck)
+
+	# 2. Replayed receipt on already claimed RunWardenPathChoice
+	var choice_replay := RunWardenPathChoice.new()
+	choice_replay.choose("bulwark")
+	var replayed_receipt := choice_replay.choose("bulwark")
+	_assert_rejection(party, replayed_receipt, "replayed choice receipt (ok: false)", base_deck)
+
+	# 3. Tampered starting block 16
+	var tampered_block := bulwark_receipt.duplicate(true)
+	tampered_block["passive"]["starting_block"] = 16
+	_assert_rejection(party, tampered_block, "tampered starting block 16", base_deck)
+
+	# 4. Tampered starting block 0
+	var tampered_zero := bulwark_receipt.duplicate(true)
+	tampered_zero["passive"]["starting_block"] = 0
+	_assert_rejection(party, tampered_zero, "tampered starting block 0", base_deck)
+
+	# 5. Tampered replaced block
+	var tampered_replaced := bulwark_receipt.duplicate(true)
+	tampered_replaced["passive"]["replaced_starting_block"] = 10
+	_assert_rejection(party, tampered_replaced, "tampered replaced_starting_block", base_deck)
+
+	# 6. Tampered passive kind
+	var tampered_kind := bulwark_receipt.duplicate(true)
+	tampered_kind["passive"]["kind"] = "starting_block"
+	_assert_rejection(party, tampered_kind, "tampered passive kind", base_deck)
+
+	# 7. Foreign owner seamstress
+	var foreign_seamstress := bulwark_receipt.duplicate(true)
+	foreign_seamstress["owner"] = "seamstress"
+	_assert_rejection(party, foreign_seamstress, "foreign owner seamstress", base_deck)
+
+	# 8. Foreign owner tinker
+	var foreign_tinker := bulwark_receipt.duplicate(true)
+	foreign_tinker["owner"] = "tinker"
+	_assert_rejection(party, foreign_tinker, "foreign owner tinker", base_deck)
+
+	# 9. Wrong path ID
+	var wrong_path := bulwark_receipt.duplicate(true)
+	wrong_path["path_id"] = "berserker"
+	_assert_rejection(party, wrong_path, "unknown path ID", base_deck)
+
+	# 10. Tampered card cost
+	var tampered_cost := bulwark_receipt.duplicate(true)
+	tampered_cost["card"]["cost"] = 0
+	_assert_rejection(party, tampered_cost, "tampered card cost", base_deck)
+
+	# 11. Tampered card effects
+	var tampered_effects := bulwark_receipt.duplicate(true)
+	tampered_effects["card"]["effects"]["block"] = 99
+	_assert_rejection(party, tampered_effects, "tampered card effects", base_deck)
+
+	# 12. Tampered display_name
+	var tampered_name := bulwark_receipt.duplicate(true)
+	tampered_name["display_name"] = "Cheater"
+	_assert_rejection(party, tampered_name, "tampered display_name", base_deck)
+
+	# 13. Tampered starter_deck
+	var tampered_deck := bulwark_receipt.duplicate(true)
+	tampered_deck["starter_deck"] = []
+	_assert_rejection(party, tampered_deck, "tampered empty starter_deck", base_deck)
+
+	# 14. Extra unexpected field
+	var extra_field := bulwark_receipt.duplicate(true)
+	extra_field["extra_cheat"] = true
+	_assert_rejection(party, extra_field, "extra unexpected field", base_deck)
+
+	# 15. Missing ok field
+	var missing_ok := bulwark_receipt.duplicate(true)
+	missing_ok.erase("ok")
+	_assert_rejection(party, missing_ok, "missing ok field", base_deck)
+
+	# 16. ok is false
+	var ok_false := bulwark_receipt.duplicate(true)
+	ok_false["ok"] = false
+	_assert_rejection(party, ok_false, "ok=false receipt", base_deck)
+
+	# 17. Non-dictionary receipts
+	_assert_rejection(party, "bulwark", "string receipt", base_deck)
+	_assert_rejection(party, ["bulwark"], "array receipt", base_deck)
+	_assert_rejection(party, 10, "int receipt", base_deck)
+	_assert_rejection(party, {}, "empty dict receipt", base_deck)
+	_assert_rejection(party, {"ok": true}, "partial dict receipt", base_deck)
+
+	# Roster refusals with genuine Bulwark receipt
+	# 18. Downed Warden at position 1
+	var downed_party := CombatParty.new(_defs())
+	downed_party.apply_damage(1, 40)
+	_check(downed_party.is_downed(1), "Warden downed in slot 1")
+	_assert_rejection(downed_party, bulwark_receipt, "downed Warden with Bulwark", base_deck)
+
+	# 19. Downed Warden swapped to slot 2
+	var swap := CombatPositionSwaps.preview_adjacent_swap(CombatParty.new(_defs()), 1, 1)
+	var moved_downed := CombatParty.new(_defs())
+	moved_downed._heroes.assign(swap["heroes"].duplicate(true))
+	moved_downed.apply_damage(2, 40)
+	_check(moved_downed.is_downed(2), "moved Warden downed in slot 2")
+	_assert_rejection(moved_downed, bulwark_receipt, "downed slot-2 Warden with Bulwark", base_deck)
+
+	# 20. Missing Warden
+	var no_warden_defs := [{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}, {"id": "other", "max_hp": 10}]
+	var no_warden_party := CombatParty.new(no_warden_defs)
+	_assert_rejection(no_warden_party, bulwark_receipt, "missing Warden with Bulwark", base_deck)
+
+	# 21. Duplicate Warden
+	var duplicated := CombatParty.new(_defs())
+	duplicated._heroes[1]["id"] = "warden"
+	_assert_rejection(duplicated, bulwark_receipt, "duplicate Warden with Bulwark", base_deck)
+
+	# 22. Invalid Warden max HP
+	var bad_max := CombatParty.new(_defs())
+	bad_max._heroes[0]["max_hp"] = 41
+	_assert_rejection(bad_max, bulwark_receipt, "invalid Warden max HP with Bulwark", base_deck)
+
+	# 23. Null party
+	var null_helper := CombatStartingBlock.new(null, bulwark_receipt)
+	_check(not null_helper.apply(), "null party with Bulwark returns false")
+
+	# 24. Invalid party (empty roster)
+	var invalid_party := CombatParty.new([])
+	var invalid_helper := CombatStartingBlock.new(invalid_party, bulwark_receipt)
+	_check(not invalid_helper.apply(), "invalid party with Bulwark returns false")
+
+
+func _assert_rejection(party: CombatParty, receipt: Variant, description: String, deck_snap: Array[String]) -> void:
+	var before := _snap(party)
+	seed(12345)
+	var expected_rand := randi()
+	seed(12345)
+	var helper := CombatStartingBlock.new(party, receipt)
+	_check(not helper.apply(), description + ": apply() returns false")
+	_check(_snap(party) == before, description + ": party unchanged")
+	_check(not helper.is_consumed(), description + ": helper not consumed")
+	var current_deck := StarterCards.new().get_starting_deck()
+	_check(current_deck == deck_snap, description + ": deck state unchanged")
+	_check(randi() == expected_rand, description + ": RNG not consumed")
+
+
 func _test_rng_preservation() -> void:
 	seed(791203)
 	var next_roll := randi()
@@ -189,18 +507,32 @@ func _test_rng_preservation() -> void:
 	_check(randi() == next_roll, "opening Block grant and replay consume no global RNG")
 	_check(snapshot[0]["block"] == 0, "RNG fixture compares the pre-grant party")
 
+	# Test Bulwark RNG preservation
+	seed(791204)
+	var next_roll_bulwark := randi()
+	seed(791204)
+	var bulwark_receipt := RunWardenPathChoice.new().choose("bulwark")
+	var party_bulwark := CombatParty.new(_defs())
+	var snap_b := _snap(party_bulwark)
+	var block_b := CombatStartingBlock.new(party_bulwark, bulwark_receipt)
+	_check(block_b.apply() and not block_b.apply(), "Bulwark RNG fixture exercises both grant and replay")
+	_check(party_bulwark.get_hero(1)["block"] == 10, "Bulwark RNG fixture grants 10 Block")
+	_check(randi() == next_roll_bulwark, "Bulwark grant and replay consume no global RNG")
+	_check(snap_b[0]["block"] == 0, "Bulwark RNG fixture compares pre-grant party")
+
 
 func _repeated_sequence() -> Array:
+	var trace: Array = []
+
+	# Default sequence
 	var party := CombatParty.new(_defs())
 	party.start_player_turn()
 	var helper := CombatStartingBlock.new(party)
-	var trace: Array = []
 	trace.append(helper.apply())
 	trace.append(_snap(party))
 	trace.append(helper.apply())
 	trace.append(_snap(party))
 	party.gain_block(1, 2)
-	# new helper for new grant? Keep same helper consumed; use fresh party for second grant scenario
 	var party2 := CombatParty.new(_defs())
 	party2.gain_block(1, 2)
 	var helper2 := CombatStartingBlock.new(party2)
@@ -208,4 +540,31 @@ func _repeated_sequence() -> Array:
 	trace.append(_snap(party2))
 	trace.append(helper2.apply())
 	trace.append(_snap(party2))
+
+	# Bulwark sequence
+	var bulwark_receipt := RunWardenPathChoice.new().choose("bulwark")
+	var party_b := CombatParty.new(_defs())
+	party_b.start_player_turn()
+	var helper_b := CombatStartingBlock.new(party_b, bulwark_receipt)
+	trace.append(helper_b.apply())
+	trace.append(_snap(party_b))
+	trace.append(helper_b.apply())
+	trace.append(_snap(party_b))
+
+	# Vanguard sequence
+	var vanguard_receipt := RunWardenPathChoice.new().choose("vanguard")
+	var party_v := CombatParty.new(_defs())
+	party_v.start_player_turn()
+	var helper_v := CombatStartingBlock.new(party_v, vanguard_receipt)
+	trace.append(helper_v.apply())
+	trace.append(_snap(party_v))
+	trace.append(helper_v.apply())
+	trace.append(_snap(party_v))
+
+	# Rejection sequence
+	var party_rej := CombatParty.new(_defs())
+	var helper_rej := CombatStartingBlock.new(party_rej, {"bad": true})
+	trace.append(helper_rej.apply())
+	trace.append(_snap(party_rej))
+
 	return trace
