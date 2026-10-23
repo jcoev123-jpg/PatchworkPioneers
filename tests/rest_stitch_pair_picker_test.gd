@@ -133,6 +133,19 @@ func _key(keycode: Key) -> void:
 
 
 func _select_mouse(button: OptionButton, target: int) -> void:
+	await _frames()
+	if picker != null and not picker.first_tiles.is_empty():
+		var is_first: bool = (button == picker.first_selector)
+		if is_first and picker.second_tile_scroll.visible:
+			picker._return_to_first_choice()
+			await _frames()
+		var meta: Variant = button.get_item_metadata(target)
+		var tile: Button = picker.first_tile_for_index(int(meta)) if is_first else picker.second_tile_for_index(int(meta))
+		_check(tile != null and tile.is_visible_in_tree(), "mouse target card tile is mounted")
+		if tile != null:
+			await _click(tile)
+			_check(button.selected == target, "physical mouse selected item %d via tile" % target)
+			return
 	await _click(button)
 	var popup := button.get_popup()
 	_check(popup.visible, "mouse physically opened OptionButton popup")
@@ -155,6 +168,21 @@ func _select_mouse(button: OptionButton, target: int) -> void:
 
 
 func _select_keyboard(button: OptionButton, target: int) -> void:
+	await _frames()
+	if picker != null and not picker.first_tiles.is_empty():
+		var is_first: bool = (button == picker.first_selector)
+		if is_first and picker.second_tile_scroll.visible:
+			picker._return_to_first_choice()
+			await _frames()
+		var meta: Variant = button.get_item_metadata(target)
+		var tile: Button = picker.first_tile_for_index(int(meta)) if is_first else picker.second_tile_for_index(int(meta))
+		_check(tile != null and tile.is_visible_in_tree(), "keyboard target card tile is mounted")
+		if tile != null:
+			tile.grab_focus()
+			_check(tile.has_focus(), "card tile has keyboard focus")
+			await _key(KEY_ENTER)
+			_check(button.selected == target, "physical keyboard selected item %d via tile" % target)
+			return
 	button.grab_focus()
 	await _key(KEY_SPACE)
 	for i in range(target):
