@@ -6,6 +6,7 @@ extends RefCounted
 
 var _attacks: CombatAttackCards
 var _support := CombatSupportCards.new()
+var _pool := SeamstressPoolCards.new()
 
 
 func _init(attacks: CombatAttackCards = null) -> void:
@@ -58,7 +59,7 @@ func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		var half: Dictionary = preview.halves[index]
 		var target: int = targets[index]
 		var kind: String = half.target_kind
-		if kind in ["self", "none", "enemy_all"] and target != 0:
+		if kind in ["self", "none", "enemy_all", "party_all"] and target != 0:
 			return failure
 		if kind in ["enemy_single", "ally_single"] and not half.to_positions.is_empty() and not half.to_positions.has(target):
 			return failure
@@ -67,6 +68,11 @@ func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			if not result.ok:
 				return failure
 			results.append(result)
+		elif half.id in CombatStitchedTargetPreview.POOL_HEAL_IDS:
+			var pool_result := _resolve_pool_heal_half(staged_party, half, target)
+			if not pool_result.ok:
+				return failure
+			results.append(pool_result)
 		else:
 			var effect := "draw"
 			var amount: int = half.effects.get("draw", 0)
@@ -93,3 +99,69 @@ func play_stitched(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	deck._rng.state = rng.state
 	_attacks.commit_transaction(attacks)
 	return {"ok": true, "halves": results}
+
+
+## Stage exactly the six authorized authored pool heals, including Darning's
+## inseparable heal + Block and target-free Field Mend. A failed second half
+## discards the entire staged party without publishing even the first heal.
+func _resolve_pool_heal_half(party: CombatParty, half: Dictionary, target: int) -> Dictionary:
+	var failed := {"ok": false}
+	var card_id: String = half["id"]
+	if card_id not in CombatStitchedTargetPreview.POOL_HEAL_IDS:
+		return failed
+	var authored: Dictionary = _pool.get_definition(card_id)
+	if authored.is_empty() or authored != half or authored.get("owner") != "seamstress":
+		return failed
+	var darning := card_id in CombatSeamstressPoolHeals.DARNING_IDS
+	var field_mend := card_id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
+	var effects: Dictionary = authored["effects"]
+	var heal: Variant = effects.get("heal")
+	var block: Variant = effects.get("block", 0)
+	if typeof(heal) != TYPE_INT or heal <= 0 or typeof(block) != TYPE_INT or block < 0:
+		return failed
+	if darning:
+		if block <= 0 or effects.size() != 2:
+			return failed
+	elif effects.size() != 1 or block != 0:
+		return failed
+	if authored["target_kind"] != ("party_all" if field_mend else "ally_single"):
+		return failed
+	if not authored["to_positions"].is_empty():
+		return failed
+	var owner_position := 0
+	for hero in party.get_heroes():
+		if hero["id"] == "seamstress":
+			owner_position = hero["position"]
+			break
+	if owner_position == 0:
+		return failed
+	if party.is_downed(owner_position) or not authored["from_positions"].has(owner_position):
+		return failed
+
+	var recipients: Array[int] = []
+	if field_mend:
+		if target != 0:
+			return failed
+		for position in range(1, CombatParty.PARTY_SIZE + 1):
+			if not party.is_downed(position):
+				recipients.append(position)
+	else:
+		if target < 1 or target > CombatParty.PARTY_SIZE or party.is_downed(target):
+			return failed
+		recipients.append(target)
+	if recipients.is_empty():
+		return failed
+	if darning:
+		var existing: int = party.get_hero(target)["block"]
+		if block > CombatParty.MAX_INT - existing:
+			return failed
+
+	var applied_heal: int = heal
+	if _support._patches != null:
+		applied_heal += _support._patches.healing_card_bonus("seamstress", card_id)
+	for position in recipients:
+		party.heal(position, applied_heal)
+	if darning:
+		party.gain_block(target, block)
+	return {"ok": true, "effect": "ally_heal" if not field_mend else "party_heal",
+		"amount": applied_heal, "block": block, "affected_positions": recipients}

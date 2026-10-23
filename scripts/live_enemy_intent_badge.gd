@@ -14,6 +14,19 @@ const BADGE_HEIGHT := 28.0
 const PATCH_WIDTH := 55.0
 const PATCH_INSET := 2.0
 const PATCH_CONTENT_HEIGHT := 39.0
+## The sewn icon area left of the caption: the patch's inner box, inset so no stitch of
+## the paper perimeter is covered by an icon.
+const ICON_INSET := Vector2(4.0, 2.5)
+## Committed HUD icon per announced action mode. Attack and block map to the authored
+## attack/defend art; anything without an entry (shove, Unravelled, slain, unknown) keeps
+## the drawn sewn glyph, so no PNG is required.
+const ICON_DIR := "res://assets/paper/ui/"
+const ICON_ART := {
+	"attack": "intent_attack.png",
+	"block": "intent_defend.png",
+	"buff": "intent_buff.png",
+	"debuff": "intent_debuff.png",
+}
 
 var source_position := 0
 var icon_mode := "none"
@@ -21,6 +34,14 @@ var readable_text := "NO ACTION"
 var intent_type := ""
 var amount := 0
 var target_position := 0
+## The committed HUD texture selected for the current mode; null draws the sewn glyph.
+var icon_texture: Texture2D = null
+## Presentation-only art root. A redirected or unavailable root (missing file or import)
+## keeps the drawn glyph instead of failing, without changing any authoritative text.
+var icon_root := ICON_DIR
+## Key: icon art path, value: Texture2D or null. A negative entry is cached too, so an
+## unavailable image is never probed twice and the drawn glyph stays the fallback.
+var _icon_cache: Dictionary = {}
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	focus_mode = Control.FOCUS_NONE
@@ -32,6 +53,65 @@ func _ready() -> void:
 func patch_rect() -> Rect2:
 	var height := maxf(1.0, size.y - PATCH_INSET * 2.0)
 	return Rect2(2.0, PATCH_INSET, PATCH_WIDTH, height)
+
+
+## The sewn icon area inside the patch, left of the unchanged caption. It is the area the
+## drawn glyphs already used, so a committed icon replaces them without moving the tag.
+func icon_rect() -> Rect2:
+	var patch := patch_rect()
+	return Rect2(patch.position + ICON_INSET,
+		Vector2(maxf(0.0, patch.size.x - ICON_INSET.x * 2.0),
+			maxf(0.0, patch.size.y - ICON_INSET.y * 2.0)))
+
+
+## Aspect-preserved destination of the selected HUD art inside that sewn icon area.
+## Empty whenever the drawn glyph is the fallback.
+func icon_texture_rect() -> Rect2:
+	var area := icon_rect()
+	if icon_texture == null or area.size.x <= 0.0 or area.size.y <= 0.0:
+		return Rect2()
+	var pixels := Vector2(icon_texture.get_width(), icon_texture.get_height())
+	if pixels.x <= 0.0 or pixels.y <= 0.0:
+		return Rect2()
+	var fit := minf(area.size.x / pixels.x, area.size.y / pixels.y)
+	var drawn := pixels * fit
+	return Rect2(area.get_center() - drawn * 0.5, drawn)
+
+
+## The committed HUD icon file of one announced mode; empty keeps the drawn glyph.
+static func icon_path_for(mode: String) -> String:
+	if not ICON_ART.has(mode):
+		return ""
+	return ICON_DIR + String(ICON_ART[mode])
+
+
+## Resolved icon path under this badge's presentation-only art root.
+func icon_art_path_for(mode: String) -> String:
+	if not ICON_ART.has(mode):
+		return ""
+	return icon_root + String(ICON_ART[mode])
+
+
+## Presentation-only lookup: an unknown mode or an unavailable image loads nothing.
+func icon_texture_for(mode: String) -> Texture2D:
+	var path := icon_art_path_for(mode)
+	if path.is_empty():
+		return null
+	if not _icon_cache.has(path):
+		_icon_cache[path] = load_icon_texture(path)
+	return _icon_cache[path] as Texture2D
+
+
+## The HUD art this badge draws now; empty while the sewn glyph is the fallback.
+func icon_art_path() -> String:
+	return "" if icon_texture == null else icon_texture.resource_path
+
+
+static func load_icon_texture(path: String) -> Texture2D:
+	# A missing import or file keeps the drawn glyph instead of failing boot.
+	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
+		return null
+	return load(path) as Texture2D
 
 
 func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false) -> void:
@@ -81,6 +161,9 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false) ->
 
 
 func _update_visuals() -> void:
+	# Every transition re-selects the icon, so a preceding action's texture is cleared
+	# (assigned null) before the new mode draws.
+	icon_texture = icon_texture_for(icon_mode)
 	queue_redraw()
 
 
@@ -99,6 +182,26 @@ func _draw() -> void:
 	for x in [12.0, 24.0, 36.0, 48.0]:
 		draw_line(Vector2(x, 4), Vector2(x + 3, 9), SLATE, 1.4, true)
 		draw_line(Vector2(x, 38), Vector2(x + 3, 33), SLATE, 1.4, true)
+	# The committed HUD icon fills the sewn icon area at its own proportions. A mode with
+	# no available image (shove, Unravelled, slain, unknown) keeps the drawn sewn glyph.
+	draw_set_transform(Vector2.ZERO)
+	var icon := icon_texture_rect()
+	if icon.size.x > 0.0 and icon.size.y > 0.0:
+		draw_texture_rect(icon_texture, icon, false)
+	else:
+		draw_set_transform(Vector2(0.0, patch.position.y - 3.0 * scale_y), 0, Vector2(1.0, scale_y))
+		_draw_glyph()
+		draw_set_transform(Vector2.ZERO)
+	# Draw text on this noninteractive canvas rather than inserting another Label
+	# into the legacy two-Label enemy roster (its other live consumers expect two).
+	draw_string(get_theme_default_font(), Vector2(62, patch.end.y - 5.0), readable_text,
+		HORIZONTAL_ALIGNMENT_LEFT, size.x - 64, 14,
+		MUTED if icon_mode in ["slain", "none"] else CREAM)
+
+
+## Drawn sewn-glyph fallback in the patch's own scaled art coordinates. Used for every
+## mode without a loaded committed icon, so the badge stays readable without any PNG.
+func _draw_glyph() -> void:
 	if icon_mode == "attack":
 		# Rust-red diagonal spearhead, visibly different from the shield.
 		draw_line(Vector2(15, 31), Vector2(40, 11), RUST, 4.0, true)
@@ -135,9 +238,3 @@ func _draw() -> void:
 	elif icon_mode == "slain":
 		draw_line(Vector2(18, 12), Vector2(41, 32), MUTED, 4.0, true)
 		draw_line(Vector2(41, 12), Vector2(18, 32), MUTED, 4.0, true)
-	# Draw text on this noninteractive canvas rather than inserting another Label
-	# into the legacy two-Label enemy roster (its other live consumers expect two).
-	draw_set_transform(Vector2.ZERO)
-	draw_string(get_theme_default_font(), Vector2(62, patch.end.y - 5.0), readable_text,
-		HORIZONTAL_ALIGNMENT_LEFT, size.x - 64, 14,
-		MUTED if icon_mode in ["slain", "none"] else CREAM)
