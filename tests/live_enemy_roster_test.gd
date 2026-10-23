@@ -110,6 +110,19 @@ func _assert_actor_art(app, presenter) -> void:
 		_check(art.get("idle") is Texture2D and art.idle.resource_path == resolved.idle
 			and art.get("attack") is Texture2D and art.attack.resource_path == resolved.attack,
 			"resolved Elite/Boss art loads both poses: " + actor_id)
+		# The authored Elite/Boss texture goes through the same mounting/draw geometry as a
+		# starter actor: bottom on the one foot line, with its contact shadow. Presentation
+		# is restored immediately, so the live battle keeps its own actor art.
+		var host = presenter._puppets[0]
+		var saved_id: String = host.actor_id
+		var saved_idle: Texture2D = host.idle_texture
+		var saved_attack: Texture2D = host.attack_texture
+		host.bind_actor(actor_id, art)
+		_check(host.image_rect().size.y > 0.0
+			and absf(host.actor_rest_bottom() - host.foot_line()) <= 0.01
+			and host.contact_shadow_rect().size.x > 0.0,
+			"authored Elite/Boss art rests on the shared foot line with a contact shadow: " + actor_id)
+		host.bind_actor(saved_id, {"idle": saved_idle, "attack": saved_attack})
 	_check(IDLE_ART["ragling"] != IDLE_ART["ragling_guard"],
 		"Guard Ragling has its own supplied image, not the base ragling")
 	var fabricated := "fabricated_unknown_actor"
@@ -127,6 +140,87 @@ func _function_body(source: String, signature: String) -> String:
 		return ""
 	var body := source.substr(start)
 	return body.left(body.find("\n\tfunc "))
+
+
+## Grounding: whichever artwork an actor draws rests its bottom edge on one shared foot
+## line above the pinned tag, with a fixed soft contact shadow and a dark rim drawn behind
+## it. Both are draw calls inside the input-inert puppet, so names, target rectangles and
+## intent badges keep working and no combat model or RNG is touched.
+func _staging(app, presenter) -> void:
+	_check(is_instance_valid(presenter.backdrop) and not presenter._puppets.is_empty()
+		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
+		"staging assertions run on every actual mounted actor")
+	if not is_instance_valid(presenter.backdrop) or presenter._puppets.is_empty():
+		return
+	var before: Array = _snapshot(app)
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var shadow_body := _function_body(source, "func _draw_contact_shadow(")
+	var rim_body := _function_body(source, "func _draw_silhouette(")
+	var puppet_draw := _function_body(source, "func _draw() -> void:")
+	_check(shadow_body.contains("contact_shadow_rect()") and shadow_body.contains("oval_points(")
+		and shadow_body.contains("draw_colored_polygon("),
+		"source draws the contact shadow as soft ovals from its fixed rest-pose rectangle")
+	_check(rim_body.contains("idle_transform(") and rim_body.contains("RIM_INK")
+		and rim_body.contains("draw_texture_rect(") and rim_body.contains("_draw_fallback_shapes(true)"),
+		"source draws one dark rim copy behind both supplied art and the drawn fallback")
+	_check(not shadow_body.contains("add_child") and not rim_body.contains("add_child")
+		and not shadow_body.contains("Control.new") and not rim_body.contains("Control.new"),
+		"the shadow and rim are drawn, never mounted as extra controls")
+	_check(puppet_draw.find("_draw_contact_shadow()") >= 0
+		and puppet_draw.find("_draw_silhouette()") >= 0
+		and puppet_draw.find("_draw_actor(") >= 0
+		and puppet_draw.find("_draw_fallback()") >= 0
+		and puppet_draw.find("_draw_tag()") >= 0
+		and puppet_draw.find("_draw_contact_shadow()") < puppet_draw.find("_draw_silhouette()")
+		and puppet_draw.find("_draw_silhouette()") < puppet_draw.find("_draw_actor(")
+		and puppet_draw.find("_draw_silhouette()") < puppet_draw.find("_draw_fallback()")
+		and puppet_draw.find("_draw_actor(") < puppet_draw.find("_draw_tag()")
+		and puppet_draw.find("_draw_fallback()") < puppet_draw.find("_draw_tag()"),
+		"source draw order is contact shadow, dark rim, actor artwork, then the pinned tag")
+	var screen_feet: Array[float] = []
+	for puppet in presenter._puppets:
+		var band: Rect2 = puppet.art_band()
+		var tag_band: Rect2 = puppet.tag_band()
+		_check(band.size.y > 0.0 and tag_band.size.y > 0.0
+			and puppet.foot_line() > band.position.y
+			and puppet.foot_line() < band.end.y + 0.01
+			and tag_band.position.y >= band.end.y - 0.01,
+			"the shared foot line sits above the pinned name/HP tag inside the art band: " + puppet.name)
+		_check(puppet.art_inset() >= puppet.IDLE_BOB_PIXELS
+			and is_equal_approx(puppet.foot_line(), band.end.y - puppet.art_inset()),
+			"the foot line keeps the bob/breathing safety inset clear of the tag band: " + puppet.name)
+		_check(absf(puppet.actor_rest_bottom() - puppet.foot_line()) <= 0.01,
+			"whichever artwork is bound, its bottom edge rests on the foot line: " + puppet.name)
+		screen_feet.append(puppet.get_global_rect().position.y + puppet.actor_rest_bottom())
+		var shadow: Rect2 = puppet.contact_shadow_rect()
+		_check(shadow.size.x > 0.0 and shadow.size.y > 0.0
+			and band.grow(0.01).encloses(shadow)
+			and is_equal_approx(shadow.get_center().x, puppet.size.x * 0.5)
+			and not shadow.intersects(puppet.tag_band().grow(-0.01)),
+			"each actor has one soft oval contact shadow on its foot line, clear of its tag: " + puppet.name)
+		puppet.idle_phase = 0.0
+		var rest_shadow := shadow
+		var rest_pose: Rect2 = puppet.posed_actor_rect()
+		puppet._process(0.37)
+		puppet._process(0.41)
+		_check(puppet.contact_shadow_rect() == rest_shadow,
+			"the contact shadow stays exactly still while the artwork breathes and bobs: " + puppet.name)
+		_check(rest_pose.size.y > 0.0 and puppet.posed_actor_rect() != rest_pose,
+			"real frame deltas still move the grounded artwork: " + puppet.name)
+		puppet.idle_phase = 0.0
+	var first: float = screen_feet[0]
+	var spread := 0.0
+	for value in screen_feet:
+		spread = maxf(spread, absf(value - first))
+	_check(spread <= 0.51,
+		"every mounted hero and enemy stands on the same 1280x720 screen foot line")
+	var hem: Rect2 = presenter.backdrop.hem_rect()
+	var hem_global_y: float = presenter.backdrop.get_global_rect().position.y + hem.position.y
+	_check(hem.size.y > 0.0 and hem_global_y > first
+		and hem_global_y - first <= presenter.STAGE_TAG_HEIGHT + 16.0,
+		"that common foot line is just above the stitched quilt hem, under the pinned tags")
+	_check(_snapshot(app) == before,
+		"grounding, contact shadow and rim reads change no combat state or RNG")
 
 
 ## Idle presentation: every living actor advances its own subtle bob and breathing pose
@@ -449,6 +543,7 @@ func _visible(app, presenter) -> void:
 		_check(is_instance_valid(puppet) and puppet.is_visible_in_tree() and puppet.mouse_filter == Control.MOUSE_FILTER_IGNORE and puppet.focus_mode == Control.FOCUS_NONE, "mounted puppet is visible and input inert")
 		_check(puppet.facing == (1.0 if puppet.name.begins_with("Hero") else -1.0), "actor puppet faces inward")
 	_assert_actor_art(app, presenter)
+	_staging(app, presenter)
 	_idle_motion(app, presenter)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
@@ -545,8 +640,58 @@ func _backdrop(app, presenter) -> void:
 	if backdrop.has_image():
 		_check(backdrop.stage_texture.resource_path == fight_path,
 			"the mounted Fight stage draws its own authored image")
+	_ground_wash(presenter, backdrop, backdrop.has_image())
 	_cover(app, presenter, backdrop)
+	# The same stage is used by every admitted kind, so the authored Elite and Boss scenes
+	# take the same wash, frame and cover geometry when they are installed.
+	for kind in ["Elite", "Boss"]:
+		backdrop.bind_battle(kind, presenter.backdrop_texture(kind))
+		_check(backdrop.battle_kind == kind
+			and backdrop.has_image() == ResourceLoader.exists(BACKDROP_ART[kind]),
+			"the mounted stage admits the " + kind + " scene only when it is present")
+		if backdrop.has_image():
+			var typed_cover: Rect2 = backdrop.image_rect()
+			_check(typed_cover.encloses(backdrop.view_rect())
+				and is_equal_approx(typed_cover.size.x / typed_cover.size.y,
+					backdrop.texture_size().x / backdrop.texture_size().y),
+				"the " + kind + " scene keeps its cover-crop geometry on the live stage")
+		_ground_wash(presenter, backdrop, backdrop.has_image())
+	backdrop.bind_battle("Fight", presenter.backdrop_texture("Fight"))
+	_check(backdrop.battle_kind == "Fight",
+		"the live battle restores its own Fight scene after the typed scene check")
 	_fallback(app, presenter, backdrop)
+
+
+## The stage is laid in under the actors: about one fifth of dark over whichever ground was
+## painted, then a soft edge vignette. Both live in the backdrop's own draw pass, behind
+## every actor, ribbon, badge and hand card, and never tint them.
+func _ground_wash(presenter, backdrop, image_ground: bool) -> void:
+	var ground: Rect2 = backdrop.view_rect() if image_ground else backdrop.quilt_cloth()
+	_check(ground.size.x > 0.0 and ground.size.y > 0.0
+		and backdrop.dim_rect().is_equal_approx(ground),
+		"the whole painted ground, not one actor box, receives the dim wash")
+	var wash: Color = backdrop.dim_color()
+	_check(is_equal_approx(wash.a, 0.2) and wash.r < 0.2 and wash.g < 0.2 and wash.b < 0.2,
+		"both the authored scene and the drawn quilt fallback are dimmed by about one fifth")
+	var bands: Array[Rect2] = backdrop.vignette_rects()
+	_check(bands.size() == presenter.STAGE_VIGNETTE_STEPS * 4,
+		"the vignette builds one soft band per edge step")
+	var area: Rect2 = ground.grow(0.01)
+	for band in bands:
+		_check(band.size.x > 0.0 and band.size.y > 0.0 and area.encloses(band),
+			"every vignette band stays inside the dimmed ground")
+	_check(backdrop.vignette_alpha(0) > backdrop.vignette_alpha(presenter.STAGE_VIGNETTE_STEPS - 1)
+		and backdrop.vignette_alpha(presenter.STAGE_VIGNETTE_STEPS - 1) > 0.0,
+		"the vignette is darkest at the rim and still fades softly toward the middle")
+	var center: Vector2 = ground.get_center()
+	var covers_center := false
+	for band in bands:
+		if band.has_point(center):
+			covers_center = true
+	_check(not covers_center, "vignette bands leave the middle of the stage clear for the actors")
+	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and backdrop.focus_mode == Control.FOCUS_NONE and backdrop.get_index() == 0,
+		"the wash and vignette live in the input-inert stage behind every battle control")
 
 
 ## Cover geometry: one image fills the whole battle view without stretching, and the
@@ -623,6 +768,7 @@ func _fallback(app, presenter, backdrop) -> void:
 	_check(not backdrop.has_image() and backdrop.image_rect() == Rect2()
 		and backdrop.image_crop() == Rect2(),
 		"an unknown battle kind leaves no image and no cover draw")
+	_ground_wash(presenter, backdrop, false)
 	_check(presenter.backdrop_texture("Unknown") == null and presenter.backdrop_texture("") == null
 		and ROSTER_ART._load_art_texture("res://assets/paper/backgrounds/fabricated_missing.png") == null
 		and ROSTER_ART._load_art_texture("") == null,
@@ -691,10 +837,23 @@ func _fallback(app, presenter, backdrop) -> void:
 		and source.contains("func quilt_rects()") and source.contains("func quilt_seams()")
 		and source.contains("func _draw_ground_hem()"),
 		"source keeps one quilt instead of tilted trapezoids and one shared hem")
+	# Ordering: the painted ground is laid in before the hem, and the actor pass never
+	# applies the stage wash, so only the backdrop is tinted.
+	_check(draw_body.find("_draw_backdrop_image()") >= 0
+		and draw_body.find("_draw_quilt()") >= 0
+		and draw_body.find("_draw_dim()") > draw_body.find("_draw_backdrop_image()")
+		and draw_body.find("_draw_dim()") > draw_body.find("_draw_quilt()")
+		and draw_body.find("_draw_vignette()") > draw_body.find("_draw_dim()")
+		and draw_body.find("_draw_ground_hem()") > draw_body.find("_draw_vignette()"),
+		"source dims and vignettes the painted ground before the hem and every actor")
+	var puppet_draw := _function_body(source, "func _draw() -> void:")
+	_check(not puppet_draw.contains("_draw_dim") and not puppet_draw.contains("vignette"),
+		"the actor draw pass never applies the stage wash or vignette to itself")
 	backdrop.bind_battle("Fight", presenter.backdrop_texture("Fight"))
 	_check(backdrop.battle_kind == "Fight"
 		and backdrop.has_image() == ResourceLoader.exists(BACKDROP_ART["Fight"]),
 		"the live battle restores its own backdrop after the fallback check")
+	_ground_wash(presenter, backdrop, backdrop.has_image())
 
 
 func _geometry(app, presenter) -> void:
@@ -961,6 +1120,7 @@ func _run() -> void:
 			and puppet.image_rect() == Rect2(),
 			"an unknown mounted actor ID falls back to the drawn puppet without textures")
 	_assert_badges(app, presenter, 1)
+	_staging(app, presenter)
 	_idle_motion(app, presenter, true)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
@@ -1102,6 +1262,7 @@ func _typed_stage(app, presenter) -> void:
 	_check(presenter._puppets.size() == 6 and presenter._labels.size() == 3
 		and meters.get_child_count() == 6, "mounted typed path has every puppet, target and real meter")
 	_assert_actor_art(app, presenter)
+	_staging(app, presenter)
 	_idle_motion(app, presenter)
 	var actions: Array = app.enemy_intents.get_intents()
 	for index in range(3):

@@ -48,6 +48,16 @@ const STAGE_QUILT_TONES := [Color("414c48"), Color("4d5a54"), Color("39443f"), C
 const STAGE_HEM_HEIGHT := 14.0
 ## Bottom band that pins each actor's short name below (never across) the stand-in art.
 const STAGE_TAG_HEIGHT := 26.0
+## The stage is laid in: both the authored scene and the drawn quilt fallback are dimmed
+## by about one fifth and framed with soft dark edges, so the sewn actors and their pinned
+## labels read as the lit subject. The same wash and frame never touch a sibling control.
+const STAGE_DIM_ALPHA := 0.2
+const STAGE_DIM_INK := Color("12100e")
+const STAGE_VIGNETTE_INK := Color("0a0f0e")
+const STAGE_VIGNETTE_ALPHA := 0.4
+const STAGE_VIGNETTE_STEPS := 8
+## How far the soft dark frame reaches in from each edge, as a fraction of the short side.
+const STAGE_VIGNETTE_DEPTH := 0.22
 
 var enemies: CombatEnemies
 var panel: PanelContainer
@@ -110,6 +120,20 @@ class Puppet extends Control:
 	## The drawn fallback's own local extents before the pose transform: body, head, legs
 	## and the slot-specific sewn prop, including stroke width.
 	const FALLBACK_EXTENTS := Rect2(-26.0, -43.0, 73.0, 85.5)
+	## One soft oval contact patch on the shared foot line, drawn from the rest pose. It is
+	## a few concentric translucent ovals, so the shadow fades at its rim instead of reading
+	## as a solid box, and it never bobs with the artwork.
+	const SHADOW_INK := Color("0c1110")
+	const SHADOW_ALPHA := 0.55
+	const SHADOW_RINGS := 3
+	const SHADOW_HEIGHT := 12.0
+	const SHADOW_WIDTH_RATIO := 0.82
+	## A dark low-radius copy of the bound artwork drawn just behind it, so every paper
+	## actor separates from the dimmed stage. Drawn shapes only: no control, no input.
+	const RIM_INK := Color("111716")
+	const RIM_ALPHA := 0.75
+	const RIM_RADIUS := 2.5
+	const RIM_SCALE := 1.05
 
 	var facing := 1.0
 	var slot := 1
@@ -166,6 +190,18 @@ class Puppet extends Control:
 	func art_safety_inset() -> float:
 		return IDLE_BOB_PIXELS + art_band().size.y * IDLE_BREATHE / 2.0 + 1.0
 
+	## The safety inset actually applied to placement: the bob/breathing reserve, capped so
+	## a small actor box still keeps a usable band.
+	func art_inset() -> float:
+		var band := art_band()
+		return minf(art_safety_inset(), minf(band.size.x, band.size.y) / 4.0)
+
+	## The one stage-foot line both draw paths share, above the pinned name tag and below
+	## the intent band. Textures and the drawn fallback put their bottom edge here, so the
+	## lineups read as standing on the quilt instead of floating in the art band.
+	func foot_line() -> float:
+		return art_band().end.y - art_inset()
+
 	## One pose shared by both draw paths: inward facing, the existing fallen tilt, the
 	## breathing height and the bob, applied about `anchor` at `base_scale`.
 	func idle_transform(anchor: Vector2, base_scale: float) -> Transform2D:
@@ -195,18 +231,19 @@ class Puppet extends Control:
 		return Rect2(0.0, top, size.x, bottom - top)
 
 	## Uniform, aspect-preserving placement inside this input-inert Control. The pose's
-	## bob and breathing room is reserved up front, so animated art stays in its band.
+	## bob and breathing room is reserved up front and the bottom edge rests on the shared
+	## foot line, so animated art stays in its band and the lineups share one ground.
 	func image_rect() -> Rect2:
 		var texture := current_texture()
 		var band := art_band()
-		var inset := minf(art_safety_inset(), minf(band.size.x, band.size.y) / 4.0)
+		var inset := art_inset()
 		var fit_band := band.grow(-inset)
 		if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0 \
 				or fit_band.size.x <= 0.0 or fit_band.size.y <= 0.0:
 			return Rect2()
 		var fit := minf(fit_band.size.x / float(texture.get_width()), fit_band.size.y / float(texture.get_height()))
 		var drawn := Vector2(texture.get_width(), texture.get_height()) * fit
-		return Rect2(fit_band.position + (fit_band.size - drawn) / 2.0, drawn)
+		return Rect2(Vector2(fit_band.get_center().x - drawn.x / 2.0, fit_band.end.y - drawn.y), drawn)
 
 	## The bounding rectangle the bound texture covers after the current idle pose.
 	func posed_image_rect() -> Rect2:
@@ -237,10 +274,46 @@ class Puppet extends Control:
 			return staged
 		return minf(staged, minf(fit.size.y / FALLBACK_EXTENTS.size.y, fit.size.x / FALLBACK_EXTENTS.size.x))
 
-	## The painted fallback's own centre inside the art band.
+	## The painted fallback's own anchor: horizontally centred, with the local bottom of
+	## FALLBACK_EXTENTS resting on the same foot line as every supplied texture.
 	func fallback_anchor() -> Vector2:
+		return Vector2(size.x / 2.0, foot_line() - FALLBACK_EXTENTS.end.y * fallback_scale())
+
+	## Width of whichever artwork is bound now, used to size the contact shadow.
+	func actor_art_width() -> float:
+		var rect := image_rect()
+		if rect.size.x > 0.0:
+			return rect.size.x
+		return FALLBACK_EXTENTS.size.x * fallback_scale()
+
+	## The bottom edge of whichever artwork is bound now, before the idle bob is applied.
+	func actor_rest_bottom() -> float:
+		var rect := image_rect()
+		if rect.size.y > 0.0:
+			return rect.end.y
+		return fallback_anchor().y + FALLBACK_EXTENTS.end.y * fallback_scale()
+
+	## One soft elliptical contact patch under the actor on the foot line. It is computed
+	## from the rest pose only, so it stays put while the art breathes and bobs, and it
+	## never reaches into the pinned tag band.
+	func contact_shadow_rect() -> Rect2:
 		var band := art_band()
-		return Vector2(size.x / 2.0, band.position.y + band.size.y / 2.0)
+		if band.size.x <= 0.0 or band.size.y <= 0.0:
+			return Rect2()
+		var width := clampf(actor_art_width() * SHADOW_WIDTH_RATIO, 16.0, band.size.x - 8.0)
+		if width <= 0.0:
+			return Rect2()
+		var bottom := minf(foot_line() + SHADOW_HEIGHT * 0.5, band.end.y - 0.5)
+		var top := maxf(band.position.y, bottom - SHADOW_HEIGHT)
+		return Rect2(size.x * 0.5 - width * 0.5, top, width, bottom - top)
+
+	## Points of one axis-aligned oval, so the contact shadow is a soft ellipse, not a box.
+	static func oval_points(center: Vector2, radius: Vector2, steps: int = 24) -> PackedVector2Array:
+		var points := PackedVector2Array()
+		for index in range(steps):
+			var angle := TAU * float(index) / float(steps)
+			points.append(center + Vector2(cos(angle) * radius.x, sin(angle) * radius.y))
+		return points
 
 	func _posed_rect(local: Rect2, anchor: Vector2, base_scale: float) -> Rect2:
 		var pose := idle_transform(anchor, base_scale)
@@ -253,12 +326,54 @@ class Puppet extends Control:
 		return bounds
 
 	func _draw() -> void:
+		# Ground the actor first: a fixed contact patch on the foot line, then the dark rim,
+		# then the artwork itself, then the pinned tag. Every layer is drawn here, so the
+		# shadow and rim add no control and can never take pointer or keyboard input.
+		_draw_contact_shadow()
+		_draw_silhouette()
 		var texture := current_texture()
 		if texture != null:
 			_draw_actor(texture)
 		else:
 			_draw_fallback()
 		_draw_tag()
+
+	## A few concentric translucent ovals: soft at the rim and darkest where the feet meet
+	## the quilt. Drawn from the rest-pose rectangle, so it never bobs with the artwork.
+	func _draw_contact_shadow() -> void:
+		var shadow := contact_shadow_rect()
+		if shadow.size.x <= 0.0 or shadow.size.y <= 0.0:
+			return
+		var center := shadow.get_center()
+		for ring in range(SHADOW_RINGS):
+			var spread := 1.0 - float(ring) / float(SHADOW_RINGS)
+			var radius := Vector2(shadow.size.x * 0.5 * spread, shadow.size.y * 0.5 * spread)
+			draw_colored_polygon(oval_points(center, radius),
+				Color(SHADOW_INK, SHADOW_ALPHA / float(SHADOW_RINGS)))
+
+	## A dark low-radius copy of whichever artwork is bound, drawn just before it. The copy
+	## is scaled about the foot line, so the rim grows up and sideways but never floats the
+	## actor off the ground. Draw-only: no target, name or intent changes.
+	func _draw_silhouette() -> void:
+		var texture := current_texture()
+		if texture != null:
+			var rect := image_rect()
+			if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+				return
+			var grown := rect.size + Vector2(RIM_RADIUS, RIM_RADIUS) * 2.0
+			draw_set_transform_matrix(idle_transform(rect.get_center() - Vector2(0.0, RIM_RADIUS), 1.0))
+			draw_texture_rect(texture, Rect2(-grown / 2.0, grown), false, Color(RIM_INK, RIM_ALPHA))
+			draw_set_transform(Vector2.ZERO)
+			return
+		var band := art_band()
+		if band.size.x <= 0.0 or band.size.y <= 0.0:
+			return
+		var scale := fallback_scale()
+		var anchor := fallback_anchor()
+		anchor.y -= FALLBACK_EXTENTS.end.y * scale * (RIM_SCALE - 1.0)
+		draw_set_transform_matrix(idle_transform(anchor, scale * RIM_SCALE))
+		_draw_fallback_shapes(true)
+		draw_set_transform(Vector2.ZERO)
 
 	## A small pinned felt tag below the art; its name text is drawn by a child Label.
 	func _draw_tag() -> void:
@@ -285,20 +400,29 @@ class Puppet extends Control:
 		draw_set_transform(Vector2.ZERO)
 
 	func _draw_fallback() -> void:
-		var ink := Color("ecdfbd")
 		var band := art_band()
 		if band.size.x <= 0.0 or band.size.y <= 0.0:
 			return
 		draw_set_transform_matrix(idle_transform(fallback_anchor(), fallback_scale()))
-		var cloth := felt.darkened(0.4) if fallen else felt
+		_draw_fallback_shapes(false)
+		draw_set_transform(Vector2.ZERO)
+
+	## Body, head, limbs and the slot-specific sewn prop in one local pose. With
+	## `silhouette` the same shapes are painted as one dark rim copy behind the actor.
+	func _draw_fallback_shapes(silhouette: bool) -> void:
+		var ink := RIM_INK if silhouette else Color("ecdfbd")
+		var cloth := RIM_INK if silhouette else (felt.darkened(0.4) if fallen else felt)
+		var face := RIM_INK if silhouette else (Color("c9b996") if not fallen else Color("777a76"))
 		var body := PackedVector2Array([Vector2(-20, -13), Vector2(14, -15), Vector2(25, 25), Vector2(-26, 28)])
 		draw_colored_polygon(body, cloth)
 		draw_polyline(body + PackedVector2Array([body[0]]), ink, 1.5, true)
-		draw_dashed_line(Vector2(-16, -8), Vector2(-21, 22), ink, 1, 4)
 		draw_line(Vector2(-11, 26), Vector2(-16, 39), cloth, 9)
 		draw_line(Vector2(12, 25), Vector2(20, 38), cloth, 9)
 		draw_line(Vector2(13, -4), Vector2(34, 8), cloth, 9)
-		draw_circle(Vector2(0, -27), 16, Color("c9b996") if not fallen else Color("777a76"))
+		draw_circle(Vector2(0, -27), 16, face)
+		if silhouette:
+			return
+		draw_dashed_line(Vector2(-16, -8), Vector2(-21, 22), ink, 1, 4)
 		draw_circle(Vector2(8, -29), 2, Color("302b29"))
 		draw_line(Vector2(10, -21), Vector2(17, -23), Color("302b29"), 2)
 		# Slot-specific sewn button patches identify each puppet without textures or RNG.
@@ -310,7 +434,6 @@ class Puppet extends Control:
 			draw_line(Vector2(32, -16), Vector2(32, 29), ink, 3)
 		else:
 			draw_rect(Rect2(25, -2, 22, 16), Color("8c6550"))
-		draw_set_transform(Vector2.ZERO)
 
 
 ## Deterministic battle stage behind the actor row: the authored paper scene of this
@@ -435,11 +558,68 @@ class StageBackdrop extends Control:
 			_draw_backdrop_image()
 		else:
 			_draw_quilt()
+		# Lay the painted ground in before piling the actors on it: an even dim wash, then
+		# soft dark edges. The quiet hem is stitched over both, so the ground line stays
+		# crisp and no actor or HUD control is ever tinted by this stage.
+		_draw_dim()
+		_draw_vignette()
 		_draw_ground_hem()
+
+	## The painted ground this stage dims: the whole battle view the scene covers, or the
+	## quilt cloth when the drawn fallback is on stage.
+	func dim_rect() -> Rect2:
+		if has_image():
+			return view_rect()
+		return quilt_cloth()
+
+	## The even dark wash laid over whichever ground was painted. It lives entirely in this
+	## stage's draw pass; actors, meters, labels and hand cards are siblings drawn after it.
+	func dim_color() -> Color:
+		return Color(STAGE_DIM_INK, STAGE_DIM_ALPHA)
+
+	## Alpha of one vignette layer: strongest at the rim, fading toward the middle.
+	func vignette_alpha(step: int) -> float:
+		var t := float(step) / float(STAGE_VIGNETTE_STEPS)
+		return STAGE_VIGNETTE_ALPHA * pow(1.0 - t, 2.0) / float(STAGE_VIGNETTE_STEPS)
+
+	## Soft dark frame at the stage edges as nested bands, four per step: left, right, top,
+	## bottom, outermost first. The middle of the view is never touched.
+	func vignette_rects() -> Array[Rect2]:
+		var bands: Array[Rect2] = []
+		var area := dim_rect()
+		if area.size.x <= 0.0 or area.size.y <= 0.0:
+			return bands
+		var depth := minf(area.size.x, area.size.y) * STAGE_VIGNETTE_DEPTH
+		var band_depth := depth / float(STAGE_VIGNETTE_STEPS)
+		for step in range(STAGE_VIGNETTE_STEPS):
+			var offset := band_depth * float(step)
+			bands.append(Rect2(area.position.x + offset, area.position.y, band_depth, area.size.y))
+			bands.append(Rect2(area.end.x - offset - band_depth, area.position.y, band_depth, area.size.y))
+			bands.append(Rect2(area.position.x, area.position.y + offset, area.size.x, band_depth))
+			bands.append(Rect2(area.position.x, area.end.y - offset - band_depth, area.size.x, band_depth))
+		return bands
 
 	## The authored paper scene, cover-cropped into the whole battle view.
 	func _draw_backdrop_image() -> void:
 		draw_texture_rect_region(stage_texture, view_rect(), image_crop())
+
+	## One even dark wash over the ground the stage painted, about one fifth.
+	func _draw_dim() -> void:
+		var area := dim_rect()
+		if area.size.x <= 0.0 or area.size.y <= 0.0:
+			return
+		draw_rect(area, dim_color())
+
+	## Soft dark frame at the edges: nested translucent bands, darkest at the rim.
+	func _draw_vignette() -> void:
+		var bands := vignette_rects()
+		for step in range(STAGE_VIGNETTE_STEPS):
+			var wash := Color(STAGE_VIGNETTE_INK, vignette_alpha(step))
+			for edge in range(4):
+				var index := step * 4 + edge
+				if index >= bands.size():
+					return
+				draw_rect(bands[index], wash)
 
 	func _draw_quilt() -> void:
 		var cloth := quilt_cloth()
