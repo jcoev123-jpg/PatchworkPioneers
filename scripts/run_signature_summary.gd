@@ -123,9 +123,18 @@ static func summarize(deck_ids: Variant, descriptors: Variant, next_stitch_id: V
 	var stitched_current: int = descriptors.size()
 	var detached_descriptors: Dictionary = descriptors.duplicate(true)
 	var stitched_ids: Array = []
+	var current_stitched_cards: Array = []
 	for card_id in deck_ids:
 		if detached_descriptors.has(card_id):
 			stitched_ids.append(card_id)
+			var descriptor: Dictionary = detached_descriptors[card_id]
+			current_stitched_cards.append({
+				"id": descriptor["id"],
+				"display_name": descriptor["display_name"],
+				"cost": descriptor["cost"],
+				"owners": descriptor["owners"].duplicate(),
+				"half_ids": descriptor["half_ids"].duplicate(),
+			})
 
 	return {
 		"ok": true,
@@ -136,6 +145,7 @@ static func summarize(deck_ids: Variant, descriptors: Variant, next_stitch_id: V
 		"descriptors": detached_descriptors,
 		"worn_ids": all_worn_ids,
 		"stitched_ids": stitched_ids,
+		"current_stitched_cards": current_stitched_cards,
 	}
 
 
@@ -149,4 +159,5 @@ static func _failure() -> Dictionary:
 		"descriptors": {},
 		"worn_ids": [],
 		"stitched_ids": [],
+		"current_stitched_cards": [],
 	}
