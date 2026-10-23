@@ -120,6 +120,200 @@ func _assert_actor_art(app, presenter) -> void:
 		"missing or empty art paths load no texture and cannot crash presentation")
 
 
+## The source of one indented Puppet method, up to the next method, for draw-path inspection.
+func _function_body(source: String, signature: String) -> String:
+	var start := source.find(signature)
+	if start < 0:
+		return ""
+	var body := source.substr(start)
+	return body.left(body.find("\n\tfunc "))
+
+
+## Idle presentation: every living actor advances its own subtle bob and breathing pose
+## inside its art band, while target rectangles, pinned names, intent badges, controls,
+## combat state and RNG stay exactly as they were.
+func _idle_motion(app, presenter, expect_fallback: bool = false) -> void:
+	_check(is_instance_valid(presenter.panel) and presenter.enemies != null
+		and not presenter._puppets.is_empty()
+		and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
+		"idle pose exercise runs on every actual mounted hero and enemy")
+	if not is_instance_valid(presenter.panel) or presenter.enemies == null or presenter._puppets.is_empty():
+		return
+	var before: Array = _snapshot(app)
+	var tweens: int = get_processed_tweens().size()
+	var hit_rects: Array[Rect2] = []
+	var tag_rects: Array[Rect2] = []
+	var tag_texts: Array[String] = []
+	var badge_rects: Array[Rect2] = []
+	var badge_texts: Array[String] = []
+	var control_rects: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		hit_rects.append(puppet.get_global_rect())
+	for tag in presenter._hero_tags:
+		tag_rects.append(tag.get_global_rect())
+		tag_texts.append(tag.text)
+	for label in presenter._labels:
+		tag_rects.append(label.get_global_rect())
+		tag_texts.append(label.text)
+	for badge in presenter._badges:
+		badge_rects.append(badge.get_global_rect())
+		badge_texts.append(badge.readable_text)
+	for control in [app.end_turn_button, app.return_button, app.hand_view, presenter.panel]:
+		control_rects.append(control.get_global_rect())
+	var standing: Array = []
+	for puppet in presenter._puppets:
+		puppet.idle_phase = 0.0
+		_check(puppet.is_processing(), "mounted puppet runs its idle frame tick: " + puppet.name)
+		_check(puppet.find_children("*", "Timer", true, false).is_empty(),
+			"idle motion schedules no timer under the actor: " + puppet.name)
+		if not puppet.fallen:
+			standing.append(puppet)
+	_check(standing.size() == presenter._puppets.size(),
+		"idle pose exercise starts with every mounted actor standing")
+	if standing.is_empty():
+		return
+	# Stable distinct phases: no two actors bob or breathe in step.
+	for first in range(standing.size()):
+		for second in range(first + 1, standing.size()):
+			_check(not is_equal_approx(standing[first].idle_offset(), standing[second].idle_offset())
+				and not is_equal_approx(standing[first].idle_bob(), standing[second].idle_bob()),
+				"each actor keeps its own deterministic idle phase")
+	var fallback_seen := false
+	for puppet in standing:
+		var band: Rect2 = puppet.art_band()
+		var inset: float = puppet.art_safety_inset()
+		_check(band.size.y > 0.0 and inset >= puppet.IDLE_BOB_PIXELS,
+			"art band reserves room for the bob and breathing swell: " + puppet.name)
+		var low := 0.0
+		var high := 0.0
+		var breath_low := 1.0
+		var breath_high := 1.0
+		var height_low := 0.0
+		var height_high := 0.0
+		var first_pose := Rect2()
+		var moved := false
+		puppet.idle_phase = 0.0
+		# Six seconds of real 0.2 s frames covers a whole bob and breathing cycle.
+		for step in range(31):
+			var bob: float = puppet.idle_bob()
+			var breath: float = puppet.idle_breath()
+			low = minf(low, bob)
+			high = maxf(high, bob)
+			breath_low = minf(breath_low, breath)
+			breath_high = maxf(breath_high, breath)
+			var posed: Rect2 = puppet.posed_actor_rect()
+			_check(posed.size.x > 0.0 and posed.size.y > 0.0 and band.grow(-0.5).encloses(posed),
+				"animated artwork stays wholly inside its art band with a safety inset: " + puppet.name)
+			_check(absf(bob) <= puppet.IDLE_BOB_PIXELS + 0.001
+				and absf(breath - 1.0) <= puppet.IDLE_BREATHE + 0.001,
+				"idle pose stays a couple of pixels and about one percent: " + puppet.name)
+			if step == 0:
+				first_pose = posed
+				height_low = posed.size.y
+				height_high = posed.size.y
+			else:
+				height_low = minf(height_low, posed.size.y)
+				height_high = maxf(height_high, posed.size.y)
+				if absf(posed.position.y - first_pose.position.y) > 0.5:
+					moved = true
+			puppet._process(0.2)
+		_check(high - low >= 2.0 and high - low <= 3.0
+			and high >= puppet.IDLE_BOB_PIXELS * 0.9 and low <= -puppet.IDLE_BOB_PIXELS * 0.9,
+			"living actor bobs two to three pixels above and below its rest pose: " + puppet.name)
+		_check(breath_high - 1.0 >= 0.009 and 1.0 - breath_low >= 0.009,
+			"living actor breathes about one percent in both directions: " + puppet.name)
+		_check(height_high - height_low >= 1.0,
+			"breathing visibly changes the drawn artwork height: " + puppet.name)
+		_check(moved, "real frame deltas advance the drawn pose: " + puppet.name)
+		var phase: float = puppet.idle_phase
+		puppet._process(0.25)
+		_check(is_equal_approx(puppet.idle_phase, phase + 0.25),
+			"idle phase advances by the real delta: " + puppet.name)
+		if puppet.current_texture() == null:
+			fallback_seen = true
+			_check(puppet.posed_image_rect() == Rect2() and puppet.posed_fallback_rect().size.y > 0.0,
+				"missing art advances the drawn fallback pose: " + puppet.name)
+		else:
+			_check(puppet.posed_image_rect().size.y > 0.0
+				and puppet.posed_actor_rect().is_equal_approx(puppet.posed_image_rect()),
+				"supplied art draw path uses the same shared pose: " + puppet.name)
+	_check(fallback_seen == expect_fallback,
+		"the drawn fallback animates exactly when an actor has no supplied art")
+	for puppet in presenter._puppets:
+		puppet._process(0.4)
+	var after_hit: Array[Rect2] = []
+	for puppet in presenter._puppets:
+		after_hit.append(puppet.get_global_rect())
+	_check(after_hit == hit_rects, "idle art never moves an actor's complete target rectangle")
+	var after_tag_rects: Array[Rect2] = []
+	var after_tag_texts: Array[String] = []
+	for tag in presenter._hero_tags:
+		after_tag_rects.append(tag.get_global_rect())
+		after_tag_texts.append(tag.text)
+	for label in presenter._labels:
+		after_tag_rects.append(label.get_global_rect())
+		after_tag_texts.append(label.text)
+	_check(after_tag_rects == tag_rects and after_tag_texts == tag_texts,
+		"pinned hero and enemy names keep their exact place and text while art moves")
+	var after_badge_rects: Array[Rect2] = []
+	var after_badge_texts: Array[String] = []
+	for badge in presenter._badges:
+		after_badge_rects.append(badge.get_global_rect())
+		after_badge_texts.append(badge.readable_text)
+	_check(after_badge_rects == badge_rects and after_badge_texts == badge_texts,
+		"intent badges keep their exact place and caption while art moves")
+	var after_control_rects: Array[Rect2] = []
+	for control in [app.end_turn_button, app.return_button, app.hand_view, presenter.panel]:
+		after_control_rects.append(control.get_global_rect())
+	_check(after_control_rects == control_rects,
+		"hand, actions and the enemy roster panel stay put while art moves")
+	_check(_snapshot(app) == before,
+		"idle presentation changes no HP/Block, deck, energy, turn, intents or run RNG")
+	_check(get_processed_tweens().size() == tweens,
+		"idle motion creates no tween that outlives the frame")
+	# Source inspection: both draw paths really apply the pose, with no timers or RNG.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var actor_body := _function_body(source, "func _draw_actor(")
+	var fallback_body := _function_body(source, "func _draw_fallback(")
+	_check(actor_body.contains("idle_transform(") and fallback_body.contains("idle_transform(")
+		and actor_body.find("idle_transform(") < actor_body.find("draw_texture_rect("),
+		"source applies the idle pose before drawing both the texture and the fallback")
+	_check(source.contains("func _process(delta: float) -> void:") and source.contains("advance_idle(delta)")
+		and source.contains("idle_phase += delta") and not source.contains("create_tween")
+		and not source.contains("Timer.new") and not source.contains("randi(")
+		and not source.contains("randf("),
+		"idle animation advances a per-instance delta phase without tweens, timers or RNG")
+
+
+## A downed or slain actor keeps the existing tilt and tint with no idle motion at all.
+func _fallen_stillness(puppets: Array) -> void:
+	for puppet in puppets:
+		_check(puppet.fallen, "fallen stillness runs on a genuinely downed/slain actor: " + puppet.name)
+		if not puppet.fallen:
+			continue
+		var phase: float = puppet.idle_phase
+		var pose: Rect2 = puppet.posed_actor_rect()
+		puppet._process(0.5)
+		_check(is_equal_approx(puppet.idle_phase, phase),
+			"fallen actor stops advancing its idle phase: " + puppet.name)
+		_check(is_equal_approx(puppet.idle_bob(), 0.0) and is_equal_approx(puppet.idle_breath(), 1.0),
+			"fallen actor keeps no bob or breathing: " + puppet.name)
+		_check(puppet.posed_actor_rect() == pose,
+			"fallen actor's drawn artwork stays perfectly still: " + puppet.name)
+		puppet._process(1.0)
+		_check(puppet.posed_actor_rect() == pose and is_equal_approx(puppet.idle_phase, phase),
+			"further frame deltas leave the fallen actor motionless: " + puppet.name)
+
+
+## A freshly mounted battle builds new puppets that start their idle phase at rest.
+func _at_rest(puppets: Array) -> bool:
+	if puppets.is_empty():
+		return false
+	for puppet in puppets:
+		if not is_instance_valid(puppet) or not is_equal_approx(puppet.idle_phase, 0.0):
+			return false
+	return true
+
 
 func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 	if not is_instance_valid(presenter.panel) or presenter.enemies == null:
@@ -255,6 +449,7 @@ func _visible(app, presenter) -> void:
 		_check(is_instance_valid(puppet) and puppet.is_visible_in_tree() and puppet.mouse_filter == Control.MOUSE_FILTER_IGNORE and puppet.focus_mode == Control.FOCUS_NONE, "mounted puppet is visible and input inert")
 		_check(puppet.facing == (1.0 if puppet.name.begins_with("Hero") else -1.0), "actor puppet faces inward")
 	_assert_actor_art(app, presenter)
+	_idle_motion(app, presenter)
 	_check(app.end_turn_button.is_visible_in_tree() and app.return_button.is_visible_in_tree(),
 		"real battle actions stay visible")
 	_check(Rect2(0, 0, 1280, 720).encloses(app.return_button.get_global_rect()), "return action fits viewport")
@@ -605,17 +800,33 @@ func _run() -> void:
 			reference.free()
 			_finish()
 			return
+		var tick_phase: float = presenter._puppets[0].idle_phase
+		await process_frame
+		await process_frame
+		_check(presenter._puppets[0].idle_phase > tick_phase,
+			"mounted idle loop advances from the real frame delta of its own actor")
 		var heroes = app.hero_view
 		var hero_slots: Array = app.hero_panels.duplicate()
 		var original_parent = presenter._hero_parent
 		var old_row_id: int = presenter.battle_row.get_instance_id()
 		var old_panel_id: int = presenter.panel.get_instance_id()
+		var old_puppet_ids: Array[int] = []
+		for puppet in presenter._puppets:
+			old_puppet_ids.append(puppet.get_instance_id())
 		presenter._clear()
 		_check(is_instance_valid(heroes) and heroes.get_parent() == original_parent and
 			app.hero_panels == hero_slots, "explicit clear restores same app-owned heroes and slots")
+		_check(presenter._puppets.is_empty(), "clear releases every animated puppet")
 		presenter._sync_battle()
+		_check(_at_rest(presenter._puppets),
+			"a fresh mount builds new puppets whose idle phase starts at rest")
 		await process_frame
 		await process_frame
+		var stale_puppets := 0
+		for id in old_puppet_ids:
+			if is_instance_id_valid(id):
+				stale_puppets += 1
+		_check(stale_puppets == 0, "remount leaves no stale animated puppet behind")
 		_check(not is_instance_id_valid(old_row_id) and not is_instance_id_valid(old_panel_id),
 			"clear/remount frees temporary wrapper and panel")
 		_check(app.hero_view == heroes and app.hero_panels == hero_slots, "remount retains hero node identities")
@@ -634,10 +845,18 @@ func _run() -> void:
 		var panel_id: int = presenter.panel.get_instance_id() if is_instance_valid(presenter.panel) else 0
 		var backdrop_id: int = presenter.backdrop.get_instance_id() if is_instance_valid(presenter.backdrop) else 0
 		var before := _snapshot(app)
+		var puppet_ids: Array[int] = []
+		for puppet in presenter._puppets:
+			puppet_ids.append(puppet.get_instance_id())
 		_fixture_start(app)
 		await process_frame
 		_check(presenter.enemies == roster_ref.get_ref() and is_instance_valid(presenter.panel) and
 			presenter.panel.get_instance_id() == panel_id, "duplicate Start Run retains same roster and panel")
+		var same_puppets: bool = presenter._puppets.size() == puppet_ids.size()
+		for index in range(mini(presenter._puppets.size(), puppet_ids.size())):
+			same_puppets = same_puppets and presenter._puppets[index].get_instance_id() == puppet_ids[index]
+		_check(same_puppets and presenter._puppets.size() == CombatParty.PARTY_SIZE + presenter.enemies.get_enemies().size(),
+			"duplicate Start Run keeps one animated puppet per actual actor, with no duplicate")
 		_check(app.battle_view.find_children("EnemyRosterPanel", "PanelContainer", true, false).size() == 1,
 			"exactly one presenter panel per battle")
 		_check(presenter._badges.size() == 2, "duplicate Start Run cannot add intent badges")
@@ -683,6 +902,13 @@ func _run() -> void:
 			app.enemy_intents.get_intents() == announced_before_death,
 			"slaying ragling leaves guard and the schedule intact")
 		_assert_badges(app, presenter)
+		var slain_puppets: Array = []
+		for puppet in presenter._puppets:
+			if puppet.facing < 0.0 and puppet.slot == 1:
+				slain_puppets.append(puppet)
+		_check(slain_puppets.size() == 1 and slain_puppets[0].fallen,
+			"the slain ragling's own puppet reflects genuine fallen state")
+		_fallen_stillness(slain_puppets)
 		_check(app.enemies.apply_damage(2, 100), "final enemy damage exercises terminal layout")
 		await process_frame
 		await process_frame
@@ -698,6 +924,7 @@ func _run() -> void:
 		app.return_button.pressed.emit()
 		_check(presenter.enemies == null and presenter.panel == null and roster_ref.get_ref() == null and
 			presenter._badges.is_empty(), "Return immediately releases roster, panel and badges")
+		_check(presenter._puppets.is_empty(), "Return removes every animated puppet with no surviving idle loop")
 		await process_frame
 		_check(not is_instance_id_valid(panel_id), "old panel freed")
 		_check(not is_instance_id_valid(row_id) and not is_instance_valid(heroes) and
@@ -734,6 +961,7 @@ func _run() -> void:
 			and puppet.image_rect() == Rect2(),
 			"an unknown mounted actor ID falls back to the drawn puppet without textures")
 	_assert_badges(app, presenter, 1)
+	_idle_motion(app, presenter, true)
 	app.return_button.pressed.emit()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 	await process_frame
@@ -874,6 +1102,7 @@ func _typed_stage(app, presenter) -> void:
 	_check(presenter._puppets.size() == 6 and presenter._labels.size() == 3
 		and meters.get_child_count() == 6, "mounted typed path has every puppet, target and real meter")
 	_assert_actor_art(app, presenter)
+	_idle_motion(app, presenter)
 	var actions: Array = app.enemy_intents.get_intents()
 	for index in range(3):
 		var actor: Dictionary = app.enemies.get_enemy(index + 1)
@@ -905,6 +1134,7 @@ func _typed_stage(app, presenter) -> void:
 	presenter._refresh()
 	_check(presenter._puppets[0].fallen and presenter._puppets[4].fallen
 		and presenter._badges[1].icon_mode == "slain", "typed hero and enemy puppets reflect actual fallen state")
+	_fallen_stillness([presenter._puppets[0], presenter._puppets[4]])
 	_assert_actor_art(app, presenter)
 	app.return_button.pressed.emit()
 	await process_frame
