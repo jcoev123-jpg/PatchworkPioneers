@@ -30,6 +30,9 @@ const KNOWN_COAT_POWERS := {
 	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6},
 	"padded_vest": {"slot": "COAT", "max_hp_bonus": 4},
 	"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8},
+	"scrap_lined_vest": {"slot": "COAT", "max_hp_bonus": 3},
+	"wool_patch_cloak": {"slot": "COAT", "max_hp_bonus": 5},
+	"chain_stitched_coat": {"slot": "COAT", "max_hp_bonus": 7},
 }
 ## Shop catalogs author slot identity alone; CombatShopPatchRules owns their powers.
 ## Descriptions of the already authored rules, never new effect calculations.
@@ -39,6 +42,9 @@ const KNOWN_TEXTS := {
 	"quilted_coat": "+6 maximum HP",
 	"padded_vest": "+4 maximum HP",
 	"double_quilt_coat": "+8 maximum HP",
+	"scrap_lined_vest": "+3 maximum HP",
+	"wool_patch_cloak": "+5 maximum HP",
+	"chain_stitched_coat": "+7 maximum HP",
 }
 
 
