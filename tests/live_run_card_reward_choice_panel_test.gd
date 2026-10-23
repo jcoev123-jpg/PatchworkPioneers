@@ -1719,9 +1719,10 @@ func _test_illustration_art(base: Dictionary) -> void:
 	await _test_illustration_fallback(base)
 
 
-## Pool cards have no individual PNG, so their reward face must fall back to the
-## owning hero's stitched emblem (and, if even that is absent, a drawn patch)
-## without ever failing to mount or taking pointer input.
+## The reward face resolves art by priority: the card's own authored picture,
+## then the owning hero's stitched emblem, then a drawn paper patch. Any of
+## those is valid, so the expectation is conditional on the actual lookup; we
+## never assert that optional art stays missing.
 func _test_illustration_fallback(base: Dictionary) -> void:
 	var ids := _authored_base_ids()
 	_check(ids.size() >= 3, "authored pool cards exist for the fallback case")
@@ -1751,17 +1752,27 @@ func _test_illustration_fallback(base: Dictionary) -> void:
 			"fallback illustration stays inert: " + card_id)
 		var art_path: String = LiveRunCardRewardChoicePanel.card_art_path(card_id)
 		var emblem: String = LiveRunCardRewardChoicePanel.emblem_path(owner)
-		_check(not ResourceLoader.exists(art_path),
-			"pool card has no individual picture to bind: " + card_id)
-		if ResourceLoader.exists(emblem):
+		# Mounted picture follows the real lookup priority; none of these
+		# branches requires optional art to be absent.
+		if ResourceLoader.exists(art_path):
+			_check(art.has_picture() and art.picture.resource_path == art_path,
+				"authored card picture is bound when present: " + card_id)
+		elif ResourceLoader.exists(emblem):
 			_check(art.has_picture() and art.picture.resource_path == emblem,
 				"hero emblem stands in for absent art: " + card_id)
 		else:
 			_check(not art.has_picture(),
-				"absent emblem keeps the drawn paper patch: " + card_id)
+				"absent art and emblem keep the drawn paper patch: " + card_id)
 		_check((content.get_node("NameLabel") as Label).text
 			== String(_base_pool_definition(card_id).get("display_name", "")),
 			"fallback face keeps its authored name: " + card_id)
+	# Controlled absent-texture case: an impossible id/owner pair deterministically
+	# exercises the ultimate drawn-paper branch (null texture) without relying on
+	# any committed art staying missing forever.
+	var nowhere_id := "zz_no_such_reward_art_card"
+	var nowhere_owner := "zz_no_such_reward_owner"
+	_check(LiveRunCardRewardChoicePanel._card_art_texture(nowhere_id, nowhere_owner) == null,
+		"synthetic id with no picture or emblem falls through to the drawn paper patch")
 	# The drawn/emblem patch is still pointer-inert: a click over it picks the card.
 	requests.clear()
 	var first_art := (panel.choices_container.get_child(0) as PanelContainer) \
