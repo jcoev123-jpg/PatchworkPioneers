@@ -34,7 +34,10 @@
     {"id": "seamstress_hemorrhage_hem", "owner": "seamstress", "price": 65},
     {"id": "seamstress_blanket_stitch", "owner": "seamstress", "price": 70},
     {"id": "seamstress_field_mend", "owner": "seamstress", "price": 75},
-    {"id": "seamstress_red_thread", "owner": "seamstress", "price": 90}
+    {"id": "seamstress_red_thread", "owner": "seamstress", "price": 90},
+    {"id": "warden_pinning_jab", "owner": "warden", "price": 50},
+    {"id": "seamstress_needle_pin", "owner": "seamstress", "price": 50},
+    {"id": "tinker_spring_trap", "owner": "tinker", "price": 50}
   ],
   "trinkets": [
     {"id": "stitched_badge", "price": 100},

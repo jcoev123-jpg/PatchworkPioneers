@@ -103,6 +103,16 @@ const SEAMSTRESS_STOCK_SPECS := {
 	"seamstress_red_thread": {"owner": "seamstress", "price": 90, "cost": 2, "plus_cost": 2, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"bleed": 6, "exposed": 1}, "plus_effects": {"bleed": 8, "exposed": 1}, "rarity": "rare"},
 }
 
+## The three M04 D2-2 cross-hero Pinned enabler COMMON base cards stocked in the
+## Shop. Rules are copied verbatim from data/cards/{warden,seamstress,tinker}_pool_cards.gd;
+## the Tinker definition keeps its explicit nested Pinned contract, and every
+## entry is a base ID (never _plus) at the established 50-gold pool quote.
+const PINNED_STOCK_SPECS := {
+	"warden_pinning_jab": {"owner": "warden", "price": 50, "cost": 1, "from": [1, 2], "target": "enemy_single", "to": [1], "effects": {"damage": 4, "pinned": true}, "rarity": "common"},
+	"seamstress_needle_pin": {"owner": "seamstress", "price": 50, "cost": 1, "from": [1, 2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 3, "pinned": true}, "rarity": "common"},
+	"tinker_spring_trap": {"owner": "tinker", "price": 50, "cost": 1, "from": [2, 3], "target": "enemy_single", "to": [1, 2, 3], "effects": {"damage": 3, "pinned": {"pinner_identity": "source_hero", "trigger": "next_attack_by_different_hero", "bonus_damage": 5, "bonus_timing": "before_weak_exposed", "consume_once": true, "same_hero_consumes": false}}, "rarity": "common"},
+}
+
 ## Every pre-existing authored card candidate and its established Shop quote.
 ## These entries must survive the candidate-pool expansion unchanged.
 const EXISTING_SHOP_CARDS := {
@@ -157,6 +167,7 @@ func _initialize() -> void:
 		_test_new_pool_shop_offers_and_purchases(party, deck, catalog)
 		_test_warden_pool_shop_offers_and_purchases(party, deck, catalog)
 		_test_seamstress_shop_stock_and_purchases(party, deck, catalog)
+		_test_pinned_enabler_shop_offers_and_purchases(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -1912,3 +1923,245 @@ func _test_seamstress_shop_stock_and_purchases(party: Array[String], deck: Array
 		_reject("seamstress + candidate " + upgrade_id, _rng(found_seed), party,
 			_with_card(candidates, 0, {"id": upgrade_id, "owner": "seamstress", "price": expected_price}),
 			trinkets, [])
+
+
+## AC1/AC2/AC3: the three M04 D2-2 cross-hero Pinned enabler COMMON base cards
+## (Warden Pinning Jab, Seamstress Needle Pin, Tinker Spring Trap) are stocked
+## once at their established 50-gold pool quote, can all occupy one genuine
+## seeded five-card/two-trinket visit, and each buys exactly its base ID for
+## exactly 50 gold through the real RunShopPurchases service.
+func _test_pinned_enabler_shop_offers_and_purchases(party: Array[String],
+		deck: Array[String], catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var trinkets: Array = authored.get("trinkets", [])
+	var warden := WardenPoolCards.new()
+	var seamstress := SeamstressPoolCards.new()
+	var tinker := TinkerPoolCards.new()
+	var counts := {}
+	for entry in candidates:
+		if entry is Dictionary and entry.get("id") is String:
+			counts[entry["id"]] = int(counts.get(entry["id"], 0)) + 1
+
+	# AC1: exactly one priced base listing per Pinned enabler, and the real
+	# unreplaced pool definition keeps its authored rules byte for byte.
+	for card_id in PINNED_STOCK_SPECS:
+		var spec: Dictionary = PINNED_STOCK_SPECS[card_id]
+		var expected_price: int = spec["price"]
+		var base_ids: Array[String] = []
+		var definition: Dictionary = {}
+		if spec["owner"] == "warden":
+			base_ids = warden.get_base_ids()
+			definition = warden.get_definition(card_id)
+		elif spec["owner"] == "seamstress":
+			base_ids = seamstress.get_base_ids()
+			definition = seamstress.get_definition(card_id)
+		else:
+			base_ids = tinker.get_pool_card_ids()
+			definition = tinker.get_definition(card_id)
+		_check(not String(card_id).ends_with("_plus"),
+			"pinned stock " + card_id + ": base ID only, never an upgrade listing")
+		_check(counts.get(card_id, 0) == 1,
+			"pinned stock " + card_id + ": listed exactly once in the authored Shop")
+		_check(counts.get(card_id + "_plus", 0) == 0,
+			"pinned stock " + card_id + ": no _plus upgrade is ever listed")
+		var authored_entry: Dictionary = {}
+		for entry in candidates:
+			if entry is Dictionary and entry.get("id") == card_id:
+				authored_entry = entry
+				break
+		_check(authored_entry.get("owner") == spec["owner"]
+			and _whole_price(authored_entry.get("price")) == expected_price,
+			"pinned stock " + card_id + ": authored owner and exact 50-gold quote")
+		_check(POOL_CARD_PRICES.get(card_id, -1) == expected_price,
+			"pinned stock " + card_id + ": quote matches the established pool price")
+		var schema_ok: bool = definition.get("starting_copies") == 0 \
+			and definition.get("upgrade_id") == card_id + "_plus" \
+			and not definition.has("upgrade_of")
+		if spec["owner"] == "tinker":
+			# TinkerPoolCards keeps its own authored schema (is_upgrade/base_id)
+			# instead of reward_eligible; the definition is not normalized.
+			schema_ok = schema_ok and definition.get("is_upgrade") == false \
+				and definition.get("base_id") == card_id
+		else:
+			schema_ok = schema_ok and definition.get("reward_eligible") == true
+		_check(base_ids.has(card_id) and definition.get("id") == card_id
+			and definition.get("owner") == spec["owner"]
+			and definition.get("rarity") == spec["rarity"]
+			and definition.get("cost") == spec["cost"]
+			and definition.get("from_positions") == spec["from"]
+			and definition.get("to_positions") == spec["to"]
+			and definition.get("target_kind") == spec["target"]
+			and definition.get("effects") == spec["effects"]
+			and schema_ok,
+			"pinned stock " + card_id + ": real common Pinned base catalog rules")
+		_check(not deck.has(card_id) and not deck.has(card_id + "_plus"),
+			"pinned stock " + card_id + ": not a starter copy, only bought")
+
+	# AC4: a forged owner, a duplicate listing or the _plus upgrade of a new
+	# Pinned base still fails closed before any RNG draw.
+	for card_id in PINNED_STOCK_SPECS:
+		var spec: Dictionary = PINNED_STOCK_SPECS[card_id]
+		var forged_owner: String = "seamstress" if spec["owner"] != "seamstress" else "warden"
+		_reject("pinned stock " + card_id + " forged owner", _rng(), party,
+			_with_card(candidates, 0, {"id": card_id, "owner": forged_owner, "price": spec["price"]}),
+			trinkets, [])
+		_reject("pinned stock " + card_id + " duplicate listing", _rng(), party,
+			_with_card(candidates, 0, {"id": card_id, "owner": spec["owner"], "price": spec["price"]}),
+			trinkets, [])
+		_reject("pinned stock " + card_id + " _plus candidate", _rng(), party,
+			_with_card(candidates, 0, {"id": card_id + "_plus", "owner": spec["owner"], "price": spec["price"]}),
+			trinkets, [])
+
+	# AC1: the named earlier Shop entries keep their own ID/owner/price listing.
+	var earlier := {}
+	for group in [EXISTING_SHOP_CARDS, WARDEN_STOCK_SPECS, SEAMSTRESS_STOCK_SPECS]:
+		for card_id in group:
+			earlier[card_id] = {"owner": group[card_id]["owner"], "price": group[card_id]["price"]}
+	for card_id in earlier:
+		var previous: Dictionary = earlier[card_id]
+		_check(counts.get(card_id, 0) == 1,
+			"pinned stock " + card_id + ": earlier Shop card retained exactly once")
+		var entry: Dictionary = {}
+		for candidate in candidates:
+			if candidate is Dictionary and candidate.get("id") == card_id:
+				entry = candidate
+				break
+		_check(entry.get("owner") == previous["owner"]
+			and _whole_price(entry.get("price")) == previous["price"],
+			"pinned stock " + card_id + ": earlier Shop owner and quote unchanged")
+	var trinket_counts := {}
+	for entry in trinkets:
+		if entry is Dictionary and entry.get("id") is String:
+			trinket_counts[entry["id"]] = int(trinket_counts.get(entry["id"], 0)) + 1
+	for trinket_id in EXISTING_SHOP_TRINKETS:
+		_check(trinket_counts.get(trinket_id, 0) == 1,
+			"pinned stock " + trinket_id + ": authored trinket still listed once")
+
+	# AC2: one compact five-candidate fixture (all three Pinned bases) forces a
+	# genuine five-card/two-trinket visit in which all three are stocked.
+	var pinned_cards: Array = [
+		{"id": "warden_pinning_jab", "owner": "warden", "price": 50},
+		{"id": "seamstress_needle_pin", "owner": "seamstress", "price": 50},
+		{"id": "tinker_spring_trap", "owner": "tinker", "price": 50},
+		{"id": "warden_strike", "owner": "warden", "price": 50},
+		{"id": "seamstress_prick", "owner": "seamstress", "price": 50},
+	]
+	var pinned_trinkets: Array = [
+		{"id": "fixture_pin_badge", "price": 90},
+		{"id": "fixture_spare_spool", "price": 110},
+	]
+	var stock_rng := _rng(SEED + 800)
+	var oracle_rng := _rng(SEED + 800)
+	var stock := RunShopStockOffers.generate(stock_rng, party, pinned_cards, pinned_trinkets, [])
+	var expected := _oracle(catalog, party, pinned_cards, pinned_trinkets, [], oracle_rng)
+	_check(stock.get("ok", false), "pinned stock: compact five-card fixture generates a visit")
+	if not stock.get("ok", false):
+		return
+	_check(stock.get("cards", []).size() == 5 and stock.get("trinkets", []).size() == 2,
+		"pinned stock: genuine five-card/two-trinket visit")
+	_check(stock.get("cards", []) == expected.cards and stock.get("trinkets", []) == expected.trinkets,
+		"pinned stock: compact visit matches the independent sorted-pool oracle")
+	var reversed_cards := pinned_cards.duplicate(true)
+	reversed_cards.reverse()
+	var reversed_trinkets := pinned_trinkets.duplicate(true)
+	reversed_trinkets.reverse()
+	var replay_rng := _rng(SEED + 800)
+	var replay := RunShopStockOffers.generate(replay_rng, party, reversed_cards, reversed_trinkets, [])
+	_check(replay == stock and replay_rng.state == stock_rng.state,
+		"pinned stock: reordered candidates replay identical offers and RNG state")
+	var distinct := {}
+	for offer in stock.get("cards", []):
+		distinct[offer.get("id")] = true
+		_check(not String(offer.get("id", "")).ends_with("_plus"),
+			"pinned stock: no pool upgrade is ever offered")
+	_check(distinct.size() == 5, "pinned stock: five distinct card offers")
+	for card_id in PINNED_STOCK_SPECS:
+		var stocked: Dictionary = {}
+		for offer in stock.get("cards", []):
+			if offer.get("id") == card_id:
+				stocked = offer
+		_check(stocked.get("owner") == PINNED_STOCK_SPECS[card_id]["owner"]
+			and stocked.get("price") == 50,
+			"pinned stock " + card_id + ": eligible and stocked at its authored quote")
+		_check(_pool_has_id(candidates, card_id),
+			"pinned stock " + card_id + ": present in the shipped candidate pool")
+
+	# AC2: the grown shipped catalog still replays exactly under a fixed seed
+	# against the independent oracle, with its next RNG state and draw.
+	var full_rng := _rng(SEED + 810)
+	var full_oracle_rng := _rng(SEED + 810)
+	var full := RunShopStockOffers.generate(full_rng, party, candidates, trinkets, [])
+	var full_oracle := _oracle(catalog, party, candidates, trinkets, [], full_oracle_rng)
+	_check(full.get("ok", false) and full.get("cards", []) == full_oracle.cards
+		and full.get("trinkets", []) == full_oracle.trinkets,
+		"pinned stock: full authored catalog replays against the independent oracle")
+	_check(full_rng.state == full_oracle_rng.state and full_rng.randi() == full_oracle_rng.randi(),
+		"pinned stock: full authored catalog leaves the oracle's next RNG state and draw")
+
+	# AC3: each newly stocked base buys exactly once for exactly 50 gold from a
+	# funded fresh visit, appends one physical base copy, marks only its own
+	# listing sold, and consumes no run RNG; repeat and goldless buys add nothing.
+	for card_id in PINNED_STOCK_SPECS:
+		var expected_price: int = PINNED_STOCK_SPECS[card_id]["price"]
+		var purchase_rng := _rng(SEED + 820)
+		var purchases := RunShopStockOffers.generate(purchase_rng, party, pinned_cards, pinned_trinkets, [])
+		var reference_rng := _rng(SEED + 820)
+		RunShopStockOffers.generate(reference_rng, party, pinned_cards, pinned_trinkets, [])
+		_check(purchases.get("ok", false),
+			"pinned stock " + card_id + ": compact stock regenerated for the paid visit")
+		if not purchases.get("ok", false):
+			continue
+		var shop := RunShopPurchases.new(party, deck, [], expected_price,
+			purchases["cards"], purchases["trinkets"])
+		_check(shop.is_valid(),
+			"pinned stock " + card_id + ": exact-fifty-gold visit opens")
+		if not shop.is_valid():
+			continue
+		var before_state: Dictionary = shop.get_state()
+		var before_stock: Dictionary = shop.get_stock()
+		var copies_before: int = before_state["deck"].count(card_id)
+		var paid: Dictionary = shop.buy("card", card_id)
+		var after_state: Dictionary = shop.get_state()
+		var after_stock: Dictionary = shop.get_stock()
+		_check(paid.get("ok", false) and paid.get("receipt", {}) ==
+			{"kind": "card", "id": card_id, "price": expected_price},
+			"pinned stock " + card_id + ": paid receipt is the exact base ID at 50 gold")
+		_check(after_state["deck"] == before_state["deck"] + [card_id]
+			and after_state["deck"].count(card_id) == copies_before + 1
+			and after_state["deck"].back() == card_id
+			and not String(after_state["deck"].back()).ends_with("_plus"),
+			"pinned stock " + card_id + ": exactly one physical base copy, never an upgrade")
+		_check(after_state["gold"] == before_state["gold"] - expected_price
+			and after_state["gold"] == 0,
+			"pinned stock " + card_id + ": exactly 50 gold debited, never negative")
+		_check(after_state["trinkets"] == before_state["trinkets"]
+			and after_state["party_ids"] == before_state["party_ids"],
+			"pinned stock " + card_id + ": card purchase touches no trinket or hero")
+		var expected_stock: Dictionary = before_stock.duplicate(true)
+		var found_listing := false
+		for listing in expected_stock["cards"]:
+			if listing.get("id") == card_id:
+				listing["sold"] = true
+				found_listing = true
+		_check(found_listing and after_stock == expected_stock,
+			"pinned stock " + card_id + ": only that listing sold, other offers intact")
+
+		var repeat: Dictionary = shop.buy("card", card_id)
+		_check(not repeat.get("ok", true) and not repeat.has("receipt")
+			and shop.get_state() == after_state and shop.get_stock() == after_stock,
+			"pinned stock " + card_id + ": repeat buy refused without mutation")
+
+		var poor := RunShopPurchases.new(party, deck, [], 0,
+			purchases["cards"], purchases["trinkets"])
+		var poor_state: Dictionary = poor.get_state()
+		var poor_stock: Dictionary = poor.get_stock()
+		var denied: Dictionary = poor.buy("card", card_id)
+		_check(poor.is_valid() and not denied.get("ok", true) and not denied.has("receipt")
+			and poor.get_state() == poor_state and poor.get_stock() == poor_stock
+			and poor_state["deck"] == deck and poor_state["gold"] == 0,
+			"pinned stock " + card_id + ": goldless buy refused with no copy or spend")
+
+		_check(purchase_rng.state == reference_rng.state
+			and purchase_rng.randi() == reference_rng.randi(),
+			"pinned stock " + card_id + ": paid and refused buys consume no run RNG")
