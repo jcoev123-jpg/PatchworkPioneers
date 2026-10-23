@@ -46,14 +46,9 @@ class StitchedTag extends Control:
 		resized.connect(queue_redraw)
 	func _draw() -> void:
 		var border_color := Color("302b29")
-		var fill_color := Color("ecdfbd")
 		var thread := Color("c9b996")
-		# Draw paper tag background
-		draw_rect(Rect2(Vector2.ZERO, size), fill_color)
-		# Draw dark border
-		draw_rect(Rect2(Vector2.ZERO, size), border_color, false, 2.0)
-		# Draw stitched seams (dashed lines just inside border)
-		var inner := Rect2(Vector2(4, 4), size - Vector2(8, 8))
+		# Draw stitched seams (dashed lines just inside border) — decorative only, no opaque fill
+		var inner := Rect2(Vector2(8, 8), size - Vector2(16, 16))
 		for y in [inner.position.y, inner.end.y - 1]:
 			draw_line(Vector2(inner.position.x, y), Vector2(inner.end.x, y), thread, 1.5)
 			# Small dashes for stitch effect
@@ -79,8 +74,8 @@ func _ready() -> void:
 	summary = Label.new()
 	summary.name = "WornElitePatches"
 	summary.position = Vector2(24, 2)
-	summary.add_theme_font_size_override("font_size", 12)
-	summary.size = Vector2(1232, 56)
+	summary.add_theme_font_size_override("font_size", 18)
+	summary.size = Vector2(1232, 72)
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	get_parent().add_child.call_deferred(summary)

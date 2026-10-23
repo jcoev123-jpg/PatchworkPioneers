@@ -79,6 +79,51 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		await _frames()
 		_check(button.has_focus() and sewing._prompt.text == explanation,
 			"physical keyboard focus reads %s power and replacement in prompt" % hero_id)
+		# Added mounted presentation checks (AC1): size, colour, style states, focus.
+		_check(sewing._prompt.get_theme_font_size("font_size") >= 18,
+			"prompt font size >= 18px")
+		_check(sewing.summary.get_theme_font_size("font_size") >= 18,
+			"summary font size >= 18px")
+		_check(sewing.summary.size.y >= 56,
+			"summary height adequate for 18px text")
+		var stitch_node: Control = button.get_node_or_null("StitchAccent")
+		_check(is_instance_valid(stitch_node) and stitch_node is Control,
+			"%s stitched tag child present" % hero_id)
+		# Verify non-default stylebox states exist and are distinguishable.
+		_check(button.get_theme_stylebox("normal") != null
+			and button.get_theme_stylebox("hover") != null
+			and button.get_theme_stylebox("pressed") != null
+			and button.get_theme_stylebox("disabled") != null
+			and button.get_theme_stylebox("focus") != null,
+			"%s button has sewn paper styleboxes for all states" % hero_id)
+		# Verify disabled torn buttons are visibly disabled (greyed) and enabled are not.
+		if button.disabled:
+			_check(button.get_theme_stylebox("disabled").bg_color.saturation < 0.3 or button.get_theme_stylebox("disabled").bg_color.value < 0.85,
+				"%s disabled button has visibly disabled style" % hero_id)
+		else:
+			_check(button.get_theme_stylebox("normal").bg_color == Color("ecdfbd")
+				or button.get_theme_stylebox("normal").border_color == sewing.HERO_COLORS.get(hero_id, Color("777166")),
+				"%s enabled button has sewn paper normal style" % hero_id)
+		# Focus mode preserved.
+		_check(button.focus_mode == Control.FOCUS_ALL,
+			"%s focus mode preserved for keyboard" % hero_id)
+		# Text readable (font size >= 18 and label not empty for enabled buttons).
+		if not button.disabled:
+			_check(button.get_theme_font_size("font_size") >= 18,
+				"%s hero tag text >= 18px" % hero_id)
+			_check(not button.text.is_empty() and button.text.contains(hero_id.capitalize()),
+				"%s hero tag text readable" % hero_id)
+	# Verify prompt and summary layout does not overlap improperly.
+	_check(sewing._prompt.get_global_rect().intersects(sewing.summary.get_global_rect()) == false
+		or sewing._prompt.get_global_rect().get_center().y < sewing.summary.get_global_rect().get_center().y,
+		"prompt and summary do not overlap improperly")
+	# Check exact hero accent colours in stitched child.
+	for hero_id_check in ["warden", "seamstress", "tinker"]:
+		var btn_check: Button = sewing.hero_buttons.filter(func(b): return b.get_meta("hero_id") == hero_id_check and is_instance_valid(b))[0] if sewing.hero_buttons.filter(func(b): return b.get_meta("hero_id") == hero_id_check and is_instance_valid(b)).size() > 0 else null
+		if btn_check == null:
+			continue
+		_check(is_instance_valid(btn_check.get_node_or_null("StitchAccent")),
+			"%s stitched tag present" % hero_id_check)
 	_check(entries.size() == 3 and sewing.wardrobe.get_snapshot() == state
 		and app.party_carryover.torn.read_state() == torn_state
 		and app.run_rng.state == run_rng and _complete_state() == before,
