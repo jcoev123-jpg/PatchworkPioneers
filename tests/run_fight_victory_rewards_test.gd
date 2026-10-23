@@ -652,17 +652,44 @@ func _test_weighted_records(definitions: Array, ids: Array[String], deck: Array[
 		var later_prepared := later_service.prepare()
 		_check(later_prepared.get("ok", false),
 			label + ": later reward accepts a previously awarded pool ID in the deck")
-		var upgraded_deck := expected_deck.duplicate()
-		upgraded_deck.append("warden_hold_the_line_plus")
-		var upgrade_fight := _fight(definitions, 1)
-		_win(upgrade_fight)
-		var upgrade_rng := _rng(312)
-		var upgrade_service := _session(upgrade_fight, upgrade_rng, ids, records,
-			upgraded_deck, 10, false)
-		var upgrade_state := upgrade_rng.state
-		_check(not upgrade_service.prepare().get("ok", true)
-			and upgrade_rng.state == upgrade_state,
-			label + ": unawarded pool '+' upgrades still fail closed without RNG use")
+		var upgrade_choices: Dictionary = RunRestCardUpgrade.list_authored_choices(expected_deck)
+		var permitted_upgrades: Dictionary = upgrade_choices.get("permitted_upgrades", {})
+		var upgrade_transaction := RunRestCardUpgrade.new(expected_deck, permitted_upgrades)
+		var base_index: int = -1
+		var choices: Array = upgrade_choices.get("choices", [])
+		for choice: Dictionary in choices:
+			if choice.get("source_id") == "warden_hold_the_line":
+				base_index = choice.get("index")
+				break
+		
+		if base_index != -1:
+			var valid_upgrade: Dictionary = upgrade_transaction.choose_upgrade(base_index)
+			_check(valid_upgrade.get("ok", false), label + ": rest upgrade choice succeeded")
+			var upgrade_fight := _fight(definitions, 1)
+			_win(upgrade_fight)
+			var upgrade_rng := _rng(312)
+			var valid_upgrade_deck: Array = valid_upgrade.get("deck", [])
+			var upgrade_service := _session(upgrade_fight, upgrade_rng, ids, records,
+				valid_upgrade_deck, 10, false)
+			var upgrade_prepared: Dictionary = upgrade_service.prepare()
+			_check(upgrade_prepared.get("ok", false),
+				label + ": authentic Rest upgraded '+' members survive into later reward sources")
+			var upgrade_offers: Array = upgrade_prepared.get("offers", [])
+			for upgrade_offer: Dictionary in upgrade_offers:
+				_check(not String(upgrade_offer.get("id", "")).ends_with("_plus"),
+					label + ": offers themselves remain unupgraded base IDs")
+			
+		var fake_plus_deck := expected_deck.duplicate()
+		fake_plus_deck.append("warden_fake_card_plus")
+		var fake_fight := _fight(definitions, 1)
+		_win(fake_fight)
+		var fake_rng := _rng(315)
+		var fake_service := _session(fake_fight, fake_rng, ids, records,
+			fake_plus_deck, 10, false)
+		var fake_state := fake_rng.state
+		_check(not fake_service.prepare().get("ok", true)
+			and fake_rng.state == fake_state,
+			label + ": counterfeit '+' unawarded pool members still fail closed without RNG use")
 	# Replayed seed with reversed records yields identical offers and RNG state
 	var reversed_records := _pool_records()
 	reversed_records.reverse()

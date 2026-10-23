@@ -83,12 +83,16 @@ func prepare() -> Dictionary:
 	if not _source_deck is Array or _source_deck.is_empty():
 		return rejected
 	# A run deck contains actual party-owned authored card IDs, with duplicates
-	# allowed. Previously awarded D2-1 pool base cards stay valid in later
-	# rewards, while upgrades and unknown IDs still fail closed.
+	# allowed. Previously awarded D2-1 pool base cards and authentic canonical
+	# pool plus cards acquired at Rest stay valid in later rewards, while
+	# stitched IDs and unknown IDs still fail closed.
 	for card_id in _source_deck:
 		if not card_id is String or card_id.is_empty():
 			return rejected
-		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+		var definition: Dictionary = {}
+		var stitch_script: Script = load("res://scripts/run_rest_stitch_cards.gd")
+		if stitch_script:
+			definition = stitch_script.call("resolve_card_definition", card_id)
 		if definition.is_empty() or not _party_ids.has(definition.get("owner")):
 			return rejected
 	# Validate the supplier-owned trinket lists and filter already-owned IDs
