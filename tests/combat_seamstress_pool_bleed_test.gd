@@ -14,6 +14,7 @@ func _initialize() -> void:
 	_test_seeded_trace()
 	_test_forecast_parity()
 	_test_forecast_rejections()
+	_test_worn_attack_patches()
 	for failure in failures:
 		printerr(failure)
 	print("combat_seamstress_pool_bleed_test: ",
@@ -402,3 +403,269 @@ func _test_forecast_rejections() -> void:
 	var bad_status := _fixture(running)
 	bad_status.enemies._enemies[1]["statuses"] = {"exposed": "invalid"}
 	_forecast_reject(bad_status, running, 1, "malformed other enemy status")
+
+
+func _patch_context(party: CombatParty, wearer: String = "seamstress",
+		sew_button: bool = true, sew_arm: bool = true) -> Dictionary:
+	var raw_attacks: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw_attacks is Array, "m04_attack_patches catalog is an array")
+	var definitions: Array[Dictionary] = []
+	for entry in raw_attacks:
+		if entry is Dictionary and entry.get("id") in ["button_eye", "pincushion_arm"]:
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = []
+	if sew_button:
+		owned.append("button_eye")
+	if sew_arm:
+		owned.append("pincushion_arm")
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine run patch ledgers valid")
+	if sew_button:
+		var result: Dictionary = wardrobe.sew("button_eye", wearer, "HEAD",
+			"sew_button_eye", wardrobe.get_snapshot())
+		_check(result.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["HEAD"] == "button_eye",
+			"Button Eye sewn on " + wearer + " HEAD slot")
+	if sew_arm:
+		var result: Dictionary = wardrobe.sew("pincushion_arm", wearer, "ARM",
+			"sew_pincushion_arm", wardrobe.get_snapshot())
+		_check(result.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["ARM"] == "pincushion_arm",
+			"Pincushion Arm sewn on " + wearer + " ARM slot")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _accept_custom(resolver: CombatSeamstressPoolBleed, f: Dictionary, id: String, target: int,
+		hits: Array, cost: int, label: String) -> void:
+	var deck: CombatDeck = f.deck
+	var party: CombatParty = f.party
+	var enemies: CombatEnemies = f.enemies
+	var before := _snapshot(deck, party, enemies)
+	_check(before.turn and before.energy == 3 and before.hand.has(id)
+		and before.party.size() == 3 and before.enemies.size() > 0,
+		label + ": actual playable preconditions")
+	var result := resolver.play_card(deck, party, enemies, id, target)
+	_check(result == {"ok": true, "hits": hits}, label + ": exact emitted hits")
+	var expected: Dictionary = before.duplicate(true)
+	expected.hand.erase(id)
+	expected.discard.append(id)
+	expected.energy -= cost
+	expected.combat_energy -= cost
+	for hit in hits:
+		var enemy: Dictionary = expected.enemies[hit.position - 1]
+		enemy["hp"] -= hit.hp_loss
+		enemy["block"] -= hit.block_absorbed
+		for status in hit.statuses:
+			if hit.statuses[status] == 0:
+				continue
+			if not enemy.has("statuses"):
+				enemy["statuses"] = {}
+			enemy["statuses"][status] = enemy["statuses"].get(status, 0) + hit.statuses[status]
+	_check(_snapshot(deck, party, enemies) == expected,
+		label + ": exact full piles, energy, RNG, party and enemy snapshot")
+
+
+func _reject_custom(resolver: CombatSeamstressPoolBleed, f: Dictionary, id: String,
+		target: int, label: String) -> void:
+	var deck: CombatDeck = f.deck
+	var party: CombatParty = f.party
+	var enemies: CombatEnemies = f.enemies
+	var before := _snapshot(deck, party, enemies)
+	_check(resolver.play_card(deck, party, enemies, id, target) == {"ok": false, "hits": []},
+		label + ": fail closed")
+	_check(_snapshot(deck, party, enemies) == before,
+		label + ": no card, energy, roster, status or RNG mutation")
+
+
+func _test_worn_attack_patches() -> void:
+	# AC1: Living Seamstress with Pincushion Arm gets +1 damage before Weak/Exposed and Block.
+	for upgraded in [false, true]:
+		var id := "seamstress_running_stitch" + ("_plus" if upgraded else "")
+		var base_dmg := 3 if upgraded else 2
+		var patched_dmg := base_dmg + 1
+		var bleed := 5 if upgraded else 4
+
+		# Pincushion Arm only (no Button Eye) to isolate damage math
+		var party := _party(2)
+		var ctx := _patch_context(party, "seamstress", false, true)
+		var resolver := CombatSeamstressPoolBleed.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+			and resolver._patches.is_valid()
+			and resolver._patches.damage_bonus("seamstress") == 1
+			and resolver._patches.damage_bonus("warden") == 0
+			and resolver._patches.damage_bonus("tinker") == 0,
+			id + ": binds valid Pincushion Arm to Seamstress")
+
+		var normal := _fixture(id, 2)
+		_accept_custom(resolver, normal, id, 1, [_hit(1, patched_dmg, 0, patched_dmg, {"bleed": bleed})],
+			1, id + ": Pincushion Arm +1 damage (deals %d vs unpatched %d)" % [patched_dmg, base_dmg])
+
+		var blocked := _fixture(id, 2)
+		_check(blocked.enemies.gain_block(2, 2), id + ": two Block preloaded on target")
+		_accept_custom(resolver, blocked, id, 2,
+			[_hit(2, patched_dmg, 2, patched_dmg - 2, {"bleed": bleed})],
+			1, id + ": Block absorbs before HP with patched damage")
+
+		# Status multipliers before/after floor:
+		# Weak: 25% less outgoing damage (3/4); Exposed: 50% more incoming damage (3/2); Both: 9/8; all floor.
+		var modified := _fixture(id, 2)
+		modified.party._heroes[1]["statuses"] = {"weak": 1}
+		_check(modified.enemies.apply_statuses({3: {"exposed": 1}}), id + ": exposed defender preloaded")
+		@warning_ignore("integer_division")
+		var expected_mod_dmg: int = patched_dmg * 9 / 8
+		_accept_custom(resolver, modified, id, 3,
+			[_hit(3, expected_mod_dmg, 0, expected_mod_dmg, {"bleed": bleed})],
+			1, id + ": Pincushion +1 applied before Weak/Exposed single final floor")
+
+		var weak_only := _fixture(id, 2)
+		weak_only.party._heroes[1]["statuses"] = {"weak": 1}
+		@warning_ignore("integer_division")
+		var expected_weak: int = patched_dmg * 3 / 4
+		_accept_custom(resolver, weak_only, id, 1,
+			[_hit(1, expected_weak, 0, expected_weak, {"bleed": bleed})],
+			1, id + ": Weak only floor(damage * 3 / 4)")
+
+		var exposed_only := _fixture(id, 2)
+		_check(exposed_only.enemies.apply_statuses({1: {"exposed": 1}}), id + ": exposed defender preloaded")
+		@warning_ignore("integer_division")
+		var expected_exposed: int = patched_dmg * 3 / 2
+		_accept_custom(resolver, exposed_only, id, 1,
+			[_hit(1, expected_exposed, 0, expected_exposed, {"bleed": bleed})],
+			1, id + ": Exposed only floor(damage * 3 / 2)")
+
+	# AC2: Button Eye sewn to HEAD: first successful attack in combat applies Exposed 1 AFTER hit damage.
+	for upgraded in [false, true]:
+		var id := "seamstress_running_stitch" + ("_plus" if upgraded else "")
+		var base_dmg := 3 if upgraded else 2
+		var patched_dmg := base_dmg + 1
+		var bleed := 5 if upgraded else 4
+
+		var party := _party(2)
+		var ctx := _patch_context(party, "seamstress", true, true)
+		var resolver := CombatSeamstressPoolBleed.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+			and resolver._patches.is_valid()
+			and resolver._patches.exposed_for_first_hit("seamstress") == {"exposed": 1},
+			id + ": binds valid Button Eye and Pincushion Arm")
+
+		# First hit with pre-existing Exposed on defender:
+		# Hit damage must use pre-existing Exposed (not boosted by Button Eye).
+		# Then Button Eye adds Exposed 1, so defender ends up with Exposed 2.
+		var first_fixture := _fixture(id, 2)
+		_check(first_fixture.enemies.apply_statuses({1: {"exposed": 1}}), id + ": target starts with Exposed 1")
+		@warning_ignore("integer_division")
+		var hit1_dmg: int = patched_dmg * 3 / 2 # uses existing Exposed 1
+		_accept_custom(resolver, first_fixture, id, 1,
+			[_hit(1, hit1_dmg, 0, hit1_dmg, {"bleed": bleed, "exposed": 1})],
+			1, id + ": first hit applies Button Eye Exposed 1 after hit damage without self-boosting")
+		_check(first_fixture.enemies.get_enemy(1)["statuses"] == {"bleed": bleed, "exposed": 2},
+			id + ": target has pre-existing 1 + Button Eye 1 = 2 Exposed")
+		_check(resolver._patches.latch_snapshot().get("seamstress") == true,
+			id + ": Button Eye latch is consumed after first successful hit")
+		_check(resolver._patches.exposed_for_first_hit("seamstress").is_empty(),
+			id + ": exposed_for_first_hit returns empty after latch consumed")
+
+		# Second hit in same combat does NOT reapply Button Eye, but retains Pincushion Arm:
+		var second_fixture := _fixture(id, 2)
+		_check(second_fixture.enemies.gain_block(2, 1), id + ": second target setup")
+		_accept_custom(resolver, second_fixture, id, 2,
+			[_hit(2, patched_dmg, 1, patched_dmg - 1, {"bleed": bleed})],
+			1, id + ": second attack in combat retains Pincushion Arm but applies no Button Eye Exposed")
+		_check(second_fixture.enemies.get_enemy(2).get("statuses", {}).get("exposed", 0) == 0,
+			id + ": second target received no Exposed")
+
+	# Button Eye latch is NOT consumed by forecast, refused plays, or pure status cards.
+	var party2 := _party(2)
+	var ctx2 := _patch_context(party2, "seamstress", true, true)
+	var resolver2 := CombatSeamstressPoolBleed.new()
+	resolver2.bind_patch_wardrobe(ctx2.wardrobe, ctx2.torn)
+
+	# 1. Forecast pure reads
+	var f_prev := _fixture("seamstress_running_stitch", 2)
+	var prev_before := _snapshot(f_prev.deck, f_prev.party, f_prev.enemies)
+	for repeat in range(3):
+		var fc: Dictionary = resolver2.forecast_single(f_prev.deck, f_prev.party, f_prev.enemies, "seamstress_running_stitch", 1)
+		_check(fc.ok and fc.damage == 3 and fc.exposed_before == 0 and fc.exposed_after == 1,
+			"forecast shows patched damage 3 and Button Eye Exposed 0 -> 1")
+		_check(_snapshot(f_prev.deck, f_prev.party, f_prev.enemies) == prev_before,
+			"forecast mutates no deck, actors, statuses or RNG")
+		_check(resolver2._patches.latch_snapshot().get("seamstress") == false,
+			"forecast does not consume Button Eye latch")
+
+	# 2. Refused plays do not consume latch
+	var f_rej := _fixture("seamstress_running_stitch", 2)
+	_check(f_rej.deck.try_spend_energy(3), "drain energy for rejection")
+	_reject_custom(resolver2, f_rej, "seamstress_running_stitch", 1, "unaffordable Running Stitch")
+	_check(resolver2._patches.latch_snapshot().get("seamstress") == false,
+		"refused play does not consume Button Eye latch")
+
+	# 3. Pure status cards do not consume latch
+	# Hemorrhage Hem:
+	var f_hem := _fixture("seamstress_hemorrhage_hem", 2)
+	_check(f_hem.enemies.apply_statuses({1: {"bleed": 2}}), "hem status preloaded")
+	_accept_custom(resolver2, f_hem, "seamstress_hemorrhage_hem", 1,
+		[_hit(1, 0, 0, 0, {"bleed": 2})], 2, "Hemorrhage Hem doubles bleed without latch")
+	_check(resolver2._patches.latch_snapshot().get("seamstress") == false,
+		"Hemorrhage Hem deals no attack damage and does not consume Button Eye")
+
+	# Red Thread: deals 0 damage, applies bleed + authored exposed 1
+	var f_red := _fixture("seamstress_red_thread", 2)
+	_accept_custom(resolver2, f_red, "seamstress_red_thread", 1,
+		[_hit(1, 0, 0, 0, {"bleed": 7, "exposed": 1})], 2, "Red Thread authored exposed without patch latch")
+	_check(resolver2._patches.latch_snapshot().get("seamstress") == false,
+		"Red Thread does not consume Button Eye latch")
+
+	# Blanket Stitch: area bleed
+	var f_blanket := _fixture("seamstress_blanket_stitch", 2, 2)
+	_accept_custom(resolver2, f_blanket, "seamstress_blanket_stitch", 0,
+		[_hit(1, 0, 0, 0, {"bleed": 3}), _hit(2, 0, 0, 0, {"bleed": 3})], 2, "Blanket Stitch area bleed")
+	_check(resolver2._patches.latch_snapshot().get("seamstress") == false,
+		"Blanket Stitch does not consume Button Eye latch")
+
+	# Now Running Stitch FINALLY consumes the latch:
+	var f_final := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver2, f_final, "seamstress_running_stitch", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 4, "exposed": 1})], 1, "Running Stitch consumes preserved latch")
+	_check(resolver2._patches.latch_snapshot().get("seamstress") == true,
+		"Button Eye latch is finally consumed")
+
+	# AC4: Negative / isolation tests
+	# 1. Foreign wearer (patches sewn to Warden only)
+	var party_w := _party(2)
+	var ctx_w := _patch_context(party_w, "warden", true, true)
+	var resolver_w := CombatSeamstressPoolBleed.new()
+	_check(resolver_w.bind_patch_wardrobe(ctx_w.wardrobe, ctx_w.torn)
+		and resolver_w._patches.damage_bonus("seamstress") == 0
+		and resolver_w._patches.exposed_for_first_hit("seamstress").is_empty(),
+		"wardrobe sewn to Warden yields 0 bonus for Seamstress")
+	var f_w := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_w, f_w, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, "Warden patch wearer gives no bonus to Seamstress")
+
+	# 2. Torn Seamstress: patches inactive
+	var party_torn := _party(2)
+	var ctx_torn := _patch_context(party_torn, "seamstress", true, true)
+	var start_torn: Array = ctx_torn.torn.read_state().heroes
+	_check(party_torn.apply_damage(2, 999) and party_torn.is_downed(2), "down seamstress to record tear")
+	_check(ctx_torn.torn.observe_battle_end("seamstress_tear_check", start_torn, party_torn.get_heroes()).ok,
+		"torn ledger records downed seamstress")
+	# Heal in combat party so she can legally act in the test
+	party_torn.heal(2, 30)
+	var resolver_torn := CombatSeamstressPoolBleed.new()
+	_check(resolver_torn.bind_patch_wardrobe(ctx_torn.wardrobe, ctx_torn.torn)
+		and resolver_torn._patches.damage_bonus("seamstress") == 0
+		and resolver_torn._patches.exposed_for_first_hit("seamstress").is_empty(),
+		"torn Seamstress has inactive patch projection")
+	var f_torn := _fixture("seamstress_running_stitch", 2)
+	_accept_custom(resolver_torn, f_torn, "seamstress_running_stitch", 1,
+		[_hit(1, 2, 0, 2, {"bleed": 4})], 1, "torn Seamstress attacks with unpatched stats")
+
+	# 3. Invalid explicit binding fails closed
+	var bad_resolver := CombatSeamstressPoolBleed.new()
+	_check(not bad_resolver.bind_patch_wardrobe(null, null), "null binding returns false")
+	_check(bad_resolver._patches != null and not bad_resolver._patches.is_valid(),
+		"explicitly bad binding sets invalid patches")
+	var f_bad := _fixture("seamstress_running_stitch", 2)
+	_reject_custom(bad_resolver, f_bad, "seamstress_running_stitch", 1, "invalid binding play fails closed")
+	_check(not bad_resolver.forecast_single(f_bad.deck, f_bad.party, f_bad.enemies, "seamstress_running_stitch", 1).ok,
+		"invalid binding forecast fails closed")

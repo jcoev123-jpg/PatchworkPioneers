@@ -531,6 +531,226 @@ func _three_enemy_case() -> void:
 	await _return()
 
 
+func _route_action(id: String) -> Button:
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == id:
+			return button
+	return null
+
+
+func _quick_fight_fixture() -> Dictionary:
+	for value in range(1, 300):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for first in map.get_legal_choices():
+			if map.get_node(first).type != "Fight":
+				continue
+			for next in map.get_node(first).outgoing:
+				if map.get_node(next).type != "Fight":
+					continue
+				map.choose_node(first)
+				var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+					map, rng, RunFightEncounterSelection.new())
+				if entry.get("encounter_id") == "starter_attacks":
+					return {"seed": value, "fight": first, "next_fight": next}
+				map.undo_choice(first, [])
+	return {}
+
+
+func _test_mounted_worn_patches() -> void:
+	var fixture := _quick_fight_fixture()
+	_check(not fixture.is_empty(), "mounted patch test: found connected Fight fixture")
+	if fixture.is_empty():
+		return
+
+	app.run_seed = fixture.seed
+	app.route_button.pressed.emit()
+	await _frames()
+
+	var first_btn := _route_action(fixture.fight)
+	_check(first_btn != null and not first_btn.disabled, "opening fight button found")
+	if first_btn == null:
+		return
+	first_btn.pressed.emit()
+	await _frames()
+
+	_check(app.deck != null and app.party.is_valid(), "predecessor fight started")
+	for enemy in app.enemies.get_enemies():
+		app.enemies.apply_damage(enemy.position, 9999)
+	app._observe_battle_result()
+	await _frames()
+	_check(app.battle_result.get_outcome() == CombatBattleResult.VICTORY
+		and app.reward_buttons.size() == 4, "predecessor victory settled")
+	if app.reward_buttons.size() != 4:
+		return
+
+	app.reward_buttons[3].pressed.emit()
+	await _frames()
+	app.continue_button.pressed.emit()
+	await _frames()
+
+	_check(app.route_view != null and app.route_view.is_visible_in_tree()
+		and app.party_carryover is RunTornCarryover, "connected route chooser open")
+	if app.route_view == null:
+		return
+
+	var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	var definitions: Array[Dictionary] = []
+	var owned: Array = []
+	for entry in records:
+		if entry is Dictionary and entry.get("id") in ["button_eye", "pincushion_arm"]:
+			var slot: String = "HEAD" if entry.id == "button_eye" else "ARM"
+			definitions.append({"id": entry.id, "slot": slot})
+			owned.append(entry.id)
+	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_coat_patches.json"))
+	if coats is Array and RunPatchCoatRules._valid_authored(coats):
+		definitions.append({"id": RunPatchCoatRules.BONUS_ID, "slot": "COAT"})
+		owned.append(RunPatchCoatRules.BONUS_ID)
+	for id in owned:
+		app.run_trinkets.append(id)
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid() and carry.torn.is_valid(),
+		"carryover valid before next fight")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), "wardrobe valid")
+	var expected := wardrobe.get_snapshot()
+	var sew1 := wardrobe.sew("button_eye", "seamstress", "HEAD", "sew_head", expected)
+	expected = wardrobe.get_snapshot()
+	var sew2 := wardrobe.sew("pincushion_arm", "seamstress", "ARM", "sew_arm", expected)
+	expected = wardrobe.get_snapshot()
+	_check(sew1.ok and sew2.ok, "sew button_eye and pincushion_arm to seamstress")
+	_check(carry.can_bind_wardrobe(wardrobe, carry.torn, expected)
+		and carry.bind_wardrobe(wardrobe, carry.torn, expected),
+		"bind wardrobe to live carryover")
+
+	var next_btn := _route_action(fixture.next_fight)
+	_check(next_btn != null and not next_btn.disabled, "next fight button found")
+	if next_btn == null:
+		return
+	next_btn.pressed.emit()
+	await _frames()
+
+	_check(app.route_view == null and app.battle_view.is_visible_in_tree()
+		and app.party.is_valid() and app.deck != null,
+		"second fight mounted successfully")
+
+	# AC3: Verifies adapter bound ONE combat-long patch authority
+	_check(adapter._service._patches != null and adapter._service._patches.is_valid(),
+		"mounted adapter resolver bound ONE patch authority on session entry")
+	var patches: CombatPatchAttackRules = adapter._service._patches
+	_check(patches.damage_bonus("seamstress") == 1, "Pincushion Arm active on Seamstress")
+	_check(patches.exposed_for_first_hit("seamstress") == {"exposed": 1}, "Button Eye active on Seamstress")
+	_check(patches.latch_snapshot().get("seamstress") == false, "Button Eye latch unconsumed at start")
+
+	# Held Running Stitch
+	var id := "seamstress_running_stitch"
+	app.deck.draw_pile.append(id)
+	_check(app.deck.draw_extra(1) == 1, "draw running stitch")
+	app._refresh_hand()
+	await _frames()
+	var panel := _panel(id)
+	_check(panel != null and adapter._bindings.has(panel), "running stitch panel bound")
+
+	# Target selection and forecast parity
+	await _arm(id, false)
+	_check(adapter.target_strip != null and is_instance_valid(adapter.target_strip),
+		"target strip visible")
+	var target_pos := 1
+	for enemy in app.enemies.get_enemies():
+		if enemy.hp > 10:
+			target_pos = enemy.position
+			break
+	_check(adapter._targets.has(target_pos), "target button available")
+	var target_btn: Button = adapter._targets[target_pos]
+	await _hover(target_btn)
+	var label := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(label != null and label.text.contains("3 damage"),
+		"forecast shows patched damage 3 (2 base + 1 Pincushion)")
+	_check(label != null and label.text.contains("Exposed: 0 -> 1"),
+		"forecast shows Button Eye Exposed 0 -> 1")
+	_check(patches.latch_snapshot().get("seamstress") == false,
+		"preview pure reads leave latch unconsumed")
+
+	# Mouse commit for first attack
+	var enemy1_before: Dictionary = app.enemies.get_enemy(target_pos)
+	await _mouse(target_btn)
+	await _frames()
+
+	var event: Dictionary = adapter.last_event
+	_check(event.get("ok", false) and event.hits.size() == 1, "commit succeeded")
+	var hit: Dictionary = event.hits[0]
+	_check(hit.damage == 3, "actual hit dealt patched 3 damage")
+	_check(hit.statuses == {"bleed": 4, "exposed": 1}, "actual hit applied Bleed 4 and Exposed 1")
+	var enemy1_after: Dictionary = app.enemies.get_enemy(target_pos)
+	_check(enemy1_after.get("statuses", {}).get("exposed", 0) ==
+		enemy1_before.get("statuses", {}).get("exposed", 0) + 1,
+		"enemy received Exposed 1")
+	_check(enemy1_after.get("statuses", {}).get("bleed", 0) ==
+		enemy1_before.get("statuses", {}).get("bleed", 0) + 4,
+		"enemy received Bleed 4 (3 + 1 passive)")
+	_check(patches.latch_snapshot().get("seamstress") == true,
+		"Button Eye latch is consumed after first hit")
+
+	# Check combat ribbons
+	var meters = app.get_node("LiveCombatMeters")
+	_check(meters != null and is_instance_valid(meters.row), "combat meters visible")
+
+	# Second cast in same combat: Running Stitch+
+	app.deck.combat_state.energy = 3
+	var id_plus := "seamstress_running_stitch_plus"
+	app.deck.draw_pile.append(id_plus)
+	_check(app.deck.draw_extra(1) == 1, "draw running stitch+")
+	app._refresh_hand()
+	await _frames()
+	var panel2 := _panel(id_plus)
+	_check(panel2 != null, "panel2 found")
+	await _arm(id_plus, true)
+	var target_btn2: Button = adapter._targets[target_pos]
+	target_btn2.grab_focus()
+	await _frames()
+	var label2 := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	# Running stitch+ has base 3 + 1 (Pincushion) = 4 damage.
+	# Enemy already has Exposed 1 from hit 1 (+50%): floor(4 * 3 / 2) = 6 damage.
+	# Bleed is 4 + 1 = 5. Exposed delta is 0 (Button Eye consumed).
+	_check(label2 != null and label2.text.contains("6 damage"),
+		"second cast forecast shows 6 damage (4 with enemy Exposed)")
+	_check(label2 != null and not label2.text.contains("Exposed:"),
+		"second cast forecast has no Button Eye Exposed delta")
+	await _key(KEY_ENTER)
+	await _frames()
+
+	var event2: Dictionary = adapter.last_event
+	_check(event2.get("ok", false) and event2.hits.size() == 1, "second cast commit succeeded")
+	_check(event2.hits[0].damage == 6, "second cast dealt 6 damage")
+	_check(event2.hits[0].statuses == {"bleed": 5},
+		"second cast applied Bleed 5 and NO Exposed")
+	_check(patches.latch_snapshot().get("seamstress") == true,
+		"latch remains consumed")
+
+	# Repaint/panel sync, forecast, turn change do not reset service/latch
+	app.enemy_intents._turn_index += 1
+	adapter._sync_battle()
+	_check(adapter._service._patches == patches, "turn change preserves single patch service")
+	_check(patches.latch_snapshot().get("seamstress") == true, "turn change does not reset latch")
+
+	# Return resets/retires resolver
+	await _return()
+	_check(adapter._service != null and adapter._service._patches == null,
+		"Return resets/retires resolver to unpatched state")
+
+	# Normal battle with no bound wardrobe remains unpatched
+	_check(app._start_battle(), "unpatched battle starts from title")
+	await _frames()
+	_check(adapter._service._patches == null,
+		"normal battle with no bound wardrobe remains unpatched")
+	await _return()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -556,6 +776,7 @@ func _run() -> void:
 	await _cancel_and_reject()
 	await _terminal_case()
 	await _three_enemy_case()
+	await _test_mounted_worn_patches()
 	app.free()
 	_finish()
 
