@@ -28,6 +28,8 @@ const KNOWN_ATTACK_POWERS := {
 }
 const KNOWN_COAT_POWERS := {
 	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6},
+	"padded_vest": {"slot": "COAT", "max_hp_bonus": 4},
+	"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8},
 }
 ## Shop catalogs author slot identity alone; CombatShopPatchRules owns their powers.
 ## Descriptions of the already authored rules, never new effect calculations.
@@ -35,6 +37,8 @@ const KNOWN_TEXTS := {
 	"button_eye": "first successful attack each combat also applies Exposed 1",
 	"pincushion_arm": "+1 damage on that wearer's damaging cards",
 	"quilted_coat": "+6 maximum HP",
+	"padded_vest": "+4 maximum HP",
+	"double_quilt_coat": "+8 maximum HP",
 }
 
 

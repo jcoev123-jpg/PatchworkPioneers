@@ -12,6 +12,8 @@ const SLOT_CATALOG := "res://data/patches/initial_patch_slots.json"
 const EYE_TEXT := "first successful attack each combat also applies Exposed 1"
 const ARM_TEXT := "+1 damage on that wearer's damaging cards"
 const COAT_TEXT := "+6 maximum HP"
+const PADDED_VEST_TEXT := "+4 maximum HP"
+const DOUBLE_QUILT_TEXT := "+8 maximum HP"
 
 
 func _badge_text() -> String:
@@ -34,6 +36,7 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_sew_previews()
 	_test_detachment_and_isolation()
+	_test_coat_powers_lifecycle_and_previews()
 	if failures.is_empty():
 		print("run_patch_wearer_summary_test: PASS (", checks, " checks)")
 	else:
@@ -181,6 +184,8 @@ func _test_catalog_backed_definitions() -> void:
 		"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1},
 		"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1},
 		"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6},
+		"padded_vest": {"slot": "COAT", "max_hp_bonus": 4},
+		"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8},
 		"stitched_badge": {"slot": "HEAD"},
 		"spare_spool": {"slot": "ARM"},
 	}
@@ -620,6 +625,14 @@ func _test_rejections() -> void:
 			"max_hp_bonus", 5],
 		["a known coat record with the wrong slot", "coat", "quilted_coat",
 			"slot", "HEAD"],
+		["a known padded_vest record with the wrong bonus", "coat", "padded_vest",
+			"max_hp_bonus", 5],
+		["a known padded_vest record with the wrong slot", "coat", "padded_vest",
+			"slot", "ARM"],
+		["a known double_quilt_coat record with the wrong bonus", "coat", "double_quilt_coat",
+			"max_hp_bonus", 7],
+		["a known double_quilt_coat record with the wrong slot", "coat", "double_quilt_coat",
+			"slot", "HEAD"],
 		["a known slot-only record with the wrong slot", "initial", "stitched_badge",
 			"slot", "ARM"],
 		["a known slot-only record with an invented effect", "initial", "spare_spool",
@@ -638,6 +651,18 @@ func _test_rejections() -> void:
 	var missing_record := _without_record(catalogs, "attack", "button_eye")
 	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_record) == rejected,
 		"a missing known catalog record is rejected exactly")
+	var missing_vest := _without_record(catalogs, "coat", "padded_vest")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_vest) == rejected,
+		"a missing padded_vest record is rejected exactly")
+	var missing_double := _without_record(catalogs, "coat", "double_quilt_coat")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_double) == rejected,
+		"a missing double_quilt_coat record is rejected exactly")
+	var missing_vest_bonus := _without_field(catalogs, "coat", "padded_vest", "max_hp_bonus")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_vest_bonus) == rejected,
+		"a padded_vest record without its bonus is rejected exactly")
+	var missing_double_bonus := _without_field(catalogs, "coat", "double_quilt_coat", "max_hp_bonus")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_double_bonus) == rejected,
+		"a double_quilt_coat record without its bonus is rejected exactly")
 	# A later authored patch that this readout cannot describe must not break it.
 	var extra: Dictionary = catalogs.duplicate(true)
 	var attack_extra: Array = extra["attack"].duplicate(true)
@@ -657,6 +682,8 @@ func _test_sew_previews() -> void:
 		["stitched_badge", "HEAD", _badge_text()],
 		["spare_spool", "ARM", _spool_text()],
 		["quilted_coat", "COAT", COAT_TEXT],
+		["padded_vest", "COAT", PADDED_VEST_TEXT],
+		["double_quilt_coat", "COAT", DOUBLE_QUILT_TEXT],
 		["button_eye", "HEAD", EYE_TEXT],
 		["pincushion_arm", "ARM", ARM_TEXT]
 	]
@@ -829,3 +856,297 @@ func _test_detachment_and_isolation() -> void:
 		"a second result is independent of a mutated earlier result")
 	_check(w.get_snapshot() == before_w and torn.read_state() == before_t,
 		"the services stay unchanged after a returned summary is mutated")
+
+
+func _test_coat_powers_lifecycle_and_previews() -> void:
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	var heroes: Array = f.heroes
+	var catalogs: Dictionary = f.catalogs
+	var rejected := {"ok": false, "heroes": []}
+	var reject_preview := {"ok": false}
+
+	# 1. AC1 & AC2: Valid wardrobe and living heroes wearing the 3 COAT patches.
+	_check(w.sew("padded_vest", "warden", "COAT", "sew_vest", w.get_snapshot()).ok,
+		"Padded Vest is sewn onto Warden COAT")
+	_check(w.sew("quilted_coat", "seamstress", "COAT", "sew_quilt", w.get_snapshot()).ok,
+		"Quilted Coat is sewn onto Seamstress COAT")
+	_check(w.sew("double_quilt_coat", "tinker", "COAT", "sew_double", w.get_snapshot()).ok,
+		"Double Quilt Coat is sewn onto Tinker COAT")
+
+	var torn := RunTornMending.new(heroes)
+	_check(torn.is_valid(), "RunTornMending accepts starter party for coat tests")
+	var torn_state := torn.read_state()
+	var summary := RunPatchWearerSummary.summarize(w, torn_state)
+	_check(summary.get("ok") == true, "summarize succeeds with all three coats sewn")
+	if summary.get("ok") != true:
+		return
+
+	# Named assertions for all three coats (AC1)
+	var warden_coat: Dictionary = summary.heroes[0]["slots"][2]
+	_check(warden_coat["slot"] == "COAT" and warden_coat["patch_id"] == "padded_vest"
+		and warden_coat["active"] == true and warden_coat["rules_text"] == PADDED_VEST_TEXT,
+		"Warden COAT publishes padded_vest with +4 maximum HP and active=true")
+
+	var seamstress_coat: Dictionary = summary.heroes[1]["slots"][2]
+	_check(seamstress_coat["slot"] == "COAT" and seamstress_coat["patch_id"] == "quilted_coat"
+		and seamstress_coat["active"] == true and seamstress_coat["rules_text"] == COAT_TEXT,
+		"Seamstress COAT publishes quilted_coat with +6 maximum HP and active=true")
+
+	var tinker_coat: Dictionary = summary.heroes[2]["slots"][2]
+	_check(tinker_coat["slot"] == "COAT" and tinker_coat["patch_id"] == "double_quilt_coat"
+		and tinker_coat["active"] == true and tinker_coat["rules_text"] == DOUBLE_QUILT_TEXT,
+		"Tinker COAT publishes double_quilt_coat with +8 maximum HP and active=true")
+
+	# Wearer only: other slots empty and blank rules text
+	for i in range(3):
+		_check(summary.heroes[i]["slots"][0]["patch_id"] == ""
+			and summary.heroes[i]["slots"][0]["rules_text"] == ""
+			and not summary.heroes[i]["slots"][0]["active"],
+			summary.heroes[i]["id"] + " HEAD slot is empty and inactive")
+		_check(summary.heroes[i]["slots"][1]["patch_id"] == ""
+			and summary.heroes[i]["slots"][1]["rules_text"] == ""
+			and not summary.heroes[i]["slots"][1]["active"],
+			summary.heroes[i]["id"] + " ARM slot is empty and inactive")
+
+	# Verify RunPatchCoatRules numeric projection (+4 / +6 / +8)
+	var health_proj := RunPatchCoatRules.project_health(torn_state, w, catalogs["coat"])
+	_check(health_proj.get("ok") == true, "RunPatchCoatRules projects health with all 3 coats")
+	if health_proj.get("ok") == true:
+		_check(health_proj.heroes[0]["max_hp"] == 44 and health_proj.heroes[0]["hp"] == 40,
+			"Warden effective max HP projected as 40 + 4 = 44 while stored hp is 40")
+		_check(health_proj.heroes[1]["max_hp"] == 36 and health_proj.heroes[1]["hp"] == 30,
+			"Seamstress effective max HP projected as 30 + 6 = 36 while stored hp is 30")
+		_check(health_proj.heroes[2]["max_hp"] == 34 and health_proj.heroes[2]["hp"] == 26,
+			"Tinker effective max HP projected as 26 + 8 = 34 while stored hp is 26")
+		# Base max HP in torn state and wardrobe snapshot remains unchanged
+		_check(torn_state.heroes[0]["max_hp"] == 40 and torn_state.heroes[1]["max_hp"] == 30
+			and torn_state.heroes[2]["max_hp"] == 26,
+			"base max HP in torn state remains 40, 30, 26")
+
+	# AC1 fail-closed with copied detached catalogs
+	var corrupted_checks := [
+		["coat", "padded_vest", "max_hp_bonus", 5, "padded_vest wrong bonus"],
+		["coat", "padded_vest", "slot", "HEAD", "padded_vest wrong slot"],
+		["coat", "double_quilt_coat", "max_hp_bonus", 10, "double_quilt_coat wrong bonus"],
+		["coat", "double_quilt_coat", "slot", "ARM", "double_quilt_coat wrong slot"],
+	]
+	for c in corrupted_checks:
+		var corrupted := _with_field(catalogs, c[0], c[1], c[2], c[3])
+		_check(RunPatchWearerSummary.summarize(w, torn_state, corrupted) == rejected,
+			c[4] + " makes summarize refuse")
+		_check(RunPatchWearerSummary.preview_sew(w, torn_state, c[1], "warden", corrupted) == reject_preview,
+			c[4] + " makes preview_sew refuse")
+
+	var missing_vest := _without_record(catalogs, "coat", "padded_vest")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_vest) == rejected,
+		"missing padded_vest makes summarize refuse")
+	_check(RunPatchWearerSummary.preview_sew(w, torn_state, "padded_vest", "warden", missing_vest) == reject_preview,
+		"missing padded_vest makes preview_sew refuse")
+
+	var missing_double := _without_record(catalogs, "coat", "double_quilt_coat")
+	_check(RunPatchWearerSummary.summarize(w, torn_state, missing_double) == rejected,
+		"missing double_quilt_coat makes summarize refuse")
+	_check(RunPatchWearerSummary.preview_sew(w, torn_state, "double_quilt_coat", "tinker", missing_double) == reject_preview,
+		"missing double_quilt_coat makes preview_sew refuse")
+
+	# 2. AC2: Real tear -> wardrobe refresh -> described yet inactive -> legal mend -> reactivation
+	var b_start: Array = torn_state.heroes
+	var b_end: Array = b_start.duplicate(true)
+	b_end[0]["hp"] = 0 # Warden downed
+	b_end[2]["hp"] = 0 # Tinker downed
+	_check(torn.observe_battle_end("coat_battle_tear", b_start, b_end).ok,
+		"real battle ends with Warden and Tinker torn")
+	var torn_state2 := torn.read_state()
+	var w_snap := w.get_snapshot()
+	_check(w.refresh_run_context(torn_state2.heroes, w_snap.owned, w_snap.scraps,
+		w_snap.gold, w_snap.cards, w_snap),
+		"wardrobe refreshed to reflect torn heroes")
+	var torn_summary := RunPatchWearerSummary.summarize(w, torn_state2)
+	_check(torn_summary.get("ok") == true, "summarize succeeds after heroes are torn")
+	if torn_summary.get("ok") == true:
+		var w_torn_coat: Dictionary = torn_summary.heroes[0]["slots"][2]
+		_check(w_torn_coat["patch_id"] == "padded_vest" and w_torn_coat["active"] == false
+			and w_torn_coat["rules_text"] == PADDED_VEST_TEXT,
+			"torn Warden keeps padded_vest described (+4 maximum HP) but active=false")
+
+		var s_live_coat: Dictionary = torn_summary.heroes[1]["slots"][2]
+		_check(s_live_coat["patch_id"] == "quilted_coat" and s_live_coat["active"] == true
+			and s_live_coat["rules_text"] == COAT_TEXT,
+			"living Seamstress keeps quilted_coat active=true and described")
+
+		var t_torn_coat: Dictionary = torn_summary.heroes[2]["slots"][2]
+		_check(t_torn_coat["patch_id"] == "double_quilt_coat" and t_torn_coat["active"] == false
+			and t_torn_coat["rules_text"] == DOUBLE_QUILT_TEXT,
+			"torn Tinker keeps double_quilt_coat described (+8 maximum HP) but active=false")
+
+	# Verify RunPatchCoatRules does not apply bonus to torn wearers
+	var torn_proj := RunPatchCoatRules.project_health(torn_state2, w, catalogs["coat"])
+	_check(torn_proj.get("ok") == true, "project_health succeeds on torn roster")
+	if torn_proj.get("ok") == true:
+		_check(torn_proj.heroes[0]["max_hp"] == 37,
+			"torn Warden max HP remains 37 (40-3, no coat bonus)")
+		_check(torn_proj.heroes[1]["max_hp"] == 36,
+			"living Seamstress max HP remains 36 (30+6)")
+		_check(torn_proj.heroes[2]["max_hp"] == 23,
+			"torn Tinker max HP remains 23 (26-3, no coat bonus)")
+
+	# Legal mend on Warden
+	var mend_w := torn.choose_mend("mend_node_w", "receipt_coat_w", "warden", 1, 4,
+		torn_state2.heroes, true)
+	_check(mend_w.get("ok") == true, "Warden mended successfully")
+	var state_after_mend_w := torn.read_state()
+	var w_snap2 := w.get_snapshot()
+	_check(w.refresh_run_context(state_after_mend_w.heroes, w_snap2.owned, w_snap2.scraps,
+		w_snap2.gold, w_snap2.cards, w_snap2),
+		"wardrobe refreshed after Warden mend")
+	var mended_w_summary := RunPatchWearerSummary.summarize(w, state_after_mend_w)
+	_check(mended_w_summary.get("ok") == true, "summarize succeeds after Warden mend")
+	if mended_w_summary.get("ok") == true:
+		var w_mended_coat: Dictionary = mended_w_summary.heroes[0]["slots"][2]
+		_check(w_mended_coat["patch_id"] == "padded_vest" and w_mended_coat["active"] == true
+			and w_mended_coat["rules_text"] == PADDED_VEST_TEXT,
+			"mended Warden reactivates padded_vest with +4 maximum HP")
+		var t_still_torn: Dictionary = mended_w_summary.heroes[2]["slots"][2]
+		_check(t_still_torn["patch_id"] == "double_quilt_coat" and t_still_torn["active"] == false,
+			"unmended Tinker double_quilt_coat stays inactive")
+
+	# Legal mend on Tinker
+	var mend_t := torn.choose_mend("mend_node_t", "receipt_coat_t", "tinker", 3, 2,
+		state_after_mend_w.heroes, true)
+	_check(mend_t.get("ok") == true, "Tinker mended successfully")
+	var state_after_mend_t := torn.read_state()
+	var w_snap3 := w.get_snapshot()
+	_check(w.refresh_run_context(state_after_mend_t.heroes, w_snap3.owned, w_snap3.scraps,
+		w_snap3.gold, w_snap3.cards, w_snap3),
+		"wardrobe refreshed after Tinker mend")
+	var mended_t_summary := RunPatchWearerSummary.summarize(w, state_after_mend_t)
+	_check(mended_t_summary.get("ok") == true, "summarize succeeds after Tinker mend")
+	if mended_t_summary.get("ok") == true:
+		var t_mended_coat: Dictionary = mended_t_summary.heroes[2]["slots"][2]
+		_check(t_mended_coat["patch_id"] == "double_quilt_coat" and t_mended_coat["active"] == true
+			and t_mended_coat["rules_text"] == DOUBLE_QUILT_TEXT,
+			"mended Tinker reactivates double_quilt_coat with +8 maximum HP")
+
+	# Verify project_health restores numeric bonus on both mended heroes
+	var mended_proj := RunPatchCoatRules.project_health(state_after_mend_t, w, catalogs["coat"])
+	_check(mended_proj.get("ok") == true, "project_health succeeds after both heroes mended")
+	if mended_proj.get("ok") == true:
+		_check(mended_proj.heroes[0]["max_hp"] == 41,
+			"mended Warden max HP is 37 + 4 = 41")
+		_check(mended_proj.heroes[1]["max_hp"] == 36,
+			"Seamstress max HP remains 30 + 6 = 36")
+		_check(mended_proj.heroes[2]["max_hp"] == 31,
+			"mended Tinker max HP is 23 + 8 = 31")
+
+	# 3. AC3: Accurate nonmutating previews for empty and occupied COAT slots
+	var prev_f := _fixture(2)
+	if prev_f.is_empty():
+		return
+	var pw: RunPatchWardrobe = prev_f.wardrobe
+	var ptorn := RunTornMending.new(prev_f.heroes)
+	var ptorn_state := ptorn.read_state()
+	var pre_snap := pw.get_snapshot()
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 998877
+	var pre_local_state := local_rng.state
+	seed(554433)
+	var pre_global_rand := randi()
+	seed(554433)
+
+	# Empty slot preview for Padded Vest on Warden
+	var vest_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "padded_vest", "warden")
+	_check(vest_prev.get("ok") == true and vest_prev.get("patch_id") == "padded_vest"
+		and vest_prev.get("slot") == "COAT" and vest_prev.get("rules_text") == PADDED_VEST_TEXT
+		and vest_prev.get("wearer") == "warden" and vest_prev.get("displaced_id") == ""
+		and vest_prev.get("displaced_rules_text") == "" and vest_prev.get("scrap_delta") == 0,
+		"empty COAT preview for Padded Vest on Warden matches specification")
+
+	# Empty slot preview for Double Quilt Coat on Seamstress
+	var double_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "double_quilt_coat", "seamstress")
+	_check(double_prev.get("ok") == true and double_prev.get("patch_id") == "double_quilt_coat"
+		and double_prev.get("slot") == "COAT" and double_prev.get("rules_text") == DOUBLE_QUILT_TEXT
+		and double_prev.get("wearer") == "seamstress" and double_prev.get("displaced_id") == ""
+		and double_prev.get("displaced_rules_text") == "" and double_prev.get("scrap_delta") == 0,
+		"empty COAT preview for Double Quilt Coat on Seamstress matches specification")
+
+	# Invariants: wardrobe, torn state and RNG are completely untouched
+	_check(pw.get_snapshot() == pre_snap, "wardrobe snapshot unchanged after empty previews")
+	_check(ptorn.read_state() == ptorn_state, "torn ledger unchanged after empty previews")
+	_check(local_rng.state == pre_local_state and randi() == pre_global_rand,
+		"RNG untouched after empty previews")
+
+	# Now occupy Warden's COAT slot with quilted_coat
+	_check(pw.sew("quilted_coat", "warden", "COAT", "prev_sew_quilt", pw.get_snapshot()).ok,
+		"Warden equips Quilted Coat before replacement preview")
+	var occ_snap := pw.get_snapshot()
+
+	seed(554433)
+	pre_global_rand = randi()
+	seed(554433)
+
+	# Occupied slot preview: Padded Vest displacing Quilted Coat
+	var occ_vest_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "padded_vest", "warden")
+	_check(occ_vest_prev.get("ok") == true and occ_vest_prev.get("patch_id") == "padded_vest"
+		and occ_vest_prev.get("slot") == "COAT" and occ_vest_prev.get("rules_text") == PADDED_VEST_TEXT
+		and occ_vest_prev.get("wearer") == "warden" and occ_vest_prev.get("displaced_id") == "quilted_coat"
+		and occ_vest_prev.get("displaced_rules_text") == COAT_TEXT
+		and occ_vest_prev.get("scrap_delta") == 1,
+		"occupied COAT preview: Padded Vest displacing Quilted Coat projects +1 scrap and displaced text")
+
+	# Occupied slot preview: Double Quilt Coat displacing Quilted Coat
+	var occ_double_prev := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "double_quilt_coat", "warden")
+	_check(occ_double_prev.get("ok") == true and occ_double_prev.get("patch_id") == "double_quilt_coat"
+		and occ_double_prev.get("slot") == "COAT" and occ_double_prev.get("rules_text") == DOUBLE_QUILT_TEXT
+		and occ_double_prev.get("wearer") == "warden" and occ_double_prev.get("displaced_id") == "quilted_coat"
+		and occ_double_prev.get("displaced_rules_text") == COAT_TEXT
+		and occ_double_prev.get("scrap_delta") == 1,
+		"occupied COAT preview: Double Quilt Coat displacing Quilted Coat projects +1 scrap and displaced text")
+
+	# Invariants after occupied preview
+	_check(pw.get_snapshot() == occ_snap, "wardrobe snapshot unchanged after occupied previews")
+	_check(ptorn.read_state() == ptorn_state, "torn ledger unchanged after occupied previews")
+	_check(local_rng.state == pre_local_state and randi() == pre_global_rand,
+		"RNG untouched after occupied previews")
+
+	# Commit sew of Padded Vest displacing Quilted Coat and verify receipt matches preview
+	var commit_sew := pw.sew("padded_vest", "warden", "COAT", "commit_vest", pw.get_snapshot())
+	_check(commit_sew.get("ok") == true, "commit sew of Padded Vest succeeds")
+	if commit_sew.get("ok") == true:
+		var rc: Dictionary = commit_sew.get("receipt", {})
+		_check(rc.get("patch_id") == occ_vest_prev.get("patch_id")
+			and rc.get("hero_id") == occ_vest_prev.get("wearer")
+			and rc.get("slot") == occ_vest_prev.get("slot")
+			and rc.get("displaced_id") == occ_vest_prev.get("displaced_id")
+			and rc.get("scrap_delta") == occ_vest_prev.get("scrap_delta"),
+			"actual commit receipt matches occupied preview projection")
+		var post_w := pw.get_snapshot()
+		_check(post_w.scraps == occ_snap.scraps + 1, "scraps increased by 1 upon displacing coat")
+		_check(not post_w.owned.has("quilted_coat"), "displaced Quilted Coat destroyed")
+		_check(post_w.worn["warden"]["COAT"] == "padded_vest", "Warden now wears Padded Vest")
+
+	# Preview Double Quilt Coat displacing Padded Vest
+	var occ_double_prev2 := RunPatchWearerSummary.preview_sew(pw, ptorn_state, "double_quilt_coat", "warden")
+	_check(occ_double_prev2.get("ok") == true and occ_double_prev2.get("patch_id") == "double_quilt_coat"
+		and occ_double_prev2.get("slot") == "COAT" and occ_double_prev2.get("rules_text") == DOUBLE_QUILT_TEXT
+		and occ_double_prev2.get("wearer") == "warden" and occ_double_prev2.get("displaced_id") == "padded_vest"
+		and occ_double_prev2.get("displaced_rules_text") == PADDED_VEST_TEXT
+		and occ_double_prev2.get("scrap_delta") == 1,
+		"occupied COAT preview: Double Quilt Coat displacing Padded Vest projects +1 scrap and +4 max HP displaced")
+
+	# Preview on torn hero fails closed
+	var p_start: Array = ptorn_state.heroes
+	var p_end: Array = p_start.duplicate(true)
+	p_end[0]["hp"] = 0
+	_check(ptorn.observe_battle_end("prev_tear", p_start, p_end).ok, "Warden torn for preview check")
+	var ptorn_down := ptorn.read_state()
+	var cur_snap := pw.get_snapshot()
+	_check(pw.refresh_run_context(ptorn_down.heroes, cur_snap.owned, cur_snap.scraps,
+		cur_snap.gold, cur_snap.cards, cur_snap), "wardrobe context refreshed for torn preview")
+	_check(RunPatchWearerSummary.preview_sew(pw, ptorn_down, "double_quilt_coat", "warden") == reject_preview,
+		"preview_sew rejects torn hero for Double Quilt Coat")
+	_check(RunPatchWearerSummary.preview_sew(pw, ptorn_down, "double_quilt_coat", "seamstress").get("ok") == true,
+		"preview_sew still succeeds for living hero on torn run")
