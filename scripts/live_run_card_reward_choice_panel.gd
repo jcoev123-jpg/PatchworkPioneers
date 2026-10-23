@@ -34,6 +34,12 @@ const STITCH_THREAD := Color("#c9b996")
 const OWNER_STRIP_HEIGHT := 24
 const OWNER_NAME_FONT_SIZE := 14
 
+## The card's own authored picture gets a dedicated, inert illustration window
+## above the name; the name keeps a plain cream strip of its own instead of
+## cropping art behind its text.
+const CARD_ART_HEIGHT := 64
+const NAME_STRIP_HEIGHT := 44
+
 ## Sewn Flow/ChatGPT art in the heroes' stitched-felt style. Every piece is
 ## optional: a missing texture falls back to the flat procedural paper, and the
 ## StyleBoxFlat styles stay underneath to carry palette, hover glow and focus.
@@ -208,13 +214,23 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	owner_patch.add_child(owner_label)
 
-	# Name on a pinned torn-paper strip
+	# Illustration window: image-only, inert to pointer and focus, and sized to
+	# its own patch so the name, cost, marks, rules and Choose stay separate.
 	var card_art := _card_art_texture(String(offer["id"]), owner)
+	var illustration := _CardIllustration.new()
+	illustration.name = "CardArt"
+	illustration.picture = card_art
+	illustration.owner_color = OWNER_COLORS[owner]
+	illustration.custom_minimum_size = Vector2(0, CARD_ART_HEIGHT)
+	illustration.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	content.add_child(illustration)
+
+	# Name on its own readable torn-paper strip, never cropped illustration art
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.custom_minimum_size = Vector2(0, 70)
+	name_label.custom_minimum_size = Vector2(0, NAME_STRIP_HEIGHT)
 	var name_box := StyleBoxFlat.new()
 	name_box.bg_color = Color("#fbf3e4")
 	name_box.border_color = Color("#c7b89f")
@@ -224,17 +240,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	name_box.content_margin_right = 6
 	name_box.content_margin_top = 4
 	name_box.content_margin_bottom = 4
-	if card_art != null:
-		# The name is sewn across a stitched illustration patch: the card's own
-		# art, else its hero's emblem (a wide band from the middle of it).
-		name_label.add_theme_stylebox_override("normal", _art_band(card_art))
-		name_label.add_theme_color_override("font_color", LIGHT_INK)
-		name_label.add_theme_color_override("font_outline_color", Color("#1d1715"))
-		name_label.add_theme_constant_override("outline_size", 7)
-		name_label.add_theme_font_size_override("font_size", 23)
-		name_label.draw.connect(_draw_art_seam.bind(name_label))
-	else:
-		name_label.add_theme_stylebox_override("normal", name_box)
+	name_label.add_theme_stylebox_override("normal", name_box)
 	content.add_child(name_label)
 
 	# Rarity tag (only for pool cards with authored rarity)
@@ -570,15 +576,23 @@ func _style_card(card: PanelContainer, owner: String, active: bool) -> void:
 	card.queue_redraw()
 
 
-## A reward card's own illustration (assets/paper/cards/<id>.png, upgrades
-## share the base art), else the owning hero's stitched emblem; null keeps the
-## plain linen name box.
+## A reward card's own illustration lives in cards/art/<base_id>.png; only a
+## final "_plus" shares its base card's picture. Fallback order: authored
+## picture, then the owning hero's stitched emblem, then a drawn paper patch
+## (null), so a valid offer always mounts.
+static func card_art_path(card_id: String) -> String:
+	return ART_DIR + "cards/art/%s.png" % card_id.trim_suffix("_plus")
+
+
+static func emblem_path(owner: String) -> String:
+	return ART_DIR + "cards/emblem_%s.png" % owner
+
+
 static func _card_art_texture(card_id: String, owner: String) -> Texture2D:
-	var base_id := card_id.trim_suffix("_plus")
-	var own := art_texture(ART_DIR + "cards/%s.png" % base_id)
+	var own := art_texture(card_art_path(card_id))
 	if own != null:
 		return own
-	return art_texture(ART_DIR + "cards/emblem_%s.png" % owner)
+	return art_texture(emblem_path(owner))
 
 
 static func art_texture(path: String) -> Texture2D:
@@ -612,29 +626,6 @@ func _draw_sewn_frame(card: PanelContainer) -> void:
 		card.draw_texture(badge, Vector2(roundf((card.size.x - badge.get_width()) * 0.5), 0.0))
 
 
-static func _art_band(texture: Texture2D) -> StyleBoxTexture:
-	var band := StyleBoxTexture.new()
-	band.texture = texture
-	var size := texture.get_size()
-	var height := size.x * 0.24
-	band.region_rect = Rect2(0, size.y * 0.46 - height * 0.5, size.x, height)
-	band.content_margin_left = 10
-	band.content_margin_right = 10
-	band.content_margin_top = 6
-	band.content_margin_bottom = 6
-	return band
-
-
-## Dark felt edge and a cream running stitch around the illustration patch.
-func _draw_art_seam(art: Control) -> void:
-	var rect := Rect2(Vector2.ZERO, art.size)
-	art.draw_rect(rect, Color("#3b2f2a"), false, 3.0)
-	var inner := rect.grow(-6.0)
-	for edge: Array in [[inner.position, Vector2(inner.end.x, inner.position.y)],
-			[Vector2(inner.end.x, inner.position.y), inner.end],
-			[inner.end, Vector2(inner.position.x, inner.end.y)],
-			[Vector2(inner.position.x, inner.end.y), inner.position]]:
-		art.draw_dashed_line(edge[0], edge[1], Color("#f1e6cf", 0.9), 2.0, 7.0)
 
 
 func _draw_quilt(control: Control, box: StyleBoxTexture) -> void:
@@ -888,6 +879,54 @@ static func _humanize_patch(id: String) -> String:
 		if not part.is_empty():
 			words.append(part.capitalize())
 	return " ".join(words)
+
+
+## The card's illustration window: the authored picture (or hero emblem, or a
+## drawn cream/stitched paper patch) painted inside its own sewn seam. It never
+## takes pointer input or focus, so the card's own click and every button keep
+## working exactly as before.
+class _CardIllustration extends Control:
+	@export var picture: Texture2D
+	@export var owner_color: Color = Color.WHITE
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	## True when a real authored picture or hero emblem is bound.
+	func has_picture() -> bool:
+		return picture != null
+
+	func _draw() -> void:
+		var rect := Rect2(Vector2.ZERO, size)
+		draw_rect(rect, Color("#f1e6cf"))
+		if picture != null:
+			var art_size: Vector2 = picture.get_size()
+			if art_size.x > 0.0 and art_size.y > 0.0:
+				var fit: float = minf(rect.size.x / art_size.x, rect.size.y / art_size.y)
+				var target: Vector2 = art_size * fit
+				draw_texture_rect(picture, Rect2((rect.size - target) * 0.5, target), false)
+		else:
+			# Drawn paper fallback: an owner-felt cross-stitch on cream.
+			draw_rect(rect.grow(-8.0), Color(owner_color, 0.16))
+			var center: Vector2 = rect.size * 0.5
+			var reach: float = minf(rect.size.x, rect.size.y) * 0.3
+			draw_dashed_line(center - Vector2(reach, 0.0), center + Vector2(reach, 0.0),
+				owner_color, 2.0, 5.0)
+			draw_dashed_line(center - Vector2(0.0, reach), center + Vector2(0.0, reach),
+				owner_color, 2.0, 5.0)
+		# Dark felt edge and a cream running stitch around the patch.
+		draw_rect(rect, Color("#3b2f2a"), false, 3.0)
+		var inner: Rect2 = rect.grow(-6.0)
+		draw_dashed_line(inner.position, Vector2(inner.end.x, inner.position.y),
+			Color("#f1e6cf", 0.9), 2.0, 7.0)
+		draw_dashed_line(Vector2(inner.end.x, inner.position.y), inner.end,
+			Color("#f1e6cf", 0.9), 2.0, 7.0)
+		draw_dashed_line(inner.end, Vector2(inner.position.x, inner.end.y),
+			Color("#f1e6cf", 0.9), 2.0, 7.0)
+		draw_dashed_line(Vector2(inner.position.x, inner.end.y), inner.position,
+			Color("#f1e6cf", 0.9), 2.0, 7.0)
 
 
 ## Owner color patch (sewn stripe at top of card)
