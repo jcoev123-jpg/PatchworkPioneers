@@ -830,6 +830,12 @@ func _sync_battle() -> void:
 		panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		panel.mouse_entered.connect(entered)
 		panel.mouse_exited.connect(exited)
+	# Enemy Bleed can tick before ANY combo card is played. At live battle
+	# admission, share this roster-bound gauge with the matching round flow,
+	# including when the Spool/Snip card is only drawn on a later turn.
+	# _share_gauge retains the unbound/foreign-roster fail-closed checks.
+	if app._combo_battle_current():
+		_share_gauge(app.party, app.enemies, "")
 	_refresh()
 
 

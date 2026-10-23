@@ -232,6 +232,7 @@ func _run() -> void:
 			_check(_snapshot() == before, "rebuild and stale callback preserve rules state")
 			await _return()
 	await _combo_route_case()
+	await _combo_precast_bleed()
 	await _combo_three_slots()
 	await _combo_forecasts()
 	await _combo_commits()
@@ -1316,6 +1317,132 @@ func _combo_route_case() -> void:
 ## Find an actual first-node Fight with three authored enemies. Advance the
 ## same seeded map and encounter RNG that the app uses, never fabricate a
 ## third live target in the mounted roster.
+## Bleed from a genuine Seamstress hand attack must charge the battle's
+## SAME gauge even before the first Pin/Unravel combo is ever committed.
+## The single missing charge makes Spool (3) fall short of Snip's 8/2 gate.
+func _combo_precast_bleed() -> void:
+	var fixture := _combo_route_fixture()
+	_check(not fixture.is_empty(), "pre-combo Bleed fixture has a real routed Fight")
+	if fixture.is_empty():
+		return
+	app.run_seed = fixture.seed
+	await _click(app.route_button)
+	var fight: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == fixture.fight:
+			fight = button
+	_check(fight != null and not fight.disabled, "pre-combo Bleed enters via enabled Fight control")
+	if fight == null:
+		await _return()
+		return
+	await _click(fight)
+	_check(app.deck != null and app._current_act_battle()
+		and app.round_flow != null and app.enemies != null,
+		"real routed combat and enemy phase exist before any combo")
+	if app.deck == null or not app._current_act_battle():
+		return
+	# Durable original enemy slot: real Bleed, Spool and Snip can all resolve
+	# without accidentally ending this routed combat early.
+	app.enemies._enemies[0]["max_hp"] = 100
+	app.enemies._enemies[0]["hp"] = 100
+	_check(app.enemies.gain_block(1, 30), "real target survives pre-combo Bleed and follow-up")
+	var snip := "tinker_snip_the_seam"
+	var spool := "tinker_spool_launcher"
+	app.deck.hand.assign(["seamstress_prick", snip])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	var held = _panel(snip)
+	var seamstress_card = _panel("seamstress_prick")
+	var gauge = presenter._unravel
+	var flow = app.round_flow
+	_check(held != null and seamstress_card != null
+		and presenter._bindings.has(held) and presenter._bindings.has(seamstress_card)
+		and app.deck.hand.has(snip), "routed real hand holds combo alongside playable Bleed")
+	_check(gauge != null and gauge._bound_enemies == app.enemies
+		and gauge.get_snapshot(1).get("gauge", -1) == 0
+		and flow._unravel == gauge, "round flow shares the exact validated gauge before any cast")
+	if held == null or seamstress_card == null or gauge == null:
+		await _return()
+		return
+	# A physical Seamstress Prick applies Bleed, with NO combo committed yet.
+	await _click(seamstress_card)
+	await _click(app.get_node("LiveEnemyRoster")._labels[0])
+	_check(presenter.last_event.get("ok", false)
+		and app.enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 3
+		and app.deck.hand.has(snip) and app.deck.discard_pile.count(snip) == 0
+		and gauge.get_snapshot(1)["gauge"] == 0,
+		"confirmed Seamstress attack applies Bleed while held Snip remains uncast")
+	var hp_before_tick: int = app.enemies.get_enemy(1)["hp"]
+	var previous_turn: int = app.enemy_intents._turn_index
+	await _click(app.end_turn_button)
+	_check(app.enemy_intents._turn_index == previous_turn + 1 and app.deck.turn_active,
+		"real End Turn advances an enemy owner Bleed boundary")
+	_check(app.enemies.get_enemy(1)["hp"] == hp_before_tick - 3
+		and app.enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 2
+		and not app.enemies.is_slain(1), "real enemy suffers one surviving Bleed tick")
+	_check(app.round_flow == flow and flow._unravel == gauge
+		and presenter._unravel == gauge and gauge.get_snapshot(1)["gauge"] == 1
+		and gauge.get_snapshot(1)["threshold"] == 8,
+		"exactly one Unravel earned from Bleed BEFORE any combo cast")
+	# Same battle, next hand: Spool adds 3 to that original Bleed charge.
+	# This is the exact half-threshold where Snip must be empowered.
+	app.deck.hand.assign([spool, snip])
+	app.deck.combat_state.energy = 3
+	app._refresh_hand()
+	await _frames()
+	_check(_panel(spool) != null and _panel(snip) != null
+		and flow._unravel == gauge and presenter._unravel == gauge,
+		"hand rebuild preserves the identical round-flow/presenter gauge")
+	if _panel(spool) == null or _panel(snip) == null:
+		await _return()
+		return
+	await _click(_panel(spool))
+	await _click(app.get_node("LiveEnemyRoster")._labels[0])
+	_check(presenter.last_event.get("ok", false)
+		and presenter.last_event["hits"][0]["unravel"] == 3
+		and gauge.get_snapshot(1)["gauge"] == 4 and not gauge.get_snapshot(1)["skip_pending"]
+		and presenter._play._tinker._consumed,
+		"committed Spool adds three to the earlier Bleed tick, reaching exactly 4/8")
+	var forecast := _combo_oracle(snip)
+	var expected: Dictionary = {}
+	for hit in forecast.get("targets", []):
+		if int(hit["position"]) == 1:
+			expected = hit
+	_check(forecast.get("playable", false) and not expected.is_empty()
+		and expected.get("unravel_before", {}).get("gauge") == 4
+		and expected.get("unravel_before", {}).get("threshold") == 8
+		and expected.get("conditional_empowered", false)
+		and expected.get("tinker_first_attack_bonus", -1) == 0
+		and expected.get("damage", 0) == 15,
+		"Snip forecast empowers precisely at CURRENT half-threshold after Bleed plus Spool")
+	var before_preview := _combo_state()
+	seed(72891)
+	var global_next := randi()
+	seed(72891)
+	await _hover(_panel(snip))
+	_check(presenter.cue.is_visible_in_tree()
+		and presenter.cue.text == _combo_expected(snip, forecast)
+		and _combo_state() == before_preview and app.run_rng.state == before_preview[11],
+		"live held Snip preview reads the battle gauge without spending or run RNG")
+	await _key(KEY_ESCAPE)
+	_check(_combo_state() == before_preview and randi() == global_next,
+		"Snip preview plus cancel changes neither authorities nor global RNG")
+	await _key(KEY_P)
+	await _key(KEY_1)
+	_check(not expected.is_empty() and presenter.last_event.get("ok", false)
+		and presenter.last_event["hits"].size() == 1
+		and presenter.last_event["hits"][0]["damage"] == expected.get("damage")
+		and app.enemies.get_enemy(1)["hp"] == expected.get("hp_after")
+		and app.enemies.get_enemy(1)["block"] == expected.get("block_after"),
+		"authoritative empowered Snip hit matches its detached half-threshold HP/Block forecast")
+	_check(app.deck.hand.count(snip) == 0 and app.deck.discard_pile.count(snip) == before_preview[2].count(snip) + 1
+		and app.deck.energy == 1 and app.run_rng.state == before_preview[11]
+		and presenter._unravel == gauge and flow._unravel == gauge,
+		"real Snip commits one card/energy with unchanged RNG and gauge identity")
+	await _return()
+
+
 func _combo_three_fixture() -> Dictionary:
 	for value in range(1, 180):
 		var rng := RandomNumberGenerator.new()
