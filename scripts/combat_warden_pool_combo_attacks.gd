@@ -98,8 +98,15 @@ func can_play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# and living slot using CombatUnravel's own nonmutating guard.
 	if not unravel._validate_roster_and_position(enemies, target_position):
 		return false
-	if not _valid_gauge(unravel.get_snapshot(target_position)):
+	var gauge: Dictionary = unravel.get_snapshot(target_position)
+	if not _valid_gauge(gauge):
 		return false
+	if effects.has("unravel"):
+		var added: int = effects["unravel"]
+		if active_patches != null:
+			added += active_patches.card_unravel_bonus(WARDEN_ID, card_id)
+		if gauge["gauge"] > CombatStatuses.MAX_INT - added:
+			return false
 
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
 	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
@@ -132,6 +139,11 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
 	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
+	var unravel_charge: int = 0
+	if effects.has("unravel"):
+		unravel_charge = int(effects["unravel"])
+		if active_patches != null:
+			unravel_charge += active_patches.card_unravel_bonus(WARDEN_ID, card_id)
 
 	var base_damage: int = effects["damage"] + bonus + patch_damage
 	var attacker_statuses: Dictionary = attacker.get("statuses", {})
@@ -156,7 +168,7 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		if effects.has("pinned"):
 			applied_pin = pinned.pin_enemy(enemies, target_position, WARDEN_ID)
 		else:
-			charged = effects["unravel"]
+			charged = unravel_charge
 			unravel.apply_unravel(enemies, target_position, charged)
 
 	# Button Eye: once-per-combat rider applied after all hits of the first successful attack.

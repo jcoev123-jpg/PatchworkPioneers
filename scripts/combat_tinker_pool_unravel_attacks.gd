@@ -405,6 +405,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		unravel_amount = 0
 	else:
 		unravel_amount = int(effects.get("unravel", 0))
+		if _patches != null and unravel_amount > 0:
+			unravel_amount += _patches.card_unravel_bonus("tinker", card_id)
 
 	var patch_damage: int = 0 if _patches == null else _patches.damage_bonus("tinker")
 	var patch_first_status: Dictionary = {} if _patches == null else _patches.exposed_for_first_hit("tinker")
