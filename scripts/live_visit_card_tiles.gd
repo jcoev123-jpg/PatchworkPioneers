@@ -1,0 +1,1025 @@
+class_name LiveVisitCardTiles
+extends Control
+## Passive illustrated card selection for the real Shop and Rest visits.
+##
+## A new Shop/Rest view is mounted by the app itself. This node finds that view,
+## leaves its validated controls untouched and mounts one scrollable gallery of
+## sewn card tiles beside it:
+##   * Shop card offers (five authored listings, price and sold state),
+##   * every owned deck copy for the single paid removal, by occurrence index,
+##   * every permitted Rest upgrade with its before/after cost and effects.
+##
+## A tile only asks the visit's EXISTING OptionButton to select one canonical
+## row. The original Buy / Remove / Upgrade button still performs the one
+## authoritative transaction, with its own full revalidation. This class never
+## spends gold or scraps, never changes the deck, never draws RNG and never
+## advances the route. It only displays state that the visit and its services
+## already published.
+##
+## The face is the reward card's own: its sewn frame, illustration-then-emblem
+## art lookup, drawn paper fallback and human-readable rules text.
+
+## Reward card presentation, reused instead of duplicated. A detached instance
+## is used purely as a drawing/label factory; it is never mounted or opened.
+const REWARD := preload("res://scripts/live_run_card_reward_choice_panel.gd")
+
+const FELT_FALLBACK := Color("#736451")
+const PAPER := Color("#e8dcc4")
+const DARK_INK := Color("#2b2624")
+const HINT_INK := Color("#5b5147")
+const SELECTED_INK := Color("#9e3d30")
+
+## Gallery geometry as anchors, so it follows the 1280x720 window instead of
+## hard-coding pixels. The visit column is reflowed to the left in _mount.
+const GALLERY_ANCHORS := {"left": 0.42, "right": 0.99, "top": 0.02, "bottom": 0.98}
+const VIEW_POSITION := Vector2(18, 22)
+## The masked Rest upgrade dropdown no longer needs its 640px selector width;
+## freeing that width keeps the whole two-column visit inside the viewport.
+const MASKED_SELECTOR_WIDTH := 480.0
+const TILE_MIN_HEIGHT := 184.0
+const TILE_ART_SIZE := Vector2(96, 80)
+const OWNER_STRIP_HEIGHT := 20.0
+
+var _app: Node = null
+var _face: Control = null
+var _kind: String = ""
+var _view: Control = null
+var _view_id: int = 0
+var _gallery: PanelContainer = null
+var _scroll: ScrollContainer = null
+var _list: VBoxContainer = null
+var _summary: Label = null
+var _tiles: Array[Dictionary] = []
+var _masked: Array[Dictionary] = []
+var _epoch: int = 0
+var _signature: String = ""
+var _selector_offer: OptionButton = null
+var _selector_remove: OptionButton = null
+var _selector_upgrade: OptionButton = null
+var _buy: Button = null
+var _remove: Button = null
+var _upgrade: Button = null
+
+
+func _ready() -> void:
+	# A passive overlay: it never takes pointer input itself, and only its
+	# gallery panel (a child, on the far side of the visit) is interactive.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	focus_mode = Control.FOCUS_NONE
+	_app = get_parent()
+	_face = REWARD.new()
+
+
+func _exit_tree() -> void:
+	_teardown()
+	if is_instance_valid(_face):
+		_face.free()
+	_face = null
+	_app = null
+
+
+## The app builds a visit synchronously; this runs after that same frame, so
+## every option row the visit publishes is already populated.
+func _process(_delta: float) -> void:
+	_sync()
+
+
+func _sync() -> void:
+	if _app == null or not is_instance_valid(_app):
+		_teardown()
+		return
+	var visit := _locate_visit()
+	if visit.is_empty():
+		_teardown()
+		return
+	if _view != visit["view"] or _kind != visit["kind"]:
+		_teardown()
+		_mount(visit["kind"], visit["view"])
+		return
+	if not _visit_current():
+		_teardown()
+		return
+	if _content_signature() != _signature:
+		_rebuild()
+	else:
+		_paint_selection()
+
+
+## The two real visit views are the only VBoxContainer children of the app that
+## carry their canonical anchor controls. A hidden or replaced view is released.
+func _locate_visit() -> Dictionary:
+	for child in _app.get_children():
+		if not (child is VBoxContainer) or not child.is_visible_in_tree():
+			continue
+		if child.get_node_or_null("RestStitchCost") != null:
+			return {"kind": "Rest", "view": child}
+		if child.get_node_or_null("ShopPatchSewing") != null:
+			return {"kind": "Shop", "view": child}
+	return {}
+
+
+func _visit_current() -> bool:
+	if _gallery == null or _view == null or not is_instance_valid(_view):
+		return false
+	if _view_id != _view.get_instance_id() or not _view.is_visible_in_tree():
+		return false
+	var visit := _locate_visit()
+	return not visit.is_empty() and visit["view"] == _view
+
+
+# --- mounting -------------------------------------------------------------
+
+func _mount(kind: String, view: Control) -> void:
+	_kind = kind
+	_view = view
+	_view_id = view.get_instance_id()
+	_epoch += 1
+	_collect_controls(view)
+	var inherited_focus := _prepare_controls()
+	_reflow_view(view)
+	# The runtime visit view is appended after this scene child, so lift the
+	# gallery above it once per visit; nothing else in the app is reordered.
+	var parent := get_parent()
+	if parent != null:
+		parent.move_child(self, parent.get_child_count() - 1)
+	_mount_gallery()
+	_rebuild()
+	if inherited_focus:
+		call_deferred("_grab_first_tile", _epoch)
+
+
+## The visit's own control identities. The dropdown that belongs to an action
+## row is the direct-child OptionButton immediately above that action button.
+func _collect_controls(view: Control) -> void:
+	_selector_offer = null
+	_selector_remove = null
+	_selector_upgrade = null
+	_buy = null
+	_remove = null
+	_upgrade = null
+	var previous_option: OptionButton = null
+	for child in view.get_children():
+		if child is OptionButton:
+			previous_option = child
+		elif child is Button:
+			var text: String = (child as Button).text
+			if text.begins_with("Buy selected card"):
+				_buy = child
+				_selector_offer = previous_option
+			elif text.begins_with("Remove selected card"):
+				_remove = child
+				_selector_remove = previous_option
+			elif text.begins_with("Upgrade selected card"):
+				_upgrade = child
+				_selector_upgrade = previous_option
+
+
+## The original dropdowns keep their enabled/visible/selected contract, because
+## the app's commits still validate it. They are only made invisible and inert
+## to pointer and keyboard input; the gallery is their visible replacement.
+## Returns true when the app had focused one of them, so its keyboard focus can
+## move to the first visible tile instead of being lost.
+func _prepare_controls() -> bool:
+	_masked.clear()
+	var inherited_focus := false
+	for selector in [_selector_offer, _selector_remove, _selector_upgrade]:
+		if selector == null or not is_instance_valid(selector):
+			continue
+		if selector == _selector_upgrade:
+			selector.custom_minimum_size = Vector2(MASKED_SELECTOR_WIDTH,
+				minf(selector.custom_minimum_size.y, 40.0))
+		_masked.append({
+			"selector": selector,
+			"modulate": selector.modulate,
+			"mouse_filter": selector.mouse_filter,
+			"focus_mode": selector.focus_mode,
+		})
+		selector.modulate = Color(1.0, 1.0, 1.0, 0.0)
+		selector.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		selector.focus_mode = Control.FOCUS_NONE
+		selector.tooltip_text = "Cards are shown in the visit card gallery"
+		if selector.has_focus():
+			selector.release_focus()
+			inherited_focus = true
+	return inherited_focus
+
+
+func _restore_controls() -> void:
+	for entry in _masked:
+		var selector = entry["selector"]
+		if not is_instance_valid(selector):
+			continue
+		selector.modulate = entry["modulate"]
+		selector.mouse_filter = entry["mouse_filter"]
+		selector.focus_mode = entry["focus_mode"]
+	_masked.clear()
+
+
+## Keep the validated visit controls on the left half; the gallery owns the
+## right half. Sizes stay the visit's own minimum size, so nothing clips.
+func _reflow_view(view: Control) -> void:
+	view.anchor_left = 0.0
+	view.anchor_top = 0.0
+	view.anchor_right = 0.0
+	view.anchor_bottom = 0.0
+	view.size = view.get_combined_minimum_size()
+	view.position = VIEW_POSITION
+
+
+func _mount_gallery() -> void:
+	_gallery = PanelContainer.new()
+	_gallery.name = "VisitCardGallery"
+	_gallery.mouse_filter = Control.MOUSE_FILTER_STOP
+	_gallery.focus_mode = Control.FOCUS_NONE
+	_gallery.anchor_left = 0.0
+	_gallery.anchor_right = GALLERY_ANCHORS["right"]
+	_gallery.anchor_top = GALLERY_ANCHORS["top"]
+	_gallery.anchor_bottom = GALLERY_ANCHORS["bottom"]
+	# Start beside the reflowed visit column instead of at a fixed fraction, so
+	# a wider or narrower visit can never hide its own buttons under the tiles.
+	var window_width: float = size.x if size.x > 0.0 else 1280.0
+	var right_edge: float = window_width * float(GALLERY_ANCHORS["right"])
+	var view_right: float = _view.position.x + _view.size.x if _view != null else 0.0
+	var left_edge: float = maxf(window_width * float(GALLERY_ANCHORS["left"]), view_right + 16.0)
+	left_edge = minf(left_edge, right_edge - 360.0)
+	_gallery.offset_left = left_edge
+	_gallery.offset_right = 0.0
+	_gallery.offset_top = 0.0
+	_gallery.offset_bottom = 0.0
+	var board := StyleBoxFlat.new()
+	board.bg_color = PAPER
+	board.border_color = Color("#5c4a3c")
+	board.set_border_width_all(3)
+	board.set_corner_radius_all(9)
+	board.content_margin_left = 10
+	board.content_margin_right = 10
+	board.content_margin_top = 8
+	board.content_margin_bottom = 8
+	board.shadow_color = Color(0.02, 0.02, 0.03, 0.55)
+	board.shadow_size = 9
+	_gallery.add_theme_stylebox_override("panel", board)
+	add_child(_gallery)
+
+	var column := VBoxContainer.new()
+	column.name = "GalleryColumn"
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override("separation", 6)
+	_gallery.add_child(column)
+
+	var title := Label.new()
+	title.name = "GalleryTitle"
+	title.text = "%s • CARD GALLERY" % _kind.to_upper()
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title.add_theme_color_override("font_color", DARK_INK)
+	title.add_theme_font_size_override("font_size", 20)
+	column.add_child(title)
+	_summary = Label.new()
+	_summary.name = "GalleryHint"
+	_summary.text = ("Select only — the Shop's own Buy and Remove buttons still commit."
+		if _kind == "Shop" else "Select only — the Rest's own Upgrade button still commits.")
+	_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_summary.add_theme_color_override("font_color", HINT_INK)
+	_summary.add_theme_font_size_override("font_size", 14)
+	column.add_child(_summary)
+
+	_scroll = ScrollContainer.new()
+	_scroll.name = "GalleryScroll"
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	# Keyboard focus inside the gallery scrolls its own card into view.
+	_scroll.follow_focus = true
+	column.add_child(_scroll)
+	_list = VBoxContainer.new()
+	_list.name = "GalleryTiles"
+	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_list.add_theme_constant_override("separation", 6)
+	_scroll.add_child(_list)
+
+
+# --- content --------------------------------------------------------------
+
+func _content_signature() -> String:
+	var parts := PackedStringArray([_kind, str(_view_id)])
+	for selector in [_selector_offer, _selector_remove, _selector_upgrade]:
+		if selector == null or not is_instance_valid(selector):
+			parts.append("-")
+			continue
+		parts.append("d%d:l%d:n%d" % [int(selector.disabled), int(selector.visible), selector.item_count])
+		for index in range(selector.item_count):
+			parts.append("%s|%s" % [str(selector.get_item_metadata(index)),
+				selector.get_item_text(index)])
+	if _kind == "Shop":
+		parts.append(_deck_signature(_run_deck()))
+		for card in _shop_stock_cards():
+			parts.append("%s:%s:%s" % [str(card.get("id", "")), str(card.get("price", -1)),
+				str(card.get("sold", false))])
+		parts.append("g%d" % _shop_gold())
+		parts.append("r%d" % _removal_count())
+	else:
+		parts.append(_deck_signature(_run_deck()))
+		parts.append(str(_app.get("run_stitch_descriptors")))
+		parts.append(str(_app.get("run_next_stitch_id")))
+	return "|".join(parts)
+
+
+## A cheap change detector: every owned copy in order, so a purchase, removal,
+## upgrade or replacement of one deck index still rebuilds the tiles.
+func _deck_signature(deck: Array) -> String:
+	var parts := PackedStringArray()
+	for card in deck:
+		parts.append(str(card))
+	return ",".join(parts)
+
+
+func _rebuild() -> void:
+	if _list == null or not is_instance_valid(_list):
+		return
+	for child in _list.get_children():
+		_list.remove_child(child)
+		child.queue_free()
+	_tiles.clear()
+	if _kind == "Shop":
+		_rebuild_shop()
+	else:
+		_rebuild_rest()
+	_signature = _content_signature()
+	_paint_selection()
+	_splice_focus()
+
+
+func _rebuild_shop() -> void:
+	var offers := _selector_offer
+	var removals := _selector_remove
+	if offers == null or not is_instance_valid(offers):
+		_add_note("No card listings are mounted for this Shop.")
+	else:
+		_add_section("Buy a card",
+			"Select a listing, then press the Shop's own Buy button to pay its quote.")
+		for row in range(offers.item_count):
+			_mount_tile(_offer_spec(row), row, "offer")
+	if removals == null or not is_instance_valid(removals):
+		_add_note("No owned-card removal is mounted for this Shop.")
+	else:
+		_add_section("Remove one owned card",
+			"Every owned copy has its own tile, including duplicate copies.")
+		for row in range(removals.item_count):
+			_mount_tile(_removal_spec(row), row, "removal")
+
+
+func _rebuild_rest() -> void:
+	var selector := _selector_upgrade
+	if selector == null or not is_instance_valid(selector):
+		_add_note("This Rest offers no card upgrade; Heal remains available.")
+		return
+	_add_section("Upgrade a card (instead of Heal)",
+		"Select one owned copy, then press the Rest's own Upgrade button.")
+	var rows := _rest_rows()
+	for row in range(selector.item_count):
+		_mount_tile(_upgrade_spec(selector, row, rows), row, "upgrade")
+
+
+func _add_section(text: String, hint: String) -> void:
+	var header := Label.new()
+	header.text = text
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_theme_color_override("font_color", DARK_INK)
+	header.add_theme_font_size_override("font_size", 17)
+	_list.add_child(header)
+	var subtitle := Label.new()
+	subtitle.text = hint
+	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	subtitle.add_theme_color_override("font_color", HINT_INK)
+	subtitle.add_theme_font_size_override("font_size", 13)
+	_list.add_child(subtitle)
+
+
+func _add_note(text: String) -> void:
+	var note := Label.new()
+	note.text = text
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	note.add_theme_color_override("font_color", HINT_INK)
+	note.add_theme_font_size_override("font_size", 15)
+	_list.add_child(note)
+
+
+# --- canonical data (read-only) -------------------------------------------
+
+## The Shop's own published stock. Nothing is generated or rolled here.
+func _shop_stock_cards() -> Array:
+	var purchases = _app.get("shop_purchases")
+	if purchases == null or not is_instance_valid(purchases):
+		return []
+	var stock = purchases.get_stock()
+	if not (stock is Dictionary) or not (stock.get("cards") is Array):
+		return []
+	return stock["cards"]
+
+
+func _shop_gold() -> int:
+	var gold = _app.get("session_gold")
+	return gold if gold is int else -1
+
+
+## The owned deck for this visit: the run's own single shared deck, which both
+## the Shop and Rest ledgers are required to match at commit time. Presentation
+## only; it never authorizes a row.
+func _owned_deck() -> Array:
+	return _run_deck()
+
+
+func _run_deck() -> Array:
+	var deck = _app.get("run_deck")
+	return deck if deck is Array else []
+
+
+func _removal_count() -> int:
+	var count = _app.get("run_removal_count")
+	return count if count is int else -1
+
+
+## This visit's canonical Rest upgrade rows, exactly as the app's own upgrade
+## transaction projects them. Read-only: a fresh service, no run mutation.
+func _rest_rows() -> Array:
+	var deck = _app.get("run_deck")
+	if not (deck is Array):
+		return []
+	var canonical := RunRestCardUpgrade.list_authored_choices(
+		deck, _app.get("run_stitch_descriptors"), _app.get("run_next_stitch_id"))
+	if canonical.get("ok") != true or not (canonical.get("choices") is Array):
+		return []
+	return canonical["choices"]
+
+
+## Presentation definition for any card that can legitimately be owned: an
+## authored starter, a starter/pool plus, a pool base, or a genuine stitched
+## composite from this run's descriptor ledger. Never guessed from the label.
+func _definition_for(card_id: String) -> Dictionary:
+	var definition := RunRestStitchCards.resolve_card_definition(card_id)
+	if not definition.is_empty():
+		return definition
+	var descriptors = _app.get("run_stitch_descriptors")
+	if descriptors is Dictionary and descriptors.has(card_id):
+		var descriptor: Variant = descriptors[card_id]
+		if descriptor is Dictionary and (descriptor as Dictionary).get("first_half") is Dictionary:
+			# A stitched composite is described by its descriptor, whose halves
+			# are already authored definitions; no new rules are invented.
+			var first: Dictionary = descriptor["first_half"]
+			var second: Dictionary = descriptor["second_half"]
+			return {
+				"id": card_id,
+				"display_name": String(descriptor.get("display_name", card_id)),
+				"owner": String(first.get("owner", "")),
+				"cost": int(descriptor.get("cost", 0)),
+				"from_positions": [],
+				"to_positions": [],
+				"target_kind": "none",
+				"effects": {},
+				"stitched_halves": "%s + %s" % [String(first.get("display_name", "")),
+					String(second.get("display_name", ""))],
+				"stitched_owners": descriptor.get("owners", []).duplicate(),
+			}
+	return {}
+
+
+# --- tile specifications --------------------------------------------------
+
+func _offer_spec(row: int) -> Dictionary:
+	var selector := _selector_offer
+	var metadata: Variant = selector.get_item_metadata(row)
+	var card_id: String = metadata if metadata is String else ""
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	var offer := _stock_offer_for(row, card_id)
+	var price: int = int(offer.get("price", -1))
+	var sold: bool = offer.get("sold", false) == true
+	var meta := "Price quoted by this Shop"
+	if sold:
+		meta = "SOLD • %d gold" % price
+	elif price >= 0:
+		meta = "%d gold • you have %d" % [price, _shop_gold()]
+	return {
+		"card_id": card_id,
+		"art_id": card_id,
+		"owner": String(definition.get("owner", "")),
+		"title": String(definition.get("display_name", card_id if not card_id.is_empty() else "Listing %d" % (row + 1))),
+		"meta": meta,
+		"effects": _rules_text(definition),
+	}
+
+
+func _stock_offer_for(row: int, card_id: String) -> Dictionary:
+	var stock := _shop_stock_cards()
+	if row >= 0 and row < stock.size() and String(stock[row].get("id", "")) == card_id:
+		return stock[row]
+	for card: Dictionary in stock:
+		if String(card.get("id", "")) == card_id:
+			return card
+	return {}
+
+
+func _removal_spec(row: int) -> Dictionary:
+	# Identity comes from the visit's authoritative owned deck by OCCURRENCE
+	# index, never from the visible dropdown label (duplicates share a label).
+	var deck := _owned_deck()
+	var card_id: String = String(deck[row]) if row >= 0 and row < deck.size() else ""
+	var definition := _definition_for(card_id)
+	var copies := 0
+	for owned in deck:
+		if String(owned) == card_id:
+			copies += 1
+	var occurrence := 0
+	for index in range(mini(row + 1, deck.size())):
+		if String(deck[index]) == card_id:
+			occurrence += 1
+	var owner_text := _owner_text(definition, card_id)
+	var meta := "Deck card #%d" % (row + 1)
+	if copies > 1:
+		meta += " • copy %d of %d" % [occurrence, copies]
+	if not card_id.is_empty():
+		meta += " • removal costs %d gold" % _removal_quote()
+	return {
+		"card_id": card_id,
+		"art_id": card_id,
+		"owner": String(definition.get("owner", "")),
+		"owner_text": owner_text,
+		"title": String(definition.get("display_name", card_id)),
+		"meta": meta,
+		"effects": _rules_text(definition),
+	}
+
+
+func _removal_quote() -> int:
+	var visit = _app.get("shop_visit")
+	if visit != null and is_instance_valid(visit):
+		return int(visit.quote())
+	return -1
+
+
+func _upgrade_spec(selector: OptionButton, row: int, rows: Array) -> Dictionary:
+	# The selector's metadata is the canonical zero-based deck index.
+	var metadata: Variant = selector.get_item_metadata(row)
+	var entry: Dictionary = {}
+	for candidate: Dictionary in rows:
+		if candidate.get("index") == metadata:
+			entry = candidate
+			break
+	if entry.is_empty():
+		# A forged or stale row carries no canonical projection; show an inert
+		# placeholder instead of inventing an identity from its label.
+		return {
+			"card_id": "",
+			"art_id": "",
+			"owner": "",
+			"title": "Unavailable selection",
+			"meta": "This row no longer matches the Rest's canonical choices.",
+			"effects": "",
+		}
+	var base_id := String(entry.get("base_id", ""))
+	var plus_id := String(entry.get("plus_id", ""))
+	var base_definition := _definition_for(base_id)
+	var plus_definition := _definition_for(plus_id)
+	var owner := String(entry.get("owner", base_definition.get("owner", "")))
+	var before_cost: int = int(entry.get("cost", base_definition.get("cost", 0)))
+	var after_cost: int = int(entry.get("plus_cost", plus_definition.get("cost", 0)))
+	var base_name := String(entry.get("display_name", base_definition.get("display_name", base_id)))
+	var plus_name := String(entry.get("plus_display_name", plus_definition.get("display_name", plus_id)))
+	var deck_index: int = int(metadata) if metadata is int else row
+	return {
+		"card_id": base_id,
+		"art_id": base_id,
+		"owner": owner,
+		"title": "%s → %s" % [base_name, plus_name],
+		"meta": "Deck card #%d • cost %d → %d energy" % [deck_index + 1, before_cost, after_cost],
+		"effects": "Before: %s\nAfter: %s" % [_effects_text(entry.get("effects", {}), base_definition),
+			_effects_text(entry.get("plus_effects", {}), plus_definition)],
+	}
+
+
+## The reward card's own human-readable rules block, line for line.
+func _rules_text(definition: Dictionary) -> String:
+	if definition.is_empty():
+		return "No authored description for this card."
+	if definition.get("stitched_halves") is String:
+		return "Stitched halves: %s" % definition["stitched_halves"]
+	return _face._format_rules(definition)
+
+
+## Just the effect sentence of the same human-readable block, used for the
+## Rest tile's before/after comparison.
+func _effects_text(effects: Variant, definition: Dictionary) -> String:
+	if not (effects is Dictionary) or (effects as Dictionary).is_empty():
+		return "no effect"
+	var rules_definition: Dictionary = definition.duplicate(true)
+	if rules_definition.is_empty():
+		rules_definition = {"effects": (effects as Dictionary).duplicate(true)}
+	var rendered: String = _face._format_rules(rules_definition)
+	var lines := String(rendered).split("\n")
+	if lines.size() >= 3 and not lines[2].is_empty():
+		return lines[2]
+	return "no effect"
+
+
+func _owner_text(definition: Dictionary, card_id: String) -> String:
+	if definition.get("stitched_owners") is Array:
+		var names: Array[String] = []
+		for owner in definition["stitched_owners"]:
+			names.append(String(owner).capitalize())
+		if not names.is_empty():
+			return " / ".join(PackedStringArray(names))
+	var owner := String(definition.get("owner", ""))
+	return owner.capitalize() if not owner.is_empty() else card_id.replace("_", " ").capitalize()
+
+
+# --- tile presentation ----------------------------------------------------
+
+## A full sewn card face built exactly like the reward card: owner felt strip,
+## authored illustration (then hero emblem, then drawn paper patch), name and
+## the reward panel's own rules text. Presentation only; no game state.
+##
+## The returned "tile" is the layout element to mount: its sewn panel grows with
+## its own readable text, while the transparent "button" laid over the face is
+## the single mouse/keyboard target.
+func build_card_face(spec: Dictionary) -> Dictionary:
+	var panel := PanelContainer.new()
+	panel.name = "SewnFace"
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.focus_mode = Control.FOCUS_NONE
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.custom_minimum_size = Vector2(0, TILE_MIN_HEIGHT)
+	var owner := String(spec.get("owner", ""))
+	var art_id := String(spec.get("art_id", spec.get("card_id", "")))
+	_face._style_card(panel, owner, false)
+
+	var row := HBoxContainer.new()
+	row.name = "FaceRow"
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 10)
+	panel.add_child(row)
+
+	var picture := LiveRunCardRewardChoicePanel._CardIllustration.new()
+	picture.name = "CardArt"
+	picture.picture = REWARD._card_art_texture(art_id, owner)
+	picture.owner_color = LiveRunCardRewardChoicePanel.OWNER_COLORS.get(owner, FELT_FALLBACK)
+	picture.custom_minimum_size = TILE_ART_SIZE
+	picture.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(picture)
+
+	var text_column := VBoxContainer.new()
+	text_column.name = "FaceText"
+	text_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	text_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_column.add_theme_constant_override("separation", 2)
+	row.add_child(text_column)
+
+	var strip := LiveRunCardRewardChoicePanel._OwnerPatch.new()
+	strip.name = "OwnerPatch"
+	strip.owner_color = LiveRunCardRewardChoicePanel.OWNER_COLORS.get(owner, FELT_FALLBACK)
+	strip.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
+	text_column.add_child(strip)
+	var owner_label: Label = _face._card_label("OwnerLabel",
+		String(spec.get("owner_text", owner.capitalize() if not owner.is_empty() else "Unassigned")), 13)
+	owner_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	owner_label.add_theme_color_override("font_color",
+		LiveRunCardRewardChoicePanel.owner_ink(owner))
+	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	strip.add_child(owner_label)
+
+	var title_label: Label = _face._card_label("TileName", String(spec.get("title", "")), 19)
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text_column.add_child(title_label)
+	var meta_label: Label = _face._card_label("TileMeta", String(spec.get("meta", "")), 14)
+	meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	meta_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	meta_label.add_theme_color_override("font_color", HINT_INK)
+	text_column.add_child(meta_label)
+	var effects_label: Label = _face._card_label("TileEffects", String(spec.get("effects", "")), 13)
+	effects_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	effects_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text_column.add_child(effects_label)
+
+	var selected_label := Label.new()
+	selected_label.name = "TileSelected"
+	selected_label.text = "SELECTED"
+	selected_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	selected_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	selected_label.add_theme_color_override("font_color", SELECTED_INK)
+	selected_label.add_theme_font_size_override("font_size", 13)
+	selected_label.layout_mode = 2
+	selected_label.visible = false
+	text_column.add_child(selected_label)
+
+	# The transparent click/focus target covers the panel's own content area, so
+	# the sewn border and the readable text keep their exact reward-card look.
+	# It is added last and paints nothing: the face never gets hidden by a button
+	# style, and hover/focus still show through the sewn frame underneath.
+	var button := Button.new()
+	button.name = "TileButton"
+	button.focus_mode = Control.FOCUS_ALL
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	button.text = ""
+	button.flat = true
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	panel.add_child(button)
+	_face._add_focus_stitch(button)
+	return {
+		"tile": panel,
+		"button": button,
+		"panel": panel,
+		"picture": picture,
+		"owner_label": owner_label,
+		"title_label": title_label,
+		"meta_label": meta_label,
+		"effects_label": effects_label,
+		"selected_label": selected_label,
+	}
+
+
+func _mount_tile(spec: Dictionary, row: int, group: String) -> void:
+	var face := build_card_face(spec)
+	var button: Button = face["button"]
+	button.name = "Tile_%s_%d" % [group, row]
+	var record := {
+		"button": button,
+		"panel": face["panel"],
+		"picture": face["picture"],
+		"selected": face["selected_label"],
+		"row": row,
+		"group": group,
+		"owner": String(spec.get("owner", "")),
+		"hovered": false,
+		"focused": false,
+		"details": {
+			"group": group,
+			"row": row,
+			"card_id": String(spec.get("card_id", "")),
+			"owner": String(spec.get("owner", "")),
+			"owner_text": face["owner_label"].text,
+			"title": face["title_label"].text,
+			"meta": face["meta_label"].text,
+			"effects": face["effects_label"].text,
+		},
+	}
+	_tiles.append(record)
+	_list.add_child(face["tile"])
+	button.pressed.connect(_on_tile_pressed.bind(_epoch, button))
+	button.mouse_entered.connect(_on_tile_hover.bind(button, true))
+	button.mouse_exited.connect(_on_tile_hover.bind(button, false))
+	button.focus_entered.connect(_on_tile_focus.bind(button, true))
+	button.focus_exited.connect(_on_tile_focus.bind(button, false))
+	_apply_disabled(record)
+
+
+func _apply_disabled(record: Dictionary) -> void:
+	var selector := _selector_for(String(record["group"]))
+	var button: Button = record["button"]
+	button.disabled = selector == null or not is_instance_valid(selector) or selector.disabled
+
+
+func _selector_for(group: String) -> OptionButton:
+	match group:
+		"offer":
+			return _selector_offer
+		"removal":
+			return _selector_remove
+		"upgrade":
+			return _selector_upgrade
+	return null
+
+
+func _paint_selection() -> void:
+	for record in _tiles:
+		var button = record["button"]
+		if not is_instance_valid(button):
+			continue
+		_apply_disabled(record)
+		var selector := _selector_for(String(record["group"]))
+		var selected: bool = selector != null and is_instance_valid(selector) \
+			and selector.selected == int(record["row"])
+		var label: Label = record["selected"]
+		if label.visible != selected:
+			label.visible = selected
+			_paint_tile(record)
+
+
+func _paint_tile(record: Dictionary) -> void:
+	var panel = record["panel"]
+	if not is_instance_valid(panel):
+		return
+	var label: Label = record["selected"]
+	var active: bool = record["hovered"] or record["focused"] or label.visible
+	_face._style_card(panel, String(record["owner"]), active)
+
+
+## Keep Tab traversal on the visible tiles instead of the masked dropdowns, and
+## splice the visit's own action buttons into that chain. The app's remaining
+## neighbours are left exactly as it set them.
+func _splice_focus() -> void:
+	var chain: Array[Control] = []
+	var entry: Control = null
+	if _kind == "Shop":
+		for record in _tiles_of("offer"):
+			chain.append(record["button"])
+		if is_instance_valid(_buy):
+			chain.append(_buy)
+		for record in _tiles_of("removal"):
+			chain.append(record["button"])
+		if is_instance_valid(_remove):
+			chain.append(_remove)
+		entry = _app.get("shop_back_button")
+	else:
+		for record in _tiles_of("upgrade"):
+			chain.append(record["button"])
+		if is_instance_valid(_upgrade):
+			chain.append(_upgrade)
+		entry = _app.get("rest_heal_button")
+	if chain.is_empty():
+		return
+	for index in range(chain.size()):
+		var control := chain[index]
+		if index + 1 < chain.size():
+			control.focus_next = control.get_path_to(chain[index + 1])
+		if index > 0:
+			control.focus_previous = control.get_path_to(chain[index - 1])
+	# The visit's own entry button still exists and is the app's chain origin;
+	# hand its forward step to the first visible tile and back again.
+	if is_instance_valid(entry) and is_instance_valid(chain[0]):
+		entry.focus_next = entry.get_path_to(chain[0])
+		chain[0].focus_previous = chain[0].get_path_to(entry)
+
+
+func _tiles_of(group: String) -> Array:
+	var result: Array = []
+	for record in _tiles:
+		if String(record["group"]) == group and is_instance_valid(record["button"]):
+			result.append(record)
+	return result
+
+
+# --- interaction ----------------------------------------------------------
+
+func _on_tile_pressed(epoch: int, button: Variant) -> void:
+	if epoch != _epoch or not _visit_current():
+		return
+	var record := _record_for(button)
+	if record.is_empty():
+		return
+	var tile: Button = record["button"]
+	if not is_instance_valid(tile) or not tile.is_inside_tree() or not tile.is_visible_in_tree() \
+			or tile.disabled or not _gallery.is_ancestor_of(tile):
+		return
+	var selector := _selector_for(String(record["group"]))
+	if selector == null or not is_instance_valid(selector) or selector.disabled:
+		return
+	if not _view.is_ancestor_of(selector) or not selector.is_visible_in_tree():
+		return
+	var row := int(record["row"])
+	if row < 0 or row >= selector.item_count:
+		return
+	# The only side effect: the visit's own selector now holds this row. The
+	# app's tested handler runs exactly as for a real dropdown choice, and the
+	# original Buy/Remove/Upgrade button still owns the transaction.
+	selector.select(row)
+	selector.item_selected.emit(row)
+	_paint_selection()
+
+
+func _on_tile_hover(button: Variant, entered: bool) -> void:
+	var record := _record_for(button)
+	if record.is_empty():
+		return
+	record["hovered"] = entered
+	_paint_tile(record)
+
+
+func _on_tile_focus(button: Variant, entered: bool) -> void:
+	var record := _record_for(button)
+	if record.is_empty():
+		return
+	record["focused"] = entered
+	_paint_tile(record)
+	if entered and is_instance_valid(button):
+		_scroll_into_view(button)
+
+
+func _scroll_into_view(button: Control) -> void:
+	if _scroll == null or not is_instance_valid(_scroll):
+		return
+	_scroll.ensure_control_visible(button)
+	call_deferred("_defer_scroll_into_view", _epoch, button)
+
+
+## The app focused a dropdown that is now masked; move that keyboard focus to
+## the first visible tile so keyboard play continues from the same place.
+func _grab_first_tile(epoch: int) -> void:
+	if epoch != _epoch or not _visit_current() or _tiles.is_empty():
+		return
+	var first = _tiles[0]["button"]
+	if is_instance_valid(first) and not first.disabled and not first.has_focus():
+		first.grab_focus()
+
+
+func _defer_scroll_into_view(epoch: int, button: Variant) -> void:
+	if epoch != _epoch or _scroll == null or not is_instance_valid(_scroll) \
+			or not is_instance_valid(button):
+		return
+	_scroll.ensure_control_visible(button)
+
+
+func _record_for(button: Variant) -> Dictionary:
+	for record in _tiles:
+		if record["button"] == button:
+			return record
+	return {}
+
+
+# --- public read-only view (tests and audits) -----------------------------
+
+func gallery_kind() -> String:
+	return _kind
+
+
+func is_gallery_mounted() -> bool:
+	return _visit_current() and _gallery != null
+
+
+func gallery_panel() -> PanelContainer:
+	return _gallery
+
+
+func gallery_scroll() -> ScrollContainer:
+	return _scroll
+
+
+func offer_tiles() -> Array[Button]:
+	return _buttons(_tiles_of("offer"))
+
+
+func removal_tiles() -> Array[Button]:
+	return _buttons(_tiles_of("removal"))
+
+
+func upgrade_tiles() -> Array[Button]:
+	return _buttons(_tiles_of("upgrade"))
+
+
+func tile_row(tile: Variant) -> int:
+	var record := _record_for(tile)
+	return int(record.get("row", -1))
+
+
+## The mounted text and art facts of one tile, for audits. Detached copy.
+func tile_details(tile: Variant) -> Dictionary:
+	var record := _record_for(tile)
+	if record.is_empty():
+		return {}
+	var details: Dictionary = record["details"].duplicate(true)
+	var button = record["button"]
+	var picture = record["picture"]
+	details["disabled"] = button.disabled if is_instance_valid(button) else true
+	details["selected"] = record["selected"].visible if is_instance_valid(record["selected"]) else false
+	details["has_picture"] = picture.has_picture() if is_instance_valid(picture) else false
+	var texture: Texture2D = picture.picture if is_instance_valid(picture) else null
+	details["art_path"] = texture.resource_path if texture != null else ""
+	return details
+
+
+func _buttons(records: Array) -> Array[Button]:
+	var result: Array[Button] = []
+	for record in records:
+		if is_instance_valid(record["button"]):
+			result.append(record["button"])
+	return result
+
+
+# --- teardown -------------------------------------------------------------
+
+## A closed or replaced visit must leave no tiles, no focus neighbours and no
+## live callbacks. Freed buttons make every retained callable inert.
+func _teardown() -> void:
+	_epoch += 1
+	_restore_controls()
+	if is_instance_valid(_gallery):
+		if _gallery.get_parent() == self:
+			remove_child(_gallery)
+		_gallery.queue_free()
+	_gallery = null
+	_scroll = null
+	_list = null
+	_summary = null
+	_tiles.clear()
+	_selector_offer = null
+	_selector_remove = null
+	_selector_upgrade = null
+	_buy = null
+	_remove = null
+	_upgrade = null
+	_kind = ""
+	_view = null
+	_view_id = 0
+	_signature = ""

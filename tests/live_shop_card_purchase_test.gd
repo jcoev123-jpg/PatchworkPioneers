@@ -6,11 +6,6 @@ func _purchase_state() -> Array:
 	return [_shop_state(), app.shop_purchases.get_state(), app.shop_purchases.get_stock(), app.run_map.get_floors()]
 
 
-func _offer_key(code: Key) -> void:
-	_check(app.shop_offers.get_popup().visible, "stock popup is mounted and open")
-	await _key(code)
-
-
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
@@ -91,6 +86,10 @@ func _run() -> void:
 		_check(_purchase_state() == before and app.shop_view.visible, "old callbacks cannot buy or close newly mounted Shop")
 		if session == 0:
 			_check(app.session_gold < stock.cards[0].price and app.shop_buy_button.disabled, "natural victory cannot afford listing")
+			before = _purchase_state()
+			await _click_tile(_tile_for("offer", 2))
+			_check(_purchase_state() == before and app.shop_buy_button.disabled,
+				"unaffordable offer tile selects without spending and leaves Buy blocked")
 			buy.call()
 			await _click(app.shop_buy_button)
 			app.shop_buy_button.grab_focus()
@@ -160,38 +159,26 @@ func _run() -> void:
 			buy.call()
 			_check(_purchase_state() == wrong, "desynchronized deck rejects")
 			app.run_deck.pop_back()
-			# Select a non-first listing through the actual popup.
+			# Select a non-first listing through its real sewn offer tile.
+			var listing_tile = _tile_for("offer", 1)
+			before = _purchase_state()
 			if session == 2:
-				app.shop_offers.grab_focus()
-				await _key(KEY_SPACE)
-				await _offer_key(KEY_HOME)
-				await _offer_key(KEY_DOWN)
-				await _offer_key(KEY_ENTER)
+				await _select_tile_by_key(listing_tile)
 			else:
-				await _click(app.shop_offers)
-				var popup: PopupMenu = app.shop_offers.get_popup()
-				_check(popup.visible, "mouse opens real stock popup")
-				var point := Vector2(popup.position) + Vector2(popup.size.x * 0.5, popup.size.y * 0.3)
-				var motion := InputEventMouseMotion.new()
-				motion.position = point
-				root.push_input(motion, true)
-				await _frames()
-				for pressed in [true, false]:
-					var event := InputEventMouseButton.new()
-					event.position = point
-					event.button_index = MOUSE_BUTTON_LEFT
-					event.pressed = pressed
-					root.push_input(event, true)
-				await _frames()
-			_check(app.shop_offers.selected == 1, "focused popup selects second listing")
+				await _click_tile(listing_tile)
+			_check(app.shop_offers.selected == 1, "sewn offer tile selects the second listing")
+			_check(_purchase_state() == before, "tile selection alone cannot buy or alter stock")
 			var offer: Dictionary = stock.cards[1]
 			var expected_deck: Array = app.run_deck.duplicate()
 			expected_deck.append(offer.id)
 			var ledger: Dictionary = visit.get_state()
 			if session == 2:
-				app.shop_offers.grab_focus()
-				await _key(KEY_TAB)
-				_check(app.shop_buy_button.has_focus(), "Tab reaches Buy from stock selector")
+				listing_tile.grab_focus()
+				for step in range(4):
+					if app.shop_buy_button.has_focus():
+						break
+					await _key(KEY_TAB)
+				_check(app.shop_buy_button.has_focus(), "Tab reaches Buy from the stock tiles")
 				await _key(KEY_ENTER)
 			else:
 				await _click(app.shop_buy_button)
@@ -205,6 +192,15 @@ func _run() -> void:
 			ledger.gold = app.session_gold
 			_check(visit.get_state() == ledger and app.run_removal_count == 0 and visit.quote() == 75
 				and not app.shop_remove_button.disabled, "same visit preserves node/history/count/quote and can remove after Buy")
+			await _frames()
+			var sold_tile = _tile_for("offer", 1)
+			var sold_details: Dictionary = _visit_tiles().tile_details(sold_tile)
+			_check(sold_details.meta.begins_with("SOLD") and sold_details.selected,
+				"bought listing keeps one sewn tile, marked SOLD and visibly selected")
+			before = _purchase_state()
+			await _click_tile(sold_tile)
+			_check(_purchase_state() == before and app.shop_buy_button.disabled,
+				"re-selecting the sold tile cannot buy or charge again")
 			var after := _purchase_state()
 			buy.call()
 			app.shop_buy_button.disabled = false
@@ -333,15 +329,23 @@ func _test_stocked_pool_buy(target: String) -> void:
 			var prior_removals: int = app.run_removal_count
 			var original_deck: Array = app.run_deck.duplicate(true)
 			var selected_stock: Dictionary = listed.duplicate(true)
-			app.shop_offers.select(position)
-			app.shop_offers.item_selected.emit(position)
+			var pool_tile = _tile_for("offer", position)
+			before = _purchase_state()
+			if target == "warden":
+				await _click_tile(pool_tile)
+			else:
+				await _select_tile_by_key(pool_tile)
+			_check(_purchase_state() == before, "pool tile selection alone spends nothing")
 			_check(not app.shop_buy_button.disabled and app.shop_offers.get_item_text(position) ==
 				"%s | %d gold" % [paid.id, paid.price], "real offer selection enables precisely quoted Buy")
 			if target == "warden":
 				await _click(app.shop_buy_button)
 			else:
-				app.shop_offers.grab_focus()
-				await _key(KEY_TAB)
+				pool_tile.grab_focus()
+				for step in range(_visit_tiles().offer_tiles().size() + 2):
+					if app.shop_buy_button.has_focus():
+						break
+					await _key(KEY_TAB)
 				_check(app.shop_buy_button.has_focus(), "Thread Whip Buy is keyboard reachable")
 				await _key(KEY_ENTER)
 			var expected_deck: Array = original_deck + [paid.id]

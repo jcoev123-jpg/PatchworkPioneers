@@ -50,6 +50,43 @@ func _shop_state() -> Array:
 	return [_persistent(), app.run_removal_count, app.shop_visit.get_state()]
 
 
+## The one passive gallery scene child that mounts sewn tiles beside a visit.
+func _visit_tiles():
+	return app.get_node("LiveVisitCardTiles")
+
+
+func _tile_for(group: String, row: int):
+	var gallery = _visit_tiles()
+	var source: Array = gallery.offer_tiles() if group == "offer" \
+		else (gallery.removal_tiles() if group == "removal" else gallery.upgrade_tiles())
+	for tile in source:
+		if gallery.tile_row(tile) == row:
+			return tile
+	return null
+
+
+## Real pointer selection: the tile must be scrolled into the visible gallery
+## first, exactly as a player reaches a lower card.
+func _click_tile(tile) -> void:
+	_check(tile != null, "physical tile click requires a mounted tile")
+	if tile == null:
+		return
+	_visit_tiles().gallery_scroll().ensure_control_visible(tile)
+	await _frames()
+	await _click(tile)
+
+
+## Real keyboard selection: focus the tile, then Enter activates it.
+func _select_tile_by_key(tile) -> void:
+	_check(tile != null, "keyboard tile selection requires a mounted tile")
+	if tile == null:
+		return
+	tile.grab_focus()
+	await _frames()
+	_check(tile.has_focus(), "keyboard focus reaches the mounted tile")
+	await _key(KEY_ENTER)
+
+
 ## AC2: the physical Shop visit displays its committed stall scene behind the same usable
 ## controls, with a cover crop and no pointer or keyboard capture.
 func _check_shop_backdrop() -> int:
@@ -85,15 +122,40 @@ func _check_shop_backdrop() -> int:
 	return bed.get_instance_id()
 
 
-func _popup_key(code: Key) -> void:
-	var popup: PopupMenu = app.shop_cards.get_popup()
-	_check(popup.visible, "owned-card popup is open for physical input")
-	for pressed in [true, false]:
-		var event := InputEventKey.new()
-		event.keycode = code
-		event.pressed = pressed
-		root.push_input(event, true)
+## The tile face is the reward card's own. Cover all three authored render
+## priorities with a controlled synthetic ID: the card illustration, then the
+## owner emblem, then the drawn paper patch, and never assume art is absent.
+func _check_tile_art(gallery) -> void:
+	var authored: Dictionary = gallery.build_card_face({
+		"card_id": "warden_strike", "art_id": "warden_strike", "owner": "warden",
+		"title": "Strike", "meta": "probe", "effects": "probe"})
+	root.add_child(authored["tile"])
+	authored["tile"].size = Vector2(520, 200)
 	await _frames()
+	_check(authored["picture"].has_picture()
+		and authored["picture"].picture.resource_path == "res://assets/paper/cards/art/warden_strike.png",
+		"a tile for an illustrated card reuses the reward card's authored picture")
+	authored["tile"].free()
+	var emblem: Dictionary = gallery.build_card_face({
+		"card_id": "zz_synthetic_missing_art", "art_id": "zz_synthetic_missing_art", "owner": "warden",
+		"title": "Synthetic probe", "meta": "probe", "effects": "probe"})
+	root.add_child(emblem["tile"])
+	emblem["tile"].size = Vector2(520, 200)
+	await _frames()
+	_check(emblem["picture"].has_picture()
+		and emblem["picture"].picture.resource_path == "res://assets/paper/cards/emblem_warden.png",
+		"a card without its own art falls back to the owning hero's stitched emblem")
+	emblem["tile"].free()
+	var drawn: Dictionary = gallery.build_card_face({
+		"card_id": "zz_synthetic_missing_art", "art_id": "zz_synthetic_missing_art",
+		"owner": "synthetic_owner", "title": "Synthetic probe", "meta": "probe", "effects": "probe"})
+	root.add_child(drawn["tile"])
+	drawn["tile"].size = Vector2(520, 200)
+	await _frames()
+	_check(not drawn["picture"].has_picture() and drawn["title_label"].text == "Synthetic probe"
+		and drawn["tile"].get_global_rect().size.x > 0.0 and drawn["tile"].get_global_rect().size.y > 0.0,
+		"a card with neither picture nor emblem still mounts the drawn paper fallback")
+	drawn["tile"].free()
 
 
 func _run() -> void:
@@ -266,6 +328,57 @@ func _run() -> void:
 		_check(app.shop_purchases.is_valid() and app.shop_offers.item_count == 5, "routed Shop includes valid card buying stock")
 		for control in [app.shop_view, app.shop_label, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_continue_button, app.shop_back_button]:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "Shop control fits 1280x720")
+		var gallery = _visit_tiles()
+		_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Shop",
+			"real Shop mounts the passive visit card gallery")
+		var panel: Control = gallery.gallery_panel()
+		_check(is_instance_valid(panel) and panel.is_visible_in_tree()
+			and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect())
+			and is_instance_valid(gallery.gallery_scroll()),
+			"scrollable Shop gallery fits inside 1280x720")
+		_check(gallery.offer_tiles().size() == 5, "Shop gallery shows all five offer tiles")
+		_check(gallery.removal_tiles().size() == app.run_deck.size(),
+			"Shop gallery shows exactly one removal tile per owned occurrence")
+		var scroll: ScrollContainer = gallery.gallery_scroll()
+		var scroll_start: int = scroll.scroll_vertical
+		scroll.ensure_control_visible(gallery.removal_tiles().back())
+		await _frames()
+		_check(scroll.scroll_vertical > scroll_start
+			and Rect2(0, 0, 1280, 720).encloses(gallery.removal_tiles().back().get_global_rect()),
+			"the scrollable gallery reaches a lower owned card inside 1280x720")
+		for control in [app.shop_offers, app.shop_cards]:
+			_check(control.is_visible_in_tree() and not control.disabled and control.modulate.a == 0.0
+				and control.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and control.focus_mode == Control.FOCUS_NONE,
+				"masked Shop dropdown keeps its validated contract but takes no pointer or focus")
+		var stock: Array = app.shop_purchases.get_stock().cards
+		for index in range(gallery.offer_tiles().size()):
+			var tile = gallery.offer_tiles()[index]
+			var details: Dictionary = gallery.tile_details(tile)
+			var listing: Dictionary = stock[index]
+			var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(listing.id)
+			_check(gallery.tile_row(tile) == index and details.card_id == listing.id
+				and details.title == String(definition.get("display_name", listing.id))
+				and details.meta.begins_with("%d gold" % int(listing.price)) and details.has_picture,
+				"offer tile shows its authored name, quoted price and art/emblem")
+		for index in range(app.run_deck.size()):
+			var tile = gallery.removal_tiles()[index]
+			var details: Dictionary = gallery.tile_details(tile)
+			var owned: String = app.run_deck[index]
+			var definition: Dictionary = RunRestStitchCards.resolve_card_definition(owned)
+			_check(gallery.tile_row(tile) == index and details.card_id == owned
+				and details.title == String(definition.get("display_name", owned))
+				and details.meta.begins_with("Deck card #%d" % (index + 1)),
+				"removal tile carries the exact owned occurrence index and authored name")
+		before = _shop_state()
+		await _click_tile(_tile_for("offer", 2))
+		_check(_shop_state() == before and app.shop_offers.selected == 2,
+			"offer tile click selects that listing with zero ledger effect")
+		await _select_tile_by_key(_tile_for("offer", 1))
+		_check(_shop_state() == before and app.shop_offers.selected == 1,
+			"offer tile keyboard selection has zero ledger effect")
+		if session == 0:
+			await _check_tile_art(gallery)
 		before = _shop_state()
 		route_callback.call()
 		back_callback.call()
@@ -324,7 +437,7 @@ func _run() -> void:
 			else:
 				_check(before == replay, "same-seed restart reproduces complete combat, inventory, ledger, route and RNG")
 		else:
-			# Select the last copy by physical keyboard navigation in the actual popup.
+			# Later duplicate: every owned occurrence has its own sewn tile.
 			var duplicate_index := -1
 			for index in range(1, app.run_deck.size()):
 				if app.run_deck[index] == app.run_deck[0]:
@@ -332,16 +445,17 @@ func _run() -> void:
 			_check(duplicate_index > 0, "owned fixture contains duplicate copies")
 			if duplicate_index < 0:
 				break
-			app.shop_cards.grab_focus()
-			await _key(KEY_SPACE)
-			await _popup_key(KEY_HOME)
-			for index in range(duplicate_index):
-				await _popup_key(KEY_DOWN)
-			await _popup_key(KEY_ENTER)
-			_check(app.shop_cards != null, "popup selection keeps Shop mounted")
-			if app.shop_cards == null:
-				break
-			_check(app.shop_cards.selected == duplicate_index, "physical keyboard chooses later duplicate in owned popup")
+			var duplicate_tile = _tile_for("removal", duplicate_index)
+			before = _shop_state()
+			if session == 1:
+				await _click_tile(duplicate_tile)
+			else:
+				await _select_tile_by_key(duplicate_tile)
+			_check(app.shop_cards.selected == duplicate_index,
+				"physical tile input chooses the later duplicate occurrence")
+			_check(_shop_state() == before, "choosing the later duplicate spends nothing")
+			_check(gallery.tile_details(duplicate_tile).selected,
+				"the chosen owned occurrence is visibly selected")
 			var expected_deck: Array = app.run_deck.duplicate()
 			expected_deck.remove_at(0)
 			var gold: int = app.session_gold
@@ -349,15 +463,22 @@ func _run() -> void:
 			if session == 1:
 				await _click(app.shop_remove_button)
 			else:
-				app.shop_cards.grab_focus()
-				await _key(KEY_TAB)
-				_check(app.shop_remove_button.has_focus(), "Tab reaches Remove from owned selector")
+				duplicate_tile.grab_focus()
+				var reach: int = gallery.removal_tiles().size() + 3
+				for step in range(reach):
+					if app.shop_remove_button.has_focus():
+						break
+					await _key(KEY_TAB)
+				_check(app.shop_remove_button.has_focus(), "Tab reaches Remove from the owned-card tiles")
 				await _key(KEY_ENTER)
 			_check(app.run_deck == expected_deck and app.session_gold == gold - price
 				and app.run_removal_count == count + 1, "funded input removes FIRST duplicate and charges exact quote once")
 			_check(visit.get_state().deck == expected_deck and visit.get_state().gold == app.session_gold
 				and visit.get_state().prior_removals == count + 1 and app.shop_remove_button.disabled,
 				"run mirrors used ledger exactly and disables removal")
+			await _frames()
+			_check(gallery.removal_tiles().all(func(tile): return tile.disabled),
+				"every owned-card tile disables with the spent Shop removal")
 			var after := _shop_state()
 			remove_callback.call()
 			app.shop_remove_button.pressed.emit()
@@ -365,7 +486,8 @@ func _run() -> void:
 			_check(_shop_state() == after, "repeat mouse and retained callback cannot remove or charge twice")
 			_check(after[0][0] == before[0][0] and after[0][3] == before[0][3]
 				and after[0][4] == before[0][4], "removal preserves heroes, seeded RNG and route")
-		stale = [route_callback, back_callback, remove_callback,
+		var tile_callback: Callable = gallery.offer_tiles()[0].pressed.get_connections()[0].callable
+		stale = [route_callback, back_callback, remove_callback, tile_callback,
 			app.shop_continue_button.pressed.get_connections()[0].callable,
 			app.shop_back_button.pressed.get_connections()[0].callable]
 		if session % 2 == 0:
@@ -383,6 +505,10 @@ func _run() -> void:
 			and app.shop_continue_button == null
 			and app.shop_purchases == null and app.shop_offers == null and app.shop_buy_button == null
 			and app.session_gold == 0 and app.run_removal_count == 0, "skip/Return closes ledger, clears run and rejects stale inputs")
+		_check(not gallery.is_gallery_mounted() and not is_instance_valid(gallery.gallery_panel())
+			and gallery.offer_tiles().is_empty() and gallery.removal_tiles().is_empty()
+			and gallery.gallery_kind() == "",
+			"Return discards the Shop gallery, its tiles and its callbacks")
 		_check(randi() == global_next, "complete physical route/Shop leaves global RNG untouched")
 	_finish_shop()
 
