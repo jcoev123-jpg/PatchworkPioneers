@@ -31,8 +31,8 @@ func is_patch_binding_valid() -> bool:
 		_wardrobe, _torn, _wardrobe_snapshot, _torn_snapshot)
 
 
-func play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary, target_position: int = 0) -> bool:
-	return _play_support(deck, party, definition, target_position, true)
+func play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary, target_position: int = 0, cost_discount: int = 0) -> bool:
+	return _play_support(deck, party, definition, target_position, true, "", cost_discount)
 
 
 ## Only for a detached transaction: all ordinary validation/effects, but the
@@ -43,7 +43,8 @@ func resolve_staged_half(deck: CombatDeck, party: CombatParty,
 
 
 func _play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary,
-		target_position: int, consume_card: bool, authored_half_id: String = "") -> bool:
+		target_position: int, consume_card: bool, authored_half_id: String = "",
+		cost_discount: int = 0) -> bool:
 	if deck == null or party == null or not deck.turn_active or not party.is_valid():
 		return false
 	if not is_patch_binding_valid():
@@ -61,6 +62,12 @@ func _play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary,
 		return false
 	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY:
 		return false
+	# The one authored Clockwork point only ever reduces a PRINTED cost of two or
+	# more, and only a real consumed play may charge the reduced amount.
+	if cost_discount < 0 or cost_discount > 1 \
+			or (cost_discount > 0 and (cost < 2 or not consume_card)):
+		return false
+	var effective_cost: int = cost - cost_discount
 	if not from_positions is Array or from_positions.is_empty():
 		return false
 	if not effect is String or not effect in ["self_block", "ally_block", "ally_heal", "draw"]:
@@ -73,7 +80,7 @@ func _play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary,
 
 	# No mutation, including RNG movement, occurs before every precondition
 	# has been checked. Hand membership is by ID, not just card definition.
-	if not deck.hand.has(card_id) or deck.energy < cost:
+	if not deck.hand.has(card_id) or deck.energy < effective_cost:
 		return false
 	var owner_position := 0
 	for hero in party.get_heroes():
@@ -118,7 +125,7 @@ func _play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary,
 
 	# After prevalidation all following operations are guaranteed by the
 	# existing deck/party APIs to succeed; charge exactly once.
-	if consume_card and not deck.try_spend_energy(cost):
+	if consume_card and not deck.try_spend_energy(effective_cost):
 		return false
 	match effect:
 		"self_block", "ally_block":

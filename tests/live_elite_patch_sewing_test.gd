@@ -24,6 +24,65 @@ func _hover(control: Control) -> void:
 	await _frames()
 
 
+func _mouse_move(point: Vector2) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await _frames()
+
+
+func _mouse_button_at(point: Vector2, pressed: bool) -> void:
+	var event := InputEventMouseButton.new()
+	event.position = point
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	root.push_input(event, true)
+	await _frames()
+
+
+## WCAG relative luminance contrast, so "readable" is measured rather than assumed.
+func _relative_luminance(color: Color) -> float:
+	var linear := func(value: float) -> float:
+		return value / 12.92 if value <= 0.04045 else pow((value + 0.055) / 1.055, 2.4)
+	return 0.2126 * linear.call(color.r) + 0.7152 * linear.call(color.g) \
+		+ 0.0722 * linear.call(color.b)
+
+
+func _contrast_ratio(foreground: Color, background: Color) -> float:
+	var first := _relative_luminance(foreground)
+	var second := _relative_luminance(background)
+	return (maxf(first, second) + 0.05) / (minf(first, second) + 0.05)
+
+
+## Mirror Button's own colour selection so the assertion matches what it draws.
+func _effective_text_color(button: Button) -> Color:
+	var mode := button.get_draw_mode()
+	if mode == BaseButton.DRAW_DISABLED:
+		return button.get_theme_color("font_disabled_color")
+	if mode == BaseButton.DRAW_HOVER_PRESSED and button.has_theme_stylebox("hover_pressed"):
+		return button.get_theme_color("font_hover_pressed_color")
+	if mode == BaseButton.DRAW_PRESSED:
+		return button.get_theme_color("font_pressed_color")
+	if mode == BaseButton.DRAW_HOVER:
+		return button.get_theme_color("font_hover_color")
+	if button.has_focus():
+		return button.get_theme_color("font_focus_color")
+	return button.get_theme_color("font_color")
+
+
+func _effective_surface_color(button: Button) -> Color:
+	var mode := button.get_draw_mode()
+	if mode == BaseButton.DRAW_DISABLED:
+		return button.get_theme_stylebox("disabled").bg_color
+	if mode == BaseButton.DRAW_HOVER_PRESSED and button.has_theme_stylebox("hover_pressed"):
+		return button.get_theme_stylebox("hover_pressed").bg_color
+	if mode == BaseButton.DRAW_PRESSED:
+		return button.get_theme_stylebox("pressed").bg_color
+	if mode == BaseButton.DRAW_HOVER:
+		return button.get_theme_stylebox("hover").bg_color
+	return button.get_theme_stylebox("normal").bg_color
+
+
 func _complete_state() -> Array:
 	return [_settlement_state(), app.run_scraps, app.run_map.get_floors(),
 		app.run_map.get_generation_revision(), app.run_seed,
@@ -51,7 +110,8 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		"preview is mounted only with the genuinely confirmed Elite claim context")
 	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
 		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
-		and sewing._prompt.text.contains(drop) and sewing._prompt.text.contains(state.definitions[drop]),
+		and sewing._prompt.text.contains(sewing._friendly_label(drop))
+		and sewing._prompt.text.contains(sewing._friendly_label(state.definitions[drop])),
 		"visible wrapped keyboard-readable prompt names the exact drop and slot")
 	for button in sewing.hero_buttons:
 		var hero_id: String = button.get_meta("hero_id")
@@ -64,20 +124,109 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		entries[hero_id] = preview
 		var explanation: String = button.tooltip_text
 		var expected_gain: String = "+1 scrap" if preview.displaced_id != "" else "+0 scrap"
-		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(drop)
+		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(sewing._friendly_label(drop))
 			and explanation.contains(preview.slot) and explanation.contains(expected_gain)
 			and (preview.rules_text.is_empty() or explanation.contains(preview.rules_text))
-			and (preview.displaced_id.is_empty() or explanation.contains(preview.displaced_id))
+			and (preview.displaced_id.is_empty() or explanation.contains(sewing._friendly_label(preview.displaced_id)))
 			and (preview.displaced_rules_text.is_empty()
 				or explanation.contains(preview.displaced_rules_text)),
 			"mounted %s tooltip describes authoritative power and own displacement" % hero_id)
 		await _hover(button)
 		_check(sewing._prompt.text == explanation,
 			"real mouse hover exposes %s tooltip content visibly" % hero_id)
+		# AC1 repair: each drawn text state of this cream tag must use dark ink on
+		# its own paper surface; the shell theme otherwise supplies cream hover,
+		# pressed, focus and hover+pressed text.
+		var normal_bg: Color = button.get_theme_stylebox("normal").bg_color
+		var hover_bg: Color = button.get_theme_stylebox("hover").bg_color
+		var pressed_bg: Color = button.get_theme_stylebox("pressed").bg_color
+		var hover_pressed_box: StyleBoxFlat = button.get_theme_stylebox("hover_pressed") as StyleBoxFlat
+		_check(hover_pressed_box != null
+			and _contrast_ratio(button.get_theme_color("font_hover_pressed_color"),
+				hover_pressed_box.bg_color) >= 4.5,
+			"%s hover+pressed name stays readable on its paper surface" % hero_id)
+		_check(_contrast_ratio(button.get_theme_color("font_color"), normal_bg) >= 4.5
+			and _contrast_ratio(button.get_theme_color("font_focus_color"), normal_bg) >= 4.5
+			and _contrast_ratio(button.get_theme_color("font_hover_color"), hover_bg) >= 4.5
+			and _contrast_ratio(button.get_theme_color("font_pressed_color"), pressed_bg) >= 4.5,
+			"%s normal/focus/hover/pressed ink contrasts with the drawn paper surfaces" % hero_id)
+		if not button.disabled:
+			# Real pointer hover uses the engine's own draw mode and colour choice.
+			_check(button.is_hovered() and button.get_draw_mode() == BaseButton.DRAW_HOVER
+				and _effective_text_color(button) == Color("302b29")
+				and _contrast_ratio(_effective_text_color(button),
+					_effective_surface_color(button)) >= 4.5,
+				"%s real pointer hover keeps the readable name on the hover paper tag" % hero_id)
+			# Real pointer press-and-hold must keep the same tag ink, not cream text.
+			var center: Vector2 = button.get_global_rect().get_center()
+			await _mouse_button_at(center, true)
+			_check(button.get_draw_mode() == BaseButton.DRAW_PRESSED and button.is_pressed()
+				and button.text == hero_id.capitalize()
+				and _effective_text_color(button) == Color("302b29")
+				and _contrast_ratio(_effective_text_color(button),
+					_effective_surface_color(button)) >= 4.5,
+				"%s real pointer press keeps the readable name on pressed paper" % hero_id)
+			# Release outside the tag so this presentation probe never sews.
+			await _mouse_move(Vector2(2, 2))
+			await _mouse_button_at(Vector2(2, 2), false)
+			_check(not button.is_pressed() and not button.is_hovered(),
+				"%s presentation probe releases without sewing" % hero_id)
 		button.grab_focus()
 		await _frames()
 		_check(button.has_focus() and sewing._prompt.text == explanation,
 			"physical keyboard focus reads %s power and replacement in prompt" % hero_id)
+		if not button.disabled:
+			# Keyboard focus draws the normal paper box, so it needs the ink focus colour.
+			_check(button.get_draw_mode() == BaseButton.DRAW_NORMAL
+				and _effective_text_color(button) == Color("302b29")
+				and _contrast_ratio(_effective_text_color(button),
+					_effective_surface_color(button)) >= 4.5,
+				"%s keyboard focus keeps dark ink on the normal paper tag" % hero_id)
+		# Added mounted presentation checks (AC1): size, colour, style states, focus.
+		_check(sewing._prompt.get_theme_font_size("font_size") >= 18,
+			"prompt font size >= 18px")
+		_check(sewing.summary.get_theme_font_size("font_size") >= 18,
+			"summary font size >= 18px")
+		_check(sewing.summary.size.y >= 56,
+			"summary height adequate for 18px text")
+		var stitch_node: Control = button.get_node_or_null("StitchAccent")
+		_check(is_instance_valid(stitch_node) and stitch_node is Control,
+			"%s stitched tag child present" % hero_id)
+		# Verify non-default stylebox states exist and are distinguishable.
+		_check(button.get_theme_stylebox("normal") != null
+			and button.get_theme_stylebox("hover") != null
+			and button.get_theme_stylebox("pressed") != null
+			and button.get_theme_stylebox("disabled") != null
+			and button.get_theme_stylebox("focus") != null,
+			"%s button has sewn paper styleboxes for all states" % hero_id)
+		# Verify disabled torn buttons are visibly disabled (greyed) and enabled are not.
+		if button.disabled:
+			_check(button.get_theme_stylebox("disabled").bg_color.saturation < 0.3 or button.get_theme_stylebox("disabled").bg_color.value < 0.85,
+				"%s disabled button has visibly disabled style" % hero_id)
+		else:
+			_check(button.get_theme_stylebox("normal").bg_color == Color("ecdfbd")
+				or button.get_theme_stylebox("normal").border_color == sewing.HERO_COLORS.get(hero_id, Color("777166")),
+				"%s enabled button has sewn paper normal style" % hero_id)
+		# Focus mode preserved.
+		_check(button.focus_mode == Control.FOCUS_ALL,
+			"%s focus mode preserved for keyboard" % hero_id)
+		# Text readable (font size >= 18 and label not empty for enabled buttons).
+		if not button.disabled:
+			_check(button.get_theme_font_size("font_size") >= 18,
+				"%s hero tag text >= 18px" % hero_id)
+			_check(not button.text.is_empty() and button.text.contains(hero_id.capitalize()),
+				"%s hero tag text readable" % hero_id)
+	# Verify prompt and summary layout does not overlap improperly.
+	_check(sewing._prompt.get_global_rect().intersects(sewing.summary.get_global_rect()) == false
+		or sewing._prompt.get_global_rect().get_center().y < sewing.summary.get_global_rect().get_center().y,
+		"prompt and summary do not overlap improperly")
+	# Check exact hero accent colours in stitched child.
+	for hero_id_check in ["warden", "seamstress", "tinker"]:
+		var btn_check: Button = sewing.hero_buttons.filter(func(b): return b.get_meta("hero_id") == hero_id_check and is_instance_valid(b))[0] if sewing.hero_buttons.filter(func(b): return b.get_meta("hero_id") == hero_id_check and is_instance_valid(b)).size() > 0 else null
+		if btn_check == null:
+			continue
+		_check(is_instance_valid(btn_check.get_node_or_null("StitchAccent")),
+			"%s stitched tag present" % hero_id_check)
 	_check(entries.size() == 3 and sewing.wardrobe.get_snapshot() == state
 		and app.party_carryover.torn.read_state() == torn_state
 		and app.run_rng.state == run_rng and _complete_state() == before,
@@ -98,7 +247,7 @@ func _verify_worn_readout() -> void:
 			if record.patch_id == "":
 				continue
 			var fragment: String = "%s: %s (%s) [%s]" % [
-				hero.id.capitalize(), record.patch_id, record.slot,
+				hero.id.capitalize(), sewing._friendly_label(record.patch_id), record.slot,
 				"active" if record.active else "inactive"]
 			if not record.rules_text.is_empty():
 				fragment += " - %s" % record.rules_text
@@ -275,7 +424,7 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 		_reject_patch(callback, "torn-party duplicate sewing callback")
 		await _click(app.continue_button)
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
-			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), drop]),
+			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), sewing._friendly_label(drop)]),
 			"Continue remains usable and wearer summary survives torn-party Elite")
 		_verify_worn_readout()
 		_reject_patch(callback, "torn-party stale callback after Continue")
@@ -446,7 +595,7 @@ func _run() -> void:
 			_check(app.party_carryover._wardrobe == sewing.wardrobe,
 				"successful sewing binds the exact live carryover wardrobe")
 			var slot: String = after.definitions[drop]
-			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), drop, slot]),
+			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), sewing._friendly_label(drop), slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
 			_check(chosen_preview.get("ok") == true
 				and slot == chosen_preview.get("slot")
@@ -474,7 +623,7 @@ func _run() -> void:
 			retained.append(callback)
 			observations.append([after, reward_state, app.run_rng.state, app.run_trinkets.duplicate()])
 			await _click(app.continue_button)
-			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(drop), "Continue retains visible wearer")
+			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(sewing._friendly_label(drop)), "Continue retains visible wearer")
 			_verify_worn_readout()
 			_reject_patch(callback, "stale sew after Continue")
 		_check(observations.size() == 2, "both earned drops actually sewn")

@@ -381,13 +381,13 @@ func _ui_test(activation: Key) -> void:
 	# Button Eye selection exercises the keyboard on this same mounted picker.
 	for spec in [
 			["stitched_badge", "tinker", "MOVE", "HEAD", "opening Block",
-				CombatShopPatchRules.OPENING_BLOCK_BONUS],
+				CombatShopPatchRules.OPENING_BLOCK_BONUS, "Stitched Badge"],
 			["stitched_badge", "warden", "SWAP", "HEAD", "opening Block",
-				CombatShopPatchRules.OPENING_BLOCK_BONUS],
+				CombatShopPatchRules.OPENING_BLOCK_BONUS, "Stitched Badge"],
 			["spare_spool", "warden", "MOVE", "ARM", "positive-heal",
-				CombatShopPatchRules.HEALING_CARD_BONUS],
+				CombatShopPatchRules.HEALING_CARD_BONUS, "Spare Spool"],
 			["spare_spool", "seamstress", "SWAP", "ARM", "positive-heal",
-				CombatShopPatchRules.HEALING_CARD_BONUS]]:
+				CombatShopPatchRules.HEALING_CARD_BONUS, "Spare Spool"]]:
 		var source_index := -1
 		for i in range(picker._sources.size()):
 			if picker._sources[i].patch_id == spec[0]:
@@ -407,7 +407,7 @@ func _ui_test(activation: Key) -> void:
 		var preview: String = picker.preview_label.text
 		_check(preview.contains(spec[2]) and preview.contains("BEFORE")
 			and preview.contains("AFTER") and preview.contains("Cost: 1 scrap")
-			and preview.contains(spec[3] + " " + spec[0] + " (active)")
+			and preview.contains(spec[3] + " " + spec[6] + " (active)")
 			and preview.contains(spec[4]) and preview.contains(str(spec[5]))
 			and not picker.confirm_button.disabled,
 			"physical mouse choice shows real Shop MOVE/SWAP and exact active power: "
@@ -447,7 +447,7 @@ func _ui_test(activation: Key) -> void:
 		if target_index >= 0:
 			await _pick(picker.destination_selector, target_index, false)
 			_check(picker.preview_label.text.contains("SWAP")
-				and picker.preview_label.text.contains("stitched_badge")
+				and picker.preview_label.text.contains("Stitched Badge")
 				and picker.preview_label.text.contains("Exposed 1")
 				and picker.preview_label.text.contains("Seamstress BEFORE")
 				and picker.preview_label.text.contains("Warden AFTER")

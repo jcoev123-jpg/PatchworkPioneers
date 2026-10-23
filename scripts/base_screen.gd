@@ -2,11 +2,11 @@ class_name BaseScreen
 extends Control
 ## The Quilt Village: the patchwork base between the title and a run.
 ## Presentation only. It allocates no run, RNG, deck or currency state and
-## reports only sewn actions, Set out, the Heroes Path pick and Back to title,
+## reports only sewn actions, Set out, the Heroes Path picks and Back to title,
 ## which the host validates by view identity and visibility before acting on
-## them. The two Heroes options are authored elsewhere: the host presents their
-## readable names and confirms the pick, so this view owns no Path rules, no
-## authored data and no deck.
+## them. The Heroes and Tinker options are authored elsewhere: the host presents
+## their readable names and confirms each pick, so this view owns no Path rules,
+## no authored data and no deck.
 ##
 ## The owner's base_village.png is mounted as a cover backdrop only when
 ## ResourceLoader confirms the art exists. The matte quilt ground, sewn houses
@@ -14,6 +14,7 @@ extends Control
 ## village stays readable and identifiable with or without the optional image.
 
 signal path_choice_requested(path_id: String)
+signal tinker_path_choice_requested(path_id: String)
 signal set_out_requested
 signal back_requested
 
@@ -21,6 +22,9 @@ const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
 const DESIGN_SIZE := Vector2(1280.0, 720.0)
 ## The Heroes house's pinned Path board sits below it, clear of the Camp tent.
 const HEROES_PANEL_RECT := Rect2(96, 396, 352, 212)
+## The Tinker's own pinned board sits beside the Seamstress one, in the same lower
+## band: it never covers the Seamstress board, the buildings or the sewn actions.
+const TINKER_PANEL_RECT := Rect2(472, 396, 336, 212)
 const INK := Color("#2b3135")
 const PAPER := Color("#ecdfbd")
 const THREAD := Color("#c9b996")
@@ -38,6 +42,11 @@ var path_option_box: VBoxContainer
 var path_buttons: Array[Button] = []
 var path_hint_label: Label
 var path_status_label: Label
+var tinker_panel: PanelContainer
+var tinker_option_box: VBoxContainer
+var tinker_buttons: Array[Button] = []
+var tinker_hint_label: Label
+var tinker_status_label: Label
 
 var _open := false
 var _set_out_pending := false
@@ -46,6 +55,10 @@ var _path_pending := false
 var _path_options: Array = []
 var _selected_path_id := ""
 var _selected_path_name := ""
+var _tinker_pending := false
+var _tinker_options: Array = []
+var _selected_tinker_id := ""
+var _selected_tinker_name := ""
 var _backdrop: Texture2D
 var _buildings: Array = []
 var _paths: Array = []
@@ -82,6 +95,7 @@ func _ready() -> void:
 	_backdrop = load_base_backdrop()
 	_build_top_strip()
 	_build_heroes_choice()
+	_build_tinker_choice()
 	_build_actions()
 	_wire_focus()
 	resized.connect(queue_redraw)
@@ -175,8 +189,13 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 	for button in path_buttons:
 		if is_instance_valid(button):
 			button.disabled = not _selected_path_id.is_empty()
+	for button in tinker_buttons:
+		if is_instance_valid(button):
+			button.disabled = not _selected_tinker_id.is_empty()
 	if is_instance_valid(path_panel):
 		path_panel.visible = not _path_options.is_empty()
+	if is_instance_valid(tinker_panel):
+		tinker_panel.visible = not _tinker_options.is_empty()
 	if is_instance_valid(wallet_label):
 		wallet_label.text = "Gold %d  ·  Scraps %d" % [gold, scraps]
 	visible = true
@@ -310,17 +329,148 @@ func close_village() -> void:
 	_apply_closed_state()
 
 
+## Host-supplied authored Tinker options: [{id, display_name, card_name}, ...] in
+## authored order. Presentation only; no ID is resolved here. This board is
+## independent of the Seamstress one: each pick is offered, confirmed and shown
+## once on its own.
+func present_tinker_path_options(options: Variant) -> bool:
+	if not options is Array or not is_instance_valid(tinker_option_box):
+		return false
+	if not _selected_tinker_id.is_empty():
+		return false
+	var cleaned: Array = []
+	var seen: Dictionary = {}
+	for raw in options:
+		if not raw is Dictionary:
+			return false
+		var record: Dictionary = raw
+		var path_id := String(record.get("id", ""))
+		var display_name := String(record.get("display_name", ""))
+		if path_id.strip_edges().is_empty() or display_name.strip_edges().is_empty():
+			return false
+		if seen.has(path_id):
+			return false
+		seen[path_id] = true
+		cleaned.append({"id": path_id, "display_name": display_name,
+			"card_name": String(record.get("card_name", ""))})
+	if cleaned.is_empty():
+		return false
+	for button in tinker_buttons:
+		if is_instance_valid(button):
+			tinker_option_box.remove_child(button)
+			button.queue_free()
+	tinker_buttons.clear()
+	_selected_tinker_id = ""
+	_selected_tinker_name = ""
+	_tinker_options = cleaned
+	for option in cleaned:
+		var button := Button.new()
+		button.name = "TinkerPathChoice_" + String(option["id"])
+		button.text = String(option["display_name"])
+		button.tooltip_text = "Tinker Path: " + String(option["display_name"]) \
+			+ (" · card " + String(option["card_name"]) if not String(option["card_name"]).is_empty() else "")
+		button.custom_minimum_size = Vector2(0, 40)
+		button.add_theme_font_size_override("font_size", 18)
+		button.set_meta("path_id", String(option["id"]))
+		button.pressed.connect(_on_tinker_path_pressed.bind(String(option["id"])))
+		button.add_child(SewnEdge.new())
+		tinker_option_box.add_child(button)
+		tinker_buttons.append(button)
+	if is_instance_valid(tinker_hint_label):
+		tinker_hint_label.text = "Choose one Tinker Path for this run"
+	if is_instance_valid(tinker_status_label):
+		tinker_status_label.text = "No Tinker Path chosen yet"
+	if is_instance_valid(tinker_panel):
+		tinker_panel.visible = _open
+	_wire_focus()
+	return true
+
+
+## Detached copy of the presented Tinker options, in authored order.
+func tinker_path_options() -> Array:
+	return _tinker_options.duplicate(true)
+
+
+## The Tinker Path this setup has actually confirmed, or "" before a valid pick.
+func selected_tinker_path_id() -> String:
+	return _selected_tinker_id
+
+
+func selected_tinker_path_name() -> String:
+	return _selected_tinker_name
+
+
+## Host confirmation of a validated Tinker pick. The other Tinker option can no
+## longer be chosen, and the Seamstress board is left exactly as it was.
+func mark_tinker_path_selected(path_id: String, display_name: String) -> bool:
+	if not _open or _set_out_pending or _back_pending:
+		return false
+	if not _selected_tinker_id.is_empty():
+		return false
+	if path_id.strip_edges().is_empty() or display_name.strip_edges().is_empty():
+		return false
+	var chosen := _tinker_path_button(path_id)
+	if chosen == null:
+		return false
+	_selected_tinker_id = path_id
+	_selected_tinker_name = display_name
+	var card_name := ""
+	for option in _tinker_options:
+		if String(option.get("id", "")) == path_id:
+			card_name = String(option.get("card_name", ""))
+	for button in tinker_buttons:
+		if not is_instance_valid(button):
+			continue
+		button.disabled = true
+		button.release_focus()
+	if is_instance_valid(tinker_hint_label):
+		tinker_hint_label.text = "Tinker Path sewn for this run"
+	if is_instance_valid(tinker_status_label):
+		tinker_status_label.text = "Selected: " + display_name \
+			+ (" · card " + card_name if not card_name.is_empty() else "")
+		tinker_status_label.show()
+	_wire_focus()
+	if is_instance_valid(set_out_button):
+		set_out_button.grab_focus()
+	return true
+
+
+## Host refusal of a Tinker Path request: keep the offered options actionable. A
+## Tinker Path that was already confirmed cannot be released or replaced.
+func release_tinker_path_choice() -> bool:
+	if not _open or _set_out_pending or _back_pending:
+		return false
+	if not _selected_tinker_id.is_empty() or _tinker_options.is_empty():
+		return false
+	for button in tinker_buttons:
+		if is_instance_valid(button):
+			button.disabled = false
+	if is_instance_valid(tinker_hint_label):
+		tinker_hint_label.text = "Choose one Tinker Path for this run"
+	_wire_focus()
+	return true
+
+
 func _apply_closed_state() -> void:
 	_open = false
 	_set_out_pending = false
 	_back_pending = false
 	_path_pending = false
+	_tinker_pending = false
 	_selected_path_id = ""
 	_selected_path_name = ""
+	_selected_tinker_id = ""
+	_selected_tinker_name = ""
 	visible = false
 	if is_instance_valid(path_panel):
 		path_panel.visible = false
+	if is_instance_valid(tinker_panel):
+		tinker_panel.visible = false
 	for button in path_buttons:
+		if is_instance_valid(button):
+			button.disabled = true
+			button.release_focus()
+	for button in tinker_buttons:
 		if is_instance_valid(button):
 			button.disabled = true
 			button.release_focus()
@@ -343,6 +493,9 @@ func release_set_out() -> bool:
 	for button in path_buttons:
 		if is_instance_valid(button):
 			button.disabled = not _selected_path_id.is_empty()
+	for button in tinker_buttons:
+		if is_instance_valid(button):
+			button.disabled = not _selected_tinker_id.is_empty()
 	_wire_focus()
 	set_out_button.grab_focus()
 	return true
@@ -465,6 +618,64 @@ func _build_heroes_choice() -> void:
 	column.add_child(path_status_label)
 
 
+## The Tinker's own pinned board beside the Heroes one: the two authored Tinker
+## Paths and the one pick this run carries. Hidden until the host presents real
+## Tinker options, so a host that offers none leaves the village unchanged.
+func _build_tinker_choice() -> void:
+	var panel := PanelContainer.new()
+	panel.name = "TinkerChoice"
+	tinker_panel = panel
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.position = TINKER_PANEL_RECT.position
+	panel.custom_minimum_size = TINKER_PANEL_RECT.size
+	panel.size = TINKER_PANEL_RECT.size
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = PIN_PAPER
+	paper.border_color = Color("#766351")
+	paper.set_border_width_all(3)
+	paper.set_corner_radius_all(6)
+	paper.content_margin_left = 14.0
+	paper.content_margin_right = 14.0
+	paper.content_margin_top = 10.0
+	paper.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", paper)
+	panel.visible = false
+	add_child(panel)
+
+	var column := VBoxContainer.new()
+	column.name = "TinkerColumn"
+	column.add_theme_constant_override("separation", 6)
+	panel.add_child(column)
+
+	var heading := Label.new()
+	heading.name = "TinkerHeading"
+	heading.text = "Heroes · Tinker Path"
+	heading.add_theme_color_override("font_color", INK)
+	heading.add_theme_font_size_override("font_size", 20)
+	column.add_child(heading)
+
+	tinker_hint_label = Label.new()
+	tinker_hint_label.name = "TinkerPathHint"
+	tinker_hint_label.text = "Choose one Tinker Path for this run"
+	tinker_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tinker_hint_label.add_theme_color_override("font_color", Color("#5a5346"))
+	tinker_hint_label.add_theme_font_size_override("font_size", 14)
+	column.add_child(tinker_hint_label)
+
+	tinker_option_box = VBoxContainer.new()
+	tinker_option_box.name = "TinkerPathOptions"
+	tinker_option_box.add_theme_constant_override("separation", 6)
+	column.add_child(tinker_option_box)
+
+	tinker_status_label = Label.new()
+	tinker_status_label.name = "TinkerPathStatus"
+	tinker_status_label.text = "No Tinker Path chosen yet"
+	tinker_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tinker_status_label.add_theme_color_override("font_color", Color("#3f5a3a"))
+	tinker_status_label.add_theme_font_size_override("font_size", 15)
+	column.add_child(tinker_status_label)
+
+
 func _build_actions() -> void:
 	var row := HBoxContainer.new()
 	row.name = "SetOutRow"
@@ -487,13 +698,16 @@ func _build_actions() -> void:
 	row.add_child(set_out_button)
 
 
-## Every live sewn action forms one forward/reverse Tab loop: Back, the two
-## authored Path options (while still choosable), then Set out.
+## Every live sewn action forms one forward/reverse Tab loop: Back, both authored
+## Path options, both authored Tinker options (while still choosable), then Set out.
 func _wire_focus() -> void:
 	var loop: Array[Control] = []
 	if is_instance_valid(back_button) and not back_button.disabled:
 		loop.append(back_button)
 	for button in path_buttons:
+		if is_instance_valid(button) and not button.disabled:
+			loop.append(button)
+	for button in tinker_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			loop.append(button)
 	if is_instance_valid(set_out_button) and not set_out_button.disabled:
@@ -508,6 +722,13 @@ func _wire_focus() -> void:
 
 func _path_button(path_id: String) -> Button:
 	for button in path_buttons:
+		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
+			return button
+	return null
+
+
+func _tinker_path_button(path_id: String) -> Button:
+	for button in tinker_buttons:
 		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
 			return button
 	return null
@@ -528,6 +749,23 @@ func _on_path_pressed(path_id: String) -> void:
 	_path_pending = true
 	path_choice_requested.emit(path_id)
 	_path_pending = false
+
+
+## The Tinker board reports its own pick. The host validates it against the
+## authored Tinker record and, only on success, calls mark_tinker_path_selected.
+func _on_tinker_path_pressed(path_id: String) -> void:
+	if not _open or _tinker_pending or _set_out_pending or _back_pending:
+		return
+	if not _selected_tinker_id.is_empty():
+		return
+	if not is_inside_tree() or not is_visible_in_tree():
+		return
+	var button := _tinker_path_button(path_id)
+	if button == null or button.disabled:
+		return
+	_tinker_pending = true
+	tinker_path_choice_requested.emit(path_id)
+	_tinker_pending = false
 
 
 func _on_set_out_pressed() -> void:

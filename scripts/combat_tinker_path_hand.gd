@@ -87,6 +87,30 @@ func end_player_turn() -> bool:
 	return true
 
 
+## Adopt a player turn the ROUTED battle already opened (its own deck start and
+## party reset). Never starts or ends the real deck turn, so a live round flow
+## keeps sole ownership of those boundaries.
+func adopt_open_turn() -> bool:
+	if not is_bound() or _active or not deck.turn_active:
+		return false
+	if not rules.start_player_turn():
+		return false
+	_active = true
+	var credit: int = rules.take_next_turn_energy_bonus()
+	if credit > 0:
+		deck.combat_state.energy += credit
+	return true
+
+
+## Close this Path's view of a turn the live round flow already closed. The real
+## deck turn is untouched; only the Path's own expiry and credit rules advance.
+func release_open_turn() -> bool:
+	if not _active:
+		return false
+	_active = false
+	return rules.end_player_turn()
+
+
 ## The caller supplies only the presented card's identity/printed metadata,
 ## NEVER an effect dictionary or a success flag. Both metadata and the real
 ## Tinker position are matched against the authoritative selected definition.

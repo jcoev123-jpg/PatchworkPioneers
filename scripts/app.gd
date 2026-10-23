@@ -312,6 +312,14 @@ var _route_from_base := false
 var run_seamstress_path_choice: RunSeamstressPathChoice
 ## Detached receipt of the Path this run carries; empty until a successful Set out.
 var run_seamstress_path_receipt: Dictionary = {}
+## The village's independent Tinker Path setup. Its claimed instance is kept for
+## the whole run, because only it can authenticate the battle's Path authority.
+var run_tinker_path_choice: RunTinkerPathChoice
+## Detached receipt of the Tinker Path this run carries; empty until Set out.
+var run_tinker_path_receipt: Dictionary = {}
+## The one validated Tinker setup receipt this village visit produced, detached
+## from the setup. Empty until a Tinker option is confirmed.
+var _tinker_setup_receipt: Dictionary = {}
 var route_view: VBoxContainer
 var route_back_button: Button
 var route_map_button: Button
@@ -750,7 +758,15 @@ func _open_base() -> bool:
 	run_seamstress_path_choice = choice if choice.is_valid() else null
 	if run_seamstress_path_choice != null:
 		view.present_path_options(_seamstress_path_options(run_seamstress_path_choice))
+	# The Tinker Path is its own board and its own validated offer set. A record
+	# that does not validate simply offers no Tinker Path.
+	_tinker_setup_receipt = {}
+	var tinker := RunTinkerPathChoice.new()
+	run_tinker_path_choice = tinker if not tinker.get_offers().is_empty() else null
+	if run_tinker_path_choice != null:
+		view.present_tinker_path_options(_tinker_path_options(run_tinker_path_choice))
 	view.path_choice_requested.connect(_base_path_choice.bind(weakref(view)))
+	view.tinker_path_choice_requested.connect(_base_tinker_path_choice.bind(weakref(view)))
 	view.set_out_requested.connect(_base_set_out.bind(weakref(view)))
 	view.back_requested.connect(_base_back.bind(weakref(view)))
 	title_view.hide()
@@ -768,6 +784,64 @@ func _seamstress_path_options(choice: RunSeamstressPathChoice) -> Array:
 			"card_name": String(card.get("display_name", "")),
 		})
 	return options
+
+
+## Detached presentation records for the two authored Tinker Paths, in authored
+## order. Read from the same validated offer set the run service uses.
+func _tinker_path_options(choice: RunTinkerPathChoice) -> Array:
+	var options: Array = []
+	for path in choice.get_offers():
+		var card: Dictionary = path.get("card", {})
+		options.append({
+			"id": String(path.get("id", "")),
+			"display_name": String(path.get("display_name", "")),
+			"card_name": String(card.get("display_name", "")),
+		})
+	return options
+
+
+## A Tinker Path pick is only live while it is this app's mounted, visible
+## village, the offer set still validates, and no Tinker receipt was committed.
+func _base_tinker_path_choice(path_id: String, source: WeakRef) -> void:
+	var view := _live_base(source)
+	if view == null:
+		return
+	if not run_tinker_path_receipt.is_empty():
+		view.release_tinker_path_choice()
+		return
+	var choice := run_tinker_path_choice
+	if choice == null or choice.get_offers().is_empty() or choice.has_selection():
+		view.release_tinker_path_choice()
+		return
+	var receipt := choice.choose(path_id, StarterCards.new().get_starting_deck())
+	if not bool(receipt.get("ok", false)):
+		view.release_tinker_path_choice()
+		return
+	var definition: Dictionary = choice.get_definition(String(receipt.get("path_id", "")))
+	_tinker_setup_receipt = receipt.duplicate(true)
+	view.mark_tinker_path_selected(String(receipt["path_id"]),
+		String(definition.get("display_name", "")))
+
+
+## The validated Tinker receipt this setup carries, detached from the setup's own
+## copy. Nothing is committed until the village really confirmed that Path.
+func _selected_tinker_receipt(view: BaseScreen) -> Dictionary:
+	if view == null or not bool(_tinker_setup_receipt.get("ok", false)):
+		return {}
+	if view.selected_tinker_path_id() != String(_tinker_setup_receipt.get("path_id", "")) \
+		or run_tinker_path_choice == null or not run_tinker_path_choice.has_selection():
+		return {}
+	var selection: Dictionary = run_tinker_path_choice.get_selection()
+	if String(selection.get("card_id", "")) != String(_tinker_setup_receipt.get("card_id", "")) \
+		or String(selection.get("passive_id", "")) != String(_tinker_setup_receipt.get("passive_id", "")):
+		return {}
+	var definition: Dictionary = run_tinker_path_choice.get_definition(
+		String(selection.get("path_id", "")))
+	var card: Variant = definition.get("card")
+	if not card is Dictionary or String((card as Dictionary).get("id", "")) \
+			!= String(_tinker_setup_receipt.get("card_id", "")):
+		return {}
+	return _tinker_setup_receipt.duplicate(true)
 
 
 ## A Path pick is only live while it is this app's mounted, visible village, the
@@ -841,6 +915,7 @@ func _base_set_out(source: WeakRef) -> void:
 		return
 	# Only a real opening book commits the setup's Path as this run's detached receipt.
 	run_seamstress_path_receipt = _selected_path_receipt(view)
+	run_tinker_path_receipt = _selected_tinker_receipt(view)
 	_route_from_base = true
 	_close_base(view)
 
@@ -853,6 +928,9 @@ func _base_back(source: WeakRef) -> void:
 	# Back to title abandons this visit's Path setup; nothing of it reaches a run.
 	run_seamstress_path_choice = null
 	run_seamstress_path_receipt = {}
+	run_tinker_path_choice = null
+	run_tinker_path_receipt = {}
+	_tinker_setup_receipt = {}
 	if is_instance_valid(title_view):
 		title_view.show()
 	if is_instance_valid(base_button):
@@ -870,6 +948,7 @@ func _open_route() -> void:
 		return
 	# A fresh opening starts with no Path receipt; only this Base's Set out commits one.
 	run_seamstress_path_receipt = {}
+	run_tinker_path_receipt = {}
 	_route_from_base = false
 	var cards := _load_starter_deck()
 	var initial_party := CombatParty.new(_load_party_definitions())
@@ -2192,18 +2271,18 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	var next_flow: CombatRoundFlow
 	if entry.get("success", false):
 		# The state immediately before the admission shuffle, so a Path battle
-		# performs exactly one shuffle: the final thirteen-card deal.
+		# performs exactly one shuffle: the final deal with every selected Path card.
 		var shuffle_state := run_rng.state
 		var admission := RunStitchedBattleHandEntry.new().admit_next_fight(
 			run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id, snapshot.receipt, run_rng)
 		if admission.get("ok", false) and admission.snapshot == snapshot:
 			next_deck = admission.combat_deck
-			# A selected Path adds its one exclusive card to this battle only, never
-			# to the stitchable run ledger. The admission shuffle is rewound so the
-			# thirteen-card deal is the single recorded shuffle of this fight.
-			var path_card_id := _battle_path_card_id()
-			if not path_card_id.is_empty():
-				next_deck = _admit_path_deck(snapshot.deck, path_card_id, shuffle_state)
+			# Each selected Path adds its one exclusive card to this battle only,
+			# never to the stitchable run ledger. The admission shuffle is rewound so
+			# the final deal is the single recorded shuffle of this fight.
+			var path_card_ids := _battle_path_card_ids()
+			if not path_card_ids.is_empty():
+				next_deck = _admit_path_deck(snapshot.deck, path_card_ids, shuffle_state)
 			next_result = CombatBattleResult.new(next_party, entry.enemies)
 			next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies, entry.intents, next_result)
 			staged = next_flow.begin_fight()
@@ -2260,10 +2339,21 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 	return true
 
 
-## The exclusive Path card this run's validated receipt carries, or "" when the
-## run has no Path. The receipt is revalidated by the canonical combat resolver;
-## a tampered, stale or unselected record names no card.
-func _battle_path_card_id() -> String:
+## The exclusive Path cards this run's validated receipts carry, in a stable
+## order. Each receipt is revalidated by its canonical service, so a tampered,
+## stale or unselected record names no card at all.
+func _battle_path_card_ids() -> Array[String]:
+	var card_ids: Array[String] = []
+	var seamstress := _seamstress_battle_card_id()
+	if not seamstress.is_empty():
+		card_ids.append(seamstress)
+	var tinker := _tinker_battle_card_id()
+	if not tinker.is_empty() and not card_ids.has(tinker):
+		card_ids.append(tinker)
+	return card_ids
+
+
+func _seamstress_battle_card_id() -> String:
 	if run_seamstress_path_receipt.is_empty():
 		return ""
 	var resolver := CombatSeamstressPathCards.new()
@@ -2272,17 +2362,41 @@ func _battle_path_card_id() -> String:
 	return resolver.get_card_id()
 
 
-## ONE battle deck for a Path run: the canonical admitted IDs plus that Path's
-## card, shuffled once from the pre-admission run RNG state. An unselected run
-## keeps the admission deck and its RNG untouched.
-func _admit_path_deck(admitted: Array, card_id: String, rng_state: int) -> CombatDeck:
-	if run_rng == null or card_id.is_empty() or admitted.is_empty():
+## The Tinker card only when the run's detached receipt, the claimed setup and
+## the authored record all agree. Any mismatch names no card.
+func _tinker_battle_card_id() -> String:
+	if not bool(run_tinker_path_receipt.get("ok", false)) or run_tinker_path_choice == null \
+		or not run_tinker_path_choice.has_selection():
+		return ""
+	var selection: Dictionary = run_tinker_path_choice.get_selection()
+	var path_id := String(selection.get("path_id", ""))
+	var card_id := String(selection.get("card_id", ""))
+	if path_id.is_empty() or card_id.is_empty() \
+		or String(run_tinker_path_receipt.get("path_id", "")) != path_id \
+		or String(run_tinker_path_receipt.get("card_id", "")) != card_id \
+		or String(run_tinker_path_receipt.get("passive_id", "")) != String(selection.get("passive_id", "")):
+		return ""
+	var definition: Dictionary = run_tinker_path_choice.get_definition(path_id)
+	var card: Variant = definition.get("card")
+	if not card is Dictionary or String((card as Dictionary).get("id", "")) != card_id \
+			or String(definition.get("passive_id", "")) != String(selection.get("passive_id", "")):
+		return ""
+	return card_id
+
+
+## ONE battle deck for a Path run: the canonical admitted IDs plus every selected
+## Path card, shuffled once from the pre-admission run RNG state. An unselected
+## run keeps the admission deck and its RNG untouched.
+func _admit_path_deck(admitted: Array, path_card_ids: Array, rng_state: int) -> CombatDeck:
+	if run_rng == null or path_card_ids.is_empty() or admitted.is_empty():
 		return null
 	var card_ids: Array[String] = []
 	card_ids.assign(admitted)
-	if card_ids.has(card_id):
-		return null
-	card_ids.append(card_id)
+	for card_id in path_card_ids:
+		var id := String(card_id)
+		if id.is_empty() or card_ids.has(id):
+			return null
+		card_ids.append(id)
 	run_rng.state = rng_state
 	return CombatDeck.new(card_ids, run_rng)
 
@@ -4270,12 +4384,11 @@ func _quilt_owners_of(card_id: String) -> Array[String]:
 func _path_card_owner(card_id: String) -> String:
 	if card_id.is_empty():
 		return ""
-	var resolver := CombatSeamstressPathCards.new()
-	if not resolver.bind_choice(run_seamstress_path_receipt):
-		return ""
-	if resolver.get_card_id() != card_id:
-		return ""
-	return CombatSeamstressPathCards.OWNER_ID
+	if _seamstress_battle_card_id() == card_id:
+		return CombatSeamstressPathCards.OWNER_ID
+	if _tinker_battle_card_id() == card_id:
+		return "tinker"
+	return ""
 
 
 func _refresh_hand() -> void:
@@ -4721,6 +4834,9 @@ func _return_to_title() -> void:
 	# A fresh title owns no Path: an abandoned or finished run drops its receipt.
 	run_seamstress_path_receipt = {}
 	run_seamstress_path_choice = null
+	run_tinker_path_receipt = {}
+	run_tinker_path_choice = null
+	_tinker_setup_receipt = {}
 	_close_base()
 	_clear_visit_backdrop()
 	_clear_quiet_spool()

@@ -1,0 +1,3 @@
+[
+  {"id":"frayfinder_mitt","slot":"ARM","effect":"first_single_target_half_unravel_attack_bonus","amount":2,"minimum_unravel_numerator":1,"minimum_unravel_denominator":2,"once_per_player_turn":true,"hit_number":1,"target_kind":"enemy_single"}
+]

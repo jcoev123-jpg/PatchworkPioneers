@@ -15,7 +15,8 @@ const KNOWN_EFFECT_KEYS := [
 	"heal", "exposed", "weak", "bleed", "unravel", "bleed_multiplier", "pinned",
 	"guarding", "thorns", "draw", "energy", "gain_energy", "self_hp_loss",
 	"conditional_damage", "random_target_each_hit", "rng_source",
-	"living_targets_only", "duration",
+	"living_targets_only", "duration", "next_attack_damage_bonus",
+	"next_turn_energy", "expires",
 ]
 ## Plain-text keyword reminders appended to the tooltip (never the card face)
 ## for authored cards that actually carry the mechanic. They explain only the
@@ -43,6 +44,10 @@ var _path_loaded := false
 var _path_card_definitions: Dictionary = {}
 var _path_passives: Dictionary = {}
 var _path_names: Dictionary = {}
+## Authored Tinker Path card faces, keyed by card ID, from the same validated
+## offer set the run service uses.
+var _tinker_path_loaded := false
+var _tinker_path_cards: Dictionary = {}
 # Key: the ACTUAL hand panel, value: original card ID, facts and signal Callables.
 var _bindings: Dictionary = {}
 var _app
@@ -66,10 +71,13 @@ func _ledger() -> RunRestStitchCards:
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
 	_load_path_cards()
+	_load_tinker_path_cards()
 	if _path_card_definitions.has(card_id):
 		# Detached like every catalog lookup, so a caller can never alter the
 		# authored Path record other panels read.
 		return (_path_card_definitions[card_id] as Dictionary).duplicate(true)
+	if _tinker_path_cards.has(card_id):
+		return (_tinker_path_cards[card_id] as Dictionary).duplicate(true)
 	var move := M02PositionCards.new().get_definition(card_id)
 	if not move.is_empty():
 		return move
@@ -130,6 +138,24 @@ func _path_passive_bonus(card_id: String, status: String) -> int:
 
 func _path_name(card_id: String) -> String:
 	return str(_path_names.get(card_id, ""))
+
+
+## The two authored Tinker Path cards, loaded once from the same validated offer
+## set. A record that does not validate contributes no face and no playability.
+func _load_tinker_path_cards() -> void:
+	if _tinker_path_loaded:
+		return
+	_tinker_path_loaded = true
+	for path in RunTinkerPathChoice.new().get_offers():
+		if not path is Dictionary:
+			continue
+		var card: Variant = (path as Dictionary).get("card")
+		if not card is Dictionary:
+			continue
+		var card_id: String = str((card as Dictionary).get("id", ""))
+		if card_id.is_empty():
+			continue
+		_tinker_path_cards[card_id] = (card as Dictionary).duplicate(true)
 
 
 ## Cached, optional texture load. A frame or hero emblem that is not on disk
@@ -391,6 +417,16 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 	if effects.has("energy") and not effects.has("gain_energy"):
 		parts.append("BASE gain %d energy" % int(effects["energy"])
 			if precise else "+%d energy" % int(effects["energy"]))
+	if effects.has("next_attack_damage_bonus"):
+		var bonus: int = int(effects["next_attack_damage_bonus"])
+		var timing: String = " this turn" \
+			if str(effects.get("expires", "")) == "end_of_player_turn" else ""
+		parts.append("BASE the next attack%s deals +%d damage" % [timing, bonus]
+			if precise else "+%d next attack" % bonus)
+	if effects.has("next_turn_energy"):
+		var credit: int = int(effects["next_turn_energy"])
+		parts.append("BASE gain %d energy on your next turn" % credit
+			if precise else "+%d energy next turn" % credit)
 	if effects.has("self_hp_loss"):
 		parts.append("BASE self-damage %d" % int(effects["self_hp_loss"])
 			if precise else "-%d HP" % int(effects["self_hp_loss"]))
@@ -778,18 +814,32 @@ func _update_visual(panel: Control) -> void:
 	var playable := false
 	var id: String = _bindings[panel].id
 	_load_path_cards()
+	_load_tinker_path_cards()
 	if _app != null and _app.deck != null and _app.party != null and _app.enemies != null \
 			and _wired(panel, id):
+		# The battle's one Tinker Path authority may already have discounted this
+		# cast, which is a real price: the face must not dim an affordable card.
+		var battle_preview = _app.get_node_or_null("LiveAttackPreview")
+		var discount := 0
+		if battle_preview != null and is_instance_valid(battle_preview) \
+				and battle_preview.has_method("tinker_cost_discount"):
+			discount = int(battle_preview.tinker_cost_discount(id))
 		if _targeting.supports(id):
 			# Starter, plain-strike, heavy and Sight Glass attacks share their own
 			# read-only preview; no catalog record alone can claim a legal target.
-			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id).get("playable", false))
+			playable = bool(_targeting.get_preview(_app.deck, _app.party, _app.enemies, id, discount).get("playable", false))
 		elif _path_card_definitions.has(id):
 			# A Path card is enable-able only by the genuine battle-bound resolver
 			# of the mounted routed fight, never by its authored face alone.
 			var presenter = _app.get_node_or_null("LiveAttackPreview")
 			playable = presenter != null and is_instance_valid(presenter) \
 				and bool(presenter.path_preview(id).get("playable", false))
+		elif _tinker_path_cards.has(id):
+			# A Tinker Path card is enable-able only by this battle's one genuine
+			# Path authority, never by its authored face alone.
+			var tinker_presenter = _app.get_node_or_null("LiveAttackPreview")
+			playable = tinker_presenter != null and is_instance_valid(tinker_presenter) \
+				and bool(tinker_presenter.tinker_path_playable(id))
 		elif id.begins_with(RunRestStitchCards.ID_PREFIX):
 			playable = bool(_stitched_preview.get_preview(_ledger(), _app._stitch_snapshot(), _app.deck, _app.party, _app.enemies, id).get("playable", false))
 		elif id in M02PositionCards.IDS:
@@ -800,7 +850,8 @@ func _update_visual(panel: Control) -> void:
 		else:
 			var support := _definition(id)
 			var position := _owner_position(str(support.get("owner", "")))
-			playable = not support.is_empty() and _app.deck.turn_active and _app.deck.energy >= int(support.get("cost", -1)) \
+			playable = not support.is_empty() and _app.deck.turn_active \
+				and _app.deck.energy + discount >= int(support.get("cost", -1)) \
 				and position in support.get("from_positions", []) and not _app.party.is_downed(position)
 	var hovered := false
 	var viewport := panel.get_viewport()

@@ -488,12 +488,42 @@ func _is_heal_card(card_id: String) -> bool:
 		or card_id in CombatSeamstressPoolHeals.TEA_IDS \
 		or card_id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
 
+## The battle-scoped Path authority lives on the mounted attack presenter, which
+## already owns this battle's shared Tinker first-attack latch and turn boundary.
+## A stale or foreign presenter never authorizes a Path cast.
+func _path_presenter():
+	var app = get_parent()
+	if app == null:
+		return null
+	var presenter = app.get_node_or_null("LiveAttackPreview")
+	if presenter == null or not is_instance_valid(presenter) \
+			or presenter._deck != _deck or presenter._battle != _battle:
+		return null
+	return presenter
+
+
+## A selected Tinker Path card is actionable only while this battle's one Path
+## authority is really bound to this deck, turn and hand.
+func _is_path_card(card_id: String) -> bool:
+	var presenter = _path_presenter()
+	return presenter != null and presenter.tinker_path_is_card(card_id)
+
+
+## The battle's one Path authority's authored Clockwork reduction, read BEFORE
+## the support service's printed-cost check so a discounted card stays castable.
+func _path_discount(card_id: String) -> int:
+	var presenter = _path_presenter()
+	return 0 if presenter == null else int(presenter.tinker_cost_discount(card_id))
+
+
 func _is_actionable(card_id: String) -> bool:
-	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id) or _is_heal_card(card_id)
+	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id) or _is_heal_card(card_id) or _is_path_card(card_id)
 
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
 func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int) -> bool:
+	if _is_path_card(card_id):
+		return _play_path_card(card_id)
 	if card_id in SPARE_PARTS_IDS:
 		return _tinker_gadgets != null and bool(_tinker_gadgets.resolve_spare_parts(deck, party, card_id, position).get("ok", false))
 	if _is_block_card(card_id):
@@ -508,7 +538,25 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		if _heal_cards == null:
 			return false
 		return bool(_heal_cards.play_card(deck, party, card_id, position))
-	return _play != null and _play.play_card(deck, party, card_id, position)
+	return _play != null and _play.play_card(deck, party, card_id, position,
+		_path_discount(card_id))
+
+
+## Target-free commit of the selected Tinker Path card. The face the player is
+## looking at supplies the presented metadata; the battle's one Path authority
+## revalidates it with the real Tinker position, turn and energy before it
+## spends, discards or arms anything.
+func _play_path_card(card_id: String) -> bool:
+	var presenter = _path_presenter()
+	if presenter == null:
+		return false
+	var presented: Dictionary = _metadata.definition(card_id)
+	if presented.is_empty():
+		return false
+	var receipt: Dictionary = presenter.commit_tinker_path_card(card_id,
+		String(presented.get("owner", "")), int(presented.get("cost", -1)),
+		String(presented.get("target_kind", "")))
+	return bool(receipt.get("ok", false))
 
 
 func _sync_battle() -> void:
@@ -864,6 +912,17 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			or app.enemies == null or not app.enemies.is_valid() \
 			or party.is_defeated() or app.enemies.is_victorious():
 			return false
+	if _is_path_card(card_id):
+		# Presentation preflight only: the one Path authority revalidates and commits.
+		if app._battle_closed or not deck.turn_active or app.battle_result == null \
+			or not app.battle_result.can_continue() or app.battle_result._party != party \
+			or app.battle_result._enemies != app.enemies or not party.is_valid() \
+			or app.enemies == null or not app.enemies.is_valid() \
+			or party.is_defeated() or app.enemies.is_victorious():
+			return false
+		var presenter = _path_presenter()
+		if presenter == null or not presenter.tinker_path_playable(card_id):
+			return false
 	var index: int = panel.get_index()
 	return index < deck.hand.size() and deck.hand[index] == card_id \
 		and panel.get_child(0) is Label and panel.get_child(0).text == card_id
@@ -919,13 +978,26 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			_sync_battle()
 			app.end_turn_button.grab_focus()
 		return
+	var energy_before: int = deck.energy
 	if not _play_held(deck, party, card_id, 0):
 		return
+	_report_path_play(card_id, energy_before)
 	var app = get_parent()
 	app._refresh_party()
 	app._refresh_hand()
 	_sync_battle()
 	app.end_turn_button.grab_focus()
+
+
+## A real, successful Tinker support play still belongs to the battle's one Path
+## authority, so Clockwork's authored discount is a real cost reduction. The Path
+## card itself already recorded its own commit.
+func _report_path_play(card_id: String, energy_before: int) -> void:
+	if _is_path_card(card_id):
+		return
+	var presenter = _path_presenter()
+	if presenter != null:
+		presenter.report_tinker_play(card_id, energy_before)
 
 
 func _selection_valid() -> bool:

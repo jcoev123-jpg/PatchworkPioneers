@@ -93,6 +93,7 @@ func _detached_hit(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	unravel_copy._gauges = unravel._gauges.duplicate(true)
 	var latch_copy := CombatTinkerFirstAttack.new()
 	latch_copy._consumed = first_attack._consumed
+	latch_copy._path_bonus = first_attack._path_bonus
 
 	var gauge_before: Dictionary = unravel.get_snapshot(position)
 	var pin_before: String = pinned.pinner_for_enemy(position)

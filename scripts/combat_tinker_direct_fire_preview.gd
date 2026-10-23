@@ -28,7 +28,8 @@ func definition(card_id: String) -> Dictionary:
 
 
 func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, resolver: CombatTinkerPoolAttacks) -> Dictionary:
+		card_id: String, resolver: CombatTinkerPoolAttacks,
+		cost_discount: int = 0) -> Dictionary:
 	var unavailable := {"playable": false, "requires_selection": false,
 		"target_positions": [] as Array[int], "hits": []}
 	if resolver == null or deck == null or party == null or enemies == null \
@@ -44,7 +45,7 @@ func get_preview(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		# This is the exact non-mutating resolver preflight, including held
 		# copy, energy, living owner/FROM, target/TO and status overflow.
 		var plan: Dictionary = resolver._prepare(deck, party, enemies,
-			card_id, position, resolver.get_pinned())
+			card_id, position, resolver.get_pinned(), cost_discount)
 		if not plan.get("ok", false):
 			continue
 		var defender: Dictionary = enemies.get_enemy(position)

@@ -38,6 +38,7 @@ func start_player_turn() -> void:
 func stage_transaction() -> CombatAttackCards:
 	var staged := CombatAttackCards.new()
 	staged._tinker._consumed = _tinker._consumed
+	staged._tinker._path_bonus = _tinker._path_bonus
 	if _patches != null:
 		staged._patches = CombatPatchAttackRules.new()
 		staged._patches._valid = _patches._valid
@@ -48,6 +49,7 @@ func stage_transaction() -> CombatAttackCards:
 
 func commit_transaction(staged: CombatAttackCards) -> void:
 	_tinker._consumed = staged._tinker._consumed
+	_tinker._path_bonus = staged._tinker._path_bonus
 	if _patches != null:
 		_patches._consumed = staged._patches._consumed.duplicate(true)
 
@@ -65,11 +67,13 @@ func resolve_staged_half(party: CombatParty, enemies: CombatEnemies,
 ## Rejects every invalid selection, recipient and status snapshot before mutating
 ## any real combat state. Target positions are original roster slots, never indices
 ## compacted after deaths. Supplied status snapshots are never mutated.
+## cost_discount is an already-validated authored reduction (never more than the
+## one Clockwork point) applied to the real charge exactly once, before spending.
 func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int = 0, attacker_statuses: Dictionary = {},
-		enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
+		enemy_statuses_by_position: Dictionary = {}, cost_discount: int = 0) -> Dictionary:
 	var plan := _prepare(deck, party, enemies, card_id, target_position,
-		attacker_statuses, enemy_statuses_by_position, true)
+		attacker_statuses, enemy_statuses_by_position, true, cost_discount)
 	if not plan.ok:
 		return _failure()
 	var positions: Array[int] = plan.positions
@@ -131,7 +135,8 @@ func play_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 ## Pure preflight shared by forecasts and committed attacks. No latch is consumed.
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, attacker_statuses: Dictionary,
-		enemy_statuses_by_position: Dictionary, select_target: bool) -> Dictionary:
+		enemy_statuses_by_position: Dictionary, select_target: bool,
+		cost_discount: int = 0) -> Dictionary:
 	if deck == null or party == null or enemies == null:
 		return _failure()
 	if _patches != null and not _patches.is_valid():
@@ -151,7 +156,7 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 	# Preview owns hand/energy/owner-position and alive-target legality. Recheck
 	# the chosen target below, as previews do not commit a selection.
-	var preview := _targeting.get_preview(deck, party, enemies, card_id)
+	var preview := _targeting.get_preview(deck, party, enemies, card_id, cost_discount)
 	if not preview.get("playable", false):
 		return _failure()
 	var positions: Array[int] = preview["target_positions"]
@@ -233,7 +238,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			enemies, attack_damage, owner_statuses, target_statuses):
 		return _failure()
 	return {"ok": true, "positions": positions, "applications": applications,
-		"attack_damage": attack_damage, "cost": cost_value,
+		"attack_damage": attack_damage, "cost": cost_value - cost_discount,
+		"printed_cost": cost_value,
 		"requires_selection": preview["requires_selection"],
 		"owner_id": owner_id,
 		"owner_statuses": owner_statuses, "target_statuses": target_statuses}
@@ -243,9 +249,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 ## Uses the current instance's Tinker latch without spending or recording a hit.
 func forecast_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, attacker_statuses: Dictionary = {},
-		enemy_statuses_by_position: Dictionary = {}) -> Dictionary:
+		enemy_statuses_by_position: Dictionary = {}, cost_discount: int = 0) -> Dictionary:
 	var plan := _prepare(deck, party, enemies, card_id, 0,
-		attacker_statuses, enemy_statuses_by_position, false)
+		attacker_statuses, enemy_statuses_by_position, false, cost_discount)
 	if not plan.ok:
 		return {"playable": false, "requires_selection": false, "hits": []}
 	var hits: Array[Dictionary] = []

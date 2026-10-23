@@ -39,6 +39,10 @@ var _unravel: CombatUnravel
 ## deck, party, roster and the one gauge shared with the round flow.
 var _path_cards: CombatSeamstressPathCards
 var _path_card: Dictionary = {}
+## The one Tinker Path authority of THIS routed battle. It owns the selected
+## card's commit, the per-turn Wind-up credit and Clockwork discount, and the
+## first-attack/Scope bonuses reported by every successful Tinker play.
+var _tinker_path: CombatTinkerPathHand
 var _routed_gauge_shared := false
 var last_event: Dictionary = {}
 var _armed: Control
@@ -296,6 +300,149 @@ func _path_quote_text(position: int, quote: Dictionary) -> String:
 	if parts.is_empty():
 		return "%d: no effect" % position
 	return "%d: %s" % [position, ", ".join(parts)]
+
+
+## Bind this battle's selected Tinker Path to the genuine claimed setup, the
+## detached run receipt, this real deck and party. Only a matching trio can name
+## a Path card or expose the one rules authority the hand commits through.
+func _bind_tinker_path(app) -> void:
+	_tinker_path = null
+	if app == null or _deck == null or app.party == null:
+		return
+	var receipt: Variant = app.run_tinker_path_receipt
+	var choice: Variant = app.run_tinker_path_choice
+	if not receipt is Dictionary or (receipt as Dictionary).is_empty():
+		return
+	if not choice is RunTinkerPathChoice or not (choice as RunTinkerPathChoice).has_selection():
+		return
+	var selection: Dictionary = (choice as RunTinkerPathChoice).get_selection()
+	if String(selection.get("path_id", "")) != String((receipt as Dictionary).get("path_id", "")) \
+			or String(selection.get("card_id", "")) != String((receipt as Dictionary).get("card_id", "")) \
+			or String(selection.get("passive_id", "")) != String((receipt as Dictionary).get("passive_id", "")):
+		return
+	var hand := CombatTinkerPathHand.new(choice, _deck, app.party)
+	if hand.is_bound():
+		_tinker_path = hand
+
+
+## True only while this battle holds exactly one copy of the selected Tinker
+## Path card, no copy of the other Path's card, and its genuine authority.
+func tinker_ready() -> bool:
+	if _tinker_path == null or _deck == null:
+		return false
+	var app = get_parent()
+	return app != null and app.deck == _deck and _tinker_path.is_bound()
+
+
+func _tinker_hero() -> Dictionary:
+	var app = get_parent()
+	if app == null or app.party == null:
+		return {}
+	for hero in app.party.get_heroes():
+		if hero.get("id") == "tinker":
+			return hero
+	return {}
+
+
+func _tinker_position() -> int:
+	return int(_tinker_hero().get("position", 0))
+
+
+func _is_tinker_path_card(card_id: String) -> bool:
+	if _tinker_path == null or card_id.is_empty():
+		return false
+	return card_id == String(_tinker_path._selected_card.get("id", ""))
+
+
+## Read-only quote of the genuine held Path card through the shared authority's
+## own authenticated metadata/position/energy check. A preview never charges,
+## discards or arms anything.
+func tinker_path_quote(card_id: String) -> Dictionary:
+	if not _is_tinker_path_card(card_id) or not tinker_ready():
+		return {"ok": false}
+	var card: Dictionary = _tinker_path._selected_card
+	return _tinker_path.preview_path_card(card_id, String(card.get("owner", "")),
+		int(card.get("cost", -1)), _tinker_position(), String(card.get("target_kind", "")))
+
+
+## Public admission for the mounted shared hand: the genuine selected Tinker Path
+## card of this battle, bound to its authenticated authority right now.
+func tinker_path_is_card(card_id: String) -> bool:
+	return _is_tinker_path_card(card_id) and tinker_ready()
+
+
+## Public read-only admission for the mounted hand face and tests.
+func tinker_path_playable(card_id: String) -> bool:
+	return bool(tinker_path_quote(card_id).get("ok", false))
+
+
+## Target-free hand commit of the selected Path card. The PRESENTED face metadata
+## and the real Tinker position are authenticated by the shared battle service;
+## spending, discarding and every effect stay inside that one authority.
+func commit_tinker_path_card(card_id: String, owner: String, printed_cost: int,
+		target_kind: String) -> Dictionary:
+	if not tinker_ready():
+		return {"ok": false}
+	var receipt: Dictionary = _tinker_path.commit_path_card(card_id, owner,
+		printed_cost, _tinker_position(), target_kind)
+	if not receipt.get("ok", false):
+		return receipt
+	_apply_tinker_path_receipt(receipt)
+	return receipt
+
+
+## Arm the authored Path bonus on the same battle-scoped first-attack latch every
+## Tinker resolver and forecast already reads, so the projected +4 is real damage.
+func _apply_tinker_path_receipt(receipt: Dictionary) -> void:
+	if not bool(receipt.get("arms_scope", false)) or _play == null:
+		return
+	var effects: Variant = _tinker_path._selected_card.get("effects", {})
+	var bonus: int = int((effects as Dictionary).get("next_attack_damage_bonus", 0)) \
+		if effects is Dictionary else 0
+	_play._tinker.arm_path_bonus(bonus)
+
+
+## The battle's one Path authority's authored Clockwork reduction for a live cast,
+## evaluated BEFORE any resolver's printed-cost check. Zero for every other card,
+## a spent discount or a foreign/stale authority.
+func tinker_cost_discount(card_id: String) -> int:
+	if _tinker_path == null or _deck == null or not _deck.turn_active or not tinker_ready():
+		return 0
+	var tinker := _tinker_hero()
+	if tinker.is_empty() or int(tinker.get("hp", 0)) <= 0:
+		return 0
+	return _tinker_path.get_rules().discount_for(card_id, int(tinker["position"]),
+		int(tinker["hp"]))
+
+
+## One real, successful Tinker card play is reported to this battle's one Path
+## authority. It revalidates the card, the live Tinker position/HP and the
+## pre-spend energy before recording the first hit, Scope and Clockwork state.
+## The resolver already charged the authority's own discounted cost, so nothing
+## is refunded here.
+func report_tinker_play(card_id: String, energy_before: int) -> Dictionary:
+	if _tinker_path == null or not tinker_ready():
+		return {}
+	var tinker := _tinker_hero()
+	if tinker.is_empty() or int(tinker.get("hp", 0)) <= 0:
+		return {}
+	var result: Dictionary = _tinker_path.get_rules().commit_successful(card_id,
+		int(tinker["position"]), int(tinker["hp"]), energy_before, true)
+	if not result.get("ok", false):
+		return {}
+	_apply_tinker_path_receipt(result)
+	return result
+
+
+## The routed round flow owns the real deck turn. This advances only the Path's
+## own view of it: the previous turn closes (Scope expires, Clockwork re-arms)
+## and the new one opens, claiming a queued Wind-up credit exactly once after the
+## deck reset.
+func _advance_tinker_path_turn() -> void:
+	if _tinker_path == null or not tinker_ready() or _deck == null or not _deck.turn_active:
+		return
+	_tinker_path.release_open_turn()
+	_tinker_path.adopt_open_turn()
 
 
 ## A selectable combo must belong to this actual routed battle, with the
@@ -585,8 +732,11 @@ func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
 	if _is_path_card(id):
 		return path_preview(id)
+	# The battle's one Path authority prices a qualifying Tinker card BEFORE any
+	# resolver's printed-cost affordability check.
+	var discount: int = tinker_cost_discount(id)
 	if _direct_fire_preview.supports(id):
-		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire)
+		return _direct_fire_preview.get_preview(_deck, app.party, app.enemies, id, _direct_fire, discount)
 	if _targeting.is_seamstress_control(id):
 		return _control_preview(id)
 	if _targeting.is_pool_combo_attack(id):
@@ -594,7 +744,7 @@ func _target_preview(id: String) -> Dictionary:
 		return {"playable": forecast.get("playable", false),
 			"requires_selection": forecast.get("requires_selection", false),
 			"target_positions": forecast.get("target_positions", [])}
-	return _targeting.get_preview(_deck, app.party, app.enemies, id)
+	return _targeting.get_preview(_deck, app.party, app.enemies, id, discount)
 
 
 func _queue_attack(position: int) -> void:
@@ -644,6 +794,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 			or panel.get_index() != panel_index or app.deck.hand != queued_hand):
 		_reject_stitch()
 		return
+	var energy_before: int = _deck.energy
 	if (direct or combo or path) and (app._battle_closed or target_id.is_empty() \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -659,6 +810,11 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		return
 	last_event = _resolve_attack(party, enemies, id, position)
 	if last_event.ok:
+		# Every real Tinker play feeds the battle's one Path authority, so its
+		# first-hit latch, Scope and Clockwork state can never drift from combat.
+		# A non-Tinker card fails closed inside the authority.
+		if _tinker_path != null:
+			report_tinker_play(id, energy_before)
 		_after_attack()
 	elif guarded:
 		_reject_stitch()
@@ -677,9 +833,10 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 			return {"ok": false}
 		return _path_cards.play_card(_deck, party, enemies, id, position)
 	if _direct_fire_preview.supports(id):
+		var direct_discount: int = tinker_cost_discount(id)
 		if forecast:
-			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire)
-		return _direct_fire.play_attack(_deck, party, enemies, id, position)
+			return _direct_fire_preview.get_preview(_deck, party, enemies, id, _direct_fire, direct_discount)
+		return _direct_fire.play_attack(_deck, party, enemies, id, position, null, direct_discount)
 	if _targeting.is_pool_combo_attack(id):
 		if forecast:
 			return _combo_preview(id)
@@ -724,9 +881,14 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	var enemy_statuses := {}
 	for enemy in enemies.get_enemies():
 		enemy_statuses[enemy.position] = enemy.get("statuses", {})
+	# The one Path authority prices a qualifying Tinker card before the starter
+	# resolver checks or charges the printed cost.
+	var discount: int = tinker_cost_discount(id)
 	if forecast:
-		return _play.forecast_attack(_deck, party, enemies, id, owner_statuses, enemy_statuses)
-	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses, enemy_statuses)
+		return _play.forecast_attack(_deck, party, enemies, id, owner_statuses,
+			enemy_statuses, discount)
+	return _play.play_attack(_deck, party, enemies, id, position, owner_statuses,
+		enemy_statuses, discount)
 
 
 ## Nonattack utility forecast: status stacks and draw only, never a hit or
@@ -963,6 +1125,9 @@ func _sync_battle() -> void:
 		# The selected Path card is bound only to this battle's genuine receipt,
 		# deck, party, roster and the one gauge shared with its round flow.
 		_bind_path_cards(app)
+		# The Tinker Path is bound the same way, from its own claimed setup and
+		# authenticated run receipt.
+		_bind_tinker_path(app)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		cue = Label.new()
 		cue.name = "AttackPreviewCue"
@@ -981,6 +1146,9 @@ func _sync_battle() -> void:
 	if app.enemy_intents != null and _turn != app.enemy_intents._turn_index:
 		_turn = app.enemy_intents._turn_index
 		_play.start_player_turn()
+		# The Path authority follows the same genuine player-turn boundary, so an
+		# unspent Scope expires and a queued Wind-up credit is claimed once.
+		_advance_tinker_path_turn()
 		_cancel_choice()
 	if _bindings.has(_armed) and _is_stitched(_armed) and (_receipt != app._stitch_snapshot() or _run_map != app.run_map):
 		_cancel_choice()
@@ -1200,7 +1368,11 @@ func _refresh() -> void:
 		controls = "P / click card; 1-3 / click enemy"
 	if is_direct:
 		controls += "; Tinker FROM %s" % _key_hint(definition.from_positions)
-	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, definition.cost, controls, description]
+	# The one Path authority may already have discounted this cast: the strip
+	# reports the energy that will really be charged, never a printed price the
+	# resolver no longer asks for.
+	var shown_cost: int = maxi(0, int(definition.cost) - tinker_cost_discount(id))
+	cue.text = "%s | %d energy | %s\n%s" % [definition.display_name, shown_cost, controls, description]
 
 
 func _unbind(panel) -> void:
@@ -1242,6 +1414,7 @@ func _clear() -> void:
 	_unravel = null
 	_path_cards = null
 	_path_card.clear()
+	_tinker_path = null
 	_routed_gauge_shared = false
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)

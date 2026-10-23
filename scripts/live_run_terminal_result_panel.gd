@@ -49,7 +49,8 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	description_label.text = ("The final boss has fallen. The run is complete."
 		if status == RunActBattleOutcome.VICTORY
 		else "The party has fallen. The run has ended.")
-	summary_label.text = _signature_text()
+	var battles_resolved: int = (settled as Array).size()
+	summary_label.text = "Battles resolved: %d\n%s" % [battles_resolved, _signature_text()]
 	return_button.disabled = false
 	return_button.focus_mode = Control.FOCUS_ALL
 	_button_connection = _on_return_pressed.bind(_generation, return_button)

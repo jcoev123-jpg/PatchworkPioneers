@@ -30,6 +30,19 @@ var _pinned: CombatPinned = null
 var _damage := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
 var _patches: CombatPatchAttackRules = null
+## The one authored cost reduction a caller may apply to the NEXT cast only. The
+## mounted area adapter sets it from the battle's Tinker Path authority before it
+## plays, so Clockwork's discount is charged by this resolver itself.
+var cost_discount: int = 0
+
+
+## Rejects an out-of-contract reduction. This never changes what the resolver
+## validates, only the energy its successful cast really charges.
+func set_cost_discount(value: int) -> bool:
+	if value < 0 or value > 1:
+		return false
+	cost_discount = value
+	return true
 
 
 ## An explicit failed bind must fail closed, not silently discard the wardrobe.
@@ -283,9 +296,17 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var to_value: Variant = definition.get("to_positions")
 	var kind_value: Variant = definition.get("target_kind")
 	var effects_value: Variant = definition.get("effects")
-	if not cost_value is int or cost_value < 0 or cost_value > deck.energy \
+	if not cost_value is int or cost_value < 0 \
 			or not from_value is Array or not to_value is Array \
 			or not kind_value is String or not effects_value is Dictionary:
+		return _failure()
+	# The one authored Clockwork point only ever reduces a PRINTED cost of two or
+	# more; anything else fails closed rather than under-charging the battle.
+	if cost_discount < 0 or cost_discount > 1 \
+			or (cost_discount > 0 and cost_value < 2):
+		return _failure()
+	var effective_cost: int = cost_value - cost_discount
+	if effective_cost > deck.energy:
 		return _failure()
 	var effects: Dictionary = effects_value
 
@@ -420,7 +441,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		"attack_damage": raw_damage + bonus + patch_damage,
 		"patch_exposed": patch_exposed,
 		"owner_statuses": owner_statuses,
-		"cost": cost_value,
+		"cost": effective_cost,
+		"printed_cost": cost_value,
 		"unravel_amount": unravel_amount,
 		"active_pinned": active_pinned,
 	}

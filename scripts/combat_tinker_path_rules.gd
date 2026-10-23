@@ -57,6 +57,29 @@ func take_next_turn_energy_bonus() -> int:
 	return bonus
 
 
+## The authored Clockwork reduction for this card at this position, evaluated
+## WITHOUT the caller's energy balance. The live hand asks this before any
+## printed-cost affordability check, then threads the same number into the real
+## resolver, so a discounted card stays castable at the energy the player has.
+func discount_for(card_id: String, tinker_position: int, tinker_hp: int) -> int:
+	if not is_valid_path() or not _turn_active or tinker_hp <= 0 			or tinker_position < 1 or tinker_position > 3:
+		return 0
+	var definition: Dictionary = _resolve_card(card_id)
+	if definition.is_empty() or definition.get("owner") != "tinker":
+		return 0
+	return _discount_for_definition(definition, tinker_position)
+
+
+func _discount_for_definition(definition: Dictionary, tinker_position: int) -> int:
+	var positions: Variant = definition.get("from_positions")
+	var printed: Variant = definition.get("cost")
+	if not (positions is Array) or not positions.has(tinker_position) 			or not (printed is int) or printed < 0:
+		return 0
+	if _path_id == "clockwork" and not _clockwork_used and printed >= 2:
+		return 1
+	return 0
+
+
 func preview(card_id: String, tinker_position: int, tinker_hp: int,
 		available_energy: int) -> Dictionary:
 	if not is_valid_path() or not _turn_active or tinker_hp <= 0 			or tinker_position < 1 or tinker_position > 3 or available_energy < 0:
@@ -68,22 +91,29 @@ func preview(card_id: String, tinker_position: int, tinker_hp: int,
 	var printed: Variant = definition.get("cost")
 	if not (positions is Array) or not positions.has(tinker_position) 			or not (printed is int) or printed < 0:
 		return {"ok": false}
-	var discount: int = 0
-	if _path_id == "clockwork" and not _clockwork_used and printed >= 2:
-		discount = 1
+	var discount: int = _discount_for_definition(definition, tinker_position)
 	var cost: int = maxi(0, printed - discount)
 	if available_energy < cost:
 		return {"ok": false}
 	var attack: bool = _is_attack(definition)
+	# The native +3 and the armed Scope +4 are separate latches: the first hit of
+	# the turn can already be spent while a later Scope still owes its own bonus.
 	var sharpshot_bonus: int = 0
+	var scope_bonus: int = 0
 	if _path_id == "sharpshot" and attack:
-		sharpshot_bonus = _first_attack.bonus_for_attack(card_id)
-	var scope_bonus: int = 4 if attack and _path_id == "sharpshot" and _scope_armed else 0
+		sharpshot_bonus = _first_attack.first_hit_bonus()
+		scope_bonus = _first_attack.path_bonus()
+	var arms_scope: bool = card_id == _path_card_id and _path_id == "sharpshot"
+	var scope_amount: int = 0
+	if arms_scope:
+		var effects: Variant = definition.get("effects")
+		if effects is Dictionary:
+			scope_amount = int((effects as Dictionary).get("next_attack_damage_bonus", 0))
 	return {
 		"ok": true, "card_id": card_id, "printed_cost": printed, "cost": cost,
 		"discount": discount, "is_attack": attack, "sharpshot_bonus": sharpshot_bonus,
 		"scope_bonus": scope_bonus, "damage_bonus": sharpshot_bonus + scope_bonus,
-		"arms_scope": card_id == _path_card_id and _path_id == "sharpshot",
+		"arms_scope": arms_scope, "scope_amount": scope_amount,
 		"next_turn_energy": 1 if card_id == _path_card_id and _path_id == "clockwork" else 0
 	}
 
@@ -104,7 +134,10 @@ func commit_successful(card_id: String, tinker_position: int, tinker_hp: int,
 			_first_attack.record_successful_attack(card_id)
 			_scope_armed = false
 	if result["arms_scope"]:
-		_scope_armed = true
+		# Scope arms the NEXT qualifying Tinker attack, even after this turn's
+		# native first hit was already spent.
+		_first_attack.arm_path_bonus(int(result.get("scope_amount", 0)))
+		_scope_armed = _first_attack.path_bonus() > 0
 	if result["next_turn_energy"] > 0:
 		_pending_energy += int(result["next_turn_energy"])
 	return result
