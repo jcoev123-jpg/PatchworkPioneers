@@ -1810,7 +1810,8 @@ func _refresh_action_focus() -> void:
 ## Routed rewards are prepared once; the standalone demo keeps its fixed offering.
 ## Both routed services receive the authored D2-1 base records of party-owned
 ## heroes, so the live pick is the accepted weighted selector, never a starter
-## fallback.
+## fallback, plus the run's current Rest stitch ledger so an authentic composite
+## already owned at a Rest stays a legal run deck member.
 func _build_card_reward() -> void:
 	if not _battle_closed or battle_result == null or battle_result.get_outcome() != CombatBattleResult.VICTORY:
 		return
@@ -1832,11 +1833,13 @@ func _build_card_reward() -> void:
 			if not party_carryover.read_state().completed_fights.has(_carryover_node):
 				return
 			fight_rewards = RunFightVictoryRewards.new(battle_result, run_rng, party_ids,
-				records, run_deck, session_gold, false)
+				records, run_deck, session_gold, false, [], [],
+				run_stitch_descriptors, run_next_stitch_id)
 			prepared = fight_rewards.prepare()
 		else:
 			multi_fight_rewards = RunMultiFightRewards.new(run_map, run_rng, party_carryover,
-				run_deck, session_gold, run_trinkets, records, _catalog_trinket_ids())
+				run_deck, session_gold, run_trinkets, records, _catalog_trinket_ids(),
+				run_stitch_descriptors, run_next_stitch_id)
 			prepared = multi_fight_rewards.prepare(_carryover_node, battle_result, party)
 		if not prepared.ok:
 			fight_rewards = null
@@ -2000,13 +2003,17 @@ func _settle_routed_reward(id: String, offering) -> bool:
 	if offering is RunFightVictoryRewards:
 		if offering._battle != battle_result or offering._rng != run_rng \
 			or offering._source_deck != run_deck or offering._starting_gold != session_gold \
-			or offering._owned_trinket_ids != run_trinkets:
+			or offering._owned_trinket_ids != run_trinkets \
+			or offering._stitched_descriptors != run_stitch_descriptors \
+			or offering._next_stitch_id != run_next_stitch_id:
 			return false
 	if offering is RunMultiFightRewards:
 		if offering._map != run_map or offering._rng != run_rng or offering._carry != party_carryover \
 			or offering.read_state().deck != run_deck or offering.read_state().gold != session_gold \
 			or offering.read_state().party.heroes != run_heroes \
-			or offering.read_state().trinkets != run_trinkets:
+			or offering.read_state().trinkets != run_trinkets \
+			or offering._stitched_descriptors != run_stitch_descriptors \
+			or offering._next_stitch_id != run_next_stitch_id:
 			return false
 	var torn_carry := party_carryover as RunTornCarryover
 	if torn_carry == null or torn_carry.read_state().heroes != run_heroes \

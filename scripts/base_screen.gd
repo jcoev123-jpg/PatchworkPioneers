@@ -15,6 +15,7 @@ extends Control
 
 signal path_choice_requested(path_id: String)
 signal tinker_path_choice_requested(path_id: String)
+signal warden_path_choice_requested(path_id: String)
 signal set_out_requested
 signal back_requested
 
@@ -25,6 +26,10 @@ const HEROES_PANEL_RECT := Rect2(96, 396, 352, 212)
 ## The Tinker's own pinned board sits beside the Seamstress one, in the same lower
 ## band: it never covers the Seamstress board, the buildings or the sewn actions.
 const TINKER_PANEL_RECT := Rect2(472, 396, 336, 212)
+const WARDEN_PANEL_RECT := Rect2(832, 396, 352, 212)
+const WARDEN_SLATE := Color("#4a5d73")
+const WARDEN_BONE := Color("#d9cfb8")
+const WARDEN_RUST := Color("#a4552f")
 const INK := Color("#2b3135")
 const PAPER := Color("#ecdfbd")
 const THREAD := Color("#c9b996")
@@ -47,6 +52,11 @@ var tinker_option_box: VBoxContainer
 var tinker_buttons: Array[Button] = []
 var tinker_hint_label: Label
 var tinker_status_label: Label
+var warden_panel: PanelContainer
+var warden_option_box: VBoxContainer
+var warden_buttons: Array[Button] = []
+var warden_hint_label: Label
+var warden_status_label: Label
 
 var _open := false
 var _set_out_pending := false
@@ -65,6 +75,13 @@ var _tinker_hover_id := ""
 var _tinker_focus_id := ""
 var _selected_tinker_id := ""
 var _selected_tinker_name := ""
+var _warden_pending := false
+var _warden_options: Array = []
+var _warden_previews: Dictionary = {}
+var _warden_hover_id := ""
+var _warden_focus_id := ""
+var _selected_warden_id := ""
+var _selected_warden_name := ""
 var _backdrop: Texture2D
 var _buildings: Array = []
 var _paths: Array = []
@@ -102,6 +119,7 @@ func _ready() -> void:
 	_build_top_strip()
 	_build_heroes_choice()
 	_build_tinker_choice()
+	_build_warden_choice()
 	_build_actions()
 	_wire_focus()
 	resized.connect(queue_redraw)
@@ -190,6 +208,7 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 	_set_out_pending = false
 	_back_pending = false
 	_path_pending = false
+	_warden_pending = false
 	set_out_button.disabled = false
 	back_button.disabled = false
 	for button in path_buttons:
@@ -198,6 +217,11 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 	for button in tinker_buttons:
 		if is_instance_valid(button):
 			button.disabled = not _selected_tinker_id.is_empty()
+	for button in warden_buttons:
+		if is_instance_valid(button):
+			button.disabled = not _selected_warden_id.is_empty()
+	if is_instance_valid(warden_panel):
+		warden_panel.visible = not _warden_options.is_empty()
 	if is_instance_valid(path_panel):
 		path_panel.visible = not _path_options.is_empty()
 	if is_instance_valid(tinker_panel):
@@ -206,6 +230,7 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 		wallet_label.text = "Gold %d  ·  Scraps %d" % [gold, scraps]
 	visible = true
 	queue_redraw()
+	_wire_focus()
 	set_out_button.grab_focus()
 	return true
 
@@ -324,7 +349,8 @@ func mark_path_selected(path_id: String, display_name: String) -> bool:
 		path_status_label.show()
 	_wire_focus()
 	if is_instance_valid(set_out_button):
-		set_out_button.grab_focus()
+		_wire_focus()
+	set_out_button.grab_focus()
 	return true
 
 
@@ -463,7 +489,8 @@ func mark_tinker_path_selected(path_id: String, display_name: String) -> bool:
 		tinker_status_label.show()
 	_wire_focus()
 	if is_instance_valid(set_out_button):
-		set_out_button.grab_focus()
+		_wire_focus()
+	set_out_button.grab_focus()
 	return true
 
 
@@ -483,12 +510,148 @@ func release_tinker_path_choice() -> bool:
 	return true
 
 
+## Third, independently offered hero board. Only host-owned identity/name/card
+## rows enter this view; neither this method nor a button creates a run receipt.
+func present_warden_path_options(options: Variant) -> bool:
+	if not options is Array or not is_instance_valid(warden_option_box):
+		return false
+	if not _selected_warden_id.is_empty() or _warden_pending:
+		return false
+	var cleaned: Array = []
+	var seen: Dictionary = {}
+	for raw in options:
+		if not raw is Dictionary:
+			return false
+		var record: Dictionary = raw
+		var path_id := String(record.get("id", ""))
+		var display_name := String(record.get("display_name", ""))
+		if path_id.strip_edges().is_empty() or display_name.strip_edges().is_empty() or seen.has(path_id):
+			return false
+		seen[path_id] = true
+		cleaned.append({"id": path_id, "display_name": display_name,
+			"card_name": String(record.get("card_name", ""))})
+	if cleaned.is_empty():
+		return false
+	for button in warden_buttons:
+		if is_instance_valid(button):
+			warden_option_box.remove_child(button)
+			button.queue_free()
+	warden_buttons.clear()
+	_warden_options = cleaned
+	_warden_previews.clear()
+	_warden_hover_id = ""
+	_warden_focus_id = ""
+	_selected_warden_id = ""
+	_selected_warden_name = ""
+	for option in cleaned:
+		var path_id := String(option["id"])
+		var button := Button.new()
+		button.name = "WardenPathChoice_" + path_id
+		button.text = String(option["display_name"])
+		button.set_meta("path_id", path_id)
+		button.custom_minimum_size = Vector2(0, 40)
+		button.add_theme_font_size_override("font_size", 18)
+		_style_warden_button(button)
+		var preview := VillagePathPreview.warden(option)
+		var tooltip := "Warden Path: " + String(option["display_name"]) \
+			+ (" · card " + String(option["card_name"]) if not String(option["card_name"]).is_empty() else "")
+		if not preview.is_empty():
+			_warden_previews[path_id] = preview
+			tooltip = String(preview["tooltip"])
+		button.tooltip_text = tooltip
+		# Bind the actual control, not only its ID: an old queued button or
+		# callback must never authorize a replacement offer with the same ID.
+		button.pressed.connect(_on_warden_path_pressed.bind(path_id, button))
+		button.focus_entered.connect(_on_warden_preview_entered.bind(path_id, true))
+		button.focus_exited.connect(_on_warden_preview_exited.bind(path_id, true))
+		button.mouse_entered.connect(_on_warden_preview_entered.bind(path_id, false))
+		button.mouse_exited.connect(_on_warden_preview_exited.bind(path_id, false))
+		button.add_child(SewnEdge.new())
+		warden_option_box.add_child(button)
+		warden_buttons.append(button)
+	if is_instance_valid(warden_hint_label):
+		warden_hint_label.text = "Choose one Warden Path for this run"
+	if is_instance_valid(warden_status_label):
+		warden_status_label.text = "No Warden Path chosen yet"
+	if is_instance_valid(warden_panel):
+		warden_panel.visible = _open
+	_wire_focus()
+	return true
+
+
+func warden_path_options() -> Array:
+	return _warden_options.duplicate(true)
+
+
+func selected_warden_path_id() -> String:
+	return _selected_warden_id
+
+
+func selected_warden_path_name() -> String:
+	return _selected_warden_name
+
+
+## A host validates the requested ID; only its explicit approval calls this.
+func mark_warden_path_selected(path_id: String, display_name: String) -> bool:
+	if not _open or _set_out_pending or _back_pending or not is_visible_in_tree():
+		return false
+	if not _selected_warden_id.is_empty():
+		return false
+	var chosen := _warden_path_button(path_id)
+	if chosen == null:
+		return false
+	var card_name := ""
+	var matches := false
+	for option in _warden_options:
+		if String(option.get("id", "")) == path_id and String(option.get("display_name", "")) == display_name:
+			matches = true
+			card_name = String(option.get("card_name", ""))
+	if not matches:
+		return false
+	_warden_pending = false
+	_selected_warden_id = path_id
+	_selected_warden_name = display_name
+	for button in warden_buttons:
+		if is_instance_valid(button):
+			button.disabled = true
+			button.release_focus()
+	if is_instance_valid(warden_hint_label):
+		warden_hint_label.text = "Warden Path sewn for this run"
+	if is_instance_valid(warden_status_label):
+		warden_status_label.text = "Selected: " + display_name \
+			+ (" · card " + card_name if not card_name.is_empty() else "")
+	_wire_focus()
+	if is_instance_valid(set_out_button):
+		set_out_button.grab_focus()
+	return true
+
+
+## A refused request restores ONLY Warden's offered controls.
+func release_warden_path_choice() -> bool:
+	if not _open or _set_out_pending or _back_pending or not is_visible_in_tree():
+		return false
+	if not _selected_warden_id.is_empty() or _warden_options.is_empty():
+		return false
+	_warden_pending = false
+	for button in warden_buttons:
+		if is_instance_valid(button):
+			button.disabled = false
+	if is_instance_valid(warden_status_label):
+		warden_status_label.text = "No Warden Path chosen yet"
+	_refresh_warden_hint()
+	_wire_focus()
+	return true
+
+
 func _apply_closed_state() -> void:
 	_open = false
 	_set_out_pending = false
 	_back_pending = false
 	_path_pending = false
 	_tinker_pending = false
+	_warden_pending = false
+	_selected_warden_id = ""
+	_selected_warden_name = ""
 	_selected_path_id = ""
 	_selected_path_name = ""
 	_selected_tinker_id = ""
@@ -497,11 +660,16 @@ func _apply_closed_state() -> void:
 	_path_focus_id = ""
 	_tinker_hover_id = ""
 	_tinker_focus_id = ""
+	_warden_hover_id = ""
+	_warden_focus_id = ""
 	visible = false
 	if is_instance_valid(path_panel):
 		path_panel.visible = false
 	if is_instance_valid(tinker_panel):
 		tinker_panel.visible = false
+	if is_instance_valid(warden_panel):
+		warden_panel.visible = false
+	_refresh_warden_hint()
 	_refresh_path_hint()
 	_refresh_tinker_hint()
 	for button in path_buttons:
@@ -509,6 +677,10 @@ func _apply_closed_state() -> void:
 			button.disabled = true
 			button.release_focus()
 	for button in tinker_buttons:
+		if is_instance_valid(button):
+			button.disabled = true
+			button.release_focus()
+	for button in warden_buttons:
 		if is_instance_valid(button):
 			button.disabled = true
 			button.release_focus()
@@ -534,6 +706,10 @@ func release_set_out() -> bool:
 	for button in tinker_buttons:
 		if is_instance_valid(button):
 			button.disabled = not _selected_tinker_id.is_empty()
+	for button in warden_buttons:
+		if is_instance_valid(button):
+			button.disabled = _warden_pending or not _selected_warden_id.is_empty()
+	_wire_focus()
 	_wire_focus()
 	set_out_button.grab_focus()
 	return true
@@ -714,6 +890,92 @@ func _build_tinker_choice() -> void:
 	column.add_child(tinker_status_label)
 
 
+## Warden's own patch, 24 px after Tinker and above the Set out row.
+## Compact one-line hints leave the detailed passive/card text in tooltips.
+func _build_warden_choice() -> void:
+	var panel := PanelContainer.new()
+	panel.name = "WardenChoice"
+	warden_panel = panel
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.position = WARDEN_PANEL_RECT.position
+	panel.custom_minimum_size = WARDEN_PANEL_RECT.size
+	panel.size = WARDEN_PANEL_RECT.size
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = PIN_PAPER
+	paper.border_color = WARDEN_SLATE
+	paper.set_border_width_all(3)
+	paper.set_corner_radius_all(6)
+	paper.content_margin_left = 14.0
+	paper.content_margin_right = 14.0
+	paper.content_margin_top = 10.0
+	paper.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", paper)
+	panel.visible = false
+	add_child(panel)
+
+	var column := VBoxContainer.new()
+	column.name = "WardenColumn"
+	column.add_theme_constant_override("separation", 6)
+	panel.add_child(column)
+
+	var heading := Label.new()
+	heading.name = "WardenHeading"
+	heading.text = "Heroes · Warden Path"
+	heading.add_theme_color_override("font_color", INK)
+	heading.add_theme_font_size_override("font_size", 20)
+	column.add_child(heading)
+
+	warden_hint_label = Label.new()
+	warden_hint_label.name = "WardenPathHint"
+	warden_hint_label.text = "Choose one Warden Path for this run"
+	warden_hint_label.clip_text = true
+	warden_hint_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	warden_hint_label.add_theme_color_override("font_color", WARDEN_SLATE)
+	warden_hint_label.add_theme_font_size_override("font_size", 16)
+	column.add_child(warden_hint_label)
+
+	warden_option_box = VBoxContainer.new()
+	warden_option_box.name = "WardenPathOptions"
+	warden_option_box.add_theme_constant_override("separation", 6)
+	column.add_child(warden_option_box)
+
+	warden_status_label = Label.new()
+	warden_status_label.name = "WardenPathStatus"
+	warden_status_label.text = "No Warden Path chosen yet"
+	warden_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	warden_status_label.max_lines_visible = 2
+	warden_status_label.add_theme_color_override("font_color", WARDEN_SLATE)
+	warden_status_label.add_theme_font_size_override("font_size", 16)
+	column.add_child(warden_status_label)
+
+
+## Light bone felt / dark slate ink in ALL button states (including focus).
+func _style_warden_button(button: Button) -> void:
+	var surface := StyleBoxFlat.new()
+	surface.bg_color = WARDEN_BONE
+	surface.border_color = WARDEN_RUST
+	surface.set_border_width_all(2)
+	surface.set_corner_radius_all(5)
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var state_surface := surface.duplicate() as StyleBoxFlat
+		if state == "hover" or state == "hover_pressed":
+			state_surface.bg_color = Color("#efe3c9")
+		elif state == "pressed":
+			state_surface.bg_color = Color("#c4b595")
+		elif state == "disabled":
+			state_surface.bg_color = Color("#d4cdbb")
+		button.add_theme_stylebox_override(state, state_surface)
+	for state in ["font_color", "font_hover_color", "font_pressed_color",
+			"font_focus_color", "font_disabled_color", "font_hover_pressed_color"]:
+		button.add_theme_color_override(state, INK)
+	var focused := StyleBoxFlat.new()
+	focused.bg_color = Color.TRANSPARENT
+	focused.border_color = WARDEN_SLATE
+	focused.set_border_width_all(3)
+	focused.set_corner_radius_all(5)
+	button.add_theme_stylebox_override("focus", focused)
+
+
 func _build_actions() -> void:
 	var row := HBoxContainer.new()
 	row.name = "SetOutRow"
@@ -746,7 +1008,10 @@ func _wire_focus() -> void:
 		if is_instance_valid(button) and not button.disabled:
 			loop.append(button)
 	for button in tinker_buttons:
-		if is_instance_valid(button) and not button.disabled:
+		if is_instance_valid(button) and not button.disabled and button.is_visible_in_tree():
+			loop.append(button)
+	for button in warden_buttons:
+		if is_instance_valid(button) and not button.disabled and button.is_visible_in_tree():
 			loop.append(button)
 	if is_instance_valid(set_out_button) and not set_out_button.disabled:
 		loop.append(set_out_button)
@@ -760,6 +1025,13 @@ func _wire_focus() -> void:
 
 func _path_button(path_id: String) -> Button:
 	for button in path_buttons:
+		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
+			return button
+	return null
+
+
+func _warden_path_button(path_id: String) -> Button:
+	for button in warden_buttons:
 		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
 			return button
 	return null
@@ -877,6 +1149,60 @@ func _on_tinker_path_pressed(path_id: String) -> void:
 	_tinker_pending = true
 	tinker_path_choice_requested.emit(path_id)
 	_tinker_pending = false
+
+
+func _on_warden_preview_entered(path_id: String, from_focus: bool) -> void:
+	if from_focus:
+		_warden_focus_id = path_id
+	else:
+		_warden_hover_id = path_id
+	_refresh_warden_hint()
+
+
+func _on_warden_preview_exited(path_id: String, from_focus: bool) -> void:
+	if from_focus:
+		if _warden_focus_id == path_id:
+			_warden_focus_id = ""
+	elif _warden_hover_id == path_id:
+		_warden_hover_id = ""
+	_refresh_warden_hint()
+
+
+func _refresh_warden_hint() -> void:
+	if not is_instance_valid(warden_hint_label):
+		return
+	if not _selected_warden_id.is_empty():
+		warden_hint_label.text = "Warden Path sewn for this run"
+		return
+	warden_hint_label.text = "Choose one Warden Path for this run"
+	var active := _warden_focus_id if not _warden_focus_id.is_empty() else _warden_hover_id
+	var preview: Variant = _warden_previews.get(active, {})
+	if preview is Dictionary:
+		var hint := String((preview as Dictionary).get("hint", ""))
+		if not hint.is_empty():
+			warden_hint_label.text = hint
+
+
+## A press requests validation, never chooses a path or changes live state.
+## Pending remains held until explicit host mark or release (unlike the older
+## synchronous Seamstress/Tinker callbacks); stale button instances fail closed.
+func _on_warden_path_pressed(path_id: String, source: Button) -> void:
+	if not _open or _warden_pending or _set_out_pending or _back_pending:
+		return
+	if not _selected_warden_id.is_empty() or not is_inside_tree() or not is_visible_in_tree():
+		return
+	if not is_instance_valid(warden_panel) or not warden_panel.is_visible_in_tree():
+		return
+	if not is_instance_valid(source) or source != _warden_path_button(path_id) or source.disabled:
+		return
+	_warden_pending = true
+	for button in warden_buttons:
+		if is_instance_valid(button):
+			button.disabled = true
+	if is_instance_valid(warden_status_label):
+		warden_status_label.text = "Waiting for Warden Path approval"
+	_wire_focus()
+	warden_path_choice_requested.emit(path_id)
 
 
 func _on_set_out_pressed() -> void:

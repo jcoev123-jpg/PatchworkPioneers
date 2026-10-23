@@ -4,6 +4,8 @@ extends RefCounted
 ## map, RNG and ledger. prepare(node, witnessed_result, party) caches one offer;
 ## choose(node, card_id) settles it, with "" meaning explicit Skip.
 ## External ledger changes invalidate this owner's resource snapshot.
+## The optional Rest stitch ledger is copied with the deck, so a prepared reward
+## keeps admitting exactly the composites this run owned when it was prepared.
 
 var _map: RunMap
 var _rng: RandomNumberGenerator
@@ -13,6 +15,8 @@ var _gold: int
 var _trinkets: Array
 var _candidates: Array
 var _trinket_candidates: Array
+var _stitched_descriptors: Variant
+var _next_stitch_id: Variant
 var _ledger: Dictionary
 var _graph: Array
 var _map_revision: int = 0
@@ -28,7 +32,8 @@ var _paid_battles: Array[CombatBattleResult] = []
 
 func _init(map: RunMap, rng: RandomNumberGenerator, carry: RunPartyCarryover,
 		deck: Array, gold: int, owned_trinkets: Array, candidates: Array,
-		trinket_candidates: Array = []) -> void:
+		trinket_candidates: Array = [], stitched_descriptors: Variant = {},
+		next_stitch_id: Variant = 1) -> void:
 	_map = map
 	_rng = rng
 	_carry = carry
@@ -37,6 +42,9 @@ func _init(map: RunMap, rng: RandomNumberGenerator, carry: RunPartyCarryover,
 	_trinkets = owned_trinkets.duplicate(true)
 	_candidates = candidates.duplicate(true)
 	_trinket_candidates = trinket_candidates.duplicate(true)
+	_stitched_descriptors = (stitched_descriptors.duplicate(true)
+		if stitched_descriptors is Dictionary else stitched_descriptors)
+	_next_stitch_id = next_stitch_id
 	_ledger = {} if carry == null else carry.read_state()
 	_graph = [] if map == null else map.get_floors()
 	_map_revision = 0 if map == null else map.get_generation_revision()
@@ -59,7 +67,7 @@ func prepare(node_id: Variant, battle: CombatBattleResult, party: CombatParty) -
 		ids.append(hero["id"])
 	var reward := RunFightVictoryRewards.new(battle, _rng, ids, _candidates,
 		_deck, _gold, _map.get_node(node_id)["type"] == "Elite",
-		_trinket_candidates, _trinkets)
+		_trinket_candidates, _trinkets, _stitched_descriptors, _next_stitch_id)
 	var prepared := reward.prepare()
 	if not prepared["ok"]:
 		return prepared
