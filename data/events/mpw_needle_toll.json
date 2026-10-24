@@ -1,0 +1,22 @@
+{
+  "id": "needle_toll",
+  "title": "The Needle Toll",
+  "description": "A ring of bent needles bars the path, each one threaded with a single bright scrap. The toll-keeper's stitches pull tight as you step closer.",
+  "hp_cost": 6,
+  "minimum_hp": 7,
+  "exit_scraps": 1,
+  "offer_count": 2,
+  "rarity": "rare",
+  "once_per_run": true,
+  "visit_weight": 1,
+  "choices": [
+    {
+      "id": "pay_toll",
+      "text": "Pay the Needle Toll: one living hero with at least 7 HP loses 6 HP (never torn), then choose one of two rare cards."
+    },
+    {
+      "id": "safe_exit",
+      "text": "Step back from the needles and pocket the loose scrap (+1 scrap)."
+    }
+  ]
+}
