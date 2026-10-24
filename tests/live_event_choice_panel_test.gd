@@ -1272,9 +1272,30 @@ func _check_story_structure(label: String) -> void:
 	_check(panel.description_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
 		label + " complete story wraps naturally")
 	var content := panel.choices_container.get_parent()
-	_check(panel.description_label.get_index() < panel.choices_container.get_index()
+	# The authored display line keeps only the height its own font needs: no
+	# reserved title block may open a blank band above the story.
+	var title_font := panel.title_label.get_theme_font("font")
+	var title_size := panel.title_label.get_theme_font_size("font_size")
+	var title_height := title_font.get_height(title_size) if title_font != null else 0.0
+	_check(title_font != null
+		and panel.title_label.get_combined_minimum_size().y <= title_height + 4.0,
+		label + " title takes only its natural display height")
+	_check(panel.title_label.get_index() + 1 == panel.description_label.get_index()
+		and panel.description_label.get_index() < panel.choices_container.get_index()
 		and panel.bottom_stitches.get_index() > panel.choices_container.get_index(),
-		label + " story, tickets, bottom stitching stay in content order")
+		label + " title, story, tickets, bottom stitching stay in content order")
+	# Nothing but the optional wallet caption may sit between the story and the
+	# tickets; any other block there would be the blank gulf this view avoids.
+	for index in range(panel.description_label.get_index() + 1, panel.choices_container.get_index()):
+		var between := content.get_child(index)
+		_check(between is Label and between.name == "WalletBalance",
+			label + " only the wallet caption sits between story and tickets")
+	for child in content.get_children():
+		var block := child as Control
+		_check(block != null and block.size_flags_vertical & Control.SIZE_EXPAND == 0,
+			label + " no content block stretches the parchment")
+	_check(absf(panel.paper_panel.size.y - panel.paper_panel.get_combined_minimum_size().y) <= 1.0,
+		label + " parchment stays content-sized")
 	var balance := content.get_node_or_null("WalletBalance")
 	if balance != null:
 		_check(balance.get_index() > panel.description_label.get_index()
