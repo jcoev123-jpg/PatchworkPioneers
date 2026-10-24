@@ -1338,10 +1338,11 @@ func _tile_eligible(record: Dictionary) -> bool:
 			var stock := _shop_stock_cards()
 			return row < stock.size() and stock[row] is Dictionary \
 				and stock[row].get("sold", false) != true \
-				and selector.get_item_metadata(row) == stock[row].get("id")
+				and selector.get_item_metadata(row) == stock[row].get("id") \
+				and _app._current_shop_ledger() \
+				and selector.get_item_text(row) == _app._shop_offer_text(stock[row])
 		"removal":
-			var deck := _run_deck()
-			return row < deck.size() and selector.get_item_text(row) == String(deck[row])
+			return _app._shop_owned_row_current(row)
 		"upgrade":
 			if not is_instance_valid(_upgrade) or _upgrade.disabled:
 				return false

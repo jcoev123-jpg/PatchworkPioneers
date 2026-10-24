@@ -992,7 +992,11 @@ func _run() -> void:
 		_check(app.shop_label.text == "Gold: %d | Removal: %d gold" % [app.session_gold, price], "visible gold and authoritative escalating quote")
 		_check(app.shop_cards.item_count == app.run_deck.size(), "compact OptionButton includes every owned copy")
 		for index in range(app.run_deck.size()):
-			_check(app.shop_cards.get_item_text(index) == app.run_deck[index], "owned ID order is visible")
+			var definition := RunRestStitchCards.resolve_card_definition(app.run_deck[index])
+			_check(not definition.is_empty() and app.shop_cards.get_item_text(index) ==
+				"Deck #%d: %s" % [index + 1, definition.display_name]
+				and app.shop_cards.get_item_metadata(index) == app.run_deck[index],
+				"owned canonical names identify each deck occurrence with exact ID metadata")
 		_check(app.shop_purchases.is_valid() and app.shop_offers.item_count == 5, "routed Shop includes valid card buying stock")
 		for control in [app.shop_view, app.shop_label, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_continue_button, app.shop_back_button]:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "Shop control fits 1280x720")
@@ -1185,15 +1189,27 @@ func _run() -> void:
 		var original_id: String = app.shop_cards.get_item_text(selected)
 		var different_id := ""
 		for owned in app.run_deck:
-			if owned != original_id:
+			if owned != app.run_deck[selected]:
 				different_id = owned
 				break
 		_check(not different_id.is_empty(), "mismatched fixture is a different owned ID")
-		for invalid in ["unknown_card", different_id]:
+		var selected_tile = _tile_for("removal", selected)
+		_check(selected_tile != null and gallery._tile_eligible({"button": selected_tile,
+			"group": "removal", "row": selected}), "authentic selected owned tile is eligible before forgery")
+		for invalid in ["unknown_card", different_id, app.shop_cards.get_item_text((selected + 1) % app.run_deck.size())]:
 			app.shop_cards.set_item_text(selected, invalid)
 			remove_callback.call()
 			_check(_shop_state() == before, "unknown or mismatched owned ID cannot spend")
+			_check(not gallery._tile_eligible({"button": selected_tile, "group": "removal", "row": selected}),
+				"gallery refuses forged or swapped occurrence label")
 		app.shop_cards.set_item_text(selected, original_id)
+		for invalid in [null, selected, "unknown_card", different_id]:
+			app.shop_cards.set_item_metadata(selected, invalid)
+			remove_callback.call()
+			_check(_shop_state() == before, "forged owned metadata cannot spend")
+			_check(not gallery._tile_eligible({"button": selected_tile,
+				"group": "removal", "row": selected}), "gallery refuses forged owned metadata")
+		app.shop_cards.set_item_metadata(selected, app.run_deck[selected])
 		if session in [0, 3]:
 			_check(app.session_gold < price, "natural victory gold cannot afford removal")
 			await _click(app.shop_remove_button)
