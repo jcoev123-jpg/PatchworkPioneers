@@ -828,13 +828,16 @@ func _scenario_stitched_owners() -> void:
 
 
 func _run() -> void:
-	seed(915033)
-	var global_next := randi()
-	seed(915033)
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	# Mounting the real scene builds the presentation-only felt puff reserve, and a
+	# CPUParticles2D seeds itself from the global RNG once when it is built. The mounted-play
+	# guard therefore starts after the mount and still covers every play, rejection and Return.
+	seed(915033)
+	var global_next := randi()
+	seed(915033)
 	presenter = app.get_node("LiveAttackPreview")
 	support = app.get_node("LiveSupportHand")
 	fixture = _find_fixture("warden_brace")
