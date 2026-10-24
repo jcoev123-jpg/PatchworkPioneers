@@ -211,6 +211,11 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 	_check(panel.has_open_event() and panel.is_visible_in_tree(), label + " mounted visible event")
 	_check(panel.title_label.text == record["title"] and panel.description_label.text == record["description"],
 		label + " authored title and description visible")
+	# AC2: wallet offerings keep the same natural-height story above their
+	# three-line 78px tickets instead of reserving a fixed story block.
+	_check(panel.description_label.size_flags_vertical & Control.SIZE_EXPAND == 0
+		and panel.description_label.custom_minimum_size == Vector2.ZERO,
+		label + " wallet story sits at its natural wrapped height above the tickets")
 	var balance := panel.choices_container.get_parent().get_node_or_null("WalletBalance") as Label
 	_check(balance != null, label + " visible balance label")
 	if balance != null:
@@ -679,6 +684,11 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 	_check(panel.is_visible_in_tree() and panel.has_open_event(), label + " panel open/visible")
 	_check(panel.title_label.text == record["title"], label + " exact title")
 	_check(panel.description_label.text == record["description"], label + " complete description")
+	# AC1: the story takes only its natural wrapped height, so no expanding
+	# description (or spacer) can push the first authored ticket away from it.
+	_check(panel.description_label.size_flags_vertical & Control.SIZE_EXPAND == 0
+		and panel.description_label.custom_minimum_size == Vector2.ZERO,
+		label + " story sits at its natural wrapped height above the choices")
 	_check(panel.title_label.theme_type_variation == "PatchHeading"
 		and (panel.title_label.get_theme_font("font") as Font).resource_path == HEADING_FONT,
 		label + " authored Event title wears the master PatchHeading Londrina face")
@@ -764,6 +774,8 @@ func _test_authored() -> void:
 		await _frames()
 		_check(not panel.has_open_event() and not panel.visible
 			and panel.get_choice_buttons().is_empty(), "close releases authored " + id)
+		_check(panel.description_label.custom_minimum_size == Vector2.ZERO,
+			"close resets the story to its natural height " + id)
 
 
 func _test_three_choice_and_identity() -> void:

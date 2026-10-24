@@ -1,7 +1,10 @@
 class_name LiveEventChoicePanel
 extends Control
 ## Standalone, unwired presentation for an authored M04 Event.
-## open_event() preserves the legacy ID-only signal.
+## The open parchment reads as one story: the PatchHeading title and the fully
+## wrapped description take only their natural height, and the authored choice
+## tickets sit directly beneath them on the same sewn paper sheet (no stretch
+## spacer). open_event() preserves the legacy ID-only signal.
 ## open_event_with_wallet() displays an opt-in, detached affordability forecast
 ## and emits an uncommitted wallet receipt for the run owner to validate.
 ## Neither mode updates the live run, owns RNG, or completes routed Events.
@@ -118,11 +121,13 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 	_offered_wallet = wallet.duplicate(true)
 	_wallet_previews.clear()
 	title_label.text = snapshot["title"]
+	# The story keeps its natural wrapped height in both modes: the scene sets no
+	# reserved description block, so the first authored ticket sits one small gap
+	# below the text instead of after a stretch spacer.
 	description_label.text = snapshot["description"]
 	if wallet_mode:
-		# Three-line wallet tickets need a tighter text budget so the paper
-		# card keeps every choice onscreen at 1280x720.
-		description_label.custom_minimum_size = Vector2(0.0, 56.0)
+		# Wallet offerings add their balance caption and keep each three-line
+		# ticket's own 78px minimum; the story above still takes only its text.
 		_wallet_label = Label.new()
 		_wallet_label.name = "WalletBalance"
 		_wallet_label.text = "Wallet  •  %d gold   /   %d scraps" % [_offered_wallet["gold"], _offered_wallet["scraps"]]
@@ -308,7 +313,10 @@ func close_event() -> void:
 	if is_node_ready():
 		title_label.text = ""
 		description_label.text = ""
-		description_label.custom_minimum_size = Vector2(0.0, 114.0)
+		# The story always takes its natural wrapped height in both modes, so a
+		# closed/reopened panel starts with no reserved story block and no stale
+		# wallet minimum left over.
+		description_label.custom_minimum_size = Vector2.ZERO
 	for button in _choice_buttons:
 		if not is_instance_valid(button):
 			continue
