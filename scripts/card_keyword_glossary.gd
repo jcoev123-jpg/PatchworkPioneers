@@ -8,9 +8,21 @@ extends RefCounted
 const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding", "thorns"]
 ## Non-keyword rules are explained after the seven keywords, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
-const SPECIAL_ORDER := ["conditional_damage", "random_hit"]
+const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff"]
 ## The Unravel thresholds the authored "current threshold" condition compares to.
 const UNRAVEL_THRESHOLDS := "starts at 8 normal, 12 elite, 16 boss and rises by 4 after each break"
+## The two energy-trading pool cards this Help knows, plus the exact authored
+## numbers and the three hero slots their owner/structure check needs.
+const OVERCLOCK_IDS := ["tinker_overclock", "tinker_overclock_plus"]
+const TRANCE_IDS := ["seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
+const OVERCLOCK_COST := 0
+const OVERCLOCK_GAIN := 1
+const OVERCLOCK_SELF_DAMAGE := 3
+const TRANCE_COST := 1
+const TRANCE_GAIN := 1
+const TRANCE_BASE_DRAW := 2
+const TRANCE_PLUS_DRAW := 3
+const PARTY_SIZE := 3
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -52,18 +64,20 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 				explanation = "Warden's Counter-stitch (1 energy, from positions 1-2) makes enemies that attack Warden take %d damage until the next turn." % int(raw)
 		lines.append({"keyword": keyword, "explanation": explanation})
 	for key: String in SPECIAL_ORDER:
-		var special := _special_line(key, effects)
+		var special := _special_line(key, definition, effects)
 		if not special.is_empty():
 			lines.append(special)
 	return lines
 
 
-static func _special_line(rule_key: String, effects: Dictionary) -> Dictionary:
+static func _special_line(rule_key: String, definition: Dictionary, effects: Dictionary) -> Dictionary:
 	match rule_key:
 		"conditional_damage":
 			return _conditional_damage_line(effects)
 		"random_hit":
 			return _random_hit_line(effects)
+		"energy_tradeoff":
+			return _energy_tradeoff_line(definition, effects)
 	return {}
 
 
@@ -137,3 +151,74 @@ static func _random_hit_line(effects: Dictionary) -> Dictionary:
 	var explanation := "%d separate hits of %d damage each. Every hit picks its own random living enemy using the run's single seeded RNG, so the same enemy can be hit more than once." % [
 		int(hit_value), int(damage_value)]
 	return {"keyword": "Random hits", "explanation": explanation}
+
+
+## Overclock's and Tailor's Trance's authored energy trades. Only the exact
+## catalog identity and descriptor shape qualify: the owner, cost, self target,
+## empty target list, legal source slots and the written effect keys/amounts are
+## all re-checked here, so a partial, mis-owned, mispriced or extended record
+## never claims this Help. The amounts in the text are the checked ones.
+static func _energy_tradeoff_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	var is_overclock: bool = OVERCLOCK_IDS.has(card_id)
+	if not is_overclock and not TRANCE_IDS.has(card_id):
+		return {}
+	var expected_owner := "tinker" if is_overclock else "seamstress"
+	if String(definition.get("owner", "")) != expected_owner:
+		return {}
+	if definition.get("target_kind") != "self":
+		return {}
+	var to_value: Variant = definition.get("to_positions")
+	if not to_value is Array or not (to_value as Array).is_empty():
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int:
+		return {}
+	var from_value: Variant = definition.get("from_positions")
+	if not from_value is Array or (from_value as Array).is_empty():
+		return {}
+	for position: Variant in (from_value as Array):
+		if not position is int or int(position) < 1 or int(position) > PARTY_SIZE:
+			return {}
+	if is_overclock:
+		return _overclock_line(int(cost_value), effects)
+	return _trance_line(card_id, int(cost_value), effects)
+
+
+## Overclock trades HP for energy: it costs nothing, grants one energy and then
+## damages its own Tinker through CombatParty.apply_damage, where Block absorbs
+## first and any remainder lowers HP (which can leave her torn).
+static func _overclock_line(cost: int, effects: Dictionary) -> Dictionary:
+	if cost != OVERCLOCK_COST or effects.size() != 2:
+		return {}
+	var gained: Variant = effects.get("gain_energy")
+	var loss: Variant = effects.get("self_hp_loss")
+	if not gained is int or int(gained) != OVERCLOCK_GAIN:
+		return {}
+	if not loss is int or int(loss) != OVERCLOCK_SELF_DAMAGE:
+		return {}
+	var explanation := "Costs %d energy to play and gains %d energy, for a net gain of %d energy. Tinker then takes %d damage herself: Block absorbs that damage first, and any remainder lowers her HP, so this can leave her torn." % [
+		cost, int(gained), int(gained) - cost, int(loss)]
+	return {"keyword": "Energy tradeoff", "explanation": explanation}
+
+
+## Tailor's Trance spends one energy and immediately regains it, so the play is
+## net 0 energy but still requires that single energy up front; it then draws the
+## exact authored number of cards (2 base, 3 upgraded). Nothing else qualifies.
+static func _trance_line(card_id: String, cost: int, effects: Dictionary) -> Dictionary:
+	if cost != TRANCE_COST or effects.size() != 2:
+		return {}
+	var gained: Variant = effects.get("energy")
+	var drawn: Variant = effects.get("draw")
+	if not gained is int or int(gained) != TRANCE_GAIN:
+		return {}
+	var is_plus: bool = card_id.ends_with("_plus")
+	var required_draw: int = TRANCE_PLUS_DRAW if is_plus else TRANCE_BASE_DRAW
+	if not drawn is int or int(drawn) != required_draw:
+		return {}
+	var explanation := "Costs %d energy, which must be available before the play, then regains that same %d energy, so the play itself is net 0 energy. Draws %d cards." % [
+		cost, int(gained), int(drawn)]
+	return {"keyword": "Energy tradeoff", "explanation": explanation}

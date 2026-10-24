@@ -222,6 +222,7 @@ func _catalog_test() -> void:
 	for ordinary_id: String in ["tinker_scatter_bolts", "tinker_long_barrel"]:
 		_check(CardKeywordGlossary.describe(tinker.get_definition(ordinary_id)).is_empty(),
 			"ordinary authored %s never gains a special-rule row" % ordinary_id)
+	_energy_catalog_test(tinker, seamstress)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -305,6 +306,189 @@ func _catalog_test() -> void:
 	_check(combined_keywords == ["Bleed 1", "Conditional damage", "Random hits"],
 		"special rows follow the fixed keyword rows in a stable order")
 	_check(combined == combined_original, "combined special input untouched")
+
+
+## A detached card definition with the authored structural keys the energy
+## tradeoff contract re-checks, so malformed fixtures cannot borrow a positive
+## verdict from the real catalog.
+func _energy_definition(card_id: Variant, owner: Variant, cost: Variant,
+		target_kind: Variant, to_positions: Array, effects: Dictionary,
+		from_positions: Variant = [1, 2, 3]) -> Dictionary:
+	return {"id": card_id, "owner": owner, "cost": cost, "target_kind": target_kind,
+		"from_positions": from_positions.duplicate(true),
+		"to_positions": to_positions.duplicate(true), "effects": effects.duplicate(true)}
+
+
+## Overclock and Tailor's Trance, base and '+' records, straight from their real
+## catalogs: one energy row each with the authored cost, gain/net result and the
+## exact 3 self-damage risk or 2/3 draws. Ordinary, partial, mis-owned,
+## mispriced, mistargeted, badly typed or extended fixtures stay silent.
+func _energy_catalog_test(tinker: TinkerPoolCards, seamstress: SeamstressPoolCards) -> void:
+	var cases := [
+		{"catalog": tinker, "id": "tinker_overclock", "owner": "tinker", "cost": 0, "draws": 0},
+		{"catalog": tinker, "id": "tinker_overclock_plus", "owner": "tinker", "cost": 0, "draws": 0},
+		{"catalog": seamstress, "id": "seamstress_tailors_trance", "owner": "seamstress",
+			"cost": 1, "draws": 2},
+		{"catalog": seamstress, "id": "seamstress_tailors_trance_plus", "owner": "seamstress",
+			"cost": 1, "draws": 3},
+	]
+	for case: Dictionary in cases:
+		var catalog: Variant = case["catalog"]
+		var card_id: String = String(case["id"])
+		_check(catalog.has_card(card_id), "energy card is present in its real catalog " + card_id)
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual energy catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		var original: Dictionary = definition.duplicate(true)
+		_check(String(definition.get("owner", "")) == String(case["owner"])
+			and int(definition.get("cost", -1)) == int(case["cost"])
+			and String(definition.get("target_kind", "")) == "self"
+			and (definition.get("to_positions", [1]) as Array).is_empty()
+			and not (definition.get("from_positions", []) as Array).is_empty(),
+			"authored owner, cost and self-only target for " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		_check(rows.size() == 1 and String(rows[0]["keyword"]) == "Energy tradeoff",
+			"exactly one energy tradeoff row for " + card_id)
+		if rows.size() != 1:
+			continue
+		var text := String(rows[0]["explanation"])
+		if card_id.begins_with("tinker_overclock"):
+			_check(int(effects.get("gain_energy", 0)) == 1
+				and int(effects.get("self_hp_loss", 0)) == 3,
+				"catalog Overclock numbers are +1 energy and 3 self-damage " + card_id)
+			_check(text.contains("Costs 0 energy") and text.contains("gains 1 energy")
+				and text.contains("net gain of 1 energy")
+				and text.contains("takes 3 damage herself")
+				and text.contains("Block absorbs") and text.contains("leave her torn"),
+				"Overclock Help states cost, gain, net result and the honest HP risk " + card_id)
+			_check(not text.contains("Block 3") and not text.contains("3 Block")
+				and not text.contains("damage 3"),
+				"Overclock Help never redefines HP or Block " + card_id)
+		else:
+			var expected_draw: int = int(case["draws"])
+			_check(int(effects.get("energy", 0)) == 1 and int(effects.get("draw", 0)) == expected_draw,
+				"catalog Trance numbers are +1 energy and %d draws %s" % [expected_draw, card_id])
+			_check(text.contains("Costs 1 energy")
+				and text.contains("must be available before the play")
+				and text.contains("regains that same 1 energy")
+				and text.contains("net 0 energy")
+				and text.contains("Draws %d cards" % expected_draw),
+				"Trance Help states the up-front cost, the net 0 refund and %d draws %s"
+					% [expected_draw, card_id])
+			_check(not text.contains("free") and not text.contains("without energy"),
+				"Trance Help never implies an empty-energy hand can cast it " + card_id)
+		_check(definition == original and catalog.get_definition(card_id) == original,
+			"energy Help never mutates the catalog definition " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"energy Help stays deterministic for " + card_id)
+		rows[0]["keyword"] = "Tampered"
+		rows[0]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(fresh.size() == 1 and String(fresh[0]["keyword"]) == "Energy tradeoff"
+			and String(fresh[0]["explanation"]).contains("energy")
+			and definition == original,
+			"energy Help results are detached from the caller's definition " + card_id)
+	var overclock := _energy_definition("tinker_overclock", "tinker", 0, "self", [],
+		{"gain_energy": 1, "self_hp_loss": 3})
+	var trance := _energy_definition("seamstress_tailors_trance", "seamstress", 1, "self", [],
+		{"energy": 1, "draw": 2})
+	_check(CardKeywordGlossary.describe(overclock).size() == 1
+		and CardKeywordGlossary.describe(trance).size() == 1,
+		"exact energy descriptor shapes are explained")
+	var fixtures: Array = []
+	var fixture := overclock.duplicate(true)
+	fixture["owner"] = "seamstress"
+	fixtures.append(["wrong Overclock owner", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["cost"] = 1
+	fixtures.append(["wrong Overclock cost", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["target_kind"] = "ally_single"
+	fixtures.append(["wrong Overclock target", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["to_positions"] = [1]
+	fixtures.append(["Overclock with a target slot", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["effects"]["draw"] = 1
+	fixtures.append(["Overclock with an extra effect", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["effects"] = {"gain_energy": 1}
+	fixtures.append(["partial Overclock effects", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["effects"]["self_hp_loss"] = 2
+	fixtures.append(["wrong Overclock self-damage", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["effects"]["gain_energy"] = 2
+	fixtures.append(["wrong Overclock gain", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["effects"]["gain_energy"] = "1"
+	fixtures.append(["text Overclock gain", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["cost"] = "0"
+	fixtures.append(["text Overclock cost", fixture])
+	fixture = overclock.duplicate(true)
+	fixture.erase("owner")
+	fixtures.append(["Overclock without an owner", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["id"] = "tinker_overclock_plus_plus"
+	fixtures.append(["similarly named Overclock", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["id"] = "tinker_ricochet"
+	fixtures.append(["energy effects on an unrelated ID", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["from_positions"] = [4]
+	fixtures.append(["Overclock from an illegal slot", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["from_positions"] = "1,2,3"
+	fixtures.append(["text Overclock source slots", fixture])
+	fixture = overclock.duplicate(true)
+	fixture["id"] = 7
+	fixtures.append(["non-string Overclock ID", fixture])
+	fixture = trance.duplicate(true)
+	fixture["owner"] = "tinker"
+	fixtures.append(["wrong Trance owner", fixture])
+	fixture = trance.duplicate(true)
+	fixture["cost"] = 0
+	fixtures.append(["wrong Trance cost", fixture])
+	fixture = trance.duplicate(true)
+	fixture["effects"]["draw"] = 3
+	fixtures.append(["base Trance with upgraded draws", fixture])
+	fixture = trance.duplicate(true)
+	fixture["id"] = "seamstress_tailors_trance_plus"
+	fixtures.append(["upgraded Trance with base draws", fixture])
+	fixture = trance.duplicate(true)
+	fixture["effects"]["energy"] = 2
+	fixtures.append(["wrong Trance gain", fixture])
+	fixture = trance.duplicate(true)
+	fixture["target_kind"] = "enemy_single"
+	fixtures.append(["wrong Trance target", fixture])
+	fixture = trance.duplicate(true)
+	fixture["effects"]["heal"] = 2
+	fixtures.append(["Trance with an extra effect", fixture])
+	fixture = trance.duplicate(true)
+	fixture["effects"] = {"energy": 1}
+	fixtures.append(["partial Trance effects", fixture])
+	fixture = trance.duplicate(true)
+	fixture["effects"]["draw"] = "2"
+	fixtures.append(["text Trance draws", fixture])
+	for case in fixtures:
+		var broken: Dictionary = case[1]
+		var broken_before: Dictionary = broken.duplicate(true)
+		_check(CardKeywordGlossary.describe(broken).is_empty(),
+			"%s never fabricates energy Help" % String(case[0]))
+		_check(broken == broken_before, "%s leaves the fixture untouched" % String(case[0]))
+	_check(overclock == _energy_definition("tinker_overclock", "tinker", 0, "self", [],
+		{"gain_energy": 1, "self_hp_loss": 3})
+		and trance == _energy_definition("seamstress_tailors_trance", "seamstress", 1,
+			"self", [], {"energy": 1, "draw": 2}),
+		"negative energy cases never mutate the positive fixtures")
+	_check(CardKeywordGlossary.describe({"effects": {"gain_energy": 1, "self_hp_loss": 3}}).is_empty()
+		and CardKeywordGlossary.describe({"id": "tinker_overclock",
+			"effects": {"energy": 1, "draw": 2}}).is_empty(),
+		"partial descriptors without the full authored contract stay silent")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
@@ -541,6 +725,131 @@ func _special_help(fixture: Dictionary, slot: int) -> void:
 		"special Help closes with its receipt")
 
 
+## Genuine authored candidate records for a constrained three-hero reward: one
+## real warden, one real seamstress (Tailor's Trance) and one real tinker
+## (Overclock) base card. With exactly one candidate per living hero, the real
+## weighted selector must offer each of them once, so both energy cards are found
+## by their catalog IDs and never by an offer index.
+func _energy_candidates() -> Array:
+	var wanted := ["warden_bastion_quilt", "seamstress_tailors_trance", "tinker_overclock"]
+	var candidates: Array = []
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if wanted.has(String(record.get("id", ""))):
+			candidates.append(record)
+	return candidates
+
+
+func _slot_for(receipt: Dictionary, card_id: String) -> int:
+	var offers: Array = receipt.get("offers", [])
+	for index in range(offers.size()):
+		if String((offers[index] as Dictionary).get("id", "")) == card_id:
+			return index
+	return -1
+
+
+## The real Fight/Elite reward Help tab for the two energy cards: the mounted
+## popup must show the authored numbers, open and close by mouse and keyboard,
+## and change nothing; a real Choose and Skip afterwards still work.
+func _energy_help(fixture: Dictionary, kind: String) -> void:
+	var receipt: Dictionary = fixture["receipt"]
+	if not receipt.get("ok", false):
+		return
+	var overclock_slot := _slot_for(receipt, "tinker_overclock")
+	var trance_slot := _slot_for(receipt, "seamstress_tailors_trance")
+	_check(overclock_slot >= 0 and trance_slot >= 0,
+		"genuine prepared %s offers Overclock and Tailor's Trance by ID" % kind)
+	if overclock_slot < 0 or trance_slot < 0:
+		return
+	_check(overclock_slot != trance_slot, "energy offers keep distinct slots " + kind)
+	var node_id := "reward_energy_%s" % kind.to_lower()
+	_check(panel.open_rewards(node_id, kind, receipt), "mounted genuine energy %s receipt" % kind)
+	await _frames()
+	if not panel.has_open_rewards():
+		return
+	var before := _snapshot(fixture)
+	for card_id: String in ["tinker_overclock", "seamstress_tailors_trance"]:
+		var slot := _slot_for(receipt, card_id)
+		var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+		var entries := CardKeywordGlossary.describe(definition)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(entries.size() == 1 and String(entries[0]["keyword"]) == "Energy tradeoff",
+			"catalog-backed single energy row for offered " + card_id)
+		var card := panel.choices_container.get_child(slot) as PanelContainer
+		var help := card.get_node_or_null("HelpCorner/HelpButton") as Button
+		_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+			"%s energy offer gains the real Help tab" % card_id)
+		if help == null or entries.size() != 1:
+			continue
+		await _mouse(help)
+		var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+		_check(overlay != null and panel._help_overlay == overlay,
+			"mouse Help opens the %s energy popup" % card_id)
+		if overlay == null:
+			continue
+		var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+		_check(list.get_child_count() == 1, "%s Help shows exactly its energy row" % card_id)
+		var text := ""
+		if list.get_child_count() > 0:
+			text = (list.get_child(0) as Label).text
+		_check(text.contains("Energy tradeoff")
+			and text.contains(String(entries[0]["explanation"])),
+			"live %s Help repeats the glossary explanation" % card_id)
+		if card_id == "tinker_overclock":
+			_check(text.contains("Costs %d energy" % int(definition.get("cost", -1)))
+				and text.contains("gains %d energy" % int(effects.get("gain_energy", 0)))
+				and text.contains("takes %d damage herself" % int(effects.get("self_hp_loss", 0)))
+				and text.contains("Block absorbs") and text.contains("torn"),
+				"live Overclock Help states its cost, gain and 3 self-damage risk")
+		else:
+			_check(text.contains("Costs %d energy" % int(definition.get("cost", -1)))
+				and text.contains("must be available before the play")
+				and text.contains("regains that same %d energy" % int(effects.get("energy", 0)))
+				and text.contains("net 0 energy")
+				and text.contains("Draws %d cards" % int(effects.get("draw", 0))),
+				"live Trance Help states the up-front cost, net 0 refund and exact draws")
+		_check(_snapshot(fixture) == before and requests.is_empty()
+			and not panel._awaiting_ack and not panel._accepted,
+			"inspecting %s Help changes no offer, deck, gold, scraps, party, claim or RNG" % card_id)
+		await _key(KEY_ESCAPE)
+		_check(panel._help_overlay == null and help.has_focus(),
+			"Escape closes %s energy Help and restores its tab" % card_id)
+		panel.get_choice_buttons()[slot].grab_focus()
+		await _key(KEY_RIGHT)
+		_check(help.has_focus(), "keyboard Right from Choose reaches %s energy Help" % card_id)
+		await _key(KEY_ENTER)
+		_check(panel._help_overlay != null, "keyboard Enter opens %s energy Help" % card_id)
+		await _key(KEY_ESCAPE)
+		_check(panel._help_overlay == null and help.has_focus()
+			and requests.is_empty() and _snapshot(fixture) == before,
+			"keyboard closes %s energy Help without requesting the card" % card_id)
+	var choose := panel.get_choice_buttons()[overclock_slot]
+	await _mouse(panel.choices_container.get_child(overclock_slot).get_node(
+		"HelpCorner/HelpButton") as Button)
+	choose.pressed.emit()
+	_check(panel._help_overlay == null and requests == [{"node": node_id, "card": "tinker_overclock"}],
+		"Choose after energy Help emits exactly one Overclock request")
+	_check(panel._awaiting_ack and not panel._accepted,
+		"energy Choose waits for caller acknowledgement")
+	_check(_snapshot(fixture) == before, "energy Choose leaves the prepared reward unclaimed")
+	panel.acknowledge(false)
+	_check(not choose.disabled, "rejected energy Choose re-enables the offer")
+	var skip := panel.get_choice_buttons()[3]
+	await _mouse(panel.choices_container.get_child(trance_slot).get_node(
+		"HelpCorner/HelpButton") as Button)
+	skip.grab_focus()
+	await _key(KEY_SPACE)
+	_check(panel._help_overlay == null and requests.size() == 2
+		and requests[1] == {"node": node_id, "card": ""},
+		"energy Skip dismisses Help and requests the empty ID once")
+	panel.acknowledge(true)
+	_check(panel._accepted and skip.disabled, "accepted energy Skip stays latched")
+	_check(_snapshot(fixture) == before,
+		"energy Help, Choose and Skip leave service, receipt, RNG and models unchanged")
+	panel.close_rewards()
+	_check(not panel.has_open_rewards() and panel._help_overlay == null,
+		"energy Help closes with its receipt")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_catalog_test()
@@ -617,6 +926,20 @@ func _run() -> void:
 	_check(mounted.has("tinker_snip_the_seam") and mounted.has("tinker_ricochet"),
 		"seeded Fight rewards really offered both special-rule Tinker cards")
 	_check(requests.is_empty(), "special-rule Help never requests a reward")
+	# The genuinely prepared Fight and Elite rewards that offer Overclock and
+	# Tailor's Trance now explain their authored energy trade in the same panel.
+	for kind in ["Fight", "Elite"]:
+		requests.clear()
+		var energy := _prepared(kind, 18300, true, _energy_candidates())
+		var offered_ids: Array[String] = []
+		for offer: Dictionary in energy["receipt"].get("offers", []):
+			offered_ids.append(String(offer.get("id", "")))
+		_check(offered_ids.has("tinker_overclock")
+			and offered_ids.has("seamstress_tailors_trance"),
+			"constrained %s reward really offers both energy cards" % kind)
+		await _energy_help(energy, kind)
+		_check(requests.size() == 2, "energy %s Help ends after exactly Choose and Skip" % kind)
+		requests.clear()
 	_finish()
 
 
