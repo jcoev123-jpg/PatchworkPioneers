@@ -78,6 +78,37 @@ func _live_tinker_latch(app) -> CombatTinkerFirstAttack:
 	return preview._play._tinker
 
 
+## Share the attack presenter's exact validated sewn authority (including
+## its already-consumed first-hit state). A present but invalid/missing binding
+## refuses the cast; a run without a wardrobe retains legacy behavior.
+func _live_tinker_patch_rules(app) -> Dictionary:
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview == null or not is_instance_valid(preview) \
+			or preview._battle != _battle or preview._deck != _deck \
+			or preview._session != [app.party, app.enemies, app.battle_result,
+				app.run_rng, app.enemy_intents] or preview._turn != _turn \
+			or not preview._play is CombatAttackCards:
+		return {}
+	var rules: CombatPatchAttackRules = preview._play._patches
+	var carry := app.party_carryover as RunTornCarryover
+	if carry == null or carry._wardrobe == null:
+		return {"rules": null} if rules == null else {}
+	# A live run binding is explicit. Recheck its canonical run identity and
+	# ledger witness before accepting the battle's persistent projection.
+	var wardrobe: RunPatchWardrobe = carry._wardrobe
+	if rules == null or not is_instance_valid(rules) or not rules.is_valid() \
+			or wardrobe == null or not wardrobe.is_valid() or carry.torn == null \
+			or not carry.torn.is_valid():
+		return {}
+	var current := wardrobe.get_snapshot()
+	if not carry.can_bind_wardrobe(wardrobe, carry.torn, current) \
+			or current.heroes != app.run_heroes or current.owned != app.run_trinkets \
+			or current.cards != app.run_deck or current.scraps != app.run_scraps \
+			or current.gold != app.session_gold or current.seed != app.run_seed:
+		return {}
+	return {"rules": rules}
+
+
 ## The battle's own Pinned set and Unravel gauge, exactly as the mounted
 ## single-target presenter created them for this session. A gauge card fails
 ## closed unless that one gauge is bound to this roster and the live round flow
@@ -557,10 +588,14 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 		# and Unravel authorities. A missing or foreign gauge refuses the cast.
 		var shared_latch: CombatTinkerFirstAttack = _live_tinker_latch(get_parent())
 		var authorities: Dictionary = _live_unravel_authorities(get_parent())
-		if shared_latch == null or authorities.is_empty():
+		var patch_authority: Dictionary = _live_tinker_patch_rules(get_parent())
+		if shared_latch == null or authorities.is_empty() or patch_authority.is_empty():
 			_cancel()
 			return
 		var resolver := CombatTinkerPoolUnravelAttacks.new(shared_latch)
+		if not resolver.set_patch_rules(patch_authority["rules"]):
+			_cancel()
+			return
 		# The authority's authored reduction is charged by the resolver itself.
 		if not resolver.set_cost_discount(_live_tinker_discount(card_id)):
 			_cancel()

@@ -51,6 +51,13 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bo
 	return _patches.bind_wardrobe(wardrobe, torn)
 
 
+## Share the attack presenter's battle-long first-hit patch authority.
+## An invalid explicit binding must refuse, not fall back to unpatched play.
+func set_patch_rules(rules: CombatPatchAttackRules) -> bool:
+	_patches = rules
+	return rules == null or (is_instance_valid(rules) and rules.is_valid())
+
+
 func _init(arg1: Variant = null, arg2: Variant = null, arg3: Variant = null) -> void:
 	for arg: Variant in [arg1, arg2, arg3]:
 		if arg is CombatTinkerFirstAttack:
