@@ -1093,6 +1093,8 @@ func _caption_legibility(app, presenter) -> void:
 		and badge.target_position == 2 and badge.intent_type == "debuff"
 		and badge.policy_cue == "FRONT" and long_debuff == original,
 		"a long debuff keeps its exact authoritative caption beside its target policy")
+	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — raises incoming attack damage by 50%, rounded down.\nTarget policy (FRONT): picks the front living hero.",
+		"debuff with front policy explains exposed rule, hero target and front policy")
 	_check(_caption_fits(badge)
 		and badge.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT
 		and _contrast(badge.caption_ink(), LiveEnemyIntentBadge.CAPTION_FILL) >= 7.0,
@@ -1114,6 +1116,8 @@ func _caption_legibility(app, presenter) -> void:
 		and badge.target_position == 3 and badge.policy_cue == "LOW HP"
 		and _caption_fits(badge) and _badge_icon_fits(badge, ""),
 		"a long shove caption fits beside its policy and keeps the sewn glyph")
+	_check(badge.tooltip_text == "Push front Hero 3 (back).\nTarget policy (LOW HP): aims at the living hero with the lowest HP.",
+		"shove with lowest_living_hp policy explains push front, hero target and lowest HP policy")
 	# Unavailable icon art: the real missing-image fallback still paints the same readable
 	# caption, plaque, policy ticket and sewn glyph from the same authoritative text.
 	var saved_root: String = badge.icon_root
@@ -1124,6 +1128,26 @@ func _caption_legibility(app, presenter) -> void:
 		and badge.target_position == 2 and badge.policy_cue == "EXPOSED"
 		and _caption_fits(badge) and badge.policy_text_rect() != Rect2(),
 		"unavailable icon art keeps the readable caption, plaque and policy ticket")
+	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — raises incoming attack damage by 50%, rounded down.\nTarget policy (EXPOSED): prioritises an Exposed living hero.",
+		"debuff with exposed policy explains exposed rule, hero target and exposed policy")
+	var atk_random := {"type": "attack", "amount": 7, "target_position": 1}
+	badge.show_intent(atk_random, false, false, "random")
+	_check(badge.tooltip_text == "7 damage aimed at Hero 1 (front).\nTarget policy (RANDOM): uses the run-seeded target choice.",
+		"attack with random policy explains damage, hero target and random policy")
+	badge.show_intent(atk_random, false, false, "")
+	_check(badge.tooltip_text == "7 damage aimed at Hero 1 (front).",
+		"targeted attack without policy includes no policy text")
+	badge.show_intent(atk_random, false, false, "front")
+	_check(badge.tooltip_text.contains("Target policy (FRONT)"), "policy present before unravel")
+	badge.show_intent(atk_random, false, true, "front")
+	_check(badge.tooltip_text == "Unravelled: next action is skipped.",
+		"unravelled suppresses attack and policy tooltip")
+	badge.show_intent(atk_random, true, false, "front")
+	_check(badge.tooltip_text == "Slain: no action.",
+		"slain suppresses attack and policy tooltip")
+	badge.show_intent(atk_random, false, false, "front")
+	_check(badge.tooltip_text == "7 damage aimed at Hero 1 (front).\nTarget policy (FRONT): picks the front living hero.",
+		"fresh intent cleanly restores attack and policy tooltip")
 	badge.icon_root = saved_root
 	_check(_snapshot(app) == before,
 		"every caption, plaque and policy transition is presentation only")
@@ -1245,8 +1269,10 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 		if not by_position.has(position):
 			continue
 		var announced: Dictionary = by_position[position]
-		_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-			"drawn badge and text never intercept pointer events")
+		_check(badge.mouse_filter == Control.MOUSE_FILTER_PASS,
+			"drawn badge and text use safe hover filter without intercepting pointer events")
+		_check(badge.focus_mode == Control.FOCUS_NONE and not badge.tooltip_text.is_empty(),
+			"badge stays focus inert and has informative tooltip")
 		_check(not badge.readable_text.is_empty() and _caption_fits(badge),
 			"drawn readable intent fits its dark caption plaque inside the badge")
 		var rect: Rect2 = badge.get_global_rect()
@@ -1983,8 +2009,10 @@ func _bound_skip_badges(app, presenter) -> void:
 	_check(_snapshot(app) == pending_model and app.enemy_intents.get_intents() == announced
 		and service.get_snapshot(1).skip_pending,
 		"five UI reads cannot consume the pending skip, mutate intents, decks, HP or RNG")
-	_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE and badge.focus_mode == Control.FOCUS_NONE,
+	_check(badge.mouse_filter == Control.MOUSE_FILTER_PASS and badge.focus_mode == Control.FOCUS_NONE,
 		"the Unravelled mark cannot steal mouse or keyboard target input")
+	_check(badge.tooltip_text == "Unravelled: next action is skipped.",
+		"unravelled badge tooltip explains next action is skipped")
 	await _input_mouse(badge)
 	_check(_snapshot(app) == pending_model and service.get_snapshot(1).skip_pending,
 		"actual pointer clicking the skip badge cannot play a card or consume the skip")
@@ -2211,6 +2239,20 @@ func _policy_cue_cases(app, presenter) -> void:
 				and badge.intent_type == action.type and badge.amount == action.amount
 				and badge.target_position == target and badge.source_position == position,
 				"%s action preserves exact caption/target and policy_for original slot %d" % [policy, position])
+			var policy_descs := {
+				"front": "picks the front living hero",
+				"lowest_living_hp": "aims at the living hero with the lowest HP",
+				"exposed": "prioritises an Exposed living hero",
+				"random": "uses the run-seeded target choice"
+			}
+			if action.type in ["attack", "debuff", "shove"]:
+				_check(badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(target))
+					and badge.tooltip_text.contains("Target policy (%s): %s." % [expected_cue, policy_descs[expected_policy]]),
+					"targeted action tooltip explains target and policy for original slot %d" % position)
+			else:
+				_check(badge.tooltip_text.contains("Block on the acting enemy")
+					and not badge.tooltip_text.contains("Target policy"),
+					"block/buff action tooltip shows no policy for original slot %d" % position)
 		for repeat in range(4):
 			presenter._refresh()
 		_check(schedule.get_intents() == cached and app.run_rng.state == state,
@@ -2224,6 +2266,8 @@ func _policy_cue_cases(app, presenter) -> void:
 			_check(presenter._badges[0].policy_cue.is_empty()
 				and presenter._badges[0].readable_text == "UNRAVELLED",
 				"pending skip suppresses both real policy and action")
+			_check(presenter._badges[0].tooltip_text == "Unravelled: next action is skipped.",
+				"pending skip tooltip suppresses policy and previous action")
 			flow._unravel = old_unravel
 			presenter._refresh()
 			_check(presenter._badges[0].policy_cue == "FRONT", "cleared skip restores authored policy")
@@ -2232,10 +2276,14 @@ func _policy_cue_cases(app, presenter) -> void:
 			_check(presenter._badges[0].policy_cue.is_empty()
 				and presenter._badges[0].readable_text == "SLAIN",
 				"slain cue overrides bound policy")
+			_check(presenter._badges[0].tooltip_text == "Slain: no action.",
+				"slain tooltip overrides bound policy")
 			app.enemies._enemies.assign(old_roster.duplicate(true))
 			app.enemies._enemies[0]["intent"] = {"target": "front", "actions": [first]}
 			presenter._refresh()
 			_check(presenter._badges[0].policy_cue == "FRONT", "restored living source has cue")
+			_check(presenter._badges[0].tooltip_text.contains("Target policy (FRONT)"),
+				"restored living source restores policy in tooltip")
 	# An unbound legacy schedule and a missing authority never invent a policy.
 	var legacy := CombatEnemyIntents.new(patterns)
 	app.enemy_intents = legacy
