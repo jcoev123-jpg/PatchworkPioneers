@@ -52,6 +52,62 @@ func _reject_rest(callback: Callable, reason: String) -> void:
 	_check(_rest_state() == before, reason + " leaves full run/visit/map/RNG unchanged")
 
 
+## The same gallery is mounted by the real Rest route, with one upgrade
+## group. Direction keys scroll and change focus, never choose or spend.
+func _check_rest_direction_keys() -> void:
+	var gallery = _visit_tiles()
+	var tiles: Array[Button] = gallery.upgrade_tiles()
+	_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Rest"
+		and tiles.size() >= 4 and not app.rest_upgrade_cards.disabled,
+		"Rest arrow test has real mounted, enabled multi-choice upgrade gallery")
+	if tiles.size() < 4:
+		return
+	var before := _rest_state()
+	var initial_selection: int = app.rest_upgrade_cards.selected
+	var emitted := [0]
+	app.rest_upgrade_cards.item_selected.connect(func(_row: int): emitted[0] += 1)
+	tiles[0].grab_focus()
+	await _frames()
+	var focus_stitch = tiles[0].get_node_or_null("FocusStitch")
+	_check(tiles[0].has_focus() and focus_stitch != null and focus_stitch.is_stitching()
+		and Rect2(Vector2.ZERO, tiles[0].size).encloses(focus_stitch.perimeter_rect()),
+		"Rest keyboard focus paints the inset sewn border within the card")
+	await _key(KEY_UP)
+	_check(tiles[0].has_focus(), "Rest Up at first upgrade row stays in the group")
+	await _key(KEY_DOWN)
+	_check(tiles[1].has_focus(), "Rest Down focuses adjacent upgrade")
+	await _key(KEY_RIGHT)
+	await _key(KEY_LEFT)
+	_check(tiles[1].has_focus(), "horizontal Rest arrows cannot escape upgrade cards")
+	await _key(KEY_UP)
+	_check(tiles[0].has_focus(), "Rest Up returns to previous enabled upgrade")
+	var scroll: ScrollContainer = gallery.gallery_scroll()
+	tiles.back().grab_focus()
+	await _frames()
+	_check(scroll.scroll_vertical > 0
+		and scroll.get_global_rect().encloses(tiles.back().get_global_rect())
+		and tiles.back().get_node("FocusStitch").is_stitching(),
+		"last Rest upgrade scrolls full sewn focus frame into view")
+	await _key(KEY_DOWN)
+	_check(tiles.back().has_focus(), "Rest Down at end does not wrap into Heal or Upgrade")
+	tiles[0].grab_focus()
+	app.rest_upgrade_cards.set_item_disabled(1, true)
+	await _frames()
+	await _key(KEY_DOWN)
+	_check(tiles[2].has_focus() and tiles[1].disabled,
+		"Rest Down skips disabled canonical upgrade row")
+	app.rest_upgrade_cards.set_item_disabled(1, false)
+	await _frames()
+	_check(_rest_state() == before and app.rest_upgrade_cards.selected == initial_selection
+		and emitted == [0], "Rest arrows preserve chosen row, run wallet, deck, RNG and route")
+	_check(not gallery.tile_details(tiles[2]).selected and tiles[2].has_focus(),
+		"Rest SELECTED label remains distinct from keyboard focus")
+	await _key(KEY_ENTER)
+	_check(app.rest_upgrade_cards.selected == 2 and emitted == [1]
+		and gallery.tile_details(tiles[2]).selected and _rest_state() == before,
+		"Enter selects one focused Rest row via OptionButton without upgrading")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -86,6 +142,7 @@ func _run() -> void:
 			if app.rest_recovery == null or not is_instance_valid(app.rest_continue_button):
 				break
 			_bounds(app.rest_view)
+			await _check_rest_direction_keys()
 			var button: Button = app.rest_continue_button
 			var visit: RunRestRecovery = app.rest_recovery
 			var map: RunMap = app.run_map

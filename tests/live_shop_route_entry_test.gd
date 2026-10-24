@@ -457,6 +457,74 @@ func _check_selection_cue(gallery) -> void:
 	cue["tile"].free()
 
 
+## Real mounted direction-key traversal: focus only, scroll and sewn focus ink,
+## no OptionButton signal, ledger action, route change or RNG draw.
+func _check_shop_direction_keys(gallery) -> void:
+	var offers: Array[Button] = gallery.offer_tiles()
+	var owned: Array[Button] = gallery.removal_tiles()
+	_check(gallery.is_gallery_mounted() and offers.size() >= 4 and owned.size() >= 4,
+		"direction-key Shop fixture has both mounted multi-card groups")
+	if offers.size() < 4 or owned.size() < 4:
+		return
+	var before := _shop_state()
+	var selections := [app.shop_offers.selected, app.shop_cards.selected]
+	var signals := [0, 0]
+	app.shop_offers.item_selected.connect(func(_row: int): signals[0] += 1)
+	app.shop_cards.item_selected.connect(func(_row: int): signals[1] += 1)
+	var scroll: ScrollContainer = gallery.gallery_scroll()
+	offers[0].grab_focus()
+	await _frames()
+	var stitch = offers[0].get_node_or_null("FocusStitch")
+	_check(offers[0].has_focus() and stitch != null and stitch.is_stitching()
+		and Rect2(Vector2.ZERO, offers[0].size).encloses(stitch.perimeter_rect()),
+		"first mounted Shop tile paints its inset sewn keyboard focus perimeter")
+	await _key(KEY_UP)
+	_check(offers[0].has_focus(), "Up at first sale tile stays in its group")
+	await _key(KEY_DOWN)
+	_check(offers[1].has_focus(), "Down focuses next sale tile without selecting it")
+	await _key(KEY_RIGHT)
+	_check(owned[1].has_focus(), "Right moves to corresponding enabled removal row")
+	await _key(KEY_DOWN)
+	_check(owned[2].has_focus(), "Down focuses next removal tile")
+	await _key(KEY_LEFT)
+	_check(offers[2].has_focus(), "Left returns to the nearest corresponding sale row")
+	await _key(KEY_LEFT)
+	_check(offers[2].has_focus(), "Left at sale edge cannot escape into an action")
+	await _key(KEY_RIGHT)
+	_check(owned[2].has_focus(), "Right can cross the sections repeatedly")
+	owned.back().grab_focus()
+	await _frames()
+	_check(scroll.scroll_vertical > 0
+		and scroll.get_global_rect().encloses(owned.back().get_global_rect())
+		and owned.back().get_node("FocusStitch").is_stitching(),
+		"focusing the last owned card scrolls its whole sewn focus frame into view")
+	await _key(KEY_DOWN)
+	_check(owned.back().has_focus(), "Down at removal edge does not wrap or exit")
+	await _key(KEY_LEFT)
+	var corresponding: int = mini(owned.size() - 1, offers.size() - 1)
+	_check(offers[corresponding].has_focus(),
+		"Left from a deeper owned row chooses nearest enabled sale row")
+	offers[0].grab_focus()
+	app.shop_offers.set_item_disabled(1, true)
+	await _frames()
+	await _key(KEY_DOWN)
+	_check(offers[2].has_focus() and offers[1].disabled,
+		"Down skips a disabled sale row without selecting it")
+	app.shop_offers.set_item_disabled(1, false)
+	await _frames()
+	_check(_shop_state() == before
+		and [app.shop_offers.selected, app.shop_cards.selected] == selections
+		and signals == [0, 0],
+		"all arrows, edges and disabled skips preserve selectors, gold, deck, route and RNG")
+	var target := offers[2]
+	_check(target.has_focus() and not gallery.tile_details(target).selected,
+		"keyboard focus and SELECTED ink are separate states")
+	await _key(KEY_SPACE)
+	_check(app.shop_offers.selected == 2 and signals == [1, 0]
+		and _shop_state() == before and gallery.tile_details(target).selected,
+		"Space selects focused Shop row exactly once via OptionButton with no payment")
+
+
 func _tile_for(group: String, row: int):
 	var gallery = _visit_tiles()
 	var source: Array = gallery.offer_tiles() if group == "offer" \
@@ -916,6 +984,8 @@ func _run() -> void:
 		await _hover(gallery.removal_tiles()[0])
 		_check(_shop_state() == before and app.shop_offers.selected == hover_selection,
 			"hovering Shop tiles explains them without selecting, spending or advancing")
+		await _check_shop_direction_keys(gallery)
+		before = _shop_state()
 		await _click_tile(_tile_for("offer", 2))
 		_check(_shop_state() == before and app.shop_offers.selected == 2,
 			"offer tile click selects that listing with zero ledger effect")
