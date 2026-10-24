@@ -59,6 +59,7 @@ var _target_ids: Array[String] = []
 var current_forecast: Dictionary = {}
 var _dragging := false
 var _drag_origin := Vector2.ZERO
+var _receipt_seq := 0
 
 
 func _ledger() -> RunRestStitchCards:
@@ -561,6 +562,7 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 	last_event = CombatStitchedCards.new(_play).play_stitched(deck, app.party, app.enemies,
 		_ledger(), id, choices[0], choices[1], _fray)
 	if last_event.ok:
+		_forward_switchback_stitched_play(id, preview)
 		_after_attack()
 	else:
 		_cancel_choice()
@@ -820,6 +822,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		# A non-Tinker card fails closed inside the authority.
 		if _tinker_path != null:
 			report_tinker_play(id, energy_before)
+		_forward_switchback_ordinary_play(id)
 		_after_attack()
 	elif guarded:
 		_reject_stitch()
@@ -1186,6 +1189,7 @@ func _sync_battle() -> void:
 	if app.enemy_intents != null and _turn != app.enemy_intents._turn_index:
 		_turn = app.enemy_intents._turn_index
 		_play.start_player_turn()
+		ensure_quilt_switchback_bound()
 		# A new intent index is published only by the real round transition.
 		# An old active latch cannot be reset by a hover or a hand redraw.
 		if _fray != null:
@@ -1221,6 +1225,7 @@ func _sync_battle() -> void:
 	# Standalone battles bind on their first successful gauge-bearing cast.
 	if not _routed_gauge_shared and app.run_map != null and app._combo_battle_current():
 		_routed_gauge_shared = _share_gauge(app.party, app.enemies, "")
+	ensure_quilt_switchback_bound()
 	_refresh()
 
 
@@ -1474,3 +1479,106 @@ func _clear() -> void:
 	_controls = CombatSeamstressPoolControl.new()
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null
+	_receipt_seq = 0
+
+
+
+## Ensure combat Quilt authority is bound to an authentic sewn wardrobe and torn ledger.
+## Fails closed for absent, stale, unrelated or unequipped wardrobe.
+func ensure_quilt_switchback_bound() -> void:
+	var app = get_parent()
+	if app == null or not is_instance_valid(app):
+		return
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	if quilt == null or not is_instance_valid(quilt) or not quilt is CombatQuiltBonus:
+		return
+	var carry := app.party_carryover as RunTornCarryover
+	if carry == null or not is_instance_valid(carry) or carry._wardrobe == null or carry.torn == null:
+		if quilt.is_switchback_active():
+			quilt.disable_switchback()
+		return
+	var wardrobe: RunPatchWardrobe = carry._wardrobe
+	var torn: RunTornMending = carry.torn
+	if not is_instance_valid(wardrobe) or not is_instance_valid(torn):
+		if quilt.is_switchback_active():
+			quilt.disable_switchback()
+		return
+	if not wardrobe.is_valid() or not torn.is_valid():
+		if quilt.is_switchback_active():
+			quilt.disable_switchback()
+		return
+	var current: Dictionary = wardrobe.get_snapshot()
+	if not carry.can_bind_wardrobe(wardrobe, torn, current):
+		if quilt.is_switchback_active():
+			quilt.disable_switchback()
+		return
+	if current.heroes != app.run_heroes or current.owned != app.run_trinkets \
+			or current.cards != app.run_deck or current.scraps != app.run_scraps \
+			or current.gold != app.session_gold or current.seed != app.run_seed:
+		if quilt.is_switchback_active():
+			quilt.disable_switchback()
+		return
+	var worn: Dictionary = current.get("worn", {})
+	var has_switchback := false
+	for hero_id in worn:
+		var hero_worn: Dictionary = worn.get(hero_id, {})
+		if hero_worn.get("HEAD") == "switchback_button":
+			has_switchback = true
+			break
+	if not has_switchback:
+		if quilt.is_switchback_active():
+			quilt.disable_switchback()
+		return
+	if not quilt.is_switchback_active() or quilt._switchback_wardrobe != wardrobe or quilt._switchback_torn != torn:
+		quilt.enable_switchback(wardrobe, torn)
+
+
+func _owner_for_attack_card(card_id: String) -> String:
+	if _is_path_card(card_id):
+		return CombatSeamstressPathCards.OWNER_ID
+	if _tinker_path != null and card_id == str(_tinker_path._selected_card.get("id", "")):
+		return "tinker"
+	var def := _definition(card_id)
+	var owner: String = str(def.get("owner", ""))
+	if owner in CombatQuiltBonus.HERO_IDS:
+		return owner
+	return ""
+
+
+func _forward_switchback_ordinary_play(card_id: String) -> void:
+	var app = get_parent()
+	if app == null or not is_instance_valid(app):
+		return
+	ensure_quilt_switchback_bound()
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	if quilt == null or not is_instance_valid(quilt) or not quilt is CombatQuiltBonus or not quilt.is_switchback_active():
+		return
+	var owner: String = _owner_for_attack_card(card_id)
+	if owner.is_empty() or not owner in CombatQuiltBonus.HERO_IDS:
+		return
+	_receipt_seq += 1
+	var receipt_id := "attack_%d" % _receipt_seq
+	quilt.observe_confirmed_play(receipt_id, owner)
+
+
+func _forward_switchback_stitched_play(stitched_id: String, preview: Dictionary) -> void:
+	var app = get_parent()
+	if app == null or not is_instance_valid(app):
+		return
+	ensure_quilt_switchback_bound()
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	if quilt == null or not is_instance_valid(quilt) or not quilt is CombatQuiltBonus:
+		return
+	if not quilt.is_switchback_active():
+		return
+	var halves: Array = preview.get("halves", [])
+	if halves.size() != 2:
+		return
+	var first_owner: String = str(halves[0].get("owner", ""))
+	var second_owner: String = str(halves[1].get("owner", ""))
+	if not first_owner in CombatQuiltBonus.HERO_IDS or not second_owner in CombatQuiltBonus.HERO_IDS:
+		return
+	_receipt_seq += 1
+	var first_receipt := "stitched_%d_0" % _receipt_seq
+	var second_receipt := "stitched_%d_1" % _receipt_seq
+	quilt.observe_confirmed_stitched_play(first_receipt, first_owner, second_receipt, second_owner)

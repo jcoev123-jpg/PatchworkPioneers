@@ -827,6 +827,330 @@ func _scenario_stitched_owners() -> void:
 	_check(app.deck == null and app._quilt_bonus == null, "Return clears the stitched battle quota")
 
 
+
+
+func _sew_switchback_wardrobe(wearer: String = "warden") -> RunPatchWardrobe:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array, "Switchback: catalog parsed")
+	var definitions: Array = []
+	if raw is Array:
+		for entry in raw:
+			definitions.append({"id": entry.id, "slot": entry.slot})
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid(), "Switchback: carryover valid")
+	if not app.run_trinkets.has("switchback_button"):
+		app.run_trinkets.append("switchback_button")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes,
+		app.run_trinkets, definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed)
+	_check(wardrobe.is_valid(), "Switchback: wardrobe valid")
+	if wearer != "":
+		var sew_result := wardrobe.sew("switchback_button", wearer, "HEAD", "sew", wardrobe.get_snapshot())
+		_check(sew_result.ok, "Switchback: sew succeeded")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()), "Switchback: bind succeeded")
+	presenter.ensure_quilt_switchback_bound()
+	return wardrobe
+
+
+func _scenario_switchback_ordinary_and_quilt(seed_fixture: Dictionary) -> Array:
+	if not await _open_route(seed_fixture.seed) or not await _choose_fight(seed_fixture.fight):
+		return []
+	var wardrobe := _sew_switchback_wardrobe("warden")
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	_check(quilt != null and quilt.is_switchback_active(), "Switchback ordinary: active on combat Quilt authority")
+	var initial_sw: Dictionary = quilt.get_switchback_state()
+	_check(not initial_sw.consumed and initial_sw.prev_owner == "" and initial_sw.receipts_observed.is_empty(),
+		"Switchback ordinary: clean opening state")
+
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	var foes: Array = app.enemies.get_enemies()
+	for index in range(foes.size()):
+		app.enemies._enemies[index]["max_hp"] = maxi(int(foes[index]["max_hp"]), 60)
+		app.enemies._enemies[index]["hp"] = app.enemies._enemies[index]["max_hp"]
+
+	app.deck.hand.assign(["warden_brace", "seamstress_prick", "warden_strike", "tinker_tune_up"])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+
+	var trace: Array = [_state()]
+
+	# Step 1: Warden plays warden_brace (wearer plays first: no prior owner -> no switchback award)
+	var warden_block_before: int = app.party.get_hero(1).block
+	_check(warden_block_before == 0, "Warden starts at 0 Block")
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	var warden_block_after_brace: int = app.party.get_hero(1).block
+	_check(warden_block_after_brace == 7, "Warden brace grants printed 7 Block only, no switchback on opening play")
+	var sw_state: Dictionary = quilt.get_switchback_state()
+	_check(not sw_state.consumed and sw_state.prev_owner == "warden" and sw_state.receipts_observed.size() == 1,
+		"Switchback: Warden receipt recorded, latch unconsumed")
+	trace.append(_state())
+
+	# Step 2: Seamstress plays seamstress_prick on enemy 1 (different living owner sets up transition)
+	var seam_block_before: int = app.party.get_hero(2).block
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	var seam_block_after: int = app.party.get_hero(2).block
+	_check(seam_block_after == seam_block_before, "Seamstress has no Switchback patch, Block unchanged")
+	sw_state = quilt.get_switchback_state()
+	_check(not sw_state.consumed and sw_state.prev_owner == "seamstress" and sw_state.receipts_observed.size() == 2,
+		"Switchback: Seamstress receipt recorded, prev_owner advanced to seamstress")
+	trace.append(_state())
+
+	# Step 3: Warden plays warden_strike on enemy 1 (wearer immediately follows DIFFERENT living hero -> EXACTLY +2 Block!)
+	var warden_block_before_strike: int = app.party.get_hero(1).block
+	_check(warden_block_before_strike == 7, "Warden before strike still at 7 Block")
+	await _play_attack("warden_strike", false, 1)
+	await _frames()
+	var warden_block_after_strike: int = app.party.get_hero(1).block
+	_check(warden_block_after_strike == 9, "AC1: Warden wearer immediately following Seamstress gains exactly +2 Block (total 9)")
+	sw_state = quilt.get_switchback_state()
+	_check(sw_state.consumed and sw_state.prev_owner == "warden" and sw_state.receipts_observed.size() == 3,
+		"Switchback: latch consumed, Warden receipt recorded")
+	trace.append(_state())
+
+	# Step 4: Duplicate / repeat transition within the same turn:
+	# Tinker plays tinker_tune_up (free support)
+	await _play_support("tinker_tune_up", false, 0)
+	await _frames()
+	sw_state = quilt.get_switchback_state()
+	_check(sw_state.consumed and sw_state.prev_owner == "tinker" and sw_state.receipts_observed.size() == 4,
+		"Switchback: Tinker receipt recorded, latch remains consumed")
+	var progress: Dictionary = quilt.get_patch_progress()
+	_check(progress.awarded and progress.patches.warden.played and progress.patches.seamstress.played and progress.patches.tinker.played,
+		"AC4: Quilt bonus awarded when all 3 living heroes have played")
+	var blocks_after_quilt: Dictionary = _blocks(app.party.get_heroes())
+	_check(blocks_after_quilt == {"warden": 12, "seamstress": 3, "tinker": 3},
+		"AC4: Quilt awards exactly +3 Block to each living hero (Warden 9+3=12, Seamstress 3, Tinker 3)")
+	trace.append(_state())
+
+	# Step 5: Second eligible transition by Warden in the same turn:
+	app.deck.hand.assign(["warden_brace"])
+	app.deck.combat_state.energy = 1
+	app._refresh_hand()
+	await _frames()
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	var warden_block_after_repeat: int = app.party.get_hero(1).block
+	_check(warden_block_after_repeat == 12 + 7, "Switchback: repeat eligible transition in same turn grants ONLY printed 7 Block (19), no extra Switchback")
+	_check(quilt.get_switchback_state().consumed, "Switchback latch remains consumed")
+	trace.append(_state())
+
+	# Step 6: End Turn and New Player Turn re-arms Switchback
+	await _click(app.end_turn_button)
+	await _frames()
+	_check(app.deck.turn_active and not app._battle_closed, "New turn active")
+	var new_quilt: CombatQuiltBonus = app._quilt_bonus
+	_check(new_quilt != null and new_quilt.is_switchback_active(), "Switchback active in new turn")
+	var new_sw: Dictionary = new_quilt.get_switchback_state()
+	_check(not new_sw.consumed and new_sw.prev_owner == "", "AC3: New player turn re-arms Switchback (consumed false, prev_owner empty)")
+	var new_blocks: Dictionary = _blocks(app.party.get_heroes())
+	_check(new_blocks == {"warden": 0, "seamstress": 0, "tinker": 0}, "Party Block reset on new turn")
+
+	# Step 7: Prove re-armed Switchback triggers in new turn:
+	app.deck.hand.assign(["seamstress_prick", "warden_brace"])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	_check(app.party.get_hero(1).block == 7 + 2, "AC3: Re-armed Switchback triggers in new turn granting exactly +2 Block (total 9)")
+	_check(new_quilt.get_switchback_state().consumed, "Switchback consumed once again in new turn")
+	trace.append(_state())
+
+	await _click(app.return_button)
+	await _frames()
+	return trace
+
+
+func _scenario_switchback_stitched(seed_fixture: Dictionary) -> void:
+	if not await _open_route(seed_fixture.seed) or not await _choose_fight(seed_fixture.fight):
+		return
+	# Create the stitch first so run_deck and run_scraps are published before wardrobe binding:
+	var ledger := RunRestStitchCards.new(app.run_deck, {}, 3, 1)
+	var made := ledger.choose_stitch(app.run_deck.find("seamstress_prick"),
+		app.run_deck.find("warden_strike"), ledger.get_snapshot())
+	_check(bool(made.get("ok", false)), "Switchback stitched: created composite seamstress + warden")
+	if not bool(made.get("ok", false)):
+		await _click(app.return_button)
+		return
+	app.run_deck = made.deck.duplicate()
+	app.run_stitch_descriptors = made.descriptors.duplicate(true)
+	app.run_scraps = made.remaining_scraps
+	app.run_next_stitch_id = made.next_stitch_id
+	var stitched_id: String = made.stitched_id
+
+	# Now bind genuinely sewn wardrobe with Switchback Button on Warden:
+	var wardrobe := _sew_switchback_wardrobe("warden")
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	_check(quilt != null and quilt.is_switchback_active(), "Switchback stitched: active")
+
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	var foes: Array = app.enemies.get_enemies()
+	for index in range(foes.size()):
+		app.enemies._enemies[index]["max_hp"] = maxi(int(foes[index]["max_hp"]), 60)
+		app.enemies._enemies[index]["hp"] = app.enemies._enemies[index]["max_hp"]
+
+	app.deck.hand.assign([stitched_id])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+
+	# Partial selection then cancellation (ESC):
+	_check(await _arm(stitched_id, true), "Stitched card armed")
+	await _key(KEY_1)
+	await _frames()
+	_check(presenter._choices.size() == 1, "Half 0 chosen, half 1 pending")
+	await _key(KEY_ESCAPE)
+	await _frames()
+	_check(presenter._armed == null and presenter._choices.is_empty(), "Partial stitched selection cancelled")
+	var sw_state: Dictionary = quilt.get_switchback_state()
+	_check(not sw_state.consumed and sw_state.prev_owner == "" and sw_state.receipts_observed.is_empty(),
+		"AC2: Cancelled partial stitched selection forwards NO receipts and consumes NO latch")
+	_check(_blocks(app.party.get_heroes()) == {"warden": 0, "seamstress": 0, "tinker": 0},
+		"Party Block unchanged after cancelled partial stitch")
+
+	# Genuine commitment of composite (Seamstress half 0, Warden half 1):
+	_check(await _arm(stitched_id, true), "Stitched card re-armed")
+	await _key(KEY_1)
+	await _key(KEY_1)
+	await _frames()
+
+	_check(presenter.last_event.get("ok", false), "Stitched play committed successfully")
+	sw_state = quilt.get_switchback_state()
+	_check(sw_state.consumed, "AC2: Stitched second half (Warden) triggered Switchback latch")
+	_check(sw_state.prev_owner == "warden", "AC2: Final owner pointer is second half (warden)")
+	_check(sw_state.receipts_observed.size() == 2, "AC2: Exactly two ordered half receipts observed")
+	_check(sw_state.receipts_observed[0].begins_with("stitched_") and sw_state.receipts_observed[1].begins_with("stitched_"),
+		"AC2: Distinct stitched half receipt IDs")
+	_check(app.party.get_hero(1).block == 2, "AC2: Warden gained exactly +2 Block from Switchback on second half")
+
+	await _click(app.return_button)
+	await _frames()
+
+
+func _scenario_switchback_negatives() -> void:
+	# Negative 1: Unequipped wardrobe (no Switchback Button)
+	if not await _open_route(fixture.seed) or not await _choose_fight(fixture.fight):
+		return
+	var wardrobe_unworn := _sew_switchback_wardrobe("")
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	_check(quilt != null and not quilt.is_switchback_active(), "AC3: Unequipped wardrobe fails closed (switchback inactive)")
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	app.deck.hand.assign(["seamstress_prick", "warden_brace"])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	_check(app.party.get_hero(1).block == 7, "AC3: Unworn Switchback grants NO +2 Block (only printed 7)")
+	await _click(app.return_button)
+	await _frames()
+
+	# Negative 2: Torn wearer
+	if not await _open_route(fixture.seed) or not await _choose_fight(fixture.fight):
+		return
+	var wardrobe_torn := _sew_switchback_wardrobe("warden")
+	quilt = app._quilt_bonus
+	_check(quilt != null and quilt.is_switchback_active(), "Switchback active before tear")
+	var carry := app.party_carryover as RunTornCarryover
+	var start_heroes: Array = carry.torn.read_state().heroes
+	var end_heroes: Array = start_heroes.duplicate(true)
+	end_heroes[0].hp = 0
+	_check(carry.torn.observe_battle_end("tear_node", start_heroes, end_heroes).ok, "Tear recorded on Warden")
+	_check(carry.torn.read_state().tear_counts.warden == 1, "Warden tear count is 1")
+	wardrobe_torn.refresh_run_context(app.run_heroes, app.run_trinkets, app.run_scraps, app.session_gold, app.run_deck, wardrobe_torn.get_snapshot())
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	app.deck.hand.assign(["seamstress_prick", "warden_brace"])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	_check(app.party.get_hero(1).block == 7, "AC3: Torn wearer gains NO +2 Block (only printed 7)")
+	_check(not quilt.get_switchback_state().consumed, "AC3: Torn wearer leaves Switchback latch unconsumed")
+	await _click(app.return_button)
+	await _frames()
+
+	# Negative 3: Downed wearer
+	if not await _open_route(fixture.seed) or not await _choose_fight(fixture.fight):
+		return
+	_sew_switchback_wardrobe("warden")
+	quilt = app._quilt_bonus
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	_check(app.party.apply_damage(1, 999) and app.party.is_downed(1), "Warden downed by combat damage")
+	app.deck.hand.assign(["seamstress_prick", "warden_brace"])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	var state_before_downed_cast: Array = _state()
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	_check(_state() == state_before_downed_cast, "AC3: Downed wearer play is rejected; combat state unchanged")
+	_check(not quilt.get_switchback_state().consumed, "AC3: Downed wearer leaves latch unconsumed")
+	await _click(app.return_button)
+	await _frames()
+
+	# Negative 4: Stale wardrobe fails closed
+	if not await _open_route(fixture.seed) or not await _choose_fight(fixture.fight):
+		return
+	_sew_switchback_wardrobe("warden")
+	quilt = app._quilt_bonus
+	_check(quilt.is_switchback_active(), "Switchback active before drift")
+	var gold_before: int = app.session_gold
+	app.session_gold += 99
+	presenter.ensure_quilt_switchback_bound()
+	_check(not quilt.is_switchback_active(), "AC3: Stale wardrobe fails closed (switchback disabled)")
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	app.deck.hand.assign(["seamstress_prick", "warden_brace"])
+	app.deck.energy = 3
+	app._refresh_hand()
+	await _frames()
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	await _play_support("warden_brace", false, 0)
+	await _frames()
+	_check(app.party.get_hero(1).block == 7, "AC3: Stale wardrobe grants NO Switchback Block")
+	app.session_gold = gold_before
+	await _click(app.return_button)
+	await _frames()
+
+	# Negative 5: Insufficient energy / rejected play does not set up or claim transition
+	if not await _open_route(fixture.seed) or not await _choose_fight(fixture.fight):
+		return
+	_sew_switchback_wardrobe("warden")
+	quilt = app._quilt_bonus
+	for index in range(CombatParty.PARTY_SIZE):
+		app.party._heroes[index]["block"] = 0
+	app.deck.hand.assign(["seamstress_prick", "warden_brace"])
+	app.deck.combat_state.energy = 0
+	app._refresh_hand()
+	await _frames()
+	var state_before_rejected: Array = _state()
+	var sw_before_rejected: Dictionary = quilt.get_switchback_state()
+	await _play_attack("seamstress_prick", false, 1)
+	await _frames()
+	_check(_state() == state_before_rejected and quilt.get_switchback_state() == sw_before_rejected,
+		"AC3: Rejected 0-energy play leaves combat state and Switchback tracker untouched")
+	await _click(app.return_button)
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -863,6 +1187,12 @@ func _run() -> void:
 		"the Warden Strike seed replays the complete three-owner trace exactly")
 	await _scenario_reshuffle_duplicate(fixture)
 	await _scenario_stitched_owners()
+	var sw_first := await _scenario_switchback_ordinary_and_quilt(fixture)
+	var sw_replay := await _scenario_switchback_ordinary_and_quilt(fixture)
+	_check(sw_first.size() > 4 and sw_replay == sw_first,
+		"AC1/AC3: Switchback ordinary trace replays deterministically (Block, energy, piles, RNG)")
+	await _scenario_switchback_stitched(fixture)
+	await _scenario_switchback_negatives()
 	_check(randi() == global_next,
 		"mounted plays, rejections, End Turn and Return preserve the global RNG")
 	app.free()

@@ -59,6 +59,7 @@ var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
+var _receipt_seq := 0
 
 
 ## Resolved path of one committed HUD image under the current presentation-only root.
@@ -992,6 +993,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	_cancel_pending()
 	if card_id in M02PositionCards.IDS:
 		if CombatPositionSwaps.play_move_card(deck, party, card_id, M02PositionCards.new().get_definition(card_id)):
+			_forward_switchback_ordinary_play(card_id)
 			var app = get_parent()
 			app._refresh_party()
 			app._refresh_intents()
@@ -1003,6 +1005,7 @@ func _activate(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 	if not _play_held(deck, party, card_id, 0):
 		return
 	_report_path_play(card_id, energy_before)
+	_forward_switchback_ordinary_play(card_id)
 	var app = get_parent()
 	app._refresh_party()
 	app._refresh_hand()
@@ -1120,6 +1123,7 @@ func _resolve_target(position: int, token: int) -> void:
 	var id: String = _pending.id
 	_cancel_pending()
 	if _play_held(_deck, _party, id, position):
+		_forward_switchback_ordinary_play(id)
 		var app = get_parent()
 		app._refresh_party()
 		app._refresh_hand()
@@ -1164,6 +1168,7 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	_receipt_seq = 0
 	_metadata.clear()
 	_cancel_pending()
 	for panel in _bindings.keys():
@@ -1206,3 +1211,38 @@ func _clear() -> void:
 	_energy_cards = null
 	_tinker_gadgets = null
 	_heal_cards = null
+
+
+
+func _ensure_quilt_switchback_bound() -> void:
+	var presenter = _path_presenter()
+	if presenter != null and presenter.has_method("ensure_quilt_switchback_bound"):
+		presenter.ensure_quilt_switchback_bound()
+
+
+func _owner_for_support_card(card_id: String) -> String:
+	var def: Dictionary = _metadata.definition(card_id)
+	var owner: String = str(def.get("owner", ""))
+	if owner in CombatQuiltBonus.HERO_IDS:
+		return owner
+	var starter := StarterCards.new().get_definition(card_id)
+	owner = str(starter.get("owner", ""))
+	if owner in CombatQuiltBonus.HERO_IDS:
+		return owner
+	return ""
+
+
+func _forward_switchback_ordinary_play(card_id: String) -> void:
+	var app = get_parent()
+	if app == null or not is_instance_valid(app):
+		return
+	_ensure_quilt_switchback_bound()
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	if quilt == null or not is_instance_valid(quilt) or not quilt is CombatQuiltBonus or not quilt.is_switchback_active():
+		return
+	var owner: String = _owner_for_support_card(card_id)
+	if owner.is_empty() or not owner in CombatQuiltBonus.HERO_IDS:
+		return
+	_receipt_seq += 1
+	var receipt_id := "support_%d" % _receipt_seq
+	quilt.observe_confirmed_play(receipt_id, owner)
