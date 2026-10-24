@@ -9,6 +9,10 @@ extends Control
 ## action and the service-parsed outcome: exact signed gold/scraps, the zero
 ## change wording, or an honest unavailable placeholder. A wallet offering also
 ## repeats its own authoritative projected balance or exact shortfall.
+## Each mounted choice also wears a small sewn number tag (1, 2, 3) and the open,
+## visible panel answers the physical 1/2/3 keys by handing that authored-order
+## choice to the same guarded pressed callback the mouse and focus path use. A
+## two-choice offering simply has no third tag and ignores key 3.
 
 ## Printed when the service could not parse a choice outcome. No amount, name or
 ## affordability is invented for such a branch.
@@ -21,6 +25,14 @@ const NO_CHANGE := "No change to gold or scraps."
 const AUTHORED_ONLY := "Authored outcome; your run's wallet is not checked here."
 ## The neutral wallet used only to parse legacy authored deltas.
 const NEUTRAL_WALLET := {"gold": 0, "scraps": 0}
+## Sewn number tag geometry on a choice ticket: a small felt square pinned to
+## the left edge, clear of the centred authored text and the wallet forecast.
+const CUE_INSET := 9.0
+const CUE_SIZE := 26.0
+## Sewn tag palette: pale paper felt, stitched thread border, dark ink numeral.
+const CUE_PAPER := Color("#f3e7cc")
+const CUE_THREAD := Color("#8a6f55")
+const CUE_INK := Color("#3a2c22")
 
 signal choice_committed(event_id: String, choice_id: String)
 ## Emits exactly one detached RunEventChoice receipt on a successful wallet
@@ -39,6 +51,8 @@ var _selector: RunEventChoice = null
 var _generation: int = 0
 var _is_open: bool = false
 var _choice_buttons: Array[Button] = []
+## One sewn number tag per mounted choice, in the same authored order.
+var _choice_cues: Array[Label] = []
 var _bound_choices: Dictionary = {}
 var _committed_choice: Dictionary = {}
 var _wallet_mode: bool = false
@@ -148,6 +162,7 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 			button.add_theme_font_size_override("font_size", 18)
 			button.disabled = not can_pay
 			button.focus_mode = Control.FOCUS_ALL if can_pay else Control.FOCUS_NONE
+		_add_choice_cue(button, i)
 		choices_container.add_child(button)
 		_choice_buttons.append(button)
 		_bound_choices[button] = choice_id
@@ -155,6 +170,36 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		# and closed/reopened offerings cannot redirect an old pressed signal.
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+
+
+## A small sewn number tag pinned to the left edge of one choice ticket. It only
+## repeats the authored position as a numeral: the button's own text, tooltip,
+## action and layout stay exactly as authored, and the tag takes neither pointer
+## nor keyboard focus.
+func _add_choice_cue(button: Button, index: int) -> void:
+	var cue := Label.new()
+	cue.name = "ChoiceCue_%d" % index
+	cue.text = str(index + 1)
+	cue.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cue.focus_mode = Control.FOCUS_NONE
+	cue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cue.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cue.anchor_top = 0.5
+	cue.anchor_bottom = 0.5
+	cue.offset_left = CUE_INSET
+	cue.offset_top = -CUE_SIZE * 0.5
+	cue.offset_right = CUE_INSET + CUE_SIZE
+	cue.offset_bottom = CUE_SIZE * 0.5
+	var patch := StyleBoxFlat.new()
+	patch.bg_color = CUE_PAPER
+	patch.border_color = CUE_THREAD
+	patch.set_border_width_all(2)
+	patch.set_corner_radius_all(9)
+	cue.add_theme_stylebox_override("normal", patch)
+	cue.add_theme_color_override("font_color", CUE_INK)
+	cue.add_theme_font_size_override("font_size", 15)
+	button.add_child(cue)
+	_choice_cues.append(cue)
 
 
 ## The service's own parsed rows for a legacy offering, read through a neutral
@@ -256,6 +301,7 @@ func close_event() -> void:
 			choices_container.remove_child(button)
 		button.queue_free()
 	_choice_buttons.clear()
+	_choice_cues.clear()
 	_bound_choices.clear()
 	if is_instance_valid(_wallet_label):
 		_wallet_label.get_parent().remove_child(_wallet_label)
@@ -270,6 +316,43 @@ func has_open_event() -> bool:
 ## Snapshot of the actual visible choice controls for external scene inspection.
 func get_choice_buttons() -> Array[Button]:
 	return _choice_buttons.duplicate()
+
+
+## Snapshot of the sewn 1-based number tags, in the same authored order as the
+## mounted choice buttons.
+func get_choice_cues() -> Array[Label]:
+	return _choice_cues.duplicate()
+
+
+## Physical 1/2/3 hands the authored-order choice to the same guarded pressed
+## callback as the mouse and focus path, so generation, selector ownership,
+## visibility, disabled state and the exact bound choice ID all still decide.
+## Only an open, visible offering answers; a two-choice Event has no third tag,
+## so key 3 is left alone. Closed, hidden, spent and out-of-range keys are inert.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key: InputEventKey = event
+	if not key.pressed or key.echo:
+		return
+	if not _is_open or not is_visible_in_tree():
+		return
+	var index := -1
+	match key.keycode:
+		KEY_1:
+			index = 0
+		KEY_2:
+			index = 1
+		KEY_3:
+			index = 2
+	if index < 0 or index >= _choice_buttons.size():
+		return
+	var button: Button = _choice_buttons[index]
+	var choice_id: String = _bound_choices.get(button, "")
+	if choice_id.is_empty():
+		return
+	get_viewport().set_input_as_handled()
+	_on_choice_pressed(_selector, choice_id, _generation, button)
 
 
 func _on_choice_pressed(offered: RunEventChoice, choice_id: String, generation: int, button: Button) -> void:

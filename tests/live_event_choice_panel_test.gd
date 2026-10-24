@@ -1169,6 +1169,220 @@ func _test_rng_zero_draws() -> void:
 		"RNG flow commits once without effects")
 
 
+## WCAG relative-luminance contrast for a drawn numeral against its felt tag.
+func _contrast(first: Color, second: Color) -> float:
+	var a := _luminance(first)
+	var b := _luminance(second)
+	return (maxf(a, b) + 0.05) / (minf(a, b) + 0.05)
+
+
+func _luminance(color: Color) -> float:
+	return 0.2126 * _linear_channel(color.r) + 0.7152 * _linear_channel(color.g) \
+		+ 0.0722 * _linear_channel(color.b)
+
+
+func _linear_channel(value: float) -> float:
+	return value / 12.92 if value <= 0.04045 else pow((value + 0.055) / 1.055, 2.4)
+
+
+## AC1: every mounted ticket wears exactly one sewn numeral tag in authored
+## order; the tag is a tiny felt patch on the ticket's left edge that is legible,
+## never takes pointer or focus, and stays clear of the centred authored caption
+## and wallet forecast.
+func _check_numbered_cues(record: Dictionary, label: String) -> void:
+	var buttons := panel.get_choice_buttons()
+	var cues := panel.get_choice_cues()
+	var choices: Array = record["choices"]
+	_check(cues.size() == buttons.size() and cues.size() == choices.size(),
+		label + " one sewn number tag per offered choice")
+	if cues.size() != buttons.size() or buttons.size() != choices.size():
+		return
+	var viewport := Rect2(Vector2.ZERO, Vector2(root.size))
+	for i in range(cues.size()):
+		var cue: Label = cues[i]
+		var button: Button = buttons[i]
+		_check(cue.text == str(i + 1), label + " tag repeats the authored position " + str(i))
+		_check(cue.get_parent() == button and cue.is_visible_in_tree(),
+			label + " tag is mounted on its own ticket " + str(i))
+		_check(cue.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and cue.focus_mode == Control.FOCUS_NONE,
+			label + " tag never takes pointer or keyboard focus " + str(i))
+		var cue_rect: Rect2 = cue.get_global_rect()
+		_check(viewport.encloses(cue_rect), label + " tag stays inside 1280x720 " + str(i))
+		_check(button.get_global_rect().encloses(cue_rect),
+			label + " tag sits fully on its ticket " + str(i))
+		# Independent caption geometry: the widest drawn ticket line is centred,
+		# so its left edge is the forbidding boundary for the tag.
+		var font: Font = button.get_theme_font("font")
+		var font_size: int = button.get_theme_font_size("font_size")
+		var widest := 0.0
+		for line in button.text.split("\n"):
+			widest = maxf(widest, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+		var caption_left: float = button.get_global_rect().position.x \
+			+ maxf(0.0, (button.size.x - widest) * 0.5)
+		_check(cue_rect.end.x <= caption_left,
+			label + " tag keeps clear of the centred caption " + str(i))
+		var patch := cue.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(patch != null and patch.bg_color.a > 0.0,
+			label + " tag is a drawn felt patch " + str(i))
+		if patch != null:
+			_check(_contrast(cue.get_theme_color("font_color"), patch.bg_color) >= 4.5,
+				label + " numeral stays readable on its felt tag " + str(i))
+			_check(patch.border_width_left >= 1 and patch.corner_radius_top_left >= 1,
+				label + " tag keeps its stitched thread border " + str(i))
+		_check(cue.get_theme_font_size("font_size") >= 14,
+			label + " tag numeral legible at 1280x720 " + str(i))
+
+
+## AC1/AC3: physical 1/2/3 keys pick the authored-order option through the same
+## guarded pressed path in a three-choice Event; a two-choice Event has no third
+## tag and ignores key 3, while spent and out-of-range keys stay inert.
+func _test_numbered_choice_keys() -> void:
+	var signpost: Dictionary = authored.get("frayed_signpost", {})
+	var spool: Dictionary = authored.get("quiet_spool", {})
+	_check(not signpost.is_empty() and not spool.is_empty(),
+		"numbered legacy key fixtures are authored Events")
+	if signpost.is_empty() or spool.is_empty():
+		return
+	seed(424242)
+	var expected_rng := randi()
+	seed(424242)
+	var digests: Array = [KEY_1, KEY_2, KEY_3]
+	var expected_ids := ["read", "choose", "sell_arrowwork"]
+	for index in range(digests.size()):
+		committed.clear()
+		wallet_committed.clear()
+		_check(panel.open_event(signpost), "numbered three-choice Event opens #" + str(index))
+		await _frames()
+		_check_numbered_cues(signpost, "numbered three-choice #" + str(index))
+		await _key(digests[index])
+		_check(committed.size() == 1 and committed[0] == {
+			"event_id": "frayed_signpost", "choice_id": expected_ids[index]},
+			"physical key %d commits the authored option #%d" % [index + 1, index])
+		_check(wallet_committed.is_empty(), "legacy numbered key emits no wallet receipt #" + str(index))
+		_check(panel._selector.is_claimed(), "numbered key latched the real selector #" + str(index))
+		await _key(KEY_1)
+		await _key(KEY_3)
+		await _key(KEY_0)
+		await _key(KEY_4)
+		_check(committed.size() == 1, "spent and out-of-range numbered keys cannot replay #" + str(index))
+		panel.close_event()
+		await _frames()
+		_check(panel.get_choice_cues().is_empty(), "close releases every sewn tag #" + str(index))
+	# Two-choice Event: there is no third tag, and key 3 leaves the visit unspent.
+	committed.clear()
+	_check(panel.open_event(spool), "two-choice Event opens for numbered keys")
+	await _frames()
+	_check_numbered_cues(spool, "numbered two-choice")
+	_check(panel.get_choice_cues().size() == 2, "two-choice Event wears exactly two tags")
+	await _key(KEY_3)
+	_check(committed.is_empty() and panel._selector.is_valid(),
+		"two-choice Event ignores physical key 3")
+	await _key(KEY_2)
+	_check(committed == [{"event_id": "quiet_spool", "choice_id": "ignore"}],
+		"two-choice second tag commits the authored second option")
+	panel.close_event()
+	await _frames()
+	_check(randi() == expected_rng, "numbered legacy keys and tags consume zero RNG")
+
+
+## AC2: with the real Quilting Bee at 0 gold / 2 scraps, tag 2 is an
+## unaffordable ticket that spends nothing, tag 1 claims sew_panel exactly once
+## with the exact detached after-wallet, and hidden, repeated and stale
+## generation keys can never emit again or draw from the RNG.
+func _test_wallet_numbered_keys() -> void:
+	var bee: Dictionary = authored.get("quilting_bee", {})
+	_check(not bee.is_empty(), "numbered wallet fixture is the authored Quilting Bee")
+	if bee.is_empty():
+		return
+	var wallet := {"gold": 0, "scraps": 2}
+	var original := wallet.duplicate(true)
+	wallet_committed.clear()
+	committed.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 515253
+	var rng_state := rng.state
+	seed(515253)
+	var next_global := randi()
+	seed(515253)
+	_check(panel.open_event_with_wallet(bee, wallet), "numbered wallet bee opens at 0 gold / 2 scraps")
+	await _frames()
+	_check_numbered_cues(bee, "numbered wallet bee")
+	var buttons := panel.get_choice_buttons()
+	var sew := _wallet_index(bee, "sew_panel")
+	var buy := _wallet_index(bee, "buy_thread")
+	var watch := _wallet_index(bee, "watch")
+	_check(sew == 0 and buy == 1 and watch == 2,
+		"authored Quilting Bee order is 1 sew, 2 buy, 3 watch")
+	if buttons.size() != 3 or sew < 0 or buy < 0 or watch < 0:
+		panel.close_event()
+		await _frames()
+		return
+	_check(buttons[buy].disabled and buttons[buy].focus_mode == Control.FOCUS_NONE,
+		"numbered tag 2 sits on a really unaffordable ticket")
+	await _key(KEY_2)
+	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
+		"unaffordable numbered option cannot claim the visit")
+	_check(wallet == original and rng.state == rng_state,
+		"refused numbered purchase spends no wallet or RNG")
+	# A hidden panel is inert even though the visit is still open and unspent.
+	panel.hide()
+	await _frames()
+	_check(not panel.is_visible_in_tree() and panel.has_open_event() and panel._selector.is_valid(),
+		"hidden numbered visit is really open, unspent and invisible")
+	await _key(KEY_1)
+	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
+		"hidden panel ignores numbered keys")
+	panel.show()
+	await _frames()
+	await _key(KEY_1)
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": "quilting_bee", "choice_id": "sew_panel",
+		"wallet": {"gold": 32, "scraps": 0}},
+		"physical key 1 settles the first authored option with its exact after-wallet")
+	_check(wallet == original, "numbered settlement never mutates the supplied wallet")
+	(wallet_committed[0]["wallet"] as Dictionary)["gold"] = -5
+	_check(panel._committed_choice == {"ok": true, "event_id": "quilting_bee",
+		"choice_id": "sew_panel", "wallet": {"gold": 32, "scraps": 0}},
+		"numbered receipt is detached from the panel's own record")
+	await _key(KEY_1)
+	await _key(KEY_2)
+	await _key(KEY_3)
+	_check(wallet_committed.size() == 1 and committed.is_empty(),
+		"repeated numbered keys cannot settle twice")
+	var old_callable: Callable = buttons[0].pressed.get_connections()[0]["callable"]
+	var old_selector := panel._selector
+	var old_generation := panel._generation
+	panel.close_event()
+	_check(is_instance_valid(buttons[0]) and not panel.has_open_event(),
+		"closed numbered visit is still holding its released ticket")
+	old_callable.call()
+	_check(wallet_committed.size() == 1, "closed ticket's saved callback cannot emit again")
+	await _frames()
+	_check(not is_instance_valid(buttons[0]), "closed numbered tickets are really gone")
+	_check(panel.open_event_with_wallet(bee, original), "numbered bee reopens after a claim")
+	await _frames()
+	var reopened_selector := panel._selector
+	var reopened_buttons := panel.get_choice_buttons()
+	_check(reopened_buttons.size() == 3 and not reopened_buttons[0].disabled,
+		"reopened numbered tickets are fresh and selectable")
+	if reopened_buttons.size() == 3:
+		panel._on_choice_pressed(old_selector, "sew_panel", old_generation, reopened_buttons[0])
+	_check(wallet_committed.size() == 1 and reopened_selector.is_valid()
+		and not reopened_selector.is_claimed(),
+		"old-generation callbacks stay inert on the reopened panel")
+	await _key(KEY_3)
+	_check(wallet_committed.size() == 2 and wallet_committed[1] == {
+		"ok": true, "event_id": "quilting_bee", "choice_id": "watch",
+		"wallet": {"gold": 0, "scraps": 3}},
+		"reopened panel answers key 3 with its fresh authored third option")
+	_check(wallet == original, "reopened numbered keys still leave the caller wallet alone")
+	_check(rng.state == rng_state and randi() == next_global,
+		"numbered wallet keys and reopen consume zero RNG")
+	panel.close_event()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1200,6 +1414,8 @@ func _run() -> void:
 	await _test_wallet_authored()
 	await _test_wallet_reopen_refresh()
 	await _test_wallet_keyboard()
+	await _test_numbered_choice_keys()
+	await _test_wallet_numbered_keys()
 	await _test_wallet_rejection_and_generation()
 	_finish()
 
