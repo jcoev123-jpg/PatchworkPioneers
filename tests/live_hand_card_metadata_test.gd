@@ -42,6 +42,68 @@ const UNRAVEL_FACTS := [
 	"threshold rises by 4",
 	"rest of combat",
 ]
+## The exact terse line each mounted face must draw, written out independently of
+## the presenter: amounts, hit counts, block, healing, draw, energy/HP, statuses
+## and the ALL/RND recipient markers.
+const SHORT_LINES := {
+	"warden_strike": "6 dmg",
+	"warden_strike_plus": "7 dmg",
+	"warden_brace": "7 Block",
+	"warden_brace_plus": "10 Block",
+	"warden_shield_bash": "8 dmg · Weak 1",
+	"warden_shield_bash_plus": "11 dmg · Weak 1",
+	"seamstress_prick": "3 dmg · Bleed 3",
+	"seamstress_prick_plus": "4 dmg · Bleed 3",
+	"seamstress_mend": "heal 5",
+	"seamstress_stitch_up": "5 Block",
+	"tinker_pop_shot": "5 dmg",
+	"tinker_scrap_bomb": "4 dmg · ALL",
+	"tinker_tune_up": "draw 1",
+	"warden_hold_the_line": "5 Block · 2 Block allies",
+	"warden_pinning_jab": "4 dmg · Pin",
+	"warden_draw_fire": "6 Block · Guard",
+	"warden_counter_stitch": "5 Block · Thorns 3",
+	"warden_seam_breaker": "7 dmg · Unravel 4",
+	"warden_pin_and_pound": "9 dmg x2",
+	"warden_bastion_quilt": "10 Block · ALL",
+	"seamstress_running_stitch": "2 dmg · Bleed 4",
+	"seamstress_darning": "3 Block · heal 4",
+	"seamstress_snag": "Weak 1 · Unravel 3",
+	"seamstress_hemorrhage_hem": "double Bleed",
+	"seamstress_unpick": "Unravel 5",
+	"seamstress_blanket_stitch": "Bleed 3 · ALL",
+	"seamstress_field_mend": "heal 4 · ALL",
+	"seamstress_red_thread": "Exposed 1 · Bleed 7",
+	"seamstress_tailors_trance": "draw 2 · +1 energy",
+	"tinker_rivet_shot": "4 dmg · Exposed 1",
+	"tinker_spring_trap": "3 dmg · Pin +5",
+	"tinker_scatter_bolts": "3 dmg · ALL",
+	"tinker_spare_parts": "3 Block · draw 1",
+	"tinker_long_barrel": "12 dmg",
+	"tinker_spool_launcher": "3 dmg · Unravel 3",
+	"tinker_overclock": "+1 energy · -3 HP",
+	"tinker_shrapnel_seam": "5 dmg · Unravel 2 · ALL",
+	"tinker_sight_glass": "Exposed 2 · draw 1",
+	"tinker_ricochet": "4 dmg x3 · RND",
+	"tinker_bobbin_cannon": "20 dmg",
+	"tinker_snip_the_seam": "5 dmg · 15 dmg if Unravelled/half gauge",
+}
+## The same line read from the authored record alone, for the cards whose printed
+## amount comes from a published passive or confirmed-hit adapter. Proves the
+## formatter itself never adds a bonus or infers a combat result.
+const AUTHORED_LINES := {
+	"seamstress_prick": "3 dmg · Bleed 2",
+	"seamstress_running_stitch": "2 dmg · Bleed 3",
+	"seamstress_running_stitch_plus": "3 dmg · Bleed 4",
+	"seamstress_blanket_stitch": "Bleed 2 · ALL",
+	"seamstress_blanket_stitch_plus": "Bleed 3 · ALL",
+	"seamstress_red_thread": "Exposed 1 · Bleed 6",
+	"seamstress_red_thread_plus": "Exposed 1 · Bleed 8",
+}
+## Words the drawn face must never print: the precise from/target rows, the
+## recipient adjective and the reward panel's old position wording.
+const FACE_BANNED_WORDS := ["From", "Target", "living", "pick 1", "front", "middle", "back"]
+
 
 var failures: Array[String] = []
 var checks := 0
@@ -111,6 +173,133 @@ func _expected_positions(positions: Array) -> String:
 	if positions.size() > 1:
 		return "%s–%s" % [positions[0], positions.back()]
 	return "?"
+
+
+## The same recipient-slot sentence the tooltip's pip legend must state.
+func _tooltip_target_slots(definition: Dictionary) -> String:
+	var positions: Array = definition.get("to_positions", [])
+	if not positions.is_empty():
+		return _expected_positions(positions)
+	match str(definition.get("target_kind", "")):
+		"ally_single":
+			return "any hero slot"
+		"party_all":
+			return "every hero"
+		"self":
+			return "this hero"
+		"adjacent_ally":
+			return "the adjacent hero"
+	return "no target"
+
+
+## Every authored ID of the four shared card catalogs, read from their own
+## enumerators so a new pool entry can never be silently skipped.
+func _all_catalog_ids() -> Array[String]:
+	var ids: Array[String] = []
+	ids.append_array(StarterCards.new().get_all_card_ids())
+	ids.append_array(WardenPoolCards.new().get_all_card_ids())
+	ids.append_array(SeamstressPoolCards.new().get_all_card_ids())
+	for base_id in TinkerPoolCards.new().get_pool_card_ids():
+		ids.append(base_id)
+		ids.append(base_id + "_plus")
+	return ids
+
+
+## One deterministic, read-only formatter produces every face line: exact authored
+## amounts, hit counts, all/random markers, energy/HP and an honest fallback for a
+## field it cannot read. Nothing here plays a card, spends a resource, mutates a
+## record or draws from the seeded run RNG.
+func _formatter_check(metadata) -> void:
+	var formatter = load("res://scripts/card_short_rules.gd")
+	_check(formatter != null, "shared card short formatter loads")
+	if formatter == null:
+		return
+	var before := _snapshot()
+	seed(4517)
+	var expected_global := randi()
+	seed(4517)
+	var seen := 0
+	for card_id in SHORT_LINES:
+		var definition: Dictionary = metadata.definition(card_id)
+		_check(not definition.is_empty(), "terse-line catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var authored: Dictionary = definition.duplicate(true)
+		var described: Dictionary = formatter.describe(definition)
+		_check(described.get("known") == true and not bool(described.get("unknown", true)),
+			"formatter reads the validated authored record: " + card_id)
+		_check(definition == authored, "formatter never mutates its input record: " + card_id)
+		var face: String = metadata.short_line(card_id)
+		_check(face == str(SHORT_LINES[card_id]),
+			"exact terse face line for %s: got '%s'" % [card_id, face])
+		for banned in FACE_BANNED_WORDS:
+			_check(not face.contains(banned),
+				"face line prints no '%s': %s" % [banned, card_id])
+		seen += 1
+	# The formatter itself never adds a published passive: the presenter supplies
+	# that applied amount from the same validated record.
+	for card_id in SHORT_LINES:
+		var definition: Dictionary = metadata.definition(card_id)
+		if definition.is_empty():
+			continue
+		var authored_line: String = formatter.line(definition)
+		if AUTHORED_LINES.has(card_id):
+			_check(authored_line == str(AUTHORED_LINES[card_id]),
+				"authored-only line for %s: got '%s'" % [card_id, authored_line])
+		else:
+			_check(authored_line == str(SHORT_LINES[card_id]),
+				"formatter and presenter agree for %s: got '%s'" % [card_id, authored_line])
+	_check(seen >= CARD_FACTS.size(), "every required starter face was formatted")
+	# Repeated calls are identical, and a caller mutating a returned phrase array
+	# can never leak into the next description.
+	var bomb: Dictionary = metadata.definition("tinker_scrap_bomb")
+	var first: Dictionary = formatter.describe(bomb)
+	(first["phrases"] as Array).append("SENTINEL")
+	var second: Dictionary = formatter.describe(bomb)
+	var third: Dictionary = formatter.describe(bomb)
+	_check(not (second["phrases"] as Array).has("SENTINEL") and second == third,
+		"formatter results are detached and deterministic")
+	_check(String(first["line"]) == String(third["line"]),
+		"repeated formatting returns the same line")
+	# All-area, per-hit-random and repeated hits stay visibly distinct.
+	var bomb_line: String = formatter.line(bomb)
+	var ricochet_line: String = formatter.line(metadata.definition("tinker_ricochet"))
+	var pound_line: String = formatter.line(metadata.definition("warden_pin_and_pound"))
+	_check(bomb_line.ends_with("ALL") and ricochet_line.ends_with("RND")
+		and pound_line.contains("x2"),
+		"ALL, RND and the hit count stay distinct phrases")
+	_check(not pound_line.contains("ALL") and not pound_line.contains("RND"),
+		"a repeated single-target hit claims no area or random cast")
+	# An authored field the formatter cannot read is reported honestly instead of
+	# being rendered as an invented number.
+	var mystery := {"id": "probe_mystery_card", "target_kind": "enemy_single",
+		"effects": {"damage": 2, "mystery_damage": 9}}
+	var mystery_line: String = formatter.line(mystery)
+	_check(mystery_line == "2 dmg · other effects",
+		"unknown effect field falls back honestly: " + mystery_line)
+	_check(formatter.has_unknown(mystery)
+		and not formatter.has_unknown(metadata.definition("warden_strike")),
+		"unknown-field detection only fires for unrecognized authoring")
+	_check(not mystery_line.contains("9") and not mystery_line.contains("mystery"),
+		"unknown field never prints an invented amount or its raw key")
+	_check(formatter.line({"effects": {"damage": "6"}}) == "other effects",
+		"an unreadable authored amount is reported, never printed")
+	_check(formatter.line({}) == "" and formatter.describe({}).get("known") == false,
+		"an empty record is not a known card")
+	_check(formatter.line(null) == "" and formatter.describe([]).get("known") == false,
+		"a non-dictionary record is not a known card")
+	# Every authored catalog record keeps a readable terse line, not just the
+	# required starter nine.
+	var catalog_ids := _all_catalog_ids()
+	_check(not catalog_ids.is_empty(), "the shared catalogs enumerate authored cards")
+	for card_id in catalog_ids:
+		var line: String = metadata.short_line(card_id)
+		_check(not line.is_empty(), "every authored card keeps a terse face line: " + card_id)
+		for banned in FACE_BANNED_WORDS:
+			_check(not line.contains(banned),
+				"no '%s' on the face line: %s" % [banned, card_id])
+	_check(randi() == expected_global, "the short formatter draws no global RNG")
+	_check(_snapshot() == before, "short-line formatting mutates no live model")
 
 
 ## The compact target badge text for a validated Warden Path record.
@@ -324,6 +513,35 @@ func _source_check() -> void:
 	_check(art_at >= 0, "panel drawing paints the illustration")
 	_check(cost_at > art_at and owner_at > art_at,
 		"the picture is painted before the cost coin and owner text it must never cover")
+	# The drawn faces print the pips and the terse authored line, never the
+	# precise from/target rows (those stay in the hover tooltip).
+	for name in ["_draw_half", "_draw_sewn_half"]:
+		var body := _function_body(text, name)
+		_check(not body.is_empty(), "renderer defines " + name)
+		_check(not body.contains("from_text") and not body.contains("target_text"),
+			"%s prints no from/target row" % name)
+		_check(body.contains("_rules("), name + " prints the terse formatter line")
+	_check(_function_body(text, "_draw_half").contains("_draw_pips("),
+		"the ordinary sewn face still paints its legality pips")
+	var pips := _function_body(text, "_draw_pips")
+	_check(pips.count("range(1, 4)") == 2 and pips.contains("draw_circle")
+		and pips.contains("draw_rect"),
+		"the face paints three source circles and three target squares")
+	_check(pips.contains("draw_dashed_line") and pips.contains("\"enemy_all\""),
+		"all-enemy target squares are threaded together on the face")
+	_check(_function_body(text, "base_effect_text").contains("_pip_legend("),
+		"the hover tooltip explains the pips and their legal slots")
+	_check(text.contains("CardShortRules.line("),
+		"the drawn face line comes from the shared short formatter")
+
+
+## The exact source of one GDScript function, for presentation-only assertions.
+func _function_body(text: String, name: String) -> String:
+	var start := text.find("func " + name + "(")
+	if start < 0:
+		return ""
+	var next := text.find("\nfunc ", start + 1)
+	return text.substr(start, text.length() - start if next < 0 else next - start)
 
 
 func _validate_display(observed: Dictionary) -> void:
@@ -397,6 +615,13 @@ func _validate_display(observed: Dictionary) -> void:
 		if definition.target_kind in ["enemy_single", "enemy_all"]:
 			target_line += _expected_positions(definition.to_positions)
 		_check(facts.get("target_text") == target_line, "authored enemy/ally/self/no-target line printed")
+		# The drawn face is the terse formatter line, never a from/target sentence.
+		var expected_short: String = str(SHORT_LINES.get(card_id, ""))
+		_check(not expected_short.is_empty() and facts.get("rules") == expected_short,
+			"mounted face draws the exact terse authored line: " + card_id)
+		for banned in FACE_BANNED_WORDS:
+			_check(not str(facts.get("rules", "")).contains(banned),
+				"mounted face prints no '%s': %s" % [banned, card_id])
 		# Tooltip verifies the base effect text for every held card.
 		var tooltip_text := panel.tooltip_text
 		var tooltip_lines := tooltip_text.split("\n")
@@ -421,6 +646,19 @@ func _validate_display(observed: Dictionary) -> void:
 			"none":
 				tooltip_target_line = "No target"
 		_check(tooltip_lines.has(tooltip_target_line), "tooltip exact target line: " + card_id)
+		# The hover tooltip is the one place that spells the painted pips out.
+		var target_slot_phrase: String
+		if definition.to_positions.is_empty():
+			target_slot_phrase = "no target square is filled (%s)" % _tooltip_target_slots(definition)
+		else:
+			target_slot_phrase = "■ filled = a legal target slot (%s)" % _tooltip_target_slots(definition)
+		_check(tooltip_text.contains("PIPS: ● filled = a slot this hero may play from (%s)"
+			% _expected_positions(definition.from_positions))
+			and tooltip_text.contains(target_slot_phrase),
+			"tooltip explains the six pips and their exact legal slots: " + card_id)
+		if definition.target_kind == "enemy_all":
+			_check(tooltip_text.contains("the thread stitches every enemy square (ALL = all of them)"),
+				"tooltip explains the all-enemy stitch: " + card_id)
 		_check(tooltip_text.contains("BASE"), "tooltip states base effect: " + card_id)
 		# Exact per-required-ID tooltip assertions for the nine authored cards.
 		if card_id == "warden_strike":
@@ -1259,6 +1497,7 @@ func _run() -> void:
 		_validate_display(observed)
 		if session == 0:
 			_keyword_explanations(presenter._metadata)
+			_formatter_check(presenter._metadata)
 			await _warden_path_presentation()
 		await _visual_feedback()
 		# Compare the same global RNG stream, not a separately seeded RNG instance.

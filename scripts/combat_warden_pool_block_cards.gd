@@ -18,6 +18,7 @@ var _torn: RunTornMending = null
 var _wardrobe_snapshot: Dictionary = {}
 var _torn_snapshot: Dictionary = {}
 var _patch_rules: CombatPatchAttackRules = null
+var _head_rules: CombatM05HeadPatchRules = null
 
 
 ## Authenticates and snapshots a genuine wardrobe and torn ledger for wearer effects.
@@ -30,6 +31,7 @@ func bind_patch_wardrobe(wardrobe: Variant, torn: Variant,
 	_wardrobe_snapshot = {}
 	_torn_snapshot = {}
 	_patch_rules = null
+	_head_rules = null
 
 	if not (wardrobe is RunPatchWardrobe) or not (torn is RunTornMending):
 		return false
@@ -50,11 +52,16 @@ func bind_patch_wardrobe(wardrobe: Variant, torn: Variant,
 	if not rules.bind_wardrobe(wardrobe, torn):
 		return false
 
+	var head_rules := CombatM05HeadPatchRules.new()
+	if not head_rules.bind_wardrobe(wardrobe, torn):
+		return false
+
 	_wardrobe = wardrobe
 	_torn = torn
 	_wardrobe_snapshot = snap.duplicate(true)
 	_torn_snapshot = torn_state.duplicate(true)
 	_patch_rules = rules
+	_head_rules = head_rules
 	_binding_valid = true
 	return true
 
@@ -72,11 +79,21 @@ func is_patch_binding_valid() -> bool:
 		return false
 	if _patch_rules == null or not _patch_rules.is_valid():
 		return false
+	if _head_rules == null or not _head_rules.read_projection().get("ok", false):
+		return false
 	return true
 
 
 func get_patches() -> CombatPatchAttackRules:
 	return _patch_rules
+
+
+func get_head_patches() -> CombatM05HeadPatchRules:
+	return _head_rules
+
+
+func get_head_rules() -> CombatM05HeadPatchRules:
+	return _head_rules
 
 
 func get_wardrobe() -> RunPatchWardrobe:
@@ -173,9 +190,18 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 		return rejected
 
 	var bonus := 0
-	if _binding_attempted and _patch_rules != null:
-		bonus = _patch_rules.card_block_bonus("warden", card_id)
-		if bonus < 0:
+	if _binding_attempted:
+		if _patch_rules != null:
+			var arm_bonus: int = _patch_rules.card_block_bonus("warden", card_id)
+			if arm_bonus < 0:
+				return rejected
+			bonus += arm_bonus
+		if _head_rules != null:
+			var head_bonus: int = _head_rules.get_bonus("warden", card_id, "block")
+			if head_bonus < 0:
+				return rejected
+			bonus += head_bonus
+		if bonus < 0 or bonus > CombatParty.MAX_INT:
 			return rejected
 
 	var final_block_amount := block_amount
