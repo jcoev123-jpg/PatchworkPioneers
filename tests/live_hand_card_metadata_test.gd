@@ -44,62 +44,74 @@ const UNRAVEL_FACTS := [
 ]
 ## The exact short combat sentence each mounted face must draw, written out
 ## independently of the presenter: amounts, hit counts, block, healing, draw,
-## energy/HP, statuses and the one/two/all/random recipient wording.
+## energy/HP, statuses and the one/all/random recipient wording. Offensive
+## effects read as compact clauses ("Deal 4. Exposed 1.", "Deal 3 to all.",
+## "Deal 2 x3, random."), while support wording is unchanged.
 const SHORT_LINES := {
-	"warden_strike": "Deal 6 damage to one enemy.",
-	"warden_strike_plus": "Deal 7 damage to one enemy.",
+	"warden_strike": "Deal 6.",
+	"warden_strike_plus": "Deal 7.",
 	"warden_brace": "Gain 7 Block.",
 	"warden_brace_plus": "Gain 10 Block.",
-	"warden_shield_bash": "Deal 8 damage to one enemy and apply Weak 1.",
-	"warden_shield_bash_plus": "Deal 11 damage to one enemy and apply Weak 1.",
-	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 3.",
-	"seamstress_prick_plus": "Deal 4 damage to one enemy and apply Bleed 3.",
+	"warden_shield_bash": "Deal 8. Weak 1.",
+	"warden_shield_bash_plus": "Deal 11. Weak 1.",
+	"seamstress_prick": "Deal 3. Bleed 3.",
+	"seamstress_prick_plus": "Deal 4. Bleed 3.",
 	"seamstress_mend": "Heal a chosen ally 5 HP.",
 	"seamstress_stitch_up": "Give a chosen ally 5 Block.",
-	"tinker_pop_shot": "Deal 5 damage to one enemy.",
-	"tinker_scrap_bomb": "Deal 4 damage to every enemy.",
+	"tinker_pop_shot": "Deal 5.",
+	"tinker_scrap_bomb": "Deal 4 to all.",
 	"tinker_tune_up": "Draw 1 card.",
 	"warden_hold_the_line": "Gain 5 Block and give every other ally 2 Block.",
-	"warden_pinning_jab": "Deal 4 damage to one enemy and pin it.",
+	"warden_pinning_jab": "Deal 4. Pin.",
 	"warden_draw_fire": "Gain 6 Block and Guard until your next turn.",
 	"warden_counter_stitch": "Gain 5 Block and gain 3 Thorns until your next turn.",
-	"warden_seam_breaker": "Deal 7 damage to one enemy and add 4 Unravel.",
-	"warden_pin_and_pound": "Deal 9 damage to one enemy 2 times.",
+	"warden_seam_breaker": "Deal 7. Unravel 4.",
+	"warden_pin_and_pound": "Deal 9 x2.",
 	"warden_bastion_quilt": "Give every ally 10 Block.",
-	"seamstress_running_stitch": "Deal 2 damage to one enemy and apply Bleed 4.",
+	"seamstress_running_stitch": "Deal 2. Bleed 4.",
 	"seamstress_darning": "Heal a chosen ally 4 HP and give them 3 Block.",
-	"seamstress_snag": "Apply Weak 1 to one enemy and add 3 Unravel.",
-	"seamstress_hemorrhage_hem": "Double the Bleed on one enemy.",
-	"seamstress_unpick": "Add 5 Unravel to one enemy.",
-	"seamstress_blanket_stitch": "Apply Bleed 3 to every enemy.",
+	"seamstress_snag": "Weak 1. Unravel 3.",
+	"seamstress_hemorrhage_hem": "Double Bleed.",
+	"seamstress_unpick": "Unravel 5.",
+	"seamstress_blanket_stitch": "Bleed 3 to all.",
 	"seamstress_field_mend": "Heal every ally 4 HP.",
-	"seamstress_red_thread": "Apply Exposed 1 and Bleed 7 to one enemy.",
+	"seamstress_red_thread": "Exposed 1, Bleed 7.",
 	"seamstress_tailors_trance": "Draw 2 cards and gain 1 energy.",
-	"tinker_rivet_shot": "Deal 4 damage to one enemy and apply Exposed 1.",
-	"tinker_spring_trap": "Deal 3 damage to one enemy and pin it for +5.",
-	"tinker_scatter_bolts": "Deal 3 damage to every enemy.",
+	"tinker_rivet_shot": "Deal 4. Exposed 1.",
+	"tinker_spring_trap": "Deal 3. Pin +5.",
+	"tinker_scatter_bolts": "Deal 3 to all.",
 	"tinker_spare_parts": "Gain 3 Block and draw 1 card.",
-	"tinker_long_barrel": "Deal 12 damage to one enemy.",
-	"tinker_spool_launcher": "Deal 3 damage to one enemy and add 3 Unravel.",
+	"tinker_long_barrel": "Deal 12.",
+	"tinker_spool_launcher": "Deal 3. Unravel 3.",
 	"tinker_overclock": "Gain 1 energy and lose 3 HP.",
-	"tinker_shrapnel_seam": "Deal 5 damage to every enemy and add 2 Unravel.",
-	"tinker_sight_glass": "Apply Exposed 2 to one enemy. Draw 1 card.",
-	"tinker_ricochet": "Deal 4 damage to a random enemy each hit, 3 hits.",
-	"tinker_bobbin_cannon": "Deal 20 damage to one enemy.",
-	"tinker_snip_the_seam": "Deal 5 damage to one enemy, or 15 if Unravelled or half gauge.",
+	"tinker_shrapnel_seam": "Deal 5 to all. Unravel 2 to all.",
+	"tinker_sight_glass": "Exposed 2. Draw 1 card.",
+	"tinker_ricochet": "Deal 4 x3, random.",
+	"tinker_bobbin_cannon": "Deal 20.",
+	"tinker_snip_the_seam": "Deal 5, or 15 if Unravelled or half gauge.",
 }
 ## The same line read from the authored record alone, for the cards whose printed
 ## amount comes from a published passive or confirmed-hit adapter. Proves the
 ## formatter itself never adds a bonus or infers a combat result.
 const AUTHORED_LINES := {
-	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 2.",
-	"seamstress_running_stitch": "Deal 2 damage to one enemy and apply Bleed 3.",
-	"seamstress_running_stitch_plus": "Deal 3 damage to one enemy and apply Bleed 4.",
-	"seamstress_blanket_stitch": "Apply Bleed 2 to every enemy.",
-	"seamstress_blanket_stitch_plus": "Apply Bleed 3 to every enemy.",
-	"seamstress_red_thread": "Apply Exposed 1 and Bleed 6 to one enemy.",
-	"seamstress_red_thread_plus": "Apply Exposed 1 and Bleed 8 to one enemy.",
+	"seamstress_prick": "Deal 3. Bleed 2.",
+	"seamstress_running_stitch": "Deal 2. Bleed 3.",
+	"seamstress_running_stitch_plus": "Deal 3. Bleed 4.",
+	"seamstress_blanket_stitch": "Bleed 2 to all.",
+	"seamstress_blanket_stitch_plus": "Bleed 3 to all.",
+	"seamstress_red_thread": "Exposed 1, Bleed 6.",
+	"seamstress_red_thread_plus": "Exposed 1, Bleed 8.",
 }
+## The owner's three compact examples, formatted from authored-shaped records so
+## the exact wording is checked even before an equal catalog card exists.
+const OWNER_EXAMPLES := [
+	{"target_kind": "enemy_single", "effects": {"damage": 4, "exposed": 1},
+		"line": "Deal 4. Exposed 1."},
+	{"target_kind": "enemy_all", "effects": {"damage": 3},
+		"line": "Deal 3 to all."},
+	{"target_kind": "enemy_random", "effects": {"damage": 2, "hit_count": 3,
+		"random_target_each_hit": true}, "line": "Deal 2 x3, random."},
+]
 ## Words the drawn face must never print: the precise from/target rows, the
 ## recipient adjective and the reward panel's old position wording.
 const FACE_BANNED_WORDS := ["From", "Target", "living", "pick 1", "front", "middle", "back"]
@@ -267,25 +279,48 @@ func _formatter_check(metadata) -> void:
 	var bomb_line: String = formatter.line(bomb)
 	var ricochet_line: String = formatter.line(metadata.definition("tinker_ricochet"))
 	var pound_line: String = formatter.line(metadata.definition("warden_pin_and_pound"))
-	_check(bomb_line == "Deal 4 damage to every enemy."
-		and ricochet_line == "Deal 4 damage to a random enemy each hit, 3 hits."
-		and pound_line == "Deal 9 damage to one enemy 2 times.",
+	_check(bomb_line == "Deal 4 to all."
+		and ricochet_line == "Deal 4 x3, random."
+		and pound_line == "Deal 9 x2.",
 		"area, per-hit-random and repeated hits keep distinct sentences")
-	_check(bomb_line.contains("every enemy") and not bomb_line.contains("random"),
+	_check(bomb_line.contains("to all") and not bomb_line.contains("random"),
 		"an area cast names every enemy, never one random pick")
-	_check(ricochet_line.contains("a random enemy each hit") and ricochet_line.contains("3 hits")
-		and not ricochet_line.contains("every enemy"),
+	_check(ricochet_line.contains("x3, random") and not ricochet_line.contains("to all"),
 		"a per-hit random cast says so instead of claiming an area")
-	_check(pound_line.contains("2 times") and not pound_line.contains("every enemy")
+	_check(pound_line.contains("x2") and not pound_line.contains("to all")
 		and not pound_line.contains("random"),
 		"a repeated single-target hit claims no area or random cast")
+	# The owner's three compact examples, formatted from authored-shaped records.
+	for example in OWNER_EXAMPLES:
+		var probe := {"id": "probe_owner_example", "target_kind": example["target_kind"],
+			"effects": (example["effects"] as Dictionary).duplicate(true)}
+		var probed: Dictionary = formatter.describe(probe)
+		_check(probed.get("known") == true and not bool(probed.get("unknown", true))
+			and str(probed.get("line", "")) == str(example["line"]),
+			"owner compact example: '%s' -> '%s'" % [str(example["line"]),
+				str(probed.get("line", ""))])
+		_check(probe["effects"] == example["effects"],
+			"compact example formatting mutates no authored record")
+	# Conditional, Pin, Unravel and status-only cards keep their real amounts and
+	# distinctions in the shorter phrases.
+	_check(formatter.line(metadata.definition("tinker_snip_the_seam"))
+		== "Deal 5, or 15 if Unravelled or half gauge.",
+		"conditional damage keeps both authored amounts and its trigger")
+	_check(formatter.line(metadata.definition("tinker_spring_trap")) == "Deal 3. Pin +5."
+		and formatter.line(metadata.definition("warden_pinning_jab")) == "Deal 4. Pin.",
+		"Pin keeps its own bonus instead of a fabricated damage amount")
+	_check(formatter.line(metadata.definition("warden_seam_breaker")) == "Deal 7. Unravel 4."
+		and formatter.line(metadata.definition("seamstress_unpick")) == "Unravel 5.",
+		"Unravel keeps its authored gauge amount")
+	_check(formatter.line(metadata.definition("seamstress_snag")) == "Weak 1. Unravel 3."
+		and formatter.line(metadata.definition("seamstress_red_thread")) == "Exposed 1, Bleed 6.",
+		"status-only attacks stay statuses, never an invented damage clause")
 	# An authored field the formatter cannot read is reported honestly instead of
 	# being rendered as an invented number.
 	var mystery := {"id": "probe_mystery_card", "target_kind": "enemy_single",
 		"effects": {"damage": 2, "mystery_damage": 9}}
 	var mystery_line: String = formatter.line(mystery)
-	_check(mystery_line == ("Deal 2 damage to one enemy. "
-		+ "Other authored effects are not described."),
+	_check(mystery_line == ("Deal 2. Other authored effects are not described."),
 		"unknown effect field falls back honestly: " + mystery_line)
 	_check(formatter.has_unknown(mystery)
 		and not formatter.has_unknown(metadata.definition("warden_strike")),

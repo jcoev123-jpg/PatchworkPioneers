@@ -150,15 +150,15 @@ func _snapshot(fixture: Dictionary) -> Dictionary:
 func _expected_cards() -> Dictionary:
 	return {
 		"warden_strike": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
-			"effects": {"damage": 6}, "text": "Deal 6 damage to one enemy."},
+			"effects": {"damage": 6}, "text": "Deal 6."},
 		"warden_strike_plus": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
-			"effects": {"damage": 7}, "text": "Deal 7 damage to one enemy."},
+			"effects": {"damage": 7}, "text": "Deal 7."},
 		"warden_brace": {"from": [1, 2, 3], "to": [], "kind": "self",
 			"effects": {"block": 7}, "text": "Gain 7 Block."},
 		"warden_shield_bash": {"from": [1], "to": [1], "kind": "enemy_single",
-			"effects": {"damage": 8, "weak": 1}, "text": "Deal 8 damage to one enemy and apply Weak 1."},
+			"effects": {"damage": 8, "weak": 1}, "text": "Deal 8. Weak 1."},
 		"seamstress_prick": {"from": [1, 2, 3], "to": [1, 2, 3], "kind": "enemy_single",
-			"effects": {"damage": 3, "bleed": 2}, "text": "Deal 3 damage to one enemy and apply Bleed 2."},
+			"effects": {"damage": 3, "bleed": 2}, "text": "Deal 3. Bleed 2."},
 		"seamstress_mend": {"from": [2, 3], "to": [], "kind": "ally_single",
 			"effects": {"heal": 5}, "text": "Heal a chosen ally 5 HP."},
 		"seamstress_stitch_up": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
@@ -170,9 +170,9 @@ func _expected_cards() -> Dictionary:
 		"seamstress_stitch_up_plus": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
 			"effects": {"block": 7}, "text": "Give a chosen ally 7 Block."},
 		"tinker_pop_shot": {"from": [2, 3], "to": [1, 2, 3], "kind": "enemy_single",
-			"effects": {"damage": 5}, "text": "Deal 5 damage to one enemy."},
+			"effects": {"damage": 5}, "text": "Deal 5."},
 		"tinker_scrap_bomb": {"from": [3], "to": [1, 2, 3], "kind": "enemy_all",
-			"effects": {"damage": 4}, "text": "Deal 4 damage to every enemy."},
+			"effects": {"damage": 4}, "text": "Deal 4 to all."},
 		"tinker_tune_up": {"from": [1, 2, 3], "to": [], "kind": "none",
 			"effects": {"draw": 1}, "text": "Draw 1 card."},
 	}
@@ -1251,65 +1251,47 @@ func _expected_rules(definition: Dictionary) -> String:
 		if effects.has(key):
 			has_enemy = true
 	if has_enemy:
-		var recipient: String = _sentence_recipient(definition)
-		var head := ""
-		var tails: Array[String] = []
-		var conditional := ""
+		var object_suffix: String = _sentence_object_suffix(definition)
+		var clauses: Array[String] = []
+		var damage := ""
 		if effects.has("damage"):
-			head = "deal %d damage" % int(effects["damage"])
+			damage = "deal %d" % int(effects["damage"])
+			if hits > 1:
+				damage += " x%d" % hits
+			damage += ", random" if random_each else object_suffix
 		if effects.has("conditional_damage"):
 			var condition: Dictionary = effects["conditional_damage"] \
 				if effects["conditional_damage"] is Dictionary else {}
 			var empowered: int = int(condition.get("damage", -1))
-			if head.is_empty():
-				head = "deal %d damage if %s" % [empowered, _condition_terms(condition)]
+			if damage.is_empty():
+				damage = "deal %d%s%s if %s" % [empowered, "" if random_each else object_suffix,
+					", random" if random_each else "", _condition_terms(condition)]
 			else:
-				conditional = ", or %d if %s" % [empowered, _condition_terms(condition)]
-		if effects.has("pinned"):
-			var bonus := 0
-			if effects["pinned"] is Dictionary \
-					and (effects["pinned"] as Dictionary).get("bonus_damage") is int:
-				bonus = int((effects["pinned"] as Dictionary)["bonus_damage"])
-			if head.is_empty():
-				head = "pin " + recipient + (" for +%d" % bonus if bonus > 0 else "")
-				recipient = ""
-			else:
-				tails.append("pin it" if bonus == 0 else "pin it for +%d" % bonus)
+				damage += ", or %d if %s" % [empowered, _condition_terms(condition)]
+		if not damage.is_empty():
+			clauses.append(damage)
 		var statuses: Array[String] = []
 		for status: String in ["exposed", "weak", "bleed"]:
 			if effects.has(status):
 				statuses.append("%s %d" % [status.capitalize(), int(effects[status])])
 		if not statuses.is_empty():
-			var clause := "apply " + _sentence_join(statuses)
-			if head.is_empty():
-				head = clause
-			else:
-				tails.append(clause)
+			clauses.append(", ".join(statuses) + object_suffix)
 		if effects.has("unravel"):
-			var clause := "add %d Unravel" % int(effects["unravel"])
-			if head.is_empty():
-				head = clause
-			else:
-				tails.append(clause)
-		var sentence := ""
-		if not head.is_empty():
-			sentence = _sentence_capital(head) if recipient.is_empty() \
-				else _sentence_capital("%s to %s" % [head, recipient])
-			if effects.has("damage") and hits > 1:
-				sentence += (" each hit, %d hits" % hits) if random_each \
-					else (" %d times" % hits)
-			sentence += conditional
-			for tail: String in tails:
-				sentence += " and " + tail
-			sentence += "."
+			clauses.append("unravel %d%s" % [int(effects["unravel"]), object_suffix])
+		if effects.has("pinned"):
+			var bonus := 0
+			if effects["pinned"] is Dictionary \
+					and (effects["pinned"] as Dictionary).get("bonus_damage") is int:
+				bonus = int((effects["pinned"] as Dictionary)["bonus_damage"])
+			clauses.append("pin%s%s" % [" +%d" % bonus if bonus > 0 else "", object_suffix])
+		for clause: String in clauses:
+			sentences.append(_sentence_capital(clause) + ".")
 		if effects.has("bleed_multiplier"):
 			var multiplier: int = int(effects["bleed_multiplier"])
 			if multiplier == 2:
-				sentence += " Double the Bleed on %s." % _sentence_recipient(definition)
+				sentences.append("Double Bleed%s." % object_suffix)
 			else:
-				sentence += " Multiply the Bleed on %s by %d." % [
-					_sentence_recipient(definition), multiplier]
-		sentences.append(sentence.strip_edges())
+				sentences.append("Multiply Bleed x%d%s." % [multiplier, object_suffix])
 	# A descriptor heal names its own recipient instead of the cast's target.
 	if effects.get("heal") is Dictionary:
 		var heal: Dictionary = effects["heal"]
@@ -1383,6 +1365,19 @@ func _sentence_recipient(definition: Dictionary) -> String:
 	return "the target"
 
 
+## The compact object a face clause carries: an area cast says "to all", a
+## random cast names its random enemy, and a single enemy needs no wording.
+func _sentence_object_suffix(definition: Dictionary) -> String:
+	match str(definition.get("target_kind", "")):
+		"enemy_single": return ""
+		"enemy_all": return " to all"
+		"enemy_random": return " to a random enemy"
+		"ally_single": return " to a chosen ally"
+		"party_all": return " to every ally"
+		"self": return " to yourself"
+	return " to the target"
+
+
 func _condition_terms(condition: Dictionary) -> String:
 	var terms: Array[String] = []
 	for item: Variant in condition.get("conditions", []):
@@ -1444,7 +1439,7 @@ func _required_rule_phrases(card_id: String) -> Array[String]:
 		"tinker_overclock":
 			return ["Gain 1 energy", "lose 3 HP"]
 		"tinker_ricochet":
-			return ["Deal 4 damage", "3 hits", "a random enemy each hit"]
+			return ["Deal 4 x3, random"]
 	return []
 
 

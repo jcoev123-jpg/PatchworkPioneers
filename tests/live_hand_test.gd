@@ -367,11 +367,10 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 	var target_kind: String = str(definition.get("target_kind", ""))
 	var tokens: Array[String] = []
 	if effects.has("damage"):
-		tokens.append("deal %d damage" % int(effects["damage"]))
+		tokens.append("deal %d" % int(effects["damage"]))
 		var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
 		if hits > 1:
-			tokens.append(("%d hits" % hits) if bool(effects.get("random_target_each_hit", false))
-				else ("%d times" % hits))
+			tokens.append("x%d" % hits)
 	if effects.has("block"):
 		if target_kind == "ally_single":
 			tokens.append(("them %d block" if effects.has("heal") else "chosen ally %d block")
@@ -407,11 +406,11 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 			applied += 1
 		tokens.append("bleed %d" % applied)
 	if effects.has("unravel"):
-		tokens.append("%d unravel" % int(effects["unravel"]))
+		tokens.append("unravel %d" % int(effects["unravel"]))
 	if effects.has("bleed_multiplier"):
-		tokens.append("double the bleed")
+		tokens.append("double bleed")
 	if effects.has("pinned"):
-		tokens.append("pin it")
+		tokens.append("pin")
 	if effects.has("guarding"):
 		tokens.append("guard")
 	if effects.has("thorns"):
@@ -434,9 +433,9 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 		tokens.append("%d if" % int(condition.get("damage", 0)))
 	# The face must distinguish a whole-area cast from a per-hit random pick.
 	if bool(effects.get("random_target_each_hit", false)):
-		tokens.append("a random enemy each hit")
+		tokens.append(", random")
 	elif target_kind == "enemy_all":
-		tokens.append("every enemy")
+		tokens.append("to all")
 	elif target_kind == "party_all":
 		tokens.append("every ally")
 	return tokens

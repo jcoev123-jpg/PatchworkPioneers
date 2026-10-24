@@ -16,14 +16,14 @@ const RETIRED_RULES_TEXT: Array[String] = ["From:", "Target:", "Positions:",
 ## Independent authored expectations for the cards every run owns at Shop entry:
 ## the exact short sentence and amount each face must print.
 const STARTER_EFFECT_LINES := {
-	"warden_strike": "Deal 6 damage to one enemy.",
-	"warden_shield_bash": "Deal 8 damage to one enemy and apply Weak 1.",
+	"warden_strike": "Deal 6.",
+	"warden_shield_bash": "Deal 8. Weak 1.",
 	"warden_brace": "Gain 7 Block.",
-	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 2.",
+	"seamstress_prick": "Deal 3. Bleed 2.",
 	"seamstress_mend": "Heal a chosen ally 5 HP.",
 	"seamstress_stitch_up": "Give a chosen ally 5 Block.",
-	"tinker_pop_shot": "Deal 5 damage to one enemy.",
-	"tinker_scrap_bomb": "Deal 4 damage to every enemy.",
+	"tinker_pop_shot": "Deal 5.",
+	"tinker_scrap_bomb": "Deal 4 to all.",
 	"tinker_tune_up": "Draw 1 card.",
 }
 
