@@ -40,7 +40,7 @@ func apply(path_receipt: Variant = null) -> bool:
 	if path_receipt != null:
 		_path_receipt = path_receipt
 	var block_amount := _resolve_block_amount()
-	if block_amount <= 0:
+	if block_amount < 0:
 		return false
 	if _party == null or not is_instance_valid(_party) or not _party.is_valid():
 		return false
@@ -57,7 +57,9 @@ func apply(path_receipt: Variant = null) -> bool:
 			warden_position = position
 	if warden_position == 0 or _party.is_downed(warden_position):
 		return false
-	if not _party.gain_block(warden_position, block_amount):
+	# Vanguard replaces the opening grant with a future first-hit passive.
+	# Its authentic zero-Block opening still consumes this battle's latch.
+	if block_amount > 0 and not _party.gain_block(warden_position, block_amount):
 		return false
 	_consumed = true
 	return true
@@ -94,7 +96,7 @@ func _resolve_block_amount() -> int:
 			return -1
 		return amount
 	elif target_id == VANGUARD_PATH_ID:
-		return BLOCK_AMOUNT
+		return 0
 	return -1
 
 

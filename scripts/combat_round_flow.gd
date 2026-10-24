@@ -23,7 +23,8 @@ var _battle_result: CombatBattleResult
 func _init(deck: CombatDeck = null, party: CombatParty = null,
 		enemies: CombatEnemies = null, intents: CombatEnemyIntents = null,
 		result: CombatBattleResult = null, unravel: CombatUnravel = null,
-		reactions: CombatWardenGuardReactions = null) -> void:
+		reactions: CombatWardenGuardReactions = null,
+		path_receipt: Variant = null) -> void:
 	_deck = deck
 	_party = party
 	_enemies = enemies
@@ -31,7 +32,7 @@ func _init(deck: CombatDeck = null, party: CombatParty = null,
 	_result = result
 	_unravel = unravel
 	_reactions = reactions
-	_opening_block = CombatStartingBlock.new(party)
+	_opening_block = CombatStartingBlock.new(party, path_receipt)
 
 
 ## Begin exactly once: clear inherited hero Block, deal the first hand, then
@@ -47,6 +48,10 @@ func begin_fight() -> bool:
 		return false
 	# A downed Warden can be carried with living allies; the one-shot helper skips him.
 	if _party.is_defeated() or _enemies.is_victorious() or not _result.can_continue():
+		return false
+	# Authenticate an optional Path before clearing Block or drawing cards.
+	# Vanguard's zero is valid; a negative result is a forged receipt.
+	if _opening_block._resolve_block_amount() < 0:
 		return false
 	# The optional battle-local projection is detached from the run wardrobe.
 	# Reject a malformed binding or a roster changed since its admission before
@@ -246,6 +251,8 @@ func _valid_bindings() -> bool:
 		var hero: Dictionary = _party.get_hero(index + 1)
 		if hero.get("id") not in ["warden", "seamstress", "tinker"] \
 				or hero["id"] in ids:
+			return false
+		if hero["id"] == "warden" and hero.get("max_hp") != CombatStartingBlock.WARDEN_MAX_HP:
 			return false
 		ids.append(hero["id"])
 	var preflight := CombatStatusTurnBatch.new()

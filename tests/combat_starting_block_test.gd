@@ -284,10 +284,11 @@ func _test_vanguard_contract() -> void:
 	_check(party.start_player_turn(), "player turn resets party block")
 	var before := _snap(party)
 	var helper := CombatStartingBlock.new(party, vanguard_receipt)
-	_check(helper.apply(), "Vanguard helper applies successfully")
+	_check(helper.apply() and helper.is_consumed(),
+		"genuine zero-Block Vanguard result succeeds and latches once")
 	var after := _snap(party)
 	_check(party.get_hero(1).get("hp") == 40, "Warden HP unchanged at 40")
-	_check(party.get_hero(1).get("block") == 6, "Vanguard keeps base 6 Block, NOT 10 and NOT 16")
+	_check(party.get_hero(1).get("block") == 0, "Vanguard replaces base 6 with no opening Block")
 	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(2).get("block") == 0, "Seamstress unchanged")
 	_check(party.get_hero(3).get("hp") == 26 and party.get_hero(3).get("block") == 0, "Tinker unchanged")
 
@@ -298,8 +299,7 @@ func _test_vanguard_contract() -> void:
 		_check(not hero.get("pinned", false), "Hero %d has no pinned flag attached" % position)
 
 	var expected_after := before.duplicate(true)
-	expected_after[0]["block"] = 6
-	_check(after == expected_after, "Vanguard matches exact base 6 block grant")
+	_check(after == expected_after, "Vanguard zero opening leaves entire roster unchanged")
 	_check(not helper.apply(), "repeat apply with Vanguard returns false")
 	_check(_snap(party) == after, "repeat apply leaves Vanguard party unchanged")
 
@@ -311,11 +311,42 @@ func _test_vanguard_contract() -> void:
 	var swapped_helper := CombatStartingBlock.new(swapped_party, vanguard_receipt)
 	_check(swapped_helper.apply(), "Vanguard applies to moved Warden in slot 2")
 	var swapped_expected := swapped_before.duplicate(true)
-	swapped_expected[1]["block"] = 6
-	_check(_snap(swapped_party) == swapped_expected, "slot 2 Warden gets 6 Block with Vanguard")
+	_check(_snap(swapped_party) == swapped_expected and swapped_helper.is_consumed(),
+		"slot 2 Warden receives no Block, zero result consumes latch")
 	_check(not swapped_helper.apply(), "slot 2 Vanguard cannot reapply")
 
-	# Compare default (+6), Vanguard (+6), and Bulwark (+10) on separate seeded fixtures
+	# Two legal adjacent moves put Warden at slot 3 with no Vanguard grant.
+	var third_party := CombatParty.new(_defs())
+	var first_move := CombatPositionSwaps.preview_adjacent_swap(third_party, 1, 1)
+	_check(first_move.get("ok") == true, "Vanguard first move to slot 2 is legal")
+	if first_move.get("ok") != true:
+		return
+	third_party._heroes.assign(first_move["heroes"])
+	var second_move := CombatPositionSwaps.preview_adjacent_swap(third_party, 2, 1)
+	_check(second_move.get("ok") == true, "Vanguard second move to slot 3 is legal")
+	if second_move.get("ok") != true:
+		return
+	third_party._heroes.assign(second_move["heroes"])
+	var third_before := _snap(third_party)
+	var third_helper := CombatStartingBlock.new(third_party, vanguard_receipt)
+	_check(third_helper.apply() and third_helper.is_consumed()
+		and _snap(third_party) == third_before,
+		"slot 3 Vanguard consumes zero opening with no foreign changes")
+	_check(not third_helper.apply() and _snap(third_party) == third_before,
+		"slot 3 Vanguard cannot replay zero opening")
+	# Unlike a grant, Vanguard must not change even pre-existing Block.
+	var existing := CombatParty.new(_defs())
+	_check(existing.gain_block(1, 2), "Vanguard existing Block precondition")
+	var existing_before := _snap(existing)
+	var existing_helper := CombatStartingBlock.new(existing, vanguard_receipt)
+	_check(existing_helper.apply() and existing_helper.is_consumed()
+		and _snap(existing) == existing_before,
+		"Vanguard does not add to pre-existing Block")
+	_check(existing.start_player_turn() and not existing_helper.apply()
+		and existing.get_hero(1)["block"] == 0,
+		"Vanguard latch stays consumed after next turn resets Block")
+
+	# Compare default (+6), Vanguard (zero), and Bulwark (+10) on seeded fixtures
 	seed(88101)
 	var party_default := CombatParty.new(_defs())
 	party_default.start_player_turn()
@@ -338,7 +369,12 @@ func _test_vanguard_contract() -> void:
 	_check(helper_bulwark.apply(), "seeded Bulwark helper applies")
 	var snap_bulwark := _snap(party_bulwark)
 
-	_check(snap_default == snap_vanguard, "Vanguard produces identical roster to default (both 6 Block)")
+	_check(snap_default[0]["block"] == 6 and snap_vanguard[0]["block"] == 0,
+		"seeded default 6 and Vanguard zero are genuinely different")
+	var adjusted_default := snap_default.duplicate(true)
+	adjusted_default[0]["block"] = 0
+	_check(snap_vanguard == adjusted_default,
+		"seeded Vanguard changes only Warden's original opening Block")
 	_check(snap_bulwark[0]["block"] == 10 and snap_default[0]["block"] == 6,
 		"Bulwark grants 10 Block vs default 6")
 	_check(snap_bulwark[1] == snap_default[1], "Seamstress identical between Bulwark and default")
