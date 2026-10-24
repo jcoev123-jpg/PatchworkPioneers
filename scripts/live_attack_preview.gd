@@ -454,7 +454,7 @@ func _combo_preview(id: String) -> Dictionary:
 	if not app._combo_battle_current() or not _control_ready(app.party, app.enemies, id):
 		return {"playable": false, "requires_selection": false, "target_positions": [], "targets": []}
 	return _combo_oracle.get_preview(_deck, app.party, app.enemies,
-		_pinned, _unravel, _play._tinker, id, 0)
+		_pinned, _unravel, _play._tinker, id, 0, _play._patches)
 
 
 ## Scoped picker for the six control variants: targeted legality stays with
@@ -849,8 +849,9 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 			return {"ok": false}
 		if CombatWardenPoolComboAttacks.SUPPORTED_CARD_IDS.has(id):
 			return _warden_combo.play_attack(_deck, party, enemies, _pinned, _unravel, id, position)
-		return CombatTinkerPoolUnravelAttacks.new(_play._tinker, _unravel, _pinned).play_attack(
-			_deck, party, enemies, id, position)
+		var tinker_combo := CombatTinkerPoolUnravelAttacks.new(_play._tinker, _unravel, _pinned)
+		tinker_combo.set_patch_rules(_play._patches)
+		return tinker_combo.play_attack(_deck, party, enemies, id, position)
 	if _targeting.is_sight_glass(id):
 		if forecast:
 			return _sight_forecast(party, enemies, id)
@@ -1134,6 +1135,7 @@ func _sync_battle() -> void:
 		# Needle Pin shares the exact starter attack object and once-per-combat
 		# latch, including an explicitly failed wardrobe admission.
 		_controls.bind_patch_rules(_play._patches)
+		_warden_combo.set_patches(_play._patches)
 		_controls.bind_head_patch_rules(head_rules)
 		if head_rules != null:
 			_play.bind_head_patch_rules(head_rules)
