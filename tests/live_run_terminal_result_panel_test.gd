@@ -208,11 +208,15 @@ func _app_snapshot() -> Dictionary:
 	}
 
 
-func _signature(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
-	var summary: Dictionary = _signature_with_stats(ledger, wardrobe)
+func _signature(ledger: Dictionary, wardrobe: RunPatchWardrobe,
+		tears_by_id: Dictionary = {}) -> Dictionary:
+	var summary: Dictionary = _signature_with_stats(ledger, wardrobe, tears_by_id)
 	return summary
 
-func _signature_with_stats(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
+## These stitch/wardrobe recap ledgers never admitted a battle, so their genuine
+## tear count is zero; a caller proving a real tear passes its by-ID map.
+func _signature_with_stats(ledger: Dictionary, wardrobe: RunPatchWardrobe,
+		tears_by_id: Dictionary = {}) -> Dictionary:
 	var summary: Dictionary = RunSignatureSummary.summarize(ledger["deck"], ledger["descriptors"],
 		ledger["next_stitch_id"], wardrobe)
 	if summary.get("ok") != true or wardrobe == null or not wardrobe.is_valid():
@@ -229,6 +233,7 @@ func _signature_with_stats(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Di
 		if by_id.has(hid):
 			h["hp"] = by_id[hid].get("hp", 0)
 			h["max_hp"] = by_id[hid].get("max_hp", 0)
+		h["tears"] = int(tears_by_id.get(hid, 0))
 	return summary
 
 func _orig_signature(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
@@ -762,11 +767,11 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 		_check(single_lines[1] == "Patches worn: 3", "AC2: exact worn count wording is preserved")
 		_check(single_lines[2] == "Crafted: Strike / Prick",
 			"AC1: the recap names the authored pair instead of the stitched ID")
-		_check(single_lines[3] == "Warden 40/40 HP · HEAD Button Eye · ARM - · COAT -",
-			"AC2: Warden row keeps HEAD/ARM/COAT order with a dash for empty slots")
-		_check(single_lines[4] == "Seamstress 30/30 HP · HEAD - · ARM Pincushion Arm · COAT -",
+		_check(single_lines[3] == "Warden 40/40 HP · HEAD Button Eye · ARM - · COAT - · Tears: 0",
+			"AC2: Warden row keeps HEAD/ARM/COAT order with a dash for empty slots and an explicit zero tear count")
+		_check(single_lines[4] == "Seamstress 30/30 HP · HEAD - · ARM Pincushion Arm · COAT - · Tears: 0",
 			"AC2: pincushion_arm is shown as the readable title-cased Pincushion Arm")
-		_check(single_lines[5] == "Tinker 26/26 HP · HEAD - · ARM - · COAT Quilted Coat",
+		_check(single_lines[5] == "Tinker 26/26 HP · HEAD - · ARM - · COAT Quilted Coat · Tears: 0",
 			"AC2: Tinker row keeps its order with readable coat name and empty dashes")
 	_check(not single_text.contains("stitched_000001"), "AC1: opaque stitched IDs are never shown")
 	_check(not single_text.contains("more"), "AC1: a single current stitched card adds no +N more")
@@ -879,7 +884,7 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 	_check(not zero_text.contains("Crafted:") and not zero_text.contains("Strike")
 		and not zero_text.contains("Brace") and not zero_text.contains("stitched_"),
 		"AC3: an empty current stitch recap invents no names or IDs")
-	_check(zero_lines[4] == "Tinker 26/26 HP · HEAD - · ARM - · COAT -",
+	_check(zero_lines[4] == "Tinker 26/26 HP · HEAD - · ARM - · COAT - · Tears: 0",
 		"AC2: empty slots remain explicit dashes in the final hero row")
 	panel.close_result()
 	_check(not panel.has_open_result(), "AC3: the recap view closes back to its shipped closed state")
@@ -1186,7 +1191,11 @@ func _audit_result_readability(status: String, expected: Dictionary,
 		for slot in ["HEAD", "ARM", "COAT"]:
 			var patch_id: String = hero.slots[slot]
 			parts.append("%s %s" % [slot, patch_id.capitalize() if not patch_id.is_empty() else "-"])
-		expected_lines.append("%s %d/%d HP · %s" % [str(hero.hero_id).capitalize(), hero.hp, hero.max_hp, " · ".join(parts)])
+		var row := "%s %d/%d HP · %s · Tears: %d" % [str(hero.hero_id).capitalize(),
+			hero.hp, hero.max_hp, " · ".join(parts), hero.tears]
+		if int(hero.hp) == 0:
+			row += " · TORN"
+		expected_lines.append(row)
 	_check(lines.size() == expected_lines.size(), label + ": exact number of signed ledger lines")
 	for index in range(mini(lines.size(), expected_lines.size())):
 		_check(lines[index] == expected_lines[index],
@@ -1369,11 +1378,11 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(vic_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Victory preserves stitched counts")
 	_check(vic_lines[2] == "Patches worn: 3", "AC3: Victory preserves patches worn total")
 	_check(vic_lines[3] == "Crafted: Strike / Prick", "AC3: Victory preserves crafted card name")
-	_check(vic_lines[4] == "Warden 18/37 HP · HEAD Button Eye · ARM - · COAT -",
-		"AC2: Warden row shows authoritative 18/37 HP and reduced cap from tear despite position 2")
-	_check(vic_lines[5] == "Seamstress 22/30 HP · HEAD - · ARM Pincushion Arm · COAT -",
+	_check(vic_lines[4] == "Warden 18/37 HP · HEAD Button Eye · ARM - · COAT - · Tears: 1",
+		"AC2: Warden row shows authoritative 18/37 HP, reduced cap and genuine tear despite position 2")
+	_check(vic_lines[5] == "Seamstress 22/30 HP · HEAD - · ARM Pincushion Arm · COAT - · Tears: 0",
 		"AC2: Seamstress row shows authoritative 22/30 HP despite position 3")
-	_check(vic_lines[6] == "Tinker 12/26 HP · HEAD - · ARM - · COAT Quilted Coat",
+	_check(vic_lines[6] == "Tinker 12/26 HP · HEAD - · ARM - · COAT Quilted Coat · Tears: 0",
 		"AC2: Tinker row shows authoritative 12/26 HP despite position 1")
 	_check(not panel.return_button.disabled and panel.return_button.focus_mode == Control.FOCUS_ALL,
 		"AC3: Return button is enabled and focusable")
@@ -1394,11 +1403,11 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(def_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Defeat preserves stitched counts")
 	_check(def_lines[2] == "Patches worn: 3", "AC3: Defeat preserves patches worn total")
 	_check(def_lines[3] == "Crafted: Strike / Prick", "AC3: Defeat preserves crafted card name")
-	_check(def_lines[4] == "Warden 18/37 HP · HEAD Button Eye · ARM - · COAT -",
+	_check(def_lines[4] == "Warden 18/37 HP · HEAD Button Eye · ARM - · COAT - · Tears: 1",
 		"AC2: Warden row shows authoritative 18/37 HP on Defeat")
-	_check(def_lines[5] == "Seamstress 22/30 HP · HEAD - · ARM Pincushion Arm · COAT -",
+	_check(def_lines[5] == "Seamstress 22/30 HP · HEAD - · ARM Pincushion Arm · COAT - · Tears: 0",
 		"AC2: Seamstress row shows authoritative 22/30 HP on Defeat")
-	_check(def_lines[6] == "Tinker 12/26 HP · HEAD - · ARM - · COAT Quilted Coat",
+	_check(def_lines[6] == "Tinker 12/26 HP · HEAD - · ARM - · COAT Quilted Coat · Tears: 0",
 		"AC2: Tinker row shows authoritative 12/26 HP on Defeat")
 	panel.close_result()
 	_check(_app_snapshot() == snap_before_def, "AC1: Defeat open/close leaves wallet, seed, deck and heroes completely unchanged")
@@ -1449,6 +1458,249 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	app.run_heroes = original_heroes
 
 
+## A terminal result whose validated authority fails must show the same
+## fail-closed statement, with no enabled Return and no partial hero/tear data,
+## and must leave the tampered fixture and every other ledger byte untouched.
+func _expect_unavailable(latch: RunActBattleOutcome, label: String) -> void:
+	var before := _app_snapshot()
+	var torn_before: Dictionary = app.party_carryover.torn.read_state()
+	_check(panel.open_result(latch), label + ": the settled outcome still opens")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"),
+		label + ": fails closed as Summary unavailable")
+	_check(not panel.summary_label.text.contains("Tears:")
+		and not panel.summary_label.text.contains("HP"),
+		label + ": no fabricated hero or tear data is displayed")
+	_check(not panel.summary_label.text.contains("Gold:")
+		and not panel.summary_label.text.contains("Scraps:"),
+		label + ": no partial totals are displayed")
+	_check(panel.return_button.disabled and panel.return_button.focus_mode == Control.FOCUS_NONE,
+		label + ": Return is disabled and unreachable")
+	_check(not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
+		label + ": no stitched detail accompanies the refusal")
+	var earlier := returns
+	panel.return_button.pressed.emit()
+	_check(returns == earlier, label + ": a forced Return signal is refused")
+	panel.close_result()
+	_check(_app_snapshot() == before and app.party_carryover.torn.read_state() == torn_before,
+		label + ": the refusal mutates no hero, deck, purse, wardrobe or torn ledger")
+
+
+## M05 terminal tear seams. Every hero row must state its genuine by-ID tear
+## count from the same validated carryover's torn ledger, TORN must follow only
+## that hero's authenticated zero HP, and a legal mend or Rest revive must keep
+## the permanent seam count and reduced cap without this view mutating a byte.
+func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
+	var starter := _starter_deck()
+	if starter.is_empty():
+		return
+	var victory_latch: RunActBattleOutcome = victory["ctx"]["latch"]
+	var defeat_latch: RunActBattleOutcome = defeat["ctx"]["latch"]
+	var victory_battle: Dictionary = victory["battle"]
+	var settled: int = (victory_latch.get_state().settled_node_ids as Array).size()
+
+	# A fresh run genuinely carries zero tears, stated per hero instead of hidden.
+	_install_run({"deck": starter, "descriptors": {}, "next_stitch_id": 1})
+	var zero_app := _app_snapshot()
+	var zero_run := _snapshot(defeat["ctx"], defeat["battle"])
+	_check(panel.open_result(defeat_latch), "AC1: a settled defeat opens on an untorn run")
+	await _frames()
+	var zero_rows := panel.summary_label.text.split("\n")
+	_check(zero_rows.size() == 6, "AC1: an untorn ledger keeps its counts and three hero rows")
+	_check(_line_with(zero_rows, "Warden ") == "Warden 40/40 HP · HEAD - · ARM - · COAT - · Tears: 0",
+		"AC1: a fresh run states Warden Tears: 0 instead of omitting the field")
+	_check(_line_with(zero_rows, "Seamstress ") == "Seamstress 30/30 HP · HEAD - · ARM - · COAT - · Tears: 0",
+		"AC1: a fresh run states Seamstress Tears: 0")
+	_check(_line_with(zero_rows, "Tinker ") == "Tinker 26/26 HP · HEAD - · ARM - · COAT - · Tears: 0",
+		"AC1: a fresh run states Tinker Tears: 0 with no TORN flag")
+	_check(not panel.summary_label.text.contains("TORN"),
+		"AC1: living heroes are never named TORN")
+	_check(_app_snapshot() == zero_app and _snapshot(defeat["ctx"], defeat["battle"]) == zero_run,
+		"AC1: reading zero tears changes no hero, deck, purse, wardrobe or RNG")
+	panel.close_result()
+
+	# One genuine tear, published by the carryover's own real reward claim.
+	var party := CombatParty.new(_definitions(HEROES))
+	var carry := RunTornCarryover.new(party.get_heroes())
+	_check(carry.is_valid(), "AC1: the tear fixture carryover is authentic")
+	var fight := carry.create_next_fight_party()
+	_check(fight != null, "AC1: the run admits a genuine next-fight party")
+	if fight == null:
+		return
+	var enemies := CombatEnemies.new([{"id": "tear_dummy", "max_hp": 8}])
+	var result := CombatBattleResult.new(fight, enemies)
+	_check(carry.begin_battle("tear_node", result, fight),
+		"AC1: a real battle begins before the tear")
+	_check(fight.apply_damage(1, fight.get_hero(1)["hp"]) and fight.is_downed(1),
+		"AC1: the Warden is genuinely downed in battle")
+	_check(enemies.apply_damage(1, 8) and enemies.is_victorious(),
+		"AC1: the party survives and the enemy is slain")
+	_check(result.evaluate() == CombatBattleResult.VICTORY, "AC1: the tear battle is witnessed")
+	_check(carry.commit_victory("tear_node", result, fight).get("ok") == true,
+		"AC1: the tear battle victory commits")
+	_check(carry.apply_reward("tear_node", result, fight).get("ok") == true,
+		"AC1: the reward claim publishes the torn ledger")
+	var torn_state: Dictionary = carry.torn.read_state()
+	_check(torn_state.get("tear_counts") == {"warden": 1, "seamstress": 0, "tinker": 0},
+		"AC1: the torn ledger holds exactly one genuine Warden tear by ID")
+	var torn_heroes: Array = carry.read_state().heroes
+	_check(torn_heroes[0].id == "warden" and torn_heroes[0].hp == 0 and torn_heroes[0].max_hp == 37,
+		"AC1: the tear costs 3 maximum HP and leaves the Warden downed")
+	_check(torn_state.get("heroes") == torn_heroes,
+		"AC1: the torn ledger publishes the same authenticated carryover heroes")
+	var wardrobe := RunPatchWardrobe.new(torn_heroes, ["button_eye", "pincushion_arm", "quilted_coat"],
+		PATCH_DEFINITIONS.duplicate(true), 5, 43, starter, 5801, true)
+	_check(wardrobe.is_valid(), "AC1: the torn wardrobe validates against the reduced roster")
+	_check(wardrobe.sew("button_eye", "seamstress", "HEAD", "tear_sew_seamstress",
+		wardrobe.get_snapshot()).get("ok") == true, "AC1: the living Seamstress wears the HEAD patch")
+	_check(wardrobe.sew("quilted_coat", "tinker", "COAT", "tear_sew_tinker",
+		wardrobe.get_snapshot()).get("ok") == true, "AC1: the living Tinker wears the COAT patch")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"AC1: the torn wardrobe binds to this same carryover and torn ledger")
+	app.run_heroes = torn_heroes.duplicate(true)
+	app.party_carryover = carry
+	app.session_gold = 43
+	app.run_scraps = 5
+	app.run_deck.assign(starter)
+	app.run_stitch_descriptors = {}
+	app.run_next_stitch_id = 1
+	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
+	var before := _app_snapshot()
+	var run_before := _snapshot(victory["ctx"], victory_battle)
+	_check(panel.open_result(victory_latch), "AC1: a settled victory opens on a genuinely torn ledger")
+	await _frames()
+	var rows := panel.summary_label.text.split("\n")
+	_check(rows.size() == 6, "AC1: the torn ledger keeps the preserved count and hero rows")
+	_check(rows[0] == "Battles resolved: %d · Gold: 43 · Scraps: 5" % settled,
+		"AC1: the torn ledger keeps the exact wallet line")
+	_check(_line_with(rows, "Warden ") == "Warden 0/37 HP · HEAD - · ARM - · COAT - · Tears: 1 · TORN",
+		"AC1: zero HP alone adds TORN beside the genuine by-ID count and real HP")
+	_check(_line_with(rows, "Seamstress ") == "Seamstress 30/30 HP · HEAD Button Eye · ARM - · COAT - · Tears: 0",
+		"AC1: a living hero states Tears: 0 and no TORN flag")
+	_check(_line_with(rows, "Tinker ") == "Tinker 26/26 HP · HEAD - · ARM - · COAT Quilted Coat · Tears: 0",
+		"AC1: the worn coat is named while the ledger keeps the real maximum")
+	var projected: Array = carry._projected_heroes()
+	var projected_tinker := 0
+	for hero in projected:
+		if hero is Dictionary and hero.get("id") == "tinker":
+			projected_tinker = hero.get("max_hp", 0)
+	_check(projected_tinker == 32 and _line_with(rows, "Tinker ").begins_with("Tinker 26/26 HP"),
+		"AC1: a worn COAT raises only the effective combat cap, never the ledger tear or maximum")
+	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
+		"AC1: the torn ledger view mutates no hero, deck, purse, wardrobe or RNG")
+	panel.close_result()
+
+	# A legal mend removes TORN, never the permanent seam or its cap loss.
+	var mend: Dictionary = carry.choose_mend("tear_rest", "tear_mend_receipt", "warden", 1, 5,
+		carry.read_state(), wardrobe.get_snapshot(), true)
+	_check(mend.get("ok") == true and mend.get("remaining_scraps") == 3,
+		"AC2: the legal mend commits and spends exactly 2 of 5 scraps")
+	var mended: Array = mend.get("heroes", [])
+	_check(mended.size() == 3 and mended[0].id == "warden" and mended[0].hp == 9
+		and mended[0].max_hp == 37, "AC2: a mend revives to floor(25% of 37) without restoring the cap")
+	_check(carry.torn.read_state().get("tear_counts") == {"warden": 1, "seamstress": 0, "tinker": 0},
+		"AC2: mending never erases the historical tear")
+	app.run_heroes = mended.duplicate(true)
+	app.run_scraps = mend.get("remaining_scraps", 0)
+	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
+	before = _app_snapshot()
+	run_before = _snapshot(victory["ctx"], victory_battle)
+	_check(panel.open_result(victory_latch), "AC2: the mended run reopens its settled victory")
+	await _frames()
+	rows = panel.summary_label.text.split("\n")
+	_check(_line_with(rows, "Warden ") == "Warden 9/37 HP · HEAD - · ARM - · COAT - · Tears: 1",
+		"AC2: a legally mended Warden keeps Tears: 1 and loses the TORN flag")
+	_check(not panel.summary_label.text.contains("TORN"),
+		"AC2: no hero is TORN once the only downed hero has been revived")
+	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
+		"AC2: displaying the mended ledger mutates no state and consumes no RNG")
+	panel.close_result()
+
+	# A second genuine tear, then the real Rest revival of that hero.
+	var fight_two := carry.create_next_fight_party()
+	_check(fight_two != null, "AC2: the torn run admits its second real party")
+	if fight_two == null:
+		return
+	var enemies_two := CombatEnemies.new([{"id": "tear_dummy_two", "max_hp": 8}])
+	var result_two := CombatBattleResult.new(fight_two, enemies_two)
+	_check(carry.begin_battle("tear_node_two", result_two, fight_two),
+		"AC2: a second real battle begins")
+	_check(fight_two.apply_damage(2, fight_two.get_hero(2)["hp"]),
+		"AC2: the Seamstress is downed for a second genuine tear")
+	_check(enemies_two.apply_damage(1, 8) and result_two.evaluate() == CombatBattleResult.VICTORY,
+		"AC2: the second battle is won and witnessed")
+	_check(carry.commit_victory("tear_node_two", result_two, fight_two).get("ok") == true
+		and carry.apply_reward("tear_node_two", result_two, fight_two).get("ok") == true,
+		"AC2: the second tear is published by the real reward claim")
+	var tears_two: Dictionary = carry.torn.read_state().get("tear_counts", {})
+	_check(tears_two == {"warden": 1, "seamstress": 1, "tinker": 0},
+		"AC2: tears are counted per hero ID across the run")
+	var rested: Dictionary = carry.choose_rest_heal("tear_rest_node")
+	_check(rested.get("ok") == true, "AC2: the real Rest revive commits")
+	var rested_heroes: Array = rested.get("heroes", [])
+	_check(rested_heroes.size() == 3 and rested_heroes[0].hp == 20 and rested_heroes[0].max_hp == 37
+		and rested_heroes[1].hp == 9 and rested_heroes[1].max_hp == 27,
+		"AC2: Rest revives the downed hero while both reduced caps stay permanent")
+	_check(carry.torn.read_state().get("tear_counts") == tears_two,
+		"AC2: Rest removes no historical tear")
+	app.run_heroes = rested_heroes.duplicate(true)
+	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
+	before = _app_snapshot()
+	run_before = _snapshot(victory["ctx"], victory_battle)
+	_check(panel.open_result(victory_latch), "AC2: the Rest-revived run opens its settled victory")
+	await _frames()
+	rows = panel.summary_label.text.split("\n")
+	_check(_line_with(rows, "Warden ") == "Warden 20/37 HP · HEAD - · ARM - · COAT - · Tears: 1",
+		"AC2: the Rest-healed Warden keeps its permanent seam and reduced maximum")
+	_check(_line_with(rows, "Seamstress ") == "Seamstress 9/27 HP · HEAD Button Eye · ARM - · COAT - · Tears: 1",
+		"AC2: the revived Seamstress stays alive with the same single historical tear")
+	_check(_line_with(rows, "Tinker ") == "Tinker 26/26 HP · HEAD - · ARM - · COAT Quilted Coat · Tears: 0",
+		"AC2: the untouched hero still reports zero tears")
+	_check(not panel.summary_label.text.contains("TORN"),
+		"AC2: a Rest revival clears TORN while the tear count stays")
+	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
+		"AC2: the Rest-revived ledger is shown without any state or RNG mutation")
+	panel.close_result()
+
+	# AC3: an inconsistent torn ledger is never presented partially or invented.
+	var saved_counts: Dictionary = carry.torn._tear_counts.duplicate(true)
+	var saved_heroes: Array = carry.torn._heroes.duplicate(true)
+	var saved_valid: bool = carry.torn._valid
+	carry.torn._tear_counts["warden"] = -1
+	_expect_unavailable(victory_latch, "AC3: negative tear count")
+	carry.torn._tear_counts = saved_counts.duplicate(true)
+
+	carry.torn._tear_counts["tinker"] = "0"
+	_expect_unavailable(victory_latch, "AC3: non-integer tear count")
+	carry.torn._tear_counts = saved_counts.duplicate(true)
+
+	carry.torn._tear_counts.erase("seamstress")
+	_expect_unavailable(victory_latch, "AC3: missing tear count")
+	carry.torn._tear_counts = saved_counts.duplicate(true)
+
+	carry.torn._heroes[0]["hp"] = 7
+	_expect_unavailable(victory_latch, "AC3: torn heroes diverged from the carryover")
+	carry.torn._heroes = saved_heroes.duplicate(true)
+
+	carry.torn._valid = false
+	_expect_unavailable(victory_latch, "AC3: invalid torn ledger")
+	carry.torn._valid = saved_valid
+
+	_check(carry.torn.read_state().get("tear_counts") == saved_counts
+		and carry.torn.read_state().get("heroes") == saved_heroes,
+		"AC3: the refusals never repaired or rewrote the torn ledger")
+	before = _app_snapshot()
+	run_before = _snapshot(victory["ctx"], victory_battle)
+	_check(panel.open_result(victory_latch), "AC3: the restored torn ledger opens again")
+	await _frames()
+	_check(_line_with(panel.summary_label.text.split("\n"), "Warden ")
+		== "Warden 20/37 HP · HEAD - · ARM - · COAT - · Tears: 1"
+		and not panel.return_button.disabled,
+		"AC3: only the genuine restored ledger is presented with a usable Return")
+	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
+		"AC3: the positive control also mutates no state")
+	panel.close_result()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1485,6 +1737,7 @@ func _run() -> void:
 		_test_invalid_source(defeat)
 		await _test_readable_typography(victory, defeat)
 		await _test_terminal_wallet_and_health(victory, defeat)
+		await _test_terminal_tears(victory, defeat)
 	_finish()
 
 
