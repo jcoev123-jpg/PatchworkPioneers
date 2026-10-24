@@ -8,6 +8,9 @@ extends Control
 ## The same counters also state the reached floor, but only when the settled
 ## latch's own generated map can prove that the last witnessed battle is exactly
 ## the node the route still stands on.
+## An authenticated result reads down the parchment: outcome plaque, the three
+## party tickets, the run ledger and the sole Return action, with the tickets and
+## ledger sharing the paper's spare height so its lower space is used.
 
 signal return_to_title_requested
 
@@ -71,12 +74,14 @@ const RETURN_BUTTON_PATH := "PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
 @onready var paper_panel: PanelContainer = $PaperPanel
+@onready var result_content: VBoxContainer = $PaperPanel/ContentMargin/ResultContent
 @onready var title_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultTitle
 @onready var description_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultDescription
 @onready var summary_label: Label = $PaperPanel/ContentMargin/ResultContent/RunLedger/RunSignature
 @onready var hero_recap: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap
 @onready var hero_recap_title: Label = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRecapTitle
 @onready var hero_rows: HBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRows
+@onready var run_ledger: HBoxContainer = $PaperPanel/ContentMargin/ResultContent/RunLedger
 @onready var return_button: Button = $PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var top_stitches: Label = $PaperPanel/ContentMargin/ResultContent/TopStitches
 @onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ResultContent/BottomStitches
@@ -159,11 +164,29 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 		_button_connection = _on_return_pressed.bind(_generation, return_button)
 		return_button.pressed.connect(_button_connection)
 	visible = true
+	_fit_result_height()
 	# Only an authorized result is handed the keyboard, and only once the opened
 	# view has genuinely been laid out and drawn.
 	if _can_return:
 		_defer_return_focus()
 	return true
+
+
+## Lay the authenticated result down the parchment: the title plaque, the three
+## party tickets, the run ledger and the sole Return action read top to bottom,
+## and the tickets and ledger share the paper's spare height, so the composition
+## uses its lower space instead of leaving a blank field under a centred block.
+## A fail-closed result has no tickets to fill that space, so its compact block
+## stays centred rather than stretching the ledger into one empty panel.
+## Presentation only: no counter, ticket or action depends on this arrangement.
+func _fit_result_height() -> void:
+	if not is_node_ready():
+		return
+	var filled: bool = hero_recap.visible
+	result_content.alignment = (BoxContainer.ALIGNMENT_BEGIN if filled
+		else BoxContainer.ALIGNMENT_CENTER)
+	run_ledger.size_flags_vertical = (Control.SIZE_EXPAND_FILL if filled
+		else Control.SIZE_FILL)
 
 
 ## The achieved terminal depth in floors, proven read-only from the settled
@@ -604,7 +627,12 @@ func _mount_hero_rows(rows: Array) -> void:
 		row.add_child(inset)
 		var portrait := TextureRect.new()
 		portrait.name = "HeroPortrait"
+		# The ticket shares the parchment's spare height with the ledger, so the
+		# portrait grows with it instead of floating as a small square in a tall
+		# felt strip; the name and detail keep the wider share of the ticket.
 		portrait.custom_minimum_size = Vector2(84, 140)
+		portrait.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		portrait.size_flags_stretch_ratio = 0.8
 		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -615,6 +643,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		line.name = "RowLine"
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.size_flags_stretch_ratio = 1.5
 		line.alignment = BoxContainer.ALIGNMENT_CENTER
 		line.add_theme_constant_override("separation", 4)
 		inset.add_child(line)
