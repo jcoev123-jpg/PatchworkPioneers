@@ -295,6 +295,55 @@ static func art_path(card_id: String) -> String:
 	return ART_DIR + "%s.png" % card_id.trim_suffix("_plus")
 
 
+## Accessible, readable FROM-positions tooltip ("Owner FROM: 1, 2").
+static func from_positions_tooltip(positions: Array) -> String:
+	if positions.is_empty():
+		return "Owner FROM: none"
+	var sorted_pos: Array = positions.duplicate()
+	sorted_pos.sort()
+	var values: Array[String] = []
+	for pos in sorted_pos:
+		values.append(str(pos))
+	return "Owner FROM: " + ", ".join(PackedStringArray(values))
+
+
+## Public presentation query for tile FROM-pip state (tests and accessibility).
+static func tile_pip_state(tile: Button) -> Dictionary:
+	if tile == null:
+		return {}
+	var result := {
+		"from_positions": tile.get_meta("from_positions", []),
+		"tooltip": tile.tooltip_text,
+		"active_pips": [] as Array[int],
+		"inactive_pips": [] as Array[int],
+	}
+	for pos in [1, 2, 3]:
+		var pip := tile.find_child("From%d" % pos, true, false) as Control
+		if pip != null and pip.get_meta("active", false):
+			result["active_pips"].append(pos)
+		else:
+			result["inactive_pips"].append(pos)
+	return result
+
+
+## Returns the mounted FROM pip controls (1, 2, 3) for a card tile.
+static func tile_from_pips(tile: Button) -> Array[Control]:
+	var pips: Array[Control] = []
+	if tile == null:
+		return pips
+	for pos in [1, 2, 3]:
+		var pip := tile.find_child("From%d" % pos, true, false) as Control
+		if pip != null:
+			pips.append(pip)
+	return pips
+
+
+static func is_pip_lit(pip: Control) -> bool:
+	if pip == null:
+		return false
+	return bool(pip.get_meta("active", false))
+
+
 static func _texture(path: String) -> Texture2D:
 	if not ResourceLoader.exists(path):
 		return null
@@ -510,9 +559,69 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tile.add_child(name_lbl)
 
+	# Canonical FROM positions lookup
+	var def := RunRestStitchCards.resolve_card_definition(entry.get("id", ""))
+	var from_positions: Array = []
+	if not def.is_empty() and def.has("from_positions"):
+		var raw_from: Variant = def["from_positions"]
+		if typeof(raw_from) == TYPE_ARRAY:
+			from_positions = (raw_from as Array).duplicate()
+	tile.set_meta("from_positions", from_positions)
+	tile.tooltip_text = from_positions_tooltip(from_positions)
+
+	# Three small numbered sewn FROM pips (1, 2, 3)
+	var pips_row := HBoxContainer.new()
+	pips_row.name = "FromPips"
+	pips_row.position = Vector2(8, 85)
+	pips_row.size = Vector2(54, 16)
+	pips_row.add_theme_constant_override("separation", 3)
+	pips_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pips_row.tooltip_text = tile.tooltip_text
+	tile.add_child(pips_row)
+
+	for pos in [1, 2, 3]:
+		var is_active: bool = from_positions.has(pos)
+		var pip := Panel.new()
+		pip.name = "From%d" % pos
+		pip.custom_minimum_size = Vector2(16, 16)
+		pip.size = Vector2(16, 16)
+		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pip.tooltip_text = tile.tooltip_text
+		pip.set_meta("position", pos)
+		pip.set_meta("active", is_active)
+		pip.set_meta("lit", is_active)
+
+		var pip_box := StyleBoxFlat.new()
+		if is_active:
+			pip_box.bg_color = owner_col
+			pip_box.border_color = INK
+		else:
+			pip_box.bg_color = Color("#ebdcc0")
+			pip_box.border_color = Color("#968c7e")
+		pip_box.set_border_width_all(1)
+		pip_box.set_corner_radius_all(3)
+		pip.add_theme_stylebox_override("panel", pip_box)
+		pips_row.add_child(pip)
+
+		var num_lbl := Label.new()
+		num_lbl.name = "PipNum"
+		num_lbl.text = str(pos)
+		num_lbl.position = Vector2(0, 0)
+		num_lbl.size = Vector2(16, 16)
+		num_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		num_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		num_lbl.add_theme_font_size_override("font_size", 10)
+		if is_active:
+			num_lbl.add_theme_color_override("font_color", INK if owner_str == "tinker" else CREAM)
+		else:
+			num_lbl.add_theme_color_override("font_color", Color("#7a7267"))
+		num_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pip.add_child(num_lbl)
+
 	# Round sewn cost button
 	var cost_badge := Panel.new()
-	cost_badge.position = Vector2(36, 84)
+	cost_badge.name = "CostBadge"
+	cost_badge.position = Vector2(66, 84)
 	cost_badge.size = Vector2(24, 18)
 	cost_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cost_box := StyleBoxFlat.new()
@@ -524,6 +633,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	tile.add_child(cost_badge)
 
 	var cost_lbl := Label.new()
+	cost_lbl.name = "CostLabel"
 	cost_lbl.position = Vector2(0, 0)
 	cost_lbl.size = Vector2(24, 18)
 	cost_lbl.text = str(entry["cost"])
