@@ -1,5 +1,11 @@
 extends SceneTree
 
+const PRICK := "seamstress_prick"
+const POP := "tinker_pop_shot"
+const MEND := "seamstress_mend"
+const BOMB := "tinker_scrap_bomb"
+const STRIKE := "warden_strike"
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -14,6 +20,9 @@ func _initialize() -> void:
 	_test_invalid_visits()
 	_test_replay_and_rng()
 	_test_removal_rebase()
+	_test_stitched_removal_rebase()
+	_test_stitched_forged_receipts()
+	_test_legacy_quote_and_rebase()
 	if failures.is_empty():
 		print("run_shop_purchases_test: PASS (", checks, " checks)")
 	else:
@@ -491,3 +500,397 @@ func _test_replay_and_rng() -> void:
 	_check(left.get_state()["gold"] >= 0, "replay gold never negative")
 	_check(left.get_stock()["cards"].size() == 5
 			and left.get_stock()["trinkets"].size() == 2, "replay stock counts preserved")
+
+
+func _forged(base: Dictionary, field: String, value: Variant) -> Dictionary:
+	var copy: Dictionary = base.duplicate(true)
+	copy[field] = value
+	return copy
+
+
+## Two authentic Rest composites owned by a real run ledger.
+func _stitched_fixture() -> Dictionary:
+	var catalog := StarterCards.new()
+	var deck: Array[String] = []
+	deck.assign(catalog.get_starting_deck())
+	_check(deck.count(STRIKE) == 2 and deck.has(PRICK) and deck.has(POP)
+		and deck.has(MEND) and deck.has(BOMB),
+		"stitched fixture takes the real repeated starter deck")
+	var first := RunRestStitchCards.new(deck, {}, 9)
+	_check(first.is_valid(), "stitched fixture Rest accepts the starter ledger")
+	if not first.is_valid():
+		return {}
+	var one := first.choose_stitch(deck.find(PRICK), deck.find(POP), first.get_snapshot())
+	_check(one.ok and one.stitched_id == "stitched_000001" and one.descriptors.size() == 1,
+		"stitched fixture canonically stitches Prick / Pop Shot")
+	if not one.ok:
+		return {}
+	var second := RunRestStitchCards.new(one.deck, one.descriptors, one.remaining_scraps,
+		one.next_stitch_id)
+	_check(second.is_valid(), "stitched fixture second Rest accepts the committed ledger")
+	if not second.is_valid():
+		return {}
+	var two := second.choose_stitch(one.deck.find(MEND), one.deck.find(BOMB),
+		second.get_snapshot())
+	_check(two.ok and two.stitched_id == "stitched_000002"
+		and two.descriptors.size() == 2 and two.next_stitch_id == 3,
+		"stitched fixture owns two distinct canonical composites")
+	if not two.ok:
+		return {}
+	return two
+
+
+## A compatible five-card/two-trinket stock drawn from the visit's own ledger.
+func _stitched_shop(visit_state: Dictionary, gold: int = -1) -> RunShopPurchases:
+	var shop_gold: int = visit_state.gold if gold < 0 else gold
+	return RunShopPurchases.new(
+		["warden", "seamstress", "tinker"], visit_state.deck, visit_state.trinkets, shop_gold,
+		[
+			{"id": "warden_brace", "owner": "warden", "price": 25},
+			{"id": "tinker_pop_shot", "owner": "tinker", "price": 30},
+			{"id": "seamstress_mend", "owner": "seamstress", "price": 15},
+			{"id": "tinker_scrap_bomb", "owner": "tinker", "price": 20},
+			{"id": "warden_shield_bash", "owner": "warden", "price": 10}
+		],
+		[{"id": "t_spool", "price": 40}, {"id": "t_pocket", "price": 20}]
+	)
+
+
+func _test_stitched_removal_rebase() -> void:
+	seed(730188)
+	var expected_draw := randi()
+	seed(730188)
+	var made := _stitched_fixture()
+	if made.is_empty():
+		return
+	var retired_id: String = "stitched_000001"
+	var kept_id: String = made.stitched_id
+	_check(kept_id == "stitched_000002" and made.descriptors.size() == 2,
+		"fixture owns serials 1 and 2 with a cursor of 3")
+	var deck: Array[String] = []
+	deck.assign(made.deck)
+	var visit := RunShopVisit.new(deck, 400, 0, [], made.descriptors, made.next_stitch_id)
+	_check(visit.get_state().valid and visit.open_visit("stitched-shop"),
+		"real stitched run ledger opens its first Shop")
+	_check(visit.quote() == 75, "first stitched Shop quotes 75 gold")
+	var shop := _stitched_shop(visit.get_state())
+	_check(shop.is_valid(), "purchase ledger admits the real stitched visit")
+
+	# Buy before removal: both ledgers must stay equal.
+	var bought := shop.buy("card", "warden_brace")
+	_check(bought.ok and bought.receipt == {"kind": "card", "id": "warden_brace", "price": 25},
+		"authentic stock card purchase before removal")
+	_check(visit.reconcile_purchase(bought), "visit reconciles the paid purchase")
+	var before := visit.get_state()
+	_check(before.has("descriptors") and before.has("next_stitch_id")
+		and before.descriptors == made.descriptors and before.next_stitch_id == 3,
+		"stitched snapshot keeps descriptor and cursor authority")
+	_check(before.removal_available and before.price == 75, "removal is still quoted at 75")
+	var paid_state := {
+		"party_ids": ["warden", "seamstress", "tinker"],
+		"deck": before.deck.duplicate(true),
+		"trinkets": before.trinkets.duplicate(true),
+		"gold": before.gold
+	}
+	_check(shop.get_state() == paid_state and paid_state.gold == 375
+		and paid_state.deck.size() == before.deck.size(),
+		"purchase ledger deck and gold agree with the visit after the buy")
+
+	var ordinary := visit.remove_card(STRIKE)
+	_check(ordinary.size() == 7 and ordinary.ok and ordinary.price == 75
+		and ordinary.descriptors == made.descriptors and ordinary.next_stitch_id == 3
+		and ordinary.gold == 300 and ordinary.prior_removals == 1,
+		"ordinary seven-field removal keeps both composites and charges 75")
+	_check(ordinary.deck.count(STRIKE) == 1 and ordinary.deck.count(retired_id) == 1
+		and ordinary.deck.count(kept_id) == 1 and ordinary.descriptors.size() == 2,
+		"only the first STRIKE copy is retired; a different composite survives")
+	var frozen_state := shop.get_state()
+	var frozen_stock := shop.get_stock()
+	_check(shop.can_rebase_removal(before, ordinary, STRIKE),
+		"authentic seven-field ordinary receipt passes preflight")
+	_check(shop.get_state() == frozen_state and shop.get_stock() == frozen_stock,
+		"stitched preflight is read only")
+	_check(not shop.can_rebase_removal(before, ordinary, "seamstress_prick"),
+		"foreign card ID cannot preflight the same receipt")
+	_check(shop.rebase_removal(before, ordinary, STRIKE),
+		"authentic seven-field ordinary receipt rebases once")
+	_check(shop.get_state().deck == visit.get_state().deck
+		and shop.get_state().gold == visit.get_state().gold
+		and shop.get_state().trinkets == visit.get_state().trinkets,
+		"purchase ledger agrees exactly with the visit after the rebase")
+	_check(shop.get_stock() == frozen_stock, "rebasing a removal leaves stock untouched")
+	_check(not shop.can_rebase_removal(before, ordinary, STRIKE)
+		and not shop.rebase_removal(before, ordinary, STRIKE),
+		"the same seven-field receipt cannot rebase twice")
+	var visited := visit.get_state()
+	_check(visited.descriptors == made.descriptors and visited.next_stitch_id == 3
+		and visited.status == "used" and not visited.removal_available,
+		"visit keeps both composites, its cursor and the one-use latch")
+
+	# Buy after removal: both ledgers still agree.
+	var later_buy := shop.buy("card", "warden_shield_bash")
+	_check(later_buy.ok and later_buy.receipt.price == 10 and visit.reconcile_purchase(later_buy),
+		"purchase after the rebase reconciles")
+	_check(shop.get_state().deck == visit.get_state().deck
+		and shop.get_state().gold == visit.get_state().gold,
+		"both ledgers stay equal through a post-removal purchase")
+
+	# Second Shop: 100-gold composite retirement on a fresh purchase ledger.
+	_check(visit.close_visit() and visit.open_visit("stitched-shop-two") and visit.quote() == 100,
+		"second stitched Shop quotes 100 without rewinding removals")
+	var retire_shop := _stitched_shop(visit.get_state())
+	_check(retire_shop.is_valid(), "second purchase ledger admits the stitched visit")
+	var retire_before := visit.get_state()
+	var retired := visit.remove_card(retired_id)
+	var retired_deck: Array = retire_before.deck.duplicate()
+	retired_deck.erase(retired_id)
+	var kept_registry: Dictionary = {kept_id: made.descriptors[kept_id]}
+	_check(retired.size() == 7 and retired.ok and retired.price == 100
+		and retired.deck == retired_deck and retired.descriptors == kept_registry
+		and retired.next_stitch_id == 3 and retired.gold == retire_before.gold - 100
+		and retired.prior_removals == 2,
+		"composite retirement is an exact seven-field 100-gold receipt")
+	_check(retire_shop.can_rebase_removal(retire_before, retired, retired_id)
+		and retire_shop.rebase_removal(retire_before, retired, retired_id),
+		"composite retirement rebases through the purchase ledger")
+	_check(retire_shop.get_state().deck == visit.get_state().deck
+		and retire_shop.get_state().gold == visit.get_state().gold,
+		"composite rebase keeps deck and gold equal")
+	var retired_state := visit.get_state()
+	_check(retired_state.descriptors == kept_registry and retired_state.next_stitch_id == 3
+		and retired_state.visited_ids == ["stitched-shop", "stitched-shop-two"]
+		and retired_state.claimed_fight_ids == [] and retired_state.status == "used",
+		"visit retires only that descriptor without rewinding the cursor")
+	var future := RunRestStitchCards.new(retired_state.deck, retired_state.descriptors, 3,
+		retired_state.next_stitch_id)
+	_check(future.is_valid(), "a later Rest accepts the rebased stitched ledger")
+	if future.is_valid():
+		var resewn := future.choose_stitch(retired_state.deck.find(PRICK),
+			retired_state.deck.find(POP), future.get_snapshot())
+		_check(resewn.ok and resewn.stitched_id == "stitched_000003"
+			and resewn.next_stitch_id == 4 and resewn.descriptors.has(kept_id),
+			"a retired serial is never reused while the other composite survives")
+	_check(randi() == expected_draw, "the stitched rebase path consumes no global RNG")
+
+
+func _test_stitched_forged_receipts() -> void:
+	seed(730189)
+	var expected_draw := randi()
+	seed(730189)
+	var made := _stitched_fixture()
+	if made.is_empty():
+		return
+	var deck: Array[String] = []
+	deck.assign(made.deck)
+	var visit := RunShopVisit.new(deck, 200, 0, [], made.descriptors, made.next_stitch_id)
+	_check(visit.open_visit("forged-shop"), "forgery Shop opens on a real stitched ledger")
+	var shop := _stitched_shop(visit.get_state())
+	_check(shop.is_valid(), "forgery purchase ledger is valid")
+	var before := visit.get_state()
+	var authentic := visit.remove_card(STRIKE)
+	_check(authentic.size() == 7 and authentic.ok and authentic.price == 75
+		and authentic.gold == 125 and authentic.next_stitch_id == 3,
+		"authentic seven-field receipt captured before tampering")
+	var baseline := shop.get_state()
+	var baseline_stock := shop.get_stock()
+
+	var tampered: Array = []
+	tampered.append(["price", _forged(authentic, "price", 76)])
+	tampered.append(["gold", _forged(authentic, "gold", 126)])
+	tampered.append(["prior_removals", _forged(authentic, "prior_removals", 2)])
+	tampered.append(["ok", _forged(authentic, "ok", false)])
+	tampered.append(["float gold", _forged(authentic, "gold", 125.0)])
+	tampered.append(["cursor", _forged(authentic, "next_stitch_id", 4)])
+	tampered.append(["rewound cursor", _forged(authentic, "next_stitch_id", 1)])
+	tampered.append(["float cursor", _forged(authentic, "next_stitch_id", 3.0)])
+	tampered.append(["descriptors", _forged(authentic, "descriptors", {})])
+	tampered.append(["deck", _forged(authentic, "deck", authentic.deck + [STRIKE])])
+	tampered.append(["foreign deck", _forged(authentic, "deck", authentic.deck + ["foreign_card"])])
+	var extra_key: Dictionary = authentic.duplicate(true)
+	extra_key["receipt"] = {}
+	tampered.append(["extra receipt key", extra_key])
+	var extra_snapshot: Dictionary = authentic.duplicate(true)
+	extra_snapshot["status"] = "used"
+	tampered.append(["extra snapshot key", extra_snapshot])
+	var missing_descriptors: Dictionary = authentic.duplicate(true)
+	missing_descriptors.erase("descriptors")
+	tampered.append(["missing descriptors", missing_descriptors])
+	var missing_cursor: Dictionary = authentic.duplicate(true)
+	missing_cursor.erase("next_stitch_id")
+	tampered.append(["missing cursor", missing_cursor])
+	var missing_price: Dictionary = authentic.duplicate(true)
+	missing_price.erase("price")
+	tampered.append(["missing price", missing_price])
+	var forged_registry: Dictionary = authentic.duplicate(true)
+	forged_registry["descriptors"]["stitched_000001"]["cost"] = 0
+	tampered.append(["forged descriptor", forged_registry])
+	var forged_half: Dictionary = authentic.duplicate(true)
+	forged_half["descriptors"]["stitched_000001"]["first_half"]["effects"]["damage"] = 99
+	tampered.append(["forged half", forged_half])
+	var partial_registry: Dictionary = authentic.duplicate(true)
+	partial_registry["descriptors"].erase("stitched_000001")
+	tampered.append(["incomplete registry", partial_registry])
+	for entry in tampered:
+		var label: String = entry[0]
+		var receipt: Dictionary = entry[1]
+		_check(not shop.can_rebase_removal(before, receipt, STRIKE),
+			"tampered " + label + " receipt cannot preflight")
+		_check(not shop.rebase_removal(before, receipt, STRIKE),
+			"tampered " + label + " receipt cannot rebase")
+		_check(shop.get_state() == baseline and shop.get_stock() == baseline_stock,
+			"tampered " + label + " receipt leaves state and stock")
+
+	# Stale or malformed source snapshots.
+	var stale: Array = []
+	var no_registry: Dictionary = before.duplicate(true)
+	no_registry["descriptors"] = {}
+	stale.append(["dropped descriptor", no_registry])
+	var changed_cursor: Dictionary = before.duplicate(true)
+	changed_cursor["next_stitch_id"] = 5
+	stale.append(["legal but changed cursor", changed_cursor])
+	var rewound: Dictionary = before.duplicate(true)
+	rewound["next_stitch_id"] = 1
+	stale.append(["rewound cursor", rewound])
+	var string_cursor: Dictionary = before.duplicate(true)
+	string_cursor["next_stitch_id"] = "2"
+	stale.append(["string cursor", string_cursor])
+	var array_registry: Dictionary = before.duplicate(true)
+	array_registry["descriptors"] = []
+	stale.append(["array registry", array_registry])
+	var no_cursor: Dictionary = before.duplicate(true)
+	no_cursor.erase("next_stitch_id")
+	stale.append(["mixed fields", no_cursor])
+	var no_descriptors: Dictionary = before.duplicate(true)
+	no_descriptors.erase("descriptors")
+	stale.append(["other mixed fields", no_descriptors])
+	var forged_source: Dictionary = before.duplicate(true)
+	forged_source["descriptors"]["stitched_000001"]["half_ids"] = [STRIKE, STRIKE]
+	stale.append(["forged source descriptor", forged_source])
+	var stale_deck: Dictionary = before.duplicate(true)
+	stale_deck["deck"] = before.deck.slice(1)
+	stale.append(["stale deck", stale_deck])
+	var stale_gold: Dictionary = before.duplicate(true)
+	stale_gold["gold"] = before.gold + 1
+	stale.append(["stale gold", stale_gold])
+	var stale_count: Dictionary = before.duplicate(true)
+	stale_count["prior_removals"] = 1
+	stale.append(["stale removal count", stale_count])
+	var stale_status: Dictionary = before.duplicate(true)
+	stale_status["status"] = "closed"
+	stale.append(["stale status", stale_status])
+	for entry in stale:
+		var label: String = entry[0]
+		var snapshot: Dictionary = entry[1]
+		_check(not shop.can_rebase_removal(snapshot, authentic, STRIKE),
+			"stale " + label + " cannot preflight a genuine receipt")
+		_check(not shop.rebase_removal(snapshot, authentic, STRIKE),
+			"stale " + label + " cannot rebase")
+		_check(shop.get_state() == baseline and shop.get_stock() == baseline_stock,
+			"stale " + label + " leaves state and stock")
+
+	# Foreign IDs and the wrong receipt shape for this snapshot.
+	_check(not shop.can_rebase_removal(before, authentic, MEND),
+		"foreign card ID cannot claim the receipt")
+	_check(not shop.can_rebase_removal(before, authentic, ""),
+		"blank card ID cannot claim the receipt")
+	var legacy_cards: Array[String] = []
+	legacy_cards.assign(before.deck)
+	var five_field := RunShopCardRemoval.try_remove(legacy_cards, before.gold,
+		before.prior_removals, STRIKE)
+	_check(five_field.size() == 5 and five_field.ok,
+		"legacy five-field receipt computed for the same removal")
+	_check(not shop.can_rebase_removal(before, five_field, STRIKE)
+		and not shop.rebase_removal(before, five_field, STRIKE),
+		"five-field receipt cannot rebase a stitched snapshot")
+	_check(shop.get_state() == baseline and shop.get_stock() == baseline_stock,
+		"wrong-shape receipts leave state and stock")
+
+	# Unaffordable and forged-success attempts.
+	var poor_deck: Array[String] = []
+	poor_deck.assign(made.deck)
+	var poor_visit := RunShopVisit.new(poor_deck, 74, 0, [], made.descriptors,
+		made.next_stitch_id)
+	_check(poor_visit.open_visit("poor-stitched") and poor_visit.quote() == 75,
+		"74-gold stitched visit is otherwise available")
+	var poor_shop := _stitched_shop(poor_visit.get_state())
+	var poor_before := poor_visit.get_state()
+	var poor_shop_before := poor_shop.get_state()
+	var poor_stock_before := poor_shop.get_stock()
+	var denied := poor_visit.remove_card(STRIKE)
+	_check(denied.size() == 7 and not denied.ok and denied.price == 75 and denied.gold == 74,
+		"unaffordable stitched removal echoes an exact seven-field rejection")
+	_check(not poor_shop.can_rebase_removal(poor_before, denied, STRIKE),
+		"unaffordable seven-field receipt cannot preflight")
+	var forced_success: Dictionary = denied.duplicate(true)
+	forced_success["ok"] = true
+	_check(not poor_shop.can_rebase_removal(poor_before, forced_success, STRIKE)
+		and not poor_shop.rebase_removal(poor_before, forced_success, STRIKE),
+		"forged success flag on a poor receipt rejects")
+	_check(poor_shop.get_state() == poor_shop_before and poor_shop.get_stock() == poor_stock_before,
+		"unaffordable attempts leave the purchase ledger untouched")
+	_check(poor_visit.get_state() == poor_before, "unaffordable attempts leave the visit untouched")
+
+	# The genuine receipt still commits after every forgery.
+	_check(shop.can_rebase_removal(before, authentic, STRIKE)
+		and shop.rebase_removal(before, authentic, STRIKE),
+		"genuine receipt still commits after every forgery")
+	var committed := shop.get_state()
+	_check(committed.deck == visit.get_state().deck and committed.gold == visit.get_state().gold
+		and not committed.has("descriptors") and not committed.has("next_stitch_id"),
+		"committed purchase ledger agrees with the visit and holds no descriptor authority")
+	_check(shop.get_stock() == baseline_stock, "forgeries and the genuine rebase never change stock")
+
+	# Returned snapshots and receipts stay detached.
+	baseline["descriptors"] = {"forged": {}}
+	baseline_stock["cards"][0]["sold"] = true
+	authentic["descriptors"]["stitched_000001"]["cost"] = 9
+	_check(shop.get_state() == committed and not shop.get_stock()["cards"][0]["sold"],
+		"mutating returned snapshots and receipts cannot corrupt the purchase ledger")
+	_check(visit.get_state().descriptors == made.descriptors,
+		"mutating the removal receipt cannot corrupt the visit registry")
+	_check(randi() == expected_draw, "every stitched forgery attempt consumes no global RNG")
+
+
+func _test_legacy_quote_and_rebase() -> void:
+	seed(730190)
+	var expected_draw := randi()
+	seed(730190)
+	var deck: Array[String] = ["w_start", "s_start", "w_start", "t_start"]
+	var visit := RunShopVisit.new(deck, 200, 1)
+	_check(visit.open_visit("legacy-shop") and visit.quote() == 100,
+		"legacy visit still quotes 100 after one prior removal")
+	var shop := RunShopPurchases.new(
+		["warden", "seamstress", "tinker"], deck, [], 200,
+		[
+			{"id": "c_a", "owner": "warden", "price": 5},
+			{"id": "c_b", "owner": "seamstress", "price": 6},
+			{"id": "c_c", "owner": "tinker", "price": 7},
+			{"id": "c_d", "owner": "warden", "price": 8},
+			{"id": "c_e", "owner": "seamstress", "price": 9}
+		],
+		[{"id": "t_one", "price": 10}, {"id": "t_two", "price": 11}]
+	)
+	var before := visit.get_state()
+	_check(not before.has("descriptors") and not before.has("next_stitch_id"),
+		"legacy snapshot carries neither stitched field")
+	var frozen := shop.get_state()
+	var result := visit.remove_card("w_start")
+	_check(result.size() == 5 and result.ok and result.price == 100
+		and result.gold == 100 and result.prior_removals == 2,
+		"legacy removal returns the exact five-field 100-gold receipt")
+	_check(shop.can_rebase_removal(before, result, "w_start"),
+		"legacy five-field preflight still passes")
+	var stitched_shaped: Dictionary = result.duplicate(true)
+	stitched_shaped["descriptors"] = {}
+	stitched_shaped["next_stitch_id"] = 2
+	_check(not shop.can_rebase_removal(before, stitched_shaped, "w_start"),
+		"seven-field receipt against a legacy snapshot rejects")
+	_check(shop.get_state() == frozen, "rejected wrong-shape legacy rebase is read only")
+	_check(shop.rebase_removal(before, result, "w_start")
+		and shop.get_state().deck == visit.get_state().deck
+		and shop.get_state().gold == visit.get_state().gold,
+		"legacy five-field removal still rebases deck and gold")
+	_check(not shop.rebase_removal(before, result, "w_start"), "legacy replay still rejects")
+	_check(result.deck.count("w_start") == 1 and visit.get_state().prior_removals == 2,
+		"legacy first-copy semantics and removal count preserved")
+	_check(randi() == expected_draw, "legacy rebase consumes no global RNG")
