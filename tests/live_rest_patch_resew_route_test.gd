@@ -16,10 +16,10 @@ func _request(patch: String, source: String, target: String, keyboard: bool) -> 
 	var found := false
 	for i in range(picker._sources.size()):
 		if picker._sources[i] == {"patch_id": patch, "from_hero": source}:
-			await _pick(picker.source_selector, i, keyboard)
+			await _activate(picker._source_buttons[i], keyboard)
 			for j in range(picker._destinations.size()):
 				if picker._destinations[j].to_hero == target:
-					await _pick(picker.destination_selector, j, keyboard)
+					await _activate(picker._destination_buttons[j], keyboard)
 					found = true
 					break
 			break

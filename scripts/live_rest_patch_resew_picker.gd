@@ -1,7 +1,6 @@
 class_name LiveRestPatchResewPicker
 extends Control
-## Reusable, unmounted Rest view. A caller owns the current run/route,
-## creates a fresh operation ID, commits re_sew, then calls present again.
+## The run owner authenticates and commits re-sews; this view only offers sewn choices.
 
 signal re_sew_requested(patch_id: String, from_hero: String, to_hero: String,
 		rest_node_id: String, exact_snapshot: Dictionary)
@@ -10,9 +9,26 @@ const CREAM := Color("#eee2ca")
 const PAPER := Color("#c8b99e")
 const SLATE := Color("#252f39")
 const STITCH := Color("#7f8b89")
+const GOLD := Color("#f3d28f")
 
-var source_selector: OptionButton
-var destination_selector: OptionButton
+## The mounted owner references these first real buttons for focus and its
+## exact destination index guard. Neither opens a dropdown.
+class SewnChip extends Button:
+	var selected := -1
+
+	func _draw() -> void:
+		var thread := Color("#a3a69b") if not button_pressed else Color("#625947")
+		for x in range(12, int(size.x) - 10, 15):
+			draw_line(Vector2(x, size.y - 5), Vector2(x + 7, size.y - 5), thread, 1.0)
+
+var source_selector: SewnChip
+var destination_selector: SewnChip
+var source_tags: HFlowContainer
+var destination_tags: HFlowContainer
+var source_scroll: ScrollContainer
+var destination_scroll: ScrollContainer
+var _source_buttons: Array[Button] = []
+var _destination_buttons: Array[Button] = []
 var confirm_button: Button
 var scraps_label: Label
 var preview_label: Label
@@ -52,29 +68,34 @@ func present(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 	_options = model["options"].duplicate(true)
 	scraps_label.text = "Scraps: %d" % model["scraps"]
 	feedback_label.text = owner_message if not owner_message.is_empty() else "Choose a patch and a recipient."
-	source_selector.clear()
 	_sources.clear()
+	_reset_tags(source_tags, _source_buttons, source_selector)
+	_reset_tags(destination_tags, _destination_buttons, destination_selector)
 	for option in _options:
-		var already := false
-		for source in _sources:
-			if source["patch_id"] == option["patch_id"] and source["from_hero"] == option["from_hero"]:
-				already = true
-				break
-		if already:
+		var identity := {"patch_id": option["patch_id"], "from_hero": option["from_hero"]}
+		if _sources.has(identity):
 			continue
-		_sources.append({"patch_id": option["patch_id"], "from_hero": option["from_hero"]})
-		source_selector.add_item("%s • %s • %s%s" % [
+		_sources.append(identity)
+		var i := _sources.size() - 1
+		var button: SewnChip = source_selector if i == 0 else SewnChip.new()
+		if i > 0:
+			source_tags.add_child(button)
+		_configure_tag(button, "Source_%d" % i, "%s / %s
+%s%s" % [
 			_nice(option["from_hero"]), option["slot"], _nice(option["patch_id"]),
-			" (torn/inactive)" if not option["source_active"] else ""])
-	source_selector.disabled = _sources.is_empty()
-	if not _sources.is_empty():
-		source_selector.select(0)
-	_refresh_destinations()
+			" • torn/inactive" if not option["source_active"] else ""], 250)
+		button.pressed.connect(_choose_source.bind(i))
+		_source_buttons.append(button)
+	if _sources.is_empty():
+		_update_preview()
+	else:
+		_choose_source(0, true)
+	_relink_focus.call_deferred()
 	return true
 
 
 func selected_option() -> Dictionary:
-	if source_selector == null or _pending or _sources.is_empty() or _destinations.is_empty():
+	if destination_selector == null or _pending or _destinations.is_empty():
 		return {}
 	var i := destination_selector.selected
 	if i < 0 or i >= _destinations.size():
@@ -82,9 +103,60 @@ func selected_option() -> Dictionary:
 	return _destinations[i].duplicate(true)
 
 
+func _choose_source(index: int, initial: bool = false) -> void:
+	if _pending or index < 0 or index >= _sources.size():
+		return
+	source_selector.selected = index
+	for i in range(_source_buttons.size()):
+		_source_buttons[i].button_pressed = i == index
+		_style_chip(_source_buttons[i], i == index)
+	_refresh_destinations(initial)
+
+
+func _refresh_destinations(select_first: bool = false) -> void:
+	_reset_tags(destination_tags, _destination_buttons, destination_selector)
+	_destinations.clear()
+	if _sources.is_empty() or source_selector.selected < 0:
+		_update_preview()
+		return
+	var chosen: Dictionary = _sources[source_selector.selected]
+	for option in _options:
+		if option["patch_id"] != chosen["patch_id"] or option["from_hero"] != chosen["from_hero"]:
+			continue
+		_destinations.append(option.duplicate(true))
+		var i := _destinations.size() - 1
+		var button: SewnChip = destination_selector if i == 0 else SewnChip.new()
+		if i > 0:
+			destination_tags.add_child(button)
+		var detail := "empty %s" % option["slot"] if option["kind"] == "MOVE" else (
+			"swap %s" % _nice(option["exchanged_id"]))
+		_configure_tag(button, "Destination_%d" % i,
+			"%s / %s
+%s%s" % [_nice(option["to_hero"]), option["kind"], detail,
+			" • torn/inactive" if not option["destination_active"] else ""], 345)
+		button.pressed.connect(_choose_destination.bind(i))
+		_destination_buttons.append(button)
+	if select_first and not _destinations.is_empty():
+		_choose_destination(0)
+	else:
+		_update_preview()
+	_relink_focus.call_deferred()
+
+
+func _choose_destination(index: int) -> void:
+	if _pending or index < 0 or index >= _destinations.size():
+		return
+	destination_selector.selected = index
+	for i in range(_destination_buttons.size()):
+		_destination_buttons[i].button_pressed = i == index
+		_style_chip(_destination_buttons[i], i == index)
+	_update_preview()
+
+
 func _request_selected() -> void:
 	if _pending or not is_visible_in_tree() or not confirm_button.is_visible_in_tree() \
-			or confirm_button.disabled or source_selector.disabled or destination_selector.disabled:
+			or confirm_button.disabled or source_selector.selected < 0 \
+			or destination_selector.selected < 0:
 		return
 	var option := selected_option()
 	if option.is_empty():
@@ -99,37 +171,21 @@ func _request_selected() -> void:
 		return
 	_pending = true
 	confirm_button.disabled = true
-	source_selector.disabled = true
-	destination_selector.disabled = true
+	for button in _source_buttons:
+		button.disabled = true
+	for button in _destination_buttons:
+		button.disabled = true
 	feedback_label.text = "Waiting for run owner to accept or reject this request…"
 	re_sew_requested.emit(option["patch_id"], option["from_hero"],
 		option["to_hero"], _node_id, _snapshot.duplicate(true))
 
 
-func _refresh_destinations(_unused: int = 0) -> void:
-	destination_selector.clear()
-	_destinations.clear()
-	if _sources.is_empty() or source_selector.selected < 0:
-		_update_preview()
-		return
-	var chosen: Dictionary = _sources[source_selector.selected]
-	for option in _options:
-		if option["patch_id"] != chosen["patch_id"] or option["from_hero"] != chosen["from_hero"]:
-			continue
-		_destinations.append(option.duplicate(true))
-		destination_selector.add_item(_nice(option["to_hero"]) + (
-			" (torn/inactive)" if not option["destination_active"] else ""))
-	if not _destinations.is_empty():
-		destination_selector.select(0)
-	_update_preview()
-
-
-func _update_preview(_unused: int = 0) -> void:
+func _update_preview() -> void:
 	var option := selected_option()
 	if option.is_empty():
-		preview_label.text = "No eligible re-sew choices"
+		preview_label.text = "Select a destination tag to see its 1-scrap re-sew forecast." \
+			if not _destinations.is_empty() else "No eligible re-sew choices"
 		confirm_button.disabled = true
-		destination_selector.disabled = _pending or _destinations.is_empty()
 		return
 	var estimate := RunRestPatchResewOptions.forecast(
 		_wardrobe, _torn, _snapshot, _node_id, option)
@@ -138,7 +194,11 @@ func _update_preview(_unused: int = 0) -> void:
 		return
 	var exchange := "empty destination" if estimate["kind"] == "MOVE" else (
 		"swap with %s" % _nice(estimate["exchanged_id"]))
-	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap\n%s\n%s\n%s\n%s" % [
+	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap
+%s
+%s
+%s
+%s" % [
 		estimate["kind"], estimate["slot"], _nice(estimate["source"]["hero_id"]),
 		_nice(estimate["destination"]["hero_id"]), exchange, estimate["cost"],
 		_wearer_preview(estimate["source"], "before"),
@@ -146,7 +206,6 @@ func _update_preview(_unused: int = 0) -> void:
 		_wearer_preview(estimate["destination"], "before"),
 		_wearer_preview(estimate["destination"], "after")]
 	confirm_button.disabled = _pending
-	destination_selector.disabled = _pending or _destinations.is_empty()
 
 
 static func _wearer_preview(wearer: Dictionary, phase: String) -> String:
@@ -167,15 +226,63 @@ static func _wearer_preview(wearer: Dictionary, phase: String) -> String:
 		" | ".join(summary)]
 
 
+func _reset_tags(container: HFlowContainer, buttons: Array[Button], first: SewnChip) -> void:
+	for button in buttons:
+		if button != first:
+			container.remove_child(button)
+			button.queue_free()
+	for connection in first.pressed.get_connections():
+		first.pressed.disconnect(connection.callable)
+	buttons.clear()
+	first.selected = -1
+	first.button_pressed = false
+	first.disabled = true
+	first.visible = false
+
+
+func _configure_tag(button: SewnChip, node_name: String, caption: String, width: float) -> void:
+	button.name = node_name
+	button.text = caption
+	button.custom_minimum_size = Vector2(width, 48)
+	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	button.focus_mode = Control.FOCUS_ALL
+	button.toggle_mode = true
+	button.button_pressed = false
+	button.disabled = false
+	button.visible = true
+	_style_chip(button, false)
+
+
+func _relink_focus() -> void:
+	if not is_inside_tree():
+		return
+	var controls: Array[Control] = []
+	for button in _source_buttons:
+		if button.visible and not button.disabled:
+			controls.append(button)
+	for button in _destination_buttons:
+		if button.visible and not button.disabled:
+			controls.append(button)
+	if not confirm_button.disabled:
+		controls.append(confirm_button)
+	var close: Control = get_parent().get_node_or_null("DismissResew")
+	if close != null:
+		controls.append(close)
+	if controls.is_empty():
+		return
+	for i in range(controls.size()):
+		controls[i].focus_next = controls[i].get_path_to(controls[(i + 1) % controls.size()])
+		controls[i].focus_previous = controls[i].get_path_to(
+			controls[(i + controls.size() - 1) % controls.size()])
+
+
 func _clear(message: String) -> void:
 	_pending = false
 	_options.clear()
 	_sources.clear()
 	_destinations.clear()
-	source_selector.clear()
-	destination_selector.clear()
-	source_selector.disabled = true
-	destination_selector.disabled = true
+	_reset_tags(source_tags, _source_buttons, source_selector)
+	_reset_tags(destination_tags, _destination_buttons, destination_selector)
 	confirm_button.disabled = true
 	preview_label.text = "No eligible re-sew choices"
 	feedback_label.text = message
@@ -195,56 +302,67 @@ func _build() -> void:
 	panel.name = "StitchedPaperRestPanel"
 	panel.add_theme_stylebox_override("panel", paper)
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.offset_left = -420
-	panel.offset_right = 420
-	panel.offset_top = -310
-	panel.offset_bottom = 310
+	panel.offset_left = -455
+	panel.offset_right = 455
+	panel.offset_top = -320
+	panel.offset_bottom = 320
 	add_child(panel)
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 8)
-	panel.add_child(body)
 	var padding := MarginContainer.new()
-	padding.add_theme_constant_override("margin_left", 24)
-	padding.add_theme_constant_override("margin_right", 24)
-	padding.add_theme_constant_override("margin_top", 12)
-	padding.add_theme_constant_override("margin_bottom", 12)
-	panel.remove_child(body)
+	padding.add_theme_constant_override("margin_left", 19)
+	padding.add_theme_constant_override("margin_right", 19)
+	padding.add_theme_constant_override("margin_top", 10)
+	padding.add_theme_constant_override("margin_bottom", 10)
 	panel.add_child(padding)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 6)
 	padding.add_child(body)
-	var title := _label("REST  /  RE-SEW PATCHES", 23)
-	body.add_child(title)
-	var rule := _label("Each transfer costs 1 scrap. Your Heal / Upgrade / Stitch choice stays available.", 13)
-	body.add_child(rule)
-	scraps_label = _label("Scraps: --", 18)
+	body.add_child(_label("REST  /  RE-SEW PATCHES", 22))
+	body.add_child(_label("1 scrap per re-sew • Heal / Upgrade / Stitch remains available.", 13))
+	scraps_label = _label("Scraps: --", 17)
 	body.add_child(scraps_label)
-	body.add_child(_label("Worn patch / source hero", 15))
-	source_selector = OptionButton.new()
-	source_selector.name = "SourcePatch"
-	source_selector.custom_minimum_size = Vector2(0, 40)
-	source_selector.focus_mode = Control.FOCUS_ALL
-	source_selector.item_selected.connect(_refresh_destinations)
-	_style_button(source_selector)
-	body.add_child(source_selector)
-	body.add_child(_label("Destination hero (same slot only)", 15))
-	destination_selector = OptionButton.new()
-	destination_selector.name = "DestinationHero"
-	destination_selector.custom_minimum_size = Vector2(0, 40)
-	destination_selector.focus_mode = Control.FOCUS_ALL
-	destination_selector.item_selected.connect(_update_preview)
-	_style_button(destination_selector)
-	body.add_child(destination_selector)
-	preview_label = _label("No eligible re-sew choices", 14)
-	preview_label.custom_minimum_size = Vector2(0, 190)
+	body.add_child(_label("WORN PATCH  /  SOURCE HERO", 14))
+	source_scroll = ScrollContainer.new()
+	source_scroll.name = "SewnSourceScroll"
+	source_scroll.custom_minimum_size = Vector2(0, 111)
+	source_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	source_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body.add_child(source_scroll)
+	source_tags = HFlowContainer.new()
+	source_tags.name = "SourceTags"
+	source_tags.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	source_tags.add_theme_constant_override("h_separation", 8)
+	source_tags.add_theme_constant_override("v_separation", 6)
+	source_scroll.add_child(source_tags)
+	source_selector = SewnChip.new()
+	source_tags.add_child(source_selector)
+	body.add_child(_label("RECIPIENT HERO  /  MATCHING SLOT", 14))
+	destination_scroll = ScrollContainer.new()
+	destination_scroll.name = "SewnDestinationScroll"
+	destination_scroll.custom_minimum_size = Vector2(0, 61)
+	destination_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	destination_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body.add_child(destination_scroll)
+	destination_tags = HFlowContainer.new()
+	destination_tags.name = "DestinationTags"
+	destination_tags.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	destination_tags.add_theme_constant_override("h_separation", 8)
+	destination_tags.add_theme_constant_override("v_separation", 6)
+	destination_scroll.add_child(destination_tags)
+	destination_selector = SewnChip.new()
+	destination_tags.add_child(destination_selector)
+	preview_label = _label("No eligible re-sew choices", 12)
+	preview_label.custom_minimum_size = Vector2(0, 175)
+	preview_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(preview_label)
 	confirm_button = Button.new()
 	confirm_button.name = "ConfirmResew"
-	confirm_button.text = "Re-sew (1 scrap)"
-	confirm_button.custom_minimum_size = Vector2(0, 47)
+	confirm_button.text = "CONFIRM RE-SEW  /  1 SCRAP"
+	confirm_button.custom_minimum_size = Vector2(0, 44)
 	confirm_button.focus_mode = Control.FOCUS_ALL
 	_style_button(confirm_button)
 	confirm_button.pressed.connect(_request_selected)
 	body.add_child(confirm_button)
-	feedback_label = _label("", 13)
+	feedback_label = _label("", 12)
 	body.add_child(feedback_label)
 
 
@@ -257,15 +375,56 @@ func _label(value: String, font_size: int) -> Label:
 	return label
 
 
-func _style_button(button: Control) -> void:
+func _style_chip(button: Button, selected: bool) -> void:
+	var base := Color("#d9c49c") if selected else Color("#46565a")
+	var ink := SLATE if selected else CREAM
+	button.add_theme_color_override("font_color", ink)
+	button.add_theme_color_override("font_hover_color", ink)
+	button.add_theme_color_override("font_pressed_color", SLATE)
+	button.add_theme_color_override("font_hover_pressed_color", SLATE)
+	button.add_theme_color_override("font_focus_color", ink)
+	button.add_theme_color_override("font_disabled_color", Color("#a7aba8"))
+	button.add_theme_font_size_override("font_size", 13)
+	for name in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
+		var surface := StyleBoxFlat.new()
+		surface.bg_color = Color("#273239") if name == "disabled" else (
+			Color("#efdaad") if name in ["hover", "pressed", "hover_pressed"] else base)
+		surface.border_color = GOLD if name == "focus" or selected else STITCH
+		surface.set_border_width_all(3 if name == "focus" or selected else 2)
+		surface.set_corner_radius_all(5)
+		surface.content_margin_top = 3
+		surface.content_margin_bottom = 8
+		button.add_theme_stylebox_override(name, surface)
+	button.queue_redraw()
+
+
+func _style_button(button: Button) -> void:
 	button.add_theme_color_override("font_color", CREAM)
+	button.add_theme_color_override("font_hover_color", CREAM)
+	button.add_theme_color_override("font_pressed_color", SLATE)
 	button.add_theme_color_override("font_focus_color", CREAM)
+	button.add_theme_color_override("font_disabled_color", Color("#a7aba8"))
+	button.add_theme_color_override("font_hover_pressed_color", SLATE)
 	var box := StyleBoxFlat.new()
 	box.bg_color = Color("#3a4851")
 	box.border_color = PAPER
 	box.set_border_width_all(2)
 	button.add_theme_stylebox_override("normal", box)
-	button.add_theme_stylebox_override("focus", box.duplicate())
+	var hovered := box.duplicate()
+	hovered.bg_color = Color("#53646a")
+	button.add_theme_stylebox_override("hover", hovered)
+	var pressed := box.duplicate()
+	pressed.bg_color = GOLD
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("hover_pressed", pressed.duplicate())
+	var disabled := box.duplicate()
+	disabled.bg_color = Color("#273239")
+	disabled.border_color = STITCH
+	button.add_theme_stylebox_override("disabled", disabled)
+	var focus := box.duplicate()
+	focus.border_color = GOLD
+	focus.set_border_width_all(3)
+	button.add_theme_stylebox_override("focus", focus)
 
 
 static func _nice(id: String) -> String:

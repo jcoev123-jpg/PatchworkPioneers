@@ -333,35 +333,15 @@ func _click(control: Control) -> void:
 	await _frames()
 
 
-func _pick(button: OptionButton, index: int, keyboard: bool) -> void:
+func _pick(button: Button, keyboard: bool) -> void:
+	_check(button.visible and not button.disabled and button.focus_mode == Control.FOCUS_ALL,
+		"physical sewn button is visible and keyboard reachable")
 	if keyboard:
 		button.grab_focus()
 		await _key(KEY_ENTER)
 	else:
 		await _click(button)
-	var popup := button.get_popup()
-	_check(popup.visible and index < button.item_count, "physical selector popup opens")
-	if not popup.visible or index >= button.item_count:
-		return
-	if keyboard:
-		await _key(KEY_HOME)
-		for i in range(index):
-			await _key(KEY_DOWN)
-		await _key(KEY_ENTER)
-	else:
-		var point := Vector2(popup.position) + Vector2(popup.size.x * 0.5,
-			popup.size.y * (index + 0.5) / button.item_count)
-		var motion := InputEventMouseMotion.new()
-		motion.position = point
-		root.push_input(motion, true)
-		await _frames()
-		for press in [true, false]:
-			var event := InputEventMouseButton.new()
-			event.position = point
-			event.button_index = MOUSE_BUTTON_LEFT
-			event.pressed = press
-			root.push_input(event, true)
-		await _frames()
+	_check(button.button_pressed, "physical sewn chip retains selected felt state")
 
 
 func _ui_test(activation: Key) -> void:
@@ -409,7 +389,7 @@ func _ui_test(activation: Key) -> void:
 		_check(source_index >= 0, "Shop patch is a selectable real source: " + spec[0])
 		if source_index < 0:
 			continue
-		await _pick(picker.source_selector, source_index, false)
+		await _pick(picker._source_buttons[source_index], false)
 		var destination_index := -1
 		for i in range(picker._destinations.size()):
 			if picker._destinations[i].to_hero == spec[1]:
@@ -417,8 +397,31 @@ func _ui_test(activation: Key) -> void:
 		_check(destination_index >= 0, "Shop patch has legal same-slot destination: " + str(spec[0]) + " to " + str(spec[1]))
 		if destination_index < 0:
 			continue
-		await _pick(picker.destination_selector, destination_index, false)
+		await _pick(picker._destination_buttons[destination_index], false)
 		var preview: String = picker.preview_label.text
+		var selected: Dictionary = picker.selected_option()
+		var service: Dictionary = _option(f, spec[0], spec[1])
+		var forecast: Dictionary = RunRestPatchResewOptions.forecast(w, t, original, f.rest, service)
+		_check(selected == service and forecast.get("ok") == true
+			and selected.kind == forecast.kind and selected.slot == forecast.slot
+			and selected.exchanged_id == forecast.exchanged_id,
+			"physical tags bind the entire exact service option and forecast")
+		if forecast.get("ok") == true:
+			for wearer in [forecast.source, forecast.destination]:
+				for phase in ["before", "after"]:
+					var state: Dictionary = wearer[phase]
+					var marker := "%s %s • HP %d/%d, effective cap %d" % [
+						str(wearer.hero_id).capitalize(), phase.to_upper(),
+						state.hp, state.base_max_hp, state.effective_max_hp]
+					_check(preview.contains(marker),
+						"mounted preview exactly reflects forecast hero, HP and effective cap")
+					for slot in RunRestPatchResewOptions.SLOTS:
+						var patch_state: Dictionary = state.slots[slot]
+						var display := "%s empty" % slot if patch_state.id == "" else (
+							"%s %s (%s)" % [slot, str(patch_state.id).replace("_", " ").capitalize(),
+								"active" if patch_state.active else "dormant"])
+						_check(preview.contains(display),
+							"mounted before/after forecast shows each authentic slot and activity")
 		_check(preview.contains(spec[2]) and preview.contains("BEFORE")
 			and preview.contains("AFTER") and preview.contains("Cost: 1 scrap")
 			and preview.contains(spec[3] + " " + spec[6] + " (active)")
@@ -435,20 +438,25 @@ func _ui_test(activation: Key) -> void:
 			head_index = i
 	_check(head_index >= 0, "authored Button Eye source is selectable")
 	if head_index >= 0:
-		await _pick(picker.source_selector, head_index, true)
-		_check(picker.preview_label.text.contains("Warden BEFORE")
-			and picker.preview_label.text.contains("Warden AFTER")
-			and picker.preview_label.text.contains("Exposed 1"),
-			"source keyboard selection updates both wearer forecasts")
-		await _key(KEY_TAB)
-		_check(picker.destination_selector.has_focus(), "Tab goes from source to destination")
+		await _pick(picker._source_buttons[head_index], true)
+		_check(picker.source_selector.selected == head_index
+			and picker._source_buttons[head_index].button_pressed
+			and picker.destination_selector.selected == -1
+			and picker.confirm_button.disabled
+			and picker.preview_label.text.contains("Select a destination"),
+			"changing source visibly clears any stale destination and preview")
+		for step in range(picker._source_buttons.size() - head_index):
+			await _key(KEY_TAB)
+		_check(picker.destination_selector.has_focus(),
+			"Tab traverses remaining source tags before destination")
+
 		var move_index := -1
 		for i in range(picker._destinations.size()):
 			if picker._destinations[i].to_hero == "tinker":
 				move_index = i
 		_check(move_index >= 0, "empty same-slot target exists")
 		if move_index >= 0:
-			await _pick(picker.destination_selector, move_index, false)
+			await _pick(picker._destination_buttons[move_index], false)
 			_check(picker.preview_label.text.contains("MOVE")
 				and picker.preview_label.text.contains("empty destination")
 				and picker.preview_label.text.contains("Tinker AFTER"),
@@ -459,7 +467,7 @@ func _ui_test(activation: Key) -> void:
 				target_index = i
 		_check(target_index >= 0, "occupied same-slot recipient reachable")
 		if target_index >= 0:
-			await _pick(picker.destination_selector, target_index, false)
+			await _pick(picker._destination_buttons[target_index], false)
 			_check(picker.preview_label.text.contains("SWAP")
 				and picker.preview_label.text.contains("Stitched Badge")
 				and picker.preview_label.text.contains("Exposed 1")
