@@ -214,7 +214,7 @@ func _fixture_ok(party: CombatParty, enemies: CombatEnemies, prefix: String) -> 
 	_check(guard.get("id") == "ragling_guard" and guard.get("hp") == 12
 		and guard.get("max_hp") == 12 and guard.get("block") == 0
 		and guard.get("position") == 1
-		and guard.get("art_path") == "res://assets/paper/enemies/ragling.png",
+		and guard.get("art_path") == "res://assets/paper/enemies/ragling_guard.png",
 		prefix + ": slot 1 is the 12 HP Guard Ragling with its authored art")
 	var stalker := enemies.get_enemy(2)
 	_check(stalker.get("id") == "spool_stalker" and stalker.get("hp") == 14
@@ -344,7 +344,7 @@ func _test_authored_file_and_roster() -> void:
 	var stalker_record := _unique_by(_load_json(RUN_ENEMIES_PATH), "id",
 		"spool_stalker", "run catalog")
 	_check(WEIGHTED.project(guard_record) == {"id": "ragling_guard", "name": "Guard Ragling",
-		"max_hp": 12, "art_path": "res://assets/paper/enemies/ragling.png"},
+		"max_hp": 12, "art_path": "res://assets/paper/enemies/ragling_guard.png"},
 		"Guard Ragling normalized definition is the unchanged starter record")
 	_check(WEIGHTED.project(stalker_record) == {"id": "spool_stalker", "name": "Spool Stalker",
 		"max_hp": 14, "art_path": "res://assets/paper/enemies/spool_stalker.png"},

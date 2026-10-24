@@ -12,7 +12,7 @@ const ROSTERS := {
 	HEMCROSS: ["spool_stalker", "fray_scavenger", "button_guard"]
 }
 const ENEMY_STATS := {
-	"ragling_guard": ["Guard Ragling", 12, "res://assets/paper/enemies/ragling.png"],
+	"ragling_guard": ["Guard Ragling", 12, "res://assets/paper/enemies/ragling_guard.png"],
 	"seam_ripper": ["Seam Ripper", 18, "res://assets/paper/enemies/seam_ripper.png"],
 	"spool_stalker": ["Spool Stalker", 14, "res://assets/paper/enemies/spool_stalker.png"],
 	"fray_scavenger": ["Fray Scavenger", 14, "res://assets/paper/enemies/fray_scavenger.png"],

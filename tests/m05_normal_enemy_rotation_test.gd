@@ -142,9 +142,8 @@ func _catalog_and_bindings() -> void:
 		if not catalog.has(id):
 			continue
 		var old: Array = OLD[id]
-		var art_id: String = "ragling" if id == "ragling_guard" else id
 		_check(catalog[id] == {"id": id, "name": old[0], "max_hp": old[1],
-			"art_path": "res://assets/paper/enemies/" + art_id + ".png",
+			"art_path": "res://assets/paper/enemies/" + id + ".png",
 			"intent": {"target": old[2], "actions": old[3]}},
 			"original normal retains exact full definition " + id)
 	pools = JSON.parse_string(FileAccess.get_file_as_string(POOLS))
