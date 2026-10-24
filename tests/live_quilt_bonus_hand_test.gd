@@ -70,9 +70,14 @@ func _assert_quilt(note: String) -> void:
 		return
 	var row: HBoxContainer = support.quilt_row
 	_check(is_instance_valid(row) and row.get_parent() == app.battle_view.find_child(
-		"SupportHUD", true, false) and row.visible and row.get_child_count() == 3,
+		"SupportHUD", true, false) and row.visible,
 		note + ": exactly three mounted patches are visible in SupportHUD")
 	if not is_instance_valid(row):
+		return
+	var marks := row.find_child("QuiltOwnerMarks", true, false) as HBoxContainer
+	_check(marks != null and marks.get_child_count() == 3,
+		note + ": shared Quilt cloth groups exactly three owner marks")
+	if marks == null:
 		return
 	var snapshot: Dictionary = service.get_patch_progress()
 	_check(snapshot.active and snapshot.patches.size() == 3,
@@ -81,7 +86,7 @@ func _assert_quilt(note: String) -> void:
 	var expected_ids := ["warden", "seamstress", "tinker"]
 	for index in range(expected_ids.size()):
 		var owner: String = expected_ids[index]
-		var square = row.get_child(index)
+		var square = marks.get_child(index)
 		var expected: Dictionary = snapshot.patches.get(owner, {})
 		_check(square == support.quilt_patches.get(owner)
 			and square.owner_id == owner and square.name == "QuiltPatch_" + owner,
@@ -107,10 +112,11 @@ func _assert_quilt(note: String) -> void:
 			note + ": " + owner + " is focus-free but hoverable")
 	var rect := row.get_global_rect()
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
-	_check(viewport.encloses(rect) and rect.size.x <= 120 and rect.size.y <= 40
+	_check(viewport.encloses(rect) and rect.size.y <= 76
 		and support.backing.covers(row),
 		note + ": sewn squares fit on the real 1280x720 felt-table backing")
-	for other in [support.energy_orb, support.help_label, app.end_turn_button, app.return_button]:
+	for other in [support.energy_orb, support.help_label, app.hand_view, app.pile_label,
+			app.end_turn_button, app.return_button]:
 		if is_instance_valid(other) and other.is_visible_in_tree():
 			_check(not rect.intersects(other.get_global_rect()),
 				note + ": squares do not cover " + other.name)
