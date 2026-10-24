@@ -126,6 +126,32 @@ func _run() -> void:
 			_check(tile_a.has_focus(), "first card tile has keyboard focus")
 			await _key(KEY_ENTER)
 		_check(picker.second_tile_scroll.visible and not picker.first_tile_scroll.visible, "second tile scroll displayed after first choice")
+		await _frames()
+		_check(picker.second_tiles.size() > 0 and picker.second_tiles[0].has_focus(), "focus automatically moves to first visible second tile")
+
+		if session == 1:
+			picker.change_first_button.grab_focus()
+			await _key(KEY_ENTER)
+			await _frames()
+			_check(picker.first_tile_scroll.visible and not picker.second_tile_scroll.visible, "Change First returns to first row")
+			_check(picker.first_tiles.size() > 0 and picker.first_tiles[0].has_focus(), "focus automatically returns to first visible first tile")
+			_check(picker.confirm_button.disabled, "discarded prior pair cannot be confirmed")
+			
+			var temp_tile = picker.first_tile_for_index(other_a)
+			temp_tile.grab_focus()
+			await _key(KEY_ENTER)
+			await _frames()
+			_check(picker.second_tile_scroll.visible, "second tile scroll displayed after alternate first choice")
+			_check(picker.second_tiles.size() > 0 and picker.second_tiles[0].has_focus(), "focus automatically moves to second tile again")
+			
+			picker.change_first_button.grab_focus()
+			await _key(KEY_ENTER)
+			await _frames()
+			
+			tile_a.grab_focus()
+			await _key(KEY_ENTER)
+			await _frames()
+
 		var expected_second_options: Array = picker._model.second_options(a)
 		_check(picker.second_tiles.size() == expected_second_options.size(), "second_tiles populated with exact second_options count")
 		var second_indices: Array[int] = []
