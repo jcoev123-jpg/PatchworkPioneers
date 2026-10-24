@@ -5,6 +5,9 @@ extends Control
 ## Never observes combat or advances, settles or mutates a run.
 ## The settled result keeps its genuine counters and adds one sewn ribbon per
 ## hero, so the party's HP, permanent tears and worn patch names are readable.
+## The same counters also state the reached floor, but only when the settled
+## latch's own generated map can prove that the last witnessed battle is exactly
+## the node the route still stands on.
 
 signal return_to_title_requested
 
@@ -132,6 +135,12 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 		signature.get("gold", 0),
 		signature.get("scraps", 0),
 	]
+	# The depth is a verified fact from the same settled latch, never a guess:
+	# an unproven map relationship simply leaves the counters without a floor.
+	if _can_return:
+		var floor_reached := _verified_floor_reached(latch, state)
+		if floor_reached > 0:
+			top_ledger += " · Floor reached: %d/%d" % [floor_reached, RunMap.FLOOR_COUNT]
 	summary_label.text = ("%s\n%s" % [top_ledger, signature_text]) if _can_return else ("Battles resolved: %d\n%s" % [battles_resolved, signature_text])
 	_clear_details()
 	_clear_hero_rows()
@@ -149,6 +158,49 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	if _can_return:
 		_defer_return_focus()
 	return true
+
+
+## The achieved terminal depth in floors, proven read-only from the settled
+## latch's own generated map: the last witnessed battle must be exactly the node
+## the route still stands on, that node's floor must be the map's current floor,
+## and the floor must exist in this act. A run victory additionally requires the
+## final Boss. Anything stale, closed, pending or mismatched yields -1, so the
+## view prints no depth rather than an invented N/12. Depth is never derived by
+## splitting a node ID or by counting settled battles: noncombat stops make that
+## count smaller than the floor the party actually reached.
+func _verified_floor_reached(latch: RunActBattleOutcome, state: Dictionary) -> int:
+	if latch == null:
+		return -1
+	var status: Variant = state.get("run_status")
+	if status != RunActBattleOutcome.VICTORY and status != RunActBattleOutcome.DEFEAT:
+		return -1
+	if state.get("pending_node_id") != "":
+		return -1
+	var settled: Variant = state.get("settled_node_ids")
+	if not settled is Array or (settled as Array).is_empty():
+		return -1
+	var last_settled: Variant = (settled as Array).back()
+	if typeof(last_settled) != TYPE_STRING or last_settled.is_empty():
+		return -1
+	var map: RunMap = latch._map
+	if map == null or not map.is_generated():
+		return -1
+	if map.get_current_node_id() != last_settled:
+		return -1
+	var floor_reached: int = map.get_current_floor()
+	if floor_reached < 1 or floor_reached > RunMap.FLOOR_COUNT:
+		return -1
+	var node: Dictionary = map.get_node(last_settled)
+	if node.is_empty() or node.get("id") != last_settled \
+			or node.get("floor") != floor_reached:
+		return -1
+	var kind: Variant = node.get("type")
+	if kind != "Fight" and kind != "Elite" and kind != "Boss":
+		return -1
+	if status == RunActBattleOutcome.VICTORY \
+			and (kind != "Boss" or floor_reached != RunMap.FLOOR_COUNT):
+		return -1
+	return floor_reached
 
 
 ## Hides, releases keyboard focus and invalidates any retained old callback.
