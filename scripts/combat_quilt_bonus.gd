@@ -195,6 +195,16 @@ func _living_heroes() -> Array[Dictionary]:
 	return living
 
 
+## The current living set is authoritative at the committed receipt boundary.
+func _is_living_hero(hero_id: String) -> bool:
+	if hero_id == "" or _party == null or not _party.is_valid():
+		return false
+	for hero in _living_heroes():
+		if hero["id"] == hero_id:
+			return true
+	return false
+
+
 ## Opt-in Switchback Button transition tracking.
 ## Only activates when a valid wardrobe and torn state are supplied.
 func enable_switchback(wardrobe: Variant, torn: Variant) -> bool:
@@ -253,9 +263,13 @@ func observe_confirmed_play(receipt_id: String, owner_id: String) -> Dictionary:
 	# Check if the owner lives and the patch is worn and untorn.
 	var eligible := _switchback_wearer_for(owner_id)
 	if eligible:
-		# If previous owner is set and different from current, and not yet triggered,
-		# and the wearer wears the patch, then trigger 2 Block.
-		if _prev_owner != "" and _prev_owner != owner_id and not _switchback_consumed:
+		# The wearer's just-committed play must immediately follow a committed
+		# play by a DIFFERENT hero who is still living now. A predecessor downed
+		# by his own committed play (a 3 HP Overclock) or downed between the two
+		# commits can never set the bonus up, so liveness is checked here at the
+		# committed receipt boundary rather than when the predecessor played.
+		if _prev_owner != "" and _prev_owner != owner_id and not _switchback_consumed \
+				and _is_living_hero(_prev_owner):
 			if not _party.gain_block(_hero_position_for(owner_id), 2):
 				return rejected
 			_switchback_consumed = true
