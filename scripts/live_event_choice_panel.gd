@@ -168,9 +168,9 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 	_offered_wallet = wallet.duplicate(true)
 	_wallet_previews.clear()
 	title_label.text = snapshot["title"]
-	# The story keeps its natural wrapped height in both modes: the scene sets no
-	# reserved description block, so the first authored ticket sits one small gap
-	# below the text instead of after a stretch spacer.
+	# The title and story keep only their natural height in both modes: the scene
+	# reserves neither a title block nor a description block, so the first authored
+	# ticket sits one small gap below the text instead of after a stretch spacer.
 	description_label.text = snapshot["description"]
 	if wallet_mode:
 		# Wallet offerings add their balance caption and keep each three-line

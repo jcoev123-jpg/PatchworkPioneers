@@ -322,7 +322,7 @@ func _battle(enemy_path: String) -> Dictionary:
 		"both battle rosters begin alive")
 	if enemy_path == BOSS:
 		_check(enemies.get_enemy(1).get("id") == "patchwork_behemoth"
-			and enemies.get_enemy(1).get("hp") == 42,
+			and enemies.get_enemy(1).get("hp") == 84,
 			"real authored final boss fixture is alive")
 	var result := CombatBattleResult.new(party, enemies)
 	_check(result.get_outcome() == CombatBattleResult.ACTIVE, "combat result starts ACTIVE")

@@ -313,7 +313,9 @@ func _run_seed(value: int) -> Dictionary:
 			if terminal not in [CombatBattleResult.VICTORY, CombatBattleResult.DEFEAT]:
 				return _fail("encounter exceeded %d real turns %s" % [TURN_CAP, choice])
 			if terminal == CombatBattleResult.DEFEAT:
-				if not party.is_defeated() or enemies.is_victorious():
+				# Enemy Bleed can finish the Boss after the enemy attack has
+				# already latched DEFEAT. The first observed result stays final.
+				if not party.is_defeated() or result.get_outcome() != CombatBattleResult.DEFEAT or not result.is_finished():
 					return _fail("non-authentic defeat")
 				lost = true
 				break

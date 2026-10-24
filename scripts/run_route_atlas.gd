@@ -286,6 +286,23 @@ class LegalPatchAction extends Button:
 ## Left-hand travel diary: an inert high-contrast sewn-paper journey and pinned
 ## twelve-floor progress trail. It never invents a route choice or reads RNG.
 class JourneyJournal extends Control:
+	## The diary's body-text floor (VIS V6): every bead numeral, completed-kind caption, the
+	## second display heading and the progress footer reads at least this many points.
+	const BEAD_FONT_SIZE := 18
+	const KIND_FONT_SIZE := 18
+	const SECTION_HEADING_FONT_SIZE := 18
+	const FOOTER_FONT_SIZE := 18
+	## Diary-local spacing. Three rows of four beads are spread so an 18-point kind caption
+	## and the current-floor pin still clear the neighbouring row and the progress footer.
+	const SECTION_HEADING_BASELINE := 176.0
+	const BEAD_FIRST := Vector2(59.0, 220.0)
+	const BEAD_COLUMN_STEP := 132.0
+	const BEAD_ROW_STEP := 76.0
+	const BEAD_RADIUS := 17.0
+	## Baseline of a committed kind below its own bead, and the caption column it centres in.
+	const CAPTION_BASELINE := 37.0
+	const CAPTION_WIDTH := 116.0
+
 	var current_floor := 0
 	var current_area := ""
 	var next_floor := 1
@@ -307,6 +324,16 @@ class JourneyJournal extends Control:
 	## Read-only copy of the visited-kind captions this diary draws, in route order.
 	func visited_kind_sequence() -> Array[String]:
 		return visited_kinds.duplicate()
+
+	## The exact caption this diary paints below bead `floor_index` (zero-based): the committed
+	## kind for a floor the party already finished, otherwise blank. The current bead and every
+	## future bead therefore stay empty, and no unvisited floor is ever projected.
+	func caption_kind(floor_index: int) -> String:
+		if floor_index < 0 or floor_index >= current_floor:
+			return ""
+		if floor_index >= visited_kinds.size():
+			return ""
+		return visited_kinds[floor_index]
 
 	## Read-only face for the two display headings: the nearest inherited Theme that
 	## really defines PatchHeading, else the committed Londrina Solid file. It never
@@ -364,30 +391,30 @@ class JourneyJournal extends Control:
 			HORIZONTAL_ALIGNMENT_LEFT, 495.0, 18, RunRouteAtlas.INK)
 		draw_dashed_line(Vector2(22, 155), Vector2(size.x - 22, 155),
 			RunRouteAtlas.THREAD, 2.0, 8.0)
-		draw_string(heading, Vector2(22, 194), "PINNED FLOOR TRAIL",
-			HORIZONTAL_ALIGNMENT_LEFT, 490.0, 17, RunRouteAtlas.INK)
+		draw_string(heading, Vector2(22, SECTION_HEADING_BASELINE), "PINNED FLOOR TRAIL",
+			HORIZONTAL_ALIGNMENT_LEFT, 490.0, SECTION_HEADING_FONT_SIZE, RunRouteAtlas.INK)
 		var beads: Array[Vector2] = []
 		for i in range(12):
-			beads.append(Vector2(59.0 + float(i % 4) * 132.0,
-				235.0 + float(i / 4) * 66.0))
+			beads.append(BEAD_FIRST + Vector2(float(i % 4) * BEAD_COLUMN_STEP,
+				float(i / 4) * BEAD_ROW_STEP))
 		for i in range(11):
 			draw_dashed_line(beads[i], beads[i + 1], RunRouteAtlas.THREAD, 2.0, 7.0)
 		for i in range(12):
 			var point := beads[i]
 			var done := i < current_floor
-			draw_circle(point, 17.0, RunRouteAtlas.CHOSEN_BG if done else RunRouteAtlas.PAPER_SHADE)
-			draw_arc(point, 17.0, 0.0, TAU, 28,
+			draw_circle(point, BEAD_RADIUS,
+				RunRouteAtlas.CHOSEN_BG if done else RunRouteAtlas.PAPER_SHADE)
+			draw_arc(point, BEAD_RADIUS, 0.0, TAU, 28,
 				RunRouteAtlas.CHOSEN_THREAD if done else RunRouteAtlas.INK, 2.0, true)
-			draw_string(font, point + Vector2(-10.0, 5.0), "%02d" % (i + 1),
-				HORIZONTAL_ALIGNMENT_CENTER, 20.0, 15,
+			draw_string(font, point + Vector2(-10.0, 6.0), "%02d" % (i + 1),
+				HORIZONTAL_ALIGNMENT_CENTER, 20.0, BEAD_FONT_SIZE,
 				Color("#ffffff") if done else RunRouteAtlas.INK)
 			# Completed beads carry their real visit kind below the numbered disc.
 			# An unvisited bead keeps that space blank, so no future kind is shown.
-			if done and i < visited_kinds.size():
-				var kind := visited_kinds[i]
-				if not kind.is_empty():
-					draw_string(font, point + Vector2(-58.0, 34.0), kind,
-						HORIZONTAL_ALIGNMENT_CENTER, 116.0, 15, RunRouteAtlas.INK)
+			var kind := caption_kind(i)
+			if not kind.is_empty():
+				draw_string(font, point + Vector2(-CAPTION_WIDTH * 0.5, CAPTION_BASELINE), kind,
+					HORIZONTAL_ALIGNMENT_CENTER, CAPTION_WIDTH, KIND_FONT_SIZE, RunRouteAtlas.INK)
 		# The diary's real pushpin points to the latest committed bead.
 		if current_floor > 0:
 			var pin := beads[current_floor - 1] + Vector2(0, -23)
@@ -395,7 +422,7 @@ class JourneyJournal extends Control:
 			draw_circle(pin, 7.0, Color("#bd5149"))
 		draw_string(font, Vector2(22, size.y - 20),
 			"Stitched route  ·  %d of 12 floors visited" % visited.size(),
-			HORIZONTAL_ALIGNMENT_LEFT, 490.0, 16, RunRouteAtlas.INK)
+			HORIZONTAL_ALIGNMENT_LEFT, 490.0, FOOTER_FONT_SIZE, RunRouteAtlas.INK)
 
 
 func _add_journal(current_floor: int, chosen: Array[String]) -> void:
@@ -415,7 +442,7 @@ func _add_journal(current_floor: int, chosen: Array[String]) -> void:
 		kinds.append(str(_map.get_node(id).get("type", "")))
 	journal.visited_kinds = kinds
 	journal.position = Vector2(46.0, 102.0)
-	journal.size = Vector2(532.0, 442.0)
+	journal.size = Vector2(532.0, 460.0)
 	journal.custom_minimum_size = journal.size
 	_inert(journal)
 	add_child(journal)
