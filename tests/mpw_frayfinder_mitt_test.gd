@@ -12,6 +12,9 @@ func _initialize() -> void:
 	_stitched_halves()
 	_prior_shared_passive_stitched()
 	_mixed_stitched_halves()
+	_pool_thresholds()
+	_pool_commit_and_turns()
+	_pool_negative_attempts()
 	for failure in failures:
 		printerr(failure)
 	print("mpw_frayfinder_mitt_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -508,3 +511,256 @@ func _prior_shared_passive_stitched() -> void:
 			label + ": replayed receipt cannot spend again")
 		_check(rule.quote_starter_hit("warden_strike", 1).get("bonus") == 0,
 			label + ": later same-owner quote receives no +2")
+
+
+func _pool_fight(card_id: String, wearer: String = "warden", seed_value: int = 919,
+		with_patch: bool = true, torn: RunTornMending = null,
+		owner_order: Array = ["warden", "seamstress", "tinker"]) -> Dictionary:
+	var defs: Array = []
+	var hp := {"warden": 40, "seamstress": 30, "tinker": 26}
+	for id in owner_order:
+		defs.append({"id": id, "max_hp": hp[id]})
+	var party := CombatParty.new(defs)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var deck_ids: Array[String] = _deck_ids()
+	deck_ids.append(card_id)
+	var deck := CombatDeck.new(deck_ids, rng)
+	_check(deck.start_turn() and deck.energy == 3, "pool fight turn opens with 3 energy")
+	while not deck.hand.has(card_id) and not deck.draw_pile.is_empty():
+		deck.draw_extra(1)
+	_check(deck.hand.has(card_id), "pool card acquired in hand through real draw")
+	var enemies := CombatEnemies.new([
+		{"id": "ragling", "max_hp": 60},
+		{"id": "elite_guard", "max_hp": 60},
+		{"id": "boss_behemoth", "max_hp": 60}
+	])
+	var gauge := CombatUnravel.new()
+	_check(party.is_valid() and enemies.is_valid()
+		and gauge.bind_roster(enemies, {1: "normal", 2: "elite", 3: "boss"}),
+		"genuine living party and bound normal elite boss roster for pool fight")
+	if torn == null:
+		torn = RunTornMending.new(CombatParty.new(_party_defs()).get_heroes())
+	var m04: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	var m05: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_attack_patches.json"))
+	var patch_defs := []
+	for authored in m04 + m05:
+		patch_defs.append({"id": authored.id, "slot": authored.slot})
+	var wardrobe := RunPatchWardrobe.new(CombatParty.new(_party_defs()).get_heroes(),
+		["frayfinder_mitt", "pincushion_arm", "button_eye"], patch_defs, 0, 5,
+		["warden_strike"], seed_value)
+	_check(wardrobe.is_valid() and torn.is_valid(), "actual owned patch and run torn ledger")
+	if with_patch:
+		var sewing := wardrobe.sew("frayfinder_mitt", wearer, "ARM",
+			"sew_mitt", wardrobe.get_snapshot())
+		_check(sewing.ok and sewing.receipt.slot == "ARM"
+			and wardrobe.get_snapshot().worn[wearer].ARM == "frayfinder_mitt",
+			"genuine sewn ARM transaction with canonical receipt for pool fight")
+	var rule := CombatFrayfinderMitt.new()
+	_check(rule.bind_battle(deck, party, enemies, gauge, wardrobe, torn)
+		and rule.begin_player_turn(), "valid service bound to pool authorities and active turn")
+	return {"deck": deck, "party": party, "enemies": enemies, "gauge": gauge,
+		"wardrobe": wardrobe, "torn": torn, "rule": rule, "rng": rng}
+
+
+func _pool_thresholds() -> void:
+	var pool_cards := [
+		{"id": "warden_brass_buckle", "owner": "warden", "base_dmg": 5, "block": 4},
+		{"id": "warden_brass_buckle_plus", "owner": "warden", "base_dmg": 7, "block": 6},
+		{"id": "seamstress_thread_whip", "owner": "seamstress", "base_dmg": 6, "block": 0},
+		{"id": "seamstress_thread_whip_plus", "owner": "seamstress", "base_dmg": 8, "block": 0},
+	]
+	for card in pool_cards:
+		var card_id: String = card["id"]
+		var owner: String = card["owner"]
+		for tier_case in [[1, 4, 8, "normal"], [2, 6, 12, "elite"], [2, 8, 16, "boss"]]:
+			for just_below in [true, false]:
+				var f := _pool_fight(card_id, owner)
+				var slot: int = tier_case[0]
+				if tier_case[3] == "boss":
+					_check(f.gauge.bind_roster(f.enemies, {1: "normal", 2: "boss", 3: "elite"}),
+						card_id + " bind boss at legal target slot 2")
+				var amount: int = tier_case[1] - (1 if just_below else 0)
+				_check(f.gauge.get_snapshot(slot).threshold == tier_case[2]
+					and f.gauge.apply_unravel(f.enemies, slot, amount),
+					card_id + " real tier and charge")
+				var before := _state(f)
+				var quoted: Dictionary = f.rule.quote_pool_hit(card_id, slot)
+				_check(quoted.get("bonus") == (0 if just_below else 2)
+					and f.gauge.get_snapshot(slot).gauge == amount,
+					card_id + " threshold boundary position %d gauge %d/%d" % [slot, amount, tier_case[2]])
+				_check(before == _state(f), card_id + " threshold quote is completely read-only")
+				_check(f.rule.quote_pool_strike(card_id, slot) == quoted
+					and f.rule.quote_plain_strike(card_id, slot) == quoted,
+					card_id + " alias quote methods agree")
+				if not just_below:
+					_check(f.rule.authorize_pool_hit(quoted, f.deck, f.party, f.enemies, card_id, slot) == 2,
+						card_id + " authorize_pool_hit succeeds on matching authorities")
+					var tampered := quoted.duplicate(true)
+					tampered.bonus = 3
+					_check(f.rule.authorize_pool_hit(tampered, f.deck, f.party, f.enemies, card_id, slot) == 0,
+						card_id + " tampered bonus authorization fails")
+					var bad_seal := quoted.duplicate(true)
+					bad_seal.seal = "bad"
+					_check(f.rule.authorize_pool_hit(bad_seal, f.deck, f.party, f.enemies, card_id, slot) == 0,
+						card_id + " tampered seal authorization fails")
+					var foreign_deck := CombatDeck.new(["warden_strike"], RandomNumberGenerator.new())
+					_check(f.rule.authorize_pool_hit(quoted, foreign_deck, f.party, f.enemies, card_id, slot) == 0,
+						card_id + " foreign deck authorization fails")
+
+		# Test raised threshold on normal enemy (+4 after break = 12)
+		var raised := _pool_fight(card_id, owner)
+		_check(raised.gauge.apply_unravel(raised.enemies, 1, 8)
+			and raised.gauge.consume_action_skip(raised.enemies, 1)
+			and raised.gauge.get_snapshot(1).threshold == 12,
+			card_id + " normal Unravel skip resets to real raised threshold 12")
+		_check(raised.gauge.apply_unravel(raised.enemies, 1, 5)
+			and raised.rule.quote_pool_hit(card_id, 1).bonus == 0,
+			card_id + " raised 5/12 does not earn bonus")
+		_check(raised.gauge.apply_unravel(raised.enemies, 1, 1)
+			and raised.rule.quote_pool_hit(card_id, 1).bonus == 2,
+			card_id + " raised 6/12 does earn +2")
+
+
+func _pool_commit_and_turns() -> void:
+	var pool_cards := [
+		{"id": "warden_brass_buckle", "owner": "warden", "base_dmg": 5, "block": 4},
+		{"id": "warden_brass_buckle_plus", "owner": "warden", "base_dmg": 7, "block": 6},
+		{"id": "seamstress_thread_whip", "owner": "seamstress", "base_dmg": 6, "block": 0},
+		{"id": "seamstress_thread_whip_plus", "owner": "seamstress", "base_dmg": 8, "block": 0},
+	]
+	for card in pool_cards:
+		var card_id: String = card["id"]
+		var owner: String = card["owner"]
+		var base_dmg: int = card["base_dmg"]
+		var block: int = card["block"]
+		var f := _pool_fight(card_id, owner)
+		_check(f.gauge.apply_unravel(f.enemies, 1, 4), card_id + " pre-hit half gauge")
+		var before := _state(f)
+		var first: Dictionary = f.rule.quote_pool_hit(card_id, 1)
+		var repeat: Dictionary = f.rule.quote_pool_hit(card_id, 1)
+		_check(first.bonus == 2 and repeat == first, card_id + " repeat preview quotes same +2 without spending")
+		_check(not f.rule.consume_confirmed_hit(first, {"ok": true, "hits": []})
+			and _state(f) == before, card_id + " preview-only counterfeit receipt cannot consume")
+
+		# Real confirmed pool strike commit via resolver with mitt
+		var resolver := CombatPoolPlainStrikes.new()
+		var owner_pos := 1 if owner == "warden" else 2
+		var result: Dictionary = resolver.play_card(
+			f.deck, f.party, f.enemies, card_id, 1, null, null, f.rule, first)
+		_check(result.ok and result.hits.size() == 1 and result.hits[0].damage == base_dmg + 2,
+			card_id + " real confirmed pool strike deals +2 damage")
+		_check(result.hits[0].hp_loss == base_dmg + 2, card_id + " enemy hp loss matches damage")
+		if block > 0:
+			_check(result.block_deltas == {owner_pos: block}
+				and f.party.get_hero(owner_pos).block == block,
+				card_id + " Warden gains exact printed Block")
+		else:
+			_check(result.block_deltas == {} and f.party.get_hero(owner_pos).block == 0,
+				card_id + " Seamstress gains 0 Block")
+		_check(f.rule.latch_snapshot().get(owner) == true,
+			card_id + " resolver consumed wearer latch automatically")
+		_check(not f.rule.consume_confirmed_hit(first, result),
+			card_id + " receipt replay refused")
+		_check(f.rule.quote_pool_hit(card_id, 1).bonus == 0,
+			card_id + " same owner later pool attack never gets bonus in same turn")
+
+		# Tampered receipt verification
+		var tampered_receipt := result.duplicate(true)
+		tampered_receipt.hits[0].damage += 1
+		_check(not f.rule.consume_confirmed_hit(first, tampered_receipt),
+			card_id + " tampered receipt rejected")
+
+		# Turn reset
+		_check(not f.rule.begin_player_turn(), card_id + " hover/preview cannot reset active turn")
+		_check(f.deck.end_turn() and f.rule.end_player_turn(), card_id + " real turn closes before latch reset")
+		_check(f.deck.start_turn() and f.deck.energy == 3 and f.rule.begin_player_turn()
+			and f.rule.latch_snapshot().is_empty(), card_id + " new real 3-energy turn resets latch")
+		_check(f.deck.draw_extra(7) >= 0, card_id + " redraw hand in new turn")
+		if f.deck.hand.has(card_id):
+			_check(f.rule.quote_pool_hit(card_id, 1).bonus == 2,
+				card_id + " new turn requalifies under retained half gauge")
+
+
+func _pool_negative_attempts() -> void:
+	for id in ["warden_brass_buckle", "seamstress_thread_whip"]:
+		var owner := "warden" if id.begins_with("warden_") else "seamstress"
+		var other_owner := "seamstress" if owner == "warden" else "warden"
+		var f := _pool_fight(id, owner)
+		_check(f.gauge.apply_unravel(f.enemies, 1, 4), id + " negative fixture half gauge")
+
+		_unchanged(f, id + " multi-hit 2", func():
+			_check(f.rule.quote_pool_hit(id, 1, 2).bonus == 0,
+				id + " second hit cannot multiply +2"))
+
+		_unchanged(f, id + " other owner borrow", func():
+			var other_card := "seamstress_thread_whip" if owner == "warden" else "warden_brass_buckle"
+			_check(f.rule.quote_pool_hit(other_card, 1).bonus == 0,
+				id + " other hero cannot borrow Mitt"))
+
+		_unchanged(f, id + " target out of bounds 9", func():
+			_check(f.rule.quote_pool_hit(id, 9).bonus == 0,
+				id + " out of bounds target 9 rejected"))
+
+		_unchanged(f, id + " target out of bounds 0", func():
+			_check(f.rule.quote_pool_hit(id, 0).bonus == 0,
+				id + " target 0 rejected"))
+
+		_unchanged(f, id + " target slot 3 (pool plain strikes only hit 1-2)", func():
+			_check(f.rule.quote_pool_hit(id, 3).bonus == 0,
+				id + " target 3 outside to_positions rejected"))
+
+		_unchanged(f, id + " unknown card", func():
+			_check(f.rule.quote_pool_hit("fake_pool_card", 1).bonus == 0,
+				id + " unknown card rejected"))
+
+		var q: Dictionary = f.rule.quote_pool_hit(id, 1)
+		_check(not f.rule.consume_confirmed_hit(q, {"ok": false, "hits": []}),
+			id + " refused hit does not consume")
+
+		# Downed hero
+		var owner_pos := 1 if owner == "warden" else 2
+		_check(f.party.apply_damage(owner_pos, 40) and f.party.is_downed(owner_pos),
+			id + " owner downed")
+		_unchanged(f, id + " downed owner", func():
+			_check(f.rule.quote_pool_hit(id, 1).bonus == 0,
+				id + " downed owner cannot gain bonus"))
+
+		# Insufficient energy
+		var low := _pool_fight(id, owner)
+		_check(low.deck.try_spend_energy(3) and low.deck.energy == 0,
+			id + " real deck depleted")
+		_unchanged(low, id + " insufficient energy", func():
+			_check(low.rule.quote_pool_hit(id, 1).bonus == 0,
+				id + " zero energy never quotes"))
+
+		# Slain target
+		var slain := _pool_fight(id, owner)
+		_check(slain.gauge.apply_unravel(slain.enemies, 1, 4)
+			and slain.enemies.apply_damage(1, 60), id + " slain target")
+		_unchanged(slain, id + " slain target", func():
+			_check(slain.rule.quote_pool_hit(id, 1).bonus == 0,
+				id + " slain enemy never qualifies"))
+
+		# Unsewn patch
+		var none := _pool_fight(id, owner, 923, false)
+		_check(none.gauge.apply_unravel(none.enemies, 1, 4)
+			and none.rule.quote_pool_hit(id, 1).bonus == 0,
+			id + " owned but unsewn Frayfinder is not active")
+
+		# Alternative ARM sewn
+		_check(none.wardrobe.sew("pincushion_arm", owner, "ARM",
+			"pin", none.wardrobe.get_snapshot()).ok,
+			id + " genuine alternative ARM sewn")
+		_check(none.rule.quote_pool_hit(id, 1).bonus == 0,
+			id + " alternative ARM cannot grant Frayfinder")
+
+		# Illegal FROM position (Warden in slot 3)
+		if owner == "warden":
+			var shifted := _pool_fight(id, owner, 444, true, null, ["seamstress", "tinker", "warden"])
+			_check(shifted.gauge.apply_unravel(shifted.enemies, 1, 4), "shifted half gauge")
+			_unchanged(shifted, id + " Warden in back row", func():
+				_check(shifted.rule.quote_pool_hit(id, 1).bonus == 0,
+					id + " Warden in forbidden slot 3 never quotes"))
