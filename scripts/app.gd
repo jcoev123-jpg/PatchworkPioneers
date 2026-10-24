@@ -4282,6 +4282,16 @@ func _sync_shop_wardrobe() -> void:
 	_shop_patch_context = _shop_patch_snapshot()
 
 
+func _shop_patch_offer_text(offer: Dictionary) -> String:
+	if _shop_wardrobe == null:
+		return ""
+	var slot: Variant = _shop_wardrobe.get_snapshot().definitions.get(offer.id)
+	if slot not in RunPatchWardrobe.SLOTS:
+		return ""
+	return "%s | %s | %d gold%s" % [String(offer.id).capitalize(), slot,
+		offer.price, " | SOLD" if offer.sold else ""]
+
+
 func _refresh_shop_patches() -> void:
 	if not is_instance_valid(shop_patch_offers):
 		return
@@ -4289,11 +4299,13 @@ func _refresh_shop_patches() -> void:
 	shop_patch_offers.clear()
 	var stock: Array = shop_purchases.get_stock().trinkets
 	for offer in stock:
-		shop_patch_offers.add_item(_shop_offer_text(offer))
+		var text := _shop_patch_offer_text(offer)
+		shop_patch_offers.add_item(text if not text.is_empty() else "Patch unavailable")
 		shop_patch_offers.set_item_metadata(shop_patch_offers.item_count - 1, offer.id)
 	shop_patch_offers.select(selected)
 	shop_patch_buy_button.disabled = _shop_wardrobe == null or selected >= stock.size() \
-		or stock[selected].sold or session_gold < stock[selected].price
+		or stock[selected].sold or session_gold < stock[selected].price \
+		or _shop_patch_offer_text(stock[selected]).is_empty()
 
 
 func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
@@ -4314,10 +4326,11 @@ func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -
 		return
 	var offer: Dictionary = stock[index]
 	var hero: Dictionary = run_heroes[hero_index]
-	if not shop_patch_offers.get_item_metadata(index) is String \
+	var text := _shop_patch_offer_text(offer)
+	if text.is_empty() or not shop_patch_offers.get_item_metadata(index) is String \
 		or not shop_patch_heroes.get_item_metadata(hero_index) is String \
 		or shop_patch_offers.get_item_metadata(index) != offer.id \
-		or shop_patch_offers.get_item_text(index) != _shop_offer_text(offer) \
+		or shop_patch_offers.get_item_text(index) != text \
 		or shop_patch_heroes.get_item_metadata(hero_index) != hero.id \
 		or shop_patch_heroes.get_item_text(hero_index) != hero.id.capitalize():
 		return
