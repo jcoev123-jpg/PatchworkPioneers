@@ -978,6 +978,12 @@ func _run() -> void:
 		if app.shop_view == null or app.shop_visit == null:
 			break
 		var bed_id: int = _check_shop_backdrop()
+		var heading := app.shop_view.get_node_or_null("ShopTitle") as Label
+		_check(heading != null and heading.is_visible_in_tree()
+			and heading.text == "Shop - Floor %d" % app.run_map.get_node(id).floor
+			and not heading.text.contains(id) and heading.theme_type_variation == &"PatchHeading"
+			and _label_face_path(heading) == HEADING_FACE_PATH,
+			"real Shop names its committed floor with the inherited heading face and no raw ID")
 		var visit: RunShopVisit = app.shop_visit
 		var state := visit.get_state()
 		_check(app.run_map.get_route() == [fixture.fight, id] and state.visited_ids == [id]

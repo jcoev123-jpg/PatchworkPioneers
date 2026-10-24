@@ -127,6 +127,11 @@ func _run() -> void:
 		if app.rest_upgrade == null or not is_instance_valid(app.rest_upgrade_cards):
 			break
 		_bounds(app.rest_view)
+		var heading := app.rest_view.get_node_or_null("RestTitle") as Label
+		_check(heading != null and heading.is_visible_in_tree()
+			and heading.text == "Rest camp - Floor %d" % app.run_map.get_node(fixture.rest).floor
+			and heading.theme_type_variation == &"PatchHeading" and not heading.text.contains(fixture.rest),
+			"upgrade visit retains the readable committed Rest floor title")
 		_check(app.run_scraps == 1 and app.rest_stitch_button.disabled, "one earned scrap cannot enable Stitch")
 		var choices: OptionButton = app.rest_upgrade_cards
 		var visit: RunRestCardUpgrade = app.rest_upgrade

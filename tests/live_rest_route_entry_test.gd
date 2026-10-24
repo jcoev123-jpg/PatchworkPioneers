@@ -108,9 +108,14 @@ func _check_rest_forecast() -> void:
 	for index in range(oracle.forecasts.size()):
 		var forecast: Dictionary = oracle.forecasts[index]
 		var hero: Dictionary = oracle.heroes[index]
-		_check(lines[index] == "%s: HP %d/%d | %s: %d/%d (+%d HP)" % [forecast.id.capitalize(),
-			forecast.hp_before, hero.max_hp, "Revive" if forecast.revived else "Heal",
-			forecast.hp_after, hero.max_hp, forecast.hp_delta], "visible current/result/delta/revive matches oracle exactly")
+		var expected := "%s: HP %d/%d | " % [forecast.id.capitalize(), forecast.hp_before, hero.max_hp]
+		if forecast.revived:
+			expected += "Revive to %d/%d" % [forecast.hp_after, hero.max_hp]
+		elif forecast.hp_delta == 0:
+			expected += "Full health"
+		else:
+			expected += "Heal +%d to %d/%d" % [forecast.hp_delta, forecast.hp_after, hero.max_hp]
+		_check(lines[index] == expected, "visible current HP and compact service forecast match exactly")
 	for repeat in range(3):
 		app._refresh_rest_hp()
 		_check(app.rest_hp_label.text.split("\n") == lines, "repeated preview remains fresh and identical")
@@ -145,6 +150,8 @@ func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = fals
 		return false
 	if downed:
 		_check(app.party.apply_damage(3, 999) and app.party.is_downed(3), "fixture downs Tinker in actual combat")
+		_check(app.party.apply_damage(2, 1) and not app.party.is_downed(2),
+			"fixture wounds a living Seamstress for the numeric Heal forecast")
 	var before := _persistent()
 	app._continue_to_rest_route(null, weakref(app.run_map), null)
 	_check(_persistent() == before and app.route_view == null, "active combat cannot continue or heal")
@@ -317,8 +324,9 @@ func _run() -> void:
 		if app.rest_view == null:
 			break
 		var bed_id: int = _check_rest_backdrop()
-		var heading := app.rest_view.get_child(0) as Label
-		_check(heading != null and heading.text == "Rest camp" and heading.is_visible_in_tree()
+		var heading := app.rest_view.get_node_or_null("RestTitle") as Label
+		_check(heading != null and heading.text == "Rest camp - Floor %d" % app.run_map.get_node(rest_id).floor
+			and not heading.text.contains(rest_id) and heading.is_visible_in_tree()
 			and heading.theme_type_variation == &"PatchHeading", "real Rest has a player-facing themed camp title")
 		_check_rest_forecast()
 		if session == 0:
@@ -328,6 +336,11 @@ func _run() -> void:
 		_check(app.rest_hp_label.text.contains("Revive") == (session == 1), "downed visit revives; fresh living visit has no stale revival")
 		_check(RunRestHealPreview.preview(copy).forecasts[2].hp_delta == 0 if session != 1 else
 			RunRestHealPreview.preview(copy).forecasts[2].revived, "mounted cases cover full-HP cap and downed recovery")
+		_check(app.rest_hp_label.text.contains("Full health") if session != 1 else
+			app.rest_hp_label.text.contains("Revive to "), "mounted full-health and revive cases use compact wording")
+		if session == 1:
+			_check(copy.any(func(hero): return hero.hp > 0 and hero.hp < hero.max_hp)
+				and app.rest_hp_label.text.contains("Heal +"), "damaged living hero mounts a numeric Heal forecast")
 		before = _persistent()
 		old_route.call()
 		old_back.call()

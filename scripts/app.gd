@@ -3939,7 +3939,8 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	add_child(rest_view)
 	_mount_visit_backdrop("Rest", rest_view)
 	var heading := Label.new()
-	heading.text = "Rest camp"
+	heading.name = "RestTitle"
+	heading.text = "Rest camp - Floor %d" % run_map.get_current_floor()
 	heading.theme_type_variation = &"PatchHeading"
 	rest_view.add_child(heading)
 	rest_hp_label = Label.new()
@@ -4076,8 +4077,12 @@ func _refresh_rest_hp() -> void:
 		var line := "%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp]
 		if preview.get("ok") == true:
 			var forecast: Dictionary = preview.forecasts[index]
-			line += " | %s: %d/%d (+%d HP)" % ["Revive" if forecast.revived else "Heal",
-				forecast.hp_after, forecast.max_hp, forecast.hp_delta]
+			if forecast.revived:
+				line += " | Revive to %d/%d" % [forecast.hp_after, forecast.max_hp]
+			elif forecast.hp_delta == 0:
+				line += " | Full health"
+			else:
+				line += " | Heal +%d to %d/%d" % [forecast.hp_delta, forecast.hp_after, forecast.max_hp]
 		lines.append(line)
 	rest_hp_label.text = "\n".join(lines)
 
@@ -4131,7 +4136,9 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	add_child(shop_view)
 	_mount_visit_backdrop("Shop", shop_view)
 	var heading := Label.new()
-	heading.text = "Shop - " + id
+	heading.name = "ShopTitle"
+	heading.text = "Shop - Floor %d" % run_map.get_current_floor()
+	heading.theme_type_variation = &"PatchHeading"
 	shop_view.add_child(heading)
 	shop_label = Label.new()
 	shop_view.add_child(shop_label)
