@@ -252,7 +252,10 @@ func _valid_bindings() -> bool:
 		if hero.get("id") not in ["warden", "seamstress", "tinker"] \
 				or hero["id"] in ids:
 			return false
-		if hero["id"] == "warden" and hero.get("max_hp") != CombatStartingBlock.WARDEN_MAX_HP:
+		# Run carryover can lower his cap after a tear or raise it with a coat.
+		# Without a worn-patch projection, a raw over-cap roster is invalid.
+		if hero["id"] == "warden" and hero.get("max_hp", 0) > CombatStartingBlock.WARDEN_MAX_HP \
+				and not _party.has_meta("shop_patch_projection"):
 			return false
 		ids.append(hero["id"])
 	var preflight := CombatStatusTurnBatch.new()
