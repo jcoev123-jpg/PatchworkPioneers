@@ -64,6 +64,50 @@ const SELECTED_INK := Color("#9e3d30")
 ## hard-coding pixels. The visit column is reflowed to the left in _mount.
 const GALLERY_ANCHORS := {"left": 0.42, "right": 0.99, "top": 0.02, "bottom": 0.98}
 const VIEW_POSITION := Vector2(18, 22)
+## The shipped sewn button fabric the visit's own actions are sewn from. It is
+## the same nine-patch the reward panel uses for its buttons; no new art file.
+const ACTION_BUTTON_PATH := "res://assets/paper/ui/reward_button.png"
+## Unstretched sewn edge of that texture, matching the reward presentation's
+## 22px button edge.
+const ACTION_BUTTON_EDGE := 22
+## The head face the action rail wears: the shared master button variation, so
+## it reads as part of the same stitched set as the title actions.
+const ACTION_VARIATION := "PatchHeadingButton"
+const ACTION_FONT_SIZE := 20
+## Room the sewn edge takes before a label starts, and the small vertical
+## padding that keeps the existing 48-56px action rows from growing.
+const ACTION_PADDING_X := 26
+const ACTION_PADDING_Y := 6
+## Dark ink is the readable contrast on this light burlap; disabled and focus
+## keep their own distinct ink so every state stays legible.
+const ACTION_INK := Color("#241f1b")
+const ACTION_DISABLED_INK := Color("#38312a")
+const ACTION_FOCUS_INK := Color("#1d1815")
+## One tint per face, multiplied into the same fabric: a calmer normal, a
+## brighter hover, a visibly depressed press and a desaturated disabled face.
+const ACTION_TINTS := {
+	"normal": Color(0.94, 0.92, 0.88),
+	"hover": Color(1.0, 1.0, 1.0),
+	"pressed": Color(0.74, 0.68, 0.62),
+	"hover_pressed": Color(0.70, 0.64, 0.58),
+	"disabled": Color(0.78, 0.78, 0.80),
+}
+## The stitched flat fallback used when the fabric texture cannot be loaded:
+## cream/burlap fills with a dark sewn edge, never a default green slab.
+const ACTION_FALLBACK_FILLS := {
+	"normal": Color("#c8b092"),
+	"hover": Color("#ddc6a4"),
+	"pressed": Color("#a4886a"),
+	"hover_pressed": Color("#9d8064"),
+	"disabled": Color("#b3a897"),
+}
+const ACTION_FALLBACK_EDGE := Color("#5c4a3c")
+## Every styled face. "hover_pressed" is included so a held pointer shows the
+## fabric too instead of the shared theme's flat felt.
+const ACTION_SKIN_STATES := ["normal", "hover", "pressed", "hover_pressed",
+	"disabled", "focus"]
+const ACTION_INK_STATES := ["font_color", "font_hover_color", "font_pressed_color",
+	"font_hover_pressed_color", "font_focus_color"]
 ## A masked canonical dropdown keeps its data contract but no longer takes a
 ## dropdown row in the left action column. Its own theme minimum is collapsed
 ## (empty boxes, 1px text, 1px arrow) so the visit's vertical layout only pays a
@@ -101,6 +145,10 @@ var _upgrade: Button = null
 var _arrow_face: FontVariation = null
 var _arrow_heading_face: FontVariation = null
 var _arrow_glyphs: FontFile = null
+## One entry per real action Button whose theme this visit temporarily changed:
+## the button itself, its original variation and every override the skin wrote.
+## Restored on _teardown so the next visit is rebuilt exactly as the app made it.
+var _action_skin: Array[Dictionary] = []
 
 
 func _ready() -> void:
@@ -179,6 +227,7 @@ func _mount(kind: String, view: Control) -> void:
 	_selected_offer_row = -1
 	_collect_controls(view)
 	var inherited_focus := _prepare_controls()
+	_apply_action_skin_rail(view)
 	_reflow_view(view)
 	# The runtime visit view is appended after this scene child, so lift the
 	# gallery above it once per visit; nothing else in the app is reordered.
@@ -293,6 +342,190 @@ func _restore_controls() -> void:
 		selector.remove_theme_font_size_override("font_size")
 		selector.remove_theme_icon_override("arrow")
 	_masked.clear()
+
+
+# --- sewn action skin -----------------------------------------------------
+
+## Sew every existing direct action Button of the mounted visit from the reward
+## fabric. OptionButtons (the masked canonical selectors) and any control that is
+## not a plain Button child of the visit are left exactly as the app made them.
+## Presentation only: no callback, child, text, disabled flag, mouse filter or
+## focus neighbour is touched.
+func _apply_action_skin_rail(view: Control) -> void:
+	if view == null or not is_instance_valid(view):
+		return
+	for child in view.get_children():
+		if child is Button and not (child is OptionButton):
+			apply_action_skin(child)
+
+
+## Skin one real Button. Returns false for a freed control, an OptionButton or
+## any other non-button. Repeating the call updates the same record instead of
+## adding a second one, so no callback or visual child can accumulate.
+func apply_action_skin(button: Button, fabric_path := ACTION_BUTTON_PATH) -> bool:
+	if not is_instance_valid(button) or button is OptionButton:
+		return false
+	var record := _action_skin_record(button)
+	if record.is_empty():
+		record = _remember_action_button(button)
+		_action_skin.append(record)
+	var fabric := action_fabric(fabric_path)
+	button.theme_type_variation = ACTION_VARIATION
+	button.add_theme_font_size_override("font_size", ACTION_FONT_SIZE)
+	for state in ACTION_SKIN_STATES:
+		button.add_theme_stylebox_override(state, _action_face(state, fabric))
+	for entry in ACTION_INK_STATES:
+		button.add_theme_color_override(entry, ACTION_INK)
+	button.add_theme_color_override("font_disabled_color", ACTION_DISABLED_INK)
+	record["fabric"] = fabric_path if fabric != null else ""
+	return true
+
+
+## The sewn fabric as a nine-patch, or null when the image is unavailable so the
+## caller draws the legible stitched flat fallback instead.
+func action_fabric(fabric_path := ACTION_BUTTON_PATH) -> Texture2D:
+	if fabric_path.is_empty() or not ResourceLoader.exists(fabric_path):
+		return null
+	return load(fabric_path) as Texture2D
+
+
+func _action_face(state: String, fabric: Texture2D) -> StyleBox:
+	if state == "focus":
+		# A dark ink ring drawn just outside the sewn face. Transparent centre so
+		# it never paints over the action's caption, like the reward focus style.
+		var focus := StyleBoxFlat.new()
+		focus.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+		focus.draw_center = false
+		focus.border_color = ACTION_FOCUS_INK
+		focus.set_border_width_all(3)
+		focus.set_corner_radius_all(7)
+		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+			focus.set_expand_margin(side, 2.0)
+		return focus
+	var tint: Color = ACTION_TINTS.get(state, ACTION_TINTS["normal"])
+	var fill: Color = ACTION_FALLBACK_FILLS.get(state, ACTION_FALLBACK_FILLS["normal"])
+	if fabric != null:
+		var sewn := StyleBoxTexture.new()
+		sewn.texture = fabric
+		sewn.modulate_color = tint
+		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+			sewn.set_texture_margin(side, ACTION_BUTTON_EDGE)
+		_sew_content_margins(sewn)
+		return sewn
+	var flat := StyleBoxFlat.new()
+	flat.bg_color = fill
+	flat.border_color = ACTION_FALLBACK_EDGE
+	flat.set_border_width_all(3)
+	flat.set_corner_radius_all(7)
+	_sew_content_margins(flat)
+	return flat
+
+
+## The label sits inside the sewn edge horizontally but keeps the existing
+## compact row height: these are single-line action captions, not card faces.
+func _sew_content_margins(box: StyleBox) -> void:
+	box.set_content_margin(SIDE_LEFT, ACTION_PADDING_X)
+	box.set_content_margin(SIDE_RIGHT, ACTION_PADDING_X)
+	box.set_content_margin(SIDE_TOP, ACTION_PADDING_Y)
+	box.set_content_margin(SIDE_BOTTOM, ACTION_PADDING_Y)
+
+
+## The original variation plus every override this helper is about to write, so
+## a rebuilt visit gets the untouched app button back rather than a stale skin.
+func _remember_action_button(button: Button) -> Dictionary:
+	var record := {
+		"button": button,
+		"variation": button.theme_type_variation,
+		"fabric": "",
+		"styleboxes": {},
+		"colors": {},
+		"font_sizes": {},
+	}
+	for state in ACTION_SKIN_STATES:
+		record["styleboxes"][state] = _remember_stylebox(button, state)
+	for entry in ACTION_INK_STATES + ["font_disabled_color"]:
+		record["colors"][entry] = _remember_color(button, entry)
+	record["font_sizes"]["font_size"] = _remember_font_size(button, "font_size")
+	return record
+
+
+func _remember_stylebox(button: Button, state: String) -> Dictionary:
+	return {
+		"set": button.has_theme_stylebox_override(state),
+		"value": button.get_theme_stylebox(state) if button.has_theme_stylebox_override(state) else null,
+	}
+
+
+func _remember_color(button: Button, entry: String) -> Dictionary:
+	return {
+		"set": button.has_theme_color_override(entry),
+		"value": button.get_theme_color(entry) if button.has_theme_color_override(entry) else null,
+	}
+
+
+func _remember_font_size(button: Button, entry: String) -> Dictionary:
+	return {
+		"set": button.has_theme_font_size_override(entry),
+		"value": button.get_theme_font_size(entry) if button.has_theme_font_size_override(entry) else 0,
+	}
+
+
+func _action_skin_record(button: Button) -> Dictionary:
+	for record in _action_skin:
+		if is_instance_valid(record["button"]) and record["button"] == button:
+			return record
+	return {}
+
+
+## Undo every variation and override this visit wrote, so a closed or rebuilt
+## visit leaves the app's own action Buttons exactly as it mounted them.
+func _restore_action_skin() -> void:
+	for record in _action_skin:
+		var button = record["button"]
+		if not is_instance_valid(button):
+			continue
+		button.theme_type_variation = record["variation"]
+		for state in ACTION_SKIN_STATES:
+			var style: Dictionary = record["styleboxes"][state]
+			if style["set"]:
+				button.add_theme_stylebox_override(state, style["value"])
+			else:
+				button.remove_theme_stylebox_override(state)
+		for entry in ACTION_INK_STATES + ["font_disabled_color"]:
+			var color: Dictionary = record["colors"][entry]
+			if color["set"]:
+				button.add_theme_color_override(entry, color["value"])
+			else:
+				button.remove_theme_color_override(entry)
+		var font_size: Dictionary = record["font_sizes"]["font_size"]
+		if font_size["set"]:
+			button.add_theme_font_size_override("font_size", font_size["value"])
+		else:
+			button.remove_theme_font_size_override("font_size")
+	_action_skin.clear()
+
+
+## Public teardown for tests and audits: restore every touched action Button.
+func restore_action_skin() -> void:
+	_restore_action_skin()
+
+
+func is_action_skinned(button: Button) -> bool:
+	return not _action_skin_record(button).is_empty()
+
+
+## How many live action Buttons this visit currently holds a skin record for.
+func action_skin_count() -> int:
+	var count := 0
+	for record in _action_skin:
+		if is_instance_valid(record["button"]):
+			count += 1
+	return count
+
+
+## The fabric actually used for one skinned Button, or "" for the flat fallback.
+func action_skin_texture_path(button: Button) -> String:
+	return String(_action_skin_record(button).get("fabric", ""))
 
 
 ## Keep the validated visit controls on the left half; the gallery owns the
@@ -1462,6 +1695,7 @@ func _buttons(records: Array) -> Array[Button]:
 func _teardown() -> void:
 	_epoch += 1
 	_restore_controls()
+	_restore_action_skin()
 	if is_instance_valid(_gallery):
 		if _gallery.get_parent() == self:
 			remove_child(_gallery)
