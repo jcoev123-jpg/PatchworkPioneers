@@ -6,6 +6,10 @@ const MEND := {"id": "seamstress_mend", "owner_id": "seamstress", "cost": 1,
 	"from_positions": [2, 3], "effect": "ally_heal", "amount": 5}
 const STITCH := {"id": "seamstress_stitch_up", "owner_id": "seamstress", "cost": 1,
 	"from_positions": [1, 2, 3], "effect": "ally_block", "amount": 5}
+const BRACE_PLUS := {"id": "warden_brace_plus", "owner_id": "warden", "cost": 1,
+	"from_positions": [1, 2, 3], "effect": "self_block", "amount": 10}
+const STITCH_PLUS := {"id": "seamstress_stitch_up_plus", "owner_id": "seamstress", "cost": 1,
+	"from_positions": [1, 2, 3], "effect": "ally_block", "amount": 7}
 const TUNE := {"id": "tinker_tune_up", "owner_id": "tinker", "cost": 0,
 	"from_positions": [1, 2, 3], "effect": "draw", "amount": 1}
 
@@ -21,6 +25,7 @@ func _initialize() -> void:
 	_test_replay()
 	_test_spare_spool()
 	_test_bound_rejections()
+	_test_hemguard_cuff()
 	for failure in failures:
 		printerr(failure)
 	print("combat_support_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -436,3 +441,165 @@ func _test_bound_rejections() -> void:
 			_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, w.owned, w.scraps, w.gold, w.cards, w), "reconcile authority before recovery")
 		_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "fresh binding recovers explicitly")
 		_check(c.service.play_support(c.deck, c.party, MEND, 1) and c.party.get_hero(1).hp == 35, "fresh valid binding restores seven heal")
+
+
+func _cuff_fixture(mode: String, card_id: String = "warden_brace", seed_value: int = 42) -> Dictionary:
+	var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in definitions:
+		_check(hero.max_hp == floor(hero.max_hp), "authored HP is integral")
+		hero.max_hp = int(hero.max_hp)
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(1).id == "warden" and party.get_hero(2).id == "seamstress", "authored Warden and Seamstress exist")
+	var torn := RunTornMending.new(party.get_heroes())
+	var slots: Array = [
+		{"id": "stitched_badge", "slot": "HEAD"},
+		{"id": "spare_spool", "slot": "ARM"},
+		{"id": "hemguard_cuff", "slot": "ARM"},
+	]
+	var owned: Array = []
+	if mode != "absent":
+		owned.append("hemguard_cuff")
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, slots, 5)
+	_check(wardrobe.is_valid() and torn.is_valid(), "valid real patch ledgers for cuff")
+	if mode not in ["absent", "unsewn"]:
+		var wearer := "warden"
+		if mode in ["sewn_seamstress", "target_cuff"]:
+			wearer = "seamstress"
+		elif mode == "wrong":
+			wearer = "tinker"
+		_check(wardrobe.sew("hemguard_cuff", wearer, "ARM", "cuff-sew", wardrobe.get_snapshot()).ok, "real Cuff sew")
+	if mode == "moved":
+		_check(wardrobe.start_rest("rest", wardrobe.get_snapshot()).ok, "Rest opens for move")
+		_check(wardrobe.re_sew("hemguard_cuff", "warden", "seamstress", "rest", "cuff-move", wardrobe.get_snapshot()).ok, "real Cuff moves to seamstress")
+		_check(wardrobe.end_rest("rest", wardrobe.get_snapshot()).ok, "Rest closes")
+	if mode == "torn":
+		var start: Array = torn.read_state().heroes
+		var finish: Array = start.duplicate(true)
+		finish[0].hp = 0
+		_check(torn.observe_battle_end("fight", start, finish).ok, "actual warden tear")
+		var state := wardrobe.get_snapshot()
+		_check(wardrobe.refresh_run_context(torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "wardrobe reconciles tear")
+		party._heroes.assign(torn.read_state().heroes)
+	var resolver := CombatSupportCards.new()
+	if mode != "unbound":
+		_check(resolver.bind_patch_wardrobe(wardrobe, torn), "explicit real Cuff binding")
+	var deck := _deck([card_id], seed_value)
+	return {"party": party, "deck": deck, "service": resolver, "wardrobe": wardrobe, "torn": torn}
+
+
+func _cuff_sequence(seed_value: int) -> Array:
+	var c := _cuff_fixture("sewn_warden", "warden_brace", seed_value)
+	_check(c.party.gain_block(1, 6), "opening six Block fixture")
+	var trace: Array = [_snapshot(c.deck, c.party)]
+	_bound_reject(c, BRACE, 2, "self block rejects wrong target before cuff play")
+	_check(c.service.play_support(c.deck, c.party, BRACE, 0), "bound canonical Brace commits with Cuff")
+	_check(c.party.get_hero(1).block == 15 and c.deck.energy == 2 and c.deck.hand.is_empty()
+		and c.deck.discard_pile == ["warden_brace"], "actual fifteen Block (6+7+2), one energy and discard")
+	trace.append(_snapshot(c.deck, c.party))
+	return trace
+
+
+func _test_hemguard_cuff() -> void:
+	_check(StarterCards.new().get_definition("warden_brace").effects.block == BRACE.amount, "canonical seven-block precondition")
+	_check(StarterCards.new().get_definition("warden_brace_plus").effects.block == BRACE_PLUS.amount, "canonical ten-block precondition")
+	_check(StarterCards.new().get_definition("seamstress_stitch_up").effects.block == STITCH.amount, "canonical five-block precondition")
+	_check(StarterCards.new().get_definition("seamstress_stitch_up_plus").effects.block == STITCH_PLUS.amount, "canonical seven-block stitch plus precondition")
+
+	for seed_value in [0, 42, 987654]:
+		_check(_cuff_sequence(seed_value) == _cuff_sequence(seed_value), "bound cuff seeded replay")
+
+	# AC1: Brace grants 9 Block (7+2) and Brace+ grants 12 (10+2) atop existing 6 opening Block
+	var c := _cuff_fixture("sewn_warden", "warden_brace")
+	_check(c.party.gain_block(1, 6), "Warden opening block setup")
+	var before := _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, BRACE, 0), "Brace commits with cuff")
+	_check(c.party.get_hero(1).block == 15 and c.deck.energy == 2 and c.deck.hand.is_empty()
+		and c.deck.discard_pile == ["warden_brace"], "Brace grants 9 (7+2) atop opening 6 Block")
+	_check(c.deck._rng.state == before[8], "run RNG unchanged after Brace play")
+
+	c = _cuff_fixture("sewn_warden", "warden_brace_plus")
+	_check(c.party.gain_block(1, 6), "Warden opening block setup for Brace+")
+	before = _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, BRACE_PLUS, 0), "Brace+ commits with cuff")
+	_check(c.party.get_hero(1).block == 18 and c.deck.energy == 2 and c.deck.hand.is_empty()
+		and c.deck.discard_pile == ["warden_brace_plus"], "Brace+ grants 12 (10+2) atop opening 6 Block")
+	_check(c.deck._rng.state == before[8], "run RNG unchanged after Brace+ play")
+
+	# Unworn, wrong-wearer, unsewn, moved, absent, unbound grant no bonus (base 7 Block)
+	for mode in ["absent", "unsewn", "wrong", "moved", "unbound"]:
+		c = _cuff_fixture(mode, "warden_brace")
+		before = _snapshot(c.deck, c.party)
+		_check(c.service.play_support(c.deck, c.party, BRACE, 0), mode + " remains ordinary Brace")
+		_check(_snapshot(c.deck, c.party) == _expected(before, BRACE, 1) and c.party.get_hero(1).block == 7,
+			mode + " exactly seven Block, normal piles/energy/RNG")
+
+	# AC2: Stitch Up grants 7 Block (5+2) and Stitch Up+ grants 9 (7+2) only to selected ally
+	for target in [1, 2, 3]:
+		c = _cuff_fixture("sewn_seamstress", "seamstress_stitch_up")
+		before = _snapshot(c.deck, c.party)
+		_check(c.service.play_support(c.deck, c.party, STITCH, target), "Stitch Up commits with cuff on Seamstress targeting " + str(target))
+		_check(c.party.get_hero(target).block == 7, "Stitch Up grants exactly 7 (5+2) Block to recipient " + str(target))
+		for other in [1, 2, 3]:
+			if other != target:
+				_check(c.party.get_hero(other).block == 0, "non-target hero " + str(other) + " gains no Block")
+		_check(c.deck.energy == 2 and c.deck.hand.is_empty() and c.deck.discard_pile == ["seamstress_stitch_up"], "one energy and discard")
+		_check(c.deck._rng.state == before[8], "run RNG unchanged after Stitch Up")
+
+	c = _cuff_fixture("sewn_seamstress", "seamstress_stitch_up_plus")
+	before = _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, STITCH_PLUS, 1), "Stitch Up+ commits with cuff on Seamstress")
+	_check(c.party.get_hero(1).block == 9 and c.deck.energy == 2, "Stitch Up+ grants 9 (7+2) Block only to recipient")
+	_check(c.deck._rng.state == before[8], "run RNG unchanged after Stitch Up+")
+
+	# AC2: Cuff on target rather than owner gives NO bonus
+	c = _cuff_fixture("sewn_warden", "seamstress_stitch_up")
+	before = _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, STITCH, 1), "Stitch Up targeting cuff wearer Warden")
+	_check(c.party.get_hero(1).block == 5, "cuff on target rather than card owner grants NO bonus (base 5)")
+	_check(_snapshot(c.deck, c.party) == _expected(before, STITCH, 1), "exact standard 5-block transition")
+
+	# AC2: Unrelated cards preserve exact behavior
+	c = _cuff_fixture("sewn_warden", "seamstress_mend")
+	_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28, "wounded ally fixture")
+	before = _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, MEND, 1), "Mend with cuff sewn on Warden")
+	_check(c.party.get_hero(1).hp == 33, "Mend heals exactly base 5 (not 7)")
+	_check(_snapshot(c.deck, c.party) == _expected(before, MEND, 1), "exact 5-heal transition")
+
+	c = _cuff_fixture("sewn_warden", "tinker_tune_up")
+	before = _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, TUNE, 0), "Tune Up with cuff on Warden")
+	_check(c.deck.energy == 3 and c.deck.discard_pile == ["tinker_tune_up"], "Tune Up exact behavior preserved")
+
+	# Rejections
+	c = _cuff_fixture("sewn_warden", "warden_brace")
+	for change in [{"amount": 9}, {"amount": 0}, {"amount": 999}, {"owner_id": "seamstress"},
+		{"id": "fake_brace"}, {"from_positions": [2, 3]}, {"cost": 0}, {"effect": "self_heal"}]:
+		var forged := BRACE.duplicate(true)
+		for key in change:
+			forged[key] = change[key]
+		if change.has("id"):
+			c.deck.hand.append("fake_brace")
+		_bound_reject(c, forged, 0, "spoofed brace " + str(change))
+
+	# Block overflow with cuff bonus
+	c = _cuff_fixture("sewn_warden", "warden_brace")
+	_check(c.party.gain_block(1, CombatParty.MAX_INT - 8), "Warden Block almost full")
+	_bound_reject(c, BRACE, 0, "cuff Block overflow rejects before spending")
+
+	# Torn wearer in ledger cannot play or grant bonus
+	c = _cuff_fixture("torn", "warden_brace")
+	_check(c.party.is_downed(1) and c.torn.read_state().tear_counts.warden == 1, "Warden truly torn")
+	_bound_reject(c, BRACE, 0, "torn Warden cannot play Brace")
+
+	# Divergent state (Lesson 37): fresh combat party with positive HP while run ledger has Warden torn
+	c = _cuff_fixture("torn", "warden_brace")
+	var fresh_heroes: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in fresh_heroes:
+		hero.max_hp = int(hero.max_hp)
+	c.party = CombatParty.new(fresh_heroes)
+	_check(c.party.is_valid() and not c.party.is_downed(1) and c.torn.read_state().heroes[0]["hp"] == 0,
+		"divergent fixture: party alive, torn ledger zero HP")
+	_check(c.service.play_support(c.deck, c.party, BRACE, 0), "divergent party plays Brace")
+	_check(c.party.get_hero(1).block == 7, "torn wearer in run ledger receives base 7 Block, NO cuff bonus")
+

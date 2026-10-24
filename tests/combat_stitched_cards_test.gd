@@ -23,6 +23,8 @@ func _initialize() -> void:
 	_test_pool_energy_failures()
 	_test_pool_energy_replay()
 	_test_spool_rejections()
+	_test_hemguard_cuff()
+	_test_cuff_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -784,4 +786,189 @@ func _test_pool_energy_replay() -> void:
 				_check(_pool_energy_sequence(id, reverse, seed_value)
 					== _pool_energy_sequence(id, reverse, seed_value),
 					id + " order " + str(reverse) + ": same-seed Rest-to-combat replay")
+
+
+func _bind_cuff(c: Dictionary, mode: String = "sewn_warden") -> void:
+	var slots: Array = [
+		{"id": "stitched_badge", "slot": "HEAD"},
+		{"id": "spare_spool", "slot": "ARM"},
+		{"id": "hemguard_cuff", "slot": "ARM"}
+	]
+	var owned: Array = []
+	if mode != "absent":
+		owned.append("hemguard_cuff")
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), owned, slots, 5)
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	_check(c.wardrobe.is_valid() and c.torn.is_valid(), "real valid stitched cuff authorities")
+	if mode not in ["absent", "unsewn"]:
+		var wearer := "warden"
+		if mode in ["sewn_seamstress", "target_cuff"]:
+			wearer = "seamstress"
+		elif mode == "wrong":
+			wearer = "tinker"
+		_check(c.wardrobe.sew("hemguard_cuff", wearer, "ARM", "stitched-cuff-sew", c.wardrobe.get_snapshot()).ok, "stitched fixture sews Cuff")
+	if mode == "moved":
+		_check(c.wardrobe.start_rest("rest", c.wardrobe.get_snapshot()).ok, "real Rest opens")
+		_check(c.wardrobe.re_sew("hemguard_cuff", "warden", "seamstress", "rest", "cuff-move", c.wardrobe.get_snapshot()).ok, "stitched Cuff moves to seamstress")
+		_check(c.wardrobe.end_rest("rest", c.wardrobe.get_snapshot()).ok, "real Rest closes")
+	if mode == "torn":
+		var start: Array = c.torn.read_state().heroes
+		var finish := start.duplicate(true)
+		finish[0].hp = 0
+		_check(torn_observe(c.torn, start, finish), "actual stitched Warden tear")
+		var state: Dictionary = c.wardrobe.get_snapshot()
+		_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "stitched wardrobe refreshes torn Warden")
+		c.party._heroes.assign(c.torn.read_state().heroes)
+	if mode != "unbound":
+		_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "stitched explicit Cuff binding")
+
+
+func torn_observe(torn: RunTornMending, start: Array, finish: Array) -> bool:
+	return torn.observe_battle_end("tear", start, finish).ok
+
+
+func _cuff_sequence(seed_value: int, reverse: bool) -> Array:
+	var c := _fixture(PRICK if reverse else "warden_brace", "warden_brace" if reverse else PRICK, seed_value)
+	_bind_cuff(c, "sewn_warden")
+	var ledger := [c.wardrobe.get_snapshot(), c.torn.read_state()]
+	var before := _snapshot(c)
+	_reject(c, 0, 0 if reverse else 99, "later half fails after Brace or Prick")
+	var expected := before.duplicate(true)
+	expected[1] = []
+	expected[2] = [c.id]
+	expected[3] = 1
+	expected[6][0].block = 9
+	expected[7][0].hp -= 3
+	expected[7][0]["statuses"] = {"bleed": 3}
+	_check(_play(c, 1 if reverse else 0, 0 if reverse else 1).ok, "bound Cuff composite commits either order")
+	_check(_snapshot(c) == expected, "nine real Block (7+2), 3 Prick damage, exact one charge/discard and no RNG draw")
+	_check(ledger == [c.wardrobe.get_snapshot(), c.torn.read_state()], "composite leaves authoritative ledgers pristine")
+	return [before, _snapshot(c), ledger]
+
+
+func _test_hemguard_cuff() -> void:
+	for seed_value in [0, 83, 9741]:
+		for reverse in [false, true]:
+			_check(_cuff_sequence(seed_value, reverse) == _cuff_sequence(seed_value, reverse), "bound Cuff composite exact seeded replay in each order")
+
+	# AC3: Brace + Prick in both orders with Cuff on Warden
+	for reverse in [false, true]:
+		for mode in ["absent", "unsewn", "wrong", "moved", "unbound", "sewn_warden"]:
+			var c := _fixture(PRICK if reverse else "warden_brace", "warden_brace" if reverse else PRICK)
+			_bind_cuff(c, mode)
+			var before := _snapshot(c)
+			var expected := before.duplicate(true)
+			expected[1] = []
+			expected[2] = [c.id]
+			expected[3] = 1
+			expected[6][0].block = 9 if mode == "sewn_warden" else 7
+			expected[7][0].hp -= 3
+			expected[7][0]["statuses"] = {"bleed": 3}
+			_check(_play(c, 1 if reverse else 0, 0 if reverse else 1).ok, mode + " Brace/Prick commits both orders")
+			_check(_snapshot(c) == expected, mode + " exact 7 or 9 Block, piles/energy/RNG pristine")
+
+	# AC3: Upgraded half warden_brace_plus retains upgrade and receives +2 (10+2 = 12)
+	for reverse in [false, true]:
+		var c := _fixture(PRICK if reverse else "warden_brace_plus", "warden_brace_plus" if reverse else PRICK)
+		_bind_cuff(c, "sewn_warden")
+		var before := _snapshot(c)
+		var expected := before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].block = 12
+		expected[7][0].hp -= 3
+		expected[7][0]["statuses"] = {"bleed": 3}
+		_check(_play(c, 1 if reverse else 0, 0 if reverse else 1).ok, "Brace+/Prick commits both orders with 12 Block")
+		_check(_snapshot(c) == expected, "exact 12 Block for Brace+ with Cuff")
+
+	# AC3: Seamstress Stitch Up with Cuff on Seamstress
+	for reverse in [false, true]:
+		var c := _fixture(POP if reverse else "seamstress_stitch_up", "seamstress_stitch_up" if reverse else POP)
+		_bind_cuff(c, "sewn_seamstress")
+		var before := _snapshot(c)
+		var expected := before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].block = 7
+		expected[7][1].hp -= 8
+		expected[8] = true
+		_check(_play(c, 2 if reverse else 1, 1 if reverse else 2).ok, "Stitch Up/Pop commits with Cuff on Seamstress")
+		_check(_snapshot(c) == expected, "exact 7 Block (5+2) for Stitch Up on ally with Cuff on Seamstress")
+
+	# AC3: Upgraded seamstress_stitch_up_plus with Cuff on Seamstress (7+2 = 9)
+	for reverse in [false, true]:
+		var c := _fixture(POP if reverse else "seamstress_stitch_up_plus", "seamstress_stitch_up_plus" if reverse else POP)
+		_bind_cuff(c, "sewn_seamstress")
+		var before := _snapshot(c)
+		var expected := before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].block = 9
+		expected[7][1].hp -= 8
+		expected[8] = true
+		_check(_play(c, 2 if reverse else 1, 1 if reverse else 2).ok, "Stitch Up+/Pop commits with 9 Block")
+		_check(_snapshot(c) == expected, "exact 9 Block for Stitch Up+ with Cuff")
+
+	# AC3: Cuff on target rather than owner gives NO bonus
+	for reverse in [false, true]:
+		var c := _fixture(POP if reverse else "seamstress_stitch_up", "seamstress_stitch_up" if reverse else POP)
+		_bind_cuff(c, "sewn_warden")
+		var before := _snapshot(c)
+		var expected := before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].block = 5
+		expected[7][1].hp -= 8
+		expected[8] = true
+		_check(_play(c, 2 if reverse else 1, 1 if reverse else 2).ok, "Stitch Up targeting cuff wearer Warden gives base 5 Block")
+		_check(_snapshot(c) == expected, "exact 5 Block when cuff is on target rather than card owner")
+
+
+func _test_cuff_rejections() -> void:
+	# Torn wearer cannot play composite
+	var torn := _fixture("warden_brace", PRICK)
+	_bind_cuff(torn, "torn")
+	_check(torn.party.is_downed(1) and torn.torn.read_state().tear_counts.warden == 1, "stitched Warden truly torn")
+	_reject(torn, 0, 1, "torn Warden cannot play composite")
+
+	# Stale / drifted wardrobe ledger fails closed
+	for mode in ["null", "invalid", "stale_wardrobe", "stale_torn", "drift"]:
+		var c := _fixture("warden_brace", PRICK)
+		_bind_cuff(c)
+		var w: Dictionary = c.wardrobe.get_snapshot()
+		var t: Dictionary = c.torn.read_state()
+		match mode:
+			"null":
+				_check(not c.service.bind_patch_wardrobe(null, c.torn), "stitched null cuff binding rejects")
+			"invalid":
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, RunTornMending.new()), "stitched invalid authority rejects")
+			"stale_wardrobe":
+				w.scraps += 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t), "stitched stale wardrobe snapshot rejects")
+			"stale_torn":
+				t.heroes[0].hp -= 1
+				_check(not c.service.bind_patch_wardrobe(c.wardrobe, c.torn, w, t), "stitched stale torn snapshot rejects")
+			"drift":
+				_check(c.wardrobe.start_rest("later", w).ok, "stitched bound ledger actually advances")
+		var ledgers := [c.wardrobe.get_snapshot(), c.torn.read_state()]
+		_reject(c, 0, 1, mode + " stitched cuff binding fails closed")
+		_check(ledgers == [c.wardrobe.get_snapshot(), c.torn.read_state()], "rejected composite preserves ledgers")
+
+	# Block overflow rollback
+	var c := _fixture("warden_brace", PRICK)
+	_bind_cuff(c)
+	_check(c.party.gain_block(1, CombatParty.MAX_INT - 8), "Warden Block almost full")
+	_reject(c, 0, 1, "first Brace 9-block overflow rejects composite before Prick damage")
+
+	# Missing second target rolls back first half Block
+	c = _fixture("warden_brace", PRICK)
+	_bind_cuff(c)
+	_reject(c, 0, 0, "missing second Prick target rolls back first Brace 9-block")
+	_check(_play(c, 0, 1).ok and c.party.get_hero(1).block == 9 and c.deck.energy == 1,
+		"retry after missing target commits once with 9 Block")
+
 
