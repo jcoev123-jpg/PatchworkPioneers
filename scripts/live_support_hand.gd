@@ -580,10 +580,14 @@ func _sync_battle() -> void:
 			if app._current_carryover_fight() and carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
 				_play.bind_patch_wardrobe(carry._wardrobe, carry.torn, state, carry.torn.read_state())
 				_heal_cards.bind_patch_wardrobe(carry._wardrobe, carry.torn, state, carry.torn.read_state())
+				# The pure-Block resolver receives the same authenticated projection, so a
+				# sewn ARM cuff applies to the exact live shared-hand card play.
+				_block_cards.bind_patch_wardrobe(carry._wardrobe, carry.torn, state, carry.torn.read_state())
 			else:
 				# Explicit invalid run authority must never fall back to unbound play.
 				_play.bind_patch_wardrobe(null, null)
 				_heal_cards.bind_patch_wardrobe(null, null)
+				_block_cards.bind_patch_wardrobe(null, null)
 		_battle.tree_exiting.connect(_clear, CONNECT_ONE_SHOT)
 		var hud := _battle.find_child("SupportHUD", true, false) as HBoxContainer
 		energy_orb = EnergyOrb.new()

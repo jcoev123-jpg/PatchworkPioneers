@@ -2,7 +2,9 @@ extends SceneTree
 ## Mounted shared-hand coverage for the five resolved Warden pure-Block pool cards.
 ## Real scene, real CombatDeck draw, real hand panels and authoritative battle state.
 ## Expected Block is derived independently from the authored catalog, never from the
-## resolver's return value.
+## resolver's return value. The routed cases admit a genuine Fight through the authored
+## opening book with the run's real RunTornCarryover, so a sewn M05 Hemguard Cuff is
+## applied by the live shared-hand transaction, never by a detached fake effect.
 
 const INSTRUCTION := "Click or focus and press Enter / Space to play"
 const REQUIRED_BASE_IDS := [
@@ -18,6 +20,10 @@ var checks := 0
 var app
 var presenter
 var catalog := WardenPoolCards.new()
+## The seeded authored opening book that offers two connected Fights, resolved once.
+var opening_seed := -1
+var opening_fight := ""
+var next_fight := ""
 
 
 func _initialize() -> void:
@@ -136,7 +142,10 @@ func _effect_phrases(definition: Dictionary) -> Array[String]:
 	return phrases
 
 
-func _blocks_after(heroes: Array, definition: Dictionary, target_position: int) -> Dictionary:
+## The Hemguard Cuff bonus is an authored +N on the card's own positive "block"
+## field: it never touches "block_all" or "other_ally_block" (brief M05 semantics).
+func _blocks_after(heroes: Array, definition: Dictionary, target_position: int,
+		bonus: int = 0) -> Dictionary:
 	var effects: Dictionary = definition.get("effects", {})
 	var blocks := {}
 	var owner_position := 0
@@ -146,7 +155,7 @@ func _blocks_after(heroes: Array, definition: Dictionary, target_position: int) 
 			owner_position = int(hero.position)
 	match definition.get("target_kind", ""):
 		"self":
-			blocks[owner_position] += int(effects["block"])
+			blocks[owner_position] += int(effects["block"]) + bonus
 			if effects.has("other_ally_block"):
 				for hero in heroes:
 					if hero.id != "warden" and int(hero.hp) > 0:
@@ -156,13 +165,25 @@ func _blocks_after(heroes: Array, definition: Dictionary, target_position: int) 
 				if int(hero.hp) > 0:
 					blocks[hero.position] += int(effects["block_all"])
 		"ally_single":
-			blocks[target_position] += int(effects["block"])
+			blocks[target_position] += int(effects["block"]) + bonus
 	return blocks
+
+
+## Block each hero actually gained from the committed card, in hero-slot order.
+func _party_block_gain(before: Array) -> Array:
+	var values := []
+	for index in range(before.size()):
+		values.append(int(app.party.get_hero(index + 1).block) - int(before[index].block))
+	return values
 
 
 ## Independent catalog-derived expectation: only authored Block recipients differ;
 ## every other field on every hero, enemy, pile, intent and RNG stays identical.
-func _assert_success(card_id: String, before: Array, target_position: int, stage: String) -> void:
+## `bonus` is the authenticated cuff amount the live resolver may add to the card's
+## own "block" field only; `expected_blocks` is the exact Block each living hero
+## gained from the committed card, if given.
+func _assert_success(card_id: String, before: Array, target_position: int, stage: String,
+		bonus: int = 0, expected_blocks: Array = []) -> void:
 	var definition: Dictionary = catalog.get_definition(card_id)
 	var cost: int = int(definition.get("cost", -1))
 	_check(app.deck.energy == int(before[3]) - cost, "exactly one authored energy payment: " + stage)
@@ -176,7 +197,7 @@ func _assert_success(card_id: String, before: Array, target_position: int, stage
 		"played card lands in discard once: " + stage)
 	_check(app.deck.draw_pile == before[0], "draw pile unchanged: " + stage)
 	_check(app.deck.turn_active == before[4], "turn state unchanged: " + stage)
-	var blocks := _blocks_after(before[5], definition, target_position)
+	var blocks := _blocks_after(before[5], definition, target_position, bonus)
 	for index in range(before[5].size()):
 		var was: Dictionary = before[5][index]
 		var now: Dictionary = app.party.get_hero(index + 1)
@@ -184,6 +205,10 @@ func _assert_success(card_id: String, before: Array, target_position: int, stage
 		expected.block = blocks[was.position]
 		_check(now == expected, "only authored Block recipients changed: %s slot %d" % [stage, index + 1])
 		_check(now.block == blocks[was.position], "exact catalog Block total: %s slot %d" % [stage, index + 1])
+	if not expected_blocks.is_empty():
+		_check(_party_block_gain(before[5]) == expected_blocks,
+			"exact live party Block gain %s (live %s): %s" % [
+				str(expected_blocks), str(_party_block_gain(before[5])), stage])
 	_check(app.enemies.get_enemies() == before[6], "enemy roster unchanged: " + stage)
 	_check(app.enemy_attacks == before[7], "enemy attacks unchanged: " + stage)
 	_check(app.enemy_intents.get_intents() == before[8], "enemy intents unchanged: " + stage)
@@ -502,6 +527,320 @@ func _starter_handler_intact() -> void:
 	await _return()
 
 
+## The seeded authored opening book that offers a Fight and then a connected
+## onward Fight, found once (the seed search only reads generated maps).
+func _opening_choice() -> bool:
+	if opening_seed > 0:
+		return true
+	for number in range(1, 400):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = number
+		var generated := RunMap.new()
+		generated.generate(rng)
+		for node_id in generated.get_legal_choices():
+			if generated.get_node(node_id).get("type", "") != "Fight":
+				continue
+			if not generated.choose_node(node_id):
+				continue
+			for next_id in generated.get_legal_choices():
+				if generated.get_node(next_id).get("type", "") == "Fight":
+					opening_seed = number
+					opening_fight = node_id
+					next_fight = next_id
+					return true
+	return false
+
+
+## Press a real mounted route control, the same connected admission a click follows.
+func _choose_route_node(node_id: String) -> bool:
+	var action: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == node_id:
+			action = button
+			break
+	_check(is_instance_valid(action) and action.is_visible_in_tree() and not action.disabled,
+		"real route chooser mounts the connected node: " + node_id)
+	if not is_instance_valid(action):
+		return false
+	action.pressed.emit()
+	await _frames()
+	return true
+
+
+## Settle the genuine opening Fight through the run's real reward and route
+## services, so a later Fight is admitted from a real between-fights route.
+func _settle_opening_fight() -> bool:
+	var defeated := true
+	for enemy in app.enemies.get_enemies():
+		defeated = app.enemies.apply_damage(int(enemy.position), 99999) and defeated
+	_check(defeated, "opening Fight enemies are genuinely defeated")
+	app._observe_battle_result()
+	await _frames()
+	_check(app._battle_closed and app.reward_buttons.size() >= 4,
+		"real opening Fight victory mounts its reward claim")
+	if app.reward_buttons.size() < 4:
+		return false
+	app.reward_buttons[3].pressed.emit()
+	await _frames()
+	_check(is_instance_valid(app.continue_button) and app.fight_reward_claimed,
+		"actual routed reward service accepts the skip receipt")
+	if not is_instance_valid(app.continue_button):
+		return false
+	app.continue_button.pressed.emit()
+	await _frames()
+	var ready: bool = is_instance_valid(app.route_view) \
+		and app.run_map.get_legal_choices().has(next_fight)
+	_check(ready, "first reward settles and the connected Fight is selectable")
+	return ready
+
+
+## Prior-earned M05 ownership plus the genuine sewn ARM ledger, built from the
+## run's real inventory context and bound with the carryover's own API.
+func _sew_run_cuff(wearer: String) -> bool:
+	_check(not app.run_trinkets.has("hemguard_cuff"),
+		"authentic run does not own the M05 cuff yet")
+	app.run_trinkets.append("hemguard_cuff")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		[{"id": "hemguard_cuff", "slot": "ARM"}], app.run_scraps,
+		app.session_gold, app.run_deck, app.run_seed, true)
+	var sewn: Dictionary = wardrobe.sew("hemguard_cuff", wearer, "ARM",
+		"lane2-live-cuff-" + wearer, wardrobe.get_snapshot())
+	_check(wardrobe.is_valid() and sewn.get("ok", false),
+		"real prior-earned cuff is sewn to the %s ARM slot" % wearer)
+	var carry := app.party_carryover as RunTornCarryover
+	var bound: bool = carry != null \
+		and carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()) \
+		and carry._wardrobe == wardrobe
+	_check(bound, "run carryover authentically owns this sewn ARM ledger")
+	return wardrobe.is_valid() and sewn.get("ok", false) and bound
+
+
+## AC1/AC2 live route: title -> seeded authored opening book -> real Fight(s)
+## admitted with the run's genuine RunTornCarryover. `prior_earned` settles the
+## opening Fight first, owns the cuff between fights and admits the connected
+## Fight naturally, so the resolver binds at ordinary battle synchronization; a
+## single-fight case sews at the mounted battle's documented rebind boundary.
+## No detached fake effect is injected anywhere.
+func _enter_routed(card_id: String, wearer: String, prior_earned: bool = false) -> bool:
+	_check(app.deck == null and app.run_map == null, "routed case starts at a clean title")
+	if not _opening_choice():
+		_check(false, "seeded authored opening book offers two connected Fights")
+		return false
+	app.run_seed = opening_seed
+	await _mouse(app.route_button)
+	var carry := app.party_carryover as RunTornCarryover
+	var ready: bool = app.deck == null and app.run_map != null and carry != null \
+		and app.run_map.get_legal_choices().has(opening_fight)
+	_check(ready, "real title opens the seeded route with a genuine torn carryover")
+	if not ready:
+		return false
+	_check(app._can_choose_connected_route(), "opening Fight is choosable on the connected route")
+	_check(app._unfought_run(), "opening Fight belongs to a genuine unfought run")
+	_check(carry.create_next_fight_party() != null,
+		"the untouched ledger projects the opening fight party")
+	if not await _choose_route_node(opening_fight):
+		return false
+	var accepted: bool = app._current_carryover_fight() and app.deck is CombatDeck \
+		and app.party_carryover == carry
+	_check(accepted, "real opening Fight admits with the genuine carryover")
+	if not accepted:
+		return false
+	var node_id := opening_fight
+	if prior_earned:
+		if not await _settle_opening_fight():
+			return false
+		if wearer != "" and not _sew_run_cuff(wearer):
+			return false
+		if not await _choose_route_node(next_fight):
+			return false
+		node_id = next_fight
+	elif wearer != "":
+		if not _sew_run_cuff(wearer):
+			return false
+		# The mounted battle's own synchronization boundary rebinds the resolvers,
+		# so the live hand runs against the newly authenticated projection.
+		presenter._clear()
+		presenter._sync_battle()
+		await _frames()
+		_check(app.deck is CombatDeck and is_instance_valid(app.battle_view) \
+			and app.party_carryover == carry,
+			"rebind boundary keeps the same real mounted battle")
+	accepted = app._current_carryover_fight() and app.deck is CombatDeck \
+		and app.party_carryover == carry and app.run_map.get_current_node_id() == node_id
+	_check(accepted, "live Warden battle is mounted on the expected route node: " + node_id)
+	if not accepted:
+		return false
+	var resolver = presenter._block_cards
+	var expected_bonus: int = 2 if catalog.get_definition(card_id).get("effects", {}).has("block") else 0
+	if wearer == "warden":
+		_check(resolver is CombatWardenPoolBlockCards and resolver.is_patch_binding_valid()
+			and resolver.get_wardrobe() == carry._wardrobe and resolver.get_torn() == carry.torn
+			and resolver.get_patches() != null and resolver.get_patches().is_valid()
+			and resolver.get_patches().card_block_bonus("warden", card_id) == expected_bonus,
+			"live Block resolver carries the authenticated sewn Warden cuff")
+	elif wearer == "":
+		_check(resolver is CombatWardenPoolBlockCards and resolver.is_patch_binding_valid()
+			and resolver.get_wardrobe() == null and resolver.get_patches() == null,
+			"no-carryover routed baseline leaves the Block resolver unbound")
+	else:
+		_check(resolver is CombatWardenPoolBlockCards and resolver.is_patch_binding_valid()
+			and resolver.get_wardrobe() == carry._wardrobe
+			and resolver.get_patches().card_block_bonus("warden", card_id) == 0,
+			"live Block resolver holds the ledger but awards no Warden bonus")
+	# The run deck owns reward cards in live play; put one authored copy through
+	# the real deck draw so the mounted panel is exactly what a run would hold.
+	app.deck.draw_pile.append(card_id)
+	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.back() == card_id,
+		"real combat deck draws the authored card: " + card_id)
+	app._refresh_hand()
+	await _frames()
+	return _panel(card_id) != null
+
+
+## One committed routed card play through the mounted real hand. `wearer` names the
+## run's actual sewn ARM owner ("" for the unsewn baseline).
+func _routed_play(card_id: String, wearer: String, keyboard: bool, target_position: int,
+		expected_blocks: Array, stage: String, prior_earned: bool = false) -> void:
+	if not await _enter_routed(card_id, wearer, prior_earned):
+		await _return()
+		return
+	var definition: Dictionary = catalog.get_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	var bonus: int = 2 if wearer == "warden" and effects.has("block") else 0
+	var panel := _panel(card_id)
+	_assert_display(card_id, stage)
+	var before := _state()
+	if target_position == 0:
+		if keyboard:
+			panel.grab_focus()
+			_check(panel.has_focus(), "keyboard path focuses the routed pool panel: " + stage)
+			await _keyboard(KEY_ENTER)
+		else:
+			await _mouse(panel)
+	else:
+		await _mouse(panel)
+		_check(_state() == before, "arming never pre-spends: " + stage)
+		_check(presenter._pending.get("choosing", false), "real living-ally target mode: " + stage)
+		var hero: Control = app.hero_panels[target_position - 1]
+		if keyboard:
+			app.hero_panels[0].grab_focus()
+			for step in range(target_position - 1):
+				await _keyboard(KEY_TAB)
+			_check(hero.has_focus(), "Tab reaches the chosen living ally: " + stage)
+			root.push_input(_key(KEY_ENTER), true)
+			root.push_input(_key(KEY_ENTER), true)
+			root.push_input(_key(KEY_ENTER, false), true)
+			await _frames()
+		else:
+			await _mouse(hero)
+	_assert_success(card_id, before, target_position, stage, bonus, expected_blocks)
+	await _return()
+
+
+## AC1: the exact authored amounts on a genuinely sewn Warden, per target kind.
+func _routed_cuff_cases() -> void:
+	# The headline case runs the full natural route: a settled opening Fight, the
+	# cuff sewn between fights, then a naturally admitted connected Fight.
+	await _routed_play("warden_hold_the_line", "warden", false, 0, [7, 2, 2],
+		"routed cuff Hold the Line", true)
+	await _routed_play("warden_hold_the_line_plus", "warden", true, 0, [9, 3, 3],
+		"routed cuff Hold the Line+")
+	await _routed_play("warden_patch_guard", "warden", false, 2, [0, 10, 0],
+		"routed cuff Patch Guard")
+	await _routed_play("warden_patch_guard_plus", "warden", true, 3, [0, 0, 13],
+		"routed cuff Patch Guard+")
+	await _routed_play("warden_quick_darn", "warden", true, 0, [6, 0, 0],
+		"routed cuff Quick Darn")
+	await _routed_play("warden_iron_hem", "warden", false, 0, [16, 0, 0],
+		"routed cuff Iron Hem")
+	# Iron Hem+ costs one and still authors 14 Block, so the cuff makes it 16.
+	await _routed_play("warden_iron_hem_plus", "warden", true, 0, [16, 0, 0],
+		"routed cuff Iron Hem+")
+	await _routed_play("warden_bastion_quilt", "warden", false, 0, [10, 10, 10],
+		"routed cuff Bastion Quilt")
+
+
+## AC2: unsewn and wrong-wearer run ledgers never award the Warden bonus.
+func _routed_unsewn_cases() -> void:
+	await _routed_play("warden_hold_the_line", "", false, 0, [5, 2, 2],
+		"routed unsewn Hold the Line")
+	await _routed_play("warden_patch_guard", "", false, 2, [0, 8, 0],
+		"routed unsewn Patch Guard")
+	await _routed_play("warden_iron_hem", "seamstress", false, 0, [14, 0, 0],
+		"routed seamstress cuff Iron Hem")
+
+
+## AC2 fail-closed: a refused/stale live binding never spends, discards or awards
+## Block, and the real battle synchronization fail-closes a torn projection.
+func _routed_fail_closed() -> void:
+	if not await _enter_routed("warden_iron_hem", "warden"):
+		await _return()
+		return
+	var carry := app.party_carryover as RunTornCarryover
+	var panel := _panel("warden_iron_hem")
+	# A mismatched expected snapshot is refused, and the live resolver fails closed.
+	var before := _state()
+	_check(not presenter._block_cards.bind_patch_wardrobe(carry._wardrobe, carry.torn, {}),
+		"a mismatched expected wardrobe snapshot is refused")
+	_check(not presenter._block_cards.is_patch_binding_valid(),
+		"the refused binding explicitly fail-closes the live Block resolver")
+	await _mouse(panel)
+	_check(_state() == before and presenter._pending.is_empty(),
+		"fail-closed live resolver never spends, discards or awards Block")
+	_check(app.deck.hand.has("warden_iron_hem"),
+		"fail-closed live play leaves the held copy in hand")
+	# The same live resolver recovers with the real authenticated ledger.
+	_check(presenter._block_cards.bind_patch_wardrobe(carry._wardrobe, carry.torn),
+		"the same live resolver accepts the authenticated binding again")
+	var rebound := _state()
+	await _mouse(panel)
+	_assert_success("warden_iron_hem", rebound, 0, "recovered cuff Iron Hem", 2, [16, 0, 0])
+	# A genuine torn ledger tears the authenticated projection: the real battle
+	# synchronization must fail-close the resolver instead of playing unbonused.
+	# A real zero-cost copy is drawn so a refusal cannot be blamed on energy.
+	app.deck.draw_pile.append("warden_quick_darn")
+	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.back() == "warden_quick_darn",
+		"authored zero-cost card enters the real hand for the torn check")
+	app._refresh_hand()
+	await _frames()
+	var torn_state := carry.torn.read_state()
+	var start: Array = torn_state.get("heroes", []).duplicate(true)
+	var warden_index := -1
+	for index in range(start.size()):
+		if start[index].get("id") == "warden":
+			warden_index = index
+	_check(warden_index >= 0, "routed torn ledger really holds the Warden")
+	if warden_index < 0:
+		await _return()
+		return
+	var ending: Array = start.duplicate(true)
+	ending[warden_index]["hp"] = 0
+	var observed: Dictionary = carry.torn.observe_battle_end("lane2-live-torn", start, ending)
+	_check(observed.get("ok", false),
+		"genuine torn ledger marks the Warden torn: %s" % str(observed))
+	presenter._clear()
+	presenter._sync_battle()
+	await _frames()
+	_check(app.deck is CombatDeck and is_instance_valid(app.battle_view) \
+		and presenter._block_cards != null,
+		"torn check keeps the real mounted battle after resynchronization")
+	_check(not presenter._block_cards.is_patch_binding_valid()
+		and presenter._block_cards.get_wardrobe() == null,
+		"stale torn carryover synchronization fail-closes the live Block resolver")
+	var stale := _state()
+	await _mouse(_panel("warden_quick_darn"))
+	_check(_state() == stale and presenter._pending.is_empty()
+		and app.deck.hand.has("warden_quick_darn"),
+		"stale torn carryover never awards a cuff bonus through live play")
+	await _return()
+
+
+func _routed_cases() -> void:
+	await _routed_cuff_cases()
+	await _routed_unsewn_cases()
+	await _routed_fail_closed()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -534,6 +873,7 @@ func _run() -> void:
 	await _cancellation_cases()
 	await _invalid_and_stale()
 	await _starter_handler_intact()
+	await _routed_cases()
 	app.free()
 	_finish()
 
