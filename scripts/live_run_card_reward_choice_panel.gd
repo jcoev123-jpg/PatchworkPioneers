@@ -49,7 +49,7 @@ const OWNER_NAME_FONT_SIZE := 14
 ## The card's own authored picture gets a dedicated, inert illustration window
 ## above the name; the name keeps a plain cream strip of its own instead of
 ## cropping art behind its text. The window takes the card's leftover height
-## (see _mount_card); its minimum leaves 96px for the uncropped picture and
+## (see _mount_card); its minimum leaves 96px for the cropped picture and
 ## 8px of sewn backing on each edge while every face stays aligned.
 const CARD_ART_HEIGHT := 112
 const CARD_ART_STRETCH_RATIO := 2.0
@@ -1103,8 +1103,8 @@ class _CardIllustration extends Control:
 	const EMBLEM_INSET := 8.0
 
 	@export var picture: Texture2D
-	## How `picture` is presented. Card art and the emblems of every other
-	## mounted card face keep the contained-picture default; the reward panel
+	## How `picture` is presented. Card art covers the illustration inset;
+	## the reward panel
 	## asks for the broad sewn-felt mode when only an owner emblem was available.
 	@export var mode: String = MODE_CARD_ART
 	@export var owner_color: Color = Color.WHITE
@@ -1118,7 +1118,7 @@ class _CardIllustration extends Control:
 	func has_picture() -> bool:
 		return picture != null
 
-	## The authored card picture is bound and presented as a contained picture.
+	## The authored card picture is bound and covers the illustration inset.
 	func is_card_art() -> bool:
 		return picture != null and mode == MODE_CARD_ART
 
@@ -1139,8 +1139,8 @@ class _CardIllustration extends Control:
 		return Rect2(Vector2.ONE * inset,
 			(size - Vector2.ONE * inset * 2.0).max(Vector2.ZERO))
 
-	## Exact destination rect the picture is painted into. Card art keeps the
-	## texture's aspect inside the sewn window; an emblem fills its felt inset
+	## Exact destination rect the picture is painted into. Card art covers the
+	## sewn window's inset; an emblem fits its felt inset
 	## and leaves its full image bounds clear of the perimeter stitches.
 	func picture_rect() -> Rect2:
 		if picture == null:
@@ -1153,15 +1153,27 @@ class _CardIllustration extends Control:
 			area = emblem_backing_rect().grow(-EMBLEM_INSET)
 		if area.size.x <= 0.0 or area.size.y <= 0.0:
 			return Rect2()
+		if mode == MODE_CARD_ART:
+			return area
 		var fit: float = minf(area.size.x / art_size.x, area.size.y / art_size.y)
 		var target: Vector2 = art_size * fit
 		return Rect2(area.get_center() - target * 0.5, target)
 
-	## Keep the sewn frame close to the contained image instead of painting an
-	## empty landscape slab across the card. Fallbacks retain their owner patch.
+	## Centered source crop matching the destination aspect, without stretching.
+	## Emblems retain their entire source image.
+	func picture_source_rect() -> Rect2:
+		var target: Rect2 = picture_rect()
+		if target.size.x <= 0.0 or target.size.y <= 0.0:
+			return Rect2()
+		var art_size: Vector2 = picture.get_size()
+		if mode != MODE_CARD_ART:
+			return Rect2(Vector2.ZERO, art_size)
+		var scale_factor: float = maxf(target.size.x / art_size.x, target.size.y / art_size.y)
+		var crop_size: Vector2 = (target.size / scale_factor).min(art_size)
+		return Rect2((art_size - crop_size) * 0.5, crop_size)
+
+	## Back the full illustration inset with its sewn frame.
 	func sewn_backing_rect() -> Rect2:
-		if is_card_art():
-			return picture_rect().grow(8.0)
 		return window_rect()
 
 	func _draw() -> void:
@@ -1171,13 +1183,23 @@ class _CardIllustration extends Control:
 			_draw_contained_picture()
 		elif picture != null:
 			draw_rect(rect, Color("#ddcfb7"))
-			_draw_contained_picture()
+			if is_card_art():
+				_draw_cover_picture()
+			else:
+				_draw_contained_picture()
 		else:
 			draw_rect(rect, Color("#f1e6cf"))
 			_draw_paper_patch(rect)
 		_draw_sewn_seam(rect)
 
-	## The authored 4:3 picture, contained (never distorted) and centred.
+	func _draw_cover_picture() -> void:
+		var target: Rect2 = picture_rect()
+		var source: Rect2 = picture_source_rect()
+		if source.size.x <= 0.0 or source.size.y <= 0.0:
+			return
+		draw_texture_rect_region(picture, target, source)
+
+	## The whole emblem, contained (never distorted) and centred.
 	func _draw_contained_picture() -> void:
 		var target: Rect2 = picture_rect()
 		if target.size.x <= 0.0 or target.size.y <= 0.0:

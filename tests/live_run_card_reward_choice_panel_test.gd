@@ -1962,7 +1962,7 @@ func _test_three_tier_rarities(base: Dictionary) -> void:
 
 
 ## The illustration window's own drawing contract, read from the mounted control:
-## the picture is painted at its authored aspect (never stretched), centred, and
+## the source region is painted without stretching, centred, and
 ## entirely inside the sewn window it is mounted in.
 func _check_picture_geometry(art: LiveRunCardRewardChoicePanel._CardIllustration,
 		card_id: String) -> void:
@@ -1979,21 +1979,37 @@ func _check_picture_geometry(art: LiveRunCardRewardChoicePanel._CardIllustration
 		"illustration window keeps its readable minimum height: " + card_id)
 	_check(rect.size.x > 0.0 and rect.size.y > 0.0 and window.encloses(rect),
 		"picture is painted inside its sewn window: " + card_id)
-	_check(rect.size.y > 0.0 and absf(rect.size.x / rect.size.y
-		- texture_size.x / texture_size.y) <= 0.02,
-		"picture keeps its authored aspect ratio, never stretched: " + card_id)
+	var source: Rect2 = art.picture_source_rect()
+	_check(source.size.x > 0.0 and source.size.y > 0.0,
+		"picture has a nonempty source region: " + card_id)
+	if source.size.x <= 0.0 or source.size.y <= 0.0:
+		return
+	_check(Rect2(Vector2.ZERO, texture_size).encloses(source),
+		"source crop stays inside texture bounds: " + card_id)
+	_check(source.get_center().is_equal_approx(texture_size * 0.5),
+		"source crop is centred on the authored picture: " + card_id)
+	_check(absf(rect.size.x / rect.size.y - source.size.x / source.size.y) <= 0.001
+		and is_equal_approx(rect.size.x / source.size.x, rect.size.y / source.size.y),
+		"source maps to destination with equal scale on both axes: " + card_id)
 	_check(absf(rect.get_center().x - window.get_center().x) <= 1.0
 		and absf(rect.get_center().y - window.get_center().y) <= 1.0,
 		"picture is centred in its sewn window: " + card_id)
 	if art.is_card_art():
 		var drawable: Rect2 = window.grow(-8.0)
 		_check(rect.size.x >= drawable.size.x * 0.9
-			or rect.size.y >= drawable.size.y * 0.9,
-			"authored picture fills the available axis rather than a tiny inset: " + card_id)
+			and rect.size.y >= drawable.size.y * 0.9 and rect.is_equal_approx(drawable),
+			"authored picture covers both axes of the sewn inset: " + card_id)
+		var expected_scale := maxf(drawable.size.x / texture_size.x, drawable.size.y / texture_size.y)
+		_check(is_equal_approx(rect.size.x / source.size.x, expected_scale)
+			and source.size.is_equal_approx(drawable.size / expected_scale),
+			"cover uses the largest centered source crop at uniform scale: " + card_id)
 		var backing := art.sewn_backing_rect()
-		_check(window.encloses(backing) and backing.encloses(rect)
+		_check(backing == window and backing.encloses(rect)
 			and backing.size.is_equal_approx(rect.size + Vector2(16, 16)),
-			"compact sewn backing hugs the entire picture: " + card_id)
+			"sewn backing frames the full illustration inset: " + card_id)
+	else:
+		_check(source == Rect2(Vector2.ZERO, texture_size),
+			"contained emblem preserves its entire source picture: " + card_id)
 
 
 ## The hero emblem fills a broad owner-felt patch rather than a tiny disc.
@@ -2081,7 +2097,7 @@ func _test_illustration_art(base: Dictionary, kind: String) -> void:
 		if ResourceLoader.exists(art_path):
 			_check(art.has_picture() and art.picture.resource_path == art_path,
 				"committed individual art is bound: " + card_id)
-			# Authored art keeps the card-art mode: a real picture contained large,
+			# Authored art keeps the card-art mode: a real picture covering the inset,
 			# never the emblem medallion and never the drawn placeholder.
 			_check(art.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART
 				and art.is_card_art() and not art.is_emblem() and not art.is_paper_patch(),
@@ -2116,6 +2132,30 @@ func _test_illustration_art(base: Dictionary, kind: String) -> void:
 				var current := content.get_node(strip_name) as Control
 				_check(absf(peer.global_position.y - current.global_position.y) <= 0.5,
 					"three authored faces align their " + strip_name)
+	# Controlled texture shapes on the real mounted Fight/Elite faces prove both
+	# vertical and horizontal cropping independently of installed art dimensions.
+	var controlled_art := panel.choices_container.get_child(0).get_node(
+		"CardMargin/CardContent/CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+	var original_picture: Texture2D = controlled_art.picture
+	for dimensions: Vector2i in [Vector2i(120, 480), Vector2i(1200, 120), Vector2i(400, 300)]:
+		var texture := PlaceholderTexture2D.new()
+		texture.size = Vector2(dimensions)
+		controlled_art.picture = texture
+		controlled_art.mode = controlled_art.MODE_CARD_ART
+		controlled_art.queue_redraw()
+		await _frames()
+		_check_picture_geometry(controlled_art, "%s controlled %s" % [kind, dimensions])
+		var crop := controlled_art.picture_source_rect()
+		_check(crop.size.x < dimensions.x or crop.size.y < dimensions.y,
+			"mismatched aspect actually crops source pixels: %s %s" % [kind, dimensions])
+		if dimensions.x < dimensions.y:
+			_check(is_equal_approx(crop.size.x, dimensions.x) and crop.size.y < dimensions.y,
+				"portrait crop removes equal top/bottom portions: " + kind)
+		elif dimensions.x == 1200:
+			_check(is_equal_approx(crop.size.y, dimensions.y) and crop.size.x < dimensions.x,
+				"wide landscape crop removes equal left/right portions: " + kind)
+	controlled_art.picture = original_picture
+	controlled_art.queue_redraw()
 	# Force both resource-loss branches on actual mounted faces, independent of
 	# whether optional pool-card images are later supplied by the art pipeline.
 	var fallback_card := panel.choices_container.get_child(1) as PanelContainer
@@ -2258,7 +2298,19 @@ func _test_illustration_source() -> void:
 		"fallback source draws wide owner felt, corner patches and sewn seams")
 	_check(art.contains("func _draw_contained_picture(")
 		and art.contains("draw_texture_rect(picture, target, false)"),
-		"card art is drawn contained from its measured aspect rect, never tiled")
+		"emblem is drawn contained from its measured aspect rect, never tiled")
+	var draw := art.substr(art.find("func _draw()"),
+		art.find("func _draw_cover_picture()") - art.find("func _draw()")).replace("\r\n", "\n")
+	_check(draw.contains("if is_card_art():\n\t\t\t\t_draw_cover_picture()")
+		and draw.contains("if is_emblem():\n\t\t\t_draw_felt_fallback()\n\t\t\t_draw_contained_picture()"),
+		"draw routes authored art to cover and emblem to contained felt")
+	var cover := art.substr(art.find("func _draw_cover_picture()"),
+		art.find("func _draw_contained_picture()") - art.find("func _draw_cover_picture()"))
+	_check(cover.contains("var target: Rect2 = picture_rect()")
+		and cover.contains("var source: Rect2 = picture_source_rect()")
+		and cover.contains("draw_texture_rect_region(picture, target, source)")
+		and not cover.contains("draw_texture_rect(picture"),
+		"authored art draws the measured source crop into the measured cover destination")
 	_check(art.contains("func _draw_paper_patch(") and art.contains("draw_dashed_line("),
 		"missing art and emblem still draw the stitched paper patch")
 	_check(not art.contains("load(\"res://assets"), "illustration never loads art by itself")
@@ -2292,7 +2344,7 @@ func _test_missing_art_placeholder() -> void:
 		"missing art and emblem resolve to the placeholder mode")
 	var default_probe := LiveRunCardRewardChoicePanel._CardIllustration.new()
 	_check(default_probe.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART,
-		"other mounted card faces keep the contained-picture default mode")
+		"mounted card faces keep the card-art default mode")
 	default_probe.free()
 	var probe := LiveRunCardRewardChoicePanel._CardIllustration.new()
 	probe.name = "NullArtProbe"
