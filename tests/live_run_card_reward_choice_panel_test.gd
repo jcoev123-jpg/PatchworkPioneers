@@ -621,8 +621,48 @@ func _check_focus_style(button: Button, label: String) -> void:
 
 ## Real Tab input walks all three Choose actions to Skip and back to the first
 ## Choose, where the dark stitched perimeter follows focus; Skip stays usable.
+## Measure the complete Skip label against the installed font and the
+## burlap inset, then check the entire visible vertical family in screen space.
+func _check_skip_and_vertical_fit(label: String) -> void:
+	var skip := panel.skip_button
+	_check(skip.text == "Skip — take no card",
+		label + " preserves every word of the Skip action")
+	var font: Font = skip.get_theme_font("font")
+	if font == null:
+		font = ThemeDB.fallback_font
+	var point_size: int = skip.get_theme_font_size("font_size")
+	var text_width: float = font.get_string_size(skip.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x
+	var text_height: float = font.get_height(point_size)
+	var safe_width: float = text_width + float(panel.BUTTON_EDGE + 8) * 2.0
+	_check(skip.size.x >= safe_width and skip.custom_minimum_size.x >= safe_width
+		and skip.size.y >= text_height + 16.0,
+		label + " full Skip glyphs fit within the burlap's sewn border")
+	var burlap := skip.get_node_or_null("BurlapPatch") as NinePatchRect
+	if burlap != null:
+		_check(burlap.get_global_rect().encloses(skip.get_global_rect()),
+			label + " burlap patch covers the entire fitted Skip face")
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	var panel_bounds := panel.paper_panel.get_global_rect()
+	var family: Array[Control] = [panel.top_stitches, panel.title_label,
+		panel.gold_label]
+	if panel.trinket_label.visible:
+		family.append(panel.trinket_label)
+	family.append(panel.choices_container)
+	family.append(skip)
+	family.append(panel.bottom_stitches)
+	for i in range(family.size()):
+		var rect := family[i].get_global_rect()
+		_check(screen.encloses(rect) and panel_bounds.encloses(rect),
+			label + " essential reward row %d fits screen and sewn panel" % i)
+		if i > 0:
+			_check(family[i - 1].get_global_rect().end.y <= rect.position.y + 0.5,
+				label + " reward rows stay vertically ordered without overlap")
+
+
 func _test_focus_navigation(actions: Array[Button], label: String) -> void:
 	requests.clear()
+	_check_skip_and_vertical_fit(label)
 	_check(actions[0].has_focus(), label + " opens focused on the first Choose")
 	_check_focus_style(actions[0], label + " first Choose")
 	for index in range(1, 4):
@@ -1851,52 +1891,36 @@ func _check_picture_geometry(art: LiveRunCardRewardChoicePanel._CardIllustration
 	_check(absf(rect.get_center().x - window.get_center().x) <= 1.0
 		and absf(rect.get_center().y - window.get_center().y) <= 1.0,
 		"picture is centred in its sewn window: " + card_id)
+	if art.is_card_art():
+		var drawable: Rect2 = window.grow(-4.0)
+		_check(rect.size.x >= drawable.size.x * 0.9
+			or rect.size.y >= drawable.size.y * 0.9,
+			"authored picture fills the available axis rather than a tiny inset: " + card_id)
 
 
-## The fallback owner emblem is a sewn felt medallion: the emblem is inscribed in
-## the medallion's inner circle (its corners on that circle, never over the sewn
-## ring), and the ring's stitches never cross the picture.
-func _check_emblem_medallion(art: LiveRunCardRewardChoicePanel._CardIllustration,
+## The hero emblem fills a broad owner-felt patch rather than a tiny disc.
+func _check_emblem_felt(art: LiveRunCardRewardChoicePanel._CardIllustration,
 		card_id: String) -> void:
 	_check(art.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_EMBLEM
 		and art.is_emblem() and not art.is_card_art() and art.has_picture(),
-		"emblem fallback mounts in its own medallion mode: " + card_id)
-	_check(art.owner_color != Color.WHITE, "medallion carries the owner felt colour: " + card_id)
-	var radius: float = art.medallion_radius()
-	var inner: float = art.medallion_inner_radius()
-	var center: Vector2 = art.medallion_center()
+		"emblem fallback mounts in distinct felt mode: " + card_id)
+	_check(art.owner_color != Color.WHITE, "owner felt colour: " + card_id)
 	var window := Rect2(Vector2.ZERO, art.size)
-	_check(radius > 0.0 and inner > 0.0 and inner < radius,
-		"medallion has a felt disc and a sewn ring inside it: " + card_id)
-	_check(window.encloses(Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0)),
-		"medallion disc stays inside the illustration window: " + card_id)
-	_check(absf(center.x - window.get_center().x) <= 0.5
-		and absf(center.y - window.get_center().y) <= 0.5,
-		"medallion is centred in the illustration window: " + card_id)
+	var backing: Rect2 = art.emblem_backing_rect()
+	_check(window.encloses(backing) and backing.size.x >= window.size.x * 0.9
+		and backing.size.y >= window.size.y * 0.85,
+		"felt spans the window rather than a tiny medallion: " + card_id)
+	_check(backing.get_center().distance_to(window.get_center()) <= 0.5,
+		"felt backing is centred: " + card_id)
 	_check_picture_geometry(art, card_id)
 	var rect: Rect2 = art.picture_rect()
-	_check(rect.size.y <= inner * 2.0 + 0.01,
-		"emblem is inscribed in the medallion's inner circle: " + card_id)
-	for corner: Vector2 in [rect.position, Vector2(rect.end.x, rect.position.y),
-			rect.end, Vector2(rect.position.x, rect.end.y)]:
-		var distance: float = corner.distance_to(center)
-		_check(distance <= inner + 0.5 and distance >= inner - 0.5,
-			"emblem corner lies on the medallion's inner circle: " + card_id)
-	_check(LiveRunCardRewardChoicePanel._CardIllustration.MEDALLION_STITCHES >= 8,
-		"medallion ring is stitched from many short seams: " + card_id)
-	var spans: Array[Vector2] = art.medallion_stitch_spans()
-	_check(spans.size() == LiveRunCardRewardChoicePanel._CardIllustration.MEDALLION_STITCHES,
-		"medallion reports one stitched seam per ring step: " + card_id)
-	var stitch_radius: float = art.medallion_stitch_radius()
-	_check(stitch_radius > inner - 0.01 and stitch_radius <= radius,
-		"ring stitches walk the felt band outside the emblem: " + card_id)
-	for span: Vector2 in spans:
-		_check(span.y > span.x and span.y - span.x < TAU * 0.5,
-			"medallion seam is a short arc, never a diameter: " + card_id)
-		for fraction: float in [0.0, 0.5, 1.0]:
-			var angle: float = lerpf(span.x, span.y, fraction)
-			var point: Vector2 = center + Vector2(cos(angle), sin(angle)) * stitch_radius
-			_check(not rect.has_point(point), "no medallion stitch crosses the emblem: " + card_id)
+	var inner: Rect2 = backing.grow(-art.EMBLEM_INSET)
+	_check(inner.encloses(rect),
+		"whole emblem stays within the sewn felt inset: " + card_id)
+	_check(rect.size.x >= inner.size.x * 0.9 or rect.size.y >= inner.size.y * 0.9,
+		"emblem fills a generous axis of its patch: " + card_id)
+	_check(art.EMBLEM_INSET > 4.0 and art.FELT_INSET > 0.0,
+		"seams lie outside the emblem: " + card_id)
 
 
 ## The reward face must bind the canonical individual card art (cards/art/
@@ -1969,7 +1993,7 @@ func _test_illustration_art(base: Dictionary) -> void:
 		elif ResourceLoader.exists(emblem):
 			_check(art.has_picture() and art.picture.resource_path == emblem,
 				"missing art falls back to the hero emblem: " + card_id)
-			_check_emblem_medallion(art, card_id)
+			_check_emblem_felt(art, card_id)
 		else:
 			_check(not art.has_picture() and art.is_paper_patch(),
 				"unpictured card keeps the drawn paper patch without failing: " + card_id)
@@ -2047,7 +2071,7 @@ func _test_illustration_fallback(base: Dictionary) -> void:
 		elif ResourceLoader.exists(emblem):
 			_check(art.has_picture() and art.picture.resource_path == emblem,
 				"hero emblem stands in for absent art: " + card_id)
-			_check_emblem_medallion(art, card_id)
+			_check_emblem_felt(art, card_id)
 		else:
 			_check(not art.has_picture() and art.is_paper_patch(),
 				"absent art and emblem keep the drawn paper patch: " + card_id)
@@ -2087,12 +2111,12 @@ func _test_illustration_source() -> void:
 	_check(art.contains("func is_card_art(") and art.contains("func is_emblem(")
 		and art.contains("func is_paper_patch("),
 		"illustration source exposes its three presentation modes")
-	_check(art.contains("func picture_rect(") and art.contains("medallion_inner_radius()")
-		and art.contains("art_size * (medallion_inner_radius() * 2.0 / diagonal)"),
-		"emblem picture is scaled to inscribe the medallion's inner circle")
-	_check(art.contains("draw_circle(") and art.contains("draw_arc(")
-		and art.contains("medallion_stitch_spans()"),
-		"medallion source draws a felt disc, a sewn ring and its stitches")
+	_check(art.contains("func picture_rect(") and art.contains("emblem_backing_rect()")
+		and art.contains("area = emblem_backing_rect().grow(-EMBLEM_INSET)"),
+		"emblem picture fills the inset felt patch with original aspect")
+	_check(art.contains("func _draw_felt_fallback(")
+		and art.contains("draw_colored_polygon(") and art.contains("draw_dashed_line("),
+		"fallback source draws wide owner felt, corner patches and sewn seams")
 	_check(art.contains("func _draw_contained_picture(")
 		and art.contains("draw_texture_rect(picture, target, false)"),
 		"card art is drawn contained from its measured aspect rect, never tiled")
@@ -2150,10 +2174,11 @@ func _test_missing_art_placeholder() -> void:
 	_check(probe.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and probe.focus_mode == Control.FOCUS_NONE,
 		"placeholder window takes no pointer input or focus")
-	_check(probe.medallion_radius() > 0.0,
-		"placeholder window still knows its medallion frame size")
+	_check(probe.emblem_backing_rect().size.x > 0.0,
+		"placeholder still knows its owner felt backing size")
 	probe.size = Vector2.ZERO
-	_check(probe.medallion_radius() == 0.0 and probe.picture_rect() == Rect2(),
+	_check(probe.emblem_backing_rect().size == Vector2.ZERO
+		and probe.picture_rect() == Rect2(),
 		"a collapsed window reports no drawable art instead of failing")
 	root.remove_child(probe)
 	probe.free()
@@ -2162,7 +2187,7 @@ func _test_missing_art_placeholder() -> void:
 ## AC2 composition guard for the Help tab: it is sewn onto the owner band's right
 ## end, so it can never cover the picture, the name, the effects text or Choose.
 ## The final rhythm is judged by screenshots, not by new coordinate goldens.
-func _test_art_and_help_clearance(base: Dictionary) -> void:
+func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 	var ids: Array[String] = ["tinker_ricochet", "tinker_snip_the_seam", "seamstress_red_thread"]
 	var receipt := base.duplicate(true)
 	for slot in range(3):
@@ -2173,7 +2198,7 @@ func _test_art_and_help_clearance(base: Dictionary) -> void:
 		receipt["offers"][slot] = {"id": ids[slot],
 			"owner": String(definition.get("owner", ""))}
 	requests.clear()
-	_check(panel.open_rewards("help_clearance", "Fight", receipt),
+	_check(panel.open_rewards("help_clearance", kind, receipt),
 		"help clearance receipt mounts through the real panel")
 	if not panel.has_open_rewards():
 		return
@@ -2187,14 +2212,30 @@ func _test_art_and_help_clearance(base: Dictionary) -> void:
 			_check(false, "help clearance card mounts: " + card_id)
 			continue
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var help := card.get_node_or_null("HelpCorner/HelpButton") as Button
+		var help := card.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
 		_check(help != null and help.is_visible_in_tree() and not help.disabled,
 			"keyword card keeps a live Help tab: " + card_id)
 		if help == null:
 			continue
 		var help_rect := help.get_global_rect()
+		var owner_patch := content.get_node("OwnerPatch") as Control
+		var owner_label := owner_patch.get_node("OwnerLabel") as Label
+		var corner := owner_patch.get_node("HelpCorner") as Control
+		var owner_rect := owner_patch.get_global_rect()
 		_check(card.get_global_rect().encloses(help_rect) and screen.encloses(help_rect),
 			"Help tab stays inside its card and 1280x720: " + card_id)
+		_check(corner.get_parent() == owner_patch
+			and owner_rect.encloses(corner.get_global_rect())
+			and owner_rect.encloses(help_rect)
+			and absf(help_rect.end.x - owner_rect.end.x) <= 1.0
+			and absf(help_rect.position.y - owner_rect.position.y) <= 1.0,
+			"Help follows its own owner strip's right edge: " + card_id)
+		_check(not help_rect.intersects(owner_label.get_global_rect())
+			and not help_rect.intersects(panel.title_label.get_global_rect())
+			and not help_rect.intersects(panel.gold_label.get_global_rect())
+			and (not panel.trinket_label.visible
+				or not help_rect.intersects(panel.trinket_label.get_global_rect())),
+			"Help avoids owner name and every reward banner line: " + card_id)
 		var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
 		var picture := Rect2(art.global_position + art.picture_rect().position,
 			art.picture_rect().size) if art != null and art.has_picture() else Rect2()
@@ -2210,8 +2251,50 @@ func _test_art_and_help_clearance(base: Dictionary) -> void:
 		if picture.size.x > 0.0:
 			_check(not help_rect.intersects(picture),
 				"Help tab never covers the drawn picture: " + card_id)
+		var receipt_before: Dictionary = panel._receipt.duplicate(true)
+		await _mouse(help)
+		var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+		_check(overlay != null and panel._help_overlay == overlay,
+			"mouse Help opens the real glossary for this card: " + card_id)
+		if overlay != null:
+			var help_title := overlay.get_node("HelpContent/HelpTitle") as Label
+			var lines := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+			_check(help_title.text.contains(String(_base_pool_definition(card_id)["display_name"]))
+				and lines.get_child_count() > 0,
+				"glossary names the offered card and explains real keywords: " + card_id)
+			var close := overlay.get_node("HelpContent/CloseHelpButton") as Button
+			await _mouse(close)
+			_check(panel._help_overlay == null and help.has_focus(),
+				"mouse Close returns focus to the owning Help: " + card_id)
+		help.grab_focus()
+		await _key(KEY_SPACE)
+		_check(panel._help_overlay != null,
+			"keyboard Space on this Help opens glossary: " + card_id)
+		if panel._help_overlay != null:
+			await _key(KEY_ESCAPE)
+			_check(panel._help_overlay == null and help.has_focus(),
+				"keyboard Escape closes glossary and restores Help focus: " + card_id)
+		_check(requests.is_empty() and panel._receipt == receipt_before
+			and not panel._awaiting_ack,
+			"mouse/keyboard Help never requests or changes the prepared choice: " + card_id)
 	_check(clearance_checks >= 18, "help clearance really inspected every sibling")
 	_check(receipt["offers"][0]["id"] == ids[0], "help clearance receipt stays authentic")
+	var old_help := panel._help_buttons[0] as Button
+	var connections := old_help.pressed.get_connections()
+	_check(connections.size() == 1, "Help owns exactly one glossary callback before close")
+	var stale_help: Callable
+	if connections.size() == 1:
+		stale_help = connections[0]["callable"]
+	panel.close_rewards()
+	await _frames()
+	_check(panel.open_rewards("help_clearance", kind, receipt),
+		"fresh prepared reward remounts after glossary close")
+	await _frames()
+	if stale_help.is_valid():
+		stale_help.call()
+	_check(panel._help_overlay == null and requests.is_empty()
+		and not panel._awaiting_ack and panel._receipt == receipt,
+		"closed-generation Help cannot open a new receipt's glossary or mutate it")
 	panel.close_rewards()
 	await _frames()
 
@@ -2251,7 +2334,8 @@ func _run() -> void:
 	await _test_illustration_art(original_fight)
 	_test_illustration_source()
 	await _test_missing_art_placeholder()
-	await _test_art_and_help_clearance(original_fight)
+	await _test_art_and_help_clearance(original_fight, "Fight")
+	await _test_art_and_help_clearance(original_elite, "Elite")
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
 	var pool_fight := _prepared_pool(false, 18203)

@@ -25,9 +25,9 @@ color = Color(0.094, 0.141, 0.172, 1)
 [node name="PaperPanel" type="PanelContainer" parent="."]
 layout_mode = 1
 anchor_left = 0.06
-anchor_top = 0.09
+anchor_top = 0.045
 anchor_right = 0.94
-anchor_bottom = 0.91
+anchor_bottom = 0.955
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -40,7 +40,7 @@ theme_override_constants/margin_bottom = 18
 
 [node name="RewardContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 9
+theme_override_constants/separation = 6
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/RewardContent"]
 layout_mode = 2
@@ -62,7 +62,7 @@ layout_mode = 2
 horizontal_alignment = 1
 
 [node name="CardChoices" type="HBoxContainer" parent="PaperPanel/ContentMargin/RewardContent"]
-custom_minimum_size = Vector2(0, 310)
+custom_minimum_size = Vector2(0, 320)
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 14
