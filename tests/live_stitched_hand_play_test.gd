@@ -211,11 +211,17 @@ func _hand_fixture() -> Dictionary:
 	return {}
 
 
-func _earn(fixture: Dictionary, pair: Array, keyboard: bool) -> String:
+func _earn(fixture: Dictionary, pair: Array, keyboard: bool,
+		sew_wearer: String = "", sew_patch: bool = true) -> String:
 	if not await _routed_win(fixture, false):
 		return ""
 	await _click(app.reward_buttons[3])
 	await _click(app.continue_button)
+	# The opening reward closes before a genuine run-owned COAT receipt is sewn
+	# through the actual wardrobe transaction, so every later visit (Elite pass,
+	# Rest admission and the next Fight) carries the same worn patch ledger.
+	if not sew_wearer.is_empty() and not _sew_coat(sew_wearer, sew_patch):
+		return ""
 	await _visit_path(fixture.elite.slice(0, -1), keyboard)
 	await _click(_route_action(fixture.elite.back()))
 	_check(app.enemies != null and app.run_map.get_current_node_id() == fixture.elite.back(), "actual Elite earns stitch purse")
@@ -228,6 +234,8 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool) -> String:
 	await _visit_path(fixture.rest.slice(0, -1), keyboard)
 	await _click(_route_action(fixture.rest.back()))
 	_check(app.run_scraps == 3 and app.rest_stitch != null and app.rest_stitch.is_valid(), "earned three scraps at connected Rest")
+	if app.rest_stitch == null or not app.rest_stitch.is_valid():
+		return ""
 	await _select_stitch(app.rest_stitch_first, app.run_deck.find(pair[0]), keyboard)
 	await _select_stitch(app.rest_stitch_second, app.run_deck.find(pair[1]), keyboard)
 	await _click(app.rest_stitch_button)
@@ -257,6 +265,283 @@ func _earn(fixture: Dictionary, pair: Array, keyboard: bool) -> String:
 		await _key(KEY_1)
 		_check(_complete_state() == before, "retained freed panel callback rejects after restart")
 	return id
+
+
+## A genuine run-owned COAT receipt: the authored M05 record is sewn through the
+## real wardrobe transaction and bound by the actual routed carryover. `sew` false
+## keeps the patch genuinely owned but worn by nobody.
+func _sew_coat(wearer: String, sew: bool) -> bool:
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid(), "routed carryover exists before the COAT receipt")
+	if carry == null or not carry.is_valid() or carry._wardrobe != null:
+		_check(false, "an unbound routed carryover owns the first COAT receipt")
+		return false
+	if not app.run_trinkets.has("borrowed_button"):
+		app.run_trinkets.append("borrowed_button")
+	# The run's own authored definition projection: the real Elite sewing flow
+	# builds its wardrobe from exactly this set, so an owned drop stays valid.
+	var definitions: Array = RunAuthoredPatchDefinitions.load_definitions()
+	_check(not definitions.is_empty(), "authored patch definitions load for the run")
+	if definitions.is_empty():
+		return false
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), "authentic run context builds a valid patch wardrobe")
+	if not wardrobe.is_valid():
+		return false
+	var defined: Dictionary = wardrobe.get_snapshot().definitions
+	_check(defined.get("borrowed_button") == "COAT",
+		"run definitions carry the Borrowed Button as an authored COAT")
+	if sew:
+		var sewn := wardrobe.sew("borrowed_button", wearer, "COAT",
+			"lane220_live_borrowed_button", wardrobe.get_snapshot())
+		_check(sewn.get("ok", false)
+			and sewn.get("receipt", {}).get("patch_id") == "borrowed_button",
+			"real COAT sew transaction commits the Borrowed Button")
+		if not sewn.get("ok", false):
+			return false
+	var state: Dictionary = wardrobe.get_snapshot()
+	_check(state.owned.has("borrowed_button")
+		and (state.worn[wearer].COAT == "borrowed_button") == sew,
+		"owned COAT is sewn onto the tested wearer only when requested")
+	var bound: bool = carry.can_bind_wardrobe(wardrobe, carry.torn, state) \
+		and carry.bind_wardrobe(wardrobe, carry.torn, state)
+	_check(bound and carry._wardrobe == wardrobe,
+		"actual routed carryover adopts the committed patch wardrobe")
+	return bound
+
+
+func _hero_position(hero_id: String) -> int:
+	for hero in app.party.get_heroes():
+		if hero.get("id") == hero_id:
+			return int(hero.get("position", 0))
+	return 0
+
+
+## A real enemy phase can shove the front hero. Restore only an authored legal
+## ordering with a genuine adjacent swap, so both halves keep their FROM slots and
+## every hero keeps its own HP and Block.
+func _restore_stitch_positions(id: String) -> void:
+	if presenter._stitch_preview(id).get("playable", false):
+		return
+	if _hero_position("seamstress") != 1:
+		_check(false, "only an authored front-slot shove can unpick this composite")
+		return
+	var swap := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+	_check(swap.get("ok", false), "the displaced owner can make a real adjacent swap home")
+	if not swap.get("ok", false):
+		return
+	app.party._heroes.assign(swap.heroes)
+	app._refresh_party()
+	await _frames()
+	_check(presenter._stitch_preview(id).get("playable", false),
+		"real adjacent swap restores both authored half positions")
+
+
+## A real End Turn, then the authentic shared deck must hand the composite back.
+func _coat_next_turn(id: String) -> bool:
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		if not app.party.is_downed(position):
+			app.party.heal(position, 999)
+	app._refresh_party()
+	await _frames()
+	await _click(app.end_turn_button)
+	_check(app.deck != null and app.deck.turn_active, "real End Turn opens the next shared player turn")
+	while app.deck.turn_active and not app.deck.hand.has(id) \
+			and (app.deck.draw_pile.has(id) or app.deck.discard_pile.has(id)):
+		_check(app.deck.draw_extra(1) == 1, "real seeded draw recovers the held composite")
+	app._refresh_hand()
+	await _frames()
+	await _restore_stitch_positions(id)
+	_check(app.deck.hand.has(id) and presenter._bindings.has(_panel(id)) and app.deck.energy >= 2,
+		"the next real turn holds the two-cost composite again")
+	return app.deck.hand.has(id) and app.deck.energy >= 2
+
+
+## One physical two-half commit of the held composite through the real hand. The
+## Mend half selects its ally; the authored self-Brace half is auto-ordered by the
+## resolver's own `_skip_automatic`, so no synthetic second target is clicked.
+func _coat_play(id: String, heal_target: int) -> bool:
+	await _arm(id, false)
+	await _pick(heal_target, "ally", false)
+	_check(presenter.last_event.get("ok", false)
+		and presenter.last_event.get("halves", []).size() == 2,
+		"physical two-half COAT composite commits both ordered halves")
+	return presenter.last_event.get("ok", false)
+
+
+## One committed composite plus its exact HP/Block/cost/discard/RNG/latch facts.
+## The wearer always takes the second half's authored 7 Block; only the committed
+## other-owner heal may add the COAT's single 3-Block award.
+func _coat_commit_case(id: String, heal_target: int, brace_target: int,
+		expected_award: int, expected_receipts: int, label: String) -> void:
+	var target_hp_before: int = int(app.party.get_hero(heal_target).hp)
+	var target_max: int = int(app.party.get_hero(heal_target).max_hp)
+	var brace_hp_before: int = int(app.party.get_hero(brace_target).hp)
+	var block_before: int = int(app.party.get_hero(brace_target).block)
+	var energy_before: int = app.deck.energy
+	var discard_before: int = app.deck.discard_pile.count(id)
+	var rng_before: int = app.run_rng.state
+	var button: CombatBorrowedButton = app.get_node("LiveSupportHand")._heal_cards._borrowed_button
+	_check(button != null, label + ": the mounted hand owns one COAT notifier")
+	if button == null:
+		return
+	var awards_before: int = int(button.read_state().awards)
+	await _coat_play(id, heal_target)
+	var receipt: Dictionary = presenter.last_event
+	_check(receipt.get("ok", false) and receipt.get("halves", []).size() == 2
+		and receipt.halves[0].get("effect") == "ally_heal"
+		and receipt.halves[1].get("effect") == "self_block",
+		label + ": ordered Mend then self-Brace halves commit as authored support effects")
+	_check(int(app.party.get_hero(heal_target).hp) == mini(target_hp_before + 5, target_max),
+		label + ": committed Mend half restores exactly five HP to its recipient")
+	var expected_brace_hp: int = mini(target_hp_before + 5, target_max) \
+		if brace_target == heal_target else brace_hp_before
+	_check(int(app.party.get_hero(brace_target).hp) == expected_brace_hp,
+		label + ": only the Mend recipient's HP changes")
+	_check(int(app.party.get_hero(brace_target).block) == block_before + 7 + expected_award,
+		label + ": Brace's own 7 Block plus exactly " + str(expected_award) + " COAT Block")
+	_check(app.deck.energy == energy_before - 2 and not app.deck.hand.has(id)
+		and app.deck.discard_pile.count(id) == discard_before + 1,
+		label + ": exactly one shared two-cost charge and one discard")
+	_check(app.run_rng.state == rng_before,
+		label + ": the committed heal, Block and COAT award consume no run RNG")
+	var state: Dictionary = button.read_state()
+	_check(state.get("ok") == true, label + ": the bound COAT authorities are still current")
+	_check(int(state.awards) == awards_before + (1 if expected_award > 0 else 0)
+		and int(state.block_awarded) == 3 * int(state.awards)
+		and state.receipts.size() == expected_receipts,
+		label + ": the one shared combat latch records exactly this committed heal")
+	if expected_award > 0:
+		_check(state.wearer_id == "warden"
+			and String(state.receipt_id).begins_with("stitched_half_"),
+			label + ": the award names the wounded wearer and the stitched half receipt")
+
+
+## AC1/AC2/AC3 mounted: the worn COAT follows only a genuinely committed stitched
+## heal, shares its one latch across hand refreshes, and never pays twice.
+func _coat_stitched_case(id: String, mode: String) -> void:
+	var support = app.get_node("LiveSupportHand")
+	var heals: CombatSeamstressPoolHeals = support.stitched_heal_authority(
+		app.deck, app.party, app.battle_view)
+	_check(heals != null and heals == support._heal_cards,
+		"mounted hand lends its own battle-bound healing service to the commit")
+	_check(support.stitched_heal_authority(app.deck,
+			CombatParty.new(app.party.get_heroes()), app.battle_view) == null
+		and support.stitched_heal_authority(app.deck, app.party, app.return_button) == null,
+		"a foreign party or session can never borrow the COAT latch")
+	if heals == null:
+		return
+	var button: CombatBorrowedButton = heals._borrowed_button
+	_check(button != null, "mounted hand owns one bound COAT notifier")
+	_check(heals._wardrobe == app.party_carryover._wardrobe,
+		"the stitched commit shares the run's authenticated patch wardrobe")
+	_check(heals._torn == app.party_carryover.torn,
+		"the stitched commit shares the run's authenticated torn ledger")
+	if button == null:
+		return
+	var preview: Dictionary = presenter._stitch_preview(id)
+	_check(preview.get("playable", false) and int(preview.get("cost", -1)) == 2,
+		"authored Mend/Brace composite is held for its shared two energy")
+	if not preview.get("playable", false):
+		return
+	var warden := _hero_position("warden")
+	var heal_target := warden
+	if mode == "self":
+		heal_target = _hero_position("seamstress")
+	_check(warden > 0 and heal_target > 0 and not app.party.is_downed(warden)
+		and not app.party.is_downed(heal_target),
+		"sewn COAT wearer and committed heal recipient are living")
+	if mode == "sewn":
+		# A deferred stitched commit that fails revalidation must never heal,
+		# spend, discard, roll RNG or spend the COAT latch.
+		await _arm(id, false)
+		_check(presenter._choices.is_empty() and not presenter._queued,
+			"physical composite is armed without a partial commit")
+		var stale := _snapshot()
+		var stale_event: Dictionary = presenter.last_event.duplicate(true)
+		var press := InputEventKey.new()
+		press.keycode = KEY_1
+		press.pressed = true
+		root.push_input(press, true)
+		_check(presenter._queued and presenter._choices.size() == 2,
+			"a physical first target orders both authored halves")
+		app.run_scraps = 1
+		await _frames()
+		_check(_snapshot() == stale and presenter.last_event == stale_event,
+			"stale stitched selection never heals, pays, discards or rolls RNG")
+		_check(int(button.read_state().awards) == 0 and button.read_state().receipts.is_empty(),
+			"stale selection leaves the one-combat latch completely unspent")
+		app.run_scraps = 0
+		presenter._cancel_choice()
+		app._refresh_hand()
+		await _frames()
+	# Later halves always target the Warden; only the Mend recipient varies.
+	for position in [warden, heal_target]:
+		app.party.heal(position, 999)
+	app._refresh_party()
+	await _frames()
+	_check(app.party.apply_damage(warden, 6), "authored opening Block is spent before the COAT check")
+	_check(app.party.apply_damage(heal_target, 9 if heal_target == warden else 10),
+		"the committed heal's recipient genuinely lost HP")
+	app._refresh_party()
+	await _frames()
+	_check(int(app.party.get_hero(warden).block) == 0,
+		"no lingering Block can hide the exact authored award")
+	await _coat_commit_case(id, heal_target, warden,
+		3 if mode == "sewn" else 0, 1, "stitched " + mode)
+	if mode != "sewn":
+		return
+	_check(int(button.read_state().awards) == 1,
+		"the first eligible committed heal paid exactly once")
+	# The same battle-scoped latches survive every live hand refresh.
+	var awarded_button := button
+	for repeat in range(3):
+		app._refresh_hand()
+		await _frames()
+	_check(support._heal_cards == heals and heals._borrowed_button == awarded_button
+		and support.stitched_heal_authority(app.deck, app.party, app.battle_view) == heals,
+		"one battle-scoped COAT latch and its authorities survive hand refreshes")
+	_check(int(button.read_state().awards) == 1
+		and button.read_state().wearer_id == "warden",
+		"refreshing the hand never re-arms the spent combat latch")
+	# A second genuine other-owner heal in the same combat pays no extra Block.
+	if not await _coat_next_turn(id):
+		return
+	warden = _hero_position("warden")
+	_check(app.party.apply_damage(warden, 9), "the wearer is wounded again for the second heal")
+	app._refresh_party()
+	await _frames()
+	await _coat_commit_case(id, warden, warden, 0, 2, "second stitched heal")
+	_check(int(button.read_state().awards) == 1,
+		"a later eligible heal in the same combat pays nothing extra")
+	# The same owner healing itself is a real heal, never an other-owner award.
+	if not await _coat_next_turn(id):
+		return
+	var seamstress := _hero_position("seamstress")
+	warden = _hero_position("warden")
+	_check(seamstress > 0 and app.party.apply_damage(seamstress, 10),
+		"the Seamstress is genuinely wounded for her own committed Mend")
+	app._refresh_party()
+	await _frames()
+	await _coat_commit_case(id, seamstress, warden, 0, 3, "self-owner stitched heal")
+	_check(int(button.read_state().awards) == 1,
+		"an owner's self-heal never awards the COAT Block")
+
+
+func _coat_cases(fixture: Dictionary) -> void:
+	for mode in ["sewn", "self", "unsewn"]:
+		seed(105105)
+		var global_next := randi()
+		seed(105105)
+		print("stitched COAT case: ", mode)
+		var id := await _earn(fixture, ["seamstress_mend", "warden_brace"], false,
+			"warden", mode != "unsewn")
+		if id.is_empty():
+			return
+		await _coat_stitched_case(id, mode)
+		await _return()
+		_check(randi() == global_next, "worn COAT route and stitched cast preserve global RNG")
 
 
 func _return_race(id: String) -> void:
@@ -574,6 +859,7 @@ func _run() -> void:
 			else:
 				await _return()
 			_check(randi() == global_next, "earned route and cast preserve global RNG")
+	await _coat_cases(fixture)
 	await _finish_hand()
 
 
