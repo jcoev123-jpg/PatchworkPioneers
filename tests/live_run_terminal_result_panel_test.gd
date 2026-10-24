@@ -528,6 +528,11 @@ func _validate_view(status: String, label: String) -> void:
 	_check(button.text == "Return to Title" and not button.disabled
 		and button.focus_mode == Control.FOCUS_ALL and button.is_visible_in_tree(),
 		label + " sole enabled focusable return action")
+	var button_font := button.get_theme_font("font") as Font
+	_check(button.theme_type_variation == "PatchHeadingButton"
+		and button_font != null and button_font.resource_path == HEADING_FONT
+		and button.get_theme_font_size("font_size") == 24,
+		label + " original Return action resolves to 24 px Londrina via PatchHeadingButton")
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
 	_check(paper != null and paper.border_width_left >= 4 and paper.border_width_top >= 4
 		and paper.bg_color.get_luminance() > 0.5,
@@ -726,6 +731,11 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 		label + " exact result text and hero ribbons survive the missing picture")
 	_check(not panel.return_button.disabled and panel.return_button.is_visible_in_tree(),
 		label + " sole Return action stays available without the picture")
+	var fallback_font := panel.return_button.get_theme_font("font") as Font
+	_check(panel.return_button.theme_type_variation == "PatchHeadingButton"
+		and fallback_font != null and fallback_font.resource_path == HEADING_FONT
+		and panel.return_button.get_theme_font_size("font_size") == 24,
+		label + " missing picture leaves the original Return action in 24 px Londrina")
 	var slate := panel.get_node("SlateBackdrop") as ColorRect
 	_check(slate.is_visible_in_tree() and slate.color.get_luminance() < 0.3,
 		label + " slate keeps the stage dark without the picture")
