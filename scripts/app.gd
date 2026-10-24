@@ -3524,9 +3524,17 @@ func _stitch_snapshot() -> Dictionary:
 	return RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id).get_snapshot()
 
 
+func _rest_stitch_indices() -> Array[int]:
+	var indices: Array[int] = []
+	for index in range(_rest_deck.size()):
+		if not RunRestStitchCards.resolve_card_definition(_rest_deck[index]).is_empty():
+			indices.append(index)
+	return indices
+
+
 func _rest_stitch_text(index: int, first: bool) -> String:
-	var definition := StarterCards.new().get_definition(_rest_deck[index])
-	return "%s card: Deck #%d: %s - %s" % ["First" if first else "Second", index + 1, definition.owner, definition.display_name]
+	var definition := RunRestStitchCards.resolve_card_definition(_rest_deck[index])
+	return "%s card: Deck #%d: %s - %s" % ["First" if first else "Second", index + 1, str(definition.owner).capitalize(), definition.display_name]
 
 
 func _completed_rest_stitch() -> bool:
@@ -3550,10 +3558,7 @@ func _stitch_at_rest(visit: RunRestStitchCards, button, first, second) -> void:
 		if not is_instance_valid(control) or control != pair[1] or control.get_parent() != rest_view \
 			or control.disabled or not control.is_visible_in_tree():
 			return
-	var indices: Array[int] = []
-	for index in range(_rest_deck.size()):
-		if StarterCards.new().has_card(_rest_deck[index]):
-			indices.append(index)
+	var indices := _rest_stitch_indices()
 	for selector in [first, second]:
 		if selector.item_count != indices.size() or selector.selected < 0 or selector.selected >= indices.size():
 			return
@@ -3997,10 +4002,9 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_stitch_second = OptionButton.new()
 	for selector in [rest_stitch_first, rest_stitch_second]:
 		selector.custom_minimum_size = Vector2(480, 36)
-		for index in range(run_deck.size()):
-			if StarterCards.new().has_card(run_deck[index]):
-				selector.add_item(_rest_stitch_text(index, selector == rest_stitch_first))
-				selector.set_item_metadata(selector.item_count - 1, index)
+		for index in _rest_stitch_indices():
+			selector.add_item(_rest_stitch_text(index, selector == rest_stitch_first))
+			selector.set_item_metadata(selector.item_count - 1, index)
 		rest_view.add_child(selector)
 	rest_heal_button = Button.new()
 	rest_heal_button.text = "Heal party (30% max HP; revive downed heroes)"
