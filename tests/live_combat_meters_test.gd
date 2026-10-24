@@ -7,6 +7,33 @@ var checks := 0
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 ## The committed Block icon the mounted ribbons must display beside a positive amount.
 const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
+## Independent literal expectations for the eight authored M05 HEAD/ARM rules.
+## These fourth tooltip lines are written from data/patches/m05_*.json and the
+## rule scripts, never produced by the presenter under test, so a wrong amount,
+## effect kind, recipient scope or condition cannot pass by agreeing with it.
+const M05_EXPECTED_POWERS := {
+	"bloodstitch_bonnet": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on cards owned by this living wearer.",
+	"button_glass_visor": "Authored patch rule: card_exposed_bonus +1 to positive Exposed on this wearer's cards.",
+	"stern_seam_cap": "Authored patch rule: card_weak_bonus +1 to positive Weak on this wearer's cards.",
+	"reinforced_browband": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards, applied to the card's actual Block recipient (even if it is an ally).",
+	"hemguard_cuff": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards.",
+	"red_bobbin_cuff": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier.",
+	"loose_thread_glove": "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards.",
+	"frayfinder_mitt": "Authored patch rule: +2 Unravel ONLY on this living wearer's first single-target attack hit, if that enemy's gauge is already at least 1/2 of its current threshold; once per PLAYER turn. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit.",
+}
+## Catalog facts each literal line restates: slot, authored effect key, amount and
+## the positive status it may boost. The seven card bonuses are wearer-owned and
+## positive-only; Frayfinder is the conditional first-hit Unravel bonus.
+const M05_EXPECTED_FACTS := {
+	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
+	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "status": "Exposed"},
+	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1, "status": "Weak"},
+	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
+	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
+	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "status": "Unravel"},
+	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus", "amount": 2, "status": "Unravel"},
+}
 
 
 func _initialize() -> void:
@@ -1735,12 +1762,80 @@ func _patch_tooltip(hero: Dictionary, label: String, patch_id: String, slot: Str
 		label, patch_id, slot, "ACTIVE" if active else "DORMANT"]
 
 
+## The authored catalog record for one bounded M05 HEAD/ARM ID, looked up by ID
+## presence so growing catalogs never invalidate this check.
+func _m05_catalog_entry(patch_id: String) -> Dictionary:
+	for path in ["res://data/patches/m05_head_patches.json",
+			"res://data/patches/m05_arm_support_patches.json",
+			"res://data/patches/m05_attack_patches.json"]:
+		var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if raw is Array:
+			for entry in raw:
+				if entry is Dictionary and entry.get("id") == patch_id:
+					return entry
+	return {}
+
+
+## Re-derive one M05 rule independently of the presenter: exact catalog amount
+## and effect key, the positive status, wearer-owned cards, the real Block
+## recipient, Red Bobbin versus Hemorrhage Hem, and Frayfinder's first
+## single-target hit / half-threshold / once-per-player-turn limit.
+func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
+	var facts: Dictionary = M05_EXPECTED_FACTS[patch_id]
+	var entry := _m05_catalog_entry(patch_id)
+	_check(not entry.is_empty() and entry.get("slot") == facts["slot"]
+		and entry.get("effect") == facts["effect"]
+		and int(entry.get("amount", -1)) == int(facts["amount"]),
+		"authored catalog agrees with the expected %s %s +%d rule: %s" % [
+			facts["slot"], facts["effect"], facts["amount"], patch_id])
+	_check(line.begins_with("Authored patch rule:"),
+		"the %s line describes an authored rule, not a fabricated trigger: %s" % [patch_id, line])
+	if patch_id != "frayfinder_mitt":
+		_check(line.contains(String(facts["effect"])),
+			"the %s line names its authored effect key: %s" % [patch_id, line])
+	if patch_id == "frayfinder_mitt":
+		var numerator := int(entry.get("minimum_unravel_numerator", 0))
+		var denominator := int(entry.get("minimum_unravel_denominator", 0))
+		_check(line.contains("+%d Unravel" % facts["amount"])
+			and line.contains("first single-target attack hit")
+			and line.contains("at least %d/%d of its current threshold" % [numerator, denominator])
+			and line.contains("once per PLAYER turn")
+			and line.contains("Not any area/multi-hit/later hit")
+			and entry.get("once_per_player_turn") == true
+			and int(entry.get("hit_number", 0)) == 1
+			and entry.get("target_kind") == "enemy_single"
+			and numerator == 1 and denominator == 2,
+			"Frayfinder Mitt keeps its +2 first single-target hit, half-threshold, once-per-turn condition: " + line)
+		_check(not line.contains("unconditional") and not line.contains("every attack"),
+			"Frayfinder Mitt never claims an unconditional or per-attack Unravel bonus: " + line)
+		_check(line.contains("Normal/elite/boss base thresholds %d/%d/%d, grow +%d per break" % [
+				CombatUnravel.THRESHOLD_NORMAL, CombatUnravel.THRESHOLD_ELITE,
+				CombatUnravel.THRESHOLD_BOSS, CombatUnravel.THRESHOLD_INCREMENT]),
+			"Frayfinder Mitt states the real Unravel base thresholds and growth: " + line)
+	else:
+		_check(line.contains("+%d to positive %s" % [facts["amount"], facts["status"]]),
+			"the %s line keeps its authored +%d positive %s amount: %s" % [
+				patch_id, facts["amount"], facts["status"], line])
+		_check(line.contains("this wearer's cards")
+			or line.contains("cards owned by this living wearer"),
+			"the %s line restricts the bonus to the wearer's own cards: %s" % [patch_id, line])
+		_check(not line.contains("any hero") and not line.contains("unconditional")
+			and not line.contains("any cards"),
+			"the %s line never claims an unconditional bonus to anyone's cards: %s" % [patch_id, line])
+	if patch_id == "reinforced_browband":
+		_check(line.contains("actual Block recipient (even if it is an ally)"),
+			"Reinforced Browband names the card's real Block recipient, including an ally: " + line)
+	if patch_id == "red_bobbin_cuff":
+		_check(line.contains("not Hemorrhage Hem's multiplier"),
+			"Red Bobbin Cuff is not Hemorrhage Hem's multiplier: " + line)
+
+
 ## A named sewn HEAD/ARM patch: readable name, authored ID, real wearer and
-## slot, plus the exact authored rule line for the eight M05 entries, never an
-## invented/fabricated effect sentence. Unknown IDs keep only the neutral 3-line
-## prefix.
+## slot, plus the independently expected authored rule line for the eight M05
+## entries, never an invented/fabricated effect sentence. Unknown IDs keep only
+## the neutral 3-line prefix.
 func _assert_named_chip(button: Button, hero: Dictionary, label: String,
-		patch_id: String, slot: String, active: bool, presenter: Node = null) -> void:
+		patch_id: String, slot: String, active: bool) -> void:
 	_check(button != null and button.visible and button.text == slot
 		and button.focus_mode == Control.FOCUS_NONE
 		and button.mouse_filter == Control.MOUSE_FILTER_STOP
@@ -1749,23 +1844,23 @@ func _assert_named_chip(button: Button, hero: Dictionary, label: String,
 		"sewn %s chip is a visible, hover-only, actionless slot label: %s" % [slot, patch_id])
 	if button == null:
 		return
-	var expected := _patch_tooltip(hero, label, patch_id, slot, active)
-	var known_m05 := ["bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap",
-		"reinforced_browband", "hemguard_cuff", "red_bobbin_cuff",
-		"loose_thread_glove", "frayfinder_mitt"]
-	if known_m05.has(patch_id):
-		var power_line := ""
-		if presenter != null:
-			power_line = presenter._patch_power(patch_id)
-		_check(not power_line.is_empty() or presenter == null,
-			"known M05 %s has an authored power description" % patch_id)
-		expected += "\n" + power_line
-		_check(button.tooltip_text == expected,
-			"%s keeps its readable name, authored ID, wearer, slot and authored rule: %s" % [patch_id, button.tooltip_text])
-		_check(button.tooltip_text.split("\n").size() == 4,
+	var prefix := _patch_tooltip(hero, label, patch_id, slot, active)
+	if M05_EXPECTED_POWERS.has(patch_id):
+		var rule_line: String = M05_EXPECTED_POWERS[patch_id]
+		var lines := button.tooltip_text.split("\n")
+		_check(lines.size() == 4,
 			"known M05 %s tooltip has four lines (base + authored rule): %s" % [patch_id, button.tooltip_text])
+		_check(lines.size() == 4 and "\n".join(lines.slice(0, 3)) == prefix,
+			"%s keeps the complete wearer/name/ID/slot/ACTIVE or DORMANT prefix: %s" % [
+				patch_id, button.tooltip_text])
+		_check(lines.size() == 4 and lines[3] == rule_line,
+			"%s shows its independently expected authored rule line: %s" % [patch_id, button.tooltip_text])
+		if lines.size() == 4:
+			_assert_m05_rule_terms(patch_id, lines[3])
+		_check(button.tooltip_text == prefix + "\n" + rule_line,
+			"%s chip matches the full expected tooltip: %s" % [patch_id, button.tooltip_text])
 	else:
-		_check(button.tooltip_text == expected,
+		_check(button.tooltip_text == prefix,
 			"%s keeps its readable name, authored ID, wearer and slot: %s" % [patch_id, button.tooltip_text])
 		_check(button.tooltip_text.split("\n").size() == 3,
 			"unwired patch tooltip invents no effect line: " + patch_id)
@@ -1899,13 +1994,13 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		"Seamstress COAT chip names Thick Felt Mantle, its real +10 and no free healing")
 	# AC1/AC3: named HEAD/ARM patches with their authored rules.
 	_assert_named_chip(_patch_chip(meters[0], "HEAD"), app.party.get_hero(1),
-		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", true, presenter)
+		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", true)
 	_assert_named_chip(_patch_chip(meters[0], "ARM"), app.party.get_hero(1),
-		"Hemguard Cuff", "hemguard_cuff", "ARM", true, presenter)
+		"Hemguard Cuff", "hemguard_cuff", "ARM", true)
 	_assert_named_chip(_patch_chip(meters[2], "HEAD"), app.party.get_hero(3),
-		"Button Glass Visor", "button_glass_visor", "HEAD", true, presenter)
+		"Button Glass Visor", "button_glass_visor", "HEAD", true)
 	_assert_named_chip(_patch_chip(meters[2], "ARM"), app.party.get_hero(3),
-		"Loose Thread Glove", "loose_thread_glove", "ARM", true, presenter)
+		"Loose Thread Glove", "loose_thread_glove", "ARM", true)
 	var tinker_coat := _patch_chip(meters[2], "COAT")
 	_check(tinker_coat != null and not tinker_coat.visible and tinker_coat.text.is_empty()
 		and tinker_coat.tooltip_text.is_empty(),
@@ -1964,7 +2059,7 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		and bool(warden_coat.get_meta("fallen_chip")) == true,
 		"the worn COAT chip reads DORMANT with no false active bonus once its wearer is torn")
 	_assert_named_chip(_patch_chip(meters[0], "HEAD"), app.party.get_hero(1),
-		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", false, presenter)
+		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", false)
 	_check(_patch_chip(meters[1], "COAT").tooltip_text.contains("ACTIVE")
 		and _patch_chip(meters[1], "COAT").tooltip_text.contains("+10 effective maximum HP"),
 		"the other living wearer's COAT stays ACTIVE with its own +10")
@@ -1983,13 +2078,13 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		return
 	var b_meters: Array = case_b["meters"]
 	_assert_named_chip(_patch_chip(b_meters[0], "HEAD"), app.party.get_hero(1),
-		"Stern Seam Cap", "stern_seam_cap", "HEAD", true, presenter)
+		"Stern Seam Cap", "stern_seam_cap", "HEAD", true)
 	_assert_named_chip(_patch_chip(b_meters[0], "ARM"), app.party.get_hero(1),
-		"Red Bobbin Cuff", "red_bobbin_cuff", "ARM", true, presenter)
+		"Red Bobbin Cuff", "red_bobbin_cuff", "ARM", true)
 	_assert_named_chip(_patch_chip(b_meters[1], "HEAD"), app.party.get_hero(2),
-		"Reinforced Browband", "reinforced_browband", "HEAD", true, presenter)
+		"Reinforced Browband", "reinforced_browband", "HEAD", true)
 	_assert_named_chip(_patch_chip(b_meters[1], "ARM"), app.party.get_hero(2),
-		"Frayfinder Mitt", "frayfinder_mitt", "ARM", true, presenter)
+		"Frayfinder Mitt", "frayfinder_mitt", "ARM", true)
 	_check(app.party.get_hero(1)["max_hp"] == 40 and app.party.get_hero(2)["max_hp"] == 30
 		and app.party.get_hero(3)["max_hp"] == 26 and b_meters[0].hp_text.text == "40/40",
 		"M05 case B: HEAD/ARM patches never invent a maximum-HP change")
@@ -2002,7 +2097,12 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	await _hover(arm_chip)
 	_check(root.gui_get_hovered_control() == arm_chip
 		and arm_chip.tooltip_text == _patch_tooltip(app.party.get_hero(2), "Frayfinder Mitt",
-			"frayfinder_mitt", "ARM", true) + "\n" + presenter._patch_power("frayfinder_mitt"),
+			"frayfinder_mitt", "ARM", true) + "\n" + M05_EXPECTED_POWERS["frayfinder_mitt"]
+		and arm_chip.tooltip_text.contains("+2 Unravel")
+		and arm_chip.tooltip_text.contains("first single-target attack hit")
+		and arm_chip.tooltip_text.contains("at least 1/2 of its current threshold")
+		and arm_chip.tooltip_text.contains("once per PLAYER turn")
+		and not arm_chip.tooltip_text.contains("unconditional"),
 		"real pointer hover reads Frayfinder Mitt's authored conditional +2 Unravel rule")
 	await _mouse(app.return_button)
 	await _frames()
