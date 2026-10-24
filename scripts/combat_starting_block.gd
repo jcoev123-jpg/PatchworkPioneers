@@ -34,33 +34,54 @@ func is_consumed() -> bool:
 	return _consumed
 
 
+## Preflight is used by CombatRoundFlow before clearing Block or drawing.
+## A downed Warden has a valid roster/receipt, but receives no grant.
+func can_open() -> bool:
+	return not _consumed and _resolve_block_amount() >= 0 and _warden_position() > 0
+
+
 func apply(path_receipt: Variant = null) -> bool:
-	if _consumed:
-		return false
 	if path_receipt != null:
 		_path_receipt = path_receipt
+	if not can_open():
+		return false
+	var warden_position := _warden_position()
+	if _party.is_downed(warden_position):
+		return false
 	var block_amount := _resolve_block_amount()
-	if block_amount <= 0:
-		return false
-	if _party == null or not is_instance_valid(_party) or not _party.is_valid():
-		return false
-	# CombatParty.is_valid() only checks roster size. Validate the whole
-	# formation before granting a uniquely authored Warden at his current slot.
-	if not CombatStatusTurnBatch.new().tick_side("heroes", _party.get_heroes())["ok"]:
-		return false
-	var warden_position := 0
-	for position in range(1, CombatParty.PARTY_SIZE + 1):
-		var hero: Dictionary = _party.get_hero(position)
-		if hero["id"] == WARDEN_ID:
-			if warden_position != 0 or hero["max_hp"] != WARDEN_MAX_HP:
-				return false
-			warden_position = position
-	if warden_position == 0 or _party.is_downed(warden_position):
-		return false
-	if not _party.gain_block(warden_position, block_amount):
+	# Vanguard replaces opening Block with a first-confirmed-hit passive.
+	if block_amount > 0 and not _party.gain_block(warden_position, block_amount):
 		return false
 	_consumed = true
 	return true
+
+
+func _warden_position() -> int:
+	if _party == null or not is_instance_valid(_party) or not _party.is_valid():
+		return 0
+	# Match round-flow carryover admission: torn heroes may have reduced caps,
+	# and a worn COAT may raise the cap only with a valid same-party projection.
+	if not CombatStatusTurnBatch.new().tick_side("heroes", _party.get_heroes())["ok"]:
+		return 0
+	var has_projection := _party.has_meta("shop_patch_projection")
+	if has_projection:
+		var projection: Variant = _party.get_meta("shop_patch_projection")
+		if not projection is Dictionary or not projection.get("rules") is CombatShopPatchRules:
+			return 0
+		if not projection.rules.is_valid() or projection.get("heroes") != _party.get_heroes():
+			return 0
+	var ids: Array[String] = []
+	var warden_position := 0
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		var hero: Dictionary = _party.get_hero(position)
+		if hero["id"] not in ["warden", "seamstress", "tinker"] or hero["id"] in ids:
+			return 0
+		ids.append(hero["id"])
+		if hero["id"] == WARDEN_ID:
+			if hero["max_hp"] > WARDEN_MAX_HP and not has_projection:
+				return 0
+			warden_position = position
+	return warden_position
 
 
 func _resolve_block_amount() -> int:
@@ -94,7 +115,7 @@ func _resolve_block_amount() -> int:
 			return -1
 		return amount
 	elif target_id == VANGUARD_PATH_ID:
-		return BLOCK_AMOUNT
+		return 0
 	return -1
 
 

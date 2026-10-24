@@ -21,6 +21,8 @@ func _run() -> void:
 	_test_bound_reaction_movement_and_skips()
 	_test_bound_reaction_rejections_and_replay()
 	_test_opening_and_rounds()
+	_test_path_openings()
+	_test_carryover_path_openings()
 	_test_terminal_victory()
 	_test_terminal_defeat()
 	_test_rejections()
@@ -78,7 +80,8 @@ func _rng(seed_value: int) -> RandomNumberGenerator:
 
 
 func _fight(seed_value: int = 509, hero_defs: Array = [],
-		enemy_defs: Array = [], intent_defs: Array = []) -> Dictionary:
+		enemy_defs: Array = [], intent_defs: Array = [],
+		path_receipt: Variant = null, party_override: CombatParty = null) -> Dictionary:
 	if hero_defs.is_empty():
 		hero_defs = _load_json(HEROES_PATH)
 	if enemy_defs.is_empty():
@@ -88,11 +91,17 @@ func _fight(seed_value: int = 509, hero_defs: Array = [],
 	var cards := StarterCards.new().get_starting_deck()
 	var rng := _rng(seed_value)
 	var deck := CombatDeck.new(cards, rng)
-	var party := CombatParty.new(hero_defs)
+	var party := party_override if party_override != null else CombatParty.new(hero_defs)
 	var enemies := CombatEnemies.new(enemy_defs)
 	var scheduler := CombatEnemyIntents.new(intent_defs)
 	var result := CombatBattleResult.new(party, enemies)
-	var flow := CombatRoundFlow.new(deck, party, enemies, scheduler, result)
+	# Keep exercising the untouched legacy constructor for unselected runs.
+	var flow: CombatRoundFlow
+	if path_receipt == null:
+		flow = CombatRoundFlow.new(deck, party, enemies, scheduler, result)
+	else:
+		flow = CombatRoundFlow.new(deck, party, enemies, scheduler, result,
+			null, null, path_receipt)
 	return {"deck": deck, "rng": rng, "party": party, "enemies": enemies,
 		"intents": scheduler, "result": result, "flow": flow, "cards": cards}
 
@@ -236,6 +245,237 @@ func _test_opening_and_rounds() -> void:
 			_check(deck._rng.state != prior_rng and deck.draw_pile.size() == 7
 				and deck.discard_pile.is_empty(),
 				"second end genuinely refills 10 discarded cards with seeded shuffle")
+
+
+func _test_path_openings() -> void:
+	# Actual authored claims, not synthetic mode flags, drive each seeded fight.
+	var bulwark := RunWardenPathChoice.new().choose("bulwark")
+	var vanguard := RunWardenPathChoice.new().choose("vanguard")
+	_check(bulwark.get("ok") == true and bulwark.get("path_id") == "bulwark"
+		and vanguard.get("ok") == true and vanguard.get("path_id") == "vanguard",
+		"both positive fixtures are genuine single-claim Warden Path receipts")
+	var options: Array[Dictionary] = [
+		{"name": "unselected", "receipt": null, "block": 6},
+		{"name": "bulwark", "receipt": bulwark, "block": 10},
+		{"name": "vanguard", "receipt": vanguard, "block": 0},
+	]
+	for option in options:
+		var name: String = option["name"]
+		var amount: int = option["block"]
+		var fight := _fight(42617, [], [], [], option["receipt"])
+		_preconditions(fight)
+		var party: CombatParty = fight["party"]
+		var deck: CombatDeck = fight["deck"]
+		var flow: CombatRoundFlow = fight["flow"]
+		var intents: CombatEnemyIntents = fight["intents"]
+		var enemies: CombatEnemies = fight["enemies"]
+		var oracle := CombatDeck.new(fight["cards"], _rng(42617))
+		_check(party.gain_block(1, 4) and party.gain_block(2, 2)
+			and party.gain_block(3, 3), name + " starts with genuine inherited hero Block")
+		var expected_heroes := party.get_heroes()
+		for hero in expected_heroes:
+			hero["block"] = 0
+		expected_heroes[0]["block"] = amount
+		var original_enemies := enemies.get_enemies()
+		var original_intents := intents.get_intents()
+		seed(42617)
+		var global_next := randi()
+		seed(42617)
+		_check(flow.begin_fight() and oracle.start_turn(),
+			name + " seeded admission and independent first turn succeed")
+		_check(party.get_heroes() == expected_heroes
+			and flow._opening_block.is_consumed(),
+			name + " resets inherited Block then applies exactly " + str(amount)
+			+ " Warden opening Block once; no other actor or status changes")
+		_check(_deck_snapshot(deck) == _deck_snapshot(oracle)
+			and deck.hand.size() == 5 and deck.energy == 3,
+			name + " opens with five exact seeded cards, three energy and matching RNG")
+		_check(enemies.get_enemies() == original_enemies
+			and intents.get_intents() == original_intents and intents._turn_index == 0
+			and fight["result"].get_outcome() == CombatBattleResult.ACTIVE,
+			name + " leaves enemy roster, turn-zero intent and result unchanged")
+		_check(randi() == global_next, name + " opening consumes no global RNG")
+		_reject(fight, flow.begin_fight, name + " duplicate battle entry")
+		_check(flow.end_turn() and oracle.end_turn() and oracle.start_turn(),
+			name + " commits first enemy phase and next seeded draw")
+		_check(_deck_snapshot(deck) == _deck_snapshot(oracle)
+			and deck.hand.size() == 5 and deck.energy == 3
+			and intents._turn_index == 1,
+			name + " continues with exact seeded turn cadence")
+		_check(party.get_hero(1)["hp"] == (39 if name == "vanguard" else 40)
+			and party.get_hero(1)["block"] == 0
+			and party.get_hero(2)["hp"] == 30 and party.get_hero(2)["block"] == 0
+			and party.get_hero(3)["hp"] == 26 and party.get_hero(3)["block"] == 0
+			and flow._opening_block.is_consumed(),
+			name + " absorbs opening attack iff it had Block and never re-grants it")
+		_reject(fight, flow.begin_fight, name + " reentry after turn transition")
+		_conserved(fight)
+
+		# A downed Warden does not block an otherwise legitimate fight start.
+		var downed := _fight(42618, [], [], [], option["receipt"])
+		var downed_party: CombatParty = downed["party"]
+		_check(downed_party.apply_damage(1, 40)
+			and downed_party.is_downed(1) and not downed_party.is_defeated(),
+			name + " downed fixture keeps two other living heroes")
+		var downed_heroes := downed_party.get_heroes()
+		var downed_oracle := CombatDeck.new(downed["cards"], _rng(42618))
+		_check(downed["flow"].begin_fight() and downed_oracle.start_turn()
+			and downed_party.get_heroes() == downed_heroes
+			and downed_party.get_hero(1)["block"] == 0
+			and not downed["flow"]._opening_block.is_consumed(),
+			name + " starts a genuine downed-Warden fight without opening grant")
+		_check(_deck_snapshot(downed["deck"]) == _deck_snapshot(downed_oracle)
+			and downed["deck"].hand.size() == 5 and downed["deck"].energy == 3
+			and downed["intents"]._turn_index == 0,
+			name + " downed admission preserves the same seed and turn-zero intents")
+		_reject(downed, downed["flow"].begin_fight, name + " downed duplicate begin")
+
+	# Rejections must occur before clearing even inherited Block, drawing cards,
+	# advancing an intent, latching a result, or spending either RNG.
+	var forged_block := bulwark.duplicate(true)
+	forged_block["passive"]["starting_block"] = 16
+	var forged_vanguard := vanguard.duplicate(true)
+	forged_vanguard["passive"]["once_per_turn"] = false
+	var wrong_owner := bulwark.duplicate(true)
+	wrong_owner["owner"] = "tinker"
+	var wrong_path := bulwark.duplicate(true)
+	wrong_path["path_id"] = "vanguard"
+	var claimant := RunWardenPathChoice.new()
+	_check(claimant.choose("vanguard").get("ok") == true,
+		"invalid replay receipt comes from a previously successful real claim")
+	var replayed := claimant.choose("vanguard")
+	var bad_receipts: Array[Dictionary] = [
+		{"name": "tampered Bulwark", "receipt": forged_block},
+		{"name": "tampered Vanguard", "receipt": forged_vanguard},
+		{"name": "foreign Warden owner", "receipt": wrong_owner},
+		{"name": "wrong Path identity", "receipt": wrong_path},
+		{"name": "replayed claim", "receipt": replayed},
+		{"name": "non-dictionary", "receipt": "vanguard"},
+		{"name": "empty receipt", "receipt": {}},
+	]
+	for bad in bad_receipts:
+		var refused := _fight(42619, [], [], [], bad["receipt"])
+		_preconditions(refused)
+		_check(refused["party"].gain_block(1, 4)
+			and refused["party"].get_hero(1)["block"] == 4,
+			bad["name"] + " refusal has meaningful inherited Block to preserve")
+		_reject_invalid(refused, bad["name"] + " optional Path receipt")
+		_check(refused["party"].get_hero(1)["block"] == 4,
+			bad["name"] + " rejected before Block reset")
+
+	# A structurally sized but non-authored Warden must not silently begin
+	# without a grant (the standalone helper already rejects that identity).
+	var wrong_hp := _fight(42620, [], [], [], bulwark)
+	wrong_hp["party"]._heroes[0]["max_hp"] = 41
+	_check(wrong_hp["party"].is_valid(), "wrong-HP party is structurally three actors")
+	_reject_invalid(wrong_hp, "non-authored Warden max HP")
+
+
+func _carryover_opening_party(kind: String) -> CombatParty:
+	var starter := CombatParty.new(_load_json(HEROES_PATH))
+	var initial := starter.get_heroes()
+	var carry := RunTornCarryover.new(initial)
+	_check(carry.is_valid(), kind + " starts from a genuine torn-carryover ledger")
+	if not carry.is_valid():
+		return null
+	if kind == "coat":
+		var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string(
+			CombatShopPatchRules.SLOTS_CATALOG))
+		definitions.append({"id": "quilted_coat", "slot": "COAT"})
+		var wardrobe := RunPatchWardrobe.new(initial, ["quilted_coat"], definitions, 0)
+		_check(wardrobe.is_valid(), "COAT fixture owns genuine authored quilted coat")
+		if not wardrobe.is_valid():
+			return null
+		_check(wardrobe.sew("quilted_coat", "warden", "COAT", "wear-before-fight",
+			wardrobe.get_snapshot()).ok, "authentic Warden COAT sewing succeeds")
+		_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+			"authentic wardrobe binds to the same tear ledger")
+	else:
+		var first := carry.create_next_fight_party()
+		var enemies := CombatEnemies.new(_load_json(ENEMIES_PATH))
+		var result := CombatBattleResult.new(first, enemies)
+		_check(first != null and carry.begin_battle("tear-warden", result, first),
+			"mending fixture admits a real carryover battle")
+		_check(first.apply_damage(1, 9999) and first.is_downed(1),
+			"mending fixture genuinely downs Warden")
+		for enemy in enemies.get_enemies():
+			_check(enemies.apply_damage(enemy.position, 9999),
+				"mending fixture defeats actual encounter enemy")
+		_check(result.evaluate() == CombatBattleResult.VICTORY
+			and carry.commit_victory("tear-warden", result, first).ok
+			and carry.apply_reward("tear-warden", result, first).ok,
+			"victory and reward publish genuine Warden tear")
+		_check(carry.read_state().heroes[0].max_hp == 37
+			and carry.choose_rest_heal("heal-warden").ok,
+			"real Rest revives Warden without restoring torn max HP")
+	var party := carry.create_next_fight_party()
+	_check(party != null, kind + " produces a fresh authoritative next-fight party")
+	if party != null:
+		var expected_cap := 46 if kind == "coat" else 37
+		_check(party.get_hero(1).max_hp == expected_cap
+			and party.get_hero(1).hp > 0 and party.get_hero(1).block == 0
+			and (party.has_meta("shop_patch_projection") == (kind == "coat")),
+			kind + " living Warden has projected cap and correct provenance")
+	return party
+
+
+func _test_carryover_path_openings() -> void:
+	var receipts := [
+		{"name": "unselected", "receipt": null, "block": 6},
+		{"name": "bulwark", "receipt": RunWardenPathChoice.new().choose("bulwark"), "block": 10},
+		{"name": "vanguard", "receipt": RunWardenPathChoice.new().choose("vanguard"), "block": 0},
+	]
+	for kind in ["mended", "coat"]:
+		for option in receipts:
+			var party := _carryover_opening_party(kind)
+			if party == null:
+				continue
+			var name: String = kind + " " + option.name
+			var amount: int = option.block
+			var fight := _fight(42621, [], [], [], option.receipt, party)
+			var flow: CombatRoundFlow = fight.flow
+			var deck: CombatDeck = fight.deck
+			var oracle := CombatDeck.new(fight.cards, _rng(42621))
+			if kind == "mended":
+				_check(party.gain_block(1, 4) and party.gain_block(2, 2)
+					and party.gain_block(3, 3),
+					name + " starts with meaningful inherited Block")
+			# COAT parties keep their genuine unmodified same-party projection.
+			var expected := party.get_heroes()
+			for hero in expected:
+				hero.block = 0
+			expected[0].block = amount
+			var enemies_before: Array = fight.enemies.get_enemies()
+			var intents_before: Array = fight.intents.get_intents()
+			_check(flow.begin_fight() and oracle.start_turn(),
+				name + " authentic next-fight opening succeeds")
+			_check(party.get_heroes() == expected and flow._opening_block.is_consumed(),
+				name + " grants only exact " + str(amount) + " Block and latches once")
+			_check(_deck_snapshot(deck) == _deck_snapshot(oracle)
+				and deck.hand.size() == 5 and deck.energy == 3
+				and fight.enemies.get_enemies() == enemies_before
+				and fight.intents.get_intents() == intents_before
+				and fight.intents._turn_index == 0,
+				name + " retains exact first hand, energy, intent, enemies and RNG")
+			_reject(fight, flow.begin_fight, name + " duplicate entry")
+			var hp_before: int = party.get_hero(1).hp
+			_check(flow.end_turn() and oracle.end_turn() and oracle.start_turn()
+				and _deck_snapshot(deck) == _deck_snapshot(oracle)
+				and party.get_hero(1).block == 0
+				and party.get_hero(1).hp == hp_before - (1 if amount == 0 else 0)
+				and flow._opening_block.is_consumed(),
+				name + " next turn retains latch, exact seeded cadence and proper damage")
+			_reject(fight, flow.begin_fight, name + " later reentry")
+			_conserved(fight)
+
+	# Even a valid projection must be the one associated with this same party.
+	var over := _carryover_opening_party("coat")
+	if over != null:
+		var forged := _fight(42622, [], [], [], null, over)
+		over._heroes[0].max_hp = 47
+		_check(over.get_hero(1).max_hp == 47,
+			"forged COAT precondition really exceeds its admitted +6 cap")
+		_reject_invalid(forged, "COAT projection mismatched to Warden 47 cap")
 
 
 func _test_terminal_victory() -> void:

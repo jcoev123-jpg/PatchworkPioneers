@@ -23,7 +23,8 @@ var _battle_result: CombatBattleResult
 func _init(deck: CombatDeck = null, party: CombatParty = null,
 		enemies: CombatEnemies = null, intents: CombatEnemyIntents = null,
 		result: CombatBattleResult = null, unravel: CombatUnravel = null,
-		reactions: CombatWardenGuardReactions = null) -> void:
+		reactions: CombatWardenGuardReactions = null,
+		path_receipt: Variant = null) -> void:
 	_deck = deck
 	_party = party
 	_enemies = enemies
@@ -31,7 +32,7 @@ func _init(deck: CombatDeck = null, party: CombatParty = null,
 	_result = result
 	_unravel = unravel
 	_reactions = reactions
-	_opening_block = CombatStartingBlock.new(party)
+	_opening_block = CombatStartingBlock.new(party, path_receipt)
 
 
 ## Begin exactly once: clear inherited hero Block, deal the first hand, then
@@ -48,6 +49,10 @@ func begin_fight() -> bool:
 	# A downed Warden can be carried with living allies; the one-shot helper skips him.
 	if _party.is_defeated() or _enemies.is_victorious() or not _result.can_continue():
 		return false
+	# Authenticate an optional Path before clearing Block or drawing cards.
+	# Vanguard's zero is valid; a negative result is a forged receipt.
+	if not _opening_block.can_open():
+		return false
 	# The optional battle-local projection is detached from the run wardrobe.
 	# Reject a malformed binding or a roster changed since its admission before
 	# clearing Block, dealing cards, or consuming the shared run RNG.
@@ -59,10 +64,13 @@ func begin_fight() -> bool:
 		patches = projection.rules
 		if not patches.is_valid() or projection.get("heroes") != _party.get_heroes():
 			return false
-	# Validated services make all three operations total for this initial state.
+	# Preflight checked the unique Warden and authentic carryover before mutation.
+	# A downed Warden is deliberately allowed without an opening latch.
+	var living_warden := not _party.is_downed(_opening_block._warden_position())
 	_party.start_player_turn()
+	if living_warden and not _opening_block.apply():
+		return false
 	_deck.start_turn()
-	_opening_block.apply()
 	if patches != null:
 		for hero in _party.get_heroes():
 			var bonus := patches.opening_block_bonus(hero.id)
@@ -246,6 +254,11 @@ func _valid_bindings() -> bool:
 		var hero: Dictionary = _party.get_hero(index + 1)
 		if hero.get("id") not in ["warden", "seamstress", "tinker"] \
 				or hero["id"] in ids:
+			return false
+		# Run carryover can lower his cap after a tear or raise it with a coat.
+		# Without a worn-patch projection, a raw over-cap roster is invalid.
+		if hero["id"] == "warden" and hero.get("max_hp", 0) > CombatStartingBlock.WARDEN_MAX_HP \
+				and not _party.has_meta("shop_patch_projection"):
 			return false
 		ids.append(hero["id"])
 	var preflight := CombatStatusTurnBatch.new()
