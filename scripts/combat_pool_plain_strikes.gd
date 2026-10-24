@@ -11,12 +11,61 @@ const SUPPORTED_IDS := [
 var _attacks := CombatStatusAttacks.new()
 var _pinned: CombatPinned = null
 var _patches: CombatPatchAttackRules = null
+var _head_patches: CombatM05HeadPatchRules = null
+var _binding_attempted := false
+var _binding_valid := false
+var _wardrobe: RunPatchWardrobe = null
+var _torn: RunTornMending = null
+var _wardrobe_snapshot: Dictionary = {}
+var _torn_snapshot: Dictionary = {}
 
 
 ## An explicit invalid binding disables casting instead of dropping the bonus.
+## Both wearer projections must accept the SAME genuine run ledgers: the M04/M05
+## ARM powers (Pincushion Arm, Hemguard Cuff) and the M05 HEAD powers.
 func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+	_binding_attempted = true
+	_binding_valid = false
+	_wardrobe = null
+	_torn = null
+	_wardrobe_snapshot = {}
+	_torn_snapshot = {}
+	# A failed attempt still leaves a real, invalid rule set behind so callers
+	# can inspect it instead of receiving null.
 	_patches = CombatPatchAttackRules.new()
-	return _patches.bind_wardrobe(wardrobe, torn)
+	_head_patches = CombatM05HeadPatchRules.new()
+	if wardrobe == null or torn == null or not wardrobe.is_valid() or not torn.is_valid():
+		return false
+	var arm_rules := CombatPatchAttackRules.new()
+	if not arm_rules.bind_wardrobe(wardrobe, torn):
+		return false
+	var head_rules := CombatM05HeadPatchRules.new()
+	if not head_rules.bind_wardrobe(wardrobe, torn):
+		return false
+	_wardrobe = wardrobe
+	_torn = torn
+	_wardrobe_snapshot = wardrobe.get_snapshot()
+	_torn_snapshot = torn.read_state()
+	_patches = arm_rules
+	_head_patches = head_rules
+	_binding_valid = true
+	return true
+
+
+## An explicit binding is only usable while every stored authority still
+## describes the same run ledgers. Rejected or drifted bindings never fall back
+## to unpatched play; an unbound resolver keeps its historic printed behaviour.
+func is_patch_binding_valid() -> bool:
+	if not _binding_attempted:
+		return true
+	if not _binding_valid or _patches == null or _head_patches == null:
+		return false
+	if not _patches.is_valid() or not _head_patches.read_projection().get("ok", false):
+		return false
+	if _wardrobe == null or _torn == null or not _wardrobe.is_valid() or not _torn.is_valid():
+		return false
+	return _wardrobe.get_snapshot() == _wardrobe_snapshot \
+		and _torn.read_state() == _torn_snapshot
 
 
 func _init(pinned: Variant = null, patches: Variant = null) -> void:
@@ -46,12 +95,18 @@ func get_patches() -> CombatPatchAttackRules:
 	return _patches
 
 
+func get_head_patches() -> CombatM05HeadPatchRules:
+	return _head_patches
+
+
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int, pinned: CombatPinned = null,
 		patches: CombatPatchAttackRules = null) -> Dictionary:
 	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
 	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
+		return _failure()
+	if not is_patch_binding_valid():
 		return _failure()
 	if active_patches != null and not active_patches.is_valid():
 		return _failure()
@@ -92,6 +147,25 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not warden_card and (effects.has("block") or block_amount != 0):
 		return _failure()
 
+	# Each worn M05 Block patch adds +2 to the WARDEN's own Block gain only.
+	# The ARM projection is Hemguard Cuff; the HEAD projection is Reinforced
+	# Browband. A damage-only card never gains Block from either.
+	var block_bonus: int = 0
+	if warden_card:
+		if active_patches != null:
+			var arm_bonus: int = active_patches.card_block_bonus(owner_id, card_id)
+			if arm_bonus < 0:
+				return _failure()
+			block_bonus += arm_bonus
+		if _head_patches != null:
+			var head_bonus: int = _head_patches.get_bonus(owner_id, card_id, "block")
+			if head_bonus < 0:
+				return _failure()
+			block_bonus += head_bonus
+		if block_bonus > CombatParty.MAX_INT - block_amount:
+			return _failure()
+	var final_block: int = block_amount + block_bonus
+
 	# Validate authoritative full rosters (including status shapes) before
 	# any debit or hit. Keep their original slots after other actors fall.
 	var heroes: Array[Dictionary] = party.get_heroes()
@@ -114,8 +188,9 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	if owner["block"] > CombatParty.MAX_INT or target["block"] > CombatEnemies.MAX_INT:
 		return _failure()
-	# Brass Buckle's gain must fit BEFORE damage, energy or card movement.
-	if warden_card and block_amount > CombatParty.MAX_INT - owner["block"]:
+	# Brass Buckle's full gain (printed plus worn Block patches) must fit
+	# BEFORE damage, energy or card movement.
+	if warden_card and final_block > CombatParty.MAX_INT - owner["block"]:
 		return _failure()
 	if patch_exposed > 0 and not enemies.can_apply_statuses({target_position: {"exposed": patch_exposed}}):
 		return _failure()
@@ -141,8 +216,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			active_patches.record_successful_attack(owner_id)
 	var block_deltas: Dictionary = {}
 	if warden_card:
-		party.gain_block(owner_position, block_amount)
-		block_deltas[owner_position] = block_amount
+		party.gain_block(owner_position, final_block)
+		block_deltas[owner_position] = final_block
 	return {"ok": true, "hits": [{
 		"position": target_position, "damage": hit["damage"],
 		"block_absorbed": hit["block_absorbed"], "hp_loss": hit["hp_loss"],

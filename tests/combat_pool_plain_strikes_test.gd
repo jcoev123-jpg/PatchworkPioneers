@@ -27,6 +27,11 @@ func _initialize() -> void:
 	_test_button_eye_ac1_first_hit()
 	_test_button_eye_ac2_latch_second_hit_and_dual_patches()
 	_test_button_eye_ac3_dormant_rejections_and_overflow()
+	_test_block_patch_matrix()
+	_test_block_patch_wearer_scope()
+	_test_block_patch_damage_and_lethal()
+	_test_block_patch_rejections_and_stale()
+	_test_block_patch_torn_wearer()
 	for failure in failures:
 		printerr(failure)
 	print("combat_pool_plain_strikes_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -128,7 +133,8 @@ func _snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 func _play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		id: String, target: int, damage: int, absorbed: int, loss: int,
-		gain: int, owner_position: int, label: String, pinned: CombatPinned = null) -> void:
+		gain: int, owner_position: int, label: String, pinned: CombatPinned = null,
+		resolver: CombatPoolPlainStrikes = null) -> void:
 	var owner_id: String = "warden" if id.begins_with("warden_") else "seamstress"
 	_check(deck.hand.has(id) and deck.turn_active and deck.energy >= 1,
 		label + ": live held hand and energy preconditions")
@@ -138,7 +144,8 @@ func _play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		label + ": selected original enemy slot is living")
 	var before: Dictionary = _snapshot(deck, party, enemies, pinned)
 	var before_pinner: String = pinned.pinner_for_enemy(target) if pinned != null else ""
-	var result: Dictionary = CombatPoolPlainStrikes.new().play_card(
+	var active: CombatPoolPlainStrikes = resolver if resolver != null else CombatPoolPlainStrikes.new()
+	var result: Dictionary = active.play_card(
 		deck, party, enemies, id, target, pinned)
 	var block_deltas: Dictionary = {}
 	if gain > 0:
@@ -173,9 +180,11 @@ func _play(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 
 
 func _reject(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		id: String, target: int, label: String, pinned: CombatPinned = null) -> void:
+		id: String, target: int, label: String, pinned: CombatPinned = null,
+		resolver: CombatPoolPlainStrikes = null) -> void:
 	var before: Dictionary = _snapshot(deck, party, enemies, pinned)
-	_check(CombatPoolPlainStrikes.new().play_card(deck, party, enemies, id, target, pinned)
+	var active: CombatPoolPlainStrikes = resolver if resolver != null else CombatPoolPlainStrikes.new()
+	_check(active.play_card(deck, party, enemies, id, target, pinned)
 		== {"ok": false, "hits": [], "block_deltas": {}},
 		label + ": fail-closed event")
 	_check(_snapshot(deck, party, enemies, pinned) == before,
@@ -740,6 +749,7 @@ func _test_worn_pincushion_plain_strikes() -> void:
 					"other wearer truly downed")
 				_check(ctx.torn.observe_battle_end("tear", start, party.get_heroes())["ok"],
 					"run torn ledger records wearer down")
+				_refresh_after_tear(ctx)
 				_check(ctx.wardrobe.project_active(ctx.torn.read_state())["active"][owner].is_empty(),
 					"torn wearer patch dormant in projection")
 			var resolver := CombatPoolPlainStrikes.new()
@@ -1022,6 +1032,7 @@ func _test_button_eye_ac3_dormant_rejections_and_overflow() -> void:
 	var start_heroes: Array = ctx_torn.torn.read_state()["heroes"]
 	_check(party_torn.apply_damage(1, 999) and party_torn.is_downed(1), "warden downed for torn test")
 	_check(ctx_torn.torn.observe_battle_end("tear", start_heroes, party_torn.get_heroes())["ok"], "recorded tear")
+	_refresh_after_tear(ctx_torn)
 	_check(ctx_torn.wardrobe.project_active(ctx_torn.torn.read_state())["active"]["warden"].is_empty(), "warden active empty")
 	var resolver_torn := CombatPoolPlainStrikes.new()
 	_check(resolver_torn.bind_patch_wardrobe(ctx_torn.wardrobe, ctx_torn.torn), "bind torn wardrobe")
@@ -1096,3 +1107,365 @@ func _test_button_eye_ac3_dormant_rejections_and_overflow() -> void:
 		_check(rej_res == {"ok": false, "hits": [], "block_deltas": {}}, "fails closed: " + rej_case["name"])
 		_check(_snapshot(deck_neg, party_neg, foes_neg) == snap_neg, "state immutable: " + rej_case["name"])
 		_check(resolver_neg._patches.latch_snapshot().get("warden") == false, "latch preserved: " + rej_case["name"])
+
+
+## A real tear changes HP, max HP and Block in the run ledger. The run owner
+## keeps the wardrobe's hero array equal to that canonical roster between nodes.
+func _refresh_after_tear(context: Dictionary) -> void:
+	var torn: RunTornMending = context["torn"]
+	var wardrobe: RunPatchWardrobe = context["wardrobe"]
+	var old: Dictionary = wardrobe.get_snapshot()
+	_check(wardrobe.refresh_run_context(torn.read_state()["heroes"], old["owned"],
+		old["scraps"], old["gold"], old["cards"], old),
+		"wardrobe refreshed onto the canonical torn roster")
+
+
+## Genuine M05 ARM/HEAD Block patch ledgers: authentic authored metadata, both
+## patches owned, and one sewn onto each named wearer. The roster argument lets
+## a shifted CombatParty bind the canonical run roster.
+func _block_context(arm_wearer: String = "", head_wearer: String = "",
+		roster: Array = []) -> Dictionary:
+	var heroes: Array = roster if not roster.is_empty() else _party().get_heroes()
+	var raw_arm: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_arm_support_patches.json"))
+	var raw_head: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	_check(raw_arm is Array and raw_head is Array
+		and not raw_arm.is_empty() and not raw_head.is_empty(),
+		"authored M05 ARM and HEAD patch catalogs available")
+	var definitions: Array = []
+	var arm_ids: Array = []
+	var head_ids: Array = []
+	for entry in raw_arm:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+		arm_ids.append(entry["id"])
+	for entry in raw_head:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+		head_ids.append(entry["id"])
+	_check(arm_ids.has("hemguard_cuff") and head_ids.has("reinforced_browband"),
+		"authentic Hemguard Cuff and Reinforced Browband IDs exist in their catalogs")
+	var owned: Array = ["hemguard_cuff", "reinforced_browband"]
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, definitions, 2)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine M05 Block patch run ledgers valid")
+	if not arm_wearer.is_empty():
+		var sewn_arm: Dictionary = wardrobe.sew("hemguard_cuff", arm_wearer, "ARM",
+			"sew_block_cuff", wardrobe.get_snapshot())
+		_check(sewn_arm.get("ok", false) and
+			wardrobe.get_snapshot()["worn"][arm_wearer]["ARM"] == "hemguard_cuff",
+			"authentic Hemguard Cuff sewn on the named " + arm_wearer)
+	if not head_wearer.is_empty():
+		var sewn_head: Dictionary = wardrobe.sew("reinforced_browband", head_wearer, "HEAD",
+			"sew_block_browband", wardrobe.get_snapshot())
+		_check(sewn_head.get("ok", false) and
+			wardrobe.get_snapshot()["worn"][head_wearer]["HEAD"] == "reinforced_browband",
+			"authentic Reinforced Browband sewn on the named " + head_wearer)
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+## AC1: 4/6 printed (6/8 with either patch, 8/10 with both) on the real Warden.
+func _test_block_patch_matrix() -> void:
+	var brass := {
+		"warden_brass_buckle": {"damage": 5, "block": 4},
+		"warden_brass_buckle_plus": {"damage": 7, "block": 6},
+	}
+	for id in brass:
+		var damage: int = brass[id]["damage"]
+		var printed: int = brass[id]["block"]
+		for mode in ["neither", "cuff", "browband", "both"]:
+			var cuff: bool = mode == "cuff" or mode == "both"
+			var browband: bool = mode == "browband" or mode == "both"
+			var party := _party()
+			var ctx := _block_context("warden" if cuff else "",
+				"warden" if browband else "", party.get_heroes())
+			var resolver := CombatPoolPlainStrikes.new()
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+				and resolver.is_patch_binding_valid(),
+				id + " " + mode + ": genuine wardrobe and HEAD authority bound")
+			_check(resolver.get_patches().card_block_bonus("warden", id) == (2 if cuff else 0)
+				and resolver.get_patches().card_block_bonus("seamstress", id) == 0,
+				id + " " + mode + ": ARM projection is wearer-only")
+			_check(resolver.get_head_patches().get_bonus("warden", id, "block")
+				== (2 if browband else 0)
+				and resolver.get_head_patches().get_bonus("seamstress", id, "block") == 0
+				and resolver.get_head_patches().get_bonus("warden", id, "bleed") == 0,
+				id + " " + mode + ": HEAD projection is wearer-only and Block-only")
+			var bonus: int = (2 if cuff else 0) + (2 if browband else 0)
+			var deck := _deck([id])
+			var foes := _enemies([40, 40])
+			_check(foes.gain_block(1, 3), id + " " + mode + ": target holds real Block")
+			_play(deck, party, foes, id, 1, damage, 3, damage - 3, printed + bonus, 1,
+				id + " " + mode + ": worn Block patches add exactly " + str(bonus),
+				null, resolver)
+			_check(party.get_hero(1)["block"] == printed + bonus
+				and not deck.hand.has(id) and deck.discard_pile.has(id)
+				and deck.energy == 2,
+				id + " " + mode + ": exact Warden Block, one held copy, one energy")
+
+
+## AC2: owner and effect scope, plus a shifted Warden in legal FROM 2.
+func _test_block_patch_wearer_scope() -> void:
+	# Both patches on the Seamstress give the Warden's Brass Buckle nothing.
+	var party := _party()
+	var ctx := _block_context("seamstress", "seamstress", party.get_heroes())
+	var resolver := CombatPoolPlainStrikes.new()
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+		and resolver.get_patches().card_block_bonus("warden", "warden_brass_buckle") == 0
+		and resolver.get_head_patches().get_bonus("warden", "warden_brass_buckle", "block") == 0,
+		"patches worn by the Seamstress project nothing for the Warden")
+	var deck := _deck(["warden_brass_buckle"])
+	var foes := _enemies([40])
+	_play(deck, party, foes, "warden_brass_buckle", 1, 5, 0, 5, 4, 1,
+		"Brass Buckle keeps printed Block when another hero wears both patches",
+		null, resolver)
+
+	# Thread Whip and Thread Whip+ stay damage-only for their own wearer.
+	for id in ["seamstress_thread_whip", "seamstress_thread_whip_plus"]:
+		var whip_party := _party()
+		var whip_ctx := _block_context("seamstress", "seamstress", whip_party.get_heroes())
+		var whip_resolver := CombatPoolPlainStrikes.new()
+		_check(whip_resolver.bind_patch_wardrobe(whip_ctx.wardrobe, whip_ctx.torn),
+			id + ": genuine binding for the damage-only card")
+		_check(whip_resolver.get_patches().card_block_bonus("seamstress", id) == 0
+			and whip_resolver.get_head_patches().get_bonus("seamstress", id, "block") == 0,
+			id + ": authentic damage-only card has no Block effect to boost")
+		var whip_definition: Dictionary = _definition(id)
+		var whip_deck := _deck([id])
+		var whip_foes := _enemies([40])
+		var whip_damage: int = whip_definition["effects"]["damage"]
+		_play(whip_deck, whip_party, whip_foes, id, 1, whip_damage, 0, whip_damage, 0, 2,
+			id + ": worn Block patches never add ally Block", null, whip_resolver)
+		_check(whip_party.get_hero(1)["block"] == 0 and whip_party.get_hero(2)["block"] == 0
+			and whip_party.get_hero(3)["block"] == 0,
+			id + ": no hero gained Block from the damage-only card")
+
+	# A shifted Warden still receives its own wearer-only bonus in FROM 2.
+	var ledger: Array = _party().get_heroes()
+	var shifted_ctx := _block_context("warden", "warden", ledger)
+	var shifted_party := _party(["seamstress", "warden", "tinker"])
+	var shifted_resolver := CombatPoolPlainStrikes.new()
+	_check(shifted_resolver.bind_patch_wardrobe(shifted_ctx.wardrobe, shifted_ctx.torn),
+		"shifted Warden binds the same canonical run ledgers")
+	var shifted_deck := _deck(["warden_brass_buckle"])
+	var shifted_foes := _enemies([40, 40])
+	_check(shifted_foes.gain_block(2, 3), "shifted target slot two holds real Block")
+	_play(shifted_deck, shifted_party, shifted_foes, "warden_brass_buckle", 2, 5, 3, 2, 8, 2,
+		"shifted Warden in FROM 2 gains both +2 Block patches", null, shifted_resolver)
+	_check(shifted_party.get_hero(1)["block"] == 0 and shifted_party.get_hero(3)["block"] == 0,
+		"the shifted Warden's allies gain no patch Block")
+
+
+## AC3: printed attack math, one energy, one discard, lethal Block award, no RNG.
+func _test_block_patch_damage_and_lethal() -> void:
+	# Lethal hit still awards the full padded Block.
+	var party := _party()
+	var ctx := _block_context("warden", "warden", party.get_heroes())
+	var resolver := CombatPoolPlainStrikes.new()
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+		"lethal fixture: genuine dual-patch binding")
+	var deck := _deck(["warden_brass_buckle"])
+	var foes := _enemies([3, 20])
+	_play(deck, party, foes, "warden_brass_buckle", 1, 5, 0, 3, 8, 1,
+		"lethal Brass Buckle still awards printed four plus both +2 patches",
+		null, resolver)
+	_check(foes.is_slain(1) and not foes.is_slain(2)
+		and party.get_hero(1)["block"] == 8
+		and resolver.get_patches().latch_snapshot().get("warden") == false,
+		"lethal hit keeps enemy slots, awards full Warden Block, consumes no latch")
+
+	# A foreign Pinned token still adds only damage.
+	var pinned_party := _party()
+	var pinned_ctx := _block_context("warden", "warden", pinned_party.get_heroes())
+	var pinned_resolver := CombatPoolPlainStrikes.new()
+	_check(pinned_resolver.bind_patch_wardrobe(pinned_ctx.wardrobe, pinned_ctx.torn),
+		"pinned fixture: genuine dual-patch binding")
+	var pinned_deck := _deck(["warden_brass_buckle"])
+	var pinned_foes := _enemies([40])
+	var pinned := CombatPinned.new()
+	_check(pinned.pin_enemy(pinned_foes, 1, "seamstress"),
+		"foreign pin established before the patched hit")
+	_play(pinned_deck, pinned_party, pinned_foes, "warden_brass_buckle", 1, 10, 0, 10, 8, 1,
+		"foreign Pinned +5 stays a damage bonus while both patches add Block",
+		pinned, pinned_resolver)
+	_check(pinned.pinner_for_enemy(1).is_empty(), "foreign pin consumed on a patched hit")
+
+	# Real Weak still scales the printed damage; the patches only change Block.
+	var weak_party := _party()
+	var weak_ctx := _block_context("warden", "warden", weak_party.get_heroes())
+	var weak_resolver := CombatPoolPlainStrikes.new()
+	_check(weak_resolver.bind_patch_wardrobe(weak_ctx.wardrobe, weak_ctx.torn),
+		"weak fixture: genuine dual-patch binding")
+	var weak_deck := _deck(["warden_brass_buckle"])
+	var weak_foes := _enemies([40])
+	weak_party._heroes[0]["statuses"] = {"weak": 1}
+	var weak_damage: int = CombatStatuses.new().adjusted_attack_damage(5, {"weak": 1}, {})
+	_check(weak_damage == 3, "independent CombatStatuses Weak rounding agrees")
+	_play(weak_deck, weak_party, weak_foes, "warden_brass_buckle", 1, weak_damage, 0,
+		weak_damage, 8, 1, "Weak scales only the attack, patches add only Block",
+		null, weak_resolver)
+	_check(weak_party.get_hero(1)["block"] == 8 and
+		weak_party.get_hero(1).get("statuses", {}) == {"weak": 1},
+		"weak owner keeps eight Block and its status")
+
+
+## AC4: refused casts change nothing; a rejected or stale binding never plays
+## unpatched, and an unbound resolver keeps its historic printed behaviour.
+func _test_block_patch_rejections_and_stale() -> void:
+	for scenario in [
+		{"name": "block patch: zero energy", "kind": "energy"},
+		{"name": "block patch: target zero", "target": 0},
+		{"name": "block patch: target slot three", "target": 3},
+		{"name": "block patch: downed Warden", "kind": "downed"},
+		{"name": "block patch: Warden in forbidden back row", "kind": "wrong_pos"},
+		{"name": "block patch: padded Block overflow", "kind": "overflow"},
+	]:
+		var party := _party()
+		var ctx := _block_context("warden", "warden", party.get_heroes())
+		var resolver := CombatPoolPlainStrikes.new()
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn),
+			scenario["name"] + ": genuine dual-patch binding")
+		var deck := _deck(["warden_brass_buckle"])
+		var foes := _enemies([40, 40])
+		var pinned := CombatPinned.new()
+		_check(pinned.pin_enemy(foes, 1, "seamstress"),
+			scenario["name"] + ": foreign pin established")
+		match scenario.get("kind", ""):
+			"energy":
+				_check(deck.try_spend_energy(3), scenario["name"] + ": real energy exhausted")
+			"downed":
+				_check(party.apply_damage(1, 40) and party.is_downed(1),
+					scenario["name"] + ": Warden truly downed in slot one")
+			"wrong_pos":
+				party = _party(["seamstress", "tinker", "warden"])
+				_check(party.get_hero(3)["id"] == "warden" and not party.is_downed(3),
+					scenario["name"] + ": living Warden outside its authored FROM slots")
+			"overflow":
+				party._heroes[0]["block"] = CombatParty.MAX_INT - 6
+				_check(party.get_hero(1)["block"] == CombatParty.MAX_INT - 6,
+					scenario["name"] + ": printed four fits but both +2 do not")
+		var wardrobe_before: Dictionary = ctx.wardrobe.get_snapshot()
+		var heads_before: Dictionary = resolver.get_head_patches().read_projection()
+		var latch_before: Dictionary = resolver.get_patches().latch_snapshot()
+		_reject(deck, party, foes, "warden_brass_buckle", scenario.get("target", 1),
+			scenario["name"], pinned, resolver)
+		_check(pinned.pinner_for_enemy(1) == "seamstress",
+			scenario["name"] + ": Pinned token preserved")
+		_check(ctx.wardrobe.get_snapshot() == wardrobe_before
+			and resolver.get_head_patches().read_projection() == heads_before
+			and resolver.get_patches().latch_snapshot() == latch_before
+			and resolver.is_patch_binding_valid(),
+			scenario["name"] + ": run ledgers and both patch latches unchanged")
+
+	# A real re-sew after binding is stale: refuse rather than play unpatched.
+	var stale_party := _party()
+	var stale_ctx := _block_context("warden", "", stale_party.get_heroes())
+	var stale_resolver := CombatPoolPlainStrikes.new()
+	_check(stale_resolver.bind_patch_wardrobe(stale_ctx.wardrobe, stale_ctx.torn)
+		and stale_resolver.is_patch_binding_valid(),
+		"Cuff-only binding starts valid")
+	var stale_deck := _deck(["warden_brass_buckle"])
+	var stale_foes := _enemies([40])
+	_check(stale_ctx.wardrobe.sew("reinforced_browband", "warden", "HEAD",
+		"sew_after_bind", stale_ctx.wardrobe.get_snapshot()).get("ok", false),
+		"real Rest re-sew changes the wardrobe after the binding")
+	_check(not stale_resolver.is_patch_binding_valid(),
+		"stale wardrobe and HEAD projection detected")
+	_reject(stale_deck, stale_party, stale_foes, "warden_brass_buckle", 1,
+		"stale Block patch binding", null, stale_resolver)
+	_check(stale_resolver.bind_patch_wardrobe(stale_ctx.wardrobe, stale_ctx.torn),
+		"fresh rebind after the re-sew accepted")
+	_check(stale_resolver.get_patches().card_block_bonus("warden", "warden_brass_buckle") == 2
+		and stale_resolver.get_head_patches().get_bonus("warden",
+			"warden_brass_buckle", "block") == 2,
+		"rebound projection awards both patches")
+	_play(stale_deck, stale_party, stale_foes, "warden_brass_buckle", 1, 5, 0, 5, 8, 1,
+		"rebound Cuff plus Browband awards the full eight Block", null, stale_resolver)
+
+	# A real torn-ledger change also makes the bound HEAD authority stale.
+	var torn_party := _party()
+	var torn_ctx := _block_context("warden", "warden", torn_party.get_heroes())
+	var torn_resolver := CombatPoolPlainStrikes.new()
+	_check(torn_resolver.bind_patch_wardrobe(torn_ctx.wardrobe, torn_ctx.torn),
+		"torn-staleness fixture: genuine dual-patch binding")
+	var torn_deck := _deck(["warden_brass_buckle"])
+	var torn_foes := _enemies([40])
+	var torn_start: Array = torn_ctx.torn.read_state()["heroes"]
+	var torn_end: Array = torn_party.get_heroes()
+	torn_end[1]["hp"] = 0
+	_check(torn_ctx.torn.observe_battle_end("tear_stale", torn_start, torn_end)["ok"],
+		"real battle end tears the Seamstress in the run ledger")
+	_check(not torn_resolver.is_patch_binding_valid(),
+		"torn ledger change makes the bound HEAD authority stale")
+	_reject(torn_deck, torn_party, torn_foes, "warden_brass_buckle", 1,
+		"stale torn Block patch binding", null, torn_resolver)
+	_refresh_after_tear(torn_ctx)
+	_check(torn_resolver.bind_patch_wardrobe(torn_ctx.wardrobe, torn_ctx.torn)
+		and torn_resolver.is_patch_binding_valid(),
+		"rebind after the torn ledger change accepted")
+	_play(torn_deck, torn_party, torn_foes, "warden_brass_buckle", 1, 5, 0, 5, 8, 1,
+		"Warden keeps both +2 Block patches while the Seamstress is torn",
+		null, torn_resolver)
+
+	# Explicitly invalid bindings refuse every cast instead of playing unpatched.
+	var invalid_party := _party()
+	var invalid_ctx := _block_context("warden", "warden", invalid_party.get_heroes())
+	var invalid_deck := _deck(["warden_brass_buckle"])
+	var invalid_foes := _enemies([40])
+	for kind in ["null wardrobe", "null torn", "invalid torn ledger"]:
+		var invalid_resolver := CombatPoolPlainStrikes.new()
+		var bound: bool = false
+		match kind:
+			"null wardrobe":
+				bound = invalid_resolver.bind_patch_wardrobe(null, invalid_ctx.torn)
+			"null torn":
+				bound = invalid_resolver.bind_patch_wardrobe(invalid_ctx.wardrobe, null)
+			_:
+				bound = invalid_resolver.bind_patch_wardrobe(invalid_ctx.wardrobe,
+					RunTornMending.new())
+		_check(not bound and not invalid_resolver.is_patch_binding_valid()
+			and not invalid_resolver.get_patches().is_valid()
+			and not invalid_resolver.get_head_patches().read_projection().get("ok", true),
+			kind + ": explicit Block patch binding refused and cleared")
+		_reject(invalid_deck, invalid_party, invalid_foes, "warden_brass_buckle", 1,
+			kind + ": invalid Block patch binding", null, invalid_resolver)
+
+	# An unbound resolver keeps the historic printed behaviour.
+	var plain_party := _party()
+	var plain_deck := _deck(["warden_brass_buckle"])
+	var plain_foes := _enemies([40])
+	_play(plain_deck, plain_party, plain_foes, "warden_brass_buckle", 1, 5, 0, 5, 4, 1,
+		"unbound resolver still awards only the printed four Block")
+
+
+## AC2: a torn wearer's patches are dormant and the downed hero cannot cast.
+func _test_block_patch_torn_wearer() -> void:
+	var party := _party()
+	var ctx := _block_context("warden", "warden", party.get_heroes())
+	var start: Array = ctx.torn.read_state()["heroes"]
+	_check(party.apply_damage(1, 999) and party.is_downed(1),
+		"Warden truly downed for the tear")
+	_check(ctx.torn.observe_battle_end("tear_block_patch", start,
+		party.get_heroes())["ok"], "run torn ledger records the Warden tear")
+	_refresh_after_tear(ctx)
+	_check(ctx.wardrobe.project_active(ctx.torn.read_state())["active"]["warden"].is_empty(),
+		"both worn Block patches are dormant while torn")
+	var resolver := CombatPoolPlainStrikes.new()
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+		and resolver.is_patch_binding_valid(),
+		"torn wearer binding still authenticates the ledgers")
+	_check(resolver.get_patches().card_block_bonus("warden", "warden_brass_buckle") == 0
+		and resolver.get_head_patches().get_bonus("warden", "warden_brass_buckle", "block") == 0,
+		"torn wearer projects no Block patch bonus")
+	var deck := _deck(["warden_brass_buckle"])
+	var foes := _enemies([40])
+	_reject(deck, party, foes, "warden_brass_buckle", 1,
+		"downed Warden cannot cast patched Brass Buckle", null, resolver)
+	_check(resolver.get_patches().latch_snapshot().get("warden") == false,
+		"torn rejection leaves the patch latch untouched")
+
+	# A living combat party cannot revive the torn run ledger's dormant patch.
+	var revived := _party()
+	var revived_deck := _deck(["warden_brass_buckle"])
+	var revived_foes := _enemies([40])
+	_play(revived_deck, revived, revived_foes, "warden_brass_buckle", 1, 5, 0, 5, 4, 1,
+		"living party with a torn run ledger gets printed Block only", null, resolver)
