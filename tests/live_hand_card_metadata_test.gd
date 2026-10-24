@@ -582,6 +582,16 @@ func _source_check() -> void:
 		"the hover tooltip explains the pips and their legal slots")
 	_check(text.contains("CardShortRules.line("),
 		"the drawn face line comes from the shared short formatter")
+	_check(text.contains('"PatchHeading"'), "renderer references master PatchHeading font variation")
+	_check(text.contains("func name_font(") and text.contains("func body_font("),
+		"renderer exposes name_font and body_font helpers")
+	_check(text.contains("_name_font(panel)"), "renderer routes name font selection through _name_font")
+	var draw_half_src := _function_body(text, "_draw_half")
+	_check(draw_half_src.contains("_name_font(panel)"), "_draw_half draws half name with _name_font")
+	var draw_sewn_half_src := _function_body(text, "_draw_sewn_half")
+	_check(draw_sewn_half_src.contains("_name_font(panel)"), "_draw_sewn_half draws compact half name with _name_font")
+	var draw_panel_src := _function_body(text, "_draw_panel")
+	_check(draw_panel_src.contains("_name_font(panel)"), "_draw_panel draws card title with _name_font")
 
 
 ## The exact source of one GDScript function, for presentation-only assertions.
@@ -1511,6 +1521,171 @@ func _unknown_check() -> void:
 	_check(_snapshot() == before, "unknown/mismatched catalog view cannot touch any live model")
 
 
+## Typography AC1/AC2: card titles and stitched halves select the master PatchHeading
+## variation (Londrina Solid Regular), while body/rules/owner/tooltips retain Patrick Hand.
+func _typography_check() -> void:
+	var master_theme: Theme = load("res://assets/fonts/patchwork_theme.tres")
+	_check(master_theme != null, "master Patchwork theme resource loads")
+	if master_theme == null:
+		return
+	_check(master_theme.has_font("font", "PatchHeading"),
+		"master Theme defines PatchHeading font variation")
+	var master_heading: Font = master_theme.get_font("font", "PatchHeading")
+	var master_body: Font = master_theme.default_font
+	_check(master_heading != null and master_heading.resource_path.ends_with("LondrinaSolid-Regular.ttf"),
+		"master PatchHeading resolves Londrina Solid Regular font")
+	_check(master_body != null and master_body.resource_path.ends_with("PatrickHand-Regular.ttf"),
+		"master Theme default font resolves Patrick Hand")
+	_check(master_heading != master_body,
+		"heading font and body font are distinct resources")
+
+	var metadata = presenter._metadata
+	var panels := _panels()
+	_check(panels.size() > 0, "active hand panels present for typography inspection")
+	# 1. Known starter cards currently held in the real battle hand.
+	for panel in panels:
+		if not is_instance_valid(panel) or panel.get_child_count() == 0:
+			continue
+		var card_id: String = panel.get_child(0).text
+		_check(metadata.name_font(panel) == master_heading,
+			"held card title selects PatchHeading Londrina Solid: " + card_id)
+		_check(metadata.body_font(panel) == master_body,
+			"held card body text retains default Patrick Hand: " + card_id)
+		var facts: Dictionary = metadata.get_facts(panel)
+		_check(metadata.definition(card_id).get("display_name") == facts.get("display_name"),
+			"authored display_name preserved byte-for-byte: " + card_id)
+
+	# 2. Probes for starter/base, pool and '+' cards mounted in app.hand_view.
+	var probe_metadata = load(HAND_SCRIPT).new()
+	probe_metadata.set_app(app)
+	var test_card_ids := [
+		"warden_strike", "warden_strike_plus",
+		"seamstress_prick", "seamstress_prick_plus",
+		"tinker_pop_shot", "tinker_pop_shot_plus",
+		"warden_hold_the_line", "tinker_ricochet", "seamstress_needle_pin"
+	]
+	for test_id in test_card_ids:
+		var p := PanelContainer.new()
+		p.custom_minimum_size = Vector2(150, 96)
+		var l := Label.new()
+		l.text = test_id
+		p.add_child(l)
+		app.hand_view.add_child(p)
+		await _frames()
+		var p_panels: Array[Node] = [p]
+		var p_hand: Array[String] = [test_id]
+		probe_metadata.sync(p_panels, p_hand)
+		await _frames()
+		_check(probe_metadata.name_font(p) == master_heading,
+			"mounted panel for %s selects PatchHeading Londrina Solid" % test_id)
+		_check(probe_metadata.body_font(p) == master_body,
+			"mounted panel for %s retains Patrick Hand body font" % test_id)
+		var definition: Dictionary = probe_metadata.definition(test_id)
+		_check(not definition.is_empty(), "test definition found: " + test_id)
+		_check(probe_metadata.describe(test_id).get("display_name") == definition.get("display_name"),
+			"display name unchanged for %s: %s" % [test_id, definition.get("display_name")])
+		probe_metadata.clear()
+		p.free()
+		await _frames()
+
+	# 3. Genuine stitched composite with two different-owner halves in tall and compact faces.
+	var original_deck: Array[String] = app.run_deck.duplicate()
+	var original_descriptors: Dictionary = app.run_stitch_descriptors.duplicate(true)
+	var original_scraps: int = app.run_scraps
+	var original_next_id: int = app.run_next_stitch_id
+
+	var stitch_pair := ["warden_shield_bash", "seamstress_prick"]
+	var stitch_first: Dictionary = metadata.definition(stitch_pair[0])
+	var stitch_second: Dictionary = metadata.definition(stitch_pair[1])
+	_check(stitch_first.get("owner") != stitch_second.get("owner"),
+		"stitched card half owners differ: %s vs %s" % [stitch_first.get("owner"), stitch_second.get("owner")])
+
+	var ledger := RunRestStitchCards.new(stitch_pair.duplicate(), {}, 3, 1)
+	_check(ledger.is_valid(), "synthetic Rest stitch ledger is valid")
+	var stitch_receipt := ledger.choose_stitch(0, 1, ledger.get_snapshot())
+	_check(bool(stitch_receipt.get("ok", false)), "choose_stitch succeeds")
+	var stitch_id: String = str(stitch_receipt.get("stitched_id", ""))
+	_check(stitch_id.begins_with(RunRestStitchCards.ID_PREFIX), "stitched ID starts with prefix")
+
+	var st_deck: Array[String] = [stitch_id]
+	app.run_deck = st_deck
+	app.run_stitch_descriptors = ledger.get_snapshot().descriptors.duplicate(true)
+	app.run_scraps = ledger.get_snapshot().remaining_scraps
+	app.run_next_stitch_id = ledger.get_snapshot().next_stitch_id
+
+	# 3a. Tall stitched card
+	var tall_panel := PanelContainer.new()
+	tall_panel.theme = master_theme
+	tall_panel.size = Vector2(230, 160)
+	var tall_label := Label.new()
+	tall_label.text = stitch_id
+	tall_panel.add_child(tall_label)
+	root.add_child(tall_panel)
+	await _frames()
+	var tall_panels: Array[Node] = [tall_panel]
+	var tall_hand: Array[String] = [stitch_id]
+	probe_metadata.sync(tall_panels, tall_hand)
+	await _frames()
+	var tall_geo: Dictionary = probe_metadata.get_geometry(tall_panel)
+	_check(not tall_geo.get("compact", true), "tall stitched panel is not compact")
+	_check((tall_geo.get("halves", []) as Array).size() == 2, "tall stitched panel has two half rects")
+	_check(probe_metadata.name_font(tall_panel) == master_heading,
+		"tall stitched panel title selects PatchHeading")
+	_check(probe_metadata.half_name_font(tall_panel) == master_heading,
+		"tall stitched halves select PatchHeading")
+	_check(probe_metadata.body_font(tall_panel) == master_body,
+		"tall stitched body text retains Patrick Hand")
+
+	# 3b. Compact stitched card
+	var compact_panel := PanelContainer.new()
+	compact_panel.theme = master_theme
+	compact_panel.size = Vector2(230, 96)
+	var compact_label := Label.new()
+	compact_label.text = stitch_id
+	compact_panel.add_child(compact_label)
+	root.add_child(compact_panel)
+	await _frames()
+	var compact_panels: Array[Node] = [compact_panel]
+	var compact_hand: Array[String] = [stitch_id]
+	probe_metadata.sync(compact_panels, compact_hand)
+	await _frames()
+	var compact_geo: Dictionary = probe_metadata.get_geometry(compact_panel)
+	_check(compact_geo.get("compact", false) == true, "compact stitched panel measures compact")
+	_check((compact_geo.get("halves", []) as Array).size() == 2, "compact stitched panel has two half rects")
+	_check(probe_metadata.name_font(compact_panel) == master_heading,
+		"compact stitched panel title selects PatchHeading")
+	_check(probe_metadata.half_name_font(compact_panel) == master_heading,
+		"compact stitched halves select PatchHeading")
+	_check(probe_metadata.body_font(compact_panel) == master_body,
+		"compact stitched body text retains Patrick Hand")
+
+	probe_metadata.clear()
+	tall_panel.free()
+	compact_panel.free()
+	app.run_deck = original_deck
+	app.run_stitch_descriptors = original_descriptors
+	app.run_scraps = original_scraps
+	app.run_next_stitch_id = original_next_id
+	await _frames()
+
+	# 4. Unknown/missing halves remain honest placeholders.
+	var partial_facts := {
+		"id": "stitched_test_partial",
+		"halves": ["warden_strike", "missing_unknown_half"]
+	}
+	var partial_title: String = metadata._title(partial_facts)
+	_check(partial_title.contains("Unknown half"), "partial halves produce honest placeholder: " + partial_title)
+	_check(not metadata._halves_known(partial_facts["halves"]), "unknown half pair is not recognized as halves_known")
+
+	# 5. Standalone test panel without theme resolves gracefully.
+	var standalone := PanelContainer.new()
+	standalone.theme = Theme.new()
+	var un_themed_font: Font = metadata.name_font(standalone)
+	_check(un_themed_font != null, "unthemed standalone panel resolves name font gracefully")
+	standalone.free()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_catalog_facts()
@@ -1548,6 +1723,7 @@ func _run() -> void:
 			_keyword_explanations(presenter._metadata)
 			_formatter_check(presenter._metadata)
 			await _warden_path_presentation()
+			await _typography_check()
 		await _visual_feedback()
 		# Compare the same global RNG stream, not a separately seeded RNG instance.
 		seed(8459)
