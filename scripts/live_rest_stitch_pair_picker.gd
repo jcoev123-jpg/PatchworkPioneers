@@ -124,7 +124,7 @@ func _ready() -> void:
 	first_tile_scroll = ScrollContainer.new()
 	first_tile_scroll.name = "FirstTileScroll"
 	first_tile_scroll.position = Vector2(30, 62)
-	first_tile_scroll.size = Vector2(650, 114)
+	first_tile_scroll.size = Vector2(650, 146)
 	first_tile_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	first_tile_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	first_tile_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -138,7 +138,7 @@ func _ready() -> void:
 	second_tile_scroll = ScrollContainer.new()
 	second_tile_scroll.name = "SecondTileScroll"
 	second_tile_scroll.position = Vector2(30, 62)
-	second_tile_scroll.size = Vector2(650, 114)
+	second_tile_scroll.size = Vector2(650, 146)
 	second_tile_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	second_tile_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	second_tile_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -162,8 +162,8 @@ func _ready() -> void:
 	second_selector.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var preview_panel := Panel.new()
-	preview_panel.position = Vector2(30, 178)
-	preview_panel.size = Vector2(650, 252)
+	preview_panel.position = Vector2(30, 212)
+	preview_panel.size = Vector2(650, 218)
 	var inset := StyleBoxFlat.new()
 	inset.bg_color = Color("#fff8e9")
 	inset.border_color = Color("#968c7e")
@@ -183,7 +183,7 @@ func _ready() -> void:
 	preview_scroll = ScrollContainer.new()
 	preview_scroll.name = "StitchPreviewScroll"
 	preview_scroll.position = Vector2(12, 34)
-	preview_scroll.size = Vector2(516, 212)
+	preview_scroll.size = Vector2(516, 178)
 	preview_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	preview_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	# Reading overflow never joins the action Tab chain: tiles, Change First,
@@ -476,8 +476,8 @@ func _mark_tile_selected(tile: Button, is_selected: bool) -> void:
 func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	var tile := Button.new()
 	tile.name = ("FirstTile_%d" if is_first else "SecondTile_%d") % entry["index"]
-	tile.custom_minimum_size = Vector2(108, 106)
-	tile.size = Vector2(108, 106)
+	tile.custom_minimum_size = Vector2(108, 134)
+	tile.size = Vector2(108, 134)
 	tile.focus_mode = Control.FOCUS_ALL
 	tile.mouse_filter = Control.MOUSE_FILTER_STOP
 	tile.set_meta("index", entry["index"])
@@ -561,8 +561,8 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	var name_lbl := Label.new()
 	name_lbl.name = "CardName"
 	name_lbl.theme_type_variation = "PatchHeading"
-	name_lbl.position = Vector2(2, 60)
-	name_lbl.size = Vector2(104, 24)
+	name_lbl.position = Vector2(2, 61)
+	name_lbl.size = Vector2(104, 44)
 	name_lbl.text = entry["name"]
 	name_lbl.add_theme_font_size_override("font_size", CARD_NAME_FONT_SIZE)
 	name_lbl.add_theme_color_override("font_color", INK)
@@ -585,7 +585,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	# Three small numbered sewn FROM pips (1, 2, 3)
 	var pips_row := HBoxContainer.new()
 	pips_row.name = "FromPips"
-	pips_row.position = Vector2(4, 85)
+	pips_row.position = Vector2(4, 108)
 	pips_row.size = Vector2(54, 16)
 	pips_row.add_theme_constant_override("separation", 3)
 	pips_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -634,7 +634,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	# Round sewn cost button
 	var cost_badge := Panel.new()
 	cost_badge.name = "CostBadge"
-	cost_badge.position = Vector2(80, 84)
+	cost_badge.position = Vector2(80, 107)
 	cost_badge.size = Vector2(24, 18)
 	cost_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cost_box := StyleBoxFlat.new()
@@ -664,7 +664,7 @@ func _create_change_first_button(first_idx: int) -> Button:
 	var btn := Button.new()
 	btn.name = "ChangeFirstButton"
 	btn.custom_minimum_size = Vector2(96, 106)
-	btn.size = Vector2(96, 106)
+	btn.size = Vector2(96, 134)
 	btn.focus_mode = Control.FOCUS_ALL
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

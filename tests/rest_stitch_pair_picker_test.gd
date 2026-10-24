@@ -2691,11 +2691,68 @@ func _test_owner_position_pips() -> void:
 	panel.free()
 
 
+func _assert_tile_unobstructed_bounds(tile: Button, label: String) -> void:
+	_check(tile != null and tile.is_visible_in_tree(), label + " tile is mounted and visible")
+	var name_label := tile.get_node_or_null("CardName") as Label
+	_check(name_label != null and name_label.is_visible_in_tree(), label + " tile has visible CardName")
+	var pips_row := tile.find_child("FromPips", true, false) as Control
+	_check(pips_row != null and pips_row.is_visible_in_tree(), label + " tile has visible FromPips")
+	var cost_badge := tile.find_child("CostBadge", true, false) as Control
+	_check(cost_badge != null and cost_badge.is_visible_in_tree(), label + " tile has visible CostBadge")
+	if name_label == null or pips_row == null or cost_badge == null:
+		return
+
+	# CardName label rect must not intersect FromPips or CostBadge
+	var name_global_rect := name_label.get_global_rect()
+	var pips_global_rect := pips_row.get_global_rect()
+	var cost_global_rect := cost_badge.get_global_rect()
+	_check(not name_global_rect.intersects(pips_global_rect),
+		label + " CardName rect does not intersect FromPips: %s" % tile.name)
+	_check(not name_global_rect.intersects(cost_global_rect),
+		label + " CardName rect does not intersect CostBadge: %s" % tile.name)
+	_check(pips_global_rect.position.y >= name_global_rect.end.y,
+		label + " FromPips row is placed strictly below CardName: %s" % tile.name)
+	_check(cost_global_rect.position.y >= name_global_rect.end.y,
+		label + " CostBadge is placed strictly below CardName: %s" % tile.name)
+
+	# Actual rendered multiline text bounds within CardName must not intersect FromPips or CostBadge
+	var font: Font = name_label.get_theme_font("font")
+	var font_size: int = name_label.get_theme_font_size("font_size")
+	var text_sz := font.get_multiline_string_size(name_label.text, HORIZONTAL_ALIGNMENT_CENTER, name_label.size.x, font_size)
+	var text_local_y := 0.0
+	if name_label.vertical_alignment == VERTICAL_ALIGNMENT_CENTER:
+		text_local_y = maxf(0.0, (name_label.size.y - text_sz.y) / 2.0)
+	var text_global_rect := Rect2(
+		name_label.global_position.x,
+		name_label.global_position.y + text_local_y,
+		name_label.size.x,
+		text_sz.y
+	)
+	_check(not text_global_rect.intersects(pips_global_rect),
+		label + " rendered text bounds do not intersect FromPips: %s" % tile.name)
+	_check(not text_global_rect.intersects(cost_global_rect),
+		label + " rendered text bounds do not intersect CostBadge: %s" % tile.name)
+
+	# If this is a missing-art fallback tile, check CardNameFallback does not intersect CardName, pips or cost
+	var fallback_label := tile.find_child("CardNameFallback", true, false) as Label
+	if fallback_label != null:
+		var fallback_rect := fallback_label.get_global_rect()
+		_check(not fallback_rect.intersects(name_global_rect),
+			label + " CardNameFallback does not intersect CardName: %s" % tile.name)
+		_check(not fallback_rect.intersects(pips_global_rect),
+			label + " CardNameFallback does not intersect FromPips: %s" % tile.name)
+		_check(not fallback_rect.intersects(cost_global_rect),
+			label + " CardNameFallback does not intersect CostBadge: %s" % tile.name)
+		var art_window := fallback_label.get_parent() as Panel
+		_check(art_window != null and art_window.get_global_rect().encloses(fallback_rect),
+			label + " CardNameFallback is enclosed in art window: %s" % tile.name)
+
+
 ## AC1, AC2, AC3: Card tile typography, contrast, components, and selection invariants.
 func _test_card_tile_typography_and_contrast() -> void:
 	var test_deck: Array[String] = [
 		"warden_strike",
-		"seamstress_running_stitch",
+		"seamstress_hemorrhage_hem_plus",
 		"tinker_pop_shot",
 		"tinker_snip_the_seam_plus",
 		"warden_counter_stitch_plus",
@@ -2731,6 +2788,7 @@ func _test_card_tile_typography_and_contrast() -> void:
 		var owner_str: String = str(def["owner"])
 
 		_bounds(tile)
+		_assert_tile_unobstructed_bounds(tile, "stage 1 tile %d" % i)
 
 		# AC1: Friendly name in PatchHeading at >= 16px, autowrap enabled
 		var name_label := tile.get_node_or_null("CardName") as Label
@@ -2803,9 +2861,10 @@ func _test_card_tile_typography_and_contrast() -> void:
 		"stage 2 is visible after first selection")
 	_check(panel.confirm_button.disabled, "confirm button is disabled upon entering stage 2")
 
-	# Check Stage 2 tiles
+	# Check Stage 2 tiles (includes seamstress_hemorrhage_hem_plus with long name & missing art)
 	for tile in panel.second_tiles:
 		_bounds(tile)
+		_assert_tile_unobstructed_bounds(tile, "stage 2 tile %s" % tile.name)
 		var name_label := tile.get_node_or_null("CardName") as Label
 		_check(name_label != null and name_label.get_theme_font_size("font_size") >= 16,
 			"stage 2 tile CardName font size is >= 16px")
@@ -2813,6 +2872,48 @@ func _test_card_tile_typography_and_contrast() -> void:
 			"stage 2 tile CardName uses PatchHeading")
 		_check(name_label.autowrap_mode != TextServer.AUTOWRAP_OFF,
 			"stage 2 tile CardName has autowrap enabled")
+		var tile_id: String = tile.get_meta("id")
+		var s_def := RunRestStitchCards.resolve_card_definition(tile_id)
+		_check(name_label.text == s_def["display_name"],
+			"stage 2 tile displays exact friendly authored name: %s" % s_def["display_name"])
+
+		# Owner stripe contrast on stage 2
+		var stripe_label := tile.find_child("OwnerStripe", true, false) as Label
+		_check(stripe_label != null, "stage 2 tile mounts OwnerStripe")
+		var s_owner: String = str(tile.get_meta("owner"))
+		var s_owner_col: Color = LiveRestStitchPairPicker.OWNER_COLORS[s_owner]
+		var s_stripe_col := stripe_label.get_theme_color("font_color")
+		if s_owner == "tinker":
+			_check(s_stripe_col == LiveRestStitchPairPicker.INK,
+				"stage 2 tinker stripe uses dark ink text")
+		else:
+			_check(s_stripe_col == LiveRestStitchPairPicker.CREAM,
+				"stage 2 %s stripe uses cream text" % s_owner)
+		_check(_contrast(s_stripe_col, s_owner_col) >= 4.5,
+			"stage 2 tile stripe text contrast >= 4.5")
+
+		# Missing art fallback check on stage 2
+		var s_tex := LiveRestStitchPairPicker._texture(LiveRestStitchPairPicker.art_path(tile_id))
+		var s_fallback := tile.find_child("CardNameFallback", true, false) as Label
+		if s_tex == null:
+			_check(s_fallback != null and s_fallback.text == s_def["display_name"],
+				"stage 2 missing-art tile %s mounts fallback with friendly name" % tile_id)
+
+	# Alternate Stage 2 check: return to stage 1, pick seamstress_hemorrhage_hem_plus (index 1)
+	# which offers warden_counter_stitch_plus (another long authored name with unknown art) in stage 2
+	await _click_tile(panel.change_first_button)
+	await _frames()
+	_check(panel.first_tile_scroll.visible and not panel.second_tile_scroll.visible,
+		"returned to stage 1 via Change First")
+	await _click_tile(panel.first_tiles[1])
+	await _frames()
+	_check(panel.second_tile_scroll.visible, "stage 2 visible for second choice")
+	for tile in panel.second_tiles:
+		_bounds(tile)
+		_assert_tile_unobstructed_bounds(tile, "alternate stage 2 tile %s" % tile.name)
+		var name_label := tile.get_node_or_null("CardName") as Label
+		_check(name_label != null and name_label.get_theme_font_size("font_size") >= 16,
+			"alternate stage 2 tile CardName font size is >= 16px")
 
 	# Check missing art synthesized entry
 	var synth_entry := {
@@ -2824,6 +2925,8 @@ func _test_card_tile_typography_and_contrast() -> void:
 	}
 	var synth_tile := panel._create_card_tile(synth_entry, true)
 	panel.add_child(synth_tile)
+	_bounds(synth_tile)
+	_assert_tile_unobstructed_bounds(synth_tile, "synth tile")
 	var synth_name := synth_tile.get_node_or_null("CardName") as Label
 	_check(synth_name != null and synth_name.text == "Synthesized Long Card Name",
 		"synth tile retains long name")
