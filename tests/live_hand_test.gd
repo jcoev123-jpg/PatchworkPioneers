@@ -212,6 +212,25 @@ func _pool_definition(card_id: String) -> Dictionary:
 	return TinkerPoolCards.new().get_definition(card_id)
 
 
+var _warden_path_cache: Dictionary = {}
+
+
+## Authentic Warden Path card definitions loaded from the genuine RunWardenPathChoice
+## record; detached like every catalog lookup.
+func _warden_path_definition(card_id: String) -> Dictionary:
+	if _warden_path_cache.is_empty():
+		var choice := RunWardenPathChoice.new()
+		if choice.is_valid():
+			for path in choice.get_authored_paths():
+				if path is Dictionary:
+					var card: Variant = (path as Dictionary).get("card")
+					if card is Dictionary and not str((card as Dictionary).get("id", "")).is_empty():
+						_warden_path_cache[str((card as Dictionary)["id"])] = (card as Dictionary).duplicate(true)
+	if _warden_path_cache.has(card_id):
+		return (_warden_path_cache[card_id] as Dictionary).duplicate(true)
+	return {}
+
+
 func _panel_for(card_id: String) -> Control:
 	if not is_instance_valid(app.hand_view):
 		return null
@@ -223,11 +242,16 @@ func _panel_for(card_id: String) -> Control:
 
 
 func _combat_state() -> Array:
+	var pinned_tokens := {}
+	var preview = app.get_node_or_null("LiveAttackPreview")
+	if preview != null and "_pinned" in preview and preview._pinned is CombatPinned:
+		for pos in range(1, 4):
+			pinned_tokens[pos] = preview._pinned.pinner_for_enemy(pos)
 	return [app.deck.hand.duplicate(), app.deck.draw_pile.duplicate(),
 		app.deck.discard_pile.duplicate(), app.deck.energy, app.deck.turn_active,
 		app.party.get_heroes(), app.enemies.get_enemies(),
 		app.enemy_intents.get_intents(), app.run_rng.seed, app.run_rng.state,
-		app.battle_result.get_outcome(), app.session_gold]
+		app.battle_result.get_outcome(), app.session_gold, pinned_tokens]
 
 
 func _click_center(panel: Control) -> void:
@@ -467,6 +491,15 @@ func _area_card(card_id: String) -> bool:
 ## Independent admission expectation built from the real resolver tables and the
 ## mounted area adapter's own card list, never from the presenter being checked.
 func _pool_admitted(card_id: String) -> bool:
+	# Warden Path cards (Bulwark Brace and Lance Pin) are authored records from
+	# RunWardenPathChoice. They remain unwired unless a genuine selected,
+	# battle-bound Path authority exists in the mounted battle.
+	if not _warden_path_definition(card_id).is_empty():
+		var path_authority = app.get_node_or_null("LiveWardenPathHand")
+		if path_authority != null and is_instance_valid(path_authority) \
+				and path_authority.has_method("is_admitted"):
+			return bool(path_authority.is_admitted(card_id))
+		return false
 	var base_id: String = card_id.trim_suffix("_plus")
 	if CombatWardenPoolBlockCards.SUPPORTED_KINDS.has(base_id) \
 			and (card_id == base_id or card_id == base_id + "_plus"):
@@ -645,6 +678,7 @@ func _pool_faces() -> void:
 	if not batch.is_empty():
 		await _inspect_pool_batch(batch)
 	await _sewn_and_unknown_faces()
+	await _warden_path_cases()
 	await _admitted_pool_play()
 
 
@@ -848,6 +882,190 @@ func _unknown_pool_face(metadata) -> void:
 	var before := _combat_state()
 	await _click_center(panel)
 	_check(_combat_state() == before, "clicking an unauthored card changes nothing")
+
+
+## Authentic Warden Path card faces: recognized as known authored display records
+## while remaining honest unwired stubs without a selected battle-bound authority.
+## Preserves unchanged deck/party/enemy/Pinned/RNG state on rejected mouse/keyboard input.
+func _warden_path_cases() -> void:
+	var choice := RunWardenPathChoice.new()
+	_check(choice.is_valid(), "RunWardenPathChoice validates genuine Path records")
+	if not choice.is_valid():
+		return
+	var paths: Array = choice.get_authored_paths()
+	var path_cards: Array[Dictionary] = []
+	for path in paths:
+		if path is Dictionary and (path as Dictionary).get("card") is Dictionary:
+			path_cards.append((path as Dictionary)["card"])
+	for required_id in [CombatWardenPathCards.BULWARK_BRACE_ID, CombatWardenPathCards.LANCE_PIN_ID]:
+		var found := false
+		for card in path_cards:
+			if card.get("id") == required_id:
+				found = true
+				break
+		_check(found, "genuine Warden Path card authored: " + required_id)
+
+	# Negative branch: unauthored Path ID
+	_check(_warden_path_definition("warden_unauthored_path").is_empty(),
+		"unauthored Path ID returns empty definition")
+	_check(_pool_admitted("warden_unauthored_path") == false,
+		"unauthored Path ID is not admitted")
+
+	for card in path_cards:
+		var card_id: String = str(card.get("id", ""))
+		if card_id.is_empty():
+			continue
+		if not await _open_battle("warden path face: " + card_id):
+			continue
+
+		var metadata = app.get_node("LiveSupportHand")._metadata
+		app.deck.draw_pile.append(card_id)
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.back() == card_id,
+			"real deck draws the authored Warden Path card: " + card_id)
+		app._refresh_hand()
+		await _frames()
+
+		var panel := _panel_for(card_id)
+		_check(panel != null, "authored Warden Path card mounted: " + card_id)
+		if panel == null:
+			await _close_battle("warden path face: " + card_id)
+			continue
+
+		_check(panel.get_child_count() >= 1 and panel.get_child(0) is Label \
+			and not panel.get_child(0).is_visible_in_tree(),
+			"identity label kept but raw ID never rendered: " + card_id)
+
+		# AC1: Authored-face recognition
+		var facts: Dictionary = metadata.get_facts(panel)
+		_check(facts.get("known") == true and facts.get("id") == card_id,
+			"Warden Path recognized as known authored card: " + card_id)
+		_check(facts.get("owner") == "warden" and facts.get("owner_text") == "Warden",
+			"reports Warden owner: " + card_id)
+		_check(facts.get("display_name") == str(card.get("display_name", "")),
+			"authored display name on the face: " + card_id)
+		_check(not str(facts.get("display_name", "")).contains("warden_") \
+			and not str(facts.get("display_name", "")).is_empty(),
+			"human name without raw-ID substitution: " + card_id)
+		var cost: int = int(card.get("cost", -1))
+		_check(facts.get("cost") == cost and facts.get("cost_text") == "Cost %d" % cost,
+			"authored cost on the face: " + card_id)
+		_check(facts.get("from_text") == "From " + _face_positions(card.get("from_positions", [])),
+			"authored from positions: " + card_id)
+		var target_kind: String = str(card.get("target_kind", ""))
+		var expected_target: String = _badge_target(target_kind, card.get("to_positions", []))
+		_check(facts.get("target_text") == expected_target,
+			"authored target text '%s': %s" % [expected_target, card_id])
+
+		var rules: String = str(facts.get("rules", ""))
+		_check(not rules.is_empty() and not rules.contains("BASE") and not rules.contains("Unknown"),
+			"rules line is readable and concise: " + card_id + " (" + rules + ")")
+		_check(rules.length() <= 80, "rules line stays short: " + card_id)
+		_check(rules.ends_with(".") and rules.substr(0, 1) == rules.substr(0, 1).to_upper() \
+			and not rules.contains("·"),
+			"rules line is a complete sentence: " + card_id)
+
+		if card_id == CombatWardenPathCards.BULWARK_BRACE_ID:
+			_check(cost == 1, "Bulwark Brace cost is 1")
+			_check(facts.get("from_text") == "From 1–3", "Bulwark Brace from 1-3")
+			_check(facts.get("target_text") == "Self", "Bulwark Brace self target")
+			_check(rules.contains("9 Block"), "Bulwark Brace rules report 9 Block")
+		elif card_id == CombatWardenPathCards.LANCE_PIN_ID:
+			_check(cost == 1, "Lance Pin cost is 1")
+			_check(facts.get("from_text") == "From 1", "Lance Pin from 1")
+			_check(facts.get("target_text") == "To enemy 1–2", "Lance Pin target enemy 1-2")
+			_check(rules.to_lower().contains("deal 6") and rules.to_lower().contains("pin"),
+				"Lance Pin rules report 6 damage and Pinned")
+
+		# Tooltip recognition
+		var tooltip: String = panel.tooltip_text
+		_check(tooltip.contains(str(card.get("display_name", ""))),
+			"mounted tooltip names authored card: " + card_id)
+		_check(not tooltip.contains("Unknown card") and not tooltip.contains("Rules unknown"),
+			"no unknown placeholder in tooltip: " + card_id)
+		_check(tooltip.contains("Warden; %d energy" % cost),
+			"tooltip includes Warden and cost: " + card_id)
+		if card_id == CombatWardenPathCards.BULWARK_BRACE_ID:
+			_check(tooltip.contains("gain 9 Block"), "Bulwark Brace tooltip reports 9 Block")
+		elif card_id == CombatWardenPathCards.LANCE_PIN_ID:
+			_check(tooltip.contains("deal 6 damage") and tooltip.contains("Pin"),
+				"Lance Pin tooltip reports 6 damage and Pinned")
+
+		# Geometry check
+		var geometry: Dictionary = metadata.get_geometry(panel)
+		_check(not geometry.is_empty(), "real panel measures drawn card: " + card_id)
+		if not geometry.is_empty():
+			var bounds := Rect2(Vector2.ZERO, panel.size)
+			for key in ["owner", "cost", "footer"]:
+				var rect: Rect2 = geometry[key]
+				_check(rect.size.x > 0.0 and rect.size.y > 0.0 and bounds.encloses(rect),
+					"drawn %s stays inside card: %s" % [key, card_id])
+
+		# AC2: Honest live admission
+		var admitted: bool = _pool_admitted(card_id)
+		_check(admitted == false, "independent _pool_admitted predicts false: " + card_id)
+		_check(panel.gui_input.get_connections().is_empty(),
+			"no play GUI signal connections for unwired Path card: " + card_id)
+		_check(panel.focus_mode == Control.FOCUS_NONE,
+			"unwired Path card takes no keyboard focus: " + card_id)
+
+		var current_focus := root.gui_get_focus_owner()
+		if current_focus != null:
+			current_focus.release_focus()
+		_check(panel.focus_mode == Control.FOCUS_NONE and not panel.has_focus(),
+			"unwired Path card takes no keyboard focus: " + card_id)
+		_check(root.gui_get_focus_owner() == null,
+			"keyboard focus remains unassigned: " + card_id)
+
+		var visual: Dictionary = metadata.visual_state(panel)
+		_check(bool(visual.get("playable", false)) == false,
+			"visual state is not playable: " + card_id)
+		_check(not panel.self_modulate.is_equal_approx(Color.WHITE),
+			"unwired Path card has dimmed styling: " + card_id)
+
+		# Attempt mouse input: verify non-mutation
+		var before := _combat_state()
+		await _click_center(panel)
+		_check(_combat_state() == before,
+			"rejected mouse click leaves combat state unchanged: " + card_id)
+
+		# Attempt keyboard input: verify non-mutation
+		for key_code in [KEY_ENTER, KEY_SPACE, KEY_KP_ENTER]:
+			var event_press := InputEventKey.new()
+			event_press.keycode = key_code
+			event_press.pressed = true
+			root.push_input(event_press, true)
+			var event_release := InputEventKey.new()
+			event_release.keycode = key_code
+			event_release.pressed = false
+			root.push_input(event_release, true)
+			await _frames()
+			_check(_combat_state() == before,
+				"rejected keyboard input (%s) leaves combat state unchanged: %s" % [key_code, card_id])
+
+		# Direct gui_input key delivery: verify non-mutation
+		var direct_key := InputEventKey.new()
+		direct_key.keycode = KEY_ENTER
+		direct_key.pressed = true
+		panel.gui_input.emit(direct_key)
+		await _frames()
+		_check(_combat_state() == before,
+			"delivering key event to unwired Path panel leaves combat state unchanged: " + card_id)
+
+		# Explicitly verify unchanged combat state invariants
+		_check(app.deck.energy == int(before[3]),
+			"energy unchanged on rejected input: " + card_id)
+		_check(app.deck.hand == before[0],
+			"hand unchanged on rejected input: " + card_id)
+		_check(app.deck.discard_pile == before[2],
+			"discard pile unchanged on rejected input: " + card_id)
+		_check(app.party.get_heroes() == before[5],
+			"party HP/Block unchanged on rejected input: " + card_id)
+		_check(app.enemies.get_enemies() == before[6],
+			"enemies HP/Block/statuses unchanged on rejected input: " + card_id)
+		_check(app.run_rng.seed == int(before[8]) and app.run_rng.state == int(before[9]),
+			"RNG seed/state unchanged on rejected input: " + card_id)
+
+		await _close_battle("warden path face: " + card_id)
 
 
 ## Playing an admitted pool card through the real mounted hand still spends,
