@@ -21,6 +21,8 @@ var app
 var adapter
 var preview
 var catalog := TinkerPoolCards.new()
+var sewn_wardrobe: RunPatchWardrobe
+var sewn_route: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -101,6 +103,11 @@ func _state() -> Dictionary:
 		"turn": app.enemy_intents._turn_index,
 		"outcome": app.battle_result.get_outcome(), "closed": app._battle_closed,
 		"gold": app.session_gold, "first": preview._play._tinker._consumed,
+		"patch_active": preview._play._patches.active_snapshot() if preview._play._patches != null else {},
+		"patch_latch": preview._play._patches.latch_snapshot() if preview._play._patches != null else {},
+		"wardrobe": sewn_wardrobe.get_snapshot() if sewn_wardrobe != null else {},
+		"run_deck": app.run_deck.duplicate(), "trinkets": app.run_trinkets.duplicate(),
+		"scraps": app.run_scraps, "run_heroes": app.run_heroes.duplicate(true),
 		"gauges": gauges, "tiers": tiers, "pins": pins,
 		"flow_gauge": app.round_flow._unravel if app.round_flow != null else null}
 
@@ -170,20 +177,34 @@ func _oracle(before: Dictionary, id: String, is_starter: bool = false) -> Dictio
 	pinned._pinner_by_position = (before.pins as Dictionary).duplicate(true)
 	var first := CombatTinkerFirstAttack.new()
 	first._consumed = before.first
+	var rules: CombatPatchAttackRules = null
+	if sewn_wardrobe != null and not (before.patch_active as Dictionary).is_empty():
+		rules = CombatPatchAttackRules.new()
+		var carry := app.party_carryover as RunTornCarryover
+		_check(carry != null and rules.bind_wardrobe(sewn_wardrobe, carry.torn),
+			"independent oracle binds genuine sewn wardrobe and Torn ledger")
+		if rules.is_valid():
+			_check(rules.active_snapshot() == before.patch_active,
+				"independent wardrobe projection matches the live wearer")
+			rules._consumed = (before.patch_latch as Dictionary).duplicate(true)
 	var event: Dictionary
 	if is_starter:
 		var starter := CombatAttackCards.new()
 		starter._tinker = first
+		starter._patches = rules
 		event = starter.play_attack(deck, party, enemies, id, 1)
 	elif id in UNRAVEL_IDS:
-		event = CombatTinkerPoolUnravelAttacks.new(first).play_attack(deck, party,
-			enemies, id, 0, unravel, pinned)
+		var unravel_attack := CombatTinkerPoolUnravelAttacks.new(first)
+		_check(unravel_attack.set_patch_rules(rules),
+			"independent Shrapnel resolver accepts current sewn snapshot")
+		event = unravel_attack.play_attack(deck, party, enemies, id, 0, unravel, pinned)
 	else:
 		event = CombatTinkerPoolAttacks.new(first).play_attack(deck, party, enemies, id, 0)
 	return {"event": event, "draw": deck.draw_pile.duplicate(), "hand": deck.hand.duplicate(),
 		"discard": deck.discard_pile.duplicate(), "energy": deck.energy,
 		"active": deck.turn_active, "party": party.get_heroes(),
 		"enemies": enemies.get_enemies(), "rng": rng.state, "first": first._consumed,
+		"patch_latch": rules.latch_snapshot() if rules != null else {},
 		"gauges": unravel._gauges.duplicate(true),
 		"tiers": unravel._tiers_by_position.duplicate(true),
 		"pins": pinned._pinner_by_position.duplicate(true)}
@@ -202,6 +223,8 @@ func _same_as_oracle(before: Dictionary, oracle: Dictionary, stage: String) -> v
 		"single seeded run/deck RNG exactly matches independent oracle: " + stage)
 	_check(preview._play._tinker._consumed == oracle.first,
 		"starter presenter owns consumed first-attack latch: " + stage)
+	_check((preview._play._patches.latch_snapshot() if preview._play._patches != null else {})
+		== oracle.patch_latch, "starter presenter owns persistent Button Eye latch: " + stage)
 	_check(_gauges() == oracle.gauges and _pins() == oracle.pins,
 		"battle Unravel gauges and Pinned tokens equal detached oracle: " + stage)
 	_check(app.enemy_attacks == before.attacks and app.enemy_intents.get_intents() == before.intents
@@ -249,6 +272,7 @@ func _return() -> void:
 	if is_instance_valid(app.return_button):
 		app.return_button.pressed.emit()
 	await _frames()
+	sewn_wardrobe = null
 
 
 func _face(id: String) -> void:
@@ -368,6 +392,137 @@ func _starter(id: String) -> bool:
 	return true
 
 
+## A legal noncombat prefix permits an authentic sewn wardrobe before the
+## first routed Fight. Cache only the route recipe; every case re-enters the
+## actual app and uses its own fresh run ledgers and fight authorities.
+func _sewn_route_fixture() -> Dictionary:
+	if not sewn_route.is_empty():
+		return sewn_route
+	for value in range(1, 1500):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		map.generate(rng)
+		for first in map.get_legal_choices():
+			if map.get_node(first).get("type") != "Treasure":
+				continue
+			var replay_rng := RandomNumberGenerator.new()
+			replay_rng.seed = value
+			var replay := RunMap.new()
+			replay.generate(replay_rng)
+			if not replay.choose_node(first):
+				continue
+			for second in replay.get_legal_choices():
+				if replay.get_node(second).get("type") == "Fight":
+					sewn_route = {"seed": value, "treasure": first, "fight": second}
+					return sewn_route
+	return {}
+
+
+func _route_button(route_id: String) -> Button:
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == route_id:
+			return button
+	return null
+
+
+func _start_sewn(id: String, patches: Array[String]) -> bool:
+	var fixture := _sewn_route_fixture()
+	_check(not fixture.is_empty() and app.deck == null,
+		"authored Treasure to Fight route starts from the real title")
+	if fixture.is_empty() or app.deck != null:
+		return false
+	app.run_seed = fixture.seed
+	app.route_button.pressed.emit()
+	await _frames()
+	var treasure := _route_button(fixture.treasure)
+	_check(treasure != null and not treasure.disabled, "genuine Treasure prefix is actionable")
+	if treasure == null:
+		return false
+	treasure.pressed.emit()
+	await _frames()
+	_check(app.run_map.get_route() == [fixture.treasure],
+		"connected noncombat prefix is genuinely committed")
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid() and carry.torn.is_valid()
+		and carry.read_state().heroes == app.run_heroes,
+		"real run carryover and Torn/Mending ledger agree")
+	if carry == null:
+		return false
+	var definitions: Array[Dictionary] = []
+	for patch_id in patches:
+		var catalog_path := "res://data/patches/m04_attack_patches.json"
+		if patch_id == "loose_thread_glove":
+			catalog_path = "res://data/patches/m05_arm_support_patches.json"
+		var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(catalog_path))
+		var found := false
+		if records is Array:
+			for record in records:
+				if record is Dictionary and record.get("id") == patch_id:
+					_check(record.get("amount") == 1 and record.get("slot") in ["ARM", "HEAD"],
+						"genuine authored attack patch effect and equipment slot: " + patch_id)
+					definitions.append({"id": patch_id, "slot": record.slot})
+					found = true
+		_check(found, "required authored patch ID occurs in real catalog: " + patch_id)
+		if not found:
+			return false
+		app.run_trinkets.append(patch_id)
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), "run-owned wardrobe accepts exact run inventory and hero state")
+	if not wardrobe.is_valid():
+		return false
+	for patch in definitions:
+		var sew := wardrobe.sew(patch.id, "tinker", patch.slot,
+			"sew_" + patch.id, wardrobe.get_snapshot())
+		_check(sew.get("ok", false) and sew.receipt.patch_id == patch.id,
+			"authentic Tinker sewn " + patch.slot + " receipt: " + patch.id)
+		if not sew.get("ok", false):
+			return false
+	var expected := wardrobe.get_snapshot()
+	_check(carry.can_bind_wardrobe(wardrobe, carry.torn, expected)
+		and carry.bind_wardrobe(wardrobe, carry.torn, expected),
+		"real persistent run carryover admits sewn wardrobe before Fight")
+	if carry._wardrobe != wardrobe:
+		return false
+	var fight := _route_button(fixture.fight)
+	_check(fight != null and not fight.disabled and app._can_choose_connected_route(),
+		"connected authored Fight remains legal with sewn wardrobe")
+	if fight == null or fight.disabled:
+		return false
+	fight.pressed.emit()
+	await _frames()
+	_check(app.deck != null and is_instance_valid(app.battle_view)
+		and app.battle_result._party == app.party and app.battle_result._enemies == app.enemies,
+		"authentic routed Fight mounts matching battle, party, enemies and result")
+	if app.deck == null:
+		return false
+	sewn_wardrobe = wardrobe
+	var rules: CombatPatchAttackRules = preview._play._patches
+	_check(rules != null and rules.is_valid()
+		and rules.active_snapshot().get("tinker", []).size() == patches.size(),
+		"starter presenter has validated the real Tinker sewn projection")
+	if rules == null or not rules.is_valid():
+		return false
+	_check(adapter._live_tinker_patch_rules(app).get("rules") == rules,
+		"Shrapnel adapter selects the exact existing battle rules object")
+	_check(_test_tier_map(app.enemies) == preview._unravel._tiers_by_position,
+		"routed gauge tiers match independent authored enemy catalog")
+	for position in range(1, app.enemies.get_enemies().size() + 1):
+		var tier: String = _test_tier_map(app.enemies)[position]
+		_check(preview._unravel.get_snapshot(position).get("threshold") ==
+			{"normal": 8, "elite": 12, "boss": 16}[tier],
+			"routed original enemy slot has correct normal/elite/boss threshold")
+	app.deck.draw_pile.append(id)
+	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has(id),
+		"authored Shrapnel copy actually drawn by the routed shared deck")
+	app._refresh_hand()
+	await _frames()
+	_check(_panel(id) != null and adapter._bindings.has(_panel(id)),
+		"sewn Shrapnel panel mounted through the normal live hand")
+	return _panel(id) != null
+
+
 func _shared_latch() -> void:
 	for order in ["starter_first", "area_first"]:
 		var id := "tinker_scatter_bolts"
@@ -411,6 +566,166 @@ func _shared_latch() -> void:
 
 ## AC2: the target-free Shrapnel Seam reads the battle's foreign Pinned token,
 ## pays two energy, damages every survivor and charges its authored Unravel.
+## Genuine sewn ARM fixtures exercise both base/upgraded Shrapnel in the
+## physical hand, including status floor rounding, Block, Pinned and RNG.
+func _sewn_arm_cases() -> void:
+	for patch in ["pincushion_arm", "loose_thread_glove"]:
+		for id in UNRAVEL_IDS:
+			var worn: Array[String] = [patch]
+			if not await _start_sewn(id, worn):
+				await _return()
+				continue
+			var rules: CombatPatchAttackRules = preview._play._patches
+			_check(sewn_wardrobe.get_snapshot().worn.tinker.ARM == patch
+				and sewn_wardrobe.get_snapshot().worn.tinker.HEAD == ""
+				and rules.latch_snapshot().get("tinker") == false,
+				"exactly one authentic ARM patch, no HEAD, no consumed first-hit")
+			for enemy in app.enemies._enemies:
+				enemy.max_hp = 140
+				enemy.hp = 140
+			app.party._heroes[2]["statuses"] = {"weak": 1}
+			_check(app.enemies.gain_block(1, 4), "first original enemy wears real Block")
+			if app.enemies.get_enemies().size() > 1:
+				_check(app.enemies.apply_statuses({2: {"exposed": 1}}),
+					"second original enemy has real Exposed for floor rounding")
+			_check(preview._pinned.pin_enemy(app.enemies, 1, "warden"),
+				"foreign Warden Pinned token pre-exists sewn Shrapnel")
+			var before := _state()
+			var oracle := _oracle(before, id)
+			_check(oracle.event.get("ok", false) and not oracle.event.hits.is_empty(),
+				"detached patched resolver accepts genuine mounted card fixture")
+			await _mouse(_panel(id))
+			_same_as_oracle(before, oracle, patch + " / " + id)
+			_check(adapter.last_event == oracle.event,
+				"exact patch damage, Weak/Exposed flooring, Block and Unravel hit receipt")
+			var authored: Dictionary = catalog.get_definition(id).effects
+			var wanted_unravel: int = int(authored.unravel) + (1 if patch == "loose_thread_glove" else 0)
+			for hit in adapter.last_event.get("hits", []):
+				_check(hit.unravel == wanted_unravel
+					and preview._unravel.get_snapshot(hit.position).gauge == wanted_unravel,
+					"surviving slot receives only its authored + sewn Unravel: " + patch)
+			_check(adapter.last_event.hits[0].damage ==
+				CombatStatuses.new().adjusted_attack_damage(
+					int(authored.damage) + 3 + (1 if patch == "pincushion_arm" else 0) + 5,
+					{"weak": 1}, app.enemies.get_enemy(1).get("statuses", {})),
+				"sewn per-hit Pincushion bonus and foreign pin precede Weak rounding")
+			_check(_pins().is_empty() and app.deck.energy == before.energy - 2
+				and app.deck.discard_pile.count(id) == 1
+				and before.wardrobe == sewn_wardrobe.get_snapshot(),
+				"one payment, one discard, consumed pin and untouched sewn run ledger")
+			await _return()
+
+## First HEAD effect is a battle-long latch, independent of Tinker's +3 turn.
+func _sewn_button_eye_orders() -> void:
+	for order in ["pop_first", "shrapnel_first"]:
+		var head: Array[String] = ["button_eye"]
+		if not await _start_sewn(SHRAPNEL, head):
+			await _return()
+			continue
+		var rules: CombatPatchAttackRules = preview._play._patches
+		_check(rules.active_snapshot().get("tinker", []) == ["button_eye"]
+			and sewn_wardrobe.get_snapshot().worn.tinker.ARM == "",
+			"genuine HEAD-only projection, ARM empty")
+		for enemy in app.enemies._enemies:
+			enemy.max_hp = 160
+			enemy.hp = 160
+		app.deck.draw_pile.append("tinker_pop_shot")
+		_check(app.deck.draw_extra(1) == 1, "routed Pop Shot drawn")
+		app._refresh_hand()
+		await _frames()
+		var sequence: Array = ["tinker_pop_shot", SHRAPNEL] if order == "pop_first" \
+			else [SHRAPNEL, "tinker_pop_shot"]
+		for i in range(sequence.size()):
+			var selected: String = sequence[i]
+			var before := _state()
+			var oracle := _oracle(before, selected, selected == "tinker_pop_shot")
+			_check(oracle.event.get("ok", false), "detached HEAD oracle attack succeeds")
+			if selected == "tinker_pop_shot":
+				if not await _starter(selected):
+					break
+				_check(preview.last_event == oracle.event, "physical starter receipt equals oracle")
+			else:
+				await _mouse(_panel(selected))
+				_check(adapter.last_event == oracle.event, "physical Shrapnel receipt equals oracle")
+			_same_as_oracle(before, oracle, order + " / " + selected)
+			_check(rules == preview._play._patches and rules.latch_snapshot().tinker,
+				"same battle rules object consumes first-hit exactly once")
+			_check(oracle.event.hits[0].statuses.get("exposed", 0) == (1 if i == 0 else 0),
+				"first confirmed Tinker attack alone applies Exposed")
+			if selected == SHRAPNEL and i == 0:
+				for j in range(1, oracle.event.hits.size()):
+					_check(oracle.event.hits[j].statuses.is_empty(),
+						"later targets of same Shrapnel do not gain same-card Exposed")
+			app._refresh_hand()
+			await _frames()
+			_check(preview._play._patches == rules and rules.latch_snapshot().tinker,
+				"genuine hand refresh preserves consumed Button Eye")
+		_check(app.deck.energy == 0 and app.deck.discard_pile.count(SHRAPNEL) == 1,
+			"alternating two-cost and one-cost attacks charged once each")
+		app.end_turn_button.pressed.emit()
+		await _frames()
+		_check(app.deck.turn_active and app.deck.energy == 3
+			and not preview._play._tinker._consumed and rules.latch_snapshot().tinker,
+			"new player turn re-arms native +3, not combat-long first Exposed")
+		app.deck.draw_pile.append(SHRAPNEL_PLUS)
+		_check(app.deck.draw_extra(1) == 1, "upgraded Shrapnel drawn next turn")
+		app._refresh_hand()
+		await _frames()
+		var before_plus := _state()
+		var plus_oracle := _oracle(before_plus, SHRAPNEL_PLUS)
+		await _mouse(_panel(SHRAPNEL_PLUS))
+		_same_as_oracle(before_plus, plus_oracle, "upgraded Shrapnel after Button Eye used")
+		_check(adapter.last_event == plus_oracle.event
+			and adapter.last_event.hits[0].statuses.get("exposed", 0) == 0
+			and rules.latch_snapshot().tinker,
+			"upgraded Shrapnel after turn/refresh does not reapply Button Eye")
+		await _return()
+
+## An explicit invalid sewn authority or downed owner never falls back.
+func _sewn_refusals() -> void:
+	for mode in ["invalid_rules", "missing_rules", "invalid_wardrobe", "downed"]:
+		var arm: Array[String] = ["pincushion_arm"]
+		if not await _start_sewn(SHRAPNEL, arm):
+			await _return()
+			continue
+		var panel := _panel(SHRAPNEL)
+		var callback: Callable = adapter._bindings[panel]["callback"]
+		var rules: CombatPatchAttackRules = preview._play._patches
+		var carry := app.party_carryover as RunTornCarryover
+		match mode:
+			"invalid_rules":
+				rules._valid = false
+			"missing_rules":
+				preview._play._patches = null
+			"invalid_wardrobe":
+				carry._wardrobe = RunPatchWardrobe.new()
+			"downed":
+				_check(app.party.apply_damage(3, app.party.get_hero(3).hp)
+					and app.party.is_downed(3), "authentic Tinker downed in mounted battle")
+		var before := _state()
+		callback.call(_press())
+		await _frames()
+		_check(_state() == before and adapter._pending.is_empty(),
+			"explicit invalid wearer authority rejects without spend/RNG: " + mode)
+		await _return()
+
+	var heroes := CombatParty.new(app._load_party_definitions()).get_heroes()
+	var torn := RunTornMending.new(heroes)
+	var downed := heroes.duplicate(true)
+	downed[2]["hp"] = 0
+	_check(torn.observe_battle_end("shrapnel_torn", heroes, downed).get("ok", false),
+		"genuine Torn/Mending end observation records Tinker down")
+	var wardrobe := RunPatchWardrobe.new(torn.read_state().heroes, ["pincushion_arm"],
+		[{"id": "pincushion_arm", "slot": "ARM"}], 0, 0, [], SEED, true)
+	_check(wardrobe.is_valid() and wardrobe.sew("pincushion_arm", "tinker", "ARM",
+		"sew_torn", wardrobe.get_snapshot()).get("ok", false),
+		"assigned patch remains genuinely sewn on torn wearer")
+	var patch_rules := CombatPatchAttackRules.new()
+	_check(patch_rules.bind_wardrobe(wardrobe, torn)
+		and patch_rules.active_snapshot().get("tinker", []).is_empty()
+		and patch_rules.damage_bonus("tinker") == 0,
+		"torn ledger masks Pincushion even while sewn")
+
 func _shrapnel_pinned() -> void:
 	if not await _start(SHRAPNEL_PLUS):
 		await _return()
@@ -1014,6 +1329,9 @@ func _run() -> void:
 	await _case(SHRAPNEL, true, KEY_SPACE)
 	await _case(SHRAPNEL_PLUS, false)
 	await _case(SHRAPNEL_PLUS, false, KEY_ENTER, true)
+	await _sewn_arm_cases()
+	await _sewn_button_eye_orders()
+	await _sewn_refusals()
 	await _shrapnel_pinned()
 	await _shrapnel_latch()
 	await _shrapnel_unravel_skip()
