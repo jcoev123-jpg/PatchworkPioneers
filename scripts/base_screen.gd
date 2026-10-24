@@ -48,6 +48,8 @@ const HINT_SIZE := 18
 const STATUS_SIZE := 18
 ## A Path option keeps its 18 px caption and still fits its pinned paper board.
 const PATH_OPTION_HEIGHT := 36.0
+## Every Path option caption wears the master display face at this body floor.
+const PATH_OPTION_SIZE := 18
 
 var set_out_button: Button
 var back_button: Button
@@ -295,7 +297,7 @@ func present_path_options(options: Variant) -> bool:
 			tooltip = String(preview["tooltip"])
 		button.tooltip_text = tooltip
 		button.custom_minimum_size = Vector2(0, PATH_OPTION_HEIGHT)
-		button.add_theme_font_size_override("font_size", 18)
+		_sew_path_option_face(button)
 		button.set_meta("path_id", option_id)
 		button.pressed.connect(_on_path_pressed.bind(option_id))
 		button.focus_entered.connect(_on_path_preview_entered.bind(option_id, true))
@@ -435,7 +437,7 @@ func present_tinker_path_options(options: Variant) -> bool:
 			tooltip = String(preview["tooltip"])
 		button.tooltip_text = tooltip
 		button.custom_minimum_size = Vector2(0, PATH_OPTION_HEIGHT)
-		button.add_theme_font_size_override("font_size", 18)
+		_sew_path_option_face(button)
 		button.set_meta("path_id", option_id)
 		button.pressed.connect(_on_tinker_path_pressed.bind(option_id))
 		button.focus_entered.connect(_on_tinker_preview_entered.bind(option_id, true))
@@ -561,7 +563,7 @@ func present_warden_path_options(options: Variant) -> bool:
 		button.text = String(option["display_name"])
 		button.set_meta("path_id", path_id)
 		button.custom_minimum_size = Vector2(0, PATH_OPTION_HEIGHT)
-		button.add_theme_font_size_override("font_size", 18)
+		_sew_path_option_face(button)
 		_style_warden_button(button)
 		var preview := VillagePathPreview.warden(option)
 		var tooltip := "Warden Path: " + String(option["display_name"]) \
@@ -971,6 +973,15 @@ func _build_warden_choice() -> void:
 	warden_status_label.add_theme_color_override("font_color", WARDEN_INK)
 	warden_status_label.add_theme_font_size_override("font_size", STATUS_SIZE)
 	column.add_child(warden_status_label)
+
+
+## All three Path boards share one sewn option face: the master Theme's
+## PatchHeadingButton (Londrina Solid Regular) at the 18 px body floor. Only the
+## caption face changes; each option keeps its authored name, hint, tooltip and
+## signal, and Warden keeps its own bone/slate/rust surfaces.
+func _sew_path_option_face(button: Button) -> void:
+	button.theme_type_variation = &"PatchHeadingButton"
+	button.add_theme_font_size_override("font_size", PATH_OPTION_SIZE)
 
 
 ## Light bone felt / dark slate ink in ALL button states (including focus).

@@ -1098,8 +1098,8 @@ static func _humanize_patch(id: String) -> String:
 
 
 ## The card's illustration window. Three modes, in fallback order:
-## authored card art (contained large, aspect preserved), the owning hero's
-## emblem (large on a landscape owner-felt patch), or, when both
+## authored card art (cover, aspect preserved), the owning hero's
+## emblem (complete above a cropped texture backing), or, when both
 ## resources are missing, a drawn cream/stitched paper patch. It never takes
 ## pointer input or focus, so the card's own click and every button keep working
 ## exactly as before.
@@ -1147,6 +1147,26 @@ class _CardIllustration extends Control:
 		var inset: float = minf(FELT_INSET, minf(size.x, size.y) * 0.25)
 		return Rect2(Vector2.ONE * inset,
 			(size - Vector2.ONE * inset * 2.0).max(Vector2.ZERO))
+
+	## A second copy of the same emblem fills the felt beneath the complete one.
+	func emblem_backdrop_rect() -> Rect2:
+		if not is_emblem():
+			return Rect2()
+		var target: Rect2 = emblem_backing_rect()
+		if target.size.x <= 0.0 or target.size.y <= 0.0:
+			return Rect2()
+		return target
+
+	func emblem_backdrop_source_rect() -> Rect2:
+		var target: Rect2 = emblem_backdrop_rect()
+		if target.size.x <= 0.0 or target.size.y <= 0.0:
+			return Rect2()
+		var art_size: Vector2 = picture.get_size()
+		if art_size.x <= 0.0 or art_size.y <= 0.0:
+			return Rect2()
+		var scale_factor: float = maxf(target.size.x / art_size.x, target.size.y / art_size.y)
+		var crop_size: Vector2 = (target.size / scale_factor).min(art_size)
+		return Rect2((art_size - crop_size) * 0.5, crop_size)
 
 	## Exact destination rect the picture is painted into. Card art covers the
 	## sewn window's inset; an emblem fits its felt inset
@@ -1230,6 +1250,9 @@ class _CardIllustration extends Control:
 			backing.end, backing.end - Vector2(backing.size.x * 0.22, 0),
 			backing.end - Vector2(0, backing.size.y * 0.85)])
 		draw_colored_polygon(right_piece, owner_color.darkened(0.12))
+		var source: Rect2 = emblem_backdrop_source_rect()
+		if source.size.x > 0.0 and source.size.y > 0.0:
+			draw_texture_rect_region(picture, emblem_backdrop_rect(), source, Color(1, 1, 1, 0.45))
 		draw_rect(backing, Color("#3b2f2a"), false, 2.0)
 		var seam: Rect2 = backing.grow(-4.0)
 		if seam.size.x > 0.0 and seam.size.y > 0.0:

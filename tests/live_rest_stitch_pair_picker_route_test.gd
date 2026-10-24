@@ -28,11 +28,23 @@ func _assert_tile_names(tiles: Array[Button], entries: Array[Dictionary]) -> voi
 		var tile := tiles[i]
 		var entry := entries[i]
 		var authored := RunRestStitchCards.resolve_card_definition(entry["id"])
+		var from_positions: Array = authored.get("from_positions", []) if not authored.is_empty() else []
 		_check(not authored.is_empty() and entry["name"] == authored.get("display_name")
 			and tile.get_meta("index") == entry["index"]
 			and tile.get_meta("id") == entry["id"]
 			and tile.get_meta("name") == entry["name"],
 			"tile identity and authored name match canonical entry")
+		_check(tile.tooltip_text.begins_with("Owner FROM:") and not tile.tooltip_text.contains("TO:"),
+			"tile tooltip describes owner FROM positions, not enemy TO")
+		for pos in [1, 2, 3]:
+			var pip := tile.find_child("From%d" % pos, true, false) as Control
+			_check(pip != null and pip.is_inside_tree(), "tile mounts From%d pip" % pos)
+			if pip != null:
+				var is_active: bool = from_positions.has(pos)
+				_check(bool(pip.get_meta("active", false)) == is_active,
+					"pip %d active matches canonical from_positions: %s" % [pos, entry["id"]])
+				var num := pip.find_child("PipNum", true, false) as Label
+				_check(num != null and num.text == str(pos), "pip %d displays readable numeral" % pos)
 		_assert_heading(tile.get_node_or_null("CardName") as Label, entry["name"], 11)
 		var fallback := tile.find_child("CardNameFallback", true, false) as Label
 		if fallback != null:
@@ -62,6 +74,19 @@ func _assert_missing_art_names(picker: LiveRestStitchPairPicker) -> void:
 			entries[0]["name"], 10)
 		_check(tile.get_meta("name") == entries[0]["name"],
 			"missing-art tile retains canonical name metadata in both stages")
+		_check(tile.tooltip_text == "Owner FROM: none",
+			"missing-art tile tooltip indicates no active positions")
+		_check(tile.get_meta("from_positions", [1]) == [],
+			"missing-art tile has empty canonical from_positions")
+		_check(tile.get_meta("cost") == entries[0]["cost"] and tile.get_meta("owner") == entries[0]["owner"],
+			"missing-art tile retains cost and owner")
+		for pos in [1, 2, 3]:
+			var pip := tile.find_child("From%d" % pos, true, false) as Control
+			_check(pip != null and not pip.get_meta("active", false),
+				"missing-art tile never invents active position %d" % pos)
+			var num := pip.find_child("PipNum", true, false) as Label
+			_check(num != null and num.text == str(pos),
+				"missing-art pip %d displays readable inactive numeral" % pos)
 		tile.free()
 
 

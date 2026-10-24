@@ -4565,11 +4565,21 @@ func _mount_shop_patches() -> void:
 		if not definitions.is_empty():
 			_shop_wardrobe = RunPatchWardrobe.new(run_heroes, run_trinkets, definitions,
 				run_scraps, session_gold, run_deck, run_seed, true)
+	var panel := PanelContainer.new()
+	panel.name = "ShopPatchSewing"
+	shop_view.add_child(panel)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 4)
+	panel.add_child(content)
+	var heading := Label.new()
+	heading.name = "EquipmentHeading"
+	heading.text = "Equipment — sewing included"
+	heading.theme_type_variation = &"PatchHeading"
+	content.add_child(heading)
 	var row := HBoxContainer.new()
-	row.name = "ShopPatchSewing"
-	shop_view.add_child(row)
+	content.add_child(row)
 	shop_patch_offers = OptionButton.new()
-	shop_patch_offers.custom_minimum_size = Vector2(300, 40)
+	shop_patch_offers.custom_minimum_size = Vector2(350, 40)
 	row.add_child(shop_patch_offers)
 	shop_patch_heroes = OptionButton.new()
 	row.add_child(shop_patch_heroes)
@@ -4577,13 +4587,12 @@ func _mount_shop_patches() -> void:
 		shop_patch_heroes.add_item(hero.id.capitalize())
 		shop_patch_heroes.set_item_metadata(shop_patch_heroes.item_count - 1, hero.id)
 	shop_patch_buy_button = Button.new()
-	shop_patch_buy_button.text = "Buy + sew (free)"
 	row.add_child(shop_patch_buy_button)
 	shop_patch_preview = Label.new()
 	shop_patch_preview.name = "ShopPatchPreview"
 	shop_patch_preview.custom_minimum_size.x = 440
 	shop_patch_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	shop_view.add_child(shop_patch_preview)
+	content.add_child(shop_patch_preview)
 	shop_patch_offers.item_selected.connect(_select_shop_patch.bind(shop_patch_offers))
 	shop_patch_buy_button.pressed.connect(_buy_shop_patch.bind(shop_visit, shop_purchases, shop_patch_buy_button))
 
@@ -4625,7 +4634,7 @@ func _shop_patch_offer_text(offer: Dictionary) -> String:
 	var slot: Variant = _shop_wardrobe.get_snapshot().definitions.get(offer.id)
 	if slot not in RunPatchWardrobe.SLOTS:
 		return ""
-	return "%s | %s | %d gold%s" % [String(offer.id).capitalize(), slot,
+	return "%s | %s | %d gold%s" % [String(offer.id).capitalize(), String(slot).capitalize(),
 		offer.price, " | SOLD" if offer.sold else ""]
 
 
@@ -4639,10 +4648,21 @@ func _refresh_shop_patches() -> void:
 		var text := _shop_patch_offer_text(offer)
 		shop_patch_offers.add_item(text if not text.is_empty() else "Patch unavailable")
 		shop_patch_offers.set_item_metadata(shop_patch_offers.item_count - 1, offer.id)
+	selected = mini(selected, stock.size() - 1)
 	shop_patch_offers.select(selected)
-	shop_patch_buy_button.disabled = _shop_wardrobe == null or selected >= stock.size() \
-		or stock[selected].sold or session_gold < stock[selected].price \
-		or _shop_patch_offer_text(stock[selected]).is_empty()
+	shop_patch_buy_button.disabled = true
+	shop_patch_buy_button.text = "Patch unavailable"
+	if selected >= 0 and not _shop_patch_offer_text(stock[selected]).is_empty() \
+		and _shop_patch_current() and _current_shop_ledger():
+		var offer: Dictionary = stock[selected]
+		var quote := "Buy & sew — %d gold" % offer.price
+		if offer.sold:
+			shop_patch_buy_button.text = "SOLD — %d gold" % offer.price
+		elif session_gold < offer.price:
+			shop_patch_buy_button.text = "%s (insufficient gold)" % quote
+		else:
+			shop_patch_buy_button.text = quote
+			shop_patch_buy_button.disabled = false
 	_refresh_shop_patch_preview()
 
 

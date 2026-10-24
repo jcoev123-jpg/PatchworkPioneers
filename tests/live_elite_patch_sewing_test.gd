@@ -179,6 +179,8 @@ const EXPECTED_NAMES := {
 	"threadguard_wrap": "Threadguard Wrap",
 }
 const SLOT_NAMES := {"HEAD": "HEAD", "ARM": "ARM", "COAT": "COAT"}
+const HEADING_FONT_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const BODY_FONT_PATH := "res://assets/fonts/PatrickHand-Regular.ttf"
 const AUTHORED_PATCH_CATALOGS := [
 	"res://data/patches/initial_patch_slots.json",
 	"res://data/patches/m04_attack_patches.json",
@@ -351,12 +353,108 @@ func _reject_patch(callback: Callable, message: String) -> void:
 			message + ": rejected sew never prints success receipt")
 
 
+## AC1: after a genuine claim, the mounted offer takes the already-shipped sewn display
+## face for its compact title, short chooser caption and three wearer actions, while the
+## full authored rules stay 18 px Patrick Hand body text. Every literal body string is
+## checked independently in _verify_preview_choice below.
+func _verify_sewing_heading(drop: String) -> void:
+	await _frames()
+	var expected_title := "Sew " + _expected_name(drop)
+	var mounted: Theme = sewing.inherited_theme()
+	var heading: Font = sewing.heading_font()
+	_check(mounted != null and heading != null
+		and heading.resource_path == HEADING_FONT_PATH
+		and (mounted.get_font("font", "PatchHeading") as Font).resource_path == HEADING_FONT_PATH,
+		"the mounted sewing choice resolves PatchHeading from the shared Theme")
+	var title: Label = sewing.title_label
+	_check(is_instance_valid(title) and title.is_visible_in_tree()
+		and title.text == expected_title and not title.text.contains(drop),
+		"mounted offer title literally reads the authored friendly name: " + expected_title)
+	if not is_instance_valid(title) or not is_instance_valid(sewing._prompt):
+		return
+	var title_font: Font = title.get_theme_font("font")
+	_check(title.theme_type_variation == &"PatchHeading" and title_font != null
+		and title_font.resource_path == HEADING_FONT_PATH
+		and title.get_theme_font_size("font_size") >= 20
+		and title.get_theme_font_size("font_size") <= 28
+		and title.autowrap_mode != TextServer.AUTOWRAP_OFF
+		and Rect2(0, 0, 1280, 720).encloses(title.get_global_rect()),
+		"offer title is compact Londrina PatchHeading inside the 1280x720 viewport")
+	var chooser: Label = sewing.chooser_label
+	_check(is_instance_valid(chooser) and chooser.is_visible_in_tree()
+		and chooser.text == "Sew to (free):"
+		and chooser.theme_type_variation == &"PatchHeading"
+		and (chooser.get_theme_font("font") as Font).resource_path == HEADING_FONT_PATH
+		and sewing._choices.is_ancestor_of(chooser),
+		"short free-sew chooser label keeps its wording in the PatchHeading face")
+	var body_font: Font = sewing._prompt.get_theme_font("font")
+	_check(sewing._prompt.get_theme_font_size("font_size") == 18
+		and body_font != null and body_font.resource_path == BODY_FONT_PATH
+		and body_font != title_font
+		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF,
+		"full authored patch description stays 18 px Patrick Hand body text")
+	_check(not title.get_global_rect().intersects(sewing._prompt.get_global_rect())
+		and not sewing._prompt.get_global_rect().intersects(sewing._choices.get_global_rect())
+		and title.get_global_rect().end.y <= sewing._choices.get_global_rect().position.y,
+		"sewn offer title, body rules and wearer row stack without overlap")
+	for button in sewing.hero_buttons:
+		var hero_id: String = button.get_meta("hero_id")
+		var face: Font = button.get_theme_font("font")
+		_check(button.theme_type_variation == &"PatchHeadingButton" and face != null
+			and face.resource_path == HEADING_FONT_PATH
+			and button.get_theme_font_size("font_size") >= 18,
+			"%s wearer action wears the shipped PatchHeadingButton face" % hero_id)
+		_check(button.get_theme_color("font_color") == Color("302b29")
+			and button.get_theme_color("font_hover_color") == Color("302b29")
+			and button.get_theme_color("font_pressed_color") == Color("302b29")
+			and button.get_theme_color("font_focus_color") == Color("302b29")
+			and button.get_theme_color("font_hover_pressed_color") == Color("302b29"),
+			"%s display lettering keeps dark ink on every cream paper state" % hero_id)
+
+
+## AC1 fallback: a mounted Theme that authors no PatchHeading, and an unavailable display
+## file, resolve no display face at all; the lettering then keeps the readable body face
+## instead of ever assigning a null font.
+func _verify_heading_fallback() -> void:
+	var body: Font = load(BODY_FONT_PATH)
+	var bare := Theme.new()
+	bare.default_font = body
+	_check(sewing.heading_face(bare) == null and sewing.heading_face(null) == null
+		and sewing.load_heading_font("res://assets/fonts/absent.ttf") == null
+		and sewing.load_heading_font("") == null,
+		"a fallback Theme and an unavailable display file resolve no display face")
+	var probe := Label.new()
+	probe.text = "Sew Button Eye"
+	probe.theme = bare
+	root.add_child(probe)
+	var probe_button := Button.new()
+	probe_button.text = "Warden"
+	probe_button.theme = bare
+	root.add_child(probe_button)
+	await _frames()
+	sewing.apply_heading(probe, sewing.heading_face(bare))
+	sewing.apply_heading_button(probe_button,
+		sewing.load_heading_font("res://assets/fonts/absent.ttf"))
+	await _frames()
+	for control in [probe, probe_button]:
+		var font: Font = control.get_theme_font("font")
+		_check(font != null and font.resource_path == BODY_FONT_PATH,
+			"%s keeps the readable body face instead of a null font" % control.text)
+	_check(probe.theme_type_variation == &"PatchHeading"
+		and probe_button.theme_type_variation == &"PatchHeadingButton",
+		"fallback lettering still selects the sewn PatchHeading variations")
+	probe.free()
+	probe_button.free()
+
+
 ## Inspect the actual mounted reward choice before any activation. Real pointer
 ## and keyboard focus must both reveal THIS hero's oracle consequence.
 func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 	var before := _complete_state()
 	var run_rng: int = app.run_rng.state
 	var torn_state: Dictionary = app.party_carryover.torn.read_state()
+	await _verify_sewing_heading(drop)
+	await _verify_heading_fallback()
 	var entries: Dictionary = {}
 	var lines: Dictionary = {}
 	_check(sewing._eligible() and sewing._claim_context == sewing._context(),
@@ -666,6 +764,13 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 			and not buttons[1].disabled and not buttons[2].disabled
 			and buttons[1].is_visible_in_tree() and buttons[2].is_visible_in_tree(),
 			"torn Warden cannot sew while Seamstress and Tinker remain enabled")
+		# AC1: the disabled torn action wears the same sewn action face, so the offer
+		# reads as one display hierarchy even when a wearer is unavailable.
+		_check(buttons[0].theme_type_variation == &"PatchHeadingButton"
+			and (buttons[0].get_theme_font("font") as Font).resource_path == HEADING_FONT_PATH
+			and buttons[0].get_theme_font_size("font_size") >= 18
+			and buttons[0].get_theme_color("font_disabled_color") != Color("302b29"),
+			"disabled torn Warden action keeps the PatchHeadingButton face and its own grey ink")
 		var state: Dictionary = sewing.wardrobe.get_snapshot()
 		var before: Array = _complete_state()
 		var rng_before: int = app.run_rng.state
@@ -978,7 +1083,9 @@ func _run() -> void:
 		var old_carry: RunTornCarryover = app.party_carryover
 		await _click(app.route_back_button)
 		_check(old_carry._wardrobe == null, "return clears even the retained carryover binding")
-		_check(sewing.wardrobe == null and sewing.hero_buttons.is_empty() and sewing.summary.text.is_empty(), "title resets companion completely")
+		_check(sewing.wardrobe == null and sewing.hero_buttons.is_empty() and sewing.summary.text.is_empty()
+			and sewing.title_label == null and sewing.chooser_label == null,
+			"title resets companion completely")
 		for callback in retained:
 			callback.call()
 		_check(sewing.wardrobe == null and app.run_trinkets.is_empty() and app.run_scraps == 0

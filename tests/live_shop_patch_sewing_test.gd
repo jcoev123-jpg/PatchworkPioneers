@@ -146,6 +146,7 @@ const PREVIEW_POWERS := {
 
 
 func _check_preview() -> void:
+	_check_patch_action()
 	var stock: Array = app.shop_purchases.get_stock().trinkets
 	var index: int = app.shop_patch_offers.selected
 	_check(not stock.is_empty() and index >= 0 and index < stock.size()
@@ -232,20 +233,92 @@ func _reject_buy(callback: Callable, reason: String) -> void:
 func _check_patch_labels() -> void:
 	var stock: Array = app.shop_purchases.get_stock().trinkets
 	var definitions: Dictionary = wardrobe.get_snapshot().definitions
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
 	_check(stock.size() == 2 and app.shop_patch_offers.item_count == stock.size(),
 		"mounted Shop labels cover both genuine stock offers")
 	var names := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 		"quilted_coat": "Quilted Coat"}
 	for i in range(stock.size()):
 		var offer: Dictionary = stock[i]
+		var candidates: Array = authored.trinkets.filter(func(candidate): return candidate.id == offer.id)
+		_check(candidates.size() == 1 and offer.price == candidates[0].price,
+			"genuine selected stock price agrees with authored catalog")
 		_check(definitions.has(offer.id) and definitions[offer.id] in RunPatchWardrobe.SLOTS,
 			"real stock has an authoritative wardrobe slot")
 		var expected := "%s | %s | %d gold%s" % [names.get(offer.id, String(offer.id).capitalize()),
-			definitions.get(offer.id), offer.price, " | SOLD" if offer.sold else ""]
+			String(definitions.get(offer.id)).capitalize(), offer.price, " | SOLD" if offer.sold else ""]
 		_check(app.shop_patch_offers.get_item_text(i) == expected
 			and not app.shop_patch_offers.get_item_text(i).contains("_")
 			and app.shop_patch_offers.get_item_metadata(i) == offer.id,
 			"exact readable name, genuine slot, stock price/SOLD and authentic ID metadata")
+	_check_patch_action()
+
+
+func _check_patch_action() -> void:
+	var stock: Array = app.shop_purchases.get_stock().trinkets
+	var index: int = app.shop_patch_offers.selected
+	_check(index >= 0 and index < stock.size(), "action has an authentic selected offer")
+	if index < 0 or index >= stock.size():
+		return
+	var offer: Dictionary = stock[index]
+	var expected := "Buy & sew — %d gold" % offer.price
+	if offer.sold:
+		expected = "SOLD — %d gold" % offer.price
+	elif app.session_gold < offer.price:
+		expected += " (insufficient gold)"
+	_check(app.shop_patch_buy_button.text == expected
+		and app.shop_patch_buy_button.disabled == (offer.sold or app.session_gold < offer.price),
+		"selected stock sets exact truthful price/status and enabled state")
+
+
+func _check_equipment_layout() -> void:
+	var panel := app.shop_view.get_node_or_null("ShopPatchSewing") as PanelContainer
+	_check(panel != null, "real Shop mounts one equipment PanelContainer")
+	if panel == null:
+		return
+	_check(app.shop_view.find_children("ShopPatchSewing", "PanelContainer", false, false).size() == 1,
+		"exactly one local equipment backing")
+	var style := panel.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(style != null and style == app.theme.get_stylebox("panel", "PanelContainer")
+		and style.draw_center and style.bg_color.a == 1.0,
+		"equipment inherits installed opaque felt panel style")
+	var heading := panel.find_child("EquipmentHeading", true, false) as Label
+	_check(heading != null and heading.text == "Equipment — sewing included"
+		and heading.theme_type_variation == &"PatchHeading", "concise equipment heading explains included sewing")
+	var controls: Array[Control] = [app.shop_patch_offers, app.shop_patch_heroes,
+		app.shop_patch_buy_button, app.shop_patch_preview]
+	for control in controls:
+		_check(panel.is_ancestor_of(control) and control.is_visible_in_tree()
+			and panel.get_global_rect().encloses(control.get_global_rect())
+			and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect())
+			and control.get_theme_font_size("font_size") >= 18,
+			"readable equipment child contained in local panel and viewport: " + control.name)
+	_check(Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect())
+		and not panel.get_global_rect().intersects(app.shop_remove_button.get_global_rect())
+		and not panel.get_global_rect().intersects(app.shop_continue_button.get_global_rect()),
+		"local felt backing fits viewport clear of adjacent actions")
+	for i in range(3):
+		var control: Control = controls[i]
+		_check(control.size.x >= control.get_minimum_size().x and control.size.y >= control.get_minimum_size().y,
+			"equipment caption is not truncated")
+	app.shop_remove_button.grab_focus()
+	for control in controls.slice(0, 3):
+		await _key(KEY_TAB)
+		_check(control.has_focus(), "physical Tab reaches each equipment action in order")
+	await _key(KEY_TAB)
+	_check(app.shop_continue_button.has_focus(), "physical Tab exits equipment to Continue")
+	for control in [app.shop_patch_buy_button, app.shop_patch_heroes, app.shop_patch_offers, app.shop_remove_button]:
+		var event := InputEventKey.new()
+		event.keycode = KEY_TAB
+		event.shift_pressed = true
+		event.pressed = true
+		root.push_input(event, true)
+		event = event.duplicate()
+		event.pressed = false
+		root.push_input(event, true)
+		await _frames()
+		_check(control.has_focus(), "physical reverse Tab traverses equipment actions")
 
 
 func _activate(control: Control, keyboard: bool) -> void:
@@ -299,7 +372,7 @@ func _negative_inputs(callback: Callable) -> void:
 	picker.set_item_metadata(0, id)
 	var text := picker.get_item_text(0)
 	for forged in ["forged 1 gold quote", text.replace(String(id).capitalize(), "Counterfeit Patch"),
-		text.replace(wardrobe.get_snapshot().definitions[id], "UNKNOWN"),
+		text.replace(String(wardrobe.get_snapshot().definitions[id]).capitalize(), "UNKNOWN"),
 		app.shop_patch_offers.get_item_text(1)]:
 		picker.set_item_text(0, forged)
 		_reject_buy(callback, "forged name, slot, price or other stock label")
@@ -321,6 +394,7 @@ func _negative_inputs(callback: Callable) -> void:
 			wardrobe._definitions[id] = invalid
 		app._refresh_shop_patches()
 		_check(app.shop_patch_buy_button.disabled, "missing/unknown slot disables purchase")
+		_check(app.shop_patch_buy_button.text == "Patch unavailable", "missing/unknown slot has explicit unavailable action")
 		_check(app.shop_patch_preview.text == "Patch preview unavailable.", "unknown slot has no invented preview")
 		_reject_buy(callback, "missing/unknown slot")
 		app.shop_patch_buy_button.disabled = false
@@ -393,10 +467,13 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 	var stock: Dictionary = app.shop_purchases.get_stock()
 	var offer: Dictionary = stock.trinkets[index]
 	_check_patch_labels()
-	_check(not offer.sold and offer.price == 100 and app.session_gold >= 100,
-		"selected genuine 100 gold offer is affordable and unsold")
+	_check(not offer.sold and offer.price > 0 and app.session_gold >= offer.price,
+		"selected genuine quoted offer is affordable and unsold")
 	await _pick(app.shop_patch_offers, index, keyboard)
 	await _pick(app.shop_patch_heroes, wearer, keyboard)
+	_check_patch_action()
+	_check(app.shop_patch_offers.selected == index and app.shop_patch_heroes.selected == wearer,
+		"refresh retains selected stock and wearer")
 	_check_preview()
 	if keyboard:
 		app.shop_patch_heroes.grab_focus()
@@ -408,7 +485,7 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 	var state := wardrobe.get_snapshot()
 	_check(state.worn[app.run_heroes[wearer].id][state.definitions[offer.id]] == offer.id,
 		"paid patch is immediately sewn into selected hero authored slot")
-	_check(app.session_gold == before[3] - 100 and state.gold == app.session_gold
+	_check(app.session_gold == before[3] - offer.price and state.gold == app.session_gold
 		and app.run_deck == before[1] and app.run_rng.state == before[6]
 		and state.operation_ids.size() == before[15].operation_ids.size() + 1,
 		"exactly one charge and operation, unchanged deck and RNG")
@@ -501,8 +578,11 @@ func _poor_and_replacement() -> void:
 		wardrobe = app._shop_wardrobe
 		var callback: Callable = app.shop_patch_buy_button.pressed.get_connections()[0].callable
 		if not funded:
-			_check(app.session_gold < 100 and app.shop_patch_buy_button.disabled,
+			_check(app.session_gold < app.shop_purchases.get_stock().trinkets[0].price and app.shop_patch_buy_button.disabled,
 				"natural reward cannot afford paid patch")
+			for i in range(app.shop_patch_offers.item_count):
+				await _pick(app.shop_patch_offers, i, true)
+				_check_patch_action()
 			var before := _patch_state()
 			callback.call()
 			await _click(app.shop_patch_buy_button)
@@ -781,6 +861,7 @@ func _run() -> void:
 			if wardrobe == null:
 				break
 			_check_patch_labels()
+			await _check_equipment_layout()
 			for control in [app.shop_view, app.shop_patch_offers, app.shop_patch_heroes,
 				app.shop_patch_buy_button, app.shop_continue_button, app.shop_back_button]:
 				_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),

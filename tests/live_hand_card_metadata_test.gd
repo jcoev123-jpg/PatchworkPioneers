@@ -550,9 +550,16 @@ func _assert_stitched_face(metadata, panel: Control, stitched_id: String, pair: 
 		and not geometry["cost"].intersects(rows[1]),
 		"stitched face retains one clear shared cost coin outside both halves")
 	var tooltip: String = panel.tooltip_text
-	_check(tooltip == "1. " + metadata.base_effect_text(str(pair[0]))
-		+ "\n2. " + metadata.base_effect_text(str(pair[1])),
-		"mounted hover tooltip is exactly two numbered full authored half rules")
+	var authored_halves: String = "1. " + metadata.base_effect_text(str(pair[0])) \
+		+ "\n2. " + metadata.base_effect_text(str(pair[1]))
+	var shared_note := tooltip.substr(authored_halves.length()) if tooltip.begins_with(authored_halves) else ""
+	_check(tooltip.begins_with(authored_halves)
+		and shared_note.begins_with("\nSTITCHED: %d energy total" % int(facts.get("cost", -1)))
+		and shared_note.count("\nSTITCHED:") == 1
+		and shared_note.contains("pay energy and discard the composite ONCE")
+		and shared_note.contains("Both owners must be alive")
+		and shared_note.contains("independent legal targets"),
+		"mounted hover tooltip keeps both full numbered halves then the one authentic shared rule")
 	_check(tooltip.find("1. " + str(first.get("display_name", ""))) == 0
 		and tooltip.find("\n2. " + str(second.get("display_name", ""))) > 0,
 		"mounted hover tooltip preserves authentic half order")
@@ -1279,6 +1286,101 @@ func _keyword_explanations(metadata) -> void:
 		_check(reversed_halves[1].begins_with("Pinning Jab; Warden; 1 energy")
 			and reversed_halves[1].contains("PINNED:") and not reversed_halves[1].contains("UNRAVEL:"),
 			"reversed order puts the Pinned glossary in the second half")
+	# Only canonical two-owner ordinary halves earn a shared price/readiness
+	# note, after the unchanged numbered descriptions and keyword glossary.
+	_check(not RunRestStitchCards.resolve_card_definition("warden_pinning_jab").is_empty()
+		and not RunRestStitchCards.resolve_card_definition("tinker_spool_launcher").is_empty(),
+		"stitched Help test halves are authentic Rest-stitch definitions")
+	_check(_occurrences(pinned_first, "STITCHED:") == 1
+		and pinned_first.find("\nSTITCHED:") > pinned_first.find("UNRAVEL:"),
+		"one shared stitch rule follows both authored numbered halves")
+	_check(pinned_first.contains("STITCHED: 2 energy total (higher half cost + 1, capped at 3)")
+		and pinned_first.contains("pay energy and discard the composite ONCE"),
+		"two 1-energy halves cost 2 energy, paid and discarded once")
+	for rule in ["Both owners must be alive", "each in their own legal FROM position",
+			"Resolve half 1, then half 2", "independent legal targets",
+			"each owner's own passive", "+ halves keep their upgrades",
+			"cannot be stitched again or upgraded"]:
+		_check(pinned_first.contains(rule), "canonical stitch explains: " + rule)
+	_check(pinned_first.contains("BASE deal 4 damage; BASE Pin the target")
+		and pinned_first.contains("BASE deal 3 damage; BASE add 3 Unravel to the target")
+		and pinned_first.find("PINNED:") < pinned_first.find("UNRAVEL:"),
+		"ordered ordinary halves retain exact authored damage/status and glossary sequence")
+	_check(unravel_first.contains("STITCHED: 2 energy total")
+		and unravel_first.find("UNRAVEL:") < unravel_first.find("PINNED:")
+		and unravel_first.find("\nSTITCHED:") > unravel_first.find("PINNED:"),
+		"reversing the halves preserves the 2-cost rule and reverses glossary order")
+	var no_pips: String = metadata.stitched_tooltip(
+		["warden_pinning_jab", "tinker_spool_launcher"], false)
+	_check(no_pips.begins_with("1. Pinning Jab; Warden; 1 energy")
+		and no_pips.contains("\n2. Spool Launcher; Tinker; 1 energy")
+		and not no_pips.contains("PIPS:") and no_pips.contains("STITCHED: 2 energy total"),
+		"Shop/Rest pip-free stitched Help retains the same shared rules")
+	var upgraded: String = metadata.stitched_tooltip(
+		["warden_pinning_jab_plus", "tinker_spool_launcher_plus"])
+	_check(upgraded.begins_with("1. Pinning Jab+; Warden; 1 energy")
+		and upgraded.contains("\n2. Spool Launcher+; Tinker; 1 energy")
+		and upgraded.contains("BASE deal 6 damage; BASE Pin the target")
+		and upgraded.contains("BASE deal 4 damage; BASE add 4 Unravel to the target"),
+		"each upgraded + half keeps its own catalog name, damage and status")
+	_check(upgraded.contains("STITCHED: 2 energy total")
+		and upgraded.find("PINNED:") < upgraded.find("UNRAVEL:")
+		and upgraded.find("UNRAVEL:") < upgraded.find("\nSTITCHED:"),
+		"upgraded stitched halves preserve one cost and ordered keyword explanations")
+	var heavy: String = metadata.stitched_tooltip(
+		["warden_heavy_thimble", "tinker_spare_parts"])
+	var heavy_reversed: String = metadata.stitched_tooltip(
+		["tinker_spare_parts", "warden_heavy_thimble"])
+	_check(heavy.begins_with("1. Heavy Thimble; Warden; 2 energy")
+		and heavy.contains("\n2. Spare Parts; Tinker; 0 energy")
+		and heavy.contains("BASE deal 11 damage")
+		and heavy.contains("BASE gain 3 Block") and heavy.contains("BASE draw 1"),
+		"2+0 half pair preserves Warden's attack then Tinker's support")
+	_check(heavy.contains("STITCHED: 3 energy total")
+		and heavy_reversed.contains("STITCHED: 3 energy total")
+		and heavy_reversed.begins_with("1. Spare Parts; Tinker; 0 energy")
+		and heavy_reversed.contains("\n2. Heavy Thimble; Warden; 2 energy"),
+		"higher half cost yields 3 in both orders, with ordered support/attack text")
+	_check(heavy.find("\nSTITCHED:") > heavy.find("\n2. Spare Parts")
+		and heavy_reversed.find("\nSTITCHED:") > heavy_reversed.find("\n2. Heavy Thimble"),
+		"shared note follows the second half for both legal orders")
+	var capped: String = metadata.stitched_tooltip(
+		["warden_bastion_quilt", "tinker_spare_parts"])
+	_check(capped.begins_with("1. Bastion Quilt; Warden; 3 energy")
+		and capped.contains("\n2. Spare Parts; Tinker; 0 energy")
+		and capped.contains("STITCHED: 3 energy total")
+		and not capped.contains("STITCHED: 4 energy total"),
+		"3+0 canonical halves respect the composite cost cap of 3")
+	# These are formatter inputs, not ledger-authenticated stitched receipts.
+	# Even a Path card known to the display lookup is not a legal Rest half.
+	_check(not metadata.definition("warden_lance_pin").is_empty()
+		and RunRestStitchCards.resolve_card_definition("warden_lance_pin").is_empty(),
+		"Path-only Warden display card is known but not Rest-stitchable")
+	var invalid_pairs := [
+		[[], "empty"], [["warden_pinning_jab"], "one half"],
+		[["warden_pinning_jab", "tinker_spool_launcher", "tinker_spare_parts"], "three halves"],
+		[["warden_pinning_jab", "warden_heavy_thimble"], "same owner"],
+		[["warden_lance_pin", "tinker_spool_launcher"], "Path-only half"],
+		[["warden_pinning_jab", "counterfeit_tinker_id"], "unknown ID"],
+		[["warden_pinning_jab", {"id": "tinker_spool_launcher", "owner": "tinker", "cost": 0}], "counterfeit record"],
+		[["warden_pinning_jab", "stitched_000001"], "pre-stitched half"],
+	]
+	for invalid in invalid_pairs:
+		var invalid_text: String = metadata.stitched_tooltip(invalid[0])
+		_check(not invalid_text.contains("STITCHED:") and not invalid_text.contains("energy total"),
+			"invalid %s cannot gain authoritative composite rules or price" % invalid[1])
+		if invalid[1] in ["unknown ID", "counterfeit record", "pre-stitched half"]:
+			_check(invalid_text.contains("\n2. Unknown card"),
+				"invalid %s preserves honest unknown-half placeholder" % invalid[1])
+			_check(not invalid_text.contains("counterfeit_tinker_id")
+				and not invalid_text.contains("stitched_000001")
+				and not invalid_text.contains('"id":'),
+				"invalid %s leaks no raw counterfeit ID" % invalid[1])
+	_check(metadata.stitched_tooltip([]).is_empty()
+		and metadata.stitched_tooltip(["warden_pinning_jab"]).is_empty()
+		and metadata.stitched_tooltip(["warden_pinning_jab", "tinker_spool_launcher",
+			"tinker_spare_parts"]).is_empty(),
+		"wrong cardinality retains the existing empty fallback")
 	# A plain damage card and an unknown ID stay free of invented keywords.
 	var neutral: String = metadata.base_effect_text("tinker_long_barrel")
 	_check(_occurrences(neutral, "PINNED:") == 0 and _occurrences(neutral, "UNRAVEL:") == 0,

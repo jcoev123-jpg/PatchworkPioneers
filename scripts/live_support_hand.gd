@@ -52,6 +52,8 @@ var discard_token: Control
 ## keeps every drawn fallback instead of failing, and repaints the same mounted nodes.
 var ui_art_root := UI_ART_DIR
 var _ui_art_cache: Dictionary = {}
+## One saved pre-battle variation per real action control; never replace its signal or skin.
+var _action_variations: Dictionary = {}
 var _hud: Control
 var _play := CombatStarterSupportPlay.new()
 var _block_cards := CombatWardenPoolBlockCards.new()
@@ -924,6 +926,29 @@ func _sync_hud_art(app) -> void:
 			token.texture = art
 			token.queue_redraw()
 	_paint_end_turn(app.end_turn_button if is_instance_valid(app) else null)
+	_sync_action_fonts(app)
+
+
+## The live actions retain their own Button nodes, wording, callbacks, state skins and
+## focus routes. Saving each prior variation once makes per-frame repaint idempotent.
+func _sync_action_fonts(app) -> void:
+	if not is_instance_valid(app):
+		return
+	for action in [app.end_turn_button, app.return_button, cancel_button]:
+		if not is_instance_valid(action) or not action is Button:
+			continue
+		var button := action as Button
+		if not _action_variations.has(button):
+			_action_variations[button] = button.theme_type_variation
+		if button.theme_type_variation != &"PatchHeadingButton":
+			button.theme_type_variation = &"PatchHeadingButton"
+
+
+func _restore_action_fonts() -> void:
+	for action in _action_variations:
+		if is_instance_valid(action):
+			(action as Button).theme_type_variation = _action_variations[action]
+	_action_variations.clear()
 
 
 ## The real End Turn button keeps its own text, pressed signal, focus, Tab cycle and
@@ -1234,6 +1259,7 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	_restore_action_fonts()
 	_receipt_seq = 0
 	_metadata.clear()
 	_cancel_pending()

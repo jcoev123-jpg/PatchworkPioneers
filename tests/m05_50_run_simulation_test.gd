@@ -30,7 +30,7 @@ func _initialize() -> void:
 				break
 			second.append(replay)
 		_check(first.size() == SEED_COUNT and first == second,
-			"every independently recreated seed has identical routes, floor, outcome, RNG, stitch/sew and deck")
+			"every independent replay matches routes, Event records/choices/receipts/wallets/RNG, Shop stock/receipts, combat, stitch/sew and deck")
 	if failures.is_empty():
 		_report(first)
 	var elapsed := Time.get_ticks_msec() - start_ms
@@ -94,6 +94,10 @@ func _run_seed(value: int) -> Dictionary:
 	var descriptors := {}
 	var next_stitch_id := 1
 	var owned: Array[String] = []
+	var shop_catalog: Dictionary = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	if shop_catalog.get("cards", []).is_empty() or shop_catalog.get("trinkets", []).is_empty():
+		return _fail("authored priced Shop catalog")
 	var patch_defs := RunAuthoredPatchDefinitions.load_definitions()
 	if patch_defs.is_empty():
 		return _fail("shipped patch catalog")
@@ -116,7 +120,12 @@ func _run_seed(value: int) -> Dictionary:
 	var skips := 0
 	var stitches := 0
 	var sews := 0
-	var no_effect_visits := 0
+	var treasure_visits := 0
+	var event_visits: Array[Dictionary] = []
+	var event_history: Array[String] = []
+	var shop_visits: Array[Dictionary] = []
+	var purchased_ids: Array[String] = []
+	var unaffordable_checks := 0
 	var won := false
 	var lost := false
 	var action_total := 0
@@ -126,7 +135,7 @@ func _run_seed(value: int) -> Dictionary:
 			return _fail("run continued without living party")
 		var legal := map.get_legal_choices()
 		var choice := strategy.choose_route(map, carry.read_state().heroes,
-			scraps, stitches, fights, elites)
+			scraps, stitches, fights, elites, gold, shop_catalog.cards)
 		if not legal.has(choice) or not map.choose_node(choice):
 			return _fail("illegal connected route on floor %d" % [floor_index + 1])
 		if map.get_current_floor() != floor_index + 1 				or map.get_route().size() != floor_index + 1:
@@ -211,7 +220,22 @@ func _run_seed(value: int) -> Dictionary:
 					plays += 1
 					if before[0] <= combat_deck.energy and decision.kind != "support":
 						return _fail("paid combat did not charge energy")
-					if combat_deck.discard_pile.count(decision.id) <= before[2].count(decision.id):
+					if decision.kind == "support":
+						# Draw support can refill from discard before its own discard.
+						var oracle_rng := RandomNumberGenerator.new()
+						oracle_rng.state = int(before[6])
+						var oracle := CombatDeck.new([], oracle_rng)
+						oracle.hand.assign(before[1])
+						oracle.discard_pile.assign(before[2])
+						oracle.draw_pile.assign(before[3])
+						oracle.combat_state.player_turn_active = true
+						var definition := StarterCards.new().get_definition(decision.id)
+						oracle.draw_extra(int(definition.effects.get("draw", 0)))
+						if not oracle.discard_played(decision.id) or oracle.hand != combat_deck.hand \
+								or oracle.draw_pile != combat_deck.draw_pile or oracle.discard_pile != combat_deck.discard_pile \
+								or oracle_rng.state != rng.state or combat_deck.energy != before[0] - definition.cost:
+							return _fail("support exact draw/refill, one payment and one discard")
+					elif combat_deck.discard_pile.count(decision.id) <= before[2].count(decision.id):
 						return _fail("confirmed card not discarded")
 					if flow.observe_result() != CombatBattleResult.ACTIVE:
 						break
@@ -292,9 +316,106 @@ func _run_seed(value: int) -> Dictionary:
 				return _fail("authentic Rest heal/revive")
 			if not wardrobe.end_rest(choice, wardrobe.get_snapshot()).get("ok", false):
 				return _fail("Rest wardrobe closing")
+		elif kind == "Shop":
+			var party_ids: Array[String] = []
+			for hero in carry.read_state().heroes:
+				party_ids.append(hero.id)
+			var offers := RunShopStockOffers.generate(rng, party_ids,
+				shop_catalog.cards, shop_catalog.trinkets, owned)
+			if not offers.get("ok", false) or offers.cards.size() != 5 or offers.trinkets.size() != 2:
+				return _fail("seven authored seeded Shop offers")
+			var shop := RunShopPurchases.new(party_ids, deck_ids, owned, gold, offers.cards, offers.trinkets)
+			if not shop.is_valid():
+				return _fail("authoritative Shop purchase admission")
+			var before := _shop_snapshot(shop, rng)
+			if not _shop_rejects(shop, "unlisted_card", rng):
+				return _fail("unlisted Shop choice mutated state/stock/RNG")
+			for listing in shop.get_stock().cards:
+				if listing.price > gold:
+					if not _shop_rejects(shop, listing.id, rng):
+						return _fail("unaffordable Shop choice mutated state/stock/RNG")
+					unaffordable_checks += 1
+			var selected := strategy.choose_shop_card(shop.get_stock(), gold)
+			var reversed_stock := shop.get_stock()
+			reversed_stock.cards.reverse()
+			if selected != strategy.choose_shop_card(shop.get_stock(), gold) \
+					or selected != strategy.choose_shop_card(reversed_stock, gold) or before != _shop_snapshot(shop, rng):
+				return _fail("Shop strategy not repeatable/read-only")
+			var paid := {}
+			if not selected.is_empty():
+				var bought := shop.buy("card", selected)
+				var expected_stock: Dictionary = before[1].duplicate(true)
+				var price := -1
+				for listing in expected_stock.cards:
+					if listing.id == selected:
+						price = listing.price
+						listing.sold = true
+				var expected_state: Dictionary = before[0].duplicate(true)
+				expected_state.deck.append(selected)
+				expected_state.gold -= price
+				if price < 0 or not bought.get("ok", false) or bought.get("receipt", {}) != {
+						"kind": "card", "id": selected, "price": price} or bought.state != expected_state \
+						or bought.stock != expected_stock or shop.get_state() != expected_state \
+						or shop.get_stock() != expected_stock or str(rng.state) != before[2]:
+					return _fail("Shop receipt must add exactly one card and spend its listed price once")
+				if not _shop_rejects(shop, selected, rng):
+					return _fail("repeated Shop purchase mutated state/stock/RNG")
+				# Publish only the authenticated service result; stitch registry/cursor stay intact.
+				deck_ids.assign(bought.state.deck)
+				gold = bought.state.gold
+				owned.assign(bought.state.trinkets)
+				paid = bought.receipt.duplicate(true)
+				purchased_ids.append(paid.id)
+				if not wardrobe.refresh_run_context(carry.read_state().heroes,
+						owned, scraps, gold, deck_ids, wardrobe.get_snapshot()):
+					return _fail("post-purchase wardrobe context")
+			else:
+				if shop.get_stock().cards.any(func(listing): return not listing.sold and listing.price <= gold) \
+						or before != _shop_snapshot(shop, rng):
+					return _fail("unaffordable Shop must leave all authorities unchanged")
+			shop_visits.append({"node": choice, "offers": offers.duplicate(true),
+				"before": before, "after": _shop_snapshot(shop, rng), "receipt": paid})
+		elif kind == "Event":
+			var before := _event_snapshot(map, carry, wardrobe, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
+			var visit := _visit_event(event_visits.size(), strategy, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, rng, event_history)
+			if not visit.get("ok", false):
+				return visit
+			# Only generic admission draws RNG; choice services never mutate authorities.
+			var unchanged := before.duplicate(true)
+			unchanged[10] = str(rng.state)
+			if unchanged != _event_snapshot(map, carry, wardrobe, deck_ids,
+					descriptors, next_stitch_id, gold, scraps, owned, rng, event_history):
+				return _fail("Event service mutated caller authorities")
+			gold = visit.wallet.gold
+			scraps = visit.wallet.scraps
+			if visit.generic:
+				event_history.append(visit.record.id)
+			if not wardrobe.refresh_run_context(carry.read_state().heroes,
+					owned, scraps, gold, deck_ids, wardrobe.get_snapshot()):
+				return _fail("post-Event authoritative wardrobe refresh")
+			var expected := before.duplicate(true)
+			expected[2] = wardrobe.get_snapshot()
+			expected[6] = gold
+			expected[7] = scraps
+			expected[10] = str(rng.state)
+			expected[11] = event_history.duplicate()
+			var after := _event_snapshot(map, carry, wardrobe, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
+			var context := wardrobe.get_snapshot()
+			if after != expected or context.gold != gold or context.scraps != scraps \
+					or context.cards != deck_ids or context.heroes != carry.read_state().heroes \
+					or context.owned != owned:
+				return _fail("Event changed unrelated authority or left stale wardrobe")
+			visit["node"] = choice
+			visit["before"] = before
+			visit["after"] = after
+			event_visits.append(visit)
+		elif kind == "Treasure":
+			treasure_visits += 1
 		else:
-			# No unsupported Event/Treasure outcome or phantom Shop purchase.
-			no_effect_visits += 1
+			return _fail("unsupported route kind")
 		if gold < 0 or scraps < 0 or not RunRestStitchCards.new(
 				deck_ids, descriptors, scraps, next_stitch_id).is_valid():
 			return _fail("negative wallet or forged durable run deck")
@@ -306,14 +427,189 @@ func _run_seed(value: int) -> Dictionary:
 		"route": trace, "won": won, "lost": lost, "rng": str(rng.state),
 		"deck": deck_ids.duplicate(), "stitches": stitches, "sews": sews,
 		"plays": plays, "phases": phases, "picks": picks, "skips": skips,
-		"battles": battles, "no_effect_visits": no_effect_visits,
+		"battles": battles, "treasure_visits": treasure_visits, "event_visits": event_visits,
+		"shop_visits": shop_visits, "purchased_ids": purchased_ids,
+		"unaffordable_checks": unaffordable_checks,
 		"gold": gold, "scraps": scraps, "actions": action_total}
+
+
+func _event_snapshot(map: RunMap, carry: RunTornCarryover, wardrobe: RunPatchWardrobe,
+		deck: Array, descriptors: Dictionary, cursor: int, gold: int, scraps: int,
+		owned: Array, rng: RandomNumberGenerator, history: Array) -> Array:
+	return [map.get_route(), carry.read_state(), wardrobe.get_snapshot(), deck.duplicate(),
+		descriptors.duplicate(true), cursor, gold, scraps, owned.duplicate(),
+		carry.torn.read_state(), str(rng.state), history.duplicate()]
+
+
+func _special_choice(service: RefCounted, index: int, event_id: String,
+		choice_id: String, scraps: int) -> Dictionary:
+	if index == 0:
+		return service.choose(event_id, choice_id, scraps)
+	return service.choose(event_id, choice_id)
+
+
+func _event_service_snapshot(service: RefCounted, index: int) -> Array:
+	if index == 0:
+		return [service.is_consumed()]
+	if index == 1:
+		return [service.is_consumed(), service.get_deck(), service.get_descriptors(),
+			service.get_next_stitch_id(), service.get_scraps()]
+	if index == 2:
+		return [service.get_snapshot()]
+	return [service.is_claimed(), service.get_event()]
+
+
+func _visit_event(index: int, strategy: M05SeededRunStrategy, deck: Array,
+		descriptors: Dictionary, cursor: int, gold: int, scraps: int,
+		rng: RandomNumberGenerator, history: Array) -> Dictionary:
+	var record := {}
+	var selected := ""
+	var service: RefCounted
+	var wallet := {"gold": gold, "scraps": scraps}
+	var rng_before := str(rng.state)
+	if index < 3:
+		var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/events/m04_events.json"))
+		if index == 0:
+			for item in document.events:
+				if item.id == "quiet_spool":
+					record = item.duplicate(true)
+			selected = "watch"
+			service = RunQuietSpoolOutcome.new()
+		elif index == 1:
+			record = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/moth_infestation.json"))
+			selected = "escape"
+			service = RunMothInfestationOutcome.new(deck, descriptors, cursor, scraps)
+			if not service.is_valid():
+				return _fail("Moth admission requires genuine ledger")
+		else:
+			record = RunDyeVatOutcome.load_authored_event()
+			selected = "skim_dye"
+			service = RunDyeVatOutcome.new(deck, descriptors, scraps, cursor)
+			if not service.is_valid():
+				return _fail("Dye admission requires genuine ledger")
+	else:
+		var rotation := RunM04EventRotation.new()
+		if not rotation.is_catalog_valid():
+			return _fail("generic authored Event rotation")
+		# Invalid/exhausted rotation cannot spend RNG, even before a real draw.
+		if rotation.select_event(rng, [17]).ok \
+				or rotation.select_event(rng, rotation.get_generic_event_ids()).ok \
+				or str(rng.state) != rng_before:
+			return _fail("rejected Event admission spent RNG")
+		var oracle_rng := RandomNumberGenerator.new()
+		oracle_rng.state = rng.state
+		var eligible := rotation.get_generic_events().filter(func(item): return not history.has(item.id))
+		if eligible.is_empty():
+			return _fail("generic Event eligible pool exhausted")
+		var expected: Dictionary = eligible[oracle_rng.randi_range(0, eligible.size() - 1)]
+		var selection := rotation.select_event(rng, history)
+		if not selection.ok or selection.event != expected or rng.state != oracle_rng.state \
+				or history.has(selection.event.id):
+			return _fail("generic Event must use shared RNG and exclude prior history")
+		record = selection.event
+		service = RunEventChoice.new(record)
+	if record.is_empty() or not RunEventChoice.new(record).is_valid():
+		return _fail("non-vacuous authored Event record")
+	var choice_rng := str(rng.state)
+	var forecast := RunEventChoice.new(record).preview_wallet_choices(wallet)
+	if not forecast.ok or forecast.choices.is_empty():
+		return _fail("Event affordability forecast")
+	var rejected: Dictionary
+	var unclaimed := _event_service_snapshot(service, index)
+	if index < 3:
+		rejected = _special_choice(service, index, record.id, "unlisted_choice", scraps)
+	else:
+		rejected = service.choose_with_wallet("unlisted_choice", wallet)
+	if rejected.ok or unclaimed != _event_service_snapshot(service, index) or str(rng.state) != choice_rng:
+		return _fail("invalid Event choice accepted or spent ledger/RNG")
+	var unaffordable := 0
+	if index >= 3:
+		for entry in forecast.choices:
+			if not entry.affordable:
+				var denied: Dictionary = service.choose_with_wallet(entry.choice_id, wallet)
+				if denied.ok or denied.wallet != wallet or unclaimed != _event_service_snapshot(service, index) \
+						or str(rng.state) != choice_rng:
+					return _fail("unaffordable Event must not spend or latch")
+				denied.wallet.gold = -123
+				if wallet != {"gold": gold, "scraps": scraps}:
+					return _fail("rejected Event wallet aliases caller")
+				unaffordable += 1
+		selected = strategy.choose_event_choice(forecast)
+		var reversed := forecast.duplicate(true)
+		reversed.choices.reverse()
+		if selected.is_empty() or selected != strategy.choose_event_choice(forecast) \
+				or selected != strategy.choose_event_choice(reversed):
+			return _fail("Event strategy deterministic choice/tie break")
+	var matches: Array = forecast.choices.filter(func(item): return item.choice_id == selected)
+	if matches.size() != 1 or not matches[0].affordable:
+		return _fail("chosen Event forecast must be affordable")
+	var authored: Array = record.choices.filter(func(item): return item.id == selected)
+	var expected_wallet := {"gold": gold + int(authored[0].outcome.gold),
+		"scraps": scraps + int(authored[0].outcome.scraps)}
+	var receipt: Dictionary
+	var duplicate: Dictionary
+	var committed: Array
+	if index < 3:
+		receipt = _special_choice(service, index, record.id, selected, scraps)
+		committed = _event_service_snapshot(service, index)
+		duplicate = _special_choice(service, index, record.id, selected, expected_wallet.scraps)
+		if receipt.get("scraps", -1) != expected_wallet.scraps:
+			return _fail("special Event authored scrap delta")
+		if index > 0 and (receipt.get("deck") != deck or receipt.get("descriptors") != descriptors \
+				or receipt.get("next_stitch_id") != cursor):
+			return _fail("special Event must preserve full stitch ledger")
+		if duplicate.get("scraps", -1) != (expected_wallet.scraps if index < 2 else scraps):
+			return _fail("repeated special Event changed ledger")
+	else:
+		receipt = service.choose_with_wallet(selected, wallet)
+		committed = _event_service_snapshot(service, index)
+		duplicate = service.choose_with_wallet(selected, expected_wallet)
+		if receipt.get("wallet") != expected_wallet or duplicate.wallet != expected_wallet:
+			return _fail("generic Event exact authored settlement once")
+	if not receipt.ok or receipt.event_id != record.id or receipt.choice_id != selected \
+			or duplicate.ok or committed != _event_service_snapshot(service, index) \
+			or matches[0].wallet != expected_wallet or str(rng.state) != choice_rng \
+			or wallet != {"gold": gold, "scraps": scraps}:
+		return _fail("Event receipt/duplicate/forecast/RNG invariants")
+	var detached: Dictionary = service.get_event() if index >= 3 else record.duplicate(true)
+	detached.choices.clear()
+	if record.choices.is_empty() or (index >= 3 and service.get_event() != record):
+		return _fail("Event record must remain detached")
+	var saved_receipt := receipt.duplicate(true)
+	if receipt.has("deck"):
+		receipt.deck.append("detachment_probe")
+		receipt.descriptors["detachment_probe"] = {}
+	if receipt.has("wallet"):
+		receipt.wallet.gold = -123
+	if committed != _event_service_snapshot(service, index) or wallet != {"gold": gold, "scraps": scraps}:
+		return _fail("Event receipt aliases live state")
+	return {"ok": true, "generic": index >= 3, "record": record.duplicate(true),
+		"receipt": saved_receipt, "wallet": expected_wallet.duplicate(),
+		"forecast": forecast.duplicate(true), "unaffordable": unaffordable,
+		"rng_before": rng_before, "rng_after": str(rng.state)}
 
 
 func _combat_snapshot(deck: CombatDeck, party: CombatParty,
 		enemies: CombatEnemies, rng: RandomNumberGenerator) -> Array:
 	return [deck.energy, deck.hand.duplicate(), deck.discard_pile.duplicate(),
 		deck.draw_pile.duplicate(), party.get_heroes(), enemies.get_enemies(), str(rng.state)]
+
+
+func _shop_snapshot(shop: RunShopPurchases, rng: RandomNumberGenerator) -> Array:
+	return [shop.get_state(), shop.get_stock(), str(rng.state)]
+
+
+func _shop_rejects(shop: RunShopPurchases, id: String, rng: RandomNumberGenerator) -> bool:
+	var before := _shop_snapshot(shop, rng)
+	var rejected := shop.buy("card", id)
+	if rejected.get("ok", true) or rejected.has("receipt") or before != _shop_snapshot(shop, rng) \
+			or rejected.state != before[0] or rejected.stock != before[1]:
+		return false
+	# Returned nested state must not alias the live purchase ledger.
+	rejected.state.deck.append("detachment_probe")
+	rejected.stock.cards[0].sold = not rejected.stock.cards[0].sold
+	return before == _shop_snapshot(shop, rng)
 
 
 func _report(trials: Array[Dictionary]) -> void:
@@ -325,7 +621,13 @@ func _report(trials: Array[Dictionary]) -> void:
 	var skips := 0
 	var plays := 0
 	var phases := 0
-	var no_effect := 0
+	var treasures := 0
+	var specials := {}
+	var generic := 0
+	var event_unaffordable := 0
+	var visits := 0
+	var purchases := 0
+	var unaffordable := 0
 	var frequencies := {}
 	for trial in trials:
 		wins += 1 if trial.won else 0
@@ -336,7 +638,25 @@ func _report(trials: Array[Dictionary]) -> void:
 		skips += trial.skips
 		plays += trial.plays
 		phases += trial.phases
-		no_effect += trial.no_effect_visits
+		treasures += trial.treasure_visits
+		for visit in trial.event_visits:
+			if visit.generic:
+				generic += 1
+			else:
+				specials[visit.record.id] = specials.get(visit.record.id, 0) + 1
+			event_unaffordable += visit.unaffordable
+			print("M05 seed=%d Event=%s choice=%s wallet=%s RNG=%s" % [trial.seed,
+				visit.record.id, visit.receipt.choice_id, JSON.stringify(visit.wallet), visit.rng_after])
+		visits += trial.shop_visits.size()
+		purchases += trial.purchased_ids.size()
+		unaffordable += trial.unaffordable_checks
+		var receipts: Array = []
+		for visit in trial.shop_visits:
+			if not visit.receipt.is_empty():
+				receipts.append(visit.receipt)
+		print("M05 seed=%d Shop visits=%d paid=%s acquired=%s final_gold=%d RNG=%s" % [
+			trial.seed, trial.shop_visits.size(), JSON.stringify(receipts),
+			JSON.stringify(trial.purchased_ids), trial.gold, trial.rng])
 		_check(trial.route.size() == trial.floor and trial.floor >= 1 and trial.floor <= 12,
 			"terminal route length equals actual reached floor")
 		_check(trial.gold >= 0 and trial.scraps >= 0 and trial.actions <= 12 * TURN_CAP * ACTION_CAP,
@@ -351,14 +671,22 @@ func _report(trials: Array[Dictionary]) -> void:
 		"nonzero genuine charged/discarded play, enemy phase, reward pick and skip")
 	_check(stitches > 0 and sews > 0,
 		"cohort must actually commit a Rest stitch and an owned patch sew")
+	_check(visits > 0 and purchases > 0 and unaffordable > 0,
+		"cohort witnesses legal Shop visits, paid card receipts and unaffordable rejections")
+	for event_id in ["quiet_spool", "moth_infestation", "dye_vat"]:
+		_check(specials.get(event_id, 0) > 0, "cohort commits real special Event " + event_id)
+	_check(generic > 0 and event_unaffordable > 0,
+		"cohort commits seeded generic Event wallet choices and rejects unaffordable choices")
 	_check(wins >= 0 and wins <= SEED_COUNT and floor_total >= SEED_COUNT,
 		"aggregate arithmetic bounds")
 	print("M05 balance: wins=%d/%d (%.1f%%), average reached floor=%.2f/12" %
 		[wins, SEED_COUNT, float(wins) * 100.0 / SEED_COUNT, float(floor_total) / SEED_COUNT])
 	print("M05 participation: stitches=%d sews=%d picks=%d skips=%d plays=%d enemy_phases=%d" %
 		[stitches, sews, picks, skips, plays, phases])
-	print("M05 no-effect Shop/Event/Treasure traversals=%d; generic events and unpurchased stock not simulated" %
-		no_effect)
+	print("M05 Shop visits=%d paid card purchases=%d unaffordable rejections=%d" % [visits, purchases, unaffordable])
+	print("M05 Events special=%s generic=%d unaffordable rejections=%d; no-effect Treasure=%d" %
+		[JSON.stringify(specials), generic, event_unaffordable, treasures])
+	print("M05 full BAL win/card-frequency gates PENDING earned-pool-card combat coverage")
 	if wins == 0:
 		print("M05 winning-deck card frequency: n/a (no winning decks)")
 	else:

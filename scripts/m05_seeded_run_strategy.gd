@@ -11,8 +11,9 @@ const EFFECTIVE_PATCH_EXCLUSIONS := ["stitched_badge", "spare_spool"]
 
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
-		fights: int, elites: int) -> String:
+		fights: int, elites: int, gold: int, card_candidates: Array) -> String:
 	var legal := map.get_legal_choices()
+	var purchase_plausible := card_candidates.any(func(offer): return offer.price <= gold)
 	var best := ""
 	var best_score := -100000
 	var need_stitch := stitched == 0 and scraps >= RunRestStitchCards.SCRAP_COST
@@ -34,8 +35,10 @@ func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
 			"Rest":
 				score = 155 if need_stitch else (100 if wounded else 44)
 			"Shop":
-				score = 46
-			"Event", "Treasure":
+				score = 80 if purchase_plausible else 46
+			"Event":
+				score = 72
+			"Treasure":
 				score = 54
 		# Prefer a legal next-floor Rest once a real reward can fund stitching.
 		if scraps >= 3 and stitched == 0 and kind != "Rest":
@@ -45,6 +48,33 @@ func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
 					break
 		if score > best_score or (score == best_score and (best.is_empty() or id < best)):
 			best = id
+			best_score = score
+	return best
+
+
+func choose_shop_card(stock: Dictionary, gold: int) -> String:
+	# Buy the cheapest unsold card; canonical ID breaks equal-price ties.
+	var best := ""
+	var price := gold + 1
+	for offer in stock.cards:
+		if offer.sold or offer.price > gold:
+			continue
+		if offer.price < price or (offer.price == price and (best.is_empty() or offer.id < best)):
+			best = offer.id
+			price = offer.price
+	return best
+
+
+func choose_event_choice(forecast: Dictionary) -> String:
+	# Value thread for stitching, with canonical choice ID breaking ties.
+	var best := ""
+	var best_score := -100000
+	for choice in forecast.get("choices", []):
+		if not choice.affordable:
+			continue
+		var score: int = choice.gold_delta + 12 * choice.scraps_delta
+		if score > best_score or (score == best_score and (best.is_empty() or choice.choice_id < best)):
+			best = choice.choice_id
 			best_score = score
 	return best
 
