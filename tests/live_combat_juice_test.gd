@@ -185,6 +185,7 @@ func _leave_fight(check_presenter: bool = true) -> void:
 			and juice.recoil_history.is_empty()
 			and juice.card_flight_history.is_empty()
 			and juice.live_card_flights() == 0 and juice.fall_history.is_empty()
+			and juice.puff_history.is_empty() and juice.live_puffs() == 0
 			and juice._phase_marker.is_empty(),
 			"Return drops the binding and every cue history")
 
@@ -380,6 +381,60 @@ func _presented_puppet(side: String, actor_id: String) -> Control:
 	return null
 
 
+## AC1: exactly one new felt puff receipt for the one actor this committed hit really
+## damaged, its live web-safe emitter anchored to that actor's own presented puppet.
+## Nothing here asserts art pixels: only identity, emitter kind, bounded size and span.
+func _assert_puff(side: String, actor_id: String, before: int, limit: float,
+		prior_nodes: Array = []) -> void:
+	var since: Array = juice.puff_history.slice(before)
+	var amount_limit: int = juice.PUFF_FAST_AMOUNT if juice.fast_animations else juice.PUFF_NORMAL_AMOUNT
+	_check(since.size() == 1 and String(since[0]["side"]) == side
+		and String(since[0]["id"]) == actor_id and int(since[0]["amount"]) <= amount_limit
+		and int(since[0]["amount"]) >= 1 and float(since[0]["duration"]) > 0.0
+		and float(since[0]["duration"]) <= limit,
+		"a committed HP hit puffs exactly one bounded felt receipt for its own actor")
+	var puppet := _presented_puppet(side, actor_id)
+	var nodes: Array = []
+	for node in _puff_nodes():
+		if not prior_nodes.has(node):
+			nodes.append(node)
+	_check(nodes.size() == 1 and is_instance_valid(puppet),
+		"the committed hit leaves exactly one new live felt puff at a mounted puppet")
+	if nodes.size() != 1 or not is_instance_valid(puppet):
+		return
+	var puff: CPUParticles2D = nodes[0] as CPUParticles2D
+	_check(puff != null and puff.get_parent() == juice.overlay and puff.one_shot
+		and puff.emitting and puff.texture == null and puff.amount >= 1
+		and puff.amount <= amount_limit and puff.lifetime <= limit,
+		"the puff is a one-shot web-safe CPUParticles2D of at most six (two fast) flecks")
+	if puff == null:
+		return
+	var near: Rect2 = puppet.get_global_rect()
+	near = near.grow(40.0)
+	_check(near.has_point(puff.global_position),
+		"the puff is anchored to the damaged actor's own puppet, not another actor")
+	var puff_object = nodes[0]
+	_check(not (puff_object is Control),
+		"the felt puff emitter is a Node2D and can never take pointer or keyboard focus")
+	var motion := InputEventMouseMotion.new()
+	motion.position = puff.global_position
+	root.push_input(motion, true)
+	await process_frame
+	var hovered := root.gui_get_hovered_control()
+	_check(hovered != juice.overlay
+		and (hovered == null or hovered.get_parent() != juice.overlay),
+		"a real hit test at the puff's own spot passes through to the battle")
+
+
+## Every live felt puff emitter this listener still owns.
+func _puff_nodes() -> Array:
+	var out: Array = []
+	for entry in juice._puffs:
+		if is_instance_valid(entry.get("node")):
+			out.append(entry["node"])
+	return out
+
+
 ## A comparable key per committed HP loss or recoil receipt.
 func _recoil_keys(records: Array) -> Array:
 	var out: Array = []
@@ -528,8 +583,9 @@ func _assert_presenter_mounted() -> void:
 	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0
-		and juice.recoil_history.is_empty(),
-		"mounting a fight fabricates no combat, card-flight or recoil cue")
+		and juice.recoil_history.is_empty() and juice.puff_history.is_empty()
+		and juice.live_puffs() == 0,
+		"mounting a fight fabricates no combat, card-flight, recoil or felt puff cue")
 	_check(is_instance_valid(juice.fast_button) and juice.fast_button.is_visible_in_tree()
 		and juice.fast_button.get_parent() == app.action_corner_row
 		and app.action_corner.is_ancestor_of(juice.fast_button)
@@ -562,6 +618,7 @@ func _commit_attack() -> void:
 	var presentation := _presentation()
 	var poses_before: int = juice.pose_history.size()
 	var recoils_before: int = juice.recoil_history.size()
+	var puffs_before: int = juice.puff_history.size()
 	var rest_pose: Rect2 = owner_puppet.posed_actor_rect() if is_instance_valid(owner_puppet) else Rect2()
 	var rest_phase: float = owner_puppet.idle_phase if is_instance_valid(owner_puppet) else 0.0
 	_check(not is_instance_valid(owner_puppet) or not owner_puppet.attacking(),
@@ -590,6 +647,8 @@ func _commit_attack() -> void:
 	_check(juice.pose_history.size() == poses_before, "a queued target/preview fabricates no hero pose")
 	_check(juice.recoil_history.size() == recoils_before,
 		"a queued target/preview fabricates no hit recoil")
+	_check(juice.puff_history.size() == puffs_before and juice.live_puffs() == 0,
+		"a queued target/preview kicks up no felt puff")
 	await _mouse(_enemy_label(position))
 	await _frames()
 	_check(randi() == global_next, "committed play through the listener draws no global RNG")
@@ -629,6 +688,7 @@ func _commit_attack() -> void:
 	# AC1/AC2: only the actor that really lost HP recoils, on its own bound puppet, and
 	# only in the drawn transform: the cue anchors, targets, names and actions stay put.
 	var target_id := String(app.enemies.get_enemy(position)["id"])
+	await _assert_puff("enemy", target_id, puffs_before, 0.6)
 	var target_puppet := _puppet_for("enemy", target_id)
 	_check(juice.recoil_history.size() == recoils_before + 1,
 		"one committed HP loss starts exactly one recoil")
@@ -740,6 +800,7 @@ func _commit_attack() -> void:
 	var failed_state := _state()
 	var poses_before_failure: int = juice.pose_history.size()
 	var recoils_before_failure: int = juice.recoil_history.size()
+	var puffs_before_failure: int = juice.puff_history.size()
 	await _mouse(_panel(String(held[0])))
 	await _mouse(_enemy_label(_target_position(String(held[0])) if _target_position(String(held[0])) > 0 else 1))
 	await _frames()
@@ -748,6 +809,8 @@ func _commit_attack() -> void:
 		"a rejected card play fabricates no hero attack pose")
 	_check(juice.recoil_history.size() == recoils_before_failure,
 		"a rejected card play fabricates no hit recoil")
+	_check(juice.puff_history.size() == puffs_before_failure,
+		"a rejected card play fabricates no felt puff")
 	_check(juice.flight_history.size() == flights_before + 1,
 		"no-energy rejected play adds no discard flight")
 	_check(_state() == failed_state, "a rejected card play changes no combat value")
@@ -839,6 +902,7 @@ func _ambiguous_cast() -> void:
 		return
 	var poses_before: int = juice.pose_history.size()
 	var recoils_before: int = juice.recoil_history.size()
+	var puffs_before: int = juice.puff_history.size()
 	var cues_before: int = juice.history.size()
 	var hand_before: Array = app.deck.hand.duplicate()
 	var discard_before: Array = app.deck.discard_pile.duplicate()
@@ -857,9 +921,23 @@ func _ambiguous_cast() -> void:
 	# Every actor whose HP really fell still recoils, and nothing else does: the hit
 	# reaction follows committed HP loss, not the single-target pose rule.
 	var area_recoils: Array = juice.recoil_history.slice(recoils_before)
-	_check(not _hp_losses(changed).is_empty()
+	var area_losses := _hp_losses(changed)
+	_check(not area_losses.is_empty()
 		and _recoils_only_from_hp_losses(area_recoils, changed),
 		"an area cast recoils only the actors whose committed HP really fell")
+	var area_puffs: Array = juice.puff_history.slice(puffs_before)
+	_check(not area_losses.is_empty() and area_puffs.size() == area_losses.size(),
+		"an area cast puffs each actor whose committed HP really fell")
+	var area_loss_keys: Array = []
+	for loss in area_losses:
+		area_loss_keys.append("%s:%s" % [String(loss["side"]), String(loss["id"])])
+	area_loss_keys.sort()
+	var area_puff_keys: Array = []
+	for receipt in area_puffs:
+		area_puff_keys.append("%s:%s" % [String(receipt["side"]), String(receipt["id"])])
+	area_puff_keys.sort()
+	_check(area_puff_keys == area_loss_keys,
+		"each area-cast puff names the exact actor it really damaged")
 	# A real enemy_all cast can legally damage exactly ONE surviving enemy. The listener
 	# must still fail closed: the card's authored target kind is enemy_all, never the
 	# number of actors its commit happened to change. Keep one enemy alive with enough
@@ -910,6 +988,7 @@ func _ambiguous_cast() -> void:
 	var single_poses_before: int = juice.pose_history.size()
 	var single_cues_before: int = juice.history.size()
 	var single_flights_before: int = juice.flight_history.size()
+	var single_puffs_before: int = juice.puff_history.size()
 	var single_hand_before: Array = app.deck.hand.duplicate()
 	var single_discard_before: Array = app.deck.discard_pile.duplicate()
 	await _key(KEY_SPACE)
@@ -935,6 +1014,10 @@ func _ambiguous_cast() -> void:
 		"a single-survivor area cast fabricates no single-source attack pose")
 	_check(not is_instance_valid(survivor_puppet) or not survivor_puppet.attacking(),
 		"no hero puppet lunges for a single-survivor area cast")
+	var single_puffs: Array = juice.puff_history.slice(single_puffs_before)
+	_check(single_puffs.size() == 1 and String(single_puffs[0]["side"]) == "enemy"
+		and int(single_puffs[0]["position"]) == survivor,
+		"a single-survivor area cast still puffs the one enemy whose HP really fell")
 	await _leave_fight()
 
 
@@ -975,6 +1058,8 @@ func _non_damaging_play() -> void:
 		"a non-damaging card play fabricates no attack pose")
 	_check(juice.recoil_history.size() == recoils_before,
 		"a pure Block gain is not a hit and never recoils")
+	_check(juice.puff_history.is_empty() and juice.live_puffs() == 0,
+		"a pure Block gain never kicks up a felt puff")
 	await _leave_fight()
 
 
@@ -1138,6 +1223,7 @@ func _enemy_phase_recoil() -> void:
 		var phase_before := _actors()
 		var receipts_before: int = juice.recoil_history.size()
 		var poses_before: int = juice.pose_history.size()
+		var puffs_before: int = juice.puff_history.size()
 		await _mouse(app.end_turn_button)
 		await _frames()
 		var phase_changed := _changed(phase_before, _actors())
@@ -1160,6 +1246,20 @@ func _enemy_phase_recoil() -> void:
 				and float(receipt["duration"]) > 0.0 and float(receipt["duration"]) <= 0.6,
 				"each enemy-phase recoil repeats a real HP loss and stays bounded")
 		var hero_id := String(app.party.get_hero(damaged_hero)["id"])
+		var phase_losses := _hp_losses(phase_changed)
+		var phase_puffs: Array = juice.puff_history.slice(puffs_before)
+		_check(phase_puffs.size() == phase_losses.size(),
+			"the enemy phase puffs exactly the actors whose HP it really took")
+		var phase_loss_keys: Array = []
+		for loss in phase_losses:
+			phase_loss_keys.append("%s:%s" % [String(loss["side"]), String(loss["id"])])
+		phase_loss_keys.sort()
+		var phase_puff_keys: Array = []
+		for receipt in phase_puffs:
+			phase_puff_keys.append("%s:%s" % [String(receipt["side"]), String(receipt["id"])])
+		phase_puff_keys.sort()
+		_check(phase_puff_keys == phase_loss_keys,
+			"each enemy-phase puff names the exact hero whose HP really fell")
 		var hero_puppet := _puppet_for("hero", hero_id)
 		_check(is_instance_valid(hero_puppet) and hero_puppet.recoiling(),
 			"the damaged hero's own puppet really carries the committed recoil")
@@ -1180,6 +1280,7 @@ func _enemy_phase_recoil() -> void:
 			break
 	_check(block_slot > 0, "a living enemy exists for the pure Block check")
 	var recoils_before_block: int = juice.recoil_history.size()
+	var puffs_before_block: int = juice.puff_history.size()
 	var cues_before_block: int = juice.history.size()
 	_check(app.enemies.gain_block(block_slot, 2), "a real committed Block gain exists")
 	await _frames()
@@ -1188,11 +1289,14 @@ func _enemy_phase_recoil() -> void:
 		"a pure Block gain still announces its own committed cue")
 	_check(juice.recoil_history.size() == recoils_before_block,
 		"a pure Block change is not a hit and never recoils")
+	_check(juice.puff_history.size() == puffs_before_block,
+		"a pure Block change never kicks up a felt puff")
 	# A hit fully absorbed by Block loses only Block: that is not evidence of a hit either.
 	var block_hero := damaged_hero if damaged_hero > 0 else 1
 	_check(app.party.gain_block(block_hero, 3), "a real committed Block gain precedes the absorbed hit")
 	await _frames()
 	var recoils_before_absorbed: int = juice.recoil_history.size()
+	var puffs_before_absorbed: int = juice.puff_history.size()
 	var cues_before_absorbed: int = juice.history.size()
 	var hp_before_absorbed: int = int(app.party.get_hero(block_hero)["hp"])
 	var block_before_absorbed: int = int(app.party.get_hero(block_hero)["block"])
@@ -1209,6 +1313,8 @@ func _enemy_phase_recoil() -> void:
 		"the absorbed hit really loses only Block and announces only that")
 	_check(juice.recoil_history.size() == recoils_before_absorbed,
 		"pure Block loss is not a HP hit and never recoils")
+	_check(juice.puff_history.size() == puffs_before_absorbed,
+		"a fully absorbed hit never kicks up a felt puff")
 	# A real heal is not a hit either: it announces its HP gain and never recoils.
 	if int(app.party.get_hero(block_hero)["hp"]) >= int(app.party.get_hero(block_hero)["max_hp"]):
 		_check(app.party.apply_damage(block_hero, 3), "the heal fixture first damages the hero for real")
@@ -1217,6 +1323,7 @@ func _enemy_phase_recoil() -> void:
 	_check(int(heal_before["hp"]) < int(heal_before["max_hp"]),
 		"the heal fixture leaves a hero with missing HP")
 	var recoils_before_heal: int = juice.recoil_history.size()
+	var puffs_before_heal: int = juice.puff_history.size()
 	var cues_before_heal: int = juice.history.size()
 	_check(app.party.heal(block_hero, 3), "a real committed heal exists")
 	await _frames()
@@ -1227,6 +1334,8 @@ func _enemy_phase_recoil() -> void:
 		"the heal announces its committed HP gain")
 	_check(juice.recoil_history.size() == recoils_before_heal,
 		"a heal is not a hit and never recoils")
+	_check(juice.puff_history.size() == puffs_before_heal,
+		"a heal never kicks up a felt puff")
 	await _leave_fight()
 
 
@@ -1604,6 +1713,7 @@ func _fall_settle() -> void:
 	var tag_rect: Rect2 = label.get_global_rect()
 	var tag_text: String = label.text
 	var falls_before: int = juice.fall_history.size()
+	var puffs_before: int = juice.puff_history.size()
 	_check(app.enemies.apply_damage(position,
 		int(victim["hp"]) + int(victim["block"])),
 		"a real committed hit takes that enemy from living to zero")
@@ -1613,6 +1723,10 @@ func _fall_settle() -> void:
 	var settled_state := _state()
 	_check(juice.fall_history.size() == falls_before + 1,
 		"one witnessed living-to-zero transition starts exactly one settle")
+	var fall_puffs: Array = juice.puff_history.slice(puffs_before)
+	_check(fall_puffs.size() == 1 and String(fall_puffs[0]["side"]) == "enemy"
+		and String(fall_puffs[0]["id"]) == victim_id,
+		"a witnessed living-to-zero HP hit still puffs its own fallen actor")
 	_check(puppet.fallen, "the fallen state is authoritative at once")
 	_check(roster.puppet_for("enemy", victim_id) == null,
 		"targeting keeps its fail-closed fallen rule")
@@ -1878,19 +1992,35 @@ func _fast_mode() -> void:
 	var falls_before: int = juice.fall_history.size()
 	var poses_before: int = juice.pose_history.size()
 	var recoils_before: int = juice.recoil_history.size()
+	var puffs_before: int = juice.puff_history.size()
 	await _mouse(_panel(id))
 	_click_now(_enemy_label(position))
 	var fast_started := false
+	var fast_puff_node: CPUParticles2D = null
 	for attempt in range(8):
 		await process_frame
 		if juice.history.size() > known:
 			fast_started = true
+			for node in _puff_nodes():
+				if node is CPUParticles2D:
+					fast_puff_node = node
 			break
 	_check(fast_started and juice.live_cues() > 0,
 		"fast mode still announces the committed hit on screen")
 	var announced: Array = juice.history.slice(known)
 	_check(announced.size() == 1 and bool(announced[0]["fast"])
 		and float(announced[0]["duration"]) <= 0.15, "fast cues are recorded at 0.15 s or less")
+	var fast_puffs: Array = juice.puff_history.slice(puffs_before)
+	_check(fast_puffs.size() == 1 and bool(fast_puffs[0]["fast"])
+		and int(fast_puffs[0]["amount"]) <= juice.PUFF_FAST_AMOUNT
+		and int(fast_puffs[0]["amount"]) >= 1
+		and float(fast_puffs[0]["duration"]) <= 0.15,
+		"a fast committed hit puffs at most two flecks within 0.15 s")
+	var fast_puff_puppet := _presented_puppet("enemy", String(app.enemies.get_enemy(position)["id"]))
+	_check(fast_puff_node != null and is_instance_valid(fast_puff_puppet)
+		and fast_puff_node.amount <= juice.PUFF_FAST_AMOUNT
+		and fast_puff_node.lifetime <= 0.15,
+		"the fast puff emitter is capped at two flecks and 0.15 s")
 	_check(juice.pose_history.size() == poses_before + 1
 		and bool(juice.pose_history.back()["fast"])
 		and float(juice.pose_history.back()["duration"]) <= 0.15,
@@ -1944,6 +2074,8 @@ func _fast_mode() -> void:
 	await create_timer(0.25).timeout
 	_check(juice.live_cues() == 0 and juice.live_flights() == 0,
 		"hit and flying card finish within 0.25 s in Fast mode")
+	_check(juice.live_puffs() == 0,
+		"the fast felt puff is fully retired within 0.25 s")
 	_check(not is_instance_valid(pose_puppet) or not pose_puppet.attacking(),
 		"the fast hero pose really ends within 0.25 s")
 	_check(not is_instance_valid(fast_recoil) or not fast_recoil.recoiling(),
@@ -1987,6 +2119,8 @@ func _teardown_and_reentry() -> void:
 	_check(live and juice.live_cues() > 0 and juice.live_flights() > 0
 		and juice.flight_history.size() == 1, "a hit and one card flight are live before Return")
 	_check(juice.pose_history.size() == 1, "a live committed pose is recorded before Return")
+	_check(juice.live_puffs() == 1 and juice.puff_history.size() == 1,
+		"a live felt puff is recorded before Return")
 	var posed: Control = _hero_puppet(String(juice.pose_history.back()["id"])) \
 		if not juice.pose_history.is_empty() else null
 	_check(is_instance_valid(posed) and posed.attacking(),
@@ -2008,6 +2142,10 @@ func _teardown_and_reentry() -> void:
 			var node = entry.get(key)
 			if is_instance_valid(node):
 				sprite_ids.append(node.get_instance_id())
+	for entry in juice._puffs:
+		var puff_node = entry.get("node")
+		if is_instance_valid(puff_node):
+			sprite_ids.append(puff_node.get_instance_id())
 	await _mouse(app.return_button)
 	await _frames()
 	_check(app.deck == null and juice.overlay == null and juice.live_cues() == 0
@@ -2015,7 +2153,8 @@ func _teardown_and_reentry() -> void:
 		and juice._held_before.is_empty() and juice._discard_before.is_empty()
 		and juice._draw_before.is_empty() and juice._held_sources.is_empty()
 		and juice.history.is_empty() and juice.pose_history.is_empty()
-		and juice.recoil_history.is_empty()
+		and juice.recoil_history.is_empty() and juice.puff_history.is_empty()
+		and juice.live_puffs() == 0
 		and juice._phase_marker.is_empty() and not juice.bound and juice._snapshot.is_empty(),
 		"Return clears the snapshot, overlay and every cue")
 	_check(not is_instance_valid(posed) or not posed.attacking(),
@@ -2036,8 +2175,9 @@ func _teardown_and_reentry() -> void:
 	_check(juice.bind_serial == serial + 1, "a fresh fight rebinds exactly once")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0
-		and juice.pose_history.is_empty() and juice.recoil_history.is_empty(),
-		"fresh reentry starts without any stale hit, card flight, hero pose or recoil")
+		and juice.pose_history.is_empty() and juice.recoil_history.is_empty()
+		and juice.puff_history.is_empty() and juice.live_puffs() == 0,
+		"fresh reentry starts without any stale hit, card flight, pose, recoil or puff")
 	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
 		"fresh reentry mounts exactly one Fast animations toggle")
 	await _leave_fight()

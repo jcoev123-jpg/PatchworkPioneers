@@ -8,7 +8,10 @@ extends Node
 ## flash at that actor's current presentation, falling back to the matching live
 ## combat meter. A committed HP *loss* also makes only that actor's own visible,
 ## standing mounted puppet recoil; pure Block loss/reset and healing are not evidence
-## of a hit, and nothing recoils for an uncommitted preview or a refused play.
+## of a hit, and nothing recoils for an uncommitted preview or a refused play. Each such
+## committed HP loss also kicks up a tiny one-shot puff of soft felt lint and thread scraps
+## at that actor's own presented puppet: never more than six flecks, fewer in fast mode,
+## gone within the same bounded cue length and never intercepting pointer or focus.
 ## A committed held-card play whose single held copy really left the hand,
 ## whose authored record is an individually targeted enemy attack and whose only
 ## authoritative change was one enemy's HP/Block loss also lets that card's own living
@@ -38,6 +41,14 @@ const POSE_HISTORY_LIMIT := 64
 const RECOIL_HISTORY_LIMIT := 64
 const FALL_HISTORY_LIMIT := 64
 const FADE_HISTORY_LIMIT := 64
+const PUFF_HISTORY_LIMIT := 64
+## A committed hit puffs a small handful of felt lint: at most six flecks in normal mode
+## and two in Fast mode, each a web-safe one-shot CPUParticles2D gone by the cue length.
+const PUFF_NORMAL_AMOUNT := 6
+const PUFF_FAST_AMOUNT := 2
+const PUFF_CREAM := Color("#f1e7ce")
+const PUFF_PALE := Color("#e3d7b8")
+const PUFF_RUST := Color("#b05a41")
 const FLIGHT_SIZE := Vector2(126, 64)
 const FLOAT_WIDTH := 120.0
 const FLOAT_HEIGHT := 26.0
@@ -67,6 +78,9 @@ var pose_history: Array[Dictionary] = []
 var recoil_history: Array[Dictionary] = []
 ## Separate bounded receipts for fall settles really started by a witnessed HP -> 0.
 var fall_history: Array[Dictionary] = []
+## Separate bounded receipts for felt/thread puffs really started by a committed HP loss
+## ({"side","position","id","hp","block","amount","duration","fast"}).
+var puff_history: Array[Dictionary] = []
 ## Separate bounded receipts for real full-screen transitions
 ## ({"transitions":[{"screen","visible"}],"fast","duration","alpha"}).
 var fade_history: Array[Dictionary] = []
@@ -82,6 +96,8 @@ var _enemies: CombatEnemies
 var _deck: CombatDeck
 var _snapshot: Dictionary = {}
 var _cues: Array[Dictionary] = []
+## Live one-shot felt puffs ({"node","remaining","side","id"}), retired by their own span.
+var _puffs: Array[Dictionary] = []
 var _flights: Array[Dictionary] = []
 var _card_flights: Array[Dictionary] = []
 var _held_before: Array[String] = []
@@ -105,7 +121,8 @@ func _ready() -> void:
 	_make_fade_layer(get_parent())
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_tick_puffs(delta)
 	_sync()
 
 
@@ -218,6 +235,8 @@ func _bind(app) -> void:
 	pose_history.clear()
 	recoil_history.clear()
 	fall_history.clear()
+	puff_history.clear()
+	_kill_puffs()
 	# Mounting only baselines the current HP/Block; it never announces a change.
 	_snapshot = _read(app)
 	_baseline_cards(app)
@@ -256,6 +275,7 @@ func _teardown() -> void:
 	pose_history.clear()
 	recoil_history.clear()
 	fall_history.clear()
+	puff_history.clear()
 	if not is_instance_valid(fast_button):
 		fast_button = null
 
@@ -422,6 +442,7 @@ func _emit_deltas(app, current: Dictionary) -> void:
 		# a heal are not, so they never shake an actor.
 		if hp_delta < 0:
 			_emit_recoil(app, change)
+			_emit_puff(app, change)
 			# Only a witnessed living-to-zero transition settles a fall.
 			if int(change.get("hp_after", -1)) == 0:
 				_emit_fall(app, change)
@@ -466,6 +487,103 @@ func _emit_fall(app, change: Dictionary) -> void:
 		"fast": fast_animations, "duration": duration})
 	if fall_history.size() > FALL_HISTORY_LIMIT:
 		fall_history = fall_history.slice(fall_history.size() - FALL_HISTORY_LIMIT)
+
+
+## One committed HP loss also kicks up a short handful of soft felt lint and thread scraps
+## at that actor's authentic presented puppet, beside its existing recoil. Identity comes
+## from the authoritative side plus ID through the same fail-closed roster lookup; a hit
+## that just made its owner fall still presents that puppet in place, so the puff follows
+## it instead of vanishing. A stale, hidden or ambiguous binding puffs nothing. The emitter
+## is a plain CPUParticles2D (no texture, shader or timer hook), so it can never take
+## pointer or keyboard focus and never touches combat.
+func _emit_puff(app, hit: Dictionary) -> void:
+	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
+		return
+	var roster = app.get_node_or_null("LiveEnemyRoster")
+	if roster == null or not is_instance_valid(roster) or not roster.has_method("puppet_for"):
+		return
+	var side := String(hit["side"])
+	var actor_id := String(hit["id"])
+	var puppet = roster.puppet_for(side, actor_id)
+	if not is_instance_valid(puppet) and roster.has_method("presented_puppet"):
+		puppet = roster.presented_puppet(side, actor_id)
+	if not is_instance_valid(puppet):
+		return
+	var rect: Rect2 = puppet.get_global_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var duration := duration_seconds()
+	var amount := PUFF_FAST_AMOUNT if fast_animations else PUFF_NORMAL_AMOUNT
+	var puff := CPUParticles2D.new()
+	puff.name = "CombatJuicePuff"
+	puff.one_shot = true
+	puff.emitting = false
+	puff.amount = amount
+	puff.lifetime = duration
+	puff.explosiveness = 1.0
+	puff.randomness = 0.6
+	# A fixed per-actor seed keeps the fleck pattern deterministic and, crucially, stops
+	# CPUParticles2D from seeding itself off the global RNG (which a committed play must
+	# never draw from). Presentation only: it mutates no combat or run value.
+	puff.use_fixed_seed = true
+	puff.seed = 712367 + int(hit["position"]) * 131 + (0 if side == "hero" else 7)
+	puff.direction = Vector2(0.0, -1.0)
+	puff.spread = 75.0
+	puff.gravity = Vector2(0.0, 40.0)
+	puff.initial_velocity_min = rect.size.y * 0.6
+	puff.initial_velocity_max = rect.size.y * 1.4
+	puff.scale_amount_min = 2.0
+	puff.scale_amount_max = 4.0
+	puff.color = PUFF_CREAM
+	# Mostly pale cream lint with the odd rust thread scrap: flat felt, never a spark.
+	var ramp := Gradient.new()
+	ramp.set_color(0, PUFF_CREAM)
+	ramp.set_color(1, PUFF_RUST)
+	ramp.add_point(0.55, PUFF_PALE)
+	puff.color_initial_ramp = ramp
+	overlay.add_child(puff)
+	puff.position = _to_overlay(rect.get_center())
+	puff.emitting = true
+	_puffs.append({"node": puff, "remaining": duration, "side": side, "id": actor_id})
+	if puff_history.size() >= PUFF_HISTORY_LIMIT:
+		puff_history = puff_history.slice(puff_history.size() - PUFF_HISTORY_LIMIT + 1)
+	puff_history.append({"side": side, "position": int(hit["position"]), "id": actor_id,
+		"hp": int(hit["hp"]), "block": int(hit["block"]), "amount": amount,
+		"duration": duration, "fast": fast_animations})
+
+
+## Retires every puff by its own bounded span, so no finished tween, replacement battle or
+## teardown can leave a live emitter behind. Presentation only: it mutates no combat value.
+func _tick_puffs(delta: float) -> void:
+	if _puffs.is_empty():
+		return
+	var keep: Array[Dictionary] = []
+	for entry in _puffs:
+		entry["remaining"] = float(entry["remaining"]) - delta
+		var node = entry.get("node")
+		if float(entry["remaining"]) > 0.0 and is_instance_valid(node):
+			keep.append(entry)
+			continue
+		if is_instance_valid(node):
+			node.queue_free()
+	_puffs = keep
+
+
+## Felt puffs still on screen (a finished or killed emitter counts as zero).
+func live_puffs() -> int:
+	var count := 0
+	for entry in _puffs:
+		if is_instance_valid(entry.get("node")):
+			count += 1
+	return count
+
+
+func _kill_puffs() -> void:
+	for entry in _puffs:
+		var node = entry.get("node")
+		if is_instance_valid(node):
+			node.queue_free()
+	_puffs.clear()
 
 
 ## Every authoritative actor whose HP or Block really changed since the last sync, with
@@ -648,6 +766,7 @@ func _same_node(a, b) -> bool:
 
 
 func _kill_cues() -> void:
+	_kill_puffs()
 	for entry in _flights:
 		var flight_tween = entry.get("tween")
 		if flight_tween is Tween and flight_tween.is_valid():
