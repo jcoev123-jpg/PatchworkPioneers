@@ -66,6 +66,19 @@ const FIELD_MEND_PLUS_ID := "seamstress_field_mend_plus"
 const FIELD_MEND_COST := 2
 const FIELD_MEND_BASE_HEAL := 4
 const FIELD_MEND_PLUS_HEAL := 6
+## Darning's authored mixed rescue (D2-1): heal and Block on one chosen ally.
+## Both base and '+' share the same 1 energy cost, positions 1-3, and single-ally
+## target. The whole catalog shape is re-checked so no forged, mis-owned,
+## mispriced, mistargeted or extended record can claim this explanation.
+const DARNING_IDS := ["seamstress_darning", "seamstress_darning_plus"]
+const DARNING_BASE_ID := "seamstress_darning"
+const DARNING_PLUS_ID := "seamstress_darning_plus"
+const DARNING_OWNER := "seamstress"
+const DARNING_COST := 1
+const DARNING_BASE_HEAL := 4
+const DARNING_BASE_BLOCK := 3
+const DARNING_PLUS_HEAL := 6
+const DARNING_PLUS_BLOCK := 4
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -113,6 +126,9 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 	var support := _party_support_line(definition, effects)
 	if not support.is_empty():
 		lines.append(support)
+	var darning := _darning_line(definition, effects)
+	if not darning.is_empty():
+		lines.append(darning)
 	return lines
 
 
@@ -455,6 +471,44 @@ static func _field_mend_line(card_id: String, definition: Dictionary,
 	var explanation := "Each living hero recovers %d HP, capped at that hero's current maximum HP. Costs %d energy and is playable by the Seamstress from positions 2-3. A downed hero is skipped and is not revived by this card." % [
 		int(heal_value), int(cost_value)]
 	return {"keyword": "Party support", "explanation": explanation}
+
+
+## Darning heals a chosen living ally and grants it Block. Only the exact
+## canonical base/'+' catalog record, owner, cost, source slots 1-3, single-ally
+## target, empty to_positions, and exact {heal, block} amounts qualify. Anything
+## else (wrong ID, cost, owner, slot, target, extra/missing effect) gets no row.
+static func _darning_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	if not DARNING_IDS.has(card_id):
+		return {}
+	if String(definition.get("owner", "")) != DARNING_OWNER:
+		return {}
+	if definition.get("target_kind") != "ally_single":
+		return {}
+	if not _exact_slots(definition.get("from_positions", null)):
+		return {}
+	if not _empty_positions(definition.get("to_positions", null)):
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int or int(cost_value) != DARNING_COST:
+		return {}
+	if effects.size() != 2:
+		return {}
+	var heal_value: Variant = effects.get("heal")
+	var block_value: Variant = effects.get("block")
+	if not heal_value is int or not block_value is int:
+		return {}
+	var upgraded: bool = card_id == DARNING_PLUS_ID
+	var required_heal: int = DARNING_PLUS_HEAL if upgraded else DARNING_BASE_HEAL
+	var required_block: int = DARNING_PLUS_BLOCK if upgraded else DARNING_BASE_BLOCK
+	if int(heal_value) != required_heal or int(block_value) != required_block:
+		return {}
+	var explanation := "Heals a chosen living ally %d HP and grants that ally %d Block. Costs %d energy and is playable by the Seamstress from positions 1-3. Healing is capped by the chosen living ally's missing HP, while the Block portion still applies even if the ally is already at full HP. A downed hero cannot be chosen and is not revived." % [
+		int(heal_value), int(block_value), int(cost_value)]
+	return {"keyword": "Mixed rescue", "explanation": explanation}
 
 
 ## An authored empty target list, exactly as expected and nothing else.
