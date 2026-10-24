@@ -90,7 +90,8 @@ func _profiles() -> void:
 		_check(sample.configure(row[0], row[1], false) and sample.profile == row[2]
 			and sample.lint == fixed_lint and sample.weather == fixed_weather
 			and sample.weather.seed == sample.PROFILE_SEEDS[row[2]]
-			and sample.weather.emitting and sample.lint.emitting
+			and sample.weather.emitting == (sample.felt_texture != null)
+			and sample.lint.emitting == (sample.felt_texture != null)
 			and sample.visible_budget() == sample.NORMAL_BUDGET,
 			"each authored area configures distinct, pooled, fixed-seed web CPU weather")
 		_geometry(sample, String(row[2]))
@@ -112,46 +113,62 @@ func _profiles() -> void:
 func _geometry(layer, family: String) -> void:
 	var bounds := Vector2(1000, 300)
 	var initial: Array = AMBIENT.motifs_for(family, bounds, 0.0, false)
-	_check(initial.size() == 30 and layer.visible_budget() >= 25
-		and layer.visible_budget() <= 40, "normal budget includes thirty actual silhouettes")
+	_check(initial.size() == 30 and layer.visible_budget() == layer.NORMAL_BUDGET,
+		"normal budget includes thirty texture placements")
 	_check(initial == AMBIENT.motifs_for(family, bounds, 0.0, false),
-		"pure geometry and placement repeat exactly")
+		"pure texture placement repeats exactly")
 	for time in [0.0, 1.0, 30.0, 60.0, 119.99, 120.0, 100000.0]:
 		var marks: Array = AMBIENT.motifs_for(family, bounds, time, false)
-		_check(marks.size() == 30, "motion retains thirty drawn motifs")
-		for i in range(marks.size()):
-			var mark: Dictionary = marks[i]
-			var vertices: PackedVector2Array = mark["vertices"]
-			_check(vertices.size() >= 4 and vertices == AMBIENT.motif_geometry(family, i),
-				"drawn motif uses the pure family silhouette")
-			var rect := Rect2(vertices[0], Vector2.ZERO)
-			for vertex in vertices:
-				rect = rect.expand(vertex)
-				_check(Rect2(Vector2.ZERO, bounds).has_point(mark["center"] + vertex),
-					"whole moving motif stays inside the stage")
-			_check(rect.size.x >= 6.0 and rect.size.x <= 14.0
-				and rect.size.y >= 6.0 and rect.size.y <= 14.0,
-				"felt silhouettes span six to fourteen pixels in both axes")
-			_check(mark["color"] == Color(AMBIENT.PROFILE_COLORS[family], 0.72),
-				"visible felt uses its area palette")
+		_check(marks.size() == 30, "motion retains thirty texture placements")
+		for mark in marks:
+			var rect: Rect2 = mark["rect"]
+			_check(Rect2(Vector2.ZERO, bounds).encloses(rect)
+				and rect.get_center().is_equal_approx(mark["center"]),
+				"whole drifting image stays inside the stage")
+			_check(rect.size.x >= 6.0 and rect.size.x <= 14.0 and rect.size.x == rect.size.y,
+				"felt texture remains six to fourteen pixels across")
+			var tint: Color = mark["color"]
+			var palette: Color = AMBIENT.PROFILE_COLORS[family]
+			_check(tint.r == palette.r and tint.g == palette.g and tint.b == palette.b
+				and tint.a >= 0.36 and tint.a <= 0.72,
+				"felt fades subtly within its admitted palette")
 	var reduced: Array = AMBIENT.motifs_for(family, bounds, 0.0, true)
 	_check(reduced.size() == 7 and reduced[0]["color"].a < initial[0]["color"].a,
-		"Fast reduces actual shape count and opacity")
+		"Fast reduces texture count and opacity")
 	var moving: Array = AMBIENT.motifs_for(family, bounds, 1.0, false)
 	var fast_moving: Array = AMBIENT.motifs_for(family, bounds, 1.0, true)
 	var normal_distance: float = initial[0]["center"].distance_to(moving[0]["center"])
 	_check(normal_distance > 0.0 and normal_distance < 1.0
-		and reduced[0]["center"].distance_to(fast_moving[0]["center"]) < normal_distance,
-		"motion is slow and further reduced in Fast")
-	_check(layer.get_child_count() == 2, "geometry creates no extra nodes")
-	var detached: PackedVector2Array = initial[0]["vertices"]
-	detached[0] = Vector2(9999, 9999)
-	_check(AMBIENT.motif_geometry(family, 0)[0] != detached[0],
-		"returned geometry cannot mutate subsequent draws")
-	for other in AMBIENT.PROFILE_COLORS:
-		if other != family:
-			_check(AMBIENT.motif_geometry(family, 0) != AMBIENT.motif_geometry(other, 0),
-				"each area has a distinct silhouette family")
+		and reduced[0]["center"].distance_to(fast_moving[0]["center"]) < normal_distance
+		and initial[0]["color"].a != moving[0]["color"].a,
+		"texture sway and fading advance slowly, with attenuated Fast drift")
+	_check(AMBIENT.light_alpha(0.0, false) != AMBIENT.light_alpha(1.0, false)
+		and AMBIENT.light_alpha(1.0, true) < AMBIENT.light_alpha(1.0, false),
+		"warm image pulses and dims in Fast")
+	_check(layer.get_child_count() == 2, "texture rendering creates no extra nodes")
+	initial[0]["rect"] = Rect2(9999, 9999, 1, 1)
+	_check(AMBIENT.motifs_for(family, bounds, 0.0, false)[0]["rect"] != initial[0]["rect"],
+		"returned placement cannot mutate subsequent draws")
+	_check(AMBIENT.motifs_for("invalid", bounds, 0.0, false).is_empty()
+		and AMBIENT.motifs_for(family, Vector2(39, 39), 0.0, false).is_empty(),
+		"invalid profiles and tiny bounds have no texture placement")
+
+
+func _textures(layer) -> void:
+	for entry in [[AMBIENT.FELT_PATH, layer.felt_texture], [AMBIENT.LIGHT_PATH, layer.light_texture]]:
+		if FileAccess.file_exists(entry[0]):
+			_check(entry[1] is Texture2D and entry[1].resource_path == entry[0]
+				and entry[1].get_width() > 0 and entry[1].get_height() > 0,
+				"supplied art is an admitted imported texture: " + entry[0])
+	_check(layer.lint.texture == layer.felt_texture and layer.weather.texture == layer.felt_texture
+		and layer.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR
+		and layer.lint.visible == (layer.felt_texture != null)
+		and layer.weather.visible == (layer.felt_texture != null)
+		and layer.lint.color_ramp.get_color(0).a == 0.0
+		and layer.weather.color_ramp.get_color(layer.weather.color_ramp.get_point_count() - 1).a == 0.0,
+		"pooled emitters share felt art, linear filtering and lifetime fades; missing art stays hidden")
+	_check(AMBIENT._load_texture("res://assets/paper/vfx/unavailable_ambient.png") == null,
+		"missing optional texture fails quietly")
 
 
 func _mounted() -> void:
@@ -168,28 +185,29 @@ func _mounted() -> void:
 	_check(layer.get_index() == roster.backdrop.get_index() + 1
 		and layer.get_global_rect() == roster.backdrop.get_global_rect()
 		and layer.size.x > 900.0 and layer.size.y > 200.0,
-		"one correctly sized ambient is immediately above the dim/vignette bed: index=%d/%d, size=%s, battle=%s" % [layer.get_index(), roster.backdrop.get_index(), layer.size, app.battle_view.size])
+		"one correctly sized ambient is immediately above the backdrop: index=%d/%d, size=%s, battle=%s" % [layer.get_index(), roster.backdrop.get_index(), layer.size, app.battle_view.size])
 	var actor_branch: Node = roster.battle_row
 	_check(is_instance_valid(actor_branch) and actor_branch.is_ancestor_of(app.hero_view),
 		"real stage row contains the hero actors")
 	while actor_branch.get_parent() != app.battle_view:
 		actor_branch = actor_branch.get_parent()
 	_check(layer.get_index() < actor_branch.get_index(),
-		"light and edge vignette render behind both actor rows")
+		"light and felt render behind both actor rows")
 	_check(layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and layer.focus_mode == Control.FOCUS_NONE
 		and layer.lint is CPUParticles2D and layer.weather is CPUParticles2D
-		and layer.lint.texture == null and layer.weather.texture == null
+		and layer.lint.texture == layer.felt_texture and layer.weather.texture == layer.felt_texture
 		and layer.lint.use_fixed_seed and layer.weather.use_fixed_seed,
-		"CPU emitters are texture-free, fixed-seed and incapable of taking input")
-	_check(layer.lint.emitting and layer.weather.emitting
+		"CPU emitters share felt art, are fixed-seed and incapable of taking input")
+	_textures(layer)
+	_check(layer.lint.emitting == (layer.felt_texture != null)
+		and layer.weather.emitting == (layer.felt_texture != null)
 		and layer.visible_budget() <= 40 and layer.visible_budget() >= 25
 		and layer.motif_metadata().size() == 30 and layer.get_child_count() == 2,
 		"normal atmosphere is visibly active and within the particle budget")
 	for mark in layer.motif_metadata():
-		for vertex in mark["vertices"]:
-			_check(Rect2(Vector2.ZERO, layer.size).has_point(mark["center"] + vertex),
-				"real 1280x720 stage contains each complete felt silhouette")
+		_check(Rect2(Vector2.ZERO, layer.size).encloses(mark["rect"]),
+			"real 1280x720 stage contains each complete felt image")
 	_check(app.battle_view.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
 		"only one ambient layer belongs to the mounted stage")
 	var state := _snapshot()
@@ -203,6 +221,29 @@ func _mounted() -> void:
 	for repeat in range(5):
 		juice._sync()
 		layer._process(0.016)
+		layer.queue_redraw()
+		await process_frame
+	var saved_felt = layer.felt_texture
+	var saved_light = layer.light_texture
+	var saved_scale: float = layer.weather.scale_amount_max
+	layer.felt_texture = null
+	layer.light_texture = null
+	_check(layer.configure(roster._backdrop_kind, roster._backdrop_floor, false)
+		and not layer.lint.emitting and not layer.weather.emitting,
+		"admitted battle with missing textures quietly suppresses emission")
+	layer.queue_redraw()
+	await process_frame
+	layer.felt_texture = saved_felt
+	layer.light_texture = saved_light
+	_check(not layer.configure("Rest", 5, false) and not layer.visible
+		and layer.profile.is_empty() and layer.motif_metadata().is_empty()
+		and not layer.lint.emitting and not layer.weather.emitting,
+		"invalid route retires real mounted ambience")
+	juice._sync()
+	_check(layer.profile == AMBIENT.profile_for(roster._backdrop_kind, roster._backdrop_floor)
+		and layer.felt_texture == saved_felt and layer.light_texture == saved_light
+		and layer.weather.scale_amount_max == saved_scale,
+		"authentic route restores cached resources and stable pixel scale")
 	_check(_snapshot() == state and juice.history.size() == receipt_count
 		and juice.flight_history.size() == flights and juice.live_cues() == cues,
 		"repeated visual refresh consumes no party/deck/enemy/run state or gameplay cue")

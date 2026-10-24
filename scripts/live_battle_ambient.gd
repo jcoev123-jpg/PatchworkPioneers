@@ -6,6 +6,8 @@ extends Control
 
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const ROUTE_MAP := preload("res://scripts/run_map.gd")
+const FELT_PATH := "res://assets/paper/vfx/felt_mote.png"
+const LIGHT_PATH := "res://assets/paper/vfx/warm_light_pool.png"
 const NORMAL_LINT := 2
 const NORMAL_AREA := 3
 const FAST_LINT := 1
@@ -32,6 +34,8 @@ var fast := false
 var lint: CPUParticles2D
 var weather: CPUParticles2D
 var _time := 0.0
+var felt_texture: Texture2D
+var light_texture: Texture2D
 
 
 func _init() -> void:
@@ -39,6 +43,10 @@ func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	focus_mode = Control.FOCUS_NONE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	# Admit imported art once, before seeded play; absent art stays invisible.
+	felt_texture = _load_texture(FELT_PATH)
+	light_texture = _load_texture(LIGHT_PATH)
 	# Construct only at the listener's initial _ready, outside a battle. Even the
 	# CPUParticles2D constructor may otherwise consume Godot's global RNG.
 	lint = _new_emitter("SoftLint", 70747)
@@ -48,13 +56,26 @@ func _init() -> void:
 	resized.connect(_resize_emitters)
 
 
+static func _load_texture(path: String) -> Texture2D:
+	if not ResourceLoader.exists(path, "Texture2D"):
+		return null
+	return load(path) as Texture2D
+
+
 func _new_emitter(label: String, fixed_seed: int) -> CPUParticles2D:
 	var emitter := CPUParticles2D.new()
 	emitter.name = label
 	emitter.emitting = false
 	emitter.use_fixed_seed = true
 	emitter.seed = fixed_seed
-	emitter.texture = null
+	emitter.texture = felt_texture
+	emitter.visible = felt_texture != null
+	var fade := Gradient.new()
+	fade.set_color(0, Color(1, 1, 1, 0))
+	fade.add_point(0.2, Color.WHITE)
+	fade.add_point(0.75, Color.WHITE)
+	fade.set_color(fade.get_point_count() - 1, Color(1, 1, 1, 0))
+	emitter.color_ramp = fade
 	emitter.one_shot = false
 	emitter.lifetime = 8.0
 	emitter.fixed_fps = 15
@@ -112,8 +133,8 @@ func configure(kind: String, floor_number: int, fast_mode: bool) -> bool:
 		_time = 0.0
 	_apply_profile()
 	_resize_emitters()
-	lint.emitting = true
-	weather.emitting = true
+	lint.emitting = felt_texture != null
+	weather.emitting = felt_texture != null
 	show()
 	queue_redraw()
 	return true
@@ -169,6 +190,12 @@ func _apply_profile() -> void:
 			weather.gravity = Vector2(-10.0, 7.0)
 			weather.scale_amount_min = 2.5
 			weather.scale_amount_max = 4.5
+	# The authored image can be any resolution; preserve small felt flecks.
+	var pixel_scale := 3.0 / maxf(1.0, felt_texture.get_width()) if felt_texture != null else 1.0
+	lint.scale_amount_min *= pixel_scale
+	lint.scale_amount_max *= pixel_scale
+	weather.scale_amount_min *= pixel_scale
+	weather.scale_amount_max *= pixel_scale
 
 
 func _resize_emitters() -> void:
@@ -201,47 +228,27 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
-## Detached, pure draw geometry. No random sampling or scene state is needed.
-## Each silhouette spans 6-14 px in both axes, including the ash flecks.
-static func motif_geometry(family: String, index: int) -> PackedVector2Array:
-	var vertices := PackedVector2Array()
-	match family:
-		"pollen":
-			vertices = PackedVector2Array([Vector2(-0.5, -0.2), Vector2(-0.2, -0.5), Vector2(0.35, -0.4), Vector2(0.5, 0.15), Vector2(0.1, 0.5), Vector2(-0.4, 0.3)])
-		"leaves":
-			vertices = PackedVector2Array([Vector2(-0.5, -0.1), Vector2(-0.15, -0.5), Vector2(0.25, -0.3), Vector2(0.5, 0.15), Vector2(0.05, 0.5), Vector2(-0.3, 0.25)])
-		"fireflies":
-			vertices = PackedVector2Array([Vector2(-0.5, -0.3), Vector2(-0.1, -0.15), Vector2(0.25, -0.5), Vector2(0.5, 0.1), Vector2(0.05, 0.5), Vector2(-0.4, 0.3)])
-		"snow":
-			vertices = PackedVector2Array([Vector2(-0.5, 0), Vector2(-0.15, -0.5), Vector2(0.35, -0.35), Vector2(0.5, 0.15), Vector2(0.1, 0.5), Vector2(-0.35, 0.3)])
-		"ash":
-			vertices = PackedVector2Array([Vector2(-0.5, 0.15), Vector2(-0.15, -0.5), Vector2(0.5, -0.2), Vector2(0.2, 0.5)])
-		"scraps":
-			vertices = PackedVector2Array([Vector2(-0.5, -0.5), Vector2(0.5, -0.3), Vector2(0.35, 0.5), Vector2(-0.4, 0.35)])
+## Pure texture placement, shared by the renderer and detached diagnostics.
+static func mote_at(family: String, bounds: Vector2, elapsed: float, fast_mode: bool, index: int) -> Dictionary:
+	var cell := posmod(index * 13, NORMAL_MOTIFS)
+	var phase := fposmod(elapsed, 120.0) * TAU / 120.0 + float(index) * 1.81 + float(PROFILE_SEEDS[family] % 17)
+	var motion_scale := 0.4 if fast_mode else 1.0
+	var at := Vector2(
+		18.0 + (bounds.x - 36.0) * (float(cell % 10) + 0.5) / 10.0,
+		18.0 + (bounds.y - 36.0) * (float(cell / 10) + 0.5) / 3.0)
+	at += Vector2(sin(phase) * 10.0, cos(phase) * 8.0) * motion_scale
 	var width := 6.0 + float(posmod(index, 9))
-	for i in range(vertices.size()):
-		vertices[i] *= width
-	return vertices
+	var tint: Color = PROFILE_COLORS[family]
+	tint.a = (0.32 if fast_mode else 0.72) * (0.75 + 0.25 * sin(phase))
+	return {"center": at, "rect": Rect2(at - Vector2.ONE * width * 0.5, Vector2.ONE * width), "color": tint}
 
 
 static func motifs_for(family: String, bounds: Vector2, elapsed: float, fast_mode: bool) -> Array:
 	var marks: Array = []
 	if not PROFILE_COLORS.has(family) or bounds.x < 40.0 or bounds.y < 40.0:
 		return marks
-	var tint: Color = PROFILE_COLORS[family]
-	tint.a = 0.32 if fast_mode else 0.72
-	var family_phase := float(PROFILE_SEEDS[family] % 17)
 	for i in range(FAST_MOTIFS if fast_mode else NORMAL_MOTIFS):
-		# Permute a 10 x 3 grid so Fast still spans the stage. A periodic sway
-		# keeps every whole silhouette in bounds without teleporting at an edge.
-		var cell := posmod(i * 13, NORMAL_MOTIFS)
-		var phase := fposmod(elapsed, 120.0) * TAU / 120.0 + float(i) * 1.81 + family_phase
-		var motion_scale := 0.4 if fast_mode else 1.0
-		var at := Vector2(
-			18.0 + (bounds.x - 36.0) * (float(cell % 10) + 0.5) / 10.0,
-			18.0 + (bounds.y - 36.0) * (float(cell / 10) + 0.5) / 3.0)
-		at += Vector2(sin(phase) * 10.0, cos(phase) * 8.0) * motion_scale
-		marks.append({"center": at, "vertices": motif_geometry(family, i), "color": tint})
+		marks.append(mote_at(family, bounds, elapsed, fast_mode, i))
 	return marks
 
 
@@ -249,25 +256,18 @@ func motif_metadata() -> Array:
 	return motifs_for(profile, size, _time, fast)
 
 
+static func light_alpha(elapsed: float, fast_mode: bool) -> float:
+	return (0.16 if fast_mode else 0.32) * (0.9 + 0.1 * sin(fposmod(elapsed, 120.0) * TAU / 12.0))
+
+
 func _draw() -> void:
-	if profile.is_empty() or size.x < 1.0 or size.y < 1.0:
+	if profile.is_empty() or size.x < 40.0 or size.y < 40.0:
 		return
-	# Layered, narrow peripheral washes soften the stage behind the actor row.
-	for edge in range(8):
-		var inset := float(edge) * 6.0
-		var shade := Color(0.13, 0.10, 0.16, 0.08 * (1.0 - float(edge) / 8.0))
-		draw_rect(Rect2(inset, inset, maxf(0.0, size.x - inset * 2.0), 6.0), shade)
-		draw_rect(Rect2(inset, size.y - inset - 6.0, maxf(0.0, size.x - inset * 2.0), 6.0), shade)
-		draw_rect(Rect2(inset, inset, 6.0, maxf(0.0, size.y - inset * 2.0)), shade)
-		draw_rect(Rect2(size.x - inset - 6.0, inset, 6.0, maxf(0.0, size.y - inset * 2.0)), shade)
-	# Overlapping translucent ellipses give the heroes a perceptible honey pool.
-	var center := Vector2(size.x * 0.26, size.y * 0.62)
-	draw_set_transform(center, 0.0, Vector2(1.65, 0.58))
-	for ring in range(9, 0, -1):
-		draw_circle(Vector2.ZERO, 13.0 + ring * 12.0,
-			Color(1.0, 0.79, 0.40, 0.032))
-	draw_set_transform(Vector2.ZERO)
-	for mark in motif_metadata():
-		draw_set_transform(mark["center"])
-		draw_colored_polygon(mark["vertices"], mark["color"])
-	draw_set_transform(Vector2.ZERO)
+	if light_texture != null:
+		var extent := Vector2(size.x * 0.38, size.y * 0.48)
+		draw_texture_rect(light_texture, Rect2(size * Vector2(0.26, 0.62) - extent * 0.5, extent),
+			false, Color(1, 1, 1, light_alpha(_time, fast)))
+	if felt_texture != null:
+		for i in range(FAST_MOTIFS if fast else NORMAL_MOTIFS):
+			var mark := mote_at(profile, size, _time, fast, i)
+			draw_texture_rect(felt_texture, mark["rect"], false, mark["color"])
