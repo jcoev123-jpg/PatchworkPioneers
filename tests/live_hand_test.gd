@@ -359,25 +359,27 @@ func _expected_tooltip_phrases(card_id: String, definition: Dictionary) -> Array
 	return phrases
 
 
-## Independent short-rule expectations for the line actually drawn on the card.
+## Independent short-rule expectations for the line actually drawn on the card:
+## terse authored phrases, never a from/target sentence or a position name.
 func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[String]:
 	var effects: Dictionary = definition.get("effects", {})
+	var target_kind: String = str(definition.get("target_kind", ""))
 	var tokens: Array[String] = []
 	if effects.has("damage"):
 		tokens.append("%d dmg" % int(effects["damage"]))
 		var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
 		if hits > 1:
 			tokens.append("x%d" % hits)
-	if bool(effects.get("random_target_each_hit", false)):
-		tokens.append("random each hit")
 	if effects.has("block"):
 		tokens.append("%d Block" % int(effects["block"]))
 	if effects.has("other_ally_block"):
-		tokens.append("%d Block to other allies" % int(effects["other_ally_block"]))
+		tokens.append("%d Block allies" % int(effects["other_ally_block"]))
 	if effects.has("block_all"):
-		tokens.append("%d Block to all heroes" % int(effects["block_all"]))
+		tokens.append("%d Block" % int(effects["block_all"]))
 	if effects.has("heal"):
-		tokens.append("heal %d" % int(effects["heal"]))
+		var heal: Variant = effects["heal"]
+		var amount: int = int(heal.get("amount", 0)) if heal is Dictionary else int(heal)
+		tokens.append("heal %d" % amount)
 	if effects.has("exposed"):
 		tokens.append("Exposed %d" % int(effects["exposed"]))
 	if effects.has("weak"):
@@ -401,14 +403,39 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 		tokens.append("draw %d" % int(effects["draw"]))
 	if effects.has("gain_energy"):
 		tokens.append("+%d energy" % int(effects["gain_energy"]))
-	if effects.has("energy") and not effects.has("gain_energy"):
+	elif effects.has("energy"):
 		tokens.append("+%d energy" % int(effects["energy"]))
+	if effects.has("next_turn_energy"):
+		tokens.append("+%d energy next turn" % int(effects["next_turn_energy"]))
 	if effects.has("self_hp_loss"):
 		tokens.append("-%d HP" % int(effects["self_hp_loss"]))
 	if effects.has("conditional_damage"):
 		var condition: Dictionary = effects["conditional_damage"]
 		tokens.append("%d dmg if" % int(condition.get("damage", 0)))
+	# The face must distinguish a whole-area cast from a per-hit random pick.
+	if bool(effects.get("random_target_each_hit", false)):
+		tokens.append("RND")
+	elif target_kind in ["enemy_all", "party_all"]:
+		tokens.append("ALL")
 	return tokens
+
+
+## The exact authored recipient slots, or the recipient rule when a card picks
+## among heroes: mirrors what the hover tooltip's pip legend must state.
+func _target_slot_text(definition: Dictionary) -> String:
+	var positions: Array = definition.get("to_positions", [])
+	if not positions.is_empty():
+		return _face_positions(positions)
+	match str(definition.get("target_kind", "")):
+		"ally_single":
+			return "any hero slot"
+		"party_all":
+			return "every hero"
+		"self":
+			return "this hero"
+		"adjacent_ally":
+			return "the adjacent hero"
+	return "no target"
 
 
 func _area_card(card_id: String) -> bool:
@@ -504,6 +531,10 @@ func _check_pool_face(card_id: String, definition: Dictionary) -> void:
 	_check(rules.length() <= 80, "card line stays short: " + card_id + " (" + rules + ")")
 	for token in _expected_rule_tokens(card_id, definition):
 		_check(rules.contains(token), "card line covers '%s': %s" % [token, card_id])
+	# The face is terse: no from/target sentence, no position or recipient name.
+	for banned in ["From", "Target", "living", "pick 1", "front", "middle", "back"]:
+		_check(not rules.contains(banned),
+			"card line never prints '%s': %s (%s)" % [banned, card_id, rules])
 	var tooltip: String = panel.tooltip_text
 	_check(tooltip.contains(str(definition.get("display_name", ""))),
 		"mounted tooltip names the authored card: " + card_id)
@@ -520,6 +551,22 @@ func _check_pool_face(card_id: String, definition: Dictionary) -> void:
 			"tooltip exact from line: " + card_id)
 		_check(lines.has(_precise_target(target_kind, definition.get("to_positions", []))),
 			"tooltip exact target line: " + card_id)
+		# The tooltip is the one place that spells out the painted pips.
+		var target_slot_phrase: String
+		if definition.get("to_positions", []).is_empty():
+			target_slot_phrase = "no target square is filled (%s)" % _target_slot_text(definition)
+		else:
+			target_slot_phrase = "■ filled = a legal target slot (%s)" % _target_slot_text(definition)
+		_check(tooltip.contains("PIPS: ● filled = a slot this hero may play from (%s)"
+			% _face_positions(definition.get("from_positions", [])))
+			and tooltip.contains(target_slot_phrase),
+			"tooltip explains the six pips and their exact slots: " + card_id)
+		if target_kind == "enemy_all":
+			_check(tooltip.contains("the thread stitches every enemy square (ALL = all of them)"),
+				"tooltip explains the all-enemy stitch: " + card_id)
+		if bool(definition.get("effects", {}).get("random_target_each_hit", false)):
+			_check(tooltip.contains("RND = one random enemy per hit"),
+				"tooltip explains the random-hit marker: " + card_id)
 		for phrase in _expected_tooltip_phrases(card_id, definition):
 			_check(tooltip.contains(phrase), "tooltip states '%s': %s" % [phrase, card_id])
 	var geometry: Dictionary = metadata.get_geometry(panel)
@@ -712,6 +759,8 @@ func _sewn_and_unknown_faces() -> void:
 		_check(tooltip.contains("BASE gain 7 Block") and tooltip.contains("BASE heal 5 HP, capped at max HP"),
 			"each half keeps its own precise effect")
 		_check(tooltip == metadata.stitched_tooltip(pair), "mounted tooltip is the ordered two-part tooltip")
+		_check(facts.get("rules") == "1. 7 Block · 2. heal 5",
+			"sewn face keeps first then second authored effect: " + str(facts.get("rules")))
 		var geometry: Dictionary = metadata.get_geometry(panel)
 		var rows: Array = geometry.get("halves", [])
 		_check(rows.size() == 2, "two separately labelled stitched rows")

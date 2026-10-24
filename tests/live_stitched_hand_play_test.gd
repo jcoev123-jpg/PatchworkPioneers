@@ -67,6 +67,21 @@ func _stitched_face(id: String, pair: Array, metadata) -> void:
 	_check(tooltip.contains(metadata.base_effect_text(str(pair[0])))
 		and tooltip.contains(metadata.base_effect_text(str(pair[1]))),
 		"each tooltip part keeps that half's complete authored rules")
+	# Each half keeps its own terse authored effect, in ledger order, and the
+	# mounted composite summary shows first then second without a from/target row.
+	var first_line: String = metadata.short_line(str(pair[0]))
+	var second_line: String = metadata.short_line(str(pair[1]))
+	_check(not first_line.is_empty() and not second_line.is_empty()
+		and first_line != second_line,
+		"each stitched half keeps a distinct terse effect: " + id)
+	for line in [first_line, second_line]:
+		_check(not line.contains("BASE") and not line.contains("Unknown"),
+			"stitched half face line stays terse: " + id)
+		for banned in ["From", "Target", "living", "pick 1", "front", "middle", "back"]:
+			_check(not line.contains(banned),
+				"stitched half face prints no '%s': %s" % [banned, id])
+	_check(str(metadata.get_facts(panel).get("rules", "")) == "1. %s · 2. %s" % [first_line, second_line],
+		"composite face summary keeps first then second authored effect: " + id)
 	# The real battle hand keeps the detailed, noncompact face: both ordered halves
 	# get the renderer's three-line geometry instead of the compact one-row fallback.
 	var real_geometry: Dictionary = metadata.get_geometry(panel)
@@ -139,6 +154,16 @@ func _authored_upgrade_names() -> void:
 		"two-part stitched tooltip keeps upgraded and base half names in order")
 	_check(tooltip.contains("BASE deal 7 damage") and tooltip.contains("BASE deal 3 damage")
 		and not tooltip.contains("BASE deal 6 damage"), "stitched tooltip states each half's own authored effect")
+	# The upgraded half keeps its own terse face line beside the base half.
+	_check(metadata.short_line("warden_strike_plus") == "7 dmg"
+		and metadata.short_line("warden_strike") == "6 dmg"
+		and metadata.short_line("seamstress_prick") == "3 dmg · Bleed 3",
+		"stitched halves keep their own terse authored amounts")
+	var made_pair: Array = made_descriptor.get("half_ids", [])
+	_check(made_pair.size() == 2
+		and metadata.short_line(str(made_pair[0])) == "7 dmg"
+		and metadata.short_line(str(made_pair[1])) == "3 dmg · Bleed 3",
+		"real stitched pair keeps both terse half effects in order")
 
 
 func _hover(control: Control) -> void:

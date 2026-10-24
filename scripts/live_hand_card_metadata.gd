@@ -8,16 +8,6 @@ const TINKER := Color("#c49a3a")
 const CREAM := Color("#ece0c8")
 const RUST := Color("#9e6f58")
 const INK := Color("#3d3440")
-## Every effect key this display formatter understands. Anything else stays
-## undescribed and is flagged honestly instead of being interpreted as a number.
-const KNOWN_EFFECT_KEYS := [
-	"damage", "hits", "hit_count", "block", "other_ally_block", "block_all",
-	"heal", "exposed", "weak", "bleed", "unravel", "bleed_multiplier", "pinned",
-	"guarding", "thorns", "draw", "energy", "gain_energy", "self_hp_loss",
-	"conditional_damage", "random_target_each_hit", "rng_source",
-	"living_targets_only", "duration", "next_attack_damage_bonus",
-	"next_turn_energy", "expires",
-]
 ## Plain-text keyword reminders appended to the tooltip (never the card face)
 ## for authored cards that actually carry the mechanic. They explain only the
 ## published rule; no card is shown as automatically pinning or unravelling.
@@ -290,7 +280,10 @@ func base_effect_text(card_id: String) -> String:
 		parts.append("No target")
 	elif not target_text.is_empty() and target_text != "Unknown target":
 		parts.append(target_text)
-	var effect_parts: Array[String] = _effect_lines(card_id, definition, true)
+	# The face prints the six legality pips but no positions of its own, so the
+	# hover tooltip is the one place that spells the slots out.
+	parts.append(_pip_legend(definition))
+	var effect_parts: Array[String] = _precise_effect_lines(card_id, definition)
 	if not effect_parts.is_empty():
 		parts.append("; ".join(effect_parts))
 	# A Warden Path passive belongs to the Path, not to the card's own cast, so
@@ -335,6 +328,59 @@ func _target_text(definition: Dictionary, precise: bool) -> String:
 	return "Unknown target"
 
 
+## Explains the six painted legality pips: filled/outlined source circles and
+## target squares, the all-enemy stitch, and the exact authored slots. The drawn
+## face never prints a position; this tooltip sentence is the only place it does.
+func _pip_legend(definition: Dictionary) -> String:
+	var parts: Array[String] = [
+		"PIPS: ● filled = a slot this hero may play from (%s)"
+			% _slots(definition.get("from_positions", []), "no slot"),
+		"○ outlined = not a source slot",
+	]
+	# A card that picks a hero (or has no target) fills no square, so the legend
+	# says so instead of implying a filled square exists.
+	if _slots(definition.get("to_positions", []), "").is_empty():
+		parts.append("no target square is filled (%s)" % _target_slots(definition))
+	else:
+		parts.append("■ filled = a legal target slot (%s)"
+			% _positions(definition.get("to_positions", [])))
+		parts.append("□ outlined = not a target slot")
+	if str(definition.get("target_kind", "")) == "enemy_all":
+		parts.append("the thread stitches every enemy square (%s = all of them)"
+			% CardShortRules.ALL_TARGET)
+	elif str(definition.get("target_kind", "")) == "party_all":
+		parts.append("%s = every hero" % CardShortRules.ALL_TARGET)
+	var raw_effects: Variant = definition.get("effects", {})
+	if raw_effects is Dictionary \
+			and bool((raw_effects as Dictionary).get("random_target_each_hit", false)):
+		parts.append("%s = one random enemy per hit" % CardShortRules.RANDOM_TARGET)
+	return "; ".join(parts) + "."
+
+
+func _slots(value: Variant, empty_text: String) -> String:
+	if not value is Array or (value as Array).is_empty():
+		return empty_text
+	return _positions(value)
+
+
+## The authored recipient slots, or the authored recipient rule when a card
+## chooses among heroes rather than among fixed enemy slots.
+func _target_slots(definition: Dictionary) -> String:
+	var to_positions: Array = definition.get("to_positions", [])
+	if not to_positions.is_empty():
+		return _positions(to_positions)
+	match str(definition.get("target_kind", "")):
+		"ally_single":
+			return "any hero slot"
+		"party_all":
+			return "every hero"
+		"self":
+			return "this hero"
+		"adjacent_ally":
+			return "the adjacent hero"
+	return "no target"
+
+
 ## The authored recipient phrase used by effect sentences; never a promise about
 ## a card whose target kind is unrecognized.
 func _recipient(definition: Dictionary) -> String:
@@ -352,11 +398,11 @@ func _recipient(definition: Dictionary) -> String:
 	return "the target"
 
 
-## Authored effect sentences, short on the card face and precise in the tooltip.
-## No resolution is predicted: only catalog fields and the real confirmed-hit
-## starter adapter are described, and any unrecognized effect key is flagged
-## instead of being rendered as an invented value.
-func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Array[String]:
+## Authored effect sentences for the hover tooltip (the drawn face uses the much
+## terser CardShortRules line instead). No resolution is predicted: only catalog
+## fields and the real confirmed-hit starter adapter are described, and any
+## unrecognized effect key is flagged instead of being rendered as a number.
+func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
 	var parts: Array[String] = []
 	var raw_effects: Variant = definition.get("effects", {})
 	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
@@ -366,27 +412,19 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 	if effects.has("damage"):
 		var damage: int = int(effects["damage"])
 		var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
-		if precise:
-			var line := "BASE deal %d damage" % damage
-			if hits > 1:
-				line += " in %d hits" % hits
-			parts.append(line)
-		else:
-			var line := "%d dmg" % damage
-			if hits > 1:
-				line += " x%d" % hits
-			parts.append(line)
+		var line := "BASE deal %d damage" % damage
+		if hits > 1:
+			line += " in %d hits" % hits
+		parts.append(line)
 	if bool(effects.get("random_target_each_hit", false)):
-		parts.append("BASE each hit picks a random living enemy" if precise else "random each hit")
+		parts.append("BASE each hit picks a random living enemy")
 	if effects.has("block"):
-		parts.append("BASE gain %d Block" % int(effects["block"]) if precise else "%d Block" % int(effects["block"]))
+		parts.append("BASE gain %d Block" % int(effects["block"]))
 	# Hold the Line and Bastion Quilt pay other recipients too; never hide them.
 	if effects.has("other_ally_block"):
-		parts.append("BASE each other living ally gains %d Block" % int(effects["other_ally_block"])
-			if precise else "%d Block to other allies" % int(effects["other_ally_block"]))
+		parts.append("BASE each other living ally gains %d Block" % int(effects["other_ally_block"]))
 	if effects.has("block_all"):
-		parts.append("BASE each living hero gains %d Block" % int(effects["block_all"])
-			if precise else "%d Block to all heroes" % int(effects["block_all"]))
+		parts.append("BASE each living hero gains %d Block" % int(effects["block_all"]))
 	if effects.has("heal"):
 		var heal_value: Variant = effects["heal"]
 		if heal_value is Dictionary:
@@ -396,25 +434,18 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 			var heal_target: String = "the weakest living ally" \
 				if str(heal.get("target", "")) == "weakest_living_ally" else recipient
 			var capped: bool = str(heal.get("cap", "")) == "missing_hp"
-			if precise:
-				var heal_line := "BASE heal %d HP to %s" % [heal_amount, heal_target]
-				if capped:
-					heal_line += ", capped at missing HP"
-				parts.append(heal_line)
-			else:
-				parts.append("heal %d%s" % [heal_amount,
-					" (weakest, capped)" if capped else ""])
+			var heal_line := "BASE heal %d HP to %s" % [heal_amount, heal_target]
+			if capped:
+				heal_line += ", capped at missing HP"
+			parts.append(heal_line)
 		else:
-			parts.append("BASE heal %d HP, capped at max HP" % int(heal_value)
-				if precise else "heal %d" % int(heal_value))
+			parts.append("BASE heal %d HP, capped at max HP" % int(heal_value))
 	if effects.has("exposed"):
 		var exposed: int = int(effects["exposed"])
 		if card_id in CombatAttackTargeting.SIGHT_GLASS_IDS:
 			parts.append("Apply Exposed %d to the selected enemy" % exposed)
-		elif precise:
-			parts.append("BASE apply Exposed %d to %s" % [exposed, recipient])
 		else:
-			parts.append("Exposed %d" % exposed)
+			parts.append("BASE apply Exposed %d to %s" % [exposed, recipient])
 	# The starter adapter is the authority for starter confirmed-hit statuses;
 	# an authored status it already covers is never counted twice.
 	var confirmed: Dictionary = _on_hit.status_for_confirmed_hit(card_id, true)
@@ -425,113 +456,77 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 		# the applied amount still comes from the combat resolver.
 		var path_bleed: int = _path_passive_bonus(card_id, "bleed")
 		var applied_bleed: int = authored_bleed + (1 if passive_bleed else path_bleed)
-		if precise:
-			var bleed_line := "BASE apply Bleed %d to %s" % [applied_bleed, recipient]
-			if passive_bleed:
-				bleed_line += " (authored %d + Seamstress passive 1)" % authored_bleed
-			elif path_bleed > 0:
-				bleed_line += " (authored %d + %s passive %d)" % [authored_bleed,
-					_path_name(card_id), path_bleed]
-			parts.append(bleed_line)
-		elif passive_bleed:
-			parts.append("Bleed %d (%d+1)" % [applied_bleed, authored_bleed])
+		var bleed_line := "BASE apply Bleed %d to %s" % [applied_bleed, recipient]
+		if passive_bleed:
+			bleed_line += " (authored %d + Seamstress passive 1)" % authored_bleed
 		elif path_bleed > 0:
-			parts.append("Bleed %d (%d+%d)" % [applied_bleed, authored_bleed, path_bleed])
-		else:
-			parts.append("Bleed %d" % applied_bleed)
+			bleed_line += " (authored %d + %s passive %d)" % [authored_bleed,
+				_path_name(card_id), path_bleed]
+		parts.append(bleed_line)
 	if effects.has("weak") and not confirmed.has("weak"):
-		parts.append("BASE apply Weak %d to %s" % [int(effects["weak"]), recipient]
-			if precise else "Weak %d" % int(effects["weak"]))
+		parts.append("BASE apply Weak %d to %s" % [int(effects["weak"]), recipient])
 	if effects.has("unravel"):
 		var authored_unravel: int = int(effects["unravel"])
 		var path_unravel: int = _path_passive_bonus(card_id, "unravel")
 		var applied_unravel: int = authored_unravel + path_unravel
-		if precise:
-			var unravel_line := "BASE add %d Unravel to %s" % [applied_unravel, recipient]
-			if path_unravel > 0:
-				unravel_line += " (authored %d + %s passive %d)" % [authored_unravel,
-					_path_name(card_id), path_unravel]
-			parts.append(unravel_line)
-		elif path_unravel > 0:
-			parts.append("Unravel %d (%d+%d)" % [applied_unravel, authored_unravel, path_unravel])
-		else:
-			parts.append("Unravel %d" % applied_unravel)
+		var unravel_line := "BASE add %d Unravel to %s" % [applied_unravel, recipient]
+		if path_unravel > 0:
+			unravel_line += " (authored %d + %s passive %d)" % [authored_unravel,
+				_path_name(card_id), path_unravel]
+		parts.append(unravel_line)
 	if effects.has("bleed_multiplier"):
 		var multiplier: int = int(effects["bleed_multiplier"])
-		if precise:
-			parts.append("BASE double the target's current Bleed" if multiplier == 2
-				else "BASE multiply the target's current Bleed by %d" % multiplier)
-		else:
-			parts.append("double Bleed" if multiplier == 2 else "x%d Bleed" % multiplier)
+		parts.append("BASE double the target's current Bleed" if multiplier == 2
+			else "BASE multiply the target's current Bleed by %d" % multiplier)
 	if effects.has("pinned"):
 		var pin_bonus := 5
 		var pin_rule: Variant = effects["pinned"]
 		if pin_rule is Dictionary and pin_rule.get("bonus_damage") is int:
 			pin_bonus = int(pin_rule["bonus_damage"])
-		parts.append("BASE Pin %s: a different hero's next attack gets +%d damage" % [recipient, pin_bonus]
-			if precise else "Pin")
+		parts.append("BASE Pin %s: a different hero's next attack gets +%d damage" % [recipient, pin_bonus])
 	if effects.has("guarding"):
-		parts.append("BASE Guard: enemy attacks aimed at other living heroes are redirected to the living Warden until your next turn" if precise else "Guard")
+		parts.append("BASE Guard: enemy attacks aimed at other living heroes are redirected to the living Warden until your next turn")
 	if effects.has("thorns"):
-		parts.append("BASE gain %d Thorns: an enemy attacking Warden takes %d damage until your next turn" % [int(effects["thorns"]), int(effects["thorns"])]
-			if precise else "Thorns %d" % int(effects["thorns"]))
+		parts.append("BASE gain %d Thorns: an enemy attacking Warden takes %d damage until your next turn" % [int(effects["thorns"]), int(effects["thorns"])])
 	if effects.has("draw"):
 		var draw_count: int = int(effects["draw"])
-		parts.append("BASE draw %d card%s" % [draw_count, "" if draw_count == 1 else "s"]
-			if precise else "draw %d" % draw_count)
+		parts.append("BASE draw %d card%s" % [draw_count, "" if draw_count == 1 else "s"])
 	if effects.has("gain_energy"):
-		parts.append("BASE gain %d energy" % int(effects["gain_energy"])
-			if precise else "+%d energy" % int(effects["gain_energy"]))
+		parts.append("BASE gain %d energy" % int(effects["gain_energy"]))
 	if effects.has("energy") and not effects.has("gain_energy"):
-		parts.append("BASE gain %d energy" % int(effects["energy"])
-			if precise else "+%d energy" % int(effects["energy"]))
+		parts.append("BASE gain %d energy" % int(effects["energy"]))
 	if effects.has("next_attack_damage_bonus"):
 		var bonus: int = int(effects["next_attack_damage_bonus"])
 		var timing: String = " this turn" \
 			if str(effects.get("expires", "")) == "end_of_player_turn" else ""
-		parts.append("BASE the next attack%s deals +%d damage" % [timing, bonus]
-			if precise else "+%d next attack" % bonus)
+		parts.append("BASE the next attack%s deals +%d damage" % [timing, bonus])
 	if effects.has("next_turn_energy"):
 		var credit: int = int(effects["next_turn_energy"])
-		parts.append("BASE gain %d energy on your next turn" % credit
-			if precise else "+%d energy next turn" % credit)
+		parts.append("BASE gain %d energy on your next turn" % credit)
 	if effects.has("self_hp_loss"):
-		parts.append("BASE self-damage %d" % int(effects["self_hp_loss"])
-			if precise else "-%d HP" % int(effects["self_hp_loss"]))
+		parts.append("BASE self-damage %d" % int(effects["self_hp_loss"]))
 	if effects.has("conditional_damage"):
 		var condition: Variant = effects["conditional_damage"]
 		if condition is Dictionary and condition.get("damage") is int:
 			var empowered: int = int(condition["damage"])
 			var clauses: Array[String] = _condition_clauses(condition)
-			if precise:
-				var condition_line := "BASE deal %d damage instead" % empowered
-				if not clauses.is_empty():
-					condition_line += " if " + _join_conditions(condition, clauses)
-				parts.append(condition_line)
-			else:
-				var short_conditions := _short_conditions(condition)
-				parts.append("%d dmg if %s" % [empowered, short_conditions] if not short_conditions.is_empty()
-					else "%d conditional dmg" % empowered)
+			var condition_line := "BASE deal %d damage instead" % empowered
+			if not clauses.is_empty():
+				condition_line += " if " + _join_conditions(condition, clauses)
+			parts.append(condition_line)
 		else:
-			parts.append("BASE an additional conditional damage effect" if precise else "conditional damage")
-	if precise:
-		for status in ["bleed", "weak"]:
-			if not confirmed.has(status):
-				continue
-			var addition: int = int(confirmed[status])
-			var rule := "ON CONFIRMED HIT add %s %d" % [status.capitalize(), addition]
-			if status == "bleed" and str(definition.get("owner", "")) == "seamstress":
-				var authored: int = int(effects.get("bleed", 0))
-				rule += " (authored Bleed %d + Seamstress passive %d)" % [authored, addition - authored]
-			parts.append(rule)
-	else:
-		for status in ["bleed", "weak"]:
-			if confirmed.has(status):
-				parts.append("%d %s on hit" % [int(confirmed[status]), status.capitalize()])
-	for key in effects:
-		if str(key) not in KNOWN_EFFECT_KEYS:
-			parts.append("BASE another authored effect is not described" if precise else "other effects")
-			break
+			parts.append("BASE an additional conditional damage effect")
+	for status in ["bleed", "weak"]:
+		if not confirmed.has(status):
+			continue
+		var addition: int = int(confirmed[status])
+		var rule := "ON CONFIRMED HIT add %s %d" % [status.capitalize(), addition]
+		if status == "bleed" and str(definition.get("owner", "")) == "seamstress":
+			var authored: int = int(effects.get("bleed", 0))
+			rule += " (authored Bleed %d + Seamstress passive %d)" % [authored, addition - authored]
+		parts.append(rule)
+	if CardShortRules.has_unknown(definition):
+		parts.append("BASE another authored effect is not described")
 	return parts
 
 
@@ -590,23 +585,6 @@ func _join_conditions(condition: Dictionary, clauses: Array[String]) -> String:
 	return joiner.join(clauses)
 
 
-## Compact form of the same predicates for the narrow card-face rule line.
-func _short_conditions(condition: Dictionary) -> String:
-	var keys: Array[String] = []
-	var authored: Variant = condition.get("conditions", [])
-	if authored is Array:
-		for entry in authored:
-			if not entry is Dictionary:
-				continue
-			if entry.has("status") and str(entry["status"]) == "unravelled":
-				keys.append("Unravelled")
-			elif entry.has("gauge") and str(entry["gauge"]) == "unravel" \
-					and str(entry.get("comparison", "")) == "at_least_half":
-				keys.append("half gauge")
-	# Authored conditions are alternatives today; the card line stays one short row.
-	return "/".join(keys)
-
-
 ## The complete two-part tooltip for a stitched card. Each half is named from
 ## its authored catalog definition, so an upgraded half keeps its "+" name.
 func stitched_tooltip(halves: Array) -> String:
@@ -622,11 +600,17 @@ func describe(card_id: String) -> Dictionary:
 		if ledger.is_valid() and ledger.get_snapshot() == _app._stitch_snapshot():
 			definition = ledger.get_snapshot().descriptors.get(card_id, {})
 			if not definition.is_empty():
+				var half_ids: Array = definition.get("half_ids", [])
+				var ordered_lines: Array[String] = []
+				for index in range(half_ids.size()):
+					var half_line: String = _rules(str(half_ids[index]))
+					if not half_line.is_empty():
+						ordered_lines.append("%d. %s" % [index + 1, half_line])
 				return {"id": card_id, "known": true, "owner": "", "owner_text": "Stitched",
 					"display_name": str(definition.get("display_name", card_id)),
 					"cost": definition.cost, "cost_text": "Cost %d" % definition.cost,
 					"from_text": "Ordered halves", "target_text": "Independent targets",
-					"rules": "Two ordered halves",
+					"rules": " · ".join(ordered_lines),
 					"halves": definition.half_ids.duplicate()}
 	if definition.is_empty():
 		return {
@@ -636,6 +620,8 @@ func describe(card_id: String) -> Dictionary:
 		}
 	var owner: String = str(definition.get("owner", ""))
 	var from_positions: Array = definition.get("from_positions", [])
+	# `from_text`/`target_text` are tooltip and mounted-fact strings only: the
+	# drawn face prints neither row (it paints the pips and the terse rule line).
 	return {
 		"id": card_id, "known": true, "owner": owner,
 		"owner_text": owner.capitalize(),
@@ -984,17 +970,50 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 		value, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, point_size, INK)
 
 
-## Human-readable rules from the authored effect fields plus the real
-## confirmed-hit adapter; no resolved or promised value is invented.
+## The terse authored effect line drawn on every hand face. One shared formatter
+## keeps the ordinary and two-half sewn faces identical; applied amounts come
+## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
 	var definition: Dictionary = _definition(id)
 	if definition.is_empty():
 		return ""
-	return ", ".join(_effect_lines(id, definition, false))
+	return CardShortRules.line(definition, _applied_amounts(id, definition))
 
 
-## Filled felt pips mark authored source slots; outlined squares mark authored
-## legal target slots. Decoration only, never an input or rules authority.
+## Public read-only view of the drawn effect line for mounted checks.
+func short_line(card_id: String) -> String:
+	return _rules(card_id)
+
+
+## Authored status amounts already published by the owning catalog/adapter (the
+## Seamstress bleed passive, a selected Path bonus, the starter on-hit adapter).
+## Read-only: no combat model is touched and no result is inferred.
+func _applied_amounts(card_id: String, definition: Dictionary) -> Dictionary:
+	var applied := {}
+	var raw_effects: Variant = definition.get("effects", {})
+	if not raw_effects is Dictionary:
+		return applied
+	var effects: Dictionary = raw_effects
+	var confirmed: Dictionary = _on_hit.status_for_confirmed_hit(card_id, true)
+	for status in ["bleed", "weak"]:
+		if confirmed.get(status) is int:
+			applied[status] = int(confirmed[status])
+	if effects.get("bleed") is int and not applied.has("bleed"):
+		var passive_bleed: int = 1 if CombatSeamstressPoolBleed.SUPPORTED_IDS.has(card_id) else 0
+		var path_bleed: int = _path_passive_bonus(card_id, "bleed")
+		if passive_bleed > 0 or path_bleed > 0:
+			applied["bleed"] = int(effects["bleed"]) + passive_bleed + path_bleed
+	if effects.get("unravel") is int:
+		var path_unravel: int = _path_passive_bonus(card_id, "unravel")
+		if path_unravel > 0:
+			applied["unravel"] = int(effects["unravel"]) + path_unravel
+	return applied
+
+
+## Filled felt pips mark authored source slots; filled squares mark authored
+## legal target slots and outlined ones mark the rest. An all-enemy card threads
+## its legal squares together so the area cast reads at a glance. Decoration
+## only, never an input or rules authority.
 func _draw_pips(panel: Control, facts: Dictionary, rect: Rect2) -> void:
 	var definition := _definition(facts.get("id", ""))
 	var from_positions: Array = definition.get("from_positions", [])
@@ -1011,12 +1030,17 @@ func _draw_pips(panel: Control, facts: Dictionary, rect: Rect2) -> void:
 			panel.draw_circle(center, radius, _owner_color(facts.get("owner", "")))
 		else:
 			panel.draw_arc(center, radius, 0.0, TAU, 12, RUST, 1.0, true)
+	var legal_targets: Array[Vector2] = []
 	for index in range(1, 4):
 		var center := Vector2(x + step * (2 + index) + 5.0, y)
 		if to_positions.has(index):
 			panel.draw_rect(Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0), INK, true)
+			legal_targets.append(center)
 		else:
 			panel.draw_rect(Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0), RUST, false, 1.0)
+	# A stitched thread joins the legal squares of an all-enemy cast.
+	if str(definition.get("target_kind", "")) == "enemy_all" and legal_targets.size() >= 2:
+		panel.draw_dashed_line(legal_targets.front(), legal_targets.back(), RUST, 1.0, 3.0)
 
 
 ## One authored half (or a whole ordinary card): owner colour, fitted name,
@@ -1027,27 +1051,25 @@ func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> 
 	var owner_color := _owner_color(facts.get("owner", ""))
 	var x: float = rect.position.x
 	var width: float = rect.size.x
+	var rules := _rules(id)
 	if order.is_empty():
 		var rows: Dictionary = _text_rows(rect)
-		var from_row: Rect2 = rows["from"]
-		_text(panel, facts.get("from_text", ""),
-			Rect2(from_row.position, Vector2(from_row.size.x - 60.0, from_row.size.y)), 10, RUST)
-		_draw_pips(panel, facts, from_row)
-		_text(panel, facts.get("target_text", ""), rows["target"], 11)
-		var rules := _rules(id)
+		# The face never prints a from/target sentence: the six pips carry the
+		# legality and the tooltip spells the slots out.
+		_draw_pips(panel, facts, rows["from"])
+		var effects: Rect2 = rows["target"]
+		effects.size.y = maxf(0.0, rect.end.y - effects.position.y)
 		if not rules.is_empty():
-			_text(panel, rules, rows["rules"], 12)
+			_text(panel, rules, effects, 13)
 		return
 	panel.draw_rect(Rect2(x - 3.0, rect.position.y + 1.0, 3, rect.size.y - 2.0), owner_color)
 	_text(panel, order + definition.get("display_name", id), Rect2(x, rect.position.y, width, 14), 13)
-	_text(panel, facts.get("owner_text", "") + " | " + facts.get("from_text", ""),
+	_text(panel, facts.get("owner_text", ""),
 		Rect2(x, rect.position.y + 14.0, width - 44.0, 11), 9, owner_color)
 	_draw_pips(panel, facts, Rect2(x, rect.position.y + 14.0, width, 11))
-	var detail: String = facts.get("target_text", "")
-	var rules := _rules(id)
 	if not rules.is_empty():
-		detail = rules if detail.is_empty() else "%s · %s" % [detail, rules]
-	_text(panel, detail, Rect2(x, rect.position.y + 27.0, width, 12), 10)
+		_text(panel, rules, Rect2(x, rect.position.y + 27.0, width,
+			maxf(0.0, rect.size.y - 27.0)), 11)
 
 
 ## True only when both ledger halves are real authored definitions; an unknown
@@ -1059,7 +1081,7 @@ func _halves_known(pair: Array) -> bool:
 
 
 ## One short sewn row of a compact stitched card: the authored half name in
-## resolution order plus that half's own owner colour and label.
+## resolution order, then that half's own owner colour and terse effect line.
 func _draw_sewn_half(panel: Control, id: String, rect: Rect2, order: int) -> void:
 	var facts := describe(id)
 	var definition := _definition(id)
@@ -1069,7 +1091,16 @@ func _draw_sewn_half(panel: Control, id: String, rect: Rect2, order: int) -> voi
 	panel.draw_rect(Rect2(rect.position.x - 3.0, rect.position.y + 1.0, 3.0, rect.size.y - 2.0), owner_color)
 	_text(panel, "%d. %s" % [order, definition.get("display_name", id)],
 		Rect2(rect.position, Vector2(rect.size.x, minf(14.0, rect.size.y))), 11)
-	_text(panel, facts.get("owner_text", ""),
+	# The effect line wins the narrow compact strip: the owner tag only joins it
+	# when both still fit at a legible size, otherwise the felt stripe and the
+	# detailed face keep the owner readable.
+	var detail: String = _rules(id)
+	var owner_text: String = facts.get("owner_text", "")
+	if not detail.is_empty() and not owner_text.is_empty() \
+			and _font(panel).get_string_size(owner_text + " · " + detail,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x <= rect.size.x:
+		detail = owner_text + " · " + detail
+	_text(panel, detail,
 		Rect2(rect.position.x, rect.position.y + 12.0, rect.size.x, maxf(6.0, rect.size.y - 12.0)), 9, owner_color)
 
 
