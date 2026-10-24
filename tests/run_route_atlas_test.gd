@@ -449,8 +449,45 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and diary.next_area == RunRouteAtlas.area_for_floor(diary.next_floor)
 				and diary.complete == map.is_complete() and diary.visited == map.get_route()
 				and _inside(Rect2(diary.position, diary.size), RunRouteAtlas.PAGE_LEFT)
-				and diary.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+				and diary.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and diary.focus_mode == Control.FOCUS_NONE,
 				label + ": authentic left journal, area and pinned visited trail without floor 13")
+			# Independent projection of the same route: each committed ID through its own
+			# authoritative node record. The view may not infer, preassign or spoiler.
+			var route := map.get_route()
+			var expected_kinds: Array[String] = []
+			for visited_id in route:
+				expected_kinds.append(str(map.get_node(visited_id).get("type", "")))
+			var sequence: Array[String] = diary.visited_kind_sequence()
+			_check(sequence == expected_kinds and diary.visited_kinds == expected_kinds
+				and sequence.size() == current_floor and sequence.size() == route.size(),
+				label + ": each completed bead owns its authentic visited kind in route order")
+			var raw_id := false
+			for kind in sequence:
+				if kind.contains("_n") or kind.begins_with("f0") or kind.begins_with("f1"):
+					raw_id = true
+			var future_kinds: Dictionary = {}
+			for floor_nodes in floors:
+				for node in floor_nodes:
+					if not route.has(node["id"]):
+						future_kinds[str(node["type"])] = true
+			for kind in expected_kinds:
+				future_kinds.erase(kind)
+			var leaked := false
+			for kind in sequence:
+				if future_kinds.has(kind):
+					leaked = true
+			_check(not raw_id and not leaked,
+				label + ": captions show kinds, never raw node IDs or an unvisited kind")
+			if map.is_complete():
+				_check(diary.visited_kinds.size() == 12
+					and diary.visited_kinds.back() == "Boss"
+					and not diary.visited_kinds.has(""),
+					label + ": completed twelve-floor route ends with the Boss kind and no floor 13")
+			# The exposed sequence is a copy; clearing it cannot erase the diary's record.
+			sequence.clear()
+			_check(diary.visited_kinds.size() == current_floor,
+				label + ": exposed visited-kind sequence is a read-only copy")
 			_check(_keeps_body_face(diary),
 				label + ": left journey diary stays in the body face, not a heading variation")
 			var heading_face := _shipped_heading_face()
@@ -557,7 +594,7 @@ func _signature(view: RunRouteAtlas) -> Array:
 			var journal: RunRouteAtlas.JourneyJournal = child
 			result.append(["journey", journal.current_floor, journal.current_area,
 				journal.next_floor, journal.next_area, journal.complete, journal.visited.duplicate(),
-				journal.position, journal.size])
+				journal.visited_kinds.duplicate(), journal.position, journal.size])
 		elif child is RunRouteAtlas.NextAreaTab:
 			result.append(["next_area", (child as RunRouteAtlas.NextAreaTab).text,
 				child.position, child.size])
@@ -647,6 +684,15 @@ func _action(view: RunRouteAtlas, id: String) -> Button:
 		if child is PanelContainer and child.get_meta("route_id") == id:
 			return child.get_node_or_null("Action") as Button
 	return null
+
+
+## Read-only visited-kind captions currently drawn by the mounted left-page diary.
+func _journal_kinds(view: RunRouteAtlas) -> Array[String]:
+	var journal := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+	if journal == null:
+		var empty: Array[String] = []
+		return empty
+	return journal.visited_kind_sequence()
 
 
 func _click_action(action: Button) -> void:
@@ -950,6 +996,8 @@ func _exercise_reveal(seed_value: int) -> void:
 	view.bind_map(other)
 	_check(not view.is_revealing() and _no_masks(view),
 		"replacement bind mid-reveal tears the old mask down")
+	_check(_journal_kinds(view).is_empty(),
+		"a newly generated replacement map cannot retain the previous visited kinds")
 	_verify(view, other, other_rng, "seed %d replacement bind" % seed_value)
 
 	# Fast presentation: the same reveal in 0.15 s.
@@ -1038,6 +1086,17 @@ func _exercise_status_tab(view: RunRouteAtlas) -> void:
 		"opening tab prompts the authored Meadow floor 1 at current floor 0")
 	_check(_state(map, rng) == before,
 		"mounting the status tab changes no map graph, route, legal choice or RNG state")
+	# AC1: zero committed choices caption no bead at all, and a repeat refresh keeps it so.
+	var opening_journal := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+	_check(opening_journal != null and opening_journal.visited.is_empty()
+		and opening_journal.visited_kinds.is_empty()
+		and opening_journal.visited_kind_sequence().is_empty(),
+		"an unvisited route shows numbered beads but no visited-kind caption")
+	view.refresh()
+	view.refresh()
+	_check(_journal_kinds(view).is_empty()
+		and (view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal) != null,
+		"repeated refresh never duplicates or invents a caption on the empty trail")
 	var required := {
 		3: "Next: Woods · Floor 4/12",
 		6: "Next: Marsh · Floor 7/12",
@@ -1071,13 +1130,22 @@ func _exercise_status_tab(view: RunRouteAtlas) -> void:
 	_check(view.next_area_tab() != null
 		and view.next_area_tab().text == "Route complete · Floor 12/12",
 		"completed route shows the terminal caption instead of a playable prompt")
+	# AC2: twelve authentic captions, floor 12 is the Boss, and a refresh is idempotent.
+	var completed_kinds := _journal_kinds(view)
+	_check(completed_kinds.size() == 12 and completed_kinds.back() == "Boss"
+		and not completed_kinds.has(""),
+		"completed legal route captions twelve authentic kinds ending at the Boss")
+	view.refresh()
+	_check(_journal_kinds(view) == completed_kinds,
+		"an unchanged refresh keeps exactly the same completed captions without duplicates")
 	view.bind_map(null)
 	_check(view.next_area_tab() == null and view.get_child_count() == 0,
 		"null bind removes the next-area tab with the map children")
 	var empty := RunMap.new()
 	view.bind_map(empty)
-	_check(view.next_area_tab() == null,
-		"an ungenerated map keeps no prior area or floor caption")
+	_check(view.next_area_tab() == null
+		and view.get_node_or_null("JourneyJournal") == null,
+		"an ungenerated map keeps no prior area, floor caption or visited history")
 	view.bind_map(map)
 	_check(view.next_area_tab() != null
 		and view.next_area_tab().text == "Route complete · Floor 12/12",
@@ -1089,6 +1157,10 @@ func _exercise_status_tab(view: RunRouteAtlas) -> void:
 	_check(view.next_area_tab() != null
 		and view.next_area_tab().text == "Next: Meadow · Floor 1/12",
 		"a freshly generated map returns to the floor-1 Meadow prompt")
+	var fresh_journal := view.get_node_or_null("JourneyJournal") as RunRouteAtlas.JourneyJournal
+	_check(fresh_journal != null and fresh_journal.visited.is_empty()
+		and fresh_journal.visited_kinds.is_empty() and _journal_kinds(view).is_empty(),
+		"a freshly generated map cannot retain the previous run's visited kinds")
 	var frozen := _state(fresh, fresh_rng)
 	view.refresh()
 	_check(_state(fresh, fresh_rng) == frozen
@@ -1270,12 +1342,16 @@ func _run() -> void:
 				and not map.get_route().has("forged") and not map.get_legal_choices().has("forged"),
 				"route/legal defensive snapshots isolated after every move")
 			var before_invalid := _state(map, rng)
+			var captions_before_reject := _journal_kinds(first)
 			_check(not map.choose_node(chosen) and not map.choose_node("unrecognized"),
 				"repeat and unknown route choices rejected on floor %d" % floor_number)
 			_check(_state(map, rng) == before_invalid, "rejected move is exactly inert")
 			first.refresh()
 			_check(_state(map, rng) == before_invalid and _signature(first) == _signature(other),
 				"rejection/refresh cannot alter chosen and legal presentation")
+			_check(_journal_kinds(first) == captions_before_reject
+				and _journal_kinds(first).size() == floor_number,
+				"a rejected choice appends no visited-kind caption on floor %d" % floor_number)
 		_check(map.is_complete() and map.get_route().size() == 12
 			and map.get_legal_choices().is_empty(), "Boss floor 12 complete, no next highlight")
 		var end_state := _state(map, rng)

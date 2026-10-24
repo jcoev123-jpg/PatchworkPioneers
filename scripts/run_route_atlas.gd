@@ -15,6 +15,9 @@ extends Control
 ## and the next three floors appear on the right page; all legal buttons are in its
 ## first column. Each round patch shows its original aspect-preserved token art
 ## above its high-contrast caption; Treasure/missing art draws a stitched emblem.
+## Beneath every bead the party actually completed, the diary prints that floor's
+## authentic authored kind, projected only from the committed route's real RunMap
+## records; future beads stay blank and never leak an upcoming floor's kind.
 ##
 ## Every patch hover names its authored floor, kind and one-based branch row, and a
 ## legal patch's Action adds the real 1-4 shortcut it answers to. Raw f##_n# IDs stay
@@ -206,6 +209,10 @@ class JourneyJournal extends Control:
 	var next_area := ""
 	var complete := false
 	var visited: Array[String] = []
+	## One authentic authored kind per committed floor, in route order, projected by
+	## _add_journal from the real RunMap record of each committed ID. It is never
+	## inferred from an ID, filled from an unvisited node or consumed by input.
+	var visited_kinds: Array[String] = []
 	## Cached committed heading face, so redraws never re-probe the shipped font file.
 	var _fallback_heading: Font = null
 
@@ -213,6 +220,10 @@ class JourneyJournal extends Control:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		resized.connect(queue_redraw)
+
+	## Read-only copy of the visited-kind captions this diary draws, in route order.
+	func visited_kind_sequence() -> Array[String]:
+		return visited_kinds.duplicate()
 
 	## Read-only face for the two display headings: the nearest inherited Theme that
 	## really defines PatchHeading, else the committed Londrina Solid file. It never
@@ -287,6 +298,13 @@ class JourneyJournal extends Control:
 			draw_string(font, point + Vector2(-10.0, 5.0), "%02d" % (i + 1),
 				HORIZONTAL_ALIGNMENT_CENTER, 20.0, 15,
 				Color("#ffffff") if done else RunRouteAtlas.INK)
+			# Completed beads carry their real visit kind below the numbered disc.
+			# An unvisited bead keeps that space blank, so no future kind is shown.
+			if done and i < visited_kinds.size():
+				var kind := visited_kinds[i]
+				if not kind.is_empty():
+					draw_string(font, point + Vector2(-58.0, 34.0), kind,
+						HORIZONTAL_ALIGNMENT_CENTER, 116.0, 15, RunRouteAtlas.INK)
 		# The diary's real pushpin points to the latest committed bead.
 		if current_floor > 0:
 			var pin := beads[current_floor - 1] + Vector2(0, -23)
@@ -307,6 +325,12 @@ func _add_journal(current_floor: int, chosen: Array[String]) -> void:
 	journal.next_area = area_for_floor(journal.next_floor)
 	journal.complete = _map.is_complete()
 	journal.visited = chosen.duplicate()
+	# Project each committed ID through the authoritative model once, in route order.
+	# Only visited records are read; an unvisited floor is never queried for display.
+	var kinds: Array[String] = []
+	for id in chosen:
+		kinds.append(str(_map.get_node(id).get("type", "")))
+	journal.visited_kinds = kinds
 	journal.position = Vector2(46.0, 102.0)
 	journal.size = Vector2(532.0, 442.0)
 	journal.custom_minimum_size = journal.size
