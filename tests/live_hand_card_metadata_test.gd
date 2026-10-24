@@ -476,9 +476,91 @@ func _assert_sewn_face(metadata, panel: Control, card_id: String, definition: Di
 		"every refitted text row still has room for its font: " + card_id)
 
 
-## Texture resolution is grounded in the authored catalogs, not in the mounted
-## hand: base art for a '+' upgrade, the owner emblem for a pool card without a
-## bespoke picture, and no borrowed felt or art for stitched/unknown IDs.
+## Assert the actual bound painter facts and rects, not a parallel layout
+## implementation. Every ordered half keeps its own authentic catalog slots.
+func _assert_stitched_face(metadata, panel: Control, stitched_id: String, pair: Array) -> void:
+	var facts: Dictionary = metadata.get_facts(panel)
+	var faces: Dictionary = metadata.get_faces(panel)
+	var geometry: Dictionary = metadata.get_geometry(panel)
+	var halves: Array = faces.get("halves", [])
+	var rows: Array = geometry.get("halves", [])
+	var details: Array = geometry.get("half_details", [])
+	_check(bool(facts.get("known", false)) and facts.get("id") == stitched_id
+		and facts.get("owner") == "" and facts.get("owner_text") == "Stitched"
+		and facts.get("halves") == pair,
+		"mounted stitched facts keep two ordered halves, never a whole owner")
+	var first: Dictionary = metadata.definition(str(pair[0]))
+	var second: Dictionary = metadata.definition(str(pair[1]))
+	_check(not first.is_empty() and not second.is_empty()
+		and first.get("owner") != second.get("owner"), "stitched assertion has real different owners")
+	_check(int(facts.get("cost", -1)) == mini(3, maxi(
+		int(first.get("cost", -1)), int(second.get("cost", -1))) + 1),
+		"stitched face has the one genuine capped composite cost")
+	_check(faces.get("frame") == null and faces.get("picture") == null
+		and faces.get("frame_path") == "" and faces.get("picture_path") == "",
+		"whole stitched card does not borrow a sole-owner frame or picture")
+	_check(halves.size() == 2 and rows.size() == 2 and details.size() == 2,
+		"both ordered sewn art/pip records and drawn rows exist in the mounted panel")
+	if halves.size() != 2 or details.size() != 2 or rows.size() != 2:
+		return
+	var bounds := Rect2(Vector2.ZERO, panel.size)
+	for index in range(2):
+		var id: String = str(pair[index])
+		var definition: Dictionary = metadata.definition(id)
+		var expected: Dictionary = metadata.face_assets(id)
+		var face: Dictionary = halves[index]
+		var detail: Dictionary = details[index]
+		var region: Rect2 = rows[index]
+		_check(face.get("id") == id and face.get("owner") == definition.get("owner")
+			and face.get("colour") == metadata._owner_color(str(definition.get("owner", ""))),
+			"sewn half %d has its own ordered ID and owner swatch" % (index + 1))
+		_check(face.get("frame_path") == expected.get("frame_path")
+			and face.get("picture_path") == expected.get("picture_path")
+			and face.get("frame") == expected.get("frame")
+			and face.get("picture") == expected.get("picture"),
+			"sewn half %d resolves only its own cached authored art/emblem/frame" % (index + 1))
+		_check(face.get("frame") is Texture2D and face.get("picture") is Texture2D,
+			"sewn half %d uses its available existing image files" % (index + 1))
+		_check(face.get("from_positions") == definition.get("from_positions", [])
+			and face.get("to_positions") == definition.get("to_positions", [])
+			and detail.get("from_positions") == definition.get("from_positions", [])
+			and detail.get("to_positions") == definition.get("to_positions", []),
+			"half %d paints independent authored source/target pip data" % (index + 1))
+		var art: Rect2 = detail["art"]
+		var name: Rect2 = detail["name"]
+		var effect: Rect2 = detail["effect"]
+		var pips: Rect2 = detail["pips"]
+		_check(bounds.encloses(region) and region.encloses(art) and region.encloses(name)
+			and region.encloses(effect) and region.encloses(pips),
+			"half %d image/name/effect/pips all fit within its mounted row" % (index + 1))
+		_check(art.size.x > 0 and art.size.y > 0 and name.size.x >= 80.0
+			and effect.size.x >= 120.0 and effect.size.y >= 8.0
+			and pips.size.x >= 45.0 and pips.size.y >= 8.0,
+			"half %d keeps readable text and an independent six-pip cell" % (index + 1))
+		_check(not art.intersects(name) and not art.intersects(effect)
+			and not art.intersects(pips) and not pips.intersects(name)
+			and not pips.intersects(effect),
+			"half %d picture and source/target pips cannot cover its name/effect" % (index + 1))
+		_check(metadata.short_line(id) != "" and not definition.get("display_name", "").is_empty(),
+			"half %d has an authored printed name/effect" % (index + 1))
+	_check(not rows[0].intersects(rows[1]) and geometry["cost"] is Rect2
+		and bounds.encloses(geometry["cost"])
+		and not geometry["cost"].intersects(rows[0])
+		and not geometry["cost"].intersects(rows[1]),
+		"stitched face retains one clear shared cost coin outside both halves")
+	var tooltip: String = panel.tooltip_text
+	_check(tooltip == "1. " + metadata.base_effect_text(str(pair[0]))
+		+ "\n2. " + metadata.base_effect_text(str(pair[1])),
+		"mounted hover tooltip is exactly two numbered full authored half rules")
+	_check(tooltip.find("1. " + str(first.get("display_name", ""))) == 0
+		and tooltip.find("\n2. " + str(second.get("display_name", ""))) > 0,
+		"mounted hover tooltip preserves authentic half order")
+	_check(int(metadata._bindings[panel].get("draw_count", 0)) > 0,
+		"real stitched panel actually received CanvasItem draw callbacks")
+
+
+## Texture resolution is grounded in authored catalogs: base/+ reuse,
+## emblem fallback, and no sole-owner assets for unknown stitched IDs.
 func _art_resolution_check() -> void:
 	var metadata = load(HAND_SCRIPT).new()
 	_check(metadata != null, "shared hand metadata script loads for texture resolution")
@@ -1612,6 +1694,10 @@ func _typography_check() -> void:
 	var original_descriptors: Dictionary = app.run_stitch_descriptors.duplicate(true)
 	var original_scraps: int = app.run_scraps
 	var original_next_id: int = app.run_next_stitch_id
+	var battle_before: Array = _snapshot()
+	seed(44719)
+	var untouched_global := randi()
+	seed(44719)
 
 	var stitch_pair := ["warden_shield_bash", "seamstress_prick"]
 	var stitch_first: Dictionary = metadata.definition(stitch_pair[0])
@@ -1654,6 +1740,7 @@ func _typography_check() -> void:
 		"tall stitched halves select PatchHeading")
 	_check(probe_metadata.body_font(tall_panel) == master_body,
 		"tall stitched body text retains Patrick Hand")
+	_assert_stitched_face(probe_metadata, tall_panel, stitch_id, stitch_pair)
 
 	# 3b. Compact stitched card
 	var compact_panel := PanelContainer.new()
@@ -1677,15 +1764,96 @@ func _typography_check() -> void:
 		"compact stitched halves select PatchHeading")
 	_check(probe_metadata.body_font(compact_panel) == master_body,
 		"compact stitched body text retains Patrick Hand")
+	_assert_stitched_face(probe_metadata, compact_panel, stitch_id, stitch_pair)
 
 	probe_metadata.clear()
 	tall_panel.free()
 	compact_panel.free()
+	await _frames()
+
+	# A second authentic stitch brings in Tinker's distinct mustard cue and
+	# exercises the same two textures and pip sets in reversed owner order.
+	var tinker_pair := ["tinker_scrap_bomb", "warden_brace"]
+	var second_ledger := RunRestStitchCards.new(tinker_pair.duplicate(), {}, 3, 1)
+	_check(second_ledger.is_valid(), "Tinker + Warden stitch ledger is valid")
+	var second_receipt := second_ledger.choose_stitch(0, 1, second_ledger.get_snapshot())
+	_check(bool(second_receipt.get("ok", false)), "Tinker + Warden stitch commits")
+	var second_id: String = str(second_receipt.get("stitched_id", ""))
+	var second_deck: Array[String] = [second_id]
+	app.run_deck = second_deck
+	app.run_stitch_descriptors = second_ledger.get_snapshot().descriptors.duplicate(true)
+	app.run_scraps = second_ledger.get_snapshot().remaining_scraps
+	app.run_next_stitch_id = second_ledger.get_snapshot().next_stitch_id
+	for panel_size in [Vector2(230, 160), Vector2(230, 96)]:
+		var other := PanelContainer.new()
+		other.theme = master_theme
+		other.size = panel_size
+		var other_label := Label.new()
+		other_label.text = second_id
+		other.add_child(other_label)
+		root.add_child(other)
+		await _frames()
+		var other_panels: Array[Node] = [other]
+		var other_hand: Array[String] = [second_id]
+		probe_metadata.sync(other_panels, other_hand)
+		await _frames()
+		_assert_stitched_face(probe_metadata, other, second_id, tinker_pair)
+		probe_metadata.clear()
+		other.free()
+		await _frames()
+
+	# Optional missing images fail visibly to the authored colour, not to a
+	# different half's illustration. Simulate an unavailable cached Warden
+	# picture and emblem while retaining the real stitch descriptor.
+	var missing_art = load(HAND_SCRIPT).new()
+	missing_art.set_app(app)
+	missing_art._textures[ART_DIR + "cards/art/warden_brace.png"] = null
+	missing_art._textures[ART_DIR + "cards/emblem_warden.png"] = null
+	var partial_images: Dictionary = missing_art.face_assets(second_id)
+	var actual_halves: Array = partial_images.get("halves", [])
+	_check(actual_halves.size() == 2, "missing-texture probe retains two real owner halves")
+	if actual_halves.size() == 2:
+		_check(actual_halves[0].get("owner") == "tinker"
+			and actual_halves[0].get("picture") is Texture2D
+			and actual_halves[1].get("owner") == "warden"
+			and actual_halves[1].get("picture") == null
+			and actual_halves[1].get("picture_path") == ""
+			and actual_halves[1].get("colour") == missing_art.WARDEN,
+			"missing Warden art stays its own colour with no borrowed Tinker image")
+	var fallback_panel := PanelContainer.new()
+	fallback_panel.theme = master_theme
+	fallback_panel.size = Vector2(230, 96)
+	var fallback_label := Label.new()
+	fallback_label.text = second_id
+	fallback_panel.add_child(fallback_label)
+	root.add_child(fallback_panel)
+	await _frames()
+	var fallback_panels: Array[Node] = [fallback_panel]
+	var fallback_hand: Array[String] = [second_id]
+	missing_art.sync(fallback_panels, fallback_hand)
+	await _frames()
+	var bound_fallback: Array = missing_art.get_faces(fallback_panel).get("halves", [])
+	_check(bound_fallback.size() == 2 and bound_fallback[1].get("picture") == null
+		and (missing_art.get_geometry(fallback_panel).get("half_details", []) as Array).size() == 2
+		and int(missing_art._bindings[fallback_panel].get("draw_count", 0)) > 0,
+		"missing optional picture retains drawn two-owner compact geometry and tint fallback")
+	_check(fallback_panel.tooltip_text == missing_art.stitched_tooltip(tinker_pair),
+		"missing picture never loses the full numbered authored tooltip")
+	missing_art.clear()
+	fallback_panel.free()
+	await _frames()
+
 	app.run_deck = original_deck
 	app.run_stitch_descriptors = original_descriptors
 	app.run_scraps = original_scraps
 	app.run_next_stitch_id = original_next_id
 	await _frames()
+	_check(app.run_deck == original_deck and app.run_stitch_descriptors == original_descriptors
+		and app.run_scraps == original_scraps and app.run_next_stitch_id == original_next_id
+		and _snapshot() == battle_before,
+		"mounted dual-owner image, geometry, tooltips and rebinds mutate no run or combat state")
+	_check(randi() == untouched_global,
+		"two-owner stitched presentation draws no global RNG")
 
 	# 4. Unknown/missing halves remain honest placeholders.
 	var partial_facts := {
