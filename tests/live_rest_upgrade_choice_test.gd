@@ -118,6 +118,47 @@ func _run() -> void:
 					found_support = true
 			_check(deck_index >= 0 and found_support,
 				"Rest exposes genuine support choice: " + base_id)
+		# One sewn tile per permitted canonical upgrade row, readable without the
+		# masked dropdown: owner, before -> after name, both costs and effects.
+		var gallery = _visit_tiles()
+		_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Rest",
+			"real Rest mounts the passive visit card gallery")
+		var panel: Control = gallery.gallery_panel()
+		_check(is_instance_valid(panel) and panel.is_visible_in_tree()
+			and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect())
+			and is_instance_valid(gallery.gallery_scroll()),
+			"scrollable Rest gallery fits inside 1280x720")
+		_check(gallery.upgrade_tiles().size() == rows.size(),
+			"Rest gallery shows exactly every permitted upgrade tile")
+		_check(choices.is_visible_in_tree() and not choices.disabled and choices.modulate.a == 0.0
+			and choices.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and choices.focus_mode == Control.FOCUS_NONE,
+			"masked Rest upgrade dropdown keeps its validated contract but takes no pointer or focus")
+		var effect_contract := {
+			"warden_strike": ["Deal 6 damage", "Deal 7 damage"],
+			"warden_brace": ["Gain 7 Block", "Gain 10 Block"],
+			"seamstress_mend": ["Chosen ally heals 5 HP", "Chosen ally heals 7 HP"],
+			"seamstress_stitch_up": ["Chosen ally gains 5 Block", "Chosen ally gains 7 Block"],
+		}
+		for item in range(rows.size()):
+			var row: Dictionary = rows[item]
+			var tile = gallery.upgrade_tiles()[item]
+			var details: Dictionary = gallery.tile_details(tile)
+			_check(gallery.tile_row(tile) == item and details.card_id == String(row["base_id"]),
+				"upgrade tile owns the canonical row and deck copy")
+			_check(details.owner_text == String(row["owner"]).capitalize()
+				and details.title == "%s → %s" % [String(row["display_name"]), String(row["plus_display_name"])]
+				and details.meta == "Deck card #%d • cost %d → %d energy" % [
+					int(row["index"]) + 1, int(row["cost"]), int(row["plus_cost"])],
+				"upgrade tile shows its owner, before -> after name and both costs")
+			_check(details.has_picture, "upgrade tile mounts authored art or the owner emblem")
+			if effect_contract.has(String(row["source_id"])):
+				var expected_effects: Array = effect_contract[String(row["source_id"])]
+				_check(details.effects == "Before: %s\nAfter: %s" % [expected_effects[0], expected_effects[1]],
+					"upgrade tile reads the exact authored before/after effect: " + String(row["source_id"]))
+		app.rest_heal_button.grab_focus()
+		await _key(KEY_TAB)
+		_check(gallery.upgrade_tiles()[0].has_focus(), "Tab reaches the first Rest upgrade tile")
 		var target_base: String = ("warden_strike" if session <= 2 else
 			["", "", "", "warden_brace", "seamstress_mend", "seamstress_stitch_up"][session])
 		var target_deck_index: int = indices[1] if session <= 2 else source.find(target_base)
@@ -205,39 +246,32 @@ func _run() -> void:
 			_check(app.rest_recovery.is_consumed() and app.rest_upgrade_button.disabled, "Heal remains available and excludes Upgrade")
 			_reject_upgrade(upgrade, "Upgrade after Heal")
 		else:
-			# Select the intended instance through genuine popup or Tab/Enter.
+			# Select the intended deck instance through its real sewn tile.
+			var target_tile = _tile_for("upgrade", target_row)
+			_check(target_tile != null and gallery.tile_row(target_tile) == target_row,
+				"the chosen canonical row owns one sewn upgrade tile")
+			if target_tile == null:
+				break
+			var selection_before := _persistent()
 			if session in [0, 3]:
-				await _click(choices)
-				var popup := choices.get_popup()
-				_check(popup.visible, "mouse opens eligible index menu")
-				var font := popup.get_theme_font("font")
-				var height := font.get_height(popup.get_theme_font_size("font_size")) + popup.get_theme_constant("v_separation")
-				var margin := popup.get_theme_stylebox("panel").get_content_margin(SIDE_TOP)
-				var point := Vector2(popup.position) + Vector2(30, margin + height * (float(target_row) + 0.5))
-				for pressed in [true, false]:
-					var event := InputEventMouseButton.new()
-					event.position = point
-					event.button_index = MOUSE_BUTTON_LEFT
-					event.pressed = pressed
-					root.push_input(event, true)
-				await _frames()
+				await _click_tile(target_tile)
 			else:
-				app.rest_heal_button.grab_focus()
-				await _key(KEY_TAB)
-				_check(choices.has_focus(), "Tab reaches card index selector")
-				await _key(KEY_SPACE)
-				for step in range(target_row):
-					await _key(KEY_DOWN)
-				await _key(KEY_ENTER)
+				await _select_tile_by_key(target_tile)
+			_check(_persistent() == selection_before, "tile selection alone cannot upgrade or consume the Rest")
 			_check(choices.selected == target_row and choices.get_item_metadata(choices.selected) == target_deck_index,
-				"physical input selects exactly the intended authored deck index")
+				"physical tile input selects exactly the intended authored deck index")
+			_check(gallery.tile_details(target_tile).selected,
+				"the chosen occurrence is visibly selected in the gallery")
 			var before := _persistent()
 			if session in [0, 3]:
 				await _click(button)
 			else:
-				choices.grab_focus()
-				await _key(KEY_TAB)
-				_check(button.has_focus(), "Tab reaches Upgrade action")
+				target_tile.grab_focus()
+				for step in range(gallery.upgrade_tiles().size() + 2):
+					if button.has_focus():
+						break
+					await _key(KEY_TAB)
+				_check(button.has_focus(), "Tab reaches the Upgrade action from the tiles")
 				await _key(KEY_ENTER)
 			var upgraded := source.duplicate()
 			upgraded[target_deck_index] = chosen_plus
@@ -253,6 +287,9 @@ func _run() -> void:
 			_check(app.rest_hp_label.text == "\n".join(hp_lines), "refresh cannot restore forecast after Upgrade")
 			_check(app.rest_heal_button.disabled and button.disabled and choices.disabled
 				and not app.rest_continue_button.disabled, "exclusive consumed upgrade enables Continue")
+			await _frames()
+			_check(gallery.upgrade_tiles().all(func(tile): return tile.disabled),
+				"every upgrade tile disables once the Rest choice is spent")
 			_reject_upgrade(upgrade, "duplicate Upgrade")
 			_reject_upgrade(heal, "Heal after Upgrade")
 			app.run_deck[indices[0]] = "seamstress_prick"
@@ -370,6 +407,9 @@ func _run() -> void:
 		_check(app.rest_upgrade == null and app.rest_upgrade_cards == null and app.rest_upgrade_button == null
 			and app._rest_committed_deck.is_empty() and app.run_deck.is_empty() and app.run_map == null,
 			"title clears all upgrade state and controls")
+		_check(not gallery.is_gallery_mounted() and gallery.upgrade_tiles().is_empty()
+			and not is_instance_valid(gallery.gallery_panel()),
+			"title discards the Rest gallery, its tiles and its callbacks")
 		stale.call()
 		_check(app.run_map == null and app.run_deck.is_empty(), "post-title upgrade callback inert")
 		_check(randi() == global_next, "complete path consumes no global RNG")

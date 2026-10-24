@@ -50,6 +50,8 @@ func _bounds(view: Control) -> void:
 
 
 func _paid_card(index: int, keyboard: bool) -> void:
+	# Let the presenter rebuild its tiles for the post-removal stock/ledger.
+	await _frames()
 	var stock: Dictionary = app.shop_purchases.get_stock()
 	var offer: Dictionary = stock.cards[index]
 	var expected: Array = app.run_deck.duplicate()
@@ -57,13 +59,23 @@ func _paid_card(index: int, keyboard: bool) -> void:
 	var gold: int = app.session_gold - offer.price
 	var rng: int = app.run_rng.state
 	_check(not offer.sold and gold >= 0, "post-removal purchase fixture is unsold and affordable")
-	app.shop_offers.select(index)
-	app.shop_offers.item_selected.emit(index)
+	var listing_tile = _tile_for("offer", index)
+	_check(listing_tile != null, "the paid listing owns one sewn offer tile")
+	if listing_tile == null:
+		return
+	if keyboard:
+		await _select_tile_by_key(listing_tile)
+	else:
+		await _click_tile(listing_tile)
+	_check(app.shop_offers.selected == index, "real sewn tile selects the paid listing")
 	_check(not app.shop_offers.disabled and not app.shop_buy_button.disabled, "valid visit keeps selected affordable stock enabled")
 	if keyboard:
-		app.shop_offers.grab_focus()
-		await _key(KEY_TAB)
-		_check(app.shop_buy_button.has_focus(), "Tab reaches Buy from stock after removal")
+		listing_tile.grab_focus()
+		for step in range(_visit_tiles().offer_tiles().size() + 2):
+			if app.shop_buy_button.has_focus():
+				break
+			await _key(KEY_TAB)
+		_check(app.shop_buy_button.has_focus(), "Tab reaches Buy from the offer tiles after removal")
 		await _key(KEY_ENTER)
 	else:
 		await _click(app.shop_buy_button)
@@ -224,8 +236,9 @@ func _run() -> void:
 			else:
 				app.shop_back_button.grab_focus()
 				await _key(KEY_TAB)
-				_check(app.shop_offers.has_focus(), "Shop focus wraps after Return")
-				for step in range(8):
+				_check(_visit_tiles().offer_tiles()[0].has_focus(),
+					"Shop focus wraps from Return to the first offer tile")
+				for step in range(64):
 					if button.has_focus():
 						break
 					await _key(KEY_TAB)

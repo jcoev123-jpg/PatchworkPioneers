@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_replay()
 	_test_sewn_attack_patches()
+	_test_head_weak()
 	if failures.is_empty():
 		print("combat_seamstress_pool_control_test: PASS (", checks, " checks)")
 	else:
@@ -372,6 +373,138 @@ func _sewn_fixture(assignments: Array, torn_seamstress: bool = false) -> Diction
 	resolver.bind_patch_rules(starter._patches)
 	_check(resolver._patches == starter._patches, "single exact first-hit latch shared")
 	return {"starter": starter, "wardrobe": wardrobe, "torn": torn}
+
+
+
+## True HEAD authority uses RunPatchWardrobe sewing receipts and the same
+## RunTornMending ledger as a routed battle, not a synthetic bonus object.
+func _head_fixture(wearer: String = "seamstress") -> Dictionary:
+	var start := CombatParty.new([
+		{"id": "warden", "max_hp": 40},
+		{"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}]).get_heroes()
+	var wardrobe := RunPatchWardrobe.new(start, ["stern_seam_cap"],
+		[{"id": "stern_seam_cap", "slot": "HEAD"}], 2)
+	var torn := RunTornMending.new(start)
+	_check(wardrobe.is_valid() and torn.is_valid(), "genuine M05 HEAD run ledgers start valid")
+	_check(wardrobe.sew("stern_seam_cap", wearer, "HEAD", "cap_sewn",
+		wardrobe.get_snapshot()).get("ok", false), "authentic HEAD sewing receipt for " + wearer)
+	var head := CombatM05HeadPatchRules.new()
+	_check(head.bind_wardrobe(wardrobe, torn) and head.read_projection().get("ok", false),
+		"fresh genuine HEAD projection binds " + wearer)
+	resolver.bind_head_patch_rules(head)
+	return {"head": head, "wardrobe": wardrobe, "torn": torn}
+
+
+func _test_head_weak() -> void:
+	for variant in [SNAG, SNAG_PLUS]:
+		var ctx := _head_fixture()
+		var authored: Dictionary = SeamstressPoolCards.new().get_definition(variant)
+		var f := _fixture([variant, UNPICK], 3 if variant == SNAG_PLUS else 2)
+		var enemies: CombatEnemies = f.enemies
+		_check(authored.cost == 1 and authored.from_positions == [2, 3]
+			and authored.to_positions == [1, 2, 3]
+			and authored.effects.weak == 1
+			and authored.effects.unravel == (3 if variant == SNAG else 4),
+			"both Snags have exact authorial cost/from/to/effects")
+		_check(enemies.gain_block(1, 6)
+			and enemies.apply_statuses({1: {"bleed": 2, "exposed": 1}}),
+			"head Snag precondition retains target Block and unrelated statuses")
+		var before: Dictionary = _state(f)
+		var projected := resolver.snag_weak_preview(variant)
+		_check(projected == {"ok": true, "weak": 2} and _state(f) == before,
+			"HEAD +1 Weak read-only preview is exactly two: " + variant)
+		var event := _play(f, variant, 1)
+		var gauge: Dictionary = f.unravel.get_snapshot(1)
+		var charge: int = 3 if variant == SNAG else 4
+		_check(event.get("ok", false) and event.weak_applied == 2
+			and event.unravel_applied == charge and event.unravel_snapshot == gauge
+			and event.damage == 0 and event.hp_loss == 0,
+			"real HEAD Snag receipt commits Weak 2 and exactly authored Unravel")
+		_check(enemies.get_enemy(1).statuses == {"bleed": 2, "exposed": 1, "weak": 2}
+			and enemies.get_enemy(1).hp == 18 and enemies.get_enemy(1).block == 6
+			and enemies.get_enemy(2) == before.enemies[1]
+			and enemies.get_enemy(3) == before.enemies[2]
+			and gauge.gauge == charge and gauge.threshold == 8
+			and f.pinned._pinner_by_position.is_empty(),
+			"HEAD Snag changes only selected Weak/gauge, not attacks/Block/other statuses or enemies")
+		_spent_once(before, f, variant, "genuinely patched " + variant)
+		_check(ctx.head.read_projection().ok and ctx.head.get_bonus("seamstress", variant, "weak") == 1,
+			"confirmed play never consumes a run HEAD patch or changes the run ledger")
+		resolver.bind_head_patch_rules(null)
+
+	# An ordinary cast still gets authored Weak 1 with no optional HEAD.
+	var plain := _fixture([SNAG])
+	var plain_before := _state(plain)
+	_check(resolver.snag_weak_preview(SNAG) == {"ok": true, "weak": 1},
+		"missing HEAD binding explicitly means vanilla Weak 1")
+	var ordinary := _play(plain, SNAG, 1)
+	_check(ordinary.get("ok", false) and ordinary.weak_applied == 1
+		and ordinary.unravel_applied == 3 and plain.enemies.get_enemy(1).statuses == {"weak": 1},
+		"genuinely unpatched legal cast stays Weak 1 with Unravel 3")
+	_spent_once(plain_before, plain, SNAG, "unpatched Snag")
+
+	var wrong := _head_fixture("warden")
+	var other := _fixture([SNAG_PLUS])
+	_check(wrong.head.get_bonus("seamstress", SNAG_PLUS, "weak") == 0
+		and resolver.snag_weak_preview(SNAG_PLUS).weak == 1,
+		"cap sewn to another living owner cannot empower Seamstress")
+	var other_before := _state(other)
+	var other_event := _play(other, SNAG_PLUS, 1)
+	_check(other_event.get("ok", false) and other_event.weak_applied == 1
+		and other_event.unravel_applied == 4
+		and other.enemies.get_enemy(1).statuses == {"weak": 1},
+		"wrong wearer's cap leaves real Snag+ as Weak 1")
+	_spent_once(other_before, other, SNAG_PLUS, "wrong-wearer HEAD cast")
+
+	# HEAD never adds Weak to non-Weak cards, even when sewn to owner.
+	var valid := _head_fixture()
+	for id in [PIN, UNPICK]:
+		var f := _fixture([id])
+		var snapshot := _state(f)
+		_check(valid.head.get_bonus("seamstress", id, "weak") == 0,
+			"Needle Pin and Unpick do not author Weak and cannot gain it")
+		var event := _play(f, id, 1)
+		_check(event.get("ok", false) and event.weak_applied == 0
+			and f.enemies.get_enemy(1).get("statuses", {}).get("weak", 0) == 0,
+			"non-Weak cards commit normally and never award HEAD Weak")
+		_spent_once(snapshot, f, id, "unaffected " + id)
+
+	# A changed genuine run ledger makes the attached HEAD stale: reject the
+	# entire cast before energy, piles, statuses, gauge or RNG can move.
+	var stale_f := _fixture([SNAG])
+	_check(valid.wardrobe.start_rest("new_rest", valid.wardrobe.get_snapshot()).ok,
+		"real Rest ledger transition invalidates cached combat HEAD")
+	_check(not valid.head.read_projection().ok
+		and not resolver.head_binding_valid()
+		and not resolver.snag_weak_preview(SNAG).get("ok", false),
+		"stale HEAD projection fails closed even for read-only forecast")
+	_reject(stale_f, SNAG, 1, stale_f.pinned, stale_f.unravel, "stale explicit HEAD")
+
+	resolver.bind_head_patch_rules(CombatM05HeadPatchRules.new())
+	var unbound := _fixture([SNAG_PLUS])
+	_check(not resolver.head_binding_valid(), "explicit unbound HEAD is invalid, not absent")
+	_reject(unbound, SNAG_PLUS, 1, unbound.pinned, unbound.unravel, "invalid explicit HEAD")
+	resolver.bind_head_patch_rules(null)
+
+	var torn := _head_fixture()
+	var source: Array = torn.torn.read_state().heroes
+	var ending: Array = source.duplicate(true)
+	ending[1].hp = 0
+	_check(torn.torn.observe_battle_end("real_seamstress_tear", source, ending).ok,
+		"real battle tear recorded by RunTornMending")
+	var sewn: Dictionary = torn.wardrobe.get_snapshot()
+	_check(torn.wardrobe.refresh_run_context(torn.torn.read_state().heroes,
+		sewn.owned, sewn.scraps, sewn.gold, sewn.cards, sewn),
+		"real wardrobe refresh agrees with torn hero's run state")
+	_check(torn.head.read_projection().ok == false
+		and torn.head.get_bonus("seamstress", SNAG, "weak") == 0,
+		"unrebound torn projection cannot leak any HEAD power")
+	resolver.bind_head_patch_rules(null)
+	var downed := _fixture([SNAG])
+	_check(downed.party.apply_damage(2, 30) and downed.party.is_downed(2),
+		"true combat downing makes a Snag actor ineligible")
+	_reject(downed, SNAG, 1, downed.pinned, downed.unravel, "downed Seamstress with torn cap")
 
 
 func _test_sewn_attack_patches() -> void:

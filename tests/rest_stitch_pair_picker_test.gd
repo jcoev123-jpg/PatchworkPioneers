@@ -133,6 +133,19 @@ func _key(keycode: Key) -> void:
 
 
 func _select_mouse(button: OptionButton, target: int) -> void:
+	await _frames()
+	if picker != null and not picker.first_tiles.is_empty():
+		var is_first: bool = (button == picker.first_selector)
+		if is_first and picker.second_tile_scroll.visible:
+			picker._return_to_first_choice()
+			await _frames()
+		var meta: Variant = button.get_item_metadata(target)
+		var tile: Button = picker.first_tile_for_index(int(meta)) if is_first else picker.second_tile_for_index(int(meta))
+		_check(tile != null and tile.is_visible_in_tree(), "mouse target card tile is mounted")
+		if tile != null:
+			await _click(tile)
+			_check(button.selected == target, "physical mouse selected item %d via tile" % target)
+			return
 	await _click(button)
 	var popup := button.get_popup()
 	_check(popup.visible, "mouse physically opened OptionButton popup")
@@ -155,6 +168,21 @@ func _select_mouse(button: OptionButton, target: int) -> void:
 
 
 func _select_keyboard(button: OptionButton, target: int) -> void:
+	await _frames()
+	if picker != null and not picker.first_tiles.is_empty():
+		var is_first: bool = (button == picker.first_selector)
+		if is_first and picker.second_tile_scroll.visible:
+			picker._return_to_first_choice()
+			await _frames()
+		var meta: Variant = button.get_item_metadata(target)
+		var tile: Button = picker.first_tile_for_index(int(meta)) if is_first else picker.second_tile_for_index(int(meta))
+		_check(tile != null and tile.is_visible_in_tree(), "keyboard target card tile is mounted")
+		if tile != null:
+			tile.grab_focus()
+			_check(tile.has_focus(), "card tile has keyboard focus")
+			await _key(KEY_ENTER)
+			_check(button.selected == target, "physical keyboard selected item %d via tile" % target)
+			return
 	button.grab_focus()
 	await _key(KEY_SPACE)
 	for i in range(target):
@@ -703,6 +731,7 @@ func _run() -> void:
 	await _test_thumbnail_fallbacks()
 	await _test_mixed_pool_picker()
 	await _test_snip_conditional_descriptions()
+	await _test_submitted_single_intent_latch()
 	_finish()
 
 
@@ -1251,3 +1280,158 @@ func _test_mixed_pool_picker() -> void:
 	seed(991823)
 	_check(neg_rng.state == neg_state and randi() == neg_global,
 		"negative checks on mixed ledger consume no local or global RNG")
+
+
+## AC3: After submission, the picker latches as submitted and cannot emit a second
+## intent or re-arm selection on the same binding without a fresh bind.
+func _test_submitted_single_intent_latch() -> void:
+	var test_deck := _deck()
+	var scraps := 4
+	var test_service := RunRestStitchCards.new(test_deck, {}, scraps)
+	_check(test_service.is_valid() and not test_service.is_consumed(),
+		"genuine >=3-scrap service is valid")
+	var snapshot: Dictionary = test_service.get_snapshot()
+
+	var p := LiveRestStitchPairPicker.new()
+	p.name = "SubmittedLatchSingleIntentPicker"
+	p.position = Vector2(330, 180)
+	p.size = Vector2(600, 355)
+	root.add_child(p)
+	await _frames()
+
+	var intent_log: Array[Dictionary] = []
+	p.stitch_requested.connect(func(first: int, second: int, source: Dictionary):
+		intent_log.append({"first": first, "second": second, "source": source})
+	)
+
+	p.bind(test_service, snapshot)
+	await _frames()
+	_check(not p.is_submitted(), "picker starts unsubmitted")
+	_check(not p.first_tiles.is_empty() and not p.first_selector.disabled,
+		"picker tiles and legacy selector available initially")
+
+	var first_idx := _idx(test_deck, "seamstress_prick")
+	var second_idx := _idx(test_deck, "tinker_pop_shot")
+	var first_tile := p.first_tile_for_index(first_idx)
+	_check(first_tile != null and not first_tile.disabled, "first tile is enabled")
+	await _click(first_tile)
+	await _frames()
+
+	var second_tile := p.second_tile_for_index(second_idx)
+	_check(second_tile != null and not second_tile.disabled, "second tile is enabled")
+	await _click(second_tile)
+	await _frames()
+
+	_check(not p.confirm_button.disabled, "confirm button enabled for selected pair")
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 882244
+	var rng_before := rng.state
+	seed(882244)
+	var global_before := randi()
+	seed(882244)
+
+	# Confirm once without committing the service
+	await _click(p.confirm_button)
+	await _frames()
+
+	_check(intent_log.size() == 1, "exactly one intent emitted on initial confirmation")
+	_check(intent_log[0]["first"] == first_idx and intent_log[0]["second"] == second_idx
+		and intent_log[0]["source"] == snapshot, "emitted intent carries chosen indices and snapshot")
+	_check(p.is_submitted(), "picker is latched as submitted")
+	_check(not test_service.is_consumed(), "service remains uncommitted/unconsumed")
+	_check(test_service.get_snapshot() == snapshot, "service snapshot unmutated")
+	_check(p.confirm_button.disabled and p.confirm_button.focus_mode == Control.FOCUS_NONE,
+		"confirm button disabled and non-focusable after submission")
+	_check(p.first_selector.disabled and p.first_selector.focus_mode == Control.FOCUS_NONE,
+		"first selector disabled after submission")
+	_check(p.second_selector.disabled and p.second_selector.focus_mode == Control.FOCUS_NONE,
+		"second selector disabled after submission")
+	for tile in p.first_tiles:
+		_check(tile.disabled and tile.focus_mode == Control.FOCUS_NONE,
+			"first tile disabled and focus none after submission")
+	for tile in p.second_tiles:
+		_check(tile.disabled and tile.focus_mode == Control.FOCUS_NONE,
+			"second tile disabled and focus none after submission")
+
+	# Try selecting another genuine pair and confirming with mouse/Enter and legacy callbacks
+	var alt_first := _idx(test_deck, "warden_strike")
+	var alt_second := _idx(test_deck, "seamstress_mend")
+	var alt_first_tile := p.first_tile_for_index(alt_first)
+	if alt_first_tile != null:
+		await _click(alt_first_tile)
+		alt_first_tile.pressed.emit()
+		p.select_first_tile(alt_first)
+		p._focus_tile(alt_first_tile)
+		_check(not alt_first_tile.has_focus(), "submitted first tile cannot receive focus")
+		await _key(KEY_ENTER)
+		await _frames()
+
+	var alt_first_row := _row_in_first(p, alt_first)
+	if alt_first_row >= 0:
+		p.first_selector.select(alt_first_row)
+		p.first_selector.item_selected.emit(alt_first_row)
+	if p._first_callback.is_valid():
+		p._first_callback.call(alt_first_row)
+
+	var alt_second_tile := p.second_tile_for_index(alt_second)
+	if alt_second_tile != null:
+		await _click(alt_second_tile)
+		alt_second_tile.pressed.emit()
+		p.select_second_tile(alt_second)
+		p._focus_tile(alt_second_tile)
+		_check(not alt_second_tile.has_focus(), "submitted second tile cannot receive focus")
+		await _key(KEY_ENTER)
+		await _frames()
+
+	var alt_second_row := _row_in_second(p, alt_second)
+	if alt_second_row >= 0:
+		p.second_selector.select(alt_second_row)
+		p.second_selector.item_selected.emit(alt_second_row)
+	if p._second_callback.is_valid():
+		p._second_callback.call(0)
+
+	await _click(p.confirm_button)
+	p.confirm_button.pressed.emit()
+	if not p.confirm_button.disabled and p.confirm_button.focus_mode != Control.FOCUS_NONE:
+		p.confirm_button.grab_focus()
+	_check(not p.confirm_button.has_focus(), "submitted confirm button cannot receive focus")
+	await _key(KEY_ENTER)
+	if p._confirm_callback.is_valid():
+		p._confirm_callback.call()
+	await _frames()
+
+	# Assert only one unchanged index/snapshot intent, unchanged service/deck/wallet/RNG
+	_check(intent_log.size() == 1,
+		"single-intent guarantee: intent log still has exactly 1 intent after all re-activation attempts")
+	_check(intent_log[0]["first"] == first_idx and intent_log[0]["second"] == second_idx
+		and intent_log[0]["source"] == snapshot, "intent remains unchanged original pair/snapshot")
+	_check(not test_service.is_consumed(), "service remains unconsumed")
+	_check(test_service.get_snapshot() == snapshot, "service/deck/descriptors unmutated")
+	_check(test_service.get_snapshot()["remaining_scraps"] == scraps, "wallet scraps unmutated")
+	_check(rng.state == rng_before and randi() == global_before, "local and global RNG unchanged")
+
+	# Selection becomes available after a fresh bind
+	p.bind(test_service, snapshot)
+	await _frames()
+	_check(not p.is_submitted(), "latch reset after fresh bind")
+	_check(not p.first_selector.disabled, "first selector re-enabled after fresh bind")
+	var fresh_first := p.first_tile_for_index(alt_first)
+	_check(fresh_first != null and not fresh_first.disabled, "first tile re-enabled on fresh bind")
+	await _click(fresh_first)
+	await _frames()
+
+	var fresh_second := p.second_tile_for_index(alt_second)
+	_check(fresh_second != null and not fresh_second.disabled, "second tile re-enabled on fresh bind")
+	await _click(fresh_second)
+	await _frames()
+
+	_check(not p.confirm_button.disabled, "confirm re-enabled after fresh bind and selection")
+	await _click(p.confirm_button)
+	await _frames()
+
+	_check(intent_log.size() == 2, "fresh binding allows emitting a second intent")
+	_check(intent_log[1]["first"] == alt_first and intent_log[1]["second"] == alt_second
+		and intent_log[1]["source"] == snapshot, "second intent has newly chosen pair")
+
+	p.free()

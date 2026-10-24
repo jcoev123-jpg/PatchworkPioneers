@@ -207,7 +207,32 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 			for i in range(expected_rows.size()):
 				_check(rows[i + 1] == expected_rows[i],
 					"actual signature line %d matches the independent oracle" % (i + 1))
-	_check(_source(ctx) == before, "opening and painting cannot change source, map, receipt or RNG")
+	var cards: Array = expected.get("current_stitched_cards", [])
+	_check(panel.stitched_section.visible == not cards.is_empty(),
+		"detail section exists only for genuinely retained sewn cards")
+	_check(panel.stitched_rows.get_child_count() == cards.size(),
+		"every retained descriptor, not only two recap names, has one detail row")
+	for i in range(cards.size()):
+		var card: Dictionary = cards[i]
+		var first: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[0])
+		var second: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[1])
+		_check(not first.is_empty() and not second.is_empty()
+			and card.owners == [first.owner, second.owner]
+			and first.owner != second.owner,
+			"canonical retained halves have different, ordered hero owners")
+		_check(card.cost == mini(3, maxi(first.cost, second.cost) + 1),
+			"retained descriptor cost matches authored half costs")
+		var row := panel.stitched_rows.get_child(i)
+		var composite := row.get_node("CardInset/CardLines/Composite") as Label
+		var halves := row.get_node("CardInset/CardLines/Halves") as Label
+		_check(composite.text == "%s  ·  %d energy" % [card.display_name, card.cost],
+			"mounted row shows exact composite name and energy cost in deck order")
+		_check(halves.text == "1 · %s (%s)    →    2 · %s (%s)" % [
+			first.display_name, str(first.owner).capitalize(),
+			second.display_name, str(second.owner).capitalize()],
+			"mounted row prints actual authored half names and matching owner order")
+	panel.stitched_scroll.scroll_vertical = 9999
+	_check(_source(ctx) == before, "opening and scrolling cannot change source, map, receipt or RNG")
 
 
 func _stage() -> void:
@@ -299,6 +324,24 @@ func _remove_and_resew() -> void:
 	_publish()
 
 
+func _stitch_again() -> void:
+	var stitch := RunRestStitchCards.new(deck, descriptors, 3, cursor)
+	_check(stitch.is_valid(), "post-Shop genuine Rest ledger validates")
+	var receipt: Dictionary = stitch.choose_stitch(deck.find("warden_brace"),
+		deck.find("tinker_scrap_bomb"), stitch.get_snapshot())
+	_check(receipt.get("ok") == true and receipt.get("next_stitch_id") == 4,
+		"fresh genuine Rest stitches two surviving different-owner halves")
+	if receipt.get("ok") != true:
+		return
+	deck.assign(receipt.deck)
+	descriptors = receipt.descriptors.duplicate(true)
+	cursor = receipt.next_stitch_id
+	var prior: Dictionary = wardrobe.get_snapshot()
+	_check(wardrobe.refresh_run_context(heroes, prior.owned, prior.scraps,
+		prior.gold, deck, prior), "wardrobe follows new authoritative stitched deck")
+	_publish()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(APP_SCENE) as PackedScene
@@ -327,7 +370,9 @@ func _run() -> void:
 	panel.return_button.pressed.emit()
 	_check(returns == 1 and panel.return_button.disabled, "Return one-shot even under replay")
 	panel.close_result()
-	_check(panel.summary_label.text.is_empty(), "closing clears signature label")
+	_check(panel.summary_label.text.is_empty() and not panel.stitched_section.visible
+		and panel.stitched_rows.get_child_count() == 0,
+		"closing clears signature and every stitched row")
 	old_callback.call()
 	_check(returns == 1, "stale prior callback cannot return again")
 	_remove_and_resew()
@@ -338,6 +383,14 @@ func _run() -> void:
 	_show(win, "Victory", oracle)
 	_check(panel._generation > old_generation and returns == 1
 		and not panel.return_button.disabled, "fresh open resets callback and Return state")
+	panel.close_result()
+	_stitch_again()
+	oracle = RunSignatureSummary.summarize(deck, descriptors, cursor, wardrobe)
+	_check(oracle.ok and oracle.stitched_created == 3 and oracle.stitched_current == 2
+		and not oracle.stitched_ids.has("stitched_000001")
+		and oracle.stitched_ids.has("stitched_000003"),
+		"new authentic Rest stitch increments history and appears once after Shop")
+	_show(win, "Victory", oracle)
 	panel.close_result()
 	var loss := _defeat()
 	_show(loss, "Defeat", oracle)
@@ -365,7 +418,8 @@ func _run() -> void:
 	_check(panel.open_result(loss.latch), "valid unsewn first run opens")
 	_check(panel.summary_label.text.contains("Stitched: 0 made · 0 in deck")
 		and panel.summary_label.text.contains("Patches worn: 0")
-		and not panel.summary_label.text.contains("Summary unavailable"),
+		and not panel.summary_label.text.contains("Summary unavailable")
+		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
 		"validated never-bound wardrobe reports zero worn, not owned inventory")
 	_check(_source(loss) == before and app.party_carryover._wardrobe == null,
 		"temporary first-run wardrobe is never bound or mutated")
@@ -389,11 +443,12 @@ func _run() -> void:
 	_check(panel.open_result(loss.latch)
 		and panel.summary_label.text.ends_with("Summary unavailable"),
 		"stale bound wardrobe fails closed rather than asserting zero worn")
-	_check(panel.title_label.text == "Defeat" and not panel.return_button.disabled,
-		"unavailable signature preserves actual terminal outcome and Return")
+	_check(panel.title_label.text == "Defeat" and panel.return_button.disabled
+		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
+		"unavailable signature preserves outcome but disables Return and stale details")
 	_check(_source(loss) == before, "unavailable presentation leaves all source state intact")
 	panel.return_button.pressed.emit()
-	_check(returns == 3, "unavailable signature cannot prevent Return")
+	_check(returns == 2, "unavailable source never authorizes Return")
 	panel.close_result()
 	_check(panel.summary_label.text.is_empty(), "new runs cannot inherit stale summary")
 	_finish()

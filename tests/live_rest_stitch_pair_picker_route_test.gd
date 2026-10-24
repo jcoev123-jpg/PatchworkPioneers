@@ -107,25 +107,49 @@ func _run() -> void:
 		if picker == null:
 			break
 		_check(picker._model._service == app.rest_stitch and picker._model.source_snapshot() == app._rest_stitch_source, "picker binds exact real service and receipt")
-		for control in [picker, picker.first_selector, picker.second_selector, picker.confirm_button, app.rest_stitch_overlay.get_node("DismissStitch")]:
+		for control in [picker, picker.first_tile_scroll, picker.second_tile_scroll, picker.confirm_button, app.rest_stitch_overlay.get_node("DismissStitch")]:
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "guided controls bounded")
 		await _key(KEY_TAB)
-		_check(picker.first_selector.has_focus(), "Tab from Back reaches first original")
+		_check(picker.first_tiles[0].has_focus(), "Tab from Back reaches first original tile")
 		var a: int = app.run_deck.rfind("warden_strike")
 		var b: int = app.run_deck.find("seamstress_prick")
-		_check(a > 0 and b > a, "duplicate original and authored cross-owner partner exist")
-		var row_a := -1
-		for i in range(picker.first_selector.item_count):
-			if picker.first_selector.get_item_metadata(i) == a:
-				row_a = i
-		_check(row_a >= 0, "duplicate original appears by exact index")
-		await _select_stitch(picker.first_selector, row_a, session % 2 == 1)
-		var row_b := -1
-		for i in range(picker.second_selector.item_count):
-			if picker.second_selector.get_item_metadata(i) == b:
-				row_b = i
-		_check(row_b >= 0, "eligible cross-owner partner appears")
-		await _select_stitch(picker.second_selector, row_b, session % 2 == 1)
+		var other_a: int = app.run_deck.find("warden_strike")
+		_check(a > 0 and b > a and other_a != a, "duplicate original and authored cross-owner partner exist")
+		var tile_a := picker.first_tile_for_index(a)
+		var tile_other_a := picker.first_tile_for_index(other_a)
+		_check(tile_a != null and tile_other_a != null and tile_a != tile_other_a, "distinct duplicate occurrences are preserved as distinct first tiles")
+		_check(tile_a.is_visible_in_tree() and tile_other_a.is_visible_in_tree(), "duplicate original card tiles are mounted and visible")
+		if session % 2 == 0:
+			await _click(tile_a)
+		else:
+			tile_a.grab_focus()
+			_check(tile_a.has_focus(), "first card tile has keyboard focus")
+			await _key(KEY_ENTER)
+		_check(picker.second_tile_scroll.visible and not picker.first_tile_scroll.visible, "second tile scroll displayed after first choice")
+		var expected_second_options: Array = picker._model.second_options(a)
+		_check(picker.second_tiles.size() == expected_second_options.size(), "second_tiles populated with exact second_options count")
+		var second_indices: Array[int] = []
+		var no_same_owner := true
+		for s_tile in picker.second_tiles:
+			var idx: int = s_tile.get_meta("index")
+			second_indices.append(idx)
+			var card_id: String = app.run_deck[idx]
+			var def: Dictionary = catalog.get_definition(card_id)
+			if not def.is_empty() and def.get("owner", "") == catalog.get_definition(app.run_deck[a]).get("owner", ""):
+				no_same_owner = false
+		_check(no_same_owner, "second_tiles contain no same-owner cards")
+		var expected_indices: Array[int] = []
+		for opt in expected_second_options:
+			expected_indices.append(opt.index)
+		_check(second_indices == expected_indices, "second_tiles populated only with second_options(a)")
+		var tile_b := picker.second_tile_for_index(b)
+		_check(tile_b != null and tile_b.is_visible_in_tree(), "eligible cross-owner partner tile exists")
+		if session % 2 == 0:
+			await _click(tile_b)
+		else:
+			tile_b.grab_focus()
+			_check(tile_b.has_focus(), "second card tile has keyboard focus")
+			await _key(KEY_ENTER)
 		var preview: Dictionary = picker._current_pair()
 		_check(not preview.is_empty(), "physically selected pair produces preview")
 		if preview.is_empty():
@@ -195,7 +219,6 @@ func _run() -> void:
 			if session == 0:
 				await _click(picker.confirm_button)
 			else:
-				picker.second_selector.grab_focus()
 				await _key(KEY_TAB)
 				_check(picker.confirm_button.has_focus(), "Tab reaches guided confirmation")
 				await _key(KEY_ENTER)

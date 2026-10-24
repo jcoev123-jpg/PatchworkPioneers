@@ -5,8 +5,15 @@ const INK := Color("302b29")
 const PAPER := Color("ecdfbd")
 const THREAD := Color("c9b996")
 const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
+## Code-drawn ground for a missing owner picture; never a blank felt screen.
+const FALLBACK_STAGE := Color("2b3135")
+## Felt the three original title actions are sewn onto, darker than every button state.
+const ACTION_BACKING := Color("3a4436")
+## The two sewn backings stay inside this share of the picture, so scenery stays visible.
+const MENU_COVERAGE_LIMIT := 0.35
 var _title: Control
 var _label: Label
+var _actions: Array[Button] = []
 var _backdrop: Texture2D
 
 
@@ -46,6 +53,27 @@ func backdrop_rect() -> Rect2:
 	var texture_size := Vector2(_backdrop.get_width(), _backdrop.get_height())
 	var fit := maxf(size.x / texture_size.x, size.y / texture_size.y)
 	return Rect2((size - texture_size * fit) / 2.0, texture_size * fit)
+
+
+## Compact paper backing that follows the live title label, in shell coordinates.
+func title_backing_rect() -> Rect2:
+	if not is_instance_valid(_label):
+		return Rect2()
+	return Rect2(_label.global_position - global_position, _label.size).grow_individual(26, 20, 26, 18)
+
+
+## Compact felt backing that follows the three original actions, in shell coordinates.
+func action_backing_rect() -> Rect2:
+	var backing := Rect2()
+	for index in range(_actions.size()):
+		var button := _actions[index]
+		if not is_instance_valid(button):
+			return Rect2()
+		var rect := Rect2(button.global_position - global_position, button.size)
+		backing = rect if index == 0 else backing.merge(rect)
+	if backing.size.x <= 0 or backing.size.y <= 0:
+		return Rect2()
+	return backing.grow_individual(26, 18, 26, 16)
 
 
 func _panel(fill: Color, edge: Color, border: int = 2) -> StyleBoxFlat:
@@ -98,13 +126,17 @@ func _bind_title() -> void:
 	var app = get_parent()
 	_title = app.title_view
 	_label = app.title_label
+	_actions.assign([app.start_button, app.route_button, app.base_button])
 	# App creates the full-screen ColorRect first. Draw after it, before title actions.
 	app.move_child(self, _title.get_index() - 1)
 	_label.theme_type_variation = "TitleLabel"
 	_label.add_theme_color_override("font_color", INK)
 	_label.add_theme_constant_override("outline_size", 0)
-	for button in [app.start_button, app.route_button, app.base_button]:
+	for button in _actions:
 		button.add_child(ButtonStitches.new())
+		# The menu backing follows the real action rects; containers may lay them out
+		# after the first draw, so every later rect change repaints the backing.
+		button.item_rect_changed.connect(queue_redraw)
 	_title.visibility_changed.connect(_sync_visibility)
 	_title.resized.connect(queue_redraw)
 	_title.item_rect_changed.connect(queue_redraw)
@@ -129,26 +161,70 @@ func _sewn_patch(points: PackedVector2Array, fill: Color) -> void:
 		draw_dashed_line(from, to, THREAD, 1.5, 6.0)
 
 
+## Deterministic torn paper outline: fixed inward bites, so decoration never touches
+## either RNG and every corner stays exact (always a triangulable simple polygon).
+static func _torn_rect(rect: Rect2, depth: float) -> PackedVector2Array:
+	const EDGE_STEPS := 4
+	var torn := PackedVector2Array()
+	for index in range(EDGE_STEPS):
+		var t := float(index) / float(EDGE_STEPS)
+		torn.append(Vector2(lerpf(rect.position.x, rect.end.x, t),
+			rect.position.y + _bite(index, depth)))
+	for index in range(EDGE_STEPS):
+		var t := float(index) / float(EDGE_STEPS)
+		torn.append(Vector2(rect.end.x - _bite(index + 1, depth),
+			lerpf(rect.position.y, rect.end.y, t)))
+	for index in range(EDGE_STEPS):
+		var t := float(index) / float(EDGE_STEPS)
+		torn.append(Vector2(lerpf(rect.end.x, rect.position.x, t),
+			rect.end.y - _bite(index + 2, depth)))
+	for index in range(EDGE_STEPS):
+		var t := float(index) / float(EDGE_STEPS)
+		torn.append(Vector2(rect.position.x + _bite(index + 3, depth),
+			lerpf(rect.end.y, rect.position.y, t)))
+	return torn
+
+
+static func _bite(index: int, depth: float) -> float:
+	const BITES := [0.0, 0.62, 0.18, 0.86, 0.34, 0.0]
+	return float(BITES[index % BITES.size()]) * depth
+
+
+## One torn, stitched backing with a paper shadow: patchwork edges and seam detail kept.
+func _draw_sewn_backing(rect: Rect2, fill: Color) -> void:
+	var torn := _torn_rect(rect, 6.0)
+	var shadow := PackedVector2Array()
+	for point in torn:
+		shadow.append(point + Vector2(4, 5))
+	draw_colored_polygon(shadow, Color(0.11, 0.1, 0.09, 0.38))
+	_sewn_patch(torn, fill)
+
+
+## Code-drawn sewn horizon shown only when the owner picture is missing.
+func _draw_fallback_picture() -> void:
+	draw_rect(Rect2(Vector2.ZERO, size), FALLBACK_STAGE)
+	var bands := [[0.54, Color("4c5548")], [0.7, Color("5a614b")], [0.86, Color("6b6046")]]
+	for band in bands:
+		var top: float = size.y * float(band[0])
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(0.0, top + 22.0), Vector2(size.x * 0.34, top - 8.0),
+			Vector2(size.x * 0.68, top + 16.0), Vector2(size.x, top - 12.0),
+			Vector2(size.x, size.y), Vector2(0.0, size.y)]), band[1])
+
+
 func _draw() -> void:
 	if not is_instance_valid(_label):
 		return
-	# Owner-supplied paper backdrop first; sewn patches, title and buttons stay on top.
+	# Owner-supplied picture first: the whole viewport, proportions preserved.
 	if _backdrop != null:
 		draw_texture_rect(_backdrop, backdrop_rect(), false)
-	# Authored, deterministic cut edges: decoration never touches either RNG.
-	var scale_to_view := size / Vector2(1280, 720)
-	draw_set_transform(Vector2.ZERO, 0.0, scale_to_view)
-	_sewn_patch(PackedVector2Array([Vector2(42, 60), Vector2(462, 38), Vector2(480, 650), Vector2(24, 674)]), Color("414c48"))
-	_sewn_patch(PackedVector2Array([Vector2(824, 36), Vector2(1230, 76), Vector2(1252, 676), Vector2(800, 646)]), Color("594c48"))
-	_sewn_patch(PackedVector2Array([Vector2(216, 130), Vector2(1062, 110), Vector2(1092, 614), Vector2(196, 632)]), Color("74714e"))
-	_sewn_patch(PackedVector2Array([Vector2(276, 178), Vector2(1002, 166), Vector2(1026, 568), Vector2(258, 580)]), Color("4d5a54"))
-	_sewn_patch(PackedVector2Array([Vector2(76, 506), Vector2(186, 514), Vector2(178, 620), Vector2(68, 612)]), Color("8c6550"))
-	_sewn_patch(PackedVector2Array([Vector2(1100, 112), Vector2(1202, 102), Vector2(1210, 202), Vector2(1112, 214)]), Color("79738a"))
-	draw_set_transform(Vector2.ZERO)
-	# Follow the existing title label, including container layout and viewport resizing.
-	var banner := Rect2(_label.global_position - global_position, _label.size).grow_individual(36, 24, 36, 24)
-	var a := banner.position
-	var b := banner.end
-	_sewn_patch(PackedVector2Array([a + Vector2(0, 7), Vector2(a.x + 92, a.y),
-		Vector2(b.x - 80, a.y + 3), Vector2(b.x, a.y - 3), Vector2(b.x - 8, b.y - 12),
-		b, Vector2(a.x + 70, b.y - 4), Vector2(a.x - 6, b.y)]), PAPER)
+	else:
+		_draw_fallback_picture()
+	# Only two compact sewn backings follow the live controls. The rest of the picture
+	# stays uncovered scenery, and every original control still draws above this shell.
+	var banner := title_backing_rect()
+	if banner.size.x > 0 and banner.size.y > 0:
+		_draw_sewn_backing(banner, PAPER)
+	var menu := action_backing_rect()
+	if menu.size.x > 0 and menu.size.y > 0:
+		_draw_sewn_backing(menu, ACTION_BACKING)

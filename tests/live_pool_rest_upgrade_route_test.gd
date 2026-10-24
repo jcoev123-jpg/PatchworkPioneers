@@ -93,32 +93,23 @@ func _authored_effect_text(effects: Dictionary) -> String:
 
 
 func _select_mouse_row(choices: OptionButton, row: int) -> void:
-	await _click(choices)
-	var popup := choices.get_popup()
-	_check(popup.visible, "mouse opens the earned pool index menu")
-	var font := popup.get_theme_font("font")
-	var height := font.get_height(popup.get_theme_font_size("font_size")) + popup.get_theme_constant("v_separation")
-	var margin := popup.get_theme_stylebox("panel").get_content_margin(SIDE_TOP)
-	var point := Vector2(popup.position) + Vector2(30, margin + height * (float(row) + 0.5))
-	for pressed in [true, false]:
-		var event := InputEventMouseButton.new()
-		event.position = point
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = pressed
-		root.push_input(event, true)
-	await _frames()
+	var tile = _tile_for("upgrade", row)
+	_check(tile != null, "earned pool row owns one sewn upgrade tile")
+	if tile == null:
+		return
+	await _click_tile(tile)
 	_check(choices.selected == row, "physical pointer selects the earned pool row")
+	_check(_visit_tiles().tile_details(tile).selected, "chosen earned row is visibly selected")
 
 
 func _select_keyboard_row(choices: OptionButton, row: int) -> void:
-	app.rest_heal_button.grab_focus()
-	await _key(KEY_TAB)
-	_check(choices.has_focus(), "Tab reaches the earned pool index selector")
-	await _key(KEY_SPACE)
-	for step in range(row):
-		await _key(KEY_DOWN)
-	await _key(KEY_ENTER)
+	var tile = _tile_for("upgrade", row)
+	_check(tile != null, "earned pool row owns one sewn upgrade tile")
+	if tile == null:
+		return
+	await _select_tile_by_key(tile)
 	_check(choices.selected == row, "physical keys select the earned pool row")
+	_check(_visit_tiles().tile_details(tile).selected, "chosen earned row is visibly selected")
 
 
 func _play_earned_pool(session: int, plus_id: String, plus_def: Dictionary) -> Array:
@@ -358,8 +349,12 @@ func _pool_route_session(chosen: Dictionary, reward_index: int, keyboard: bool) 
 	var committed: Array = source.duplicate()
 	committed[pool_index] = plus_id
 	if keyboard:
-		choices.grab_focus()
-		await _key(KEY_TAB)
+		var pool_tile = _tile_for("upgrade", pool_row)
+		pool_tile.grab_focus()
+		for step in range(_visit_tiles().upgrade_tiles().size() + 2):
+			if button.has_focus():
+				break
+			await _key(KEY_TAB)
 		_check(button.has_focus(), "Tab reaches the earned Upgrade action")
 		await _key(KEY_ENTER)
 	else:
