@@ -63,8 +63,12 @@ const PIPS_STRIP_HEIGHT := 20
 const COST_COIN_SIZE := 38
 const CHOOSE_HEIGHT := 44
 ## The Help tab is sewn onto the owner felt band's right end, never over the
-## card's picture, effects text or Choose button.
+## card's picture, effects text or Choose button. Its 24px cell is too short for
+## the normal 22px top and bottom burlap seams (44 > 24), so only this tab takes
+## a compact vertical art slice: 6 + 6 leaves a 12px centre inside the cell while
+## the side seams keep BUTTON_EDGE.
 const HELP_TAB_SIZE := Vector2(78, 24)
+const HELP_TAB_EDGE_VERTICAL := 6
 
 ## Sewn Flow/ChatGPT art in the heroes' stitched-felt style. Every piece is
 ## optional: a missing texture falls back to the flat procedural paper, and the
@@ -400,7 +404,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 		help.custom_minimum_size = HELP_TAB_SIZE
 		help.size_flags_horizontal = Control.SIZE_SHRINK_END
 		help.size_flags_vertical = Control.SIZE_FILL
-		_style_button(help, OWNER_COLORS[owner])
+		_style_button(help, OWNER_COLORS[owner], HELP_TAB_EDGE_VERTICAL)
 		help.add_theme_font_size_override("font_size", 14)
 		_add_focus_stitch(help)
 		header.add_child(help)
@@ -982,11 +986,21 @@ func _fit_skip_button() -> void:
 		maxf(54.0, font.get_height(point_size) + 20.0))
 
 
-func _style_button(button: Button, accent: Color) -> void:
+func _style_button(button: Button, accent: Color, vertical_edge: int = BUTTON_EDGE) -> void:
 	# Every reward action (Choose, Skip, Help and the glossary's Close) is lettered
 	# in the project's display face. Assigning the variation first means a later
 	# _fit_skip_button measures the font that is actually drawn.
 	button.theme_type_variation = &"PatchHeadingButton"
+	_apply_sewn_faces(button, accent)
+	button.add_theme_font_size_override("font_size", 20)
+	_sew_burlap(button, accent, vertical_edge, art_texture(BURLAP_BUTTON))
+
+
+## The procedural sewn face shared by every reward action: an opaque beige felt
+## per draw state, a transparent dark focus stitch and readable ink. It is also
+## the complete face when the optional burlap art is missing, so the fallback
+## never needs a generated asset to stay readable.
+func _apply_sewn_faces(button: Button, accent: Color) -> void:
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var box := StyleBoxFlat.new()
 		match state:
@@ -1011,14 +1025,16 @@ func _style_button(button: Button, accent: Color) -> void:
 	# Keyboard focus keeps dark ink on the beige face instead of relying on the
 	# engine default focus colour.
 	button.add_theme_color_override("font_focus_color", DARK_INK)
-	button.add_theme_font_size_override("font_size", 20)
-	_sew_burlap(button, accent)
 
 
 ## Burlap patch sewn behind a button's label; the procedural face above it is
-## made see-through so hover, press and disabled tints still read on top.
-func _sew_burlap(button: Button, accent: Color) -> void:
-	var burlap := art_texture(BURLAP_BUTTON)
+## made see-through so hover, press and disabled tints still read on top. The
+## art is optional: with no texture this returns before touching the opaque
+## faces, so the plain sewn button keeps serving every action.
+## `vertical_edge` shrinks only the top and bottom slice, for the short Help tab;
+## the left and right seams always keep the normal BUTTON_EDGE width.
+func _sew_burlap(button: Button, accent: Color, vertical_edge: int,
+		burlap: Texture2D) -> void:
 	if burlap == null:
 		return
 	var tints := {"normal": Color(1, 1, 1, 0.0), "hover": Color(1, 0.97, 0.88, 0.22),
@@ -1037,8 +1053,8 @@ func _sew_burlap(button: Button, accent: Color) -> void:
 	patch.texture = burlap
 	patch.patch_margin_left = BUTTON_EDGE
 	patch.patch_margin_right = BUTTON_EDGE
-	patch.patch_margin_top = BUTTON_EDGE
-	patch.patch_margin_bottom = BUTTON_EDGE
+	patch.patch_margin_top = vertical_edge
+	patch.patch_margin_bottom = vertical_edge
 	patch.show_behind_parent = true
 	patch.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	patch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
