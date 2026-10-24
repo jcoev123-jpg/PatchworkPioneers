@@ -878,7 +878,14 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	if _targeting.is_heavy_pool_attack(id):
 		if forecast:
 			return _heavy_forecast(party, enemies, id)
-		return _heavy_attacks.play_attack(_deck, party, enemies, id, position)
+		var mitt_quote := {}
+		if _fray != null:
+			mitt_quote = _fray.quote_heavy_hit(id, position)
+		var committed := _heavy_attacks.play_attack(_deck, party, enemies, id, position,
+			{}, {}, _pinned, _play._patches, _fray, mitt_quote)
+		if committed.get("ok", false) and mitt_quote.get("bonus") == 2:
+			_fray.consume_confirmed_hit(mitt_quote, committed)
+		return committed
 	var owner_statuses: Dictionary = {}
 	var owner: String = _catalog.get_definition(id).get("owner", "")
 	for hero in party.get_heroes():
@@ -1036,15 +1043,41 @@ func _pool_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> D
 
 
 ## Identical read-only damage preview, but express Pin and Pound as two
-## sequential hits on the chosen target, not a single damage packet.
+## sequential hits on the chosen target, not a single damage packet, and include
+## any conditional first-hit bonus without mutating or latching anything.
 func _heavy_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
 	var preview := _pool_forecast(party, enemies, id)
 	if not preview.playable:
 		return preview
 	var effects: Dictionary = _definition(id).get("effects", {})
 	var count: int = int(effects.get("hits", 1))
+	var definition := _definition(id)
+	var damage: int = int(effects.get("damage", 0))
+	var owner: Variant = definition.get("owner")
+	var owner_statuses: Dictionary = {}
+	for hero in party.get_heroes():
+		if hero.get("id") == owner:
+			owner_statuses = hero.get("statuses", {})
+			break
 	for hit in preview.hits:
 		hit["hit_count"] = count
+		var position: int = int(hit.get("position", 0))
+		var mitt_bonus := 0
+		if _fray != null:
+			var quote: Dictionary = _fray.quote_heavy_hit(id, position)
+			mitt_bonus = int(quote.get("bonus", 0))
+		var enemy: Dictionary = enemies.get_enemy(position)
+		var defender: Dictionary = enemy.get("statuses", {})
+		var hit1_dmg: int = _statuses.adjusted_attack_damage(damage + mitt_bonus, owner_statuses, defender)
+		hit["damage"] = hit1_dmg
+		if count == 2:
+			var hit2_dmg: int = _statuses.adjusted_attack_damage(damage, owner_statuses, defender)
+			hit["first_damage"] = hit1_dmg
+			hit["second_damage"] = hit2_dmg
+			if mitt_bonus > 0:
+				hit["mitt_bonus"] = mitt_bonus
+		elif mitt_bonus > 0:
+			hit["mitt_bonus"] = mitt_bonus
 	return preview
 
 
@@ -1139,6 +1172,7 @@ func _sync_battle() -> void:
 		# latch, including an explicitly failed wardrobe admission.
 		_controls.bind_patch_rules(_play._patches)
 		_warden_combo.set_patches(_play._patches)
+		_heavy_attacks.set_patches(_play._patches)
 		_controls.bind_head_patch_rules(head_rules)
 		if head_rules != null:
 			_play.bind_head_patch_rules(head_rules)
@@ -1165,6 +1199,8 @@ func _sync_battle() -> void:
 			if mitt.bind_battle(_deck, app.party, app.enemies, _unravel,
 					carry._wardrobe, carry.torn, _play):
 				_fray = mitt
+		_heavy_attacks.set_pinned(_pinned)
+		_heavy_attacks.set_mitt(_fray)
 		# The selected Path card is bound only to this battle's genuine receipt,
 		# deck, party, roster and the one gauge shared with its round flow.
 		_bind_path_cards(app)
@@ -1391,8 +1427,14 @@ func _refresh() -> void:
 		if status_plan.get("ok", false):
 			additions_by_position = status_plan.applications
 	for hit in preview.hits:
-		var detail := ("%d: 2 hits x %d damage each" % [hit.position, hit.damage]
-			if int(hit.get("hit_count", 1)) == 2 else "%d: %d damage" % [hit.position, hit.damage])
+		var detail: String
+		if int(hit.get("hit_count", 1)) == 2:
+			if hit.has("first_damage") and hit.has("second_damage") and hit["first_damage"] != hit["second_damage"]:
+				detail = "%d: 2 hits (%d + %d damage)" % [hit.position, hit.first_damage, hit.second_damage]
+			else:
+				detail = "%d: 2 hits x %d damage each" % [hit.position, hit.damage]
+		else:
+			detail = "%d: %d damage" % [hit.position, hit.damage]
 		var enemy: Dictionary = app.enemies.get_enemy(hit.position)
 		var current: Dictionary = enemy.get("statuses", {})
 		var additions: Dictionary = additions_by_position.get(hit.position, {})
@@ -1475,6 +1517,7 @@ func _clear() -> void:
 	_tinker_path = null
 	_routed_gauge_shared = false
 	_fray = null
+	_heavy_attacks = CombatWardenPoolHeavyAttacks.new()
 	_play = CombatAttackCards.new() # Return/title retires the prior battle's wearer latch.
 	_controls = CombatSeamstressPoolControl.new()
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)

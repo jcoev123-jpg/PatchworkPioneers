@@ -12,6 +12,11 @@ const POOL_PLAIN_IDS := [
 	"seamstress_thread_whip", "seamstress_thread_whip_plus",
 ]
 
+const POOL_HEAVY_IDS := [
+	"warden_heavy_thimble", "warden_heavy_thimble_plus",
+	"warden_pin_and_pound", "warden_pin_and_pound_plus",
+]
+
 var _deck: CombatDeck
 var _party: CombatParty
 var _enemies: CombatEnemies
@@ -162,8 +167,29 @@ func quote_stitched_half(run_cards: RunRestStitchCards, stitched_id: String,
 	return quote
 
 
+func quote_heavy_hit(card_id: String, target_position: int, hit_number: int = 1,
+		cost_discount: int = 0) -> Dictionary:
+	if not _ready() or not _deck.hand.has(card_id):
+		return {"bonus": 0}
+	if card_id not in POOL_HEAVY_IDS:
+		return {"bonus": 0}
+	var definition: Dictionary = WardenPoolCards.new().get_definition(card_id)
+	if definition.get("id") != card_id or definition.get("owner") != "warden" \
+			or definition.get("target_kind") != "enemy_single":
+		return {"bonus": 0}
+	return _quote(definition, card_id, target_position, hit_number, "heavy", 0, "",
+		cost_discount)
+
+
+func quote_heavy_attack(card_id: String, target_position: int, hit_number: int = 1,
+		cost_discount: int = 0) -> Dictionary:
+	return quote_heavy_hit(card_id, target_position, hit_number, cost_discount)
+
+
 func quote_pool_hit(card_id: String, target_position: int, hit_number: int = 1,
 		cost_discount: int = 0) -> Dictionary:
+	if card_id in POOL_HEAVY_IDS:
+		return quote_heavy_hit(card_id, target_position, hit_number, cost_discount)
 	if not _ready() or not _deck.hand.has(card_id):
 		return {"bonus": 0}
 	if card_id not in POOL_PLAIN_IDS:
@@ -212,9 +238,27 @@ func authorize_stitched_half(quote: Dictionary, deck: CombatDeck,
 	return 2 if quote_stitched_half(run_cards, card_id, half_index, target) == quote else 0
 
 
+func authorize_heavy_hit(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		cost_discount: int = 0) -> int:
+	if deck != _deck or party != _party or enemies != _enemies or quote.get("bonus") != 2:
+		return 0
+	if not quote.has("seal") or quote.get("seal") != _seal(quote):
+		return 0
+	return 2 if quote_heavy_hit(card_id, target, 1, cost_discount) == quote else 0
+
+
+func authorize_heavy_attack(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		cost_discount: int = 0) -> int:
+	return authorize_heavy_hit(quote, deck, party, enemies, card_id, target, cost_discount)
+
+
 func authorize_pool_hit(quote: Dictionary, deck: CombatDeck,
 		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
 		cost_discount: int = 0) -> int:
+	if card_id in POOL_HEAVY_IDS:
+		return authorize_heavy_hit(quote, deck, party, enemies, card_id, target, cost_discount)
 	if deck != _deck or party != _party or enemies != _enemies or quote.get("bonus") != 2:
 		return 0
 	if not quote.has("seal") or quote.get("seal") != _seal(quote):
@@ -276,7 +320,7 @@ func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
 			if second.get("target_kind") not in ["enemy_single", "enemy_all"]:
 				next_half = 2
 		_stitched_sequence[quote.card_id] = next_half
-	elif source != "starter" and source != "pool":
+	elif source != "starter" and source != "pool" and source != "heavy":
 		return false
 	# A confirmed unpatched/low-gauge first stitched half advances the ordered
 	# half sequence but never spends a wearer's Frayfinder entitlement.
@@ -344,6 +388,8 @@ func _transition_matches(quote: Dictionary, receipt: Dictionary,
 		return _verified_stitched_transition(quote, receipt, run_cards, before, after)
 	if quote.source == "pool":
 		return _verified_pool_transition(quote, receipt, before, after)
+	if quote.source == "heavy":
+		return _verified_heavy_transition(quote, receipt, before, after)
 	if quote.source != "starter":
 		return false
 	if before.get("party") != after.party or before.get("rng") != after.rng:
@@ -599,6 +645,143 @@ func _verified_pool_transition(quote: Dictionary, receipt: Dictionary,
 		return false
 	if not is_warden and not block_deltas.is_empty():
 		return false
+	return true
+
+
+func _verified_heavy_transition(quote: Dictionary, receipt: Dictionary,
+		before: Dictionary, after: Dictionary) -> bool:
+	if quote.card_id not in POOL_HEAVY_IDS:
+		return false
+	if receipt.get("card_id") != quote.card_id or receipt.get("target_position") != quote.target:
+		return false
+	if before.get("rng") != after.rng:
+		return false
+	if before.get("draw") != after.draw:
+		return false
+	if before.get("energy") != after.energy + quote.cost:
+		return false
+	var hand: Array = before.hand.duplicate()
+	if not hand.has(quote.card_id):
+		return false
+	hand.erase(quote.card_id)
+	if hand != after.hand:
+		return false
+	var discard: Array = before.discard.duplicate()
+	discard.append(quote.card_id)
+	if discard != after.discard:
+		return false
+
+	var earlier_party: Array = before.party
+	var later_party: Array = after.party
+	if earlier_party != later_party:
+		return false
+
+	var hits: Variant = receipt.get("hits")
+	if typeof(hits) != TYPE_ARRAY or hits.is_empty():
+		return false
+
+	var is_single_hit: bool = (quote.card_id == "warden_heavy_thimble" or quote.card_id == "warden_heavy_thimble_plus")
+	if is_single_hit and hits.size() != 1:
+		return false
+	if not is_single_hit and hits.size() not in [1, 2]:
+		return false
+
+	var earlier_enemies: Array = before.enemies
+	var later_enemies: Array = after.enemies
+	if earlier_enemies.size() != later_enemies.size() or quote.target < 1 or quote.target > earlier_enemies.size():
+		return false
+
+	var earlier_target: Dictionary = earlier_enemies[quote.target - 1]
+	var later_target: Dictionary = later_enemies[quote.target - 1]
+	if earlier_target.get("id") != later_target.get("id") or earlier_target.get("position") != later_target.get("position"):
+		return false
+
+	var total_hp_loss := 0
+	var total_block_absorbed := 0
+	for hit in hits:
+		if typeof(hit) != TYPE_DICTIONARY or hit.get("position") != quote.target:
+			return false
+		for field in ["hp_loss", "block_absorbed", "damage"]:
+			if typeof(hit.get(field)) != TYPE_INT or hit[field] < 0:
+				return false
+		if hit.hp_loss + hit.block_absorbed > hit.damage:
+			return false
+		total_hp_loss += hit.hp_loss
+		total_block_absorbed += hit.block_absorbed
+
+	var earlier_hp: int = int(earlier_target.get("hp", 0))
+	var later_hp: int = int(later_target.get("hp", 0))
+	var earlier_block: int = int(earlier_target.get("block", 0))
+	var later_block: int = int(later_target.get("block", 0))
+
+	if earlier_hp - later_hp != total_hp_loss:
+		return false
+	if earlier_block - later_block != total_block_absorbed:
+		return false
+
+	if not is_single_hit:
+		if hits.size() == 1:
+			if hits[0].hp_loss < earlier_hp or later_hp > 0:
+				return false
+		else:
+			if hits[0].hp_loss >= earlier_hp:
+				return false
+
+	for i in range(earlier_enemies.size()):
+		if i + 1 == quote.target:
+			continue
+		var ee: Dictionary = earlier_enemies[i]
+		var le: Dictionary = later_enemies[i]
+		if ee.get("id") != le.get("id") or ee.get("position") != le.get("position"):
+			return false
+		if ee.get("hp") != le.get("hp") or ee.get("block") != le.get("block") or ee.get("statuses", {}) != le.get("statuses", {}):
+			return false
+
+	var definition: Dictionary = WardenPoolCards.new().get_definition(quote.card_id)
+	var base_damage: int = int(definition.get("effects", {}).get("damage", 0))
+
+	var warden_hero: Dictionary = {}
+	for hero in before.party:
+		if hero.get("id") == "warden":
+			warden_hero = hero
+			break
+	if warden_hero.is_empty():
+		return false
+	var warden_statuses: Dictionary = warden_hero.get("statuses", {})
+	var foe_statuses: Dictionary = earlier_target.get("statuses", {})
+
+	var patch_damage: int = 1 if _active.get("warden", []).has("pincushion_arm") else 0
+
+	var hit0_mitt_bonus: int = quote.bonus
+	var hit0_pin_bonus: int = int(hits[0].get("pinned_bonus", 0))
+	if hit0_pin_bonus not in [0, 5]:
+		return false
+	var expected_hit0_damage: int = CombatStatuses.new().adjusted_attack_damage(
+		base_damage + hit0_pin_bonus + patch_damage + hit0_mitt_bonus, warden_statuses, foe_statuses)
+	if hits[0].damage != expected_hit0_damage:
+		return false
+
+	if hits.size() > 1:
+		var hit1_pin_bonus: int = int(hits[1].get("pinned_bonus", 0))
+		if hit1_pin_bonus != 0:
+			return false
+		var expected_hit1_damage: int = CombatStatuses.new().adjusted_attack_damage(
+			base_damage + patch_damage, warden_statuses, foe_statuses)
+		if hits[1].damage != expected_hit1_damage:
+			return false
+
+	var earlier_statuses: Dictionary = earlier_target.get("statuses", {})
+	var later_statuses: Dictionary = later_target.get("statuses", {})
+	if earlier_statuses.get("weak", 0) != later_statuses.get("weak", 0) \
+			or earlier_statuses.get("bleed", 0) != later_statuses.get("bleed", 0):
+		return false
+	var exp_delta: int = int(later_statuses.get("exposed", 0)) - int(earlier_statuses.get("exposed", 0))
+	if exp_delta not in [0, 1]:
+		return false
+	var hit0_statuses: Dictionary = hits[0].get("statuses", {})
+	if int(hit0_statuses.get("exposed", 0)) != exp_delta:
+		return false
+
 	return true
 
 

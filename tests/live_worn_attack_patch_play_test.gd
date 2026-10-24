@@ -339,7 +339,7 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
-		head_status: bool = false, visor: String = "") -> bool:
+		head_status: bool = false, visor: String = "", heavy: bool = false) -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -371,8 +371,10 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 	if app.deck == null:
 		return false
 	if downed:
-		_check(app.party.apply_damage(3, 9999) and app.party.is_downed(3),
-			"authentic run downed Tinker before battle settlement")
+		var dpos := 1 if owner == "warden" else 3
+		var dname := "Warden" if owner == "warden" else "Tinker"
+		_check(app.party.apply_damage(dpos, 9999) and app.party.is_downed(dpos),
+			"authentic run downed %s before battle settlement" % dname)
 	for enemy in app.enemies.get_enemies():
 		_check(app.enemies.apply_damage(enemy.position, 9999), "settle predecessor, not tested target")
 	app._observe_battle_result()
@@ -393,6 +395,8 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		# A genuinely unpatched run: the real deck owns both Rivet variants but
 		# no wardrobe is ever bound for this battle.
 		_own_rivets()
+	if heavy:
+		_own_heavy_cards()
 	if owner != "":
 		var bound := false
 		if not visor.is_empty():
@@ -970,6 +974,7 @@ func _run() -> void:
 	await _mitt_scope_stitched_case(fixture)
 	await _head_mounted_cases(fixture)
 	await _visor_cases(fixture)
+	await _mitt_heavy_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -1486,3 +1491,314 @@ func _visor_cases(fixture: Dictionary) -> void:
 	await _visor_latch_case(fixture)
 	for scenario in ["absent", "unworn", "other_owner", "torn"]:
 		await _visor_negative_case(fixture, scenario)
+
+
+## Authored Warden heavy cards genuinely owned by the real run deck.
+func _own_heavy_cards() -> void:
+	for id in ["warden_heavy_thimble", "warden_heavy_thimble_plus",
+			"warden_pin_and_pound", "warden_pin_and_pound_plus"]:
+		for copy in range(3):
+			app.run_deck.append(id)
+
+
+func _physical_heavy_hit(id: String, position: int, keyboard: bool,
+		expected_damages: Array, expected_statuses: Dictionary = {}) -> Dictionary:
+	if app.deck.energy < 2:
+		app.deck.combat_state.energy = 3
+	if not await _ensure_held(id):
+		return {}
+	if app.deck.energy < 2:
+		app.deck.combat_state.energy = 3
+	var panel = _panel(id)
+	_check(panel != null and panel.is_visible_in_tree()
+		and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect()),
+		"held heavy attack panel is visible inside 1280x720: " + id)
+	var forecast: Dictionary = presenter._resolve_attack(app.party, app.enemies, id, 0, true)
+	_check(forecast.playable and position in forecast.hits.map(func(hit): return hit.position),
+		"mounted heavy attack authority forecasts legal target: " + id)
+	_check(await _choose(id, keyboard), "physical heavy hand selection succeeded: " + id)
+	_check(presenter.cue.is_visible_in_tree()
+		and Rect2(0, 0, 1280, 720).encloses(presenter.cue.get_global_rect()),
+		"selected heavy attack cue fits 1280x720: " + id)
+	var before := _live_state()
+	var enemy_before: Dictionary = app.enemies.get_enemy(position)
+	var cost := 2
+	if keyboard:
+		await _key(KEY_1 if position == 1 else (KEY_2 if position == 2 else KEY_3))
+	else:
+		await _click(app.get_node("LiveEnemyRoster")._labels[position - 1])
+	var event: Dictionary = presenter.last_event
+	_check(event.get("ok", false), "heavy attack event succeeded: " + id)
+	var actual_damages: Array = []
+	for h in event.get("hits", []):
+		actual_damages.append(h.get("damage", 0))
+	_check(actual_damages == expected_damages,
+		"heavy attack actual damages %s equal expected %s for %s" % [str(actual_damages), str(expected_damages), id])
+	var after: Dictionary = app.enemies.get_enemy(position)
+	var total_damage: int = 0
+	for d in expected_damages:
+		total_damage += int(d)
+	_check(app.deck.energy == before[15] - cost
+		and app.deck.hand.count(id) == before[12].count(id) - 1
+		and app.deck.discard_pile.count(id) == before[14].count(id) + 1,
+		"heavy card charges 2 energy and moves once to discard: " + id)
+	_check(after.block == maxi(0, int(enemy_before.get("block", 0)) - total_damage)
+		and after.hp == maxi(0, int(enemy_before.get("hp", 0)) - maxi(0, total_damage - int(enemy_before.get("block", 0))))
+		and app.run_rng.state == before[10],
+		"real HP, Block, and run RNG agree with confirmed heavy attack: " + id)
+	_check(app.hand_view.get_child_count() == app.deck.hand.size()
+		and app.get_node("LiveSupportHand").energy_label.text == "%d" % app.deck.energy,
+		"mounted hand and energy redraw after heavy hit: " + id)
+	_check(presenter.cue != null and presenter.cue.text == ""
+		and not presenter.cue.is_visible_in_tree(),
+		"committed heavy attack retires attack cue: " + id)
+	return event
+
+
+## Complete mounted regression for authentic sewn Frayfinder Mitt on Warden heavy attacks.
+func _mitt_heavy_cases(fixture: Dictionary) -> void:
+	# --- Case 1: All 4 heavy IDs, mouse and keyboard, below-half, at-half, and turn reset ---
+	for keyboard in [false, true]:
+		if not await _entry(fixture, "warden", false, keyboard, true, [], false, false, "", true):
+			_check(false, "M05 heavy routed fixture entered: keyboard=" + str(keyboard))
+			continue
+		var mitt: CombatFrayfinderMitt = presenter._fray
+		var gauge: CombatUnravel = presenter._unravel
+		_check(mitt != null and gauge != null, "mitt and unravel authorities bound to presenter")
+		# Give enemy 1 enough block so it survives testing both below-half and at-half
+		app.enemies.gain_block(1, 40)
+
+		# Subcase 1a: Below half (3/8) -> no +2 bonus, latch not consumed
+		if not await _ensure_held("warden_heavy_thimble"):
+			continue
+		_check(gauge.apply_unravel(app.enemies, 1, 3), "enemy 1 unravel set to 3/8")
+		var q_below: Dictionary = mitt.quote_heavy_hit("warden_heavy_thimble", 1)
+		_check(q_below.get("bonus") == 0 and mitt.latch_snapshot().is_empty(),
+			"below-half heavy quote bonus is 0")
+		await _hover(_panel("warden_heavy_thimble"))
+		_check(presenter.cue.text.contains("11 damage") and not presenter.cue.text.contains("13 damage"),
+			"cue shows base 11 damage when below half")
+		await _physical_heavy_hit("warden_heavy_thimble", 1, keyboard, [11])
+		_check(mitt.latch_snapshot().is_empty(),
+			"below-half heavy hit leaves mitt latch unconsumed")
+
+		# Subcase 1b: At half (4/8) -> +2 bonus applied to first hit, latch consumed
+		app.deck.combat_state.energy = 3
+		if not await _ensure_held("warden_heavy_thimble_plus"):
+			continue
+		_check(gauge.apply_unravel(app.enemies, 1, 1), "enemy 1 unravel rises to 4/8")
+		var q_half: Dictionary = mitt.quote_heavy_hit("warden_heavy_thimble_plus", 1)
+		_check(q_half.get("bonus") == 2 and mitt.latch_snapshot().is_empty(),
+			"at-half heavy quote bonus is 2")
+		await _hover(_panel("warden_heavy_thimble_plus"))
+		_check(presenter.cue.text.contains("17 damage"),
+			"cue shows upgraded 15+2=17 damage at half unravel")
+		await _physical_heavy_hit("warden_heavy_thimble_plus", 1, keyboard, [17])
+		_check(mitt.latch_snapshot() == {"warden": true},
+			"at-half heavy hit consumes Warden mitt latch")
+
+		# Subcase 1c: Replay / counterfeit rejection
+		_check(not mitt.consume_confirmed_hit(q_half, presenter.last_event),
+			"replaying confirmed heavy receipt fails")
+
+		# Subcase 1d: Second heavy hit in SAME turn receives no bonus (latch spent)
+		app.deck.combat_state.energy = 3
+		if not await _ensure_held("warden_pin_and_pound"):
+			continue
+		app.enemies.gain_block(2, 40)
+		_check(gauge.apply_unravel(app.enemies, 2, 4), "enemy 2 unravel set to 4/8")
+		var q_spent: Dictionary = mitt.quote_heavy_hit("warden_pin_and_pound", 2)
+		_check(q_spent.get("bonus") == 0,
+			"quote bonus is 0 when latch already spent this turn")
+		await _hover(_panel("warden_pin_and_pound"))
+		_check(presenter.cue.text.contains("9 damage each"),
+			"cue shows unboosted 9 damage each when latch is spent")
+		await _physical_heavy_hit("warden_pin_and_pound", 2, keyboard, [9, 9])
+		_check(mitt.latch_snapshot() == {"warden": true},
+			"second attack in same turn cannot re-award or restack mitt")
+
+		# Subcase 1e: End Turn restores availability once
+		var prev_turn: int = app.enemy_intents._turn_index
+		await _click(app.end_turn_button)
+		await _frames()
+		_check(app.enemy_intents._turn_index == prev_turn + 1
+			and app.deck.turn_active and mitt.latch_snapshot().is_empty(),
+			"end turn restores mitt latch availability")
+
+		# Subcase 1f: Fresh turn Pin and Pound receives +2 on hit 1 only, hit 2 gets base 9
+		if not await _ensure_held("warden_pin_and_pound"):
+			continue
+		_check(gauge.get_snapshot(2).gauge >= 4, "enemy 2 still at or above half unravel")
+		var q_fresh: Dictionary = mitt.quote_heavy_hit("warden_pin_and_pound", 2)
+		_check(q_fresh.get("bonus") == 2, "fresh turn quote gets +2")
+		await _hover(_panel("warden_pin_and_pound"))
+		_check(presenter.cue.text.contains("11 + 9 damage"),
+			"fresh turn cue shows 11 + 9 damage for pin and pound")
+		await _physical_heavy_hit("warden_pin_and_pound", 2, keyboard, [11, 9])
+		_check(mitt.latch_snapshot() == {"warden": true},
+			"pin and pound consumes mitt latch on hit 1 only")
+
+		await _click(app.return_button)
+		_check(presenter._fray == null and presenter._unravel == null,
+			"return to title retires battle-bound mitt: keyboard=" + str(keyboard))
+
+	# --- Case 2: Pin and Pound+ & Lethal short-circuit on hit 1 (AC2) ---
+	if await _entry(fixture, "warden", false, false, true, [], false, false, "", true):
+		var mitt2: CombatFrayfinderMitt = presenter._fray
+		var gauge2: CombatUnravel = presenter._unravel
+		app.enemies.gain_block(1, 40)
+		_check(gauge2.apply_unravel(app.enemies, 1, 4), "enemy 1 at 4/8 unravel")
+		# Surviving multi-hit with Pin and Pound+ (12 + 2 = 14 hit 1, 12 hit 2)
+		if await _ensure_held("warden_pin_and_pound_plus"):
+			await _hover(_panel("warden_pin_and_pound_plus"))
+			_check(presenter.cue.text.contains("14 + 12 damage"),
+				"cue shows 14 + 12 damage for pin and pound plus")
+			await _physical_heavy_hit("warden_pin_and_pound_plus", 1, false, [14, 12])
+			_check(mitt2.latch_snapshot() == {"warden": true},
+				"pin and pound plus consumes latch")
+
+		# End turn to restore latch
+		await _click(app.end_turn_button)
+		await _frames()
+		_check(mitt2.latch_snapshot().is_empty(), "latch restored on end turn")
+
+		# Lethal hit 1: set enemy 2 HP to 5, block to 0
+		app.enemies._enemies[1]["hp"] = 5
+		app.enemies._enemies[1]["block"] = 0
+		_check(gauge2.apply_unravel(app.enemies, 2, 4), "enemy 2 at 4/8 unravel")
+		# Hit 1 deals 11 damage, which kills enemy 2 (5 HP). Hit 2 must be skipped!
+		var lethal_event: Dictionary = await _physical_heavy_hit("warden_pin_and_pound", 2, false, [11])
+		_check(lethal_event.get("hits", []).size() == 1,
+			"lethal hit 1 skips hit 2 for pin and pound")
+		_check(app.enemies.is_slain(2), "target enemy 2 is slain")
+		_check(mitt2.latch_snapshot() == {"warden": true},
+			"lethal hit 1 still authenticated and consumed latch")
+
+		await _click(app.return_button)
+
+	# --- Case 3: Raised threshold & gauge progression (AC3) ---
+	if await _entry(fixture, "warden", false, false, true, [], false, false, "", true):
+		var mitt3: CombatFrayfinderMitt = presenter._fray
+		var gauge3: CombatUnravel = presenter._unravel
+		app.enemies.gain_block(1, 40)
+		if await _ensure_held("warden_heavy_thimble"):
+			# Unravel enemy 1 completely (8 charge) and consume skip to raise threshold by 4
+			_check(gauge3.apply_unravel(app.enemies, 1, 8), "enemy 1 unravels (8/8)")
+			_check(gauge3.consume_action_skip(app.enemies, 1), "action skip consumed")
+			_check(gauge3.get_snapshot(1).threshold == 12, "threshold raised from 8 to 12")
+			_check(gauge3.get_snapshot(1).gauge == 0, "gauge resets to 0/12")
+			# At 5/12 (< 6): below half of raised threshold
+			_check(gauge3.apply_unravel(app.enemies, 1, 5), "enemy 1 unravel at 5/12")
+			_check(mitt3.quote_heavy_hit("warden_heavy_thimble", 1).get("bonus") == 0,
+				"5/12 is strictly below half of 12, bonus is 0")
+			# At 6/12 (>= 6): at half of raised threshold
+			_check(gauge3.apply_unravel(app.enemies, 1, 1), "enemy 1 unravel at 6/12")
+			_check(mitt3.quote_heavy_hit("warden_heavy_thimble", 1).get("bonus") == 2,
+				"6/12 is at half of raised threshold 12, bonus is 2")
+			await _physical_heavy_hit("warden_heavy_thimble", 1, false, [13])
+			_check(mitt3.latch_snapshot() == {"warden": true},
+				"raised-threshold hit consumes latch")
+		await _click(app.return_button)
+
+	# --- Case 4: Statuses (Weak, Exposed, Pinned) math (AC1, AC2) ---
+	if await _entry(fixture, "warden", false, false, true, [], false, false, "", true):
+		var mitt4: CombatFrayfinderMitt = presenter._fray
+		var gauge4: CombatUnravel = presenter._unravel
+		app.enemies.gain_block(1, 50)
+		_check(gauge4.apply_unravel(app.enemies, 1, 4), "enemy 1 unravel at 4/8")
+		# Cross-owner Pinned (+5 on hit 1)
+		_check(presenter._pinned.pin_enemy(app.enemies, 1, "tinker"), "pin enemy 1 by Tinker")
+		_check(presenter._pinned.pinner_for_enemy(1) == "tinker", "enemy 1 is pinned by Tinker")
+		# Weak on Warden (-25%) and Exposed on Enemy 1 (+50%)
+		app.party._heroes[0]["statuses"] = {"weak": 1}
+		_check(app.enemies.apply_statuses({1: {"exposed": 1}}), "exposed applied to enemy 1")
+		# Math:
+		# Hit 1: base 9 + Pinned 5 + Mitt 2 = 16. With Weak+Exposed (9/8): floor(16 * 1.125) = 18.
+		# Hit 2: base 9 + Pinned 0 + Mitt 0 = 9. With Weak+Exposed (9/8): floor(9 * 1.125) = 10.
+		await _physical_heavy_hit("warden_pin_and_pound", 1, false, [18, 10])
+		_check(presenter._pinned.pinner_for_enemy(1) == "", "pinned consumed after attack")
+		_check(mitt4.latch_snapshot() == {"warden": true}, "latch consumed")
+		await _click(app.return_button)
+
+	# --- Case 5: Negative Guards, Atomic Rejections, No-Spend (AC3) ---
+	# Subcase 5a: Unsewn Mitt baseline (no patch)
+	if await _entry(fixture, "", false, false, false, [], false, false, "", true):
+		_check(presenter._fray == null, "unsewn run has no frayfinder mitt")
+		app.enemies.gain_block(1, 40)
+		_check(presenter._unravel.apply_unravel(app.enemies, 1, 4), "enemy 1 at 4/8 unravel")
+		await _physical_heavy_hit("warden_heavy_thimble", 1, false, [11])
+		await _click(app.return_button)
+
+	# Subcase 5b: Different wearer (Mitt sewn on Seamstress)
+	if await _entry(fixture, "seamstress", false, false, true, [], false, false, "", true):
+		var mitt_s: CombatFrayfinderMitt = presenter._fray
+		app.enemies.gain_block(1, 40)
+		_check(presenter._unravel.apply_unravel(app.enemies, 1, 4), "enemy 1 at 4/8 unravel")
+		if await _ensure_held("warden_heavy_thimble"):
+			# Warden plays heavy thimble, but mitt is on Seamstress -> no +2 bonus
+			_check(mitt_s.quote_heavy_hit("warden_heavy_thimble", 1).get("bonus") == 0,
+				"Warden gets 0 bonus when mitt is sewn on Seamstress")
+			await _physical_heavy_hit("warden_heavy_thimble", 1, false, [11])
+			_check(mitt_s.latch_snapshot().is_empty(),
+				"Warden attack leaves Seamstress mitt latch untouched")
+		await _click(app.return_button)
+
+	# Subcase 5c: Atomic rejections (wrong target, no energy, wrong position, downed/torn)
+	if await _entry(fixture, "warden", false, false, true, [], false, false, "", true):
+		var mitt_neg: CombatFrayfinderMitt = presenter._fray
+		app.enemies.gain_block(1, 40)
+		_check(presenter._unravel.apply_unravel(app.enemies, 1, 4), "enemy 1 at 4/8")
+		if await _ensure_held("warden_heavy_thimble"):
+			_check(await _choose("warden_heavy_thimble", false), "heavy thimble chosen")
+			# Invalid target (slot 4 does not exist)
+			var state_before_target := _live_state()
+			presenter._queue_attack(4)
+			_check(_live_state() == state_before_target and mitt_neg.latch_snapshot().is_empty(),
+				"invalid target fails atomically without mutating state or latch")
+
+			# Insufficient energy (energy = 1, cost = 2)
+			app.deck.combat_state.energy = 1
+			var state_before_energy := _live_state()
+			presenter._queue_attack(1)
+			await _key(KEY_1)
+			_check(_live_state() == state_before_energy and mitt_neg.latch_snapshot().is_empty(),
+				"insufficient energy fails atomically")
+			app.deck.combat_state.energy = 3
+
+			# Invalid position (Warden not in position 1)
+			var swap_res := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)
+			_check(swap_res.ok, "swap Warden to position 2")
+			for idx in range(3):
+				app.party._heroes[idx] = swap_res.heroes[idx].duplicate(true)
+			await _frames()
+			var state_before_pos := _live_state()
+			_check(not presenter._resolve_attack(app.party, app.enemies, "warden_heavy_thimble", 1).get("ok", false),
+				"Warden in pos 2 cannot play heavy attack")
+			_check(_live_state() == state_before_pos and mitt_neg.latch_snapshot().is_empty(),
+				"invalid hero position leaves state unchanged")
+			# Swap back to position 1
+			var swap_back := CombatPositionSwaps.preview_adjacent_swap(app.party, 2, -1)
+			for idx in range(3):
+				app.party._heroes[idx] = swap_back.heroes[idx].duplicate(true)
+			await _frames()
+
+			# Downed Warden
+			_check(app.party.apply_damage(1, 9999) and app.party.is_downed(1), "down Warden")
+			var state_before_downed := _live_state()
+			_check(not presenter._resolve_attack(app.party, app.enemies, "warden_heavy_thimble", 1).get("ok", false),
+				"downed Warden cannot attack")
+			_check(_live_state() == state_before_downed and mitt_neg.latch_snapshot().is_empty(),
+				"downed Warden attempt leaves state unchanged")
+
+		await _click(app.return_button)
+
+	# Subcase 5d: Torn Warden (torn wearer suppresses patch)
+	if await _entry(fixture, "warden", true, false, true, [], false, false, "", true):
+		_check(app.party.is_downed(1) and app.party_carryover.torn.read_state().heroes[0].hp == 0,
+			"Warden is authentically torn in carried run ledger")
+		if await _ensure_held("warden_heavy_thimble"):
+			var state_torn := _live_state()
+			_check(not presenter._resolve_attack(app.party, app.enemies, "warden_heavy_thimble", 1).get("ok", false)
+				and _live_state() == state_torn,
+				"torn Warden cannot attack or spend mitt")
+		await _click(app.return_button)

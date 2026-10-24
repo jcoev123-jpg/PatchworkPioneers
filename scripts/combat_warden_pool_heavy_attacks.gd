@@ -26,17 +26,18 @@ const SUPPORTED_CARD_IDS: Array[String] = [
 var _pinned: CombatPinned = null
 ## Optional per-battle patch rules. Null keeps the pre-M04 unpatched behaviour.
 var _patches: CombatPatchAttackRules = null
+## Optional per-battle Frayfinder Mitt rules. Null keeps the pre-M05 unpatched behaviour.
+var _mitt: CombatFrayfinderMitt = null
 
 
-func _init(pinned_or_patches: Variant = null, optional_patches: Variant = null) -> void:
-	if pinned_or_patches is CombatPinned:
-		_pinned = pinned_or_patches
-	elif pinned_or_patches is CombatPatchAttackRules:
-		_patches = pinned_or_patches
-	if optional_patches is CombatPinned:
-		_pinned = optional_patches
-	elif optional_patches is CombatPatchAttackRules:
-		_patches = optional_patches
+func _init(pinned_or_patches: Variant = null, optional_patches: Variant = null, optional_mitt: Variant = null) -> void:
+	for arg in [pinned_or_patches, optional_patches, optional_mitt]:
+		if arg is CombatPinned:
+			_pinned = arg
+		elif arg is CombatPatchAttackRules:
+			_patches = arg
+		elif arg is CombatFrayfinderMitt:
+			_mitt = arg
 
 
 ## An explicit invalid binding disables playing instead of dropping the bonus.
@@ -51,6 +52,18 @@ func get_patches() -> CombatPatchAttackRules:
 
 func set_patches(patches: CombatPatchAttackRules) -> void:
 	_patches = patches
+
+
+func set_mitt(mitt: CombatFrayfinderMitt) -> void:
+	_mitt = mitt
+
+
+func get_mitt() -> CombatFrayfinderMitt:
+	return _mitt
+
+
+func bind_mitt(mitt: CombatFrayfinderMitt) -> void:
+	_mitt = mitt
 
 
 ## Binds the shared battle Pinned service; the caller still owns its lifetime.
@@ -79,12 +92,26 @@ func can_play(
 	enemies: CombatEnemies,
 	card_id: String,
 	target_position: int,
-	pinned: CombatPinned = null,
-	patches: CombatPatchAttackRules = null
+	pinned: Variant = null,
+	patches: Variant = null,
+	mitt: Variant = null,
+	quote: Dictionary = {}
 ) -> bool:
-	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
-	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+	var active_pinned: CombatPinned = _pinned
+	var active_patches: CombatPatchAttackRules = _patches
+	var active_mitt: CombatFrayfinderMitt = _mitt
+
+	for arg in [pinned, patches, mitt]:
+		if arg is CombatPinned:
+			active_pinned = arg
+		elif arg is CombatPatchAttackRules:
+			active_patches = arg
+		elif arg is CombatFrayfinderMitt:
+			active_mitt = arg
+
 	if active_patches != null and not active_patches.is_valid():
+		return false
+	if active_mitt != null and not active_mitt.is_valid():
 		return false
 	if deck == null or party == null or enemies == null:
 		return false
@@ -153,7 +180,8 @@ func can_play(
 	if base_damage <= 0:
 		return false
 	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(WARDEN_ID)
-	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage:
+	var max_bonus: int = 5 + patch_damage + (2 if active_mitt != null else 0)
+	if base_damage > CombatStatuses.MAX_INT - max_bonus:
 		return false
 
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
@@ -218,12 +246,29 @@ func play_attack(
 	target_position: int,
 	attacker_statuses: Dictionary = {},
 	enemy_statuses_by_position: Dictionary = {},
-	pinned: CombatPinned = null,
-	patches: CombatPatchAttackRules = null
+	pinned: Variant = null,
+	patches: Variant = null,
+	mitt: Variant = null,
+	quote: Dictionary = {}
 ) -> Dictionary:
-	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
-	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+	var active_pinned: CombatPinned = _pinned
+	var active_patches: CombatPatchAttackRules = _patches
+	var active_mitt: CombatFrayfinderMitt = _mitt
+	var active_quote: Dictionary = quote.duplicate(true)
+
+	for arg in [pinned, patches, mitt]:
+		if arg is CombatPinned:
+			active_pinned = arg
+		elif arg is CombatPatchAttackRules:
+			active_patches = arg
+		elif arg is CombatFrayfinderMitt:
+			active_mitt = arg
+		elif arg is Dictionary and active_quote.is_empty():
+			active_quote = (arg as Dictionary).duplicate(true)
+
 	if active_patches != null and not active_patches.is_valid():
+		return _failure(card_id, target_position)
+	if active_mitt != null and not active_mitt.is_valid():
 		return _failure(card_id, target_position)
 	if deck == null or party == null or enemies == null:
 		return _failure(card_id, target_position)
@@ -268,8 +313,23 @@ func play_attack(
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(WARDEN_ID)
 	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
 
-	# Reserve Pinned's possible +5 and patch_damage before any debit so hit math cannot overflow.
-	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage:
+	var mitt_bonus := 0
+	if active_mitt != null:
+		if active_quote.is_empty():
+			active_quote = active_mitt.quote_heavy_hit(card_id, target_position)
+		if active_quote.get("bonus") == 2:
+			var authorized: int = active_mitt.authorize_heavy_hit(active_quote, deck, party,
+				enemies, card_id, target_position)
+			if authorized != 2:
+				return _failure(card_id, target_position)
+			mitt_bonus = 2
+		elif active_quote.get("bonus") != 0:
+			return _failure(card_id, target_position)
+	elif not active_quote.is_empty() and active_quote.get("bonus", 0) != 0:
+		return _failure(card_id, target_position)
+
+	# Reserve Pinned's possible +5, patch_damage and mitt_bonus before any debit so hit math cannot overflow.
+	if base_damage > CombatStatuses.MAX_INT - 5 - patch_damage - mitt_bonus:
 		return _failure(card_id, target_position)
 
 	# Precondition: held copy in hand and sufficient energy
@@ -369,8 +429,9 @@ func play_attack(
 		if active_pinned != null:
 			pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, WARDEN_ID)
 
+		var hit_mitt_bonus: int = mitt_bonus if i == 0 else 0
 		var hit_result: Dictionary = damage_resolver.resolve_vs_enemy(
-			enemies, target_position, base_damage + pin_bonus + patch_damage, owner_statuses, target_statuses
+			enemies, target_position, base_damage + pin_bonus + patch_damage + hit_mitt_bonus, owner_statuses, target_statuses
 		)
 		if not hit_result.get("ok", false):
 			break
@@ -414,11 +475,13 @@ func play(
 	target_position: int,
 	attacker_statuses: Dictionary = {},
 	enemy_statuses_by_position: Dictionary = {},
-	pinned: CombatPinned = null,
-	patches: CombatPatchAttackRules = null
+	pinned: Variant = null,
+	patches: Variant = null,
+	mitt: Variant = null,
+	quote: Dictionary = {}
 ) -> Dictionary:
 	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
-		enemy_statuses_by_position, pinned, patches)
+		enemy_statuses_by_position, pinned, patches, mitt, quote)
 
 
 ## Alias for play_attack.
@@ -430,11 +493,13 @@ func play_card(
 	target_position: int,
 	attacker_statuses: Dictionary = {},
 	enemy_statuses_by_position: Dictionary = {},
-	pinned: CombatPinned = null,
-	patches: CombatPatchAttackRules = null
+	pinned: Variant = null,
+	patches: Variant = null,
+	mitt: Variant = null,
+	quote: Dictionary = {}
 ) -> Dictionary:
 	return play_attack(deck, party, enemies, card_id, target_position, attacker_statuses,
-		enemy_statuses_by_position, pinned, patches)
+		enemy_statuses_by_position, pinned, patches, mitt, quote)
 
 
 func _valid_statuses(statuses: Dictionary) -> bool:
