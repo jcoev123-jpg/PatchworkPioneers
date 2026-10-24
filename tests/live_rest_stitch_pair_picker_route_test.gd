@@ -380,10 +380,18 @@ func _resew_affordability() -> void:
 	old_open.call()
 	_check(app.rest_stitch_overlay == null, "guided excluded by patch overlay")
 	var picker: LiveRestPatchResewPicker = app.rest_patch_picker
-	_check(picker.source_selector.item_count > 0, "real sewn source exists")
-	await _select_stitch(picker.source_selector, 0, false)
-	_check(picker.destination_selector.item_count > 0, "real transfer destination exists")
-	await _select_stitch(picker.destination_selector, 0, false)
+	_check(not picker._source_buttons.is_empty(), "real sewn source exists")
+	if picker._source_buttons.is_empty():
+		return
+	await _click(picker._source_buttons[0])
+	_check(picker.source_selector.selected == 0 and picker._source_buttons[0].button_pressed,
+		"mouse selects the first sewn patch source")
+	_check(not picker._destination_buttons.is_empty(), "real transfer destination exists")
+	if picker._destination_buttons.is_empty():
+		return
+	await _click(picker._destination_buttons[0])
+	_check(picker.destination_selector.selected == 0 and picker._destination_buttons[0].button_pressed,
+		"mouse selects the first sewn recipient")
 	_check(not picker.confirm_button.disabled, "real re-sew available")
 	var service: RunRestStitchCards = app.rest_stitch
 	await _click(picker.confirm_button)
