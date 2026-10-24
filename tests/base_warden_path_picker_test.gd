@@ -1,6 +1,8 @@
 extends SceneTree
 ## Standalone view-only Warden Path offers, sourced from the shipped catalog.
 const WARDEN_DATA := "res://data/heroes/warden_paths.json"
+const SEAMSTRESS_DATA := "res://data/heroes/seamstress_paths.json"
+const TINKER_DATA := "res://data/heroes/tinker_paths.json"
 ## The App's shared Theme builder and the two shipped display faces the village must wear.
 const SHELL_SCRIPT := "res://scripts/patchwork_ui_shell.gd"
 const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
@@ -160,6 +162,34 @@ func _sibling_options(records: Array) -> Array:
 	return offers
 
 
+## The authored friendly names from all three shipped Path catalogs, keyed by ID:
+## the sewn button captions must match these independently of any service.
+func _authored_names() -> Dictionary:
+	var names: Dictionary = {}
+	for path in [SEAMSTRESS_DATA, TINKER_DATA, WARDEN_DATA]:
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		var records: Variant = parsed
+		if parsed is Dictionary:
+			records = parsed.get("paths", [])
+		if not records is Array:
+			continue
+		for raw in records:
+			if raw is Dictionary:
+				var record: Dictionary = raw
+				names[String(record.get("id", ""))] = String(record.get("display_name", ""))
+	return names
+
+
+## The shipped Warden palette the bone board and slate focus ring must keep.
+func _warden_palette() -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(WARDEN_DATA))
+	if parsed is Dictionary:
+		var palette: Variant = parsed.get("palette", {})
+		if palette is Dictionary:
+			return palette
+	return {}
+
+
 func _button(view: BaseScreen, id: String) -> Button:
 	for button in view.warden_buttons:
 		if String(button.get_meta("path_id", "")) == id:
@@ -227,12 +257,15 @@ func _typography_case(offered: Array) -> void:
 	if shared == null:
 		_check(false, "the App's shared display Theme is available")
 		return
+	var shared_face := shared.get_font("font", "PatchHeadingButton") as Font
 	_check(shared.get_type_variation_base("PatchTitle") == &"Label"
 		and shared.get_type_variation_base("PatchHeading") == &"Label"
 		and shared.get_type_variation_base("PatchHeadingButton") == &"Button"
 		and (shared.get_font("font", "PatchTitle") as Font).resource_path == TITLE_FONT
-		and (shared.get_font("font", "PatchHeading") as Font).resource_path == HEADING_FONT,
-		"the App's shared Theme really authors the shipped Patch display faces")
+		and (shared.get_font("font", "PatchHeading") as Font).resource_path == HEADING_FONT
+		and shared_face != null and shared_face.resource_path == HEADING_FONT
+		and ResourceLoader.exists(HEADING_FONT),
+		"the App's shared Theme really authors the shipped Patch display faces, including the button face")
 	var view := BaseScreen.new()
 	view.theme = shared
 	root.add_child(view)
@@ -248,6 +281,22 @@ func _typography_case(offered: Array) -> void:
 	await process_frame
 	await process_frame
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	var authored_names := _authored_names()
+	var palette := _warden_palette()
+	_check(authored_names.size() >= 6 and not String(authored_names.get("bulwark", "")).is_empty()
+		and not String(authored_names.get("vanguard", "")).is_empty()
+		and not String(authored_names.get("bloodline", "")).is_empty()
+		and not String(authored_names.get("unpicker", "")).is_empty()
+		and not String(authored_names.get("sharpshot", "")).is_empty()
+		and not String(authored_names.get("clockwork", "")).is_empty(),
+		"all six authored Path friendly names are really present in the shipped catalogs")
+	var palette_keys := ["bone", "slate_blue", "rust"]
+	var palette_ok := true
+	for key in palette_keys:
+		palette_ok = palette_ok and palette.has(key) \
+			and not String(palette.get(key, "")).is_empty()
+	_check(palette_ok, "the shipped Warden catalog keeps its bone/slate/rust palette")
+	var face_ok: Dictionary = {}
 	var title := view.village_title_label
 	var title_font := title.get_theme_font("font")
 	var strip := view.find_child("TopStrip", true, false) as PanelContainer
@@ -301,6 +350,30 @@ func _typography_case(offered: Array) -> void:
 				"AC2: %s %s really offers its authored preview" % [tag, option_id])
 			if button == null:
 				continue
+			# AC1: the sewn caption face on every authored Path option.
+			var face_font := button.get_theme_font("font") as Font
+			var face_size := button.get_theme_font_size("font_size")
+			var text_width := INF
+			if face_font != null:
+				text_width = face_font.get_string_size(button.text,
+					HORIZONTAL_ALIGNMENT_LEFT, -1.0, face_size).x
+			var authored_name := String(authored_names.get(option_id, ""))
+			var face_pass := button.theme_type_variation == &"PatchHeadingButton" \
+				and face_font != null and face_font.resource_path == HEADING_FONT \
+				and shared_face != null and face_font.resource_path == shared_face.resource_path \
+				and face_size >= 18 \
+				and not button.clip_text \
+				and button.text == authored_name and button.text == String(option["display_name"]) \
+				and not authored_name.is_empty() \
+				and text_width <= button.size.x \
+				and button.get_minimum_size().x <= button.size.x + 0.5 \
+				and panel.get_global_rect().encloses(button.get_global_rect()) \
+				and viewport.encloses(button.get_global_rect()) \
+				and button.focus_mode == Control.FOCUS_ALL
+			face_ok[option_id] = face_pass
+			_check(face_pass,
+				"AC1: %s %s wears the shipped Londrina Solid Regular PatchHeadingButton face at 18 px+ with its full authored name inside its board"
+					% [tag, option_id])
 			button.grab_focus()
 			await process_frame
 			await process_frame
@@ -309,10 +382,46 @@ func _typography_case(offered: Array) -> void:
 				and hint.get_visible_line_count() == hint.get_line_count()
 				and panel.get_global_rect().encloses(hint.get_global_rect())
 				and not _overlaps_any(hint, board["buttons"])
+				and button.tooltip_text == String(preview.get("tooltip", ""))
 				and button.tooltip_text.contains("PASSIVE: ")
 				and button.tooltip_text.contains("CARD: "),
-				"AC2: %s %s keeps its whole focused hint on the board and its full rule in the tooltip"
+				"AC2: %s %s keeps its whole focused hint on the board and its full unchanged rule in the tooltip"
 					% [tag, option_id])
+		for button in board["buttons"]:
+			var button_id := String(button.get_meta("path_id", ""))
+			if board["owner"] == "warden":
+				# Warden's authored bone/slate/rust contrast must survive the new face.
+				var surface := button.get_theme_stylebox("normal") as StyleBoxFlat
+				var focus_ring := button.get_theme_stylebox("focus") as StyleBoxFlat
+				var state_inks := {"normal": "font_color", "hover": "font_hover_color",
+					"pressed": "font_pressed_color", "hover_pressed": "font_hover_pressed_color",
+					"disabled": "font_disabled_color"}
+				var readable := true
+				for state in state_inks:
+					var state_surface := button.get_theme_stylebox(state) as StyleBoxFlat
+					if state_surface == null:
+						readable = false
+						continue
+					readable = readable and _contrast(button.get_theme_color(state_inks[state]),
+						state_surface.bg_color) >= 4.5
+				_check(button.has_theme_stylebox_override("normal") and surface != null
+					and surface.bg_color == Color(String(palette.get("bone", "")))
+					and surface.border_color == Color(String(palette.get("rust", "")))
+					and readable
+					and focus_ring != null and focus_ring.border_width_top >= 3
+					and focus_ring.border_color == Color(String(palette.get("slate_blue", "")))
+					and _contrast(focus_ring.border_color, surface.bg_color) >= 3.0,
+					"AC2: Warden %s keeps its bone/rust surface, dark ink in every state and the slate focus ring"
+						% button_id)
+			else:
+				var shared_surface := shared.get_stylebox("normal", "Button")
+				var shared_focus := button.get_theme_stylebox("focus") as StyleBoxFlat
+				_check(not button.has_theme_stylebox_override("normal")
+					and button.get_theme_stylebox("normal") == shared_surface
+					and shared_focus != null and shared_focus.border_width_top >= 3
+					and shared_focus.border_color.a >= 0.99,
+					"AC2: %s %s keeps its shared sewn surface and focus ring under the display face"
+						% [tag, button_id])
 		var chosen: Dictionary = board["options"][0]
 		# The longest authored name/card line is the worst case for the status label.
 		for option in board["options"]:
@@ -334,6 +443,14 @@ func _typography_case(offered: Array) -> void:
 			and panel.get_global_rect().encloses(status.get_global_rect())
 			and status.get_theme_font_size("font_size") >= 18,
 			"AC2: %s keeps the confirmed Path name and its card readable at 18 px" % tag)
+	var required_faces := ["bulwark", "vanguard", "bloodline", "unpicker", "sharpshot", "clockwork"]
+	var missing_faces: Array[String] = []
+	for required in required_faces:
+		if face_ok.get(required, false) != true:
+			missing_faces.append(required)
+	_check(missing_faces.is_empty() and face_ok.size() == required_faces.size(),
+		"AC1: all six mounted Path option buttons pass the display-face check (missing: %s)"
+			% str(missing_faces))
 	_check(view.selected_path_id() != "" and view.selected_tinker_path_id() != ""
 		and view.selected_warden_path_id() != "",
 		"AC3: all three independent Path boards keep their own confirmed pick")
