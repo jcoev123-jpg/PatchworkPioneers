@@ -90,6 +90,9 @@ const HEADING_FACE_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## Developer wording the player-facing visit gallery must never show.
 const RETIRED_GALLERY_TEXT: Array[String] = ["CARD GALLERY", "Select only",
 	"own button", "commit"]
+## The Shop gallery's neutral guidance, shown on a fresh visit and whenever the
+## previous pick is no longer a live card-for-sale offer.
+const SHOP_GALLERY_GUIDANCE := "Choose a card, then press Buy or Remove."
 
 
 ## The face a mounted label actually resolves, looking through the code-drawn
@@ -641,8 +644,9 @@ func _check_shop_gallery_labels(gallery) -> void:
 		and _label_face_path(title) == HEADING_FACE_PATH,
 		"mounted Shop gallery title wears the master PatchHeading face")
 	_check(hint != null and hint.is_visible_in_tree()
-		and hint.text == "Choose a card, then press Buy or Remove."
+		and hint.text == SHOP_GALLERY_GUIDANCE
 		and hint.text.contains("Buy") and hint.text.contains("Remove")
+		and not hint.text.contains("gold")
 		and _label_face_path(hint) == BODY_FACE_PATH,
 		"mounted Shop gallery hint tells the player to choose a card and press Buy or Remove")
 	var headings: Array = panel.find_children("GallerySectionHeading*", "Label", true, false)
@@ -683,6 +687,137 @@ func _check_shop_gallery_labels(gallery) -> void:
 			and effects_label.get_theme_font_size("font_size") >= 16
 			and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
 			"every Shop tile keeps its body-face effects at 16 px or more")
+
+
+## The mounted sewn hint under the Shop title.
+func _gallery_hint(gallery) -> Label:
+	var panel: Control = gallery.gallery_panel()
+	return panel.find_child("GalleryHint", true, false) as Label
+
+
+## Independent wallet-consequence oracle for one published listing: the authored
+## catalog name plus the visit's own quoted price and the run's current gold,
+## formatted here rather than by the presenter that produced the hint.
+func _offer_hint_oracle(listing: Dictionary, gold: int) -> String:
+	var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(String(listing.id))
+	var card_name: String = String(definition.get("display_name", ""))
+	var price: int = int(listing.price)
+	if gold >= price:
+		return card_name + " — " + str(price) + " gold; " + str(gold - price) \
+			+ " gold left after Buy"
+	return card_name + " — " + str(price) + " gold; you have " + str(gold) + ", " \
+		+ str(price - gold) + " short"
+
+
+## AC1/AC2/AC3: the sewn GalleryHint is a selection receipt for the real Shop.
+## A click and a keyboard activation each name the picked sale card, its actual
+## quoted price and the true wallet outcome while spending nothing; a removal
+## pick and a fresh visit drop back to the neutral guidance. The genuine Buy
+## commit is checked separately, after the inventory-facing checks.
+func _check_offer_hint(gallery) -> void:
+	var hint := _gallery_hint(gallery)
+	_check(hint != null and hint.is_visible_in_tree() and _label_face_path(hint) == BODY_FACE_PATH
+		and hint.get_theme_font_size("font_size") >= 15,
+		"mounted Shop hint is a readable body-face label")
+	if hint == null:
+		return
+	var stock: Array = app.shop_purchases.get_stock().cards
+	var gold: int = app.session_gold
+	_check(gallery.offer_tiles().size() == stock.size() and stock.size() == 5,
+		"hint fixture compares every published listing against a mounted sale tile")
+	_check(hint.text == SHOP_GALLERY_GUIDANCE,
+		"a newly mounted Shop visit shows neutral guidance instead of a stale offer synopsis")
+	var before := _shop_state()
+	var persistent := _persistent()
+	for index in range(stock.size()):
+		var tile = _tile_for("offer", index)
+		if index % 2 == 0:
+			await _click_tile(tile)
+		else:
+			await _select_tile_by_key(tile)
+		_check(app.shop_offers.selected == index and gallery.tile_details(tile).selected,
+			"tile input selects the published sale row %d" % index)
+		_check(hint.text == _offer_hint_oracle(stock[index], gold),
+			"hint names row %d's authored card, quoted price and exact wallet outcome" % index)
+		_check(_shop_state() == before and _persistent() == persistent,
+			"selecting sale row %d changes no gold, deck, stock, route or RNG" % index)
+	# A sold or otherwise non-offer row cannot keep a Buy synopsis alive.
+	var removal_before := _shop_state()
+	await _click_tile(_tile_for("removal", 0))
+	_check(app.shop_cards.selected == 0 and _shop_state() == removal_before,
+		"a real removal-tile pick selects that owned copy and spends nothing")
+	_check(hint.text == SHOP_GALLERY_GUIDANCE
+		and not hint.text.contains("left after Buy") and not hint.text.contains("short"),
+		"a removal pick replaces the old Buy synopsis with the neutral Shop guidance")
+
+
+## AC1/AC2/AC3: only the genuine Buy control settles a sale. Once it does, that
+## sold listing loses its offer synopsis, disables, and cannot be revived by its
+## old tile callback; gold, deck and the visit ledger move exactly once.
+func _check_offer_purchase_hint(gallery) -> void:
+	var hint := _gallery_hint(gallery)
+	_check(hint != null, "the purchase check has a mounted Shop hint")
+	if hint == null:
+		return
+	var stock: Array = app.shop_purchases.get_stock().cards
+	var gold: int = app.session_gold
+	var target := -1
+	for index in range(stock.size()):
+		if not stock[index].sold and gold >= int(stock[index].price):
+			target = index
+			break
+	_check(target >= 0, "this session has an unsold listing the wallet can afford")
+	if target < 0:
+		return
+	var purchased_tile = _tile_for("offer", target)
+	_check(purchased_tile != null and not purchased_tile.disabled,
+		"the affordable listing has an enabled sale tile")
+	if purchased_tile == null:
+		return
+	await _click_tile(purchased_tile)
+	_check(hint.text == _offer_hint_oracle(stock[target], gold),
+		"the affordable selection previews its post-Buy wallet before any payment")
+	var stale_tile_callback: Callable = purchased_tile.pressed.get_connections()[0].callable
+	var visit: RunShopVisit = app.shop_visit
+	var deck_before: Array = app.run_deck.duplicate()
+	var stock_before: Array = app.shop_purchases.get_stock().cards.duplicate(true)
+	var route_before: Array = app.run_map.get_route().duplicate()
+	var rng_before: int = app.run_rng.state
+	var card_id: String = String(stock[target].id)
+	var price: int = int(stock[target].price)
+	var expected_deck: Array = deck_before.duplicate()
+	expected_deck.append(card_id)
+	_check(not app.shop_buy_button.disabled, "an affordable selection leaves the existing Buy control enabled")
+	await _click(app.shop_buy_button)
+	_check(app.session_gold == gold - price and app.run_deck == expected_deck,
+		"the existing Buy control alone charges the quoted price once and adds the card")
+	_check(app.run_map.get_route() == route_before and app.run_rng.state == rng_before
+		and visit.get_state().deck == app.run_deck and visit.get_state().gold == app.session_gold
+		and app.shop_purchases.get_state().deck == app.run_deck,
+		"the single purchase settles the visit ledger and leaves route and run RNG untouched")
+	var stock_after: Array = app.shop_purchases.get_stock().cards
+	_check(stock_after[target].sold and stock_before[target].sold == false
+		and app.shop_offers.selected == target and app.shop_buy_button.disabled,
+		"the settled listing is marked sold and its Buy control disables")
+	_check(hint.text == SHOP_GALLERY_GUIDANCE,
+		"a sold listing drops the old Buy synopsis back to neutral guidance")
+	var sold_tile = _tile_for("offer", target)
+	var sold_definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	_check(sold_tile != null and sold_tile.disabled
+		and gallery.tile_details(sold_tile).title == String(sold_definition.get("display_name", card_id)),
+		"the sold listing keeps its authored tile but disables it")
+	if sold_tile == null:
+		return
+	sold_tile.pressed.emit()
+	await _frames()
+	_check(hint.text == SHOP_GALLERY_GUIDANCE and app.shop_offers.selected == target
+		and app.session_gold == gold - price,
+		"the sold tile cannot reselect itself or announce a second purchase")
+	var after_buy := _shop_state()
+	stale_tile_callback.call()
+	await _frames()
+	_check(_shop_state() == after_buy and hint.text == SHOP_GALLERY_GUIDANCE,
+		"the pre-purchase tile callback cannot revive the sold synopsis or spend again")
 
 
 func _run() -> void:
@@ -867,6 +1002,15 @@ func _run() -> void:
 		_check(gallery.removal_tiles().size() == app.run_deck.size(),
 			"Shop gallery shows exactly one removal tile per owned occurrence")
 		_check_shop_gallery_labels(gallery)
+		var quoted_prices: Array = app.shop_purchases.get_stock().cards.map(
+			func(offer): return int(offer.price))
+		if session == 1:
+			_check(app.session_gold >= int(quoted_prices.max()),
+				"funded Shop visit can afford every quoted listing")
+		elif session in [0, 3]:
+			_check(app.session_gold < int(quoted_prices.min()),
+				"natural victory wallet is short of every quoted listing")
+		await _check_offer_hint(gallery)
 		var scroll: ScrollContainer = gallery.gallery_scroll()
 		var scroll_start: int = scroll.scroll_vertical
 		scroll.ensure_control_visible(gallery.removal_tiles().back())
@@ -992,6 +1136,8 @@ func _run() -> void:
 		await _select_tile_by_key(_tile_for("offer", 1))
 		_check(_shop_state() == before and app.shop_offers.selected == 1,
 			"offer tile keyboard selection has zero ledger effect")
+		if session == 1:
+			await _check_offer_purchase_hint(gallery)
 		if session == 0:
 			await _check_tile_art(gallery)
 			await _check_selection_cue(gallery)

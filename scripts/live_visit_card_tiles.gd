@@ -30,6 +30,10 @@ const CATALOG := preload("res://scripts/live_hand_card_metadata.gd")
 ## Printed on a tile whose row cannot be matched to a canonical catalog record.
 ## It names no card and invents no rule or amount.
 const DETAILS_UNAVAILABLE := "Card details unavailable: this row has no canonical catalog record."
+## The Shop gallery's neutral guidance: shown on a fresh visit and whenever the
+## player's last pick is not a live card-for-sale offer (a removal tile, a sold
+## listing, a stale row). It never quotes a price or a wallet.
+const SHOP_GUIDANCE := "Choose a card, then press Buy or Remove."
 
 ## U+2192, the arrow a Rest upgrade tile prints between its two authored halves
 ## (name and cost). Patrick Hand has no arrow glyph, so those two labels alone
@@ -84,6 +88,10 @@ var _tiles: Array[Dictionary] = []
 var _masked: Array[Dictionary] = []
 var _epoch: int = 0
 var _signature: String = ""
+## The card-for-sale row the player last picked in this visit, or -1. Set only
+## by a real tile press/keyboard activation; reset when a removal tile, a sold or
+## rebuilt offer, or a new visit makes that pick stale.
+var _selected_offer_row: int = -1
 var _selector_offer: OptionButton = null
 var _selector_remove: OptionButton = null
 var _selector_upgrade: OptionButton = null
@@ -168,6 +176,7 @@ func _mount(kind: String, view: Control) -> void:
 	_view = view
 	_view_id = view.get_instance_id()
 	_epoch += 1
+	_selected_offer_row = -1
 	_collect_controls(view)
 	var inherited_focus := _prepare_controls()
 	_reflow_view(view)
@@ -347,7 +356,7 @@ func _mount_gallery() -> void:
 	column.add_child(title)
 	_summary = Label.new()
 	_summary.name = "GalleryHint"
-	_summary.text = ("Choose a card, then press Buy or Remove."
+	_summary.text = (SHOP_GUIDANCE
 		if _kind == "Shop" else "Choose a card, then press Upgrade — or take Heal instead.")
 	_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1133,6 +1142,52 @@ func _paint_selection() -> void:
 		if label.visible != selected:
 			label.visible = selected
 			_paint_tile(record)
+	_paint_offer_hint()
+
+
+## The sewn hint under the Shop title is the player's selection receipt: when
+## the last pick is still a live card-for-sale row it names that card, quotes its
+## published price and states the wallet consequence. Every other state (fresh
+## visit, removal pick, sold or mismatched row, unknown catalog record) falls back
+## to the neutral Shop guidance, so no obsolete synopsis can linger.
+func _paint_offer_hint() -> void:
+	if _kind != "Shop" or not is_instance_valid(_summary):
+		return
+	var text := _offer_synopsis()
+	if _summary.text != text:
+		_summary.text = text
+
+
+## Read-only projection of the selected offer. Both numbers are the visit's own
+## published price and the run's current wallet; nothing is quoted, spent or
+## rolled here.
+func _offer_synopsis() -> String:
+	var row := _selected_offer_row
+	if row < 0 or not is_instance_valid(_selector_offer):
+		return SHOP_GUIDANCE
+	if row != _selector_offer.selected or row >= _selector_offer.item_count:
+		return SHOP_GUIDANCE
+	var stock := _shop_stock_cards()
+	var gold := _shop_gold()
+	if row >= stock.size() or not (stock[row] is Dictionary) or gold < 0:
+		return SHOP_GUIDANCE
+	var offer: Dictionary = stock[row]
+	if offer.get("sold", false) == true \
+			or _selector_offer.get_item_metadata(row) != offer.get("id"):
+		return SHOP_GUIDANCE
+	var price := int(offer.get("price", -1))
+	if price < 0:
+		return SHOP_GUIDANCE
+	var card_id := String(offer.get("id", ""))
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	var card_name := String(definition.get("display_name", ""))
+	if card_name.is_empty():
+		# No canonical catalog name: keep the honest neutral guidance rather than
+		# printing a raw ID or inventing a title.
+		return SHOP_GUIDANCE
+	if gold >= price:
+		return "%s — %d gold; %d gold left after Buy" % [card_name, price, gold - price]
+	return "%s — %d gold; you have %d, %d short" % [card_name, price, gold, price - gold]
 
 
 func _paint_tile(record: Dictionary) -> void:
@@ -1262,6 +1317,9 @@ func _on_tile_pressed(epoch: int, button: Variant) -> void:
 	# original Buy/Remove/Upgrade button still owns the transaction.
 	selector.select(row)
 	selector.item_selected.emit(row)
+	# Record which group the player actually picked, so the sewn hint can show a
+	# live offer synopsis and forget it as soon as a removal row takes over.
+	_selected_offer_row = row if String(record["group"]) == "offer" else -1
 	_paint_selection()
 
 
@@ -1423,3 +1481,4 @@ func _teardown() -> void:
 	_view = null
 	_view_id = 0
 	_signature = ""
+	_selected_offer_row = -1
