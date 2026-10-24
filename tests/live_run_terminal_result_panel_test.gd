@@ -264,6 +264,9 @@ func _hero_row_text(row: Control) -> String:
 	var detail_label := row.get_node_or_null("RowInset/RowLine/HeroDetail") as Label
 	if name_label == null or detail_label == null:
 		return ""
+	var badge := row.get_node_or_null("RowInset/RowLine/TornBadge") as Label
+	if badge != null and badge.visible and not badge.text.is_empty():
+		return "%s %s %s" % [name_label.text, badge.text, detail_label.text]
 	return "%s %s" % [name_label.text, detail_label.text]
 
 
@@ -291,8 +294,6 @@ func _oracle_hero_lines(summary: Dictionary) -> Array[String]:
 	var lines: Array[String] = []
 	for hero in summary.get("heroes", []):
 		var parts: Array[String] = ["%d/%d HP" % [int(hero.hp), int(hero.max_hp)]]
-		if int(hero.hp) == 0:
-			parts.append("TORN")
 		parts.append("1 tear" if int(hero.tears) == 1 else "%d tears" % int(hero.tears))
 		var worn: Array[String] = []
 		for slot in ["HEAD", "ARM", "COAT"]:
@@ -300,7 +301,12 @@ func _oracle_hero_lines(summary: Dictionary) -> Array[String]:
 			if not patch_id.is_empty():
 				worn.append("%s %s" % [slot, patch_id.capitalize()])
 		parts.append(" · ".join(worn) if not worn.is_empty() else "no patches")
-		lines.append("%s %s" % [str(hero.hero_id).capitalize(), " · ".join(parts)])
+		var hero_name := str(hero.hero_id).capitalize()
+		var detail := " · ".join(parts)
+		if int(hero.hp) == 0:
+			lines.append("%s %s %s" % [hero_name, "TORN", detail])
+		else:
+			lines.append("%s %s" % [hero_name, detail])
 	return lines
 
 
@@ -1767,10 +1773,40 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 		settled, _floor_clause(victory["ctx"])],
 		"AC1: the torn ledger keeps the exact wallet line")
 	_check_hero_rows([
-		"Warden 0/37 HP · TORN · 1 tear · no patches",
+		"Warden TORN 0/37 HP · 1 tear · no patches",
 		"Seamstress 30/30 HP · 0 tears · HEAD Button Eye",
 		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
 	], "AC1: torn run ribbons")
+	var row_warden: Control = panel.hero_rows.get_child(0)
+	var warden_badge := row_warden.get_node_or_null("RowInset/RowLine/TornBadge") as Label
+	_check(warden_badge != null, "AC1: 0-HP Warden row contains TornBadge node")
+	if warden_badge != null:
+		_check(warden_badge.text == "TORN", "AC1: TornBadge text is exactly TORN")
+		_check(warden_badge.theme_type_variation == "PatchHeading", "AC1: TornBadge uses PatchHeading variation")
+		var badge_font := warden_badge.get_theme_font("font") as Font
+		_check(badge_font != null and badge_font.resource_path == HEADING_FONT,
+			"AC1: TornBadge font resolves to LondrinaSolid-Regular display font")
+		_check(warden_badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and warden_badge.focus_mode == Control.FOCUS_NONE,
+			"AC1: TornBadge is decorative and noninteractive")
+		var b_style := warden_badge.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(b_style != null and b_style.border_width_left >= 1,
+			"AC1: TornBadge has sewn border style")
+	var warden_torn_labels := row_warden.find_children("*", "Label", true, false).filter(
+		func(l: Label): return l.text == "TORN")
+	_check(warden_torn_labels.size() == 1, "AC1: exactly one TORN badge in Warden row")
+	var warden_detail := row_warden.get_node("RowInset/RowLine/HeroDetail") as Label
+	_check(not warden_detail.text.contains("TORN"), "AC1: no duplicate TORN word in HeroDetail")
+	_check(warden_detail.text == "0/37 HP · 1 tear · no patches",
+		"AC1: authentic HP, tear and patch values preserved in HeroDetail")
+	var row_seamstress: Control = panel.hero_rows.get_child(1)
+	var row_tinker: Control = panel.hero_rows.get_child(2)
+	_check(row_seamstress.get_node_or_null("RowInset/RowLine/TornBadge") == null
+		and row_tinker.get_node_or_null("RowInset/RowLine/TornBadge") == null,
+		"AC2: living heroes receive no TORN badge")
+	_check(not (row_seamstress.get_node("RowInset/RowLine/HeroDetail") as Label).text.contains("TORN")
+		and not (row_tinker.get_node("RowInset/RowLine/HeroDetail") as Label).text.contains("TORN"),
+		"AC2: living hero details contain no TORN text")
 	var projected: Array = carry._projected_heroes()
 	var projected_tinker := 0
 	for hero in projected:
@@ -1927,10 +1963,17 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	await _frames()
 	rows = panel.summary_label.text.split("\n")
 	_check_hero_rows([
-		"Warden 0/34 HP · TORN · 2 tears · no patches",
+		"Warden TORN 0/34 HP · 2 tears · no patches",
 		"Seamstress 9/27 HP · 1 tear · HEAD Button Eye",
 		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
 	], "AC2: repeatedly torn run ribbons")
+	var row_w2: Control = panel.hero_rows.get_child(0)
+	var badge_w2 := row_w2.get_node_or_null("RowInset/RowLine/TornBadge") as Label
+	_check(badge_w2 != null and badge_w2.text == "TORN"
+		and badge_w2.theme_type_variation == "PatchHeading",
+		"AC2: repeatedly torn Warden maintains distinct TORN badge")
+	_check(not (row_w2.get_node("RowInset/RowLine/HeroDetail") as Label).text.contains("TORN"),
+		"AC2: no duplicate TORN in repeatedly torn Warden detail")
 	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
 		"AC2: presenting plural tear counts mutates no hero, deck, purse, wardrobe or RNG")
 	panel.close_result()
@@ -2057,6 +2100,8 @@ func _test_reopen_resets_recap(defeat: Dictionary) -> void:
 	_check(panel.hero_rows.get_child_count() == 0 and not panel.hero_recap.visible
 		and panel.summary_label.text.is_empty(),
 		"AC3: close removes every ribbon and clears the counters")
+	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
+		"AC3: no TornBadge survives close")
 	_check(_app_snapshot() == worn_before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
 		"AC3: closing the worn recap mutates nothing")
 	_install_run({"deck": starter, "descriptors": {}, "next_stitch_id": 1})
@@ -2123,10 +2168,26 @@ func _test_torn_wearer_keeps_patches(defeat: Dictionary) -> void:
 	_check(panel.open_result(defeat["ctx"]["latch"]), "AC1: the torn wearer result opens")
 	await _frames()
 	_check_hero_rows([
-		"Warden 0/37 HP · TORN · 1 tear · HEAD Button Eye",
+		"Warden TORN 0/37 HP · 1 tear · HEAD Button Eye",
 		"Seamstress 30/30 HP · 0 tears · no patches",
 		"Tinker 26/26 HP · 0 tears · no patches",
 	], "AC1: torn wearer ribbons")
+	var row_tw: Control = panel.hero_rows.get_child(0)
+	var badge_tw := row_tw.get_node_or_null("RowInset/RowLine/TornBadge") as Label
+	_check(badge_tw != null and badge_tw.text == "TORN"
+		and badge_tw.theme_type_variation == "PatchHeading",
+		"AC1: torn wearer has sewn TORN badge next to name")
+	var detail_tw := row_tw.get_node("RowInset/RowLine/HeroDetail") as Label
+	_check(not detail_tw.text.contains("TORN"),
+		"AC1: no duplicate TORN in worn patch detail")
+	_check(detail_tw.text == "0/37 HP · 1 tear · HEAD Button Eye",
+		"AC1: torn wearer keeps HEAD Button Eye visible and unchanged")
+	_check(row_tw.find_children("*", "Label", true, false).filter(
+		func(l: Label): return l.text == "TORN").size() == 1,
+		"AC1: exactly one TORN badge on torn wearer row")
+	_check(panel.hero_rows.get_child(1).get_node_or_null("RowInset/RowLine/TornBadge") == null
+		and panel.hero_rows.get_child(2).get_node_or_null("RowInset/RowLine/TornBadge") == null,
+		"AC1: living heroes receive no badge beside torn wearer")
 	_check(not _hero_rows_text()[1].contains("TORN") and not _hero_rows_text()[2].contains("TORN"),
 		"AC1: living heroes carry no TORN marker beside the torn wearer")
 	_check(_app_snapshot() == before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
@@ -2538,6 +2599,125 @@ func _test_depth_beyond_battle_count() -> void:
 	panel.close_result()
 
 
+## AC1, AC2, AC3: Sewn TORN badge on recap ribbons for downed heroes.
+## Distinguishes genuinely downed heroes with a compact sewn TORN badge next to the
+## hero name, preserves three-hero identity order Warden/Seamstress/Tinker, ensures
+## living heroes receive no badge and no duplicate TORN in HeroDetail, and verifies
+## close/reopen and invalid-result fail-closed safety.
+func _test_sewn_torn_badges(victory: Dictionary, defeat: Dictionary) -> void:
+	var starter := _starter_deck()
+	if starter.is_empty():
+		return
+
+	# Mixed party: Seamstress is genuinely downed in battle (0 HP), Warden & Tinker survive.
+	var party := CombatParty.new(_definitions(HEROES))
+	var carry := RunTornCarryover.new(party.get_heroes())
+	_check(carry.is_valid(), "AC1/AC2: authentic carryover for mixed party")
+	var fight := carry.create_next_fight_party()
+	_check(fight != null, "AC1/AC2: mixed party admits battle")
+	if fight == null:
+		return
+	var enemies := CombatEnemies.new([{"id": "dummy_mixed", "max_hp": 8}])
+	var result := CombatBattleResult.new(fight, enemies)
+	_check(carry.begin_battle("mixed_node", result, fight), "AC1/AC2: mixed battle begins")
+	_check(fight.apply_damage(2, fight.get_hero(2)["hp"]) and fight.is_downed(2),
+		"AC1/AC2: Seamstress takes lethal damage and is downed")
+	_check(enemies.apply_damage(1, 8) and enemies.is_victorious(),
+		"AC1/AC2: enemies defeated with surviving Warden and Tinker")
+	_check(result.evaluate() == CombatBattleResult.VICTORY, "AC1/AC2: mixed battle evaluated VICTORY")
+	_check(carry.commit_victory("mixed_node", result, fight).get("ok") == true,
+		"AC1/AC2: mixed battle committed")
+	_check(carry.apply_reward("mixed_node", result, fight).get("ok") == true,
+		"AC1/AC2: mixed reward applied")
+	var mixed_heroes: Array = carry.read_state().heroes
+	_check(mixed_heroes.size() == 3
+		and mixed_heroes[0].id == "warden" and mixed_heroes[0].hp == 40
+		and mixed_heroes[1].id == "seamstress" and mixed_heroes[1].hp == 0 and mixed_heroes[1].max_hp == 27
+		and mixed_heroes[2].id == "tinker" and mixed_heroes[2].hp == 26,
+		"AC1/AC2: mixed carryover heroes state matches expected HP and Seamstress down")
+	var wardrobe := RunPatchWardrobe.new(mixed_heroes,
+		["button_eye", "pincushion_arm", "quilted_coat"],
+		PATCH_DEFINITIONS.duplicate(true),
+		4, 50, starter, 5801, true)
+	_check(wardrobe.is_valid(), "AC1/AC2: wardrobe for mixed party validates")
+	_check(wardrobe.sew("pincushion_arm", "seamstress", "ARM", "sew_seamstress_mixed",
+		wardrobe.get_snapshot()).get("ok") == true, "AC1: sew on downed Seamstress")
+	_check(wardrobe.sew("quilted_coat", "tinker", "COAT", "sew_tinker_mixed",
+		wardrobe.get_snapshot()).get("ok") == true, "AC1: sew on living Tinker")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"AC1/AC2: bind wardrobe to carryover")
+
+	app.run_heroes = mixed_heroes.duplicate(true)
+	app.party_carryover = carry
+	app.session_gold = 50
+	app.run_scraps = 4
+	app.run_deck.assign(starter)
+	app.run_stitch_descriptors = {}
+	app.run_next_stitch_id = 1
+	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
+
+	var before := _app_snapshot()
+	var state := _snapshot(defeat["ctx"], defeat["battle"])
+	_check(panel.open_result(defeat["ctx"]["latch"]), "AC1/AC2: opens mixed party defeat result")
+	await _frames()
+	_check(panel.has_open_result() and panel.is_visible_in_tree(), "AC1/AC2: panel is open and visible")
+
+	var expected_mixed: Array[String] = [
+		"Warden 40/40 HP · 0 tears · no patches",
+		"Seamstress TORN 0/27 HP · 1 tear · ARM Pincushion Arm",
+		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
+	]
+	_check_hero_rows(expected_mixed, "AC2: mixed party ribbons match independent oracle")
+
+	var seamstress_row: Control = panel.hero_rows.get_child(1)
+	var badge := seamstress_row.get_node_or_null("RowInset/RowLine/TornBadge") as Label
+	_check(badge != null, "AC1: downed Seamstress row contains TornBadge node")
+	if badge != null:
+		_check(badge.text == "TORN", "AC1: TornBadge text is exactly TORN")
+		_check(badge.theme_type_variation == "PatchHeading", "AC1: TornBadge uses PatchHeading variation")
+		var b_font := badge.get_theme_font("font") as Font
+		_check(b_font != null and b_font.resource_path == HEADING_FONT,
+			"AC1: TornBadge font resolves to LondrinaSolid-Regular display font")
+		_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE and badge.focus_mode == Control.FOCUS_NONE,
+			"AC1: TornBadge ignores mouse and keyboard focus")
+		var b_style := badge.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(b_style != null and b_style.border_width_left >= 1, "AC1: TornBadge has sewn border style")
+		_check(b_style.border_color.get_luminance() < 0.6, "AC1: TornBadge border uses dark border color")
+	var s_torn_labels := seamstress_row.find_children("*", "Label", true, false).filter(
+		func(l: Label): return l.text == "TORN")
+	_check(s_torn_labels.size() == 1, "AC1: exactly one TORN badge in Seamstress row")
+	var s_detail := seamstress_row.get_node("RowInset/RowLine/HeroDetail") as Label
+	_check(not s_detail.text.contains("TORN"), "AC1: no duplicate TORN in HeroDetail")
+	_check(s_detail.text == "0/27 HP · 1 tear · ARM Pincushion Arm",
+		"AC1: authentic HP, tears, and worn patch preserved in HeroDetail")
+
+	var warden_row: Control = panel.hero_rows.get_child(0)
+	var tinker_row: Control = panel.hero_rows.get_child(2)
+	_check(warden_row.get_node_or_null("RowInset/RowLine/TornBadge") == null,
+		"AC2: living Warden row has no TornBadge")
+	_check(tinker_row.get_node_or_null("RowInset/RowLine/TornBadge") == null,
+		"AC2: living Tinker row has no TornBadge")
+	_check(not (warden_row.get_node("RowInset/RowLine/HeroDetail") as Label).text.contains("TORN"),
+		"AC2: living Warden detail has no TORN")
+	_check(not (tinker_row.get_node("RowInset/RowLine/HeroDetail") as Label).text.contains("TORN"),
+		"AC2: living Tinker detail has no TORN")
+
+	panel.close_result()
+	_check(not panel.has_open_result() and panel.hero_rows.get_child_count() == 0,
+		"AC3: close clears result and removes all hero rows")
+	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
+		"AC3: no TornBadge survives close")
+	_check(_app_snapshot() == before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
+		"AC3: presentation and close leave app and run ledgers unchanged")
+
+	_install_run({"deck": starter, "descriptors": {}, "next_stitch_id": 1})
+	_check(panel.open_result(defeat["ctx"]["latch"]), "AC3: reopen with fresh untorn run")
+	await _frames()
+	_check(panel.find_children("TornBadge", "", true, false).is_empty(),
+		"AC3: reopened living run contains zero TornBadges")
+	panel.close_result()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -2578,6 +2758,7 @@ func _run() -> void:
 		await _test_readable_typography(victory, defeat)
 		await _test_terminal_wallet_and_health(victory, defeat)
 		await _test_terminal_tears(victory, defeat)
+		await _test_sewn_torn_badges(victory, defeat)
 		await _test_deferred_keyboard_focus(victory, defeat)
 		await _test_depth_beyond_battle_count()
 		await _test_unverified_floor()

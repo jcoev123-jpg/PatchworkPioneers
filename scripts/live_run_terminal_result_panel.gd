@@ -48,6 +48,8 @@ const UNAVAILABLE := "Summary unavailable"
 const NO_PATCHES := "no patches"
 ## The one badge a hero receives for authenticated zero HP.
 const TORN_BADGE := "TORN"
+const HERO_TORN_BADGE_FONT_SIZE := 14
+const HERO_TORN_BADGE_BG := Color("#e4d2b5")
 ## The three sewn hero ribbons. Each keeps a heading name and a body detail
 ## line at or above the 18 px floor, on the same cream felt used by the kept
 ## sewn-card rows, so the recap reads as part of the patchwork result.
@@ -537,6 +539,7 @@ func _hero_recap_parts(hero: Dictionary) -> Dictionary:
 	if typeof(tears) != TYPE_INT or tears < 0:
 		return {}
 	var parts: Array[String] = []
+	var is_torn: bool = false
 	# HP is optional only for an unauthenticated direct formatter call; any
 	# malformed wider value still fails the whole ledger shut.
 	if hero.has("hp") or hero.has("max_hp"):
@@ -547,7 +550,7 @@ func _hero_recap_parts(hero: Dictionary) -> Dictionary:
 			return {}
 		parts.append("%d/%d HP" % [hp, max_hp])
 		if hp == 0:
-			parts.append(TORN_BADGE)
+			is_torn = true
 	parts.append(_tear_label(tears))
 	var slots: Variant = hero.get("slots")
 	if not slots is Dictionary:
@@ -563,6 +566,7 @@ func _hero_recap_parts(hero: Dictionary) -> Dictionary:
 	return {
 		"name": str(hero_id).capitalize(),
 		"detail": " · ".join(parts),
+		"is_torn": is_torn,
 	}
 
 
@@ -603,6 +607,28 @@ func _mount_hero_rows(rows: Array) -> void:
 		name_label.add_theme_font_size_override("font_size", HERO_NAME_FONT_SIZE)
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		line.add_child(name_label)
+		if parts.get("is_torn", false):
+			var badge := Label.new()
+			badge.name = "TornBadge"
+			badge.text = TORN_BADGE
+			badge.theme_type_variation = "PatchHeading"
+			badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			badge.focus_mode = Control.FOCUS_NONE
+			badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			badge.add_theme_color_override("font_color", HERO_NAME_INK)
+			badge.add_theme_font_size_override("font_size", HERO_TORN_BADGE_FONT_SIZE)
+			var badge_style := StyleBoxFlat.new()
+			badge_style.bg_color = HERO_TORN_BADGE_BG
+			badge_style.border_color = HERO_ROW_BORDER
+			badge_style.set_border_width_all(1)
+			badge_style.set_corner_radius_all(3)
+			badge_style.content_margin_left = 6
+			badge_style.content_margin_right = 6
+			badge_style.content_margin_top = 1
+			badge_style.content_margin_bottom = 1
+			badge.add_theme_stylebox_override("normal", badge_style)
+			line.add_child(badge)
 		var detail_label := Label.new()
 		detail_label.name = "HeroDetail"
 		detail_label.text = parts["detail"]
