@@ -51,7 +51,7 @@ func begin_fight() -> bool:
 		return false
 	# Authenticate an optional Path before clearing Block or drawing cards.
 	# Vanguard's zero is valid; a negative result is a forged receipt.
-	if _opening_block._resolve_block_amount() < 0:
+	if not _opening_block.can_open():
 		return false
 	# The optional battle-local projection is detached from the run wardrobe.
 	# Reject a malformed binding or a roster changed since its admission before
@@ -64,10 +64,13 @@ func begin_fight() -> bool:
 		patches = projection.rules
 		if not patches.is_valid() or projection.get("heroes") != _party.get_heroes():
 			return false
-	# Validated services make all three operations total for this initial state.
+	# Preflight checked the unique Warden and authentic carryover before mutation.
+	# A downed Warden is deliberately allowed without an opening latch.
+	var living_warden := not _party.is_downed(_opening_block._warden_position())
 	_party.start_player_turn()
+	if living_warden and not _opening_block.apply():
+		return false
 	_deck.start_turn()
-	_opening_block.apply()
 	if patches != null:
 		for hero in _party.get_heroes():
 			var bonus := patches.opening_block_bonus(hero.id)

@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_ac3()
 	_test_bulwark_replacement()
 	_test_vanguard_contract()
+	_test_carryover_caps()
 	_test_receipt_rejections()
 	_test_rng_preservation()
 	var first := _repeated_sequence()
@@ -379,6 +380,77 @@ func _test_vanguard_contract() -> void:
 		"Bulwark grants 10 Block vs default 6")
 	_check(snap_bulwark[1] == snap_default[1], "Seamstress identical between Bulwark and default")
 	_check(snap_bulwark[2] == snap_default[2], "Tinker identical between Bulwark and default")
+
+
+func _test_carryover_caps() -> void:
+	var initial := CombatParty.new(_defs()).get_heroes()
+	var torn := RunTornCarryover.new(initial)
+	var first := torn.create_next_fight_party()
+	var enemies := CombatEnemies.new([{"id": "carryover_probe", "max_hp": 10}])
+	var result := CombatBattleResult.new(first, enemies)
+	_check(torn.is_valid() and first != null
+		and torn.begin_battle("first-fight", result, first),
+		"real carryover ledger admits an opening battle")
+	if first == null:
+		return
+	_check(first.apply_damage(1, 9999) and first.is_downed(1)
+		and enemies.apply_damage(1, 9999)
+		and result.evaluate() == CombatBattleResult.VICTORY
+		and torn.commit_victory("first-fight", result, first).ok
+		and torn.apply_reward("first-fight", result, first).ok
+		and torn.choose_rest_heal("rest-after-tear").ok,
+		"actual tear, reward and Rest produce an alive reduced-cap Warden")
+	var mended := torn.create_next_fight_party()
+	_check(mended != null and mended.get_hero(1).max_hp == 37
+		and mended.get_hero(1).hp > 0, "authentic mended Warden starts under 40")
+
+	var coat := RunTornCarryover.new(initial)
+	var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	definitions.append({"id": "quilted_coat", "slot": "COAT"})
+	var wardrobe := RunPatchWardrobe.new(initial, ["quilted_coat"], definitions, 0)
+	_check(wardrobe.is_valid() and wardrobe.sew("quilted_coat", "warden", "COAT",
+		"wear-coat", wardrobe.get_snapshot()).ok
+		and coat.bind_wardrobe(wardrobe, coat.torn, wardrobe.get_snapshot()),
+		"genuine Warden COAT sewn and bound to same run ledger")
+	var projected := coat.create_next_fight_party()
+	_check(projected != null and projected.get_hero(1).max_hp == 46
+		and projected.has_meta("shop_patch_projection"),
+		"real COAT creates over-40 Warden with validated same-party projection")
+	for kind in ["mended", "coat"]:
+		for option in [
+			{"name": "unselected", "receipt": null, "amount": 6},
+			{"name": "bulwark", "receipt": RunWardenPathChoice.new().choose("bulwark"), "amount": 10},
+			{"name": "vanguard", "receipt": RunWardenPathChoice.new().choose("vanguard"), "amount": 0}]:
+			var party: CombatParty = (torn if kind == "mended" else coat).create_next_fight_party()
+			if party == null:
+				_check(false, kind + " retains an authentic fresh party per Path")
+				continue
+			var label: String = kind + " " + option.name
+			var before := _snap(party)
+			var expected := before.duplicate(true)
+			expected[0].block = option.amount
+			var helper := CombatStartingBlock.new(party, option.receipt)
+			_check(helper.can_open(), label + " valid roster and receipt preflight")
+			_check(helper.apply() and helper.is_consumed()
+				and _snap(party) == expected,
+				label + " grants exact Warden opening with no foreign changes")
+			_check(not helper.apply() and _snap(party) == expected,
+				label + " opening stays consumed")
+
+	# An ordinary three-actor over-cap roster without a projection is forged.
+	var forged := CombatParty.new(_defs())
+	forged._heroes[0].max_hp = 41
+	_check(not CombatStartingBlock.new(forged).can_open(),
+		"raw 41-HP Warden cannot pass passive preflight")
+	var invalid_projected := coat.create_next_fight_party()
+	if invalid_projected != null:
+		invalid_projected._heroes[0].max_hp = 47
+		var before := _snap(invalid_projected)
+		var helper := CombatStartingBlock.new(invalid_projected)
+		_check(not helper.can_open() and not helper.apply()
+			and not helper.is_consumed() and _snap(invalid_projected) == before,
+			"COAT snapshot mismatched to 47 cap fails closed without Block or latch")
 
 
 func _test_receipt_rejections() -> void:

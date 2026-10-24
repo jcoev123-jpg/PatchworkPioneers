@@ -227,6 +227,53 @@ func _service_checks() -> void:
 	_check([carry.read_state(), carry.torn.read_state()] == before, "defeat cannot change tears or heroes")
 
 
+func _mounted_warden_carryover_opening() -> void:
+	# Follow the actual route through a Warden tear, downed next Fight,
+	# Rest revival, and a living sub-40 Warden's next Fight opening.
+	var fixture := _tear_fixture("Fight")
+	_check(not fixture.is_empty(), "mounted Warden tear route offers Fight/Fight/Rest/Fight")
+	if fixture.is_empty():
+		return
+	app.run_seed = fixture.seed
+	await _activate(app.route_button, false)
+	await _activate(_route_action(fixture.fight), false)
+	_check(app.party != null and app.party.get_hero(1).id == "warden"
+		and app.party.get_hero(1).block == 6,
+		"real first Fight has living Warden with base opening Block")
+	_check(app.party.apply_damage(1, 9999) and app.party.is_downed(1),
+		"real first Fight downs Warden for an earned tear")
+	await _win_fixture()
+	await _activate(app.reward_buttons[3], false)
+	_check(app.run_heroes[0].max_hp == 37 and app.run_heroes[0].hp == 0,
+		"reward genuinely publishes Warden tear and downed state")
+	await _activate(app.continue_button, false)
+	await _activate(_route_action(fixture.second), false)
+	_check(app.party.get_hero(1).max_hp == 37 and app.party.is_downed(1)
+		and app.party.get_hero(1).block == 0
+		and not app.round_flow._opening_block.is_consumed(),
+		"downed Warden begins next mounted Fight without a grant or consumed latch")
+	await _win_fixture()
+	await _activate(app.reward_buttons[3], false)
+	await _activate(app.continue_button, false)
+	await _activate(_route_action(fixture.rest), false)
+	await _activate(app.rest_heal_button, false)
+	_check(app.run_heroes[0].max_hp == 37 and app.run_heroes[0].hp > 0,
+		"physical Rest revives Warden without undoing the tear cap")
+	await _activate(app.rest_continue_button, false)
+	await _activate(_route_action(fixture.last), false)
+	_check(app.party.get_hero(1).id == "warden"
+		and app.party.get_hero(1).max_hp == 37
+		and app.party.get_hero(1).hp > 0 and app.party.get_hero(1).block == 6
+		and app.party.get_hero(2).block == 0 and app.party.get_hero(3).block == 0
+		and app.round_flow._opening_block.is_consumed()
+		and app.deck.turn_active and app.deck.hand.size() == 5 and app.deck.energy == 3,
+		"real next Fight grants exact once-only 6 to restored sub-40 Warden with seeded hand/energy")
+	var before: Array = app.party.get_heroes()
+	_check(not app.round_flow.begin_fight() and app.party.get_heroes() == before,
+		"mounted mended next Fight cannot replay the opening passive")
+	await _activate(app.return_button, false)
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -298,6 +345,7 @@ func _run() -> void:
 				_check(observed == replay, "mouse and keyboard replay identical heroes/receipts/RNG")
 			await _activate(app.return_button, keyboard)
 			_check(app.party_carryover == null and app.run_heroes.is_empty(), "title resets tear history")
+	await _mounted_warden_carryover_opening()
 	_check(app._start_battle(), "explicit standalone M01 fixture starts")
 	await _frames()
 	_check(app.run_map == null and app.party_carryover == null and app.party.get_hero(3).max_hp == 26, "standalone restart has pristine maximum and no tear service")
