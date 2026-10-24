@@ -270,6 +270,19 @@ func _check_patch_action() -> void:
 	_check(app.shop_patch_buy_button.text == expected
 		and app.shop_patch_buy_button.disabled == (offer.sold or app.session_gold < offer.price),
 		"selected stock sets exact truthful price/status and enabled state")
+	var button: Button = app.shop_patch_buy_button
+	var font := button.get_theme_font("font")
+	var font_size := button.get_theme_font_size("font_size")
+	_check(font != null and font_size >= 18 and button.is_visible_in_tree(),
+		"caption clearance uses the mounted readable font")
+	var caption := font.get_string_size(expected, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var face := button.get_theme_stylebox(state)
+		_check(face.get_content_margin(SIDE_LEFT) >= LiveVisitCardTiles.ACTION_PADDING_X
+			and face.get_content_margin(SIDE_RIGHT) >= LiveVisitCardTiles.ACTION_PADDING_X
+			and caption.x + face.get_minimum_size().x <= button.size.x
+			and caption.y + face.get_minimum_size().y <= button.size.y,
+			"exact selected caption clears sewn padding in " + state + ": " + expected)
 
 
 func _check_equipment_layout() -> void:
@@ -286,6 +299,18 @@ func _check_equipment_layout() -> void:
 	var heading := panel.find_child("EquipmentHeading", true, false) as Label
 	_check(heading != null and heading.text == "Equipment — sewing included"
 		and heading.theme_type_variation == &"PatchHeading", "concise equipment heading explains included sewing")
+	var content := heading.get_parent() as VBoxContainer
+	var selectors := app.shop_patch_offers.get_parent() as HBoxContainer
+	var button: Button = app.shop_patch_buy_button
+	_check(content != null and selectors != null and selectors.get_parent() == content
+		and selectors.get_children() == [app.shop_patch_offers, app.shop_patch_heroes]
+		and button.get_parent() == content and button.get_index() == selectors.get_index() + 1
+		and app.shop_patch_preview.get_parent() == content,
+		"existing equipment column gives the action its own row after both selectors")
+	_check(is_equal_approx(button.size.x, content.size.x)
+		and button.size.y >= 48 and button.custom_minimum_size.y >= 48,
+		"sewn action fills the equipment content width with comfortable height")
+	_check_patch_action()
 	var controls: Array[Control] = [app.shop_patch_offers, app.shop_patch_heroes,
 		app.shop_patch_buy_button, app.shop_patch_preview]
 	for control in controls:
@@ -495,6 +520,7 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 	_check_patch_labels()
 	_check_preview()
 	_check(app.shop_patch_buy_button.disabled, "selected sold stock disables purchase after refresh")
+	_check_patch_action()
 	_check(app.shop_visit.get_state().trinkets == state.owned
 		and app.shop_purchases.get_state().trinkets == state.owned and app.run_trinkets == state.owned
 		and app.shop_visit.get_state().gold == state.gold and app.shop_purchases.get_state().gold == state.gold,
