@@ -705,6 +705,9 @@ func _check_skip_and_vertical_fit(label: String) -> void:
 	if burlap != null:
 		_check(burlap.get_global_rect().encloses(skip.get_global_rect()),
 			label + " burlap patch covers the entire fitted Skip face")
+		_check(burlap.patch_margin_top == panel.BUTTON_EDGE
+			and burlap.patch_margin_bottom == panel.BUTTON_EDGE,
+			label + " Skip keeps the established normal-size burlap slice")
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
 	var panel_bounds := panel.paper_panel.get_global_rect()
 	var family: Array[Control] = [panel.top_stitches, panel.title_label,
@@ -2587,6 +2590,66 @@ func _test_missing_art_placeholder() -> void:
 	probe.free()
 
 
+## The optional burlap art must stay optional: with no texture the sewn reward
+## action keeps opaque normal/hover/pressed/disabled faces, a dark focus stitch
+## and readable ink, so a legible fallback never needs a generated asset. The
+## same faces still take the art slice when the shipped texture resolves.
+func _test_burlap_fallback() -> void:
+	var accent := Color("#766351")
+	var probe := Button.new()
+	probe.name = "FallbackBurlapProbe"
+	root.add_child(probe)
+	panel._apply_sewn_faces(probe, accent)
+	panel._sew_burlap(probe, accent, panel.BUTTON_EDGE, null)
+	await _frames()
+	_check(probe.get_node_or_null("BurlapPatch") == null,
+		"absent burlap texture mounts no art patch")
+	for state: String in ["normal", "hover", "pressed", "disabled"]:
+		_check(probe.has_theme_stylebox_override(state),
+			"absent burlap texture keeps a sewn %s face" % state)
+		var box := probe.get_theme_stylebox(state) as StyleBoxFlat
+		_check(box != null and box.bg_color.a >= 1.0,
+			"absent burlap texture keeps an opaque %s face" % state)
+		_check(box != null and box.border_color == accent
+			and box.border_width_top >= 2 and box.corner_radius_top_left >= 4,
+			"absent burlap texture keeps the owner-sewn %s border" % state)
+	var focus := probe.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(focus != null and probe.has_theme_stylebox_override("focus")
+		and focus.bg_color.a == 0.0
+		and focus.border_color == LiveRunCardRewardChoicePanel._FocusStitch.DARK_FOCUS_INK,
+		"absent burlap texture keeps the dark focus stitch face")
+	_check(probe.get_theme_color("font_color") == Color("#263137")
+		and probe.get_theme_color("font_focus_color") == LiveRunCardRewardChoicePanel.DARK_INK,
+		"absent burlap texture keeps readable dark ink on the beige face")
+	# The art branch is not dead: when the shipped texture resolves it mounts the
+	# established normal-size slice, exactly what Choose, Skip and Close keep.
+	var art := LiveRunCardRewardChoicePanel.art_texture(
+		LiveRunCardRewardChoicePanel.BURLAP_BUTTON)
+	var art_probe := Button.new()
+	art_probe.name = "ArtBurlapProbe"
+	root.add_child(art_probe)
+	panel._apply_sewn_faces(art_probe, accent)
+	panel._sew_burlap(art_probe, accent, panel.BUTTON_EDGE, art)
+	await _frames()
+	var art_patch := art_probe.get_node_or_null("BurlapPatch") as NinePatchRect
+	_check((art != null) == (art_patch != null),
+		"burlap art patch follows the resolved texture")
+	if art_patch != null:
+		_check(art_patch.get_parent() == art_probe
+			and art_patch.patch_margin_top == panel.BUTTON_EDGE
+			and art_patch.patch_margin_bottom == panel.BUTTON_EDGE
+			and art_patch.patch_margin_left == panel.BUTTON_EDGE
+			and art_patch.patch_margin_right == panel.BUTTON_EDGE,
+			"resolved burlap mounts the established normal-size slice behind its action")
+		var normal := art_probe.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(normal != null and normal.bg_color.a == 0.0,
+			"resolved burlap makes the procedural face see-through")
+	root.remove_child(probe)
+	probe.free()
+	root.remove_child(art_probe)
+	art_probe.free()
+
+
 ## AC2 composition guard for the Help tab: it is sewn onto the owner band's right
 ## end, so it can never cover the picture, the name, the effects text or Choose.
 ## The final rhythm is judged by screenshots, not by new coordinate goldens.
@@ -2608,6 +2671,9 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 	await _frames()
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
 	var clearance_checks := 0
+	var burlap_checks := 0
+	var burlap_art := LiveRunCardRewardChoicePanel.art_texture(
+		LiveRunCardRewardChoicePanel.BURLAP_BUTTON)
 	for slot in range(3):
 		var card_id: String = ids[slot]
 		var card := panel.choices_container.get_child(slot) as PanelContainer
@@ -2639,6 +2705,37 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			"card header row fits both owner patch and Help tab: " + card_id)
 		_check(is_equal_approx(header.size.y, 24.0) and help.size.y <= 24.0 and owner_patch.size.y <= 24.0,
 			"card header keeps to one 24px line: " + card_id)
+		# The Help cell is only 24px tall, so its burlap must not carry the normal
+		# 22px top+bottom seams (44 > 24). The mounted NinePatchRect itself proves
+		# the art slice still has a positive centre inside that cell.
+		var help_burlap := help.get_node_or_null("BurlapPatch") as NinePatchRect
+		_check((burlap_art != null) == (help_burlap != null),
+			"mounted Help burlap follows the shipped texture: " + card_id)
+		if help_burlap != null:
+			burlap_checks += 1
+			var top_edge: int = help_burlap.patch_margin_top
+			var bottom_edge: int = help_burlap.patch_margin_bottom
+			var centre_height: float = LiveRunCardRewardChoicePanel.HELP_TAB_SIZE.y \
+				- float(top_edge) - float(bottom_edge)
+			_check(help_burlap.get_parent() == help,
+				"Help burlap patch belongs to this Help control: " + card_id)
+			_check(help_burlap.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and help_burlap.focus_mode == Control.FOCUS_NONE,
+				"Help burlap patch stays pointer-inert and unfocusable: " + card_id)
+			_check(top_edge >= 0 and bottom_edge >= 0,
+				"Help burlap vertical margins are nonnegative: " + card_id)
+			_check(top_edge + bottom_edge < int(LiveRunCardRewardChoicePanel.HELP_TAB_SIZE.y)
+				and centre_height > 0.0,
+				"Help burlap seams leave a positive centre inside the 24px cell: " + card_id)
+			var burlap_size: Vector2 = help_burlap.texture.get_size() \
+				if help_burlap.texture != null else Vector2.ZERO
+			_check(burlap_size.x > float(help_burlap.patch_margin_left
+					+ help_burlap.patch_margin_right)
+				and burlap_size.y > float(top_edge + bottom_edge),
+				"Help burlap nine-slice leaves a real source centre: " + card_id)
+			_check(help_burlap.patch_margin_left == LiveRunCardRewardChoicePanel.BUTTON_EDGE
+				and help_burlap.patch_margin_right == LiveRunCardRewardChoicePanel.BUTTON_EDGE,
+				"Help burlap keeps the established side seams: " + card_id)
 		_check(not help_rect.intersects(owner_label.get_global_rect())
 			and not help_rect.intersects(panel.title_label.get_global_rect())
 			and not help_rect.intersects(panel.gold_label.get_global_rect())
@@ -2676,6 +2773,11 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			_check(panel._help_overlay == null and help.has_focus(),
 				"mouse Close returns focus to the owning Help: " + card_id)
 		var choose := content.get_node("ChooseButton") as Button
+		var choose_patch := choose.get_node_or_null("BurlapPatch") as NinePatchRect
+		if choose_patch != null:
+			_check(choose_patch.patch_margin_top == LiveRunCardRewardChoicePanel.BUTTON_EDGE
+				and choose_patch.patch_margin_bottom == LiveRunCardRewardChoicePanel.BUTTON_EDGE,
+				"Choose keeps the established normal-size burlap slice: " + card_id)
 		choose.grab_focus()
 		await _key(KEY_RIGHT)
 		_check(help.has_focus(),
@@ -2701,6 +2803,8 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			and not panel._awaiting_ack,
 			"mouse/keyboard Help never requests or changes the prepared choice: " + card_id)
 	_check(clearance_checks >= 18, "help clearance really inspected every sibling")
+	_check(burlap_checks == (3 if burlap_art != null else 0),
+		"every mounted keyword Help tab was inspected against its burlap art")
 	_check(receipt["offers"][0]["id"] == ids[0], "help clearance receipt stays authentic")
 	var old_help := panel._help_buttons[0] as Button
 	var connections := old_help.pressed.get_connections()
@@ -2816,6 +2920,11 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 				and close.get_theme_font_size(&"font_size") >= 18,
 				"glossary Close action wears the display face")
 			if close != null:
+				var close_patch := close.get_node_or_null("BurlapPatch") as NinePatchRect
+				if close_patch != null:
+					_check(close_patch.patch_margin_top == LiveRunCardRewardChoicePanel.BUTTON_EDGE
+						and close_patch.patch_margin_bottom == LiveRunCardRewardChoicePanel.BUTTON_EDGE,
+						"glossary Close keeps the established normal-size burlap slice")
 				await _mouse(close)
 				_check(panel._help_overlay == null and first_help.has_focus(),
 					"closing the glossary returns focus to its Help tab")
@@ -2861,6 +2970,7 @@ func _run() -> void:
 	await _test_illustration_art(original_elite, "Elite")
 	_test_illustration_source()
 	await _test_missing_art_placeholder()
+	await _test_burlap_fallback()
 	await _test_art_and_help_clearance(original_fight, "Fight")
 	await _test_art_and_help_clearance(original_elite, "Elite")
 	await _test_no_keyword_card_without_help(original_fight, "Fight")
