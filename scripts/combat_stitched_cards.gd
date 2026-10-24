@@ -4,9 +4,13 @@ extends RefCounted
 ## caller-authored half dictionaries. Share attacks with ordinary card plays so
 ## Tinker's turn latch and wearer-only patch latches have one combat authority.
 
+## The only two canonical halves carrying Spare Parts' printed Block + one draw.
+const SPARE_PARTS_IDS: Array[String] = ["tinker_spare_parts", "tinker_spare_parts_plus"]
+
 var _attacks: CombatAttackCards
 var _support := CombatSupportCards.new()
 var _pool := SeamstressPoolCards.new()
+var _tinker_pool := TinkerPoolCards.new()
 var _energy := CombatPoolEnergyCards.new()
 ## Reuse the ordinary healing service's combat-scoped COAT notifier and latch.
 ## The live hand owner will supply this same instance at its commit boundary.
@@ -139,6 +143,14 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not energy_result.get("ok", false):
 				return failure
 			results.append(energy_result)
+		elif half.id in SPARE_PARTS_IDS:
+			# Spare Parts prints Block AND a draw; the generic single-effect
+			# fallback would keep only the Block. Authenticate the canonical
+			# base/+ record itself, never a caller-supplied effect dictionary.
+			var spare_result := _resolve_spare_parts_half(staged_deck, staged_party, half)
+			if not spare_result.get("ok", false):
+				return failure
+			results.append(spare_result)
 		else:
 			var effect := "draw"
 			var amount: int = half.effects.get("draw", 0)
@@ -263,3 +275,67 @@ func _resolve_pool_heal_half(party: CombatParty, half: Dictionary, target: int) 
 		party.gain_block(target, applied_block)
 	return {"ok": true, "effect": "ally_heal" if not field_mend else "party_heal",
 		"amount": applied_heal, "block": applied_block, "affected_positions": recipients}
+
+
+## Stage exactly the two canonical Spare Parts halves: their authored Block goes
+## to the living Tinker in her CURRENT slot (plus only her own worn ARM/HEAD
+## Block patch), then exactly one card is drawn with the staged seeded deck.
+## The half is re-authenticated against the real Tinker catalog, so an inflated
+## or otherwise forged effect record can never publish a larger Block or draw.
+## The enclosing transaction still owns the one capped cost and single discard.
+func _resolve_spare_parts_half(deck: CombatDeck, party: CombatParty,
+		half: Dictionary) -> Dictionary:
+	var failed := {"ok": false}
+	if deck == null or party == null:
+		return failed
+	var id_value: Variant = half.get("id")
+	if typeof(id_value) != TYPE_STRING or not id_value in SPARE_PARTS_IDS:
+		return failed
+	var card_id: String = id_value
+	var authored: Dictionary = _tinker_pool.get_definition(card_id)
+	if authored.is_empty() or authored != half or authored.get("owner") != "tinker":
+		return failed
+	if authored["cost"] != 0 or authored["target_kind"] != "self" \
+			or not authored["to_positions"].is_empty():
+		return failed
+	var effects: Dictionary = authored["effects"]
+	var printed_block: Variant = effects.get("block")
+	var draw: Variant = effects.get("draw")
+	if typeof(printed_block) != TYPE_INT or typeof(draw) != TYPE_INT \
+			or effects.size() != 2 or draw != 1:
+		return failed
+	if printed_block != (4 if card_id.ends_with("_plus") else 3):
+		return failed
+	var owner_position := 0
+	for hero in party.get_heroes():
+		if hero["id"] == "tinker":
+			owner_position = hero["position"]
+			break
+	if owner_position == 0 or party.is_downed(owner_position) \
+			or not authored["from_positions"].has(owner_position):
+		return failed
+	# The battle party can still live while the run ledger marks Tinker torn.
+	if _support._torn != null:
+		for hero in _support._torn.read_state().get("heroes", []):
+			if typeof(hero) == TYPE_DICTIONARY and hero.get("id") == "tinker" \
+					and int(hero.get("hp", 0)) <= 0:
+				return failed
+
+	# Only Tinker's own worn ARM/HEAD Block patches touch her own half.
+	var granted_block: int = printed_block
+	if _support._arm_patches != null:
+		granted_block += _support._arm_patches.card_block_bonus("tinker", card_id)
+	if _support._head_patches != null:
+		granted_block += _support._head_patches.get_bonus("tinker", card_id, "block")
+	var current_block: int = party.get_hero(owner_position)["block"]
+	if granted_block < printed_block or granted_block > CombatParty.MAX_INT - current_block:
+		return failed
+	if not party.gain_block(owner_position, granted_block):
+		return failed
+	# The composite itself is still held, so this draw can never reshuffle the
+	# just-played copy; an exhausted supply legally draws zero, never a stand-in.
+	var drawn: int = deck.draw_extra(int(draw))
+	if drawn < 0:
+		return failed
+	return {"ok": true, "effect": "block_and_draw", "amount": granted_block,
+		"draw": draw, "drawn": drawn}
