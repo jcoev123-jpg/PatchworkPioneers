@@ -25,6 +25,9 @@ func _initialize() -> void:
 	_test_spool_rejections()
 	_test_hemguard_cuff()
 	_test_cuff_rejections()
+	_test_borrowed_button_halves()
+	_test_borrowed_button_rejections_and_latch()
+	_test_borrowed_button_party_and_torn()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_cards_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -125,7 +128,9 @@ func _snapshot(c: Dictionary) -> Array:
 		{} if c.get("torn") == null else c.torn.read_state(),
 		{} if c.service._support._patches == null else c.service._support._patches.active_snapshot(),
 		c.service._support._wardrobe_snapshot.duplicate(true),
-		c.service._support._torn_snapshot.duplicate(true)]
+		c.service._support._torn_snapshot.duplicate(true),
+		{} if c.get("button_heals") == null else c.button_heals._borrowed_button.read_state(),
+		-1 if c.get("button_heals") == null else c.button_heals._heal_receipt_number]
 
 
 func _reject(c: Dictionary, a: int, b: int, label: String) -> void:
@@ -1254,3 +1259,211 @@ func _test_cuff_rejections() -> void:
 	_reject(c, 1, 2, "divergent torn Seamstress cannot play stitched Darning composite")
 
 
+
+
+## P6 uses the genuine Rest ledger and the SAME pool-heal notifier across all
+## ordered stitched commits. No separate receipt latches are made by this test.
+func _bind_button(c: Dictionary, wearer: String = "warden") -> void:
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), ["borrowed_button"],
+		[{"id": "borrowed_button", "slot": "COAT"}], 4)
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	_check(c.wardrobe.is_valid() and c.torn.is_valid(), "P6 genuine run patch authorities")
+	if wearer != "":
+		_check(c.wardrobe.sew("borrowed_button", wearer, "COAT",
+			"stitched_p6_sew", c.wardrobe.get_snapshot()).ok,
+			"P6 genuinely sewn to chosen wearer")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"stitched resolver has current wardrobe/torn authentication")
+	var heals := CombatSeamstressPoolHeals.new()
+	_check(heals.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"ordinary healing service shares the current patch authorities")
+	c.service.bind_borrowed_button(heals)
+	c.button_heals = heals
+	_check(heals._borrowed_button != null and heals._heal_receipt_number == 0,
+		"real combat notifier starts unspent, with no observations")
+
+
+func _button_state(c: Dictionary) -> Dictionary:
+	return c.button_heals._borrowed_button.read_state()
+
+
+func _test_borrowed_button_halves() -> void:
+	var healing_cards := ["seamstress_mend", "seamstress_mend_plus",
+		"seamstress_thimble_tea", "seamstress_thimble_tea_plus",
+		"seamstress_darning", "seamstress_darning_plus",
+		"seamstress_field_mend", "seamstress_field_mend_plus"]
+	for card_id in healing_cards:
+		var authored: Dictionary = StarterCards.new().get_definition(card_id)
+		if authored.is_empty():
+			authored = SeamstressPoolCards.new().get_definition(card_id)
+		_check(authored.get("id") == card_id and authored.effects.get("heal", 0) > 0,
+			"independent real authored heal for " + card_id)
+		if authored.is_empty():
+			continue
+		for reverse in [false, true]:
+			var c := _rest_fixture("warden_brace" if reverse else card_id,
+				card_id if reverse else "warden_brace", 21106)
+			_bind_button(c)
+			_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28,
+				"wounded living different-owner P6 wearer")
+			var heal_target: int = 0 if authored.target_kind == "party_all" else 1
+			var cost: int = c.rest.preview_play(c.id, c.party.get_heroes()).cost
+			var outcome := _play(c, 0 if reverse else heal_target,
+				heal_target if reverse else 0)
+			var label: String = card_id + " order " + str(reverse)
+			_check(outcome.get("ok") == true and outcome.halves.size() == 2,
+				label + " genuine two-owner ordered Rest stitch commits")
+			var healed: int = int(authored.effects.heal)
+			var printed_block: int = int(authored.effects.get("block", 0))
+			_check(c.party.get_hero(1).hp == 28 + healed,
+				label + " restores actual authored HP to Warden")
+			_check(c.party.get_hero(1).block == 7 + printed_block + 3,
+				label + " has authored Brace/Darning plus exactly 3 P6 Block")
+			_check(c.deck.energy == 3 - cost and c.deck.hand.is_empty()
+				and c.deck.discard_pile == [c.id],
+				label + " charges composite once and discards exactly once")
+			var state := _button_state(c)
+			_check(state.awards == 1 and state.block_awarded == 3
+				and state.wearer_id == "warden" and state.receipts.size() == 1
+				and state.receipt_id.begins_with("stitched_half_%d:" % (1 if reverse else 0)),
+				label + " one authenticated half/recipient receipt and spent latch")
+			_check(c.button_heals._heal_receipt_number == 1,
+				label + " shares exactly one combat receipt sequence")
+
+
+func _test_borrowed_button_rejections_and_latch() -> void:
+	# Full-health overheal and genuine self-heal never pay the COAT.
+	var c := _rest_fixture("seamstress_mend", "warden_brace", 21107)
+	_bind_button(c)
+	_check(_play(c, 1, 0).ok and c.party.get_hero(1).hp == 40,
+		"stitched Mend at full HP is a successful 0-restoration commit")
+	_check(_button_state(c).awards == 0 and _button_state(c).receipts.is_empty()
+		and c.party.get_hero(1).block == 7,
+		"overheal cannot generate a P6 receipt or extra Block")
+	c = _rest_fixture("seamstress_mend", "warden_brace", 21108)
+	_bind_button(c, "seamstress")
+	_check(c.party.apply_damage(2, 10), "self-heal wearer genuinely wounded")
+	_check(_play(c, 2, 0).ok and c.party.get_hero(2).hp == 25,
+		"authored stitched self-heal genuinely restores 5 HP")
+	_check(_button_state(c).awards == 0 and c.party.get_hero(2).block == 0,
+		"self-healing stitched half never grants wearer P6 Block")
+	c = _rest_fixture("seamstress_mend", "warden_brace", 21109)
+	_bind_button(c, "")
+	_check(c.party.apply_damage(1, 12) and _play(c, 1, 0).ok,
+		"owned but unsewn patch witnesses a genuine different-owner heal")
+	_check(_button_state(c).awards == 0 and c.party.get_hero(1).block == 7,
+		"unsewn patch cannot grant P6 Block")
+
+	# Failed casts must not create any receipt or consume the one-combat latch.
+	for mode in ["illegal_target", "second_half", "energy", "downed", "stale"]:
+		c = _rest_fixture("seamstress_mend", "warden_brace", 21110)
+		_bind_button(c)
+		_check(c.party.apply_damage(1, 12), mode + " genuine wounded wearer")
+		match mode:
+			"energy":
+				_check(c.deck.try_spend_energy(2) and c.deck.energy == 1,
+					"stitched cost 2 is genuinely unaffordable")
+			"downed":
+				_check(c.party.apply_damage(1, 40) and c.party.is_downed(1),
+					"healing target truly downed")
+			"stale":
+				_check(c.wardrobe.start_rest("stale_p6", c.wardrobe.get_snapshot()).ok,
+					"bound wardrobe advanced authentically")
+		_reject(c, 0 if mode == "illegal_target" else 1,
+			99 if mode == "second_half" else 0,
+			"P6 " + mode + " rejects atomically")
+		_check(_button_state(c).awards == 0 and _button_state(c).receipts.is_empty()
+			and c.button_heals._heal_receipt_number == 0,
+			"P6 " + mode + " leaves notifier and latch wholly untouched")
+
+	# A retained service, deck and Rest composite actually commits in two turns.
+	c = _rest_fixture("seamstress_mend", "warden_brace", 21111)
+	_bind_button(c)
+	_check(c.party.apply_damage(1, 15), "latch wearer wounded for two commits")
+	_check(_play(c, 1, 0).ok and c.party.get_hero(1).block == 10,
+		"first real stitched Mend/Brace awards 3 Block")
+	var first_receipt: String = _button_state(c).receipt_id
+	_check(c.deck.end_turn() and c.party.start_player_turn() and c.deck.start_turn()
+		and c.deck.hand.has(c.id), "actual next turn redraws the same stitched copy")
+	_check(c.party.get_hero(1).block == 0, "turn boundary clears first award Block")
+	_check(_play(c, 1, 0).ok and c.party.get_hero(1).hp == 35
+		and c.party.get_hero(1).block == 7, "second real stitched heal grants only Brace Block")
+	_check(_button_state(c).awards == 1 and _button_state(c).receipts.size() == 2,
+		"same combat notifier retains one award across two committed casts")
+	var replay: Dictionary = c.button_heals._borrowed_button.notify_committed_heal(
+		first_receipt, "seamstress", "warden", 25, 30)
+	_check(replay.reason == "duplicate_receipt" and _button_state(c).awards == 1,
+		"duplicate original receipt is refused by retained combat helper")
+
+	# A genuinely different party after rebind gets one new battle-bound latch,
+	# even when the long-lived ordinary/stitched service itself is retained.
+	var previous_button: CombatBorrowedButton = c.button_heals._borrowed_button
+	_check(c.button_heals.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"next combat reauthenticates unchanged run ledgers")
+	var deck := CombatDeck.new([c.id], _rng_for_p6(21112))
+	_check(deck.start_turn() and deck.hand == [c.id],
+		"new battle genuinely holds the Rest composite")
+	c.deck = deck
+	c.party = CombatParty.new(_definitions("res://data/heroes/starter_party.json"))
+	_check(c.party.is_valid() and c.party.apply_damage(1, 8),
+		"next combat has a new real living, wounded party")
+	_check(_play(c, 1, 0).ok and _button_state(c).awards == 1
+		and c.button_heals._borrowed_button != previous_button
+		and c.party.get_hero(1).block == 10,
+		"new combat renews the latch once on the same retained service")
+
+
+func _rng_for_p6(seed_value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	return rng
+
+
+func _test_borrowed_button_party_and_torn() -> void:
+	# Target-free Field Mend heals several recipients, each with its own exact
+	# pre/post HP; the later wounded wearer still receives the single P6 award.
+	var c := _rest_fixture("seamstress_field_mend", "warden_brace", 21113)
+	_bind_button(c, "tinker")
+	_check(c.party.apply_damage(1, 9) and c.party.apply_damage(3, 11),
+		"party-wide P6 heal has two genuinely damaged living recipients")
+	var outcome := _play(c, 0, 0)
+	_check(outcome.get("ok") == true and outcome.halves.size() == 2,
+		"ordered field heal and Brace commit atomically with no targets")
+	_check(c.party.get_hero(1).hp == 35 and c.party.get_hero(3).hp == 19
+		and c.party.get_hero(2).hp == 30,
+		"party-wide heal restores both actual damaged recipients, no overheal")
+	_check(c.party.get_hero(3).block == 3 and c.party.get_hero(1).block == 7,
+		"only patched Tinker gains 3 P6; Warden receives authored Brace")
+	_check(_button_state(c).awards == 1 and _button_state(c).wearer_id == "tinker"
+		and _button_state(c).receipts.size() == 2
+		and c.button_heals._heal_receipt_number == 1,
+		"two ordered Field Mend recipients share one half receipt sequence")
+
+	# A real battle-end tear suspends a still-sewn COAT. A later CombatParty can
+	# start that run-torn hero at positive HP; this must not restore the patch.
+	c = _rest_fixture("seamstress_mend", "warden_brace", 21114)
+	_bind_button(c)
+	var start: Array = c.torn.read_state().heroes
+	var finish: Array = start.duplicate(true)
+	finish[0].hp = 0
+	_check(c.torn.observe_battle_end("stitched_p6_tear", start, finish).ok,
+		"wearer's run ledger records genuine battle-end tearing")
+	var state: Dictionary = c.wardrobe.get_snapshot()
+	_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes,
+		state.owned, state.scraps, state.gold, state.cards, state),
+		"wardrobe refreshes real torn run heroes without unsewing the button")
+	var roster: Array = []
+	for hero in c.torn.read_state().heroes:
+		roster.append({"id": hero.id, "max_hp": hero.max_hp})
+	c.party = CombatParty.new(roster)
+	_check(c.party.is_valid() and c.party.get_hero(1).hp == 37
+		and c.torn.read_state().heroes[0].hp == 0,
+		"fresh battle party lives while original wearer remains run-torn")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn)
+		and c.button_heals.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"both real combat authorities rebind to the exact torn ledger")
+	_check(c.party.apply_damage(1, 8), "run-torn wearer is wounded in party")
+	_check(_play(c, 1, 0).ok and c.party.get_hero(1).hp == 34,
+		"genuine different-owner stitched Mend heals torn-ledger wearer by 5")
+	_check(c.party.get_hero(1).block == 7 and _button_state(c).awards == 0,
+		"run-torn COAT remains suspended even when battle party is alive")
