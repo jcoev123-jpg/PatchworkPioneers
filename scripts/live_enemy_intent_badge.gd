@@ -306,15 +306,18 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		elif intent_type == "debuff":
 			readable_text = "%s %d: %s" % [action.status.capitalize(), amount, rank_caption(target_position)]
 			var status_name := String(action.get("status", "")).to_lower()
+			# The three authored debuffs explain their own rule in full: the affected hero,
+			# the amount, the turn duration, Bleed's Block bypass and the rounded damage of
+			# Weak and Exposed. Only attack damage and the Bleed tick are described here.
 			if status_name == "bleed":
-				tip = "Bleed %d to %s — loses %d HP at owner's turn end then decrements by 1." % [
-					amount, hero_target_label(target_position), amount]
+				tip = "Bleed %d to %s — that hero loses %d HP at its turn end, ignoring Block; Bleed then decreases by 1 (from %d to %d)." % [
+					amount, hero_target_label(target_position), amount, amount, maxi(0, amount - 1)]
 			elif status_name == "weak":
-				tip = "Weak %d to %s — reduces attack damage by 25%%." % [
-					amount, hero_target_label(target_position)]
+				tip = "Weak %d to %s — for %d turn%s, -25%% outgoing attack damage; damage is rounded down, minimum 0." % [
+					amount, hero_target_label(target_position), amount, "" if amount == 1 else "s"]
 			elif status_name == "exposed":
-				tip = "Exposed %d to %s — raises incoming attack damage by 50%%, rounded down." % [
-					amount, hero_target_label(target_position)]
+				tip = "Exposed %d to %s — for %d turn%s, +50%% incoming attack damage; damage is rounded down, minimum 0." % [
+					amount, hero_target_label(target_position), amount, "" if amount == 1 else "s"]
 			else:
 				tip = "%s %d to %s." % [
 					status_name.capitalize(), amount, hero_target_label(target_position)]

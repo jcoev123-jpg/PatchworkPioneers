@@ -1093,7 +1093,7 @@ func _caption_legibility(app, presenter) -> void:
 		and badge.target_position == 2 and badge.intent_type == "debuff"
 		and badge.policy_cue == "Front" and long_debuff == original,
 		"a long debuff keeps its exact authoritative caption beside its target policy")
-	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — raises incoming attack damage by 50%, rounded down.\nTarget policy (FRONT): picks the front living hero.",
+	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — for 2 turns, +50% incoming attack damage; damage is rounded down, minimum 0.\nTarget policy (FRONT): picks the front living hero.",
 		"debuff with front policy explains exposed rule, hero target and front policy")
 	_check(_caption_fits(badge)
 		and badge.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT
@@ -1128,7 +1128,7 @@ func _caption_legibility(app, presenter) -> void:
 		and badge.target_position == 2 and badge.policy_cue == "Exposed"
 		and _caption_fits(badge) and badge.policy_text_rect() != Rect2(),
 		"unavailable icon art keeps the readable caption, plaque and policy ticket")
-	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — raises incoming attack damage by 50%, rounded down.\nTarget policy (EXPOSED): prioritises an Exposed living hero.",
+	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — for 2 turns, +50% incoming attack damage; damage is rounded down, minimum 0.\nTarget policy (EXPOSED): prioritises an Exposed living hero.",
 		"debuff with exposed policy explains exposed rule, hero target and exposed policy")
 	var atk_random := {"type": "attack", "amount": 7, "target_position": 1}
 	badge.show_intent(atk_random, false, false, "random")
