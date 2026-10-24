@@ -108,9 +108,9 @@ func _check_rest_forecast() -> void:
 	for index in range(oracle.forecasts.size()):
 		var forecast: Dictionary = oracle.forecasts[index]
 		var hero: Dictionary = oracle.heroes[index]
-		var expected := "%s: HP %d/%d | " % [forecast.id.capitalize(), forecast.hp_before, hero.max_hp]
+		var expected := "%s  %d/%d HP  -  " % [forecast.id.capitalize(), forecast.hp_before, hero.max_hp]
 		if forecast.revived:
-			expected += "Revive to %d/%d" % [forecast.hp_after, hero.max_hp]
+			expected += "Revive +%d to %d/%d" % [forecast.hp_delta, forecast.hp_after, hero.max_hp]
 		elif forecast.hp_delta == 0:
 			expected += "Full health"
 		else:
@@ -125,12 +125,57 @@ func _check_rest_forecast() -> void:
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "forecast and every Rest control fit viewport")
 	_check(app.rest_hp_label.size.x >= app.rest_hp_label.get_minimum_size().x,
 		"complete forecast text fits label without clipping")
+	var ribbons := app.rest_view.get_node_or_null("RestPartyRibbons") as PanelContainer
+	_check(ribbons != null and app.rest_hp_label.get_parent() == ribbons,
+		"referenced live Label is mounted in the real left-rail sewn summary")
+	if ribbons == null:
+		return
+	_check(ribbons.is_visible_in_tree() and app.rest_hp_label.is_visible_in_tree()
+		and app.rest_hp_label.get_line_count() == 3,
+		"exactly three hero status lines are visible")
+	_check(ribbons.mouse_filter == Control.MOUSE_FILTER_IGNORE and ribbons.focus_mode == Control.FOCUS_NONE
+		and app.rest_hp_label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and app.rest_hp_label.focus_mode == Control.FOCUS_NONE,
+		"summary and text cannot capture pointer or keyboard actions")
+	var ink: Color = app.rest_hp_label.get_theme_color("font_color")
+	var style: StyleBox = ribbons.get_theme_stylebox("panel")
+	var backing := Color.TRANSPARENT
+	if style is StyleBoxFlat:
+		backing = style.bg_color
+	var rows := ribbons.get_node("HeroRibbons") as VBoxContainer
+	_check(rows != null and rows.get_child_count() == 3
+		and rows.mouse_filter == Control.MOUSE_FILTER_IGNORE, "three inert sewn hero ribbons are mounted")
+	for index in range(rows.get_child_count()):
+		var row := rows.get_child(index) as NinePatchRect
+		_check(row != null and row.get_meta("hero_id") == oracle.forecasts[index].id
+			and row.mouse_filter == Control.MOUSE_FILTER_IGNORE and row.focus_mode == Control.FOCUS_NONE,
+			"ribbon identities follow the service hero ordering without intercepting input")
+		var art_path: String = ribbons.get_meta("art_path")
+		_check((row.texture != null) == ResourceLoader.exists(art_path, "Texture2D")
+			and (row.texture == null or row.texture.resource_path == art_path),
+			"each hero ribbon reuses sewn nameplate art with an optional missing-art fallback")
+		_check(row.modulate == backing and backing.a == 1.0,
+			"ribbon tint and opaque backing bound the brightest possible fabric texel")
+		_check(ribbons.get_global_rect().encloses(row.get_global_rect())
+			and row.size.y >= app.rest_hp_label.get_theme_font("font").get_height(20),
+			"each complete text line has its own compact ribbon inside the summary")
+	_check(app.rest_hp_label.get_theme_font_size("font_size") >= 18
+		and (ink.srgb_to_linear().get_luminance() + 0.05) / (backing.srgb_to_linear().get_luminance() + 0.05) >= 4.5,
+		"large cream ink has high contrast against the dark sewn backing")
+	_check(Rect2(0, 0, 1280, 720).encloses(app.rest_hp_label.get_global_rect())
+		and ribbons.get_global_rect().encloses(app.rest_hp_label.get_global_rect())
+		and app.rest_hp_label.size.y >= app.rest_hp_label.get_minimum_size().y,
+		"all three complete hero lines fit the summary and viewport")
+	for control in app.rest_view.get_children():
+		if control is Control and control != ribbons and control.is_visible_in_tree():
+			_check(not ribbons.get_global_rect().intersects(control.get_global_rect()),
+				"summary leaves every selector and action unobscured")
 
 
 func _check_rest_hp_only() -> void:
 	var expected: PackedStringArray = []
 	for hero in app.run_heroes:
-		expected.append("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp])
+		expected.append("%s  %d/%d HP" % [hero.id.capitalize(), hero.hp, hero.max_hp])
 	_check(app.rest_hp_label.text == "\n".join(expected), "completed or rejected forecast shows current HP only")
 
 
@@ -337,7 +382,7 @@ func _run() -> void:
 		_check(RunRestHealPreview.preview(copy).forecasts[2].hp_delta == 0 if session != 1 else
 			RunRestHealPreview.preview(copy).forecasts[2].revived, "mounted cases cover full-HP cap and downed recovery")
 		_check(app.rest_hp_label.text.contains("Full health") if session != 1 else
-			app.rest_hp_label.text.contains("Revive to "), "mounted full-health and revive cases use compact wording")
+			app.rest_hp_label.text.contains("Revive +"), "mounted full-health and revive cases use compact wording")
 		if session == 1:
 			_check(copy.any(func(hero): return hero.hp > 0 and hero.hp < hero.max_hp)
 				and app.rest_hp_label.text.contains("Heal +"), "damaged living hero mounts a numeric Heal forecast")
@@ -392,7 +437,7 @@ func _run() -> void:
 		for index in range(3):
 			var hero: Dictionary = app.run_heroes[index]
 			_check(hero.hp == mini(hero.max_hp, (1 if copy[index].hp == 0 else copy[index].hp) + int(hero.max_hp * 0.3)), "exact capped 30% and revive arithmetic")
-			_check(app.rest_hp_label.text.contains("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp]), "on-screen persistent HP updated")
+			_check(app.rest_hp_label.text.contains("%s  %d/%d HP" % [hero.id.capitalize(), hero.hp, hero.max_hp]), "on-screen persistent HP updated")
 		_check(copy[2].hp == 0 if session == 1 else copy[2].hp == copy[2].max_hp, "fixture exercises downed revive or full-HP cap")
 		var after := _persistent()
 		_check(after.slice(1) == before.slice(1), "heal preserves inventory/gold/RNG/route and all combat state")

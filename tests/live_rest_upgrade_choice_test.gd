@@ -443,7 +443,7 @@ func _run() -> void:
 				and app.party_carryover.read_state() == ledger, "Upgrade preserves heroes, gold, RNG, route, combat and carryover ledger")
 			var hp_lines: PackedStringArray = []
 			for hero in heroes:
-				hp_lines.append("%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp])
+				hp_lines.append("%s  %d/%d HP" % [hero.id.capitalize(), hero.hp, hero.max_hp])
 			_check(app.rest_hp_label.text == "\n".join(hp_lines), "Upgrade removes forecast and keeps exact current HP rows")
 			app._refresh_rest_hp()
 			_check(app.rest_hp_label.text == "\n".join(hp_lines), "refresh cannot restore forecast after Upgrade")

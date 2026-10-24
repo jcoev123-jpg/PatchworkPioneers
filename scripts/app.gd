@@ -4020,8 +4020,49 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	heading.text = "Rest camp - Floor %d" % run_map.get_current_floor()
 	heading.theme_type_variation = &"PatchHeading"
 	rest_view.add_child(heading)
+	var party_ribbons := PanelContainer.new()
+	party_ribbons.name = "RestPartyRibbons"
+	party_ribbons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	party_ribbons.focus_mode = Control.FOCUS_NONE
+	# Reuse the sewn nameplate art; a missing image keeps the same dark backing.
+	var ribbon_art := "res://assets/paper/ui/hud_name_plate.png"
+	party_ribbons.set_meta("art_path", ribbon_art)
+	var ribbon_style := StyleBoxFlat.new()
+	ribbon_style.bg_color = Color("42392f")
+	ribbon_style.border_color = ROUTE_BOOK_THREAD
+	ribbon_style.set_border_width_all(1)
+	for side in [SIDE_LEFT, SIDE_RIGHT]:
+		ribbon_style.set_content_margin(side, 12)
+	for side in [SIDE_TOP, SIDE_BOTTOM]:
+		ribbon_style.set_content_margin(side, 6)
+	party_ribbons.add_theme_stylebox_override("panel", ribbon_style)
+	rest_view.add_child(party_ribbons)
+	var ribbon_rows := VBoxContainer.new()
+	ribbon_rows.name = "HeroRibbons"
+	ribbon_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ribbon_rows.add_theme_constant_override("separation", 4)
+	party_ribbons.add_child(ribbon_rows)
+	for hero in run_heroes:
+		var ribbon := NinePatchRect.new()
+		ribbon.name = hero.id
+		ribbon.set_meta("hero_id", hero.id)
+		ribbon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+			ribbon.set_patch_margin(side, 8)
+		ribbon.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		ribbon.modulate = Color("42392f")
+		if ResourceLoader.exists(ribbon_art, "Texture2D"):
+			ribbon.texture = load(ribbon_art)
+		ribbon_rows.add_child(ribbon)
+	# PanelContainer overlays the single live Label on the three art ribbons.
 	rest_hp_label = Label.new()
-	rest_view.add_child(rest_hp_label)
+	rest_hp_label.name = "HeroStatusLines"
+	rest_hp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rest_hp_label.focus_mode = Control.FOCUS_NONE
+	rest_hp_label.add_theme_font_size_override("font_size", 20)
+	rest_hp_label.add_theme_color_override("font_color", ROUTE_BOOK_PAPER)
+	rest_hp_label.add_theme_constant_override("line_spacing", 4)
+	party_ribbons.add_child(rest_hp_label)
 	var stitch_label := Label.new()
 	stitch_label.name = "RestStitchCost"
 	stitch_label.text = "Stitch two different owners: 3 scraps (owned: %d)" % run_scraps
@@ -4150,15 +4191,15 @@ func _refresh_rest_hp() -> void:
 	var lines: PackedStringArray = []
 	for index in range(run_heroes.size()):
 		var hero: Dictionary = run_heroes[index]
-		var line := "%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp]
+		var line := "%s  %d/%d HP" % [hero.id.capitalize(), hero.hp, hero.max_hp]
 		if preview.get("ok") == true:
 			var forecast: Dictionary = preview.forecasts[index]
 			if forecast.revived:
-				line += " | Revive to %d/%d" % [forecast.hp_after, forecast.max_hp]
+				line += "  -  Revive +%d to %d/%d" % [forecast.hp_delta, forecast.hp_after, forecast.max_hp]
 			elif forecast.hp_delta == 0:
-				line += " | Full health"
+				line += "  -  Full health"
 			else:
-				line += " | Heal +%d to %d/%d" % [forecast.hp_delta, forecast.hp_after, forecast.max_hp]
+				line += "  -  Heal +%d to %d/%d" % [forecast.hp_delta, forecast.hp_after, forecast.max_hp]
 		lines.append(line)
 	rest_hp_label.text = "\n".join(lines)
 
