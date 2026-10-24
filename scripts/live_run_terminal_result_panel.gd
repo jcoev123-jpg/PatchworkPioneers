@@ -244,6 +244,8 @@ func _populate_details(summary: Dictionary) -> void:
 		var name_label := Label.new()
 		name_label.name = "Composite"
 		name_label.text = "%s  ·  %d energy" % [descriptor["display_name"], descriptor["cost"]]
+		# A genuine sewn row's name is a heading; its two ordered halves stay body text.
+		name_label.theme_type_variation = "PatchHeading"
 		name_label.add_theme_color_override("font_color", Color("#28363c"))
 		name_label.add_theme_font_size_override("font_size", 16)
 		stack.add_child(name_label)
@@ -392,6 +394,10 @@ func _apply_patchwork_style() -> void:
 	summary_label.add_theme_color_override("font_color", Color("#2f4147"))
 	summary_label.add_theme_font_size_override("font_size", 17)
 	summary_label.add_theme_constant_override("line_spacing", 2)
+	# Outcome and stitched-detail headings use the master Theme's Londrina heading face;
+	# the sentence, ledger and half descriptions stay in the inherited body font.
+	title_label.theme_type_variation = "PatchHeading"
+	stitched_heading.theme_type_variation = "PatchHeading"
 	stitched_heading.add_theme_color_override("font_color", Color("#28363c"))
 	stitched_heading.add_theme_font_size_override("font_size", 16)
 	var detail_paper := StyleBoxFlat.new()

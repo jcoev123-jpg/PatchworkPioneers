@@ -251,6 +251,9 @@ func _apply_patchwork_style() -> void:
 	paper_panel.add_theme_stylebox_override("panel", paper)
 	for label in [title_label, description_label]:
 		label.add_theme_color_override("font_color", Color("#2c3437"))
+	# The authored Event title speaks in the master Theme's Londrina heading face;
+	# the description below it stays in the inherited Patrick Hand body font.
+	title_label.theme_type_variation = "PatchHeading"
 	title_label.add_theme_font_size_override("font_size", 36)
 	description_label.add_theme_font_size_override("font_size", 23)
 	for stitch_label in [top_stitches, bottom_stitches]:

@@ -2,6 +2,8 @@ extends SceneTree
 ## Mounted, deterministic M04 Event panel contract. No live app wiring or effects.
 const PANEL_SCENE := "res://scenes/event_choice_panel.tscn"
 const EVENTS_PATH := "res://data/events/m04_events.json"
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 const REQUIRED := {
 	"button_trail": "The Button Trail",
 	"loose_seam": "The Loose Seam",
@@ -552,6 +554,12 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 	_check(panel.is_visible_in_tree() and panel.has_open_event(), label + " panel open/visible")
 	_check(panel.title_label.text == record["title"], label + " exact title")
 	_check(panel.description_label.text == record["description"], label + " complete description")
+	_check(panel.title_label.theme_type_variation == "PatchHeading"
+		and (panel.title_label.get_theme_font("font") as Font).resource_path == HEADING_FONT,
+		label + " authored Event title wears the master PatchHeading Londrina face")
+	_check(panel.description_label.theme_type_variation == ""
+		and (panel.description_label.get_theme_font("font") as Font).resource_path == BODY_FONT,
+		label + " Event description stays in the inherited body font")
 	_check(panel.paper_panel.get_theme_stylebox("panel") is StyleBoxFlat,
 		label + " patchwork paper StyleBoxFlat")
 	_check(panel.get_node("SlateBackdrop") is ColorRect, label + " slate background node")
