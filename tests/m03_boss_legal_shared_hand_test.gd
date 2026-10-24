@@ -22,6 +22,7 @@ func _initialize() -> void:
 	randi()
 	_check(randi() != expected_global, "global RNG sentinel detects an injected draw")
 	_check(_normalize(1.5) == null, "fractional JSON numbers cannot be truncated")
+	_test_behemoth_phase_rules()
 	for failure in failures:
 		printerr(failure)
 	print("m03_boss_legal_shared_hand_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -299,3 +300,213 @@ func _fight() -> String:
 		"fixed seed witnesses the exact seven-attack sequence over four player turns")
 	print("Boss legal actions: ", JSON.stringify(actions), "; final: ", JSON.stringify(_snapshot(f)))
 	return JSON.stringify(trace)
+
+
+func _test_behemoth_phase_rules() -> void:
+	# RNG witness: verify the selector consumes ZERO RNG
+	var witness_rng := RandomNumberGenerator.new()
+	witness_rng.seed = 991199
+	var witness_state_before := witness_rng.state
+	seed(445566)
+	var global_rand_before := randi()
+	seed(445566)
+
+	# 1. Parse both real JSON sources
+	var boss_path := "res://data/enemies/boss.json"
+	var p2_path := "res://data/enemies/m05_behemoth_phase_two.json"
+	var boss_raw_str := FileAccess.get_file_as_string(boss_path)
+	var p2_raw_str := FileAccess.get_file_as_string(p2_path)
+	var boss_bytes_before := boss_raw_str.to_utf8_buffer()
+	var p2_bytes_before := p2_raw_str.to_utf8_buffer()
+
+	var parsed_boss: Variant = _normalize(JSON.parse_string(boss_raw_str))
+	var parsed_p2: Variant = _normalize(JSON.parse_string(p2_raw_str))
+
+	_check(parsed_boss is Array and not parsed_boss.is_empty(), "real boss catalog parses non-empty array")
+	_check(parsed_p2 is Dictionary and not parsed_p2.is_empty(), "real phase-two JSON parses non-empty dictionary")
+
+	# Find patchwork_behemoth without assuming catalog size or ordering
+	var behemoth_def: Dictionary = {}
+	for entry in (parsed_boss if parsed_boss is Array else []):
+		if entry is Dictionary and entry.get("id") == "patchwork_behemoth":
+			behemoth_def = entry
+			break
+
+	_check(not behemoth_def.is_empty(), "shipped boss catalog contains patchwork_behemoth definition")
+	_check(behemoth_def.get("max_hp") == 42, "shipped boss definition max_hp is 42")
+
+	# Validate Phase 1 table
+	var p1_intent: Dictionary = behemoth_def.get("intent", {})
+	_check(p1_intent.get("target") == "front", "shipped phase-one intent target is front")
+	var p1_actions: Array = p1_intent.get("actions", [])
+	_check(p1_actions.size() == 3, "shipped phase-one intent has exactly 3 actions")
+	var expected_p1_actions := [
+		{"type": "attack", "amount": 2, "weight": 4},
+		{"type": "block", "amount": 3, "weight": 2},
+		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+	]
+	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 2 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+
+	# Validate Phase 2 table
+	var p2_dict: Dictionary = parsed_p2 if parsed_p2 is Dictionary else {}
+	_check(p2_dict.get("boss_id") == "patchwork_behemoth", "phase-two record boss_id is patchwork_behemoth")
+	_check(p2_dict.get("phase") == 2, "phase-two record phase is 2")
+	_check(p2_dict.get("threshold_hp") == 21, "phase-two record threshold_hp is 21")
+	var p2_intent: Dictionary = p2_dict.get("intent", {})
+	_check(p2_intent.get("target") == "lowest_living_hp", "phase-two intent target is lowest_living_hp")
+	var p2_actions: Array = p2_intent.get("actions", [])
+	_check(p2_actions.size() == 3, "phase-two intent has exactly 3 actions")
+	var expected_p2_actions := [
+		{"type": "attack", "amount": 4, "weight": 4},
+		{"type": "block", "amount": 3, "weight": 2},
+		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+	]
+	_check(p2_actions == expected_p2_actions, "phase-two actions match attack 4 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+
+	# Snapshots before any projection
+	var boss_deep_before: Variant = parsed_boss.duplicate(true)
+	var behemoth_deep_before: Dictionary = behemoth_def.duplicate(true)
+	var p2_deep_before: Dictionary = p2_dict.duplicate(true)
+
+	# 2. HP Probes: 42, 22, 21, 1, 0
+	# HP 42 -> Phase 1
+	var res42: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 42, p2_dict)
+	_check(res42.get("ok") == true, "HP 42 select_phase returns ok true")
+	_check(res42.get("phase") == 1, "HP 42 select_phase returns phase 1")
+	_check(res42.get("intent") == p1_intent, "HP 42 intent matches phase 1 intent table")
+	_check(res42.get("intent").get("target") == "front", "HP 42 intent target is front")
+
+	# HP 22 -> Phase 1
+	var res22: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 22, p2_dict)
+	_check(res22.get("ok") == true, "HP 22 select_phase returns ok true")
+	_check(res22.get("phase") == 1, "HP 22 select_phase returns phase 1")
+	_check(res22.get("intent") == p1_intent, "HP 22 intent matches phase 1 intent table")
+	_check(res22.get("intent").get("target") == "front", "HP 22 intent target is front")
+
+	# HP 21 -> Phase 2
+	var res21: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 21, p2_dict)
+	_check(res21.get("ok") == true, "HP 21 select_phase returns ok true")
+	_check(res21.get("phase") == 2, "HP 21 select_phase returns phase 2")
+	_check(res21.get("intent") == p2_intent, "HP 21 intent matches phase 2 intent table")
+	_check(res21.get("intent").get("target") == "lowest_living_hp", "HP 21 intent target is lowest_living_hp")
+
+	# HP 1 -> Phase 2
+	var res1: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 1, p2_dict)
+	_check(res1.get("ok") == true, "HP 1 select_phase returns ok true")
+	_check(res1.get("phase") == 2, "HP 1 select_phase returns phase 2")
+	_check(res1.get("intent") == p2_intent, "HP 1 intent matches phase 2 intent table")
+	_check(res1.get("intent").get("target") == "lowest_living_hp", "HP 1 intent target is lowest_living_hp")
+
+	# HP 0 -> Dead / Fail closed
+	var res0: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 0, p2_dict)
+	_check(res0.get("ok") == false, "HP 0 (dead) select_phase fails closed with ok false")
+
+	# Also verify selector accepts boss catalog array directly
+	var res_catalog: Dictionary = CombatBehemothPhaseRules.select_phase(parsed_boss, 21, p2_dict)
+	_check(res_catalog.get("ok") == true and res_catalog.get("phase") == 2, "selector accepts full boss catalog array")
+
+	# 3. Source deep-equality and byte-equivalence check before and after projection
+	_check(parsed_boss == boss_deep_before, "parsed boss catalog deep-equal before and after projection")
+	_check(behemoth_def == behemoth_deep_before, "behemoth definition deep-equal before and after projection")
+	_check(p2_dict == p2_deep_before, "parsed phase-two record deep-equal before and after projection")
+	_check(FileAccess.get_file_as_string(boss_path).to_utf8_buffer() == boss_bytes_before,
+		"boss.json byte-identical before and after projection")
+	_check(FileAccess.get_file_as_string(p2_path).to_utf8_buffer() == p2_bytes_before,
+		"m05_behemoth_phase_two.json byte-identical before and after projection")
+
+	# 4. Detached snapshot check: mutating returned nested objects does NOT alter source or future selections
+	res21.get("intent").get("actions")[0]["amount"] = 999
+	res21.get("intent")["target"] = "mutated_policy"
+	var res21_fresh: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 21, p2_dict)
+	_check(res21_fresh.get("intent").get("actions")[0].get("amount") == 4, "returned intent is deep copy; fresh query attack amount is 4")
+	_check(res21_fresh.get("intent").get("target") == "lowest_living_hp", "returned intent is deep copy; fresh query target is lowest_living_hp")
+	_check(p2_dict.get("intent").get("actions")[0].get("amount") == 4, "source phase-two record attack amount remains 4")
+	_check(p2_dict.get("intent").get("target") == "lowest_living_hp", "source phase-two record target remains lowest_living_hp")
+
+	# 5. Negative and fail-closed tests:
+	# Malformed catalog
+	_check(CombatBehemothPhaseRules.select_phase([], 22, p2_dict).get("ok") == false, "empty catalog fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(null, 22, p2_dict).get("ok") == false, "null catalog fails closed")
+	_check(CombatBehemothPhaseRules.select_phase("not_dict", 22, p2_dict).get("ok") == false, "string catalog fails closed")
+	_check(CombatBehemothPhaseRules.select_phase([{"id": "other_enemy"}], 22, p2_dict).get("ok") == false, "catalog without boss fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 22, null).get("ok") == false, "null phase two fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 22, {}).get("ok") == false, "empty phase two fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 22, "bad").get("ok") == false, "string phase two fails closed")
+
+	# Unknown boss
+	var wrong_boss: Dictionary = behemoth_def.duplicate(true)
+	wrong_boss["id"] = "unknown_boss"
+	_check(CombatBehemothPhaseRules.select_phase(wrong_boss, 22, p2_dict).get("ok") == false, "wrong boss ID fails closed")
+	var wrong_p2_boss: Dictionary = p2_dict.duplicate(true)
+	wrong_p2_boss["boss_id"] = "wrong_boss"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, wrong_p2_boss).get("ok") == false, "wrong phase-two boss_id fails closed")
+
+	# Wrong max_hp
+	var wrong_hp_boss: Dictionary = behemoth_def.duplicate(true)
+	wrong_hp_boss["max_hp"] = 50
+	_check(CombatBehemothPhaseRules.select_phase(wrong_hp_boss, 22, p2_dict).get("ok") == false, "wrong boss max_hp fails closed")
+
+	# Noninteger / out-of-range HP
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21.5, p2_dict).get("ok") == false, "fractional HP fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, "21", p2_dict).get("ok") == false, "string HP fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, null, p2_dict).get("ok") == false, "null HP fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, -1, p2_dict).get("ok") == false, "negative HP fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 43, p2_dict).get("ok") == false, "HP above max 42 fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 100, p2_dict).get("ok") == false, "HP 100 fails closed")
+
+	# Invalid phase / threshold
+	var bad_phase: Dictionary = p2_dict.duplicate(true)
+	bad_phase["phase"] = 1
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_phase).get("ok") == false, "phase-two phase != 2 fails closed")
+	var bad_thresh: Dictionary = p2_dict.duplicate(true)
+	bad_thresh["threshold_hp"] = 20
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_thresh).get("ok") == false, "phase-two threshold != 21 fails closed")
+	var bad_thresh2: Dictionary = p2_dict.duplicate(true)
+	bad_thresh2["threshold_hp"] = 42
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_thresh2).get("ok") == false, "phase-two threshold 42 fails closed")
+
+	# Unsupported policy
+	var bad_policy: Dictionary = p2_dict.duplicate(true)
+	bad_policy["intent"]["target"] = "back"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_policy).get("ok") == false, "unsupported target policy back fails closed")
+	var bad_policy2: Dictionary = p2_dict.duplicate(true)
+	bad_policy2["intent"]["target"] = "random"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_policy2).get("ok") == false, "non-authored policy random fails closed")
+	var bad_p1_policy: Dictionary = behemoth_def.duplicate(true)
+	bad_p1_policy["intent"]["target"] = "lowest_living_hp"
+	_check(CombatBehemothPhaseRules.select_phase(bad_p1_policy, 22, p2_dict).get("ok") == false, "phase 1 target not front fails closed")
+
+	# Nonpositive or fractional weights
+	var bad_wt0: Dictionary = p2_dict.duplicate(true)
+	bad_wt0["intent"]["actions"][0]["weight"] = 0
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_wt0).get("ok") == false, "weight 0 fails closed")
+	var bad_wtn: Dictionary = p2_dict.duplicate(true)
+	bad_wtn["intent"]["actions"][0]["weight"] = -1
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_wtn).get("ok") == false, "negative weight fails closed")
+	var bad_wtf: Dictionary = p2_dict.duplicate(true)
+	bad_wtf["intent"]["actions"][0]["weight"] = 2.5
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_wtf).get("ok") == false, "fractional weight fails closed")
+
+	# Invalid action / status / amount
+	var bad_act: Dictionary = p2_dict.duplicate(true)
+	bad_act["intent"]["actions"][0]["type"] = "heal"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_act).get("ok") == false, "invalid action type heal fails closed")
+	var bad_stat: Dictionary = p2_dict.duplicate(true)
+	bad_stat["intent"]["actions"][2]["status"] = "poison"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_stat).get("ok") == false, "invalid status poison fails closed")
+	var bad_amt: Dictionary = p2_dict.duplicate(true)
+	bad_amt["intent"]["actions"][0]["amount"] = -1
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_amt).get("ok") == false, "negative amount fails closed")
+	var bad_amt2: Dictionary = p2_dict.duplicate(true)
+	bad_amt2["intent"]["actions"][0]["amount"] = 5
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_amt2).get("ok") == false, "attack amount 5 != 4 fails closed")
+
+	# Verify sources remained unmutated after all negative probes
+	_check(parsed_boss == boss_deep_before, "boss catalog unmutated after all negative probes")
+	_check(behemoth_def == behemoth_deep_before, "behemoth definition unmutated after all negative probes")
+	_check(p2_dict == p2_deep_before, "phase-two record unmutated after all negative probes")
+
+	# Verify RNG witness state remained unchanged across ALL selector and probe calls
+	_check(witness_rng.state == witness_state_before, "seeded RNG witness state completely unchanged across all selector calls")
+	_check(randi() == global_rand_before, "global RNG state completely unchanged across all selector calls")
+
