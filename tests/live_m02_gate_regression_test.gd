@@ -348,13 +348,20 @@ func _run() -> void:
 	var next := randi()
 	seed(55042)
 	_pure_proof()
+	_check(randi() == next, "scene-free gate consumes no global RNG")
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
+	# Mounting the real scene builds the presentation-only felt puff reserve, and a
+	# CPUParticles2D seeds itself from the global RNG once when it is built. The mounted-run
+	# guard therefore starts after the mount and still covers every gate and play below.
+	seed(55042)
+	next = randi()
+	seed(55042)
 	var first := await _timeline(false)
 	var second := await _timeline(true)
 	_check(not first.is_empty() and first == second, "fresh physical title restart seed-42 full snapshots replay exactly")
-	_check(randi() == next, "entire mounted and scene-free gate consumes no global RNG")
+	_check(randi() == next, "mounted gate and run consume no further global RNG")
 	app.free()
 	for failure in failures:
 		printerr(failure)
