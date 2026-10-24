@@ -1146,7 +1146,7 @@ func _unravel_bound_fight(app, presenter) -> void:
 		and not app.enemy_intents.get_intents().is_empty(),
 		"the skipped original attack causes no HP loss while the scheduler legitimately advances")
 	_check(thread.value == 0 and thread.max_value == 12 and (thread.get_node("ThreadFraction") as Label).text == "0/12"
-		and roster._badges[0].icon_mode == "attack" and roster._badges[0].readable_text.begins_with("ATK "),
+		and roster._badges[0].icon_mode == "attack" and roster._badges[0].readable_text.begins_with("Hit "),
 		"after real skipped action gauge resets and next scheduler action resumes")
 	_check(app.enemies.apply_statuses({1: {"bleed": 1}}), "surviving enemy gains real Bleed before owner tick")
 	var before_bleed: Dictionary = authority.get_snapshot(1)

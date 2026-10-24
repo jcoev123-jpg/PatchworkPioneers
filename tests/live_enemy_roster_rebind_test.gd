@@ -113,7 +113,7 @@ func _mounted(app, presenter) -> bool:
 			and badge.name == "EnemyIntent%d" % enemy.position and badge.source_position == enemy.position
 			and action.enemy_position == enemy.position and badge.intent_type == "attack"
 			and badge.amount == action.amount and badge.target_position == action.target_position
-			and badge.readable_text == "ATK %d > H%d" % [action.amount, action.target_position],
+			and badge.readable_text == "Hit %d: %s" % [action.amount, {1: "Front", 2: "Middle", 3: "Back"}[action.target_position]],
 			"replacement badge announces compatible authoritative source, amount and target")
 		# Stable mounted contract: the whole sewn patch, not only the Control, sits clear of
 		# the viewport's upper edge and above its own actor art, and stays pointer/focus inert.

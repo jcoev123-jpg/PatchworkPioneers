@@ -78,11 +78,11 @@ func _run() -> void:
 			"Intent: Enemy 1 -> Hero 3: Weak 2; Enemy 2 -> Hero 3 (Tinker): 4 damage",
 			"Intent: Enemy 1: Shove Hero 2 front; Enemy 2: 1 Block"]
 		var badges := [
-			["H1 PUSH BACK", "EXPOSED 2 > H1"],
-			["BUFF +3 BLK", "ATK 5 > H1"],
-			["BLOCK +2", "BLEED 2 > H2"],
-			["WEAK 2 > H3", "ATK 4 > H3"],
-			["H2 PUSH FRONT", "BLOCK +1"]]
+			["Shove Front back", "Exposed 2: Front"],
+			["Buff +3 Block", "Hit 5: Front"],
+			["Block +2", "Bleed 2: Middle"],
+			["Weak 2: Back", "Hit 4: Back"],
+			["Shove Middle forward", "Block +1"]]
 		# Committed HUD icon per presented source: shove keeps the sewn glyph, block uses
 		# the authored defend art, and every other announced kind its own texture.
 		var icons := [
@@ -208,9 +208,9 @@ func _badge_icons(app) -> void:
 	var second = presenter._badges[1]
 	# Real first announcement of this battle: shove source keeps the glyph, the debuff
 	# source draws its committed art, with unchanged captions.
-	_check(badge.icon_mode == "shove" and badge.readable_text == "H1 PUSH BACK"
+	_check(badge.icon_mode == "shove" and badge.readable_text == "Shove Front back"
 		and _icon_fits(badge, ""), "real shove intent keeps the sewn glyph")
-	_check(second.icon_mode == "debuff" and second.readable_text == "EXPOSED 2 > H1"
+	_check(second.icon_mode == "debuff" and second.readable_text == "Exposed 2: Front"
 		and _icon_fits(second, "res://assets/paper/ui/intent_debuff.png"),
 		"real debuff intent draws its committed HUD art")
 	_check(LiveEnemyIntentBadge.icon_path_for("attack") == "res://assets/paper/ui/intent_attack.png"
@@ -230,8 +230,8 @@ func _badge_icons(app) -> void:
 		"block": "res://assets/paper/ui/intent_defend.png",
 		"buff": "res://assets/paper/ui/intent_buff.png",
 		"debuff": "res://assets/paper/ui/intent_debuff.png"}
-	var texts := {"attack": "ATK 5 > H2", "block": "BLOCK +3",
-		"buff": "BUFF +2 BLK", "debuff": "WEAK 2 > H1"}
+	var texts := {"attack": "Hit 5: Middle", "block": "Block +3",
+		"buff": "Buff +2 Block", "debuff": "Weak 2: Front"}
 	var expected_tooltips := {
 		"attack": "5 damage aimed at Hero 2 (middle).",
 		"block": "3 Block on the acting enemy.",
@@ -253,7 +253,7 @@ func _badge_icons(app) -> void:
 	badge.show_intent(attack, false)
 	_check(_icon_fits(badge, paths["attack"]), "attack art binds before the fallback transitions")
 	badge.show_intent({"type": "shove", "amount": 0, "target_position": 2, "direction": 1}, false)
-	_check(badge.icon_mode == "shove" and badge.readable_text == "H2 PUSH BACK"
+	_check(badge.icon_mode == "shove" and badge.readable_text == "Shove Middle back"
 		and badge.amount == 0 and badge.target_position == 2 and _icon_fits(badge, ""),
 		"shove clears the preceding HUD texture for its sewn glyph")
 	_check(badge.tooltip_text == "Push back Hero 2 (middle).", "shove explains direction and target")
@@ -280,7 +280,7 @@ func _badge_icons(app) -> void:
 	var saved_root: String = badge.icon_root
 	badge.icon_root = "res://assets/paper/ui/absent/"
 	badge.show_intent(attack, false)
-	_check(badge.icon_mode == "attack" and badge.readable_text == "ATK 5 > H2"
+	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 5: Middle"
 		and badge.amount == 5 and badge.target_position == 2 and _icon_fits(badge, ""),
 		"unavailable icon art keeps the readable attack glyph and exact announcement")
 	_check(LiveEnemyIntentBadge.load_icon_texture("res://assets/paper/ui/absent/intent_attack.png") == null
@@ -434,8 +434,8 @@ func _caption_readability(app) -> void:
 	var debuff = presenter._badges[1]
 	# The real first announcement: a shove with its sewn glyph and an Exposed debuff with
 	# its committed art, both under the larger fitted caption on the dark plaque.
-	_check(shove.readable_text == "H1 PUSH BACK" and _icon_fits(shove, "")
-		and debuff.readable_text == "EXPOSED 2 > H1"
+	_check(shove.readable_text == "Shove Front back" and _icon_fits(shove, "")
+		and debuff.readable_text == "Exposed 2: Front"
 		and _icon_fits(debuff, "res://assets/paper/ui/intent_debuff.png"),
 		"real shove glyph and debuff art are mounted before the caption checks")
 	_check(shove.caption_font_size() > 14 and debuff.caption_font_size() > 14
@@ -449,9 +449,9 @@ func _caption_readability(app) -> void:
 	var long_debuff := {"type": "debuff", "amount": 2, "status": "exposed", "target_position": 1}
 	var original := long_debuff.duplicate(true)
 	shove.show_intent(long_debuff, false, false, "exposed")
-	_check(shove.readable_text == "EXPOSED 2 > H1" and shove.intent_type == "debuff"
+	_check(shove.readable_text == "Exposed 2: Front" and shove.intent_type == "debuff"
 		and shove.amount == 2 and shove.target_position == 1
-		and shove.policy_cue == "EXPOSED" and long_debuff == original,
+		and shove.policy_cue == "Exposed" and long_debuff == original,
 		"long debuff keeps its exact authoritative text beside its target policy")
 	_check(_caption_readable(shove)
 		and shove.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT,
@@ -465,7 +465,7 @@ func _caption_readability(app) -> void:
 	# A long shove caption with the longest policy label, still inside the same band.
 	shove.show_intent({"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
 		false, false, "lowest_living_hp")
-	_check(shove.readable_text == "H3 PUSH FRONT" and shove.policy_cue == "LOW HP"
+	_check(shove.readable_text == "Shove Back forward" and shove.policy_cue == "Low HP"
 		and shove.intent_type == "shove" and shove.target_position == 3
 		and _caption_readable(shove) and _icon_fits(shove, ""),
 		"a long shove caption fits beside its policy and keeps the sewn glyph")
@@ -475,15 +475,15 @@ func _caption_readability(app) -> void:
 	shove.icon_root = "res://assets/paper/ui/absent/"
 	shove.show_intent(long_debuff, false, false, "front")
 	_check(shove.icon_texture == null and _icon_fits(shove, "")
-		and shove.readable_text == "EXPOSED 2 > H1" and shove.amount == 2
-		and shove.target_position == 1 and shove.policy_cue == "FRONT"
+		and shove.readable_text == "Exposed 2: Front" and shove.amount == 2
+		and shove.target_position == 1 and shove.policy_cue == "Front"
 		and _caption_readable(shove),
 		"unavailable icon art keeps the sewn-glyph fallback under the readable caption")
 	shove.icon_root = saved_root
 	_check(_snapshot(app) == before,
 		"every caption, plaque and policy transition is presentation only")
 	presenter._refresh()
-	_check(_snapshot(app) == before and shove.readable_text == "H1 PUSH BACK"
+	_check(_snapshot(app) == before and shove.readable_text == "Shove Front back"
 		and shove.policy_cue.is_empty() and _caption_readable(shove)
 		and _icon_fits(shove, "")
 		and _icon_fits(debuff, "res://assets/paper/ui/intent_debuff.png"),

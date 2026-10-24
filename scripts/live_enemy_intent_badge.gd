@@ -59,14 +59,18 @@ var amount := 0
 var target_position := 0
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
-const POLICY_LABELS := {"front": "FRONT", "lowest_living_hp": "LOW HP",
-	"exposed": "EXPOSED", "random": "RANDOM"}
+const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Low HP",
+	"exposed": "Exposed", "random": "Random"}
 const POLICY_DESCRIPTIONS := {
 	"front": "picks the front living hero",
 	"lowest_living_hp": "aims at the living hero with the lowest HP",
 	"exposed": "prioritises an Exposed living hero",
 	"random": "uses the run-seeded target choice",
 }
+
+
+static func rank_caption(pos: int) -> String:
+	return {1: "Front", 2: "Middle", 3: "Back"}.get(pos, "Hero %d" % pos)
 
 
 static func hero_target_label(pos: int) -> String:
@@ -282,14 +286,14 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		intent_type = "attack"
 		amount = action.get("amount", 0)
 		target_position = action.get("target_position", 0)
-		readable_text = "ATK %d > H%d" % [amount, target_position]
+		readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
 		tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
 	elif action.get("type") == "block":
 		icon_mode = "block"
 		intent_type = "block"
 		amount = action.get("amount", 0)
 		target_position = 0
-		readable_text = "BLOCK +%d" % amount
+		readable_text = "Block +%d" % amount
 		tip = "%d Block on the acting enemy." % amount
 	elif action.get("type") in ["buff", "debuff", "shove"]:
 		intent_type = action.type
@@ -297,10 +301,10 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		amount = action.amount
 		target_position = action.get("target_position", 0)
 		if intent_type == "buff":
-			readable_text = "BUFF +%d BLK" % amount
+			readable_text = "Buff +%d Block" % amount
 			tip = "%d Block on the acting enemy." % amount
 		elif intent_type == "debuff":
-			readable_text = "%s %d > H%d" % [action.status.to_upper(), amount, target_position]
+			readable_text = "%s %d: %s" % [action.status.capitalize(), amount, rank_caption(target_position)]
 			var status_name := String(action.get("status", "")).to_lower()
 			if status_name == "bleed":
 				tip = "Bleed %d to %s — loses %d HP at owner's turn end then decrements by 1." % [
@@ -316,7 +320,7 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 					status_name.capitalize(), amount, hero_target_label(target_position)]
 		else:
 			var push_dir := "push back" if action.direction == 1 else "push front"
-			readable_text = "H%d %s" % [target_position, "PUSH BACK" if action.direction == 1 else "PUSH FRONT"]
+			readable_text = "Shove %s %s" % [rank_caption(target_position), "back" if action.direction == 1 else "forward"]
 			tip = "Push %s %s." % [push_dir.trim_prefix("push "), hero_target_label(target_position)]
 	else:
 		icon_mode = "none"
@@ -326,7 +330,7 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		readable_text = "NO ACTION"
 		tip = "No action."
 	if not policy_cue.is_empty() and POLICY_DESCRIPTIONS.has(policy):
-		tip += "\nTarget policy (%s): %s." % [policy_cue, POLICY_DESCRIPTIONS[policy]]
+		tip += "\nTarget policy (%s): %s." % [policy_cue.to_upper(), POLICY_DESCRIPTIONS[policy]]
 	tooltip_text = tip
 	_update_visuals()
 

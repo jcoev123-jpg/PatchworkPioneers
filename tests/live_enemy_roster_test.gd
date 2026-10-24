@@ -1089,9 +1089,9 @@ func _caption_legibility(app, presenter) -> void:
 	var long_debuff := {"type": "debuff", "amount": 2, "status": "exposed", "target_position": 2}
 	var original := long_debuff.duplicate(true)
 	badge.show_intent(long_debuff, false, false, "front")
-	_check(badge.readable_text == "EXPOSED 2 > H2" and badge.amount == 2
+	_check(badge.readable_text == "Exposed 2: Middle" and badge.amount == 2
 		and badge.target_position == 2 and badge.intent_type == "debuff"
-		and badge.policy_cue == "FRONT" and long_debuff == original,
+		and badge.policy_cue == "Front" and long_debuff == original,
 		"a long debuff keeps its exact authoritative caption beside its target policy")
 	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — raises incoming attack damage by 50%, rounded down.\nTarget policy (FRONT): picks the front living hero.",
 		"debuff with front policy explains exposed rule, hero target and front policy")
@@ -1112,8 +1112,8 @@ func _caption_legibility(app, presenter) -> void:
 	# A long shove caption with the longest policy label: still inside the same band.
 	badge.show_intent({"type": "shove", "amount": 0, "target_position": 3,
 		"direction": -1}, false, false, "lowest_living_hp")
-	_check(badge.readable_text == "H3 PUSH FRONT" and badge.icon_mode == "shove"
-		and badge.target_position == 3 and badge.policy_cue == "LOW HP"
+	_check(badge.readable_text == "Shove Back forward" and badge.icon_mode == "shove"
+		and badge.target_position == 3 and badge.policy_cue == "Low HP"
 		and _caption_fits(badge) and _badge_icon_fits(badge, ""),
 		"a long shove caption fits beside its policy and keeps the sewn glyph")
 	_check(badge.tooltip_text == "Push front Hero 3 (back).\nTarget policy (LOW HP): aims at the living hero with the lowest HP.",
@@ -1124,8 +1124,8 @@ func _caption_legibility(app, presenter) -> void:
 	badge.icon_root = "res://assets/paper/ui/absent/"
 	badge.show_intent(long_debuff, false, false, "exposed")
 	_check(badge.icon_texture == null and _badge_icon_fits(badge, "")
-		and badge.readable_text == "EXPOSED 2 > H2" and badge.amount == 2
-		and badge.target_position == 2 and badge.policy_cue == "EXPOSED"
+		and badge.readable_text == "Exposed 2: Middle" and badge.amount == 2
+		and badge.target_position == 2 and badge.policy_cue == "Exposed"
 		and _caption_fits(badge) and badge.policy_text_rect() != Rect2(),
 		"unavailable icon art keeps the readable caption, plaque and policy ticket")
 	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — raises incoming attack damage by 50%, rounded down.\nTarget policy (EXPOSED): prioritises an Exposed living hero.",
@@ -1152,7 +1152,7 @@ func _caption_legibility(app, presenter) -> void:
 	_check(_snapshot(app) == before,
 		"every caption, plaque and policy transition is presentation only")
 	presenter._refresh()
-	_check(_snapshot(app) == before and presenter._badges[0].readable_text == "ATK 1 > H1"
+	_check(_snapshot(app) == before and presenter._badges[0].readable_text == "Hit 1: Front"
 		and presenter._badges[0].policy_cue.is_empty()
 		and _caption_fits(presenter._badges[0]) and _caption_fits(presenter._badges[1]),
 		"a refresh restores the real announcements with fitted captions")
@@ -1302,17 +1302,17 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 			var kind: String = announced["type"]
 			var amount: int = announced["amount"]
 			var target: int = announced.get("target_position", 0)
-			var message := "ATK %d > H%d" % [amount, target] if kind == "attack" else "BLOCK +%d" % amount
+			var message := "Hit %d: %s" % [amount, {1: "Front", 2: "Middle", 3: "Back"}.get(target, "")] if kind == "attack" else "Block +%d" % amount
 			_check(badge.icon_mode == kind and badge.intent_type == kind and badge.amount == amount and
 				badge.target_position == target and badge.readable_text == message,
 				"badge mode, text, damage/Block and target equal authoritative copied intent")
 			if position == 1 and expected_target != -1:
 				_check(kind == "attack" and amount == 1 and target == expected_target and
-					badge.readable_text == "ATK 1 > H%d" % expected_target,
+					badge.readable_text == "Hit 1: %s" % {1: "Front", 2: "Middle", 3: "Back"}[expected_target],
 					"ragling next announced target follows real End Turn scheduler")
 			if position == 2:
 				_check(kind == "block" and amount == 1 and target == 0 and
-					badge.readable_text == "BLOCK +1",
+					badge.readable_text == "Block +1",
 					"living Guard always announces upcoming +1 Block, not accumulated Block")
 		modes.append(badge.icon_mode)
 	_check(positions == [1, 2], "two unique badges preserve authored enemy source positions")
@@ -2001,7 +2001,7 @@ func _bound_skip_badges(app, presenter) -> void:
 		and badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0,
 		"scheduled attack/target is suppressed only in pending skip presentation")
 	_check(presenter._badges[1].icon_mode == "block"
-		and presenter._badges[1].readable_text == "BLOCK +1",
+		and presenter._badges[1].readable_text == "Block +1",
 		"unskipped second source retains real block intent")
 	var pending_model := _snapshot(app)
 	for step in range(5):
@@ -2021,11 +2021,11 @@ func _bound_skip_badges(app, presenter) -> void:
 		{1: "elite", 2: "boss"}), "mismatched roster is genuinely independently bound")
 	app.round_flow._unravel = foreign
 	presenter._refresh()
-	_check(badge.icon_mode == "attack" and badge.readable_text == "ATK 1 > H1",
+	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 1: Front",
 		"roster-mismatched pending authority falls back to unchanged scheduler intent")
 	app.round_flow._unravel = null
 	presenter._refresh()
-	_check(badge.icon_mode == "attack" and badge.readable_text == "ATK 1 > H1",
+	_check(badge.icon_mode == "attack" and badge.readable_text == "Hit 1: Front",
 		"missing authority preserves ordinary attack instead of stale UNRAVELLED")
 	app.round_flow._unravel = service
 	presenter._refresh()
@@ -2035,7 +2035,7 @@ func _bound_skip_badges(app, presenter) -> void:
 	await process_frame
 	presenter._refresh()
 	_check(not service.get_snapshot(1).skip_pending and service.get_snapshot(1).threshold == 12
-		and badge.icon_mode == "attack" and badge.readable_text.begins_with("ATK ")
+		and badge.icon_mode == "attack" and badge.readable_text.begins_with("Hit ")
 		and app.enemy_intents._turn_index == 1
 		and app.enemy_attacks == app.enemy_intents.get_intents(),
 		"real End Turn consumes pending original slot once and badge re-announces the scheduler")
@@ -2228,12 +2228,12 @@ func _policy_cue_cases(app, presenter) -> void:
 			var target: int = action.get("target_position", 0)
 			var original_caption := ""
 			match action.type:
-				"attack": original_caption = "ATK %d > H%d" % [action.amount, target]
-				"block": original_caption = "BLOCK +%d" % action.amount
-				"buff": original_caption = "BUFF +%d BLK" % action.amount
-				"debuff": original_caption = "%s %d > H%d" % [action.status.to_upper(), action.amount, target]
-				"shove": original_caption = "H%d %s" % [target, "PUSH BACK" if action.direction == 1 else "PUSH FRONT"]
-			var expected_cue: String = LiveEnemyIntentBadge.POLICY_LABELS.get(expected_policy, "") \
+				"attack": original_caption = "Hit %d: %s" % [action.amount, {1: "Front", 2: "Middle", 3: "Back"}.get(target, "")]
+				"block": original_caption = "Block +%d" % action.amount
+				"buff": original_caption = "Buff +%d Block" % action.amount
+				"debuff": original_caption = "%s %d: %s" % [action.status.capitalize(), action.amount, {1: "Front", 2: "Middle", 3: "Back"}[target]]
+				"shove": original_caption = "Shove %s %s" % [{1: "Front", 2: "Middle", 3: "Back"}[target], "back" if action.direction == 1 else "forward"]
+			var expected_cue: String = {"front": "Front", "lowest_living_hp": "Low HP", "exposed": "Exposed", "random": "Random"}.get(expected_policy, "") \
 				if action.type in ["attack", "debuff", "shove"] else ""
 			_check(badge.policy_cue == expected_cue and badge.readable_text == original_caption
 				and badge.intent_type == action.type and badge.amount == action.amount
@@ -2247,7 +2247,7 @@ func _policy_cue_cases(app, presenter) -> void:
 			}
 			if action.type in ["attack", "debuff", "shove"]:
 				_check(badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(target))
-					and badge.tooltip_text.contains("Target policy (%s): %s." % [expected_cue, policy_descs[expected_policy]]),
+					and badge.tooltip_text.contains("Target policy (%s): %s." % [expected_cue.to_upper(), policy_descs[expected_policy]]),
 					"targeted action tooltip explains target and policy for original slot %d" % position)
 			else:
 				_check(badge.tooltip_text.contains("Block on the acting enemy")
@@ -2270,7 +2270,7 @@ func _policy_cue_cases(app, presenter) -> void:
 				"pending skip tooltip suppresses policy and previous action")
 			flow._unravel = old_unravel
 			presenter._refresh()
-			_check(presenter._badges[0].policy_cue == "FRONT", "cleared skip restores authored policy")
+			_check(presenter._badges[0].policy_cue == "Front", "cleared skip restores authored policy")
 			_check(app.enemies.apply_damage(1, 999), "test fixture slays actual original enemy")
 			presenter._refresh()
 			_check(presenter._badges[0].policy_cue.is_empty()
@@ -2281,7 +2281,7 @@ func _policy_cue_cases(app, presenter) -> void:
 			app.enemies._enemies.assign(old_roster.duplicate(true))
 			app.enemies._enemies[0]["intent"] = {"target": "front", "actions": [first]}
 			presenter._refresh()
-			_check(presenter._badges[0].policy_cue == "FRONT", "restored living source has cue")
+			_check(presenter._badges[0].policy_cue == "Front", "restored living source has cue")
 			_check(presenter._badges[0].tooltip_text.contains("Target policy (FRONT)"),
 				"restored living source restores policy in tooltip")
 	# An unbound legacy schedule and a missing authority never invent a policy.

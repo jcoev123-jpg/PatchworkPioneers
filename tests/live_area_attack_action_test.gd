@@ -273,7 +273,7 @@ func _run() -> void:
 		_check(roster._badges.size() == 2, "both source badges mounted")
 		if roster._badges.size() == 2:
 			_check(roster._badges[1].is_visible_in_tree() and roster._badges[1].icon_mode == "block"
-				and roster._badges[1].readable_text == "BLOCK +1"
+				and roster._badges[1].readable_text == "Block +1"
 				and roster._badges[0].icon_mode == "slain", "surviving Guard badge retains exact Block; Ragling badge slain")
 		_visible()
 		app.return_button.pressed.emit()
