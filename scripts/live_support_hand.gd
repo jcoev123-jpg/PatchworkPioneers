@@ -28,6 +28,11 @@ const BUTTON_STATES := ["normal", "hover", "pressed", "disabled"]
 const TABLE_HELP := "Help"
 const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space to play it. " \
 	+ "Up / Down or Tab moves between cards. Esc or Cancel clears a chosen target."
+## Idle Help is sewn in the shipped display heading; the longer targeting prompt uses the
+## theme's PatrickHand body face. Both stay at the VIS V2 >= 18 px readable floor.
+const HELP_IDLE_FACE := &"PatchHeading"
+const HELP_BODY_FACE := &""
+const HELP_FONT_SIZE := 18
 var _battle: Control
 var _deck: CombatDeck
 var _party: CombatParty
@@ -667,13 +672,14 @@ func _sync_battle() -> void:
 		help_label.mouse_default_cursor_shape = Control.CURSOR_HELP
 		help_label.focus_mode = Control.FOCUS_NONE
 		help_label.tooltip_text = TABLE_HELP_DETAIL
+		help_label.theme_type_variation = HELP_IDLE_FACE
 		help_label.custom_minimum_size = Vector2(64, 34)
 		help_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		help_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		help_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		help_label.add_theme_font_size_override("font_size", 15)
+		help_label.add_theme_font_size_override("font_size", HELP_FONT_SIZE)
 		help_label.add_theme_color_override("font_color", Color("ecdfbd"))
 		var patch := StyleBoxFlat.new()
 		patch.bg_color = Color("42392f")
@@ -772,6 +778,11 @@ func _sync_battle() -> void:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
 	if help_label.text != help_text:
 		help_label.text = help_text
+	# The same patch keeps the sewn frame; only its face changes: idle Help in the shipped
+	# display heading, the longer targeting prompt in the body face. Restored on cancel.
+	var help_face: StringName = HELP_BODY_FACE if choosing else HELP_IDLE_FACE
+	if help_label.theme_type_variation != help_face:
+		help_label.theme_type_variation = help_face
 	var help_flags: int = Control.SIZE_EXPAND_FILL if choosing else Control.SIZE_SHRINK_BEGIN
 	if help_label.size_flags_horizontal != help_flags:
 		help_label.size_flags_horizontal = help_flags

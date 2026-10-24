@@ -163,6 +163,14 @@ func _visible() -> void:
 	_check(presenter.help_label.get_line_count() > 0
 		and presenter.help_label.get_visible_line_count() == presenter.help_label.get_line_count(),
 		"Help cue renders every line it wraps")
+	var help_font: Font = presenter.help_label.get_theme_font("font")
+	_check(presenter.help_label.theme_type_variation == &"PatchHeading"
+		and help_font != null and help_font.resource_path == "res://assets/fonts/LondrinaSolid-Regular.ttf"
+		and presenter.help_label.get_theme_font_size("font_size") >= 18,
+		"idle Help is sewn in the shipped display heading at the readable size floor")
+	_check(presenter.help_label.get_minimum_size().x <= presenter.help_label.size.x
+		and presenter.help_label.get_minimum_size().y <= presenter.help_label.size.y,
+		"idle Help text stays inside its sewn patch")
 	_check(presenter.help_label.tooltip_text == presenter.TABLE_HELP_DETAIL
 		and presenter.help_label.mouse_filter != Control.MOUSE_FILTER_IGNORE,
 		"complete instructions stay reachable on a hoverable help label")
@@ -898,6 +906,15 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(presenter.help_label.get_line_count() > 0
 		and presenter.help_label.get_visible_line_count() == presenter.help_label.get_line_count(),
 		"target prompt renders every wrapped line without clipping")
+	var target_font: Font = presenter.help_label.get_theme_font("font")
+	_check(presenter.help_label.theme_type_variation != &"PatchHeading"
+		and presenter.help_label.theme_type_variation == &""
+		and target_font != null and target_font.resource_path == "res://assets/fonts/PatrickHand-Regular.ttf"
+		and presenter.help_label.get_theme_font_size("font_size") >= 18,
+		"target prompt uses the body face at the readable size floor")
+	_check(presenter.help_label.get_minimum_size().x <= presenter.help_label.size.x
+		and presenter.help_label.get_minimum_size().y <= presenter.help_label.size.y,
+		"target prompt stays inside the same sewn patch")
 	_check(presenter.help_label.size_flags_horizontal == Control.SIZE_EXPAND_FILL
 		and not presenter.footer_spring.visible,
 		"target prompt expands to the available footer width while the idle cue shrinks")
@@ -1069,6 +1086,7 @@ func _ally_cases() -> void:
 			if scenario in ["escape", "queued_cancel", "cancel", "replace", "turn", "hidden", "downed_owner", "downed_after", "zero", "inactive", "absent", "detached"]:
 				_check(presenter._pending.is_empty() and presenter._targets.is_empty(), "cancellation removes queued work and target callbacks: " + scenario)
 				_check(presenter.help_label.text == presenter.TABLE_HELP
+					and presenter.help_label.theme_type_variation == &"PatchHeading"
 					and presenter.help_label.size_flags_horizontal != Control.SIZE_EXPAND_FILL
 					and presenter.footer_spring.visible,
 					"cancellation restores the compact Help cue: " + scenario)
