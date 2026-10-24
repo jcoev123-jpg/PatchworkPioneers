@@ -18,6 +18,9 @@ const EARNED_POOL_BLOCKS := [
 	"warden_hold_the_line", "warden_patch_guard", "warden_quick_darn",
 	"warden_iron_hem", "warden_bastion_quilt",
 ]
+const EARNED_SEAMSTRESS := [
+	"seamstress_darning", "seamstress_snag", "seamstress_blanket_stitch",
+]
 
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
@@ -92,12 +95,16 @@ func choose_event_choice(forecast: Dictionary) -> String:
 func choose_reward(offers: Array, seed_value: int, previous_picks: int) -> String:
 	if offers.is_empty() or seed_value % 3 != 0 or previous_picks != 0:
 		return "" # Real Skip is an authored choice, not an invented award.
-	for offer in offers:
-		var id := str(offer.get("id", ""))
-		var definition := _pool_definition(id)
-		if definition.get("reward_eligible", false) and (
-				EARNED_POOL_ATTACKS.has(id) or EARNED_POOL_BLOCKS.has(id)):
-			return str(offer.id)
+	# Rotate family priority within the original picking subset, without RNG.
+	var families := [CombatPoolEnergyCards.SUPPORTED_IDS, EARNED_POOL_BLOCKS,
+		EARNED_POOL_ATTACKS, EARNED_SEAMSTRESS]
+	for offset in range(families.size()):
+		var family: Array = families[(seed_value / 3 + offset) % families.size()]
+		for offer in offers:
+			var id := str(offer.get("id", ""))
+			if family.has(id) and not id.ends_with("_plus") \
+					and not RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty():
+				return id
 	return "" # Unsupported earned shapes stay unselected in this bounded cohort.
 
 
@@ -146,7 +153,9 @@ func choose_sew(wardrobe: RunPatchWardrobe, heroes: Array) -> Dictionary:
 func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		attacks: CombatAttackCards, run_cards: RunRestStitchCards,
 		plain: CombatPoolPlainStrikes, heavy: CombatWardenPoolHeavyAttacks,
-		rejected_ids: Array, blocks: CombatWardenPoolBlockCards = null) -> Dictionary:
+		rejected_ids: Array, blocks: CombatWardenPoolBlockCards = null,
+		heals: CombatSeamstressPoolHeals = null, control: CombatSeamstressPoolControl = null,
+		bleed: CombatSeamstressPoolBleed = null, unravel: CombatUnravel = null) -> Dictionary:
 	if not deck.turn_active or party.is_defeated() or enemies.is_victorious():
 		return {}
 	var best := {}
@@ -154,6 +163,57 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var targeter := CombatAttackTargeting.new()
 	for id in deck.hand:
 		if rejected_ids.has(id):
+			continue
+		if EARNED_SEAMSTRESS.has(id.trim_suffix("_plus")):
+			var definition := _pool_definition(id)
+			if definition.cost > deck.energy or not _living_owner_in_from(party.get_heroes(), definition):
+				continue
+			var target := 0
+			if definition.target_kind == "ally_single":
+				if heals == null or not heals.is_patch_binding_valid():
+					continue
+				var block_amount: int = definition.effects.block
+				if heals._head_patches != null:
+					block_amount += heals._head_patches.get_bonus("seamstress", id, "block")
+				if heals._arm_patches != null:
+					block_amount += heals._arm_patches.card_block_bonus("seamstress", id)
+				for hero in party.get_heroes():
+					if hero.hp > 0 and hero.block <= CombatParty.MAX_INT - block_amount \
+							and (target == 0 or hero.max_hp - hero.hp > party.get_hero(target).max_hp - party.get_hero(target).hp):
+						target = hero.position
+				if target == 0:
+					continue
+			elif definition.target_kind == "enemy_single":
+				if control == null or not control.head_binding_valid() or unravel == null \
+						or (control._patches != null and not control._patches.is_valid()):
+					continue
+				for position in definition.to_positions:
+					var gauge := unravel.get_snapshot(position)
+					var weak := control.snag_weak_preview(id)
+					if unravel._validate_roster_and_position(enemies, position) \
+							and gauge.get("gauge", -1) is int and gauge.get("threshold", 0) is int \
+							and gauge.gauge >= 0 and gauge.threshold > 0 and gauge.gauge <= gauge.threshold \
+							and gauge.get("unravelled") is bool and gauge.get("skip_pending") is bool \
+							and weak.get("ok", false) and enemies.can_apply_statuses({position: {"weak": weak.weak}}):
+						target = position
+						break
+				if target == 0:
+					continue
+			elif bleed == null or not bleed._prepare(deck, party, enemies, id, 0).get("ok", false):
+				continue
+			if 205 > best_score:
+				best_score = 205
+				best = {"kind": "earned_seamstress", "id": id, "target": target}
+			continue
+		if CombatPoolEnergyCards.SUPPORTED_IDS.has(id):
+			var definition := _pool_definition(id)
+			if definition.is_empty() or definition.cost > deck.energy \
+					or deck.energy > CombatParty.MAX_INT - CombatPoolEnergyCards.ENERGY_GAIN \
+					or not _living_owner_in_from(party.get_heroes(), definition):
+				continue
+			if 210 > best_score:
+				best_score = 210
+				best = {"kind": "earned_energy", "id": id, "target": 0}
 			continue
 		if EARNED_POOL_BLOCKS.has(id.trim_suffix("_plus")):
 			var definition := _pool_definition(id)
@@ -261,6 +321,8 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 func _pool_definition(id: String) -> Dictionary:
 	if id.begins_with("warden_"):
 		return WardenPoolCards.new().get_definition(id)
+	if id.begins_with("tinker_"):
+		return TinkerPoolCards.new().get_definition(id)
 	return SeamstressPoolCards.new().get_definition(id)
 
 
