@@ -43,7 +43,8 @@ func _live_state() -> Array:
 		active, latch, presenter.last_event.duplicate(true),
 		presenter._fray.latch_snapshot() if presenter._fray != null else null,
 		presenter._unravel.get_snapshot(1) if presenter._unravel != null else {},
-		presenter._play._tinker.path_bonus()]
+		presenter._play._tinker.path_bonus(),
+		presenter._play._head_rules.read_projection() if presenter._play._head_rules != null else null]
 
 
 ## A genuine run-owned ARM receipt, separate from the existing M04 patch
@@ -94,8 +95,12 @@ func _prepare_live_stitch(first_id: String, second_id: String) -> String:
 	var rest := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors,
 		app.run_scraps, app.run_next_stitch_id)
 	var result := rest.choose_stitch(first, second, rest.get_snapshot())
+	var expected_cost := mini(3, maxi(
+		int(RunRestStitchCards.resolve_card_definition(first_id).cost),
+		int(RunRestStitchCards.resolve_card_definition(second_id).cost)) + 1)
 	_check(result.get("ok", false) and result.descriptor.owners[0] != result.descriptor.owners[1]
-		and result.descriptor.cost == 2, "Rest service creates ordered two-owner cost-2 composite")
+		and result.descriptor.cost == expected_cost,
+		"Rest service creates ordered two-owner capped-cost composite")
 	if not result.get("ok", false):
 		return ""
 	app.run_deck.assign(result.deck)
@@ -333,7 +338,8 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 
 
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
-		mitt: bool = false, stitch_pair: Array = [], scope: bool = false) -> bool:
+		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
+		head_status: bool = false) -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -384,7 +390,8 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		_check(stitch_pair.size() == 2 and not _prepare_live_stitch(stitch_pair[0], stitch_pair[1]).is_empty(),
 			"genuine Rest descriptor ready before routed battle")
 	if owner != "":
-		if not (_bind_mitt(owner) if mitt else _bind_authored(owner, downed)):
+		if not (_bind_head_statuses() if head_status else
+			(_bind_mitt(owner) if mitt else _bind_authored(owner, downed))):
 			return false
 	var action: Button = _route_action(fixture.path.back())
 	_check(action != null and not action.disabled, "next Fight is an authentic connected choice")
@@ -421,7 +428,13 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 			and patches.active_snapshot() == projection.active
 			and patches.latch_snapshot().get(owner) == false,
 			"connected presenter's single attack service sees exact sewn wearer projection")
-	if not mitt:
+	if head_status:
+		var head_rules: CombatM05HeadPatchRules = presenter._play._head_rules
+		_check(head_rules != null and head_rules.read_projection().ok
+			and head_rules.read_projection().heads.warden.patch_id == "stern_seam_cap"
+			and head_rules.read_projection().heads.seamstress.patch_id == "bloodstitch_bonnet",
+			"live presenter shares both genuine battle-scoped M05 HEAD projections")
+	elif not mitt:
 		await _probe_patch_refresh(owner)
 	else:
 		_check(presenter._fray != null and presenter._fray.is_valid()
@@ -931,6 +944,7 @@ func _run() -> void:
 	await _mitt_starter_cases(fixture)
 	await _mitt_stitched_cases(fixture)
 	await _mitt_scope_stitched_case(fixture)
+	await _head_mounted_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -942,3 +956,189 @@ func _finish_patch_play() -> void:
 	print("live_worn_attack_patch_play_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Sew both authored status HEAD patches into the persistent routed run before
+## battle entry. The owner binds the exact current receipt, not a test projection.
+func _bind_head_statuses() -> bool:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	_check(raw is Array, "live authored M05 HEAD metadata loads")
+	if not raw is Array:
+		return false
+	var expected := {
+		"stern_seam_cap": {"effect": "card_weak_bonus", "amount": 1},
+		"bloodstitch_bonnet": {"effect": "card_bleed_bonus", "amount": 1},
+		"button_glass_visor": {"effect": "card_exposed_bonus", "amount": 1},
+		"reinforced_browband": {"effect": "card_block_bonus", "amount": 2},
+	}
+	var definitions := []
+	for id in expected:
+		var matches: Array = raw.filter(func(entry): return entry is Dictionary and entry.get("id") == id)
+		_check(matches.size() == 1 and matches[0].get("slot") == "HEAD"
+			and matches[0].get("effect") == expected[id].effect
+			and matches[0].get("amount") == expected[id].amount,
+			"mounted real catalog records correct named HEAD power " + id)
+		if matches.size() != 1:
+			return false
+		definitions.append({"id": id, "slot": "HEAD"})
+	for id in ["stern_seam_cap", "bloodstitch_bonnet"]:
+		app.run_trinkets.append(id)
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid() and carry.read_state().heroes == app.run_heroes,
+		"routed M05 receipt uses real carried living roster")
+	if carry == null:
+		return false
+	worn_wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(worn_wardrobe.is_valid(), "genuine M05 two-wearer wardrobe is valid")
+	if not worn_wardrobe.is_valid():
+		return false
+	var warden := worn_wardrobe.sew("stern_seam_cap", "warden", "HEAD",
+		"live_head_warden", worn_wardrobe.get_snapshot())
+	var seamstress := worn_wardrobe.sew("bloodstitch_bonnet", "seamstress", "HEAD",
+		"live_head_seamstress", worn_wardrobe.get_snapshot())
+	_check(warden.get("ok", false) and seamstress.get("ok", false)
+		and warden.receipt.patch_id == "stern_seam_cap"
+		and seamstress.receipt.patch_id == "bloodstitch_bonnet"
+		and warden.receipt.hero_id == "warden"
+		and seamstress.receipt.hero_id == "seamstress",
+		"distinct real sewn M05 HEAD receipts belong to original owners")
+	var current: Dictionary = worn_wardrobe.get_snapshot()
+	var projected := worn_wardrobe.project_active(carry.torn.read_state())
+	_check(projected.ok and projected.worn.warden.HEAD == "stern_seam_cap"
+		and projected.worn.seamstress.HEAD == "bloodstitch_bonnet"
+		and projected.active.warden == ["stern_seam_cap"]
+		and projected.active.seamstress == ["bloodstitch_bonnet"]
+		and carry.can_bind_wardrobe(worn_wardrobe, carry.torn, current)
+		and carry.bind_wardrobe(worn_wardrobe, carry.torn, current),
+		"actual routed run owns both HEAD projections before next Fight")
+	return carry._wardrobe == worn_wardrobe
+
+
+func _head_mounted_cases(fixture: Dictionary) -> void:
+	for scenario in ["bash_mouse", "prick_keyboard", "stitched_mouse", "stitched_keyboard"]:
+		var stitched: bool = scenario.begins_with("stitched")
+		var keyboard: bool = scenario.ends_with("keyboard")
+		var pair := ["warden_shield_bash", "seamstress_prick"] if stitched else []
+		if not await _entry(fixture, "warden", false, keyboard, false, pair, false, true):
+			_check(false, "real connected M05 HEAD fixture entered: " + scenario)
+			continue
+		var head_rules: CombatM05HeadPatchRules = presenter._play._head_rules
+		_check(head_rules != null and presenter._controls._head_rules == head_rules,
+			"same HEAD object backs control and starter attack battle authorities")
+		var before_refresh := _live_state()
+		for repeated in range(3):
+			app._refresh_hand()
+			await _frames()
+		_check(presenter._play._head_rules == head_rules
+			and head_rules.read_projection().ok and _live_state() == before_refresh,
+			"real three-time hand refresh preserves worn HEAD projection and full state")
+		if not stitched:
+			var id := "warden_shield_bash" if scenario == "bash_mouse" else "seamstress_prick"
+			var amount := 2 if scenario == "bash_mouse" else 4
+			var status := "weak" if scenario == "bash_mouse" else "bleed"
+			var target := 1
+			if await _ensure_held(id):
+				var untouched := _live_state()
+				await _hover(_panel(id))
+				_check(presenter.cue.text.contains(status.capitalize() + " 0 → " + str(amount))
+					and _live_state() == untouched,
+					"mounted live status forecast shows exact sewn " + status + " counter without mutation")
+				if status == "bleed":
+					_check(await _choose(id, keyboard), "HEAD held Prick arms for stale-click check")
+					var no_change := _live_state()
+					presenter._queue_attack(4)
+					_check(_live_state() == no_change and not presenter._queued,
+						"illegal HEAD enemy target cannot queue or mutate")
+					presenter._queue_attack(1)
+					_check(presenter._queued, "real selected target schedules a HEAD commit")
+					var original_enemy_id: String = app.enemies._enemies[0]["id"]
+					app.enemies._enemies[0]["id"] = "substituted_enemy"
+					await _frames()
+					app.enemies._enemies[0]["id"] = original_enemy_id
+					_check(_live_state() == no_change and not presenter._queued,
+						"replaced enemy rejects deferred HEAD commit without spend/status/RNG")
+				var required := {"weak": amount} if status == "weak" else {"bleed": amount}
+				await _physical_hit(id, target, keyboard, 8 if status == "weak" else 3, required)
+				_check(app.enemies.get_enemy(target).get("statuses", {}).get(status, 0) == amount,
+					"held routed " + id + " commits exact HEAD status to its confirmed target")
+			await _click(app.return_button)
+			_check(presenter._play._head_rules == null,
+				"return ends battle-scoped M05 HEAD projection")
+			continue
+		var stitch_id := ""
+		for key in app.run_stitch_descriptors:
+			stitch_id = key
+		_check(not stitch_id.is_empty(), "Rest-created canonical stitched ID in routed run")
+		if stitch_id.is_empty() or not await _ensure_held(stitch_id):
+			await _click(app.return_button)
+			continue
+		var descriptor: Dictionary = app.run_stitch_descriptors[stitch_id]
+		var preview: Dictionary = presenter._stitch_preview(stitch_id)
+		_check(preview.playable and preview.halves.size() == 2
+			and descriptor.half_ids == ["warden_shield_bash", "seamstress_prick"]
+			and descriptor.owners == ["warden", "seamstress"] and descriptor.cost == 3
+			and app.deck.energy == 3,
+			"genuine Rest composites preserve ordered owner halves and capped 3-energy cost")
+		var first_target := 1
+		var second_target := 2
+		_check(preview.halves[0].target_positions.has(first_target)
+			and preview.halves[1].target_positions.has(second_target),
+			"both original enemy slots are legal for sewn stitched halves")
+		if not preview.halves[0].target_positions.has(first_target) \
+				or not preview.halves[1].target_positions.has(second_target):
+			await _click(app.return_button)
+			continue
+		var before := _live_state()
+		var before_hand: Array = app.deck.hand.duplicate()
+		var before_discard: Array = app.deck.discard_pile.duplicate()
+		var before_foes: Array = app.enemies.get_enemies()
+		var before_rng: int = app.run_rng.state
+		var recorded: Array = []
+		var capture := func():
+			if presenter.current_forecast.get("playable", false) \
+					and presenter.current_forecast.get("halves", []).size() == 2:
+				recorded.append({"cue": presenter.cue.text,
+					"forecast": presenter.current_forecast.duplicate(true),
+					"enemies": app.enemies.get_enemies(),
+					"rng": app.run_rng.state})
+		presenter.forecast_updated.connect(capture)
+		_check(await _choose(stitch_id, keyboard), "genuine held stitched face selected")
+		if keyboard:
+			await _key(KEY_1)
+			await _key(KEY_2)
+		else:
+			await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			await _click(app.get_node("LiveEnemyRoster")._labels[1])
+		if presenter.forecast_updated.is_connected(capture):
+			presenter.forecast_updated.disconnect(capture)
+		_check(not recorded.is_empty(), "mounted read-only stitched outcome forecast fired")
+		if not recorded.is_empty():
+			var seen: Dictionary = recorded.back()
+			_check(seen.cue.contains("Weak 2") and seen.cue.contains("Bleed 4")
+				and seen.forecast.halves[0].hits[0].statuses == {"weak": 2}
+				and seen.forecast.halves[1].hits[0].statuses == {"bleed": 4}
+				and seen.enemies == before_foes and seen.rng == before_rng,
+				"two owner-specific on-hit HEAD counters forecast before staged commit")
+		var event: Dictionary = presenter.last_event
+		_check(event.get("ok", false) and event.get("halves", []).size() == 2,
+			"physical stitched transaction resolves through real shared hand")
+		if event.get("ok", false):
+			_check(event.halves[0].hits == [{
+				"position": first_target, "damage": 8, "block_absorbed": 0,
+				"hp_loss": 8, "statuses": {"weak": 2}}]
+				and event.halves[1].hits == [{
+				"position": second_target, "damage": 3, "block_absorbed": 0,
+				"hp_loss": 3, "statuses": {"bleed": 4}}],
+				"stitched Warden then Seamstress resolve exact independent damage/statuses")
+			_check(app.enemies.get_enemy(1).get("statuses", {}).get("weak", 0) == 2
+				and app.enemies.get_enemy(2).get("statuses", {}).get("bleed", 0) == 4
+				and app.deck.energy == before[15] - 3
+				and app.deck.hand.count(stitch_id) == before_hand.count(stitch_id) - 1
+				and app.deck.discard_pile.count(stitch_id) == before_discard.count(stitch_id) + 1
+				and app.run_rng.state == before_rng,
+				"one composite energy/discard, ordered target statuses and zero RNG spend")
+		await _click(app.return_button)
+		_check(presenter._play._head_rules == null,
+			"stitched battle return retires the one shared HEAD authority")

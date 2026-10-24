@@ -27,6 +27,8 @@ func _initialize() -> void:
 	_test_patch_rejections_and_replay()
 	_test_real_shop_coat_wardrobes()
 	_test_malformed_patch_wardrobes()
+	_test_m05_head_statuses()
+	_test_m05_head_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -1435,3 +1437,196 @@ func _test_patch_rejections_and_replay() -> void:
 		and a._patches.latch_snapshot() == b._patches.latch_snapshot(),
 
 		"identical seeded real decks, events and patch latches replay exactly")
+
+
+## Authentic M05 metadata and sew receipts; never fabricate an active modifier.
+func _head_context(assignments: Array) -> Dictionary:
+	var party := _party()
+	var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	_check(records is Array, "authored HEAD catalog exists")
+	if not records is Array:
+		return {}
+	var expected := {
+		"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1},
+		"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1},
+		"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1},
+		"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2},
+	}
+	var defs := []
+	for id in expected:
+		var matches: Array = records.filter(func(record): return record is Dictionary and record.get("id") == id)
+		_check(matches.size() == 1 and matches[0].get("slot") == expected[id].slot
+			and matches[0].get("effect") == expected[id].effect
+			and matches[0].get("amount") == expected[id].amount,
+			"required M05 HEAD ID/slot/effect/amount: " + id)
+		if matches.size() != 1:
+			return {}
+		defs.append({"id": id, "slot": "HEAD"})
+	var worn := []
+	for id in expected:
+		worn.append(id)
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), worn, defs, 4)
+	_check(torn.is_valid() and wardrobe.is_valid(), "M05 real wearer and torn authorities")
+	for assigned in assignments:
+		var sewn := wardrobe.sew(assigned.id, assigned.hero, "HEAD",
+			"head_" + assigned.id, wardrobe.get_snapshot())
+		_check(sewn.get("ok", false) and sewn.receipt.patch_id == assigned.id
+			and sewn.receipt.hero_id == assigned.hero and sewn.receipt.slot == "HEAD",
+			"authentic unique M05 HEAD sew receipt")
+	return {"party": party, "torn": torn, "wardrobe": wardrobe}
+
+
+func _head_service(ctx: Dictionary) -> CombatAttackCards:
+	var attacks := CombatAttackCards.new()
+	var heads := CombatM05HeadPatchRules.new()
+	_check(heads.bind_wardrobe(ctx.wardrobe, ctx.torn)
+		and heads.read_projection().ok, "M05 binds genuine current HEAD projection")
+	_check(attacks.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
+		and attacks.bind_head_patch_rules(heads), "attack resolver shares HEAD authority")
+	_check(attacks._head_rules == heads and heads.read_projection().heads.size() == 3,
+		"one read-only wearer HEAD authority for all owners")
+	return attacks
+
+
+func _head_reject(attacks: CombatAttackCards, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, id: String, target: int, ctx: Dictionary,
+		label: String) -> void:
+	var before := _snapshot(deck, party, enemies)
+	var heads_before := attacks._head_rules.read_projection()
+	var wardrobe_before: Dictionary = ctx.wardrobe.get_snapshot()
+	var torn_before: Dictionary = ctx.torn.read_state()
+	_reject(attacks, deck, party, enemies, id, target, label)
+	_check(_snapshot(deck, party, enemies) == before
+		and attacks._head_rules.read_projection() == heads_before
+		and ctx.wardrobe.get_snapshot() == wardrobe_before
+		and ctx.torn.read_state() == torn_before,
+		label + ": HEAD projection, both ledgers and run RNG stay unchanged")
+
+
+func _test_m05_head_statuses() -> void:
+	var ctx := _head_context([
+		{"id": "stern_seam_cap", "hero": "warden"},
+		{"id": "bloodstitch_bonnet", "hero": "seamstress"}])
+	if ctx.is_empty():
+		return
+	var attacks := _head_service(ctx)
+	var heads: Dictionary = attacks._head_rules.read_projection().heads
+	_check(heads.warden.patch_id == "stern_seam_cap"
+		and heads.seamstress.patch_id == "bloodstitch_bonnet"
+		and heads.tinker.is_empty(), "independent wearer-specific HEAD projections")
+	var deck := _deck(["warden_shield_bash", "seamstress_prick"])
+	var foes := _enemies([60, 60, 60])
+	_check(foes.gain_block(1, 3), "patched Shield Bash hits genuine enemy Block")
+	_accept(attacks, deck, ctx.party, foes, "warden_shield_bash", 1,
+		[_hit(1, 8, 3, 5, {"weak": 2})], 2,
+		"real sewn Stern Seam Cap: eight damage, Weak 2 at enemy one")
+	_accept(attacks, deck, ctx.party, foes, "seamstress_prick", 2,
+		[_hit(2, 3, 0, 3, {"bleed": 4})], 1,
+		"real sewn Bloodstitch Bonnet: three damage, Bleed 4 at enemy two")
+	_check(foes.get_enemy(1).statuses == {"weak": 2}
+		and foes.get_enemy(2).statuses == {"bleed": 4}
+		and foes.get_enemy(3).get("statuses", {}).is_empty() and deck.energy == 0,
+		"exact separated status destinations and one three-energy turn")
+	_check(CombatStatuses.new().end_owner_turn(20, 0, {"bleed": 4})
+		== {"ok": true, "hp": 16, "block": 0,
+			"statuses": {"bleed": 3}, "bleed_hp_loss": 4},
+		"normal bleed lifecycle remains untouched")
+	_check(attacks._head_rules.read_projection().heads == heads,
+		"confirmed casts never change wearer receipt/projection")
+	var none := _head_context([])
+	if none.is_empty():
+		return
+	var plain := _head_service(none)
+	_accept(plain, _deck(["warden_shield_bash"]), none.party, _enemies([40]),
+		"warden_shield_bash", 1, [_hit(1, 8, 0, 8, {"weak": 1})], 2,
+		"valid unworn HEAD returns authored Weak 1")
+	_accept(plain, _deck(["seamstress_prick"]), none.party, _enemies([40, 40]),
+		"seamstress_prick", 2, [_hit(2, 3, 0, 3, {"bleed": 3})], 1,
+		"valid unworn HEAD returns passive Bleed 3")
+	_accept(CombatAttackCards.new(), _deck(["warden_shield_bash"]), _party(),
+		_enemies([40]), "warden_shield_bash", 1,
+		[_hit(1, 8, 0, 8, {"weak": 1})], 2,
+		"untouched unbound legacy starter attack still resolves")
+
+
+func _test_m05_head_rejections() -> void:
+	var wrong := _head_context([
+		{"id": "stern_seam_cap", "hero": "seamstress"},
+		{"id": "bloodstitch_bonnet", "hero": "warden"}])
+	if wrong.is_empty():
+		return
+	var wrong_attacks := _head_service(wrong)
+	_accept(wrong_attacks, _deck(["warden_shield_bash"]), wrong.party, _enemies([40]),
+		"warden_shield_bash", 1, [_hit(1, 8, 0, 8, {"weak": 1})], 2,
+		"foreign Stern cap cannot grant Warden Weak")
+	_accept(wrong_attacks, _deck(["seamstress_prick"]), wrong.party, _enemies([40, 40]),
+		"seamstress_prick", 2, [_hit(2, 3, 0, 3, {"bleed": 3})], 1,
+		"foreign Bloodstitch cannot grant Seamstress Bleed")
+	_check(not wrong.wardrobe.sew("button_glass_visor", "warden", "ARM",
+		"forged_arm", wrong.wardrobe.get_snapshot()).ok,
+		"HEAD metadata rejects wrong-slot sew without ledger write")
+	var ctx := _head_context([
+		{"id": "stern_seam_cap", "hero": "warden"},
+		{"id": "bloodstitch_bonnet", "hero": "seamstress"}])
+	if ctx.is_empty():
+		return
+	var attacks := _head_service(ctx)
+	_accept(attacks, _deck(["warden_strike"]), ctx.party, _enemies([40]),
+		"warden_strike", 1, [_hit(1, 6, 0, 6)], 1,
+		"unrelated positive-damage starter attack never inherits status")
+	_head_reject(attacks, _deck(["warden_shield_bash"]), ctx.party, _enemies([40]),
+		"warden_shield_bash", 2, ctx, "illegal enemy TO with sewn HEAD")
+	_head_reject(attacks, _deck(["seamstress_prick"]), ctx.party, _enemies([40]),
+		"seamstress_prick", 3, ctx, "missing enemy slot with sewn HEAD")
+	var empty := _deck(["warden_shield_bash"])
+	_check(empty.try_spend_energy(2), "real energy pre-spent before refusal")
+	_head_reject(attacks, empty, ctx.party, _enemies([40]),
+		"warden_shield_bash", 1, ctx, "insufficient energy with sewn HEAD")
+	var overflow := _enemies([40])
+	overflow._enemies[0]["statuses"] = {"weak": CombatStatuses.MAX_INT}
+	_head_reject(attacks, _deck(["warden_shield_bash"]), ctx.party, overflow,
+		"warden_shield_bash", 1, ctx, "HEAD Weak status capacity preflight")
+	var downed := _party()
+	_check(downed.apply_damage(2, 9999) and downed.is_downed(2),
+		"owner truly downed in battle")
+	_head_reject(attacks, _deck(["seamstress_prick"]), downed, _enemies([40]),
+		"seamstress_prick", 1, ctx, "downed HEAD wearer cannot cast")
+	var back := _party(["seamstress", "tinker", "warden"])
+	_head_reject(attacks, _deck(["warden_shield_bash"]), back, _enemies([40]),
+		"warden_shield_bash", 1, ctx, "illegal owner FROM for worn Bash")
+	var stale_deck := _deck(["warden_shield_bash"])
+	var stale: Dictionary = ctx.wardrobe.sew("reinforced_browband", "tinker", "HEAD",
+		"later_authentic_sew", ctx.wardrobe.get_snapshot())
+	_check(stale.ok and not attacks._head_rules.read_projection().ok,
+		"new authentic sew invalidates battle-start HEAD authority")
+	_head_reject(attacks, stale_deck, ctx.party, _enemies([40]),
+		"warden_shield_bash", 1, ctx, "stale current-run HEAD receipt fails closed")
+	var invalid := CombatM05HeadPatchRules.new()
+	_check(not invalid.bind_wardrobe(null, null), "malformed HEAD bind rejected")
+	var malformed := CombatAttackCards.new()
+	_check(not malformed.bind_head_patch_rules(invalid),
+		"present invalid HEAD authority retained as a rejection")
+	_reject(malformed, _deck(["warden_shield_bash"]), _party(), _enemies([40]),
+		"warden_shield_bash", 1, "malformed HEAD never falls back to baseline")
+	var fresh := _head_context([{"id": "bloodstitch_bonnet", "hero": "seamstress"}])
+	if fresh.is_empty():
+		return
+	var prior: Array = fresh.torn.read_state().heroes
+	var ended: Array = prior.duplicate(true)
+	ended[1]["hp"] = 0
+	_check(fresh.torn.observe_battle_end("genuine_torn_fight", prior, ended).ok,
+		"real battle-end observation tears Seamstress")
+	var previous: Dictionary = fresh.wardrobe.get_snapshot()
+	var torn_roster: Array = fresh.torn.read_state().heroes
+	_check(fresh.wardrobe.refresh_run_context(torn_roster, previous.owned,
+		previous.scraps, previous.gold, previous.cards, previous),
+		"persistent wardrobe refreshes to true torn roster")
+	var torn_attacks := _head_service(fresh)
+	_check(torn_attacks._head_rules.read_projection().heads.seamstress.is_empty(),
+		"torn wearer has no projected HEAD power")
+	# A fresh CombatParty can be full-HP before carryover replays torn state.
+	_head_reject(torn_attacks, _deck(["seamstress_prick"]), _party(), _enemies([40]),
+		"seamstress_prick", 1, fresh,
+		"positive fresh combat HP cannot bypass torn run owner")
