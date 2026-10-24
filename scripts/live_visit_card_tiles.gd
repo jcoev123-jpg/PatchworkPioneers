@@ -31,6 +31,21 @@ const CATALOG := preload("res://scripts/live_hand_card_metadata.gd")
 ## It names no card and invents no rule or amount.
 const DETAILS_UNAVAILABLE := "Card details unavailable: this row has no canonical catalog record."
 
+## U+2192, the arrow a Rest upgrade tile prints between its two authored halves
+## (name and cost). Patrick Hand has no arrow glyph, so those two labels alone
+## take the Patrick Hand face below with a code-drawn arrow appended as fallback.
+const ARROW := 0x2192
+## The master body face every sewn tile label inherits from the App theme. It is
+## only ever used as a FontVariation base, never edited or replaced on disk.
+const BODY_FONT_PATH := "res://assets/fonts/PatrickHand-Regular.ttf"
+## The fallback glyph's own pixel size and tightly fitted pen box. The arrow is
+## drawn here rather than loaded from a platform font or an art file.
+const ARROW_GLYPH_SIZE := 32
+const ARROW_GLYPH_WIDTH := 24
+## Advance (pen width) and baseline offset inside the glyph's own 32px em.
+const ARROW_GLYPH_ADVANCE := 26.0
+const ARROW_GLYPH_BASELINE := 26.0
+
 const FELT_FALLBACK := Color("#736451")
 const PAPER := Color("#e8dcc4")
 const DARK_INK := Color("#2b2624")
@@ -70,6 +85,8 @@ var _selector_upgrade: OptionButton = null
 var _buy: Button = null
 var _remove: Button = null
 var _upgrade: Button = null
+var _arrow_face: FontVariation = null
+var _arrow_glyphs: FontFile = null
 
 
 func _ready() -> void:
@@ -714,6 +731,9 @@ func _upgrade_spec(selector: OptionButton, row: int, rows: Array) -> Dictionary:
 		"effects": "Before: %s\nAfter: %s" % [_effects_text(entry.get("effects", {}), base_definition),
 			_effects_text(entry.get("plus_effects", {}), plus_definition)],
 		"tooltip": tooltip,
+		# Presentation-only: this face's name and cost print U+2192, so both
+		# labels take the Patrick Hand + drawn-arrow fallback face.
+		"arrow_glyphs": true,
 	}
 
 
@@ -753,6 +773,102 @@ func _owner_text(definition: Dictionary, card_id: String) -> String:
 
 
 # --- tile presentation ----------------------------------------------------
+
+## A Patrick Hand face with a code-drawn U+2192 appended as its fallback, so the
+## Rest upgrade title and cost arrows print as arrows instead of missing-glyph
+## boxes. The inherited master face is only referenced as the variation's base;
+## the imported FontFile is never mutated, and the fallback glyph is generated in
+## code rather than borrowed from a platform font or an art file.
+func arrow_face() -> FontVariation:
+	if _arrow_face != null:
+		return _arrow_face
+	var variation := FontVariation.new()
+	variation.base_font = _body_face()
+	var glyphs := arrow_glyph_font()
+	if glyphs != null and glyphs.has_char(ARROW):
+		variation.fallbacks = [glyphs]
+	_arrow_face = variation
+	return _arrow_face
+
+
+## The body face a sewn tile label inherits here: the App theme's own Patrick
+## Hand, so the tile text keeps the exact master face. Resolved read-only.
+func _body_face() -> Font:
+	if is_inside_tree():
+		var inherited: Font = get_theme_font("font", "Label")
+		if inherited != null:
+			return inherited
+	return load(BODY_FONT_PATH) as Font
+
+
+## A one-glyph bitmap face drawn in code: the U+2192 arrow. Returns null if the
+## glyph cannot be registered, so callers keep the inherited face rather than
+## printing a broken one. Cached for every tile of every visit.
+func arrow_glyph_font() -> FontFile:
+	if _arrow_glyphs != null:
+		return _arrow_glyphs
+	var font := FontFile.new()
+	# The fixed size and its scaling mode must be set before the first glyph call
+	# (a size cache is created on demand), so every label size scales this one em.
+	font.fixed_size = ARROW_GLYPH_SIZE
+	font.fixed_size_scale_mode = TextServer.FIXED_SIZE_SCALE_ENABLED
+	var em := Vector2i.ZERO
+	font.set_texture_image(0, em, 0, _arrow_glyph_image())
+	font.set_glyph_texture_idx(0, em, ARROW, 0)
+	font.set_glyph_uv_rect(0, em, ARROW, Rect2(0, 0, ARROW_GLYPH_WIDTH, ARROW_GLYPH_SIZE))
+	font.set_glyph_size(0, em, ARROW, Vector2(ARROW_GLYPH_WIDTH, ARROW_GLYPH_SIZE))
+	font.set_glyph_offset(0, em, ARROW, Vector2(0, -ARROW_GLYPH_BASELINE))
+	font.set_glyph_advance(0, ARROW_GLYPH_SIZE, ARROW, Vector2(ARROW_GLYPH_ADVANCE, 0))
+	font.set_cache_ascent(0, ARROW_GLYPH_SIZE, 20.0)
+	font.set_cache_descent(0, ARROW_GLYPH_SIZE, 5.0)
+	if not font.has_char(ARROW):
+		return null
+	_arrow_glyphs = font
+	return font
+
+
+## The drawn arrow: a shaft and two fanned head strokes, stamped with a soft
+## edge so it reads as sewn ink at 14 and 19 pixels. White pixels with alpha;
+## the label's own font colour tints it. No image file is created.
+func _arrow_glyph_image() -> Image:
+	var image := Image.create(ARROW_GLYPH_WIDTH, ARROW_GLYPH_SIZE, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	var middle := ARROW_GLYPH_SIZE * 0.5
+	var strokes := [
+		[Vector2(4.0, middle), Vector2(16.5, middle)],
+		[Vector2(13.0, middle - 6.5), Vector2(20.0, middle)],
+		[Vector2(13.0, middle + 6.5), Vector2(20.0, middle)],
+	]
+	for y in range(ARROW_GLYPH_SIZE):
+		for x in range(ARROW_GLYPH_WIDTH):
+			var point := Vector2(x + 0.5, y + 0.5)
+			var distance := INF
+			for stroke in strokes:
+				distance = minf(distance, _stroke_distance(point, stroke[0], stroke[1]))
+			var coverage := clampf(1.6 - distance, 0.0, 1.0)
+			if coverage > 0.0:
+				image.set_pixel(x, y, Color(1.0, 1.0, 1.0, coverage))
+	return image
+
+
+func _stroke_distance(point: Vector2, start: Vector2, end: Vector2) -> float:
+	var span := end - start
+	if span.length_squared() <= 0.0:
+		return point.distance_to(start)
+	var along := clampf((point - start).dot(span) / span.length_squared(), 0.0, 1.0)
+	return point.distance_to(start + span * along)
+
+
+## Only the Rest upgrade face prints U+2192, and only its name and cost labels
+## take the arrow fallback. Every other tile string, rule and tooltip keeps the
+## inherited master face untouched.
+func _apply_arrow_face(spec: Dictionary, label: Label) -> void:
+	if spec.get("arrow_glyphs", false) != true or not label.text.contains(String.chr(ARROW)):
+		return
+	var face := arrow_face()
+	if face != null and face.has_char(ARROW):
+		label.add_theme_font_override("font", face)
+
 
 ## A full sewn card face built exactly like the reward card: owner felt strip,
 ## authored illustration (then hero emblem, then drawn paper patch), name and
@@ -826,6 +942,10 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	meta_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	meta_label.add_theme_color_override("font_color", HINT_INK)
 	text_column.add_child(meta_label)
+	# The Rest upgrade name and cost are the only sewn tile text that prints an
+	# arrow; they keep Patrick Hand with the code-drawn U+2192 as the fallback.
+	_apply_arrow_face(spec, title_label)
+	_apply_arrow_face(spec, meta_label)
 	var effects_label: Label = _face._card_label("TileEffects", String(spec.get("effects", "")), 13)
 	effects_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	effects_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

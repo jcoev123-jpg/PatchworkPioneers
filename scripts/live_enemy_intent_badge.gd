@@ -61,6 +61,24 @@ var target_position := 0
 var policy_cue := ""
 const POLICY_LABELS := {"front": "FRONT", "lowest_living_hp": "LOW HP",
 	"exposed": "EXPOSED", "random": "RANDOM"}
+const POLICY_DESCRIPTIONS := {
+	"front": "picks the front living hero",
+	"lowest_living_hp": "aims at the living hero with the lowest HP",
+	"exposed": "prioritises an Exposed living hero",
+	"random": "uses the run-seeded target choice",
+}
+
+
+static func hero_target_label(pos: int) -> String:
+	match pos:
+		1:
+			return "Hero 1 (front)"
+		2:
+			return "Hero 2 (middle)"
+		3:
+			return "Hero 3 (back)"
+		_:
+			return "Hero %d" % pos
 ## The committed HUD texture selected for the current mode; null draws the sewn glyph.
 var icon_texture: Texture2D = null
 ## Presentation-only art root. A redirected or unavailable root (missing file or import)
@@ -70,9 +88,10 @@ var icon_root := ICON_DIR
 ## unavailable image is never probed twice and the drawn glyph stays the fallback.
 var _icon_cache: Dictionary = {}
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_PASS
 	focus_mode = Control.FOCUS_NONE
 	custom_minimum_size = Vector2(BADGE_WIDTH, BADGE_HEIGHT)
+	tooltip_text = "No action."
 	# The fitted caption depends on the mounted width, so a relayout repaints the tag.
 	resized.connect(queue_redraw)
 	queue_redraw()
@@ -243,30 +262,35 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
+	var tip := ""
 	if slain:
 		icon_mode = "slain"
 		intent_type = ""
 		amount = 0
 		target_position = 0
 		readable_text = "SLAIN"
+		tip = "Slain: no action."
 	elif skip_pending:
 		icon_mode = "unravelled"
 		intent_type = ""
 		amount = 0
 		target_position = 0
 		readable_text = "UNRAVELLED"
+		tip = "Unravelled: next action is skipped."
 	elif action.get("type") == "attack":
 		icon_mode = "attack"
 		intent_type = "attack"
 		amount = action.get("amount", 0)
 		target_position = action.get("target_position", 0)
 		readable_text = "ATK %d > H%d" % [amount, target_position]
+		tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
 	elif action.get("type") == "block":
 		icon_mode = "block"
 		intent_type = "block"
 		amount = action.get("amount", 0)
 		target_position = 0
 		readable_text = "BLOCK +%d" % amount
+		tip = "%d Block on the acting enemy." % amount
 	elif action.get("type") in ["buff", "debuff", "shove"]:
 		intent_type = action.type
 		icon_mode = intent_type
@@ -274,16 +298,36 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		target_position = action.get("target_position", 0)
 		if intent_type == "buff":
 			readable_text = "BUFF +%d BLK" % amount
+			tip = "%d Block on the acting enemy." % amount
 		elif intent_type == "debuff":
 			readable_text = "%s %d > H%d" % [action.status.to_upper(), amount, target_position]
+			var status_name := String(action.get("status", "")).to_lower()
+			if status_name == "bleed":
+				tip = "Bleed %d to %s — loses %d HP at owner's turn end then decrements by 1." % [
+					amount, hero_target_label(target_position), amount]
+			elif status_name == "weak":
+				tip = "Weak %d to %s — reduces attack damage by 25%%." % [
+					amount, hero_target_label(target_position)]
+			elif status_name == "exposed":
+				tip = "Exposed %d to %s — raises incoming attack damage by 50%%, rounded down." % [
+					amount, hero_target_label(target_position)]
+			else:
+				tip = "%s %d to %s." % [
+					status_name.capitalize(), amount, hero_target_label(target_position)]
 		else:
+			var push_dir := "push back" if action.direction == 1 else "push front"
 			readable_text = "H%d %s" % [target_position, "PUSH BACK" if action.direction == 1 else "PUSH FRONT"]
+			tip = "Push %s %s." % [push_dir.trim_prefix("push "), hero_target_label(target_position)]
 	else:
 		icon_mode = "none"
 		intent_type = ""
 		amount = 0
 		target_position = 0
 		readable_text = "NO ACTION"
+		tip = "No action."
+	if not policy_cue.is_empty() and POLICY_DESCRIPTIONS.has(policy):
+		tip += "\nTarget policy (%s): %s." % [policy_cue, POLICY_DESCRIPTIONS[policy]]
+	tooltip_text = tip
 	_update_visuals()
 
 

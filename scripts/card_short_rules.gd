@@ -118,23 +118,28 @@ static func _has_enemy_effects(effects: Dictionary) -> bool:
 	return false
 
 
-## Damage, statuses, Unravel and Pin all target the cast's own recipient, so
-## they read as one combat sentence instead of a bag of marker phrases.
+## Damage, statuses, Unravel and Pin all target the cast's own recipient. The face
+## prints them as compact clauses with the amount in front and a full stop between
+## effects ("Deal 4. Exposed 1.", "Deal 3 to all.", "Deal 2 x3, random.") instead
+## of one long "damage to one enemy and apply" sentence.
 static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 		applied: Dictionary) -> Dictionary:
 	if not _has_enemy_effects(effects):
 		return {}
 	var unknown := false
-	var recipient := _recipient(card)
 	var hits := _hits(effects)
 	var random_each := bool(effects.get("random_target_each_hit", false))
-	var head := ""
-	var tails: Array[String] = []
-	var conditional := ""
+	var object_suffix := _enemy_object_suffix(card)
+	var clauses: Array[String] = []
+	var damage := ""
 	if effects.has("damage"):
-		var damage := _amount(effects["damage"], -1)
-		if damage >= 0:
-			head = "deal %d damage" % damage
+		var authored := _amount(effects["damage"], -1)
+		if authored >= 0:
+			damage = "deal %d" % authored
+			if hits > 1:
+				damage += " x%d" % hits
+			# A per-hit random cast says so; every other cast names its recipient.
+			damage += ", random" if random_each else object_suffix
 		else:
 			unknown = true
 	if effects.has("conditional_damage"):
@@ -143,63 +148,67 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 			if condition is Dictionary else -1, -1)
 		if empowered < 0:
 			unknown = true
-		elif head.is_empty():
-			head = "deal %d damage if %s" % [empowered, _condition_text(condition)]
+		elif damage.is_empty():
+			var conditional_damage := "deal %d" % empowered
+			conditional_damage += ", random" if random_each else object_suffix
+			damage = "%s if %s" % [conditional_damage, _condition_text(condition)]
 		else:
 			# The empowered amount replaces the base damage; it is not a second hit.
-			conditional = ", or %d if %s" % [empowered, _condition_text(condition)]
+			damage += ", or %d if %s" % [empowered, _condition_text(condition)]
+	if not damage.is_empty():
+		clauses.append(damage)
+	# One merged status clause in the fixed order, then Unravel and Pin.
+	var status := _status_labels(effects, applied)
+	if bool(status.get("unknown", false)):
+		unknown = true
+	var labels: Array = status.get("labels", [])
+	var status_texts: Array[String] = []
+	for label in labels:
+		status_texts.append(str(label))
+	if not status_texts.is_empty():
+		clauses.append(", ".join(status_texts) + object_suffix)
+	if effects.has("unravel"):
+		var authored := _amount(effects["unravel"], -1)
+		if authored > 0:
+			clauses.append("unravel %d%s" % [
+				_amount(applied.get("unravel", authored), authored), object_suffix])
+		else:
+			unknown = true
 	if effects.has("pinned"):
 		var bonus := _pin_bonus(effects["pinned"])
 		if bonus < 0:
 			unknown = true
-		elif head.is_empty():
-			# A lone Pin names its own recipient instead of reading "pin it to".
-			head = "pin " + recipient + (" for +%d" % bonus if bonus > 0 else "")
-			recipient = ""
 		else:
-			tails.append("pin it" if bonus == 0 else "pin it for +%d" % bonus)
-	var status_clause := _status_clause(effects, applied)
-	if not bool(status_clause.get("empty", true)):
-		if head.is_empty():
-			head = str(status_clause["text"])
-		else:
-			tails.append(str(status_clause["text"]))
-	if bool(status_clause.get("unknown", false)):
-		unknown = true
-	if effects.has("unravel"):
-		var authored := _amount(effects["unravel"], -1)
-		if authored > 0:
-			var clause := "add %d Unravel" % _amount(applied.get("unravel", authored), authored)
-			if head.is_empty():
-				head = clause
-			else:
-				tails.append(clause)
-		else:
-			unknown = true
-	var sentence := ""
-	if not head.is_empty():
-		sentence = _capitalize(head) if recipient.is_empty() \
-			else _capitalize("%s to %s" % [head, recipient])
-		if effects.has("damage") and hits > 1:
-			sentence += (" each hit, %d hits" % hits) if random_each \
-				else (" %d times" % hits)
-		sentence += conditional
-		for tail in tails:
-			sentence += " and " + tail
-		sentence += "."
+			clauses.append("pin%s%s" % [" +%d" % bonus if bonus > 0 else "", object_suffix])
+	var phrases: Array[String] = []
+	for clause in clauses:
+		phrases.append(_capitalize(clause) + ".")
 	if effects.has("bleed_multiplier"):
 		var multiplier := _amount(effects["bleed_multiplier"], -1)
 		if multiplier == 2:
-			sentence += " Double the Bleed on %s." % _recipient(card)
+			phrases.append("Double Bleed%s." % object_suffix)
 		elif multiplier > 2:
-			sentence += " Multiply the Bleed on %s by %d." % [_recipient(card), multiplier]
+			phrases.append("Multiply Bleed x%d%s." % [multiplier, object_suffix])
 		else:
 			unknown = true
-	return {"sentence": sentence.strip_edges(), "unknown": unknown}
+	return {"sentence": SEPARATOR.join(phrases).strip_edges(), "unknown": unknown}
 
 
-## One merged "apply Exposed 1 and Bleed 3" clause, in the fixed status order.
-static func _status_clause(effects: Dictionary, applied: Dictionary) -> Dictionary:
+## The recipient a non-damage clause names: an area cast says "to all" once per
+## clause, a random cast keeps its random object, and a single enemy needs none.
+static func _enemy_object_suffix(card: Dictionary) -> String:
+	match str(card.get("target_kind", "")):
+		"enemy_single":
+			return ""
+		"enemy_all":
+			return " to all"
+		"enemy_random":
+			return " to a random enemy"
+	return " to " + _recipient(card)
+
+
+## The authored status labels in the fixed printed order, with applied amounts.
+static func _status_labels(effects: Dictionary, applied: Dictionary) -> Dictionary:
 	var labels: Array[String] = []
 	var unknown := false
 	for status in STATUS_ORDER:
@@ -211,9 +220,21 @@ static func _status_clause(effects: Dictionary, applied: Dictionary) -> Dictiona
 			continue
 		var amount := _amount(applied.get(status, authored), authored)
 		labels.append("%s %d" % [status.capitalize(), amount])
-	if labels.is_empty():
+	return {"labels": labels, "unknown": unknown}
+
+
+## The ally/support sentence keeps its explicit "apply Exposed 1 and Bleed 3"
+## wording; only the enemy face uses the terse status list.
+static func _status_clause(effects: Dictionary, applied: Dictionary) -> Dictionary:
+	var status := _status_labels(effects, applied)
+	var unknown := bool(status.get("unknown", false))
+	var labels: Array = status.get("labels", [])
+	var typed: Array[String] = []
+	for label in labels:
+		typed.append(str(label))
+	if typed.is_empty():
 		return {"text": "", "empty": true, "unknown": unknown}
-	return {"text": "apply " + _join_and(labels), "empty": false, "unknown": unknown}
+	return {"text": "apply " + _join_and(typed), "empty": false, "unknown": unknown}
 
 
 ## Self-directed effects: Block, draw, energy, HP loss, Guard, Thorns and the

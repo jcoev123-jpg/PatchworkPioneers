@@ -28,8 +28,8 @@ const CHIP_SEPARATION := 2
 ## Bounded, presentation-only readable names for known authored patch IDs. The M05
 ## HEAD/ARM entries describe their authored rules directly in `_patch_power` below
 ## (card_bleed_bonus, card_exposed_bonus, card_weak_bonus, card_block_bonus,
-## card_unravel_bonus, and Frayfinder's conditional first-hit Unravel). An unknown
-## ID keeps its raw authored ID and is never given a fabricated power line.
+## card_unravel_bonus, and Frayfinder's conditional first-hit attack damage). An
+## unknown ID keeps its raw authored ID and is never given a fabricated power line.
 const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
 	"quilted_coat": "Quilted Coat", "padded_vest": "Padded Vest",
@@ -589,7 +589,7 @@ func _patch_power(id: String) -> String:
 		"loose_thread_glove":
 			return "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards."
 		"frayfinder_mitt":
-			return "Authored patch rule: +2 Unravel ONLY on this living wearer's first single-target attack hit, if that enemy's gauge is already at least 1/2 of its current threshold; once per PLAYER turn. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit."
+			return "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit."
 	if _coat_bonuses.is_empty():
 		var coats_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 			"res://data/patches/m04_coat_patches.json"))

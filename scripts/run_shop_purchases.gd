@@ -117,6 +117,13 @@ func get_state() -> Dictionary:
 
 ## Preflight the exact helper transition against this purchase ledger. A visit
 ## can rebase once; no caller-supplied price or partial snapshot is trusted.
+##
+## A stitched visit snapshot carries BOTH "descriptors" and "next_stitch_id",
+## so the authentic receipt is the seven-key stitch-ledger transition: its
+## registry and allocator cursor come from the visit that owns them, while the
+## deck, gold and removal count are checked against this purchase ledger. A
+## snapshot with NEITHER field keeps the exact legacy five-key contract, and a
+## mixed or malformed field set is refused outright.
 func can_rebase_removal(before: Variant, result: Variant, card_id: Variant) -> bool:
 	if not _valid or _removal_rebased or not before is Dictionary or not result is Dictionary or not _is_id(card_id):
 		return false
@@ -131,9 +138,22 @@ func can_rebase_removal(before: Variant, result: Variant, card_id: Variant) -> b
 	var count: Variant = before.get("prior_removals")
 	if not count is int or count < 0:
 		return false
+	var has_descriptors: bool = before.has("descriptors")
+	var has_cursor: bool = before.has("next_stitch_id")
+	if has_descriptors != has_cursor:
+		return false
 	var cards: Array[String] = []
 	cards.assign(_state.deck)
-	var expected := RunShopCardRemoval.try_remove(cards, _state.gold, count, card_id)
+	var expected: Dictionary
+	if has_descriptors:
+		var descriptors: Variant = before["descriptors"]
+		var cursor: Variant = before["next_stitch_id"]
+		if not descriptors is Dictionary or not cursor is int:
+			return false
+		expected = RunShopCardRemoval.try_remove_with_stitch_ledger(
+				cards, descriptors, cursor, _state.gold, count, card_id)
+	else:
+		expected = RunShopCardRemoval.try_remove(cards, _state.gold, count, card_id)
 	return expected.ok and result == expected
 
 

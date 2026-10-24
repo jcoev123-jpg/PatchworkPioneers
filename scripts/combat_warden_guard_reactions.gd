@@ -15,6 +15,121 @@ const ALLOWED_CARD_IDS: Array[String] = [
 var guarding: bool = false
 var thorns: int = 0
 
+var _binding_attempted: bool = false
+var _binding_valid: bool = false
+var _wardrobe: RunPatchWardrobe = null
+var _torn: RunTornMending = null
+var _wardrobe_snapshot: Dictionary = {}
+var _torn_snapshot: Dictionary = {}
+var _patch_rules: CombatPatchAttackRules = null
+var _head_rules: CombatM05HeadPatchRules = null
+
+
+## Authenticates a genuine run wardrobe and torn ledger for the worn Block patches.
+## An explicit attempt always replaces any previous binding; a failed attempt
+## leaves this service fail-closed instead of silently playing unpatched.
+func bind_patch_wardrobe(wardrobe: Variant, torn: Variant,
+		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	_binding_attempted = true
+	_binding_valid = false
+	_wardrobe = null
+	_torn = null
+	_wardrobe_snapshot = {}
+	_torn_snapshot = {}
+	_patch_rules = null
+	_head_rules = null
+
+	if not (wardrobe is RunPatchWardrobe) or not (torn is RunTornMending):
+		return false
+	if not wardrobe.is_valid() or not torn.is_valid():
+		return false
+
+	var snap: Dictionary = wardrobe.get_snapshot()
+	var torn_state: Dictionary = torn.read_state()
+
+	if expected_wardrobe != null:
+		if typeof(expected_wardrobe) != TYPE_DICTIONARY or expected_wardrobe != snap:
+			return false
+	if expected_torn != null:
+		if typeof(expected_torn) != TYPE_DICTIONARY or expected_torn != torn_state:
+			return false
+
+	var rules := CombatPatchAttackRules.new()
+	if not rules.bind_wardrobe(wardrobe, torn):
+		return false
+
+	var head_rules := CombatM05HeadPatchRules.new()
+	if not head_rules.bind_wardrobe(wardrobe, torn):
+		return false
+
+	_wardrobe = wardrobe
+	_torn = torn
+	_wardrobe_snapshot = snap.duplicate(true)
+	_torn_snapshot = torn_state.duplicate(true)
+	_patch_rules = rules
+	_head_rules = head_rules
+	_binding_valid = true
+	return true
+
+
+## True for the legacy unbound service and for a live, unchanged explicit bind.
+func is_patch_binding_valid() -> bool:
+	if not _binding_attempted:
+		return true
+	if not _binding_valid or _wardrobe == null or _torn == null:
+		return false
+	if not _wardrobe.is_valid() or not _torn.is_valid():
+		return false
+	if _wardrobe.get_snapshot() != _wardrobe_snapshot:
+		return false
+	if _torn.read_state() != _torn_snapshot:
+		return false
+	if _patch_rules == null or not _patch_rules.is_valid():
+		return false
+	if _head_rules == null or not _head_rules.read_projection().get("ok", false):
+		return false
+	return true
+
+
+## Read-only wearer Block projection for one authored Warden reaction card.
+## Returns the authored Block plus +2 per genuine, living, worn block patch.
+## Guarding, Thorns and every other effect stay exactly as authored.
+func project_block(card_id: Variant) -> Dictionary:
+	var rejected := {"ok": false, "block": 0, "bonus": 0}
+	if _binding_attempted and not is_patch_binding_valid():
+		return rejected
+	if typeof(card_id) != TYPE_STRING:
+		return rejected
+	var card: String = card_id as String
+	if not ALLOWED_CARD_IDS.has(card):
+		return rejected
+	var definition: Dictionary = WardenPoolCards.new().get_definition(card)
+	if definition.is_empty() or definition.get("id") != card \
+			or definition.get("owner") != WARDEN_ID:
+		return rejected
+	var effects_v: Variant = definition.get("effects")
+	if not effects_v is Dictionary:
+		return rejected
+	var authored_v: Variant = (effects_v as Dictionary).get("block")
+	if not authored_v is int or (authored_v as int) <= 0:
+		return rejected
+	var authored: int = authored_v as int
+
+	var bonus := 0
+	if _binding_attempted:
+		if _patch_rules == null or _head_rules == null:
+			return rejected
+		var arm_bonus: int = _patch_rules.card_block_bonus(WARDEN_ID, card)
+		if arm_bonus < 0:
+			return rejected
+		var head_bonus: int = _head_rules.get_bonus(WARDEN_ID, card, "block")
+		if head_bonus < 0:
+			return rejected
+		bonus = arm_bonus + head_bonus
+		if bonus < 0 or authored > CombatParty.MAX_INT - bonus:
+			return rejected
+	return {"ok": true, "block": authored + bonus, "bonus": bonus}
+
 
 func is_guarding() -> bool:
 	return guarding
@@ -116,19 +231,30 @@ func apply_committed_card(arg1: Variant, arg2: Variant) -> bool:
 			return false
 
 	var effects: Dictionary = auth_def.get("effects", {}) as Dictionary
-	var block_amount: int = int(effects.get("block", 0))
+	# Authenticated wearer projection: authored Block plus genuine worn patches.
+	var projected: Dictionary = project_block(card_id)
+	if not projected.get("ok", false):
+		return false
+	var block_amount: int = int(projected.get("block", 0))
+	var thorns_gain: int = int(effects.get("thorns", 0))
+	if thorns_gain < 0:
+		return false
 
-	# Apply authored block to Warden
+	# Every capacity refusal happens before any party or mode mutation.
+	var current_block: int = int(party.get_hero(warden_position).get("block", 0))
+	if block_amount > CombatParty.MAX_INT - current_block:
+		return false
+	if thorns_gain > 0 and thorns_gain > CombatParty.MAX_INT - thorns:
+		return false
+
+	# Apply projected Block to Warden
 	if not party.gain_block(warden_position, block_amount):
 		return false
 
 	# Apply reaction mode
 	if bool(effects.get("guarding", false)):
 		guarding = true
-	var thorns_gain: int = int(effects.get("thorns", 0))
 	if thorns_gain > 0:
-		if thorns_gain > CombatParty.MAX_INT - thorns:
-			return false
 		thorns += thorns_gain
 
 	return true
@@ -256,10 +382,16 @@ func play_from_hand(deck: Variant, party: Variant, card_id: Variant) -> bool:
 	if p.is_downed(warden_position):
 		return false
 
+	# Authenticated wearer Block projection; a failed or stale bind refuses here.
+	var projected: Dictionary = project_block(id)
+	if not projected.get("ok", false):
+		return false
+	var projected_block: int = int(projected.get("block", 0))
+
 	# Block upper bound before mutation.
 	var warden_hero: Dictionary = p.get_hero(warden_position)
 	var current_block: int = int(warden_hero.get("block", 0))
-	if block_amount > CombatParty.MAX_INT - current_block:
+	if projected_block > CombatParty.MAX_INT - current_block:
 		return false
 
 	# Remaining Thorns bound before mutation.
@@ -270,7 +402,7 @@ func play_from_hand(deck: Variant, party: Variant, card_id: Variant) -> bool:
 	# Commit phase: all preflight passed.
 	if not d.try_spend_energy(cost):
 		return false
-	if not p.gain_block(warden_position, block_amount):
+	if not p.gain_block(warden_position, projected_block):
 		d.combat_state.energy += cost
 		return false
 	if guarding_gain:

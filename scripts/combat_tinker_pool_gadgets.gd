@@ -3,16 +3,116 @@ extends RefCounted
 ## Resolves Tinker's two nonattack utility pool cards (Spare Parts and Sight Glass)
 ## against the shared CombatDeck, CombatParty and CombatEnemies. Does not own
 ## definitions or duplicate state; callers supply seeded instances.
+##
+## An optional explicit wearer bind projects the M05 ARM/HEAD Block patches onto
+## Spare Parts only. It is authenticated against the genuine run wardrobe and
+## torn ledger, snapshots them, and fails closed once either authority moves.
+
+var _binding_attempted: bool = false
+var _binding_valid: bool = false
+var _wardrobe: RunPatchWardrobe = null
+var _torn: RunTornMending = null
+var _wardrobe_snapshot: Dictionary = {}
+var _torn_snapshot: Dictionary = {}
+var _patch_rules: CombatPatchAttackRules = null
+var _head_rules: CombatM05HeadPatchRules = null
 
 
 func _init() -> void:
 	pass
 
 
+## Authenticates and snapshots a genuine wardrobe and torn ledger for the
+## wearer-only Block projection. A failed bind clears any previous binding and
+## stays explicit, so a later resolution rejects instead of granting vanilla.
+func bind_patch_wardrobe(wardrobe: Variant, torn: Variant,
+		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	_binding_attempted = true
+	_binding_valid = false
+	_wardrobe = null
+	_torn = null
+	_wardrobe_snapshot = {}
+	_torn_snapshot = {}
+	_patch_rules = null
+	_head_rules = null
+
+	if not (wardrobe is RunPatchWardrobe) or not (torn is RunTornMending):
+		return false
+	if not wardrobe.is_valid() or not torn.is_valid():
+		return false
+
+	var snap: Dictionary = wardrobe.get_snapshot()
+	var torn_state: Dictionary = torn.read_state()
+
+	if expected_wardrobe != null:
+		if typeof(expected_wardrobe) != TYPE_DICTIONARY or expected_wardrobe != snap:
+			return false
+	if expected_torn != null:
+		if typeof(expected_torn) != TYPE_DICTIONARY or expected_torn != torn_state:
+			return false
+
+	var rules := CombatPatchAttackRules.new()
+	if not rules.bind_wardrobe(wardrobe, torn):
+		return false
+
+	var head_rules := CombatM05HeadPatchRules.new()
+	if not head_rules.bind_wardrobe(wardrobe, torn):
+		return false
+
+	_wardrobe = wardrobe
+	_torn = torn
+	_wardrobe_snapshot = snap.duplicate(true)
+	_torn_snapshot = torn_state.duplicate(true)
+	_patch_rules = rules
+	_head_rules = head_rules
+	_binding_valid = true
+	return true
+
+
+## True when no bind was requested, or when the bound authorities are still the
+## exact ledgers that were authenticated.
+func is_patch_binding_valid() -> bool:
+	if not _binding_attempted:
+		return true
+	if not _binding_valid or _wardrobe == null or _torn == null:
+		return false
+	if not _wardrobe.is_valid() or not _torn.is_valid():
+		return false
+	if _wardrobe.get_snapshot() != _wardrobe_snapshot:
+		return false
+	if _torn.read_state() != _torn_snapshot:
+		return false
+	if _patch_rules == null or not _patch_rules.is_valid():
+		return false
+	if _head_rules == null or not _head_rules.read_projection().get("ok", false):
+		return false
+	return true
+
+
+func get_patches() -> CombatPatchAttackRules:
+	return _patch_rules
+
+
+func get_head_patches() -> CombatM05HeadPatchRules:
+	return _head_rules
+
+
+func get_wardrobe() -> RunPatchWardrobe:
+	return _wardrobe
+
+
+func get_torn() -> RunTornMending:
+	return _torn
+
+
 ## Spare Parts family: cost 0, target_kind self, from positions 2 or 3.
 ## Effects: {block: N, draw: 1}. Grants Block to the actual current Tinker,
 ## draws one using CombatDeck.draw_extra (even if no card is available),
 ## then discards one held copy. Does not consume first-attack bonus.
+##
+## A bound wearer adds only +2 per active Tinker-worn Hemguard Cuff ARM and/or
+## Reinforced Browband HEAD to the authored positive Block; Sight Glass and
+## every other card is unaffected.
 ##
 ## Returns {ok: true, block: int, drawn: int} on success,
 ## {ok: false} on rejection (no state changes).
@@ -21,6 +121,9 @@ func resolve_spare_parts(deck: CombatDeck, party: CombatParty,
 		card_id: String, target_position: int = 0) -> Dictionary:
 	## Reject any nonzero target_position (Spare Parts has target_kind self).
 	if target_position != 0:
+		return _failure()
+	## A stale or failed explicit bind never silently grants an unpatched cast.
+	if _binding_attempted and not is_patch_binding_valid():
 		return _failure()
 	if deck == null or party == null or not deck.turn_active or not party.is_valid():
 		return _failure()
@@ -49,6 +152,28 @@ func resolve_spare_parts(deck: CombatDeck, party: CombatParty,
 			or not draw_amt is int or draw_amt != 1:
 		return _failure()
 
+	## Wearer-only projection: only a living Tinker's own worn ARM/HEAD Block
+	## patches count, and only onto this card's authored positive Block.
+	var bonus: int = 0
+	if _binding_attempted:
+		if _patch_rules != null:
+			var arm_bonus: int = _patch_rules.card_block_bonus("tinker", card_id)
+			if arm_bonus < 0:
+				return _failure()
+			bonus += arm_bonus
+		if _head_rules != null:
+			var head_bonus: int = _head_rules.get_bonus("tinker", card_id, "block")
+			if head_bonus < 0:
+				return _failure()
+			bonus += head_bonus
+		if bonus < 0 or bonus > CombatParty.MAX_INT:
+			return _failure()
+	var granted_block: int = block_amt
+	if bonus > 0:
+		if granted_block > CombatParty.MAX_INT - bonus:
+			return _failure()
+		granted_block += bonus
+
 	## Find the Tinker hero in an allowed from_position.
 	var owner_position: int = 0
 	for hero in party.get_heroes():
@@ -60,8 +185,11 @@ func resolve_spare_parts(deck: CombatDeck, party: CombatParty,
 	if owner_position == 0:
 		return _failure()
 
-	## Validate Block capacity before any mutation.
-	if not party.gain_block(owner_position, block_amt):
+	## Cap Block before any party/deck mutation.
+	var current_block: int = party.get_hero(owner_position)["block"]
+	if granted_block > CombatParty.MAX_INT - current_block:
+		return _failure()
+	if not party.gain_block(owner_position, granted_block):
 		return _failure()
 
 	## Draw before discarding so the just-played zero-cost card cannot
@@ -74,7 +202,7 @@ func resolve_spare_parts(deck: CombatDeck, party: CombatParty,
 	if not deck.discard_played(card_id):
 		return _failure()
 
-	return {"ok": true, "block": block_amt, "drawn": drawn}
+	return {"ok": true, "block": granted_block, "drawn": drawn}
 
 
 ## Sight Glass family: cost 1, target_kind enemy_single, from positions 2 or 3.

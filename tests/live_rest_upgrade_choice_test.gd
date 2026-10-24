@@ -137,8 +137,8 @@ func _run() -> void:
 		# Independent authored expectations: exact short combat prose and the
 		# canonical amount each half must print, never borrowed from the view.
 		var effect_contract := {
-			"warden_strike": {"before": "Deal 6 damage to one enemy.",
-				"after": "Deal 7 damage to one enemy.", "before_amount": 6, "after_amount": 7},
+			"warden_strike": {"before": "Deal 6.", "after": "Deal 7.",
+				"before_amount": 6, "after_amount": 7},
 			"warden_brace": {"before": "Gain 7 Block.", "after": "Gain 10 Block.",
 				"before_amount": 7, "after_amount": 10},
 			"seamstress_mend": {"before": "Heal a chosen ally 5 HP.",
@@ -192,8 +192,8 @@ func _run() -> void:
 				_check(details.effects == "Before: %s\nAfter: %s" % [expected["before"], expected["after"]],
 					"upgrade tile reads the exact authored before/after effect: " + String(row["source_id"]))
 				_check(halves[0] != halves[1]
-					and halves[0].contains(" %d " % int(expected["before_amount"]))
-					and halves[1].contains(" %d " % int(expected["after_amount"])),
+					and halves[0].contains(" %d" % int(expected["before_amount"]))
+					and halves[1].contains(" %d" % int(expected["after_amount"])),
 					"each half prints its own distinct canonical authored amount: " + String(row["source_id"]))
 			# AC2: the tile's hover explains both authored halves under their own
 			# Before/After headings, each with its own name, cost and rules.
@@ -218,8 +218,8 @@ func _run() -> void:
 		# source definition is never mutated, and empty/unknown stay honest.
 		var authored_strike: Dictionary = RunRestStitchCards.resolve_card_definition("warden_strike")
 		_check(authored_strike.get("effects") == {"damage": 6}
-			and gallery._effects_text({"damage": 7}, authored_strike) == "Deal 7 damage to one enemy."
-			and gallery._effects_text({"damage": 6}, authored_strike) == "Deal 6 damage to one enemy."
+			and gallery._effects_text({"damage": 7}, authored_strike) == "Deal 7."
+			and gallery._effects_text({"damage": 6}, authored_strike) == "Deal 6."
 			and authored_strike.get("effects") == {"damage": 6},
 			"Rest half renders the supplied canonical amount on the authored definition without mutating it")
 		_check(gallery._effects_text({}, authored_strike) == "no effect"

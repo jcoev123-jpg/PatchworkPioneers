@@ -232,6 +232,12 @@ func _badge_icons(app) -> void:
 		"debuff": "res://assets/paper/ui/intent_debuff.png"}
 	var texts := {"attack": "ATK 5 > H2", "block": "BLOCK +3",
 		"buff": "BUFF +2 BLK", "debuff": "WEAK 2 > H1"}
+	var expected_tooltips := {
+		"attack": "5 damage aimed at Hero 2 (middle).",
+		"block": "3 Block on the acting enemy.",
+		"buff": "2 Block on the acting enemy.",
+		"debuff": "Weak 2 to Hero 1 (front) — reduces attack damage by 25%."
+	}
 	for mode in ["attack", "block", "buff", "debuff"]:
 		var action := _action_for(mode)
 		var original := action.duplicate(true)
@@ -240,6 +246,8 @@ func _badge_icons(app) -> void:
 			and badge.readable_text == texts[mode] and _icon_fits(badge, paths[mode]),
 			"each announced mode selects its own committed HUD icon: " + mode)
 		_check(action == original, "icon selection never mutates the copied announcement")
+		_check(badge.tooltip_text == expected_tooltips[mode],
+			"each announced mode formats its truthful hover explanation: " + mode)
 	var attack := _action_for("attack")
 	# A textured action followed by every fallback mode must clear the old texture.
 	badge.show_intent(attack, false)
@@ -248,20 +256,24 @@ func _badge_icons(app) -> void:
 	_check(badge.icon_mode == "shove" and badge.readable_text == "H2 PUSH BACK"
 		and badge.amount == 0 and badge.target_position == 2 and _icon_fits(badge, ""),
 		"shove clears the preceding HUD texture for its sewn glyph")
+	_check(badge.tooltip_text == "Push back Hero 2 (middle).", "shove explains direction and target")
 	badge.show_intent(attack, false)
 	badge.show_intent(attack, false, true)
 	_check(badge.icon_mode == "unravelled" and badge.readable_text == "UNRAVELLED"
 		and badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0
 		and _icon_fits(badge, ""), "Unravelled clears the preceding HUD texture")
+	_check(badge.tooltip_text == "Unravelled: next action is skipped.", "Unravelled explains action is skipped")
 	badge.show_intent(attack, false)
 	badge.show_intent(attack, true)
 	_check(badge.icon_mode == "slain" and badge.readable_text == "SLAIN"
 		and badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0
 		and _icon_fits(badge, ""), "slain clears the preceding HUD texture")
+	_check(badge.tooltip_text == "Slain: no action.", "slain explains no action")
 	badge.show_intent(attack, false)
 	badge.show_intent({"type": "mystery", "amount": 4}, false)
 	_check(badge.icon_mode == "none" and badge.readable_text == "NO ACTION"
 		and _icon_fits(badge, ""), "unknown action clears the preceding HUD texture")
+	_check(badge.tooltip_text == "No action.", "mystery resets tooltip to no action")
 	# Unavailable art: the real fallback for an image or import the art pipeline has not
 	# delivered. The authoritative text, amount and target stay exactly as announced.
 	badge.show_intent(attack, false)
@@ -292,9 +304,25 @@ func _badge_icons(app) -> void:
 		and badge.intent_type == "" and badge.amount == 0 and badge.target_position == 0,
 		"the slain source shows only its sewn glyph, never its preceding action art")
 	_check(_snapshot(app) == slain_state, "slain badge presentation changes no state or RNG")
-	_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+	_check(badge.tooltip_text == "Slain: no action.", "mounted slain badge shows truthful hover text")
+	_check(badge.mouse_filter == Control.MOUSE_FILTER_PASS
 		and badge.focus_mode == Control.FOCUS_NONE and badge.get_child_count() == 0,
-		"the iconed badge takes no pointer or keyboard input and mounts no child control")
+		"the iconed badge takes safe hover filter, no focus, and mounts no child control")
+	var hover_motion := InputEventMouseMotion.new()
+	hover_motion.position = badge.get_global_rect().get_center()
+	root.push_input(hover_motion, true)
+	var click_press := InputEventMouseButton.new()
+	click_press.button_index = MOUSE_BUTTON_LEFT
+	click_press.position = hover_motion.position
+	click_press.pressed = true
+	root.push_input(click_press, true)
+	var click_release := InputEventMouseButton.new()
+	click_release.button_index = MOUSE_BUTTON_LEFT
+	click_release.position = hover_motion.position
+	click_release.pressed = false
+	root.push_input(click_release, true)
+	await process_frame
+	_check(_snapshot(app) == slain_state, "pointer hover and click on badge cannot mutate combat state or RNG")
 	# Source inspection: the icon draw is guarded by the retained drawn-glyph fallback.
 	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_intent_badge.gd")
 	var draw_body := _body(source, "func _draw() -> void:")

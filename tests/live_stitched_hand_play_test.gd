@@ -155,16 +155,14 @@ func _authored_upgrade_names() -> void:
 	_check(tooltip.contains("BASE deal 7 damage") and tooltip.contains("BASE deal 3 damage")
 		and not tooltip.contains("BASE deal 6 damage"), "stitched tooltip states each half's own authored effect")
 	# The upgraded half keeps its own short-sentence face line beside the base half.
-	_check(metadata.short_line("warden_strike_plus") == "Deal 7 damage to one enemy."
-		and metadata.short_line("warden_strike") == "Deal 6 damage to one enemy."
-		and metadata.short_line("seamstress_prick")
-			== "Deal 3 damage to one enemy and apply Bleed 3.",
+	_check(metadata.short_line("warden_strike_plus") == "Deal 7."
+		and metadata.short_line("warden_strike") == "Deal 6."
+		and metadata.short_line("seamstress_prick") == "Deal 3. Bleed 3.",
 		"stitched halves keep their own terse authored amounts")
 	var made_pair: Array = made_descriptor.get("half_ids", [])
 	_check(made_pair.size() == 2
-		and metadata.short_line(str(made_pair[0])) == "Deal 7 damage to one enemy."
-		and metadata.short_line(str(made_pair[1]))
-			== "Deal 3 damage to one enemy and apply Bleed 3.",
+		and metadata.short_line(str(made_pair[0])) == "Deal 7."
+		and metadata.short_line(str(made_pair[1])) == "Deal 3. Bleed 3.",
 		"real stitched pair keeps both terse half effects in order")
 
 

@@ -17,6 +17,9 @@ func _run_all_suites() -> void:
 	_test_ac3_reactions_sequential_and_movement()
 	_test_ac4_lifecycle_and_rejections()
 	_test_hand_spend()
+	_test_patch_block_projection_ac1()
+	_test_patch_wearer_and_binding_ac2()
+	_test_patch_negative_and_stale_ac3()
 	await _test_real_mounted_hand()
 	_finish()
 
@@ -636,6 +639,534 @@ func _test_hand_spend() -> void:
 	_check(not reactions13.play_from_hand(deck13, CombatParty.new([]), "warden_draw_fire"), "HS AC4: invalid party rejects")
 
 
+# =============================================================================
+# M05 worn Block patch projection (Draw Fire / Counter-stitch reactions)
+# =============================================================================
+
+## Independent oracle from the brief: authored Block, Guarding, Thorns and the
+## legal from-positions. Never derived from the catalog or the service under test.
+func _reactions_table() -> Dictionary:
+	return {
+		"warden_draw_fire": {"block": 6, "guarding": true, "thorns": 0, "from": [1]},
+		"warden_draw_fire_plus": {"block": 8, "guarding": true, "thorns": 0, "from": [1]},
+		"warden_counter_stitch": {"block": 5, "guarding": false, "thorns": 3, "from": [1, 2]},
+		"warden_counter_stitch_plus": {"block": 7, "guarding": false, "thorns": 4, "from": [1, 2]},
+	}
+
+
+func _patch_definitions() -> Array:
+	return [
+		{"id": "hemguard_cuff", "slot": "ARM"},
+		{"id": "reinforced_browband", "slot": "HEAD"},
+	]
+
+
+## Genuine wardrobe and torn ledger built from a real starter CombatParty roster.
+## `wear` maps an authored slot to the hero who really sews the patch there.
+func _patch_fixture(wear: Dictionary = {}) -> Dictionary:
+	var heroes: Array = _party().get_heroes()
+	var torn: RunTornMending = RunTornMending.new(heroes)
+	_check(torn.is_valid(), "fixture: genuine torn ledger")
+	var wardrobe: RunPatchWardrobe = RunPatchWardrobe.new(heroes,
+		["hemguard_cuff", "reinforced_browband"], _patch_definitions(), 5, 100,
+		["warden_draw_fire", "warden_counter_stitch"], 4242)
+	_check(wardrobe.is_valid(), "fixture: genuine run wardrobe")
+	for slot: String in ["HEAD", "ARM"]:
+		var wearer: String = str(wear.get(slot, ""))
+		if wearer.is_empty():
+			continue
+		var patch_id: String = "reinforced_browband" if slot == "HEAD" else "hemguard_cuff"
+		var sewn: Dictionary = wardrobe.sew(patch_id, wearer, slot,
+			"op-" + patch_id + "-" + wearer, wardrobe.get_snapshot())
+		_check(sewn.get("ok") == true,
+			"fixture: sew " + patch_id + " onto " + wearer + " " + slot)
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+## A torn run roster (real battle end) with both Block patches sewn on the Warden.
+func _torn_warden_fixture() -> Dictionary:
+	var heroes: Array = _party().get_heroes()
+	var torn: RunTornMending = RunTornMending.new(heroes)
+	_check(torn.is_valid(), "fixture: torn ledger for the Warden tear")
+	var ended: Array = heroes.duplicate(true)
+	ended[0]["hp"] = 0
+	_check(torn.observe_battle_end("fixture_warden_tear", heroes.duplicate(true), ended).get("ok") == true,
+		"fixture: genuine battle end tears the Warden in the run ledger")
+	var state: Dictionary = torn.read_state()
+	var wardrobe: RunPatchWardrobe = RunPatchWardrobe.new(state["heroes"],
+		["hemguard_cuff", "reinforced_browband"], _patch_definitions(), 5, 100,
+		["warden_draw_fire"], 4242, true)
+	_check(wardrobe.is_valid(), "fixture: current-run wardrobe matches the torn roster")
+	for slot: String in ["HEAD", "ARM"]:
+		var patch_id: String = "reinforced_browband" if slot == "HEAD" else "hemguard_cuff"
+		_check(wardrobe.sew(patch_id, "warden", slot, "op-torn-" + patch_id,
+			wardrobe.get_snapshot()).get("ok") == true,
+			"fixture: sew " + patch_id + " onto the torn Warden")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _party_with_warden_at(position: int) -> CombatParty:
+	var party: CombatParty = _party()
+	var slot: int = 1
+	while slot < position:
+		var preview: Dictionary = CombatPositionSwaps.preview_adjacent_swap(party, slot, 1)
+		_check(preview.get("ok", false), "fixture: legal swap toward Warden slot " + str(position))
+		party = CombatParty.new(preview.get("heroes", []))
+		slot += 1
+	_check(party.get_hero(position)["id"] == "warden",
+		"fixture: Warden really occupies slot " + str(position))
+	return party
+
+
+## A real paid hand that holds exactly one copy of the reaction card.
+func _paid_deck(card_id: String, seed_value: int) -> CombatDeck:
+	var cards: Array[String] = [card_id, "filler_a", "filler_b", "filler_c", "filler_d"]
+	var deck: CombatDeck = CombatDeck.new(cards, _rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == CombatState.TURN_ENERGY,
+		"fixture: paid deck opens a real 3-energy turn for " + card_id)
+	deck.hand.clear()
+	deck.hand.append(card_id)
+	return deck
+
+
+func _combat_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		reactions: CombatWardenGuardReactions) -> Array:
+	return [
+		party.get_heroes(),
+		deck.hand.duplicate(true),
+		deck.draw_pile.duplicate(true),
+		deck.discard_pile.duplicate(true),
+		deck.energy,
+		deck.turn_active,
+		deck.combat_state.energy,
+		deck.combat_state.player_turn_active,
+		enemies.get_enemies(),
+		reactions.is_guarding(),
+		reactions.get_thorns(),
+		reactions.is_patch_binding_valid(),
+		deck._rng.state,
+		deck._rng.seed,
+	]
+
+
+func _committed_snapshot(party: CombatParty, enemies: CombatEnemies,
+		reactions: CombatWardenGuardReactions) -> Array:
+	return [
+		party.get_heroes(),
+		enemies.get_enemies(),
+		reactions.is_guarding(),
+		reactions.get_thorns(),
+		reactions.is_patch_binding_valid(),
+	]
+
+
+func _refuse_committed(reactions: CombatWardenGuardReactions, card: Variant,
+		party: CombatParty, enemies: CombatEnemies, label: String) -> void:
+	var before: Array = _committed_snapshot(party, enemies, reactions)
+	_check(not reactions.apply_committed_card(card, party), label + ": refused")
+	_check(_committed_snapshot(party, enemies, reactions) == before,
+		label + ": party, enemy roster and reaction mode unchanged")
+
+
+func _refuse_paid(reactions: CombatWardenGuardReactions, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, label: String) -> void:
+	var before: Array = _combat_snapshot(deck, party, enemies, reactions)
+	_check(not reactions.play_from_hand(deck, party, card_id), label + ": refused")
+	_check(_combat_snapshot(deck, party, enemies, reactions) == before,
+		label + ": hand, piles, energy, party, enemy roster, mode and RNG unchanged")
+
+
+## Accepted paid play of one patched reaction; returns a detached snapshot for replay.
+func _accept_paid(card_id: String, position: int, wardrobe: RunPatchWardrobe,
+		torn: RunTornMending, expected_block: int, seed_value: int,
+		label: String) -> Array:
+	var party: CombatParty = _party_with_warden_at(position)
+	var enemies: CombatEnemies = _enemies()
+	var deck: CombatDeck = _paid_deck(card_id, seed_value)
+	var reactions: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(reactions.bind_patch_wardrobe(wardrobe, torn),
+		label + ": genuine wardrobe and torn ledger bind")
+	var hand_before: int = deck.hand.size()
+	var discard_before: int = deck.discard_pile.size()
+	var energy_before: int = deck.energy
+	var rng_before: int = deck._rng.state
+	var allies_before: Array = party.get_heroes()
+	var spec: Dictionary = _reactions_table()[card_id]
+	_check(reactions.play_from_hand(deck, party, card_id), label + ": paid play accepted")
+	_check(party.get_hero(position)["block"] == expected_block,
+		label + ": exact " + str(expected_block) + " Block at slot " + str(position))
+	_check(deck.energy == energy_before - 1, label + ": exactly one energy spent")
+	_check(deck.hand.size() == hand_before - 1 and not deck.hand.has(card_id),
+		label + ": exactly one held copy committed")
+	_check(deck.discard_pile.size() == discard_before + 1 and deck.discard_pile.back() == card_id,
+		label + ": exactly one discard")
+	_check(deck._rng.state == rng_before, label + ": deck RNG untouched by the play")
+	_check(reactions.is_guarding() == bool(spec["guarding"]),
+		label + ": Guarding duration/behaviour unchanged")
+	_check(reactions.get_thorns() == int(spec["thorns"]),
+		label + ": Thorns amount unchanged")
+	for index in range(CombatParty.PARTY_SIZE):
+		if index + 1 != position:
+			_check(party.get_hero(index + 1) == allies_before[index],
+				label + ": ally slot " + str(index + 1) + " untouched")
+	return _combat_snapshot(deck, party, enemies, reactions)
+
+
+## AC1: genuine worn patches add exactly +2 Block apiece on every legal reaction path.
+func _test_patch_block_projection_ac1() -> void:
+	var table: Dictionary = _reactions_table()
+	var wear_buckets: Array = [
+		{"wear": {}, "delta": 0, "label": "no patch"},
+		{"wear": {"ARM": "warden"}, "delta": 2, "label": "Hemguard Cuff only"},
+		{"wear": {"HEAD": "warden"}, "delta": 2, "label": "Reinforced Browband only"},
+		{"wear": {"HEAD": "warden", "ARM": "warden"}, "delta": 4, "label": "both patches"},
+	]
+	for bucket: Dictionary in wear_buckets:
+		var wear: Dictionary = bucket["wear"]
+		var delta: int = int(bucket["delta"])
+		var label: String = str(bucket["label"])
+		var fixture: Dictionary = _patch_fixture(wear)
+		var wardrobe: RunPatchWardrobe = fixture["wardrobe"]
+		var torn: RunTornMending = fixture["torn"]
+		var probe: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(probe.bind_patch_wardrobe(wardrobe, torn), "AC1: bind " + label)
+		_check(probe.is_patch_binding_valid(), "AC1: live binding " + label)
+
+		for card_id: String in table:
+			var exact_block: int = int(table[card_id]["block"]) + delta
+			var projected: Dictionary = probe.project_block(card_id)
+			_check(projected.get("ok", false), "AC1: projection available for " + card_id + " " + label)
+			_check(int(projected.get("block", -1)) == exact_block,
+				"AC1: " + card_id + " projects exact " + str(exact_block) + " Block (" + label + ")")
+			_check(int(projected.get("bonus", -1)) == delta,
+				"AC1: " + card_id + " bonus is exactly +" + str(delta) + " (" + label + ")")
+
+			# Already-paid committed path at every authored from-position.
+			for position: int in (table[card_id]["from"] as Array):
+				var party: CombatParty = _party_with_warden_at(position)
+				var enemies: CombatEnemies = _enemies()
+				var reactions: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+				_check(reactions.bind_patch_wardrobe(wardrobe, torn),
+					"AC1: committed bind " + label)
+				var allies_before: Array = party.get_heroes()
+				var before: Array = _committed_snapshot(party, enemies, reactions)
+				_check(reactions.apply_committed_card(card_id, party),
+					"AC1: committed " + card_id + " at slot " + str(position) + " (" + label + ")")
+				_check(party.get_hero(position)["block"] == exact_block,
+					"AC1: committed " + card_id + " grants exact " + str(exact_block)
+						+ " Block at slot " + str(position) + " (" + label + ")")
+				_check(reactions.is_guarding() == bool(table[card_id]["guarding"]),
+					"AC1: committed " + card_id + " Guarding unchanged (" + label + ")")
+				_check(reactions.get_thorns() == int(table[card_id]["thorns"]),
+					"AC1: committed " + card_id + " Thorns unchanged (" + label + ")")
+				for index in range(CombatParty.PARTY_SIZE):
+					if index + 1 != position:
+						_check(party.get_hero(index + 1) == allies_before[index],
+							"AC1: committed " + card_id + " leaves ally slot "
+								+ str(index + 1) + " untouched (" + label + ")")
+				# Only the Warden's Block and reaction mode changed.
+				var after: Array = _committed_snapshot(party, enemies, reactions)
+				_check(after[1] == before[1], "AC1: committed " + card_id + " leaves enemies unchanged")
+				_check(after[2] == bool(table[card_id]["guarding"])
+					and after[3] == int(table[card_id]["thorns"]),
+					"AC1: committed " + card_id + " mode is purely authored (" + label + ")")
+
+			# Paid shared-hand path: one energy, one discard, same projected Block.
+			var paid_block: int = int(table[card_id]["block"]) + delta
+			_accept_paid(card_id, 1, wardrobe, torn, paid_block, 71,
+				"AC1 paid " + card_id + " (" + label + ")")
+			if (table[card_id]["from"] as Array).has(2):
+				_accept_paid(card_id, 2, wardrobe, torn, paid_block, 71,
+					"AC1 paid " + card_id + " slot 2 (" + label + ")")
+
+	# Two fixed seeds replay the same patched paid matrix identically.
+	var both: Dictionary = _patch_fixture({"HEAD": "warden", "ARM": "warden"})
+	for seed_value: int in [101, 202]:
+		var first: Array = []
+		var second: Array = []
+		for card_id: String in table:
+			for position: int in (table[card_id]["from"] as Array):
+				var exact_block: int = int(table[card_id]["block"]) + 4
+				first.append(_accept_paid(card_id, position, both["wardrobe"], both["torn"],
+					exact_block, seed_value, "AC1 seed " + str(seed_value) + " first"))
+				second.append(_accept_paid(card_id, position, both["wardrobe"], both["torn"],
+					exact_block, seed_value, "AC1 seed " + str(seed_value) + " second"))
+		_check(first == second,
+			"AC1: seed " + str(seed_value) + " repeated patched matrix is identical")
+
+
+## AC2: unbound legacy play, wrong wearer, torn owner and a failed bind all keep the contract.
+func _test_patch_wearer_and_binding_ac2() -> void:
+	var table: Dictionary = _reactions_table()
+
+	# 1. Legacy unbound controls: authored numbers, one energy, one discard.
+	for card_id: String in table:
+		var party: CombatParty = _party()
+		var deck: CombatDeck = _paid_deck(card_id, 37)
+		var reactions: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(reactions.is_patch_binding_valid(), "AC2: unbound service stays legacy-valid")
+		var projected: Dictionary = reactions.project_block(card_id)
+		_check(int(projected.get("block", -1)) == int(table[card_id]["block"])
+			and int(projected.get("bonus", -1)) == 0,
+			"AC2: unbound projection is authored Block for " + card_id)
+		var before_energy: int = deck.energy
+		_check(reactions.play_from_hand(deck, party, card_id),
+			"AC2: unbound paid play accepted for " + card_id)
+		_check(party.get_hero(1)["block"] == int(table[card_id]["block"]),
+			"AC2: unbound paid play keeps authored Block for " + card_id)
+		_check(deck.energy == before_energy - 1, "AC2: unbound play spends once for " + card_id)
+		_check(reactions.get_thorns() == int(table[card_id]["thorns"])
+			and reactions.is_guarding() == bool(table[card_id]["guarding"]),
+			"AC2: unbound mode stays authored for " + card_id)
+		var committed_party: CombatParty = _party()
+		var committed: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(committed.apply_committed_card(card_id, committed_party),
+			"AC2: unbound committed play accepted for " + card_id)
+		_check(committed_party.get_hero(1)["block"] == int(table[card_id]["block"]),
+			"AC2: unbound committed play keeps authored Block for " + card_id)
+
+	# 2. The identical patches on Seamstress and on Tinker never boost the Warden.
+	for wearer: String in ["seamstress", "tinker"]:
+		var fixture: Dictionary = _patch_fixture({"HEAD": wearer, "ARM": wearer})
+		var wardrobe: RunPatchWardrobe = fixture["wardrobe"]
+		var torn: RunTornMending = fixture["torn"]
+		var bound: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+		_check(bound.bind_patch_wardrobe(wardrobe, torn),
+			"AC2: genuine bind with patches on " + wearer)
+		for card_id: String in table:
+			_check(int(bound.project_block(card_id).get("bonus", -1)) == 0,
+				"AC2: " + wearer + "-worn patches give no bonus to " + card_id)
+			var party: CombatParty = _party()
+			_check(bound.apply_committed_card(card_id, party),
+				"AC2: committed " + card_id + " still legal with " + wearer + " wearing both")
+			_check(party.get_hero(1)["block"] == int(table[card_id]["block"]),
+				"AC2: committed " + card_id + " keeps authored Block with " + wearer + " wearing both")
+			var wardens: Array = [party.get_hero(1), party.get_hero(2), party.get_hero(3)]
+			if wearer == "seamstress":
+				_check(wardens[1]["block"] == 0, "AC2: Seamstress never gains the Warden Block")
+			else:
+				_check(wardens[2]["block"] == 0, "AC2: Tinker never gains the Warden Block")
+			_accept_paid(card_id, 1, wardrobe, torn, int(table[card_id]["block"]), 73,
+				"AC2: paid " + card_id + " with " + wearer + " wearing both")
+
+	# 3. A torn Warden in the run ledger owns nothing even with both patches sewn on.
+	var torn_fixture: Dictionary = _torn_warden_fixture()
+	var torn_rules: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(torn_rules.bind_patch_wardrobe(torn_fixture["wardrobe"], torn_fixture["torn"]),
+		"AC2: bind the torn Warden's twin patches")
+	for card_id: String in table:
+		_check(int(torn_rules.project_block(card_id).get("bonus", -1)) == 0,
+			"AC2: torn Warden gains no bonus for " + card_id)
+		var living: CombatParty = _party()
+		_check(torn_rules.apply_committed_card(card_id, living),
+			"AC2: committed " + card_id + " legal for a living battle Warden")
+		_check(living.get_hero(1)["block"] == int(table[card_id]["block"]),
+			"AC2: torn ledger keeps authored Block for " + card_id)
+		_accept_paid(card_id, 1, torn_fixture["wardrobe"], torn_fixture["torn"],
+			int(table[card_id]["block"]), 79, "AC2: paid " + card_id + " with a torn ledger owner")
+
+	# 4. A failed or stale explicit bind fails closed instead of silently playing unpatched.
+	var genuine: Dictionary = _patch_fixture({"HEAD": "warden", "ARM": "warden"})
+	var failed: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not failed.bind_patch_wardrobe(null, null), "AC2: null explicit bind is refused")
+	_check(not failed.is_patch_binding_valid(), "AC2: failed bind is explicitly invalid")
+	var failed_party: CombatParty = _party()
+	var failed_deck: CombatDeck = _paid_deck("warden_draw_fire", 83)
+	_refuse_committed(failed, "warden_draw_fire", failed_party, _enemies(),
+		"AC2: failed bind cannot fall back to unpatched committed play")
+	_refuse_paid(failed, failed_deck, failed_party, _enemies(), "warden_draw_fire",
+		"AC2: failed bind cannot fall back to unpatched paid play")
+	var half: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not half.bind_patch_wardrobe(genuine["wardrobe"], null),
+		"AC2: missing torn ledger bind is refused")
+	_refuse_paid(half, failed_deck, failed_party, _enemies(), "warden_draw_fire",
+		"AC2: half binding refuses paid play")
+	var wrong_expected: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(not wrong_expected.bind_patch_wardrobe(genuine["wardrobe"], genuine["torn"],
+		{"stale": true}, null), "AC2: stale expected wardrobe snapshot bind is refused")
+	_refuse_paid(wrong_expected, failed_deck, failed_party, _enemies(), "warden_draw_fire",
+		"AC2: stale expected snapshot refuses paid play")
+	# Recovering is an explicit rebind, never a silent fallback.
+	_check(failed.bind_patch_wardrobe(genuine["wardrobe"], genuine["torn"]),
+		"AC2: explicit rebind after a failure succeeds")
+	var recovered_party: CombatParty = _party()
+	_check(failed.apply_committed_card("warden_draw_fire", recovered_party),
+		"AC2: rebind restores the patched play")
+	_check(recovered_party.get_hero(1)["block"] == 10,
+		"AC2: rebind applies both worn patches (6 + 2 + 2)")
+	_accept_paid("warden_draw_fire", 1, genuine["wardrobe"], genuine["torn"], 10, 89,
+		"AC2: rebind paid Draw Fire")
+
+
+## AC3: negatives, overflow and stale bindings refuse before any mutation.
+func _test_patch_negative_and_stale_ac3() -> void:
+	var table: Dictionary = _reactions_table()
+	var fixture: Dictionary = _patch_fixture({"HEAD": "warden", "ARM": "warden"})
+	var wardrobe: RunPatchWardrobe = fixture["wardrobe"]
+	var torn: RunTornMending = fixture["torn"]
+	var patched: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(patched.bind_patch_wardrobe(wardrobe, torn), "AC3: bind both worn patches")
+	var enemy_roster: CombatEnemies = _enemies()
+
+	# 1. Illegal positions for the committed and paid paths.
+	var slot_two: CombatParty = _party_with_warden_at(2)
+	_refuse_committed(patched, "warden_draw_fire", slot_two, enemy_roster,
+		"AC3: committed Draw Fire at slot 2 refused")
+	_refuse_paid(patched, _paid_deck("warden_draw_fire", 91), slot_two, enemy_roster,
+		"warden_draw_fire", "AC3: paid Draw Fire at slot 2 refused")
+	var slot_three: CombatParty = _party_with_warden_at(3)
+	_refuse_committed(patched, "warden_counter_stitch", slot_three, enemy_roster,
+		"AC3: committed Counter-stitch at slot 3 refused")
+	_refuse_paid(patched, _paid_deck("warden_counter_stitch", 97), slot_three, enemy_roster,
+		"warden_counter_stitch", "AC3: paid Counter-stitch at slot 3 refused")
+	# Slot 2 remains legal for Counter-stitch (control against over-refusal).
+	var legal_two: CombatParty = _party_with_warden_at(2)
+	_check(patched.apply_committed_card("warden_counter_stitch", legal_two),
+		"AC3: Counter-stitch at slot 2 stays legal")
+	_check(legal_two.get_hero(2)["block"] == 9, "AC3: legal slot 2 Counter-stitch is 5 + 4")
+
+	# 2. Downed Warden refuses both entry points.
+	var downed: CombatParty = _party()
+	_check(downed.apply_damage(1, 40) and downed.is_downed(1), "AC3: Warden downed in combat")
+	_refuse_committed(patched, "warden_draw_fire", downed, enemy_roster,
+		"AC3: downed Warden refuses committed Draw Fire")
+	_refuse_paid(patched, _paid_deck("warden_draw_fire", 103), downed, enemy_roster,
+		"warden_draw_fire", "AC3: downed Warden refuses paid Draw Fire")
+
+	# 3. Absent held card and short energy.
+	var empty_hand_deck: CombatDeck = _paid_deck("warden_draw_fire", 107)
+	empty_hand_deck.hand.clear()
+	_refuse_paid(patched, empty_hand_deck, _party(), enemy_roster, "warden_draw_fire",
+		"AC3: absent held card refused")
+	var poor_deck: CombatDeck = _paid_deck("warden_draw_fire", 109)
+	_check(poor_deck.try_spend_energy(3), "AC3: energy fixture spends all three")
+	_refuse_paid(patched, poor_deck, _party(), enemy_roster, "warden_draw_fire",
+		"AC3: short energy refused")
+
+	# 4. Stale wardrobe: a genuine sew after the bind invalidates it until rebind.
+	var stale_fixture: Dictionary = _patch_fixture({"ARM": "warden"})
+	var stale_w: RunPatchWardrobe = stale_fixture["wardrobe"]
+	var stale_t: RunTornMending = stale_fixture["torn"]
+	var stale: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(stale.bind_patch_wardrobe(stale_w, stale_t), "AC3: bind before the wardrobe changes")
+	_check(stale_w.sew("reinforced_browband", "tinker", "HEAD", "op-stale-head",
+		stale_w.get_snapshot()).get("ok") == true, "AC3: genuine wardrobe change")
+	_check(not stale.is_patch_binding_valid(), "AC3: binding turns stale after the sew")
+	_refuse_paid(stale, _paid_deck("warden_draw_fire", 113), _party(), enemy_roster,
+		"warden_draw_fire", "AC3: stale wardrobe refuses paid Draw Fire")
+	_check(stale.bind_patch_wardrobe(stale_w, stale_t), "AC3: rebind after the wardrobe change")
+	_accept_paid("warden_draw_fire", 1, stale_w, stale_t, 8, 127,
+		"AC3: rebind still applies only the Warden's Hemguard Cuff")
+
+	# 5. Stale torn ledger (real later battle) refuses until rebind.
+	var torn_stale_fixture: Dictionary = _patch_fixture({"HEAD": "warden"})
+	var ts_w: RunPatchWardrobe = torn_stale_fixture["wardrobe"]
+	var ts_t: RunTornMending = torn_stale_fixture["torn"]
+	var ts_service: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(ts_service.bind_patch_wardrobe(ts_w, ts_t), "AC3: bind before the torn ledger changes")
+	var held: Array = ts_t.read_state()["heroes"]
+	var later: Array = held.duplicate(true)
+	later[2]["hp"] = 0
+	_check(ts_t.observe_battle_end("ac3_later_battle", held.duplicate(true), later).get("ok") == true,
+		"AC3: genuine later battle tears the Tinker")
+	_check(not ts_service.is_patch_binding_valid(), "AC3: binding turns stale after the torn change")
+	_refuse_committed(ts_service, "warden_counter_stitch", _party(), enemy_roster,
+		"AC3: stale torn ledger refuses committed Counter-stitch")
+	_refuse_paid(ts_service, _paid_deck("warden_counter_stitch", 131), _party(), enemy_roster,
+		"warden_counter_stitch", "AC3: stale torn ledger refuses paid Counter-stitch")
+
+	# 6. At-capacity Block: the projected amount must fit, before any spend.
+	var capped: CombatParty = _party()
+	capped._heroes[0]["block"] = CombatParty.MAX_INT - 6
+	_refuse_committed(patched, "warden_draw_fire", capped, enemy_roster,
+		"AC3: projected 10 Block cannot fit 6 remaining capacity")
+	_refuse_paid(patched, _paid_deck("warden_draw_fire", 137), capped, enemy_roster,
+		"warden_draw_fire", "AC3: paid projected overflow refused")
+	# The same capacity really would have accepted the unpatched authored 6.
+	var unbound_capped: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	var unbound_party: CombatParty = _party()
+	unbound_party._heroes[0]["block"] = CombatParty.MAX_INT - 6
+	_check(unbound_capped.apply_committed_card("warden_draw_fire", unbound_party),
+		"AC3: unpatched authored 6 exactly fits the same capacity")
+	_check(unbound_party.get_hero(1)["block"] == CombatParty.MAX_INT,
+		"AC3: unpatched authored Block reaches the exact cap")
+
+	# 7. Thorns overflow refuses before the Block of the same card is applied.
+	var thorn_cap: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(thorn_cap.bind_patch_wardrobe(wardrobe, torn), "AC3: bind for the Thorns overflow")
+	thorn_cap.thorns = CombatParty.MAX_INT
+	var thorn_party: CombatParty = _party()
+	_refuse_committed(thorn_cap, "warden_counter_stitch", thorn_party, enemy_roster,
+		"AC3: Thorns overflow refuses committed Counter-stitch")
+	_check(thorn_party.get_hero(1)["block"] == 0,
+		"AC3: Thorns overflow never applies the projected Block first")
+	_refuse_paid(thorn_cap, _paid_deck("warden_counter_stitch", 139), thorn_party, enemy_roster,
+		"warden_counter_stitch", "AC3: Thorns overflow refuses paid Counter-stitch")
+	_check(thorn_party.get_hero(1)["block"] == 0,
+		"AC3: paid Thorns overflow never applies Block or energy first")
+
+	# 8. Duplicate paid copy and disallowed/counterfeit committed descriptors.
+	var single_deck: CombatDeck = _paid_deck("warden_draw_fire", 149)
+	var single_party: CombatParty = _party()
+	_check(patched.play_from_hand(single_deck, single_party, "warden_draw_fire"),
+		"AC3: first paid Draw Fire accepted")
+	_check(single_deck.energy == 2 and single_party.get_hero(1)["block"] == 10,
+		"AC3: first paid play spent once and gained 10")
+	_refuse_paid(patched, single_deck, single_party, enemy_roster, "warden_draw_fire",
+		"AC3: duplicate paid play of the consumed copy refused")
+	_check(single_deck.discard_pile.count("warden_draw_fire") == 1,
+		"AC3: duplicate refusal never discards twice")
+
+	var descriptor_party: CombatParty = _party()
+	var descriptor_enemies: CombatEnemies = _enemies()
+	# A counterfeit descriptor claiming the patched total is never a grant source.
+	_refuse_committed(patched, {"id": "warden_draw_fire",
+		"effects": {"block": 10, "guarding": true, "duration": "until_next_turn"}},
+		descriptor_party, descriptor_enemies,
+		"AC3: counterfeit patched Block descriptor refused")
+	_refuse_committed(patched, {"id": "warden_draw_fire", "effects": {"block": 6}},
+		descriptor_party, descriptor_enemies,
+		"AC3: descriptor dropping Guarding refused")
+	_refuse_committed(patched, {"id": "warden_draw_fire", "target_kind": "enemy_single"},
+		descriptor_party, descriptor_enemies,
+		"AC3: descriptor with a disallowed target refused")
+	_refuse_committed(patched, {"id": "warden_draw_fire", "from_positions": [2]},
+		descriptor_party, descriptor_enemies,
+		"AC3: descriptor with a disallowed from-position refused")
+	_refuse_committed(patched, {"id": "warden_draw_fire", "owner": "tinker"},
+		descriptor_party, descriptor_enemies,
+		"AC3: descriptor with a foreign owner refused")
+	_refuse_committed(patched, "warden_hold_the_line", descriptor_party, descriptor_enemies,
+		"AC3: disallowed Warden card refused")
+	# The genuine descriptor still works after every refusal.
+	_check(patched.apply_committed_card("warden_draw_fire", descriptor_party),
+		"AC3: genuine descriptor still accepted after descriptor refusals")
+	_check(descriptor_party.get_hero(1)["block"] == 10,
+		"AC3: genuine descriptor applies the projected 10 Block")
+
+	# 9. Reaction modes still expire at the player-turn boundary.
+	var expiry: CombatWardenGuardReactions = CombatWardenGuardReactions.new()
+	_check(expiry.bind_patch_wardrobe(wardrobe, torn), "AC3: bind for the turn-boundary case")
+	var expiry_party: CombatParty = _party()
+	var expiry_deck: CombatDeck = _paid_deck("warden_counter_stitch", 151)
+	_check(expiry.play_from_hand(expiry_deck, expiry_party, "warden_counter_stitch"),
+		"AC3: patched Counter-stitch accepted")
+	_check(expiry.get_thorns() == 3 and expiry_party.get_hero(1)["block"] == 9,
+		"AC3: patched Counter-stitch is 9 Block and authored Thorns 3")
+	_check(expiry.begin_player_turn(), "AC3: player-turn boundary accepted")
+	_check(not expiry.is_guarding() and expiry.get_thorns() == 0,
+		"AC3: until-next-turn modes expired, not lengthened by the patches")
+	_check(expiry_party.get_hero(1)["block"] == 9,
+		"AC3: the reaction boundary never resets Block")
+	var expiry_enemies: CombatEnemies = _enemies()
+	var expiry_attack: Dictionary = {"enemy_position": 1, "target_position": 2, "amount": 3}
+	var expiry_result: Dictionary = expiry.resolve_enemy_attack(expiry_party, expiry_enemies, expiry_attack)
+	_check(expiry_result.get("target_position") == 2 and expiry_result.get("redirected") == false,
+		"AC3: expired Guarding no longer redirects for patched play")
+	_check(expiry_result.get("retaliation_damage") == 0,
+		"AC3: expired Thorns grants no retaliation for patched play")
+	_check(expiry_enemies.get_enemy(1)["hp"] == 12,
+		"AC3: expired Thorns leaves the attacking enemy untouched")
 
 
 # =============================================================================
