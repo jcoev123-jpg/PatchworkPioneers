@@ -296,6 +296,90 @@ func _pick(patch_id: String, destination: String) -> void:
 			"selected destination matches exact authoritative service option")
 
 
+const KNOWN_PATCH_POWERS := {
+	"button_eye": "first attack each combat: Exposed 1",
+	"stitched_badge": "+3 opening Block to living wearer (stacks with innate Block)",
+	"pincushion_arm": "damage-dealing cards: +1 damage",
+	"spare_spool": "+2 healing on positive-heal cards owned by wearer only",
+	"quilted_coat": "+6 effective max HP (no heal)"
+}
+
+
+func _assert_changed_slot_preview(f: Dictionary, kind: String, slot: String,
+		from_id: String, to_id: String, source_before: String, source_after: String,
+		destination_before: String, destination_after: String) -> void:
+	var option := picker.selected_option()
+	var snapshot: Dictionary = f.wardrobe.get_snapshot()
+	var forecast := RunRestPatchResewOptions.forecast(
+		f.wardrobe, f.torn, snapshot, f.rest, option)
+	var selected_is_real: bool = not option.is_empty() and forecast.get("ok") == true
+	_check(selected_is_real and option.get("kind") == kind and option.get("slot") == slot
+		and option.get("from_hero") == from_id and option.get("to_hero") == to_id
+		and option.get("cost") == 1 and forecast.get("cost") == 1,
+		"mounted %s %s has an authentic selected option and forecast" % [kind, slot])
+	if not selected_is_real:
+		return
+	var source: Dictionary = forecast["source"]
+	var destination: Dictionary = forecast["destination"]
+	_check(source["before"]["slots"][slot]["id"] == source_before
+		and source["after"]["slots"][slot]["id"] == source_after
+		and destination["before"]["slots"][slot]["id"] == destination_before
+		and destination["after"]["slots"][slot]["id"] == destination_after,
+		"real %s %s forecast has the expected two before/after slot assignments" % [kind, slot])
+	var preview := picker.preview_label.text
+	var lines := preview.split(String.chr(10))
+	_check(lines.size() == 3, "preview has just an action and two changed-slot lines")
+	if lines.size() != 3:
+		return
+	var slot_name := slot.to_lower().capitalize() + " patch"
+	var header := "%s / %s / %s to %s / Cost: %d scrap / Scraps %d to %d" % [
+		kind.to_lower().capitalize(), slot_name, from_id.capitalize(), to_id.capitalize(),
+		forecast["cost"], snapshot["scraps"], snapshot["scraps"] - forecast["cost"]]
+	_check(lines[0] == header and picker.scraps_label.text == "Scraps: %d" % snapshot["scraps"],
+		"action and wallet match real %s %s forecast and current purse" % [kind, slot])
+	for index in range(2):
+		var wearer: Dictionary = source if index == 0 else destination
+		var before: Dictionary = wearer["before"]
+		var after: Dictionary = wearer["after"]
+		var before_patch: Dictionary = before["slots"][slot]
+		var after_patch: Dictionary = after["slots"][slot]
+		var expected_start := "%s %s: %s to %s / " % [
+			wearer["hero_id"].capitalize(), slot_name,
+			_expected_patch_state(before_patch), _expected_patch_state(after_patch)]
+		var expected_health := "HP %d/%d to %d/%d / effective cap %d to %d" % [
+			before["hp"], before["base_max_hp"], after["hp"], after["base_max_hp"],
+			before["effective_max_hp"], after["effective_max_hp"]]
+		_check(lines[index + 1] == expected_start + expected_health,
+			"changed %s wearer quotes actual slot, power, activity, HP and cap" % wearer["hero_id"])
+		for patch in [before_patch, after_patch]:
+			var patch_id: String = patch["id"]
+			if patch_id.is_empty():
+				_check(patch["effect"] == "" and not patch["active"],
+					"empty changed slot cannot invent a patch power")
+			elif KNOWN_PATCH_POWERS.has(patch_id):
+				_check(patch["effect"] == KNOWN_PATCH_POWERS[patch_id],
+					"real forecast cites the independently known power: " + patch_id)
+	for other_slot in ["HEAD", "ARM", "COAT"]:
+		if other_slot == slot:
+			continue
+		_check(not preview.contains(other_slot) and
+			not preview.contains(other_slot.to_lower().capitalize() + " patch:"),
+			"preview omits unrelated %s inventories" % other_slot)
+
+
+func _expected_patch_state(patch: Dictionary) -> String:
+	var id: String = patch["id"]
+	if id.is_empty():
+		return "empty"
+	var name := id.replace("_", " ").capitalize()
+	var effect: String = patch["effect"]
+	if not patch["active"]:
+		return "%s (dormant; inactive power: %s)" % [name, effect] \
+			if not effect.is_empty() else "%s (dormant)" % name
+	return "%s (active: %s)" % [name, effect] \
+		if not effect.is_empty() else "%s (active)" % name
+
+
 func _positive(f: Dictionary) -> void:
 	var w: RunPatchWardrobe = f.wardrobe
 	var start := w.get_snapshot()
@@ -384,10 +468,10 @@ func _positive(f: Dictionary) -> void:
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
 			"Tinker / Move")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
-			"empty Head slot")
-		and picker.preview_label.text.contains("Move • Head patch")
-		and picker.preview_label.text.contains("empty Head slot"),
-		"HEAD move preview uses human labels but exact machine option")
+			"empty Head slot"),
+		"HEAD move chip uses human labels but exact machine option")
+	_assert_changed_slot_preview(f, "MOVE", "HEAD", "warden", "tinker",
+		"button_eye", "", "", "button_eye")
 	_pick("button_eye", "seamstress")
 	var head_swap := picker.selected_option()
 	_check(head_swap.get("kind") == "SWAP" and head_swap.get("slot") == "HEAD"
@@ -399,10 +483,12 @@ func _positive(f: Dictionary) -> void:
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
 			"Seamstress / Swap")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
-			"Head patch • swap with Stitched Badge")
-		and picker.preview_label.text.contains("Swap • Head patch")
-		and picker.preview_label.text.contains("swap with Stitched Badge"),
-		"HEAD swap chip and preview use friendly labels; ledger IDs remain exact")
+			"Head patch")
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"swap with Stitched Badge"),
+		"HEAD swap chip uses friendly labels; ledger IDs remain exact")
+	_assert_changed_slot_preview(f, "SWAP", "HEAD", "warden", "seamstress",
+		"button_eye", "stitched_badge", "stitched_badge", "button_eye")
 	picker.confirm_button.pressed.emit()
 	var first := w.get_snapshot()
 	_check(f.receipts.size() == 1 and f.receipts[0].receipt.exchanged_id == "stitched_badge"
@@ -412,17 +498,17 @@ func _positive(f: Dictionary) -> void:
 		"HEAD swapped through UI signal, fresh operation and rerendered exact scraps")
 	_pick("pincushion_arm", "warden")
 	_check(picker.selected_option().get("kind") == "MOVE"
-		and picker.selected_option().get("slot") == "ARM"
-		and picker.preview_label.text.contains("Move • Arm patch")
-		and picker.preview_label.text.contains("empty Arm slot"),
-		"ARM move preview keeps exact option and human slot")
+		and picker.selected_option().get("slot") == "ARM",
+		"ARM move retains exact selected option and human slot")
+	_assert_changed_slot_preview(f, "MOVE", "ARM", "seamstress", "warden",
+		"pincushion_arm", "", "", "pincushion_arm")
 	_pick("pincushion_arm", "tinker")
 	_check(picker.selected_option().get("kind") == "SWAP"
 		and picker.selected_option().get("exchanged_id") == "spare_spool"
-		and picker.selected_option().get("cost") == 1
-		and picker.preview_label.text.contains("Swap • Arm patch")
-		and picker.preview_label.text.contains("swap with Spare Spool"),
-		"ARM swap preview keeps exact option and friendly exchanged name")
+		and picker.selected_option().get("cost") == 1,
+		"ARM swap retains exact selected option and exchanged patch")
+	_assert_changed_slot_preview(f, "SWAP", "ARM", "seamstress", "tinker",
+		"pincushion_arm", "spare_spool", "spare_spool", "pincushion_arm")
 	picker.confirm_button.pressed.emit()
 	var second := w.get_snapshot()
 	_check(f.receipts.size() == 2 and f.receipts[1].receipt.exchanged_id == "spare_spool"
@@ -441,11 +527,28 @@ func _positive(f: Dictionary) -> void:
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
 			"Tinker / Move")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
-			"empty Coat slot")
-		and picker.preview_label.text.contains("Move • Coat patch")
-		and picker.preview_label.text.contains("empty Coat slot")
-		and not picker.preview_label.text.contains("MOVE • COAT"),
-		"COAT move chip and forecast use human labels with exact machine option")
+			"empty Coat slot"),
+		"COAT move chip uses human labels with exact machine option")
+	_assert_changed_slot_preview(f, "MOVE", "COAT", "warden", "tinker",
+		"quilted_coat", "", "", "quilted_coat")
+	var coat_forecast := RunRestPatchResewOptions.forecast(
+		w, f.torn, w.get_snapshot(), f.rest, picker.selected_option())
+	_check(coat_forecast.get("ok") == true, "live Quilted Coat projection exists")
+	if coat_forecast.get("ok") == true:
+		var from_before: Dictionary = coat_forecast["source"]["before"]
+		var from_after: Dictionary = coat_forecast["source"]["after"]
+		var to_before: Dictionary = coat_forecast["destination"]["before"]
+		var to_after: Dictionary = coat_forecast["destination"]["after"]
+		var live_heroes: Array = f.torn.read_state().heroes
+		_check(from_before["hp"] == live_heroes[0]["hp"]
+			and to_before["hp"] == live_heroes[2]["hp"]
+			and from_before["hp"] == from_after["hp"]
+			and to_before["hp"] == to_after["hp"]
+			and from_before["base_max_hp"] == from_after["base_max_hp"]
+			and to_before["base_max_hp"] == to_after["base_max_hp"]
+			and from_before["effective_max_hp"] == from_after["effective_max_hp"] + 6
+			and to_after["effective_max_hp"] == to_before["effective_max_hp"] + 6,
+			"Coat moves exactly +6 effective cap between actual live HP; no equip healing")
 	picker.confirm_button.pressed.emit()
 	var after := w.get_snapshot()
 	_check(f.receipts.size() == 3 and f.receipts[2].receipt.exchanged_id == ""
@@ -653,12 +756,34 @@ func _torn_preview_active() -> void:
 	_check(picker.present(w, t, before, f.rest),
 		"two-scrap torn wearer still has all valid re-sew choices")
 	_pick("spare_spool", "warden")
+	_assert_changed_slot_preview(f, "MOVE", "ARM", "tinker", "warden",
+		"spare_spool", "", "", "spare_spool")
+	var source_line := picker.preview_label.text.split(String.chr(10))[1]
 	_check(picker._source_buttons[picker.source_selector.selected].text.contains("torn/inactive")
-		and picker.preview_label.text.contains("Tinker BEFORE") and picker.preview_label.text.contains("dormant")
+		and source_line.contains("Tinker Arm patch:")
+		and source_line.contains("Spare Spool (dormant; inactive power:")
+		and not source_line.contains("Spare Spool (active:"),
+		"torn source's moved power is explicitly dormant, never applied")
+	_pick("quilted_coat", "tinker")
+	_assert_changed_slot_preview(f, "MOVE", "COAT", "warden", "tinker",
+		"quilted_coat", "", "", "quilted_coat")
+	var torn_coat := RunRestPatchResewOptions.forecast(
+		w, t, before, f.rest, picker.selected_option())
+	_check(torn_coat.get("ok") == true, "torn target Coat forecast is authentic")
+	if torn_coat.get("ok") == true:
+		var recipient: Dictionary = torn_coat["destination"]["after"]
+		var destination_line := picker.preview_label.text.split(String.chr(10))[2]
+		_check(not recipient["slots"]["COAT"]["active"] and recipient["hp"] == 0
+			and recipient["effective_max_hp"] == recipient["base_max_hp"]
+			and recipient["base_max_hp"] == t.read_state().heroes[2].max_hp
+			and destination_line.contains(
+				"Quilted Coat (dormant; inactive power: +6 effective max HP (no heal))")
+			and not destination_line.contains("Quilted Coat (active:"),
+			"torn Tinker cannot activate Quilted Coat +6 or receive an equip heal")
+	_check(w.get_snapshot() == before and t.read_state().heroes[2].hp == 0
 		and picker.scraps_label.text == "Scraps: 2",
-		"torn/inactive explicitly visible on source selector and preview")
-	_check(w.get_snapshot() == before and t.read_state().heroes[2].hp == 0,
-		"rendering torn or living targets never revives, reassigns or spends")
+		"rendering torn and living changes never revives, reassigns or spends")
+
 
 
 func _input_checks() -> void:
