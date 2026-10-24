@@ -109,6 +109,7 @@ func _attack_patch_claims() -> void:
 			var stale := state.duplicate(true)
 			stale.gold += 1
 			_reject_patch(sewing._sew.bind("warden", target, sewing._token, stale), "new patch stale sew")
+			_check(not sewing._prompt.text.begins_with("Sewn "), "no success confirmation before commit")
 			await _click(target)
 			var after: Dictionary = sewing.wardrobe.get_snapshot()
 			var slot: String = state.definitions[patch_id]
@@ -116,6 +117,15 @@ func _attack_patch_claims() -> void:
 				and after.scraps == state.scraps and after.operation_ids.size() == state.operation_ids.size() + 1
 				and app.party_carryover._wardrobe == sewing.wardrobe,
 				"new Elite patch sews exact slot free and once")
+			var expected_confirmation := "Sewn %s to Warden (%s); +0 scraps (empty slot)." % [
+				_expected_name(patch_id), slot]
+			_check(is_instance_valid(sewing._prompt) and sewing._prompt.text == expected_confirmation,
+				"committed empty slot sew updates prompt to explicit success receipt: " + expected_confirmation)
+			_check(sewing._prompt.text.contains(_expected_name(patch_id))
+				and sewing._prompt.text.contains("Warden")
+				and sewing._prompt.text.contains(slot)
+				and sewing._prompt.text.contains("+0"),
+				"empty slot receipt names patch, wearer, slot and +0")
 			_reject_patch(callback, "new patch sew replay")
 			await _click(app.continue_button)
 			_reject_patch(callback, "new patch retired sew")
@@ -331,8 +341,14 @@ func _complete_state() -> Array:
 
 func _reject_patch(callback: Callable, message: String) -> void:
 	var before := _complete_state()
+	var prompt_before: String = sewing._prompt.text if is_instance_valid(sewing._prompt) else ""
 	callback.call()
 	_check(_complete_state() == before, message + ": complete run/wardrobe unchanged")
+	var prompt_after: String = sewing._prompt.text if is_instance_valid(sewing._prompt) else ""
+	_check(prompt_after == prompt_before, message + ": prompt unchanged on rejection")
+	if not prompt_before.begins_with("Sewn "):
+		_check(not prompt_after.begins_with("Sewn "),
+			message + ": rejected sew never prints success receipt")
 
 
 ## Inspect the actual mounted reward choice before any activation. Real pointer
@@ -694,6 +710,10 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 		var expected: Dictionary = previews.get(hero, {})
 		_check(chosen.has_focus() and expected.get("ok") == true,
 			"torn-party physical keyboard selection has valid focus and preview")
+		_check(not sewing._prompt.text.begins_with("Sewn "),
+			"torn-party prompt has no confirmation before committed sew")
+		_reject_patch(sewing._sew.bind("warden", buttons[0], sewing._token, state),
+			"torn Warden direct sew rejected without confirmation")
 		var callback: Callable = chosen.pressed.get_connections()[0].callable
 		var settlement: Array = _settlement_state()
 		await _key(KEY_ENTER if chosen_index == 1 else KEY_SPACE)
@@ -703,6 +723,15 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 			and after.operation_ids.size() == 1 and app.run_scraps == after.scraps
 			and app.party_carryover._wardrobe == sewing.wardrobe,
 			"Enter/Space sews each eligible torn-party recipient once with matching receipt/scrap")
+		var torn_expected_confirmation := "Sewn %s to %s (%s); +0 scraps (empty slot)." % [
+			_expected_name(drop), hero.capitalize(), expected.slot]
+		_check(is_instance_valid(sewing._prompt) and sewing._prompt.text == torn_expected_confirmation,
+			"torn-party committed sew updates prompt to receipt: " + torn_expected_confirmation)
+		_check(sewing._prompt.text.contains(_expected_name(drop))
+			and sewing._prompt.text.contains(hero.capitalize())
+			and sewing._prompt.text.contains(expected.slot)
+			and sewing._prompt.text.contains("+0"),
+			"torn-party receipt names patch, living wearer, slot and +0")
 		_check(_settlement_state() == settlement and app.run_rng.state == rng_before
 			and app.party_carryover.torn.read_state() == torn,
 			"torn-party sew preserves reward, unrelated run state, RNG and original tear")
@@ -869,6 +898,7 @@ func _run() -> void:
 			app.run_map._generation_revision = revision
 			var unchanged := _settlement_state()
 			var scraps: int = app.run_scraps
+			_check(not sewing._prompt.text.begins_with("Sewn "), "prompt has no confirmation before committed sew")
 			if session == 0:
 				await _click(button)
 			else:
@@ -885,6 +915,28 @@ func _run() -> void:
 			var slot: String = after.definitions[drop]
 			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), _expected_name(drop), slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
+			var session_expected_prompt: String
+			if chosen_preview.displaced_id != "":
+				session_expected_prompt = "Sewn %s to %s (%s); +1 scrap from replacing %s." % [
+					_expected_name(drop), hero.capitalize(), slot, _expected_name(chosen_preview.displaced_id)]
+			else:
+				session_expected_prompt = "Sewn %s to %s (%s); +0 scraps (empty slot)." % [
+					_expected_name(drop), hero.capitalize(), slot]
+			_check(is_instance_valid(sewing._prompt) and sewing._prompt.text == session_expected_prompt,
+				"physical confirmation updates prompt to receipt")
+			if chosen_preview.displaced_id != "":
+				_check(sewing._prompt.text.contains(_expected_name(drop))
+					and sewing._prompt.text.contains(hero.capitalize())
+					and sewing._prompt.text.contains(slot)
+					and sewing._prompt.text.contains(_expected_name(chosen_preview.displaced_id))
+					and sewing._prompt.text.contains("+1"),
+					"session sew receipt names patch, wearer, slot, old patch and +1 scrap")
+			else:
+				_check(sewing._prompt.text.contains(_expected_name(drop))
+					and sewing._prompt.text.contains(hero.capitalize())
+					and sewing._prompt.text.contains(slot)
+					and sewing._prompt.text.contains("+0"),
+					"session sew receipt names patch, wearer, slot and +0 scraps")
 			_check(chosen_preview.get("ok") == true
 				and slot == chosen_preview.get("slot")
 				and after.scraps == scraps + chosen_preview.get("scrap_delta", -100)
@@ -1041,12 +1093,22 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 	var entries: Dictionary = await _verify_preview_choice(drop, state)
 	_check(entries.size() == 3, "all three real displaced-preview choices stay readable and read-only")
 	var callback: Callable = target.pressed.get_connections()[0].callable
+	_check(not sewing._prompt.text.begins_with("Sewn "), "displaced prompt has no confirmation before committed sew")
 	await _click(target)
 	var after: Dictionary = prior.get_snapshot()
 	_check(after.worn[wearer].COAT == drop and not after.owned.has("reinforced_patchcoat")
 		and after.owned.has(drop) and after.scraps == state.scraps + 1
 		and after.operation_ids.size() == state.operation_ids.size() + 1,
 		"genuine displaced sew owns the new coat and grants exactly +1 scrap")
+	var displaced_expected_receipt := "Sewn Quilted Coat to Warden (COAT); +1 scrap from replacing Reinforced Patchcoat."
+	_check(is_instance_valid(sewing._prompt) and sewing._prompt.text == displaced_expected_receipt,
+		"displaced sew updates prompt to explicit receipt: " + displaced_expected_receipt)
+	_check(sewing._prompt.text.contains("Quilted Coat")
+		and sewing._prompt.text.contains("Warden")
+		and sewing._prompt.text.contains("COAT")
+		and sewing._prompt.text.contains("Reinforced Patchcoat")
+		and sewing._prompt.text.contains("+1 scrap"),
+		"displaced receipt explicitly names new patch, wearer, slot, old patch, and +1 scrap")
 	_check(sewing.summary.text == "Worn patches: Warden: Quilted Coat (COAT) [active] - +6 maximum HP",
 		"post-sew worn summary literally names the surviving coat with slot and power")
 	_check(not sewing.summary.text.contains("reinforced_patchcoat")
@@ -1208,6 +1270,7 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 			service._pending, app.run_map.get_route(), app.run_map.get_floors()]
 		var worn_expected: Dictionary = state.worn.duplicate(true)
 		worn_expected["warden"][expected_slot] = drop
+		_check(not sewing._prompt.text.begins_with("Sewn "), "authored claim prompt has no confirmation before commit")
 		await _click(target)
 		var after: Dictionary = sewing.wardrobe.get_snapshot()
 		_check(after.worn == worn_expected and after.owned.has(drop)
@@ -1215,6 +1278,30 @@ func _test_authored_live_claims(fixture: Dictionary) -> void:
 			and after.scraps == state.scraps + (1 if replaced != "" else 0)
 			and after.operation_ids.size() == state.operation_ids.size() + 1,
 			"real hero button sews exact authored slot and destroys only displaced patch")
+		if is_instance_valid(sewing._prompt):
+			var expected_receipt: String
+			if replaced != "":
+				expected_receipt = "Sewn %s to Warden (%s); +1 scrap from replacing %s." % [
+					_expected_name(drop), expected_slot, _expected_name(replaced)]
+			else:
+				expected_receipt = "Sewn %s to Warden (%s); +0 scraps (empty slot)." % [
+					_expected_name(drop), expected_slot]
+			_check(sewing._prompt.text == expected_receipt,
+				"committed authored sew updates prompt with receipt for %s (%s, replaced: %s)" % [
+					drop, expected_slot, replaced])
+			if replaced != "":
+				_check(sewing._prompt.text.contains(_expected_name(drop))
+					and sewing._prompt.text.contains(_expected_name(replaced))
+					and sewing._prompt.text.contains("Warden")
+					and sewing._prompt.text.contains(expected_slot)
+					and sewing._prompt.text.contains("+1"),
+					"authored displaced receipt names old/new patches, wearer, slot, and +1 scrap")
+			else:
+				_check(sewing._prompt.text.contains(_expected_name(drop))
+					and sewing._prompt.text.contains("Warden")
+					and sewing._prompt.text.contains(expected_slot)
+					and sewing._prompt.text.contains("+0"),
+					"authored empty-slot receipt names patch, wearer, slot, and +0 scraps")
 		_check(app.run_trinkets == after.owned and app.run_scraps == after.scraps
 			and service.read_state().trinkets == after.owned
 			and app.party_carryover._wardrobe == sewing.wardrobe

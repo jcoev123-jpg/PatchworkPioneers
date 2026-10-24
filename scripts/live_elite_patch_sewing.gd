@@ -332,6 +332,8 @@ static func _preview_line(preview: Dictionary) -> String:
 func _show_preview(hero_id: String, token: int) -> void:
 	if token != _token or not is_instance_valid(_prompt) or not _eligible():
 		return
+	if wardrobe != null and wardrobe._find_wearer(_drop) != "":
+		return
 	var carry := get_parent().party_carryover as RunTornCarryover
 	if carry == null or carry.torn == null:
 		return
@@ -412,6 +414,18 @@ func _sew(hero_id: String, button, token: int, expected: Dictionary) -> void:
 	_bound_carry = carry
 	for action in hero_buttons:
 		action.disabled = true
+	if is_instance_valid(_prompt):
+		var receipt: Dictionary = result.get("receipt", {})
+		var patch_name: String = _friendly_label(receipt.get("patch_id", _drop))
+		var hero_name: String = receipt.get("hero_id", hero_id).capitalize()
+		var slot_name: String = str(receipt.get("slot", slot))
+		var displaced_id: String = receipt.get("displaced_id", "")
+		if displaced_id != "":
+			_prompt.text = "Sewn %s to %s (%s); +1 scrap from replacing %s." % [
+				patch_name, hero_name, slot_name, _friendly_label(displaced_id)]
+		else:
+			_prompt.text = "Sewn %s to %s (%s); +0 scraps (empty slot)." % [
+				patch_name, hero_name, slot_name]
 	_update_summary()
 
 
