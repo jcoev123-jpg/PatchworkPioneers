@@ -229,9 +229,9 @@ func _test_authored_file() -> void:
 		"slot 1 is the existing Ragling with 12 max HP")
 	_check(guard.get("name") == "Guard Ragling" and int(guard.get("max_hp", 0)) == 12,
 		"slot 2 is the existing Guard Ragling with 12 max HP")
-	_check(not String(ragling.get("art_path", "")).is_empty()
-		and ragling.get("art_path") == guard.get("art_path"),
-		"both sources still reuse the one existing ragling image path")
+	_check(ragling.get("art_path") == "res://assets/paper/enemies/ragling.png"
+		and guard.get("art_path") == "res://assets/paper/enemies/ragling_guard.png",
+		"both sources keep their own authored ragling images")
 	_check(roster.size() >= 2,
 		"the two source positions fit the existing starter enemy roster")
 

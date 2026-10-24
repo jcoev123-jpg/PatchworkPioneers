@@ -367,10 +367,9 @@ func _test_authored_file() -> void:
 		"AC1: slot 1 is the unchanged Ragling with 12 maximum HP")
 	_check(guard.get("name") == "Guard Ragling" and guard.get("max_hp") == 12,
 		"AC1: slot 2 is the unchanged Guard Ragling with 12 maximum HP")
-	_check(ragling.get("art_path") is String and guard.get("art_path") is String
-		and not String(ragling.get("art_path")).is_empty()
-		and ragling.get("art_path") == guard.get("art_path"),
-		"AC1: both sources keep their existing authored art path")
+	_check(ragling.get("art_path") == "res://assets/paper/enemies/ragling.png"
+		and guard.get("art_path") == "res://assets/paper/enemies/ragling_guard.png",
+		"AC1: both sources keep their own authored art path")
 
 	# The party the encounter is balanced against is unchanged too.
 	var heroes := _load_definitions(HEROES_PATH)

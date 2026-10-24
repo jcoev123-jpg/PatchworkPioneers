@@ -105,7 +105,7 @@ func _test_catalogs() -> void:
 	var required := {
 		"needle_marshal": ["Needle Marshal", 28, "res://assets/paper/enemies/needle_marshal.png"],
 		"spool_hexer": ["Spool Hexer", 24, "res://assets/paper/enemies/spool_hexer.png"],
-		"ragling_guard": ["Guard Ragling", 12, "res://assets/paper/enemies/ragling.png"],
+		"ragling_guard": ["Guard Ragling", 12, "res://assets/paper/enemies/ragling_guard.png"],
 		"spool_stalker": ["Spool Stalker", 14, "res://assets/paper/enemies/spool_stalker.png"]}
 	for id in required:
 		var record := _record(records, id)
