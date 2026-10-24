@@ -8,36 +8,46 @@ const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 ## The committed Block icon the mounted ribbons must display beside a positive amount.
 const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
 ## Independent literal expectations for the authored M05 HEAD/ARM/COAT rules.
-## These fourth tooltip lines are written from data/patches/m05_*.json and the
-## rule scripts, never produced by the presenter under test, so a wrong amount,
-## effect kind, recipient scope or condition cannot pass by agreeing with it.
+## These fourth tooltip lines are written from data/patches/m05_*.json, the shared
+## M04 attack catalog (Switchback Button) and the rule scripts, never produced by
+## the presenter under test, so a wrong amount, effect kind, recipient scope or
+## condition cannot pass by agreeing with it.
 const M05_EXPECTED_POWERS := {
 	"bloodstitch_bonnet": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on cards owned by this living wearer.",
 	"button_glass_visor": "Authored patch rule: card_exposed_bonus +1 to positive Exposed on this wearer's cards.",
 	"stern_seam_cap": "Authored patch rule: card_weak_bonus +1 to positive Weak on this wearer's cards.",
 	"reinforced_browband": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards, applied to the card's actual Block recipient (even if it is an ally).",
 	"hemguard_cuff": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards.",
+	"threadguard_wrap": "Authored patch rule: card_block_bonus +1 to positive Block on this wearer's cards, applied to the card's actual Block recipient; a damage-only card that grants no Block never gains a fabricated bonus.",
 	"red_bobbin_cuff": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier.",
 	"loose_thread_glove": "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards.",
 	"frayfinder_mitt": "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit.",
+	"switchback_button": "Authored patch rule: once per player turn, when a different living hero's committed card or ordered stitched half immediately precedes this living, untorn wearer's committed card or half, the wearer gains +2 Block; both stitched halves count by their real owner, and invalid or failed plays never set or claim it.",
 	"borrowed_button": "Authored patch rule: once per combat, after a different living hero's committed card or ordered stitched half actually restores at least 1 HP to the living, untorn wearer, that wearer gains 3 Block.",
 }
 ## Catalog facts each literal line restates: slot, authored effect key, amount and
 ## the positive status or damage it may boost. The seven card bonuses are
 ## wearer-owned and positive-only; Frayfinder is the conditional first-hit +2
-## attack-damage bonus; Borrowed Button is the conditional other-hero heal Block award.
+## attack-damage bonus; Switchback Button is the once-per-player-turn +2 Block
+## awarded to the wearer whose committed play follows a different living owner;
+## Borrowed Button is the conditional other-hero heal Block award.
 const M05_EXPECTED_FACTS := {
 	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
 	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "status": "Exposed"},
 	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1, "status": "Weak"},
 	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
 	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
+	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1, "status": "Block"},
 	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
 	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "status": "Unravel"},
 	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus",
 		"amount": 2, "status": "attack damage", "timing": "before Weak/Exposed",
 		"hit": "first confirmed single-target attack hit", "limit": "once per PLAYER turn",
 		"exclusions": "Not any area/multi-hit/later hit", "numerator": 1, "denominator": 2},
+	"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block",
+		"amount": 2, "status": "Block", "limit": "once per player turn",
+		"gate": "different living hero", "order": "immediately precedes",
+		"owner_scope": "count by their real owner", "refusal": "invalid or failed plays never set or claim it"},
 	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block",
 		"heal_threshold": 1, "block": 3, "uses_per_combat": 1},
 }
@@ -1057,6 +1067,7 @@ func _run() -> void:
 	await _block_art_case(app, presenter)
 	await _worn_coat_ribbons_test(app, presenter)
 	await _m05_patch_ribbons_test(app, presenter)
+	await _switchback_threadguard_ribbons_test(app, presenter)
 	app.free()
 	await _frames()
 	_finish()
@@ -1769,10 +1780,12 @@ func _patch_tooltip(hero: Dictionary, label: String, patch_id: String, slot: Str
 		label, patch_id, slot, "ACTIVE" if active else "DORMANT"]
 
 
-## The authored catalog record for one bounded M05 HEAD/ARM/COAT ID, looked up by ID
-## presence so growing catalogs never invalidate this check.
+## The authored catalog record for one bounded M05 HEAD/ARM/COAT ID, plus the shared
+## M04 attack catalog where Switchback Button ships; looked up by ID presence so
+## growing catalogs never invalidate this check.
 func _m05_catalog_entry(patch_id: String) -> Dictionary:
-	for path in ["res://data/patches/m05_head_patches.json",
+	for path in ["res://data/patches/m04_attack_patches.json",
+			"res://data/patches/m05_head_patches.json",
 			"res://data/patches/m05_arm_support_patches.json",
 			"res://data/patches/m05_attack_patches.json",
 			"res://data/patches/m05_coat_patches.json"]:
@@ -1787,13 +1800,39 @@ func _m05_catalog_entry(patch_id: String) -> Dictionary:
 ## Re-derive one M05 rule independently of the presenter: exact catalog amount
 ## and effect key, the positive status, wearer-owned cards, the real Block
 ## recipient, Red Bobbin versus Hemorrhage Hem, Frayfinder's +2 attack-damage
-## first single-target hit / half-threshold / once-per-player-turn limit, and
+## first single-target hit / half-threshold / once-per-player-turn limit,
+## Switchback Button's ordered different-owner follow-up award, and
 ## Borrowed Button's other-hero positive-heal 3-Block rule.
 func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 	var facts: Dictionary = M05_EXPECTED_FACTS[patch_id]
 	var entry := _m05_catalog_entry(patch_id)
 	_check(line.begins_with("Authored patch rule:"),
 		"the %s line describes an authored rule, not a fabricated trigger: %s" % [patch_id, line])
+	if patch_id == "switchback_button":
+		_check(not entry.is_empty() and entry.get("slot") == facts["slot"]
+			and entry.get("effect") == facts["effect"]
+			and int(entry.get("amount", -1)) == int(facts["amount"])
+			and entry.get("once_per_player_turn") == true,
+			"authored catalog agrees with the expected Switchback Button HEAD +2 once-per-player-turn rule")
+		_check(line.contains(String(facts["limit"])),
+			"Switchback Button states its once-per-player-turn limit: " + line)
+		_check(line.contains(String(facts["gate"])) and line.contains("committed card"),
+			"Switchback Button requires a different living hero's committed play: " + line)
+		_check(line.contains(String(facts["order"])),
+			"Switchback Button requires the immediately preceding committed play: " + line)
+		_check(line.contains("ordered stitched half")
+			and line.contains(String(facts["owner_scope"])),
+			"Switchback Button counts ordered stitched halves by their real owner: " + line)
+		_check(line.contains("+%d Block" % int(facts["amount"])),
+			"Switchback Button awards its authored +2 Block: " + line)
+		_check(line.contains("living, untorn wearer"),
+			"Switchback Button requires the living, untorn wearer: " + line)
+		_check(line.contains(String(facts["refusal"])),
+			"Switchback Button never arms itself from an invalid or failed play: " + line)
+		_check(not line.contains("all living heroes") and not line.contains("draw")
+			and not line.contains("+3 Block"),
+			"Switchback Button is never described as the separate Quilt reward: " + line)
+		return
 	if patch_id == "borrowed_button":
 		_check(not entry.is_empty() and entry.get("slot") == facts["slot"]
 			and entry.get("effect") == facts["effect"]
@@ -1873,6 +1912,19 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 	if patch_id == "red_bobbin_cuff":
 		_check(line.contains("not Hemorrhage Hem's multiplier"),
 			"Red Bobbin Cuff is not Hemorrhage Hem's multiplier: " + line)
+	if patch_id == "threadguard_wrap":
+		_check(line.contains("actual Block recipient"),
+			"Threadguard Wrap applies to the card's actual Block recipient: " + line)
+		_check(line.contains("damage-only card")
+			and line.contains("never gains a fabricated bonus")
+			and not line.contains("any card") and not line.contains("every card"),
+			"Threadguard Wrap invents no Block on a damage-only card: " + line)
+		_check(int(entry.get("amount", 0)) == int(facts["amount"])
+			and int(_m05_catalog_entry("hemguard_cuff").get("amount", -1)) == 2,
+			"Threadguard Wrap stays its authored +1 beside Hemguard Cuff's +2")
+		_check(line.contains("card_block_bonus +%d" % int(facts["amount"]))
+			and not line.contains("card_block_bonus +%d" % 2),
+			"Threadguard Wrap never claims Hemguard Cuff's +2 amount: " + line)
 
 
 ## A named sewn HEAD/ARM patch: readable name, authored ID, real wearer and
@@ -1984,7 +2036,8 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		"reinforced_patchcoat": "Reinforced Patchcoat", "thick_felt_mantle": "Thick Felt Mantle",
 		"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
 		"quilted_coat": "Quilted Coat", "stitched_badge": "Stitched Badge",
-		"spare_spool": "Spare Spool", "borrowed_button": "Borrowed Button"}
+		"spare_spool": "Spare Spool", "borrowed_button": "Borrowed Button",
+		"switchback_button": "Switchback Button", "threadguard_wrap": "Threadguard Wrap"}
 	for id in labels:
 		_check(presenter.PATCH_LABELS.get(id, "") == labels[id],
 			"authored readable patch label stays intact: " + id)
@@ -2279,6 +2332,189 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
 		"M05 case C cleans up and returns to title")
+
+## M05: the two earlier-omitted authored patch powers are readable from their real
+## sewn battle chips - Switchback Button (HEAD) and Threadguard Wrap (ARM) - while
+## the chips stay hover-only, actionless and read-only.
+func _switchback_threadguard_ribbons_test(app, presenter) -> void:
+	# AC1/AC2: bounded readable names for the two newly explained IDs.
+	var labels := {
+		"switchback_button": "Switchback Button", "threadguard_wrap": "Threadguard Wrap"}
+	for id in labels:
+		_check(presenter.PATCH_LABELS.get(id, "") == labels[id],
+			"newly explained patch keeps its authored readable label: " + id)
+	# A genuine wardrobe/carryover: Switchback Button on the Warden's HEAD, Hemguard
+	# Cuff on the same Warden's ARM for the +2 comparison, Threadguard Wrap on the
+	# Seamstress's ARM. Tinker wears nothing.
+	var fixture := await _m05_worn_fixture(app, presenter, [
+		["switchback_button", "warden", "HEAD"],
+		["hemguard_cuff", "warden", "ARM"],
+		["threadguard_wrap", "seamstress", "ARM"]])
+	_check(not fixture.is_empty(), "Switchback/Threadguard case: real wardrobe, carryover and live meters")
+	if fixture.is_empty():
+		return
+	var meters: Array = fixture["meters"]
+	var carry: RunTornCarryover = fixture["carry"]
+	var wardrobe: RunPatchWardrobe = fixture["wardrobe"]
+	var warden: Dictionary = app.party.get_hero(1)
+	var seamstress: Dictionary = app.party.get_hero(2)
+	var tinker: Dictionary = app.party.get_hero(3)
+	_check(warden["id"] == "warden" and seamstress["id"] == "seamstress"
+		and tinker["id"] == "tinker"
+		and warden["hp"] > 0 and seamstress["hp"] > 0 and tinker["hp"] > 0,
+		"Switchback/Threadguard case: three living heroes in their authored order")
+	var worn: Dictionary = wardrobe.get_snapshot()["worn"]
+	_check(worn["warden"]["HEAD"] == "switchback_button"
+		and worn["warden"]["ARM"] == "hemguard_cuff"
+		and worn["seamstress"]["ARM"] == "threadguard_wrap",
+		"Switchback/Threadguard case: the real worn ledger carries the sewn patches")
+	# AC1: the real worn HEAD chip names Switchback Button, its wearer, ID, slot and
+	# ACTIVE state, and states its authored follow-up award and once-per-turn limit.
+	var switchback := _patch_chip(meters[0], "HEAD")
+	_assert_named_chip(switchback, warden, "Switchback Button", "switchback_button", "HEAD", true)
+	var switchback_entry := _m05_catalog_entry("switchback_button")
+	_check(switchback_entry.get("slot") == "HEAD"
+		and switchback_entry.get("effect") == "different_owner_followup_block"
+		and int(switchback_entry.get("amount", -1)) == 2
+		and switchback_entry.get("once_per_player_turn") == true,
+		"authored Switchback Button record is HEAD, different_owner_followup_block, +2, once per player turn")
+	_check(switchback != null and switchback.tooltip_text
+		== _patch_tooltip(warden, "Switchback Button", "switchback_button", "HEAD", true)
+			+ "\n" + M05_EXPECTED_POWERS["switchback_button"],
+		"Warden HEAD chip matches the independent Switchback Button tooltip")
+	_check(switchback != null and switchback.tooltip_text.contains("+2 Block")
+		and switchback.tooltip_text.contains("once per player turn")
+		and switchback.tooltip_text.split("\n").size() == 4,
+		"Switchback Button chip keeps its four-line ACTIVE hover with the authored +2 Block")
+	# AC2: the real worn ARM chip names Threadguard Wrap, its wearer, ID, slot and
+	# ACTIVE state, and states the +1 Block limited to positive-Block cards.
+	var threadguard := _patch_chip(meters[1], "ARM")
+	_assert_named_chip(threadguard, seamstress, "Threadguard Wrap", "threadguard_wrap", "ARM", true)
+	var threadguard_entry := _m05_catalog_entry("threadguard_wrap")
+	var hemguard_entry := _m05_catalog_entry("hemguard_cuff")
+	_check(threadguard_entry.get("slot") == "ARM"
+		and threadguard_entry.get("effect") == "card_block_bonus"
+		and int(threadguard_entry.get("amount", -1)) == 1
+		and hemguard_entry.get("effect") == "card_block_bonus"
+		and int(hemguard_entry.get("amount", -1)) == 2,
+		"authored Threadguard Wrap is ARM card_block_bonus +1 beside Hemguard Cuff's +2")
+	_check(threadguard != null and threadguard.tooltip_text
+		== _patch_tooltip(seamstress, "Threadguard Wrap", "threadguard_wrap", "ARM", true)
+			+ "\n" + M05_EXPECTED_POWERS["threadguard_wrap"],
+		"Seamstress ARM chip matches the independent Threadguard Wrap tooltip")
+	_check(threadguard != null and threadguard.tooltip_text.contains("+1 to positive Block")
+		and threadguard.tooltip_text.contains("actual Block recipient")
+		and not threadguard.tooltip_text.contains("+2 to positive Block"),
+		"Threadguard Wrap chip keeps its own +1 and never Hemguard Cuff's +2")
+	_assert_named_chip(_patch_chip(meters[0], "ARM"), warden, "Hemguard Cuff",
+		"hemguard_cuff", "ARM", true)
+	# AC2: the mounted claims agree with the live authored rule owner, and a
+	# damage-only card never gains a fabricated Block.
+	var rules := CombatPatchAttackRules.new()
+	_check(rules.bind_wardrobe(wardrobe, carry.torn),
+		"Switchback/Threadguard case: the real patch resolver binds the same worn ledgers")
+	_check(rules.card_block_bonus("seamstress", "seamstress_stitch_up") == 1
+		and rules.project_card_support("seamstress", "seamstress_stitch_up") == {"block": 6},
+		"live Threadguard Wrap adds exactly +1 to the wearer's printed 5 Block")
+	_check(rules.card_block_bonus("warden", "warden_brace") == 2
+		and rules.project_card_support("warden", "warden_brace") == {"block": 9},
+		"live Hemguard Cuff adds its authored +2 to the same eligible kind")
+	_check(rules.card_block_bonus("seamstress", "seamstress_prick") == 0
+		and not rules.project_card_support("seamstress", "seamstress_prick").has("block"),
+		"Threadguard Wrap fabricates no Block on a damage-only card")
+	_check(rules.card_block_bonus("tinker", "tinker_spool_launcher") == 0,
+		"a hero without Threadguard Wrap gains no fabricated Block bonus")
+	# AC3: real pointer hover and repeated refresh are read-only.
+	var before := _state(app)
+	var ledger: Dictionary = wardrobe.get_snapshot()
+	seed(87211)
+	var expected_global := randi()
+	seed(87211)
+	for repeat in range(4):
+		presenter._sync_battle()
+		await _frames()
+	await _hover(switchback)
+	_check(root.gui_get_hovered_control() == switchback
+		and switchback.tooltip_text.contains("+2 Block"),
+		"real pointer hover reads the Switchback Button rule without an action")
+	await _hover(threadguard)
+	_check(root.gui_get_hovered_control() == threadguard
+		and threadguard.tooltip_text.contains("+1 to positive Block"),
+		"real pointer hover reads the Threadguard Wrap rule without an action")
+	_check(switchback != null and threadguard != null
+		and switchback.gui_input.get_connections().is_empty()
+		and threadguard.gui_input.get_connections().is_empty()
+		and switchback.pressed.get_connections().is_empty()
+		and threadguard.pressed.get_connections().is_empty(),
+		"the Switchback/Threadguard chips create no gameplay action or input handler")
+	_check(_state(app) == before and randi() == expected_global
+		and wardrobe.get_snapshot() == ledger and app.party_carryover == carry
+		and carry._wardrobe == wardrobe,
+		"repeated Switchback/Threadguard hover and refresh change no HP, Block, energy, hand, worn patches or RNG")
+	_check(app.party.get_hero(1)["block"] == before[0][0]["block"]
+		and app.party.get_hero(2)["block"] == before[0][1]["block"],
+		"hovering either newly explained chip fabricates no live Block award")
+	# AC3: an unknown ID keeps its neutral three-line prefix, never a power line.
+	presenter._sync_patch_buttons(meters[0], app.party.get_hero(1),
+		{"HEAD": "mystery_switchback"})
+	var unknown_head := _patch_chip(meters[0], "HEAD")
+	_check(unknown_head != null and unknown_head.visible and unknown_head.text == "HEAD"
+		and unknown_head.tooltip_text == _patch_tooltip(app.party.get_hero(1),
+			"mystery_switchback", "mystery_switchback", "HEAD", true)
+		and unknown_head.tooltip_text.split("\n").size() == 3,
+		"an unknown HEAD ID keeps its raw authored ID and invents no power line")
+	_check(not _patch_chip(meters[0], "ARM").visible
+		and _patch_chip(meters[0], "ARM").tooltip_text.is_empty(),
+		"an unsewn ARM slot gains no fictional bonus beside the unknown ID")
+	presenter._sync_battle()
+	await _frames()
+	_check(_patch_chip(meters[0], "HEAD").tooltip_text.contains(
+			"Switchback Button (switchback_button) — HEAD")
+		and _patch_chip(meters[0], "ARM").tooltip_text.contains(
+			"Hemguard Cuff (hemguard_cuff) — ARM"),
+		"the next authoritative frame restores the real sewn chips")
+	_check(_state(app) == before and wardrobe.get_snapshot() == ledger,
+		"inspecting an unknown ID or empty slot changes no combat or ledger state")
+	# AC1/AC3: a torn Switchback Button wearer reads DORMANT with no false award.
+	_check(app.party.apply_damage(1, 999) and app.party.is_downed(1),
+		"Switchback/Threadguard case: the real party API downs the Switchback Button wearer")
+	presenter._sync_battle()
+	await _frames()
+	_check(meters[0].hp_text.text == "0/40",
+		"the downed Switchback Button wearer keeps its base 40 cap at zero HP")
+	_check(switchback.visible and switchback.text == "HEAD"
+		and switchback.tooltip_text
+			== _patch_tooltip(app.party.get_hero(1), "Switchback Button", "switchback_button",
+				"HEAD", false) + "\n" + M05_EXPECTED_POWERS["switchback_button"]
+		and switchback.tooltip_text.contains("DORMANT")
+		and not switchback.tooltip_text.contains("ACTIVE")
+		and bool(switchback.get_meta("fallen_chip")) == true,
+		"a torn Switchback Button wearer reads DORMANT with no false active award")
+	_check(threadguard.visible and threadguard.text == "ARM"
+		and threadguard.tooltip_text.contains("ACTIVE")
+		and not threadguard.tooltip_text.contains("DORMANT"),
+		"the other living wearer's Threadguard Wrap stays ACTIVE")
+	# AC2/AC3: a torn Threadguard Wrap wearer also reads DORMANT.
+	_check(app.party.apply_damage(2, 999) and app.party.is_downed(2),
+		"Switchback/Threadguard case: the real party API downs the Threadguard Wrap wearer")
+	presenter._sync_battle()
+	await _frames()
+	_check(threadguard.visible and threadguard.text == "ARM"
+		and threadguard.tooltip_text
+			== _patch_tooltip(app.party.get_hero(2), "Threadguard Wrap", "threadguard_wrap",
+				"ARM", false) + "\n" + M05_EXPECTED_POWERS["threadguard_wrap"]
+		and threadguard.tooltip_text.contains("DORMANT")
+		and not threadguard.tooltip_text.contains("ACTIVE")
+		and bool(threadguard.get_meta("fallen_chip")) == true,
+		"a torn Threadguard Wrap wearer reads DORMANT with no fabricated Block")
+	_check(app.party.get_hero(2)["block"] == 0,
+		"the torn Threadguard Wrap wearer never gains Block from its hover")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
+		"Switchback/Threadguard case cleans up and returns to title")
+
+
 func _finish() -> void:
 	for failure in failures:
 		printerr(failure)
