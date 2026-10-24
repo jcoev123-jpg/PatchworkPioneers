@@ -6,8 +6,9 @@ extends SceneTree
 ## ?screen=rest mounts, so nothing here is a parallel reimplementation. Style
 ## facts only: identity, labels, callbacks, overrides, ink/fill contrast and the
 ## reversible per-visit record. The tile faces are checked against the reward
-## renderer's own art resolver, texture and presentation mode together. No
-## coordinate or screenshot assertions.
+## renderer's own art resolver, texture and presentation mode together, and the
+## in-face SELECTED stamp is only checked by measuring its live controls, never
+## by hard-coded coordinates or screenshots.
 
 const GALLERY := preload("res://scripts/live_visit_card_tiles.gd")
 const REWARD := preload("res://scripts/live_run_card_reward_choice_panel.gd")
@@ -15,6 +16,14 @@ const FABRIC := "res://assets/paper/ui/reward_button.png"
 const MISSING_FABRIC := "res://assets/paper/ui/absent_action_fabric.png"
 const EDGE := 22
 const FACE_STATES := ["normal", "hover", "pressed", "hover_pressed", "disabled"]
+## The complete word the sewn face stamps on its canonical selected row.
+const SELECTED_TEXT := "SELECTED"
+## A deliberately long, wrapping probe title used only by this rendering test.
+## It is never catalog data and never enters a real visit.
+const LONG_PROBE_TITLE := "Counter-stitch Across the Whole Wrapping Seam of Tailor's Trance"
+## The paper inset the stamp must keep before the sewn border, measured here
+## independently from the gallery's own layout constant.
+const REQUIRED_STAMP_INSET := 4.0
 
 var failures: Array[String] = []
 var checks := 0
@@ -38,6 +47,7 @@ func _run() -> void:
 	root.add_child(gallery)
 	await process_frame
 	_check_constructed_faces(gallery)
+	await _check_constructed_selected_stamp(gallery)
 	await _check_tile_art_modes(gallery)
 	await _check_mounted_rail("shop")
 	await _check_mounted_rail("rest")
@@ -48,6 +58,45 @@ func _run() -> void:
 	print("live_visit_action_skin_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+## Four process frames, the same settling window the other mounted visit tests
+## give real pointer and keyboard input.
+func _frames() -> void:
+	for frame in range(4):
+		await process_frame
+
+
+## Real keyboard input through the root viewport.
+func _key(code: Key) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = pressed
+		root.push_input(event, true)
+	await _frames()
+
+
+## Real pointer click at the control's own centre.
+func _click(control: Control) -> void:
+	_check(is_instance_valid(control), "physical click requires an existing control")
+	if not is_instance_valid(control):
+		return
+	_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0
+		and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
+		"clicked control is visible inside 1280x720")
+	var motion := InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = control.get_global_rect().get_center()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		root.push_input(event, true)
+	await _frames()
+
 
 
 # --- real constructed Buttons ---------------------------------------------
@@ -162,6 +211,145 @@ func _check_constructed_faces(gallery) -> void:
 		and not option.has_theme_stylebox_override("normal"),
 		"canonical OptionButton keeps its shared theme skin")
 	option.free()
+
+
+# --- the in-face SELECTED stamp (constructed faces) ------------------------
+
+## AC1 (constructed): every sewn card face reserves a real row inside its paper
+## for the complete SELECTED stamp. The label is not a child of TileName's
+## wrapping row, its measured width is the full word, and both an ordinary and a
+## long wrapping title keep it inside the cream paper with its own right inset.
+## Hidden and selected states are both exercised; no screenshot is involved.
+func _check_constructed_selected_stamp(gallery) -> void:
+	var column := VBoxContainer.new()
+	column.name = "SelectedStampProbe"
+	column.add_theme_constant_override("separation", 6)
+	column.size = Vector2(620, 460)
+	root.add_child(column)
+	var normal: Dictionary = gallery.build_card_face({
+		"card_id": "warden_strike", "art_id": "warden_strike", "owner": "warden",
+		"title": "Warden Strike", "meta": "3 gold • you have 100",
+		"effects": "Deal 6."})
+	var wrapped: Dictionary = gallery.build_card_face({
+		"card_id": "hemorrhage_hem", "art_id": "hemorrhage_hem", "owner": "warden",
+		"title": LONG_PROBE_TITLE, "meta": "3 gold • you have 100",
+		"effects": "Deal 3. Bleed 2."})
+	column.add_child(normal["tile"])
+	column.add_child(wrapped["tile"])
+	await _frames()
+	var normal_marker: Label = normal["selected_label"]
+	var wrapped_marker: Label = wrapped["selected_label"]
+	_check(not normal_marker.visible and not wrapped_marker.visible,
+		"constructed faces hide SELECTED until their canonical row is chosen")
+	var normal_row: Control = normal_marker.get_parent()
+	_check(normal_row != null and String(normal_row.name) == "SelectedRow"
+		and normal_row.custom_minimum_size.y > 0.0,
+		"constructed faces reserve a SELECTED row even while the stamp is hidden")
+	_check(normal_marker.text == SELECTED_TEXT and wrapped_marker.text == SELECTED_TEXT,
+		"constructed faces carry the complete SELECTED word")
+
+	# Selected state: reveal both stamps and measure the real settled layout.
+	normal_marker.visible = true
+	wrapped_marker.visible = true
+	await _frames()
+	_check_selected_fit(normal["tile"], normal_marker, "constructed normal face")
+	_check_selected_fit(wrapped["tile"], wrapped_marker, "constructed long-name face")
+	var normal_size := normal_marker.size
+	var normal_right := normal_marker.get_global_rect().end.x
+	var wrapped_size := wrapped_marker.size
+	var wrapped_right := wrapped_marker.get_global_rect().end.x
+	_check(normal_size.x > 0.0 and is_equal_approx(normal_size.x, wrapped_size.x),
+		"a long wrapping name does not change the SELECTED stamp's own width")
+	_check(is_equal_approx(normal_right, wrapped_right),
+		"a long wrapping name does not move the SELECTED stamp past its paper inset")
+	_check(wrapped["title_label"].get_theme_font("font").get_string_size(
+		wrapped["title_label"].text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		wrapped["title_label"].get_theme_font_size("font_size")).x
+		> normal["title_label"].get_theme_font("font").get_string_size(
+			normal["title_label"].text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			normal["title_label"].get_theme_font_size("font_size")).x,
+		"the probe title really is wider than the ordinary name")
+
+	# Runtime independence from TileName's own text width: retitling the same face
+	# to the long probe may wrap the name but cannot resize or shift the stamp.
+	var normal_title: Label = normal["title_label"]
+	var original_title := normal_title.text
+	normal_title.text = LONG_PROBE_TITLE
+	await _frames()
+	_check(normal_marker.size.is_equal_approx(normal_size)
+		and is_equal_approx(normal_marker.get_global_rect().end.x, normal_right),
+		"an enlarged TileName cannot resize or shift the SELECTED stamp")
+	_check_selected_fit(normal["tile"], normal_marker, "constructed retitled face")
+	normal_title.text = original_title
+	await _frames()
+	_check(normal_marker.size.is_equal_approx(normal_size),
+		"restoring the name leaves the SELECTED stamp unchanged")
+
+	# Hidden again: the stamp is gone but its reserved slot remains.
+	normal_marker.visible = false
+	await _frames()
+	_check(not normal_marker.visible and normal_row.custom_minimum_size.y > 0.0,
+		"hiding the stamp keeps its reserved in-face row")
+	column.free()
+	await process_frame
+
+
+## AC1: the stamp's slot and display, measured on a real mounted face. Its text
+## is literal and whole, it lives in its own SelectedRow inside SewnFace (never
+## in TitleRow), its reserved width is at least the word's own measured width,
+## it is inert, and its settled rect sits inside the cream paper with an inset
+## before the sewn border.
+func _check_selected_fit(panel: Control, marker: Label, label: String) -> void:
+	_check(is_instance_valid(panel) and is_instance_valid(marker),
+		label + " has a mounted SewnFace and SELECTED stamp")
+	if not is_instance_valid(panel) or not is_instance_valid(marker):
+		return
+	_check(marker.text == SELECTED_TEXT,
+		label + " prints the complete SELECTED word")
+	_check(marker.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and marker.focus_mode == Control.FOCUS_NONE,
+		label + " SELECTED stamp stays mouse and focus inert")
+	var title_row := panel.find_child("TitleRow", true, false) as Control
+	_check(title_row != null and not title_row.is_ancestor_of(marker),
+		label + " SELECTED stamp is not inside the wrapping TitleRow")
+	var row := marker.get_parent() as Control
+	_check(row != null and String(row.name) == "SelectedRow"
+		and panel.is_ancestor_of(marker),
+		label + " SELECTED stamp owns an in-face row of SewnFace")
+	var font: Font = marker.get_theme_font("font")
+	var font_size: int = marker.get_theme_font_size("font_size")
+	_check(font != null, label + " SELECTED stamp resolves its own face")
+	if font == null:
+		return
+	var needed := font.get_string_size(SELECTED_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		font_size).x
+	_check(needed > 0.0 and marker.get_minimum_size().x >= needed - 1.0,
+		label + " reserves the complete SELECTED text width")
+	_check(marker.size.x >= marker.get_minimum_size().x - 1.0,
+		label + " displays the reserved SELECTED width without squeezing")
+	_check(marker.size.y >= font.get_height(font_size) - 1.0,
+		label + " reserves the SELECTED line's own height without clipping")
+	var paper := _paper_rect(panel)
+	var stamp := marker.get_global_rect()
+	_check(paper.size.x > 0.0 and paper.size.y > 0.0,
+		label + " exposes its cream paper rect")
+	_check(paper.grow(0.5).encloses(stamp),
+		label + " SELECTED stamp sits fully inside the sewn paper")
+	_check(stamp.end.x <= paper.end.x - REQUIRED_STAMP_INSET + 1.0,
+		label + " SELECTED stamp keeps its inset before the sewn border")
+
+
+## The cream paper rect inside a sewn face: its own panel style's margins.
+func _paper_rect(panel: Control) -> Rect2:
+	var style: StyleBox = panel.get_theme_stylebox("panel")
+	if style == null:
+		return Rect2()
+	var rect := panel.get_global_rect()
+	return Rect2(rect.position + Vector2(style.get_margin(SIDE_LEFT),
+			style.get_margin(SIDE_TOP)),
+		rect.size - Vector2(style.get_margin(SIDE_LEFT) + style.get_margin(SIDE_RIGHT),
+			style.get_margin(SIDE_TOP) + style.get_margin(SIDE_BOTTOM)))
+
 
 
 # --- sewn card art (resolver parity) --------------------------------------
@@ -317,6 +505,7 @@ func _check_mounted_rail(screen: String) -> void:
 	_check([app.session_gold, app.run_scraps, app.run_deck] == wallet,
 		screen + " inspection spends nothing and leaves the shared deck alone")
 	_check_mounted_tile_art(gallery, screen)
+	await _check_mounted_selected_stamps(app, gallery, screen)
 
 	# Hiding the visit is the same live path that releases the gallery on a
 	# return; its teardown must put the app's own Buttons back untouched.
@@ -376,6 +565,181 @@ func _check_mounted_tile_art(gallery, screen: String) -> void:
 			and String(details.get("art_path", "")) == expected_path
 			and bool(details.get("has_picture", false)) == (texture != null),
 			screen + " tile audit reports the resolver's texture and mode: " + art_id)
+
+
+# --- the in-face SELECTED stamp on the real mounted visits -----------------
+
+## AC1/AC2 (mounted): on the real 1280x720 Shop and Rest, every eligible tile is
+## selected through genuine pointer or keyboard input. The complete SELECTED
+## stamp then appears only on that group's canonical OptionButton row, inside the
+## sewn paper; every unselected card's stamp is hidden. Clearing the canonical
+## dropdown hides the group's stamps, and restoring its row brings back exactly
+## that row. Selecting spends no gold or scraps and never touches the deck, and
+## the original action callbacks remain the only transaction path.
+func _check_mounted_selected_stamps(app, gallery, screen: String) -> void:
+	var groups: Array = ["offer", "removal"] if screen == "shop" else ["upgrade"]
+	var before := [app.session_gold, app.run_scraps, app.run_deck.duplicate(true)]
+	var touched := 0
+	for group_value in groups:
+		var group := String(group_value)
+		var tiles := _tiles_for(gallery, group)
+		_check(not tiles.is_empty(),
+			screen + " mounts " + group + " tiles for the SELECTED stamp check")
+		for tile in tiles:
+			if tile.disabled or not tile.is_visible_in_tree():
+				continue
+			if touched % 2 == 0:
+				# Real pointer selection, after the same scroll a player uses.
+				gallery.gallery_scroll().ensure_control_visible(tile)
+				await _frames()
+				await _click(tile)
+			else:
+				# Real keyboard selection: focus the tile, then Enter activates it.
+				tile.grab_focus()
+				await _frames()
+				_check(tile.has_focus(), screen + " keyboard focus reaches the " + group + " tile")
+				await _key(KEY_ENTER)
+			touched += 1
+			_check(not tile.disabled and _canonical_row(app, group) == gallery.tile_row(tile),
+				screen + " real input selects exactly this " + group + " tile's canonical row")
+			_check_group_stamps(app, gallery, screen, group)
+			for other_value in groups:
+				var other := String(other_value)
+				if other != group:
+					_check_group_stamps(app, gallery, screen, other)
+	_check(touched > 0,
+		screen + " mounted selection exercised at least one eligible tile")
+
+	# Fail closed: with no canonical dropdown row chosen, its stamps disappear;
+	# restoring the canonical row shows the stamp on that row and nowhere else.
+	for group_value in groups:
+		var group := String(group_value)
+		var selector := _visit_selector(app, group)
+		var tiles := _tiles_for(gallery, group)
+		if selector == null or not is_instance_valid(selector) or tiles.is_empty():
+			continue
+		var previous := selector.selected
+		selector.select(-1)
+		await _frames()
+		var hidden := true
+		for tile in tiles:
+			var marker := _stamp(tile)
+			hidden = hidden and is_instance_valid(marker) and not marker.visible
+		_check(hidden, screen + " " + group
+			+ " hides every SELECTED stamp when no canonical row is chosen")
+		if previous >= 0 and previous < selector.item_count:
+			selector.select(previous)
+			await _frames()
+			var exact := true
+			for tile in tiles:
+				var marker := _stamp(tile)
+				exact = exact and is_instance_valid(marker) \
+					and marker.visible == (gallery.tile_row(tile) == previous)
+			_check(exact, screen + " " + group
+				+ " restores SELECTED only on canonical row " + str(previous))
+
+	# The real mounted face carries the same guarantee as the constructed one:
+	# retitling its TileName to the long wrapping probe may wrap the name at the
+	# gallery's actual 1280 width, but the chosen stamp keeps its box, its paper
+	# inset and its visibility. The name is restored afterwards.
+	var probe_tile: Button = null
+	var probe_marker: Label = null
+	for group_value in groups:
+		for tile in _tiles_for(gallery, String(group_value)):
+			var marker := _stamp(tile)
+			if is_instance_valid(marker) and marker.visible:
+				probe_tile = tile
+				probe_marker = marker
+				break
+		if probe_tile != null:
+			break
+	_check(probe_tile != null and probe_marker != null,
+		screen + " has a chosen row for the long-name stamp probe")
+	if probe_tile != null and probe_marker != null:
+		var probe_name := probe_tile.get_parent().find_child("TileName", true, false) as Label
+		_check(probe_name != null, screen + " chosen tile keeps its TileName label")
+		if probe_name != null:
+			var original_title := probe_name.text
+			var stamp_box := probe_marker.size
+			var stamp_right := probe_marker.get_global_rect().end.x
+			probe_name.text = LONG_PROBE_TITLE
+			await _frames()
+			_check(probe_marker.size.is_equal_approx(stamp_box)
+				and is_equal_approx(probe_marker.get_global_rect().end.x, stamp_right),
+				screen + " a long wrapping mounted TileName cannot resize or shift SELECTED")
+			_check_selected_fit(probe_tile.get_parent(), probe_marker,
+				screen + " retitled mounted face")
+			probe_name.text = original_title
+			await _frames()
+
+	_check([app.session_gold, app.run_scraps, app.run_deck] == before,
+		screen + " selecting every eligible tile spends nothing and leaves the deck alone")
+	var actions: Array = [app.shop_buy_button, app.shop_remove_button] if screen == "shop" \
+		else [app.rest_upgrade_button]
+	for button in actions:
+		_check(is_instance_valid(button) and button.pressed.get_connections().size() == 1,
+			screen + " selection leaves the original action's one canonical callback")
+
+
+## Every stamp of one mounted group against its canonical OptionButton row.
+func _check_group_stamps(app, gallery, screen: String, group: String) -> void:
+	var selector := _visit_selector(app, group)
+	var tiles := _tiles_for(gallery, group)
+	for tile in tiles:
+		var marker := _stamp(tile)
+		var row: int = int(gallery.tile_row(tile))
+		_check(is_instance_valid(marker) and marker.text == SELECTED_TEXT,
+			screen + " " + group + " row " + str(row) + " keeps its complete SELECTED stamp")
+		if not is_instance_valid(marker):
+			continue
+		var expected: bool = selector != null and is_instance_valid(selector) \
+			and selector.selected == row
+		_check(marker.visible == expected, screen + " " + group + " row " + str(row)
+			+ " SELECTED visibility follows the canonical OptionButton row")
+		if expected:
+			_check_selected_fit(tile.get_parent(), marker,
+				screen + " " + group + " row " + str(row))
+
+
+## The tile's own in-face SELECTED label, or null when it has none.
+func _stamp(tile: Variant) -> Label:
+	if not is_instance_valid(tile):
+		return null
+	var panel = (tile as Control).get_parent()
+	if not is_instance_valid(panel):
+		return null
+	return panel.find_child("TileSelected", true, false) as Label
+
+
+## The selected tile Buttons of one mounted group.
+func _tiles_for(gallery, group: String) -> Array:
+	match group:
+		"offer":
+			return gallery.offer_tiles()
+		"removal":
+			return gallery.removal_tiles()
+		"upgrade":
+			return gallery.upgrade_tiles()
+	return []
+
+
+## The visit's canonical OptionButton for one group.
+func _visit_selector(app, group: String) -> OptionButton:
+	match group:
+		"offer":
+			return app.shop_offers
+		"removal":
+			return app.shop_cards
+		"upgrade":
+			return app.rest_upgrade_cards
+	return null
+
+
+## The canonical row the visit currently holds for one group, or -1.
+func _canonical_row(app, group: String) -> int:
+	var selector := _visit_selector(app, group)
+	return selector.selected if is_instance_valid(selector) else -1
+
 
 
 # --- shared style assertions ----------------------------------------------
