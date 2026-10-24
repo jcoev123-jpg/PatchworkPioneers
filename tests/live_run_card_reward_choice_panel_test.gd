@@ -1010,7 +1010,9 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 				and rules_label.get_global_rect().end.y <= action.get_global_rect().position.y,
 				"rules label fits card and never overlaps cost or button " + offer["id"])
 		_check(name_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
-			and name_label.size_flags_vertical == Control.SIZE_EXPAND_FILL,
+			and name_label.size.y >= name_label.get_minimum_size().y
+			and name_label.get_visible_line_count() == name_label.get_line_count()
+			and not name_label.clip_text,
 			"long valid display name supports robust wrapping")
 		var style := card.get_theme_stylebox("panel") as StyleBoxFlat
 		_check(style != null and style.border_color == panel.OWNER_COLORS[offer["owner"]],
@@ -1892,10 +1894,14 @@ func _check_picture_geometry(art: LiveRunCardRewardChoicePanel._CardIllustration
 		and absf(rect.get_center().y - window.get_center().y) <= 1.0,
 		"picture is centred in its sewn window: " + card_id)
 	if art.is_card_art():
-		var drawable: Rect2 = window.grow(-4.0)
+		var drawable: Rect2 = window.grow(-8.0)
 		_check(rect.size.x >= drawable.size.x * 0.9
 			or rect.size.y >= drawable.size.y * 0.9,
 			"authored picture fills the available axis rather than a tiny inset: " + card_id)
+		var backing := art.sewn_backing_rect()
+		_check(window.encloses(backing) and backing.encloses(rect)
+			and backing.size.is_equal_approx(rect.size + Vector2(16, 16)),
+			"compact sewn backing hugs the entire picture: " + card_id)
 
 
 ## The hero emblem fills a broad owner-felt patch rather than a tiny disc.
@@ -1926,7 +1932,7 @@ func _check_emblem_felt(art: LiveRunCardRewardChoicePanel._CardIllustration,
 ## The reward face must bind the canonical individual card art (cards/art/
 ## <base_id>.png), fall back to the hero emblem and then a drawn patch, and keep
 ## that illustration in its own inert window above a legible plain name strip.
-func _test_illustration_art(base: Dictionary) -> void:
+func _test_illustration_art(base: Dictionary, kind: String) -> void:
 	for starter in ["warden_strike", "seamstress_prick", "tinker_pop_shot"]:
 		_check(LiveRunCardRewardChoicePanel.card_art_path(starter)
 			== "res://assets/paper/cards/art/%s.png" % starter,
@@ -1952,7 +1958,7 @@ func _test_illustration_art(base: Dictionary) -> void:
 			"owner": String(definition.get("owner", ""))}
 	var before := receipt.duplicate(true)
 	requests.clear()
-	_check(panel.open_rewards("art_preview", "Fight", receipt),
+	_check(panel.open_rewards("art_preview", kind, receipt),
 		"illustration receipt mounts through the real panel")
 	if not panel.has_open_rewards():
 		return
@@ -1979,6 +1985,7 @@ func _test_illustration_art(base: Dictionary) -> void:
 			"illustration window stays above the name strip: " + card_id)
 		var art_path: String = LiveRunCardRewardChoicePanel.card_art_path(card_id)
 		var emblem: String = LiveRunCardRewardChoicePanel.emblem_path(String(definition.get("owner", "")))
+		_check(ResourceLoader.exists(art_path), "required committed picture exists: " + card_id)
 		if ResourceLoader.exists(art_path):
 			_check(art.has_picture() and art.picture.resource_path == art_path,
 				"committed individual art is bound: " + card_id)
@@ -1988,8 +1995,8 @@ func _test_illustration_art(base: Dictionary) -> void:
 				and art.is_card_art() and not art.is_emblem() and not art.is_paper_patch(),
 				"authored art renders in its own card-art mode: " + card_id)
 			_check_picture_geometry(art, card_id)
-			_check(art.picture_rect().size.y > 52.0,
-				"authored picture is drawn larger than the old 52px strip: " + card_id)
+			_check(art.picture_rect().size.y >= 96.0,
+				"mounted authored picture is at least 96px high: " + card_id)
 		elif ResourceLoader.exists(emblem):
 			_check(art.has_picture() and art.picture.resource_path == emblem,
 				"missing art falls back to the hero emblem: " + card_id)
@@ -2009,6 +2016,31 @@ func _test_illustration_art(base: Dictionary) -> void:
 			"name strip keeps the authored display name: " + card_id)
 		_check(name_label.is_visible_in_tree() and art.is_visible_in_tree(),
 			"illustration and name are both visibly drawn: " + card_id)
+		_check_mounted_art_clearance(card, card_id)
+		if slot > 0:
+			var first := panel.choices_container.get_child(0) as Control
+			for strip_name in ["CardArt", "NameLabel", "CostButton", "PositionPips", "RulesLabel", "ChooseButton"]:
+				var peer := first.get_node("CardMargin/CardContent/" + strip_name) as Control
+				var current := content.get_node(strip_name) as Control
+				_check(absf(peer.global_position.y - current.global_position.y) <= 0.5,
+					"three authored faces align their " + strip_name)
+	# Force both resource-loss branches on actual mounted faces, independent of
+	# whether optional pool-card images are later supplied by the art pipeline.
+	var fallback_card := panel.choices_container.get_child(1) as PanelContainer
+	var fallback_art := fallback_card.get_node("CardMargin/CardContent/CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+	fallback_art.picture = load(LiveRunCardRewardChoicePanel.emblem_path("seamstress")) as Texture2D
+	fallback_art.mode = fallback_art.MODE_EMBLEM
+	fallback_art.queue_redraw()
+	await _frames()
+	_check_emblem_felt(fallback_art, "mounted emblem")
+	_check_mounted_art_clearance(fallback_card, "mounted emblem")
+	fallback_art.picture = null
+	fallback_art.mode = fallback_art.MODE_NONE
+	fallback_art.queue_redraw()
+	await _frames()
+	_check(fallback_art.is_paper_patch() and fallback_art.picture_rect() == Rect2(),
+		"mounted missing art keeps a visible placeholder without a picture")
+	_check_mounted_art_clearance(fallback_card, "mounted placeholder")
 	# A pointer click over the illustration passes through to the card action
 	# exactly once, so the picture never swallows the player's choice.
 	requests.clear()
@@ -2024,14 +2056,29 @@ func _test_illustration_art(base: Dictionary) -> void:
 	_check(receipt == before, "illustration preview leaves its receipt intact")
 	panel.close_rewards()
 	await _frames()
-	await _test_illustration_fallback(base)
+	await _test_illustration_fallback(base, kind)
+
+
+func _check_mounted_art_clearance(card: PanelContainer, context: String) -> void:
+	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+	var art := content.get_node("CardArt") as Control
+	var screen := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	for strip in ["OwnerPatch", "NameLabel", "CostButton", "PositionPips", "RulesLabel", "ChooseButton"]:
+		var control := content.get_node(strip) as Control
+		_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0
+			and screen.encloses(control.get_global_rect())
+			and card.get_global_rect().encloses(control.get_global_rect())
+			and not art.get_global_rect().intersects(control.get_global_rect()),
+			"mounted art leaves %s readable inside the viewport: %s" % [strip, context])
+	_check(screen.encloses(panel.skip_button.get_global_rect()) and not panel.skip_button.disabled,
+		"Skip stays reachable beside mounted art: " + context)
 
 
 ## The reward face resolves art by priority: the card's own authored picture,
 ## then the owning hero's stitched emblem, then a drawn paper patch. Any of
 ## those is valid, so the expectation is conditional on the actual lookup; we
 ## never assert that optional art stays missing.
-func _test_illustration_fallback(base: Dictionary) -> void:
+func _test_illustration_fallback(base: Dictionary, kind: String) -> void:
 	var ids := _authored_base_ids()
 	_check(ids.size() >= 3, "authored pool cards exist for the fallback case")
 	if ids.size() < 3:
@@ -2042,7 +2089,7 @@ func _test_illustration_fallback(base: Dictionary) -> void:
 		receipt["offers"][slot] = {"id": card_id,
 			"owner": String(_base_pool_definition(card_id).get("owner", ""))}
 	requests.clear()
-	_check(panel.open_rewards("art_fallback", "Fight", receipt),
+	_check(panel.open_rewards("art_fallback", kind, receipt),
 		"unpictured pool cards still mount a valid reward offer")
 	if not panel.has_open_rewards():
 		return
@@ -2331,7 +2378,8 @@ func _run() -> void:
 	await _test_all_catalog_rules(original_fight)
 	_test_renderer_source()
 	await _test_cost_and_marks(original_fight, original_elite)
-	await _test_illustration_art(original_fight)
+	await _test_illustration_art(original_fight, "Fight")
+	await _test_illustration_art(original_elite, "Elite")
 	_test_illustration_source()
 	await _test_missing_art_placeholder()
 	await _test_art_and_help_clearance(original_fight, "Fight")
