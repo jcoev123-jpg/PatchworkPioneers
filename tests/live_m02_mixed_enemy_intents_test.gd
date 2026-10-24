@@ -514,6 +514,35 @@ func _caption_readable(badge) -> bool:
 		and _contrast(LiveEnemyIntentBadge.POLICY_INK, LiveEnemyIntentBadge.POLICY_FILL) >= 4.5
 
 
+## The two sewn pieces of one mounted badge are really bounded inside its intent band and
+## never share pixels: the painted action text, its dark plaque and the separate rust ticket.
+## Measured on the real 192x28 band, so a longer target-priority wording cannot quietly
+## run under the ticket or out of the badge.
+func _band_pieces_fit(badge) -> bool:
+	var band := Rect2(Vector2.ZERO, badge.size).grow(0.01)
+	var text: Rect2 = badge.caption_text_rect()
+	var plaque: Rect2 = badge.caption_rect()
+	var tag: Rect2 = badge.policy_rect()
+	return text.size.x > 0.0 and tag.size.x > 0.0 and tag.size.y > 0.0 \
+		and band.encloses(text) and band.encloses(plaque) and band.encloses(tag) \
+		and not text.intersects(tag) and not plaque.intersects(tag) \
+		and badge.caption_text_area().end.x <= tag.position.x
+
+
+## The rust ticket is measured exactly as its own 13 px cue plus its felt padding, so the
+## displayed target-priority wording is the one the drawing code really paints.
+func _ticket_fits(badge, label: String) -> bool:
+	var font: Font = badge.policy_font()
+	var tag: Rect2 = badge.policy_rect()
+	if font == null or tag.size.x <= 0.0 or tag.size.y <= 0.0 or badge.policy_cue != label:
+		return false
+	var text: Rect2 = badge.policy_text_rect()
+	return is_equal_approx(text.size.x, font.get_string_size(label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, LiveEnemyIntentBadge.POLICY_FONT).x) \
+		and is_equal_approx(tag.size.x, text.size.x + LiveEnemyIntentBadge.POLICY_PAD * 2.0) \
+		and tag.grow(0.01).encloses(text)
+
+
 ## Cycle 183: every mounted caption sits on its own dark sewn plaque in fitted cream ink,
 ## and a target-policy cue keeps a separate readable ticket instead of being painted across
 ## the caption. A long debuff, a long shove, a policy cue and unavailable icon art all stay
@@ -561,13 +590,15 @@ func _caption_readability(app) -> void:
 		"the caption plaque and policy ticket stay distinguishable inside the same band")
 	_check(_icon_fits(shove, "res://assets/paper/ui/intent_debuff.png"),
 		"the long debuff keeps its committed icon art visible")
-	# A long shove caption with the longest policy label, still inside the same band.
+	# A long shove caption with the longest targeting cue, still inside the same band.
 	shove.show_intent({"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
 		false, false, "lowest_living_hp")
-	_check(shove.readable_text == "Shove 3 forward" and shove.policy_cue == "Low HP"
+	_check(shove.readable_text == "Shove 3 forward" and shove.policy_cue == "Aim low HP"
 		and shove.intent_type == "shove" and shove.target_position == 3
 		and _caption_readable(shove) and _icon_fits(shove, ""),
-		"a long shove caption fits beside its policy and keeps the sewn glyph")
+		"a long shove caption fits beside its aiming ticket and keeps the sewn glyph")
+	_check(_ticket_fits(shove, "Aim low HP"),
+		"the mounted aiming ticket measures as its own bounded sewn piece")
 	# The narrowest sewn band (one column of a three-enemy stage) still fits: the compact
 	# action falls back to its tight measured form instead of crossing the ticket.
 	var mounted_size: Vector2 = shove.size
@@ -577,6 +608,19 @@ func _caption_readability(app) -> void:
 	_check(shove.readable_text == "Shove 3 fwd" and shove.caption_font_size() >= 14
 		and _caption_readable(shove),
 		"the narrowest sewn band falls back to the tight shove form without clipping")
+	_check(_band_pieces_fit(shove) and _ticket_fits(shove, "Aim low HP"),
+		"the narrow shove caption and aiming ticket stay bounded and disjoint at 192x28")
+	# The longest authored debuff beside the longest ticket, in that same narrow band: the
+	# measured ladder steps to its tight form, so amount and hero number stay whole.
+	shove.show_intent({"type": "debuff", "amount": 2, "status": "exposed", "target_position": 1},
+		false, false, "lowest_living_hp")
+	_check(shove.readable_text == "Exposed 2→1" and shove.policy_cue == "Aim low HP"
+		and shove.amount == 2 and shove.target_position == 1
+		and _caption_readable(shove) and _band_pieces_fit(shove),
+		"a long debuff keeps its exact amount and hero number at 192x28 beside the aiming ticket")
+	_check(shove.tooltip_text.contains("Hero 1 (front)")
+		and shove.tooltip_text.contains("aims at the living hero with the lowest current HP"),
+		"the narrow debuff hover still names the hero and the current-HP aiming rule")
 	shove.size = mounted_size
 	# Unavailable icon art: the real missing-image fallback keeps the sewn glyph under the
 	# same readable caption, plaque and policy ticket.
@@ -653,8 +697,8 @@ func _heading_fonts(app) -> void:
 	# A longer genuine phrase the display face cannot fit at that size keeps the readable
 	# body face, still inside the same sewn plaque and above the bounded floor.
 	badge.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
-	badge.show_intent({"type": "shove", "amount": 0, "target_position": 2, "direction": 1}, false)
-	_check(badge.readable_text == "Shove Middle back" and badge.caption_font() == body
+	badge.show_intent({"type": "shove", "amount": 0, "target_position": 2, "direction": -1}, false)
+	_check(badge.readable_text == "Shove Middle forward" and badge.caption_font() == body
 		and badge.caption_font_size() > 14 and _caption_readable(badge),
 		"a long authentic caption keeps the readable body face instead of a clipped heading")
 	badge.size = mounted_size
@@ -663,9 +707,9 @@ func _heading_fonts(app) -> void:
 	badge.show_intent({"type": "debuff", "amount": 2, "status": "weak", "target_position": 1},
 		false, false, "lowest_living_hp")
 	var ticket_face: Font = badge.policy_font()
-	_check(ticket_face == body and badge.policy_cue == "Low HP"
+	_check(ticket_face == body and badge.policy_cue == "Aim low HP"
 		and is_equal_approx(badge.policy_text_rect().size.x, ticket_face.get_string_size(
-			"Low HP", HORIZONTAL_ALIGNMENT_LEFT, -1,
+			"Aim low HP", HORIZONTAL_ALIGNMENT_LEFT, -1,
 			LiveEnemyIntentBadge.POLICY_FONT).x)
 		and is_equal_approx(badge.policy_rect().size.x, badge.policy_text_rect().size.x
 			+ LiveEnemyIntentBadge.POLICY_PAD * 2.0)
