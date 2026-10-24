@@ -53,9 +53,7 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="EventDescription" type="Label" parent="PaperPanel/ContentMargin/EventContent"]
-custom_minimum_size = Vector2(0, 114)
 layout_mode = 2
-size_flags_vertical = 3
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
