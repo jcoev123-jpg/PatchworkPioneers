@@ -13,8 +13,11 @@ const INK := Color("#28313c")
 ## The optional authored picture for a stitch half: cards/art/<base_id>.png,
 ## with only a final "_plus" sharing its base card's illustration.
 const ART_DIR := "res://assets/paper/cards/art/"
-const FIRST_THUMB_RECT := Rect2(532, 43, 100, 70)
-const SECOND_THUMB_RECT := Rect2(532, 119, 100, 70)
+const FIRST_THUMB_RECT := Rect2(532, 40, 100, 70)
+const SECOND_THUMB_RECT := Rect2(532, 116, 100, 70)
+## Sewing-table body copy: the primary instruction, both authored halves and
+## the genuine consequence forecast stay readable at 1280x720.
+const BODY_FONT_SIZE := 18
 
 var first_selector: OptionButton
 var second_selector: OptionButton
@@ -26,6 +29,10 @@ var second_half_label: Label
 var consequence_label: Label
 var first_thumbnail: TextureRect
 var second_thumbnail: TextureRect
+## Long authored effects wrap past the local preview; the detail column scrolls
+## inside the fixed sewn panel while the thumbnails and actions stay pinned.
+var preview_scroll: ScrollContainer
+var preview_details: VBoxContainer
 
 var first_tile_scroll: ScrollContainer
 var first_tile_container: HBoxContainer
@@ -93,8 +100,8 @@ func _ready() -> void:
 	title.name = "StitchPickerHeading"
 	title.theme_type_variation = "PatchHeading"
 	title.text = "REST • STITCH TWO ORIGINAL CARDS"
-	title.position = Vector2(27, 12)
-	title.size = Vector2(650, 24)
+	title.position = Vector2(27, 7)
+	title.size = Vector2(650, 26)
 	title.add_theme_color_override("font_color", INK)
 	title.add_theme_font_size_override("font_size", 18)
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -102,17 +109,17 @@ func _ready() -> void:
 
 	step_label = Label.new()
 	step_label.text = "Step 1: Choose first original card (3 scraps)"
-	step_label.position = Vector2(30, 36)
-	step_label.size = Vector2(650, 18)
+	step_label.position = Vector2(28, 34)
+	step_label.size = Vector2(654, 26)
 	step_label.add_theme_color_override("font_color", Color("#4a5d73"))
-	step_label.add_theme_font_size_override("font_size", 13)
+	step_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	step_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(step_label)
 
 	# Illustrated sewn-card tile surfaces
 	first_tile_scroll = ScrollContainer.new()
 	first_tile_scroll.name = "FirstTileScroll"
-	first_tile_scroll.position = Vector2(30, 56)
+	first_tile_scroll.position = Vector2(30, 62)
 	first_tile_scroll.size = Vector2(650, 114)
 	first_tile_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	first_tile_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -126,7 +133,7 @@ func _ready() -> void:
 
 	second_tile_scroll = ScrollContainer.new()
 	second_tile_scroll.name = "SecondTileScroll"
-	second_tile_scroll.position = Vector2(30, 56)
+	second_tile_scroll.position = Vector2(30, 62)
 	second_tile_scroll.size = Vector2(650, 114)
 	second_tile_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	second_tile_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -151,8 +158,8 @@ func _ready() -> void:
 	second_selector.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var preview_panel := Panel.new()
-	preview_panel.position = Vector2(30, 174)
-	preview_panel.size = Vector2(650, 248)
+	preview_panel.position = Vector2(30, 178)
+	preview_panel.size = Vector2(650, 252)
 	var inset := StyleBoxFlat.new()
 	inset.bg_color = Color("#fff8e9")
 	inset.border_color = Color("#968c7e")
@@ -162,23 +169,41 @@ func _ready() -> void:
 	preview_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(preview_panel)
 	summary_label = Label.new()
-	summary_label.position = Vector2(14, 8)
-	summary_label.size = Vector2(622, 31)
+	summary_label.position = Vector2(14, 6)
+	summary_label.size = Vector2(622, 26)
 	summary_label.add_theme_color_override("font_color", INK)
-	summary_label.add_theme_font_size_override("font_size", 18)
+	summary_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	summary_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	preview_panel.add_child(summary_label)
-	first_half_label = _detail_label(preview_panel, Vector2(14, 41))
-	second_half_label = _detail_label(preview_panel, Vector2(14, 117))
+
+	preview_scroll = ScrollContainer.new()
+	preview_scroll.name = "StitchPreviewScroll"
+	preview_scroll.position = Vector2(12, 34)
+	preview_scroll.size = Vector2(516, 212)
+	preview_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	preview_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	# Reading overflow never joins the action Tab chain: tiles, Change First,
+	# Confirm and the Rest dismissal keep their exact traversal order.
+	preview_scroll.focus_mode = Control.FOCUS_NONE
+	preview_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+	preview_panel.add_child(preview_scroll)
+
+	preview_details = VBoxContainer.new()
+	preview_details.name = "StitchPreviewDetails"
+	preview_details.add_theme_constant_override("separation", 4)
+	preview_details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	preview_scroll.add_child(preview_details)
+
+	first_half_label = _detail_label(preview_details)
+	second_half_label = _detail_label(preview_details)
 	consequence_label = Label.new()
-	consequence_label.position = Vector2(14, 194)
-	consequence_label.size = Vector2(622, 52)
 	consequence_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	consequence_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	consequence_label.add_theme_color_override("font_color", INK)
-	consequence_label.add_theme_font_size_override("font_size", 14)
-	consequence_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	preview_panel.add_child(consequence_label)
+	consequence_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	consequence_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	consequence_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	preview_details.add_child(consequence_label)
 	_first_thumb = _thumbnail_surface(preview_panel, FIRST_THUMB_RECT)
 	_second_thumb = _thumbnail_surface(preview_panel, SECOND_THUMB_RECT)
 	first_thumbnail = _first_thumb["picture"]
@@ -188,7 +213,7 @@ func _ready() -> void:
 
 	confirm_button = Button.new()
 	confirm_button.text = "Confirm Stitch • 3 scraps"
-	confirm_button.position = Vector2(30, 440)
+	confirm_button.position = Vector2(30, 434)
 	confirm_button.size = Vector2(650, 44)
 	confirm_button.focus_mode = Control.FOCUS_ALL
 	add_child(confirm_button)
@@ -329,14 +354,13 @@ func thumbnail_state(which: String) -> Dictionary:
 	}
 
 
-func _detail_label(parent: Control, at: Vector2) -> Label:
+func _detail_label(parent: Control) -> Label:
 	var label := Label.new()
-	label.position = at
-	label.size = Vector2(512, 75)
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_color_override("font_color", INK)
-	label.add_theme_font_size_override("font_size", 15)
+	label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(label)
 	return label
@@ -801,6 +825,7 @@ func clear() -> void:
 		first_half_label.text = ""
 		second_half_label.text = ""
 		consequence_label.text = ""
+		_reset_preview_scroll()
 		_clear_thumbnails()
 		_clear_keyword_help()
 		_left_edge.color = OWNER_COLORS["warden"]
@@ -838,6 +863,7 @@ func refresh() -> void:
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
+	_reset_preview_scroll()
 	_clear_thumbnails()
 	_clear_keyword_help()
 	if _submitted or not is_inside_tree() or not _model.is_available():
@@ -919,6 +945,7 @@ func _populate_second_options(first_idx: int) -> void:
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
+	_reset_preview_scroll()
 	_clear_thumbnails()
 	_clear_keyword_help()
 	_left_edge.color = _color_for_index(first_idx)
@@ -968,6 +995,7 @@ func _return_to_first_choice() -> void:
 	first_half_label.text = ""
 	second_half_label.text = ""
 	consequence_label.text = ""
+	_reset_preview_scroll()
 	_clear_thumbnails()
 	_clear_keyword_help()
 	_left_edge.color = OWNER_COLORS["warden"]
@@ -1060,6 +1088,7 @@ func _update_preview() -> void:
 	if pair.is_empty():
 		_disable_choice()
 		return
+	_reset_preview_scroll()
 	summary_label.text = "%s • %d energy • %d scraps (request only)" % [
 		pair["display_name"], pair["energy_cost"], pair["scrap_cost"]]
 	first_half_label.text = _half_lines("First", pair["first_half"])
@@ -1090,6 +1119,41 @@ func _consequence_lines(pair: Dictionary) -> String:
 		pair["first_name"], pair["first_index"] + 1, pair["second_name"], pair["second_index"] + 1,
 		pair["deck_before_count"], pair["deck_after_count"], pair["scrap_cost"],
 		pair["remaining_scraps"]]
+
+
+## Every new pairing starts at the first-half sentence; long authored effects
+## stay reachable by scrolling the local preview rather than being clipped.
+func _reset_preview_scroll() -> void:
+	if preview_scroll != null and is_instance_valid(preview_scroll):
+		preview_scroll.scroll_vertical = 0
+
+
+## Reading keys for the local preview. These never join the action Tab chain,
+## so a focused tile keeps keyboard focus while Page Up/Down, Home and End page
+## the wrapped forecast inside the sewn panel.
+func _input(event: InputEvent) -> void:
+	if _submitted or preview_scroll == null or not is_instance_valid(preview_scroll) \
+			or not is_visible_in_tree():
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus == null or (focus != self and not is_ancestor_of(focus)):
+		return
+	var page := maxi(1, int(preview_scroll.size.y) - 24)
+	match key.keycode:
+		KEY_PAGEDOWN:
+			preview_scroll.scroll_vertical += page
+		KEY_PAGEUP:
+			preview_scroll.scroll_vertical -= page
+		KEY_HOME:
+			preview_scroll.scroll_vertical = 0
+		KEY_END:
+			preview_scroll.scroll_vertical = int(preview_scroll.get_v_scroll_bar().max_value)
+		_:
+			return
+	get_viewport().set_input_as_handled()
 
 
 func _positions(positions: Array) -> String:
@@ -1314,6 +1378,7 @@ func _disable_choice() -> void:
 		second_half_label.text = ""
 	if consequence_label != null:
 		consequence_label.text = ""
+	_reset_preview_scroll()
 	_clear_thumbnails()
 	_clear_keyword_help()
 	call_deferred("_rebuild_focus_chain")

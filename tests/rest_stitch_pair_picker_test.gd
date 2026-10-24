@@ -6,6 +6,7 @@ var checks := 0
 var received: Array[Dictionary] = []
 var picker: LiveRestStitchPairPicker
 var catalog := StarterCards.new()
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 
 
 func _initialize() -> void:
@@ -108,6 +109,48 @@ func _take(a: int, b: int, snapshot: Dictionary) -> void:
 func _frames() -> void:
 	await process_frame
 	await process_frame
+
+
+## Real pointer wheel over the mounted preview, as a player scrolls it.
+func _wheel(control: Control, button_index: MouseButton, times: int) -> void:
+	var point := control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for i in range(times):
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = button_index
+		event.pressed = true
+		root.push_input(event, true)
+	await _frames()
+
+
+func _body_font_path(label: Label) -> String:
+	var font := label.get_theme_font("font") as Font
+	return font.resource_path if font != null else ""
+
+
+## The primary instruction and all three forecast readouts must resolve the
+## inherited body face at sewing-table size (>=18 px), never a shrunken label.
+func _assert_preview_typography(p: LiveRestStitchPairPicker, label: String) -> void:
+	var readouts := [
+		["step", p.step_label], ["summary", p.summary_label],
+		["first", p.first_half_label], ["second", p.second_half_label],
+		["consequence", p.consequence_label],
+	]
+	for pair in readouts:
+		var readout: Label = pair[1]
+		_check(readout != null and readout.is_inside_tree(),
+			label + " mounts the " + pair[0] + " forecast readout")
+		if readout == null:
+			continue
+		_check(readout.get_theme_font_size("font_size") >= 18,
+			label + " " + pair[0] + " resolves body type at 18 px or larger")
+		_check(_body_font_path(readout) == BODY_FONT,
+			label + " " + pair[0] + " keeps the inherited project body face")
+	_check(not p.step_label.text.is_empty() and p.step_label.is_visible_in_tree(),
+		label + " keeps the primary stitching instruction visible")
 
 
 func _focused_tile(tiles: Array[Button]) -> Button:
@@ -226,6 +269,7 @@ func _assert_sewn_caption(panel: LiveRestStitchPairPicker, a: int, b: int,
 		and forecast["deck_after_count"] == deck_count - 1
 		and forecast["scrap_cost"] == 3 and forecast["remaining_scraps"] == scraps_left,
 		label + " visible projection retains exact zero-based oracle indices and economic fields")
+	_assert_preview_typography(panel, label)
 
 
 ## The first/second half must mount that original's own illustration (a final
@@ -776,6 +820,7 @@ func _run() -> void:
 	await _test_keyword_help_picker()
 	await _test_mixed_pool_picker()
 	await _test_snip_conditional_descriptions()
+	await _test_readable_stitch_forecast()
 	await _test_submitted_single_intent_latch()
 	await _test_keyboard_focus_route()
 	_finish()
@@ -1010,6 +1055,193 @@ func _test_snip_conditional_descriptions() -> void:
 		and snip_projection.get("energy_cost") == 2,
 		"detached Snip/Strike preview charges exactly 3 scraps on commit projection")
 	snip_picker.free()
+
+
+## VIS V6 / M04: the mounted Rest stitching forecast must stay readable at the
+## sewing-table footprint. Both authored halves and the genuine consequence are
+## printed at >=18 px, and a long conditional effect wraps inside the local
+## preview and stays reachable with the wheel and the keyboard without moving
+## Confirm, Change First or the original-card tiles.
+func _test_readable_stitch_forecast() -> void:
+	var snip_deck: Array[String] = [
+		"tinker_snip_the_seam",       # 0: long authored conditional damage
+		"tinker_snip_the_seam_plus",  # 1: upgraded form, second-half partner only
+		"warden_strike",              # 2: ordinary first-half partner
+		"seamstress_prick",           # 3: ordinary second-half partner
+	]
+	var ledger := RunRestStitchCards.new(snip_deck, {}, 3)
+	_check(ledger.is_valid() and not ledger.is_consumed(),
+		"readable forecast fixture has a genuine 3-scrap Rest ledger")
+	if not ledger.is_valid():
+		return
+	var source := ledger.get_snapshot()
+	var snip := RunRestStitchCards.resolve_card_definition("tinker_snip_the_seam")
+	var strike := RunRestStitchCards.resolve_card_definition("warden_strike")
+	_check(not snip.is_empty() and not strike.is_empty(),
+		"readable forecast fixture resolves both authored originals")
+
+	var panel := LiveRestStitchPairPicker.new()
+	panel.name = "ReadableRestStitchPairPicker"
+	panel.position = Vector2(285, 75)  # the real Rest overlay position at 1280x720
+	root.add_child(panel)
+	await _frames()
+	var intents: Array[Dictionary] = []
+	panel.stitch_requested.connect(func(a, b, s): intents.append({"first": a, "second": b, "source": s}))
+	panel.bind(ledger, source)
+	await _frames()
+	_check(panel.size == Vector2(710, 500),
+		"readable forecast keeps the fixed 710x500 sewing-table footprint")
+	_bounds(panel)
+
+	# Step 1: the primary instruction is body-sized and complete.
+	_check(panel.step_label.text == "Step 1: Choose first original card (3 scraps)",
+		"initial mounted step keeps the exact authored instruction")
+	_check(panel.step_label.size.x + 0.5 >= panel.step_label.get_minimum_size().x
+		and panel.step_label.size.y + 0.5 >= panel.step_label.get_minimum_size().y,
+		"initial step instruction prints unclipped at 1280x720")
+	_assert_preview_typography(panel, "initial Step 1")
+
+	var first_row := _row_in_first(panel, 0)
+	_check(first_row >= 0, "long-effect Snip is a legal first original")
+	if first_row < 0:
+		panel.free()
+		return
+	await _select_live_tile(panel.first_selector, first_row)
+	await _frames()
+	# Step 2: still body-sized after a valid original card is chosen.
+	_check(panel.step_label.text == "Step 2: Choose second card from a different hero • 3 scraps.",
+		"second mounted step keeps the exact authored instruction")
+	_check(panel.step_label.size.x + 0.5 >= panel.step_label.get_minimum_size().x
+		and panel.step_label.size.y + 0.5 >= panel.step_label.get_minimum_size().y,
+		"second step instruction prints unclipped at 1280x720")
+	_assert_preview_typography(panel, "Step 2")
+
+	var second_row := _row_in_second(panel, 2)
+	_check(second_row >= 0, "Strike is a legal different-owner second original")
+	if second_row < 0:
+		panel.free()
+		return
+	await _select_live_tile(panel.second_selector, second_row)
+	await _frames()
+
+	var snip_effect := "5 damage, or 15 instead if Unravelled or Unravel is at least half its current threshold (first Tinker attack this turn: +3 damage)"
+	var expected_first := "First: Snip the Seam — Tinker (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\n" + snip_effect
+	var expected_second := "Second: Strike — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1-2\n6 damage"
+	var preview := panel._current_pair()
+	_check(not preview.is_empty() and preview.get("first_half") == snip
+		and preview.get("second_half") == strike,
+		"legal Snip / Strike pair shows both complete authored halves")
+	_check(panel.first_half_label.text == expected_first,
+		"first-half readout keeps every authored conditional word and number")
+	_check(panel.second_half_label.text == expected_second,
+		"second-half readout keeps the complete ordered authored rule")
+	_check(panel.first_half_label.text == panel._half_lines("First", preview.get("first_half", {}))
+		and panel.second_half_label.text == panel._half_lines("Second", preview.get("second_half", {})),
+		"mounted halves equal the authoritative ordered pair text")
+	_check(not panel.first_half_label.text.contains("5+15")
+		and not panel.first_half_label.text.contains("5 + 15")
+		and panel.first_half_label.text.contains("15 instead"),
+		"the conditional damage stays a genuine replacement, never a summed or shortened forecast")
+
+	var expected_energy := mini(3, maxi(int(snip.get("cost", 0)), int(strike.get("cost", 0))) + 1)
+	_check(preview.get("energy_cost") == expected_energy and expected_energy == 2,
+		"legal pair quotes min(3, max(half costs)+1) stitched energy")
+	_check(preview.get("scrap_cost") == 3 and preview.get("remaining_scraps") == 0
+		and preview.get("deck_before_count") == snip_deck.size()
+		and preview.get("deck_after_count") == snip_deck.size() - 1,
+		"legal pair quotes the authoritative 3 scraps and one-card deck loss")
+	_check(panel.summary_label.text == "Snip the Seam / Strike • 2 energy • 3 scraps (request only)",
+		"fixed summary shows the joined name, capped energy and 3-scrap wallet")
+	_check(panel.consequence_label.text ==
+		"Sew Snip the Seam (copy #1) + Strike (copy #3)\n4 → 3 shared cards • 3 scraps spent • 0 remaining\nSewn card cannot upgrade or stitch again",
+		"consequence keeps the exact copies, deck delta, 3-scrap spend and permanent no-upgrade/no-restitch rule")
+
+	# Typography and measured overflow, not brittle absolute coordinates.
+	_assert_preview_typography(panel, "legal long-effect pair")
+	var scroll := panel.preview_scroll
+	_check(scroll != null and is_instance_valid(scroll) and scroll.is_inside_tree()
+		and scroll.is_visible_in_tree(),
+		"legal pair mounts a real local preview scroll")
+	if scroll == null or not is_instance_valid(scroll):
+		panel.free()
+		return
+	_check(scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
+		and scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_AUTO,
+		"local preview scrolls only vertically inside the sewn panel")
+	_check(scroll.focus_mode == Control.FOCUS_NONE,
+		"reading scroll never joins the action keyboard chain")
+	_check(scroll.get_parent() != null
+		and scroll.get_parent().get_global_rect().encloses(scroll.get_global_rect()),
+		"local preview scroll stays inside the fixed sewn preview panel")
+	_check(scroll.get_global_rect().end.x <= panel.first_thumbnail.get_global_rect().position.x
+		and scroll.get_global_rect().end.x <= panel.second_thumbnail.get_global_rect().position.x,
+		"local preview scroll never covers either preserved illustration")
+
+	var bar := scroll.get_v_scroll_bar()
+	_check(bar != null and bar.max_value > scroll.size.y,
+		"the long authored effect genuinely exceeds the preview viewport")
+	_check(scroll.scroll_vertical == 0,
+		"a new pair starts at the first-half sentence")
+	var consequence_rect := panel.consequence_label.get_global_rect()
+	_check(not scroll.get_global_rect().encloses(consequence_rect),
+		"consequence begins below the fold instead of being clipped away")
+	for readout in [panel.first_half_label, panel.second_half_label, panel.consequence_label]:
+		var shown: Label = readout
+		_check(shown.size.y + 0.5 >= shown.get_minimum_size().y,
+			"wrapped preview text owns the full readable height")
+		_check(shown.get_visible_line_count() == shown.get_line_count(),
+			"every wrapped authored preview line is printed, not truncated")
+		_check(shown.get_global_rect().end.x <= panel.first_thumbnail.get_global_rect().position.x,
+			"wrapped preview text ends before the illustration gutter")
+	_check(panel.confirm_button.is_visible_in_tree() and not panel.confirm_button.disabled,
+		"Confirm Stitch stays visible and enabled beside the overflowing preview")
+	_check(panel.confirm_button.get_global_rect().position.y >= scroll.get_global_rect().end.y,
+		"Confirm Stitch is never covered by the local preview scroll")
+	_thumb_present_or_placeholder(panel, "first", "tinker_snip_the_seam",
+		"Snip the Seam", "tinker")
+	_thumb_present_or_placeholder(panel, "second", "warden_strike", "Strike", "warden")
+
+	# Mouse wheel: reachable end, then back to the first half, focus untouched.
+	var second_tile := panel.second_tile_for_index(2)
+	_check(second_tile != null and second_tile.is_visible_in_tree() and not second_tile.disabled,
+		"chosen second tile remains a visible action beside the preview")
+	if second_tile != null:
+		second_tile.grab_focus()
+		await _frames()
+		_check(second_tile.has_focus(), "preview scrolling is exercised with real action focus")
+	await _wheel(scroll, MOUSE_BUTTON_WHEEL_DOWN, 20)
+	_check(scroll.scroll_vertical >= int(bar.max_value - scroll.size.y) - 1,
+		"mouse wheel reaches the end of the long authored forecast")
+	_check(scroll.get_global_rect().encloses(panel.consequence_label.get_global_rect()),
+		"the complete consequence and 3-scrap wallet become fully readable")
+	_check(second_tile != null and second_tile.has_focus(),
+		"mouse wheel scrolling never steals action focus")
+	_check(panel.confirm_button.is_visible_in_tree()
+		and panel.confirm_button.get_global_rect().position.y >= scroll.get_global_rect().end.y,
+		"Confirm Stitch stays uncovered at the end of the preview")
+	await _wheel(scroll, MOUSE_BUTTON_WHEEL_UP, 20)
+	_check(scroll.scroll_vertical == 0, "mouse wheel returns to the first-half sentence")
+
+	# Keyboard parity: Home/End/Page Down page the preview, Tab still confirms.
+	await _key(KEY_END)
+	_check(scroll.scroll_vertical >= int(bar.max_value - scroll.size.y) - 1,
+		"End key reaches the end of the mounted forecast")
+	_check(second_tile != null and second_tile.has_focus(),
+		"keyboard preview paging keeps tile focus")
+	await _key(KEY_HOME)
+	_check(scroll.scroll_vertical == 0, "Home key returns to the first-half sentence")
+	await _key(KEY_PAGEDOWN)
+	_check(scroll.scroll_vertical > 0, "Page Down pages the wrapped forecast")
+	await _key(KEY_TAB)
+	_check(panel.confirm_button.has_focus(),
+		"Tab from the focused original still reaches Confirm Stitch")
+	await _key(KEY_ENTER)
+	_check(intents.size() == 1 and intents[0]["first"] == 0 and intents[0]["second"] == 2
+		and intents[0]["source"] == source,
+		"readable overflowing pair still emits exactly one exact ordered request")
+	_check(ledger.get_snapshot() == source and not ledger.is_consumed(),
+		"readable forecast and scrolling spend no scraps and mutate no Rest receipt")
+	panel.free()
 
 
 func _finish() -> void:
