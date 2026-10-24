@@ -200,7 +200,13 @@ func _update_preview() -> void:
 	var exchange := "empty %s slot" % _slot_name(estimate["slot"]) \
 		if estimate["kind"] == "MOVE" else (
 		"swap with %s" % _nice(estimate["exchanged_id"]))
-	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap
+	# The validated snapshot is the only wallet truth: quote its exact scraps
+	# minus the real cost, never a UI claim or a separate ledger.
+	var current_scraps: Variant = _snapshot.get("scraps")
+	if typeof(current_scraps) != TYPE_INT or int(current_scraps) < int(estimate["cost"]):
+		_clear("Preview expired: refresh the Rest before trying again")
+		return
+	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap • Scraps %d → %d
 %s
 %s
 %s
@@ -208,6 +214,7 @@ func _update_preview() -> void:
 		_action_label(estimate["kind"]), _slot_label(estimate["slot"]),
 		_nice(estimate["source"]["hero_id"]),
 		_nice(estimate["destination"]["hero_id"]), exchange, estimate["cost"],
+		current_scraps, int(current_scraps) - int(estimate["cost"]),
 		_wearer_preview(estimate["source"], "before"),
 		_wearer_preview(estimate["source"], "after"),
 		_wearer_preview(estimate["destination"], "before"),
