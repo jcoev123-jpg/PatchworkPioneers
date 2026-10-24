@@ -171,8 +171,9 @@ func _check_preview() -> void:
 	for field in ["effect", "amount", "max_hp_bonus", "once_per_player_turn", "minimum_unravel_numerator", "minimum_unravel_denominator", "hit_number", "target_kind", "heal_threshold", "block", "uses_per_combat"]:
 		if expected.has(field):
 			_check(record.get(field) == expected[field], "preview oracle matches authored " + field)
-	var text := "%s | %s%s: %s. Inactive while wearer is torn." % [String(offer.id).capitalize(),
-		expected.slot, " | SOLD" if offer.sold else "", expected.text]
+	var text := "%s (%s slot)%s\nEffect: %s\nInactive while wearer is torn." % [
+		String(offer.id).capitalize(), String(expected.slot).capitalize(),
+		" (SOLD)" if offer.sold else "", expected.text]
 	_check(app.shop_patch_preview.text == text and app.shop_patch_preview.is_visible_in_tree()
 		and app.shop_patch_preview.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
 		"visible autowrapped preview gives exact conditional name, slot and power")
@@ -246,12 +247,13 @@ func _check_patch_labels() -> void:
 			"genuine selected stock price agrees with authored catalog")
 		_check(definitions.has(offer.id) and definitions[offer.id] in RunPatchWardrobe.SLOTS,
 			"real stock has an authoritative wardrobe slot")
-		var expected := "%s | %s | %d gold%s" % [names.get(offer.id, String(offer.id).capitalize()),
-			String(definitions.get(offer.id)).capitalize(), offer.price, " | SOLD" if offer.sold else ""]
+		var expected := "%s (%s slot)" % [names.get(offer.id, String(offer.id).capitalize()),
+			String(definitions.get(offer.id)).capitalize()]
 		_check(app.shop_patch_offers.get_item_text(i) == expected
 			and not app.shop_patch_offers.get_item_text(i).contains("_")
+			and not app.shop_patch_offers.get_item_text(i).contains("|")
 			and app.shop_patch_offers.get_item_metadata(i) == offer.id,
-			"exact readable name, genuine slot, stock price/SOLD and authentic ID metadata")
+			"exact readable name, explicit genuine slot and authentic ID metadata")
 	_check_patch_action()
 
 

@@ -4737,8 +4737,7 @@ func _shop_patch_offer_text(offer: Dictionary) -> String:
 	var slot: Variant = _shop_wardrobe.get_snapshot().definitions.get(offer.id)
 	if slot not in RunPatchWardrobe.SLOTS:
 		return ""
-	return "%s | %s | %d gold%s" % [String(offer.id).capitalize(), String(slot).capitalize(),
-		offer.price, " | SOLD" if offer.sold else ""]
+	return "%s (%s slot)" % [String(offer.id).capitalize(), String(slot).capitalize()]
 
 
 func _refresh_shop_patches() -> void:
@@ -4808,8 +4807,8 @@ func _refresh_shop_patch_preview() -> void:
 		effect = RunPatchWearerSummary.KNOWN_TEXTS.get(offer.id, "")
 	if effect.is_empty():
 		return
-	shop_patch_preview.text = "%s | %s%s: %s. Inactive while wearer is torn." % [
-		String(offer.id).capitalize(), slot, " | SOLD" if offer.sold else "", effect]
+	shop_patch_preview.text = "%s%s\nEffect: %s\nInactive while wearer is torn." % [
+		_shop_patch_offer_text(offer), " (SOLD)" if offer.sold else "", effect]
 
 
 func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
