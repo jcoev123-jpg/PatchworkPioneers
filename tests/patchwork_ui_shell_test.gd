@@ -12,6 +12,11 @@ func _run() -> void:
 	var shared: Theme = app.theme
 	_check(shared != null and shared.default_font_size >= 18, "scene installs body theme before App readiness")
 	_check(shared.get_font_size("font_size", "TitleLabel") >= 40, "shared title default at least 40")
+	_check(app.title_label.get_theme_font("font").resource_path == shell.TITLE_FONT,
+		"title uses the Londrina Solid title font")
+	var body_font: Font = app.start_button.get_theme_font("font")
+	_check(body_font != null and body_font.resource_path == "res://assets/fonts/PatrickHand-Regular.ttf",
+		"buttons fall back to the project theme's Patrick Hand body font")
 	_check((shared.get_stylebox("panel", "Panel") as StyleBoxFlat).bg_color == shell.PAPER
 		and (shared.get_stylebox("panel", "PanelContainer") as StyleBoxFlat).bg_color != shell.PAPER,
 		"shared Theme supplies paper panels and contrasting felt containers")
