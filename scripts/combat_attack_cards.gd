@@ -267,6 +267,12 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 					if extra > CombatStatuses.MAX_INT - additions[status]:
 						return _failure()
 					additions[status] += extra
+		if _patches != null and additions.get("bleed", 0) > 0:
+			var arm_bleed := _patches.card_bleed_bonus(owner_id, card_id)
+			if arm_bleed > 0:
+				if arm_bleed > CombatStatuses.MAX_INT - additions["bleed"]:
+					return _failure()
+				additions["bleed"] += arm_bleed
 		for status in patch_statuses:
 			additions[status] = additions.get(status, 0) + patch_statuses[status]
 		var application := {position: additions}

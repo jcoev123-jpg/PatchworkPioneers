@@ -29,6 +29,7 @@ func _initialize() -> void:
 	_test_malformed_patch_wardrobes()
 	_test_m05_head_statuses()
 	_test_m05_head_rejections()
+	_test_red_bobbin_cuff()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -1630,3 +1631,82 @@ func _test_m05_head_rejections() -> void:
 	_head_reject(torn_attacks, _deck(["seamstress_prick"]), _party(), _enemies([40]),
 		"seamstress_prick", 1, fresh,
 		"positive fresh combat HP cannot bypass torn run owner")
+
+
+	
+func _test_red_bobbin_cuff() -> void:
+	var arm_records: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m05_arm_support_patches.json"))
+	var head_records: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m05_head_patches.json"))
+	var defs := []
+	for r in arm_records + head_records:
+		defs.append({"id": r.id, "slot": r.slot})
+	var party := _party()
+	var torn := RunTornMending.new(party.get_heroes())
+	var worn := ["red_bobbin_cuff", "bloodstitch_bonnet"]
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), worn, defs, 4)
+	
+	var plain_worn := ["red_bobbin_cuff", "bloodstitch_bonnet"]
+	
+	var sew_arm := wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "sew1", wardrobe.get_snapshot())
+	var sew_head := wardrobe.sew("bloodstitch_bonnet", "seamstress", "HEAD", "sew2", wardrobe.get_snapshot())
+	_check(sew_arm.ok and sew_head.ok, "sew M05 ARM and HEAD on Seamstress")
+	
+	var attacks := CombatAttackCards.new()
+	var head_rules := CombatM05HeadPatchRules.new()
+	head_rules.bind_wardrobe(wardrobe, torn)
+	attacks.bind_patch_wardrobe(wardrobe, torn)
+	attacks.bind_head_patch_rules(head_rules)
+	
+	var foes := _enemies([60, 60, 60])
+	var deck := _deck(["seamstress_prick"])
+	_accept(attacks, deck, party, foes, "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 5})], 1,
+		"Red Bobbin Cuff and Bloodstitch Bonnet stack Bleed to 5")
+	
+	var plain_wardrobe := RunPatchWardrobe.new(party.get_heroes(), plain_worn, defs, 4)
+	var plain_attacks := CombatAttackCards.new()
+	plain_attacks.bind_patch_wardrobe(plain_wardrobe, torn)
+	_accept(plain_attacks, _deck(["seamstress_prick"]), party, _enemies([60]), "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 3})], 1, "unworn cuff grants base Bleed 3")
+	
+	var warden_wardrobe := RunPatchWardrobe.new(party.get_heroes(), plain_worn, defs, 4)
+	warden_wardrobe.sew("red_bobbin_cuff", "warden", "ARM", "sew3", warden_wardrobe.get_snapshot())
+	var warden_attacks := CombatAttackCards.new()
+	warden_attacks.bind_patch_wardrobe(warden_wardrobe, torn)
+	_accept(warden_attacks, _deck(["seamstress_prick"]), party, _enemies([60]), "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 3})], 1, "cuff on Warden grants no bonus to Seamstress")
+
+	var arm_wardrobe := RunPatchWardrobe.new(party.get_heroes(), plain_worn, defs, 4)
+	arm_wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "sew4", arm_wardrobe.get_snapshot())
+	var arm_attacks := CombatAttackCards.new()
+	arm_attacks.bind_patch_wardrobe(arm_wardrobe, torn)
+	
+	var overflow_foes := _enemies([60])
+	overflow_foes._enemies[0]["statuses"] = {"bleed": CombatStatuses.MAX_INT - 3}
+	var w_before := arm_wardrobe.get_snapshot()
+	var t_before := torn.read_state()
+	_reject(arm_attacks, _deck(["seamstress_prick"]), party, overflow_foes, "seamstress_prick", 1,
+		"Bleed 4 patched rejected due to overflow")
+	_check(arm_wardrobe.get_snapshot() == w_before and torn.read_state() == t_before, "ledgers stay unchanged")
+		
+	var overflow_foes_unpatched := _enemies([60])
+	overflow_foes_unpatched._enemies[0]["statuses"] = {"bleed": CombatStatuses.MAX_INT - 3}
+	_accept(plain_attacks, _deck(["seamstress_prick"]), party, overflow_foes_unpatched, "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 3})], 1, "Bleed 3 unpatched accepted at MAX_INT - 3")
+
+	var down_party := _party()
+	down_party.apply_damage(2, 100)
+	var down_attacks := CombatAttackCards.new()
+	down_attacks.bind_patch_wardrobe(arm_wardrobe, torn)
+	_reject(down_attacks, _deck(["seamstress_prick"]), down_party, _enemies([60]), "seamstress_prick", 1,
+		"downed owner rejected")
+
+	var empty_energy := _deck(["seamstress_prick"])
+	empty_energy.try_spend_energy(3)
+	_reject(arm_attacks, empty_energy, party, _enemies([60]), "seamstress_prick", 1, "no energy rejected")
+
+	var absent_foes := _enemies([60])
+	absent_foes.apply_damage(1, 100)
+	_reject(arm_attacks, _deck(["seamstress_prick"]), party, absent_foes, "seamstress_prick", 1, "absent/slain target rejected")
+
+	_reject(arm_attacks, _deck(["seamstress_prick"]), party, _enemies([60]), "seamstress_prick", 0, "illegal from/to rejected")
