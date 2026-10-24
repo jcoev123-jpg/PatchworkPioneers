@@ -5,6 +5,7 @@ const INK := Color("302b29")
 const PAPER := Color("ecdfbd")
 const THREAD := Color("c9b996")
 const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
+const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
 ## Code-drawn ground for a missing owner picture; never a blank felt screen.
 const FALLBACK_STAGE := Color("2b3135")
 ## Felt the three original title actions are sewn onto, darker than every button state.
@@ -98,6 +99,8 @@ func _build_theme() -> Theme:
 	shared.set_type_variation("TitleLabel", "Label")
 	shared.set_font_size("font_size", "TitleLabel", 48)
 	shared.set_color("font_color", "TitleLabel", INK)
+	# Owner 2026-10-24: Londrina Solid titles; body text falls back to the project theme's Patrick Hand.
+	shared.set_font("font", "TitleLabel", load(TITLE_FONT))
 	shared.set_stylebox("panel", "Panel", _panel(PAPER, Color("a8997b")))
 	shared.set_stylebox("panel", "PanelContainer", _panel(Color("514b42"), Color("a8997b")))
 	# Cream ink stays readable on all four earthy felt states.
