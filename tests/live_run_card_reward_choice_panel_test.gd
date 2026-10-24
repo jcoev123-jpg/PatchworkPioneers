@@ -874,6 +874,28 @@ func _check_reward_typography(receipt: Dictionary) -> void:
 		"mounted reward banner resolves the project PatchHeading font")
 	_check(panel.title_label.get_theme_font_size(&"font_size") == 31,
 		"reward banner retains its authored point size")
+	var is_elite: bool = panel._node_kind == "Elite"
+	_check(panel.gold_label.is_visible_in_tree() and not panel.gold_label.text.is_empty(),
+		"a visible pending-gold receipt is mounted for inspection")
+	var receipts: Array[Label] = [panel.gold_label]
+	if is_elite:
+		_check(panel.trinket_label.is_visible_in_tree()
+			and not panel.trinket_label.text.is_empty(),
+			"Elite mounts a separate visible patch receipt beside the gold receipt")
+		receipts.append(panel.trinket_label)
+	else:
+		_check(not panel.trinket_label.visible and panel.trinket_label.text.is_empty(),
+			"plain Fight leaves the patch receipt hidden and empty")
+	for receipt_label: Label in receipts:
+		_check_receipt_tab(receipt_label, heading_font, project_theme)
+	if receipts.size() == 2:
+		_check(panel.gold_label.get_theme_stylebox("normal") is StyleBoxFlat
+			and panel.trinket_label.get_theme_stylebox("normal") is StyleBoxFlat
+			and (panel.gold_label.get_theme_stylebox("normal") as StyleBoxFlat).bg_color
+				!= (panel.trinket_label.get_theme_stylebox("normal") as StyleBoxFlat).bg_color,
+			"gold and patch receipts wear distinct sewn tabs")
+	_check(panel.gold_label.text == "Pending gold: +%d" % int(receipt.get("gold_award", 0)),
+		"sewn gold receipt keeps the exact pending-gold wording")
 	var offers: Array = receipt.get("offers", [])
 	_check(offers.size() == 3 and panel.choices_container.get_child_count() == 3,
 		"typography inspects all three actual mounted offers")
@@ -907,6 +929,70 @@ func _check_reward_typography(receipt: Dictionary) -> void:
 			"cost coin keeps default font: " + card_id)
 
 
+## Pending gold and the Elite patch are sewn labels: the project display face,
+## their authored point size, dark ink on a muted felt tab inside a dark stitch,
+## and no pointer capture. Measured from the mounted label, not a screenshot: the
+## tab only owns the seam around its own line, so the three offers, Help tabs,
+## banner and Skip keep their established vertical room.
+func _check_receipt_tab(label: Label, heading_font: Font, project_theme: Theme) -> void:
+	var label_name := String(label.name)
+	var point_size: int = 22 if label_name == "GoldLabel" else 19
+	_check(label.is_visible_in_tree() and not label.text.is_empty(),
+		"sewn receipt is on screen with its bound text: " + label_name)
+	_check(label.theme_type_variation == &"PatchHeading"
+		and label.get_theme_font(&"font") == heading_font,
+		"sewn receipt resolves the project PatchHeading font: " + label_name)
+	_check(label.get_theme_font(&"font") != project_theme.default_font,
+		"sewn receipt uses the display face, not the plain body font: " + label_name)
+	_check(label.get_theme_font_size(&"font_size") == point_size,
+		"sewn receipt keeps its authored %d point size: %s" % [point_size, label_name])
+	_check(label.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"sewn receipt never captures the pointer: " + label_name)
+	var tab := label.get_theme_stylebox("normal") as StyleBoxFlat
+	_check(tab != null, "sewn receipt has its own paper/felt tab: " + label_name)
+	if tab == null:
+		return
+	var felt: Color = tab.bg_color
+	_check(felt.a > 0.0 and felt.get_luminance() > 0.3 and felt.get_luminance() < 0.8,
+		"receipt tab is muted felt rather than bare paper or pure black: " + label_name)
+	_check(tab.border_width_left >= 2 and tab.border_width_top >= 2
+		and tab.border_width_right >= 2 and tab.border_width_bottom >= 2,
+		"receipt tab is outlined by a sewn border: " + label_name)
+	_check(tab.border_color.get_luminance() < felt.get_luminance(),
+		"receipt stitch border is darker than its felt: " + label_name)
+	_check(tab.corner_radius_top_left >= 4 and tab.corner_radius_bottom_right >= 4,
+		"receipt tab has sewn rounded corners: " + label_name)
+	var ink: Color = label.get_theme_color("font_color")
+	_check(ink.get_luminance() < felt.get_luminance(),
+		"receipt text is dark ink on its felt tab: " + label_name)
+	_check(LiveRunCardRewardChoicePanel.contrast_ratio(ink, felt) >= 4.5,
+		"receipt ink passes 4.5:1 contrast on its tab: %s (%.2f:1)"
+			% [label_name, LiveRunCardRewardChoicePanel.contrast_ratio(ink, felt)])
+	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
+	if paper != null:
+		_check(LiveRunCardRewardChoicePanel.contrast_ratio(felt, paper.bg_color) >= 1.15,
+			"receipt felt separates from the reward paper behind it: " + label_name)
+	# The tab owns only its seam: modest insets and a measured height close to
+	# one display line, so no wrapper crowds the cards, banner, Help or Skip.
+	var font: Font = label.get_theme_font(&"font")
+	if font == null:
+		font = ThemeDB.fallback_font
+	var line_height: float = font.get_height(point_size)
+	_check(label.size.x > 0.0 and label.size.y > 0.0,
+		"receipt tab has real measured room on the page: " + label_name)
+	_check(tab.content_margin_top <= 4.0 and tab.content_margin_bottom <= 4.0,
+		"receipt tab keeps only modest vertical insets: " + label_name)
+	_check(label.size.y <= line_height + 10.0,
+		"receipt tab adds only its seam to one line (%.1fpx line, %.1fpx tab): %s"
+			% [line_height, label.size.y, label_name])
+	var text_width: float = font.get_string_size(label.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x
+	_check(label.size.x <= text_width + tab.content_margin_left
+		+ tab.content_margin_right + 8.0,
+		"receipt tab hugs its own line instead of spanning the page (%.1fpx text, %.1fpx tab): %s"
+			% [text_width, label.size.x, label_name])
+
+
 func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 	_check_reward_typography(receipt)
 	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "actual scene mounted: " + kind)
@@ -915,13 +1001,23 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		"reward title is human-readable without raw node ID: " + kind)
 	_check(panel.gold_label.text == "Pending gold: +%d" % receipt["gold_award"],
 		"exact prepared pending gold visible: " + kind)
+	_check(panel.gold_label.is_visible_in_tree()
+		and int(receipt["gold_award"]) >= (25 if kind == "Elite" else 10)
+		and int(receipt["gold_award"]) <= (35 if kind == "Elite" else 20),
+		"sewn %s gold receipt shows its actual documented award band: " % kind
+			+ panel.gold_label.text)
 	_check(panel.trinket_label.visible == (kind == "Elite"), "Elite-only trinket label visibility")
 	if kind == "Elite":
+		_check(panel.trinket_label.is_visible_in_tree()
+			and panel.trinket_label.text == "Patch: Thread Token",
+			"separate sewn patch receipt names the humanised Elite drop: " + kind)
 		_check(panel.trinket_label.text.contains("Thread Token"), "human-readable patch name visible: " + kind)
 		_check(not panel.trinket_label.text.contains(receipt["trinket_drop_id"]) and not panel.trinket_label.text.contains("_"),
 			"patch label does not expose raw trinket identifier or underscore")
 	else:
 		_check(panel.trinket_label.text.is_empty(), "non-Elite trinket label is empty")
+		_check(not panel.trinket_label.is_visible_in_tree(),
+			"plain Fight never displays a patch receipt just because its style exists")
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
 	_check(paper != null and paper.bg_color.get_luminance() > 0.55
 		and paper.border_width_left >= 4, "cream stitched paper")

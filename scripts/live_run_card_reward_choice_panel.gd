@@ -28,6 +28,18 @@ const DARK_INK := Color("#302b29")
 const LIGHT_INK := Color("#fbf3e4")
 const STITCH_THREAD := Color("#c9b996")
 
+## The pending-gold and Elite-patch receipts are sewn onto their own small felt
+## ledger tabs, like the banner label and the card names, instead of reading as
+## loose plain-font lines. Each tab is just a StyleBoxFlat on the existing
+## label: a muted felt face inside a dark running-stitch border, with small
+## side insets and only the seam's own 2px above and below the line, so the
+## banner, the three offer faces, Help and Skip keep their established room.
+const RECEIPT_GOLD_FELT := Color("#c8ad7d")
+const RECEIPT_PATCH_FELT := Color("#aebb97")
+const RECEIPT_TAB_BORDER := Color("#5a4a38")
+const RECEIPT_TAB_INSET_X := 14
+const RECEIPT_TAB_INSET_Y := 2
+
 ## The sewn owner strip only needs to grow enough for a readable hero name;
 ## the paper's top and bottom seams give up exactly those pixels (see
 ## _apply_patchwork_style), so no card control moves or clips.
@@ -859,10 +871,36 @@ func _apply_patchwork_style() -> void:
 	title_label.add_theme_font_size_override("font_size", 31)
 	gold_label.add_theme_font_size_override("font_size", 22)
 	trinket_label.add_theme_font_size_override("font_size", 19)
+	_sew_receipt_tab(gold_label, RECEIPT_GOLD_FELT)
+	_sew_receipt_tab(trinket_label, RECEIPT_PATCH_FELT)
 	for label in [top_stitches, bottom_stitches]:
 		label.add_theme_color_override("font_color", Color("#77624f"))
 		label.add_theme_font_size_override("font_size", 17)
 	_apply_sewn_art(paper, content_margin)
+
+
+## Sew one reward receipt onto a small tab of its own. The label keeps the exact
+## text, visibility, dark ink and point size that open_rewards binds; this only
+## gives that line the display face and a muted felt face inside a dark seam.
+## Size stays in the label (no wrapper), so the receipt costs one stitched line
+## and never crowds the banner, the three cards, Help or Skip.
+func _sew_receipt_tab(label: Label, felt: Color) -> void:
+	label.theme_type_variation = &"PatchHeading"
+	label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var tab := StyleBoxFlat.new()
+	tab.bg_color = felt
+	tab.border_color = RECEIPT_TAB_BORDER
+	tab.set_border_width_all(2)
+	tab.set_corner_radius_all(6)
+	tab.content_margin_left = RECEIPT_TAB_INSET_X
+	tab.content_margin_right = RECEIPT_TAB_INSET_X
+	tab.content_margin_top = RECEIPT_TAB_INSET_Y
+	tab.content_margin_bottom = RECEIPT_TAB_INSET_Y + 1
+	tab.shadow_color = Color(0.16, 0.12, 0.08, 0.35)
+	tab.shadow_size = 3
+	tab.shadow_offset = Vector2(0, 1)
+	label.add_theme_stylebox_override("normal", tab)
 
 
 ## Lays the Flow/ChatGPT patchwork art over the procedural paper: the stitched
