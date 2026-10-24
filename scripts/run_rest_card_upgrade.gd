@@ -11,6 +11,18 @@ extends RefCounted
 # Explicit catalog-backed starter pairs; never infer an upgrade from a suffix.
 # These expected definitions are the same exact semantics resolved by combat.
 const STARTER_UPGRADE_PAIRS := {
+	"warden_shield_bash": {"plus_id": "warden_shield_bash_plus", "owner": "warden",
+		"cost": 2, "from_positions": [1], "target_kind": "enemy_single",
+		"to_positions": [1], "effects": {"damage": 8, "weak": 1}, "plus_effects": {"damage": 11, "weak": 1}},
+	"seamstress_prick": {"plus_id": "seamstress_prick_plus", "owner": "seamstress",
+		"cost": 1, "from_positions": [1, 2, 3], "target_kind": "enemy_single",
+		"to_positions": [1, 2, 3], "effects": {"damage": 3, "bleed": 2}, "plus_effects": {"damage": 4, "bleed": 3}},
+	"tinker_pop_shot": {"plus_id": "tinker_pop_shot_plus", "owner": "tinker",
+		"cost": 1, "from_positions": [2, 3], "target_kind": "enemy_single",
+		"to_positions": [1, 2, 3], "effects": {"damage": 5}, "plus_effects": {"damage": 7}},
+	"tinker_scrap_bomb": {"plus_id": "tinker_scrap_bomb_plus", "owner": "tinker",
+		"cost": 2, "from_positions": [3], "target_kind": "enemy_all",
+		"to_positions": [1, 2, 3], "effects": {"damage": 4}, "plus_effects": {"damage": 6}},
 	"warden_strike": {"plus_id": "warden_strike_plus", "owner": "warden",
 		"cost": 1, "from_positions": [1, 2], "target_kind": "enemy_single",
 		"to_positions": [1, 2], "effects": {"damage": 6}, "plus_effects": {"damage": 7}},

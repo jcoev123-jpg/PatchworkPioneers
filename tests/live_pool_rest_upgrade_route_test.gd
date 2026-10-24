@@ -230,8 +230,11 @@ func _pool_route_session(chosen: Dictionary, reward_index: int, keyboard: bool) 
 	var rows: Array = canonical.choices
 	var expected_indices: Array = []
 	for index in range(app.run_deck.size()):
-		if app.run_deck[index] in ["warden_strike", "warden_brace", "seamstress_mend",
-				"seamstress_stitch_up", base_id]:
+		var owned_id: String = app.run_deck[index]
+		# This fixture owns starters plus the earned pool base. Check genuine
+		# catalog pairs rather than freeze the supported starter catalog's IDs.
+		if owned_id == base_id or (catalog.has_card(owned_id)
+				and catalog.has_card(owned_id + "_plus")):
 			expected_indices.append(index)
 	var shown_indices: Array = []
 	var pool_row := -1
