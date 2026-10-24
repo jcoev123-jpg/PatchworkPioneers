@@ -956,19 +956,39 @@ func _fit(font: Font, value: String, available: float, preferred: int) -> int:
 	return point_size
 
 
+func name_font(panel: Control) -> Font:
+	return _name_font(panel)
+
+
+func body_font(panel: Control) -> Font:
+	return _font(panel)
+
+
+func half_name_font(panel: Control) -> Font:
+	return _name_font(panel)
+
+
 func _font(panel: Control) -> Font:
-	var font: Font = panel.get_theme_default_font()
+	var font: Font = panel.get_theme_default_font() if is_instance_valid(panel) else null
 	return font if font != null else ThemeDB.fallback_font
 
 
-func _text(panel: Control, value: String, rect: Rect2, preferred: int, color: Color = INK) -> void:
+func _name_font(panel: Control) -> Font:
+	if is_instance_valid(panel) and panel.has_theme_font("font", "PatchHeading"):
+		var font: Font = panel.get_theme_font("font", "PatchHeading")
+		if font != null:
+			return font
+	return _font(panel)
+
+
+func _text(panel: Control, value: String, rect: Rect2, preferred: int, color: Color = INK, font: Font = null) -> void:
 	if value.is_empty() or rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return
-	var font := _font(panel)
+	var effective_font := font if font != null else _font(panel)
 	# A row never renders taller than the space the face gives it, so a refitted
 	# compact row cannot bleed into the neighbouring line.
-	var point_size := mini(_fit(font, value, rect.size.x, preferred), maxi(8, int(rect.size.y)))
-	panel.draw_string(font, rect.position + Vector2(0, minf(float(point_size), rect.size.y)),
+	var point_size := mini(_fit(effective_font, value, rect.size.x, preferred), maxi(8, int(rect.size.y)))
+	panel.draw_string(effective_font, rect.position + Vector2(0, minf(float(point_size), rect.size.y)),
 		value, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, point_size, color)
 
 
@@ -1072,7 +1092,7 @@ func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> 
 			_text(panel, rules, effects, 13)
 		return
 	panel.draw_rect(Rect2(x - 3.0, rect.position.y + 1.0, 3, rect.size.y - 2.0), owner_color)
-	_text(panel, order + definition.get("display_name", id), Rect2(x, rect.position.y, width, 14), 13)
+	_text(panel, order + definition.get("display_name", id), Rect2(x, rect.position.y, width, 14), 13, INK, _name_font(panel))
 	_text(panel, facts.get("owner_text", ""),
 		Rect2(x, rect.position.y + 14.0, width - 44.0, 11), 9, owner_color)
 	_draw_pips(panel, facts, Rect2(x, rect.position.y + 14.0, width, 11))
@@ -1099,7 +1119,7 @@ func _draw_sewn_half(panel: Control, id: String, rect: Rect2, order: int) -> voi
 	var owner_color := _owner_color(facts.get("owner", ""))
 	panel.draw_rect(Rect2(rect.position.x - 3.0, rect.position.y + 1.0, 3.0, rect.size.y - 2.0), owner_color)
 	_text(panel, "%d. %s" % [order, definition.get("display_name", id)],
-		Rect2(rect.position, Vector2(rect.size.x, minf(14.0, rect.size.y))), 11)
+		Rect2(rect.position, Vector2(rect.size.x, minf(14.0, rect.size.y))), 11, INK, _name_font(panel))
 	# The effect line wins the narrow compact strip: the owner tag only joins it
 	# when both still fit at a legible size, otherwise the felt stripe and the
 	# detailed face keep the owner readable.
@@ -1205,7 +1225,7 @@ func _draw_panel(panel: Control) -> void:
 	_center_text(panel, str(facts.get("cost", -1)) if int(facts.get("cost", -1)) >= 0 else "?",
 		cost, 14 if not layout["compact"] else 12)
 	_text(panel, facts.get("owner_text", ""), layout["owner"], 11, _owner_color(facts.get("owner", "")))
-	_text(panel, _title(facts), layout["title"], 15 if not layout["compact"] else 13)
+	_text(panel, _title(facts), layout["title"], 15 if not layout["compact"] else 13, INK, _name_font(panel))
 	var halves: Array = layout["halves"]
 	var pair: Array = facts.get("halves", [])
 	if halves.size() == 2 and _halves_known(pair):
