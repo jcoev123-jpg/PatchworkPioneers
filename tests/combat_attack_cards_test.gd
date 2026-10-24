@@ -879,7 +879,7 @@ func _patch_context(assignments: Array, scraps: int = 4) -> Dictionary:
 
 		"res://data/patches/m04_attack_patches.json"))
 
-	_check(records is Array and records.size() == 2, "own attack patch catalog parses")
+	_check(records is Array, "own attack patch catalog parses; required IDs checked below")
 
 	for id in ["button_eye", "pincushion_arm"]:
 

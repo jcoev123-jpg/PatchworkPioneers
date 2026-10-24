@@ -256,7 +256,8 @@ func observe_confirmed_play(receipt_id: String, owner_id: String) -> Dictionary:
 		# If previous owner is set and different from current, and not yet triggered,
 		# and the wearer wears the patch, then trigger 2 Block.
 		if _prev_owner != "" and _prev_owner != owner_id and not _switchback_consumed:
-			_party.gain_block(_hero_position_for(owner_id), 2)
+			if not _party.gain_block(_hero_position_for(owner_id), 2):
+				return rejected
 			_switchback_consumed = true
 			_receipt_ids[receipt_id] = true
 			_prev_owner = owner_id
@@ -277,6 +278,9 @@ func observe_confirmed_stitched_play(first_receipt_id: String, first_owner_id: S
 
 func _switchback_wearer_for(owner_id: String) -> bool:
 	if not _switchback_active or _switchback_wardrobe == null or _switchback_torn == null:
+		return false
+	var position := _hero_position_for(owner_id)
+	if position == 0 or _party.is_downed(position):
 		return false
 	if not _switchback_torn.is_valid():
 		return false

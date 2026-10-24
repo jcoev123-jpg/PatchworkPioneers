@@ -9,6 +9,7 @@ var sewing
 const EXPECTED_NAMES := {
 	"button_eye": "Button Eye",
 	"pincushion_arm": "Pincushion Arm",
+	"switchback_button": "Switchback Button",
 	"quilted_coat": "Quilted Coat",
 	"padded_vest": "Padded Vest",
 	"double_quilt_coat": "Double Quilt Coat",

@@ -86,7 +86,7 @@ func _test_catalog_definitions_and_schema() -> void:
 
 	# Verify M04 catalog is intact.
 	var m04_raw: Variant = _json("res://data/patches/m04_attack_patches.json")
-	_check(typeof(m04_raw) == TYPE_ARRAY and m04_raw.size() == 2, "m04_attack_patches.json has exactly 2 records")
+	_check(typeof(m04_raw) == TYPE_ARRAY, "m04_attack_patches.json parses; required IDs checked below")
 	var m04_seen := {}
 	for entry: Variant in m04_raw:
 		if typeof(entry) == TYPE_DICTIONARY:

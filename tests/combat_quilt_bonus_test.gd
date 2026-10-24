@@ -494,189 +494,205 @@ func _test_stitched_rejections_and_reset() -> void:
 		"reset: award latch and squares reset")
 
 
-## Helper to construct a wardrobe with the switchback_button sewn onto HEAD.
-func _switchback_wardrobe_for(wearer_id: String, torn_state_dict: Dictionary) -> Dictionary:
-	var heroes := [
-		{"id": "warden", "max_hp": 40, "position": 1, "hp": 40, "block": 0},
-		{"id": "seamstress", "max_hp": 30, "position": 2, "hp": 30, "block": 0},
-		{"id": "tinker", "max_hp": 26, "position": 3, "hp": 26, "block": 0},
-	]
-	var wardrobe := RunPatchWardrobe.new(heroes,
-		["switchback_button"],
-		[{"id": "switchback_button", "slot": "HEAD"}],
-		0, 0, [], 0)
-	# Sew the patch onto the intended hero.
-	var snapshot := wardrobe.get_snapshot()
-	var sew_result := wardrobe.sew("switchback_button", wearer_id, "HEAD", "swb_op_1", snapshot)
-	return {"wardrobe": wardrobe, "torn_state": torn_state_dict}
+## Wardrobe definitions always come from the actual catalog, projected to id/slot.
+func _switchback_fixture(wearer: String = "warden", cards: Array[String] = [
+		"warden_brace", "warden_brace", "seamstress_stitch_up", "tinker_tune_up"]) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array, "Switchback: actual catalog parses")
+	var definitions := []
+	if raw is Array:
+		for entry in raw:
+			definitions.append({"id": entry.id, "slot": entry.slot})
+	var party := _party()
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(torn.read_state().heroes,
+		["switchback_button"], definitions, 2, 17, cards, 42)
+	_check(wardrobe.is_valid() and torn.is_valid(), "Switchback: valid catalog-backed authorities")
+	if wearer != "":
+		_check(wardrobe.sew("switchback_button", wearer, "HEAD", "sew", wardrobe.get_snapshot()).ok
+			and wardrobe.get_snapshot().worn[wearer].HEAD == "switchback_button", "Switchback: real HEAD sew")
+	var deck := _deck(cards, 42)
+	_check(deck.start_turn() and deck.hand.size() == cards.size(), "Switchback: genuine small deck dealt")
+	var quilt := CombatQuiltBonus.new(party, deck)
+	_check(quilt.begin_player_turn() and quilt.enable_switchback(wardrobe, torn), "Switchback: bound and active")
+	return {"party": party, "deck": deck, "quilt": quilt, "wardrobe": wardrobe, "torn": torn}
+
+
+func _switchback_state(c: Dictionary) -> Dictionary:
+	return {"combat": _state(c.deck, c.party), "wardrobe": c.wardrobe.get_snapshot(),
+		"torn": c.torn.read_state(), "quilt": c.quilt.get_patch_progress(),
+		"switchback": c.quilt.get_switchback_state()}
+
+
+# This service observes caller-confirmed receipts; it does not authenticate casts.
+# Every positive test observation follows a successful real transaction.
+func _switchback_observe(c: Dictionary, receipt: String, owner: String, amount: int) -> void:
+	var before := _switchback_state(c)
+	var result: Dictionary = c.quilt.observe_confirmed_play(receipt, owner)
+	_check(result == {"ok": true, "triggered": amount > 0, "block_granted": amount}, "Switchback: exact receipt " + receipt)
+	var expected: Dictionary = before.combat.duplicate(true)
+	for hero in expected.heroes:
+		if hero.id == owner:
+			hero.block += amount
+	var after := _switchback_state(c)
+	_check(after.combat == expected and after.wardrobe == before.wardrobe
+		and after.torn == before.torn and after.quilt == before.quilt,
+		"Switchback: only expected wearer Block changes; piles/energy/RNG/Quilt preserved")
+	_check(after.switchback.prev_owner == owner and receipt in after.switchback.receipts_observed
+		and after.switchback.consumed == (before.switchback.consumed or amount > 0),
+		"Switchback: exact receipt/pointer/consumption latch")
+
+
+func _switchback_play(c: Dictionary, card: String, receipt: String, owner: String,
+		amount: int, target: int = 0) -> void:
+	var before := _state(c.deck, c.party)
+	var committed := support.play_card(c.deck, c.party, card, target)
+	_check(committed, "Switchback: canonical support committed " + receipt)
+	if not committed:
+		return
+	_check(c.deck.energy == before.energy - 1 and c.deck.hand.size() == before.hand.size() - 1
+		and c.deck.discard_pile.size() == before.discard.size() + 1
+		and c.deck.discard_pile.back() == card and c.deck._rng.state == before.rng,
+		"Switchback: support pays/discards exactly once")
+	_switchback_observe(c, receipt, owner, amount)
 
 
 func _test_switchback_positive() -> void:
-	# AC1: A real committed play by a different living hero followed by the
-	# wearer's play grants exactly 2 Block to the wearer.
-	var party := _party()
-	var deck := _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up",
-		"warden_strike", "tinker_pop_shot"], 42)
-	_check(deck.start_turn(), "positive: deck starts")
-	var quilt := CombatQuiltBonus.new(party, deck)
-	_check(quilt.begin_player_turn(), "positive: quilt begins")
-
-	# Create wardrobe with switchback_button on warden's HEAD, and a torn state.
-	var torn := RunTornMending.new([
-		{"id": "warden", "max_hp": 40, "position": 1, "hp": 40, "block": 0},
-		{"id": "seamstress", "max_hp": 30, "position": 2, "hp": 30, "block": 0},
-		{"id": "tinker", "max_hp": 26, "position": 3, "hp": 26, "block": 0},
-	])
-	var fixtures := _switchback_wardrobe_for("warden", torn.read_state())
-	var wardrobe_obj: Variant = fixtures["wardrobe"]
-	_check(quilt.enable_switchback(wardrobe_obj, torn), "positive: switchback enabled")
-
-	# First play: warden plays (no previous owner -> no trigger).
-	_check(support.play_card(deck, party, "warden_brace"), "positive: warden plays")
-	var result1 := quilt.observe_confirmed_play("swb_r1", "warden")
-	_check(result1.ok and not result1.triggered and result1.block_granted == 0,
-		"positive: first receipt does not trigger")
-	_check(_blocks(party) == {"warden": 7, "seamstress": 0, "tinker": 0},
-		"positive: no bonus after first receipt")
-
-	# Second play: seamstress plays (different owner). Previous = warden.
-	# Warden wears the patch, so when warden plays again after seamstress,
-	# the trigger applies. But let's set it up correctly.
-	_check(support.play_card(deck, party, "seamstress_stitch_up", 3),
-		"positive: seamstress plays")
-	var result2 := quilt.observe_confirmed_play("swb_r2", "seamstress")
-	_check(result2.ok and not result2.triggered and result2.block_granted == 0,
-		"positive: second receipt (seamstress) does not trigger because wearer is warden")
-
-	# Now observe a receipt for warden (different previous owner = seamstress,
-	# wearer eligible). We don't need a real card play for observation,
-	# since observe_confirmed_play works with receipt IDs independently.
-	var before_block := _blocks(party)
-	var result3 := quilt.observe_confirmed_play("swb_r3", "warden")
-	_check(result3.ok and result3.triggered and result3.block_granted == 2,
-		"positive: third receipt (warden after different owner) triggers exactly 2 Block")
-	var after_block := _blocks(party)
-	_check(after_block["warden"] == before_block["warden"] + 2,
-		"positive: warden gains exactly 2 additional Block")
-	_check(after_block["seamstress"] == before_block["seamstress"],
-		"positive: other heroes unchanged by transition bonus")
+	seed(71821)
+	var expected_global := randi()
+	seed(71821)
+	var c := _switchback_fixture()
+	_switchback_play(c, "seamstress_stitch_up", "first", "seamstress", 0, 3)
+	_switchback_play(c, "warden_brace", "followup", "warden", 2)
+	_check(_blocks(c.party) == {"warden": 9, "seamstress": 0, "tinker": 5},
+		"Switchback: exactly 2 above printed Brace")
+	_check(support.play_card(c.deck, c.party, "tinker_tune_up"), "Switchback: free Tinker setup commits")
+	_switchback_observe(c, "tinker", "tinker", 0)
+	_switchback_play(c, "warden_brace", "second_eligible", "warden", 0)
+	_check(_blocks(c.party).warden == 16 and c.quilt.get_switchback_state().consumed,
+		"Switchback: second eligible transition grants only printed Block")
+	_check(c.deck.end_turn(), "Switchback: deck ends")
+	c.quilt.end_player_turn()
+	var before := _switchback_state(c)
+	_check(not c.quilt.observe_confirmed_play("closed", "warden").ok
+		and _switchback_state(c) == before, "Switchback: inactive turn is inert")
+	_check(c.party.start_player_turn() and c.deck.start_turn() and c.quilt.begin_player_turn(),
+		"Switchback: genuine new player turn")
+	_check(c.quilt.get_switchback_state() == {"active": true, "consumed": false,
+		"prev_owner": "", "receipts_observed": []}, "Switchback: all turn latches reset")
+	_switchback_play(c, "warden_brace", "followup", "warden", 0)
+	_switchback_play(c, "seamstress_stitch_up", "first", "seamstress", 0, 3)
+	_switchback_play(c, "warden_brace", "new", "warden", 2)
+	_check(_blocks(c.party) == {"warden": 16, "seamstress": 0, "tinker": 5},
+		"Switchback: new turn grants exactly 2, old receipt IDs reusable")
+	_check(randi() == expected_global, "Switchback: commits and turn reset preserve global RNG")
 
 
 func _test_switchback_negative_and_reset() -> void:
-	# AC2: Negative cases and once-per-turn consumption.
-	var party := _party()
-	var deck := _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up"], 55)
-	_check(deck.start_turn(), "negative: deck starts")
-	var quilt := CombatQuiltBonus.new(party, deck)
-	_check(quilt.begin_player_turn(), "negative: quilt begins")
-
-	var torn := RunTornMending.new([
-		{"id": "warden", "max_hp": 40, "position": 1, "hp": 40, "block": 0},
-		{"id": "seamstress", "max_hp": 30, "position": 2, "hp": 30, "block": 0},
-		{"id": "tinker", "max_hp": 26, "position": 3, "hp": 26, "block": 0},
-	])
-	var fixtures := _switchback_wardrobe_for("warden", torn.read_state())
-	_check(quilt.enable_switchback(fixtures["wardrobe"], torn),
-		"negative: enabled")
-
-	# Replayed receipt must not advance pointer or spend trigger.
-	var replay := quilt.observe_confirmed_play("swb_r1", "warden")
-	_check(replay.ok and replay.triggered == false, "negative: first receipt ok")
-	var replay_again := quilt.observe_confirmed_play("swb_r1", "warden")
-	_check(not replay_again.ok and replay_again.block_granted == 0,
-		"negative: replayed receipt rejected, no trigger, pointer not advanced")
-
-	# Same owner after first does not trigger.
-	var same_owner := quilt.observe_confirmed_play("swb_r2", "warden")
-	_check(same_owner.ok and not same_owner.triggered and same_owner.block_granted == 0,
-		"negative: same-owner receipt does not trigger")
-
-	# Downed wearer: rely on mechanism's projection (downed hero excluded
-	# by active projection). We observe with original snapshot; the mechanism
-	# checks projection active set, so a downed projection would exclude it.
-	var downed_result := quilt.observe_confirmed_play("swb_r_down", "warden")
-	_check(downed_result.ok == true, "negative: original snapshot still eligible")
-
-	# Unworn hero: observe a receipt for a hero without the patch.
-	var unworn := quilt.observe_confirmed_play("swb_r_tinker", "tinker")
-	_check(unworn.ok and not unworn.triggered, "negative: unworn owner receipt observed but no trigger")
-
-	# Once consumed, a later valid alternating receipt should not trigger again.
-	# Restore party to living and play sequence that would trigger.
-	party = _party()
-	deck = _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up"], 55)
-	_check(deck.start_turn(), "negative: restored deck starts")
-	quilt = CombatQuiltBonus.new(party, deck)
-	_check(quilt.begin_player_turn(), "negative: restored quilt begins")
-	_check(quilt.enable_switchback(fixtures["wardrobe"], torn),
-		"negative: restored enabled")
-	_check(support.play_card(deck, party, "warden_brace"), "negative: restored warden plays")
-	_check(quilt.observe_confirmed_play("swb_r_a", "warden").ok, "negative: restored first receipt")
-	_check(support.play_card(deck, party, "seamstress_stitch_up", 1), "negative: restored stitch plays")
-	_check(quilt.observe_confirmed_play("swb_r_b", "seamstress").ok, "negative: restored second receipt")
-	_check(support.play_card(deck, party, "tinker_tune_up"), "negative: restored tinker plays")
-	# At this point, previous owner is tinker, and warden hasn't been triggered yet.
-	# Let's trigger it by observing a receipt for warden after a different owner.
-	var triggered_result := quilt.observe_confirmed_play("swb_r_trigger", "warden")
-	_check(triggered_result.triggered and triggered_result.block_granted == 2,
-		"negative: first valid trigger grants 2 Block")
-	# A second eligible transition in same turn grants nothing.
-	_check(support.play_card(deck, party, "seamstress_stitch_up", 1), "negative: restored seamstress second")
-	var second_trigger := quilt.observe_confirmed_play("swb_r_no", "seamstress")
-	_check(second_trigger.ok and not second_trigger.triggered and second_trigger.block_granted == 0,
-		"negative: second eligible transition grants nothing")
+	var c := _switchback_fixture()
+	_switchback_play(c, "warden_brace", "same1", "warden", 0)
+	_switchback_play(c, "warden_brace", "same2", "warden", 0)
+	_check(not c.quilt.get_switchback_state().consumed, "Switchback: same-owner pair does not spend entitlement")
+	var before := _switchback_state(c)
+	for invalid in [["same1", "seamstress"], ["", "warden"], [" bad", "warden"],
+			["invalid", ""], ["invalid", "visitor"], ["invalid", " warden"]]:
+		_check(not c.quilt.observe_confirmed_play(invalid[0], invalid[1]).ok
+			and _switchback_state(c) == before, "Switchback: duplicate/invalid receipt wholly inert")
+	_check(not support.play_card(c.deck, c.party, "missing_card") and _switchback_state(c) == before,
+		"Switchback: refused play cannot supply setup or consume latch")
+	c = _switchback_fixture("")
+	_switchback_play(c, "seamstress_stitch_up", "unworn1", "seamstress", 0, 3)
+	_switchback_play(c, "warden_brace", "unworn2", "warden", 0)
+	_check(not c.quilt.get_switchback_state().consumed, "Switchback: unworn patch inert")
+	for restored in [false, true]:
+		c = _switchback_fixture()
+		var start: Array = c.torn.read_state().heroes
+		var end := start.duplicate(true)
+		end[0].hp = 0
+		_check(c.torn.observe_battle_end("tear", start, end).ok
+			and c.torn.read_state().tear_counts.warden == 1, "Switchback: real tear recorded")
+		if restored:
+			var heroes: Array = c.torn.read_state().heroes
+			_check(c.torn.apply_rest("rest", heroes, true).ok and c.torn.read_state().heroes[0].hp > 0,
+				"Switchback: authentic Rest revives scarred wearer")
+		_check(not c.party.is_downed(1), "Switchback: combat wearer lives despite run tear")
+		_switchback_play(c, "seamstress_stitch_up", "torn1", "seamstress", 0, 3)
+		_switchback_play(c, "warden_brace", "torn2", "warden", 0)
+		_check(not c.quilt.get_switchback_state().consumed, "Switchback: torn wearer leaves latch unused")
+	c = _switchback_fixture()
+	_switchback_play(c, "seamstress_stitch_up", "down1", "seamstress", 0, 3)
+	_check(support.play_card(c.deck, c.party, "warden_brace")
+		and c.party.apply_damage(1, 100) and c.party.is_downed(1),
+		"Switchback: real wearer commit followed by actual combat downing")
+	_switchback_observe(c, "down2", "warden", 0)
+	_check(not c.quilt.get_switchback_state().consumed, "Switchback: downing leaves latch unused")
+	c = _switchback_fixture()
+	_switchback_play(c, "seamstress_stitch_up", "cap1", "seamstress", 0, 3)
+	_check(support.play_card(c.deck, c.party, "warden_brace")
+		and c.party.gain_block(1, CombatParty.MAX_INT - 8), "Switchback: one spare Block after genuine play")
+	before = _switchback_state(c)
+	_check(not c.quilt.observe_confirmed_play("cap2", "warden").ok and _switchback_state(c) == before,
+		"Switchback: overflow rejects atomically without consuming receipt/latch")
+	c = _switchback_fixture()
+	c.quilt.disable_switchback()
+	before = _switchback_state(c)
+	_check(not c.quilt.observe_confirmed_play("disabled", "warden").ok and _switchback_state(c) == before,
+		"Switchback: disabled service wholly inert")
 
 
 func _test_switchback_stitched_ordered() -> void:
-	# AC3: Ordered stitched halves in first-then-second order; once per turn;
-	# next-turn reset; Quilt unchanged.
-	var party := _party()
-	var deck := _deck(["warden_brace", "seamstress_stitch_up", "tinker_tune_up",
-		"warden_strike", "tinker_pop_shot"], 99)
-	_check(deck.start_turn(), "stitched: deck starts")
-	var quilt := CombatQuiltBonus.new(party, deck)
-	_check(quilt.begin_player_turn(), "stitched: quilt begins")
-
-	var torn := RunTornMending.new([
-		{"id": "warden", "max_hp": 40, "position": 1, "hp": 40, "block": 0},
-		{"id": "seamstress", "max_hp": 30, "position": 2, "hp": 30, "block": 0},
-		{"id": "tinker", "max_hp": 26, "position": 3, "hp": 26, "block": 0},
-	])
-	var fixtures := _switchback_wardrobe_for("seamstress", torn.read_state())
-	_check(quilt.enable_switchback(fixtures["wardrobe"], torn),
-		"stitched: enabled for seamstress")
-
-	# First half: warden plays. Previous owner = warden.
-	_check(support.play_card(deck, party, "warden_brace"), "stitched: warden plays first")
-	var first_half := quilt.observe_confirmed_play("swb_s1", "warden")
-	_check(first_half.ok and not first_half.triggered, "stitched: first half no trigger")
-
-	# Second half: seamstress (wearer) follows warden (different). Should trigger.
-	_check(support.play_card(deck, party, "seamstress_stitch_up", 2),
-		"stitched: seamstress plays second half")
-	var second_half := quilt.observe_confirmed_play("swb_s2", "seamstress")
-	_check(second_half.ok and second_half.triggered and second_half.block_granted == 2,
-		"stitched: second half triggers because previous owner was different")
-
-	# Once triggered, no more triggers this turn.
-	var extra := quilt.observe_confirmed_play("swb_extra", "warden")
-	_check(extra.ok and not extra.triggered, "stitched: extra receipt does not retrigger")
-
-	# Quilt remains unchanged by switchback observation.
-	var quilt_progress_before := quilt.get_patch_progress()
-	_check(quilt_progress_before.active and not quilt_progress_before.awarded,
-		"stitched: quilt unchanged by observation")
-
-	# Next turn resets the transition tracking (not the wardrobe binding).
-	_check(deck.end_turn(), "stitched: end turn")
-	quilt.end_player_turn()
-	_check(party.start_player_turn() and deck.start_turn() and quilt.begin_player_turn(),
-		"stitched: new turn starts")
-	# After reset, a new alternating sequence can trigger again.
-	_check(support.play_card(deck, party, "warden_brace"), "stitched: next turn warden")
-	_check(quilt.observe_confirmed_play("swb_n1", "warden").ok, "stitched: next turn first receipt")
-	_check(support.play_card(deck, party, "seamstress_stitch_up", 3),
-		"stitched: next turn seamstress")
-	var next_trigger := quilt.observe_confirmed_play("swb_n2", "seamstress")
-	_check(next_trigger.triggered and next_trigger.block_granted == 2,
-		"stitched: next turn trigger works again after reset")
+	for reverse in [false, true]:
+		var first := "seamstress_stitch_up" if reverse else "warden_brace"
+		var second := "warden_brace" if reverse else "seamstress_stitch_up"
+		var rest := RunRestStitchCards.new([first, second], {}, 3)
+		var chosen := rest.choose_stitch(0, 1, rest.get_snapshot())
+		_check(chosen.ok, "Switchback stitched: authentic Rest stitch")
+		if not chosen.ok:
+			continue
+		var ids: Array[String] = [chosen.stitched_id, "seamstress_stitch_up", "tinker_tune_up"]
+		var c := _switchback_fixture("seamstress", ids)
+		var enemies := CombatEnemies.new([{"id": "ragling", "max_hp": 60}])
+		_check(enemies.is_valid(), "Switchback stitched: real living enemies")
+		var committed := CombatStitchedCards.new().play_stitched(c.deck, c.party, enemies, rest,
+			chosen.stitched_id, 3 if reverse else 0, 0 if reverse else 3)
+		_check(committed.ok and committed.halves.size() == 2 and c.deck.energy == 1
+			and c.deck.discard_pile == [chosen.stitched_id], "Switchback stitched: real atomic commit, one payment/discard")
+		if not committed.ok:
+			continue
+		var before := _switchback_state(c)
+		var enemy_before := enemies.get_enemies()
+		var rest_before := rest.get_snapshot()
+		var results: Array = c.quilt.observe_confirmed_stitched_play("half0",
+			"seamstress" if reverse else "warden", "half1", "warden" if reverse else "seamstress")
+		_check(results == [{"ok": true, "triggered": false, "block_granted": 0},
+			{"ok": true, "triggered": not reverse, "block_granted": 0 if reverse else 2}],
+			"Switchback stitched: exact ordered half results")
+		var expected: Dictionary = before.combat.duplicate(true)
+		expected.heroes[1].block += 0 if reverse else 2
+		var after := _switchback_state(c)
+		_check(after.combat == expected and after.wardrobe == before.wardrobe and after.torn == before.torn
+			and after.quilt == before.quilt and enemies.get_enemies() == enemy_before
+			and rest.get_snapshot() == rest_before, "Switchback stitched: only eligible wearer Block changes")
+		_check(after.switchback.prev_owner == ("warden" if reverse else "seamstress")
+			and after.switchback.receipts_observed == ["half0", "half1"]
+			and after.switchback.consumed == not reverse, "Switchback stitched: ordered pointer and latch")
+		before = _switchback_state(c)
+		results = c.quilt.observe_confirmed_stitched_play("half0", "warden", "half1", "seamstress")
+		_check(not results[0].ok and not results[1].ok and _switchback_state(c) == before,
+			"Switchback stitched: duplicate halves wholly inert")
+		_check(c.quilt.record_confirmed_stitched_play("warden", "seamstress").ok,
+			"Switchback coexistence: independent Quilt owners credited")
+		_check(support.play_card(c.deck, c.party, "tinker_tune_up"),
+			"Switchback coexistence: genuine free Tinker play commits")
+		_switchback_observe(c, "tinker", "tinker", 0)
+		var quilt_before := _blocks(c.party)
+		var award: Dictionary = c.quilt.record_confirmed_play("tinker")
+		_check(award == {"ok": true, "triggered": true, "drawn": 1},
+			"Switchback coexistence: original Quilt reward still draws exactly one")
+		var quilt_after := _blocks(c.party)
+		for id in quilt_before:
+			_check(quilt_after[id] == quilt_before[id] + 3, "Switchback coexistence: exact original party Block")
+		# Tinker's real play sets up a second eligible transition in forward
+		# order; reverse order has not consumed its entitlement yet.
+		_switchback_play(c, "seamstress_stitch_up", "later", "seamstress", 2 if reverse else 0, 3)

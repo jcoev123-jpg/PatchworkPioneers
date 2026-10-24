@@ -5,6 +5,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_authored_switchback()
 	_test_slots_and_replacement()
 	_test_rest_moves_and_swaps()
 	_test_torn_mend_and_rest()
@@ -60,6 +61,73 @@ func _definitions() -> Array:
 		{"id": "quilted_coat", "slot": "COAT"},
 		{"id": "coat_extra", "slot": "COAT"}
 	]
+
+
+func _test_authored_switchback() -> void:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw is Array, "authored M04 patch catalog parses")
+	if not raw is Array:
+		return
+	var expected := {
+		"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1},
+		"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1},
+		"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block",
+			"amount": 2, "once_per_player_turn": true},
+	}
+	var counts := {}
+	var definitions := []
+	for entry in raw:
+		_check(entry is Dictionary and entry.has("id") and entry.has("slot"),
+			"catalog entry has wardrobe metadata")
+		if not entry is Dictionary or not entry.has("id") or not entry.has("slot"):
+			continue
+		definitions.append({"id": entry.id, "slot": entry.slot})
+		if not expected.has(entry.id):
+			continue
+		counts[entry.id] = counts.get(entry.id, 0) + 1
+		for key in expected[entry.id]:
+			_check(entry.get(key) == expected[entry.id][key], entry.id + " authored " + key)
+	for id in expected:
+		_check(counts.get(id, 0) == 1, "exactly one authored record for " + id)
+	var attacks := CombatPatchAttackRules.new()
+	_check(attacks._valid_catalog(raw), "attack validator coexists with authored non-attack patch")
+	for id in ["button_eye", "pincushion_arm"]:
+		var absent: Array = raw.filter(func(entry): return entry.id != id)
+		_check(not attacks._valid_catalog(absent), "attack validator still requires " + id)
+		for key in ["slot", "effect", "amount"]:
+			var malformed: Array = raw.duplicate(true)
+			for entry in malformed:
+				if entry.id == id:
+					entry[key] = "invalid"
+			_check(not attacks._valid_catalog(malformed), "attack validator rejects malformed " + id + " " + key)
+	var duplicate: Array = raw.duplicate(true)
+	duplicate.append(raw[0].duplicate(true))
+	_check(not attacks._valid_catalog(duplicate) and not attacks._valid_catalog([])
+		and not attacks._valid_catalog({}) and not attacks._valid_catalog([{}]),
+		"attack validator preserves duplicate/missing/malformed rejection")
+	var heroes := _party()
+	_check(not RunPatchWardrobe.new(heroes, ["switchback_button"], raw, 0).is_valid(),
+		"wardrobe rejects full effect definitions; metadata must be normalized")
+	var wardrobe := RunPatchWardrobe.new(heroes, ["switchback_button"], definitions, 0)
+	_check(wardrobe.is_valid(), "wardrobe accepts actual catalog id/slot projection")
+	_reject(wardrobe, "Switchback cannot occupy ARM", func(): return wardrobe.sew(
+		"switchback_button", "warden", "ARM", "wrong_slot", wardrobe.get_snapshot()))
+	_check(_sew(wardrobe, "switchback_button", "warden", "HEAD", "switchback").ok,
+		"authored Switchback sews onto HEAD")
+	var before := wardrobe.get_snapshot()
+	var torn := RunTornMending.new(heroes)
+	var active := wardrobe.project_active(torn.read_state())
+	_check(active.ok and active.active.warden == ["switchback_button"],
+		"living wearer projects authored Switchback")
+	var start: Array = torn.read_state().heroes
+	var end := start.duplicate(true)
+	end[0].hp = 0
+	_check(torn.observe_battle_end("switchback_tear", start, end).ok,
+		"genuine tear commits before testing inactive projection")
+	active = wardrobe.project_active(torn.read_state())
+	_check(active.ok and active.active.warden == [] and wardrobe.get_snapshot() == before,
+		"tear masks Switchback without changing its worn slot or resources")
 
 
 func _owned() -> Array:

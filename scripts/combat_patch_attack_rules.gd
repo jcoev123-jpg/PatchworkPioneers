@@ -218,18 +218,25 @@ func _get_canonical_card_definition(card_id: String) -> Dictionary:
 
 
 func _valid_catalog(raw: Variant) -> bool:
-	if typeof(raw) != TYPE_ARRAY or raw.size() != EFFECTS.size():
+	if typeof(raw) != TYPE_ARRAY:
 		return false
 	var seen := {}
 	for entry in raw:
-		if typeof(entry) != TYPE_DICTIONARY or entry.size() != 4:
+		if typeof(entry) != TYPE_DICTIONARY:
 			return false
 		var id: Variant = entry.get("id")
-		if typeof(id) != TYPE_STRING or not EFFECTS.has(id) or seen.has(id):
+		if typeof(id) != TYPE_STRING or id.is_empty() or id != id.strip_edges() or seen.has(id):
+			return false
+		seen[id] = true
+		# Other services own additional catalog powers; validate our required
+		# entries exactly without imposing a total on this shared catalog.
+		if not EFFECTS.has(id):
+			continue
+		if entry.size() != 4:
 			return false
 		var expected: Dictionary = EFFECTS[id]
 		for key in expected:
-			if not entry.has(key) or entry[key] != expected[key]:
+			if not entry.has(key):
 				return false
 			# JSON.parse_string decodes JSON numbers as floating-point values.
 			if key == "amount":
@@ -237,8 +244,12 @@ func _valid_catalog(raw: Variant) -> bool:
 					return false
 			elif typeof(entry[key]) != typeof(expected[key]):
 				return false
-		seen[id] = true
-	return seen.size() == EFFECTS.size()
+			if entry[key] != expected[key]:
+				return false
+	for id in EFFECTS:
+		if not seen.has(id):
+			return false
+	return true
 
 
 static func _valid_support_catalog(raw: Variant) -> bool:
