@@ -22,25 +22,47 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.094, 0.141, 0.172, 1)
 
+[node name="ResultBackdropArt" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="FeltMat" type="PanelContainer" parent="."]
+layout_mode = 1
+anchor_left = 0.1075
+anchor_top = 0.0278
+anchor_right = 0.8925
+anchor_bottom = 0.9722
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
 [node name="PaperPanel" type="PanelContainer" parent="."]
 layout_mode = 1
 anchor_left = 0.12
-anchor_top = 0.10
+anchor_top = 0.05
 anchor_right = 0.88
-anchor_bottom = 0.90
+anchor_bottom = 0.95
 grow_horizontal = 2
 grow_vertical = 2
 
 [node name="ContentMargin" type="MarginContainer" parent="PaperPanel"]
 layout_mode = 2
 theme_override_constants/margin_left = 40
-theme_override_constants/margin_top = 20
+theme_override_constants/margin_top = 14
 theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 20
+theme_override_constants/margin_bottom = 14
 
 [node name="ResultContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 6
 alignment = 1
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
@@ -49,13 +71,13 @@ text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
 
 [node name="ResultTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 58)
+custom_minimum_size = Vector2(0, 60)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="ResultDescription" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 48)
+custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
@@ -102,7 +124,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 5
 
 [node name="ReturnButton" type="Button" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 54)
+custom_minimum_size = Vector2(0, 52)
 layout_mode = 2
 size_flags_horizontal = 4
 focus_mode = 2

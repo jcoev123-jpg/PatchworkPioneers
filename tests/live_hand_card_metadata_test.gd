@@ -718,6 +718,73 @@ func _keyword_explanations(metadata) -> void:
 		["tinker_spool_launcher", "tinker_spool_launcher_plus"],
 		["tinker_snip_the_seam", "tinker_snip_the_seam_plus"],
 	]
+	var guarding_cases := [
+		["warden_draw_fire", "warden_draw_fire_plus", 6, 8],
+	]
+	for g_entry in guarding_cases:
+		var base_id: String = str(g_entry[0])
+		var plus_id: String = str(g_entry[1])
+		var base_definition: Dictionary = metadata.definition(base_id)
+		var plus_definition: Dictionary = metadata.definition(plus_id)
+		_check(not base_definition.is_empty() and not plus_definition.is_empty(),
+			"Guarding catalog and upgrade exist: " + base_id)
+		var base_effects: Dictionary = base_definition.get("effects", {})
+		var plus_effects: Dictionary = plus_definition.get("effects", {})
+		_check(base_effects.has("guarding") and plus_effects.has("guarding"),
+			"Guarding catalogs really author guarding on base and +: " + base_id)
+		_check(int(base_effects.get("block", -1)) == int(g_entry[2])
+			and int(plus_effects.get("block", -1)) == int(g_entry[3]),
+			"Guarding base/+ block comes from the catalogs: " + base_id)
+		for pair in [[base_id, base_definition, g_entry[2]], [plus_id, plus_definition, g_entry[3]]]:
+			var card_id: String = str(pair[0])
+			var definition: Dictionary = pair[1]
+			var expected_block: int = int(pair[2])
+			var text: String = metadata.base_effect_text(card_id)
+			_check(text.contains("BASE gain %d Block" % expected_block),
+				"Guarding card keeps its exact authored block: " + card_id)
+			_check(text.contains("BASE Guard: enemy attacks aimed at other living heroes are redirected to the living Warden until your next turn"),
+				"Guarding card explains precise redirect mechanics: " + card_id)
+			var lines := text.split("\n")
+			var header := "%s; %s; %d energy" % [str(definition.get("display_name", "")),
+				str(definition.get("owner", "")).capitalize(), int(definition.get("cost", -1))]
+			_check(lines.has(header), "Guarding card keeps exact cost header: " + card_id)
+			_check(lines.has("Self"), "Guarding card targets self: " + card_id)
+
+	var thorns_cases := [
+		["warden_counter_stitch", "warden_counter_stitch_plus", 5, 7, 3, 4],
+	]
+	for t_entry in thorns_cases:
+		var base_id: String = str(t_entry[0])
+		var plus_id: String = str(t_entry[1])
+		var base_definition: Dictionary = metadata.definition(base_id)
+		var plus_definition: Dictionary = metadata.definition(plus_id)
+		_check(not base_definition.is_empty() and not plus_definition.is_empty(),
+			"Thorns catalog and upgrade exist: " + base_id)
+		var base_effects: Dictionary = base_definition.get("effects", {})
+		var plus_effects: Dictionary = plus_definition.get("effects", {})
+		_check(base_effects.has("thorns") and plus_effects.has("thorns"),
+			"Thorns catalogs really author thorns on base and +: " + base_id)
+		_check(int(base_effects.get("block", -1)) == int(t_entry[2])
+			and int(plus_effects.get("block", -1)) == int(t_entry[3]),
+			"Thorns base/+ block comes from the catalogs: " + base_id)
+		_check(int(base_effects.get("thorns", -1)) == int(t_entry[4])
+			and int(plus_effects.get("thorns", -1)) == int(t_entry[5]),
+			"Thorns base/+ amounts come from the catalogs: " + base_id)
+		for pair in [[base_id, base_definition, t_entry[2], t_entry[4]], [plus_id, plus_definition, t_entry[3], t_entry[5]]]:
+			var card_id: String = str(pair[0])
+			var definition: Dictionary = pair[1]
+			var expected_block: int = int(pair[2])
+			var expected_thorns: int = int(pair[3])
+			var text: String = metadata.base_effect_text(card_id)
+			_check(text.contains("BASE gain %d Block" % expected_block),
+				"Thorns card keeps its exact authored block: " + card_id)
+			_check(text.contains("BASE gain %d Thorns: an enemy attacking Warden takes %d damage until your next turn" % [expected_thorns, expected_thorns]),
+				"Thorns card explains precise retaliation mechanics: " + card_id)
+			var lines := text.split("\n")
+			var header := "%s; %s; %d energy" % [str(definition.get("display_name", "")),
+				str(definition.get("owner", "")).capitalize(), int(definition.get("cost", -1))]
+			_check(lines.has(header), "Thorns card keeps exact cost header: " + card_id)
+			_check(lines.has("Self"), "Thorns card targets self: " + card_id)
 	for entry in unravel_cases:
 		var base_id: String = str(entry[0])
 		var plus_id: String = str(entry[1])

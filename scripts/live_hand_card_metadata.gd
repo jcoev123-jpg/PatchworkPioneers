@@ -471,9 +471,9 @@ func _effect_lines(card_id: String, definition: Dictionary, precise: bool) -> Ar
 		parts.append("BASE Pin %s: a different hero's next attack gets +%d damage" % [recipient, pin_bonus]
 			if precise else "Pin")
 	if effects.has("guarding"):
-		parts.append("BASE Guard: enemy attacks are redirected to this hero" if precise else "Guard")
+		parts.append("BASE Guard: enemy attacks aimed at other living heroes are redirected to the living Warden until your next turn" if precise else "Guard")
 	if effects.has("thorns"):
-		parts.append("BASE gain %d Thorns until your next turn" % int(effects["thorns"])
+		parts.append("BASE gain %d Thorns: an enemy attacking Warden takes %d damage until your next turn" % [int(effects["thorns"]), int(effects["thorns"])]
 			if precise else "Thorns %d" % int(effects["thorns"]))
 	if effects.has("draw"):
 		var draw_count: int = int(effects["draw"])

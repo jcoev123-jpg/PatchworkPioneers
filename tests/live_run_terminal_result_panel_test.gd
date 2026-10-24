@@ -7,6 +7,9 @@ const HEROES := "res://data/heroes/starter_party.json"
 const BOSS := "res://data/enemies/boss.json"
 const FIGHT := "res://data/enemies/starter_enemies.json"
 const STARTER_DECK := "res://data/cards/starter_deck.json"
+## Controlled synthetic path for the guarded-fallback branch. It is never
+## asserted that any committed art is absent: this name simply never resolves.
+const MISSING_ART := "res://assets/paper/backgrounds/__cycle178_missing_art__.png"
 ## Authored patch metadata for the genuine wardrobe projection; the same
 ## fixture shapes used by tests/run_signature_summary_test.gd.
 const PATCH_DEFINITIONS := [
@@ -389,6 +392,17 @@ func _defeat() -> Dictionary:
 	return {"ctx": ctx, "battle": battle}
 
 
+func _connected_draws(target: Control, method: String) -> int:
+	if target == null:
+		return 0
+	var total := 0
+	for entry in target.draw.get_connections():
+		var callable: Callable = entry.get("callable", Callable())
+		if callable.is_valid() and callable.get_method() == method:
+			total += 1
+	return total
+
+
 func _validate_view(status: String, label: String) -> void:
 	_check(panel.has_open_result() and panel.is_visible_in_tree(),
 		label + " mounted and visible")
@@ -411,6 +425,47 @@ func _validate_view(status: String, label: String) -> void:
 	var backdrop := panel.get_node("SlateBackdrop") as ColorRect
 	_check(backdrop != null and backdrop.color.get_luminance() < 0.3,
 		label + " dark slate ColorRect covers background")
+	var stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
+	_check(stage != null and stage.texture != null and stage.is_visible_in_tree(),
+		label + " established illustrated camp stage is mounted and visible")
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	if stage != null:
+		_check(stage.get_index() < panel.paper_panel.get_index()
+			and backdrop != null and stage.get_index() > backdrop.get_index(),
+			label + " illustration is a full-rect sibling before the paper")
+		_check(stage.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and stage.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
+			and stage.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_COVERED,
+			label + " inert illustration preserves the picture aspect while covering")
+		_check(stage.get_global_rect() == screen,
+			label + " illustration covers the whole 1280x720 stage")
+		if stage.texture != null:
+			_check(stage.texture.resource_path == LiveRunTerminalResultPanel.CAMP_BACKDROP,
+				label + " only the already-imported camp picture is used")
+	var felt := panel.get_node_or_null("FeltMat") as PanelContainer
+	var felt_box := (felt.get_theme_stylebox("panel") as StyleBoxFlat) if felt != null else null
+	_check(felt != null and felt.is_visible_in_tree()
+		and felt.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and felt_box != null and felt_box.bg_color.get_luminance() < 0.3
+		and felt.get_global_rect().encloses(panel.paper_panel.get_global_rect())
+		and felt.get_index() < panel.paper_panel.get_index(),
+		label + " dark felt mat lies behind and around the parchment")
+	_check(_connected_draws(panel.paper_panel, "_draw_paper_stitches") >= 1
+		and _connected_draws(felt, "_draw_felt_stitches") >= 1,
+		label + " conspicuous stitched perimeter is drawn on parchment and felt")
+	_check(paper != null and felt_box != null
+		and absf(LiveRunTerminalResultPanel.PAPER_THREAD.get_luminance()
+			- paper.bg_color.get_luminance()) > 0.3
+		and absf(LiveRunTerminalResultPanel.FELT_THREAD.get_luminance()
+			- felt_box.bg_color.get_luminance()) > 0.3,
+		label + " seam threads contrast with both parchment and felt")
+	_check(panel.title_label.get_theme_stylebox("normal") is StyleBoxFlat
+		and panel.summary_label.get_theme_stylebox("normal") is StyleBoxFlat
+		and panel.title_label.get_theme_font_size("font_size")
+			> panel.description_label.get_theme_font_size("font_size")
+		and panel.description_label.get_theme_font_size("font_size")
+			>= panel.summary_label.get_theme_font_size("font_size"),
+		label + " sewn title plaque, bounded ledger and descending text hierarchy")
 	_check(panel.top_stitches.text.contains("×") and panel.bottom_stitches.text.contains("×")
 		and panel.top_stitches.get_theme_color("font_color") != Color.TRANSPARENT,
 		label + " visible decorative running stitches")
@@ -420,9 +475,12 @@ func _validate_view(status: String, label: String) -> void:
 	_check(button.get_theme_stylebox("normal") is StyleBoxFlat
 		and button.get_theme_stylebox("focus") is StyleBoxFlat,
 		label + " procedural cardboard button and focus ring")
-	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
 	var controls: Array = [panel.paper_panel, panel.title_label, panel.description_label,
 		panel.top_stitches, panel.bottom_stitches, button, panel.summary_label]
+	if stage != null:
+		controls.append(stage)
+	if felt != null:
+		controls.append(felt)
 	if panel.stitched_section.visible:
 		controls.append(panel.stitched_section)
 		controls.append(panel.stitched_heading)
@@ -482,6 +540,61 @@ func _settle_active_win(ctx: Dictionary, battle: Dictionary) -> void:
 	_check(ctx["latch"].settle_current_battle(), "intermediate Fight victory settled")
 
 
+## The illustrated stage is optional presentation. A deliberately missing
+## picture must remove only that layer: the settled result, its exact text, the
+## felt/paper framing and the sole Return action all stay intact, and no run
+## state, currency or RNG moves. A controlled synthetic path is used, so this
+## never asserts that any committed art file is absent.
+func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: String) -> void:
+	var before := _snapshot(ctx, battle)
+	var stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
+	_check(stage != null and stage.texture != null and stage.is_visible_in_tree(),
+		label + " starts from the real illustrated stage")
+	if stage == null:
+		return
+	var title := panel.title_label.text
+	var description := panel.description_label.text
+	var summary := panel.summary_label.text
+	var felt := panel.get_node_or_null("FeltMat") as PanelContainer
+	var felt_box := (felt.get_theme_stylebox("panel") as StyleBoxFlat) if felt != null else null
+	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(LiveRunTerminalResultPanel.guarded_texture(MISSING_ART) == null
+		and LiveRunTerminalResultPanel.guarded_texture("") == null,
+		label + " guarded picture lookup fails closed for empty and missing paths")
+	_check(not panel.apply_backdrop_art(MISSING_ART),
+		label + " missing picture reports no illustrated layer")
+	await _frames()
+	_check(not stage.visible and stage.texture == null and not stage.is_visible_in_tree(),
+		label + " only the picture layer disappears")
+	_check(panel.is_visible_in_tree() and panel.has_open_result()
+		and panel.title_label.text == title and panel.description_label.text == description
+		and panel.summary_label.text == summary,
+		label + " exact result text survives the missing picture")
+	_check(not panel.return_button.disabled and panel.return_button.is_visible_in_tree(),
+		label + " sole Return action stays available without the picture")
+	var slate := panel.get_node("SlateBackdrop") as ColorRect
+	_check(slate.is_visible_in_tree() and slate.color.get_luminance() < 0.3,
+		label + " slate keeps the stage dark without the picture")
+	_check(felt != null and felt.is_visible_in_tree() and felt_box != null
+		and felt_box.bg_color.get_luminance() < 0.3
+		and paper != null and paper.bg_color.get_luminance() > 0.5
+		and panel.stitched_section.visible == (panel.stitched_rows.get_child_count() > 0),
+		label + " felt and parchment framing stays readable without the picture")
+	_check(_snapshot(ctx, battle) == before,
+		label + " missing picture and stage changes never alter run state or RNG")
+	_check(panel.apply_backdrop_art(LiveRunTerminalResultPanel.CAMP_BACKDROP),
+		label + " the already-imported camp picture remounts")
+	await _frames()
+	_check(stage.visible and stage.is_visible_in_tree() and stage.texture != null
+		and stage.texture.resource_path == LiveRunTerminalResultPanel.CAMP_BACKDROP,
+		label + " restored illustration is the same existed camp picture")
+	_check(panel.title_label.text == title and panel.description_label.text == description
+		and panel.summary_label.text == summary and not panel.return_button.disabled,
+		label + " restoring the picture never rewrites the settled result")
+	_check(_snapshot(ctx, battle) == before,
+		label + " remounting the illustrated stage preserves authoritative state")
+
+
 func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> void:
 	var victory_ctx: Dictionary = victory["ctx"]
 	var victory_battle: Dictionary = victory["battle"]
@@ -493,6 +606,7 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_validate_view("Victory", "Boss victory")
 	_check(panel.summary_label.text.begins_with("Battles resolved: %d\n" % victory_settled),
 		"Boss victory shows correct battles resolved count")
+	await _test_missing_backdrop_art(victory_ctx, victory_battle, "Boss victory")
 	var generation := panel._generation
 	var connections := panel.return_button.pressed.get_connections()
 	_check(connections.size() == 1, "only one callback for Return button")
@@ -538,6 +652,7 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_validate_view("Defeat", "party defeat")
 	_check(panel.summary_label.text.begins_with("Battles resolved: %d\n" % defeat_settled),
 		"Party defeat shows correct battles resolved count")
+	await _test_missing_backdrop_art(defeat_ctx, defeat_battle, "party defeat")
 	if old_callback.is_valid():
 		old_callback.call()
 	_check(returns == 1 and not panel.return_button.disabled,

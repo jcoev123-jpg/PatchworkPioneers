@@ -6,6 +6,20 @@ extends Control
 
 signal return_to_title_requested
 
+## The one illustrated stage texture this view may use. It is already imported
+## by the reward panel's sewn camp, so the terminal result joins the established
+## patchwork identity without introducing new art. Resolution is exists-guarded:
+## a missing picture hides only this layer and never the result.
+const CAMP_BACKDROP := "res://assets/paper/backgrounds/reward_camp.png"
+## Conspicuous stitched perimeter: cream thread walked on the dark felt mat and
+## dark thread sewn just inside the parchment's own border.
+const FELT_THREAD := Color("#e6d6b5")
+const PAPER_THREAD := Color("#6b5343")
+const FELT_STITCH_INSET := 8.0
+const PAPER_STITCH_INSET := 6.0
+
+@onready var backdrop_art: TextureRect = $ResultBackdropArt
+@onready var felt_mat: PanelContainer = $FeltMat
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultTitle
 @onready var description_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultDescription
@@ -336,20 +350,48 @@ func _on_return_pressed(generation: int, button: Button) -> void:
 
 
 func _apply_patchwork_style() -> void:
+	_style_felt_stage()
 	var paper := StyleBoxFlat.new()
-	paper.bg_color = Color("#e5d5b5")
-	paper.border_color = Color("#766351")
-	paper.set_border_width_all(6)
-	paper.set_corner_radius_all(14)
-	paper.shadow_color = Color(0.04, 0.07, 0.08, 0.75)
-	paper.shadow_size = 12
+	paper.bg_color = Color("#e8d9ba")
+	paper.border_color = Color("#5a4738")
+	paper.set_border_width_all(5)
+	paper.set_corner_radius_all(12)
+	paper.shadow_color = Color(0.03, 0.05, 0.06, 0.85)
+	paper.shadow_size = 16
 	paper_panel.add_theme_stylebox_override("panel", paper)
+	if paper_panel.draw.get_connections().is_empty():
+		paper_panel.draw.connect(_draw_paper_stitches.bind(paper_panel))
+		paper_panel.resized.connect(paper_panel.queue_redraw)
+	# The outcome is sewn onto its own pale plaque, above a bounded ledger
+	# strip, so the heading, the sentence and the run summary read as three
+	# distinct layers instead of one flat block of text.
+	var plaque := StyleBoxFlat.new()
+	plaque.bg_color = Color("#f4e9d0")
+	plaque.border_color = Color("#6e5a46")
+	plaque.set_border_width_all(3)
+	plaque.set_corner_radius_all(9)
+	plaque.content_margin_left = 26
+	plaque.content_margin_right = 26
+	plaque.content_margin_top = 4
+	plaque.content_margin_bottom = 6
+	title_label.add_theme_stylebox_override("normal", plaque)
 	title_label.add_theme_color_override("font_color", Color("#24343b"))
-	title_label.add_theme_font_size_override("font_size", 48)
-	description_label.add_theme_color_override("font_color", Color("#304046"))
-	description_label.add_theme_font_size_override("font_size", 23)
-	summary_label.add_theme_color_override("font_color", Color("#304046"))
+	title_label.add_theme_font_size_override("font_size", 50)
+	description_label.add_theme_color_override("font_color", Color("#33454b"))
+	description_label.add_theme_font_size_override("font_size", 21)
+	var ledger := StyleBoxFlat.new()
+	ledger.bg_color = Color("#f0e5cd")
+	ledger.border_color = Color("#a08a6d")
+	ledger.set_border_width_all(2)
+	ledger.set_corner_radius_all(7)
+	ledger.content_margin_left = 18
+	ledger.content_margin_right = 18
+	ledger.content_margin_top = 8
+	ledger.content_margin_bottom = 8
+	summary_label.add_theme_stylebox_override("normal", ledger)
+	summary_label.add_theme_color_override("font_color", Color("#2f4147"))
 	summary_label.add_theme_font_size_override("font_size", 17)
+	summary_label.add_theme_constant_override("line_spacing", 2)
 	stitched_heading.add_theme_color_override("font_color", Color("#28363c"))
 	stitched_heading.add_theme_font_size_override("font_size", 16)
 	var detail_paper := StyleBoxFlat.new()
@@ -370,7 +412,7 @@ func _apply_patchwork_style() -> void:
 		scrollbar.add_theme_stylebox_override(state, grip)
 	for label in [top_stitches, bottom_stitches]:
 		label.add_theme_color_override("font_color", Color("#85715b"))
-		label.add_theme_font_size_override("font_size", 18)
+		label.add_theme_font_size_override("font_size", 16)
 
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var wood := StyleBoxFlat.new()
@@ -400,3 +442,80 @@ func _apply_patchwork_style() -> void:
 	return_button.add_theme_color_override("font_pressed_color", Color("#1e292e"))
 	return_button.add_theme_color_override("font_disabled_color", Color("#302e2d"))
 	return_button.add_theme_font_size_override("font_size", 24)
+
+
+## Dark felt mat framed by a cream running stitch, laid under the parchment.
+## The mat ignores the mouse and draws only in its own felt border, so it never
+## covers the parchment, its text or the sole Return action.
+func _style_felt_stage() -> void:
+	var felt := StyleBoxFlat.new()
+	felt.bg_color = Color("#463b33")
+	felt.border_color = Color("#8a7462")
+	felt.set_border_width_all(2)
+	felt.set_corner_radius_all(18)
+	felt.shadow_color = Color(0.03, 0.05, 0.06, 0.8)
+	felt.shadow_size = 14
+	felt_mat.add_theme_stylebox_override("panel", felt)
+	felt_mat.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if felt_mat.draw.get_connections().is_empty():
+		felt_mat.draw.connect(_draw_felt_stitches.bind(felt_mat))
+		felt_mat.resized.connect(felt_mat.queue_redraw)
+	apply_backdrop_art(CAMP_BACKDROP)
+
+
+## Exists-guarded texture lookup. A missing or unreadable resource returns null
+## instead of a load error, so the optional illustrated layer can simply vanish.
+static func guarded_texture(path: String) -> Texture2D:
+	if path.strip_edges().is_empty() or not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
+
+
+## Mount or remove the illustrated stage. The settled result never depends on
+## this layer: a missing texture only hides the art (and its shade), leaving the
+## slate, felt mat, stitched parchment and every line of the result readable.
+func apply_backdrop_art(path: String) -> bool:
+	if not is_node_ready():
+		return false
+	var texture := guarded_texture(path)
+	backdrop_art.texture = texture
+	backdrop_art.visible = texture != null
+	if texture == null:
+		return false
+	_mount_backdrop_shade()
+	return true
+
+
+## A soft dark wash over the camp picture keeps the cream parchment and its
+## dark ink legible against the brighter art. It lives inside the art node, so
+## hiding the art layer hides the wash with it.
+func _mount_backdrop_shade() -> void:
+	if backdrop_art.get_node_or_null("ResultBackdropShade") != null:
+		return
+	var shade := ColorRect.new()
+	shade.name = "ResultBackdropShade"
+	shade.color = Color(0.05, 0.07, 0.09, 0.3)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backdrop_art.add_child(shade)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+## Dark running stitches around the parchment, inside its border and clear of
+## every content margin.
+func _draw_paper_stitches(canvas: Control) -> void:
+	_stitch_rect(canvas, Rect2(Vector2.ZERO, canvas.size).grow(-PAPER_STITCH_INSET),
+		PAPER_THREAD, 2.5, 9.0)
+
+
+## Cream running stitches on the dark felt mat, framing the parchment.
+func _draw_felt_stitches(canvas: Control) -> void:
+	_stitch_rect(canvas, Rect2(Vector2.ZERO, canvas.size).grow(-FELT_STITCH_INSET),
+		FELT_THREAD, 3.0, 10.0)
+
+
+func _stitch_rect(canvas: CanvasItem, rect: Rect2, color: Color, width: float, dash: float) -> void:
+	var corners: Array[Vector2] = [rect.position, Vector2(rect.end.x, rect.position.y),
+		rect.end, Vector2(rect.position.x, rect.end.y)]
+	for index in range(corners.size()):
+		canvas.draw_dashed_line(corners[index], corners[(index + 1) % corners.size()],
+			color, width, dash)
