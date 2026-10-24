@@ -55,6 +55,9 @@ const HERO_ROW_BG := Color("#f2e5cb")
 const HERO_ROW_BORDER := Color("#8d7560")
 const HERO_NAME_INK := Color("#28363c")
 const HERO_DETAIL_INK := Color("#334750")
+## The permanent identity of the sole Return action, re-resolved at handoff time
+## so a substituted or reparented button can never receive the player's keyboard.
+const RETURN_BUTTON_PATH := "PaperPanel/ContentMargin/ResultContent/ReturnButton"
 
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
@@ -141,6 +144,10 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 		_button_connection = _on_return_pressed.bind(_generation, return_button)
 		return_button.pressed.connect(_button_connection)
 	visible = true
+	# Only an authorized result is handed the keyboard, and only once the opened
+	# view has genuinely been laid out and drawn.
+	if _can_return:
+		_defer_return_focus()
 	return true
 
 
@@ -628,6 +635,34 @@ func has_open_result() -> bool:
 ## Read-only presentation state, not an authority for combat or settlement.
 func get_presented_status() -> String:
 	return _presented_status
+
+
+## Hand the keyboard to the one authorized action only after the opened result
+## has genuinely been laid out and drawn: an immediate grab_focus() can be lost
+## while the freshly shown view is still being laid out. The request is tagged
+## with the current generation, so a close or a newer open makes it inert
+## instead of focusing, or reactivating, a stale or closed action.
+func _defer_return_focus() -> void:
+	_take_return_focus.bind(_generation).call_deferred()
+
+
+## The deferred half of that handoff. Every guard is re-checked at execution
+## time: a refused, closed, hidden, disabled, unreachable or superseded result
+## is never focused, and an already-spent action is never reactivated.
+func _take_return_focus(generation: int) -> void:
+	if generation != _generation or not _is_open or not _can_return or _return_requested:
+		return
+	if not is_inside_tree() or not is_visible_in_tree():
+		return
+	var button := get_node_or_null(RETURN_BUTTON_PATH) as Button
+	if button == null or button != return_button or not is_instance_valid(return_button):
+		return
+	if not return_button.is_inside_tree() or not return_button.is_visible_in_tree():
+		return
+	if return_button.disabled or return_button.focus_mode != Control.FOCUS_ALL:
+		return
+	if not return_button.has_focus():
+		return_button.grab_focus()
 
 
 func _on_return_pressed(generation: int, button: Button) -> void:

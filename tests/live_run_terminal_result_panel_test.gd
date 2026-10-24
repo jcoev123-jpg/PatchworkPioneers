@@ -745,6 +745,8 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	var victory_settled: int = (victory_latch.get_state().get("settled_node_ids") as Array).size()
 	_check(panel.open_result(victory_latch), "accepts settled Boss VICTORY")
 	await _frames()
+	_check(panel.return_button.has_focus() and panel.return_button.is_visible_in_tree(),
+		"AC1: settled Boss victory hands Return real keyboard focus with no test grab_focus")
 	_validate_view("Victory", "Boss victory")
 	var victory_stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
 	_check(victory_stage != null and victory_stage.texture != null
@@ -821,9 +823,8 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 		old_callback.call()
 	_check(returns == 1 and not panel.return_button.disabled,
 		"stale previous-generation callback cannot spend reopened result")
-	panel.return_button.grab_focus()
-	await _frames()
-	_check(panel.return_button.has_focus(), "Return button receives actual keyboard focus")
+	_check(panel.return_button.has_focus(),
+		"AC1: the reopened defeat is keyboard-ready without a test grab_focus")
 	await _key(KEY_ENTER)
 	_check(returns == 2 and panel.return_button.disabled,
 		"real focused Enter emits exactly one new request")
@@ -835,9 +836,8 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.open_result(defeat_latch), "same settled outcome can reopen only after close")
 	await _frames()
 	_validate_view("Defeat", "reopened defeat")
-	panel.return_button.grab_focus()
-	await _frames()
-	_check(panel.return_button.has_focus(), "reopened Space action has real focus")
+	_check(panel.return_button.has_focus(),
+		"AC1: fresh reopened presentation is keyboard-ready without a test grab_focus")
 	await _key(KEY_SPACE)
 	_check(returns == 3 and panel.return_button.disabled,
 		"real focused Space emits exactly one request for fresh presentation")
@@ -2107,6 +2107,207 @@ func _test_torn_wearer_keeps_patches(defeat: Dictionary) -> void:
 	_check(panel.hero_rows.get_child_count() == 0, "AC1: closing the torn wearer clears its ribbons")
 
 
+## AC1/AC2/AC3 of the settled-result keyboard handoff: a genuine settled result
+## gives its one authorized action real keyboard focus after the deferred UI
+## frame, while a refused, closed, hidden, disabled, unauthenticated, superseded
+## or spent result never receives focus and never returns. Runs after the older
+## suites, whose exact return counts stay independent of this one.
+func _test_deferred_keyboard_focus(victory: Dictionary, defeat: Dictionary) -> void:
+	var victory_latch: RunActBattleOutcome = victory["ctx"]["latch"]
+	var defeat_latch: RunActBattleOutcome = defeat["ctx"]["latch"]
+	var victory_state := _snapshot(victory["ctx"], victory["battle"])
+	var defeat_state := _snapshot(defeat["ctx"], defeat["battle"])
+	var earlier := returns
+	_install_run({"deck": _starter_deck(), "descriptors": {}, "next_stitch_id": 1})
+
+	# AC1: an authentic settled floor-12 Boss Victory.
+	panel.return_button.release_focus()
+	_check(not panel.return_button.has_focus(), "AC1: Return starts genuinely unfocused")
+	_check(panel.open_result(victory_latch), "AC1: settled Boss Victory opens for keyboard access")
+	_check(not panel.return_button.disabled and not panel.return_button.has_focus(),
+		"AC1: the enabled action waits for the deferred UI frame instead of focusing synchronously")
+	await _frames()
+	_check(panel.return_button.has_focus() and panel.return_button.is_visible_in_tree()
+		and not panel.return_button.disabled,
+		"AC1: enabled Return acquires real keyboard focus with no test grab_focus")
+	await _key(KEY_ENTER)
+	_check(returns == earlier + 1 and panel.return_button.disabled,
+		"AC1: physical Enter emits exactly one return request and disables the action")
+	panel.return_button.pressed.emit()
+	await _key(KEY_ENTER)
+	_check(returns == earlier + 1, "AC1: the spent victory action cannot replay")
+	_check(_snapshot(victory["ctx"], victory["battle"]) == victory_state,
+		"AC1: keyboard return mutates no combat, map, latch or RNG state")
+	panel.close_result()
+	_check(not panel.return_button.has_focus() and panel.return_button.disabled,
+		"AC1: close releases the focus it handed over")
+
+	# AC1: the witnessed all-heroes-downed Defeat, now through Space.
+	panel.return_button.release_focus()
+	_check(panel.open_result(defeat_latch), "AC1: witnessed party Defeat opens for keyboard access")
+	await _frames()
+	_check(panel.return_button.has_focus(),
+		"AC1: the defeat also hands Return real keyboard focus by itself")
+	await _key(KEY_SPACE)
+	_check(returns == earlier + 2 and panel.return_button.disabled,
+		"AC1: physical Space emits exactly one return request and disables the action")
+	_check(_snapshot(defeat["ctx"], defeat["battle"]) == defeat_state,
+		"AC1: the Space return leaves the witnessed defeat, map and RNG untouched")
+	panel.close_result()
+
+	# AC2: a genuine pending ACTIVE latch is refused and never focused.
+	var pending_ctx := _context(7711)
+	var pending_map: RunMap = pending_ctx["map"]
+	var pending_opening := ""
+	for choice in pending_map.get_legal_choices():
+		if pending_map.get_node(choice).get("type") == "Fight":
+			pending_opening = choice
+			break
+	_check(not pending_opening.is_empty(), "AC2: a genuine opening Fight exists for the pending latch")
+	if not pending_opening.is_empty():
+		_select(pending_ctx, pending_opening)
+		var pending_battle := _battle(FIGHT)
+		var pending_latch: RunActBattleOutcome = pending_ctx["latch"]
+		_check(pending_latch.begin_current_battle(pending_battle["result"]),
+			"AC2: a genuine pending ACTIVE battle begins")
+		var pending_before := _snapshot(pending_ctx, pending_battle)
+		panel.return_button.release_focus()
+		_check(not panel.open_result(pending_latch), "AC2: the pending ACTIVE latch is refused")
+		await _frames()
+		_check(not panel.return_button.has_focus() and panel.return_button.disabled,
+			"AC2: a refused pending latch gets neither focus nor an enabled action")
+		panel._take_return_focus.call_deferred(panel._generation)
+		await _frames()
+		_check(not panel.has_open_result() and not panel.return_button.has_focus()
+			and returns == earlier + 2,
+			"AC2: a forced deferred handoff cannot reach a refused result")
+		panel.return_button.pressed.emit()
+		_check(returns == earlier + 2 and _snapshot(pending_ctx, pending_battle) == pending_before,
+			"AC2: the refused focus attempt returns nothing and mutates no combat or RNG")
+
+	# AC2: an unavailable run signature keeps the action closed to the keyboard.
+	var ledger_before := _app_snapshot()
+	app.run_next_stitch_id = 0
+	panel.return_button.release_focus()
+	_check(panel.open_result(victory_latch), "AC2: an unavailable signature still shows the outcome")
+	await _frames()
+	_check(panel.return_button.disabled and panel.return_button.focus_mode == Control.FOCUS_NONE
+		and not panel.return_button.has_focus(),
+		"AC2: an unauthenticated signature never focuses or enables Return")
+	panel._take_return_focus.call_deferred(panel._generation)
+	await _frames()
+	_check(not panel.return_button.has_focus() and returns == earlier + 2,
+		"AC2: a forced deferred handoff cannot focus an unauthenticated result")
+	panel.close_result()
+	app.run_next_stitch_id = ledger_before.cursor
+	_check(_app_snapshot() == ledger_before,
+		"AC2: the shadowed focus attempt repairs, spends and scatters nothing")
+
+	# AC2: a valid result closed before its queued handoff ever runs.
+	panel.return_button.release_focus()
+	_check(panel.open_result(defeat_latch), "AC2: a valid result queues its deferred handoff")
+	panel.close_result()
+	await _frames()
+	_check(not panel.return_button.has_focus() and panel.return_button.disabled
+		and not panel.has_open_result() and returns == earlier + 2,
+		"AC2: a handoff queued before close never focuses or activates the closed action")
+
+	# AC2: hidden panel and disabled action are unreachable for a live handoff.
+	panel.return_button.release_focus()
+	_check(panel.open_result(defeat_latch), "AC2: a valid defeat opens for the hidden/disabled probes")
+	await _frames()
+	_check(panel.return_button.has_focus(), "AC2: the hidden/disabled probe starts keyboard-ready")
+	panel.hide()
+	await _frames()
+	_check(not panel.return_button.is_visible_in_tree() and not panel.return_button.has_focus(),
+		"AC2: hiding the result makes its action unreachable and releases focus")
+	panel._take_return_focus.call_deferred(panel._generation)
+	await _frames()
+	_check(not panel.return_button.has_focus() and returns == earlier + 2,
+		"AC2: a deferred handoff cannot focus a hidden result")
+	panel.show()
+	await _frames()
+	panel.return_button.release_focus()
+	panel.return_button.disabled = true
+	panel._take_return_focus.call_deferred(panel._generation)
+	await _frames()
+	_check(not panel.return_button.has_focus() and returns == earlier + 2,
+		"AC2: a deferred handoff cannot focus or activate a disabled Return")
+	panel.return_button.disabled = false
+	panel.close_result()
+
+	# AC3: valid -> close -> reopen on a new generation, then a real keyboard
+	# Return, with the retained stitched-card list still independently usable.
+	var sewn := _stitch_pairs(_starter_deck(), [
+		["warden_strike", "seamstress_prick"],
+		["warden_brace", "seamstress_mend"],
+		["warden_shield_bash", "tinker_pop_shot"],
+	], 9)
+	_check(not sewn.is_empty(), "AC3: the generation fixture commits three genuine stitches")
+	if sewn.is_empty():
+		return
+	var wardrobe := _wardrobe(sewn["deck"], [
+		["button_eye", "warden", "HEAD", "focus_sew_warden"],
+		["pincushion_arm", "seamstress", "ARM", "focus_sew_seamstress"],
+		["quilted_coat", "tinker", "COAT", "focus_sew_tinker"],
+	])
+	_install_run(sewn, wardrobe)
+	var app_before := _app_snapshot()
+	var run_before := _snapshot(defeat["ctx"], defeat["battle"])
+	panel.return_button.release_focus()
+	_check(panel.open_result(defeat_latch), "AC3: a stitched valid defeat opens with a queued handoff")
+	await _frames()
+	_check(panel.stitched_rows.get_child_count() == 3 and panel.return_button.has_focus(),
+		"AC3: the stitched result is retained and keyboard-ready")
+	var stale_generation := panel._generation
+	panel.close_result()
+	_check(not panel.return_button.has_focus() and panel.stitched_rows.get_child_count() == 0,
+		"AC3: close invalidates the handoff and removes the retained rows")
+	_check(panel.open_result(victory_latch),
+		"AC3: a different settled result reopens on a new generation")
+	await _frames()
+	_check(panel._generation != stale_generation and panel.return_button.has_focus(),
+		"AC3: the reopened result is keyboard-ready on its own generation")
+	var scroll := panel.stitched_scroll
+	_check(panel.stitched_rows.get_child_count() == 3 and scroll.is_visible_in_tree()
+		and scroll.focus_mode == Control.FOCUS_ALL,
+		"AC3: the retained stitched-card list stays independently focusable")
+	scroll.scroll_vertical = 0
+	await _frames()
+	scroll.grab_focus()
+	await _frames()
+	_check(scroll.has_focus() and not panel.return_button.has_focus(),
+		"AC3: the retained list takes real keyboard focus away from Return")
+	await _key(KEY_DOWN)
+	_check(scroll.scroll_vertical > 0, "AC3: Down key still scrolls the retained list")
+	await _key(KEY_END)
+	_check(scroll.scroll_vertical >= int(scroll.get_v_scroll_bar().max_value - scroll.size.y) - 1,
+		"AC3: End key still reaches the last retained row")
+	panel._take_return_focus.call_deferred(stale_generation)
+	await _frames()
+	_check(scroll.has_focus() and not panel.return_button.has_focus() and returns == earlier + 2,
+		"AC3: the earlier generation can neither steal focus nor request a return")
+	scroll.release_focus()
+	panel.close_result()
+	await _frames()
+	_check(panel.open_result(defeat_latch),
+		"AC3: the valid result reopens once more on a newer generation")
+	await _frames()
+	_check(panel.return_button.has_focus() and panel._generation != stale_generation,
+		"AC3: the reopened valid result becomes keyboard-ready with no test grab_focus")
+	await _key(KEY_ENTER)
+	_check(returns == earlier + 3 and panel.return_button.disabled,
+		"AC3: the reopened result returns exactly once by physical Enter")
+	panel.return_button.pressed.emit()
+	await _key(KEY_ENTER)
+	_check(returns == earlier + 3, "AC3: forced replay after the real return is refused")
+	_check(_snapshot(defeat["ctx"], defeat["battle"]) == run_before and _app_snapshot() == app_before,
+		"AC3: focus, scrolling, stale handoff and return leave every ledger untouched")
+	panel.close_result()
+	_check(not panel.has_open_result() and not panel.return_button.has_focus(),
+		"AC3: the final close leaves no retained focus or open result")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -2147,6 +2348,7 @@ func _run() -> void:
 		await _test_readable_typography(victory, defeat)
 		await _test_terminal_wallet_and_health(victory, defeat)
 		await _test_terminal_tears(victory, defeat)
+		await _test_deferred_keyboard_focus(victory, defeat)
 	_finish()
 
 
