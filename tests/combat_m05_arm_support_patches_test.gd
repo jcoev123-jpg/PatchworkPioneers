@@ -9,6 +9,8 @@ func _initialize() -> void:
 	_test_active_wearer_card_support_bonuses()
 	_test_negative_cross_owner_torn_and_resew_transfer()
 	_test_immutability_detachment_and_m04_coexistence()
+	_test_threadguard_wearer_block_bonus()
+	_test_threadguard_scope_torn_resew_and_legacy_arms()
 
 	if failures.is_empty():
 		print("combat_m05_arm_support_patches_test: PASS (", checks, " checks)")
@@ -62,7 +64,8 @@ func _test_catalog_definitions_and_schema() -> void:
 	var expected_records := {
 		"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
 		"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
-		"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1}
+		"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
+		"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1}
 	}
 
 	var seen_ids := {}
@@ -84,6 +87,12 @@ func _test_catalog_definitions_and_schema() -> void:
 	for exp_id: String in expected_records:
 		_check(seen_ids.has(exp_id), "authored catalog contains record for " + exp_id)
 
+	# Threadguard Wrap is the smaller Block patch, never a copy of Hemguard Cuff.
+	_check(int(_find_record(raw, "threadguard_wrap").get("amount", 0)) == 1,
+		"threadguard_wrap authors exactly +1 Block")
+	_check(int(_find_record(raw, "hemguard_cuff").get("amount", 0)) == 2,
+		"hemguard_cuff keeps its authored +2 Block")
+
 	# Verify M04 catalog is intact.
 	var m04_raw: Variant = _json("res://data/patches/m04_attack_patches.json")
 	_check(typeof(m04_raw) == TYPE_ARRAY and m04_raw.size() == 2, "m04_attack_patches.json has exactly 2 records")
@@ -100,30 +109,68 @@ func _test_catalog_definitions_and_schema() -> void:
 	_check(not CombatPatchAttackRules._valid_support_catalog({}), "_valid_support_catalog rejects dictionary")
 	_check(not CombatPatchAttackRules._valid_support_catalog([]), "_valid_support_catalog rejects empty array lacking required IDs")
 
-	# Wrong slot fixture
-	var bad_slot: Array = [
-		{"id": "hemguard_cuff", "slot": "HEAD", "effect": "card_block_bonus", "amount": 2},
-		{"id": "red_bobbin_cuff", "slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
-		{"id": "loose_thread_glove", "slot": "ARM", "effect": "card_unravel_bonus", "amount": 1}
-	]
-	_check(not CombatPatchAttackRules._valid_support_catalog(bad_slot), "_valid_support_catalog rejects wrong slot")
+	# Every malformed fixture starts from the shipped records and breaks exactly
+	# one authored field, so each rejection isolates its own defect.
+	var bad_slot: Array = _with_patch_field(raw, "threadguard_wrap", "slot", "HEAD")
+	_check(not CombatPatchAttackRules._valid_support_catalog(bad_slot),
+		"_valid_support_catalog rejects threadguard_wrap outside ARM")
 
-	# Wrong amount fixture
-	var bad_amount: Array = [
-		{"id": "hemguard_cuff", "slot": "ARM", "effect": "card_block_bonus", "amount": 5},
-		{"id": "red_bobbin_cuff", "slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
-		{"id": "loose_thread_glove", "slot": "ARM", "effect": "card_unravel_bonus", "amount": 1}
-	]
-	_check(not CombatPatchAttackRules._valid_support_catalog(bad_amount), "_valid_support_catalog rejects wrong amount")
+	var bad_amount: Array = _with_patch_field(raw, "threadguard_wrap", "amount", 2)
+	_check(not CombatPatchAttackRules._valid_support_catalog(bad_amount),
+		"_valid_support_catalog rejects threadguard_wrap at Hemguard Cuff's +2")
 
-	# Duplicate ID fixture
-	var bad_dup: Array = [
-		{"id": "hemguard_cuff", "slot": "ARM", "effect": "card_block_bonus", "amount": 2},
-		{"id": "hemguard_cuff", "slot": "ARM", "effect": "card_block_bonus", "amount": 2},
-		{"id": "red_bobbin_cuff", "slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
-		{"id": "loose_thread_glove", "slot": "ARM", "effect": "card_unravel_bonus", "amount": 1}
-	]
-	_check(not CombatPatchAttackRules._valid_support_catalog(bad_dup), "_valid_support_catalog rejects duplicate required ID")
+	var bad_effect: Array = _with_patch_field(raw, "threadguard_wrap", "effect", "card_bleed_bonus")
+	_check(not CombatPatchAttackRules._valid_support_catalog(bad_effect),
+		"_valid_support_catalog rejects a threadguard_wrap authored as another effect")
+
+	var missing_new: Array = _without_patch(raw, "threadguard_wrap")
+	_check(not CombatPatchAttackRules._valid_support_catalog(missing_new),
+		"_valid_support_catalog requires the shipped threadguard_wrap record")
+
+	var bad_legacy_slot: Array = _with_patch_field(raw, "hemguard_cuff", "slot", "HEAD")
+	_check(not CombatPatchAttackRules._valid_support_catalog(bad_legacy_slot),
+		"_valid_support_catalog rejects wrong slot")
+
+	var bad_legacy_amount: Array = _with_patch_field(raw, "hemguard_cuff", "amount", 5)
+	_check(not CombatPatchAttackRules._valid_support_catalog(bad_legacy_amount),
+		"_valid_support_catalog rejects wrong amount")
+
+	var bad_dup: Array = raw.duplicate(true)
+	bad_dup.append(_find_record(raw, "threadguard_wrap"))
+	_check(not CombatPatchAttackRules._valid_support_catalog(bad_dup),
+		"_valid_support_catalog rejects duplicate required ID")
+
+	# A later lane may append a new M05 ARM identity before this resolver knows
+	# it; that must stay tolerated instead of failing every battle bind.
+	var later_record: Array = raw.duplicate(true)
+	later_record.append({"id": "future_m05_arm", "slot": "ARM",
+		"effect": "card_block_bonus", "amount": 3})
+	_check(CombatPatchAttackRules._valid_support_catalog(later_record),
+		"_valid_support_catalog tolerates a later unknown ARM record")
+
+
+func _find_record(records: Array, patch_id: String) -> Dictionary:
+	for entry: Variant in records:
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == patch_id:
+			return entry
+	return {}
+
+
+func _with_patch_field(records: Array, patch_id: String, field: String, value: Variant) -> Array:
+	var copy: Array = records.duplicate(true)
+	for entry: Variant in copy:
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == patch_id:
+			entry[field] = value
+	return copy
+
+
+func _without_patch(records: Array, patch_id: String) -> Array:
+	var kept := []
+	for entry: Variant in records:
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == patch_id:
+			continue
+		kept.append(entry)
+	return kept
 
 
 func _test_active_wearer_card_support_bonuses() -> void:
@@ -458,3 +505,256 @@ func _test_immutability_detachment_and_m04_coexistence() -> void:
 	_check(rules.damage_bonus("warden") == 0, "warden does not have pincushion_arm")
 	_check(rules.card_support_bonuses("seamstress", "seamstress_prick") == {"block": 0, "bleed": 0, "unravel": 0},
 		"seamstress wearing pincushion_arm does not have bleed support bonus")
+
+
+## Genuine starter-roster ledgers (real RunPatchWardrobe + RunTornMending) that
+## own the shipped Threadguard Wrap and every older M05 ARM support patch.
+func _threadguard_ledgers(scraps: int = 4) -> Dictionary:
+	var heroes := _starter_heroes_fixture()
+	var torn := RunTornMending.new(heroes)
+	var defs := [
+		{"id": "threadguard_wrap", "slot": "ARM"},
+		{"id": "hemguard_cuff", "slot": "ARM"},
+		{"id": "red_bobbin_cuff", "slot": "ARM"},
+		{"id": "loose_thread_glove", "slot": "ARM"},
+		{"id": "button_eye", "slot": "HEAD"}
+	]
+	var owned := ["threadguard_wrap", "hemguard_cuff", "red_bobbin_cuff",
+		"loose_thread_glove", "button_eye"]
+	var cards := ["warden_brace", "warden_strike", "seamstress_stitch_up",
+		"seamstress_prick", "tinker_spool_launcher"]
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, defs, scraps, 100, cards, 24601)
+	_check(wardrobe.is_valid() and torn.is_valid(),
+		"threadguard fixture uses genuine wardrobe and torn ledgers")
+	_check(wardrobe.get_snapshot().get("heroes") == torn.read_state().get("heroes"),
+		"threadguard fixture ledgers share one hero authority")
+	return {"wardrobe": wardrobe, "torn": torn, "heroes": heroes}
+
+
+## Sews threadguard_wrap onto one living wearer and binds a fresh resolver.
+func _threadguard_rules(wearer: String) -> Dictionary:
+	var ctx := _threadguard_ledgers()
+	var wardrobe: RunPatchWardrobe = ctx["wardrobe"]
+	var torn: RunTornMending = ctx["torn"]
+	var sewn := wardrobe.sew("threadguard_wrap", wearer, "ARM",
+		"op-threadguard-" + wearer, wardrobe.get_snapshot())
+	_check(sewn.get("ok") == true, "sew threadguard_wrap to " + wearer + " ARM")
+	var rules := CombatPatchAttackRules.new()
+	_check(rules.bind_wardrobe(wardrobe, torn), "threadguard rules bound over the real ledgers")
+	ctx["rules"] = rules
+	return ctx
+
+
+## Plays one authored support card through the real shared deck and party with
+## the patch resolver bound to the same wearer ledgers.
+func _play_threadguard_card(ctx: Dictionary, card_id: String, effect: String,
+		amount: int, target_position: int, recipient_position: int,
+		owner_position: int, expected_block: int, label: String) -> void:
+	var wardrobe: RunPatchWardrobe = ctx["wardrobe"]
+	var torn: RunTornMending = ctx["torn"]
+	var party := CombatParty.new(ctx["heroes"])
+	_check(party.is_valid(), label + ": genuine combat party")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 90210
+	# Exactly five cards means start_turn deals the whole deck: the authored card
+	# is genuinely held exactly once, so a discard is unambiguous.
+	var cards: Array[String] = [card_id, "filler_a", "filler_b", "filler_c", "filler_d"]
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn() and deck.energy == 3 and deck.hand.count(card_id) == 1,
+		label + ": genuine shared turn holding exactly one copy")
+	var support := CombatSupportCards.new()
+	_check(support.bind_patch_wardrobe(wardrobe, torn),
+		label + ": CombatSupportCards bound to the wearer ledgers")
+	_check(support.is_patch_binding_valid(), label + ": bound wearer authorities are current")
+	var authored := StarterCards.new().get_definition(card_id)
+	var definition := {
+		"id": card_id,
+		"owner_id": authored.get("owner"),
+		"cost": authored.get("cost"),
+		"from_positions": authored.get("from_positions"),
+		"effect": effect,
+		"amount": amount
+	}
+	var hp_before: Array = party.get_heroes()
+	_check(support.play_support(deck, party, definition, target_position),
+		label + ": authored support card resolved")
+	_check(party.get_hero(recipient_position)["block"] == expected_block,
+		label + ": Block lands as " + str(expected_block) + " on the real recipient")
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		if position == recipient_position:
+			continue
+		_check(party.get_hero(position)["block"] == 0,
+			label + ": position " + str(position) + " gains no Block")
+	if recipient_position != owner_position:
+		_check(party.get_hero(owner_position)["block"] == 0,
+			label + ": the wearer gains no automatic Block of their own")
+	_check(party.get_hero(recipient_position)["hp"] == hp_before[recipient_position - 1]["hp"],
+		label + ": no HP mutation")
+	_check(deck.energy == 3 - int(authored.get("cost"))
+		and deck.discard_pile == [card_id] and not deck.hand.has(card_id),
+		label + ": exactly one printed cost and one discarded copy")
+
+
+func _test_threadguard_wearer_block_bonus() -> void:
+	# AC2: the living, untorn wearer's own positive-Block cards gain exactly +1.
+	var warden_ctx := _threadguard_rules("warden")
+	var warden_rules: CombatPatchAttackRules = warden_ctx["rules"]
+	_check(warden_rules.active_snapshot().get("warden", []).has("threadguard_wrap"),
+		"living Warden's ARM projection activates threadguard_wrap")
+
+	var starter := StarterCards.new()
+	var brace_def := starter.get_definition("warden_brace")
+	_check(brace_def.get("cost") == 1 and brace_def.get("effects", {}) == {"block": 7},
+		"printed Warden Brace is 1 cost for 7 Block")
+	_check(warden_rules.card_block_bonus("warden", "warden_brace") == 1,
+		"threadguard_wrap gives its wearer's Brace exactly +1 Block")
+	_check(warden_rules.card_support_bonuses("warden", "warden_brace") ==
+		{"block": 1, "bleed": 0, "unravel": 0}, "Brace support bonus is only block: 1")
+	_check(warden_rules.project_card_support("warden", "warden_brace") == {"block": 8},
+		"Brace projects 7 -> 8 with threadguard_wrap")
+	_check(warden_rules.project_card_support("warden", "warden_brace").get("block") != 9,
+		"threadguard_wrap is not Hemguard Cuff's +2")
+
+	# A non-Block card never gains Block.
+	var strike_def := starter.get_definition("warden_strike")
+	_check(strike_def.get("effects", {}) == {"damage": 6}, "printed Warden Strike deals 6 damage")
+	_check(warden_rules.card_support_bonuses("warden", "warden_strike") ==
+		{"block": 0, "bleed": 0, "unravel": 0},
+		"non-Block warden_strike gains no threadguard_wrap bonus")
+	_check(warden_rules.project_card_support("warden", "warden_strike") == {"damage": 6},
+		"Strike projects unchanged damage without an invented Block key")
+
+	# Wrong owner / wrong recipient.
+	_check(warden_rules.card_block_bonus("seamstress", "seamstress_stitch_up") == 0,
+		"Seamstress without threadguard_wrap gets no Block bonus")
+	_check(warden_rules.card_block_bonus("warden", "seamstress_stitch_up") == 0,
+		"wearer playing another owner's card gets no Block bonus")
+	_check(warden_rules.project_card_support("warden", "warden_shield_bash") ==
+		{"damage": 8, "weak": 1},
+		"a non-Block wearer card projects no invented Block")
+	_check(warden_rules.card_block_bonus("tinker", "tinker_spool_launcher") == 0,
+		"unworn Tinker keeps zero Block bonus")
+
+	# Brace through the real shared hand: 7 printed -> 8 for the wearer only.
+	_play_threadguard_card(warden_ctx, "warden_brace", "self_block", 7, 0, 1, 1, 8,
+		"Warden Brace with threadguard_wrap")
+
+	# AC2: Stitch Up is still the chosen ally's Block, now +1 to 6.
+	var seam_ctx := _threadguard_rules("seamstress")
+	var seam_rules: CombatPatchAttackRules = seam_ctx["rules"]
+	var stitch_def := starter.get_definition("seamstress_stitch_up")
+	_check(stitch_def.get("cost") == 1 and stitch_def.get("effects", {}) == {"block": 5}
+		and stitch_def.get("target_kind") == "ally_single",
+		"printed Seamstress Stitch Up is 1 cost for 5 Block on one chosen ally")
+	_check(seam_rules.card_block_bonus("seamstress", "seamstress_stitch_up") == 1,
+		"threadguard_wrap gives the wearing Seamstress's Stitch Up +1 Block")
+	_check(seam_rules.project_card_support("seamstress", "seamstress_stitch_up") == {"block": 6},
+		"Stitch Up projects 5 -> 6 with threadguard_wrap")
+	_check(seam_rules.project_card_support("seamstress", "seamstress_stitch_up").get("block") != 7,
+		"Stitch Up is not projected twice")
+	_check(seam_rules.card_block_bonus("warden", "warden_brace") == 0,
+		"the bonus belongs to the wearer, never to another hero's card")
+	_check(seam_rules.card_support_bonuses("seamstress", "seamstress_prick") ==
+		{"block": 0, "bleed": 0, "unravel": 0},
+		"threadguard_wrap is not a generic bonus for a Bleed card")
+
+	# The chosen ally receives the 6 Block; the wearing Seamstress receives none.
+	_play_threadguard_card(seam_ctx, "seamstress_stitch_up", "ally_block", 5, 1, 1, 2, 6,
+		"Seamstress Stitch Up on ally Warden")
+
+
+func _test_threadguard_scope_torn_resew_and_legacy_arms() -> void:
+	# AC3: owning the patch without sewing it admits no bonus.
+	var idle := _threadguard_ledgers()
+	var idle_rules := CombatPatchAttackRules.new()
+	_check(idle_rules.bind_wardrobe(idle["wardrobe"], idle["torn"]), "unworn fixture bound")
+	_check(idle_rules.card_block_bonus("warden", "warden_brace") == 0,
+		"unworn threadguard_wrap grants no Block bonus")
+	_check(idle_rules.card_block_bonus("seamstress", "seamstress_stitch_up") == 0,
+		"unworn threadguard_wrap grants no ally Block bonus")
+
+	# A torn (0 HP) wearer's Threadguard Wrap is dormant.
+	var torn_ctx := _threadguard_rules("warden")
+	var torn_wardrobe: RunPatchWardrobe = torn_ctx["wardrobe"]
+	var torn: RunTornMending = torn_ctx["torn"]
+	var torn_rules: CombatPatchAttackRules = torn_ctx["rules"]
+	_check(torn_rules.card_block_bonus("warden", "warden_brace") == 1,
+		"the living Warden starts with the Threadguard bonus")
+	var battle_start: Array = torn_ctx["heroes"].duplicate(true)
+	var battle_end: Array = torn_ctx["heroes"].duplicate(true)
+	battle_end[0]["hp"] = 0 # Warden is torn at 0 HP.
+	var tear := torn.observe_battle_end("threadguard-battle-1", battle_start, battle_end)
+	_check(tear.get("ok") == true, "battle end observed: Warden torn")
+	var torn_rebind := CombatPatchAttackRules.new()
+	_check(torn_rebind.bind_wardrobe(torn_wardrobe, torn), "torn fixture re-bound")
+	_check(torn_rebind.active_snapshot().get("warden", []).is_empty(),
+		"torn Warden carries no active patches")
+	_check(torn_rebind.card_block_bonus("warden", "warden_brace") == 0,
+		"torn wearer admits no Threadguard Block bonus")
+	_check(torn_rebind.project_card_support("warden", "warden_brace") == {"block": 7},
+		"torn wearer's Brace still projects the printed 7 Block")
+	_check(torn_rebind.card_block_bonus("seamstress", "seamstress_stitch_up") == 0,
+		"a torn Warden never lends the effect to another hero")
+
+	# A real paid same-slot Rest re-sew moves the effect, and only a fresh bind
+	# admits it for the new wearer.
+	var resew_ctx := _threadguard_rules("warden")
+	var resew_wardrobe: RunPatchWardrobe = resew_ctx["wardrobe"]
+	var resew_torn: RunTornMending = resew_ctx["torn"]
+	var old_rules: CombatPatchAttackRules = resew_ctx["rules"]
+	var old_support := CombatSupportCards.new()
+	_check(old_support.bind_patch_wardrobe(resew_wardrobe, resew_torn),
+		"support resolver bound before the paid re-sew")
+	_check(old_rules.card_block_bonus("warden", "warden_brace") == 1,
+		"the pre-rest bind grants Warden the Threadguard bonus")
+	var rest_open := resew_wardrobe.start_rest("threadguard-rest", resew_wardrobe.get_snapshot())
+	_check(rest_open.get("ok") == true, "Rest opened for the Threadguard re-sew")
+	var scraps_before: int = resew_wardrobe.get_snapshot()["scraps"]
+	var resew := resew_wardrobe.re_sew("threadguard_wrap", "warden", "seamstress",
+		"threadguard-rest", "op-threadguard-resew", resew_wardrobe.get_snapshot())
+	_check(resew.get("ok") == true, "paid same-slot re-sew of threadguard_wrap to Seamstress")
+	_check(int(resew_wardrobe.get_snapshot()["scraps"]) == scraps_before - 1,
+		"the Threadguard re-sew cost exactly 1 scrap")
+	_check(resew.get("receipt", {}).get("slot") == "ARM"
+		and resew.get("receipt", {}).get("exchanged_id") == "",
+		"the re-sew stayed inside the ARM slot and exchanged nothing")
+	_check(resew_wardrobe.end_rest("threadguard-rest", resew_wardrobe.get_snapshot()).get("ok") == true,
+		"Rest closed after the Threadguard re-sew")
+
+	# Stale ownership: the pre-rest authorities refuse the new state.
+	_check(not old_rules.is_current(), "the pre-rest bind is stale after the paid re-sew")
+	_check(not old_support.is_patch_binding_valid(),
+		"a resolver bound before the re-sew refuses to play the stale wearer")
+
+	var rebound := CombatPatchAttackRules.new()
+	_check(rebound.bind_wardrobe(resew_wardrobe, resew_torn), "fresh bind after the Threadguard re-sew")
+	_check(rebound.card_block_bonus("warden", "warden_brace") == 0,
+		"the former wearer loses the Threadguard Block bonus")
+	_check(rebound.card_block_bonus("seamstress", "seamstress_stitch_up") == 1,
+		"the new wearer gains the Threadguard Block bonus")
+	_check(rebound.project_card_support("seamstress", "seamstress_stitch_up") == {"block": 6},
+		"the new wearer's Stitch Up projects 5 -> 6")
+	_play_threadguard_card(resew_ctx, "seamstress_stitch_up", "ally_block", 5, 1, 1, 2, 6,
+		"Seamstress Stitch Up after the paid re-sew")
+
+	# The older ARM identities keep their authored amounts next to the new one.
+	var legacy := _threadguard_ledgers()
+	var legacy_wardrobe: RunPatchWardrobe = legacy["wardrobe"]
+	var legacy_torn: RunTornMending = legacy["torn"]
+	_check(legacy_wardrobe.sew("hemguard_cuff", "warden", "ARM", "op-legacy-hem",
+		legacy_wardrobe.get_snapshot()).get("ok") == true, "sew hemguard_cuff to Warden")
+	_check(legacy_wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "op-legacy-bobbin",
+		legacy_wardrobe.get_snapshot()).get("ok") == true, "sew red_bobbin_cuff to Seamstress")
+	_check(legacy_wardrobe.sew("loose_thread_glove", "tinker", "ARM", "op-legacy-glove",
+		legacy_wardrobe.get_snapshot()).get("ok") == true, "sew loose_thread_glove to Tinker")
+	var legacy_rules := CombatPatchAttackRules.new()
+	_check(legacy_rules.bind_wardrobe(legacy_wardrobe, legacy_torn), "legacy ARM fixture bound")
+	_check(legacy_rules.card_block_bonus("warden", "warden_brace") == 2,
+		"Hemguard Cuff still adds its authored +2 Block")
+	_check(legacy_rules.project_card_support("warden", "warden_brace") == {"block": 9},
+		"Hemguard Cuff still projects Brace 7 -> 9")
+	_check(legacy_rules.card_support_bonuses("seamstress", "seamstress_prick") ==
+		{"block": 0, "bleed": 1, "unravel": 0}, "Red Bobbin Cuff still adds +1 Bleed")
+	_check(legacy_rules.card_support_bonuses("tinker", "tinker_spool_launcher") ==
+		{"block": 0, "bleed": 0, "unravel": 1}, "Loose Thread Glove still adds +1 Unravel")
+

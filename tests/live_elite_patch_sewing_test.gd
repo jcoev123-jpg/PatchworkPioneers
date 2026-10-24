@@ -28,6 +28,7 @@ const EXPECTED_NAMES := {
 	"loose_thread_glove": "Loose Thread Glove",
 	"frayfinder_mitt": "Frayfinder Mitt",
 	"borrowed_button": "Borrowed Button",
+	"threadguard_wrap": "Threadguard Wrap",
 }
 const SLOT_NAMES := {"HEAD": "HEAD", "ARM": "ARM", "COAT": "COAT"}
 const AUTHORED_PATCH_CATALOGS := [

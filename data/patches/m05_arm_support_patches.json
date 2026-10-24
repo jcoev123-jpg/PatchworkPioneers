@@ -1,5 +1,6 @@
 [
   {"id":"hemguard_cuff","slot":"ARM","effect":"card_block_bonus","amount":2},
   {"id":"red_bobbin_cuff","slot":"ARM","effect":"card_bleed_bonus","amount":1},
-  {"id":"loose_thread_glove","slot":"ARM","effect":"card_unravel_bonus","amount":1}
+  {"id":"loose_thread_glove","slot":"ARM","effect":"card_unravel_bonus","amount":1},
+  {"id":"threadguard_wrap","slot":"ARM","effect":"card_block_bonus","amount":1}
 ]
