@@ -14,6 +14,10 @@ const EARNED_POOL_ATTACKS := [
 	"warden_heavy_thimble", "warden_heavy_thimble_plus",
 	"warden_pin_and_pound", "warden_pin_and_pound_plus",
 ]
+const EARNED_POOL_BLOCKS := [
+	"warden_hold_the_line", "warden_patch_guard", "warden_quick_darn",
+	"warden_iron_hem", "warden_bastion_quilt",
+]
 
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
@@ -89,7 +93,10 @@ func choose_reward(offers: Array, seed_value: int, previous_picks: int) -> Strin
 	if offers.is_empty() or seed_value % 3 != 0 or previous_picks != 0:
 		return "" # Real Skip is an authored choice, not an invented award.
 	for offer in offers:
-		if EARNED_POOL_ATTACKS.has(str(offer.get("id", ""))):
+		var id := str(offer.get("id", ""))
+		var definition := _pool_definition(id)
+		if definition.get("reward_eligible", false) and (
+				EARNED_POOL_ATTACKS.has(id) or EARNED_POOL_BLOCKS.has(id)):
 			return str(offer.id)
 	return "" # Unsupported earned shapes stay unselected in this bounded cohort.
 
@@ -139,7 +146,7 @@ func choose_sew(wardrobe: RunPatchWardrobe, heroes: Array) -> Dictionary:
 func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		attacks: CombatAttackCards, run_cards: RunRestStitchCards,
 		plain: CombatPoolPlainStrikes, heavy: CombatWardenPoolHeavyAttacks,
-		rejected_ids: Array) -> Dictionary:
+		rejected_ids: Array, blocks: CombatWardenPoolBlockCards = null) -> Dictionary:
 	if not deck.turn_active or party.is_defeated() or enemies.is_victorious():
 		return {}
 	var best := {}
@@ -147,6 +154,23 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var targeter := CombatAttackTargeting.new()
 	for id in deck.hand:
 		if rejected_ids.has(id):
+			continue
+		if EARNED_POOL_BLOCKS.has(id.trim_suffix("_plus")):
+			var definition := _pool_definition(id)
+			if blocks == null or not blocks.is_patch_binding_valid() or definition.is_empty() \
+					or definition.cost > deck.energy \
+					or not _living_owner_in_from(party.get_heroes(), definition):
+				continue
+			var target := 0
+			if definition.target_kind == "ally_single":
+				for hero in party.get_heroes():
+					if hero.hp > 0 and (target == 0 or hero.block < party.get_hero(target).block):
+						target = hero.position
+				if target == 0:
+					continue
+			if 190 > best_score:
+				best_score = 190
+				best = {"kind": "earned_block", "id": id, "target": target}
 			continue
 		if EARNED_POOL_ATTACKS.has(id):
 			var definition := _pool_definition(id)

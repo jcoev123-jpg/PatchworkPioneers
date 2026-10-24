@@ -127,6 +127,7 @@ func _run_seed(value: int) -> Dictionary:
 	var shop_visits: Array[Dictionary] = []
 	var purchased_ids: Array[String] = []
 	var acquired_ids: Array[String] = []
+	var reward_visits: Array[Dictionary] = []
 	var earned_plays: Array[Dictionary] = []
 	var unaffordable_checks := 0
 	var won := false
@@ -182,9 +183,11 @@ func _run_seed(value: int) -> Dictionary:
 			var stitched := CombatStitchedCards.new(attacks)
 			var plain := CombatPoolPlainStrikes.new()
 			var heavy := CombatWardenPoolHeavyAttacks.new()
+			var blocks := CombatWardenPoolBlockCards.new()
 			if not attacks.bind_patch_wardrobe(wardrobe, carry.torn) 					or not support.bind_patch_wardrobe(wardrobe, carry.torn) 					or not stitched.bind_patch_wardrobe(wardrobe, carry.torn) \
 					or not plain.bind_patch_wardrobe(wardrobe, carry.torn) \
-					or not heavy.bind_patch_wardrobe(wardrobe, carry.torn):
+					or not heavy.bind_patch_wardrobe(wardrobe, carry.torn) \
+					or not blocks.bind_patch_wardrobe(wardrobe, carry.torn):
 				return _fail("genuinely worn patch rules binding")
 			attacks.start_player_turn()
 			var terminal := ""
@@ -193,7 +196,7 @@ func _run_seed(value: int) -> Dictionary:
 				for action_index in range(ACTION_CAP):
 					action_total += 1
 					var decision := strategy.choose_card(combat_deck, party, enemies,
-						attacks, run_cards, plain, heavy, rejected_ids)
+						attacks, run_cards, plain, heavy, rejected_ids, blocks)
 					if decision.is_empty():
 						break
 					var before := _combat_snapshot(combat_deck, party, enemies, rng)
@@ -206,6 +209,11 @@ func _run_seed(value: int) -> Dictionary:
 							pool_receipt = (heavy.play_attack(combat_deck, party, enemies,
 								decision.id, decision.target) if heavy.is_supported_card(decision.id)
 								else plain.play_card(combat_deck, party, enemies, decision.id, decision.target))
+							accepted = pool_receipt.get("ok", false)
+						"earned_block":
+							if not acquired_ids.has(decision.id):
+								return _fail("unearned Block card selected from hand")
+							pool_receipt = blocks.play_card(combat_deck, party, decision.id, decision.target)
 							accepted = pool_receipt.get("ok", false)
 						"attack":
 							accepted = attacks.play_attack(combat_deck, party, enemies,
@@ -232,7 +240,7 @@ func _run_seed(value: int) -> Dictionary:
 							return _fail("rejected card mutated paid combat/RNG")
 						rejected_ids.append(decision.id)
 						continue
-					if decision.kind == "earned_pool":
+					if decision.kind in ["earned_pool", "earned_block"]:
 						var definition := strategy._pool_definition(decision.id)
 						if not _pool_transition_valid(before, combat_deck, party, enemies,
 								rng, decision, definition, pool_receipt):
@@ -240,7 +248,7 @@ func _run_seed(value: int) -> Dictionary:
 						earned_plays.append({"id": decision.id, "target": decision.target,
 							"receipt": pool_receipt.duplicate(true), "battle": choice})
 					plays += 1
-					if before[0] <= combat_deck.energy and decision.kind != "support":
+					if before[0] <= combat_deck.energy and decision.kind not in ["support", "earned_block"]:
 						return _fail("paid combat did not charge energy")
 					if decision.kind == "support":
 						# Draw support can refill from discard before its own discard.
@@ -295,6 +303,8 @@ func _run_seed(value: int) -> Dictionary:
 			var settled := reward.choose(choice, selected)
 			if not settled.get("ok", false):
 				return _fail("genuine reward pick/skip failed")
+			reward_visits.append({"offers": offer.offers.duplicate(true), "selected": selected,
+				"state": settled.state.duplicate(true), "rng": str(rng.state)})
 			if not carry.apply_reward(choice, result, party).get("ok", false):
 				return _fail("torn carryover failed to publish witnessed settlement")
 			if not selected.is_empty():
@@ -455,6 +465,7 @@ func _run_seed(value: int) -> Dictionary:
 		"battles": battles, "treasure_visits": treasure_visits, "event_visits": event_visits,
 		"shop_visits": shop_visits, "purchased_ids": purchased_ids,
 		"acquired_ids": acquired_ids, "earned_plays": earned_plays,
+		"reward_visits": reward_visits,
 		"unaffordable_checks": unaffordable_checks,
 		"gold": gold, "scraps": scraps, "actions": action_total}
 
@@ -462,30 +473,41 @@ func _run_seed(value: int) -> Dictionary:
 func _pool_transition_valid(before: Array, deck: CombatDeck, party: CombatParty,
 		enemies: CombatEnemies, rng: RandomNumberGenerator, decision: Dictionary,
 		definition: Dictionary, receipt: Dictionary) -> bool:
-	if definition.is_empty() or not receipt.get("ok", false) or receipt.get("hits", []).is_empty():
+	if definition.is_empty() or not receipt.get("ok", false):
 		return false
+	var expected_hand: Array = before[1].duplicate()
+	expected_hand.erase(decision.id)
+	var expected_discard: Array = before[2].duplicate()
+	expected_discard.append(decision.id)
 	if deck.energy != before[0] - definition.cost or str(rng.state) != before[6] \
+			or deck.hand != expected_hand or deck.discard_pile != expected_discard \
 			or deck.hand.count(decision.id) != before[1].count(decision.id) - 1 \
 			or deck.discard_pile.count(decision.id) != before[2].count(decision.id) + 1 \
 			or deck.draw_pile != before[3]:
 		return false
-	var target := int(decision.get("target", 0))
-	if target < 1 or target > before[5].size():
-		return false
-	var old_enemy: Dictionary = before[5][target - 1]
-	var new_enemy: Dictionary = enemies.get_enemy(target)
-	var absorbed := 0
-	var hp_loss := 0
-	for hit in receipt.hits:
-		if hit.position != target or hit.damage <= 0:
+	if decision.kind == "earned_block":
+		if receipt.get("block_deltas", {}).is_empty() or enemies.get_enemies() != before[5]:
 			return false
-		absorbed += int(hit.block_absorbed)
-		hp_loss += int(hit.hp_loss)
-	if old_enemy.block - new_enemy.block != absorbed or old_enemy.hp - new_enemy.hp != hp_loss:
-		return false
-	for index in range(before[5].size()):
-		if index + 1 != target and before[5][index] != enemies.get_enemy(index + 1):
+	else:
+		var target := int(decision.get("target", 0))
+		if target < 1 or target > before[5].size():
 			return false
+		var old_enemy: Dictionary = before[5][target - 1]
+		var new_enemy: Dictionary = enemies.get_enemy(target)
+		if receipt.get("hits", []).is_empty():
+			return false
+		var absorbed := 0
+		var hp_loss := 0
+		for hit in receipt.hits:
+			if hit.position != target or hit.damage <= 0:
+				return false
+			absorbed += int(hit.block_absorbed)
+			hp_loss += int(hit.hp_loss)
+		if old_enemy.block - new_enemy.block != absorbed or old_enemy.hp - new_enemy.hp != hp_loss:
+			return false
+		for index in range(before[5].size()):
+			if index + 1 != target and before[5][index] != enemies.get_enemy(index + 1):
+				return false
 	var old_heroes: Array = before[4]
 	var new_heroes := party.get_heroes()
 	var block_deltas: Dictionary = receipt.get("block_deltas", {})
@@ -560,7 +582,109 @@ func _test_earned_pool_fixture() -> void:
 			if heavy.is_supported_card(id) else plain.play_card(deck, party, enemies, id, 1))
 		_check(not denied.get("ok", true) and spent == _combat_snapshot(deck, party, enemies, rng),
 			"spent pool copy rejects without mutation " + id)
+	_test_block_pool_fixture()
 	_test_pool_negative_positions()
+
+
+func _test_block_pool_fixture() -> void:
+	var strategy := M05SeededRunStrategy.new()
+	var rows := [
+		["warden_hold_the_line", 1, [5, 2, 2]],
+		["warden_hold_the_line_plus", 1, [7, 3, 3]],
+		["warden_patch_guard", 1, [0, 8, 0]],
+		["warden_patch_guard_plus", 1, [0, 11, 0]],
+		["warden_quick_darn", 0, [4, 0, 0]],
+		["warden_quick_darn_plus", 0, [6, 0, 0]],
+		["warden_iron_hem", 2, [14, 0, 0]],
+		["warden_iron_hem_plus", 1, [14, 0, 0]],
+		["warden_bastion_quilt", 3, [10, 10, 10]],
+		["warden_bastion_quilt_plus", 3, [13, 13, 13]],
+	]
+	for row in rows:
+		var id: String = row[0]
+		var definition := strategy._pool_definition(id)
+		_check(definition.cost == row[1], "Block authored cost " + id)
+		var offered := [{"id": id}]
+		_check(strategy.choose_reward(offered, 3, 0) == ("" if id.ends_with("_plus") else id),
+			"Block rewards accept only eligible bases " + id)
+		_check(strategy.choose_reward(offered, 1, 0).is_empty() \
+			and strategy.choose_reward(offered, 3, 1).is_empty(), "Block keeps seeded skips " + id)
+		var conditions := ["legal", "wrong_target", "downed_owner", "dead_ally"]
+		if definition.cost > 0:
+			conditions.append("no_energy")
+		if not definition.from_positions.has(3):
+			conditions.append("wrong_owner_slot")
+		for condition in conditions:
+			if condition == "dead_ally" and definition.target_kind != "ally_single":
+				continue
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 8402
+			var deck := CombatDeck.new([id], rng)
+			var initial := _load_party()
+			var heroes := initial.get_heroes()
+			if condition == "wrong_owner_slot":
+				heroes = [heroes[1], heroes[2], heroes[0]]
+			var party := CombatParty.new(heroes)
+			var torn := RunTornMending.new(initial.get_heroes())
+			var wardrobe := RunPatchWardrobe.new(torn.read_state().heroes, [],
+				RunAuthoredPatchDefinitions.load_definitions(), 0, 0, [id], 8402)
+			var blocks := CombatWardenPoolBlockCards.new()
+			var enemies := CombatEnemies.new([{"id": "foe", "max_hp": 50}])
+			_check(party.is_valid() and torn.is_valid() and wardrobe.is_valid() \
+				and blocks.bind_patch_wardrobe(wardrobe, torn) and deck.start_turn() \
+				and deck.hand == [id] and enemies.is_valid(), "authenticated held Block fixture " + id + condition)
+			# Ensure Patch Guard chooses a living ally rather than blindly using slot 1.
+			_check(party.gain_block(1, 1), "initial owner Block " + id)
+			if condition == "downed_owner":
+				party.apply_damage(1, 41)
+			elif condition == "dead_ally":
+				party.apply_damage(2, 30)
+			elif condition == "no_energy":
+				_check(deck.try_spend_energy(3), "drain Block energy " + id)
+			if definition.cost == 0 and condition == "legal":
+				_check(deck.try_spend_energy(3) and deck.energy == 0, "free Block at zero energy " + id)
+			_check((condition != "wrong_owner_slot" or (party.get_hero(3).id == "warden" \
+				and party.get_hero(3).hp > 0 and not definition.from_positions.has(3))) \
+				and (condition != "downed_owner" or party.is_downed(1)) \
+				and (condition != "dead_ally" or party.is_downed(2)) \
+				and (condition != "no_energy" or deck.energy < definition.cost),
+				"non-vacuous Block refusal precondition " + id + condition)
+			var before := _combat_snapshot(deck, party, enemies, rng)
+			var authority := [wardrobe.get_snapshot(), torn.read_state()]
+			var decision := strategy.choose_card(deck, party, enemies, CombatAttackCards.new(),
+				RunRestStitchCards.new(StarterCards.new().get_starting_deck(), {}, 0, 1),
+				CombatPoolPlainStrikes.new(), CombatWardenPoolHeavyAttacks.new(), [], blocks)
+			_check(before == _combat_snapshot(deck, party, enemies, rng), "Block decision is pure " + id)
+			var target := 2 if definition.target_kind == "ally_single" else 0
+			if condition in ["legal", "wrong_target"]:
+				_check(decision == {"kind": "earned_block", "id": id, "target": target},
+					"strategy selects held Block and legal target " + id)
+			elif condition != "dead_ally":
+				_check(decision.is_empty(), "strategy skips illegal Block " + id + condition)
+			else:
+				_check(decision.get("target") == 3, "Patch Guard skips dead ally " + id)
+			if condition == "wrong_target":
+				target = 0 if definition.target_kind == "ally_single" else 1
+			var receipt := blocks.play_card(deck, party, id, target)
+			if condition == "legal":
+				_check(_pool_transition_valid(before, deck, party, enemies, rng, decision, definition, receipt),
+					"Block exact receipt/payment/discard transition " + id)
+				var expected_deltas := {}
+				for index in range(3):
+					if row[2][index] > 0:
+						expected_deltas[index + 1] = row[2][index]
+				_check(receipt.get("block_deltas") == expected_deltas, "Block exact authored deltas " + id)
+				var spent := _combat_snapshot(deck, party, enemies, rng)
+				_check(not blocks.play_card(deck, party, id, target).get("ok", true) \
+					and spent == _combat_snapshot(deck, party, enemies, rng), "spent Block refuses unchanged " + id)
+				_check(strategy.choose_card(deck, party, enemies, CombatAttackCards.new(),
+					RunRestStitchCards.new(StarterCards.new().get_starting_deck(), {}, 0, 1),
+					CombatPoolPlainStrikes.new(), CombatWardenPoolHeavyAttacks.new(), [], blocks).is_empty()
+					and spent == _combat_snapshot(deck, party, enemies, rng), "spent Block is not selected again " + id)
+			else:
+				_check(not receipt.get("ok", true) and before == _combat_snapshot(deck, party, enemies, rng),
+					"Block rejection preserves combat/RNG " + id + condition)
+			_check(authority == [wardrobe.get_snapshot(), torn.read_state()], "Block preserves run authorities " + id)
 
 
 func _test_pool_negative_positions() -> void:
@@ -809,6 +933,8 @@ func _report(trials: Array[Dictionary]) -> void:
 	var acquired := {}
 	var winning_acquired := {}
 	var earned_plays := 0
+	var block_plays := 0
+	var acquired_blocks := {}
 	var earned_receipts := []
 	var starter_ids := StarterCards.new().get_starting_deck()
 	for trial in trials:
@@ -833,11 +959,18 @@ func _report(trials: Array[Dictionary]) -> void:
 		purchases += trial.purchased_ids.size()
 		for id in trial.acquired_ids:
 			acquired[id] = acquired.get(id, 0) + 1
+			if M05SeededRunStrategy.EARNED_POOL_BLOCKS.has(id):
+				acquired_blocks[id] = acquired_blocks.get(id, 0) + 1
 		for event in trial.earned_plays:
+			var is_block := M05SeededRunStrategy.EARNED_POOL_BLOCKS.has(event.id.trim_suffix("_plus"))
 			_check(trial.acquired_ids.has(event.id) and event.receipt.get("ok", false) \
-				and not event.receipt.get("hits", []).is_empty(),
-				"accepted earned play has genuine acquired ID and hit receipt")
-			earned_plays += 1
+				and (not event.receipt.get("block_deltas", {}).is_empty() if is_block \
+				else not event.receipt.get("hits", []).is_empty()),
+				"accepted earned play has genuine acquired ID and effect receipt")
+			if is_block:
+				block_plays += 1
+			else:
+				earned_plays += 1
 			earned_receipts.append({"seed": trial.seed, "id": event.id,
 				"battle": event.battle, "receipt": event.receipt})
 		unaffordable += trial.unaffordable_checks
@@ -864,6 +997,8 @@ func _report(trials: Array[Dictionary]) -> void:
 		"nonzero genuine charged/discarded play, enemy phase, reward pick and skip")
 	_check(earned_plays > 0 and not earned_receipts.is_empty(),
 		"cohort actually commits acquired supported pool attacks in later hands")
+	_check(not acquired_blocks.is_empty() and block_plays > 0,
+		"cohort actually acquires and plays earned pure-Block cards")
 	_check(stitches > 0 and sews > 0,
 		"cohort must actually commit a Rest stitch and an owned patch sew")
 	_check(visits > 0 and purchases > 0 and unaffordable > 0,
@@ -882,7 +1017,9 @@ func _report(trials: Array[Dictionary]) -> void:
 	print("M05 Events special=%s generic=%d unaffordable rejections=%d; no-effect Treasure=%d" %
 		[JSON.stringify(specials), generic, event_unaffordable, treasures])
 	print("M05 supported earned-pool coverage PARTIAL (other pool shapes deliberately unselected); acquired=%s accepted_plays=%d receipts=%s" % [
-		JSON.stringify(acquired), earned_plays, JSON.stringify(earned_receipts)])
+		JSON.stringify(acquired), earned_plays + block_plays, JSON.stringify(earned_receipts)])
+	print("M05 earned Block acquired=%s accepted_plays=%d; earned direct-hit plays=%d" % [
+		JSON.stringify(acquired_blocks), block_plays, earned_plays])
 	print("M05 BAL win target 15-30/50 (30-60%%): %s (%d/50)" % [
 		"PASS" if wins >= 15 and wins <= 30 else "FAIL", wins])
 	if wins == 0:
