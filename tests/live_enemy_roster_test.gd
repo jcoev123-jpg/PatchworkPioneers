@@ -142,6 +142,15 @@ func _function_body(source: String, signature: String) -> String:
 	return body.left(body.find("\n\tfunc "))
 
 
+## The source of one top-level script method, up to the next method, for draw-path checks.
+func _method_body(source: String, signature: String) -> String:
+	var start := source.find(signature)
+	if start < 0:
+		return ""
+	var body := source.substr(start)
+	return body.left(body.find("\nfunc "))
+
+
 ## The routed Fight stage advances by the admitted node's own integer floor: meadow 1-3,
 ## woods 4-6, marsh 7-9, peaks 10-11. A standalone battle (no map, no floor) keeps the
 ## meadow, while an invalid floor or missing file keeps the drawn quilt.
@@ -1035,12 +1044,173 @@ func _at_rest(puppets: Array) -> bool:
 	return true
 
 
+## Cycle 183: the mounted intent caption is a dark sewn plaque with high-contrast cream ink
+## at a bounded, fitted size, and a target-policy cue stays its own readable ticket beside
+## it. The real mounted two-enemy battle proves the attack and Block tags the player sees,
+## then the same mounted badge proves a long debuff and a long shove beside a real policy,
+## with committed icon art and its sewn fallback still visible. Every transition is
+## presentation only: authoritative text, amount, target, icons and all combat/RNG state
+## stay exactly as announced.
+func _caption_legibility(app, presenter) -> void:
+	_check(presenter.enemies != null and app.deck != null and presenter._badges.size() == 2,
+		"caption legibility checks run on the real mounted two-enemy battle")
+	if presenter.enemies == null or app.deck == null or presenter._badges.size() != 2:
+		return
+	var before := _snapshot(app)
+	var styles: Array[String] = []
+	for mounted in presenter._badges:
+		styles.append(mounted.icon_mode)
+	_check(styles == ["attack", "block"],
+		"the mounted battle really announces an attack and a Block intent")
+	for badge in presenter._badges:
+		# The attack and Block tags the player reads: dark backing, cream ink and the
+		# theme's own body size instead of the old floating 14 px caption.
+		_check(badge.caption_font_size() == LiveEnemyIntentBadge.CAPTION_MAX_FONT
+			and badge.caption_font_size() > 14,
+			"mounted %s caption uses the larger bounded body size" % badge.icon_mode)
+		_check(_caption_fits(badge),
+			"mounted %s caption fits inside its badge without clipping" % badge.icon_mode)
+		_check(badge.caption_ink() == LiveEnemyIntentBadge.CAPTION_INK
+			and badge.caption_ink() != LiveEnemyIntentBadge.MUTED
+			and _contrast(badge.caption_ink(), LiveEnemyIntentBadge.CAPTION_FILL) >= 7.0,
+			"mounted %s caption ink is high-contrast cream on the dark plaque" % badge.icon_mode)
+		var plaque: Rect2 = badge.caption_rect()
+		_check(plaque.size.x > 0.0 and plaque.size.y > 0.0
+			and plaque.position.x > badge.patch_rect().end.x
+			and not plaque.intersects(badge.icon_rect())
+			and Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(plaque),
+			"the dark caption plaque sits beside the sewn patch inside the same badge")
+		_check(badge.policy_cue.is_empty() and badge.policy_rect() == Rect2()
+			and badge.policy_text_rect() == Rect2(),
+			"an unbound live schedule paints no invented policy ticket")
+	var badge = presenter._badges[0]
+	# A long authoritative debuff beside a real front policy: the caption steps down only as
+	# far as the bounded floor and never runs under the policy ticket.
+	var long_debuff := {"type": "debuff", "amount": 2, "status": "exposed", "target_position": 2}
+	var original := long_debuff.duplicate(true)
+	badge.show_intent(long_debuff, false, false, "front")
+	_check(badge.readable_text == "EXPOSED 2 > H2" and badge.amount == 2
+		and badge.target_position == 2 and badge.intent_type == "debuff"
+		and badge.policy_cue == "FRONT" and long_debuff == original,
+		"a long debuff keeps its exact authoritative caption beside its target policy")
+	_check(_caption_fits(badge)
+		and badge.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT
+		and _contrast(badge.caption_ink(), LiveEnemyIntentBadge.CAPTION_FILL) >= 7.0,
+		"the long debuff caption is bounded, fitted and readable on the dark plaque")
+	var tag: Rect2 = badge.policy_rect()
+	var text: Rect2 = badge.caption_text_rect()
+	_check(tag.size.x > 0.0 and tag.size.y > 0.0
+		and Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(tag)
+		and not text.intersects(tag) and tag.grow(0.01).encloses(badge.policy_text_rect())
+		and _contrast(LiveEnemyIntentBadge.POLICY_INK, LiveEnemyIntentBadge.POLICY_FILL) >= 4.5,
+		"the target policy keeps its own readable ticket, clear of the caption text")
+	_check(_badge_icon_fits(badge, "res://assets/paper/ui/intent_debuff.png")
+		and badge.caption_rect().position.x > badge.patch_rect().end.x,
+		"the long debuff caption keeps its committed icon art visible beside it")
+	# A long shove caption with the longest policy label: still inside the same band.
+	badge.show_intent({"type": "shove", "amount": 0, "target_position": 3,
+		"direction": -1}, false, false, "lowest_living_hp")
+	_check(badge.readable_text == "H3 PUSH FRONT" and badge.icon_mode == "shove"
+		and badge.target_position == 3 and badge.policy_cue == "LOW HP"
+		and _caption_fits(badge) and _badge_icon_fits(badge, ""),
+		"a long shove caption fits beside its policy and keeps the sewn glyph")
+	# Unavailable icon art: the real missing-image fallback still paints the same readable
+	# caption, plaque, policy ticket and sewn glyph from the same authoritative text.
+	var saved_root: String = badge.icon_root
+	badge.icon_root = "res://assets/paper/ui/absent/"
+	badge.show_intent(long_debuff, false, false, "exposed")
+	_check(badge.icon_texture == null and _badge_icon_fits(badge, "")
+		and badge.readable_text == "EXPOSED 2 > H2" and badge.amount == 2
+		and badge.target_position == 2 and badge.policy_cue == "EXPOSED"
+		and _caption_fits(badge) and badge.policy_text_rect() != Rect2(),
+		"unavailable icon art keeps the readable caption, plaque and policy ticket")
+	badge.icon_root = saved_root
+	_check(_snapshot(app) == before,
+		"every caption, plaque and policy transition is presentation only")
+	presenter._refresh()
+	_check(_snapshot(app) == before and presenter._badges[0].readable_text == "ATK 1 > H1"
+		and presenter._badges[0].policy_cue.is_empty()
+		and _caption_fits(presenter._badges[0]) and _caption_fits(presenter._badges[1]),
+		"a refresh restores the real announcements with fitted captions")
+	# Source inspection: the plaque is painted beneath the fitted caption, never floating ink.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_intent_badge.gd")
+	var draw_body := _method_body(source, "func _draw() -> void:")
+	var caption_body := _method_body(source, "func _draw_caption() -> void:")
+	var fit_body := _method_body(source, "func caption_font_size() -> int:")
+	_check(draw_body.contains("_draw_caption()")
+		and caption_body.find("draw_colored_polygon(") >= 0
+		and caption_body.find("CAPTION_FILL") >= 0
+		and caption_body.find("draw_colored_polygon(") < caption_body.find("draw_string(")
+		and caption_body.contains("caption_ink()") and caption_body.contains("POLICY_FILL"),
+		"source paints the dark plaque under the cream caption and the separate policy ticket")
+	_check(fit_body.contains("CAPTION_MAX_FONT") and fit_body.contains("CAPTION_MIN_FONT")
+		and fit_body.contains("get_string_size(") and not fit_body.contains("-1, 14"),
+		"source fits the caption with the real theme font between bounded sizes")
+	_check(source.contains("func caption_ink() -> Color:")
+		and source.contains("func caption_rect() -> Rect2:")
+		and not source.contains("MUTED if icon_mode in [\"slain\", \"none\"] else CREAM"),
+		"source replaced the low-contrast floating caption with the backed one")
+
+
 ## The authored front policy's living target, read from the real party.
 func _front_target(app) -> int:
 	for index in range(CombatParty.PARTY_SIZE):
 		if app.party.get_hero(index + 1).hp > 0:
 			return index + 1
 	return 1
+
+
+## One channel of relative luminance, for a real ink-to-backing contrast measurement.
+func _channel(value: float) -> float:
+	if value <= 0.04045:
+		return value / 12.92
+	return pow((value + 0.055) / 1.055, 2.4)
+
+
+func _luminance(color: Color) -> float:
+	return 0.2126 * _channel(color.r) + 0.7152 * _channel(color.g) + 0.0722 * _channel(color.b)
+
+
+func _contrast(first: Color, second: Color) -> float:
+	var high: float = maxf(_luminance(first), _luminance(second))
+	var low: float = minf(_luminance(first), _luminance(second))
+	return (high + 0.05) / (low + 0.05)
+
+
+## The committed art (or its sewn-glyph fallback) stays visible beside the caption.
+func _badge_icon_fits(badge, path: String) -> bool:
+	var drawn: Rect2 = badge.icon_texture_rect()
+	if path.is_empty():
+		return badge.icon_texture == null and drawn == Rect2()
+	if badge.icon_texture == null or badge.icon_art_path() != path:
+		return false
+	var pixels := Vector2(badge.icon_texture.get_width(), badge.icon_texture.get_height())
+	return pixels.x > 0.0 and pixels.y > 0.0 \
+		and drawn.size.x > 0.0 and drawn.size.y > 0.0 \
+		and is_equal_approx(drawn.size.x / drawn.size.y, pixels.x / pixels.y) \
+		and badge.icon_rect().grow(0.01).encloses(drawn) \
+		and badge.patch_rect().grow(0.01).encloses(drawn)
+
+
+## The mounted caption really fits: its painted text measures inside the caption room at the
+## badge's own fitted size, inside the dark plaque, clear of the separate policy ticket and
+## wholly inside the badge. Sizes stay inside the bounded range, never a literal font size.
+func _caption_fits(badge) -> bool:
+	var font: Font = badge.get_theme_default_font()
+	if font == null or badge.readable_text.is_empty():
+		return false
+	var size_px: int = badge.caption_font_size()
+	var text: Rect2 = badge.caption_text_rect()
+	var plaque: Rect2 = badge.caption_rect()
+	return size_px >= LiveEnemyIntentBadge.CAPTION_MIN_FONT \
+		and size_px <= LiveEnemyIntentBadge.CAPTION_MAX_FONT \
+		and text.size.x > 0.0 and text.size.y > 0.0 \
+		and is_equal_approx(text.size.x, font.get_string_size(badge.readable_text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x) \
+		and badge.caption_text_area().grow(0.01).encloses(text) \
+		and plaque.grow(0.01).encloses(text) \
+		and Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(plaque) \
+		and not text.intersects(badge.policy_rect())
 
 
 func _assert_badges(app, presenter, expected_target: int = -1) -> void:
@@ -1077,10 +1247,8 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 		var announced: Dictionary = by_position[position]
 		_check(badge.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"drawn badge and text never intercept pointer events")
-		_check(not badge.readable_text.is_empty() and badge.get_theme_default_font() != null and
-			badge.get_theme_default_font().get_string_size(badge.readable_text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
-			"drawn readable intent fits within its badge")
+		_check(not badge.readable_text.is_empty() and _caption_fits(badge),
+			"drawn readable intent fits its dark caption plaque inside the badge")
 		var rect: Rect2 = badge.get_global_rect()
 		var drawn: Rect2 = Rect2(rect.position + badge.patch_rect().position, badge.patch_rect().size)
 		_check(rect.size.x >= 192 and rect.size.y >= badge.custom_minimum_size.y - 0.01
@@ -1094,7 +1262,10 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 			not rect.intersects(app.return_button.get_global_rect()) and
 			not rect.intersects(app.hand_view.get_global_rect()),
 			"roster intent badge does not cover hand or battle controls")
-		_check(rect.size.x >= 64 + badge.get_theme_default_font().get_string_size(badge.readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, "badge's drawn caption area has adequate width")
+		_check(badge.caption_rect().position.x > badge.patch_rect().end.x
+			and rect.encloses(Rect2(rect.position + badge.caption_text_rect().position,
+				badge.caption_text_rect().size)),
+			"badge's drawn caption area has adequate width beside the sewn patch")
 		for meter in meters:
 			_check(not rect.intersects(meter.get_global_rect()), "intent badge does not cover HP/Block meter")
 		if app.enemies.is_slain(position):
@@ -1597,6 +1768,8 @@ func _run() -> void:
 			reference.free()
 			_finish()
 			return
+		if session == 0:
+			_caption_legibility(app, presenter)
 		var tick_phase: float = presenter._puppets[0].idle_phase
 		await process_frame
 		await process_frame
@@ -1946,7 +2119,7 @@ func _typed_stage(app, presenter) -> void:
 			and badge.amount == action.amount and badge.target_position == action.get("target_position", 0),
 			"typed identity and complete authoritative intent survive mounted presentation")
 		_check(Rect2(0, 0, 1280, 720).encloses(presenter._labels[index].get_global_rect())
-			and badge.get_theme_default_font().get_string_size(badge.readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
+			and _caption_fits(badge),
 			"real typed name and short intent are readable inside the stage")
 	# Exercise every distinct symbol and exact destination on a real mounted canvas.
 	var badge = presenter._badges[0]
@@ -1959,7 +2132,7 @@ func _typed_stage(app, presenter) -> void:
 		_check(badge.icon_mode == action.type and badge.intent_type == action.type
 			and badge.amount == action.amount and badge.target_position == action.get("target_position", 0)
 			and action == original, "all intent symbols preserve exact copied kind, amount and destination")
-		_check(badge.get_theme_default_font().get_string_size(badge.readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x <= badge.size.x - 64,
+		_check(_caption_fits(badge),
 			"each intent caption fits the three-enemy stage")
 	presenter._refresh()
 	_check(_snapshot(app) == before, "typed repeated refresh and every badge kind preserve all models and RNG")
