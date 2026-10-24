@@ -26,6 +26,7 @@ func _initialize() -> void:
 	_test_spare_spool()
 	_test_bound_rejections()
 	_test_hemguard_cuff()
+	_test_reinforced_browband()
 	for failure in failures:
 		printerr(failure)
 	print("combat_support_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -603,3 +604,221 @@ func _test_hemguard_cuff() -> void:
 	_check(c.service.play_support(c.deck, c.party, BRACE, 0), "divergent party plays Brace")
 	_check(c.party.get_hero(1).block == 7, "torn wearer in run ledger receives base 7 Block, NO cuff bonus")
 
+
+## Genuine M05 HEAD ledger, never a fabricated bonus projection. Each fixture
+## starts from the authored roster and sews through RunPatchWardrobe.
+func _browband_fixture(mode: String, card_id: String, owner_id: String,
+		seed_value: int = 42) -> Dictionary:
+	var definitions: Array = JSON.parse_string(FileAccess.get_file_as_string("res://data/heroes/starter_party.json"))
+	for hero in definitions:
+		_check(hero.max_hp == floor(hero.max_hp), "HEAD fixture authored integral HP")
+		hero.max_hp = int(hero.max_hp)
+	var party := CombatParty.new(definitions)
+	_check(party.is_valid() and party.get_hero(1).id == "warden"
+		and party.get_hero(2).id == "seamstress", "HEAD fixture has authentic owners")
+	var torn := RunTornMending.new(party.get_heroes())
+	var slots: Array = []
+	for catalog_path in [CombatM05HeadPatchRules.CATALOG_PATH,
+			CombatPatchAttackRules.SUPPORT_CATALOG]:
+		var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(catalog_path))
+		_check(records is Array, "HEAD fixture real patch catalog loads: " + catalog_path)
+		for record in records:
+			if record.get("id") in ["reinforced_browband", "hemguard_cuff"]:
+				slots.append({"id": record.id, "slot": record.slot})
+	_check(slots.size() == 2, "HEAD and ARM definitions come from both real catalogs")
+	var owned: Array = []
+	if mode not in ["absent", "arm_only"]:
+		owned.append("reinforced_browband")
+	if mode in ["both", "arm_only"]:
+		owned.append("hemguard_cuff")
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, slots, 5)
+	_check(wardrobe.is_valid() and torn.is_valid(), "authentic HEAD/ARM wardrobe and torn ledgers")
+	if mode not in ["absent", "unsewn", "arm_only"]:
+		var actual_head_wearer := owner_id
+		if mode == "wrong":
+			actual_head_wearer = "seamstress" if owner_id == "warden" else "warden"
+		_check(wardrobe.sew("reinforced_browband", actual_head_wearer, "HEAD",
+			"head-sew", wardrobe.get_snapshot()).ok, "authentic HEAD sew: " + mode)
+	if mode in ["both", "arm_only"]:
+		_check(wardrobe.sew("hemguard_cuff", owner_id, "ARM", "arm-sew",
+			wardrobe.get_snapshot()).ok, "authentic ARM sew alongside HEAD")
+	if mode == "torn":
+		var start: Array = torn.read_state().heroes
+		var finish: Array = start.duplicate(true)
+		for hero in finish:
+			if hero.id == owner_id:
+				hero.hp = 0
+		_check(torn.observe_battle_end("head-tear", start, finish).ok,
+			"real HEAD wearer torn in run ledger")
+		var state := wardrobe.get_snapshot()
+		_check(wardrobe.refresh_run_context(torn.read_state().heroes, state.owned,
+			state.scraps, state.gold, state.cards, state), "reconcile torn HEAD wearer")
+		party._heroes.assign(torn.read_state().heroes)
+	var resolver := CombatSupportCards.new()
+	if mode != "unbound":
+		var ws := wardrobe.get_snapshot()
+		var ts := torn.read_state()
+		_check(resolver.bind_patch_wardrobe(wardrobe, torn, ws, ts)
+			and resolver.is_patch_binding_valid(),
+			"HEAD binding authentic and snapshot-matched: " + mode)
+	return {"party": party, "deck": _deck([card_id], seed_value),
+		"service": resolver, "wardrobe": wardrobe, "torn": torn}
+
+
+func _head_block_case(mode: String, definition: Dictionary, amount: int, seed_value: int) -> void:
+	var owner: String = definition.owner_id
+	var card_id: String = definition.id
+	var c := _browband_fixture(mode, card_id, owner, seed_value)
+	var target := 0 if owner == "warden" else 1
+	var recipient := 1
+	var before := _snapshot(c.deck, c.party)
+	var original_wardrobe: Dictionary = c.wardrobe.get_snapshot()
+	var original_torn: Dictionary = c.torn.read_state()
+	_check(c.deck.hand.count(card_id) == 1 and c.deck.energy == 3
+		and not c.party.is_downed(1 if owner == "warden" else 2),
+		"nonvacuous held HEAD support and living owner: " + card_id + "/" + mode)
+	if mode != "unbound":
+		var projection: Dictionary = c.service._head_patches.read_projection()
+		var head_bonus: int = c.service._head_patches.get_bonus(owner, card_id, "block")
+		_check(projection.get("ok") == true and head_bonus == (2 if mode in ["head", "both"] else 0),
+			"read-only original-owner HEAD projection: " + card_id + "/" + mode)
+		_check(_snapshot(c.deck, c.party) == before
+			and c.wardrobe.get_snapshot() == original_wardrobe
+			and c.torn.read_state() == original_torn,
+			"HEAD projection never plays a card, touches ledgers or advances RNG")
+	var predicted := definition.duplicate(true)
+	predicted.amount = amount
+	var expected := _expected(before, predicted, recipient)
+	_check(c.service.play_support(c.deck, c.party, definition, target),
+		"HEAD held support commits: " + card_id + "/" + mode)
+	_check(_snapshot(c.deck, c.party) == expected,
+		"exact HEAD+ARM Block, one printed-energy spend, piles, heroes, turn and RNG: " + card_id + "/" + mode)
+	_check(c.party.get_hero(recipient).block == amount
+		and c.deck.hand.count(card_id) == 0 and c.deck.discard_pile.count(card_id) == 1,
+		"one award to correct recipient and exactly one held discard: " + card_id + "/" + mode)
+	for other in [1, 2, 3]:
+		if other != recipient:
+			_check(c.party.get_hero(other).block == 0,
+				"HEAD support never grants Block to nonrecipient: " + card_id + "/" + mode)
+	_check(c.wardrobe.get_snapshot() == original_wardrobe
+		and c.torn.read_state() == original_torn, "committed support does not sew or mutate run ledgers")
+	_bound_reject(c, definition, target, "HEAD spent card cannot replay " + card_id + "/" + mode)
+
+
+func _test_reinforced_browband() -> void:
+	# Four complete printed/HEAD/ARM/additive outcome matrices. Each run
+	# asserts the full exact party/deck/RNG transition, not just a Block number.
+	for definition in [BRACE, BRACE_PLUS, STITCH, STITCH_PLUS]:
+		for mode in ["absent", "unsewn", "wrong", "unbound", "arm_only", "head", "both"]:
+			var bonus := 4 if mode == "both" else (2 if mode in ["head", "arm_only"] else 0)
+			for seed_value in [42, 987654]:
+				_head_block_case(mode, definition, int(definition.amount) + bonus, seed_value)
+
+	# The wearer identity survives legal physical position movement.
+	var c := _browband_fixture("both", "warden_brace_plus", "warden")
+	var heroes: Array = c.party.get_heroes()
+	c.party = CombatParty.new([heroes[1], heroes[2], heroes[0]])
+	_check(c.party.get_hero(3).id == "warden" and not c.party.is_downed(3),
+		"HEAD+ARM Warden physically moves to legal back slot")
+	_check(c.service.play_support(c.deck, c.party, BRACE_PLUS, 0)
+		and c.party.get_hero(3).block == 14 and c.party.get_hero(1).block == 0,
+		"legal moved Warden receives precisely 10+2+2, not position-owner bonus")
+
+	# Wrong-wearer contrast: Warden wearing HEAD is the *recipient*, not the
+	# Seamstress card owner. It must not improve Stitch Up or Stitch Up+.
+	for definition in [STITCH, STITCH_PLUS]:
+		c = _browband_fixture("wrong", definition.id, "seamstress")
+		var before := _snapshot(c.deck, c.party)
+		_check(c.wardrobe.project_active(c.torn.read_state()).active.warden.has("reinforced_browband"),
+			"recipient really wears the wrong-owner Browband")
+		_check(c.service.play_support(c.deck, c.party, definition, 1)
+			and _snapshot(c.deck, c.party) == _expected(before, definition, 1),
+			"target-owned HEAD cannot add to original Stitch Block")
+
+	# Reject rather than charge when printed Block fits but HEAD or HEAD+ARM
+	# makes the authoritative resulting Block exceed capacity.
+	for mode in ["head", "both"]:
+		c = _browband_fixture(mode, BRACE.id, "warden")
+		var limit := CombatParty.MAX_INT - (8 if mode == "head" else 10)
+		_check(c.party.gain_block(1, limit), "HEAD Block-capacity boundary prepared")
+		_bound_reject(c, BRACE, 0, mode + " overflow checked before spend")
+
+	# All failed preconditions leave every HP/Block, pile, energy, turn, RNG
+	# and both genuine ledgers byte-for-byte identical.
+	c = _browband_fixture("both", BRACE.id, "warden")
+	_bound_reject(c, BRACE, 2, "HEAD self targeting forbidden")
+	for edit in [{"amount": 11}, {"cost": 0}, {"owner_id": "seamstress"},
+			{"from_positions": [2, 3]}, {"effect": "ally_block"}]:
+		var forged := BRACE.duplicate(true)
+		for key in edit:
+			forged[key] = edit[key]
+		_bound_reject(c, forged, 0, "forged HEAD card " + str(edit))
+	_check(c.deck.try_spend_energy(3), "HEAD no-energy fixture actually depleted")
+	_bound_reject(c, BRACE, 0, "HEAD cannot play without energy")
+	c = _browband_fixture("both", STITCH.id, "seamstress")
+	_bound_reject(c, STITCH, 0, "HEAD Stitch requires a selected ally")
+	_check(c.party.apply_damage(3, 26) and c.party.is_downed(3),
+		"HEAD recipient genuinely downed")
+	_bound_reject(c, STITCH, 3, "HEAD cannot grant Block to downed ally")
+
+	# A run tear disables the HEAD even in a reconciled wardrobe.
+	for definition in [BRACE, STITCH]:
+		c = _browband_fixture("torn", definition.id, definition.owner_id)
+		_check(c.torn.read_state().tear_counts[definition.owner_id] == 1,
+			"authentic HEAD owner tear counted")
+		_bound_reject(c, definition, 0 if definition.owner_id == "warden" else 1,
+			"torn HEAD owner cannot cast")
+
+	# A changed run authority invalidates an old explicit binding, including a
+	# legal re-sew; only a new matching binding recovers plain printed Block.
+	c = _browband_fixture("head", BRACE.id, "warden")
+	var wardrobe: RunPatchWardrobe = c.wardrobe
+	_check(wardrobe.start_rest("head-rest", wardrobe.get_snapshot()).ok,
+		"HEAD Rest opens for re-sew")
+	_check(wardrobe.re_sew("reinforced_browband", "warden", "seamstress",
+		"head-rest", "move-head", wardrobe.get_snapshot()).ok,
+		"HEAD moved off caster by real re-sew")
+	_check(wardrobe.end_rest("head-rest", wardrobe.get_snapshot()).ok,
+		"HEAD Rest closes")
+	_bound_reject(c, BRACE, 0, "stale HEAD ledger after re-sew")
+	_check(c.service.bind_patch_wardrobe(wardrobe, c.torn, wardrobe.get_snapshot(),
+		c.torn.read_state()), "fresh HEAD rebind follows re-sew")
+	var before := _snapshot(c.deck, c.party)
+	_check(c.service.play_support(c.deck, c.party, BRACE, 0)
+		and _snapshot(c.deck, c.party) == _expected(before, BRACE, 1),
+		"re-sewn Browband on other hero never adds to Warden Block")
+
+	for failure_mode in ["null", "forged_wardrobe", "forged_torn", "invalid_torn"]:
+		c = _browband_fixture("head", BRACE.id, "warden")
+		var ws: Dictionary = c.wardrobe.get_snapshot()
+		var ts: Dictionary = c.torn.read_state()
+		var bound_ok := false
+		match failure_mode:
+			"null":
+				bound_ok = c.service.bind_patch_wardrobe(null, c.torn)
+			"forged_wardrobe":
+				ws.scraps += 1
+				bound_ok = c.service.bind_patch_wardrobe(c.wardrobe, c.torn, ws, ts)
+			"forged_torn":
+				ts.heroes[0].hp -= 1
+				bound_ok = c.service.bind_patch_wardrobe(c.wardrobe, c.torn, ws, ts)
+			"invalid_torn":
+				bound_ok = c.service.bind_patch_wardrobe(c.wardrobe, RunTornMending.new())
+		_check(not bound_ok and not c.service.is_patch_binding_valid(),
+			"invalid explicit HEAD bind fails closed: " + failure_mode)
+		_bound_reject(c, BRACE, 0, "explicitly failed HEAD bind " + failure_mode)
+
+	# Neither Mend nor a zero-cost draw acquires Block from HEAD.
+	for choice in [{"id": "seamstress_mend", "owner": "seamstress", "def": MEND, "target": 1},
+			{"id": "tinker_tune_up", "owner": "tinker", "def": TUNE, "target": 0}]:
+		c = _browband_fixture("head", choice.id, choice.owner)
+		var initial := _snapshot(c.deck, c.party)
+		_check(c.service._head_patches.get_bonus(choice.owner, choice.id, "block") == 0,
+			"HEAD cannot project Block for non-Block starter support")
+		if choice.id == "seamstress_mend":
+			_check(c.party.apply_damage(1, 8), "non-Block Mend target wounded")
+			initial = _snapshot(c.deck, c.party)
+		_check(c.service.play_support(c.deck, c.party, choice["def"], choice.target),
+			"authentic non-Block support still plays")
+		_check(_snapshot(c.deck, c.party) == _expected(initial, choice["def"], 1),
+			"HEAD leaves original Mend/Tune effect, cost, piles and RNG unchanged")
