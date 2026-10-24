@@ -398,8 +398,14 @@ func _run() -> void:
 	if not plain.is_empty() and await _routed_win(plain, false):
 		await _click(app.reward_buttons[3])
 		await _click(app.continue_button)
-		var oracle := _canonical_oracle(plain.path[0])
-		await _click(_route_action(plain.path[0]))
+		var transit: Array = plain.path.duplicate()
+		var next_fight: String = transit.pop_back()
+		await _visit_path(transit, false)
+		_check(app.run_map.get_node(next_fight).get("type") == "Fight"
+			and app.run_map.get_legal_choices().has(next_fight),
+			"plain routed fixture reaches an actual connected Fight after transit")
+		var oracle := _canonical_oracle(next_fight)
+		await _click(_route_action(next_fight))
 		_check(not oracle.is_empty() and _mounted_state() == oracle.mounted
 			and app.run_stitch_descriptors.is_empty() and app.deck.hand.size() == 5
 			and app.deck.energy == 3, "plain routed Fight matches canonical admission oracle")
