@@ -122,6 +122,7 @@ const SHORT_LINES := {
 	"seamstress_tailors_trance_plus": "Draw 3. Gain 1 energy.",
 	"tinker_rivet_shot": "Deal 4. Exposed 1.",
 	"tinker_spring_trap": "Deal 3. Pin.",
+	"tinker_spring_trap_plus": "Deal 4. Pin.",
 	"tinker_scatter_bolts": "Deal 3 to all.",
 	"tinker_spare_parts": "Gain 3 Block. Draw 1.",
 	"tinker_spare_parts_plus": "Gain 4 Block. Draw 1.",
@@ -2236,6 +2237,60 @@ func _typography_check() -> void:
 	await _frames()
 
 
+## Both earned Spring versions must be enabled only by the mounted battle's
+## real target preflight, never by their catalog face alone.
+func _spring_face_states() -> void:
+	if not await _start():
+		return
+	var metadata = presenter._metadata
+	for id in ["tinker_spring_trap", "tinker_spring_trap_plus"]:
+		app.deck.draw_pile.append(id)
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.back() == id,
+			"metadata Spring copy drawn by actual CombatDeck: " + id)
+		app._refresh_hand()
+		await _frames()
+		var panel := _find(id)
+		_check(panel != null and metadata._bindings.has(panel),
+			"real Spring hand face mounted and decorated: " + id)
+		if panel == null:
+			continue
+		var read_before := _snapshot()
+		metadata._update_visual(panel)
+		_check(metadata.visual_state(panel).get("playable", false)
+			and panel.self_modulate.is_equal_approx(Color.WHITE),
+			"legal living target and energy enable Spring face: " + id)
+		_check(metadata.short_line(id) == SHORT_LINES[id]
+			and panel.tooltip_text.contains("BASE Pin the target")
+			and _occurrences(panel.tooltip_text, "PINNED:") == 1,
+			"Spring short rule and Pinned Help remain exact: " + id)
+		_check(_snapshot() == read_before, "Spring face read does not mutate battle: " + id)
+		app.deck.combat_state.energy = 0
+		metadata._update_visual(panel)
+		_check(not metadata.visual_state(panel).get("playable", true)
+			and not panel.self_modulate.is_equal_approx(Color.WHITE),
+			"no energy dims mounted Spring face: " + id)
+		app.deck.combat_state.energy = 3
+		metadata._update_visual(panel)
+		_check(metadata.visual_state(panel).get("playable", false),
+			"restored energy restores legal Spring face: " + id)
+	for index in range(1, app.enemies.get_enemies().size() + 1):
+		if not app.enemies.is_slain(index):
+			_check(app.enemies.apply_damage(index, 10000), "remove legal Spring target %d" % index)
+	_check(app.enemies.is_victorious(), "Spring face no-target precondition is real")
+	for id in ["tinker_spring_trap", "tinker_spring_trap_plus"]:
+		var panel := _find(id)
+		_check(panel != null, "Spring remains mounted for no-target face check: " + id)
+		if panel == null:
+			continue
+		metadata._update_visual(panel)
+		_check(not metadata.visual_state(panel).get("playable", true)
+			and not panel.self_modulate.is_equal_approx(Color.WHITE),
+			"no living legal enemy dims both Spring faces")
+	app.return_button.pressed.emit()
+	await _frames()
+	_check(app.deck == null, "Spring metadata battle returns to title cleanly")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_catalog_facts()
@@ -2329,6 +2384,7 @@ func _run() -> void:
 			"Return to Title released run and battle")
 		_check(presenter._metadata._bindings.is_empty() and app.start_button.has_focus(),
 			"Title remains focusable and no stale panel survives")
+	await _spring_face_states()
 	app.free()
 	_finish()
 
