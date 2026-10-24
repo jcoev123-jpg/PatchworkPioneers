@@ -98,6 +98,14 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	_check(is_instance_valid(panel) and app.route_view == null, "later Event mounts actual wallet panel")
 	if not is_instance_valid(panel):
 		return []
+	var paper_style := panel.paper_panel.get_theme_stylebox("panel")
+	if ResourceLoader.exists("res://assets/paper/ui/reward_panel.png", "Texture2D"):
+		_check(paper_style is StyleBoxTexture, "real routed Event mounts sewn paper")
+		if paper_style is StyleBoxTexture:
+			_check(paper_style.texture != null and paper_style.texture.resource_path
+				== "res://assets/paper/ui/reward_panel.png", "routed paper uses shipped reward fabric")
+	else:
+		_check(paper_style is StyleBoxFlat, "real routed Event retains flat fallback")
 	var record := panel._selector.get_event()
 	_check(record.id == event_id and record.id == expected_id and app.run_rng.state == rng.state
 		and app._wallet_event_history == [event_id], "named Event uses exactly one deterministic draw: " + event_id)
