@@ -756,6 +756,7 @@ func _run() -> void:
 		"binding detached component before mounting preserves genuine source and safe initial selection")
 	prebound.free()
 	await _test_thumbnail_fallbacks()
+	await _test_keyword_help_picker()
 	await _test_mixed_pool_picker()
 	await _test_snip_conditional_descriptions()
 	await _test_submitted_single_intent_latch()
@@ -1001,6 +1002,78 @@ func _finish() -> void:
 	quit(0 if failures.is_empty() else 1)
 
 
+## Drive the supplied mounted picker, not the earlier global starter picker.
+func _select_live_tile(button: OptionButton, row: int, keyboard: bool = false) -> void:
+	var panel := button.get_parent() as LiveRestStitchPairPicker
+	_check(panel != null and row >= 0 and row < button.item_count,
+		"tile activation has a real mounted picker and legal source row")
+	if panel == null or row < 0 or row >= button.item_count:
+		return
+	var is_first := button == panel.first_selector
+	if is_first and panel.second_tile_scroll.visible:
+		panel._return_to_first_choice()
+		await _frames()
+	var index: int = button.get_item_metadata(row)
+	var tile: Button = panel.first_tile_for_index(index) if is_first else panel.second_tile_for_index(index)
+	_check(tile != null and tile.is_visible_in_tree(), "chosen original tile is mounted and visible")
+	if tile == null:
+		return
+	if keyboard:
+		tile.grab_focus()
+		_check(tile.has_focus(), "chosen original tile receives keyboard focus")
+		await _key(KEY_ENTER)
+	else:
+		tile.pressed.emit()
+		await _frames()
+	_check(button.selected == row, "mounted tile action synchronizes original selector row")
+
+
+## Independent expected tooltip rows from the original resolver descriptors.
+func _expected_keyword_help(definition: Dictionary) -> String:
+	var rows: Array[String] = []
+	for entry in CardKeywordGlossary.describe(definition):
+		rows.append("%s — %s" % [entry["keyword"], entry["explanation"]])
+	return "\n".join(rows)
+
+
+func _assert_keyword_help(panel: LiveRestStitchPairPicker, first_id: String,
+		second_id: String, label: String) -> void:
+	var first := RunRestStitchCards.resolve_card_definition(first_id)
+	var second := RunRestStitchCards.resolve_card_definition(second_id)
+	_check(not first.is_empty() and not second.is_empty(), label + " resolves both originals")
+	if first.is_empty() or second.is_empty():
+		return
+	var first_help := _expected_keyword_help(first)
+	var second_help := _expected_keyword_help(second)
+	var combined: Array[String] = []
+	if not first_help.is_empty():
+		combined.append("First — %s\n%s" % [first["display_name"], first_help])
+	if not second_help.is_empty():
+		combined.append("Second — %s\n%s" % [second["display_name"], second_help])
+	_check(panel.first_half_label.tooltip_text == first_help
+		and panel.second_half_label.tooltip_text == second_help,
+		label + " has exact separate ordered original glossary records")
+	_check(panel._first_thumb["backing"].tooltip_text == first_help
+		and panel.first_thumbnail.tooltip_text == first_help
+		and panel._second_thumb["backing"].tooltip_text == second_help
+		and panel.second_thumbnail.tooltip_text == second_help,
+		label + " both illustration and text hover regions expose their own Help")
+	_check(not panel.confirm_button.disabled
+		and panel.confirm_button.tooltip_text == "\n\n".join(combined),
+		label + " focusable Confirm contains only the two current ordered Help groups")
+
+
+func _assert_keyword_help_clear(panel: LiveRestStitchPairPicker, label: String) -> void:
+	_check(panel.first_half_label.tooltip_text.is_empty()
+		and panel.second_half_label.tooltip_text.is_empty()
+		and panel.confirm_button.tooltip_text.is_empty()
+		and panel._first_thumb["backing"].tooltip_text.is_empty()
+		and panel.first_thumbnail.tooltip_text.is_empty()
+		and panel._second_thumb["backing"].tooltip_text.is_empty()
+		and panel.second_thumbnail.tooltip_text.is_empty(),
+		label + " removes both half, illustration and Confirm tooltips")
+
+
 func _row_in_first(p: LiveRestStitchPairPicker, deck_index: int) -> int:
 	for i in range(p.first_selector.item_count):
 		if p.first_selector.get_item_metadata(i) == deck_index:
@@ -1013,6 +1086,157 @@ func _row_in_second(p: LiveRestStitchPairPicker, deck_index: int) -> int:
 		if p.second_selector.get_item_metadata(i) == deck_index:
 			return i
 	return -1
+
+
+## Real mounted 3-scrap pool halves: keyword hover, keyboard Help and lifecycle.
+func _test_keyword_help_picker() -> void:
+	var cards: Array[String] = [
+		"warden_pinning_jab", "seamstress_snag",
+		"warden_pinning_jab_plus", "seamstress_snag_plus",
+		"warden_strike", "tinker_pop_shot"]
+	var ledger := RunRestStitchCards.new(cards, {}, 3)
+	_check(ledger.is_valid() and not ledger.is_consumed(), "keyword test has valid real 3-scrap originals")
+	var source := ledger.get_snapshot()
+	var jab := RunRestStitchCards.resolve_card_definition(cards[0])
+	var snag := RunRestStitchCards.resolve_card_definition(cards[1])
+	var jab_rows := CardKeywordGlossary.describe(jab)
+	var snag_rows := CardKeywordGlossary.describe(snag)
+	var plus_rows := CardKeywordGlossary.describe(RunRestStitchCards.resolve_card_definition(cards[3]))
+	_check(jab_rows.size() == 1 and jab_rows[0]["keyword"] == "Pinned"
+		and str(jab_rows[0]["explanation"]).contains("DIFFERENT hero")
+		and str(jab_rows[0]["explanation"]).contains("+5 damage before Weak/Exposed")
+		and str(jab_rows[0]["explanation"]).contains("consumes this pin"),
+		"authentic Pinning Jab glossary states different-owner +5 and consumption")
+	_check(snag_rows.size() == 2 and snag_rows[0]["keyword"] == "Weak 1"
+		and snag_rows[1]["keyword"] == "Unravel 3"
+		and str(snag_rows[0]["explanation"]).contains("25% less attack damage")
+		and str(snag_rows[0]["explanation"]).contains("rounds down (minimum 0)")
+		and str(snag_rows[1]["explanation"]).contains("normal 8, elite 12, boss 16")
+		and str(snag_rows[1]["explanation"]).contains("skips its NEXT action")
+		and str(snag_rows[1]["explanation"]).contains("resets to 0")
+		and str(snag_rows[1]["explanation"]).contains("rises by 4"),
+		"authentic Snag glossary orders Weak then Unravel with exact break/rounding rules")
+	_check(plus_rows.size() == 2 and plus_rows[0]["keyword"] == "Weak 1"
+		and plus_rows[1]["keyword"] == "Unravel 4",
+		"authentic Snag+ glossary describes four Unravel, not three")
+	var panel := LiveRestStitchPairPicker.new()
+	panel.position = Vector2(330, 180)
+	root.add_child(panel)
+	await _frames()
+	panel.stitch_requested.connect(_take)
+	panel.bind(ledger, source)
+	_check(panel.first_selector.item_count == cards.size() and panel.confirm_button.disabled,
+		"genuine keyword ledger mounts first-stage selectable originals")
+	_assert_keyword_help_clear(panel, "initial mounted bind")
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 221144
+	var local_before := local_rng.state
+	seed(221144)
+	var global_next := randi()
+	seed(221144)
+	var signal_count := received.size()
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, 0))
+	_check(panel.second_selector.item_count > 0 and panel.confirm_button.disabled
+		and panel.first_half_label.text.is_empty() and panel.second_half_label.text.is_empty(),
+		"one selected half cannot advertise a complete pair")
+	_assert_keyword_help_clear(panel, "incomplete first selection")
+	await _select_live_tile(panel.second_selector, _row_in_second(panel, 1))
+	_check(panel._current_pair().get("first_index") == 0
+		and panel._current_pair().get("second_index") == 1
+		and panel._current_pair().get("energy_cost") == 2
+		and panel._current_pair().get("remaining_scraps") == 0,
+		"genuine Jab/Snag maintains source indices, two energy and three-scrap price")
+	_check(panel.first_half_label.text ==
+		"First: Pinning Jab — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1\n4 damage; Pinned"
+		and panel.second_half_label.text ==
+		"Second: Snag — Seamstress (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\nUnravel 3; Weak 1",
+		"Jab/Snag original card faces remain exactly short authored lines")
+	_assert_keyword_help(panel, cards[0], cards[1], "base Jab then Snag")
+	_check(not panel.first_half_label.tooltip_text.contains("Weak 1 —")
+		and not panel.first_half_label.tooltip_text.contains("Unravel 3 —")
+		and not panel.second_half_label.tooltip_text.contains("Pinned —"),
+		"each half's hover avoids the other half's keyword rows")
+	_check(panel.first_half_label.mouse_filter != Control.MOUSE_FILTER_IGNORE
+		and panel.second_half_label.mouse_filter != Control.MOUSE_FILTER_IGNORE
+		and panel.first_thumbnail.mouse_filter != Control.MOUSE_FILTER_IGNORE,
+		"hoverable text and art regions can receive pointer Help")
+	var chosen_a := panel._selected_first_index
+	var chosen_b := panel._selected_second_index
+	var second_tile := panel.second_tile_for_index(1)
+	_check(second_tile != null and second_tile.is_visible_in_tree(), "real second tile can receive keyboard focus")
+	if second_tile != null:
+		second_tile.grab_focus()
+		await _key(KEY_TAB)
+		_check(panel.confirm_button.has_focus(), "Tab reaches genuine Confirm for combined Help")
+		_assert_keyword_help(panel, cards[0], cards[1], "focused Confirm")
+	_check(panel._selected_first_index == chosen_a and panel._selected_second_index == chosen_b,
+		"keyboard focus and Help do not change selected source indices")
+	# Reverse through the actual keyboard tile activation path.
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, 1), true)
+	_assert_keyword_help_clear(panel, "reverse first-only selection")
+	await _select_live_tile(panel.second_selector, _row_in_second(panel, 0), true)
+	_check(panel.first_half_label.text.begins_with("First: Snag — Seamstress")
+		and panel.second_half_label.text.begins_with("Second: Pinning Jab — Warden"),
+		"reversed originals swap short half faces")
+	_assert_keyword_help(panel, cards[1], cards[0], "reversed Snag then Jab")
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, 2))
+	_assert_keyword_help_clear(panel, "upgraded first-only selection")
+	await _select_live_tile(panel.second_selector, _row_in_second(panel, 3))
+	_check(panel.first_half_label.text ==
+		"First: Pinning Jab+ — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1\n6 damage; Pinned"
+		and panel.second_half_label.text ==
+		"Second: Snag+ — Seamstress (1 energy)\nFrom hero positions 2-3; choose one enemy in positions 1-3\nUnravel 4; Weak 1",
+		"real upgraded halves retain six damage and Unravel four card-face rules")
+	_assert_keyword_help(panel, cards[2], cards[3], "upgraded Jab+ then Snag+")
+	_check(not panel.second_half_label.tooltip_text.contains("Unravel 3 —")
+		and panel.second_half_label.tooltip_text.contains("Unravel 4 —"),
+		"upgraded second half clears previous Unravel three Help")
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, 4))
+	await _select_live_tile(panel.second_selector, _row_in_second(panel, 5))
+	_check(CardKeywordGlossary.describe(RunRestStitchCards.resolve_card_definition(cards[4])).is_empty()
+		and CardKeywordGlossary.describe(RunRestStitchCards.resolve_card_definition(cards[5])).is_empty(),
+		"ordinary Strike and Pop Shot genuinely have no keyword Help")
+	_assert_keyword_help(panel, cards[4], cards[5], "unkeyworded pair")
+	_assert_keyword_help_clear(panel, "unkeyworded pair does not fabricate Help")
+	panel._return_to_first_choice()
+	_assert_keyword_help_clear(panel, "cancel back to first choice")
+	panel.clear()
+	_assert_keyword_help_clear(panel, "explicit clear")
+	panel.bind(ledger, source)
+	_assert_keyword_help_clear(panel, "valid rebind before pair")
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, 0))
+	await _select_live_tile(panel.second_selector, _row_in_second(panel, 1))
+	_assert_keyword_help(panel, cards[0], cards[1], "restored pair before invalid row")
+	var row := _row_in_second(panel, 1)
+	panel.second_selector.set_item_metadata(row, 5)
+	await _click(panel.confirm_button)
+	_check(panel.confirm_button.disabled and received.size() == signal_count,
+		"forged second option fails closed without emitting intent")
+	_assert_keyword_help_clear(panel, "invalid metadata selection")
+	var poor := RunRestStitchCards.new(cards, {}, 2)
+	panel.bind(poor, poor.get_snapshot())
+	_check(panel.first_selector.disabled and panel.confirm_button.disabled,
+		"insufficient scraps disables mounted Stitch")
+	_assert_keyword_help_clear(panel, "insufficient scraps")
+	panel.bind(ledger, source)
+	_assert_keyword_help_clear(panel, "rebound valid ledger")
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, 0))
+	await _select_live_tile(panel.second_selector, _row_in_second(panel, 1))
+	_assert_keyword_help(panel, cards[0], cards[1], "valid current pair before request")
+	_check(ledger.get_snapshot() == source and not ledger.is_consumed()
+		and received.size() == signal_count and local_rng.state == local_before
+		and randi() == global_next,
+		"all preview, hover, keyboard, rejection and rebinding preserve receipt, deck, scraps, intent and RNG")
+	await _click(panel.confirm_button)
+	_check(received.size() == signal_count + 1
+		and received.back() == {"first": 0, "second": 1, "source": source}
+		and ledger.get_snapshot() == source and not ledger.is_consumed(),
+		"existing Confirm emits one ordered request and makes no detached transaction")
+	_check(panel.confirm_button.disabled, "one-shot request disables Confirm")
+	_assert_keyword_help_clear(panel, "submitted intent")
+	panel.bind(ledger, source)
+	_assert_keyword_help_clear(panel, "post-submission rebind")
+	panel.free()
 
 
 func _test_mixed_pool_picker() -> void:
