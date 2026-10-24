@@ -1173,9 +1173,17 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	row.add_theme_constant_override("separation", 10)
 	panel.add_child(row)
 
+	# Resolve the face's art once, with the reward renderer's own contract, and
+	# bind the texture and its presentation mode together. Authored card art then
+	# keeps its contained, aspect-preserved picture; an owner emblem gets the wide
+	# sewn-felt backing instead of being painted as a small contained picture; and
+	# an unresolved image keeps the illustration's drawn paper patch.
+	var art: Dictionary = REWARD.resolve_card_art(art_id, owner)
 	var picture := LiveRunCardRewardChoicePanel._CardIllustration.new()
 	picture.name = "CardArt"
-	picture.picture = REWARD._card_art_texture(art_id, owner)
+	picture.picture = art.get("texture") as Texture2D
+	picture.mode = String(art.get("mode",
+		LiveRunCardRewardChoicePanel._CardIllustration.MODE_NONE))
 	picture.owner_color = LiveRunCardRewardChoicePanel.OWNER_COLORS.get(owner, FELT_FALLBACK)
 	picture.custom_minimum_size = TILE_ART_SIZE
 	picture.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1293,6 +1301,7 @@ func _mount_tile(spec: Dictionary, row: int, group: String) -> void:
 			"group": group,
 			"row": row,
 			"card_id": String(spec.get("card_id", "")),
+			"art_id": String(spec.get("art_id", spec.get("card_id", ""))),
 			"owner": String(spec.get("owner", "")),
 			"owner_text": face["owner_label"].text,
 			"title": face["title_label"].text,
@@ -1676,6 +1685,7 @@ func tile_details(tile: Variant) -> Dictionary:
 	details["disabled"] = button.disabled if is_instance_valid(button) else true
 	details["selected"] = record["selected"].visible if is_instance_valid(record["selected"]) else false
 	details["has_picture"] = picture.has_picture() if is_instance_valid(picture) else false
+	details["art_mode"] = picture.mode if is_instance_valid(picture) else ""
 	var texture: Texture2D = picture.picture if is_instance_valid(picture) else null
 	details["art_path"] = texture.resource_path if texture != null else ""
 	return details

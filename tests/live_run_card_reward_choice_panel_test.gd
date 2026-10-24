@@ -1471,11 +1471,9 @@ func _expected_rules(definition: Dictionary) -> String:
 		if effects.has("unravel"):
 			clauses.append("unravel %d%s" % [int(effects["unravel"]), object_suffix])
 		if effects.has("pinned"):
-			var bonus := 0
-			if effects["pinned"] is Dictionary \
-					and (effects["pinned"] as Dictionary).get("bonus_damage") is int:
-				bonus = int((effects["pinned"] as Dictionary)["bonus_damage"])
-			clauses.append("pin%s%s" % [" +%d" % bonus if bonus > 0 else "", object_suffix])
+			# The face names the keyword; the +5 and its different-owner rule
+			# belong to the Help glossary, not to the short sentence.
+			clauses.append("pin%s" % object_suffix)
 		for clause: String in clauses:
 			sentences.append(_sentence_capital(clause) + ".")
 		if effects.has("bleed_multiplier"):
@@ -1534,12 +1532,10 @@ func _expected_rules(definition: Dictionary) -> String:
 			% [timing, int(effects["next_attack_damage_bonus"])])
 	if effects.has("self_hp_loss"):
 		self_clauses.append("lose %d HP" % int(effects["self_hp_loss"]))
-	var tail_time := " until your next turn" \
-		if String(effects.get("duration", "")) == "until_next_turn" else ""
 	if effects.has("guarding"):
-		self_clauses.append("Guard" + tail_time)
+		self_clauses.append("Guard")
 	if effects.has("thorns"):
-		self_clauses.append("gain %d Thorns%s" % [int(effects["thorns"]), tail_time])
+		self_clauses.append("gain %d Thorns" % int(effects["thorns"]))
 	if not self_clauses.is_empty():
 		for clause: String in self_clauses:
 			sentences.append(_sentence_capital(clause) + ".")
