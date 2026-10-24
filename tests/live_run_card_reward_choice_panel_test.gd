@@ -1891,6 +1891,18 @@ func _exercise_pool(fixture: Dictionary, kind: String) -> void:
 	_check(panel.open_rewards(node_id, kind, receipt), kind + " weighted receipt opens the real panel")
 	await _frames()
 	_validate_pool(receipt, kind, node_id)
+	for slot in range(3):
+		var art := panel.choices_container.get_child(slot).get_node(
+			"CardMargin/CardContent/CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+		_check(art != null, kind + " authentic pool offer mounts an illustration")
+		if art == null:
+			continue
+		var offer: Dictionary = receipt["offers"][slot]
+		var resolved := LiveRunCardRewardChoicePanel.resolve_card_art(offer["id"], offer["owner"])
+		_check(art.picture == resolved["texture"] and art.mode == resolved["mode"],
+			kind + " authentic pool offer uses the real art lookup")
+		if art.is_emblem():
+			_check_emblem_felt(art, kind + " authentic " + String(offer["id"]))
 	var actions := panel.get_choice_buttons()
 	if actions.size() != 4:
 		panel.close_rewards()
@@ -2150,6 +2162,32 @@ func _check_emblem_felt(art: LiveRunCardRewardChoicePanel._CardIllustration,
 		"felt spans the window rather than a tiny medallion: " + card_id)
 	_check(backing.get_center().distance_to(window.get_center()) <= 0.5,
 		"felt backing is centred: " + card_id)
+	_check(art.picture != null, "backdrop has an emblem texture: " + card_id)
+	if art.picture == null:
+		return
+	var texture_size := art.picture.get_size()
+	var destination := art.emblem_backdrop_rect()
+	var source := art.emblem_backdrop_source_rect()
+	var inset := window.grow(-8.0)
+	_check(destination.size.x > 0.0 and destination.size.y > 0.0
+		and window.encloses(destination) and destination == backing
+		and destination.size.x >= inset.size.x * 0.9
+		and destination.size.y >= inset.size.y * 0.9,
+		"emblem-derived backdrop fills both inset axes: " + card_id)
+	_check(source.size.x > 0.0 and source.size.y > 0.0,
+		"backdrop uses a nonempty crop: " + card_id)
+	if source.size.x <= 0.0 or source.size.y <= 0.0:
+		return
+	_check(Rect2(Vector2.ZERO, texture_size).encloses(source)
+		and source.get_center().is_equal_approx(texture_size * 0.5)
+		and destination.get_center().is_equal_approx(window.get_center()),
+		"backdrop crop is legal and centered: " + card_id)
+	var expected_scale := maxf(destination.size.x / texture_size.x,
+		destination.size.y / texture_size.y)
+	_check(is_equal_approx(destination.size.x / source.size.x, expected_scale)
+		and is_equal_approx(destination.size.y / source.size.y, expected_scale)
+		and source.size.is_equal_approx(destination.size / expected_scale),
+		"backdrop uses maximal cover crop with uniform scale: " + card_id)
 	_check_picture_geometry(art, card_id)
 	var rect: Rect2 = art.picture_rect()
 	var inner: Rect2 = backing.grow(-art.EMBLEM_INSET)
@@ -2278,7 +2316,26 @@ func _test_illustration_art(base: Dictionary, kind: String) -> void:
 		elif dimensions.x == 1200:
 			_check(is_equal_approx(crop.size.y, dimensions.y) and crop.size.x < dimensions.x,
 				"wide landscape crop removes equal left/right portions: " + kind)
+		_check(controlled_art.emblem_backdrop_rect() == Rect2()
+			and controlled_art.emblem_backdrop_source_rect() == Rect2(),
+			"authored cover has no emblem backdrop: " + kind)
+		controlled_art.mode = controlled_art.MODE_EMBLEM
+		controlled_art.queue_redraw()
+		await _frames()
+		_check_emblem_felt(controlled_art, "%s controlled emblem %s" % [kind, dimensions])
+		var backdrop_crop := controlled_art.emblem_backdrop_source_rect()
+		_check(backdrop_crop.size.x < dimensions.x or backdrop_crop.size.y < dimensions.y,
+			"emblem backdrop really crops the mismatched source: " + kind)
+		if dimensions.x < dimensions.y:
+			_check(is_equal_approx(backdrop_crop.size.x, dimensions.x)
+				and backdrop_crop.size.y < dimensions.y,
+				"portrait emblem backdrop crops top and bottom: " + kind)
+		elif dimensions.x == 1200:
+			_check(is_equal_approx(backdrop_crop.size.y, dimensions.y)
+				and backdrop_crop.size.x < dimensions.x,
+				"wide emblem backdrop crops left and right: " + kind)
 	controlled_art.picture = original_picture
+	controlled_art.mode = controlled_art.MODE_CARD_ART
 	controlled_art.queue_redraw()
 	# Force both resource-loss branches on actual mounted faces, independent of
 	# whether optional pool-card images are later supplied by the art pipeline.
@@ -2294,7 +2351,9 @@ func _test_illustration_art(base: Dictionary, kind: String) -> void:
 	fallback_art.mode = fallback_art.MODE_NONE
 	fallback_art.queue_redraw()
 	await _frames()
-	_check(fallback_art.is_paper_patch() and fallback_art.picture_rect() == Rect2(),
+	_check(fallback_art.is_paper_patch() and fallback_art.picture_rect() == Rect2()
+		and fallback_art.emblem_backdrop_rect() == Rect2()
+		and fallback_art.emblem_backdrop_source_rect() == Rect2(),
 		"mounted missing art keeps a visible placeholder without a picture")
 	_check_mounted_art_clearance(fallback_card, "mounted placeholder")
 	# A pointer click over the illustration passes through to the card action
@@ -2435,6 +2494,18 @@ func _test_illustration_source() -> void:
 		and cover.contains("draw_texture_rect_region(picture, target, source)")
 		and not cover.contains("draw_texture_rect(picture"),
 		"authored art draws the measured source crop into the measured cover destination")
+	var felt := art.substr(art.find("func _draw_felt_fallback()"),
+		art.find("func _draw_paper_patch(") - art.find("func _draw_felt_fallback()"))
+	var backdrop_draw := felt.find("draw_texture_rect_region(picture, emblem_backdrop_rect(), source, Color(1, 1, 1, 0.45))")
+	_check(felt.contains("var source: Rect2 = emblem_backdrop_source_rect()")
+		and backdrop_draw > felt.find("draw_colored_polygon(right_piece")
+		and backdrop_draw < felt.find("draw_rect(backing, Color(\"#3b2f2a\")")
+		and backdrop_draw < felt.find("draw_dashed_line(")
+		and not felt.contains("draw_texture_rect(picture"),
+		"subdued emblem crop paints above flat felt, beneath its border and stitches")
+	_check(draw.find("_draw_felt_fallback()") < draw.find("_draw_contained_picture()")
+		and draw.find("_draw_contained_picture()") < draw.find("_draw_sewn_seam(rect)"),
+		"complete contained emblem sits above textured felt and below the outer seam")
 	_check(art.contains("func _draw_paper_patch(") and art.contains("draw_dashed_line("),
 		"missing art and emblem still draw the stitched paper patch")
 	_check(not art.contains("load(\"res://assets"), "illustration never loads art by itself")
@@ -2481,7 +2552,9 @@ func _test_missing_art_placeholder() -> void:
 	_check(probe.is_paper_patch() and not probe.has_picture()
 		and not probe.is_card_art() and not probe.is_emblem(),
 		"null art and emblem mount the drawn paper patch")
-	_check(probe.picture_rect() == Rect2(),
+	_check(probe.picture_rect() == Rect2()
+		and probe.emblem_backdrop_rect() == Rect2()
+		and probe.emblem_backdrop_source_rect() == Rect2(),
 		"placeholder window paints no picture rect")
 	_check(probe.is_visible_in_tree() and probe.size.y
 		>= LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT,
@@ -2495,6 +2568,11 @@ func _test_missing_art_placeholder() -> void:
 	_check(probe.emblem_backing_rect().size == Vector2.ZERO
 		and probe.picture_rect() == Rect2(),
 		"a collapsed window reports no drawable art instead of failing")
+	probe.picture = PlaceholderTexture2D.new()
+	probe.mode = probe.MODE_EMBLEM
+	_check(probe.emblem_backdrop_rect() == Rect2()
+		and probe.emblem_backdrop_source_rect() == Rect2(),
+		"collapsed emblem also reports no drawable backdrop")
 	root.remove_child(probe)
 	probe.free()
 
