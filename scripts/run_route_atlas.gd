@@ -75,6 +75,9 @@ const PIN_SIZE := Vector2(24.0, 30.0)
 const REVEAL_DURATION := 0.6
 const REVEAL_FAST_DURATION := 0.15
 ## Authored floor bands; journal and each visible floor heading use the same mapping.
+## The visible area caption and the numbered FLOOR heading are chapter headings: they
+## select the master Theme's PatchHeading (Londrina Solid Regular) variation, while the
+## journal, status tab and round patch captions keep the readable body face.
 const AREA_BANDS := [
 	{"name": "Meadow", "first_floor": 1, "last_floor": 3},
 	{"name": "Woods", "first_floor": 4, "last_floor": 6},
@@ -545,7 +548,8 @@ func refresh() -> void:
 		header.size = Vector2(NODE_SIZE.x + 16.0, 28.0)
 		header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		header.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		header.add_theme_font_size_override("font_size", 16)
+		header.theme_type_variation = "PatchHeading"
+		header.add_theme_font_size_override("font_size", 18)
 		header.add_theme_color_override("font_color", INK)
 		_inert(header)
 		add_child(header)
@@ -715,7 +719,8 @@ func _add_area_labels(visible_floors: Array[int]) -> void:
 		label.size = Vector2(NODE_SIZE.x + 16.0, AREA_LABEL_HEIGHT)
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 18)
+		label.theme_type_variation = "PatchHeading"
+		label.add_theme_font_size_override("font_size", 20)
 		label.add_theme_color_override("font_color", INK)
 		label.add_theme_constant_override("outline_size", 4)
 		label.add_theme_color_override("font_outline_color", PAPER)
