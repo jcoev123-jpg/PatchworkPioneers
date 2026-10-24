@@ -1542,9 +1542,11 @@ func _cover(app, presenter, backdrop) -> void:
 	for control in [app.hero_view, presenter.panel, app.hand_view, app.end_turn_button]:
 		_check(global_view.encloses(control.get_global_rect()),
 			"one stage image spans lineups, meters, hand and actions: " + control.name)
-	_check(backdrop.get_index() == 0 and app.hand_view.get_parent().get_index() > 0,
+	var column: Node = app.hand_view
+	while column.get_parent() != app.battle_view:
+		column = column.get_parent()
+	_check(backdrop.get_index() == 0 and column.get_index() > 0,
 		"the stage is drawn before every battle control and the free hand")
-	var column: Node = app.hand_view.get_parent()
 	var meters = app.get_node_or_null("LiveCombatMeters")
 	_check(column.get_index() > backdrop.get_index() and column.is_ancestor_of(app.hero_view)
 		and is_instance_valid(meters) and is_instance_valid(meters.row)
@@ -1724,6 +1726,123 @@ func _geometry(app, presenter) -> void:
 	for lower in [app.hand_view, app.end_turn_button, app.return_button]:
 		_check(presenter.battle_row.get_global_rect().end.y <= lower.get_global_rect().position.y,
 			"actor sides stay above usable hand and actions")
+
+
+## Global measurements of the actual mounted draw and input geometry, including the
+## rotated cards. A local foot constant alone cannot prove where the parent put it.
+func _meadow_layout(app, presenter, near_meadow: bool = true) -> void:
+	var viewport := Rect2(0, 0, 1280, 720)
+	var meters = app.get_node("LiveCombatMeters").row
+	_check(presenter._puppets.size() == 3 + app.enemies.get_enemies().size()
+		and is_instance_valid(meters) and meters.get_child_count() == presenter._puppets.size(),
+		"global geometry has real actors and one authoritative ribbon per actor")
+	if not is_instance_valid(meters) or presenter._puppets.is_empty():
+		return
+	var bottoms: Array[float] = []
+	var regions: Array[Control] = [app.hand_view, app.pile_label.get_parent(),
+		app.end_turn_button, app.action_corner, app.get_node("LiveSupportHand").energy_orb]
+	for puppet in presenter._puppets:
+		var art: Rect2 = puppet.get_global_transform() * puppet.rest_drawn_rect()
+		var shadow: Rect2 = puppet.get_global_transform() * puppet.contact_shadow_rect()
+		_check(art.has_area() and viewport.encloses(art) and viewport.encloses(shadow)
+			and absf(art.end.y - shadow.get_center().y) <= shadow.size.y,
+			"real art or fallback is grounded on its fixed global shadow: " + puppet.name)
+		bottoms.append(art.end.y)
+		if near_meadow:
+			_check(art.end.y >= 400.0 and art.end.y <= 440.0,
+				"mounted idle feet reach the near meadow: " + puppet.name + " at " + str(art.end.y))
+		for badge in presenter._badges:
+			_check(not art.intersects(badge.get_global_rect()), "intent tags never obscure actor artwork")
+		for meter in meters.get_children():
+			_check(not art.intersects(meter.get_global_rect()), "ribbons never obscure actor artwork")
+	_check(bottoms.max() - bottoms.min() <= 0.02, "both live lineups share one measured screen foot line")
+	for meter in meters.get_children():
+		regions.append(meter)
+	for label in [app.enemy_buff_forecast_label, app.combo_cue,
+			app.get_node("LiveAttackPreview").cue]:
+		if is_instance_valid(label) and label.is_visible_in_tree():
+			regions.append(label)
+	for index in range(regions.size()):
+		var rect := regions[index].get_global_rect()
+		_check(regions[index].is_visible_in_tree() and rect.has_area() and viewport.encloses(rect),
+			"active lower control fits viewport: " + regions[index].name)
+		for other in range(index):
+			_check(not rect.intersects(regions[other].get_global_rect()),
+				"separate readable regions: " + regions[index].name + "/" + regions[other].name)
+	_check(app.hand_view.get_child_count() == app.deck.hand.size() and not app.deck.hand.is_empty(),
+		"mounted hand geometry checks real held cards")
+	for card in app.hand_view.get_children():
+		_check(card.size.y >= 160.0, "every held face preserves the full stitched height")
+		var bounds: Rect2 = card.get_global_transform() * Rect2(Vector2.ZERO, card.size)
+		_check(viewport.encloses(bounds), "rotated held card fits viewport")
+		for region in regions:
+			if region != app.hand_view:
+				_check(not bounds.intersects(region.get_global_rect()),
+					"rotated card clears " + region.name)
+	var table = app.get_node("LiveSupportHand").backing
+	var column: Node = app.hero_view
+	while column.get_parent() != app.battle_view:
+		column = column.get_parent()
+	_check(is_instance_valid(table) and table.get_index() < column.get_index(),
+		"existing table stays behind all nested lower controls")
+
+
+func _expanded_meadow_layout(scene: PackedScene) -> void:
+	var app = scene.instantiate()
+	root.add_child(app)
+	await process_frame
+	_fixture_start(app)
+	for frame in range(6):
+		await process_frame
+	var presenter = app.get_node("LiveEnemyRoster")
+	_check(app.deck != null and app.deck.hand.size() == 5 and presenter._puppets.size() == 5,
+		"expanded layout begins with a real five-card Fight and three heroes")
+	if app.deck == null or presenter._puppets.size() != 5:
+		app.free()
+		return
+	_meadow_layout(app, presenter)
+	var host = presenter._puppets.back()
+	var saved_id: String = host.actor_id
+	var saved_art := {"idle": host.idle_texture, "attack": host.attack_texture}
+	for actor_id in ["missing_layout_art", "needle_marshal", "spool_hexer", "patchwork_behemoth"]:
+		host.bind_actor(actor_id, presenter.art_for(actor_id))
+		_check((host.current_texture() == null) == (actor_id == "missing_layout_art"),
+			"alternate mounted geometry really exercises missing art and Elite/Boss textures")
+		_meadow_layout(app, presenter)
+	host.bind_actor(saved_id, saved_art)
+	for hero in app.party._heroes:
+		hero["statuses"] = {"bleed": 2, "weak": 2, "exposed": 2}
+		_check(app.party.gain_block(hero.position, 4), "expanded hero has real Block")
+	for enemy in app.enemies.get_enemies():
+		_check(app.enemies.apply_statuses({enemy.position: {"bleed": 2, "weak": 2, "exposed": 2}})
+			and app.enemies.gain_block(enemy.position, 4), "expanded enemy has real Block and three statuses")
+	var before := _snapshot(app)
+	for frame in range(6):
+		await process_frame
+	_check(app.enemy_buff_forecast_label.is_visible_in_tree()
+		and not app.enemy_buff_forecast_label.text.is_empty(), "real guard intent expands the buff forecast")
+	var chips := 0
+	for meter in app.get_node("LiveCombatMeters").row.get_children():
+		for button in meter.find_child("StatusButtons", true, false).get_children():
+			if button.is_visible_in_tree():
+				chips += 1
+	_check(chips == 15, "all five actors really display their three status controls")
+	_meadow_layout(app, presenter)
+	await _input_key(KEY_P)
+	var cue = app.get_node("LiveAttackPreview").cue
+	_check(is_instance_valid(cue) and cue.is_visible_in_tree() and not cue.text.is_empty(),
+		"real keyboard hand selection mounts an expanded attack forecast")
+	_meadow_layout(app, presenter, false)
+	await _input_key(KEY_ESCAPE)
+	_check(_snapshot(app) == before, "expanded layout and keyboard forecasts spend no resources or RNG")
+	app.return_button.pressed.emit()
+	await process_frame
+	_fixture_start(app)
+	for frame in range(6):
+		await process_frame
+	_meadow_layout(app, presenter)
+	app.return_button.pressed.emit()
+	app.free()
 
 
 func _mouse_attack(app, reference, presenter) -> void:
@@ -1968,6 +2087,7 @@ func _run() -> void:
 	await process_frame
 	app.starter_enemies_path = SOURCE
 	await _typed_stage(app, presenter)
+	await _expanded_meadow_layout(scene)
 	app.free()
 	reference.free()
 	_finish()

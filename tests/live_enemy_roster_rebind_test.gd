@@ -160,6 +160,13 @@ func _assert_stage(app, presenter) -> void:
 		else:
 			enemy_height = puppet.size.y
 		var texture: Texture2D = puppet.current_texture()
+		var global_art: Rect2 = puppet.get_global_transform() * puppet.rest_drawn_rect()
+		var global_shadow: Rect2 = puppet.get_global_transform() * puppet.contact_shadow_rect()
+		_check(global_art.has_area() and global_art.end.y >= 400.0 and global_art.end.y <= 440.0
+			and absf(global_art.end.y - global_shadow.get_center().y) <= global_shadow.size.y
+			and Rect2(0, 0, 1280, 720).encloses(global_art)
+			and Rect2(0, 0, 1280, 720).encloses(global_shadow),
+			"rebound art/fallback and fixed shadow share the near-meadow screen ground: " + puppet.name)
 		if texture == null:
 			_check(puppet.art_band().size.y >= 100.0,
 				"art-missing actor keeps a large drawn fallback stage: " + puppet.name)

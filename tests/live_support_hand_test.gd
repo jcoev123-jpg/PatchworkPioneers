@@ -193,6 +193,8 @@ func _table_checks(stage: String) -> void:
 	_check(presenter.backing == table and table.get_parent() == app.battle_view
 		and table.is_visible_in_tree(), "table is the mounted presenter control: " + stage)
 	var column: Control = app.hand_view.get_parent() as Control
+	while column != null and column.get_parent() != app.battle_view:
+		column = column.get_parent() as Control
 	_check(column != null and column.get_parent() == app.battle_view
 		and table.get_index() < column.get_index(), "table draws behind every existing battle control: " + stage)
 	_check(table.mouse_filter == Control.MOUSE_FILTER_IGNORE and table.focus_mode == Control.FOCUS_NONE

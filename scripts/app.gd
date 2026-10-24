@@ -1676,7 +1676,7 @@ func _build_battle() -> void:
 	# seam above it; the hand and action bar keep their own rows so nothing is pushed below
 	# the 720 px viewport.
 	battle_view.add_theme_constant_override("margin_top", BATTLE_TOP_SEAM)
-	battle_view.add_theme_constant_override("margin_bottom", 0)
+	battle_view.add_theme_constant_override("margin_bottom", 8)
 	add_child(battle_view)
 	var column := VBoxContainer.new()
 	# Compact rows keep the large actor stage, the hero meters, five cards and the
@@ -1723,12 +1723,30 @@ func _build_battle() -> void:
 	var pile_row := HBoxContainer.new()
 	pile_row.name = "PileCounts"
 	pile_row.add_theme_constant_override("separation", 24)
-	column.add_child(pile_row)
+	# Cards and the compact action stack share the lower band. The orb keeps its
+	# full size, while actions use the space beside the hand instead of a third row.
+	var tray := HBoxContainer.new()
+	tray.name = "BattleLowerTray"
+	tray.add_theme_constant_override("separation", 16)
+	column.add_child(tray)
+	var cards := VBoxContainer.new()
+	cards.name = "BattleCardsColumn"
+	cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# The fan rotates the outer cards a few pixels beyond the unrotated row.
+	cards.add_theme_constant_override("separation", 10)
+	tray.add_child(cards)
+	var information := HBoxContainer.new()
+	information.name = "BattleHandInformation"
+	information.add_theme_constant_override("separation", 16)
+	cards.add_child(information)
+	information.add_child(pile_row)
+	enemy_buff_forecast_label.reparent(information)
+	enemy_buff_forecast_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pile_label = Label.new()
 	pile_row.add_child(pile_label)
 	# The transient forecast owns the row directly above the hand, so a shown
 	# strip yields stage height without ever moving the card row.
-	_mount_combo_cue(column)
+	_mount_combo_cue(cards)
 	hand_view = HBoxContainer.new()
 	hand_view.name = "SharedHand"
 	hand_view.custom_minimum_size.y = HAND_CARD_HEIGHT
@@ -1736,15 +1754,19 @@ func _build_battle() -> void:
 	hand_view.size_flags_vertical = Control.SIZE_FILL
 	hand_view.add_theme_constant_override("separation", 16)
 	hand_view.sort_children.connect(_fan_hand, CONNECT_DEFERRED)
-	column.add_child(hand_view)
+	cards.add_child(hand_view)
+	var sidebar := VBoxContainer.new()
+	sidebar.name = "BattleActionStack"
+	sidebar.add_theme_constant_override("separation", 2)
+	tray.add_child(sidebar)
 	var support_hud := HBoxContainer.new()
 	support_hud.name = "SupportHUD"
 	support_hud.custom_minimum_size.y = 76
 	support_hud.add_theme_constant_override("separation", 16)
-	column.add_child(support_hud)
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 16)
-	support_hud.add_child(actions)
+	sidebar.add_child(support_hud)
+	var actions := VBoxContainer.new()
+	actions.add_theme_constant_override("separation", 2)
+	sidebar.add_child(actions)
 	actions.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	end_turn_button = Button.new()
 	end_turn_button.text = "End Turn"
@@ -1756,7 +1778,7 @@ func _build_battle() -> void:
 
 
 ## Secondary actions share one small sewn felt corner; End Turn stays the large control.
-func _build_action_corner(actions: HBoxContainer) -> void:
+func _build_action_corner(actions: Container) -> void:
 	action_corner = ActionCorner.new()
 	action_corner.name = "BattleActionCorner"
 	action_corner.size_flags_vertical = Control.SIZE_SHRINK_CENTER

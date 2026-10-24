@@ -796,6 +796,8 @@ func _mount_table(app) -> void:
 	# Place it immediately before the battle column, so the accepted actor-stage backdrop and
 	# every existing control keep their own sibling order and draw on top of the table.
 	var column := _hud.get_parent() as Control
+	while column != null and column.get_parent() != _battle:
+		column = column.get_parent() as Control
 	if column != null and column.get_parent() == _battle:
 		_battle.move_child(backing, column.get_index())
 	var pile_row = app.pile_label.get_parent() if is_instance_valid(app.pile_label) else null
