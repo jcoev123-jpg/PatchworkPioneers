@@ -53,6 +53,29 @@ func _stock_oracle() -> Dictionary:
 	return {"stock": {"cards": expected.cards, "trinkets": expected.trinkets}, "state": rng.state}
 
 
+## Pick a reproducible genuine Shop RNG state for one mounted keyword-tooltip
+## session. Other sessions keep the uninterrupted combat-to-Shop RNG sequence.
+func _keyword_shop_state() -> int:
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var owners: Array[String] = []
+	for hero in app.run_heroes:
+		owners.append(hero.id)
+	for value in range(1, 256):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var opening_state: int = rng.state
+		var result := RunShopStockOffers.generate(rng, owners, authored.cards, authored.trinkets, [])
+		if not result.get("ok", false) or result.cards.size() != 5 or result.trinkets.size() != 2:
+			continue
+		if result.trinkets[0].id == result.trinkets[1].id:
+			continue
+		for offer in result.cards:
+			var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(String(offer.id))
+			var effects: Dictionary = definition.get("effects", {})
+			if effects.has("pinned") or effects.has("unravel") or _unravel_conditional(effects):
+				return opening_state
+	return -1
+
 func _fixture() -> Dictionary:
 	for value in range(1, 1000):
 		var rng := RandomNumberGenerator.new()
@@ -966,6 +989,11 @@ func _run() -> void:
 		original_map._nodes[parent].outgoing = outgoing
 		app._carryover_floors = original_map.get_floors()
 		shop.set_meta("route_id", id)
+		if session == 2:
+			var keyword_state: int = _keyword_shop_state()
+			_check(keyword_state != -1, "a seeded five-card/two-patch Shop can offer a status-keyword card")
+			if keyword_state != -1:
+				app.run_rng.state = keyword_state
 		if session in [1, 2]:
 			app.session_gold = 200
 			app.run_removal_count = 1 if session == 2 else 0
@@ -1092,9 +1120,10 @@ func _run() -> void:
 			if effects.has("unravel") or _unravel_conditional(effects):
 				_check(tile.tooltip_text.contains("Unravel N adds N to that enemy's gauge"),
 					"unravel offer tooltip explains the published gauge rule")
-		# The seeded stock carries an authored status-keyword offer, so the
-		# keyword handling is genuinely exercised instead of silently skipped.
-		_check(keyword_offers > 0, "this Shop stock contains an authored status-keyword offer")
+		# The dedicated seeded visit exercises real mounted keyword tooltips;
+		# ordinary seeded stocks may legitimately omit Pinned/Unravel cards.
+		if session == 2:
+			_check(keyword_offers > 0, "seeded mounted Shop exercises an authored status-keyword offer")
 		for index in range(app.run_deck.size()):
 			var tile = gallery.removal_tiles()[index]
 			var details: Dictionary = gallery.tile_details(tile)
