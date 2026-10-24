@@ -647,14 +647,17 @@ func _rules_text(definition: Dictionary) -> String:
 	return CardShortRules.line(definition)
 
 
-## Just the effect sentence of the same shared line, used for the Rest tile's
-## before/after comparison.
+## One half of the Rest tile's before/after comparison: the canonical row's own
+## authored effects, printed as the same complete short sentence the hand and
+## reward faces use. The resolved definition supplies the authored recipient
+## wording, while the supplied effects are always the ones rendered, so neither
+## half can be described by the other half's numbers or lose its sentence. Both
+## inputs are copied; no source definition is ever mutated.
 func _effects_text(effects: Variant, definition: Dictionary) -> String:
 	if not (effects is Dictionary) or (effects as Dictionary).is_empty():
 		return "no effect"
 	var rules_definition: Dictionary = definition.duplicate(true)
-	if rules_definition.is_empty():
-		rules_definition = {"effects": (effects as Dictionary).duplicate(true)}
+	rules_definition["effects"] = (effects as Dictionary).duplicate(true)
 	var rendered: String = CardShortRules.line(rules_definition)
 	return rendered if not rendered.is_empty() else "no effect"
 

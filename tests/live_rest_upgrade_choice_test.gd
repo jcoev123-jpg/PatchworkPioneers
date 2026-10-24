@@ -134,12 +134,19 @@ func _run() -> void:
 			and choices.mouse_filter == Control.MOUSE_FILTER_IGNORE
 			and choices.focus_mode == Control.FOCUS_NONE,
 			"masked Rest upgrade dropdown keeps its validated contract but takes no pointer or focus")
+		# Independent authored expectations: exact short combat prose and the
+		# canonical amount each half must print, never borrowed from the view.
 		var effect_contract := {
-			"warden_strike": ["Deal 6 damage to one enemy.", "Deal 7 damage to one enemy."],
-			"warden_brace": ["Gain 7 Block.", "Gain 10 Block."],
-			"seamstress_mend": ["Heal a chosen ally 5 HP.", "Heal a chosen ally 7 HP."],
-			"seamstress_stitch_up": ["Give a chosen ally 5 Block.", "Give a chosen ally 7 Block."],
+			"warden_strike": {"before": "Deal 6 damage to one enemy.",
+				"after": "Deal 7 damage to one enemy.", "before_amount": 6, "after_amount": 7},
+			"warden_brace": {"before": "Gain 7 Block.", "after": "Gain 10 Block.",
+				"before_amount": 7, "after_amount": 10},
+			"seamstress_mend": {"before": "Heal a chosen ally 5 HP.",
+				"after": "Heal a chosen ally 7 HP.", "before_amount": 5, "after_amount": 7},
+			"seamstress_stitch_up": {"before": "Give a chosen ally 5 Block.",
+				"after": "Give a chosen ally 7 Block.", "before_amount": 5, "after_amount": 7},
 		}
+		await _frames()
 		for item in range(rows.size()):
 			var row: Dictionary = rows[item]
 			var tile = gallery.upgrade_tiles()[item]
@@ -152,10 +159,72 @@ func _run() -> void:
 					int(row["index"]) + 1, int(row["cost"]), int(row["plus_cost"])],
 				"upgrade tile shows its owner, before -> after name and both costs")
 			_check(details.has_picture, "upgrade tile mounts authored art or the owner emblem")
+			# Both halves are joined by exactly one line break and each one prints
+			# a complete short sentence: never a positional slice of another
+			# renderer, and never a valid effect collapsed into "no effect".
+			var halves: PackedStringArray = String(details.effects).split("\n")
+			_check(halves.size() == 2 and not halves[0].strip_edges().is_empty()
+				and not halves[1].strip_edges().is_empty()
+				and not details.effects.contains("no effect")
+				and not details.effects.contains("No authored description")
+				and not details.effects.contains("From:") and not details.effects.contains("Target:")
+				and not details.effects.contains("Positions:")
+				and halves[0].ends_with(".") and halves[1].ends_with("."),
+				"upgrade tile prints one complete concise effect per authored half")
+			# The mounted label itself stays readable inside the sewn frame.
+			var tile_panel: Control = tile.get_parent()
+			var effects_label := tile_panel.find_child("TileEffects", true, false) as Label
+			_check(effects_label != null and effects_label.text == details.effects
+				and effects_label.get_theme_font_size("font_size") >= 13
+				and effects_label.get_global_rect().size.x > 0.0
+				and effects_label.get_global_rect().size.y > 0.0
+				and tile_panel.get_global_rect().encloses(effects_label.get_global_rect()),
+				"the mounted before/after effect stays legible inside its sewn tile")
 			if effect_contract.has(String(row["source_id"])):
-				var expected_effects: Array = effect_contract[String(row["source_id"])]
-				_check(details.effects == "Before: %s\nAfter: %s" % [expected_effects[0], expected_effects[1]],
+				var expected: Dictionary = effect_contract[String(row["source_id"])]
+				_check(details.effects == "Before: %s\nAfter: %s" % [expected["before"], expected["after"]],
 					"upgrade tile reads the exact authored before/after effect: " + String(row["source_id"]))
+				_check(halves[0] != halves[1]
+					and halves[0].contains(" %d " % int(expected["before_amount"]))
+					and halves[1].contains(" %d " % int(expected["after_amount"])),
+					"each half prints its own distinct canonical authored amount: " + String(row["source_id"]))
+		# The Rest half renders the CANONICAL row's effects on the authored
+		# definition: a different supplied amount changes the sentence, the
+		# source definition is never mutated, and empty/unknown stay honest.
+		var authored_strike: Dictionary = RunRestStitchCards.resolve_card_definition("warden_strike")
+		_check(authored_strike.get("effects") == {"damage": 6}
+			and gallery._effects_text({"damage": 7}, authored_strike) == "Deal 7 damage to one enemy."
+			and gallery._effects_text({"damage": 6}, authored_strike) == "Deal 6 damage to one enemy."
+			and authored_strike.get("effects") == {"damage": 6},
+			"Rest half renders the supplied canonical amount on the authored definition without mutating it")
+		_check(gallery._effects_text({}, authored_strike) == "no effect"
+			and gallery._effects_text({"forged": 1}, authored_strike)
+				== "Other authored effects are not described."
+			and authored_strike.get("effects") == {"damage": 6},
+			"Rest half keeps empty and unknown effects honest instead of guessing")
+		# A stale or forged canonical row must stay inert: an honest placeholder
+		# with no guessed identity or effect, and no upgrade or spend on input.
+		var stale_metadata: Variant = choices.get_item_metadata(1)
+		var stale_text: String = choices.get_item_text(1)
+		choices.set_item_metadata(1, -1)
+		await _frames()
+		var placeholder = gallery.upgrade_tiles()[1]
+		var placeholder_details: Dictionary = gallery.tile_details(placeholder)
+		_check(placeholder_details.card_id.is_empty() and placeholder_details.effects.is_empty()
+			and placeholder_details.title == "Unavailable selection"
+			and placeholder_details.meta == "This row no longer matches the Rest's canonical choices.",
+			"a stale Rest row renders an inert placeholder instead of a guessed card or effect")
+		var placeholder_before := _persistent()
+		await _click_tile(placeholder)
+		_check(_persistent() == placeholder_before and app.rest_upgrade != null
+			and not app.rest_upgrade.is_consumed(),
+			"physical input on the stale placeholder cannot upgrade or spend")
+		choices.set_item_metadata(1, stale_metadata)
+		choices.set_item_text(1, stale_text)
+		await _frames()
+		_check(not gallery.tile_details(gallery.upgrade_tiles()[1]).card_id.is_empty()
+			and not gallery.tile_details(gallery.upgrade_tiles()[1]).effects.contains("Unavailable"),
+			"restoring the canonical row rebuilds its real sewn tile")
 		app.rest_heal_button.grab_focus()
 		await _key(KEY_TAB)
 		_check(gallery.upgrade_tiles()[0].has_focus(), "Tab reaches the first Rest upgrade tile")
