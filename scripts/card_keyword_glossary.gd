@@ -8,7 +8,7 @@ extends RefCounted
 const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding", "thorns"]
 ## Non-keyword rules are explained after the seven keywords, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
-const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff"]
+const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling"]
 ## The Unravel thresholds the authored "current threshold" condition compares to.
 const UNRAVEL_THRESHOLDS := "starts at 8 normal, 12 elite, 16 boss and rises by 4 after each break"
 ## The two energy-trading pool cards this Help knows, plus the exact authored
@@ -23,6 +23,15 @@ const TRANCE_GAIN := 1
 const TRANCE_BASE_DRAW := 2
 const TRANCE_PLUS_DRAW := 3
 const PARTY_SIZE := 3
+## Hemorrhage Hem's authored doubling rule: base and '+' carry the same
+## descriptor, only the energy cost differs. The whole catalog shape is re-checked
+## so no other card, owner, price, slot or target can borrow this explanation.
+const BLEED_DOUBLING_BASE_ID := "seamstress_hemorrhage_hem"
+const BLEED_DOUBLING_PLUS_ID := "seamstress_hemorrhage_hem_plus"
+const BLEED_DOUBLING_OWNER := "seamstress"
+const BLEED_DOUBLING_BASE_COST := 2
+const BLEED_DOUBLING_PLUS_COST := 1
+const BLEED_DOUBLING_MULTIPLIER := 2
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -78,6 +87,8 @@ static func _special_line(rule_key: String, definition: Dictionary, effects: Dic
 			return _random_hit_line(effects)
 		"energy_tradeoff":
 			return _energy_tradeoff_line(definition, effects)
+		"bleed_doubling":
+			return _bleed_doubling_line(definition, effects)
 	return {}
 
 
@@ -222,3 +233,52 @@ static func _trance_line(card_id: String, cost: int, effects: Dictionary) -> Dic
 	var explanation := "Costs %d energy, which must be available before the play, then regains that same %d energy, so the play itself is net 0 energy. Draws %d cards." % [
 		cost, int(gained), int(drawn)]
 	return {"keyword": "Energy tradeoff", "explanation": explanation}
+
+
+## Hemorrhage Hem multiplies Bleed already on its single enemy target: N -> N + N
+## through CombatSeamstressPoolBleed, so 0 stays 0. It is not a fresh "Bleed N"
+## application (that is where the Seamstress's usual +1 would come from), and the
+## doubled stacks then follow the ordinary turn-end tick and decrement. Only the
+## exact authored base/'+' record, owner, cost, legal slots, single-enemy target
+## and positive multiplier 2 qualify; anything else gets no row.
+static func _bleed_doubling_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	if card_id != BLEED_DOUBLING_BASE_ID and card_id != BLEED_DOUBLING_PLUS_ID:
+		return {}
+	if String(definition.get("owner", "")) != BLEED_DOUBLING_OWNER:
+		return {}
+	if definition.get("target_kind") != "enemy_single":
+		return {}
+	if not _exact_slots(definition.get("from_positions", null)) \
+			or not _exact_slots(definition.get("to_positions", null)):
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int:
+		return {}
+	var required_cost: int = BLEED_DOUBLING_PLUS_COST if card_id == BLEED_DOUBLING_PLUS_ID else BLEED_DOUBLING_BASE_COST
+	if int(cost_value) != required_cost:
+		return {}
+	if effects.size() != 1:
+		return {}
+	var multiplier_value: Variant = effects.get("bleed_multiplier")
+	if not multiplier_value is int or int(multiplier_value) != BLEED_DOUBLING_MULTIPLIER:
+		return {}
+	var explanation := "Doubles the Bleed already on the target instead of adding new Bleed: Bleed N becomes 2N, and a target with no Bleed stays at 0. The doubled stacks then tick like any Bleed at the affected unit's turn end: that unit loses HP equal to its Bleed, then Bleed decreases by 1 (an enemy tick also adds 1 Unravel). This is not a fresh Bleed application, so the Seamstress's usual +1 Bleed does not apply."
+	return {"keyword": "Bleed doubling", "explanation": explanation}
+
+
+## The authored party slots, exactly 1..3 in order and nothing else.
+static func _exact_slots(value: Variant) -> bool:
+	if not value is Array:
+		return false
+	var slots: Array = value
+	if slots.size() != PARTY_SIZE:
+		return false
+	for index in range(PARTY_SIZE):
+		var slot: Variant = slots[index]
+		if not slot is int or int(slot) != index + 1:
+			return false
+	return true
