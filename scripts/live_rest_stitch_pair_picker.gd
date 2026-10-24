@@ -184,6 +184,7 @@ func _ready() -> void:
 	first_thumbnail = _first_thumb["picture"]
 	second_thumbnail = _second_thumb["picture"]
 	_clear_thumbnails()
+	_clear_keyword_help()
 
 	confirm_button = Button.new()
 	confirm_button.text = "Confirm Stitch • 3 scraps"
@@ -218,7 +219,7 @@ func _thumbnail_surface(parent: Control, at: Rect2) -> Dictionary:
 	var backing := Panel.new()
 	backing.position = at.position
 	backing.size = at.size
-	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backing.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(backing)
 	var name_label := Label.new()
 	name_label.position = Vector2(4, 4)
@@ -236,7 +237,7 @@ func _thumbnail_surface(parent: Control, at: Rect2) -> Dictionary:
 	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	picture.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	picture.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(picture)
 	return {"backing": backing, "label": name_label, "picture": picture}
 
@@ -313,7 +314,7 @@ func _detail_label(parent: Control, at: Vector2) -> Label:
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_color_override("font_color", INK)
 	label.add_theme_font_size_override("font_size", 15)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(label)
 	return label
 
@@ -767,6 +768,7 @@ func clear() -> void:
 		second_half_label.text = ""
 		consequence_label.text = ""
 		_clear_thumbnails()
+		_clear_keyword_help()
 		_left_edge.color = OWNER_COLORS["warden"]
 		_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -801,6 +803,7 @@ func refresh() -> void:
 	second_half_label.text = ""
 	consequence_label.text = ""
 	_clear_thumbnails()
+	_clear_keyword_help()
 	if _submitted or not is_inside_tree() or not _model.is_available():
 		return
 
@@ -880,6 +883,7 @@ func _populate_second_options(first_idx: int) -> void:
 	second_half_label.text = ""
 	consequence_label.text = ""
 	_clear_thumbnails()
+	_clear_keyword_help()
 	_left_edge.color = _color_for_index(first_idx)
 	_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -928,6 +932,7 @@ func _return_to_first_choice() -> void:
 	second_half_label.text = ""
 	consequence_label.text = ""
 	_clear_thumbnails()
+	_clear_keyword_help()
 	_left_edge.color = OWNER_COLORS["warden"]
 	_right_edge.color = OWNER_COLORS["tinker"]
 
@@ -983,6 +988,33 @@ func _on_second_changed(item: int, epoch: int) -> void:
 	_update_preview()
 
 
+## Per-original authored Help; no aggregate descriptor or gameplay state involved.
+func _keyword_help(half: Dictionary) -> String:
+	var rows: Array[String] = []
+	for record in CardKeywordGlossary.describe(half):
+		rows.append("%s — %s" % [record["keyword"], record["explanation"]])
+	return "\n".join(rows)
+
+
+func _clear_keyword_help() -> void:
+	if first_half_label != null:
+		first_half_label.tooltip_text = ""
+	if second_half_label != null:
+		second_half_label.tooltip_text = ""
+	if confirm_button != null:
+		confirm_button.tooltip_text = ""
+	for state in [_first_thumb, _second_thumb]:
+		if state.is_empty():
+			continue
+		(state["backing"] as Panel).tooltip_text = ""
+		(state["picture"] as TextureRect).tooltip_text = ""
+
+
+func _set_half_keyword_help(state: Dictionary, help: String) -> void:
+	(state["backing"] as Panel).tooltip_text = help
+	(state["picture"] as TextureRect).tooltip_text = help
+
+
 func _update_preview() -> void:
 	confirm_button.disabled = true
 	var pair := _current_pair()
@@ -993,6 +1025,18 @@ func _update_preview() -> void:
 		pair["display_name"], pair["energy_cost"], pair["scrap_cost"]]
 	first_half_label.text = _half_lines("First", pair["first_half"])
 	second_half_label.text = _half_lines("Second", pair["second_half"])
+	var first_help := _keyword_help(pair["first_half"])
+	var second_help := _keyword_help(pair["second_half"])
+	first_half_label.tooltip_text = first_help
+	second_half_label.tooltip_text = second_help
+	_set_half_keyword_help(_first_thumb, first_help)
+	_set_half_keyword_help(_second_thumb, second_help)
+	var combined: Array[String] = []
+	if not first_help.is_empty():
+		combined.append("First — %s\n%s" % [pair["first_name"], first_help])
+	if not second_help.is_empty():
+		combined.append("Second — %s\n%s" % [pair["second_name"], second_help])
+	confirm_button.tooltip_text = "\n\n".join(combined)
 	consequence_label.text = _consequence_lines(pair)
 	_show_thumbnail(_first_thumb, pair["first_half"])
 	_show_thumbnail(_second_thumb, pair["second_half"])
@@ -1232,6 +1276,7 @@ func _disable_choice() -> void:
 	if consequence_label != null:
 		consequence_label.text = ""
 	_clear_thumbnails()
+	_clear_keyword_help()
 	call_deferred("_rebuild_focus_chain")
 
 
