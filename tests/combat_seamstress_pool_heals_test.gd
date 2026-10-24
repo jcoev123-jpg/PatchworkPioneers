@@ -31,6 +31,8 @@ func _initialize() -> void:
 	_test_m05_block_patch_cases()
 	_test_borrowed_button_all_six()
 	_test_borrowed_button_latch_and_replay()
+	_test_borrowed_button_starter_mixed_orders()
+	_test_borrowed_button_starter_negatives()
 	_test_borrowed_button_negative_cases()
 	_test_replay()
 	for failure: String in failures:
@@ -918,6 +920,159 @@ func _test_borrowed_button_latch_and_replay() -> void:
 		and service._borrowed_button.read_state().wearer_id == "tinker"
 		and service._borrowed_button != button,
 		"fresh combat owns a new helper/latch, old helper remains spent")
+
+
+## Independent Mend oracle: the support resolver performs the only HP/energy/card
+## mutation, then the pool-owned notifier observes its real committed result.
+func _starter_button_play(deck: CombatDeck, party: CombatParty,
+		service: CombatSeamstressPoolHeals, starter: CombatStarterSupportPlay,
+		id: String, target: int, award: bool, label: String) -> void:
+	var before := _snapshot(deck, party)
+	var amount := 7 if id == "seamstress_mend_plus" else 5
+	_check(deck.turn_active and deck.hand.has(id) and deck.energy >= 1
+		and party.get_hero(target).hp > 0, label + ": held, affordable, living target")
+	var expected := before.duplicate(true)
+	expected.heroes[target - 1].hp = mini(
+		expected.heroes[target - 1].max_hp, expected.heroes[target - 1].hp + amount)
+	if award:
+		expected.heroes[target - 1].block += 3
+	expected.energy -= 1
+	expected.state_energy -= 1
+	expected.hand.remove_at(expected.hand.find(id))
+	expected.discard.append(id)
+	var before_hp: int = party.get_hero(target).hp
+	_check(starter.play_card(deck, party, id, target), label + ": actual starter card committed")
+	var result := service.notify_committed_starter_mend(
+		deck, party, id, target, before_hp, party.get_hero(target).hp,
+		before.hand.count(id), before.discard.size(), before.energy)
+	_check(result.get("awarded") == award and result.get("block", 0) == (3 if award else 0),
+		label + ": shared COAT authority returns exact conditional Block")
+	_check(_snapshot(deck, party) == expected,
+		label + ": exact HP, +3 only once, one energy/discard, unchanged RNG")
+	_check(deck.hand.count(id) == before.hand.count(id) - 1
+		and deck.discard_pile.count(id) == before.discard.count(id) + 1,
+		label + ": only one held copy consumed")
+
+
+func _test_borrowed_button_starter_mixed_orders() -> void:
+	for starter_first in [true, false]:
+		var fixture := _button_fixture("warden")
+		if fixture.is_empty():
+			return
+		var party: CombatParty = fixture.party
+		_check(party.apply_damage(1, 16) and party.get_hero(1).hp == 24,
+			"mixed-order Warden has enough missing HP for both authentic heals")
+		var service := _button_service(fixture)
+		var starter := CombatStarterSupportPlay.new()
+		_check(starter.bind_patch_wardrobe(fixture.wardrobe, fixture.torn),
+			"starter resolver shares the identical genuine patch authorities")
+		var id := "seamstress_mend" if starter_first else "seamstress_mend_plus"
+		var deck := _deck([id, "seamstress_darning", "filler-a", "filler-b", "filler-c"])
+		var label := "starter then pool" if starter_first else "pool then starter"
+		if starter_first:
+			_starter_button_play(deck, party, service, starter, id, 1, true, label + ": first")
+		else:
+			_button_play(deck, party, service, "seamstress_darning", 1, 1, true, label + ": first")
+		var button: CombatBorrowedButton = service._borrowed_button
+		_check(service.bind_patch_wardrobe(fixture.wardrobe, fixture.torn)
+			and service._borrowed_button == button and button.read_state().awards == 1,
+			label + ": same-party rebind cannot replenish COAT")
+		if starter_first:
+			_button_play(deck, party, service, "seamstress_darning", 1, 1, false, label + ": second")
+		else:
+			_starter_button_play(deck, party, service, starter, id, 1, false, label + ": second")
+		var state := button.read_state()
+		var first_receipt := "starter_mend:1:1" if starter_first else "seamstress_pool_heal:1:1"
+		var second_receipt := "seamstress_pool_heal:2:1" if starter_first else "starter_mend:2:1"
+		_check(state.ok and state.awards == 1 and state.block_awarded == 3
+			and state.wearer_id == "warden" and state.receipt_id == first_receipt
+			and state.receipts == [first_receipt, second_receipt],
+			label + ": one shared latch and two unique cross-route receipts")
+		var before_replay := _snapshot(deck, party)
+		var duplicate := button.notify_committed_heal(first_receipt, "seamstress",
+			"warden", 24, party.get_hero(1).hp)
+		var forged := button.notify_committed_heal("stale_starter_observation", "seamstress",
+			"warden", 12, 13)
+		var corrected := button.notify_committed_heal("stale_starter_observation",
+			"seamstress", "warden", 24, party.get_hero(1).hp)
+		_check(not duplicate.ok and duplicate.reason == "duplicate_receipt"
+			and not forged.ok and forged.reason == "stale_observation"
+			and not corrected.ok and corrected.reason == "duplicate_receipt"
+			and _snapshot(deck, party) == before_replay and button.read_state().awards == 1,
+			label + ": stale and replayed observations cannot redeem or mutate state")
+		# A distinctly new CombatParty on the same run ledgers re-arms the exact helper.
+		var new_party := _party()
+		_check(new_party.apply_damage(1, 12), label + ": new combat wearer wounded")
+		_check(service.bind_patch_wardrobe(fixture.wardrobe, fixture.torn),
+			label + ": new party uses authentic unchanged run authorities")
+		var fresh_deck := _deck(["seamstress_mend_plus"])
+		_starter_button_play(fresh_deck, new_party, service, starter,
+			"seamstress_mend_plus", 1, true, label + ": new fight")
+		_check(service._borrowed_button != button
+			and service._borrowed_button.read_state().awards == 1
+			and service._borrowed_button.read_state().receipt_id == "starter_mend:1:1",
+			label + ": distinct fight has a fresh single-use notifier")
+
+
+func _test_borrowed_button_starter_negatives() -> void:
+	for scenario in ["full_hp", "unsewn", "wrong_wearer", "self", "downed_healer",
+			"downed_recipient", "insufficient_energy", "invalid_binding"]:
+		var wearer := "seamstress" if scenario == "self" else (
+			"tinker" if scenario == "wrong_wearer" else "warden")
+		var fixture := _button_fixture(wearer, scenario != "unsewn")
+		if fixture.is_empty():
+			return
+		var party: CombatParty = fixture.party
+		var service := _button_service(fixture)
+		var starter := CombatStarterSupportPlay.new()
+		_check(starter.bind_patch_wardrobe(fixture.wardrobe, fixture.torn),
+			scenario + ": genuine starter wardrobe binding")
+		var target := 2 if scenario == "self" else 1
+		if scenario != "full_hp":
+			_check(party.apply_damage(target, 9), scenario + ": missing HP exists")
+		if scenario == "downed_healer":
+			_check(party.apply_damage(2, 9999), "downed Seamstress cannot play")
+		if scenario == "downed_recipient":
+			_check(party.apply_damage(target, 9999), "downed Warden cannot receive Mend")
+		if scenario == "invalid_binding":
+			fixture.wardrobe._gold += 1
+		var deck := _deck(["seamstress_mend"])
+		if scenario == "insufficient_energy":
+			_check(deck.try_spend_energy(3), "no energy remains for Mend")
+		var before := _snapshot(deck, party)
+		if scenario in ["downed_healer", "downed_recipient", "insufficient_energy",
+				"invalid_binding"]:
+			_check(not starter.play_card(deck, party, "seamstress_mend", target),
+				scenario + ": real starter cast refused")
+			_check(_snapshot(deck, party) == before
+				and service._borrowed_button.read_state().receipts.is_empty(),
+				scenario + ": refused transaction preserves HP, Block, piles, RNG and latch")
+		else:
+			_check(starter.play_card(deck, party, "seamstress_mend", target),
+				scenario + ": legal starter Mend commits")
+			var result := service.notify_committed_starter_mend(
+				deck, party, "seamstress_mend", target, before.heroes[target - 1].hp,
+				party.get_hero(target).hp, before.hand.count("seamstress_mend"),
+				before.discard.size(), before.energy)
+			_check(not result.get("awarded", false)
+				and party.get_hero(target).block == before.heroes[target - 1].block
+				and service._borrowed_button.read_state().awards == 0,
+				scenario + ": no COAT award for zero heal, self or wrong/unsewn wearer")
+	var fixture := _button_fixture("warden")
+	var party: CombatParty = fixture.party
+	var service := _button_service(fixture)
+	_check(party.apply_damage(1, 9), "invalid observation test wearer wounded")
+	var pending_deck := _deck(["seamstress_mend"])
+	var before := _snapshot(pending_deck, party)
+	var invalid := service.notify_committed_starter_mend(pending_deck, party,
+		"seamstress_stitch_up", 1, 31, 32, 1, 0, 3)
+	var stale := service.notify_committed_starter_mend(pending_deck, party,
+		"seamstress_mend", 1, 31, 32, before.hand.count("seamstress_mend"),
+		before.discard.size(), before.energy)
+	_check(not invalid.get("ok", false) and not stale.get("ok", false)
+		and service._borrowed_button.read_state().awards == 0
+		and party.get_hero(1).block == 0,
+		"non-heal ID and stale HP cannot manufacture a Block award")
 
 
 func _test_borrowed_button_negative_cases() -> void:
