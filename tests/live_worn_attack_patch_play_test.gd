@@ -339,7 +339,7 @@ func _physical_hit(id: String, position: int, keyboard: bool, damage: int,
 
 func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
-		head_status: bool = false) -> bool:
+		head_status: bool = false, visor: String = "") -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -389,9 +389,21 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 	if not stitch_pair.is_empty():
 		_check(stitch_pair.size() == 2 and not _prepare_live_stitch(stitch_pair[0], stitch_pair[1]).is_empty(),
 			"genuine Rest descriptor ready before routed battle")
+	if visor == "absent":
+		# A genuinely unpatched run: the real deck owns both Rivet variants but
+		# no wardrobe is ever bound for this battle.
+		_own_rivets()
 	if owner != "":
-		if not (_bind_head_statuses() if head_status else
-			(_bind_mitt(owner) if mitt else _bind_authored(owner, downed))):
+		var bound := false
+		if not visor.is_empty():
+			bound = _bind_visor(owner, visor == "sewn")
+		elif head_status:
+			bound = _bind_head_statuses()
+		elif mitt:
+			bound = _bind_mitt(owner)
+		else:
+			bound = _bind_authored(owner, downed)
+		if not bound:
 			return false
 	var action: Button = _route_action(fixture.path.back())
 	_check(action != null and not action.disabled, "next Fight is an authentic connected choice")
@@ -434,6 +446,18 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 			and head_rules.read_projection().heads.warden.patch_id == "stern_seam_cap"
 			and head_rules.read_projection().heads.seamstress.patch_id == "bloodstitch_bonnet",
 			"live presenter shares both genuine battle-scoped M05 HEAD projections")
+	elif visor == "sewn" or visor == "owned":
+		# One battle-scoped projection must price BOTH the starter service and the
+		# direct-fire resolver, so Rivet Shot and every starter card see one truth.
+		var battle_heads: CombatM05HeadPatchRules = presenter._play._head_rules
+		var direct_heads: CombatM05HeadPatchRules = presenter._direct_fire.get_head_patches()
+		var projection: Dictionary = battle_heads.read_projection() if battle_heads != null else {}
+		var expected_sewn: Dictionary = {} if visor == "owned" or downed else {
+			"patch_id": "button_glass_visor", "effect": "card_exposed_bonus", "amount": 1}
+		_check(battle_heads != null and direct_heads == battle_heads
+			and projection.get("ok", false)
+			and projection.get("heads", {}).get(owner, {}) == expected_sewn,
+			"starter and direct-fire services share one authenticated HEAD projection")
 	elif not mitt:
 		await _probe_patch_refresh(owner)
 	else:
@@ -945,6 +969,7 @@ func _run() -> void:
 	await _mitt_stitched_cases(fixture)
 	await _mitt_scope_stitched_case(fixture)
 	await _head_mounted_cases(fixture)
+	await _visor_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -1142,3 +1167,322 @@ func _head_mounted_cases(fixture: Dictionary) -> void:
 		await _click(app.return_button)
 		_check(presenter._play._head_rules == null,
 			"stitched battle return retires the one shared HEAD authority")
+
+
+## Both authored Rivet variants must be genuinely owned by the real run deck.
+## Two copies each leave a real second held copy for a later attempt.
+func _own_rivets() -> void:
+	for id in ["tinker_rivet_shot", "tinker_rivet_shot_plus"]:
+		for copy in range(2):
+			app.run_deck.append(id)
+
+
+## Genuine authored Button Glass Visor sewn (or merely owned) on the persistent
+## run before the next routed Fight. Only the run owner binds the exact receipt.
+func _bind_visor(owner: String, sew_visor: bool = true) -> bool:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	_check(raw is Array, "live authored M05 HEAD catalog loads for the visor")
+	if not raw is Array:
+		return false
+	var visor: Array = raw.filter(func(entry): return entry is Dictionary and entry.get("id") == "button_glass_visor")
+	_check(visor.size() == 1 and visor[0].get("slot") == "HEAD"
+		and visor[0].get("effect") == "card_exposed_bonus"
+		and visor[0].get("amount") == 1,
+		"button_glass_visor is authored once as HEAD card_exposed_bonus 1")
+	if visor.size() != 1:
+		return false
+	var definitions := []
+	for entry in raw:
+		if entry is Dictionary and entry.has("id") and entry.has("slot"):
+			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	_own_rivets()
+	app.run_trinkets.append("button_glass_visor")
+	if sew_visor:
+		# The later genuine Rest re-sew must be affordable from real run scraps.
+		app.run_scraps += 4
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and carry.is_valid() and carry.read_state().heroes == app.run_heroes,
+		"routed visor receipt uses the real carried roster")
+	if carry == null:
+		return false
+	worn_wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(worn_wardrobe.is_valid() and worn_wardrobe.get_snapshot().scraps == app.run_scraps,
+		"genuine M05 visor wardrobe is valid for the real run purse")
+	if not worn_wardrobe.is_valid():
+		return false
+	if sew_visor:
+		var sewn: Dictionary = worn_wardrobe.sew("button_glass_visor", owner, "HEAD",
+			"live_visor_" + owner, worn_wardrobe.get_snapshot())
+		_check(sewn.get("ok", false) and sewn.receipt.patch_id == "button_glass_visor"
+			and sewn.receipt.hero_id == owner and sewn.receipt.slot == "HEAD",
+			"genuine sewn HEAD receipt wears the visor on " + owner)
+		if not sewn.get("ok", false):
+			return false
+	var current: Dictionary = worn_wardrobe.get_snapshot()
+	var torn_state: Dictionary = carry.torn.read_state()
+	var projected := worn_wardrobe.project_active(torn_state)
+	var wearer_hp := 0
+	for hero in torn_state.get("heroes", []):
+		if hero.get("id") == owner:
+			wearer_hp = int(hero.get("hp", 0))
+	var expected_active: Array = ["button_glass_visor"] if sew_visor and wearer_hp > 0 else []
+	_check(projected.get("ok", false)
+		and projected.worn[owner].HEAD == ("button_glass_visor" if sew_visor else "")
+		and projected.active[owner] == expected_active,
+		"real head ledger projects exactly the visor sewn on " + owner)
+	_check(carry.can_bind_wardrobe(worn_wardrobe, carry.torn, current)
+		and carry.bind_wardrobe(worn_wardrobe, carry.torn, current),
+		"routed run owner binds the genuine visor wardrobe")
+	return carry._wardrobe == worn_wardrobe
+
+
+## The exact authored Rivet records, read straight from the card catalog.
+func _assert_rivet_record(id: String) -> Dictionary:
+	var record := TinkerPoolCards.new().get_definition(id)
+	var upgrade := id.ends_with("_plus")
+	_check(record.get("id") == id and record.get("owner") == "tinker"
+		and record.get("cost") == 1 and record.get("from_positions") == [2, 3]
+		and record.get("to_positions") == [1, 2, 3]
+		and record.get("target_kind") == "enemy_single"
+		and int(record.effects.damage) == (6 if upgrade else 4)
+		and int(record.effects.exposed) == 1,
+		"authored " + id + " is cost 1, FROM 2-3, one enemy in 1-3, " +
+			("6" if upgrade else "4") + " damage and authored Exposed 1")
+	return record
+
+
+## One genuinely held Rivet cast through the physical mounted hand: the live
+## forecast and the confirmed hit must agree on exact damage and post-hit Exposed.
+func _rivet_cast(id: String, target: int, damage: int, exposed_before: int,
+		exposed_after: int, keyboard: bool = false) -> Dictionary:
+	var record := _assert_rivet_record(id)
+	if not await _ensure_held(id):
+		return {}
+	var panel := _panel(id)
+	_check(panel != null and panel.is_visible_in_tree()
+		and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect()),
+		"held Rivet panel is mounted inside 1280x720: " + id)
+	await _hover(panel)
+	_check(presenter.cue.text.contains("Exposed %d → %d after hit" % [exposed_before, exposed_after]),
+		"live cue projects the exact confirmed Exposed %d → %d" % [exposed_before, exposed_after])
+	var preview: Dictionary = presenter._target_preview(id)
+	var legal: Array = preview.get("target_positions", [])
+	var hit: Dictionary = {}
+	for candidate in preview.get("hits", []):
+		if int(candidate.get("position", 0)) == target:
+			hit = candidate
+	_check(preview.get("playable", false) and legal.has(1) and legal.has(2)
+		and target in legal and hit.get("damage") == damage
+		and hit.get("exposed_before") == exposed_before
+		and hit.get("exposed_after") == exposed_after,
+		"live resolver forecast names the real living slots and exact outcome: " + id)
+	var enemy: Dictionary = app.enemies.get_enemy(target)
+	var before := _live_state()
+	var held_before: int = app.deck.hand.count(id)
+	var discard_before: int = app.deck.discard_pile.count(id)
+	_check(enemy.get("statuses", {}) == ({"exposed": exposed_before} if exposed_before > 0 else {}),
+		"the target holds no status before the confirmed " + id)
+	_check(await _choose(id, keyboard), "physical hand selection arms the real " + id)
+	var armed := _live_state()
+	# The authored starter encounter has two real enemies: slot 3 is not a legal
+	# recipient, so the shortcut must not queue a cast or mutate anything.
+	presenter._queue_attack(3)
+	_check(not presenter._queued and _live_state() == armed,
+		"an unoccupied enemy slot cannot queue the real " + id)
+	_check(_live_state() == before and app.enemies.get_enemy(target).get("statuses", {})
+		== enemy.get("statuses", {}) and app.deck.energy == before[15],
+		"arming " + id + " charges no energy and applies no status")
+	if keyboard:
+		await _key(KEY_1 + target - 1)
+	else:
+		await _click(app.get_node("LiveEnemyRoster")._labels[target - 1])
+	var event: Dictionary = presenter.last_event
+	_check(event.get("ok", false) and event.get("hits", []).size() == 1
+		and event.hits[0].position == target and event.hits[0].damage == damage
+		and event.hits[0].statuses == {"exposed": exposed_after - exposed_before},
+		"confirmed " + id + " reports exact damage and its Exposed rider")
+	var after: Dictionary = app.enemies.get_enemy(target)
+	_check(after.get("statuses", {}) == {"exposed": exposed_after}
+		and after.hp == enemy.hp - maxi(0, damage - enemy.block)
+		and after.block == maxi(0, enemy.block - damage),
+		"post-hit target carries exactly Exposed " + str(exposed_after) + " after real damage")
+	_check(app.deck.energy == before[15] - int(record.cost)
+		and app.deck.hand.count(id) == held_before - 1
+		and app.deck.discard_pile.count(id) == discard_before + 1
+		and app.run_rng.state == before[10],
+		"one held copy is charged once and discarded once without using run RNG")
+	_check(presenter.cue != null and not presenter.cue.is_visible_in_tree(),
+		"confirmed cast retires the idle attack cue")
+	return event
+
+
+## A genuine Rest re-sew that moves the sewn visor away from Tinker must leave
+## the battle's HEAD authority stale: the cast is refused, never silently
+## reverted to the unpatched authored Exposed 1.
+func _visor_stale_authority() -> void:
+	var head_rules: CombatM05HeadPatchRules = presenter._play._head_rules
+	app.deck.combat_state.energy = 1
+	var held := await _ensure_held("tinker_rivet_shot")
+	_check(held and app.deck.hand.has("tinker_rivet_shot"),
+		"a genuinely held second Rivet waits for the stale-authority attempt")
+	if not held:
+		return
+	var opened: Dictionary = worn_wardrobe.start_rest("live_visor_rest", worn_wardrobe.get_snapshot())
+	var moved: Dictionary = worn_wardrobe.re_sew("button_glass_visor", "tinker", "warden",
+		"live_visor_rest", "live_visor_moved", worn_wardrobe.get_snapshot())
+	_check(opened.get("ok", false) and moved.get("ok", false)
+		and moved.receipt.patch_id == "button_glass_visor"
+		and worn_wardrobe.get_snapshot().worn.warden.HEAD == "button_glass_visor"
+		and worn_wardrobe.get_snapshot().worn.tinker.HEAD == "",
+		"real Rest re-sew moves the sewn visor from Tinker to the Warden")
+	app.run_scraps = worn_wardrobe.get_snapshot().scraps
+	await _frames()
+	_check(head_rules != null and head_rules == presenter._play._head_rules
+		and presenter._direct_fire.get_head_patches() == head_rules
+		and not head_rules.read_projection().get("ok", false),
+		"the moved run ledger leaves the one battle-scoped HEAD authority stale")
+	var frozen := _live_state()
+	_check(not presenter._target_preview("tinker_rivet_shot").playable,
+		"stale HEAD authority makes the mounted Rivet forecast unavailable")
+	_check(await _choose("tinker_rivet_shot", false), "stale Rivet panel is still physically held")
+	presenter._queue_attack(1)
+	_check(not presenter._queued and _live_state() == frozen,
+		"stale authority cannot queue, charge or apply the real held Rivet")
+	_check(not presenter._resolve_attack(app.party, app.enemies,
+		"tinker_rivet_shot", 1).get("ok", false) and _live_state() == frozen,
+		"stale authority refuses the cast instead of a forged vanilla Exposed 1")
+	var back: Dictionary = worn_wardrobe.re_sew("button_glass_visor", "warden", "tinker",
+		"live_visor_rest", "live_visor_back", worn_wardrobe.get_snapshot())
+	app.run_scraps = worn_wardrobe.get_snapshot().scraps
+	_check(back.get("ok", false)
+		and worn_wardrobe.get_snapshot().worn.tinker.HEAD == "button_glass_visor"
+		and not presenter._play._head_rules.read_projection().get("ok", false),
+		"re-sewing the same visor back never revives the stale battle authority")
+
+
+## AC1: a genuine sewn visor on the living Tinker raises a real mounted Rivet
+## Shot cast to Exposed 2 (authored 1 + HEAD 1), for base and upgrade.
+func _visor_sewn_case(fixture: Dictionary, scenario: String) -> void:
+	var id := "tinker_rivet_shot_plus" if scenario == "upgrade" else "tinker_rivet_shot"
+	var damage := 9 if scenario == "upgrade" else 7
+	if not await _entry(fixture, "tinker", false, scenario == "upgrade",
+			false, [], false, false, "sewn"):
+		_check(false, "genuine sewn visor routed fixture entered: " + scenario)
+		return
+	var head_rules: CombatM05HeadPatchRules = presenter._play._head_rules
+	_check(presenter._direct_fire.get_first_attack() == presenter._play._tinker,
+		"direct fire keeps the one shared Tinker first-attack latch: " + scenario)
+	_check(head_rules != null and presenter._direct_fire.get_head_patches() == head_rules
+		and head_rules.read_projection().get("ok", false)
+		and head_rules.read_projection().heads.tinker.patch_id == "button_glass_visor",
+		"the mounted battle authenticates one sewn visor HEAD projection for Tinker")
+	for card_id in ["tinker_rivet_shot", "tinker_rivet_shot_plus"]:
+		_check(head_rules.get_bonus("tinker", card_id, "exposed") == 1
+			and int(_assert_rivet_record(card_id).effects.exposed) == 1,
+			card_id + " authored Exposed 1 gains exactly the sewn visor 1")
+	_check(head_rules.get_bonus("warden", id, "exposed") == 0
+		and head_rules.get_bonus("tinker", "tinker_pop_shot", "exposed") == 0
+		and head_rules.get_bonus("tinker", id, "bleed") == 0,
+		"the visor never adds Exposed to another wearer, card or effect")
+	# AC1 boundary: exactly one real energy still pays the cost-1 cast once.
+	app.deck.combat_state.energy = 1
+	var event := await _rivet_cast(id, 1, damage, 0, 2, scenario == "upgrade")
+	_check(event.get("ok", false) and app.deck.energy == 0,
+		"a single real energy pays for the sewn " + id)
+	if scenario == "base":
+		await _visor_stale_authority()
+	await _click(app.return_button)
+	_check(presenter._direct_fire.get_head_patches() == null
+		and presenter._play._head_rules == null,
+		"return retires the battle-scoped visor authority from both services")
+
+
+## AC3: the same mounted battle keeps the one shared first-attack latch and the
+## real Weak/Exposed flooring while the sewn rider stays attached.
+func _visor_latch_case(fixture: Dictionary) -> void:
+	if not await _entry(fixture, "tinker", false, false, false, [], false, false, "sewn"):
+		_check(false, "shared-latch visor fixture entered")
+		return
+	var head_rules: CombatM05HeadPatchRules = presenter._play._head_rules
+	_check(head_rules != null and head_rules.get_bonus("tinker", "tinker_rivet_shot", "exposed") == 1,
+		"the latch battle starts with the genuine sewn visor rider")
+	await _rivet_cast("tinker_rivet_shot", 1, 7, 0, 2)
+	_check(presenter._play._tinker._consumed
+		and presenter._direct_fire.get_first_attack()._consumed,
+		"one confirmed Rivet consumes the single shared Tinker first-attack latch")
+	app.party._heroes[2]["statuses"] = {"weak": 1}
+	_check(app.enemies.apply_statuses({2: {"exposed": 1}}),
+		"the second real target carries Exposed 1 before the upgraded Rivet")
+	var plus := TinkerPoolCards.new().get_definition("tinker_rivet_shot_plus")
+	var expected: int = CombatStatuses.new().adjusted_attack_damage(
+		int(plus.effects.damage), {"weak": 1}, {"exposed": 1})
+	_check(expected == 6, "independent rule oracle floors 6 under Weak and Exposed to 6")
+	await _rivet_cast("tinker_rivet_shot_plus", 2, expected, 1, 3, true)
+	_check(app.enemies.get_enemy(1).get("statuses", {}) == {"exposed": 2}
+		and app.enemies.get_enemy(2).get("statuses", {}) == {"exposed": 3},
+		"the Exposed each cast applies affects later hits, not the hit that made it")
+	await _click(app.return_button)
+
+
+## AC2: absent, owned-but-unworn, wrong-wearer and torn visors must never grant
+## the rider; the unpatched legal Rivet keeps exactly its authored Exposed 1.
+func _visor_negative_case(fixture: Dictionary, scenario: String) -> void:
+	var owner := "" if scenario == "absent" else (
+		"warden" if scenario == "other_owner" else "tinker")
+	var visor := ""
+	if scenario == "absent":
+		visor = "absent"
+	elif scenario == "unworn":
+		visor = "owned"
+	else:
+		visor = "sewn"
+	var downed := scenario == "torn"
+	if not await _entry(fixture, owner, downed, false, false, [], false, false, visor):
+		_check(false, "routed visor negative fixture entered: " + scenario)
+		return
+	var head_rules: CombatM05HeadPatchRules = presenter._play._head_rules
+	if scenario == "absent":
+		_check(head_rules == null and presenter._direct_fire.get_head_patches() == null,
+			"an unpatched battle gives both mounted services no HEAD authority")
+	else:
+		# Prove the negative precondition instead of trusting an empty projection.
+		var ledger: Dictionary = worn_wardrobe.get_snapshot()
+		if scenario == "unworn":
+			_check(ledger.owned.has("button_glass_visor")
+				and ledger.worn.tinker.HEAD == "",
+				"the unworn fixture really owns the visor without sewing it")
+		elif scenario == "other_owner":
+			_check(ledger.worn.warden.HEAD == "button_glass_visor"
+				and ledger.worn.tinker.HEAD == "",
+				"the wrong-wearer fixture really sews the visor on the Warden's HEAD")
+		_check(head_rules != null and presenter._direct_fire.get_head_patches() == head_rules
+			and head_rules.read_projection().get("ok", false)
+			and head_rules.get_bonus("tinker", "tinker_rivet_shot", "exposed") == 0
+			and head_rules.get_bonus("tinker", "tinker_rivet_shot_plus", "exposed") == 0,
+			scenario + " leaves the living Tinker without any HEAD Exposed bonus")
+	if scenario == "torn":
+		_check(app.party.is_downed(3)
+			and app.party_carryover.torn.read_state().heroes[2].hp == 0,
+			"the torn precondition really holds in the run ledger")
+		if await _ensure_held("tinker_rivet_shot"):
+			var frozen := _live_state()
+			_check(not presenter._target_preview("tinker_rivet_shot").playable
+				and not presenter._resolve_attack(app.party, app.enemies,
+					"tinker_rivet_shot", 1).get("ok", false)
+				and _live_state() == frozen
+				and app.enemies.get_enemy(1).get("statuses", {}) == {},
+				"a torn wearer is refused, never a forged vanilla Exposed 1")
+	else:
+		await _rivet_cast("tinker_rivet_shot", 1, 7, 0, 1)
+	await _click(app.return_button)
+
+
+## M05 Button Glass Visor through the real mounted hand.
+func _visor_cases(fixture: Dictionary) -> void:
+	for scenario in ["base", "upgrade"]:
+		await _visor_sewn_case(fixture, scenario)
+	await _visor_latch_case(fixture)
+	for scenario in ["absent", "unworn", "other_owner", "torn"]:
+		await _visor_negative_case(fixture, scenario)

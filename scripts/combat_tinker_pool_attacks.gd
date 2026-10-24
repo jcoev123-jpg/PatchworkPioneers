@@ -56,6 +56,15 @@ func get_head_patches() -> CombatM05HeadPatchRules:
 	return _head_patches
 
 
+## Bind the EXACT battle-authenticated M05 HEAD projection the live hand already
+## uses for starter attacks, so one sewn projection prices every resolver. Null
+## leaves this resolver honestly unpatched; a present but invalid or stale
+## projection rejects every cast instead of silently reverting to vanilla.
+func bind_head_patch_rules(rules: CombatM05HeadPatchRules) -> bool:
+	_head_patches = rules
+	return rules != null and rules.read_projection().get("ok", false)
+
+
 func is_supported_card(card_id: String) -> bool:
 	var base_id: String = card_id.trim_suffix("_plus")
 	return BASE_IDS.has(base_id) and (card_id == base_id or card_id == base_id + "_plus")
