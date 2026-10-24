@@ -61,6 +61,24 @@ func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
 	if panel._selector == null:
 		return
 	var record: Dictionary = panel._selector.get_event()
+	_check(panel.choices_container.size_flags_vertical & Control.SIZE_EXPAND == 0,
+		label + " choices take content height without expansion")
+	_check(panel.description_label.custom_minimum_size == Vector2.ZERO
+		and panel.description_label.size_flags_vertical & Control.SIZE_EXPAND == 0
+		and panel.description_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+		label + " live description wraps naturally without a reserved block")
+	_check(panel.description_label.text == record.get("description")
+		and panel.title_label.text == record.get("title"), label + " complete authored story mounted")
+	_check(panel.description_label.get_index() < panel.choices_container.get_index()
+		and panel.bottom_stitches.get_index() > panel.choices_container.get_index(),
+		label + " story, choices and bottom stitches in content order")
+	var picker_name: String = {"moth_infestation": "MothCardPickerBox", "dye_vat": "DyeVatPickerBox"}.get(record.get("id"), "")
+	if not picker_name.is_empty():
+		var box := panel.choices_container.get_node_or_null(picker_name)
+		_check(box != null and box == panel.choices_container.get_child(0), label + " real selector precedes tickets")
+		if box != null:
+			var pickers := box.find_children("*", "ItemList", false, false)
+			_check(pickers.size() == 1 and pickers[0].is_visible_in_tree(), label + " actual card picker visible")
 	var impacts: Array = expected.get(record.get("id"), [])
 	var choices: Array = record.get("choices", [])
 	var buttons := panel.get_choice_buttons()
@@ -84,6 +102,7 @@ func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
 		var font := button.get_theme_font("font")
 		var font_size := button.get_theme_font_size("font_size")
 		var style := button.get_theme_stylebox("normal")
+		_check_event_ticket_skin(button, label + str(i))
 		_check(font.get_height(font_size) * 2 + style.get_minimum_size().y <= button.size.y,
 			label + " both caption lines fit ticket height " + str(i))
 		var widest := 0.0
@@ -103,6 +122,51 @@ func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
 		_check(not rect.intersects(panel.bottom_stitches.get_global_rect())
 			and not rect.intersects(panel.description_label.get_global_rect()),
 			label + " ticket clears description and bottom stitches " + str(i))
+
+
+func _check_event_ticket_skin(button: Button, label: String) -> void:
+	var faces: Array[Color] = []
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var style := button.get_theme_stylebox(state)
+		var face := Color.BLACK
+		if ResourceLoader.exists("res://assets/paper/ui/reward_button.png"):
+			_check(style is StyleBoxTexture, label + " art-backed " + state)
+			if style is StyleBoxTexture:
+				var sewn := style as StyleBoxTexture
+				_check(sewn.texture != null and sewn.texture.resource_path == "res://assets/paper/ui/reward_button.png"
+					and sewn.texture_margin_left > 0 and sewn.texture_margin_right > 0
+					and sewn.texture_margin_top > 0 and sewn.texture_margin_bottom > 0,
+					label + " exact nine-slice fabric " + state)
+				if sewn.texture != null:
+					var image := sewn.texture.get_image()
+					face = image.get_pixel(image.get_width() / 2, image.get_height() / 2) * sewn.modulate_color
+		else:
+			_check(style is StyleBoxFlat, label + " readable missing-art face " + state)
+			if style is StyleBoxFlat:
+				face = (style as StyleBoxFlat).bg_color
+		var ink_name: String = "font_color" if state == "normal" else "font_" + state + "_color"
+		_check(_ticket_contrast(button.get_theme_color(ink_name), face) >= 4.5, label + " readable " + state)
+		faces.append(face)
+	_check(faces[0] != faces[1] and faces[0] != faces[2] and faces[0] != faces[3], label + " distinct ticket states")
+	var focus := button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(focus != null and not focus.draw_center and focus.border_width_left >= 3,
+		label + " visible keyboard ring without covering text")
+	if focus != null:
+		_check(_ticket_contrast(focus.border_color, faces[0]) >= 3.0, label + " contrasting focus ring")
+	_check(_ticket_contrast(button.get_theme_color("font_focus_color"), faces[0]) >= 4.5,
+		label + " focus keeps readable ink")
+	_check(button.get_theme_stylebox("hover_pressed") == button.get_theme_stylebox("pressed"),
+		label + " held press keeps the pressed face")
+
+
+func _ticket_contrast(first: Color, second: Color) -> float:
+	var values: Array[float] = []
+	for color in [first, second]:
+		var linear: Array[float] = []
+		for channel in [color.r, color.g, color.b]:
+			linear.append(channel / 12.92 if channel <= 0.04045 else pow((channel + 0.055) / 1.055, 2.4))
+		values.append(0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2])
+	return (maxf(values[0], values[1]) + 0.05) / (minf(values[0], values[1]) + 0.05)
 
 
 func _effects() -> Array:

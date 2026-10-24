@@ -208,6 +208,7 @@ func _wallet_index(record: Dictionary, choice_id: String) -> int:
 
 
 func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String) -> void:
+	_check_story_structure(label)
 	_check(panel.has_open_event() and panel.is_visible_in_tree(), label + " mounted visible event")
 	_check(panel.title_label.text == record["title"] and panel.description_label.text == record["description"],
 		label + " authored title and description visible")
@@ -262,10 +263,7 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 		_check(button.get_parent() == panel.choices_container and button.is_visible_in_tree(),
 			label + " actual mounted choice button " + str(i))
 		_check(viewport.encloses(button.get_global_rect()), label + " full choice onscreen " + str(i))
-		_check(button.get_theme_stylebox("normal") is StyleBoxFlat and
-			button.get_theme_stylebox("disabled") is StyleBoxFlat and
-			button.get_theme_stylebox("focus") is StyleBoxFlat,
-			label + " paper/cardboard/focus styling intact " + str(i))
+		_check_ticket_skin(button, label + str(i))
 
 
 func _wallet_success(record: Dictionary, wallet: Dictionary, choice_id: String,
@@ -681,6 +679,7 @@ func _read_authored() -> void:
 
 
 func _validate_layout(record: Dictionary, label: String) -> void:
+	_check_story_structure(label)
 	_check(panel.is_visible_in_tree() and panel.has_open_event(), label + " panel open/visible")
 	_check(panel.title_label.text == record["title"], label + " exact title")
 	_check(panel.description_label.text == record["description"], label + " complete description")
@@ -712,8 +711,7 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 		_check(button.focus_mode == Control.FOCUS_ALL, label + " keyboard reachable " + str(i))
 		_check(not button.disabled and button.is_visible_in_tree(), label + " enabled and visible " + str(i))
 		_check(viewport_rect.encloses(button.get_global_rect()), label + " full button fits viewport " + str(i))
-		_check(button.get_theme_stylebox("normal") is StyleBoxFlat
-			and button.get_theme_stylebox("focus") is StyleBoxFlat, label + " procedural button/focus styling " + str(i))
+		_check_ticket_skin(button, label + str(i))
 		_check(button.tooltip_text == _expected_authored_tooltip(choices[i]),
 			label + " authored action and exact signed outcome on hover " + str(i))
 		# open_event() carries no run wallet, so its neutral zero-wallet service
@@ -1202,7 +1200,117 @@ func _test_rng_zero_draws() -> void:
 		"RNG flow commits once without effects")
 
 
-## WCAG relative-luminance contrast for a drawn numeral against its felt tag.
+func _check_story_structure(label: String) -> void:
+	_check(panel.choices_container.size_flags_vertical & Control.SIZE_EXPAND == 0,
+		label + " choices do not stretch away from the story")
+	_check(panel.description_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+		label + " complete story wraps naturally")
+	var content := panel.choices_container.get_parent()
+	_check(panel.description_label.get_index() < panel.choices_container.get_index()
+		and panel.bottom_stitches.get_index() > panel.choices_container.get_index(),
+		label + " story, tickets, bottom stitching stay in content order")
+	var balance := content.get_node_or_null("WalletBalance")
+	if balance != null:
+		_check(balance.get_index() > panel.description_label.get_index()
+			and balance.get_index() < panel.choices_container.get_index(),
+			label + " wallet sits between story and tickets")
+
+
+func _check_ticket_skin(button: Button, label: String, art_expected := true) -> void:
+	var faces: Array[Color] = []
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var style := button.get_theme_stylebox(state)
+		var face := Color.BLACK
+		if art_expected and ResourceLoader.exists("res://assets/paper/ui/reward_button.png"):
+			_check(style is StyleBoxTexture, label + " sewn art face " + state)
+			if style is StyleBoxTexture:
+				var sewn := style as StyleBoxTexture
+				_check(sewn.texture != null and sewn.texture.resource_path == "res://assets/paper/ui/reward_button.png",
+					label + " exact reward fabric " + state)
+				_check(sewn.texture_margin_left > 0 and sewn.texture_margin_top > 0
+					and sewn.texture_margin_right > 0 and sewn.texture_margin_bottom > 0,
+					label + " nine-sliced edges " + state)
+				if sewn.texture != null:
+					var image := sewn.texture.get_image()
+					face = image.get_pixel(image.get_width() / 2, image.get_height() / 2) * sewn.modulate_color
+		else:
+			_check(style is StyleBoxFlat, label + " readable missing-art fallback " + state)
+			if style is StyleBoxFlat:
+				face = (style as StyleBoxFlat).bg_color
+		var ink_name: String = "font_color" if state == "normal" else "font_" + state + "_color"
+		_check(_contrast(button.get_theme_color(ink_name), face) >= 4.5,
+			label + " dark readable text " + state)
+		faces.append(face)
+	_check(faces[0] != faces[1] and faces[0] != faces[2] and faces[0] != faces[3],
+		label + " hover, press and disabled faces differ from normal")
+	_check(button.get_theme_stylebox("hover_pressed") == button.get_theme_stylebox("pressed"),
+		label + " held hover uses pressed surface")
+	var focus := button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(focus != null and not focus.draw_center and focus.border_width_left >= 3,
+		label + " distinct nonoccluding keyboard ring")
+	if focus != null:
+		_check(_contrast(focus.border_color, faces[0]) >= 3.0, label + " visible focus ring")
+	_check(_contrast(button.get_theme_color("font_focus_color"), faces[0]) >= 4.5,
+		label + " focused caption stays dark")
+
+
+func _test_fallback_tickets() -> void:
+	# Reuse real mounted two-/three-line offerings; only the requested art path
+	# differs. This exercises missing-art rendering without editing any asset.
+	for wallet_mode in [false, true]:
+		var record: Dictionary = authored["frayed_signpost"].duplicate(true)
+		var opened := panel.open_event_with_wallet(record, {"gold": 10, "scraps": 10}) if wallet_mode else panel.open_event(record)
+		_check(opened, "fallback genuine three-choice offering opens")
+		if not opened:
+			continue
+		await _frames()
+		for button in panel.get_choice_buttons():
+			var font_size := button.get_theme_font_size("font_size")
+			panel._style_choice_button(button, "res://assets/paper/ui/event_ticket_missing_test.png")
+			button.add_theme_font_size_override("font_size", font_size)
+			_check_ticket_skin(button, "fallback wallet=" + str(wallet_mode), false)
+		await _check_ticket_input_states(false)
+		panel.close_event()
+		await _frames()
+
+
+func _check_ticket_input_states(art_expected := true) -> void:
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 3 and not buttons[0].disabled, "state probe has three real enabled tickets")
+	if buttons.size() != 3 or buttons[0].disabled:
+		return
+	var button: Button = buttons[0]
+	var legacy_before := committed.duplicate(true)
+	var wallet_before := wallet_committed.duplicate(true)
+	button.grab_focus()
+	await _mouse_motion(button)
+	_check(button.has_focus() and button.is_hovered(), "real focus and pointer hover reach ticket")
+	_check_ticket_skin(button, "focused hovered ticket", art_expected)
+	var press := InputEventMouseButton.new()
+	press.position = button.get_global_rect().get_center()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	root.push_input(press, true)
+	await _frames()
+	_check(button.button_pressed, "real held mouse press reaches ticket")
+	_check_ticket_skin(button, "held ticket", art_expected)
+	# Cancel over the story so checking the pressed style never spends a choice.
+	var outside := panel.description_label.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = outside
+	root.push_input(motion, true)
+	press = InputEventMouseButton.new()
+	press.position = outside
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = false
+	root.push_input(press, true)
+	await _frames()
+	_check(not button.button_pressed and not panel._selector.is_claimed()
+		and committed == legacy_before and wallet_committed == wallet_before,
+		"cancelled state inspection neither claims nor emits")
+
+
+## WCAG relative-luminance contrast for ticket ink and sewn number tags.
 func _contrast(first: Color, second: Color) -> float:
 	var a := _luminance(first)
 	var b := _luminance(second)
@@ -1441,6 +1549,12 @@ func _run() -> void:
 	await _test_wallet_malformed_tooltips()
 	await _test_authored()
 	await _test_three_choice_and_identity()
+	await _test_fallback_tickets()
+	_check(panel.open_event(authored["frayed_signpost"]), "art state offering opens")
+	await _frames()
+	await _check_ticket_input_states()
+	panel.close_event()
+	await _frames()
 	await _test_frayed_new_button()
 	await _test_invalid_and_replay()
 	_test_rng_zero_draws()

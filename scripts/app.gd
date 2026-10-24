@@ -3049,9 +3049,6 @@ func _open_moth_infestation(id: String, source: WeakRef) -> bool:
 		panel.free()
 		return false
 	_mount_event_backdrop(panel)
-	# The authored Moth description is shorter than Quiet Spool's; this keeps the
-	# selector and all three choices inside the same paper panel.
-	panel.description_label.custom_minimum_size = Vector2(0, 64)
 	moth_panel = panel
 	if not _mount_moth_picker(panel) or not run_map.choose_node(id):
 		_moth_picker = null
@@ -3345,9 +3342,6 @@ func _open_dye_vat(id: String, source: WeakRef) -> bool:
 		panel.free()
 		return false
 	_mount_event_backdrop(panel)
-	# The authored Dye Vat description is shorter than Quiet Spool's; this keeps
-	# the selector and all three choices inside the same paper panel.
-	panel.description_label.custom_minimum_size = Vector2(0, 64)
 	dye_vat_panel = panel
 	_dye_vat_outcome = outcome
 	_dye_vat_node = id

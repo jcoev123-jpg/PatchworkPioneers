@@ -66,7 +66,16 @@ var _wallet_label: Label = null
 
 func _ready() -> void:
 	_apply_patchwork_style()
+	paper_panel.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
 	close_event()
+
+
+## Follow wrapped story and live selector minimums, including later picker mounts.
+## Equal vertical anchors keep the complete content-sized parchment centred.
+func _fit_parchment() -> void:
+	var height := paper_panel.get_combined_minimum_size().y
+	paper_panel.offset_top = -height * 0.5
+	paper_panel.offset_bottom = height * 0.5
 
 
 ## Displays a detached authored offering; refuses invalid records and refuses
@@ -434,32 +443,44 @@ func _apply_patchwork_style() -> void:
 		stitch_label.add_theme_font_size_override("font_size", 17)
 
 
-func _style_choice_button(button: Button) -> void:
+func _style_choice_button(button: Button, art_path := "res://assets/paper/ui/reward_button.png") -> void:
+	var fabric: Texture2D = load(art_path) as Texture2D if ResourceLoader.exists(art_path) else null
+	button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	var tints := {"normal": Color.WHITE, "hover": Color(1.12, 1.12, 1.12),
+		"pressed": Color(0.88, 0.88, 0.88), "disabled": Color(0.94, 0.92, 0.88)}
 	for state in ["normal", "hover", "pressed", "disabled"]:
-		var style := StyleBoxFlat.new()
-		match state:
-			"normal":
-				style.bg_color = Color("#bca17e")
-			"hover":
-				style.bg_color = Color("#d2b58c")
-			"pressed":
-				style.bg_color = Color("#9f805e")
-			"disabled":
-				style.bg_color = Color("#948875")
-		style.border_color = Color("#6c5347")
-		style.set_border_width_all(2)
-		style.set_corner_radius_all(7)
-		style.content_margin_left = 18
-		style.content_margin_right = 18
+		var style: StyleBox
+		if fabric != null:
+			var sewn := StyleBoxTexture.new()
+			sewn.texture = fabric
+			sewn.modulate_color = tints[state]
+			for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+				sewn.set_texture_margin(side, 12.0)
+			style = sewn
+		else:
+			var flat := StyleBoxFlat.new()
+			flat.bg_color = Color("#e6ceaa") * tints[state]
+			flat.border_color = Color("#6c5347")
+			flat.set_border_width_all(2)
+			flat.set_corner_radius_all(7)
+			style = flat
+		style.content_margin_left = 40
+		style.content_margin_right = 40
+		style.content_margin_top = 10
+		style.content_margin_bottom = 10
 		button.add_theme_stylebox_override(state, style)
+	button.add_theme_stylebox_override("hover_pressed", button.get_theme_stylebox("pressed"))
 	var focus := StyleBoxFlat.new()
 	focus.bg_color = Color.TRANSPARENT
-	focus.border_color = Color("#fff5d4")
+	focus.draw_center = false
+	focus.border_color = Color("#503222")
 	focus.set_border_width_all(4)
 	focus.set_corner_radius_all(8)
 	button.add_theme_stylebox_override("focus", focus)
 	button.add_theme_color_override("font_color", Color("#27343a"))
 	button.add_theme_color_override("font_hover_color", Color("#1e292e"))
 	button.add_theme_color_override("font_pressed_color", Color("#1e292e"))
+	button.add_theme_color_override("font_hover_pressed_color", Color("#1e292e"))
+	button.add_theme_color_override("font_focus_color", Color("#27343a"))
 	button.add_theme_color_override("font_disabled_color", Color("#302e2d"))
 	button.add_theme_font_size_override("font_size", 21)
