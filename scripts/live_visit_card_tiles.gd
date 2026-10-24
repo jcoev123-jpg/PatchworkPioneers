@@ -1065,13 +1065,48 @@ func _mount_tile(spec: Dictionary, row: int, group: String) -> void:
 	button.mouse_exited.connect(_on_tile_hover.bind(button, false))
 	button.focus_entered.connect(_on_tile_focus.bind(button, true))
 	button.focus_exited.connect(_on_tile_focus.bind(button, false))
+	button.gui_input.connect(_on_tile_key.bind(_epoch, button))
 	_apply_disabled(record)
 
 
 func _apply_disabled(record: Dictionary) -> void:
-	var selector := _selector_for(String(record["group"]))
 	var button: Button = record["button"]
-	button.disabled = selector == null or not is_instance_valid(selector) or selector.disabled
+	button.disabled = not _tile_eligible(record)
+
+
+## A destination must still refer to an enabled canonical row in the current
+## visit. Sold offers, spent removals, and stale metadata cannot be navigated
+## to or activated, even before the next gallery rebuild.
+func _tile_eligible(record: Dictionary) -> bool:
+	if not _visit_current() or _gallery == null:
+		return false
+	var tile: Button = record["button"]
+	if not is_instance_valid(tile) or not tile.is_inside_tree() \
+			or not tile.is_visible_in_tree() or not _gallery.is_ancestor_of(tile):
+		return false
+	var selector := _selector_for(String(record["group"]))
+	if selector == null or not is_instance_valid(selector) or selector.disabled \
+			or not selector.is_visible_in_tree() or not _view.is_ancestor_of(selector):
+		return false
+	var row: int = int(record["row"])
+	if row < 0 or row >= selector.item_count or selector.is_item_disabled(row):
+		return false
+	match String(record["group"]):
+		"offer":
+			var stock := _shop_stock_cards()
+			return row < stock.size() and stock[row] is Dictionary \
+				and stock[row].get("sold", false) != true \
+				and selector.get_item_metadata(row) == stock[row].get("id")
+		"removal":
+			var deck := _run_deck()
+			return row < deck.size() and selector.get_item_text(row) == String(deck[row])
+		"upgrade":
+			if not is_instance_valid(_upgrade) or _upgrade.disabled:
+				return false
+			var choices := _rest_rows()
+			return row < choices.size() \
+				and selector.get_item_metadata(row) == choices[row].get("index")
+	return false
 
 
 func _selector_for(group: String) -> OptionButton:
@@ -1156,6 +1191,55 @@ func _tiles_of(group: String) -> Array:
 
 # --- interaction ----------------------------------------------------------
 
+## Direction keys change focus only; OptionButton selection and its signal
+## remain exclusive to Enter/Space/click. Arrows are consumed at group edges,
+## preventing Godot's automatic focus search from escaping to other actions.
+func _on_tile_key(event: InputEvent, epoch: int, button: Variant) -> void:
+	var key_event := event as InputEventKey
+	if key_event == null or not key_event.pressed or key_event.echo:
+		return
+	var key: Key = key_event.keycode
+	if key not in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
+		return
+	if epoch != _epoch or not _visit_current():
+		return
+	var record := _record_for(button)
+	if record.is_empty() or not _tile_eligible(record) or button.disabled \
+			or not button.has_focus():
+		return
+	button.accept_event()
+	var group := String(record["group"])
+	var destination_group := group
+	var row := int(record["row"])
+	var step := 0
+	if key == KEY_UP or key == KEY_DOWN:
+		step = -1 if key == KEY_UP else 1
+	elif _kind == "Shop":
+		if key == KEY_LEFT and group == "removal":
+			destination_group = "offer"
+		elif key == KEY_RIGHT and group == "offer":
+			destination_group = "removal"
+		else:
+			return
+	else:
+		return
+	var closest: Button = null
+	var best_distance := 2147483647
+	for candidate in _tiles_of(destination_group):
+		if not _tile_eligible(candidate):
+			continue
+		var candidate_row := int(candidate["row"])
+		var delta := candidate_row - row
+		if step != 0 and delta * step <= 0:
+			continue
+		var distance := absi(delta)
+		if distance < best_distance:
+			best_distance = distance
+			closest = candidate["button"]
+	if closest != null and not closest.disabled:
+		closest.grab_focus()
+
+
 func _on_tile_pressed(epoch: int, button: Variant) -> void:
 	if epoch != _epoch or not _visit_current():
 		return
@@ -1163,8 +1247,7 @@ func _on_tile_pressed(epoch: int, button: Variant) -> void:
 	if record.is_empty():
 		return
 	var tile: Button = record["button"]
-	if not is_instance_valid(tile) or not tile.is_inside_tree() or not tile.is_visible_in_tree() \
-			or tile.disabled or not _gallery.is_ancestor_of(tile):
+	if not _tile_eligible(record) or tile.disabled:
 		return
 	var selector := _selector_for(String(record["group"]))
 	if selector == null or not is_instance_valid(selector) or selector.disabled:
@@ -1212,9 +1295,10 @@ func _scroll_into_view(button: Control) -> void:
 func _grab_first_tile(epoch: int) -> void:
 	if epoch != _epoch or not _visit_current() or _tiles.is_empty():
 		return
-	var first = _tiles[0]["button"]
-	if is_instance_valid(first) and not first.disabled and not first.has_focus():
-		first.grab_focus()
+	for record in _tiles:
+		if _tile_eligible(record) and not record["button"].disabled:
+			record["button"].grab_focus()
+			return
 
 
 func _defer_scroll_into_view(epoch: int, button: Variant) -> void:
