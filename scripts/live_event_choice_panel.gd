@@ -16,6 +16,9 @@ extends Control
 ## visible panel answers the physical 1/2/3 keys by handing that authored-order
 ## choice to the same guarded pressed callback the mouse and focus path use. A
 ## two-choice offering simply has no third tag and ignores key 3.
+## The tags and the wallet-aware balance caption are sewn in the Theme's
+## PatchHeading display face; the story, ticket actions, impacts and precise
+## gold/scraps forecasts keep the inherited Patrick Hand body face and wording.
 ## The committed crossroads scene sits behind the parchment as one inert picture
 ## layer: it is resolved only when that shipped image really exists, and otherwise
 ## the panel keeps its opaque slate with a fully working parchment and choices.
@@ -44,6 +47,11 @@ const CUE_SIZE := 26.0
 const CUE_PAPER := Color("#f3e7cc")
 const CUE_THREAD := Color("#8a6f55")
 const CUE_INK := Color("#3a2c22")
+## The master Theme's sewn display face. The authored Event title already wears it;
+## the numbered choice tags and the wallet caption are stitched in the same face
+## so they belong to the open parchment. Body labels (story, ticket actions,
+## impacts and forecasts) stay in the inherited Patrick Hand face.
+const DISPLAY_VARIATION := "PatchHeading"
 
 signal choice_committed(event_id: String, choice_id: String)
 ## Emits exactly one detached RunEventChoice receipt on a successful wallet
@@ -171,6 +179,7 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		_wallet_label.name = "WalletBalance"
 		_wallet_label.text = "Wallet  •  %d gold   /   %d scraps" % [_offered_wallet["gold"], _offered_wallet["scraps"]]
 		_wallet_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_wallet_label.theme_type_variation = DISPLAY_VARIATION
 		_wallet_label.add_theme_color_override("font_color", Color("#343c3c"))
 		_wallet_label.add_theme_font_size_override("font_size", 20)
 		choices_container.get_parent().add_child(_wallet_label)
@@ -242,6 +251,9 @@ func _add_choice_cue(button: Button, index: int) -> void:
 	patch.set_border_width_all(2)
 	patch.set_corner_radius_all(9)
 	cue.add_theme_stylebox_override("normal", patch)
+	# The numeral is stitched in the Event's own display face rather than the
+	# ticket's body copy: same tag, same place, same inert behaviour.
+	cue.theme_type_variation = DISPLAY_VARIATION
 	cue.add_theme_color_override("font_color", CUE_INK)
 	cue.add_theme_font_size_override("font_size", 15)
 	button.add_child(cue)
@@ -458,7 +470,7 @@ func _apply_patchwork_style() -> void:
 		label.add_theme_color_override("font_color", Color("#2c3437"))
 	# The authored Event title speaks in the master Theme's Londrina heading face;
 	# the description below it stays in the inherited Patrick Hand body font.
-	title_label.theme_type_variation = "PatchHeading"
+	title_label.theme_type_variation = DISPLAY_VARIATION
 	title_label.add_theme_font_size_override("font_size", 36)
 	description_label.add_theme_font_size_override("font_size", 23)
 	for stitch_label in [top_stitches, bottom_stitches]:

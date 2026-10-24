@@ -4,6 +4,8 @@ const PANEL_SCENE := "res://scenes/event_choice_panel.tscn"
 const EVENTS_PATH := "res://data/events/m04_events.json"
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
+## The master Theme's Label variation that carries the Londrina display face.
+const DISPLAY_VARIATION := "PatchHeading"
 ## The one committed Event scene this screen reuses; never a new asset.
 const EVENT_ART := "res://assets/paper/backgrounds/event_crossroads.png"
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
@@ -215,6 +217,14 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 	_check(panel.has_open_event() and panel.is_visible_in_tree(), label + " mounted visible event")
 	_check(panel.title_label.text == record["title"] and panel.description_label.text == record["description"],
 		label + " authored title and description visible")
+	# AC2: the wallet offering's story keeps the body face while its dynamic
+	# balance caption joins the Event title in the sewn display face.
+	_check(panel.title_label.theme_type_variation == DISPLAY_VARIATION
+		and (panel.title_label.get_theme_font("font") as Font).resource_path == HEADING_FONT,
+		label + " wallet Event title keeps the display heading face")
+	_check(panel.description_label.theme_type_variation == ""
+		and (panel.description_label.get_theme_font("font") as Font).resource_path == BODY_FONT,
+		label + " wallet Event description keeps the inherited body face")
 	# AC2: wallet offerings keep the same natural-height story above their
 	# three-line 78px tickets instead of reserving a fixed story block.
 	_check(panel.description_label.size_flags_vertical & Control.SIZE_EXPAND == 0
@@ -225,6 +235,11 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 	if balance != null:
 		_check(balance.is_visible_in_tree() and balance.text == "Wallet  •  %d gold   /   %d scraps" % [wallet["gold"], wallet["scraps"]],
 			label + " current exact gold and scraps")
+		_check(balance.theme_type_variation == DISPLAY_VARIATION,
+			label + " balance caption wears the master PatchHeading variation")
+		var balance_font := balance.get_theme_font("font") as Font
+		_check(balance_font != null and balance_font.resource_path == HEADING_FONT,
+			label + " balance caption is sewn in the Londrina display face")
 	var preview := RunEventChoice.new(record).preview_wallet_choices(wallet)
 	_check(preview.get("ok", false) == true, label + " valid RunEventChoice preview")
 	var buttons := panel.get_choice_buttons()
@@ -243,6 +258,9 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 			choices[i]["text"], panel._delta_label(row["gold_delta"]), panel._delta_label(row["scraps_delta"]),
 			_expected_forecast(row, wallet)]
 		_check(button.text == expected, label + " authored text, signed deltas and exact service forecast " + str(i))
+		var ticket_font := button.get_theme_font("font") as Font
+		_check(ticket_font != null and ticket_font.resource_path == BODY_FONT,
+			label + " ticket action, deltas and after-wallet lines keep the body face " + str(i))
 		var lines := button.text.split("\n")
 		_check(lines.size() == 3, label + " ticket carries name, deltas and forecast lines " + str(i))
 		if row["affordable"]:
@@ -691,7 +709,7 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 	_check(panel.description_label.size_flags_vertical & Control.SIZE_EXPAND == 0
 		and panel.description_label.custom_minimum_size == Vector2.ZERO,
 		label + " story sits at its natural wrapped height above the choices")
-	_check(panel.title_label.theme_type_variation == "PatchHeading"
+	_check(panel.title_label.theme_type_variation == DISPLAY_VARIATION
 		and (panel.title_label.get_theme_font("font") as Font).resource_path == HEADING_FONT,
 		label + " authored Event title wears the master PatchHeading Londrina face")
 	_check(panel.description_label.theme_type_variation == ""
@@ -710,6 +728,8 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 		var button: Button = buttons[i]
 		_check(panel.choices_container.get_child(i) == button, label + " authentic button " + str(i))
 		_check(button.text == _expected_ticket(choices[i]), label + " exact authored choice text " + str(i))
+		_check((button.get_theme_font("font") as Font).resource_path == BODY_FONT,
+			label + " authored action and impact stay in the body face " + str(i))
 		_check(button.name == "Choice_%d" % i, label + " stable choice node identity " + str(i))
 		_check(button.focus_mode == Control.FOCUS_ALL, label + " keyboard reachable " + str(i))
 		_check(not button.disabled and button.is_visible_in_tree(), label + " enabled and visible " + str(i))
@@ -1391,6 +1411,17 @@ func _check_numbered_cues(record: Dictionary, label: String) -> void:
 		_check(cue.text == str(i + 1), label + " tag repeats the authored position " + str(i))
 		_check(cue.get_parent() == button and cue.is_visible_in_tree(),
 			label + " tag is mounted on its own ticket " + str(i))
+		_check(cue.theme_type_variation == DISPLAY_VARIATION,
+			label + " tag wears the master PatchHeading variation " + str(i))
+		var cue_font := cue.get_theme_font("font") as Font
+		_check(cue_font != null and cue_font.resource_path == HEADING_FONT,
+			label + " tag numeral is sewn in the Londrina display face " + str(i))
+		_check(panel._bound_choices.get(button, "") == String(choices[i]["id"])
+			and button.get_parent() == panel.choices_container
+			and not button.pressed.get_connections().is_empty(),
+			label + " tagged ticket keeps its authored choice binding " + str(i))
+		_check((button.get_theme_font("font") as Font).resource_path == BODY_FONT,
+			label + " tagged ticket still speaks in the body face " + str(i))
 		_check(cue.mouse_filter == Control.MOUSE_FILTER_IGNORE
 			and cue.focus_mode == Control.FOCUS_NONE,
 			label + " tag never takes pointer or keyboard focus " + str(i))
@@ -1570,6 +1601,80 @@ func _test_wallet_numbered_keys() -> void:
 	await _frames()
 
 
+## AC3: closing and reopening a legacy and a wallet offering really rebuilds the
+## sewn tags and the balance caption in the display face, with the body-face
+## story and exact captions intact, and without changing guarded input or RNG.
+func _test_cue_font_reopen() -> void:
+	var spool: Dictionary = authored.get("quiet_spool", {})
+	var bee: Dictionary = authored.get("quilting_bee", {})
+	_check(not spool.is_empty() and not bee.is_empty(), "font reopen fixtures are authored Events")
+	if spool.is_empty() or bee.is_empty():
+		return
+	seed(313131)
+	var expected_rng := randi()
+	seed(313131)
+	var legacy_fonts: Array[String] = []
+	var legacy_captions: Array[String] = []
+	for attempt in range(2):
+		committed.clear()
+		_check(panel.open_event(spool), "legacy font reopen opens #" + str(attempt))
+		if not panel.has_open_event():
+			return
+		await _frames()
+		_check_numbered_cues(spool, "legacy font reopen #" + str(attempt))
+		var fonts: Array[String] = []
+		var captions: Array[String] = []
+		for cue in panel.get_choice_cues():
+			var cue_font := cue.get_theme_font("font") as Font
+			fonts.append(cue_font.resource_path if cue_font != null else "")
+		for button in panel.get_choice_buttons():
+			captions.append(button.text)
+		legacy_fonts.append("|".join(fonts))
+		legacy_captions.append("|".join(captions))
+		panel.close_event()
+		await _frames()
+		_check(panel.get_choice_cues().is_empty() and panel.get_choice_buttons().is_empty(),
+			"close releases the reopened legacy tags #" + str(attempt))
+	_check(legacy_fonts.size() == 2 and legacy_fonts[0] == legacy_fonts[1]
+		and legacy_fonts[0] == HEADING_FONT + "|" + HEADING_FONT,
+		"legacy reopen recreates every tag in the Londrina display face")
+	_check(legacy_captions.size() == 2 and legacy_captions[0] == legacy_captions[1]
+		and not legacy_captions.is_empty(),
+		"legacy reopen rebuilds identical body-face tickets")
+	var wallets: Array = [{"gold": 0, "scraps": 2}, {"gold": 15, "scraps": 0}]
+	var wallet_captions: Array[String] = []
+	var wallet_fonts: Array[String] = []
+	for wallet in wallets:
+		wallet_committed.clear()
+		committed.clear()
+		_check(panel.open_event_with_wallet(bee, wallet), "wallet font reopen opens at " + str(wallet))
+		if not panel.has_open_event():
+			return
+		await _frames()
+		_check_wallet_layout(bee, wallet, "wallet font reopen " + str(wallet))
+		_check_numbered_cues(bee, "wallet font reopen " + str(wallet))
+		var balance := panel.choices_container.get_parent().get_node_or_null("WalletBalance") as Label
+		_check(balance != null, "wallet font reopen mounts its balance caption " + str(wallet))
+		if balance == null:
+			panel.close_event()
+			await _frames()
+			continue
+		var balance_font := balance.get_theme_font("font") as Font
+		wallet_fonts.append(balance_font.resource_path if balance_font != null else "")
+		wallet_captions.append(balance.text)
+		_check(balance.text == "Wallet  •  %d gold   /   %d scraps" % [wallet["gold"], wallet["scraps"]],
+			"reopened balance caption states the exact supplied balances " + str(wallet))
+		panel.close_event()
+		await _frames()
+		_check(panel.choices_container.get_parent().get_node_or_null("WalletBalance") == null,
+			"close releases the reopened balance caption " + str(wallet))
+	_check(wallet_fonts.size() == 2 and wallet_fonts[0] == HEADING_FONT and wallet_fonts[1] == HEADING_FONT,
+		"both reopened wallet captions are sewn in the Londrina display face")
+	_check(wallet_captions.size() == 2 and wallet_captions[0] != wallet_captions[1],
+		"wallet reopen refreshes the caption to each supplied balance")
+	_check(randi() == expected_rng, "font reopen and close consume zero RNG")
+
+
 ## Mounted surface contract for both shipped fabric and opaque missing-art paper.
 func _check_paper_skin(label: String, fallback: bool = false) -> void:
 	_check(panel.find_children("PaperPanel", "PanelContainer", true, false).size() == 1,
@@ -1736,6 +1841,7 @@ func _run() -> void:
 	await _test_wallet_keyboard()
 	await _test_numbered_choice_keys()
 	await _test_wallet_numbered_keys()
+	await _test_cue_font_reopen()
 	await _test_backdrop_fallback()
 	await _test_wallet_rejection_and_generation()
 	_finish()
