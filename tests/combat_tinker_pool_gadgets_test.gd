@@ -1,7 +1,8 @@
 extends SceneTree
 ## D2-1 deterministic headless tests for Tinker's Spare Parts and Sight Glass
 ## shared-hand utility resolution (base and plus versions), plus the M05
-## wearer-only ARM/HEAD Block projection onto Spare Parts.
+## wearer-only ARM/HEAD Block projection onto Spare Parts and the HEAD Exposed
+## projection onto Sight Glass.
 
 const ARM_PATCHES := "res://data/patches/m05_arm_support_patches.json"
 const HEAD_PATCHES := "res://data/patches/m05_head_patches.json"
@@ -26,6 +27,9 @@ func _initialize() -> void:
 	_test_wearer_block_ac1()
 	_test_wearer_scope_ac2()
 	_test_wearer_rejections_ac3()
+	_test_visor_exposed_ac1()
+	_test_visor_scope_ac2()
+	_test_visor_rejections_ac3()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_gadgets_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -637,6 +641,8 @@ func _test_wearer_block_ac1() -> void:
 	var configs := [
 		{"label": "unbound", "patches": [], "bonus": 0},
 		{"label": "Hemguard Cuff only", "patches": CUFF_ONLY, "bonus": 2},
+		{"label": "Threadguard Wrap only",
+			"patches": [{"id": "threadguard_wrap", "slot": "ARM"}], "bonus": 1},
 		{"label": "Reinforced Browband only", "patches": BROWBAND_ONLY, "bonus": 2},
 		{"label": "both patches", "patches": BOTH_PATCHES, "bonus": 4},
 	]
@@ -947,12 +953,446 @@ func _test_wearer_rejections_ac3() -> void:
 	_check(deck._rng.state == before["rng"],
 		"AC3 insufficient energy consumes no RNG")
 
-	## 9. Sight Glass is independent of the Spare Parts wearer bind.
+	## 9. A stale or failed binding rejects Sight Glass before any deck mutation,
+	## and a fresh current bind without a Visor keeps the authored Exposed 2.
 	party = _party(middle)
 	enemies = _enemies([50, 60, 70])
-	deck = _spare_parts_deck("tinker_sight_glass", 4242)
+	deck = _sight_deck("tinker_sight_glass", 4242)
+	before = _full_snapshot(deck, party, enemies)
 	result = wardrobe_svc.resolve_sight_glass(deck, party, enemies, "tinker_sight_glass", 2)
+	_assert_rejection(result, before, _full_snapshot(deck, party, enemies),
+		"AC3 Sight Glass rejects a stale wearer binding")
+	_check(deck._rng.state == before["rng"],
+		"AC3 stale wearer binding Sight Glass consumes no RNG")
+
+	var fresh_svc: CombatTinkerPoolGadgets = _bound_service(BOTH_PATCHES)["svc"]
+	party = _party(middle)
+	enemies = _enemies([50, 60, 70])
+	deck = _sight_deck("tinker_sight_glass", 4242)
+	result = fresh_svc.resolve_sight_glass(deck, party, enemies, "tinker_sight_glass", 2)
 	_check(result == {"ok": true, "exposed_applied": 2, "drawn": 1, "target": 2},
-		"AC3 Sight Glass keeps its authored play while the Spare Parts bind is stale")
+		"AC3 a current ARM/HEAD bind without a Visor keeps the authored Exposed 2")
 	_check(enemies.get_enemy(2)["statuses"]["exposed"] == 2 and deck.energy == 2,
 		"AC3 Sight Glass applies only Exposed 2 and its printed energy")
+
+
+## ---------------------------------------------------------------------------
+## M05 HEAD Exposed projection fixtures (Button Glass Visor: HEAD,
+## card_exposed_bonus +1).
+## ---------------------------------------------------------------------------
+
+const VISOR := [{"id": "button_glass_visor", "slot": "HEAD"}]
+
+
+func _sight_deck(card_id: String, seed_value: int) -> CombatDeck:
+	# Three matching copies among seven guarantee a held copy and leave a
+	# seeded draw supply for the single draw.
+	return _spare_parts_deck(card_id, seed_value)
+
+
+## Plays one held Sight Glass through a genuine shared deck, party and enemy
+## roster, asserting the exact receipt, the chosen target and every unchanged
+## authority.
+func _check_sight_glass_play(svc: CombatTinkerPoolGadgets, card_id: String,
+		order: Array, target: int, expected_exposed: int, label: String,
+		seed_value: int = 4242) -> Dictionary:
+	var party := _party(order)
+	var enemies := _enemies([50, 60, 70])
+	var deck := _sight_deck(card_id, seed_value)
+	var before := _full_snapshot(deck, party, enemies)
+	var draw_before: Array = deck.draw_pile.duplicate()
+	var tinker_position: int = order.find("tinker") + 1
+	_check(before["hand"].count(card_id) >= 1 and before["energy"] == 3,
+		label + ": genuine held copy with the shared three energy")
+	_check(party.get_hero(tinker_position)["id"] == "tinker"
+		and not party.is_downed(tinker_position),
+		label + ": the resolving Tinker slot is genuine and living")
+	var result = svc.resolve_sight_glass(deck, party, enemies, card_id, target)
+	_check(result == {"ok": true, "exposed_applied": expected_exposed,
+		"drawn": 1, "target": target},
+		label + ": exact applied Exposed, one draw and the chosen target")
+	_check(enemies.get_enemy(target)["statuses"]["exposed"] == expected_exposed,
+		label + ": projected Exposed lands on the chosen enemy")
+	_check(enemies.get_enemy(target)["hp"] == before["enemies"][target - 1]["hp"]
+		and enemies.get_enemy(target)["block"] == before["enemies"][target - 1]["block"],
+		label + ": no HP or Block change to the target")
+	var others_clean := true
+	for position in range(1, 4):
+		if position != target \
+				and enemies.get_enemy(position).get("statuses", {}).get("exposed", 0) != 0:
+			others_clean = false
+	_check(others_clean, label + ": no Exposed leaks to the other enemy slots")
+	_check(party.get_heroes() == before["party"],
+		label + ": no hero HP or Block mutation")
+	_check(deck.energy == 2 and deck.combat_state.energy == int(before["state_energy"]) - 1,
+		label + ": exactly the printed one energy charged")
+	_check(deck.hand.size() == 5 and deck.discard_pile == [card_id]
+		and deck.hand.count(card_id) + deck.draw_pile.count(card_id) \
+			+ deck.discard_pile.count(card_id) == 3,
+		label + ": one drawn card and exactly one discarded copy")
+	_check(deck.draw_pile == draw_before.slice(0, draw_before.size() - 1),
+		label + ": the draw comes from the seeded pile in order")
+	_check(deck._rng.state == before["rng"],
+		label + ": no speculative RNG draws")
+	return {"result": result, "deck": deck, "party": party, "enemies": enemies,
+		"before": before, "after": _full_snapshot(deck, party, enemies)}
+
+
+## ---------------------------------------------------------------------------
+## AC1: with the Button Glass Visor genuinely sewn to a living Tinker, a legal
+## base or plus Sight Glass applies Exposed 3 (2 printed +1 wearer HEAD), draws
+## one, charges one energy and discards one held copy.
+## ---------------------------------------------------------------------------
+
+func _test_visor_exposed_ac1() -> void:
+	var canonical := ["warden", "seamstress", "tinker"]
+	var middle := ["warden", "tinker", "seamstress"]
+
+	var bound := _bound_service(VISOR)
+	var svc: CombatTinkerPoolGadgets = bound["svc"]
+	var heads: CombatM05HeadPatchRules = svc.get_head_patches()
+	_check(heads != null and heads.read_projection().get("ok") == true,
+		"AC1 visor fixture holds a valid, current HEAD projection")
+	for card_id in SIGHT_GLASS_IDS:
+		_check(heads.get_bonus("tinker", card_id, "exposed") == 1,
+			"AC1 the genuine Tinker-worn Visor projects +1 Exposed for " + card_id)
+	_check(heads.get_bonus("tinker", "tinker_spare_parts", "exposed") == 0
+		and heads.get_bonus("tinker", "tinker_spare_parts", "block") == 0
+		and heads.get_bonus("tinker", "tinker_sight_glass", "block") == 0,
+		"AC1 the Visor projects no Exposed onto Spare Parts and no Block at all")
+
+	## Two legal Tinker positions (2 and 3) with two targets each, both IDs.
+	for order in [canonical, middle]:
+		for card_id in SIGHT_GLASS_IDS:
+			for target in [1, 3]:
+				_check_sight_glass_play(svc, card_id, order, target, 3,
+					"AC1 Visor / %s / pos%d -> target %d" % [card_id,
+						order.find("tinker") + 1, target])
+
+	## The projection stays additive on a target that is already Exposed.
+	var stack_party := _party(middle)
+	var stack_enemies := _enemies([50, 60, 70])
+	_check(stack_enemies.apply_statuses({1: {"exposed": 3}}),
+		"AC1 pre-existing Exposed 3 fixture")
+	var stack_deck := _sight_deck("tinker_sight_glass", 4242)
+	var stack_result = svc.resolve_sight_glass(stack_deck, stack_party, stack_enemies,
+		"tinker_sight_glass", 1)
+	_check(stack_result == {"ok": true, "exposed_applied": 3, "drawn": 1, "target": 1},
+		"AC1 a stacking Visor cast reports its full applied amount")
+	_check(stack_enemies.get_enemy(1)["statuses"]["exposed"] == 6,
+		"AC1 projected Exposed 3 stacks on pre-existing Exposed 3")
+	_check(stack_deck.energy == 2
+		and stack_deck.discard_pile == ["tinker_sight_glass"],
+		"AC1 the stacking cast still spends one energy and discards once")
+
+	## Equal-seed replays of the projected cast leave identical traces.
+	for card_id in SIGHT_GLASS_IDS:
+		var replay_a_svc: CombatTinkerPoolGadgets = _bound_service(VISOR)["svc"]
+		var replay_b_svc: CombatTinkerPoolGadgets = _bound_service(VISOR)["svc"]
+		var first := _check_sight_glass_play(replay_a_svc, card_id, canonical, 2, 3,
+			"AC1 replay A " + card_id, 98765)
+		var second := _check_sight_glass_play(replay_b_svc, card_id, canonical, 2, 3,
+			"AC1 replay B " + card_id, 98765)
+		_check(first["result"] == second["result"],
+			"AC1 equal-seed replay: identical Visor result for " + card_id)
+		_check(first["after"] == second["after"],
+			"AC1 equal-seed replay: identical party, enemies, piles, energy and RNG for "
+				+ card_id)
+
+
+## ---------------------------------------------------------------------------
+## AC2: no valid Tinker-worn Visor means the authored Exposed 2, and other ARM
+## or HEAD patches keep Spare Parts at its authored Block plus only its own
+## eligible wearer bonuses.
+## ---------------------------------------------------------------------------
+
+func _test_visor_scope_ac2() -> void:
+	var canonical := ["warden", "seamstress", "tinker"]
+	var middle := ["warden", "tinker", "seamstress"]
+
+	## No bind at all: the legal authored baseline.
+	for card_id in SIGHT_GLASS_IDS:
+		_check_sight_glass_play(CombatTinkerPoolGadgets.new(), card_id, middle, 2, 2,
+			"AC2 unbound baseline " + card_id)
+
+	## The same Visor sewn onto another hero never helps the Tinker cast.
+	var warden_worn := _bound_service(VISOR, "warden")
+	var warden_heads: CombatM05HeadPatchRules = warden_worn["svc"].get_head_patches()
+	_check(warden_heads != null
+		and warden_heads.get_bonus("tinker", "tinker_sight_glass", "exposed") == 0,
+		"AC2 a Warden-worn Visor projects nothing onto the Tinker cast")
+	_check_sight_glass_play(warden_worn["svc"], "tinker_sight_glass", canonical, 1, 2,
+		"AC2 Warden-worn Visor keeps Sight Glass at Exposed 2")
+	_check_sight_glass_play(warden_worn["svc"], "tinker_sight_glass_plus", middle, 3, 2,
+		"AC2 Warden-worn Visor keeps Sight Glass+ at Exposed 2")
+
+	## The ARM/HEAD Block patches never turn into Exposed on Sight Glass.
+	var both := _bound_service(BOTH_PATCHES)
+	for card_id in SIGHT_GLASS_IDS:
+		_check_sight_glass_play(both["svc"], card_id, middle, 3, 2,
+			"AC2 Cuff/Browband keep Sight Glass at the authored Exposed 2 for " + card_id)
+	for card_id in SPARE_PARTS_IDS:
+		var authored: int = 4 if card_id.ends_with("_plus") else 3
+		_check_spare_parts_play(both["svc"], card_id, canonical, authored + 4,
+			"AC2 Cuff/Browband still add only their own Block for " + card_id)
+
+	## The Visor is a HEAD Exposed patch: it grants Spare Parts no Block.
+	var visor_only := _bound_service(VISOR)
+	_check(visor_only["svc"].get_patches().card_block_bonus("tinker", "tinker_spare_parts") == 0,
+		"AC2 the HEAD Visor is not read as an ARM Block patch")
+	for card_id in SPARE_PARTS_IDS:
+		var authored: int = 4 if card_id.ends_with("_plus") else 3
+		_check_spare_parts_play(visor_only["svc"], card_id, canonical, authored,
+			"AC2 the Visor grants Spare Parts no Block for " + card_id)
+
+	## Legal mixed slots: Visor HEAD plus Hemguard Cuff ARM at the same time.
+	var visor_and_cuff := _bound_service([
+		{"id": "button_glass_visor", "slot": "HEAD"},
+		{"id": "hemguard_cuff", "slot": "ARM"},
+	])
+	_check_sight_glass_play(visor_and_cuff["svc"], "tinker_sight_glass", canonical, 3, 3,
+		"AC2 Visor plus Cuff still applies exactly Exposed 3")
+	_check_spare_parts_play(visor_and_cuff["svc"], "tinker_spare_parts", middle, 5,
+		"AC2 Visor plus Cuff keeps Spare Parts at authored 3 plus the ARM 2")
+
+	## Only its living, untorn wearer receives the bonus: a Tinker the run ledger
+	## has torn keeps Exposed 2 even while this combat party still shows her up.
+	var torn_ctx := _wearer_ledgers()
+	var torn_wardrobe: RunPatchWardrobe = torn_ctx["wardrobe"]
+	var torn: RunTornMending = torn_ctx["torn"]
+	var torn_heroes: Array = torn_ctx["heroes"]
+	_check(torn_wardrobe.sew("button_glass_visor", "tinker", "HEAD",
+		"op-186-visor-tear", torn_wardrobe.get_snapshot()).get("ok") == true,
+		"AC2 sew the Visor before the tear")
+	var torn_end: Array = torn_heroes.duplicate(true)
+	torn_end[2]["hp"] = 0
+	_check(torn.observe_battle_end("node-186-visor-tear", torn_heroes.duplicate(true),
+		torn_end).get("ok") == true, "AC2 battle end observed: Tinker torn under the Visor")
+	var torn_state: Dictionary = torn.read_state()
+	var torn_ledger: Dictionary = torn_wardrobe.get_snapshot()
+	_check(torn_wardrobe.refresh_run_context(torn_state["heroes"], torn_ledger["owned"],
+		torn_ledger["scraps"], torn_ledger["gold"], torn_ledger["cards"], torn_ledger),
+		"AC2 wardrobe refresh adopts the torn roster")
+	var torn_svc := CombatTinkerPoolGadgets.new()
+	_check(torn_svc.bind_patch_wardrobe(torn_wardrobe, torn),
+		"AC2 bind the torn ledger explicitly under the Visor")
+	_check(torn_svc.is_patch_binding_valid(),
+		"AC2 the torn Visor binding is authentic and current")
+	var torn_heads: CombatM05HeadPatchRules = torn_svc.get_head_patches()
+	_check(torn_heads != null
+		and torn_heads.get_bonus("tinker", "tinker_sight_glass", "exposed") == 0,
+		"AC2 a torn Tinker's Visor projects no Exposed bonus")
+	var torn_run := _check_sight_glass_play(torn_svc, "tinker_sight_glass", canonical, 2, 2,
+		"AC2 torn Tinker under the Visor keeps the authored Exposed 2")
+	var torn_party: CombatParty = torn_run["party"]
+	_check(torn_party.get_hero(3)["hp"] == 26 and not torn_party.is_downed(3),
+		"AC2 the combat party still shows a living Tinker while the run ledger is torn")
+
+
+## ---------------------------------------------------------------------------
+## AC3: a stale or failed Visor bind, a downed owner, an illegal target or
+## from-position, a missing held copy, insufficient energy or exhausted status
+## capacity changes no party, enemy, hand, energy, discard or RNG state.
+## ---------------------------------------------------------------------------
+
+func _test_visor_rejections_ac3() -> void:
+	var canonical := ["warden", "seamstress", "tinker"]
+	var middle := ["warden", "tinker", "seamstress"]
+
+	## 1. The wardrobe moves after a successful Visor bind.
+	var stale_ctx := _bound_service(VISOR)
+	var stale_svc: CombatTinkerPoolGadgets = stale_ctx["svc"]
+	var stale_wardrobe: RunPatchWardrobe = stale_ctx["wardrobe"]
+	_check(stale_wardrobe.sew("bloodstitch_bonnet", "warden", "HEAD",
+		"op-186-visor-stale", stale_wardrobe.get_snapshot()).get("ok") == true,
+		"AC3 auxiliary sew fixture on the Visor-bound wardrobe")
+	_check(not stale_svc.is_patch_binding_valid(),
+		"AC3 a moved wardrobe makes the Visor binding stale")
+	for card_id in SIGHT_GLASS_IDS:
+		var party := _party(middle)
+		var enemies := _enemies([50, 60, 70])
+		var deck := _sight_deck(card_id, 4242)
+		var before := _full_snapshot(deck, party, enemies)
+		var result = stale_svc.resolve_sight_glass(deck, party, enemies, card_id, 1)
+		_assert_rejection(result, before, _full_snapshot(deck, party, enemies),
+			"AC3 stale Visor binding rejects " + card_id)
+		_check(deck._rng.state == before["rng"],
+			"AC3 stale Visor binding consumes no RNG for " + card_id)
+		_check(deck.hand.count(card_id) >= 1 and deck.discard_pile.is_empty(),
+			"AC3 stale Visor binding keeps the card in hand for " + card_id)
+
+	## 2. The torn ledger moves after a successful Visor bind.
+	var torn_ctx := _bound_service(VISOR)
+	var torn_svc: CombatTinkerPoolGadgets = torn_ctx["svc"]
+	var torn: RunTornMending = torn_ctx["torn"]
+	var heroes := _party().get_heroes()
+	var battle_end: Array = heroes.duplicate(true)
+	battle_end[0]["hp"] = 0
+	_check(torn.observe_battle_end("node-186-visor-stale-torn", heroes, battle_end).get("ok") == true,
+		"AC3 the seamstress is torn after the Visor bind")
+	_check(not torn_svc.is_patch_binding_valid(),
+		"AC3 a moved torn ledger makes the Visor binding stale")
+	var torn_party := _party(canonical)
+	var torn_enemies := _enemies([50, 60, 70])
+	var torn_deck := _sight_deck("tinker_sight_glass_plus", 4242)
+	var torn_before := _full_snapshot(torn_deck, torn_party, torn_enemies)
+	var torn_result = torn_svc.resolve_sight_glass(torn_deck, torn_party, torn_enemies,
+		"tinker_sight_glass_plus", 3)
+	_assert_rejection(torn_result, torn_before,
+		_full_snapshot(torn_deck, torn_party, torn_enemies),
+		"AC3 stale torn ledger rejects the Visor cast")
+	_check(torn_deck._rng.state == torn_before["rng"],
+		"AC3 stale torn ledger consumes no RNG")
+
+	## 3. An explicit Visor bind that fails authentication rejects every cast.
+	var failed_ctx := _wearer_ledgers()
+	var failed_wardrobe: RunPatchWardrobe = failed_ctx["wardrobe"]
+	var failed_torn: RunTornMending = failed_ctx["torn"]
+	_check(failed_wardrobe.sew("button_glass_visor", "tinker", "HEAD",
+		"op-186-visor-failed", failed_wardrobe.get_snapshot()).get("ok") == true,
+		"AC3 sew the Visor before the failed bind")
+	var genuine: Dictionary = failed_wardrobe.get_snapshot()
+	var wrong_snapshot: Dictionary = genuine.duplicate(true)
+	wrong_snapshot["gold"] = int(wrong_snapshot["gold"]) + 1
+	var failed_svc := CombatTinkerPoolGadgets.new()
+	_check(not failed_svc.bind_patch_wardrobe(failed_wardrobe, failed_torn,
+		wrong_snapshot, failed_torn.read_state()),
+		"AC3 mismatched expected wardrobe rejects the explicit Visor bind")
+	_check(not failed_svc.is_patch_binding_valid(),
+		"AC3 a failed Visor bind stays explicit and invalid")
+	var failed_party := _party(middle)
+	var failed_enemies := _enemies([50, 60, 70])
+	var failed_deck := _sight_deck("tinker_sight_glass", 4242)
+	var failed_before := _full_snapshot(failed_deck, failed_party, failed_enemies)
+	var failed_result = failed_svc.resolve_sight_glass(failed_deck, failed_party,
+		failed_enemies, "tinker_sight_glass", 2)
+	_assert_rejection(failed_result, failed_before,
+		_full_snapshot(failed_deck, failed_party, failed_enemies),
+		"AC3 a failed Visor bind never grants a vanilla cast")
+
+	## 4. A Tinker downed inside this combat party cannot cast it.
+	var downed_ctx := _bound_service(VISOR)
+	var downed_svc: CombatTinkerPoolGadgets = downed_ctx["svc"]
+	var downed_party := _party(middle)
+	_check(downed_party.apply_damage(2, 30) and downed_party.is_downed(2),
+		"AC3 Tinker downed at pos2 under the Visor")
+	var downed_enemies := _enemies([50, 60, 70])
+	var downed_deck := _sight_deck("tinker_sight_glass", 4242)
+	var downed_before := _full_snapshot(downed_deck, downed_party, downed_enemies)
+	var downed_result = downed_svc.resolve_sight_glass(downed_deck, downed_party,
+		downed_enemies, "tinker_sight_glass", 1)
+	_assert_rejection(downed_result, downed_before,
+		_full_snapshot(downed_deck, downed_party, downed_enemies),
+		"AC3 downed Visor wearer rejects the cast")
+	_check(downed_deck._rng.state == downed_before["rng"],
+		"AC3 downed Visor wearer consumes no RNG")
+
+	## 5. Illegal FROM position with a genuine, current Visor binding.
+	var illegal_party := _party(["tinker", "warden", "seamstress"])
+	var illegal_enemies := _enemies([50, 60, 70])
+	var illegal_deck := _sight_deck("tinker_sight_glass", 4242)
+	var illegal_before := _full_snapshot(illegal_deck, illegal_party, illegal_enemies)
+	var illegal_result = downed_svc.resolve_sight_glass(illegal_deck, illegal_party,
+		illegal_enemies, "tinker_sight_glass", 1)
+	_assert_rejection(illegal_result, illegal_before,
+		_full_snapshot(illegal_deck, illegal_party, illegal_enemies),
+		"AC3 Visor cast rejects Tinker at position 1")
+
+	## 6. An empty hand copy.
+	var empty_party := _party(middle)
+	var empty_enemies := _enemies([50, 60, 70])
+	var empty_deck := _deck(["warden_brace", "seamstress_mend", "tinker_tune_up",
+		"tinker_pop_shot", "extra1"], 4242)
+	_check(not empty_deck.hand.has("tinker_sight_glass"),
+		"AC3 missing held copy fixture")
+	var empty_before := _full_snapshot(empty_deck, empty_party, empty_enemies)
+	var empty_result = downed_svc.resolve_sight_glass(empty_deck, empty_party,
+		empty_enemies, "tinker_sight_glass", 1)
+	_assert_rejection(empty_result, empty_before,
+		_full_snapshot(empty_deck, empty_party, empty_enemies),
+		"AC3 Visor cast rejects a missing held copy")
+
+	## 7. Insufficient energy.
+	var low_party := _party(middle)
+	var low_enemies := _enemies([50, 60, 70])
+	var low_deck := _sight_deck("tinker_sight_glass", 4242)
+	_check(low_deck.try_spend_energy(3) and low_deck.energy == 0,
+		"AC3 energy exhausted fixture under the Visor")
+	var low_before := _full_snapshot(low_deck, low_party, low_enemies)
+	var low_result = downed_svc.resolve_sight_glass(low_deck, low_party, low_enemies,
+		"tinker_sight_glass", 1)
+	_assert_rejection(low_result, low_before,
+		_full_snapshot(low_deck, low_party, low_enemies),
+		"AC3 Visor cast rejects insufficient energy")
+	_check(low_deck._rng.state == low_before["rng"],
+		"AC3 insufficient energy consumes no RNG under the Visor")
+
+	## 8. Status capacity is preflighted with the projected 3, not the printed 2.
+	var cap_party := _party(middle)
+	var cap_enemies := _enemies([50, 60, 70])
+	_check(cap_enemies.apply_statuses({1: {"exposed": CombatEnemies.MAX_INT - 2}}),
+		"AC3 pre-existing Exposed leaves room for 2 but not 3")
+	_check(cap_enemies.can_apply_statuses({1: {"exposed": 2}}),
+		"AC3 the printed 2 still fits the capacity fixture")
+	_check(not cap_enemies.can_apply_statuses({1: {"exposed": 3}}),
+		"AC3 the projected 3 does not fit the capacity fixture")
+	var cap_deck := _sight_deck("tinker_sight_glass", 4242)
+	var cap_before := _full_snapshot(cap_deck, cap_party, cap_enemies)
+	var cap_result = downed_svc.resolve_sight_glass(cap_deck, cap_party, cap_enemies,
+		"tinker_sight_glass", 1)
+	_assert_rejection(cap_result, cap_before,
+		_full_snapshot(cap_deck, cap_party, cap_enemies),
+		"AC3 the projected Visor amount is what the capacity preflight rejects")
+	_check(cap_deck._rng.state == cap_before["rng"],
+		"AC3 capacity rejection consumes no RNG under the Visor")
+
+	## The same state without a Visor accepts and caps the enemy at MAX_INT.
+	var cap_plain_party := _party(middle)
+	var cap_plain_enemies := _enemies([50, 60, 70])
+	_check(cap_plain_enemies.apply_statuses({1: {"exposed": CombatEnemies.MAX_INT - 2}}),
+		"AC3 plain capacity fixture mirrors the projected one")
+	var cap_plain_deck := _sight_deck("tinker_sight_glass", 4242)
+	var cap_plain_result = CombatTinkerPoolGadgets.new().resolve_sight_glass(
+		cap_plain_deck, cap_plain_party, cap_plain_enemies, "tinker_sight_glass", 1)
+	_check(cap_plain_result == {"ok": true, "exposed_applied": 2, "drawn": 1, "target": 1}
+		and cap_plain_enemies.get_enemy(1)["statuses"]["exposed"] == CombatEnemies.MAX_INT,
+		"AC3 without the Visor the authored 2 still lands and caps at MAX_INT")
+
+	## 9. Illegal targets and a slain target with the Visor bound.
+	var target_party := _party(middle)
+	var target_enemies := _enemies([50, 60, 70])
+	var target_deck := _sight_deck("tinker_sight_glass", 4242)
+	for bad_target in [0, 4]:
+		var target_before := _full_snapshot(target_deck, target_party, target_enemies)
+		var target_result = downed_svc.resolve_sight_glass(target_deck, target_party,
+			target_enemies, "tinker_sight_glass", bad_target)
+		_assert_rejection(target_result, target_before,
+			_full_snapshot(target_deck, target_party, target_enemies),
+			"AC3 Visor cast rejects target position " + str(bad_target))
+	_check(target_enemies.apply_damage(1, 50) and target_enemies.is_slain(1),
+		"AC3 target pos1 slain under the Visor")
+	var slain_before := _full_snapshot(target_deck, target_party, target_enemies)
+	var slain_result = downed_svc.resolve_sight_glass(target_deck, target_party,
+		target_enemies, "tinker_sight_glass", 1)
+	_assert_rejection(slain_result, slain_before,
+		_full_snapshot(target_deck, target_party, target_enemies),
+		"AC3 Visor cast rejects a slain target")
+
+	## 10. A held single copy cannot be played twice.
+	var once_party := _party(canonical)
+	var once_enemies := _enemies([50, 60, 70])
+	var once_deck := _deck(["tinker_sight_glass", "warden_brace", "seamstress_mend",
+		"tinker_tune_up", "tinker_pop_shot"], 4242)
+	_check(once_deck.hand.count("tinker_sight_glass") == 1
+		and once_deck.draw_pile.is_empty(), "AC3 single-copy fixture for duplicate play")
+	var once_result = downed_svc.resolve_sight_glass(once_deck, once_party, once_enemies,
+		"tinker_sight_glass", 1)
+	_check(once_result == {"ok": true, "exposed_applied": 3, "drawn": 0, "target": 1}
+		and once_enemies.get_enemy(1)["statuses"]["exposed"] == 3,
+		"AC3 the first Visor cast lands with the projected 3")
+	var again_before := _full_snapshot(once_deck, once_party, once_enemies)
+	var again_result = downed_svc.resolve_sight_glass(once_deck, once_party, once_enemies,
+		"tinker_sight_glass", 1)
+	_assert_rejection(again_result, again_before,
+		_full_snapshot(once_deck, once_party, once_enemies),
+		"AC3 the same held copy cannot be played twice")
