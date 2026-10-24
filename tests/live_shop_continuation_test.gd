@@ -59,7 +59,7 @@ func _check_connected_book() -> void:
 		var row := slate.get_node("HeroRow" + str(index))
 		_check(row.get_node("HeroName").text == hero.name
 			and row.get_node("Health").text == "HP %d / %d" % [hero.hp, hero.max_hp], "left page reflects canonical carried hero")
-	_check(slate.get_node("Resources").text == "Deck: %d cards\nGold: %d    Scraps: %d" % [app.run_deck.size(), app.session_gold, app.run_scraps], "left page reflects actual deck and wallets")
+	_check(slate.get_node("Resources").text == "Deck: %d cards\nGold: %d\nScraps: %d" % [app.run_deck.size(), app.session_gold, app.run_scraps], "left page reflects actual deck and wallets on three supply lines")
 	var ids: Array = []
 	var actions: Array[Control] = []
 	for button in app.route_buttons:
