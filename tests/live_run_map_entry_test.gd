@@ -168,6 +168,10 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				and child.get_meta("route_id") == id
 				and child.get_meta("route_kind") == String(node.type)
 				and atlas.get_global_rect().encloses(child.get_global_rect()), "readable mounted identity: " + id)
+			var hover := "Floor %02d · %s · Branch %d" % [
+				int(node.floor), String(node.type), int(node.position) + 1]
+			_check(child.tooltip_text == hover and not child.tooltip_text.contains(id),
+				"readable sewn route hover: " + id)
 			var legal: bool = app.run_map.get_legal_choices().has(id)
 			_check(child.get_meta("route_state") == ("legal" if legal else "other")
 				and child.get_theme_stylebox("panel").bg_color == (RunRouteAtlas.LEGAL_BG if legal else RunRouteAtlas.OTHER_BG),
@@ -179,8 +183,9 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 				if action_button != null:
 					_check(action_button.focus_mode == Control.FOCUS_ALL
 						and action_button.mouse_filter == Control.MOUSE_FILTER_STOP
-						and action_button.tooltip_text.contains(id)
-						and action_button.tooltip_text.contains(String(node.type))
+						and action_button.tooltip_text == "Choose " + hover
+							+ " (key %d)" % (number + 1)
+						and not action_button.tooltip_text.contains(id)
 						and child.get_global_rect().encloses(action_button.get_global_rect()),
 						"live legal button is focused/clickable inside paper: " + id)
 			else:

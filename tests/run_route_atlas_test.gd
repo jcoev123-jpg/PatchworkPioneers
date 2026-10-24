@@ -88,6 +88,14 @@ func _inside(rect: Rect2, outer: Rect2) -> bool:
 		and rect.end.x <= outer.end.x and rect.end.y <= outer.end.y
 
 
+## Independent player-facing wording for one real node record: authored floor, authored
+## kind and the one-based branch row. Spelled out here so this regression cannot inherit
+## a wording mistake from the view itself.
+func _hover_text(node: Dictionary) -> String:
+	return "Floor %02d · %s · Branch %d" % [
+		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
+
+
 # The mounted preview must always show a complete open book: owner art or drawing.
 func _verify_book(view: RunRouteAtlas, label: String) -> void:
 	if view.uses_board_texture():
@@ -350,15 +358,20 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and identity.get_combined_minimum_size().x <= marker.size.x
 				and identity.get_combined_minimum_size().y <= marker.size.y,
 				label + ": high contrast caption and legal number fit " + id)
+			_check(marker.tooltip_text == _hover_text(all_nodes[id])
+				and not marker.tooltip_text.contains(id),
+				label + ": sewn hover names the real floor, kind and branch " + id)
 			var action := marker.get_node_or_null("Action") as Button
 			_check((action != null) == legal.has(id),
 				label + ": only currently reachable next floor has Action " + id)
 			if action != null:
 				_check(action.focus_mode == Control.FOCUS_ALL and not action.disabled
 					and action.mouse_filter == Control.MOUSE_FILTER_STOP
-					and action.tooltip_text.contains(id) and action.tooltip_text.contains(str(all_nodes[id]["type"]))
+					and action.tooltip_text == "Choose " + _hover_text(all_nodes[id])
+						+ " (key %d)" % number
+					and not action.tooltip_text.contains(id)
 					and action.get_meta("route_id") == id,
-					label + ": exact legal ID actionable by mouse and keyboard " + id)
+					label + ": exact legal Choose hover and real shortcut " + id)
 			_verify_token_marker(marker, id, view, label)
 		elif child is RunRouteAtlas.JourneyJournal:
 			journal_count += 1

@@ -3,6 +3,9 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 var requests: Array[String] = []
+## Real mounted states where the numeric shortcut N is NOT the branch row + 1, so the
+## legal hover cannot be derived from the branch number. At least one must be checked.
+var shifted_branch_states := 0
 const NUMBER_KEYS: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4]
 
 
@@ -72,6 +75,14 @@ func _marker(view: RunRouteAtlas, id: String) -> PanelContainer:
 	return null
 
 
+## Independent player-facing wording for one real node record: authored floor, authored
+## kind and the one-based branch row. Spelled out here so the mounted shortcuts regression
+## cannot inherit a wording mistake from the view itself.
+func _hover_text(node: Dictionary) -> String:
+	return "Floor %02d · %s · Branch %d" % [
+		int(node["floor"]), str(node["type"]), int(node["position"]) + 1]
+
+
 func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
 		where: String) -> Array[String]:
 	var before := _state(map, rng)
@@ -116,6 +127,9 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 		_check(marker.get_meta("route_state") == ("legal" if index >= 0 else
 			("chosen" if map.get_route().has(id) else "other")),
 			where + ": exact actual legal/chosen/inactive state " + id)
+		var hover := _hover_text(expected[id])
+		_check(marker.tooltip_text == hover and not marker.tooltip_text.contains(id),
+			where + ": sewn floor, kind and branch hover on the real patch " + id)
 		if index >= 0:
 			button_count += 1
 			_check(action is RunRouteAtlas.LegalPatchAction
@@ -124,10 +138,12 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 				where + ": round patch owns the stitched inset focus treatment " + id)
 			_check(action != null and action.focus_mode == Control.FOCUS_ALL
 				and action.is_visible_in_tree() and not action.disabled
-				and action.tooltip_text.contains(id)
-				and action.tooltip_text.contains(String(expected[id]["type"]))
+				and action.tooltip_text == "Choose " + hover + " (key %d)" % (index + 1)
+				and not action.tooltip_text.contains(id)
 				and action.get_meta("route_id") == id,
-				where + ": only legal destination has exact ID mouse/focus button " + id)
+				where + ": legal Choose hover names its real shortcut " + id)
+			if index != int(expected[id]["position"]):
+				shifted_branch_states += 1
 		else:
 			_check(action == null and identity.text == String(expected[id]["type"]),
 				where + ": future and current patches cannot request a choice " + id)
@@ -537,6 +553,8 @@ func _run() -> void:
 		_check(_state(map, identical_rng) == finished, "null binding leaves former map unchanged")
 
 	_check(saw_narrow, "at least one real connected state offers fewer than four destinations")
+	_check(shifted_branch_states >= 1,
+		"real legal hover was checked where the shortcut differs from branch + 1 (%d states)" % shifted_branch_states)
 	view.queue_free()
 	other_focus.queue_free()
 	close_focus.queue_free()
