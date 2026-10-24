@@ -845,8 +845,9 @@ func _test_m05_head_patches() -> void:
 			dup["hp"] = 0
 		end_roster.append(dup)
 	_check(ctx_torn.torn.observe_battle_end("tear_node", start_roster, end_roster).get("ok", false), "seamstress torn")
+	var ts_torn = ctx_torn.torn.read_state()
 	var w_snap = ctx_torn.wardrobe.get_snapshot()
-	_check(ctx_torn.wardrobe.refresh_run_context(end_roster, w_snap.owned, w_snap.scraps, w_snap.gold, w_snap.cards, w_snap), "wardrobe torn sync")
+	_check(ctx_torn.wardrobe.refresh_run_context(ts_torn.heroes, w_snap.owned, w_snap.scraps, w_snap.gold, w_snap.cards, w_snap), "wardrobe torn sync")
 	var resolver_torn := CombatSeamstressPoolBleed.new()
 	resolver_torn.bind_patch_wardrobe(ctx_torn.wardrobe, ctx_torn.torn)
 	
