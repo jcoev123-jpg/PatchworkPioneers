@@ -5,8 +5,9 @@ extends RefCounted
 ## definitions or duplicate state; callers supply seeded instances.
 ##
 ## An optional explicit wearer bind projects the M05 ARM/HEAD Block patches onto
-## Spare Parts only. It is authenticated against the genuine run wardrobe and
-## torn ledger, snapshots them, and fails closed once either authority moves.
+## Spare Parts and the HEAD Exposed patch onto Sight Glass only. It is
+## authenticated against the genuine run wardrobe and torn ledger, snapshots
+## them, and fails closed once either authority moves.
 
 var _binding_attempted: bool = false
 var _binding_valid: bool = false
@@ -112,7 +113,7 @@ func get_torn() -> RunTornMending:
 ##
 ## A bound wearer adds only +2 per active Tinker-worn Hemguard Cuff ARM and/or
 ## Reinforced Browband HEAD to the authored positive Block; Sight Glass and
-## every other card is unaffected.
+## every other card gain no Block from this projection.
 ##
 ## Returns {ok: true, block: int, drawn: int} on success,
 ## {ok: false} on rejection (no state changes).
@@ -206,15 +207,23 @@ func resolve_spare_parts(deck: CombatDeck, party: CombatParty,
 
 
 ## Sight Glass family: cost 1, target_kind enemy_single, from positions 2 or 3.
-## Effects: {exposed: 2, draw: 1}. Applies Exposed 2 to one chosen LIVING
-## enemy at a to_position, draws one, discards one held copy, spends 1 energy.
+## Effects: {exposed: 2, draw: 1}. Applies the authored Exposed plus any
+## wearer-only HEAD projection to one chosen LIVING enemy at a to_position,
+## draws one, discards one held copy, spends 1 energy.
 ## Does NOT consume first-attack bonus (not an attack). Stacks on pre-existing
 ## Exposed. Slain enemies remain in slots but cannot be targeted.
+##
+## A bound wearer adds only +1 per active Tinker-worn Button Glass Visor HEAD to
+## this card's authored positive Exposed; the same computed amount is used for
+## the status-capacity preflight and the returned exposed_applied field.
 ##
 ## Returns {ok: true, exposed_applied: int, drawn: int, target: int} on success,
 ## {ok: false} on rejection (no state changes).
 func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target_position: int) -> Dictionary:
+	## A stale or failed explicit bind never silently grants an unpatched cast.
+	if _binding_attempted and not is_patch_binding_valid():
+		return _failure()
 	if deck == null or party == null or enemies == null \
 			or not deck.turn_active or not party.is_valid() or not enemies.is_valid():
 		return _failure()
@@ -245,6 +254,15 @@ func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEn
 			or not draw_amt is int or draw_amt != 1:
 		return _failure()
 
+	## Wearer-only projection: only a living Tinker's own worn HEAD patch that
+	## names this exact card's positive Exposed counts, and it is added once.
+	var bonus: int = 0
+	if _binding_attempted and _head_rules != null:
+		bonus = _head_rules.get_bonus("tinker", card_id, "exposed")
+		if bonus < 0 or bonus > CombatEnemies.MAX_INT - exposed_amt:
+			return _failure()
+	var applied_exposed: int = exposed_amt + bonus
+
 	## Validate target position is in to_positions and enemy is living.
 	if not target_position is int or not to_value.has(target_position):
 		return _failure()
@@ -262,8 +280,8 @@ func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEn
 	if owner_position == 0:
 		return _failure()
 
-	## Validate status capacity before any mutation.
-	if not enemies.can_apply_statuses({target_position: {"exposed": exposed_amt}}):
+	## Validate status capacity before any mutation, using the computed amount.
+	if not enemies.can_apply_statuses({target_position: {"exposed": applied_exposed}}):
 		return _failure()
 
 	## Spend energy first, then apply effects.
@@ -271,7 +289,7 @@ func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEn
 		return _failure()
 
 	## Apply Exposed (stacks on existing).
-	enemies.apply_statuses({target_position: {"exposed": exposed_amt}})
+	enemies.apply_statuses({target_position: {"exposed": applied_exposed}})
 
 	## Draw one card.
 	var drawn: int = deck.draw_extra(draw_amt)
@@ -280,7 +298,7 @@ func resolve_sight_glass(deck: CombatDeck, party: CombatParty, enemies: CombatEn
 	if not deck.discard_played(card_id):
 		return _failure()
 
-	return {"ok": true, "exposed_applied": exposed_amt, "drawn": drawn, "target": target_position}
+	return {"ok": true, "exposed_applied": applied_exposed, "drawn": drawn, "target": target_position}
 
 
 func _failure() -> Dictionary:
