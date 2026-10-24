@@ -11,46 +11,60 @@ const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
 ## These fourth tooltip lines are written from data/patches/m05_*.json, the shared
 ## M04 attack catalog (Switchback Button) and the rule scripts, never produced by
 ## the presenter under test, so a wrong amount, effect kind, recipient scope or
-## condition cannot pass by agreeing with it.
+## condition cannot pass by agreeing with it. Each line is player language: no
+## internal effect keys and no "Authored patch rule" preamble.
 const M05_EXPECTED_POWERS := {
-	"bloodstitch_bonnet": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on cards owned by this living wearer.",
-	"button_glass_visor": "Authored patch rule: card_exposed_bonus +1 to positive Exposed on this wearer's cards.",
-	"stern_seam_cap": "Authored patch rule: card_weak_bonus +1 to positive Weak on this wearer's cards.",
-	"reinforced_browband": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards, applied to the card's actual Block recipient (even if it is an ally).",
-	"hemguard_cuff": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards.",
-	"threadguard_wrap": "Authored patch rule: card_block_bonus +1 to positive Block on this wearer's cards, applied to the card's actual Block recipient; a damage-only card that grants no Block never gains a fabricated bonus.",
-	"red_bobbin_cuff": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier.",
-	"loose_thread_glove": "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards.",
-	"frayfinder_mitt": "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit.",
-	"switchback_button": "Authored patch rule: once per player turn, when a different living hero's committed card or ordered stitched half immediately precedes this living, untorn wearer's committed card or half, the wearer gains +2 Block; both stitched halves count by their real owner, and invalid or failed plays never set or claim it.",
-	"borrowed_button": "Authored patch rule: once per combat, after a different living hero's committed card or ordered stitched half actually restores at least 1 HP to the living, untorn wearer, that wearer gains 3 Block.",
+	"bloodstitch_bonnet": "This wearer's cards that already apply Bleed add 1 more Bleed.",
+	"button_glass_visor": "This wearer's cards that already apply Exposed add 1 more Exposed.",
+	"stern_seam_cap": "This wearer's cards that already apply Weak add 1 more Weak.",
+	"reinforced_browband": "This wearer's cards that already grant Block grant 2 more Block, to the card's actual recipient (even an ally).",
+	"hemguard_cuff": "This wearer's cards that already grant Block grant 2 more Block.",
+	"threadguard_wrap": "This wearer's cards that already grant Block grant 1 more Block, to the card's actual recipient; a damage-only card that grants no Block gains no Block from it.",
+	"red_bobbin_cuff": "This wearer's cards that already apply Bleed add 1 more Bleed; it never multiplies Hemorrhage Hem.",
+	"loose_thread_glove": "This wearer's cards that already grant Unravel grant 1 more Unravel.",
+	"frayfinder_mitt": "Once per player turn, this living wearer's first confirmed single-target attack hit of the player turn deals +2 attack damage before Weak/Exposed, but only if that enemy's Unravel was already at least 1/2 of its current threshold before the hit. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Never an Unravel gauge gain, not any area/multi-hit/later hit, and no bonus on a rejected play.",
+	"switchback_button": "Once per player turn, when a different living hero's committed card or ordered stitched half immediately precedes this living, untorn wearer's committed card or half, the wearer gains +2 Block; each ordered stitched half counts for its real owner, and a failed, invalid or uncommitted play never sets or claims it.",
+	"borrowed_button": "Once per combat, when a different living hero's committed card or ordered stitched half actually restores at least 1 HP to this living, untorn wearer, that wearer gains 3 Block; never from this wearer's own play, a heal that restores 0 HP, Rest mending or a failed play.",
 }
 ## Catalog facts each literal line restates: slot, authored effect key, amount and
-## the positive status or damage it may boost. The seven card bonuses are
-## wearer-owned and positive-only; Frayfinder is the conditional first-hit +2
-## attack-damage bonus; Switchback Button is the once-per-player-turn +2 Block
-## awarded to the wearer whose committed play follows a different living owner;
-## Borrowed Button is the conditional other-hero heal Block award.
+## the positive status or damage it may boost. The eight card bonuses are
+## wearer-owned and positive-only, phrased with the human verb and amount a player
+## reads; Frayfinder is the conditional first-hit +2 attack-damage bonus;
+## Switchback Button is the once-per-player-turn +2 Block awarded to the wearer
+## whose committed play follows a different living owner; Borrowed Button is the
+## conditional other-hero heal Block award.
 const M05_EXPECTED_FACTS := {
-	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
-	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "status": "Exposed"},
-	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1, "status": "Weak"},
-	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
-	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
-	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1, "status": "Block"},
-	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
-	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "status": "Unravel"},
+	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1,
+		"status": "Bleed", "verb": "apply", "bonus": "add 1 more Bleed"},
+	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1,
+		"status": "Exposed", "verb": "apply", "bonus": "add 1 more Exposed"},
+	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1,
+		"status": "Weak", "verb": "apply", "bonus": "add 1 more Weak"},
+	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2,
+		"status": "Block", "verb": "grant", "bonus": "grant 2 more Block"},
+	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2,
+		"status": "Block", "verb": "grant", "bonus": "grant 2 more Block"},
+	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1,
+		"status": "Block", "verb": "grant", "bonus": "grant 1 more Block"},
+	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1,
+		"status": "Bleed", "verb": "apply", "bonus": "add 1 more Bleed"},
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1,
+		"status": "Unravel", "verb": "grant", "bonus": "grant 1 more Unravel"},
 	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus",
 		"amount": 2, "status": "attack damage", "timing": "before Weak/Exposed",
-		"hit": "first confirmed single-target attack hit", "limit": "once per PLAYER turn",
-		"exclusions": "Not any area/multi-hit/later hit", "numerator": 1, "denominator": 2},
+		"hit": "first confirmed single-target attack hit", "limit": "Once per player turn",
+		"exclusions": "not any area/multi-hit/later hit", "numerator": 1, "denominator": 2},
 	"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block",
-		"amount": 2, "status": "Block", "limit": "once per player turn",
+		"amount": 2, "status": "Block", "limit": "Once per player turn",
 		"gate": "different living hero", "order": "immediately precedes",
-		"owner_scope": "count by their real owner", "refusal": "invalid or failed plays never set or claim it"},
+		"owner_scope": "counts for its real owner", "refusal": "never sets or claims it"},
 	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block",
 		"heal_threshold": 1, "block": 3, "uses_per_combat": 1},
 }
+## Internal implementation keys must never leak into a player-facing hover line.
+const M05_INTERNAL_KEYS := ["Authored patch rule", "card_bleed_bonus", "card_block_bonus",
+	"card_unravel_bonus", "card_exposed_bonus", "card_weak_bonus"]
+
 
 
 func _initialize() -> void:
@@ -1797,17 +1811,19 @@ func _m05_catalog_entry(patch_id: String) -> Dictionary:
 	return {}
 
 
-## Re-derive one M05 rule independently of the presenter: exact catalog amount
-## and effect key, the positive status, wearer-owned cards, the real Block
-## recipient, Red Bobbin versus Hemorrhage Hem, Frayfinder's +2 attack-damage
-## first single-target hit / half-threshold / once-per-player-turn limit,
-## Switchback Button's ordered different-owner follow-up award, and
-## Borrowed Button's other-hero positive-heal 3-Block rule.
+## Re-derive one M05 rule independently of the presenter: player language with no
+## internal effect key or preamble, exact catalog amount and effect family, the
+## positive status, wearer-owned cards, the real Block recipient, Red Bobbin versus
+## Hemorrhage Hem, Frayfinder's +2 attack-damage first single-target hit /
+## half-threshold / once-per-player-turn limit, Switchback Button's ordered
+## different-owner follow-up award, and Borrowed Button's other-hero positive-heal
+## 3-Block rule.
 func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 	var facts: Dictionary = M05_EXPECTED_FACTS[patch_id]
 	var entry := _m05_catalog_entry(patch_id)
-	_check(line.begins_with("Authored patch rule:"),
-		"the %s line describes an authored rule, not a fabricated trigger: %s" % [patch_id, line])
+	for token in M05_INTERNAL_KEYS:
+		_check(not line.contains(String(token)),
+			"the %s line uses player language, never %s: %s" % [patch_id, token, line])
 	if patch_id == "switchback_button":
 		_check(not entry.is_empty() and entry.get("slot") == facts["slot"]
 			and entry.get("effect") == facts["effect"]
@@ -1827,8 +1843,9 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 			"Switchback Button awards its authored +2 Block: " + line)
 		_check(line.contains("living, untorn wearer"),
 			"Switchback Button requires the living, untorn wearer: " + line)
-		_check(line.contains(String(facts["refusal"])),
-			"Switchback Button never arms itself from an invalid or failed play: " + line)
+		_check(line.contains(String(facts["refusal"]))
+			and line.contains("failed, invalid or uncommitted play"),
+			"Switchback Button never arms itself from a failed, invalid or uncommitted play: " + line)
 		_check(not line.contains("all living heroes") and not line.contains("draw")
 			and not line.contains("+3 Block"),
 			"Switchback Button is never described as the separate Quilt reward: " + line)
@@ -1840,7 +1857,7 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 			and int(entry.get("block", 0)) == int(facts["block"])
 			and int(entry.get("uses_per_combat", 0)) == int(facts["uses_per_combat"]),
 			"authored catalog agrees with the expected Borrowed Button rule: %s" % patch_id)
-		_check(line.contains("once per combat") and facts["uses_per_combat"] == 1,
+		_check(line.contains("Once per combat") and facts["uses_per_combat"] == 1,
 			"Borrowed Button states its once-per-combat limit: " + line)
 		_check(line.contains("different living hero")
 			and entry.get("effect") == "other_hero_committed_heal_block",
@@ -1853,6 +1870,10 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 			"Borrowed Button specifies the living, untorn wearer recipient: " + line)
 		_check(line.contains("that wearer gains %d Block" % facts["block"]),
 			"Borrowed Button awards 3 Block to the wearer: " + line)
+		_check(line.contains("this wearer's own play") and line.contains("restores 0 HP"),
+			"Borrowed Button excludes a self-heal and a zero-HP heal: " + line)
+		_check(line.contains("Rest mending") and line.contains("failed play"),
+			"Borrowed Button excludes Rest mending and a failed play: " + line)
 		_check(not line.contains("maximum HP") and not line.contains("+max-HP")
 			and not line.contains("effective maximum HP") and not line.contains("free healing"),
 			"Borrowed Button never invents a maximum HP bonus: " + line)
@@ -1862,9 +1883,6 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 		and int(entry.get("amount", -1)) == int(facts["amount"]),
 		"authored catalog agrees with the expected %s %s +%d rule: %s" % [
 			facts["slot"], facts["effect"], facts["amount"], patch_id])
-	if patch_id != "frayfinder_mitt":
-		_check(line.contains(String(facts["effect"])),
-			"the %s line names its authored effect key: %s" % [patch_id, line])
 	if patch_id == "frayfinder_mitt":
 		var numerator := int(entry.get("minimum_unravel_numerator", 0))
 		var denominator := int(entry.get("minimum_unravel_denominator", 0))
@@ -1882,14 +1900,16 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 			"Frayfinder Mitt gates on half the CURRENT threshold measured before the hit: " + line)
 		_check(line.contains(String(facts["limit"]))
 			and entry.get("once_per_player_turn") == true,
-			"Frayfinder Mitt stays once per PLAYER turn: " + line)
+			"Frayfinder Mitt stays once per player turn: " + line)
 		_check(line.contains(String(facts["exclusions"]))
 			and entry.get("target_kind") == "enemy_single"
 			and int(entry.get("hit_number", 0)) == 1
 			and numerator == int(facts["numerator"]) and denominator == int(facts["denominator"]),
 			"Frayfinder Mitt excludes area, multi-hit and later hits: " + line)
-		_check(line.contains("never an Unravel gauge gain"),
+		_check(line.contains("Never an Unravel gauge gain"),
 			"Frayfinder Mitt says it adds nothing to the Unravel gauge: " + line)
+		_check(line.contains("no bonus on a rejected play"),
+			"Frayfinder Mitt promises nothing for a rejected play: " + line)
 		_check(not line.contains("unconditional") and not line.contains("every attack"),
 			"Frayfinder Mitt never claims an unconditional or per-attack bonus: " + line)
 		_check(line.contains("Normal/elite/boss base thresholds %d/%d/%d, grow +%d per break" % [
@@ -1897,40 +1917,43 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 				CombatUnravel.THRESHOLD_BOSS, CombatUnravel.THRESHOLD_INCREMENT]),
 			"Frayfinder Mitt states the real Unravel base thresholds and growth: " + line)
 	else:
-		_check(line.contains("+%d to positive %s" % [facts["amount"], facts["status"]]),
-			"the %s line keeps its authored +%d positive %s amount: %s" % [
+		_check(line.contains("This wearer's cards that already %s %s" % [
+				facts["verb"], facts["status"]]),
+			"the %s line limits the bonus to this wearer's card that already %ss %s: %s" % [
+				patch_id, facts["verb"], facts["status"], line])
+		_check(line.contains(String(facts["bonus"])),
+			"the %s line states its authored +%d %s amount in player words: %s" % [
 				patch_id, facts["amount"], facts["status"], line])
-		_check(line.contains("this wearer's cards")
-			or line.contains("cards owned by this living wearer"),
-			"the %s line restricts the bonus to the wearer's own cards: %s" % [patch_id, line])
 		_check(not line.contains("any hero") and not line.contains("unconditional")
-			and not line.contains("any cards"),
+			and not line.contains("any cards") and not line.contains("every card"),
 			"the %s line never claims an unconditional bonus to anyone's cards: %s" % [patch_id, line])
+		_check(not line.contains("free cast") and not line.contains("grants %s to" % facts["status"]),
+			"the %s line never claims a free card cast or an unconditional status: %s" % [patch_id, line])
 	if patch_id == "reinforced_browband":
-		_check(line.contains("actual Block recipient (even if it is an ally)"),
+		_check(line.contains("actual recipient") and line.contains("even an ally"),
 			"Reinforced Browband names the card's real Block recipient, including an ally: " + line)
 	if patch_id == "red_bobbin_cuff":
-		_check(line.contains("not Hemorrhage Hem's multiplier"),
+		_check(line.contains("never multiplies Hemorrhage Hem")
+			and not line.contains("Hemorrhage Hem's multiplier"),
 			"Red Bobbin Cuff is not Hemorrhage Hem's multiplier: " + line)
 	if patch_id == "threadguard_wrap":
-		_check(line.contains("actual Block recipient"),
-			"Threadguard Wrap applies to the card's actual Block recipient: " + line)
+		_check(line.contains("actual recipient"),
+			"Threadguard Wrap applies to the card's actual recipient: " + line)
 		_check(line.contains("damage-only card")
-			and line.contains("never gains a fabricated bonus")
+			and line.contains("gains no Block from it")
 			and not line.contains("any card") and not line.contains("every card"),
 			"Threadguard Wrap invents no Block on a damage-only card: " + line)
 		_check(int(entry.get("amount", 0)) == int(facts["amount"])
 			and int(_m05_catalog_entry("hemguard_cuff").get("amount", -1)) == 2,
 			"Threadguard Wrap stays its authored +1 beside Hemguard Cuff's +2")
-		_check(line.contains("card_block_bonus +%d" % int(facts["amount"]))
-			and not line.contains("card_block_bonus +%d" % 2),
+		_check(line.contains("grant 1 more Block") and not line.contains("grant 2 more Block"),
 			"Threadguard Wrap never claims Hemguard Cuff's +2 amount: " + line)
 
 
-## A named sewn HEAD/ARM patch: readable name, authored ID, real wearer and
-## slot, plus the independently expected authored rule line for the eight M05
-## entries, never an invented/fabricated effect sentence. Unknown IDs keep only
-## the neutral 3-line prefix.
+## A named sewn HEAD/ARM/COAT patch: readable name, authored ID, real wearer and
+## slot, plus the independently expected player-language power sentence for every
+## authored M05/MPW entry, never an invented/fabricated effect sentence. Unknown
+## IDs keep only the neutral 3-line prefix.
 func _assert_named_chip(button: Button, hero: Dictionary, label: String,
 		patch_id: String, slot: String, active: bool) -> void:
 	_check(button != null and button.visible and button.text == slot
@@ -2041,6 +2064,20 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	for id in labels:
 		_check(presenter.PATCH_LABELS.get(id, "") == labels[id],
 			"authored readable patch label stays intact: " + id)
+	# AC1/AC2: all eleven presenter power lines are player language - no "Authored
+	# patch rule" preamble and no internal effect key - and each matches the
+	# independently written literal line before any mounted case can skip it.
+	_check(M05_EXPECTED_POWERS.size() == 11,
+		"eleven authored M05/MPW patch powers have independent expectations")
+	for patch_id in M05_EXPECTED_POWERS:
+		var power: String = presenter._patch_power(patch_id)
+		_check(power == M05_EXPECTED_POWERS[patch_id],
+			"%s presenter power matches the independent player sentence: %s" % [patch_id, power])
+		_check(not power.is_empty(),
+			"%s has a readable worn-patch power line" % patch_id)
+		for token in M05_INTERNAL_KEYS:
+			_check(not power.contains(String(token)),
+				"%s power never exposes %s" % [patch_id, token])
 	# Case A: both new COAT options plus representative HEAD/ARM labels.
 	var case_a := await _m05_worn_fixture(app, presenter, [
 		["bloodstitch_bonnet", "warden", "HEAD"],
@@ -2101,10 +2138,11 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	_assert_named_chip(_patch_chip(meters[2], "ARM"), app.party.get_hero(3),
 		"Loose Thread Glove", "loose_thread_glove", "ARM", true)
 	var glove_chip := _patch_chip(meters[2], "ARM")
-	_check(glove_chip != null and glove_chip.tooltip_text.contains("card_unravel_bonus +1")
-		and glove_chip.tooltip_text.contains("+1 to positive Unravel")
+	_check(glove_chip != null and glove_chip.tooltip_text.contains("grant 1 more Unravel")
+		and glove_chip.tooltip_text.contains("already grant Unravel")
+		and not glove_chip.tooltip_text.contains("card_unravel_bonus")
 		and not M05_EXPECTED_POWERS["frayfinder_mitt"].contains("+2 Unravel")
-		and M05_EXPECTED_POWERS["loose_thread_glove"].contains("+1 to positive Unravel"),
+		and M05_EXPECTED_POWERS["loose_thread_glove"].contains("grant 1 more Unravel"),
 		"Loose Thread Glove stays the real Unravel award, distinct from Frayfinder's +2 damage")
 	var tinker_coat := _patch_chip(meters[2], "COAT")
 	_check(tinker_coat != null and not tinker_coat.visible and tinker_coat.text.is_empty()
@@ -2208,9 +2246,10 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		and arm_chip.tooltip_text.contains("before Weak/Exposed")
 		and arm_chip.tooltip_text.contains("first confirmed single-target attack hit")
 		and arm_chip.tooltip_text.contains("at least 1/2 of its current threshold before the hit")
-		and arm_chip.tooltip_text.contains("once per PLAYER turn")
-		and arm_chip.tooltip_text.contains("never an Unravel gauge gain")
-		and arm_chip.tooltip_text.contains("Not any area/multi-hit/later hit")
+		and arm_chip.tooltip_text.contains("Once per player turn")
+		and arm_chip.tooltip_text.contains("Never an Unravel gauge gain")
+		and arm_chip.tooltip_text.contains("not any area/multi-hit/later hit")
+		and arm_chip.tooltip_text.contains("no bonus on a rejected play")
 		and not arm_chip.tooltip_text.contains("unconditional"),
 		"real pointer hover reads Frayfinder Mitt's authored conditional +2 attack-damage rule")
 	_check(arm_chip != null and arm_chip.tooltip_text.split("\n").size() == 4
@@ -2246,7 +2285,7 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 			+ "\n" + M05_EXPECTED_POWERS["borrowed_button"],
 		"Tinker COAT chip matches independent Borrowed Button tooltip")
 	_check(c_tinker_coat != null
-		and c_tinker_coat.tooltip_text.contains("once per combat")
+		and c_tinker_coat.tooltip_text.contains("Once per combat")
 		and c_tinker_coat.tooltip_text.contains("different living hero")
 		and c_tinker_coat.tooltip_text.contains("committed card or ordered stitched half")
 		and c_tinker_coat.tooltip_text.contains("restores at least 1 HP")
@@ -2383,7 +2422,7 @@ func _switchback_threadguard_ribbons_test(app, presenter) -> void:
 			+ "\n" + M05_EXPECTED_POWERS["switchback_button"],
 		"Warden HEAD chip matches the independent Switchback Button tooltip")
 	_check(switchback != null and switchback.tooltip_text.contains("+2 Block")
-		and switchback.tooltip_text.contains("once per player turn")
+		and switchback.tooltip_text.contains("Once per player turn")
 		and switchback.tooltip_text.split("\n").size() == 4,
 		"Switchback Button chip keeps its four-line ACTIVE hover with the authored +2 Block")
 	# AC2: the real worn ARM chip names Threadguard Wrap, its wearer, ID, slot and
@@ -2402,9 +2441,9 @@ func _switchback_threadguard_ribbons_test(app, presenter) -> void:
 		== _patch_tooltip(seamstress, "Threadguard Wrap", "threadguard_wrap", "ARM", true)
 			+ "\n" + M05_EXPECTED_POWERS["threadguard_wrap"],
 		"Seamstress ARM chip matches the independent Threadguard Wrap tooltip")
-	_check(threadguard != null and threadguard.tooltip_text.contains("+1 to positive Block")
-		and threadguard.tooltip_text.contains("actual Block recipient")
-		and not threadguard.tooltip_text.contains("+2 to positive Block"),
+	_check(threadguard != null and threadguard.tooltip_text.contains("grant 1 more Block")
+		and threadguard.tooltip_text.contains("actual recipient")
+		and not threadguard.tooltip_text.contains("grant 2 more Block"),
 		"Threadguard Wrap chip keeps its own +1 and never Hemguard Cuff's +2")
 	_assert_named_chip(_patch_chip(meters[0], "ARM"), warden, "Hemguard Cuff",
 		"hemguard_cuff", "ARM", true)
@@ -2439,7 +2478,7 @@ func _switchback_threadguard_ribbons_test(app, presenter) -> void:
 		"real pointer hover reads the Switchback Button rule without an action")
 	await _hover(threadguard)
 	_check(root.gui_get_hovered_control() == threadguard
-		and threadguard.tooltip_text.contains("+1 to positive Block"),
+		and threadguard.tooltip_text.contains("grant 1 more Block"),
 		"real pointer hover reads the Threadguard Wrap rule without an action")
 	_check(switchback != null and threadguard != null
 		and switchback.gui_input.get_connections().is_empty()
