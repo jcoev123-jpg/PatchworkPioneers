@@ -4,6 +4,13 @@ extends Node
 var wardrobe: RunPatchWardrobe
 var hero_buttons: Array[Button] = []
 var summary: Label
+## Mounted display hierarchy for the real free-sew offer: a compact sewn offer
+## title, the short chooser caption and the three wearer actions. Every detailed
+## rule and consequence stays in the 18 px body `_prompt` and the button tooltips.
+var title_label: Label
+var chooser_label: Label
+var _heading_probed_path := ""
+var _fallback_heading: Font = null
 var _map: RunMap
 var _rng: RandomNumberGenerator
 var _choices: HBoxContainer
@@ -16,6 +23,13 @@ var _bound_carry: RunTornCarryover
 var _summary_inputs: Array = []
 
 const INK := Color("302b29")
+## The sewn display voice is the master Theme's already-shipped PatchHeading variation
+## (Londrina Solid Regular). Only the compact offer title, the short chooser caption and
+## the wearer actions use it; the authored rules stay in the body face. No new asset.
+const HEADING_VARIATION := &"PatchHeading"
+const HEADING_BUTTON_VARIATION := &"PatchHeadingButton"
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const TITLE_FONT_SIZE := 24
 
 const HERO_COLORS := {
     "warden": Color("4a5d73"),
@@ -55,6 +69,76 @@ const FRIENDLY_LABELS := {
 
 static func _friendly_label(id: String) -> String:
 	return FRIENDLY_LABELS.get(id, id)
+
+
+## A Theme's authored PatchHeading face, or null when that Theme merely falls back to
+## its own body font. Read-only: the mounted Theme is never duplicated or edited.
+static func heading_face(source: Theme) -> Font:
+	if source == null:
+		return null
+	if not source.get_font_list(HEADING_VARIATION).has("font"):
+		return null
+	var face := source.get_font("font", HEADING_VARIATION)
+	if face == null or face == source.default_font:
+		return null
+	return face
+
+
+## The already-shipped Londrina Solid file that backs PatchHeading. An empty path or a
+## missing file is null, so the caller keeps the mounted body face instead of a null font.
+static func load_heading_font(path: String = HEADING_FONT) -> Font:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		return null
+	return load(path) as Font
+
+
+## Sewn display lettering for one live label. A null face (fallback Theme without an
+## authored PatchHeading and an unavailable file) leaves the readable body face in place.
+static func apply_heading(label: Label, face: Font) -> void:
+	if label == null:
+		return
+	label.theme_type_variation = HEADING_VARIATION
+	if face != null:
+		label.add_theme_font_override("font", face)
+
+
+## Sewn display lettering for one live wearer action. Only the face changes: the
+## existing cream paper styleboxes, dark ink and focus ring stay exactly as they are.
+static func apply_heading_button(button: Button, face: Font) -> void:
+	if button == null:
+		return
+	button.theme_type_variation = HEADING_BUTTON_VARIATION
+	if face != null:
+		button.add_theme_font_override("font", face)
+
+
+## The nearest mounted Theme that really authors PatchHeading.
+func inherited_theme() -> Theme:
+	var node: Node = self
+	while node != null:
+		var mounted: Theme = null
+		if node is Control:
+			mounted = (node as Control).theme
+		elif node is Window:
+			mounted = (node as Window).theme
+		if mounted != null and heading_face(mounted) != null:
+			return mounted
+		node = node.get_parent()
+	return null
+
+
+## Read-only display face for the offer title, chooser caption and wearer actions: the
+## mounted shared Theme's PatchHeading face, else the committed Londrina Solid file.
+func heading_font() -> Font:
+	var mounted := inherited_theme()
+	if mounted != null:
+		var face := heading_face(mounted)
+		if face != null:
+			return face
+	if HEADING_FONT != _heading_probed_path:
+		_heading_probed_path = HEADING_FONT
+		_fallback_heading = load_heading_font(HEADING_FONT)
+	return _fallback_heading
 
 
 class StitchedTag extends Control:
@@ -130,6 +214,8 @@ func _clear_choices() -> void:
 		_choices.queue_free()
 	_choices = null
 	_prompt = null
+	title_label = null
+	chooser_label = null
 	hero_buttons.clear()
 	_claim_context.clear()
 	_service = null
@@ -219,6 +305,16 @@ func observe_claim(offering, result: Dictionary) -> void:
 	app.hand_view.get_parent().add_theme_constant_override("separation", 12)
 	app.hand_view.add_child(column)
 	reward.reparent(column)
+	# Compact sewn offer title in the shipped display face, above the authored rules.
+	var face := heading_font()
+	title_label = Label.new()
+	title_label.name = "ElitePatchOfferTitle"
+	title_label.text = "Sew %s" % _friendly_label(drop)
+	title_label.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
+	title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	apply_heading(title_label, face)
+	column.add_child(title_label)
 	_prompt = Label.new()
 	_prompt.name = "ElitePatchPowerPreview"
 	_prompt.add_theme_font_size_override("font_size", 18)
@@ -233,15 +329,21 @@ func observe_claim(offering, result: Dictionary) -> void:
 		_friendly_label(drop), _friendly_label(state.definitions[drop]), power]
 	_choices = HBoxContainer.new()
 	column.add_child(_choices)
-	var label := Label.new()
-	label.text = "Sew to (free):"
-	_choices.add_child(label)
+	# Short chooser caption keeps its exact wording and takes only the display face.
+	chooser_label = Label.new()
+	chooser_label.name = "SewChooserCaption"
+	chooser_label.text = "Sew to (free):"
+	apply_heading(chooser_label, face)
+	_choices.add_child(chooser_label)
 	for hero in app.run_heroes:
 		var button := Button.new()
 		button.text = hero.id.capitalize()
 		button.set_meta("hero_id", hero.id)
 		button.disabled = hero.hp == 0 or not previews.has(hero.id)
 		button.custom_minimum_size = Vector2(170, 52)
+		# Wearer actions speak in the shipped PatchHeadingButton display face; the
+		# cream paper tag, hero-colour border, ink and focus ring below are unchanged.
+		apply_heading_button(button, face)
 		# Styled sewn-paper tag appearance (>=18px text, cream fill, stitched seams).
 		# The shell theme paints cream text for felt buttons, so every drawn state
 		# of this cream tag (normal, focus, hover, pressed, hover+pressed) needs
