@@ -464,6 +464,21 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 			_check(sequence == expected_kinds and diary.visited_kinds == expected_kinds
 				and sequence.size() == current_floor and sequence.size() == route.size(),
 				label + ": each completed bead owns its authentic visited kind in route order")
+			# The caption actually painted under each of the twelve beads: completed floors only.
+			var painted: Array[String] = []
+			var expected_painted: Array[String] = []
+			for bead in range(12):
+				painted.append(diary.caption_kind(bead))
+				expected_painted.append(expected_kinds[bead] if bead < current_floor else "")
+			_check(painted == expected_painted and diary.caption_kind(-1).is_empty()
+				and diary.caption_kind(12).is_empty(),
+				label + ": only completed beads print a kind, the current and future beads stay blank")
+			# VIS body-text floor: every diary fact below the title reads at 18 points or more.
+			_check(RunRouteAtlas.JourneyJournal.BEAD_FONT_SIZE >= 18
+				and RunRouteAtlas.JourneyJournal.KIND_FONT_SIZE >= 18
+				and RunRouteAtlas.JourneyJournal.SECTION_HEADING_FONT_SIZE >= 18
+				and RunRouteAtlas.JourneyJournal.FOOTER_FONT_SIZE >= 18,
+				label + ": bead numerals, kind captions, second heading and footer keep the 18-point floor")
 			var raw_id := false
 			for kind in sequence:
 				if kind.contains("_n") or kind.begins_with("f0") or kind.begins_with("f1"):
