@@ -223,6 +223,7 @@ func _catalog_test() -> void:
 		_check(CardKeywordGlossary.describe(tinker.get_definition(ordinary_id)).is_empty(),
 			"ordinary authored %s never gains a special-rule row" % ordinary_id)
 	_energy_catalog_test(tinker, seamstress)
+	_bleed_doubling_catalog_test(seamstress)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -491,6 +492,190 @@ func _energy_catalog_test(tinker: TinkerPoolCards, seamstress: SeamstressPoolCar
 		"partial descriptors without the full authored contract stay silent")
 
 
+## A detached Hemorrhage Hem definition with the authored structural keys the
+## doubling contract re-checks, so malformed fixtures cannot borrow a positive
+## verdict from the real catalog.
+func _bleed_definition(card_id: Variant, owner: Variant, cost: Variant,
+		target_kind: Variant, from_positions: Variant, to_positions: Variant,
+		effects: Variant) -> Dictionary:
+	var definition := {"id": card_id, "owner": owner, "cost": cost,
+		"target_kind": target_kind}
+	definition["from_positions"] = from_positions.duplicate(true) \
+		if from_positions is Array else from_positions
+	definition["to_positions"] = to_positions.duplicate(true) \
+		if to_positions is Array else to_positions
+	definition["effects"] = effects.duplicate(true) if effects is Dictionary else effects
+	return definition
+
+
+## Hemorrhage Hem, base and '+' records, straight from the real Seamstress pool:
+## one Bleed doubling row each that states N -> 2N, that zero stays zero and that
+## the ordinary turn-end tick/decrement still applies. It never teaches a fresh
+## "Bleed 2" application. The authored cost, owner, slots, target, rarity and
+## multiplier are checked against the catalog, and every foreign, mis-owned,
+## mispriced, mistargeted, retyped or non-2 fixture stays silent.
+func _bleed_doubling_catalog_test(seamstress: SeamstressPoolCards) -> void:
+	var cases := [
+		{"id": "seamstress_hemorrhage_hem", "cost": 2},
+		{"id": "seamstress_hemorrhage_hem_plus", "cost": 1},
+	]
+	for case: Dictionary in cases:
+		var card_id: String = String(case["id"])
+		_check(seamstress.has_card(card_id),
+			"Hemorrhage Hem is present in its real catalog " + card_id)
+		var definition: Dictionary = seamstress.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual Hemorrhage Hem catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		_check(String(definition.get("owner", "")) == "seamstress"
+			and int(definition.get("cost", -1)) == int(case["cost"])
+			and String(definition.get("target_kind", "")) == "enemy_single"
+			and definition.get("from_positions") == [1, 2, 3]
+			and definition.get("to_positions") == [1, 2, 3],
+			"authored Seamstress owner, %d energy and 1-3 onto one enemy 1-3 for %s"
+				% [int(case["cost"]), card_id])
+		_check(String(definition.get("rarity", "")) == "uncommon",
+			"Hemorrhage Hem stays an uncommon pool card " + card_id)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects == {"bleed_multiplier": 2},
+			"authored descriptor is exactly the multiplier 2 " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		var names: Array[String] = []
+		var words := ""
+		for row: Dictionary in rows:
+			names.append(String(row["keyword"]))
+			words += String(row["explanation"]) + " "
+		_check(rows.size() == 1 and names == ["Bleed doubling"],
+			"exactly one Bleed doubling row for " + card_id)
+		if rows.size() != 1:
+			continue
+		_check(words.contains("Bleed N becomes 2N") and words.contains("stays at 0"),
+			"doubling Help states N -> 2N and that zero remains zero " + card_id)
+		_check(words.contains("turn end") and words.contains("decreases by 1")
+			and words.contains("HP equal to its Bleed"),
+			"doubling Help keeps the ordinary Bleed tick and decrement " + card_id)
+		_check(words.contains("instead of adding new Bleed")
+			and words.contains("not a fresh Bleed application")
+			and words.contains("usual +1 Bleed does not apply"),
+			"doubling Help never promises the Seamstress's +1 application passive " + card_id)
+		_check(not words.contains("Bleed 2") and not words.contains("Bleed 2N"),
+			"doubling Help is never taught as a fresh numeric Bleed 2 " + card_id)
+		_check(definition == original and seamstress.get_definition(card_id) == original,
+			"doubling Help never mutates the catalog definition " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"doubling Help stays deterministic for " + card_id)
+		rows[0]["keyword"] = "Tampered"
+		rows[0]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(fresh.size() == 1 and String(fresh[0]["keyword"]) == "Bleed doubling"
+			and String(fresh[0]["explanation"]).contains("2N") and definition == original,
+			"doubling Help results are detached from the caller's definition " + card_id)
+	var base := _bleed_definition("seamstress_hemorrhage_hem", "seamstress", 2,
+		"enemy_single", [1, 2, 3], [1, 2, 3], {"bleed_multiplier": 2})
+	var plus := _bleed_definition("seamstress_hemorrhage_hem_plus", "seamstress", 1,
+		"enemy_single", [1, 2, 3], [1, 2, 3], {"bleed_multiplier": 2})
+	_check(CardKeywordGlossary.describe(base).size() == 1
+		and CardKeywordGlossary.describe(plus).size() == 1,
+		"exact doubling descriptor shapes are explained")
+	var fixtures: Array = []
+	fixtures.append(["bare multiplier descriptor without a card identity",
+		_shape({"bleed_multiplier": 2})])
+	var fixture := _bleed_definition("seamstress_running_stitch", "seamstress", 2,
+		"enemy_single", [1, 2, 3], [1, 2, 3], {"bleed_multiplier": 2})
+	fixtures.append(["multiplier on an unrelated Seamstress ID", fixture])
+	fixture = base.duplicate(true)
+	fixture["owner"] = "warden"
+	fixtures.append(["wrong doubling owner", fixture])
+	fixture = base.duplicate(true)
+	fixture["cost"] = 1
+	fixtures.append(["wrong base Hemorrhage Hem cost", fixture])
+	fixture = plus.duplicate(true)
+	fixture["cost"] = 2
+	fixtures.append(["wrong upgraded Hemorrhage Hem cost", fixture])
+	fixture = base.duplicate(true)
+	fixture["target_kind"] = "enemy_all"
+	fixtures.append(["wrong doubling target kind", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = [2, 3]
+	fixtures.append(["doubling from two slots only", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = [1, 2, 4]
+	fixtures.append(["doubling from an illegal slot", fixture])
+	fixture = base.duplicate(true)
+	fixture["to_positions"] = [1, 2]
+	fixtures.append(["doubling onto two slots only", fixture])
+	fixture = base.duplicate(true)
+	fixture["to_positions"] = []
+	fixtures.append(["doubling with no target slots", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = "1,2,3"
+	fixtures.append(["text doubling source slots", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["bleed_multiplier"] = 0
+	fixtures.append(["zero multiplier", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["bleed_multiplier"] = 1
+	fixtures.append(["identity multiplier", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["bleed_multiplier"] = 3
+	fixtures.append(["triple multiplier", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["bleed_multiplier"] = "2"
+	fixtures.append(["text multiplier", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["bleed_multiplier"] = 2.0
+	fixtures.append(["float multiplier", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"] = "double"
+	fixtures.append(["unreadable effect block", fixture])
+	fixture = base.duplicate(true)
+	fixture["id"] = "seamstress_hemorrhage_hem_plus_plus"
+	fixtures.append(["similarly named Hemorrhage Hem", fixture])
+	fixture = base.duplicate(true)
+	fixture.erase("id")
+	fixtures.append(["doubling without a card ID", fixture])
+	fixture = base.duplicate(true)
+	fixture["id"] = 7
+	fixtures.append(["non-string doubling ID", fixture])
+	fixture = base.duplicate(true)
+	fixture["cost"] = "2"
+	fixtures.append(["text doubling cost", fixture])
+	for case in fixtures:
+		var broken: Dictionary = case[1]
+		var broken_before: Dictionary = broken.duplicate(true)
+		_check(CardKeywordGlossary.describe(broken).is_empty(),
+			"%s never fabricates Bleed doubling Help" % String(case[0]))
+		_check(broken == broken_before, "%s leaves the fixture untouched" % String(case[0]))
+	_check(base == _bleed_definition("seamstress_hemorrhage_hem", "seamstress", 2,
+			"enemy_single", [1, 2, 3], [1, 2, 3], {"bleed_multiplier": 2})
+		and plus == _bleed_definition("seamstress_hemorrhage_hem_plus", "seamstress", 1,
+			"enemy_single", [1, 2, 3], [1, 2, 3], {"bleed_multiplier": 2}),
+		"negative doubling cases never mutate the positive fixtures")
+	# Ordinary numeric Bleed keeps exactly its previous row, even on the same ID.
+	var numeric := _bleed_definition("seamstress_hemorrhage_hem", "seamstress", 2,
+		"enemy_single", [1, 2, 3], [1, 2, 3], {"bleed": 2})
+	var numeric_rows := CardKeywordGlossary.describe(numeric)
+	_check(numeric_rows.size() == 1 and String(numeric_rows[0]["keyword"]) == "Bleed 2"
+		and not String(numeric_rows[0]["keyword"]).contains("doubling"),
+		"ordinary numeric Bleed keeps its existing row and never becomes doubling")
+	# An extended descriptor drops the doubling claim but not the numeric row it
+	# genuinely authors.
+	var mixed := base.duplicate(true)
+	mixed["effects"]["bleed"] = 2
+	var mixed_names: Array[String] = []
+	for row: Dictionary in CardKeywordGlossary.describe(mixed):
+		mixed_names.append(String(row["keyword"]))
+	_check(not mixed_names.has("Bleed doubling") and mixed_names.has("Bleed 2"),
+		"an extra effect key drops the doubling row and keeps the ordinary Bleed row")
+	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
+		"unravel", "guarding", "thorns"]
+		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
+			"energy_tradeoff", "bleed_doubling"],
+		"doubling is the last special row after the seven fixed keyword rows")
+
+
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
 	var receipt: Dictionary = fixture["receipt"]
 	if not receipt.get("ok", false):
@@ -747,6 +932,119 @@ func _slot_for(receipt: Dictionary, card_id: String) -> int:
 	return -1
 
 
+## Genuine authored candidate records for a constrained three-hero Fight: exactly
+## one real base card per hero, including the real Hemorrhage Hem base record.
+## With one candidate per living hero the real weighted selector offers each of
+## them once, so the doubling card is found by its catalog ID, never by index.
+func _hemorrhage_candidates() -> Array:
+	var wanted := ["warden_pinning_jab", "seamstress_hemorrhage_hem", "tinker_spring_trap"]
+	var candidates: Array = []
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if wanted.has(String(record.get("id", ""))):
+			candidates.append(record)
+	return candidates
+
+
+## The real Fight reward Help tab for base Hemorrhage Hem: the mounted popup must
+## state N -> 2N, that zero stays zero and that the ordinary Bleed tick/decrement
+## remains, open and close by mouse and keyboard, and change nothing; a real
+## Choose and Skip afterwards still work and still claim nothing themselves.
+func _hemorrhage_help(fixture: Dictionary) -> void:
+	var receipt: Dictionary = fixture["receipt"]
+	if not receipt.get("ok", false):
+		return
+	var card_id := "seamstress_hemorrhage_hem"
+	var slot := _slot_for(receipt, card_id)
+	_check(slot >= 0, "genuine prepared Fight offers the base Hemorrhage Hem by ID")
+	if slot < 0:
+		return
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	_check(definition.get("id") == card_id and definition.get("owner") == "seamstress"
+		and int(definition.get("cost", -1)) == 2,
+		"offered Hemorrhage Hem resolves the authored base record")
+	if definition.get("id") != card_id:
+		return
+	var node_id := "reward_hemorrhage_hem"
+	_check(panel.open_rewards(node_id, "Fight", receipt),
+		"mounted genuine Hemorrhage Hem receipt")
+	await _frames()
+	if not panel.has_open_rewards():
+		return
+	var before := _snapshot(fixture)
+	var entries := CardKeywordGlossary.describe(definition)
+	_check(entries.size() == 1 and String(entries[0]["keyword"]) == "Bleed doubling",
+		"catalog-backed single Bleed doubling row for the offered Hemorrhage Hem")
+	var card := panel.choices_container.get_child(slot) as PanelContainer
+	var help := card.get_node_or_null(
+		"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+		"offered Hemorrhage Hem gains the real Help tab")
+	if help == null or entries.size() != 1:
+		panel.close_rewards()
+		return
+	await _mouse(help)
+	var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+	_check(overlay != null and panel._help_overlay == overlay,
+		"mouse Help opens the Hemorrhage Hem doubling popup")
+	if overlay == null:
+		panel.close_rewards()
+		return
+	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	_check(list.get_child_count() == 1, "Hemorrhage Hem Help shows exactly its doubling row")
+	var text := ""
+	if list.get_child_count() > 0:
+		text = (list.get_child(0) as Label).text
+	_check(text.contains("Bleed doubling")
+		and text.contains(String(entries[0]["explanation"])),
+		"live Hemorrhage Hem Help repeats the glossary explanation")
+	_check(text.contains("Bleed N becomes 2N") and text.contains("stays at 0")
+		and text.contains("turn end") and text.contains("decreases by 1")
+		and not text.contains("Bleed 2"),
+		"live Hemorrhage Hem Help states N -> 2N, zero stays zero and the ordinary tick")
+	_check(_snapshot(fixture) == before and requests.is_empty()
+		and not panel._awaiting_ack and not panel._accepted,
+		"opening Hemorrhage Hem Help changes no receipt, deck, wallet, patches or RNG")
+	await _mouse(overlay.get_node("HelpContent/CloseHelpButton") as Button)
+	_check(panel._help_overlay == null and help.has_focus(),
+		"mouse Close dismisses Hemorrhage Hem Help and restores its tab")
+	_check(_snapshot(fixture) == before and requests.is_empty(),
+		"closing Hemorrhage Hem Help stays read-only")
+	panel.get_choice_buttons()[slot].grab_focus()
+	await _key(KEY_RIGHT)
+	_check(help.has_focus(), "keyboard Right from Choose reaches Hemorrhage Hem Help")
+	await _key(KEY_ENTER)
+	_check(panel._help_overlay != null, "keyboard Enter reopens Hemorrhage Hem Help")
+	await _key(KEY_ESCAPE)
+	_check(panel._help_overlay == null and help.has_focus() and requests.is_empty(),
+		"Escape closes Hemorrhage Hem Help without requesting the card")
+	_check(_snapshot(fixture) == before, "keyboard Help leaves the prepared receipt unclaimed")
+	# Help inspection may precede a real choice; only the choice itself requests.
+	var choose := panel.get_choice_buttons()[slot]
+	await _mouse(help)
+	choose.pressed.emit()
+	_check(panel._help_overlay == null and requests == [{"node": node_id, "card": card_id}],
+		"Choose after Hemorrhage Hem Help emits exactly one real offer")
+	_check(panel._awaiting_ack and not panel._accepted,
+		"Hemorrhage Hem Choose waits for caller acknowledgement")
+	_check(_snapshot(fixture) == before, "Choose leaves the prepared reward unclaimed")
+	panel.acknowledge(false)
+	_check(not choose.disabled, "rejected Hemorrhage Hem Choose re-enables the offer")
+	var skip := panel.get_choice_buttons()[3]
+	await _mouse(help)
+	skip.grab_focus()
+	await _key(KEY_SPACE)
+	_check(panel._help_overlay == null and requests.size() == 2
+		and requests[1] == {"node": node_id, "card": ""},
+		"Skip dismisses Hemorrhage Hem Help and requests the empty ID once")
+	panel.acknowledge(true)
+	_check(panel._accepted and skip.disabled, "accepted Hemorrhage Hem Skip stays latched")
+	_check(_snapshot(fixture) == before,
+		"Help, Choose and Skip leave service, receipt, deck, wallet, patches and RNG unchanged")
+	panel.close_rewards()
+	_check(not panel.has_open_rewards() and panel._help_overlay == null,
+		"Hemorrhage Hem Help closes with its receipt")
+
+
 ## The real Fight/Elite reward Help tab for the two energy cards: the mounted
 ## popup must show the authored numbers, open and close by mouse and keyboard,
 ## and change nothing; a real Choose and Skip afterwards still work.
@@ -940,6 +1238,18 @@ func _run() -> void:
 		await _energy_help(energy, kind)
 		_check(requests.size() == 2, "energy %s Help ends after exactly Choose and Skip" % kind)
 		requests.clear()
+	# The seeded Fight reward that genuinely offers base Hemorrhage Hem explains
+	# its authored Bleed doubling in that same live Help surface.
+	requests.clear()
+	var hemorrhage := _prepared("Fight", 18360, true, _hemorrhage_candidates())
+	var hemorrhage_ids: Array[String] = []
+	for offer: Dictionary in hemorrhage["receipt"].get("offers", []):
+		hemorrhage_ids.append(String(offer.get("id", "")))
+	_check(hemorrhage_ids.has("seamstress_hemorrhage_hem"),
+		"constrained Fight reward really offers base Hemorrhage Hem")
+	await _hemorrhage_help(hemorrhage)
+	_check(requests.size() == 2, "Hemorrhage Hem Help ends after exactly Choose and Skip")
+	requests.clear()
 	_finish()
 
 
