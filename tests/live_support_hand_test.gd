@@ -194,6 +194,7 @@ func _visible() -> void:
 		"one shared cloth groups the three reusable owner marks")
 	_table_checks("live sync")
 	_hud_art_checks("live sync")
+	_action_font_checks("live sync")
 	for index in range(3):
 		var hero: Dictionary = app.party.get_hero(index + 1)
 		_check(app.hero_panels[index].get_child(0).text == "%d - %s\nHP: %d/%d | Block: %d%s" % [
@@ -303,6 +304,30 @@ func _hud_art_checks(stage: String) -> void:
 		"the authored face never grows the accepted End Turn control and stays inside 1280x720: " + stage)
 
 
+## The mounted actions share the shipped display font without changing their inputs.
+func _action_font_checks(stage: String) -> void:
+	var theme: Theme = app.theme
+	var font: Font = theme.get_font("font", "PatchHeadingButton")
+	_check(font != null and font.resource_path == "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		"shipped PatchHeadingButton points to Londrina Regular: " + stage)
+	for button in [app.end_turn_button, app.return_button, presenter.cancel_button]:
+		_check(is_instance_valid(button) and button is Button, "real action exists: " + stage)
+		if not is_instance_valid(button):
+			continue
+		_check(button.theme_type_variation == &"PatchHeadingButton"
+			and button.get_theme_font("font") == font
+			and button.get_theme_font_size("font_size") >= 18,
+			"action uses readable PatchHeadingButton: " + stage + " " + button.text)
+		_check(presenter._action_variations.has(button)
+			and button.pressed.get_connections().size() == 1,
+			"one saved action variation and one pressed callback: " + stage + " " + button.text)
+	_check(app.end_turn_button.text == "End Turn"
+		and presenter.cancel_button.text == "Cancel target (Esc)"
+		and app.end_turn_button.focus_next == app.end_turn_button.get_path_to(app.return_button)
+		and app.end_turn_button.get_theme_stylebox("focus") != null,
+		"action text, existing Tab route and focus ring survive: " + stage)
+
+
 ## Both authored pile pictures sit beside the one existing count Label: no duplicated
 ## number, no pointer or keyboard target and no extra control anywhere.
 func _pile_token_checks(stage: String) -> void:
@@ -392,7 +417,8 @@ func _rebind_case() -> void:
 	var table: Control = presenter.backing
 	presenter._clear()
 	_check(presenter.backing == null and presenter.energy_orb == null
-		and presenter.draw_token == null and presenter.discard_token == null,
+		and presenter.draw_token == null and presenter.discard_token == null
+		and presenter._action_variations.is_empty(),
 		"clearing the presenter drops every authored HUD node")
 	await _frames()
 	presenter._sync_battle()
@@ -405,6 +431,7 @@ func _rebind_case() -> void:
 		and app.find_children("SupportHandDiscardPile", "Control", true, false).size() == 1,
 		"rebinding never duplicates a tray, pile token or orb")
 	_hud_art_checks("rebound presenter")
+	_action_font_checks("rebound presenter")
 	# The intentional rebind replaces the table once; later checks track the new one.
 	table_instance = presenter.backing.get_instance_id()
 	_visible()
@@ -434,6 +461,12 @@ func _missing_art_case() -> void:
 	_check(str(button.get_meta("hud_end_turn_art", "")) == ""
 		and not button.has_theme_stylebox_override("normal"),
 		"missing End Turn art restores the existing theme face")
+	_action_font_checks("missing authored art")
+	_check(button.get_theme_stylebox("normal") != null
+		and button.get_theme_stylebox("hover") != null
+		and button.get_theme_stylebox("pressed") != null
+		and button.get_theme_stylebox("disabled") != null,
+		"fallback retains all four usable button skins")
 	_check(presenter.backing == table and presenter.energy_orb == orb
 		and presenter.draw_token == draw_token and presenter.discard_token == discard_token
 		and app.end_turn_button == button
@@ -673,7 +706,8 @@ func _run() -> void:
 		var closed_table: int = presenter.backing.get_instance_id() if is_instance_valid(presenter.backing) else 0
 		_check(closed_table != 0 and closed_table == table_instance, "session kept its single table through play and turns")
 		app.return_button.pressed.emit()
-		_check(presenter._bindings.is_empty() and presenter._deck == null, "Return immediately disconnects session")
+		_check(presenter._bindings.is_empty() and presenter._deck == null
+			and presenter._action_variations.is_empty(), "Return immediately disconnects session and restores fonts")
 		_check(presenter.backing == null, "Return drops the table reference immediately")
 		await _frames()
 		_check(app.deck == null and presenter.energy_label == null and presenter.energy_orb == null
@@ -855,6 +889,7 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(_live() == before, "pending ally choice never charges or changes rules")
 	var choosing: bool = presenter._pending.get("choosing", false)
 	_check(choosing and presenter.cancel_button.is_visible_in_tree(), "target mode and cancel visible")
+	_action_font_checks("target selection")
 	_check(not presenter.quilt_row.is_visible_in_tree()
 		and not presenter.quilt_row.find_child("SupportHandQuiltTitle", true, false).is_visible_in_tree(),
 		"ally targeting hides the entire Quilt cluster including its title")
