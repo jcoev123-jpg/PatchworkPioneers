@@ -406,6 +406,33 @@ func _spool_sequence(seed_value: int, reverse: bool) -> Array:
 	return [before, _snapshot(c), ledger]
 
 
+func _darning_cuff_sequence(seed_value: int, reverse: bool, upgraded: bool = false) -> Array:
+	var darning_id: String = "seamstress_darning_plus" if upgraded else "seamstress_darning"
+	var first: String = POP if reverse else darning_id
+	var second: String = darning_id if reverse else POP
+	var c := _fixture(first, second, seed_value)
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.apply_damage(1, 15), "real living wound for Darning replay")
+	var ledger: Array = [c.wardrobe.get_snapshot(), c.torn.read_state()]
+	var before: Array = _snapshot(c)
+	_reject(c, 0 if reverse else 1, 1 if reverse else 0, "invalid target rejects composite before commit")
+	var expected: Array = before.duplicate(true)
+	expected[1] = []
+	expected[2] = [c.id]
+	expected[3] = 1
+	var heal: int = 6 if upgraded else 4
+	var block: int = 6 if upgraded else 5
+	expected[6][0].hp += heal
+	expected[6][0].block = block
+	expected[7][1].hp -= 8
+	expected[8] = true
+	var play_res := _play(c, 2 if reverse else 1, 1 if reverse else 2)
+	_check(play_res.ok, "bound Cuff Darning composite commits either order")
+	_check(_snapshot(c) == expected, "exact Darning heal and Cuff Block in replay")
+	_check(ledger == [c.wardrobe.get_snapshot(), c.torn.read_state()], "composite leaves ledgers pristine")
+	return [before, _snapshot(c), ledger]
+
+
 func _test_spare_spool() -> void:
 	for seed_value in [0, 83, 9741]:
 		for reverse in [false, true]:
@@ -525,6 +552,39 @@ func _test_pool_healing_halves() -> void:
 						label + ": Warden Brace adds independently to Darning Block")
 				_check(_snapshot(c) == expected,
 					label + ": exact HP/Block, enemy, deck, cost, seeded RNG and patch ledgers")
+	# Authenticated Rest stitch descriptors for Darning and Darning+ with Hemguard Cuff
+	for d_id: String in CombatSeamstressPoolHeals.DARNING_IDS:
+		var upgraded_d: bool = d_id.ends_with("_plus")
+		var exp_heal: int = 6 if upgraded_d else 4
+		var exp_block: int = 6 if upgraded_d else 5
+		for reverse: bool in [false, true]:
+			var first_card: String = POP if reverse else d_id
+			var second_card: String = d_id if reverse else POP
+			var rc := _rest_fixture(first_card, second_card, 7721)
+			_bind_cuff(rc, "sewn_seamstress")
+			_check(rc.party.apply_damage(1, 12), d_id + ": real wound before Rest composite")
+			var before_snap := _snapshot(rc)
+			var exp_snap := before_snap.duplicate(true)
+			exp_snap[1] = []
+			exp_snap[2] = [rc.id]
+			exp_snap[3] = 1
+			exp_snap[6][0].hp += exp_heal
+			exp_snap[6][0].block = exp_block
+			exp_snap[7][1].hp -= 8
+			exp_snap[8] = true
+			var rres := _play(rc, 2 if reverse else 1, 1 if reverse else 2)
+			var rlabel: String = str(d_id) + " / POP Rest descriptor order " + str(reverse) + " with Cuff"
+			_check(rres.ok and rres.halves.size() == 2, rlabel + ": commits both halves")
+			if rres.ok:
+				var d_half: Dictionary = rres.halves[1 if reverse else 0]
+				_check(d_half == {"ok": true, "effect": "ally_heal",
+					"amount": exp_heal, "block": exp_block, "affected_positions": [1]},
+					rlabel + ": returned half block agrees with actual Block")
+				_check(rc.party.get_hero(1).block == exp_block,
+					rlabel + ": party hero block agrees with returned half block")
+				_check(_snapshot(rc) == exp_snap,
+					rlabel + ": exact party, deck, energy, RNG and ledgers preserved")
+
 	# Full-HP healing remains legal and cannot overflow a hero's maximum.
 	for id in CombatStitchedTargetPreview.POOL_HEAL_IDS:
 		var field: bool = id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
@@ -590,6 +650,12 @@ func _test_pool_heal_failures() -> void:
 	_check(c.party.is_downed(2) and c.wardrobe.project_active(c.torn.read_state()).active.seamstress.is_empty(),
 		"authentic sewn Spare Spool wearer torn and patch inactive")
 	_reject(c, 1, 0, "torn Seamstress cannot use stitched pool card")
+	# Darning Block headroom preflight with Hemguard Cuff:
+	# 3 printed Block would fit in 4 headroom, but 5 (3+2) overflows.
+	c = _fixture("seamstress_darning", "warden_brace")
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.gain_block(1, CombatParty.MAX_INT - 4), "genuine Darning headroom precondition (4 left)")
+	_reject(c, 1, 0, "Darning with Cuff bonus (+2) overflows 4 headroom, rejects before healing")
 	for mode in ["null", "stale_wardrobe", "stale_torn", "drift"]:
 		c = _fixture("seamstress_field_mend", "warden_brace")
 		_bind_spool(c)
@@ -792,33 +858,45 @@ func _bind_cuff(c: Dictionary, mode: String = "sewn_warden") -> void:
 	var slots: Array = [
 		{"id": "stitched_badge", "slot": "HEAD"},
 		{"id": "spare_spool", "slot": "ARM"},
-		{"id": "hemguard_cuff", "slot": "ARM"}
+		{"id": "hemguard_cuff", "slot": "ARM"},
+		{"id": "threadguard_wrap", "slot": "ARM"}
 	]
 	var owned: Array = []
-	if mode != "absent":
+	if mode == "sewn_threadguard":
+		owned.append("threadguard_wrap")
+	elif mode != "absent":
 		owned.append("hemguard_cuff")
 	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), owned, slots, 5)
 	c.torn = RunTornMending.new(c.party.get_heroes())
 	_check(c.wardrobe.is_valid() and c.torn.is_valid(), "real valid stitched cuff authorities")
 	if mode not in ["absent", "unsewn"]:
-		var wearer := "warden"
-		if mode in ["sewn_seamstress", "target_cuff"]:
+		var wearer: String = "warden"
+		if mode in ["sewn_seamstress", "target_cuff", "torn_seamstress", "torn_divergent", "sewn_threadguard"]:
 			wearer = "seamstress"
 		elif mode == "wrong":
 			wearer = "tinker"
-		_check(c.wardrobe.sew("hemguard_cuff", wearer, "ARM", "stitched-cuff-sew", c.wardrobe.get_snapshot()).ok, "stitched fixture sews Cuff")
+		var patch_name: String = "threadguard_wrap" if mode == "sewn_threadguard" else "hemguard_cuff"
+		_check(c.wardrobe.sew(patch_name, wearer, "ARM", "stitched-cuff-sew", c.wardrobe.get_snapshot()).ok, "stitched fixture sews Cuff")
 	if mode == "moved":
 		_check(c.wardrobe.start_rest("rest", c.wardrobe.get_snapshot()).ok, "real Rest opens")
 		_check(c.wardrobe.re_sew("hemguard_cuff", "warden", "seamstress", "rest", "cuff-move", c.wardrobe.get_snapshot()).ok, "stitched Cuff moves to seamstress")
 		_check(c.wardrobe.end_rest("rest", c.wardrobe.get_snapshot()).ok, "real Rest closes")
-	if mode == "torn":
+	if mode == "torn" or mode == "torn_seamstress":
+		var hero_idx: int = 1 if mode == "torn_seamstress" else 0
 		var start: Array = c.torn.read_state().heroes
-		var finish := start.duplicate(true)
-		finish[0].hp = 0
-		_check(torn_observe(c.torn, start, finish), "actual stitched Warden tear")
+		var finish: Array = start.duplicate(true)
+		finish[hero_idx].hp = 0
+		_check(torn_observe(c.torn, start, finish), "actual stitched tear")
 		var state: Dictionary = c.wardrobe.get_snapshot()
-		_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "stitched wardrobe refreshes torn Warden")
+		_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "stitched wardrobe refreshes torn hero")
 		c.party._heroes.assign(c.torn.read_state().heroes)
+	if mode == "torn_divergent":
+		var start: Array = c.torn.read_state().heroes
+		var finish: Array = start.duplicate(true)
+		finish[1].hp = 0
+		_check(torn_observe(c.torn, start, finish), "actual stitched tear divergent")
+		var state: Dictionary = c.wardrobe.get_snapshot()
+		_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned, state.scraps, state.gold, state.cards, state), "stitched wardrobe refreshes torn divergent")
 	if mode != "unbound":
 		_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn), "stitched explicit Cuff binding")
 
@@ -927,6 +1005,155 @@ func _test_hemguard_cuff() -> void:
 		_check(_play(c, 2 if reverse else 1, 1 if reverse else 2).ok, "Stitch Up targeting cuff wearer Warden gives base 5 Block")
 		_check(_snapshot(c) == expected, "exact 5 Block when cuff is on target rather than card owner")
 
+	# Replay check for Darning + Hemguard Cuff
+	for seed_value: int in [0, 83, 9741]:
+		for reverse: bool in [false, true]:
+			for upgraded: bool in [false, true]:
+				_check(_darning_cuff_sequence(seed_value, reverse, upgraded)
+					== _darning_cuff_sequence(seed_value, reverse, upgraded),
+					"bound Cuff Darning (upgraded: %s) exact replay order %s" % [str(upgraded), str(reverse)])
+
+	# AC1: Darning + POP in both orders with Cuff on Seamstress (heal 4, Block 5)
+	for reverse: bool in [false, true]:
+		var c := _fixture(POP if reverse else "seamstress_darning", "seamstress_darning" if reverse else POP)
+		_bind_cuff(c, "sewn_seamstress")
+		_check(c.party.apply_damage(1, 10), "precondition wound for Darning")
+		var before: Array = _snapshot(c)
+		var expected: Array = before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].hp += 4
+		expected[6][0].block = 5
+		expected[7][1].hp -= 8
+		expected[8] = true
+		var res := _play(c, 2 if reverse else 1, 1 if reverse else 2)
+		_check(res.ok and res.halves.size() == 2, "Darning/Pop commits both orders with Cuff on Seamstress")
+		if res.ok:
+			var d_half: Dictionary = res.halves[1 if reverse else 0]
+			_check(d_half == {"ok": true, "effect": "ally_heal", "amount": 4, "block": 5, "affected_positions": [1]},
+				"exact heal 4 and block 5 for Darning half with Cuff")
+			_check(c.party.get_hero(1).block == 5, "exact 5 Block on ally with Cuff on Seamstress")
+		_check(_snapshot(c) == expected, "exact party HP/Block, enemy, deck, energy and ledgers for Darning with Cuff")
+
+	# AC1: Upgraded Darning+ + POP in both orders with Cuff on Seamstress (heal 6, Block 6)
+	for reverse: bool in [false, true]:
+		var c := _fixture(POP if reverse else "seamstress_darning_plus", "seamstress_darning_plus" if reverse else POP)
+		_bind_cuff(c, "sewn_seamstress")
+		_check(c.party.apply_damage(1, 10), "precondition wound for Darning+")
+		var before: Array = _snapshot(c)
+		var expected: Array = before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].hp += 6
+		expected[6][0].block = 6
+		expected[7][1].hp -= 8
+		expected[8] = true
+		var res := _play(c, 2 if reverse else 1, 1 if reverse else 2)
+		_check(res.ok and res.halves.size() == 2, "Darning+/Pop commits both orders with Cuff on Seamstress")
+		if res.ok:
+			var d_half: Dictionary = res.halves[1 if reverse else 0]
+			_check(d_half == {"ok": true, "effect": "ally_heal", "amount": 6, "block": 6, "affected_positions": [1]},
+				"exact heal 6 and block 6 for Darning+ half with Cuff")
+			_check(c.party.get_hero(1).block == 6, "exact 6 Block on ally with Cuff on Seamstress")
+		_check(_snapshot(c) == expected, "exact party HP/Block, enemy, deck, energy and ledgers for Darning+ with Cuff")
+
+	# AC1: Darning + Brace in both orders with Cuff on Seamstress
+	for reverse: bool in [false, true]:
+		var c := _fixture("warden_brace" if reverse else "seamstress_darning", "seamstress_darning" if reverse else "warden_brace")
+		_bind_cuff(c, "sewn_seamstress")
+		_check(c.party.apply_damage(1, 10), "precondition wound for Darning/Brace")
+		var before: Array = _snapshot(c)
+		var expected: Array = before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].hp += 4
+		expected[6][0].block = 12
+		var res := _play(c, 0 if reverse else 1, 1 if reverse else 0)
+		_check(res.ok and res.halves.size() == 2, "Darning/Brace commits both orders with Cuff on Seamstress")
+		if res.ok:
+			var d_half: Dictionary = res.halves[1 if reverse else 0]
+			_check(d_half.block == 5, "Darning half reports 5 Block")
+			_check(c.party.get_hero(1).block == 12, "Warden receives 12 Block (5 Darning + 7 Brace)")
+		_check(_snapshot(c) == expected, "exact party HP/Block for Darning/Brace with Cuff")
+
+	# AC1: Upgraded Darning+ + Brace in both orders with Cuff on Seamstress
+	for reverse: bool in [false, true]:
+		var c := _fixture("warden_brace" if reverse else "seamstress_darning_plus", "seamstress_darning_plus" if reverse else "warden_brace")
+		_bind_cuff(c, "sewn_seamstress")
+		_check(c.party.apply_damage(1, 10), "precondition wound for Darning+/Brace")
+		var before: Array = _snapshot(c)
+		var expected: Array = before.duplicate(true)
+		expected[1] = []
+		expected[2] = [c.id]
+		expected[3] = 1
+		expected[6][0].hp += 6
+		expected[6][0].block = 13
+		var res := _play(c, 0 if reverse else 1, 1 if reverse else 0)
+		_check(res.ok and res.halves.size() == 2, "Darning+/Brace commits both orders with Cuff on Seamstress")
+		if res.ok:
+			var d_half: Dictionary = res.halves[1 if reverse else 0]
+			_check(d_half.block == 6, "Darning+ half reports 6 Block")
+			_check(c.party.get_hero(1).block == 13, "Warden receives 13 Block (6 Darning+ + 7 Brace)")
+		_check(_snapshot(c) == expected, "exact party HP/Block for Darning+/Brace with Cuff")
+
+	# AC2: Negative modes for Darning and Darning+ (absent, unsewn, wrong, sewn_warden, unbound)
+	for reverse: bool in [false, true]:
+		for mode: String in ["absent", "unsewn", "wrong", "sewn_warden", "unbound"]:
+			for upgraded: bool in [false, true]:
+				var d_card: String = "seamstress_darning_plus" if upgraded else "seamstress_darning"
+				var c := _fixture(POP if reverse else d_card, d_card if reverse else POP)
+				_bind_cuff(c, mode)
+				_check(c.party.apply_damage(1, 10), "precondition wound for Darning negative")
+				var before: Array = _snapshot(c)
+				var expected: Array = before.duplicate(true)
+				expected[1] = []
+				expected[2] = [c.id]
+				expected[3] = 1
+				var exp_h: int = 6 if upgraded else 4
+				var exp_b: int = 4 if upgraded else 3
+				expected[6][0].hp += exp_h
+				expected[6][0].block = exp_b
+				expected[7][1].hp -= 8
+				expected[8] = true
+				var res := _play(c, 2 if reverse else 1, 1 if reverse else 2)
+				var mode_lbl: String = mode + " Darning" + ("+" if upgraded else "") + " order " + str(reverse)
+				_check(res.ok and res.halves.size() == 2, mode_lbl + ": commits with unaugmented Block")
+				if res.ok:
+					var d_half: Dictionary = res.halves[1 if reverse else 0]
+					_check(d_half.block == exp_b, mode_lbl + ": exact authored Block " + str(exp_b))
+					_check(c.party.get_hero(1).block == exp_b, mode_lbl + ": party hero block agrees with authored Block")
+				_check(_snapshot(c) == expected, mode_lbl + ": preserves complete state with authored Block")
+
+	# Authored Threadguard Wrap (+1 ARM Block) alternative on Seamstress
+	for reverse: bool in [false, true]:
+		for upgraded: bool in [false, true]:
+			var d_card: String = "seamstress_darning_plus" if upgraded else "seamstress_darning"
+			var c := _fixture(POP if reverse else d_card, d_card if reverse else POP)
+			_bind_cuff(c, "sewn_threadguard")
+			_check(c.party.apply_damage(1, 10), "precondition wound for Threadguard Darning")
+			var before: Array = _snapshot(c)
+			var expected: Array = before.duplicate(true)
+			expected[1] = []
+			expected[2] = [c.id]
+			expected[3] = 1
+			var exp_h: int = 6 if upgraded else 4
+			var exp_b: int = 5 if upgraded else 4
+			expected[6][0].hp += exp_h
+			expected[6][0].block = exp_b
+			expected[7][1].hp -= 8
+			expected[8] = true
+			var res := _play(c, 2 if reverse else 1, 1 if reverse else 2)
+			var tg_lbl: String = "Threadguard Darning" + ("+" if upgraded else "") + " order " + str(reverse)
+			_check(res.ok and res.halves.size() == 2, tg_lbl + ": commits with +1 Block")
+			if res.ok:
+				var d_half: Dictionary = res.halves[1 if reverse else 0]
+				_check(d_half.block == exp_b, tg_lbl + ": exact Block " + str(exp_b))
+				_check(c.party.get_hero(1).block == exp_b, tg_lbl + ": party hero block agrees")
+			_check(_snapshot(c) == expected, tg_lbl + ": state matches exact +1 Block")
+
 
 func _test_cuff_rejections() -> void:
 	# Torn wearer cannot play composite
@@ -970,5 +1197,60 @@ func _test_cuff_rejections() -> void:
 	_reject(c, 0, 0, "missing second Prick target rolls back first Brace 9-block")
 	_check(_play(c, 0, 1).ok and c.party.get_hero(1).block == 9 and c.deck.energy == 1,
 		"retry after missing target commits once with 9 Block")
+
+	# AC3: Final Block overflow preflight case that would have passed with printed Darning Block (3)
+	# but cannot fit the cuff bonus (+2, total 5)
+	c = _fixture("seamstress_darning", POP)
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.gain_block(1, CombatParty.MAX_INT - 4), "Warden Block at MAX_INT - 4 (room for 4)")
+	_reject(c, 1, 2, "first Darning 5-block overflow rejects composite before POP damage or heal")
+
+	# Reverse order: POP first, then Darning overflows -> staged POP damage rolled back completely!
+	c = _fixture(POP, "seamstress_darning")
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.gain_block(1, CombatParty.MAX_INT - 4), "Warden Block at MAX_INT - 4 (room for 4)")
+	_reject(c, 2, 1, "second Darning 5-block overflow rolls back first POP damage and latch")
+
+	# AC3: Invalid second half rolls back first Darning heal and Cuff Block, retry commits once
+	c = _fixture("seamstress_darning", POP)
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.apply_damage(1, 10), "real wound on Warden before invalid second half")
+	_reject(c, 1, 0, "missing second POP target rolls back first Darning heal and Cuff Block")
+	var retry_res := _play(c, 1, 2)
+	_check(retry_res.ok and retry_res.halves.size() == 2, "retry after missing second target commits once")
+	_check(c.party.get_hero(1).hp == 34 and c.party.get_hero(1).block == 5
+		and c.enemies.get_enemy(2).hp == 4 and c.deck.energy == 1
+		and c.deck.discard_pile == [c.id] and c.deck.hand.is_empty(),
+		"retry commits exact 4 heal, 5 block, 8 damage, 1 discard, 2 energy spent")
+
+	# AC3: Reverse order invalid second half rolls back first POP damage, retry commits once
+	c = _fixture(POP, "seamstress_darning")
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.apply_damage(1, 10), "real wound on Warden before reverse invalid second half")
+	_reject(c, 2, 0, "missing second Darning target rolls back first POP damage")
+	var retry_res_rev := _play(c, 2, 1)
+	_check(retry_res_rev.ok and retry_res_rev.halves.size() == 2, "retry reverse after missing target commits once")
+	_check(c.party.get_hero(1).hp == 34 and c.party.get_hero(1).block == 5
+		and c.enemies.get_enemy(2).hp == 4 and c.deck.energy == 1
+		and c.deck.discard_pile == [c.id] and c.deck.hand.is_empty(),
+		"retry reverse commits exact 4 heal, 5 block, 8 damage, 1 discard, 2 energy spent")
+
+	# AC2: Downed Seamstress cannot play stitched Darning
+	c = _fixture("seamstress_darning", POP)
+	_bind_cuff(c, "sewn_seamstress")
+	_check(c.party.apply_damage(2, 30) and c.party.is_downed(2), "real downed Seamstress")
+	_reject(c, 1, 2, "downed Seamstress cannot play stitched Darning composite")
+
+	# AC2: Torn Seamstress cannot play stitched Darning
+	c = _fixture("seamstress_darning", POP)
+	_bind_cuff(c, "torn_seamstress")
+	_check(c.party.is_downed(2) and c.torn.read_state().tear_counts.seamstress == 1, "stitched Seamstress truly torn")
+	_reject(c, 1, 2, "torn Seamstress cannot play stitched Darning composite")
+
+	# AC2: Divergent torn Seamstress cannot play stitched Darning (Lesson 30)
+	c = _fixture("seamstress_darning", POP)
+	_bind_cuff(c, "torn_divergent")
+	_check(c.party.get_hero(2).hp > 0 and c.torn.read_state().heroes[1].hp == 0, "divergent living party with torn ledger")
+	_reject(c, 1, 2, "divergent torn Seamstress cannot play stitched Darning composite")
 
 
