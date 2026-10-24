@@ -56,13 +56,13 @@ grow_vertical = 2
 [node name="ContentMargin" type="MarginContainer" parent="PaperPanel"]
 layout_mode = 2
 theme_override_constants/margin_left = 40
-theme_override_constants/margin_top = 14
+theme_override_constants/margin_top = 12
 theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 14
+theme_override_constants/margin_bottom = 12
 
 [node name="ResultContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 5
 alignment = 1
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
@@ -77,7 +77,7 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="ResultDescription" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 44)
+custom_minimum_size = Vector2(0, 38)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
@@ -113,9 +113,11 @@ layout_mode = 2
 text = "KEPT SEWN CARDS"
 
 [node name="StitchedScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent"]
+clip_contents = true
 custom_minimum_size = Vector2(0, 94)
 layout_mode = 2
 size_flags_vertical = 3
+focus_mode = 2
 horizontal_scroll_mode = 0
 
 [node name="StitchedRows" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll"]

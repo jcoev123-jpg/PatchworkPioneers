@@ -17,6 +17,21 @@ const FELT_THREAD := Color("#e6d6b5")
 const PAPER_THREAD := Color("#6b5343")
 const FELT_STITCH_INSET := 8.0
 const PAPER_STITCH_INSET := 6.0
+## Readable body/detail text at 1280x720 (VIS V2: body >= 18 px). The sewn
+## ledger, the detail heading, the composite name and its ordered halves are all
+## genuine text, so each stays at or above that floor.
+const LEDGER_FONT_SIZE := 19
+const DETAIL_HEADING_FONT_SIZE := 19
+const COMPOSITE_FONT_SIZE := 18
+const HALVES_FONT_SIZE := 18
+## One keyboard scroll notch for the retained-card list; Godot's ScrollContainer
+## only reacts to the wheel and the grabber, so this view maps the standard
+## scroll keys while the list owns focus.
+const DETAIL_SCROLL_STEP := 56.0
+const DETAIL_PAGE_RATIO := 0.8
+## Half-width of the sewn scrollbar track, so the enlarged list keeps a visible
+## "more rows below" affordance instead of a zero-width bar.
+const SCROLLBAR_WIDTH := 4.0
 
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
@@ -42,6 +57,7 @@ var _button_connection: Callable
 
 func _ready() -> void:
 	_apply_patchwork_style()
+	stitched_scroll.gui_input.connect(_on_stitched_scroll_input)
 	close_result()
 
 
@@ -102,6 +118,7 @@ func close_result() -> void:
 	return_button.focus_mode = Control.FOCUS_NONE
 	return_button.release_focus()
 	_clear_details()
+	stitched_scroll.release_focus()
 	title_label.text = ""
 	description_label.text = ""
 	summary_label.text = ""
@@ -247,7 +264,7 @@ func _populate_details(summary: Dictionary) -> void:
 		# A genuine sewn row's name is a heading; its two ordered halves stay body text.
 		name_label.theme_type_variation = "PatchHeading"
 		name_label.add_theme_color_override("font_color", Color("#28363c"))
-		name_label.add_theme_font_size_override("font_size", 16)
+		name_label.add_theme_font_size_override("font_size", COMPOSITE_FONT_SIZE)
 		stack.add_child(name_label)
 		var halves_label := Label.new()
 		halves_label.name = "Halves"
@@ -255,7 +272,7 @@ func _populate_details(summary: Dictionary) -> void:
 			first["display_name"], str(owners[0]).capitalize(),
 			second["display_name"], str(owners[1]).capitalize()]
 		halves_label.add_theme_color_override("font_color", Color("#334750"))
-		halves_label.add_theme_font_size_override("font_size", 14)
+		halves_label.add_theme_font_size_override("font_size", HALVES_FONT_SIZE)
 		halves_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		stack.add_child(halves_label)
 		stitched_rows.add_child(row)
@@ -270,6 +287,41 @@ func _clear_details() -> void:
 	for row in stitched_rows.get_children():
 		stitched_rows.remove_child(row)
 		row.queue_free()
+
+
+## Keyboard access to the kept-card list. The ScrollContainer itself only
+## follows the wheel and the grabber, so the standard scroll actions move this
+## read-only offset while the list owns focus. Rows, order and ledger text are
+## untouched: this only reveals rows the viewport already holds.
+func _on_stitched_scroll_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo or not _is_open:
+		return
+	var page: float = stitched_scroll.size.y * DETAIL_PAGE_RATIO
+	var current: float = stitched_scroll.scroll_vertical
+	if key.is_action_pressed(&"ui_down"):
+		_scroll_details_to(current + DETAIL_SCROLL_STEP)
+	elif key.is_action_pressed(&"ui_up"):
+		_scroll_details_to(current - DETAIL_SCROLL_STEP)
+	elif key.is_action_pressed(&"ui_page_down"):
+		_scroll_details_to(current + page)
+	elif key.is_action_pressed(&"ui_page_up"):
+		_scroll_details_to(current - page)
+	elif key.is_action_pressed(&"ui_home"):
+		_scroll_details_to(0.0)
+	elif key.is_action_pressed(&"ui_end"):
+		_scroll_details_to(INF)
+	else:
+		return
+	stitched_scroll.accept_event()
+
+
+## Clamp the requested offset to the real content height so the last row can be
+## fully reached and never over-scrolled past it.
+func _scroll_details_to(offset: float) -> void:
+	var bar := stitched_scroll.get_v_scroll_bar()
+	var limit: float = maxf(0.0, bar.max_value - stitched_scroll.size.y)
+	stitched_scroll.scroll_vertical = int(roundf(clampf(offset, 0.0, limit)))
 
 
 ## Consume the validated projection in its original hero and slot order.
@@ -388,18 +440,18 @@ func _apply_patchwork_style() -> void:
 	ledger.set_corner_radius_all(7)
 	ledger.content_margin_left = 18
 	ledger.content_margin_right = 18
-	ledger.content_margin_top = 8
-	ledger.content_margin_bottom = 8
+	ledger.content_margin_top = 6
+	ledger.content_margin_bottom = 6
 	summary_label.add_theme_stylebox_override("normal", ledger)
 	summary_label.add_theme_color_override("font_color", Color("#2f4147"))
-	summary_label.add_theme_font_size_override("font_size", 17)
-	summary_label.add_theme_constant_override("line_spacing", 2)
+	summary_label.add_theme_font_size_override("font_size", LEDGER_FONT_SIZE)
+	summary_label.add_theme_constant_override("line_spacing", 1)
 	# Outcome and stitched-detail headings use the master Theme's Londrina heading face;
 	# the sentence, ledger and half descriptions stay in the inherited body font.
 	title_label.theme_type_variation = "PatchHeading"
 	stitched_heading.theme_type_variation = "PatchHeading"
 	stitched_heading.add_theme_color_override("font_color", Color("#28363c"))
-	stitched_heading.add_theme_font_size_override("font_size", 16)
+	stitched_heading.add_theme_font_size_override("font_size", DETAIL_HEADING_FONT_SIZE)
 	var detail_paper := StyleBoxFlat.new()
 	detail_paper.bg_color = Color("#e9dabc")
 	detail_paper.border_color = Color("#78614e")
@@ -410,11 +462,17 @@ func _apply_patchwork_style() -> void:
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color("#d1bc99")
 	track.set_corner_radius_all(3)
+	# A real width, so the enlarged retained-card list always shows that more
+	# rows are sewn below instead of hiding them behind a zero-width bar.
+	track.content_margin_left = SCROLLBAR_WIDTH
+	track.content_margin_right = SCROLLBAR_WIDTH
 	scrollbar.add_theme_stylebox_override("scroll", track)
 	for state in ["grabber", "grabber_highlight", "grabber_pressed"]:
 		var grip := StyleBoxFlat.new()
 		grip.bg_color = Color("#75614f")
 		grip.set_corner_radius_all(3)
+		grip.content_margin_left = SCROLLBAR_WIDTH
+		grip.content_margin_right = SCROLLBAR_WIDTH
 		scrollbar.add_theme_stylebox_override(state, grip)
 	for label in [top_stitches, bottom_stitches]:
 		label.add_theme_color_override("font_color", Color("#85715b"))
