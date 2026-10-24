@@ -11,17 +11,34 @@ func _run() -> void:
 	var shell = app.get_node("PatchworkUIShell")
 	var shared: Theme = app.theme
 	_check(shared != null and shared.default_font_size >= 18, "scene installs body theme before App readiness")
-	_check(shared.get_font_size("font_size", "TitleLabel") >= 40, "shared title default at least 40")
+	# The mounted shell Theme must carry the master Theme's whole typography family.
+	_check(shared.get_type_variation_base("PatchTitle") == "Label"
+		and shared.get_type_variation_base("PatchHeading") == "Label"
+		and shared.get_type_variation_base("PatchHeadingButton") == "Button",
+		"shared Theme keeps the master PatchTitle/PatchHeading/PatchHeadingButton variations")
+	_check(shared.get_font_size("font_size", "PatchTitle") >= 40,
+		"shared PatchTitle default at least 40")
+	_check((shared.get_font("font", "PatchHeading") as Font).resource_path == shell.HEADING_FONT
+		and (shared.get_font("font", "PatchHeadingButton") as Font).resource_path == shell.HEADING_FONT,
+		"master heading variation resolves the Londrina Regular face")
+	var master: Theme = load(shell.THEME_PATH)
+	_check(master != null and master != shared and master.get_font_size("font_size", "PatchTitle") < 40,
+		"the shell duplicates the master Theme instead of mutating it")
 	_check(app.title_label.get_theme_font("font").resource_path == shell.TITLE_FONT,
 		"title uses the Londrina Solid title font")
-	var body_font: Font = app.start_button.get_theme_font("font")
-	_check(body_font != null and body_font.resource_path == "res://assets/fonts/PatrickHand-Regular.ttf",
-		"buttons fall back to the project theme's Patrick Hand body font")
+	for button in [app.start_button, app.route_button, app.base_button]:
+		_check(button.theme_type_variation == "PatchHeadingButton"
+			and (button.get_theme_font("font") as Font).resource_path == shell.HEADING_FONT,
+			"title action uses the master Londrina heading button font: " + button.text)
+		_check(button.get_theme_color("font_color") == shared.get_color("font_color", "Button")
+			and button.get_theme_color("font_hover_color") == shared.get_color("font_hover_color", "Button")
+			and button.get_theme_color("font_pressed_color") == shared.get_color("font_pressed_color", "Button"),
+			"title action keeps the shared cream ink in every state: " + button.text)
 	_check((shared.get_stylebox("panel", "Panel") as StyleBoxFlat).bg_color == shell.PAPER
 		and (shared.get_stylebox("panel", "PanelContainer") as StyleBoxFlat).bg_color != shell.PAPER,
 		"shared Theme supplies paper panels and contrasting felt containers")
-	_check(app.title_label.theme_type_variation == "TitleLabel" and app.title_label.get_theme_color("font_color") == shell.INK,
-		"existing live label uses dark ink title variation")
+	_check(app.title_label.theme_type_variation == "PatchTitle" and app.title_label.get_theme_color("font_color") == shell.INK,
+		"existing live label uses the master dark ink PatchTitle variation")
 	_check(shell.mouse_filter == Control.MOUSE_FILTER_IGNORE and shell.focus_mode == Control.FOCUS_NONE,
 		"shell cannot intercept pointer or keyboard")
 	_check(shell.TITLE_BACKDROP == "res://assets/paper/backgrounds/title.png"
@@ -160,6 +177,14 @@ func _run() -> void:
 		root.add_child(app)
 		await process_frame
 		_check(await boot.enter_preview(app, screen), "nonempty real preview precondition: " + screen)
+		# Live mounted Event and terminal views resolve the master typography through
+		# the App theme the shell installed, not only in a standalone panel mount.
+		if screen == "event":
+			_check_heading_and_body(app.quiet_spool_panel.title_label,
+				app.quiet_spool_panel.description_label, "live Event")
+		elif screen == "results":
+			_check_heading_and_body(app.terminal_result_panel.title_label,
+				app.terminal_result_panel.description_label, "live terminal result")
 		var controls: Array[Control] = []
 		_collect(app, controls)
 		_check(not controls.is_empty(), "live screen has themed controls: " + screen)
@@ -186,3 +211,16 @@ func _collect(node: Node, controls: Array[Control]) -> void:
 		if child is Control:
 			controls.append(child)
 		_collect(child, controls)
+
+
+## A real mounted heading resolves the master Londrina variation; its body line
+## keeps the master Patrick Hand face underneath it.
+func _check_heading_and_body(heading: Label, body: Label, label: String) -> void:
+	_check(heading.theme_type_variation == "PatchHeading"
+		and (heading.get_theme_font("font") as Font).resource_path
+			== "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		label + " heading uses the master PatchHeading Londrina face")
+	_check(body.theme_type_variation == ""
+		and (body.get_theme_font("font") as Font).resource_path
+			== "res://assets/fonts/PatrickHand-Regular.ttf",
+		label + " body text keeps the master Patrick Hand face")

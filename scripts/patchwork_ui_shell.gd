@@ -5,7 +5,10 @@ const INK := Color("302b29")
 const PAPER := Color("ecdfbd")
 const THREAD := Color("c9b996")
 const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
+## The master project Theme owns the Patch* typography variations and the body font.
+const THEME_PATH := "res://assets/fonts/patchwork_theme.tres"
 const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## Code-drawn ground for a missing owner picture; never a blank felt screen.
 const FALLBACK_STAGE := Color("2b3135")
 ## Felt the three original title actions are sewn onto, darker than every button state.
@@ -45,6 +48,18 @@ static func _load_backdrop(path: String = TITLE_BACKDROP) -> Texture2D:
 	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
 		return null
 	return load(path) as Texture2D
+
+
+## A detached copy of the master Theme, or an empty Theme when it is unavailable: the
+## shell then still owns every style it sets, and the master resource is never mutated.
+static func _load_master_theme(path: String = THEME_PATH) -> Theme:
+	if path.is_empty() or not ResourceLoader.exists(path, "Theme"):
+		return Theme.new()
+	var master := load(path) as Theme
+	if master == null:
+		return Theme.new()
+	var copy := master.duplicate(true) as Theme
+	return copy if copy != null else Theme.new()
 
 
 ## Cover the whole shell while preserving the backdrop's proportions.
@@ -92,15 +107,21 @@ func _panel(fill: Color, edge: Color, border: int = 2) -> StyleBoxFlat:
 
 
 func _build_theme() -> Theme:
-	var shared := Theme.new()
+	# The shell's Theme replaces the project Theme under App, so start from a duplicate of
+	# the master one: live title, Event and result views keep its Patch* typography.
+	var shared := _load_master_theme()
 	shared.default_font_size = 18
 	shared.set_font_size("font_size", "Label", 18)
 	shared.set_color("font_color", "Label", PAPER)
-	shared.set_type_variation("TitleLabel", "Label")
-	shared.set_font_size("font_size", "TitleLabel", 48)
-	shared.set_color("font_color", "TitleLabel", INK)
-	# Owner 2026-10-24: Londrina Solid titles; body text falls back to the project theme's Patrick Hand.
-	shared.set_font("font", "TitleLabel", load(TITLE_FONT))
+	# Owner 2026-10-24: Londrina Solid titles; body text stays Patrick Hand from the master Theme.
+	shared.set_type_variation("PatchTitle", "Label")
+	shared.set_font("font", "PatchTitle", load(TITLE_FONT))
+	shared.set_font_size("font_size", "PatchTitle", 48)
+	shared.set_color("font_color", "PatchTitle", INK)
+	shared.set_type_variation("PatchHeading", "Label")
+	shared.set_font("font", "PatchHeading", load(HEADING_FONT))
+	shared.set_type_variation("PatchHeadingButton", "Button")
+	shared.set_font("font", "PatchHeadingButton", load(HEADING_FONT))
 	shared.set_stylebox("panel", "Panel", _panel(PAPER, Color("a8997b")))
 	shared.set_stylebox("panel", "PanelContainer", _panel(Color("514b42"), Color("a8997b")))
 	# Cream ink stays readable on all four earthy felt states.
@@ -132,10 +153,12 @@ func _bind_title() -> void:
 	_actions.assign([app.start_button, app.route_button, app.base_button])
 	# App creates the full-screen ColorRect first. Draw after it, before title actions.
 	app.move_child(self, _title.get_index() - 1)
-	_label.theme_type_variation = "TitleLabel"
+	_label.theme_type_variation = "PatchTitle"
 	_label.add_theme_color_override("font_color", INK)
 	_label.add_theme_constant_override("outline_size", 0)
 	for button in _actions:
+		# The three original actions speak in the master Theme's Londrina heading face.
+		button.theme_type_variation = "PatchHeadingButton"
 		button.add_child(ButtonStitches.new())
 		# The menu backing follows the real action rects; containers may lay them out
 		# after the first draw, so every later rect change repaints the backing.

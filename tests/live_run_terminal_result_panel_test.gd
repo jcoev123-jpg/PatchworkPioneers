@@ -7,6 +7,8 @@ const HEROES := "res://data/heroes/starter_party.json"
 const BOSS := "res://data/enemies/boss.json"
 const FIGHT := "res://data/enemies/starter_enemies.json"
 const STARTER_DECK := "res://data/cards/starter_deck.json"
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 ## Controlled synthetic path for the guarded-fallback branch. It is never
 ## asserted that any committed art is absent: this name simply never resolves.
 const MISSING_ART := "res://assets/paper/backgrounds/__cycle178_missing_art__.png"
@@ -25,6 +27,8 @@ var app: Variant
 var failures: Array[String] = []
 var checks: int = 0
 var returns: int = 0
+## Genuine Composite/Halves labels mounted and checked for master typography.
+var sewn_rows_checked: int = 0
 
 
 func _initialize() -> void:
@@ -408,9 +412,17 @@ func _validate_view(status: String, label: String) -> void:
 		label + " mounted and visible")
 	_check(panel.get_presented_status() == status.to_upper() and panel.title_label.text == status,
 		label + " authoritative terminal heading and presentation state")
+	_check(panel.title_label.theme_type_variation == "PatchHeading"
+		and (panel.title_label.get_theme_font("font") as Font).resource_path == HEADING_FONT,
+		label + " witnessed outcome title wears the master PatchHeading Londrina face")
 	var sentence := ("The final boss has fallen. The run is complete."
 		if status == "Victory" else "The party has fallen. The run has ended.")
 	_check(panel.description_label.text == sentence, label + " short distinct neutral sentence")
+	_check(panel.description_label.theme_type_variation == ""
+		and (panel.description_label.get_theme_font("font") as Font).resource_path == BODY_FONT
+		and panel.summary_label.theme_type_variation == ""
+		and (panel.summary_label.get_theme_font("font") as Font).resource_path == BODY_FONT,
+		label + " outcome sentence and run ledger stay in the inherited body font")
 	var all_buttons := panel.find_children("*", "Button", true, false)
 	_check(all_buttons.size() == 1 and all_buttons[0] == panel.return_button,
 		label + " exactly one mounted Button")
@@ -854,6 +866,8 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 		"Shop single survivor")
 	await _mounted_composites(ledger_zero, zero_wardrobe, zero_summary, defeat,
 		"fully removed composites")
+	_check(sewn_rows_checked >= 3,
+		"genuine sewn rows were mounted and their heading/half typography actually checked")
 
 
 ## Exercise the actual App-mounted scene, not just a formatting helper.
@@ -890,6 +904,16 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 			first.display_name, str(first.owner).capitalize(),
 			second.display_name, str(second.owner).capitalize()],
 			label + " authored halves and distinct owners in order")
+		_check(panel.stitched_heading.theme_type_variation == "PatchHeading"
+			and (panel.stitched_heading.get_theme_font("font") as Font).resource_path == HEADING_FONT,
+			label + " stitched detail heading wears the master PatchHeading face")
+		_check(name_label.theme_type_variation == "PatchHeading"
+			and (name_label.get_theme_font("font") as Font).resource_path == HEADING_FONT,
+			label + " genuine composite name wears the master PatchHeading face")
+		_check(halves_label.theme_type_variation == ""
+			and (halves_label.get_theme_font("font") as Font).resource_path == BODY_FONT,
+			label + " both ordered half descriptions stay in the inherited body font")
+		sewn_rows_checked += 1
 	if cards.size() >= 3:
 		var bar := panel.stitched_scroll.get_v_scroll_bar()
 		_check(bar.max_value > panel.stitched_scroll.size.y,

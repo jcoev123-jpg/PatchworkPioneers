@@ -33,9 +33,11 @@ const SELECTED_INK := Color("#9e3d30")
 ## hard-coding pixels. The visit column is reflowed to the left in _mount.
 const GALLERY_ANCHORS := {"left": 0.42, "right": 0.99, "top": 0.02, "bottom": 0.98}
 const VIEW_POSITION := Vector2(18, 22)
-## The masked Rest upgrade dropdown no longer needs its 640px selector width;
-## freeing that width keeps the whole two-column visit inside the viewport.
-const MASKED_SELECTOR_WIDTH := 480.0
+## A masked canonical dropdown keeps its data contract but no longer takes a
+## dropdown row in the left action column. Its own theme minimum is collapsed
+## (empty boxes, 1px text, 1px arrow) so the visit's vertical layout only pays a
+## couple of pixels instead of a whole empty control.
+const MASKED_ROW_MIN_HEIGHT := 12.0
 const TILE_MIN_HEIGHT := 184.0
 const TILE_ART_SIZE := Vector2(96, 80)
 const OWNER_STRIP_HEIGHT := 20.0
@@ -177,6 +179,10 @@ func _collect_controls(view: Control) -> void:
 ## The original dropdowns keep their enabled/visible/selected contract, because
 ## the app's commits still validate it. They are only made invisible and inert
 ## to pointer and keyboard input; the gallery is their visible replacement.
+## Their leftover layout row is also reclaimed: the same live control stays a
+## child of the genuine view (populated, selected, enabled and visible in tree
+## for the app's validation) but is collapsed to a couple of pixels, so the left
+## action column shows no blank dropdown strip above Buy/Remove/Upgrade.
 ## Returns true when the app had focused one of them, so its keyboard focus can
 ## move to the first visible tile instead of being lost.
 func _prepare_controls() -> bool:
@@ -185,25 +191,52 @@ func _prepare_controls() -> bool:
 	for selector in [_selector_offer, _selector_remove, _selector_upgrade]:
 		if selector == null or not is_instance_valid(selector):
 			continue
-		if selector == _selector_upgrade:
-			selector.custom_minimum_size = Vector2(MASKED_SELECTOR_WIDTH,
-				minf(selector.custom_minimum_size.y, 40.0))
-		_masked.append({
+		var entry := {
 			"selector": selector,
 			"modulate": selector.modulate,
 			"mouse_filter": selector.mouse_filter,
 			"focus_mode": selector.focus_mode,
-		})
+			"custom_minimum_size": selector.custom_minimum_size,
+			"size_flags_vertical": selector.size_flags_vertical,
+		}
+		_masked.append(entry)
 		selector.modulate = Color(1.0, 1.0, 1.0, 0.0)
 		selector.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		selector.focus_mode = Control.FOCUS_NONE
 		selector.tooltip_text = "Cards are shown in the visit card gallery"
+		_collapse_selector_row(selector)
 		if selector.has_focus():
 			selector.release_focus()
 			inherited_focus = true
 	return inherited_focus
 
 
+## Collapse only the masked control's own layout footprint. The OptionButton
+## itself keeps every item, its metadata and its selection; nothing about the
+## app's commit validation reads a size or a theme override.
+func _collapse_selector_row(selector: OptionButton) -> void:
+	selector.custom_minimum_size = Vector2.ZERO
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		selector.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	selector.add_theme_font_size_override("font_size", 1)
+	selector.add_theme_icon_override("arrow", _mask_icon())
+
+
+var _tiny_icon: ImageTexture = null
+
+
+## A 1x1 transparent texture, drawn in code, so an invisible dropdown pays no
+## arrow-icon height. Never a new art file.
+func _mask_icon() -> ImageTexture:
+	if _tiny_icon == null:
+		var image := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		image.fill(Color(0, 0, 0, 0))
+		_tiny_icon = ImageTexture.create_from_image(image)
+	return _tiny_icon
+
+
+## Undo every temporary mask and layout change, so a fresh visit rebuilds the
+## canonical dropdowns exactly as the app mounted them.
 func _restore_controls() -> void:
 	for entry in _masked:
 		var selector = entry["selector"]
@@ -212,6 +245,12 @@ func _restore_controls() -> void:
 		selector.modulate = entry["modulate"]
 		selector.mouse_filter = entry["mouse_filter"]
 		selector.focus_mode = entry["focus_mode"]
+		selector.custom_minimum_size = entry["custom_minimum_size"]
+		selector.size_flags_vertical = entry["size_flags_vertical"]
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			selector.remove_theme_stylebox_override(state)
+		selector.remove_theme_font_size_override("font_size")
+		selector.remove_theme_icon_override("arrow")
 	_masked.clear()
 
 
@@ -688,10 +727,21 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	strip.add_child(owner_label)
 
+	# The title row reserves a readable slot for the SELECTED tag: the tag sits
+	# inside the cream paper, inset from the sewn border, beside the name and
+	# above the rules text, so a long wrapping title or multi-line effects can
+	# never clip or cover it.
+	var title_row := HBoxContainer.new()
+	title_row.name = "TitleRow"
+	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_row.add_theme_constant_override("separation", 6)
+	text_column.add_child(title_row)
+
 	var title_label: Label = _face._card_label("TileName", String(spec.get("title", "")), 19)
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	text_column.add_child(title_label)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title_label)
 	var meta_label: Label = _face._card_label("TileMeta", String(spec.get("meta", "")), 14)
 	meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	meta_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -706,12 +756,14 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	selected_label.name = "TileSelected"
 	selected_label.text = "SELECTED"
 	selected_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	selected_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	selected_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	selected_label.add_theme_color_override("font_color", SELECTED_INK)
 	selected_label.add_theme_font_size_override("font_size", 13)
-	selected_label.layout_mode = 2
+	selected_label.size_flags_horizontal = Control.SIZE_SHRINK_END
+	selected_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	selected_label.visible = false
-	text_column.add_child(selected_label)
+	title_row.add_child(selected_label)
 
 	# The transparent click/focus target covers the panel's own content area, so
 	# the sewn border and the readable text keep their exact reward-card look.
@@ -971,6 +1023,28 @@ func upgrade_tiles() -> Array[Button]:
 func tile_row(tile: Variant) -> int:
 	var record := _record_for(tile)
 	return int(record.get("row", -1))
+
+
+## Read-only audit of one masked canonical selector: the layout it was mounted
+## with and the compact footprint the gallery put it in. Detached copy.
+func masked_selector_layout(group: String) -> Dictionary:
+	var selector := _selector_for(group)
+	if selector == null or not is_instance_valid(selector):
+		return {}
+	var original := Vector2.ZERO
+	for entry in _masked:
+		if entry["selector"] == selector:
+			original = entry["custom_minimum_size"]
+	return {
+		"visible_in_tree": selector.is_visible_in_tree(),
+		"disabled": selector.disabled,
+		"item_count": selector.item_count,
+		"selected": selector.selected,
+		"pointer_ignore": selector.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"focus_none": selector.focus_mode == Control.FOCUS_NONE,
+		"original_custom_minimum": original,
+		"masked_min_height": selector.get_combined_minimum_size().y,
+	}
 
 
 ## The mounted text and art facts of one tile, for audits. Detached copy.
