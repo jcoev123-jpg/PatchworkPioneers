@@ -338,6 +338,20 @@ func _positive(f: Dictionary) -> void:
 		and picker._source_buttons.size() == 5 and not picker.confirm_button.disabled,
 		"real picker renders five source selectors and truthful purse")
 	_chip_face_checks()
+	var human_slots := {"HEAD": "Head patch", "ARM": "Arm patch", "COAT": "Coat patch"}
+	for i in range(picker._sources.size()):
+		var source: Dictionary = picker._sources[i]
+		var source_slot := ""
+		for option in model.options:
+			if option.patch_id == source.patch_id and option.from_hero == source.from_hero:
+				source_slot = option.slot
+				break
+		_check(human_slots.has(source_slot)
+			and picker._source_buttons[i].text.contains(
+				"%s / %s" % [str(source.from_hero).capitalize(), human_slots.get(source_slot, "")])
+			and picker._source_buttons[i].text.contains(
+				str(source.patch_id).replace("_", " ").capitalize()),
+			"mounted source chip gives friendly hero, slot and patch: " + source.patch_id)
 	var initial_choice := picker.selected_option()
 	_check(initial_choice == picker._destinations[0]
 		and picker._source_buttons[0].button_pressed
@@ -353,14 +367,42 @@ func _positive(f: Dictionary) -> void:
 		and picker.confirm_button.disabled and not picker._source_buttons[0].button_pressed
 		and picker._source_buttons[3].button_pressed,
 		"changing source rebuilds only its offered recipients and clears stale destination")
-	_check(picker._destination_buttons[0].text.contains(offered[0].kind)
-		and picker._destination_buttons[1].text.contains(offered[1].kind),
-		"each destination chip states the service-offered MOVE/SWAP distinction")
+	_check(offered.size() == 2
+		and offered[0].kind == "MOVE" and offered[1].kind == "SWAP"
+		and picker._destination_buttons[0].text.contains("Warden / Move")
+		and picker._destination_buttons[0].text.contains("empty Arm slot")
+		and picker._destination_buttons[1].text.contains("Tinker / Swap")
+		and picker._destination_buttons[1].text.contains("Arm patch • swap with Spare Spool")
+		and not picker._destination_buttons[0].text.contains("MOVE")
+		and not picker._destination_buttons[1].text.contains("SWAP"),
+		"destination chips distinguish friendly Move/Swap and empty/occupied Arm slots")
 	picker.re_sew_requested.connect(_owner.bind(f))
+	_pick("button_eye", "tinker")
+	var head_move := picker.selected_option()
+	_check(head_move.get("kind") == "MOVE" and head_move.get("slot") == "HEAD"
+		and head_move.get("patch_id") == "button_eye" and head_move.get("cost") == 1
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"Tinker / Move")
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"empty Head slot")
+		and picker.preview_label.text.contains("Move • Head patch")
+		and picker.preview_label.text.contains("empty Head slot"),
+		"HEAD move preview uses human labels but exact machine option")
 	_pick("button_eye", "seamstress")
-	_check(picker.selected_option().get("kind") == "SWAP"
-		and picker.preview_label.text.contains("SWAP")
-		and picker.preview_label.text.contains("Stitched Badge"), "HEAD swap preview visible")
+	var head_swap := picker.selected_option()
+	_check(head_swap.get("kind") == "SWAP" and head_swap.get("slot") == "HEAD"
+		and head_swap.get("patch_id") == "button_eye"
+		and head_swap.get("from_hero") == "warden"
+		and head_swap.get("to_hero") == "seamstress"
+		and head_swap.get("exchanged_id") == "stitched_badge"
+		and head_swap.get("cost") == 1
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"Seamstress / Swap")
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"Head patch • swap with Stitched Badge")
+		and picker.preview_label.text.contains("Swap • Head patch")
+		and picker.preview_label.text.contains("swap with Stitched Badge"),
+		"HEAD swap chip and preview use friendly labels; ledger IDs remain exact")
 	picker.confirm_button.pressed.emit()
 	var first := w.get_snapshot()
 	_check(f.receipts.size() == 1 and f.receipts[0].receipt.exchanged_id == "stitched_badge"
@@ -368,9 +410,19 @@ func _positive(f: Dictionary) -> void:
 		and first.worn.seamstress.HEAD == "button_eye"
 		and first.scraps == 2 and picker.scraps_label.text == "Scraps: 2",
 		"HEAD swapped through UI signal, fresh operation and rerendered exact scraps")
+	_pick("pincushion_arm", "warden")
+	_check(picker.selected_option().get("kind") == "MOVE"
+		and picker.selected_option().get("slot") == "ARM"
+		and picker.preview_label.text.contains("Move • Arm patch")
+		and picker.preview_label.text.contains("empty Arm slot"),
+		"ARM move preview keeps exact option and human slot")
 	_pick("pincushion_arm", "tinker")
 	_check(picker.selected_option().get("kind") == "SWAP"
-		and picker.preview_label.text.contains("Spare Spool"), "ARM swap preview visible")
+		and picker.selected_option().get("exchanged_id") == "spare_spool"
+		and picker.selected_option().get("cost") == 1
+		and picker.preview_label.text.contains("Swap • Arm patch")
+		and picker.preview_label.text.contains("swap with Spare Spool"),
+		"ARM swap preview keeps exact option and friendly exchanged name")
 	picker.confirm_button.pressed.emit()
 	var second := w.get_snapshot()
 	_check(f.receipts.size() == 2 and f.receipts[1].receipt.exchanged_id == "spare_spool"
@@ -380,8 +432,20 @@ func _positive(f: Dictionary) -> void:
 		"ARM swapped through owner callback exactly once")
 	_pick("quilted_coat", "tinker")
 	_check(picker.selected_option().get("kind") == "MOVE"
-		and picker.preview_label.text.contains("MOVE")
-		and picker.preview_label.text.contains("empty destination"), "COAT move preview visible")
+		and picker.selected_option().get("patch_id") == "quilted_coat"
+		and picker.selected_option().get("slot") == "COAT"
+		and picker.selected_option().get("from_hero") == "warden"
+		and picker.selected_option().get("to_hero") == "tinker"
+		and picker.selected_option().get("exchanged_id") == ""
+		and picker.selected_option().get("cost") == 1
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"Tinker / Move")
+		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
+			"empty Coat slot")
+		and picker.preview_label.text.contains("Move • Coat patch")
+		and picker.preview_label.text.contains("empty Coat slot")
+		and not picker.preview_label.text.contains("MOVE • COAT"),
+		"COAT move chip and forecast use human labels with exact machine option")
 	picker.confirm_button.pressed.emit()
 	var after := w.get_snapshot()
 	_check(f.receipts.size() == 3 and f.receipts[2].receipt.exchanged_id == ""

@@ -32,6 +32,10 @@ const DETAIL_PAGE_RATIO := 0.8
 ## Half-width of the sewn scrollbar track, so the enlarged list keeps a visible
 ## "more rows below" affordance instead of a zero-width bar.
 const SCROLLBAR_WIDTH := 4.0
+## The single fail-closed statement for a result whose authority cannot be
+## proven. It is also returned by the ledger formatter, so a row that cannot be
+## rendered in full never becomes a partial result.
+const UNAVAILABLE := "Summary unavailable"
 
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
@@ -87,12 +91,16 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	var battles_resolved: int = (settled as Array).size()
 	var signature: Dictionary = _validated_signature()
 	_can_return = signature.get("ok") == true
+	# The ledger may only be shown whole: a formatter that cannot render every
+	# proven row (including each hero's tears) fails closed with the same text.
+	var signature_text := _format_signature(signature) if _can_return else UNAVAILABLE
+	if signature_text == UNAVAILABLE:
+		_can_return = false
 	var top_ledger := "Battles resolved: %d · Gold: %d · Scraps: %d" % [
 		battles_resolved,
 		signature.get("gold", 0),
 		signature.get("scraps", 0),
 	]
-	var signature_text := _format_signature(signature) if _can_return else "Summary unavailable"
 	summary_label.text = ("%s\n%s" % [top_ledger, signature_text]) if _can_return else ("Battles resolved: %d\n%s" % [battles_resolved, signature_text])
 	_clear_details()
 	if _can_return:
@@ -186,12 +194,34 @@ func _validated_signature() -> Dictionary:
 			"max_hp": max_hp,
 		}
 
+	# Permanent tear seams come only from the torn ledger that belongs to this
+	# exact validated carryover. It must publish these same authenticated
+	# heroes, and every hero needs exactly one nonnegative integer count keyed
+	# by ID (never by current position, and never inferred from max HP: a worn
+	# COAT can raise the effective cap without mending a single seam).
+	var torn: RunTornMending = carry.torn
+	if torn == null or not torn.is_valid():
+		return {}
+	var torn_state: Dictionary = torn.read_state()
+	if torn_state.get("ok") != true or torn_state.get("heroes") != carry_state.get("heroes"):
+		return {}
+	var counts: Variant = torn_state.get("tear_counts")
+	if typeof(counts) != TYPE_DICTIONARY or counts.size() != heroes_by_id.size():
+		return {}
+	var tears_by_id: Dictionary = {}
+	for hero_id in heroes_by_id:
+		var count: Variant = counts.get(hero_id)
+		if typeof(count) != TYPE_INT or count < 0:
+			return {}
+		tears_by_id[hero_id] = count
+
 	for hero_row in summary.get("heroes", []):
 		var hero_id: String = hero_row.get("hero_id", "")
 		if not heroes_by_id.has(hero_id):
 			return {}
 		hero_row["hp"] = heroes_by_id[hero_id]["hp"]
 		hero_row["max_hp"] = heroes_by_id[hero_id]["max_hp"]
+		hero_row["tears"] = tears_by_id[hero_id]
 
 	return summary
 
@@ -362,6 +392,8 @@ func _scroll_details_to(offset: float) -> void:
 ## Empty cells stay explicitly empty instead of resembling worn inventory.
 ## Names and slot labels are presentation only: descriptors are authored, and
 ## worn IDs are never recomputed into effects here.
+## Each hero row carries its proven by-ID tear count, including zero, and the
+## player-facing TORN name only while that hero's authenticated HP is zero.
 func _format_signature(summary: Dictionary) -> String:
 	var lines: Array[String] = [
 		"Stitched: %d made · %d in deck" % [summary.stitched_created, summary.stitched_current],
@@ -371,6 +403,9 @@ func _format_signature(summary: Dictionary) -> String:
 	if not crafted.is_empty():
 		lines.append(crafted)
 	for hero in summary.heroes:
+		var tears: Variant = hero.get("tears")
+		if typeof(tears) != TYPE_INT or tears < 0:
+			return UNAVAILABLE
 		var slots: Array[String] = []
 		for slot in RunSignatureSummary.SLOTS:
 			var patch_id: String = hero.slots[slot]
@@ -378,9 +413,13 @@ func _format_signature(summary: Dictionary) -> String:
 		var hero_name: String = str(hero.hero_id).capitalize()
 		var slots_text: String = " · ".join(slots)
 		if hero.has("hp") and hero.has("max_hp"):
-			lines.append("%s %d/%d HP · %s" % [hero_name, hero["hp"], hero["max_hp"], slots_text])
+			var row := "%s %d/%d HP · %s · Tears: %d" % [
+				hero_name, hero["hp"], hero["max_hp"], slots_text, tears]
+			if int(hero["hp"]) == 0:
+				row += " · TORN"
+			lines.append(row)
 		else:
-			lines.append("%s  %s" % [hero_name, "  ·  ".join(slots)])
+			lines.append("%s  %s · Tears: %d" % [hero_name, "  ·  ".join(slots), tears])
 	return "\n".join(lines)
 
 

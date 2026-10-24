@@ -146,6 +146,7 @@ func _run() -> void:
 		app.return_button.pressed.emit()
 		await process_frame
 	await _badge_icons(app)
+	await _debuff_hovers(app)
 	await _caption_readability(app)
 	await _rejections(app)
 	app.free()
@@ -236,7 +237,7 @@ func _badge_icons(app) -> void:
 		"attack": "5 damage aimed at Hero 2 (middle).",
 		"block": "3 Block on the acting enemy.",
 		"buff": "2 Block on the acting enemy.",
-		"debuff": "Weak 2 to Hero 1 (front) — reduces attack damage by 25%."
+		"debuff": "Weak 2 to Hero 1 (front) — for 2 turns, -25% outgoing attack damage; damage is rounded down, minimum 0."
 	}
 	for mode in ["attack", "block", "buff", "debuff"]:
 		var action := _action_for(mode)
@@ -334,6 +335,93 @@ func _badge_icons(app) -> void:
 		and glyph_body.contains("elif icon_mode == \"unravelled\"")
 		and glyph_body.contains("elif icon_mode == \"slain\""),
 		"source retains readable sewn glyphs for shove, Unravelled and slain")
+	app.return_button.pressed.emit()
+	await process_frame
+
+
+## Cycle 199: the three authored enemy debuffs explain their real rule on the hover of the
+## badge the player sees in the battle. Every announcement is a copied presentation input:
+## captions, amounts, targets and icons stay exactly as announced, and no combat state,
+## scheduler or RNG value moves.
+func _debuff_hovers(app) -> void:
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node_or_null("LiveEnemyRoster")
+	_check(app.deck != null and app.enemy_intents != null and is_instance_valid(presenter)
+		and presenter._badges.size() == 2, "debuff hover checks run on the real mounted battle")
+	if app.deck == null or not is_instance_valid(presenter) or presenter._badges.size() != 2:
+		return
+	var before := _snapshot(app)
+	var badge = presenter._badges[0]
+	# Independent expectations, written from the design rules rather than the presenter:
+	# Bleed bypasses Block and decrements 2 to 1; Weak is -25% outgoing for 2 turns;
+	# Exposed is +50% incoming for 1 turn; both round damage down to a minimum of 0.
+	var cases := [
+		[{"type": "debuff", "amount": 2, "status": "bleed", "target_position": 1},
+			"Bleed 2: Front",
+			"Bleed 2 to Hero 1 (front) — that hero loses 2 HP at its turn end, ignoring Block; Bleed then decreases by 1 (from 2 to 1)."],
+		[{"type": "debuff", "amount": 2, "status": "weak", "target_position": 1},
+			"Weak 2: Front",
+			"Weak 2 to Hero 1 (front) — for 2 turns, -25% outgoing attack damage; damage is rounded down, minimum 0."],
+		[{"type": "debuff", "amount": 1, "status": "exposed", "target_position": 2},
+			"Exposed 1: Middle",
+			"Exposed 1 to Hero 2 (middle) — for 1 turn, +50% incoming attack damage; damage is rounded down, minimum 0."]]
+	for row in cases:
+		var action: Dictionary = row[0]
+		var original := action.duplicate(true)
+		badge.show_intent(action, false)
+		_check(badge.is_visible_in_tree() and badge.intent_type == "debuff"
+			and badge.readable_text == row[1] and badge.amount == action.amount
+			and badge.target_position == action.target_position
+			and badge.policy_cue.is_empty()
+			and _icon_fits(badge, "res://assets/paper/ui/intent_debuff.png"),
+			"mounted debuff keeps its exact caption, amount, target and icon: " + row[1])
+		_check(badge.tooltip_text == row[2],
+			"mounted debuff hover explains its authored rule: " + row[1])
+		_check(action == original, "debuff hover never mutates the copied announcement: " + row[1])
+	# Each rule carries the numbers the player needs, not just a generic sentence.
+	badge.show_intent(cases[0][0], false)
+	var bleed_tip: String = badge.tooltip_text
+	_check(bleed_tip.contains("Hero 1 (front)") and bleed_tip.contains("2 HP")
+		and bleed_tip.contains("turn end") and bleed_tip.contains("ignoring Block")
+		and bleed_tip.contains("decreases by 1") and bleed_tip.contains("from 2 to 1"),
+		"Bleed hover names the hero, HP, turn end, Block bypass and the decrement")
+	badge.show_intent(cases[1][0], false)
+	_check(badge.tooltip_text.contains("Hero 1 (front)") and badge.tooltip_text.contains("2 turns")
+		and badge.tooltip_text.contains("-25% outgoing attack damage")
+		and badge.tooltip_text.contains("rounded down, minimum 0"),
+		"Weak hover names the hero, duration, outgoing reduction and rounded damage")
+	badge.show_intent(cases[2][0], false)
+	_check(badge.tooltip_text.contains("Hero 2 (middle)") and badge.tooltip_text.contains("1 turn,")
+		and badge.tooltip_text.contains("+50% incoming attack damage")
+		and badge.tooltip_text.contains("rounded down, minimum 0"),
+		"Exposed hover names the hero, duration, incoming increase and rounded damage")
+	# A real target policy still appends its own explanation after the rule.
+	var policy_bleed := {"type": "debuff", "amount": 2, "status": "bleed", "target_position": 1}
+	var policy_original := policy_bleed.duplicate(true)
+	badge.show_intent(policy_bleed, false, false, "front")
+	_check(badge.tooltip_text == String(cases[0][2])
+		+ "\nTarget policy (FRONT): picks the front living hero."
+		and badge.policy_cue == "Front" and policy_bleed == policy_original
+		and _caption_readable(badge),
+		"a debuff hover keeps the readable rule and appends its target policy")
+	# A status this badge does not describe keeps the neutral generic fallback.
+	var unknown := {"type": "debuff", "amount": 3, "status": "snagged", "target_position": 2}
+	var unknown_original := unknown.duplicate(true)
+	badge.show_intent(unknown, false)
+	_check(badge.readable_text == "Snagged 3: Middle" and badge.intent_type == "debuff"
+		and badge.tooltip_text == "Snagged 3 to Hero 2 (middle)."
+		and not badge.tooltip_text.contains("Block")
+		and not badge.tooltip_text.contains("rounded down")
+		and unknown == unknown_original,
+		"an unknown status keeps the neutral generic hover")
+	_check(_snapshot(app) == before, "every debuff hover explanation is presentation only")
+	presenter._refresh()
+	_check(_snapshot(app) == before and badge.readable_text == "Shove Front back"
+		and badge.tooltip_text == "Push back Hero 1 (front)."
+		and badge.policy_cue.is_empty() and _icon_fits(badge, ""),
+		"a refresh restores the real announcement after the debuff hovers")
 	app.return_button.pressed.emit()
 	await process_frame
 
