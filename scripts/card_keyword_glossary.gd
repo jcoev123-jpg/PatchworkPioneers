@@ -42,6 +42,30 @@ const PIN_AND_POUND_COST := 2
 const PIN_AND_POUND_BASE_DAMAGE := 9
 const PIN_AND_POUND_PLUS_DAMAGE := 12
 const PIN_AND_POUND_HITS := 2
+## The six authored party-wide / cross-hero support cards (D2-1), base and '+'.
+## Their Help row is appended after every keyword and special-rule row, and only
+## an exact catalog shape (identity, owner, cost, source slots, target, empty
+## target list and the written effect keys/amounts) may claim it.
+const PARTY_SUPPORT_IDS := ["warden_hold_the_line", "warden_hold_the_line_plus",
+	"warden_bastion_quilt", "warden_bastion_quilt_plus",
+	"seamstress_field_mend", "seamstress_field_mend_plus"]
+const HOLD_THE_LINE_BASE_ID := "warden_hold_the_line"
+const HOLD_THE_LINE_PLUS_ID := "warden_hold_the_line_plus"
+const HOLD_THE_LINE_COST := 1
+const HOLD_THE_LINE_BASE_BLOCK := 5
+const HOLD_THE_LINE_PLUS_BLOCK := 7
+const HOLD_THE_LINE_BASE_ALLY_BLOCK := 2
+const HOLD_THE_LINE_PLUS_ALLY_BLOCK := 3
+const BASTION_QUILT_BASE_ID := "warden_bastion_quilt"
+const BASTION_QUILT_PLUS_ID := "warden_bastion_quilt_plus"
+const BASTION_QUILT_COST := 3
+const BASTION_QUILT_BASE_BLOCK := 10
+const BASTION_QUILT_PLUS_BLOCK := 13
+const FIELD_MEND_BASE_ID := "seamstress_field_mend"
+const FIELD_MEND_PLUS_ID := "seamstress_field_mend_plus"
+const FIELD_MEND_COST := 2
+const FIELD_MEND_BASE_HEAL := 4
+const FIELD_MEND_PLUS_HEAL := 6
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -86,6 +110,9 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 		var special := _special_line(key, definition, effects)
 		if not special.is_empty():
 			lines.append(special)
+	var support := _party_support_line(definition, effects)
+	if not support.is_empty():
+		lines.append(support)
 	return lines
 
 
@@ -319,6 +346,120 @@ static func _two_hits_line(definition: Dictionary, effects: Dictionary) -> Dicti
 	var explanation := "Costs %d energy to play. Deals two hits of %d damage each, one after the other, to the same originally chosen enemy; if the first hit kills it, the second hit is skipped instead of moving to another enemy. A Pinned token placed by a DIFFERENT hero adds +5 damage to the first hit only, before Weak/Exposed, and is consumed then, so the second hit never gains it; a pin from the same hero does not apply. Pin and Pound itself creates no Pinned token." % [
 		int(cost_value), int(damage_value)]
 	return {"keyword": "Two hits", "explanation": explanation}
+
+
+## The three D2-1 party-support families, dispatched only by exact identity.
+## Each family re-checks its whole authored catalog shape and repeats only the
+## Block/heal amounts it actually read from the caller's authenticated record.
+static func _party_support_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	if not PARTY_SUPPORT_IDS.has(card_id):
+		return {}
+	if card_id == HOLD_THE_LINE_BASE_ID or card_id == HOLD_THE_LINE_PLUS_ID:
+		return _hold_the_line_line(card_id, definition, effects)
+	if card_id == BASTION_QUILT_BASE_ID or card_id == BASTION_QUILT_PLUS_ID:
+		return _bastion_quilt_line(card_id, definition, effects)
+	return _field_mend_line(card_id, definition, effects)
+
+
+## Hold the Line gives the Warden the first authored amount and every OTHER
+## living hero the second; a downed hero gets nothing. The resolver follows the
+## Warden's current hero identity, not a fixed seat, so the Help names no slot.
+static func _hold_the_line_line(card_id: String, definition: Dictionary,
+		effects: Dictionary) -> Dictionary:
+	if String(definition.get("owner", "")) != "warden":
+		return {}
+	if definition.get("target_kind") != "self":
+		return {}
+	if not _exact_positions(definition.get("from_positions", null), [1, 2]):
+		return {}
+	if not _empty_positions(definition.get("to_positions", null)):
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int or int(cost_value) != HOLD_THE_LINE_COST:
+		return {}
+	if effects.size() != 2:
+		return {}
+	var block_value: Variant = effects.get("block")
+	var ally_value: Variant = effects.get("other_ally_block")
+	if not block_value is int or not ally_value is int:
+		return {}
+	var upgraded: bool = card_id == HOLD_THE_LINE_PLUS_ID
+	var required_block: int = HOLD_THE_LINE_PLUS_BLOCK if upgraded \
+		else HOLD_THE_LINE_BASE_BLOCK
+	var required_ally: int = HOLD_THE_LINE_PLUS_ALLY_BLOCK if upgraded \
+		else HOLD_THE_LINE_BASE_ALLY_BLOCK
+	if int(block_value) != required_block or int(ally_value) != required_ally:
+		return {}
+	var explanation := "Warden gains %d Block, and every OTHER living hero gains %d Block. Costs %d energy and is playable by the Warden from positions 1-2. A downed hero gains nothing, and the Warden's share follows her current position rather than a fixed slot." % [
+		int(block_value), int(ally_value), int(cost_value)]
+	return {"keyword": "Party support", "explanation": explanation}
+
+
+## Bastion Quilt gives the one authored amount to EVERY living hero, wherever
+## each hero currently stands; a downed hero is skipped.
+static func _bastion_quilt_line(card_id: String, definition: Dictionary,
+		effects: Dictionary) -> Dictionary:
+	if String(definition.get("owner", "")) != "warden":
+		return {}
+	if definition.get("target_kind") != "party_all":
+		return {}
+	if not _exact_slots(definition.get("from_positions", null)):
+		return {}
+	if not _empty_positions(definition.get("to_positions", null)):
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int or int(cost_value) != BASTION_QUILT_COST:
+		return {}
+	if effects.size() != 1:
+		return {}
+	var block_value: Variant = effects.get("block_all")
+	if not block_value is int:
+		return {}
+	var required_block: int = BASTION_QUILT_PLUS_BLOCK \
+		if card_id == BASTION_QUILT_PLUS_ID else BASTION_QUILT_BASE_BLOCK
+	if int(block_value) != required_block:
+		return {}
+	var explanation := "Every living hero gains %d Block, even after the party changes positions. Costs %d energy and is playable by the Warden from any of the three positions. A downed hero gains nothing." % [
+		int(block_value), int(cost_value)]
+	return {"keyword": "Party support", "explanation": explanation}
+
+
+## Field Mend heals each living hero the one authored amount, capped at that
+## hero's current maximum HP; a downed hero is skipped and never revived.
+static func _field_mend_line(card_id: String, definition: Dictionary,
+		effects: Dictionary) -> Dictionary:
+	if String(definition.get("owner", "")) != "seamstress":
+		return {}
+	if definition.get("target_kind") != "party_all":
+		return {}
+	if not _exact_positions(definition.get("from_positions", null), [2, 3]):
+		return {}
+	if not _empty_positions(definition.get("to_positions", null)):
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int or int(cost_value) != FIELD_MEND_COST:
+		return {}
+	if effects.size() != 1:
+		return {}
+	var heal_value: Variant = effects.get("heal")
+	if not heal_value is int:
+		return {}
+	var required_heal: int = FIELD_MEND_PLUS_HEAL \
+		if card_id == FIELD_MEND_PLUS_ID else FIELD_MEND_BASE_HEAL
+	if int(heal_value) != required_heal:
+		return {}
+	var explanation := "Each living hero recovers %d HP, capped at that hero's current maximum HP. Costs %d energy and is playable by the Seamstress from positions 2-3. A downed hero is skipped and is not revived by this card." % [
+		int(heal_value), int(cost_value)]
+	return {"keyword": "Party support", "explanation": explanation}
+
+
+## An authored empty target list, exactly as expected and nothing else.
+static func _empty_positions(value: Variant) -> bool:
+	return value is Array and (value as Array).is_empty()
 
 
 ## The authored positions, exactly as expected in order and nothing else.
