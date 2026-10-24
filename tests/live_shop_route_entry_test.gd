@@ -55,6 +55,59 @@ func _visit_tiles():
 	return app.get_node("LiveVisitCardTiles")
 
 
+## Every tile of one group currently painting the SELECTED cue.
+func _selected_tiles(gallery, group: String) -> Array:
+	var source: Array = gallery.offer_tiles() if group == "offer" \
+		else (gallery.removal_tiles() if group == "removal" else gallery.upgrade_tiles())
+	var result: Array = []
+	for tile in source:
+		if gallery.tile_details(tile).get("selected", false):
+			result.append(tile)
+	return result
+
+
+## AC1/AC2: a real click and a real Enter move the one visible SELECTED cue
+## between the canonical rows with no wallet, deck, map or RNG effect; the
+## masked selectors keep their whole data contract without a dropdown row; and
+## the shared face gives a long wrapped card a whole, unclipped tag.
+func _check_selection_cue(gallery) -> void:
+	var before := _shop_state()
+	await _click_tile(_tile_for("offer", 3))
+	_check(app.shop_offers.selected == 3 and _shop_state() == before,
+		"real offer click selects the fourth listing with no run effect")
+	_check(_selected_tiles(gallery, "offer") == [_tile_for("offer", 3)],
+		"exactly the clicked offer tile shows the SELECTED cue")
+	await _select_tile_by_key(_tile_for("offer", 0))
+	_check(app.shop_offers.selected == 0 and _shop_state() == before,
+		"real offer Enter selects the first listing with no run effect")
+	_check(_selected_tiles(gallery, "offer") == [_tile_for("offer", 0)]
+		and not gallery.tile_details(_tile_for("offer", 3)).selected,
+		"moving selection clears the prior cue and marks only the new tile")
+	var cue: Dictionary = gallery.build_card_face({
+		"card_id": "warden_strike", "art_id": "warden_strike", "owner": "warden",
+		"title": "Stitched Overlong Recursive Seamstress Repair Volley of the Warden's Twin Needles",
+		"meta": "Deck card #12 • copy 3 of 4 • removal costs 100 gold",
+		"effects": "Deal 6 damage to the front position and gain 7 Block.\nBefore: chosen ally heals 5 HP\nAfter: chosen ally heals 7 HP and gains 5 Block\nPinned: exhausts at end of turn"})
+	root.add_child(cue["tile"])
+	await _frames()
+	# Let the probe face take its own readable minimum size, exactly as the
+	# gallery lays it out, instead of forcing a box that would clip by design.
+	var needed: Vector2 = cue["tile"].get_combined_minimum_size()
+	cue["tile"].size = Vector2(maxf(520.0, needed.x), maxf(240.0, needed.y))
+	await _frames()
+	cue["selected_label"].visible = true
+	await _frames()
+	var tag: Control = cue["selected_label"]
+	_check(tag.is_visible_in_tree() and tag.text == "SELECTED" and tag.size.x > 0.0 and tag.size.y > 0.0
+		and cue["panel"].get_global_rect().encloses(tag.get_global_rect())
+		and not tag.get_global_rect().intersects(cue["effects_label"].get_global_rect())
+		and not tag.get_global_rect().intersects(cue["picture"].get_global_rect())
+		and cue["title_label"].text.begins_with("Stitched Overlong")
+		and cue["effects_label"].text.contains("Pinned: exhausts at end of turn"),
+		"a long wrapped card keeps one whole SELECTED tag inside its sewn frame, clear of art, name and effects")
+	cue["tile"].free()
+
+
 func _tile_for(group: String, row: int):
 	var gallery = _visit_tiles()
 	var source: Array = gallery.offer_tiles() if group == "offer" \
@@ -351,6 +404,35 @@ func _run() -> void:
 				and control.mouse_filter == Control.MOUSE_FILTER_IGNORE
 				and control.focus_mode == Control.FOCUS_NONE,
 				"masked Shop dropdown keeps its validated contract but takes no pointer or focus")
+		var layouts: Array = [gallery.masked_selector_layout("offer"),
+			gallery.masked_selector_layout("removal")]
+		for layout in layouts:
+			_check(not layout.is_empty() and layout.original_custom_minimum.y >= 48.0
+				and layout.masked_min_height <= LiveVisitCardTiles.MASKED_ROW_MIN_HEIGHT
+				and layout.visible_in_tree and not layout.disabled and layout.item_count > 0
+				and layout.selected >= 0 and layout.pointer_ignore and layout.focus_none,
+				"masked Shop dropdown keeps its data contract but takes no left-column dropdown row")
+		for button in [app.shop_buy_button, app.shop_remove_button,
+				app.shop_continue_button, app.shop_back_button]:
+			_check(button.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(button.get_global_rect())
+				and not app.shop_offers.get_global_rect().intersects(button.get_global_rect())
+				and not app.shop_cards.get_global_rect().intersects(button.get_global_rect()),
+				"real Shop action stays readable and clear of the collapsed selector rows")
+		if session == 0:
+			app.shop_view.visible = false
+			await _frames()
+			_check(app.shop_offers.custom_minimum_size == Vector2(440, 48)
+				and app.shop_offers.modulate.a == 1.0
+				and app.shop_offers.focus_mode != Control.FOCUS_NONE
+				and app.shop_offers.mouse_filter != Control.MOUSE_FILTER_IGNORE
+				and app.shop_offers.get_combined_minimum_size().y >= 24.0,
+				"tearing the gallery down restores the canonical Shop dropdown exactly")
+			app.shop_view.visible = true
+			await _frames()
+			_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Shop"
+				and app.shop_offers.custom_minimum_size == Vector2.ZERO
+				and app.shop_offers.modulate.a == 0.0,
+				"a re-synced Shop visit masks and collapses its selectors again")
 		var stock: Array = app.shop_purchases.get_stock().cards
 		for index in range(gallery.offer_tiles().size()):
 			var tile = gallery.offer_tiles()[index]
@@ -379,6 +461,7 @@ func _run() -> void:
 			"offer tile keyboard selection has zero ledger effect")
 		if session == 0:
 			await _check_tile_art(gallery)
+			await _check_selection_cue(gallery)
 		before = _shop_state()
 		route_callback.call()
 		back_callback.call()
