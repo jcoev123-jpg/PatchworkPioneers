@@ -32,6 +32,10 @@ func _initialize() -> void:
 	_test_block_patch_damage_and_lethal()
 	_test_block_patch_rejections_and_stale()
 	_test_block_patch_torn_wearer()
+	_test_frayfinder_mitt_ac1_all_four_ids()
+	_test_frayfinder_mitt_ac2_gauge_latches_rejections()
+	_test_frayfinder_mitt_ac3_consumption_replay_and_turns()
+	_test_frayfinder_mitt_ac4_status_pinned_and_dual_patches()
 	for failure in failures:
 		printerr(failure)
 	print("combat_pool_plain_strikes_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -1469,3 +1473,380 @@ func _test_block_patch_torn_wearer() -> void:
 	var revived_foes := _enemies([40])
 	_play(revived_deck, revived, revived_foes, "warden_brass_buckle", 1, 5, 0, 5, 4, 1,
 		"living party with a torn run ledger gets printed Block only", null, resolver)
+
+
+func _mitt_context(wearer: String = "warden", party_heroes: Array = [],
+		seed_value: int = 101, sew_head: String = "") -> Dictionary:
+	var heroes: Array = party_heroes if not party_heroes.is_empty() else _party().get_heroes()
+	var raw_m04: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	var raw_m05: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_attack_patches.json"))
+	var raw_head: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	_check(raw_m04 is Array and raw_m05 is Array and raw_head is Array,
+		"authored patch catalogs available for mitt context")
+	var definitions: Array = []
+	for entry in raw_m04 + raw_m05 + raw_head:
+		definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned: Array = ["frayfinder_mitt"]
+	if not sew_head.is_empty():
+		owned.append(sew_head)
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine run ledgers valid")
+	if not wearer.is_empty():
+		var sewn_arm := wardrobe.sew("frayfinder_mitt", wearer, "ARM",
+			"sew_mitt", wardrobe.get_snapshot())
+		_check(sewn_arm.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["ARM"] == "frayfinder_mitt",
+			"valid Frayfinder Mitt ARM assignment on " + wearer)
+	if not sew_head.is_empty() and not wearer.is_empty():
+		var sewn_head := wardrobe.sew(sew_head, wearer, "HEAD",
+			"sew_head", wardrobe.get_snapshot())
+		_check(sewn_head.get("ok", false) and wardrobe.get_snapshot()["worn"][wearer]["HEAD"] == sew_head,
+			"valid HEAD assignment on " + wearer)
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _setup_mitt_battle(wanted_cards: Array, wearer: String = "warden",
+		party_order: Array = ["warden", "seamstress", "tinker"],
+		enemy_hps: Array[int] = [40, 40, 40], enemy_tier: String = "normal",
+		initial_gauge: int = 4, sew_head: String = "", seed_val: int = 77123) -> Dictionary:
+	var party := _party(party_order)
+	var foes := _enemies(enemy_hps)
+	var deck := _deck(wanted_cards, seed_val)
+	var ctx := _mitt_context(wearer, _party().get_heroes(), seed_val, sew_head)
+	var gauge := CombatUnravel.new()
+	var roster_tiers := {}
+	for i in range(1, foes.get_enemies().size() + 1):
+		roster_tiers[i] = enemy_tier
+	_check(gauge.bind_roster(foes, roster_tiers), "gauge bound to enemy roster")
+	if initial_gauge > 0:
+		_check(gauge.apply_unravel(foes, 1, initial_gauge), "apply initial unravel gauge")
+	var mitt := CombatFrayfinderMitt.new()
+	_check(mitt.bind_battle(deck, party, foes, gauge, ctx.wardrobe, ctx.torn)
+		and mitt.begin_player_turn(), "mitt battle bound and turn begun")
+	return {
+		"deck": deck, "party": party, "foes": foes, "gauge": gauge,
+		"wardrobe": ctx.wardrobe, "torn": ctx.torn, "mitt": mitt,
+	}
+
+
+## AC1: Given a genuinely bound living/untorn Frayfinder wearer, an actual held
+## Brass Buckle/Brass Buckle+ or Thread Whip/Thread Whip+ in its authored from position,
+## and a legal living target at gauge >= half its current Unravel threshold before the hit,
+## one confirmed pool cast deals exactly +2 pre-Weak/Exposed damage.
+func _test_frayfinder_mitt_ac1_all_four_ids() -> void:
+	# 1. warden_brass_buckle (5 base + 2 = 7 damage, 4 Block)
+	var b1 := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	_check(b1.foes.gain_block(1, 3), "target 1 gains 3 block")
+	var resolver := CombatPoolPlainStrikes.new()
+	var snap1 := _snapshot(b1.deck, b1.party, b1.foes)
+	var res1: Dictionary = resolver.play_card(b1.deck, b1.party, b1.foes, "warden_brass_buckle", 1, null, null, b1.mitt)
+	_check(res1.get("ok", false), "warden_brass_buckle with mitt succeeds")
+	_check(res1["hits"][0]["damage"] == 7 and res1["hits"][0]["block_absorbed"] == 3
+		and res1["hits"][0]["hp_loss"] == 4, "exact 7 damage (5+2) through 3 block")
+	_check(res1["block_deltas"] == {1: 4} and b1.party.get_hero(1)["block"] == 4, "warden gains printed 4 block")
+	_check(b1.mitt.latch_snapshot().get("warden") == true, "warden mitt latch consumed")
+	_check(b1.deck.energy == snap1["energy"] - 1 and b1.deck.discard_pile.has("warden_brass_buckle"), "1 energy spent, card discarded")
+	_check(b1.deck._rng.state == snap1["rng_state"], "RNG untouched")
+
+	# 2. warden_brass_buckle_plus with shifted party (Warden in slot 2) (7 base + 2 = 9 damage, 6 Block)
+	var b2 := _setup_mitt_battle(["warden_brass_buckle_plus"], "warden", ["seamstress", "warden", "tinker"])
+	_check(b2.gauge.apply_unravel(b2.foes, 2, 4), "target 2 gauge 4/8")
+	_check(b2.foes.gain_block(2, 4), "target 2 gains 4 block")
+	var res2: Dictionary = resolver.play_card(b2.deck, b2.party, b2.foes, "warden_brass_buckle_plus", 2, null, null, b2.mitt)
+	_check(res2.get("ok", false), "warden_brass_buckle_plus succeeds")
+	_check(res2["hits"][0]["damage"] == 9 and res2["hits"][0]["block_absorbed"] == 4
+		and res2["hits"][0]["hp_loss"] == 5, "exact 9 damage (7+2) through 4 block")
+	_check(res2["block_deltas"] == {2: 6} and b2.party.get_hero(2)["block"] == 6, "warden in slot 2 gains printed 6 block")
+	_check(b2.mitt.latch_snapshot().get("warden") == true, "warden mitt latch consumed")
+
+	# 3. seamstress_thread_whip (6 base + 2 = 8 damage, 0 Block)
+	var b3 := _setup_mitt_battle(["seamstress_thread_whip"], "seamstress")
+	_check(b3.foes.gain_block(1, 5), "target 1 gains 5 block")
+	var res3: Dictionary = resolver.play_card(b3.deck, b3.party, b3.foes, "seamstress_thread_whip", 1, null, null, b3.mitt)
+	_check(res3.get("ok", false), "seamstress_thread_whip succeeds")
+	_check(res3["hits"][0]["damage"] == 8 and res3["hits"][0]["block_absorbed"] == 5
+		and res3["hits"][0]["hp_loss"] == 3, "exact 8 damage (6+2) through 5 block")
+	_check(res3["block_deltas"] == {} and b3.party.get_hero(2)["block"] == 0, "seamstress gains 0 block")
+	_check(b3.mitt.latch_snapshot().get("seamstress") == true, "seamstress mitt latch consumed")
+
+	# 4. seamstress_thread_whip_plus with shifted party (Seamstress in slot 3) (8 base + 2 = 10 damage, 0 Block)
+	var b4 := _setup_mitt_battle(["seamstress_thread_whip_plus"], "seamstress", ["warden", "tinker", "seamstress"])
+	var res4: Dictionary = resolver.play_card(b4.deck, b4.party, b4.foes, "seamstress_thread_whip_plus", 1, null, null, b4.mitt)
+	_check(res4.get("ok", false), "seamstress_thread_whip_plus succeeds")
+	_check(res4["hits"][0]["damage"] == 10 and res4["hits"][0]["hp_loss"] == 10, "exact 10 damage (8+2)")
+	_check(res4["block_deltas"] == {} and b4.party.get_hero(3)["block"] == 0, "seamstress gains 0 block")
+	_check(b4.mitt.latch_snapshot().get("seamstress") == true, "seamstress mitt latch consumed")
+
+	# 5. Lethal hit with Mitt: target slain, overkill clamped, block still awarded
+	var b5 := _setup_mitt_battle(["warden_brass_buckle"], "warden", ["warden", "seamstress", "tinker"], [5, 40])
+	var res5: Dictionary = resolver.play_card(b5.deck, b5.party, b5.foes, "warden_brass_buckle", 1, null, null, b5.mitt)
+	_check(res5.get("ok", false), "lethal hit succeeds")
+	_check(res5["hits"][0]["damage"] == 7 and res5["hits"][0]["hp_loss"] == 5, "damage 7, hp loss clamped to 5")
+	_check(b5.foes.is_slain(1) and b5.party.get_hero(1)["block"] == 4, "target slain, block awarded")
+	_check(b5.mitt.latch_snapshot().get("warden") == true, "latch consumed on lethal hit")
+
+	# 6. Bound Mitt via set_mitt / constructor
+	var b6 := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	var res_bound := CombatPoolPlainStrikes.new(null, null, b6.mitt)
+	_check(res_bound.get_mitt() == b6.mitt, "get_mitt returns bound mitt")
+	var res6: Dictionary = res_bound.play_card(b6.deck, b6.party, b6.foes, "warden_brass_buckle", 1)
+	_check(res6.get("ok", false) and res6["hits"][0]["damage"] == 7, "bound resolver honors mitt without argument")
+	_check(b6.mitt.latch_snapshot().get("warden") == true, "bound resolver consumed latch")
+
+	var b7 := _setup_mitt_battle(["seamstress_thread_whip"], "seamstress")
+	var res_set := CombatPoolPlainStrikes.new()
+	res_set.set_mitt(b7.mitt)
+	_check(res_set.get_mitt() == b7.mitt, "set_mitt agrees")
+	var res7: Dictionary = res_set.play_card(b7.deck, b7.party, b7.foes, "seamstress_thread_whip", 1)
+	_check(res7.get("ok", false) and res7["hits"][0]["damage"] == 8, "set_mitt resolver honors mitt")
+	_check(b7.mitt.latch_snapshot().get("seamstress") == true, "set_mitt consumed latch")
+
+
+## AC2: Given a below-half gauge, an already-used wearer latch, an ineligible/downed/torn wearer,
+## bad position/target/energy or an uncommitted quote, no +2 is applied and rejected plays do
+## not spend energy, move cards, alter rosters, consume Pinned or advance RNG.
+func _test_frayfinder_mitt_ac2_gauge_latches_rejections() -> void:
+	# 1. Below-half gauge on normal enemy (threshold 8, gauge 3): deals printed damage, latch untouched
+	var b1 := _setup_mitt_battle(["warden_brass_buckle", "warden_brass_buckle_plus"], "warden",
+		["warden", "seamstress", "tinker"], [40, 40], "normal", 3)
+	var resolver := CombatPoolPlainStrikes.new()
+	var res1: Dictionary = resolver.play_card(b1.deck, b1.party, b1.foes, "warden_brass_buckle", 1, null, null, b1.mitt)
+	_check(res1.get("ok", false), "below-half play succeeds with printed values")
+	_check(res1["hits"][0]["damage"] == 5, "deals printed 5 damage without +2")
+	_check(res1["block_deltas"] == {1: 4}, "printed 4 block")
+	_check(b1.mitt.latch_snapshot().get("warden", false) == false, "below-half gauge does NOT consume latch")
+
+	# Now charge to 4 (half threshold) in same turn: now it earns +2 and consumes latch!
+	_check(b1.gauge.apply_unravel(b1.foes, 1, 1), "charge to 4/8")
+	b1.deck.energy = 3
+	b1.deck.combat_state.energy = 3
+	var res1b: Dictionary = resolver.play_card(b1.deck, b1.party, b1.foes, "warden_brass_buckle_plus", 1, null, null, b1.mitt)
+	_check(res1b.get("ok", false) and res1b["hits"][0]["damage"] == 9, "subsequent qualified hit deals +2")
+	_check(b1.mitt.latch_snapshot().get("warden") == true, "latch consumed by qualified hit")
+
+	# 2. Already-used wearer latch: second hit in same turn receives NO +2 bonus
+	b1.deck.energy = 3
+	b1.deck.combat_state.energy = 3
+	var deck2 := _deck(["warden_brass_buckle_plus"])
+	var res1c: Dictionary = resolver.play_card(deck2, b1.party, b1.foes, "warden_brass_buckle_plus", 1, null, null, b1.mitt)
+	_check(res1c.get("ok", false), "third hit in same turn succeeds")
+	_check(res1c["hits"][0]["damage"] == 7, "deals printed 7 damage, no second +2")
+
+	# 3. Ineligible wearer: Seamstress plays Thread Whip when Warden wears Mitt
+	var b2 := _setup_mitt_battle(["seamstress_thread_whip", "warden_brass_buckle"], "warden")
+	var res2: Dictionary = resolver.play_card(b2.deck, b2.party, b2.foes, "seamstress_thread_whip", 1, null, null, b2.mitt)
+	_check(res2.get("ok", false), "seamstress play succeeds")
+	_check(res2["hits"][0]["damage"] == 6, "seamstress deals unpatched 6 damage")
+	_check(b2.mitt.latch_snapshot().get("warden", false) == false, "warden latch untouched by seamstress attack")
+	# Warden then attacks and DOES receive +2
+	var res2w: Dictionary = resolver.play_card(b2.deck, b2.party, b2.foes, "warden_brass_buckle", 1, null, null, b2.mitt)
+	_check(res2w.get("ok", false) and res2w["hits"][0]["damage"] == 7, "warden receives +2")
+	_check(b2.mitt.latch_snapshot().get("warden") == true, "warden latch consumed")
+
+	# 4. Negative rejection matrix with Mitt:
+	# Zero energy, downed owner, wrong position, target 0, target 3, slain target all fail closed.
+	for rej_case in [
+		{"name": "mitt: zero energy", "kind": "energy"},
+		{"name": "mitt: downed owner", "kind": "downed"},
+		{"name": "mitt: Warden in slot 3", "kind": "wrong_pos"},
+		{"name": "mitt: target 0", "target": 0},
+		{"name": "mitt: target 3", "target": 3},
+		{"name": "mitt: slain target", "kind": "slain"},
+	]:
+		var b_neg := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+		var target_neg: int = rej_case.get("target", 1)
+		match rej_case.get("kind", ""):
+			"energy":
+				_check(b_neg.deck.try_spend_energy(3), "exhaust energy")
+			"downed":
+				_check(b_neg.party.apply_damage(1, 40) and b_neg.party.is_downed(1), "down warden")
+			"wrong_pos":
+				b_neg.party = _party(["seamstress", "tinker", "warden"])
+			"slain":
+				_check(b_neg.foes.apply_damage(1, 40) and b_neg.foes.is_slain(1), "slay target 1")
+
+		var snap_before := _snapshot(b_neg.deck, b_neg.party, b_neg.foes)
+		var rej_res: Dictionary = resolver.play_card(b_neg.deck, b_neg.party, b_neg.foes, "warden_brass_buckle", target_neg, null, null, b_neg.mitt)
+		_check(rej_res == {"ok": false, "hits": [], "block_deltas": {}}, rej_case["name"] + " fails closed")
+		_check(_snapshot(b_neg.deck, b_neg.party, b_neg.foes) == snap_before, rej_case["name"] + " leaves state strictly identical")
+		_check(b_neg.mitt.latch_snapshot().get("warden", false) == false, rej_case["name"] + " leaves mitt latch unconsumed")
+
+	# 5. Retry after rejection succeeds
+	var b_retry := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	_check(b_retry.deck.try_spend_energy(3), "drain energy for rejection")
+	_check(not resolver.play_card(b_retry.deck, b_retry.party, b_retry.foes, "warden_brass_buckle", 1, null, null, b_retry.mitt).get("ok", false),
+		"rejection on 0 energy")
+	_check(b_retry.mitt.latch_snapshot().get("warden", false) == false, "latch intact after rejection")
+	b_retry.deck.energy = 3
+	b_retry.deck.combat_state.energy = 3
+	var res_retry: Dictionary = resolver.play_card(b_retry.deck, b_retry.party, b_retry.foes, "warden_brass_buckle", 1, null, null, b_retry.mitt)
+	_check(res_retry.get("ok", false) and res_retry["hits"][0]["damage"] == 7, "retry succeeds with +2")
+	_check(b_retry.mitt.latch_snapshot().get("warden") == true, "retry consumed latch")
+
+	# 6. Forged quote and mismatched quote
+	var b_forge := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	var real_quote: Dictionary = b_forge.mitt.quote_pool_hit("warden_brass_buckle", 1)
+	var forged_quote := real_quote.duplicate(true)
+	forged_quote.bonus = 3
+	_check(not resolver.play_card(b_forge.deck, b_forge.party, b_forge.foes, "warden_brass_buckle", 1, null, null, b_forge.mitt, forged_quote).get("ok", false),
+		"forged quote bonus 3 rejected")
+	var bad_seal_quote := real_quote.duplicate(true)
+	bad_seal_quote.seal = "corrupted"
+	_check(not resolver.play_card(b_forge.deck, b_forge.party, b_forge.foes, "warden_brass_buckle", 1, null, null, b_forge.mitt, bad_seal_quote).get("ok", false),
+		"tampered seal rejected")
+	# Quote with target 1 passed when attacking target 2
+	_check(b_forge.gauge.apply_unravel(b_forge.foes, 2, 4), "gauge 2 charged")
+	_check(not resolver.play_card(b_forge.deck, b_forge.party, b_forge.foes, "warden_brass_buckle", 2, null, null, b_forge.mitt, real_quote).get("ok", false),
+		"quote for target 1 used against target 2 rejected")
+
+	# 7. Quote without Mitt fails closed if claiming bonus
+	var b_nomitt := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	_check(not resolver.play_card(b_nomitt.deck, b_nomitt.party, b_nomitt.foes, "warden_brass_buckle", 1, null, null, null, real_quote).get("ok", false),
+		"quote with bonus 2 passed without mitt fails closed")
+
+	# 8. Torn wearer patch is dormant
+	var b_torn := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	var start_h: Array = b_torn.torn.read_state()["heroes"]
+	_check(b_torn.party.apply_damage(1, 999) and b_torn.party.is_downed(1), "down warden for tear")
+	_check(b_torn.torn.observe_battle_end("tear_mitt", start_h, b_torn.party.get_heroes())["ok"], "recorded tear")
+	_refresh_after_tear({"wardrobe": b_torn.wardrobe, "torn": b_torn.torn})
+	var living_party := _party()
+	var res_torn: Dictionary = resolver.play_card(b_torn.deck, living_party, b_torn.foes, "warden_brass_buckle", 1)
+	_check(res_torn.get("ok", false) and res_torn["hits"][0]["damage"] == 5, "torn wearer gets printed damage only")
+
+
+## AC3: Given a valid hit, its authenticated quote and actual post-commit deck/roster
+## receipt consume Frayfinder at most once that turn; replay or changed
+## hand/target/gauge/wardrobe/turn cannot claim the bonus. After an authentic next
+## player turn it can trigger again. Tests compare full before/after authority snapshots.
+func _test_frayfinder_mitt_ac3_consumption_replay_and_turns() -> void:
+	var b := _setup_mitt_battle(["warden_brass_buckle", "warden_brass_buckle_plus"], "warden")
+	var resolver := CombatPoolPlainStrikes.new()
+	var quote: Dictionary = b.mitt.quote_pool_hit("warden_brass_buckle", 1)
+	_check(quote.get("bonus") == 2, "initial quote has bonus 2")
+	var before_snap := _snapshot(b.deck, b.party, b.foes)
+
+	var result: Dictionary = resolver.play_card(b.deck, b.party, b.foes, "warden_brass_buckle", 1, null, null, b.mitt, quote)
+	_check(result.get("ok", false), "first play succeeded")
+	_check(b.mitt.latch_snapshot().get("warden") == true, "mitt latch consumed after first hit")
+
+	# Authority snapshot comparison:
+	var expected_snap := before_snap.duplicate(true)
+	expected_snap["energy"] -= 1
+	expected_snap["state_energy"] -= 1
+	var hand: Array = expected_snap["hand"]
+	hand.erase("warden_brass_buckle")
+	var discard: Array = expected_snap["discard"]
+	discard.append("warden_brass_buckle")
+	expected_snap["heroes"][0]["block"] += 4
+	expected_snap["foes"][0]["hp"] -= 7
+	expected_snap["foes"][0]["block"] -= 0
+	_check(_snapshot(b.deck, b.party, b.foes) == expected_snap, "full snapshot matches expected post-commit state exactly")
+
+	# Replay denial
+	_check(not b.mitt.consume_confirmed_hit(quote, result), "replaying quote with receipt denied")
+
+	# Counterfeit receipts rejected
+	var counterfeit := result.duplicate(true)
+	counterfeit["hits"][0]["damage"] += 1
+	_check(not b.mitt.consume_confirmed_hit(quote, counterfeit), "counterfeit receipt rejected")
+
+	# Next turn reset
+	_check(b.deck.end_turn() and b.mitt.end_player_turn(), "turn ends")
+	_check(b.deck.start_turn() and b.mitt.begin_player_turn(), "next turn opens")
+	_check(b.mitt.latch_snapshot().is_empty(), "latch reset for new turn")
+	_check(b.deck.draw_extra(7) >= 0, "draw cards in new turn")
+	if b.deck.hand.has("warden_brass_buckle_plus"):
+		var quote_turn2: Dictionary = b.mitt.quote_pool_hit("warden_brass_buckle_plus", 1)
+		_check(quote_turn2.get("bonus") == 2, "retained half gauge allows +2 in new turn")
+		var res_turn2: Dictionary = resolver.play_card(b.deck, b.party, b.foes, "warden_brass_buckle_plus", 1, null, null, b.mitt, quote_turn2)
+		_check(res_turn2.get("ok", false) and res_turn2["hits"][0]["damage"] == 9, "new turn deals 7+2=9 damage")
+		_check(b.mitt.latch_snapshot().get("warden") == true, "new turn consumed latch")
+
+
+## AC4: With and without the Mitt, the four plain strikes still charge/discard exactly once
+## and retain 5/4, 7/6, 6 and 8 printed damage/Block, Warden-only Block, Pinned's different-owner +5
+## and existing M04/M05 patch projections; Weak/Exposed round down after the additional +2.
+func _test_frayfinder_mitt_ac4_status_pinned_and_dual_patches() -> void:
+	var resolver := CombatPoolPlainStrikes.new()
+
+	# 1. Status combinations with Mitt (+2 added before Weak/Exposed):
+	var cases := [
+		{"id": "warden_brass_buckle", "base": 5, "block": 4, "weak": false, "exposed": false, "expected": 7},
+		{"id": "warden_brass_buckle", "base": 5, "block": 4, "weak": true, "exposed": false, "expected": 5}, # floor(7 * 0.75) = 5
+		{"id": "warden_brass_buckle", "base": 5, "block": 4, "weak": false, "exposed": true, "expected": 10}, # floor(7 * 1.5) = 10
+		{"id": "warden_brass_buckle", "base": 5, "block": 4, "weak": true, "exposed": true, "expected": 7}, # floor(7 * 9/8) = 7
+		{"id": "warden_brass_buckle_plus", "base": 7, "block": 6, "weak": true, "exposed": false, "expected": 6}, # floor(9 * 0.75) = 6
+		{"id": "warden_brass_buckle_plus", "base": 7, "block": 6, "weak": false, "exposed": true, "expected": 13}, # floor(9 * 1.5) = 13
+		{"id": "warden_brass_buckle_plus", "base": 7, "block": 6, "weak": true, "exposed": true, "expected": 10}, # floor(9 * 9/8) = 10
+		{"id": "seamstress_thread_whip", "base": 6, "block": 0, "weak": true, "exposed": false, "expected": 6}, # floor(8 * 0.75) = 6
+		{"id": "seamstress_thread_whip", "base": 6, "block": 0, "weak": false, "exposed": true, "expected": 12}, # floor(8 * 1.5) = 12
+		{"id": "seamstress_thread_whip", "base": 6, "block": 0, "weak": true, "exposed": true, "expected": 9}, # floor(8 * 9/8) = 9
+		{"id": "seamstress_thread_whip_plus", "base": 8, "block": 0, "weak": true, "exposed": false, "expected": 7}, # floor(10 * 0.75) = 7
+		{"id": "seamstress_thread_whip_plus", "base": 8, "block": 0, "weak": false, "exposed": true, "expected": 15}, # floor(10 * 1.5) = 15
+		{"id": "seamstress_thread_whip_plus", "base": 8, "block": 0, "weak": true, "exposed": true, "expected": 11}, # floor(10 * 9/8) = 11
+	]
+	for sc in cases:
+		var card_id: String = sc["id"]
+		var owner: String = "warden" if card_id.begins_with("warden_") else "seamstress"
+		var owner_pos: int = 1 if owner == "warden" else 2
+		var b := _setup_mitt_battle([card_id], owner)
+		if sc["weak"]:
+			b.party._heroes[owner_pos - 1]["statuses"] = {"weak": 1}
+		if sc["exposed"]:
+			b.foes._enemies[0]["statuses"] = {"exposed": 1}
+		var res: Dictionary = resolver.play_card(b.deck, b.party, b.foes, card_id, 1, null, null, b.mitt)
+		_check(res.get("ok", false), card_id + " status case succeeded")
+		_check(res["hits"][0]["damage"] == sc["expected"],
+			card_id + " status damage expected %d, got %d" % [sc["expected"], res["hits"][0]["damage"]])
+		if sc["block"] > 0:
+			_check(res["block_deltas"] == {owner_pos: sc["block"]}, card_id + " block deltas exact")
+		else:
+			_check(res["block_deltas"] == {}, card_id + " seamstress block deltas empty")
+
+	# 2. Pinned interaction + Mitt:
+	# Foreign pin adds +5 raw damage BEFORE Weak/Exposed and Mitt adds +2.
+	# For Brass Buckle (5 base): raw = 5 + 5 + 2 = 12. With Weak 1 + Exposed 1: floor(12 * 9/8) = 13.
+	var b_pin := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	b_pin.party._heroes[0]["statuses"] = {"weak": 1}
+	b_pin.foes._enemies[0]["statuses"] = {"exposed": 1}
+	var pinned := CombatPinned.new()
+	_check(pinned.pin_enemy(b_pin.foes, 1, "seamstress"), "foreign pin set")
+	var res_pin: Dictionary = resolver.play_card(b_pin.deck, b_pin.party, b_pin.foes, "warden_brass_buckle", 1, pinned, null, b_pin.mitt)
+	_check(res_pin.get("ok", false) and res_pin["hits"][0]["damage"] == 13, "foreign pin + mitt Weak+Exposed deals 13")
+	_check(pinned.pinner_for_enemy(1) == "", "foreign pin consumed")
+	_check(b_pin.mitt.latch_snapshot().get("warden") == true, "mitt latch consumed")
+
+	# Same-owner pin: no +5 bonus, pin NOT consumed, Mitt +2 still applies!
+	var b_same := _setup_mitt_battle(["warden_brass_buckle"], "warden")
+	var pinned_same := CombatPinned.new()
+	_check(pinned_same.pin_enemy(b_same.foes, 1, "warden"), "same owner pin set")
+	var res_same: Dictionary = resolver.play_card(b_same.deck, b_same.party, b_same.foes, "warden_brass_buckle", 1, pinned_same, null, b_same.mitt)
+	_check(res_same.get("ok", false) and res_same["hits"][0]["damage"] == 7, "same owner pin gives no +5, mitt gives +2 = 7")
+	_check(pinned_same.pinner_for_enemy(1) == "warden", "same owner pin preserved")
+	_check(b_same.mitt.latch_snapshot().get("warden") == true, "mitt latch consumed")
+
+	# 3. Dual patches: Button Eye (HEAD) + Frayfinder Mitt (ARM)
+	var b_dual := _setup_mitt_battle(["warden_brass_buckle"], "warden", ["warden", "seamstress", "tinker"], [50, 50], "normal", 4, "button_eye")
+	var res_dual_bind := CombatPoolPlainStrikes.new()
+	_check(res_dual_bind.bind_patch_wardrobe(b_dual.wardrobe, b_dual.torn), "bind wardrobe with Button Eye")
+	var res_dual: Dictionary = res_dual_bind.play_card(b_dual.deck, b_dual.party, b_dual.foes, "warden_brass_buckle", 1, null, null, b_dual.mitt)
+	_check(res_dual.get("ok", false), "dual patch play succeeded")
+	_check(res_dual["hits"][0]["damage"] == 7, "deals 5+2=7 damage")
+	_check(res_dual["hits"][0]["statuses"] == {"exposed": 1}, "Button Eye applied exposed 1")
+	_check(b_dual.foes.get_enemy(1)["statuses"].get("exposed", 0) == 1, "target has exposed 1")
+	_check(res_dual_bind._patches.latch_snapshot().get("warden") == true, "Button Eye latch consumed")
+	_check(b_dual.mitt.latch_snapshot().get("warden") == true, "Mitt latch consumed")
+
+	# 4. Dual patches: Reinforced Browband (HEAD) + Frayfinder Mitt (ARM) on Warden
+	var b_brow := _setup_mitt_battle(["warden_brass_buckle"], "warden", ["warden", "seamstress", "tinker"], [50, 50], "normal", 4, "reinforced_browband")
+	var res_brow_bind := CombatPoolPlainStrikes.new()
+	_check(res_brow_bind.bind_patch_wardrobe(b_brow.wardrobe, b_brow.torn), "bind wardrobe with Reinforced Browband")
+	var res_brow: Dictionary = res_brow_bind.play_card(b_brow.deck, b_brow.party, b_brow.foes, "warden_brass_buckle", 1, null, null, b_brow.mitt)
+	_check(res_brow.get("ok", false), "Reinforced Browband + Mitt play succeeded")
+	_check(res_brow["hits"][0]["damage"] == 7, "deals 5+2=7 damage")
+	_check(res_brow["block_deltas"] == {1: 6} and b_brow.party.get_hero(1)["block"] == 6, "gains printed 4 + 2 browband = 6 block")
+	_check(b_brow.mitt.latch_snapshot().get("warden") == true, "Mitt latch consumed")
