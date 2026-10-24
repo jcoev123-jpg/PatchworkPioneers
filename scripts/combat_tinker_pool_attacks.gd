@@ -13,12 +13,18 @@ var _pinned: CombatPinned
 var _damage := CombatStatusAttacks.new()
 var _statuses := CombatStatuses.new()
 var _patches: CombatPatchAttackRules = null
+var _head_patches: CombatM05HeadPatchRules = null
 
 
 ## Failed explicit binding stays unusable; never fall back to an unpatched cast.
-func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
+func bind_patch_wardrobe(wardrobe: Variant, torn: Variant) -> bool:
 	_patches = CombatPatchAttackRules.new()
-	return _patches.bind_wardrobe(wardrobe, torn)
+	_head_patches = CombatM05HeadPatchRules.new()
+	if not (wardrobe is RunPatchWardrobe) or not (torn is RunTornMending):
+		return false
+	var attack_ok := _patches.bind_wardrobe(wardrobe, torn)
+	var head_ok := _head_patches.bind_wardrobe(wardrobe, torn)
+	return attack_ok and head_ok
 
 
 func _init(first_attack: Variant = null, pinned: Variant = null) -> void:
@@ -44,6 +50,10 @@ func set_pinned(pinned: CombatPinned) -> void:
 
 func get_pinned() -> CombatPinned:
 	return _pinned
+
+
+func get_head_patches() -> CombatM05HeadPatchRules:
+	return _head_patches
 
 
 func is_supported_card(card_id: String) -> bool:
@@ -123,6 +133,12 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	if _patches != null and not _patches.is_valid():
 		return _failure()
+	if _head_patches != null and not _head_patches.read_projection().get("ok", false):
+		return _failure()
+	if _head_patches != null:
+		for hero in _head_patches._torn_snapshot.get("heroes", []):
+			if hero.get("id") == "tinker" and hero.get("hp", 0) <= 0:
+				return _failure()
 	var base_id: String = card_id.trim_suffix("_plus")
 	if not BASE_IDS.has(base_id) or (card_id != base_id and card_id != base_id + "_plus"):
 		return _failure()
@@ -198,7 +214,10 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if base_id == "tinker_rivet_shot":
 		if not effects.get("exposed") is int or effects["exposed"] <= 0:
 			return _failure()
-		exposed = effects["exposed"]
+		var head_exposed: int = 0 if _head_patches == null else _head_patches.get_bonus("tinker", card_id, "exposed")
+		if head_exposed < 0 or head_exposed > CombatEnemies.MAX_INT - effects["exposed"]:
+			return _failure()
+		exposed = effects["exposed"] + head_exposed
 
 	var owner_count := 0
 	var owner_statuses: Dictionary = {}
