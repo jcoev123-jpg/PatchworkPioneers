@@ -809,6 +809,7 @@ func _build_title() -> void:
 
 	title_label = Label.new()
 	title_label.text = TITLE
+	title_label.theme_type_variation = &"PatchTitle"   # Londrina Solid Black (assets/fonts/patchwork_theme.tres)
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title_label.add_theme_font_size_override("font_size", 64)
 	title_label.add_theme_color_override("font_color", Color("ece0c8"))

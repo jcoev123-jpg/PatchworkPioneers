@@ -25,6 +25,10 @@ window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
 
+[gui]
+
+theme/custom="res://assets/fonts/patchwork_theme.tres"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
