@@ -21,6 +21,9 @@ const EARNED_POOL_BLOCKS := [
 const EARNED_SEAMSTRESS := [
 	"seamstress_darning", "seamstress_snag", "seamstress_blanket_stitch",
 ]
+const EARNED_TINKER := [
+	"tinker_scatter_bolts", "tinker_shrapnel_seam", "tinker_spare_parts", "tinker_sight_glass",
+]
 
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
@@ -98,8 +101,15 @@ func choose_reward(offers: Array, seed_value: int, previous_picks: int) -> Strin
 	# Rotate family priority within the original picking subset, without RNG.
 	var families := [CombatPoolEnergyCards.SUPPORTED_IDS, EARNED_POOL_BLOCKS,
 		EARNED_POOL_ATTACKS, EARNED_SEAMSTRESS]
+	var priorities := []
 	for offset in range(families.size()):
-		var family: Array = families[(seed_value / 3 + offset) % families.size()]
+		priorities.append(families[(seed_value / 3 + offset) % families.size()])
+	# Preserve energy enablers and each seed's original family preference while
+	# considering earned Tinker before the remaining fallbacks. Skips stay fixed.
+	priorities.insert(1, EARNED_TINKER)
+	priorities.erase(CombatPoolEnergyCards.SUPPORTED_IDS)
+	priorities.push_front(CombatPoolEnergyCards.SUPPORTED_IDS)
+	for family in priorities:
 		for offer in offers:
 			var id := str(offer.get("id", ""))
 			if family.has(id) and not id.ends_with("_plus") \
@@ -155,7 +165,10 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		plain: CombatPoolPlainStrikes, heavy: CombatWardenPoolHeavyAttacks,
 		rejected_ids: Array, blocks: CombatWardenPoolBlockCards = null,
 		heals: CombatSeamstressPoolHeals = null, control: CombatSeamstressPoolControl = null,
-		bleed: CombatSeamstressPoolBleed = null, unravel: CombatUnravel = null) -> Dictionary:
+		bleed: CombatSeamstressPoolBleed = null, unravel: CombatUnravel = null,
+		tinker_area: CombatTinkerPoolAttacks = null,
+		tinker_unravel: CombatTinkerPoolUnravelAttacks = null,
+		gadgets: CombatTinkerPoolGadgets = null) -> Dictionary:
 	if not deck.turn_active or party.is_defeated() or enemies.is_victorious():
 		return {}
 	var best := {}
@@ -163,6 +176,47 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var targeter := CombatAttackTargeting.new()
 	for id in deck.hand:
 		if rejected_ids.has(id):
+			continue
+		if EARNED_TINKER.has(id.trim_suffix("_plus")):
+			var definition := _pool_definition(id)
+			if definition.is_empty() or definition.cost > deck.energy \
+					or not _living_owner_in_from(party.get_heroes(), definition):
+				continue
+			if gadgets == null or not gadgets.is_patch_binding_valid():
+				continue # Authenticate the same battle ledgers for all three services.
+			var target := 0
+			var base: String = id.trim_suffix("_plus")
+			if base == "tinker_scatter_bolts":
+				if tinker_area == null or not tinker_area._prepare(deck, party, enemies, id, 0, null).get("ok", false):
+					continue
+			elif base == "tinker_shrapnel_seam":
+				if tinker_unravel == null or not tinker_unravel.can_play(deck, party, enemies, id):
+					continue
+			else:
+				if base == "tinker_spare_parts":
+					var amount: int = definition.effects.block
+					if gadgets.get_patches() != null:
+						amount += gadgets.get_patches().card_block_bonus("tinker", id)
+					if gadgets.get_head_patches() != null:
+						amount += gadgets.get_head_patches().get_bonus("tinker", id, "block")
+					var owner: Dictionary = party.get_heroes().filter(func(hero): return hero.id == "tinker")[0]
+					if owner.block > CombatParty.MAX_INT - amount:
+						continue
+				else:
+					var amount: int = definition.effects.exposed
+					if gadgets.get_head_patches() != null:
+						amount += gadgets.get_head_patches().get_bonus("tinker", id, "exposed")
+					for position in definition.to_positions:
+						var enemy := enemies.get_enemy(position)
+						if not enemy.is_empty() and enemy.hp > 0 \
+								and enemies.can_apply_statuses({position: {"exposed": amount}}):
+							target = position
+							break
+					if target == 0:
+						continue
+			if 204 > best_score:
+				best_score = 204
+				best = {"kind": "earned_tinker", "id": id, "target": target}
 			continue
 		if EARNED_SEAMSTRESS.has(id.trim_suffix("_plus")):
 			var definition := _pool_definition(id)

@@ -64,6 +64,11 @@ const SELECTED_INK := Color("#9e3d30")
 ## hard-coding pixels. The visit column is reflowed to the left in _mount.
 const GALLERY_ANCHORS := {"left": 0.42, "right": 0.99, "top": 0.02, "bottom": 0.98}
 const VIEW_POSITION := Vector2(18, 22)
+## Paper room kept between the reflowed visit column and the bottom of the
+## 1280x720 window, mirroring the gallery's own lower anchor. The column is
+## bounded to VIEW_POSITION.y + this margin, so the last action row (Return)
+## always stands on the window instead of being cut off below it.
+const VIEW_BOTTOM_MARGIN := 18.0
 ## The shipped sewn button fabric the visit's own actions are sewn from. It is
 ## the same nine-patch the reward panel uses for its buttons; no new art file.
 const ACTION_BUTTON_PATH := "res://assets/paper/ui/reward_button.png"
@@ -159,6 +164,11 @@ var _arrow_glyphs: FontFile = null
 ## the button itself, its original variation and every override the skin wrote.
 ## Restored on _teardown so the next visit is rebuilt exactly as the app made it.
 var _action_skin: Array[Dictionary] = []
+## The nested Shop equipment card this visit bounded, so a long patch preview
+## scrolls inside it instead of growing the left column past the window:
+## {"panel", "content", "scroll", "minimum"}. Empty for a Rest visit (no
+## equipment card) and before the first bound is applied.
+var _equipment_rail: Dictionary = {}
 
 
 func _ready() -> void:
@@ -168,6 +178,9 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_NONE
 	_app = get_parent()
 	_face = REWARD.new()
+	# The visit column is bounded against the live window, so a resized window
+	# re-fits the same mounted controls instead of leaving a stale fit behind.
+	resized.connect(_on_overlay_resized)
 
 
 func _exit_tree() -> void:
@@ -202,6 +215,10 @@ func _sync() -> void:
 	if _content_signature() != _signature:
 		_rebuild()
 	else:
+		# A taller autowrapped patch preview regrows the bounded equipment card
+		# (never past the window), so the action rows below it stay on screen.
+		if _bound_equipment_rail():
+			_reflow_view(_view)
 		_paint_selection()
 
 
@@ -538,14 +555,181 @@ func action_skin_texture_path(button: Button) -> String:
 
 
 ## Keep the validated visit controls on the left half; the gallery owns the
-## right half. Sizes stay the visit's own minimum size, so nothing clips.
+## right half. The column keeps its own minimum width, but its height is bounded
+## to the window: every action row stays mounted and reachable, and the one
+## variable-height part (the Shop's nested equipment card) gives up height to
+## its own scroll instead of pushing Continue/Return below the 720 px view.
 func _reflow_view(view: Control) -> void:
 	view.anchor_left = 0.0
 	view.anchor_top = 0.0
 	view.anchor_right = 0.0
 	view.anchor_bottom = 0.0
 	view.size = view.get_combined_minimum_size()
+	# Bounding the equipment card moves its content column one level deeper.
+	# The app states its focus route as relative paths, so resolve those
+	# neighbours first and rewrite the same ones after the move.
+	var links := _remember_focus_links(view)
+	_bound_equipment_rail()
+	_restore_focus_links(links)
+	view.size = view.get_combined_minimum_size()
 	view.position = VIEW_POSITION
+
+
+## Every existing focus neighbour of the visit's own controls, resolved to the
+## controls themselves. No neighbour is added, removed or reordered; only the
+## relative path that names it is rebuilt after a re-parent.
+func _remember_focus_links(view: Control) -> Array:
+	var links: Array = []
+	if view == null or not is_instance_valid(view):
+		return links
+	for node in view.find_children("*", "Control", true, false):
+		var control := node as Control
+		if control == null or control.focus_mode == Control.FOCUS_NONE:
+			continue
+		var next := _focus_target(control, control.focus_next)
+		var previous := _focus_target(control, control.focus_previous)
+		if next != null or previous != null:
+			links.append({"control": control, "next": next, "previous": previous})
+	return links
+
+
+func _focus_target(control: Control, path: NodePath) -> Control:
+	if path.is_empty():
+		return null
+	return control.get_node_or_null(path) as Control
+
+
+## Re-point each remembered neighbour to the same control from its new position.
+## Paths that never crossed the moved column are left exactly as the app set them.
+func _restore_focus_links(links: Array) -> void:
+	for link in links:
+		var control: Control = link["control"]
+		if not is_instance_valid(control):
+			continue
+		var next = link["next"]
+		if is_instance_valid(next):
+			control.focus_next = control.get_path_to(next)
+		var previous = link["previous"]
+		if is_instance_valid(previous):
+			control.focus_previous = control.get_path_to(previous)
+
+
+# --- bounded activity rail ------------------------------------------------
+
+## The height the left column may occupy: the window minus its own top position
+## and the bottom paper margin. 720 is only the boot fallback before the
+## full-rect overlay has been laid out.
+func _available_rail_height() -> float:
+	var window_height: float = size.y if size.y > 0.0 else 720.0
+	return maxf(0.0, window_height - VIEW_POSITION.y - VIEW_BOTTOM_MARGIN)
+
+
+## Bound the Shop's nested equipment card so the visit's fixed action rows
+## (Buy, Remove, the sew action, Continue, Return) always fit on screen. The card
+## keeps the height its content wants while that fits; a long autowrapped patch
+## preview then scrolls inside the card instead of growing the whole column below
+## the window. A Rest visit has no equipment card, so this is a no-op there.
+## Returns true when the card's bound changed and the column needs re-sizing.
+func _bound_equipment_rail() -> bool:
+	if _kind != "Shop" or _view == null or not is_instance_valid(_view):
+		return false
+	var panel := _view.find_child("ShopPatchSewing", true, false) as PanelContainer
+	if panel == null or not is_instance_valid(panel):
+		return false
+	var content: Control = null
+	if not _equipment_rail.is_empty() and _equipment_rail.get("panel") == panel \
+			and is_instance_valid(_equipment_rail.get("content")):
+		content = _equipment_rail["content"]
+	else:
+		if panel.get_child_count() != 1:
+			return false
+		content = panel.get_child(0) as VBoxContainer
+		if content == null:
+			return false
+		_mount_equipment_scroll(panel, content)
+	var applied: float = panel.custom_minimum_size.y
+	var available := _available_rail_height()
+	# Everything except the equipment card is fixed height: the title, the gold
+	# line, the action rows, the separations and the masked selectors.
+	var rail_min: float = _view.get_combined_minimum_size().y
+	var fixed: float = maxf(0.0, rail_min - panel.get_combined_minimum_size().y)
+	var cap: float = maxf(0.0, available - fixed)
+	var natural: float = content.get_combined_minimum_size().y + _panel_vertical_margins(panel)
+	var target: float = minf(natural, cap)
+	if not is_equal_approx(target, applied):
+		panel.custom_minimum_size.y = target
+	# Safety clamp: if anything in the fixed rows above or below the card grew
+	# between measuring and now, trim the card by exactly that much so the whole
+	# action rail still ends inside the window.
+	var excess: float = _view.get_combined_minimum_size().y - available
+	if excess > 0.5:
+		target = maxf(0.0, target - excess)
+		if not is_equal_approx(target, applied):
+			panel.custom_minimum_size.y = target
+	return not is_equal_approx(target, applied)
+
+
+## Put the equipment card's own content column inside a bounded scroll. The
+## card, its heading, both pickers, its sew action and its preview label stay
+## the app's own controls in their original order and parents; only the content
+## column gains one scrolling parent, so a taller preview scrolls (mouse wheel or
+## focus-follow) instead of clipping.
+func _mount_equipment_scroll(panel: PanelContainer, content: Control) -> void:
+	_restore_equipment_rail()
+	var scroll := ScrollContainer.new()
+	scroll.name = "ShopPatchScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	# Keyboard focus on either picker or the sew action scrolls its row into view.
+	scroll.follow_focus = true
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var minimum := panel.custom_minimum_size
+	panel.remove_child(content)
+	scroll.add_child(content)
+	panel.add_child(scroll)
+	_equipment_rail = {
+		"panel": panel,
+		"content": content,
+		"scroll": scroll,
+		"minimum": minimum,
+	}
+
+
+func _panel_vertical_margins(panel: PanelContainer) -> float:
+	var style: StyleBox = panel.get_theme_stylebox("panel")
+	return style.get_minimum_size().y if style != null else 0.0
+
+
+## A resized window re-fits the same mounted controls against the new height.
+func _on_overlay_resized() -> void:
+	if _visit_current():
+		call_deferred("_refit_rail_bounds")
+
+
+func _refit_rail_bounds() -> void:
+	if _visit_current():
+		_reflow_view(_view)
+
+
+## Put the equipment card back exactly as the app mounted it, so a closed or
+## rebuilt visit leaves no scroll parent and no changed minimum size behind.
+func _restore_equipment_rail() -> void:
+	if _equipment_rail.is_empty():
+		return
+	var panel = _equipment_rail.get("panel")
+	var content = _equipment_rail.get("content")
+	var scroll = _equipment_rail.get("scroll")
+	if is_instance_valid(scroll):
+		if is_instance_valid(content) and content.get_parent() == scroll:
+			scroll.remove_child(content)
+		if scroll.get_parent() != null:
+			scroll.get_parent().remove_child(scroll)
+		scroll.queue_free()
+	if is_instance_valid(panel):
+		if is_instance_valid(content) and content.get_parent() == null:
+			panel.add_child(content)
+		panel.custom_minimum_size = _equipment_rail.get("minimum", Vector2.ZERO)
+	_equipment_rail = {}
 
 
 func _mount_gallery() -> void:
@@ -1707,6 +1891,39 @@ func masked_selector_layout(group: String) -> Dictionary:
 	}
 
 
+## Read-only audit of the bounded left action rail: the height the window allows
+## the column, the height it actually holds, and the Shop equipment card's own
+## bounded window. Numbers only, measured from the mounted controls; no test has
+## to guess a pixel position.
+func action_rail_layout() -> Dictionary:
+	if _view == null or not is_instance_valid(_view):
+		return {}
+	var window_height: float = size.y if size.y > 0.0 else 720.0
+	var available := _available_rail_height()
+	var panel = _equipment_rail.get("panel")
+	var content = _equipment_rail.get("content")
+	var scroll = _equipment_rail.get("scroll")
+	var bounded: bool = is_instance_valid(panel) and is_instance_valid(scroll) \
+		and is_instance_valid(content) and _view.is_ancestor_of(panel) \
+		and panel.is_ancestor_of(scroll) and scroll.is_ancestor_of(content)
+	var visible_height := 0.0
+	var content_height := 0.0
+	if bounded:
+		visible_height = (scroll as ScrollContainer).size.y
+		content_height = (content as Control).get_combined_minimum_size().y
+	return {
+		"window_height": window_height,
+		"available_height": available,
+		"rail_min_height": _view.get_combined_minimum_size().y,
+		"rail_height": _view.size.y,
+		"fits": _view.size.y <= available + 0.5,
+		"equipment_bounded": bounded,
+		"equipment_visible_height": visible_height,
+		"equipment_content_height": content_height,
+		"equipment_scrolls": bounded and content_height > visible_height + 0.5,
+	}
+
+
 ## The mounted text and art facts of one tile, for audits. Detached copy.
 func tile_details(tile: Variant) -> Dictionary:
 	var record := _record_for(tile)
@@ -1741,6 +1958,7 @@ func _teardown() -> void:
 	_epoch += 1
 	_restore_controls()
 	_restore_action_skin()
+	_restore_equipment_rail()
 	if is_instance_valid(_gallery):
 		if _gallery.get_parent() == self:
 			remove_child(_gallery)

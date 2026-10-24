@@ -45,7 +45,7 @@ func _assert_tile_names(tiles: Array[Button], entries: Array[Dictionary]) -> voi
 					"pip %d active matches canonical from_positions: %s" % [pos, entry["id"]])
 				var num := pip.find_child("PipNum", true, false) as Label
 				_check(num != null and num.text == str(pos), "pip %d displays readable numeral" % pos)
-		_assert_heading(tile.get_node_or_null("CardName") as Label, entry["name"], 11)
+		_assert_heading(tile.get_node_or_null("CardName") as Label, entry["name"], 16)
 		var fallback := tile.find_child("CardNameFallback", true, false) as Label
 		if fallback != null:
 			_assert_heading(fallback, entry["name"], 10)
@@ -69,7 +69,7 @@ func _assert_missing_art_names(picker: LiveRestStitchPairPicker) -> void:
 	for first in [true, false]:
 		var tile := picker._create_card_tile(entry, first)
 		picker.add_child(tile)
-		_assert_heading(tile.get_node_or_null("CardName") as Label, entries[0]["name"], 11)
+		_assert_heading(tile.get_node_or_null("CardName") as Label, entries[0]["name"], 16)
 		_assert_heading(tile.find_child("CardNameFallback", true, false) as Label,
 			entries[0]["name"], 10)
 		_check(tile.get_meta("name") == entries[0]["name"],
