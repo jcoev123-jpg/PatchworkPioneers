@@ -10,6 +10,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_earned_pool_fixture()
+	_test_energy_pool_fixture()
 	var start_ms := Time.get_ticks_msec()
 	var seeds: Array[int] = []
 	var first: Array[Dictionary] = []
@@ -31,7 +32,7 @@ func _initialize() -> void:
 				break
 			second.append(replay)
 		_check(first.size() == SEED_COUNT and first == second,
-			"every independent replay matches routes, Event records/choices/receipts/wallets/RNG, Shop stock/receipts, combat, stitch/sew and deck")
+			"every independent replay matches routes, rewards, energy receipts, Event records/choices/receipts/wallets/RNG, Shop stock/receipts, combat, stitch/sew and deck")
 	if failures.is_empty():
 		_report(first)
 	var elapsed := Time.get_ticks_msec() - start_ms
@@ -184,6 +185,7 @@ func _run_seed(value: int) -> Dictionary:
 			var plain := CombatPoolPlainStrikes.new()
 			var heavy := CombatWardenPoolHeavyAttacks.new()
 			var blocks := CombatWardenPoolBlockCards.new()
+			var energy_cards := CombatPoolEnergyCards.new()
 			if not attacks.bind_patch_wardrobe(wardrobe, carry.torn) 					or not support.bind_patch_wardrobe(wardrobe, carry.torn) 					or not stitched.bind_patch_wardrobe(wardrobe, carry.torn) \
 					or not plain.bind_patch_wardrobe(wardrobe, carry.torn) \
 					or not heavy.bind_patch_wardrobe(wardrobe, carry.torn) \
@@ -203,6 +205,12 @@ func _run_seed(value: int) -> Dictionary:
 					var accepted := false
 					var pool_receipt := {}
 					match decision.kind:
+						"earned_energy":
+							if not acquired_ids.has(decision.id):
+								return _fail("unearned energy card selected from hand")
+							accepted = energy_cards.play_card(combat_deck, party, decision.id, decision.target)
+							if accepted:
+								pool_receipt = _energy_receipt(before, combat_deck, party, enemies, rng, decision)
 						"earned_pool":
 							if not acquired_ids.has(decision.id):
 								return _fail("unearned pool card selected from hand")
@@ -240,15 +248,17 @@ func _run_seed(value: int) -> Dictionary:
 							return _fail("rejected card mutated paid combat/RNG")
 						rejected_ids.append(decision.id)
 						continue
-					if decision.kind in ["earned_pool", "earned_block"]:
+					if decision.kind in ["earned_pool", "earned_block", "earned_energy"]:
 						var definition := strategy._pool_definition(decision.id)
-						if not _pool_transition_valid(before, combat_deck, party, enemies,
-								rng, decision, definition, pool_receipt):
+						var valid: bool = (pool_receipt.get("ok", false) if decision.kind == "earned_energy" else
+							_pool_transition_valid(before, combat_deck, party, enemies,
+								rng, decision, definition, pool_receipt))
+						if not valid:
 							return _fail("earned pool receipt/payment/roster transition")
 						earned_plays.append({"id": decision.id, "target": decision.target,
 							"receipt": pool_receipt.duplicate(true), "battle": choice})
 					plays += 1
-					if before[0] <= combat_deck.energy and decision.kind not in ["support", "earned_block"]:
+					if before[0] <= combat_deck.energy and decision.kind not in ["support", "earned_block", "earned_energy"]:
 						return _fail("paid combat did not charge energy")
 					if decision.kind == "support":
 						# Draw support can refill from discard before its own discard.
@@ -265,7 +275,7 @@ func _run_seed(value: int) -> Dictionary:
 								or oracle.draw_pile != combat_deck.draw_pile or oracle.discard_pile != combat_deck.discard_pile \
 								or oracle_rng.state != rng.state or combat_deck.energy != before[0] - definition.cost:
 							return _fail("support exact draw/refill, one payment and one discard")
-					elif combat_deck.discard_pile.count(decision.id) <= before[2].count(decision.id):
+					elif decision.kind != "earned_energy" and combat_deck.discard_pile.count(decision.id) <= before[2].count(decision.id):
 						return _fail("confirmed card not discarded")
 					if flow.observe_result() != CombatBattleResult.ACTIVE:
 						break
@@ -468,6 +478,151 @@ func _run_seed(value: int) -> Dictionary:
 		"reward_visits": reward_visits,
 		"unaffordable_checks": unaffordable_checks,
 		"gold": gold, "scraps": scraps, "actions": action_total}
+
+
+## The energy resolver returns bool. Publish a receipt only after independently
+## checking the authored effect against detached pre-play piles, roster and RNG.
+func _energy_receipt(before: Array, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, rng: RandomNumberGenerator, decision: Dictionary) -> Dictionary:
+	var definition := M05SeededRunStrategy.new()._pool_definition(decision.id)
+	if definition.is_empty() or decision.target != 0 or not before[1].has(decision.id):
+		return {}
+	var oracle_rng := RandomNumberGenerator.new()
+	var oracle := CombatDeck.new([], oracle_rng)
+	oracle_rng.state = int(before[6])
+	oracle.hand.assign(before[1])
+	oracle.discard_pile.assign(before[2])
+	oracle.draw_pile.assign(before[3])
+	oracle.combat_state.player_turn_active = true
+	var expected_heroes: Array = before[4].duplicate(true)
+	var overclock := CombatPoolEnergyCards.OVERCLOCK_IDS.has(decision.id)
+	var drawn := 0
+	var hp_loss := 0
+	var absorbed := 0
+	if overclock:
+		for hero in expected_heroes:
+			if hero.id == definition.owner:
+				absorbed = mini(hero.block, int(definition.effects.self_hp_loss))
+				hero.block -= absorbed
+				var old_hp: int = hero.hp
+				hero.hp = maxi(0, hero.hp - (int(definition.effects.self_hp_loss) - absorbed))
+				hp_loss = old_hp - hero.hp
+	else:
+		drawn = oracle.draw_extra(int(definition.effects.draw))
+	var gain: int = definition.effects.get("gain_energy", definition.effects.get("energy", 0))
+	if not oracle.discard_played(decision.id) or deck.energy != before[0] - definition.cost + gain \
+			or deck.hand != oracle.hand or deck.draw_pile != oracle.draw_pile \
+			or deck.discard_pile != oracle.discard_pile or rng.state != oracle_rng.state \
+			or party.get_heroes() != expected_heroes or enemies.get_enemies() != before[5] \
+			or not deck.turn_active:
+		return {}
+	return {"ok": true, "cost": definition.cost, "energy_gain": gain,
+		"energy_before": before[0], "energy_after": deck.energy, "drawn": drawn,
+		"hp_loss": hp_loss, "block_absorbed": absorbed,
+		"rng_before": before[6], "rng_after": str(rng.state)}
+
+
+func _energy_decision(strategy: M05SeededRunStrategy, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, rejected: Array = []) -> Dictionary:
+	return strategy.choose_card(deck, party, enemies, CombatAttackCards.new(),
+		RunRestStitchCards.new(StarterCards.new().get_starting_deck(), {}, 0, 1),
+		CombatPoolPlainStrikes.new(), CombatWardenPoolHeavyAttacks.new(), rejected)
+
+
+func _test_energy_pool_fixture() -> void:
+	var strategy := M05SeededRunStrategy.new()
+	var resolver := CombatPoolEnergyCards.new()
+	# Actual generated three-card offers, never a fabricated reward list.
+	var witnessed := {}
+	for seed_value in range(1, 1001):
+		var offer_rng := RandomNumberGenerator.new()
+		offer_rng.seed = seed_value
+		var offer := RunPoolCardRewardOffers.generate_from_authored_pools(
+			offer_rng, ["warden", "seamstress", "tinker"])
+		_check(offer.ok and offer.offers.size() == 3, "real energy reward offer")
+		var before_rng := offer_rng.state
+		var selected := strategy.choose_reward(offer.offers, 3, 0)
+		_check(offer_rng.state == before_rng and selected == strategy.choose_reward(offer.offers, 3, 0),
+			"energy reward choice is read-only and repeatable")
+		if CombatPoolEnergyCards.SUPPORTED_IDS.has(selected):
+			_check(offer.offers.any(func(item): return item.id == selected) \
+				and not selected.ends_with("_plus") \
+				and RunPoolCardRewardOffers.get_authored_base_candidates().any(func(item): return item.id == selected),
+				"energy reward selects a genuine eligible offered base")
+			witnessed[selected] = true
+		if witnessed.has("tinker_overclock") and witnessed.has("seamstress_tailors_trance"):
+			break
+	_check(witnessed.has("tinker_overclock") and witnessed.has("seamstress_tailors_trance"),
+		"both energy families can be selected from real three-card offers")
+	for id in CombatPoolEnergyCards.SUPPORTED_IDS:
+		var definition := strategy._pool_definition(id)
+		var overclock: bool = id.begins_with("tinker_")
+		var expected_draw := 0 if overclock else (3 if id.ends_with("_plus") else 2)
+		_check(definition.cost == (0 if overclock else 1) \
+			and definition.effects.get("gain_energy", definition.effects.get("energy", 0)) == 1 \
+			and definition.effects.get("draw", 0) == expected_draw \
+			and definition.effects.get("self_hp_loss", 0) == (3 if overclock else 0),
+			"energy authored base/plus values " + id)
+		_check(strategy.choose_reward([{"id": id}], 3, 0) == ("" if id.ends_with("_plus") else id) \
+			and strategy.choose_reward([{"id": id}], 1, 0).is_empty() \
+			and strategy.choose_reward([{"id": id}], 3, 1).is_empty(), "energy reward skips/upgrades " + id)
+		for position in [1, 2, 3]:
+			for condition in ["legal", "refill", "blocked", "absent", "downed", "wrong_target",
+					"zero_energy", "inactive", "rejected", "overflow"]:
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 8403
+				var deck := CombatDeck.new([id, "tinker_sight_glass", "tinker_shrapnel_seam", "tinker_ricochet"], rng)
+				var heroes := _load_party().get_heroes()
+				var owner_index := 2 if overclock else 1
+				var owner: Dictionary = heroes.pop_at(owner_index)
+				heroes.insert(position - 1, owner)
+				var party := CombatParty.new(heroes)
+				var enemies := CombatEnemies.new([{"id": "foe", "max_hp": 50}])
+				_check(party.is_valid() and enemies.is_valid() and deck.start_turn() and deck.hand.has(id) \
+					and party.get_hero(position).id == definition.owner, "real held energy fixture " + id + condition)
+				if condition == "refill":
+					for filler in deck.hand.duplicate():
+						if filler != id:
+							_check(deck.discard_played(filler), "real refill discard")
+				elif condition == "blocked":
+					_check(party.gain_block(position, 2), "energy owner Block fixture")
+				elif condition == "absent":
+					_check(deck.discard_played(id) and not deck.hand.has(id), "energy absent copy")
+				elif condition == "downed":
+					_check(party.apply_damage(position, 100) and party.is_downed(position), "energy downed owner")
+				elif condition == "zero_energy":
+					_check(deck.try_spend_energy(3) and deck.energy == 0, "energy zero boundary")
+				elif condition == "inactive":
+					_check(deck.end_turn() and not deck.turn_active, "energy inactive turn")
+				elif condition == "overflow":
+					deck.combat_state.energy = CombatParty.MAX_INT
+				var before := _combat_snapshot(deck, party, enemies, rng)
+				var rejected: Array = [id] if condition == "rejected" else []
+				var decision := _energy_decision(strategy, deck, party, enemies, rejected)
+				var legal: bool = definition.from_positions.has(position) and condition in [
+					"legal", "refill", "blocked", "wrong_target", "rejected", "zero_energy"] \
+					and (condition != "zero_energy" or overclock)
+				_check(decision == ({"kind": "earned_energy", "id": id, "target": 0} \
+					if legal and condition != "rejected" else {}) \
+					and before == _combat_snapshot(deck, party, enemies, rng), "energy admission is pure " + id + condition)
+				if condition == "rejected":
+					continue # Finite-action rejection latch prevents re-selection.
+				var target := 1 if condition == "wrong_target" else 0
+				var accepted := resolver.play_card(deck, party, id, target)
+				if legal and target == 0:
+					var receipt := _energy_receipt(before, deck, party, enemies, rng,
+						{"id": id, "target": 0})
+					_check(accepted and receipt.get("ok", false), "energy exact authored transition " + id + condition)
+					if not receipt.is_empty():
+						_check(receipt.drawn == expected_draw if condition == "refill" else receipt.drawn == 0,
+							"energy actual draw count " + id)
+					var spent := _combat_snapshot(deck, party, enemies, rng)
+					_check(not deck.hand.has(id) and not resolver.play_card(deck, party, id, 0) \
+						and _energy_decision(strategy, deck, party, enemies).is_empty() \
+						and spent == _combat_snapshot(deck, party, enemies, rng), "spent energy copy refuses unchanged " + id)
+				else:
+					_check(not accepted and before == _combat_snapshot(deck, party, enemies, rng),
+						"energy rejection preserves all combat/RNG " + id + condition)
 
 
 func _pool_transition_valid(before: Array, deck: CombatDeck, party: CombatParty,
@@ -894,7 +1049,7 @@ func _visit_event(index: int, strategy: M05SeededRunStrategy, deck: Array,
 func _combat_snapshot(deck: CombatDeck, party: CombatParty,
 		enemies: CombatEnemies, rng: RandomNumberGenerator) -> Array:
 	return [deck.energy, deck.hand.duplicate(), deck.discard_pile.duplicate(),
-		deck.draw_pile.duplicate(), party.get_heroes(), enemies.get_enemies(), str(rng.state)]
+		deck.draw_pile.duplicate(), party.get_heroes(), enemies.get_enemies(), str(rng.state), deck.turn_active]
 
 
 func _shop_snapshot(shop: RunShopPurchases, rng: RandomNumberGenerator) -> Array:
@@ -935,6 +1090,9 @@ func _report(trials: Array[Dictionary]) -> void:
 	var earned_plays := 0
 	var block_plays := 0
 	var acquired_blocks := {}
+	var acquired_energy := {}
+	var energy_plays := {}
+	var energy_rewards := {}
 	var earned_receipts := []
 	var starter_ids := StarterCards.new().get_starting_deck()
 	for trial in trials:
@@ -961,13 +1119,25 @@ func _report(trials: Array[Dictionary]) -> void:
 			acquired[id] = acquired.get(id, 0) + 1
 			if M05SeededRunStrategy.EARNED_POOL_BLOCKS.has(id):
 				acquired_blocks[id] = acquired_blocks.get(id, 0) + 1
+			if CombatPoolEnergyCards.SUPPORTED_IDS.has(id):
+				acquired_energy[id] = acquired_energy.get(id, 0) + 1
+		for visit in trial.reward_visits:
+			if CombatPoolEnergyCards.SUPPORTED_IDS.has(visit.selected):
+				_check(visit.offers.size() == 3 and visit.offers.any(func(item): return item.id == visit.selected) \
+					and not visit.selected.ends_with("_plus") and trial.seed % 3 == 0,
+					"cohort energy acquisition came from a real eligible three-card reward")
+				energy_rewards[visit.selected] = energy_rewards.get(visit.selected, 0) + 1
 		for event in trial.earned_plays:
 			var is_block := M05SeededRunStrategy.EARNED_POOL_BLOCKS.has(event.id.trim_suffix("_plus"))
+			var is_energy := CombatPoolEnergyCards.SUPPORTED_IDS.has(event.id)
 			_check(trial.acquired_ids.has(event.id) and event.receipt.get("ok", false) \
-				and (not event.receipt.get("block_deltas", {}).is_empty() if is_block \
-				else not event.receipt.get("hits", []).is_empty()),
+				and (event.receipt.get("energy_gain") == 1 if is_energy else
+				(not event.receipt.get("block_deltas", {}).is_empty() if is_block \
+				else not event.receipt.get("hits", []).is_empty())),
 				"accepted earned play has genuine acquired ID and effect receipt")
-			if is_block:
+			if is_energy:
+				energy_plays[event.id] = energy_plays.get(event.id, 0) + 1
+			elif is_block:
 				block_plays += 1
 			else:
 				earned_plays += 1
@@ -999,6 +1169,9 @@ func _report(trials: Array[Dictionary]) -> void:
 		"cohort actually commits acquired supported pool attacks in later hands")
 	_check(not acquired_blocks.is_empty() and block_plays > 0,
 		"cohort actually acquires and plays earned pure-Block cards")
+	for id in ["tinker_overclock", "seamstress_tailors_trance"]:
+		_check(acquired_energy.get(id, 0) > 0 and energy_plays.get(id, 0) > 0 and energy_rewards.get(id, 0) > 0,
+			"cohort actually acquires offered energy base and commits held plays " + id)
 	_check(stitches > 0 and sews > 0,
 		"cohort must actually commit a Rest stitch and an owned patch sew")
 	_check(visits > 0 and purchases > 0 and unaffordable > 0,
@@ -1017,9 +1190,11 @@ func _report(trials: Array[Dictionary]) -> void:
 	print("M05 Events special=%s generic=%d unaffordable rejections=%d; no-effect Treasure=%d" %
 		[JSON.stringify(specials), generic, event_unaffordable, treasures])
 	print("M05 supported earned-pool coverage PARTIAL (other pool shapes deliberately unselected); acquired=%s accepted_plays=%d receipts=%s" % [
-		JSON.stringify(acquired), earned_plays + block_plays, JSON.stringify(earned_receipts)])
+		JSON.stringify(acquired), earned_plays + block_plays + _energy_play_count(energy_plays), JSON.stringify(earned_receipts)])
 	print("M05 earned Block acquired=%s accepted_plays=%d; earned direct-hit plays=%d" % [
 		JSON.stringify(acquired_blocks), block_plays, earned_plays])
+	print("M05 earned energy acquired=%s rewards=%s accepted_plays=%s" % [
+		JSON.stringify(acquired_energy), JSON.stringify(energy_rewards), JSON.stringify(energy_plays)])
 	print("M05 BAL win target 15-30/50 (30-60%%): %s (%d/50)" % [
 		"PASS" if wins >= 15 and wins <= 30 else "FAIL", wins])
 	if wins == 0:
@@ -1056,3 +1231,10 @@ func _report(trials: Array[Dictionary]) -> void:
 			"FAIL" if exceeds else "PASS"])
 		print("M05 optional acquired-card over-half diagnostic: %s" % [
 			"FAIL" if optional_frequencies.values().any(func(count): return count * 2 > wins) else "PASS"])
+
+
+func _energy_play_count(counts: Dictionary) -> int:
+	var total := 0
+	for count in counts.values():
+		total += int(count)
+	return total

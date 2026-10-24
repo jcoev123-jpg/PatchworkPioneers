@@ -92,6 +92,13 @@ func choose_event_choice(forecast: Dictionary) -> String:
 func choose_reward(offers: Array, seed_value: int, previous_picks: int) -> String:
 	if offers.is_empty() or seed_value % 3 != 0 or previous_picks != 0:
 		return "" # Real Skip is an authored choice, not an invented award.
+	# The same seeded picking subset prefers a naturally offered energy base.
+	for offer in offers:
+		var id := str(offer.get("id", ""))
+		if CombatPoolEnergyCards.SUPPORTED_IDS.has(id) \
+				and not RunPoolCardRewardOffers.resolve_reward_definition(id).is_empty() \
+				and not id.ends_with("_plus"):
+			return id
 	for offer in offers:
 		var id := str(offer.get("id", ""))
 		var definition := _pool_definition(id)
@@ -154,6 +161,16 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var targeter := CombatAttackTargeting.new()
 	for id in deck.hand:
 		if rejected_ids.has(id):
+			continue
+		if CombatPoolEnergyCards.SUPPORTED_IDS.has(id):
+			var definition := _pool_definition(id)
+			if definition.is_empty() or definition.cost > deck.energy \
+					or deck.energy > CombatParty.MAX_INT - CombatPoolEnergyCards.ENERGY_GAIN \
+					or not _living_owner_in_from(party.get_heroes(), definition):
+				continue
+			if 210 > best_score:
+				best_score = 210
+				best = {"kind": "earned_energy", "id": id, "target": 0}
 			continue
 		if EARNED_POOL_BLOCKS.has(id.trim_suffix("_plus")):
 			var definition := _pool_definition(id)
@@ -261,6 +278,8 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 func _pool_definition(id: String) -> Dictionary:
 	if id.begins_with("warden_"):
 		return WardenPoolCards.new().get_definition(id)
+	if id.begins_with("tinker_"):
+		return TinkerPoolCards.new().get_definition(id)
 	return SeamstressPoolCards.new().get_definition(id)
 
 
