@@ -30,6 +30,9 @@ var destination_scroll: ScrollContainer
 var _source_buttons: Array[Button] = []
 var _destination_buttons: Array[Button] = []
 var confirm_button: Button
+var banner_label: Label
+var source_heading: Label
+var destination_heading: Label
 var scraps_label: Label
 var preview_label: Label
 var feedback_label: Label
@@ -316,11 +319,17 @@ func _build() -> void:
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 6)
 	padding.add_child(body)
-	body.add_child(_label("REST  /  RE-SEW PATCHES", 22))
-	body.add_child(_label("1 scrap per re-sew • Heal / Upgrade / Stitch remains available.", 13))
+	banner_label = _heading("REST  /  RE-SEW PATCHES", 26, "ResewBanner")
+	body.add_child(banner_label)
+	var instruction := _label(
+		"1 scrap per re-sew • Heal / Upgrade / Stitch remains available.", 13)
+	instruction.name = "ResewInstruction"
+	body.add_child(instruction)
 	scraps_label = _label("Scraps: --", 17)
+	scraps_label.name = "ResewScraps"
 	body.add_child(scraps_label)
-	body.add_child(_label("WORN PATCH  /  SOURCE HERO", 14))
+	source_heading = _heading("WORN PATCH  /  SOURCE HERO", 18, "ResewSourceHeading")
+	body.add_child(source_heading)
 	source_scroll = ScrollContainer.new()
 	source_scroll.name = "SewnSourceScroll"
 	source_scroll.custom_minimum_size = Vector2(0, 111)
@@ -335,7 +344,8 @@ func _build() -> void:
 	source_scroll.add_child(source_tags)
 	source_selector = SewnChip.new()
 	source_tags.add_child(source_selector)
-	body.add_child(_label("RECIPIENT HERO  /  MATCHING SLOT", 14))
+	destination_heading = _heading("RECIPIENT HERO  /  MATCHING SLOT", 18, "ResewDestinationHeading")
+	body.add_child(destination_heading)
 	destination_scroll = ScrollContainer.new()
 	destination_scroll.name = "SewnDestinationScroll"
 	destination_scroll.custom_minimum_size = Vector2(0, 61)
@@ -351,19 +361,31 @@ func _build() -> void:
 	destination_selector = SewnChip.new()
 	destination_tags.add_child(destination_selector)
 	preview_label = _label("No eligible re-sew choices", 12)
+	preview_label.name = "ResewPreview"
 	preview_label.custom_minimum_size = Vector2(0, 175)
 	preview_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(preview_label)
 	confirm_button = Button.new()
 	confirm_button.name = "ConfirmResew"
 	confirm_button.text = "CONFIRM RE-SEW  /  1 SCRAP"
+	confirm_button.theme_type_variation = "PatchHeadingButton"
 	confirm_button.custom_minimum_size = Vector2(0, 44)
 	confirm_button.focus_mode = Control.FOCUS_ALL
 	_style_button(confirm_button)
 	confirm_button.pressed.connect(_request_selected)
 	body.add_child(confirm_button)
 	feedback_label = _label("", 12)
+	feedback_label.name = "ResewFeedback"
 	body.add_child(feedback_label)
+
+
+func _heading(value: String, font_size: int, node_name: String) -> Label:
+	# Section titles wear the master PatchHeading Londrina face; every body
+	# instruction, scrap count, chip, preview and feedback stays in Patrick Hand.
+	var label := _label(value, font_size)
+	label.name = node_name
+	label.theme_type_variation = "PatchHeading"
+	return label
 
 
 func _label(value: String, font_size: int) -> Label:
