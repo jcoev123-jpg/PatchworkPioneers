@@ -489,6 +489,23 @@ func _is_heal_card(card_id: String) -> bool:
 		or card_id in CombatSeamstressPoolHeals.TEA_IDS \
 		or card_id in CombatSeamstressPoolHeals.FIELD_MEND_IDS
 
+## Read-only handoff of THIS battle's one healing service to the mounted attack
+## presenter that commits Rest-stitched composites. The very same instance (and so
+## the very same once-per-combat COAT latch) is returned only while its deck, party
+## and battle view are still the live hand's, so a stale sibling node, a previous
+## combat or a replaced battle can never lend a foreign latch. Nothing is bound,
+## reset, spent or discarded here.
+func stitched_heal_authority(deck: CombatDeck, party: CombatParty, battle) -> CombatSeamstressPoolHeals:
+	if _heal_cards == null or deck == null or party == null or not is_instance_valid(battle):
+		return null
+	if not is_inside_tree():
+		return null
+	var app = get_parent()
+	if app == null or deck != _deck or party != _party or battle != _battle \
+			or app.deck != deck or app.party != party or app.battle_view != battle:
+		return null
+	return _heal_cards
+
 ## The battle-scoped Path authority lives on the mounted attack presenter, which
 ## already owns this battle's shared Tinker first-attack latch and turn boundary.
 ## A stale or foreign presenter never authorizes a Path cast.

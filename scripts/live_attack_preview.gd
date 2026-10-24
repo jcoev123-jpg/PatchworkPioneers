@@ -529,6 +529,22 @@ func _choose_stitch(position: int, side: String = "") -> void:
 	_refresh()
 
 
+## The mounted support hand owns this routed battle's one healing service, already
+## authenticated against the live wardrobe/torn ledgers. Only that exact deck,
+## party and battle may lend it to a stitched commit, so ordinary held heals and
+## authenticated stitched halves share one COAT latch. Any unavailable or stale
+## sibling keeps the current unpatched stitched behavior.
+func _stitched_heals(app, deck: CombatDeck, party: CombatParty) -> CombatSeamstressPoolHeals:
+	if app == null or deck == null or party == null or deck != _deck \
+			or not is_instance_valid(_battle) or app.battle_view != _battle:
+		return null
+	var support = app.get_node_or_null("LiveSupportHand")
+	if support == null or not is_instance_valid(support) \
+			or not support.has_method("stitched_heal_authority"):
+		return null
+	return support.stitched_heal_authority(deck, party, _battle)
+
+
 func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, choices: Array, ids: Array, receipt: Dictionary, deck, map) -> void:
 	var app = get_parent()
 	if not is_inside_tree() or app == null or app.get_node_or_null("LiveAttackPreview") != self or token != _token or not _queued:
@@ -559,7 +575,16 @@ func _commit_stitch(panel, id: String, token: int, session: Array, turn: int, ch
 		elif choices[index] != 0:
 			_reject_stitch()
 			return
-	last_event = CombatStitchedCards.new(_play).play_stitched(deck, app.party, app.enemies,
+	# Reuse the mounted hand's exact battle-bound healing service (and its live
+	# wardrobe/torn authorities) so a genuinely held stitched half notifies the same
+	# once-per-combat COAT latch as an ordinary held heal. Without those bindings
+	# the composite keeps its current unpatched behavior.
+	var transaction := CombatStitchedCards.new(_play)
+	var heals: CombatSeamstressPoolHeals = _stitched_heals(app, deck, app.party)
+	if heals != null and heals._wardrobe != null and heals._torn != null \
+			and transaction.bind_patch_wardrobe(heals._wardrobe, heals._torn):
+		transaction.bind_borrowed_button(heals)
+	last_event = transaction.play_stitched(deck, app.party, app.enemies,
 		_ledger(), id, choices[0], choices[1], _fray)
 	if last_event.ok:
 		_forward_switchback_stitched_play(id, preview)
