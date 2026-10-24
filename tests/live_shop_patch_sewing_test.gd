@@ -47,6 +47,25 @@ func _reject_buy(callback: Callable, reason: String) -> void:
 	_check(_patch_state() == before, reason + " leaves all ledgers, history and RNG unchanged")
 
 
+func _check_patch_labels() -> void:
+	var stock: Array = app.shop_purchases.get_stock().trinkets
+	var definitions: Dictionary = wardrobe.get_snapshot().definitions
+	_check(stock.size() == 2 and app.shop_patch_offers.item_count == stock.size(),
+		"mounted Shop labels cover both genuine stock offers")
+	var names := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
+		"quilted_coat": "Quilted Coat"}
+	for i in range(stock.size()):
+		var offer: Dictionary = stock[i]
+		_check(definitions.has(offer.id) and definitions[offer.id] in RunPatchWardrobe.SLOTS,
+			"real stock has an authoritative wardrobe slot")
+		var expected := "%s | %s | %d gold%s" % [names.get(offer.id, String(offer.id).capitalize()),
+			definitions.get(offer.id), offer.price, " | SOLD" if offer.sold else ""]
+		_check(app.shop_patch_offers.get_item_text(i) == expected
+			and not app.shop_patch_offers.get_item_text(i).contains("_")
+			and app.shop_patch_offers.get_item_metadata(i) == offer.id,
+			"exact readable name, genuine slot, stock price/SOLD and authentic ID metadata")
+
+
 func _activate(control: Control, keyboard: bool) -> void:
 	if keyboard:
 		control.grab_focus()
@@ -88,13 +107,16 @@ func _negative_inputs(callback: Callable) -> void:
 		_reject_buy(callback, "hidden control")
 		control.show()
 	var id: Variant = picker.get_item_metadata(0)
-	for forged in ["unstocked", app.shop_purchases.get_stock().trinkets[1].id, 12]:
+	for forged in ["unstocked", app.shop_purchases.get_stock().trinkets[1].id, String(id).capitalize(), 12]:
 		picker.set_item_metadata(0, forged)
 		_reject_buy(callback, "forged stock selection")
 	picker.set_item_metadata(0, id)
 	var text := picker.get_item_text(0)
-	picker.set_item_text(0, "forged 1 gold quote")
-	_reject_buy(callback, "forged price")
+	for forged in ["forged 1 gold quote", text.replace(String(id).capitalize(), "Counterfeit Patch"),
+		text.replace(wardrobe.get_snapshot().definitions[id], "UNKNOWN"),
+		app.shop_patch_offers.get_item_text(1)]:
+		picker.set_item_text(0, forged)
+		_reject_buy(callback, "forged name, slot, price or other stock label")
 	picker.set_item_text(0, text)
 	var owner: Variant = heroes.get_item_metadata(0)
 	heroes.set_item_metadata(0, "foreign")
@@ -104,6 +126,19 @@ func _negative_inputs(callback: Callable) -> void:
 	wardrobe._definitions[id] = "COAT" if slot != "COAT" else "HEAD"
 	_reject_buy(callback, "drifted authored slot")
 	wardrobe._definitions[id] = slot
+	for invalid in [null, "UNKNOWN"]:
+		if invalid == null:
+			wardrobe._definitions.erase(id)
+		else:
+			wardrobe._definitions[id] = invalid
+		app._refresh_shop_patches()
+		_check(app.shop_patch_buy_button.disabled, "missing/unknown slot disables purchase")
+		_reject_buy(callback, "missing/unknown slot")
+		app.shop_patch_buy_button.disabled = false
+		_reject_buy(callback, "forced enabled missing/unknown slot")
+	wardrobe._definitions[id] = slot
+	app._refresh_shop_patches()
+	_check_patch_labels()
 	app.session_gold += 1
 	_reject_buy(callback, "drifted purse cannot auto-repair")
 	app.session_gold -= 1
@@ -168,6 +203,7 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 	var before := _patch_state()
 	var stock: Dictionary = app.shop_purchases.get_stock()
 	var offer: Dictionary = stock.trinkets[index]
+	_check_patch_labels()
 	_check(not offer.sold and offer.price == 100 and app.session_gold >= 100,
 		"selected genuine 100 gold offer is affordable and unsold")
 	await _pick(app.shop_patch_offers, index, keyboard)
@@ -189,6 +225,8 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 	stock.trinkets[index].sold = true
 	_check(app.shop_purchases.get_stock() == stock and app.party_carryover._wardrobe == wardrobe,
 		"only selected stock sold and same wardrobe bound")
+	_check_patch_labels()
+	_check(app.shop_patch_buy_button.disabled, "selected sold stock disables purchase after refresh")
 	_check(app.shop_visit.get_state().trinkets == state.owned
 		and app.shop_purchases.get_state().trinkets == state.owned and app.run_trinkets == state.owned
 		and app.shop_visit.get_state().gold == state.gold and app.shop_purchases.get_state().gold == state.gold,
@@ -511,6 +549,7 @@ func _run() -> void:
 			_check(wardrobe != null and wardrobe.is_valid(), "real wardrobe exists")
 			if wardrobe == null:
 				break
+			_check_patch_labels()
 			for control in [app.shop_view, app.shop_patch_offers, app.shop_patch_heroes,
 				app.shop_patch_buy_button, app.shop_continue_button, app.shop_back_button]:
 				_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),

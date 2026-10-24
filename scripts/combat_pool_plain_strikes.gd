@@ -12,6 +12,7 @@ var _attacks := CombatStatusAttacks.new()
 var _pinned: CombatPinned = null
 var _patches: CombatPatchAttackRules = null
 var _head_patches: CombatM05HeadPatchRules = null
+var _mitt: CombatFrayfinderMitt = null
 var _binding_attempted := false
 var _binding_valid := false
 var _wardrobe: RunPatchWardrobe = null
@@ -68,15 +69,14 @@ func is_patch_binding_valid() -> bool:
 		and _torn.read_state() == _torn_snapshot
 
 
-func _init(pinned: Variant = null, patches: Variant = null) -> void:
-	if pinned is CombatPinned:
-		_pinned = pinned
-	elif pinned is CombatPatchAttackRules:
-		_patches = pinned
-	if patches is CombatPinned:
-		_pinned = patches
-	elif patches is CombatPatchAttackRules:
-		_patches = patches
+func _init(arg1: Variant = null, arg2: Variant = null, arg3: Variant = null) -> void:
+	for arg in [arg1, arg2, arg3]:
+		if arg is CombatPinned:
+			_pinned = arg
+		elif arg is CombatPatchAttackRules:
+			_patches = arg
+		elif arg is CombatFrayfinderMitt:
+			_mitt = arg
 
 
 func set_pinned(pinned: CombatPinned) -> void:
@@ -95,15 +95,40 @@ func get_patches() -> CombatPatchAttackRules:
 	return _patches
 
 
+func set_mitt(mitt: CombatFrayfinderMitt) -> void:
+	_mitt = mitt
+
+
+func get_mitt() -> CombatFrayfinderMitt:
+	return _mitt
+
+
+func bind_mitt(mitt: CombatFrayfinderMitt) -> void:
+	_mitt = mitt
+
+
 func get_head_patches() -> CombatM05HeadPatchRules:
 	return _head_patches
 
 
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: String, target_position: int, pinned: CombatPinned = null,
-		patches: CombatPatchAttackRules = null) -> Dictionary:
-	var active_pinned: CombatPinned = pinned if pinned != null else _pinned
-	var active_patches: CombatPatchAttackRules = patches if patches != null else _patches
+		card_id: String, target_position: int, pinned: Variant = null,
+		patches: Variant = null, mitt: Variant = null, quote: Dictionary = {}) -> Dictionary:
+	var active_pinned: CombatPinned = _pinned
+	var active_patches: CombatPatchAttackRules = _patches
+	var active_mitt: CombatFrayfinderMitt = _mitt
+	var active_quote: Dictionary = quote.duplicate(true)
+
+	for arg in [pinned, patches, mitt]:
+		if arg is CombatPinned:
+			active_pinned = arg
+		elif arg is CombatPatchAttackRules:
+			active_patches = arg
+		elif arg is CombatFrayfinderMitt:
+			active_mitt = arg
+		elif arg is Dictionary and active_quote.is_empty():
+			active_quote = (arg as Dictionary).duplicate(true)
+
 	if deck == null or party == null or enemies == null or not SUPPORTED_IDS.has(card_id):
 		return _failure()
 	if not is_patch_binding_valid():
@@ -140,7 +165,25 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var patch_damage: int = 0 if active_patches == null else active_patches.damage_bonus(owner_id)
 	var patch_first_status: Dictionary = {} if active_patches == null else active_patches.exposed_for_first_hit(owner_id)
 	var patch_exposed: int = int(patch_first_status.get("exposed", 0))
-	if damage > CombatStatuses.MAX_INT - 5 - patch_damage:
+
+	var mitt_bonus := 0
+	if active_mitt != null:
+		if not active_mitt.is_valid():
+			return _failure()
+		if active_quote.is_empty():
+			active_quote = active_mitt.quote_pool_hit(card_id, target_position)
+		if active_quote.get("bonus") == 2:
+			var authorized: int = active_mitt.authorize_pool_hit(active_quote, deck, party,
+				enemies, card_id, target_position)
+			if authorized != 2:
+				return _failure()
+			mitt_bonus = 2
+		elif active_quote.get("bonus") != 0:
+			return _failure()
+	elif not active_quote.is_empty() and active_quote.get("bonus", 0) != 0:
+		return _failure()
+
+	if damage > CombatStatuses.MAX_INT - 5 - patch_damage - mitt_bonus:
 		return _failure()
 	if warden_card and block_amount <= 0:
 		return _failure()
@@ -203,7 +246,8 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var pin_bonus: int = 0
 	if active_pinned != null:
 		pin_bonus = active_pinned.bonus_for_attack(enemies, target_position, owner_id)
-	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position, damage + pin_bonus + patch_damage,
+	var hit: Dictionary = _attacks.resolve_vs_enemy(enemies, target_position,
+		damage + pin_bonus + patch_damage + mitt_bonus,
 		owner.get("statuses", {}), target.get("statuses", {}))
 	var hit_statuses: Dictionary = {}
 	if hit.get("ok", false):
@@ -218,11 +262,14 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if warden_card:
 		party.gain_block(owner_position, final_block)
 		block_deltas[owner_position] = final_block
-	return {"ok": true, "hits": [{
+	var receipt := {"ok": true, "hits": [{
 		"position": target_position, "damage": hit["damage"],
 		"block_absorbed": hit["block_absorbed"], "hp_loss": hit["hp_loss"],
 		"statuses": hit_statuses,
 	}], "block_deltas": block_deltas}
+	if active_mitt != null and active_quote.has("seal"):
+		active_mitt.consume_confirmed_hit(active_quote, receipt)
+	return receipt
 
 
 func _failure() -> Dictionary:

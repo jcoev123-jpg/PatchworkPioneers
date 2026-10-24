@@ -136,7 +136,7 @@ func _run() -> void:
 		var next: Callable = app.rest_continue_button.pressed.get_connections()[0].callable
 		var source: Array = app.run_deck.duplicate()
 		var heroes: Array = app.run_heroes.duplicate(true)
-		_check(app.rest_hp_label.text.contains(" -> "), "eligible Upgrade visit initially shows pending Heal forecast")
+		_check_rest_forecast()
 		var ledger: Dictionary = app.party_carryover.read_state()
 		var indices: Array[int] = []
 		for index in range(source.size()):

@@ -36,10 +36,10 @@ const OWNER_NAME_FONT_SIZE := 14
 
 ## The card's own authored picture gets a dedicated, inert illustration window
 ## above the name; the name keeps a plain cream strip of its own instead of
-## cropping art behind its text. The window also takes a double share of the
-## card's leftover height (see _mount_card), so a real 4:3 picture is drawn much
-## larger than this readable minimum while every card in a row stays aligned.
-const CARD_ART_HEIGHT := 74
+## cropping art behind its text. The window takes the card's leftover height
+## (see _mount_card); its minimum leaves 96px for the uncropped picture and
+## 8px of sewn backing on each edge while every face stays aligned.
+const CARD_ART_HEIGHT := 112
 const CARD_ART_STRETCH_RATIO := 2.0
 const NAME_STRIP_HEIGHT := 32
 ## Card-local rhythm: every strip gives up only the pixels the taller picture
@@ -265,7 +265,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
 	name_label.theme_type_variation = &"PatchHeading"
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	name_label.size_flags_vertical = Control.SIZE_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_label.custom_minimum_size = Vector2(0, NAME_STRIP_HEIGHT)
 	var name_box := StyleBoxFlat.new()
@@ -1110,7 +1110,7 @@ class _CardIllustration extends Control:
 		var art_size: Vector2 = picture.get_size()
 		if art_size.x <= 0.0 or art_size.y <= 0.0:
 			return Rect2()
-		var area: Rect2 = window_rect().grow(-4.0)
+		var area: Rect2 = window_rect().grow(-8.0)
 		if mode == MODE_EMBLEM:
 			area = emblem_backing_rect().grow(-EMBLEM_INSET)
 		if area.size.x <= 0.0 or area.size.y <= 0.0:
@@ -1119,8 +1119,15 @@ class _CardIllustration extends Control:
 		var target: Vector2 = art_size * fit
 		return Rect2(area.get_center() - target * 0.5, target)
 
+	## Keep the sewn frame close to the contained image instead of painting an
+	## empty landscape slab across the card. Fallbacks retain their owner patch.
+	func sewn_backing_rect() -> Rect2:
+		if is_card_art():
+			return picture_rect().grow(8.0)
+		return window_rect()
+
 	func _draw() -> void:
-		var rect := window_rect()
+		var rect := sewn_backing_rect()
 		if is_emblem():
 			_draw_felt_fallback()
 			_draw_contained_picture()

@@ -29,6 +29,10 @@ const M05_COAT_PATCHES_PATH := "res://data/patches/m05_coat_patches.json"
 const KNOWN_ATTACK_POWERS := {
 	"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1},
 	"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1},
+	# The once-per-player-turn limit and the different living owner are part of
+	# this identity; the live receipt integration is owned by a queued lane.
+	"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block",
+		"amount": 2, "once_per_player_turn": true},
 }
 const KNOWN_COAT_POWERS := {
 	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6},
@@ -53,6 +57,9 @@ const KNOWN_M05_ARM_POWERS := {
 	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
 	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
 	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
+	# Threadguard Wrap is the +1 counterpart of Hemguard Cuff (+2); never the same
+	# amount and never a different slot.
+	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1},
 }
 ## Frayfinder is a conditional first-hit attack-damage bonus, never an
 ## unconditional +2 to every attack and never an Unravel gauge award. Every
@@ -76,6 +83,7 @@ const KNOWN_M05_COAT_POWERS := {
 const KNOWN_TEXTS := {
 	"button_eye": "first successful attack each combat also applies Exposed 1",
 	"pincushion_arm": "+1 damage on that wearer's damaging cards",
+	"switchback_button": "Once per player turn, when a different living hero's committed card or stitched half (ordered first then second) immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up.",
 	"quilted_coat": "+6 maximum HP",
 	"padded_vest": "+4 maximum HP",
 	"double_quilt_coat": "+8 maximum HP",
@@ -89,6 +97,7 @@ const KNOWN_TEXTS := {
 	"stern_seam_cap": "+1 Weak on eligible Weak cards owned by this living wearer only",
 	"reinforced_browband": "+2 Block on eligible Block cards owned by this living wearer only",
 	"hemguard_cuff": "+2 Block on eligible Block cards owned by this living wearer only",
+	"threadguard_wrap": "+1 Block on this living wearer's cards that already grant Block; never on a card without Block.",
 	"red_bobbin_cuff": "+1 Bleed on eligible Bleed cards owned by this living wearer only",
 	"loose_thread_glove": "+1 Unravel on eligible Unravel cards owned by this living wearer only",
 	"frayfinder_mitt": "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits.",
@@ -455,6 +464,14 @@ static func _collect(entries: Array, kind: String, slots: Dictionary) -> bool:
 			var amount: Variant = entry.get("amount")
 			if not _integral(amount) or int(amount) != int(expected["amount"]):
 				return false
+			# A once-per-player-turn limit is part of that power's identity: a
+			# missing, non-boolean or false flag would advertise another trigger.
+			if expected.has("once_per_player_turn"):
+				var once: Variant = entry.get("once_per_player_turn")
+				if typeof(once) != TYPE_BOOL:
+					return false
+				if once != expected["once_per_player_turn"]:
+					return false
 			slots[id] = expected["slot"]
 		elif kind == "coat":
 			if not KNOWN_COAT_POWERS.has(id):

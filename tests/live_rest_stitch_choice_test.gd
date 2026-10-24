@@ -128,6 +128,13 @@ func _run() -> void:
 		_check(first.item_count == app.run_deck.size() and second.item_count == first.item_count, "every original instance offered including duplicates")
 		for index in range(first.item_count):
 			_check(first.get_item_metadata(index) == index and second.get_item_metadata(index) == index, "selectors retain original indices")
+			var definition: Dictionary = catalog.get_definition(app.run_deck[index])
+			var suffix := "Deck #%d: %s - %s" % [index + 1, definition.owner, definition.display_name]
+			_check(first.get_item_text(index) == "First card: " + suffix
+				and second.get_item_text(index) == "Second card: " + suffix,
+				"mounted selectors visibly identify ordered halves with exact occurrence and owner")
+		_check(first.text.begins_with("First card: ") and second.text.begins_with("Second card: ")
+			and first.size.y == second.size.y, "closed selectors expose distinct roles without an extra row")
 		_reject_stitch(next, "premature Continue")
 		_reject_stitch(stitch, "same instance")
 		second.select(1)
@@ -176,6 +183,11 @@ func _run() -> void:
 		first.set_item_metadata(first_index, second_index)
 		_reject_stitch(stitch, "forged original-index list")
 		first.set_item_metadata(first_index, first_index)
+		for selector in [first, second]:
+			var original: String = selector.get_item_text(selector.selected)
+			selector.set_item_text(selector.selected, "forged card")
+			_reject_stitch(stitch, "forged visible selector text")
+			selector.set_item_text(selector.selected, original)
 		var source: Dictionary = app._stitch_snapshot()
 		var oracle := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
 		var expected := oracle.choose_stitch(first_index, second_index, source)
@@ -195,6 +207,9 @@ func _run() -> void:
 			_check(app.rest_stitch.is_consumed() and app._stitch_snapshot() == oracle.get_snapshot(), "exact oracle deck, ordered survivors, descriptor, cursor and three-scrap spend committed")
 			_check(app.run_scraps == 0 and app.run_stitch_descriptors.size() == 1 and app.run_next_stitch_id == 2, "one durable stitched instance allocated")
 			_check(not app.rest_continue_button.disabled and app.rest_heal_button.disabled and app.rest_upgrade_button.disabled, "exclusive Stitch enables Continue")
+			_check_rest_hp_only()
+			app._refresh_rest_hp()
+			_check_rest_hp_only()
 			_reject_stitch(stitch, "duplicate Stitch")
 			_reject_stitch(heal, "Heal after Stitch")
 			_reject_stitch(upgrade, "Upgrade after Stitch")

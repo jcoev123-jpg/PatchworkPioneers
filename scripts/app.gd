@@ -3417,9 +3417,9 @@ func _stitch_snapshot() -> Dictionary:
 	return RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id).get_snapshot()
 
 
-func _rest_stitch_text(index: int) -> String:
+func _rest_stitch_text(index: int, first: bool) -> String:
 	var definition := StarterCards.new().get_definition(_rest_deck[index])
-	return "Deck #%d: %s - %s" % [index + 1, definition.owner, definition.display_name]
+	return "%s card: Deck #%d: %s - %s" % ["First" if first else "Second", index + 1, definition.owner, definition.display_name]
 
 
 func _completed_rest_stitch() -> bool:
@@ -3452,7 +3452,7 @@ func _stitch_at_rest(visit: RunRestStitchCards, button, first, second) -> void:
 			return
 		for item in range(indices.size()):
 			if typeof(selector.get_item_metadata(item)) != TYPE_INT or selector.get_item_metadata(item) != indices[item] \
-				or selector.is_item_disabled(item) or selector.get_item_text(item) != _rest_stitch_text(indices[item]):
+				or selector.is_item_disabled(item) or selector.get_item_text(item) != _rest_stitch_text(indices[item], selector == first):
 				return
 	var current := _stitch_snapshot()
 	if current != _rest_stitch_source or visit.get_snapshot() != current or visit._source_snapshot != current:
@@ -3876,11 +3876,11 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	add_child(rest_view)
 	_mount_visit_backdrop("Rest", rest_view)
 	var heading := Label.new()
-	heading.text = "Rest - " + id
+	heading.text = "Rest camp"
+	heading.theme_type_variation = &"PatchHeading"
 	rest_view.add_child(heading)
 	rest_hp_label = Label.new()
 	rest_view.add_child(rest_hp_label)
-	_refresh_rest_hp()
 	var stitch_label := Label.new()
 	stitch_label.name = "RestStitchCost"
 	stitch_label.text = "Stitch two different owners: 3 scraps (owned: %d)" % run_scraps
@@ -3891,7 +3891,7 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		selector.custom_minimum_size = Vector2(480, 36)
 		for index in range(run_deck.size()):
 			if StarterCards.new().has_card(run_deck[index]):
-				selector.add_item(_rest_stitch_text(index))
+				selector.add_item(_rest_stitch_text(index, selector == rest_stitch_first))
 				selector.set_item_metadata(selector.item_count - 1, index)
 		rest_view.add_child(selector)
 	rest_heal_button = Button.new()
@@ -3953,6 +3953,7 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 			actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
 			actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
 	_rest_patch_context = _rest_patch_snapshot()
+	_refresh_rest_hp()
 	return true
 
 
@@ -3999,7 +4000,12 @@ func _refresh_rest_hp() -> void:
 	if rest_recovery != null and not rest_recovery.is_consumed() \
 		and rest_upgrade != null and not rest_upgrade.is_consumed() \
 		and rest_stitch != null and not rest_stitch.is_consumed() \
-		and _rest_committed_heroes.is_empty() and _rest_committed_deck.is_empty():
+		and _rest_committed_heroes.is_empty() and _rest_committed_deck.is_empty() \
+		and rest_recovery._valid and rest_recovery._roster == _rest_heroes \
+		and rest_upgrade._valid and rest_upgrade._source == _rest_deck and rest_upgrade._deck == _rest_deck \
+		and rest_stitch.is_valid() and _stitch_snapshot() == _rest_stitch_source \
+		and rest_stitch.get_snapshot() == _rest_stitch_source and rest_stitch._source_snapshot == _rest_stitch_source \
+		and run_deck == _rest_deck and _rest_upgrade_context():
 		preview = RunRestHealPreview.preview(run_heroes)
 	var lines: PackedStringArray = []
 	for index in range(run_heroes.size()):
@@ -4007,8 +4013,8 @@ func _refresh_rest_hp() -> void:
 		var line := "%s: HP %d/%d" % [hero.id.capitalize(), hero.hp, hero.max_hp]
 		if preview.get("ok") == true:
 			var forecast: Dictionary = preview.forecasts[index]
-			line += " -> %d/%d (+%d)%s" % [forecast.hp_after, preview.heroes[index].max_hp,
-				forecast.hp_delta, " Revive" if forecast.revived else ""]
+			line += " | %s: %d/%d (+%d HP)" % ["Revive" if forecast.revived else "Heal",
+				forecast.hp_after, forecast.max_hp, forecast.hp_delta]
 		lines.append(line)
 	rest_hp_label.text = "\n".join(lines)
 
@@ -4276,6 +4282,16 @@ func _sync_shop_wardrobe() -> void:
 	_shop_patch_context = _shop_patch_snapshot()
 
 
+func _shop_patch_offer_text(offer: Dictionary) -> String:
+	if _shop_wardrobe == null:
+		return ""
+	var slot: Variant = _shop_wardrobe.get_snapshot().definitions.get(offer.id)
+	if slot not in RunPatchWardrobe.SLOTS:
+		return ""
+	return "%s | %s | %d gold%s" % [String(offer.id).capitalize(), slot,
+		offer.price, " | SOLD" if offer.sold else ""]
+
+
 func _refresh_shop_patches() -> void:
 	if not is_instance_valid(shop_patch_offers):
 		return
@@ -4283,11 +4299,13 @@ func _refresh_shop_patches() -> void:
 	shop_patch_offers.clear()
 	var stock: Array = shop_purchases.get_stock().trinkets
 	for offer in stock:
-		shop_patch_offers.add_item(_shop_offer_text(offer))
+		var text := _shop_patch_offer_text(offer)
+		shop_patch_offers.add_item(text if not text.is_empty() else "Patch unavailable")
 		shop_patch_offers.set_item_metadata(shop_patch_offers.item_count - 1, offer.id)
 	shop_patch_offers.select(selected)
 	shop_patch_buy_button.disabled = _shop_wardrobe == null or selected >= stock.size() \
-		or stock[selected].sold or session_gold < stock[selected].price
+		or stock[selected].sold or session_gold < stock[selected].price \
+		or _shop_patch_offer_text(stock[selected]).is_empty()
 
 
 func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
@@ -4308,10 +4326,11 @@ func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -
 		return
 	var offer: Dictionary = stock[index]
 	var hero: Dictionary = run_heroes[hero_index]
-	if not shop_patch_offers.get_item_metadata(index) is String \
+	var text := _shop_patch_offer_text(offer)
+	if text.is_empty() or not shop_patch_offers.get_item_metadata(index) is String \
 		or not shop_patch_heroes.get_item_metadata(hero_index) is String \
 		or shop_patch_offers.get_item_metadata(index) != offer.id \
-		or shop_patch_offers.get_item_text(index) != _shop_offer_text(offer) \
+		or shop_patch_offers.get_item_text(index) != text \
 		or shop_patch_heroes.get_item_metadata(hero_index) != hero.id \
 		or shop_patch_heroes.get_item_text(hero_index) != hero.id.capitalize():
 		return

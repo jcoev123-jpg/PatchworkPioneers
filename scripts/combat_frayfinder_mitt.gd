@@ -7,6 +7,11 @@ const CATALOG := "res://data/patches/m05_attack_patches.json"
 const PATCH_ID := "frayfinder_mitt"
 const EFFECT := "first_single_target_half_unravel_attack_bonus"
 
+const POOL_PLAIN_IDS := [
+	"warden_brass_buckle", "warden_brass_buckle_plus",
+	"seamstress_thread_whip", "seamstress_thread_whip_plus",
+]
+
 var _deck: CombatDeck
 var _party: CombatParty
 var _enemies: CombatEnemies
@@ -157,6 +162,33 @@ func quote_stitched_half(run_cards: RunRestStitchCards, stitched_id: String,
 	return quote
 
 
+func quote_pool_hit(card_id: String, target_position: int, hit_number: int = 1,
+		cost_discount: int = 0) -> Dictionary:
+	if not _ready() or not _deck.hand.has(card_id):
+		return {"bonus": 0}
+	if card_id not in POOL_PLAIN_IDS:
+		return {"bonus": 0}
+	var warden_card: bool = card_id.begins_with("warden_")
+	var definition: Dictionary = (WardenPoolCards.new().get_definition(card_id)
+		if warden_card else SeamstressPoolCards.new().get_definition(card_id))
+	var owner_id := "warden" if warden_card else "seamstress"
+	if definition.get("id") != card_id or definition.get("owner") != owner_id \
+			or definition.get("target_kind") != "enemy_single":
+		return {"bonus": 0}
+	return _quote(definition, card_id, target_position, hit_number, "pool", 0, "",
+		cost_discount)
+
+
+func quote_pool_strike(card_id: String, target_position: int, hit_number: int = 1,
+		cost_discount: int = 0) -> Dictionary:
+	return quote_pool_hit(card_id, target_position, hit_number, cost_discount)
+
+
+func quote_plain_strike(card_id: String, target_position: int, hit_number: int = 1,
+		cost_discount: int = 0) -> Dictionary:
+	return quote_pool_hit(card_id, target_position, hit_number, cost_discount)
+
+
 ## A resolver may use +2 only when the complete sealed quote still matches the
 ## SAME live authorities immediately before its genuine commit. No caller can
 ## supply a free-form damage amount or reuse a quote from an older hand.
@@ -178,6 +210,28 @@ func authorize_stitched_half(quote: Dictionary, deck: CombatDeck,
 	if not quote.has("seal") or quote.get("seal") != _seal(quote):
 		return 0
 	return 2 if quote_stitched_half(run_cards, card_id, half_index, target) == quote else 0
+
+
+func authorize_pool_hit(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		cost_discount: int = 0) -> int:
+	if deck != _deck or party != _party or enemies != _enemies or quote.get("bonus") != 2:
+		return 0
+	if not quote.has("seal") or quote.get("seal") != _seal(quote):
+		return 0
+	return 2 if quote_pool_hit(card_id, target, 1, cost_discount) == quote else 0
+
+
+func authorize_pool_strike(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		cost_discount: int = 0) -> int:
+	return authorize_pool_hit(quote, deck, party, enemies, card_id, target, cost_discount)
+
+
+func authorize_plain_strike(quote: Dictionary, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		cost_discount: int = 0) -> int:
+	return authorize_pool_hit(quote, deck, party, enemies, card_id, target, cost_discount)
 
 
 func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
@@ -222,7 +276,7 @@ func consume_confirmed_hit(quote: Dictionary, receipt: Dictionary,
 			if second.get("target_kind") not in ["enemy_single", "enemy_all"]:
 				next_half = 2
 		_stitched_sequence[quote.card_id] = next_half
-	elif source != "starter":
+	elif source != "starter" and source != "pool":
 		return false
 	# A confirmed unpatched/low-gauge first stitched half advances the ordered
 	# half sequence but never spends a wearer's Frayfinder entitlement.
@@ -288,6 +342,8 @@ func _transition_matches(quote: Dictionary, receipt: Dictionary,
 	var after := _battle_snapshot()
 	if quote.source == "stitched":
 		return _verified_stitched_transition(quote, receipt, run_cards, before, after)
+	if quote.source == "pool":
+		return _verified_pool_transition(quote, receipt, before, after)
 	if quote.source != "starter":
 		return false
 	if before.get("party") != after.party or before.get("rng") != after.rng:
@@ -447,6 +503,103 @@ func _verified_stitched_transition(quote: Dictionary, receipt: Dictionary,
 								and rng.state == after.rng:
 							return true
 	return false
+
+
+func _verified_pool_transition(quote: Dictionary, receipt: Dictionary,
+		before: Dictionary, after: Dictionary) -> bool:
+	if quote.card_id not in POOL_PLAIN_IDS:
+		return false
+	if before.get("rng") != after.rng:
+		return false
+	if before.get("draw") != after.draw:
+		return false
+	if before.get("energy") != after.energy + quote.cost:
+		return false
+	var hand: Array = before.hand.duplicate()
+	if not hand.has(quote.card_id):
+		return false
+	hand.erase(quote.card_id)
+	if hand != after.hand:
+		return false
+	var discard: Array = before.discard.duplicate()
+	discard.append(quote.card_id)
+	if discard != after.discard:
+		return false
+	var hits: Variant = receipt.get("hits")
+	if typeof(hits) != TYPE_ARRAY or hits.size() != 1:
+		return false
+	if typeof(hits[0]) != TYPE_DICTIONARY or hits[0].get("position") != quote.target:
+		return false
+	var expected_damage := {}
+	for event in hits:
+		var position: Variant = event.get("position")
+		if typeof(position) != TYPE_INT or position < 1 or position > before.enemies.size():
+			return false
+		for field in ["hp_loss", "block_absorbed", "damage"]:
+			if typeof(event.get(field)) != TYPE_INT or event[field] < 0:
+				return false
+		if event.hp_loss + event.block_absorbed > event.damage:
+			return false
+		var tally: Dictionary = expected_damage.get(position, {"hp": 0, "block": 0})
+		tally.hp += event.hp_loss
+		tally.block += event.block_absorbed
+		expected_damage[position] = tally
+	for i in range(before.enemies.size()):
+		var earlier: Dictionary = before.enemies[i]
+		var later: Dictionary = after.enemies[i]
+		if earlier.position != later.position or earlier.id != later.id:
+			return false
+		var tally: Dictionary = expected_damage.get(i + 1, {"hp": 0, "block": 0})
+		if earlier.hp - later.hp != tally.hp or earlier.block - later.block != tally.block:
+			return false
+	var earlier_party: Array = before.party
+	var later_party: Array = after.party
+	if earlier_party.size() != later_party.size():
+		return false
+	var is_warden: bool = quote.card_id.begins_with("warden_")
+	var block_deltas: Variant = receipt.get("block_deltas")
+	if typeof(block_deltas) != TYPE_DICTIONARY:
+		return false
+	var owner_found := false
+	for i in range(earlier_party.size()):
+		var ep: Dictionary = earlier_party[i]
+		var lp: Dictionary = later_party[i]
+		if ep.get("id") != lp.get("id") or ep.get("position") != lp.get("position"):
+			return false
+		if ep.get("hp") != lp.get("hp") or ep.get("max_hp") != lp.get("max_hp") \
+				or ep.get("statuses", {}) != lp.get("statuses", {}):
+			return false
+		var ep_block: int = ep.get("block", 0)
+		var lp_block: int = lp.get("block", 0)
+		if ep.get("id") == quote.owner:
+			owner_found = true
+			if not is_warden:
+				if ep_block != lp_block:
+					return false
+			else:
+				var min_gain: int = 4 if quote.card_id == "warden_brass_buckle" else 6
+				var max_gain: int = min_gain
+				if _active.get("warden", []).has("hemguard_cuff"):
+					max_gain += 2
+				if _active.get("warden", []).has("reinforced_browband"):
+					max_gain += 2
+				if block_deltas.size() != 1 or not block_deltas.has(ep.get("position")):
+					return false
+				var gain: Variant = block_deltas[ep.get("position")]
+				if typeof(gain) != TYPE_INT or gain < min_gain or gain > max_gain:
+					return false
+				if (gain - min_gain) % 2 != 0:
+					return false
+				if lp_block != ep_block + gain:
+					return false
+		else:
+			if ep_block != lp_block:
+				return false
+	if not owner_found:
+		return false
+	if not is_warden and not block_deltas.is_empty():
+		return false
+	return true
 
 
 ## Authoritative descriptor restricts the target shape. Receipts only narrow

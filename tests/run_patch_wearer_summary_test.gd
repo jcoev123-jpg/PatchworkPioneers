@@ -33,6 +33,8 @@ const M05_FRAYFINDER_TEXT := "+2 attack damage once per player turn on this livi
 ## The old shipped readout advertised a gauge award. It must never come back.
 const M05_FRAYFINDER_FALSE_TEXT := "+2 Unravel"
 const BORROWED_BUTTON_TEXT := "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."
+const SWITCHBACK_TEXT := "Once per player turn, when a different living hero's committed card or stitched half (ordered first then second) immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up."
+const THREADGUARD_TEXT := "+1 Block on this living wearer's cards that already grant Block; never on a card without Block."
 
 
 func _badge_text() -> String:
@@ -59,6 +61,7 @@ func _initialize() -> void:
 	_test_new_coat_patches_lifecycle()
 	_test_m05_coat_patches_lifecycle()
 	_test_borrowed_button_readout()
+	_test_switchback_and_threadguard_readout()
 	_test_m05_head_and_arm_summary()
 	_test_m05_frayfinder_attack_damage_text()
 	_test_m05_frayfinder_rest_resew_text()
@@ -231,6 +234,9 @@ func _test_catalog_backed_definitions() -> void:
 	var expectations := {
 		"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1},
 		"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1},
+		"switchback_button": {"slot": "HEAD",
+			"effect": "different_owner_followup_block", "amount": 2,
+			"once_per_player_turn": true},
 		"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6},
 		"padded_vest": {"slot": "COAT", "max_hp_bonus": 4},
 		"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8},
@@ -248,6 +254,7 @@ func _test_catalog_backed_definitions() -> void:
 		"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
 		"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
 		"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
+		"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1},
 		"frayfinder_mitt": {"slot": "ARM",
 			"effect": "first_single_target_half_unravel_attack_bonus", "amount": 2,
 			"minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2,
@@ -807,7 +814,9 @@ func _test_sew_previews() -> void:
 		["red_bobbin_cuff", "ARM", M05_BLEED_TEXT],
 		["loose_thread_glove", "ARM", M05_UNRAVEL_TEXT],
 		["frayfinder_mitt", "ARM", M05_FRAYFINDER_TEXT],
-		["borrowed_button", "COAT", BORROWED_BUTTON_TEXT]
+		["borrowed_button", "COAT", BORROWED_BUTTON_TEXT],
+		["switchback_button", "HEAD", SWITCHBACK_TEXT],
+		["threadguard_wrap", "ARM", THREADGUARD_TEXT]
 	]
 	for record in known:
 		var fixture := _fixture()
@@ -1908,6 +1917,273 @@ func _test_borrowed_button_readout() -> void:
 		"every M05 COAT rejection leaves both genuine ledgers unchanged")
 
 
+## AC1/AC2/AC3: the authored Switchback Button HEAD trigger and Threadguard Wrap
+## ARM bonus are described through the catalog-authenticated summary and preview,
+## keep their identity on a torn wearer, follow a genuine re-sew and fail closed.
+## This presentation service only describes those rules; it never executes them.
+func _test_switchback_and_threadguard_readout() -> void:
+	var expected := {
+		"switchback_button": {"slot": "HEAD", "text": SWITCHBACK_TEXT},
+		"threadguard_wrap": {"slot": "ARM", "text": THREADGUARD_TEXT},
+	}
+	_check(SWITCHBACK_TEXT.contains("Once per player turn")
+		and SWITCHBACK_TEXT.contains("different living hero")
+		and SWITCHBACK_TEXT.contains("immediately precedes")
+		and SWITCHBACK_TEXT.contains("stitched half")
+		and SWITCHBACK_TEXT.contains("first then second")
+		and SWITCHBACK_TEXT.contains("2 Block")
+		and SWITCHBACK_TEXT.contains("same-owner repeats")
+		and SWITCHBACK_TEXT.contains("rejected plays"),
+		"Switchback names the exact different-owner per-turn trigger and award")
+	_check(not SWITCHBACK_TEXT.contains("Unravel") and not SWITCHBACK_TEXT.contains("damage"),
+		"Switchback is a Block trigger, never an Unravel or damage award")
+	_check(THREADGUARD_TEXT.contains("+1 Block")
+		and THREADGUARD_TEXT.contains("already grant Block")
+		and THREADGUARD_TEXT.contains("never on a card without Block")
+		and THREADGUARD_TEXT != M05_ARM_BLOCK_TEXT
+		and not THREADGUARD_TEXT.contains("+2 Block"),
+		"Threadguard is +1 on Block-granting cards and distinct from the +2 Hemguard")
+	_check(RunPatchWearerSummary.KNOWN_TEXTS.get("switchback_button") == SWITCHBACK_TEXT
+		and RunPatchWearerSummary.KNOWN_TEXTS.get("threadguard_wrap") == THREADGUARD_TEXT,
+		"one shared KNOWN_TEXTS string supplies the mounted readout and sew preview")
+
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	var torn := RunTornMending.new(f.heroes)
+	_check(torn.is_valid(), "the Switchback and Threadguard fixture has a real torn ledger")
+	var before_w := w.get_snapshot()
+	var before_t := torn.read_state()
+	var local := RandomNumberGenerator.new()
+	local.seed = 20201
+	var local_state: int = local.state
+	seed(31007)
+	var global_next: int = randi()
+	seed(31007)
+
+	# AC2: an authentic available but unworn copy previews the same exact text.
+	for id in expected:
+		var preview := RunPatchWearerSummary.preview_sew(w, before_t, id, "seamstress")
+		_check(preview.get("ok") == true and preview.get("patch_id") == id
+			and preview.get("slot") == expected[id]["slot"]
+			and preview.get("rules_text") == expected[id]["text"]
+			and preview.get("wearer") == "seamstress"
+			and preview.get("displaced_id") == ""
+			and preview.get("displaced_rules_text") == ""
+			and preview.get("scrap_delta") == 0,
+			id + " previews its exact catalog-authenticated text in its authored slot")
+	_check(w.get_snapshot() == before_w and torn.read_state() == before_t
+		and local.state == local_state and randi() == global_next,
+		"both previews change no ledger and consume no local or global RNG")
+
+	# AC1: sew each already-owned ID into its correct slot on the real wardrobe.
+	_check(w.sew("switchback_button", "seamstress", "HEAD",
+		"sb_readout_sew", w.get_snapshot()).ok,
+		"Switchback Button is sewn onto the living Seamstress HEAD")
+	_check(w.sew("threadguard_wrap", "warden", "ARM",
+		"tg_readout_sew", w.get_snapshot()).ok,
+		"Threadguard Wrap is sewn onto the living Warden ARM")
+	var sewn_w := w.get_snapshot()
+	var summary := RunPatchWearerSummary.summarize(w, before_t)
+	_check(summary.get("ok") == true, "both living wearers publish a summary")
+	if summary.get("ok") != true:
+		return
+	_check(summary.heroes[0]["slots"][1] == {"slot": "ARM",
+		"patch_id": "threadguard_wrap", "active": true, "rules_text": THREADGUARD_TEXT},
+		"the living Warden ARM publishes the exact Threadguard Wrap record")
+	_check(summary.heroes[1]["slots"][0] == {"slot": "HEAD",
+		"patch_id": "switchback_button", "active": true, "rules_text": SWITCHBACK_TEXT},
+		"the living Seamstress HEAD publishes the exact Switchback Button record")
+	for hero_index in [0, 1, 2]:
+		var hero_id: String = summary.heroes[hero_index]["id"]
+		_check(summary.heroes[hero_index]["position"] == hero_index + 1,
+			hero_id + " keeps its exact position after both sews")
+		for s in range(3):
+			var worn: Dictionary = summary.heroes[hero_index]["slots"][s]
+			if hero_index == 1 and s == 0:
+				continue
+			if hero_index == 0 and s == 1:
+				continue
+			_check(worn["patch_id"] == "" and worn["rules_text"] == ""
+				and worn["active"] == false,
+				hero_id + " " + worn["slot"] + " stays empty for the wearer-only powers")
+	_check(w.get_snapshot() == sewn_w and torn.read_state() == before_t,
+		"summarizing both wearers changes neither ledger")
+
+	# AC2: a genuine paid Rest re-sew makes the readout follow the real wearer.
+	_check(w.start_rest("sb_readout_rest", w.get_snapshot()).ok,
+		"a real Rest session opens for the Switchback re-sew")
+	var moved := w.re_sew("switchback_button", "seamstress", "tinker",
+		"sb_readout_rest", "sb_readout_move", w.get_snapshot())
+	_check(moved.get("ok") == true
+		and moved.get("receipt", {}).get("patch_id") == "switchback_button"
+		and moved.get("receipt", {}).get("from_hero") == "seamstress"
+		and moved.get("receipt", {}).get("to_hero") == "tinker"
+		and moved.get("receipt", {}).get("slot") == "HEAD"
+		and moved.get("receipt", {}).get("scrap_delta") == -1,
+		"the same-slot Rest move takes the paid one-scrap receipt")
+	_check(w.end_rest("sb_readout_rest", w.get_snapshot()).ok,
+		"the Rest session closes after the re-sew")
+	var moved_w := w.get_snapshot()
+	_check(moved_w["scraps"] == sewn_w["scraps"] - 1
+		and moved_w["worn"]["seamstress"]["HEAD"] == ""
+		and moved_w["worn"]["tinker"]["HEAD"] == "switchback_button",
+		"the ledger now owns exactly one Switchback wearer and one spent scrap")
+	var moved_summary := RunPatchWearerSummary.summarize(w, before_t)
+	_check(moved_summary.get("ok") == true
+		and moved_summary.heroes[1]["slots"][0] == {"slot": "HEAD", "patch_id": "",
+			"active": false, "rules_text": ""}
+		and moved_summary.heroes[2]["slots"][0] == {"slot": "HEAD",
+			"patch_id": "switchback_button", "active": true, "rules_text": SWITCHBACK_TEXT},
+		"the readout follows Switchback to its new living wearer")
+	_check(moved_summary.heroes[0]["slots"][1] == {"slot": "ARM",
+		"patch_id": "threadguard_wrap", "active": true, "rules_text": THREADGUARD_TEXT},
+		"the unrelated Threadguard wearer is untouched by the re-sew")
+
+	# AC2: an actually torn wearer stays visible but inactive.
+	var start: Array = before_t.heroes
+	var ending: Array = start.duplicate(true)
+	ending[2]["hp"] = 0
+	_check(torn.observe_battle_end("sb_readout_tear", start, ending).ok,
+		"the real ledger witnesses the Switchback wearer's tear")
+	var downed := torn.read_state()
+	var down_w := w.get_snapshot()
+	_check(w.refresh_run_context(downed.heroes, down_w.owned, down_w.scraps,
+		down_w.gold, down_w.cards, down_w),
+		"the wardrobe is refreshed to the genuine torn roster")
+	var down_summary := RunPatchWearerSummary.summarize(w, downed)
+	_check(down_summary.get("ok") == true
+		and down_summary.heroes[2]["slots"][0] == {"slot": "HEAD",
+			"patch_id": "switchback_button", "active": false, "rules_text": SWITCHBACK_TEXT},
+		"the torn Switchback wearer keeps its identity and text but is inactive")
+	_check(down_summary.heroes[0]["slots"][1] == {"slot": "ARM",
+		"patch_id": "threadguard_wrap", "active": true, "rules_text": THREADGUARD_TEXT},
+		"the living Threadguard wearer stays active through the tear")
+	var down_preview_w := w.get_snapshot()
+	_check(RunPatchWearerSummary.preview_sew(w, downed, "padded_vest", "tinker")
+		== {"ok": false},
+		"a torn wearer cannot preview a new sew")
+	_check(w.get_snapshot() == down_preview_w and torn.read_state() == downed,
+		"the refused preview changes neither ledger")
+
+	var mend := torn.choose_mend("sb_readout_mend", "sb_readout_mend_receipt",
+		"tinker", 3, 2, downed.heroes, true)
+	_check(mend.get("ok") == true, "a real mend restores the Switchback wearer")
+	var mended := torn.read_state()
+	var mended_w := w.get_snapshot()
+	_check(w.refresh_run_context(mended.heroes, mended_w.owned, mended_w.scraps,
+		mended_w.gold, mended_w.cards, mended_w),
+		"the wardrobe is refreshed to the mended roster")
+	var mended_summary := RunPatchWearerSummary.summarize(w, mended)
+	_check(mended_summary.get("ok") == true
+		and mended_summary.heroes[2]["slots"][0] == {"slot": "HEAD",
+			"patch_id": "switchback_button", "active": true, "rules_text": SWITCHBACK_TEXT},
+		"the mended wearer reactivates the same Switchback description")
+
+	# AC3: tampered, duplicated or missing catalogs never advertise either power.
+	var pf := _fixture(2)
+	if pf.is_empty():
+		return
+	var pw: RunPatchWardrobe = pf.wardrobe
+	var pcatalogs: Dictionary = pf.catalogs
+	var ptorn := RunTornMending.new(pf.heroes)
+	_check(ptorn.is_valid(), "the tampering fixture has a real torn ledger")
+	var ptorn_state := ptorn.read_state()
+	var guarded_w := pw.get_snapshot()
+	var rejected := {"ok": false, "heroes": []}
+	var reject_preview := {"ok": false}
+	for id in expected:
+		var guard := RunPatchWearerSummary.preview_sew(pw, ptorn_state, id, "tinker")
+		_check(guard.get("ok") == true and guard.get("rules_text") == expected[id]["text"]
+			and guard.get("slot") == expected[id]["slot"],
+			"the untouched catalog legitimately previews " + id)
+	var broken := [
+		["a switchback_button in the wrong slot", "attack", "switchback_button",
+			"slot", "ARM"],
+		["a switchback_button with the wrong effect", "attack", "switchback_button",
+			"effect", "different_owner_block"],
+		["a switchback_button with the wrong amount", "attack", "switchback_button",
+			"amount", 3],
+		["a switchback_button that is not once per player turn", "attack",
+			"switchback_button", "once_per_player_turn", false],
+		["a switchback_button limited once per combat", "attack", "switchback_button",
+			"once_per_player_turn", "combat"],
+		["a threadguard_wrap in the wrong slot", "m05_arm", "threadguard_wrap",
+			"slot", "HEAD"],
+		["a threadguard_wrap with the wrong effect", "m05_arm", "threadguard_wrap",
+			"effect", "card_bleed_bonus"],
+		["a threadguard_wrap with the wrong amount", "m05_arm", "threadguard_wrap",
+			"amount", 2],
+		["a threadguard_wrap with a zero amount", "m05_arm", "threadguard_wrap",
+			"amount", 0],
+	]
+	for entry in broken:
+		var patched := _with_field(pcatalogs, entry[1], entry[2], entry[3], entry[4])
+		_check(RunPatchWearerSummary.summarize(pw, ptorn_state, patched) == rejected,
+			str(entry[0]) + " is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(pw, ptorn_state,
+			entry[2], "tinker", patched) == reject_preview,
+			str(entry[0]) + " cannot be previewed")
+	var missing_fields := [
+		["attack", "switchback_button", "once_per_player_turn"],
+		["attack", "switchback_button", "amount"],
+		["attack", "switchback_button", "effect"],
+		["m05_arm", "threadguard_wrap", "amount"],
+		["m05_arm", "threadguard_wrap", "effect"],
+	]
+	for entry in missing_fields:
+		var patched := _without_field(pcatalogs, entry[0], entry[1], entry[2])
+		_check(RunPatchWearerSummary.summarize(pw, ptorn_state, patched) == rejected,
+			entry[1] + " without " + entry[2] + " is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(pw, ptorn_state,
+			entry[1], "tinker", patched) == reject_preview,
+			entry[1] + " without " + entry[2] + " cannot be previewed")
+	var missing_records := [
+		["attack", "switchback_button"],
+		["m05_arm", "threadguard_wrap"],
+	]
+	for pair in missing_records:
+		var patched := _without_record(pcatalogs, pair[0], pair[1])
+		_check(RunPatchWearerSummary.summarize(pw, ptorn_state, patched) == rejected,
+			"a missing " + pair[1] + " record is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(pw, ptorn_state,
+			pair[1], "tinker", patched) == reject_preview,
+			"a missing " + pair[1] + " record cannot be previewed")
+	var duplicated_records := [
+		["attack", "switchback_button"],
+		["m05_arm", "threadguard_wrap"],
+	]
+	for pair in duplicated_records:
+		var patched := _with_duplicate_record(pcatalogs, pair[0], pair[1])
+		_check(RunPatchWearerSummary.summarize(pw, ptorn_state, patched) == rejected,
+			"a duplicated " + pair[1] + " record is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(pw, ptorn_state,
+			pair[1], "tinker", patched) == reject_preview,
+			"a duplicated " + pair[1] + " record cannot be previewed")
+	_check(RunPatchWearerSummary.summarize(pw, ptorn_state,
+		{"m05_arm": "nonsense"}) == rejected,
+		"a malformed M05 ARM collection is rejected exactly")
+	_check(RunPatchWearerSummary.summarize(pw, ptorn_state,
+		{"attack": "nonsense"}) == rejected,
+		"a malformed attack collection is rejected exactly")
+	_check(pw.get_snapshot() == guarded_w and ptorn.read_state() == ptorn_state,
+		"every Switchback and Threadguard rejection leaves both ledgers unchanged")
+
+	# An unrecognized future slot-only record still gains no invented power.
+	var future_w := RunPatchWardrobe.new(pf.heroes, ["future_wearer_patch"],
+		[{"id": "future_wearer_patch", "slot": "ARM"}], 2, 170,
+		["warden_strike"], 8197)
+	_check(future_w.is_valid() and future_w.sew("future_wearer_patch", "tinker",
+		"ARM", "future_wearer_sew", future_w.get_snapshot()).ok,
+		"an unrecognized future ARM patch can live in the real ledger")
+	var future_summary := RunPatchWearerSummary.summarize(future_w, ptorn_state)
+	_check(future_summary.get("ok") == true
+		and future_summary.heroes[2]["slots"][1] == {"slot": "ARM",
+			"patch_id": "future_wearer_patch", "active": true, "rules_text": ""},
+		"an unrecognized future patch stays visible with empty text")
+
+
 func _m05_expectations() -> Dictionary:
 	return {
 		"bloodstitch_bonnet": {"slot": "HEAD", "text": M05_BLEED_TEXT},
@@ -1917,6 +2193,7 @@ func _m05_expectations() -> Dictionary:
 		"hemguard_cuff": {"slot": "ARM", "text": M05_ARM_BLOCK_TEXT},
 		"red_bobbin_cuff": {"slot": "ARM", "text": M05_BLEED_TEXT},
 		"loose_thread_glove": {"slot": "ARM", "text": M05_UNRAVEL_TEXT},
+		"threadguard_wrap": {"slot": "ARM", "text": THREADGUARD_TEXT},
 		"frayfinder_mitt": {"slot": "ARM", "text": M05_FRAYFINDER_TEXT},
 	}
 
