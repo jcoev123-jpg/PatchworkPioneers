@@ -6,6 +6,7 @@ const BOMB := "tinker_scrap_bomb"
 const SUPPORT_HALF := "warden_brace"
 const ENERGY_IDS := ["tinker_overclock", "tinker_overclock_plus",
 	"seamstress_tailors_trance", "seamstress_tailors_trance_plus"]
+const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 var failures: Array[String] = []
 var checks := 0
 
@@ -22,6 +23,9 @@ func _initialize() -> void:
 	_test_pool_energy_halves()
 	_test_pool_energy_failures()
 	_test_pool_energy_replay()
+	_test_spare_parts_halves()
+	_test_spare_parts_failures()
+	_test_spare_parts_replay()
 	_test_spool_rejections()
 	_test_hemguard_cuff()
 	_test_cuff_rejections()
@@ -857,6 +861,272 @@ func _test_pool_energy_replay() -> void:
 				_check(_pool_energy_sequence(id, reverse, seed_value)
 					== _pool_energy_sequence(id, reverse, seed_value),
 					id + " order " + str(reverse) + ": same-seed Rest-to-combat replay")
+
+
+## Both printed Spare Parts effects in one atomic half: the authored Block goes
+## to the living Tinker in her CURRENT slot and exactly one card is drawn with
+## the single seeded RNG. Base/+ are genuinely Rest-created, in either order.
+func _test_spare_parts_halves() -> void:
+	for card_id in SPARE_PARTS_IDS:
+		var printed_block: int = 4 if card_id.ends_with("_plus") else 3
+		var authored: Dictionary = TinkerPoolCards.new().get_definition(card_id)
+		_check(not authored.is_empty()
+			and authored == RunRestStitchCards.resolve_card_definition(card_id),
+			card_id + ": authentic authored Spare Parts half")
+		_check(authored.get("effects") == {"block": printed_block, "draw": 1},
+			card_id + ": printed Block and one draw")
+		for reverse in [false, true]:
+			var c := _rest_fixture(card_id if not reverse else "warden_shield_bash",
+				"warden_shield_bash" if not reverse else card_id, 8301)
+			c.deck.draw_pile.assign(["warden_brace"])
+			var tpos := _position_of(c.party, "tinker")
+			_check(tpos == 3 and _position_of(c.party, "warden") == 1,
+				card_id + ": authored party positions")
+			var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+			_check(cost == 3 and c.deck.energy == 3 and c.deck.hand == [c.id],
+				card_id + ": capped cost three, held composite and three energy")
+			var before := _snapshot(c)
+			var oracle := _oracle_draw(before[0], before[2], 1, before[5])
+			_check(oracle["drawn"] == ["warden_brace"],
+				card_id + ": known draw-pile card is the drawn one")
+			var expected := before.duplicate(true)
+			expected[0] = oracle["draw"]
+			expected[1] = oracle["drawn"]
+			expected[2] = oracle["discard"].duplicate()
+			expected[2].append(c.id)
+			expected[3] = 0
+			expected[5] = oracle["rng"]
+			expected[6][tpos - 1]["block"] = printed_block
+			expected[7][0].hp -= 8
+			expected[7][0]["statuses"] = {"weak": 1}
+			var label: String = card_id + (" second" if reverse else " first")
+			var result := _play(c, 1 if reverse else 0, 0 if reverse else 1)
+			_check(result.ok and result.halves.size() == 2, label + ": both halves commit")
+			if not result.ok:
+				continue
+			var spare_half := {"ok": true, "effect": "block_and_draw",
+				"amount": printed_block, "draw": 1, "drawn": 1}
+			var bash_half := {"ok": true, "hits": [_expected_hit(1, 8, 0, {"weak": 1})]}
+			_check(result.halves == ([bash_half, spare_half] if reverse
+				else [spare_half, bash_half]),
+				label + ": exact ordered Block, draw and Shield Bash outcomes")
+			_check(c.party.get_hero(tpos).block == printed_block
+				and c.deck.hand == ["warden_brace"],
+				label + ": exact Tinker Block and one-card hand delta")
+			_check(c.deck.energy == 0 and c.deck.discard_pile == [c.id],
+				label + ": one capped charge and exactly one discard")
+			_check(_snapshot(c) == expected,
+				label + ": exact party, piles, enemy, latches and single seeded RNG")
+
+		# An empty draw pile reshuffles the real discard pile with the same
+		# injected generator, then only the composite itself is discarded.
+		for reverse in [false, true]:
+			var refill := _rest_fixture(card_id if not reverse else "warden_brace",
+				"warden_brace" if not reverse else card_id, 9741)
+			refill.deck.discard_pile.assign(["warden_strike", PRICK, "tinker_tune_up"])
+			var rtpos := _position_of(refill.party, "tinker")
+			var rcost: int = int(refill.rest.get_snapshot()["descriptors"][refill.id]["cost"])
+			_check(rcost == 2, card_id + ": Brace composite costs two")
+			var before_refill := _snapshot(refill)
+			var oracle_refill := _oracle_draw(before_refill[0], before_refill[2], 1,
+				before_refill[5])
+			_check(oracle_refill["drawn"].size() == 1 and oracle_refill["rng"] != before_refill[5],
+				card_id + ": seeded refill really shuffled one real card")
+			var expected_refill := before_refill.duplicate(true)
+			expected_refill[0] = oracle_refill["draw"]
+			expected_refill[1] = oracle_refill["drawn"]
+			expected_refill[2] = oracle_refill["discard"].duplicate()
+			expected_refill[2].append(refill.id)
+			expected_refill[3] = 1
+			expected_refill[5] = oracle_refill["rng"]
+			expected_refill[6][rtpos - 1]["block"] = printed_block
+			expected_refill[6][0]["block"] = 7
+			var rlabel: String = card_id + (" after Brace" if reverse else " before Brace")
+			var refill_result := _play(refill, 0, 0)
+			_check(refill_result.ok and refill_result.halves.size() == 2,
+				rlabel + ": commits from an exhausted draw pile")
+			_check(refill.party.get_hero(rtpos).block == printed_block
+				and refill.party.get_hero(1).block == 7
+				and refill.deck.hand == oracle_refill["drawn"]
+				and refill.deck.discard_pile == [refill.id] and refill.deck.energy == 1,
+				rlabel + ": exact refilled hand, both Blocks, one charge and one discard")
+			_check(_snapshot(refill) == expected_refill,
+				rlabel + ": exact seeded refill state and hand delta")
+
+		# Tinker's CURRENT slot receives the Block, not a fixed roster seat.
+		var shifted := _rest_fixture(card_id, "warden_brace", 8304)
+		var heroes: Array = shifted.party.get_heroes()
+		shifted.party = CombatParty.new([heroes[0], heroes[2], heroes[1]])
+		_check(_position_of(shifted.party, "tinker") == 2,
+			card_id + ": Tinker genuinely moved to the middle slot")
+		shifted.deck.draw_pile.assign(["warden_strike"])
+		var before_shift := _snapshot(shifted)
+		var oracle_shift := _oracle_draw(before_shift[0], before_shift[2], 1, before_shift[5])
+		var expected_shift := before_shift.duplicate(true)
+		expected_shift[0] = oracle_shift["draw"]
+		expected_shift[1] = oracle_shift["drawn"]
+		expected_shift[2] = oracle_shift["discard"].duplicate()
+		expected_shift[2].append(shifted.id)
+		expected_shift[3] = 1
+		expected_shift[5] = oracle_shift["rng"]
+		expected_shift[6][1]["block"] = printed_block
+		expected_shift[6][0]["block"] = 7
+		var shift_result := _play(shifted, 0, 0)
+		_check(shift_result.ok and shifted.party.get_hero(2).block == printed_block
+			and shifted.party.get_hero(3).block == 0,
+			card_id + ": Block lands on Tinker's current middle slot only")
+		_check(_snapshot(shifted) == expected_shift,
+			card_id + ": exact middle-slot Block, drawn card and single discard")
+
+		# Only Tinker's OWN sewn ARM Block patch augments her own half.
+		for reverse in [false, true]:
+			var patched := _rest_fixture(card_id if not reverse else "warden_brace",
+				"warden_brace" if not reverse else card_id, 8303)
+			_bind_cuff(patched, "wrong")  # genuine hemguard_cuff sewn on Tinker
+			patched.deck.draw_pile.assign(["warden_strike"])
+			var ptpos := _position_of(patched.party, "tinker")
+			var before_patch := _snapshot(patched)
+			var oracle_patch := _oracle_draw(before_patch[0], before_patch[2], 1,
+				before_patch[5])
+			var expected_patch := before_patch.duplicate(true)
+			expected_patch[0] = oracle_patch["draw"]
+			expected_patch[1] = oracle_patch["drawn"]
+			expected_patch[2] = oracle_patch["discard"].duplicate()
+			expected_patch[2].append(patched.id)
+			expected_patch[3] = 1
+			expected_patch[6][ptpos - 1]["block"] = printed_block + 2
+			expected_patch[6][0]["block"] = 7
+			var plabel: String = card_id + (" patched after Brace" if reverse
+				else " patched before Brace")
+			var patch_result := _play(patched, 0, 0)
+			_check(patch_result.ok and patched.party.get_hero(ptpos).block == printed_block + 2
+				and patched.party.get_hero(1).block == 7,
+				plabel + ": Tinker's own Cuff adds +2 to her half only")
+			_check(_snapshot(patched) == expected_patch,
+				plabel + ": exact patch-augmented Block, drawn card and unchanged RNG")
+
+
+## No rejection may publish Block, a draw, a discard, energy or RNG movement.
+func _test_spare_parts_failures() -> void:
+	var spare := SPARE_PARTS_IDS[0]
+	var c := _fixture(spare, "warden_brace")
+	_reject(c, 1, 0, "Spare Parts self half refuses a selected target")
+	_reject(c, 0, 1, "Brace after staged Spare Parts refuses a selected target")
+	c = _fixture(PRICK, spare)
+	_reject(c, 1, 2, "Spare Parts second half refuses a selected target")
+
+	# A failed later attack half rolls back the staged Block AND a real seeded
+	# refill draw; the retry then commits both printed effects exactly once.
+	c = _rest_fixture(spare, PRICK, 6101)
+	c.deck.discard_pile.assign(["warden_strike", "seamstress_mend", "tinker_tune_up"])
+	var tpos := _position_of(c.party, "tinker")
+	var cost: int = int(c.rest.get_snapshot()["descriptors"][c.id]["cost"])
+	_check(cost == 2 and c.deck.energy == 3, "Spare Parts/Prick composite costs two")
+	var before := _snapshot(c)
+	_reject(c, 0, 0, "missing second Prick target rolls back staged Block and seeded refill")
+	var oracle := _oracle_draw(before[0], before[2], 1, before[5])
+	var expected := before.duplicate(true)
+	expected[0] = oracle["draw"]
+	expected[1] = oracle["drawn"]
+	expected[2] = oracle["discard"].duplicate()
+	expected[2].append(c.id)
+	expected[3] = 1
+	expected[5] = oracle["rng"]
+	expected[6][tpos - 1]["block"] = 3
+	expected[7][1].hp -= 3
+	expected[7][1]["statuses"] = {"bleed": 3}
+	var retry := _play(c, 0, 2)
+	_check(retry.ok and retry.halves == [
+		{"ok": true, "effect": "block_and_draw", "amount": 3, "draw": 1, "drawn": 1},
+		{"ok": true, "hits": [_expected_hit(2, 3, 0, {"bleed": 3})]}],
+		"retry commits both printed Spare Parts effects and Prick once")
+	_check(_snapshot(c) == expected,
+		"retry exact seeded refill, Block, damage, one charge and one discard")
+
+	# A failing SECOND Spare Parts half rolls back the first Brace Block.
+	c = _fixture("warden_brace", spare)
+	c.party.gain_block(_position_of(c.party, "tinker"), CombatParty.MAX_INT)
+	_check(c.party.get_hero(_position_of(c.party, "tinker")).block == CombatParty.MAX_INT,
+		"genuine Tinker Block saturation behind Brace")
+	_reject(c, 0, 0, "second Spare Parts Block overflow rolls back first Brace")
+
+	c = _fixture(spare, "warden_shield_bash")
+	_check(c.deck.try_spend_energy(1) and c.deck.energy == 2,
+		"one energy already paid before the cost-three composite")
+	_reject(c, 0, 1, "cost-three Spare Parts composite needs three initial energy")
+
+	c = _fixture(spare, "warden_brace")
+	tpos = _position_of(c.party, "tinker")
+	_check(c.party.apply_damage(tpos, c.party.get_hero(tpos).hp) and c.party.is_downed(tpos),
+		"real downed Tinker")
+	_reject(c, 0, 0, "downed Spare Parts owner")
+
+	c = _fixture(spare, "warden_brace")
+	var heroes: Array = c.party.get_heroes()
+	c.party = CombatParty.new([heroes[2], heroes[1], heroes[0]])
+	_check(_position_of(c.party, "tinker") == 1,
+		"Tinker genuinely moved to an illegal front FROM slot")
+	_reject(c, 0, 0, "Spare Parts owner at an illegal front FROM")
+
+	c = _fixture(spare, "warden_brace")
+	var forged: Dictionary = c.rest.get_snapshot()
+	forged.descriptors[c.id].first_half.effects.block = 99
+	c.rest = RunRestStitchCards.new(forged.deck, forged.descriptors, 0, 2)
+	_check(not c.rest.is_valid(), "preinflated Spare Parts descriptor is truly invalid")
+	_reject(c, 0, 0, "forged Spare Parts descriptor cannot grant 99 Block")
+
+	# Even an in-memory half record that disagrees with the real catalog (the
+	# exact shape the old generic fallback trusted) must fail closed.
+	c = _fixture(spare, "warden_brace")
+	_check(c.rest._descriptors[c.id]["first_half"]["effects"]["block"] == 3,
+		"live Rest descriptor really carries printed Block three")
+	c.rest._descriptors[c.id]["first_half"]["effects"]["block"] = 99
+	_reject(c, 0, 0, "inflated live Spare Parts half cannot publish forged Block")
+
+	c = _fixture(spare, "warden_brace")
+	c.party.gain_block(_position_of(c.party, "tinker"), CombatParty.MAX_INT)
+	_check(c.party.get_hero(_position_of(c.party, "tinker")).block == CombatParty.MAX_INT,
+		"genuine Tinker Block saturation")
+	_reject(c, 0, 0, "Spare Parts Block overflow rejects before any draw")
+
+	# The battle party can live while the run ledger marks Tinker torn.
+	c = _rest_fixture(spare, "warden_brace", 6103)
+	var slots: Array = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatShopPatchRules.SLOTS_CATALOG))
+	c.wardrobe = RunPatchWardrobe.new(c.party.get_heroes(), [], slots, 5)
+	c.torn = RunTornMending.new(c.party.get_heroes())
+	var start: Array = c.torn.read_state().heroes
+	var finish: Array = start.duplicate(true)
+	finish[_position_of(c.party, "tinker") - 1].hp = 0
+	_check(c.torn.observe_battle_end("spare_parts_tear", start, finish).ok,
+		"run ledger records a genuine Tinker tear")
+	var state: Dictionary = c.wardrobe.get_snapshot()
+	_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, state.owned,
+		state.scraps, state.gold, state.cards, state),
+		"wardrobe refreshes the torn run heroes")
+	_check(c.party.get_hero(3).hp > 0 and c.torn.read_state().heroes[2].hp == 0,
+		"battle Tinker still lives while the run ledger marks her torn")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"composite authenticated against the torn run ledger")
+	_reject(c, 0, 0, "run-torn Tinker cannot earn stitched Spare Parts")
+
+
+func _spare_parts_sequence(card_id: String, reverse: bool, seed_value: int) -> Array:
+	var c := _rest_fixture(card_id if not reverse else "warden_shield_bash",
+		"warden_shield_bash" if not reverse else card_id, seed_value)
+	c.deck.draw_pile.assign(["warden_brace"])
+	var before := _snapshot(c)
+	var result := _play(c, 1 if reverse else 0, 0 if reverse else 1)
+	return [before, result, _snapshot(c)]
+
+
+func _test_spare_parts_replay() -> void:
+	for seed_value in [0, 83, 9741]:
+		for card_id in SPARE_PARTS_IDS:
+			for reverse in [false, true]:
+				_check(_spare_parts_sequence(card_id, reverse, seed_value)
+					== _spare_parts_sequence(card_id, reverse, seed_value),
+					card_id + " order " + str(reverse) + ": same-seed Spare Parts replay")
 
 
 func _bind_cuff(c: Dictionary, mode: String = "sewn_warden") -> void:
