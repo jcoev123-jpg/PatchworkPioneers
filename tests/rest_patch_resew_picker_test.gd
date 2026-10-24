@@ -81,8 +81,17 @@ func _chip_face_checks() -> void:
 		"chip typography fixture really mounts five sources and two recipients")
 	for chip in picker._source_buttons + picker._destination_buttons:
 		_check(_face_path(chip) == BODY_FACE_PATH
-			and chip.get_theme_font_size("font_size") == 13,
-			"sewn option chip text stays in the readable Patrick Hand body face")
+			and chip.get_theme_font_size("font_size") >= 18,
+			"sewn option chip text stays in the readable Patrick Hand body face at >=18 px")
+		_check(chip.focus_mode == Control.FOCUS_ALL,
+			"sewn option chip supports keyboard focus")
+		for spec in [["normal", "font_color"], ["hover", "font_hover_color"],
+				["pressed", "font_pressed_color"], ["hover_pressed", "font_hover_pressed_color"],
+				["focus", "font_focus_color"], ["disabled", "font_disabled_color"]]:
+			var surface := chip.get_theme_stylebox(spec[0]) as StyleBoxFlat
+			var ink: Color = chip.get_theme_color(spec[1])
+			_check(surface != null and _contrast(ink, surface.bg_color) >= 3.0,
+				"chip stays legible in its %s state" % spec[0])
 
 
 ## AC1/AC2: the mounted picker's own named headings and Confirm button inherit
@@ -114,24 +123,28 @@ func _typography_checks() -> void:
 	var panel := picker.find_child("StitchedPaperRestPanel", true, false) as Control
 	_check(panel != null and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect()),
 		"stitched Rest panel stays inside the 1280x720 screen")
-	for spec in [[banner, "REST  /  RE-SEW PATCHES", 26],
-			[source, "WORN PATCH  /  SOURCE HERO", 18],
-			[destination, "RECIPIENT HERO  /  MATCHING SLOT", 18]]:
+	for spec in [[banner, "REST  /  RE-SEW PATCHES", 40],
+			[source, "WORN PATCH  /  SOURCE HERO", 22],
+			[destination, "RECIPIENT HERO  /  MATCHING SLOT", 22]]:
 		var label := spec[0] as Label
 		if label == null:
 			_check(false, "named picker heading exists: " + str(spec[1]))
 			continue
 		_check(label.text == spec[1] and label.theme_type_variation == "PatchHeading"
 			and _face_path(label) == heading_font.resource_path
-			and label.get_theme_font_size("font_size") == spec[2]
+			and label.get_theme_font_size("font_size") >= spec[2]
 			and (panel == null or panel.get_global_rect().encloses(label.get_global_rect())),
 			"named picker heading inherits the master PatchHeading Londrina face: " + str(spec[1]))
 	for body in [picker.find_child("ResewInstruction", true, false), picker.scraps_label,
 			picker.preview_label, picker.feedback_label]:
 		var label := body as Label
 		_check(label != null and label.theme_type_variation == ""
-			and _face_path(label) == master.default_font.resource_path,
-			"ordinary picker instruction, scraps, preview and feedback keep Patrick Hand")
+			and _face_path(label) == master.default_font.resource_path
+			and label.get_theme_font_size("font_size") >= 18,
+			"ordinary picker instruction, scraps, preview and feedback keep Patrick Hand at >=18 px")
+	var paper_style := panel.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(paper_style != null and _contrast(picker.preview_label.get_theme_color("font_color"), paper_style.bg_color) >= 3.0,
+		"body text has high contrast on sewn panel background")
 	_check(picker.confirm_button.theme_type_variation == "PatchHeadingButton"
 		and _face_path(picker.confirm_button) == button_font.resource_path
 		and picker.confirm_button.is_visible_in_tree()
@@ -283,6 +296,13 @@ func _pick(patch_id: String, destination: String) -> void:
 	_check(picker.source_selector.selected == source_index
 		and picker._source_buttons[source_index].button_pressed,
 		"source tag identity and selected felt style match " + patch_id)
+	for spec in [["normal", "font_color"], ["hover", "font_hover_color"],
+			["pressed", "font_pressed_color"], ["hover_pressed", "font_hover_pressed_color"],
+			["focus", "font_focus_color"], ["disabled", "font_disabled_color"]]:
+		var surface := picker._source_buttons[source_index].get_theme_stylebox(spec[0]) as StyleBoxFlat
+		var ink: Color = picker._source_buttons[source_index].get_theme_color(spec[1])
+		_check(surface != null and _contrast(ink, surface.bg_color) >= 3.0,
+			"selected source chip stays legible in its %s state" % spec[0])
 	var to_index := -1
 	for j in range(picker._destinations.size()):
 		if picker._destinations[j]["to_hero"] == destination:
@@ -329,6 +349,9 @@ func _assert_changed_slot_preview(f: Dictionary, kind: String, slot: String,
 	var preview := picker.preview_label.text
 	var lines := preview.split(String.chr(10))
 	_check(lines.size() == 3, "preview has just an action and two changed-slot lines")
+	_check(picker.preview_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
+		and picker.preview_label.tooltip_text == preview,
+		"preview wraps long forecast text and provides full hover/focus tooltip")
 	if lines.size() != 3:
 		return
 	var slot_name := slot.to_lower().capitalize() + " patch"

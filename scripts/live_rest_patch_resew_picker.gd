@@ -86,7 +86,7 @@ func present(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		_configure_tag(button, "Source_%d" % i, "%s / %s
 %s%s" % [
 			_nice(option["from_hero"]), _slot_label(option["slot"]), _nice(option["patch_id"]),
-			" • torn/inactive" if not option["source_active"] else ""], 250)
+			" • torn/inactive" if not option["source_active"] else ""], 260)
 		button.pressed.connect(_choose_source.bind(i))
 		_source_buttons.append(button)
 	if _sources.is_empty():
@@ -138,7 +138,7 @@ func _refresh_destinations(select_first: bool = false) -> void:
 		_configure_tag(button, "Destination_%d" % i,
 			"%s / %s
 %s%s" % [_nice(option["to_hero"]), _action_label(option["kind"]), detail,
-			" • torn/inactive" if not option["destination_active"] else ""], 345)
+			" • torn/inactive" if not option["destination_active"] else ""], 360)
 		button.pressed.connect(_choose_destination.bind(i))
 		_destination_buttons.append(button)
 	if select_first and not _destinations.is_empty():
@@ -190,6 +190,7 @@ func _update_preview() -> void:
 	if option.is_empty():
 		preview_label.text = "Select a destination tag to see its 1-scrap re-sew forecast." \
 			if not _destinations.is_empty() else "No eligible re-sew choices"
+		preview_label.tooltip_text = preview_label.text
 		confirm_button.disabled = true
 		return
 	var estimate := RunRestPatchResewOptions.forecast(
@@ -212,6 +213,7 @@ func _update_preview() -> void:
 		_slot_change(estimate["source"], estimate["slot"]),
 		_slot_change(estimate["destination"], estimate["slot"])
 	])
+	preview_label.tooltip_text = preview_label.text
 	confirm_button.disabled = _pending
 
 
@@ -255,7 +257,8 @@ func _reset_tags(container: HFlowContainer, buttons: Array[Button], first: SewnC
 func _configure_tag(button: SewnChip, node_name: String, caption: String, width: float) -> void:
 	button.name = node_name
 	button.text = caption
-	button.custom_minimum_size = Vector2(width, 48)
+	button.custom_minimum_size = Vector2(width, 56)
+	button.tooltip_text = caption
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	button.focus_mode = Control.FOCUS_ALL
 	button.toggle_mode = true
@@ -297,6 +300,7 @@ func _clear(message: String) -> void:
 	_reset_tags(destination_tags, _destination_buttons, destination_selector)
 	confirm_button.disabled = true
 	preview_label.text = "No eligible re-sew choices"
+	preview_label.tooltip_text = ""
 	feedback_label.text = message
 	scraps_label.text = "Scraps: --"
 
@@ -328,20 +332,20 @@ func _build() -> void:
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 6)
 	padding.add_child(body)
-	banner_label = _heading("REST  /  RE-SEW PATCHES", 26, "ResewBanner")
+	banner_label = _heading("REST  /  RE-SEW PATCHES", 40, "ResewBanner")
 	body.add_child(banner_label)
 	var instruction := _label(
-		"1 scrap per re-sew • Heal / Upgrade / Stitch remains available.", 13)
+		"1 scrap per re-sew • Heal / Upgrade / Stitch remains available.", 18)
 	instruction.name = "ResewInstruction"
 	body.add_child(instruction)
-	scraps_label = _label("Scraps: --", 17)
+	scraps_label = _label("Scraps: --", 18)
 	scraps_label.name = "ResewScraps"
 	body.add_child(scraps_label)
-	source_heading = _heading("WORN PATCH  /  SOURCE HERO", 18, "ResewSourceHeading")
+	source_heading = _heading("WORN PATCH  /  SOURCE HERO", 22, "ResewSourceHeading")
 	body.add_child(source_heading)
 	source_scroll = ScrollContainer.new()
 	source_scroll.name = "SewnSourceScroll"
-	source_scroll.custom_minimum_size = Vector2(0, 111)
+	source_scroll.custom_minimum_size = Vector2(0, 126)
 	source_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	source_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(source_scroll)
@@ -353,11 +357,11 @@ func _build() -> void:
 	source_scroll.add_child(source_tags)
 	source_selector = SewnChip.new()
 	source_tags.add_child(source_selector)
-	destination_heading = _heading("RECIPIENT HERO  /  MATCHING SLOT", 18, "ResewDestinationHeading")
+	destination_heading = _heading("RECIPIENT HERO  /  MATCHING SLOT", 22, "ResewDestinationHeading")
 	body.add_child(destination_heading)
 	destination_scroll = ScrollContainer.new()
 	destination_scroll.name = "SewnDestinationScroll"
-	destination_scroll.custom_minimum_size = Vector2(0, 61)
+	destination_scroll.custom_minimum_size = Vector2(0, 64)
 	destination_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	destination_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(destination_scroll)
@@ -369,9 +373,9 @@ func _build() -> void:
 	destination_scroll.add_child(destination_tags)
 	destination_selector = SewnChip.new()
 	destination_tags.add_child(destination_selector)
-	preview_label = _label("No eligible re-sew choices", 12)
+	preview_label = _label("No eligible re-sew choices", 18)
 	preview_label.name = "ResewPreview"
-	preview_label.custom_minimum_size = Vector2(0, 175)
+	preview_label.custom_minimum_size = Vector2(0, 140)
 	preview_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(preview_label)
 	confirm_button = Button.new()
@@ -383,7 +387,7 @@ func _build() -> void:
 	_style_button(confirm_button)
 	confirm_button.pressed.connect(_request_selected)
 	body.add_child(confirm_button)
-	feedback_label = _label("", 12)
+	feedback_label = _label("", 18)
 	feedback_label.name = "ResewFeedback"
 	body.add_child(feedback_label)
 
@@ -410,12 +414,12 @@ func _style_chip(button: Button, selected: bool) -> void:
 	var base := Color("#d9c49c") if selected else Color("#46565a")
 	var ink := SLATE if selected else CREAM
 	button.add_theme_color_override("font_color", ink)
-	button.add_theme_color_override("font_hover_color", ink)
+	button.add_theme_color_override("font_hover_color", SLATE)
 	button.add_theme_color_override("font_pressed_color", SLATE)
 	button.add_theme_color_override("font_hover_pressed_color", SLATE)
 	button.add_theme_color_override("font_focus_color", ink)
 	button.add_theme_color_override("font_disabled_color", Color("#a7aba8"))
-	button.add_theme_font_size_override("font_size", 13)
+	button.add_theme_font_size_override("font_size", 18)
 	for name in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
 		var surface := StyleBoxFlat.new()
 		surface.bg_color = Color("#273239") if name == "disabled" else (
@@ -423,7 +427,7 @@ func _style_chip(button: Button, selected: bool) -> void:
 		surface.border_color = GOLD if name == "focus" or selected else STITCH
 		surface.set_border_width_all(3 if name == "focus" or selected else 2)
 		surface.set_corner_radius_all(5)
-		surface.content_margin_top = 3
+		surface.content_margin_top = 4
 		surface.content_margin_bottom = 8
 		button.add_theme_stylebox_override(name, surface)
 	button.queue_redraw()
