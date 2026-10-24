@@ -135,10 +135,10 @@ func _run() -> void:
 			and choices.focus_mode == Control.FOCUS_NONE,
 			"masked Rest upgrade dropdown keeps its validated contract but takes no pointer or focus")
 		var effect_contract := {
-			"warden_strike": ["Deal 6 damage", "Deal 7 damage"],
-			"warden_brace": ["Gain 7 Block", "Gain 10 Block"],
-			"seamstress_mend": ["Chosen ally heals 5 HP", "Chosen ally heals 7 HP"],
-			"seamstress_stitch_up": ["Chosen ally gains 5 Block", "Chosen ally gains 7 Block"],
+			"warden_strike": ["Deal 6 damage to one enemy.", "Deal 7 damage to one enemy."],
+			"warden_brace": ["Gain 7 Block.", "Gain 10 Block."],
+			"seamstress_mend": ["Heal a chosen ally 5 HP.", "Heal a chosen ally 7 HP."],
+			"seamstress_stitch_up": ["Give a chosen ally 5 Block.", "Give a chosen ally 7 Block."],
 		}
 		for item in range(rows.size()):
 			var row: Dictionary = rows[item]

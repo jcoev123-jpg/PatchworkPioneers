@@ -330,11 +330,17 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	pips_container.custom_minimum_size = Vector2(0, PIPS_STRIP_HEIGHT)
 	content.add_child(pips_container)
 
-	# Rules text
-	var rules_label := _card_label("RulesLabel", _format_rules(definition), 15)
+	# Effects text: the same detached short-sentence formatter the held hand
+	# uses. No live passive boost is predicted for a detached reward offer.
+	var effect_line := CardShortRules.line(definition)
+	var rules_label := _card_label("RulesLabel", effect_line, 15)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rules_label.custom_minimum_size = Vector2(0, 60)
 	content.add_child(rules_label)
+
+	# The face never prints a position sentence, so the hover explains the six
+	# painted marks (and the slots they fill) without taking the card's action.
+	card.tooltip_text = _pip_legend(definition)
 
 	# Choose button
 	var action := Button.new()
@@ -387,131 +393,55 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	return card
 
 
-## A detached catalog card is the sole source of the preview, never battle
-## passives, receipt/offer data, RNG or current combat availability.
-## Every authored target kind and base-pool effect key is summarized here.
-func _format_rules(definition: Dictionary) -> String:
-	var kind: String = String(definition.get("target_kind", ""))
-	var from_text := _position_text(definition.get("from_positions", []), true)
-	var slots := _position_text(definition.get("to_positions", []), false)
-	var target_text := ""
-	match kind:
-		"enemy_single": target_text = "pick 1 living enemy " + slots
-		"enemy_all": target_text = "all living enemies " + slots
-		"enemy_random": target_text = "1 random living enemy per hit " + slots
-		"self": target_text = "self"
-		"ally_single": target_text = "1 living ally 1-3"
-		"party_all": target_text = "all allies"
-		"none": target_text = "none"
-	var effects: Dictionary = definition.get("effects", {})
-	var copy: Array[String] = []
-	var until_next_turn: bool = String(effects.get("duration", "")) == "until_next_turn"
-	var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
-	for key: String in effects:
-		match key:
-			"damage":
-				var dealt := "Deal %d damage" % int(effects[key])
-				if hits > 1:
-					dealt += " ×%d hits" % hits
-				elif kind == "enemy_all":
-					dealt += " EACH"
-				if bool(effects.get("random_target_each_hit", false)):
-					dealt += " (random target each hit)"
-				if effects.has("conditional_damage"):
-					dealt += _conditional_damage_hint(effects["conditional_damage"])
-				copy.append(dealt)
-			"block":
-				if kind == "ally_single":
-					copy.append("Chosen ally gains %d Block" % int(effects[key]))
-				elif kind == "self":
-					copy.append("Gain %d Block" % int(effects[key]))
-				else:
-					copy.append("Gain %d Block" % int(effects[key]))
-			"block_all":
-				copy.append("All allies gain %d Block each" % int(effects[key]))
-			"other_ally_block":
-				copy.append("Every other ally gains %d Block" % int(effects[key]))
-			"heal":
-				if kind == "ally_single":
-					copy.append("Chosen ally heals %d HP" % int(effects[key]))
-				elif kind == "party_all":
-					copy.append("All allies heal %d HP each" % int(effects[key]))
-				else:
-					copy.append("Heal %d HP" % int(effects[key]))
-			"draw":
-				var drawn: int = int(effects[key])
-				copy.append("Draw %d card%s" % [drawn, "" if drawn == 1 else "s"])
-			"weak":
-				copy.append("Weak %d" % int(effects[key]))
-			"bleed":
-				copy.append("Bleed %d%s" % [int(effects[key]),
-					" EACH" if kind == "enemy_all" else ""])
-			"bleed_multiplier":
-				copy.append("Bleed ×%d" % int(effects[key]))
-			"unravel":
-				copy.append("Unravel %d" % int(effects[key]))
-			"exposed":
-				copy.append("Exposed %d" % int(effects[key]))
-			"pinned":
-				copy.append("Pinned " + _pinned_hint(effects[key]))
-			"guarding":
-				copy.append("Guarding" + (" until next turn" if until_next_turn else ""))
-			"thorns":
-				copy.append("Thorns %d%s" % [int(effects[key]),
-					" until next turn" if until_next_turn else ""])
-			"energy", "gain_energy":
-				copy.append("Gain +%d energy" % int(effects[key]))
-			"self_hp_loss":
-				copy.append("%d HP lost" % int(effects[key]))
-			"conditional_damage":
-				# Only reachable when authored without a base damage key.
-				if not effects.has("damage"):
-					var rule: Dictionary = effects[key] if effects[key] is Dictionary else {}
-					copy.append("Deal %d damage conditionally" % int(rule.get("damage", 0)))
-			_:
-				pass
-	return "From: %s\nTarget: %s\n%s" % [from_text, target_text, ", ".join(copy)]
+## The hover legend for the six painted marks. The face prints no position, so
+## this is the only place the reward view spells the exact legal slots out; a
+## card that chooses a hero (or has no target) says that no square is filled.
+func _pip_legend(definition: Dictionary) -> String:
+	var from_text := _positions_text(definition.get("from_positions", []), "no slot")
+	var parts: Array[String] = [
+		"PIPS: filled circles = slots this hero may play from (%s)" % from_text,
+		"outlined circles = not a source slot",
+	]
+	var to_positions: Array = definition.get("to_positions", [])
+	if to_positions.is_empty():
+		parts.append("no target square is filled (%s)" % _target_slot_text(definition))
+	else:
+		parts.append("filled squares = legal target slots (%s)" % _positions_text(to_positions, "?"))
+		parts.append("outlined squares = not a target slot")
+	match str(definition.get("target_kind", "")):
+		"enemy_all":
+			parts.append("a sewn thread joins every enemy square (%s = all of them)"
+				% CardShortRules.ALL_TARGET)
+		"party_all":
+			parts.append("%s = every hero" % CardShortRules.ALL_TARGET)
+	var raw_effects: Variant = definition.get("effects", {})
+	if raw_effects is Dictionary \
+			and bool((raw_effects as Dictionary).get("random_target_each_hit", false)):
+		parts.append("%s = one random enemy per hit" % CardShortRules.RANDOM_TARGET)
+	return "; ".join(parts) + "."
 
 
-func _position_text(positions: Array, is_source: bool) -> String:
-	match positions:
-		[1]: return "1 (front)"
-		[3]: return "3 (back)"
-		[1, 2]: return "1-2 (front/middle)" if is_source else "1-2"
-		[2, 3]: return "2-3 (middle/back)" if is_source else "2-3"
-		[1, 2, 3]: return "1-3 (front to back)" if is_source else "1-3"
-	return ""
+## The authored slots as a compact range, never a guessed position.
+func _positions_text(positions: Array, empty_text: String) -> String:
+	if positions.is_empty():
+		return empty_text
+	if positions.size() == 1:
+		return str(positions[0])
+	return "%s–%s" % [positions[0], positions.back()]
 
 
-func _pinned_hint(rule: Variant) -> String:
-	var bonus := 5
-	if rule is Dictionary and (rule as Dictionary).get("bonus_damage") is int:
-		bonus = int((rule as Dictionary)["bonus_damage"])
-	return "(+%d damage on another hero's next attack, once)" % bonus
-
-
-func _conditional_damage_hint(condition: Variant) -> String:
-	if not condition is Dictionary:
-		return ""
-	var rule: Dictionary = condition
-	var empowered: int = int(rule.get("damage", 0))
-	var hints: Array[String] = []
-	for item: Variant in rule.get("conditions", []):
-		if not item is Dictionary:
-			continue
-		var part: Dictionary = item
-		if part.has("status"):
-			hints.append(String(part["status"]).capitalize())
-		elif part.has("gauge"):
-			var gauge := String(part["gauge"]).capitalize()
-			if String(part.get("comparison", "")) == "at_least_half":
-				hints.append(gauge + " at half")
-			else:
-				hints.append(gauge + " " + String(part.get("comparison", "")).replace("_", " "))
-	var joiner := " and " if String(rule.get("operator", "or")) == "and" else " or "
-	if hints.is_empty():
-		return " (%d instead under a condition)" % empowered
-	return " (%d instead if %s)" % [empowered, joiner.join(hints)]
+## The authored recipient rule for a card that fills no target square.
+func _target_slot_text(definition: Dictionary) -> String:
+	match str(definition.get("target_kind", "")):
+		"ally_single":
+			return "any hero slot"
+		"party_all":
+			return "every hero"
+		"self":
+			return "this hero"
+		"adjacent_ally":
+			return "the adjacent hero"
+	return "no target"
 
 
 func _card_label(label_name: String, value: String, point_size: int) -> Label:
@@ -1425,8 +1355,9 @@ class _CostButton extends Control:
 ## Authored position marks, identical in convention to the shared hand's pips:
 ## three source circles (owner-colour filled when legal, outlined when not) and
 ## three target squares (ink filled when legal, outlined when not). Slot 1 is
-## always the front. The readable target kind lives in RulesLabel; this control
-## draws no glyph and no miniature number.
+## always the front. An all-enemy cast also sews its filled squares together.
+## The readable target kind lives in the hover legend; this control draws no
+## glyph and no miniature number.
 class _PositionPips extends Control:
 	@export var from_positions: Array[int] = []
 	@export var to_positions: Array[int] = []
@@ -1474,6 +1405,17 @@ class _PositionPips extends Control:
 			})
 		return markers
 
+	## The sewn thread across an all-enemy cast: from the first filled square to
+	## the last. Empty for every other target kind or fewer than two squares.
+	func thread_points() -> PackedVector2Array:
+		var filled: Array[Vector2] = []
+		for marker: Dictionary in slots():
+			if String(marker["shape"]) == "square" and bool(marker["filled"]):
+				filled.append(marker["center"] as Vector2)
+		if target_kind == "enemy_all" and filled.size() >= 2:
+			return PackedVector2Array([filled.front(), filled.back()])
+		return PackedVector2Array()
+
 	func _draw() -> void:
 		for marker: Dictionary in slots():
 			var center: Vector2 = marker["center"]
@@ -1492,3 +1434,8 @@ class _PositionPips extends Control:
 				else:
 					draw_rect(box, CARD_PAPER, true)
 					draw_rect(box, OUTLINE, false, 1.5)
+		# The thread is drawn last so it visibly joins the legal squares of a
+		# whole-area cast; no other target kind claims an area.
+		var thread := thread_points()
+		if thread.size() == 2:
+			draw_dashed_line(thread[0], thread[1], STITCH_THREAD, 1.5, 4.0)

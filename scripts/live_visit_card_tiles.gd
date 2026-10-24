@@ -638,28 +638,25 @@ func _upgrade_spec(selector: OptionButton, row: int, rows: Array) -> Dictionary:
 	}
 
 
-## The reward card's own human-readable rules block, line for line.
+## The shared short-sentence rules line the hand and reward faces print.
 func _rules_text(definition: Dictionary) -> String:
 	if definition.is_empty():
 		return "No authored description for this card."
 	if definition.get("stitched_halves") is String:
 		return "Stitched halves: %s" % definition["stitched_halves"]
-	return _face._format_rules(definition)
+	return CardShortRules.line(definition)
 
 
-## Just the effect sentence of the same human-readable block, used for the
-## Rest tile's before/after comparison.
+## Just the effect sentence of the same shared line, used for the Rest tile's
+## before/after comparison.
 func _effects_text(effects: Variant, definition: Dictionary) -> String:
 	if not (effects is Dictionary) or (effects as Dictionary).is_empty():
 		return "no effect"
 	var rules_definition: Dictionary = definition.duplicate(true)
 	if rules_definition.is_empty():
 		rules_definition = {"effects": (effects as Dictionary).duplicate(true)}
-	var rendered: String = _face._format_rules(rules_definition)
-	var lines := String(rendered).split("\n")
-	if lines.size() >= 3 and not lines[2].is_empty():
-		return lines[2]
-	return "no effect"
+	var rendered: String = CardShortRules.line(rules_definition)
+	return rendered if not rendered.is_empty() else "no effect"
 
 
 func _owner_text(definition: Dictionary, card_id: String) -> String:
