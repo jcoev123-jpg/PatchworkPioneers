@@ -1235,9 +1235,10 @@ func _badge_icon_fits(badge, path: String) -> bool:
 
 ## The mounted caption really fits: its painted text measures inside the caption room at the
 ## badge's own fitted size, inside the dark plaque, clear of the separate policy ticket and
-## wholly inside the badge. Sizes stay inside the bounded range, never a literal font size.
+## wholly inside the badge. The oracle uses the badge's effective Font (display face or body
+## face, whichever it really paints with); sizes stay inside the bounded range.
 func _caption_fits(badge) -> bool:
-	var font: Font = badge.get_theme_default_font()
+	var font: Font = badge.caption_font()
 	if font == null or badge.readable_text.is_empty():
 		return false
 	var size_px: int = badge.caption_font_size()
