@@ -1139,6 +1139,11 @@ func _sync_battle() -> void:
 		_controls.bind_head_patch_rules(head_rules)
 		if head_rules != null:
 			_play.bind_head_patch_rules(head_rules)
+			# The direct-fire resolver reads the SAME battle-authenticated HEAD
+			# projection as the starter service: a genuinely sewn Button Glass
+			# Visor raises Rivet Shot's authored Exposed, and a stale projection
+			# rejects the cast instead of silently playing the unpatched card.
+			_direct_fire.bind_head_patch_rules(head_rules)
 		last_event = {}
 		# One Pinned set and one Unravel gauge live for this whole battle session.
 		# They are created here and never recreated or reset by a hand refresh.
