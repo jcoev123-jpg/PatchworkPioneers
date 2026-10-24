@@ -495,7 +495,7 @@ var route_map_button: Button
 var route_atlas_overlay: Control
 var route_atlas: RunRouteAtlas
 var route_atlas_close: Button
-## The opening chooser's pointer-inert page backdrop; null for a connected route.
+## The route chooser's pointer-inert page backdrop.
 var route_book_backdrop: Control
 ## The mounted noncombat visit's pointer-inert art bed; null outside a Rest/Shop visit.
 var visit_backdrop: Control
@@ -1219,7 +1219,7 @@ func _mount_route_book() -> void:
 	route_book_backdrop = book
 
 
-## Free the opening chooser's page backdrop synchronously; a connected route has none.
+## Free the chooser page backdrop synchronously.
 func _clear_route_book() -> void:
 	if is_instance_valid(route_book_backdrop):
 		if route_book_backdrop.get_parent() != null:
@@ -1244,7 +1244,7 @@ func _route_token_texture(path: String) -> Texture2D:
 ## One art-backed opening patch: exact ID in metadata, readable kind label, sewn token,
 ## a stitched felt face and a readable kind accent. Its page slot is set by the caller
 ## from the authored node position, so the patch is never a list row.
-func _route_choice_button(id: String, kind: String) -> Button:
+func _route_choice_button(id: String, kind: String, opening: bool = true) -> Button:
 	var label := route_kind_label(kind)
 	var button := Button.new()
 	button.name = "Opening_" + id
@@ -1256,7 +1256,7 @@ func _route_choice_button(id: String, kind: String) -> Button:
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
 	button.set_meta("route_label", label)
-	button.disabled = kind not in RunMap.NORMAL_TYPES
+	button.disabled = kind not in RunMap.NORMAL_TYPES and (opening or kind != "Boss")
 	if button.disabled:
 		button.text = label + " (unavailable)"
 	else:
@@ -1264,7 +1264,8 @@ func _route_choice_button(id: String, kind: String) -> Button:
 	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
 	button.add_child(_route_token(kind))
 	button.add_child(_route_patch_stitch(kind))
-	button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
+	if opening:
+		button.pressed.connect(_choose_route.bind(id, weakref(run_map)))
 	return button
 
 
@@ -2220,37 +2221,51 @@ func _present_connected_route(source_map: WeakRef) -> void:
 		var wardrobe := carry._wardrobe
 		wardrobe.refresh_run_context(run_heroes, run_trinkets, run_scraps,
 			session_gold, run_deck, wardrobe.get_snapshot())
-	route_view = VBoxContainer.new()
-	route_view.set_anchors_preset(Control.PRESET_CENTER)
-	route_view.add_theme_constant_override("separation", 8)
+	_mount_route_book()
+	var book := route_book_backdrop
+	var current := run_map.get_node(run_map.get_current_node_id())
+	var floor_number := int(current.get("floor", 0))
+	var area := RunRouteAtlas.area_for_floor(floor_number)
+	book.get_node("AreaCue").text = area
+	book.get_node("AreaCue").set_meta("area_name", area)
+	book.get_node("FloorCue").text = "Floor %02d" % floor_number
+	book.get_node("FloorCue").set_meta("floor_number", floor_number)
+	book.get_node("FloorHint").text = "Choose the next stop"
+	var page := RouteBook.choices_rect()
+	route_view = Control.new()
+	route_view.name = "ConnectedBookChoices"
+	route_view.position = page.position
+	route_view.size = page.size
 	add_child(route_view)
 	var heading := Label.new()
-	heading.text = "Connected route - choose your next node"
+	heading.text = "Choose your next stop"
+	heading.size = Vector2(page.size.x, 34)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 24)
+	heading.add_theme_color_override("font_color", ROUTE_BOOK_INK)
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	route_view.add_child(heading)
-	var wallet := Label.new()
-	wallet.text = "Gold: %d | Scraps: %d | Mend: %d scraps" % [
-		session_gold, run_scraps, RunMapMendChoices.MEND_COST]
-	route_view.add_child(wallet)
-	_present_route_patch_summary(carry)
+	var branches := RouteBranches.new()
+	route_view.add_child(branches)
+	var targets: Array[Rect2] = []
 	var prior := run_map.get_route()
 	for id in run_map.get_legal_choices():
 		var node := run_map.get_node(id)
-		var action := Button.new()
-		action.text = "%s: %s" % [id, node.type]
-		action.set_meta("route_id", id)
-		action.set_meta("route_kind", node.type)
-		action.disabled = node.type not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]
-		if action.disabled:
-			action.text += " (unavailable)"
-		action.custom_minimum_size = Vector2(440, 48)
+		var action := _route_choice_button(id, String(node.type), false)
+		# Four legal patches fit above up to three direct-child Mend quotes.
+		action.custom_minimum_size = Vector2(ROUTE_PATCH_SIZE.x, 54)
+		action.size = action.custom_minimum_size
+		action.position = Vector2(ROUTE_PATCH_LEFT, 42 + route_buttons.size() * 58)
 		action.pressed.connect(_dispatch_route.bind(id, source_map, prior, action))
 		route_view.add_child(action)
 		route_buttons.append(action)
+		targets.append(Rect2(action.position, action.size))
+	branches.branch_targets = targets
 	var context := _map_mend_context()
 	var mends := _project_map_mends()
 	if mends.get("ok") == true:
 		for option in mends.options:
-			var mend := Button.new()
+			var mend := _route_book_action("", Vector2(432, 40), "Mend this torn hero")
 			mend.text = "Mend %s (position %d) - %d scraps, to %d HP" % [
 				String(option.hero_id).capitalize(), option.position,
 				option.cost, option.post_mend_hp]
@@ -2267,23 +2282,53 @@ func _present_connected_route(source_map: WeakRef) -> void:
 			_append_map_mend_unavailable("Mend unavailable - no torn heroes")
 	else:
 		_append_map_mend_unavailable("Mend unavailable - invalid source")
-	route_map_button = Button.new()
-	route_map_button.text = "View full map"
+	for index in range(map_mend_buttons.size()):
+		var mend := map_mend_buttons[index]
+		mend.custom_minimum_size = Vector2(432, 40)
+		mend.size = mend.custom_minimum_size
+		mend.position = Vector2(0, 280 + index * 44)
+	_present_route_patch_summary(carry)
+	route_map_button = _route_book_action("View full map", Vector2(210, 44), "Open the optional full map")
+	route_map_button.position = Vector2(0, 510)
 	route_view.add_child(route_map_button)
 	route_map_button.pressed.connect(_open_route_atlas.bind(
 		weakref(run_map), weakref(route_view), weakref(route_map_button)))
-	route_back_button = Button.new()
-	route_back_button.text = "Return to title"
+	route_back_button = _route_book_action("Return to title", Vector2(210, 44), "Leave this run")
+	route_back_button.position = Vector2(222, 510)
 	route_back_button.pressed.connect(_return_from_visit.bind(route_view))
 	route_view.add_child(route_back_button)
-	_focus_visit(route_view)
+	var actions: Array[Control] = []
+	for button in route_buttons + map_mend_buttons:
+		if not button.disabled:
+			actions.append(button)
+	actions.append(route_view.get_node("PatchSummaryScroll"))
+	actions.append(route_map_button)
+	actions.append(route_back_button)
+	for index in range(actions.size()):
+		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+		actions[index].focus_previous = actions[index].get_path_to(actions[(index - 1 + actions.size()) % actions.size()])
+	actions[0].grab_focus()
 
 
 func _present_route_patch_summary(carry: RunTornCarryover) -> void:
+	var scroll := route_view.get_node_or_null("PatchSummaryScroll") as ScrollContainer
+	if scroll == null:
+		scroll = ScrollContainer.new()
+		scroll.name = "PatchSummaryScroll"
+		scroll.position = Vector2(0, 416)
+		scroll.size = Vector2(432, 82)
+		scroll.focus_mode = Control.FOCUS_ALL
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll.tooltip_text = "Sewn patches - scroll to read all wearers"
+		scroll.gui_input.connect(func(event: InputEvent):
+			if event.is_action_pressed("ui_down") or event.is_action_pressed("ui_up"):
+				scroll.scroll_vertical += 40 if event.is_action_pressed("ui_down") else -40
+				scroll.accept_event())
+		route_view.add_child(scroll)
 	var readout := HBoxContainer.new()
 	readout.name = "PatchWearerSummary"
 	readout.add_theme_constant_override("separation", 12)
-	route_view.add_child(readout)
+	scroll.add_child(readout)
 	var unavailable := ""
 	var summary: Dictionary = {}
 	if carry == null:
@@ -2314,7 +2359,7 @@ func _present_route_patch_summary(carry: RunTornCarryover) -> void:
 	for hero in summary.heroes:
 		var status := Label.new()
 		status.set_meta("hero_id", hero.id)
-		status.custom_minimum_size.x = 300
+		status.custom_minimum_size.x = 132
 		status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		status.add_theme_font_size_override("font_size", 14)
 		status.text = "%s - patches" % hero.id.capitalize()
@@ -2331,8 +2376,7 @@ func _present_route_patch_summary(carry: RunTornCarryover) -> void:
 
 
 func _append_map_mend_unavailable(message: String) -> void:
-	var unavailable := Button.new()
-	unavailable.text = message
+	var unavailable := _route_book_action(message, Vector2(432, 40), message)
 	unavailable.disabled = true
 	unavailable.custom_minimum_size = Vector2(440, 40)
 	route_view.add_child(unavailable)

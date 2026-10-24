@@ -486,7 +486,7 @@ func _run() -> void:
 				app.party_carryover = original
 			await _activate(_button(app, fixture[2]), mode == 1)
 			_check(app.run_map.get_route() == [fixture[2]], "opening commits exactly the selected node")
-			_check(app.route_book_backdrop == null, "committing the opening disposes its book")
+			_check(app.route_book_backdrop == null or app.route_book_backdrop.get_instance_id() != book_id, "committing the opening disposes its book, with a fresh book for immediate connected choices")
 			await process_frame
 			_check(book_id != 0 and not is_instance_id_valid(book_id), "the disposed opening book is freed")
 			_check(not is_instance_id_valid(slate_id), "route choice frees the opening party slate")

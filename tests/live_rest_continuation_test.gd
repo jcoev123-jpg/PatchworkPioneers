@@ -214,6 +214,7 @@ func _run() -> void:
 			if app.route_view == null:
 				break
 			_check(_persistent() == before, "Continue preserves exact run and combat state")
+			await _check_connected_book()
 			_bounds(app.route_view)
 			for callback in [exit, heal, back]:
 				_reject_rest(callback, "hidden previous visit callback")
@@ -222,7 +223,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = map.get_node(id).type
 				shown.append(id)
-				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "only supported true adjacent ID/type enabled")
+				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "only supported true adjacent ID/type enabled")
 				if action.disabled:
 					var rejected := _rest_state()
 					await _click(action)

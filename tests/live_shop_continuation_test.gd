@@ -42,6 +42,59 @@ func _route_action(id: String) -> Button:
 	return null
 
 
+func _check_connected_book() -> void:
+	_check(app._can_choose_connected_route() and not app.run_map.get_route().is_empty(), "book has a genuine completed route context")
+	var book: Control = app.route_book_backdrop
+	_check(is_instance_valid(book) and book.is_visible_in_tree() and app.route_view.name == "ConnectedBookChoices"
+		and not app.route_view is Container, "connected choices mount the existing book with independent sewn patches")
+	if not is_instance_valid(book):
+		return
+	var floor_number: int = app.run_map.get_node(app.run_map.get_current_node_id()).floor
+	_check(book.get_node("FloorCue").text == "Floor %02d" % floor_number
+		and book.get_node("FloorCue").get_meta("floor_number") == floor_number
+		and book.get_node("AreaCue").text == RunRouteAtlas.area_for_floor(floor_number), "book identifies the actual current floor and area")
+	var slate := book.get_node("PartySlate")
+	for index in range(app.run_heroes.size()):
+		var hero: Dictionary = app.run_heroes[index]
+		var row := slate.get_node("HeroRow" + str(index))
+		_check(row.get_node("HeroName").text == hero.name
+			and row.get_node("Health").text == "HP %d / %d" % [hero.hp, hero.max_hp], "left page reflects canonical carried hero")
+	_check(slate.get_node("Resources").text == "Deck: %d cards\nGold: %d    Scraps: %d" % [app.run_deck.size(), app.session_gold, app.run_scraps], "left page reflects actual deck and wallets")
+	var ids: Array = []
+	var actions: Array[Control] = []
+	for button in app.route_buttons:
+		var id: String = button.get_meta("route_id")
+		var kind: String = app.run_map.get_node(id).type
+		ids.append(id)
+		_check(button.get_parent() == app.route_view and button.get_meta("route_kind") == kind
+			and button.text == app.route_kind_label(kind) and button.get_child_count() == 2, "friendly sewn node keeps exact legal identity and token/stitches")
+		if not button.disabled:
+			actions.append(button)
+	_check(not ids.is_empty() and ids == app.run_map.get_legal_choices(), "book shows precisely the real legal choices")
+	for button in app.map_mend_buttons:
+		_check(button.get_parent() == app.route_view, "Mend remains a direct guarded chooser child")
+		if not button.disabled:
+			actions.append(button)
+	actions.append(app.route_view.get_node("PatchSummaryScroll"))
+	actions.append(app.route_map_button)
+	actions.append(app.route_back_button)
+	var before := _continuation_state()
+	actions[0].grab_focus()
+	for index in range(actions.size()):
+		_check(actions[index].has_focus(), "physical Tab visits every connected action and patch summary")
+		await _key(KEY_TAB)
+	_check(actions[0].has_focus(), "connected keyboard order wraps to the first route")
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = KEY_TAB
+		event.shift_pressed = true
+		event.pressed = pressed
+		root.push_input(event, true)
+	await _frames()
+	_check(actions.back().has_focus(), "reverse Tab reaches title exit")
+	_check(_continuation_state() == before, "focus traversal preserves route, ledgers and RNG")
+
+
 func _bounds(view: Control) -> void:
 	_check(view.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(view.get_global_rect()), "visit fits viewport")
 	for control in view.get_children():
@@ -251,6 +304,7 @@ func _run() -> void:
 			_check(app.run_deck.count(persisted_pool_id) == pool_count
 				and visit.get_state().deck == app.run_deck and not persisted_pool_id.ends_with("_plus"),
 				"real Continue retains purchased base ID in shared run deck and closed visit ledger")
+			await _check_connected_book()
 			_bounds(app.route_view)
 			before = _continuation_state()
 			for callback in [exit, remove, buy, back]:
@@ -260,7 +314,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = live_map.get_node(id).type
 				shown.append(id)
-				_check(action.text.begins_with("%s: %s" % [id, node_kind]) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
+				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
 				if action.disabled:
 					await _click(action)
 					action.pressed.emit()

@@ -200,6 +200,7 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 					"Shop visit mounts its own art bed")
 				await _click(app.shop_continue_button)
 				_check(app.visit_backdrop == null, "Shop continuation releases the visit art bed")
+		await _check_connected_book()
 		_check(app.route_view != null and app.route_view.is_visible_in_tree(), "completed visit keeps connected chooser live")
 
 
@@ -302,6 +303,7 @@ func _run() -> void:
 			var old_reward: Callable = app.reward_buttons[0].pressed.get_connections()[0].callable
 			var old_continue: Callable = app.continue_button.pressed.get_connections()[0].callable
 			await _click(app.continue_button)
+			await _check_connected_book()
 			var path: Array = fixture.path.duplicate()
 			var id: String = path.pop_back()
 			await _visit_path(path, session == 1)

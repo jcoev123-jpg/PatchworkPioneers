@@ -208,6 +208,7 @@ func _run() -> void:
 			var expected: Array = app.run_heroes.duplicate(true)
 			expected[2].hp = 5
 			var conserved: Array = [app.session_gold, app.run_deck.duplicate(), app.run_map.get_route(), app.run_rng.state]
+			await _check_connected_book()
 			_bounds(app.route_view)
 			if keyboard:
 				app.route_buttons.back().grab_focus()
@@ -283,6 +284,7 @@ func _run() -> void:
 			_check(seamstress_option.get("position") == 1 and seamstress_option.get("base_max_hp") == 27
 				and seamstress_option.get("post_mend_hp") == 6 and seamstress_option.get("affordable") == true,
 				"second torn hero projects its own canonical option")
+			await _check_connected_book()
 			_bounds(app.route_view)
 			await _activate(_mend_button("warden"), keyboard)
 			_check(app.run_heroes[1].hp == 9 and app.run_heroes[0].hp == 0 and app.run_scraps == 0 and wardrobe.get_snapshot().worn == worn_before

@@ -19,7 +19,7 @@ func _activate_summary(control: Control, keyboard: bool) -> void:
 
 
 func _summary_text() -> Array:
-	var readout: HBoxContainer = app.route_view.get_node("PatchWearerSummary")
+	var readout: HBoxContainer = app.route_view.get_node("PatchSummaryScroll/PatchWearerSummary")
 	var texts := []
 	for label in readout.get_children():
 		_check(label is Label and label.is_visible_in_tree(), "actual visible read-only patch label")
@@ -33,6 +33,9 @@ func _assert_summary() -> Array:
 	_check(oracle.ok and oracle.heroes.size() == 3, "real sources yield three wearer summaries")
 	var texts := _summary_text()
 	_check(texts.size() == 3, "one visible readout per hero")
+	var scroll: ScrollContainer = app.route_view.get_node("PatchSummaryScroll")
+	_check(scroll.focus_mode == Control.FOCUS_ALL and scroll.gui_input.get_connections().size() > 0,
+		"complete wearer summary has keyboard scrolling as well as mouse scrolling")
 	if not oracle.ok or texts.size() != 3:
 		return texts
 	for i in range(3):
@@ -61,6 +64,13 @@ func _summary_bounds(control: Control) -> void:
 	if control is Label:
 		_check(control.size.x >= control.get_minimum_size().x, "patch text is not clipped")
 		_check(control.size.y >= control.get_minimum_size().y, "wrapped patch text has room to show every line")
+	if control is ScrollContainer:
+		var content: Control = control.get_node("PatchWearerSummary")
+		_check(content.size.x <= control.size.x, "summary wraps within its readable scroll width")
+		for label in content.get_children():
+			_check(label.size.x >= label.get_minimum_size().x, "scroll content preserves the complete patch text width")
+			_check(label.size.y >= label.get_minimum_size().y, "scroll content retains every wrapped patch line")
+		return
 	for child in control.get_children():
 		if child is Control:
 			_summary_bounds(child)
@@ -79,7 +89,7 @@ func _summary_negatives() -> void:
 	var torn: RunTornMending = carry.torn
 	carry.torn = null
 	# Render just the readout: map/mend admission requires a non-null ledger.
-	var old: HBoxContainer = app.route_view.get_node("PatchWearerSummary")
+	var old: HBoxContainer = app.route_view.get_node("PatchSummaryScroll/PatchWearerSummary")
 	old.free()
 	app._present_route_patch_summary(carry)
 	_check(_summary_text() == ["Patches unavailable - invalid source"], "missing ledger fails closed")
@@ -216,6 +226,15 @@ func _run() -> void:
 					await _reopen_summary()
 					_check(_assert_summary() == texts and _summary_state() == before, "reopen is identical and spends nothing across all ledgers/RNG")
 				_summary_bounds(app.route_view)
+				var scroll: ScrollContainer = app.route_view.get_node("PatchSummaryScroll")
+				_check(scroll.get_node("PatchWearerSummary").size.y > scroll.size.y,
+					"real worn-patch text needs the mounted scroll region")
+				scroll.grab_focus()
+				await _key(KEY_DOWN)
+				_check(scroll.scroll_vertical > 0 and _summary_state() == before,
+					"physical Down reveals remaining patch lines without spending or RNG")
+				await _key(KEY_UP)
+				_check(scroll.scroll_vertical == 0, "physical Up returns to the wearer headings")
 				var trace := [texts, before]
 				if keyboard:
 					_check(trace == replay, "same-seed mouse/keyboard continuation agrees completely")
