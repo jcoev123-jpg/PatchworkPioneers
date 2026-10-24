@@ -4270,6 +4270,15 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 			selector.add_item(_rest_stitch_text(index, selector == rest_stitch_first))
 			selector.set_item_metadata(selector.item_count - 1, index)
 		rest_view.add_child(selector)
+	if rest_stitch_first.item_count > 0:
+		rest_stitch_first.select(0)
+		var first_index: int = rest_stitch_first.get_item_metadata(0)
+		var first_owner: String = RunRestStitchCards.resolve_card_definition(_rest_deck[first_index]).owner
+		for row in range(rest_stitch_second.item_count):
+			var second_index: int = rest_stitch_second.get_item_metadata(row)
+			if RunRestStitchCards.resolve_card_definition(_rest_deck[second_index]).owner != first_owner:
+				rest_stitch_second.select(row)
+				break
 	rest_heal_button = Button.new()
 	rest_heal_button.text = "Heal"
 	rest_heal_button.tooltip_text = "Choose one: Heal, Upgrade or Stitch. Heal restores 30% max HP and revives downed heroes."
