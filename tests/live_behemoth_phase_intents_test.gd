@@ -11,6 +11,11 @@ func _initialize() -> void:
 	_test_locked_phase_one_attack()
 	_test_phase_two_actions()
 	_test_seeded_replay()
+	_test_round_phase_crossing()
+	_test_round_unravel_action_kinds()
+	_test_round_bleed_delayed_skip()
+	_test_round_down_target_fallback()
+	_test_round_rejections_and_replay()
 	for failure in failures:
 		printerr(failure)
 	print("live_behemoth_phase_intents_test: ",
@@ -24,7 +29,7 @@ func _check(ok: bool, label: String) -> void:
 		failures.append(label)
 
 
-func _start_boss(seed_value: int) -> Dictionary:
+func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	var map := RunMap.new()
@@ -52,13 +57,28 @@ func _start_boss(seed_value: int) -> Dictionary:
 	var party := CombatParty.new(heroes)
 	var enemies: CombatEnemies = entry.enemies
 	var selector: CombatEnemyIntents = entry.intents
+	# Genuine rounds shuffle the shared deck before the first weighted draw.
+	var deck: CombatDeck = null
+	if with_round_flow:
+		deck = CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
 	if not party.is_valid() or not enemies.is_valid() \
 			or enemies.get_enemy(1).get("id") != "patchwork_behemoth" \
 			or enemies.get_enemy(1).get("hp") != 42 \
 			or not selector.bind_battle(enemies, party, rng):
 		return {}
-	return {"map": map, "rng": rng, "party": party,
+	var battle := {"map": map, "rng": rng, "party": party,
 		"enemies": enemies, "intents": selector}
+	if with_round_flow:
+		var gauge := CombatUnravel.new()
+		if not gauge.bind_roster(enemies, {1: "boss"}):
+			return {}
+		var result := CombatBattleResult.new(party, enemies)
+		battle["deck"] = deck
+		battle["unravel"] = gauge
+		battle["result"] = result
+		battle["flow"] = CombatRoundFlow.new(deck, party, enemies, selector,
+			result, gauge)
+	return battle
 
 
 func _hurt_to_phase_two(battle: Dictionary) -> bool:
@@ -269,3 +289,398 @@ func _test_locked_phase_one_attack() -> void:
 		and selector._slots[0].actions[0].action.amount == 4
 		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
 		"following announcement (only) upgrades the actual attack/policy")
+
+
+## These round fixtures extend the routed floor-12 admission above. They keep
+## its one real Boss slot, the same run RNG for deck and weighted scheduler,
+## and a Boss-tier CombatUnravel bound to that *same* CombatEnemies instance.
+func _round_boss_with_action(kind: String) -> Dictionary:
+	for seed_value in range(1, 160):
+		var battle := _start_boss(seed_value, true)
+		if battle.is_empty():
+			return {}
+		var announced: Array[Dictionary] = battle.intents.get_intents()
+		if announced.size() == 1 and announced[0].get("type") == kind:
+			battle["seed"] = seed_value
+			return battle
+	return {}
+
+
+func _round_snapshot(battle: Dictionary) -> Dictionary:
+	var deck: CombatDeck = battle.deck
+	var intents: CombatEnemyIntents = battle.intents
+	return {
+		"heroes": battle.party.get_heroes(),
+		"enemies": battle.enemies.get_enemies(),
+		"hand": deck.hand.duplicate(true),
+		"draw": deck.draw_pile.duplicate(true),
+		"discard": deck.discard_pile.duplicate(true),
+		"energy": deck.energy, "active": deck.turn_active,
+		"rng": battle.rng.state, "announced": intents.get_intents(),
+		"phase": intents._boss_phase, "slots": intents._slots.duplicate(true),
+		"turn_index": intents._turn_index,
+		"unravel": battle.unravel.get_snapshot(1),
+		"outcome": battle.result.get_outcome(),
+		"started": battle.flow._started
+	}
+
+
+## Independent weighted oracle: the authored phase selector supplies the
+## genuine JSON actions/weights. A COPY of the live pre-advance RNG state
+## makes exactly one legitimate 1..total weighted draw. No guessed action.
+func _next_phase_two_oracle(battle: Dictionary, rng_state: int) -> Dictionary:
+	var choice := CombatBehemothPhaseRules.select_phase(
+		battle.intents._boss_definition, 21, battle.intents._phase_two_record)
+	if not choice.get("ok", false) or choice.get("phase") != 2:
+		return {}
+	var weighted := CombatEnemyIntents._weighted_slot(1, choice.intent)
+	if weighted.is_empty() or weighted.target != "lowest_living_hp":
+		return {}
+	var total := 0
+	for entry in weighted.actions:
+		total += int(entry.weight)
+	var oracle_rng := RandomNumberGenerator.new()
+	oracle_rng.state = rng_state
+	var roll := oracle_rng.randi_range(1, total)
+	var action: Dictionary = {}
+	for entry in weighted.actions:
+		roll -= int(entry.weight)
+		if roll <= 0:
+			action = entry.action.duplicate(true)
+			break
+	if action.is_empty():
+		return {}
+	action["enemy_position"] = 1
+	if action.type in ["attack", "debuff", "shove"]:
+		action["target_position"] = CombatEnemyIntents.priority_target(
+			battle.party, weighted.target)
+	return {"intent": action, "rng": oracle_rng.state}
+
+
+func _test_round_phase_crossing() -> void:
+	var battle := _round_boss_with_action("attack")
+	_check(not battle.is_empty(), "real floor-12 round admits a seeded phase-one attack")
+	if battle.is_empty():
+		return
+	var flow: CombatRoundFlow = battle.flow
+	var deck: CombatDeck = battle.deck
+	var party: CombatParty = battle.party
+	var enemies: CombatEnemies = battle.enemies
+	var intents: CombatEnemyIntents = battle.intents
+	_check(battle.map.get_current_floor() == 12 and intents.is_bound()
+		and intents._boss_slot == 1 and battle.unravel._bound_enemies == enemies
+		and battle.unravel.get_snapshot(1).threshold == 16
+		and deck._rng == battle.rng and enemies.get_enemy(1).max_hp == 42
+		and party.get_hero(1).max_hp == 40 and party.get_hero(2).max_hp == 30
+		and party.get_hero(3).max_hp == 26,
+		"round uses authentic boss, three original heroes, shared RNG and Boss gauge")
+	_check(flow.begin_fight() and deck.turn_active and deck.energy == 3
+		and deck.hand.size() == 5 and deck.draw_pile.size() >= 5
+		and party.get_hero(1).block == 6,
+		"real active first hand is opened before the threshold crossing")
+	var locked := intents.get_intents()
+	_check(locked.size() == 1 and locked[0] == {"type": "attack", "amount": 2,
+		"enemy_position": 1, "target_position": 1}
+		and intents._boss_phase == 1 and CombatEnemyIntents.policy_for(enemies, 1) == "front",
+		"bound phase-one attack is already committed against front Warden")
+	var state: int = battle.rng.state
+	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+		and intents.get_intents() == locked and battle.rng.state == state,
+		"at 22 HP the real battle keeps its phase-one announcement")
+	_check(enemies.apply_damage(1, 1) and enemies.get_enemy(1).hp == 21
+		and party.apply_damage(1, 6) and party.get_hero(1).block == 0
+		and party.apply_damage(2, 16) and party.get_hero(2).hp == 14
+		and intents.get_intents() == locked and intents._boss_phase == 1
+		and CombatEnemyIntents.policy_for(enemies, 1) == "front"
+		and battle.rng.state == state,
+		"22-to-21 player-turn change leaves bound action, policy and RNG untouched")
+	var oracle := _next_phase_two_oracle(battle, state)
+	_check(not oracle.is_empty() and oracle.intent.get("enemy_position") == 1
+		and (not oracle.intent.has("target_position") or oracle.intent.target_position == 2),
+		"authored phase-two weighted oracle targets the lowest living HP hero")
+	_check(flow.end_turn(), "real round commits previously announced phase-one attack")
+	_check(party.get_hero(1).hp == 38 and party.get_hero(2).hp == 14
+		and enemies.get_enemy(1).hp == 21 and battle.unravel.get_snapshot(1).gauge == 0,
+		"old 2-damage front attack executes despite the Boss being at 21")
+	_check(intents._boss_phase == 2 and intents._slots[0].target == "lowest_living_hp"
+		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp"
+		and intents.get_intents() == [oracle.get("intent")]
+		and battle.rng.state == oracle.get("rng"),
+		"only successful advance draws genuine phase-two action once, with bound policy")
+	var before := _round_snapshot(battle)
+	var detached := intents.get_intents()
+	detached[0]["amount"] = 999
+	_check(_round_snapshot(battle) == before and intents.get_intents() == before.announced,
+		"repeated phase-two inspection neither spends RNG nor mutates cached intent")
+
+
+func _test_round_unravel_action_kinds() -> void:
+	for kind in ["attack", "block", "debuff"]:
+		var battle := _round_boss_with_action(kind)
+		_check(not battle.is_empty(), "routed Boss yields a genuine phase-one " + kind)
+		if battle.is_empty():
+			continue
+		var flow: CombatRoundFlow = battle.flow
+		var party: CombatParty = battle.party
+		var enemies: CombatEnemies = battle.enemies
+		var intents: CombatEnemyIntents = battle.intents
+		var gauge: CombatUnravel = battle.unravel
+		_check(flow.begin_fight() and party.apply_damage(2, 16)
+			and enemies.apply_damage(1, 21) and enemies.get_enemy(1).hp == 21
+			and gauge.apply_unravel(enemies, 1, 16),
+			"active Boss turn crosses phase and reaches the 16-gauge break: " + kind)
+		var locked := intents.get_intents()
+		var snapshot := gauge.get_snapshot(1)
+		var heroes_before := party.get_heroes()
+		var enemy_before := enemies.get_enemy(1)
+		var rng_before: int = battle.rng.state
+		var oracle := _next_phase_two_oracle(battle, rng_before)
+		_check(locked.size() == 1 and locked[0].type == kind
+			and intents._boss_phase == 1 and snapshot == {"gauge": 16,
+				"threshold": 16, "unravelled": true, "skip_pending": true}
+			and not oracle.is_empty(), "phase-one " + kind + " is locked with one pending skip")
+		_check(flow.end_turn(), "Boss skips its real announced " + kind + " exactly once")
+		_check(party.get_hero(1).hp == heroes_before[0].hp
+			and party.get_hero(2).hp == heroes_before[1].hp
+			and party.get_hero(3).hp == heroes_before[2].hp
+			and party.get_hero(1).get("statuses", {}) == heroes_before[0].get("statuses", {})
+			and enemies.get_enemy(1).block == enemy_before.block
+			and enemies.get_enemy(1).hp == enemy_before.hp,
+			"skipped " + kind + " causes no attack, Block or Weak action effect")
+		_check(gauge.get_snapshot(1) == {"gauge": 0, "threshold": 20,
+				"unravelled": false, "skip_pending": false}
+			and intents._boss_phase == 2 and intents._slots[0].target == "lowest_living_hp"
+			and intents.get_intents() == [oracle.get("intent")]
+			and battle.rng.state == oracle.get("rng"),
+			"skipped " + kind + " consumes break then draws exactly one phase-two intent")
+		# Execute the next real announcement independently on detached actors,
+		# then prove the live next turn does not silently skip again.
+		var expected_party := CombatParty.new(party.get_heroes())
+		expected_party._heroes.assign(party.get_heroes())
+		var expected_enemies := CombatEnemies.new(enemies.get_enemies())
+		expected_enemies._enemies.assign(enemies.get_enemies())
+		var resolved := CombatEnemyPhase.new().execute_phase(
+			expected_party, expected_enemies, intents.get_intents(), null, true)
+		_check(resolved.get("ok", false) and resolved.events.size() == 1
+			and resolved.events[0].applied, "next phase-two " + kind + " is genuinely executable")
+		_check(flow.end_turn(), "Boss acts on turn after skipped " + kind)
+		var actual_heroes := party.get_heroes()
+		var predicted_heroes := expected_party.get_heroes()
+		var equivalent := true
+		for slot in range(3):
+			equivalent = equivalent and actual_heroes[slot].hp == predicted_heroes[slot].hp
+			equivalent = equivalent and actual_heroes[slot].get("statuses", {}) == predicted_heroes[slot].get("statuses", {})
+		_check(equivalent and enemies.get_enemy(1).block == expected_enemies.get_enemy(1).block
+			and gauge.get_snapshot(1).gauge == 0 and gauge.get_snapshot(1).threshold == 20
+			and not gauge.get_snapshot(1).skip_pending,
+			"following phase-two action executes once; no phantom second skip: " + kind)
+
+
+func _test_round_bleed_delayed_skip() -> void:
+	var battle := _round_boss_with_action("attack")
+	_check(not battle.is_empty(), "surviving Bleed fixture routes the actual Boss attacker")
+	if battle.is_empty():
+		return
+	var party: CombatParty = battle.party
+	var enemies: CombatEnemies = battle.enemies
+	var intents: CombatEnemyIntents = battle.intents
+	var gauge: CombatUnravel = battle.unravel
+	var flow: CombatRoundFlow = battle.flow
+	_check(flow.begin_fight() and party.apply_damage(1, 6)
+		and enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+		and enemies.gain_block(1, 4)
+		and enemies.apply_statuses({1: {"bleed": 1}})
+		and gauge.apply_unravel(enemies, 1, 15),
+		"at 22 HP boss has surviving Bleed, Block 4 and 15/16 gauge")
+	var locked := intents.get_intents()
+	_check(locked.size() == 1 and locked[0].type == "attack"
+		and locked[0].amount == 2 and locked[0].target_position == 1
+		and not gauge.get_snapshot(1).skip_pending,
+		"Bleed has not preemptively skipped the already-announced front attack")
+	_check(flow.end_turn(), "owner turn executes committed attack then enemy Bleed tick")
+	_check(party.get_hero(1).hp == 38 and enemies.get_enemy(1).hp == 21
+		and enemies.get_enemy(1).block == 4
+		and enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 0
+		and gauge.get_snapshot(1) == {"gauge": 16, "threshold": 16,
+			"unravelled": true, "skip_pending": true}
+		and intents._boss_phase == 2 and intents._slots[0].target == "lowest_living_hp",
+		"surviving Bleed bypasses Block, adds exactly 1 gauge AFTER attack and upgrades next phase")
+	var hp_before := party.get_heroes()
+	var block_before: int = enemies.get_enemy(1).block
+	var announced := intents.get_intents()
+	_check(flow.end_turn() and party.get_hero(1).hp == hp_before[0].hp
+		and party.get_hero(2).hp == hp_before[1].hp
+		and party.get_hero(3).hp == hp_before[2].hp
+		and enemies.get_enemy(1).block == block_before
+		and gauge.get_snapshot(1) == {"gauge": 0, "threshold": 20,
+			"unravelled": false, "skip_pending": false}
+		and announced.size() == 1 and intents._boss_phase == 2,
+		"only FOLLOWING phase-two announced action is skipped and threshold rises to 20")
+	# At the raised 20-gauge boundary, surviving Bleed must again apply
+	# AFTER this turn's genuine committed phase-two action.
+	_check(gauge.apply_unravel(enemies, 1, 19)
+		and enemies.apply_statuses({1: {"bleed": 1}})
+		and gauge.get_snapshot(1).gauge == 19
+		and not gauge.get_snapshot(1).skip_pending,
+		"surviving Boss approaches its raised 20-gauge break")
+	var committed := intents.get_intents()
+	var expected_party := CombatParty.new(party.get_heroes())
+	expected_party._heroes.assign(party.get_heroes())
+	var expected_enemies := CombatEnemies.new(enemies.get_enemies())
+	expected_enemies._enemies.assign(enemies.get_enemies())
+	var simulated := CombatEnemyPhase.new().execute_phase(
+		expected_party, expected_enemies, committed, null, true)
+	_check(simulated.get("ok", false) and simulated.events.size() == 1
+		and simulated.events[0].applied,
+		"current genuine phase-two action is executable before 20-gauge Bleed")
+	_check(flow.end_turn() and enemies.get_enemy(1).hp == 20
+		and enemies.get_enemy(1).block == expected_enemies.get_enemy(1).block
+		and party.get_hero(1).hp == expected_party.get_hero(1).hp
+		and party.get_hero(2).hp == expected_party.get_hero(2).hp
+		and party.get_hero(3).hp == expected_party.get_hero(3).hp
+		and gauge.get_snapshot(1) == {"gauge": 20, "threshold": 20,
+			"unravelled": true, "skip_pending": true},
+		"20-gauge Bleed follows phase-two action despite Block")
+	var after_20_heroes := party.get_heroes()
+	var after_20_block: int = enemies.get_enemy(1).block
+	_check(flow.end_turn() and party.get_heroes() == after_20_heroes
+		and enemies.get_enemy(1).block == after_20_block
+		and gauge.get_snapshot(1) == {"gauge": 0, "threshold": 24,
+			"unravelled": false, "skip_pending": false},
+		"next action skips once at 20, never at the earlier Bleed tick")
+
+
+func _test_round_rejections_and_replay() -> void:
+	var battle := _start_boss(188421, true)
+	var foreign := _start_boss(188421, true)
+	_check(not battle.is_empty() and not foreign.is_empty(),
+		"independent real run battles exist for mismatch and replay guards")
+	if battle.is_empty() or foreign.is_empty():
+		return
+	var flow: CombatRoundFlow = battle.flow
+	var gauge: CombatUnravel = battle.unravel
+	var enemies: CombatEnemies = battle.enemies
+	var start_state := _round_snapshot(battle)
+	_check(not flow.end_turn() and _round_snapshot(battle) == start_state,
+		"end-turn before admission rejects without consuming the first weighted intent")
+	_check(flow.begin_fight() and enemies.apply_damage(1, 21)
+		and gauge.apply_unravel(enemies, 1, 16)
+		and gauge.get_snapshot(1).skip_pending,
+		"malformed and mismatched end-turn guards start with a genuine pending Boss skip")
+	var before := _round_snapshot(battle)
+	_check(not gauge.apply_unravel(foreign.enemies, 1, 1)
+		and _round_snapshot(battle) == before,
+		"wrong Unravel source cannot charge a different routed boss")
+	gauge._bound_enemies = foreign.enemies
+	before = _round_snapshot(battle)
+	_check(not flow.end_turn() and _round_snapshot(battle) == before
+		and gauge.get_snapshot(1).skip_pending,
+		"mismatched battle-bound gauge rejects without actor, deck, RNG or skip spend")
+	gauge._bound_enemies = enemies
+	var original := gauge.get_snapshot(1)
+	gauge._gauges[1] = {"gauge": 16, "threshold": 16}
+	before = _round_snapshot(battle)
+	_check(not flow.end_turn() and _round_snapshot(battle) == before,
+		"malformed bound Boss gauge rejects atomically before its phase")
+	gauge._gauges[1] = original
+	_check(battle.deck.end_turn() and not battle.deck.turn_active,
+		"externally closed turn is an actual stale/duplicate end-turn precondition")
+	before = _round_snapshot(battle)
+	_check(not flow.end_turn() and _round_snapshot(battle) == before,
+		"stale duplicate end-turn cannot consume a pending skip or weighted RNG")
+
+	var terminal := _start_boss(188421, true)
+	_check(not terminal.is_empty(), "terminal guard has an independent routed Boss")
+	if not terminal.is_empty():
+		_check(terminal.flow.begin_fight()
+			and terminal.unravel.apply_unravel(terminal.enemies, 1, 16)
+			and terminal.enemies.apply_damage(1, 42)
+			and terminal.result.evaluate() == CombatBattleResult.VICTORY,
+			"terminal victory is latched while the Boss's skip remains pending")
+		var end_state := _round_snapshot(terminal)
+		_check(not terminal.flow.end_turn() and _round_snapshot(terminal) == end_state,
+			"terminal end-turn leaves pending skip, actors, hand and RNG untouched")
+
+	var first := _round_replay(751829)
+	var second := _round_replay(751829)
+	_check(first.size() == 4 and second.size() == 4 and first == second,
+		"two independent real Boss rounds replay ordered intents, actors, deck, gauge and RNG")
+	if first.size() == 4:
+		_check(first[0].phase == 1 and first[1].phase == 1
+			and first[1].enemies[0].hp == 21
+			and first[1].announced == first[0].announced
+			and first[1].rng == first[0].rng
+			and first[2].phase == 2 and first[2].unravel.threshold == 20
+			and first[2].unravel.gauge == 0 and first[2].rng != first[1].rng
+			and first[3].turn_index == first[2].turn_index + 1,
+			"replay genuinely crosses phase, skips once and advances single seeded weighted roll")
+
+
+func _round_replay(seed_value: int) -> Array:
+	var battle := _start_boss(seed_value, true)
+	if battle.is_empty() or not battle.flow.begin_fight():
+		return []
+	var first := _round_snapshot(battle)
+	if not battle.enemies.apply_damage(1, 21) or not battle.party.apply_damage(2, 16) \
+			or not battle.unravel.apply_unravel(battle.enemies, 1, 16):
+		return []
+	var crossed := _round_snapshot(battle)
+	var oracle := _next_phase_two_oracle(battle, battle.rng.state)
+	if oracle.is_empty() or not battle.flow.end_turn():
+		return []
+	var after_skip := _round_snapshot(battle)
+	if after_skip.announced != [oracle.intent] or after_skip.rng != oracle.rng:
+		return []
+	if not battle.flow.end_turn():
+		return []
+	return [first, crossed, after_skip, _round_snapshot(battle)]
+
+
+## The bound target stays announced when its hero falls mid-hand; execution
+## chooses a still-living recipient using the already-committed phase policy.
+func _test_round_down_target_fallback() -> void:
+	var selected: Dictionary = {}
+	for seed_value in range(1, 90):
+		var battle := _start_boss(seed_value, true)
+		if battle.is_empty():
+			break
+		if not battle.flow.begin_fight() or not battle.party.apply_damage(2, 16) \
+				or not battle.enemies.apply_damage(1, 21) \
+				or not battle.unravel.apply_unravel(battle.enemies, 1, 16) \
+				or not battle.flow.end_turn():
+			break
+		var announced: Array[Dictionary] = battle.intents.get_intents()
+		if announced.size() == 1 and announced[0].get("target_position") == 2:
+			selected = battle
+			break
+	_check(not selected.is_empty(),
+		"seeded routed phase-two Boss commits a living target for downed fallback")
+	if selected.is_empty():
+		return
+	var party: CombatParty = selected.party
+	var intents: CombatEnemyIntents = selected.intents
+	var gauge: CombatUnravel = selected.unravel
+	var original := intents.get_intents()
+	var rng_before: int = selected.rng.state
+	_check(original.size() == 1 and original[0].target_position == 2
+		and party.get_hero(2).hp == 14 and party.apply_damage(2, 14)
+		and party.is_downed(2) and intents.get_intents() == original
+		and selected.rng.state == rng_before,
+		"announced living hero 2 falls during player turn without retarget or new RNG")
+	var expected_party := CombatParty.new(party.get_heroes())
+	expected_party._heroes.assign(party.get_heroes())
+	var expected_enemies := CombatEnemies.new(selected.enemies.get_enemies())
+	expected_enemies._enemies.assign(selected.enemies.get_enemies())
+	var executed := CombatEnemyPhase.new().execute_phase(
+		expected_party, expected_enemies, original, null, true)
+	_check(executed.get("ok", false) and executed.events.size() == 1
+		and executed.events[0].applied and executed.events[0].target_position == 3,
+		"real phase executor falls back to lowest living HP hero 3")
+	_check(selected.flow.end_turn()
+		and party.is_downed(2) and party.get_hero(2).hp == 0
+		and party.get_hero(3).hp == expected_party.get_hero(3).hp
+		and party.get_hero(3).get("statuses", {}) == expected_party.get_hero(3).get("statuses", {})
+		and selected.enemies.get_enemy(1).block == expected_enemies.get_enemy(1).block
+		and gauge.get_snapshot(1).threshold == 20
+		and not gauge.get_snapshot(1).skip_pending,
+		"live fallback never targets fallen hero 2 and does not skip again")
