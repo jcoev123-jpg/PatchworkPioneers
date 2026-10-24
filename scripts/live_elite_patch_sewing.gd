@@ -23,6 +23,10 @@ const HERO_COLORS := {
     "tinker": Color("c49a3a"),
 }
 
+## Sewn, readable names for every authored patch the sewing flow can display.
+## Display text only: an entry never grants, changes or advertises a power (the
+## authored catalog and `RunPatchWearerSummary` own the rules text). An unknown
+## or future ID deliberately keeps its raw text instead of gaining a new name.
 const FRIENDLY_LABELS := {
     "button_eye": "Button Eye",
     "pincushion_arm": "Pincushion Arm",
@@ -34,6 +38,17 @@ const FRIENDLY_LABELS := {
     "chain_stitched_coat": "Chain Stitched Coat",
     "stitched_badge": "Stitched Badge",
     "spare_spool": "Spare Spool",
+    "reinforced_patchcoat": "Reinforced Patchcoat",
+    "thick_felt_mantle": "Thick Felt Mantle",
+    "bloodstitch_bonnet": "Bloodstitch Bonnet",
+    "button_glass_visor": "Button Glass Visor",
+    "stern_seam_cap": "Stern Seam Cap",
+    "reinforced_browband": "Reinforced Browband",
+    "hemguard_cuff": "Hemguard Cuff",
+    "red_bobbin_cuff": "Red Bobbin Cuff",
+    "loose_thread_glove": "Loose Thread Glove",
+    "frayfinder_mitt": "Frayfinder Mitt",
+    "borrowed_button": "Borrowed Button",
 }
 
 static func _friendly_label(id: String) -> String:

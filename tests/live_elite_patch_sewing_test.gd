@@ -3,6 +3,103 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var sewing
 
+## Literal, independent ID -> readable name oracle, written by hand from the
+## shipped catalogs and the owner's naming. It is never computed from the
+## presenter's own table, so a wrong, missing or invented name fails here.
+const EXPECTED_NAMES := {
+	"button_eye": "Button Eye",
+	"pincushion_arm": "Pincushion Arm",
+	"quilted_coat": "Quilted Coat",
+	"padded_vest": "Padded Vest",
+	"double_quilt_coat": "Double Quilt Coat",
+	"scrap_lined_vest": "Scrap Lined Vest",
+	"wool_patch_cloak": "Wool Patch Cloak",
+	"chain_stitched_coat": "Chain Stitched Coat",
+	"stitched_badge": "Stitched Badge",
+	"spare_spool": "Spare Spool",
+	"reinforced_patchcoat": "Reinforced Patchcoat",
+	"thick_felt_mantle": "Thick Felt Mantle",
+	"bloodstitch_bonnet": "Bloodstitch Bonnet",
+	"button_glass_visor": "Button Glass Visor",
+	"stern_seam_cap": "Stern Seam Cap",
+	"reinforced_browband": "Reinforced Browband",
+	"hemguard_cuff": "Hemguard Cuff",
+	"red_bobbin_cuff": "Red Bobbin Cuff",
+	"loose_thread_glove": "Loose Thread Glove",
+	"frayfinder_mitt": "Frayfinder Mitt",
+	"borrowed_button": "Borrowed Button",
+}
+const SLOT_NAMES := {"HEAD": "HEAD", "ARM": "ARM", "COAT": "COAT"}
+const AUTHORED_PATCH_CATALOGS := [
+	"res://data/patches/initial_patch_slots.json",
+	"res://data/patches/m04_attack_patches.json",
+	"res://data/patches/m04_coat_patches.json",
+	"res://data/patches/m05_head_patches.json",
+	"res://data/patches/m05_arm_support_patches.json",
+	"res://data/patches/m05_attack_patches.json",
+	"res://data/patches/m05_coat_patches.json",
+]
+
+
+func _expected_name(id: String) -> String:
+	return EXPECTED_NAMES.get(id, id)
+
+
+## AC1: every authored patch, including the two M04 coats and nine M05 patches
+## this goal names, reads as its exact literal name. Unknown IDs stay raw.
+func _test_literal_names() -> void:
+	for pair in [
+		["reinforced_patchcoat", "Reinforced Patchcoat"],
+		["thick_felt_mantle", "Thick Felt Mantle"],
+		["bloodstitch_bonnet", "Bloodstitch Bonnet"],
+		["button_glass_visor", "Button Glass Visor"],
+		["stern_seam_cap", "Stern Seam Cap"],
+		["reinforced_browband", "Reinforced Browband"],
+		["hemguard_cuff", "Hemguard Cuff"],
+		["red_bobbin_cuff", "Red Bobbin Cuff"],
+		["loose_thread_glove", "Loose Thread Glove"],
+		["frayfinder_mitt", "Frayfinder Mitt"],
+		["borrowed_button", "Borrowed Button"],
+	]:
+		_check(sewing._friendly_label(pair[0]) == pair[1],
+			"literal readable name for %s is %s (got %s)" % [pair[0], pair[1], sewing._friendly_label(pair[0])])
+	var authored: Array[String] = []
+	for path in AUTHORED_PATCH_CATALOGS:
+		var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		_check(records is Array and not records.is_empty(), "authored patch catalog loads: " + path)
+		if not records is Array:
+			continue
+		for record in records:
+			_check(record is Dictionary and record.get("id") is String and record.get("slot") is String,
+				"authored patch record carries an id and slot in " + path)
+			if record is Dictionary and record.get("id") is String:
+				authored.append(record.id)
+	_check(not authored.is_empty(), "authored patch catalogs are non-empty")
+	for id in EXPECTED_NAMES:
+		_check(authored.has(id), "literal name oracle ID is present in a shipped catalog: " + id)
+	for id in authored:
+		_check(EXPECTED_NAMES.has(id), "literal name oracle covers authored patch " + id)
+		if not EXPECTED_NAMES.has(id):
+			continue
+		var name: String = EXPECTED_NAMES[id]
+		var shown: String = sewing._friendly_label(id)
+		_check(shown == name, "presenter label for %s is literally %s (got %s)" % [id, name, shown])
+		_check(shown != id and not shown.contains("_") and shown.contains(" ")
+			and shown.strip_edges() == shown and shown.substr(0, 1).to_upper() == shown.substr(0, 1),
+			"label for %s is sewn-readable Title Case, never the raw ID" % id)
+		_check(not name.contains("+") and not name.to_lower().contains("hp")
+			and not name.to_lower().contains("damage"),
+			"name for %s carries no invented power text" % id)
+	# Unknown or missing IDs never receive invented display text or power.
+	for unknown in ["", "unknown_patch", "quilted_coat_plus", "COAT"]:
+		_check(sewing._friendly_label(unknown) == unknown, "unknown ID %s keeps its own raw text" % [unknown])
+	_check(RunPatchWearerSummary._resolve_rules_text("unknown_patch", {}) == "",
+		"unknown ID never gains invented power text")
+	var table: Dictionary = sewing.FRIENDLY_LABELS
+	for id in table:
+		_check(EXPECTED_NAMES.has(id) and table[id] == EXPECTED_NAMES[id],
+			"presenter table name for %s matches the independent literal oracle" % id)
+
 
 func _click(control: Control) -> void:
 	if is_instance_valid(control):
@@ -106,13 +203,13 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 	var run_rng: int = app.run_rng.state
 	var torn_state: Dictionary = app.party_carryover.torn.read_state()
 	var entries: Dictionary = {}
+	var lines: Dictionary = {}
 	_check(sewing._eligible() and sewing._claim_context == sewing._context(),
 		"preview is mounted only with the genuinely confirmed Elite claim context")
-	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
-		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
-		and sewing._prompt.text.contains(sewing._friendly_label(drop))
-		and sewing._prompt.text.contains(sewing._friendly_label(state.definitions[drop])),
-		"visible wrapped keyboard-readable prompt names the exact drop and slot")
+	var expected_name: String = _expected_name(drop)
+	var expected_slot: String = state.definitions[drop]
+	_check(EXPECTED_NAMES.has(drop) and SLOT_NAMES.has(expected_slot),
+		"claimed drop and authored slot are covered by the literal name oracle")
 	for button in sewing.hero_buttons:
 		var hero_id: String = button.get_meta("hero_id")
 		var preview: Dictionary = RunPatchWearerSummary.preview_sew(
@@ -122,15 +219,39 @@ func _verify_preview_choice(drop: String, state: Dictionary) -> Dictionary:
 		if preview.get("ok") != true:
 			continue
 		entries[hero_id] = preview
+		var displaced_expected: String = "empty %s slot; +0 scrap" % preview.slot
+		if preview.displaced_id != "":
+			displaced_expected = "replaces %s in %s slot (destroyed); +1 scrap" % [
+				_expected_name(preview.displaced_id), preview.slot]
+			if not preview.displaced_rules_text.is_empty():
+				displaced_expected += " [old: %s]" % preview.displaced_rules_text
+		var power_expected: String = preview.rules_text
+		if power_expected.is_empty():
+			power_expected = "power not documented"
+		lines[hero_id] = "%s: %s (%s) - %s; %s" % [
+			hero_id.capitalize(), expected_name, preview.slot, power_expected, displaced_expected]
+	# The prompt starts as the mount sentence and, once a hero tag is reached,
+	# keeps that hero's exact line. Both are literal; the raw ID is never shown.
+	var mount_power: String = entries.values()[0].rules_text if not entries.is_empty() else ""
+	if mount_power.is_empty():
+		mount_power = "power not documented"
+	var prompt_allowed: Array[String] = [
+		"%s (%s): %s. Choose a living wearer (free); focus a hero for slot consequences." % [
+			expected_name, SLOT_NAMES[expected_slot], mount_power]]
+	prompt_allowed.append_array(lines.values())
+	_check(is_instance_valid(sewing._prompt) and sewing._prompt.is_visible_in_tree()
+		and sewing._prompt.autowrap_mode != TextServer.AUTOWRAP_OFF
+		and prompt_allowed.has(sewing._prompt.text)
+		and sewing._prompt.text.contains(expected_name)
+		and not sewing._prompt.text.contains(drop),
+		"visible wrapped keyboard-readable prompt shows an exact literal drop name and slot")
+	for button in sewing.hero_buttons:
+		var hero_id: String = button.get_meta("hero_id")
+		if not entries.has(hero_id):
+			continue
 		var explanation: String = button.tooltip_text
-		var expected_gain: String = "+1 scrap" if preview.displaced_id != "" else "+0 scrap"
-		_check(explanation.contains(hero_id.capitalize()) and explanation.contains(sewing._friendly_label(drop))
-			and explanation.contains(preview.slot) and explanation.contains(expected_gain)
-			and (preview.rules_text.is_empty() or explanation.contains(preview.rules_text))
-			and (preview.displaced_id.is_empty() or explanation.contains(sewing._friendly_label(preview.displaced_id)))
-			and (preview.displaced_rules_text.is_empty()
-				or explanation.contains(preview.displaced_rules_text)),
-			"mounted %s tooltip describes authoritative power and own displacement" % hero_id)
+		_check(explanation == lines[hero_id] and not explanation.contains(drop),
+			"mounted %s tooltip literally names the drop, power and own +0/+1 scrap displacement" % hero_id)
 		await _hover(button)
 		_check(sewing._prompt.text == explanation,
 			"real mouse hover exposes %s tooltip content visibly" % hero_id)
@@ -247,7 +368,7 @@ func _verify_worn_readout() -> void:
 			if record.patch_id == "":
 				continue
 			var fragment: String = "%s: %s (%s) [%s]" % [
-				hero.id.capitalize(), sewing._friendly_label(record.patch_id), record.slot,
+				hero.id.capitalize(), _expected_name(record.patch_id), record.slot,
 				"active" if record.active else "inactive"]
 			if not record.rules_text.is_empty():
 				fragment += " - %s" % record.rules_text
@@ -448,7 +569,7 @@ func _test_torn_warden_focus(fixture: Dictionary) -> void:
 		_reject_patch(callback, "torn-party duplicate sewing callback")
 		await _click(app.continue_button)
 		_check(app.route_view != null and app.route_view.is_visible_in_tree()
-			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), sewing._friendly_label(drop)]),
+			and sewing.summary.text.contains("%s: %s" % [hero.capitalize(), _expected_name(drop)]),
 			"Continue remains usable and wearer summary survives torn-party Elite")
 		_verify_worn_readout()
 		_reject_patch(callback, "torn-party stale callback after Continue")
@@ -465,6 +586,7 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	sewing = app.get_node("LiveElitePatchSewing")
+	_test_literal_names()
 	var fixture := await _coat_multi_fixture()
 	_check(not fixture.is_empty(), "real seeded route reaches two Elites and Shop")
 	if fixture.is_empty():
@@ -619,7 +741,7 @@ func _run() -> void:
 			_check(app.party_carryover._wardrobe == sewing.wardrobe,
 				"successful sewing binds the exact live carryover wardrobe")
 			var slot: String = after.definitions[drop]
-			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), sewing._friendly_label(drop), slot]),
+			_check(after.worn[hero][slot] == drop and sewing.summary.text.contains("%s: %s (%s)" % [hero.capitalize(), _expected_name(drop), slot]),
 				"physical confirmation sews authored slot and visibly names wearer")
 			_check(chosen_preview.get("ok") == true
 				and slot == chosen_preview.get("slot")
@@ -647,7 +769,7 @@ func _run() -> void:
 			retained.append(callback)
 			observations.append([after, reward_state, app.run_rng.state, app.run_trinkets.duplicate()])
 			await _click(app.continue_button)
-			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(sewing._friendly_label(drop)), "Continue retains visible wearer")
+			_check(app.route_view.is_visible_in_tree() and sewing.summary.text.contains(_expected_name(drop)), "Continue retains visible wearer")
 			_verify_worn_readout()
 			_reject_patch(callback, "stale sew after Continue")
 		_check(observations.size() == 2, "both earned drops actually sewn")
@@ -669,7 +791,129 @@ func _run() -> void:
 	_check(not torn_fixture.is_empty(), "seeded torn-Warden predecessor connects to Elite without recovery Rest")
 	if not torn_fixture.is_empty():
 		await _test_torn_warden_focus(torn_fixture)
+	await _test_displaced_name(fixture)
 	await _finish_sewing()
+
+
+## AC2: a genuine Elite coat drop that lands on an already-worn authored COAT
+## must visibly name what the player loses and grant exactly +1 scrap. The prior
+## wear is installed through the real wardrobe and carryover services (the
+## shipped drop catalog holds one patch per slot, so a same-slot collision has
+## no live drop source yet); the claim, prompt, tooltips, sew and worn summary
+## below are the real mounted ones.
+func _test_displaced_name(fixture: Dictionary) -> void:
+	seed(194194)
+	var global_next := randi()
+	seed(194194)
+	if not await _routed_win(fixture, false):
+		return
+	await _click(app.reward_buttons[3])
+	await _click(app.continue_button)
+	_check(app.run_trinkets.is_empty() and app.party_carryover._wardrobe == null,
+		"displacement run starts with no patch ownership or sewing ledger")
+	app.run_trinkets.append("reinforced_patchcoat")
+	# The fixture's ledger admits every shipped patch slot (the initial slots,
+	# the authored attack patches and all authored coats) so the real sewing
+	# services can hold the prior wear; the drop, claim and sew below stay real.
+	var definitions: Array = []
+	for path in AUTHORED_PATCH_CATALOGS.slice(0, 3):
+		for record in JSON.parse_string(FileAccess.get_file_as_string(path)):
+			definitions.append({"id": record.id, "slot": record.slot})
+	var prior := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
+		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(prior.is_valid(), "real roster admits the authored prior coat")
+	if not prior.is_valid():
+		return
+	var wearer: String = app.run_heroes[0].id
+	_check(wearer == "warden", "first living wearer is the authored Warden")
+	var sewn := prior.sew("reinforced_patchcoat", wearer, "COAT", "fixture:prior-coat",
+		prior.get_snapshot())
+	_check(sewn.ok and sewn.receipt.get("displaced_id") == ""
+		and sewn.receipt.get("scrap_delta") == 0
+		and app.party_carryover.bind_wardrobe(prior, app.party_carryover.torn,
+			prior.get_snapshot()),
+		"authored prior coat is sewn into an empty COAT and bound by the real services")
+	var path: Array = fixture.paths[0].duplicate()
+	var elite: String = path.pop_back()
+	await _visit_path(path, false)
+	await _click(_route_action(elite))
+	_check(app.run_map.get_node(elite).type == "Elite" and not app._battle_closed,
+		"genuine connected Elite mounts over the bound wear")
+	for enemy in app.enemies.get_enemies():
+		_check(app.enemies.apply_damage(enemy.position, 9999),
+			"defeat the real Elite while a coat is worn")
+	app._observe_battle_result()
+	await _frames()
+	var service: RunMultiFightRewards = app.multi_fight_rewards
+	_check(service != null and app.reward_buttons.size() == 4, "real Elite reward is prepared")
+	if service == null or app.reward_buttons.size() != 4:
+		return
+	var drop: String = app.fight_reward_trinket
+	_check(drop == "quilted_coat", "seeded Elite genuinely drops the authored Quilted Coat")
+	await _click(app.reward_buttons[3])
+	_check(app.fight_reward_claimed and app.run_trinkets.has(drop),
+		"Skip still commits the genuine coat drop once")
+	_check(sewing.wardrobe == prior and sewing.hero_buttons.size() == 3 and sewing._eligible(),
+		"mounted sewing adopts the already-bound wardrobe for the confirmed claim")
+	if sewing.wardrobe != prior or sewing.hero_buttons.size() != 3:
+		return
+	var state: Dictionary = prior.get_snapshot()
+	_check(state.scraps == app.run_scraps and state.owned == app.run_trinkets
+		and state.worn[wearer].COAT == "reinforced_patchcoat",
+		"committed run context reaches the bound wardrobe before the displaced sew")
+	var torn_state: Dictionary = app.party_carryover.torn.read_state()
+	var preview: Dictionary = RunPatchWearerSummary.preview_sew(prior, torn_state, drop, wearer)
+	_check(preview.get("ok") == true and preview.get("slot") == "COAT"
+		and preview.get("displaced_id") == "reinforced_patchcoat"
+		and preview.get("scrap_delta") == 1
+		and preview.get("rules_text") == "+6 maximum HP"
+		and preview.get("displaced_rules_text") == "+9 maximum HP",
+		"oracle preview is an occupied COAT with its authored power and +1 scrap")
+	# These three strings are written independently of any production formatter.
+	_check(sewing._prompt.text == "Quilted Coat (COAT): +6 maximum HP. Choose a living wearer (free); focus a hero for slot consequences.",
+		"mounted prompt literally names Quilted Coat and its COAT slot power")
+	var target: Button = sewing.hero_buttons.filter(
+		func(button): return button.get_meta("hero_id") == wearer)[0]
+	var loss := "Warden: Quilted Coat (COAT) - +6 maximum HP; replaces Reinforced Patchcoat in COAT slot (destroyed); +1 scrap [old: +9 maximum HP]"
+	_check(target.tooltip_text == loss,
+		"mounted tooltip literally names the displaced Reinforced Patchcoat and +1 scrap")
+	_check(not target.tooltip_text.contains("reinforced_patchcoat")
+		and not target.tooltip_text.contains(drop),
+		"tooltip shows sewn names, never raw patch IDs")
+	await _hover(target)
+	_check(sewing._prompt.text == loss,
+		"real pointer hover visibly shows the displaced name and +1 scrap")
+	target.grab_focus()
+	await _frames()
+	_check(target.has_focus() and sewing._prompt.text == loss,
+		"physical keyboard focus shows the displaced name and +1 scrap")
+	for other in sewing.hero_buttons:
+		if other.get_meta("hero_id") != wearer:
+			_check(other.tooltip_text.ends_with("empty COAT slot; +0 scrap"),
+				"each other living wearer keeps the exact +0 scrap empty-slot consequence")
+	var entries: Dictionary = await _verify_preview_choice(drop, state)
+	_check(entries.size() == 3, "all three real displaced-preview choices stay readable and read-only")
+	var callback: Callable = target.pressed.get_connections()[0].callable
+	await _click(target)
+	var after: Dictionary = prior.get_snapshot()
+	_check(after.worn[wearer].COAT == drop and not after.owned.has("reinforced_patchcoat")
+		and after.owned.has(drop) and after.scraps == state.scraps + 1
+		and after.operation_ids.size() == state.operation_ids.size() + 1,
+		"genuine displaced sew owns the new coat and grants exactly +1 scrap")
+	_check(sewing.summary.text == "Worn patches: Warden: Quilted Coat (COAT) [active] - +6 maximum HP",
+		"post-sew worn summary literally names the surviving coat with slot and power")
+	_check(not sewing.summary.text.contains("reinforced_patchcoat")
+		and not sewing.summary.text.contains(drop),
+		"worn summary shows sewn names, never raw patch IDs")
+	_reject_patch(callback, "displaced duplicate sew")
+	await _click(app.continue_button)
+	_check(app.route_view != null and app.route_view.is_visible_in_tree(),
+		"Continue remains usable after a displaced sew")
+	_verify_worn_readout()
+	await _click(app.route_back_button)
+	_check(app.title_view.visible and sewing.wardrobe == null and app.run_map == null,
+		"displacement run returns to a clean sewn title")
+	_check(randi() == global_next, "displaced claim, sewing and reset preserve global RNG")
 
 
 func _reward_oracle_after_prepare(service: RunMultiFightRewards) -> Dictionary:
