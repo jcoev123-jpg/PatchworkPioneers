@@ -8,6 +8,9 @@ var _attacks: CombatAttackCards
 var _support := CombatSupportCards.new()
 var _pool := SeamstressPoolCards.new()
 var _energy := CombatPoolEnergyCards.new()
+## Reuse the ordinary healing service's combat-scoped COAT notifier and latch.
+## The live hand owner will supply this same instance at its commit boundary.
+var _button_heals: CombatSeamstressPoolHeals = null
 
 
 func _init(attacks: CombatAttackCards = null) -> void:
@@ -17,6 +20,13 @@ func _init(attacks: CombatAttackCards = null) -> void:
 func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
 	return _support.bind_patch_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn)
+
+
+## Optional P6 integration: the very same battle-bound healing service must
+## handle ordinary cards as well as stitched commits, so neither path can refill
+## the once-per-combat latch or generate colliding receipt sequences.
+func bind_borrowed_button(heals: CombatSeamstressPoolHeals) -> void:
+	_button_heals = heals
 
 
 ## The optional Frayfinder service authenticates its own half quotes against
@@ -96,11 +106,14 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 	staged_enemies._enemies = enemies.get_enemies()
 	var attacks := _attacks.stage_transaction()
 	var results: Array[Dictionary] = []
+	var committed_heals: Array[Dictionary] = []
 	var targets := [first_target, second_target]
 	for index in range(2):
 		var half: Dictionary = preview.halves[index]
 		var target: int = targets[index]
 		var kind: String = half.target_kind
+		# Real per-half pre/post snapshots; discarded on any staged failure.
+		var hp_before: Array = staged_party.get_heroes() if half.effects.has("heal") else []
 		if kind in ["self", "none", "enemy_all", "party_all"] and target != 0:
 			return failure
 		if kind in ["enemy_single", "ally_single"] and not half.to_positions.is_empty() and not half.to_positions.has(target):
@@ -141,6 +154,18 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 			if not _support.resolve_staged_half(staged_deck, staged_party, normalized, target, half.id):
 				return failure
 			results.append({"ok": true, "effect": effect, "amount": amount})
+		if not hp_before.is_empty():
+			var hp_after: Array = staged_party.get_heroes()
+			var observations: Array[Dictionary] = []
+			for seat in range(CombatParty.PARTY_SIZE):
+				if hp_after[seat]["hp"] > hp_before[seat]["hp"]:
+					observations.append({"position": seat + 1, "id": hp_after[seat]["id"],
+						"before": hp_before[seat]["hp"], "after": hp_after[seat]["hp"]})
+			# Keep every genuine healing half's own owner and ordered recipients.
+			# Zero-restoration halves are not eligible for P6 receipts.
+			if not observations.is_empty():
+				committed_heals.append({"owner": half.owner, "index": index,
+					"observations": observations})
 	staged_deck.try_spend_energy(preview.cost)
 	staged_deck.discard_played(stitched_id)
 	party._heroes = staged_party.get_heroes()
@@ -151,6 +176,16 @@ func _play_with_bonuses(deck: CombatDeck, party: CombatParty, enemies: CombatEne
 	deck.combat_state.energy = staged_deck.energy
 	deck._rng.state = rng.state
 	_attacks.commit_transaction(attacks)
+	# No notification is possible until both ordered halves, the one charge,
+	# discard and all authoritative roster/RNG publication have succeeded.
+	if _button_heals != null and _button_heals._borrowed_button != null \
+			and _button_heals.is_patch_binding_valid() \
+			and _button_heals._wardrobe == _support._wardrobe \
+			and _button_heals._torn == _support._torn \
+			and (_button_heals._button_party in [null, party] or _button_heals._pending_new_party):
+		for healed_half in committed_heals:
+			_button_heals._notify_borrowed_button(party, healed_half.owner,
+				healed_half.observations, "stitched_half_%d" % healed_half.index)
 	return {"ok": true, "halves": results}
 
 

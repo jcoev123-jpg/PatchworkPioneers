@@ -28,6 +28,8 @@ func _initialize() -> void:
 	_test_downed_and_torn_wearer()
 	_test_torn_healer_still_refused()
 	_test_stitched_half_owners()
+	_test_real_stitched_commits_share_latch()
+	_test_real_stitched_resewn_wearer()
 	for failure: String in failures:
 		printerr(failure)
 	print("mpw_borrowed_button_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -702,3 +704,124 @@ func _test_stitched_half_owners() -> void:
 	_check(_snapshot(deck, party, fixture) == before_replay
 		and party.get_hero(1)["block"] == 3,
 		"stitched replays leave the party, ledgers, deck and RNG untouched")
+
+
+## The real atomic Rest resolver and ordinary pool healer must share one notifier.
+## Neither can re-arm the other by re-binding the same combat authorities.
+func _real_stitched_context(reverse: bool = false) -> Dictionary:
+	var fixture := _fixture()
+	if fixture.is_empty():
+		return {}
+	var rest := RunRestStitchCards.new(
+		["warden_brace" if reverse else "seamstress_mend",
+		 "seamstress_mend" if reverse else "warden_brace"], {}, 3)
+	_check(rest.is_valid(), "real Rest stitching ledger is valid")
+	var sewn := rest.choose_stitch(0, 1, rest.get_snapshot())
+	_check(sewn.get("ok") == true and sewn.get("consumed_ids", []).size() == 2,
+		"genuine Rest choice removes both originals and creates stitched ID")
+	if not sewn.get("ok", false):
+		return {}
+	var deck := _deck([sewn.stitched_id, TEA, TEA], 211613)
+	_check(deck.hand.has(sewn.stitched_id) and deck.hand.count(TEA) == 2,
+		"shared battle hand genuinely holds stitched card and ordinary Tea")
+	var heals := CombatSeamstressPoolHeals.new()
+	_check(heals.bind_patch_wardrobe(fixture.wardrobe, fixture.torn),
+		"ordinary healing service has valid combat wardrobe/torn binding")
+	var stitched := CombatStitchedCards.new()
+	_check(stitched.bind_patch_wardrobe(fixture.wardrobe, fixture.torn),
+		"stitched resolver shares the same authentic patch ledgers")
+	stitched.bind_borrowed_button(heals)
+	var enemies_data: Array = _json("res://data/enemies/starter_enemies.json")
+	for record in enemies_data:
+		record.max_hp = int(record.max_hp)
+	var enemies := CombatEnemies.new(enemies_data)
+	_check(enemies.is_valid() and rest.preview_play(sewn.stitched_id,
+		fixture.party.get_heroes()).ok, "enemy roster and stitched owners genuinely valid")
+	return {"fixture": fixture, "party": fixture.party, "rest": rest,
+		"deck": deck, "enemies": enemies, "heals": heals,
+		"stitched": stitched, "id": sewn.stitched_id}
+
+
+func _test_real_stitched_commits_share_latch() -> void:
+	for reverse in [false, true]:
+		for ordinary_first in [false, true]:
+			var c := _real_stitched_context(reverse)
+			if c.is_empty():
+				continue
+			_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28,
+				"real other-owner wearer wounded before two card commits")
+			var shared: CombatBorrowedButton = c.heals._borrowed_button
+			var heal_target: int = 1
+			var a: int = 0 if reverse else heal_target
+			var b: int = heal_target if reverse else 0
+			if ordinary_first:
+				_check(c.heals.play_card(c.deck, c.party, TEA, heal_target),
+					"ordinary Tea commits first and authenticates P6")
+			else:
+				var first: Dictionary = c.stitched.play_stitched(
+					c.deck, c.party, c.enemies, c.rest, c.id, a, b)
+				_check(first.get("ok") == true and first.halves.size() == 2,
+					"real stitched Mend/Brace commits both ordered halves first")
+			_check(shared.read_state().awards == 1 and c.party.get_hero(1).block >= 3,
+				"first authentic heal consumes the one-combat 3-Block latch")
+			var receipt: String = shared.read_state().receipt_id
+			_check(c.heals.bind_patch_wardrobe(c.fixture.wardrobe, c.fixture.torn)
+				and c.heals._borrowed_button == shared,
+				"same-combat ledger rebind preserves the exact notifier instance")
+			if ordinary_first:
+				var second: Dictionary = c.stitched.play_stitched(
+					c.deck, c.party, c.enemies, c.rest, c.id, a, b)
+				_check(second.get("ok") == true and second.halves.size() == 2,
+					"genuine stitched heal follows ordinary committed Tea")
+			else:
+				_check(c.heals.play_card(c.deck, c.party, TEA, heal_target),
+					"ordinary Tea follows genuine stitched heal in same combat")
+			_check(c.party.get_hero(1).hp == 36 and c.party.get_hero(1).block == 10,
+				"one 3-Block P6 award plus authored 7 Brace after two actual heals")
+			_check(c.deck.energy == 1 and c.deck.discard_pile.size() == 2
+				and c.deck.discard_pile.count(c.id) == 1
+				and c.deck.discard_pile.count(TEA) == 1,
+				"two real committed cards each discarded once; stitched energy paid once")
+			_check(shared.read_state().awards == 1 and shared.read_state().receipts.size() == 2
+				and c.heals._heal_receipt_number == 2,
+				"both ordered source kinds share one sequence and only one P6 payment")
+			var before: Dictionary = _snapshot(c.deck, c.party, c.fixture)
+			var replay: Dictionary = shared.notify_committed_heal(receipt,
+				"seamstress", "warden", 28, 33)
+			_check(replay.reason == "duplicate_receipt"
+				and _snapshot(c.deck, c.party, c.fixture) == before
+				and shared.read_state().awards == 1,
+				"replaying either source's original receipt cannot award again")
+
+
+func _test_real_stitched_resewn_wearer() -> void:
+	var c := _real_stitched_context()
+	if c.is_empty():
+		return
+	var wardrobe: RunPatchWardrobe = c.fixture.wardrobe
+	_check(wardrobe.start_rest("p6_resew_rest", wardrobe.get_snapshot()).ok,
+		"real Rest is opened before re-sewing Borrowed Button")
+	_check(wardrobe.re_sew("borrowed_button", "warden", "tinker",
+		"p6_resew_rest", "move_p6_to_tinker", wardrobe.get_snapshot()).ok,
+		"Borrowed Button genuinely re-sewn from Warden to Tinker")
+	_check(wardrobe.end_rest("p6_resew_rest", wardrobe.get_snapshot()).ok,
+		"real Rest closes with P6 on new wearer")
+	_check(c.heals.bind_patch_wardrobe(wardrobe, c.fixture.torn)
+		and c.stitched.bind_patch_wardrobe(wardrobe, c.fixture.torn),
+		"new combat reauthenticates actual re-sewn wardrobe")
+	_check(c.party.apply_damage(3, 9) and c.party.get_hero(3).hp == 17,
+		"new wearer Tinker genuinely wounded and living")
+	var before: Dictionary = _snapshot(c.deck, c.party, c.fixture)
+	var outcome: Dictionary = c.stitched.play_stitched(
+		c.deck, c.party, c.enemies, c.rest, c.id, 3, 0)
+	_check(outcome.get("ok") == true and outcome.halves.size() == 2,
+		"actual Rest-stitched Seamstress Mend heals newly sewn Tinker")
+	_check(c.party.get_hero(3).hp == 22 and c.party.get_hero(3).block == 3
+		and c.party.get_hero(1).block == 7,
+		"only the new active COAT wearer gains 3 P6 Block; Brace stays with Warden")
+	_check(c.heals._borrowed_button.read_state().awards == 1
+		and c.heals._borrowed_button.read_state().wearer_id == "tinker"
+		and c.heals._borrowed_button.read_state().receipts.size() == 1,
+		"re-sewn wearer's first authentic other-owner heal spends one latch")
+	_check(c.deck.energy == before.energy - 2 and c.deck.discard_pile.count(c.id) == 1,
+		"re-sewing does not alter one-cost and one-discard stitched transaction")
