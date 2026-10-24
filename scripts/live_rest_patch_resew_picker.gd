@@ -92,9 +92,7 @@ func present(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		var button: SewnChip = source_selector if i == 0 else SewnChip.new()
 		if i > 0:
 			source_tags.add_child(button)
-		_configure_tag(button, "Source_%d" % i, "%s / %s\n%s%s" % [
-			_nice(option["from_hero"]), _slot_label(option["slot"]), _nice(option["patch_id"]),
-			" • torn/inactive" if not option["source_active"] else ""], 260, source_scroll)
+		_configure_tag(button, "Source_%d" % i, _source_caption(option), 260, source_scroll)
 		button.pressed.connect(_choose_source.bind(i))
 		_source_buttons.append(button)
 	if _sources.is_empty():
@@ -140,14 +138,8 @@ func _refresh_destinations(select_first: bool = false) -> void:
 		var button: SewnChip = destination_selector if i == 0 else SewnChip.new()
 		if i > 0:
 			destination_tags.add_child(button)
-		var detail := "empty %s slot" % _slot_name(option["slot"]) \
-			if option["kind"] == "MOVE" else (
-				"%s • swap with %s" % [
-					_slot_label(option["slot"]), _nice(option["exchanged_id"])])
-		_configure_tag(button, "Destination_%d" % i,
-			"%s / %s\n%s%s" % [_nice(option["to_hero"]), _action_label(option["kind"]), detail,
-			" • torn/inactive" if not option["destination_active"] else ""], 360,
-			destination_scroll)
+		_configure_tag(button, "Destination_%d" % i, _destination_caption(option),
+			360, destination_scroll)
 		button.pressed.connect(_choose_destination.bind(i))
 		_destination_buttons.append(button)
 	if select_first and not _destinations.is_empty():
@@ -535,3 +527,29 @@ static func _slot_label(slot: String) -> String:
 
 static func _action_label(kind: String) -> String:
 	return kind.to_lower().capitalize()
+
+
+## Presentation only: a worn source tag reads "<Hero> · <Slot> patch" over the
+## patch name, so the wearer and slot scan without slash-separated fields while
+## the underlying option keeps its exact IDs.
+static func _source_caption(option: Dictionary) -> String:
+	return "%s · %s\n%s%s" % [
+		_nice(option["from_hero"]), _slot_label(option["slot"]),
+		_nice(option["patch_id"]),
+		" • torn/inactive" if not option["source_active"] else ""]
+
+
+## A recipient tag leads with the sewn action ("Move to <Hero>" or
+## "Swap with <Hero>") and keeps the existing slot and exchanged-patch detail.
+static func _destination_caption(option: Dictionary) -> String:
+	var detail := "empty %s slot" % _slot_name(option["slot"]) \
+		if option["kind"] == "MOVE" else (
+			"%s • swap with %s" % [
+				_slot_label(option["slot"]), _nice(option["exchanged_id"])])
+	return "%s\n%s%s" % [
+		_recipient_action(option["kind"], option["to_hero"]), detail,
+		" • torn/inactive" if not option["destination_active"] else ""]
+
+
+static func _recipient_action(kind: String, hero: String) -> String:
+	return "Move to %s" % _nice(hero) if kind == "MOVE" else "Swap with %s" % _nice(hero)

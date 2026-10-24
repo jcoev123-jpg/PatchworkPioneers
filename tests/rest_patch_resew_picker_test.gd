@@ -558,12 +558,16 @@ func _positive(f: Dictionary) -> void:
 			if option.patch_id == source.patch_id and option.from_hero == source.from_hero:
 				source_slot = option.slot
 				break
-		_check(human_slots.has(source_slot)
-			and picker._source_buttons[i].text.contains(
-				"%s / %s" % [str(source.from_hero).capitalize(), human_slots.get(source_slot, "")])
-			and picker._source_buttons[i].text.contains(
-				str(source.patch_id).replace("_", " ").capitalize()),
-			"mounted source chip gives friendly hero, slot and patch: " + source.patch_id)
+		var hero_name := str(source.from_hero).capitalize()
+		var patch_name := str(source.patch_id).replace("_", " ").capitalize()
+		var source_lines := picker._source_buttons[i].text.split(String.chr(10))
+		_check(human_slots.has(source_slot) and source_lines.size() == 2
+			and source_lines[0] == "%s · %s" % [hero_name, human_slots.get(source_slot, "")]
+			and source_lines[1] == patch_name
+			and not source_lines[0].contains("/") and not source_lines[0].contains("_")
+			and not picker._source_buttons[i].text.contains(str(source.patch_id)),
+			"mounted source chip reads '<Hero> · <Slot> patch' over the friendly patch name: "
+			+ source.patch_id)
 	var initial_choice := picker.selected_option()
 	_check(initial_choice == picker._destinations[0]
 		and picker._source_buttons[0].button_pressed
@@ -581,20 +585,30 @@ func _positive(f: Dictionary) -> void:
 		"changing source rebuilds only its offered recipients and clears stale destination")
 	_check(offered.size() == 2
 		and offered[0].kind == "MOVE" and offered[1].kind == "SWAP"
-		and picker._destination_buttons[0].text.contains("Warden / Move")
+		and picker._destination_buttons[0].text.contains("Move to Warden")
 		and picker._destination_buttons[0].text.contains("empty Arm slot")
-		and picker._destination_buttons[1].text.contains("Tinker / Swap")
+		and picker._destination_buttons[1].text.contains("Swap with Tinker")
 		and picker._destination_buttons[1].text.contains("Arm patch • swap with Spare Spool")
 		and not picker._destination_buttons[0].text.contains("MOVE")
 		and not picker._destination_buttons[1].text.contains("SWAP"),
 		"destination chips distinguish friendly Move/Swap and empty/occupied Arm slots")
+	var move_lines := picker._destination_buttons[0].text.split(String.chr(10))
+	var swap_lines := picker._destination_buttons[1].text.split(String.chr(10))
+	_check(move_lines.size() == 2 and swap_lines.size() == 2
+		and move_lines[0] == "Move to Warden" and move_lines[1] == "empty Arm slot"
+		and swap_lines[0] == "Swap with Tinker"
+		and swap_lines[1] == "Arm patch • swap with Spare Spool"
+		and not picker._destination_buttons[0].text.contains("/")
+		and not picker._destination_buttons[1].text.contains("/")
+		and not picker._destination_buttons[1].text.contains("spare_spool"),
+		"recipient chips lead with sewn Move/Swap wording and keep slot detail on line two")
 	picker.re_sew_requested.connect(_owner.bind(f))
 	_pick("button_eye", "tinker")
 	var head_move := picker.selected_option()
 	_check(head_move.get("kind") == "MOVE" and head_move.get("slot") == "HEAD"
 		and head_move.get("patch_id") == "button_eye" and head_move.get("cost") == 1
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
-			"Tinker / Move")
+			"Move to Tinker")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
 			"empty Head slot"),
 		"HEAD move chip uses human labels but exact machine option")
@@ -609,7 +623,7 @@ func _positive(f: Dictionary) -> void:
 		and head_swap.get("exchanged_id") == "stitched_badge"
 		and head_swap.get("cost") == 1
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
-			"Seamstress / Swap")
+			"Swap with Seamstress")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
 			"Head patch")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
@@ -653,7 +667,7 @@ func _positive(f: Dictionary) -> void:
 		and picker.selected_option().get("exchanged_id") == ""
 		and picker.selected_option().get("cost") == 1
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
-			"Tinker / Move")
+			"Move to Tinker")
 		and picker._destination_buttons[picker.destination_selector.selected].text.contains(
 			"empty Coat slot"),
 		"COAT move chip uses human labels with exact machine option")
@@ -887,11 +901,17 @@ func _torn_preview_active() -> void:
 	_assert_changed_slot_preview(f, "MOVE", "ARM", "tinker", "warden",
 		"spare_spool", "", "", "spare_spool")
 	var source_line := picker.preview_label.text.split(String.chr(10))[1]
-	_check(picker._source_buttons[picker.source_selector.selected].text.contains("torn/inactive")
+	var torn_source_lines := picker._source_buttons[
+		picker.source_selector.selected].text.split(String.chr(10))
+	_check(torn_source_lines.size() == 2
+		and torn_source_lines[0] == "Tinker · Arm patch"
+		and torn_source_lines[1] == "Spare Spool • torn/inactive"
+		and not torn_source_lines[0].contains("/")
+		and picker._source_buttons[picker.source_selector.selected].text.contains("torn/inactive")
 		and source_line.contains("Tinker Arm patch:")
 		and source_line.contains("Spare Spool (dormant; inactive power:")
 		and not source_line.contains("Spare Spool (active:"),
-		"torn source's moved power is explicitly dormant, never applied")
+		"torn source tag leads with its sewn wearer/slot and keeps the torn suffix")
 	_pick("quilted_coat", "tinker")
 	_assert_changed_slot_preview(f, "MOVE", "COAT", "warden", "tinker",
 		"quilted_coat", "", "", "quilted_coat")
@@ -908,6 +928,13 @@ func _torn_preview_active() -> void:
 				"Quilted Coat (dormant; inactive power: +6 effective max HP (no heal))")
 			and not destination_line.contains("Quilted Coat (active:"),
 			"torn Tinker cannot activate Quilted Coat +6 or receive an equip heal")
+		var torn_destination_lines := picker._destination_buttons[
+			picker.destination_selector.selected].text.split(String.chr(10))
+		_check(torn_destination_lines.size() == 2
+			and torn_destination_lines[0] == "Move to Tinker"
+			and torn_destination_lines[1] == "empty Coat slot • torn/inactive"
+			and not torn_destination_lines[0].contains("/"),
+			"torn recipient tag leads with 'Move to <Hero>' and keeps its torn slot warning")
 	_check(w.get_snapshot() == before and t.read_state().heroes[2].hp == 0
 		and picker.scraps_label.text == "Scraps: 2",
 		"rendering torn and living changes never revives, reassigns or spends")
@@ -1077,11 +1104,11 @@ func _long_tag_checks() -> void:
 	_check(picker._source_buttons.size() == 5 and picker._destination_buttons.size() == 2,
 		"long-caption fixture really mounts five sources and two recipients")
 	var expected_sources := [
-		"Warden / Head patch\nButton Eye",
-		"Warden / Coat patch\nReinforced Patchcoat",
-		"Seamstress / Head patch\nStitched Badge",
-		"Seamstress / Coat patch\nChain Stitched Coat",
-		"Tinker / Coat patch\nDouble Quilt Coat • torn/inactive"
+		"Warden · Head patch\nButton Eye",
+		"Warden · Coat patch\nReinforced Patchcoat",
+		"Seamstress · Head patch\nStitched Badge",
+		"Seamstress · Coat patch\nChain Stitched Coat",
+		"Tinker · Coat patch\nDouble Quilt Coat • torn/inactive"
 	]
 	var source_count := mini(expected_sources.size(), picker._source_buttons.size())
 	for i in range(source_count):
@@ -1093,8 +1120,8 @@ func _long_tag_checks() -> void:
 		and picker._source_buttons[4].size.y > 56.0,
 		"torn long coat source grows past the old fixed 56 px tag")
 	var expected_move_destinations := [
-		"Seamstress / Swap\nHead patch • swap with Stitched Badge",
-		"Tinker / Move\nempty Head slot • torn/inactive"
+		"Swap with Seamstress\nHead patch • swap with Stitched Badge",
+		"Move to Tinker\nempty Head slot • torn/inactive"
 	]
 	for i in range(mini(expected_move_destinations.size(), picker._destination_buttons.size())):
 		_check(picker._destination_buttons[i].text == expected_move_destinations[i],
@@ -1105,8 +1132,8 @@ func _long_tag_checks() -> void:
 	await process_frame
 	await process_frame
 	var expected_long_destinations := [
-		"Seamstress / Swap\nCoat patch • swap with Chain Stitched Coat",
-		"Tinker / Swap\nCoat patch • swap with Double Quilt Coat • torn/inactive"
+		"Swap with Seamstress\nCoat patch • swap with Chain Stitched Coat",
+		"Swap with Tinker\nCoat patch • swap with Double Quilt Coat • torn/inactive"
 	]
 	_check(picker._destinations.size() == 2,
 		"real long coat source offers exactly its two recipient heroes")
@@ -1161,8 +1188,8 @@ func _long_tag_checks() -> void:
 		and picker.confirm_button.disabled,
 		"keyboard selection of the final source rebuilds its recipients with no stale choice")
 	var final_destinations := [
-		"Warden / Swap\nCoat patch • swap with Reinforced Patchcoat",
-		"Seamstress / Swap\nCoat patch • swap with Chain Stitched Coat"
+		"Swap with Warden\nCoat patch • swap with Reinforced Patchcoat",
+		"Swap with Seamstress\nCoat patch • swap with Chain Stitched Coat"
 	]
 	for i in range(mini(final_destinations.size(), picker._destination_buttons.size())):
 		_check(picker._destination_buttons[i].text == final_destinations[i],
