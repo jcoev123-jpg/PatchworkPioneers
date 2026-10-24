@@ -435,6 +435,41 @@ func _shop_fight_shop() -> void:
 	await _click(app.route_back_button)
 
 
+## The enlarged normal Fight rotation changes the first seeded Shop stock.
+## Search genuine Fight -> Shop admissions until Quilted Coat is offered;
+## purchase it physically, with the same full wardrobe receipt checks.
+func _purchase_seeded_coat() -> bool:
+	var next_seed := 1
+	for attempt in range(24):
+		var fixture := _sequence_fixture(["Shop"], next_seed)
+		_check(not fixture.is_empty(), "seeded Shop coat probe finds a legal connected route")
+		if fixture.is_empty() or not await _routed_win(fixture, false):
+			return false
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		app.session_gold = 500
+		await _reach(fixture.paths[0], false)
+		wardrobe = app._shop_wardrobe
+		_check(wardrobe != null and wardrobe.is_valid()
+			and app.shop_purchases != null, "coat probe mounts genuine Shop and wardrobe")
+		if wardrobe == null or app.shop_purchases == null:
+			return false
+		var coat := -1
+		for i in range(app.shop_purchases.get_stock().trinkets.size()):
+			if app.shop_purchases.get_stock().trinkets[i].id == "quilted_coat":
+				coat = i
+				break
+		if coat >= 0:
+			await _purchase(coat, false)
+			_check(wardrobe.get_snapshot().owned.has("quilted_coat"),
+				"real seeded Shop buys and sews the authored Quilted Coat")
+			await _click(app.shop_back_button)
+			return true
+		next_seed = fixture.seed + 1
+		await _click(app.shop_back_button)
+	return false
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
@@ -551,6 +586,8 @@ func _run() -> void:
 				old.call()
 			_check(app.run_map == null and app._shop_wardrobe == null and app.run_trinkets.is_empty()
 				and app.session_gold == 0, "title/reset discards callbacks and wardrobe")
+	if not saw_coat:
+		saw_coat = await _purchase_seeded_coat()
 	_check(saw_coat, "real Shop routes actually purchased the authored coat")
 	await _poor_and_replacement()
 	await _unsewn_elite_before_shop()

@@ -258,7 +258,7 @@ func _test_stocked_pool_buy(target: String) -> void:
 	var eligible := WardenPoolCards.new().get_base_ids()
 	var matched := false
 	var attempted := 0
-	for value in range(1, 1000):
+	for value in range(1, 6000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -377,6 +377,6 @@ func _test_stocked_pool_buy(target: String) -> void:
 			"candidate route returns cleanly to title with no stale Shop service")
 		if matched:
 			break
-		if attempted >= 20:
+		if attempted >= 60:
 			break
-	_check(matched, "bounded authentic seeded Shop routes can actually buy " + target)
+	_check(matched, "bounded authentic seeded Shop routes can actually buy %s after %d qualifying routes" % [target, attempted])

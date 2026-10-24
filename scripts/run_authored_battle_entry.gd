@@ -73,6 +73,12 @@ func _entry_from_data(map: RunMap, run_rng: RandomNumberGenerator,
             else:
                 available_normal[enemy_id] = true
 
+    # Only these two M05 Fight alternatives intentionally reuse earlier schedules.
+    # All pre-existing named encounters must keep their canonical binding.
+    var schedule_aliases := {
+        "felt_moth_pressure": "res://data/encounters/bobbin_skirmish.json",
+        "pin_thread_crossfire": "res://data/encounters/buttonhole_holdout.json",
+    }
     var paths := {}
     var rosters := {}
     var schedules := {}
@@ -86,9 +92,13 @@ func _entry_from_data(map: RunMap, run_rng: RandomNumberGenerator,
             return {"success": false}
         var path = entry["schedule"]
         var ids = entry["enemy_ids"]
-        if not path is String or path != "res://data/encounters/%s.json" % id \
-                or path != path.simplify_path() or not FileAccess.file_exists(path) \
-                or not ids is Array or ids.is_empty():
+        # Several named Fight alternatives intentionally reuse a validated
+        # two-source schedule. Keep the path canonical and inside encounters.
+        if not path is String or path.get_base_dir() != "res://data/encounters" \
+                or not path.ends_with(".json") or path != path.simplify_path() \
+                or (path != "res://data/encounters/%s.json" % id
+                    and not (kind == "Fight" and schedule_aliases.get(id) == path)) \
+                or not FileAccess.file_exists(path) or not ids is Array or ids.is_empty():
             return {"success": false}
         for enemy_id in ids:
             if not enemy_id is String or not (available_boss if kind == "Boss" \

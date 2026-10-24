@@ -284,6 +284,30 @@ func _coat_multi_fixture() -> Dictionary:
 	return {}
 
 
+## The torn-party regression needs an actual route that cannot mend the Warden
+## between the predecessor Fight and the Elite. Other fixture paths may use Rest.
+func _torn_focus_fixture() -> Dictionary:
+	var next_seed := 1
+	for attempt in range(120):
+		var fixture := _multi_fixture(next_seed)
+		if fixture.is_empty():
+			return {}
+		var rng := RandomNumberGenerator.new()
+		rng.seed = fixture.seed
+		var map := RunMap.new()
+		if not map.generate(rng):
+			return {}
+		var transit: Array = fixture.paths[0].duplicate()
+		transit.pop_back()
+		var healing_rest := false
+		for node in transit:
+			healing_rest = healing_rest or map.get_node(node).get("type") == "Rest"
+		if not healing_rest:
+			return fixture
+		next_seed = fixture.seed + 1
+	return {}
+
+
 ## Enter through the real map and defeat the actual opening roster with Warden
 ## downed. Claiming that predecessor reward publishes a lawful tear BEFORE
 ## the later Elite coordinator captures its authoritative run context.
@@ -641,7 +665,10 @@ func _run() -> void:
 		_check(sewing.wardrobe == null and app.run_trinkets.is_empty() and app.run_scraps == 0
 			and app.run_map == null and app.title_view.visible, "old callbacks cannot restore a title-state assignment")
 		_check(randi() == global_next, "claim, sewing, negatives and reset preserve global RNG")
-	await _test_torn_warden_focus(fixture)
+	var torn_fixture := _torn_focus_fixture()
+	_check(not torn_fixture.is_empty(), "seeded torn-Warden predecessor connects to Elite without recovery Rest")
+	if not torn_fixture.is_empty():
+		await _test_torn_warden_focus(torn_fixture)
 	await _finish_sewing()
 
 
