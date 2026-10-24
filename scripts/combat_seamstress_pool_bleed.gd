@@ -16,6 +16,7 @@ const OWNER_ID := "seamstress"
 
 var _attacks := CombatStatusAttacks.new()
 var _patches: CombatPatchAttackRules = null
+var _head_patches: CombatM05HeadPatchRules = null
 var _receipt: Dictionary = {}
 var _selected_path: String = ""
 var _path_selection_attempted: bool = false
@@ -33,7 +34,10 @@ func _init(choice_or_receipt: Variant = null, unravel: CombatUnravel = null) -> 
 ## A failed explicit binding fails closed; an untouched service stays unbound.
 func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	_patches = CombatPatchAttackRules.new()
-	return _patches.bind_wardrobe(wardrobe, torn)
+	var attack_ok := _patches.bind_wardrobe(wardrobe, torn)
+	_head_patches = CombatM05HeadPatchRules.new()
+	var head_ok := _head_patches.bind_wardrobe(wardrobe, torn)
+	return attack_ok and head_ok
 
 
 func bind_choice(choice_or_receipt: Variant) -> bool:
@@ -143,6 +147,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	if _patches != null and not _patches.is_valid():
 		return _failure()
+	if _head_patches != null and not _head_patches.read_projection().get("ok", false):
+		return _failure()
 	if not deck.turn_active or not deck.hand.has(card_id) or not party.is_valid():
 		return _failure()
 	if not enemies.can_apply_statuses({}) or enemies.is_victorious():
@@ -248,11 +254,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			var bleed_amount: int = effects["bleed"]
 			var passive_bonus: int = 0 if _selected_path == UNPICKER_PATH else 1
 			var patch_bleed: int = 0 if _patches == null else _patches.card_bleed_bonus("seamstress", card_id)
-			if bleed_amount > CombatEnemies.MAX_INT - (passive_bonus + patch_bleed):
+			var head_bleed: int = 0 if _head_patches == null else _head_patches.get_bonus("seamstress", card_id, "bleed")
+			if bleed_amount > CombatEnemies.MAX_INT - (passive_bonus + patch_bleed + head_bleed):
 				return _failure()
-			additions["bleed"] = bleed_amount + passive_bonus + patch_bleed
+			additions["bleed"] = bleed_amount + passive_bonus + patch_bleed + head_bleed
+			var head_exposed: int = 0 if _head_patches == null else _head_patches.get_bonus("seamstress", card_id, "exposed")
 			if effects.has("exposed"):
-				additions["exposed"] = effects["exposed"]
+				additions["exposed"] = effects["exposed"] + head_exposed
 			elif is_running and patch_exposed > 0:
 				additions["exposed"] = patch_exposed
 		applications[position] = additions
