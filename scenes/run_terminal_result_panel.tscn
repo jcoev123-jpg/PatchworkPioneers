@@ -36,33 +36,33 @@ stretch_mode = 6
 
 [node name="FeltMat" type="PanelContainer" parent="."]
 layout_mode = 1
-anchor_left = 0.1075
-anchor_top = 0.0278
-anchor_right = 0.8925
-anchor_bottom = 0.9722
+anchor_left = 0.0175
+anchor_top = 0.0
+anchor_right = 0.9825
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
 [node name="PaperPanel" type="PanelContainer" parent="."]
 layout_mode = 1
-anchor_left = 0.12
-anchor_top = 0.05
-anchor_right = 0.88
-anchor_bottom = 0.95
+anchor_left = 0.03
+anchor_top = 0.015
+anchor_right = 0.97
+anchor_bottom = 0.985
 grow_horizontal = 2
 grow_vertical = 2
 
 [node name="ContentMargin" type="MarginContainer" parent="PaperPanel"]
 layout_mode = 2
-theme_override_constants/margin_left = 40
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 40
-theme_override_constants/margin_bottom = 12
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 6
 
 [node name="ResultContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 5
+theme_override_constants/separation = 3
 alignment = 1
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
@@ -77,19 +77,11 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="ResultDescription" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 38)
+custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
-
-[node name="RunSignature" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 122)
-layout_mode = 2
-horizontal_alignment = 1
-vertical_alignment = 1
-autowrap_mode = 3
-mouse_filter = 2
 
 [node name="HeroRecap" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent"]
 visible = false
@@ -101,32 +93,45 @@ layout_mode = 2
 text = "PARTY RECAP"
 horizontal_alignment = 1
 
-[node name="HeroRows" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]
+[node name="HeroRows" type="HBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="StitchedSection" type="PanelContainer" parent="PaperPanel/ContentMargin/ResultContent"]
+[node name="RunLedger" type="HBoxContainer" parent="PaperPanel/ContentMargin/ResultContent"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="RunSignature" type="Label" parent="PaperPanel/ContentMargin/ResultContent/RunLedger"]
+custom_minimum_size = Vector2(480, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3
+mouse_filter = 2
+
+[node name="StitchedSection" type="PanelContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger"]
 visible = false
 custom_minimum_size = Vector2(0, 134)
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_horizontal = 3
 
-[node name="DetailMargin" type="MarginContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection"]
+[node name="DetailMargin" type="MarginContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection"]
 layout_mode = 2
 theme_override_constants/margin_left = 12
 theme_override_constants/margin_top = 6
 theme_override_constants/margin_right = 12
 theme_override_constants/margin_bottom = 6
 
-[node name="DetailContent" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin"]
+[node name="DetailContent" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="DetailTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent"]
+[node name="DetailTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent"]
 layout_mode = 2
 text = "KEPT SEWN CARDS"
 
-[node name="StitchedScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent"]
+[node name="StitchedScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent"]
 clip_contents = true
 custom_minimum_size = Vector2(0, 88)
 layout_mode = 2
@@ -134,7 +139,7 @@ size_flags_vertical = 3
 focus_mode = 2
 horizontal_scroll_mode = 0
 
-[node name="StitchedRows" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll"]
+[node name="StitchedRows" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent/StitchedScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 5

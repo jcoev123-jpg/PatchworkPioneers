@@ -599,9 +599,10 @@ func _validate_view(status: String, label: String) -> void:
 	var recap_rows := panel.hero_rows.get_children()
 	_check(panel.hero_recap.is_visible_in_tree() and recap_rows.size() == 3,
 		label + " three sewn hero recap ribbons are mounted")
-	var previous_bottom := panel.summary_label.get_global_rect().end.y
+	var previous_bottom := panel.description_label.get_global_rect().end.y
 	_check(panel.hero_recap_title.get_global_rect().position.y >= previous_bottom - 0.5,
-		label + " party recap heading is sewn below the run counters without overlap")
+		label + " party recap heading follows the outcome without overlap")
+	var previous_right := panel.hero_rows.get_global_rect().position.x
 	for row in recap_rows:
 		var ribbon := row as PanelContainer
 		var ribbon_box := (ribbon.get_theme_stylebox("panel") as StyleBoxFlat) if ribbon != null else null
@@ -610,9 +611,21 @@ func _validate_view(status: String, label: String) -> void:
 			and ribbon_box.border_width_left >= 1
 			and ribbon_box.border_color.get_luminance() < 0.6,
 			label + " hero ribbon wears the sewn cream felt panel: " + str(row.name))
-		_check(row.get_global_rect().position.y >= previous_bottom - 0.5,
-			label + " hero ribbon is sewn below the previous ribbon without overlap")
-		previous_bottom = row.get_global_rect().end.y
+		_check(row.get_global_rect().position.x >= previous_right - 0.5,
+			label + " hero ticket follows the previous ticket without overlap")
+		previous_right = row.get_global_rect().end.x
+		var portrait := row.get_node_or_null("RowInset/HeroPortrait") as TextureRect
+		var hero_id: String = ["warden", "seamstress", "tinker"][row.get_index()]
+		_check(portrait != null and portrait.texture != null
+			and portrait.texture.resource_path == "res://assets/paper/heroes/%s.png" % hero_id,
+			label + " matching shipped portrait for " + hero_id)
+		if portrait != null:
+			_check(portrait.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and portrait.focus_mode == Control.FOCUS_NONE
+				and portrait.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
+				and portrait.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				and portrait.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR,
+				label + " portrait is inert, linear filtered and aspect preserving")
 		var name_label := row.get_node("RowInset/RowLine/HeroName") as Label
 		var detail_label := row.get_node("RowInset/RowLine/HeroDetail") as Label
 		_check(name_label != null and name_label.theme_type_variation == "PatchHeading"
@@ -625,10 +638,10 @@ func _validate_view(status: String, label: String) -> void:
 			label + " hero ribbon detail keeps the inherited body face at 18 px or more")
 		_check(screen.encloses(row.get_global_rect()),
 			label + " hero ribbon fits the 1280x720 stage")
-		_check(row.size.y > 0 and row.size.y <= 72.0,
-			label + " hero ribbon stays a compact row, height %s" % str(row.size.y))
-	_check(panel.hero_recap.size.y <= 200.0,
-		label + " the three-ribbon recap block stays compact, height %s" % str(panel.hero_recap.size.y))
+		_check(row.size.y >= 180.0 and row.size.y <= 260.0,
+			label + " hero portrait ticket is prominent and bounded, height %s" % str(row.size.y))
+	_check(panel.hero_recap.size.y <= 290.0,
+		label + " three portrait tickets leave space for the ledger and Return")
 	var controls: Array = [panel.paper_panel, panel.title_label, panel.description_label,
 		panel.top_stitches, panel.bottom_stitches, button, panel.summary_label,
 		panel.hero_recap, panel.hero_recap_title, panel.hero_rows]
@@ -714,6 +727,27 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 	var description := panel.description_label.text
 	var summary := panel.summary_label.text
 	var recap := _hero_rows_text()
+	var app_before := _app_snapshot()
+	for row in panel.hero_rows.get_children():
+		var portrait := row.get_node("RowInset/HeroPortrait") as TextureRect
+		_check(portrait != null and portrait.texture != null,
+			label + " missing-portrait probe starts from a shipped texture")
+		if portrait == null or portrait.texture == null:
+			continue
+		var original_path := portrait.texture.resource_path
+		_check(not panel.apply_hero_portrait(portrait, MISSING_ART),
+			label + " unavailable hero portrait selects felt fallback")
+		await _frames()
+		_check(portrait.texture == null and row.is_visible_in_tree()
+			and row.get_theme_stylebox("panel") is StyleBoxFlat
+			and _hero_rows_text() == recap and panel.summary_label.text == summary
+			and not panel.return_button.disabled and panel.return_button.is_visible_in_tree(),
+			label + " felt fallback preserves the full text ticket, ledger and Return")
+		_check(panel.apply_hero_portrait(portrait, original_path)
+			and portrait.texture.resource_path == original_path,
+			label + " matching hero portrait remounts")
+	_check(_app_snapshot() == app_before and _snapshot(ctx, battle) == before,
+		label + " missing hero art never changes authorities or RNG")
 	var felt := panel.get_node_or_null("FeltMat") as PanelContainer
 	var felt_box := (felt.get_theme_stylebox("panel") as StyleBoxFlat) if felt != null else null
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
@@ -807,6 +841,9 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	panel.return_button.pressed.emit()
 	panel.show()
 	_check(returns == 0, "disabled, hidden button and hidden panel emissions inert")
+	var mouse_portrait := panel.hero_rows.get_child(0).get_node("RowInset/HeroPortrait") as TextureRect
+	_check(mouse_portrait.texture != null and not panel.apply_hero_portrait(mouse_portrait, MISSING_ART),
+		"AC3: mouse Return probe genuinely removes a previously mounted hero portrait")
 	await _frames()
 	await _mouse(panel.return_button)
 	_check(returns == 1 and panel.return_button.disabled,
@@ -862,6 +899,9 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 		"stale previous-generation callback cannot spend reopened result")
 	_check(panel.return_button.has_focus(),
 		"AC1: the reopened defeat is keyboard-ready without a test grab_focus")
+	var key_portrait := panel.hero_rows.get_child(1).get_node("RowInset/HeroPortrait") as TextureRect
+	_check(key_portrait.texture != null and not panel.apply_hero_portrait(key_portrait, MISSING_ART),
+		"AC3: keyboard Return probe genuinely removes a previously mounted hero portrait")
 	await _key(KEY_ENTER)
 	_check(returns == 2 and panel.return_button.disabled,
 		"real focused Enter emits exactly one new request")
@@ -1463,8 +1503,10 @@ func _audit_result_readability(status: String, expected: Dictionary,
 		and stage.encloses(button.get_global_rect()),
 		label + ": Return to Title is fully inside the paper and the stage")
 	var recap_rect := panel.hero_recap.get_global_rect()
-	_check(ledger.get_global_rect().end.y <= recap_rect.position.y
+	_check(recap_rect.end.y <= ledger.get_global_rect().position.y
 		and recap_rect.end.y <= detail.get_global_rect().position.y
+		and ledger.get_global_rect().end.x <= panel.stitched_section.get_global_rect().position.x
+		and ledger.get_global_rect().end.y <= button.get_global_rect().position.y
 		and panel.stitched_section.get_global_rect().end.y <= button.get_global_rect().position.y,
 		label + ": counters, hero ribbons, retained list and Return never overlap")
 	button.grab_focus()
@@ -2039,6 +2081,7 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 		_check(rows[index + 1] == expected[index],
 			"AC1: mounted count line %d matches the independent oracle" % (index + 1))
 	_check_hero_rows(expected_heroes, "AC1: fully worn party ribbons")
+	_validate_view("Defeat", "fully worn portrait tickets")
 	var recap_text := "\n".join(_hero_rows_text())
 	_check(not recap_text.contains("HEAD -")
 		and not recap_text.contains("ARM -")

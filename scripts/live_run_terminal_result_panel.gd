@@ -3,7 +3,7 @@ extends Control
 ## Standalone M03 terminal presentation. An external host owns mounting and
 ## title/new-run navigation; this view only requests the return action.
 ## Never observes combat or advances, settles or mutates a run.
-## The settled result keeps its genuine counters and adds one sewn ribbon per
+## The settled result keeps its genuine counters and adds one portrait ticket per
 ## hero, so the party's HP, permanent tears and worn patch names are readable.
 ## The same counters also state the reached floor, but only when the settled
 ## latch's own generated map can prove that the last witnessed battle is exactly
@@ -50,12 +50,16 @@ const NO_PATCHES := "no patches"
 const TORN_BADGE := "TORN"
 const HERO_TORN_BADGE_FONT_SIZE := 14
 const HERO_TORN_BADGE_BG := Color("#e4d2b5")
-## The three sewn hero ribbons. Each keeps a heading name and a body detail
+## The three sewn hero tickets. Each keeps a heading name and a body detail
 ## line at or above the 18 px floor, on the same cream felt used by the kept
 ## sewn-card rows, so the recap reads as part of the patchwork result.
 const HERO_NAME_FONT_SIZE := 20
 const HERO_DETAIL_FONT_SIZE := 18
-const HERO_NAME_WIDTH := 132.0
+const HERO_PORTRAITS := {
+	"warden": "res://assets/paper/heroes/warden.png",
+	"seamstress": "res://assets/paper/heroes/seamstress.png",
+	"tinker": "res://assets/paper/heroes/tinker.png",
+}
 const HERO_ROW_BG := Color("#f2e5cb")
 const HERO_ROW_BORDER := Color("#8d7560")
 const HERO_NAME_INK := Color("#28363c")
@@ -69,17 +73,17 @@ const RETURN_BUTTON_PATH := "PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultTitle
 @onready var description_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultDescription
-@onready var summary_label: Label = $PaperPanel/ContentMargin/ResultContent/RunSignature
+@onready var summary_label: Label = $PaperPanel/ContentMargin/ResultContent/RunLedger/RunSignature
 @onready var hero_recap: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap
 @onready var hero_recap_title: Label = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRecapTitle
-@onready var hero_rows: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRows
+@onready var hero_rows: HBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRows
 @onready var return_button: Button = $PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var top_stitches: Label = $PaperPanel/ContentMargin/ResultContent/TopStitches
 @onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ResultContent/BottomStitches
-@onready var stitched_section: PanelContainer = $PaperPanel/ContentMargin/ResultContent/StitchedSection
-@onready var stitched_heading: Label = $PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/DetailTitle
-@onready var stitched_scroll: ScrollContainer = $PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll
-@onready var stitched_rows: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent/StitchedScroll/StitchedRows
+@onready var stitched_section: PanelContainer = $PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection
+@onready var stitched_heading: Label = $PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent/DetailTitle
+@onready var stitched_scroll: ScrollContainer = $PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent/StitchedScroll
+@onready var stitched_rows: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent/StitchedScroll/StitchedRows
 
 var _generation: int = 0
 var _is_open: bool = false
@@ -564,44 +568,60 @@ func _hero_recap_parts(hero: Dictionary) -> Dictionary:
 	var worn := _worn_slots_text(slot_map)
 	parts.append(worn if not worn.is_empty() else NO_PATCHES)
 	return {
+		"hero_id": hero_id,
 		"name": str(hero_id).capitalize(),
 		"detail": " · ".join(parts),
 		"is_torn": is_torn,
 	}
 
 
-## Sew one cream felt ribbon per authenticated hero, each with a heading name
-## and its body detail. Rows are plain mouse-transparent labels: the sole
-## interactive control on this view stays the Return button.
+## Sew one cream felt portrait ticket per authenticated hero. Identity comes
+## from the validated row, never party position or an independent authority read.
+## Art and labels ignore input; only Return and the optional card scroll focus.
 func _mount_hero_rows(rows: Array) -> void:
 	_clear_hero_rows()
 	for index in range(rows.size()):
 		var parts: Dictionary = rows[index]
 		var row := PanelContainer.new()
 		row.name = "HeroRow%d" % index
+		row.custom_minimum_size = Vector2(0, 180)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var felt := StyleBoxFlat.new()
 		felt.bg_color = HERO_ROW_BG
 		felt.border_color = HERO_ROW_BORDER
 		felt.set_border_width_all(1)
 		felt.set_corner_radius_all(5)
+		felt.content_margin_left = 10
+		felt.content_margin_right = 10
+		felt.content_margin_top = 8
+		felt.content_margin_bottom = 8
 		row.add_theme_stylebox_override("panel", felt)
-		var inset := MarginContainer.new()
+		var inset := HBoxContainer.new()
 		inset.name = "RowInset"
 		inset.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for side in ["left", "right"]:
-			inset.add_theme_constant_override("margin_" + side, 10)
-		for side in ["top", "bottom"]:
-			inset.add_theme_constant_override("margin_" + side, 3)
+		inset.add_theme_constant_override("separation", 10)
 		row.add_child(inset)
-		var line := HBoxContainer.new()
+		var portrait := TextureRect.new()
+		portrait.name = "HeroPortrait"
+		portrait.custom_minimum_size = Vector2(84, 140)
+		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		inset.add_child(portrait)
+		apply_hero_portrait(portrait, HERO_PORTRAITS.get(parts["hero_id"], ""))
+		var line := VBoxContainer.new()
 		line.name = "RowLine"
-		line.add_theme_constant_override("separation", 8)
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.alignment = BoxContainer.ALIGNMENT_CENTER
+		line.add_theme_constant_override("separation", 4)
 		inset.add_child(line)
 		var name_label := Label.new()
 		name_label.name = "HeroName"
 		name_label.text = parts["name"]
-		name_label.custom_minimum_size = Vector2(HERO_NAME_WIDTH, 0)
+		name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		name_label.theme_type_variation = "PatchHeading"
 		name_label.add_theme_color_override("font_color", HERO_NAME_INK)
 		name_label.add_theme_font_size_override("font_size", HERO_NAME_FONT_SIZE)
@@ -610,6 +630,7 @@ func _mount_hero_rows(rows: Array) -> void:
 		if parts.get("is_torn", false):
 			var badge := Label.new()
 			badge.name = "TornBadge"
+			badge.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 			badge.text = TORN_BADGE
 			badge.theme_type_variation = "PatchHeading"
 			badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -631,6 +652,7 @@ func _mount_hero_rows(rows: Array) -> void:
 			line.add_child(badge)
 		var detail_label := Label.new()
 		detail_label.name = "HeroDetail"
+		detail_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		detail_label.text = parts["detail"]
 		detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		detail_label.add_theme_color_override("font_color", HERO_DETAIL_INK)
@@ -640,6 +662,13 @@ func _mount_hero_rows(rows: Array) -> void:
 		line.add_child(detail_label)
 		hero_rows.add_child(row)
 	hero_recap.visible = not rows.is_empty()
+
+
+## Optional imported portrait; the cream felt ticket remains its fallback.
+## This presentation seam also permits synthetic unavailable-art checks.
+func apply_hero_portrait(portrait: TextureRect, path: String) -> bool:
+	portrait.texture = guarded_texture(path)
+	return portrait.texture != null
 
 
 ## Remove every ribbon and hide the recap block, so a closed or refused view
@@ -896,7 +925,7 @@ static func backdrop_for_status(status: String) -> String:
 ## Exists-guarded texture lookup. A missing or unreadable resource returns null
 ## instead of a load error, so the optional illustrated layer can simply vanish.
 static func guarded_texture(path: String) -> Texture2D:
-	if path.strip_edges().is_empty() or not ResourceLoader.exists(path):
+	if path.strip_edges().is_empty() or not ResourceLoader.exists(path, "Texture2D"):
 		return null
 	return load(path) as Texture2D
 
