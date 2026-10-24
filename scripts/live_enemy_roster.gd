@@ -52,12 +52,17 @@ const ACTOR_ART := {
 ## One large stage for both sides: heroes and enemies share this minimum actor height,
 ## so neither lineup is drawn smaller than the other.
 const STAGE_ACTOR_HEIGHT := 180
-## Band above the art on both sides: enemies keep their intent badge there, heroes keep
-## the same empty band so the two lineups render their art at identical scale.
+## The shared art reservation above both lineups: enemies pin their intent ticket in this
+## band and heroes keep the same empty room, so the two sides still draw their art at one
+## scale with one foot line. The band is only the room a ticket needs; its seat is measured
+## from the source's own resting artwork, never from this band's upper edge.
 const STAGE_INTENT_BAND := 36.0
-## Viewport-safe gap between the stage's upper edge and every intent badge, so the whole
+## Viewport-safe gap between the viewport's upper edge and every intent ticket, so a whole
 ## stitched patch reads as pinned inside 1280x720 instead of hanging off the top edge.
 const STAGE_INTENT_SAFE_MARGIN := 8.0
+## Breathing room between a seated ticket's bottom edge and its actor's resting artwork, so
+## the paper patch never sits on the art while the drawing bobs and breathes.
+const INTENT_ART_CLEARANCE := 8.0
 const STAGE_HEM := Color("2a3431")
 const STAGE_THREAD := Color("c9b996")
 ## One continuous quilt: regular, axis-aligned patches whose edges are shared, so the
@@ -1456,13 +1461,8 @@ func _sync_battle() -> void:
 		badge.name = "EnemyIntent%d" % enemy.position
 		badge.source_position = enemy.position
 		puppet.add_child(badge)
-		# Intent stays above the enemy actor but below the viewport's upper edge, inside
-		# the shared stage band: the patch never touches the screen edge or the art.
-		badge.anchor_right = 1.0
-		badge.offset_left = 0.0
-		badge.offset_right = 0.0
-		badge.offset_top = STAGE_INTENT_SAFE_MARGIN
-		badge.offset_bottom = STAGE_INTENT_BAND
+		# Containers settle after mounting; resize and normal refresh both use resting art.
+		puppet.resized.connect(_place_intent_ticket.bind(puppet, badge))
 		_badges.append(badge)
 	panel.custom_minimum_size.x = 300
 	battle_row.add_child(panel)
@@ -1542,7 +1542,38 @@ func _refresh() -> void:
 				and _badges[index].source_position == position \
 				and action.get("enemy_position") == position:
 			policy = CombatEnemyIntents.policy_for(enemies, position)
-		_badges[index].show_intent(action, enemies.is_slain(position), pending, policy)
+		var badge := _badges[index]
+		_place_intent_ticket(badge.get_parent() as Puppet, badge)
+		badge.show_intent(action, enemies.is_slain(position), pending, policy)
+
+
+## Presentation only: seat one already-mounted ticket on its own source's resting artwork.
+## Never use posed bounds, attack textures or transient transforms, so a lunge, recoil or
+## fall never drags the ticket. The whole ticket stays inside its source column and inside
+## the viewport; at constrained sizes that safety wins over the animation clearance.
+func _place_intent_ticket(puppet: Puppet, badge: LiveEnemyIntentBadge) -> void:
+	if not is_instance_valid(puppet) or not is_instance_valid(badge):
+		return
+	var art := puppet.rest_drawn_rect()
+	# Before the container lays the column out (or while the source is off-screen) there is
+	# no resting art to pin to: hide the ticket for that frame instead of drawing it loose.
+	var viewport := puppet.get_global_transform().affine_inverse() * puppet.get_viewport_rect()
+	var slot := Rect2(Vector2.ZERO, puppet.size).intersection(viewport)
+	badge.visible = art.has_area() and slot.has_area()
+	if not badge.visible:
+		return
+	var width := maxf(badge.custom_minimum_size.x, slot.size.x)
+	var height := badge.custom_minimum_size.y
+	var clearance := maxf(INTENT_ART_CLEARANCE, puppet.art_safety_inset() + Puppet.RIM_RADIUS)
+	# Centre the ticket on its own art, keeping it inside the source column (and the viewport
+	# where the column crosses the edge) and above that art with its animation clearance.
+	var left := slot.position.x
+	var right := maxf(left, slot.end.x - width)
+	var top := maxf(slot.position.y, viewport.position.y + STAGE_INTENT_SAFE_MARGIN)
+	var bottom := maxf(top, slot.end.y - height)
+	badge.position = Vector2(clampf(art.get_center().x - width * 0.5, left, right),
+		clampf(art.position.y - clearance - height, top, bottom))
+	badge.size = Vector2(width, height)
 
 
 ## Only the admission-owned service of the active, still-identical fight is readable.

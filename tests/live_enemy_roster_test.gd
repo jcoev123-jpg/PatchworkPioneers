@@ -1293,10 +1293,11 @@ func _assert_badges(app, presenter, expected_target: int = -1) -> void:
 		_check(not badge.readable_text.is_empty() and _caption_fits(badge),
 			"drawn readable intent fits its dark caption plaque inside the badge")
 		var rect: Rect2 = badge.get_global_rect()
+		_ticket_at_rest(badge)
 		var drawn: Rect2 = Rect2(rect.position + badge.patch_rect().position, badge.patch_rect().size)
 		_check(rect.size.x >= 192 and rect.size.y >= badge.custom_minimum_size.y - 0.01
 			and Rect2(0, 0, 1280, 720).encloses(rect), "badge has visible area within the viewport")
-		# Cycle 127: the control is inset inside the intent band, and the drawn patch is
+		# The control follows resting artwork, and the drawn patch is
 		# complete below the viewport's upper edge, so no stitch is sliced off.
 		_check(drawn.position.y >= 8.0 and drawn.end.y <= rect.end.y + 0.01
 			and Rect2(0, 0, 1280, 720).encloses(drawn),
@@ -1821,12 +1822,45 @@ func _expanded_meadow_layout(scene: PackedScene) -> void:
 	var host = presenter._puppets.back()
 	var saved_id: String = host.actor_id
 	var saved_art := {"idle": host.idle_texture, "attack": host.attack_texture}
+	var ticket: LiveEnemyIntentBadge = presenter._badges.back()
+	var binding_before := _snapshot(app)
+	var target_before: Rect2 = presenter._labels.back().get_global_rect()
+	var ticket_tops: Array[float] = []
 	for actor_id in ["missing_layout_art", "needle_marshal", "spool_hexer", "patchwork_behemoth"]:
 		host.bind_actor(actor_id, presenter.art_for(actor_id))
 		_check((host.current_texture() == null) == (actor_id == "missing_layout_art"),
 			"alternate mounted geometry really exercises missing art and Elite/Boss textures")
+		presenter._place_intent_ticket(host, ticket)
+		_ticket_at_rest(ticket)
+		ticket_tops.append(ticket.position.y)
 		_meadow_layout(app, presenter)
+	_check(ticket_tops.max() - ticket_tops.min() > 1.0,
+		"different resting Fight/Elite/Boss artwork seats tickets at different heights")
 	host.bind_actor(saved_id, saved_art)
+	presenter._place_intent_ticket(host, ticket)
+	_check(_snapshot(app) == binding_before and presenter._labels.back().get_global_rect() == target_before,
+		"art-bound ticket replacement preserves real combat, announcements, RNG and target region")
+	# Source inspection: a seat is measured from resting artwork only, so a committed lunge,
+	# a recoil, a fall or any other transient pose can never drag the ticket with it.
+	var seat := _method_body(FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd"),
+		"func _place_intent_ticket(")
+	_check(seat.contains("rest_drawn_rect()") and seat.contains("clampf(")
+		and seat.contains("badge.size =") and not seat.contains("posed_")
+		and not seat.contains("pose_texture") and not seat.contains("idle_bob")
+		and not seat.contains("create_tween") and not seat.contains("randi("),
+		"tickets are seated from resting artwork inside their own source, never from a pose")
+	root.size = Vector2i(1280, 760)
+	for frame in range(6):
+		await process_frame
+	for badge in presenter._badges:
+		_ticket_at_rest(badge)
+	root.size = Vector2i(1280, 720)
+	for frame in range(6):
+		await process_frame
+	for badge in presenter._badges:
+		_ticket_at_rest(badge)
+	_check(_snapshot(app) == binding_before and presenter._labels.back().get_global_rect() == target_before,
+		"real viewport relayout restores targets and preserves combat and seeded RNG")
 	for hero in app.party._heroes:
 		hero["statuses"] = {"bleed": 2, "weak": 2, "exposed": 2}
 		_check(app.party.gain_block(hero.position, 4), "expanded hero has real Block")
@@ -2823,6 +2857,34 @@ func _invalid_sources(app, reference, presenter) -> void:
 		_check(presenter.enemies == null and presenter.panel == null and presenter._badges.is_empty(),
 			"invalid battle teardown also clears all intent cues")
 		await process_frame
+
+
+func _ticket_at_rest(badge: LiveEnemyIntentBadge) -> void:
+	var puppet = badge.get_parent()
+	_check(puppet is ROSTER_ART.Puppet and puppet.slot == badge.source_position,
+		"ticket is mounted on its authoritative source puppet")
+	if not puppet is ROSTER_ART.Puppet:
+		return
+	var art: Rect2 = puppet.rest_drawn_rect()
+	var rect: Rect2 = badge.get_rect()
+	var clearance: float = maxf(ROSTER_ART.INTENT_ART_CLEARANCE,
+		puppet.art_safety_inset() + puppet.RIM_RADIUS)
+	# The independent expected seat: the ticket hangs on its own resting artwork with the
+	# animation clearance, kept inside its source column and the viewport's top margin.
+	var slot_top: float = maxf(0.0, ROSTER_ART.STAGE_INTENT_SAFE_MARGIN - puppet.global_position.y)
+	var expected_y: float = clampf(art.position.y - clearance - rect.size.y, slot_top,
+		maxf(slot_top, puppet.size.y - rect.size.y))
+	var centred: bool = is_equal_approx(rect.get_center().x, art.get_center().x)
+	var flush: bool = is_equal_approx(rect.position.x, 0.0) \
+		or is_equal_approx(rect.end.x, puppet.size.x)
+	_check(badge.is_visible_in_tree() and art.has_area()
+		and is_equal_approx(rect.position.y, expected_y)
+		and rect.end.y <= art.position.y + 0.01
+		and (centred or flush)
+		and Rect2(Vector2.ZERO, puppet.size).grow(0.01).encloses(rect)
+		and puppet.get_viewport_rect().encloses(badge.get_global_rect())
+		and Rect2(Vector2.ZERO, badge.size).encloses(badge.patch_rect()),
+		"complete sewn ticket sits above resting art within its source and viewport")
 
 
 func _finish() -> void:
