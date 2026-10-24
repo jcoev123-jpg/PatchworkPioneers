@@ -147,6 +147,13 @@ func _run() -> void:
 				"after": "Give a chosen ally 7 Block.", "before_amount": 5, "after_amount": 7},
 		}
 		await _frames()
+		# Hovering a tile is a read-only explanation: it never upgrades, spends,
+		# consumes the Rest or moves the canonical selection.
+		var hover_before := _upgrade_state()
+		var hover_selection: int = choices.selected
+		await _hover(gallery.upgrade_tiles()[0])
+		_check(_upgrade_state() == hover_before and choices.selected == hover_selection,
+			"hovering an upgrade tile explains it without upgrading, spending or selecting")
 		for item in range(rows.size()):
 			var row: Dictionary = rows[item]
 			var tile = gallery.upgrade_tiles()[item]
@@ -188,6 +195,24 @@ func _run() -> void:
 					and halves[0].contains(" %d " % int(expected["before_amount"]))
 					and halves[1].contains(" %d " % int(expected["after_amount"])),
 					"each half prints its own distinct canonical authored amount: " + String(row["source_id"]))
+			# AC2: the tile's hover explains both authored halves under their own
+			# Before/After headings, each with its own name, cost and rules.
+			var base_definition: Dictionary = RunRestStitchCards.resolve_card_definition(String(row["source_id"]))
+			var plus_definition: Dictionary = RunRestStitchCards.resolve_card_definition(String(row["plus_id"]))
+			_check(not base_definition.is_empty() and not plus_definition.is_empty(),
+				"both authored upgrade halves resolve: " + String(row["source_id"]))
+			_check(details.tooltip == tile.tooltip_text and not tile.tooltip_text.is_empty(),
+				"upgrade tile exposes its hover explanation on the mounted tile button")
+			_check_upgrade_tooltip(tile, base_definition, plus_definition)
+			if effect_contract.has(String(row["source_id"])):
+				var expected_tooltip: Dictionary = effect_contract[String(row["source_id"])]
+				var tooltip_halves: PackedStringArray = String(details.tooltip).split("\nAfter:\n")
+				_check(tooltip_halves.size() == 2
+					and tooltip_halves[0].contains(str(int(expected_tooltip["before_amount"])))
+					and tooltip_halves[1].contains(str(int(expected_tooltip["after_amount"])))
+					and tooltip_halves[0] != tooltip_halves[1],
+					"hover Before and After halves carry their own distinct authored amount: "
+						+ String(row["source_id"]))
 		# The Rest half renders the CANONICAL row's effects on the authored
 		# definition: a different supplied amount changes the sentence, the
 		# source definition is never mutated, and empty/unknown stay honest.
@@ -214,6 +239,12 @@ func _run() -> void:
 			and placeholder_details.title == "Unavailable selection"
 			and placeholder_details.meta == "This row no longer matches the Rest's canonical choices.",
 			"a stale Rest row renders an inert placeholder instead of a guessed card or effect")
+		_check(placeholder_details.tooltip == LiveVisitCardTiles.DETAILS_UNAVAILABLE
+			and placeholder.tooltip_text == placeholder_details.tooltip
+			and not placeholder_details.tooltip.contains("Before:")
+			and not placeholder_details.tooltip.contains("After:")
+			and not placeholder_details.tooltip.contains("damage"),
+			"a stale Rest row tooltip says details are unavailable instead of inventing rules")
 		var placeholder_before := _persistent()
 		await _click_tile(placeholder)
 		_check(_persistent() == placeholder_before and app.rest_upgrade != null
@@ -225,6 +256,10 @@ func _run() -> void:
 		_check(not gallery.tile_details(gallery.upgrade_tiles()[1]).card_id.is_empty()
 			and not gallery.tile_details(gallery.upgrade_tiles()[1]).effects.contains("Unavailable"),
 			"restoring the canonical row rebuilds its real sewn tile")
+		_check(gallery.upgrade_tiles()[1].tooltip_text.contains("Before:\n")
+			and gallery.upgrade_tiles()[1].tooltip_text.contains("\nAfter:\n")
+			and not gallery.upgrade_tiles()[1].tooltip_text.contains("unavailable"),
+			"restoring the canonical row replaces the stale hover text")
 		app.rest_heal_button.grab_focus()
 		await _key(KEY_TAB)
 		_check(gallery.upgrade_tiles()[0].has_focus(), "Tab reaches the first Rest upgrade tile")
