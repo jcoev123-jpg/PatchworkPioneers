@@ -1735,10 +1735,12 @@ func _patch_tooltip(hero: Dictionary, label: String, patch_id: String, slot: Str
 		label, patch_id, slot, "ACTIVE" if active else "DORMANT"]
 
 
-## A named but unwired HEAD/ARM patch: readable name, authored ID, real wearer and
-## slot, and exactly one status line — never a fabricated live-power sentence.
+## A named sewn HEAD/ARM patch: readable name, authored ID, real wearer and
+## slot, plus the exact authored rule line for the eight M05 entries, never an
+## invented/fabricated effect sentence. Unknown IDs keep only the neutral 3-line
+## prefix.
 func _assert_named_chip(button: Button, hero: Dictionary, label: String,
-		patch_id: String, slot: String, active: bool) -> void:
+		patch_id: String, slot: String, active: bool, presenter: Node = null) -> void:
 	_check(button != null and button.visible and button.text == slot
 		and button.focus_mode == Control.FOCUS_NONE
 		and button.mouse_filter == Control.MOUSE_FILTER_STOP
@@ -1748,10 +1750,25 @@ func _assert_named_chip(button: Button, hero: Dictionary, label: String,
 	if button == null:
 		return
 	var expected := _patch_tooltip(hero, label, patch_id, slot, active)
-	_check(button.tooltip_text == expected,
-		"%s keeps its readable name, authored ID, wearer and slot: %s" % [patch_id, button.tooltip_text])
-	_check(button.tooltip_text.split("\n").size() == 3,
-		"unwired patch tooltip invents no effect line: " + patch_id)
+	var known_m05 := ["bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap",
+		"reinforced_browband", "hemguard_cuff", "red_bobbin_cuff",
+		"loose_thread_glove", "frayfinder_mitt"]
+	if known_m05.has(patch_id):
+		var power_line := ""
+		if presenter != null:
+			power_line = presenter._patch_power(patch_id)
+		_check(not power_line.is_empty() or presenter == null,
+			"known M05 %s has an authored power description" % patch_id)
+		expected += "\n" + power_line
+		_check(button.tooltip_text == expected,
+			"%s keeps its readable name, authored ID, wearer, slot and authored rule: %s" % [patch_id, button.tooltip_text])
+		_check(button.tooltip_text.split("\n").size() == 4,
+			"known M05 %s tooltip has four lines (base + authored rule): %s" % [patch_id, button.tooltip_text])
+	else:
+		_check(button.tooltip_text == expected,
+			"%s keeps its readable name, authored ID, wearer and slot: %s" % [patch_id, button.tooltip_text])
+		_check(button.tooltip_text.split("\n").size() == 3,
+			"unwired patch tooltip invents no effect line: " + patch_id)
 
 
 ## Build a genuine wardrobe/carryover exactly like real play, sew the supplied
@@ -1880,15 +1897,15 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		== _patch_tooltip(app.party.get_hero(2), "Thick Felt Mantle", "thick_felt_mantle",
 			"COAT", true) + "\n+10 effective maximum HP while living; no free healing.",
 		"Seamstress COAT chip names Thick Felt Mantle, its real +10 and no free healing")
-	# AC1/AC3: named HEAD/ARM patches with no invented live power.
+	# AC1/AC3: named HEAD/ARM patches with their authored rules.
 	_assert_named_chip(_patch_chip(meters[0], "HEAD"), app.party.get_hero(1),
-		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", true)
+		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", true, presenter)
 	_assert_named_chip(_patch_chip(meters[0], "ARM"), app.party.get_hero(1),
-		"Hemguard Cuff", "hemguard_cuff", "ARM", true)
+		"Hemguard Cuff", "hemguard_cuff", "ARM", true, presenter)
 	_assert_named_chip(_patch_chip(meters[2], "HEAD"), app.party.get_hero(3),
-		"Button Glass Visor", "button_glass_visor", "HEAD", true)
+		"Button Glass Visor", "button_glass_visor", "HEAD", true, presenter)
 	_assert_named_chip(_patch_chip(meters[2], "ARM"), app.party.get_hero(3),
-		"Loose Thread Glove", "loose_thread_glove", "ARM", true)
+		"Loose Thread Glove", "loose_thread_glove", "ARM", true, presenter)
 	var tinker_coat := _patch_chip(meters[2], "COAT")
 	_check(tinker_coat != null and not tinker_coat.visible and tinker_coat.text.is_empty()
 		and tinker_coat.tooltip_text.is_empty(),
@@ -1947,7 +1964,7 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		and bool(warden_coat.get_meta("fallen_chip")) == true,
 		"the worn COAT chip reads DORMANT with no false active bonus once its wearer is torn")
 	_assert_named_chip(_patch_chip(meters[0], "HEAD"), app.party.get_hero(1),
-		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", false)
+		"Bloodstitch Bonnet", "bloodstitch_bonnet", "HEAD", false, presenter)
 	_check(_patch_chip(meters[1], "COAT").tooltip_text.contains("ACTIVE")
 		and _patch_chip(meters[1], "COAT").tooltip_text.contains("+10 effective maximum HP"),
 		"the other living wearer's COAT stays ACTIVE with its own +10")
@@ -1966,13 +1983,13 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		return
 	var b_meters: Array = case_b["meters"]
 	_assert_named_chip(_patch_chip(b_meters[0], "HEAD"), app.party.get_hero(1),
-		"Stern Seam Cap", "stern_seam_cap", "HEAD", true)
+		"Stern Seam Cap", "stern_seam_cap", "HEAD", true, presenter)
 	_assert_named_chip(_patch_chip(b_meters[0], "ARM"), app.party.get_hero(1),
-		"Red Bobbin Cuff", "red_bobbin_cuff", "ARM", true)
+		"Red Bobbin Cuff", "red_bobbin_cuff", "ARM", true, presenter)
 	_assert_named_chip(_patch_chip(b_meters[1], "HEAD"), app.party.get_hero(2),
-		"Reinforced Browband", "reinforced_browband", "HEAD", true)
+		"Reinforced Browband", "reinforced_browband", "HEAD", true, presenter)
 	_assert_named_chip(_patch_chip(b_meters[1], "ARM"), app.party.get_hero(2),
-		"Frayfinder Mitt", "frayfinder_mitt", "ARM", true)
+		"Frayfinder Mitt", "frayfinder_mitt", "ARM", true, presenter)
 	_check(app.party.get_hero(1)["max_hp"] == 40 and app.party.get_hero(2)["max_hp"] == 30
 		and app.party.get_hero(3)["max_hp"] == 26 and b_meters[0].hp_text.text == "40/40",
 		"M05 case B: HEAD/ARM patches never invent a maximum-HP change")
@@ -1985,8 +2002,8 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	await _hover(arm_chip)
 	_check(root.gui_get_hovered_control() == arm_chip
 		and arm_chip.tooltip_text == _patch_tooltip(app.party.get_hero(2), "Frayfinder Mitt",
-			"frayfinder_mitt", "ARM", true),
-		"real pointer hover reads Frayfinder Mitt's name with no unwired power claim")
+			"frayfinder_mitt", "ARM", true) + "\n" + presenter._patch_power("frayfinder_mitt"),
+		"real pointer hover reads Frayfinder Mitt's authored conditional +2 Unravel rule")
 	await _mouse(app.return_button)
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null,

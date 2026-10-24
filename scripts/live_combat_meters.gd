@@ -26,9 +26,10 @@ const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 const CHIP_FONT_SIZES := [11, 10, 9]
 const CHIP_SEPARATION := 2
 ## Bounded, presentation-only readable names for known authored patch IDs. The M05
-## HEAD/ARM entries only name already-prepared catalog patches; their live rules are
-## wired by separate tasks, so `_patch_power` still adds no effect sentence for them.
-## An unknown ID keeps its raw authored ID and is never given a power line.
+## HEAD/ARM entries describe their authored rules directly in `_patch_power` below
+## (card_bleed_bonus, card_exposed_bonus, card_weak_bonus, card_block_bonus,
+## card_unravel_bonus, and Frayfinder's conditional first-hit Unravel). An unknown
+## ID keeps its raw authored ID and is never given a fabricated power line.
 const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
 	"quilted_coat": "Quilted Coat", "padded_vest": "Padded Vest",
@@ -573,6 +574,22 @@ func _patch_power(id: String) -> String:
 		"pincushion_arm":
 			return "Damage-dealing cards owned by this wearer deal +%d damage." % \
 				CombatPatchAttackRules.EFFECTS[id]["amount"]
+		"bloodstitch_bonnet":
+			return "Authored patch rule: card_bleed_bonus +1 to positive Bleed on cards owned by this living wearer."
+		"button_glass_visor":
+			return "Authored patch rule: card_exposed_bonus +1 to positive Exposed on this wearer's cards."
+		"stern_seam_cap":
+			return "Authored patch rule: card_weak_bonus +1 to positive Weak on this wearer's cards."
+		"reinforced_browband":
+			return "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards, applied to the card's actual Block recipient (even if it is an ally)."
+		"hemguard_cuff":
+			return "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards."
+		"red_bobbin_cuff":
+			return "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier."
+		"loose_thread_glove":
+			return "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards."
+		"frayfinder_mitt":
+			return "Authored patch rule: +2 Unravel ONLY on this living wearer's first single-target attack hit, if that enemy's gauge is already at least 1/2 of its current threshold; once per PLAYER turn. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit."
 	if _coat_bonuses.is_empty():
 		var coats_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 			"res://data/patches/m04_coat_patches.json"))
