@@ -9,6 +9,35 @@ class RejectingMap extends RunMap:
 		return false
 
 
+## Tokens the retired multi-line card block printed. The accepted concise reward
+## faces never show them, so a Shop tile showing one has fallen back to old prose.
+const RETIRED_RULES_TEXT: Array[String] = ["From:", "Target:", "Positions:",
+	"front position", "middle position", "back position", "Pinned:", "\n"]
+## Independent authored expectations for the cards every run owns at Shop entry:
+## the exact short sentence and amount each face must print.
+const STARTER_EFFECT_LINES := {
+	"warden_strike": "Deal 6 damage to one enemy.",
+	"warden_shield_bash": "Deal 8 damage to one enemy and apply Weak 1.",
+	"warden_brace": "Gain 7 Block.",
+	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 2.",
+	"seamstress_mend": "Heal a chosen ally 5 HP.",
+	"seamstress_stitch_up": "Give a chosen ally 5 Block.",
+	"tinker_pop_shot": "Deal 5 damage to one enemy.",
+	"tinker_scrap_bomb": "Deal 4 damage to every enemy.",
+	"tinker_tune_up": "Draw 1 card.",
+}
+
+
+## The accepted reward face's rules line for one authored definition: the shared
+## short renderer, with a stitched composite described by its own authored halves.
+func _concise_rules(definition: Dictionary) -> String:
+	if definition.is_empty():
+		return "No authored description for this card."
+	if definition.get("stitched_halves") is String:
+		return "Stitched halves: %s" % definition["stitched_halves"]
+	return CardShortRules.line(definition)
+
+
 func _stock_oracle() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
@@ -443,6 +472,11 @@ func _run() -> void:
 				and details.title == String(definition.get("display_name", listing.id))
 				and details.meta.begins_with("%d gold" % int(listing.price)) and details.has_picture,
 				"offer tile shows its authored name, quoted price and art/emblem")
+			# The accepted reward face's own concise line, never the old block.
+			_check(details.effects == _concise_rules(definition)
+				and not details.effects.is_empty() and details.effects.ends_with(".")
+				and RETIRED_RULES_TEXT.all(func(token): return not details.effects.contains(token)),
+				"offer tile prints the accepted concise effect, not position prose: " + String(listing.id))
 		for index in range(app.run_deck.size()):
 			var tile = gallery.removal_tiles()[index]
 			var details: Dictionary = gallery.tile_details(tile)
@@ -452,6 +486,28 @@ func _run() -> void:
 				and details.title == String(definition.get("display_name", owned))
 				and details.meta.begins_with("Deck card #%d" % (index + 1)),
 				"removal tile carries the exact owned occurrence index and authored name")
+			# A real owned copy prints the accepted concise wording, and the
+			# independently authored sentence for that exact card ID.
+			_check(details.effects == _concise_rules(definition)
+				and not details.effects.is_empty() and details.effects.ends_with(".")
+				and RETIRED_RULES_TEXT.all(func(token): return not details.effects.contains(token)),
+				"removal tile prints the accepted concise rules wording, not position prose")
+			if STARTER_EFFECT_LINES.has(owned):
+				_check(details.effects == String(STARTER_EFFECT_LINES[owned]),
+					"removal tile prints the exact authored short effect for " + owned)
+		for known in ["warden_strike", "warden_brace", "seamstress_mend",
+				"seamstress_stitch_up", "tinker_scrap_bomb", "tinker_tune_up"]:
+			_check(app.run_deck.has(known) and STARTER_EFFECT_LINES.has(known),
+				"exact concise expectation is exercised by an owned copy: " + known)
+		# The mounted Shop faces keep their concise sentence readable inside the
+		# sewn frame at 1280x720 (both a priced offer and an owned copy).
+		for tile in [gallery.offer_tiles()[0], gallery.removal_tiles()[0]]:
+			var face_panel: Control = tile.get_parent()
+			var effects_label := face_panel.find_child("TileEffects", true, false) as Label
+			_check(effects_label != null and effects_label.text == gallery.tile_details(tile).effects
+				and effects_label.get_theme_font_size("font_size") >= 13
+				and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
+				"the concise effect stays legible inside its sewn Shop tile")
 		before = _shop_state()
 		await _click_tile(_tile_for("offer", 2))
 		_check(_shop_state() == before and app.shop_offers.selected == 2,
