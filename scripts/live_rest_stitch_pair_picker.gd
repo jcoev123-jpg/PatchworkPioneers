@@ -834,6 +834,7 @@ func _on_first_tile_pressed(index: int) -> void:
 			break
 
 	_populate_second_options(index)
+	call_deferred("_handoff_focus", _epoch, false)
 
 
 func _populate_second_options(first_idx: int) -> void:
@@ -925,6 +926,22 @@ func _return_to_first_choice() -> void:
 	_right_edge.color = OWNER_COLORS["tinker"]
 
 	call_deferred("_rebuild_focus_chain")
+	call_deferred("_handoff_focus", _epoch, true)
+
+
+func _handoff_focus(epoch: int, to_first: bool) -> void:
+	if _submitted or epoch != _epoch or not is_inside_tree():
+		return
+	if to_first:
+		for tile in first_tiles:
+			if is_instance_valid(tile) and tile.is_inside_tree() and tile.visible and not tile.disabled:
+				tile.grab_focus()
+				return
+	else:
+		for tile in second_tiles:
+			if is_instance_valid(tile) and tile.is_inside_tree() and tile.visible and not tile.disabled:
+				tile.grab_focus()
+				return
 
 
 func _on_first_changed(item: int, epoch: int) -> void:
