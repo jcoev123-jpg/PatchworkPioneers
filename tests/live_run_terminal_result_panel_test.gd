@@ -209,6 +209,29 @@ func _app_snapshot() -> Dictionary:
 
 
 func _signature(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
+	var summary: Dictionary = _signature_with_stats(ledger, wardrobe)
+	return summary
+
+func _signature_with_stats(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
+	var summary: Dictionary = RunSignatureSummary.summarize(ledger["deck"], ledger["descriptors"],
+		ledger["next_stitch_id"], wardrobe)
+	if summary.get("ok") != true or wardrobe == null or not wardrobe.is_valid():
+		return summary
+	var snap: Dictionary = wardrobe.get_snapshot()
+	summary["gold"] = snap.get("gold", 0)
+	summary["scraps"] = snap.get("scraps", 0)
+	var by_id: Dictionary = {}
+	for h in snap.get("heroes", []):
+		if h is Dictionary and h.has("id"):
+			by_id[h["id"]] = h
+	for h in summary.get("heroes", []):
+		var hid: String = h.get("hero_id", "")
+		if by_id.has(hid):
+			h["hp"] = by_id[hid].get("hp", 0)
+			h["max_hp"] = by_id[hid].get("max_hp", 0)
+	return summary
+
+func _orig_signature(ledger: Dictionary, wardrobe: RunPatchWardrobe) -> Dictionary:
 	return RunSignatureSummary.summarize(ledger["deck"], ledger["descriptors"],
 		ledger["next_stitch_id"], wardrobe)
 
@@ -616,7 +639,7 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.open_result(victory_latch), "accepts settled Boss VICTORY")
 	await _frames()
 	_validate_view("Victory", "Boss victory")
-	_check(panel.summary_label.text.begins_with("Battles resolved: %d\n" % victory_settled),
+	_check(panel.summary_label.text.begins_with("Battles resolved: %d · Gold: 0 · Scraps: 0\n" % victory_settled),
 		"Boss victory shows correct battles resolved count")
 	await _test_missing_backdrop_art(victory_ctx, victory_battle, "Boss victory")
 	var generation := panel._generation
@@ -662,7 +685,7 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.open_result(defeat_latch), "new settled DEFEAT opens after close")
 	await _frames()
 	_validate_view("Defeat", "party defeat")
-	_check(panel.summary_label.text.begins_with("Battles resolved: %d\n" % defeat_settled),
+	_check(panel.summary_label.text.begins_with("Battles resolved: %d · Gold: 0 · Scraps: 0\n" % defeat_settled),
 		"Party defeat shows correct battles resolved count")
 	await _test_missing_backdrop_art(defeat_ctx, defeat_battle, "party defeat")
 	if old_callback.is_valid():
@@ -739,11 +762,11 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 		_check(single_lines[1] == "Patches worn: 3", "AC2: exact worn count wording is preserved")
 		_check(single_lines[2] == "Crafted: Strike / Prick",
 			"AC1: the recap names the authored pair instead of the stitched ID")
-		_check(single_lines[3] == "Warden  HEAD Button Eye  ·  ARM -  ·  COAT -",
+		_check(single_lines[3] == "Warden 40/40 HP · HEAD Button Eye · ARM - · COAT -",
 			"AC2: Warden row keeps HEAD/ARM/COAT order with a dash for empty slots")
-		_check(single_lines[4] == "Seamstress  HEAD -  ·  ARM Pincushion Arm  ·  COAT -",
+		_check(single_lines[4] == "Seamstress 30/30 HP · HEAD - · ARM Pincushion Arm · COAT -",
 			"AC2: pincushion_arm is shown as the readable title-cased Pincushion Arm")
-		_check(single_lines[5] == "Tinker  HEAD -  ·  ARM -  ·  COAT Quilted Coat",
+		_check(single_lines[5] == "Tinker 26/26 HP · HEAD - · ARM - · COAT Quilted Coat",
 			"AC2: Tinker row keeps its order with readable coat name and empty dashes")
 	_check(not single_text.contains("stitched_000001"), "AC1: opaque stitched IDs are never shown")
 	_check(not single_text.contains("more"), "AC1: a single current stitched card adds no +N more")
@@ -856,7 +879,7 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 	_check(not zero_text.contains("Crafted:") and not zero_text.contains("Strike")
 		and not zero_text.contains("Brace") and not zero_text.contains("stitched_"),
 		"AC3: an empty current stitch recap invents no names or IDs")
-	_check(zero_lines[4] == "Tinker  HEAD -  ·  ARM -  ·  COAT -",
+	_check(zero_lines[4] == "Tinker 26/26 HP · HEAD - · ARM - · COAT -",
 		"AC2: empty slots remain explicit dashes in the final hero row")
 	panel.close_result()
 	_check(not panel.has_open_result(), "AC3: the recap view closes back to its shipped closed state")
@@ -1145,7 +1168,7 @@ func _audit_result_readability(status: String, expected: Dictionary,
 	# Exact authoritative signature, with an independent line oracle.
 	var lines := ledger.text.split("\n")
 	var expected_lines: Array[String] = [
-		"Battles resolved: %d" % settled,
+		"Battles resolved: %d · Gold: %d · Scraps: %d" % [settled, expected.gold, expected.scraps],
 		"Stitched: %d made · %d in deck" % [expected.stitched_created, expected.stitched_current],
 		"Patches worn: %d" % expected.worn_total,
 	]
@@ -1163,7 +1186,7 @@ func _audit_result_readability(status: String, expected: Dictionary,
 		for slot in ["HEAD", "ARM", "COAT"]:
 			var patch_id: String = hero.slots[slot]
 			parts.append("%s %s" % [slot, patch_id.capitalize() if not patch_id.is_empty() else "-"])
-		expected_lines.append("%s  %s" % [str(hero.hero_id).capitalize(), "  ·  ".join(parts)])
+		expected_lines.append("%s %d/%d HP · %s" % [str(hero.hero_id).capitalize(), hero.hp, hero.max_hp, " · ".join(parts)])
 	_check(lines.size() == expected_lines.size(), label + ": exact number of signed ledger lines")
 	for index in range(mini(lines.size(), expected_lines.size())):
 		_check(lines[index] == expected_lines[index],
@@ -1254,6 +1277,178 @@ func _audit_result_readability(status: String, expected: Dictionary,
 		label + ": typography and scrolling change no signed run state or RNG")
 
 
+## M05 AC1, AC2, AC3: Synchronized wallet (gold/scraps) and hero HP with swap and tear.
+func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -> void:
+	var starter_defs := _definitions(HEROES)
+	var party := CombatParty.new(starter_defs)
+	var carry := RunTornCarryover.new(party.get_heroes())
+	_check(carry.is_valid(), "AC1/AC2: authentic carryover starts valid")
+
+	# Battle 1 with position swaps and lethal damage on Warden to cause a tear:
+	var p1 := carry.create_next_fight_party()
+	var e1 := CombatEnemies.new([{"id": "dummy", "max_hp": 8}])
+	var r1 := CombatBattleResult.new(p1, e1)
+	_check(carry.begin_battle("node_tear", r1, p1), "AC2: battle 1 begins")
+	# Swaps: swap Warden (pos 1) and Seamstress (pos 2)
+	var s1 := CombatPositionSwaps.preview_adjacent_swap(p1, 1, 1)
+	p1._heroes.assign(s1.heroes)
+	# Swap Warden (pos 2) and Tinker (pos 3)
+	var s2 := CombatPositionSwaps.preview_adjacent_swap(p1, 2, 1)
+	p1._heroes.assign(s2.heroes)
+	# Swap Seamstress (pos 1) and Tinker (pos 2)
+	var s3 := CombatPositionSwaps.preview_adjacent_swap(p1, 1, 1)
+	p1._heroes.assign(s3.heroes)
+	# Swap Seamstress (pos 2) and Warden (pos 3)
+	var s4 := CombatPositionSwaps.preview_adjacent_swap(p1, 2, 1)
+	p1._heroes.assign(s4.heroes)
+	_check(p1.get_hero(1)["id"] == "tinker" and p1.get_hero(2)["id"] == "warden" and p1.get_hero(3)["id"] == "seamstress",
+		"AC2: party swapped to Tinker 1, Warden 2, Seamstress 3")
+
+	# Lethal damage to Warden at position 2:
+	_check(p1.apply_damage(2, p1.get_hero(2)["hp"]), "AC2: Warden takes lethal damage in battle 1")
+	_check(e1.apply_damage(1, 8), "AC2: slay dummy enemy 1")
+	_check(r1.evaluate() == CombatBattleResult.VICTORY, "AC2: battle 1 victory evaluated")
+	_check(carry.commit_victory("node_tear", r1, p1).ok, "AC2: battle 1 victory committed")
+	_check(carry.apply_reward("node_tear", r1, p1).ok, "AC2: battle 1 reward applied (tear on Warden)")
+
+	# Mend Warden at rest node:
+	_check(carry.choose_mend("node_rest", "receipt_mend", "warden", 2, 10, carry.read_state(), null, true).ok,
+		"AC2: Warden mended at rest stop")
+
+	# Battle 2: set final HP (Tinker: 12/26, Warden: 18/37, Seamstress: 22/30):
+	var p2 := carry.create_next_fight_party()
+	var e2 := CombatEnemies.new([{"id": "dummy2", "max_hp": 8}])
+	var r2 := CombatBattleResult.new(p2, e2)
+	_check(carry.begin_battle("node_fight_2", r2, p2), "AC2: battle 2 begins")
+	_check(p2.apply_damage(1, 14), "AC2: Tinker takes damage to 12 HP")
+	_check(p2.apply_damage(3, 8), "AC2: Seamstress takes damage to 22 HP")
+	p2._heroes[1]["hp"] = 18
+	_check(e2.apply_damage(1, 8), "AC2: slay dummy enemy 2")
+	_check(r2.evaluate() == CombatBattleResult.VICTORY, "AC2: battle 2 victory evaluated")
+	_check(carry.commit_victory("node_fight_2", r2, p2).ok, "AC2: battle 2 victory committed")
+	_check(carry.apply_reward("node_fight_2", r2, p2).ok, "AC2: battle 2 reward applied")
+
+	var gold := 43
+	var scraps := 2
+	var single := _stitch_pairs(_starter_deck(), [["warden_strike", "seamstress_prick"]], 3)
+	var heroes_state: Array = carry.read_state().heroes.duplicate(true)
+	_check(heroes_state.size() == 3 and heroes_state[0]["id"] == "tinker" and heroes_state[0]["hp"] == 12 and heroes_state[0]["max_hp"] == 26
+		and heroes_state[1]["id"] == "warden" and heroes_state[1]["hp"] == 18 and heroes_state[1]["max_hp"] == 37
+		and heroes_state[2]["id"] == "seamstress" and heroes_state[2]["hp"] == 22 and heroes_state[2]["max_hp"] == 30,
+		"AC2: carryover heroes state matches expected swapped order and reduced Warden max HP")
+
+	var wardrobe := RunPatchWardrobe.new(heroes_state,
+		["button_eye", "pincushion_arm", "quilted_coat"],
+		PATCH_DEFINITIONS.duplicate(true),
+		scraps, gold, single["deck"], 5801, true)
+	_check(wardrobe.is_valid(), "AC1/AC2: wardrobe with swapped heroes and tear is valid")
+	_check(wardrobe.sew("button_eye", "warden", "HEAD", "sew_warden_custom", wardrobe.get_snapshot()).ok, "sew Button Eye on Warden")
+	_check(wardrobe.sew("pincushion_arm", "seamstress", "ARM", "sew_seamstress_custom", wardrobe.get_snapshot()).ok, "sew Pincushion Arm on Seamstress")
+	_check(wardrobe.sew("quilted_coat", "tinker", "COAT", "sew_tinker_custom", wardrobe.get_snapshot()).ok, "sew Quilted Coat on Tinker")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()), "AC1/AC2: carryover binds wardrobe snapshot")
+
+	app.run_heroes = heroes_state.duplicate(true)
+	app.party_carryover = carry
+	app.session_gold = gold
+	app.run_scraps = scraps
+	app.run_deck.assign(single["deck"])
+	app.run_stitch_descriptors = single["descriptors"].duplicate(true)
+	app.run_next_stitch_id = single["next_stitch_id"]
+	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
+
+	# AC1 & AC2: Victory check
+	var victory_latch: RunActBattleOutcome = victory["ctx"]["latch"]
+	var victory_settled: int = (victory_latch.get_state().get("settled_node_ids") as Array).size()
+	var snap_before_vic := _app_snapshot()
+	_check(panel.open_result(victory_latch), "AC1: opens valid settled Victory with wallet and hero health")
+	await _frames()
+	_check(panel.has_open_result() and panel.is_visible_in_tree(), "AC1: Victory result is mounted and open")
+	var vic_lines := panel.summary_label.text.split("\n")
+	_check(vic_lines[0] == "Battles resolved: %d · Gold: 43 · Scraps: 2" % victory_settled,
+		"AC1: Victory shows exact nonnegative gold and scraps beside battles resolved")
+	_check(vic_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Victory preserves stitched counts")
+	_check(vic_lines[2] == "Patches worn: 3", "AC3: Victory preserves patches worn total")
+	_check(vic_lines[3] == "Crafted: Strike / Prick", "AC3: Victory preserves crafted card name")
+	_check(vic_lines[4] == "Warden 18/37 HP · HEAD Button Eye · ARM - · COAT -",
+		"AC2: Warden row shows authoritative 18/37 HP and reduced cap from tear despite position 2")
+	_check(vic_lines[5] == "Seamstress 22/30 HP · HEAD - · ARM Pincushion Arm · COAT -",
+		"AC2: Seamstress row shows authoritative 22/30 HP despite position 3")
+	_check(vic_lines[6] == "Tinker 12/26 HP · HEAD - · ARM - · COAT Quilted Coat",
+		"AC2: Tinker row shows authoritative 12/26 HP despite position 1")
+	_check(not panel.return_button.disabled and panel.return_button.focus_mode == Control.FOCUS_ALL,
+		"AC3: Return button is enabled and focusable")
+	panel.close_result()
+	_check(not panel.has_open_result(), "panel closes cleanly")
+	_check(_app_snapshot() == snap_before_vic, "AC1: Victory open/close leaves wallet, seed, deck and heroes completely unchanged")
+
+	# AC1 & AC2: Defeat check
+	var defeat_latch: RunActBattleOutcome = defeat["ctx"]["latch"]
+	var defeat_settled: int = (defeat_latch.get_state().get("settled_node_ids") as Array).size()
+	var snap_before_def := _app_snapshot()
+	_check(panel.open_result(defeat_latch), "AC1: opens valid settled Defeat with wallet and hero health")
+	await _frames()
+	_check(panel.has_open_result() and panel.is_visible_in_tree(), "AC1: Defeat result is mounted and open")
+	var def_lines := panel.summary_label.text.split("\n")
+	_check(def_lines[0] == "Battles resolved: %d · Gold: 43 · Scraps: 2" % defeat_settled,
+		"AC1: Defeat shows exact nonnegative gold and scraps beside battles resolved")
+	_check(def_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Defeat preserves stitched counts")
+	_check(def_lines[2] == "Patches worn: 3", "AC3: Defeat preserves patches worn total")
+	_check(def_lines[3] == "Crafted: Strike / Prick", "AC3: Defeat preserves crafted card name")
+	_check(def_lines[4] == "Warden 18/37 HP · HEAD Button Eye · ARM - · COAT -",
+		"AC2: Warden row shows authoritative 18/37 HP on Defeat")
+	_check(def_lines[5] == "Seamstress 22/30 HP · HEAD - · ARM Pincushion Arm · COAT -",
+		"AC2: Seamstress row shows authoritative 22/30 HP on Defeat")
+	_check(def_lines[6] == "Tinker 12/26 HP · HEAD - · ARM - · COAT Quilted Coat",
+		"AC2: Tinker row shows authoritative 12/26 HP on Defeat")
+	panel.close_result()
+	_check(_app_snapshot() == snap_before_def, "AC1: Defeat open/close leaves wallet, seed, deck and heroes completely unchanged")
+
+	# AC3: Negative and Fail-Closed Checks
+	var original_gold: int = app.session_gold
+	app.session_gold = 999
+	_check(panel.open_result(victory_latch), "panel opens outcome even with mismatched wallet")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: mismatched gold shows Summary unavailable")
+	_check(not panel.summary_label.text.contains("Gold:"), "AC3: no unvalidated gold is displayed")
+	_check(not panel.summary_label.text.contains("HP"), "AC3: no unvalidated HP is displayed")
+	_check(panel.return_button.disabled, "AC3: mismatched wallet disables Return button")
+	panel.close_result()
+	app.session_gold = original_gold
+
+	var original_scraps: int = app.run_scraps
+	app.run_scraps = 999
+	_check(panel.open_result(victory_latch), "panel opens outcome even with mismatched scraps")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: mismatched scraps shows Summary unavailable")
+	_check(not panel.summary_label.text.contains("Scraps:"), "AC3: no unvalidated scraps is displayed")
+	_check(not panel.summary_label.text.contains("HP"), "AC3: no unvalidated HP is displayed")
+	_check(panel.return_button.disabled, "AC3: mismatched scraps disables Return button")
+	panel.close_result()
+	app.run_scraps = original_scraps
+
+	app.session_gold = -5
+	_check(panel.open_result(victory_latch), "panel opens outcome with negative gold")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: negative gold rejected")
+	_check(not panel.summary_label.text.contains("Gold:"), "AC3: negative gold not displayed")
+	_check(panel.return_button.disabled, "AC3: negative gold disables Return")
+	panel.close_result()
+	app.session_gold = original_gold
+
+	app.run_scraps = -1
+	_check(panel.open_result(victory_latch), "panel opens outcome with negative scraps")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: negative scraps rejected")
+	_check(panel.return_button.disabled, "AC3: negative scraps disables Return")
+	panel.close_result()
+	app.run_scraps = original_scraps
+
+	var original_heroes: Array = app.run_heroes.duplicate(true)
+	app.run_heroes[0]["hp"] = 999
+	_check(panel.open_result(victory_latch), "panel opens outcome with mismatched hero HP")
+	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: mismatched hero HP rejected")
+	_check(not panel.summary_label.text.contains("HP"), "AC3: no unvalidated HP displayed")
+	_check(panel.return_button.disabled, "AC3: mismatched hero HP disables Return")
+	panel.close_result()
+	app.run_heroes = original_heroes
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1289,6 +1484,7 @@ func _run() -> void:
 		_test_global_rng(defeat)
 		_test_invalid_source(defeat)
 		await _test_readable_typography(victory, defeat)
+		await _test_terminal_wallet_and_health(victory, defeat)
 	_finish()
 
 
