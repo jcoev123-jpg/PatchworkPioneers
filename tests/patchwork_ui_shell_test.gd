@@ -1,6 +1,11 @@
 extends "res://tests/live_run_map_entry_test.gd"
 ## Mounted presentation/lifecycle checks; visual layout is reviewed in web screenshots.
 
+## The master body face every sewn tile label inherits: Patrick Hand.
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
+## U+2192, printed between the two halves of a real Rest upgrade tile.
+const ARROW := 0x2192
+
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
@@ -185,6 +190,8 @@ func _run() -> void:
 		elif screen == "results":
 			_check_heading_and_body(app.terminal_result_panel.title_label,
 				app.terminal_result_panel.description_label, "live terminal result")
+		elif screen == "rest":
+			_check_rest_arrow_tiles(app)
 		var controls: Array[Control] = []
 		_collect(app, controls)
 		_check(not controls.is_empty(), "live screen has themed controls: " + screen)
@@ -224,3 +231,93 @@ func _check_heading_and_body(heading: Label, body: Label, label: String) -> void
 		and (body.get_theme_font("font") as Font).resource_path
 			== "res://assets/fonts/PatrickHand-Regular.ttf",
 		label + " body text keeps the master Patrick Hand face")
+
+
+## The real Rest visit prints U+2192 between the two halves of every upgrade
+## tile's name and cost line. Both mounted labels must keep the literal arrow,
+## the Patrick Hand base face and a fallback that really covers the glyph, and
+## reading them must leave the run deck and wallet untouched.
+func _check_rest_arrow_tiles(app) -> void:
+	var gallery = app.get_node_or_null("LiveVisitCardTiles")
+	_check(gallery != null and is_instance_valid(gallery) and gallery.is_gallery_mounted()
+		and gallery.gallery_kind() == "Rest",
+		"rest preview mounts the real visit card gallery")
+	if gallery == null or not is_instance_valid(gallery):
+		return
+	var tiles: Array[Button] = gallery.upgrade_tiles()
+	_check(not tiles.is_empty(), "rest preview mounts real Rest upgrade tiles")
+	if tiles.is_empty():
+		return
+	var deck: Array = app.run_deck.duplicate()
+	var wallet := [app.session_gold, app.run_scraps]
+	var arrows := 0
+	for tile in tiles:
+		var panel: Control = tile.get_parent()
+		var name_label := panel.find_child("TileName", true, false) as Label
+		var meta_label := panel.find_child("TileMeta", true, false) as Label
+		_check(name_label != null and meta_label != null,
+			"real Rest upgrade tile mounts its name and cost labels")
+		for label in [name_label, meta_label]:
+			if label == null:
+				continue
+			_check(label.text.contains(String.chr(ARROW)),
+				"real Rest upgrade label keeps the literal U+2192: " + label.name)
+			var face: Font = label.get_theme_font("font")
+			_check(face != null and face.has_char(ARROW),
+				"resolved Rest upgrade face covers U+2192 through its fallback: " + label.name)
+			_check(face is FontVariation
+				and (face as FontVariation).base_font != null
+				and (face as FontVariation).base_font.resource_path == BODY_FONT
+				and not (face as FontVariation).base_font.has_char(ARROW),
+				"Rest upgrade text keeps the Patrick Hand base face: " + label.name)
+			arrows += _count_drawn_arrows(label, face)
+		# Every other line on the same sewn face keeps the inherited master face.
+		for other_name in ["OwnerLabel", "TileEffects"]:
+			var other := panel.find_child(other_name, true, false) as Label
+			_check(other != null and not other.has_theme_font_override("font")
+				and (other.get_theme_font("font") as Font).resource_path == BODY_FONT,
+				"non-arrow Rest tile text keeps the inherited Patrick Hand face: " + other_name)
+	_check(arrows == 2 * tiles.size(),
+		"every displayed Rest arrow resolves to a drawn glyph, not a missing-glyph box")
+	_check(app.run_deck == deck and [app.session_gold, app.run_scraps] == wallet,
+		"reading the Rest arrows leaves the run deck and wallet untouched")
+
+
+## Shape one mounted label's own text and prove its U+2192 is drawn by a fallback
+## with a painted glyph atlas, never the base face's .notdef box. Returns the
+## number of arrows proven drawn.
+func _count_drawn_arrows(label: Label, face: Font) -> int:
+	if face == null:
+		return 0
+	var size: int = label.get_theme_font_size("font_size")
+	var rids: Array[RID] = face.get_rids()
+	_check(rids.size() >= 2, "Rest arrow face carries its fallback: " + label.name)
+	if rids.size() < 2:
+		return 0
+	var base_rid: RID = rids[0]
+	var server := TextServerManager.get_primary_interface()
+	var shaped := server.create_shaped_text()
+	server.shaped_text_add_string(shaped, label.text, rids, size)
+	var drawn := 0
+	for glyph in server.shaped_text_get_glyphs(shaped):
+		if int(glyph.get("index")) != ARROW:
+			continue
+		var font_rid: RID = glyph.get("font_rid")
+		var key := Vector2i(size, 0)
+		var texture_idx := server.font_get_glyph_texture_idx(font_rid, key, ARROW)
+		var image: Image = server.font_get_texture_image(font_rid, key, texture_idx) \
+			if texture_idx >= 0 else null
+		var uv: Rect2 = server.font_get_glyph_uv_rect(font_rid, key, ARROW)
+		var painted := 0
+		if image != null:
+			for y in range(int(uv.position.y), int(uv.end.y)):
+				for x in range(int(uv.position.x), int(uv.end.x)):
+					if image.get_pixel(x, y).a > 0.0:
+						painted += 1
+		var ok: bool = font_rid != base_rid and float(glyph.get("advance")) > 0.0 and painted > 0
+		_check(ok, "the shown arrow is drawn by the fallback glyph: " + label.name)
+		if ok:
+			drawn += 1
+	server.free_rid(shaped)
+	return drawn
+
