@@ -1,13 +1,16 @@
 class_name CardShortRules
 extends RefCounted
-## Deterministic, read-only formatter for the terse effect line printed on a hand
-## card face. Every phrase comes from one already-validated authored card record:
-## this class plays no card, resolves no damage or status order, rolls no RNG and
-## never predicts what a cast would actually do.
+## Deterministic, read-only formatter for the terse effect sentence printed on a
+## hand or reward card face. Every sentence comes from one already-validated
+## authored card record: this class plays no card, resolves no damage or status
+## order, rolls no RNG and never predicts what a cast would actually do.
 ##
 ## `applied` optionally carries amounts the caller has already read from the same
 ## validated record (for example an authored Path/passive bonus printed by the
 ## owning catalog). It is never computed here.
+##
+## The face prints short combat sentences only: legal slots never appear as
+## prose, because the drawn pips and the hover legend carry them.
 
 ## Every effect key this formatter can print. An authored key outside this list
 ## is reported honestly as an undescribed effect instead of being guessed at.
@@ -19,16 +22,20 @@ const KNOWN_EFFECT_KEYS := [
 	"living_targets_only", "duration", "next_attack_damage_bonus",
 	"next_turn_energy", "expires",
 ]
-const SEPARATOR := " · "
-## Terse markers for the two targeting kinds the face must distinguish.
+## Sentences are separated by one space, so the face reads as ordinary prose.
+const SEPARATOR := " "
+## Terse markers the hover legend still explains for the painted pips.
 const ALL_TARGET := "ALL"
 const RANDOM_TARGET := "RND"
-const SWAP_PHRASE := "swap ally"
-const UNKNOWN_PHRASE := "other effects"
+const SWAP_SENTENCE := "Swap places with the adjacent ally."
+const UNKNOWN_SENTENCE := "Other authored effects are not described."
+## Statuses keep one fixed printed order whatever the authoring order is.
+const STATUS_ORDER := ["exposed", "weak", "bleed"]
 
 
 ## One description of a validated card record:
 ## {known: bool, phrases: Array[String], line: String, unknown: bool}
+## `phrases` are the complete short sentences in printed order.
 ## `unknown` is true when the record authors a field (or a shape) this formatter
 ## cannot read, so the face can say so instead of inventing a number.
 static func describe(definition: Variant, applied: Dictionary = {}) -> Dictionary:
@@ -43,125 +50,26 @@ static func describe(definition: Variant, applied: Dictionary = {}) -> Dictionar
 	var undescribed := false
 	# Authored movement rules carry no effects dictionary of their own.
 	if str(card.get("action_kind", "")) == "adjacent_swap":
-		phrases.append(SWAP_PHRASE)
-	if effects.has("damage"):
-		var damage := _amount(effects["damage"], -1)
-		if damage >= 0:
-			phrases.append(_damage_phrase(damage, _hits(effects)))
-		else:
+		phrases.append(SWAP_SENTENCE)
+	for part in [
+		_enemy_sentence(card, effects, applied),
+		_other_heal_sentence(card, effects),
+		_ally_sentence(card, effects, applied),
+		_party_sentence(card, effects),
+		_self_sentence(card, effects),
+	]:
+		var sentence := str(part.get("sentence", ""))
+		if bool(part.get("unknown", false)):
 			undescribed = true
-	if effects.has("block"):
-		var block := _amount(effects["block"], -1)
-		if block >= 0:
-			phrases.append("%d Block" % block)
-		else:
-			undescribed = true
-	# Hold the Line and Bastion Quilt pay other recipients too; never hide them.
-	if effects.has("other_ally_block"):
-		var ally_block := _amount(effects["other_ally_block"], -1)
-		if ally_block >= 0:
-			phrases.append("%d Block allies" % ally_block)
-		else:
-			undescribed = true
-	if effects.has("block_all"):
-		var all_block := _amount(effects["block_all"], -1)
-		if all_block >= 0:
-			phrases.append("%d Block" % all_block)
-		else:
-			undescribed = true
-	if effects.has("heal"):
-		var heal_phrase := _heal_phrase(effects["heal"])
-		if heal_phrase.is_empty():
-			undescribed = true
-		else:
-			phrases.append(heal_phrase)
-	for status in ["exposed", "weak", "bleed", "unravel"]:
-		if not effects.has(status):
-			continue
-		var authored := _amount(effects[status], -1)
-		if authored <= 0:
-			undescribed = true
-			continue
-		var amount := _amount(applied.get(status, authored), authored)
-		phrases.append("%s %d" % [status.capitalize(), amount])
-	if effects.has("bleed_multiplier"):
-		var multiplier := _amount(effects["bleed_multiplier"], -1)
-		if multiplier == 2:
-			phrases.append("double Bleed")
-		elif multiplier > 2:
-			phrases.append("Bleed x%d" % multiplier)
-		else:
-			undescribed = true
-	if effects.has("pinned"):
-		var pin_phrase := _pin_phrase(effects["pinned"])
-		if pin_phrase.is_empty():
-			undescribed = true
-		else:
-			phrases.append(pin_phrase)
-	if effects.has("guarding"):
-		if _flag(effects["guarding"]):
-			phrases.append("Guard")
-		else:
-			undescribed = true
-	if effects.has("thorns"):
-		var thorns := _amount(effects["thorns"], -1)
-		if thorns > 0:
-			phrases.append("Thorns %d" % thorns)
-		else:
-			undescribed = true
-	if effects.has("draw"):
-		var draw := _amount(effects["draw"], -1)
-		if draw > 0:
-			phrases.append("draw %d" % draw)
-		else:
-			undescribed = true
-	for key in ["gain_energy", "energy"]:
-		if not effects.has(key):
-			continue
-		# One energy phrase only: an explicit gain_energy wins over a bare energy.
-		if key == "energy" and effects.has("gain_energy"):
-			continue
-		var energy := _amount(effects[key], -1)
-		if energy > 0:
-			phrases.append("+%d energy" % energy)
-		else:
-			undescribed = true
-	if effects.has("next_turn_energy"):
-		var credit := _amount(effects["next_turn_energy"], -1)
-		if credit > 0:
-			phrases.append("+%d energy next turn" % credit)
-		else:
-			undescribed = true
-	if effects.has("self_hp_loss"):
-		var cost_hp := _amount(effects["self_hp_loss"], -1)
-		if cost_hp > 0:
-			phrases.append("-%d HP" % cost_hp)
-		else:
-			undescribed = true
-	if effects.has("next_attack_damage_bonus"):
-		var bonus := _amount(effects["next_attack_damage_bonus"], -1)
-		if bonus > 0:
-			phrases.append("+%d next attack" % bonus)
-		else:
-			undescribed = true
-	if effects.has("conditional_damage"):
-		var conditional_phrase := _conditional_phrase(effects["conditional_damage"])
-		if conditional_phrase.is_empty():
-			undescribed = true
-		else:
-			phrases.append(conditional_phrase)
-	# The authored recipient shape is its own terse phrase so a status-only area
-	# or random cast still says so on the face.
-	var marker := _target_marker(card, effects)
-	if not marker.is_empty():
-		phrases.append(marker)
+		if not sentence.is_empty():
+			phrases.append(sentence)
 	var unknown := undescribed or has_unknown(definition)
 	if unknown:
-		phrases.append(UNKNOWN_PHRASE)
+		phrases.append(UNKNOWN_SENTENCE)
 	return _result(true, phrases, unknown)
 
 
-## The complete terse face line, phrases in the fixed authored order.
+## The complete terse face line, sentences in the fixed printed order.
 static func line(definition: Variant, applied: Dictionary = {}) -> String:
 	return str(describe(definition, applied).get("line", ""))
 
@@ -184,78 +92,312 @@ static func _result(known: bool, phrases: Array[String], unknown: bool) -> Dicti
 		"unknown": unknown}
 
 
-## "%d dmg x%d" for repeated hits; targeting is its own phrase so the all-enemy
-## and per-hit-random kinds stay distinct instead of blurring together.
-static func _damage_phrase(damage: int, hits: int) -> String:
-	var text := "%d dmg" % damage
-	if hits > 1:
-		text += " x%d" % hits
-	return text
-
-
-## Terse recipient phrase: ALL for an area card, RND for a per-hit random pick.
-static func _target_marker(card: Dictionary, effects: Dictionary) -> String:
-	if bool(effects.get("random_target_each_hit", false)):
-		return RANDOM_TARGET
+## The authored recipient as the sentence names it; never a slot number.
+static func _recipient(card: Dictionary) -> String:
 	match str(card.get("target_kind", "")):
-		"enemy_all", "party_all":
-			return ALL_TARGET
-	return ""
+		"enemy_single":
+			return "one enemy"
+		"enemy_all":
+			return "every enemy"
+		"enemy_random":
+			return "a random enemy"
+		"ally_single":
+			return "a chosen ally"
+		"party_all":
+			return "every ally"
+		"self":
+			return "yourself"
+	return "the target"
 
 
-static func _heal_phrase(value: Variant) -> String:
-	if value is int and int(value) >= 0:
-		return "heal %d" % int(value)
-	if not value is Dictionary:
-		return ""
-	var heal: Dictionary = value
+static func _has_enemy_effects(effects: Dictionary) -> bool:
+	for key in ["damage", "conditional_damage", "exposed", "weak", "bleed",
+			"unravel", "bleed_multiplier", "pinned"]:
+		if effects.has(key):
+			return true
+	return false
+
+
+## Damage, statuses, Unravel and Pin all target the cast's own recipient, so
+## they read as one combat sentence instead of a bag of marker phrases.
+static func _enemy_sentence(card: Dictionary, effects: Dictionary,
+		applied: Dictionary) -> Dictionary:
+	if not _has_enemy_effects(effects):
+		return {}
+	var unknown := false
+	var recipient := _recipient(card)
+	var hits := _hits(effects)
+	var random_each := bool(effects.get("random_target_each_hit", false))
+	var head := ""
+	var tails: Array[String] = []
+	var conditional := ""
+	if effects.has("damage"):
+		var damage := _amount(effects["damage"], -1)
+		if damage >= 0:
+			head = "deal %d damage" % damage
+		else:
+			unknown = true
+	if effects.has("conditional_damage"):
+		var condition: Variant = effects["conditional_damage"]
+		var empowered := _amount((condition as Dictionary).get("damage", -1) \
+			if condition is Dictionary else -1, -1)
+		if empowered < 0:
+			unknown = true
+		elif head.is_empty():
+			head = "deal %d damage if %s" % [empowered, _condition_text(condition)]
+		else:
+			# The empowered amount replaces the base damage; it is not a second hit.
+			conditional = ", or %d if %s" % [empowered, _condition_text(condition)]
+	if effects.has("pinned"):
+		var bonus := _pin_bonus(effects["pinned"])
+		if bonus < 0:
+			unknown = true
+		elif head.is_empty():
+			# A lone Pin names its own recipient instead of reading "pin it to".
+			head = "pin " + recipient + (" for +%d" % bonus if bonus > 0 else "")
+			recipient = ""
+		else:
+			tails.append("pin it" if bonus == 0 else "pin it for +%d" % bonus)
+	var status_clause := _status_clause(effects, applied)
+	if not bool(status_clause.get("empty", true)):
+		if head.is_empty():
+			head = str(status_clause["text"])
+		else:
+			tails.append(str(status_clause["text"]))
+	if bool(status_clause.get("unknown", false)):
+		unknown = true
+	if effects.has("unravel"):
+		var authored := _amount(effects["unravel"], -1)
+		if authored > 0:
+			var clause := "add %d Unravel" % _amount(applied.get("unravel", authored), authored)
+			if head.is_empty():
+				head = clause
+			else:
+				tails.append(clause)
+		else:
+			unknown = true
+	var sentence := ""
+	if not head.is_empty():
+		sentence = _capitalize(head) if recipient.is_empty() \
+			else _capitalize("%s to %s" % [head, recipient])
+		if effects.has("damage") and hits > 1:
+			sentence += (" each hit, %d hits" % hits) if random_each \
+				else (" %d times" % hits)
+		sentence += conditional
+		for tail in tails:
+			sentence += " and " + tail
+		sentence += "."
+	if effects.has("bleed_multiplier"):
+		var multiplier := _amount(effects["bleed_multiplier"], -1)
+		if multiplier == 2:
+			sentence += " Double the Bleed on %s." % _recipient(card)
+		elif multiplier > 2:
+			sentence += " Multiply the Bleed on %s by %d." % [_recipient(card), multiplier]
+		else:
+			unknown = true
+	return {"sentence": sentence.strip_edges(), "unknown": unknown}
+
+
+## One merged "apply Exposed 1 and Bleed 3" clause, in the fixed status order.
+static func _status_clause(effects: Dictionary, applied: Dictionary) -> Dictionary:
+	var labels: Array[String] = []
+	var unknown := false
+	for status in STATUS_ORDER:
+		if not effects.has(status):
+			continue
+		var authored := _amount(effects[status], -1)
+		if authored <= 0:
+			unknown = true
+			continue
+		var amount := _amount(applied.get(status, authored), authored)
+		labels.append("%s %d" % [status.capitalize(), amount])
+	if labels.is_empty():
+		return {"text": "", "empty": true, "unknown": unknown}
+	return {"text": "apply " + _join_and(labels), "empty": false, "unknown": unknown}
+
+
+## Self-directed effects: Block, draw, energy, HP loss, Guard, Thorns and the
+## bonus that arms a later attack. `other_ally_block` shares this sentence
+## because it is paid by the same cast while the rest of the line stays short.
+static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	var unknown := false
+	var clauses: Array[String] = []
+	var ally_single := str(card.get("target_kind", "")) == "ally_single"
+	if effects.has("block") and not ally_single:
+		var block := _amount(effects["block"], -1)
+		if block >= 0:
+			clauses.append("gain %d Block" % block)
+		else:
+			unknown = true
+	if effects.has("other_ally_block"):
+		var ally_block := _amount(effects["other_ally_block"], -1)
+		if ally_block >= 0:
+			clauses.append("give every other ally %d Block" % ally_block)
+		else:
+			unknown = true
+	if effects.has("draw"):
+		var draw := _amount(effects["draw"], -1)
+		if draw > 0:
+			clauses.append("draw %d card%s" % [draw, "" if draw == 1 else "s"])
+		else:
+			unknown = true
+	for key in ["gain_energy", "energy"]:
+		if not effects.has(key):
+			continue
+		# One energy clause only: an explicit gain_energy wins over a bare energy.
+		if key == "energy" and effects.has("gain_energy"):
+			continue
+		var energy := _amount(effects[key], -1)
+		if energy > 0:
+			clauses.append("gain %d energy" % energy)
+		else:
+			unknown = true
+	if effects.has("next_turn_energy"):
+		var credit := _amount(effects["next_turn_energy"], -1)
+		if credit > 0:
+			clauses.append("gain %d energy next turn" % credit)
+		else:
+			unknown = true
+	if effects.has("next_attack_damage_bonus"):
+		var bonus := _amount(effects["next_attack_damage_bonus"], -1)
+		if bonus > 0:
+			var timing := " this turn" \
+				if str(effects.get("expires", "")) == "end_of_player_turn" else ""
+			clauses.append("your next attack%s deals +%d damage" % [timing, bonus])
+		else:
+			unknown = true
+	if effects.has("self_hp_loss"):
+		var cost_hp := _amount(effects["self_hp_loss"], -1)
+		if cost_hp > 0:
+			clauses.append("lose %d HP" % cost_hp)
+		else:
+			unknown = true
+	var tail_time := " until your next turn" \
+		if str(effects.get("duration", "")) == "until_next_turn" else ""
+	if effects.has("guarding"):
+		if _flag(effects["guarding"]):
+			clauses.append("Guard" + tail_time)
+		else:
+			unknown = true
+	if effects.has("thorns"):
+		var thorns := _amount(effects["thorns"], -1)
+		if thorns > 0:
+			clauses.append("gain %d Thorns%s" % [thorns, tail_time])
+		else:
+			unknown = true
+	if clauses.is_empty():
+		return {"sentence": "", "unknown": unknown}
+	return {"sentence": _capitalize(_join_and(clauses)) + ".", "unknown": unknown}
+
+
+## A single chosen ally: healing first, then the Block it also receives.
+static func _ally_sentence(card: Dictionary, effects: Dictionary,
+		applied: Dictionary) -> Dictionary:
+	if str(card.get("target_kind", "")) != "ally_single":
+		return {}
+	var unknown := false
+	var clauses: Array[String] = []
+	var healed := false
+	if effects.get("heal") is int:
+		var heal := _amount(effects["heal"], -1)
+		if heal >= 0:
+			clauses.append("heal a chosen ally %d HP" % heal)
+			healed = true
+		else:
+			unknown = true
+	if effects.has("block"):
+		var block := _amount(effects["block"], -1)
+		if block >= 0:
+			clauses.append("give them %d Block" % block if healed
+				else "give a chosen ally %d Block" % block)
+		else:
+			unknown = true
+	var status_clause := _status_clause(effects, applied)
+	if not bool(status_clause.get("empty", true)):
+		clauses.append(str(status_clause["text"]))
+	if bool(status_clause.get("unknown", false)):
+		unknown = true
+	if effects.has("unravel"):
+		var authored := _amount(effects["unravel"], -1)
+		if authored > 0:
+			clauses.append("add %d Unravel" % _amount(applied.get("unravel", authored), authored))
+		else:
+			unknown = true
+	if clauses.is_empty():
+		return {"sentence": "", "unknown": unknown}
+	return {"sentence": _capitalize(_join_and(clauses)) + ".", "unknown": unknown}
+
+
+## Every ally: an area Block or heal.
+static func _party_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if str(card.get("target_kind", "")) != "party_all":
+		return {}
+	var unknown := false
+	var clauses: Array[String] = []
+	if effects.get("heal") is int:
+		var heal := _amount(effects["heal"], -1)
+		if heal >= 0:
+			clauses.append("heal every ally %d HP" % heal)
+		else:
+			unknown = true
+	if effects.has("block_all"):
+		var all_block := _amount(effects["block_all"], -1)
+		if all_block >= 0:
+			clauses.append("give every ally %d Block" % all_block)
+		else:
+			unknown = true
+	if clauses.is_empty():
+		return {"sentence": "", "unknown": unknown}
+	return {"sentence": _capitalize(_join_and(clauses)) + ".", "unknown": unknown}
+
+
+## An authored descriptor heal names its own recipient, so it never borrows the
+## cast's target. Capped amounts say so instead of promising a full heal.
+static func _other_heal_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if not effects.get("heal") is Dictionary:
+		return {}
+	var heal: Dictionary = effects["heal"]
 	var amount := _amount(heal.get("amount", -1), -1)
 	if amount < 0:
-		return ""
-	var phrase := "heal %d" % amount
-	if str(heal.get("target", "")) == "weakest_living_ally":
-		phrase += " weakest"
+		return {"sentence": "", "unknown": true}
+	var who := "the weakest ally" \
+		if str(heal.get("target", "")) == "weakest_living_ally" else _recipient(card)
+	var sentence := "Heal %s %d HP" % [who, amount]
 	if str(heal.get("cap", "")) == "missing_hp":
-		phrase += " capped"
-	return phrase
+		sentence += ", capped at missing HP"
+	return {"sentence": sentence + ".", "unknown": false}
 
 
-static func _pin_phrase(value: Variant) -> String:
-	if value is bool:
-		return "Pin" if value else ""
-	if not value is Dictionary:
-		return ""
-	var rule: Dictionary = value
-	if rule.is_empty():
-		return ""
-	var bonus := _amount(rule.get("bonus_damage", -1), -1)
-	return "Pin +%d" % bonus if bonus >= 0 else "Pin"
-
-
-static func _conditional_phrase(value: Variant) -> String:
-	if not value is Dictionary:
-		return ""
-	var condition: Dictionary = value
-	var empowered := _amount(condition.get("damage", -1), -1)
-	if empowered < 0:
-		return ""
-	var labels: Array[String] = []
-	var authored: Variant = condition.get("conditions", [])
-	if authored is Array:
-		for entry in (authored as Array):
+static func _condition_text(value: Variant) -> String:
+	var conditions: Array[String] = []
+	if value is Dictionary and (value as Dictionary).get("conditions") is Array:
+		for entry in (value as Dictionary)["conditions"]:
 			if not entry is Dictionary:
 				continue
 			var predicate: Dictionary = entry
 			if str(predicate.get("status", "")) == "unravelled":
-				if not labels.has("Unravelled"):
-					labels.append("Unravelled")
+				if not conditions.has("Unravelled"):
+					conditions.append("Unravelled")
 			elif str(predicate.get("gauge", "")) == "unravel" \
 					and str(predicate.get("comparison", "")) == "at_least_half":
-				if not labels.has("half gauge"):
-					labels.append("half gauge")
-	if labels.is_empty():
-		return "%d dmg conditional" % empowered
-	return "%d dmg if %s" % [empowered, "/".join(labels)]
+				if not conditions.has("half gauge"):
+					conditions.append("half gauge")
+	if conditions.is_empty():
+		return "an unstated condition"
+	var joiner := " and " if value is Dictionary \
+		and str((value as Dictionary).get("operator", "or")) == "and" else " or "
+	return joiner.join(conditions)
+
+
+static func _pin_bonus(value: Variant) -> int:
+	if value is bool:
+		return 0 if bool(value) else -1
+	if not value is Dictionary:
+		return -1
+	var rule: Dictionary = value
+	if rule.is_empty():
+		return -1
+	return _amount(rule.get("bonus_damage", 0), 0)
 
 
 static func _hits(effects: Dictionary) -> int:
@@ -275,3 +417,17 @@ static func _flag(value: Variant) -> bool:
 	if value is bool:
 		return bool(value)
 	return value is Dictionary and not (value as Dictionary).is_empty()
+
+
+static func _join_and(parts: Array[String]) -> String:
+	if parts.is_empty():
+		return ""
+	if parts.size() == 1:
+		return parts[0]
+	return ", ".join(parts.slice(0, parts.size() - 1)) + " and " + parts.back()
+
+
+static func _capitalize(text: String) -> String:
+	if text.is_empty():
+		return text
+	return text.substr(0, 1).to_upper() + text.substr(1)

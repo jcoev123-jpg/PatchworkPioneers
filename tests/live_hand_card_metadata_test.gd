@@ -42,63 +42,63 @@ const UNRAVEL_FACTS := [
 	"threshold rises by 4",
 	"rest of combat",
 ]
-## The exact terse line each mounted face must draw, written out independently of
-## the presenter: amounts, hit counts, block, healing, draw, energy/HP, statuses
-## and the ALL/RND recipient markers.
+## The exact short combat sentence each mounted face must draw, written out
+## independently of the presenter: amounts, hit counts, block, healing, draw,
+## energy/HP, statuses and the one/two/all/random recipient wording.
 const SHORT_LINES := {
-	"warden_strike": "6 dmg",
-	"warden_strike_plus": "7 dmg",
-	"warden_brace": "7 Block",
-	"warden_brace_plus": "10 Block",
-	"warden_shield_bash": "8 dmg · Weak 1",
-	"warden_shield_bash_plus": "11 dmg · Weak 1",
-	"seamstress_prick": "3 dmg · Bleed 3",
-	"seamstress_prick_plus": "4 dmg · Bleed 3",
-	"seamstress_mend": "heal 5",
-	"seamstress_stitch_up": "5 Block",
-	"tinker_pop_shot": "5 dmg",
-	"tinker_scrap_bomb": "4 dmg · ALL",
-	"tinker_tune_up": "draw 1",
-	"warden_hold_the_line": "5 Block · 2 Block allies",
-	"warden_pinning_jab": "4 dmg · Pin",
-	"warden_draw_fire": "6 Block · Guard",
-	"warden_counter_stitch": "5 Block · Thorns 3",
-	"warden_seam_breaker": "7 dmg · Unravel 4",
-	"warden_pin_and_pound": "9 dmg x2",
-	"warden_bastion_quilt": "10 Block · ALL",
-	"seamstress_running_stitch": "2 dmg · Bleed 4",
-	"seamstress_darning": "3 Block · heal 4",
-	"seamstress_snag": "Weak 1 · Unravel 3",
-	"seamstress_hemorrhage_hem": "double Bleed",
-	"seamstress_unpick": "Unravel 5",
-	"seamstress_blanket_stitch": "Bleed 3 · ALL",
-	"seamstress_field_mend": "heal 4 · ALL",
-	"seamstress_red_thread": "Exposed 1 · Bleed 7",
-	"seamstress_tailors_trance": "draw 2 · +1 energy",
-	"tinker_rivet_shot": "4 dmg · Exposed 1",
-	"tinker_spring_trap": "3 dmg · Pin +5",
-	"tinker_scatter_bolts": "3 dmg · ALL",
-	"tinker_spare_parts": "3 Block · draw 1",
-	"tinker_long_barrel": "12 dmg",
-	"tinker_spool_launcher": "3 dmg · Unravel 3",
-	"tinker_overclock": "+1 energy · -3 HP",
-	"tinker_shrapnel_seam": "5 dmg · Unravel 2 · ALL",
-	"tinker_sight_glass": "Exposed 2 · draw 1",
-	"tinker_ricochet": "4 dmg x3 · RND",
-	"tinker_bobbin_cannon": "20 dmg",
-	"tinker_snip_the_seam": "5 dmg · 15 dmg if Unravelled/half gauge",
+	"warden_strike": "Deal 6 damage to one enemy.",
+	"warden_strike_plus": "Deal 7 damage to one enemy.",
+	"warden_brace": "Gain 7 Block.",
+	"warden_brace_plus": "Gain 10 Block.",
+	"warden_shield_bash": "Deal 8 damage to one enemy and apply Weak 1.",
+	"warden_shield_bash_plus": "Deal 11 damage to one enemy and apply Weak 1.",
+	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 3.",
+	"seamstress_prick_plus": "Deal 4 damage to one enemy and apply Bleed 3.",
+	"seamstress_mend": "Heal a chosen ally 5 HP.",
+	"seamstress_stitch_up": "Give a chosen ally 5 Block.",
+	"tinker_pop_shot": "Deal 5 damage to one enemy.",
+	"tinker_scrap_bomb": "Deal 4 damage to every enemy.",
+	"tinker_tune_up": "Draw 1 card.",
+	"warden_hold_the_line": "Gain 5 Block and give every other ally 2 Block.",
+	"warden_pinning_jab": "Deal 4 damage to one enemy and pin it.",
+	"warden_draw_fire": "Gain 6 Block and Guard until your next turn.",
+	"warden_counter_stitch": "Gain 5 Block and gain 3 Thorns until your next turn.",
+	"warden_seam_breaker": "Deal 7 damage to one enemy and add 4 Unravel.",
+	"warden_pin_and_pound": "Deal 9 damage to one enemy 2 times.",
+	"warden_bastion_quilt": "Give every ally 10 Block.",
+	"seamstress_running_stitch": "Deal 2 damage to one enemy and apply Bleed 4.",
+	"seamstress_darning": "Heal a chosen ally 4 HP and give them 3 Block.",
+	"seamstress_snag": "Apply Weak 1 to one enemy and add 3 Unravel.",
+	"seamstress_hemorrhage_hem": "Double the Bleed on one enemy.",
+	"seamstress_unpick": "Add 5 Unravel to one enemy.",
+	"seamstress_blanket_stitch": "Apply Bleed 3 to every enemy.",
+	"seamstress_field_mend": "Heal every ally 4 HP.",
+	"seamstress_red_thread": "Apply Exposed 1 and Bleed 7 to one enemy.",
+	"seamstress_tailors_trance": "Draw 2 cards and gain 1 energy.",
+	"tinker_rivet_shot": "Deal 4 damage to one enemy and apply Exposed 1.",
+	"tinker_spring_trap": "Deal 3 damage to one enemy and pin it for +5.",
+	"tinker_scatter_bolts": "Deal 3 damage to every enemy.",
+	"tinker_spare_parts": "Gain 3 Block and draw 1 card.",
+	"tinker_long_barrel": "Deal 12 damage to one enemy.",
+	"tinker_spool_launcher": "Deal 3 damage to one enemy and add 3 Unravel.",
+	"tinker_overclock": "Gain 1 energy and lose 3 HP.",
+	"tinker_shrapnel_seam": "Deal 5 damage to every enemy and add 2 Unravel.",
+	"tinker_sight_glass": "Apply Exposed 2 to one enemy. Draw 1 card.",
+	"tinker_ricochet": "Deal 4 damage to a random enemy each hit, 3 hits.",
+	"tinker_bobbin_cannon": "Deal 20 damage to one enemy.",
+	"tinker_snip_the_seam": "Deal 5 damage to one enemy, or 15 if Unravelled or half gauge.",
 }
 ## The same line read from the authored record alone, for the cards whose printed
 ## amount comes from a published passive or confirmed-hit adapter. Proves the
 ## formatter itself never adds a bonus or infers a combat result.
 const AUTHORED_LINES := {
-	"seamstress_prick": "3 dmg · Bleed 2",
-	"seamstress_running_stitch": "2 dmg · Bleed 3",
-	"seamstress_running_stitch_plus": "3 dmg · Bleed 4",
-	"seamstress_blanket_stitch": "Bleed 2 · ALL",
-	"seamstress_blanket_stitch_plus": "Bleed 3 · ALL",
-	"seamstress_red_thread": "Exposed 1 · Bleed 6",
-	"seamstress_red_thread_plus": "Exposed 1 · Bleed 8",
+	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 2.",
+	"seamstress_running_stitch": "Deal 2 damage to one enemy and apply Bleed 3.",
+	"seamstress_running_stitch_plus": "Deal 3 damage to one enemy and apply Bleed 4.",
+	"seamstress_blanket_stitch": "Apply Bleed 2 to every enemy.",
+	"seamstress_blanket_stitch_plus": "Apply Bleed 3 to every enemy.",
+	"seamstress_red_thread": "Apply Exposed 1 and Bleed 6 to one enemy.",
+	"seamstress_red_thread_plus": "Apply Exposed 1 and Bleed 8 to one enemy.",
 }
 ## Words the drawn face must never print: the precise from/target rows, the
 ## recipient adjective and the reward panel's old position wording.
@@ -232,6 +232,8 @@ func _formatter_check(metadata) -> void:
 		var face: String = metadata.short_line(card_id)
 		_check(face == str(SHORT_LINES[card_id]),
 			"exact terse face line for %s: got '%s'" % [card_id, face])
+		_check(face.ends_with(".") and not face.contains("·"),
+			"face line is complete short sentences: " + card_id)
 		for banned in FACE_BANNED_WORDS:
 			_check(not face.contains(banned),
 				"face line prints no '%s': %s" % [banned, card_id])
@@ -261,28 +263,37 @@ func _formatter_check(metadata) -> void:
 		"formatter results are detached and deterministic")
 	_check(String(first["line"]) == String(third["line"]),
 		"repeated formatting returns the same line")
-	# All-area, per-hit-random and repeated hits stay visibly distinct.
+	# All-area, per-hit-random and repeated hits stay visibly distinct sentences.
 	var bomb_line: String = formatter.line(bomb)
 	var ricochet_line: String = formatter.line(metadata.definition("tinker_ricochet"))
 	var pound_line: String = formatter.line(metadata.definition("warden_pin_and_pound"))
-	_check(bomb_line.ends_with("ALL") and ricochet_line.ends_with("RND")
-		and pound_line.contains("x2"),
-		"ALL, RND and the hit count stay distinct phrases")
-	_check(not pound_line.contains("ALL") and not pound_line.contains("RND"),
+	_check(bomb_line == "Deal 4 damage to every enemy."
+		and ricochet_line == "Deal 4 damage to a random enemy each hit, 3 hits."
+		and pound_line == "Deal 9 damage to one enemy 2 times.",
+		"area, per-hit-random and repeated hits keep distinct sentences")
+	_check(bomb_line.contains("every enemy") and not bomb_line.contains("random"),
+		"an area cast names every enemy, never one random pick")
+	_check(ricochet_line.contains("a random enemy each hit") and ricochet_line.contains("3 hits")
+		and not ricochet_line.contains("every enemy"),
+		"a per-hit random cast says so instead of claiming an area")
+	_check(pound_line.contains("2 times") and not pound_line.contains("every enemy")
+		and not pound_line.contains("random"),
 		"a repeated single-target hit claims no area or random cast")
 	# An authored field the formatter cannot read is reported honestly instead of
 	# being rendered as an invented number.
 	var mystery := {"id": "probe_mystery_card", "target_kind": "enemy_single",
 		"effects": {"damage": 2, "mystery_damage": 9}}
 	var mystery_line: String = formatter.line(mystery)
-	_check(mystery_line == "2 dmg · other effects",
+	_check(mystery_line == ("Deal 2 damage to one enemy. "
+		+ "Other authored effects are not described."),
 		"unknown effect field falls back honestly: " + mystery_line)
 	_check(formatter.has_unknown(mystery)
 		and not formatter.has_unknown(metadata.definition("warden_strike")),
 		"unknown-field detection only fires for unrecognized authoring")
 	_check(not mystery_line.contains("9") and not mystery_line.contains("mystery"),
 		"unknown field never prints an invented amount or its raw key")
-	_check(formatter.line({"effects": {"damage": "6"}}) == "other effects",
+	_check(formatter.line({"effects": {"damage": "6"}})
+		== "Other authored effects are not described.",
 		"an unreadable authored amount is reported, never printed")
 	_check(formatter.line({}) == "" and formatter.describe({}).get("known") == false,
 		"an empty record is not a known card")
@@ -295,6 +306,9 @@ func _formatter_check(metadata) -> void:
 	for card_id in catalog_ids:
 		var line: String = metadata.short_line(card_id)
 		_check(not line.is_empty(), "every authored card keeps a terse face line: " + card_id)
+		_check(line.ends_with(".") and line.substr(0, 1) == line.substr(0, 1).to_upper()
+			and not line.contains("·"),
+			"every authored face is a complete short sentence: " + card_id + " (" + line + ")")
 		for banned in FACE_BANNED_WORDS:
 			_check(not line.contains(banned),
 				"no '%s' on the face line: %s" % [banned, card_id])

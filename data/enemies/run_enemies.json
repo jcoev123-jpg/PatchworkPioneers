@@ -25,5 +25,29 @@
       {"type": "block", "amount": 2, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
       {"type": "buff", "amount": 2, "weight": 1}
+    ]}},
+  {"id": "felt_bulwark", "name": "Felt Bulwark", "max_hp": 18, "art_path": "res://assets/paper/enemies/felt_bulwark.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "attack", "amount": 2, "weight": 3},
+      {"type": "block", "amount": 3, "weight": 3},
+      {"type": "buff", "amount": 2, "weight": 1}
+    ]}},
+  {"id": "moth_scribe", "name": "Moth Scribe", "max_hp": 14, "art_path": "res://assets/paper/enemies/moth_scribe.png",
+    "intent": {"target": "exposed", "actions": [
+      {"type": "attack", "amount": 2, "weight": 3},
+      {"type": "debuff", "amount": 1, "status": "weak", "weight": 2},
+      {"type": "block", "amount": 2, "weight": 1}
+    ]}},
+  {"id": "pin_skitter", "name": "Pin Skitter", "max_hp": 13, "art_path": "res://assets/paper/enemies/pin_skitter.png",
+    "intent": {"target": "random", "actions": [
+      {"type": "attack", "amount": 2, "weight": 4},
+      {"type": "shove", "amount": 0, "direction": 1, "weight": 1},
+      {"type": "block", "amount": 1, "weight": 1}
+    ]}},
+  {"id": "thread_biter", "name": "Thread Biter", "max_hp": 15, "art_path": "res://assets/paper/enemies/thread_biter.png",
+    "intent": {"target": "lowest_living_hp", "actions": [
+      {"type": "attack", "amount": 3, "weight": 3},
+      {"type": "debuff", "amount": 1, "status": "bleed", "weight": 1},
+      {"type": "block", "amount": 2, "weight": 1}
     ]}}
 ]

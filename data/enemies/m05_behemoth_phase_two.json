@@ -1,0 +1,13 @@
+{
+  "boss_id": "patchwork_behemoth",
+  "phase": 2,
+  "threshold_hp": 21,
+  "intent": {
+    "target": "lowest_living_hp",
+    "actions": [
+      {"type": "attack", "amount": 4, "weight": 4},
+      {"type": "block", "amount": 3, "weight": 2},
+      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+    ]
+  }
+}

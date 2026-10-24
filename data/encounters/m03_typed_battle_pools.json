@@ -105,6 +105,14 @@
     "hemhook_exposed_swap": {
       "schedule": "res://data/encounters/hemhook_exposed_swap.json",
       "enemy_ids": ["spool_stalker", "seam_ripper", "fray_scavenger"]
+    },
+    "felt_moth_pressure": {
+      "schedule": "res://data/encounters/bobbin_skirmish.json",
+      "enemy_ids": ["felt_bulwark", "moth_scribe"]
+    },
+    "pin_thread_crossfire": {
+      "schedule": "res://data/encounters/buttonhole_holdout.json",
+      "enemy_ids": ["pin_skitter", "thread_biter"]
     }
   },
   "Elite": {

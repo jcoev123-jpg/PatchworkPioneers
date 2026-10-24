@@ -9,6 +9,35 @@ class RejectingMap extends RunMap:
 		return false
 
 
+## Tokens the retired multi-line card block printed. The accepted concise reward
+## faces never show them, so a Shop tile showing one has fallen back to old prose.
+const RETIRED_RULES_TEXT: Array[String] = ["From:", "Target:", "Positions:",
+	"front position", "middle position", "back position", "Pinned:", "\n"]
+## Independent authored expectations for the cards every run owns at Shop entry:
+## the exact short sentence and amount each face must print.
+const STARTER_EFFECT_LINES := {
+	"warden_strike": "Deal 6 damage to one enemy.",
+	"warden_shield_bash": "Deal 8 damage to one enemy and apply Weak 1.",
+	"warden_brace": "Gain 7 Block.",
+	"seamstress_prick": "Deal 3 damage to one enemy and apply Bleed 2.",
+	"seamstress_mend": "Heal a chosen ally 5 HP.",
+	"seamstress_stitch_up": "Give a chosen ally 5 Block.",
+	"tinker_pop_shot": "Deal 5 damage to one enemy.",
+	"tinker_scrap_bomb": "Deal 4 damage to every enemy.",
+	"tinker_tune_up": "Draw 1 card.",
+}
+
+
+## The accepted reward face's rules line for one authored definition: the shared
+## short renderer, with a stitched composite described by its own authored halves.
+func _concise_rules(definition: Dictionary) -> String:
+	if definition.is_empty():
+		return "No authored description for this card."
+	if definition.get("stitched_halves") is String:
+		return "Stitched halves: %s" % definition["stitched_halves"]
+	return CardShortRules.line(definition)
+
+
 func _stock_oracle() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
@@ -53,6 +82,297 @@ func _shop_state() -> Array:
 ## The one passive gallery scene child that mounts sewn tiles beside a visit.
 func _visit_tiles():
 	return app.get_node("LiveVisitCardTiles")
+
+
+## Prose the retired multi-line card block printed; a tooltip showing one has
+## fallen back to old wording instead of the precise catalog explanation.
+const RETIRED_TOOLTIP_TEXT: Array[String] = ["From:", "Target:", "Positions:",
+	"front position", "middle position", "back position", "PIPS:"]
+
+
+## Independent, catalog-grounded hover oracle for one authored card. It reads
+## only the authored definition plus the published on-hit and status-passive
+## rules, and never calls the visit presenter that produced the tooltip.
+func _tooltip_oracle(definition: Dictionary) -> Dictionary:
+	var id: String = String(definition.get("id", ""))
+	var owner: String = String(definition.get("owner", ""))
+	var effects: Dictionary = definition.get("effects", {})
+	var confirmed: Dictionary = CombatOnHitStatuses.new().status_for_confirmed_hit(id, true)
+	var facts := {
+		"header": "%s; %s; %d energy" % [String(definition.get("display_name", id)),
+			owner.capitalize(), int(definition.get("cost", -1))],
+		"source": "From " + _positions_oracle(definition.get("from_positions", [])),
+		"target": _target_oracle(definition),
+		"facts": [],
+		"keywords": [],
+	}
+	if effects.has("damage"):
+		facts.facts.append("deal %d damage" % int(effects["damage"]))
+	if effects.has("block"):
+		facts.facts.append("gain %d Block" % int(effects["block"]))
+	if effects.has("block_all"):
+		facts.facts.append("%d Block" % int(effects["block_all"]))
+	if effects.has("other_ally_block"):
+		facts.facts.append("%d Block" % int(effects["other_ally_block"]))
+	if effects.has("heal") and effects["heal"] is int:
+		facts.facts.append("heal %d HP" % int(effects["heal"]))
+	if effects.has("draw"):
+		facts.facts.append("draw %d card" % int(effects["draw"]))
+	if effects.has("gain_energy"):
+		facts.facts.append("gain %d energy" % int(effects["gain_energy"]))
+	elif effects.has("energy"):
+		facts.facts.append("gain %d energy" % int(effects["energy"]))
+	if effects.has("exposed"):
+		facts.facts.append("Exposed %d" % int(effects["exposed"]))
+	if effects.has("weak"):
+		facts.facts.append("%s Weak %d" % ["add" if confirmed.has("weak") else "apply",
+			int(effects["weak"])])
+	if effects.has("bleed"):
+		if confirmed.has("bleed"):
+			facts.facts.append("add Bleed %d" % int(confirmed["bleed"]))
+		else:
+			var applied: int = int(effects["bleed"]) \
+				+ (1 if CombatSeamstressPoolBleed.SUPPORTED_IDS.has(id) else 0)
+			facts.facts.append("Bleed %d" % applied)
+	if effects.has("unravel"):
+		facts.facts.append("add %d Unravel" % int(effects["unravel"]))
+	if effects.has("bleed_multiplier"):
+		facts.facts.append("double the target's current Bleed"
+			if int(effects["bleed_multiplier"]) == 2
+			else "Bleed by %d" % int(effects["bleed_multiplier"]))
+	if effects.has("pinned"):
+		facts.facts.append("Pin ")
+		facts.keywords.append("PINNED:")
+	if effects.has("unravel") or _unravel_conditional(effects):
+		facts.keywords.append("UNRAVEL:")
+	if effects.has("thorns"):
+		facts.facts.append("%d Thorns" % int(effects["thorns"]))
+	if effects.has("guarding"):
+		facts.facts.append("Guard")
+	var condition: Variant = effects.get("conditional_damage")
+	if condition is Dictionary and (condition as Dictionary).get("damage") is int:
+		facts.facts.append("deal %d damage instead" % int((condition as Dictionary)["damage"]))
+	return facts
+
+
+## Unravelled/half-gauge conditionals need the Unravel rules just as an Unravel N
+## does; this mirrors the published glossary trigger, not the presenter.
+func _unravel_conditional(effects: Dictionary) -> bool:
+	var condition: Variant = effects.get("conditional_damage")
+	if not (condition is Dictionary):
+		return false
+	var entries: Variant = (condition as Dictionary).get("conditions", [])
+	if not (entries is Array):
+		return false
+	for entry in entries:
+		if entry is Dictionary and (str((entry as Dictionary).get("status", "")) == "unravelled" \
+				or (str((entry as Dictionary).get("gauge", "")) == "unravel" \
+				and str((entry as Dictionary).get("comparison", "")) == "at_least_half")):
+			return true
+	return false
+
+
+## Authored slots with the same contiguous-range wording the shared formatter
+## publishes, computed from the catalog array rather than from the tooltip.
+func _positions_oracle(positions: Array) -> String:
+	if positions.is_empty():
+		return "?"
+	var values: Array[String] = []
+	for position in positions:
+		values.append(str(position))
+	for index in range(1, positions.size()):
+		if int(positions[index]) != int(positions[index - 1]) + 1:
+			return ",".join(values)
+	if positions.size() > 1:
+		return "%s–%s" % [values.front(), values.back()]
+	return values.front()
+
+
+## The authored recipient sentence for one target kind.
+func _target_oracle(definition: Dictionary) -> String:
+	var positions: Array = definition.get("to_positions", [])
+	match str(definition.get("target_kind", "")):
+		"enemy_single":
+			return "To one selected enemy " + _positions_oracle(positions)
+		"enemy_all":
+			return "All enemies " + _positions_oracle(positions)
+		"enemy_random":
+			return "A random living enemy per hit (%s)" % _positions_oracle(positions)
+		"self":
+			return "Self"
+		"ally_single":
+			return "Choose one living ally"
+		"party_all":
+			return "All living heroes"
+		"adjacent_ally":
+			return "Swap with the living adjacent ally %s" % (
+				"behind" if int(definition.get("direction", 0)) == 1 else "ahead")
+		"none":
+			return "No target"
+	return ""
+
+
+## AC1: one mounted tile's hover carries the complete authored record - name,
+## owner, cost, source slots, target, exact effect numbers and keyword rules -
+## without the hand-only PIPS legend or the retired prose.
+func _check_card_tooltip(tile, definition: Dictionary, label: String) -> void:
+	var tooltip: String = tile.tooltip_text if is_instance_valid(tile) else ""
+	var facts := _tooltip_oracle(definition)
+	var expected := "%s\n%s" % [facts.header, facts.source]
+	if not String(facts.target).is_empty():
+		expected += "\n" + String(facts.target)
+	_check(tooltip.begins_with(expected),
+		"%s tooltip opens with the authored name, owner, cost, source slots and target: %s"
+			% [label, String(definition.get("id", ""))])
+	_check(RETIRED_TOOLTIP_TEXT.all(func(token): return not tooltip.contains(token)),
+		"%s tooltip drops the hand pip legend and the retired prose" % label)
+	for fact in facts.facts:
+		_check(tooltip.contains(String(fact)),
+			"%s tooltip states the authored effect '%s'" % [label, String(fact)])
+	for keyword in facts.keywords:
+		_check(tooltip.contains(String(keyword)),
+			"%s tooltip explains the authored keyword %s" % [label, String(keyword)])
+	for keyword in ["PINNED:", "UNRAVEL:"]:
+		if not facts.keywords.has(keyword):
+			_check(not tooltip.contains(keyword),
+				"%s tooltip invents no %s rule" % [label, keyword])
+
+
+## AC2: an upgrade tile's hover carries both authored halves under Before/After
+## headings, each with its own name, cost, source, target and effect numbers.
+func _check_upgrade_tooltip(tile, base_definition: Dictionary, plus_definition: Dictionary) -> void:
+	var tooltip: String = tile.tooltip_text if is_instance_valid(tile) else ""
+	var before := _tooltip_oracle(base_definition)
+	var after := _tooltip_oracle(plus_definition)
+	var before_lead := "Before:\n%s\n%s" % [before.header, before.source]
+	var after_lead := "\nAfter:\n%s\n%s" % [after.header, after.source]
+	if not String(before.target).is_empty():
+		before_lead += "\n" + String(before.target)
+	if not String(after.target).is_empty():
+		after_lead += "\n" + String(after.target)
+	_check(tooltip.begins_with(before_lead) and tooltip.contains(after_lead),
+		"upgrade tooltip opens with the authored Before then After name, cost, source and target")
+	_check(RETIRED_TOOLTIP_TEXT.all(func(token): return not tooltip.contains(token))
+		and tooltip.find("Before:") < tooltip.find("After:"),
+		"upgrade tooltip keeps Before before After and drops the hand pip legend")
+	var sections: PackedStringArray = tooltip.split("\nAfter:\n")
+	_check(sections.size() == 2, "upgrade tooltip has exactly one Before and one After half")
+	if sections.size() != 2:
+		return
+	var before_text: String = String(sections[0]).trim_prefix("Before:\n")
+	var after_text: String = String(sections[1])
+	for fact in before.facts:
+		_check(before_text.contains(String(fact)),
+			"Before half states its own authored effect '%s'" % String(fact))
+	for fact in after.facts:
+		_check(after_text.contains(String(fact)),
+			"After half states its own authored effect '%s'" % String(fact))
+
+
+## Real pointer hover over one tile: motion only, never a button event.
+func _hover(control: Control) -> void:
+	_check(is_instance_valid(control), "physical hover requires a mounted tile")
+	if not is_instance_valid(control):
+		return
+	var motion := InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+
+
+## The first two owned copies a genuine stitch accepts: two authored, different
+## owners, exactly as the Rest transaction requires.
+func _stitch_indices(deck: Array) -> Array:
+	for first in range(deck.size()):
+		var first_definition: Dictionary = RunRestStitchCards.resolve_card_definition(String(deck[first]))
+		if first_definition.is_empty():
+			continue
+		for second in range(first + 1, deck.size()):
+			var second_definition: Dictionary = RunRestStitchCards.resolve_card_definition(String(deck[second]))
+			if second_definition.is_empty() or second_definition.get("owner") == first_definition.get("owner"):
+				continue
+			return [first, second]
+	return []
+
+
+## AC1: a genuinely sewn owned copy explains its ordered authored halves in the
+## Shop, with the composite's own name and cost and without the hand pip legend;
+## a forged descriptor says details are unavailable instead of guessing. Every
+## step reads only canonical run state and is restored afterwards.
+func _check_stitched_removal_tooltip(gallery) -> void:
+	var deck: Array = app.run_deck.duplicate()
+	var descriptors: Dictionary = app.run_stitch_descriptors.duplicate(true)
+	var next_id: int = app.run_next_stitch_id
+	var pair := _stitch_indices(deck)
+	_check(pair.size() == 2 and pair[0] < pair[1], "the owned deck holds two authored halves of different owners")
+	if pair.size() != 2:
+		return
+	var ledger := RunRestStitchCards.new(deck, descriptors, RunRestStitchCards.SCRAP_COST, next_id)
+	var made: Dictionary = ledger.choose_stitch(pair[0], pair[1], ledger.get_snapshot())
+	_check(made.get("ok") == true and made.get("consumed_ids") == [deck[pair[0]], deck[pair[1]]],
+		"genuine Rest stitch transaction produces an authentic composite")
+	if made.get("ok") != true:
+		return
+	var stitched_id: String = String(made.get("stitched_id", ""))
+	var descriptor: Dictionary = made.get("descriptor", {}).duplicate(true)
+	app.run_deck.assign(made.get("deck", []))
+	app.run_stitch_descriptors = made.get("descriptors", {}).duplicate(true)
+	app.run_next_stitch_id = int(made.get("next_stitch_id", next_id))
+	await _frames()
+	await _frames()
+	var row: int = app.run_deck.find(stitched_id)
+	var tile = _tile_for("removal", row)
+	_check(tile != null and row >= 0, "the sewn owned copy mounts its own removal tile")
+	if tile != null:
+		var tooltip: String = tile.tooltip_text
+		var details: Dictionary = gallery.tile_details(tile)
+		var first: Dictionary = RunRestStitchCards.resolve_card_definition(String(made["consumed_ids"][0]))
+		var second: Dictionary = RunRestStitchCards.resolve_card_definition(String(made["consumed_ids"][1]))
+		_check(details.tooltip == tooltip
+			and tooltip.begins_with("%s; %d energy" % [String(descriptor.get("display_name", "")),
+				int(descriptor.get("cost", 0))]),
+			"sewn removal tooltip states the composite's authored name and cost")
+		_check(tooltip.contains("1. %s; %s; %d energy" % [String(first.get("display_name", "")),
+				String(first.get("owner", "")).capitalize(), int(first.get("cost", -1))])
+			and tooltip.contains("\n2. %s; %s; %d energy" % [String(second.get("display_name", "")),
+				String(second.get("owner", "")).capitalize(), int(second.get("cost", -1))])
+			and tooltip.find("\n1. ") < tooltip.find("\n2. "),
+			"sewn removal tooltip names its ordered authored halves")
+		var first_rules := _tooltip_oracle(first)
+		var second_rules := _tooltip_oracle(second)
+		for fact in first_rules.facts:
+			_check(tooltip.contains(String(fact)), "sewn first half keeps its authored effect '%s'" % fact)
+		for fact in second_rules.facts:
+			_check(tooltip.contains(String(fact)), "sewn second half keeps its authored effect '%s'" % fact)
+		_check(RETIRED_TOOLTIP_TEXT.all(func(token): return not tooltip.contains(token))
+			and not tooltip.contains(stitched_id),
+			"sewn removal tooltip drops the hand pip legend and never prints a raw ID")
+	var hover_before := _shop_state()
+	await _hover(tile)
+	_check(_shop_state() == hover_before, "hovering a sewn owned copy spends and advances nothing")
+	# A forged descriptor no longer matches the canonical projection of its two
+	# authored halves, so it must print the honest placeholder.
+	var forged: Dictionary = app.run_stitch_descriptors.duplicate(true)
+	forged[stitched_id]["display_name"] = "Forged Seam"
+	app.run_stitch_descriptors = forged
+	await _frames()
+	await _frames()
+	var forged_tile = _tile_for("removal", app.run_deck.find(stitched_id))
+	_check(forged_tile != null and forged_tile.tooltip_text == LiveVisitCardTiles.DETAILS_UNAVAILABLE,
+		"a forged stitched descriptor prints details unavailable instead of invented halves")
+	app.run_deck.assign(deck)
+	app.run_stitch_descriptors = descriptors
+	app.run_next_stitch_id = next_id
+	await _frames()
+	await _frames()
+	var restored = _tile_for("removal", 0)
+	var restored_definition: Dictionary = RunRestStitchCards.resolve_card_definition(String(deck[0]))
+	var restored_oracle := _tooltip_oracle(restored_definition)
+	_check(restored != null and not restored_definition.is_empty()
+		and restored.tooltip_text.begins_with("%s\n%s" % [restored_oracle.header, restored_oracle.source])
+		and not restored.tooltip_text.contains("ordered halves")
+		and not restored.tooltip_text.contains(stitched_id),
+		"restoring the canonical deck replaces the stale sewn hover text")
 
 
 ## Every tile of one group currently painting the SELECTED cue.
@@ -434,6 +754,7 @@ func _run() -> void:
 				and app.shop_offers.modulate.a == 0.0,
 				"a re-synced Shop visit masks and collapses its selectors again")
 		var stock: Array = app.shop_purchases.get_stock().cards
+		var keyword_offers := 0
 		for index in range(gallery.offer_tiles().size()):
 			var tile = gallery.offer_tiles()[index]
 			var details: Dictionary = gallery.tile_details(tile)
@@ -443,6 +764,28 @@ func _run() -> void:
 				and details.title == String(definition.get("display_name", listing.id))
 				and details.meta.begins_with("%d gold" % int(listing.price)) and details.has_picture,
 				"offer tile shows its authored name, quoted price and art/emblem")
+			# The accepted reward face's own concise line, never the old block.
+			_check(details.effects == _concise_rules(definition)
+				and not details.effects.is_empty() and details.effects.ends_with(".")
+				and RETIRED_RULES_TEXT.all(func(token): return not details.effects.contains(token)),
+				"offer tile prints the accepted concise effect, not position prose: " + String(listing.id))
+			# AC1: a genuine offer tile explains its full authored record on hover.
+			_check(details.tooltip == tile.tooltip_text and not tile.tooltip_text.is_empty(),
+				"offer tile exposes its hover explanation on the mounted tile button")
+			_check_card_tooltip(tile, definition, "offer tile")
+			var effects: Dictionary = definition.get("effects", {})
+			if effects.has("pinned") or effects.has("unravel") or _unravel_conditional(effects):
+				keyword_offers += 1
+			if effects.has("pinned"):
+				_check(tile.tooltip_text.contains("one pin per enemy")
+					and tile.tooltip_text.contains("+5 damage BEFORE Weak/Exposed"),
+					"pinned offer tooltip explains the published pin rule")
+			if effects.has("unravel") or _unravel_conditional(effects):
+				_check(tile.tooltip_text.contains("Unravel N adds N to that enemy's gauge"),
+					"unravel offer tooltip explains the published gauge rule")
+		# The seeded stock carries an authored status-keyword offer, so the
+		# keyword handling is genuinely exercised instead of silently skipped.
+		_check(keyword_offers > 0, "this Shop stock contains an authored status-keyword offer")
 		for index in range(app.run_deck.size()):
 			var tile = gallery.removal_tiles()[index]
 			var details: Dictionary = gallery.tile_details(tile)
@@ -452,7 +795,40 @@ func _run() -> void:
 				and details.title == String(definition.get("display_name", owned))
 				and details.meta.begins_with("Deck card #%d" % (index + 1)),
 				"removal tile carries the exact owned occurrence index and authored name")
+			# A real owned copy prints the accepted concise wording, and the
+			# independently authored sentence for that exact card ID.
+			_check(details.effects == _concise_rules(definition)
+				and not details.effects.is_empty() and details.effects.ends_with(".")
+				and RETIRED_RULES_TEXT.all(func(token): return not details.effects.contains(token)),
+				"removal tile prints the accepted concise rules wording, not position prose")
+			if STARTER_EFFECT_LINES.has(owned):
+				_check(details.effects == String(STARTER_EFFECT_LINES[owned]),
+					"removal tile prints the exact authored short effect for " + owned)
+			# AC1: the owned tile's hover is the same complete authored record.
+			_check(details.tooltip == tile.tooltip_text and not tile.tooltip_text.is_empty(),
+				"owned removal tile exposes its hover explanation on the mounted tile button")
+			_check_card_tooltip(tile, definition, "owned removal tile")
+		for known in ["warden_strike", "warden_brace", "seamstress_mend",
+				"seamstress_stitch_up", "tinker_scrap_bomb", "tinker_tune_up"]:
+			_check(app.run_deck.has(known) and STARTER_EFFECT_LINES.has(known),
+				"exact concise expectation is exercised by an owned copy: " + known)
+		# The mounted Shop faces keep their concise sentence readable inside the
+		# sewn frame at 1280x720 (both a priced offer and an owned copy).
+		for tile in [gallery.offer_tiles()[0], gallery.removal_tiles()[0]]:
+			var face_panel: Control = tile.get_parent()
+			var effects_label := face_panel.find_child("TileEffects", true, false) as Label
+			_check(effects_label != null and effects_label.text == gallery.tile_details(tile).effects
+				and effects_label.get_theme_font_size("font_size") >= 13
+				and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
+				"the concise effect stays legible inside its sewn Shop tile")
 		before = _shop_state()
+		var hover_selection: int = app.shop_offers.selected
+		await _hover(gallery.offer_tiles()[0])
+		gallery.gallery_scroll().ensure_control_visible(gallery.removal_tiles()[0])
+		await _frames()
+		await _hover(gallery.removal_tiles()[0])
+		_check(_shop_state() == before and app.shop_offers.selected == hover_selection,
+			"hovering Shop tiles explains them without selecting, spending or advancing")
 		await _click_tile(_tile_for("offer", 2))
 		_check(_shop_state() == before and app.shop_offers.selected == 2,
 			"offer tile click selects that listing with zero ledger effect")
@@ -462,6 +838,7 @@ func _run() -> void:
 		if session == 0:
 			await _check_tile_art(gallery)
 			await _check_selection_cue(gallery)
+			await _check_stitched_removal_tooltip(gallery)
 		before = _shop_state()
 		route_callback.call()
 		back_callback.call()

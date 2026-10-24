@@ -150,31 +150,31 @@ func _snapshot(fixture: Dictionary) -> Dictionary:
 func _expected_cards() -> Dictionary:
 	return {
 		"warden_strike": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
-			"effects": {"damage": 6}, "text": "From: 1-2 (front/middle)\nTarget: pick 1 living enemy 1-2\nDeal 6 damage"},
+			"effects": {"damage": 6}, "text": "Deal 6 damage to one enemy."},
 		"warden_strike_plus": {"from": [1, 2], "to": [1, 2], "kind": "enemy_single",
-			"effects": {"damage": 7}, "text": "From: 1-2 (front/middle)\nTarget: pick 1 living enemy 1-2\nDeal 7 damage"},
+			"effects": {"damage": 7}, "text": "Deal 7 damage to one enemy."},
 		"warden_brace": {"from": [1, 2, 3], "to": [], "kind": "self",
-			"effects": {"block": 7}, "text": "From: 1-3 (front to back)\nTarget: self\nGain 7 Block"},
+			"effects": {"block": 7}, "text": "Gain 7 Block."},
 		"warden_shield_bash": {"from": [1], "to": [1], "kind": "enemy_single",
-			"effects": {"damage": 8, "weak": 1}, "text": "From: 1 (front)\nTarget: pick 1 living enemy 1 (front)\nDeal 8 damage, Weak 1"},
+			"effects": {"damage": 8, "weak": 1}, "text": "Deal 8 damage to one enemy and apply Weak 1."},
 		"seamstress_prick": {"from": [1, 2, 3], "to": [1, 2, 3], "kind": "enemy_single",
-			"effects": {"damage": 3, "bleed": 2}, "text": "From: 1-3 (front to back)\nTarget: pick 1 living enemy 1-3\nDeal 3 damage, Bleed 2"},
+			"effects": {"damage": 3, "bleed": 2}, "text": "Deal 3 damage to one enemy and apply Bleed 2."},
 		"seamstress_mend": {"from": [2, 3], "to": [], "kind": "ally_single",
-			"effects": {"heal": 5}, "text": "From: 2-3 (middle/back)\nTarget: 1 living ally 1-3\nChosen ally heals 5 HP"},
+			"effects": {"heal": 5}, "text": "Heal a chosen ally 5 HP."},
 		"seamstress_stitch_up": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
-			"effects": {"block": 5}, "text": "From: 1-3 (front to back)\nTarget: 1 living ally 1-3\nChosen ally gains 5 Block"},
+			"effects": {"block": 5}, "text": "Give a chosen ally 5 Block."},
 		"warden_brace_plus": {"from": [1, 2, 3], "to": [], "kind": "self",
-			"effects": {"block": 10}, "text": "From: 1-3 (front to back)\nTarget: self\nGain 10 Block"},
+			"effects": {"block": 10}, "text": "Gain 10 Block."},
 		"seamstress_mend_plus": {"from": [2, 3], "to": [], "kind": "ally_single",
-			"effects": {"heal": 7}, "text": "From: 2-3 (middle/back)\nTarget: 1 living ally 1-3\nChosen ally heals 7 HP"},
+			"effects": {"heal": 7}, "text": "Heal a chosen ally 7 HP."},
 		"seamstress_stitch_up_plus": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
-			"effects": {"block": 7}, "text": "From: 1-3 (front to back)\nTarget: 1 living ally 1-3\nChosen ally gains 7 Block"},
+			"effects": {"block": 7}, "text": "Give a chosen ally 7 Block."},
 		"tinker_pop_shot": {"from": [2, 3], "to": [1, 2, 3], "kind": "enemy_single",
-			"effects": {"damage": 5}, "text": "From: 2-3 (middle/back)\nTarget: pick 1 living enemy 1-3\nDeal 5 damage"},
+			"effects": {"damage": 5}, "text": "Deal 5 damage to one enemy."},
 		"tinker_scrap_bomb": {"from": [3], "to": [1, 2, 3], "kind": "enemy_all",
-			"effects": {"damage": 4}, "text": "From: 3 (back)\nTarget: all living enemies 1-3\nDeal 4 damage EACH"},
+			"effects": {"damage": 4}, "text": "Deal 4 damage to every enemy."},
 		"tinker_tune_up": {"from": [1, 2, 3], "to": [], "kind": "none",
-			"effects": {"draw": 1}, "text": "From: 1-3 (front to back)\nTarget: none\nDraw 1 card"},
+			"effects": {"draw": 1}, "text": "Draw 1 card."},
 	}
 
 
@@ -319,6 +319,25 @@ func _check_position_marks(pips: LiveRunCardRewardChoicePanel._PositionPips,
 		"target squares filled exactly for to_positions: " + card_id)
 	_check(pips.target_kind == String(definition.get("target_kind", "")),
 		"position marks keep the authored target kind: " + card_id)
+	# An all-enemy cast sews its filled target squares together; no other kind
+	# claims an area thread across the marks.
+	var thread: PackedVector2Array = pips.thread_points()
+	if String(definition.get("target_kind", "")) == "enemy_all":
+		_check(thread.size() == 2,
+			"all-enemy marks thread their filled squares together: " + card_id)
+		if thread.size() == 2:
+			var square_centres: Array[Vector2] = []
+			for slot: Dictionary in slots:
+				if String(slot.get("shape", "")) == "square" and bool(slot.get("filled", false)):
+					square_centres.append(slot.get("center", Vector2.ZERO))
+			_check(square_centres.size() >= 2 and thread[0] == square_centres.front()
+				and thread[1] == square_centres.back(),
+				"thread runs from the first to the last legal square: " + card_id)
+			_check(thread[0].y == thread[1].y and thread[0].distance_to(thread[1]) > 0.0,
+				"thread is a real horizontal seam across the marks: " + card_id)
+	else:
+		_check(thread.is_empty(),
+			"no area thread is sewn for a non-area target kind: " + card_id)
 
 
 ## The sewn owner strip must name the hero who owns the offered card in ink
@@ -374,18 +393,60 @@ func _check_owner_strip(receipt: Dictionary, slot: int) -> void:
 		"owner strip leaves the bound offer ID unchanged: " + card_id)
 
 
-## The readable target-kind sentence the rules label must spell out; the marks
-## stay silent so no glyph beyond the project font is required.
-func _kind_phrase(kind: String) -> String:
-	match kind:
-		"enemy_single": return "Target: pick 1 living enemy"
-		"enemy_all": return "Target: all living enemies"
-		"enemy_random": return "Target: 1 random living enemy per hit"
-		"self": return "Target: self"
-		"ally_single": return "Target: 1 living ally 1-3"
-		"party_all": return "Target: all allies"
-		"none": return "Target: none"
-	return ""
+## The hover legend the mounted card must show: the only place the reward view
+## spells the six painted marks out, including the no-square ally/self cases.
+func _expected_legend(definition: Dictionary) -> String:
+	var parts: Array[String] = [
+		"PIPS: filled circles = slots this hero may play from (%s)"
+			% _slots_text(definition.get("from_positions", []), "no slot"),
+		"outlined circles = not a source slot",
+	]
+	var to_positions: Array = definition.get("to_positions", [])
+	if to_positions.is_empty():
+		parts.append("no target square is filled (%s)" % _target_slots_text(definition))
+	else:
+		parts.append("filled squares = legal target slots (%s)"
+			% _slots_text(to_positions, "?"))
+		parts.append("outlined squares = not a target slot")
+	match str(definition.get("target_kind", "")):
+		"enemy_all":
+			parts.append("a sewn thread joins every enemy square (ALL = all of them)")
+		"party_all":
+			parts.append("ALL = every hero")
+	var raw_effects: Variant = definition.get("effects", {})
+	if raw_effects is Dictionary \
+			and bool((raw_effects as Dictionary).get("random_target_each_hit", false)):
+		parts.append("RND = one random enemy per hit")
+	return "; ".join(parts) + "."
+
+
+func _slots_text(positions: Array, empty_text: String) -> String:
+	if positions.is_empty():
+		return empty_text
+	if positions.size() == 1:
+		return str(positions[0])
+	return "%s–%s" % [positions[0], positions.back()]
+
+
+func _target_slots_text(definition: Dictionary) -> String:
+	match str(definition.get("target_kind", "")):
+		"ally_single":
+			return "any hero slot"
+		"party_all":
+			return "every hero"
+		"self":
+			return "this hero"
+		"adjacent_ally":
+			return "the adjacent hero"
+	return "no target"
+
+
+## The face must never print the old targeting/position prose again: legal
+## positions live only in the painted marks and the hover legend.
+func _assert_no_position_prose(text: String, card_id: String) -> void:
+	for banned in ["From:", "Target:", "living", "pick 1", "front", "middle", "back"]:
+		_check(not text.contains(banned),
+			"face prints no old position prose '%s': %s" % [banned, card_id])
 
 
 ## Source slice of one nested renderer class, used for the drawing checks that
@@ -451,6 +512,9 @@ func _test_renderer_source() -> void:
 	_check(not marks.is_empty(), "position mark drawing source located")
 	_check(marks.contains("draw_circle(") and marks.contains("draw_rect("),
 		"position marks draw circles and squares")
+	_check(marks.contains("thread_points(") and marks.contains("draw_dashed_line(")
+		and marks.contains("\"enemy_all\""),
+		"an all-enemy cast sews its filled squares together with a dashed thread")
 	_check(not marks.contains("draw_string("),
 		"position marks draw no miniature numbers")
 	var ascii_only := true
@@ -603,8 +667,8 @@ func _test_all_catalog_rules(base: Dictionary) -> void:
 			and definition.get("effects") == case["effects"],
 			"independent authored fields and base effects: " + card_id)
 		var detached: Dictionary = definition.duplicate(true)
-		_check(panel._format_rules(detached) == case["text"],
-			"three-line formatter exactly matches authored targeting/effects: " + card_id)
+		_check(CardShortRules.line(detached) == case["text"],
+			"one short-sentence formatter matches authored effects: " + card_id)
 		_check(detached == definition, "formatter never mutates detached catalog card: " + card_id)
 	# Mount valid three-offer groups through the same live receipt path. No
 	# synthetic service or selection logic, and the final short group reuses
@@ -651,7 +715,8 @@ func _starter_cost_cases() -> Array[String]:
 
 
 ## One mounted offer checked against the resolved catalog definition: exact
-## cost in a centred gold coin, six position slots, readable target sentence.
+## cost in a centred gold coin, six position slots, the shared short-sentence
+## effect text and the hover legend for the exact slots.
 func _check_mounted_face(receipt: Dictionary, slot: int) -> void:
 	var offer: Dictionary = receipt["offers"][slot]
 	var card_id := String(offer.get("id", ""))
@@ -671,12 +736,15 @@ func _check_mounted_face(receipt: Dictionary, slot: int) -> void:
 		return
 	_check_cost_coin(cost_button, definition, card_id)
 	_check_position_marks(pips, definition, card_id)
-	var kind: String = String(definition.get("target_kind", ""))
-	var phrase: String = _kind_phrase(kind)
-	_check(not phrase.is_empty(),
-		"authored target kind has a readable sentence: " + card_id)
-	_check(rules_label.text.contains(phrase),
-		"readable rules spell out the authored target kind %s: %s" % [kind, card_id])
+	var expected_line: String = CardShortRules.line(definition)
+	_check(not expected_line.is_empty() and rules_label.text == expected_line,
+		"face prints the shared short-sentence line: " + card_id)
+	_assert_no_position_prose(rules_label.text, card_id)
+	_check(card.tooltip_text == _expected_legend(definition),
+		"hover states the exact source and recipient slots: " + card_id)
+	_check(card.mouse_filter == Control.MOUSE_FILTER_STOP
+		and not card.tooltip_text.is_empty(),
+		"hover legend is reachable without changing the card's action: " + card_id)
 
 
 func _test_cost_and_marks(fight_base: Dictionary, elite_base: Dictionary) -> void:
@@ -830,11 +898,19 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 					"authoritative definition matches displayed positional/effect contract " + offer["id"])
 				_check(rules_label.text == authored["text"],
 					"mounted card shows exact authored rules (including amounts) " + offer["id"])
+				_check(rules_label.text == CardShortRules.line(definition),
+					"mounted card uses the one shared short-sentence formatter " + offer["id"])
+				_assert_no_position_prose(rules_label.text, String(offer["id"]))
 			_check(rules_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
 				and rules_label.get_theme_font_size("font_size") >= 15
 				and rules_label.get_line_count() <= 3
 				and rules_label.get_visible_line_count() == rules_label.get_line_count(),
 				"rules are readable in at most three complete rendered lines " + offer["id"])
+			_check(card.tooltip_text == _expected_legend(definition),
+				"mounted card hover states the exact source and recipient slots " + offer["id"])
+			_check(card.mouse_filter == Control.MOUSE_FILTER_STOP
+				and not card.tooltip_text.is_empty(),
+				"mounted card hover legend is reachable beside its action " + offer["id"])
 			_check(card.get_global_rect().encloses(rules_label.get_global_rect())
 				and screen.encloses(rules_label.get_global_rect())
 				and cost_button.get_global_rect().end.y <= rules_label.get_global_rect().position.y
@@ -1159,116 +1235,185 @@ func _authored_base_ids() -> Array[String]:
 ## formatter that drops authored metadata cannot agree with this oracle.
 func _expected_rules(definition: Dictionary) -> String:
 	var kind: String = String(definition.get("target_kind", ""))
-	var from_positions: Array = definition.get("from_positions", [])
-	var from_text := ""
-	match from_positions:
-		[1]: from_text = "1 (front)"
-		[3]: from_text = "3 (back)"
-		[1, 2]: from_text = "1-2 (front/middle)"
-		[2, 3]: from_text = "2-3 (middle/back)"
-		[1, 2, 3]: from_text = "1-3 (front to back)"
-	var target_positions: Array = definition.get("to_positions", [])
-	var slots := ""
-	match target_positions:
-		[1]: slots = "1 (front)"
-		[1, 2]: slots = "1-2"
-		[2, 3]: slots = "2-3"
-		[1, 2, 3]: slots = "1-3"
-	var target_text := ""
-	if kind == "enemy_single":
-		target_text = "pick 1 living enemy " + slots
-	elif kind == "enemy_all":
-		target_text = "all living enemies " + slots
-	elif kind == "enemy_random":
-		target_text = "1 random living enemy per hit " + slots
-	elif kind == "self":
-		target_text = "self"
-	elif kind == "ally_single":
-		target_text = "1 living ally 1-3"
-	elif kind == "party_all":
-		target_text = "all allies"
-	elif kind == "none":
-		target_text = "none"
 	var effects: Dictionary = definition.get("effects", {})
-	var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
-	var until_next_turn: bool = String(effects.get("duration", "")) == "until_next_turn"
-	var copy: Array[String] = []
-	for key: String in effects:
-		if key == "damage":
-			var line := "Deal %d damage" % int(effects["damage"])
-			if hits > 1:
-				line += " ×%d hits" % hits
-			elif kind == "enemy_all":
-				line += " EACH"
-			if bool(effects.get("random_target_each_hit", false)):
-				line += " (random target each hit)"
-			if effects.has("conditional_damage"):
-				var condition: Dictionary = effects["conditional_damage"] if effects["conditional_damage"] is Dictionary else {}
-				var terms: Array[String] = []
-				for item: Variant in condition.get("conditions", []):
-					if not item is Dictionary:
-						continue
-					var part: Dictionary = item
-					if part.has("status"):
-						terms.append(String(part["status"]).capitalize())
-					elif part.has("gauge"):
-						var gauge := String(part["gauge"]).capitalize()
-						terms.append(gauge + (" at half"
-							if String(part.get("comparison", "")) == "at_least_half"
-							else " " + String(part.get("comparison", "")).replace("_", " ")))
-				var join_word := " and " if String(condition.get("operator", "or")) == "and" else " or "
-				line += (" (%d instead under a condition)" % int(condition.get("damage", 0))) \
-					if terms.is_empty() \
-					else (" (%d instead if %s)" % [int(condition.get("damage", 0)), join_word.join(terms)])
-			copy.append(line)
-		elif key == "block":
-			if kind == "ally_single":
-				copy.append("Chosen ally gains %d Block" % int(effects["block"]))
-			elif kind == "self":
-				copy.append("Gain %d Block" % int(effects["block"]))
+	var hits: int = 1
+	if effects.get("hits") is int:
+		hits = maxi(1, int(effects["hits"]))
+	elif effects.get("hit_count") is int:
+		hits = maxi(1, int(effects["hit_count"]))
+	var random_each: bool = bool(effects.get("random_target_each_hit", false))
+	var sentences: Array[String] = []
+	# One combat sentence for damage, statuses, Unravel and Pin.
+	var enemy_keys := ["damage", "conditional_damage", "exposed", "weak", "bleed",
+		"unravel", "bleed_multiplier", "pinned"]
+	var has_enemy := false
+	for key: String in enemy_keys:
+		if effects.has(key):
+			has_enemy = true
+	if has_enemy:
+		var recipient: String = _sentence_recipient(definition)
+		var head := ""
+		var tails: Array[String] = []
+		var conditional := ""
+		if effects.has("damage"):
+			head = "deal %d damage" % int(effects["damage"])
+		if effects.has("conditional_damage"):
+			var condition: Dictionary = effects["conditional_damage"] \
+				if effects["conditional_damage"] is Dictionary else {}
+			var empowered: int = int(condition.get("damage", -1))
+			if head.is_empty():
+				head = "deal %d damage if %s" % [empowered, _condition_terms(condition)]
 			else:
-				copy.append("Gain %d Block" % int(effects["block"]))
-		elif key == "block_all":
-			copy.append("All allies gain %d Block each" % int(effects["block_all"]))
-		elif key == "other_ally_block":
-			copy.append("Every other ally gains %d Block" % int(effects["other_ally_block"]))
-		elif key == "heal":
-			if kind == "ally_single":
-				copy.append("Chosen ally heals %d HP" % int(effects["heal"]))
-			elif kind == "party_all":
-				copy.append("All allies heal %d HP each" % int(effects["heal"]))
-			else:
-				copy.append("Heal %d HP" % int(effects["heal"]))
-		elif key == "draw":
-			copy.append("Draw %d card%s" % [int(effects["draw"]), "" if int(effects["draw"]) == 1 else "s"])
-		elif key == "weak":
-			copy.append("Weak %d" % int(effects["weak"]))
-		elif key == "bleed":
-			copy.append("Bleed %d%s" % [int(effects["bleed"]), " EACH" if kind == "enemy_all" else ""])
-		elif key == "bleed_multiplier":
-			copy.append("Bleed ×%d" % int(effects["bleed_multiplier"]))
-		elif key == "unravel":
-			copy.append("Unravel %d" % int(effects["unravel"]))
-		elif key == "exposed":
-			copy.append("Exposed %d" % int(effects["exposed"]))
-		elif key == "pinned":
-			var bonus := 5
-			if effects["pinned"] is Dictionary and (effects["pinned"] as Dictionary).get("bonus_damage") is int:
+				conditional = ", or %d if %s" % [empowered, _condition_terms(condition)]
+		if effects.has("pinned"):
+			var bonus := 0
+			if effects["pinned"] is Dictionary \
+					and (effects["pinned"] as Dictionary).get("bonus_damage") is int:
 				bonus = int((effects["pinned"] as Dictionary)["bonus_damage"])
-			copy.append("Pinned (+%d damage on another hero's next attack, once)" % bonus)
-		elif key == "guarding":
-			copy.append("Guarding" + (" until next turn" if until_next_turn else ""))
-		elif key == "thorns":
-			copy.append("Thorns %d%s" % [int(effects["thorns"]),
-				" until next turn" if until_next_turn else ""])
-		elif key == "energy" or key == "gain_energy":
-			copy.append("Gain +%d energy" % int(effects[key]))
-		elif key == "self_hp_loss":
-			copy.append("%d HP lost" % int(effects["self_hp_loss"]))
-		elif key == "conditional_damage" and not effects.has("damage"):
-			var orphan: Dictionary = effects["conditional_damage"] if effects["conditional_damage"] is Dictionary else {}
-			copy.append("Deal %d damage conditionally" % int(orphan.get("damage", 0)))
-	return "From: %s\nTarget: %s\n%s" % [from_text, target_text, ", ".join(copy)]
+			if head.is_empty():
+				head = "pin " + recipient + (" for +%d" % bonus if bonus > 0 else "")
+				recipient = ""
+			else:
+				tails.append("pin it" if bonus == 0 else "pin it for +%d" % bonus)
+		var statuses: Array[String] = []
+		for status: String in ["exposed", "weak", "bleed"]:
+			if effects.has(status):
+				statuses.append("%s %d" % [status.capitalize(), int(effects[status])])
+		if not statuses.is_empty():
+			var clause := "apply " + _sentence_join(statuses)
+			if head.is_empty():
+				head = clause
+			else:
+				tails.append(clause)
+		if effects.has("unravel"):
+			var clause := "add %d Unravel" % int(effects["unravel"])
+			if head.is_empty():
+				head = clause
+			else:
+				tails.append(clause)
+		var sentence := ""
+		if not head.is_empty():
+			sentence = _sentence_capital(head) if recipient.is_empty() \
+				else _sentence_capital("%s to %s" % [head, recipient])
+			if effects.has("damage") and hits > 1:
+				sentence += (" each hit, %d hits" % hits) if random_each \
+					else (" %d times" % hits)
+			sentence += conditional
+			for tail: String in tails:
+				sentence += " and " + tail
+			sentence += "."
+		if effects.has("bleed_multiplier"):
+			var multiplier: int = int(effects["bleed_multiplier"])
+			if multiplier == 2:
+				sentence += " Double the Bleed on %s." % _sentence_recipient(definition)
+			else:
+				sentence += " Multiply the Bleed on %s by %d." % [
+					_sentence_recipient(definition), multiplier]
+		sentences.append(sentence.strip_edges())
+	# A descriptor heal names its own recipient instead of the cast's target.
+	if effects.get("heal") is Dictionary:
+		var heal: Dictionary = effects["heal"]
+		var who := "the weakest ally" \
+			if String(heal.get("target", "")) == "weakest_living_ally" else _sentence_recipient(definition)
+		var sentence := "Heal %s %d HP" % [who, int(heal.get("amount", -1))]
+		if String(heal.get("cap", "")) == "missing_hp":
+			sentence += ", capped at missing HP"
+		sentences.append(sentence + ".")
+	if kind == "ally_single":
+		var clauses: Array[String] = []
+		var healed := false
+		if effects.get("heal") is int:
+			clauses.append("heal a chosen ally %d HP" % int(effects["heal"]))
+			healed = true
+		if effects.has("block"):
+			clauses.append(("give them %d Block" % int(effects["block"])) if healed
+				else ("give a chosen ally %d Block" % int(effects["block"])))
+		if not clauses.is_empty():
+			sentences.append(_sentence_capital(_sentence_join(clauses)) + ".")
+	if kind == "party_all":
+		var clauses: Array[String] = []
+		if effects.get("heal") is int:
+			clauses.append("heal every ally %d HP" % int(effects["heal"]))
+		if effects.has("block_all"):
+			clauses.append("give every ally %d Block" % int(effects["block_all"]))
+		if not clauses.is_empty():
+			sentences.append(_sentence_capital(_sentence_join(clauses)) + ".")
+	# Self-directed effects share one sentence; other-ally Block joins it.
+	var self_clauses: Array[String] = []
+	if effects.has("block") and kind != "ally_single":
+		self_clauses.append("gain %d Block" % int(effects["block"]))
+	if effects.has("other_ally_block"):
+		self_clauses.append("give every other ally %d Block" % int(effects["other_ally_block"]))
+	if effects.has("draw"):
+		var drawn: int = int(effects["draw"])
+		self_clauses.append("draw %d card%s" % [drawn, "" if drawn == 1 else "s"])
+	if effects.has("gain_energy"):
+		self_clauses.append("gain %d energy" % int(effects["gain_energy"]))
+	elif effects.has("energy"):
+		self_clauses.append("gain %d energy" % int(effects["energy"]))
+	if effects.has("next_turn_energy"):
+		self_clauses.append("gain %d energy next turn" % int(effects["next_turn_energy"]))
+	if effects.has("next_attack_damage_bonus"):
+		var timing := " this turn" \
+			if String(effects.get("expires", "")) == "end_of_player_turn" else ""
+		self_clauses.append("your next attack%s deals +%d damage"
+			% [timing, int(effects["next_attack_damage_bonus"])])
+	if effects.has("self_hp_loss"):
+		self_clauses.append("lose %d HP" % int(effects["self_hp_loss"]))
+	var tail_time := " until your next turn" \
+		if String(effects.get("duration", "")) == "until_next_turn" else ""
+	if effects.has("guarding"):
+		self_clauses.append("Guard" + tail_time)
+	if effects.has("thorns"):
+		self_clauses.append("gain %d Thorns%s" % [int(effects["thorns"]), tail_time])
+	if not self_clauses.is_empty():
+		sentences.append(_sentence_capital(_sentence_join(self_clauses)) + ".")
+	return " ".join(sentences)
+
+
+## The recipient the face sentence names for one authored target kind.
+func _sentence_recipient(definition: Dictionary) -> String:
+	match str(definition.get("target_kind", "")):
+		"enemy_single": return "one enemy"
+		"enemy_all": return "every enemy"
+		"enemy_random": return "a random enemy"
+		"ally_single": return "a chosen ally"
+		"party_all": return "every ally"
+		"self": return "yourself"
+	return "the target"
+
+
+func _condition_terms(condition: Dictionary) -> String:
+	var terms: Array[String] = []
+	for item: Variant in condition.get("conditions", []):
+		if not item is Dictionary:
+			continue
+		var part: Dictionary = item
+		if str(part.get("status", "")) == "unravelled":
+			if not terms.has("Unravelled"):
+				terms.append("Unravelled")
+		elif str(part.get("gauge", "")) == "unravel" \
+				and str(part.get("comparison", "")) == "at_least_half":
+			if not terms.has("half gauge"):
+				terms.append("half gauge")
+	if terms.is_empty():
+		return "an unstated condition"
+	var joiner := " and " if String(condition.get("operator", "or")) == "and" else " or "
+	return joiner.join(terms)
+
+
+func _sentence_join(parts: Array[String]) -> String:
+	if parts.is_empty():
+		return ""
+	if parts.size() == 1:
+		return parts[0]
+	return ", ".join(parts.slice(0, parts.size() - 1)) + " and " + parts.back()
+
+
+func _sentence_capital(text: String) -> String:
+	if text.is_empty():
+		return text
+	return text.substr(0, 1).to_upper() + text.substr(1)
 
 
 ## Structural qualifier keys that never render their own clause; every other
@@ -1285,21 +1430,21 @@ func _covered_effect_keys() -> Array[String]:
 func _required_rule_phrases(card_id: String) -> Array[String]:
 	match card_id:
 		"warden_bastion_quilt":
-			return ["all allies", "10 Block each"]
+			return ["every ally", "10 Block"]
 		"warden_hold_the_line":
-			return ["Every other ally gains 2 Block"]
+			return ["give every other ally 2 Block"]
 		"seamstress_darning":
-			return ["Chosen ally heals 4 HP", "Chosen ally gains 3 Block"]
+			return ["Heal a chosen ally 4 HP", "give them 3 Block"]
 		"seamstress_stitch_up":
-			return ["Chosen ally gains 5 Block"]
+			return ["Give a chosen ally 5 Block"]
 		"tinker_sight_glass":
 			return ["Exposed 2", "Draw 1 card"]
 		"seamstress_red_thread":
 			return ["Bleed 6", "Exposed 1"]
 		"tinker_overclock":
-			return ["+1 energy", "3 HP lost"]
+			return ["Gain 1 energy", "lose 3 HP"]
 		"tinker_ricochet":
-			return ["Deal 4 damage", "×3 hits", "random target each hit"]
+			return ["Deal 4 damage", "3 hits", "a random enemy each hit"]
 	return []
 
 
@@ -1366,10 +1511,9 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 				definition, card_id)
 			_check_position_marks(pips_container as LiveRunCardRewardChoicePanel._PositionPips,
 				definition, card_id)
-		var kind_phrase: String = _kind_phrase(String(definition.get("target_kind", "")))
-		_check(not kind_phrase.is_empty(), "pool card has a readable target-kind sentence: " + card_id)
-		_check(kind_phrase.is_empty() or rules_label.text.contains(kind_phrase),
-			"pool card rules spell out the authored target kind: " + card_id)
+		var expected_line: String = _expected_rules(definition)
+		_check(not expected_line.is_empty() and rules_label.text == expected_line,
+			"pool card rules match its authored catalog definition: " + card_id)
 		var expected_rarity: String = String(definition.get("rarity", "")).capitalize()
 		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_rarity,
 			"RarityLabel matches authored rarity: %s (%s)" % [expected_rarity, card_id])
@@ -1383,19 +1527,26 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		_assert_no_raw_identifiers(card, card_id, node_id, receipt.get("trinket_drop_id", ""))
 		_check(rules_label.text == _expected_rules(definition),
 			"pool card rules match its authored catalog definition: " + card_id)
-		var rule_lines := rules_label.text.split("\n")
-		_check(rule_lines.size() == 3 and rule_lines[0].begins_with("From: ")
-			and rule_lines[1].begins_with("Target: ")
-			and not rule_lines[0].substr(6).strip_edges().is_empty()
-			and not rule_lines[1].substr(8).strip_edges().is_empty()
-			and not rule_lines[2].strip_edges().is_empty(),
-			"pool card shows nonblank from, target and effect text: " + card_id)
+		_check(rules_label.text == CardShortRules.line(definition),
+			"pool card face comes from the one shared formatter: " + card_id)
+		_check(not rules_label.text.contains("\n") and rules_label.text.strip_edges() != "",
+			"pool card shows one nonblank short-sentence effect line: " + card_id)
+		_check(rules_label.text.ends_with(".")
+			and rules_label.text.substr(0, 1) == rules_label.text.substr(0, 1).to_upper(),
+			"pool card effect line is a complete sentence: " + card_id)
+		_assert_no_position_prose(rules_label.text, card_id)
+		_check(card.tooltip_text == _expected_legend(definition),
+			"pool card hover states the exact source and recipient slots: " + card_id)
+		_check(card.mouse_filter == Control.MOUSE_FILTER_STOP
+			and not card.tooltip_text.is_empty(),
+			"pool card hover legend is reachable beside its action: " + card_id)
 		var effects: Dictionary = definition.get("effects", {})
 		for effect_key: String in effects:
 			_check(_covered_effect_keys().has(effect_key),
 				"authored pool effect key is rendered: %s (%s)" % [effect_key, card_id])
 			var value: Variant = effects[effect_key]
-			if value is int:
+			# A doubled Bleed is printed as the word "Double", never as a bare 2.
+			if value is int and effect_key != "bleed_multiplier":
 				_check(rules_label.text.contains(str(value)),
 					"authored pool value %d visible for %s" % [int(value), card_id])
 		for phrase: String in _required_rule_phrases(card_id):
@@ -1902,11 +2053,17 @@ func _test_illustration_source() -> void:
 		and resolver.find("card_art_path(") < resolver.find("emblem_path("),
 		"authored card art is tried before the owner emblem")
 	_check(resolver.contains("MODE_NONE"), "missing art and emblem fall through to the placeholder")
-	var mount := _source_slice("func _mount_card", "## A detached catalog card is the sole source")
+	var mount := _source_slice("func _mount_card", "## The hover legend for the six painted marks")
 	_check(mount.contains("resolve_card_art(") and mount.contains("illustration.mode ="),
 		"the live card mounts the resolved mode instead of a bare texture")
 	_check(mount.contains("CARD_ART_HEIGHT") and mount.contains("SIZE_EXPAND_FILL"),
 		"the mounted picture window keeps its readable minimum and takes card slack")
+	_check(mount.contains("CardShortRules.line("),
+		"the mounted reward face gets its effect text from the shared formatter")
+	_check(mount.contains("card.tooltip_text = _pip_legend("),
+		"the mounted reward face carries the hover legend for its marks")
+	_check(not mount.contains("_format_rules"),
+		"the reward face keeps no independent position-target formatter")
 
 
 ## The deliberate null-art/null-emblem path: a mounted window with no texture

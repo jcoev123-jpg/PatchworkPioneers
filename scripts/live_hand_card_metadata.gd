@@ -266,7 +266,12 @@ func get_faces(panel: Control) -> Dictionary:
 	return _bindings[panel].get("faces", {}).duplicate()
 
 
-func base_effect_text(card_id: String) -> String:
+## `include_pips` controls only the hand-only PIPS legend, which explains the
+## drawn card face's legality pips. A panel that has no such pips (the Shop and
+## Rest card gallery) asks for the same catalog name, cost, source, target,
+## effect and keyword text without that legend; the default keeps the hand
+## tooltip byte-for-byte unchanged and an unknown ID still fails closed.
+func base_effect_text(card_id: String, include_pips: bool = true) -> String:
 	var definition: Dictionary = _definition(card_id)
 	if definition.is_empty():
 		return "Unknown card"
@@ -280,9 +285,10 @@ func base_effect_text(card_id: String) -> String:
 		parts.append("No target")
 	elif not target_text.is_empty() and target_text != "Unknown target":
 		parts.append(target_text)
-	# The face prints the six legality pips but no positions of its own, so the
-	# hover tooltip is the one place that spells the slots out.
-	parts.append(_pip_legend(definition))
+	if include_pips:
+		# The face prints the six legality pips but no positions of its own, so
+		# the hover tooltip is the one place that spells the slots out.
+		parts.append(_pip_legend(definition))
 	var effect_parts: Array[String] = _precise_effect_lines(card_id, definition)
 	if not effect_parts.is_empty():
 		parts.append("; ".join(effect_parts))
@@ -587,10 +593,13 @@ func _join_conditions(condition: Dictionary, clauses: Array[String]) -> String:
 
 ## The complete two-part tooltip for a stitched card. Each half is named from
 ## its authored catalog definition, so an upgraded half keeps its "+" name.
-func stitched_tooltip(halves: Array) -> String:
+## `include_pips` is forwarded to each half so a pip-free panel (the visit card
+## gallery) keeps the same ordered authored rules without the hand legend.
+func stitched_tooltip(halves: Array, include_pips: bool = true) -> String:
 	if halves.size() != 2:
 		return ""
-	return "1. " + base_effect_text(str(halves[0])) + "\n2. " + base_effect_text(str(halves[1]))
+	return "1. " + base_effect_text(str(halves[0]), include_pips) \
+		+ "\n2. " + base_effect_text(str(halves[1]), include_pips)
 
 
 func describe(card_id: String) -> Dictionary:

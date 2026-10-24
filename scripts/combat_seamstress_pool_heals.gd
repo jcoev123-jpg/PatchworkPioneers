@@ -16,12 +16,28 @@ var _wardrobe: RunPatchWardrobe
 var _torn: RunTornMending
 var _wardrobe_snapshot: Dictionary = {}
 var _torn_snapshot: Dictionary = {}
+## One COAT notifier per authentic combat binding; it never executes a card.
+var _borrowed_button: CombatBorrowedButton = null
+var _button_party: CombatParty = null
+var _heal_receipt_number := 0
+var _pending_new_party := false
 
 
 ## An attempted binding remains explicit even on failure. Run ledgers stay at the
 ## authenticated combat-start snapshot until a fresh binding is supplied.
 func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
+	# Repeated authentication of the SAME combat ledgers cannot refill a spent
+	# latch. Only a subsequent distinct CombatParty proves a new battle.
+	var same_authorities: bool = _borrowed_button != null and _wardrobe == wardrobe \
+		and _torn == torn and is_patch_binding_valid()
+	var previous_button: CombatBorrowedButton = _borrowed_button if same_authorities else null
+	var previous_party: CombatParty = _button_party if same_authorities else null
+	var previous_number: int = _heal_receipt_number if same_authorities else 0
+	_borrowed_button = null
+	_button_party = null
+	_heal_receipt_number = 0
+	_pending_new_party = false
 	_patches = CombatShopPatchRules.new()
 	_head_patches = CombatM05HeadPatchRules.new()
 	_arm_patches = CombatPatchAttackRules.new()
@@ -35,6 +51,10 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		return false
 	_wardrobe_snapshot = wardrobe.get_snapshot()
 	_torn_snapshot = torn.read_state()
+	_borrowed_button = previous_button if same_authorities else CombatBorrowedButton.new()
+	_button_party = previous_party
+	_heal_receipt_number = previous_number
+	_pending_new_party = same_authorities and previous_party != null
 	return true
 
 
@@ -131,12 +151,41 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 	# They never draw, shuffle or consume the run RNG.
 	if not deck.try_spend_energy(cost):
 		return false
+	# Observe only recipients of the actual committed heal, never catalog forecasts.
+	var observations: Array[Dictionary] = []
 	if is_field_mend:
 		for position in range(1, CombatParty.PARTY_SIZE + 1):
 			if not party.is_downed(position):
+				var before_hp: int = party.get_hero(position)["hp"]
 				party.heal(position, applied_heal)
+				observations.append({"position": position, "id": party.get_hero(position)["id"],
+					"before": before_hp, "after": party.get_hero(position)["hp"]})
 	else:
+		var before_hp: int = party.get_hero(target_position)["hp"]
 		party.heal(target_position, applied_heal)
+		observations.append({"position": target_position, "id": party.get_hero(target_position)["id"],
+			"before": before_hp, "after": party.get_hero(target_position)["hp"]})
 		if is_darning:
 			party.gain_block(target_position, applied_block)
-	return deck.discard_played(card_id)
+	if not deck.discard_played(card_id):
+		return false
+
+	# A unique, deterministic receipt belongs only to a completed held-card commit.
+	# The notifier may refuse an ineligible COAT, but never rolls back legal healing.
+	if _pending_new_party:
+		_pending_new_party = false
+		if _button_party != null and _button_party != party:
+			_borrowed_button = CombatBorrowedButton.new()
+			_button_party = null
+			_heal_receipt_number = 0
+	_heal_receipt_number += 1
+	if _borrowed_button != null:
+		if _button_party == null:
+			_button_party = party
+			_borrowed_button.bind_combat(party, _wardrobe, _torn)
+		if _button_party == party:
+			for observation: Dictionary in observations:
+				_borrowed_button.notify_committed_heal(
+					"seamstress_pool_heal:%d:%d" % [_heal_receipt_number, observation["position"]],
+					definition["owner"], observation["id"], observation["before"], observation["after"])
+	return true

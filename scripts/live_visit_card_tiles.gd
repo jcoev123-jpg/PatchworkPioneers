@@ -22,6 +22,14 @@ extends Control
 ## Reward card presentation, reused instead of duplicated. A detached instance
 ## is used purely as a drawing/label factory; it is never mounted or opened.
 const REWARD := preload("res://scripts/live_run_card_reward_choice_panel.gd")
+## The shared hand tooltip formatter, also detached and used read-only. Its
+## pip-free mode prints the same catalog name, cost, source, target, effect and
+## keyword text the hand explains, without the hand face's PIPS legend (these
+## tiles have no legality pips).
+const CATALOG := preload("res://scripts/live_hand_card_metadata.gd")
+## Printed on a tile whose row cannot be matched to a canonical catalog record.
+## It names no card and invents no rule or amount.
+const DETAILS_UNAVAILABLE := "Card details unavailable: this row has no canonical catalog record."
 
 const FELT_FALLBACK := Color("#736451")
 const PAPER := Color("#e8dcc4")
@@ -44,6 +52,7 @@ const OWNER_STRIP_HEIGHT := 20.0
 
 var _app: Node = null
 var _face: Control = null
+var _catalog = CATALOG.new()
 var _kind: String = ""
 var _view: Control = null
 var _view_id: int = 0
@@ -352,6 +361,10 @@ func _content_signature() -> String:
 				selector.get_item_text(index)])
 	if _kind == "Shop":
 		parts.append(_deck_signature(_run_deck()))
+		# The stitch ledger feeds the owned-card tooltips, so a changed or forged
+		# descriptor registry must replace stale text just like a changed deck.
+		parts.append(str(_app.get("run_stitch_descriptors")))
+		parts.append(str(_app.get("run_next_stitch_id")))
 		for card in _shop_stock_cards():
 			parts.append("%s:%s:%s" % [str(card.get("id", "")), str(card.get("price", -1)),
 				str(card.get("sold", false))])
@@ -525,6 +538,61 @@ func _definition_for(card_id: String) -> Dictionary:
 	return {}
 
 
+## Same as card_tooltip, but a row with no canonical record prints the honest
+## unavailable placeholder instead of an empty hover.
+func _tooltip_or_placeholder(card_id: String) -> String:
+	var text := card_tooltip(card_id)
+	return text if not text.is_empty() else DETAILS_UNAVAILABLE
+
+
+## The detached hover text for one canonical card ID, built only from authored
+## catalog records and this run's validated stitch ledger. Empty when the ID has
+## no canonical record, so callers print an honest placeholder instead.
+func card_tooltip(card_id: String) -> String:
+	if card_id.is_empty():
+		return ""
+	var halves := _stitched_halves(card_id)
+	if not halves.is_empty():
+		var descriptors = _app.get("run_stitch_descriptors")
+		var descriptor: Dictionary = (descriptors as Dictionary).get(card_id, {})
+		return "%s; %d energy; ordered halves:\n%s" % [
+			String(descriptor.get("display_name", card_id)), int(descriptor.get("cost", 0)),
+			_catalog.stitched_tooltip(halves, false)]
+	if _catalog.definition(card_id).is_empty():
+		return ""
+	return _catalog.base_effect_text(card_id, false)
+
+
+## The ordered authored half IDs of a genuine stitched composite in this run's
+## descriptor ledger. A missing, malformed or forged descriptor - or a half that
+## is not an authored card - returns [], so no rule is ever invented from it.
+func _stitched_halves(card_id: String) -> Array:
+	if _app == null or not is_instance_valid(_app):
+		return []
+	if not card_id.begins_with(RunRestStitchCards.ID_PREFIX):
+		return []
+	var descriptors = _app.get("run_stitch_descriptors")
+	if not (descriptors is Dictionary) or not (descriptors as Dictionary).has(card_id):
+		return []
+	var descriptor: Variant = (descriptors as Dictionary)[card_id]
+	if not (descriptor is Dictionary):
+		return []
+	var ids: Variant = (descriptor as Dictionary).get("half_ids")
+	if not (ids is Array) or (ids as Array).size() != 2:
+		return []
+	if not ((ids as Array)[0] is String) or not ((ids as Array)[1] is String):
+		return []
+	var first: Dictionary = RunRestStitchCards.resolve_card_definition(String((ids as Array)[0]))
+	var second: Dictionary = RunRestStitchCards.resolve_card_definition(String((ids as Array)[1]))
+	if first.is_empty() or second.is_empty() or first.get("owner") == second.get("owner"):
+		return []
+	# The canonical transaction regenerates every descriptor field from the two
+	# authored halves, so any mismatch means this row is not that record.
+	if descriptor != RunRestStitchCards._make_descriptor(card_id, first, second):
+		return []
+	return [String((ids as Array)[0]), String((ids as Array)[1])]
+
+
 # --- tile specifications --------------------------------------------------
 
 func _offer_spec(row: int) -> Dictionary:
@@ -547,6 +615,7 @@ func _offer_spec(row: int) -> Dictionary:
 		"title": String(definition.get("display_name", card_id if not card_id.is_empty() else "Listing %d" % (row + 1))),
 		"meta": meta,
 		"effects": _rules_text(definition),
+		"tooltip": _tooltip_or_placeholder(card_id),
 	}
 
 
@@ -588,6 +657,7 @@ func _removal_spec(row: int) -> Dictionary:
 		"title": String(definition.get("display_name", card_id)),
 		"meta": meta,
 		"effects": _rules_text(definition),
+		"tooltip": _tooltip_or_placeholder(card_id),
 	}
 
 
@@ -616,6 +686,7 @@ func _upgrade_spec(selector: OptionButton, row: int, rows: Array) -> Dictionary:
 			"title": "Unavailable selection",
 			"meta": "This row no longer matches the Rest's canonical choices.",
 			"effects": "",
+			"tooltip": DETAILS_UNAVAILABLE,
 		}
 	var base_id := String(entry.get("base_id", ""))
 	var plus_id := String(entry.get("plus_id", ""))
@@ -627,6 +698,13 @@ func _upgrade_spec(selector: OptionButton, row: int, rows: Array) -> Dictionary:
 	var base_name := String(entry.get("display_name", base_definition.get("display_name", base_id)))
 	var plus_name := String(entry.get("plus_display_name", plus_definition.get("display_name", plus_id)))
 	var deck_index: int = int(metadata) if metadata is int else row
+	# Both halves are explained from their own canonical records. An unresolvable
+	# half prints the honest placeholder instead of a guessed name or amount.
+	var before_tooltip: String = card_tooltip(base_id)
+	var after_tooltip: String = card_tooltip(plus_id)
+	var tooltip := DETAILS_UNAVAILABLE
+	if not before_tooltip.is_empty() and not after_tooltip.is_empty():
+		tooltip = "Before:\n%s\nAfter:\n%s" % [before_tooltip, after_tooltip]
 	return {
 		"card_id": base_id,
 		"art_id": base_id,
@@ -635,31 +713,32 @@ func _upgrade_spec(selector: OptionButton, row: int, rows: Array) -> Dictionary:
 		"meta": "Deck card #%d • cost %d → %d energy" % [deck_index + 1, before_cost, after_cost],
 		"effects": "Before: %s\nAfter: %s" % [_effects_text(entry.get("effects", {}), base_definition),
 			_effects_text(entry.get("plus_effects", {}), plus_definition)],
+		"tooltip": tooltip,
 	}
 
 
-## The reward card's own human-readable rules block, line for line.
+## The shared short-sentence rules line the hand and reward faces print.
 func _rules_text(definition: Dictionary) -> String:
 	if definition.is_empty():
 		return "No authored description for this card."
 	if definition.get("stitched_halves") is String:
 		return "Stitched halves: %s" % definition["stitched_halves"]
-	return _face._format_rules(definition)
+	return CardShortRules.line(definition)
 
 
-## Just the effect sentence of the same human-readable block, used for the
-## Rest tile's before/after comparison.
+## One half of the Rest tile's before/after comparison: the canonical row's own
+## authored effects, printed as the same complete short sentence the hand and
+## reward faces use. The resolved definition supplies the authored recipient
+## wording, while the supplied effects are always the ones rendered, so neither
+## half can be described by the other half's numbers or lose its sentence. Both
+## inputs are copied; no source definition is ever mutated.
 func _effects_text(effects: Variant, definition: Dictionary) -> String:
 	if not (effects is Dictionary) or (effects as Dictionary).is_empty():
 		return "no effect"
 	var rules_definition: Dictionary = definition.duplicate(true)
-	if rules_definition.is_empty():
-		rules_definition = {"effects": (effects as Dictionary).duplicate(true)}
-	var rendered: String = _face._format_rules(rules_definition)
-	var lines := String(rendered).split("\n")
-	if lines.size() >= 3 and not lines[2].is_empty():
-		return lines[2]
-	return "no effect"
+	rules_definition["effects"] = (effects as Dictionary).duplicate(true)
+	var rendered: String = CardShortRules.line(rules_definition)
+	return rendered if not rendered.is_empty() else "no effect"
 
 
 func _owner_text(definition: Dictionary, card_id: String) -> String:
@@ -775,6 +854,9 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
 	button.text = ""
 	button.flat = true
+	# The one hover text for this tile: the detached canonical explanation the
+	# caller resolved for this row, or its own honest placeholder. Read-only.
+	button.tooltip_text = String(spec.get("tooltip", ""))
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 	panel.add_child(button)
@@ -1055,6 +1137,7 @@ func tile_details(tile: Variant) -> Dictionary:
 	var details: Dictionary = record["details"].duplicate(true)
 	var button = record["button"]
 	var picture = record["picture"]
+	details["tooltip"] = button.tooltip_text if is_instance_valid(button) else ""
 	details["disabled"] = button.disabled if is_instance_valid(button) else true
 	details["selected"] = record["selected"].visible if is_instance_valid(record["selected"]) else false
 	details["has_picture"] = picture.has_picture() if is_instance_valid(picture) else false

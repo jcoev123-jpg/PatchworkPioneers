@@ -1,6 +1,15 @@
 extends "res://tests/live_event_treasure_continuation_test.gd"
 
 
+## Physical pointer hover that never presses, so the routed Event tickets can be
+## inspected for their read-only hover text without committing anything.
+func _hover(control: Control) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = control.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await _frames()
+
+
 ## AC2: every mounted Event choice panel shows the committed crossroads scene above its
 ## own opaque slate, behind the paper panel and its usable choices.
 func _check_event_backdrop(panel, label: String) -> int:
@@ -236,6 +245,12 @@ func _moth_outcomes() -> void:
 		and app.run_map.get_route() == third_route + [fixture.path[2]] and app.route_view == null,
 		"third Event mounts the Dye Vat and blocks onward routing")
 	if is_instance_valid(app.dye_vat_panel):
+		var dye_buttons: Array[Button] = app.dye_vat_panel.get_choice_buttons()
+		_check(dye_buttons.size() == 3
+			and dye_buttons[0].tooltip_text.contains("it becomes its authored + version")
+			and dye_buttons[0].tooltip_text.contains("Scraps -3")
+			and dye_buttons[2].tooltip_text.ends_with("No change to gold or scraps."),
+			"live Dye Vat tickets explain the upgrade and the zero-change exit on hover")
 		await _click(app.dye_vat_panel.get_choice_buttons()[2])
 		_check(app.dye_vat_panel == null and app._dye_vat_completed and app.route_view != null
 			and app.run_deck == third_deck,
@@ -434,6 +449,17 @@ func _run() -> void:
 				var event_panel_id: int = _check_event_backdrop(panel, "first Event")
 				var buttons := panel.get_choice_buttons()
 				_check(buttons.size() == 2 and buttons[0].text == "Watch the thread unwind" and buttons[1].text == "Leave the spool alone", "authored Watch and Ignore controls")
+				_check(buttons[0].tooltip_text == "Watch the thread unwind\nGold +0   |   Scraps +1\nAuthored outcome; your run's wallet is not checked here."
+					and buttons[1].tooltip_text == "Leave the spool alone\nGold +0   |   Scraps +0\nNo change to gold or scraps.",
+					"live routed tickets explain their exact authored outcome on hover")
+				var hover_state := _event_state()
+				await _hover(buttons[0])
+				await _hover(buttons[1])
+				_check(root.gui_get_hovered_control() == buttons[1]
+					and buttons[0].tooltip_text.contains("Scraps +1")
+					and buttons[1].tooltip_text.contains("No change to gold or scraps."),
+					"hovering the routed tickets reveals their outcome and commits nothing")
+				_check(_event_state() == hover_state, "hover leaves the whole live run untouched")
 				_check(buttons[0].has_focus(), "Watch receives initial keyboard focus")
 				for button in buttons:
 					_check(Rect2(0, 0, 1280, 720).encloses(button.get_global_rect()), "choice fits viewport")
@@ -495,6 +521,10 @@ func _run() -> void:
 					_check(moth_buttons.size() == 3 and moth_buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)"
 						and moth_buttons[1].text == "Fumigate the deck (spend 1 scrap)"
 						and moth_buttons[2].text == "Escape before the moths spread", "three authored Moth controls")
+					_check(moth_buttons[0].tooltip_text == "Feed one ordinary card to the moths (+2 scraps)\nGold +0   |   Scraps +2\nAuthored outcome; your run's wallet is not checked here."
+						and moth_buttons[1].tooltip_text == "Fumigate the deck (spend 1 scrap)\nGold +0   |   Scraps -1\nAuthored outcome; your run's wallet is not checked here."
+						and moth_buttons[2].tooltip_text == "Escape before the moths spread\nGold +0   |   Scraps +0\nNo change to gold or scraps.",
+						"live Moth tickets explain the removal, the cost and the zero change on hover")
 					var picker: ItemList = app._moth_picker
 					_check(is_instance_valid(picker) and picker.item_count == app._moth_ordinary_indices().size(),
 						"index-accurate ordinary selector covers the live deck")

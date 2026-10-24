@@ -359,64 +359,86 @@ func _expected_tooltip_phrases(card_id: String, definition: Dictionary) -> Array
 	return phrases
 
 
-## Independent short-rule expectations for the line actually drawn on the card:
-## terse authored phrases, never a from/target sentence or a position name.
+## Independent short-rule expectations for the sentence actually drawn on the
+## card: authored combat clauses, never a from/target sentence or a position name.
+## Tokens are lowercase because a sentence capitalises its opening clause.
 func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[String]:
 	var effects: Dictionary = definition.get("effects", {})
 	var target_kind: String = str(definition.get("target_kind", ""))
 	var tokens: Array[String] = []
 	if effects.has("damage"):
-		tokens.append("%d dmg" % int(effects["damage"]))
+		tokens.append("deal %d damage" % int(effects["damage"]))
 		var hits: int = int(effects.get("hits", effects.get("hit_count", 1)))
 		if hits > 1:
-			tokens.append("x%d" % hits)
+			tokens.append(("%d hits" % hits) if bool(effects.get("random_target_each_hit", false))
+				else ("%d times" % hits))
 	if effects.has("block"):
-		tokens.append("%d Block" % int(effects["block"]))
+		if target_kind == "ally_single":
+			tokens.append(("them %d block" if effects.has("heal") else "chosen ally %d block")
+				% int(effects["block"]))
+		else:
+			tokens.append("%d block" % int(effects["block"]))
 	if effects.has("other_ally_block"):
-		tokens.append("%d Block allies" % int(effects["other_ally_block"]))
+		tokens.append("give every other ally %d block" % int(effects["other_ally_block"]))
 	if effects.has("block_all"):
-		tokens.append("%d Block" % int(effects["block_all"]))
-	if effects.has("heal"):
-		var heal: Variant = effects["heal"]
-		var amount: int = int(heal.get("amount", 0)) if heal is Dictionary else int(heal)
-		tokens.append("heal %d" % amount)
+		tokens.append("give every ally %d block" % int(effects["block_all"]))
+	if effects.get("heal") is Dictionary:
+		var heal: Dictionary = effects["heal"]
+		tokens.append("heal %s %d hp" % [
+			"the weakest ally" if str(heal.get("target", "")) == "weakest_living_ally" else "the target",
+			int(heal.get("amount", 0))])
+		if str(heal.get("cap", "")) == "missing_hp":
+			tokens.append("capped at missing hp")
+	elif effects.has("heal"):
+		var heal_amount: int = int(effects["heal"])
+		if target_kind == "party_all":
+			tokens.append("heal every ally %d hp" % heal_amount)
+		elif target_kind == "ally_single":
+			tokens.append("heal a chosen ally %d hp" % heal_amount)
+		else:
+			tokens.append("heal %d hp" % heal_amount)
 	if effects.has("exposed"):
-		tokens.append("Exposed %d" % int(effects["exposed"]))
+		tokens.append("exposed %d" % int(effects["exposed"]))
 	if effects.has("weak"):
-		tokens.append("Weak %d" % int(effects["weak"]))
+		tokens.append("weak %d" % int(effects["weak"]))
 	if effects.has("bleed"):
 		var applied: int = int(effects["bleed"])
 		if CombatSeamstressPoolBleed.SUPPORTED_IDS.has(card_id):
 			applied += 1
-		tokens.append("Bleed %d" % applied)
+		tokens.append("bleed %d" % applied)
 	if effects.has("unravel"):
-		tokens.append("Unravel %d" % int(effects["unravel"]))
+		tokens.append("%d unravel" % int(effects["unravel"]))
 	if effects.has("bleed_multiplier"):
-		tokens.append("Bleed")
+		tokens.append("double the bleed")
 	if effects.has("pinned"):
-		tokens.append("Pin")
+		tokens.append("pin it")
 	if effects.has("guarding"):
-		tokens.append("Guard")
+		tokens.append("guard")
 	if effects.has("thorns"):
-		tokens.append("Thorns %d" % int(effects["thorns"]))
+		tokens.append("%d thorns" % int(effects["thorns"]))
 	if effects.has("draw"):
-		tokens.append("draw %d" % int(effects["draw"]))
+		tokens.append("draw %d card" % int(effects["draw"]))
 	if effects.has("gain_energy"):
-		tokens.append("+%d energy" % int(effects["gain_energy"]))
+		tokens.append("gain %d energy" % int(effects["gain_energy"]))
 	elif effects.has("energy"):
-		tokens.append("+%d energy" % int(effects["energy"]))
+		tokens.append("gain %d energy" % int(effects["energy"]))
 	if effects.has("next_turn_energy"):
-		tokens.append("+%d energy next turn" % int(effects["next_turn_energy"]))
+		tokens.append("gain %d energy next turn" % int(effects["next_turn_energy"]))
+	if effects.has("next_attack_damage_bonus"):
+		tokens.append("next attack")
+		tokens.append("+%d damage" % int(effects["next_attack_damage_bonus"]))
 	if effects.has("self_hp_loss"):
-		tokens.append("-%d HP" % int(effects["self_hp_loss"]))
+		tokens.append("lose %d hp" % int(effects["self_hp_loss"]))
 	if effects.has("conditional_damage"):
 		var condition: Dictionary = effects["conditional_damage"]
-		tokens.append("%d dmg if" % int(condition.get("damage", 0)))
+		tokens.append("%d if" % int(condition.get("damage", 0)))
 	# The face must distinguish a whole-area cast from a per-hit random pick.
 	if bool(effects.get("random_target_each_hit", false)):
-		tokens.append("RND")
-	elif target_kind in ["enemy_all", "party_all"]:
-		tokens.append("ALL")
+		tokens.append("a random enemy each hit")
+	elif target_kind == "enemy_all":
+		tokens.append("every enemy")
+	elif target_kind == "party_all":
+		tokens.append("every ally")
 	return tokens
 
 
@@ -529,8 +551,11 @@ func _check_pool_face(card_id: String, definition: Dictionary) -> void:
 	_check(not rules.is_empty() and not rules.contains("BASE") and not rules.contains("Unknown"),
 		"card line states readable short rules: " + card_id + " (" + rules + ")")
 	_check(rules.length() <= 80, "card line stays short: " + card_id + " (" + rules + ")")
+	_check(rules.ends_with(".") and rules.substr(0, 1) == rules.substr(0, 1).to_upper()
+		and not rules.contains("·"),
+		"card line is a complete short sentence: " + card_id + " (" + rules + ")")
 	for token in _expected_rule_tokens(card_id, definition):
-		_check(rules.contains(token), "card line covers '%s': %s" % [token, card_id])
+		_check(rules.to_lower().contains(token), "card line covers '%s': %s" % [token, card_id])
 	# The face is terse: no from/target sentence, no position or recipient name.
 	for banned in ["From", "Target", "living", "pick 1", "front", "middle", "back"]:
 		_check(not rules.contains(banned),
@@ -759,7 +784,7 @@ func _sewn_and_unknown_faces() -> void:
 		_check(tooltip.contains("BASE gain 7 Block") and tooltip.contains("BASE heal 5 HP, capped at max HP"),
 			"each half keeps its own precise effect")
 		_check(tooltip == metadata.stitched_tooltip(pair), "mounted tooltip is the ordered two-part tooltip")
-		_check(facts.get("rules") == "1. 7 Block · 2. heal 5",
+		_check(facts.get("rules") == "1. Gain 7 Block. · 2. Heal a chosen ally 5 HP.",
 			"sewn face keeps first then second authored effect: " + str(facts.get("rules")))
 		var geometry: Dictionary = metadata.get_geometry(panel)
 		var rows: Array = geometry.get("halves", [])

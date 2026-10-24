@@ -29,7 +29,9 @@ const M05_WEAK_TEXT := "+1 Weak on eligible Weak cards owned by this living wear
 const M05_HEAD_BLOCK_TEXT := "+2 Block on eligible Block cards owned by this living wearer only"
 const M05_ARM_BLOCK_TEXT := "+2 Block on eligible Block cards owned by this living wearer only"
 const M05_UNRAVEL_TEXT := "+1 Unravel on eligible Unravel cards owned by this living wearer only"
-const M05_FRAYFINDER_TEXT := "+2 Unravel once per player turn on this living wearer's first single-target attack hit, only against a target already at least 1/2 of its current Unravel threshold (not on every attack)"
+const M05_FRAYFINDER_TEXT := "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits."
+## The old shipped readout advertised a gauge award. It must never come back.
+const M05_FRAYFINDER_FALSE_TEXT := "+2 Unravel"
 const BORROWED_BUTTON_TEXT := "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."
 
 
@@ -58,6 +60,9 @@ func _initialize() -> void:
 	_test_m05_coat_patches_lifecycle()
 	_test_borrowed_button_readout()
 	_test_m05_head_and_arm_summary()
+	_test_m05_frayfinder_attack_damage_text()
+	_test_m05_frayfinder_rest_resew_text()
+	_test_m05_frayfinder_consumers_share_text()
 	_test_m05_torn_and_replacement_previews()
 	_test_m05_authority_fail_closed()
 	if failures.is_empty():
@@ -1983,6 +1988,176 @@ func _test_m05_head_and_arm_summary() -> void:
 		_check(committed.get("ok") == true and committed_slot["patch_id"] == id
 			and committed_slot["active"] == true and committed_slot["rules_text"] == text,
 			id + " committed sew then summarizes with the same authored effect")
+
+
+## AC1: the single M05 attack patch is a first-hit ATTACK DAMAGE bonus, never a
+## gauge award, in both the wearer summary and the Elite sew preview.
+func _test_m05_frayfinder_attack_damage_text() -> void:
+	var text := M05_FRAYFINDER_TEXT
+	# Every part of the shipped rule stays readable in the one shared sentence.
+	_check(text.contains("+2 attack damage"),
+		"the Frayfinder description states +2 attack damage")
+	_check(text.contains("once per player turn"),
+		"the Frayfinder description states the once-per-player-turn limit")
+	_check(text.contains("first confirmed single-target hit"),
+		"the Frayfinder description states the first confirmed single-target hit")
+	_check(text.contains("already at half its current Unravel threshold"),
+		"the Frayfinder description states the pre-hit half-threshold condition")
+	_check(text.contains("no bonus on area or later hits"),
+		"the Frayfinder description excludes area and later hits")
+	_check(not text.contains(M05_FRAYFINDER_FALSE_TEXT)
+		and not text.contains("Unravel once")
+		and not text.contains("gauge")
+		and not text.contains("gain ")
+		and not text.contains("adds")
+		and not text.contains("spend")
+		and not text.contains("apply"),
+		"the Frayfinder description never claims an Unravel gauge award or spend")
+
+	var f := _fixture()
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	# The shipped catalog record is the only authority for this ARM identity.
+	var records := _records(f.catalogs, "frayfinder_mitt")
+	_check(records.size() == 1, "exactly one shipped record authors frayfinder_mitt")
+	if records.size() != 1:
+		return
+	var record: Dictionary = records[0]
+	_check(record.get("slot") == "ARM"
+		and record.get("effect") == "first_single_target_half_unravel_attack_bonus"
+		and record.get("amount") == 2
+		and record.get("minimum_unravel_numerator") == 1
+		and record.get("minimum_unravel_denominator") == 2
+		and record.get("once_per_player_turn") == true
+		and record.get("hit_number") == 1
+		and record.get("target_kind") == "enemy_single",
+		"the shipped Frayfinder record is a +2 first single-target ARM bonus")
+	var sewn := w.sew("frayfinder_mitt", "warden", "ARM",
+		"frayfinder_text_sew", w.get_snapshot())
+	_check(sewn.get("ok") == true and sewn.receipt.patch_id == "frayfinder_mitt"
+		and sewn.receipt.hero_id == "warden" and sewn.receipt.slot == "ARM",
+		"Frayfinder is genuinely sewn onto the living Warden ARM")
+	var torn := RunTornMending.new(f.heroes)
+	_check(torn.is_valid(), "the Frayfinder owner has a real torn ledger")
+	var torn_state := torn.read_state()
+	var before_w := w.get_snapshot()
+	var summary := RunPatchWearerSummary.summarize(w, torn_state)
+	_check(summary.get("ok") == true, "the sewn Frayfinder wearer publishes a summary")
+	if summary.get("ok") != true:
+		return
+	var worn: Dictionary = summary.heroes[0]["slots"][1]
+	_check(worn["slot"] == "ARM" and worn["patch_id"] == "frayfinder_mitt"
+		and worn["active"] == true and worn["rules_text"] == text,
+		"the summary describes Frayfinder as the exact +2 attack-damage first-hit bonus")
+	_check(not worn["rules_text"].contains(M05_FRAYFINDER_FALSE_TEXT)
+		and not worn["rules_text"].contains("gauge")
+		and not worn["rules_text"].contains("gain ")
+		and not worn["rules_text"].contains("adds")
+		and not worn["rules_text"].contains("spend"),
+		"the summary never describes Frayfinder as an Unravel award or spend")
+	_check(summary.heroes[0]["slots"][0]["patch_id"] == ""
+		and summary.heroes[0]["slots"][2]["patch_id"] == "",
+		"Frayfinder occupies only the Warden ARM slot")
+	_check(w.get_snapshot() == before_w and torn.read_state() == torn_state,
+		"describing Frayfinder changes neither ledger")
+
+	var pf := _fixture()
+	if pf.is_empty():
+		return
+	var pw: RunPatchWardrobe = pf.wardrobe
+	var ptorn := RunTornMending.new(pf.heroes)
+	var ptorn_state := ptorn.read_state()
+	var before_pw := pw.get_snapshot()
+	var preview := RunPatchWearerSummary.preview_sew(pw, ptorn_state,
+		"frayfinder_mitt", "tinker")
+	_check(preview.get("ok") == true and preview.get("patch_id") == "frayfinder_mitt"
+		and preview.get("slot") == "ARM" and preview.get("wearer") == "tinker"
+		and preview.get("rules_text") == text
+		and preview.get("displaced_id") == "" and preview.get("scrap_delta") == 0,
+		"the Elite sew preview repeats the same truthful Frayfinder text")
+	_check(not str(preview.get("rules_text", "")).contains(M05_FRAYFINDER_FALSE_TEXT),
+		"the sew preview never describes Frayfinder as +2 Unravel")
+	_check(pw.get_snapshot() == before_pw and ptorn.read_state() == ptorn_state,
+		"the Frayfinder preview changes neither ledger")
+
+
+## AC2: the connected Rest re-sew forecast inherits the corrected shared text for
+## a genuine open Rest and a real sewn ledger.
+func _test_m05_frayfinder_rest_resew_text() -> void:
+	var f := _fixture(2)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	_check(w.sew("frayfinder_mitt", "warden", "ARM",
+		"frayfinder_rest_sew", w.get_snapshot()).ok,
+		"Frayfinder is sewn before the genuine Rest re-sew")
+	var torn := RunTornMending.new(f.heroes)
+	_check(torn.is_valid(), "the Rest re-sew has a real torn ledger")
+	_check(w.start_rest("rest_m05", w.get_snapshot()).ok, "a real Rest session opens")
+	var before_w := w.get_snapshot()
+	var before_t := torn.read_state()
+	var model := RunRestPatchResewOptions.project(w, torn, before_w, "rest_m05")
+	_check(model.get("ok") == true and model.get("scraps") == 2,
+		"the Rest option projector accepts the genuine sewn ledger")
+	if model.get("ok") != true:
+		return
+	var option: Dictionary = {}
+	for choice in model["options"]:
+		if choice["patch_id"] == "frayfinder_mitt" and choice["to_hero"] == "tinker":
+			option = choice
+			break
+	_check(not option.is_empty() and option.get("from_hero") == "warden"
+		and option.get("slot") == "ARM" and option.get("kind") == "MOVE"
+		and option.get("cost") == 1,
+		"the real Rest offers a one-scrap Frayfinder ARM move")
+	if option.is_empty():
+		return
+	var local := RandomNumberGenerator.new()
+	local.seed = 5531
+	var local_state: int = local.state
+	seed(90210)
+	var global_next: int = randi()
+	seed(90210)
+	var forecast := RunRestPatchResewOptions.forecast(w, torn, before_w, "rest_m05", option)
+	_check(forecast.get("ok") == true, "the Frayfinder re-sew forecast is legal")
+	if forecast.get("ok") != true:
+		return
+	var expected_slot := {"id": "frayfinder_mitt", "active": true,
+		"effect": M05_FRAYFINDER_TEXT}
+	_check(forecast["source"]["before"]["slots"]["ARM"] == expected_slot,
+		"the Rest source wearer inherits the corrected Frayfinder text")
+	_check(forecast["destination"]["after"]["slots"]["ARM"] == expected_slot,
+		"the Rest destination wearer inherits the corrected Frayfinder text")
+	_check(forecast["source"]["after"]["slots"]["ARM"]["effect"] == ""
+		and forecast["destination"]["before"]["slots"]["ARM"]["effect"] == "",
+		"the same forecast leaves the empty ARM slot blank")
+	_check(not str(forecast["source"]["before"]["slots"]["ARM"]["effect"]).contains(
+		M05_FRAYFINDER_FALSE_TEXT),
+		"the Rest forecast never describes Frayfinder as +2 Unravel")
+	_check(w.get_snapshot() == before_w and torn.read_state() == before_t
+		and local.state == local_state and randi() == global_next,
+		"the Rest re-sew forecast changes no ledger and consumes no RNG")
+
+
+## AC2: the mounted map readout, Elite sewing and Rest re-sew all read this one
+## shared descriptor, so no controller had to be edited for the correction.
+func _test_m05_frayfinder_consumers_share_text() -> void:
+	var consumers := {
+		"res://scripts/app.gd": ["RunPatchWearerSummary.summarize"],
+		"res://scripts/live_elite_patch_sewing.gd": [
+			"RunPatchWearerSummary.preview_sew", "RunPatchWearerSummary.summarize"],
+		"res://scripts/run_rest_patch_resew_options.gd": [
+			"RunPatchWearerSummary.KNOWN_TEXTS"],
+	}
+	for path in consumers:
+		var source := FileAccess.get_file_as_string(path)
+		_check(not source.is_empty(), path + " is readable for consumer inspection")
+		for reference in consumers[path]:
+			_check(source.contains(reference),
+				path + " keeps its " + reference + " consumer reference")
+	_check(RunPatchWearerSummary.KNOWN_TEXTS.get("frayfinder_mitt") == M05_FRAYFINDER_TEXT,
+		"one shared KNOWN_TEXTS string supplies every connected readout")
 
 
 ## AC3: torn definitions keep their text but publish active=false, and a

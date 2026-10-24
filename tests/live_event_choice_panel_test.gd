@@ -13,6 +13,11 @@ const REQUIRED := {
 	"needle_gate": "The Needle Gate",
 	"quilting_bee": "The Quilting Bee",
 }
+## Independent wording for the three hover endings. The panel's own constants
+## are never consulted, so a shared mistake cannot hide behind an oracle.
+const ZERO_HINT := "No change to gold or scraps."
+const LEGACY_HINT := "Authored outcome; your run's wallet is not checked here."
+const UNAVAILABLE_HINT := "Outcome unavailable: this choice cannot be settled."
 
 var panel: LiveEventChoicePanel
 var failures: Array[String] = []
@@ -114,6 +119,72 @@ func _expected_needs(row: Dictionary, wallet: Dictionary) -> Array[String]:
 	return needs
 
 
+## The authored gold/scraps amounts of one choice, parsed exactly as the service
+## parses them (integral floats allowed, an outcome that is not exactly the two
+## amount keys is unknown). Never reads the panel or its preview rows.
+func _authored_amounts(choice: Dictionary) -> Dictionary:
+	var outcome: Variant = choice.get("outcome")
+	if not outcome is Dictionary:
+		return {}
+	var dict: Dictionary = outcome
+	if dict.size() != 2 or not dict.has("gold") or not dict.has("scraps"):
+		return {}
+	var gold: Variant = _authored_int(dict.get("gold"))
+	var scraps: Variant = _authored_int(dict.get("scraps"))
+	if gold == null or scraps == null:
+		return {}
+	return {"gold": int(gold), "scraps": int(scraps)}
+
+
+func _authored_int(value: Variant) -> Variant:
+	if typeof(value) == TYPE_INT:
+		return value
+	if typeof(value) == TYPE_FLOAT:
+		var number: float = value
+		if is_finite(number) and floor(number) == number:
+			return int(number)
+	return null
+
+
+## Independent legacy hover oracle: the authored action, its exact signed
+## deltas, the zero-change wording for an exit, or the honest placeholder. A
+## legacy offering has no run wallet, so no affordability line is ever expected.
+func _expected_authored_tooltip(choice: Dictionary) -> String:
+	var amount := _authored_amounts(choice)
+	if amount.is_empty():
+		return String(choice["text"]) + "\n" + UNAVAILABLE_HINT
+	var lines: Array[String] = [String(choice["text"]),
+		"Gold %+d   |   Scraps %+d" % [amount["gold"], amount["scraps"]]]
+	if amount["gold"] == 0 and amount["scraps"] == 0:
+		lines.append(ZERO_HINT)
+	else:
+		lines.append(LEGACY_HINT)
+	return "\n".join(lines)
+
+
+## Independent wallet hover oracle: the authored action and signed deltas, then
+## the balance those exact amounts project from the caller wallet, or the exact
+## shortfall per resource when the projection would go negative.
+func _expected_wallet_tooltip(choice: Dictionary, wallet: Dictionary) -> String:
+	var amount := _authored_amounts(choice)
+	if amount.is_empty():
+		return String(choice["text"]) + "\n" + UNAVAILABLE_HINT
+	var after_gold: int = int(wallet["gold"]) + amount["gold"]
+	var after_scraps: int = int(wallet["scraps"]) + amount["scraps"]
+	var lines: Array[String] = [String(choice["text"]),
+		"Gold %+d   |   Scraps %+d" % [amount["gold"], amount["scraps"]]]
+	if after_gold >= 0 and after_scraps >= 0:
+		lines.append("After: %d gold | %d scraps" % [after_gold, after_scraps])
+	else:
+		var needs: Array[String] = []
+		if after_gold < 0:
+			needs.append("Need %d gold" % -after_gold)
+		if after_scraps < 0:
+			needs.append("Need %d scraps" % -after_scraps)
+		lines.append("UNAVAILABLE" if needs.is_empty() else "   •   ".join(needs))
+	return "\n".join(lines)
+
+
 func _wallet_index(record: Dictionary, choice_id: String) -> int:
 	var choices: Array = record.get("choices", [])
 	for i in range(choices.size()):
@@ -164,6 +235,11 @@ func _check_wallet_layout(record: Dictionary, wallet: Dictionary, label: String)
 		_check(button.disabled == not row["affordable"] and
 			button.focus_mode == (Control.FOCUS_ALL if row["affordable"] else Control.FOCUS_NONE),
 			label + " affordability disables and skips focus for unavailable choice " + str(i))
+		_check(button.tooltip_text == _expected_wallet_tooltip(choices[i], wallet),
+			label + " hover repeats the exact authored action and current projection " + str(i))
+		_check(button.tooltip_text.begins_with(String(choices[i]["text"]))
+			and button.tooltip_text.split("\n").size() == 3,
+			label + " hover is exactly action, deltas and one projection " + str(i))
 		_check(button.get_parent() == panel.choices_container and button.is_visible_in_tree(),
 			label + " actual mounted choice button " + str(i))
 		_check(viewport.encloses(button.get_global_rect()), label + " full choice onscreen " + str(i))
@@ -268,8 +344,14 @@ func _wallet_denied_then_recover(record: Dictionary, wallet: Dictionary, denied_
 		expected_wallet["gold"], expected_wallet["scraps"]]),
 		label + " recovery ticket shows exact service after totals")
 	# Hovering a ticket alone must not settle, mutate or consume RNG.
+	var denied_tooltip: String = disabled.tooltip_text
+	var recovery_tooltip: String = recovery.tooltip_text
 	await _mouse_motion(recovery)
+	_check(root.gui_get_hovered_control() == recovery, label + " pointer really rests on the recovery ticket")
 	await _mouse_motion(disabled)
+	_check(root.gui_get_hovered_control() == disabled, label + " pointer really rests on the unavailable ticket")
+	_check(disabled.tooltip_text == denied_tooltip and recovery.tooltip_text == recovery_tooltip,
+		label + " hover reveals the same read-only text and rewrites nothing")
 	_check(wallet_committed.is_empty() and committed.is_empty(), label + " hover alone commits nothing")
 	_check(wallet == snapshot, label + " hover leaves caller wallet unchanged")
 	disabled.pressed.emit()
@@ -328,6 +410,7 @@ func _test_wallet_reopen_refresh() -> void:
 		return
 	var wallets: Array = [{"gold": 0, "scraps": 2}, {"gold": 15, "scraps": 0}, {"gold": 0, "scraps": 0}]
 	var snapshots: Array = []
+	var tooltip_snapshots: Array = []
 	for wallet in wallets:
 		_check(panel.open_event_with_wallet(bee, wallet),
 			"quilting bee opens at " + str(wallet))
@@ -336,24 +419,40 @@ func _test_wallet_reopen_refresh() -> void:
 		await _frames()
 		_check_wallet_layout(bee, wallet, "reopen bee @ " + str(wallet))
 		var texts: Array[String] = []
+		var tooltips: Array[String] = []
 		for button in panel.get_choice_buttons():
 			texts.append(button.text)
+			tooltips.append(button.tooltip_text)
 		snapshots.append(texts)
+		tooltip_snapshots.append(tooltips)
 		panel.close_event()
 		await _frames()
-	_check(snapshots.size() == 3, "three quilting bee wallet snapshots captured")
-	if snapshots.size() == 3:
+	_check(snapshots.size() == 3 and tooltip_snapshots.size() == 3,
+		"three quilting bee wallet snapshots captured")
+	if snapshots.size() == 3 and tooltip_snapshots.size() == 3:
 		_check(snapshots[0] != snapshots[1] and snapshots[1] != snapshots[2]
 			and snapshots[0] != snapshots[2],
 			"different wallets refresh every ticket for the same authored event")
+		_check(tooltip_snapshots[0] != tooltip_snapshots[1]
+			and tooltip_snapshots[1] != tooltip_snapshots[2]
+			and tooltip_snapshots[0] != tooltip_snapshots[2],
+			"reopening at another wallet refreshes every hover projection")
 		_check((snapshots[0] as Array)[0].ends_with("After: 32 gold | 0 scraps"),
 			"2 scraps wallet previews sew_panel after totals")
+		_check((tooltip_snapshots[0] as Array)[0].ends_with("After: 32 gold | 0 scraps"),
+			"2 scraps wallet hover previews sew_panel after totals")
 		_check((snapshots[1] as Array)[0].ends_with("Need 2 scraps"),
 			"15 gold wallet ticket names the missing scraps for sew_panel")
+		_check((tooltip_snapshots[1] as Array)[0].ends_with("Need 2 scraps"),
+			"15 gold wallet hover names the missing scraps for sew_panel")
 		_check((snapshots[1] as Array)[1].ends_with("After: 0 gold | 2 scraps"),
 			"15 gold wallet previews buy_thread after totals")
+		_check((tooltip_snapshots[1] as Array)[1].ends_with("After: 0 gold | 2 scraps"),
+			"15 gold wallet hover previews buy_thread after totals")
 		_check((snapshots[2] as Array)[1].ends_with("Need 15 gold"),
 			"0 gold wallet ticket names the missing gold for buy_thread")
+		_check((tooltip_snapshots[2] as Array)[1].ends_with("Need 15 gold"),
+			"0 gold wallet hover names the missing gold for buy_thread")
 	# Estate Sale at a contrasting wallet must reuse the same authoritative path.
 	_check(panel.open_event_with_wallet(estate, {"gold": 20, "scraps": 0}),
 		"estate sale reopens at 20 gold")
@@ -366,12 +465,19 @@ func _test_wallet_reopen_refresh() -> void:
 	if buy_index >= 0 and sell_index >= 0 and leave_index >= 0:
 		_check(estate_buttons[buy_index].text.ends_with("After: 5 gold | 2 scraps"),
 			"estate buy_thread shows exact after totals")
+		_check(estate_buttons[buy_index].tooltip_text.ends_with("After: 5 gold | 2 scraps"),
+			"estate buy_thread hover shows exact after totals")
 		_check(estate_buttons[sell_index].text.ends_with("Need 2 scraps")
 			and estate_buttons[sell_index].disabled
 			and estate_buttons[sell_index].focus_mode == Control.FOCUS_NONE,
 			"estate sell_fabric names missing scraps and cannot be selected")
+		_check(estate_buttons[sell_index].tooltip_text.ends_with("Need 2 scraps")
+			and not estate_buttons[sell_index].tooltip_text.contains("After:"),
+			"estate sell_fabric hover names the exact shortfall only")
 		_check(estate_buttons[leave_index].text.ends_with("After: 20 gold | 0 scraps"),
 			"estate leave shows unchanged exact after totals")
+		_check(estate_buttons[leave_index].tooltip_text.ends_with("After: 20 gold | 0 scraps"),
+			"estate leave hover shows unchanged exact after totals")
 	else:
 		_check(false, "estate sale choice IDs offered for reopen refresh")
 	panel.close_event()
@@ -457,6 +563,11 @@ func _test_wallet_rejection_and_generation() -> void:
 	_check(bad.disabled and bad.text.contains("UNAVAILABLE") and bad.text.contains("Gold —"),
 		"malformed outcome never appears affordable")
 	_check(bad.focus_mode == Control.FOCUS_NONE, "malformed outcome is unfocusable")
+	_check(bad.tooltip_text == String(malformed["choices"][idx]["text"]) + "\n" + UNAVAILABLE_HINT,
+		"malformed outcome hover keeps the authored action and an honest placeholder")
+	_check(not bad.tooltip_text.contains("\nGold ") and not bad.tooltip_text.contains("After:")
+		and not bad.tooltip_text.contains("Need "),
+		"malformed outcome hover invents no amount, balance or shortfall")
 	bad.pressed.emit()
 	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
 		"malformed outcome cannot spend visit")
@@ -579,6 +690,13 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 		_check(viewport_rect.encloses(button.get_global_rect()), label + " full button fits viewport " + str(i))
 		_check(button.get_theme_stylebox("normal") is StyleBoxFlat
 			and button.get_theme_stylebox("focus") is StyleBoxFlat, label + " procedural button/focus styling " + str(i))
+		_check(button.tooltip_text == _expected_authored_tooltip(choices[i]),
+			label + " authored action and exact signed outcome on hover " + str(i))
+		# open_event() carries no run wallet, so its neutral zero-wallet service
+		# preview must never surface as an affordability claim.
+		_check(not button.tooltip_text.contains("After:")
+			and not button.tooltip_text.contains("Need "),
+			label + " legacy hover never claims this run's affordability " + str(i))
 
 
 func _test_authored() -> void:
@@ -772,6 +890,205 @@ func _test_frayed_new_button() -> void:
 	await _frames()
 
 
+## AC1: the three run-owner Events the app really mounts explain their authored
+## action and exact currency on hover, including zero-change exits and a priced
+## branch that the neutral preview calls unaffordable.
+func _test_authored_tooltips() -> void:
+	var quiet: Dictionary = authored.get("quiet_spool", {})
+	var moth := _wallet_record("res://data/events/moth_infestation.json", "moth_infestation")
+	var dye := _wallet_record("res://data/events/dye_vat.json", "dye_vat")
+	for record in [quiet, moth, dye]:
+		_check(not record.is_empty() and RunEventChoice.new(record).is_valid(),
+			"authored hover fixture is a genuine valid event " + str(record.get("id", "")))
+	if quiet.is_empty() or moth.is_empty() or dye.is_empty():
+		return
+	seed(616263)
+	var expected_rng := randi()
+	seed(616263)
+	committed.clear()
+	for record in [quiet, moth, dye]:
+		var id := String(record["id"])
+		_check(panel.open_event(record), "legacy hover opens " + id)
+		if not panel.has_open_event():
+			return
+		await _frames()
+		var buttons := panel.get_choice_buttons()
+		var choices: Array = record["choices"]
+		_check(buttons.size() == choices.size(), "legacy hover fixture mounts every choice " + id)
+		if buttons.size() != choices.size():
+			panel.close_event()
+			await _frames()
+			continue
+		var by_id: Dictionary = {}
+		for i in range(buttons.size()):
+			var choice_id := String(choices[i]["id"])
+			by_id[choice_id] = buttons[i]
+			_check(buttons[i].tooltip_text == _expected_authored_tooltip(choices[i]),
+				"legacy hover states the exact authored action and outcome " + id + "/" + choice_id)
+			_check(buttons[i].text == choices[i]["text"],
+				"hover leaves the authored label untouched " + id + "/" + choice_id)
+			_check(buttons[i].focus_mode == Control.FOCUS_ALL and not buttons[i].disabled,
+				"hover keeps every legacy choice reachable " + id + "/" + choice_id)
+		# Moth feeding removes a chosen card; the Dye Vat rewrites a pool card.
+		if id == "moth_infestation":
+			var feed: String = by_id["sacrifice_card"].tooltip_text
+			_check(feed.begins_with("Feed one ordinary card to the moths")
+				and feed.contains("Scraps +2") and not feed.contains("Need "),
+				"moth feed hover names the removal action and its exact gain")
+			var fumigate: String = by_id["fumigate"].tooltip_text
+			_check(fumigate.begins_with("Fumigate the deck")
+				and fumigate.contains("Scraps -1") and not fumigate.contains("Need 1 scrap")
+				and not fumigate.contains("After:"),
+				"moth fumigate hover states its cost without a run-wallet claim")
+			_check((by_id["escape"] as Button).tooltip_text.ends_with(ZERO_HINT),
+				"moth escape hover states the zero-change exit")
+		elif id == "dye_vat":
+			var immerse: String = by_id["immerse"].tooltip_text
+			_check(immerse.begins_with("Immerse one owned pool card in the dye")
+				and immerse.contains("it becomes its authored + version")
+				and immerse.contains("Scraps -3") and not immerse.contains("Need 3 scraps"),
+				"dye immerse hover keeps the upgrade action and exact cost")
+			_check((by_id["leave"] as Button).tooltip_text.ends_with(ZERO_HINT),
+				"dye leave hover states the zero-change exit")
+		else:
+			_check((by_id["watch"] as Button).tooltip_text.contains("Scraps +1")
+				and (by_id["watch"] as Button).tooltip_text.ends_with(LEGACY_HINT),
+				"quiet spool watch hover states its exact gain")
+			_check((by_id["ignore"] as Button).tooltip_text.ends_with(ZERO_HINT),
+				"quiet spool ignore hover states the zero-change exit")
+		# Real pointer hover cannot settle, mutate or draw from the RNG.
+		var view_rect := Rect2(Vector2.ZERO, Vector2(root.size))
+		_check(view_rect.encloses(panel.paper_panel.get_global_rect()),
+			"hover fixture paper card stays inside 1280x720 " + id)
+		for button in buttons:
+			_check(view_rect.encloses(button.get_global_rect()),
+				"hover fixture ticket stays inside 1280x720 " + id)
+		for button in buttons:
+			await _mouse_motion(button)
+			_check(root.gui_get_hovered_control() == button,
+				"pointer really rests on " + id + "/" + str(panel._bound_choices.get(button, "")))
+		_check(committed.is_empty() and panel._selector.is_valid(),
+			"hovering every legacy choice commits nothing " + id)
+		panel.close_event()
+		await _frames()
+	_check(randi() == expected_rng, "legacy hover and close consume zero RNG")
+
+
+## AC2: malformed or unknown authored outcomes keep their action and print the
+## honest placeholder, invent no number, and change no selection rule. Closing
+## really releases the hover-bearing tickets and reopening rebuilds them.
+func _test_malformed_tooltips() -> void:
+	var base: Dictionary = authored.get("quiet_spool", {})
+	_check(not base.is_empty(), "malformed hover fixture is the authored Quiet Spool")
+	if base.is_empty():
+		return
+	var broken: Array[Dictionary] = []
+	var missing := base.duplicate(true)
+	missing["choices"][0].erase("outcome")
+	broken.append(missing)
+	var nonnumeric := base.duplicate(true)
+	nonnumeric["choices"][0]["outcome"] = {"gold": "not coins", "scraps": 1}
+	broken.append(nonnumeric)
+	var extra := base.duplicate(true)
+	extra["choices"][0]["outcome"] = {"gold": 4, "scraps": 1, "card": "keep"}
+	broken.append(extra)
+	for i in range(broken.size()):
+		var record: Dictionary = broken[i]
+		committed.clear()
+		_check(panel.open_event(record), "legacy record with a broken outcome opens #" + str(i))
+		await _frames()
+		var buttons := panel.get_choice_buttons()
+		_check(buttons.size() == 2, "both legacy tickets still mount #" + str(i))
+		if buttons.size() != 2:
+			panel.close_event()
+			await _frames()
+			continue
+		_check(buttons[0].tooltip_text == String(record["choices"][0]["text"]) + "\n" + UNAVAILABLE_HINT,
+			"broken legacy outcome keeps its action and the honest placeholder #" + str(i))
+		_check(not buttons[0].tooltip_text.contains("\nGold ")
+			and not buttons[0].tooltip_text.contains("Need "),
+			"broken legacy outcome invents no amount #" + str(i))
+		_check(buttons[1].tooltip_text == _expected_authored_tooltip(record["choices"][1]),
+			"intact sibling keeps its exact zero-change hover #" + str(i))
+		_check(not buttons[0].disabled and not buttons[1].disabled,
+			"broken legacy outcome never changes selection rules #" + str(i))
+		panel.close_event()
+		await _frames()
+	var quiet: Dictionary = base.duplicate(true)
+	_check(panel.open_event(quiet), "legacy hover fixture opens for the reopen check")
+	await _frames()
+	var first: Array[String] = []
+	for button in panel.get_choice_buttons():
+		first.append(button.tooltip_text)
+	_check(first.size() == 2 and first[0].contains("Scraps +1") and first[1].ends_with(ZERO_HINT),
+		"first legacy opening explains both authored outcomes")
+	panel.close_event()
+	await _frames()
+	_check(panel.get_choice_buttons().is_empty(), "close releases the hover-bearing tickets")
+	_check(panel.open_event(quiet), "same legacy offering reopens after close")
+	await _frames()
+	var second: Array[String] = []
+	for button in panel.get_choice_buttons():
+		second.append(button.tooltip_text)
+	_check(not second.is_empty() and second == first, "reopening rebuilds identical hover text")
+	panel.close_event()
+	await _frames()
+
+
+## AC2: an unknown outcome in a real wallet offering is disabled, explains the
+## authored action, names no balance or shortfall, and never blocks a genuine
+## alternative from settling exactly once.
+func _test_wallet_malformed_tooltips() -> void:
+	var record: Dictionary = authored.get("quilting_bee", {})
+	_check(not record.is_empty(), "wallet malformed hover fixture is the authored bee")
+	if record.is_empty():
+		return
+	var unknown := record.duplicate(true)
+	var watch := _wallet_index(unknown, "watch")
+	_check(watch >= 0, "bee watch choice present for the unknown outcome")
+	if watch < 0:
+		return
+	unknown["choices"][watch].erase("outcome")
+	var wallet := {"gold": 15, "scraps": 0}
+	wallet_committed.clear()
+	committed.clear()
+	_check(panel.open_event_with_wallet(unknown, wallet), "bee with one unknown outcome opens")
+	await _frames()
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 3, "unknown-outcome wallet offering mounts every ticket")
+	if buttons.size() != 3:
+		panel.close_event()
+		await _frames()
+		return
+	_check(buttons[watch].tooltip_text == String(unknown["choices"][watch]["text"]) + "\n" + UNAVAILABLE_HINT,
+		"unknown wallet outcome keeps the action and the honest placeholder")
+	_check(buttons[watch].disabled and buttons[watch].focus_mode == Control.FOCUS_NONE,
+		"unknown wallet outcome cannot be selected or focused")
+	_check(not buttons[watch].tooltip_text.contains("\nGold ")
+		and not buttons[watch].tooltip_text.contains("After:")
+		and not buttons[watch].tooltip_text.contains("Need "),
+		"unknown wallet outcome invents no amount, balance or shortfall")
+	for index in range(3):
+		if index == watch:
+			continue
+		_check(buttons[index].tooltip_text == _expected_wallet_tooltip(unknown["choices"][index], wallet),
+			"known sibling wallet hover keeps its exact projection " + str(index))
+	buttons[watch].pressed.emit()
+	_check(wallet_committed.is_empty() and panel._selector.is_valid(),
+		"unknown wallet outcome cannot spend the visit")
+	var buy := _wallet_index(unknown, "buy_thread")
+	_check(buy >= 0 and buy != watch, "known bee alternative present")
+	if buy >= 0:
+		buttons[buy].pressed.emit()
+		_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+			"ok": true, "event_id": "quilting_bee", "choice_id": "buy_thread",
+			"wallet": {"gold": 0, "scraps": 2}},
+			"known alternative still settles exactly once from the real ticket")
+	_check(wallet == {"gold": 15, "scraps": 0}, "unknown outcome never touches the caller wallet")
+	panel.close_event()
+	await _frames()
+
+
 func _test_invalid_and_replay() -> void:
 	var valid := _fixture_three()
 	var invalids: Array[Dictionary] = []
@@ -872,6 +1189,9 @@ func _run() -> void:
 	_check(panel.has_method("open_event") and panel.has_method("close_event"),
 		"required public lifecycle methods exist")
 	_read_authored()
+	await _test_authored_tooltips()
+	await _test_malformed_tooltips()
+	await _test_wallet_malformed_tooltips()
 	await _test_authored()
 	await _test_three_choice_and_identity()
 	await _test_frayed_new_button()

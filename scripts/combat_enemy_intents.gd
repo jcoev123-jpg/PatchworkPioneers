@@ -8,6 +8,7 @@ extends RefCounted
 
 const TARGET_POLICIES := ["front", "lowest_living_hp", "exposed", "random"]
 const MAX_INT := 9223372036854775807
+const BOSS_CATALOG_PATH := "res://data/enemies/boss.json"
 
 var _definitions: Array[Dictionary] = []
 var _turn_index := 0
@@ -19,6 +20,13 @@ var _party: CombatParty
 var _rng: RandomNumberGenerator
 var _slots: Array[Dictionary] = []
 var _cache: Array[Dictionary] = []
+# The authoritative roster is also CombatEnemyPhase's source for policy fallback.
+# The boss's cached phase and that roster policy must move in the same commit.
+var _enemies: CombatEnemies
+var _boss_slot := 0
+var _boss_phase := 0
+var _boss_definition: Dictionary = {}
+var _phase_two_record: Variant = null
 
 
 func _init(definitions: Array = []) -> void:
@@ -54,47 +62,121 @@ func _init(definitions: Array = []) -> void:
 ## caller must supply the genuine roster, party and run generator.
 func bind_battle(enemies: CombatEnemies, party: CombatParty,
 		rng: RandomNumberGenerator) -> bool:
+	if enemies == null or not is_instance_valid(enemies) or not enemies.is_valid():
+		return false
+	var has_behemoth := false
+	for enemy in enemies.get_enemies():
+		if enemy.get("id") == CombatBehemothPhaseRules.BOSS_ID:
+			has_behemoth = true
+			break
+	if not has_behemoth:
+		return _bind_battle_with_phase_data(enemies, party, rng, null, null)
+	# Production reads both authored resources once. The narrower helper is an
+	# injection seam for malformed/missing data tests, never a second scheduler.
+	var catalog := FileAccess.open(BOSS_CATALOG_PATH, FileAccess.READ)
+	if catalog == null:
+		return false
+	var boss_data: Variant = JSON.parse_string(catalog.get_as_text())
+	catalog.close()
+	var phase_file := FileAccess.open(CombatBehemothPhaseRules.PHASE_TWO_PATH, FileAccess.READ)
+	if phase_file == null:
+		return false
+	var phase_data: Variant = JSON.parse_string(phase_file.get_as_text())
+	phase_file.close()
+	return _bind_battle_with_phase_data(enemies, party, rng, boss_data, phase_data)
+
+
+## All validation (including both boss records) happens before the first draw
+## or any publication. Inputs and authentic actor dictionaries stay detached.
+func _bind_battle_with_phase_data(enemies: CombatEnemies, party: CombatParty,
+		rng: RandomNumberGenerator, boss_data: Variant, phase_data: Variant) -> bool:
 	if not _valid or _bound or enemies == null or party == null or rng == null:
 		return false
 	if not is_instance_valid(enemies) or not is_instance_valid(party) \
 			or not is_instance_valid(rng) or not enemies.is_valid() or not party.is_valid():
 		return false
 	var roster := enemies.get_enemies()
-	if roster.size() != _definitions.size() or roster.size() > CombatEnemies.MAX_ENEMIES:
+	if roster.size() != _definitions.size() or roster.size() > CombatEnemies.MAX_ENEMIES \
+			or living_positions(party).is_empty():
 		return false
+	var boss_slot := 0
+	var boss_definition: Dictionary = {}
+	var phase_two: Variant = null
+	var boss_phase := 0
+	var boss_intent: Dictionary = {}
+	for index in range(roster.size()):
+		if roster[index].get("id") != CombatBehemothPhaseRules.BOSS_ID:
+			continue
+		if roster.size() != 1 or boss_slot != 0 \
+				or not CombatBehemothPhaseRules.validate_boss_definition(boss_data) \
+				or not CombatBehemothPhaseRules.validate_phase_two_record(phase_data):
+			return false
+		var canonical: Variant = boss_data
+		if boss_data is Array:
+			if boss_data.size() != 1:
+				return false
+			canonical = boss_data[0]
+		if not canonical is Dictionary:
+			return false
+		# The Boss roster must carry the catalog's canonical identity and
+		# phase-one intent. HP/Block are mutable battle state, not definitions.
+		for field in ["id", "name", "max_hp", "art_path", "intent"]:
+			if roster[index].get(field) != canonical.get(field):
+				return false
+		boss_slot = index + 1
+		boss_definition = canonical.duplicate(true)
+		phase_two = phase_data.duplicate(true)
+		var selection := CombatBehemothPhaseRules.select_phase(
+			boss_definition, roster[index].get("hp"), phase_two)
+		if not selection.get("ok", false):
+			return false
+		boss_phase = selection["phase"]
+		boss_intent = selection["intent"]
 	var slots: Array[Dictionary] = []
 	for index in range(roster.size()):
-		var spec = roster[index].get("intent")
-		if not spec is Dictionary or spec.size() != 2 \
-				or not spec.has("target") or not spec.has("actions"):
+		var spec: Variant = boss_intent if index + 1 == boss_slot else roster[index].get("intent")
+		var slot := _weighted_slot(index + 1, spec)
+		if slot.is_empty():
 			return false
-		var policy = spec["target"]
-		if not policy is String or not policy in TARGET_POLICIES:
-			return false
-		var raw_actions = spec["actions"]
-		if not raw_actions is Array or raw_actions.is_empty():
-			return false
-		var actions: Array[Dictionary] = []
-		var total_weight := 0
-		for raw in raw_actions:
-			var action := weighted_action(raw)
-			if action.is_empty():
-				return false
-			# Keep the announcement roll's weight sum inside a safe integer.
-			if int(action["weight"]) > MAX_INT - total_weight:
-				return false
-			total_weight += int(action["weight"])
-			actions.append(action)
-		slots.append({"enemy_position": index + 1, "target": policy, "actions": actions})
+		slots.append(slot)
 	var batch := _draw_batch(slots, party, rng)
 	if batch.size() != slots.size():
 		return false
 	_party = party
 	_rng = rng
+	_enemies = enemies
 	_slots = slots
 	_cache = batch
+	_boss_slot = boss_slot
+	_boss_phase = boss_phase
+	_boss_definition = boss_definition
+	_phase_two_record = phase_two
+	if boss_slot > 0:
+		_enemies._enemies[boss_slot - 1]["intent"] = boss_intent.duplicate(true)
 	_bound = true
 	return true
+
+
+## Normalize one complete spec without changing its owner or any source data.
+static func _weighted_slot(position: int, spec: Variant) -> Dictionary:
+	if not spec is Dictionary or spec.size() != 2 \
+			or not spec.has("target") or not spec.has("actions"):
+		return {}
+	var policy = spec["target"]
+	if not policy is String or not policy in TARGET_POLICIES:
+		return {}
+	var raw_actions = spec["actions"]
+	if not raw_actions is Array or raw_actions.is_empty():
+		return {}
+	var actions: Array[Dictionary] = []
+	var total_weight := 0
+	for raw in raw_actions:
+		var action := weighted_action(raw)
+		if action.is_empty() or int(action["weight"]) > MAX_INT - total_weight:
+			return {}
+		total_weight += int(action["weight"])
+		actions.append(action)
+	return {"enemy_position": position, "target": policy, "actions": actions}
 
 
 ## True only for a live fight bound to authored weighted intentions.
@@ -348,10 +430,44 @@ func advance_turn() -> bool:
 	if not _valid:
 		return false
 	if _bound:
-		var batch := _draw_batch(_slots, _party, _rng)
-		if batch.size() != _slots.size():
-			_cache.clear()
+		var next_slots: Array[Dictionary] = _slots
+		var next_phase := _boss_phase
+		var next_intent: Dictionary = {}
+		if _boss_slot > 0:
+			var boss := _enemies.get_enemy(_boss_slot)
+			var hp = boss.get("hp")
+			if boss.get("id") != CombatBehemothPhaseRules.BOSS_ID \
+					or not hp is int or hp < 0 or hp > CombatBehemothPhaseRules.BOSS_MAX_HP:
+				return false
+			if hp > 0:
+				var choice := CombatBehemothPhaseRules.select_phase(
+					_boss_definition, hp, _phase_two_record)
+				if not choice.get("ok", false):
+					return false
+				# Phase two is sticky within the fight; a cached announcement
+				# cannot regress to a weaker phase on a later advance.
+				if _boss_phase == CombatBehemothPhaseRules.PHASE_TWO \
+						and choice["phase"] == CombatBehemothPhaseRules.PHASE_ONE:
+					choice = CombatBehemothPhaseRules.select_phase(_boss_definition,
+						CombatBehemothPhaseRules.PHASE_TWO_THRESHOLD, _phase_two_record)
+				if not choice.get("ok", false):
+					return false
+				next_phase = choice["phase"]
+				next_intent = choice["intent"]
+				var next_slot := _weighted_slot(_boss_slot, next_intent)
+				if next_slot.is_empty():
+					return false
+				next_slots = _slots.duplicate(true)
+				next_slots[_boss_slot - 1] = next_slot
+		var batch := _draw_batch(next_slots, _party, _rng)
+		if batch.size() != next_slots.size():
 			return false
+		# One commit: the next cached action and CombatEnemyPhase's policy
+		# fallback must observe the same phase. Reads never enter this branch.
+		_slots = next_slots
 		_cache = batch
+		if not next_intent.is_empty():
+			_enemies._enemies[_boss_slot - 1]["intent"] = next_intent.duplicate(true)
+			_boss_phase = next_phase
 	_turn_index += 1
 	return true

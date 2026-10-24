@@ -6,6 +6,29 @@ const CREAM := Color("#e9dfcb")
 const SLATE := Color("#34444b")
 const RUST := Color("#a55f4b")
 const MUTED := Color("#777a76")
+## Caption backing: a dark felt plaque stitched under the action text, so cream ink keeps
+## its contrast over every authored battle backdrop instead of vanishing into light art.
+const CAPTION_FILL := Color("#232c31")
+const CAPTION_STITCH := Color("#9c9484")
+const CAPTION_INK := CREAM
+## Slain and no-action tags stay muted, but still read clearly on that dark plaque.
+const CAPTION_INK_MUTED := Color("#c4bba9")
+## Target policy: its own rust felt ticket, never painted across the caption.
+const POLICY_FILL := Color("#8d4b3a")
+const POLICY_INK := CREAM
+const POLICY_FONT := 11
+## Bounded caption type: the theme's own body size is the short-action size, and only a
+## long authentic caption steps down, no further than this floor.
+const CAPTION_MAX_FONT := 18
+const CAPTION_MIN_FONT := 11
+## Caption layout in badge coordinates, right of the unchanged sewn patch.
+const CAPTION_LEFT := 61.0
+const CAPTION_MARGIN := 4.0
+const CAPTION_PAD := 5.0
+const CAPTION_TOP := 1.0
+const CAPTION_BOTTOM := 1.0
+const POLICY_PAD := 5.0
+const POLICY_GAP := 5.0
 ## Compact sewn tag: the roster mounts it with a viewport-safe margin inside the intent band.
 const BADGE_WIDTH := 192.0
 const BADGE_HEIGHT := 28.0
@@ -50,6 +73,8 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	focus_mode = Control.FOCUS_NONE
 	custom_minimum_size = Vector2(BADGE_WIDTH, BADGE_HEIGHT)
+	# The fitted caption depends on the mounted width, so a relayout repaints the tag.
+	resized.connect(queue_redraw)
 	queue_redraw()
 
 
@@ -80,6 +105,98 @@ func icon_texture_rect() -> Rect2:
 	var fit := minf(area.size.x / pixels.x, area.size.y / pixels.y)
 	var drawn := pixels * fit
 	return Rect2(area.get_center() - drawn * 0.5, drawn)
+
+
+## The strip right of the sewn patch that the caption and its stitched plaques may use.
+## The whole tag keeps its mounted size and anchors; only the painted text fits inside.
+func caption_area_rect() -> Rect2:
+	var width := maxf(0.0, size.x - CAPTION_LEFT - CAPTION_MARGIN)
+	var height := maxf(0.0, size.y - CAPTION_TOP - CAPTION_BOTTOM)
+	return Rect2(CAPTION_LEFT, CAPTION_TOP, width, height)
+
+
+## The separate rust-felt ticket of a target-policy cue; empty whenever none is announced,
+## and never overlapped by the caption because the caption is fitted around it.
+func policy_rect() -> Rect2:
+	var area := caption_area_rect()
+	var font := get_theme_default_font()
+	if policy_cue.is_empty() or font == null or area.size.x <= 0.0:
+		return Rect2()
+	var width := font.get_string_size(policy_cue, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		POLICY_FONT).x + POLICY_PAD * 2.0
+	var height := minf(font.get_height(POLICY_FONT) + 2.0, area.size.y)
+	return Rect2(area.end.x - width, area.position.y + (area.size.y - height) * 0.5,
+		width, height)
+
+
+## The horizontal room left for the action caption once the policy ticket is excluded.
+func caption_text_area() -> Rect2:
+	var area := caption_area_rect()
+	var right := area.end.x - CAPTION_PAD
+	var tag := policy_rect()
+	if tag.size.x > 0.0:
+		right = tag.position.x - POLICY_GAP
+	var left := area.position.x + CAPTION_PAD
+	return Rect2(left, area.position.y, maxf(0.0, right - left), area.size.y)
+
+
+## Largest bounded caption size whose measured text fits that room. Short actions get the
+## theme's own body size; only a long authentic caption steps down, never below the floor.
+func caption_font_size() -> int:
+	var font := get_theme_default_font()
+	var room := caption_text_area()
+	if font == null or room.size.x <= 0.0:
+		return CAPTION_MIN_FONT
+	for size_px in range(CAPTION_MAX_FONT, CAPTION_MIN_FONT - 1, -1):
+		if font.get_string_size(readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x \
+				<= room.size.x:
+			return size_px
+	return CAPTION_MIN_FONT
+
+
+## High-contrast ink on the dark plaque; inert states keep a muted but still legible cream.
+func caption_ink() -> Color:
+	return CAPTION_INK_MUTED if icon_mode in ["slain", "none"] else CAPTION_INK
+
+
+## Where the fitted caption is really painted, in this badge's own coordinates.
+func caption_text_rect() -> Rect2:
+	var font := get_theme_default_font()
+	var room := caption_text_area()
+	if font == null or room.size.x <= 0.0:
+		return Rect2()
+	var size_px := caption_font_size()
+	var width := font.get_string_size(readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x
+	var ascent := font.get_ascent(size_px)
+	var descent := font.get_descent(size_px)
+	var baseline := room.position.y + (room.size.y + ascent - descent) * 0.5
+	return Rect2(room.position.x, baseline - ascent, width, ascent + descent)
+
+
+## The dark stitched plaque actually painted behind the caption, hugging the fitted text so
+## the tag still reads as a sewn label rather than a bar across the actor's stage.
+func caption_rect() -> Rect2:
+	var area := caption_area_rect()
+	var text := caption_text_rect()
+	if text.size.x <= 0.0 or area.size.x <= 0.0:
+		return area
+	var left := maxf(area.position.x, text.position.x - CAPTION_PAD)
+	var right := minf(area.end.x, text.end.x + CAPTION_PAD)
+	return Rect2(left, area.position.y, right - left, area.size.y)
+
+
+## Where the policy ticket's own caption is painted, for mounted fit checks.
+func policy_text_rect() -> Rect2:
+	var font := get_theme_default_font()
+	var tag := policy_rect()
+	if font == null or tag.size.x <= 0.0:
+		return Rect2()
+	var ascent := font.get_ascent(POLICY_FONT)
+	var descent := font.get_descent(POLICY_FONT)
+	var baseline := tag.position.y + (tag.size.y + ascent - descent) * 0.5
+	return Rect2(tag.position.x + POLICY_PAD, baseline - ascent,
+		font.get_string_size(policy_cue, HORIZONTAL_ALIGNMENT_LEFT, -1, POLICY_FONT).x,
+		ascent + descent)
 
 
 ## The committed HUD icon file of one announced mode; empty keeps the drawn glyph.
@@ -204,20 +321,47 @@ func _draw() -> void:
 		draw_set_transform(Vector2.ZERO)
 	# Draw text on this noninteractive canvas rather than inserting another Label
 	# into the legacy two-Label enemy roster (its other live consumers expect two).
-	draw_string(get_theme_default_font(), Vector2(62, patch.end.y - 5.0), readable_text,
-		HORIZONTAL_ALIGNMENT_LEFT, size.x - 64, 14,
-		MUTED if icon_mode in ["slain", "none"] else CREAM)
-	# Miniature rust-felt ticket in the upper-right strip, clear of the old caption.
-	if not policy_cue.is_empty():
-		var font := get_theme_default_font()
-		var text_width := font.get_string_size(policy_cue, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
-		var x := maxf(64.0, size.x - text_width - 9.0)
-		var tag := Rect2(x - 4.0, 0.5, text_width + 8.0, 10.0)
-		draw_rect(tag, SLATE)
-		draw_line(Vector2(tag.position.x + 2.0, tag.position.y + 1.0),
-			Vector2(tag.end.x - 2.0, tag.position.y + 1.0), RUST, 1.0)
-		draw_string(font, Vector2(x, 8.5), policy_cue,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 9, CREAM)
+	_draw_caption()
+
+
+## The stitched caption tag: a dark felt plaque with cream ink, plus the separate
+## rust-felt ticket that carries a target-policy cue. All of it is painted here, so the
+## badge still mounts no child control and never takes pointer or keyboard input.
+func _draw_caption() -> void:
+	var font := get_theme_default_font()
+	var text := caption_text_rect()
+	if font == null or text.size.x <= 0.0:
+		return
+	var plaque := caption_rect()
+	# Torn-cornered felt plaque, cut like the sewn paper patch beside it.
+	draw_colored_polygon(PackedVector2Array([
+		plaque.position + Vector2(2.0, 0.0),
+		Vector2(plaque.end.x - 1.0, plaque.position.y),
+		Vector2(plaque.end.x, plaque.position.y + 3.0),
+		Vector2(plaque.end.x - 2.0, plaque.end.y),
+		Vector2(plaque.position.x + 3.0, plaque.end.y - 1.0),
+		plaque.position + Vector2(0.0, 4.0)]), CAPTION_FILL)
+	# Hand stitches along the top and bottom seams, matching the patchwork paper.
+	var stitch := Color(CAPTION_STITCH, 0.8)
+	for x in range(int(plaque.position.x) + 7, int(plaque.end.x) - 5, 12):
+		draw_line(Vector2(x, plaque.position.y + 2.0), Vector2(x + 3.0, plaque.position.y + 5.0),
+			stitch, 1.2, true)
+		draw_line(Vector2(x, plaque.end.y - 5.0), Vector2(x + 3.0, plaque.end.y - 2.0),
+			stitch, 1.2, true)
+	draw_string(font, Vector2(text.position.x, text.end.y - font.get_descent(caption_font_size())),
+		readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, caption_font_size(), caption_ink())
+	# Miniature rust-felt ticket to the right of the caption: the policy stays its own
+	# readable label instead of being painted across the announced action.
+	var tag := policy_rect()
+	if tag.size.x <= 0.0 or tag.size.y <= 0.0:
+		return
+	draw_rect(tag, POLICY_FILL)
+	draw_line(Vector2(tag.position.x + 2.0, tag.position.y + 1.0),
+		Vector2(tag.end.x - 2.0, tag.position.y + 1.0), CREAM, 1.0)
+	var policy_text := policy_text_rect()
+	draw_string(font, Vector2(policy_text.position.x,
+		policy_text.end.y - font.get_descent(POLICY_FONT)), policy_cue,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, POLICY_FONT, POLICY_INK)
 
 
 ## Drawn sewn-glyph fallback in the patch's own scaled art coordinates. Used for every

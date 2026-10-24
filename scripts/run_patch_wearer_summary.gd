@@ -54,8 +54,9 @@ const KNOWN_M05_ARM_POWERS := {
 	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
 	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
 }
-## Frayfinder is a conditional first-hit Unravel bonus, never an unconditional
-## +2 to every attack. Every authored condition is part of the identity.
+## Frayfinder is a conditional first-hit attack-damage bonus, never an
+## unconditional +2 to every attack and never an Unravel gauge award. Every
+## authored condition is part of the identity.
 const KNOWN_M05_ATTACK_POWERS := {
 	"frayfinder_mitt": {"slot": "ARM",
 		"effect": "first_single_target_half_unravel_attack_bonus", "amount": 2,
@@ -90,7 +91,7 @@ const KNOWN_TEXTS := {
 	"hemguard_cuff": "+2 Block on eligible Block cards owned by this living wearer only",
 	"red_bobbin_cuff": "+1 Bleed on eligible Bleed cards owned by this living wearer only",
 	"loose_thread_glove": "+1 Unravel on eligible Unravel cards owned by this living wearer only",
-	"frayfinder_mitt": "+2 Unravel once per player turn on this living wearer's first single-target attack hit, only against a target already at least 1/2 of its current Unravel threshold (not on every attack)",
+	"frayfinder_mitt": "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits.",
 	"borrowed_button": "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block.",
 }
 

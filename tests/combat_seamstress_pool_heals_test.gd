@@ -29,6 +29,9 @@ func _initialize() -> void:
 	_test_atomic_rejections()
 	_test_patch_binding_cases()
 	_test_m05_block_patch_cases()
+	_test_borrowed_button_all_six()
+	_test_borrowed_button_latch_and_replay()
+	_test_borrowed_button_negative_cases()
 	_test_replay()
 	for failure: String in failures:
 		printerr(failure)
@@ -311,6 +314,7 @@ func _load_patch_definitions() -> Array:
 		"res://data/patches/m05_head_patches.json",
 		"res://data/patches/m05_arm_support_patches.json",
 		"res://data/patches/m04_attack_patches.json",
+		"res://data/patches/m05_coat_patches.json",
 	]
 	var definitions: Array = []
 	var seen := {}
@@ -748,6 +752,245 @@ func _test_m05_block_patch_cases() -> void:
 	_played(co_deck, co_party, "seamstress_darning", 1, "coexisting browband and spool Darning", 2, co_service, 2)
 	# Darning+: heal 6 + 2 = 8, Block 4 + 2 = 6
 	_played(co_deck, co_party, "seamstress_darning_plus", 3, "coexisting browband and spool Darning+", 2, co_service, 2)
+
+
+
+## Borrowed Button is worn and sewn through the real run ledgers. The same
+## authenticated combat owns every subsequent card receipt and single-use latch.
+func _button_fixture(wearer: String = "warden", sew: bool = true,
+		owned: Array = ["borrowed_button"]) -> Dictionary:
+	var party := _party()
+	var heroes := party.get_heroes()
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, _load_patch_definitions(),
+		0, 0, [], 4242)
+	_check(torn.is_valid() and wardrobe.is_valid(), "Borrowed Button run authorities valid")
+	if not torn.is_valid() or not wardrobe.is_valid():
+		return {}
+	if sew:
+		var sewn := wardrobe.sew("borrowed_button", wearer, "COAT",
+			"sew_button_" + wearer, wardrobe.get_snapshot())
+		_check(sewn.get("ok") == true
+			and wardrobe.get_snapshot().worn[wearer].COAT == "borrowed_button",
+			"authentic COAT sewing committed on " + wearer)
+	return {"party": party, "wardrobe": wardrobe, "torn": torn}
+
+
+func _button_service(fixture: Dictionary) -> CombatSeamstressPoolHeals:
+	var service := CombatSeamstressPoolHeals.new()
+	_check(service.bind_patch_wardrobe(fixture.wardrobe, fixture.torn)
+		and service.is_patch_binding_valid(),
+		"all combat patch authorities authenticate before a COAT cast")
+	return service
+
+
+## The independent oracle adds exactly one COAT grant after authored healing and
+## Darning's printed Block; unchanged deck piles/energy/RNG are checked as a whole.
+func _button_play(deck: CombatDeck, party: CombatParty, service: CombatSeamstressPoolHeals,
+		id: String, target: int, wearer_position: int, earns_button: bool,
+		label: String, heal_bonus: int = 0, block_bonus: int = 0) -> void:
+	var before := _snapshot(deck, party)
+	_check(deck.turn_active and deck.hand.has(id) and deck.energy >= CASES[id].cost,
+		label + ": genuinely held and affordable")
+	var expected := _expected(before, id, target, heal_bonus, block_bonus)
+	if earns_button:
+		expected.heroes[wearer_position - 1].block += 3
+	_check(service.play_card(deck, party, id, target), label + ": real held copy commits")
+	_check(_snapshot(deck, party) == expected,
+		label + ": exact healing/Block plus single +3, one charge/discard and unchanged RNG")
+	_check(deck.hand.count(id) == before.hand.count(id) - 1
+		and deck.discard_pile.count(id) == before.discard.count(id) + 1,
+		label + ": exactly one copy spent")
+
+
+func _test_borrowed_button_all_six() -> void:
+	var index := 0
+	for id: String in CASES:
+		var wearer: String = "warden" if index % 2 == 0 else "tinker"
+		var position: int = 1 if wearer == "warden" else 3
+		var fixture := _button_fixture(wearer)
+		if fixture.is_empty():
+			return
+		var party: CombatParty = fixture.party
+		var projection: Dictionary = fixture.wardrobe.project_active(fixture.torn.read_state())
+		_check(projection.get("ok") == true
+			and projection.active[wearer].has("borrowed_button"),
+			id + ": genuine COAT active on a living other hero")
+		_wound_all(party)
+		var service := _button_service(fixture)
+		var deck := _deck([id, id, "filler-a", "filler-b", "filler-c"], 809 + index)
+		var target: int = 0 if CASES[id].kind == "party_all" else position
+		_button_play(deck, party, service, id, target, position, true,
+			id + " authentic COAT " + wearer)
+		var state := service._borrowed_button.read_state()
+		_check(state.ok and state.awards == 1 and state.block_awarded == 3
+			and state.wearer_id == wearer and state.receipt_id == "seamstress_pool_heal:1:%d" % position,
+			id + ": recipient-specific deterministic committed receipt awards once")
+		_check(state.receipts.size() == (3 if target == 0 else 1),
+			id + ": all and only actual living recipients are reported")
+		index += 1
+
+	# Preserve combined M04 Spare Spool heal and M05 HEAD/ARM Darning Block.
+	var coexist := _button_fixture("warden", true,
+		["borrowed_button", "spare_spool", "reinforced_browband", "hemguard_cuff"])
+	var w: RunPatchWardrobe = coexist.wardrobe
+	for entry in [["spare_spool", "ARM"], ["reinforced_browband", "HEAD"]]:
+		_check(w.sew(entry[0], "seamstress", entry[1], "button_co_" + entry[0],
+			w.get_snapshot()).get("ok") == true, "authentic supporting patch sewed " + entry[0])
+	var co_service := _button_service(coexist)
+	var co_party: CombatParty = coexist.party
+	_wound_all(co_party)
+	_button_play(_deck(["seamstress_darning"]), co_party, co_service,
+		"seamstress_darning", 1, 1, true,
+		"Spool +2 heal, HEAD +2 printed Block, COAT +3 separate", 2, 2)
+
+	# A downed recipient is omitted even when Field Mend heals two other heroes.
+	var skip := _button_fixture("tinker")
+	var skip_party: CombatParty = skip.party
+	_check(skip_party.apply_damage(1, 9999) and skip_party.is_downed(1)
+		and skip_party.apply_damage(2, 9) and skip_party.apply_damage(3, 9),
+		"Field Mend has exactly two living wounded recipients")
+	_button_play(_deck(["seamstress_field_mend_plus"]), skip_party,
+		_button_service(skip), "seamstress_field_mend_plus", 0, 3, true,
+		"Field Mend+ skips fallen Warden and pays living Tinker")
+	_check(skip_party.get_hero(1).hp == 0, "Field Mend never revives downed Warden")
+
+
+func _test_borrowed_button_latch_and_replay() -> void:
+	var fixture := _button_fixture("warden")
+	var service := _button_service(fixture)
+	var party: CombatParty = fixture.party
+	_wound_all(party)
+	var deck := _deck(["seamstress_thimble_tea", "seamstress_darning",
+		"seamstress_field_mend", "filler-a", "filler-b"], 7701)
+	_button_play(deck, party, service, "seamstress_thimble_tea", 1, 1, true,
+		"first Tea earns only COAT award")
+	var first_button: CombatBorrowedButton = service._borrowed_button
+	_check(service.bind_patch_wardrobe(fixture.wardrobe, fixture.torn)
+		and service._borrowed_button == first_button
+		and first_button.read_state().awards == 1,
+		"same-combat redundant authority bind preserves the already spent latch")
+	_button_play(deck, party, service, "seamstress_darning", 1, 1, false,
+		"second positive Darning cannot duplicate COAT")
+	_button_play(deck, party, service, "seamstress_field_mend", 0, 1, false,
+		"third positive multi-ally Mend cannot duplicate COAT")
+	var button: CombatBorrowedButton = service._borrowed_button
+	var state := button.read_state()
+	_check(state.ok and state.awards == 1 and state.receipts.size() == 5,
+		"three legal commits produce five distinct recipient receipts and just one award")
+	_check(state.receipts == ["seamstress_pool_heal:1:1",
+		"seamstress_pool_heal:2:1", "seamstress_pool_heal:3:1",
+		"seamstress_pool_heal:3:2", "seamstress_pool_heal:3:3"],
+		"receipt identities are deterministic, ordered and unique")
+	var committed := _snapshot(deck, party)
+	var duplicate := button.notify_committed_heal(state.receipt_id, "seamstress",
+		"warden", 31, party.get_hero(1).hp)
+	var stale := button.notify_committed_heal("forged-old-observation", "seamstress",
+		"warden", 1, 2)
+	_check(not duplicate.ok and duplicate.reason == "duplicate_receipt"
+		and not stale.ok and stale.reason == "stale_observation",
+		"replayed and stale claimed receipts are refused by existing helper")
+	_check(_snapshot(deck, party) == committed and button.read_state().awards == 1,
+		"forged/replayed receipt cannot change battle or award another Block")
+
+	# A fresh party paired with an explicit rebind is a new battle even when the
+	# unchanged run ledgers are shared by consecutive combats.
+	var same_run_party := _party()
+	_check(same_run_party.apply_damage(1, 9), "second battle uses newly wounded party")
+	_check(service.bind_patch_wardrobe(fixture.wardrobe, fixture.torn),
+		"same run ledgers reauthenticate for a distinct battle party")
+	_button_play(_deck(["seamstress_thimble_tea"]), same_run_party, service,
+		"seamstress_thimble_tea", 1, 1, true,
+		"new combat party re-arms despite unchanged run ledgers")
+	_check(service._borrowed_button != button
+		and service._borrowed_button.read_state().awards == 1,
+		"new party owns new notifier without resetting prior-combat receipts")
+
+	# Only an explicit genuinely new-combat rebind can rearm this service's latch.
+	var next_fixture := _button_fixture("tinker")
+	_check(service.bind_patch_wardrobe(next_fixture.wardrobe, next_fixture.torn),
+		"second combat supplies a fresh genuine run authority")
+	var next_party: CombatParty = next_fixture.party
+	_check(next_party.apply_damage(3, 12), "new combat Tinker is wounded")
+	_button_play(_deck(["seamstress_thimble_tea"]), next_party, service,
+		"seamstress_thimble_tea", 3, 3, true, "new combat re-arms once")
+	_check(service._borrowed_button.read_state().awards == 1
+		and service._borrowed_button.read_state().wearer_id == "tinker"
+		and service._borrowed_button != button,
+		"fresh combat owns a new helper/latch, old helper remains spent")
+
+
+func _test_borrowed_button_negative_cases() -> void:
+	for scenario in ["unsewn", "wrong_wearer", "self", "full_hp", "downed", "torn", "invalid"]:
+		var wearer := "seamstress" if scenario == "self" else (
+			"tinker" if scenario == "wrong_wearer" else "warden")
+		var fixture := _button_fixture(wearer, scenario != "unsewn")
+		if fixture.is_empty():
+			return
+		var party: CombatParty = fixture.party
+		var target := 2 if scenario == "self" else 1
+		var service := _button_service(fixture)
+		if scenario == "torn":
+			var start: Array = fixture.torn.read_state().heroes
+			var end: Array = start.duplicate(true)
+			end[0].hp = 0
+			_check(fixture.torn.observe_battle_end("button_tear", start, end).get("ok") == true,
+				"torn COAT wearer has genuine committed run tear")
+			var original: Dictionary = fixture.wardrobe.get_snapshot()
+			_check(fixture.wardrobe.refresh_run_context(fixture.torn.read_state().heroes,
+				original.owned, original.scraps, original.gold, original.cards, original),
+				"wardrobe refreshed to authentic torn ledger")
+			var next_defs := []
+			for hero: Dictionary in fixture.torn.read_state().heroes:
+				next_defs.append({"id": hero.id, "max_hp": hero.max_hp})
+			party = CombatParty.new(next_defs)
+			_check(party.is_valid(), "fresh party uses torn maximum HP")
+			service = _button_service(fixture)
+		if scenario == "downed":
+			_check(party.apply_damage(1, 9999) and party.is_downed(1),
+				"downed patch wearer is truly at zero HP")
+		elif scenario != "full_hp":
+			_check(party.apply_damage(target, 10), scenario + ": recipient wounded")
+		if scenario == "invalid":
+			var invalid_deck := _deck(["seamstress_darning", "seamstress_field_mend"])
+			_rejected(invalid_deck, party, "seamstress_darning", 0,
+				"COAT bad single target atomic rejection", service)
+			_rejected(invalid_deck, party, "seamstress_field_mend", 1,
+				"COAT bad party_all target atomic rejection", service)
+			_check(invalid_deck.try_spend_energy(3), "COAT energy exhausted")
+			_rejected(invalid_deck, party, "seamstress_darning", 1,
+				"COAT insufficient energy atomic rejection", service)
+			_check(service._borrowed_button.read_state().receipts.is_empty(),
+				"failed actions generate no COAT receipts")
+			continue
+		if scenario == "downed":
+			# A legal Field Mend excludes the downed COAT wearer.
+			_check(party.apply_damage(3, 10), "living other recipient wounded")
+			_button_play(_deck(["seamstress_field_mend"]), party, service,
+				"seamstress_field_mend", 0, 1, false, "downed wearer stays unawarded")
+		else:
+			_button_play(_deck(["seamstress_thimble_tea"]), party, service,
+				"seamstress_thimble_tea", target, 1, false,
+				scenario + ": legal heal never qualifies")
+		_check(service._borrowed_button.read_state().awards == 0,
+			scenario + ": no Borrowed Button grant")
+	# An invalid explicit authority bind poisons otherwise available cards.
+	var failed := _button_fixture()
+	var failed_service := _button_service(failed)
+	_check(not failed_service.bind_patch_wardrobe(null, failed.torn)
+		and not failed_service.is_patch_binding_valid(), "explicit null bind fails closed")
+	var failed_party: CombatParty = failed.party
+	_check(failed_party.apply_damage(1, 8), "failed-binding recipient wounded")
+	_rejected(_deck(["seamstress_thimble_tea"]), failed_party,
+		"seamstress_thimble_tea", 1, "failed binding refuses card", failed_service)
+	# Drift in a previously valid ledger similarly refuses the entire cast.
+	var drift := _button_fixture()
+	var drift_service := _button_service(drift)
+	var drift_party: CombatParty = drift.party
+	_check(drift_party.apply_damage(1, 8), "stale-binding recipient wounded")
+	drift.wardrobe._gold += 1
+	_rejected(_deck(["seamstress_darning"]), drift_party,
+		"seamstress_darning", 1, "stale wardrobe refuses card", drift_service)
 
 
 func _sequence(seed_value: int) -> Array:

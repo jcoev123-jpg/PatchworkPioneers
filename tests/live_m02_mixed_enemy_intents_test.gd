@@ -146,6 +146,7 @@ func _run() -> void:
 		app.return_button.pressed.emit()
 		await process_frame
 	await _badge_icons(app)
+	await _caption_readability(app)
 	await _rejections(app)
 	app.free()
 	for failure in failures:
@@ -336,6 +337,131 @@ func _icon_fits(badge, path: String) -> bool:
 		and is_equal_approx(drawn.size.x / drawn.size.y, pixels.x / pixels.y) \
 		and badge.icon_rect().grow(0.01).encloses(drawn) \
 		and badge.patch_rect().grow(0.01).encloses(drawn)
+
+
+## One channel of relative luminance, for a real ink-to-backing contrast measurement.
+func _channel(value: float) -> float:
+	if value <= 0.04045:
+		return value / 12.92
+	return pow((value + 0.055) / 1.055, 2.4)
+
+
+func _contrast(first: Color, second: Color) -> float:
+	var high: float = maxf(0.2126 * _channel(first.r) + 0.7152 * _channel(first.g)
+		+ 0.0722 * _channel(first.b), 0.2126 * _channel(second.r) + 0.7152 * _channel(second.g)
+		+ 0.0722 * _channel(second.b))
+	var low: float = minf(0.2126 * _channel(first.r) + 0.7152 * _channel(first.g)
+		+ 0.0722 * _channel(first.b), 0.2126 * _channel(second.r) + 0.7152 * _channel(second.g)
+		+ 0.0722 * _channel(second.b))
+	return (high + 0.05) / (low + 0.05)
+
+
+## A mounted caption is really readable: fitted text inside its dark plaque at a bounded
+## size, high-contrast cream ink, and any target-policy cue as its own ticket beside it.
+func _caption_readable(badge) -> bool:
+	var font: Font = badge.get_theme_default_font()
+	if font == null or badge.readable_text.is_empty():
+		return false
+	var size_px: int = badge.caption_font_size()
+	var text: Rect2 = badge.caption_text_rect()
+	var plaque: Rect2 = badge.caption_rect()
+	var tag: Rect2 = badge.policy_rect()
+	var fits: bool = size_px >= LiveEnemyIntentBadge.CAPTION_MIN_FONT \
+		and size_px <= LiveEnemyIntentBadge.CAPTION_MAX_FONT \
+		and text.size.x > 0.0 and text.size.y > 0.0 \
+		and is_equal_approx(text.size.x, font.get_string_size(badge.readable_text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x) \
+		and badge.caption_text_area().grow(0.01).encloses(text) \
+		and plaque.grow(0.01).encloses(text) \
+		and Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(plaque) \
+		and plaque.position.x > badge.patch_rect().end.x \
+		and _contrast(badge.caption_ink(), LiveEnemyIntentBadge.CAPTION_FILL) >= 7.0
+	if not fits:
+		return false
+	if badge.policy_cue.is_empty():
+		return tag == Rect2() and badge.policy_text_rect() == Rect2()
+	if tag.size.x <= 0.0:
+		return false
+	return Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(tag) \
+		and not text.intersects(tag) and tag.grow(0.01).encloses(badge.policy_text_rect()) \
+		and _contrast(LiveEnemyIntentBadge.POLICY_INK, LiveEnemyIntentBadge.POLICY_FILL) >= 4.5
+
+
+## Cycle 183: every mounted caption sits on its own dark sewn plaque in fitted cream ink,
+## and a target-policy cue keeps a separate readable ticket instead of being painted across
+## the caption. A long debuff, a long shove, a policy cue and unavailable icon art all stay
+## inside the same intent band with the committed art or sewn glyph still visible, and no
+## combat state, scheduler or RNG value moves.
+func _caption_readability(app) -> void:
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node_or_null("LiveEnemyRoster")
+	_check(app.deck != null and app.enemy_intents != null and is_instance_valid(presenter)
+		and presenter._badges.size() == 2, "caption checks run on the real mounted battle")
+	if app.deck == null or not is_instance_valid(presenter) or presenter._badges.size() != 2:
+		return
+	var before := _snapshot(app)
+	var shove = presenter._badges[0]
+	var debuff = presenter._badges[1]
+	# The real first announcement: a shove with its sewn glyph and an Exposed debuff with
+	# its committed art, both under the larger fitted caption on the dark plaque.
+	_check(shove.readable_text == "H1 PUSH BACK" and _icon_fits(shove, "")
+		and debuff.readable_text == "EXPOSED 2 > H1"
+		and _icon_fits(debuff, "res://assets/paper/ui/intent_debuff.png"),
+		"real shove glyph and debuff art are mounted before the caption checks")
+	_check(shove.caption_font_size() > 14 and debuff.caption_font_size() > 14
+		and _caption_readable(shove) and _caption_readable(debuff),
+		"both real captions use the larger bounded size on their dark plaques")
+	_check(shove.policy_cue.is_empty() and shove.policy_rect() == Rect2()
+		and debuff.policy_cue.is_empty() and debuff.policy_rect() == Rect2(),
+		"the unbound live schedule announces no policy ticket of its own")
+	# A long authoritative debuff beside a real policy: bounded step-down, never beneath
+	# the policy ticket, never outside the badge.
+	var long_debuff := {"type": "debuff", "amount": 2, "status": "exposed", "target_position": 1}
+	var original := long_debuff.duplicate(true)
+	shove.show_intent(long_debuff, false, false, "exposed")
+	_check(shove.readable_text == "EXPOSED 2 > H1" and shove.intent_type == "debuff"
+		and shove.amount == 2 and shove.target_position == 1
+		and shove.policy_cue == "EXPOSED" and long_debuff == original,
+		"long debuff keeps its exact authoritative text beside its target policy")
+	_check(_caption_readable(shove)
+		and shove.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT,
+		"the long debuff caption and its policy cue both fit the same intent band")
+	_check(shove.caption_rect().position.x > shove.patch_rect().end.x
+		and not shove.caption_text_rect().intersects(shove.policy_rect())
+		and shove.policy_rect().size.y <= shove.caption_area_rect().size.y,
+		"the caption plaque and policy ticket stay distinguishable inside the same band")
+	_check(_icon_fits(shove, "res://assets/paper/ui/intent_debuff.png"),
+		"the long debuff keeps its committed icon art visible")
+	# A long shove caption with the longest policy label, still inside the same band.
+	shove.show_intent({"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
+		false, false, "lowest_living_hp")
+	_check(shove.readable_text == "H3 PUSH FRONT" and shove.policy_cue == "LOW HP"
+		and shove.intent_type == "shove" and shove.target_position == 3
+		and _caption_readable(shove) and _icon_fits(shove, ""),
+		"a long shove caption fits beside its policy and keeps the sewn glyph")
+	# Unavailable icon art: the real missing-image fallback keeps the sewn glyph under the
+	# same readable caption, plaque and policy ticket.
+	var saved_root: String = shove.icon_root
+	shove.icon_root = "res://assets/paper/ui/absent/"
+	shove.show_intent(long_debuff, false, false, "front")
+	_check(shove.icon_texture == null and _icon_fits(shove, "")
+		and shove.readable_text == "EXPOSED 2 > H1" and shove.amount == 2
+		and shove.target_position == 1 and shove.policy_cue == "FRONT"
+		and _caption_readable(shove),
+		"unavailable icon art keeps the sewn-glyph fallback under the readable caption")
+	shove.icon_root = saved_root
+	_check(_snapshot(app) == before,
+		"every caption, plaque and policy transition is presentation only")
+	presenter._refresh()
+	_check(_snapshot(app) == before and shove.readable_text == "H1 PUSH BACK"
+		and shove.policy_cue.is_empty() and _caption_readable(shove)
+		and _icon_fits(shove, "")
+		and _icon_fits(debuff, "res://assets/paper/ui/intent_debuff.png"),
+		"a refresh restores the real announcements with their real icons and captions")
+	app.return_button.pressed.emit()
+	await process_frame
 
 
 ## Source of one top-level badge method, up to the next method.

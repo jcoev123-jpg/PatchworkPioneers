@@ -1,5 +1,30 @@
 extends "res://tests/live_rest_stitch_choice_test.gd"
 
+
+func _assert_live_caption(picker: LiveRestStitchPairPicker, a: int, b: int,
+		first_name: String, second_name: String, deck_count: int, scraps_left: int,
+		label: String) -> void:
+	var preview := picker._current_pair()
+	_check(not preview.is_empty() and preview == picker._model.preview(a, b),
+		label + " mounted selection matches the detached authoritative forecast")
+	if preview.is_empty():
+		return
+	var expected := "Sew %s (copy #%d) + %s (copy #%d)\n%d → %d shared cards • 3 scraps spent • %d remaining\nSewn card cannot upgrade or stitch again" % [
+		first_name, a + 1, second_name, b + 1, deck_count, deck_count - 1, scraps_left]
+	var caption := picker.consequence_label.text
+	_check(caption == expected and picker.consequence_label.get_line_count() <= 3,
+		label + " mounts exact ordered one-based copies, deck delta, spend, balance and restriction")
+	_check(not caption.contains("0-based") and not caption.contains("stitched_")
+		and not caption.contains(str(preview["first_id"]))
+		and not caption.contains(str(preview["second_id"])),
+		label + " never exposes internal card IDs or zero-based terminology")
+	_check(preview["first_index"] == a and preview["second_index"] == b
+		and preview["deck_before_count"] == deck_count
+		and preview["deck_after_count"] == deck_count - 1
+		and preview["scrap_cost"] == 3 and preview["remaining_scraps"] == scraps_left,
+		label + " preserves true zero-based authoritative indices and economics")
+
+
 func _guided_fixture() -> Dictionary:
 	for value in range(1, 3000):
 		var rng := RandomNumberGenerator.new()
@@ -177,7 +202,10 @@ func _run() -> void:
 			_check(tile_b.has_focus(), "second card tile has keyboard focus")
 			await _key(KEY_ENTER)
 		var preview: Dictionary = picker._current_pair()
-		_check(not preview.is_empty(), "physically selected pair produces preview")
+		_check(not preview.is_empty(), "physically selected pair produces preview (first=%d second=%d, select=%d/%d, available=%s, visible=%s)" % [
+			picker._selected_first_index, picker._selected_second_index,
+			picker.first_selector.selected, picker.second_selector.selected,
+			str(picker._model.is_available()), str(picker.is_visible_in_tree())])
 		if preview.is_empty():
 			break
 		_check(preview.first_half == catalog.get_definition(app.run_deck[a]) and preview.second_half == catalog.get_definition(app.run_deck[b]), "preview preserves complete authored halves")
@@ -200,18 +228,33 @@ func _run() -> void:
 			"mounted real Rest forecast equals independently committed full ledger and exact duplicate indices")
 		_check(picker.summary_label.text.contains(preview["descriptor"]["display_name"])
 			and picker.summary_label.text.contains("%d energy" % preview["descriptor"]["cost"])
-			and picker.consequence_label.text == picker._consequence_lines(preview)
-			and picker.consequence_label.text.contains("#%d (warden_strike)" % a)
-			and picker.consequence_label.text.contains("#%d (seamstress_prick)" % b)
-			and picker.consequence_label.text.contains("%d → %d shared cards" % [
-				forecast_source["deck"].size(), forecast_committed["deck"].size()])
-			and picker.consequence_label.text.contains("3 scraps → %d remaining" % forecast_committed["remaining_scraps"])
-			and picker.consequence_label.text.contains(forecast_committed["stitched_id"])
-			and picker.consequence_label.text.contains("cannot upgrade or stitch again")
-			and picker.consequence_label.get_line_count() <= 3,
-			"live visible consequence fully describes committed deck, copies, cost and restriction")
+			and picker.summary_label.text.contains("3 scraps"),
+			"live summary retains joined authored name, capped energy and stitch price")
+		_assert_live_caption(picker, a, b, "Strike", "Prick",
+			forecast_source["deck"].size(), forecast_committed["remaining_scraps"],
+			"physically selected real Rest Strike / Prick")
 		_check(_stitch_state() == before and app.rest_stitch.get_snapshot() == forecast_source
 			and not app.rest_stitch.is_consumed(), "opening and physical selections spend nothing or consume RNG")
+		# The physical pair above is already proven. Now inspect the two real
+		# duplicate Strike copies and Prick / Pop Shot on this same routed picker.
+		if session == 0:
+			for strike_copy in [other_a, a]:
+				picker._on_first_tile_pressed(strike_copy)
+				picker._on_second_tile_pressed(b)
+				_assert_live_caption(picker, strike_copy, b, "Strike", "Prick",
+					app.run_deck.size(), app.run_scraps - 3,
+					"routed Strike / Prick duplicate copy #%d" % (strike_copy + 1))
+			var pop_index: int = app.run_deck.find("tinker_pop_shot")
+			_check(pop_index >= 0, "routed starter deck contains Pop Shot partner")
+			if pop_index >= 0:
+				picker._on_first_tile_pressed(b)
+				picker._on_second_tile_pressed(pop_index)
+				_assert_live_caption(picker, b, pop_index, "Prick", "Pop Shot",
+					app.run_deck.size(), app.run_scraps - 3, "routed Prick / Pop Shot")
+			picker._on_first_tile_pressed(a)
+			picker._on_second_tile_pressed(b)
+			_check(picker._current_pair() == preview and _stitch_state() == before,
+				"alternate rendered previews restore original exact pair without spend or RNG mutation")
 		var callback: Callable = picker.stitch_requested.get_connections()[0].callable
 		var source: Dictionary = app._stitch_snapshot()
 		var request: Callable = callback.bind(a, b, source)

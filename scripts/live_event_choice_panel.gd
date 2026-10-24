@@ -5,6 +5,22 @@ extends Control
 ## open_event_with_wallet() displays an opt-in, detached affordability forecast
 ## and emits an uncommitted wallet receipt for the run owner to validate.
 ## Neither mode updates the live run, owns RNG, or completes routed Events.
+## Every mounted choice carries read-only hover text built from the authored
+## action and the service-parsed outcome: exact signed gold/scraps, the zero
+## change wording, or an honest unavailable placeholder. A wallet offering also
+## repeats its own authoritative projected balance or exact shortfall.
+
+## Printed when the service could not parse a choice outcome. No amount, name or
+## affordability is invented for such a branch.
+const OUTCOME_UNAVAILABLE := "Outcome unavailable: this choice cannot be settled."
+## Printed on a legacy ticket whose authored outcome changes nothing.
+const NO_CHANGE := "No change to gold or scraps."
+## Printed on a legacy ticket that does change a resource. A legacy offering has
+## no run wallet, so its neutral zero-wallet service preview says nothing about
+## what this run can afford and is never shown as an affordability claim.
+const AUTHORED_ONLY := "Authored outcome; your run's wallet is not checked here."
+## The neutral wallet used only to parse legacy authored deltas.
+const NEUTRAL_WALLET := {"gold": 0, "scraps": 0}
 
 signal choice_committed(event_id: String, choice_id: String)
 ## Emits exactly one detached RunEventChoice receipt on a successful wallet
@@ -78,6 +94,9 @@ func open_event_with_wallet(event_record: Dictionary, wallet: Variant) -> bool:
 
 func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Dictionary, previews: Array) -> void:
 	var snapshot: Dictionary = offered.get_event()
+	# Legacy offerings parse their authored outcomes through the same service,
+	# but from a neutral wallet: only the deltas are presentation truth here.
+	var parsed_rows: Array = previews if wallet_mode else _legacy_previews(offered, snapshot)
 	_generation += 1
 	_selector = offered
 	_is_open = true
@@ -101,9 +120,13 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 	for i in range(snapshot["choices"].size()):
 		var choice: Dictionary = snapshot["choices"][i]
 		var choice_id: String = choice["id"]
+		var parsed_row: Dictionary = {}
+		if i < parsed_rows.size() and parsed_rows[i] is Dictionary:
+			parsed_row = parsed_rows[i]
 		var button := Button.new()
 		button.name = "Choice_%d" % _choice_buttons.size()
 		button.text = choice["text"]
+		button.tooltip_text = _choice_tooltip(choice["text"], parsed_row, wallet_mode)
 		button.custom_minimum_size = Vector2(0.0, 56.0)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.focus_mode = Control.FOCUS_ALL
@@ -132,6 +155,48 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 		# and closed/reopened offerings cannot redirect an old pressed signal.
 		button.pressed.connect(_on_choice_pressed.bind(offered, choice_id, _generation, button))
 	visible = true
+
+
+## The service's own parsed rows for a legacy offering, read through a neutral
+## zero wallet. Only the parsed deltas are used: the row's affordability flag
+## describes that throwaway wallet, never the live run's. A malformed preview
+## yields no rows so every ticket falls back to the honest placeholder.
+func _legacy_previews(offered: RunEventChoice, snapshot: Dictionary) -> Array:
+	var preview: Dictionary = offered.preview_wallet_choices(NEUTRAL_WALLET.duplicate(true))
+	if preview.get("ok", false) != true or preview.get("event_id") != snapshot.get("id"):
+		return []
+	var rows: Variant = preview.get("choices")
+	var choices: Array = snapshot["choices"]
+	if not rows is Array or (rows as Array).size() != choices.size():
+		return []
+	for i in range((rows as Array).size()):
+		var row: Variant = (rows as Array)[i]
+		if not row is Dictionary or (row as Dictionary).get("choice_id") != choices[i]["id"]:
+			return []
+	return rows
+
+
+## Read-only hover text for one offered choice. The authored action always comes
+## first (the run owner's Moth removal and Dye upgrade live in that text), then
+## the exact signed gold/scraps from the service-parsed row. A wallet offering
+## finishes with its own authoritative projected balance or exact shortfall; a
+## legacy offering finishes with the zero-change wording or the honest note that
+## it does not read the run wallet. An unparsed outcome prints no numbers at all.
+func _choice_tooltip(choice_text: String, forecast: Dictionary, wallet_mode: bool) -> String:
+	var gold: Variant = forecast.get("gold_delta")
+	var scraps: Variant = forecast.get("scraps_delta")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return choice_text + "\n" + OUTCOME_UNAVAILABLE
+	var lines := PackedStringArray()
+	lines.append(choice_text)
+	lines.append("Gold %s   |   Scraps %s" % [_delta_label(gold), _delta_label(scraps)])
+	if wallet_mode:
+		lines.append(_forecast_line(forecast, _offered_wallet))
+	elif int(gold) == 0 and int(scraps) == 0:
+		lines.append(NO_CHANGE)
+	else:
+		lines.append(AUTHORED_ONLY)
+	return "\n".join(lines)
 
 
 func _delta_label(amount: Variant) -> String:
