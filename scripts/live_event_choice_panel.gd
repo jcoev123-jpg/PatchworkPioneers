@@ -162,6 +162,8 @@ func _mount_offering(offered: RunEventChoice, wallet_mode: bool, wallet: Diction
 			button.add_theme_font_size_override("font_size", 18)
 			button.disabled = not can_pay
 			button.focus_mode = Control.FOCUS_ALL if can_pay else Control.FOCUS_NONE
+		else:
+			button.text += "\n" + _authored_impact(parsed_row)
 		_add_choice_cue(button, i)
 		choices_container.add_child(button)
 		_choice_buttons.append(button)
@@ -242,6 +244,21 @@ func _choice_tooltip(choice_text: String, forecast: Dictionary, wallet_mode: boo
 	else:
 		lines.append(AUTHORED_ONLY)
 	return "\n".join(lines)
+
+
+## Legacy tickets show only parsed authored deltas, never neutral-wallet
+## affordability or a projected run balance. Unknown rows invent no amounts.
+func _authored_impact(row: Dictionary) -> String:
+	var gold: Variant = row.get("gold_delta")
+	var scraps: Variant = row.get("scraps_delta")
+	if typeof(gold) != TYPE_INT or typeof(scraps) != TYPE_INT:
+		return OUTCOME_UNAVAILABLE
+	var effects := PackedStringArray()
+	if gold != 0:
+		effects.append("Gold %+d" % gold)
+	if scraps != 0:
+		effects.append("Scraps %+d" % scraps)
+	return NO_CHANGE if effects.is_empty() else "   |   ".join(effects)
 
 
 func _delta_label(amount: Variant) -> String:

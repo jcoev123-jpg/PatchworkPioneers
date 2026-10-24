@@ -13,6 +13,7 @@ func _hover(control: Control) -> void:
 ## AC2: every mounted Event choice panel shows the committed crossroads scene above its
 ## own opaque slate, behind the paper panel and its usable choices.
 func _check_event_backdrop(panel, label: String) -> int:
+	_check_event_tickets(panel, label)
 	var bed = panel.get_node_or_null("EventBackdrop")
 	var slate = panel.get_node_or_null("SlateBackdrop")
 	_check(is_instance_valid(bed) and bed.get_parent() == panel
@@ -45,6 +46,63 @@ func _check_event_backdrop(panel, label: String) -> int:
 		and is_equal_approx(visible.size.x * (drawn.size.x / pixels.x), view.size.x),
 		label + " crossroads scene crops only the centred window that fills the view")
 	return panel.get_instance_id()
+
+
+## Inspect the real routed panel, including the extra Moth/Dye selector that
+## is absent from standalone fixtures. Gameplay assertions below still drive
+## actual mouse/keyboard commits and protect every ledger and rejected input.
+func _check_event_tickets(panel: LiveEventChoicePanel, label: String) -> void:
+	var expected := {
+		"quiet_spool": ["Scraps +1", "No change to gold or scraps."],
+		"moth_infestation": ["Scraps +2", "Scraps -1", "No change to gold or scraps."],
+		"dye_vat": ["Scraps -3", "Scraps +1", "No change to gold or scraps."],
+	}
+	_check(panel.has_open_event() and panel._selector != null, label + " real offering exists")
+	if panel._selector == null:
+		return
+	var record: Dictionary = panel._selector.get_event()
+	var impacts: Array = expected.get(record.get("id"), [])
+	var choices: Array = record.get("choices", [])
+	var buttons := panel.get_choice_buttons()
+	var cues := panel.get_choice_cues()
+	_check(not impacts.is_empty() and buttons.size() == impacts.size()
+		and choices.size() == impacts.size() and cues.size() == impacts.size(),
+		label + " all authored tickets and cues actually mounted")
+	if impacts.is_empty() or buttons.size() != impacts.size() or cues.size() != impacts.size() \
+		or choices.size() != impacts.size():
+		return
+	var viewport := Rect2(0, 0, 1280, 720)
+	_check(viewport.encloses(panel.paper_panel.get_global_rect()), label + " paper fits viewport")
+	for i in range(buttons.size()):
+		var button: Button = buttons[i]
+		_check(button.text == String(choices[i]["text"]) + "\n" + impacts[i],
+			label + " exact authored action and wallet impact " + str(i))
+		_check(button.is_visible_in_tree() and viewport.encloses(button.get_global_rect()),
+			label + " whole two-line ticket visible " + str(i))
+		_check(button.disabled or button.focus_mode == Control.FOCUS_ALL,
+			label + " allowed choices remain focusable " + str(i))
+		var font := button.get_theme_font("font")
+		var font_size := button.get_theme_font_size("font_size")
+		var style := button.get_theme_stylebox("normal")
+		_check(font.get_height(font_size) * 2 + style.get_minimum_size().y <= button.size.y,
+			label + " both caption lines fit ticket height " + str(i))
+		var widest := 0.0
+		for line in button.text.split("\n"):
+			widest = maxf(widest, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+		var rect := button.get_global_rect()
+		_check(widest + style.get_minimum_size().x <= rect.size.x,
+			label + " action and impact fit ticket width " + str(i))
+		_check(cues[i].text == str(i + 1) and cues[i].is_visible_in_tree()
+			and rect.encloses(cues[i].get_global_rect())
+			and cues[i].get_global_rect().end.x <= rect.position.x + (rect.size.x - widest) / 2,
+			label + " number cue visible and clear of caption " + str(i))
+		for sibling in panel.choices_container.get_children():
+			if sibling != button and sibling is Control and sibling.is_visible_in_tree():
+				_check(not rect.intersects(sibling.get_global_rect()),
+					label + " ticket clears other choices and selector " + str(i))
+		_check(not rect.intersects(panel.bottom_stitches.get_global_rect())
+			and not rect.intersects(panel.description_label.get_global_rect()),
+			label + " ticket clears description and bottom stitches " + str(i))
 
 
 func _effects() -> Array:
@@ -172,9 +230,9 @@ func _moth_outcomes() -> void:
 	_check(panel.title_label.text == "Moth Infestation", "Moth record selected by stable authored ID")
 	var moth_panel_id: int = _check_event_backdrop(panel, "second Event")
 	var buttons := panel.get_choice_buttons()
-	_check(buttons.size() == 3 and buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)"
-		and buttons[1].text == "Fumigate the deck (spend 1 scrap)"
-		and buttons[2].text == "Escape before the moths spread", "three authored Moth choices")
+	_check(buttons.size() == 3 and buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)\nScraps +2"
+		and buttons[1].text == "Fumigate the deck (spend 1 scrap)\nScraps -1"
+		and buttons[2].text == "Escape before the moths spread\nNo change to gold or scraps.", "three authored Moth choices")
 	_check(app._moth_picker.has_focus(), "the index selector owns initial keyboard focus")
 	var picker: ItemList = app._moth_picker
 	var ordinary: Array = app._moth_ordinary_indices()
@@ -448,7 +506,7 @@ func _run() -> void:
 				_check(panel.title_label.text == "The Quiet Spool", "record selected by stable authored ID")
 				var event_panel_id: int = _check_event_backdrop(panel, "first Event")
 				var buttons := panel.get_choice_buttons()
-				_check(buttons.size() == 2 and buttons[0].text == "Watch the thread unwind" and buttons[1].text == "Leave the spool alone", "authored Watch and Ignore controls")
+				_check(buttons.size() == 2 and buttons[0].text == "Watch the thread unwind\nScraps +1" and buttons[1].text == "Leave the spool alone\nNo change to gold or scraps.", "authored Watch and Ignore controls")
 				_check(buttons[0].tooltip_text == "Watch the thread unwind\nGold +0   |   Scraps +1\nAuthored outcome; your run's wallet is not checked here."
 					and buttons[1].tooltip_text == "Leave the spool alone\nGold +0   |   Scraps +0\nNo change to gold or scraps.",
 					"live routed tickets explain their exact authored outcome on hover")
@@ -518,9 +576,9 @@ func _run() -> void:
 					var moth_deck: Array = app.run_deck.duplicate()
 					var moth_scraps: int = app.run_scraps
 					var moth_buttons := moth_panel.get_choice_buttons()
-					_check(moth_buttons.size() == 3 and moth_buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)"
-						and moth_buttons[1].text == "Fumigate the deck (spend 1 scrap)"
-						and moth_buttons[2].text == "Escape before the moths spread", "three authored Moth controls")
+					_check(moth_buttons.size() == 3 and moth_buttons[0].text == "Feed one ordinary card to the moths (+2 scraps)\nScraps +2"
+						and moth_buttons[1].text == "Fumigate the deck (spend 1 scrap)\nScraps -1"
+						and moth_buttons[2].text == "Escape before the moths spread\nNo change to gold or scraps.", "three authored Moth controls")
 					_check(moth_buttons[0].tooltip_text == "Feed one ordinary card to the moths (+2 scraps)\nGold +0   |   Scraps +2\nAuthored outcome; your run's wallet is not checked here."
 						and moth_buttons[1].tooltip_text == "Fumigate the deck (spend 1 scrap)\nGold +0   |   Scraps -1\nAuthored outcome; your run's wallet is not checked here."
 						and moth_buttons[2].tooltip_text == "Escape before the moths spread\nGold +0   |   Scraps +0\nNo change to gold or scraps.",

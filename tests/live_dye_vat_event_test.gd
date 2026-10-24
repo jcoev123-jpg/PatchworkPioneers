@@ -199,9 +199,9 @@ func _dye_immerse_outcomes() -> void:
 	var buttons := panel.get_choice_buttons()
 	var authored := _authored_dye_choices()
 	_check(buttons.size() == 3 and authored.size() == 3
-		and buttons[0].text == String(authored[0].get("text", ""))
-		and buttons[1].text == String(authored[1].get("text", ""))
-		and buttons[2].text == String(authored[2].get("text", "")),
+		and buttons[0].text == String(authored[0].get("text", "")) + "\nScraps -3"
+		and buttons[1].text == String(authored[1].get("text", "")) + "\nScraps +1"
+		and buttons[2].text == String(authored[2].get("text", "")) + "\nNo change to gold or scraps.",
 		"the mounted screen shows the three authored Dye Vat choices")
 	var picker: ItemList = app._dye_vat_picker
 	var options: Array = app._dye_vat_outcome.get_immerse_options()

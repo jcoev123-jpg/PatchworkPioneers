@@ -146,9 +146,23 @@ func _authored_int(value: Variant) -> Variant:
 	return null
 
 
-## Independent legacy hover oracle: the authored action, its exact signed
-## deltas, the zero-change wording for an exit, or the honest placeholder. A
-## legacy offering has no run wallet, so no affordability line is ever expected.
+## Independent visible ticket oracle, using authored data rather than the
+## panel formatter or its preview rows.
+func _expected_ticket(choice: Dictionary) -> String:
+	var amount := _authored_amounts(choice)
+	var impact := UNAVAILABLE_HINT
+	if not amount.is_empty():
+		var effects: Array[String] = []
+		if amount["gold"] != 0:
+			effects.append("Gold %+d" % amount["gold"])
+		if amount["scraps"] != 0:
+			effects.append("Scraps %+d" % amount["scraps"])
+		impact = ZERO_HINT if effects.is_empty() else "   |   ".join(effects)
+	return String(choice["text"]) + "\n" + impact
+
+
+## Independent legacy hover oracle retains the full signed resource row and
+## explanation, even when the visible ticket omits zero deltas.
 func _expected_authored_tooltip(choice: Dictionary) -> String:
 	var amount := _authored_amounts(choice)
 	if amount.is_empty():
@@ -683,7 +697,7 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 	for i in range(mini(buttons.size(), choices.size())):
 		var button: Button = buttons[i]
 		_check(panel.choices_container.get_child(i) == button, label + " authentic button " + str(i))
-		_check(button.text == choices[i]["text"], label + " exact authored choice text " + str(i))
+		_check(button.text == _expected_ticket(choices[i]), label + " exact authored choice text " + str(i))
 		_check(button.name == "Choice_%d" % i, label + " stable choice node identity " + str(i))
 		_check(button.focus_mode == Control.FOCUS_ALL, label + " keyboard reachable " + str(i))
 		_check(not button.disabled and button.is_visible_in_tree(), label + " enabled and visible " + str(i))
@@ -846,7 +860,7 @@ func _test_frayed_new_button() -> void:
 		return
 	# The new button is the third option.
 	var new_button: Button = buttons[2]
-	_check(new_button.text == "Sell the stitched arrowwork (spend 2 scraps; gain 26 gold)",
+	_check(new_button.text == "Sell the stitched arrowwork (spend 2 scraps; gain 26 gold)\nGold +26   |   Scraps -2",
 		"new sell_arrowwork button text readable")
 	_check(new_button.focus_mode == Control.FOCUS_ALL, "new button keyboard reachable")
 	_check(not new_button.disabled and new_button.is_visible_in_tree(),
@@ -919,14 +933,15 @@ func _test_authored_tooltips() -> void:
 			panel.close_event()
 			await _frames()
 			continue
+		_check_numbered_cues(record, "authored impact " + id)
 		var by_id: Dictionary = {}
 		for i in range(buttons.size()):
 			var choice_id := String(choices[i]["id"])
 			by_id[choice_id] = buttons[i]
 			_check(buttons[i].tooltip_text == _expected_authored_tooltip(choices[i]),
 				"legacy hover states the exact authored action and outcome " + id + "/" + choice_id)
-			_check(buttons[i].text == choices[i]["text"],
-				"hover leaves the authored label untouched " + id + "/" + choice_id)
+			_check(buttons[i].text == _expected_ticket(choices[i]),
+				"ticket shows the authored action and parsed impact " + id + "/" + choice_id)
 			_check(buttons[i].focus_mode == Control.FOCUS_ALL and not buttons[i].disabled,
 				"hover keeps every legacy choice reachable " + id + "/" + choice_id)
 		# Moth feeding removes a chosen card; the Dye Vat rewrites a pool card.
@@ -1003,6 +1018,12 @@ func _test_malformed_tooltips() -> void:
 			panel.close_event()
 			await _frames()
 			continue
+		for index in range(buttons.size()):
+			_check(buttons[index].text == _expected_ticket(record["choices"][index]),
+				"malformed ticket shows only known impact #" + str(i) + "/" + str(index))
+		_check(not buttons[0].text.contains("Gold ") and not buttons[0].text.contains("Scraps ")
+			and not buttons[0].text.contains("After:") and not buttons[0].text.contains("Need "),
+			"malformed ticket invents no amounts or affordability #" + str(i))
 		_check(buttons[0].tooltip_text == String(record["choices"][0]["text"]) + "\n" + UNAVAILABLE_HINT,
 			"broken legacy outcome keeps its action and the honest placeholder #" + str(i))
 		_check(not buttons[0].tooltip_text.contains("\nGold ")
