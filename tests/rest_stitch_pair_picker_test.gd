@@ -823,6 +823,7 @@ func _run() -> void:
 	await _test_readable_stitch_forecast()
 	await _test_submitted_single_intent_latch()
 	await _test_keyboard_focus_route()
+	await _test_owner_position_pips()
 	_finish()
 
 
@@ -1604,6 +1605,20 @@ func _test_mixed_pool_picker() -> void:
 	_bounds(ui.first_half_label)
 	_bounds(ui.second_half_label)
 
+	# AC2: Verify each pool and starter tile carries its resolved FROM array and FROM tooltip
+	for tile in ui.first_tiles:
+		var tile_id: String = tile.get_meta("id")
+		var authored_def := RunRestStitchCards.resolve_card_definition(tile_id)
+		var exp_from: Array = authored_def.get("from_positions", [])
+		_check(tile.get_meta("from_positions") == exp_from,
+			"mixed pool tile %s has exact resolved from_positions" % tile_id)
+		_check(tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(exp_from),
+			"mixed pool tile %s has matching FROM tooltip" % tile_id)
+		for pos in [1, 2, 3]:
+			var pip := tile.find_child("From%d" % pos, true, false) as Control
+			_check(pip != null and bool(pip.get_meta("active", false)) == exp_from.has(pos),
+				"mixed pool tile %s pip %d matches resolved definition" % [tile_id, pos])
+
 	# 1. Warden Pinning Jab (4 damage; Pinned) and Pinning Jab+ (6 damage; Pinned)
 	var jab_row := _row_in_first(ui, 5)
 	_check(jab_row >= 0, "Pinning Jab selectable in first selector")
@@ -2186,3 +2201,239 @@ func _test_keyboard_focus_route() -> void:
 	_check(poor.get_snapshot()["remaining_scraps"] == 2 and not poor.is_consumed(),
 		"unavailable picker spends nothing")
 	host.free()
+
+
+## AC1/AC2/AC3: Both mounted selection stages show numbered 1/2/3 FROM pips lit
+## only for canonical from_positions, readable inactive numerals, concise FROM tooltips
+## without enemy TO, accurate handling for upgraded starter and pool cards, safe
+## unlit fallback for synthetic/unknown IDs, and complete ledger/RNG nonmutation.
+func _test_owner_position_pips() -> void:
+	var deck: Array[String] = [
+		"warden_strike",             # 0: starter duplicate #1 (FROM [1, 2])
+		"warden_strike",             # 1: starter duplicate #2 (FROM [1, 2])
+		"seamstress_prick",          # 2: starter duplicate #1 (FROM [1, 2, 3])
+		"seamstress_prick",          # 3: starter duplicate #2 (FROM [1, 2, 3])
+		"tinker_pop_shot",           # 4: starter duplicate #1 (FROM [2, 3])
+		"tinker_pop_shot",           # 5: starter duplicate #2 (FROM [2, 3])
+		"warden_strike_plus",        # 6: upgraded starter (FROM [1, 2])
+		"seamstress_prick_plus",     # 7: upgraded starter (FROM [1, 2, 3])
+		"tinker_pop_shot_plus",      # 8: upgraded starter (FROM [2, 3])
+		"warden_pinning_jab",        # 9: pool base (FROM [1, 2])
+		"seamstress_snag",           # 10: pool base (FROM [2, 3])
+		"tinker_rivet_shot",         # 11: pool base (FROM [2, 3])
+		"seamstress_field_mend",     # 12: pool base with party_all (FROM [2, 3])
+	]
+	var ledger := RunRestStitchCards.new(deck, {}, 3)
+	_check(ledger.is_valid() and not ledger.is_consumed(),
+		"pip test ledger with starters, plus and pool cards is valid")
+	var source := ledger.get_snapshot()
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 654321
+	var local_before := local_rng.state
+	seed(654321)
+	var global_before := randi()
+	seed(654321)
+
+	var panel := LiveRestStitchPairPicker.new()
+	panel.name = "PipsRestStitchPairPicker"
+	panel.position = Vector2(330, 180)
+	panel.size = Vector2(710, 500)
+	root.add_child(panel)
+	await _frames()
+	panel.bind(ledger, source)
+	await _frames()
+
+	# --- STAGE 1 (First cards) ---
+	_check(panel.first_tiles.size() == deck.size(), "every original in deck has a first tile")
+	for i in range(deck.size()):
+		var tile := panel.first_tile_for_index(i)
+		_check(tile != null and tile.is_visible_in_tree(), "first tile %d is mounted and visible" % i)
+		if tile == null:
+			continue
+		var id: String = deck[i]
+		var def := RunRestStitchCards.resolve_card_definition(id)
+		_check(not def.is_empty(), "deck card %s resolves canonical definition" % id)
+		var canonical_from: Array = def.get("from_positions", [])
+		_check(tile.get_meta("from_positions") == canonical_from,
+			"first tile %d preserves canonical from_positions for %s" % [i, id])
+		_check(tile.get_meta("id") == id and tile.get_meta("index") == i
+			and tile.get_meta("owner") == def["owner"]
+			and tile.get_meta("name") == def["display_name"]
+			and tile.get_meta("cost") == def["cost"],
+			"first tile %d preserves all original metadata for %s" % [i, id])
+
+		# Tooltip check: confirms owner FROM, never enemy TO
+		_check(tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(canonical_from),
+			"first tile %d tooltip matches canonical from tooltip for %s" % [i, id])
+		_check(tile.tooltip_text.begins_with("Owner FROM:") and not tile.tooltip_text.contains("TO:"),
+			"first tile %d tooltip quotes owner FROM and never enemy TO: %s" % [i, id])
+
+		# Pip checks: exactly 3 named pips From1, From2, From3
+		var pips := LiveRestStitchPairPicker.tile_from_pips(tile)
+		_check(pips.size() == 3, "first tile %d has exactly 3 FROM pips: %s" % [i, id])
+		var state := LiveRestStitchPairPicker.tile_pip_state(tile)
+		for pos in [1, 2, 3]:
+			var pip := tile.find_child("From%d" % pos, true, false) as Control
+			_check(pip != null and pip.is_inside_tree(), "first tile %d mounts From%d pip" % [i, pos])
+			if pip == null:
+				continue
+			var should_be_active: bool = canonical_from.has(pos)
+			_check(LiveRestStitchPairPicker.is_pip_lit(pip) == should_be_active,
+				"first tile %s pip %d lit == %s" % [id, pos, str(should_be_active)])
+			_check(bool(pip.get_meta("active", false)) == should_be_active,
+				"first tile %s pip %d active meta matches" % [id, pos])
+			_check(state["active_pips"].has(pos) == should_be_active,
+				"tile_pip_state for %s reports active status for %d" % [id, pos])
+
+			# Numeral check
+			var num := pip.find_child("PipNum", true, false) as Label
+			_check(num != null and num.text == str(pos),
+				"first tile %s pip %d displays readable numeral '%d'" % [id, pos, pos])
+			_check(num != null and num.get_theme_font_size("font_size") >= 10,
+				"first tile %s pip %d numeral has readable font size" % [id, pos])
+
+			# Visual style check
+			var style := pip.get_theme_stylebox("panel") as StyleBoxFlat
+			_check(style != null, "pip %d has flat stylebox" % pos)
+			if style != null:
+				if should_be_active:
+					_check(style.bg_color == LiveRestStitchPairPicker.OWNER_COLORS[def["owner"]],
+						"active pip %d wears owner color %s" % [pos, def["owner"]])
+				else:
+					_check(style.bg_color != LiveRestStitchPairPicker.OWNER_COLORS[def["owner"]],
+						"inactive pip %d does not wear owner color" % pos)
+
+	# Prove specific starter mappings in stage 1:
+	# Strike: lights 1+2, unlit 3
+	var strike_state := LiveRestStitchPairPicker.tile_pip_state(panel.first_tile_for_index(0))
+	_check(strike_state["active_pips"] == [1, 2] and strike_state["inactive_pips"] == [3],
+		"Warden Strike lights 1+2 and leaves 3 inactive in stage 1")
+	# Duplicate Strike #2 shares identical mapping at separate index:
+	var strike2_state := LiveRestStitchPairPicker.tile_pip_state(panel.first_tile_for_index(1))
+	_check(strike2_state["active_pips"] == [1, 2] and strike2_state["inactive_pips"] == [3],
+		"Warden Strike duplicate #2 lights 1+2 in stage 1")
+	# Prick: lights 1+2+3
+	var prick_state := LiveRestStitchPairPicker.tile_pip_state(panel.first_tile_for_index(2))
+	_check(prick_state["active_pips"] == [1, 2, 3] and prick_state["inactive_pips"].is_empty(),
+		"Seamstress Prick lights 1+2+3 in stage 1")
+	# Pop Shot: lights 2+3, unlit 1
+	var pop_state := LiveRestStitchPairPicker.tile_pip_state(panel.first_tile_for_index(4))
+	_check(pop_state["active_pips"] == [2, 3] and pop_state["inactive_pips"] == [1],
+		"Tinker Pop Shot lights 2+3 and leaves 1 inactive in stage 1")
+
+	# --- STAGE 2 (Second cards from different heroes) ---
+	# Select Warden Strike (index 0) to transition to stage 2:
+	await _click(panel.first_tile_for_index(0))
+	await _frames()
+	_check(panel.second_tile_scroll.visible and not panel.first_tile_scroll.visible,
+		"stage 2 is visible after first selection")
+	var second_options := panel._model.second_options(0)
+	_check(panel.second_tiles.size() == second_options.size(),
+		"second tiles populated with cross-owner originals")
+
+	for s_opt in second_options:
+		var s_idx: int = s_opt["index"]
+		var s_tile := panel.second_tile_for_index(s_idx)
+		_check(s_tile != null and s_tile.is_visible_in_tree(),
+			"second tile for index %d is mounted and visible" % s_idx)
+		if s_tile == null:
+			continue
+		var s_id: String = s_opt["id"]
+		var s_def := RunRestStitchCards.resolve_card_definition(s_id)
+		var canonical_from: Array = s_def.get("from_positions", [])
+
+		_check(s_tile.get_meta("from_positions") == canonical_from,
+			"second tile %d preserves canonical from_positions for %s" % [s_idx, s_id])
+		_check(s_tile.tooltip_text == LiveRestStitchPairPicker.from_positions_tooltip(canonical_from),
+			"second tile %d tooltip matches canonical from tooltip for %s" % [s_idx, s_id])
+		_check(s_tile.tooltip_text.begins_with("Owner FROM:") and not s_tile.tooltip_text.contains("TO:"),
+			"second tile %d tooltip quotes owner FROM and never enemy TO: %s" % [s_idx, s_id])
+
+		var s_state := LiveRestStitchPairPicker.tile_pip_state(s_tile)
+		for pos in [1, 2, 3]:
+			var pip := s_tile.find_child("From%d" % pos, true, false) as Control
+			_check(pip != null, "second tile mounts From%d pip for %s" % [pos, s_id])
+			if pip == null:
+				continue
+			var should_be_active: bool = canonical_from.has(pos)
+			_check(LiveRestStitchPairPicker.is_pip_lit(pip) == should_be_active,
+				"second tile %s pip %d lit == %s" % [s_id, pos, str(should_be_active)])
+			var num := pip.find_child("PipNum", true, false) as Label
+			_check(num != null and num.text == str(pos),
+				"second tile %s pip %d displays readable numeral '%d'" % [s_id, pos, pos])
+
+	# Prove specific starter mappings in stage 2 (under Warden Strike):
+	# Seamstress Prick: lights 1+2+3
+	var s_prick := panel.second_tile_for_index(2)
+	var s_prick_state := LiveRestStitchPairPicker.tile_pip_state(s_prick)
+	_check(s_prick_state["active_pips"] == [1, 2, 3] and s_prick_state["inactive_pips"].is_empty(),
+		"Seamstress Prick lights 1+2+3 in stage 2")
+	# Tinker Pop Shot: lights 2+3, unlit 1
+	var s_pop := panel.second_tile_for_index(4)
+	var s_pop_state := LiveRestStitchPairPicker.tile_pip_state(s_pop)
+	_check(s_pop_state["active_pips"] == [2, 3] and s_pop_state["inactive_pips"] == [1],
+		"Tinker Pop Shot lights 2+3 and leaves 1 inactive in stage 2")
+
+	# Return to first stage and select Seamstress Prick to inspect Warden Strike in stage 2:
+	panel._return_to_first_choice()
+	await _frames()
+	await _click(panel.first_tile_for_index(2)) # Prick
+	await _frames()
+	var s_strike := panel.second_tile_for_index(0) # Strike
+	var s_strike_state := LiveRestStitchPairPicker.tile_pip_state(s_strike)
+	_check(s_strike_state["active_pips"] == [1, 2] and s_strike_state["inactive_pips"] == [3],
+		"Warden Strike lights 1+2 and leaves 3 inactive in stage 2 under Prick")
+
+	# --- AC2: Missing-Art / Unknown-ID Presentation Fixture ---
+	# Detached entry with synthetic unknown ID retaining friendly authored name:
+	var missing_art_entry := {
+		"index": 99,
+		"id": "__unknown_synthetic_card_id__",
+		"owner": "warden",
+		"name": "Synthesized Card",
+		"cost": 1,
+	}
+	for stage_is_first in [true, false]:
+		var fallback_tile := panel._create_card_tile(missing_art_entry, stage_is_first)
+		panel.add_child(fallback_tile)
+		# Friendly name retained:
+		var name_label := fallback_tile.get_node_or_null("CardName") as Label
+		_check(name_label != null and name_label.text == "Synthesized Card",
+			"fallback tile retains friendly authored name on face")
+		var fallback_label := fallback_tile.find_child("CardNameFallback", true, false) as Label
+		_check(fallback_label != null and fallback_label.text == "Synthesized Card",
+			"fallback tile displays friendly name fallback in art box")
+		_check(fallback_tile.get_meta("name") == "Synthesized Card"
+			and fallback_tile.get_meta("cost") == 1
+			and fallback_tile.get_meta("owner") == "warden",
+			"fallback tile retains authored metadata")
+		# Canonical FROM array is empty:
+		_check(fallback_tile.get_meta("from_positions") == [],
+			"fallback tile has empty canonical from_positions")
+		_check(fallback_tile.tooltip_text == "Owner FROM: none",
+			"fallback tile tooltip states no positions without claiming legality")
+		# No falsely lit positions:
+		var fb_state := LiveRestStitchPairPicker.tile_pip_state(fallback_tile)
+		_check(fb_state["active_pips"].is_empty(),
+			"missing canonical definition yields no falsely lit positions")
+		_check(fb_state["inactive_pips"] == [1, 2, 3],
+			"all 3 positions are inactive on unknown ID")
+		for pos in [1, 2, 3]:
+			var pip := fallback_tile.find_child("From%d" % pos, true, false) as Control
+			_check(pip != null and not LiveRestStitchPairPicker.is_pip_lit(pip),
+				"fallback pip %d is unlit" % pos)
+			var num := pip.find_child("PipNum", true, false) as Label
+			_check(num != null and num.text == str(pos),
+				"fallback pip %d displays readable inactive numeral" % pos)
+		fallback_tile.free()
+
+	# --- AC3: Invariance & Nonmutation ---
+	_check(ledger.get_snapshot() == source and not ledger.is_consumed(),
+		"drawing position cues leaves Rest ledger unconsumed and snapshot untouched")
+	_check(ledger.get_snapshot()["remaining_scraps"] == 3,
+		"wallet scraps untouched at 3")
+	_check(local_rng.state == local_before and randi() == global_before,
+		"pip inspection and rendering draw no local or global RNG")
+
+	panel.free()
