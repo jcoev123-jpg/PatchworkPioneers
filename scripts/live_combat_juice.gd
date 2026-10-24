@@ -142,11 +142,13 @@ func _ready() -> void:
 
 
 ## The shipped transparent vfx image, admitted once; missing art keeps the puff silent
-## instead of drawing a substitute shape.
+## instead of drawing a substitute shape. Ask ResourceLoader only: an exported build packs
+## the remapped imported texture and may not keep the original source PNG readable, so a
+## FileAccess check on the source path would reject art that really ships.
 static func _load_puff_texture(path: String) -> Texture2D:
-	if not FileAccess.file_exists(path) or not ResourceLoader.exists(path, "Texture2D"):
+	if not ResourceLoader.exists(path, "Texture2D"):
 		return null
-	return load(path) as Texture2D
+	return ResourceLoader.load(path) as Texture2D
 
 
 func _process(delta: float) -> void:
