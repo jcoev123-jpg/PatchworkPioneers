@@ -63,11 +63,18 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 		else:
 			_check(art != null and art.token_texture == null,
 				"real app keeps drawn Treasure or unavailable-art fallback " + id)
+		var hover := "Floor %02d · %s · Branch %d" % [
+			int(actual.floor), String(actual.type), int(actual.position) + 1]
+		_check(child.tooltip_text == hover and not child.tooltip_text.contains(id),
+			"real opening patch hover names its real floor, kind and branch " + id)
 		var action := child.get_node_or_null("Action") as Button
 		if atlas._map.get_legal_choices().has(id):
 			legal_buttons += 1
+			var shortcut: int = atlas._rendered_shortcuts.find(id) + 1
 			_check(action != null and action.is_visible_in_tree()
-				and action.tooltip_text.contains(id),
+				and shortcut >= 1 and shortcut <= 4
+				and action.tooltip_text == "Choose " + hover + " (key %d)" % shortcut
+				and not action.tooltip_text.contains(id),
 				"real opening has exact canonical legal action " + id)
 		else:
 			_check(action == null, "future off-floor nodes are inert " + id)

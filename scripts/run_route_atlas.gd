@@ -16,6 +16,10 @@ extends Control
 ## first column. Each round patch shows its original aspect-preserved token art
 ## above its high-contrast caption; Treasure/missing art draws a stitched emblem.
 ##
+## Every patch hover names its authored floor, kind and one-based branch row, and a
+## legal patch's Action adds the real 1-4 shortcut it answers to. Raw f##_n# IDs stay
+## in metadata and in the route protocol; they never reach player-facing hover text.
+##
 ## Presentation only: a stitch that becomes legal because the party just visited its source
 ## sews into view with a transparent-to-coloured gradient mask on the existing full path.
 ## A Line2D gradient REPLACES default_color while installed, so the mask repeats the stitch's
@@ -842,6 +846,17 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 		_begin_reveal(line)
 
 
+## Player-facing sewn route wording for one REAL RunMap node record: its authored
+## floor, kind and one-based branch row. The f##_n# ID is never read to guess either
+## value, so a renamed ID could not change the words. A missing record keeps the
+## authored kind alone, which is what a standalone marker without a bound map has.
+static func node_hover_text(node: Dictionary, fallback_kind: String = "") -> String:
+	if node.is_empty() or not (node.has("floor") and node.has("position")):
+		return fallback_kind
+	var kind := str(node.get("type", fallback_kind))
+	return "Floor %02d · %s · Branch %d" % [int(node["floor"]), kind, int(node["position"]) + 1]
+
+
 func _add_marker(id: String, kind: String, at: Vector2,
 		chosen: Array[String], legal: Array[String], shortcut: int) -> void:
 	var marker := PanelContainer.new()
@@ -871,7 +886,9 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	marker.position = at
 	marker.custom_minimum_size = NODE_SIZE
 	marker.size = NODE_SIZE
-	marker.tooltip_text = kind + " · " + id
+	var record: Dictionary = _map.get_node(id) if _map != null else {}
+	var hover := node_hover_text(record, kind)
+	marker.tooltip_text = hover
 	_inert(marker)
 	var art := NodeToken.new()
 	art.name = "Art"
@@ -906,7 +923,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 		action.mouse_filter = Control.MOUSE_FILTER_STOP
 		action.position = Vector2(2, 2)
 		action.size = NODE_SIZE - Vector2(4, 4)
-		action.tooltip_text = "Request " + kind + " " + id
+		action.tooltip_text = "Choose %s (key %d)" % [hover, shortcut]
 		action.set_meta("route_id", id)
 		action.pressed.connect(_request_node.bind(id, _map, _revision))
 		marker.add_child(action)
