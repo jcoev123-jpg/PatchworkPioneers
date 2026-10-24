@@ -467,9 +467,9 @@ func _check_mounted_rail(screen: String) -> void:
 		_check(app.shop_buy_button in actions and app.shop_remove_button in actions
 			and app.shop_back_button in actions,
 			"Shop Buy, Remove and Return remain the rail's own Button instances")
-		_check(app.shop_buy_button.text == "Buy selected card"
-			and app.shop_remove_button.text == "Remove selected card",
-			"Shop action labels are unchanged")
+		_check(app.shop_buy_button.text == "Buy"
+			and app.shop_remove_button.text == "Remove",
+			"Shop action labels are concise")
 		for button in [app.shop_buy_button, app.shop_remove_button, app.shop_back_button]:
 			_check(button.pressed.get_connections().size() == 1,
 				"Shop action keeps exactly its one canonical transaction callback")
@@ -486,11 +486,11 @@ func _check_mounted_rail(screen: String) -> void:
 			and app.rest_stitch_button in actions
 			and app.rest_stitch_guided_button in actions and app.rest_back_button in actions,
 			"Rest Heal, Upgrade, Stitch and Return remain the rail's own Button instances")
-		_check(app.rest_heal_button.text.begins_with("Heal party")
-			and app.rest_upgrade_button.text.begins_with("Upgrade selected card")
-			and app.rest_stitch_button.text.begins_with("Stitch selected cards")
-			and app.rest_stitch_guided_button.text.begins_with("Guided Stitch"),
-			"Rest action labels are unchanged")
+		_check(app.rest_heal_button.text == "Heal"
+			and app.rest_upgrade_button.text == "Upgrade"
+			and app.rest_stitch_button.text == "Stitch (3 scraps)"
+			and app.rest_stitch_guided_button.text == "Guided Stitch (3 scraps)",
+			"Rest action labels are concise with exact scrap costs")
 		for button in [app.rest_heal_button, app.rest_upgrade_button,
 				app.rest_stitch_button, app.rest_stitch_guided_button,
 				app.rest_back_button]:

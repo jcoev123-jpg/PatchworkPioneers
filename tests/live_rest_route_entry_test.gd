@@ -4,6 +4,56 @@ extends "res://tests/live_legal_starter_fight_test.gd"
 const VISIT_ART := preload("res://scripts/live_enemy_roster.gd")
 
 
+func _check_visit_actions(view: Control, actions: Array, captions: Array) -> void:
+	_check(actions.size() == captions.size() and not actions.is_empty(),
+		"live action audit has canonical buttons and expected captions")
+	for index in range(actions.size()):
+		var button: Button = actions[index]
+		_check(is_instance_valid(button) and button.get_parent() == view
+			and button.is_visible_in_tree() and button.text == captions[index],
+			"canonical mounted action has exact caption: " + captions[index])
+		_check(button.theme_type_variation == &"PatchHeadingButton"
+			and button.get_theme_font_size("font_size") == 20
+			and button.pressed.get_connections().size() == 1,
+			"concise action keeps sewn heading skin, 20px font and one callback")
+
+
+func _check_rest_actions() -> void:
+	_check_visit_actions(app.rest_view, [app.rest_heal_button, app.rest_upgrade_button,
+		app.rest_stitch_button, app.rest_stitch_guided_button, app.rest_patch_button,
+		app.rest_continue_button, app.rest_back_button],
+		["Heal", "Upgrade", "Stitch (3 scraps)", "Guided Stitch (3 scraps)",
+		"Re-sew (1 scrap)", "Continue", "Return"])
+	for button in [app.rest_heal_button, app.rest_upgrade_button,
+			app.rest_stitch_button, app.rest_stitch_guided_button]:
+		_check(button.tooltip_text.contains("Choose one: Heal, Upgrade or Stitch."),
+			"Rest action explains the shared one-choice rule")
+	var gallery = app.get_node("LiveVisitCardTiles")
+	_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Rest"
+		and app.rest_upgrade_cards.item_count > 0
+		and gallery.upgrade_tiles().size() == app.rest_upgrade_cards.item_count,
+		"real Rest retains every canonical upgrade tile")
+	var selector: OptionButton = app.rest_upgrade_cards
+	_check(selector.is_visible_in_tree() and not selector.disabled
+		and selector.modulate.a == 0.0 and selector.focus_mode == Control.FOCUS_NONE
+		and selector.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"Rest canonical upgrade selector stays masked and validated")
+	_check(app.rest_stitch.is_valid() and not app.rest_heal_button.disabled
+		and not app.rest_upgrade_button.disabled and app.rest_continue_button.disabled,
+		"fresh Rest offers Heal and Upgrade and requires a choice before Continue")
+	_check(app.rest_stitch_button.disabled == (app.run_scraps < 3)
+		and app.rest_stitch_guided_button.disabled == (app.run_scraps < 3),
+		"direct and guided Stitch availability follows the three-scrap wallet")
+	var before := _rest_preview_state()
+	var tiles: Array = gallery.upgrade_tiles()
+	if not tiles.is_empty():
+		tiles.back().grab_focus()
+		await _key(KEY_TAB)
+		_check(app.rest_upgrade_button.has_focus(),
+			"Tab reaches canonical Upgrade from the last real upgrade tile")
+	_check(_rest_preview_state() == before, "action and focus inspection spends nothing")
+
+
 ## AC2: the physical Rest visit displays its committed camp scene behind the same usable
 ## controls, with a cover crop and no pointer or keyboard capture.
 func _check_rest_backdrop() -> int:
@@ -356,6 +406,9 @@ func _run() -> void:
 			_check(app.title_view.visible and app.run_map == null and app.run_heroes.is_empty(), "route Back and stale callbacks clear run")
 			continue
 		var rest_id: String = rest.get_meta("route_id")
+		# Two real visits with insufficient scraps, then a funded replay visit.
+		if session == 3:
+			app.run_scraps = 3
 		if session == 0:
 			await _click(rest)
 		else:
@@ -369,6 +422,7 @@ func _run() -> void:
 		if app.rest_view == null:
 			break
 		var bed_id: int = _check_rest_backdrop()
+		await _check_rest_actions()
 		var heading := app.rest_view.get_node_or_null("RestTitle") as Label
 		_check(heading != null and heading.text == "Rest camp - Floor %d" % app.run_map.get_node(rest_id).floor
 			and not heading.text.contains(rest_id) and heading.is_visible_in_tree()
@@ -428,6 +482,9 @@ func _run() -> void:
 			await _key(KEY_ENTER)
 		_check(visit.is_consumed() and app.rest_heal_button.disabled and app.run_heroes == expected_heal.heroes,
 			"visible Heal commits service exact result once")
+		_check(app.rest_upgrade_button.disabled and app.rest_stitch_button.disabled
+			and app.rest_stitch_guided_button.disabled and not app.rest_continue_button.disabled,
+			"consumed Rest disables competing choices and enables Continue")
 		_check_rest_hp_only()
 		app._refresh_rest_hp()
 		_check_rest_hp_only()

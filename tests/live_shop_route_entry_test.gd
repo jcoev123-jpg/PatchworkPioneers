@@ -1006,6 +1006,10 @@ func _run() -> void:
 		if app.shop_view == null or app.shop_visit == null:
 			break
 		var bed_id: int = _check_shop_backdrop()
+		_check_visit_actions(app.shop_view, [app.shop_buy_button, app.shop_remove_button,
+			app.shop_continue_button, app.shop_back_button], ["Buy", "Remove", "Continue", "Return"])
+		_check(not app.shop_continue_button.disabled and not app.shop_back_button.disabled,
+			"concise Shop navigation stays available")
 		var heading := app.shop_view.get_node_or_null("ShopTitle") as Label
 		_check(heading != null and heading.is_visible_in_tree()
 			and heading.text == "Shop - Floor %d" % app.run_map.get_node(id).floor
@@ -1017,6 +1021,8 @@ func _run() -> void:
 		_check(app.run_map.get_route() == [fixture.fight, id] and state.visited_ids == [id]
 			and state.shop_node_id == id and state.removal_available, "Shop records exact ID and route once")
 		var price: int = 75 + 25 * app.run_removal_count
+		_check(app.shop_remove_button.disabled == not state.removal_available,
+			"concise Remove action follows the authoritative removal availability")
 		_check(app.shop_label.text == "Gold: %d | Removal: %d gold" % [app.session_gold, price], "visible gold and authoritative escalating quote")
 		_check(app.shop_cards.item_count == app.run_deck.size(), "compact OptionButton includes every owned copy")
 		for index in range(app.run_deck.size()):
@@ -1042,6 +1048,8 @@ func _run() -> void:
 		_check_shop_gallery_labels(gallery)
 		var quoted_prices: Array = app.shop_purchases.get_stock().cards.map(
 			func(offer): return int(offer.price))
+		_check(app.shop_buy_button.disabled == (app.session_gold < quoted_prices[app.shop_offers.selected]),
+			"concise Buy action follows the canonical selected card price")
 		if session == 1:
 			_check(app.session_gold >= int(quoted_prices.max()),
 				"funded Shop visit can afford every quoted listing")

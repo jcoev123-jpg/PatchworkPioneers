@@ -260,14 +260,13 @@ func _collect_controls(view: Control) -> void:
 		if child is OptionButton:
 			previous_option = child
 		elif child is Button:
-			var text: String = (child as Button).text
-			if text.begins_with("Buy selected card"):
+			if child == _app.get("shop_buy_button"):
 				_buy = child
 				_selector_offer = previous_option
-			elif text.begins_with("Remove selected card"):
+			elif child == _app.get("shop_remove_button"):
 				_remove = child
 				_selector_remove = previous_option
-			elif text.begins_with("Upgrade selected card"):
+			elif child == _app.get("rest_upgrade_button"):
 				_upgrade = child
 				_selector_upgrade = previous_option
 
