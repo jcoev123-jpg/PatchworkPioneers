@@ -3766,6 +3766,7 @@ func _current_shop_ledger(status: String = "") -> bool:
 	return ledger.valid and ledger.shop_node_id == run_map.get_current_node_id() \
 		and ledger.deck == run_deck and ledger.gold == session_gold \
 		and ledger.trinkets == run_trinkets and ledger.prior_removals == run_removal_count \
+		and ledger.get("descriptors") == run_stitch_descriptors and ledger.get("next_stitch_id") == run_next_stitch_id \
 		and (ledger.status == status if not status.is_empty() else ledger.status in ["available", "used"])
 
 
@@ -3998,7 +3999,8 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 		or button.get_meta("route_id") != id or not run_map.get_legal_choices().has(id) \
 		or run_map.get_node(id).get("type") != "Shop":
 		return false
-	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count, run_trinkets)
+	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count, run_trinkets,
+		run_stitch_descriptors, run_next_stitch_id)
 	var offers: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
 	if not (offers is Dictionary) or not (offers.get("cards") is Array) \
 		or not (offers.get("trinkets") is Array) or run_rng == null:
@@ -4093,6 +4095,7 @@ func _select_shop_offer(_index: int) -> void:
 
 func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
 	if visit == null or visit != shop_visit or purchases == null or purchases != shop_purchases \
+		or not _current_shop_ledger() \
 		or run_map == null or _shop_map == null or _shop_map.get_ref() != run_map \
 		or run_map.get_route() != _shop_route or _shop_route.is_empty() \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Shop" \
@@ -4133,13 +4136,15 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 
 func _remove_at_shop(visit: RunShopVisit, button) -> void:
 	if visit == null or visit != shop_visit or run_map == null \
+		or not _current_shop_ledger() \
 		or _shop_map == null or _shop_map.get_ref() != run_map \
 		or run_map.get_route() != _shop_route or _shop_route.is_empty() \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Shop" \
 		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree() \
 		or not is_instance_valid(button) or button != shop_remove_button \
 		or button.disabled or not button.is_visible_in_tree() \
-		or not is_instance_valid(shop_cards) or shop_cards.selected < 0:
+		or not is_instance_valid(shop_cards) or shop_cards.disabled or not shop_cards.is_visible_in_tree() \
+		or shop_cards.selected < 0:
 		return
 	var state := visit.get_state()
 	if not state.removal_available or state.shop_node_id != run_map.get_current_node_id() \
@@ -4147,19 +4152,21 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 		or state.trinkets != run_trinkets:
 		return
 	var index := shop_cards.selected
-	if index >= run_deck.size() or shop_cards.get_item_text(index) != run_deck[index]:
+	if index >= run_deck.size() or index >= shop_cards.item_count or shop_cards.get_item_text(index) != run_deck[index]:
 		return
 	var card_id: String = shop_cards.get_item_text(index)
-	var expected := RunShopCardRemoval.try_remove(run_deck, session_gold, run_removal_count, card_id)
+	var expected := RunShopCardRemoval.try_remove_with_stitch_ledger(run_deck,
+		run_stitch_descriptors, run_next_stitch_id, session_gold, run_removal_count, card_id)
 	if shop_purchases == null or not shop_purchases.can_rebase_removal(state, expected, card_id):
 		return
 	if not _shop_patch_current():
 		return
 	var result := visit.remove_card(card_id)
-	if not result.ok:
+	if result != expected or not shop_purchases.rebase_removal(state, result, card_id):
 		return
-	shop_purchases.rebase_removal(state, result, card_id)
 	run_deck.assign(result.deck)
+	run_stitch_descriptors = result.descriptors.duplicate(true)
+	run_next_stitch_id = result.next_stitch_id
 	session_gold = result.gold
 	run_removal_count = result.prior_removals
 	_sync_shop_wardrobe()
