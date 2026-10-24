@@ -8,6 +8,10 @@ var picker: LiveRestPatchResewPicker
 ## The master faces project.godot installs: Londrina headings, Patrick Hand body.
 const BODY_FACE_PATH := "res://assets/fonts/PatrickHand-Regular.ttf"
 const HEADING_FACE_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+## Every state a sewn option chip can be drawn in, and the readable text inset
+## the task requires inside its stitched border.
+const CHIP_STATES := ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]
+const MIN_CHIP_SIDE_INSET := 12.0
 
 
 func _initialize() -> void:
@@ -27,7 +31,7 @@ func _run() -> void:
 	_typography_checks()
 	var f := _fixture(3)
 	if not f.is_empty():
-		_positive(f)
+		await _positive(f)
 		_torn_mend(f)
 		_negative(f)
 	_torn_preview_active()
@@ -63,8 +67,39 @@ func _press_key(keycode: Key) -> void:
 	await process_frame
 
 
+## AC1: every themed chip state must give the caption explicit, symmetrical
+## horizontal breathing room inside the stitched border. A StyleBoxFlat's
+## implicit horizontal content margin is only its border width, so an unset
+## left/right margin can never satisfy this.
+func _assert_chip_insets(chip: Button, description: String) -> void:
+	var themed := 0
+	var widest := 0.0
+	for state in CHIP_STATES:
+		var surface := chip.get_theme_stylebox(state) as StyleBoxFlat
+		_check(surface != null, description + " really carries a themed %s surface" % state)
+		if surface == null:
+			continue
+		themed += 1
+		widest = maxf(widest, surface.get_minimum_size().x)
+		var left := surface.get_content_margin(SIDE_LEFT)
+		var right := surface.get_content_margin(SIDE_RIGHT)
+		_check(left >= MIN_CHIP_SIDE_INSET and right >= MIN_CHIP_SIDE_INSET,
+			"%s keeps an explicit >=%d px caption inset in its %s state (left %.1f, right %.1f)"
+			% [description, int(MIN_CHIP_SIDE_INSET), state, left, right])
+		_check(is_equal_approx(left, right),
+			"%s keeps symmetrical left/right caption insets in its %s state (left %.1f, right %.1f)"
+			% [description, state, left, right])
+	_check(themed == CHIP_STATES.size(),
+		description + " themes every state it can be drawn in")
+	# The inset must not starve the caption: the narrowest usable line is still
+	# a readable width, and it is genuinely narrower than the sewn border alone.
+	_check(chip.custom_minimum_size.x - widest >= 200.0,
+		description + " keeps a readable usable caption width after its insets (%d px chip)"
+		% int(chip.custom_minimum_size.x))
+
+
 ## Independent content check: wrap the complete caption at the tag's real
-## content width and prove the chip actually reserved those wrapped lines.
+## usable width and prove the chip reserved those wrapped lines.
 func _assert_tag_layout(chip: Button, description: String) -> void:
 	var font: Font = chip.get_theme_font("font")
 	var font_size := chip.get_theme_font_size("font_size")
@@ -78,13 +113,24 @@ func _assert_tag_layout(chip: Button, description: String) -> void:
 	if font == null or normal == null or focus == null or chip.size.x <= 0.0:
 		_check(false, description + " has a genuine themed measurable body")
 		return
-	var side := maxf(normal.get_content_margin(SIDE_LEFT) + normal.get_content_margin(SIDE_RIGHT),
-		focus.get_content_margin(SIDE_LEFT) + focus.get_content_margin(SIDE_RIGHT))
-	var vertical := maxf(normal.get_content_margin(SIDE_TOP) + normal.get_content_margin(SIDE_BOTTOM),
-		focus.get_content_margin(SIDE_TOP) + focus.get_content_margin(SIDE_BOTTOM))
+	_assert_chip_insets(chip, description)
+	# The usable caption width is the chip minus the widest inset any draw state
+	# can show (explicit text inset plus its stitched border).
+	var side := 0.0
+	var vertical := 0.0
+	for state in CHIP_STATES:
+		var surface := chip.get_theme_stylebox(state) as StyleBoxFlat
+		if surface == null:
+			continue
+		side = maxf(side, surface.get_minimum_size().x)
+		vertical = maxf(vertical, surface.get_minimum_size().y)
+	_check(is_equal_approx(chip.size.x, chip.custom_minimum_size.x),
+		description + " is mounted at its measured sewn width")
 	var wrap_width := maxf(1.0, chip.size.x - side - 1.0)
 	var wrapped := font.get_multiline_string_size(chip.text,
 		HORIZONTAL_ALIGNMENT_LEFT, wrap_width, font_size)
+	_check(side >= 2.0 * MIN_CHIP_SIDE_INSET,
+		description + " measures its wrap width without the explicit left/right insets")
 	_check(chip.size.y - vertical + 0.5 >= wrapped.y,
 		description + " reserves real height for every wrapped caption line")
 	_check(chip.custom_minimum_size.y + 0.5 >= wrapped.y + vertical,
@@ -119,10 +165,19 @@ func _contrast(first: Color, second: Color) -> float:
 
 
 ## The sewn option chips are body text too; checked on a picker that really
-## mounts five worn sources and their two same-slot recipients.
+## mounts five worn sources and their two same-slot recipients, with one
+## selected source and one selected recipient.
 func _chip_face_checks() -> void:
 	_check(picker._source_buttons.size() == 5 and picker._destination_buttons.size() == 2,
 		"chip typography fixture really mounts five sources and two recipients")
+	var selected_sources := picker._source_buttons.filter(func(chip): return chip.button_pressed)
+	var selected_destinations := picker._destination_buttons.filter(
+		func(chip): return chip.button_pressed)
+	_check(selected_sources.size() == 1 and selected_destinations.size() == 1,
+		"chip inset fixture really mounts one selected source and one selected recipient")
+	_check(picker._source_buttons.size() - selected_sources.size() >= 4
+		and picker._destination_buttons.size() - selected_destinations.size() >= 1,
+		"chip inset fixture really mounts unselected source and recipient chips too")
 	for chip in picker._source_buttons + picker._destination_buttons:
 		_check(_face_path(chip) == BODY_FACE_PATH
 			and chip.get_theme_font_size("font_size") >= 18,
@@ -136,6 +191,10 @@ func _chip_face_checks() -> void:
 			var ink: Color = chip.get_theme_color(spec[1])
 			_check(surface != null and _contrast(ink, surface.bg_color) >= 3.0,
 				"chip stays legible in its %s state" % spec[0])
+		# AC1/AC2 on the real mounted chips: explicit insets in every state and
+		# the complete caption still fits the width those insets leave.
+		_assert_tag_layout(chip, "mounted %s chip" % ("selected" if chip.button_pressed
+			else "unselected"))
 
 
 ## AC1/AC2: the mounted picker's own named headings and Confirm button inherit
@@ -488,6 +547,8 @@ func _positive(f: Dictionary) -> void:
 		and picker.scraps_label.text == "Scraps: 3"
 		and picker._source_buttons.size() == 5 and not picker.confirm_button.disabled,
 		"real picker renders five source selectors and truthful purse")
+	await process_frame
+	await process_frame
 	_chip_face_checks()
 	var human_slots := {"HEAD": "Head patch", "ARM": "Arm patch", "COAT": "Coat patch"}
 	for i in range(picker._sources.size()):
