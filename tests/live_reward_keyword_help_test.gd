@@ -224,6 +224,7 @@ func _catalog_test() -> void:
 			"ordinary authored %s never gains a special-rule row" % ordinary_id)
 	_energy_catalog_test(tinker, seamstress)
 	_bleed_doubling_catalog_test(seamstress)
+	_pin_and_pound_catalog_test(warden)
 	# Exact authored shapes are explained; every unknown, malformed or partial
 	# variant stays silent and leaves the caller's definition untouched. These
 	# effect fixtures mirror the catalog descriptors but are built independently.
@@ -672,8 +673,205 @@ func _bleed_doubling_catalog_test(seamstress: SeamstressPoolCards) -> void:
 	_check(CardKeywordGlossary.KEYWORD_ORDER == ["bleed", "weak", "exposed", "pinned",
 		"unravel", "guarding", "thorns"]
 		and CardKeywordGlossary.SPECIAL_ORDER == ["conditional_damage", "random_hit",
-			"energy_tradeoff", "bleed_doubling"],
-		"doubling is the last special row after the seven fixed keyword rows")
+			"energy_tradeoff", "bleed_doubling", "two_hits"],
+		"two hits is the last special row after the seven fixed keyword rows")
+
+
+## A detached Pin and Pound definition with the authored structural keys the
+## two-hit contract re-checks, so malformed fixtures cannot borrow a positive
+## verdict from the real catalog.
+func _pin_definition(card_id: Variant, owner: Variant, cost: Variant,
+		target_kind: Variant, from_positions: Variant, to_positions: Variant,
+		effects: Variant) -> Dictionary:
+	var definition := {"id": card_id, "owner": owner, "cost": cost,
+		"target_kind": target_kind}
+	definition["from_positions"] = from_positions.duplicate(true) \
+		if from_positions is Array else from_positions
+	definition["to_positions"] = to_positions.duplicate(true) \
+		if to_positions is Array else to_positions
+	definition["effects"] = effects.duplicate(true) if effects is Dictionary else effects
+	return definition
+
+
+## Pin and Pound, base and '+' records, straight from the real Warden pool: one
+## authored Two hits row each that states the sequential same-target order, that
+## hit 2 needs a surviving target, the single different-owner Pinned +5 on hit 1
+## and that this attack creates no pin. The authored cost, owner, slot, target
+## range and exact damage are re-checked against the catalog, and every foreign,
+## mis-owned, mispriced, mispositioned, mistargeted or wrong-hit fixture stays
+## silent.
+func _pin_and_pound_catalog_test(warden: WardenPoolCards) -> void:
+	var cases := [
+		{"id": "warden_pin_and_pound", "damage": 9},
+		{"id": "warden_pin_and_pound_plus", "damage": 12},
+	]
+	for case: Dictionary in cases:
+		var card_id: String = String(case["id"])
+		_check(warden.has_card(card_id),
+			"Pin and Pound is present in its real catalog " + card_id)
+		var definition: Dictionary = warden.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"actual Pin and Pound catalog definition " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(String(definition.get("owner", "")) == "warden"
+			and int(definition.get("cost", -1)) == 2
+			and String(definition.get("target_kind", "")) == "enemy_single"
+			and definition.get("from_positions") == [1]
+			and definition.get("to_positions") == [1, 2, 3]
+			and effects == {"damage": int(case["damage"]), "hits": 2},
+			"authored Warden front slot, 2 energy and two hits on one enemy 1-3 for " + card_id)
+		var rows := CardKeywordGlossary.describe(definition)
+		_check(rows.size() == 1 and String(rows[0]["keyword"]) == "Two hits",
+			"exactly one Two hits row for " + card_id)
+		if rows.size() != 1:
+			continue
+		var text := String(rows[0]["explanation"])
+		_check(text.contains("Costs %d energy" % int(definition.get("cost", -1)))
+			and text.contains("two hits of %d damage each" % int(effects.get("damage", 0))),
+			"two-hit Help repeats the authored cost and per-hit damage " + card_id)
+		_check(text.contains("one after the other")
+			and text.contains("same originally chosen enemy")
+			and text.contains("second hit is skipped"),
+			"two-hit Help states the sequential same-target order and survival rule " + card_id)
+		_check(text.contains("DIFFERENT hero") and text.contains("+5")
+			and text.contains("first hit only") and text.contains("before Weak/Exposed")
+			and text.contains("consumed then") and text.contains("same hero does not apply"),
+			"two-hit Help states one different-owner Pinned +5 on hit 1 only " + card_id)
+		_check(text.contains("creates no Pinned token")
+			and not text.contains("adds Pinned") and not text.contains("applies Pinned"),
+			"two-hit Help never claims this attack pins its target " + card_id)
+		_check(definition == original and warden.get_definition(card_id) == original,
+			"two-hit Help never mutates the catalog definition " + card_id)
+		_check(CardKeywordGlossary.describe(definition) == rows,
+			"two-hit Help stays deterministic for " + card_id)
+		rows[0]["keyword"] = "Tampered"
+		rows[0]["explanation"] = "Tampered"
+		var fresh := CardKeywordGlossary.describe(definition)
+		_check(fresh.size() == 1 and String(fresh[0]["keyword"]) == "Two hits"
+			and String(fresh[0]["explanation"]).contains("two hits")
+			and definition == original,
+			"two-hit Help results are detached from the caller's definition " + card_id)
+	_check(CardKeywordGlossary.describe(warden.get_definition("warden_heavy_thimble")).is_empty(),
+		"ordinary Warden Heavy Thimble never gains a two-hit row")
+	var base := _pin_definition("warden_pin_and_pound", "warden", 2,
+		"enemy_single", [1], [1, 2, 3], {"damage": 9, "hits": 2})
+	var plus := _pin_definition("warden_pin_and_pound_plus", "warden", 2,
+		"enemy_single", [1], [1, 2, 3], {"damage": 12, "hits": 2})
+	_check(CardKeywordGlossary.describe(base).size() == 1
+		and CardKeywordGlossary.describe(plus).size() == 1,
+		"exact two-hit descriptor shapes are explained")
+	var fixtures: Array = []
+	fixtures.append(["bare two-hit descriptor without a card identity",
+		_shape({"damage": 9, "hits": 2})])
+	fixtures.append(["two-hit descriptor on an unrelated Warden ID",
+		_pin_definition("warden_heavy_thimble", "warden", 2, "enemy_single",
+			[1], [1, 2, 3], {"damage": 9, "hits": 2})])
+	fixtures.append(["arbitrary hit count on another authored attack",
+		_pin_definition("warden_pinning_jab", "warden", 1, "enemy_single",
+			[1, 2], [1, 2, 3], {"damage": 4, "hits": 2})])
+	var fixture := base.duplicate(true)
+	fixture["owner"] = "seamstress"
+	fixtures.append(["wrong two-hit owner", fixture])
+	fixture = base.duplicate(true)
+	fixture["cost"] = 1
+	fixtures.append(["wrong base Pin and Pound cost", fixture])
+	fixture = plus.duplicate(true)
+	fixture["cost"] = 3
+	fixtures.append(["wrong upgraded Pin and Pound cost", fixture])
+	fixture = base.duplicate(true)
+	fixture["target_kind"] = "enemy_all"
+	fixtures.append(["wrong two-hit target kind", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = [2]
+	fixtures.append(["two-hit from the middle slot only", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = [1, 2]
+	fixtures.append(["two-hit from two slots", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = []
+	fixtures.append(["two-hit from no slot", fixture])
+	fixture = base.duplicate(true)
+	fixture["from_positions"] = "1"
+	fixtures.append(["text two-hit source slots", fixture])
+	fixture = base.duplicate(true)
+	fixture["to_positions"] = [1, 2]
+	fixtures.append(["two-hit onto two slots only", fixture])
+	fixture = base.duplicate(true)
+	fixture["to_positions"] = [1, 2, 4]
+	fixtures.append(["two-hit onto an illegal slot", fixture])
+	fixture = base.duplicate(true)
+	fixture["to_positions"] = []
+	fixtures.append(["two-hit with no target slots", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["hits"] = 1
+	fixtures.append(["single-hit rewrite", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["hits"] = 3
+	fixtures.append(["three-hit rewrite", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["hits"] = "2"
+	fixtures.append(["text hit count", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["hits"] = 2.0
+	fixtures.append(["float hit count", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["damage"] = 10
+	fixtures.append(["wrong two-hit damage", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["damage"] = 12
+	fixtures.append(["base record with upgraded damage", fixture])
+	fixture = plus.duplicate(true)
+	fixture["effects"]["damage"] = 9
+	fixtures.append(["upgraded record with base damage", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"]["damage"] = "9"
+	fixtures.append(["text two-hit damage", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"].erase("hits")
+	fixtures.append(["two-hit record without a hit count", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"].erase("damage")
+	fixtures.append(["two-hit record without damage", fixture])
+	fixture = base.duplicate(true)
+	fixture["effects"] = "two hits"
+	fixtures.append(["unreadable two-hit effect block", fixture])
+	fixture = base.duplicate(true)
+	fixture["id"] = "warden_pin_and_pound_plus_plus"
+	fixtures.append(["similarly named Pin and Pound", fixture])
+	fixture = base.duplicate(true)
+	fixture.erase("id")
+	fixtures.append(["two-hit descriptor without a card ID", fixture])
+	fixture = base.duplicate(true)
+	fixture["id"] = 7
+	fixtures.append(["non-string two-hit ID", fixture])
+	fixture = base.duplicate(true)
+	fixture["cost"] = "2"
+	fixtures.append(["text two-hit cost", fixture])
+	for case in fixtures:
+		var broken: Dictionary = case[1]
+		var broken_before: Dictionary = broken.duplicate(true)
+		_check(CardKeywordGlossary.describe(broken).is_empty(),
+			"%s never fabricates two-hit Help" % String(case[0]))
+		_check(broken == broken_before, "%s leaves the fixture untouched" % String(case[0]))
+	_check(base == _pin_definition("warden_pin_and_pound", "warden", 2,
+			"enemy_single", [1], [1, 2, 3], {"damage": 9, "hits": 2})
+		and plus == _pin_definition("warden_pin_and_pound_plus", "warden", 2,
+			"enemy_single", [1], [1, 2, 3], {"damage": 12, "hits": 2}),
+		"negative two-hit cases never mutate the positive fixtures")
+	# An extended descriptor that also claims to pin drops the two-hit row but
+	# keeps the ordinary Pinned row it genuinely authors.
+	var pin_claim := base.duplicate(true)
+	pin_claim["effects"]["pinned"] = true
+	var pin_claim_before: Dictionary = pin_claim.duplicate(true)
+	var pin_claim_names: Array[String] = []
+	for row: Dictionary in CardKeywordGlossary.describe(pin_claim):
+		pin_claim_names.append(String(row["keyword"]))
+	_check(not pin_claim_names.has("Two hits") and pin_claim_names.has("Pinned")
+		and pin_claim == pin_claim_before,
+		"an extra pin claim drops the two-hit row and keeps only its ordinary Pinned row")
 
 
 func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
@@ -1045,6 +1243,115 @@ func _hemorrhage_help(fixture: Dictionary) -> void:
 		"Hemorrhage Hem Help closes with its receipt")
 
 
+## Genuine authored candidate records for a constrained three-hero Fight: exactly
+## one real base card per hero, including the real Pin and Pound base record.
+## With one candidate per living hero the real weighted selector offers each of
+## them once, so the card is found by its catalog ID, never by index.
+func _pin_and_pound_candidates() -> Array:
+	var wanted := ["warden_pin_and_pound", "seamstress_snag", "tinker_spring_trap"]
+	var candidates: Array = []
+	for record: Dictionary in RunPoolCardRewardOffers.get_authored_base_candidates():
+		if wanted.has(String(record.get("id", ""))):
+			candidates.append(record)
+	return candidates
+
+
+## The real Fight reward Help tab for base Pin and Pound: the mounted popup must
+## state the sequential same-target two hits, the single different-owner Pinned
+## +5 on hit 1 only and that this attack creates no pin, open and close by mouse
+## and keyboard, and change nothing (no request, receipt, wallet, deck, model or
+## RNG mutation). It ends without emitting any reward choice.
+func _pin_and_pound_help(fixture: Dictionary) -> void:
+	var receipt: Dictionary = fixture["receipt"]
+	if not receipt.get("ok", false):
+		return
+	var card_id := "warden_pin_and_pound"
+	var slot := _slot_for(receipt, card_id)
+	_check(slot >= 0, "genuine prepared Fight offers the base Pin and Pound by ID")
+	if slot < 0:
+		return
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
+	var effects: Dictionary = definition.get("effects", {})
+	_check(definition.get("id") == card_id and definition.get("owner") == "warden"
+		and int(definition.get("cost", -1)) == 2
+		and definition.get("from_positions") == [1]
+		and definition.get("to_positions") == [1, 2, 3]
+		and effects == {"damage": 9, "hits": 2},
+		"offered Pin and Pound resolves the authored base record")
+	if definition.get("id") != card_id:
+		return
+	var node_id := "reward_pin_and_pound"
+	_check(panel.open_rewards(node_id, "Fight", receipt),
+		"mounted genuine Pin and Pound receipt")
+	await _frames()
+	if not panel.has_open_rewards():
+		return
+	var before := _snapshot(fixture)
+	var entries := CardKeywordGlossary.describe(definition)
+	_check(entries.size() == 1 and String(entries[0]["keyword"]) == "Two hits",
+		"catalog-backed single Two hits row for the offered Pin and Pound")
+	var card := panel.choices_container.get_child(slot) as PanelContainer
+	var help := card.get_node_or_null(
+		"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
+		"offered Pin and Pound gains the real Help tab")
+	if help == null or entries.size() != 1:
+		panel.close_rewards()
+		return
+	await _mouse(help)
+	var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+	_check(overlay != null and panel._help_overlay == overlay,
+		"mouse Help opens the Pin and Pound two-hit popup")
+	if overlay == null:
+		panel.close_rewards()
+		return
+	var title := overlay.get_node("HelpContent/HelpTitle") as Label
+	_check(title.text.contains("Pin and Pound") and not title.text.contains("_"),
+		"Pin and Pound popup uses the authored human card name")
+	var list := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
+	_check(list.get_child_count() == 1,
+		"Pin and Pound Help shows exactly its authored two-hit row")
+	var text := ""
+	if list.get_child_count() > 0:
+		text = (list.get_child(0) as Label).text
+	_check(text.contains("Two hits") and text.contains(String(entries[0]["explanation"])),
+		"live Pin and Pound Help repeats the glossary explanation")
+	_check(text.contains("Costs 2 energy")
+		and text.contains("two hits of %d damage each" % int(effects.get("damage", 0)))
+		and text.contains("one after the other")
+		and text.contains("same originally chosen enemy")
+		and text.contains("second hit is skipped"),
+		"live Pin and Pound Help states both authored hits and the surviving-target rule")
+	_check(text.contains("DIFFERENT hero") and text.contains("+5")
+		and text.contains("first hit only") and text.contains("before Weak/Exposed")
+		and text.contains("consumed then") and text.contains("same hero does not apply"),
+		"live Pin and Pound Help states one different-owner Pinned +5 on hit 1 only")
+	_check(text.contains("creates no Pinned token")
+		and not text.contains("adds Pinned") and not text.contains("applies Pinned"),
+		"live Pin and Pound Help never claims the attack pins its target")
+	_check(_snapshot(fixture) == before and requests.is_empty()
+		and not panel._awaiting_ack and not panel._accepted,
+		"opening Pin and Pound Help changes no receipt, wallet, deck, model or RNG")
+	await _mouse(overlay.get_node("HelpContent/CloseHelpButton") as Button)
+	_check(panel._help_overlay == null and help.has_focus(),
+		"mouse Close dismisses Pin and Pound Help and restores its tab")
+	_check(_snapshot(fixture) == before and requests.is_empty(),
+		"closing Pin and Pound Help stays read-only")
+	panel.get_choice_buttons()[slot].grab_focus()
+	await _key(KEY_RIGHT)
+	_check(help.has_focus(), "keyboard Right from Choose reaches Pin and Pound Help")
+	await _key(KEY_ENTER)
+	_check(panel._help_overlay != null, "keyboard Enter reopens Pin and Pound Help")
+	await _key(KEY_ESCAPE)
+	_check(panel._help_overlay == null and help.has_focus() and requests.is_empty(),
+		"Escape closes Pin and Pound Help without requesting the card")
+	_check(_snapshot(fixture) == before and not panel._awaiting_ack,
+		"keyboard Help leaves the prepared Pin and Pound reward unclaimed and unrequested")
+	panel.close_rewards()
+	_check(not panel.has_open_rewards() and panel._help_overlay == null,
+		"Pin and Pound Help closes with its receipt")
+
+
 ## The real Fight/Elite reward Help tab for the two energy cards: the mounted
 ## popup must show the authored numbers, open and close by mouse and keyboard,
 ## and change nothing; a real Choose and Skip afterwards still work.
@@ -1249,6 +1556,18 @@ func _run() -> void:
 		"constrained Fight reward really offers base Hemorrhage Hem")
 	await _hemorrhage_help(hemorrhage)
 	_check(requests.size() == 2, "Hemorrhage Hem Help ends after exactly Choose and Skip")
+	requests.clear()
+	# The genuine Fight reward that offers base Pin and Pound explains its two
+	# sequential authored hits in that same live Help surface. Help only: this
+	# case must end without emitting any reward choice.
+	var pin_and_pound := _prepared("Fight", 18390, true, _pin_and_pound_candidates())
+	var pin_ids: Array[String] = []
+	for offer: Dictionary in pin_and_pound["receipt"].get("offers", []):
+		pin_ids.append(String(offer.get("id", "")))
+	_check(pin_ids.has("warden_pin_and_pound"),
+		"constrained Fight reward really offers base Pin and Pound")
+	await _pin_and_pound_help(pin_and_pound)
+	_check(requests.is_empty(), "Pin and Pound Help never requests a reward")
 	requests.clear()
 	_finish()
 
