@@ -117,11 +117,17 @@ func _win_earned_elite() -> bool:
 	return won and app.reward_buttons.size() == 4
 
 
-func _prepare_receipt(fixture: Dictionary, keyboard: bool) -> String:
+func _prepare_receipt(fixture: Dictionary, keyboard: bool, use_pool: bool = false) -> String:
 	if not await _routed_win(fixture, false):
 		return ""
-	await _click(app.reward_buttons[3])
+	var first_id := "seamstress_prick"
+	if use_pool:
+		first_id = app.fight_reward_offers[1].id
+		_check(not RunPoolCardRewardOffers.resolve_reward_definition(first_id).is_empty(), "seeded Seamstress pool reward is authentic")
+	await _click(app.reward_buttons[1] if use_pool else app.reward_buttons[3])
 	_check(app.run_scraps == 1, "opening Fight earns one scrap")
+	if use_pool:
+		_check(app.run_deck.back() == first_id, "mounted reward claim owns the earned pool half")
 	await _click(app.continue_button)
 	await _click(_route_action(fixture.elite.back()))
 	if not await _win_earned_elite():
@@ -135,7 +141,7 @@ func _prepare_receipt(fixture: Dictionary, keyboard: bool) -> String:
 	if app.rest_stitch == null or app.rest_stitch_button.disabled:
 		return ""
 	var source: Dictionary = app._stitch_snapshot()
-	var first: int = app.run_deck.find("seamstress_prick")
+	var first: int = app.run_deck.find(first_id)
 	var second: int = app.run_deck.find("tinker_pop_shot")
 	_check(first >= 0 and second >= 0, "authored cross-owner originals are owned")
 	if first < 0 or second < 0:
@@ -144,6 +150,7 @@ func _prepare_receipt(fixture: Dictionary, keyboard: bool) -> String:
 		source.remaining_scraps, source.next_stitch_id)
 	var made := rest_oracle.choose_stitch(first, second, source)
 	_check(made.ok, "independent Rest transaction issues authentic receipt")
+	_check(made.descriptor.half_ids == [first_id, "tinker_pop_shot"], "descriptor preserves selected pool/starter half order")
 	await _select_stitch(app.rest_stitch_first, first, keyboard)
 	await _select_stitch(app.rest_stitch_second, second, keyboard)
 	if keyboard:
@@ -156,7 +163,7 @@ func _prepare_receipt(fixture: Dictionary, keyboard: bool) -> String:
 	if not app.rest_stitch.is_consumed():
 		return ""
 	_check(app.run_deck.count(made.stitched_id) == 1
-		and app.run_deck.count("seamstress_prick") == source.deck.count("seamstress_prick") - 1
+		and app.run_deck.count(first_id) == source.deck.count(first_id) - 1
 		and app.run_deck.count("tinker_pop_shot") == source.deck.count("tinker_pop_shot") - 1
 		and app.run_scraps == 0 and app.run_next_stitch_id == 2,
 		"one composite consumes exactly the two originals and three scraps")
@@ -344,10 +351,10 @@ func _run() -> void:
 	_check(not fixture.is_empty(), "seeded legal Fight -> Elite -> Rest -> Fight path exists")
 	var replay: Array = []
 	var reward_replay: Dictionary = {}
-	for session in range(2):
+	for session in range(4):
 		if fixture.is_empty():
 			break
-		var id := await _prepare_receipt(fixture, session == 1)
+		var id := await _prepare_receipt(fixture, session % 2 == 1, session >= 2)
 		if id.is_empty():
 			break
 		var button := _route_action(fixture.next)
@@ -362,7 +369,7 @@ func _run() -> void:
 		var oracle := _canonical_oracle(fixture.next)
 		if oracle.is_empty():
 			break
-		if session == 1:
+		if session % 2 == 1:
 			button.grab_focus()
 			await _key(KEY_ENTER)
 		else:
@@ -378,6 +385,17 @@ func _run() -> void:
 			and app.deck.energy == 3 and app.deck._rng == app.run_rng,
 			"canonical multiset, exactly one seeded shuffle, five-card opening and three energy")
 		_reject_admission(callback, "retained already-used route callback")
+		if session >= 2:
+			_check(app.run_stitch_descriptors[id].half_ids[0].begins_with("seamstress_")
+				and not catalog.has_card(app.run_stitch_descriptors[id].half_ids[0]),
+				"earned pool composite admitted into genuine next Fight")
+			var pool_trace := _complete_state()
+			if session == 2:
+				replay = pool_trace
+			else:
+				_check(pool_trace == replay, "earned pool mouse/keyboard replay matches full admission and RNG")
+			await _click(app.return_button)
+			continue
 		await _play_natural(id, oracle, session == 1)
 		var trace := _complete_state()
 		if session == 0:

@@ -76,8 +76,9 @@ const REVEAL_DURATION := 0.6
 const REVEAL_FAST_DURATION := 0.15
 ## Authored floor bands; journal and each visible floor heading use the same mapping.
 ## The visible area caption and the numbered FLOOR heading are chapter headings: they
-## select the master Theme's PatchHeading (Londrina Solid Regular) variation, while the
-## journal, status tab and round patch captions keep the readable body face.
+## select the master Theme's PatchHeading (Londrina Solid Regular) variation, and the
+## diary's two display headings resolve that same face through its Theme. The diary's
+## facts, status tab and round patch captions keep the readable body face.
 const AREA_BANDS := [
 	{"name": "Meadow", "first_floor": 1, "last_floor": 3},
 	{"name": "Woods", "first_floor": 4, "last_floor": 6},
@@ -91,6 +92,11 @@ const AREA_LABEL_HEIGHT := 24.0
 ## Next-floor tab sits on the left page above the journey diary; it has no input.
 const NEXT_AREA_TAB_RECT := Rect2(46.0, 50.0, 500.0, 38.0)
 const NEXT_AREA_TAB_FONT_SIZE := 18
+## The diary's two display headings speak the master Theme's display voice. A mounted
+## Theme that really defines this variation supplies the face; the committed Londrina
+## Solid file (already shipped for PatchHeading) stands in when none does.
+const HEADING_VARIATION := "PatchHeading"
+const HEADING_FONT_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 
 signal node_requested(id: String)
 
@@ -200,11 +206,41 @@ class JourneyJournal extends Control:
 	var next_area := ""
 	var complete := false
 	var visited: Array[String] = []
+	## Cached committed heading face, so redraws never re-probe the shipped font file.
+	var _fallback_heading: Font = null
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_NONE
 		resized.connect(queue_redraw)
+
+	## Read-only face for the two display headings: the nearest inherited Theme that
+	## really defines PatchHeading, else the committed Londrina Solid file. It never
+	## assigns that variation to this Control, so the body facts keep the body face,
+	## and it ignores the global project/default Theme so the fallback stays reachable.
+	func heading_font() -> Font:
+		var mounted := inherited_theme()
+		if mounted != null:
+			var face := RunRouteAtlas.patch_heading_face(mounted)
+			if face != null:
+				return face
+		if _fallback_heading == null:
+			_fallback_heading = RunRouteAtlas.committed_heading_font()
+		return _fallback_heading
+
+	## The nearest Theme mounted on this journal, an ancestor Control or the root Window.
+	func inherited_theme() -> Theme:
+		var node: Node = self
+		while node != null:
+			var mounted: Theme = null
+			if node is Control:
+				mounted = (node as Control).theme
+			elif node is Window:
+				mounted = (node as Window).theme
+			if mounted != null and RunRouteAtlas.patch_heading_face(mounted) != null:
+				return mounted
+			node = node.get_parent()
+		return null
 
 	func _draw() -> void:
 		if size.x <= 0.0:
@@ -217,7 +253,12 @@ class JourneyJournal extends Control:
 		var font := get_theme_default_font()
 		if font == null:
 			return
-		draw_string(font, Vector2(22, 49), "THE SEWN JOURNEY",
+		# Both diary display headings take the authored PatchHeading voice; every
+		# current/next/progress fact and bead numeral below keeps this body face.
+		var heading := heading_font()
+		if heading == null:
+			heading = font
+		draw_string(heading, Vector2(22, 49), "THE SEWN JOURNEY",
 			HORIZONTAL_ALIGNMENT_LEFT, 480.0, 25, RunRouteAtlas.INK)
 		var here := "Trailhead" if current_floor == 0 else current_area
 		draw_string(font, Vector2(22, 94),
@@ -229,7 +270,7 @@ class JourneyJournal extends Control:
 			HORIZONTAL_ALIGNMENT_LEFT, 495.0, 18, RunRouteAtlas.INK)
 		draw_dashed_line(Vector2(22, 155), Vector2(size.x - 22, 155),
 			RunRouteAtlas.THREAD, 2.0, 8.0)
-		draw_string(font, Vector2(22, 194), "PINNED FLOOR TRAIL",
+		draw_string(heading, Vector2(22, 194), "PINNED FLOOR TRAIL",
 			HORIZONTAL_ALIGNMENT_LEFT, 490.0, 17, RunRouteAtlas.INK)
 		var beads: Array[Vector2] = []
 		for i in range(12):
@@ -769,6 +810,27 @@ static func area_for_floor(floor_number: int) -> String:
 		if floor_number >= int(band["first_floor"]) and floor_number <= int(band["last_floor"]):
 			return String(band["name"])
 	return ""
+
+
+## A Theme's authored PatchHeading face, or null when that Theme merely falls back to
+## its own default font. The diary reads this; no Control ever copies the variation.
+static func patch_heading_face(source: Theme) -> Font:
+	if source == null:
+		return null
+	if not source.get_font_list(HEADING_VARIATION).has("font"):
+		return null
+	var face := source.get_font("font", HEADING_VARIATION)
+	if face == null or face == source.default_font:
+		return null
+	return face
+
+
+## The already-shipped Londrina Solid file that backs PatchHeading. No new asset is
+## loaded, and a missing file is simply null so the diary keeps its readable body face.
+static func committed_heading_font() -> Font:
+	if not ResourceLoader.exists(HEADING_FONT_PATH):
+		return null
+	return load(HEADING_FONT_PATH) as Font
 
 
 ## Presentation-only caption for a generated map: the area and floor the NEXT legal

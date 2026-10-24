@@ -133,6 +133,7 @@ var _bindings: Dictionary = {}
 var _pending: Dictionary = {}
 var _turn := -1
 var _token := 0
+var _receipt_seq := 0
 
 
 func _ready() -> void:
@@ -859,6 +860,7 @@ func _commit(panel, card_id: String, token: int, receipt: Dictionary) -> void:
 	# A real, successful Tinker cast still feeds the battle's one Path authority,
 	# so its first-hit, Scope and Clockwork state can never drift from combat.
 	_report_tinker_path_play(card_id, energy_before)
+	_forward_switchback_ordinary_play(card_id)
 	last_event = event.duplicate(true)
 	_after_cast()
 
@@ -909,6 +911,7 @@ func _cancel() -> void:
 
 ## Battle, hand and title lifecycle changes drop every binding, receipt and hint.
 func _clear() -> void:
+	_receipt_seq = 0
 	_cancel()
 	for panel in _bindings.keys():
 		_unbind(panel)
@@ -928,3 +931,37 @@ func _clear() -> void:
 
 func _exit_tree() -> void:
 	_clear()
+
+
+
+func _ensure_quilt_switchback_bound() -> void:
+	var app = get_parent()
+	if app == null:
+		return
+	var presenter = app.get_node_or_null("LiveAttackPreview")
+	if presenter != null and presenter.has_method("ensure_quilt_switchback_bound"):
+		presenter.ensure_quilt_switchback_bound()
+
+
+func _owner_for_area_card(card_id: String) -> String:
+	var def: Dictionary = _definition(card_id)
+	var owner: String = str(def.get("owner", ""))
+	if owner in CombatQuiltBonus.HERO_IDS:
+		return owner
+	return ""
+
+
+func _forward_switchback_ordinary_play(card_id: String) -> void:
+	var app = get_parent()
+	if app == null or not is_instance_valid(app):
+		return
+	_ensure_quilt_switchback_bound()
+	var quilt: CombatQuiltBonus = app._quilt_bonus
+	if quilt == null or not is_instance_valid(quilt) or not quilt is CombatQuiltBonus or not quilt.is_switchback_active():
+		return
+	var owner: String = _owner_for_area_card(card_id)
+	if owner.is_empty() or not owner in CombatQuiltBonus.HERO_IDS:
+		return
+	_receipt_seq += 1
+	var receipt_id := "area_%d" % _receipt_seq
+	quilt.observe_confirmed_play(receipt_id, owner)

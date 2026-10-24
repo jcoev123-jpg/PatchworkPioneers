@@ -85,10 +85,12 @@ func _run() -> void:
 		if not await _routed_win(fixture, false):
 			break
 		_check(app.run_scraps == 0 and app.run_stitch_descriptors.is_empty() and app.run_next_stitch_id == 1, "new run has no free scraps or descriptors")
-		var claim: Callable = app.reward_buttons[3].pressed.get_connections()[0].callable
+		var earned_pool: String = app.fight_reward_offers[0].id
+		_check(not RunPoolCardRewardOffers.resolve_reward_definition(earned_pool).is_empty(), "real seeded pool offer exists")
+		var claim: Callable = app.reward_buttons[0].pressed.get_connections()[0].callable
 		var rng_before: int = app.run_rng.state
-		await _click(app.reward_buttons[3])
-		_check(app.run_scraps == 1 and app.run_rng.state == rng_before, "opening Fight Skip awards exactly one scrap without RNG")
+		await _click(app.reward_buttons[0])
+		_check(app.run_scraps == 1 and app.run_deck.back() == earned_pool and app.run_rng.state == rng_before, "opening Fight claims seeded pool card and exactly one scrap without RNG")
 		claim.call()
 		app._observe_battle_result()
 		_check(app.run_scraps == 1, "duplicate claim and observation cannot mint scraps")
@@ -113,6 +115,27 @@ func _run() -> void:
 		_check(app.run_scraps == 3, "duplicate Elite claim inert")
 		await _click(app.continue_button)
 		await _visit_path(fixture.rest_path.slice(0, -1), false)
+		if session == 4:
+			# Authentic canonical ledger with a pool upgrade and an issued composite;
+			# mount it through the same connected Rest admission as the earned deck.
+			var plus: String = WardenPoolCards.new().get_upgrade_id(earned_pool)
+			_check(RunRestStitchCards.is_authored_pool_plus(plus), "earned pool has an authored plus")
+			app.run_deck.append(plus)
+			app.run_deck.append("seamstress_prick_plus")
+			app.run_deck.append("tinker_pop_shot")
+			var ledger := RunRestStitchCards.new(app.run_deck, {}, 6, 1)
+			_check(ledger.is_valid(), "canonical plus ledger is valid before crafting")
+			var issued := ledger.choose_stitch(app.run_deck.size() - 2, app.run_deck.size() - 1, ledger.get_snapshot())
+			_check(issued.ok, "fixture composite issued by authentic transaction")
+			app.run_deck.assign(issued.deck)
+			# Put the composite before the pool + so later metadata cannot merely
+			# mirror menu positions; retain a separate starter + occurrence too.
+			app.run_deck.erase(issued.stitched_id)
+			app.run_deck.insert(app.run_deck.size() - 1, issued.stitched_id)
+			app.run_deck.append("warden_strike_plus")
+			app.run_stitch_descriptors = issued.descriptors.duplicate(true)
+			app.run_scraps = issued.remaining_scraps
+			app.run_next_stitch_id = issued.next_stitch_id
 		await _click(_route_action(fixture.rest_path.back()))
 		_check(app.rest_stitch != null and app.rest_stitch.is_valid() and not app.rest_stitch_button.disabled, "earned purse admits real Rest stitch")
 		if app.rest_stitch == null:
@@ -125,13 +148,25 @@ func _run() -> void:
 		var heal: Callable = app.rest_heal_button.pressed.get_connections()[0].callable
 		var upgrade: Callable = app.rest_upgrade_button.pressed.get_connections()[0].callable
 		var next: Callable = app.rest_continue_button.pressed.get_connections()[0].callable
-		_check(first.item_count == app.run_deck.size() and second.item_count == first.item_count, "every original instance offered including duplicates")
-		for index in range(first.item_count):
-			_check(first.get_item_metadata(index) == index and second.get_item_metadata(index) == index, "selectors retain original indices")
+		var eligible: Array[int] = []
+		for index in range(app.run_deck.size()):
+			if not app.run_stitch_descriptors.has(app.run_deck[index]):
+				eligible.append(index)
+		_check(first.item_count == eligible.size() and second.item_count == eligible.size(), "every canonical original occurrence offered; composites excluded")
+		_check(eligible.has(app.run_deck.find(earned_pool)), "earned pool occurrence inspected in both selectors")
+		if session == 4:
+			_check(app.run_stitch_descriptors.size() == 1 and eligible.size() == app.run_deck.size() - 1
+				and eligible.has(app.run_deck.find(WardenPoolCards.new().get_upgrade_id(earned_pool))), "nonempty authentic composite and pool plus fixture inspected")
+		for item in range(eligible.size()):
+			var index: int = eligible[item]
+			_check(first.get_item_metadata(item) == index and second.get_item_metadata(item) == index, "selectors retain original indices across excluded composites")
 			var definition: Dictionary = catalog.get_definition(app.run_deck[index])
-			var suffix := "Deck #%d: %s - %s" % [index + 1, definition.owner, definition.display_name]
-			_check(first.get_item_text(index) == "First card: " + suffix
-				and second.get_item_text(index) == "Second card: " + suffix,
+			if definition.is_empty():
+				definition = WardenPoolCards.new().get_definition(app.run_deck[index])
+			_check(not definition.is_empty(), "selector has independent authored definition")
+			var suffix := "Deck #%d: %s - %s" % [index + 1, str(definition.owner).capitalize(), definition.display_name]
+			_check(first.get_item_text(item) == "First card: " + suffix
+				and second.get_item_text(item) == "Second card: " + suffix,
 				"mounted selectors visibly identify ordered halves with exact occurrence and owner")
 		_check(first.text.begins_with("First card: ") and second.text.begins_with("Second card: ")
 			and first.size.y == second.size.y, "closed selectors expose distinct roles without an extra row")
@@ -155,9 +190,10 @@ func _run() -> void:
 		app.run_scraps = 2
 		_reject_stitch(stitch, "insufficient purse")
 		app.run_scraps = 3
+		var registry: Dictionary = app.run_stitch_descriptors.duplicate(true)
 		app.run_stitch_descriptors["forged"] = {}
 		_reject_stitch(stitch, "stale registry")
-		app.run_stitch_descriptors.clear()
+		app.run_stitch_descriptors = registry
 		var receipt: Dictionary = app.rest_stitch._source_snapshot.duplicate(true)
 		app.rest_stitch._source_snapshot.receipt = "forged"
 		_reject_stitch(stitch, "stale receipt")
@@ -183,6 +219,16 @@ func _run() -> void:
 		first.set_item_metadata(first_index, second_index)
 		_reject_stitch(stitch, "forged original-index list")
 		first.set_item_metadata(first_index, first_index)
+		# Validate the entire menu, including an unselected final occurrence.
+		var last: int = first.item_count - 1
+		var last_text: String = first.get_item_text(last)
+		first.set_item_text(last, "forged unselected card")
+		_reject_stitch(stitch, "forged unselected selector text")
+		first.set_item_text(last, last_text)
+		first.add_item("unknown card")
+		first.set_item_metadata(first.item_count - 1, app.run_deck.size())
+		_reject_stitch(stitch, "extra unknown selector record")
+		first.remove_item(first.item_count - 1)
 		for selector in [first, second]:
 			var original: String = selector.get_item_text(selector.selected)
 			selector.set_item_text(selector.selected, "forged card")
