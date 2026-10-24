@@ -3,7 +3,7 @@ extends SceneTree
 const SUPPORT_IDS: Array[String] = ["warden_brace", "seamstress_mend",
 	"seamstress_stitch_up", "tinker_tune_up"]
 const PLUS_SUPPORT_IDS: Array[String] = ["warden_brace_plus",
-	"seamstress_mend_plus", "seamstress_stitch_up_plus"]
+	"seamstress_mend_plus", "seamstress_stitch_up_plus", "tinker_tune_up_plus"]
 const ATTACK_IDS: Array[String] = ["warden_strike", "warden_shield_bash",
 	"seamstress_prick", "tinker_pop_shot", "tinker_scrap_bomb"]
 
@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_heal_and_block()
 	_test_mend_plus_and_stitch_up_plus()
 	_test_tune_up()
+	_test_tune_up_plus()
 	_test_rejections()
 	_test_plus_rejections()
 	_test_replay()
@@ -113,8 +114,8 @@ func _expected(before: Dictionary, card_id: String, recipient: int = 0) -> Dicti
 	var definition: Dictionary = catalog.get_definition(card_id)
 	after["energy"] -= definition["cost"]
 	after["combat_state"]["energy"] -= definition["cost"]
-	if card_id == "tinker_tune_up":
-		_oracle_draw(after, 1)
+	if card_id in ["tinker_tune_up", "tinker_tune_up_plus"]:
+		_oracle_draw(after, 2 if card_id == "tinker_tune_up_plus" else 1)
 	else:
 		var hero: Dictionary = after["heroes"][recipient - 1]
 		# Independent authored amounts, not derived from the definition.
@@ -214,6 +215,7 @@ func _test_plus_catalog() -> void:
 		"exact original twelve-card starter membership and order retained")
 	_check(starter_deck.size() == 12, "catalog still builds exactly twelve starting copies")
 	var plus_fields := {
+		"tinker_tune_up_plus": ["Tune Up+", "tinker", "none", "draw", 2, [1, 2, 3]],
 		"warden_brace_plus": ["Brace+", "warden", "self", "block", 10, [1, 2, 3]],
 		"seamstress_mend_plus": ["Mend+", "seamstress", "ally_single", "heal", 7, [2, 3]],
 		"seamstress_stitch_up_plus": ["Stitch Up+", "seamstress", "ally_single", "block", 7, [1, 2, 3]],
@@ -228,7 +230,7 @@ func _test_plus_catalog() -> void:
 		_check(definition.get("display_name") == expectation[0],
 			"plus display name is authored for " + card_id)
 		_check(definition.get("owner") == expectation[1]
-			and definition.get("cost") == 1
+			and definition.get("cost") == (0 if card_id == "tinker_tune_up_plus" else 1)
 			and definition.get("from_positions") == expectation[5]
 			and definition.get("target_kind") == expectation[2]
 			and definition.get("to_positions") == [],
@@ -255,8 +257,8 @@ func _test_plus_catalog() -> void:
 		"existing Strike+ remains damage 7")
 	_check(catalog.get_definition("tinker_tune_up")["effects"] == {"draw": 1},
 		"original Tune Up remains draw 1")
-	_check(not catalog.has_card("tinker_tune_up_plus"),
-		"no Tune Up+ is authored for the unspecified draw upgrade")
+	_check(not catalog.has_card("tinker_tune_up_plus_forged"),
+		"forged Tune Up+ is not authored")
 
 
 func _test_brace() -> void:
@@ -512,7 +514,7 @@ func _test_rejections() -> void:
 func _test_plus_rejections() -> void:
 	var party := _party()
 	var deck := _deck(PLUS_SUPPORT_IDS)
-	_check(deck.hand.size() == PLUS_SUPPORT_IDS.size(), "all three plus supports held together")
+	_check(deck.hand.size() == PLUS_SUPPORT_IDS.size(), "all plus supports held together")
 	for card_id in PLUS_SUPPORT_IDS:
 		_check(deck.hand.has(card_id) and catalog.has_card(card_id),
 			"plus support fixture is genuinely held: " + card_id)
@@ -523,7 +525,7 @@ func _test_plus_rejections() -> void:
 			_rejected(deck, party, card_id, position,
 				card_id + " invalid target " + str(position))
 	_rejected(deck, party, "warden_brace_plus_unit", 0, "unknown near-miss plus ID")
-	_rejected(deck, party, "tinker_tune_up_plus", 0, "unauthored Tune Up+ has no path")
+	_rejected(deck, party, "tinker_tune_up_plus_forged", 0, "forged Tune Up+ has no path")
 
 	_check(party.apply_damage(3, 26) and party.is_downed(3), "downed plus recipient prepared")
 	_rejected(deck, party, "seamstress_mend_plus", 3, "Mend+ cannot heal downed ally")
@@ -653,3 +655,42 @@ func _test_replay() -> void:
 			"six plus-support replay snapshots include seeded refill")
 		_check(plus_first == plus_second,
 			"same real plus catalog, seed and actions replay bitwise-identically")
+
+
+func _test_tune_up_plus() -> void:
+	var party := _party()
+	var cards: Array[String] = ["tinker_tune_up_plus", "warden_brace", "warden_strike",
+		"seamstress_prick", "seamstress_mend", "tinker_pop_shot",
+		"seamstress_stitch_up", "tinker_scrap_bomb"]
+	var found: CombatDeck = null
+	for value in range(1, 80):
+		var candidate := _deck(cards, value)
+		if candidate.hand.has("tinker_tune_up_plus"):
+			found = candidate
+			break
+	_check(found != null, "real seeded hand holds Tune Up+")
+	if found == null:
+		return
+	_check(found.draw_pile.size() == 3 and found.try_spend_energy(3), "draw-two fixture has cards and zero energy")
+	_rejected(found, party, "tinker_tune_up_plus", 1, "Tune Up+ rejects a target")
+	_accepted(found, party, "tinker_tune_up_plus", 0, 0, "Tune Up+ draws two at zero energy")
+	_check(found.draw_pile.size() == 1 and found.energy == 0, "exactly two drawn without energy")
+	_rejected(found, party, "tinker_tune_up_plus", 0, "Tune Up+ absent after discard")
+	for value in [31, 89]:
+		var traces: Array = []
+		for repeat in range(2):
+			var deck := _deck(["tinker_tune_up_plus", "warden_strike", "seamstress_prick"], value)
+			party = _party()
+			_check(deck.discard_played("warden_strike") and deck.discard_played("seamstress_prick"), "two genuine discard copies for reshuffle")
+			_accepted(deck, party, "tinker_tune_up_plus", 0, 0, "Tune Up+ seeded draw-two refill")
+			traces.append(_snapshot(deck, party))
+		_check(traces[0] == traces[1], "Tune Up+ authentic seeded reshuffle replay agrees")
+	var held := _deck(["tinker_tune_up_plus"])
+	party = _party()
+	_check(held.combat_state.end_player_turn() and held.hand.has("tinker_tune_up_plus"), "inactive turn genuinely retains Tune Up+")
+	_rejected(held, party, "tinker_tune_up_plus", 0, "inactive Tune Up+")
+	held = _deck(["tinker_tune_up_plus"])
+	_check(party.apply_damage(3, 26) and party.is_downed(3), "held Tune Up+ owner genuinely downed")
+	_rejected(held, party, "tinker_tune_up_plus", 0, "downed Tune Up+ owner")
+	party = CombatParty.new([])
+	_rejected(held, party, "tinker_tune_up_plus", 0, "invalid Tune Up+ party")

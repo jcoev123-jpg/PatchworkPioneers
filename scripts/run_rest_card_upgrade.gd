@@ -11,6 +11,9 @@ extends RefCounted
 # Explicit catalog-backed starter pairs; never infer an upgrade from a suffix.
 # These expected definitions are the same exact semantics resolved by combat.
 const STARTER_UPGRADE_PAIRS := {
+	"tinker_tune_up": {"plus_id": "tinker_tune_up_plus", "owner": "tinker",
+		"cost": 0, "from_positions": [1, 2, 3], "target_kind": "none",
+		"to_positions": [], "effects": {"draw": 1}, "plus_effects": {"draw": 2}},
 	"warden_shield_bash": {"plus_id": "warden_shield_bash_plus", "owner": "warden",
 		"cost": 2, "from_positions": [1], "target_kind": "enemy_single",
 		"to_positions": [1], "effects": {"damage": 8, "weak": 1}, "plus_effects": {"damage": 11, "weak": 1}},

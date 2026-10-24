@@ -116,6 +116,12 @@ const MASKED_ROW_MIN_HEIGHT := 12.0
 const TILE_MIN_HEIGHT := 184.0
 const TILE_ART_SIZE := Vector2(96, 80)
 const OWNER_STRIP_HEIGHT := 20.0
+## The SELECTED stamp's own point size, and the paper inset and reserved row
+## height its dedicated face row keeps. The row is reserved even while the stamp
+## is hidden, so picking a card never reflows the gallery.
+const SELECTED_FONT_SIZE := 13
+const SELECTED_INSET := 6.0
+const SELECTED_ROW_HEIGHT := 18.0
 
 var _app: Node = null
 var _face: Control = null
@@ -1209,10 +1215,9 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	strip.add_child(owner_label)
 
-	# The title row reserves a readable slot for the SELECTED tag: the tag sits
-	# inside the cream paper, inset from the sewn border, beside the name and
-	# above the rules text, so a long wrapping title or multi-line effects can
-	# never clip or cover it.
+	# The name owns the whole title row: TileName wraps across the face's own
+	# text width and never shares an HBox with the SELECTED stamp, so a long or
+	# wrapping name cannot squeeze the stamp toward the sewn border.
 	var title_row := HBoxContainer.new()
 	title_row.name = "TitleRow"
 	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1240,18 +1245,37 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	effects_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text_column.add_child(effects_label)
 
+	# The SELECTED stamp owns a genuine row of the sewn face instead of sharing
+	# TitleRow's width. Its row reserves the stamp's height while hidden, keeps a
+	# paper inset on the right, and the label itself is never wrapped, clipped or
+	# trimmed, so the complete word always sits inside the cream paper whatever
+	# TileName wraps to. Row and label stay inert for pointer and keyboard, and
+	# only _paint_selection reveals the label for the canonical selected row.
+	var selected_row := MarginContainer.new()
+	selected_row.name = "SelectedRow"
+	selected_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	selected_row.focus_mode = Control.FOCUS_NONE
+	selected_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	selected_row.custom_minimum_size = Vector2(0, SELECTED_ROW_HEIGHT)
+	selected_row.add_theme_constant_override("margin_right", int(SELECTED_INSET))
+	text_column.add_child(selected_row)
+
 	var selected_label := Label.new()
 	selected_label.name = "TileSelected"
 	selected_label.text = "SELECTED"
 	selected_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	selected_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	selected_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	selected_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	selected_label.clip_text = false
+	selected_label.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
 	selected_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	selected_label.focus_mode = Control.FOCUS_NONE
 	selected_label.add_theme_color_override("font_color", SELECTED_INK)
-	selected_label.add_theme_font_size_override("font_size", 13)
-	selected_label.size_flags_horizontal = Control.SIZE_SHRINK_END
-	selected_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	selected_label.add_theme_font_size_override("font_size", SELECTED_FONT_SIZE)
+	selected_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	selected_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	selected_label.visible = false
-	title_row.add_child(selected_label)
+	selected_row.add_child(selected_label)
 
 	# The transparent click/focus target covers the panel's own content area, so
 	# the sewn border and the readable text keep their exact reward-card look.

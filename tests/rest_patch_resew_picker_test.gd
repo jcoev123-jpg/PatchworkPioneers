@@ -32,6 +32,7 @@ func _run() -> void:
 		_negative(f)
 	_torn_preview_active()
 	await _input_checks()
+	await _long_tag_checks()
 	host.queue_free()
 	await process_frame
 	if failures.is_empty():
@@ -47,6 +48,49 @@ func _check(condition: bool, description: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(description)
+
+
+func _press_key(keycode: Key) -> void:
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	root.push_input(event, true)
+	await process_frame
+	var release := InputEventKey.new()
+	release.keycode = keycode
+	release.pressed = false
+	root.push_input(release, true)
+	await process_frame
+
+
+## Independent content check: wrap the complete caption at the tag's real
+## content width and prove the chip actually reserved those wrapped lines.
+func _assert_tag_layout(chip: Button, description: String) -> void:
+	var font: Font = chip.get_theme_font("font")
+	var font_size := chip.get_theme_font_size("font_size")
+	var normal := chip.get_theme_stylebox("normal") as StyleBoxFlat
+	var focus := chip.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(font != null and _face_path(chip) == BODY_FACE_PATH and font_size >= 18,
+		description + " keeps the real Patrick Hand body face at >=18 px")
+	_check(chip.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART and not chip.clip_text
+		and chip.tooltip_text == chip.text,
+		description + " keeps its complete wrapped caption and full tooltip")
+	if font == null or normal == null or focus == null or chip.size.x <= 0.0:
+		_check(false, description + " has a genuine themed measurable body")
+		return
+	var side := maxf(normal.get_content_margin(SIDE_LEFT) + normal.get_content_margin(SIDE_RIGHT),
+		focus.get_content_margin(SIDE_LEFT) + focus.get_content_margin(SIDE_RIGHT))
+	var vertical := maxf(normal.get_content_margin(SIDE_TOP) + normal.get_content_margin(SIDE_BOTTOM),
+		focus.get_content_margin(SIDE_TOP) + focus.get_content_margin(SIDE_BOTTOM))
+	var wrap_width := maxf(1.0, chip.size.x - side - 1.0)
+	var wrapped := font.get_multiline_string_size(chip.text,
+		HORIZONTAL_ALIGNMENT_LEFT, wrap_width, font_size)
+	_check(chip.size.y - vertical + 0.5 >= wrapped.y,
+		description + " reserves real height for every wrapped caption line")
+	_check(chip.custom_minimum_size.y + 0.5 >= wrapped.y + vertical,
+		description + " height is measured from the caption, not a fixed 56 px")
+	_check(chip.get_global_rect().size.x + 0.5 >= wrapped.x,
+		description + " is wide enough for its longest rendered line")
 
 
 ## The face a mounted control really resolves through the installed project
@@ -826,6 +870,23 @@ func _input_checks() -> void:
 		return
 	_check(picker.present(f.wardrobe, f.torn, f.wardrobe.get_snapshot(), f.rest),
 		"fresh UI for keyboard and mouse input checks")
+	await process_frame
+	await process_frame
+	_check(picker.source_scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED
+		and picker.destination_scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED,
+		"both sewn tag views allow vertical scrolling for wrapped captions")
+	picker._source_buttons[4].grab_focus()
+	await process_frame
+	await process_frame
+	var last_source := picker._source_buttons[4]
+	var source_view := picker.source_scroll.get_global_rect()
+	var last_rect := last_source.get_global_rect()
+	_check(root.gui_get_focus_owner() == last_source
+		and last_rect.position.y >= source_view.position.y - 1.0
+		and last_rect.end.y <= source_view.end.y + 1.0
+		and last_rect.position.x >= source_view.position.x - 1.0
+		and last_rect.end.x <= source_view.end.x + 1.0,
+		"focusing the final real source tag keeps it fully visible in its scroll view")
 	picker.source_selector.grab_focus()
 	await process_frame
 	_check(root.gui_get_focus_owner() == picker.source_selector,
@@ -876,3 +937,236 @@ func _input_checks() -> void:
 	await process_frame
 	_check(emitted.size() == 2 and f.wardrobe.get_snapshot().scraps == 1,
 		"actual 1280x720 mouse click sends one request without committing ledger")
+
+
+## AC1/AC2: a genuine five-source wardrobe whose long authored COAT names and
+## torn wearer really wrap, mounted on the same 1280x720 picker.
+func _long_fixture() -> Dictionary:
+	var authored_heroes: Variant = _json("res://data/heroes/starter_party.json")
+	var slots: Variant = _json("res://data/patches/initial_patch_slots.json")
+	var attacks: Variant = _json("res://data/patches/m04_attack_patches.json")
+	var coats: Variant = _json("res://data/patches/m04_coat_patches.json")
+	if not (authored_heroes is Array and slots is Array and attacks is Array and coats is Array):
+		_check(false, "long-caption catalogs parse into arrays")
+		return {}
+	for id in ["reinforced_patchcoat", "chain_stitched_coat", "double_quilt_coat"]:
+		_check(_catalog_has(coats, id, {"slot": "COAT"}),
+			"authored long coat entry is really present: " + id)
+	var defs := []
+	var counts := {}
+	for catalog in [slots, attacks, coats]:
+		for entry in catalog:
+			if typeof(entry) != TYPE_DICTIONARY or typeof(entry.get("id")) != TYPE_STRING:
+				continue
+			counts[entry["id"]] = counts.get(entry["id"], 0) + 1
+			defs.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned := ["button_eye", "stitched_badge", "reinforced_patchcoat",
+		"chain_stitched_coat", "double_quilt_coat"]
+	for id in owned:
+		_check(counts.get(id, 0) == 1, "long-caption patch authored exactly once: " + id)
+	var combat_defs: Array = authored_heroes.duplicate(true)
+	for entry in combat_defs:
+		entry["max_hp"] = int(entry["max_hp"])
+	var party := CombatParty.new(combat_defs)
+	_check(party.is_valid(), "long-caption fixture builds the genuine three-hero party")
+	if not party.is_valid():
+		return {}
+	var heroes: Array = party.get_heroes()
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, defs, 2,
+		173, ["warden_strike", "seamstress_prick"], 90218)
+	_check(torn.is_valid() and wardrobe.is_valid(), "long-caption wardrobe and mending admit")
+	if not torn.is_valid() or not wardrobe.is_valid():
+		return {}
+	for step in [
+		["button_eye", "warden", "HEAD"],
+		["reinforced_patchcoat", "warden", "COAT"],
+		["stitched_badge", "seamstress", "HEAD"],
+		["chain_stitched_coat", "seamstress", "COAT"],
+		["double_quilt_coat", "tinker", "COAT"]
+	]:
+		var sewn := wardrobe.sew(step[0], step[1], step[2],
+			"long_sew_" + step[0], wardrobe.get_snapshot())
+		_check(sewn.get("ok") == true and sewn.receipt.scrap_delta == 0,
+			"genuine sew establishes long-caption patch: " + step[0])
+	var start: Array = torn.read_state().heroes
+	var ending: Array = start.duplicate(true)
+	ending[2].hp = 0
+	_check(torn.observe_battle_end("long_caption_tear", start, ending).ok,
+		"actual zero-HP battle tears Tinker for a real torn caption")
+	var live := wardrobe.get_snapshot()
+	_check(wardrobe.refresh_run_context(torn.read_state().heroes, live.owned,
+		live.scraps, live.gold, live.cards, live),
+		"run owner refreshes the wardrobe after the authentic tear")
+	var opened := wardrobe.start_rest("rest_long_captions", wardrobe.get_snapshot())
+	_check(opened.get("ok") == true, "actual Rest opens for the long-caption picker")
+	return {"party": party, "torn": torn, "wardrobe": wardrobe, "coats": coats,
+		"rest": "rest_long_captions", "requests": [], "receipts": [], "mode": "commit"}
+
+
+func _long_tag_checks() -> void:
+	var f := _long_fixture()
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	_check(picker.present(w, f.torn, w.get_snapshot(), f.rest),
+		"mounted picker accepts the authenticated long-caption Rest")
+	await process_frame
+	await process_frame
+	_check(picker._source_buttons.size() == 5 and picker._destination_buttons.size() == 2,
+		"long-caption fixture really mounts five sources and two recipients")
+	var expected_sources := [
+		"Warden / Head patch\nButton Eye",
+		"Warden / Coat patch\nReinforced Patchcoat",
+		"Seamstress / Head patch\nStitched Badge",
+		"Seamstress / Coat patch\nChain Stitched Coat",
+		"Tinker / Coat patch\nDouble Quilt Coat • torn/inactive"
+	]
+	var source_count := mini(expected_sources.size(), picker._source_buttons.size())
+	for i in range(source_count):
+		_check(picker._source_buttons[i].text == expected_sources[i],
+			"long source tag keeps complete exact hero, slot, patch and torn wording: "
+			+ str(i) + " got [" + picker._source_buttons[i].text + "]")
+		_assert_tag_layout(picker._source_buttons[i], "long source tag " + str(i))
+	_check(picker._source_buttons[4].custom_minimum_size.y > 56.0
+		and picker._source_buttons[4].size.y > 56.0,
+		"torn long coat source grows past the old fixed 56 px tag")
+	var expected_move_destinations := [
+		"Seamstress / Swap\nHead patch • swap with Stitched Badge",
+		"Tinker / Move\nempty Head slot • torn/inactive"
+	]
+	for i in range(mini(expected_move_destinations.size(), picker._destination_buttons.size())):
+		_check(picker._destination_buttons[i].text == expected_move_destinations[i],
+			"long recipient tag keeps complete exact hero, action, slot and torn wording: "
+			+ str(i) + " got [" + picker._destination_buttons[i].text + "]")
+		_assert_tag_layout(picker._destination_buttons[i], "long recipient tag " + str(i))
+	picker._source_buttons[1].pressed.emit()
+	await process_frame
+	await process_frame
+	var expected_long_destinations := [
+		"Seamstress / Swap\nCoat patch • swap with Chain Stitched Coat",
+		"Tinker / Swap\nCoat patch • swap with Double Quilt Coat • torn/inactive"
+	]
+	_check(picker._destinations.size() == 2,
+		"real long coat source offers exactly its two recipient heroes")
+	for i in range(mini(expected_long_destinations.size(), picker._destination_buttons.size())):
+		_check(picker._destination_buttons[i].text == expected_long_destinations[i],
+			"long coat recipient caption keeps both real patch names and torn state: "
+			+ str(i) + " got [" + picker._destination_buttons[i].text + "]")
+		_assert_tag_layout(picker._destination_buttons[i], "long coat recipient tag " + str(i))
+	_check(picker._source_buttons[1].custom_minimum_size.y > 56.0
+		or picker._destination_buttons[1].custom_minimum_size.y > 56.0,
+		"at least one measured long caption exceeds the old fixed tag height")
+	_check(picker.source_tags.size.y > picker.source_scroll.size.y + 1.0,
+		"five genuinely long source tags overflow their scroll viewport")
+	_check(picker.destination_tags.size.y > picker.destination_scroll.size.y + 1.0,
+		"long recipient tags overflow their scroll viewport and stay scrollable")
+	var source_view := picker.source_scroll.get_global_rect()
+	picker.source_scroll.scroll_vertical = 0
+	await process_frame
+	picker._source_buttons[4].pressed.emit()
+	await process_frame
+	await process_frame
+	var selected_final := picker._source_buttons[4].get_global_rect()
+	_check(picker.source_selector.selected == 4
+		and picker.source_scroll.scroll_vertical > 0
+		and selected_final.position.y >= source_view.position.y - 1.0
+		and selected_final.end.y <= source_view.end.y + 1.0,
+		"activating the final offscreen source reveals it in the scroll view")
+	picker._source_buttons[0].pressed.emit()
+	await process_frame
+	await process_frame
+	_check(picker.source_selector.selected == 0,
+		"first real source can be selected again before keyboard navigation")
+	picker._source_buttons[0].grab_focus()
+	await process_frame
+	for step in range(picker._source_buttons.size() - 1):
+		await _press_key(KEY_TAB)
+	_check(root.gui_get_focus_owner() == picker._source_buttons[4],
+		"keyboard Tab reaches the final offscreen source tag")
+	await process_frame
+	_check(picker.source_scroll.scroll_vertical > 0.0,
+		"focusing the final source tag scrolls its viewport to it")
+	var final_source := picker._source_buttons[4].get_global_rect()
+	_check(final_source.position.y >= source_view.position.y - 1.0
+		and final_source.end.y <= source_view.end.y + 1.0
+		and final_source.position.x >= source_view.position.x - 1.0
+		and final_source.end.x <= source_view.end.x + 1.0,
+		"final focused source tag is fully revealed inside its scroll viewport")
+	await _press_key(KEY_ENTER)
+	await process_frame
+	_check(picker.source_selector.selected == 4 and picker._source_buttons[4].button_pressed
+		and picker._destinations.size() == 2 and picker.selected_option().is_empty()
+		and picker.confirm_button.disabled,
+		"keyboard selection of the final source rebuilds its recipients with no stale choice")
+	var final_destinations := [
+		"Warden / Swap\nCoat patch • swap with Reinforced Patchcoat",
+		"Seamstress / Swap\nCoat patch • swap with Chain Stitched Coat"
+	]
+	for i in range(mini(final_destinations.size(), picker._destination_buttons.size())):
+		_check(picker._destination_buttons[i].text == final_destinations[i],
+			"final source's recipient captions keep the real exchanged names: "
+			+ str(i) + " got [" + picker._destination_buttons[i].text + "]")
+		_assert_tag_layout(picker._destination_buttons[i], "final recipient tag " + str(i))
+	await _press_key(KEY_TAB)
+	_check(root.gui_get_focus_owner() == picker.destination_selector,
+		"keyboard Tab moves from the final source to its first recipient")
+	await _press_key(KEY_TAB)
+	_check(root.gui_get_focus_owner() == picker._destination_buttons[1],
+		"keyboard Tab reaches the second recipient tag")
+	await _press_key(KEY_ENTER)
+	await process_frame
+	var chosen := picker.selected_option()
+	var forecast := RunRestPatchResewOptions.forecast(
+		w, f.torn, w.get_snapshot(), f.rest, chosen)
+	_check(picker.destination_selector.selected == 1
+		and chosen.get("kind") == "SWAP" and chosen.get("slot") == "COAT"
+		and chosen.get("patch_id") == "double_quilt_coat"
+		and chosen.get("from_hero") == "tinker"
+		and chosen.get("to_hero") == "seamstress"
+		and chosen.get("exchanged_id") == "chain_stitched_coat"
+		and chosen.get("cost") == 1 and forecast.get("ok") == true
+		and forecast.get("cost") == 1,
+		"final keyboard choice keeps the exact authoritative SWAP option and forecast")
+	_check(picker.preview_label.text.contains("Tinker to Seamstress")
+		and picker.preview_label.text.contains("Cost: 1 scrap")
+		and not picker.confirm_button.disabled,
+		"final long choice leaves the full 1-scrap forecast and Confirm reachable")
+	picker.re_sew_requested.connect(_owner.bind(f))
+	var before_swap: int = int(w.get_snapshot()["scraps"])
+	await _press_key(KEY_TAB)
+	_check(root.gui_get_focus_owner() == picker.confirm_button,
+		"keyboard Tab from the selected recipient reaches Confirm")
+	await _press_key(KEY_ENTER)
+	await process_frame
+	var swapped := w.get_snapshot()
+	_check(f.receipts.size() == 1 and f.receipts[0].receipt.kind == "re_sew"
+		and f.receipts[0].receipt.exchanged_id == "chain_stitched_coat"
+		and swapped.scraps == before_swap - 1
+		and swapped.worn.tinker.COAT == "chain_stitched_coat"
+		and swapped.worn.seamstress.COAT == "double_quilt_coat",
+		"confirmed long SWAP spends exactly 1 scrap and exchanges the two real coats")
+	_check(f.torn.read_state().heroes[2].hp == 0,
+		"long-caption re-sew never revives the torn wearer")
+	_pick("button_eye", "tinker")
+	await process_frame
+	var move := picker.selected_option()
+	var move_forecast := RunRestPatchResewOptions.forecast(
+		w, f.torn, w.get_snapshot(), f.rest, move)
+	_check(move.get("kind") == "MOVE" and move.get("slot") == "HEAD"
+		and move.get("from_hero") == "warden" and move.get("to_hero") == "tinker"
+		and move.get("exchanged_id") == "" and move_forecast.get("ok") == true,
+		"real MOVE into the torn hero's empty same slot stays offered after the long SWAP")
+	var before_move: int = int(w.get_snapshot()["scraps"])
+	picker.confirm_button.pressed.emit()
+	await process_frame
+	var moved := w.get_snapshot()
+	_check(f.receipts.size() == 2 and f.receipts[1].receipt.kind == "re_sew"
+		and f.receipts[1].receipt.exchanged_id == ""
+		and moved.scraps == before_move - 1
+		and moved.worn.tinker.HEAD == "button_eye" and moved.worn.warden.HEAD == "",
+		"confirmed MOVE spends exactly 1 scrap and lands in the empty same slot")
+	_check(f.requests.size() == 2 and moved.operation_ids[-2] == "owner_resew_1"
+		and moved.operation_ids[-1] == "owner_resew_2",
+		"long-caption MOVE and SWAP use one detached request and receipt each")
+	picker.re_sew_requested.disconnect(_owner.bind(f))

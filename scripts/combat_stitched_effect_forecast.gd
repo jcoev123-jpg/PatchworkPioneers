@@ -65,6 +65,11 @@ func get_forecast(run_cards: Variant, expected_ledger: Variant, deck: Variant,
 				support._wardrobe, support._torn,
 				support._wardrobe_snapshot, support._torn_snapshot):
 			return failure
+		# Stage the optional combat-scoped P6 COAT authority with the other
+		# detached models. Without a valid bound helper the projection stays
+		# exactly as unpatched as the real transaction would behave.
+		_stage_borrowed_button(current_transaction, live_party, staged_party,
+			staged_transaction)
 
 	var result := staged_transaction.play_stitched(staged_deck, staged_party,
 		staged_enemies, staged_rest, stitched_id, first_target, second_target)
@@ -94,3 +99,48 @@ func get_forecast(run_cards: Variant, expected_ledger: Variant, deck: Variant,
 func _rejected() -> Dictionary:
 	return {"playable": false, "stitched_id": "", "cost": 0,
 		"halves": [], "projected": {}}
+
+
+## Detached P6 staging: one cloned CombatBorrowedButton and one staged healing
+## service bound to the staged party and this transaction's authentic run
+## wardrobe/torn receipts. The clone keeps a spent once-per-combat latch and its
+## accepted receipt identities, so the preview cannot award a second time, and
+## the real notifier is never told about a preview. An absent, unbound, stale or
+## foreign helper leaves the old unpatched projection in place, exactly like the
+## committed transaction's own precondition.
+func _stage_borrowed_button(current: CombatStitchedCards, live_party: CombatParty,
+		staged_party: CombatParty, staged_transaction: CombatStitchedCards) -> void:
+	var source: CombatSeamstressPoolHeals = current._button_heals
+	if source == null or source._borrowed_button == null:
+		return
+	if source._button_party != null and source._button_party != live_party \
+			and not source._pending_new_party:
+		return
+	var support: CombatSupportCards = current._support
+	if support._wardrobe == null or support._torn == null:
+		return
+	if source._wardrobe != support._wardrobe or source._torn != support._torn:
+		return
+	if not source.is_patch_binding_valid():
+		return
+	# A helper still bound to this combat carries its latch; an unspent one or a
+	# genuine new combat after a rebind starts a fresh, still-armed notifier.
+	var carries_latch: bool = source._button_party == live_party
+	var staged_button: CombatBorrowedButton = null
+	if carries_latch:
+		staged_button = source._borrowed_button.stage_for_party(staged_party)
+	else:
+		staged_button = CombatBorrowedButton.new()
+		if not staged_button.bind_combat(staged_party, support._wardrobe, support._torn):
+			staged_button = null
+	if staged_button == null:
+		return
+	var staged_heals := CombatSeamstressPoolHeals.new()
+	if not staged_heals.bind_patch_wardrobe(support._wardrobe, support._torn,
+			support._wardrobe_snapshot, support._torn_snapshot):
+		return
+	staged_heals._borrowed_button = staged_button
+	staged_heals._button_party = staged_party
+	staged_heals._heal_receipt_number = source._heal_receipt_number if carries_latch else 0
+	staged_heals._pending_new_party = false
+	staged_transaction.bind_borrowed_button(staged_heals)
