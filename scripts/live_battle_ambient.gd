@@ -6,12 +6,12 @@ extends Control
 
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const ROUTE_MAP := preload("res://scripts/run_map.gd")
-const NORMAL_LINT := 7
-const NORMAL_AREA := 20
-const FAST_LINT := 2
-const FAST_AREA := 6
-const NORMAL_MOTIFS := 4
-const FAST_MOTIFS := 1
+const NORMAL_LINT := 2
+const NORMAL_AREA := 3
+const FAST_LINT := 1
+const FAST_AREA := 2
+const NORMAL_MOTIFS := 30
+const FAST_MOTIFS := 7
 const NORMAL_BUDGET := NORMAL_LINT + NORMAL_AREA + NORMAL_MOTIFS
 const FAST_BUDGET := FAST_LINT + FAST_AREA + FAST_MOTIFS
 const PROFILE_COLORS := {
@@ -201,59 +201,73 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+## Detached, pure draw geometry. No random sampling or scene state is needed.
+## Each silhouette spans 6-14 px in both axes, including the ash flecks.
+static func motif_geometry(family: String, index: int) -> PackedVector2Array:
+	var vertices := PackedVector2Array()
+	match family:
+		"pollen":
+			vertices = PackedVector2Array([Vector2(-0.5, -0.2), Vector2(-0.2, -0.5), Vector2(0.35, -0.4), Vector2(0.5, 0.15), Vector2(0.1, 0.5), Vector2(-0.4, 0.3)])
+		"leaves":
+			vertices = PackedVector2Array([Vector2(-0.5, -0.1), Vector2(-0.15, -0.5), Vector2(0.25, -0.3), Vector2(0.5, 0.15), Vector2(0.05, 0.5), Vector2(-0.3, 0.25)])
+		"fireflies":
+			vertices = PackedVector2Array([Vector2(-0.5, -0.3), Vector2(-0.1, -0.15), Vector2(0.25, -0.5), Vector2(0.5, 0.1), Vector2(0.05, 0.5), Vector2(-0.4, 0.3)])
+		"snow":
+			vertices = PackedVector2Array([Vector2(-0.5, 0), Vector2(-0.15, -0.5), Vector2(0.35, -0.35), Vector2(0.5, 0.15), Vector2(0.1, 0.5), Vector2(-0.35, 0.3)])
+		"ash":
+			vertices = PackedVector2Array([Vector2(-0.5, 0.15), Vector2(-0.15, -0.5), Vector2(0.5, -0.2), Vector2(0.2, 0.5)])
+		"scraps":
+			vertices = PackedVector2Array([Vector2(-0.5, -0.5), Vector2(0.5, -0.3), Vector2(0.35, 0.5), Vector2(-0.4, 0.35)])
+	var width := 6.0 + float(posmod(index, 9))
+	for i in range(vertices.size()):
+		vertices[i] *= width
+	return vertices
+
+
+static func motifs_for(family: String, bounds: Vector2, elapsed: float, fast_mode: bool) -> Array:
+	var marks: Array = []
+	if not PROFILE_COLORS.has(family) or bounds.x < 40.0 or bounds.y < 40.0:
+		return marks
+	var tint: Color = PROFILE_COLORS[family]
+	tint.a = 0.32 if fast_mode else 0.72
+	var family_phase := float(PROFILE_SEEDS[family] % 17)
+	for i in range(FAST_MOTIFS if fast_mode else NORMAL_MOTIFS):
+		# Permute a 10 x 3 grid so Fast still spans the stage. A periodic sway
+		# keeps every whole silhouette in bounds without teleporting at an edge.
+		var cell := posmod(i * 13, NORMAL_MOTIFS)
+		var phase := fposmod(elapsed, 120.0) * TAU / 120.0 + float(i) * 1.81 + family_phase
+		var motion_scale := 0.4 if fast_mode else 1.0
+		var at := Vector2(
+			18.0 + (bounds.x - 36.0) * (float(cell % 10) + 0.5) / 10.0,
+			18.0 + (bounds.y - 36.0) * (float(cell / 10) + 0.5) / 3.0)
+		at += Vector2(sin(phase) * 10.0, cos(phase) * 8.0) * motion_scale
+		marks.append({"center": at, "vertices": motif_geometry(family, i), "color": tint})
+	return marks
+
+
+func motif_metadata() -> Array:
+	return motifs_for(profile, size, _time, fast)
+
+
 func _draw() -> void:
 	if profile.is_empty() or size.x < 1.0 or size.y < 1.0:
 		return
-	# Gentle honey light on the three heroes, never a second dim/vignette.
-	# It lives between the roster's already-dimmed backdrop and the actor row.
+	# Layered, narrow peripheral washes soften the stage behind the actor row.
+	for edge in range(8):
+		var inset := float(edge) * 6.0
+		var shade := Color(0.13, 0.10, 0.16, 0.08 * (1.0 - float(edge) / 8.0))
+		draw_rect(Rect2(inset, inset, maxf(0.0, size.x - inset * 2.0), 6.0), shade)
+		draw_rect(Rect2(inset, size.y - inset - 6.0, maxf(0.0, size.x - inset * 2.0), 6.0), shade)
+		draw_rect(Rect2(inset, inset, 6.0, maxf(0.0, size.y - inset * 2.0)), shade)
+		draw_rect(Rect2(size.x - inset - 6.0, inset, 6.0, maxf(0.0, size.y - inset * 2.0)), shade)
+	# Overlapping translucent ellipses give the heroes a perceptible honey pool.
 	var center := Vector2(size.x * 0.26, size.y * 0.62)
 	draw_set_transform(center, 0.0, Vector2(1.65, 0.58))
 	for ring in range(9, 0, -1):
 		draw_circle(Vector2.ZERO, 13.0 + ring * 12.0,
-			Color(1.0, 0.81, 0.49, (0.008 if fast else 0.014)))
+			Color(1.0, 0.79, 0.40, 0.032))
 	draw_set_transform(Vector2.ZERO)
-	# A few larger, hand-cut silhouettes make the weather recognisable at 720p.
-	# Their positions are fixed arithmetic, not samples of the game's RNG.
-	for i in range(FAST_MOTIFS if fast else NORMAL_MOTIFS):
-		var phase := _time * (0.16 + 0.035 * i) + float(i) * 1.81
-		var x := fposmod(size.x * (0.15 + 0.22 * i) + sin(phase) * 32.0, size.x)
-		var y := fposmod(size.y * (0.15 + 0.11 * i) + _time * _fall_speed()
-			+ cos(phase * 1.4) * 9.0, maxf(1.0, size.y * 0.73))
-		_draw_motif(Vector2(x, y), i)
-
-
-func _fall_speed() -> float:
-	match profile:
-		"leaves", "snow", "scraps":
-			return 5.0
-		"ash":
-			return -3.0
-	return 1.5
-
-
-func _draw_motif(at: Vector2, index: int) -> void:
-	var tint: Color = PROFILE_COLORS[profile]
-	tint.a = 0.33 if fast else 0.63
-	match profile:
-		"pollen":
-			draw_circle(at, 2.7, tint)
-			draw_circle(at, 5.0, Color(tint.r, tint.g, tint.b, 0.07))
-		"fireflies":
-			draw_circle(at, 8.0, Color(tint.r, tint.g, tint.b, 0.045))
-			draw_circle(at, 3.1, tint)
-		"snow":
-			draw_circle(at, 3.1 + float(index % 2), tint)
-		"ash":
-			draw_line(at + Vector2(-2, 1), at + Vector2(2, -1), tint, 1.5)
-		"leaves":
-			draw_colored_polygon(PackedVector2Array([
-				at + Vector2(-5, -2), at + Vector2(1, -4),
-				at + Vector2(6, 2), at + Vector2(-1, 4)]), tint)
-			draw_line(at + Vector2(-3, -2), at + Vector2(4, 2),
-				Color("#574d3f", 0.35), 0.8)
-		"scraps":
-			draw_colored_polygon(PackedVector2Array([
-				at + Vector2(-5, -3), at + Vector2(5, -2),
-				at + Vector2(4, 4), at + Vector2(-4, 3)]), tint)
-			draw_line(at + Vector2(-3, 0), at + Vector2(3, 1),
-				Color("#7d6357", 0.5), 0.9)
+	for mark in motif_metadata():
+		draw_set_transform(mark["center"])
+		draw_colored_polygon(mark["vertices"], mark["color"])
+	draw_set_transform(Vector2.ZERO)

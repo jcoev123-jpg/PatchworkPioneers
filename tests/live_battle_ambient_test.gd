@@ -93,17 +93,65 @@ func _profiles() -> void:
 			and sample.weather.emitting and sample.lint.emitting
 			and sample.visible_budget() == sample.NORMAL_BUDGET,
 			"each authored area configures distinct, pooled, fixed-seed web CPU weather")
+		_geometry(sample, String(row[2]))
 	for row in [["Fight", -1], ["Fight", 12], ["Elite", -1], ["Elite", 0],
 			["Elite", 12], ["Boss", -1], ["Boss", 0], ["Boss", 11],
 			["Boss", 13], ["Rest", 5], ["", 5]]:
 		_check(AMBIENT.profile_for(row[0], row[1]).is_empty()
 			and not sample.configure(row[0], row[1], false)
-			and sample.profile.is_empty() and not sample.weather.emitting,
+			and sample.profile.is_empty() and not sample.weather.emitting
+			and not sample.lint.emitting and sample.visible_budget() == 0
+			and sample.motif_metadata().is_empty() and not sample.visible,
 			"invalid routed scene %s floor %d remains without ambience" % row)
 	_check(randi() == next_random,
 		"all six profile activations and rejected mappings avoid the global RNG")
 	sample.retire()
 	sample.free()
+
+
+func _geometry(layer, family: String) -> void:
+	var bounds := Vector2(1000, 300)
+	var initial: Array = AMBIENT.motifs_for(family, bounds, 0.0, false)
+	_check(initial.size() == 30 and layer.visible_budget() >= 25
+		and layer.visible_budget() <= 40, "normal budget includes thirty actual silhouettes")
+	_check(initial == AMBIENT.motifs_for(family, bounds, 0.0, false),
+		"pure geometry and placement repeat exactly")
+	for time in [0.0, 1.0, 30.0, 60.0, 119.99, 120.0, 100000.0]:
+		var marks: Array = AMBIENT.motifs_for(family, bounds, time, false)
+		_check(marks.size() == 30, "motion retains thirty drawn motifs")
+		for i in range(marks.size()):
+			var mark: Dictionary = marks[i]
+			var vertices: PackedVector2Array = mark["vertices"]
+			_check(vertices.size() >= 4 and vertices == AMBIENT.motif_geometry(family, i),
+				"drawn motif uses the pure family silhouette")
+			var rect := Rect2(vertices[0], Vector2.ZERO)
+			for vertex in vertices:
+				rect = rect.expand(vertex)
+				_check(Rect2(Vector2.ZERO, bounds).has_point(mark["center"] + vertex),
+					"whole moving motif stays inside the stage")
+			_check(rect.size.x >= 6.0 and rect.size.x <= 14.0
+				and rect.size.y >= 6.0 and rect.size.y <= 14.0,
+				"felt silhouettes span six to fourteen pixels in both axes")
+			_check(mark["color"] == Color(AMBIENT.PROFILE_COLORS[family], 0.72),
+				"visible felt uses its area palette")
+	var reduced: Array = AMBIENT.motifs_for(family, bounds, 0.0, true)
+	_check(reduced.size() == 7 and reduced[0]["color"].a < initial[0]["color"].a,
+		"Fast reduces actual shape count and opacity")
+	var moving: Array = AMBIENT.motifs_for(family, bounds, 1.0, false)
+	var fast_moving: Array = AMBIENT.motifs_for(family, bounds, 1.0, true)
+	var normal_distance: float = initial[0]["center"].distance_to(moving[0]["center"])
+	_check(normal_distance > 0.0 and normal_distance < 1.0
+		and reduced[0]["center"].distance_to(fast_moving[0]["center"]) < normal_distance,
+		"motion is slow and further reduced in Fast")
+	_check(layer.get_child_count() == 2, "geometry creates no extra nodes")
+	var detached: PackedVector2Array = initial[0]["vertices"]
+	detached[0] = Vector2(9999, 9999)
+	_check(AMBIENT.motif_geometry(family, 0)[0] != detached[0],
+		"returned geometry cannot mutate subsequent draws")
+	for other in AMBIENT.PROFILE_COLORS:
+		if other != family:
+			_check(AMBIENT.motif_geometry(family, 0) != AMBIENT.motif_geometry(other, 0),
+				"each area has a distinct silhouette family")
 
 
 func _mounted() -> void:
@@ -121,6 +169,13 @@ func _mounted() -> void:
 		and layer.get_global_rect() == roster.backdrop.get_global_rect()
 		and layer.size.x > 900.0 and layer.size.y > 200.0,
 		"one correctly sized ambient is immediately above the dim/vignette bed: index=%d/%d, size=%s, battle=%s" % [layer.get_index(), roster.backdrop.get_index(), layer.size, app.battle_view.size])
+	var actor_branch: Node = roster.battle_row
+	_check(is_instance_valid(actor_branch) and actor_branch.is_ancestor_of(app.hero_view),
+		"real stage row contains the hero actors")
+	while actor_branch.get_parent() != app.battle_view:
+		actor_branch = actor_branch.get_parent()
+	_check(layer.get_index() < actor_branch.get_index(),
+		"light and edge vignette render behind both actor rows")
 	_check(layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and layer.focus_mode == Control.FOCUS_NONE
 		and layer.lint is CPUParticles2D and layer.weather is CPUParticles2D
@@ -128,8 +183,13 @@ func _mounted() -> void:
 		and layer.lint.use_fixed_seed and layer.weather.use_fixed_seed,
 		"CPU emitters are texture-free, fixed-seed and incapable of taking input")
 	_check(layer.lint.emitting and layer.weather.emitting
-		and layer.visible_budget() <= 36 and layer.visible_budget() > 0,
+		and layer.visible_budget() <= 40 and layer.visible_budget() >= 25
+		and layer.motif_metadata().size() == 30 and layer.get_child_count() == 2,
 		"normal atmosphere is visibly active and within the particle budget")
+	for mark in layer.motif_metadata():
+		for vertex in mark["vertices"]:
+			_check(Rect2(Vector2.ZERO, layer.size).has_point(mark["center"] + vertex),
+				"real 1280x720 stage contains each complete felt silhouette")
 	_check(app.battle_view.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
 		"only one ambient layer belongs to the mounted stage")
 	var state := _snapshot()
@@ -150,16 +210,21 @@ func _mounted() -> void:
 	# Real mounted toggle: Fast changes only this same layer's budget and opacity.
 	var original_lint = layer.lint
 	var original_weather = layer.weather
+	seed(58231)
+	global_sample = randi()
+	seed(58231)
 	await _click(juice.fast_button)
 	_check(juice.fast_animations and layer.fast
 		and layer.lint == original_lint and layer.weather == original_weather
 		and layer.visible_budget() <= 12 and layer.visible_budget() < layer.NORMAL_BUDGET
+		and layer.motif_metadata().size() == 7 and layer.get_child_count() == 2
 		and layer.weather.color.a < 0.4 and layer.lint.color.a < 0.3,
 		"Fast uses the same emitters with less weather and dimmer intensity")
 	_check(_snapshot() == state, "Fast does not change real combat or its seeded RNG")
 	await _click(juice.fast_button)
 	_check(not juice.fast_animations and not layer.fast
-		and layer.visible_budget() <= 36 and _snapshot() == state,
+		and layer.visible_budget() <= 40 and layer.motif_metadata().size() == 30
+		and _snapshot() == state,
 		"normal mode restores bounded decor without a gameplay mutation")
 	# Pointer motion over the light's own hero-side center must hit the underlying UI.
 	var motion := InputEventMouseMotion.new()
@@ -168,6 +233,7 @@ func _mounted() -> void:
 	await process_frame
 	_check(root.gui_get_hovered_control() != layer,
 		"hero-side glow never intercepts a real pointer hit test")
+	_check(randi() == global_sample, "real Fast toggles and drawing avoid global RNG drift")
 
 
 func _run() -> void:
@@ -199,16 +265,21 @@ func _run() -> void:
 			"fresh fight reuses the exact original emission resources")
 		await _mounted()
 		var old_battle = app.battle_view
+		seed(70213)
+		var return_sample := randi()
+		seed(70213)
 		app._return_to_title()
 		await _frames()
 		_check(app.deck == null and app.title_view.is_visible_in_tree()
 			and juice.ambient == layer and layer.get_parent() == juice
 			and layer.profile.is_empty() and not lint.emitting and not weather.emitting
+			and layer.motif_metadata().is_empty() and layer.visible_budget() == 0
 			and not juice.bound and juice.overlay == null,
 			"title retires all ambient emission and the old battle binding")
 		_check(not is_instance_valid(old_battle)
 			and app.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
 			"old battle is freed without an orphaned or duplicated ambient")
+		_check(randi() == return_sample, "Return parks pooled resources without global RNG drift")
 	app.free()
 	_finish()
 
