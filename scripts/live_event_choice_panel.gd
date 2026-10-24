@@ -1,6 +1,6 @@
 class_name LiveEventChoicePanel
 extends Control
-## Standalone, unwired presentation for an authored M04 Event.
+## Presentation for an authored M04 Event, mounted by the app's routed Event flow.
 ## The open parchment reads as one story: the PatchHeading title and the fully
 ## wrapped description take only their natural height, and the authored choice
 ## tickets sit directly beneath them on the same sewn paper sheet (no stretch
@@ -35,6 +35,7 @@ const NEUTRAL_WALLET := {"gold": 0, "scraps": 0}
 ## unconditional scene dependency: the picture layer stays hidden when this file
 ## does not resolve, and the opaque SlateBackdrop underneath still shows.
 const EVENT_BACKDROP_ART := "res://assets/paper/backgrounds/event_crossroads.png"
+const EVENT_PANEL_ART := "res://assets/paper/ui/reward_panel.png"
 ## Sewn number tag geometry on a choice ticket: a small felt square pinned to
 ## the left edge, clear of the centred authored text and the wallet forecast.
 const CUE_INSET := 9.0
@@ -452,14 +453,7 @@ func _on_choice_pressed(offered: RunEventChoice, choice_id: String, generation: 
 
 
 func _apply_patchwork_style() -> void:
-	var paper := StyleBoxFlat.new()
-	paper.bg_color = Color("#e5d5b5")
-	paper.border_color = Color("#766351")
-	paper.set_border_width_all(5)
-	paper.set_corner_radius_all(14)
-	paper.shadow_color = Color(0.04, 0.07, 0.08, 0.75)
-	paper.shadow_size = 12
-	paper_panel.add_theme_stylebox_override("panel", paper)
+	bind_event_paper()
 	for label in [title_label, description_label]:
 		label.add_theme_color_override("font_color", Color("#2c3437"))
 	# The authored Event title speaks in the master Theme's Londrina heading face;
@@ -470,6 +464,33 @@ func _apply_patchwork_style() -> void:
 	for stitch_label in [top_stitches, bottom_stitches]:
 		stitch_label.add_theme_color_override("font_color", Color("#85715b"))
 		stitch_label.add_theme_font_size_override("font_size", 17)
+
+
+## Reuse the existing panel; explicit content insets preserve the flat panel's
+## layout independently of the fabric's unstretched 36px sewn edges.
+func bind_event_paper(art_path: String = EVENT_PANEL_ART) -> void:
+	var fabric: Texture2D = null
+	if not art_path.is_empty() and ResourceLoader.exists(art_path, "Texture2D"):
+		fabric = ResourceLoader.load(art_path) as Texture2D
+	paper_panel.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if fabric != null:
+		var sewn := StyleBoxTexture.new()
+		sewn.texture = fabric
+		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+			sewn.set_texture_margin(side, 36.0)
+			sewn.set_content_margin(side, 5.0)
+		paper_panel.add_theme_stylebox_override("panel", sewn)
+		return
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = Color("#e5d5b5")
+	paper.border_color = Color("#766351")
+	paper.set_border_width_all(5)
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		paper.set_content_margin(side, 5.0)
+	paper.set_corner_radius_all(14)
+	paper.shadow_color = Color(0.04, 0.07, 0.08, 0.75)
+	paper.shadow_size = 12
+	paper_panel.add_theme_stylebox_override("panel", paper)
 
 
 func _style_choice_button(button: Button, art_path := "res://assets/paper/ui/reward_button.png") -> void:

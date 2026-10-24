@@ -387,43 +387,47 @@ func _presented_puppet(side: String, actor_id: String) -> Control:
 	return null
 
 
-## AC1: exactly one new felt puff receipt for the one actor this committed hit really
-## damaged, its live web-safe emitter anchored to that actor's own presented puppet.
-## Nothing here asserts art pixels: only identity, emitter kind, bounded size and span.
+## AC1: exactly one new sewn puff receipt for the one actor this committed hit really
+## damaged, its live shipped-art sprite anchored to that actor's own presented puppet, and
+## no particle emitter anywhere in this listener. Nothing here asserts art pixels: only
+## identity, texture path, bounded span and the absence of engine particles.
 func _assert_puff(side: String, actor_id: String, before: int, limit: float,
 		prior_nodes: Array = []) -> void:
 	var since: Array = juice.puff_history.slice(before)
-	var amount_limit: int = juice.PUFF_FAST_AMOUNT if juice.fast_animations else juice.PUFF_NORMAL_AMOUNT
 	_check(since.size() == 1 and String(since[0]["side"]) == side
-		and String(since[0]["id"]) == actor_id and int(since[0]["amount"]) <= amount_limit
-		and int(since[0]["amount"]) >= 1 and float(since[0]["duration"]) > 0.0
+		and String(since[0]["id"]) == actor_id and _shipped_puff_art(since)
+		and float(since[0]["duration"]) > 0.0
 		and float(since[0]["duration"]) <= limit,
-		"a committed HP hit puffs exactly one bounded felt receipt for its own actor")
+		"a committed HP hit puffs exactly one bounded sewn receipt for its own actor")
 	var puppet := _presented_puppet(side, actor_id)
 	var nodes: Array = []
 	for node in _puff_nodes():
 		if not prior_nodes.has(node):
 			nodes.append(node)
 	_check(nodes.size() == 1 and is_instance_valid(puppet),
-		"the committed hit leaves exactly one new live felt puff at a mounted puppet")
+		"the committed hit leaves exactly one new live sewn puff at a mounted puppet")
 	if nodes.size() != 1 or not is_instance_valid(puppet):
 		return
-	var puff: CPUParticles2D = nodes[0] as CPUParticles2D
-	_check(puff != null and puff.get_parent() == juice.overlay and puff.one_shot
-		and puff.emitting and puff.texture == null and puff.amount >= 1
-		and puff.amount <= amount_limit and puff.lifetime <= limit,
-		"the puff is a one-shot web-safe CPUParticles2D of at most six (two fast) flecks")
+	var puff: TextureRect = nodes[0] as TextureRect
+	_check(puff != null and puff.get_parent() == juice.overlay
+		and puff.is_visible_in_tree() and puff.texture != null and since.size() == 1
+		and puff.texture.resource_path == String(since[0]["texture"])
+		and float(since[0]["alpha"]) > 0.0 and float(since[0]["alpha"]) <= 1.0
+		and float(since[0]["size"]) > 0.0,
+		"the puff is one visible transparent shipped vfx texture sprite, never a particle emitter")
 	if puff == null:
 		return
+	_check(_particles_under(juice).is_empty(),
+		"the committed hit listener owns no CPUParticles2D or GPUParticles2D")
 	var near: Rect2 = puppet.get_global_rect()
 	near = near.grow(40.0)
-	_check(near.has_point(puff.global_position),
-		"the puff is anchored to the damaged actor's own puppet, not another actor")
-	var puff_object = nodes[0]
-	_check(not (puff_object is Control),
-		"the felt puff emitter is a Node2D and can never take pointer or keyboard focus")
+	_check(near.has_point(puff.get_global_rect().get_center()),
+		"the sewn puff is anchored to the damaged actor's own puppet, not another actor")
+	_check(puff.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and puff.focus_mode == Control.FOCUS_NONE,
+		"the sewn puff can never take pointer or keyboard focus")
 	var motion := InputEventMouseMotion.new()
-	motion.position = puff.global_position
+	motion.position = puff.get_global_rect().get_center()
 	root.push_input(motion, true)
 	await process_frame
 	var hovered := root.gui_get_hovered_control()
@@ -441,7 +445,16 @@ func _particles_under(of: Node) -> Array:
 	return out
 
 
-## Every live felt puff emitter this listener still owns.
+## True when every receipt names one of the shipped transparent vfx images.
+func _shipped_puff_art(receipts: Array) -> bool:
+	for receipt in receipts:
+		if not (String(receipt.get("texture", "")) in [juice.PUFF_FLUFF_PATH,
+				juice.PUFF_WISP_PATH]):
+			return false
+	return true
+
+
+## Every live sewn puff texture sprite this listener still owns.
 func _puff_nodes() -> Array:
 	var out: Array = []
 	for entry in juice._puffs:
@@ -607,11 +620,16 @@ func _assert_presenter_mounted() -> void:
 		and _particles_under(ambient).is_empty(),
 		"real mounted fight has one bounded texture atmosphere above its existing stage bed")
 	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
+	_check(juice.fluff_texture != null and juice.wisp_texture != null
+		and juice.fluff_texture.resource_path == juice.PUFF_FLUFF_PATH
+		and juice.wisp_texture.resource_path == juice.PUFF_WISP_PATH
+		and _particles_under(juice).is_empty(),
+		"the listener admits both shipped vfx textures and creates no particle emitter")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0
 		and juice.recoil_history.is_empty() and juice.puff_history.is_empty()
 		and juice.live_puffs() == 0,
-		"mounting a fight fabricates no combat, card-flight, recoil or felt puff cue")
+		"mounting a fight fabricates no combat, card-flight, recoil or sewn puff cue")
 	_check(is_instance_valid(juice.fast_button) and juice.fast_button.is_visible_in_tree()
 		and juice.fast_button.get_parent() == app.action_corner_row
 		and app.action_corner.is_ancestor_of(juice.fast_button)
@@ -674,7 +692,7 @@ func _commit_attack() -> void:
 	_check(juice.recoil_history.size() == recoils_before,
 		"a queued target/preview fabricates no hit recoil")
 	_check(juice.puff_history.size() == puffs_before and juice.live_puffs() == 0,
-		"a queued target/preview kicks up no felt puff")
+		"a queued target/preview kicks up no sewn puff")
 	await _mouse(_enemy_label(position))
 	await _frames()
 	_check(randi() == global_next, "committed play through the listener draws no global RNG")
@@ -715,6 +733,7 @@ func _commit_attack() -> void:
 	# only in the drawn transform: the cue anchors, targets, names and actions stay put.
 	var target_id := String(app.enemies.get_enemy(position)["id"])
 	await _assert_puff("enemy", target_id, puffs_before, 0.6)
+	var committed_puffs: Array = _puff_nodes()
 	var target_puppet := _puppet_for("enemy", target_id)
 	_check(juice.recoil_history.size() == recoils_before + 1,
 		"one committed HP loss starts exactly one recoil")
@@ -779,6 +798,15 @@ func _commit_attack() -> void:
 		puppet.show()
 		roster._labels[position - 1].show()
 		await _frames()
+	# AC3: the normal sewn puff really ends by its own bounded span, leaving no stale node.
+	await create_timer(0.7).timeout
+	var expired_puffs: Array = []
+	for puff_node in committed_puffs:
+		if is_instance_valid(puff_node):
+			expired_puffs.append(puff_node)
+	_check(not committed_puffs.is_empty() and juice.live_puffs() == 0
+		and expired_puffs.is_empty() and juice.puff_history.size() == puffs_before + 1,
+		"the normal sewn puff expires within 0.6 s and leaves no stale node or receipt")
 	# A wholly missing presentation drops the snapshot instead of inventing a cue.
 	var meters = app.get_node("LiveCombatMeters")
 	for slot in app.hero_panels:
@@ -836,7 +864,7 @@ func _commit_attack() -> void:
 	_check(juice.recoil_history.size() == recoils_before_failure,
 		"a rejected card play fabricates no hit recoil")
 	_check(juice.puff_history.size() == puffs_before_failure,
-		"a rejected card play fabricates no felt puff")
+		"a rejected card play fabricates no sewn puff")
 	_check(juice.flight_history.size() == flights_before + 1,
 		"no-energy rejected play adds no discard flight")
 	_check(_state() == failed_state, "a rejected card play changes no combat value")
@@ -952,7 +980,8 @@ func _ambiguous_cast() -> void:
 		and _recoils_only_from_hp_losses(area_recoils, changed),
 		"an area cast recoils only the actors whose committed HP really fell")
 	var area_puffs: Array = juice.puff_history.slice(puffs_before)
-	_check(not area_losses.is_empty() and area_puffs.size() == area_losses.size(),
+	_check(not area_losses.is_empty() and area_puffs.size() == area_losses.size()
+		and _shipped_puff_art(area_puffs),
 		"an area cast puffs each actor whose committed HP really fell")
 	var area_loss_keys: Array = []
 	for loss in area_losses:
@@ -1042,7 +1071,7 @@ func _ambiguous_cast() -> void:
 		"no hero puppet lunges for a single-survivor area cast")
 	var single_puffs: Array = juice.puff_history.slice(single_puffs_before)
 	_check(single_puffs.size() == 1 and String(single_puffs[0]["side"]) == "enemy"
-		and int(single_puffs[0]["position"]) == survivor,
+		and int(single_puffs[0]["position"]) == survivor and _shipped_puff_art(single_puffs),
 		"a single-survivor area cast still puffs the one enemy whose HP really fell")
 	await _leave_fight()
 
@@ -1085,7 +1114,7 @@ func _non_damaging_play() -> void:
 	_check(juice.recoil_history.size() == recoils_before,
 		"a pure Block gain is not a hit and never recoils")
 	_check(juice.puff_history.is_empty() and juice.live_puffs() == 0,
-		"a pure Block gain never kicks up a felt puff")
+		"a pure Block gain never kicks up a sewn puff")
 	await _leave_fight()
 
 
@@ -1274,7 +1303,7 @@ func _enemy_phase_recoil() -> void:
 		var hero_id := String(app.party.get_hero(damaged_hero)["id"])
 		var phase_losses := _hp_losses(phase_changed)
 		var phase_puffs: Array = juice.puff_history.slice(puffs_before)
-		_check(phase_puffs.size() == phase_losses.size(),
+		_check(phase_puffs.size() == phase_losses.size() and _shipped_puff_art(phase_puffs),
 			"the enemy phase puffs exactly the actors whose HP it really took")
 		var phase_loss_keys: Array = []
 		for loss in phase_losses:
@@ -1316,7 +1345,7 @@ func _enemy_phase_recoil() -> void:
 	_check(juice.recoil_history.size() == recoils_before_block,
 		"a pure Block change is not a hit and never recoils")
 	_check(juice.puff_history.size() == puffs_before_block,
-		"a pure Block change never kicks up a felt puff")
+		"a pure Block change never kicks up a sewn puff")
 	# A hit fully absorbed by Block loses only Block: that is not evidence of a hit either.
 	var block_hero := damaged_hero if damaged_hero > 0 else 1
 	_check(app.party.gain_block(block_hero, 3), "a real committed Block gain precedes the absorbed hit")
@@ -1340,7 +1369,7 @@ func _enemy_phase_recoil() -> void:
 	_check(juice.recoil_history.size() == recoils_before_absorbed,
 		"pure Block loss is not a HP hit and never recoils")
 	_check(juice.puff_history.size() == puffs_before_absorbed,
-		"a fully absorbed hit never kicks up a felt puff")
+		"a fully absorbed hit never kicks up a sewn puff")
 	# A real heal is not a hit either: it announces its HP gain and never recoils.
 	if int(app.party.get_hero(block_hero)["hp"]) >= int(app.party.get_hero(block_hero)["max_hp"]):
 		_check(app.party.apply_damage(block_hero, 3), "the heal fixture first damages the hero for real")
@@ -1361,7 +1390,7 @@ func _enemy_phase_recoil() -> void:
 	_check(juice.recoil_history.size() == recoils_before_heal,
 		"a heal is not a hit and never recoils")
 	_check(juice.puff_history.size() == puffs_before_heal,
-		"a heal never kicks up a felt puff")
+		"a heal never kicks up a sewn puff")
 	await _leave_fight()
 
 
@@ -1751,7 +1780,7 @@ func _fall_settle() -> void:
 		"one witnessed living-to-zero transition starts exactly one settle")
 	var fall_puffs: Array = juice.puff_history.slice(puffs_before)
 	_check(fall_puffs.size() == 1 and String(fall_puffs[0]["side"]) == "enemy"
-		and String(fall_puffs[0]["id"]) == victim_id,
+		and String(fall_puffs[0]["id"]) == victim_id and _shipped_puff_art(fall_puffs),
 		"a witnessed living-to-zero HP hit still puffs its own fallen actor")
 	_check(puppet.fallen, "the fallen state is authoritative at once")
 	_check(roster.puppet_for("enemy", victim_id) == null,
@@ -2022,13 +2051,13 @@ func _fast_mode() -> void:
 	await _mouse(_panel(id))
 	_click_now(_enemy_label(position))
 	var fast_started := false
-	var fast_puff_node: CPUParticles2D = null
+	var fast_puff_node: TextureRect = null
 	for attempt in range(8):
 		await process_frame
 		if juice.history.size() > known:
 			fast_started = true
 			for node in _puff_nodes():
-				if node is CPUParticles2D:
+				if node is TextureRect:
 					fast_puff_node = node
 			break
 	_check(fast_started and juice.live_cues() > 0,
@@ -2038,15 +2067,19 @@ func _fast_mode() -> void:
 		and float(announced[0]["duration"]) <= 0.15, "fast cues are recorded at 0.15 s or less")
 	var fast_puffs: Array = juice.puff_history.slice(puffs_before)
 	_check(fast_puffs.size() == 1 and bool(fast_puffs[0]["fast"])
-		and int(fast_puffs[0]["amount"]) <= juice.PUFF_FAST_AMOUNT
-		and int(fast_puffs[0]["amount"]) >= 1
+		and _shipped_puff_art(fast_puffs)
+		and float(fast_puffs[0]["duration"]) > 0.0
 		and float(fast_puffs[0]["duration"]) <= 0.15,
-		"a fast committed hit puffs at most two flecks within 0.15 s")
+		"a fast committed hit keeps one shipped-texture puff within 0.15 s")
+	var fast_receipt: Dictionary = fast_puffs[0] if fast_puffs.size() == 1 else {}
 	var fast_puff_puppet := _presented_puppet("enemy", String(app.enemies.get_enemy(position)["id"]))
-	_check(fast_puff_node != null and is_instance_valid(fast_puff_puppet)
-		and fast_puff_node.amount <= juice.PUFF_FAST_AMOUNT
-		and fast_puff_node.lifetime <= 0.15,
-		"the fast puff emitter is capped at two flecks and 0.15 s")
+	_check(not fast_receipt.is_empty() and fast_puff_node != null
+		and is_instance_valid(fast_puff_puppet) and fast_puff_node.texture != null
+		and fast_puff_node.texture.resource_path == String(fast_receipt["texture"])
+		and fast_puff_node.get_global_rect().grow(40.0).has_point(
+			fast_puff_puppet.get_global_rect().get_center())
+		and _particles_under(juice).is_empty(),
+		"the fast sewn puff is the shipped texture sprite at the damaged actor's own puppet")
 	_check(juice.pose_history.size() == poses_before + 1
 		and bool(juice.pose_history.back()["fast"])
 		and float(juice.pose_history.back()["duration"]) <= 0.15,
@@ -2101,7 +2134,7 @@ func _fast_mode() -> void:
 	_check(juice.live_cues() == 0 and juice.live_flights() == 0,
 		"hit and flying card finish within 0.25 s in Fast mode")
 	_check(juice.live_puffs() == 0,
-		"the fast felt puff is fully retired within 0.25 s")
+		"the fast sewn puff is fully retired within 0.25 s")
 	_check(not is_instance_valid(pose_puppet) or not pose_puppet.attacking(),
 		"the fast hero pose really ends within 0.25 s")
 	_check(not is_instance_valid(fast_recoil) or not fast_recoil.recoiling(),
@@ -2146,7 +2179,7 @@ func _teardown_and_reentry() -> void:
 		and juice.flight_history.size() == 1, "a hit and one card flight are live before Return")
 	_check(juice.pose_history.size() == 1, "a live committed pose is recorded before Return")
 	_check(juice.live_puffs() == 1 and juice.puff_history.size() == 1,
-		"a live felt puff is recorded before Return")
+		"a live sewn puff is recorded before Return")
 	var posed: Control = _hero_puppet(String(juice.pose_history.back()["id"])) \
 		if not juice.pose_history.is_empty() else null
 	_check(is_instance_valid(posed) and posed.attacking(),
@@ -2202,7 +2235,8 @@ func _teardown_and_reentry() -> void:
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0
 		and juice.pose_history.is_empty() and juice.recoil_history.is_empty()
-		and juice.puff_history.is_empty() and juice.live_puffs() == 0,
+		and juice.puff_history.is_empty() and juice.live_puffs() == 0
+		and _particles_under(juice).is_empty(),
 		"fresh reentry starts without any stale hit, card flight, pose, recoil or puff")
 	_check(app.find_children("FastAnimationsButton", "Button", true, false).size() == 1,
 		"fresh reentry mounts exactly one Fast animations toggle")

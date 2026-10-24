@@ -897,7 +897,7 @@ func _help_in_fixture(fixture: Dictionary, kind: String) -> void:
 	_check(buttons.size() == 4 and panel.choices_container.get_child_count() == 3,
 		"mounted three authored choices and Skip")
 	var card := panel.choices_container.get_child(slot) as PanelContainer
-	var help := card.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+	var help := card.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
 	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
 		"keyword offer gets styled Help control")
 	if help == null:
@@ -1050,7 +1050,7 @@ func _special_help(fixture: Dictionary, slot: int) -> void:
 		return
 	var before := _snapshot(fixture)
 	var card := panel.choices_container.get_child(slot) as PanelContainer
-	var help := card.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+	var help := card.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
 	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
 		"%s offer gains an authored Help tab" % offered_id)
 	if help == null:
@@ -1174,7 +1174,7 @@ func _hemorrhage_help(fixture: Dictionary) -> void:
 		"catalog-backed single Bleed doubling row for the offered Hemorrhage Hem")
 	var card := panel.choices_container.get_child(slot) as PanelContainer
 	var help := card.get_node_or_null(
-		"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+		"CardMargin/CardContent/CardHeader/HelpButton") as Button
 	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
 		"offered Hemorrhage Hem gains the real Help tab")
 	if help == null or entries.size() != 1:
@@ -1292,7 +1292,7 @@ func _pin_and_pound_help(fixture: Dictionary) -> void:
 		"catalog-backed single Two hits row for the offered Pin and Pound")
 	var card := panel.choices_container.get_child(slot) as PanelContainer
 	var help := card.get_node_or_null(
-		"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+		"CardMargin/CardContent/CardHeader/HelpButton") as Button
 	_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
 		"offered Pin and Pound gains the real Help tab")
 	if help == null or entries.size() != 1:
@@ -1380,7 +1380,7 @@ func _energy_help(fixture: Dictionary, kind: String) -> void:
 		_check(entries.size() == 1 and String(entries[0]["keyword"]) == "Energy tradeoff",
 			"catalog-backed single energy row for offered " + card_id)
 		var card := panel.choices_container.get_child(slot) as PanelContainer
-		var help := card.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+		var help := card.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
 		_check(help != null and help.text == "Help" and help.focus_mode == Control.FOCUS_ALL,
 			"%s energy offer gains the real Help tab" % card_id)
 		if help == null or entries.size() != 1:
@@ -1429,7 +1429,7 @@ func _energy_help(fixture: Dictionary, kind: String) -> void:
 			"keyboard closes %s energy Help without requesting the card" % card_id)
 	var choose := panel.get_choice_buttons()[overclock_slot]
 	await _mouse(panel.choices_container.get_child(overclock_slot).get_node(
-		"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button)
+		"CardMargin/CardContent/CardHeader/HelpButton") as Button)
 	choose.pressed.emit()
 	_check(panel._help_overlay == null and requests == [{"node": node_id, "card": "tinker_overclock"}],
 		"Choose after energy Help emits exactly one Overclock request")
@@ -1440,7 +1440,7 @@ func _energy_help(fixture: Dictionary, kind: String) -> void:
 	_check(not choose.disabled, "rejected energy Choose re-enables the offer")
 	var skip := panel.get_choice_buttons()[3]
 	await _mouse(panel.choices_container.get_child(trance_slot).get_node(
-		"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button)
+		"CardMargin/CardContent/CardHeader/HelpButton") as Button)
 	skip.grab_focus()
 	await _key(KEY_SPACE)
 	_check(panel._help_overlay == null and requests.size() == 2

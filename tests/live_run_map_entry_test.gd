@@ -82,7 +82,68 @@ func _reject(app, id: String, reason: String) -> void:
 			and app.victory_gold == null, reason + " leaves no battle services or actor controls")
 
 
+func _assert_opening_journey(app) -> void:
+	var before := _snapshot(app)
+	var hint: Label = app.route_book_backdrop.get_node("FloorHint")
+	_check(app.run_map.get_route().is_empty(), "opening cue has a genuinely unvisited map")
+	_check(hint.is_visible_in_tree() and hint.text == "Trailhead\nNext: Meadow · 01",
+		"mounted seeded opening names trailhead and next floor without claiming a visit")
+	app._mount_route_book()
+	_check(_snapshot(app) == before, "refreshing mounted journey leaves all run state and actions unchanged")
+	var source: RunMap = app.run_map
+	for unavailable in [null, RunMap.new()]:
+		app.run_map = unavailable
+		app._mount_route_book()
+		_check(hint.text == "Journey unavailable", "missing or ungenerated source is neutral")
+	app.run_map = source
+	app._mount_route_book()
+	_check(hint.text == "Trailhead\nNext: Meadow · 01" and _snapshot(app) == before,
+		"restoring the real source refreshes without spending")
+	var probe := RunMap.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 232
+	_check(probe.generate(rng), "journey boundary fixture generates a genuine seeded graph")
+	app.run_map = probe
+	for floor_number in range(1, RunMap.FLOOR_COUNT + 1):
+		_check(probe.choose_node(probe.get_legal_choices()[0]), "journey boundary fixture commits a legal edge")
+		app._mount_route_book()
+		var projection: Dictionary = app._route_journey_projection()
+		_check(projection.stops.size() == mini(2, floor_number), "projection retains at most two committed stops")
+		if floor_number == 3:
+			_check(hint.text.ends_with("Next: Woods · 04"), "next cue crosses the authored area boundary")
+		var id: String = probe.get_current_node_id()
+		var saved: Dictionary = probe._nodes[id].duplicate(true)
+		for field in ["floor", "type"]:
+			probe._nodes[id][field] = "invalid"
+			app._mount_route_book()
+			_check(hint.text == "Journey unavailable", "malformed committed " + field + " yields neutral text")
+			probe._nodes[id] = saved.duplicate(true)
+		probe._nodes[id].type = "Fight" if floor_number == RunMap.FLOOR_COUNT else "Boss"
+		app._mount_route_book()
+		_check(hint.text == "Journey unavailable", "known kind on the wrong committed floor is neutral")
+		probe._nodes[id] = saved.duplicate(true)
+		projection.stops[0].kind = "invented"
+		_check(probe.get_node(probe.get_route()[maxi(0, floor_number - 2)]).type != "invented",
+			"projection cannot mutate the authoritative route record")
+		if floor_number < RunMap.FLOOR_COUNT:
+			var future_id: String = probe.get_legal_choices()[0]
+			var future_kind: String = probe._nodes[future_id].type
+			probe._nodes[future_id].type = "HIDDEN FUTURE"
+			app._mount_route_book()
+			_check(not hint.text.contains("HIDDEN") and hint.text != "Journey unavailable",
+				"unopened kinds are not read even when malformed")
+			probe._nodes[future_id].type = future_kind
+	app._mount_route_book()
+	_check(hint.text.ends_with("Journey complete") and not hint.text.contains("Next:"),
+		"terminal map has a bounded complete fallback without inventing floor thirteen")
+	app.run_map = source
+	app._mount_route_book()
+	_check(hint.text == "Trailhead\nNext: Meadow · 01" and _snapshot(app) == before,
+		"fresh opening clears all earlier journey text without changing real state")
+
+
 func _preview(app, keyboard: bool, stale: Array = []) -> Array:
+	_assert_opening_journey(app)
 	var before := _snapshot(app)
 	var chooser = app.route_view
 	var action: Button = app.route_map_button

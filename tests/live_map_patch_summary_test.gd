@@ -28,6 +28,7 @@ func _summary_text() -> Array:
 
 
 func _assert_summary() -> Array:
+	_assert_journey()
 	var carry: RunTornCarryover = app.party_carryover
 	var oracle := RunPatchWearerSummary.summarize(carry._wardrobe, carry.torn.read_state())
 	_check(oracle.ok and oracle.heroes.size() == 3, "real sources yield three wearer summaries")
@@ -51,6 +52,44 @@ func _assert_summary() -> Array:
 			expected += "\n%s: %s" % [slot.slot, value]
 		_check(texts[i] == expected, "complete visible hero/slot/ID/activation/rules matches authority")
 	return texts
+
+
+func _assert_journey() -> void:
+	var before := _summary_state()
+	var book: Control = app.route_book_backdrop
+	var hint: Label = book.get_node("FloorHint")
+	var route: Array[String] = app.run_map.get_route()
+	_check(not route.is_empty() and book.is_visible_in_tree(), "journey has real committed stops and a mounted book")
+	var lines: Array[String] = []
+	for index in range(maxi(0, route.size() - 2), route.size()):
+		var node: Dictionary = app.run_map.get_node(route[index])
+		lines.append("%02d · %s" % [node.floor, node.type])
+	var next_floor := route.size() + 1
+	var next_area := "Meadow" if next_floor <= 3 else ("Woods" if next_floor <= 6 else
+		("Marsh" if next_floor <= 9 else ("Peaks" if next_floor <= 11 else "Boss")))
+	lines.append("Next: %s · %02d" % [next_area, next_floor])
+	_check(hint.text == "\n".join(lines) and not hint.text.contains("Trailhead"),
+		"mounted cue contains only last two committed floor/kind pairs and upcoming area/floor")
+	for floor_nodes in app.run_map.get_floors():
+		for node in floor_nodes:
+			_check(not hint.text.contains(node.id), "journey never exposes raw IDs")
+	_check(hint.mouse_filter == Control.MOUSE_FILTER_IGNORE and hint.focus_mode == Control.FOCUS_NONE,
+		"journey label is pointer and focus inert")
+	var stitch: Control = hint.get_node("JourneyStitch")
+	_check(stitch.mouse_filter == Control.MOUSE_FILTER_IGNORE and stitch.focus_mode == Control.FOCUS_NONE,
+		"journey stitching is inert")
+	var backing: StyleBoxFlat = hint.get_theme_stylebox("normal")
+	_check(backing.bg_color.a == 1.0 and hint.get_theme_font_size("font_size") >= 18,
+		"journey has an opaque readable backing")
+	var rect := hint.get_global_rect()
+	_check(book.page_geometry().left_page.encloses(rect)
+		and hint.size.y >= hint.get_minimum_size().y and hint.get_line_count() <= 3,
+		"complete short cue fits the left page without clipped lines")
+	_check(not rect.intersects(book.get_node("PartySlate").get_global_rect())
+		and not rect.intersects(book.get_node("PartySlate/Resources").get_global_rect()),
+		"journey remains beside the live roster and wallet")
+	app._mount_route_book()
+	_check(_summary_state() == before, "journey refresh changes no map, wallet, deck, RNG or legal actions")
 
 
 func _reopen_summary() -> void:
@@ -176,6 +215,9 @@ func _run() -> void:
 					break
 				await _activate_summary(app.reward_buttons[3], keyboard)
 				await _activate_summary(app.continue_button, keyboard)
+				_assert_journey()
+				_check(app.route_book_backdrop.get_node("FloorHint").text == "01 · Fight\nNext: Meadow · 02",
+					"real Fight continuation reveals only the committed Fight, no future Shop kind")
 				_check(_summary_text() == ["No patches sewn"], "pre-Shop route has no invented ownership")
 				app.session_gold = 400 # Funding only; stock, sewing and route are real.
 				await _activate_summary(_route_action(fixture.shop), keyboard)
@@ -199,6 +241,8 @@ func _run() -> void:
 				var slot: String = wardrobe.get_snapshot().definitions[id]
 				_check(wardrobe.get_snapshot().worn.tinker[slot] == id, "transaction sews exact slot on Tinker")
 				await _activate_summary(app.shop_continue_button, keyboard)
+				_check(app.route_book_backdrop.get_node("FloorHint").text == "01 · Fight\n02 · Shop\nNext: Meadow · 03",
+					"real Shop completion adds the second committed stop")
 				var before := _summary_state()
 				var texts := _assert_summary()
 				_check(str(texts).contains("%s: %s (%s)" % [slot, id, "inactive" if downed else "active"]), "genuinely downed wearer suppresses activation")

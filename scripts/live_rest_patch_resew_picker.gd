@@ -14,6 +14,11 @@ const GOLD := Color("#f3d28f")
 ## the extra room that keeps the stitched hem clear of the last text line.
 const TAG_MIN_HEIGHT := 56.0
 const TAG_STITCH_INSET := 10.0
+## Explicit horizontal breathing room inside the stitched border of every chip
+## state, so a caption never sits against the sewn hem.
+const TAG_SIDE_INSET := 12.0
+## Every themed chip state, measured together when sizing a tag.
+const TAG_STATES := ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]
 
 ## The mounted owner references these first real buttons for focus and its
 ## exact destination index guard. Neither opens a dropdown.
@@ -284,18 +289,18 @@ func _configure_tag(button: SewnChip, node_name: String, caption: String,
 func _fit_tag(button: SewnChip, caption: String, width: float) -> void:
 	var font := button.get_theme_font("font")
 	var font_size := button.get_theme_font_size("font_size")
-	var surface := button.get_theme_stylebox("normal") as StyleBoxFlat
-	var focus_surface := button.get_theme_stylebox("focus") as StyleBoxFlat
+	# Measure the widest inset any state can show: the selected and focused
+	# states widen the stitched border, so the usable text width is the
+	# narrowest one, and the caption must wrap to that real width.
 	var side := 0.0
 	var vertical := 0.0
-	for state_surface in [surface, focus_surface]:
+	for state in TAG_STATES:
+		var state_surface := button.get_theme_stylebox(state) as StyleBoxFlat
 		if state_surface != null:
-			side = maxf(side, state_surface.get_content_margin(SIDE_LEFT) \
-				+ state_surface.get_content_margin(SIDE_RIGHT))
-			vertical = maxf(vertical, state_surface.get_content_margin(SIDE_TOP) \
-				+ state_surface.get_content_margin(SIDE_BOTTOM))
-	# Extra room covers the sewn focus/selected border widening inside the tag.
-	var wrap_width := maxf(1.0, width - side - 8.0)
+			side = maxf(side, state_surface.get_minimum_size().x)
+			vertical = maxf(vertical, state_surface.get_minimum_size().y)
+	# A hair of slack keeps the last glyph clear of the sewn hem.
+	var wrap_width := maxf(1.0, width - side - 2.0)
 	var text_height := float(font_size)
 	if font != null:
 		text_height = font.get_multiline_string_size(caption,
@@ -475,6 +480,11 @@ func _style_chip(button: Button, selected: bool) -> void:
 		surface.border_color = GOLD if name == "focus" or selected else STITCH
 		surface.set_border_width_all(3 if name == "focus" or selected else 2)
 		surface.set_corner_radius_all(5)
+		# Explicit, symmetrical text inset on every state: the caption keeps its
+		# own breathing room inside the sewn border instead of relying on the
+		# implicit (border-width only) horizontal content margin.
+		surface.content_margin_left = TAG_SIDE_INSET
+		surface.content_margin_right = TAG_SIDE_INSET
 		surface.content_margin_top = 4
 		surface.content_margin_bottom = 8
 		button.add_theme_stylebox_override(name, surface)

@@ -3,6 +3,38 @@ extends Control
 
 signal start_run_requested
 
+## Presentation only: follows the original visit column without reparenting controls.
+## Ownership by the art bed makes Continue/Return retire the surface and its bindings.
+class ShopActionBacking extends Panel:
+	const SHELL := preload("res://scripts/patchwork_ui_shell.gd")
+	const PADDING := 10.0
+	var _view: WeakRef
+
+	func bind_view(view: Control) -> void:
+		name = "ShopActionBacking"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		var surface := get_theme_stylebox("panel", "PanelContainer").duplicate() as StyleBoxFlat
+		surface.bg_color.a = 1.0
+		add_theme_stylebox_override("panel", surface)
+		var stitches := SHELL.ButtonStitches.new()
+		stitches.name = "RailStitches"
+		stitches.focus_mode = Control.FOCUS_NONE
+		add_child(stitches)
+		_view = weakref(view)
+		view.item_rect_changed.connect(_sync_rect)
+		view.visibility_changed.connect(_sync_rect)
+		_sync_rect()
+
+	func _sync_rect() -> void:
+		var view := _view.get_ref() as Control
+		visible = is_instance_valid(view) and view.is_visible_in_tree()
+		if not visible:
+			return
+		var rect := view.get_global_rect().grow(PADDING)
+		global_position = rect.position
+		size = rect.size
+
 const TITLE := "Patchwork Pioneers"
 const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const STARTER_PARTY_PATH := "res://data/heroes/starter_party.json"
@@ -244,7 +276,7 @@ class RouteBook extends Control:
 	const BOOKMARK_FILL := Color("#a2544a")
 	const AREA_TAB := Rect2(206, 62, 210, 48)
 	const FLOOR_TAB := Rect2(206, 118, 210, 66)
-	const FLOOR_HINT := Rect2(206, 196, 210, 64)
+	const FLOOR_HINT := Rect2(206, 192, 210, 80)
 	const FELT_TAB := Color("#8f7a55")
 	const HERO_IDLE_PATHS := {
 		"warden": "res://assets/paper/heroes/warden.png",
@@ -280,12 +312,40 @@ class RouteBook extends Control:
 		cue.add_theme_color_override("font_outline_color", ROUTE_BOOK_INK)
 		cue.set_meta("floor_number", 1)
 		add_child(cue)
-		var hint := _inert_label("FloorHint", "No patch sewn yet\nchoose the first stop", 18)
+		var hint := _inert_label("FloorHint", "Journey unavailable", 18)
 		hint.position = FLOOR_HINT.position
 		hint.size = FLOOR_HINT.size
 		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		hint.add_theme_color_override("font_color", Color("fff3d6"))
+		var backing := StyleBoxFlat.new()
+		backing.bg_color = Color("42392f")
+		backing.set_corner_radius_all(6)
+		backing.content_margin_left = 8
+		backing.content_margin_right = 8
+		hint.add_theme_stylebox_override("normal", backing)
 		add_child(hint)
+		var stitch := ActionCornerStitch.new()
+		stitch.name = "JourneyStitch"
+		stitch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		hint.add_child(stitch)
+
+	## Detached presentation values only; no map, services or callbacks enter the cue.
+	func show_journey(projection: Dictionary) -> void:
+		var values := projection.duplicate(true)
+		var hint: Label = get_node("FloorHint")
+		hint.text = "Journey unavailable"
+		if values.is_empty():
+			return
+		var lines: Array[String] = []
+		for stop in values.stops:
+			lines.append("%02d · %s" % [stop.floor, stop.kind])
+		if lines.is_empty():
+			lines.append("Trailhead")
+		lines.append("Journey complete" if values.complete else
+			"Next: %s · %02d" % [values.next_area, values.next_floor])
+		hint.text = "\n".join(lines)
 
 	## Only detached run values enter this view; it has no combat/service references.
 	func show_party(snapshot: Dictionary) -> void:
@@ -1235,13 +1295,37 @@ func _open_route() -> void:
 ## Mount the inert drawn-or-owner page backdrop of the opening chooser once.
 func _mount_route_book() -> void:
 	if is_instance_valid(route_book_backdrop):
+		route_book_backdrop.show_journey(_route_journey_projection())
 		return
 	var book := RouteBook.new()
+	book.show_journey(_route_journey_projection())
 	book.board_texture = RunRouteAtlas.load_board_texture(RunRouteAtlas.MAP_BOARD_PATH)
 	book.show_party({"heroes": run_heroes.duplicate(true), "deck_count": run_deck.size(),
 		"gold": session_gold, "scraps": run_scraps})
 	add_child(book)
 	route_book_backdrop = book
+
+
+## Read committed records only. Never derive kinds from IDs or query future nodes.
+func _route_journey_projection() -> Dictionary:
+	if run_map == null or not run_map.is_generated():
+		return {}
+	var route := run_map.get_route()
+	if route.size() > RunMap.FLOOR_COUNT:
+		return {}
+	var stops: Array = []
+	for index in range(route.size()):
+		var node := run_map.get_node(route[index])
+		if not node.get("floor") is int or node.floor != index + 1 \
+			or (node.get("type") != "Boss" if index + 1 == RunMap.FLOOR_COUNT else
+				node.get("type") not in RunMap.NORMAL_TYPES):
+			return {}
+		if index >= route.size() - 2:
+			stops.append({"floor": node.floor, "kind": node.type})
+	var complete := route.size() == RunMap.FLOOR_COUNT
+	var next_floor := 0 if complete else route.size() + 1
+	return {"stops": stops, "complete": complete, "next_floor": next_floor,
+		"next_area": RunRouteAtlas.area_for_floor(next_floor)}
 
 
 ## Free the chooser page backdrop synchronously.
@@ -2279,7 +2363,6 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	book.get_node("AreaCue").set_meta("area_name", area)
 	book.get_node("FloorCue").text = "Floor %02d" % floor_number
 	book.get_node("FloorCue").set_meta("floor_number", floor_number)
-	book.get_node("FloorHint").text = "Choose the next stop"
 	var page := RouteBook.choices_rect()
 	route_view = Control.new()
 	route_view.name = "ConnectedBookChoices"
@@ -4776,6 +4859,10 @@ func _mount_visit_backdrop(kind: String, view: Control) -> void:
 	add_child(bed)
 	move_child(bed, view.get_index())
 	visit_backdrop = bed
+	if kind == "Shop":
+		var backing := ShopActionBacking.new()
+		bed.add_child(backing)
+		backing.bind_view(view)
 
 
 ## Releases the visit bed with the visit that mounted it; continuation and title return
