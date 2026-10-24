@@ -248,6 +248,55 @@ func _line_with(lines: PackedStringArray, prefix: String) -> String:
 	return ""
 
 
+## Exact visible text of one mounted hero ribbon: the heading name printed
+## beside its body detail, assembled independently of the panel's own helpers.
+func _hero_row_text(row: Control) -> String:
+	if row == null:
+		return ""
+	var name_label := row.get_node_or_null("RowInset/RowLine/HeroName") as Label
+	var detail_label := row.get_node_or_null("RowInset/RowLine/HeroDetail") as Label
+	if name_label == null or detail_label == null:
+		return ""
+	return "%s %s" % [name_label.text, detail_label.text]
+
+
+func _hero_rows_text() -> PackedStringArray:
+	var lines := PackedStringArray()
+	for row in panel.hero_rows.get_children():
+		lines.append(_hero_row_text(row as Control))
+	return lines
+
+
+## Every mounted hero ribbon must equal the independent oracle exactly, in the
+## canonical Warden/Seamstress/Tinker identity order.
+func _check_hero_rows(expected: Array[String], label: String) -> void:
+	var rows := _hero_rows_text()
+	_check(rows.size() == expected.size() and rows.size() == 3,
+		label + ": exactly three mounted hero recap ribbons")
+	for index in range(mini(rows.size(), expected.size())):
+		_check(rows[index] == expected[index],
+			label + ": hero recap ribbon %d matches the independent oracle" % index)
+
+
+## Independent hero-row oracle built straight from the authoritative summary
+## fields, never from the panel's own formatter.
+func _oracle_hero_lines(summary: Dictionary) -> Array[String]:
+	var lines: Array[String] = []
+	for hero in summary.get("heroes", []):
+		var parts: Array[String] = ["%d/%d HP" % [int(hero.hp), int(hero.max_hp)]]
+		if int(hero.hp) == 0:
+			parts.append("TORN")
+		parts.append("1 tear" if int(hero.tears) == 1 else "%d tears" % int(hero.tears))
+		var worn: Array[String] = []
+		for slot in ["HEAD", "ARM", "COAT"]:
+			var patch_id: String = hero.slots[slot]
+			if not patch_id.is_empty():
+				worn.append("%s %s" % [slot, patch_id.capitalize()])
+		parts.append(" · ".join(worn) if not worn.is_empty() else "no patches")
+		lines.append("%s %s" % [str(hero.hero_id).capitalize(), " · ".join(parts)])
+	return lines
+
+
 func _battle(enemy_path: String) -> Dictionary:
 	var party := CombatParty.new(_definitions(HEROES))
 	var enemies := CombatEnemies.new(_definitions(enemy_path))
@@ -515,8 +564,42 @@ func _validate_view(status: String, label: String) -> void:
 	_check(button.get_theme_stylebox("normal") is StyleBoxFlat
 		and button.get_theme_stylebox("focus") is StyleBoxFlat,
 		label + " procedural cardboard button and focus ring")
+	var recap_rows := panel.hero_rows.get_children()
+	_check(panel.hero_recap.is_visible_in_tree() and recap_rows.size() == 3,
+		label + " three sewn hero recap ribbons are mounted")
+	var previous_bottom := panel.summary_label.get_global_rect().end.y
+	_check(panel.hero_recap_title.get_global_rect().position.y >= previous_bottom - 0.5,
+		label + " party recap heading is sewn below the run counters without overlap")
+	for row in recap_rows:
+		var ribbon := row as PanelContainer
+		var ribbon_box := (ribbon.get_theme_stylebox("panel") as StyleBoxFlat) if ribbon != null else null
+		_check(ribbon != null and ribbon_box != null
+			and ribbon_box.bg_color.get_luminance() > 0.5
+			and ribbon_box.border_width_left >= 1
+			and ribbon_box.border_color.get_luminance() < 0.6,
+			label + " hero ribbon wears the sewn cream felt panel: " + str(row.name))
+		_check(row.get_global_rect().position.y >= previous_bottom - 0.5,
+			label + " hero ribbon is sewn below the previous ribbon without overlap")
+		previous_bottom = row.get_global_rect().end.y
+		var name_label := row.get_node("RowInset/RowLine/HeroName") as Label
+		var detail_label := row.get_node("RowInset/RowLine/HeroDetail") as Label
+		_check(name_label != null and name_label.theme_type_variation == "PatchHeading"
+			and (name_label.get_theme_font("font") as Font).resource_path == HEADING_FONT
+			and name_label.get_theme_font_size("font_size") >= 18,
+			label + " hero ribbon name keeps the inherited PatchHeading face at 18 px or more")
+		_check(detail_label != null and detail_label.theme_type_variation == ""
+			and (detail_label.get_theme_font("font") as Font).resource_path == BODY_FONT
+			and detail_label.get_theme_font_size("font_size") >= 18,
+			label + " hero ribbon detail keeps the inherited body face at 18 px or more")
+		_check(screen.encloses(row.get_global_rect()),
+			label + " hero ribbon fits the 1280x720 stage")
+		_check(row.size.y > 0 and row.size.y <= 72.0,
+			label + " hero ribbon stays a compact row, height %s" % str(row.size.y))
+	_check(panel.hero_recap.size.y <= 200.0,
+		label + " the three-ribbon recap block stays compact, height %s" % str(panel.hero_recap.size.y))
 	var controls: Array = [panel.paper_panel, panel.title_label, panel.description_label,
-		panel.top_stitches, panel.bottom_stitches, button, panel.summary_label]
+		panel.top_stitches, panel.bottom_stitches, button, panel.summary_label,
+		panel.hero_recap, panel.hero_recap_title, panel.hero_rows]
 	if stage != null:
 		controls.append(stage)
 	if felt != null:
@@ -555,7 +638,8 @@ func _test_rejection() -> void:
 	_check(not panel.open_result(latch), "genuine pending ACTIVE latch rejected")
 	_check(not panel.visible and not panel.has_open_result()
 		and panel.get_presented_status() == "" and panel.return_button.disabled
-		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
+		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0
+		and not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
 		"all rejected submissions remain hidden and action disabled")
 	panel.return_button.pressed.emit()
 	_check(returns == 0 and _snapshot(ctx, battle) == before,
@@ -595,6 +679,7 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 	var title := panel.title_label.text
 	var description := panel.description_label.text
 	var summary := panel.summary_label.text
+	var recap := _hero_rows_text()
 	var felt := panel.get_node_or_null("FeltMat") as PanelContainer
 	var felt_box := (felt.get_theme_stylebox("panel") as StyleBoxFlat) if felt != null else null
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
@@ -608,8 +693,8 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 		label + " only the picture layer disappears")
 	_check(panel.is_visible_in_tree() and panel.has_open_result()
 		and panel.title_label.text == title and panel.description_label.text == description
-		and panel.summary_label.text == summary,
-		label + " exact result text survives the missing picture")
+		and panel.summary_label.text == summary and _hero_rows_text() == recap,
+		label + " exact result text and hero ribbons survive the missing picture")
 	_check(not panel.return_button.disabled and panel.return_button.is_visible_in_tree(),
 		label + " sole Return action stays available without the picture")
 	var slate := panel.get_node("SlateBackdrop") as ColorRect
@@ -629,7 +714,8 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 		and stage.texture.resource_path == LiveRunTerminalResultPanel.CAMP_BACKDROP,
 		label + " restored illustration is the same existed camp picture")
 	_check(panel.title_label.text == title and panel.description_label.text == description
-		and panel.summary_label.text == summary and not panel.return_button.disabled,
+		and panel.summary_label.text == summary and _hero_rows_text() == recap
+		and not panel.return_button.disabled,
 		label + " restoring the picture never rewrites the settled result")
 	_check(_snapshot(ctx, battle) == before,
 		label + " remounting the illustrated stage preserves authoritative state")
@@ -760,26 +846,32 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 		"AC1: the descriptor carries the authored ordered display_name")
 	var single_text := panel._format_signature(single_summary)
 	var single_lines := single_text.split("\n")
-	_check(single_lines.size() == 6, "AC1: two count lines, one craft line and three hero rows")
-	if single_lines.size() == 6:
+	_check(single_lines.size() == 3,
+		"AC1: two genuine count lines and one craft line hold the concise counters")
+	if single_lines.size() == 3:
 		_check(single_lines[0] == "Stitched: 1 made · 1 in deck",
 			"AC1: exact made/in-deck count wording is preserved")
 		_check(single_lines[1] == "Patches worn: 3", "AC2: exact worn count wording is preserved")
 		_check(single_lines[2] == "Crafted: Strike / Prick",
 			"AC1: the recap names the authored pair instead of the stitched ID")
-		_check(single_lines[3] == "Warden 40/40 HP · 0 tears · HEAD Button Eye",
-			"AC1: Warden's worn HEAD patch is named with its slot and no empty ARM/COAT placeholders")
-		_check(single_lines[4] == "Seamstress 30/30 HP · 0 tears · ARM Pincushion Arm",
-			"AC1: pincushion_arm is shown as the readable title-cased Pincushion Arm in its ARM slot")
-		_check(single_lines[5] == "Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
-			"AC1: Tinker's row names only the worn COAT patch instead of a slot dump")
-	_check(not single_text.contains("stitched_000001"), "AC1: opaque stitched IDs are never shown")
-	_check(not single_text.contains("more"), "AC1: a single current stitched card adds no +N more")
-	_check(not single_text.contains("pincushion_arm") and not single_text.contains("button_eye")
-		and not single_text.contains("quilted_coat"),
+	var single_heroes: Array[String] = []
+	for hero in single_summary.heroes:
+		single_heroes.append(panel._hero_recap_line(hero))
+	_check(single_heroes == [
+		"Warden 40/40 HP · 0 tears · HEAD Button Eye",
+		"Seamstress 30/30 HP · 0 tears · ARM Pincushion Arm",
+		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC1: each hero ribbon names only its worn patch with its own slot")
+	_check(single_heroes[1] == "Seamstress 30/30 HP · 0 tears · ARM Pincushion Arm",
+		"AC1: pincushion_arm is shown as the readable title-cased Pincushion Arm in its ARM slot")
+	var single_all := single_text + "\n" + "\n".join(single_heroes)
+	_check(not single_all.contains("stitched_000001"), "AC1: opaque stitched IDs are never shown")
+	_check(not single_all.contains("more"), "AC1: a single current stitched card adds no +N more")
+	_check(not single_all.contains("pincushion_arm") and not single_all.contains("button_eye")
+		and not single_all.contains("quilted_coat"),
 		"AC2: raw worn patch IDs are never shown")
-	_check(not single_text.contains("HEAD -") and not single_text.contains("ARM -")
-		and not single_text.contains("COAT -") and not single_text.contains("Tears:"),
+	_check(not single_all.contains("HEAD -") and not single_all.contains("ARM -")
+		and not single_all.contains("COAT -") and not single_all.contains("Tears:"),
 		"AC1: no empty-slot or diagnostic fragments remain in the recap")
 
 	# Three current stitched cards: exactly two names plus an accurate +1 more.
@@ -879,7 +971,7 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 		"AC3: zero current stitched cards are actually reported")
 	var zero_text := panel._format_signature(zero_summary)
 	var zero_lines := zero_text.split("\n")
-	_check(zero_lines.size() == 5, "AC3: zero current stitches add no craft line")
+	_check(zero_lines.size() == 2, "AC3: zero current stitches add no craft line")
 	_check(_line_with(zero_lines, "Stitched: ") == "Stitched: 2 made · 0 in deck",
 		"AC3: historical and current totals stay distinct when the deck holds none")
 	_check(_line_with(zero_lines, "Patches worn: ") == "Patches worn: 1",
@@ -887,7 +979,7 @@ func _test_crafted_recap(defeat: Dictionary) -> void:
 	_check(not zero_text.contains("Crafted:") and not zero_text.contains("Strike")
 		and not zero_text.contains("Brace") and not zero_text.contains("stitched_"),
 		"AC3: an empty current stitch recap invents no names or IDs")
-	_check(zero_lines[4] == "Tinker 26/26 HP · 0 tears · no patches",
+	_check(panel._hero_recap_line(zero_summary.heroes[2]) == "Tinker 26/26 HP · 0 tears · no patches",
 		"AC1: an empty wearer says no patches instead of printing empty slot dashes")
 	panel.close_result()
 	_check(not panel.has_open_result(), "AC3: the recap view closes back to its shipped closed state")
@@ -918,6 +1010,9 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 	_check(panel.stitched_section.visible == not cards.is_empty()
 		and panel.stitched_rows.get_child_count() == cards.size(),
 		label + " detail visibility and exact retained count")
+	var hero_oracle := _oracle_hero_lines(expected)
+	_check(hero_oracle.size() == 3 and _hero_rows_text() == PackedStringArray(hero_oracle),
+		label + " three mounted hero ribbons match the independent oracle")
 	for i in range(cards.size()):
 		var card: Dictionary = cards[i]
 		var first: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[0])
@@ -957,8 +1052,9 @@ func _mounted_composites(ledger: Dictionary, wardrobe: RunPatchWardrobe,
 		label + " open and scroll preserve App, battle, map and seeded RNG")
 	panel.close_result()
 	_check(not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0
-		and panel.stitched_scroll.scroll_vertical == 0,
-		label + " close removes all rows and resets scrolling")
+		and panel.stitched_scroll.scroll_vertical == 0
+		and not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		label + " close removes all rows, ribbons and resets scrolling")
 	_check(_app_snapshot() == before, label + " close preserves full App/wardrobe state")
 
 
@@ -1028,8 +1124,9 @@ func _test_invalid_source(defeat: Dictionary) -> void:
 		"invalid App ledger still shows authentic terminal outcome")
 	_check(panel.summary_label.text.ends_with("Summary unavailable")
 		and panel.return_button.disabled and not panel.stitched_section.visible
-		and panel.stitched_rows.get_child_count() == 0,
-		"invalid ledger never creates card detail or an enabled Return")
+		and panel.stitched_rows.get_child_count() == 0
+		and not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"invalid ledger never creates card detail, hero ribbons or an enabled Return")
 	var earlier := returns
 	panel.return_button.pressed.emit()
 	_check(returns == earlier, "invalid run source refuses injected Return signal")
@@ -1042,8 +1139,9 @@ func _test_invalid_source(defeat: Dictionary) -> void:
 		"non-App mounted panel can show terminal sentence without fabricated summary")
 	_check(panel.summary_label.text.ends_with("Summary unavailable")
 		and panel.return_button.disabled and not panel.stitched_section.visible
-		and panel.stitched_rows.get_child_count() == 0,
-		"non-App host cannot authorize sewn detail or Return")
+		and panel.stitched_rows.get_child_count() == 0
+		and not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"non-App host cannot authorize sewn detail, hero ribbons or Return")
 	panel.return_button.pressed.emit()
 	_check(returns == earlier, "non-App host refuses a forced Return signal")
 	panel.close_result()
@@ -1137,8 +1235,9 @@ func _test_readable_typography(victory: Dictionary, defeat: Dictionary) -> void:
 	await _audit_result_readability("Victory", expected, victory, before, "AC1/AC2 Boss victory")
 	panel.close_result()
 	_check(not panel.has_open_result() and panel.stitched_rows.get_child_count() == 0
-		and panel.stitched_scroll.scroll_vertical == 0,
-		"AC2: closing the readable result clears every retained row and its scroll offset")
+		and panel.stitched_scroll.scroll_vertical == 0
+		and panel.hero_rows.get_child_count() == 0,
+		"AC2: closing the readable result clears every retained row, ribbon and scroll offset")
 	_check(panel.open_result(defeat["ctx"]["latch"]), "AC1: genuine settled Defeat opens for readability")
 	await _frames()
 	await _audit_result_readability("Defeat", expected, defeat, before, "AC1/AC2 party defeat")
@@ -1189,29 +1288,30 @@ func _audit_result_readability(status: String, expected: Dictionary,
 		if stitched_ids.size() > names.size():
 			craft += " +%d more" % (stitched_ids.size() - names.size())
 		expected_lines.append(craft)
-	for hero in expected.heroes:
-		var parts: Array[String] = ["%d/%d HP" % [hero.hp, hero.max_hp]]
-		if int(hero.hp) == 0:
-			parts.append("TORN")
-		parts.append("1 tear" if int(hero.tears) == 1 else "%d tears" % int(hero.tears))
-		var worn: Array[String] = []
-		for slot in ["HEAD", "ARM", "COAT"]:
-			var patch_id: String = hero.slots[slot]
-			if not patch_id.is_empty():
-				worn.append("%s %s" % [slot, patch_id.capitalize()])
-		parts.append(" · ".join(worn) if not worn.is_empty() else "no patches")
-		expected_lines.append("%s %s" % [str(hero.hero_id).capitalize(), " · ".join(parts)])
-	_check(lines.size() == expected_lines.size(), label + ": exact number of signed ledger lines")
+	_check(lines.size() == expected_lines.size(), label + ": exact number of signed counter lines")
 	for index in range(mini(lines.size(), expected_lines.size())):
 		_check(lines[index] == expected_lines[index],
-			label + ": signed ledger line %d is unchanged" % index)
+			label + ": signed counter line %d is unchanged" % index)
+	var hero_lines := _oracle_hero_lines(expected)
+	_check(hero_lines.size() == 3, label + ": hero oracle is non-vacuous")
+	_check_hero_rows(hero_lines, label)
+	var detail_text := "\n".join(_hero_rows_text())
 	_check(not ledger.text.contains("HEAD -") and not ledger.text.contains("ARM -")
-		and not ledger.text.contains("COAT -") and not ledger.text.contains("Tears:"),
+		and not ledger.text.contains("COAT -") and not ledger.text.contains("Tears:")
+		and not detail_text.contains("HEAD -") and not detail_text.contains("ARM -")
+		and not detail_text.contains("COAT -") and not detail_text.contains("Tears:"),
 		label + ": mounted recap prints no empty-slot or diagnostic fragments")
 	var interior := _label_interior(ledger)
 	var printed := _printed_text_size(ledger, interior.x)
 	_check(printed.y <= interior.y + 0.5 and printed.x <= interior.x + 0.5,
-		label + ": every signed ledger line prints unclipped inside its paper")
+		label + ": every signed counter line prints unclipped inside its paper")
+	for row in panel.hero_rows.get_children():
+		var hero_name := row.get_node("RowInset/RowLine/HeroName") as Label
+		var hero_detail := row.get_node("RowInset/RowLine/HeroDetail") as Label
+		_check(hero_name != null and hero_detail != null
+			and _printed_text_size(hero_name, hero_name.size.x).x <= hero_name.size.x + 0.5
+			and _printed_text_size(hero_detail, hero_detail.size.x).y <= hero_detail.size.y + 0.5,
+			label + ": hero ribbon text prints unclipped beside its name")
 	# Kept-card rows: exact order, names, halves and owners, all readable.
 	var cards: Array = expected.get("current_stitched_cards", [])
 	_check(panel.stitched_section.visible
@@ -1283,9 +1383,11 @@ func _audit_result_readability(status: String, expected: Dictionary,
 	_check(panel.paper_panel.get_global_rect().encloses(button.get_global_rect())
 		and stage.encloses(button.get_global_rect()),
 		label + ": Return to Title is fully inside the paper and the stage")
-	_check(ledger.get_global_rect().end.y <= detail.get_global_rect().position.y
+	var recap_rect := panel.hero_recap.get_global_rect()
+	_check(ledger.get_global_rect().end.y <= recap_rect.position.y
+		and recap_rect.end.y <= detail.get_global_rect().position.y
 		and panel.stitched_section.get_global_rect().end.y <= button.get_global_rect().position.y,
-		label + ": ledger and retained list never overlap the Return action")
+		label + ": counters, hero ribbons, retained list and Return never overlap")
 	button.grab_focus()
 	await _frames()
 	_check(button.has_focus(), label + ": Return action still takes focus after list scrolling")
@@ -1386,12 +1488,16 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(vic_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Victory preserves stitched counts")
 	_check(vic_lines[2] == "Patches worn: 3", "AC3: Victory preserves patches worn total")
 	_check(vic_lines[3] == "Crafted: Strike / Prick", "AC3: Victory preserves crafted card name")
-	_check(vic_lines[4] == "Warden 18/37 HP · 1 tear · HEAD Button Eye",
-		"AC2: Warden row shows authoritative 18/37 HP, reduced cap, genuine single tear and worn HEAD patch despite position 2")
-	_check(vic_lines[5] == "Seamstress 22/30 HP · 0 tears · ARM Pincushion Arm",
-		"AC2: Seamstress row shows authoritative 22/30 HP and zero tears despite position 3")
-	_check(vic_lines[6] == "Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
-		"AC2: Tinker row shows authoritative 12/26 HP and only the worn COAT patch despite position 1")
+	_check(vic_lines.size() == 4, "AC1: Victory counters hold exactly the battles, stitched, worn and craft lines")
+	_check_hero_rows([
+		"Warden 18/37 HP · 1 tear · HEAD Button Eye",
+		"Seamstress 22/30 HP · 0 tears · ARM Pincushion Arm",
+		"Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC2: Victory hero ribbons")
+	_check(_hero_row_text(panel.hero_rows.get_child(0)).contains("18/37 HP")
+		and _hero_row_text(panel.hero_rows.get_child(1)).contains("22/30 HP")
+		and _hero_row_text(panel.hero_rows.get_child(2)).contains("12/26 HP"),
+		"AC2: hero ribbons follow identity, not the swapped battlefield positions")
 	_check(not panel.return_button.disabled and panel.return_button.focus_mode == Control.FOCUS_ALL,
 		"AC3: Return button is enabled and focusable")
 	panel.close_result()
@@ -1411,12 +1517,12 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(def_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Defeat preserves stitched counts")
 	_check(def_lines[2] == "Patches worn: 3", "AC3: Defeat preserves patches worn total")
 	_check(def_lines[3] == "Crafted: Strike / Prick", "AC3: Defeat preserves crafted card name")
-	_check(def_lines[4] == "Warden 18/37 HP · 1 tear · HEAD Button Eye",
-		"AC2: Warden row shows authoritative 18/37 HP on Defeat")
-	_check(def_lines[5] == "Seamstress 22/30 HP · 0 tears · ARM Pincushion Arm",
-		"AC2: Seamstress row shows authoritative 22/30 HP on Defeat")
-	_check(def_lines[6] == "Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
-		"AC2: Tinker row shows authoritative 12/26 HP on Defeat")
+	_check(def_lines.size() == 4, "AC1: Defeat counters hold exactly the battles, stitched, worn and craft lines")
+	_check_hero_rows([
+		"Warden 18/37 HP · 1 tear · HEAD Button Eye",
+		"Seamstress 22/30 HP · 0 tears · ARM Pincushion Arm",
+		"Tinker 12/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC2: Defeat hero ribbons")
 	panel.close_result()
 	_check(_app_snapshot() == snap_before_def, "AC1: Defeat open/close leaves wallet, seed, deck and heroes completely unchanged")
 
@@ -1427,6 +1533,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: mismatched gold shows Summary unavailable")
 	_check(not panel.summary_label.text.contains("Gold:"), "AC3: no unvalidated gold is displayed")
 	_check(not panel.summary_label.text.contains("HP"), "AC3: no unvalidated HP is displayed")
+	_check(not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"AC3: mismatched wallet mounts no hero ribbons")
 	_check(panel.return_button.disabled, "AC3: mismatched wallet disables Return button")
 	panel.close_result()
 	app.session_gold = original_gold
@@ -1437,6 +1545,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: mismatched scraps shows Summary unavailable")
 	_check(not panel.summary_label.text.contains("Scraps:"), "AC3: no unvalidated scraps is displayed")
 	_check(not panel.summary_label.text.contains("HP"), "AC3: no unvalidated HP is displayed")
+	_check(not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"AC3: mismatched scraps mounts no hero ribbons")
 	_check(panel.return_button.disabled, "AC3: mismatched scraps disables Return button")
 	panel.close_result()
 	app.run_scraps = original_scraps
@@ -1445,6 +1555,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(panel.open_result(victory_latch), "panel opens outcome with negative gold")
 	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: negative gold rejected")
 	_check(not panel.summary_label.text.contains("Gold:"), "AC3: negative gold not displayed")
+	_check(not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"AC3: negative gold mounts no hero ribbons")
 	_check(panel.return_button.disabled, "AC3: negative gold disables Return")
 	panel.close_result()
 	app.session_gold = original_gold
@@ -1452,6 +1564,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	app.run_scraps = -1
 	_check(panel.open_result(victory_latch), "panel opens outcome with negative scraps")
 	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: negative scraps rejected")
+	_check(not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"AC3: negative scraps mounts no hero ribbons")
 	_check(panel.return_button.disabled, "AC3: negative scraps disables Return")
 	panel.close_result()
 	app.run_scraps = original_scraps
@@ -1461,6 +1575,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	_check(panel.open_result(victory_latch), "panel opens outcome with mismatched hero HP")
 	_check(panel.summary_label.text.ends_with("Summary unavailable"), "AC3: mismatched hero HP rejected")
 	_check(not panel.summary_label.text.contains("HP"), "AC3: no unvalidated HP displayed")
+	_check(not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"AC3: mismatched hero HP mounts no hero ribbons")
 	_check(panel.return_button.disabled, "AC3: mismatched hero HP disables Return")
 	panel.close_result()
 	app.run_heroes = original_heroes
@@ -1477,8 +1593,11 @@ func _expect_unavailable(latch: RunActBattleOutcome, label: String) -> void:
 		label + ": fails closed as Summary unavailable")
 	_check(not panel.summary_label.text.contains("tear")
 		and not panel.summary_label.text.contains("HP")
-		and not panel.summary_label.text.contains("TORN"),
+		and not panel.summary_label.text.contains("TORN")
+		and _hero_rows_text().is_empty(),
 		label + ": no fabricated hero, tear or torn-badge data is displayed")
+	_check(not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		label + ": no hero ribbon survives or is invented")
 	_check(not panel.summary_label.text.contains("Gold:")
 		and not panel.summary_label.text.contains("Scraps:"),
 		label + ": no partial totals are displayed")
@@ -1514,14 +1633,14 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	_check(panel.open_result(defeat_latch), "AC1: a settled defeat opens on an untorn run")
 	await _frames()
 	var zero_rows := panel.summary_label.text.split("\n")
-	_check(zero_rows.size() == 6, "AC1: an untorn ledger keeps its counts and three hero rows")
-	_check(_line_with(zero_rows, "Warden ") == "Warden 40/40 HP · 0 tears · no patches",
-		"AC1: a fresh run states Warden's exact zero tears and an honest empty wearer")
-	_check(_line_with(zero_rows, "Seamstress ") == "Seamstress 30/30 HP · 0 tears · no patches",
-		"AC1: a fresh run states Seamstress's exact zero tears")
-	_check(_line_with(zero_rows, "Tinker ") == "Tinker 26/26 HP · 0 tears · no patches",
-		"AC1: a fresh run states Tinker's zero tears with no TORN flag")
-	_check(not panel.summary_label.text.contains("TORN"),
+	_check(zero_rows.size() == 3,
+		"AC1: an untorn ledger keeps its wallet line plus the two genuine count lines")
+	_check_hero_rows([
+		"Warden 40/40 HP · 0 tears · no patches",
+		"Seamstress 30/30 HP · 0 tears · no patches",
+		"Tinker 26/26 HP · 0 tears · no patches",
+	], "AC1: fresh run ribbons")
+	_check(not "\n".join(_hero_rows_text()).contains("TORN"),
 		"AC1: living heroes are never named TORN")
 	_check(_app_snapshot() == zero_app and _snapshot(defeat["ctx"], defeat["battle"]) == zero_run,
 		"AC1: reading zero tears changes no hero, deck, purse, wardrobe or RNG")
@@ -1578,21 +1697,20 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	_check(panel.open_result(victory_latch), "AC1: a settled victory opens on a genuinely torn ledger")
 	await _frames()
 	var rows := panel.summary_label.text.split("\n")
-	_check(rows.size() == 6, "AC1: the torn ledger keeps the preserved count and hero rows")
+	_check(rows.size() == 3, "AC1: the torn ledger keeps the preserved wallet and count lines")
 	_check(rows[0] == "Battles resolved: %d · Gold: 43 · Scraps: 5" % settled,
 		"AC1: the torn ledger keeps the exact wallet line")
-	_check(_line_with(rows, "Warden ") == "Warden 0/37 HP · TORN · 1 tear · no patches",
-		"AC1: zero HP alone adds TORN beside the genuine by-ID count and real HP")
-	_check(_line_with(rows, "Seamstress ") == "Seamstress 30/30 HP · 0 tears · HEAD Button Eye",
-		"AC1: a living hero states zero tears, no TORN flag and its worn HEAD patch")
-	_check(_line_with(rows, "Tinker ") == "Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
-		"AC1: the worn coat is named while the ledger keeps the real maximum")
+	_check_hero_rows([
+		"Warden 0/37 HP · TORN · 1 tear · no patches",
+		"Seamstress 30/30 HP · 0 tears · HEAD Button Eye",
+		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC1: torn run ribbons")
 	var projected: Array = carry._projected_heroes()
 	var projected_tinker := 0
 	for hero in projected:
 		if hero is Dictionary and hero.get("id") == "tinker":
 			projected_tinker = hero.get("max_hp", 0)
-	_check(projected_tinker == 32 and _line_with(rows, "Tinker ").begins_with("Tinker 26/26 HP"),
+	_check(projected_tinker == 32 and _hero_rows_text()[2].begins_with("Tinker 26/26 HP"),
 		"AC1: a worn COAT raises only the effective combat cap, never the ledger tear or maximum")
 	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
 		"AC1: the torn ledger view mutates no hero, deck, purse, wardrobe or RNG")
@@ -1616,9 +1734,12 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	_check(panel.open_result(victory_latch), "AC2: the mended run reopens its settled victory")
 	await _frames()
 	rows = panel.summary_label.text.split("\n")
-	_check(_line_with(rows, "Warden ") == "Warden 9/37 HP · 1 tear · no patches",
-		"AC2: a legally mended Warden keeps one tear and loses the TORN flag")
-	_check(not panel.summary_label.text.contains("TORN"),
+	_check_hero_rows([
+		"Warden 9/37 HP · 1 tear · no patches",
+		"Seamstress 30/30 HP · 0 tears · HEAD Button Eye",
+		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC2: mended run ribbons")
+	_check(not "\n".join(_hero_rows_text()).contains("TORN"),
 		"AC2: no hero is TORN once the only downed hero has been revived")
 	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
 		"AC2: displaying the mended ledger mutates no state and consumes no RNG")
@@ -1658,13 +1779,12 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	_check(panel.open_result(victory_latch), "AC2: the Rest-revived run opens its settled victory")
 	await _frames()
 	rows = panel.summary_label.text.split("\n")
-	_check(_line_with(rows, "Warden ") == "Warden 20/37 HP · 1 tear · no patches",
-		"AC2: the Rest-healed Warden keeps its permanent tear and reduced maximum")
-	_check(_line_with(rows, "Seamstress ") == "Seamstress 9/27 HP · 1 tear · HEAD Button Eye",
-		"AC2: the revived Seamstress stays alive with the same single historical tear")
-	_check(_line_with(rows, "Tinker ") == "Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
-		"AC2: the untouched hero still reports zero tears")
-	_check(not panel.summary_label.text.contains("TORN"),
+	_check_hero_rows([
+		"Warden 20/37 HP · 1 tear · no patches",
+		"Seamstress 9/27 HP · 1 tear · HEAD Button Eye",
+		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC2: Rest-revived run ribbons")
+	_check(not "\n".join(_hero_rows_text()).contains("TORN"),
 		"AC2: a Rest revival clears TORN while the tear count stays")
 	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
 		"AC2: the Rest-revived ledger is shown without any state or RNG mutation")
@@ -1701,8 +1821,7 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	run_before = _snapshot(victory["ctx"], victory_battle)
 	_check(panel.open_result(victory_latch), "AC3: the restored torn ledger opens again")
 	await _frames()
-	_check(_line_with(panel.summary_label.text.split("\n"), "Warden ")
-		== "Warden 20/37 HP · 1 tear · no patches"
+	_check(_hero_rows_text()[0] == "Warden 20/37 HP · 1 tear · no patches"
 		and not panel.return_button.disabled,
 		"AC3: only the genuine restored ledger is presented with a usable Return")
 	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
@@ -1741,12 +1860,11 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	_check(panel.open_result(victory_latch), "AC2: the repeatedly torn run opens its settled victory")
 	await _frames()
 	rows = panel.summary_label.text.split("\n")
-	_check(_line_with(rows, "Warden ") == "Warden 0/34 HP · TORN · 2 tears · no patches",
-		"AC2: a repeated tear reads as plural player language with TORN at zero HP")
-	_check(_line_with(rows, "Seamstress ") == "Seamstress 9/27 HP · 1 tear · HEAD Button Eye",
-		"AC2: a single tear stays singular beside the worn HEAD patch")
-	_check(_line_with(rows, "Tinker ") == "Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
-		"AC2: the untouched hero still states an exact zero count")
+	_check_hero_rows([
+		"Warden 0/34 HP · TORN · 2 tears · no patches",
+		"Seamstress 9/27 HP · 1 tear · HEAD Button Eye",
+		"Tinker 26/26 HP · 0 tears · COAT Quilted Coat",
+	], "AC2: repeatedly torn run ribbons")
 	_check(_app_snapshot() == before and _snapshot(victory["ctx"], victory_battle) == run_before,
 		"AC2: presenting plural tear counts mutates no hero, deck, purse, wardrobe or RNG")
 	panel.close_result()
@@ -1771,6 +1889,8 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 	var expected: Array[String] = [
 		"Stitched: 0 made · 0 in deck",
 		"Patches worn: 4",
+	]
+	var expected_heroes: Array[String] = [
 		"Warden 40/40 HP · 0 tears · HEAD Stitched Badge · ARM Spare Spool · COAT Quilted Coat",
 		"Seamstress 30/30 HP · 0 tears · no patches",
 		"Tinker 26/26 HP · 0 tears · ARM Pincushion Arm",
@@ -1779,10 +1899,15 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 		"AC1: the compact recap fixture is a genuine four-patch wardrobe")
 	var formatted := panel._format_signature(summary).split("\n")
 	_check(formatted.size() == expected.size(),
-		"AC1: the formatter emits the count block and three compact hero rows")
+		"AC1: the formatter emits the concise count block only")
 	for index in range(mini(formatted.size(), expected.size())):
 		_check(formatted[index] == expected[index],
-			"AC1: formatted recap line %d matches the independent oracle" % index)
+			"AC1: formatted count line %d matches the independent oracle" % index)
+	var formatted_heroes: Array[String] = []
+	for hero in summary.heroes:
+		formatted_heroes.append(panel._hero_recap_line(hero))
+	_check(formatted_heroes == expected_heroes,
+		"AC1: the pure hero oracle emits the three compact recap rows")
 	_install_run(ledger, wardrobe)
 	var before := _app_snapshot()
 	var state := _snapshot(defeat["ctx"], defeat["battle"])
@@ -1790,22 +1915,34 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 	await _frames()
 	var rows := panel.summary_label.text.split("\n")
 	_check(rows.size() == expected.size() + 1 and rows[0].begins_with("Battles resolved: "),
-		"AC1: one battles line plus the count block and three compact hero rows")
+		"AC1: one battles line plus the concise count block")
 	for index in range(mini(rows.size() - 1, expected.size())):
 		_check(rows[index + 1] == expected[index],
-			"AC1: mounted recap line %d matches the independent oracle" % (index + 1))
-	_check(not panel.summary_label.text.contains("HEAD -")
-		and not panel.summary_label.text.contains("ARM -")
-		and not panel.summary_label.text.contains("COAT -")
-		and not panel.summary_label.text.contains("Tears:"),
+			"AC1: mounted count line %d matches the independent oracle" % (index + 1))
+	_check_hero_rows(expected_heroes, "AC1: fully worn party ribbons")
+	var recap_text := "\n".join(_hero_rows_text())
+	_check(not recap_text.contains("HEAD -")
+		and not recap_text.contains("ARM -")
+		and not recap_text.contains("COAT -")
+		and not recap_text.contains("Tears:"),
 		"AC1: a fully worn party prints no empty-slot or diagnostic fragments")
 	var interior := _label_interior(panel.summary_label)
 	var printed := _printed_text_size(panel.summary_label, interior.x)
 	_check(printed.y <= interior.y + 0.5 and printed.x <= interior.x + 0.5,
-		"AC1: the fully worn three-hero recap prints unclipped inside the existing parchment")
+		"AC1: the concise counters print unclipped inside the existing parchment")
+	for row in panel.hero_rows.get_children():
+		var detail := row.get_node("RowInset/RowLine/HeroDetail") as Label
+		_check(detail != null
+			and _printed_text_size(detail, detail.size.x).y <= detail.size.y + 0.5
+			and detail.size.y >= detail.get_combined_minimum_size().y - 0.5,
+			"AC1: every worn patch ribbon prints unclipped inside the existing parchment")
 	_check(panel.summary_label.get_theme_font_size("font_size") >= 18
 		and _font_path(panel.summary_label) == BODY_FONT,
-		"AC1: the recap keeps the inherited body face at 18 px or more")
+		"AC1: the counters keep the inherited body face at 18 px or more")
+	_check(panel.hero_recap_title.theme_type_variation == "PatchHeading"
+		and _font_path(panel.hero_recap_title) == HEADING_FONT
+		and panel.hero_recap_title.get_theme_font_size("font_size") >= 18,
+		"AC1: the party recap heading keeps the inherited PatchHeading face")
 	# A forged wear map, tear count or HP is never hidden: the whole ledger fails shut.
 	var forged_slots: Dictionary = summary.duplicate(true)
 	forged_slots["heroes"][0]["slots"]["ARM"] = 7
@@ -1819,9 +1956,117 @@ func _test_compact_hero_recap(defeat: Dictionary) -> void:
 	forged_hp["heroes"][2]["hp"] = 27
 	_check(panel._format_signature(forged_hp) == LiveRunTerminalResultPanel.UNAVAILABLE,
 		"AC1: HP above the authenticated maximum fails the whole recap shut")
+	_check(panel._validated_hero_rows(forged_slots).is_empty()
+		and panel._validated_hero_rows(forged_tears).is_empty()
+		and panel._validated_hero_rows(forged_hp).is_empty(),
+		"AC1: a forged hero never becomes a mounted ribbon")
 	panel.close_result()
+	_check(panel.hero_rows.get_child_count() == 0 and not panel.hero_recap.visible,
+		"AC1: closing the fully worn recap removes every ribbon")
 	_check(_app_snapshot() == before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
 		"AC1: the fully worn recap changes no wallet, deck, wardrobe, map or RNG")
+
+
+## A closed view must never show the previous run's ribbons. Reopening the same
+## settled outcome after the run state changed presents only the fresh heroes.
+func _test_reopen_resets_recap(defeat: Dictionary) -> void:
+	var starter := _starter_deck()
+	if starter.is_empty():
+		return
+	var worn := _wardrobe(starter, [
+		["button_eye", "warden", "HEAD", "reopen_sew_warden"],
+		["pincushion_arm", "seamstress", "ARM", "reopen_sew_seamstress"],
+	])
+	_install_run({"deck": starter, "descriptors": {}, "next_stitch_id": 1}, worn)
+	var worn_before := _app_snapshot()
+	var state := _snapshot(defeat["ctx"], defeat["battle"])
+	_check(panel.open_result(defeat["ctx"]["latch"]), "AC3: a worn run opens the settled defeat")
+	await _frames()
+	_check_hero_rows([
+		"Warden 40/40 HP · 0 tears · HEAD Button Eye",
+		"Seamstress 30/30 HP · 0 tears · ARM Pincushion Arm",
+		"Tinker 26/26 HP · 0 tears · no patches",
+	], "AC3: first worn open")
+	panel.close_result()
+	_check(panel.hero_rows.get_child_count() == 0 and not panel.hero_recap.visible
+		and panel.summary_label.text.is_empty(),
+		"AC3: close removes every ribbon and clears the counters")
+	_check(_app_snapshot() == worn_before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
+		"AC3: closing the worn recap mutates nothing")
+	_install_run({"deck": starter, "descriptors": {}, "next_stitch_id": 1})
+	var fresh_before := _app_snapshot()
+	_check(panel.open_result(defeat["ctx"]["latch"]),
+		"AC3: the same settled defeat reopens on the fresh run")
+	await _frames()
+	_check_hero_rows([
+		"Warden 40/40 HP · 0 tears · no patches",
+		"Seamstress 30/30 HP · 0 tears · no patches",
+		"Tinker 26/26 HP · 0 tears · no patches",
+	], "AC3: reopened fresh run")
+	var reopened := "\n".join(_hero_rows_text())
+	_check(not reopened.contains("Button Eye") and not reopened.contains("Pincushion Arm")
+		and not reopened.contains("TORN"),
+		"AC3: no stale patch name or torn badge survives a close and reopen")
+	panel.close_result()
+	_check(panel.hero_rows.get_child_count() == 0 and _app_snapshot() == fresh_before,
+		"AC3: the reopened recap closes without mutation")
+
+
+## A torn hero keeps the patches they already wear: the ribbon shows the TORN
+## marker beside the genuine tear count and still names every occupied slot,
+## while living heroes carry no marker.
+func _test_torn_wearer_keeps_patches(defeat: Dictionary) -> void:
+	var party := CombatParty.new(_definitions(HEROES))
+	var carry := RunTornCarryover.new(party.get_heroes())
+	_check(carry.is_valid(), "AC1: the torn-wearer fixture carryover is authentic")
+	var fight := carry.create_next_fight_party()
+	_check(fight != null, "AC1: the torn-wearer run admits a real party")
+	if fight == null:
+		return
+	var enemies := CombatEnemies.new([{"id": "wear_dummy", "max_hp": 8}])
+	var result := CombatBattleResult.new(fight, enemies)
+	_check(carry.begin_battle("wear_tear", result, fight), "AC1: a real battle begins")
+	_check(fight.apply_damage(1, fight.get_hero(1)["hp"]), "AC1: the Warden is genuinely downed")
+	_check(enemies.apply_damage(1, 8) and result.evaluate() == CombatBattleResult.VICTORY,
+		"AC1: the battle is won and witnessed")
+	_check(carry.commit_victory("wear_tear", result, fight).get("ok") == true
+		and carry.apply_reward("wear_tear", result, fight).get("ok") == true,
+		"AC1: the real reward claim publishes the tear")
+	var torn_heroes: Array = carry.read_state().heroes
+	_check(torn_heroes[0].id == "warden" and torn_heroes[0].hp == 0 and torn_heroes[0].max_hp == 37,
+		"AC1: the genuine tear leaves the Warden downed at 0/37")
+	var wardrobe := RunPatchWardrobe.new(torn_heroes,
+		["button_eye", "pincushion_arm"], PATCH_DEFINITIONS.duplicate(true),
+		2, 10, _starter_deck(), 5801, true)
+	_check(wardrobe.is_valid(), "AC1: the torn roster accepts a genuine wardrobe")
+	_check(wardrobe.sew("button_eye", "warden", "HEAD", "wear_head",
+		wardrobe.get_snapshot()).get("ok") == true,
+		"AC1: the torn Warden keeps its sewn HEAD patch recorded")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		"AC1: the wardrobe binds to the same torn ledger")
+	app.run_heroes = torn_heroes.duplicate(true)
+	app.party_carryover = carry
+	app.session_gold = 10
+	app.run_scraps = 2
+	app.run_deck.assign(_starter_deck())
+	app.run_stitch_descriptors = {}
+	app.run_next_stitch_id = 1
+	app.run_trinkets.assign(wardrobe.get_snapshot().owned)
+	var before := _app_snapshot()
+	var state := _snapshot(defeat["ctx"], defeat["battle"])
+	_check(panel.open_result(defeat["ctx"]["latch"]), "AC1: the torn wearer result opens")
+	await _frames()
+	_check_hero_rows([
+		"Warden 0/37 HP · TORN · 1 tear · HEAD Button Eye",
+		"Seamstress 30/30 HP · 0 tears · no patches",
+		"Tinker 26/26 HP · 0 tears · no patches",
+	], "AC1: torn wearer ribbons")
+	_check(not _hero_rows_text()[1].contains("TORN") and not _hero_rows_text()[2].contains("TORN"),
+		"AC1: living heroes carry no TORN marker beside the torn wearer")
+	_check(_app_snapshot() == before and _snapshot(defeat["ctx"], defeat["battle"]) == state,
+		"AC1: presenting a torn wearer mutates no ledger or RNG")
+	panel.close_result()
+	_check(panel.hero_rows.get_child_count() == 0, "AC1: closing the torn wearer clears its ribbons")
 
 
 func _run() -> void:
@@ -1856,6 +2101,8 @@ func _run() -> void:
 		await _test_terminal_interactions(victory, defeat)
 		await _test_crafted_recap(defeat)
 		await _test_compact_hero_recap(defeat)
+		await _test_torn_wearer_keeps_patches(defeat)
+		await _test_reopen_resets_recap(defeat)
 		_test_reordered_heroes()
 		_test_global_rng(defeat)
 		_test_invalid_source(defeat)

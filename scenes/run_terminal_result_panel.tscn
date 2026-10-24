@@ -84,16 +84,30 @@ vertical_alignment = 1
 autowrap_mode = 3
 
 [node name="RunSignature" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 132)
+custom_minimum_size = Vector2(0, 122)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 mouse_filter = 2
 
+[node name="HeroRecap" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 3
+
+[node name="HeroRecapTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]
+layout_mode = 2
+text = "PARTY RECAP"
+horizontal_alignment = 1
+
+[node name="HeroRows" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
 [node name="StitchedSection" type="PanelContainer" parent="PaperPanel/ContentMargin/ResultContent"]
 visible = false
-custom_minimum_size = Vector2(0, 144)
+custom_minimum_size = Vector2(0, 134)
 layout_mode = 2
 size_flags_vertical = 3
 
@@ -114,7 +128,7 @@ text = "KEPT SEWN CARDS"
 
 [node name="StitchedScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ResultContent/StitchedSection/DetailMargin/DetailContent"]
 clip_contents = true
-custom_minimum_size = Vector2(0, 94)
+custom_minimum_size = Vector2(0, 88)
 layout_mode = 2
 size_flags_vertical = 3
 focus_mode = 2
