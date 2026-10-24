@@ -110,6 +110,13 @@ func _frames() -> void:
 	await process_frame
 
 
+func _focused_tile(tiles: Array[Button]) -> Button:
+	for tile in tiles:
+		if is_instance_valid(tile) and tile.has_focus():
+			return tile
+	return null
+
+
 func _click(button: Control) -> void:
 	var center := button.get_global_rect().get_center()
 	for press in [true, false]:
@@ -679,10 +686,20 @@ func _run() -> void:
 			"keyboard-visible draw and targeted living-ally heal are exact and ordered")
 		_thumb_ok(picker, "first", "tinker_tune_up", "tinker")
 		_thumb_ok(picker, "second", "seamstress_mend", "seamstress")
-		picker.second_selector.grab_focus()
-		await _key(KEY_TAB)
-		_check(picker.confirm_button.has_focus(), "keyboard Tab reaches confirmation")
-		await _key(KEY_ENTER)
+		# The invisible dropdown is no longer a keyboard stop: the visible Mend
+		# tile itself routes Tab to the visible confirmation action.
+		_check(picker.first_selector.focus_mode == Control.FOCUS_NONE
+			and picker.second_selector.focus_mode == Control.FOCUS_NONE,
+			"invisible compatibility selectors stay non-focusable during second-stage selection")
+		var mend_tile := picker.second_tile_for_index(mend_index)
+		_check(mend_tile != null and mend_tile.is_visible_in_tree() and not mend_tile.disabled,
+			"visible Mend tile is a keyboard stop")
+		if mend_tile != null:
+			mend_tile.grab_focus()
+			_check(mend_tile.has_focus(), "visible Mend tile takes keyboard focus")
+			await _key(KEY_TAB)
+			_check(picker.confirm_button.has_focus(), "keyboard Tab reaches confirmation")
+			await _key(KEY_ENTER)
 	_check(received.size() == signals_before + 1
 		and received.back() == {"first":tune_index,"second":mend_index,"source":fresh.get_snapshot()},
 		"physical keyboard emits Tune Up / Mend exact indices/receipt, only once")
@@ -760,6 +777,7 @@ func _run() -> void:
 	await _test_mixed_pool_picker()
 	await _test_snip_conditional_descriptions()
 	await _test_submitted_single_intent_latch()
+	await _test_keyboard_focus_route()
 	_finish()
 
 
@@ -1470,9 +1488,18 @@ func _test_mixed_pool_picker() -> void:
 	_thumb_present_or_placeholder(ui, "second", "seamstress_field_mend_plus", "Field Mend+", "seamstress")
 
 	# Keyboard focus and confirmation on representative pool selection:
-	ui.second_selector.grab_focus()
-	await _key(KEY_TAB)
-	_check(ui.confirm_button.has_focus(), "keyboard Tab reaches confirmation button on pool selection")
+	await _frames()
+	var pool_tile := ui.second_tile_for_index(15)
+	_check(ui.first_selector.focus_mode == Control.FOCUS_NONE
+		and ui.second_selector.focus_mode == Control.FOCUS_NONE,
+		"pool picker keeps both invisible compatibility selectors out of keyboard traversal")
+	_check(pool_tile != null and pool_tile.is_visible_in_tree() and not pool_tile.disabled,
+		"selected Field Mend+ tile is a visible keyboard stop")
+	if pool_tile != null:
+		pool_tile.grab_focus()
+		_check(pool_tile.has_focus(), "selected Field Mend+ tile takes keyboard focus")
+		await _key(KEY_TAB)
+		_check(ui.confirm_button.has_focus(), "keyboard Tab reaches confirmation button on pool selection")
 	var sigs_before := received.size()
 	await _key(KEY_ENTER)
 	_check(received.size() == sigs_before + 1 and received.back()["first"] == 0
@@ -1688,3 +1715,242 @@ func _test_submitted_single_intent_latch() -> void:
 		and intent_log[1]["source"] == snapshot, "second intent has newly chosen pair")
 
 	p.free()
+
+
+## AC1/AC2/AC3: with a real 3-scrap Rest ledger the invisible compatibility
+## dropdowns are data mirrors only, and keyboard focus travels exclusively
+## through visible tiles, Change First, Confirm Stitch and a mounted
+## DismissStitch sibling, emitting exactly one exact index/snapshot request.
+func _test_keyboard_focus_route() -> void:
+	var deck := _deck()
+	_check(deck.size() >= 12 and deck.count("warden_strike") >= 2
+		and deck.count("seamstress_prick") >= 1,
+		"focus-route fixture uses the real starter deck with duplicate Strikes and Prick")
+	if deck.size() < 12 or deck.count("warden_strike") < 2:
+		return
+	var first_strike := _idx(deck, "warden_strike", 0)
+	var second_strike := _idx(deck, "warden_strike", 1)
+	var prick := _idx(deck, "seamstress_prick")
+	_check(first_strike >= 0 and second_strike >= 0 and first_strike != second_strike
+		and prick >= 0, "focus-route fixture resolves distinct duplicate occurrences")
+	var service := RunRestStitchCards.new(deck, {}, 3)
+	_check(service.is_valid() and not service.is_consumed() and service.get_snapshot()["remaining_scraps"] == 3,
+		"focus-route fixture has a genuine unconsumed 3-scrap Rest ledger")
+	var source := service.get_snapshot()
+
+	var host := Control.new()
+	host.name = "RestStitchHost"
+	host.size = Vector2(1280, 720)
+	root.add_child(host)
+	var panel := LiveRestStitchPairPicker.new()
+	panel.name = "KeyboardFocusRestStitchPicker"
+	panel.position = Vector2(330, 180)
+	host.add_child(panel)
+	var dismiss := Button.new()
+	dismiss.name = "DismissStitch"
+	dismiss.text = "Dismiss Stitch"
+	dismiss.position = Vector2(40, 640)
+	dismiss.size = Vector2(180, 40)
+	dismiss.focus_mode = Control.FOCUS_ALL
+	host.add_child(dismiss)
+	await _frames()
+
+	var intents: Array[Dictionary] = []
+	panel.stitch_requested.connect(func(a, b, s): intents.append({"first": a, "second": b, "source": s}))
+	panel.bind(service, source)
+	await _frames()
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 771177
+	var local_before := local_rng.state
+	seed(771177)
+	var global_next := randi()
+	seed(771177)
+
+	# AC1: populated, refreshed mirrors that are real data but not keyboard stops.
+	_check(panel.first_selector.item_count == deck.size() and panel.first_selector.selected == -1,
+		"compatibility first mirror is populated while nothing is preselected")
+	_check(panel.first_selector.focus_mode == Control.FOCUS_NONE
+		and panel.second_selector.focus_mode == Control.FOCUS_NONE,
+		"both invisible compatibility selectors are non-focusable from creation")
+	_check(panel.first_selector.focus_next == NodePath()
+		and panel.second_selector.focus_previous == NodePath(),
+		"compatibility selectors carry no authored focus chain")
+	panel.first_selector.grab_focus()
+	panel.second_selector.grab_focus()
+	_check(not panel.first_selector.has_focus() and not panel.second_selector.has_focus(),
+		"compatibility selectors refuse programmatic keyboard focus")
+	for i in range(mini(deck.size(), 4)):
+		_check(panel.first_selector.get_item_metadata(i) == i,
+			"compatibility first mirror keeps exact deck index %d" % i)
+
+	# Stage one: only visible original tiles and the Rest dismissal are stops.
+	_check(not panel.second_tile_scroll.visible and panel.second_tiles.is_empty(),
+		"first stage shows no second-half tiles")
+	var strike_tile := panel.first_tile_for_index(second_strike)
+	var other_strike_tile := panel.first_tile_for_index(first_strike)
+	_check(strike_tile != null and other_strike_tile != null and strike_tile != other_strike_tile
+		and strike_tile.get_meta("index") == second_strike
+		and other_strike_tile.get_meta("index") == first_strike,
+		"duplicate Strike occurrences mount distinct visible tiles with exact indices")
+	if strike_tile == null:
+		host.free()
+		return
+	_check(strike_tile.focus_mode == Control.FOCUS_ALL and strike_tile.is_visible_in_tree()
+		and not strike_tile.disabled, "visible first-stage original tile is a keyboard stop")
+	strike_tile.grab_focus()
+	_check(strike_tile.has_focus(), "visible first-stage Strike tile takes keyboard focus")
+	await _key(KEY_TAB)
+	var tabbed := _focused_tile(panel.first_tiles)
+	_check(tabbed != null and tabbed != strike_tile and tabbed.is_visible_in_tree(),
+		"Tab walks to the next visible original tile instead of a hidden dropdown")
+	_check(not panel.first_selector.has_focus() and not panel.second_selector.has_focus(),
+		"Tab never lands on either invisible compatibility selector")
+	panel.first_tiles.back().grab_focus()
+	await _key(KEY_TAB)
+	_check(dismiss.has_focus(), "Tab from the last visible original tile reaches Dismiss Stitch")
+	await _key(KEY_TAB)
+	_check(_focused_tile(panel.first_tiles) == panel.first_tiles.front(),
+		"Tab from Dismiss Stitch wraps to the first visible original tile")
+
+	# First-stage keyboard activation selects the second duplicate occurrence.
+	strike_tile = panel.first_tile_for_index(second_strike)
+	strike_tile.grab_focus()
+	await _key(KEY_ENTER)
+	_check(panel.selected_first_index() == second_strike,
+		"Enter on the second duplicate Strike tile selects that exact occurrence")
+	_check(panel.first_selector.selected >= 0
+		and panel.first_selector.get_item_metadata(panel.first_selector.selected) == second_strike,
+		"compatibility first mirror selected row still maps to the exact occurrence")
+	_check(panel.second_selector.item_count > 0 and panel.second_selector.selected == -1
+		and panel.first_selector.focus_mode == Control.FOCUS_NONE
+		and panel.second_selector.focus_mode == Control.FOCUS_NONE,
+		"second mirror is filled but stays unselected and non-focusable after the first choice")
+	for tile in panel.first_tiles:
+		_check(is_instance_valid(tile) and tile.focus_mode == Control.FOCUS_NONE,
+			"inactive first-stage tile is not a focus stop during the second stage")
+	var handoff := _focused_tile(panel.second_tiles)
+	_check(handoff != null and handoff.is_visible_in_tree() and not handoff.disabled
+		and panel.second_tile_scroll.visible,
+		"first-to-second handoff lands on a visible eligible second-half tile")
+	_check(handoff != null and panel.second_selector.get_item_count() > 0
+		and panel.second_tile_for_index(handoff.get_meta("index")) == handoff,
+		"handoff tile is a real eligible occurrence from the other hero")
+	await _key(KEY_TAB)
+	var stage_two_focus := root.gui_get_focus_owner()
+	_check(stage_two_focus != null and stage_two_focus.is_visible_in_tree()
+		and stage_two_focus != panel.first_selector and stage_two_focus != panel.second_selector,
+		"Tab in the second stage stays on a visible control, never a hidden dropdown")
+
+	# Enter on the focused second tile arms the visible pair.
+	var chosen_second := -1
+	var chosen_tile := _focused_tile(panel.second_tiles)
+	if chosen_tile == null:
+		chosen_tile = panel.second_tiles.front()
+	chosen_tile.grab_focus()
+	chosen_second = chosen_tile.get_meta("index")
+	await _key(KEY_ENTER)
+	_check(panel.selected_second_index() == chosen_second,
+		"Enter on a visible second tile selects its exact occurrence")
+	_check(panel.second_selector.selected >= 0
+		and panel.second_selector.get_item_metadata(panel.second_selector.selected) == chosen_second,
+		"compatibility second mirror selected row maps to the chosen occurrence")
+	_check(not panel.confirm_button.disabled and not panel.first_half_label.text.is_empty()
+		and not panel.second_half_label.text.is_empty(),
+		"two visible keyboard choices arm Confirm Stitch with both authored halves")
+
+	# Confirm -> Dismiss -> Change First is the visible stage-two Tab order.
+	chosen_tile = panel.second_tile_for_index(chosen_second)
+	_check(chosen_tile.has_focus(),
+		"chosen second tile keeps keyboard focus across the focus-chain rebuild")
+	await _key(KEY_TAB)
+	_check(panel.confirm_button.has_focus(), "Tab from the chosen second tile reaches Confirm Stitch")
+	await _key(KEY_TAB)
+	_check(dismiss.has_focus(), "Tab from Confirm Stitch reaches Dismiss Stitch")
+	await _key(KEY_TAB)
+	_check(panel.change_first_button != null and panel.change_first_button.has_focus(),
+		"Tab from Dismiss Stitch reaches the visible Change First action")
+	await _key(KEY_ENTER)
+	_check(panel.selected_first_index() == -1 and panel.selected_second_index() == -1
+		and panel.first_tile_scroll.visible and not panel.second_tile_scroll.visible
+		and panel.confirm_button.disabled,
+		"Change First returns to the first stage without an armed pair")
+	var returned := _focused_tile(panel.first_tiles)
+	_check(returned != null and returned.is_visible_in_tree()
+		and returned.focus_mode == Control.FOCUS_ALL,
+		"Change First returns keyboard focus to a visible first-stage tile")
+	_check(panel.first_selector.focus_mode == Control.FOCUS_NONE
+		and panel.second_selector.focus_mode == Control.FOCUS_NONE,
+		"compatibility selectors stay non-focusable after Change First")
+
+	# Re-select a legal cross-owner pair with real keys and confirm once.
+	var confirm_first := panel.first_tile_for_index(first_strike)
+	_check(confirm_first != null and confirm_first.is_visible_in_tree(), "first Strike occurrence tile is visible again")
+	if confirm_first == null:
+		host.free()
+		return
+	confirm_first.grab_focus()
+	await _key(KEY_ENTER)
+	var prick_tile := panel.second_tile_for_index(prick)
+	_check(prick_tile != null and prick_tile.is_visible_in_tree() and not prick_tile.disabled,
+		"Prick is a visible eligible second-half tile for the first Strike occurrence")
+	if prick_tile == null:
+		host.free()
+		return
+	prick_tile.grab_focus()
+	await _key(KEY_ENTER)
+	_check(panel.selected_first_index() == first_strike and panel.selected_second_index() == prick,
+		"keyboard selection keeps both exact source occurrences")
+	prick_tile = panel.second_tile_for_index(prick)
+	prick_tile.grab_focus()
+	await _key(KEY_TAB)
+	_check(panel.confirm_button.has_focus(), "Tab reaches Confirm Stitch for the keyboard pair")
+	await _key(KEY_ENTER)
+
+	# AC3: exactly one exact request, and no authoritative mutation or RNG draw.
+	_check(intents.size() == 1 and intents[0]["first"] == first_strike
+		and intents[0]["second"] == prick and intents[0]["source"] == source,
+		"keyboard route emits exactly one exact index pair with the original source snapshot")
+	_check(service.get_snapshot() == source and not service.is_consumed()
+		and service.get_snapshot()["remaining_scraps"] == 3
+		and service.get_snapshot()["deck"] == deck
+		and service.get_snapshot()["descriptors"].is_empty()
+		and service.get_snapshot()["next_stitch_id"] == 1,
+		"confirmed request changes no scraps, deck, descriptor or next stitched ID")
+	_check(local_rng.state == local_before and randi() == global_next,
+		"full keyboard focus route consumes no local or global RNG")
+
+	# A submitted picker exposes no residual hidden focus stop.
+	_check(panel.is_submitted() and panel.confirm_button.disabled
+		and panel.confirm_button.focus_mode == Control.FOCUS_NONE
+		and panel.first_selector.focus_mode == Control.FOCUS_NONE
+		and panel.second_selector.focus_mode == Control.FOCUS_NONE,
+		"submitted picker leaves no focusable visible or legacy action")
+	for tile in panel.first_tiles:
+		_check(is_instance_valid(tile) and tile.focus_mode == Control.FOCUS_NONE and tile.disabled,
+			"submitted first-stage tile is not a focus stop")
+	for tile in panel.second_tiles:
+		_check(is_instance_valid(tile) and tile.focus_mode == Control.FOCUS_NONE and tile.disabled,
+			"submitted second-stage tile is not a focus stop")
+	panel.confirm_button.grab_focus()
+	panel.first_selector.grab_focus()
+	_check(not panel.confirm_button.has_focus() and not panel.first_selector.has_focus(),
+		"submitted picker refuses focus on Confirm and the legacy selector")
+
+	# An unavailable picker must not expose any focusable hidden trap either.
+	var poor := RunRestStitchCards.new(deck, {}, 2)
+	panel.bind(poor, poor.get_snapshot())
+	await _frames()
+	_check(panel.first_tiles.is_empty() and panel.second_tiles.is_empty()
+		and panel.confirm_button.disabled and panel.first_selector.disabled
+		and panel.confirm_button.focus_mode == Control.FOCUS_NONE
+		and panel.first_selector.focus_mode == Control.FOCUS_NONE
+		and panel.second_selector.focus_mode == Control.FOCUS_NONE,
+		"insufficient-scrap picker exposes no focusable control")
+	panel.confirm_button.grab_focus()
+	panel.first_selector.grab_focus()
+	_check(not panel.confirm_button.has_focus() and not panel.first_selector.has_focus(),
+		"insufficient-scrap picker refuses focus on Confirm and the legacy selector")
+	_check(poor.get_snapshot()["remaining_scraps"] == 2 and not poor.is_consumed(),
+		"unavailable picker spends nothing")
+	host.free()
