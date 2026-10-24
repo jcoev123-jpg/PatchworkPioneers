@@ -180,8 +180,9 @@ func _leave_fight(check_presenter: bool = true) -> void:
 	_check(app.title_view.is_visible_in_tree() and app.deck == null, "Return leaves a clean title")
 	if check_presenter and is_instance_valid(juice):
 		_check(is_instance_valid(juice.ambient) and juice.ambient.get_parent() == juice
-			and juice.ambient.profile.is_empty() and not juice.ambient.lint.emitting
-			and not juice.ambient.weather.emitting
+			and juice.ambient.profile.is_empty()
+			and juice.ambient.visible_budget() == 0
+			and _particles_under(juice.ambient).is_empty()
 			and app.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
 			"Return parks only the reusable, non-emitting ambience outside battle")
 		_check(not juice.bound and juice.overlay == null and juice.history.is_empty()
@@ -431,6 +432,15 @@ func _assert_puff(side: String, actor_id: String, before: int, limit: float,
 		"a real hit test at the puff's own spot passes through to the battle")
 
 
+## Every particle emitter under (never including) the given node.
+func _particles_under(of: Node) -> Array:
+	var out: Array = []
+	for kind in ["CPUParticles2D", "GPUParticles2D"]:
+		for child in of.find_children("*", kind, true, false):
+			out.append(child)
+	return out
+
+
 ## Every live felt puff emitter this listener still owns.
 func _puff_nodes() -> Array:
 	var out: Array = []
@@ -591,9 +601,11 @@ func _assert_presenter_mounted() -> void:
 		and is_instance_valid(stage.backdrop) and stage.backdrop.has_image()
 		and ambient.get_parent() == app.battle_view
 		and ambient.get_index() == stage.backdrop.get_index() + 1
-		and not ambient.profile.is_empty() and ambient.lint.emitting
-		and ambient.weather.emitting and ambient.visible_budget() <= 36,
-		"real mounted fight has one bounded atmosphere above its existing stage bed")
+		and not ambient.profile.is_empty()
+		and ambient.visible_budget() == ambient.NORMAL_BUDGET
+		and ambient.motif_metadata().size() == ambient.NORMAL_BUDGET
+		and _particles_under(ambient).is_empty(),
+		"real mounted fight has one bounded texture atmosphere above its existing stage bed")
 	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0

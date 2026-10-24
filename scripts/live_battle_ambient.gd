@@ -1,21 +1,18 @@
 extends Control
-## One reusable, input-inert battle atmosphere. The roster admits the scene; this
-## renderer only decorates it and never reads gameplay authorities or any RNG.
-## The two CPUParticles2D nodes are constructed once at listener startup, before
-## the player begins a seeded run. They are recycled between every routed fight.
+## One reusable, input-inert battle atmosphere drawn only from two authored
+## images. The roster admits the scene; this renderer only decorates it and
+## never reads gameplay authorities or any RNG. Both image families are loaded
+## once at listener startup, before the player begins a seeded run, and the
+## same layer is recycled between every routed fight.
 
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const ROUTE_MAP := preload("res://scripts/run_map.gd")
 const FELT_PATH := "res://assets/paper/vfx/felt_mote.png"
 const LIGHT_PATH := "res://assets/paper/vfx/warm_light_pool.png"
-const NORMAL_LINT := 2
-const NORMAL_AREA := 3
-const FAST_LINT := 1
-const FAST_AREA := 2
 const NORMAL_MOTIFS := 30
 const FAST_MOTIFS := 7
-const NORMAL_BUDGET := NORMAL_LINT + NORMAL_AREA + NORMAL_MOTIFS
-const FAST_BUDGET := FAST_LINT + FAST_AREA + FAST_MOTIFS
+const NORMAL_BUDGET := NORMAL_MOTIFS
+const FAST_BUDGET := FAST_MOTIFS
 const PROFILE_COLORS := {
 	"pollen": Color("#eadba0"),
 	"leaves": Color("#9ead83"),
@@ -31,8 +28,6 @@ const PROFILE_SEEDS := {
 
 var profile := ""
 var fast := false
-var lint: CPUParticles2D
-var weather: CPUParticles2D
 var _time := 0.0
 var felt_texture: Texture2D
 var light_texture: Texture2D
@@ -47,49 +42,13 @@ func _init() -> void:
 	# Admit imported art once, before seeded play; absent art stays invisible.
 	felt_texture = _load_texture(FELT_PATH)
 	light_texture = _load_texture(LIGHT_PATH)
-	# Construct only at the listener's initial _ready, outside a battle. Even the
-	# CPUParticles2D constructor may otherwise consume Godot's global RNG.
-	lint = _new_emitter("SoftLint", 70747)
-	weather = _new_emitter("AreaWeather", 80849)
-	add_child(lint)
-	add_child(weather)
-	resized.connect(_resize_emitters)
+	resized.connect(queue_redraw)
 
 
 static func _load_texture(path: String) -> Texture2D:
 	if not ResourceLoader.exists(path, "Texture2D"):
 		return null
 	return load(path) as Texture2D
-
-
-func _new_emitter(label: String, fixed_seed: int) -> CPUParticles2D:
-	var emitter := CPUParticles2D.new()
-	emitter.name = label
-	emitter.emitting = false
-	emitter.use_fixed_seed = true
-	emitter.seed = fixed_seed
-	emitter.texture = felt_texture
-	emitter.visible = felt_texture != null
-	var fade := Gradient.new()
-	fade.set_color(0, Color(1, 1, 1, 0))
-	fade.add_point(0.2, Color.WHITE)
-	fade.add_point(0.75, Color.WHITE)
-	fade.set_color(fade.get_point_count() - 1, Color(1, 1, 1, 0))
-	emitter.color_ramp = fade
-	emitter.one_shot = false
-	emitter.lifetime = 8.0
-	emitter.fixed_fps = 15
-	emitter.explosiveness = 0.0
-	emitter.randomness = 0.35
-	emitter.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
-	emitter.direction = Vector2(0.15, 1.0)
-	emitter.spread = 25.0
-	emitter.gravity = Vector2(0.0, 3.0)
-	emitter.initial_velocity_min = 3.0
-	emitter.initial_velocity_max = 9.0
-	emitter.scale_amount_min = 1.5
-	emitter.scale_amount_max = 3.0
-	return emitter
 
 
 ## Mirrors the roster's *admitted* stage scene, never a guessed default for bad
@@ -131,10 +90,6 @@ func configure(kind: String, floor_number: int, fast_mode: bool) -> bool:
 	fast = fast_mode
 	if changed:
 		_time = 0.0
-	_apply_profile()
-	_resize_emitters()
-	lint.emitting = felt_texture != null
-	weather.emitting = felt_texture != null
 	show()
 	queue_redraw()
 	return true
@@ -145,76 +100,16 @@ func set_fast(enabled: bool) -> void:
 		return
 	fast = enabled
 	if not profile.is_empty():
-		_apply_profile()
 		queue_redraw()
-
-
-func _apply_profile() -> void:
-	lint.amount = FAST_LINT if fast else NORMAL_LINT
-	weather.amount = FAST_AREA if fast else NORMAL_AREA
-	lint.seed = 70747
-	weather.seed = int(PROFILE_SEEDS.get(profile, 80849))
-	lint.color = Color("#eee1c8", 0.25 if fast else 0.43)
-	weather.color = Color(PROFILE_COLORS.get(profile, Color.WHITE), 0.28 if fast else 0.51)
-	lint.gravity = Vector2(-1.0, 1.5)
-	lint.direction = Vector2(-0.1, 1.0)
-	lint.initial_velocity_min = 1.0
-	lint.initial_velocity_max = 5.0
-	lint.scale_amount_min = 1.0
-	lint.scale_amount_max = 2.0
-	weather.gravity = Vector2(0.0, 3.5)
-	weather.direction = Vector2(-0.2, 1.0)
-	weather.spread = 27.0
-	weather.initial_velocity_min = 4.0
-	weather.initial_velocity_max = 9.0
-	weather.scale_amount_min = 2.0
-	weather.scale_amount_max = 3.5
-	match profile:
-		"pollen":
-			weather.gravity = Vector2(0, -2.0)
-			weather.initial_velocity_max = 5.0
-		"leaves":
-			weather.gravity = Vector2(-9.0, 9.0)
-			weather.scale_amount_max = 4.0
-		"fireflies":
-			weather.gravity = Vector2.ZERO
-			weather.initial_velocity_min = 1.0
-			weather.initial_velocity_max = 3.0
-		"snow":
-			weather.gravity = Vector2(-2.0, 7.0)
-			weather.initial_velocity_max = 5.0
-		"ash":
-			weather.gravity = Vector2(-5.0, -4.0)
-			weather.scale_amount_max = 2.5
-		"scraps":
-			weather.gravity = Vector2(-10.0, 7.0)
-			weather.scale_amount_min = 2.5
-			weather.scale_amount_max = 4.5
-	# The authored image can be any resolution; preserve small felt flecks.
-	var pixel_scale := 3.0 / maxf(1.0, felt_texture.get_width()) if felt_texture != null else 1.0
-	lint.scale_amount_min *= pixel_scale
-	lint.scale_amount_max *= pixel_scale
-	weather.scale_amount_min *= pixel_scale
-	weather.scale_amount_max *= pixel_scale
-
-
-func _resize_emitters() -> void:
-	var usable := Vector2(maxf(1.0, size.x), maxf(1.0, size.y * 0.76))
-	for emitter in [lint, weather]:
-		emitter.position = Vector2(size.x * 0.5, usable.y * 0.49)
-		emitter.emission_rect_extents = usable * 0.49
-	queue_redraw()
 
 
 func visible_budget() -> int:
 	if profile.is_empty():
 		return 0
-	return lint.amount + weather.amount + (FAST_MOTIFS if fast else NORMAL_MOTIFS)
+	return FAST_BUDGET if fast else NORMAL_BUDGET
 
 
 func retire() -> void:
-	lint.emitting = false
-	weather.emitting = false
 	profile = ""
 	_time = 0.0
 	hide()
@@ -260,6 +155,8 @@ static func light_alpha(elapsed: float, fast_mode: bool) -> float:
 	return (0.16 if fast_mode else 0.32) * (0.9 + 0.1 * sin(fposmod(elapsed, 120.0) * TAU / 12.0))
 
 
+## The whole battle atmosphere: the warm pool image plus the drifting felt
+## marks. Nothing is synthesised when an image is unavailable.
 func _draw() -> void:
 	if profile.is_empty() or size.x < 40.0 or size.y < 40.0:
 		return

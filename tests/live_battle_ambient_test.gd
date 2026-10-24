@@ -1,8 +1,10 @@
 extends SceneTree
 ## Visual-only stage profiles and mounted title/fight/return reuse. All RNG
 ## comparisons are against real authorities, never seeded cosmetic sampling.
+## The atmosphere is texture-only: no particle emitter may exist anywhere in it.
 
 const AMBIENT := preload("res://scripts/live_battle_ambient.gd")
+const AMBIENT_SOURCE := "res://scripts/live_battle_ambient.gd"
 var failures: Array[String] = []
 var checks := 0
 var app
@@ -33,6 +35,15 @@ func _click(button: Control) -> void:
 		event.position = point
 		root.push_input(event, true)
 	await _frames()
+
+
+## Every particle emitter under (never including) the given node.
+func _particles(of: Node) -> Array:
+	var found: Array = []
+	for kind in ["CPUParticles2D", "GPUParticles2D"]:
+		for child in of.find_children("*", kind, true, false):
+			found.append(child)
+	return found
 
 
 func _snapshot() -> Array:
@@ -72,8 +83,6 @@ func _select_fight() -> bool:
 func _profiles() -> void:
 	var sample = AMBIENT.new()
 	root.add_child(sample)
-	var fixed_lint = sample.lint
-	var fixed_weather = sample.weather
 	seed(76543)
 	var next_random: int = randi()
 	seed(76543)
@@ -88,24 +97,29 @@ func _profiles() -> void:
 		_check(AMBIENT.profile_for(row[0], row[1]) == row[2],
 			"admitted %s floor %d selects %s" % row)
 		_check(sample.configure(row[0], row[1], false) and sample.profile == row[2]
-			and sample.lint == fixed_lint and sample.weather == fixed_weather
-			and sample.weather.seed == sample.PROFILE_SEEDS[row[2]]
-			and sample.weather.emitting == (sample.felt_texture != null)
-			and sample.lint.emitting == (sample.felt_texture != null)
-			and sample.visible_budget() == sample.NORMAL_BUDGET,
-			"each authored area configures distinct, pooled, fixed-seed web CPU weather")
+			and sample.visible_budget() == sample.NORMAL_BUDGET
+			and sample.get_child_count() == 0 and _particles(sample).is_empty(),
+			"each authored area configures a texture-only atmosphere with no emitter nodes")
 		_geometry(sample, String(row[2]))
 	for row in [["Fight", -1], ["Fight", 12], ["Elite", -1], ["Elite", 0],
 			["Elite", 12], ["Boss", -1], ["Boss", 0], ["Boss", 11],
 			["Boss", 13], ["Rest", 5], ["", 5]]:
 		_check(AMBIENT.profile_for(row[0], row[1]).is_empty()
 			and not sample.configure(row[0], row[1], false)
-			and sample.profile.is_empty() and not sample.weather.emitting
-			and not sample.lint.emitting and sample.visible_budget() == 0
-			and sample.motif_metadata().is_empty() and not sample.visible,
+			and sample.profile.is_empty() and sample.visible_budget() == 0
+			and sample.motif_metadata().is_empty() and not sample.visible
+			and sample.get_child_count() == 0 and _particles(sample).is_empty(),
 			"invalid routed scene %s floor %d remains without ambience" % row)
 	_check(randi() == next_random,
 		"all six profile activations and rejected mappings avoid the global RNG")
+	var source := FileAccess.get_file_as_string(AMBIENT_SOURCE)
+	_check(not source.is_empty() and not source.contains("Particles2D")
+		and not source.contains("ParticleProcessMaterial")
+		and source.contains("draw_texture_rect(light_texture")
+		and source.contains("draw_texture_rect(felt_texture")
+		and source.contains("if light_texture != null:")
+		and source.contains("if felt_texture != null:"),
+		"renderer source paints only the two authored images and constructs no emitter")
 	sample.retire()
 	sample.free()
 
@@ -145,7 +159,8 @@ func _geometry(layer, family: String) -> void:
 	_check(AMBIENT.light_alpha(0.0, false) != AMBIENT.light_alpha(1.0, false)
 		and AMBIENT.light_alpha(1.0, true) < AMBIENT.light_alpha(1.0, false),
 		"warm image pulses and dims in Fast")
-	_check(layer.get_child_count() == 2, "texture rendering creates no extra nodes")
+	_check(layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"texture rendering creates no extra or particle nodes")
 	initial[0]["rect"] = Rect2(9999, 9999, 1, 1)
 	_check(AMBIENT.motifs_for(family, bounds, 0.0, false)[0]["rect"] != initial[0]["rect"],
 		"returned placement cannot mutate subsequent draws")
@@ -160,13 +175,9 @@ func _textures(layer) -> void:
 			_check(entry[1] is Texture2D and entry[1].resource_path == entry[0]
 				and entry[1].get_width() > 0 and entry[1].get_height() > 0,
 				"supplied art is an admitted imported texture: " + entry[0])
-	_check(layer.lint.texture == layer.felt_texture and layer.weather.texture == layer.felt_texture
-		and layer.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR
-		and layer.lint.visible == (layer.felt_texture != null)
-		and layer.weather.visible == (layer.felt_texture != null)
-		and layer.lint.color_ramp.get_color(0).a == 0.0
-		and layer.weather.color_ramp.get_color(layer.weather.color_ramp.get_point_count() - 1).a == 0.0,
-		"pooled emitters share felt art, linear filtering and lifetime fades; missing art stays hidden")
+	_check(layer.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"texture-only layer keeps linear filtering and owns no particle node")
 	_check(AMBIENT._load_texture("res://assets/paper/vfx/unavailable_ambient.png") == null,
 		"missing optional texture fails quietly")
 
@@ -195,16 +206,13 @@ func _mounted() -> void:
 		"light and felt render behind both actor rows")
 	_check(layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and layer.focus_mode == Control.FOCUS_NONE
-		and layer.lint is CPUParticles2D and layer.weather is CPUParticles2D
-		and layer.lint.texture == layer.felt_texture and layer.weather.texture == layer.felt_texture
-		and layer.lint.use_fixed_seed and layer.weather.use_fixed_seed,
-		"CPU emitters share felt art, are fixed-seed and incapable of taking input")
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"mounted ambience owns no particle node and cannot take input")
 	_textures(layer)
-	_check(layer.lint.emitting == (layer.felt_texture != null)
-		and layer.weather.emitting == (layer.felt_texture != null)
-		and layer.visible_budget() <= 40 and layer.visible_budget() >= 25
-		and layer.motif_metadata().size() == 30 and layer.get_child_count() == 2,
-		"normal atmosphere is visibly active and within the particle budget")
+	_check(layer.visible_budget() == layer.NORMAL_BUDGET
+		and layer.motif_metadata().size() == 30
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"normal atmosphere is visibly active with thirty drawn marks and no emitter")
 	for mark in layer.motif_metadata():
 		_check(Rect2(Vector2.ZERO, layer.size).encloses(mark["rect"]),
 			"real 1280x720 stage contains each complete felt image")
@@ -225,46 +233,53 @@ func _mounted() -> void:
 		await process_frame
 	var saved_felt = layer.felt_texture
 	var saved_light = layer.light_texture
-	var saved_scale: float = layer.weather.scale_amount_max
 	layer.felt_texture = null
 	layer.light_texture = null
 	_check(layer.configure(roster._backdrop_kind, roster._backdrop_floor, false)
-		and not layer.lint.emitting and not layer.weather.emitting,
-		"admitted battle with missing textures quietly suppresses emission")
+		and layer.felt_texture == null and layer.light_texture == null
+		and layer.profile == AMBIENT.profile_for(roster._backdrop_kind, roster._backdrop_floor)
+		and layer.motif_metadata().size() == 30
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"admitted battle with missing textures quietly draws no image family")
 	layer.queue_redraw()
 	await process_frame
 	layer.felt_texture = saved_felt
 	layer.light_texture = saved_light
 	_check(not layer.configure("Rest", 5, false) and not layer.visible
 		and layer.profile.is_empty() and layer.motif_metadata().is_empty()
-		and not layer.lint.emitting and not layer.weather.emitting,
+		and layer.visible_budget() == 0
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
 		"invalid route retires real mounted ambience")
 	juice._sync()
 	_check(layer.profile == AMBIENT.profile_for(roster._backdrop_kind, roster._backdrop_floor)
 		and layer.felt_texture == saved_felt and layer.light_texture == saved_light
-		and layer.weather.scale_amount_max == saved_scale,
-		"authentic route restores cached resources and stable pixel scale")
+		and layer.visible_budget() == layer.NORMAL_BUDGET
+		and layer.motif_metadata().size() == 30,
+		"authentic route restores cached resources and thirty drawn marks")
 	_check(_snapshot() == state and juice.history.size() == receipt_count
 		and juice.flight_history.size() == flights and juice.live_cues() == cues,
 		"repeated visual refresh consumes no party/deck/enemy/run state or gameplay cue")
 	_check(randi() == global_sample, "refresh does not consume even Godot's global RNG")
-	# Real mounted toggle: Fast changes only this same layer's budget and opacity.
-	var original_lint = layer.lint
-	var original_weather = layer.weather
+	# Real mounted toggle: Fast only thins and dims this same texture layer.
+	var normal_alpha: float = layer.motif_metadata()[0]["color"].a
 	seed(58231)
 	global_sample = randi()
 	seed(58231)
 	await _click(juice.fast_button)
+	var fast_marks: Array = layer.motif_metadata()
 	_check(juice.fast_animations and layer.fast
-		and layer.lint == original_lint and layer.weather == original_weather
-		and layer.visible_budget() <= 12 and layer.visible_budget() < layer.NORMAL_BUDGET
-		and layer.motif_metadata().size() == 7 and layer.get_child_count() == 2
-		and layer.weather.color.a < 0.4 and layer.lint.color.a < 0.3,
-		"Fast uses the same emitters with less weather and dimmer intensity")
+		and layer.visible_budget() == layer.FAST_BUDGET
+		and layer.visible_budget() < layer.NORMAL_BUDGET
+		and fast_marks.size() == 7 and fast_marks[0]["color"].a < normal_alpha
+		and AMBIENT.light_alpha(layer._time, true) < AMBIENT.light_alpha(layer._time, false)
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"Fast keeps the same texture layer with fewer, dimmer marks")
 	_check(_snapshot() == state, "Fast does not change real combat or its seeded RNG")
 	await _click(juice.fast_button)
 	_check(not juice.fast_animations and not layer.fast
-		and layer.visible_budget() <= 40 and layer.motif_metadata().size() == 30
+		and layer.visible_budget() == layer.NORMAL_BUDGET
+		and layer.motif_metadata().size() == 30
+		and layer.get_child_count() == 0 and _particles(layer).is_empty()
 		and _snapshot() == state,
 		"normal mode restores bounded decor without a gameplay mutation")
 	# Pointer motion over the light's own hero-side center must hit the underlying UI.
@@ -291,19 +306,19 @@ func _run() -> void:
 		_finish()
 		return
 	var layer = juice.ambient
-	var lint = layer.lint
-	var weather = layer.weather
 	_check(layer.get_parent() == juice and layer.profile.is_empty()
-		and not lint.emitting and not weather.emitting
+		and layer.visible_budget() == 0
+		and layer.get_child_count() == 0 and _particles(layer).is_empty()
 		and app.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
-		"title has one parked inert atmosphere, no battle weather")
+		"title has one parked inert texture-only atmosphere")
 	for attempt in range(2):
 		if not await _select_fight():
 			_check(false, "physical Start and legal route button mount a real Fight")
 			break
 		await _frames()
-		_check(juice.ambient == layer and layer.lint == lint and layer.weather == weather,
-			"fresh fight reuses the exact original emission resources")
+		_check(juice.ambient == layer
+			and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+			"fresh fight reuses the exact original texture-only layer")
 		await _mounted()
 		var old_battle = app.battle_view
 		seed(70213)
@@ -313,14 +328,15 @@ func _run() -> void:
 		await _frames()
 		_check(app.deck == null and app.title_view.is_visible_in_tree()
 			and juice.ambient == layer and layer.get_parent() == juice
-			and layer.profile.is_empty() and not lint.emitting and not weather.emitting
+			and layer.profile.is_empty()
 			and layer.motif_metadata().is_empty() and layer.visible_budget() == 0
+			and layer.get_child_count() == 0 and _particles(layer).is_empty()
 			and not juice.bound and juice.overlay == null,
-			"title retires all ambient emission and the old battle binding")
+			"title retires all ambient texture drawing and the old battle binding")
 		_check(not is_instance_valid(old_battle)
 			and app.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
 			"old battle is freed without an orphaned or duplicated ambient")
-		_check(randi() == return_sample, "Return parks pooled resources without global RNG drift")
+		_check(randi() == return_sample, "Return parks the layer without global RNG drift")
 	app.free()
 	_finish()
 
