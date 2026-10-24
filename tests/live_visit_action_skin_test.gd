@@ -5,9 +5,12 @@ extends SceneTree
 ## It is exercised on real Button instances and on the real ?screen=shop and
 ## ?screen=rest mounts, so nothing here is a parallel reimplementation. Style
 ## facts only: identity, labels, callbacks, overrides, ink/fill contrast and the
-## reversible per-visit record. No coordinate or screenshot assertions.
+## reversible per-visit record. The tile faces are checked against the reward
+## renderer's own art resolver, texture and presentation mode together. No
+## coordinate or screenshot assertions.
 
 const GALLERY := preload("res://scripts/live_visit_card_tiles.gd")
+const REWARD := preload("res://scripts/live_run_card_reward_choice_panel.gd")
 const FABRIC := "res://assets/paper/ui/reward_button.png"
 const MISSING_FABRIC := "res://assets/paper/ui/absent_action_fabric.png"
 const EDGE := 22
@@ -35,6 +38,7 @@ func _run() -> void:
 	root.add_child(gallery)
 	await process_frame
 	_check_constructed_faces(gallery)
+	await _check_tile_art_modes(gallery)
 	await _check_mounted_rail("shop")
 	await _check_mounted_rail("rest")
 	gallery.free()
@@ -160,6 +164,80 @@ func _check_constructed_faces(gallery) -> void:
 	option.free()
 
 
+# --- sewn card art (resolver parity) --------------------------------------
+
+## AC1/AC2: a face built by build_card_face binds the reward renderer's resolver
+## result as one decision - the texture AND its presentation mode - so an authored
+## picture stays a contained picture, an owner emblem gets the wide sewn-felt
+## backing, and a face with no image keeps the drawn paper patch. Every branch is
+## chosen from what the resolver actually loaded on this machine; no PNG is ever
+## assumed to be absent and no art is added, removed or faked here.
+func _check_tile_art_modes(gallery) -> void:
+	# The brief's two canonical Warden faces: an authored starter and a pool card
+	# that may only have the hero emblem. Both are built through the real route.
+	for card_id: String in ["warden_strike", "warden_pinning_jab"]:
+		var resolved: Dictionary = REWARD.resolve_card_art(card_id, "warden")
+		var face: Dictionary = gallery.build_card_face({
+			"card_id": card_id, "art_id": card_id, "owner": "warden",
+			"title": card_id, "meta": "probe", "effects": "probe"})
+		root.add_child(face["tile"])
+		await process_frame
+		_check_mode_parity(face["picture"], resolved, "Warden face " + card_id)
+		# A disk fact, not an assumption: whichever of the two images exists now
+		# decides which mode the resolver must have reported.
+		if ResourceLoader.exists(REWARD.card_art_path(card_id)):
+			_check(String(resolved.get("mode", ""))
+				== LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART,
+				"Warden face " + card_id + " resolves its authored picture as card art")
+		elif ResourceLoader.exists(REWARD.emblem_path("warden")):
+			_check(String(resolved.get("mode", ""))
+				== LiveRunCardRewardChoicePanel._CardIllustration.MODE_EMBLEM,
+				"Warden face " + card_id + " falls back to the owner emblem mode")
+		face["tile"].free()
+
+	# The no-image path: an unknown card and an unknown owner resolve nothing, so
+	# the face must keep the reward illustration's own drawn paper patch and its
+	# readable text. The expectation still comes from the resolver, not from a
+	# hard-coded "this file is missing" claim.
+	var unresolved: Dictionary = REWARD.resolve_card_art("zz_synthetic_missing_art",
+		"synthetic_owner")
+	var drawn: Dictionary = gallery.build_card_face({
+		"card_id": "zz_synthetic_missing_art", "art_id": "zz_synthetic_missing_art",
+		"owner": "synthetic_owner", "title": "Synthetic probe", "meta": "probe",
+		"effects": "probe"})
+	root.add_child(drawn["tile"])
+	await process_frame
+	_check_mode_parity(drawn["picture"], unresolved, "Unresolved face")
+	_check(drawn["title_label"].text == "Synthetic probe"
+		and drawn["effects_label"].text == "probe",
+		"an unresolved face still mounts its own readable text")
+	drawn["tile"].free()
+
+
+## One face's CardArt against the resolver result: the exact texture, the exact
+## mode, and the mode predicate that decides how the illustration is painted.
+func _check_mode_parity(picture, resolved: Dictionary, label: String) -> void:
+	var expected_texture: Texture2D = resolved.get("texture") as Texture2D
+	var expected_mode := String(resolved.get("mode", ""))
+	_check(picture.picture == expected_texture and picture.mode == expected_mode,
+		label + " binds the reward resolver's texture and mode together")
+	if expected_mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART:
+		_check(picture.is_card_art() and not picture.is_emblem()
+			and not picture.is_paper_patch(),
+			label + " keeps authored art as the contained card picture")
+	elif expected_mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_EMBLEM:
+		_check(picture.is_emblem() and not picture.is_card_art()
+			and not picture.is_paper_patch(),
+			label + " gives the owner emblem its wide sewn-felt backing")
+	else:
+		_check(picture.is_paper_patch() and not picture.has_picture()
+			and not picture.is_card_art() and not picture.is_emblem(),
+			label + " keeps the drawn paper patch when no image resolves")
+	_check(picture.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and picture.focus_mode == Control.FOCUS_NONE,
+		label + " art stays mouse and focus inert")
+
+
 # --- the real mounted visit rails -----------------------------------------
 
 func _check_mounted_rail(screen: String) -> void:
@@ -238,6 +316,7 @@ func _check_mounted_rail(screen: String) -> void:
 			"Rest card gallery and its tiles are untouched by the action skin")
 	_check([app.session_gold, app.run_scraps, app.run_deck] == wallet,
 		screen + " inspection spends nothing and leaves the shared deck alone")
+	_check_mounted_tile_art(gallery, screen)
 
 	# Hiding the visit is the same live path that releases the gallery on a
 	# return; its teardown must put the app's own Buttons back untouched.
@@ -265,6 +344,38 @@ func _check_mounted_rail(screen: String) -> void:
 			screen + " teardown leaves the action's callbacks exactly as mounted")
 	app.free()
 	await process_frame
+
+
+## AC1: every card tile in the real mounted gallery - Shop offers, owned-card
+## removals and Rest upgrades - carries the reward resolver's own texture AND
+## presentation mode for its canonical art id and owner. This runs against the
+## live visit view, not a stand-in, and stays conditional on what the resolver
+## loaded, so a future authored pool-card PNG still passes.
+func _check_mounted_tile_art(gallery, screen: String) -> void:
+	var tiles: Array = []
+	tiles.append_array(gallery.offer_tiles())
+	tiles.append_array(gallery.removal_tiles())
+	tiles.append_array(gallery.upgrade_tiles())
+	_check(not tiles.is_empty(),
+		screen + " gallery mounts real card tiles for the art parity check")
+	for tile in tiles:
+		var details: Dictionary = gallery.tile_details(tile)
+		var art_id := String(details.get("art_id", ""))
+		var resolved: Dictionary = REWARD.resolve_card_art(art_id,
+			String(details.get("owner", "")))
+		var texture: Texture2D = resolved.get("texture") as Texture2D
+		var expected_path := texture.resource_path if texture != null else ""
+		var picture = tile.get_parent().find_child("CardArt", true, false)
+		_check(not art_id.is_empty() and picture != null,
+			screen + " tile keeps a canonical art id and its CardArt window: "
+				+ String(details.get("title", "")))
+		if picture == null or art_id.is_empty():
+			continue
+		_check_mode_parity(picture, resolved, screen + " mounted tile " + art_id)
+		_check(String(details.get("art_mode", "")) == String(resolved.get("mode", ""))
+			and String(details.get("art_path", "")) == expected_path
+			and bool(details.get("has_picture", false)) == (texture != null),
+			screen + " tile audit reports the resolver's texture and mode: " + art_id)
 
 
 # --- shared style assertions ----------------------------------------------
