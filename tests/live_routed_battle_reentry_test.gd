@@ -189,6 +189,29 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 						await _key(KEY_ENTER)
 					else:
 						await _click(leave)
+				elif is_instance_valid(app.wallet_event_panel):
+					_check(app.route_view == null, "generic transit Event requires its wallet choice")
+					var panel: LiveEventChoicePanel = app.wallet_event_panel
+					var record := panel._selector.get_event()
+					var wallet := {"gold": app.session_gold, "scraps": app.run_scraps}
+					var rng: int = app.run_rng.state
+					var settled := false
+					for index in range(record.choices.size()):
+						var receipt := RunEventChoice.new(record).choose_with_wallet(record.choices[index].id, wallet)
+						if not receipt.ok:
+							continue
+						var choice: Button = panel.get_choice_buttons()[index]
+						if keyboard:
+							choice.grab_focus()
+							await _key(KEY_ENTER)
+						else:
+							await _click(choice)
+						_check(app.session_gold == receipt.wallet.gold and app.run_scraps == receipt.wallet.scraps
+							and app.run_rng.state == rng and app.wallet_event_panel == null,
+							"generic transit settles exact authored wallet without another RNG draw")
+						settled = true
+						break
+					_check(settled, "generic transit has an actual affordable choice")
 			"Rest":
 				_check(is_instance_valid(app.visit_backdrop) and app.visit_backdrop.visit_kind == "Rest",
 					"Rest visit mounts its own art bed")

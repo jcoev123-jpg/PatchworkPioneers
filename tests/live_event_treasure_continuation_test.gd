@@ -1,5 +1,5 @@
 extends "res://tests/live_shop_continuation_test.gd"
-## Real won Fight, optional completed visit, then repeated no-effect placeholders.
+## Real won Fight, optional visit, then special Event choices or Treasure.
 
 
 func _find_path(map: RunMap, choices: Array, kinds: Array) -> Array:
@@ -49,6 +49,7 @@ func _effects() -> Array:
 
 func _placeholder_state() -> Array:
 	return [_effects(), app.run_map.get_floors(), app.run_map.get_route(),
+		app._wallet_event_history.duplicate(), app.wallet_event_panel,
 		app.route_view, app.route_buttons.duplicate(), app._placeholder_route.duplicate()]
 
 
@@ -179,7 +180,7 @@ func _run() -> void:
 						# Escape is the Moth branch that changes no run resource.
 						await _click(app.moth_panel.get_choice_buttons()[2])
 					_check(map.get_route() == prior + [id], "one legal input advances exactly chosen node")
-					_check(_effects() == before, "placeholder changes no actors, resources, services or RNG")
+					_check(_effects() == before, "Quiet Spool Ignore, Moth Escape and Treasure preserve actors, resources, services and RNG")
 					_check(not is_instance_valid(old_view), "previous chooser freed")
 					_reject_placeholder(callback, "duplicate click")
 					stale.append(callback)

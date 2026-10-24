@@ -654,6 +654,10 @@ var _connected_route: Array[String] = []
 var _placeholder_map: WeakRef
 var _placeholder_route: Array[String] = []
 var event_catalog_path := "res://data/events/m04_events.json"
+var wallet_event_panel: LiveEventChoicePanel
+var _wallet_event_record: Dictionary = {}
+var _wallet_event_context: Array = []
+var _wallet_event_history: Array = []
 var quiet_spool_panel: LiveEventChoicePanel
 var _quiet_spool_outcome: RunQuietSpoolOutcome
 var _quiet_spool_context: Array = []
@@ -2526,7 +2530,7 @@ func _unfought_run() -> bool:
 
 func _can_choose_connected_route() -> bool:
 	if is_instance_valid(quiet_spool_panel) or is_instance_valid(moth_panel) \
-		or is_instance_valid(dye_vat_panel):
+		or is_instance_valid(dye_vat_panel) or is_instance_valid(wallet_event_panel):
 		return false
 	if run_map == null or _connected_map == null or _connected_map.get_ref() != run_map \
 		or run_map.get_route() != _connected_route or not RunRestRecovery._is_valid_roster(run_heroes) \
@@ -2747,13 +2751,14 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 		return false
 	if run_map.get_node(id).type == "Event":
 		# The run's first Event stays Quiet Spool; its second is the accepted
-		# Moth Infestation transaction. Later Events remain no-effect visits.
+		# Moth Infestation and Dye Vat transactions, then the generic rotation.
 		if not _quiet_spool_completed:
 			return _open_quiet_spool(id, source_map)
 		if not _moth_completed:
 			return _open_moth_infestation(id, source_map)
 		if not _dye_vat_completed:
 			return _open_dye_vat(id, source_map)
+		return _open_wallet_event(id, source_map)
 	if not run_map.choose_node(id):
 		return false
 	_placeholder_map = source_map
@@ -2761,6 +2766,99 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 	_clear_route_view()
 	_present_connected_route(source_map)
 	return true
+
+
+func _wallet_event_snapshot() -> Array:
+	if run_map == null or run_rng == null or party_carryover == null or act_outcome == null \
+		or not is_instance_valid(wallet_event_panel) or wallet_event_panel._selector == null:
+		return []
+	var carry := party_carryover as RunTornCarryover
+	if carry == null:
+		return []
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(),
+		run_map.get_route(), run_rng, run_rng.state, run_seed, run_deck.duplicate(),
+		run_heroes.duplicate(true), run_trinkets.duplicate(), session_gold, run_scraps,
+		run_removal_count, run_stitch_descriptors.duplicate(true), run_next_stitch_id,
+		carry, carry.read_state(), carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), wallet_event_panel,
+		wallet_event_panel._selector, wallet_event_panel._selector.get_event(),
+		_wallet_event_record.duplicate(true), _wallet_event_history.duplicate(),
+		wallet_event_panel._offered_wallet.duplicate(true),
+		_quiet_spool_completed, _moth_completed, _dye_vat_completed]
+
+
+func _open_wallet_event(id: String, source: WeakRef) -> bool:
+	# Draw on a detached copy: failed mounting/admission must consume nothing.
+	var staged_rng := RandomNumberGenerator.new()
+	staged_rng.state = run_rng.state
+	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string(event_catalog_path)) \
+		if FileAccess.file_exists(event_catalog_path) else null
+	if document == null:
+		return false
+	var selection := RunM04EventRotation.new(document).select_event(staged_rng, _wallet_event_history)
+	if not selection.ok:
+		return false
+	var record: Dictionary = selection.event
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_event_with_wallet(record, {"gold": session_gold, "scraps": run_scraps}):
+		panel.free()
+		return false
+	_mount_event_backdrop(panel)
+	if not run_map.choose_node(id):
+		panel.free()
+		return false
+	run_rng.state = staged_rng.state
+	_wallet_event_history.append(record.id)
+	_wallet_event_record = record.duplicate(true)
+	wallet_event_panel = panel
+	_clear_route_view()
+	_wallet_event_context = _wallet_event_snapshot()
+	panel.wallet_choice_committed.connect(_commit_wallet_event.bind(panel, source))
+	var enabled: Array[Button] = []
+	for button in panel.get_choice_buttons():
+		if not button.disabled:
+			enabled.append(button)
+	for index in range(enabled.size()):
+		enabled[index].focus_next = enabled[index].get_path_to(enabled[(index + 1) % enabled.size()])
+		enabled[index].focus_previous = enabled[index].get_path_to(enabled[(index - 1 + enabled.size()) % enabled.size()])
+	if not enabled.is_empty():
+		enabled[0].grab_focus()
+	return true
+
+
+func _commit_wallet_event(receipt: Dictionary, panel, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != wallet_event_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or source == null or source.get_ref() != run_map \
+		or _wallet_event_context.is_empty() or _wallet_event_snapshot() != _wallet_event_context \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Event" \
+		or not panel._wallet_mode or panel._selector == null or not panel._selector.is_claimed() \
+		or panel._committed_choice != receipt:
+		return
+	# Recompute from the bound authored record and live pre-commit wallet; never
+	# trust a signal's wallet or a panel's unauthenticated IDs.
+	var expected := RunEventChoice.new(_wallet_event_record).choose_with_wallet(
+		receipt.get("choice_id"), {"gold": session_gold, "scraps": run_scraps})
+	if not expected.ok or receipt != expected:
+		return
+	session_gold = expected.wallet.gold
+	run_scraps = expected.wallet.scraps
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_wallet_event()
+	_present_connected_route(source)
+
+
+func _clear_wallet_event() -> void:
+	_wallet_event_context.clear()
+	_wallet_event_record.clear()
+	if is_instance_valid(wallet_event_panel):
+		wallet_event_panel.close_event()
+		remove_child(wallet_event_panel)
+		wallet_event_panel.queue_free()
+	wallet_event_panel = null
 
 
 func _load_quiet_spool() -> Dictionary:
@@ -3347,7 +3445,7 @@ func _dye_vat_snapshot() -> Array:
 
 
 ## The run's third Event presents the accepted Dye Vat transaction through the
-## live connected route. Later Events keep the no-effect placeholder.
+## live connected route. Later Events use the generic wallet rotation.
 func _open_dye_vat(id: String, source: WeakRef) -> bool:
 	var record := _load_dye_vat()
 	if record.is_empty() or _dye_vat_completed or is_instance_valid(dye_vat_panel):
@@ -5337,6 +5435,8 @@ func _return_to_title() -> void:
 	_moth_completed = false
 	_clear_dye_vat()
 	_dye_vat_completed = false
+	_clear_wallet_event()
+	_wallet_event_history.clear()
 	_clear_rest_patch_overlay()
 	_clear_rest_stitch_overlay()
 	rest_stitch_guided_button = null

@@ -1,6 +1,6 @@
 extends "res://tests/live_quiet_spool_route_test.gd"
 ## Mounted third routed Event: the authored, transactional Dye Vat. The first two
-## Events stay Quiet Spool and Moth Infestation; later Events keep the placeholder.
+## Events stay Quiet Spool and Moth Infestation; later Events use wallet choices.
 ## Every Dye Vat entry, rejection and commit here goes through the real route UI,
 ## the real run ledger and the scene-free RunDyeVatOutcome service.
 
@@ -296,20 +296,41 @@ func _dye_immerse_outcomes() -> void:
 	for callback in [commit.bind("dye_vat", "immerse"), commit.bind("dye_vat", "leave"), immerse_click, entry]:
 		_reject_dye(callback, "replayed Dye Vat input after Immerse")
 	_check(_dye_state() == settled, "duplicate or stale Dye Vat input changes nothing")
-	# A later Event keeps the no-effect placeholder past the Dye Vat.
+	# A later Event opens a generic wallet choice without changing the upgraded deck.
 	var later := _route_action(fixture.path[3])
 	_check(later != null and not later.disabled and later.get_meta("route_kind") == "Event",
-		"the Event after the Dye Vat is an enabled placeholder choice")
+		"the Event after the Dye Vat is an enabled connected choice")
 	if later == null:
 		return
 	var later_route: Array = app.run_map.get_route()
 	var later_deck: Array = app.run_deck.duplicate()
-	var later_resources := _effects()
 	await _click(later)
 	_check(app.dye_vat_panel == null and app.quiet_spool_panel == null and app.moth_panel == null
-		and app.run_map.get_route() == later_route + [fixture.path[3]] and app.route_view != null
-		and app.run_deck == later_deck and _effects() == later_resources,
-		"a later Event keeps the no-effect placeholder")
+		and app.run_map.get_route() == later_route + [fixture.path[3]] and app.route_view == null
+		and app.run_deck == later_deck and is_instance_valid(app.wallet_event_panel),
+		"a later Event mounts the wallet panel and gates continuation")
+	if not is_instance_valid(app.wallet_event_panel):
+		return
+	var wallet_panel: LiveEventChoicePanel = app.wallet_event_panel
+	var record: Dictionary = wallet_panel._selector.get_event()
+	var wallet := {"gold": app.session_gold, "scraps": app.run_scraps}
+	var resources := _effects()
+	var settled_wallet := wallet
+	for index in range(record.choices.size()):
+		var receipt := RunEventChoice.new(record).choose_with_wallet(record.choices[index].id, wallet)
+		if receipt.ok:
+			settled_wallet = receipt.wallet
+			await _click(wallet_panel.get_choice_buttons()[index])
+			break
+	_check(app.route_view != null and app.wallet_event_panel == null
+		and app.session_gold == settled_wallet.gold and app.run_scraps == settled_wallet.scraps
+		and app.run_deck == later_deck, "generic receipt preserves the Dye Vat deck and restores routing")
+	# Compare every pre-existing no-spend invariant after removing only currencies.
+	var after_resources := _effects()
+	resources[2] = after_resources[2]
+	resources[3] = after_resources[3]
+	resources[13].gold = after_resources[13].gold
+	_check(resources == after_resources, "generic choice changes no other actors, services or RNG")
 	# AC2 re-entry: the upgraded deck enters the next genuinely routed battle.
 	var next := _route_action(fixture.path[4])
 	_check(next != null and not next.disabled, "the routed Fight after the Dye Vat is an enabled choice")
