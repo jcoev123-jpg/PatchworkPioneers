@@ -624,8 +624,16 @@ func _join_conditions(condition: Dictionary, clauses: Array[String]) -> String:
 func stitched_tooltip(halves: Array, include_pips: bool = true) -> String:
 	if halves.size() != 2:
 		return ""
-	return "1. " + base_effect_text(str(halves[0]), include_pips) \
+	var text := "1. " + base_effect_text(str(halves[0]), include_pips) \
 		+ "\n2. " + base_effect_text(str(halves[1]), include_pips)
+	# The display lookup also recognizes Path cards; only the Rest service's
+	# authentic, ordinary cross-owner definitions authorize shared stitch rules.
+	var first: Dictionary = RunRestStitchCards.resolve_card_definition(halves[0])
+	var second: Dictionary = RunRestStitchCards.resolve_card_definition(halves[1])
+	if first.is_empty() or second.is_empty() or first["owner"] == second["owner"]:
+		return text
+	var cost: int = mini(3, maxi(int(first["cost"]), int(second["cost"])) + 1)
+	return text + ("\nSTITCHED: %d energy total (higher half cost + 1, capped at 3); pay energy and discard the composite ONCE. Both owners must be alive and each in their own legal FROM position. Resolve half 1, then half 2, with independent legal targets and each owner's own passive; + halves keep their upgrades. A stitched card cannot be stitched again or upgraded." % cost)
 
 
 func describe(card_id: String) -> Dictionary:
