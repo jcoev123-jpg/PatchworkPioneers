@@ -199,8 +199,9 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 			for slot in ["HEAD", "ARM", "COAT"]:
 				var id: String = hero.slots[slot]
 				parts.append("%s %s" % [slot, id.capitalize() if not id.is_empty() else "-"])
-			expected_rows.append("%s  %s" % [
-				str(hero.hero_id).capitalize(), "  ·  ".join(parts)])
+			var hp: int = 40 if hero.hero_id == "warden" else (30 if hero.hero_id == "seamstress" else 26)
+			expected_rows.append("%s %d/%d HP · %s" % [
+				str(hero.hero_id).capitalize(), hp, hp, " · ".join(parts)])
 		_check(rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"),
 			"mounted signature has battles resolved count, two counts, one craft line per nonempty deck and three hero lines")
 		if rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"):

@@ -87,8 +87,13 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	var battles_resolved: int = (settled as Array).size()
 	var signature: Dictionary = _validated_signature()
 	_can_return = signature.get("ok") == true
+	var top_ledger := "Battles resolved: %d · Gold: %d · Scraps: %d" % [
+		battles_resolved,
+		signature.get("gold", 0),
+		signature.get("scraps", 0),
+	]
 	var signature_text := _format_signature(signature) if _can_return else "Summary unavailable"
-	summary_label.text = "Battles resolved: %d\n%s" % [battles_resolved, signature_text]
+	summary_label.text = ("%s\n%s" % [top_ledger, signature_text]) if _can_return else ("Battles resolved: %d\n%s" % [battles_resolved, signature_text])
 	_clear_details()
 	if _can_return:
 		_populate_details(signature)
@@ -159,6 +164,35 @@ func _validated_signature() -> Dictionary:
 		app.run_stitch_descriptors, app.run_next_stitch_id, display_wardrobe)
 	if summary.get("ok") != true:
 		return {}
+	if typeof(app.session_gold) != TYPE_INT or app.session_gold < 0 \
+			or typeof(app.run_scraps) != TYPE_INT or app.run_scraps < 0:
+		return {}
+	summary["gold"] = app.session_gold
+	summary["scraps"] = app.run_scraps
+
+	var heroes_by_id: Dictionary = {}
+	for hero_item in app.run_heroes:
+		if not hero_item is Dictionary or not hero_item.has("id"):
+			return {}
+		var hero_id: Variant = hero_item.get("id")
+		var hp: Variant = hero_item.get("hp")
+		var max_hp: Variant = hero_item.get("max_hp")
+		if typeof(hero_id) != TYPE_STRING or typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT:
+			return {}
+		if hp < 0 or max_hp <= 0 or hp > max_hp:
+			return {}
+		heroes_by_id[hero_id] = {
+			"hp": hp,
+			"max_hp": max_hp,
+		}
+
+	for hero_row in summary.get("heroes", []):
+		var hero_id: String = hero_row.get("hero_id", "")
+		if not heroes_by_id.has(hero_id):
+			return {}
+		hero_row["hp"] = heroes_by_id[hero_id]["hp"]
+		hero_row["max_hp"] = heroes_by_id[hero_id]["max_hp"]
+
 	return summary
 
 
@@ -341,7 +375,12 @@ func _format_signature(summary: Dictionary) -> String:
 		for slot in RunSignatureSummary.SLOTS:
 			var patch_id: String = hero.slots[slot]
 			slots.append("%s %s" % [slot, _patch_label(patch_id)])
-		lines.append("%s  %s" % [str(hero.hero_id).capitalize(), "  ·  ".join(slots)])
+		var hero_name: String = str(hero.hero_id).capitalize()
+		var slots_text: String = " · ".join(slots)
+		if hero.has("hp") and hero.has("max_hp"):
+			lines.append("%s %d/%d HP · %s" % [hero_name, hero["hp"], hero["max_hp"], slots_text])
+		else:
+			lines.append("%s  %s" % [hero_name, "  ·  ".join(slots)])
 	return "\n".join(lines)
 
 
