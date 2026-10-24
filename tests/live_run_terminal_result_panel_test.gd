@@ -248,6 +248,13 @@ func _line_with(lines: PackedStringArray, prefix: String) -> String:
 	return ""
 
 
+## Independent depth oracle for an expected mounted readout: the floor the real
+## generated map's own route stands on. Never the settled battle count.
+func _floor_clause(ctx: Dictionary) -> String:
+	var map: RunMap = ctx["map"]
+	return " · Floor reached: %d/%d" % [map.get_current_floor(), RunMap.FLOOR_COUNT]
+
+
 ## Exact visible text of one mounted hero ribbon: the heading name printed
 ## beside its body detail, assembled independently of the panel's own helpers.
 func _hero_row_text(row: Control) -> String:
@@ -755,8 +762,17 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 		"settled Boss victory selects the shipped Boss stage behind an inert picture")
 	var victory_backdrop := (victory_stage.texture.resource_path
 		if victory_stage != null and victory_stage.texture != null else "")
-	_check(panel.summary_label.text.begins_with("Battles resolved: %d · Gold: 0 · Scraps: 0\n" % victory_settled),
-		"Boss victory shows correct battles resolved count")
+	_check(panel.summary_label.text.begins_with(
+		"Battles resolved: %d · Gold: 0 · Scraps: 0%s\n" % [victory_settled, _floor_clause(victory_ctx)]),
+		"Boss victory shows correct battles resolved count and reached floor")
+	var victory_floor_node := (victory_ctx["map"] as RunMap).get_node(
+		(victory_ctx["map"] as RunMap).get_current_node_id())
+	_check((victory_ctx["map"] as RunMap).get_current_floor() == RunMap.FLOOR_COUNT
+		and victory_floor_node.get("type") == "Boss"
+		and panel.summary_label.text.contains("Floor reached: %d/%d" % [RunMap.FLOOR_COUNT, RunMap.FLOOR_COUNT]),
+		"AC1: the settled floor-12 Boss route prints Floor reached: 12/12")
+	_check(victory_settled < RunMap.FLOOR_COUNT,
+		"AC1: the real Boss route resolved fewer battles than floors, so the depth is not the battle count")
 	await _test_missing_backdrop_art(victory_ctx, victory_battle, "Boss victory",
 		_expected_backdrop("Victory"))
 	var generation := panel._generation
@@ -815,8 +831,13 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.find_children("*", "Button", true, false).size() == 1
 		and not panel.return_button.disabled,
 		"outcome switch keeps exactly one enabled Return action")
-	_check(panel.summary_label.text.begins_with("Battles resolved: %d · Gold: 0 · Scraps: 0\n" % defeat_settled),
-		"Party defeat shows correct battles resolved count")
+	_check(panel.summary_label.text.begins_with(
+		"Battles resolved: %d · Gold: 0 · Scraps: 0%s\n" % [defeat_settled, _floor_clause(defeat_ctx)]),
+		"Party defeat shows correct battles resolved count and reached floor")
+	_check((defeat_ctx["map"] as RunMap).get_current_floor() == 1
+		and panel.summary_label.text.contains("Floor reached: 1/%d" % RunMap.FLOOR_COUNT)
+		and not panel.summary_label.text.contains("Floor reached: %d/%d" % [RunMap.FLOOR_COUNT, RunMap.FLOOR_COUNT]),
+		"AC2: the opening Fight defeat prints Floor reached: 1/12, never 12/12")
 	await _test_missing_backdrop_art(defeat_ctx, defeat_battle, "party defeat",
 		_expected_backdrop("Defeat"))
 	if old_callback.is_valid():
@@ -836,6 +857,9 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.open_result(defeat_latch), "same settled outcome can reopen only after close")
 	await _frames()
 	_validate_view("Defeat", "reopened defeat")
+	_check(panel.summary_label.text.contains("Floor reached: 1/%d" % RunMap.FLOOR_COUNT)
+		and not panel.summary_label.text.contains("Floor reached: %d/%d" % [RunMap.FLOOR_COUNT, RunMap.FLOOR_COUNT]),
+		"AC2: the reopened defeat still states Floor reached: 1/12, never 12/12")
 	_check(panel.return_button.has_focus(),
 		"AC1: fresh reopened presentation is keyboard-ready without a test grab_focus")
 	await _key(KEY_SPACE)
@@ -1313,7 +1337,8 @@ func _audit_result_readability(status: String, expected: Dictionary,
 	# Exact authoritative signature, with an independent line oracle.
 	var lines := ledger.text.split("\n")
 	var expected_lines: Array[String] = [
-		"Battles resolved: %d · Gold: %d · Scraps: %d" % [settled, expected.gold, expected.scraps],
+		"Battles resolved: %d · Gold: %d · Scraps: %d%s" % [settled, expected.gold,
+			expected.scraps, _floor_clause(ctx)],
 		"Stitched: %d made · %d in deck" % [expected.stitched_created, expected.stitched_current],
 		"Patches worn: %d" % expected.worn_total,
 	]
@@ -1521,7 +1546,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	await _frames()
 	_check(panel.has_open_result() and panel.is_visible_in_tree(), "AC1: Victory result is mounted and open")
 	var vic_lines := panel.summary_label.text.split("\n")
-	_check(vic_lines[0] == "Battles resolved: %d · Gold: 43 · Scraps: 2" % victory_settled,
+	_check(vic_lines[0] == "Battles resolved: %d · Gold: 43 · Scraps: 2%s" % [
+		victory_settled, _floor_clause(victory["ctx"])],
 		"AC1: Victory shows exact nonnegative gold and scraps beside battles resolved")
 	_check(vic_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Victory preserves stitched counts")
 	_check(vic_lines[2] == "Patches worn: 3", "AC3: Victory preserves patches worn total")
@@ -1550,7 +1576,8 @@ func _test_terminal_wallet_and_health(victory: Dictionary, defeat: Dictionary) -
 	await _frames()
 	_check(panel.has_open_result() and panel.is_visible_in_tree(), "AC1: Defeat result is mounted and open")
 	var def_lines := panel.summary_label.text.split("\n")
-	_check(def_lines[0] == "Battles resolved: %d · Gold: 43 · Scraps: 2" % defeat_settled,
+	_check(def_lines[0] == "Battles resolved: %d · Gold: 43 · Scraps: 2%s" % [
+		defeat_settled, _floor_clause(defeat["ctx"])],
 		"AC1: Defeat shows exact nonnegative gold and scraps beside battles resolved")
 	_check(def_lines[1] == "Stitched: 1 made · 1 in deck", "AC3: Defeat preserves stitched counts")
 	_check(def_lines[2] == "Patches worn: 3", "AC3: Defeat preserves patches worn total")
@@ -1736,7 +1763,8 @@ func _test_terminal_tears(victory: Dictionary, defeat: Dictionary) -> void:
 	await _frames()
 	var rows := panel.summary_label.text.split("\n")
 	_check(rows.size() == 3, "AC1: the torn ledger keeps the preserved wallet and count lines")
-	_check(rows[0] == "Battles resolved: %d · Gold: 43 · Scraps: 5" % settled,
+	_check(rows[0] == "Battles resolved: %d · Gold: 43 · Scraps: 5%s" % [
+		settled, _floor_clause(victory["ctx"])],
 		"AC1: the torn ledger keeps the exact wallet line")
 	_check_hero_rows([
 		"Warden 0/37 HP · TORN · 1 tear · no patches",
@@ -2308,6 +2336,208 @@ func _test_deferred_keyboard_focus(victory: Dictionary, defeat: Dictionary) -> v
 		"AC3: the final close leaves no retained focus or open result")
 
 
+## The first-choice route through the real generated 12-floor graph, read without
+## selecting anything, so a fixture can inspect a path before committing to it.
+func _greedy_path(map: RunMap) -> Array[String]:
+	var path: Array[String] = []
+	var choices := map.get_legal_choices()
+	if choices.is_empty():
+		return path
+	var node_id: String = choices[0]
+	while not node_id.is_empty():
+		path.append(node_id)
+		var outgoing: Array = map.get_node(node_id).get("outgoing", [])
+		node_id = "" if outgoing.is_empty() else str(outgoing[0])
+	return path
+
+
+## AC3: an unproven map relationship never invents a depth. A genuinely settled
+## defeat whose route has moved on, or whose graph was regenerated, keeps its
+## authentic counters and its one authorized Return without claiming "N/12".
+func _test_unverified_floor() -> void:
+	var ctx := _context(3141)
+	var map: RunMap = ctx["map"]
+	var opening := ""
+	for choice in map.get_legal_choices():
+		if map.get_node(choice).get("type") == "Fight":
+			opening = choice
+			break
+	_check(not opening.is_empty(), "AC3: a genuine opening Fight exists for the stale-map probe")
+	if opening.is_empty():
+		return
+	_select(ctx, opening)
+	var battle := _battle(FIGHT)
+	var latch: RunActBattleOutcome = ctx["latch"]
+	_check(latch.begin_current_battle(battle["result"]),
+		"AC3: the stale-map probe begins a real opening Fight")
+	var party: CombatParty = battle["party"]
+	for slot in range(1, 4):
+		_check(party.apply_damage(slot, party.get_hero(slot)["hp"]),
+			"AC3: the real party is downed at slot %d" % slot)
+	_check(battle["result"].evaluate() == CombatBattleResult.DEFEAT,
+		"AC3: the opening Fight is genuinely lost")
+	_check(latch.settle_current_battle(),
+		"AC3: the witnessed defeat settles for the stale-map probe")
+	_check(map.get_current_floor() == 1 and map.get_current_node_id() == opening,
+		"AC3: the fresh settled defeat stands on floor 1")
+	_check(panel._verified_floor_reached(latch, latch.get_state()) == 1,
+		"AC3: the authentic floor-1 defeat verifies its own depth")
+
+	# The formatter itself refuses every state that cannot prove a depth, without
+	# mutating the latch or the map it still reads.
+	var settled_state: Dictionary = latch.get_state()
+	_check(panel._verified_floor_reached(null, settled_state) == -1,
+		"AC3: no settled latch means no claimed depth")
+	_check(panel._verified_floor_reached(latch, {"run_status": RunActBattleOutcome.ACTIVE,
+		"pending_node_id": "", "settled_node_ids": [opening]}) == -1,
+		"AC3: an ACTIVE run never claims a terminal depth")
+	_check(panel._verified_floor_reached(latch, {"run_status": RunActBattleOutcome.DEFEAT,
+		"pending_node_id": opening, "settled_node_ids": [opening]}) == -1,
+		"AC3: a pending battle never claims a depth")
+	_check(panel._verified_floor_reached(latch, {"run_status": RunActBattleOutcome.DEFEAT,
+		"pending_node_id": "", "settled_node_ids": []}) == -1,
+		"AC3: no witnessed battle never claims a depth")
+	_check(panel._verified_floor_reached(latch, {"run_status": RunActBattleOutcome.VICTORY,
+		"pending_node_id": "", "settled_node_ids": [opening]}) == -1,
+		"AC3: a victory over a floor-1 Fight is not a floor-12 Boss victory")
+	_check(map.get_current_node_id() == opening and map.get_route() == [opening]
+		and map.get_current_floor() == 1,
+		"AC3: those formatter refusals read the map without moving it")
+
+	_install_run({"deck": _starter_deck(), "descriptors": {}, "next_stitch_id": 1})
+	var app_before := _app_snapshot()
+	var state_before := _snapshot(ctx, battle)
+	var earlier := returns
+	_check(panel.open_result(latch), "AC3: the verified floor-1 defeat opens")
+	await _frames()
+	_check(panel.summary_label.text.contains("Floor reached: 1/%d" % RunMap.FLOOR_COUNT)
+		and panel.return_button.has_focus(),
+		"AC3: the verified defeat states its floor and stays keyboard-ready")
+	_check(_snapshot(ctx, battle) == state_before and _app_snapshot() == app_before,
+		"AC3: the verified depth readout mutates no map, actor, latch or RNG")
+	panel.close_result()
+
+	# A stale route: the settled battle is no longer the node the map stands on.
+	_check(not map.get_legal_choices().is_empty(),
+		"AC3: the settled node offers a legal onward choice")
+	_select(ctx, map.get_legal_choices()[0])
+	var stale_state := _snapshot(ctx, battle)
+	_check(not panel.summary_label.text.contains("Floor reached"),
+		"AC3: closing the verified result clears its floor claim")
+	_check(panel.open_result(latch), "AC3: the stale-map result still opens")
+	await _frames()
+	_check(panel.summary_label.text.begins_with("Battles resolved: 1 · Gold: 0 · Scraps: 0\n"),
+		"AC3: an unverifiable map keeps the genuine battle and currency facts")
+	_check(not panel.summary_label.text.contains("Floor reached"),
+		"AC3: a route that moved past the witnessed battle claims no depth")
+	_check(not panel.return_button.disabled
+		and panel.return_button.focus_mode == Control.FOCUS_ALL,
+		"AC3: the preserved Return authorization survives an unverified depth")
+	_check(_snapshot(ctx, battle) == stale_state and _app_snapshot() == app_before,
+		"AC3: presenting an unverified depth moves no map node, actor, latch or RNG")
+	await _key(KEY_ENTER)
+	_check(returns == earlier + 1 and panel.return_button.disabled,
+		"AC3: the unverified result still returns exactly once by keyboard")
+	_check(_snapshot(ctx, battle) == stale_state,
+		"AC3: that Return leaves the stale map and the latch untouched")
+	panel.close_result()
+
+	# A regenerated graph: identical-looking IDs, but a new empty route.
+	_check(map.generate(ctx["rng"]), "AC3: a genuine new generation replaces the route")
+	_check(map.get_current_node_id() == "" and map.get_current_floor() == 0,
+		"AC3: the regenerated map stands on no floor at all")
+	var regenerated := _snapshot(ctx, battle)
+	var app_after := _app_snapshot()
+	_check(panel.open_result(latch), "AC3: the closed-map result still opens")
+	await _frames()
+	_check(panel.summary_label.text.begins_with("Battles resolved: 1 · Gold: 0 · Scraps: 0\n"),
+		"AC3: a regenerated map keeps the genuine counters")
+	_check(not panel.summary_label.text.contains("Floor reached"),
+		"AC3: a fresh empty route can never claim the old run's depth")
+	_check(not panel.return_button.disabled,
+		"AC3: Return stays authorized after a map regeneration")
+	_check(_snapshot(ctx, battle) == regenerated and _app_snapshot() == app_after,
+		"AC3: the regenerated-map refusal mutates no run state or RNG")
+	panel.close_result()
+	_check(panel.summary_label.text.is_empty() and not panel.has_open_result(),
+		"AC3: closing the unverified result leaves no depth or counters behind")
+
+
+## A genuine mid-run defeat after at least one noncombat stop: the party reached
+## a deeper floor than the number of battles it settled, so the readout can only
+## come from the map's real floor.
+func _test_depth_beyond_battle_count() -> void:
+	var ctx: Dictionary = {}
+	var path: Array[String] = []
+	var target := 0
+	for seed_value in range(6100, 6200):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var candidate := RunMap.new()
+		if not candidate.generate(rng):
+			continue
+		var candidate_path := _greedy_path(candidate)
+		if candidate_path.size() != RunMap.FLOOR_COUNT:
+			continue
+		var noncombat_seen := false
+		var candidate_target := 0
+		for index in range(candidate_path.size()):
+			var kind: String = candidate.get_node(candidate_path[index]).get("type")
+			if index >= 2 and noncombat_seen and kind in ["Fight", "Elite"]:
+				candidate_target = index
+				break
+			if kind not in ["Fight", "Elite", "Boss"]:
+				noncombat_seen = true
+		if candidate_target == 0:
+			continue
+		ctx = {"rng": rng, "map": candidate, "latch": RunActBattleOutcome.new(candidate)}
+		path = candidate_path
+		target = candidate_target
+		break
+	_check(not ctx.is_empty() and target >= 2,
+		"AC1: a real route reaches a battle after an earlier noncombat stop")
+	if ctx.is_empty() or target < 2:
+		return
+	var map: RunMap = ctx["map"]
+	var latch: RunActBattleOutcome = ctx["latch"]
+	var settled_battles := 0
+	for index in range(target):
+		_select(ctx, path[index])
+		var kind: String = map.get_node(path[index]).get("type")
+		if kind in ["Fight", "Elite"]:
+			_settle_win(ctx, _battle(FIGHT), "depth stop floor %d" % (index + 1))
+			settled_battles += 1
+	_select(ctx, path[target])
+	var losing := _battle(FIGHT)
+	_check(latch.begin_current_battle(losing["result"]),
+		"AC1: the deeper defeat begins a real battle")
+	var party: CombatParty = losing["party"]
+	for slot in range(1, 4):
+		_check(party.apply_damage(slot, party.get_hero(slot)["hp"]),
+			"AC1: the deeper party is downed at slot %d" % slot)
+	_check(losing["result"].evaluate() == CombatBattleResult.DEFEAT,
+		"AC1: the deeper battle is genuinely lost")
+	_check(latch.settle_current_battle(), "AC1: the deeper defeat settles")
+	settled_battles += 1
+	var reached: int = map.get_current_floor()
+	_check(reached == target + 1 and reached > settled_battles,
+		"AC1: the reached floor is genuinely deeper than the settled battle count")
+	_install_run({"deck": _starter_deck(), "descriptors": {}, "next_stitch_id": 1})
+	var app_before := _app_snapshot()
+	var state_before := _snapshot(ctx, losing)
+	_check(panel.open_result(latch), "AC1: the deeper witnessed defeat opens")
+	await _frames()
+	_check(panel.summary_label.text.split("\n")[0] == "Battles resolved: %d · Gold: 0 · Scraps: 0%s" % [
+		settled_battles, _floor_clause(ctx)],
+		"AC1: the deeper defeat prints the real reached floor beside the battle count")
+	_check(panel.summary_label.text.contains("Floor reached: %d/%d" % [reached, RunMap.FLOOR_COUNT])
+		and not panel.summary_label.text.contains("Floor reached: %d/%d" % [settled_battles, RunMap.FLOOR_COUNT]),
+		"AC1: the depth is the map floor, never the number of settled battles")
+	_check(_snapshot(ctx, losing) == state_before and _app_snapshot() == app_before,
+		"AC1: the deeper readout mutates no map, actor, latch or RNG")
+	panel.close_result()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -2349,6 +2579,8 @@ func _run() -> void:
 		await _test_terminal_wallet_and_health(victory, defeat)
 		await _test_terminal_tears(victory, defeat)
 		await _test_deferred_keyboard_focus(victory, defeat)
+		await _test_depth_beyond_battle_count()
+		await _test_unverified_floor()
 	_finish()
 
 

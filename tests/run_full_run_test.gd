@@ -456,6 +456,25 @@ func _return_terminal(status: String) -> void:
 	var panel: LiveRunTerminalResultPanel = app.terminal_result_panel
 	_check(panel != null and panel.has_open_result() and panel.is_visible_in_tree()
 		and panel.title_label.text == status and panel.return_button.has_focus(), "real mounted terminal: " + status)
+	if panel != null and app.run_map != null and app.act_outcome != null:
+		# Live depth proof: the summary must state the floor the real route
+		# actually reached (the map's own current node), not the smaller number
+		# of battles the settled latch witnessed on the way there.
+		var terminal_map: RunMap = app.run_map
+		var reached_node: Dictionary = terminal_map.get_node(terminal_map.get_current_node_id())
+		var reached_floor: int = terminal_map.get_current_floor()
+		var settled_battles: int = (app.act_outcome.get_state().get("settled_node_ids") as Array).size()
+		_check(reached_node.get("floor") == reached_floor
+			and panel.summary_label.text.contains("Floor reached: %d/%d" % [reached_floor, RunMap.FLOOR_COUNT]),
+			"live terminal summary states the floor the party reached: " + status)
+		if settled_battles != reached_floor:
+			_check(not panel.summary_label.text.contains(
+				"Floor reached: %d/%d" % [settled_battles, RunMap.FLOOR_COUNT]),
+				"live terminal depth is the map floor, not the settled battle count: " + status)
+		if status == "Victory":
+			_check(reached_floor == RunMap.FLOOR_COUNT and reached_node.get("type") == "Boss"
+				and settled_battles < RunMap.FLOOR_COUNT,
+				"live BOSS victory states Floor reached: 12/12 after fewer resolved battles")
 	_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.multi_fight_rewards == null
 		and app.end_turn_button.disabled and not app.deck.turn_active,
 		"Boss/defeat terminal closes combat and has no victory-choice reward")
