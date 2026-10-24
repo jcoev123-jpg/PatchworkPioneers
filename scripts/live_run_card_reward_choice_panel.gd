@@ -263,6 +263,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 
 	# Name on its own readable torn-paper strip, never cropped illustration art
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
+	name_label.theme_type_variation = &"PatchHeading"
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -837,6 +838,7 @@ func _update_card_style(index: int) -> void:
 
 
 func _apply_patchwork_style() -> void:
+	title_label.theme_type_variation = &"PatchHeading"
 	var paper := StyleBoxFlat.new()
 	paper.bg_color = Color("#e9dcc3")
 	paper.border_color = Color("#736451")

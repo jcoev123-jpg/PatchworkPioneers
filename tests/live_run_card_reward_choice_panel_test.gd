@@ -815,7 +815,60 @@ func _test_cost_and_marks(fight_base: Dictionary, elite_base: Dictionary) -> voi
 		_check(seen_kinds.has(kind), "mounted cases really cover target kind " + kind)
 
 
+func _check_reward_typography(receipt: Dictionary) -> void:
+	var project_theme := load(String(ProjectSettings.get_setting("gui/theme/custom"))) as Theme
+	_check(project_theme != null, "configured project theme loads")
+	if project_theme == null:
+		return
+	_check(project_theme.get_type_variation_base(&"PatchHeading") == &"Label"
+		and project_theme.has_font(&"font", &"PatchHeading"),
+		"project PatchHeading supplies a Label font")
+	var heading_font := project_theme.get_font(&"font", &"PatchHeading")
+	_check(heading_font != null and heading_font.resource_path
+		== "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		"project heading resolves to authored Londrina Solid Regular")
+	_check(panel.has_open_rewards() and panel.title_label.is_visible_in_tree(),
+		"typography inspected on an open mounted reward")
+	_check(panel.title_label.theme_type_variation == &"PatchHeading"
+		and panel.title_label.get_theme_font(&"font") == heading_font,
+		"mounted reward banner resolves the project PatchHeading font")
+	_check(panel.title_label.get_theme_font_size(&"font_size") == 31,
+		"reward banner retains its authored point size")
+	var offers: Array = receipt.get("offers", [])
+	_check(offers.size() == 3 and panel.choices_container.get_child_count() == 3,
+		"typography inspects all three actual mounted offers")
+	if offers.size() != 3 or panel.choices_container.get_child_count() != 3:
+		return
+	var starter := StarterCards.new()
+	for index in range(3):
+		var card_id := String(offers[index]["id"])
+		var definition := starter.get_definition(card_id)
+		if definition.is_empty():
+			definition = _base_pool_definition(card_id)
+		_check(not definition.is_empty(), "typography has an authored definition: " + card_id)
+		var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
+		var name_label := content.get_node("NameLabel") as Label
+		_check(name_label.is_visible_in_tree() and name_label.theme_type_variation == &"PatchHeading"
+			and name_label.get_theme_font(&"font") == heading_font,
+			"mounted name resolves project PatchHeading: " + card_id)
+		_check(not name_label.text.is_empty()
+			and name_label.text == String(definition.get("display_name", ""))
+			and name_label.get_theme_font_size(&"font_size") == 21,
+			"mounted name retains authored text and size, including after reopen: " + card_id)
+		for label_name in ["RulesLabel", "RarityLabel"]:
+			var label := content.get_node(label_name) as Label
+			_check(label.theme_type_variation == &""
+				and label.get_theme_font(&"font") == project_theme.default_font
+				and label.get_theme_font_size(&"font_size") == 15,
+				"body/rarity keep default font and size: %s %s" % [card_id, label_name])
+		var cost := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
+		_check(cost.theme_type_variation == &""
+			and cost.get_theme_default_font() == project_theme.default_font,
+			"cost coin keeps default font: " + card_id)
+
+
 func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
+	_check_reward_typography(receipt)
 	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "actual scene mounted: " + kind)
 	_check(panel.title_label.text.contains(kind), "reward title contains kind: " + kind)
 	_check(not panel.title_label.text.contains(node_id) and not panel.title_label.text.contains("_"),
@@ -1140,6 +1193,7 @@ func _replay_and_stale(base: Dictionary) -> void:
 				and panel._receipt == base and not panel._awaiting_ack,
 				"new offer intact after stale callback")
 		await _frames()
+		_check_reward_typography(base)
 		var buttons := panel.get_choice_buttons()
 		if buttons.size() != 4:
 			panel.close_rewards()
@@ -1445,6 +1499,7 @@ func _required_rule_phrases(card_id: String) -> Array[String]:
 
 ## The mounted card must show the real authored pool card it resolves to.
 func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
+	_check_reward_typography(receipt)
 	_check(panel.has_open_rewards() and panel.is_visible_in_tree(), "pool reward mounted: " + kind)
 	_check(panel.title_label.text.contains(kind), "pool title contains kind: " + kind)
 	_check(not panel.title_label.text.contains(node_id) and not panel.title_label.text.contains("_"),
@@ -1628,6 +1683,7 @@ func _test_pool_replay(first: Dictionary) -> void:
 		_check(panel.open_rewards("replay_node", "Fight", fixture["receipt"]),
 			"seeded weighted receipt reopens")
 		await _frames()
+		_check_reward_typography(fixture["receipt"])
 		var ui: Array = []
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
