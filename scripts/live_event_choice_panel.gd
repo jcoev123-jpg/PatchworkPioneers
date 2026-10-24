@@ -16,6 +16,9 @@ extends Control
 ## visible panel answers the physical 1/2/3 keys by handing that authored-order
 ## choice to the same guarded pressed callback the mouse and focus path use. A
 ## two-choice offering simply has no third tag and ignores key 3.
+## The committed crossroads scene sits behind the parchment as one inert picture
+## layer: it is resolved only when that shipped image really exists, and otherwise
+## the panel keeps its opaque slate with a fully working parchment and choices.
 
 ## Printed when the service could not parse a choice outcome. No amount, name or
 ## affordability is invented for such a branch.
@@ -28,6 +31,10 @@ const NO_CHANGE := "No change to gold or scraps."
 const AUTHORED_ONLY := "Authored outcome; your run's wallet is not checked here."
 ## The neutral wallet used only to parse legacy authored deltas.
 const NEUTRAL_WALLET := {"gold": 0, "scraps": 0}
+## The committed Event scene reused behind the parchment. It is never an
+## unconditional scene dependency: the picture layer stays hidden when this file
+## does not resolve, and the opaque SlateBackdrop underneath still shows.
+const EVENT_BACKDROP_ART := "res://assets/paper/backgrounds/event_crossroads.png"
 ## Sewn number tag geometry on a choice ticket: a small felt square pinned to
 ## the left edge, clear of the centred authored text and the wallet forecast.
 const CUE_INSET := 9.0
@@ -44,6 +51,7 @@ signal choice_committed(event_id: String, choice_id: String)
 signal wallet_choice_committed(result: Dictionary)
 
 @onready var paper_panel: PanelContainer = $PaperPanel
+@onready var backdrop_art: TextureRect = $EventBackdrop
 @onready var title_label: Label = $PaperPanel/ContentMargin/EventContent/EventTitle
 @onready var description_label: Label = $PaperPanel/ContentMargin/EventContent/EventDescription
 @onready var choices_container: VBoxContainer = $PaperPanel/ContentMargin/EventContent/Choices
@@ -66,8 +74,29 @@ var _wallet_label: Label = null
 
 func _ready() -> void:
 	_apply_patchwork_style()
+	bind_event_backdrop()
 	paper_panel.minimum_size_changed.connect(_fit_parchment, CONNECT_DEFERRED)
 	close_event()
+
+
+## Display-only: bind one optional picture layer behind the parchment. The scene
+## is shown only when the shipped image really resolves; a missing or empty path
+## hides the layer so the opaque SlateBackdrop stays the ground and the parchment,
+## title, story, tickets and their forecasts keep working unchanged. It reads no
+## run wallet, selector or RNG and emits nothing.
+func bind_event_backdrop(art_path: String = EVENT_BACKDROP_ART) -> void:
+	if not is_instance_valid(backdrop_art):
+		return
+	var texture := _resolve_event_backdrop(art_path)
+	backdrop_art.texture = texture
+	backdrop_art.visible = texture != null
+
+
+## The guarded optional load: an absent committed image is simply no picture.
+func _resolve_event_backdrop(art_path: String) -> Texture2D:
+	if art_path.is_empty() or not ResourceLoader.exists(art_path):
+		return null
+	return load(art_path) as Texture2D
 
 
 ## Follow wrapped story and live selector minimums, including later picker mounts.
