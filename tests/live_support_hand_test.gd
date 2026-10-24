@@ -674,6 +674,7 @@ func _run() -> void:
 	await _ally_move_cases()
 	await _stale_restart(seed_value)
 	await _pool_heal_cases()
+	await _pool_borrowed_button_live_case()
 	await _missing_art_session(seed_value)
 	app.free()
 	_finish()
@@ -1488,6 +1489,151 @@ func _pool_stale_and_duplicate_cases() -> void:
 		"stale prior-session card callback cannot play")
 	_check(_snapshot(old_deck, old_party, old_rng) == old_snapshot,
 		"released prior session objects stay unchanged")
+	await _pool_return()
+
+
+
+## Genuine routed battle -> run carryover with a sewn COAT -> held Darning panel.
+## This exercises the same _sync_battle and _play_held route as the player, not
+## an isolated helper notification or a fabricated deck transaction.
+func _pool_borrowed_button_live_case() -> void:
+	_check(app.deck == null and app.run_map == null,
+		"Borrowed Button starts from a genuine title without stale combat")
+	var route_seed := -1
+	var fight_id := ""
+	for candidate in range(1, 200):
+		var generated := RunMap.new()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = candidate
+		generated.generate(rng)
+		for node_id in generated.get_legal_choices():
+			if generated.get_node(node_id).get("type") == "Fight":
+				route_seed = candidate
+				fight_id = node_id
+				break
+		if route_seed > 0:
+			break
+	_check(route_seed > 0 and not fight_id.is_empty(),
+		"deterministic authored run map offers a real opening Fight")
+	if route_seed < 0:
+		return
+	app.run_seed = route_seed
+	app.route_button.pressed.emit()
+	await _frames()
+	var carry := app.party_carryover as RunTornCarryover
+	_check(app.run_map != null and carry != null and app.deck == null
+		and app.run_map.get_legal_choices().has(fight_id),
+		"real route admission has an authentic torn carryover and Fight choice")
+	if carry == null:
+		return
+	var route_action: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == fight_id:
+			route_action = button
+			break
+	_check(is_instance_valid(route_action) and route_action.is_visible_in_tree()
+		and not route_action.disabled, "actual mounted Fight choice is actionable")
+	if route_action == null:
+		return
+	route_action.pressed.emit()
+	await _frames()
+	_check(app._current_carryover_fight() and app.party is CombatParty
+		and app.deck is CombatDeck and app.round_flow._started,
+		"real routed Fight opens with active shared-hand and party")
+	if not app._current_carryover_fight():
+		return
+
+	# An authenticated already-owned test inventory is sewn via the real ledger
+	# before the mounted battle's explicit presentation rebind boundary.
+	var authored: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/patches/m05_coat_patches.json"))
+	var records: Array = []
+	if authored is Array:
+		for entry in authored:
+			if entry is Dictionary and entry.get("id") == "borrowed_button":
+				records.append({"id": entry.id, "slot": entry.slot})
+	_check(records.size() == 1 and records[0].slot == "COAT",
+		"actual M05 COAT catalog supplies the sewn Borrowed Button definition")
+	if records.size() != 1:
+		return
+	_check(not app.run_trinkets.has("borrowed_button"),
+		"live run initially has no synthetic owned Borrowed Button")
+	app.run_trinkets.append("borrowed_button")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, records,
+		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), "real run context admits owned COAT patch ledger")
+	if not wardrobe.is_valid():
+		return
+	var sewn := wardrobe.sew("borrowed_button", "warden", "COAT",
+		"mounted_borrowed_button_sew", wardrobe.get_snapshot())
+	_check(sewn.get("ok") == true
+		and wardrobe.project_active(carry.torn.read_state()).active.warden.has("borrowed_button"),
+		"genuine sew operation activates the living Warden COAT")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot())
+		and carry._wardrobe == wardrobe,
+		"run carryover owns and authenticates the exact sewn ledger")
+	presenter._clear()
+	presenter._sync_battle()
+	await _frames()
+	_check(presenter._heal_cards is CombatSeamstressPoolHeals
+		and presenter._heal_cards.is_patch_binding_valid()
+		and presenter._heal_cards._wardrobe == wardrobe,
+		"live hand binds its COAT helper to the real routed Fight ledgers")
+
+	app.deck.draw_pile.append("seamstress_darning")
+	_check(app.deck.draw_extra(1) == 1
+		and app.deck.hand.has("seamstress_darning"),
+		"real combat deck draws the actual pool Darning copy")
+	app._refresh_hand()
+	await _frames()
+	var panel := _pool_panel("seamstress_darning")
+	_check(is_instance_valid(panel) and panel.focus_mode == Control.FOCUS_ALL
+		and panel.gui_input.get_connections().size() == 1,
+		"actual mounted Darning panel accepts one physical player input")
+	if panel == null:
+		return
+	_check(app.party.apply_damage(1, 11) and app.party.get_hero(1).hp > 0
+		and app.party.get_hero(1).hp < app.party.get_hero(1).max_hp,
+		"living other-hero Warden genuinely wounded through opening Block before the committed heal")
+	app._refresh_party()
+	await _frames()
+	var before := _pool_state()
+	var wardrobe_before := wardrobe.get_snapshot()
+	var torn_before := carry.torn.read_state()
+	_check(presenter._heal_cards._borrowed_button != null
+		and presenter._heal_cards._borrowed_button.read_state().awards == 0,
+		"COAT starts unspent; showing a hand/forecast never awards")
+	var stale_callback: Callable = presenter._bindings[panel]
+	await _mouse(panel)
+	_check(_pool_state() == before and presenter._pending.get("choosing", false),
+		"real Darning selection creates target mode without any spend")
+	await _mouse(app.hero_panels[0])
+	var expected := _pool_expected(before, "seamstress_darning", 1)
+	expected[5][0].block += 3
+	_check(_pool_state() == expected,
+		"routed physical commit heals four, grants Darning three plus COAT three Block, discards and charges once; RNG unchanged")
+	_check(app.deck.energy == int(before[3]) - 1
+		and app.deck.hand.count("seamstress_darning") == int(before[1].count("seamstress_darning")) - 1
+		and app.deck.discard_pile.count("seamstress_darning") == int(before[2].count("seamstress_darning")) + 1,
+		"live held Darning spent its one authored energy and only one real copy")
+	var state: Dictionary = presenter._heal_cards._borrowed_button.read_state()
+	_check(state.ok and state.awards == 1 and state.wearer_id == "warden"
+		and state.receipt_id == "seamstress_pool_heal:1:1",
+		"live COAT triggered only by authentic committed other-owner healing receipt")
+	_check(wardrobe.get_snapshot() == wardrobe_before
+		and carry.torn.read_state() == torn_before
+		and app.run_rng.state == before[11],
+		"live COAT never changes persistent ledgers or seeded RNG")
+	_check(app.hero_panels[0].get_child(0).text.contains(
+		"HP: %d/%d | Block: %d" % [app.party.get_hero(1).hp,
+		app.party.get_hero(1).max_hp, app.party.get_hero(1).block]),
+		"visible mounted Warden meter refreshes the new HP and total Block")
+	var committed := _pool_state()
+	stale_callback.call(_press())
+	await _frames()
+	_check(_pool_state() == committed
+		and presenter._heal_cards._borrowed_button.read_state().awards == 1,
+		"stale real-card callback cannot replay a heal or COAT bonus")
 	await _pool_return()
 
 
