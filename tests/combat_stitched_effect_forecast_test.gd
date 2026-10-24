@@ -23,6 +23,9 @@ func _initialize() -> void:
 	_test_rejections()
 	_test_real_torn_and_mend()
 	_test_pool_heal_forecasts()
+	_test_borrowed_button_stitched_parity()
+	_test_borrowed_button_spent_latch()
+	_test_borrowed_button_negatives()
 	for failure in failures:
 		printerr(failure)
 	print("combat_stitched_effect_forecast_test: ",
@@ -81,7 +84,7 @@ func _fixture(first: String, second: String, seed_value: int = 9527) -> Dictiona
 	return {"rest": rest, "id": choice.stitched_id, "deck": deck,
 		"party": party, "enemies": enemies, "attacks": attacks,
 		"service": CombatStitchedCards.new(attacks),
-		"wardrobe": null, "torn": null}
+		"wardrobe": null, "torn": null, "button_heals": null}
 
 
 func _state(c: Dictionary) -> Dictionary:
@@ -112,6 +115,13 @@ func _whole(c: Dictionary) -> Dictionary:
 		"patch_active": {} if a._patches == null else a._patches.active_snapshot(),
 		"support_wardrobe_snapshot": c.service._support._wardrobe_snapshot.duplicate(true),
 		"support_torn_snapshot": c.service._support._torn_snapshot.duplicate(true),
+		"button": {} if c.get("button_heals") == null \
+			or c.button_heals._borrowed_button == null else {
+			"state": c.button_heals._borrowed_button.read_state(),
+			"receipt_number": c.button_heals._heal_receipt_number,
+			"bound_party": c.button_heals._button_party == c.party,
+			"pending": c.button_heals._pending_new_party,
+		},
 	}
 
 
@@ -526,3 +536,237 @@ func _test_pool_heal_forecasts() -> void:
 	var invalid := _fixture("seamstress_field_mend", BRACE)
 	_bind_pool_spool(invalid, "seamstress")
 	_reject(invalid, 1, 0, "party-all nonzero caller target rejected without changes")
+
+
+## A real run wardrobe owning the authored P6 COAT patches, an authentic tear
+## ledger and the genuine combat-bound healing service the mounted hand passes.
+## Nothing here is a test-only stand-in: the shipping patch catalog, the real
+## Rest stitch ledger and the real sewing transaction create every authority.
+func _bind_button(c: Dictionary, wearer: String = "warden") -> void:
+	var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatBorrowedButton.CATALOG_PATH))
+	_check(records is Array and not records.is_empty(), "authored M05 COAT patch catalog")
+	var definitions: Array = []
+	if records is Array:
+		for entry in records:
+			if entry.get("id") == "borrowed_button":
+				definitions.append({"id": entry.id, "slot": entry.slot})
+	_check(not definitions.is_empty() and definitions[0].slot == "COAT",
+		"authored Borrowed Button COAT definition present")
+	var torn := RunTornMending.new(c.party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(c.party.get_heroes(), ["borrowed_button"],
+		definitions, 4)
+	_check(wardrobe.is_valid() and torn.is_valid(),
+		"genuine run wardrobe and untorn run ledger")
+	if wearer != "":
+		_check(wardrobe.sew("borrowed_button", wearer, "COAT", "forecast-p6-sew",
+			wardrobe.get_snapshot()).ok, "Borrowed Button genuinely sewn to " + wearer)
+	_check(c.service.bind_patch_wardrobe(wardrobe, torn)
+		and c.attacks.bind_patch_wardrobe(wardrobe, torn),
+		"stitched and attack transactions bind the real patch ledgers")
+	var heals := CombatSeamstressPoolHeals.new()
+	_check(heals.bind_patch_wardrobe(wardrobe, torn),
+		"ordinary healing service binds the same authentic combat ledgers")
+	c.service.bind_borrowed_button(heals)
+	c.wardrobe = wardrobe
+	c.torn = torn
+	c.button_heals = heals
+	_check(heals._borrowed_button != null and heals._heal_receipt_number == 0
+		and heals._borrowed_button.read_state().awards == 0,
+		"combat P6 notifier starts genuinely unspent and unobserved")
+
+
+func _button_state(c: Dictionary) -> Dictionary:
+	return c.button_heals._borrowed_button.read_state()
+
+
+## AC1/AC2: a genuine Rest-created Mend/Brace composite on a sewn, living,
+## wounded Warden must forecast exactly the real committed HP/Block, in both half
+## orders, with plus-three P6 Block paid once through the real notifier.
+func _test_borrowed_button_stitched_parity() -> void:
+	for reverse in [false, true]:
+		for seed_value in [6111, 9527]:
+			var c := _fixture(BRACE if reverse else MEND, MEND if reverse else BRACE,
+				seed_value)
+			_bind_button(c)
+			_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28,
+				"living different-owner P6 wearer genuinely wounded")
+			var label := "sewn stitched heal order " + str(reverse) + " seed " + str(seed_value)
+			var result := _compare(c, 0 if reverse else 1, 1 if reverse else 0, label)
+			_check(result.playable and result.cost == 2
+				and result.projected.heroes[0].hp == 33
+				and result.projected.heroes[0].block == 10
+				and result.projected.heroes[1].hp == 30
+				and result.projected.heroes[2].hp == 26,
+				label + ": forecast projects 5 restored HP and 7 Brace plus exactly 3 P6")
+			var state := _button_state(c)
+			_check(c.party.get_hero(1).hp == 33 and c.party.get_hero(1).block == 10,
+				label + ": real commit matches projected Warden HP/Block exactly")
+			_check(state.awards == 1 and state.block_awarded == 3
+				and state.wearer_id == "warden" and state.receipts.size() == 1
+				and state.receipt_id.begins_with("stitched_half_%d:" % (1 if reverse else 0))
+				and c.button_heals._heal_receipt_number == 1,
+				label + ": one authenticated half receipt pays the shared notifier once")
+
+
+## AC2: the spent latch is inherited, never re-armed or spent by a forecast, and
+## repeated predictions preserve the real receipt identities and award facts.
+func _test_borrowed_button_spent_latch() -> void:
+	var c := _fixture(MEND, BRACE, 6112)
+	_bind_button(c)
+	_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28,
+		"first genuine wound before two committed casts")
+	var paid := _compare(c, 1, 0, "first sewn Mend/Brace pays the once-per-combat latch")
+	_check(paid.playable and c.party.get_hero(1).hp == 33
+		and c.party.get_hero(1).block == 10 and _button_state(c).awards == 1,
+		"first real composite heals 5 and pays 7 Brace plus one 3-Block award")
+	_check(c.deck.end_turn() and c.party.start_player_turn() and c.deck.start_turn()
+		and c.deck.hand.has(c.id), "actual next turn redraws the same composite")
+	_check(c.party.get_hero(1).block == 0, "turn boundary clears the first award Block")
+	var saved := _whole(c)
+	var receipts: Array = _button_state(c).receipts.duplicate()
+	var repeats: Array = []
+	for copy in range(2):
+		repeats.append(_peek(c, 1, 0))
+	_check(repeats[0].playable and repeats[0] == repeats[1] and _whole(c) == saved,
+		"spent-latch forecasts repeat exactly and touch no real authority")
+	_check(repeats[0].projected.heroes[0].hp == 38
+		and repeats[0].projected.heroes[0].block == 7,
+		"a spent latch projects only the authored 7 Brace Block")
+	_check(_whole(c) == saved and _button_state(c).receipts == receipts
+		and _button_state(c).awards == 1 and c.button_heals._heal_receipt_number == 1,
+		"repeated forecasts preserve the real receipt IDs, counter and award")
+	var real := _real(c, 1, 0)
+	_check(real.ok and _state(c) == repeats[0].projected,
+		"the second genuine commit matches the spent-latch forecast exactly")
+	_check(c.party.get_hero(1).hp == 38 and c.party.get_hero(1).block == 7
+		and _button_state(c).awards == 1 and _button_state(c).receipts.size() == 2,
+		"a later genuine heal is observed but never awards P6 twice")
+
+	# The next combat re-arms the retained service: the previous battle's spent
+	# latch must neither suppress this battle's forecast nor leak its receipts.
+	var next_party := CombatParty.new(_authored("res://data/heroes/starter_party.json"))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 6113
+	var next_deck := CombatDeck.new([c.id], rng)
+	_check(next_party.is_valid() and next_deck.start_turn()
+		and next_deck.hand == [c.id] and next_deck.energy == 3,
+		"next genuine combat begins with the composite and three energy")
+	c.party = next_party
+	c.deck = next_deck
+	_check(c.party.apply_damage(1, 12) and c.party.get_hero(1).hp == 28,
+		"next battle wearer starts genuinely wounded")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn)
+		and c.button_heals.bind_patch_wardrobe(c.wardrobe, c.torn)
+		and c.button_heals._pending_new_party and c.button_heals._button_party != c.party,
+		"retained service authenticates a genuinely different battle party")
+	var renewed := _compare(c, 1, 0, "next-combat rearm after a spent latch")
+	_check(renewed.playable and renewed.projected.heroes[0].hp == 33
+		and renewed.projected.heroes[0].block == 10
+		and _button_state(c).awards == 1 and c.button_heals._heal_receipt_number == 1,
+		"a new combat projects and commits one renewed 3-Block award")
+
+
+## AC3: no award is projected for a full-HP recipient, the wearer's own heal, an
+## unsewn or run-torn wearer, a foreign or stale COAT authority, or a composite
+## whose later half fails; every rejection is atomic and leaves the latch alone.
+func _test_borrowed_button_negatives() -> void:
+	var c := _fixture(MEND, BRACE, 6113)
+	_bind_button(c)
+	var full := _compare(c, 1, 0, "full-HP different-owner Mend")
+	_check(full.playable and full.projected.heroes[0].hp == 40
+		and full.projected.heroes[0].block == 7 and _button_state(c).awards == 0
+		and _button_state(c).receipts.is_empty(),
+		"full-HP overheal projects no P6 receipt or Block")
+	c = _fixture(MEND, BRACE, 6114)
+	_bind_button(c, "seamstress")
+	_check(c.party.apply_damage(2, 10) and c.party.get_hero(2).hp == 20,
+		"sewn Seamstress genuinely wounded before her own Mend")
+	var own := _compare(c, 2, 0, "own-hero stitched Mend")
+	_check(own.playable and own.projected.heroes[1].hp == 25
+		and own.projected.heroes[1].block == 0 and _button_state(c).awards == 0,
+		"self-heal restores HP but never awards P6 Block")
+	c = _fixture(MEND, BRACE, 6115)
+	_bind_button(c, "")
+	_check(c.party.apply_damage(1, 12), "owned but unsewn COAT witnesses a real heal")
+	var unsewn := _compare(c, 1, 0, "owned but unsewn COAT")
+	_check(unsewn.playable and unsewn.projected.heroes[0].hp == 33
+		and unsewn.projected.heroes[0].block == 7 and _button_state(c).awards == 0,
+		"unsewn patch projects no P6 Block")
+
+	# The same authored content in a different wardrobe OBJECT is a foreign
+	# authority: neither the forecast nor the real commit may pay it.
+	c = _fixture(MEND, BRACE, 6116)
+	_bind_button(c)
+	_check(c.party.apply_damage(1, 12), "wounded wearer with a foreign-bound helper")
+	var foreign := RunPatchWardrobe.new(c.torn.read_state().heroes, ["borrowed_button"],
+		[{"id": "borrowed_button", "slot": "COAT"}], 4)
+	_check(foreign.is_valid() and foreign.sew("borrowed_button", "warden", "COAT",
+		"forecast-p6-foreign", foreign.get_snapshot()).ok,
+		"independent authentic wardrobe genuinely sewn to Warden")
+	_check(c.button_heals.bind_patch_wardrobe(foreign, c.torn),
+		"helper rebound to the foreign wardrobe authority")
+	var by_other := _compare(c, 1, 0, "foreign P6 authority")
+	_check(by_other.playable and by_other.projected.heroes[0].block == 7
+		and _button_state(c).awards == 0,
+		"forecast and real commit both refuse a foreign COAT authority")
+
+	# A wardrobe that advanced after the transaction bound it is stale: the whole
+	# forecast and the matching real commit fail closed with no spend.
+	c = _fixture(MEND, BRACE, 6117)
+	_bind_button(c)
+	_check(c.party.apply_damage(1, 12), "wounded wearer with a stale wardrobe authority")
+	_check(c.wardrobe.start_rest("forecast-p6-stale", c.wardrobe.get_snapshot()).ok,
+		"bound wardrobe advanced authentically")
+	_reject(c, 1, 0, "stale P6 wardrobe authority")
+	var stale_before := _whole(c)
+	_check(_real(c, 1, 0) == {"ok": false, "halves": []} and _whole(c) == stale_before
+		and _button_state(c).awards == 0,
+		"the same stale authorities refuse the real commit without spending")
+
+	# A genuinely late Brace overflow rolls back the earlier heal and P6 preview.
+	var late := _fixture(MEND, BRACE, 6118)
+	_bind_button(late)
+	_check(late.party.apply_damage(1, 12), "wounded wearer before a late Brace overflow")
+	_check(late.party.gain_block(1, CombatParty.MAX_INT - 6),
+		"genuine near-limit Warden Block for the later Brace half")
+	_reject(late, 1, 0, "later Brace overflow rolls back the first heal and P6 preview")
+	var late_before := _whole(late)
+	_check(_real(late, 1, 0) == {"ok": false, "halves": []}
+		and _whole(late) == late_before and _button_state(late).awards == 0
+		and _button_state(late).receipts.is_empty(),
+		"the same rejected commit publishes no heal, receipt or latch")
+	_check(late.party.start_player_turn(), "real Block reset clears the near-limit stack")
+	var retry := _compare(late, 1, 0, "legal retry after the rolled-back later Brace")
+	_check(retry.playable and retry.projected.heroes[0].hp == 33
+		and retry.projected.heroes[0].block == 10 and _button_state(late).awards == 1,
+		"the retry commits one heal, 7 Brace and one 3-Block P6 award")
+
+	# A genuinely run-torn wearer keeps the COAT sewn but suspended.
+	c = _fixture(MEND, BRACE, 6119)
+	_bind_button(c)
+	var start: Array = c.torn.read_state().heroes
+	var finish: Array = start.duplicate(true)
+	finish[0].hp = 0
+	_check(c.torn.observe_battle_end("forecast-p6-tear", start, finish).ok,
+		"real battle tear records the wearer's run death")
+	var worn: Dictionary = c.wardrobe.get_snapshot()
+	_check(c.wardrobe.refresh_run_context(c.torn.read_state().heroes, worn.owned,
+		worn.scraps, worn.gold, worn.cards, worn),
+		"wardrobe refreshes the genuinely torn run roster")
+	var roster: Array = []
+	for hero in c.torn.read_state().heroes:
+		roster.append({"id": hero.id, "max_hp": hero.max_hp})
+	c.party = CombatParty.new(roster)
+	_check(c.party.is_valid() and c.party.get_hero(1).hp == 37
+		and c.torn.read_state().heroes[0].hp == 0,
+		"fresh battle party lives while the run ledger keeps the wearer torn")
+	_check(c.service.bind_patch_wardrobe(c.wardrobe, c.torn)
+		and c.button_heals.bind_patch_wardrobe(c.wardrobe, c.torn),
+		"both combat authorities rebind to the exact torn ledger")
+	_check(c.party.apply_damage(1, 8) and c.party.get_hero(1).hp == 29,
+		"run-torn wearer is genuinely wounded in battle")
+	var torn_result := _compare(c, 1, 0, "run-torn COAT wearer")
+	_check(torn_result.playable and torn_result.projected.heroes[0].hp == 34
+		and torn_result.projected.heroes[0].block == 7 and _button_state(c).awards == 0,
+		"suspended run-torn COAT projects no P6 Block while keeping authored Brace")

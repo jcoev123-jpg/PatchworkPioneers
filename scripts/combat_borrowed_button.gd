@@ -53,6 +53,35 @@ var _award_receipt_id := ""
 func bind_combat(party: CombatParty, wardrobe: RunPatchWardrobe,
 		torn: RunTornMending) -> bool:
 	_clear()
+	return _bind_validated(party, wardrobe, torn)
+
+
+## Narrow detached clone for a scene-free forecast. It keeps this combat's
+## authored numbers, spent/unspent latch and accepted receipt identities, but is
+## bound to the staged party and the same authentic run ledgers. The preview can
+## neither read nor mutate this combat's real notifier, so repeating a forecast
+## never spends, resets or replays the once-per-combat award.
+func stage_for_party(staged_party: CombatParty) -> CombatBorrowedButton:
+	if _party == null or not _current():
+		return null
+	var clone := CombatBorrowedButton.new()
+	if not clone._bind_validated(staged_party, _wardrobe, _torn):
+		return null
+	clone._heal_threshold = _heal_threshold
+	clone._block = _block
+	clone._uses_per_combat = _uses_per_combat
+	clone._receipts = _receipts.duplicate()
+	clone._receipt_ids = _receipt_ids.duplicate()
+	clone._awards = _awards
+	clone._wearer_id = _wearer_id
+	clone._award_receipt_id = _award_receipt_id
+	return clone
+
+
+## Shared validation for a real combat binding and a detached forecast clone. It
+## never clears the latch or receipts: only bind_combat owns that boundary.
+func _bind_validated(party: CombatParty, wardrobe: RunPatchWardrobe,
+		torn: RunTornMending) -> bool:
 	if party == null or wardrobe == null or torn == null:
 		return false
 	if not party.is_valid() or not wardrobe.is_valid() or not torn.is_valid():
@@ -103,8 +132,8 @@ func bind_combat(party: CombatParty, wardrobe: RunPatchWardrobe,
 	_party = party
 	_wardrobe = wardrobe
 	_torn = torn
-	_wardrobe_snapshot = state
-	_torn_snapshot = torn_state
+	_wardrobe_snapshot = state.duplicate(true)
+	_torn_snapshot = torn_state.duplicate(true)
 	_heal_threshold = int(authored["heal_threshold"])
 	_block = int(authored["block"])
 	_uses_per_combat = int(authored["uses_per_combat"])
