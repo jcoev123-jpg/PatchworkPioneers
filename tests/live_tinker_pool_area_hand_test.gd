@@ -8,6 +8,15 @@ const SHRAPNEL := "tinker_shrapnel_seam"
 const SHRAPNEL_PLUS := "tinker_shrapnel_seam_plus"
 const UNRAVEL_IDS := [SHRAPNEL, SHRAPNEL_PLUS]
 const SEED := 42
+## Exact compact rule each authored Tinker area face must print.
+const EXPECTED_EFFECT := {
+	"tinker_scatter_bolts": "Deal 3 to all.",
+	"tinker_scatter_bolts_plus": "Deal 4 to all.",
+	"tinker_shrapnel_seam": "Deal 5 to all. Unravel 2.",
+	"tinker_shrapnel_seam_plus": "Deal 7 to all. Unravel 3.",
+	"tinker_ricochet": "Deal 4 x3, random.",
+	"tinker_ricochet_plus": "Deal 6 x3, random.",
+}
 const TIER_CATALOGS := [
 	["res://data/enemies/starter_enemies.json", "normal"],
 	["res://data/enemies/run_enemies.json", "normal"],
@@ -292,30 +301,87 @@ func _face(id: String) -> void:
 	_check(face.get("name") == definition.display_name and face.name != "Unknown card"
 		and face.get("cost", "") == "%d energy" % int(definition.cost),
 		"authored visible name and energy cost, not raw-ID placeholder: " + id)
-	_check(face.get("variant", "").contains("Tinker") and face.variant.contains(
-		adapter._positions(definition.from_positions)),
-		"from-position and Tinker owner are printed: " + id)
-	_check(face.get("area", "").contains(adapter._positions(definition.to_positions))
-		and face.get("target", "").contains("No target choice"),
-		"original enemy scope and target-free rule are visible: " + id)
-	var effect: String = face.get("bleed", "")
-	_check(effect.contains(str(effects.damage)) and effect.contains("+3 first attack")
-		and (effect.contains("3 hits") if definition.target_kind == "enemy_random" else effect.contains("damage each")),
-		"visible correct damage and authored hit count: " + id)
-	if id in UNRAVEL_IDS:
-		_check(effect.contains("Unravel %d" % int(effects.unravel))
-			and face.get("area", "") == "All enemies %s" % adapter._positions(definition.to_positions)
-			and panel.tooltip_text.contains("Unravel %d" % int(effects.unravel)),
-			"visible Unravel charge and original-position area scope: " + id)
+	_check(face.get("name", "").ends_with("+") == id.ends_with("_plus"),
+		"visible name keeps the authored '+' upgrade suffix: " + id)
+	_check(face.get("effect", "") == EXPECTED_EFFECT.get(id, ""),
+		"visible face prints the exact compact authored rule: " + id)
+	var shown: String = "%s %s %s" % [str(face.get("name", "")), str(face.get("cost", "")),
+		str(face.get("effect", ""))]
+	for jargon in ["From", "Target", "No target choice", "living", "first attack", "base"]:
+		_check(not shown.contains(jargon), "face never prints '%s': %s" % [jargon, id])
+	# Three small source circles and three small target squares, read from the
+	# authored positions; only the simultaneous every-enemy cards are stitched.
+	var from_positions: Array = definition.from_positions
+	var to_positions: Array = definition.to_positions
+	var from_pips: Array = face.get("from_pips", [])
+	var to_pips: Array = face.get("to_pips", [])
+	_check(from_pips.size() == 3 and to_pips.size() == 3,
+		"face reports exactly three source and three target pips: " + id)
+	for index in range(mini(from_pips.size(), 3)):
+		_check(bool(from_pips[index]) == from_positions.has(index + 1),
+			"source pip %d matches the authored from positions: %s" % [index + 1, id])
+		_check(bool(to_pips[index]) == to_positions.has(index + 1),
+			"target pip %d matches the authored to positions: %s" % [index + 1, id])
+	_check(bool(face.get("thread", false)) == (definition.target_kind == "enemy_all"),
+		"stitched thread only for Scatter/Shrapnel, never Ricochet: " + id)
 	_check(panel.tooltip_text.contains(definition.display_name)
 		and panel.tooltip_text.contains("Enter / Space")
-		and panel.tooltip_text.contains("Tinker") and panel.tooltip_text.contains("no target choice"),
-		"tooltip explains keyboard, owner, scope and hit rule: " + id)
+		and panel.tooltip_text.contains("Tinker") and panel.tooltip_text.contains("no target choice")
+		and panel.tooltip_text.contains("first attack +3")
+		and panel.tooltip_text.contains("From %s" % adapter._positions(from_positions)),
+		"tooltip explains keyboard, owner, positions, target and first-attack rule: " + id)
+	if id in UNRAVEL_IDS:
+		_check(panel.tooltip_text.contains("Unravel %d" % int(effects.unravel))
+			and panel.tooltip_text.contains("All living enemies %s" % adapter._positions(to_positions)),
+			"tooltip keeps the Unravel charge and original-position area scope: " + id)
+	elif definition.target_kind == "enemy_all":
+		_check(panel.tooltip_text.contains("living")
+			and panel.tooltip_text.contains(adapter._positions(to_positions)),
+			"tooltip keeps the living every-enemy scope: " + id)
+	else:
+		_check(panel.tooltip_text.contains("random living hits")
+			and panel.tooltip_text.contains(adapter._positions(to_positions)),
+			"tooltip keeps the random living-target policy and positions: " + id)
+	if definition.target_kind == "enemy_random":
+		_check(panel.tooltip_text.contains("run RNG"),
+			"tooltip explains the seeded per-hit random policy: " + id)
 	var cue = adapter._bindings[panel].get("cue")
 	_check(is_instance_valid(cue) and cue.is_visible_in_tree() and cue.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and cue.focus_mode == Control.FOCUS_NONE and cue.get_index() > 0
 		and cue.get_theme_stylebox("panel").border_color == Color("#c49a3a"),
 		"noninteractive mustard sewn-paper overlay covers real held panel: " + id)
+	if is_instance_valid(cue):
+		# Genuinely mounted children, not a detached layout.
+		var nodes: Array = adapter.face_children(panel)
+		var visible := 0
+		for node in nodes:
+			if node is Control and node.is_visible_in_tree() and node.size.x > 0 and node.size.y > 0 \
+					and node.mouse_filter != Control.MOUSE_FILTER_STOP:
+				visible += 1
+		_check(nodes.size() >= 13 and visible == nodes.size(),
+			"every sewn text/pip child is attached, visible and never takes input: " + id)
+		_check(cue.get_child_count() == 1 and cue.get_child(0) is MarginContainer
+			and cue.get_child(0).is_visible_in_tree(),
+			"cue mounts its margin/content child instead of leaving it detached: " + id)
+		for index in range(3):
+			var from_pip = cue.find_child("From%d" % (index + 1), true, false)
+			var to_pip = cue.find_child("To%d" % (index + 1), true, false)
+			var from_style = from_pip.get_theme_stylebox("panel") if from_pip is Panel else null
+			var to_style = to_pip.get_theme_stylebox("panel") if to_pip is Panel else null
+			_check(from_style is StyleBoxFlat and from_pip.is_visible_in_tree()
+				and _pip_filled(from_pip) == from_positions.has(index + 1)
+				and (not from_positions.has(index + 1) or from_style.bg_color == Color("#c49a3a"))
+				and from_style.corner_radius_top_left * 2 >= int(from_pip.size.x),
+				"mounted circular source pip %d matches authored from positions: %s" % [index + 1, id])
+			_check(to_style is StyleBoxFlat and to_pip.is_visible_in_tree()
+				and _pip_filled(to_pip) == to_positions.has(index + 1)
+				and (not to_positions.has(index + 1) or to_style.bg_color == Color("#c49a3a"))
+				and to_style.corner_radius_top_left == 0,
+				"mounted square target pip %d matches authored to positions: %s" % [index + 1, id])
+			_check(cue.get_global_rect().grow(1.0).encloses(from_pip.get_global_rect())
+				and cue.get_global_rect().grow(1.0).encloses(to_pip.get_global_rect()),
+				"source and target pip %d stay inside the sewn face: %s" % [index + 1, id])
+		_assert_thread(cue, definition, id)
 	_check(not panel.get_child(0).is_visible_in_tree()
 		and not panel.focus_neighbor_bottom.is_empty()
 		and panel.get_node_or_null(panel.focus_neighbor_bottom) == app.end_turn_button,
@@ -327,6 +393,55 @@ func _face(id: String) -> void:
 		and not adapter.get_child(0) is Control
 		and app.battle_view.get_node_or_null("SeamstressBleedChoiceOverlay") == null,
 		"no second attack button or overlay node exists: " + id)
+
+
+## A pip is filled when its sewn style has a real background colour.
+func _pip_filled(pip: Control) -> bool:
+	var style = pip.get_theme_stylebox("panel")
+	return style is StyleBoxFlat and style.bg_color.a > 0.0
+
+
+## The stitched thread is measured from the mounted nodes: every authored target
+## square is crossed through its centre by a real drawn stitch, the source
+## circles are never stitched, and Ricochet mounts no thread at all.
+func _assert_thread(cue: Control, definition: Dictionary, stage: String) -> void:
+	var thread = cue.find_child("Thread", true, false)
+	_check((thread != null) == (definition.target_kind == "enemy_all"),
+		"mounted stitched thread only on Scatter/Shrapnel, never Ricochet: " + stage)
+	if not thread is Control:
+		return
+	_check(thread.is_visible_in_tree() and thread.mouse_filter != Control.MOUSE_FILTER_STOP
+		and thread.focus_mode == Control.FOCUS_NONE,
+		"the stitched thread is visible and never takes pointer input: " + stage)
+	var stitches: Array[Rect2] = []
+	for child in thread.get_children():
+		if child is ColorRect and String(child.name).begins_with("Stitch") \
+				and child.is_visible_in_tree() and child.size.x > 0 and child.size.y > 0:
+			stitches.append((child as ColorRect).get_global_rect())
+	var to_positions: Array = definition.to_positions
+	_check(stitches.size() >= 2 * to_positions.size() - 1,
+		"the thread mounts one stitch per target square and gap: " + stage)
+	var face_rect: Rect2 = cue.get_global_rect()
+	var on_face := true
+	for stitch in stitches:
+		if not face_rect.grow(1.0).encloses(stitch):
+			on_face = false
+	_check(on_face, "every drawn stitch stays inside the visible sewn face: " + stage)
+	for index in range(3):
+		var square: Rect2 = (cue.find_child("To%d" % (index + 1), true, false) as Control).get_global_rect()
+		var source: Rect2 = (cue.find_child("From%d" % (index + 1), true, false) as Control).get_global_rect()
+		var linked := false
+		var crossed_source := false
+		for stitch in stitches:
+			if stitch.intersects(square) and stitch.position.y <= square.get_center().y \
+					and stitch.end.y >= square.get_center().y:
+				linked = true
+			if stitch.intersects(source):
+				crossed_source = true
+		_check(linked == to_positions.has(index + 1),
+			"thread runs through target square %d exactly when authored: %s" % [index + 1, stage])
+		_check(not crossed_source,
+			"thread never crosses source circle %d: %s" % [index + 1, stage])
 
 
 func _case(id: String, by_key: bool, key: Key = KEY_ENTER, hole: bool = false) -> void:

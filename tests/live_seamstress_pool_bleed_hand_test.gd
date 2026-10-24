@@ -154,11 +154,13 @@ func _bleed_total(enemy: Dictionary) -> int:
 
 
 ## The real panel must show the authored identity as visible text, not only as
-## the hidden source Label or a mouse-only tooltip.
+## the hidden source Label or a mouse-only tooltip. The sewn face prints the
+## authored name, cost and one compact rule plus drawn position pips; the
+## positions, passive and target policy live in the detailed tooltip.
 func _assert_face(panel: Control, card_id: String, stage: String) -> void:
 	var definition: Dictionary = catalog.get_definition(card_id)
 	var effects: Dictionary = definition.get("effects", {})
-	var result_bleed: int = int(effects.get("bleed", 0)) + 1
+	var effective_bleed: int = int(effects.get("bleed", 0)) + 1
 	var face: Dictionary = adapter.face_text(panel)
 	_check(not face.is_empty(), "adapter mounts a readable face: " + stage)
 	_check(face.get("name", "") == definition.get("display_name", ""),
@@ -168,15 +170,31 @@ func _assert_face(panel: Control, card_id: String, stage: String) -> void:
 	_check(face.get("cost", "").contains(str(int(definition.get("cost", -1))))
 		and face.get("cost", "").contains("energy"),
 		"visible face shows the authored cost: " + stage)
-	var area_positions: String = adapter._positions(definition.get("to_positions", []))
-	_check(face.get("area", "").contains("All enemies") and face.get("area", "").contains(area_positions),
-		"visible face states the all-enemy area: " + stage)
-	_check(face.get("bleed", "").contains("Bleed %d" % result_bleed)
-		and face.get("bleed", "").contains("passive 1"),
-		"visible face states the authored Bleed plus passive: " + stage)
 	var upgraded: bool = card_id.ends_with("_plus")
-	_check(face.get("variant", "").begins_with("Upgraded" if upgraded else "Base"),
-		"visible face distinguishes the '+' variant: " + stage)
+	_check(face.get("name", "").ends_with("+") == upgraded,
+		"visible face keeps the authored '+' upgrade suffix: " + stage)
+	_check(face.get("effect", "") == "Bleed %d to all." % effective_bleed,
+		"visible face prints the short effective Bleed rule: " + stage)
+	var shown: String = "%s %s %s" % [str(face.get("name", "")), str(face.get("cost", "")),
+		str(face.get("effect", ""))]
+	for jargon in ["From", "Target", "No target choice", "living", "first attack",
+			"passive", "Base", "base +"]:
+		_check(not shown.contains(jargon), "face never prints '%s': %s" % [jargon, stage])
+	# Three small source circles and three small target squares, drawn from the
+	# authored positions, with a thread only for the simultaneous all-enemy cast.
+	var from_positions: Array = definition.get("from_positions", [])
+	var to_positions: Array = definition.get("to_positions", [])
+	var from_pips: Array = face.get("from_pips", [])
+	var to_pips: Array = face.get("to_pips", [])
+	_check(from_pips.size() == 3 and to_pips.size() == 3,
+		"face reports exactly three source and three target pips: " + stage)
+	for index in range(mini(from_pips.size(), 3)):
+		_check(bool(from_pips[index]) == from_positions.has(index + 1),
+			"source pip %d matches the authored from positions: %s" % [index + 1, stage])
+		_check(bool(to_pips[index]) == to_positions.has(index + 1),
+			"target pip %d matches the authored to positions: %s" % [index + 1, stage])
+	_check(bool(face.get("thread", false)) == (definition.get("target_kind") == "enemy_all"),
+		"only an every-enemy cast stitches its target squares: " + stage)
 	var cue = adapter._bindings[panel].get("cue")
 	_check(is_instance_valid(cue) and cue.get_parent() == panel and cue.is_visible_in_tree(),
 		"the readable face is mounted and visible on the real panel: " + stage)
@@ -188,12 +206,95 @@ func _assert_face(panel: Control, card_id: String, stage: String) -> void:
 			"the readable face draws above the hidden raw ID label: " + stage)
 		_check(cue.mouse_filter == Control.MOUSE_FILTER_IGNORE and cue.focus_mode == Control.FOCUS_NONE,
 			"the readable face never intercepts input or focus: " + stage)
+		# Genuinely mounted children, not a detached layout.
+		var nodes: Array = adapter.face_children(panel)
+		var visible := 0
+		for node in nodes:
+			if node is Control and node.is_visible_in_tree() and node.size.x > 0 and node.size.y > 0 \
+					and node.mouse_filter != Control.MOUSE_FILTER_STOP:
+				visible += 1
+		_check(nodes.size() >= 13 and visible == nodes.size(),
+			"every face child is attached, visible, sized and never takes input: " + stage)
+		_check(cue.get_child_count() == 1 and cue.get_child(0) is MarginContainer
+			and cue.get_child(0).is_visible_in_tree(),
+			"cue mounts its margin/content child instead of leaving it detached: " + stage)
+		for index in range(3):
+			var from_pip = cue.find_child("From%d" % (index + 1), true, false)
+			var to_pip = cue.find_child("To%d" % (index + 1), true, false)
+			var from_style = from_pip.get_theme_stylebox("panel") if from_pip is Panel else null
+			var to_style = to_pip.get_theme_stylebox("panel") if to_pip is Panel else null
+			_check(from_style is StyleBoxFlat and from_pip.is_visible_in_tree()
+				and _pip_filled(from_pip) == from_positions.has(index + 1)
+				and (not from_positions.has(index + 1) or from_style.bg_color == Color("#6e4f6b"))
+				and from_style.corner_radius_top_left * 2 >= int(from_pip.size.x),
+				"mounted circular source pip %d shows authored legality: %s" % [index + 1, stage])
+			_check(to_style is StyleBoxFlat and to_pip.is_visible_in_tree()
+				and _pip_filled(to_pip) == to_positions.has(index + 1)
+				and (not to_positions.has(index + 1) or to_style.bg_color == Color("#6e4f6b"))
+				and to_style.corner_radius_top_left == 0,
+				"mounted square target pip %d shows its authored slot: %s" % [index + 1, stage])
+			_check(cue.get_global_rect().grow(1.0).encloses(from_pip.get_global_rect())
+				and cue.get_global_rect().grow(1.0).encloses(to_pip.get_global_rect()),
+				"source and target pip %d stay inside the sewn face: %s" % [index + 1, stage])
+		_assert_thread(cue, definition, stage)
 	_check(not panel.get_child(0).is_visible_in_tree(),
 		"the raw source label stays hidden behind the readable face: " + stage)
-	for key in ["cue_name", "cue_cost", "cue_variant", "cue_area", "cue_bleed", "cue_target"]:
+	for key in ["cue_name", "cue_cost", "cue_effect"]:
 		var label = adapter._bindings[panel].get(key)
-		_check(is_instance_valid(label) and label.is_visible_in_tree() and not String(label.text).is_empty(),
+		_check(is_instance_valid(label) and label.is_visible_in_tree()
+			and not String(label.text).is_empty() and label.size.x > 0 and label.size.y > 0
+			and is_instance_valid(cue) and cue.is_ancestor_of(label),
 			"visible face label is rendered (%s): %s" % [key, stage])
+
+
+## A pip is filled when its sewn style has a real background colour.
+func _pip_filled(pip: Control) -> bool:
+	var style = pip.get_theme_stylebox("panel")
+	return style is StyleBoxFlat and style.bg_color.a > 0.0
+
+
+## The stitched thread is measured from the mounted nodes: every authored target
+## square is crossed through its centre by a real drawn stitch, the source
+## circles are never stitched, and a random-target face mounts no thread.
+func _assert_thread(cue: Control, definition: Dictionary, stage: String) -> void:
+	var all_enemy: bool = definition.get("target_kind") == "enemy_all"
+	var thread = cue.find_child("Thread", true, false)
+	_check((thread != null) == all_enemy,
+		"only the all-enemy face draws a stitched thread: " + stage)
+	if not thread is Control:
+		return
+	_check(thread.is_visible_in_tree() and thread.mouse_filter != Control.MOUSE_FILTER_STOP
+		and thread.focus_mode == Control.FOCUS_NONE,
+		"the stitched thread is visible and never takes input: " + stage)
+	var stitches: Array[Rect2] = []
+	for child in thread.get_children():
+		if child is ColorRect and String(child.name).begins_with("Stitch") \
+				and child.is_visible_in_tree() and child.size.x > 0 and child.size.y > 0:
+			stitches.append((child as ColorRect).get_global_rect())
+	var to_positions: Array = definition.get("to_positions", [])
+	_check(stitches.size() >= 2 * to_positions.size() - 1,
+		"the thread mounts one stitch per target square and gap: " + stage)
+	var face_rect: Rect2 = cue.get_global_rect()
+	var on_face := true
+	for stitch in stitches:
+		if not face_rect.grow(1.0).encloses(stitch):
+			on_face = false
+	_check(on_face, "every drawn stitch stays inside the visible sewn face: " + stage)
+	for index in range(3):
+		var square: Rect2 = (cue.find_child("To%d" % (index + 1), true, false) as Control).get_global_rect()
+		var source: Rect2 = (cue.find_child("From%d" % (index + 1), true, false) as Control).get_global_rect()
+		var linked := false
+		var crossed_source := false
+		for stitch in stitches:
+			if stitch.intersects(square) and stitch.position.y <= square.get_center().y \
+					and stitch.end.y >= square.get_center().y:
+				linked = true
+			if stitch.intersects(source):
+				crossed_source = true
+		_check(linked == to_positions.has(index + 1),
+			"thread runs through target square %d exactly when authored: %s" % [index + 1, stage])
+		_check(not crossed_source,
+			"thread never crosses source circle %d: %s" % [index + 1, stage])
 
 
 func _display(card_id: String, stage: String) -> void:
@@ -215,6 +316,17 @@ func _display(card_id: String, stage: String) -> void:
 		"catalog display name in the card tooltip: " + card_id)
 	_check(panel.tooltip_text.contains("All living enemies"),
 		"target-free all-enemy rule stated on the card: " + card_id)
+	# The detailed tooltip keeps everything the compact face leaves out.
+	var effects: Dictionary = definition.get("effects", {})
+	var printed_bleed: int = int(effects.get("bleed", 0))
+	_check(panel.tooltip_text.contains("From %s" % adapter._positions(definition.get("from_positions", [])))
+		and panel.tooltip_text.contains("All living enemies %s" % adapter._positions(
+			definition.get("to_positions", [])))
+		and panel.tooltip_text.contains("Bleed %d (%d + Seamstress passive 1)" % [
+			printed_bleed + 1, printed_bleed])
+		and panel.tooltip_text.contains("no target choice")
+		and panel.tooltip_text.contains("Enter / Space"),
+		"tooltip keeps positions, passive and target-free rules: " + card_id)
 	_assert_face(panel, card_id, stage)
 	_check(panel.get_child(0).text == card_id, "original identity label retained: " + card_id)
 	# Only the two authored IDs are claimed; the other presenters keep their cards.

@@ -17,8 +17,101 @@ const CUE_NAME := "BlanketStitchCue"
 const CREAM := Color("#ece0c8")
 const INK := Color("#3d3440")
 const RUST := Color("#9e6f58")
+## Darker sewn ink for the one compact rule line on an area card face.
+const RULE_INK := Color("#7c4a35")
 const SEAMSTRESS := Color("#6e4f6b")
 const TINKER := Color("#c49a3a")
+## Printed source/target pips are small drawn controls, never art files.
+const PIP_SIZE := 9.0
+const PIP_SLOTS := [1, 2, 3]
+const PIP_GAP := 3.0
+const GROUP_GAP := 9.0
+const THREAD_DASH := 3.0
+const THREAD_STITCH := 2.0
+
+
+## The drawn position strip: three sewn source circles, three target squares and
+## the stitched connection that runs through the target-square centres. Laying
+## the strip out by hand (instead of a container row) keeps every stitch tied to
+## a real target square rather than to the gap after the source circles.
+class PipTrack:
+	extends Control
+
+	var pip_size := 9.0
+	var pip_gap := 3.0
+	var group_gap := 9.0
+	var dash := 3.0
+	var stitch := 2.0
+	## One flag per authored enemy slot; a filled flag is a named target square.
+	var targets: Array = []
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			layout()
+
+	## Position the six pips and, when present, the thread through the centres of
+	## the authored target squares.
+	func layout() -> void:
+		var total: float = 6.0 * pip_size + 4.0 * pip_gap + group_gap
+		var left: float = maxf(0.0, (size.x - total) * 0.5)
+		var top: float = maxf(0.0, (size.y - pip_size) * 0.5)
+		for index in range(3):
+			_place(get_node_or_null("From%d" % (index + 1)),
+				Vector2(left + index * (pip_size + pip_gap), top))
+		var to_left: float = left + 3.0 * pip_size + 2.0 * pip_gap + group_gap
+		var centres: Array[float] = []
+		for index in range(3):
+			var at := Vector2(to_left + index * (pip_size + pip_gap), top)
+			_place(get_node_or_null("To%d" % (index + 1)), at)
+			if index < targets.size() and bool(targets[index]):
+				centres.append(at.x + pip_size * 0.5)
+		_layout_thread(centres, top + pip_size * 0.5)
+
+	func _place(node: Node, at: Vector2) -> void:
+		if not node is Control:
+			return
+		var control := node as Control
+		control.position = at
+		control.size = Vector2(pip_size, pip_size)
+
+	## One dash per target square plus one in each gap: the dashes land on the
+	## square centres, never merely beside them.
+	func _layout_thread(centres: Array[float], middle: float) -> void:
+		var thread := get_node_or_null("Thread") as Control
+		if thread == null:
+			return
+		thread.position = Vector2.ZERO
+		thread.size = size
+		if centres.is_empty():
+			thread.visible = false
+			return
+		thread.visible = true
+		var seam := thread.get_node_or_null("Seam") as Control
+		if seam != null:
+			var first: float = centres[0]
+			var last: float = centres[centres.size() - 1]
+			seam.position = Vector2(first - pip_size * 0.5, middle - 0.5)
+			seam.size = Vector2(last - first + pip_size, 1.0)
+		var stitches: Array[Control] = []
+		for child in thread.get_children():
+			if child is Control and String(child.name).begins_with("Stitch"):
+				stitches.append(child as Control)
+		for index in range(stitches.size()):
+			var x: float
+			if index % 2 == 0:
+				# Every even stitch sits exactly on one target-square centre.
+				var slot := int(index / 2.0)
+				if slot >= centres.size():
+					break
+				x = centres[slot]
+			else:
+				# Every odd stitch fills the gap between two target squares.
+				var pair := int((index - 1) / 2.0)
+				if pair + 1 >= centres.size():
+					break
+				x = (centres[pair] + centres[pair + 1]) * 0.5
+			stitches[index].position = Vector2(x - dash * 0.5, middle - stitch * 0.5)
+			stitches[index].size = Vector2(dash, stitch)
 
 ## Retained mount handle. This adapter never creates a separate action control.
 var button: Button
@@ -316,10 +409,12 @@ func _positions(positions: Array) -> String:
 
 
 ## The shared hand metadata presenter (owned by another lane) intentionally paints
-## an unadvertised pool ID as "Unknown card". These two IDs are real, authored
-## Blanket Stitch copies, so the adapter mounts its own visible, noninteractive
-## face over that placeholder. The original first-child ID Label, the panel's
-## input routing and every shared control stay exactly as they were.
+## an unadvertised pool ID as "Unknown card". These authored pool IDs are real
+## cards, so the adapter mounts its own visible, noninteractive face over that
+## placeholder: name, cost and a compact rule for target-free area cards, or the
+## unchanged self-utility rows for the energy skills. The original first-child ID
+## Label, the panel's input routing and every shared control stay exactly as they
+## were.
 func _mount_cue(panel: Control, card_id: String) -> void:
 	var definition: Dictionary = _definition(card_id)
 	if definition.get("id") != card_id:
@@ -370,50 +465,170 @@ func _mount_cue(panel: Control, card_id: String) -> void:
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	title_row.add_child(cost_label)
 	var effects: Dictionary = definition.get("effects", {}) if definition.get("effects", {}) is Dictionary else {}
-	var bleed: int = int(effects.get("bleed", 0))
-	var from_positions: Array = definition.get("from_positions", [])
-	var to_positions: Array = definition.get("to_positions", [])
-	var variant_label := _cue_label("%s | %s | From %s" % [
-		"Upgraded" if upgraded else "Base", "Tinker" if is_tinker else "Seamstress",
-		_positions(from_positions)], 9, owner_color)
-	variant_label.name = "Variant"
-	column.add_child(variant_label)
-	var scope: String = "Self (no enemy target)" if is_energy else "%s enemies %s" % [
-		"Random living" if is_tinker and definition.get("target_kind") == "enemy_random" else "All",
-		_positions(to_positions)]
-	var area_label := _cue_label(scope, 11, INK)
-	area_label.name = "Area"
-	column.add_child(area_label)
-	var detail: String = "Bleed %d (%d + passive 1)" % [bleed + 1, bleed]
-	if is_tinker:
-		detail = ("%d damage each (+3 first attack)" % int(effects.get("damage", 0))
-			if definition.get("target_kind") == "enemy_all" else
-			"%d hits x %d damage (+3 first attack)" % [
-				int(effects.get("hit_count", 0)), int(effects.get("damage", 0))])
-	if card_id in ENERGY_TINKER_IDS:
-		detail = "Gain %d energy; %d self-damage (Block first)" % [
+	var labels: Dictionary = {}
+	var pip_state: Dictionary = {}
+	if is_energy:
+		# The self energy skills keep their existing face copy and behaviour.
+		var variant_label := _cue_label("%s | %s | From %s" % [
+			"Upgraded" if upgraded else "Base", "Tinker" if is_tinker else "Seamstress",
+			_positions(definition.get("from_positions", []))], 9, owner_color)
+		variant_label.name = "Variant"
+		column.add_child(variant_label)
+		var area_label := _cue_label("Self (no enemy target)", 11, INK)
+		area_label.name = "Area"
+		column.add_child(area_label)
+		var detail: String = "Gain %d energy; %d self-damage (Block first)" % [
 			int(effects.get("gain_energy", 0)), int(effects.get("self_hp_loss", 0))]
-	elif card_id in UNRAVEL_TINKER_IDS:
-		detail = "%d damage each, Unravel %d (+3 first attack)" % [
-			int(effects.get("damage", 0)), int(effects.get("unravel", 0))]
-	elif card_id in ENERGY_SEAMSTRESS_IDS:
-		detail = "Gain %d energy; draw %d cards" % [
-			int(effects.get("energy", 0)), int(effects.get("draw", 0))]
-	var bleed_label := _cue_label(detail, 11, RUST)
-	bleed_label.name = "Effect" if is_tinker or is_energy else "Bleed"
-	column.add_child(bleed_label)
-	var target_label := _cue_label("No target choice", 9, RUST)
-	target_label.name = "Target"
-	column.add_child(target_label)
+		if card_id in ENERGY_SEAMSTRESS_IDS:
+			detail = "Gain %d energy; draw %d cards" % [
+				int(effects.get("energy", 0)), int(effects.get("draw", 0))]
+		var bleed_label := _cue_label(detail, 11, RUST)
+		bleed_label.name = "Effect"
+		column.add_child(bleed_label)
+		var target_label := _cue_label("No target choice", 9, RUST)
+		target_label.name = "Target"
+		column.add_child(target_label)
+		labels["variant"] = variant_label
+		labels["area"] = area_label
+		labels["bleed"] = bleed_label
+		labels["target"] = target_label
+	else:
+		# One short rule and the drawn positions only: no "From"/"Target" prose,
+		# no living-target note and no passive or first-attack arithmetic. At a
+		# five-card hand the title row is wide enough for one line; a crowded
+		# hand wraps the authored name instead of clipping it.
+		name_label.add_theme_font_size_override("font_size", 13)
+		name_label.clip_text = false
+		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cost_label.add_theme_font_size_override("font_size", 10)
+		cost_label.custom_minimum_size = Vector2(40, 0)
+		var effect_label := _cue_label(_short_effect(definition), 13, RULE_INK)
+		effect_label.name = "Effect"
+		effect_label.clip_text = false
+		effect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		column.add_child(effect_label)
+		var pips := _pip_row(definition, owner_color)
+		pips.name = "Positions"
+		column.add_child(pips)
+		labels["effect"] = effect_label
+		labels["pips"] = pips
+		pip_state = _pip_state(definition)
 	panel.add_child(cue)
 	var binding: Dictionary = _bindings[panel]
 	binding["cue"] = cue
 	binding["cue_name"] = name_label
 	binding["cue_cost"] = cost_label
-	binding["cue_variant"] = variant_label
-	binding["cue_area"] = area_label
-	binding["cue_bleed"] = bleed_label
-	binding["cue_target"] = target_label
+	for key in labels:
+		binding["cue_" + str(key)] = labels[key]
+	if not pip_state.is_empty():
+		binding["pips"] = pip_state
+
+
+## The compact rule printed on one target-free area card. Amounts come from the
+## authored record only: the Seamstress's Bleed face is the same +1 passive the
+## resolver applies, printed without its arithmetic.
+func _short_effect(definition: Dictionary) -> String:
+	var effects: Dictionary = definition.get("effects", {})
+	if str(definition.get("target_kind", "")) == "enemy_random":
+		return "Deal %d x%d, random." % [int(effects.get("damage", 0)),
+			int(effects.get("hit_count", 1))]
+	var clauses: Array[String] = []
+	if effects.has("damage"):
+		clauses.append("Deal %d to all." % int(effects.get("damage", 0)))
+	if effects.has("bleed"):
+		clauses.append("Bleed %d to all." % (int(effects.get("bleed", 0)) + 1))
+	if effects.has("unravel"):
+		clauses.append("Unravel %d." % int(effects.get("unravel", 0)))
+	return " ".join(clauses)
+
+
+## Which of the three hero slots and three enemy slots this authored card names.
+func _pip_state(definition: Dictionary) -> Dictionary:
+	var from_positions: Array = definition.get("from_positions", [])
+	var to_positions: Array = definition.get("to_positions", [])
+	var from_flags: Array[bool] = []
+	var to_flags: Array[bool] = []
+	for position in PIP_SLOTS:
+		from_flags.append(position in from_positions)
+		to_flags.append(position in to_positions)
+	return {"from": from_flags, "to": to_flags,
+		"thread": str(definition.get("target_kind", "")) == "enemy_all"}
+
+
+## Three small source circles and three small target squares. Only a
+## simultaneous every-enemy cast stitches them together, and that thread runs
+## through the target-square centres; a random cast leaves the squares unlinked
+## because each hit picks its own living slot.
+func _pip_row(definition: Dictionary, owner_color: Color) -> Control:
+	var state: Dictionary = _pip_state(definition)
+	var track := PipTrack.new()
+	track.name = "Positions"
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.focus_mode = Control.FOCUS_NONE
+	track.pip_size = PIP_SIZE
+	track.pip_gap = PIP_GAP
+	track.group_gap = GROUP_GAP
+	track.dash = THREAD_DASH
+	track.stitch = THREAD_STITCH
+	track.targets = (state["to"] as Array).duplicate()
+	track.custom_minimum_size = Vector2(
+		6.0 * PIP_SIZE + 4.0 * PIP_GAP + GROUP_GAP, PIP_SIZE + 3.0)
+	for index in range(PIP_SLOTS.size()):
+		track.add_child(_pip("From%d" % int(PIP_SLOTS[index]), bool(state["from"][index]),
+			owner_color, true))
+	for index in range(PIP_SLOTS.size()):
+		track.add_child(_pip("To%d" % int(PIP_SLOTS[index]), bool(state["to"][index]),
+			owner_color, false))
+	if bool(state["thread"]):
+		track.add_child(_thread(owner_color, state["to"]))
+	track.layout()
+	return track
+
+
+func _pip(pip_name: String, filled: bool, owner_color: Color, round: bool) -> Panel:
+	var pip := Panel.new()
+	pip.name = pip_name
+	pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pip.focus_mode = Control.FOCUS_NONE
+	pip.custom_minimum_size = Vector2(PIP_SIZE, PIP_SIZE)
+	pip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var style := StyleBoxFlat.new()
+	style.bg_color = owner_color if filled else Color(0, 0, 0, 0)
+	style.border_color = owner_color if filled else Color(INK, 0.45)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(int(ceilf(PIP_SIZE * 0.5)) if round else 0)
+	pip.add_theme_stylebox_override("panel", style)
+	return pip
+
+
+## A short stitched thread: an owner-coloured seam under one drawn dash per
+## target square and one per gap, never an image. The track positions every
+## stitch on a real target-square centre, so the seam visibly links the squares.
+func _thread(owner_color: Color, targets: Array) -> Control:
+	var thread := Control.new()
+	thread.name = "Thread"
+	thread.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thread.focus_mode = Control.FOCUS_NONE
+	var seam := ColorRect.new()
+	seam.name = "Seam"
+	seam.color = owner_color.darkened(0.4)
+	seam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	seam.focus_mode = Control.FOCUS_NONE
+	thread.add_child(seam)
+	var squares := 0
+	for flag in targets:
+		if bool(flag):
+			squares += 1
+	var stitches: int = maxi(squares * 2 - 1, 1)
+	for index in range(stitches):
+		var stitch := ColorRect.new()
+		stitch.name = "Stitch%d" % index
+		stitch.color = CREAM
+		stitch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		stitch.focus_mode = Control.FOCUS_NONE
+		stitch.custom_minimum_size = Vector2(THREAD_DASH, THREAD_STITCH)
+		thread.add_child(stitch)
+	return thread
 
 
 func _cue_label(value: String, point_size: int, color: Color) -> Label:
@@ -428,16 +643,44 @@ func _cue_label(value: String, point_size: int, color: Color) -> Label:
 
 
 ## Visible cue text actually mounted on the real panel, for mounted regressions.
+## Area faces also report their drawn source/target pip states.
 func face_text(panel) -> Dictionary:
 	if not _bindings.has(panel):
 		return {}
 	var binding: Dictionary = _bindings[panel]
 	var text := {}
-	for key in ["cue_name", "cue_cost", "cue_variant", "cue_area", "cue_bleed", "cue_target"]:
+	for key in ["cue_name", "cue_cost", "cue_variant", "cue_area", "cue_bleed",
+			"cue_target", "cue_effect"]:
 		var label = binding.get(key)
 		if is_instance_valid(label):
 			text[key.trim_prefix("cue_")] = label.text
+	var pips: Dictionary = binding.get("pips", {})
+	if not pips.is_empty():
+		text["from_pips"] = (pips.get("from", []) as Array).duplicate()
+		text["to_pips"] = (pips.get("to", []) as Array).duplicate()
+		text["thread"] = bool(pips.get("thread", false))
 	return text
+
+
+## Every node genuinely mounted under the sewn cue, depth first. Mounted
+## regressions use it to prove the text and pips are real visible children rather
+## than a layout that was never attached to the cue.
+func face_children(panel) -> Array[Node]:
+	var found: Array[Node] = []
+	if not _bindings.has(panel):
+		return found
+	var cue = _bindings[panel].get("cue")
+	if not is_instance_valid(cue):
+		return found
+	for child in cue.get_children():
+		_collect_children(child, found)
+	return found
+
+
+func _collect_children(node: Node, found: Array[Node]) -> void:
+	found.append(node)
+	for child in node.get_children():
+		_collect_children(child, found)
 
 
 ## Keep the held blank stitch panels inside the existing hand focus loop without
