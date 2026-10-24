@@ -23,6 +23,9 @@ func _initialize() -> void:
 	_test_button_eye_twelve_catalog_attacks()
 	_test_button_eye_latch_and_rejections()
 	_test_button_eye_overflow_and_lethal()
+	_test_visor_rivet_shot_variants()
+	_test_visor_other_five_families_and_alternate_wearers()
+	_test_visor_stale_failed_and_torn_rejections()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_attacks_test: ",
@@ -1086,6 +1089,10 @@ func _test_worn_pincushion_attacks() -> void:
 				"torn other-wearer actually downed in CombatParty")
 			_check(ctx.torn.observe_battle_end("tear_warden", start, party.get_heroes())["ok"],
 				"torn ledger records downed other wearer")
+			var ts_torn = ctx.torn.read_state()
+			var w_snap = ctx.wardrobe.get_snapshot()
+			_check(ctx.wardrobe.refresh_run_context(ts_torn.heroes, w_snap.owned, w_snap.scraps, w_snap.gold, w_snap.cards, w_snap),
+				"wardrobe torn sync")
 		resolver = CombatTinkerPoolAttacks.new()
 		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn)
 			and resolver._patches.damage_bonus("tinker") == 0,
@@ -1513,6 +1520,10 @@ func _test_button_eye_latch_and_rejections() -> void:
 			_check(ctx.torn.observe_battle_end("tear_tinker", start,
 				party.get_heroes()).get("ok", false),
 				"run torn ledger observes genuinely downed Button Eye wearer")
+			var ts_torn: Dictionary = ctx.torn.read_state()
+			var w_snap: Dictionary = ctx.wardrobe.get_snapshot()
+			_check(ctx.wardrobe.refresh_run_context(ts_torn.heroes, w_snap.owned, w_snap.scraps, w_snap.gold, w_snap.cards, w_snap),
+				"wardrobe torn sync")
 		first = CombatTinkerFirstAttack.new()
 		pinned = CombatPinned.new()
 		resolver = CombatTinkerPoolAttacks.new(first, pinned)
@@ -1616,3 +1627,382 @@ func _test_button_eye_overflow_and_lethal() -> void:
 			"combined patches Ricochet hit %d keeps +1 raw and post-card status" % index)
 	_check(foes.get_enemies() == expected_foes,
 		"combined-patch Ricochet final roster is identical to unexposed 3-hit oracle plus one status")
+
+
+func _visor_context(wearer: String = "tinker",
+		sew_visor: bool = true, sew_arm: bool = false) -> Dictionary:
+	var raw_m05: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	var raw_m04: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m04_attack_patches.json"))
+	_check(raw_m05 is Array and raw_m04 is Array, "patch catalogs loaded as arrays")
+	var definitions: Array = []
+	var visor_found := false
+	if raw_m05 is Array:
+		for entry in raw_m05:
+			if entry is Dictionary and entry.has("id") and entry.has("slot"):
+				definitions.append({"id": entry["id"], "slot": entry["slot"]})
+				if entry["id"] == "button_glass_visor":
+					visor_found = true
+	if raw_m04 is Array:
+		for entry in raw_m04:
+			if entry is Dictionary and entry.has("id") and entry.has("slot"):
+				definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	_check(visor_found, "button_glass_visor defined in M05 head catalog")
+	var owned: Array = []
+	if sew_visor:
+		owned.append("button_glass_visor")
+	if sew_arm:
+		owned.append("pincushion_arm")
+	var starter_heroes: Array = _party().get_heroes()
+	var torn := RunTornMending.new(starter_heroes)
+	var wardrobe := RunPatchWardrobe.new(starter_heroes, owned, definitions, 3)
+	_check(torn.is_valid() and wardrobe.is_valid(), "genuine run ledgers valid for Visor")
+	if sew_visor:
+		var result: Dictionary = wardrobe.sew("button_glass_visor", wearer, "HEAD",
+			"sew_button_glass_visor", wardrobe.get_snapshot())
+		_check(result.get("ok", false)
+			and wardrobe.get_snapshot()["worn"][wearer]["HEAD"] == "button_glass_visor",
+			"Button Glass Visor sewn on actual HEAD slot of " + wearer)
+	if sew_arm:
+		var result: Dictionary = wardrobe.sew("pincushion_arm", "tinker", "ARM",
+			"sew_arm_with_visor", wardrobe.get_snapshot())
+		_check(result.get("ok", false)
+			and wardrobe.get_snapshot()["worn"]["tinker"]["ARM"] == "pincushion_arm",
+			"pincushion_arm sewn on actual ARM slot")
+	return {"wardrobe": wardrobe, "torn": torn}
+
+
+func _visor_snapshot(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
+		first: CombatTinkerFirstAttack, resolver: CombatTinkerPoolAttacks,
+		ctx: Dictionary, pinned: CombatPinned) -> Dictionary:
+	var result: Dictionary = _snapshot(deck, party, enemies, first)
+	if resolver._patches != null:
+		result["patch_latches"] = resolver._patches.latch_snapshot()
+		result["patch_active"] = resolver._patches.active_snapshot()
+	if resolver.get_head_patches() != null:
+		result["head_projection"] = resolver.get_head_patches().read_projection()
+	result["wardrobe"] = ctx.wardrobe.get_snapshot()
+	result["torn"] = ctx.torn.read_state()
+	result["pins"] = pinned._pinner_by_position.duplicate(true)
+	return result
+
+
+func _visor_reject(resolver: CombatTinkerPoolAttacks, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, first: CombatTinkerFirstAttack,
+		ctx: Dictionary, pinned: CombatPinned, card_id: String, target: int,
+		label: String) -> void:
+	var before: Dictionary = _visor_snapshot(deck, party, enemies, first,
+		resolver, ctx, pinned)
+	_check(resolver.play_attack(deck, party, enemies, card_id, target) == _failed_play(),
+		label + " rejected in production resolver")
+	_check(_visor_snapshot(deck, party, enemies, first, resolver, ctx, pinned) == before,
+		label + " rejects atomically (latches, cards, energy, rosters, pins, RNG and ledgers)")
+
+
+func _test_visor_rivet_shot_variants() -> void:
+	# AC1: With a genuine RunPatchWardrobe/RunTornMending pair showing Button Glass Visor sewn
+	# on the living Tinker, an actually held and legal Rivet Shot or Rivet Shot+ applies
+	# Exposed 2 (authored 1 + HEAD 1) to its chosen enemy after the hit, reports the same
+	# amount in its hit receipt, and otherwise keeps authored damage, Tinker's first-attack +3,
+	# cost, position, energy and discard.
+	for upgrade in [false, true]:
+		for tinker_slot in [2, 3]:
+			var card_id := "tinker_rivet_shot_plus" if upgrade else "tinker_rivet_shot"
+			var base_damage := 6 if upgrade else 4
+			var party_order := ["warden", "tinker", "seamstress"] if tinker_slot == 2 else ["warden", "seamstress", "tinker"]
+			var party := _party(party_order)
+			_check(party.get_hero(tinker_slot)["id"] == "tinker", "Tinker at legal position %d" % tinker_slot)
+			
+			var ctx := _visor_context("tinker", true, false)
+			var first := CombatTinkerFirstAttack.new()
+			var pinned := CombatPinned.new()
+			var resolver := CombatTinkerPoolAttacks.new(first, pinned)
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), card_id + " visor bound successfully")
+			_check(resolver.get_head_patches() != null and resolver.get_head_patches().read_projection().get("ok", false),
+				card_id + " head projection is valid")
+			_check(resolver.get_head_patches().get_bonus("tinker", card_id, "exposed") == 1,
+				card_id + " head bonus is exactly 1")
+
+			# Target enemy 1 has 2 block and 50 HP.
+			var enemies := _enemies([50, 50, 50])
+			_check(enemies.gain_block(1, 2), "enemy 1 gains 2 block")
+			
+			var deck := _deck([card_id, "warden_strike"], 774)
+			var rng_before: int = deck._rng.state
+			var energy_before: int = deck.energy
+
+			var play: Dictionary = resolver.play_attack(deck, party, enemies, card_id, 1)
+			_check(play.get("ok", false), card_id + " play succeeds")
+			_check(play.get("hits", []).size() == 1, card_id + " exactly one hit")
+			
+			var hit: Dictionary = play["hits"][0]
+			_check(hit["position"] == 1, card_id + " hit position is target enemy 1")
+			var expected_damage: int = base_damage + 3 # first attack bonus +3
+			_check(hit["damage"] == expected_damage, card_id + " hit damage %d matches base %d + first-attack 3" % [hit["damage"], base_damage])
+			_check(hit["block_absorbed"] == 2, card_id + " block absorbed 2")
+			_check(hit["hp_loss"] == expected_damage - 2, card_id + " hp loss matches damage minus block")
+			_check(hit["statuses"] == {"exposed": 2}, card_id + " hit receipt reports Exposed 2")
+
+			# Assert target enemy status AFTER damage has Exposed 2
+			_check(enemies.get_enemy(1).get("statuses", {}) == {"exposed": 2}, card_id + " enemy 1 has Exposed 2 after hit")
+			_check(enemies.get_enemy(1)["hp"] == 50 - (expected_damage - 2), card_id + " enemy 1 hp correctly decremented")
+			_check(enemies.get_enemy(1)["block"] == 0, card_id + " enemy 1 block absorbed")
+
+			# Assert energy, discard, first-attack consumed, and NO extra RNG
+			_check(deck.energy == energy_before - 1, card_id + " energy deducted by cost 1")
+			_check(deck.discard_pile == [card_id], card_id + " card moved to discard once")
+			_check(not deck.hand.has(card_id), card_id + " card removed from hand")
+			_check(first._consumed, card_id + " first-attack latch consumed")
+			_check(deck._rng.state == rng_before, card_id + " non-random attack draws no RNG")
+
+	# Second attack in same turn: first-attack +3 is consumed, but Visor Exposed 2 continues!
+	var party2 := _party(["warden", "tinker", "seamstress"])
+	var ctx2 := _visor_context("tinker", true, false)
+	var first2 := CombatTinkerFirstAttack.new()
+	var resolver2 := CombatTinkerPoolAttacks.new(first2)
+	_check(resolver2.bind_patch_wardrobe(ctx2.wardrobe, ctx2.torn), "two-attack visor bind")
+	var deck2 := _deck(["tinker_rivet_shot", "tinker_rivet_shot_plus"])
+	var enemies2 := _enemies([100, 100, 100])
+	
+	var play1: Dictionary = resolver2.play_attack(deck2, party2, enemies2, "tinker_rivet_shot", 1)
+	_check(play1["ok"] and play1["hits"][0]["damage"] == 7 and play1["hits"][0]["statuses"] == {"exposed": 2},
+		"first attack gets +3 damage and applies Exposed 2")
+	_check(enemies2.get_enemy(1).get("statuses", {}) == {"exposed": 2}, "enemy 1 has Exposed 2")
+	_check(enemies2.get_enemy(1)["hp"] == 93, "enemy 1 hp is 100 - 7 = 93")
+
+	# Second attack against same enemy: enemy already has Exposed 2 (+50% damage!).
+	# Rivet Shot+ deals 6 raw damage. Since enemy is Exposed, 6 * 1.5 = 9 damage!
+	# (first-attack bonus is consumed: 0 bonus).
+	# And Rivet Shot+ applies another Exposed 2 (enemy now has Exposed 4).
+	var play2: Dictionary = resolver2.play_attack(deck2, party2, enemies2, "tinker_rivet_shot_plus", 1)
+	_check(play2["ok"], "second attack succeeds")
+	_check(play2["hits"][0]["damage"] == 9, "second attack deals 9 damage (6 raw + 50% from preexisting Exposed)")
+	_check(play2["hits"][0]["statuses"] == {"exposed": 2}, "second attack hit receipt reports Exposed 2")
+	_check(enemies2.get_enemy(1).get("statuses", {}) == {"exposed": 4}, "enemy 1 has cumulative Exposed 4")
+	_check(enemies2.get_enemy(1)["hp"] == 84, "enemy 1 hp is 93 - 9 = 84")
+	_check(deck2.energy == 1, "two energy spent total")
+	_check(deck2.discard_pile == ["tinker_rivet_shot", "tinker_rivet_shot_plus"], "both cards discarded")
+
+
+func _test_visor_other_five_families_and_alternate_wearers() -> void:
+	# AC2: With no visor, a different wearer, or one of the other five Tinker direct-fire
+	# families (base or +), the HEAD Exposed increment is zero. Existing M04 Button Eye/Pincushion,
+	# Pinned, seeded Ricochet, area-hit and Tinker-first-attack behavior stays unchanged.
+	var non_rivet_rows := [
+		{"base": "tinker_spring_trap", "damage": [3, 4], "cost": 1, "from": [2, 3], "kind": "enemy_single"},
+		{"base": "tinker_scatter_bolts", "damage": [3, 4], "cost": 1, "from": [3], "kind": "enemy_all"},
+		{"base": "tinker_long_barrel", "damage": [12, 16], "cost": 2, "from": [3], "kind": "enemy_single"},
+		{"base": "tinker_ricochet", "damage": [4, 6], "cost": 1, "from": [2, 3], "kind": "enemy_random"},
+		{"base": "tinker_bobbin_cannon", "damage": [20, 26], "cost": 3, "from": [3], "kind": "enemy_single"}
+	]
+	for row in non_rivet_rows:
+		for upgrade in [false, true]:
+			var id: String = row["base"] + ("_plus" if upgrade else "")
+			var raw_dmg: int = row["damage"][1 if upgrade else 0]
+			var party := _party(["warden", "seamstress", "tinker"])
+			var ctx := _visor_context("tinker", true, false)
+			var first := CombatTinkerFirstAttack.new()
+			var pinned := CombatPinned.new()
+			var resolver := CombatTinkerPoolAttacks.new(first, pinned)
+			_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), id + " visor bound")
+			_check(resolver.get_head_patches().get_bonus("tinker", id, "exposed") == 0,
+				id + " non-rivet direct-fire card gains zero HEAD exposed bonus")
+
+			var enemies := _enemies([80, 80, 80])
+			var deck := _deck([id], 39)
+			var before_rng: int = deck._rng.state
+			var target: int = 1 if row["kind"] == "enemy_single" else 0
+			var play: Dictionary = resolver.play_attack(deck, party, enemies, id, target)
+			_check(play.get("ok", false), id + " played with visor sewn")
+			
+			for hit in play.get("hits", []):
+				_check(hit.get("statuses", {}) == {}, id + " hit has no exposed status")
+			for enemy in enemies.get_enemies():
+				_check(enemy.get("statuses", {}).get("exposed", 0) == 0, id + " enemy has no exposed")
+
+			if row["base"] == "tinker_spring_trap":
+				_check(pinned.pinner_for_enemy(1) == "tinker", id + " Spring Trap sets pin")
+			elif row["base"] == "tinker_scatter_bolts":
+				_check(play["hits"].size() == 3, id + " hits all 3 enemies")
+			elif row["base"] == "tinker_ricochet":
+				_check(play["hits"].size() == 3, id + " hits 3 random targets")
+
+	# Visor sewn to another living hero (Warden): Tinker Rivet Shot retains authored Exposed 1
+	for upgrade in [false, true]:
+		var id: String = "tinker_rivet_shot" + ("_plus" if upgrade else "")
+		var party := _party(["warden", "tinker", "seamstress"])
+		var ctx := _visor_context("warden", true, false)
+		var first := CombatTinkerFirstAttack.new()
+		var resolver := CombatTinkerPoolAttacks.new(first)
+		_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), id + " foreign visor bind")
+		_check(resolver.get_head_patches().get_bonus("tinker", id, "exposed") == 0,
+			id + " foreign visor grants 0 bonus to Tinker")
+		var enemies := _enemies([50, 50, 50])
+		var deck := _deck([id])
+		var play: Dictionary = resolver.play_attack(deck, party, enemies, id, 1)
+		_check(play.get("ok", false) and play["hits"][0]["statuses"] == {"exposed": 1},
+			id + " foreign visor Rivet retains authored Exposed 1")
+		_check(enemies.get_enemy(1).get("statuses", {}) == {"exposed": 1},
+			id + " foreign visor target has authored Exposed 1")
+
+	# Ordinary unbound resolver: Rivet retains authored Exposed 1
+	for upgrade in [false, true]:
+		var id: String = "tinker_rivet_shot" + ("_plus" if upgrade else "")
+		var party := _party(["warden", "tinker", "seamstress"])
+		var first := CombatTinkerFirstAttack.new()
+		var resolver := CombatTinkerPoolAttacks.new(first)
+		_check(resolver.get_head_patches() == null, id + " unbound resolver has null head patches")
+		var enemies := _enemies([50, 50, 50])
+		var deck := _deck([id])
+		var play: Dictionary = resolver.play_attack(deck, party, enemies, id, 1)
+		_check(play.get("ok", false) and play["hits"][0]["statuses"] == {"exposed": 1},
+			id + " unbound Rivet retains authored Exposed 1")
+		_check(enemies.get_enemy(1).get("statuses", {}) == {"exposed": 1},
+			id + " unbound target has authored Exposed 1")
+
+	# Co-wearing Button Glass Visor (HEAD) and Pincushion Arm (ARM)
+	var party_co := _party(["warden", "tinker", "seamstress"])
+	var ctx_co := _visor_context("tinker", true, true)
+	var first_co := CombatTinkerFirstAttack.new()
+	var pinned_co := CombatPinned.new()
+	var resolver_co := CombatTinkerPoolAttacks.new(first_co, pinned_co)
+	_check(resolver_co.bind_patch_wardrobe(ctx_co.wardrobe, ctx_co.torn), "co-worn bind")
+	_check(resolver_co._patches.damage_bonus("tinker") == 1, "Pincushion provides +1 damage bonus")
+	_check(resolver_co.get_head_patches().get_bonus("tinker", "tinker_rivet_shot", "exposed") == 1,
+		"Visor provides +1 exposed bonus")
+	var foes_co := _enemies([50, 50, 50])
+	var deck_co := _deck(["tinker_rivet_shot", "tinker_spring_trap"])
+	# Rivet Shot: 4 base + 3 first + 1 pincushion = 8 damage, Exposed 2
+	var play_rivet: Dictionary = resolver_co.play_attack(deck_co, party_co, foes_co, "tinker_rivet_shot", 1)
+	_check(play_rivet.get("ok", false) and play_rivet["hits"][0]["damage"] == 8
+		and play_rivet["hits"][0]["statuses"] == {"exposed": 2},
+		"co-worn Rivet gets +1 damage and Exposed 2")
+	# Spring Trap: 3 base + 0 first + 1 pincushion = 4 damage, Exposed 0
+	var play_trap: Dictionary = resolver_co.play_attack(deck_co, party_co, foes_co, "tinker_spring_trap", 2)
+	_check(play_trap.get("ok", false) and play_trap["hits"][0]["damage"] == 4
+		and play_trap["hits"][0]["statuses"] == {},
+		"co-worn Spring Trap gets +1 damage and no exposed")
+
+	# Foreign Pinned with Visor sewn: +5 before weak/exposed, consumed on hit
+	var party_pin := _party(["warden", "tinker", "seamstress"])
+	var ctx_pin := _visor_context("tinker", true, false)
+	var first_pin := CombatTinkerFirstAttack.new()
+	var pinned_pin := CombatPinned.new()
+	var resolver_pin := CombatTinkerPoolAttacks.new(first_pin, pinned_pin)
+	_check(resolver_pin.bind_patch_wardrobe(ctx_pin.wardrobe, ctx_pin.torn), "pin visor bind")
+	var foes_pin := _enemies([50, 50, 50])
+	_check(pinned_pin.pin_enemy(foes_pin, 1, "warden"), "warden pins enemy 1")
+	var deck_pin := _deck(["tinker_rivet_shot"])
+	# 4 base + 3 first + 5 foreign pin = 12 damage, Exposed 2
+	var play_pin: Dictionary = resolver_pin.play_attack(deck_pin, party_pin, foes_pin, "tinker_rivet_shot", 1)
+	_check(play_pin.get("ok", false) and play_pin["hits"][0]["damage"] == 12
+		and play_pin["hits"][0]["statuses"] == {"exposed": 2},
+		"pinned Rivet gets +5 damage and Exposed 2")
+	_check(pinned_pin.pinner_for_enemy(1).is_empty(), "pinned token consumed on hit")
+
+
+func _test_visor_stale_failed_and_torn_rejections() -> void:
+	# AC3: An explicitly failed, stale or torn run HEAD binding cannot be treated as
+	# an unpatched valid cast; refusal leaves hand, energy, discard, enemy HP/Block/statuses,
+	# first-attack latch, patch ledgers and RNG unchanged. Unbound ordinary play remains authored vanilla.
+
+	# 1. Stale binding via Rest/re-sew
+	var party := _party(["warden", "tinker", "seamstress"])
+	var ctx := _visor_context("tinker", true, false)
+	var first := CombatTinkerFirstAttack.new()
+	var pinned := CombatPinned.new()
+	var resolver := CombatTinkerPoolAttacks.new(first, pinned)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "stale resew bind")
+	# Perform real Rest/re-sew moving visor from Tinker to Warden
+	_check(ctx.wardrobe.start_rest("rest_1", ctx.wardrobe.get_snapshot()).get("ok", false), "start rest")
+	var resew_res: Dictionary = ctx.wardrobe.re_sew("button_glass_visor", "tinker", "warden",
+		"rest_1", "resew_to_warden", ctx.wardrobe.get_snapshot())
+	_check(resew_res.get("ok", false), "real rest resew succeeds")
+	_check(ctx.wardrobe.end_rest("rest_1", ctx.wardrobe.get_snapshot()).get("ok", false), "end rest")
+	var deck := _deck(["tinker_rivet_shot"])
+	var foes := _enemies([50, 50, 50])
+	_visor_reject(resolver, deck, party, foes, first, ctx, pinned,
+		"tinker_rivet_shot", 1, "stale resew wardrobe")
+
+	# 2. Stale binding via tear
+	party = _party(["warden", "tinker", "seamstress"])
+	ctx = _visor_context("tinker", true, false)
+	first = CombatTinkerFirstAttack.new()
+	pinned = CombatPinned.new()
+	resolver = CombatTinkerPoolAttacks.new(first, pinned)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "stale tear bind")
+	var start_roster: Array = ctx.torn.read_state()["heroes"]
+	_check(party.apply_damage(1, 999) and party.is_downed(1), "down warden in party")
+	_check(ctx.torn.observe_battle_end("tear_warden", start_roster, party.get_heroes())["ok"],
+		"torn ledger records battle end tear")
+	deck = _deck(["tinker_rivet_shot"])
+	foes = _enemies([50, 50, 50])
+	_visor_reject(resolver, deck, party, foes, first, ctx, pinned,
+		"tinker_rivet_shot", 1, "stale tear ledger")
+
+	# 3. Explicit failed binding
+	party = _party(["warden", "tinker", "seamstress"])
+	ctx = _visor_context("tinker", true, false)
+	first = CombatTinkerFirstAttack.new()
+	pinned = CombatPinned.new()
+	resolver = CombatTinkerPoolAttacks.new(first, pinned)
+	_check(not resolver.bind_patch_wardrobe(null, ctx.torn), "bind null wardrobe fails")
+	_check(resolver.get_head_patches() != null and not resolver.get_head_patches().read_projection().get("ok", false),
+		"head patches invalid after failed bind")
+	deck = _deck(["tinker_rivet_shot"])
+	foes = _enemies([50, 50, 50])
+	_visor_reject(resolver, deck, party, foes, first, ctx, pinned,
+		"tinker_rivet_shot", 1, "explicit null bind")
+
+	# 4. Torn Tinker wearer at bind time
+	party = _party()
+	ctx = _visor_context("tinker", true, false)
+	var start_h: Array = ctx.torn.read_state()["heroes"]
+	_check(party.apply_damage(3, 26) and party.is_downed(3), "down tinker in combat")
+	_check(ctx.torn.observe_battle_end("tear_tinker", start_h, party.get_heroes())["ok"],
+		"record torn tinker")
+	var ts_torn: Dictionary = ctx.torn.read_state()
+	var w_snap: Dictionary = ctx.wardrobe.get_snapshot()
+	_check(ctx.wardrobe.refresh_run_context(ts_torn.heroes, w_snap.owned, w_snap.scraps, w_snap.gold, w_snap.cards, w_snap),
+		"sync wardrobe for torn tinker")
+	first = CombatTinkerFirstAttack.new()
+	pinned = CombatPinned.new()
+	resolver = CombatTinkerPoolAttacks.new(first, pinned)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "bind succeeds with torn tinker")
+	deck = _deck(["tinker_rivet_shot"])
+	foes = _enemies([50, 50, 50])
+	_visor_reject(resolver, deck, party, foes, first, ctx, pinned,
+		"tinker_rivet_shot", 1, "torn tinker wearer")
+
+	# Divergent party test (Lesson 39): party has living Tinker, but torn ledger has Tinker torn
+	var fresh_party := _party(["warden", "tinker", "seamstress"])
+	_check(not fresh_party.is_downed(2), "fresh party has living Tinker")
+	var fresh_deck := _deck(["tinker_rivet_shot"])
+	var fresh_foes := _enemies([50, 50, 50])
+	_visor_reject(resolver, fresh_deck, fresh_party, fresh_foes, first, ctx, pinned,
+		"tinker_rivet_shot", 1, "divergent party with torn ledger tinker")
+
+	# 5. Status capacity overflow refusal
+	party = _party(["warden", "tinker", "seamstress"])
+	ctx = _visor_context("tinker", true, false)
+	first = CombatTinkerFirstAttack.new()
+	pinned = CombatPinned.new()
+	resolver = CombatTinkerPoolAttacks.new(first, pinned)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "overflow bind")
+	foes = _enemies([100, 100, 100])
+	# Set enemy 1 Exposed to MAX_INT - 1 (adding 2 would overflow MAX_INT)
+	foes._enemies[0]["statuses"] = {"exposed": CombatEnemies.MAX_INT - 1}
+	deck = _deck(["tinker_rivet_shot"])
+	_visor_reject(resolver, deck, party, foes, first, ctx, pinned,
+		"tinker_rivet_shot", 1, "Exposed status capacity overflow")
+
+	# 6. Recovery with fresh valid rebind
+	party = _party(["warden", "tinker", "seamstress"])
+	ctx = _visor_context("tinker", true, false)
+	_check(resolver.bind_patch_wardrobe(ctx.wardrobe, ctx.torn), "recovery rebind")
+	foes = _enemies([50, 50, 50])
+	deck = _deck(["tinker_rivet_shot"])
+	var play_recovered: Dictionary = resolver.play_attack(deck, party, foes, "tinker_rivet_shot", 1)
+	_check(play_recovered.get("ok", false) and play_recovered["hits"][0]["statuses"] == {"exposed": 2},
+		"recovered resolver plays Rivet with Exposed 2")
