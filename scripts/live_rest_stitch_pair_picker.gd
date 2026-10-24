@@ -140,13 +140,13 @@ func _ready() -> void:
 	second_tile_scroll.add_child(second_tile_container)
 
 	# Legacy dropdown selectors kept synchronized for existing contracts/tests.
-	# Outside the normal visible Tab loop so they do not steal keyboard focus from real tiles.
+	# They are invisible data mirrors, never keyboard stops: focus belongs to the
+	# illustrated tiles, Change First, Confirm Stitch and the Rest dismissal.
 	first_selector = _option(Vector2(30, 60), "Choose first original card")
 	second_selector = _option(Vector2(30, 117), "Choose other-hero card")
 	first_selector.modulate = Color(1, 1, 1, 0)
 	second_selector.modulate = Color(1, 1, 1, 0)
-	first_selector.focus_mode = Control.FOCUS_ALL
-	second_selector.focus_mode = Control.FOCUS_ALL
+	_keep_legacy_selectors_unfocusable()
 	first_selector.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	second_selector.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -192,8 +192,6 @@ func _ready() -> void:
 	confirm_button.size = Vector2(650, 44)
 	confirm_button.focus_mode = Control.FOCUS_ALL
 	add_child(confirm_button)
-	first_selector.focus_next = first_selector.get_path_to(second_selector)
-	second_selector.focus_next = second_selector.get_path_to(confirm_button)
 	if early_service != null:
 		bind(early_service, early_source)
 	else:
@@ -212,6 +210,31 @@ func _option(at: Vector2, placeholder: String) -> OptionButton:
 	result.select(-1)
 	add_child(result)
 	return result
+
+
+## The authored dropdowns stay programmatically selectable and keep their rows,
+## metadata and item_selected contract, but must never be a keyboard stop.
+func _keep_legacy_selectors_unfocusable() -> void:
+	if first_selector != null and is_instance_valid(first_selector):
+		first_selector.focus_mode = Control.FOCUS_NONE
+		first_selector.focus_next = NodePath()
+		first_selector.focus_previous = NodePath()
+	if second_selector != null and is_instance_valid(second_selector):
+		second_selector.focus_mode = Control.FOCUS_NONE
+		second_selector.focus_next = NodePath()
+		second_selector.focus_previous = NodePath()
+
+
+func _dismiss_button() -> Button:
+	if get_parent() == null:
+		return null
+	return get_parent().get_node_or_null("DismissStitch") as Button
+
+
+## Only a mounted, visible and enabled visible control may enter Tab traversal.
+func _is_active_action(button: Button) -> bool:
+	return button != null and is_instance_valid(button) and button.is_inside_tree() \
+		and button.is_visible_in_tree() and not button.disabled
 
 
 ## A small inert illustration surface for one stitch half.
@@ -587,9 +610,8 @@ func select_second_tile(deck_index: int) -> void:
 # --- Rebuilding Navigation Focus Chain ---
 
 func _rebuild_focus_chain() -> void:
-	var dismiss: Button = null
-	if get_parent() != null:
-		dismiss = get_parent().get_node_or_null("DismissStitch") as Button
+	_keep_legacy_selectors_unfocusable()
+	var dismiss: Button = _dismiss_button()
 
 	if _submitted:
 		if first_selector != null:
@@ -617,91 +639,101 @@ func _rebuild_focus_chain() -> void:
 			dismiss.focus_previous = dismiss.get_path_to(dismiss)
 		return
 
-	first_selector.focus_mode = Control.FOCUS_ALL
-	second_selector.focus_mode = Control.FOCUS_ALL
-	first_selector.focus_next = first_selector.get_path_to(second_selector)
-	second_selector.focus_next = second_selector.get_path_to(confirm_button)
-
+	# Only the visible stage's enabled actions are keyboard stops. Active
+	# controls keep their focus mode (clearing it would release the focus the
+	# player is standing on); the other stage's tiles and inactive actions leave.
+	var has_confirm: bool = second_tile_scroll.visible and _is_active_action(confirm_button)
+	var has_change_first: bool = second_tile_scroll.visible \
+		and is_instance_valid(change_first_button) and change_first_button.visible \
+		and not change_first_button.disabled
+	var active_first: Array[Button] = []
+	var active_second: Array[Button] = []
 	if first_tile_scroll.visible:
-		var active: Array[Button] = []
 		for tile in first_tiles:
 			if is_instance_valid(tile) and tile.is_inside_tree() and tile.visible and not tile.disabled:
-				active.append(tile)
-		if active.is_empty():
+				active_first.append(tile)
+	elif second_tile_scroll.visible:
+		for tile in second_tiles:
+			if is_instance_valid(tile) and tile.is_inside_tree() and tile.visible and not tile.disabled:
+				active_second.append(tile)
+	for tile in first_tiles:
+		if is_instance_valid(tile) and not active_first.has(tile):
+			tile.focus_mode = Control.FOCUS_NONE
+	for tile in second_tiles:
+		if is_instance_valid(tile) and not active_second.has(tile):
+			tile.focus_mode = Control.FOCUS_NONE
+	if is_instance_valid(change_first_button):
+		change_first_button.focus_mode = Control.FOCUS_ALL if has_change_first else Control.FOCUS_NONE
+	if confirm_button != null:
+		confirm_button.focus_mode = Control.FOCUS_ALL if has_confirm else Control.FOCUS_NONE
+	for tile in active_first:
+		tile.focus_mode = Control.FOCUS_ALL
+	for tile in active_second:
+		tile.focus_mode = Control.FOCUS_ALL
+
+	if first_tile_scroll.visible:
+		if active_first.is_empty():
 			if dismiss != null:
 				dismiss.focus_next = dismiss.get_path_to(dismiss)
 				dismiss.focus_previous = dismiss.get_path_to(dismiss)
 			return
-		for i in range(active.size()):
-			active[i].focus_mode = Control.FOCUS_ALL
+		for i in range(active_first.size()):
 			if i > 0:
-				active[i].focus_previous = active[i].get_path_to(active[i - 1])
-				active[i].focus_neighbor_left = active[i].get_path_to(active[i - 1])
-			if i < active.size() - 1:
-				active[i].focus_next = active[i].get_path_to(active[i + 1])
-				active[i].focus_neighbor_right = active[i].get_path_to(active[i + 1])
+				active_first[i].focus_previous = active_first[i].get_path_to(active_first[i - 1])
+				active_first[i].focus_neighbor_left = active_first[i].get_path_to(active_first[i - 1])
+			if i < active_first.size() - 1:
+				active_first[i].focus_next = active_first[i].get_path_to(active_first[i + 1])
+				active_first[i].focus_neighbor_right = active_first[i].get_path_to(active_first[i + 1])
 		if dismiss != null:
-			dismiss.focus_next = dismiss.get_path_to(active.front())
-			active.front().focus_previous = active.front().get_path_to(dismiss)
-			active.back().focus_next = active.back().get_path_to(dismiss)
-			dismiss.focus_previous = dismiss.get_path_to(active.back())
+			dismiss.focus_next = dismiss.get_path_to(active_first.front())
+			active_first.front().focus_previous = active_first.front().get_path_to(dismiss)
+			active_first.back().focus_next = active_first.back().get_path_to(dismiss)
+			dismiss.focus_previous = dismiss.get_path_to(active_first.back())
 	elif second_tile_scroll.visible:
-		var has_confirm: bool = is_instance_valid(confirm_button) and confirm_button.visible and not confirm_button.disabled
-		if has_confirm:
-			confirm_button.focus_mode = Control.FOCUS_ALL
-		if is_instance_valid(change_first_button) and change_first_button.visible:
-			change_first_button.focus_mode = Control.FOCUS_ALL
-
-		var active_tiles: Array[Button] = []
-		for tile in second_tiles:
-			if is_instance_valid(tile) and tile.is_inside_tree() and tile.visible and not tile.disabled:
-				tile.focus_mode = Control.FOCUS_ALL
-				active_tiles.append(tile)
-
-		for i in range(active_tiles.size()):
+		for i in range(active_second.size()):
 			if i > 0:
-				active_tiles[i].focus_neighbor_left = active_tiles[i].get_path_to(active_tiles[i - 1])
-				active_tiles[i].focus_previous = active_tiles[i].get_path_to(active_tiles[i - 1])
-			elif is_instance_valid(change_first_button) and change_first_button.visible:
-				active_tiles[i].focus_neighbor_left = active_tiles[i].get_path_to(change_first_button)
-				active_tiles[i].focus_previous = active_tiles[i].get_path_to(change_first_button)
+				active_second[i].focus_neighbor_left = active_second[i].get_path_to(active_second[i - 1])
+				active_second[i].focus_previous = active_second[i].get_path_to(active_second[i - 1])
+			elif has_change_first:
+				active_second[i].focus_neighbor_left = active_second[i].get_path_to(change_first_button)
+				active_second[i].focus_previous = active_second[i].get_path_to(change_first_button)
 
-			if i < active_tiles.size() - 1:
-				active_tiles[i].focus_neighbor_right = active_tiles[i].get_path_to(active_tiles[i + 1])
+			if i < active_second.size() - 1:
+				active_second[i].focus_neighbor_right = active_second[i].get_path_to(active_second[i + 1])
 
 			if has_confirm:
-				active_tiles[i].focus_next = active_tiles[i].get_path_to(confirm_button)
-				active_tiles[i].focus_neighbor_bottom = active_tiles[i].get_path_to(confirm_button)
-			elif i < active_tiles.size() - 1:
-				active_tiles[i].focus_next = active_tiles[i].get_path_to(active_tiles[i + 1])
+				active_second[i].focus_next = active_second[i].get_path_to(confirm_button)
+				active_second[i].focus_neighbor_bottom = active_second[i].get_path_to(confirm_button)
+			elif i < active_second.size() - 1:
+				active_second[i].focus_next = active_second[i].get_path_to(active_second[i + 1])
 			elif dismiss != null:
-				active_tiles[i].focus_next = active_tiles[i].get_path_to(dismiss)
+				active_second[i].focus_next = active_second[i].get_path_to(dismiss)
 
-		if is_instance_valid(change_first_button) and change_first_button.visible:
-			if not active_tiles.is_empty():
-				change_first_button.focus_next = change_first_button.get_path_to(active_tiles.front())
-				change_first_button.focus_neighbor_right = change_first_button.get_path_to(active_tiles.front())
+		if has_change_first:
+			if not active_second.is_empty():
+				change_first_button.focus_next = change_first_button.get_path_to(active_second.front())
+				change_first_button.focus_neighbor_right = change_first_button.get_path_to(active_second.front())
 			if dismiss != null:
 				change_first_button.focus_previous = change_first_button.get_path_to(dismiss)
 				change_first_button.focus_neighbor_left = change_first_button.get_path_to(dismiss)
 
 		if has_confirm:
 			var sel_tile: Button = second_tile_for_index(_selected_second_index)
-			var target_tile: Button = sel_tile if sel_tile != null else (active_tiles.front() if not active_tiles.is_empty() else null)
+			var target_tile: Button = sel_tile if sel_tile != null else (active_second.front() if not active_second.is_empty() else null)
 			if target_tile != null:
 				confirm_button.focus_previous = confirm_button.get_path_to(target_tile)
 				confirm_button.focus_neighbor_top = confirm_button.get_path_to(target_tile)
 			if dismiss != null:
 				confirm_button.focus_next = confirm_button.get_path_to(dismiss)
 				dismiss.focus_previous = dismiss.get_path_to(confirm_button)
-		elif not active_tiles.is_empty() and dismiss != null:
-			dismiss.focus_previous = dismiss.get_path_to(active_tiles.back())
+		elif not active_second.is_empty() and dismiss != null:
+			dismiss.focus_previous = dismiss.get_path_to(active_second.back())
 
 		if dismiss != null:
-			if is_instance_valid(change_first_button) and change_first_button.visible:
+			if has_change_first:
 				dismiss.focus_next = dismiss.get_path_to(change_first_button)
-			elif not active_tiles.is_empty():
-				dismiss.focus_next = dismiss.get_path_to(active_tiles.front())
+			elif not active_second.is_empty():
+				dismiss.focus_next = dismiss.get_path_to(active_second.front())
 
 
 func _focus_tile(tile: Button) -> void:
@@ -763,6 +795,8 @@ func clear() -> void:
 		first_selector.disabled = true
 		second_selector.disabled = true
 		confirm_button.disabled = true
+		_keep_legacy_selectors_unfocusable()
+		confirm_button.focus_mode = Control.FOCUS_NONE
 		summary_label.text = "Not available — choose two originals (3 scraps)."
 		first_half_label.text = ""
 		second_half_label.text = ""
@@ -796,6 +830,8 @@ func refresh() -> void:
 	first_selector.disabled = true
 	second_selector.disabled = true
 	confirm_button.disabled = true
+	_keep_legacy_selectors_unfocusable()
+	confirm_button.focus_mode = Control.FOCUS_NONE
 	if step_label != null:
 		step_label.text = "Stitch requested — awaiting Rest confirmation." if _submitted else "Rest Stitch unavailable"
 	summary_label.text = "Stitch requested — awaiting Rest confirmation." if _submitted else "Not available — no eligible pair (3 scraps required)."
@@ -805,6 +841,7 @@ func refresh() -> void:
 	_clear_thumbnails()
 	_clear_keyword_help()
 	if _submitted or not is_inside_tree() or not _model.is_available():
+		call_deferred("_rebuild_focus_chain")
 		return
 
 	for entry in _model.first_options():
@@ -986,6 +1023,8 @@ func _on_second_changed(item: int, epoch: int) -> void:
 	for tile in second_tiles:
 		_mark_tile_selected(tile, tile.get_meta("index") == index)
 	_update_preview()
+	# Confirm just became a visible action: refresh the visible-only Tab route.
+	call_deferred("_rebuild_focus_chain")
 
 
 ## Per-original authored Help; no aggregate descriptor or gameplay state involved.
