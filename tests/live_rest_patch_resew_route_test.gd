@@ -115,11 +115,9 @@ func _run() -> void:
 		if not await _routed_win(fixture, false):
 			break
 		await _activate(app.reward_buttons[3], keyboard)
-		# Prior-owned save fixture: the live reward catalog has one patch per slot.
-		var records := []
-		for path in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches"]:
-			for record in JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/%s.json" % path)):
-				records.append({"id": record.id, "slot": record.slot})
+		# Prior-owned save fixture uses the same complete authored slots as live rewards.
+		var records := RunAuthoredPatchDefinitions.load_definitions()
+		_check(not records.is_empty(), "complete authored reward wardrobe loads")
 		app.run_trinkets.assign(["button_eye", "pincushion_arm"])
 		wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, records,
 			app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)

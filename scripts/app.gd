@@ -1924,8 +1924,11 @@ func _build_card_reward() -> void:
 				run_stitch_descriptors, run_next_stitch_id)
 			prepared = fight_rewards.prepare()
 		else:
+			var patch_ids := _catalog_trinket_ids()
+			if patch_ids.is_empty():
+				return
 			multi_fight_rewards = RunMultiFightRewards.new(run_map, run_rng, party_carryover,
-				run_deck, session_gold, run_trinkets, records, _catalog_trinket_ids(),
+				run_deck, session_gold, run_trinkets, records, patch_ids,
 				run_stitch_descriptors, run_next_stitch_id)
 			prepared = multi_fight_rewards.prepare(_carryover_node, battle_result, party)
 		if not prepared.ok:
@@ -2059,14 +2062,35 @@ func _reward_candidate_records(party_ids: Array[String]) -> Array:
 
 
 ## Elite drops use the existing Shop catalog; no separate reward pool.
-func _catalog_trinket_ids() -> Array:
-	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
-	if not catalog is Dictionary or not catalog.get("trinkets") is Array:
+func _validated_patch_candidates(entries: Variant) -> Array:
+	if not entries is Array or entries.is_empty():
 		return []
-	var ids: Array = []
-	for entry in catalog.trinkets:
+	var definitions := RunAuthoredPatchDefinitions.load_definitions()
+	var authority := RunPatchWearerSummary._authority({})
+	if definitions.is_empty() or authority.is_empty():
+		return []
+	var slots := {}
+	for definition in definitions:
+		slots[definition.id] = definition.slot
+	var seen := {}
+	for entry in entries:
 		if not entry is Dictionary or not entry.get("id") is String:
 			return []
+		var id: String = entry.id
+		if not slots.has(id) or authority.slots.get(id) != slots[id] or seen.has(id) \
+			or not (entry.get("price") is int or entry.get("price") is float) \
+			or entry.price != 100:
+			return []
+		seen[id] = true
+	return entries.duplicate(true)
+
+
+func _catalog_trinket_ids() -> Array:
+	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	if not catalog is Dictionary:
+		return []
+	var ids: Array = []
+	for entry in _validated_patch_candidates(catalog.get("trinkets")):
 		ids.append(entry.id)
 	return ids
 
@@ -4153,13 +4177,16 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	if not (offers is Dictionary) or not (offers.get("cards") is Array) \
 		or not (offers.get("trinkets") is Array) or run_rng == null:
 		return false
+	var patch_candidates := _validated_patch_candidates(offers.trinkets)
+	if patch_candidates.is_empty():
+		return false
 	var party_ids: Array[String] = []
 	for hero in run_heroes:
 		if not (hero is Dictionary) or not (hero.get("id") is String):
 			return false
 		party_ids.append(hero.id)
 	var rng_before := run_rng.state
-	var stock := RunShopStockOffers.generate(run_rng, party_ids, offers.cards, offers.trinkets, run_trinkets)
+	var stock := RunShopStockOffers.generate(run_rng, party_ids, offers.cards, patch_candidates, run_trinkets)
 	if not stock.ok:
 		run_rng.state = rng_before
 		return false

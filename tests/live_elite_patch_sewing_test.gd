@@ -36,11 +36,17 @@ func _acquired_attack_check(patch_id: String) -> void:
 
 ## The production shared pool must naturally roll each new drop.
 func _attack_patch_claims() -> void:
-	for patch_id in ["button_eye", "pincushion_arm"]:
-		var next_seed := 1
+	## Verified starting seeds are hints only; every offer is still rolled and checked live.
+	var drop_seeds := {"button_eye": 962, "pincushion_arm": 2998,
+		"HEAD": 61, "ARM": 1848, "COAT": 2010}
+	var search_seed := 1
+	for patch_id in ["button_eye", "pincushion_arm", "HEAD", "ARM", "COAT"]:
+		var next_seed: int = drop_seeds.get(patch_id, search_seed)
 		var obtained := false
-		for attempt in range(40):
-			var fixture := _multi_fixture(next_seed)
+		for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
+			var fixture := _multi_fixture(next_seed, 30000)
+			if not fixture.is_empty():
+				search_seed = maxi(search_seed, fixture.seed + 1)
 			_check(not fixture.is_empty(), "seeded Elite route exists for " + patch_id)
 			if fixture.is_empty():
 				return
@@ -61,8 +67,8 @@ func _attack_patch_claims() -> void:
 			await _click(_route_action(elite))
 			var rng: int = app.run_rng.state
 			var ids: Array = app._catalog_trinket_ids()
-			for required in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
-				_check(ids.has(required), "real Elite pool retains candidate " + required)
+			for definition in RunAuthoredPatchDefinitions.load_definitions():
+				_check(ids.count(definition.id) == 1, "real Elite pool retains candidate once: " + definition.id)
 			_check(app.run_rng.state == rng, "reading shared Elite catalog consumes no RNG")
 			for enemy in app.enemies.get_enemies():
 				_check(app.enemies.apply_damage(enemy.position, 9999), "win actual Elite")
@@ -71,7 +77,19 @@ func _attack_patch_claims() -> void:
 			await _frames()
 			_check(app.fight_reward_trinket == oracle.drop and app.run_rng.state == oracle.rng,
 				"real Elite drop and RNG match independent shared-pool oracle")
-			if app.fight_reward_trinket != patch_id:
+			drop_seeds[app.fight_reward_trinket] = fixture.seed
+			var dropped: String = app.fight_reward_trinket
+			if dropped not in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+				for definition in RunAuthoredPatchDefinitions.load_definitions():
+					if definition.id == dropped:
+						drop_seeds[definition.slot] = fixture.seed
+			if patch_id in RunPatchWardrobe.SLOTS and dropped not in [
+				"stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+				for definition in RunAuthoredPatchDefinitions.load_definitions():
+					if definition.id == dropped and definition.slot == patch_id:
+						patch_id = dropped
+						break
+			if dropped != patch_id:
 				await _click(app.return_button)
 				next_seed = fixture.seed + 1
 				continue
@@ -93,7 +111,7 @@ func _attack_patch_claims() -> void:
 			_reject_patch(sewing._sew.bind("warden", target, sewing._token, stale), "new patch stale sew")
 			await _click(target)
 			var after: Dictionary = sewing.wardrobe.get_snapshot()
-			var slot := "HEAD" if patch_id == "button_eye" else "ARM"
+			var slot: String = state.definitions[patch_id]
 			_check(after.worn.warden[slot] == patch_id and after.gold == state.gold
 				and after.scraps == state.scraps and after.operation_ids.size() == state.operation_ids.size() + 1
 				and app.party_carryover._wardrobe == sewing.wardrobe,
@@ -107,7 +125,13 @@ func _attack_patch_claims() -> void:
 				var fight: String = fight_path.pop_back()
 				await _visit_path(fight_path, false)
 				await _click(_route_action(fight))
-				await _acquired_attack_check(patch_id)
+				_check(app.party != null and app.enemies != null and not app._battle_closed
+					and app.run_map.get_current_node_id() == fight
+					and app.party_carryover._wardrobe == sewing.wardrobe
+					and sewing.wardrobe.get_snapshot().worn == after.worn,
+					"new Elite assignment persists into actual next Fight")
+				if patch_id in ["button_eye", "pincushion_arm"]:
+					await _acquired_attack_check(patch_id)
 				await _click(app.return_button)
 			else:
 				await _click(app.route_back_button)
@@ -496,14 +520,16 @@ func _verify_worn_readout() -> void:
 		"long worn readout wraps within 1280-wide layout")
 
 
-func _coat_multi_fixture(reward_index: int = 0) -> Dictionary:
-	var first_seed := 1
-	for attempt in range(32):
-		var fixture := _multi_fixture(first_seed)
+func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dictionary:
+	var first_seed := 5052 if prior_coat else 1
+	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
+		var fixture := _multi_fixture(first_seed, 30000)
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return {}
 		await _click(app.reward_buttons[reward_index])
 		await _click(app.continue_button)
+		if prior_coat:
+			app.run_trinkets.append("reinforced_patchcoat")
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
 		await _visit_path(path, false)
@@ -867,17 +893,20 @@ func _run() -> void:
 				and after.owned.has(drop),
 				"actual free sew has exact previewed scrap delta, ownership and displaced ID")
 			_verify_worn_readout()
-			_check(_settlement_state() == unchanged and app.run_scraps == scraps + chosen_preview.get("scrap_delta", -100)
+			var expected_settlement: Array = unchanged.duplicate(true)
+			if chosen_preview.displaced_id != "":
+				expected_settlement[2].trinkets.erase(chosen_preview.displaced_id)
+				expected_settlement[8].erase(chosen_preview.displaced_id)
+			_check(_settlement_state() == expected_settlement and app.run_scraps == scraps + chosen_preview.get("scrap_delta", -100)
 				and after.scraps == app.run_scraps,
 				"sewing changes no unrelated run, reward, deck, route, gold or RNG state")
 			_check(after.operation_ids.size() == index + 1, "one successful sew receipt per earned drop")
 			if index == 0:
 				first_worn = after.worn.duplicate(true)
 			else:
-				for id in first_worn:
-					for previous_slot in first_worn[id]:
-						if first_worn[id][previous_slot] != "":
-							_check(after.worn[id][previous_slot] == first_worn[id][previous_slot], "second legitimate drop preserves first assignment")
+				var expected_worn: Dictionary = first_worn.duplicate(true)
+				expected_worn[hero][slot] = drop
+				_check(after.worn == expected_worn, "second legitimate drop changes only chosen wearer slot")
 			for action in sewing.hero_buttons:
 				action.disabled = false
 			_reject_patch(callback, "forced duplicate sew")
@@ -907,7 +936,7 @@ func _run() -> void:
 	_check(not torn_fixture.is_empty(), "seeded torn-Warden predecessor connects to Elite without recovery Rest")
 	if not torn_fixture.is_empty():
 		await _test_torn_warden_focus(torn_fixture)
-	var displaced_fixture := await _coat_multi_fixture(3)
+	var displaced_fixture := await _coat_multi_fixture(3, true)
 	_check(not displaced_fixture.is_empty(), "Skip reward seed naturally drops coat for displacement")
 	if not displaced_fixture.is_empty():
 		await _test_displaced_name(displaced_fixture)

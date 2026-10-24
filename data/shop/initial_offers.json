@@ -47,6 +47,24 @@
     {"id": "spare_spool", "price": 100},
     {"id": "quilted_coat", "price": 100},
     {"id": "button_eye", "price": 100},
-    {"id": "pincushion_arm", "price": 100}
+    {"id": "pincushion_arm", "price": 100},
+    {"id": "switchback_button", "price": 100},
+    {"id": "padded_vest", "price": 100},
+    {"id": "double_quilt_coat", "price": 100},
+    {"id": "scrap_lined_vest", "price": 100},
+    {"id": "wool_patch_cloak", "price": 100},
+    {"id": "chain_stitched_coat", "price": 100},
+    {"id": "reinforced_patchcoat", "price": 100},
+    {"id": "thick_felt_mantle", "price": 100},
+    {"id": "bloodstitch_bonnet", "price": 100},
+    {"id": "button_glass_visor", "price": 100},
+    {"id": "stern_seam_cap", "price": 100},
+    {"id": "reinforced_browband", "price": 100},
+    {"id": "hemguard_cuff", "price": 100},
+    {"id": "red_bobbin_cuff", "price": 100},
+    {"id": "loose_thread_glove", "price": 100},
+    {"id": "threadguard_wrap", "price": 100},
+    {"id": "frayfinder_mitt", "price": 100},
+    {"id": "borrowed_button", "price": 100}
   ]
 }

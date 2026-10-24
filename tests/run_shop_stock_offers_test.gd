@@ -233,8 +233,11 @@ func _check(condition: bool, description: String) -> void:
 func _test_attack_patch_stock(party: Array[String], catalog: StarterCards) -> void:
 	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/shop/initial_offers.json"))
+	var definitions := RunAuthoredPatchDefinitions.load_definitions()
+	_check(not definitions.is_empty(), "all authored patch catalogs validate before stock assertions")
 	var seen := {}
-	for id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+	for definition in definitions:
+		var id: String = definition.id
 		var matches: Array = authored.trinkets.filter(func(entry): return entry.id == id)
 		_check(matches.size() == 1 and _whole_price(matches[0].price) == 100,
 			"shared patch candidate retained exactly once at 100 gold: " + id)
@@ -248,7 +251,8 @@ func _test_attack_patch_stock(party: Array[String], catalog: StarterCards) -> vo
 			and rng.state == oracle_rng.state, "expanded patch pool follows seeded stock oracle")
 		for offer in actual.get("trinkets", []):
 			seen[offer.id] = true
-	for id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+	for definition in definitions:
+		var id: String = definition.id
 		_check(seen.has(id), "genuine seeded stock admits patch " + id)
 
 

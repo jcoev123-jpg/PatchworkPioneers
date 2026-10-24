@@ -2,8 +2,8 @@ extends "res://tests/live_routed_battle_reentry_test.gd"
 ## Mounted opening Fight -> two Elites -> Shop; exact drops, rejection and replay.
 
 
-func _multi_fixture(first_seed: int = 1) -> Dictionary:
-	for value in range(first_seed, 3000):
+func _multi_fixture(first_seed: int = 1, last_seed: int = 3000) -> Dictionary:
+	for value in range(first_seed, last_seed):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

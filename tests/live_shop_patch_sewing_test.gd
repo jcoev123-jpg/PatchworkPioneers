@@ -37,11 +37,19 @@ func _acquired_attack_check(patch_id: String) -> void:
 ## Search actual seeded stock, never replace its candidate pool or listings.
 func _attack_patch_purchases() -> void:
 	var retained_selection := Callable()
-	for patch_id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
-		var next_seed := 1
+	## Verified starting seeds are hints; catalog changes fall back to bounded live search.
+	var stock_seeds := {"stitched_badge": 68, "spare_spool": 52,
+		"quilted_coat": 61, "button_eye": 141, "pincushion_arm": 698,
+		"HEAD": 697, "ARM": 600, "COAT": 600}
+	var search_seed := 1
+	for patch_id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm",
+		"HEAD", "ARM", "COAT"]:
+		var next_seed: int = stock_seeds.get(patch_id, search_seed)
 		var obtained := false
-		for attempt in range(40):
+		for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 			var fixture := _sequence_fixture(["Shop", "Fight"], next_seed)
+			if not fixture.is_empty():
+				search_seed = maxi(search_seed, fixture.seed + 1)
 			_check(not fixture.is_empty(), "seeded Shop -> Fight route exists for " + patch_id)
 			if fixture.is_empty() or not await _routed_win(fixture, false):
 				return
@@ -50,6 +58,7 @@ func _attack_patch_purchases() -> void:
 			app.session_gold = 500
 			await _reach(fixture.paths[0], false)
 			wardrobe = app._shop_wardrobe
+			_candidate_contract_checks()
 			_check_preview()
 			if retained_selection.is_valid():
 				var fresh_text: String = app.shop_patch_preview.text
@@ -59,7 +68,15 @@ func _attack_patch_purchases() -> void:
 					"old Shop selection callback cannot change fresh preview or run")
 			var selected := -1
 			for i in range(app.shop_patch_offers.item_count):
-				if app.shop_purchases.get_stock().trinkets[i].id == patch_id:
+				var listed_id: String = app.shop_purchases.get_stock().trinkets[i].id
+				stock_seeds[listed_id] = fixture.seed
+				if listed_id not in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+					stock_seeds[PREVIEW_POWERS[listed_id].slot] = fixture.seed
+				if patch_id in RunPatchWardrobe.SLOTS and listed_id not in [
+					"stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"] \
+					and PREVIEW_POWERS[listed_id].slot == patch_id:
+					patch_id = listed_id
+				if listed_id == patch_id:
 					selected = i
 			if selected < 0:
 				await _click(app.shop_back_button)
@@ -107,6 +124,24 @@ const PREVIEW_POWERS := {
 		"text": "first successful attack each combat also applies Exposed 1"},
 	"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1,
 		"text": "+1 damage on that wearer's damaging cards"},
+	"switchback_button": {"slot": "HEAD", "effect": "different_owner_followup_block", "amount": 2, "once_per_player_turn": true, "text": "Once per player turn, when a different living hero's committed card or stitched half (ordered first then second) immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up."},
+	"padded_vest": {"slot": "COAT", "max_hp_bonus": 4, "text": "+4 maximum HP"},
+	"double_quilt_coat": {"slot": "COAT", "max_hp_bonus": 8, "text": "+8 maximum HP"},
+	"scrap_lined_vest": {"slot": "COAT", "max_hp_bonus": 3, "text": "+3 maximum HP"},
+	"wool_patch_cloak": {"slot": "COAT", "max_hp_bonus": 5, "text": "+5 maximum HP"},
+	"chain_stitched_coat": {"slot": "COAT", "max_hp_bonus": 7, "text": "+7 maximum HP"},
+	"reinforced_patchcoat": {"slot": "COAT", "max_hp_bonus": 9, "text": "+9 maximum HP"},
+	"thick_felt_mantle": {"slot": "COAT", "max_hp_bonus": 10, "text": "+10 maximum HP"},
+	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "text": "+1 Bleed on eligible Bleed cards owned by this living wearer only"},
+	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "text": "+1 Exposed on eligible Exposed cards owned by this living wearer only"},
+	"stern_seam_cap": {"slot": "HEAD", "effect": "card_weak_bonus", "amount": 1, "text": "+1 Weak on eligible Weak cards owned by this living wearer only"},
+	"reinforced_browband": {"slot": "HEAD", "effect": "card_block_bonus", "amount": 2, "text": "+2 Block on eligible Block cards owned by this living wearer only"},
+	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "text": "+2 Block on eligible Block cards owned by this living wearer only"},
+	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "text": "+1 Bleed on eligible Bleed cards owned by this living wearer only"},
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "text": "+1 Unravel on eligible Unravel cards owned by this living wearer only"},
+	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1, "text": "+1 Block on this living wearer's cards that already grant Block; never on a card without Block."},
+	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus", "amount": 2, "minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2, "once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single", "text": "+2 attack damage once per player turn on this living wearer's first confirmed single-target hit against an enemy already at half its current Unravel threshold; no bonus on area or later hits."},
+	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block", "heal_threshold": 1, "block": 3, "uses_per_combat": 1, "text": "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."},
 }
 
 
@@ -123,17 +158,16 @@ func _check_preview() -> void:
 		return
 	var expected: Dictionary = PREVIEW_POWERS[offer.id]
 	var record: Dictionary = {}
-	if CombatShopPatchRules.EFFECTS.has(offer.id):
-		record = CombatShopPatchRules.EFFECTS[offer.id]
-	else:
-		var path := "res://data/patches/m04_coat_patches.json" if offer.id == "quilted_coat" else "res://data/patches/m04_attack_patches.json"
+	for path in RunAuthoredPatchDefinitions.CATALOG_PATHS:
 		for entry in JSON.parse_string(FileAccess.get_file_as_string(path)):
 			if entry.id == offer.id:
 				record = entry
+	if CombatShopPatchRules.EFFECTS.has(offer.id):
+		record = CombatShopPatchRules.EFFECTS[offer.id]
 	_check(not record.is_empty() and record.get("slot") == expected.slot
 		and wardrobe.get_snapshot().definitions.get(offer.id) == expected.slot,
 		"preview oracle slot agrees with shipped record and wardrobe")
-	for field in ["effect", "amount", "max_hp_bonus"]:
+	for field in ["effect", "amount", "max_hp_bonus", "once_per_player_turn", "minimum_unravel_numerator", "minimum_unravel_denominator", "hit_number", "target_kind", "heal_threshold", "block", "uses_per_combat"]:
 		if expected.has(field):
 			_check(record.get(field) == expected[field], "preview oracle matches authored " + field)
 	var text := "%s | %s%s: %s. Inactive while wearer is torn." % [String(offer.id).capitalize(),
@@ -147,7 +181,7 @@ func _check_preview() -> void:
 
 
 func _sequence_fixture(kinds: Array, first_seed: int = 1, direct_last: bool = false) -> Dictionary:
-	for value in range(first_seed, 3000):
+	for value in range(first_seed, 30000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -159,6 +193,12 @@ func _sequence_fixture(kinds: Array, first_seed: int = 1, direct_last: bool = fa
 			var source: String = first
 			for kind in kinds:
 				var path := _path_to(map, source, kind)
+				if direct_last and paths.size() == kinds.size() - 1:
+					path = []
+					for next in map.get_node(source).outgoing:
+						if map.get_node(next).type == kind:
+							path = [next]
+							break
 				if path.is_empty():
 					break
 				paths.append(path)
@@ -431,18 +471,25 @@ func _poor_and_replacement() -> void:
 		var target := 0
 		if funded:
 			app.session_gold = 500
-			var stock := _stock_oracle()
-			var replacement_id := ""
-			for i in range(2):
-				var id: String = stock.stock.trinkets[i].id
-				if id in ["stitched_badge", "spare_spool"]:
-					replacement_id = id
-					target = i
-					old_patch = "bloodstitch_bonnet" if id == "stitched_badge" else "hemguard_cuff"
-					break
-			_check(not replacement_id.is_empty(), "real stock contains a patch with an authored occupied-slot fixture")
 			var definitions := RunAuthoredPatchDefinitions.load_definitions()
-			app.run_trinkets.assign([old_patch])
+			for prior in definitions:
+				app.run_trinkets.assign([prior.id])
+				var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+					"res://data/shop/initial_offers.json"))
+				var probe_rng := RandomNumberGenerator.new()
+				probe_rng.state = app.run_rng.state
+				var stock := RunShopStockOffers.generate(probe_rng,
+					["warden", "seamstress", "tinker"], authored.cards, authored.trinkets, app.run_trinkets)
+				_check(stock.ok, "owned prior patch admits genuine seeded replacement stock")
+				for i in range(2):
+					var offered: String = stock.trinkets[i].id
+					if offered != prior.id and PREVIEW_POWERS[offered].slot == prior.slot:
+						old_patch = prior.id
+						target = i
+						break
+				if not old_patch.is_empty():
+					break
+			_check(not old_patch.is_empty(), "real stock admits a distinct authored occupied-slot fixture")
 			wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
 				app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
 			_check(wardrobe.sew(old_patch, app.run_heroes[target].id,
@@ -634,7 +681,7 @@ func _shop_fight_shop() -> void:
 ## purchase it physically, with the same full wardrobe receipt checks.
 func _purchase_seeded_coat() -> bool:
 	var next_seed := 1
-	for attempt in range(24):
+	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 		var fixture := _sequence_fixture(["Shop"], next_seed)
 		_check(not fixture.is_empty(), "seeded Shop coat probe finds a legal connected route")
 		if fixture.is_empty() or not await _routed_win(fixture, false):
@@ -662,6 +709,33 @@ func _purchase_seeded_coat() -> bool:
 		next_seed = fixture.seed + 1
 		await _click(app.shop_back_button)
 	return false
+
+
+func _candidate_contract_checks() -> void:
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
+	var pool: Array = authored.trinkets
+	var definitions := RunAuthoredPatchDefinitions.load_definitions()
+	_check(not definitions.is_empty() and not pool.is_empty(), "real candidate authorities load")
+	var rng: RandomNumberGenerator = app.run_rng
+	_check(rng != null, "candidate contract exercised during a real seeded visit")
+	var rng_state: int = rng.state
+	_check(app._validated_patch_candidates(pool) == pool, "complete shipped pool validates")
+	var ids: Array = app._catalog_trinket_ids()
+	for definition in definitions:
+		_check(ids.count(definition.id) == 1, "shared Elite pool has authored ID once: " + definition.id)
+	for bad in [null, [], ["button_eye"], [{"id": 7, "price": 100}],
+		[{"id": "foreign_patch", "price": 100}], [{"id": "", "price": 100}],
+		[{"id": "button_eye", "price": 99}], [{"id": "button_eye", "price": "100"}],
+		[{"id": "button_eye", "price": 100}, {"id": "button_eye", "price": 100}]]:
+		var before: Variant = bad.duplicate(true) if bad is Array else bad
+		_check(app._validated_patch_candidates(bad).is_empty() and bad == before,
+			"malformed patch pool rejected atomically")
+	_check(app.run_rng == rng and rng.state == rng_state,
+		"candidate reads and rejection never consume run RNG")
+	var detached: Array = app._validated_patch_candidates(pool)
+	detached[0].id = "foreign_patch"
+	_check(pool[0].id != "foreign_patch", "validated pool is detached from caller")
 
 
 func _run() -> void:
@@ -747,9 +821,10 @@ func _run() -> void:
 			var base: Array = app.party_carryover.read_state().heroes
 			for hero in app.party.get_heroes():
 				var original: Dictionary = base.filter(func(h): return h.id == hero.id)[0]
-				var bonus := 6 if worn[hero.id].COAT == "quilted_coat" else 0
+				var coat: String = worn[hero.id].COAT
+				var bonus: int = PREVIEW_POWERS.get(coat, {}).get("max_hp_bonus", 0)
 				_check(hero.max_hp == original.max_hp + bonus and hero.hp == original.hp,
-					"next Fight +6 cap applies only to coat wearer without healing")
+					"next Fight authored cap applies only to coat wearer without healing")
 			var down_position := 1
 			for hero in app.party.get_heroes():
 				if worn[hero.id].COAT == "quilted_coat":
@@ -879,11 +954,11 @@ func _badge_flow_state(f: Dictionary) -> Array:
 func _badge_fights() -> void:
 	_badge_service_checks()
 	var fixture := {}
-	var next_seed := 1
+	var next_seed := 3510
 	var badge := -1
 	# Find a real generated route whose real stock contains the Badge. Never
 	# replace stock or patch definitions to manufacture a positive case.
-	for attempt in range(20):
+	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 		fixture = _sequence_fixture(["Shop", "Fight", "Fight"], next_seed, true)
 		_check(not fixture.is_empty(), "generated route supports Badge and inactive follow-up Fight")
 		if fixture.is_empty() or not await _routed_win(fixture, false):
