@@ -7,7 +7,7 @@ var checks := 0
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 ## The committed Block icon the mounted ribbons must display beside a positive amount.
 const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
-## Independent literal expectations for the eight authored M05 HEAD/ARM rules.
+## Independent literal expectations for the authored M05 HEAD/ARM/COAT rules.
 ## These fourth tooltip lines are written from data/patches/m05_*.json and the
 ## rule scripts, never produced by the presenter under test, so a wrong amount,
 ## effect kind, recipient scope or condition cannot pass by agreeing with it.
@@ -20,11 +20,12 @@ const M05_EXPECTED_POWERS := {
 	"red_bobbin_cuff": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier.",
 	"loose_thread_glove": "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards.",
 	"frayfinder_mitt": "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit.",
+	"borrowed_button": "Authored patch rule: once per combat, after a different living hero's committed card or ordered stitched half actually restores at least 1 HP to the living, untorn wearer, that wearer gains 3 Block.",
 }
 ## Catalog facts each literal line restates: slot, authored effect key, amount and
 ## the positive status or damage it may boost. The seven card bonuses are
 ## wearer-owned and positive-only; Frayfinder is the conditional first-hit +2
-## attack-damage bonus, never an Unravel gauge award.
+## attack-damage bonus; Borrowed Button is the conditional other-hero heal Block award.
 const M05_EXPECTED_FACTS := {
 	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
 	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "status": "Exposed"},
@@ -37,6 +38,8 @@ const M05_EXPECTED_FACTS := {
 		"amount": 2, "status": "attack damage", "timing": "before Weak/Exposed",
 		"hit": "first confirmed single-target attack hit", "limit": "once per PLAYER turn",
 		"exclusions": "Not any area/multi-hit/later hit", "numerator": 1, "denominator": 2},
+	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block",
+		"heal_threshold": 1, "block": 3, "uses_per_combat": 1},
 }
 
 
@@ -1766,12 +1769,13 @@ func _patch_tooltip(hero: Dictionary, label: String, patch_id: String, slot: Str
 		label, patch_id, slot, "ACTIVE" if active else "DORMANT"]
 
 
-## The authored catalog record for one bounded M05 HEAD/ARM ID, looked up by ID
+## The authored catalog record for one bounded M05 HEAD/ARM/COAT ID, looked up by ID
 ## presence so growing catalogs never invalidate this check.
 func _m05_catalog_entry(patch_id: String) -> Dictionary:
 	for path in ["res://data/patches/m05_head_patches.json",
 			"res://data/patches/m05_arm_support_patches.json",
-			"res://data/patches/m05_attack_patches.json"]:
+			"res://data/patches/m05_attack_patches.json",
+			"res://data/patches/m05_coat_patches.json"]:
 		var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 		if raw is Array:
 			for entry in raw:
@@ -1782,18 +1786,43 @@ func _m05_catalog_entry(patch_id: String) -> Dictionary:
 
 ## Re-derive one M05 rule independently of the presenter: exact catalog amount
 ## and effect key, the positive status, wearer-owned cards, the real Block
-## recipient, Red Bobbin versus Hemorrhage Hem, and Frayfinder's +2 attack-damage
-## first single-target hit / half-threshold / once-per-player-turn limit.
+## recipient, Red Bobbin versus Hemorrhage Hem, Frayfinder's +2 attack-damage
+## first single-target hit / half-threshold / once-per-player-turn limit, and
+## Borrowed Button's other-hero positive-heal 3-Block rule.
 func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 	var facts: Dictionary = M05_EXPECTED_FACTS[patch_id]
 	var entry := _m05_catalog_entry(patch_id)
+	_check(line.begins_with("Authored patch rule:"),
+		"the %s line describes an authored rule, not a fabricated trigger: %s" % [patch_id, line])
+	if patch_id == "borrowed_button":
+		_check(not entry.is_empty() and entry.get("slot") == facts["slot"]
+			and entry.get("effect") == facts["effect"]
+			and int(entry.get("heal_threshold", 0)) == int(facts["heal_threshold"])
+			and int(entry.get("block", 0)) == int(facts["block"])
+			and int(entry.get("uses_per_combat", 0)) == int(facts["uses_per_combat"]),
+			"authored catalog agrees with the expected Borrowed Button rule: %s" % patch_id)
+		_check(line.contains("once per combat") and facts["uses_per_combat"] == 1,
+			"Borrowed Button states its once-per-combat limit: " + line)
+		_check(line.contains("different living hero")
+			and entry.get("effect") == "other_hero_committed_heal_block",
+			"Borrowed Button restricts healer to a different living hero: " + line)
+		_check(line.contains("committed card or ordered stitched half"),
+			"Borrowed Button specifies committed card or ordered stitched half: " + line)
+		_check(line.contains("restores at least %d HP" % facts["heal_threshold"]),
+			"Borrowed Button requires restoring at least 1 HP: " + line)
+		_check(line.contains("living, untorn wearer"),
+			"Borrowed Button specifies the living, untorn wearer recipient: " + line)
+		_check(line.contains("that wearer gains %d Block" % facts["block"]),
+			"Borrowed Button awards 3 Block to the wearer: " + line)
+		_check(not line.contains("maximum HP") and not line.contains("+max-HP")
+			and not line.contains("effective maximum HP") and not line.contains("free healing"),
+			"Borrowed Button never invents a maximum HP bonus: " + line)
+		return
 	_check(not entry.is_empty() and entry.get("slot") == facts["slot"]
 		and entry.get("effect") == facts["effect"]
 		and int(entry.get("amount", -1)) == int(facts["amount"]),
 		"authored catalog agrees with the expected %s %s +%d rule: %s" % [
 			facts["slot"], facts["effect"], facts["amount"], patch_id])
-	_check(line.begins_with("Authored patch rule:"),
-		"the %s line describes an authored rule, not a fabricated trigger: %s" % [patch_id, line])
 	if patch_id != "frayfinder_mitt":
 		_check(line.contains(String(facts["effect"])),
 			"the %s line names its authored effect key: %s" % [patch_id, line])
@@ -1900,7 +1929,8 @@ func _m05_worn_fixture(app, presenter, sewn: Array) -> Dictionary:
 	var raw_heroes: Array = CombatParty.new(combat_defs).get_heroes()
 	var definitions := []
 	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches",
-			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches"]:
+			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches",
+			"m05_coat_patches"]:
 		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 			"res://data/patches/%s.json" % catalog))
 		if entries is Array:
@@ -1954,7 +1984,7 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		"reinforced_patchcoat": "Reinforced Patchcoat", "thick_felt_mantle": "Thick Felt Mantle",
 		"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
 		"quilted_coat": "Quilted Coat", "stitched_badge": "Stitched Badge",
-		"spare_spool": "Spare Spool"}
+		"spare_spool": "Spare Spool", "borrowed_button": "Borrowed Button"}
 	for id in labels:
 		_check(presenter.PATCH_LABELS.get(id, "") == labels[id],
 			"authored readable patch label stays intact: " + id)
@@ -2138,7 +2168,117 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	await _mouse(app.return_button)
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
-		"M05 patch ribbons test cleans up and returns to title")
+		"M05 case B cleans up and returns to title")
+	# Case C: genuine Borrowed Button on a living hero's COAT slot (AC1, AC2, AC3).
+	var case_c := await _m05_worn_fixture(app, presenter, [
+		["bloodstitch_bonnet", "warden", "HEAD"],
+		["reinforced_patchcoat", "warden", "COAT"],
+		["borrowed_button", "tinker", "COAT"]])
+	_check(not case_c.is_empty(), "M05 case C: real wardrobe, carryover and live meters")
+	if case_c.is_empty():
+		return
+	var c_meters: Array = case_c["meters"]
+	var c_carry: RunTornCarryover = case_c["carry"]
+	var c_wardrobe: RunPatchWardrobe = case_c["wardrobe"]
+	# AC1: living wearer (Tinker) has Borrowed Button sewn on COAT.
+	# Check Tinker's max_hp is untouched (26/26), no fabricated +max-HP coat power.
+	_check(app.party.get_hero(3)["max_hp"] == 26 and app.party.get_hero(3)["hp"] == 26,
+		"Tinker wears borrowed_button with unchanged 26 max HP, no fabricated +max-HP coat power")
+	_check(c_meters[2].hp_text.text == "26/26",
+		"M05 case C: Tinker visible HP number carries the authentic base cap")
+	var c_tinker_coat := _patch_chip(c_meters[2], "COAT")
+	_assert_named_chip(c_tinker_coat, app.party.get_hero(3), "Borrowed Button", "borrowed_button", "COAT", true)
+	_check(c_tinker_coat != null and c_tinker_coat.tooltip_text
+		== _patch_tooltip(app.party.get_hero(3), "Borrowed Button", "borrowed_button", "COAT", true)
+			+ "\n" + M05_EXPECTED_POWERS["borrowed_button"],
+		"Tinker COAT chip matches independent Borrowed Button tooltip")
+	_check(c_tinker_coat != null
+		and c_tinker_coat.tooltip_text.contains("once per combat")
+		and c_tinker_coat.tooltip_text.contains("different living hero")
+		and c_tinker_coat.tooltip_text.contains("committed card or ordered stitched half")
+		and c_tinker_coat.tooltip_text.contains("restores at least 1 HP")
+		and c_tinker_coat.tooltip_text.contains("living, untorn wearer")
+		and c_tinker_coat.tooltip_text.contains("that wearer gains 3 Block")
+		and not c_tinker_coat.tooltip_text.contains("maximum HP")
+		and not c_tinker_coat.tooltip_text.contains("effective maximum HP"),
+		"Tinker COAT tooltip accurately describes the authored conditional 3-Block rule")
+	# Check other heroes' chips are unaffected:
+	# Warden has Reinforced Patchcoat (+9 max HP, ACTIVE).
+	var c_warden_coat := _patch_chip(c_meters[0], "COAT")
+	_check(c_warden_coat != null and c_warden_coat.visible and c_warden_coat.text == "COAT"
+		and c_warden_coat.tooltip_text.contains("Reinforced Patchcoat")
+		and c_warden_coat.tooltip_text.contains("+9 effective maximum HP while living; no free healing.")
+		and c_warden_coat.tooltip_text.contains("ACTIVE"),
+		"M05 case C: Warden COAT chip remains Reinforced Patchcoat with its +9 cap")
+	# Seamstress has no COAT sewn; slot is hidden.
+	var c_seamstress_coat := _patch_chip(c_meters[1], "COAT")
+	_check(c_seamstress_coat != null and not c_seamstress_coat.visible
+		and c_seamstress_coat.text.is_empty() and c_seamstress_coat.tooltip_text.is_empty(),
+		"M05 case C: Seamstress unsewn COAT slot stays hidden with no invented bonus")
+	# AC3: Real hover and repeated refresh are read-only with identical state.
+	var c_before := _state(app)
+	var c_ledger: Dictionary = c_wardrobe.get_snapshot()
+	seed(49201)
+	var c_expected_global := randi()
+	seed(49201)
+	for repeat in range(4):
+		presenter._sync_battle()
+		await _frames()
+	await _hover(c_tinker_coat)
+	_check(root.gui_get_hovered_control() == c_tinker_coat
+		and c_tinker_coat.tooltip_text.contains("that wearer gains 3 Block"),
+		"real pointer hover reads Borrowed Button rule without an action")
+	_check(_state(app) == c_before and randi() == c_expected_global
+		and c_wardrobe.get_snapshot() == c_ledger and app.party_carryover == c_carry
+		and c_carry._wardrobe == c_wardrobe,
+		"M05 case C: repeated hover/refresh never spends, changes HP/Block/ownership or advances RNG")
+	_check(app.party.get_hero(3)["block"] == 0,
+		"hovering Borrowed Button never fabricates a live Block award")
+	# AC2: Down the wearer via real party API and refresh.
+	_check(app.party.apply_damage(3, 999) and app.party.is_downed(3),
+		"M05 case C: the real party API downs the borrowed_button wearer")
+	presenter._sync_battle()
+	await _frames()
+	_check(c_meters[2].hp_text.text == "0/26",
+		"the downed Tinker keeps its base 26 cap at zero HP")
+	_check(c_tinker_coat.visible and c_tinker_coat.text == "COAT"
+		and c_tinker_coat.tooltip_text
+			== _patch_tooltip(app.party.get_hero(3), "Borrowed Button", "borrowed_button", "COAT", false)
+				+ "\n" + M05_EXPECTED_POWERS["borrowed_button"]
+		and c_tinker_coat.tooltip_text.contains("DORMANT")
+		and not c_tinker_coat.tooltip_text.contains("ACTIVE")
+		and bool(c_tinker_coat.get_meta("fallen_chip")) == true,
+		"the worn COAT chip reads DORMANT with no false active bonus once Tinker is downed")
+	_check(app.party.get_hero(3)["block"] == 0,
+		"downed wearer still has 0 Block, no fabricated Block award")
+	_check(c_warden_coat.visible and c_warden_coat.tooltip_text.contains("ACTIVE")
+		and c_warden_coat.tooltip_text.contains("+9 effective maximum HP"),
+		"unrelated living Warden COAT chip remains ACTIVE and unaffected")
+	# Neutral unknown ID and empty slots through the mounted presenter itself.
+	var c_tinker_snap: Dictionary = app.party.get_hero(3)
+	presenter._sync_patch_buttons(c_meters[2], c_tinker_snap,
+		{"HEAD": "", "ARM": "", "COAT": "mystery_borrowed_coat"})
+	var c_unknown_coat := _patch_chip(c_meters[2], "COAT")
+	_check(c_unknown_coat != null and c_unknown_coat.visible and c_unknown_coat.text == "COAT"
+		and c_unknown_coat.tooltip_text == _patch_tooltip(c_tinker_snap, "mystery_borrowed_coat",
+			"mystery_borrowed_coat", "COAT", false)
+		and c_unknown_coat.tooltip_text.split("\n").size() == 3,
+		"an unknown COAT patch ID keeps its raw authored ID and invents no power line")
+	_check(not _patch_chip(c_meters[2], "HEAD").visible
+		and _patch_chip(c_meters[2], "HEAD").tooltip_text.is_empty()
+		and not _patch_chip(c_meters[2], "ARM").visible
+		and _patch_chip(c_meters[2], "ARM").tooltip_text.is_empty(),
+		"empty HEAD/ARM slots never gain a fictional bonus")
+	presenter._sync_battle()
+	await _frames()
+	_check(_patch_chip(c_meters[2], "COAT").tooltip_text.contains(
+			"Borrowed Button (borrowed_button) — COAT")
+		and not _patch_chip(c_meters[2], "HEAD").visible,
+		"the next authoritative frame restores the real sewn Borrowed Button chip")
+	await _mouse(app.return_button)
+	await _frames()
+	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
+		"M05 case C cleans up and returns to title")
 func _finish() -> void:
 	for failure in failures:
 		printerr(failure)
