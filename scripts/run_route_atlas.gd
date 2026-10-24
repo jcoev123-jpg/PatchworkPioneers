@@ -13,8 +13,11 @@ extends Control
 ##
 ## The left page carries an inert twelve-bead pinned diary. Only the current origin
 ## and the next three floors appear on the right page; all legal buttons are in its
-## first column. Each round patch shows its original aspect-preserved token art
-## above its high-contrast caption; Treasure/missing art draws a stitched emblem.
+## first column. Each route marker is a hand-sewn angular felt tag (low-corner-radius
+## patch, cream stitches crossing its border) that shows its original aspect-preserved
+## token art above its high-contrast caption; Treasure/missing art draws a stitched
+## emblem, and a focused legal tag wears the same stitched seam inset just inside its
+## edge, clear of both the art and the lower caption.
 ## Beneath every bead the party actually completed, the diary prints that floor's
 ## authentic authored kind, projected only from the committed route's real RunMap
 ## records; future beads stay blank and never leak an upcoming floor's kind.
@@ -57,7 +60,7 @@ const NODE_TOKEN_PATHS := {
 	"Rest": "res://assets/paper/ui/map_node_rest.png",
 	"Boss": "res://assets/paper/ui/map_node_boss.png",
 }
-## Maximum drawn token image width inside the round patch, above its caption.
+## Maximum drawn token image width inside the sewn tag, above its caption.
 const NODE_TOKEN_COLUMN := 48.0
 const BOOK_RECT := Rect2(10.0, 20.0, 1220.0, 564.0)
 ## The two pages are deliberately separated by a gutter no map patch crosses.
@@ -131,7 +134,61 @@ var board_texture_override: Texture2D = null
 var board_texture_path := MAP_BOARD_PATH
 
 
-## Inert token art or drawn fallback in the top half of a circular sewn patch.
+## A sewn angular felt/paper tag: the marker's own low-corner-radius panel, with cream
+## stitches crossing its coloured border so it reads as hand-cut cloth rather than a
+## round button. Every stitch stays in the border band, so the token art and the lower
+## kind/shortcut caption are never covered, and the tag itself takes no input.
+class RouteTag extends PanelContainer:
+	## Cream thread drawn through the felt, like a running stitch across the seam.
+	const THREAD_TICK := Color("#f0e6cf")
+	## The tag's own state border colour, so the stitching belongs to the patch.
+	var edge_color := RunRouteAtlas.OTHER_BORDER
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		resized.connect(queue_redraw)
+
+	## Stitch thread tinted by the state border, kept light enough to read on every
+	## authored felt colour (chosen green, legal tan and inactive grey).
+	func stitch_color() -> Color:
+		return THREAD_TICK.lerp(edge_color, 0.22)
+
+	func _draw() -> void:
+		if size.x <= 0.0 or size.y <= 0.0:
+			return
+		var thread := stitch_color()
+		# Alternating tick lengths read as a hand-cut edge. Every tick starts at the
+		# tag silhouette and stops inside its border band, so neither the token art nor
+		# a caption as wide as the tag is ever struck through.
+		var index := 0
+		var x := 7.0
+		while x <= size.x - 7.0:
+			var length := 2.2 if index % 2 == 0 else 1.6
+			draw_line(Vector2(x, 0.6), Vector2(x, 0.6 + length), thread, 1.4, true)
+			draw_line(Vector2(x, size.y - 0.6), Vector2(x, size.y - 0.6 - length),
+				thread, 1.4, true)
+			index += 1
+			x += 10.0
+		var y := 7.0
+		while y <= size.y - 7.0:
+			var length := 2.2 if index % 2 == 0 else 1.6
+			draw_line(Vector2(0.6, y), Vector2(0.6 + length, y), thread, 1.4, true)
+			draw_line(Vector2(size.x - 0.6, y), Vector2(size.x - 0.6 - length, y),
+				thread, 1.4, true)
+			index += 1
+			y += 10.0
+		# One cross stitch sewn through each corner of the tag, clear of the art and
+		# of the vertically centred caption band.
+		for corner in [Vector2(4.2, 4.2), Vector2(size.x - 4.2, 4.2),
+				Vector2(4.2, size.y - 4.2), Vector2(size.x - 4.2, size.y - 4.2)]:
+			draw_line(corner + Vector2(-2.2, -2.2), corner + Vector2(2.2, 2.2),
+				thread, 1.4, true)
+			draw_line(corner + Vector2(2.2, -2.2), corner + Vector2(-2.2, 2.2),
+				thread, 1.4, true)
+
+
+## Inert token art or drawn fallback in the top half of a sewn angular tag.
 ## The caption sits along the lower edge, and the transparent Action covers the face.
 class NodeToken extends Control:
 	var token_kind := ""
@@ -142,8 +199,8 @@ class NodeToken extends Control:
 		focus_mode = Control.FOCUS_NONE
 		resized.connect(queue_redraw)
 
-	## Keep art centred in the upper portion of a circular patch, leaving the
-	## lower row for the readable kind and live shortcut number.
+	## Keep art centred in the upper portion of the tag, leaving the lower row for
+	## the readable kind and live shortcut number.
 	func token_rect() -> Rect2:
 		if token_texture == null or size.x <= 0.0 or size.y <= 0.0:
 			return Rect2()
@@ -173,31 +230,57 @@ class NodeToken extends Control:
 			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
 				20.0, 27, RunRouteAtlas.INK)
 
-## The Action draws a bone-thread ring WITHIN its round felt patch when focused.
-## Arcs leave the lower caption exposed; no filled overlay obscures token art.
+## The Action draws a sewn inset seam WITHIN its angular felt tag when focused: a
+## double dashed rectangle hugging the inside of the tag silhouette, with a cross
+## stitch at each corner. It stays in the tag's border band, so neither the token art
+## nor the authored 18-point caption (which can be as wide as the tag) is covered.
 class LegalPatchAction extends Button:
+	const SEAM_DARK := Color("#272f32")
+	const SEAM_LIGHT := Color("#fff1c6")
+	const SEAM_DASH := 6.0
+	## The Action fills the tag's content rect, so these local insets land just inside
+	## the tag silhouette: on the state border, short of every child Control.
+	const SEAM_INSET := 1.5
+
 	func _init() -> void:
 		focus_entered.connect(queue_redraw)
 		focus_exited.connect(queue_redraw)
 
+	## Inset rectangular seam in this Action's own coordinates.
+	func seam_rect() -> Rect2:
+		return Rect2(-SEAM_INSET, -SEAM_INSET, size.x + SEAM_INSET * 2.0,
+			size.y + SEAM_INSET * 2.0)
+
 	func _draw() -> void:
 		if not has_focus():
 			return
-		var centre := size * 0.5
-		# The focus seam is inset at least six pixels from the 80px edge.
-		# Leave the lower ~90-degree caption band unobstructed.
-		draw_arc(centre, 32.0, 2.32, TAU + 0.82, 52,
-			Color("#272f32"), 6.0, true)
-		draw_arc(centre, 32.0, 2.32, TAU + 0.82, 52,
-			Color("#fff1c6"), 3.5, true)
-		for angle in [2.56, 3.3, 4.04, 4.78, 5.52, 6.26]:
-			var radial := Vector2(cos(angle), sin(angle))
-			var tangent := Vector2(-radial.y, radial.x)
-			var point := centre + radial * 32.0
-			draw_line(point - radial * 3.0 - tangent * 2.3,
-				point + radial * 3.0 + tangent * 2.3, Color("#272f32"), 2.0, true)
-			draw_line(point - radial * 3.0 + tangent * 2.3,
-				point + radial * 3.0 - tangent * 2.3, Color("#fff1c6"), 2.0, true)
+		var seam := seam_rect()
+		if seam.size.x <= 0.0 or seam.size.y <= 0.0:
+			return
+		var top_left := seam.position
+		var top_right := Vector2(seam.end.x, seam.position.y)
+		var bottom_right := seam.end
+		var bottom_left := Vector2(seam.position.x, seam.end.y)
+		# Dark underlay then cream thread: the seam stays visible on every felt colour
+		# while both strokes stop inside the 3px border band, clear of the art and of a
+		# caption as wide as the tag itself.
+		for pass_index in range(2):
+			var color := SEAM_DARK if pass_index == 0 else SEAM_LIGHT
+			var width := 2.6 if pass_index == 0 else 1.8
+			draw_dashed_line(top_left, top_right, color, width, SEAM_DASH)
+			draw_dashed_line(top_right, bottom_right, color, width, SEAM_DASH)
+			draw_dashed_line(bottom_right, bottom_left, color, width, SEAM_DASH)
+			draw_dashed_line(bottom_left, top_left, color, width, SEAM_DASH)
+		# Corner cross stitches tie the seam down at the tag's own corners.
+		for corner in [top_left, top_right, bottom_right, bottom_left]:
+			draw_line(corner + Vector2(-2.0, -2.0), corner + Vector2(2.0, 2.0),
+				SEAM_DARK, 3.2, true)
+			draw_line(corner + Vector2(2.0, -2.0), corner + Vector2(-2.0, 2.0),
+				SEAM_DARK, 3.2, true)
+			draw_line(corner + Vector2(-2.0, -2.0), corner + Vector2(2.0, 2.0),
+				SEAM_LIGHT, 1.6, true)
+			draw_line(corner + Vector2(2.0, -2.0), corner + Vector2(-2.0, 2.0),
+				SEAM_LIGHT, 1.6, true)
 
 
 ## Left-hand travel diary: an inert high-contrast sewn-paper journey and pinned
@@ -950,7 +1033,7 @@ static func node_hover_text(node: Dictionary, fallback_kind: String = "") -> Str
 
 func _add_marker(id: String, kind: String, at: Vector2,
 		chosen: Array[String], legal: Array[String], shortcut: int) -> void:
-	var marker := PanelContainer.new()
+	var marker := RouteTag.new()
 	marker.name = "Node_" + id
 	marker.set_meta("route_id", id)
 	marker.set_meta("route_kind", kind)
@@ -968,12 +1051,18 @@ func _add_marker(id: String, kind: String, at: Vector2,
 			paper.bg_color = LEGAL_BG
 			paper.border_color = LEGAL_THREAD
 	paper.set_border_width_all(3)
-	paper.set_corner_radius_all(40)
+	# An angular hand-cut tag, not a round button: barely rounded corners, and the
+	# RouteTag overlay sews cream stitches across this border band.
+	paper.corner_radius_top_left = 6
+	paper.corner_radius_top_right = 4
+	paper.corner_radius_bottom_left = 4
+	paper.corner_radius_bottom_right = 6
 	paper.content_margin_left = 3.0
 	paper.content_margin_right = 3.0
 	paper.content_margin_top = 3.0
 	paper.content_margin_bottom = 3.0
 	marker.add_theme_stylebox_override("panel", paper)
+	marker.edge_color = paper.border_color
 	marker.position = at
 	marker.custom_minimum_size = NODE_SIZE
 	marker.size = NODE_SIZE
@@ -1007,7 +1096,8 @@ func _add_marker(id: String, kind: String, at: Vector2,
 		var action := LegalPatchAction.new()
 		action.name = "Action"
 		action.flat = true
-		# A circular hand-sewn seam replaces the theme's rectangular focus box.
+		# The LegalPatchAction draws its own inset sewn seam; the theme's rectangular
+		# focus box is suppressed so the tag silhouette stays clean.
 		for state_name in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
 			action.add_theme_stylebox_override(state_name, StyleBoxEmpty.new())
 		action.focus_mode = Control.FOCUS_ALL

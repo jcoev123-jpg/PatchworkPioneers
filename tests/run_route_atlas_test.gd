@@ -399,7 +399,7 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 			_check(_inside(Rect2(marker.position, marker.size), RunRouteAtlas.PAGE_RIGHT)
 				and not Rect2(marker.position, marker.size).intersects(RunRouteAtlas.SPINE_RECT)
 				and marker.size.x >= 72 and marker.size.y >= 72,
-				label + ": round legible patch fully on right page, away from spine " + id)
+				label + ": legible sewn tag fully on right page, away from spine " + id)
 			var style := marker.get_theme_stylebox("panel") as StyleBoxFlat
 			var state := "chosen" if map.get_route().has(id) else ("legal" if legal.has(id) else "other")
 			_check(marker.get_meta("route_kind") == all_nodes[id]["type"]
@@ -407,8 +407,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and marker.get_meta("authored_position") == all_nodes[id]["position"]
 				and style.bg_color == _expected_style(state)
 				and style.border_color == _expected_border(state)
-				and style.corner_radius_top_left >= 30,
-				label + ": circular patch shows exact kind, authored row and state " + id)
+				and marker is RunRouteAtlas.RouteTag
+				and style.corner_radius_top_left >= 0 and style.corner_radius_top_left <= 8
+				and style.corner_radius_bottom_right <= 8,
+				label + ": angular sewn tag shows exact kind, authored row and state " + id)
 			var identity := marker.get_node("Identity") as Label
 			var number := shortcuts.find(id) + 1
 			var caption := (str(number) + " " if number > 0 else "") + str(all_nodes[id]["type"])
@@ -418,9 +420,9 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and identity.get_combined_minimum_size().x <= marker.size.x
 				and identity.get_combined_minimum_size().y <= marker.size.y,
 				label + ": high contrast caption and legal number fit " + id)
-			# Round patch captions stay readable body-text tags, never chapter headings.
+			# Sewn-tag captions stay readable body-text tags, never chapter headings.
 			_check(_keeps_body_face(identity) and identity.get_theme_font_size("font_size") >= 18,
-				label + ": round patch identity caption keeps its >=18-point body tag " + id)
+				label + ": sewn tag identity caption keeps its >=18-point body tag " + id)
 			_check(marker.tooltip_text == _hover_text(all_nodes[id])
 				and not marker.tooltip_text.contains(id)
 				and not marker.tooltip_text.contains("f0") and not marker.tooltip_text.contains("f1")

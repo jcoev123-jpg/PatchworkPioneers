@@ -252,6 +252,9 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	owner_patch.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
 	content.add_child(owner_patch)
 	var owner_label := _card_label("OwnerLabel", owner.capitalize(), OWNER_NAME_FONT_SIZE)
+	# The hero name is sewn in the project's display face. Its measured 14px line
+	# height fits the existing 24px owner felt, so no strip or card geometry moves.
+	owner_label.theme_type_variation = &"PatchHeading"
 	owner_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	owner_label.add_theme_color_override("font_color", owner_ink(owner))
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -965,7 +968,9 @@ func _apply_sewn_art(paper: StyleBoxFlat, content_margin: MarginContainer) -> vo
 
 
 ## Measure the actual full label and leave the burlap's sewn edge outside
-## the glyph bounds, even with a project font wider than the default.
+## the glyph bounds, even with a project font wider than the default. The
+## display face is already assigned by _style_button, so this measures the
+## exact font the fitted Skip action draws.
 func _fit_skip_button() -> void:
 	var font: Font = skip_button.get_theme_font("font")
 	if font == null:
@@ -980,6 +985,10 @@ func _fit_skip_button() -> void:
 
 
 func _style_button(button: Button, accent: Color) -> void:
+	# Every reward action (Choose, Skip, Help and the glossary's Close) is lettered
+	# in the project's display face. Assigning the variation first means a later
+	# _fit_skip_button measures the font that is actually drawn.
+	button.theme_type_variation = &"PatchHeadingButton"
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var box := StyleBoxFlat.new()
 		match state:
