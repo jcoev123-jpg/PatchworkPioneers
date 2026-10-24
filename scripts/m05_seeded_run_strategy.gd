@@ -8,6 +8,12 @@ const STARTER_ATTACKS := [
 	"seamstress_prick", "tinker_pop_shot", "tinker_scrap_bomb"
 ]
 const EFFECTIVE_PATCH_EXCLUSIONS := ["stitched_badge", "spare_spool"]
+const EARNED_POOL_ATTACKS := [
+	"warden_brass_buckle", "warden_brass_buckle_plus",
+	"seamstress_thread_whip", "seamstress_thread_whip_plus",
+	"warden_heavy_thimble", "warden_heavy_thimble_plus",
+	"warden_pin_and_pound", "warden_pin_and_pound_plus",
+]
 
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
@@ -82,7 +88,10 @@ func choose_event_choice(forecast: Dictionary) -> String:
 func choose_reward(offers: Array, seed_value: int, previous_picks: int) -> String:
 	if offers.is_empty() or seed_value % 3 != 0 or previous_picks != 0:
 		return "" # Real Skip is an authored choice, not an invented award.
-	return str(offers[0].get("id", ""))
+	for offer in offers:
+		if EARNED_POOL_ATTACKS.has(str(offer.get("id", ""))):
+			return str(offer.id)
+	return "" # Unsupported earned shapes stay unselected in this bounded cohort.
 
 
 func choose_stitch(deck_ids: Array, heroes: Array, scraps: int) -> Dictionary:
@@ -129,6 +138,7 @@ func choose_sew(wardrobe: RunPatchWardrobe, heroes: Array) -> Dictionary:
 
 func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		attacks: CombatAttackCards, run_cards: RunRestStitchCards,
+		plain: CombatPoolPlainStrikes, heavy: CombatWardenPoolHeavyAttacks,
 		rejected_ids: Array) -> Dictionary:
 	if not deck.turn_active or party.is_defeated() or enemies.is_victorious():
 		return {}
@@ -137,6 +147,25 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var targeter := CombatAttackTargeting.new()
 	for id in deck.hand:
 		if rejected_ids.has(id):
+			continue
+		if EARNED_POOL_ATTACKS.has(id):
+			var definition := _pool_definition(id)
+			if definition.is_empty() or definition.cost > deck.energy \
+					or not _living_owner_in_from(party.get_heroes(), definition):
+				continue
+			for position in definition.to_positions:
+				var enemy := enemies.get_enemy(position)
+				if enemy.is_empty() or enemy.hp <= 0 or enemy.position != position:
+					continue
+				if heavy.is_supported_card(id) and not heavy.can_play(deck, party, enemies, id, position):
+					continue
+				if not heavy.is_supported_card(id) and not plain.is_patch_binding_valid():
+					continue
+				# Earned direct hits get first consideration; tie order follows the hand
+				# and authored target slots, with no RNG or speculative damage.
+				if 200 > best_score:
+					best_score = 200
+					best = {"kind": "earned_pool", "id": id, "target": position}
 			continue
 		if STARTER_ATTACKS.has(id):
 			var forecast := attacks.forecast_attack(deck, party, enemies, id)
@@ -203,6 +232,12 @@ func choose_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			best_score = score
 			best = {"kind": "support", "id": id, "target": target}
 	return best
+
+
+func _pool_definition(id: String) -> Dictionary:
+	if id.begins_with("warden_"):
+		return WardenPoolCards.new().get_definition(id)
+	return SeamstressPoolCards.new().get_definition(id)
 
 
 func _living_owner_in_from(heroes: Array, definition: Dictionary) -> bool:

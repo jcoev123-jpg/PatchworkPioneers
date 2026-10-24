@@ -45,7 +45,7 @@ func _select_stitch(selector: OptionButton, item: int, keyboard: bool) -> void:
 	if keyboard:
 		selector.grab_focus()
 		await _key(KEY_SPACE)
-		for index in range(item):
+		for index in range(posmod(item - selector.selected, selector.item_count)):
 			await _key(KEY_DOWN)
 		await _key(KEY_ENTER)
 	else:
@@ -77,8 +77,9 @@ func _run() -> void:
 		await _finish_stitch()
 		return
 	var replay: Array = []
+	var default_replay: Array = []
 	var retained: Callable
-	for session in range(5):
+	for session in range(7):
 		seed(820082)
 		var global_next := randi()
 		seed(820082)
@@ -170,7 +171,55 @@ func _run() -> void:
 				"mounted selectors visibly identify ordered halves with exact occurrence and owner")
 		_check(first.text.begins_with("First card: ") and second.text.begins_with("Second card: ")
 			and first.size.y == second.size.y, "closed selectors expose distinct roles without an extra row")
+		var default_first: int = first.get_item_metadata(first.selected)
+		var default_second: int = second.get_item_metadata(second.selected)
+		var default_owner: String = catalog.get_definition(app.run_deck[default_first]).owner
+		var earliest_second := -1
+		for item in range(eligible.size()):
+			var definition: Dictionary = catalog.get_definition(app.run_deck[eligible[item]])
+			if definition.is_empty():
+				definition = WardenPoolCards.new().get_definition(app.run_deck[eligible[item]])
+			if definition.owner != default_owner:
+				earliest_second = item
+				break
+		_check(first.selected == 0 and default_first == eligible[0] and earliest_second >= 0
+			and second.selected == earliest_second and default_first != default_second,
+			"funded Rest defaults to first occurrence and earliest different owner with canonical metadata")
 		_reject_stitch(next, "premature Continue")
+		if session >= 5:
+			var source: Dictionary = app._stitch_snapshot()
+			var oracle := RunRestStitchCards.new(app.run_deck, app.run_stitch_descriptors, app.run_scraps, app.run_next_stitch_id)
+			var expected := oracle.choose_stitch(default_first, default_second, source)
+			_check(expected.ok and not app.rest_stitch.is_consumed() and app.rest_continue_button.disabled,
+				"untouched defaults are legal without auto-committing")
+			if session == 5:
+				await _click(button)
+			else:
+				second.grab_focus()
+				await _key(KEY_TAB)
+				_check(button.has_focus(), "Tab reaches Stitch from untouched second default")
+				await _key(KEY_ENTER)
+			_check(app.rest_stitch.is_consumed() and app._stitch_snapshot() == oracle.get_snapshot(),
+				"untouched defaults commit exact independent ordered composite receipt")
+			_check(app.run_scraps == 0 and app.run_stitch_descriptors.size() == 1 and app.run_next_stitch_id == 2,
+				"default Stitch spends exactly three scraps for one composite")
+			_check(not app.rest_continue_button.disabled and app.rest_heal_button.disabled and app.rest_upgrade_button.disabled,
+				"default Stitch enables Continue and excludes competing choices")
+			_reject_stitch(stitch, "duplicate default Stitch")
+			if session == 5:
+				default_replay = _stitch_state().duplicate(true)
+			else:
+				_check(_stitch_state() == default_replay, "untouched mouse/keyboard defaults replay exact ledger and RNG")
+			await _click(app.rest_continue_button)
+			_check(app.route_view != null and not app.rest_view.visible, "default Stitch Continue opens connected route")
+			_reject_stitch(stitch, "default post-Continue callback")
+			await _click(app.route_back_button)
+			_check(app.run_deck.is_empty() and app.run_scraps == 0 and app.run_stitch_descriptors.is_empty()
+				and app.run_next_stitch_id == 1 and app.rest_stitch == null, "default session clears on title return")
+			_check(randi() == global_next, "untouched default route preserves global RNG")
+			continue
+		second.select(first.selected)
+		_check(first.get_item_metadata(first.selected) == second.get_item_metadata(second.selected), "explicit same-occurrence negative fixture")
 		_reject_stitch(stitch, "same instance")
 		second.select(1)
 		_check(catalog.get_definition(app.run_deck[0]).owner == catalog.get_definition(app.run_deck[1]).owner, "same-owner negative fixture")

@@ -22,8 +22,11 @@ const SELECTED_TEXT := "SELECTED"
 ## It is never catalog data and never enters a real visit.
 const LONG_PROBE_TITLE := "Counter-stitch Across the Whole Wrapping Seam of Tailor's Trance"
 ## The paper inset the stamp must keep before the sewn border, measured here
-## independently from the gallery's own layout constant.
+## independently from the gallery's own layout constant. The same minimum is
+## required below the settled stamp's own rect, so a stamp resting on (or
+## clipping through) the lower sewn hem fails instead of passing on a zero gap.
 const REQUIRED_STAMP_INSET := 4.0
+const REQUIRED_STAMP_BOTTOM_CLEARANCE := 4.0
 
 var failures: Array[String] = []
 var checks := 0
@@ -337,6 +340,19 @@ func _check_selected_fit(panel: Control, marker: Label, label: String) -> void:
 		label + " SELECTED stamp sits fully inside the sewn paper")
 	_check(stamp.end.x <= paper.end.x - REQUIRED_STAMP_INSET + 1.0,
 		label + " SELECTED stamp keeps its inset before the sewn border")
+	# A settled stamp may not rest on the lower sewn hem: the whole word keeps a
+	# positive paper inset below its own rect, measured from the inner cream edge
+	# the panel style defines rather than from a guessed screen coordinate.
+	var bottom_clearance := paper.end.y - stamp.end.y
+	_check(bottom_clearance >= REQUIRED_STAMP_BOTTOM_CLEARANCE - 0.5,
+		label + " SELECTED stamp keeps a positive paper inset above the lower sewn hem ("
+			+ str(snappedf(bottom_clearance, 0.01)) + " px)")
+	# And that clearance is reserved by the face itself: the stamp's row is at
+	# least its own measured line height plus the bottom paper inset, so the
+	# clearance survives the panel being exactly as tall as its content.
+	var stamp_line: float = font.get_height(font_size)
+	_check(row != null and row.size.y >= stamp_line + REQUIRED_STAMP_BOTTOM_CLEARANCE - 0.5,
+		label + " SELECTED row reserves the stamp's measured line height plus its bottom inset")
 
 
 ## The cream paper rect inside a sewn face: its own panel style's margins.

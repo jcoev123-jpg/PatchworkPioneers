@@ -863,6 +863,7 @@ func _apply_patchwork_style() -> void:
 	return_button.add_theme_color_override("font_hover_color", Color("#1e292e"))
 	return_button.add_theme_color_override("font_pressed_color", Color("#1e292e"))
 	return_button.add_theme_color_override("font_disabled_color", Color("#302e2d"))
+	return_button.theme_type_variation = "PatchHeadingButton"
 	return_button.add_theme_font_size_override("font_size", 24)
 
 

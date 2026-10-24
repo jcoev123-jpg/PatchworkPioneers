@@ -4270,6 +4270,15 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 			selector.add_item(_rest_stitch_text(index, selector == rest_stitch_first))
 			selector.set_item_metadata(selector.item_count - 1, index)
 		rest_view.add_child(selector)
+	if rest_stitch_first.item_count > 0:
+		rest_stitch_first.select(0)
+		var first_index: int = rest_stitch_first.get_item_metadata(0)
+		var first_owner: String = RunRestStitchCards.resolve_card_definition(_rest_deck[first_index]).owner
+		for row in range(rest_stitch_second.item_count):
+			var second_index: int = rest_stitch_second.get_item_metadata(row)
+			if RunRestStitchCards.resolve_card_definition(_rest_deck[second_index]).owner != first_owner:
+				rest_stitch_second.select(row)
+				break
 	rest_heal_button = Button.new()
 	rest_heal_button.text = "Heal"
 	rest_heal_button.tooltip_text = "Choose one: Heal, Upgrade or Stitch. Heal restores 30% max HP and revives downed heroes."
@@ -4670,7 +4679,18 @@ func _mount_shop_patches() -> void:
 		shop_patch_heroes.add_item(hero.id.capitalize())
 		shop_patch_heroes.set_item_metadata(shop_patch_heroes.item_count - 1, hero.id)
 	shop_patch_buy_button = Button.new()
-	row.add_child(shop_patch_buy_button)
+	shop_patch_buy_button.custom_minimum_size.y = 48
+	content.add_child(shop_patch_buy_button)
+	# Reuse the visit's sewn faces for this nested action, outside its direct-child rail.
+	var visit_skin := get_node("LiveVisitCardTiles") as LiveVisitCardTiles
+	shop_patch_buy_button.theme_type_variation = LiveVisitCardTiles.ACTION_VARIATION
+	shop_patch_buy_button.add_theme_font_size_override("font_size", LiveVisitCardTiles.ACTION_FONT_SIZE)
+	for state in LiveVisitCardTiles.ACTION_SKIN_STATES:
+		shop_patch_buy_button.add_theme_stylebox_override(state,
+			visit_skin._action_face(state, visit_skin.action_fabric()))
+	for ink in LiveVisitCardTiles.ACTION_INK_STATES:
+		shop_patch_buy_button.add_theme_color_override(ink, LiveVisitCardTiles.ACTION_INK)
+	shop_patch_buy_button.add_theme_color_override("font_disabled_color", LiveVisitCardTiles.ACTION_DISABLED_INK)
 	shop_patch_preview = Label.new()
 	shop_patch_preview.name = "ShopPatchPreview"
 	shop_patch_preview.custom_minimum_size.x = 440

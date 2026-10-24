@@ -9,6 +9,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_earned_pool_fixture()
 	var start_ms := Time.get_ticks_msec()
 	var seeds: Array[int] = []
 	var first: Array[Dictionary] = []
@@ -125,6 +126,8 @@ func _run_seed(value: int) -> Dictionary:
 	var event_history: Array[String] = []
 	var shop_visits: Array[Dictionary] = []
 	var purchased_ids: Array[String] = []
+	var acquired_ids: Array[String] = []
+	var earned_plays: Array[Dictionary] = []
 	var unaffordable_checks := 0
 	var won := false
 	var lost := false
@@ -177,7 +180,11 @@ func _run_seed(value: int) -> Dictionary:
 			var attacks := CombatAttackCards.new()
 			var support := CombatSupportCards.new()
 			var stitched := CombatStitchedCards.new(attacks)
-			if not attacks.bind_patch_wardrobe(wardrobe, carry.torn) 					or not support.bind_patch_wardrobe(wardrobe, carry.torn) 					or not stitched.bind_patch_wardrobe(wardrobe, carry.torn):
+			var plain := CombatPoolPlainStrikes.new()
+			var heavy := CombatWardenPoolHeavyAttacks.new()
+			if not attacks.bind_patch_wardrobe(wardrobe, carry.torn) 					or not support.bind_patch_wardrobe(wardrobe, carry.torn) 					or not stitched.bind_patch_wardrobe(wardrobe, carry.torn) \
+					or not plain.bind_patch_wardrobe(wardrobe, carry.torn) \
+					or not heavy.bind_patch_wardrobe(wardrobe, carry.torn):
 				return _fail("genuinely worn patch rules binding")
 			attacks.start_player_turn()
 			var terminal := ""
@@ -186,12 +193,20 @@ func _run_seed(value: int) -> Dictionary:
 				for action_index in range(ACTION_CAP):
 					action_total += 1
 					var decision := strategy.choose_card(combat_deck, party, enemies,
-						attacks, run_cards, rejected_ids)
+						attacks, run_cards, plain, heavy, rejected_ids)
 					if decision.is_empty():
 						break
 					var before := _combat_snapshot(combat_deck, party, enemies, rng)
 					var accepted := false
+					var pool_receipt := {}
 					match decision.kind:
+						"earned_pool":
+							if not acquired_ids.has(decision.id):
+								return _fail("unearned pool card selected from hand")
+							pool_receipt = (heavy.play_attack(combat_deck, party, enemies,
+								decision.id, decision.target) if heavy.is_supported_card(decision.id)
+								else plain.play_card(combat_deck, party, enemies, decision.id, decision.target))
+							accepted = pool_receipt.get("ok", false)
 						"attack":
 							accepted = attacks.play_attack(combat_deck, party, enemies,
 								decision.id, decision.target).get("ok", false)
@@ -217,6 +232,13 @@ func _run_seed(value: int) -> Dictionary:
 							return _fail("rejected card mutated paid combat/RNG")
 						rejected_ids.append(decision.id)
 						continue
+					if decision.kind == "earned_pool":
+						var definition := strategy._pool_definition(decision.id)
+						if not _pool_transition_valid(before, combat_deck, party, enemies,
+								rng, decision, definition, pool_receipt):
+							return _fail("earned pool receipt/payment/roster transition")
+						earned_plays.append({"id": decision.id, "target": decision.target,
+							"receipt": pool_receipt.duplicate(true), "battle": choice})
 					plays += 1
 					if before[0] <= combat_deck.energy and decision.kind != "support":
 						return _fail("paid combat did not charge energy")
@@ -275,6 +297,8 @@ func _run_seed(value: int) -> Dictionary:
 				return _fail("genuine reward pick/skip failed")
 			if not carry.apply_reward(choice, result, party).get("ok", false):
 				return _fail("torn carryover failed to publish witnessed settlement")
+			if not selected.is_empty():
+				acquired_ids.append(selected)
 			picks += 1 if not selected.is_empty() else 0
 			skips += 1 if selected.is_empty() else 0
 			deck_ids.assign(settled.state.deck)
@@ -366,6 +390,7 @@ func _run_seed(value: int) -> Dictionary:
 				owned.assign(bought.state.trinkets)
 				paid = bought.receipt.duplicate(true)
 				purchased_ids.append(paid.id)
+				acquired_ids.append(paid.id)
 				if not wardrobe.refresh_run_context(carry.read_state().heroes,
 						owned, scraps, gold, deck_ids, wardrobe.get_snapshot()):
 					return _fail("post-purchase wardrobe context")
@@ -429,8 +454,160 @@ func _run_seed(value: int) -> Dictionary:
 		"plays": plays, "phases": phases, "picks": picks, "skips": skips,
 		"battles": battles, "treasure_visits": treasure_visits, "event_visits": event_visits,
 		"shop_visits": shop_visits, "purchased_ids": purchased_ids,
+		"acquired_ids": acquired_ids, "earned_plays": earned_plays,
 		"unaffordable_checks": unaffordable_checks,
 		"gold": gold, "scraps": scraps, "actions": action_total}
+
+
+func _pool_transition_valid(before: Array, deck: CombatDeck, party: CombatParty,
+		enemies: CombatEnemies, rng: RandomNumberGenerator, decision: Dictionary,
+		definition: Dictionary, receipt: Dictionary) -> bool:
+	if definition.is_empty() or not receipt.get("ok", false) or receipt.get("hits", []).is_empty():
+		return false
+	if deck.energy != before[0] - definition.cost or str(rng.state) != before[6] \
+			or deck.hand.count(decision.id) != before[1].count(decision.id) - 1 \
+			or deck.discard_pile.count(decision.id) != before[2].count(decision.id) + 1 \
+			or deck.draw_pile != before[3]:
+		return false
+	var target := int(decision.get("target", 0))
+	if target < 1 or target > before[5].size():
+		return false
+	var old_enemy: Dictionary = before[5][target - 1]
+	var new_enemy: Dictionary = enemies.get_enemy(target)
+	var absorbed := 0
+	var hp_loss := 0
+	for hit in receipt.hits:
+		if hit.position != target or hit.damage <= 0:
+			return false
+		absorbed += int(hit.block_absorbed)
+		hp_loss += int(hit.hp_loss)
+	if old_enemy.block - new_enemy.block != absorbed or old_enemy.hp - new_enemy.hp != hp_loss:
+		return false
+	for index in range(before[5].size()):
+		if index + 1 != target and before[5][index] != enemies.get_enemy(index + 1):
+			return false
+	var old_heroes: Array = before[4]
+	var new_heroes := party.get_heroes()
+	var block_deltas: Dictionary = receipt.get("block_deltas", {})
+	for index in range(old_heroes.size()):
+		var old_hero: Dictionary = old_heroes[index]
+		var new_hero: Dictionary = new_heroes[index]
+		if new_hero.hp != old_hero.hp or new_hero.block - old_hero.block != int(
+				block_deltas.get(old_hero.position, 0)):
+			return false
+	return true
+
+
+func _test_earned_pool_fixture() -> void:
+	var cases := [
+		["warden_brass_buckle", 1, [1, 2], [1, 2], 5, 4, 1],
+		["warden_brass_buckle_plus", 1, [1, 2], [1, 2], 7, 6, 1],
+		["seamstress_thread_whip", 1, [1, 2, 3], [1, 2], 6, 0, 1],
+		["seamstress_thread_whip_plus", 1, [1, 2, 3], [1, 2], 8, 0, 1],
+		["warden_heavy_thimble", 2, [1], [1, 2], 11, 0, 1],
+		["warden_heavy_thimble_plus", 2, [1], [1, 2], 15, 0, 1],
+		["warden_pin_and_pound", 2, [1], [1, 2, 3], 9, 0, 2],
+		["warden_pin_and_pound_plus", 2, [1], [1, 2, 3], 12, 0, 2],
+	]
+	var strategy := M05SeededRunStrategy.new()
+	for row in cases:
+		var id: String = row[0]
+		var definition := strategy._pool_definition(id)
+		_check(definition.get("cost") == row[1] and definition.get("from_positions") == row[2] \
+			and definition.get("to_positions") == row[3] \
+			and definition.get("effects", {}).get("damage") == row[4] \
+			and definition.get("effects", {}).get("block", 0) == row[5] \
+			and definition.get("effects", {}).get("hits", 1) == row[6],
+			"pool authored cost/FROM/TO/effects " + id)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 8401
+		var deck := CombatDeck.new([id], rng)
+		var party := CombatParty.new([
+			{"id": "warden", "max_hp": 40},
+			{"id": "seamstress", "max_hp": 30},
+			{"id": "tinker", "max_hp": 26}])
+		var enemies := CombatEnemies.new([
+			{"id": "foe_1", "max_hp": 50},
+			{"id": "foe_2", "max_hp": 50},
+			{"id": "foe_3", "max_hp": 50}])
+		_check(deck.start_turn() and deck.hand.has(id) and party.is_valid() and enemies.is_valid(),
+			"pool real held-card fixture " + id)
+		_check(enemies.gain_block(1, 3), "pool real enemy Block fixture " + id)
+		var plain := CombatPoolPlainStrikes.new()
+		var heavy := CombatWardenPoolHeavyAttacks.new()
+		var decision := strategy.choose_card(deck, party, enemies, CombatAttackCards.new(),
+			RunRestStitchCards.new(StarterCards.new().get_starting_deck(), {}, 0, 1),
+			plain, heavy, [])
+		_check(decision.get("kind") == "earned_pool" and decision.get("id") == id \
+			and decision.get("target") == 1, "pool strategy chooses legal held card " + id)
+		var before := _combat_snapshot(deck, party, enemies, rng)
+		var receipt := (heavy.play_attack(deck, party, enemies, id, 1)
+			if heavy.is_supported_card(id) else plain.play_card(deck, party, enemies, id, 1))
+		_check(_pool_transition_valid(before, deck, party, enemies, rng, decision,
+			definition, receipt), "pool resolver one charge/discard and receipt " + id)
+		var hits: Array = receipt.get("hits", [])
+		_check(hits.size() == row[6], "pool real hit count " + id)
+		if hits.size() == row[6]:
+			for hit_index in range(hits.size()):
+				_check(hits[hit_index].damage == row[4] \
+					and hits[hit_index].block_absorbed == (3 if hit_index == 0 else 0),
+					"pool authored hit and Block absorption " + id)
+		if row[5] > 0:
+			_check(party.get_hero(1).block == row[5], "Brass Buckle owner Block " + id)
+		# A second cast of the spent copy is a resolver refusal, not a second action.
+		var spent := _combat_snapshot(deck, party, enemies, rng)
+		var denied := (heavy.play_attack(deck, party, enemies, id, 1)
+			if heavy.is_supported_card(id) else plain.play_card(deck, party, enemies, id, 1))
+		_check(not denied.get("ok", true) and spent == _combat_snapshot(deck, party, enemies, rng),
+			"spent pool copy rejects without mutation " + id)
+	_test_pool_negative_positions()
+
+
+func _test_pool_negative_positions() -> void:
+	var strategy := M05SeededRunStrategy.new()
+	for id in ["warden_brass_buckle", "warden_heavy_thimble"]:
+		var heavy := CombatWardenPoolHeavyAttacks.new()
+		var plain := CombatPoolPlainStrikes.new()
+		for condition in ["wrong_owner_slot", "downed_owner", "no_energy", "dead_target", "invalid_target", "out_of_range"]:
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 481
+			var deck := CombatDeck.new([id], rng)
+			var order := ["seamstress", "tinker", "warden"] if condition == "wrong_owner_slot" \
+				else ["warden", "seamstress", "tinker"]
+			var defs: Array = []
+			for hero_id in order:
+				defs.append({"id": hero_id, "max_hp": 30})
+			var party := CombatParty.new(defs)
+			var enemies := CombatEnemies.new([
+				{"id": "foe_1", "max_hp": 30},
+				{"id": "foe_2", "max_hp": 30},
+				{"id": "foe_3", "max_hp": 30}])
+			_check(deck.start_turn() and deck.hand.has(id) and party.is_valid() \
+				and enemies.is_valid(), "non-vacuous pool refusal fixture " + condition + id)
+			if condition == "downed_owner":
+				party.apply_damage(1, 30)
+			elif condition == "no_energy":
+				deck.try_spend_energy(3)
+			elif condition == "dead_target":
+				for position in [1, 2]:
+					enemies.apply_damage(position, 30)
+			_check((condition != "wrong_owner_slot" or party.get_hero(3).id == "warden") \
+				and (condition != "downed_owner" or party.is_downed(1)) \
+				and (condition != "no_energy" or deck.energy == 0) \
+				and (condition != "dead_target" or (enemies.is_slain(1) and enemies.is_slain(2))),
+				"pool refusal condition is real " + condition + id)
+			var target := (0 if condition == "invalid_target" else (3 if condition == "out_of_range" else 1))
+			var before := _combat_snapshot(deck, party, enemies, rng)
+			if condition not in ["out_of_range", "invalid_target"]:
+				var decision := strategy.choose_card(deck, party, enemies,
+					CombatAttackCards.new(), RunRestStitchCards.new(
+						StarterCards.new().get_starting_deck(), {}, 0, 1),
+					plain, heavy, [])
+				_check(decision.is_empty(), "strategy skips invalid pool card " + condition + id)
+			var denied := (heavy.play_attack(deck, party, enemies, id, target)
+				if heavy.is_supported_card(id) else plain.play_card(deck, party, enemies, id, target))
+			_check(not denied.get("ok", true) and before == _combat_snapshot(deck, party, enemies, rng),
+				"pool resolver refusal preserves combat/RNG " + condition + id)
 
 
 func _event_snapshot(map: RunMap, carry: RunTornCarryover, wardrobe: RunPatchWardrobe,
@@ -629,6 +806,11 @@ func _report(trials: Array[Dictionary]) -> void:
 	var purchases := 0
 	var unaffordable := 0
 	var frequencies := {}
+	var acquired := {}
+	var winning_acquired := {}
+	var earned_plays := 0
+	var earned_receipts := []
+	var starter_ids := StarterCards.new().get_starting_deck()
 	for trial in trials:
 		wins += 1 if trial.won else 0
 		floor_total += trial.floor
@@ -649,6 +831,15 @@ func _report(trials: Array[Dictionary]) -> void:
 				visit.record.id, visit.receipt.choice_id, JSON.stringify(visit.wallet), visit.rng_after])
 		visits += trial.shop_visits.size()
 		purchases += trial.purchased_ids.size()
+		for id in trial.acquired_ids:
+			acquired[id] = acquired.get(id, 0) + 1
+		for event in trial.earned_plays:
+			_check(trial.acquired_ids.has(event.id) and event.receipt.get("ok", false) \
+				and not event.receipt.get("hits", []).is_empty(),
+				"accepted earned play has genuine acquired ID and hit receipt")
+			earned_plays += 1
+			earned_receipts.append({"seed": trial.seed, "id": event.id,
+				"battle": event.battle, "receipt": event.receipt})
 		unaffordable += trial.unaffordable_checks
 		var receipts: Array = []
 		for visit in trial.shop_visits:
@@ -662,6 +853,8 @@ func _report(trials: Array[Dictionary]) -> void:
 		_check(trial.gold >= 0 and trial.scraps >= 0 and trial.actions <= 12 * TURN_CAP * ACTION_CAP,
 			"wallet and finite action cap")
 		if trial.won:
+			for id in trial.acquired_ids:
+				winning_acquired[id] = true
 			var seen := {}
 			for card_id in trial.deck:
 				seen[card_id] = true
@@ -669,6 +862,8 @@ func _report(trials: Array[Dictionary]) -> void:
 				frequencies[card_id] = frequencies.get(card_id, 0) + 1
 	_check(plays > 0 and phases > 0 and picks > 0 and skips > 0,
 		"nonzero genuine charged/discarded play, enemy phase, reward pick and skip")
+	_check(earned_plays > 0 and not earned_receipts.is_empty(),
+		"cohort actually commits acquired supported pool attacks in later hands")
 	_check(stitches > 0 and sews > 0,
 		"cohort must actually commit a Rest stitch and an owned patch sew")
 	_check(visits > 0 and purchases > 0 and unaffordable > 0,
@@ -686,14 +881,41 @@ func _report(trials: Array[Dictionary]) -> void:
 	print("M05 Shop visits=%d paid card purchases=%d unaffordable rejections=%d" % [visits, purchases, unaffordable])
 	print("M05 Events special=%s generic=%d unaffordable rejections=%d; no-effect Treasure=%d" %
 		[JSON.stringify(specials), generic, event_unaffordable, treasures])
-	print("M05 full BAL win/card-frequency gates PENDING earned-pool-card combat coverage")
+	print("M05 supported earned-pool coverage PARTIAL (other pool shapes deliberately unselected); acquired=%s accepted_plays=%d receipts=%s" % [
+		JSON.stringify(acquired), earned_plays, JSON.stringify(earned_receipts)])
+	print("M05 BAL win target 15-30/50 (30-60%%): %s (%d/50)" % [
+		"PASS" if wins >= 15 and wins <= 30 else "FAIL", wins])
 	if wins == 0:
-		print("M05 winning-deck card frequency: n/a (no winning decks)")
+		print("M05 literal no-card-over-half winning-deck gate: NOT_EVALUABLE (zero winners)")
+		print("M05 mandatory starter / optional acquired frequency: NOT_EVALUABLE")
 	else:
-		print("M05 winning-deck card frequency (%d winning decks, presence counted once/deck):" % wins)
+		var starter_frequencies := {}
+		var optional_frequencies := {}
+		var stitched_frequencies := {}
+		var other_frequencies := {}
+		var exceeds := false
 		var ids: Array = frequencies.keys()
 		ids.sort()
 		for id in ids:
 			_check(frequencies[id] <= wins, "per-card winning-deck denominator")
-			print("  %s: %d/%d (%.1f%%)" % [
-				id, frequencies[id], wins, float(frequencies[id]) * 100.0 / wins])
+			if starter_ids.has(id):
+				starter_frequencies[id] = frequencies[id]
+			elif winning_acquired.has(id):
+				optional_frequencies[id] = frequencies[id]
+			elif str(id).begins_with(RunRestStitchCards.ID_PREFIX):
+				stitched_frequencies[id] = frequencies[id]
+			else:
+				other_frequencies[id] = frequencies[id]
+			if frequencies[id] * 2 > wins:
+				exceeds = true
+		print("M05 mandatory starter winning-deck presence (once/deck): %s / %d" % [
+			JSON.stringify(starter_frequencies), wins])
+		print("M05 optional acquired winning-deck presence (once/deck): %s / %d" % [
+			JSON.stringify(optional_frequencies), wins])
+		print("M05 derived stitched winning-deck presence (once/deck): %s / %d" % [
+			JSON.stringify(stitched_frequencies), wins])
+		_check(other_frequencies.is_empty(), "winning cards classified as starter, acquired or stitched")
+		print("M05 literal no-card-over-half winning-deck gate: %s; fixed starter cards make this conflict unavoidable while retained in winning decks" % [
+			"FAIL" if exceeds else "PASS"])
+		print("M05 optional acquired-card over-half diagnostic: %s" % [
+			"FAIL" if optional_frequencies.values().any(func(count): return count * 2 > wins) else "PASS"])
