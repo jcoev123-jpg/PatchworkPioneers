@@ -28,10 +28,13 @@ const CHIP_SEPARATION := 2
 ## Bounded, presentation-only readable names for known authored patch IDs. The M05
 ## HEAD/ARM/COAT entries describe their authored rules directly in `_patch_power` below
 ## (card_bleed_bonus, card_exposed_bonus, card_weak_bonus, card_block_bonus,
-## card_unravel_bonus, Frayfinder's conditional first-hit attack damage, and Borrowed Button's other-hero positive-heal Block rule). An
+## card_unravel_bonus, Frayfinder's conditional first-hit attack damage, Switchback Button's
+## different-owner follow-up award, Threadguard Wrap's +1 Block on an already-Block card,
+## and Borrowed Button's other-hero positive-heal Block rule). An
 ## unknown ID keeps its raw authored ID and is never given a fabricated power line.
 const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
+	"switchback_button": "Switchback Button",
 	"quilted_coat": "Quilted Coat", "padded_vest": "Padded Vest",
 	"double_quilt_coat": "Double Quilt Coat", "scrap_lined_vest": "Scrap Lined Vest",
 	"wool_patch_cloak": "Wool Patch Cloak", "chain_stitched_coat": "Chain Stitched Coat",
@@ -40,6 +43,7 @@ const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare
 	"stern_seam_cap": "Stern Seam Cap", "reinforced_browband": "Reinforced Browband",
 	"hemguard_cuff": "Hemguard Cuff", "red_bobbin_cuff": "Red Bobbin Cuff",
 	"loose_thread_glove": "Loose Thread Glove", "frayfinder_mitt": "Frayfinder Mitt",
+	"threadguard_wrap": "Threadguard Wrap",
 	"borrowed_button": "Borrowed Button"}
 ## Committed Block icon, painted inside the meter's existing sewn glyph. Optional: a
 ## missing image leaves the drawn shield in place, so protection is always readable.
@@ -585,12 +589,16 @@ func _patch_power(id: String) -> String:
 			return "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards, applied to the card's actual Block recipient (even if it is an ally)."
 		"hemguard_cuff":
 			return "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards."
+		"threadguard_wrap":
+			return "Authored patch rule: card_block_bonus +1 to positive Block on this wearer's cards, applied to the card's actual Block recipient; a damage-only card that grants no Block never gains a fabricated bonus."
 		"red_bobbin_cuff":
 			return "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier."
 		"loose_thread_glove":
 			return "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards."
 		"frayfinder_mitt":
 			return "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit."
+		"switchback_button":
+			return "Authored patch rule: once per player turn, when a different living hero's committed card or ordered stitched half immediately precedes this living, untorn wearer's committed card or half, the wearer gains +2 Block; both stitched halves count by their real owner, and invalid or failed plays never set or claim it."
 		"borrowed_button":
 			return "Authored patch rule: once per combat, after a different living hero's committed card or ordered stitched half actually restores at least 1 HP to the living, untorn wearer, that wearer gains 3 Block."
 	if _coat_bonuses.is_empty():
