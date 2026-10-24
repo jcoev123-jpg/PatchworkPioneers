@@ -25,13 +25,11 @@ const STATUS_ORDER := ["bleed", "weak", "exposed"]
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
 const CHIP_FONT_SIZES := [11, 10, 9]
 const CHIP_SEPARATION := 2
-## Bounded, presentation-only readable names for known authored patch IDs. The M05
-## HEAD/ARM/COAT entries describe their authored rules directly in `_patch_power` below
-## (card_bleed_bonus, card_exposed_bonus, card_weak_bonus, card_block_bonus,
-## card_unravel_bonus, Frayfinder's conditional first-hit attack damage, Switchback Button's
-## different-owner follow-up award, Threadguard Wrap's +1 Block on an already-Block card,
-## and Borrowed Button's other-hero positive-heal Block rule). An
-## unknown ID keeps its raw authored ID and is never given a fabricated power line.
+## Bounded, presentation-only readable names for known authored patch IDs. `_patch_power`
+## below restates each M05 HEAD/ARM/COAT power as a short player sentence (worn amounts,
+## wearer-only scope, real Block recipient, single-hit/once-per-turn/once-per-combat
+## limits and the refused cases) instead of internal effect keys. An unknown ID keeps
+## its raw authored ID and is never given a fabricated power line.
 const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare Spool",
 	"button_eye": "Button Eye", "pincushion_arm": "Pincushion Arm",
 	"switchback_button": "Switchback Button",
@@ -580,27 +578,27 @@ func _patch_power(id: String) -> String:
 			return "Damage-dealing cards owned by this wearer deal +%d damage." % \
 				CombatPatchAttackRules.EFFECTS[id]["amount"]
 		"bloodstitch_bonnet":
-			return "Authored patch rule: card_bleed_bonus +1 to positive Bleed on cards owned by this living wearer."
+			return "This wearer's cards that already apply Bleed add 1 more Bleed."
 		"button_glass_visor":
-			return "Authored patch rule: card_exposed_bonus +1 to positive Exposed on this wearer's cards."
+			return "This wearer's cards that already apply Exposed add 1 more Exposed."
 		"stern_seam_cap":
-			return "Authored patch rule: card_weak_bonus +1 to positive Weak on this wearer's cards."
+			return "This wearer's cards that already apply Weak add 1 more Weak."
 		"reinforced_browband":
-			return "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards, applied to the card's actual Block recipient (even if it is an ally)."
+			return "This wearer's cards that already grant Block grant 2 more Block, to the card's actual recipient (even an ally)."
 		"hemguard_cuff":
-			return "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards."
+			return "This wearer's cards that already grant Block grant 2 more Block."
 		"threadguard_wrap":
-			return "Authored patch rule: card_block_bonus +1 to positive Block on this wearer's cards, applied to the card's actual Block recipient; a damage-only card that grants no Block never gains a fabricated bonus."
+			return "This wearer's cards that already grant Block grant 1 more Block, to the card's actual recipient; a damage-only card that grants no Block gains no Block from it."
 		"red_bobbin_cuff":
-			return "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier."
+			return "This wearer's cards that already apply Bleed add 1 more Bleed; it never multiplies Hemorrhage Hem."
 		"loose_thread_glove":
-			return "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards."
+			return "This wearer's cards that already grant Unravel grant 1 more Unravel."
 		"frayfinder_mitt":
-			return "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit."
+			return "Once per player turn, this living wearer's first confirmed single-target attack hit of the player turn deals +2 attack damage before Weak/Exposed, but only if that enemy's Unravel was already at least 1/2 of its current threshold before the hit. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Never an Unravel gauge gain, not any area/multi-hit/later hit, and no bonus on a rejected play."
 		"switchback_button":
-			return "Authored patch rule: once per player turn, when a different living hero's committed card or ordered stitched half immediately precedes this living, untorn wearer's committed card or half, the wearer gains +2 Block; both stitched halves count by their real owner, and invalid or failed plays never set or claim it."
+			return "Once per player turn, when a different living hero's committed card or ordered stitched half immediately precedes this living, untorn wearer's committed card or half, the wearer gains +2 Block; each ordered stitched half counts for its real owner, and a failed, invalid or uncommitted play never sets or claims it."
 		"borrowed_button":
-			return "Authored patch rule: once per combat, after a different living hero's committed card or ordered stitched half actually restores at least 1 HP to the living, untorn wearer, that wearer gains 3 Block."
+			return "Once per combat, when a different living hero's committed card or ordered stitched half actually restores at least 1 HP to this living, untorn wearer, that wearer gains 3 Block; never from this wearer's own play, a heal that restores 0 HP, Rest mending or a failed play."
 	if _coat_bonuses.is_empty():
 		var coats_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 			"res://data/patches/m04_coat_patches.json"))
