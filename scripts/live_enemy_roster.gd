@@ -73,6 +73,9 @@ const STAGE_QUILT_TONES := [Color("414c48"), Color("4d5a54"), Color("39443f"), C
 const STAGE_HEM_HEIGHT := 14.0
 ## Bottom band that pins each actor's short name below (never across) the stand-in art.
 const STAGE_TAG_HEIGHT := 26.0
+## The already-shipped display face every pinned actor name wears: the master Theme's
+## Londrina Solid Regular variation, installed by PatchworkUIShell from the shipped font.
+const NAME_TAG_VARIATION := "PatchHeading"
 ## The stage is laid in: both the authored scene and the drawn quilt fallback are dimmed
 ## by about one fifth and framed with soft dark edges, so the sewn actors and their pinned
 ## labels read as the lit subject. The same wash and frame never touch a sibling control.
@@ -1445,6 +1448,9 @@ func _sync_battle() -> void:
 		label.name = "EnemyState%d" % enemy.position
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.focus_mode = Control.FOCUS_NONE
+		# Sewn display lettering on the live stage: the shipped PatchHeading face, kept at
+		# the same 16 px high-contrast ink on the felt tag.
+		label.theme_type_variation = NAME_TAG_VARIATION
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1485,6 +1491,8 @@ func _make_name_tag(tag_name: String) -> Label:
 	tag.name = tag_name
 	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tag.focus_mode = Control.FOCUS_NONE
+	# The same sewn display lettering as the enemy tags, inside the 26 px pinned band.
+	tag.theme_type_variation = NAME_TAG_VARIATION
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tag.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	tag.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

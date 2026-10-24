@@ -5,6 +5,8 @@ var checks := 0
 const SOURCE := "res://data/enemies/starter_enemies.json"
 const FIXTURE := "user://live_enemy_roster_invalid.json"
 const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+## The shipped display face every pinned actor name wears, independent of the view.
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## Authored battle scene per admitted route kind; selection must never come from screen text.
 const BACKDROP_ART := {
 	"Fight": "res://assets/paper/backgrounds/battle_meadow.png",
@@ -1411,9 +1413,28 @@ func _visible(app, presenter) -> void:
 	_geometry(app, presenter)
 
 
-## Small pinned name tags: the authoritative short name, input inert, below the art band
-## and clear of the meter row and the intent badges.
+## The visible lettering of one mounted name tag: the effective font and size the control
+## really prints with, measured independently through the TextServer.
+func _tag_print_width(label: Label, text: String) -> float:
+	var font: Font = label.get_theme_font("font")
+	if font == null:
+		return INF
+	return font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		label.get_theme_font_size("font_size")).x
+
+
+## Small pinned name tags: the authoritative short name sewn in the shipped PatchHeading
+## display face, input inert, below the art band and clear of the meter row and the
+## intent badges. The lettering is measured with the effective font, at the same 16 px
+## target and inside the 26 px felt band, so a wider display face cannot clip silently.
 func _name_tags(app, presenter) -> void:
+	var theme: Theme = app.theme
+	_check(theme != null and theme.is_type_variation("PatchHeading", "Label")
+		and theme.get_font("font", "PatchHeading") is Font
+		and (theme.get_font("font", "PatchHeading") as Font).resource_path == HEADING_FONT,
+		"the mounted battle inherits the shipped PatchHeading Londrina display face")
+	_check(ROSTER_ART.NAME_TAG_VARIATION == "PatchHeading",
+		"both tag builders select the master PatchHeading variation by name")
 	_check(presenter._hero_tags.size() == app.hero_panels.size(),
 		"every mounted hero puppet carries one pinned name tag")
 	var enemies: Array[Dictionary] = presenter.enemies.get_enemies()
@@ -1426,6 +1447,17 @@ func _name_tags(app, presenter) -> void:
 		var name: String = enemies[index].get("name", "")
 		_check(not name.is_empty() and label.text == name,
 			"enemy tag is exactly the authoritative short name: " + name)
+		_check(label.theme_type_variation == "PatchHeading"
+			and label.name == "EnemyState%d" % int(enemies[index].get("position", 0)),
+			"enemy tag keeps its stable name and wears the sewn display lettering: " + name)
+		var tag_font: Font = label.get_theme_font("font")
+		var tag_size: int = label.get_theme_font_size("font_size")
+		_check(tag_font != null and tag_font.resource_path == HEADING_FONT and tag_size == 16,
+			"enemy tag resolves PatchHeading Londrina Solid Regular at the 16 px target: " + name)
+		_check(label.max_lines_visible == 1 and not label.text.contains("\n")
+			and label.vertical_alignment == VERTICAL_ALIGNMENT_BOTTOM
+			and label.get_theme_constant("outline_size") == 6,
+			"enemy tag stays one line of high-contrast felt lettering: " + name)
 		_check(label.mouse_filter == Control.MOUSE_FILTER_IGNORE and label.focus_mode == Control.FOCUS_NONE,
 			"enemy tag stays input inert while the actor keeps its own hit target")
 		_check(label.get_global_rect().position.is_equal_approx(puppet.get_global_rect().position)
@@ -1435,9 +1467,18 @@ func _name_tags(app, presenter) -> void:
 			and puppet.tag_band().end.y <= puppet.size.y + 0.01
 			and puppet.art_band().end.y <= puppet.tag_band().position.y + 0.01,
 			"enemy art band stops above the pinned name tag")
-		_check(puppet.get_theme_default_font().get_string_size(name,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= puppet.size.x - 16.0,
-			"short enemy tag fits its column without clipping: " + name)
+		# The existing fit expectation, now measured with the face that really prints: the
+		# display name must fit both the whole actor column and the sewn felt tag inside it.
+		var printed: float = _tag_print_width(label, name)
+		_check(printed > 0.0 and printed <= puppet.size.x - 16.0,
+			"heading-lettered enemy tag fits its column without clipping: " + name)
+		_check(printed <= puppet.tag_band().size.x - 20.0,
+			"heading-lettered enemy tag stays on its sewn felt tag: " + name)
+		_check(tag_font.get_height(tag_size) <= puppet.tag_band().size.y + 0.01,
+			"the display face keeps the enemy name inside the 26 px pinned band: " + name)
+		_check(label.get_global_rect().end.y - tag_font.get_height(tag_size)
+			>= puppet.get_global_rect().position.y + puppet.tag_band().position.y - 0.01,
+			"the bottom-aligned heading text really lands inside the enemy tag band: " + name)
 		if index < presenter._badges.size():
 			var tag_band_global := Rect2(puppet.get_global_rect().position + puppet.tag_band().position,
 				puppet.tag_band().size)
@@ -1447,17 +1488,45 @@ func _name_tags(app, presenter) -> void:
 		var tag: Label = presenter._hero_tags[index]
 		var puppet = presenter._puppets[index]
 		var hero: Dictionary = app.party.get_hero(index + 1)
-		_check(tag.is_visible_in_tree() and tag.text == hero.get("name", ""),
+		var hero_name: String = hero.get("name", "") if hero.get("name") is String else ""
+		_check(tag.is_visible_in_tree() and not hero_name.is_empty() and tag.text == hero_name,
 			"hero tag is exactly the authoritative short name")
+		_check(tag.theme_type_variation == "PatchHeading"
+			and tag.name == "HeroNameTag%d" % (index + 1),
+			"hero tag keeps its stable name and wears the sewn display lettering: " + hero_name)
+		var tag_font: Font = tag.get_theme_font("font")
+		var tag_size: int = tag.get_theme_font_size("font_size")
+		_check(tag_font != null and tag_font.resource_path == HEADING_FONT and tag_size == 16,
+			"hero tag resolves PatchHeading Londrina Solid Regular at the 16 px target: " + hero_name)
+		_check(tag.max_lines_visible == 1 and not tag.text.contains("\n")
+			and tag.get_theme_constant("outline_size") == 6,
+			"hero tag stays one line of high-contrast felt lettering: " + hero_name)
 		_check(tag.mouse_filter == Control.MOUSE_FILTER_IGNORE and tag.focus_mode == Control.FOCUS_NONE,
 			"hero tag stays input inert")
 		_check(tag.get_global_rect().size.y > 0.0
 			and puppet.get_global_rect().encloses(tag.get_global_rect())
 			and puppet.art_band().end.y <= puppet.tag_band().position.y + 0.01,
 			"hero tag sits inside its actor below the stand-in art")
-		_check(puppet.get_theme_default_font().get_string_size(hero.get("name", ""),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= puppet.size.x - 16.0,
-			"short hero tag fits its column without clipping")
+		_check(is_equal_approx(tag.get_global_rect().size.y, presenter.STAGE_TAG_HEIGHT),
+			"hero tag keeps the 26 px pinned band height: " + hero_name)
+		var printed: float = _tag_print_width(tag, hero_name)
+		_check(printed > 0.0 and printed <= puppet.size.x - 16.0,
+			"heading-lettered hero tag fits its column without clipping: " + hero_name)
+		_check(printed <= puppet.tag_band().size.x - 20.0,
+			"heading-lettered hero tag stays on its sewn felt tag: " + hero_name)
+		_check(tag_font.get_height(tag_size) <= presenter.STAGE_TAG_HEIGHT + 0.01,
+			"the display face keeps the hero name inside the 26 px pinned band: " + hero_name)
+	# Source inspection: both the hero builder and the separate enemy label path select the
+	# one shipped variation instead of relying on the body face.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var hero_builder := _method_body(source, "func _make_name_tag(")
+	var mount := _method_body(source, "func _sync_battle(")
+	_check(hero_builder.contains("theme_type_variation = NAME_TAG_VARIATION")
+		and mount.contains("label.theme_type_variation = NAME_TAG_VARIATION"),
+		"source sews the display variation into the hero tag builder and the enemy tag path")
+	_check(hero_builder.count("theme_type_variation") == 1
+		and mount.count("theme_type_variation") == 1,
+		"neither tag path overrides the inherited variation with a second assignment")
 	var meters = app.get_node("LiveCombatMeters")
 	if is_instance_valid(meters.row) and not presenter._labels.is_empty():
 		_check(not presenter._labels[0].get_global_rect().intersects(meters.row.get_global_rect()),
