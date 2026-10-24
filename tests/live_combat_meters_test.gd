@@ -19,11 +19,12 @@ const M05_EXPECTED_POWERS := {
 	"hemguard_cuff": "Authored patch rule: card_block_bonus +2 to positive Block on this wearer's cards.",
 	"red_bobbin_cuff": "Authored patch rule: card_bleed_bonus +1 to positive Bleed on this wearer's cards; not Hemorrhage Hem's multiplier.",
 	"loose_thread_glove": "Authored patch rule: card_unravel_bonus +1 to positive Unravel on this wearer's cards.",
-	"frayfinder_mitt": "Authored patch rule: +2 Unravel ONLY on this living wearer's first single-target attack hit, if that enemy's gauge is already at least 1/2 of its current threshold; once per PLAYER turn. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit.",
+	"frayfinder_mitt": "Authored patch rule: +2 attack damage before Weak/Exposed on this living wearer's first confirmed single-target attack hit of the player turn, if that enemy's Unravel gauge was already at least 1/2 of its current threshold before the hit; once per PLAYER turn, never an Unravel gauge gain. Normal/elite/boss base thresholds 8/12/16, grow +4 per break. Not any area/multi-hit/later hit.",
 }
 ## Catalog facts each literal line restates: slot, authored effect key, amount and
-## the positive status it may boost. The seven card bonuses are wearer-owned and
-## positive-only; Frayfinder is the conditional first-hit Unravel bonus.
+## the positive status or damage it may boost. The seven card bonuses are
+## wearer-owned and positive-only; Frayfinder is the conditional first-hit +2
+## attack-damage bonus, never an Unravel gauge award.
 const M05_EXPECTED_FACTS := {
 	"bloodstitch_bonnet": {"slot": "HEAD", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
 	"button_glass_visor": {"slot": "HEAD", "effect": "card_exposed_bonus", "amount": 1, "status": "Exposed"},
@@ -32,7 +33,10 @@ const M05_EXPECTED_FACTS := {
 	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2, "status": "Block"},
 	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1, "status": "Bleed"},
 	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1, "status": "Unravel"},
-	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus", "amount": 2, "status": "Unravel"},
+	"frayfinder_mitt": {"slot": "ARM", "effect": "first_single_target_half_unravel_attack_bonus",
+		"amount": 2, "status": "attack damage", "timing": "before Weak/Exposed",
+		"hit": "first confirmed single-target attack hit", "limit": "once per PLAYER turn",
+		"exclusions": "Not any area/multi-hit/later hit", "numerator": 1, "denominator": 2},
 }
 
 
@@ -1778,8 +1782,8 @@ func _m05_catalog_entry(patch_id: String) -> Dictionary:
 
 ## Re-derive one M05 rule independently of the presenter: exact catalog amount
 ## and effect key, the positive status, wearer-owned cards, the real Block
-## recipient, Red Bobbin versus Hemorrhage Hem, and Frayfinder's first
-## single-target hit / half-threshold / once-per-player-turn limit.
+## recipient, Red Bobbin versus Hemorrhage Hem, and Frayfinder's +2 attack-damage
+## first single-target hit / half-threshold / once-per-player-turn limit.
 func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 	var facts: Dictionary = M05_EXPECTED_FACTS[patch_id]
 	var entry := _m05_catalog_entry(patch_id)
@@ -1796,18 +1800,30 @@ func _assert_m05_rule_terms(patch_id: String, line: String) -> void:
 	if patch_id == "frayfinder_mitt":
 		var numerator := int(entry.get("minimum_unravel_numerator", 0))
 		var denominator := int(entry.get("minimum_unravel_denominator", 0))
-		_check(line.contains("+%d Unravel" % facts["amount"])
-			and line.contains("first single-target attack hit")
-			and line.contains("at least %d/%d of its current threshold" % [numerator, denominator])
-			and line.contains("once per PLAYER turn")
-			and line.contains("Not any area/multi-hit/later hit")
-			and entry.get("once_per_player_turn") == true
-			and int(entry.get("hit_number", 0)) == 1
+		_check(not line.contains("+%d Unravel" % facts["amount"]),
+			"Frayfinder Mitt never describes its +%d as an Unravel award: %s" % [facts["amount"], line])
+		_check(line.contains("+%d %s" % [facts["amount"], facts["status"]]),
+			"Frayfinder Mitt states its authored +%d %s, not a gauge bonus: %s" % [
+				facts["amount"], facts["status"], line])
+		_check(line.contains(String(facts["timing"])),
+			"Frayfinder Mitt's damage applies before Weak/Exposed: " + line)
+		_check(line.contains(String(facts["hit"]))
+			and line.contains("of the player turn"),
+			"Frayfinder Mitt keeps its first confirmed single-target hit of the player turn: " + line)
+		_check(line.contains("at least %d/%d of its current threshold before the hit" % [numerator, denominator]),
+			"Frayfinder Mitt gates on half the CURRENT threshold measured before the hit: " + line)
+		_check(line.contains(String(facts["limit"]))
+			and entry.get("once_per_player_turn") == true,
+			"Frayfinder Mitt stays once per PLAYER turn: " + line)
+		_check(line.contains(String(facts["exclusions"]))
 			and entry.get("target_kind") == "enemy_single"
-			and numerator == 1 and denominator == 2,
-			"Frayfinder Mitt keeps its +2 first single-target hit, half-threshold, once-per-turn condition: " + line)
+			and int(entry.get("hit_number", 0)) == 1
+			and numerator == int(facts["numerator"]) and denominator == int(facts["denominator"]),
+			"Frayfinder Mitt excludes area, multi-hit and later hits: " + line)
+		_check(line.contains("never an Unravel gauge gain"),
+			"Frayfinder Mitt says it adds nothing to the Unravel gauge: " + line)
 		_check(not line.contains("unconditional") and not line.contains("every attack"),
-			"Frayfinder Mitt never claims an unconditional or per-attack Unravel bonus: " + line)
+			"Frayfinder Mitt never claims an unconditional or per-attack bonus: " + line)
 		_check(line.contains("Normal/elite/boss base thresholds %d/%d/%d, grow +%d per break" % [
 				CombatUnravel.THRESHOLD_NORMAL, CombatUnravel.THRESHOLD_ELITE,
 				CombatUnravel.THRESHOLD_BOSS, CombatUnravel.THRESHOLD_INCREMENT]),
@@ -2001,6 +2017,12 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 		"Button Glass Visor", "button_glass_visor", "HEAD", true)
 	_assert_named_chip(_patch_chip(meters[2], "ARM"), app.party.get_hero(3),
 		"Loose Thread Glove", "loose_thread_glove", "ARM", true)
+	var glove_chip := _patch_chip(meters[2], "ARM")
+	_check(glove_chip != null and glove_chip.tooltip_text.contains("card_unravel_bonus +1")
+		and glove_chip.tooltip_text.contains("+1 to positive Unravel")
+		and not M05_EXPECTED_POWERS["frayfinder_mitt"].contains("+2 Unravel")
+		and M05_EXPECTED_POWERS["loose_thread_glove"].contains("+1 to positive Unravel"),
+		"Loose Thread Glove stays the real Unravel award, distinct from Frayfinder's +2 damage")
 	var tinker_coat := _patch_chip(meters[2], "COAT")
 	_check(tinker_coat != null and not tinker_coat.visible and tinker_coat.text.is_empty()
 		and tinker_coat.tooltip_text.is_empty(),
@@ -2098,12 +2120,21 @@ func _m05_patch_ribbons_test(app, presenter) -> void:
 	_check(root.gui_get_hovered_control() == arm_chip
 		and arm_chip.tooltip_text == _patch_tooltip(app.party.get_hero(2), "Frayfinder Mitt",
 			"frayfinder_mitt", "ARM", true) + "\n" + M05_EXPECTED_POWERS["frayfinder_mitt"]
-		and arm_chip.tooltip_text.contains("+2 Unravel")
-		and arm_chip.tooltip_text.contains("first single-target attack hit")
-		and arm_chip.tooltip_text.contains("at least 1/2 of its current threshold")
+		and arm_chip.tooltip_text.contains("+2 attack damage")
+		and not arm_chip.tooltip_text.contains("+2 Unravel")
+		and arm_chip.tooltip_text.contains("before Weak/Exposed")
+		and arm_chip.tooltip_text.contains("first confirmed single-target attack hit")
+		and arm_chip.tooltip_text.contains("at least 1/2 of its current threshold before the hit")
 		and arm_chip.tooltip_text.contains("once per PLAYER turn")
+		and arm_chip.tooltip_text.contains("never an Unravel gauge gain")
+		and arm_chip.tooltip_text.contains("Not any area/multi-hit/later hit")
 		and not arm_chip.tooltip_text.contains("unconditional"),
-		"real pointer hover reads Frayfinder Mitt's authored conditional +2 Unravel rule")
+		"real pointer hover reads Frayfinder Mitt's authored conditional +2 attack-damage rule")
+	_check(arm_chip != null and arm_chip.tooltip_text.split("\n").size() == 4
+		and arm_chip.tooltip_text.split("\n")[0] == "Seamstress (seamstress)"
+		and arm_chip.tooltip_text.split("\n")[1].contains("Frayfinder Mitt (frayfinder_mitt) — ARM")
+		and arm_chip.tooltip_text.split("\n")[2] == "ACTIVE",
+		"the Seamstress ARM hover keeps the genuine wearer/name/ID/slot/ACTIVE prefix")
 	await _mouse(app.return_button)
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and presenter.row == null,
