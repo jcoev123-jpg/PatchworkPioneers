@@ -116,12 +116,16 @@ const MASKED_ROW_MIN_HEIGHT := 12.0
 const TILE_MIN_HEIGHT := 184.0
 const TILE_ART_SIZE := Vector2(96, 80)
 const OWNER_STRIP_HEIGHT := 20.0
-## The SELECTED stamp's own point size, and the paper inset and reserved row
+## The SELECTED stamp's own point size, and the paper insets and reserved row
 ## height its dedicated face row keeps. The row is reserved even while the stamp
-## is hidden, so picking a card never reflows the gallery.
+## is hidden, so picking a card never reflows the gallery. The same small inset
+## is kept before the right sewn border and below the word, and the reserved row
+## is tall enough for the stamp's real line height plus that bottom inset, so the
+## complete label clears the lower sewn hem instead of resting on it.
 const SELECTED_FONT_SIZE := 13
 const SELECTED_INSET := 6.0
-const SELECTED_ROW_HEIGHT := 18.0
+const SELECTED_BOTTOM_INSET := 6.0
+const SELECTED_ROW_HEIGHT := 26.0
 
 var _app: Node = null
 var _face: Control = null
@@ -1246,10 +1250,11 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 
 	# The SELECTED stamp owns a genuine row of the sewn face instead of sharing
 	# TitleRow's width. Its row reserves the stamp's height while hidden, keeps a
-	# paper inset on the right, and the label itself is never wrapped, clipped or
-	# trimmed, so the complete word always sits inside the cream paper whatever
-	# TileName wraps to. Row and label stay inert for pointer and keyboard, and
-	# only _paint_selection reveals the label for the canonical selected row.
+	# paper inset on the right and below the word, and the label itself is never
+	# wrapped, clipped or trimmed, so the complete word always sits inside the
+	# cream paper, clear of the lower sewn hem, whatever TileName wraps to. Row
+	# and label stay inert for pointer and keyboard, and only _paint_selection
+	# reveals the label for the canonical selected row.
 	var selected_row := MarginContainer.new()
 	selected_row.name = "SelectedRow"
 	selected_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1257,6 +1262,12 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	selected_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selected_row.custom_minimum_size = Vector2(0, SELECTED_ROW_HEIGHT)
 	selected_row.add_theme_constant_override("margin_right", int(SELECTED_INSET))
+	# The bottom margin is real paper room, not a painted offset: the row's own
+	# reserved height grows by it (the Container adds its child's line height),
+	# so the settled stamp keeps this clearance from the inner cream edge even
+	# when the panel is exactly as tall as its content.
+	selected_row.add_theme_constant_override("margin_bottom",
+		int(SELECTED_BOTTOM_INSET))
 	text_column.add_child(selected_row)
 
 	var selected_label := Label.new()
