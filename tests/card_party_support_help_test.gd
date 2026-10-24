@@ -7,6 +7,7 @@ extends SceneTree
 
 const HEROES_PATH := "res://data/heroes/starter_party.json"
 const PARTY_ROW := "Party support"
+const RESCUE_ROW := "Mixed rescue"
 
 var checks := 0
 var failures: Array[String] = []
@@ -17,9 +18,11 @@ var seamstress := SeamstressPoolCards.new()
 func _initialize() -> void:
 	_test_authentic_definitions()
 	_test_authentic_seamstress()
+	_test_authentic_darning()
 	_test_warden_combat_outcomes()
 	_test_bastion_quilt_outcomes()
 	_test_field_mend_outcomes()
+	_test_darning_combat_outcomes()
 	_test_rejections()
 	_test_ordering_detachment_and_rng()
 	for failure: String in failures:
@@ -159,6 +162,61 @@ func _test_authentic_seamstress() -> void:
 			"Field Mend owner is authored to positions 2-3 for " + card_id)
 		_check(CardKeywordGlossary.describe(definition).size() == 1,
 			"real Field Mend definition gains its one support row " + card_id)
+
+
+func _authentic_darning_cases() -> Array:
+	return [
+		{"catalog": seamstress, "id": "seamstress_darning", "owner": "seamstress",
+			"cost": 1, "from": [1, 2, 3], "target": "ally_single",
+			"effects": {"heal": 4, "block": 3},
+			"phrases": ["Heals a chosen living ally 4 HP and grants that ally 3 Block",
+				"Costs 1 energy", "playable by the Seamstress from positions 1-3",
+				"Healing is capped by the chosen living ally's missing HP",
+				"Block portion still applies even if the ally is already at full HP",
+				"A downed hero cannot be chosen and is not revived"],
+			"forbidden": ["6 HP", "4 Block"]},
+		{"catalog": seamstress, "id": "seamstress_darning_plus", "owner": "seamstress",
+			"cost": 1, "from": [1, 2, 3], "target": "ally_single",
+			"effects": {"heal": 6, "block": 4},
+			"phrases": ["Heals a chosen living ally 6 HP and grants that ally 4 Block",
+				"Costs 1 energy", "playable by the Seamstress from positions 1-3",
+				"Healing is capped by the chosen living ally's missing HP",
+				"Block portion still applies even if the ally is already at full HP",
+				"A downed hero cannot be chosen and is not revived"],
+			"forbidden": ["4 HP", "3 Block"]},
+	]
+
+
+func _test_authentic_darning() -> void:
+	for case: Dictionary in _authentic_darning_cases():
+		var catalog: Variant = case["catalog"]
+		var card_id: String = String(case["id"])
+		var original: Dictionary = catalog.get_definition(card_id)
+		_check(catalog.has_card(card_id) and not original.is_empty(),
+			"authentic catalog record exists for " + card_id)
+		if original.is_empty():
+			continue
+		_check(original.get("id") == card_id
+			and original.get("owner") == case["owner"]
+			and original.get("cost") == case["cost"]
+			and original.get("from_positions") == case["from"]
+			and original.get("target_kind") == case["target"]
+			and original.get("to_positions") == []
+			and original.get("effects") == case["effects"],
+			"authored owner, cost, slots, target and exact effect amounts for " + card_id)
+		var rows := CardKeywordGlossary.describe(original)
+		_check(rows.size() == 1 and _names(rows) == [RESCUE_ROW],
+			"exactly one Mixed rescue row for " + card_id)
+		if rows.size() != 1:
+			continue
+		var text := String(rows[0]["explanation"])
+		for phrase: String in case["phrases"]:
+			_check(text.contains(phrase), "Help states '%s' for %s" % [phrase, card_id])
+		for amount: String in case["forbidden"]:
+			_check(not text.contains(amount),
+				"Help for %s never prints the other upgrade's '%s'" % [card_id, amount])
+		_check(catalog.get_definition(card_id) == original,
+			"Help never mutates the catalog record " + card_id)
 
 
 # --- Real combat outcomes the row describes ---------------------------------
@@ -330,6 +388,53 @@ func _test_field_mend_outcomes() -> void:
 			"%s never overheals a hero already at maximum HP" % card_id)
 
 
+func _test_darning_combat_outcomes() -> void:
+	for case: Dictionary in [
+		{"id": "seamstress_darning", "heal": 4, "block": 3},
+		{"id": "seamstress_darning_plus", "heal": 6, "block": 4},
+	]:
+		var card_id: String = String(case["id"])
+		var heal: int = int(case["heal"])
+		var block: int = int(case["block"])
+		# 1. Wounded ally: heals missing HP up to max_hp, grants exact Block.
+		var party := _party(["warden", "seamstress", "tinker"])
+		_check(party.apply_damage(1, 10), "target 1 wounded before " + card_id)
+		var wounded_hp_before: int = party.get_hero(1)["hp"]
+		var deck := _deck([card_id, card_id, "filler-a", "filler-b"], 9701)
+		var energy_before: int = deck.energy
+		_check(CombatSeamstressPoolHeals.new().play_card(deck, party, card_id, 1),
+			"real resolver plays %s on wounded ally" % card_id)
+		_check(party.get_hero(1)["hp"] == wounded_hp_before + heal
+			and party.get_hero(1)["block"] == block,
+			"%s heals %d HP and grants %d Block to wounded ally" % [card_id, heal, block])
+		_check(deck.energy == energy_before - 1
+			and deck.discard_pile.count(card_id) == 1,
+			"%s spends 1 energy and discards 1 copy" % card_id)
+
+		# 2. Full HP ally: healing restores 0 HP (capped at max), Block still applies!
+		party = _party(["warden", "seamstress", "tinker"])
+		var full_hp: int = party.get_hero(1)["max_hp"]
+		_check(party.get_hero(1)["hp"] == full_hp, "ally 1 starts at full HP for " + card_id)
+		deck = _deck([card_id, card_id, "filler-c", "filler-d"], 9702)
+		_check(CombatSeamstressPoolHeals.new().play_card(deck, party, card_id, 1),
+			"real resolver plays %s on full-HP ally" % card_id)
+		_check(party.get_hero(1)["hp"] == full_hp
+			and party.get_hero(1)["block"] == block,
+			"%s on full-HP ally leaves HP at max and still grants %d Block" % [card_id, block])
+
+		# 3. Downed ally: cannot revive, play rejected atomically.
+		party = _party(["warden", "seamstress", "tinker"])
+		_check(party.apply_damage(1, 99) and party.is_downed(1),
+			"ally 1 truly downed for " + card_id)
+		deck = _deck([card_id, card_id, "filler-e", "filler-f"], 9703)
+		var snap_before := [deck.energy, deck.hand.duplicate(), party.get_hero(1)["hp"]]
+		_check(not CombatSeamstressPoolHeals.new().play_card(deck, party, card_id, 1),
+			"resolver rejects %s on downed ally" % card_id)
+		_check(party.is_downed(1) and party.get_hero(1)["hp"] == 0
+			and deck.energy == snap_before[0] and deck.hand == snap_before[1],
+			"rejection on downed ally leaves energy, hand and downed hero untouched")
+
+
 # --- Rejection and fail-closed coverage ------------------------------------
 
 func _test_rejections() -> void:
@@ -352,14 +457,26 @@ func _test_rejections() -> void:
 		var rows := CardKeywordGlossary.describe(definition)
 		_check(rows.size() == 1 and _names(rows) == [PARTY_ROW],
 			"exact detached support shape is explained " + String(definition["id"]))
+	var darning_base := _support_definition("seamstress_darning", "seamstress", 1, [1, 2, 3],
+		"ally_single", [], {"heal": 4, "block": 3})
+	var darning_plus := _support_definition("seamstress_darning_plus", "seamstress", 1, [1, 2, 3],
+		"ally_single", [], {"heal": 6, "block": 4})
+	for definition: Dictionary in [darning_base, darning_plus]:
+		var rows := CardKeywordGlossary.describe(definition)
+		_check(rows.size() == 1 and _names(rows) == [RESCUE_ROW],
+			"exact detached Darning shape is explained " + String(definition["id"]))
 	# Ordinary authored cards sharing one effect key never gain the new row.
 	for real_definition: Dictionary in [warden.get_definition("warden_quick_darn"),
 			warden.get_definition("warden_patch_guard"),
-			seamstress.get_definition("seamstress_thimble_tea"),
-			seamstress.get_definition("seamstress_darning")]:
+
+			seamstress.get_definition("seamstress_thimble_tea")]:
 		_check(CardKeywordGlossary.describe(real_definition).is_empty(),
 			"ordinary card %s never gains a Party support row"
 				% String(real_definition.get("id", "")))
+	_check(not _names(CardKeywordGlossary.describe(seamstress.get_definition("seamstress_darning"))).has(PARTY_ROW),
+		"Darning never gains a Party support row")
+	_check(not _names(CardKeywordGlossary.describe(seamstress.get_definition("seamstress_darning_plus"))).has(PARTY_ROW),
+		"Darning+ never gains a Party support row")
 	var fixtures: Array = []
 	fixtures.append(["bare party effect without a card identity",
 		_shape({"block": 5, "other_ally_block": 2})])
@@ -499,18 +616,128 @@ func _test_rejections() -> void:
 	fixture = hold.duplicate(true)
 	fixture["effects"] = "block"
 	fixtures.append(["unreadable support effect block", fixture])
+	fixtures.append(["bare Darning heal and block without card identity",
+		_shape({"heal": 4, "block": 3})])
+	fixtures.append(["Darning effects on an unrelated Seamstress ID",
+		_support_definition("seamstress_running_stitch", "seamstress", 1, [1, 2, 3],
+			"ally_single", [], {"heal": 4, "block": 3})])
+	fixtures.append(["Darning effects on an unrelated Warden ID",
+		_support_definition("warden_strike", "warden", 1, [1, 2, 3],
+			"ally_single", [], {"heal": 4, "block": 3})])
+	fixture = darning_base.duplicate(true)
+	fixture["owner"] = "warden"
+	fixtures.append(["Darning with wrong owner", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["owner"] = "tinker"
+	fixtures.append(["Darning with Tinker owner", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["cost"] = 0
+	fixtures.append(["Darning with cost 0", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["cost"] = 2
+	fixtures.append(["Darning with cost 2", fixture])
+	fixture = darning_plus.duplicate(true)
+	fixture["cost"] = 0
+	fixtures.append(["Darning+ with cost 0", fixture])
+	fixture = darning_plus.duplicate(true)
+	fixture["cost"] = 2
+	fixtures.append(["Darning+ with cost 2", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["cost"] = "1"
+	fixtures.append(["Darning with text cost", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["from_positions"] = [2, 3]
+	fixtures.append(["Darning from back slots only", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["from_positions"] = [1, 2]
+	fixtures.append(["Darning from front slots only", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["from_positions"] = [1]
+	fixtures.append(["Darning from slot 1 only", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["from_positions"] = []
+	fixtures.append(["Darning from empty slots", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["from_positions"] = [1, 2, 4]
+	fixtures.append(["Darning from an illegal slot", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["from_positions"] = "1,2,3"
+	fixtures.append(["Darning with text source slots", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["target_kind"] = "enemy_single"
+	fixtures.append(["Darning with enemy target", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["target_kind"] = "self"
+	fixtures.append(["Darning with self target", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["target_kind"] = "party_all"
+	fixtures.append(["Darning with party target", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["to_positions"] = [1]
+	fixtures.append(["Darning with a target slot", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture.erase("to_positions")
+	fixtures.append(["Darning without a target list", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"]["bleed"] = 1
+	fixtures.append(["Darning with extra Bleed effect", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"]["damage"] = 3
+	fixtures.append(["Darning with extra damage effect", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"].erase("block")
+	fixtures.append(["Darning without Block effect", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"].erase("heal")
+	fixtures.append(["Darning without heal effect", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"] = {"heal": 6, "block": 4}
+	fixtures.append(["base Darning with upgraded amounts", fixture])
+	fixture = darning_plus.duplicate(true)
+	fixture["effects"] = {"heal": 4, "block": 3}
+	fixtures.append(["Darning+ with base amounts", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"]["heal"] = 4.0
+	fixtures.append(["Darning with float heal", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"]["block"] = 3.0
+	fixtures.append(["Darning with float Block", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"]["heal"] = "4"
+	fixtures.append(["Darning with text heal", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"]["block"] = "3"
+	fixtures.append(["Darning with text Block", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["id"] = 7
+	fixtures.append(["non-string Darning ID", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture.erase("id")
+	fixtures.append(["Darning descriptor without card ID", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["id"] = "seamstress_darning_plus_plus"
+	fixtures.append(["similarly named Darning ID", fixture])
+	fixture = darning_base.duplicate(true)
+	fixture["effects"] = "heal and block"
+	fixtures.append(["unreadable Darning effect block", fixture])
 	for case in fixtures:
 		var broken: Dictionary = case[1]
 		var broken_before: Dictionary = broken.duplicate(true)
 		var rows := CardKeywordGlossary.describe(broken)
 		_check(not _names(rows).has(PARTY_ROW),
 			"%s never fabricates a Party support row" % String(case[0]))
+		_check(not _names(rows).has(RESCUE_ROW),
+			"%s never fabricates a Mixed rescue row" % String(case[0]))
 		_check(broken == broken_before,
 			"%s leaves the fixture untouched" % String(case[0]))
 	_check(hold == _support_definition("warden_hold_the_line", "warden", 1, [1, 2],
 			"self", [], {"block": 5, "other_ally_block": 2})
 		and field_plus == _support_definition("seamstress_field_mend_plus",
-			"seamstress", 2, [2, 3], "party_all", [], {"heal": 6}),
+			"seamstress", 2, [2, 3], "party_all", [], {"heal": 6})
+		and darning_base == _support_definition("seamstress_darning", "seamstress", 1, [1, 2, 3],
+			"ally_single", [], {"heal": 4, "block": 3})
+		and darning_plus == _support_definition("seamstress_darning_plus", "seamstress", 1, [1, 2, 3],
+			"ally_single", [], {"heal": 6, "block": 4}),
 		"negative cases never mutate the positive fixtures")
 
 
@@ -543,6 +770,10 @@ func _test_ordering_detachment_and_rng() -> void:
 		"self", [], {"block": 5, "other_ally_block": 2, "bleed": 1})
 	_check(_names(CardKeywordGlossary.describe(extended)) == ["Bleed 1"],
 		"extended Hold the Line keeps only its authored Bleed row")
+	var extended_darning := _support_definition("seamstress_darning", "seamstress", 1, [1, 2, 3],
+		"ally_single", [], {"heal": 4, "block": 3, "bleed": 1})
+	_check(_names(CardKeywordGlossary.describe(extended_darning)) == ["Bleed 1"],
+		"extended Darning keeps only its authored Bleed row")
 	for case: Dictionary in _authentic_cases():
 		var card_id: String = String(case["id"])
 		var catalog: Variant = case["catalog"]
@@ -560,12 +791,32 @@ func _test_ordering_detachment_and_rng() -> void:
 			and String(third[0]["explanation"]).contains(
 				String(case["phrases"][0])) and original == catalog.get_definition(card_id),
 			"Help results are detached from the caller's definition " + card_id)
+	for case: Dictionary in _authentic_darning_cases():
+		var card_id: String = String(case["id"])
+		var catalog: Variant = case["catalog"]
+		var original: Dictionary = catalog.get_definition(card_id)
+		var first := CardKeywordGlossary.describe(original)
+		var second := CardKeywordGlossary.describe(original)
+		_check(first == second and first.size() == 1,
+			"repeated Help reads are identical for " + card_id)
+		if first.size() != 1:
+			continue
+		first[0]["keyword"] = "Tampered"
+		first[0]["explanation"] = "Tampered"
+		var third := CardKeywordGlossary.describe(original)
+		_check(third.size() == 1 and String(third[0]["keyword"]) == RESCUE_ROW
+			and String(third[0]["explanation"]).contains(
+				String(case["phrases"][0])) and original == catalog.get_definition(card_id),
+			"Help results are detached from the caller's definition " + card_id)
 	# Help never consumes the shared global RNG: the next random number is the
 	# same with or without these reads in between.
 	seed(77123)
 	var expected_next: int = randi()
 	seed(77123)
 	for case: Dictionary in _authentic_cases():
+		var catalog: Variant = case["catalog"]
+		CardKeywordGlossary.describe(catalog.get_definition(String(case["id"])))
+	for case: Dictionary in _authentic_darning_cases():
 		var catalog: Variant = case["catalog"]
 		CardKeywordGlossary.describe(catalog.get_definition(String(case["id"])))
 	CardKeywordGlossary.describe(combined)
