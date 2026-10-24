@@ -179,6 +179,11 @@ func _leave_fight(check_presenter: bool = true) -> void:
 	await _frames()
 	_check(app.title_view.is_visible_in_tree() and app.deck == null, "Return leaves a clean title")
 	if check_presenter and is_instance_valid(juice):
+		_check(is_instance_valid(juice.ambient) and juice.ambient.get_parent() == juice
+			and juice.ambient.profile.is_empty() and not juice.ambient.lint.emitting
+			and not juice.ambient.weather.emitting
+			and app.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+			"Return parks only the reusable, non-emitting ambience outside battle")
 		_check(not juice.bound and juice.overlay == null and juice.history.is_empty()
 			and juice.live_cues() == 0 and juice.flight_history.is_empty()
 			and juice.live_flights() == 0 and juice.pose_history.is_empty()
@@ -580,6 +585,15 @@ func _run() -> void:
 
 
 func _assert_presenter_mounted() -> void:
+	var ambient = juice.ambient
+	var stage = _roster()
+	_check(is_instance_valid(ambient) and stage != null
+		and is_instance_valid(stage.backdrop) and stage.backdrop.has_image()
+		and ambient.get_parent() == app.battle_view
+		and ambient.get_index() == stage.backdrop.get_index() + 1
+		and not ambient.profile.is_empty() and ambient.lint.emitting
+		and ambient.weather.emitting and ambient.visible_budget() <= 36,
+		"real mounted fight has one bounded atmosphere above its existing stage bed")
 	_check(juice.bound and juice.bind_serial >= 1, "the listener binds after the real fight mounts")
 	_check(juice.history.is_empty() and juice.live_cues() == 0
 		and juice.flight_history.is_empty() and juice.live_flights() == 0

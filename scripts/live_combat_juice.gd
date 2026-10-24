@@ -63,6 +63,7 @@ const SCREEN_FADE_ALPHA := 0.55
 const SCREEN_FADE_INK := Color("12100e")
 ## The observable full-screen roots of the real app, by the app's own property name.
 const SCREEN_ROOTS := ["title", "map", "battle", "results"]
+const AMBIENT_SCRIPT := preload("res://scripts/live_battle_ambient.gd")
 
 var fast_animations := false
 var fast_button: Button
@@ -92,6 +93,8 @@ var puff_history: Array[Dictionary] = []
 var fade_history: Array[Dictionary] = []
 ## The one reused, pointer-inert full-screen wash; hidden between transitions.
 var fade_layer: Control
+## One startup-allocated, recycled ambience; never create CPU emitters during seeded play.
+var ambient: Control
 ## Bumped once per battle binding, so a test or screenshot can prove a single rebind.
 var bind_serial := 0
 var bound := false
@@ -129,6 +132,9 @@ var _fade_serial := 0
 func _ready() -> void:
 	_make_fade_layer(get_parent())
 	_fill_puff_pool()
+	ambient = AMBIENT_SCRIPT.new()
+	add_child(ambient)
+	ambient.retire()
 
 
 func _process(delta: float) -> void:
@@ -143,6 +149,8 @@ func duration_seconds() -> float:
 
 func set_fast(enabled: bool) -> void:
 	fast_animations = enabled
+	if is_instance_valid(ambient):
+		ambient.set_fast(enabled)
 	_sync_button()
 
 
@@ -201,7 +209,9 @@ func _sync() -> void:
 			or _enemies != app.enemies or _deck != app.deck:
 		_teardown()
 		_bind(app)
+		_sync_ambient(app)
 		return
+	_sync_ambient(app)
 	if not is_instance_valid(fast_button):
 		fast_button = null
 	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
@@ -256,6 +266,7 @@ func _bind(app) -> void:
 
 ## Title, terminal teardown or a replaced fight: no stale snapshot and no orphan cue.
 func _teardown() -> void:
+	_retire_ambient()
 	_kill_cues()
 	# A closed or replaced battle never keeps a mounted actor mid-lunge or mid-shake.
 	var app := get_parent()
@@ -288,6 +299,48 @@ func _teardown() -> void:
 	puff_history.clear()
 	if not is_instance_valid(fast_button):
 		fast_button = null
+
+
+## Match only the roster's already-mounted, authored backdrop. The ambient stays
+## a sibling just after the stage bed, below every puppet, badge and HUD child.
+## Reparent the one preallocated layer; never construct a particle during a run.
+func _sync_ambient(app) -> void:
+	if not is_instance_valid(ambient) or not is_instance_valid(_battle):
+		return
+	var roster = app.get_node_or_null("LiveEnemyRoster")
+	if not is_instance_valid(roster) or roster._battle != _battle \
+			or not is_instance_valid(roster.backdrop) or roster.backdrop.get_parent() != _battle \
+			or not roster.backdrop.has_image():
+		_retire_ambient()
+		return
+	var kind: String = roster._backdrop_kind
+	var floor_number: int = roster._backdrop_floor
+	var chosen: String = AMBIENT_SCRIPT.profile_for(kind, floor_number)
+	if chosen.is_empty() or roster._backdrop_key != roster.stage_key(kind, floor_number):
+		_retire_ambient()
+		return
+	if ambient.get_parent() != _battle:
+		ambient.reparent(_battle, false)
+		ambient.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		ambient.offset_left = 0.0
+		ambient.offset_top = 0.0
+		ambient.offset_right = 0.0
+		ambient.offset_bottom = 0.0
+	if ambient.get_index() != roster.backdrop.get_index() + 1:
+		_battle.move_child(ambient, roster.backdrop.get_index() + 1)
+	if ambient.profile != chosen:
+		ambient.configure(kind, floor_number, fast_animations)
+	elif ambient.fast != fast_animations:
+		ambient.set_fast(fast_animations)
+
+
+func _retire_ambient() -> void:
+	if not is_instance_valid(ambient):
+		return
+	if not ambient.profile.is_empty():
+		ambient.retire()
+	if ambient.get_parent() != self:
+		ambient.reparent(self, false)
 
 
 func _make_overlay() -> Control:
