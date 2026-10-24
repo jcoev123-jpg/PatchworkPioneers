@@ -205,8 +205,12 @@ func _verify_token_marker(marker: PanelContainer, id: String, view: RunRouteAtla
 		_check(art.token_texture == null and art.token_rect() == Rect2(),
 			label + ": missing token or Treasure uses drawn fallback " + id)
 	_check(caption.vertical_alignment == VERTICAL_ALIGNMENT_BOTTOM
-		and caption.get_theme_font_size("font_size") >= 11,
-		label + ": kind and shortcut read below the emblem " + id)
+		and caption.get_theme_font_size("font_size") >= 18
+		and _keeps_body_face(caption)
+		and not caption.text.contains(id)
+		and not caption.text.contains("f0") and not caption.text.contains("f1")
+		and not caption.text.contains("_n"),
+		label + ": kind and shortcut read below the emblem without raw ID " + id)
 
 
 func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
@@ -228,15 +232,31 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 		and view.has_cached_node_token(failed_path), label + ": missing texture cached as null")
 	var probe := RunRouteAtlas.new()
 	var none: Array[String] = []
-	var legal: Array[String] = ["f01_n0", "f01_n1"]
-	probe._add_marker("f01_n0", "Fight", Vector2.ZERO, none, legal, 1)
-	probe._add_marker("f01_n1", "Treasure", Vector2(100, 0), none, legal, 2)
-	for id in legal:
+	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss"]
+	for i in range(test_kinds.size()):
+		var kind: String = test_kinds[i]
+		var id := "f01_n%d" % i
+		var shortcut := (i % 4) + 1 if i < 4 else 0
+		var probe_legal: Array[String] = []
+		if shortcut > 0:
+			probe_legal.append(id)
+		probe._add_marker(id, kind, Vector2(float(i) * 90.0, 0.0), none, probe_legal, shortcut)
 		var marker := probe.get_node_or_null("Node_" + id) as PanelContainer
 		_check(marker != null and marker.get_node_or_null("Art") is RunRouteAtlas.NodeToken
-			and marker.get_node_or_null("Action") is Button
+			and (marker.get_node_or_null("Action") is Button) == (shortcut > 0)
 			and marker.get_node_or_null("Identity") is Label,
-			label + ": standalone image-backed or fallback sewn marker with legal action " + id)
+			label + ": standalone image-backed or fallback sewn marker for " + kind)
+		if marker != null:
+			var caption := marker.get_node_or_null("Identity") as Label
+			_check(caption != null and caption.get_theme_font_size("font_size") >= 18
+				and _keeps_body_face(caption)
+				and caption.text == (str(shortcut) + " " if shortcut > 0 else "") + kind
+				and not caption.text.contains(id)
+				and not caption.text.contains("f01_n")
+				and caption.get_combined_minimum_size().x <= marker.size.x
+				and caption.get_combined_minimum_size().y <= marker.size.y,
+				label + ": standalone readable >=18px body caption for " + kind)
+			_verify_token_marker(marker, id, probe, label)
 	probe.free()
 
 
@@ -393,15 +413,18 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 			var number := shortcuts.find(id) + 1
 			var caption := (str(number) + " " if number > 0 else "") + str(all_nodes[id]["type"])
 			_check(identity.text == caption and not identity.text.contains(id)
+				and not identity.text.contains("f0") and not identity.text.contains("f1")
+				and not identity.text.contains("_n")
 				and identity.get_combined_minimum_size().x <= marker.size.x
 				and identity.get_combined_minimum_size().y <= marker.size.y,
 				label + ": high contrast caption and legal number fit " + id)
-			# Round patch captions stay tiny body-text tags, never chapter headings.
-			_check(_keeps_body_face(identity) and identity.get_theme_font_size("font_size")
-				== (11 if str(all_nodes[id]["type"]) == "Treasure" else 12),
-				label + ": round patch identity caption keeps its 11/12-point body tag " + id)
+			# Round patch captions stay readable body-text tags, never chapter headings.
+			_check(_keeps_body_face(identity) and identity.get_theme_font_size("font_size") >= 18,
+				label + ": round patch identity caption keeps its >=18-point body tag " + id)
 			_check(marker.tooltip_text == _hover_text(all_nodes[id])
-				and not marker.tooltip_text.contains(id),
+				and not marker.tooltip_text.contains(id)
+				and not marker.tooltip_text.contains("f0") and not marker.tooltip_text.contains("f1")
+				and not marker.tooltip_text.contains("_n"),
 				label + ": sewn hover names the real floor, kind and branch " + id)
 			var action := marker.get_node_or_null("Action") as Button
 			_check((action != null) == legal.has(id),
@@ -412,6 +435,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 					and action.tooltip_text == "Choose " + _hover_text(all_nodes[id])
 						+ " (key %d)" % number
 					and not action.tooltip_text.contains(id)
+					and not action.tooltip_text.contains("f0") and not action.tooltip_text.contains("f1")
+					and not action.tooltip_text.contains("_n")
 					and action.get_meta("route_id") == id,
 					label + ": exact legal Choose hover and real shortcut " + id)
 			_verify_token_marker(marker, id, view, label)

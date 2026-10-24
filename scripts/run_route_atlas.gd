@@ -973,7 +973,7 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	caption.text = (str(shortcut) + " " if state == "legal" and shortcut > 0 else "") + kind
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	caption.add_theme_font_size_override("font_size", 11 if kind == "Treasure" else 12)
+	caption.add_theme_font_size_override("font_size", 18)
 	caption.add_theme_color_override("font_color", Color("#fff8e9"))
 	caption.add_theme_constant_override("outline_size", 3)
 	caption.add_theme_color_override("font_outline_color", Color("#292a2b"))
