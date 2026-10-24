@@ -160,21 +160,46 @@ func _bind(panel: Control, card_id: String) -> void:
 	panel.gui_input.connect(callback)
 
 
-func _rule_text(definition: Dictionary) -> String:
+## The genuine, pure projection the mounted strip describes. It reads the exact
+## per-target status delta the authoritative resolver will commit, so a sewn
+## Bloodstitch Bonnet / Red Bobbin Cuff and the Bloodline passive are shown as
+## they really are instead of a fixed authored-plus-one guess. An unprojected
+## strip (no legal target yet) states no number at all.
+func _projected_bleed(definition: Dictionary, legal: Array[int]) -> Dictionary:
+	if legal.is_empty():
+		return {}
+	return _service.forecast_single(
+		_deck, _party, _enemies, str(definition.get("id", "")), legal[0])
+
+
+func _bleed_detail(definition: Dictionary, outcome: Dictionary) -> String:
 	var effects: Dictionary = definition.get("effects", {})
-	var detail := ""
+	if effects.has("bleed_multiplier"):
+		# Hemorrhage doubles whatever the chosen enemy already carries; there is
+		# no flat passive or sewn amount to print before that target is known.
+		return "Doubles the chosen enemy's CURRENT Bleed (no flat passive or sewn bonus; the preview shows N -> 2N)"
+	var authored: int = int(effects.get("bleed", 0))
+	var applied: int = authored
+	if outcome.get("ok", false):
+		applied = int(outcome.get("bleed_after", 0)) - int(outcome.get("bleed_before", 0))
+	var summary := "Bleed per the chosen enemy's forecast"
+	if outcome.get("ok", false):
+		if applied > authored:
+			summary = "Bleed %d (authored %d + %d passive/sewn)" % [
+				applied, authored, applied - authored]
+		else:
+			summary = "Bleed %d (authored %d)" % [applied, authored]
 	if effects.has("damage"):
-		detail = "%d damage; Bleed %d including passive" % [
-			int(effects["damage"]), int(effects.get("bleed", 0)) + 1]
-	elif effects.has("bleed_multiplier"):
-		detail = "Double CURRENT Bleed (0 stays 0; no passive)"
-	else:
-		detail = "Bleed %d including passive; Exposed %d" % [
-			int(effects.get("bleed", 0)) + 1, int(effects.get("exposed", 0))]
+		return "%d damage; %s" % [int(effects["damage"]), summary]
+	return "%s; Exposed %d" % [summary, int(effects.get("exposed", 0))]
+
+
+func _rule_text(definition: Dictionary, outcome: Dictionary = {}) -> String:
 	return "%s | Cost %d | From %s | One living enemy %s\n%s" % [
 		str(definition.get("display_name", "")), int(definition.get("cost", -1)),
 		_positions(definition.get("from_positions", [])),
-		_positions(definition.get("to_positions", [])), detail]
+		_positions(definition.get("to_positions", [])),
+		_bleed_detail(definition, outcome)]
 
 
 func _positions(values: Array) -> String:
@@ -227,7 +252,7 @@ func _on_card_input(event: InputEvent, panel, card_id: String) -> void:
 		"draw": _deck.draw_pile.duplicate(), "discard": _deck.discard_pile.duplicate(),
 		"energy": _deck.energy, "heroes": _party.get_heroes(),
 		"roster": _enemies.get_enemies(), "queued": false}
-	_mount_strip(definition, legal)
+	_mount_strip(definition, legal, _projected_bleed(definition, legal))
 
 
 func _selection_valid() -> bool:
@@ -238,7 +263,7 @@ func _selection_valid() -> bool:
 	return _choice.token == _token and _choice.deck == _deck 		and _choice.party == _party and _choice.enemies == _enemies 		and _choice.battle == _battle and _choice.result == _result 		and _choice.rng == _rng and _choice.intents == _intents 		and _choice.turn == _turn and is_instance_valid(panel) 		and panel.get_index() == _choice.index 		and _affordable(panel, card_id) and _choice.hand == _deck.hand 		and _choice.draw == _deck.draw_pile and _choice.discard == _deck.discard_pile 		and _choice.energy == _deck.energy 		and _choice.heroes == _party.get_heroes() 		and _choice.roster == _enemies.get_enemies()
 
 
-func _mount_strip(definition: Dictionary, legal: Array[int]) -> void:
+func _mount_strip(definition: Dictionary, legal: Array[int], outcome: Dictionary) -> void:
 	# A nonblocking overlay covers the stage; only its stitched patch and
 	# actual target buttons receive pointer events. Never claim enemy panels.
 	_overlay = Control.new()
@@ -271,7 +296,7 @@ func _mount_strip(definition: Dictionary, legal: Array[int]) -> void:
 	target_strip.add_child(column)
 	var heading := Label.new()
 	heading.name = "Rule"
-	heading.text = _rule_text(definition)
+	heading.text = _rule_text(definition, outcome)
 	heading.add_theme_color_override("font_color", INK)
 	heading.add_theme_font_size_override("font_size", 12)
 	column.add_child(heading)
