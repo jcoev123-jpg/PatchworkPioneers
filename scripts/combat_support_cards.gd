@@ -5,6 +5,7 @@ extends RefCounted
 
 var _patches: CombatShopPatchRules = null
 var _arm_patches: CombatPatchAttackRules = null
+var _head_patches: CombatM05HeadPatchRules = null
 var _wardrobe: RunPatchWardrobe
 var _torn: RunTornMending
 var _wardrobe_snapshot: Dictionary = {}
@@ -17,11 +18,14 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		expected_wardrobe: Variant = null, expected_torn: Variant = null) -> bool:
 	_patches = CombatShopPatchRules.new()
 	_arm_patches = CombatPatchAttackRules.new()
+	_head_patches = CombatM05HeadPatchRules.new()
 	_wardrobe = wardrobe
 	_torn = torn
 	if not _patches.bind_wardrobe(wardrobe, torn, expected_wardrobe, expected_torn):
 		return false
 	if not _arm_patches.bind_wardrobe(wardrobe, torn):
+		return false
+	if not _head_patches.bind_wardrobe(wardrobe, torn):
 		return false
 	_wardrobe_snapshot = wardrobe.get_snapshot()
 	_torn_snapshot = torn.read_state()
@@ -29,14 +33,17 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 
 
 func is_patch_binding_valid() -> bool:
-	if _patches == null and _arm_patches == null:
+	if _patches == null and _arm_patches == null and _head_patches == null:
 		return true
 	if _patches == null or not _patches.is_valid():
 		return false
 	if _arm_patches == null or not _arm_patches.is_valid():
 		return false
+	if _head_patches == null or not _head_patches.read_projection().get("ok", false):
+		return false
 	return CombatShopPatchRules.new().bind_wardrobe(
 		_wardrobe, _torn, _wardrobe_snapshot, _torn_snapshot) and CombatPatchAttackRules.new().bind_wardrobe(
+		_wardrobe, _torn) and CombatM05HeadPatchRules.new().bind_wardrobe(
 		_wardrobe, _torn)
 
 
@@ -145,6 +152,8 @@ func _play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary,
 				return false
 			if _arm_patches != null:
 				amount += _arm_patches.card_block_bonus(owner_id, authored_id)
+			if _head_patches != null:
+				amount += _head_patches.get_bonus(owner_id, authored_id, "block")
 			var current_block: int = party.get_hero(recipient)["block"]
 			if amount > CombatParty.MAX_INT - current_block:
 				return false

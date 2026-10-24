@@ -1866,21 +1866,27 @@ func _hemguard_cuff_live_case() -> void:
 	if not app._current_carryover_fight():
 		return
 
-	# Load authored ARM patch definition
-	var authored: Variant = JSON.parse_string(
-		FileAccess.get_file_as_string("res://data/patches/m05_arm_support_patches.json"))
+	# Load both genuine M05 catalogs; the HEAD stays unsewn during all
+	# original Cuff-only live assertions, then joins the committed path.
 	var records: Array = []
-	if authored is Array:
-		for entry in authored:
-			if entry is Dictionary and entry.get("id") == "hemguard_cuff":
-				records.append({"id": entry.id, "slot": entry.slot})
-	_check(records.size() == 1 and records[0].slot == "ARM",
-		"actual M05 ARM catalog supplies the sewn Hemguard Cuff definition")
-	if records.size() != 1:
+	for catalog_path in [CombatPatchAttackRules.SUPPORT_CATALOG,
+			CombatM05HeadPatchRules.CATALOG_PATH]:
+		var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string(catalog_path))
+		_check(authored is Array, "live M05 patch catalog loads: " + catalog_path)
+		if authored is Array:
+			for entry in authored:
+				if entry is Dictionary and entry.get("id") in ["hemguard_cuff", "reinforced_browband"]:
+					records.append({"id": entry.id, "slot": entry.slot})
+	_check(records.size() == 2 and records.has({"id": "hemguard_cuff", "slot": "ARM"})
+		and records.has({"id": "reinforced_browband", "slot": "HEAD"}),
+		"actual M05 ARM and HEAD catalogs supply both authentic definitions")
+	if records.size() != 2:
 		return
-	_check(not app.run_trinkets.has("hemguard_cuff"),
-		"live run initially has no synthetic owned Hemguard Cuff")
+	_check(not app.run_trinkets.has("hemguard_cuff")
+		and not app.run_trinkets.has("reinforced_browband"),
+		"live run initially has neither synthetic owned support patch")
 	app.run_trinkets.append("hemguard_cuff")
+	app.run_trinkets.append("reinforced_browband")
 	app.run_scraps = 5
 	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, records,
 		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
@@ -2009,6 +2015,74 @@ func _hemguard_cuff_live_case() -> void:
 	_check(app.deck.energy == energy_before_stitch2 - 1, "keyboard Stitch Up charges 1 energy")
 	_check(app.run_rng.state == rng_before_stitch2, "keyboard Stitch Up leaves RNG untouched")
 	_check(presenter._pending.is_empty(), "keyboard target mode cleared after play")
+
+	# Now activate an authentic HEAD on the same living Seamstress already
+	# wearing ARM. A selected Stitch Up+ must remain inert until its real
+	# mounted target input commits the combined 7+2+2 Block.
+	var head_sew := wardrobe.sew("reinforced_browband", "seamstress", "HEAD",
+		"mounted_head_sew", wardrobe.get_snapshot())
+	_check(head_sew.get("ok") == true
+		and wardrobe.project_active(carry.torn.read_state()).active.seamstress.has("reinforced_browband"),
+		"genuine HEAD sew activates living Seamstress Browband")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot())
+		and carry._wardrobe == wardrobe, "carryover rebinds authentic HEAD+ARM ledgers")
+	presenter._clear()
+	presenter._sync_battle()
+	await _frames()
+	_check(presenter._play != null
+		and presenter._play._support.is_patch_binding_valid()
+		and presenter._play._support._head_patches.read_projection().get("ok") == true,
+		"mounted held-play resolver received valid HEAD ledger through genuine carryover")
+
+	app.deck.draw_pile.append("seamstress_stitch_up_plus")
+	_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has("seamstress_stitch_up_plus"),
+		"real shared deck draws authentic Stitch Up+ after HEAD sewing")
+	app._refresh_hand()
+	await _frames()
+	var head_panel := _panel("seamstress_stitch_up_plus")
+	_check(is_instance_valid(head_panel) and head_panel.focus_mode == Control.FOCUS_ALL,
+		"genuine upgraded HEAD-eligible support is selectable in mounted hand")
+	if head_panel != null:
+		var before_head := _pool_state()
+		var head_ledgers := [wardrobe.get_snapshot(), carry.torn.read_state()]
+		await _hover(head_panel)
+		_check(_pool_state() == before_head and head_ledgers == [
+			wardrobe.get_snapshot(), carry.torn.read_state()],
+			"HEAD support hover/preview is fully inert, including ledgers and RNG")
+		await _mouse(head_panel)
+		_check(presenter._pending.get("choosing", false)
+			and _pool_state() == before_head
+			and app.deck.hand.has("seamstress_stitch_up_plus"),
+			"selecting HEAD-boosted Stitch Up+ only opens target choice, never spends")
+		var target_block: int = app.party.get_hero(1).block
+		var other_block: int = app.party.get_hero(2).block
+		var tinker_block: int = app.party.get_hero(3).block
+		var old_energy: int = app.deck.energy
+		var old_hand: int = app.deck.hand.count("seamstress_stitch_up_plus")
+		var old_discard: int = app.deck.discard_pile.count("seamstress_stitch_up_plus")
+		var old_rng: int = app.run_rng.state
+		var stale_head_cb: Callable = presenter._targets[app.hero_panels[0]].callback
+		await _mouse(app.hero_panels[0])
+		_check(app.party.get_hero(1).block == target_block + 11
+			and app.party.get_hero(2).block == other_block
+			and app.party.get_hero(3).block == tinker_block,
+			"real chosen Warden gains exactly 7+2 HEAD+2 ARM once; other allies unchanged")
+		_check(app.deck.energy == old_energy - 1
+			and app.deck.hand.count("seamstress_stitch_up_plus") == old_hand - 1
+			and app.deck.discard_pile.count("seamstress_stitch_up_plus") == old_discard + 1
+			and app.deck.discard_pile.back() == "seamstress_stitch_up_plus",
+			"live HEAD+ARM commit charges authored one energy and discards one matching held copy")
+		_check(app.run_rng.state == old_rng and head_ledgers == [
+			wardrobe.get_snapshot(), carry.torn.read_state()],
+			"mounted HEAD commit leaves run RNG and both run ledgers unchanged")
+		_check(app.hero_panels[0].get_child(0).text.contains("Block: %d" % (target_block + 11))
+			and presenter._pending.is_empty(),
+			"real HUD displays committed HEAD Block and targeting clears")
+		var committed_head := _pool_state()
+		stale_head_cb.call(_key(KEY_ENTER))
+		await _frames()
+		_check(_pool_state() == committed_head,
+			"replayed HEAD target callback cannot double-award or pay again")
 
 	# Clean return to title
 	await _pool_return()
