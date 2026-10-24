@@ -675,6 +675,9 @@ func _run() -> void:
 	await _stale_restart(seed_value)
 	await _pool_heal_cases()
 	await _pool_borrowed_button_live_case()
+	await _starter_borrowed_button_live_case("seamstress_mend", true, true)
+	await _starter_borrowed_button_live_case("seamstress_mend_plus", true, false)
+	await _starter_borrowed_button_live_case("seamstress_mend_plus", false, true)
 	await _hemguard_cuff_live_case()
 	await _missing_art_session(seed_value)
 	app.free()
@@ -1635,6 +1638,179 @@ func _pool_borrowed_button_live_case() -> void:
 	_check(_pool_state() == committed
 		and presenter._heal_cards._borrowed_button.read_state().awards == 1,
 		"stale real-card callback cannot replay a heal or COAT bonus")
+	await _pool_return()
+
+
+## Real route and sewn COAT: exercise mounted Mend/Mend+ plus mixed pool order.
+func _starter_borrowed_button_live_case(card_id: String, starter_first: bool,
+		mixed: bool) -> void:
+	var label := card_id + ("/starter-first" if starter_first else "/pool-first")
+	_check(app.deck == null and app.run_map == null, label + ": fresh route title")
+	var route_seed := -1
+	var fight_id := ""
+	for candidate in range(1, 200):
+		var generated := RunMap.new()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = candidate
+		generated.generate(rng)
+		for node_id in generated.get_legal_choices():
+			if generated.get_node(node_id).get("type") == "Fight":
+				route_seed = candidate
+				fight_id = node_id
+				break
+		if route_seed > 0:
+			break
+	_check(route_seed > 0 and not fight_id.is_empty(), label + ": real Fight offered")
+	if route_seed < 0:
+		return
+	app.run_seed = route_seed
+	app.route_button.pressed.emit()
+	await _frames()
+	var carry := app.party_carryover as RunTornCarryover
+	_check(carry != null and app.run_map.get_legal_choices().has(fight_id),
+		label + ": real route and torn ledger")
+	if carry == null:
+		return
+	var route_action: Button = null
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == fight_id:
+			route_action = button
+			break
+	_check(is_instance_valid(route_action) and route_action.is_visible_in_tree()
+		and not route_action.disabled, label + ": mounted Fight option")
+	if route_action == null:
+		return
+	route_action.pressed.emit()
+	await _frames()
+	_check(app._current_carryover_fight() and app.deck is CombatDeck
+		and app.party is CombatParty and app.round_flow._started,
+		label + ": real combat admitted")
+	if not app._current_carryover_fight():
+		return
+	var authored: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/patches/m05_coat_patches.json"))
+	var records: Array = []
+	if authored is Array:
+		for entry in authored:
+			if entry is Dictionary and entry.get("id") == "borrowed_button":
+				records.append({"id": entry.id, "slot": entry.slot})
+	_check(records.size() == 1 and records[0].slot == "COAT",
+		label + ": actual M05 COAT catalog")
+	if records.size() != 1:
+		return
+	app.run_trinkets.append("borrowed_button")
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, records,
+		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), label + ": valid run wardrobe")
+	if not wardrobe.is_valid():
+		return
+	var sewn := wardrobe.sew("borrowed_button", "warden", "COAT",
+		"starter_borrowed_button_sew", wardrobe.get_snapshot())
+	_check(sewn.get("ok") == true
+		and wardrobe.project_active(carry.torn.read_state()).active.warden.has("borrowed_button"),
+		label + ": real living Warden sewn COAT")
+	_check(carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot()),
+		label + ": authenticated run carryover")
+	presenter._clear()
+	presenter._sync_battle()
+	await _frames()
+	_check(presenter._play is CombatStarterSupportPlay
+		and presenter._heal_cards is CombatSeamstressPoolHeals
+		and presenter._heal_cards._wardrobe == wardrobe
+		and presenter._heal_cards.is_patch_binding_valid(),
+		label + ": both live services use same ledgers")
+	var order: Array[String] = [card_id]
+	if mixed:
+		if starter_first:
+			order.append("seamstress_darning")
+		else:
+			order.insert(0, "seamstress_darning")
+	for id in order:
+		app.deck.draw_pile.append(id)
+		_check(app.deck.draw_extra(1) == 1 and app.deck.hand.has(id),
+			label + ": real draw adds physical card " + id)
+	app._refresh_hand()
+	await _frames()
+	_check(app.party.apply_damage(1, 20) and app.party.get_hero(1).hp == 26,
+		label + ": living Warden wounded for both heals")
+	app._refresh_party()
+	await _frames()
+	var wardrobe_before := wardrobe.get_snapshot()
+	var torn_before := carry.torn.read_state()
+	var first_receipt := ""
+	for index in range(order.size()):
+		var id: String = order[index]
+		var panel := _pool_panel(id)
+		_check(is_instance_valid(panel) and panel.focus_mode == Control.FOCUS_ALL
+			and panel.gui_input.get_connections().size() == 1,
+			label + ": authentic held panel " + id)
+		if panel == null:
+			break
+		var callback: Callable = presenter._bindings[panel]
+		var before := _pool_state()
+		var count_before: int = presenter._heal_cards._borrowed_button.read_state().receipts.size()
+		var choosing := false
+		if id == "seamstress_darning":
+			if index % 2 == 1:
+				panel.grab_focus()
+				await _keyboard(KEY_ENTER)
+			else:
+				await _mouse(panel)
+			choosing = presenter._pending.get("choosing", false)
+		else:
+			choosing = await _select_ally(id, index % 2 == 1)
+		_check(choosing and _pool_state() == before
+			and presenter._heal_cards._borrowed_button.read_state().receipts.size() == count_before,
+			label + ": preview/selection makes no spend or COAT award")
+		if not choosing:
+			break
+		if index % 2 == 1:
+			app.hero_panels[0].grab_focus()
+			await _keyboard(KEY_ENTER)
+		else:
+			await _mouse(app.hero_panels[0])
+		var expected: Array
+		if id == "seamstress_darning":
+			expected = _pool_expected(before, id, 1)
+		else:
+			expected = before.duplicate(true)
+			expected[3] = int(expected[3]) - 1
+			expected[1].erase(id)
+			expected[2].append(id)
+			expected[5][0].hp = mini(expected[5][0].max_hp,
+				expected[5][0].hp + (7 if id == "seamstress_mend_plus" else 5))
+		if index == 0:
+			expected[5][0].block += 3
+		_check(_pool_state() == expected,
+			label + ": live " + id + " heals exact HP, charges/discards once, adds COAT only first and preserves RNG/wallet")
+		_check(app.deck.hand.count(id) == before[1].count(id) - 1
+			and app.deck.discard_pile.count(id) == before[2].count(id) + 1,
+			label + ": exactly one real card copy consumed " + id)
+		var state: Dictionary = presenter._heal_cards._borrowed_button.read_state()
+		var kind := "seamstress_pool_heal" if id == "seamstress_darning" else "starter_mend"
+		var receipt := "%s:%d:1" % [kind, index + 1]
+		if index == 0:
+			first_receipt = receipt
+		_check(state.ok and state.awards == 1 and state.block_awarded == 3
+			and state.wearer_id == "warden" and state.receipt_id == first_receipt
+			and state.receipts.has(receipt),
+			label + ": two paths share one COAT notifier and deterministic receipt " + receipt)
+		_check(app.hero_panels[0].get_child(0).text.contains(
+			"HP: %d/%d | Block: %d" % [app.party.get_hero(1).hp,
+			app.party.get_hero(1).max_hp, app.party.get_hero(1).block]),
+			label + ": real mounted meter refreshes healing and COAT Block")
+		_check(wardrobe.get_snapshot() == wardrobe_before
+			and carry.torn.read_state() == torn_before and app.run_rng.state == before[11],
+			label + ": authentic run, wallet and RNG unchanged")
+		var committed := _pool_state()
+		callback.call(_press())
+		await _frames()
+		_check(_pool_state() == committed
+			and presenter._heal_cards._borrowed_button.read_state().awards == 1,
+			label + ": stale duplicate callback cannot replay Mend, pool or COAT")
+	_check(presenter._heal_cards._borrowed_button.read_state().receipts.size() == order.size()
+		and presenter._heal_cards._borrowed_button.read_state().awards == 1,
+		label + ": all and only successful observations recorded; one award")
 	await _pool_return()
 
 

@@ -538,6 +538,21 @@ func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position:
 		if _heal_cards == null:
 			return false
 		return bool(_heal_cards.play_card(deck, party, card_id, position))
+	if card_id in ["seamstress_mend", "seamstress_mend_plus"]:
+		# Observe the actual recipient, not a preview or printed heal amount.
+		# Only the successful authentic held-card transaction may issue a COAT receipt.
+		var before_hp := -1
+		if party != null and party.is_valid() and position >= 1 and position <= CombatParty.PARTY_SIZE:
+			before_hp = int(party.get_hero(position).get("hp", -1))
+		var hand_before: int = deck.hand.count(card_id) if deck != null else 0
+		var discard_before: int = deck.discard_pile.size() if deck != null else -1
+		var energy_before: int = deck.energy if deck != null else -1
+		var committed: bool = _play != null and _play.play_card(deck, party, card_id, position,
+			_path_discount(card_id))
+		if committed and _heal_cards != null and before_hp >= 0:
+			_heal_cards.notify_committed_starter_mend(deck, party, card_id, position, before_hp,
+				int(party.get_hero(position)["hp"]), hand_before, discard_before, energy_before)
+		return committed
 	return _play != null and _play.play_card(deck, party, card_id, position,
 		_path_discount(card_id))
 

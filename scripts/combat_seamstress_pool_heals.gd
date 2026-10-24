@@ -170,8 +170,56 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 	if not deck.discard_played(card_id):
 		return false
 
-	# A unique, deterministic receipt belongs only to a completed held-card commit.
-	# The notifier may refuse an ineligible COAT, but never rolls back legal healing.
+	# Only one shared receipt sequence and one COAT latch serve both pool and
+	# starter committed heals. Refusal to award never unwinds a legal pool play.
+	_notify_borrowed_button(party, definition["owner"], observations, "seamstress_pool_heal")
+	return true
+
+
+## Called solely after CombatStarterSupportPlay has committed an authentic held
+## Mend/Mend+ transaction. The mounted hand supplies the recipient's actual
+## pre/post HP; this does not replay healing or charge the deck a second time.
+func notify_committed_starter_mend(deck: CombatDeck, party: CombatParty,
+		card_id: String, target_position: int, before_hp: int, after_hp: int,
+		hand_before: int, discard_before: int, energy_before: int) -> Dictionary:
+	if card_id not in ["seamstress_mend", "seamstress_mend_plus"] \
+			or deck == null or not deck.turn_active or party == null or not party.is_valid() \
+			or not is_patch_binding_valid() or _borrowed_button == null:
+		return {"ok": false, "awarded": false, "reason": "invalid_commit"}
+	# The mounted caller has just received a successful CombatStarterSupportPlay
+	# return. Authenticate that a single exact held copy was spent and discarded
+	# for its printed one energy before accepting an external heal observation.
+	# A display preview, refused cast or stale hand callback cannot satisfy this.
+	if hand_before < 1 or discard_before < 0 or energy_before < 1 \
+			or deck.hand.count(card_id) != hand_before - 1 \
+			or deck.discard_pile.size() != discard_before + 1 \
+			or deck.discard_pile.back() != card_id or deck.energy != energy_before - 1:
+		return {"ok": false, "awarded": false, "reason": "uncommitted_card"}
+	if target_position < 1 or target_position > CombatParty.PARTY_SIZE:
+		return {"ok": false, "awarded": false, "reason": "invalid_recipient"}
+	# The owner is the canonical card owner, never inferred from the recipient seat.
+	var seamstress_position := 0
+	for hero: Dictionary in party.get_heroes():
+		if hero.get("id") == "seamstress":
+			seamstress_position = int(hero["position"])
+			break
+	if seamstress_position not in [2, 3] or party.is_downed(seamstress_position) \
+			or party.is_downed(target_position):
+		return {"ok": false, "awarded": false, "reason": "invalid_owner_or_recipient"}
+	var recipient: Dictionary = party.get_hero(target_position)
+	return _notify_borrowed_button(party, "seamstress", [{
+		"position": target_position, "id": recipient["id"],
+		"before": before_hp, "after": after_hp,
+	}], "starter_mend")
+
+
+## One deterministic counter, party identity, notifier and receipt ledger.
+## Same-party wardrobe rebinds keep the spent latch; a new party after rebind
+## gets an entirely new notifier. No caller can supply or choose a receipt ID.
+func _notify_borrowed_button(party: CombatParty, owner_id: String,
+		observations: Array[Dictionary], receipt_kind: String) -> Dictionary:
+	if _borrowed_button == null:
+		return {"ok": false, "awarded": false, "reason": "unbound"}
 	if _pending_new_party:
 		_pending_new_party = false
 		if _button_party != null and _button_party != party:
@@ -179,13 +227,14 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 			_button_party = null
 			_heal_receipt_number = 0
 	_heal_receipt_number += 1
-	if _borrowed_button != null:
-		if _button_party == null:
-			_button_party = party
-			_borrowed_button.bind_combat(party, _wardrobe, _torn)
-		if _button_party == party:
-			for observation: Dictionary in observations:
-				_borrowed_button.notify_committed_heal(
-					"seamstress_pool_heal:%d:%d" % [_heal_receipt_number, observation["position"]],
-					definition["owner"], observation["id"], observation["before"], observation["after"])
-	return true
+	if _button_party == null:
+		_button_party = party
+		_borrowed_button.bind_combat(party, _wardrobe, _torn)
+	if _button_party != party:
+		return {"ok": false, "awarded": false, "reason": "foreign_party"}
+	var result: Dictionary = {"ok": false, "awarded": false, "reason": "no_observations"}
+	for observation: Dictionary in observations:
+		result = _borrowed_button.notify_committed_heal(
+			"%s:%d:%d" % [receipt_kind, _heal_receipt_number, observation["position"]],
+			owner_id, observation["id"], observation["before"], observation["after"])
+	return result
