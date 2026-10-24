@@ -42,6 +42,43 @@ const UNRAVEL_FACTS := [
 	"threshold rises by 4",
 	"rest of combat",
 ]
+## The three combat status rules the held-card Help must explain. N stands for
+## the applied stack, never a raw catalog amount: the Seamstress passive, a Path
+## bonus or an on-hit adapter may change what the resolver really applies.
+const BLEED_FACTS := [
+	"BLEED:",
+	"at the end of the affected owner's turn",
+	"loses N HP",
+	"then N decreases by 1",
+	"enemy Bleed tick also adds 1 Unravel",
+	"Damage rounds down, minimum 0",
+]
+const WEAK_FACTS := [
+	"WEAK:",
+	"for N turns",
+	"deals 25% less attack damage",
+	"Damage rounds down, minimum 0",
+]
+const EXPOSED_FACTS := [
+	"EXPOSED:",
+	"for N turns",
+	"takes 50% more attack damage",
+	"Damage rounds down, minimum 0",
+]
+## Genuine authored base/+ cards read through the real metadata lookup. The
+## third column is the catalog amount Help must never restate as the rule.
+const STATUS_CASES := [
+	["seamstress_prick", "bleed", 2],
+	["seamstress_prick_plus", "bleed", 3],
+	["warden_shield_bash", "weak", 1],
+	["warden_shield_bash_plus", "weak", 1],
+	["tinker_rivet_shot", "exposed", 1],
+	["tinker_rivet_shot_plus", "exposed", 1],
+	["seamstress_red_thread", "bleed", 6],
+	["seamstress_red_thread_plus", "bleed", 8],
+	["seamstress_hemorrhage_hem", "bleed_multiplier", 2],
+	["seamstress_hemorrhage_hem_plus", "bleed_multiplier", 2],
+]
 ## The exact short combat sentence each mounted face must draw, written out
 ## independently of the presenter: amounts, hit counts, block, healing, draw,
 ## energy/HP, statuses and the one/all/random recipient wording. Offensive
@@ -157,6 +194,46 @@ func _authored_conditional_damage(metadata, card_id: String) -> int:
 	var effects: Dictionary = metadata.definition(card_id).get("effects", {})
 	var condition: Variant = effects.get("conditional_damage")
 	return int(condition.get("damage", -1)) if condition is Dictionary else -1
+
+
+## True only for a genuine positive authored status amount. A bleeding card may
+## carry it directly or through the doubling multiplier descriptor.
+func _authored_status(definition: Dictionary, status: String) -> bool:
+	var raw_effects: Variant = definition.get("effects", {})
+	if not raw_effects is Dictionary:
+		return false
+	var effects: Dictionary = raw_effects
+	if status == "bleed":
+		return _positive_effect(effects, "bleed") or _positive_effect(effects, "bleed_multiplier")
+	return _positive_effect(effects, status)
+
+
+func _positive_effect(effects: Dictionary, key: String) -> bool:
+	var value: Variant = effects.get(key)
+	return value is int and int(value) > 0
+
+
+func _status_prefix(status: String) -> String:
+	return "BLEED:" if status == "bleed_multiplier" else status.to_upper() + ":"
+
+
+func _status_facts(status: String) -> Array:
+	match status:
+		"bleed", "bleed_multiplier":
+			return BLEED_FACTS
+		"weak":
+			return WEAK_FACTS
+		"exposed":
+			return EXPOSED_FACTS
+	return []
+
+
+## The one Help line that begins with a status prefix, for amount assertions.
+func _line_starting(text: String, prefix: String) -> String:
+	for line in text.split("\n"):
+		if line.begins_with(prefix):
+			return line
+	return ""
 
 
 ## Every keyword card keeps the ordinary header, source range and enemy target
@@ -563,6 +640,26 @@ func _assert_stitched_face(metadata, panel: Control, stitched_id: String, pair: 
 	_check(tooltip.find("1. " + str(first.get("display_name", ""))) == 0
 		and tooltip.find("\n2. " + str(second.get("display_name", ""))) > 0,
 		"mounted hover tooltip preserves authentic half order")
+	# Each half's status rules appear once, in its own numbered half, in order;
+	# the drawn face keeps both unchanged short lines and no long rule.
+	var numbered_halves := tooltip.split("\n2. ")
+	_check(numbered_halves.size() == 2, "stitched tooltip still splits into two numbered halves")
+	if numbered_halves.size() == 2:
+		for index in range(2):
+			var half_id: String = str(pair[index])
+			var half_definition: Dictionary = metadata.definition(half_id)
+			var segment: String = str(numbered_halves[index])
+			for status in ["bleed", "weak", "exposed"]:
+				var expected: int = 1 if _authored_status(half_definition, status) else 0
+				_check(_occurrences(segment, _status_prefix(status)) == expected,
+					"stitched half %d carries %s rules exactly when authored" % [index + 1, status])
+	var face_rules: String = str(facts.get("rules", ""))
+	_check(face_rules == "1. %s · 2. %s"
+		% [metadata.short_line(str(pair[0])), metadata.short_line(str(pair[1]))],
+		"mounted stitched face keeps both unchanged short lines")
+	_check(not face_rules.contains("BLEED:") and not face_rules.contains("WEAK:")
+		and not face_rules.contains("EXPOSED:"),
+		"mounted stitched face prints no long status rule")
 	_check(int(metadata._bindings[panel].get("draw_count", 0)) > 0,
 		"real stitched panel actually received CanvasItem draw callbacks")
 
@@ -840,11 +937,24 @@ func _validate_display(observed: Dictionary) -> void:
 			_check(tooltip_text.contains("To one selected enemy 1"), "exact bash target: " + card_id)
 			_check(tooltip_lines.has("BASE deal 8 damage; ON CONFIRMED HIT add Weak 1"),
 				"Shield Bash exact authored confirmed-hit Weak rule, not generic status")
+			_check(_occurrences(tooltip_text, "WEAK:") == 1
+				and tooltip_text.contains(metadata.WEAK_EXPLANATION)
+				and _occurrences(tooltip_text, "BLEED:") == 0
+				and _occurrences(tooltip_text, "EXPOSED:") == 0,
+				"live Shield Bash Help explains exactly its authored Weak rule")
 		elif card_id == "seamstress_prick":
 			_check(tooltip_text.contains("BASE deal 3 damage"), "exact prick damage: " + card_id)
 			_check(tooltip_lines.has("BASE deal 3 damage; ON CONFIRMED HIT add Bleed 3 (authored Bleed 2 + Seamstress passive 1)"),
 				"Prick exact confirmed-hit stack derives authored 2 plus passive 1")
 			_check(tooltip_text.contains("To one selected enemy 1\u20133"), "exact prick target: " + card_id)
+			_check(_occurrences(tooltip_text, "BLEED:") == 1
+				and tooltip_text.contains(metadata.BLEED_EXPLANATION)
+				and _occurrences(tooltip_text, "WEAK:") == 0
+				and _occurrences(tooltip_text, "EXPOSED:") == 0,
+				"live Prick Help explains exactly its passive-adjusted Bleed rule")
+			_check(_line_starting(tooltip_text, "BLEED:").contains("loses N HP")
+				and not _line_starting(tooltip_text, "BLEED:").contains("lose 3 HP"),
+				"live Prick Bleed rule stays generic, never claiming the applied 3")
 		elif card_id == "seamstress_mend":
 			_check(tooltip_text.contains("BASE heal 5 HP, capped at max HP"), "exact mend heal with cap: " + card_id)
 			_check(tooltip_text.contains("Choose one living ally"), "exact mend living ally: " + card_id)
@@ -1078,6 +1188,156 @@ func _play_support(card_id: String, observed: Dictionary) -> bool:
 				"replaced panels are disconnected after support play")
 	_validate_display(observed)
 	return true
+
+
+## AC1/AC3: every genuine authored status card explains its rule in the hover
+## Help, directly and on its mounted bound panel, with a generic N so a passive
+## or Path adjustment can never contradict it. Neutral and unknown cards invent
+## no status, and the existing Pinned/Unravel rows stay only where authored.
+func _status_help(metadata) -> void:
+	var before := _snapshot()
+	seed(6203)
+	var expected_global := randi()
+	seed(6203)
+	var catalog_ids := _all_catalog_ids()
+	_check(not catalog_ids.is_empty(), "status Help check has real shared catalog IDs")
+	# 1. Direct Help for every authored status base/+ card.
+	for entry in STATUS_CASES:
+		var card_id: String = str(entry[0])
+		var status: String = str(entry[1])
+		var definition: Dictionary = metadata.definition(card_id)
+		_check(not definition.is_empty(), "status catalog card exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects.get(status) is int and int(effects[status]) == int(entry[2]),
+			"status is genuinely authored at its catalog amount: " + card_id)
+		var text: String = metadata.base_effect_text(card_id)
+		var prefix := _status_prefix(status)
+		_check(_occurrences(text, prefix) == 1,
+			"exactly one %s rule row: %s" % [prefix, card_id])
+		for fact in _status_facts(status):
+			_check(text.contains(fact), "%s explains %s" % [card_id, fact])
+		var rule_line := _line_starting(text, prefix)
+		_check(not rule_line.is_empty() and rule_line.contains("N"),
+			"status rule keeps the generic N: " + card_id)
+		# Help never restates an applied amount as the generic tick/penalty.
+		var authored: int = int(entry[2])
+		for amount_phrase in ["lose %d HP" % authored, "Bleed %d" % authored,
+				"Weak %d" % authored, "Exposed %d" % authored]:
+			_check(not rule_line.contains(amount_phrase),
+				"generic Help never claims the raw amount '%s': %s" % [amount_phrase, card_id])
+		# The short face keeps its exact authored line and never grows the rule.
+		var face: String = metadata.short_line(card_id)
+		_check(not face.contains(prefix) and not face.contains("\n"),
+			"status rule stays off the short card face: " + card_id)
+		if SHORT_LINES.has(card_id):
+			_check(face == str(SHORT_LINES[card_id]),
+				"status card keeps its exact terse face line: " + card_id)
+		var facts: Dictionary = metadata.describe(card_id)
+		_check(facts.get("rules") == face and not str(facts.get("rules", "")).contains(prefix),
+			"Help rule stays separate from the drawn face facts: " + card_id)
+		_check(facts.get("cost") == int(definition.get("cost", -1))
+			and facts.get("owner_text") == str(definition.get("owner", "")).capitalize(),
+			"status Help leaves cost and owner labels unchanged: " + card_id)
+		# The pip legend, source row and target pips stay exactly as authored.
+		_check(text.contains("PIPS: ● filled = a slot this hero may play from (%s)"
+			% _expected_positions(definition.get("from_positions", []))),
+			"status Help keeps the exact source pips: " + card_id)
+		_check(text.contains("From " + _expected_positions(definition.get("from_positions", []))),
+			"status Help keeps the exact source row: " + card_id)
+		if (definition.get("to_positions", []) as Array).is_empty():
+			_check(text.contains("no target square is filled (%s)" % _tooltip_target_slots(definition)),
+				"status Help keeps the exact empty target pips: " + card_id)
+		else:
+			_check(text.contains("■ filled = a legal target slot (%s)" % _tooltip_target_slots(definition)),
+				"status Help keeps the exact target pips: " + card_id)
+	# Hemorrhage Hem doubles existing Bleed: it may explain the Bleed tick but must
+	# never claim a fresh application of the stacks it multiplies.
+	var hem_text: String = metadata.base_effect_text("seamstress_hemorrhage_hem")
+	_check(hem_text.contains("BASE double the target's current Bleed")
+		and _occurrences(hem_text, "BLEED:") == 1,
+		"doubling card explains Bleed once next to its doubling effect")
+	_check(not hem_text.contains("BASE apply Bleed")
+		and not hem_text.contains("ON CONFIRMED HIT add Bleed"),
+		"doubling card never claims a fresh Bleed application")
+	# 2. Every shared catalog card: a status row exists exactly when authored, so
+	# neutral cards invent none and Pinned/Unravel-only cards stay clean.
+	for card_id in catalog_ids:
+		var definition: Dictionary = metadata.definition(card_id)
+		if definition.is_empty():
+			continue
+		var text: String = metadata.base_effect_text(card_id)
+		for status in ["bleed", "weak", "exposed"]:
+			var expected: int = 1 if _authored_status(definition, status) else 0
+			_check(_occurrences(text, _status_prefix(status)) == expected,
+				"%s Help carries %s rules exactly when authored" % [card_id, status])
+		var effects: Dictionary = definition.get("effects", {})
+		var pinned_authored: bool = effects.has("pinned")
+		_check(text.contains("PINNED:") == pinned_authored,
+			"Pinned Help stays only where authored: " + card_id)
+		var unravel_authored: bool = effects.has("unravel") \
+			or (effects.get("conditional_damage") is Dictionary \
+				and metadata._has_unravel_conditional(effects))
+		_check(text.contains("UNRAVEL:") == unravel_authored,
+			"Unravel Help stays only where authored: " + card_id)
+	# Explicit neutral and unknown negatives, including Strike and Brace.
+	for neutral_id in ["warden_strike", "warden_strike_plus", "warden_brace",
+			"warden_brace_plus", "tinker_long_barrel", "unreleased_card"]:
+		var neutral_text: String = metadata.base_effect_text(neutral_id)
+		for status in ["bleed", "weak", "exposed"]:
+			_check(_occurrences(neutral_text, _status_prefix(status)) == 0,
+				"neutral/unknown card invents no %s rule: %s" % [status, neutral_id])
+		_check(not neutral_text.contains("Bleed") and not neutral_text.contains("Weak")
+			and not neutral_text.contains("Exposed"),
+			"neutral/unknown card names no status: " + neutral_id)
+	_check(metadata.base_effect_text("unreleased_card") == "Unknown card",
+		"unknown status Help remains the exact placeholder")
+	# A card that authors Weak and Unravel carries both, and no other status.
+	var snag: String = metadata.base_effect_text("seamstress_snag")
+	_check(_occurrences(snag, "WEAK:") == 1 and _occurrences(snag, "UNRAVEL:") == 1
+		and _occurrences(snag, "BLEED:") == 0 and _occurrences(snag, "EXPOSED:") == 0,
+		"Weak + Unravel card explains both authored rules and no other status")
+	# 3. The same Help through a real mounted, bound hand panel for Prick, Shield
+	# Bash and Rivet Shot, base and upgraded.
+	var probe_metadata = load(HAND_SCRIPT).new()
+	_check(probe_metadata != null, "mounted status Help presenter loads")
+	if probe_metadata != null:
+		probe_metadata.set_app(app)
+		for entry in STATUS_CASES:
+			var card_id: String = str(entry[0])
+			if not card_id.begins_with("seamstress_prick") \
+					and not card_id.begins_with("warden_shield_bash") \
+					and not card_id.begins_with("tinker_rivet_shot"):
+				continue
+			var probe := PanelContainer.new()
+			probe.custom_minimum_size = Vector2(150, 96)
+			var label := Label.new()
+			label.text = card_id
+			probe.add_child(label)
+			app.hand_view.add_child(probe)
+			await _frames()
+			var panels: Array[Node] = [probe]
+			var hand: Array[String] = [card_id]
+			probe_metadata.sync(panels, hand)
+			await _frames()
+			_check(probe_metadata._bindings.has(probe)
+				and probe_metadata._bindings[probe]["id"] == card_id,
+				"mounted status card binds its exact Help: " + card_id)
+			_check(probe.tooltip_text == metadata.base_effect_text(card_id),
+				"mounted tooltip is the exact authored status Help: " + card_id)
+			_check(_occurrences(probe.tooltip_text, _status_prefix(str(entry[1]))) == 1,
+				"mounted tooltip explains its status once: " + card_id)
+			_check(probe_metadata.get_facts(probe).get("rules") == metadata.short_line(card_id),
+				"mounted status card keeps its unchanged short face: " + card_id)
+			_check(int(probe_metadata._bindings[probe].get("draw_count", 0)) > 0,
+				"mounted status card really drew its paper face: " + card_id)
+			probe_metadata.clear()
+			probe.free()
+			await _frames()
+		_check(probe_metadata._bindings.is_empty(), "mounted status probes release cleanly")
+	_check(_snapshot() == before, "status Help formatting mutates no live model")
+	_check(randi() == expected_global, "status Help formatting draws no global RNG")
 
 
 ## The tooltip formatter teaches only authored Pinned/Unravel rules. Each shared
@@ -2012,6 +2272,7 @@ func _run() -> void:
 		if session == 0:
 			_keyword_explanations(presenter._metadata)
 			_formatter_check(presenter._metadata)
+			await _status_help(presenter._metadata)
 			await _warden_path_presentation()
 			await _typography_check()
 		await _visual_feedback()

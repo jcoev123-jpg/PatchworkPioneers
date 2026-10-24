@@ -13,6 +13,12 @@ const INK := Color("#3d3440")
 ## published rule; no card is shown as automatically pinning or unravelling.
 const PINNED_EXPLANATION := "PINNED: one pin per enemy, storing the hero who applied it. A DIFFERENT hero's next attack deals +5 damage BEFORE Weak/Exposed and consumes it once; same-hero attacks do not. A new pin replaces it; an unused pin lasts to combat end."
 const UNRAVEL_EXPLANATION := "UNRAVEL: an Unravel N adds N to that enemy's gauge and each Bleed tick adds 1. At the normal 8 / elite 12 / boss 16 threshold the enemy becomes Unravelled and skips its next enemy action; the gauge then resets to 0 and its threshold rises by 4 for the rest of combat."
+## Status rules are explained generically with N, never with a raw catalog
+## amount: the Seamstress passive, a Path bonus or an on-hit adapter can change
+## the number the resolver really applies, and Help must not contradict it.
+const BLEED_EXPLANATION := "BLEED: at the end of the affected owner's turn it loses N HP, then N decreases by 1. An enemy Bleed tick also adds 1 Unravel. Damage rounds down, minimum 0."
+const WEAK_EXPLANATION := "WEAK: for N turns the affected actor deals 25% less attack damage. Damage rounds down, minimum 0."
+const EXPOSED_EXPLANATION := "EXPOSED: for N turns the affected actor takes 50% more attack damage. Damage rounds down, minimum 0."
 ## The ready-made patchwork card art. Every load here is optional and cached:
 ## a missing file always leaves the drawn paper face exactly as it was.
 const ART_DIR := "res://assets/paper/"
@@ -563,17 +569,32 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 
 
 ## The keyword glossary is driven only by authored effects, so an ordinary
-## damage card never gains a pin or Unravel paragraph. Unravelled/half-gauge
-## conditionals (Snip the Seam) need the Unravel rules just as an Unravel N does.
+## damage card never gains a status, pin or Unravel paragraph. Unravelled/
+## half-gauge conditionals (Snip the Seam) need the Unravel rules just as an
+## Unravel N does. A doubling card (Hemorrhage Hem) explains the Bleed tick it
+## multiplies without claiming a fresh Bleed application.
 func _keyword_lines(definition: Dictionary) -> Array[String]:
 	var lines: Array[String] = []
 	var raw_effects: Variant = definition.get("effects", {})
 	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
+	if _positive_status(effects, "bleed") or _positive_status(effects, "bleed_multiplier"):
+		lines.append(BLEED_EXPLANATION)
+	if _positive_status(effects, "weak"):
+		lines.append(WEAK_EXPLANATION)
+	if _positive_status(effects, "exposed"):
+		lines.append(EXPOSED_EXPLANATION)
 	if effects.has("pinned"):
 		lines.append(PINNED_EXPLANATION)
 	if effects.has("unravel") or _has_unravel_conditional(effects):
 		lines.append(UNRAVEL_EXPLANATION)
 	return lines
+
+
+## A status row exists only for a genuine positive authored amount, so a
+## malformed or absent effect never invents a rule in Help.
+func _positive_status(effects: Dictionary, key: String) -> bool:
+	var value: Variant = effects.get(key)
+	return value is int and int(value) > 0
 
 
 func _has_unravel_conditional(effects: Dictionary) -> bool:
