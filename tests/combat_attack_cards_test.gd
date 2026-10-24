@@ -29,6 +29,7 @@ func _initialize() -> void:
 	_test_malformed_patch_wardrobes()
 	_test_m05_head_statuses()
 	_test_m05_head_rejections()
+	_test_red_bobbin_cuff()
 	for failure in failures:
 		printerr(failure)
 	print("combat_attack_cards_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -1630,3 +1631,262 @@ func _test_m05_head_rejections() -> void:
 	_head_reject(torn_attacks, _deck(["seamstress_prick"]), _party(), _enemies([40]),
 		"seamstress_prick", 1, fresh,
 		"positive fresh combat HP cannot bypass torn run owner")
+
+
+## AC3: a rejected patched Prick must leave the deck, the party, the enemy
+## roster, both run ledgers, the bound ARM authority, its patch latch and the
+## seeded run RNG exactly as they were before the attempt.
+func _arm_reject(attacks: CombatAttackCards, wardrobe: Variant, torn: RunTornMending,
+		deck: CombatDeck, party: CombatParty, enemies: CombatEnemies, target: int,
+		label: String) -> void:
+	var deck_before := _snapshot(deck, party, enemies)
+	var seed_before: int = deck._rng.seed
+	var state_before: int = deck._rng.state
+	var wardrobe_before: Variant = null if wardrobe == null else wardrobe.get_snapshot()
+	var torn_before: Dictionary = torn.read_state()
+	var active_before: Dictionary = attacks._patches.active_snapshot()
+	var worn_before: Dictionary = attacks._patches.worn_snapshot()
+	var latch_before: Dictionary = attacks._patches.latch_snapshot()
+	_reject(attacks, deck, party, enemies, "seamstress_prick", target, label)
+	_check(_snapshot(deck, party, enemies) == deck_before,
+		label + ": deck, party and enemy rosters unchanged")
+	_check(deck._rng.seed == seed_before and deck._rng.state == state_before,
+		label + ": seeded run RNG unchanged")
+	var wardrobe_after: Variant = null if wardrobe == null else wardrobe.get_snapshot()
+	_check(wardrobe_after == wardrobe_before and torn.read_state() == torn_before,
+		label + ": wardrobe and torn ledgers unchanged")
+	_check(attacks._patches.active_snapshot() == active_before
+		and attacks._patches.worn_snapshot() == worn_before
+		and attacks._patches.latch_snapshot() == latch_before,
+		label + ": bound ARM authority and patch latch unchanged")
+
+
+## M05 Red Bobbin Cuff is a living wearer's ARM patch: it adds one Bleed to that
+## Seamstress's own confirmed Prick, never to a foreign wearer, a stale battle
+## start or a malformed binding. Every fixture is a shipped catalog record.
+func _test_red_bobbin_cuff() -> void:
+	var arm_records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_arm_support_patches.json"))
+	var head_records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_head_patches.json"))
+	_check(arm_records is Array and head_records is Array,
+		"authored M05 ARM and HEAD catalogs exist")
+	if not (arm_records is Array and head_records is Array):
+		return
+	var cuff := {}
+	for record in arm_records:
+		if record is Dictionary and record.get("id") == "red_bobbin_cuff":
+			cuff = record
+	_check(cuff.get("slot") == "ARM" and cuff.get("effect") == "card_bleed_bonus"
+		and cuff.get("amount") == 1,
+		"shipped Red Bobbin Cuff is an ARM +1 card_bleed_bonus record")
+	var defs := []
+	for record in arm_records + head_records:
+		if record is Dictionary and record.has("id") and record.has("slot"):
+			defs.append({"id": record["id"], "slot": record["slot"]})
+	var owned := ["red_bobbin_cuff", "bloodstitch_bonnet"]
+	var party := _party()
+	var torn := RunTornMending.new(party.get_heroes())
+	_check(torn.is_valid(), "genuine run torn ledger for the living starter roster")
+
+	# AC2: the HEAD Bonnet and the ARM Cuff coexist and stack exactly once.
+	var both := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	var sew_arm: Dictionary = both.sew("red_bobbin_cuff", "seamstress", "ARM",
+		"both_arm", both.get_snapshot())
+	var sew_head: Dictionary = both.sew("bloodstitch_bonnet", "seamstress", "HEAD",
+		"both_head", both.get_snapshot())
+	_check(sew_arm.get("ok", false) and sew_head.get("ok", false),
+		"authentic ARM and HEAD sew receipts on the same Seamstress")
+	var both_attacks := CombatAttackCards.new()
+	var heads := CombatM05HeadPatchRules.new()
+	_check(both_attacks.bind_patch_wardrobe(both, torn)
+		and heads.bind_wardrobe(both, torn) and both_attacks.bind_head_patch_rules(heads),
+		"one Seamstress wears a real cuff and bonnet in distinct slots")
+	var both_foes := _enemies([60, 60, 60])
+	_accept(both_attacks, _deck(["seamstress_prick"]), party, both_foes, "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 5})], 1,
+		"printed Bleed 2, passive 1, HEAD 1 and ARM 1 stack to Bleed 5 once")
+	_check(both_foes.get_enemy(1).get("statuses", {}) == {"bleed": 5},
+		"one confirmed stacked Prick leaves exactly Bleed 5")
+
+	# AC1: a genuine ARM-only cuff adds its one Bleed to the committed Prick.
+	var arm_only := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	_check(arm_only.sew("red_bobbin_cuff", "seamstress", "ARM", "arm_only",
+		arm_only.get_snapshot()).get("ok", false),
+		"ARM-only cuff sewn on the living Seamstress")
+	var arm_attacks := CombatAttackCards.new()
+	_check(arm_attacks.bind_patch_wardrobe(arm_only, torn) and arm_attacks._head_rules == null,
+		"ARM-only genuine binding with no HEAD authority")
+	_check(arm_attacks._patches.card_bleed_bonus("seamstress", "seamstress_prick") == 1
+		and arm_attacks._patches.card_bleed_bonus("warden", "seamstress_prick") == 0,
+		"bound ARM authority quotes +1 only for its own wearer")
+	var arm_foes := _enemies([60])
+	var arm_deck := _deck(["seamstress_prick"])
+	var starting_size: int = StarterCards.new().get_starting_deck().size()
+	_accept(arm_attacks, arm_deck, party, arm_foes, "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 4})], 1,
+		"confirmed ARM-only Prick deals 3 damage and applies Bleed 4")
+	_check(arm_foes.get_enemy(1).get("hp") == 57
+		and arm_foes.get_enemy(1).get("statuses", {}) == {"bleed": 4},
+		"committed ARM Prick leaves 3 HP loss and the exact Bleed 4 status")
+	_check(arm_deck.energy == 2
+		and arm_deck.discard_pile.count("seamstress_prick") == 1
+		and arm_deck.draw_pile.size() + arm_deck.hand.size() + arm_deck.discard_pile.size()
+			== starting_size,
+		"one committed ARM Prick charges one energy and discards one copy")
+
+	var plain := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	var plain_attacks := CombatAttackCards.new()
+	_check(plain_attacks.bind_patch_wardrobe(plain, torn), "valid unworn wardrobe binds")
+	var plain_foes := _enemies([60])
+	_accept(plain_attacks, _deck(["seamstress_prick"]), party, plain_foes, "seamstress_prick", 1,
+		[_hit(1, 3, 0, 3, {"bleed": 3})], 1, "an unworn cuff keeps the passive Bleed 3")
+	_check(plain_foes.get_enemy(1).get("statuses", {}) == {"bleed": 3},
+		"no cuff applies exactly the printed plus passive Bleed 3")
+
+	var warden_wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	_check(warden_wardrobe.sew("red_bobbin_cuff", "warden", "ARM", "warden_arm",
+		warden_wardrobe.get_snapshot()).get("ok", false), "cuff genuinely sewn on the Warden")
+	var warden_attacks := CombatAttackCards.new()
+	_check(warden_attacks.bind_patch_wardrobe(warden_wardrobe, torn),
+		"foreign wearer wardrobe binds")
+	_accept(warden_attacks, _deck(["seamstress_prick"]), party, _enemies([60]),
+		"seamstress_prick", 1, [_hit(1, 3, 0, 3, {"bleed": 3})], 1,
+		"a cuff on another hero grants the Seamstress no bonus")
+
+	# The same cap admits the unpatched Bleed 3 but not the patched Bleed 4.
+	var overflow := _enemies([60])
+	overflow._enemies[0]["statuses"] = {"bleed": CombatStatuses.MAX_INT - 3}
+	var overflow_plain := _enemies([60])
+	overflow_plain._enemies[0]["statuses"] = {"bleed": CombatStatuses.MAX_INT - 3}
+	_accept(plain_attacks, _deck(["seamstress_prick"]), party, overflow_plain,
+		"seamstress_prick", 1, [_hit(1, 3, 0, 3, {"bleed": 3})], 1,
+		"unpatched Bleed 3 exactly reaches the status cap")
+
+	var seamstress_living := false
+	for hero in torn.read_state().heroes:
+		if hero.get("id") == "seamstress" and hero.get("hp", 0) > 0:
+			seamstress_living = true
+	_check(seamstress_living, "the run ledger keeps the Seamstress genuinely alive")
+	var down_party := _party()
+	_check(down_party.apply_damage(2, 100) and down_party.is_downed(2),
+		"the Seamstress is truly downed in the combat party")
+	var empty_energy := _deck(["seamstress_prick"])
+	_check(empty_energy.try_spend_energy(3), "all three energy spent before the refusal")
+	var slain := _enemies([60])
+	_check(slain.apply_damage(1, 999) and slain.is_slain(1), "target enemy truly slain")
+	# Prick may be cast from every hero slot, so its only illegal owner FROM is a
+	# living run owner who is missing from (or ambiguous in) the combat roster.
+	var rejections := [
+		{"deck": _deck(["seamstress_prick"]), "party": party, "enemies": overflow,
+			"target": 1, "label": "patched Bleed 4 past the status cap rejects"},
+		{"deck": _deck(["seamstress_prick"]), "party": _party(["warden", "tinker", "other"]),
+			"enemies": _enemies([60]), "target": 1,
+			"label": "living run owner with an illegal combat FROM rejects"},
+		{"deck": _deck(["seamstress_prick"]), "party": party, "enemies": _enemies([60]),
+			"target": 2, "label": "truly absent enemy rank rejects"},
+		{"deck": _deck(["seamstress_prick"]), "party": party, "enemies": _enemies([60]),
+			"target": 0, "label": "unselected target rejects"},
+		{"deck": _deck(["seamstress_prick"]), "party": down_party, "enemies": _enemies([60]),
+			"target": 1, "label": "downed Seamstress rejects"},
+		{"deck": empty_energy, "party": party, "enemies": _enemies([60]), "target": 1,
+			"label": "insufficient energy rejects"},
+		{"deck": _deck(["seamstress_prick"]), "party": party, "enemies": slain,
+			"target": 1, "label": "slain target rejects"},
+	]
+	for request in rejections:
+		var request_deck: CombatDeck = request["deck"]
+		var request_party: CombatParty = request["party"]
+		var request_enemies: CombatEnemies = request["enemies"]
+		_arm_reject(arm_attacks, arm_only, torn, request_deck, request_party,
+			request_enemies, int(request["target"]), str(request["label"]))
+
+	# AC3 stale ARM authority: a genuine post-bind re-sew moves the cuff away, so
+	# the saved battle-start active/worn projection must not award it.
+	var stale_wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	_check(stale_wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "stale_arm",
+		stale_wardrobe.get_snapshot()).get("ok", false),
+		"the stale fixture starts with a genuine Seamstress cuff")
+	var stale_attacks := CombatAttackCards.new()
+	_check(stale_attacks.bind_patch_wardrobe(stale_wardrobe, torn)
+		and stale_attacks._patches.card_bleed_bonus("seamstress", "seamstress_prick") == 1,
+		"the battle-start ARM authority quotes the cuff for the Seamstress")
+	_check(stale_wardrobe.start_rest("stale_rest", stale_wardrobe.get_snapshot()).get("ok", false),
+		"an authentic Rest opens for the re-sew")
+	var moved: Dictionary = stale_wardrobe.re_sew("red_bobbin_cuff", "seamstress", "warden",
+		"stale_rest", "stale_move", stale_wardrobe.get_snapshot())
+	var moved_state: Dictionary = stale_wardrobe.get_snapshot()
+	_check(moved.get("ok", false) and moved_state["worn"]["warden"]["ARM"] == "red_bobbin_cuff"
+		and moved_state["worn"]["seamstress"]["ARM"] == "",
+		"the live wardrobe really moves the cuff to the Warden after binding")
+	_arm_reject(stale_attacks, stale_wardrobe, torn, _deck(["seamstress_prick"]), party,
+		_enemies([60]), 1, "stale ARM wardrobe rejects before the hit")
+	# Any later genuine sew, even one that leaves the cuff in place, changes the
+	# authenticated receipt and must not silently reuse the battle-start powers.
+	var sewed_wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	_check(sewed_wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "sew_then_cuff",
+		sewed_wardrobe.get_snapshot()).get("ok", false),
+		"the post-bind sew fixture starts with the genuine cuff")
+	var sewed_attacks := CombatAttackCards.new()
+	_check(sewed_attacks.bind_patch_wardrobe(sewed_wardrobe, torn)
+		and sewed_attacks._patches.card_bleed_bonus("seamstress", "seamstress_prick") == 1,
+		"the battle-start authority quotes the cuff before the later sew")
+	_check(sewed_wardrobe.sew("bloodstitch_bonnet", "warden", "HEAD", "sew_after_bind",
+		sewed_wardrobe.get_snapshot()).get("ok", false),
+		"a genuine HEAD sew lands after the battle-start binding")
+	_arm_reject(sewed_attacks, sewed_wardrobe, torn, _deck(["seamstress_prick"]), party,
+		_enemies([60]), 1, "wardrobe sewn after binding rejects before the hit")
+	var rebound_arm := CombatAttackCards.new()
+	_check(rebound_arm.bind_patch_wardrobe(stale_wardrobe, torn),
+		"a fresh binding follows the moved cuff")
+	_accept(rebound_arm, _deck(["seamstress_prick"]), party, _enemies([60]),
+		"seamstress_prick", 1, [_hit(1, 3, 0, 3, {"bleed": 3})], 1,
+		"the freshly bound service follows the moved cuff with no Seamstress bonus")
+
+	# AC3 stale torn receipt: a real battle-end tear after binding fails closed.
+	var torn_wardrobe := RunPatchWardrobe.new(party.get_heroes(), owned, defs, 4)
+	_check(torn_wardrobe.sew("red_bobbin_cuff", "seamstress", "ARM", "torn_arm",
+		torn_wardrobe.get_snapshot()).get("ok", false),
+		"the stale torn fixture wears the genuine cuff")
+	var torn_ledger := RunTornMending.new(party.get_heroes())
+	var torn_attacks := CombatAttackCards.new()
+	_check(torn_attacks.bind_patch_wardrobe(torn_wardrobe, torn_ledger)
+		and torn_attacks._patches.card_bleed_bonus("seamstress", "seamstress_prick") == 1,
+		"the battle-start torn authority admits the cuff")
+	var start_roster: Array = torn_ledger.read_state()["heroes"]
+	var end_roster: Array = start_roster.duplicate(true)
+	end_roster[0]["hp"] = 0
+	_check(torn_ledger.observe_battle_end("tear_node", start_roster, end_roster).get("ok", false),
+		"a genuine battle end tears the Warden after binding")
+	_arm_reject(torn_attacks, torn_wardrobe, torn_ledger, _deck(["seamstress_prick"]), party,
+		_enemies([60]), 1, "stale torn ledger rejects before the hit")
+	var live_torn: Dictionary = torn_ledger.read_state()
+	var live_snapshot: Dictionary = torn_wardrobe.get_snapshot()
+	_check(torn_wardrobe.refresh_run_context(live_torn["heroes"], live_snapshot["owned"],
+		live_snapshot["scraps"], live_snapshot["gold"], live_snapshot["cards"],
+		live_snapshot), "the wardrobe refreshes to the true torn roster")
+	var rebound_torn := CombatAttackCards.new()
+	_check(rebound_torn.bind_patch_wardrobe(torn_wardrobe, torn_ledger),
+		"a fresh binding to the torn authorities succeeds")
+	_accept(rebound_torn, _deck(["seamstress_prick"]), party, _enemies([60]),
+		"seamstress_prick", 1, [_hit(1, 3, 0, 3, {"bleed": 4})], 1,
+		"the living Seamstress keeps her cuff after a Warden tear")
+
+	# AC3 malformed or absent ARM authorities never fall back to baseline.
+	var invalid_wardrobe := RunPatchWardrobe.new()
+	var malformed_attacks := CombatAttackCards.new()
+	_check(not invalid_wardrobe.is_valid()
+		and not malformed_attacks.bind_patch_wardrobe(invalid_wardrobe, torn),
+		"a malformed ARM wardrobe binding fails closed")
+	_arm_reject(malformed_attacks, invalid_wardrobe, torn, _deck(["seamstress_prick"]),
+		party, _enemies([60]), 1, "malformed ARM binding rejects before the hit")
+	var missing_wardrobe := CombatAttackCards.new()
+	_check(not missing_wardrobe.bind_patch_wardrobe(null, torn),
+		"an absent ARM wardrobe fails closed")
+	_arm_reject(missing_wardrobe, null, torn, _deck(["seamstress_prick"]), party,
+		_enemies([60]), 1, "absent ARM wardrobe rejects before the hit")
+	var missing_torn := CombatAttackCards.new()
+	_check(not missing_torn.bind_patch_wardrobe(arm_only, null),
+		"an absent torn ledger fails closed")
+	_arm_reject(missing_torn, arm_only, torn, _deck(["seamstress_prick"]), party,
+		_enemies([60]), 1, "absent torn ledger rejects before the hit")
