@@ -4090,7 +4090,8 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 			selector.set_item_metadata(selector.item_count - 1, index)
 		rest_view.add_child(selector)
 	rest_heal_button = Button.new()
-	rest_heal_button.text = "Heal party (30% max HP; revive downed heroes)"
+	rest_heal_button.text = "Heal"
+	rest_heal_button.tooltip_text = "Choose one: Heal, Upgrade or Stitch. Heal restores 30% max HP and revives downed heroes."
 	rest_heal_button.custom_minimum_size = Vector2(480, 56)
 	rest_heal_button.pressed.connect(_heal_at_rest.bind(rest_recovery, rest_heal_button))
 	rest_view.add_child(rest_heal_button)
@@ -4101,14 +4102,16 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 		rest_upgrade_cards.set_item_metadata(rest_upgrade_cards.item_count - 1, int(choice.index))
 	rest_view.add_child(rest_upgrade_cards)
 	rest_upgrade_button = Button.new()
-	rest_upgrade_button.text = "Upgrade selected card (instead of Heal)"
+	rest_upgrade_button.text = "Upgrade"
+	rest_upgrade_button.tooltip_text = "Choose one: Heal, Upgrade or Stitch. Upgrade the selected card."
 	rest_upgrade_button.custom_minimum_size = Vector2(480, 48)
 	rest_upgrade_button.disabled = rest_upgrade_cards.item_count == 0
 	rest_upgrade_cards.disabled = rest_upgrade_button.disabled
 	rest_upgrade_button.pressed.connect(_upgrade_at_rest.bind(rest_upgrade, rest_upgrade_button, rest_upgrade_cards))
 	rest_view.add_child(rest_upgrade_button)
 	rest_stitch_button = Button.new()
-	rest_stitch_button.text = "Stitch selected cards (instead of Heal / Upgrade)"
+	rest_stitch_button.text = "Stitch (3 scraps)"
+	rest_stitch_button.tooltip_text = "Choose one: Heal, Upgrade or Stitch. Stitch two cards from different owners."
 	rest_stitch_button.custom_minimum_size = Vector2(480, 40)
 	rest_stitch_button.disabled = not rest_stitch.is_valid() or run_scraps < RunRestStitchCards.SCRAP_COST
 	rest_stitch_first.disabled = rest_stitch_button.disabled
@@ -4116,7 +4119,8 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_stitch_button.pressed.connect(_stitch_at_rest.bind(rest_stitch, rest_stitch_button, rest_stitch_first, rest_stitch_second))
 	rest_view.add_child(rest_stitch_button)
 	rest_stitch_guided_button = Button.new()
-	rest_stitch_guided_button.text = "Guided Stitch: preview two cards (3 scraps)"
+	rest_stitch_guided_button.text = "Guided Stitch (3 scraps)"
+	rest_stitch_guided_button.tooltip_text = "Choose one: Heal, Upgrade or Stitch. Preview two cards before stitching."
 	rest_view.add_child(rest_stitch_guided_button)
 	_refresh_rest_stitch_guided()
 	rest_continue_button = Button.new()
@@ -4126,12 +4130,12 @@ func _choose_rest_route(id: String, source_map: WeakRef, prior: Array[String], b
 	rest_continue_button.pressed.connect(_continue_from_rest.bind(rest_recovery, _rest_map, _rest_route.duplicate(), rest_continue_button))
 	rest_view.add_child(rest_continue_button)
 	rest_patch_button = Button.new()
-	rest_patch_button.text = "Re-sew patches (1 scrap per transfer)"
+	rest_patch_button.text = "Re-sew (1 scrap)"
 	rest_patch_button.disabled = _rest_wardrobe == null
 	rest_patch_button.pressed.connect(_open_rest_patches.bind(rest_patch_button))
 	rest_view.add_child(rest_patch_button)
 	rest_back_button = Button.new()
-	rest_back_button.text = "Return to title"
+	rest_back_button.text = "Return"
 	rest_back_button.pressed.connect(_return_from_visit.bind(rest_view))
 	rest_view.add_child(rest_back_button)
 	_focus_visit(rest_view)
@@ -4281,7 +4285,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_view.add_child(shop_offers)
 	shop_offers.item_selected.connect(_select_shop_offer)
 	shop_buy_button = Button.new()
-	shop_buy_button.text = "Buy selected card"
+	shop_buy_button.text = "Buy"
 	shop_buy_button.custom_minimum_size = Vector2(440, 48)
 	shop_buy_button.pressed.connect(_buy_at_shop.bind(visit, purchases, shop_buy_button))
 	shop_view.add_child(shop_buy_button)
@@ -4289,7 +4293,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_cards.custom_minimum_size = Vector2(440, 48)
 	shop_view.add_child(shop_cards)
 	shop_remove_button = Button.new()
-	shop_remove_button.text = "Remove selected card"
+	shop_remove_button.text = "Remove"
 	shop_remove_button.custom_minimum_size = Vector2(440, 56)
 	shop_remove_button.pressed.connect(_remove_at_shop.bind(visit, shop_remove_button))
 	shop_view.add_child(shop_remove_button)
@@ -4300,7 +4304,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_continue_button.pressed.connect(_continue_from_shop.bind(visit, _shop_map, _shop_route.duplicate(), shop_continue_button))
 	shop_view.add_child(shop_continue_button)
 	shop_back_button = Button.new()
-	shop_back_button.text = "Return to title (skip remaining removal)"
+	shop_back_button.text = "Return"
 	shop_back_button.pressed.connect(_return_from_visit.bind(shop_view))
 	shop_view.add_child(shop_back_button)
 	_shop_patch_context = _shop_patch_snapshot()

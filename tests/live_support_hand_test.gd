@@ -173,6 +173,25 @@ func _visible() -> void:
 		and app.battle_view.find_children("SupportHandHelp", "Label", true, false).size() == 1
 		and app.battle_view.find_children("SupportHandFooterSpring", "Control", true, false).size() == 1,
 		"repeated sync leaves exactly one orb, help cue and inert spring")
+	var titles: Array = app.battle_view.find_children("SupportHandQuiltTitle", "Label", true, false)
+	_check(titles.size() == 1, "repeated sync keeps exactly one Quilt heading")
+	if titles.size() == 1:
+		var title := titles[0] as Label
+		_check(title.text == "Quilt" and title.is_visible_in_tree()
+			and title.get_line_count() == 1 and title.get_visible_line_count() == 1
+			and title.get_minimum_size().x <= title.size.x
+			and title.get_minimum_size().y <= title.size.y,
+			"mounted Quilt heading is explicit, visible and fully readable")
+		_check(title.focus_mode == Control.FOCUS_NONE
+			and title.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and title.gui_input.get_connections().is_empty(),
+			"Quilt heading leaves pointer hover and keyboard paths unchanged")
+		_check(presenter.quilt_row.get_global_rect().encloses(title.get_global_rect()),
+			"Quilt heading belongs to the same compact progress cluster")
+	_check(app.battle_view.find_children("QuiltCloth", "PanelContainer", true, false).size() == 1
+		and app.battle_view.find_children("QuiltOwnerMarks", "HBoxContainer", true, false).size() == 1
+		and presenter.quilt_patches.size() == 3,
+		"one shared cloth groups the three reusable owner marks")
 	_table_checks("live sync")
 	_hud_art_checks("live sync")
 	for index in range(3):
@@ -661,6 +680,8 @@ func _run() -> void:
 			and presenter.help_label == null and presenter.cancel_button == null, "title removes all support presentation")
 		_check(app.find_children("SupportHandEnergyOrb", "Control", true, false).is_empty(), "Return leaves no orphan orb")
 		_check(app.find_children("SupportHandHelp", "Label", true, false).is_empty()
+			and app.find_children("SupportHandQuiltTitle", "Label", true, false).is_empty()
+			and app.find_children("QuiltCloth", "PanelContainer", true, false).is_empty()
 			and app.find_children("SupportHandHelpStitch", "Control", true, false).is_empty()
 			and app.find_children("SupportHandFooterSpring", "Control", true, false).is_empty()
 			and presenter.footer_spring == null,
@@ -834,6 +855,9 @@ func _select_ally(id: String, keyboard: bool) -> bool:
 	_check(_live() == before, "pending ally choice never charges or changes rules")
 	var choosing: bool = presenter._pending.get("choosing", false)
 	_check(choosing and presenter.cancel_button.is_visible_in_tree(), "target mode and cancel visible")
+	_check(not presenter.quilt_row.is_visible_in_tree()
+		and not presenter.quilt_row.find_child("SupportHandQuiltTitle", true, false).is_visible_in_tree(),
+		"ally targeting hides the entire Quilt cluster including its title")
 	_check(presenter.help_label.text == "%s: choose a living ally | Esc: cancel" % StarterCards.new().get_definition(id).display_name,
 		"exact targeting help separate from energy")
 	_check(presenter.help_label.get_line_count() > 0
@@ -1013,6 +1037,8 @@ func _ally_cases() -> void:
 					and presenter.help_label.size_flags_horizontal != Control.SIZE_EXPAND_FILL
 					and presenter.footer_spring.visible,
 					"cancellation restores the compact Help cue: " + scenario)
+				_check(presenter.quilt_row.is_visible_in_tree() == (scenario not in ["inactive", "hidden"]),
+					"cancelled choice shows Quilt only in a visible active turn: " + scenario)
 				if scenario == "escape":
 					await _help_hover_case("after Esc cancellation")
 				for panel in app.hero_panels:

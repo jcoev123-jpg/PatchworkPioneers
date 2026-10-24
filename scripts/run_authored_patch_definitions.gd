@@ -2,6 +2,14 @@ class_name RunAuthoredPatchDefinitions
 extends RefCounted
 ## Validated ID/slot-only projection for Elite sewing. Effect data remains in
 ## its authored catalog and is never copied into the wardrobe.
+##
+## Two projections share one validation pass:
+## - load_definitions()/project_catalogs(): every authored record, including
+##   the inert starter slots of initial_patch_slots.json, for the wardrobe.
+## - load_power_definitions()/project_power_catalogs(): real power records
+##   only, for future Shop and Elite stock. The initial catalog is still
+##   validated in full, but none of its entries (including ones authored
+##   later) are power stock.
 
 const CATALOG_PATHS := [
 	"res://data/patches/initial_patch_slots.json",
@@ -13,22 +21,57 @@ const CATALOG_PATHS := [
 	"res://data/patches/m05_coat_patches.json",
 ]
 
+## The starter catalog holds inert slots, never power stock.
+const INITIAL_CATALOG_INDEX := 0
+
 
 static func load_definitions() -> Array:
+	var texts: Array = _read_catalog_texts()
+	if texts.is_empty():
+		return []
+	return from_json_texts(texts)
+
+
+## Production power-only accessor for Shop and Elite stock candidates. Returns
+## only the six power catalogs' authored {id, slot} records.
+static func load_power_definitions() -> Array:
+	var texts: Array = _read_catalog_texts()
+	if texts.is_empty():
+		return []
+	return power_definitions_from_json_texts(texts)
+
+
+static func _read_catalog_texts() -> Array:
 	var texts: Array = []
 	for path in CATALOG_PATHS:
 		if not FileAccess.file_exists(path):
 			return []
 		texts.append(FileAccess.get_file_as_string(path))
-	return from_json_texts(texts)
+	return texts
 
 
 ## Pure fixture entry: malformed JSON (including a valid JSON non-array)
 ## invalidates the entire collection before any records are trusted.
 static func from_json_texts(texts: Variant) -> Array:
-	if typeof(texts) != TYPE_ARRAY or texts.size() != CATALOG_PATHS.size():
+	var catalogs: Array = _parse_catalogs(texts)
+	if catalogs.size() != CATALOG_PATHS.size():
 		return []
+	return project_catalogs(catalogs)
+
+
+## Pure power-only fixture entry; same fail-closed validation as the full
+## projection before any initial-catalog entry is excluded.
+static func power_definitions_from_json_texts(texts: Variant) -> Array:
+	var catalogs: Array = _parse_catalogs(texts)
+	if catalogs.size() != CATALOG_PATHS.size():
+		return []
+	return project_power_catalogs(catalogs)
+
+
+static func _parse_catalogs(texts: Variant) -> Array:
 	var catalogs: Array = []
+	if typeof(texts) != TYPE_ARRAY or texts.size() != CATALOG_PATHS.size():
+		return catalogs
 	for source in texts:
 		if typeof(source) != TYPE_STRING or source.is_empty():
 			return []
@@ -36,12 +79,22 @@ static func from_json_texts(texts: Variant) -> Array:
 		if parser.parse(source) != OK or typeof(parser.data) != TYPE_ARRAY:
 			return []
 		catalogs.append(parser.data)
-	return project_catalogs(catalogs)
+	return catalogs
 
 
 ## Pure fixture entry; accepts added authored IDs without a size/order oracle.
 ## Existing named powers must remain in their original catalog and slot.
 static func project_catalogs(catalogs: Variant) -> Array:
+	return _project(catalogs, false)
+
+
+## Pure power-only record entry. Every catalog is validated first; only the
+## initial starter catalog is then withheld from the returned candidates.
+static func project_power_catalogs(catalogs: Variant) -> Array:
+	return _project(catalogs, true)
+
+
+static func _project(catalogs: Variant, power_only: bool) -> Array:
 	if typeof(catalogs) != TYPE_ARRAY or catalogs.size() != CATALOG_PATHS.size():
 		return []
 	var known: Array = [
@@ -87,6 +140,11 @@ static func project_catalogs(catalogs: Variant) -> Array:
 					return []
 			seen[id] = true
 			local[id] = true
+			# The starter catalog is validated above exactly like the power
+			# catalogs, then kept out of the power-only candidates, so entries
+			# authored into it later stay inert too.
+			if power_only and index == INITIAL_CATALOG_INDEX:
+				continue
 			projected.append({"id": id, "slot": slot})
 		for known_id in required:
 			if not local.has(known_id):

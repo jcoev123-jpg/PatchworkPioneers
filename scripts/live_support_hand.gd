@@ -410,9 +410,28 @@ class QuiltPatch extends Control:
 			draw_dashed_line(Vector2(rect.position.x, y), Vector2(rect.end.x, y), thread, 1.0, 3.0)
 		for x in [rect.position.x, rect.end.x]:
 			draw_dashed_line(Vector2(x, rect.position.y), Vector2(x, rect.end.y), thread, 1.0, 3.0)
-		var letter := owner_id.substr(0, 1).to_upper()
-		draw_string(get_theme_default_font(), Vector2(size.x * 0.5 - 5, size.y * 0.5 + 6),
-			letter, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, thread)
+		# Owner-colour appliques: shield, threaded needle and cog. Their silhouettes
+		# remain distinct before a play; the brighter cloth/check records progress.
+		var centre := size * 0.5
+		var motif := felt_color.lightened(0.35) if living else thread.darkened(0.3)
+		match owner_id:
+			"warden":
+				var shield := PackedVector2Array([centre + Vector2(-7, -8),
+					centre + Vector2(7, -8), centre + Vector2(6, 2),
+					centre + Vector2(0, 8), centre + Vector2(-6, 2)])
+				draw_colored_polygon(shield, motif)
+				draw_line(centre + Vector2(0, -5), centre + Vector2(0, 4), DARK, 1.5, true)
+			"seamstress":
+				draw_line(centre + Vector2(-6, 8), centre + Vector2(5, -7), motif, 3.0, true)
+				draw_arc(centre + Vector2(5, -6), 2.5, 0, TAU, 12, thread, 1.0, true)
+				draw_polyline(PackedVector2Array([centre + Vector2(7, -6),
+					centre + Vector2(9, -1), centre + Vector2(5, 3),
+					centre + Vector2(1, 1)]), motif, 1.5, true)
+			"tinker":
+				for tooth in range(8):
+					var spoke := Vector2.from_angle(float(tooth) * TAU / 8.0)
+					draw_line(centre + spoke * 5, centre + spoke * 9, motif, 3.0, true)
+				draw_arc(centre, 5.5, 0, TAU, 20, motif, 3.0, true)
 		if played:
 			# A completed stitch is separate from the owner's unplayed dark fill.
 			draw_line(Vector2(5, size.y - 8), Vector2(9, size.y - 4), thread, 1.5)
@@ -685,11 +704,41 @@ func _sync_battle() -> void:
 		quilt_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		quilt_row.focus_mode = Control.FOCUS_NONE
 		quilt_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var quilt_cloth := PanelContainer.new()
+		quilt_cloth.name = "QuiltCloth"
+		quilt_cloth.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var quilt_style := patch.duplicate() as StyleBoxFlat
+		quilt_style.content_margin_left = 8
+		quilt_style.content_margin_right = 8
+		quilt_style.content_margin_top = 5
+		quilt_style.content_margin_bottom = 5
+		quilt_cloth.add_theme_stylebox_override("panel", quilt_style)
+		quilt_row.add_child(quilt_cloth)
+		var quilt_column := VBoxContainer.new()
+		quilt_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		quilt_column.add_theme_constant_override("separation", 0)
+		quilt_cloth.add_child(quilt_column)
+		var quilt_title := Label.new()
+		quilt_title.name = "SupportHandQuiltTitle"
+		quilt_title.text = "Quilt"
+		quilt_title.theme_type_variation = "PatchHeading"
+		quilt_title.add_theme_font_size_override("font_size", 16)
+		quilt_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		quilt_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		quilt_column.add_child(quilt_title)
+		var marks := HBoxContainer.new()
+		marks.name = "QuiltOwnerMarks"
+		marks.add_theme_constant_override("separation", 4)
+		marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		quilt_column.add_child(marks)
+		var quilt_stitch := HelpStitch.new()
+		quilt_stitch.name = "QuiltStitch"
+		quilt_cloth.add_child(quilt_stitch)
 		for owner_id in QUILT_IDS:
 			var square := QuiltPatch.new()
 			square.name = "QuiltPatch_" + owner_id
 			square.owner_id = owner_id
-			quilt_row.add_child(square)
+			marks.add_child(square)
 			quilt_patches[owner_id] = square
 		_add_named(hud, quilt_row, "SupportHandQuiltPatches")
 		hud.move_child(quilt_row, 2)
