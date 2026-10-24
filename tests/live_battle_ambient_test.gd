@@ -101,6 +101,7 @@ func _profiles() -> void:
 			and sample.get_child_count() == 0 and _particles(sample).is_empty(),
 			"each authored area configures a texture-only atmosphere with no emitter nodes")
 		_geometry(sample, String(row[2]))
+		_added_geometry(String(row[2]))
 	for row in [["Fight", -1], ["Fight", 12], ["Elite", -1], ["Elite", 0],
 			["Elite", 12], ["Boss", -1], ["Boss", 0], ["Boss", 11],
 			["Boss", 13], ["Rest", 5], ["", 5]]:
@@ -119,7 +120,15 @@ func _profiles() -> void:
 		and source.contains("draw_texture_rect(felt_texture")
 		and source.contains("if light_texture != null:")
 		and source.contains("if felt_texture != null:"),
-		"renderer source paints only the two authored images and constructs no emitter")
+		"renderer preserves both original authored images and constructs no emitter")
+	for texture in ["fluff_texture", "wisp_texture", "vignette_texture"]:
+		_check(source.contains("draw_texture_rect(" + texture)
+			and source.contains("if " + texture + " != null:")
+			and source.contains(texture + " = _load_texture("),
+			"optional image is cached once and drawn only when available: " + texture)
+	_check(not source.contains("draw_rect(") and not source.contains("draw_circle(")
+		and not source.contains("RandomNumberGenerator") and not source.contains("rand"),
+		"stage dressing uses only textures and deterministic arithmetic")
 	sample.retire()
 	sample.free()
 
@@ -169,8 +178,52 @@ func _geometry(layer, family: String) -> void:
 		"invalid profiles and tiny bounds have no texture placement")
 
 
+func _added_geometry(family: String) -> void:
+	for bounds in [Vector2(40, 40), Vector2(1000, 300), Vector2(1280, 720)]:
+		for art in ["fluff", "wisp"]:
+			for image_size in [Vector2(120, 60), Vector2(30, 150)]:
+				var initial: Array = AMBIENT.drifts_for(family, art, bounds, 0.0, false, image_size)
+				var reduced: Array = AMBIENT.drifts_for(family, art, bounds, 0.0, true, image_size)
+				_check(initial.size() == (6 if art == "fluff" else 4)
+					and reduced.size() == (2 if art == "fluff" else 1), "added art has finite normal/Fast budgets")
+				for time in [-1.0, 0.0, 1.0, 60.0, 119.99, 120.0, 100000.0]:
+					for fast_mode in [false, true]:
+						var marks: Array = AMBIENT.drifts_for(family, art, bounds, time, fast_mode, image_size)
+						_check(marks == AMBIENT.drifts_for(family, art, bounds, time, fast_mode, image_size),
+							"added placement repeats exactly")
+						for mark in marks:
+							var rect: Rect2 = mark["rect"]
+							_check(Rect2(Vector2.ZERO, bounds).encloses(rect) and rect.end.y < bounds.y * 0.60
+								and is_equal_approx(rect.size.x / rect.size.y, image_size.x / image_size.y)
+								and mark["color"].a > 0 and mark["color"].a <= (0.10 if fast_mode else 0.24),
+								"complete aspect-safe faint sprite stays above feet/HUD")
+				var moving: Array = AMBIENT.drifts_for(family, art, bounds, 1.0, false, image_size)
+				var fast_moving: Array = AMBIENT.drifts_for(family, art, bounds, 1.0, true, image_size)
+				var distance: float = initial[0]["rect"].position.distance_to(moving[0]["rect"].position)
+				_check(distance > 0 and reduced[0]["rect"].position.distance_to(fast_moving[0]["rect"].position) < distance
+					and reduced[0]["color"].a < initial[0]["color"].a, "Fast dims and attenuates added drift")
+		var shade: Dictionary = AMBIENT.vignette_for(family, bounds, false, Vector2(1600, 900))
+		_check(not shade.is_empty() and Rect2(Vector2.ZERO, bounds).encloses(shade["rect"])
+			and is_equal_approx(shade["rect"].size.aspect(), 1600.0 / 900.0)
+			and is_equal_approx(shade["color"].a, 0.10)
+			and is_equal_approx(AMBIENT.vignette_for(family, bounds, true, Vector2(1600, 900))["color"].a, 0.05),
+			"vignette fits stage without stretching and remains faint in both modes")
+	for row in [["invalid", "fluff", Vector2(1000, 300), Vector2.ONE],
+			[family, "bad", Vector2(1000, 300), Vector2.ONE],
+			[family, "wisp", Vector2(39, 300), Vector2.ONE],
+			[family, "fluff", Vector2(1000, 300), Vector2.ZERO]]:
+		_check(AMBIENT.drifts_for(row[0], row[1], row[2], 0.0, false, row[3]).is_empty(),
+			"invalid art/profile/extent fails closed")
+	_check(AMBIENT.vignette_for("invalid", Vector2(1000, 300), false, Vector2.ONE).is_empty()
+		and AMBIENT.vignette_for(family, Vector2(39, 300), false, Vector2.ONE).is_empty()
+		and AMBIENT.vignette_for(family, Vector2(1000, 300), false, Vector2.ZERO).is_empty(),
+		"invalid vignette inputs fail closed")
+
+
 func _textures(layer) -> void:
-	for entry in [[AMBIENT.FELT_PATH, layer.felt_texture], [AMBIENT.LIGHT_PATH, layer.light_texture]]:
+	for entry in [[AMBIENT.FELT_PATH, layer.felt_texture], [AMBIENT.LIGHT_PATH, layer.light_texture],
+			[AMBIENT.FLUFF_PATH, layer.fluff_texture], [AMBIENT.WISP_PATH, layer.wisp_texture],
+			[AMBIENT.VIGNETTE_PATH, layer.vignette_texture]]:
 		if FileAccess.file_exists(entry[0]):
 			_check(entry[1] is Texture2D and entry[1].resource_path == entry[0]
 				and entry[1].get_width() > 0 and entry[1].get_height() > 0,
@@ -233,11 +286,34 @@ func _mounted() -> void:
 		await process_frame
 	var saved_felt = layer.felt_texture
 	var saved_light = layer.light_texture
+	var saved_added := [layer.fluff_texture, layer.wisp_texture, layer.vignette_texture]
+	# Exercise the real draw path even before the art pipeline supplies the files.
+	# A temporary texture stays in memory; no image assets are created or edited.
+	var placeholder := GradientTexture2D.new()
+	placeholder.width = 120
+	placeholder.height = 60
+	layer.fluff_texture = placeholder
+	layer.wisp_texture = placeholder
+	layer.vignette_texture = placeholder
+	_check(layer.added_metadata().size() == 11, "mounted normal draw admits all three optional art families")
+	layer.queue_redraw()
+	await process_frame
+	layer.set_fast(true)
+	_check(layer.added_metadata().size() == 4, "mounted Fast thins added art on the same layer")
+	layer.queue_redraw()
+	await process_frame
+	layer.set_fast(false)
+	layer.fluff_texture = null
+	_check(layer.added_metadata().size() == 5, "missing fluff preserves wisps and vignette")
+	layer.wisp_texture = null
+	_check(layer.added_metadata().size() == 1, "missing wisps preserves vignette")
+	layer.vignette_texture = null
 	layer.felt_texture = null
 	layer.light_texture = null
 	_check(layer.configure(roster._backdrop_kind, roster._backdrop_floor, false)
 		and layer.felt_texture == null and layer.light_texture == null
 		and layer.profile == AMBIENT.profile_for(roster._backdrop_kind, roster._backdrop_floor)
+		and layer.added_metadata().is_empty()
 		and layer.motif_metadata().size() == 30
 		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
 		"admitted battle with missing textures quietly draws no image family")
@@ -245,14 +321,19 @@ func _mounted() -> void:
 	await process_frame
 	layer.felt_texture = saved_felt
 	layer.light_texture = saved_light
+	layer.fluff_texture = saved_added[0]
+	layer.wisp_texture = saved_added[1]
+	layer.vignette_texture = saved_added[2]
 	_check(not layer.configure("Rest", 5, false) and not layer.visible
 		and layer.profile.is_empty() and layer.motif_metadata().is_empty()
+		and layer.added_metadata().is_empty()
 		and layer.visible_budget() == 0
 		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
 		"invalid route retires real mounted ambience")
 	juice._sync()
 	_check(layer.profile == AMBIENT.profile_for(roster._backdrop_kind, roster._backdrop_floor)
 		and layer.felt_texture == saved_felt and layer.light_texture == saved_light
+		and [layer.fluff_texture, layer.wisp_texture, layer.vignette_texture] == saved_added
 		and layer.visible_budget() == layer.NORMAL_BUDGET
 		and layer.motif_metadata().size() == 30,
 		"authentic route restores cached resources and thirty drawn marks")
@@ -330,6 +411,7 @@ func _run() -> void:
 			and juice.ambient == layer and layer.get_parent() == juice
 			and layer.profile.is_empty()
 			and layer.motif_metadata().is_empty() and layer.visible_budget() == 0
+			and layer.added_metadata().is_empty()
 			and layer.get_child_count() == 0 and _particles(layer).is_empty()
 			and not juice.bound and juice.overlay == null,
 			"title retires all ambient texture drawing and the old battle binding")
