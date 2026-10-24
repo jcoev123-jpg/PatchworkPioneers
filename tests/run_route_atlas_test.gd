@@ -13,6 +13,10 @@ const TOKEN_PATHS := {
 	"Rest": "res://assets/paper/ui/map_node_rest.png",
 	"Boss": "res://assets/paper/ui/map_node_boss.png",
 }
+## The master Theme's two faces, written out independently of the master resource:
+## headings are Londrina Solid Regular, body text is Patrick Hand.
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 ## The five authored book areas, written out independently of the view's own table:
 ## name -> [first floor, last floor].
 const AREA_LABELS := {
@@ -86,6 +90,29 @@ func _expected_border(state: String) -> Color:
 func _inside(rect: Rect2, outer: Rect2) -> bool:
 	return rect.position.x >= outer.position.x and rect.position.y >= outer.position.y \
 		and rect.end.x <= outer.end.x and rect.end.y <= outer.end.y
+
+
+func _font_path(control: Control) -> String:
+	var font := control.get_theme_font("font") as Font
+	return font.resource_path if font != null else ""
+
+
+## A mounted chapter heading: the master PatchHeading variation, the exact authored
+## pixel size and the real Londrina face resolved through the inherited Theme. No
+## per-node Theme is allowed to stand in for the installed master Theme.
+func _is_heading(label: Label, font_size: int) -> bool:
+	return label.theme == null and label.theme_type_variation == "PatchHeading" \
+		and label.has_theme_font_size_override("font_size") \
+		and label.get_theme_font_size("font_size") == font_size \
+		and _font_path(label) == HEADING_FONT \
+		and label.mouse_filter == Control.MOUSE_FILTER_IGNORE \
+		and label.focus_mode == Control.FOCUS_NONE
+
+
+## A mounted body-role control: the master Patrick Hand face, never the heading variation.
+func _keeps_body_face(control: Control) -> bool:
+	return control.theme == null and control.theme_type_variation != "PatchHeading" \
+		and _font_path(control) == BODY_FONT
 
 
 ## Independent player-facing wording for one real node record: authored floor, authored
@@ -219,9 +246,11 @@ func _verify_area_labels(view: RunRouteAtlas, visible: Array[int], label: String
 		_check(visible.has(floor_number) and not seen.has(floor_number)
 			and band.size() == 2 and floor_number >= int(band[0])
 			and floor_number <= int(band[1]) and area.text == area_name
-			and area.get_theme_font_size("font_size") >= 16
+			and int(area.get_meta("first_floor", -1)) == int(band[0])
+			and int(area.get_meta("last_floor", -1)) == int(band[1])
+			and _is_heading(area, 20)
 			and _inside(Rect2(area.position, area.size), RunRouteAtlas.PAGE_RIGHT),
-			label + ": upcoming floor has its correct readable area heading %d" % floor_number)
+			label + ": upcoming floor has its correct 20-point PatchHeading area heading %d" % floor_number)
 		seen[floor_number] = true
 	_check(seen.size() == visible.size(),
 		label + ": every visible upcoming floor and no off-window area has a heading")
@@ -250,6 +279,9 @@ func _verify_next_area_tab(view: RunRouteAtlas, map: RunMap, tab: Control, label
 		and _inside(Rect2(status.position, status.size), RunRouteAtlas.PAGE_LEFT)
 		and RunRouteAtlas.NEXT_AREA_TAB_FONT_SIZE >= 16,
 		label + ": correct next area or terminal line in readable left page")
+	# The status sentence is drawn in the body face; it is not a chapter heading.
+	_check(_keeps_body_face(status),
+		label + ": next-area status tab keeps the body face, not a heading variation")
 
 
 func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label: String) -> void:
@@ -358,6 +390,10 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and identity.get_combined_minimum_size().x <= marker.size.x
 				and identity.get_combined_minimum_size().y <= marker.size.y,
 				label + ": high contrast caption and legal number fit " + id)
+			# Round patch captions stay tiny body-text tags, never chapter headings.
+			_check(_keeps_body_face(identity) and identity.get_theme_font_size("font_size")
+				== (11 if str(all_nodes[id]["type"]) == "Treasure" else 12),
+				label + ": round patch identity caption keeps its 11/12-point body tag " + id)
 			_check(marker.tooltip_text == _hover_text(all_nodes[id])
 				and not marker.tooltip_text.contains(id),
 				label + ": sewn hover names the real floor, kind and branch " + id)
@@ -384,6 +420,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				and _inside(Rect2(diary.position, diary.size), RunRouteAtlas.PAGE_LEFT)
 				and diary.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 				label + ": authentic left journal, area and pinned visited trail without floor 13")
+			_check(_keeps_body_face(diary),
+				label + ": left journey diary stays in the body face, not a heading variation")
 		elif child is RunRouteAtlas.NextAreaTab:
 			tab_count += 1
 			_verify_next_area_tab(view, map, child, label)
@@ -394,6 +432,8 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				_check(visible_floors.has(f) and not seen_headers.has(f)
 					and header.text == "FLOOR %02d" % f,
 					label + ": one readable heading for upcoming floor %d" % f)
+				_check(_is_heading(header, 18),
+					label + ": numbered FLOOR %d is an inert 18-point PatchHeading heading" % f)
 				seen_headers[f] = true
 			_check(_inside(Rect2(header.position, header.size), RunRouteAtlas.PAGE_RIGHT)
 				and header.mouse_filter == Control.MOUSE_FILTER_IGNORE,
@@ -438,6 +478,14 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 		_check(Rect2(pin.position, pin.size).intersects(Rect2(marker.position, marker.size)),
 			label + ": pin follows the actual visited patch")
 	_verify_area_labels(view, visible_floors, label)
+	# The completed route has no upcoming column, so it must not keep stale headings.
+	if visible_floors.is_empty():
+		var stale_headings := 0
+		for child in view.get_children():
+			if child is Label:
+				stale_headings += 1
+		_check(stale_headings == 0,
+			label + ": a completed route leaves no stale area or floor heading")
 	_verify_book(view, label)
 	_check(_state(map, rng) == before,
 		label + ": window refresh and examination never mutate model or seeded RNG")
@@ -1013,6 +1061,18 @@ func _exercise_status_tab(view: RunRouteAtlas) -> void:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	# App mounts this view under PatchworkUIShell's installed master Theme, so install that
+	# same Theme here. A bare variation string would prove nothing: the mounted labels must
+	# resolve the genuine Londrina heading face through the inherited Theme.
+	var master_theme := load("res://assets/fonts/patchwork_theme.tres") as Theme
+	var master_heading: Font = master_theme.get_font("font", "PatchHeading") if master_theme != null else null
+	var master_body: Font = master_theme.default_font if master_theme != null else null
+	_check(master_theme != null and master_theme.is_type_variation("PatchHeading", "Label")
+		and master_heading != null and master_heading.resource_path == HEADING_FONT
+		and master_body != null and master_body.resource_path == BODY_FONT,
+		"shipped master Theme still supplies the PatchHeading Londrina heading and Patrick Hand body")
+	if master_theme != null:
+		root.theme = master_theme
 	var first := RunRouteAtlas.new()
 	first.position = Vector2(20, 40)
 	root.add_child(first)
