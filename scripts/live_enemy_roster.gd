@@ -109,6 +109,13 @@ static func art_paths(actor_id: String) -> Dictionary:
 	return {"idle": base + ".png", "attack": base + "_attack.png"}
 
 
+## The exact sewn fallback kind of one authoritative actor ID: the four unillustrated M05
+## normals draw their own silhouette, every other ID keeps the generic drawn puppet. The
+## one authority lives in the mounted Puppet, chosen by ID and never by stage slot.
+static func fallback_kind_for(actor_id: String) -> String:
+	return Puppet.fallback_kind_for(actor_id)
+
+
 ## The authored battle scene of one route node kind; empty for every other kind.
 static func backdrop_path(kind: String) -> String:
 	if not BATTLE_BACKDROPS.has(kind):
@@ -186,6 +193,24 @@ class Puppet extends Control:
 	## The drawn fallback's own local extents before the pose transform: body, head, legs
 	## and the slot-specific sewn prop, including stroke width.
 	const FALLBACK_EXTENTS := Rect2(-26.0, -43.0, 73.0, 85.5)
+	## The four authored M05 normals ship no image yet, so each draws its own sewn
+	## silhouette and prop inside this same Puppet; every other ID, including a fabricated
+	## one, keeps the generic drawn puppet. The kind follows the bound actor ID only, never
+	## the stage slot, so a rebind really changes the puppet an actor draws.
+	const FALLBACK_KIND_GENERIC := "generic"
+	const FALLBACK_ACTOR_IDS := ["felt_bulwark", "moth_scribe", "pin_skitter", "thread_biter"]
+	## Muted sewn felt tones of the identity-specific puppets. `cloth` always keeps this
+	## actor's own slot felt, so the four still share the stage's handmade palette.
+	const NAMED_TONES := {
+		"ink": Color("302b29"),
+		"face": Color("c9b996"),
+		"cream": Color("e6dcc0"),
+		"slate": Color("5a626b"),
+		"steel": Color("9aa1a5"),
+		"rust": Color("8c6550"),
+		"olive": Color("555d48"),
+		"plum": Color("6c5a72"),
+	}
 	## One soft oval contact patch on the shared foot line, drawn from the rest pose. It is
 	## a few concentric translucent ovals, so the shadow fades at its rim instead of reading
 	## as a solid box, and it never bobs with the artwork.
@@ -234,6 +259,9 @@ class Puppet extends Control:
 	var fallen := false
 	var felt := Color("719796")
 	var actor_id := ""
+	## Identity-specific sewn fallback of the bound actor ID; generic for every other actor,
+	## so a fabricated or image-backed ID never borrows another creature's silhouette.
+	var fallback_kind := FALLBACK_KIND_GENERIC
 	## Seconds of idle presentation this instance has run. A fresh puppet starts at rest.
 	var idle_phase := 0.0
 	var idle_texture: Texture2D
@@ -490,6 +518,11 @@ class Puppet extends Control:
 	func idle_offset() -> float:
 		return float(slot) * IDLE_SLOT_OFFSET + (0.0 if facing > 0.0 else IDLE_SIDE_OFFSET)
 
+	## The exact sewn fallback kind of one authoritative actor ID. It is a pure function of
+	## the ID, so the same actor draws the same puppet in any stage slot.
+	static func fallback_kind_for(actor_id: String) -> String:
+		return actor_id if actor_id in FALLBACK_ACTOR_IDS else FALLBACK_KIND_GENERIC
+
 	## Vertical bob in pixels for the current phase; a fallen actor does not bob.
 	func idle_bob() -> float:
 		if fallen:
@@ -539,6 +572,7 @@ class Puppet extends Control:
 			cancel_fall()
 		_fall_seen = fallen
 		actor_id = id
+		fallback_kind = fallback_kind_for(id)
 		idle_texture = art.get("idle") as Texture2D
 		attack_texture = art.get("attack") as Texture2D
 		queue_redraw()
@@ -763,6 +797,12 @@ class Puppet extends Control:
 	## Body, head, limbs and the slot-specific sewn prop in one local pose. With
 	## `silhouette` the same shapes are painted as one dark rim copy behind the actor.
 	func _draw_fallback_shapes(silhouette: bool) -> void:
+		# The four unillustrated M05 normals draw their own sewn silhouette and prop from
+		# this same filled/rim entry point, so neither path can disagree about the actor.
+		# Every other ID, including a fabricated one, keeps the generic puppet below.
+		if fallback_kind != FALLBACK_KIND_GENERIC:
+			_draw_named_fallback_shapes(silhouette)
+			return
 		var ink := RIM_INK if silhouette else Color("ecdfbd")
 		var cloth := RIM_INK if silhouette else (felt.darkened(0.4) if fallen else felt)
 		var face := RIM_INK if silhouette else (Color("c9b996") if not fallen else Color("777a76"))
@@ -787,6 +827,245 @@ class Puppet extends Control:
 			draw_line(Vector2(32, -16), Vector2(32, 29), ink, 3)
 		else:
 			draw_rect(Rect2(25, -2, 22, 16), Color("8c6550"))
+
+
+	## The identity-specific sewn silhouette of the current fallback kind, as filled local
+	## polygons. The filled puppet and its dark rim both draw exactly this list, so the two
+	## paths can never disagree about the actor's shape. Empty for the generic fallback.
+	func fallback_silhouettes() -> Array[Dictionary]:
+		match fallback_kind:
+			"felt_bulwark":
+				return _bulwark_silhouettes()
+			"moth_scribe":
+				return _moth_scribe_silhouettes()
+			"pin_skitter":
+				return _pin_skitter_silhouettes()
+			"thread_biter":
+				return _thread_biter_silhouettes()
+		return []
+
+
+	## Paints the current M05 normal's own sewn silhouette, then (only for the filled puppet)
+	## its face, teeth and stitched seams. The dark rim passes `silhouette`, so both paths
+	## draw exactly the same shape list and the rim can never outline another creature.
+	func _draw_named_fallback_shapes(silhouette: bool) -> void:
+		var shapes := fallback_silhouettes()
+		if shapes.is_empty():
+			return
+		var ink: Color = NAMED_TONES["ink"]
+		for shape in shapes:
+			var points: PackedVector2Array = shape["points"]
+			if points.size() < 3:
+				continue
+			draw_colored_polygon(points,
+				RIM_INK if silhouette else fallback_tone(String(shape["tone"])))
+			if not silhouette:
+				var outline := points.duplicate()
+				outline.append(points[0])
+				draw_polyline(outline, ink, 1.2, true)
+		if silhouette:
+			return
+		match fallback_kind:
+			"felt_bulwark":
+				_bulwark_details()
+			"moth_scribe":
+				_moth_scribe_details()
+			"pin_skitter":
+				_pin_skitter_details()
+			"thread_biter":
+				_thread_biter_details()
+
+
+	## Felt Bulwark: a squat, wide felt slab behind a big sewn round shield held forward.
+	func _bulwark_silhouettes() -> Array[Dictionary]:
+		var parts: Array[Dictionary] = [
+			_fallback_part("cloth", PackedVector2Array([Vector2(-18, 24), Vector2(-7, 26),
+				Vector2(-5, 42.5), Vector2(-16, 42.5)])),
+			_fallback_part("cloth", PackedVector2Array([Vector2(3, 26), Vector2(14, 24),
+				Vector2(16, 42.5), Vector2(5, 42.5)])),
+			_fallback_part("cloth", PackedVector2Array([Vector2(-24, 30), Vector2(-21, -8),
+				Vector2(15, -10), Vector2(23, 26)])),
+			_fallback_part("slate", oval_points(Vector2(34, 3), Vector2(13, 16), 8)),
+			_fallback_part("olive", oval_points(Vector2(34, 3), Vector2(5, 7), 8)),
+			_fallback_part("face", oval_points(Vector2(-6, -27), Vector2(14, 13), 20)),
+		]
+		return parts
+
+
+	## Felt Bulwark's face, stitched felt seams and the shield's own cross-stitch.
+	func _bulwark_details() -> void:
+		var ink := fallback_tone("ink")
+		var seam := fallback_tone("face")
+		_draw_stare_eye(Vector2(-11, -29), 2.2)
+		_draw_x_eye(Vector2(-1, -30), 2.6)
+		draw_line(Vector2(-14, -19), Vector2(1, -18), ink, 2.0, true)
+		_draw_teeth(Vector2(-11, -18), 10.0)
+		_draw_cross_stitches(Vector2(-17, 0), Vector2(-18, 23), 4, seam)
+		_draw_cross_stitches(Vector2(8, 2), Vector2(16, 20), 3, seam)
+		draw_dashed_line(Vector2(22, 3), Vector2(46, 3), seam, 1.0, 5.0)
+		draw_dashed_line(Vector2(34, -12), Vector2(34, 18), seam, 1.0, 5.0)
+		draw_circle(Vector2(34, 3), 2.4, ink)
+
+
+	## Moth Scribe: tall sewn wings, two felt antennae and a little paper scroll held forward.
+	func _moth_scribe_silhouettes() -> Array[Dictionary]:
+		var parts: Array[Dictionary] = [
+			_fallback_part("cloth", PackedVector2Array([Vector2(-4, -16), Vector2(-24, -40),
+				Vector2(-20, -8), Vector2(-6, 0)])),
+			_fallback_part("olive", PackedVector2Array([Vector2(-3, -2), Vector2(-22, 6),
+				Vector2(-15, 26), Vector2(-3, 14)])),
+			_fallback_part("cloth", PackedVector2Array([Vector2(-7, -14), Vector2(6, -16),
+				Vector2(9, 22), Vector2(2, 42.5), Vector2(-7, 36), Vector2(-9, 8)])),
+			_fallback_part("plum", PackedVector2Array([Vector2(-4, -32), Vector2(-1, -36),
+				Vector2(-8, -42), Vector2(-10, -40)])),
+			_fallback_part("plum", PackedVector2Array([Vector2(7, -33), Vector2(10, -31),
+				Vector2(13, -41), Vector2(11, -42)])),
+			_fallback_part("cream", PackedVector2Array([Vector2(15, -10), Vector2(38, -16),
+				Vector2(42, -2), Vector2(20, 6)])),
+			_fallback_part("face", oval_points(Vector2(2, -24), Vector2(12, 12), 20)),
+		]
+		return parts
+
+
+	## Moth Scribe's face, wing veins and the stitched rules of its paper scroll.
+	func _moth_scribe_details() -> void:
+		var ink := fallback_tone("ink")
+		var seam := fallback_tone("face")
+		var thread := fallback_tone("cream")
+		_draw_stare_eye(Vector2(7, -27), 2.2)
+		_draw_droopy_eye(Vector2(-4, -27), 3.0)
+		draw_line(Vector2(-2, -17), Vector2(8, -16), ink, 2.0, true)
+		_draw_teeth(Vector2(-1, -16), 8.0)
+		# The felt wings are sewn, not blank cloth.
+		draw_dashed_line(Vector2(-6, -14), Vector2(-21, -36), seam, 1.0, 5.0)
+		draw_dashed_line(Vector2(-5, 0), Vector2(-19, 20), seam, 1.0, 5.0)
+		# The scroll's stitched rules and a little ink line of writing.
+		draw_dashed_line(Vector2(18, -6), Vector2(38, -11), seam, 1.0, 5.0)
+		draw_dashed_line(Vector2(19, 1), Vector2(39, -4), seam, 1.0, 5.0)
+		draw_line(Vector2(20, -8), Vector2(35, -12), ink, 1.2, true)
+		_draw_cross_stitches(Vector2(-6, 12), Vector2(5, 32), 4, thread)
+
+
+	## Pin Skitter: a low many-legged skitter body thrusting one long sewn pin forward.
+	func _pin_skitter_silhouettes() -> Array[Dictionary]:
+		var parts: Array[Dictionary] = [
+			_fallback_part("olive", PackedVector2Array([Vector2(-19, 10), Vector2(-15, 12),
+				Vector2(-24, 42.5), Vector2(-25, 39)])),
+			_fallback_part("olive", PackedVector2Array([Vector2(-10, 13), Vector2(-6, 14),
+				Vector2(-12, 42.5), Vector2(-14, 42.5)])),
+			_fallback_part("olive", PackedVector2Array([Vector2(2, 15), Vector2(6, 14),
+				Vector2(4, 42.5), Vector2(2, 42.5)])),
+			_fallback_part("olive", PackedVector2Array([Vector2(13, 12), Vector2(17, 10),
+				Vector2(21, 42.5), Vector2(19, 42.5)])),
+			_fallback_part("cloth", PackedVector2Array([Vector2(-21, 8), Vector2(-15, -8),
+				Vector2(8, -12), Vector2(19, 0), Vector2(17, 16), Vector2(-17, 18)])),
+			_fallback_part("steel", PackedVector2Array([Vector2(17, 4), Vector2(45, -14),
+				Vector2(47, -10), Vector2(19, 8)])),
+			_fallback_part("steel", oval_points(Vector2(15, 7), Vector2(4, 4), 12)),
+			_fallback_part("face", oval_points(Vector2(11, -19), Vector2(11, 10), 20)),
+		]
+		return parts
+
+
+	## Pin Skitter's face, its crooked zigzag mouth and the seam along its pin.
+	func _pin_skitter_details() -> void:
+		var ink := fallback_tone("ink")
+		var seam := fallback_tone("face")
+		_draw_stare_eye(Vector2(15, -21), 2.8)
+		_draw_droopy_eye(Vector2(5, -19), 2.4)
+		var mouth := PackedVector2Array([Vector2(4, -13), Vector2(7, -15), Vector2(10, -13),
+			Vector2(13, -15), Vector2(17, -13)])
+		draw_polyline(mouth, ink, 1.8, true)
+		_draw_teeth(Vector2(5, -13), 11.0)
+		draw_dashed_line(Vector2(-16, 6), Vector2(14, 4), seam, 1.0, 5.0)
+		_draw_cross_stitches(Vector2(13, 5), Vector2(17, 9), 1, seam)
+		draw_line(Vector2(20, 2), Vector2(43, -12), seam, 1.0, true)
+
+
+	## Thread Biter: a hunched biter with a dark sewn jaw and a trailing thread spool.
+	func _thread_biter_silhouettes() -> Array[Dictionary]:
+		var parts: Array[Dictionary] = [
+			_fallback_part("cloth", PackedVector2Array([Vector2(-15, 24), Vector2(-6, 26),
+				Vector2(-4, 42.5), Vector2(-14, 42.5)])),
+			_fallback_part("cloth", PackedVector2Array([Vector2(5, 26), Vector2(13, 22),
+				Vector2(19, 42.5), Vector2(11, 42.5)])),
+			_fallback_part("cloth", PackedVector2Array([Vector2(-20, 16), Vector2(-15, -10),
+				Vector2(7, -16), Vector2(18, 2), Vector2(14, 24), Vector2(-11, 28)])),
+			_fallback_part("rust", PackedVector2Array([Vector2(-26, -6), Vector2(-17, -8),
+				Vector2(-15, 10), Vector2(-25, 12)])),
+			_fallback_part("face", oval_points(Vector2(12, -22), Vector2(13, 12), 20)),
+			_fallback_part("ink", PackedVector2Array([Vector2(3, -14), Vector2(24, -16),
+				Vector2(22, -8), Vector2(5, -8)])),
+		]
+		return parts
+
+
+	## Thread Biter's face, its thread-wrapped spool and the loose end trailing behind.
+	func _thread_biter_details() -> void:
+		var ink := fallback_tone("ink")
+		var seam := fallback_tone("face")
+		_draw_stare_eye(Vector2(17, -26), 2.5)
+		_draw_x_eye(Vector2(7, -25), 2.4)
+		_draw_teeth(Vector2(5, -11), 16.0)
+		draw_dashed_line(Vector2(-24, 2), Vector2(-18, 2), seam, 1.0, 4.0)
+		draw_dashed_line(Vector2(-24, 6), Vector2(-18, 6), seam, 1.0, 4.0)
+		draw_dashed_line(Vector2(-22, 12), Vector2(-20, 34), seam, 1.2, 4.0)
+		_draw_cross_stitches(Vector2(-13, -4), Vector2(2, 10), 4, seam)
+		draw_line(Vector2(4, 14), Vector2(12, 20), ink, 1.2, true)
+
+
+	func _fallback_part(tone: String, points: PackedVector2Array) -> Dictionary:
+		return {"tone": tone, "points": points}
+
+
+	## One muted sewn tone of the identity-specific puppets; `cloth` keeps this actor's own
+	## slot felt, and a fallen actor is drawn dimmed like the generic puppet.
+	func fallback_tone(tone: String) -> Color:
+		if tone == "cloth":
+			return felt.darkened(0.4) if fallen else felt
+		var base: Color = NAMED_TONES.get(tone, NAMED_TONES["face"])
+		return base.darkened(0.2) if fallen else base
+
+
+	## One staring stitched button eye. The other eye is crossed out or hooded, so every M05
+	## normal reads as its own sewn creature.
+	func _draw_stare_eye(center: Vector2, radius: float) -> void:
+		draw_circle(center, radius, fallback_tone("ink"))
+
+
+	func _draw_x_eye(center: Vector2, radius: float) -> void:
+		var ink := fallback_tone("ink")
+		draw_line(center + Vector2(-radius, -radius), center + Vector2(radius, radius),
+			ink, 1.8, true)
+		draw_line(center + Vector2(-radius, radius), center + Vector2(radius, -radius),
+			ink, 1.8, true)
+
+
+	func _draw_droopy_eye(center: Vector2, radius: float) -> void:
+		var ink := fallback_tone("ink")
+		draw_line(center + Vector2(-radius, -radius * 0.5), center + Vector2(radius, 0.0),
+			ink, 1.8, true)
+		draw_line(center + Vector2(radius * 0.4, 0.0), center + Vector2(radius * 0.4, radius * 0.7),
+			ink, 1.4, true)
+
+
+	## Three tiny crooked felt teeth under a mouth line.
+	func _draw_teeth(origin: Vector2, width: float) -> void:
+		var cream := fallback_tone("cream")
+		for index in range(3):
+			var left := origin.x + width * float(index) / 3.0
+			var right := origin.x + width * float(index + 1) / 3.0
+			var drop := 2.0 + float(index % 2) * 1.2
+			draw_colored_polygon(PackedVector2Array([Vector2(left, origin.y),
+				Vector2(right, origin.y), Vector2((left + right) * 0.5, origin.y + drop)]), cream)
+
+
+	## Visible sewn cross-stitches along one seam of the puppet.
+	func _draw_cross_stitches(from: Vector2, to: Vector2, count: int, ink: Color) -> void:
+		for index in range(count):
+			var point := from.lerp(to, (float(index) + 0.5) / float(count))
+			draw_line(point + Vector2(-2.0, -2.0), point + Vector2(2.0, 2.0), ink, 1.2, true)
+			draw_line(point + Vector2(-2.0, 2.0), point + Vector2(2.0, -2.0), ink, 1.2, true)
 
 
 ## Deterministic battle stage behind the actor row: the authored paper scene of this
