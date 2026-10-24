@@ -1624,6 +1624,78 @@ func _test_three_tier_rarities(base: Dictionary) -> void:
 	await _frames()
 
 
+## The illustration window's own drawing contract, read from the mounted control:
+## the picture is painted at its authored aspect (never stretched), centred, and
+## entirely inside the sewn window it is mounted in.
+func _check_picture_geometry(art: LiveRunCardRewardChoicePanel._CardIllustration,
+		card_id: String) -> void:
+	var texture: Texture2D = art.picture
+	_check(texture != null, "mounted art binds a real texture: " + card_id)
+	if texture == null:
+		return
+	var texture_size: Vector2 = texture.get_size()
+	_check(texture_size.x > 0.0 and texture_size.y > 0.0,
+		"bound texture reports a real size: " + card_id)
+	var rect: Rect2 = art.picture_rect()
+	var window := Rect2(Vector2.ZERO, art.size)
+	_check(art.size.x > 0.0 and art.size.y >= LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT,
+		"illustration window keeps its readable minimum height: " + card_id)
+	_check(rect.size.x > 0.0 and rect.size.y > 0.0 and window.encloses(rect),
+		"picture is painted inside its sewn window: " + card_id)
+	_check(rect.size.y > 0.0 and absf(rect.size.x / rect.size.y
+		- texture_size.x / texture_size.y) <= 0.02,
+		"picture keeps its authored aspect ratio, never stretched: " + card_id)
+	_check(absf(rect.get_center().x - window.get_center().x) <= 1.0
+		and absf(rect.get_center().y - window.get_center().y) <= 1.0,
+		"picture is centred in its sewn window: " + card_id)
+
+
+## The fallback owner emblem is a sewn felt medallion: the emblem is inscribed in
+## the medallion's inner circle (its corners on that circle, never over the sewn
+## ring), and the ring's stitches never cross the picture.
+func _check_emblem_medallion(art: LiveRunCardRewardChoicePanel._CardIllustration,
+		card_id: String) -> void:
+	_check(art.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_EMBLEM
+		and art.is_emblem() and not art.is_card_art() and art.has_picture(),
+		"emblem fallback mounts in its own medallion mode: " + card_id)
+	_check(art.owner_color != Color.WHITE, "medallion carries the owner felt colour: " + card_id)
+	var radius: float = art.medallion_radius()
+	var inner: float = art.medallion_inner_radius()
+	var center: Vector2 = art.medallion_center()
+	var window := Rect2(Vector2.ZERO, art.size)
+	_check(radius > 0.0 and inner > 0.0 and inner < radius,
+		"medallion has a felt disc and a sewn ring inside it: " + card_id)
+	_check(window.encloses(Rect2(center - Vector2(radius, radius), Vector2.ONE * radius * 2.0)),
+		"medallion disc stays inside the illustration window: " + card_id)
+	_check(absf(center.x - window.get_center().x) <= 0.5
+		and absf(center.y - window.get_center().y) <= 0.5,
+		"medallion is centred in the illustration window: " + card_id)
+	_check_picture_geometry(art, card_id)
+	var rect: Rect2 = art.picture_rect()
+	_check(rect.size.y <= inner * 2.0 + 0.01,
+		"emblem is inscribed in the medallion's inner circle: " + card_id)
+	for corner: Vector2 in [rect.position, Vector2(rect.end.x, rect.position.y),
+			rect.end, Vector2(rect.position.x, rect.end.y)]:
+		var distance: float = corner.distance_to(center)
+		_check(distance <= inner + 0.5 and distance >= inner - 0.5,
+			"emblem corner lies on the medallion's inner circle: " + card_id)
+	_check(LiveRunCardRewardChoicePanel._CardIllustration.MEDALLION_STITCHES >= 8,
+		"medallion ring is stitched from many short seams: " + card_id)
+	var spans: Array[Vector2] = art.medallion_stitch_spans()
+	_check(spans.size() == LiveRunCardRewardChoicePanel._CardIllustration.MEDALLION_STITCHES,
+		"medallion reports one stitched seam per ring step: " + card_id)
+	var stitch_radius: float = art.medallion_stitch_radius()
+	_check(stitch_radius > inner - 0.01 and stitch_radius <= radius,
+		"ring stitches walk the felt band outside the emblem: " + card_id)
+	for span: Vector2 in spans:
+		_check(span.y > span.x and span.y - span.x < TAU * 0.5,
+			"medallion seam is a short arc, never a diameter: " + card_id)
+		for fraction: float in [0.0, 0.5, 1.0]:
+			var angle: float = lerpf(span.x, span.y, fraction)
+			var point: Vector2 = center + Vector2(cos(angle), sin(angle)) * stitch_radius
+			_check(not rect.has_point(point), "no medallion stitch crosses the emblem: " + card_id)
+
+
 ## The reward face must bind the canonical individual card art (cards/art/
 ## <base_id>.png), fall back to the hero emblem and then a drawn patch, and keep
 ## that illustration in its own inert window above a legible plain name strip.
@@ -1683,11 +1755,20 @@ func _test_illustration_art(base: Dictionary) -> void:
 		if ResourceLoader.exists(art_path):
 			_check(art.has_picture() and art.picture.resource_path == art_path,
 				"committed individual art is bound: " + card_id)
+			# Authored art keeps the card-art mode: a real picture contained large,
+			# never the emblem medallion and never the drawn placeholder.
+			_check(art.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART
+				and art.is_card_art() and not art.is_emblem() and not art.is_paper_patch(),
+				"authored art renders in its own card-art mode: " + card_id)
+			_check_picture_geometry(art, card_id)
+			_check(art.picture_rect().size.y > 52.0,
+				"authored picture is drawn larger than the old 52px strip: " + card_id)
 		elif ResourceLoader.exists(emblem):
 			_check(art.has_picture() and art.picture.resource_path == emblem,
 				"missing art falls back to the hero emblem: " + card_id)
+			_check_emblem_medallion(art, card_id)
 		else:
-			_check(not art.has_picture(),
+			_check(not art.has_picture() and art.is_paper_patch(),
 				"unpictured card keeps the drawn paper patch without failing: " + card_id)
 		var strip := name_label.get_theme_stylebox("normal") as StyleBoxFlat
 		_check(strip != null, "name strip uses its own paper style: " + card_id)
@@ -1757,11 +1838,15 @@ func _test_illustration_fallback(base: Dictionary) -> void:
 		if ResourceLoader.exists(art_path):
 			_check(art.has_picture() and art.picture.resource_path == art_path,
 				"authored card picture is bound when present: " + card_id)
+			_check(art.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART
+				and art.is_card_art(), "present card art keeps the card-art mode: " + card_id)
+			_check_picture_geometry(art, card_id)
 		elif ResourceLoader.exists(emblem):
 			_check(art.has_picture() and art.picture.resource_path == emblem,
 				"hero emblem stands in for absent art: " + card_id)
+			_check_emblem_medallion(art, card_id)
 		else:
-			_check(not art.has_picture(),
+			_check(not art.has_picture() and art.is_paper_patch(),
 				"absent art and emblem keep the drawn paper patch: " + card_id)
 		_check((content.get_node("NameLabel") as Label).text
 			== String(_base_pool_definition(card_id).get("display_name", "")),
@@ -1771,6 +1856,10 @@ func _test_illustration_fallback(base: Dictionary) -> void:
 	# any committed art staying missing forever.
 	var nowhere_id := "zz_no_such_reward_art_card"
 	var nowhere_owner := "zz_no_such_reward_owner"
+	var nowhere := LiveRunCardRewardChoicePanel.resolve_card_art(nowhere_id, nowhere_owner)
+	_check(nowhere.get("mode") == LiveRunCardRewardChoicePanel._CardIllustration.MODE_NONE
+		and nowhere.get("texture") == null,
+		"synthetic id with no picture or emblem resolves to the placeholder mode")
 	_check(LiveRunCardRewardChoicePanel._card_art_texture(nowhere_id, nowhere_owner) == null,
 		"synthetic id with no picture or emblem falls through to the drawn paper patch")
 	# The drawn/emblem patch is still pointer-inert: a click over it picks the card.
@@ -1781,6 +1870,139 @@ func _test_illustration_fallback(base: Dictionary) -> void:
 	_check(requests == [{"node": "art_fallback", "card": ids[0]}],
 		"fallback illustration click still routes the offer once")
 	panel.acknowledge(false)
+	panel.close_rewards()
+	await _frames()
+
+
+## Source inspection of the two illustration modes and the placeholder, because a
+## mounted rectangle assertion cannot see which brush each branch used.
+func _test_illustration_source() -> void:
+	var art := _class_source("_CardIllustration", "## Owner color patch")
+	_check(not art.is_empty(), "illustration drawing source located")
+	for marker in ["MODE_CARD_ART", "MODE_EMBLEM", "MODE_NONE"]:
+		_check(art.contains(marker), "illustration source keeps mode " + marker)
+	_check(art.contains("func is_card_art(") and art.contains("func is_emblem(")
+		and art.contains("func is_paper_patch("),
+		"illustration source exposes its three presentation modes")
+	_check(art.contains("func picture_rect(") and art.contains("medallion_inner_radius()")
+		and art.contains("art_size * (medallion_inner_radius() * 2.0 / diagonal)"),
+		"emblem picture is scaled to inscribe the medallion's inner circle")
+	_check(art.contains("draw_circle(") and art.contains("draw_arc(")
+		and art.contains("medallion_stitch_spans()"),
+		"medallion source draws a felt disc, a sewn ring and its stitches")
+	_check(art.contains("func _draw_contained_picture(")
+		and art.contains("draw_texture_rect(picture, target, false)"),
+		"card art is drawn contained from its measured aspect rect, never tiled")
+	_check(art.contains("func _draw_paper_patch(") and art.contains("draw_dashed_line("),
+		"missing art and emblem still draw the stitched paper patch")
+	_check(not art.contains("load(\"res://assets"), "illustration never loads art by itself")
+	var resolver := _source_slice("static func resolve_card_art", "## Texture-only lookup kept")
+	_check(not resolver.is_empty(), "reward art resolver source located")
+	_check(resolver.find("card_art_path(") >= 0
+		and resolver.find("card_art_path(") < resolver.find("emblem_path("),
+		"authored card art is tried before the owner emblem")
+	_check(resolver.contains("MODE_NONE"), "missing art and emblem fall through to the placeholder")
+	var mount := _source_slice("func _mount_card", "## A detached catalog card is the sole source")
+	_check(mount.contains("resolve_card_art(") and mount.contains("illustration.mode ="),
+		"the live card mounts the resolved mode instead of a bare texture")
+	_check(mount.contains("CARD_ART_HEIGHT") and mount.contains("SIZE_EXPAND_FILL"),
+		"the mounted picture window keeps its readable minimum and takes card slack")
+
+
+## The deliberate null-art/null-emblem path: a mounted window with no texture
+## keeps drawing the stitched paper patch and stays inert, so a valid offer can
+## never fail to mount even when every optional resource is missing.
+func _test_missing_art_placeholder() -> void:
+	var nowhere := LiveRunCardRewardChoicePanel.resolve_card_art(
+		"zz_no_such_reward_art_card", "zz_no_such_reward_owner")
+	_check(nowhere.get("mode") == LiveRunCardRewardChoicePanel._CardIllustration.MODE_NONE
+		and nowhere.get("texture") == null,
+		"missing art and emblem resolve to the placeholder mode")
+	var default_probe := LiveRunCardRewardChoicePanel._CardIllustration.new()
+	_check(default_probe.mode == LiveRunCardRewardChoicePanel._CardIllustration.MODE_CARD_ART,
+		"other mounted card faces keep the contained-picture default mode")
+	default_probe.free()
+	var probe := LiveRunCardRewardChoicePanel._CardIllustration.new()
+	probe.name = "NullArtProbe"
+	probe.mode = String(nowhere.get("mode"))
+	probe.picture = nowhere.get("texture")
+	probe.owner_color = panel.OWNER_COLORS["warden"]
+	root.add_child(probe)
+	probe.size = Vector2(304.0, LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT)
+	await _frames()
+	_check(probe.is_paper_patch() and not probe.has_picture()
+		and not probe.is_card_art() and not probe.is_emblem(),
+		"null art and emblem mount the drawn paper patch")
+	_check(probe.picture_rect() == Rect2(),
+		"placeholder window paints no picture rect")
+	_check(probe.is_visible_in_tree() and probe.size.y
+		>= LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT,
+		"placeholder window still occupies a real, visible area")
+	_check(probe.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and probe.focus_mode == Control.FOCUS_NONE,
+		"placeholder window takes no pointer input or focus")
+	_check(probe.medallion_radius() > 0.0,
+		"placeholder window still knows its medallion frame size")
+	probe.size = Vector2.ZERO
+	_check(probe.medallion_radius() == 0.0 and probe.picture_rect() == Rect2(),
+		"a collapsed window reports no drawable art instead of failing")
+	root.remove_child(probe)
+	probe.free()
+
+
+## AC2 composition guard for the Help tab: it is sewn onto the owner band's right
+## end, so it can never cover the picture, the name, the effects text or Choose.
+## The final rhythm is judged by screenshots, not by new coordinate goldens.
+func _test_art_and_help_clearance(base: Dictionary) -> void:
+	var ids: Array[String] = ["tinker_ricochet", "tinker_snip_the_seam", "seamstress_red_thread"]
+	var receipt := base.duplicate(true)
+	for slot in range(3):
+		var definition := _base_pool_definition(ids[slot])
+		_check(not definition.is_empty()
+			and not CardKeywordGlossary.describe(definition).is_empty(),
+			"clearance case is an authored card with help keywords: " + ids[slot])
+		receipt["offers"][slot] = {"id": ids[slot],
+			"owner": String(definition.get("owner", ""))}
+	requests.clear()
+	_check(panel.open_rewards("help_clearance", "Fight", receipt),
+		"help clearance receipt mounts through the real panel")
+	if not panel.has_open_rewards():
+		return
+	await _frames()
+	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
+	var clearance_checks := 0
+	for slot in range(3):
+		var card_id: String = ids[slot]
+		var card := panel.choices_container.get_child(slot) as PanelContainer
+		if card == null:
+			_check(false, "help clearance card mounts: " + card_id)
+			continue
+		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
+		var help := card.get_node_or_null("HelpCorner/HelpButton") as Button
+		_check(help != null and help.is_visible_in_tree() and not help.disabled,
+			"keyword card keeps a live Help tab: " + card_id)
+		if help == null:
+			continue
+		var help_rect := help.get_global_rect()
+		_check(card.get_global_rect().encloses(help_rect) and screen.encloses(help_rect),
+			"Help tab stays inside its card and 1280x720: " + card_id)
+		var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
+		var picture := Rect2(art.global_position + art.picture_rect().position,
+			art.picture_rect().size) if art != null and art.has_picture() else Rect2()
+		for other: String in ["CardArt", "NameLabel", "RulesLabel", "ChooseButton",
+				"CostButton", "PositionPips"]:
+			var control := content.get_node_or_null(other) as Control
+			_check(control != null, "clearance sibling exists: %s (%s)" % [other, card_id])
+			if control == null:
+				continue
+			clearance_checks += 1
+			_check(not help_rect.intersects(control.get_global_rect()),
+				"Help tab never covers %s: %s" % [other, card_id])
+		if picture.size.x > 0.0:
+			_check(not help_rect.intersects(picture),
+				"Help tab never covers the drawn picture: " + card_id)
+	_check(clearance_checks >= 18, "help clearance really inspected every sibling")
+	_check(receipt["offers"][0]["id"] == ids[0], "help clearance receipt stays authentic")
 	panel.close_rewards()
 	await _frames()
 
@@ -1818,6 +2040,9 @@ func _run() -> void:
 	_test_renderer_source()
 	await _test_cost_and_marks(original_fight, original_elite)
 	await _test_illustration_art(original_fight)
+	_test_illustration_source()
+	await _test_missing_art_placeholder()
+	await _test_art_and_help_clearance(original_fight)
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
 	var pool_fight := _prepared_pool(false, 18203)

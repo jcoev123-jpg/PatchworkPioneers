@@ -36,9 +36,23 @@ const OWNER_NAME_FONT_SIZE := 14
 
 ## The card's own authored picture gets a dedicated, inert illustration window
 ## above the name; the name keeps a plain cream strip of its own instead of
-## cropping art behind its text.
-const CARD_ART_HEIGHT := 52
+## cropping art behind its text. The window also takes a double share of the
+## card's leftover height (see _mount_card), so a real 4:3 picture is drawn much
+## larger than this readable minimum while every card in a row stays aligned.
+const CARD_ART_HEIGHT := 74
+const CARD_ART_STRETCH_RATIO := 2.0
 const NAME_STRIP_HEIGHT := 32
+## Card-local rhythm: every strip gives up only the pixels the taller picture
+## needs, so the name, cost coin, position marks, full effects and Choose stay
+## separate, legible and inside the 1280x720 screen.
+const CARD_CONTENT_SEPARATION := 1
+const CARD_SIDE_MARGIN := 10
+const PIPS_STRIP_HEIGHT := 20
+const COST_COIN_SIZE := 38
+const CHOOSE_HEIGHT := 44
+## The Help tab is sewn onto the owner felt band's right end, never over the
+## card's picture, effects text or Choose button.
+const HELP_TAB_SIZE := Vector2(78, 24)
 
 ## Sewn Flow/ChatGPT art in the heroes' stitched-felt style. Every piece is
 ## optional: a missing texture falls back to the flat procedural paper, and the
@@ -208,13 +222,13 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	var margin := MarginContainer.new()
 	margin.name = "CardMargin"
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_theme_constant_override("margin_left", 10)
-	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_left", CARD_SIDE_MARGIN)
+	margin.add_theme_constant_override("margin_right", CARD_SIDE_MARGIN)
 	card.add_child(margin)
 	var content := VBoxContainer.new()
 	content.name = "CardContent"
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_theme_constant_override("separation", 2)
+	content.add_theme_constant_override("separation", CARD_CONTENT_SEPARATION)
 	margin.add_child(content)
 
 	# Owner color patch (sewn stripe at top) with the owning hero's name sewn in
@@ -232,13 +246,19 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 
 	# Illustration window: image-only, inert to pointer and focus, and sized to
 	# its own patch so the name, cost, marks, rules and Choose stay separate.
-	var card_art := _card_art_texture(String(offer["id"]), owner)
+	# The resolved art keeps two distinct modes: the card's own authored picture
+	# is contained large in the window, while a fallback hero emblem is mounted
+	# as a centred sewn medallion. A missing picture and emblem keep the drawn
+	# paper patch, so a valid offer always mounts.
+	var art := resolve_card_art(String(offer["id"]), owner)
 	var illustration := _CardIllustration.new()
 	illustration.name = "CardArt"
-	illustration.picture = card_art
+	illustration.picture = art.get("texture") as Texture2D
+	illustration.mode = String(art.get("mode", _CardIllustration.MODE_NONE))
 	illustration.owner_color = OWNER_COLORS[owner]
 	illustration.custom_minimum_size = Vector2(0, CARD_ART_HEIGHT)
-	illustration.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	illustration.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	illustration.size_flags_stretch_ratio = CARD_ART_STRETCH_RATIO
 	content.add_child(illustration)
 
 	# Name on its own readable torn-paper strip, never cropped illustration art
@@ -254,8 +274,8 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	name_box.set_corner_radius_all(4)
 	name_box.content_margin_left = 6
 	name_box.content_margin_right = 6
-	name_box.content_margin_top = 4
-	name_box.content_margin_bottom = 4
+	name_box.content_margin_top = 3
+	name_box.content_margin_bottom = 3
 	name_label.add_theme_stylebox_override("normal", name_box)
 	content.add_child(name_label)
 
@@ -272,8 +292,8 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 		tag_style.set_corner_radius_all(6)
 		tag_style.content_margin_left = 8
 		tag_style.content_margin_right = 8
-		tag_style.content_margin_top = 2
-		tag_style.content_margin_bottom = 2
+		tag_style.content_margin_top = 1
+		tag_style.content_margin_bottom = 1
 		rarity_label.add_theme_stylebox_override("normal", tag_style)
 		rarity_label.add_theme_color_override("font_color", Color("#fffaf0"))
 		rarity_label.visible = true
@@ -288,7 +308,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	cost_button.name = "CostButton"
 	cost_button.cost_value = cost_value
 	cost_button.owner_color = OWNER_COLORS[offer["owner"]]
-	cost_button.custom_minimum_size = Vector2(40, 40)
+	cost_button.custom_minimum_size = Vector2(COST_COIN_SIZE, COST_COIN_SIZE)
 	cost_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	cost_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_button.focus_mode = Control.FOCUS_NONE
@@ -307,11 +327,11 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	pips_container.to_positions = to_positions
 	pips_container.target_kind = String(definition.get("target_kind", ""))
 	pips_container.owner_color = OWNER_COLORS[offer["owner"]]
-	pips_container.custom_minimum_size = Vector2(0, 22)
+	pips_container.custom_minimum_size = Vector2(0, PIPS_STRIP_HEIGHT)
 	content.add_child(pips_container)
 
 	# Rules text
-	var rules_label := _card_label("RulesLabel", _format_rules(definition), 16)
+	var rules_label := _card_label("RulesLabel", _format_rules(definition), 15)
 	rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rules_label.custom_minimum_size = Vector2(0, 60)
 	content.add_child(rules_label)
@@ -321,7 +341,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	action.name = "ChooseButton"
 	action.text = "Choose card"
 	action.focus_mode = Control.FOCUS_ALL
-	action.custom_minimum_size = Vector2(0, 46)
+	action.custom_minimum_size = Vector2(0, CHOOSE_HEIGHT)
 	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action.mouse_filter = Control.MOUSE_FILTER_STOP
 	_style_button(action, OWNER_COLORS[offer["owner"]])
@@ -334,8 +354,9 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.mouse_exited.connect(_on_card_mouse_exited.bind(index))
 	action.focus_entered.connect(_on_card_focus_entered.bind(index))
 	action.focus_exited.connect(_on_card_focus_exited.bind(index))
-	# A small sewn corner tab is positioned over the card, never in its VBox:
-	# rules, illustration, cost and Choose keep their existing geometry.
+	# The Help tab is a sewn corner control, never part of the card's VBox: it is
+	# pinned onto the owner felt band's right end, so the picture, name, cost,
+	# marks, effects text and Choose keep their geometry and stay unobstructed.
 	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
 	if not keywords.is_empty():
 		var corner := Control.new()
@@ -349,14 +370,19 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 		help.focus_mode = Control.FOCUS_ALL
 		help.mouse_filter = Control.MOUSE_FILTER_STOP
 		corner.add_child(help)
+		# HelpCorner is fitted to the card's own content area, so a zero top and a
+		# right offset of the content margin sew the tab flush onto the owner
+		# felt band's right end: never over the picture, effects text or Choose.
 		help.anchor_left = 1.0
 		help.anchor_right = 1.0
-		help.offset_left = -87.0
-		help.offset_right = -9.0
-		help.offset_top = 29.0
-		help.offset_bottom = 59.0
+		help.anchor_top = 0.0
+		help.anchor_bottom = 0.0
+		help.offset_left = -CARD_SIDE_MARGIN - HELP_TAB_SIZE.x
+		help.offset_right = -CARD_SIDE_MARGIN
+		help.offset_top = 0.0
+		help.offset_bottom = HELP_TAB_SIZE.y
 		_style_button(help, OWNER_COLORS[owner])
-		help.add_theme_font_size_override("font_size", 15)
+		help.add_theme_font_size_override("font_size", 14)
 		_add_focus_stitch(help)
 	return card
 
@@ -770,11 +796,24 @@ static func emblem_path(owner: String) -> String:
 	return ART_DIR + "cards/emblem_%s.png" % owner
 
 
-static func _card_art_texture(card_id: String, owner: String) -> Texture2D:
+## Resolve the card face's art once, keeping the authored picture and the owner
+## emblem in separate modes so the view can present them differently. Priority:
+## the card's own picture, then the owning hero's stitched emblem, then nothing
+## (the illustrative view then draws its procedural paper patch).
+static func resolve_card_art(card_id: String, owner: String) -> Dictionary:
 	var own := art_texture(card_art_path(card_id))
 	if own != null:
-		return own
-	return art_texture(emblem_path(owner))
+		return {"mode": _CardIllustration.MODE_CARD_ART, "texture": own}
+	var emblem := art_texture(emblem_path(owner))
+	if emblem != null:
+		return {"mode": _CardIllustration.MODE_EMBLEM, "texture": emblem}
+	return {"mode": _CardIllustration.MODE_NONE, "texture": null}
+
+
+## Texture-only lookup kept for the other mounted card faces (the visit tiles),
+## which present the picture and the emblem the same way.
+static func _card_art_texture(card_id: String, owner: String) -> Texture2D:
+	return resolve_card_art(card_id, owner).get("texture") as Texture2D
 
 
 static func art_texture(path: String) -> Texture2D:
@@ -1063,12 +1102,27 @@ static func _humanize_patch(id: String) -> String:
 	return " ".join(words)
 
 
-## The card's illustration window: the authored picture (or hero emblem, or a
-## drawn cream/stitched paper patch) painted inside its own sewn seam. It never
-## takes pointer input or focus, so the card's own click and every button keep
-## working exactly as before.
+## The card's illustration window. Three modes, in fallback order:
+## authored card art (contained large, aspect preserved), the owning hero's
+## emblem (inscribed and centred inside a sewn felt medallion), or, when both
+## resources are missing, a drawn cream/stitched paper patch. It never takes
+## pointer input or focus, so the card's own click and every button keep working
+## exactly as before.
 class _CardIllustration extends Control:
+	const MODE_CARD_ART := "card_art"
+	const MODE_EMBLEM := "emblem"
+	const MODE_NONE := "none"
+	## Felt medallion geometry: outer disc, the sewn ring band that frames the
+	## emblem, and the cream stitches walked along that band.
+	const MEDALLION_PAD := 3.0
+	const MEDALLION_RING := 5.0
+	const MEDALLION_STITCHES := 16
+
 	@export var picture: Texture2D
+	## How `picture` is presented. Card art and the emblems of every other
+	## mounted card face keep the contained-picture default; the reward panel
+	## asks for the medallion mode when only an owner emblem was available.
+	@export var mode: String = MODE_CARD_ART
 	@export var owner_color: Color = Color.WHITE
 
 	func _ready() -> void:
@@ -1080,25 +1134,111 @@ class _CardIllustration extends Control:
 	func has_picture() -> bool:
 		return picture != null
 
+	## The authored card picture is bound and presented as a contained picture.
+	func is_card_art() -> bool:
+		return picture != null and mode == MODE_CARD_ART
+
+	## Only an owner emblem was available, so it is presented as a medallion.
+	func is_emblem() -> bool:
+		return picture != null and mode == MODE_EMBLEM
+
+	## Neither resource loaded: the window draws its own stitched paper patch.
+	func is_paper_patch() -> bool:
+		return picture == null
+
+	func window_rect() -> Rect2:
+		return Rect2(Vector2.ZERO, size)
+
+	## Felt disc that carries the emblem, kept inside the window.
+	func medallion_radius() -> float:
+		return maxf(0.0, minf(size.x, size.y) * 0.5 - MEDALLION_PAD)
+
+	## Largest circle the emblem may fill: inside the sewn ring band.
+	func medallion_inner_radius() -> float:
+		return maxf(0.0, medallion_radius() - MEDALLION_RING)
+
+	func medallion_center() -> Vector2:
+		return size * 0.5
+
+	## Exact destination rect the picture is painted into. Card art keeps the
+	## texture's aspect inside the sewn window; an emblem is inscribed in the
+	## medallion's inner circle, so its corners never leave the sewn ring.
+	func picture_rect() -> Rect2:
+		if picture == null:
+			return Rect2()
+		var art_size: Vector2 = picture.get_size()
+		if art_size.x <= 0.0 or art_size.y <= 0.0:
+			return Rect2()
+		if mode == MODE_EMBLEM:
+			var diagonal: float = sqrt(art_size.x * art_size.x + art_size.y * art_size.y)
+			if diagonal <= 0.0:
+				return Rect2()
+			var target: Vector2 = art_size * (medallion_inner_radius() * 2.0 / diagonal)
+			return Rect2(medallion_center() - target * 0.5, target)
+		var fit: float = minf(size.x / art_size.x, size.y / art_size.y)
+		var card_target: Vector2 = art_size * fit
+		return Rect2((size - card_target) * 0.5, card_target)
+
+	## Dashed ring spans, as (start_angle, end_angle), walked along the sewn band
+	## that surrounds the emblem. Never a diameter line and never over the picture.
+	func medallion_stitch_spans() -> Array[Vector2]:
+		var spans: Array[Vector2] = []
+		var step: float = TAU / float(MEDALLION_STITCHES)
+		for index in range(MEDALLION_STITCHES):
+			var start: float = step * float(index) + step * 0.2
+			spans.append(Vector2(start, start + step * 0.5))
+		return spans
+
+	func medallion_stitch_radius() -> float:
+		return medallion_inner_radius() + MEDALLION_RING * 0.5
+
 	func _draw() -> void:
-		var rect := Rect2(Vector2.ZERO, size)
+		var rect := window_rect()
 		draw_rect(rect, Color("#f1e6cf"))
-		if picture != null:
-			var art_size: Vector2 = picture.get_size()
-			if art_size.x > 0.0 and art_size.y > 0.0:
-				var fit: float = minf(rect.size.x / art_size.x, rect.size.y / art_size.y)
-				var target: Vector2 = art_size * fit
-				draw_texture_rect(picture, Rect2((rect.size - target) * 0.5, target), false)
+		if is_emblem():
+			_draw_medallion()
+		elif picture != null:
+			_draw_contained_picture()
 		else:
-			# Drawn paper fallback: an owner-felt cross-stitch on cream.
-			draw_rect(rect.grow(-8.0), Color(owner_color, 0.16))
-			var center: Vector2 = rect.size * 0.5
-			var reach: float = minf(rect.size.x, rect.size.y) * 0.3
-			draw_dashed_line(center - Vector2(reach, 0.0), center + Vector2(reach, 0.0),
-				owner_color, 2.0, 5.0)
-			draw_dashed_line(center - Vector2(0.0, reach), center + Vector2(0.0, reach),
-				owner_color, 2.0, 5.0)
-		# Dark felt edge and a cream running stitch around the patch.
+			_draw_paper_patch(rect)
+		_draw_sewn_seam(rect)
+
+	## The authored 4:3 picture, contained (never distorted) and centred.
+	func _draw_contained_picture() -> void:
+		var target: Rect2 = picture_rect()
+		if target.size.x <= 0.0 or target.size.y <= 0.0:
+			return
+		draw_texture_rect(picture, target, false)
+
+	## Owner emblem mounted as a round sewn felt medallion: felt disc, the emblem
+	## inscribed inside it, then the dark ring band and cream running stitches
+	## that frame it. The ring is drawn outside the inscribed picture.
+	func _draw_medallion() -> void:
+		var center: Vector2 = medallion_center()
+		var radius: float = medallion_radius()
+		if radius <= 0.0:
+			return
+		draw_circle(center, radius, Color(owner_color, 0.95))
+		draw_circle(center, medallion_inner_radius(), Color(CARD_PAPER, 0.22))
+		_draw_contained_picture()
+		draw_arc(center, medallion_stitch_radius(), 0.0, TAU, 48,
+			Color("#3b2f2a"), MEDALLION_RING, true)
+		for span: Vector2 in medallion_stitch_spans():
+			draw_arc(center, medallion_stitch_radius(), span.x, span.y, 6,
+				Color("#f1e6cf"), 2.0, true)
+
+	## Drawn paper fallback: an owner-felt cross-stitch on cream.
+	func _draw_paper_patch(rect: Rect2) -> void:
+		draw_rect(rect.grow(-8.0), Color(owner_color, 0.16))
+		var center: Vector2 = rect.size * 0.5
+		var reach: float = minf(rect.size.x, rect.size.y) * 0.3
+		draw_dashed_line(center - Vector2(reach, 0.0), center + Vector2(reach, 0.0),
+			owner_color, 2.0, 5.0)
+		draw_dashed_line(center - Vector2(0.0, reach), center + Vector2(0.0, reach),
+			owner_color, 2.0, 5.0)
+
+	## Dark felt edge and a cream running stitch around the whole window.
+	func _draw_sewn_seam(rect: Rect2) -> void:
 		draw_rect(rect, Color("#3b2f2a"), false, 3.0)
 		var inner: Rect2 = rect.grow(-6.0)
 		draw_dashed_line(inner.position, Vector2(inner.end.x, inner.position.y),
