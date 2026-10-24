@@ -358,7 +358,7 @@ func _ui_test(activation: Key) -> void:
 	await _frames()
 	_check(picker.present(w, t, original, f.rest), "existing live-mounted picker accepts exact Rest")
 	await _frames()
-	_check((picker.preview_label.text.contains("MOVE") or picker.preview_label.text.contains("SWAP"))
+	_check((picker.preview_label.text.contains("Move") or picker.preview_label.text.contains("Swap"))
 		and picker.preview_label.text.contains("BEFORE")
 		and picker.preview_label.text.contains("AFTER")
 		and picker.preview_label.text.contains("Cost: 1 scrap"),
@@ -422,7 +422,18 @@ func _ui_test(activation: Key) -> void:
 								"active" if patch_state.active else "dormant"])
 						_check(preview.contains(display),
 							"mounted before/after forecast shows each authentic slot and activity")
-		_check(preview.contains(spec[2]) and preview.contains("BEFORE")
+		var friendly_kind := str(spec[2]).capitalize()
+		var friendly_slot := str(spec[3]).capitalize()
+		var friendly_detail := "empty %s slot" % friendly_slot if spec[2] == "MOVE" else (
+			"swap with %s" % str(service.exchanged_id).replace("_", " ").capitalize())
+		_check(preview.contains("%s • %s patch" % [friendly_kind, friendly_slot])
+			and preview.contains(friendly_detail)
+			and picker._source_buttons[source_index].text.contains(
+				"%s patch" % friendly_slot)
+			and picker._destination_buttons[destination_index].text.contains(friendly_kind)
+			and picker._destination_buttons[destination_index].text.contains(friendly_detail),
+			"mouse-selected sewn chips and forecast use human action/slot/recipient labels")
+		_check(preview.contains(friendly_kind) and preview.contains("BEFORE")
 			and preview.contains("AFTER") and preview.contains("Cost: 1 scrap")
 			and preview.contains(spec[3] + " " + spec[6] + " (active)")
 			and preview.contains(spec[4]) and preview.contains(str(spec[5]))
@@ -457,8 +468,8 @@ func _ui_test(activation: Key) -> void:
 		_check(move_index >= 0, "empty same-slot target exists")
 		if move_index >= 0:
 			await _pick(picker._destination_buttons[move_index], false)
-			_check(picker.preview_label.text.contains("MOVE")
-				and picker.preview_label.text.contains("empty destination")
+			_check(picker.preview_label.text.contains("Move • Head patch")
+				and picker.preview_label.text.contains("empty Head slot")
 				and picker.preview_label.text.contains("Tinker AFTER"),
 				"physical mouse selection displays empty MOVE and its active recipient")
 		var target_index := -1
@@ -468,8 +479,8 @@ func _ui_test(activation: Key) -> void:
 		_check(target_index >= 0, "occupied same-slot recipient reachable")
 		if target_index >= 0:
 			await _pick(picker._destination_buttons[target_index], false)
-			_check(picker.preview_label.text.contains("SWAP")
-				and picker.preview_label.text.contains("Stitched Badge")
+			_check(picker.preview_label.text.contains("Swap • Head patch")
+				and picker.preview_label.text.contains("swap with Stitched Badge")
 				and picker.preview_label.text.contains("Exposed 1")
 				and picker.preview_label.text.contains("Seamstress BEFORE")
 				and picker.preview_label.text.contains("Warden AFTER")

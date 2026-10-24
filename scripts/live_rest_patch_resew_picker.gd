@@ -85,7 +85,7 @@ func present(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 			source_tags.add_child(button)
 		_configure_tag(button, "Source_%d" % i, "%s / %s
 %s%s" % [
-			_nice(option["from_hero"]), option["slot"], _nice(option["patch_id"]),
+			_nice(option["from_hero"]), _slot_label(option["slot"]), _nice(option["patch_id"]),
 			" • torn/inactive" if not option["source_active"] else ""], 250)
 		button.pressed.connect(_choose_source.bind(i))
 		_source_buttons.append(button)
@@ -131,11 +131,13 @@ func _refresh_destinations(select_first: bool = false) -> void:
 		var button: SewnChip = destination_selector if i == 0 else SewnChip.new()
 		if i > 0:
 			destination_tags.add_child(button)
-		var detail := "empty %s" % option["slot"] if option["kind"] == "MOVE" else (
-			"swap %s" % _nice(option["exchanged_id"]))
+		var detail := "empty %s slot" % _slot_name(option["slot"]) \
+			if option["kind"] == "MOVE" else (
+				"%s • swap with %s" % [
+					_slot_label(option["slot"]), _nice(option["exchanged_id"])])
 		_configure_tag(button, "Destination_%d" % i,
 			"%s / %s
-%s%s" % [_nice(option["to_hero"]), option["kind"], detail,
+%s%s" % [_nice(option["to_hero"]), _action_label(option["kind"]), detail,
 			" • torn/inactive" if not option["destination_active"] else ""], 345)
 		button.pressed.connect(_choose_destination.bind(i))
 		_destination_buttons.append(button)
@@ -195,14 +197,16 @@ func _update_preview() -> void:
 	if estimate.get("ok") != true:
 		_clear("Preview expired: refresh the Rest before trying again")
 		return
-	var exchange := "empty destination" if estimate["kind"] == "MOVE" else (
+	var exchange := "empty %s slot" % _slot_name(estimate["slot"]) \
+		if estimate["kind"] == "MOVE" else (
 		"swap with %s" % _nice(estimate["exchanged_id"]))
 	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap
 %s
 %s
 %s
 %s" % [
-		estimate["kind"], estimate["slot"], _nice(estimate["source"]["hero_id"]),
+		_action_label(estimate["kind"]), _slot_label(estimate["slot"]),
+		_nice(estimate["source"]["hero_id"]),
 		_nice(estimate["destination"]["hero_id"]), exchange, estimate["cost"],
 		_wearer_preview(estimate["source"], "before"),
 		_wearer_preview(estimate["source"], "after"),
@@ -451,3 +455,16 @@ func _style_button(button: Button) -> void:
 
 static func _nice(id: String) -> String:
 	return id.replace("_", " ").capitalize()
+
+
+## Presentation only: options, forecasts and owner requests keep exact enum IDs.
+static func _slot_name(slot: String) -> String:
+	return slot.to_lower().capitalize()
+
+
+static func _slot_label(slot: String) -> String:
+	return "%s patch" % _slot_name(slot)
+
+
+static func _action_label(kind: String) -> String:
+	return kind.to_lower().capitalize()
