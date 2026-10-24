@@ -2650,11 +2650,64 @@ func _test_burlap_fallback() -> void:
 	art_probe.free()
 
 
-## AC2 composition guard for the Help tab: it is sewn onto the owner band's right
-## end, so it can never cover the picture, the name, the effects text or Choose.
-## The final rhythm is judged by screenshots, not by new coordinate goldens.
+## The Help cell must stay readable when the optional sewn button art is absent:
+## the procedural face is opaque and the same measured label fit reserves both
+## sewn side seams, so the fallback never crowds the owner ribbon either.
+func _test_help_cell_without_art() -> void:
+	var accent := Color("#766351")
+	var probe := Button.new()
+	probe.name = "HelpCellFallbackProbe"
+	probe.text = "Help"
+	probe.theme_type_variation = &"PatchHeadingButton"
+	probe.add_theme_font_size_override("font_size",
+		LiveRunCardRewardChoicePanel.HELP_TAB_FONT_SIZE)
+	panel._apply_sewn_faces(probe, accent)
+	panel._sew_burlap(probe, accent,
+		LiveRunCardRewardChoicePanel.HELP_TAB_EDGE_VERTICAL, null)
+	root.add_child(probe)
+	await _frames()
+	panel._fit_help_tab(probe)
+	probe.size = probe.custom_minimum_size
+	await _frames()
+	_check(probe.get_node_or_null("BurlapPatch") == null,
+		"absent sewn art mounts no Help burlap patch")
+	var face := probe.get_theme_stylebox("normal") as StyleBoxFlat
+	_check(face != null and face.bg_color.a >= 1.0 and face.border_color == accent,
+		"absent sewn art keeps an opaque owner-accent Help cell")
+	_check(face != null and LiveRunCardRewardChoicePanel.contrast_ratio(
+		probe.get_theme_color("font_color"), face.bg_color) >= 4.5,
+		"absent sewn art keeps dark Help ink readable on the felt")
+	var font: Font = probe.get_theme_font(&"font")
+	if font == null:
+		font = ThemeDB.fallback_font
+	var point_size: int = probe.get_theme_font_size(&"font_size")
+	var text_width: float = font.get_string_size(probe.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x
+	var required: float = text_width + float(panel.BUTTON_EDGE) * 2.0 \
+		+ float(panel.HELP_TAB_TEXT_BREATH)
+	_check(text_width > 0.0 and probe.custom_minimum_size.x >= required - 0.01
+		and probe.custom_minimum_size.x <= ceilf(required),
+		"absent sewn art measures the Help label with both side seams reserved")
+	_check(probe.custom_minimum_size.y >= font.get_height(point_size) - 1.0
+		and probe.custom_minimum_size.y <= LiveRunCardRewardChoicePanel.HELP_TAB_HEIGHT,
+		"absent sewn art keeps the Help label inside its 24px cell")
+	if face != null:
+		_check(probe.size.x >= text_width + face.content_margin_left
+			+ face.content_margin_right,
+			"absent sewn art leaves the complete Help label room inside its cell")
+	root.remove_child(probe)
+	probe.free()
+
+
+## AC2 composition guard for the Help tab: it is a second sewn cell beside the
+## owner ribbon, never sewn onto the hero's name. Measured text fit proves the
+## full hero name and the Help label both keep their own room at 1280x720, with
+## or without the optional burlap art. The final rhythm is judged by screenshots,
+## not by new coordinate goldens.
 func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
-	var ids: Array[String] = ["tinker_ricochet", "tinker_snip_the_seam", "seamstress_red_thread"]
+	# One keyword-bearing authored card for each hero, so the full Warden,
+	# Seamstress and Tinker names are inspected beside a real Help cell.
+	var ids: Array[String] = ["warden_pinning_jab", "seamstress_red_thread", "tinker_ricochet"]
 	var receipt := base.duplicate(true)
 	for slot in range(3):
 		var definition := _base_pool_definition(ids[slot])
@@ -2672,6 +2725,7 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
 	var clearance_checks := 0
 	var burlap_checks := 0
+	var mounted_owners: Array[String] = []
 	var burlap_art := LiveRunCardRewardChoicePanel.art_texture(
 		LiveRunCardRewardChoicePanel.BURLAP_BUTTON)
 	for slot in range(3):
@@ -2705,6 +2759,50 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			"card header row fits both owner patch and Help tab: " + card_id)
 		_check(is_equal_approx(header.size.y, 24.0) and help.size.y <= 24.0 and owner_patch.size.y <= 24.0,
 			"card header keeps to one 24px line: " + card_id)
+		# Measured text fit: the mount measures the real display label and the
+		# sewn side seams, so neither cell borrows from the other. The gap of card
+		# paper between them is the structural separation the screenshot judges.
+		var owner := String(receipt["offers"][slot]["owner"])
+		mounted_owners.append(owner)
+		var help_font: Font = help.get_theme_font(&"font")
+		if help_font == null:
+			help_font = ThemeDB.fallback_font
+		var help_point: int = help.get_theme_font_size(&"font_size")
+		var help_label_width: float = help_font.get_string_size(help.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, help_point).x
+		var help_required: float = help_label_width \
+			+ float(panel.BUTTON_EDGE) * 2.0 + float(panel.HELP_TAB_TEXT_BREATH)
+		_check(help_font != null and help_label_width > 0.0,
+			"Help label measures real display glyphs: " + card_id)
+		_check(is_equal_approx(help.custom_minimum_size.x, ceilf(help_required))
+			and help.size.x >= help_required - 0.01,
+			"Help cell is measured to its label plus both sewn side seams: %s (custom %.1f, size %.1f, required %.1f)"
+				% [card_id, help.custom_minimum_size.x, help.size.x, help_required])
+		_check(help.size.y >= help_font.get_height(help_point) - 1.0,
+			"Help label keeps its complete display line height: " + card_id)
+		var owner_font: Font = owner_label.get_theme_font(&"font")
+		if owner_font == null:
+			owner_font = ThemeDB.fallback_font
+		var owner_point: int = owner_label.get_theme_font_size(&"font_size")
+		var owner_label_width: float = owner_font.get_string_size(owner_label.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, owner_point).x
+		_check(owner_label_width > 0.0 and owner_label.size.x >= owner_label_width,
+			"complete '%s' name fits its own ribbon cell: %s" % [owner_label.text, card_id])
+		_check(absf(owner_label.size.x
+				- (owner_patch.size.x - 2.0 * float(panel.OWNER_NAME_SIDE_INSET))) <= 0.5,
+			"owner name keeps its measured side insets clear of the seam: " + card_id)
+		_check(owner_rect.encloses(owner_label.get_global_rect())
+			and not owner_label.clip_text and owner_label.get_line_count() == 1,
+			"full hero name is sewn whole, never clipped by the Help cell: " + card_id)
+		_check(header.get_theme_constant("separation") == panel.HEADER_CELL_GAP
+			and help_rect.position.x - owner_rect.end.x >= float(panel.HEADER_CELL_GAP) - 0.5,
+			"card paper separates the Help cell from the owner ribbon: " + card_id)
+		var help_face := help.get_theme_stylebox("normal") as StyleBoxFlat
+		_check(help_face != null and help_face.border_width_left >= 2
+			and help_face.border_color.r == panel.OWNER_COLORS[owner].r
+			and help_face.border_color.g == panel.OWNER_COLORS[owner].g
+			and help_face.border_color.b == panel.OWNER_COLORS[owner].b,
+			"Help cell keeps its own owner-accent sewn border: " + card_id)
 		# The Help cell is only 24px tall, so its burlap must not carry the normal
 		# 22px top+bottom seams (44 > 24). The mounted NinePatchRect itself proves
 		# the art slice still has a positive centre inside that cell.
@@ -2715,7 +2813,7 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			burlap_checks += 1
 			var top_edge: int = help_burlap.patch_margin_top
 			var bottom_edge: int = help_burlap.patch_margin_bottom
-			var centre_height: float = LiveRunCardRewardChoicePanel.HELP_TAB_SIZE.y \
+			var centre_height: float = LiveRunCardRewardChoicePanel.HELP_TAB_HEIGHT \
 				- float(top_edge) - float(bottom_edge)
 			_check(help_burlap.get_parent() == help,
 				"Help burlap patch belongs to this Help control: " + card_id)
@@ -2724,7 +2822,7 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 				"Help burlap patch stays pointer-inert and unfocusable: " + card_id)
 			_check(top_edge >= 0 and bottom_edge >= 0,
 				"Help burlap vertical margins are nonnegative: " + card_id)
-			_check(top_edge + bottom_edge < int(LiveRunCardRewardChoicePanel.HELP_TAB_SIZE.y)
+			_check(top_edge + bottom_edge < int(LiveRunCardRewardChoicePanel.HELP_TAB_HEIGHT)
 				and centre_height > 0.0,
 				"Help burlap seams leave a positive centre inside the 24px cell: " + card_id)
 			var burlap_size: Vector2 = help_burlap.texture.get_size() \
@@ -2803,6 +2901,8 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			and not panel._awaiting_ack,
 			"mouse/keyboard Help never requests or changes the prepared choice: " + card_id)
 	_check(clearance_checks >= 18, "help clearance really inspected every sibling")
+	_check(mounted_owners == ["warden", "seamstress", "tinker"],
+		"clearance mounts keyword Help beside all three full hero names: " + str(mounted_owners))
 	_check(burlap_checks == (3 if burlap_art != null else 0),
 		"every mounted keyword Help tab was inspected against its burlap art")
 	_check(receipt["offers"][0]["id"] == ids[0], "help clearance receipt stays authentic")
@@ -2971,6 +3071,7 @@ func _run() -> void:
 	_test_illustration_source()
 	await _test_missing_art_placeholder()
 	await _test_burlap_fallback()
+	await _test_help_cell_without_art()
 	await _test_art_and_help_clearance(original_fight, "Fight")
 	await _test_art_and_help_clearance(original_elite, "Elite")
 	await _test_no_keyword_card_without_help(original_fight, "Fight")

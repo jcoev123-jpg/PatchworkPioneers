@@ -45,6 +45,10 @@ const RECEIPT_TAB_INSET_Y := 2
 ## _apply_patchwork_style), so no card control moves or clips.
 const OWNER_STRIP_HEIGHT := 24
 const OWNER_NAME_FONT_SIZE := 14
+## The hero name is sewn in the middle of its ribbon, never against the seam
+## that meets the Help cell, so the full visible name keeps its own breathing
+## room even when a keyword card reserves a tab beside it.
+const OWNER_NAME_SIDE_INSET := 8
 
 ## The card's own authored picture gets a dedicated, inert illustration window
 ## above the name; the name keeps a plain cream strip of its own instead of
@@ -62,13 +66,19 @@ const CARD_SIDE_MARGIN := 10
 const PIPS_STRIP_HEIGHT := 20
 const COST_COIN_SIZE := 38
 const CHOOSE_HEIGHT := 44
-## The Help tab is sewn onto the owner felt band's right end, never over the
-## card's picture, effects text or Choose button. Its 24px cell is too short for
-## the normal 22px top and bottom burlap seams (44 > 24), so only this tab takes
-## a compact vertical art slice: 6 + 6 leaves a 12px centre inside the cell while
-## the side seams keep BUTTON_EDGE.
-const HELP_TAB_SIZE := Vector2(78, 24)
+## Keyword Help gets its own sewn cell beside the owner felt, never sewn onto the
+## hero's ribbon: a 10px gap of card paper separates the two patches so the full
+## hero name and the Help label read independently. Its 24px cell is too short
+## for the normal 22px top and bottom burlap seams (44 > 24), so only this tab
+## takes a compact vertical art slice: 6 + 6 leaves a 12px centre inside the cell
+## while the side seams keep BUTTON_EDGE. The cell width is measured from the
+## actually drawn display label plus those side seams, with a little breath, so
+## the ribbon keeps every pixel the name needs when the sewn art is absent too.
+const HEADER_CELL_GAP := 10
+const HELP_TAB_HEIGHT := 24
+const HELP_TAB_FONT_SIZE := 14
 const HELP_TAB_EDGE_VERTICAL := 6
+const HELP_TAB_TEXT_BREATH := 6
 
 ## Sewn Flow/ChatGPT art in the heroes' stitched-felt style. Every piece is
 ## optional: a missing texture falls back to the flat procedural paper, and the
@@ -248,13 +258,14 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	content.add_theme_constant_override("separation", CARD_CONTENT_SEPARATION)
 	margin.add_child(content)
 
-	# Horizontal card header row with flexible owner ribbon and optional Help cell
+	# Horizontal card header row: the owner ribbon keeps its own whole cell and
+	# the keyword Help tab is a second sewn cell, separated by card paper.
 	var header := HBoxContainer.new()
 	header.name = "CardHeader"
 	header.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
 	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	header.add_theme_constant_override("separation", 0)
+	header.add_theme_constant_override("separation", HEADER_CELL_GAP)
 	content.add_child(header)
 
 	# Owner color patch (sewn stripe at top) with the owning hero's name sewn in
@@ -274,6 +285,11 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	owner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	owner_label.add_theme_color_override("font_color", owner_ink(owner))
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# A plain FULL_RECT label can run glyphs into the felt border. The measured
+	# side inset keeps the complete Warden/Seamstress/Tinker name inside its own
+	# sewn cell, clear of the gap that separates it from Help.
+	owner_label.offset_left = OWNER_NAME_SIDE_INSET
+	owner_label.offset_right = -OWNER_NAME_SIDE_INSET
 	owner_patch.add_child(owner_label)
 
 	# Illustration window: image-only, inert to pointer and focus, and sized to
@@ -393,7 +409,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	action.focus_entered.connect(_on_card_focus_entered.bind(index))
 	action.focus_exited.connect(_on_card_focus_exited.bind(index))
 	# Distinct, always reserved-in-width Help tab cell for keyword cards,
-	# adjacent sibling to OwnerPatch in CardHeader.
+	# a separate sibling of OwnerPatch in CardHeader with card paper between.
 	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
 	if not keywords.is_empty():
 		var help := Button.new()
@@ -401,11 +417,11 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 		help.text = "Help"
 		help.focus_mode = Control.FOCUS_ALL
 		help.mouse_filter = Control.MOUSE_FILTER_STOP
-		help.custom_minimum_size = HELP_TAB_SIZE
 		help.size_flags_horizontal = Control.SIZE_SHRINK_END
 		help.size_flags_vertical = Control.SIZE_FILL
 		_style_button(help, OWNER_COLORS[owner], HELP_TAB_EDGE_VERTICAL)
-		help.add_theme_font_size_override("font_size", 14)
+		help.add_theme_font_size_override("font_size", HELP_TAB_FONT_SIZE)
+		_fit_help_tab(help)
 		_add_focus_stitch(help)
 		header.add_child(help)
 	return card
@@ -984,6 +1000,38 @@ func _fit_skip_button() -> void:
 	skip_button.custom_minimum_size = Vector2(
 		ceilf(label_width + border_space),
 		maxf(54.0, font.get_height(point_size) + 20.0))
+
+
+## Resolve the display face a reward action draws with even before the card
+## subtree is inside the SceneTree (Control.get_theme_font() cannot yet see the
+## project theme there). Once mounted this is the same PatchHeadingButton font
+## resource the button resolves, so the measured Help cell matches the label.
+func _action_display_font(control: Control) -> Font:
+	var theme_path := String(ProjectSettings.get_setting("gui/theme/custom", ""))
+	if not theme_path.is_empty():
+		var project_theme := load(theme_path) as Theme
+		if project_theme != null:
+			var themed := project_theme.get_font(&"font", &"PatchHeadingButton")
+			if themed != null:
+				return themed
+	var font: Font = control.get_theme_font(&"font")
+	if font != null:
+		return font
+	return ThemeDB.fallback_font
+
+
+## Measure the actual Help label in the display face it is drawn with and keep
+## the sewn side seams (BUTTON_EDGE each) outside the glyphs, plus a little
+## breath. The cell never borrows the owner ribbon's width and the same measured
+## minimum serves the procedural face when the burlap art is absent.
+func _fit_help_tab(help: Button) -> void:
+	var font: Font = _action_display_font(help)
+	var point_size: int = help.get_theme_font_size(&"font_size")
+	var label_width: float = font.get_string_size(help.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x
+	var side_space: float = float(BUTTON_EDGE) * 2.0
+	help.custom_minimum_size = Vector2(
+		ceilf(label_width + side_space + HELP_TAB_TEXT_BREATH), HELP_TAB_HEIGHT)
 
 
 func _style_button(button: Button, accent: Color, vertical_edge: int = BUTTON_EDGE) -> void:
