@@ -36,6 +36,11 @@ const SCROLLBAR_WIDTH := 4.0
 ## proven. It is also returned by the ledger formatter, so a row that cannot be
 ## rendered in full never becomes a partial result.
 const UNAVAILABLE := "Summary unavailable"
+## Player wording for a wearer with no sewn patch, instead of empty slot
+## placeholders that once read like broken diagnostics.
+const NO_PATCHES := "no patches"
+## The one badge a hero receives for authenticated zero HP.
+const TORN_BADGE := "TORN"
 
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
@@ -389,11 +394,11 @@ func _scroll_details_to(offset: float) -> void:
 
 
 ## Consume the validated projection in its original hero and slot order.
-## Empty cells stay explicitly empty instead of resembling worn inventory.
-## Names and slot labels are presentation only: descriptors are authored, and
-## worn IDs are never recomputed into effects here.
-## Each hero row carries its proven by-ID tear count, including zero, and the
-## player-facing TORN name only while that hero's authenticated HP is zero.
+## Each hero becomes one compact player-facing recap line: name, authentic
+## current/maximum HP, the TORN badge only while that hero's HP is zero, the
+## hero's genuine by-ID tear count stated exactly once, and then only the slots
+## that hero actually wears (or a plain "no patches" phrase). Empty slot
+## placeholders, raw IDs and diagnostic keys never reach the player.
 func _format_signature(summary: Dictionary) -> String:
 	var lines: Array[String] = [
 		"Stitched: %d made · %d in deck" % [summary.stitched_created, summary.stitched_current],
@@ -403,24 +408,68 @@ func _format_signature(summary: Dictionary) -> String:
 	if not crafted.is_empty():
 		lines.append(crafted)
 	for hero in summary.heroes:
-		var tears: Variant = hero.get("tears")
-		if typeof(tears) != TYPE_INT or tears < 0:
+		var row := _hero_recap_line(hero)
+		if row.is_empty():
 			return UNAVAILABLE
-		var slots: Array[String] = []
-		for slot in RunSignatureSummary.SLOTS:
-			var patch_id: String = hero.slots[slot]
-			slots.append("%s %s" % [slot, _patch_label(patch_id)])
-		var hero_name: String = str(hero.hero_id).capitalize()
-		var slots_text: String = " · ".join(slots)
-		if hero.has("hp") and hero.has("max_hp"):
-			var row := "%s %d/%d HP · %s · Tears: %d" % [
-				hero_name, hero["hp"], hero["max_hp"], slots_text, tears]
-			if int(hero["hp"]) == 0:
-				row += " · TORN"
-			lines.append(row)
-		else:
-			lines.append("%s  %s · Tears: %d" % [hero_name, "  ·  ".join(slots), tears])
+		lines.append(row)
 	return "\n".join(lines)
+
+
+## One hero's compact recap row. Presentation only: it re-reads the already
+## authenticated summary and never re-resolves a patch, a tear or a card.
+func _hero_recap_line(hero: Dictionary) -> String:
+	var hero_id: Variant = hero.get("hero_id")
+	if typeof(hero_id) != TYPE_STRING or not RunSignatureSummary.HERO_IDS.has(hero_id):
+		return ""
+	var tears: Variant = hero.get("tears")
+	if typeof(tears) != TYPE_INT or tears < 0:
+		return ""
+	var parts: Array[String] = []
+	# HP is optional only for an unauthenticated direct formatter call; any
+	# malformed wider value still fails the whole ledger shut.
+	if hero.has("hp") or hero.has("max_hp"):
+		var hp: Variant = hero.get("hp")
+		var max_hp: Variant = hero.get("max_hp")
+		if typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT \
+				or max_hp <= 0 or hp < 0 or hp > max_hp:
+			return ""
+		parts.append("%d/%d HP" % [hp, max_hp])
+		if hp == 0:
+			parts.append(TORN_BADGE)
+	parts.append(_tear_label(tears))
+	var slots: Variant = hero.get("slots")
+	if not slots is Dictionary:
+		return ""
+	var slot_map: Dictionary = slots
+	# Every canonical slot must be an authenticated ID string before any row is
+	# published; a malformed map must not masquerade as a bare wearer.
+	for slot in RunSignatureSummary.SLOTS:
+		if typeof(slot_map.get(slot)) != TYPE_STRING:
+			return ""
+	var worn := _worn_slots_text(slot_map)
+	if worn.is_empty():
+		parts.append(NO_PATCHES)
+	else:
+		parts.append(worn)
+	return "%s %s" % [str(hero_id).capitalize(), " · ".join(parts)]
+
+
+## Named wear entries in HEAD/ARM/COAT order. Only genuinely worn patches are
+## listed, each with the slot it occupies, so a patch is never hidden to
+## shorten a line. The caller has already authenticated every slot value.
+func _worn_slots_text(slot_map: Dictionary) -> String:
+	var entries: Array[String] = []
+	for slot in RunSignatureSummary.SLOTS:
+		var patch_id: String = slot_map.get(slot)
+		if patch_id.is_empty():
+			continue
+		entries.append("%s %s" % [slot, _patch_label(patch_id)])
+	return " · ".join(entries)
+
+
+## Exact seam count in player language: "1 tear", "0 tears", "2 tears".
+func _tear_label(count: int) -> String:
+	return "1 tear" if count == 1 else "%d tears" % count
 
 
 ## One compact recap line naming at most two currently held stitched cards in
@@ -449,13 +498,12 @@ func _crafted_cards_line(summary: Dictionary) -> String:
 	return line
 
 
-## Readable slot label: underscores become spaces and each word is title-cased.
+## Readable patch label: underscores become spaces and each word is title-cased.
+## Only genuinely worn IDs reach here, so no empty placeholder is ever produced.
 func _patch_label(patch_id: String) -> String:
-	if patch_id.is_empty():
-		return "-"
 	var label := patch_id.replace("_", " ").strip_edges()
 	if label.is_empty():
-		return "-"
+		return ""
 	return label.capitalize()
 
 

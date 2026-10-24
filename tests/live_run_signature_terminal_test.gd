@@ -195,21 +195,28 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 			expected_rows.append(craft)
 		for i in range(3):
 			var hero: Dictionary = expected.heroes[i]
-			var parts: Array[String] = []
-			for slot in ["HEAD", "ARM", "COAT"]:
-				var id: String = hero.slots[slot]
-				parts.append("%s %s" % [slot, id.capitalize() if not id.is_empty() else "-"])
 			var hp: int = 40 if hero.hero_id == "warden" else (30 if hero.hero_id == "seamstress" else 26)
 			# This staged run never admitted a battle, so every genuine by-ID tear
-			# count is zero; the terminal row states it explicitly.
-			expected_rows.append("%s %d/%d HP · %s · Tears: 0" % [
-				str(hero.hero_id).capitalize(), hp, hp, " · ".join(parts)])
+			# count is zero; the terminal row states it explicitly. Only worn
+			# patches are named, each with its own slot, and an empty wearer says
+			# so instead of printing empty slot placeholders.
+			var parts: Array[String] = ["%d/%d HP" % [hp, hp], "0 tears"]
+			var worn: Array[String] = []
+			for slot in ["HEAD", "ARM", "COAT"]:
+				var id: String = hero.slots[slot]
+				if not id.is_empty():
+					worn.append("%s %s" % [slot, id.capitalize()])
+			parts.append(" · ".join(worn) if not worn.is_empty() else "no patches")
+			expected_rows.append("%s %s" % [str(hero.hero_id).capitalize(), " · ".join(parts)])
 		_check(rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"),
 			"mounted signature has battles resolved count, two counts, one craft line per nonempty deck and three hero lines")
 		if rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"):
 			for i in range(expected_rows.size()):
 				_check(rows[i + 1] == expected_rows[i],
 					"actual signature line %d matches the independent oracle" % (i + 1))
+		_check(not value.contains("HEAD -") and not value.contains("ARM -")
+			and not value.contains("COAT -") and not value.contains("Tears:"),
+			"mounted recap prints no empty-slot or diagnostic fragments")
 	var cards: Array = expected.get("current_stitched_cards", [])
 	_check(panel.stitched_section.visible == not cards.is_empty(),
 		"detail section exists only for genuinely retained sewn cards")
