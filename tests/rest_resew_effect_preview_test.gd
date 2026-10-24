@@ -364,7 +364,9 @@ func _ui_test(activation: Key) -> void:
 	_check((picker.preview_label.text.contains("Move") or picker.preview_label.text.contains("Swap"))
 		and picker.preview_label.text.contains("BEFORE")
 		and picker.preview_label.text.contains("AFTER")
-		and picker.preview_label.text.contains("Cost: 1 scrap"),
+		and picker.preview_label.text.contains("Cost: 1 scrap")
+		and picker.preview_label.text.contains(
+			"Scraps %d → %d" % [original.scraps, original.scraps - 1]),
 		"initial mounted choice shows both original and proposed states")
 	var screen := Rect2(0, 0, 1280, 720)
 	for control in [picker.source_selector, picker.destination_selector,
@@ -443,6 +445,10 @@ func _ui_test(activation: Key) -> void:
 			and not picker.confirm_button.disabled,
 			"physical mouse choice shows real Shop MOVE/SWAP and exact active power: "
 			+ spec[0] + " to " + spec[1])
+		_check(preview.contains("Scraps %d → %d" % [original.scraps, original.scraps - 1])
+			and original.scraps >= 1 and w.get_snapshot() == original,
+			"mounted %s selection quotes the exact rest wallet %d -> %d without spending"
+			% [spec[2], original.scraps, original.scraps - 1])
 	_check(picker.present(w, t, original, f.rest),
 		"mounted picker can re-present the same unchanged Rest after Shop inspection")
 	await _frames()
@@ -473,7 +479,9 @@ func _ui_test(activation: Key) -> void:
 			await _pick(picker._destination_buttons[move_index], false)
 			_check(picker.preview_label.text.contains("Move • Head patch")
 				and picker.preview_label.text.contains("empty Head slot")
-				and picker.preview_label.text.contains("Tinker AFTER"),
+				and picker.preview_label.text.contains("Tinker AFTER")
+				and picker.preview_label.text.contains(
+					"Scraps %d → %d" % [original.scraps, original.scraps - 1]),
 				"physical mouse selection displays empty MOVE and its active recipient")
 		var target_index := -1
 		for i in range(picker._destinations.size()):
@@ -487,6 +495,8 @@ func _ui_test(activation: Key) -> void:
 				and picker.preview_label.text.contains("Exposed 1")
 				and picker.preview_label.text.contains("Seamstress BEFORE")
 				and picker.preview_label.text.contains("Warden AFTER")
+				and picker.preview_label.text.contains(
+					"Scraps %d → %d" % [original.scraps, original.scraps - 1])
 				and not picker.confirm_button.disabled,
 				"physical keyboard source and mouse destination refresh SWAP/effects")
 			var chosen := picker.selected_option()
@@ -505,6 +515,101 @@ func _ui_test(activation: Key) -> void:
 			_check(calls.size() == 1, "pending keyboard and mouse replays emit nothing")
 	_check(w.get_snapshot() == original and t.read_state() == torn_before,
 		"UI never directly mutates genuine services or spends")
+	picker.free()
+	await _frames()
+
+
+## AC1/AC2: the real one-scrap boundary must quote 1 → 0 and then commit
+## exactly one scrap through the picker's own request/owner signal.
+func _one_scrap_boundary_tests() -> void:
+	for spec in [["tinker", "MOVE", ""], ["seamstress", "SWAP", "stitched_badge"]]:
+		await _one_scrap_case(spec[0], spec[1], spec[2])
+
+
+func _one_scrap_case(target: String, kind: String, exchanged: String) -> void:
+	var f := _fixture(1)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.w
+	var t: RunTornMending = f.t
+	var snapshot: Dictionary = w.get_snapshot()
+	var torn_before: Dictionary = t.read_state()
+	_check(snapshot.scraps == 1, "one-scrap fixture really holds exactly one scrap")
+	root.size = Vector2i(1280, 720)
+	root.gui_embed_subwindows = true
+	var picker := LiveRestPatchResewPicker.new()
+	root.add_child(picker)
+	picker.size = Vector2(1280, 720)
+	await _frames()
+	_check(picker.present(w, t, snapshot, f.rest), "one-scrap Rest mounts the eligible picker")
+	await _frames()
+	var source_index := -1
+	for i in range(picker._sources.size()):
+		if picker._sources[i].patch_id == "button_eye" \
+				and picker._sources[i].from_hero == "warden":
+			source_index = i
+	_check(source_index >= 0, "one-scrap picker offers the worn Button Eye")
+	if source_index < 0:
+		picker.free()
+		await _frames()
+		return
+	await _pick(picker._source_buttons[source_index], false)
+	var destination_index := -1
+	for i in range(picker._destinations.size()):
+		if picker._destinations[i].to_hero == target:
+			destination_index = i
+	_check(destination_index >= 0, "one-scrap picker offers the " + target + " recipient")
+	if destination_index < 0:
+		picker.free()
+		await _frames()
+		return
+	await _pick(picker._destination_buttons[destination_index], false)
+	var chosen: Dictionary = picker.selected_option()
+	var preview: String = picker.preview_label.text
+	_check(chosen.get("kind") == kind and chosen.get("exchanged_id") == exchanged
+		and chosen.get("cost") == 1, "one-scrap selection binds the real " + kind + " option")
+	_check(preview.contains("Scraps 1 → 0") and preview.contains("Cost: 1 scrap")
+		and preview.contains("Warden BEFORE") and preview.contains("AFTER")
+		and preview.contains(str(target).capitalize() + " BEFORE"),
+		"one-scrap " + kind + " preview visibly quotes 1 -> 0 with both wearers")
+	if kind == "SWAP":
+		_check(preview.contains("swap with Stitched Badge"),
+			"one-scrap SWAP keeps the exchanged patch name")
+	var repeated: String = preview
+	picker._update_preview()
+	picker._choose_destination(destination_index)
+	await _frames()
+	_check(picker.preview_label.text == repeated and w.get_snapshot() == snapshot
+		and t.read_state() == torn_before,
+		"repeated one-scrap selection and preview spend nothing")
+	var accepted := []
+	picker.re_sew_requested.connect(func(patch, source, dest, node, exact):
+		accepted.append([patch, source, dest, node, exact])
+		accepted.append(w.re_sew(patch, source, dest, node,
+			"boundary_" + kind.to_lower(), exact)))
+	picker.confirm_button.grab_focus()
+	await _key(KEY_ENTER)
+	var after: Dictionary = w.get_snapshot()
+	var projected: Dictionary = snapshot.worn.duplicate(true)
+	projected["warden"]["HEAD"] = snapshot.worn[target]["HEAD"]
+	projected[target]["HEAD"] = "button_eye"
+	_check(accepted.size() == 2
+		and accepted[0] == ["button_eye", "warden", target, f.rest, snapshot]
+		and accepted[1].get("ok") == true,
+		"one accepted Confirm carries exact ids once to the run-owner ledger")
+	_check(after.scraps == 0 and after.worn == projected
+		and after.heroes == snapshot.heroes and after.cards == snapshot.cards
+		and after.gold == snapshot.gold and after.owned == snapshot.owned
+		and after.seed == snapshot.seed,
+		"owner commits the " + kind
+		+ " at one scrap: 0 left, exact slot change, no heal/upgrade/stitch")
+	_check(t.read_state() == torn_before
+		and after.operation_ids.size() == snapshot.operation_ids.size() + 1
+		and after.operation_ids.slice(0, -1) == snapshot.operation_ids,
+		"one-scrap re-sew appends a single operation without touching torn state or seed")
+	_check(picker._pending and picker.confirm_button.disabled, "boundary confirm latches once")
+	picker._request_selected()
+	_check(w.get_snapshot() == after, "repeated boundary confirm cannot charge a second scrap")
 	picker.free()
 	await _frames()
 
@@ -549,6 +654,16 @@ func _deny_test() -> void:
 		and not RunRestPatchResewOptions.forecast(no_scrap.w, no_scrap.t,
 			no_scrap.w.get_snapshot(), no_scrap.rest, _option_unchecked(no_scrap,
 			"button_eye", "tinker")).ok, "zero-scrap Rest is not actionable")
+	var zero_picker := LiveRestPatchResewPicker.new()
+	root.add_child(zero_picker)
+	zero_picker.size = Vector2(1280, 720)
+	_check(not zero_picker.present(no_scrap.w, no_scrap.t,
+		no_scrap.w.get_snapshot(), no_scrap.rest)
+		and zero_picker.confirm_button.disabled
+		and zero_picker.preview_label.text == "No eligible re-sew choices"
+		and zero_picker.scraps_label.text == "Scraps: 0",
+		"zero-scrap mounted picker stays disabled with no actionable spend promise")
+	zero_picker.free()
 	var picker := LiveRestPatchResewPicker.new()
 	root.add_child(picker)
 	picker.size = Vector2(1280, 720)
@@ -571,7 +686,9 @@ func _deny_test() -> void:
 	picker._update_preview()
 	picker._request_selected()
 	_check(calls.is_empty() and picker.confirm_button.disabled
-		and picker.preview_label.text == "No eligible re-sew choices",
+		and picker.preview_label.text == "No eligible re-sew choices"
+		and not picker.preview_label.text.contains("Scraps ")
+		and not picker.preview_label.text.contains("Cost: 1 scrap"),
 		"stale picker loses actionable preview and cannot emit")
 	_check(w.get_snapshot() == moved, "stale request does not spend again")
 	picker.free()
@@ -1092,7 +1209,8 @@ func _run() -> void:
 	_torn_shop_test()
 	await _ui_test(KEY_SPACE)
 	await _ui_test(KEY_ENTER)
-	_deny_test()
+	await _one_scrap_boundary_tests()
+	await _deny_test()
 	for failure in failures:
 		printerr(failure)
 	print("rest_resew_effect_preview_test: ", "PASS" if failures.is_empty() else "FAIL",
