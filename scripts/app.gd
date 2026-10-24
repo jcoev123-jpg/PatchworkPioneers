@@ -4205,8 +4205,6 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_view.add_child(shop_buy_button)
 	shop_cards = OptionButton.new()
 	shop_cards.custom_minimum_size = Vector2(440, 48)
-	for card_id in run_deck:
-		shop_cards.add_item(card_id)
 	shop_view.add_child(shop_cards)
 	shop_remove_button = Button.new()
 	shop_remove_button.text = "Remove selected card"
@@ -4236,7 +4234,33 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 
 
 func _shop_offer_text(offer: Dictionary) -> String:
-	return "%s | %d gold%s" % [offer.id, offer.price, " | SOLD" if offer.sold else ""]
+	var definition := RunPoolCardRewardOffers.resolve_reward_definition(offer.id)
+	if definition.is_empty():
+		return ""
+	return "%s | %d gold%s" % [definition.display_name, offer.price, " | SOLD" if offer.sold else ""]
+
+
+func _shop_owned_text(index: int) -> String:
+	if index < 0 or index >= run_deck.size():
+		return ""
+	var card_id: String = run_deck[index]
+	var definition := RunRestStitchCards.resolve_card_definition(card_id)
+	if definition.is_empty():
+		var registry := RunRestStitchCards.new(run_deck, run_stitch_descriptors, 0, run_next_stitch_id)
+		if not registry.is_valid() or not run_stitch_descriptors.has(card_id):
+			return ""
+		definition = run_stitch_descriptors[card_id]
+	return "Deck #%d: %s" % [index + 1, definition.display_name]
+
+
+func _shop_owned_row_current(index: int) -> bool:
+	if not _current_shop_ledger() or not is_instance_valid(shop_cards) \
+		or index < 0 or index >= run_deck.size() or index >= shop_cards.item_count:
+		return false
+	var text := _shop_owned_text(index)
+	return not text.is_empty() and shop_cards.get_item_metadata(index) is String \
+		and shop_cards.get_item_metadata(index) == run_deck[index] \
+		and shop_cards.get_item_text(index) == text
 
 
 func _select_shop_offer(_index: int) -> void:
@@ -4266,7 +4290,8 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 	if index < 0 or index >= stock.size() or index >= shop_offers.item_count:
 		return
 	var offer: Dictionary = stock[index]
-	if offer.sold or session_gold < offer.price or shop_offers.get_item_metadata(index) != offer.id \
+	if offer.sold or session_gold < offer.price or _shop_offer_text(offer).is_empty() \
+		or not shop_offers.get_item_metadata(index) is String or shop_offers.get_item_metadata(index) != offer.id \
 		or shop_offers.get_item_text(index) != _shop_offer_text(offer):
 		return
 	if not _shop_patch_current():
@@ -4278,9 +4303,6 @@ func _buy_at_shop(visit: RunShopVisit, purchases: RunShopPurchases, button) -> v
 		return
 	run_deck.assign(result.state.deck)
 	session_gold = result.state.gold
-	shop_cards.clear()
-	for card_id in run_deck:
-		shop_cards.add_item(card_id)
 	_sync_shop_wardrobe()
 	_refresh_shop()
 
@@ -4303,9 +4325,9 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 		or state.trinkets != run_trinkets:
 		return
 	var index := shop_cards.selected
-	if index >= run_deck.size() or index >= shop_cards.item_count or shop_cards.get_item_text(index) != run_deck[index]:
+	if not _shop_owned_row_current(index):
 		return
-	var card_id: String = shop_cards.get_item_text(index)
+	var card_id: String = run_deck[index]
 	var expected := RunShopCardRemoval.try_remove_with_stitch_ledger(run_deck,
 		run_stitch_descriptors, run_next_stitch_id, session_gold, run_removal_count, card_id)
 	if shop_purchases == null or not shop_purchases.can_rebase_removal(state, expected, card_id):
@@ -4326,6 +4348,12 @@ func _remove_at_shop(visit: RunShopVisit, button) -> void:
 
 
 func _refresh_shop() -> void:
+	var owned_selected := shop_cards.selected
+	shop_cards.clear()
+	for index in range(run_deck.size()):
+		shop_cards.add_item(_shop_owned_text(index))
+		shop_cards.set_item_metadata(index, run_deck[index])
+	shop_cards.select(clampi(owned_selected, 0, run_deck.size() - 1) if not run_deck.is_empty() else -1)
 	shop_label.text = "Gold: %d | Removal: %d gold" % [session_gold, shop_visit.quote()]
 	shop_remove_button.disabled = not shop_visit.get_state().removal_available
 	shop_cards.disabled = shop_remove_button.disabled
@@ -4335,11 +4363,13 @@ func _refresh_shop() -> void:
 	for offer in stock:
 		shop_offers.add_item(_shop_offer_text(offer))
 		shop_offers.set_item_metadata(shop_offers.item_count - 1, offer.id)
+	selected = mini(selected, stock.size() - 1)
 	shop_offers.select(selected)
 	var ledger := shop_visit.get_state()
 	var valid_visit: bool = ledger.valid and ledger.status in ["available", "used"]
 	shop_offers.disabled = not valid_visit
-	shop_buy_button.disabled = not valid_visit or stock[selected].sold or session_gold < stock[selected].price
+	shop_buy_button.disabled = not valid_visit or selected < 0 or stock[selected].sold \
+		or session_gold < stock[selected].price or _shop_offer_text(stock[selected]).is_empty()
 	_refresh_shop_patches()
 
 

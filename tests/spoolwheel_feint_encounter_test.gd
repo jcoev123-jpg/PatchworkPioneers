@@ -213,9 +213,10 @@ func _fixture_ok(party: CombatParty, enemies: CombatEnemies, prefix: String) -> 
 	for i in range(2):
 		var enemy := enemies.get_enemy(i + 1)
 		var id: String = ["ragling", "ragling_guard"][i]
+		var art_path: String = "res://assets/paper/enemies/" + id + ".png"
 		_check(enemy["id"] == id and enemy["hp"] == 12 and enemy["max_hp"] == 12
 			and enemy["position"] == i + 1 and enemy["block"] == 0
-			and enemy["art_path"] == "res://assets/paper/enemies/ragling.png",
+			and enemy["art_path"] == art_path,
 			prefix + ": %s correct slot, art, HP and zero Block" % id)
 	return true
 

@@ -6,7 +6,7 @@ var fixture_gold := 500
 var fixture_count := 0
 
 
-func _prepare_shop_receipt(fixture: Dictionary, keyboard: bool) -> String:
+func _prepare_shop_receipt(fixture: Dictionary, keyboard: bool, upgrade: bool = false) -> String:
 	if not await _routed_win(fixture, false):
 		return ""
 	await _click(app.reward_buttons[3])
@@ -25,6 +25,22 @@ func _prepare_shop_receipt(fixture: Dictionary, keyboard: bool) -> String:
 		"connected Rest offers genuine funded stitch")
 	if app.rest_stitch == null or app.rest_stitch_button.disabled:
 		return ""
+	if upgrade:
+		var index: int = app.run_deck.find("warden_strike")
+		var row := -1
+		for item in range(app.rest_upgrade_cards.item_count):
+			if app.rest_upgrade_cards.get_item_metadata(item) == index:
+				row = item
+		_check(index >= 0 and row >= 0 and not app.rest_upgrade_button.disabled,
+			"real Rest offers the owned starter upgrade")
+		if row < 0:
+			return ""
+		app.rest_upgrade_cards.select(row)
+		await _click(app.rest_upgrade_button)
+		_check(app.run_deck[index] == "warden_strike_plus" and app.rest_upgrade.is_consumed(),
+			"real Rest commits authored plus card")
+		await _click(app.rest_continue_button)
+		return "warden_strike_plus"
 	var source: Dictionary = app._stitch_snapshot()
 	var first: int = app.run_deck.find("seamstress_prick")
 	var second: int = app.run_deck.find("tinker_pop_shot")
@@ -196,7 +212,14 @@ func _run() -> void:
 			app.shop_cards.select(0)
 			app.shop_cards.set_item_text(0, "stitched_999999")
 			_reject_shop([remove], "forged selected row")
-			app.shop_cards.set_item_text(0, app.run_deck[0])
+			app.shop_cards.set_item_text(0, app._shop_owned_text(0))
+			for index in range(app.run_deck.size()):
+				var id: String = app.run_deck[index]
+				var definition := RunRestStitchCards.resolve_card_definition(id)
+				var name: String = registry[id].display_name if id == stitched else definition.display_name
+				_check(app.shop_cards.get_item_text(index) == "Deck #%d: %s" % [index + 1, name]
+					and app.shop_cards.get_item_metadata(index) == id,
+					"genuine Rest composite and ordinary copies show canonical names with authentic IDs")
 			if not poor:
 				await _buy_stitch_shop(0, keyboard)
 			var target: String = "warden_strike" if keyboard else stitched
@@ -267,6 +290,32 @@ func _run() -> void:
 				and app.deck != null and app.deck.hand.size() == 5, "connected battle admits surviving stitched ledger through real route")
 			_reject_shop(stale, "old Shop callbacks in later battle")
 			await _click(app.return_button)
+	if not fixture.is_empty():
+		fixture_gold = 500
+		fixture_count = 0
+		var upgraded := await _prepare_shop_receipt(fixture, false, true)
+		_check(upgraded == "warden_strike_plus", "upgraded Shop fixture earned its plus through Rest")
+		if not upgraded.is_empty():
+			await _click(_route_action(fixture.shop))
+			_check(app.shop_visit != null and app._current_shop_ledger(), "upgraded deck mounts genuine Shop")
+			if app.shop_visit != null:
+				var row: int = app.run_deck.find(upgraded)
+				var definition := RunRestStitchCards.resolve_card_definition(upgraded)
+				_check(row >= 0 and not definition.is_empty() and definition.display_name.ends_with("+")
+					and app.shop_cards.get_item_text(row) == "Deck #%d: %s" % [row + 1, definition.display_name]
+					and app.shop_cards.get_item_metadata(row) == upgraded, "owned plus uses canonical name and original ID")
+				await _select_shop_row("removal", row, true)
+				var expected: Array = app.run_deck.duplicate()
+				expected.remove_at(row)
+				app.shop_remove_button.grab_focus()
+				await _key(KEY_ENTER)
+				_check(app.run_deck == expected and app.session_gold == 425 and app.run_removal_count == 1
+					and app._current_shop_ledger(), "keyboard removes exact upgraded ID for one canonical debit")
+				for index in range(app.run_deck.size()):
+					_check(app.shop_cards.get_item_metadata(index) == app.run_deck[index]
+						and app.shop_cards.get_item_text(index) == "Deck #%d: %s" % [index + 1,
+							RunRestStitchCards.resolve_card_definition(app.run_deck[index]).display_name],
+						"paid removal rebuilds canonical labels and metadata for remaining occurrences")
 	app.free()
 	await _frames()
 	for failure in failures:

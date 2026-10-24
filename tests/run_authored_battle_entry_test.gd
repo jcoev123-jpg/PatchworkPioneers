@@ -43,7 +43,7 @@ const NAMES := {
 }
 const ART_PATHS := {
     "ragling": "res://assets/paper/enemies/ragling.png",
-    "ragling_guard": "res://assets/paper/enemies/ragling.png",
+    "ragling_guard": "res://assets/paper/enemies/ragling_guard.png",
     "fray_scavenger": "res://assets/paper/enemies/fray_scavenger.png",
     "spool_stalker": "res://assets/paper/enemies/spool_stalker.png",
     "button_guard": "res://assets/paper/enemies/button_guard.png",
@@ -1312,7 +1312,7 @@ func _test_m04_elite_pool_bindings() -> void:
         ["res://data/enemies/m04_elites.json", "spool_hexer", "Spool Hexer", 24,
             "res://assets/paper/enemies/spool_hexer.png"],
         ["res://data/enemies/starter_enemies.json", "ragling_guard", "Guard Ragling", 12,
-            "res://assets/paper/enemies/ragling.png"],
+            "res://assets/paper/enemies/ragling_guard.png"],
         ["res://data/enemies/run_enemies.json", "spool_stalker", "Spool Stalker", 14,
             "res://assets/paper/enemies/spool_stalker.png"],
     ]

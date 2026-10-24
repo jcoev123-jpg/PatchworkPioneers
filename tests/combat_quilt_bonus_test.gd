@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_switchback_positive()
 	_test_switchback_negative_and_reset()
 	_test_switchback_stitched_ordered()
+	_test_switchback_living_predecessor()
 	for failure in failures:
 		printerr(failure)
 	print("combat_quilt_bonus_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -696,3 +697,57 @@ func _test_switchback_stitched_ordered() -> void:
 		# Tinker's real play sets up a second eligible transition in forward
 		# order; reverse order has not consumed its entitlement yet.
 		_switchback_play(c, "seamstress_stitch_up", "later", "seamstress", 2 if reverse else 0, 3)
+
+
+## Switchback follows only a committed play by a DIFFERENT hero who is still
+## living when the wearer's follow-up commits. A predecessor downed by that same
+## play (a 3 HP Overclock) or downed before the follow-up cannot set it up.
+func _test_switchback_living_predecessor() -> void:
+	seed(60613)
+	var expected_global := randi()
+	seed(60613)
+	var c := _switchback_fixture("warden", ["tinker_overclock", "warden_brace",
+		"seamstress_stitch_up", "warden_brace"])
+	var rng_before: int = c.deck._rng.state
+	_check(c.party.apply_damage(3, 23) and c.party.get_hero(3).hp == 3 and not c.party.is_downed(3),
+		"Switchback fallen: real damage leaves Tinker at exactly 3 HP")
+	_check(CombatPoolEnergyCards.new().play_card(c.deck, c.party, "tinker_overclock")
+		and c.party.is_downed(3) and c.party.get_hero(3).hp == 0,
+		"Switchback fallen: legal committed Overclock downs its own 3 HP owner")
+	_check(c.deck.energy == 4 and c.deck.discard_pile == ["tinker_overclock"]
+		and c.deck.hand.count("warden_brace") == 2 and c.deck.hand.has("seamstress_stitch_up"),
+		"Switchback fallen: authentic Overclock gains one energy and discards once")
+	_switchback_observe(c, "overclock", "tinker", 0)
+	_check(c.quilt.get_switchback_state().prev_owner == "tinker"
+		and not c.quilt.get_switchback_state().consumed,
+		"Switchback fallen: downed owner receipt is recorded but earns nothing")
+	_switchback_play(c, "warden_brace", "brace_after_fallen", "warden", 0)
+	_check(_blocks(c.party) == {"warden": 7, "seamstress": 0, "tinker": 0}
+		and c.deck.energy == 3 and c.deck.discard_pile == ["tinker_overclock", "warden_brace"]
+		and c.deck._rng.state == rng_before,
+		"Switchback fallen: Brace grants exactly its printed 7 (never 9) with honest payment and RNG")
+	_check(not c.quilt.get_switchback_state().consumed
+		and c.quilt.get_switchback_state().prev_owner == "warden",
+		"Switchback fallen: no ineligible predecessor spends the once-per-turn entitlement")
+	# The unspent entitlement still rewards a play that genuinely follows a
+	# living, different hero once the wearer commits after her.
+	_switchback_play(c, "seamstress_stitch_up", "living_setup", "seamstress", 0, 1)
+	_switchback_play(c, "warden_brace", "brace_after_living", "warden", 2)
+	_check(_blocks(c.party) == {"warden": 21, "seamstress": 0, "tinker": 0}
+		and c.quilt.get_switchback_state().consumed,
+		"Switchback fallen: a still-living Seamstress then grants the exact +2 once")
+
+	# A predecessor who was living at her commit but falls before the follow-up
+	# is equally ineligible.
+	c = _switchback_fixture("warden", ["seamstress_stitch_up", "warden_brace"])
+	_switchback_play(c, "seamstress_stitch_up", "setup_before_fall", "seamstress", 0, 3)
+	_check(c.party.get_hero(2).hp == 30 and not c.party.is_downed(2),
+		"Switchback fallen: living Seamstress committed the setup play")
+	_check(c.party.apply_damage(2, 30) and c.party.is_downed(2),
+		"Switchback fallen: real damage downs the predecessor before the follow-up")
+	_switchback_play(c, "warden_brace", "brace_after_fall", "warden", 0)
+	_check(_blocks(c.party) == {"warden": 7, "seamstress": 0, "tinker": 5}
+		and not c.quilt.get_switchback_state().consumed
+		and c.quilt.get_switchback_state().prev_owner == "warden",
+		"Switchback fallen: fallen predecessor still gives only printed 7 and leaves the latch unspent")
+	_check(randi() == expected_global, "Switchback fallen: rejected transitions preserve global RNG")

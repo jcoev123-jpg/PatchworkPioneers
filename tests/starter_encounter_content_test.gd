@@ -1,5 +1,9 @@
 extends SceneTree
 
+## Read-only live roster resolver: the authored idle art must agree with the same ID's
+## already-working puppet mapping, without mounting or changing the app.
+const ROSTER_ART := preload("res://scripts/live_enemy_roster.gd")
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -151,13 +155,41 @@ func _test_json_readable_and_entries() -> void:
 	_check(ragling_raw.get("name") == "Ragling", "ragling name is Ragling")
 	_check(ragling_raw.get("max_hp") == 12, "ragling max_hp is 12")
 	_check(ragling_raw.get("art_path") == "res://assets/paper/enemies/ragling.png",
-		"ragling art_path is authored placeholder")
+		"ragling art_path is its own shipped puppet image")
+	_check(FileAccess.file_exists("res://assets/paper/enemies/ragling.png"),
+		"ragling idle puppet image exists on disk")
 
 	_check(guard_raw.get("id") == "ragling_guard", "ragling_guard id correct")
 	_check(guard_raw.get("name") == "Guard Ragling", "ragling_guard name is Guard Ragling")
 	_check(guard_raw.get("max_hp") == 12, "ragling_guard max_hp is 12")
-	_check(guard_raw.get("art_path") == "res://assets/paper/enemies/ragling.png",
-		"ragling_guard art_path is authored placeholder")
+	_check(guard_raw.get("art_path") == "res://assets/paper/enemies/ragling_guard.png",
+		"ragling_guard art_path is its own shipped puppet image")
+	_check(ragling_raw.get("art_path") != guard_raw.get("art_path"),
+		"ragling and ragling_guard keep distinct authored art paths")
+	# Both already-shipped poses of the Guard must exist, or its idle/attack pairing is a lie.
+	_check(FileAccess.file_exists("res://assets/paper/enemies/ragling_guard.png"),
+		"ragling_guard idle puppet image exists on disk")
+	_check(FileAccess.file_exists("res://assets/paper/enemies/ragling_guard_attack.png"),
+		"ragling_guard attack puppet image exists on disk")
+
+	# AC2: the authored path agrees with the live roster's own ID-based static resolver,
+	# proven here without mounting or changing the app.
+	var guard_live: Dictionary = ROSTER_ART.art_paths("ragling_guard")
+	var ragling_live: Dictionary = ROSTER_ART.art_paths("ragling")
+	_check(guard_live.get("idle") == guard_raw.get("art_path"),
+		"ragling_guard authored art_path matches the live roster idle resolver")
+	_check(guard_live.get("attack") == "res://assets/paper/enemies/ragling_guard_attack.png",
+		"ragling_guard live roster attack companion is the paired _attack image")
+	_check(FileAccess.file_exists(String(guard_live.get("idle", ""))),
+		"ragling_guard resolved idle image exists on disk")
+	_check(FileAccess.file_exists(String(guard_live.get("attack", ""))),
+		"ragling_guard resolved attack image exists on disk")
+	_check(ragling_live.get("idle") == ragling_raw.get("art_path"),
+		"ragling authored art_path matches the live roster idle resolver")
+	_check(not ragling_live.is_empty() and not guard_live.is_empty()
+		and ragling_live.get("idle") != guard_live.get("idle")
+		and ragling_live.get("attack") != guard_live.get("attack"),
+		"live roster resolves distinct idle and attack assets for ragling and ragling_guard")
 
 	# Verify exactly-one-match: duplicate the required entry locally and observe failure.
 	var dup_ragling = _find_enemy_by_id(enemies_raw + [ragling_raw], "ragling")

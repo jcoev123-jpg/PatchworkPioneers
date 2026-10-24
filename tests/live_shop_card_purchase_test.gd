@@ -74,7 +74,8 @@ func _run() -> void:
 			_check(not seen.has(offer.id), "generated card offers are distinct")
 			seen[offer.id] = true
 			_check(offer.price == prices.get(offer.id) and not offer.sold
-				and app.shop_offers.get_item_text(index) == "%s | %d gold" % [offer.id, offer.price],
+				and app.shop_offers.get_item_metadata(index) == offer.id
+				and app.shop_offers.get_item_text(index) == "%s | %d gold" % [definition.display_name, offer.price],
 				"every quoted price matches authored unsold stock")
 		for control in [app.shop_view, app.shop_offers, app.shop_buy_button, app.shop_cards, app.shop_remove_button, app.shop_back_button]:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()),
@@ -184,6 +185,13 @@ func _run() -> void:
 				await _click(app.shop_buy_button)
 			_check(app.run_deck == expected_deck and app.session_gold == 200 - offer.price,
 				"funded Buy appends exactly selected card and charges exact price")
+			_check(app.shop_offers.selected == 1 and app.shop_offers.get_item_metadata(1) == offer.id
+				and app.shop_offers.get_item_text(1) == "%s | %d gold | SOLD" % [
+					RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name, offer.price]
+				and app.shop_cards.get_item_metadata(expected_deck.size() - 1) == offer.id
+				and app.shop_cards.get_item_text(expected_deck.size() - 1) == "Deck #%d: %s" % [
+					expected_deck.size(), RunPoolCardRewardOffers.resolve_reward_definition(offer.id).display_name],
+				"paid purchase retains offer selection, publishes SOLD and appends named owned row with exact metadata")
 			var expected_stock := stock.duplicate(true)
 			expected_stock.cards[1].sold = true
 			_check(purchases.get_stock() == expected_stock and purchases.get_state().deck == expected_deck
@@ -337,7 +345,8 @@ func _test_stocked_pool_buy(target: String) -> void:
 				await _select_tile_by_key(pool_tile)
 			_check(_purchase_state() == before, "pool tile selection alone spends nothing")
 			_check(not app.shop_buy_button.disabled and app.shop_offers.get_item_text(position) ==
-				"%s | %d gold" % [paid.id, paid.price], "real offer selection enables precisely quoted Buy")
+				"%s | %d gold" % [RunPoolCardRewardOffers.resolve_reward_definition(paid.id).display_name, paid.price]
+				and app.shop_offers.get_item_metadata(position) == paid.id, "real offer selection enables precisely quoted Buy")
 			if target == "warden":
 				await _click(app.shop_buy_button)
 			else:

@@ -22,12 +22,14 @@ signal back_requested
 const BASE_BACKDROP := "res://assets/paper/backgrounds/base_village.png"
 const DESIGN_SIZE := Vector2(1280.0, 720.0)
 ## The Heroes house's pinned Path board sits below it, clear of the Camp tent.
-const HEROES_PANEL_RECT := Rect2(96, 396, 352, 212)
+const HEROES_PANEL_RECT := Rect2(96, 392, 352, 218)
 ## The Tinker's own pinned board sits beside the Seamstress one, in the same lower
 ## band: it never covers the Seamstress board, the buildings or the sewn actions.
-const TINKER_PANEL_RECT := Rect2(472, 396, 336, 212)
-const WARDEN_PANEL_RECT := Rect2(832, 396, 352, 212)
+const TINKER_PANEL_RECT := Rect2(472, 392, 336, 218)
+const WARDEN_PANEL_RECT := Rect2(832, 392, 352, 218)
 const WARDEN_SLATE := Color("#4a5d73")
+## Dark slate ink for Warden text on the sewn bone paper board.
+const WARDEN_INK := Color("#33404f")
 const WARDEN_BONE := Color("#d9cfb8")
 const WARDEN_RUST := Color("#a4552f")
 const INK := Color("#2b3135")
@@ -37,6 +39,15 @@ const MATTE := Color("#414c48")
 const PIN_PAPER := Color("#f3e8cd")
 const PIN_THREAD := Color("#85715b")
 const LABEL_FONT_SIZE := 18
+## VIS V6 display hierarchy. The shipped Theme supplies the faces
+## (PatchTitle = Londrina Solid Black, PatchHeading = Londrina Solid Regular);
+## these are the sizes the village asks for, keeping body text at 18 px or more.
+const TITLE_SIZE := 42
+const PATH_HEADING_SIZE := 22
+const HINT_SIZE := 18
+const STATUS_SIZE := 18
+## A Path option keeps its 18 px caption and still fits its pinned paper board.
+const PATH_OPTION_HEIGHT := 36.0
 
 var set_out_button: Button
 var back_button: Button
@@ -283,7 +294,7 @@ func present_path_options(options: Variant) -> bool:
 			_path_previews[option_id] = preview
 			tooltip = String(preview["tooltip"])
 		button.tooltip_text = tooltip
-		button.custom_minimum_size = Vector2(0, 40)
+		button.custom_minimum_size = Vector2(0, PATH_OPTION_HEIGHT)
 		button.add_theme_font_size_override("font_size", 18)
 		button.set_meta("path_id", option_id)
 		button.pressed.connect(_on_path_pressed.bind(option_id))
@@ -423,7 +434,7 @@ func present_tinker_path_options(options: Variant) -> bool:
 			_tinker_previews[option_id] = preview
 			tooltip = String(preview["tooltip"])
 		button.tooltip_text = tooltip
-		button.custom_minimum_size = Vector2(0, 40)
+		button.custom_minimum_size = Vector2(0, PATH_OPTION_HEIGHT)
 		button.add_theme_font_size_override("font_size", 18)
 		button.set_meta("path_id", option_id)
 		button.pressed.connect(_on_tinker_path_pressed.bind(option_id))
@@ -549,7 +560,7 @@ func present_warden_path_options(options: Variant) -> bool:
 		button.name = "WardenPathChoice_" + path_id
 		button.text = String(option["display_name"])
 		button.set_meta("path_id", path_id)
-		button.custom_minimum_size = Vector2(0, 40)
+		button.custom_minimum_size = Vector2(0, PATH_OPTION_HEIGHT)
 		button.add_theme_font_size_override("font_size", 18)
 		_style_warden_button(button)
 		var preview := VillagePathPreview.warden(option)
@@ -745,6 +756,7 @@ func _build_top_strip() -> void:
 	back_button.name = "BackButton"
 	back_button.text = "Back to title"
 	back_button.custom_minimum_size = Vector2(200, 40)
+	back_button.add_theme_font_size_override("font_size", 18)
 	back_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	back_button.tooltip_text = "Return to the title"
 	back_button.pressed.connect(_on_back_pressed)
@@ -754,8 +766,10 @@ func _build_top_strip() -> void:
 	village_title_label = Label.new()
 	village_title_label.name = "VillageTitle"
 	village_title_label.text = "Quilt village"
+	# The master Theme's display title face, at a size the compact strip can carry.
+	village_title_label.theme_type_variation = &"PatchTitle"
 	village_title_label.add_theme_color_override("font_color", INK)
-	village_title_label.add_theme_font_size_override("font_size", 30)
+	village_title_label.add_theme_font_size_override("font_size", TITLE_SIZE)
 	village_title_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(village_title_label)
 
@@ -792,43 +806,47 @@ func _build_heroes_choice() -> void:
 	paper.set_corner_radius_all(6)
 	paper.content_margin_left = 14.0
 	paper.content_margin_right = 14.0
-	paper.content_margin_top = 10.0
-	paper.content_margin_bottom = 10.0
+	paper.content_margin_top = 8.0
+	paper.content_margin_bottom = 8.0
 	panel.add_theme_stylebox_override("panel", paper)
 	panel.visible = false
 	add_child(panel)
 
 	var column := VBoxContainer.new()
 	column.name = "HeroesColumn"
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", 4)
 	panel.add_child(column)
 
 	var heading := Label.new()
 	heading.name = "HeroesHeading"
 	heading.text = "Heroes · Seamstress Path"
+	heading.theme_type_variation = &"PatchHeading"
 	heading.add_theme_color_override("font_color", INK)
-	heading.add_theme_font_size_override("font_size", 20)
+	heading.add_theme_font_size_override("font_size", PATH_HEADING_SIZE)
 	column.add_child(heading)
 
 	path_hint_label = Label.new()
 	path_hint_label.name = "PathHint"
 	path_hint_label.text = "Choose one Path for this run"
 	path_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	path_hint_label.add_theme_color_override("font_color", Color("#5a5346"))
-	path_hint_label.add_theme_font_size_override("font_size", 14)
+	path_hint_label.add_theme_color_override("font_color", Color("#4a4438"))
+	path_hint_label.add_theme_font_size_override("font_size", HINT_SIZE)
 	column.add_child(path_hint_label)
 
 	path_option_box = VBoxContainer.new()
 	path_option_box.name = "PathOptions"
-	path_option_box.add_theme_constant_override("separation", 6)
+	path_option_box.add_theme_constant_override("separation", 4)
 	column.add_child(path_option_box)
 
 	path_status_label = Label.new()
 	path_status_label.name = "PathStatus"
 	path_status_label.text = "No Path chosen yet"
 	path_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	path_status_label.add_theme_color_override("font_color", Color("#3f5a3a"))
-	path_status_label.add_theme_font_size_override("font_size", 15)
+	# The confirmed line sits on the board's lower edge, level with its siblings.
+	path_status_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	path_status_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	path_status_label.add_theme_color_override("font_color", Color("#33502f"))
+	path_status_label.add_theme_font_size_override("font_size", STATUS_SIZE)
 	column.add_child(path_status_label)
 
 
@@ -850,43 +868,46 @@ func _build_tinker_choice() -> void:
 	paper.set_corner_radius_all(6)
 	paper.content_margin_left = 14.0
 	paper.content_margin_right = 14.0
-	paper.content_margin_top = 10.0
-	paper.content_margin_bottom = 10.0
+	paper.content_margin_top = 8.0
+	paper.content_margin_bottom = 8.0
 	panel.add_theme_stylebox_override("panel", paper)
 	panel.visible = false
 	add_child(panel)
 
 	var column := VBoxContainer.new()
 	column.name = "TinkerColumn"
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", 4)
 	panel.add_child(column)
 
 	var heading := Label.new()
 	heading.name = "TinkerHeading"
 	heading.text = "Heroes · Tinker Path"
+	heading.theme_type_variation = &"PatchHeading"
 	heading.add_theme_color_override("font_color", INK)
-	heading.add_theme_font_size_override("font_size", 20)
+	heading.add_theme_font_size_override("font_size", PATH_HEADING_SIZE)
 	column.add_child(heading)
 
 	tinker_hint_label = Label.new()
 	tinker_hint_label.name = "TinkerPathHint"
 	tinker_hint_label.text = "Choose one Tinker Path for this run"
 	tinker_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tinker_hint_label.add_theme_color_override("font_color", Color("#5a5346"))
-	tinker_hint_label.add_theme_font_size_override("font_size", 14)
+	tinker_hint_label.add_theme_color_override("font_color", Color("#4a4438"))
+	tinker_hint_label.add_theme_font_size_override("font_size", HINT_SIZE)
 	column.add_child(tinker_hint_label)
 
 	tinker_option_box = VBoxContainer.new()
 	tinker_option_box.name = "TinkerPathOptions"
-	tinker_option_box.add_theme_constant_override("separation", 6)
+	tinker_option_box.add_theme_constant_override("separation", 4)
 	column.add_child(tinker_option_box)
 
 	tinker_status_label = Label.new()
 	tinker_status_label.name = "TinkerPathStatus"
 	tinker_status_label.text = "No Tinker Path chosen yet"
 	tinker_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tinker_status_label.add_theme_color_override("font_color", Color("#3f5a3a"))
-	tinker_status_label.add_theme_font_size_override("font_size", 15)
+	tinker_status_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tinker_status_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	tinker_status_label.add_theme_color_override("font_color", Color("#33502f"))
+	tinker_status_label.add_theme_font_size_override("font_size", STATUS_SIZE)
 	column.add_child(tinker_status_label)
 
 
@@ -907,45 +928,48 @@ func _build_warden_choice() -> void:
 	paper.set_corner_radius_all(6)
 	paper.content_margin_left = 14.0
 	paper.content_margin_right = 14.0
-	paper.content_margin_top = 10.0
-	paper.content_margin_bottom = 10.0
+	paper.content_margin_top = 8.0
+	paper.content_margin_bottom = 8.0
 	panel.add_theme_stylebox_override("panel", paper)
 	panel.visible = false
 	add_child(panel)
 
 	var column := VBoxContainer.new()
 	column.name = "WardenColumn"
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", 4)
 	panel.add_child(column)
 
 	var heading := Label.new()
 	heading.name = "WardenHeading"
 	heading.text = "Heroes · Warden Path"
+	heading.theme_type_variation = &"PatchHeading"
 	heading.add_theme_color_override("font_color", INK)
-	heading.add_theme_font_size_override("font_size", 20)
+	heading.add_theme_font_size_override("font_size", PATH_HEADING_SIZE)
 	column.add_child(heading)
 
 	warden_hint_label = Label.new()
 	warden_hint_label.name = "WardenPathHint"
 	warden_hint_label.text = "Choose one Warden Path for this run"
-	warden_hint_label.clip_text = true
-	warden_hint_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	warden_hint_label.add_theme_color_override("font_color", WARDEN_SLATE)
-	warden_hint_label.add_theme_font_size_override("font_size", 16)
+	# The authored preview hint is the full sentence: wrap it inside the paper
+	# board instead of clipping it away behind the option buttons.
+	warden_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	warden_hint_label.add_theme_color_override("font_color", WARDEN_INK)
+	warden_hint_label.add_theme_font_size_override("font_size", HINT_SIZE)
 	column.add_child(warden_hint_label)
 
 	warden_option_box = VBoxContainer.new()
 	warden_option_box.name = "WardenPathOptions"
-	warden_option_box.add_theme_constant_override("separation", 6)
+	warden_option_box.add_theme_constant_override("separation", 4)
 	column.add_child(warden_option_box)
 
 	warden_status_label = Label.new()
 	warden_status_label.name = "WardenPathStatus"
 	warden_status_label.text = "No Warden Path chosen yet"
 	warden_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	warden_status_label.max_lines_visible = 2
-	warden_status_label.add_theme_color_override("font_color", WARDEN_SLATE)
-	warden_status_label.add_theme_font_size_override("font_size", 16)
+	warden_status_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	warden_status_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	warden_status_label.add_theme_color_override("font_color", WARDEN_INK)
+	warden_status_label.add_theme_font_size_override("font_size", STATUS_SIZE)
 	column.add_child(warden_status_label)
 
 
@@ -991,6 +1015,8 @@ func _build_actions() -> void:
 	set_out_button.name = "SetOutButton"
 	set_out_button.text = "Set out"
 	set_out_button.custom_minimum_size = Vector2(380, 72)
+	# The master Theme's display heading face, still far above the 18 px body floor.
+	set_out_button.theme_type_variation = &"PatchHeadingButton"
 	set_out_button.add_theme_font_size_override("font_size", 30)
 	set_out_button.tooltip_text = "Choose this run's opening route"
 	set_out_button.pressed.connect(_on_set_out_pressed)

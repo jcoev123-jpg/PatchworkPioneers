@@ -1,6 +1,11 @@
 extends SceneTree
 ## Standalone view-only Warden Path offers, sourced from the shipped catalog.
 const WARDEN_DATA := "res://data/heroes/warden_paths.json"
+## The App's shared Theme builder and the two shipped display faces the village must wear.
+const SHELL_SCRIPT := "res://scripts/patchwork_ui_shell.gd"
+const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 var failures: Array[String] = []
 var checks := 0
 var requests: Array[String] = []
@@ -162,6 +167,195 @@ func _button(view: BaseScreen, id: String) -> Button:
 	return null
 
 
+## The real Theme the App installs under its children: the title shell duplicates
+## the master Theme and adds the sewn button states and display faces.
+func _shared_theme() -> Theme:
+	var shell: Control = load(SHELL_SCRIPT).new()
+	var shared: Theme = shell._build_theme()
+	shell.free()
+	return shared
+
+
+func _channel_luminance(value: float) -> float:
+	return value / 12.92 if value <= 0.03928 else pow((value + 0.055) / 1.055, 2.4)
+
+
+func _luminance(color: Color) -> float:
+	return 0.2126 * _channel_luminance(color.r) + 0.7152 * _channel_luminance(color.g) \
+		+ 0.0722 * _channel_luminance(color.b)
+
+
+## WCAG-style contrast ratio between text ink and the paper it is sewn onto.
+func _contrast(ink: Color, paper: Color) -> float:
+	var first := _luminance(ink)
+	var second := _luminance(paper)
+	return (maxf(first, second) + 0.05) / (minf(first, second) + 0.05)
+
+
+func _option_button(buttons: Array, path_id: String) -> Button:
+	for button in buttons:
+		if is_instance_valid(button) and String(button.get_meta("path_id", "")) == path_id:
+			return button
+	return null
+
+
+func _preview(owner: String, option: Dictionary) -> Dictionary:
+	if owner == "seamstress":
+		return VillagePathPreview.seamstress(option)
+	if owner == "tinker":
+		return VillagePathPreview.tinker(option)
+	return VillagePathPreview.warden(option)
+
+
+func _overlaps_any(label: Label, buttons: Array) -> bool:
+	var rect := label.get_global_rect()
+	for button in buttons:
+		if is_instance_valid(button) and rect.intersects(button.get_global_rect()):
+			return true
+	return false
+
+
+## The confirmed-Path line the board must show for one authored option.
+func _selected_line(option: Dictionary) -> String:
+	return "Selected: %s · card %s" % [String(option["display_name"]), String(option["card_name"])]
+
+
+## AC1/AC2/AC3: the real village, mounted under the App's shared Theme, keeps a
+## legible display hierarchy without losing any authored hint, name or card.
+func _typography_case(offered: Array) -> void:
+	var shared := _shared_theme()
+	if shared == null:
+		_check(false, "the App's shared display Theme is available")
+		return
+	_check(shared.get_type_variation_base("PatchTitle") == &"Label"
+		and shared.get_type_variation_base("PatchHeading") == &"Label"
+		and shared.get_type_variation_base("PatchHeadingButton") == &"Button"
+		and (shared.get_font("font", "PatchTitle") as Font).resource_path == TITLE_FONT
+		and (shared.get_font("font", "PatchHeading") as Font).resource_path == HEADING_FONT,
+		"the App's shared Theme really authors the shipped Patch display faces")
+	var view := BaseScreen.new()
+	view.theme = shared
+	root.add_child(view)
+	view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	await process_frame
+	view.set_out_requested.connect(_on_set_out)
+	var seam_offers := _sibling_options(RunSeamstressPathChoice.new().get_paths())
+	var tink_offers := _sibling_options(RunTinkerPathChoice.new().get_offers())
+	_check(view.open_village(2, 5) and view.present_path_options(seam_offers)
+		and view.present_tinker_path_options(tink_offers)
+		and view.present_warden_path_options(offered),
+		"the shared-Theme village mounts all three real Path boards")
+	await process_frame
+	await process_frame
+	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	var title := view.village_title_label
+	var title_font := title.get_theme_font("font")
+	var strip := view.find_child("TopStrip", true, false) as PanelContainer
+	_check(title.theme_type_variation == &"PatchTitle" and title_font != null
+		and title_font.resource_path == TITLE_FONT
+		and title_font.resource_path == (shared.get_font("font", "PatchTitle") as Font).resource_path
+		and title.get_theme_font_size("font_size") >= 40
+		and title.get_theme_font_size("font_size") <= 44
+		and strip != null and strip.get_global_rect().encloses(title.get_global_rect())
+		and _contrast(title.get_theme_color("font_color"),
+			strip.get_theme_stylebox("panel").bg_color) >= 4.5,
+		"AC1: 'Quilt village' is the master Londrina Black PatchTitle at 40-44 px, dark on its paper strip")
+	var boards: Array = [
+		{"tag": "Seamstress", "owner": "seamstress", "panel": view.path_panel,
+			"heading": "HeroesHeading", "hint": view.path_hint_label,
+			"status": view.path_status_label, "buttons": view.path_buttons, "options": seam_offers},
+		{"tag": "Tinker", "owner": "tinker", "panel": view.tinker_panel,
+			"heading": "TinkerHeading", "hint": view.tinker_hint_label,
+			"status": view.tinker_status_label, "buttons": view.tinker_buttons, "options": tink_offers},
+		{"tag": "Warden", "owner": "warden", "panel": view.warden_panel,
+			"heading": "WardenHeading", "hint": view.warden_hint_label,
+			"status": view.warden_status_label, "buttons": view.warden_buttons, "options": offered},
+	]
+	for board in boards:
+		var tag := String(board["tag"])
+		var panel: PanelContainer = board["panel"]
+		var paper: Color = panel.get_theme_stylebox("panel").bg_color
+		var heading := panel.find_child(String(board["heading"]), true, false) as Label
+		var heading_font: Font = heading.get_theme_font("font") if heading != null else null
+		_check(heading != null and heading.theme_type_variation == &"PatchHeading"
+			and heading_font != null and heading_font.resource_path == HEADING_FONT
+			and heading_font.resource_path == (shared.get_font("font", "PatchHeading") as Font).resource_path
+			and heading.get_theme_font_size("font_size") >= 22
+			and heading.get_theme_font_size("font_size") <= 24
+			and panel.get_global_rect().encloses(heading.get_global_rect()),
+			"AC1: the %s board heading is the Londrina PatchHeading face at 22-24 px" % tag)
+		var hint: Label = board["hint"]
+		var status: Label = board["status"]
+		for label: Label in [hint, status]:
+			_check(label.get_theme_font_size("font_size") >= 18
+				and not label.clip_text and label.autowrap_mode != TextServer.AUTOWRAP_OFF
+				and (label.get_theme_font("font") as Font).resource_path == BODY_FONT
+				and _contrast(label.get_theme_color("font_color"), paper) >= 4.5
+				and panel.get_global_rect().encloses(label.get_global_rect()),
+				"AC2: %s hint/status is dark sewn ink in the Patrick Hand body at 18 px or more" % tag)
+		for option in board["options"]:
+			var option_id := String(option["id"])
+			var button := _option_button(board["buttons"], option_id)
+			var preview := _preview(String(board["owner"]), option)
+			_check(button != null and button.is_visible_in_tree() and not preview.is_empty(),
+				"AC2: %s %s really offers its authored preview" % [tag, option_id])
+			if button == null:
+				continue
+			button.grab_focus()
+			await process_frame
+			await process_frame
+			_check(hint.text == String(preview.get("hint", ""))
+				and hint.get_line_count() >= 1
+				and hint.get_visible_line_count() == hint.get_line_count()
+				and panel.get_global_rect().encloses(hint.get_global_rect())
+				and not _overlaps_any(hint, board["buttons"])
+				and button.tooltip_text.contains("PASSIVE: ")
+				and button.tooltip_text.contains("CARD: "),
+				"AC2: %s %s keeps its whole focused hint on the board and its full rule in the tooltip"
+					% [tag, option_id])
+		var chosen: Dictionary = board["options"][0]
+		# The longest authored name/card line is the worst case for the status label.
+		for option in board["options"]:
+			if _selected_line(option).length() > _selected_line(chosen).length():
+				chosen = option
+		var chosen_id := String(chosen["id"])
+		var chosen_name := String(chosen["display_name"])
+		var marked := false
+		if board["owner"] == "seamstress":
+			marked = view.mark_path_selected(chosen_id, chosen_name)
+		elif board["owner"] == "tinker":
+			marked = view.mark_tinker_path_selected(chosen_id, chosen_name)
+		else:
+			marked = view.mark_warden_path_selected(chosen_id, chosen_name)
+		await process_frame
+		_check(marked and status.is_visible_in_tree()
+			and status.text == _selected_line(chosen)
+			and status.get_visible_line_count() == status.get_line_count()
+			and panel.get_global_rect().encloses(status.get_global_rect())
+			and status.get_theme_font_size("font_size") >= 18,
+			"AC2: %s keeps the confirmed Path name and its card readable at 18 px" % tag)
+	_check(view.selected_path_id() != "" and view.selected_tinker_path_id() != ""
+		and view.selected_warden_path_id() != "",
+		"AC3: all three independent Path boards keep their own confirmed pick")
+	_check(view.set_out_button.theme_type_variation == &"PatchHeadingButton"
+		and view.set_out_button.get_theme_font_size("font_size") >= 18
+		and view.find_child("SetOutButton", true, false) == view.set_out_button
+		and view.set_out_button.has_focus()
+		and viewport.encloses(view.set_out_button.get_global_rect()),
+		"AC1: the real Set out action keeps its PatchHeadingButton face, viewport fit and keyboard focus")
+	var focus_style := view.set_out_button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(focus_style != null and focus_style.border_width_top >= 3
+		and focus_style.border_color.a >= 0.99,
+		"AC1: Set out keeps a distinct opaque sewn keyboard-focus ring")
+	var set_out_before := set_out_count
+	view.set_out_button.pressed.emit()
+	_check(set_out_count == set_out_before + 1,
+		"AC1: Set out is still the real mounted control behind its own signal")
+	view.close_village()
+	view.free()
+	await process_frame
+
+
 func _focus_loop(view: BaseScreen) -> void:
 	var loop: Array[Button] = [view.back_button]
 	loop.append_array(view.path_buttons)
@@ -312,6 +506,7 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var offered := _authored_options()
 	if offered.size() >= 2:
+		await _typography_case(offered)
 		for option in offered:
 			await _fresh_case(option, offered, String(option["id"]) == "bulwark")
 	for failure in failures:
