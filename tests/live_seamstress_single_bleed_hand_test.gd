@@ -1037,6 +1037,442 @@ func _test_mounted_red_bobbin_cuff() -> void:
 	await _return()
 
 
+## ---------------------------------------------------------------------------
+## Genuine sewn HEAD/ARM Bleed: the mounted target strip must state the exact
+## amount the authoritative resolver will commit for the ACTUAL Seamstress.
+## The expectations below come from the authored card catalog, the authored
+## Bloodline passive record and the authored patch catalogs -- never from the
+## presenter that is being verified.
+## ---------------------------------------------------------------------------
+
+const BLEED_CARD_IDS := [
+	"seamstress_running_stitch", "seamstress_running_stitch_plus",
+	"seamstress_red_thread", "seamstress_red_thread_plus",
+]
+const HEM_CARD_IDS := ["seamstress_hemorrhage_hem", "seamstress_hemorrhage_hem_plus"]
+
+
+func _joined_positions(values: Array) -> String:
+	var parts: Array[String] = []
+	for value in values:
+		parts.append(str(value))
+	return ",".join(parts)
+
+
+func _expected_bloodline() -> int:
+	var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/seamstress_paths.json"))
+	_check(records is Array, "authored Seamstress Path catalog parses")
+	if not records is Array:
+		return 0
+	for entry in records:
+		if entry is Dictionary and entry.get("id") == "bloodline":
+			var passive: Variant = entry.get("passive")
+			_check(passive is Dictionary and passive.get("applies_to") == "seamstress"
+				and passive.get("kind") == "bleed_bonus" and passive.get("status") == "bleed"
+				and int(passive.get("value", 0)) == 1 and passive.get("stacks") == false,
+				"authored Bloodline passive is +1 Bleed on the Seamstress only")
+			return int(passive.get("value", 0)) if passive is Dictionary else 0
+	_check(false, "authored Bloodline Path record exists")
+	return 0
+
+
+func _authored_patch_bleed(patch_id: String) -> int:
+	if patch_id == "":
+		return 0
+	for path in ["res://data/patches/m05_head_patches.json",
+			"res://data/patches/m05_arm_support_patches.json"]:
+		var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		_check(records is Array, "authored M05 patch catalog parses: " + path)
+		if not records is Array:
+			continue
+		for entry in records:
+			if entry is Dictionary and entry.get("id") == patch_id:
+				_check(entry.get("effect") == "card_bleed_bonus"
+					and int(entry.get("amount", 0)) == 1,
+					"authored patch " + patch_id + " is +1 Bleed")
+				return int(entry.get("amount", 0))
+	_check(false, "authored patch record exists: " + patch_id)
+	return 0
+
+
+func _expected_strip(definition: Dictionary, applied: int) -> String:
+	var effects: Dictionary = definition.effects
+	var authored: int = int(effects.get("bleed", 0))
+	var summary := "Bleed %d (authored %d)" % [applied, authored]
+	if applied > authored:
+		summary = "Bleed %d (authored %d + %d passive/sewn)" % [
+			applied, authored, applied - authored]
+	var detail := ""
+	if effects.has("damage"):
+		detail = "%d damage; %s" % [int(effects.damage), summary]
+	else:
+		detail = "%s; Exposed %d" % [summary, int(effects.get("exposed", 0))]
+	return "%s | Cost %d | From %s | One living enemy %s\n%s" % [
+		str(definition.display_name), int(definition.cost),
+		_joined_positions(definition.from_positions),
+		_joined_positions(definition.to_positions), detail]
+
+
+func _expected_hem_strip(definition: Dictionary) -> String:
+	return "%s | Cost %d | From %s | One living enemy %s\n%s" % [
+		str(definition.display_name), int(definition.cost),
+		_joined_positions(definition.from_positions),
+		_joined_positions(definition.to_positions),
+		"Doubles the chosen enemy's CURRENT Bleed (no flat passive or sewn bonus; the preview shows N -> 2N)"]
+
+
+func _first_target(min_hp: int = 1) -> int:
+	for enemy in app.enemies.get_enemies():
+		if int(enemy.hp) >= min_hp:
+			return int(enemy.position)
+	return -1
+
+
+func _enter_connected_fight(label: String) -> Dictionary:
+	var fixture := _quick_fight_fixture()
+	_check(not fixture.is_empty(), label + ": found connected Fight fixture")
+	if fixture.is_empty():
+		return {"ok": false}
+	app.run_seed = fixture.seed
+	app.route_button.pressed.emit()
+	await _frames()
+	var first_btn := _route_action(fixture.fight)
+	_check(first_btn != null and not first_btn.disabled, label + ": opening fight button found")
+	if first_btn == null:
+		return {"ok": false}
+	first_btn.pressed.emit()
+	await _frames()
+	_check(app.deck != null and app.party.is_valid(), label + ": predecessor fight started")
+	if app.deck == null or app.party == null:
+		return {"ok": false}
+	for enemy in app.enemies.get_enemies():
+		app.enemies.apply_damage(enemy.position, 9999)
+	app._observe_battle_result()
+	await _frames()
+	var won: bool = app.battle_result.get_outcome() == CombatBattleResult.VICTORY
+	_check(won and app.reward_buttons.size() == 4, label + ": predecessor victory settled")
+	if not won or app.reward_buttons.size() != 4:
+		return {"ok": false}
+	app.reward_buttons[3].pressed.emit()
+	await _frames()
+	app.continue_button.pressed.emit()
+	await _frames()
+	_check(app.route_view != null and app.route_view.is_visible_in_tree()
+		and app.party_carryover is RunTornCarryover, label + ": connected route chooser open")
+	if app.route_view == null:
+		return {"ok": false}
+	return {"ok": true, "fixture": fixture}
+
+
+func _sew_wardrobe(head_id: String, arm_id: String, label: String) -> bool:
+	var definitions: Array[Dictionary] = []
+	for path in ["res://data/patches/m05_head_patches.json",
+			"res://data/patches/m05_arm_support_patches.json"]:
+		var records: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		_check(records is Array, label + ": M05 catalog parses: " + path)
+		if not records is Array:
+			return false
+		for entry in records:
+			if not entry is Dictionary:
+				continue
+			var slot: Variant = entry.get("slot")
+			if (slot == "HEAD" or slot == "ARM") and entry.get("id") is String:
+				definitions.append({"id": str(entry.id), "slot": str(slot)})
+	app.run_trinkets.clear()
+	for patch_id in [head_id, arm_id]:
+		if patch_id != "":
+			app.run_trinkets.append(patch_id)
+	var wardrobe := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets,
+		definitions, app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+	_check(wardrobe.is_valid(), label + ": real wardrobe accepts the authored patches")
+	if not wardrobe.is_valid():
+		return false
+	var expected := wardrobe.get_snapshot()
+	if head_id != "":
+		var sewn_head := wardrobe.sew(head_id, "seamstress", "HEAD",
+			"sew_head_" + head_id, expected)
+		expected = wardrobe.get_snapshot()
+		_check(sewn_head.ok, label + ": " + head_id + " really sewn on Seamstress HEAD")
+		if not sewn_head.ok:
+			return false
+	if arm_id != "":
+		var sewn_arm := wardrobe.sew(arm_id, "seamstress", "ARM",
+			"sew_arm_" + arm_id, expected)
+		expected = wardrobe.get_snapshot()
+		_check(sewn_arm.ok, label + ": " + arm_id + " really sewn on Seamstress ARM")
+		if not sewn_arm.ok:
+			return false
+	_check(expected.get("worn", {}).get("seamstress", {}).get("HEAD", "") == head_id
+		and expected.get("worn", {}).get("seamstress", {}).get("ARM", "") == arm_id,
+		label + ": the actual Seamstress carries the authored sewn slots")
+	var carry := app.party_carryover as RunTornCarryover
+	var bound: bool = carry != null and carry.can_bind_wardrobe(wardrobe, carry.torn, expected) and carry.bind_wardrobe(wardrobe, carry.torn, expected)
+	_check(bound, label + ": the sewn wardrobe binds to the live run carryover")
+	return bound
+
+
+func _enter_next_fight(fixture: Dictionary, label: String) -> bool:
+	var next_btn := _route_action(fixture.next_fight)
+	_check(next_btn != null and not next_btn.disabled, label + ": next fight button found")
+	if next_btn == null:
+		return false
+	next_btn.pressed.emit()
+	await _frames()
+	var ready: bool = app.route_view == null and app.battle_view.is_visible_in_tree() and app.party.is_valid() and app.deck != null
+	_check(ready, label + ": connected fight mounted with the sewn wardrobe")
+	return ready
+
+
+func _draw_card(id: String, label: String) -> bool:
+	app.deck.combat_state.energy = 3
+	app.deck.draw_pile.append(id)
+	_check(app.deck.draw_extra(1) == 1, label + ": real deck draws " + id)
+	app._refresh_hand()
+	await _frames()
+	var panel := _panel(id)
+	_check(panel != null and adapter._bindings.has(panel),
+		label + ": held " + id + " has one mounted input binding")
+	return panel != null
+
+
+func _release_card(id: String) -> void:
+	# Test fixture only: drop the extra copy this inspection drew so the mounted
+	# hand stays a realistic five-card hand instead of growing every check.
+	app.deck.hand.erase(id)
+	app._refresh_hand()
+	await _frames()
+
+
+func _check_bleed_strip(id: String, applied: int, label: String, commit_mode := "") -> void:
+	if not await _draw_card(id, label):
+		return
+	var definition: Dictionary = catalog.get_definition(id)
+	await _arm(id, commit_mode == "keyboard")
+	if adapter.target_strip == null:
+		return
+	var heading := adapter.target_strip.find_child("Rule", true, false) as Label
+	_check(heading != null and heading.text == _expected_strip(definition, applied),
+		label + ": mounted strip states the real effective Bleed for " + id)
+	if heading != null and applied > int(definition.effects.bleed) + 1:
+		_check(not heading.text.contains("Bleed %d including passive" % (
+			int(definition.effects.bleed) + 1)),
+			label + ": strip never repeats the raw authored-plus-one number for " + id)
+	var target := _first_target(1)
+	if target < 0 or not adapter._targets.has(target):
+		_check(false, label + ": living enemy target available for " + id)
+		await _key(KEY_ESCAPE)
+		return
+	var forecast: Dictionary = adapter._service.forecast_single(
+		app.deck, app.party, app.enemies, id, target)
+	_check(forecast.get("ok", false)
+		and int(forecast.bleed_after) - int(forecast.bleed_before) == applied,
+		label + ": bound forecast applies exactly the stated Bleed for " + id)
+	var before := _state()
+	var latch_before: Dictionary = adapter._service._patches.latch_snapshot()
+	await _hover(adapter._targets[target])
+	adapter._targets[target].grab_focus()
+	await _frames()
+	var preview := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(preview != null and preview.text == _outcome_text(forecast)
+		and preview.text.contains("Bleed: %d -> %d" % [
+			int(forecast.bleed_before), int(forecast.bleed_after)]),
+		label + ": target preview keeps the exact future Bleed for " + id)
+	_check(_state() == before and not adapter._choice.get("queued", false)
+		and adapter._service._patches.latch_snapshot() == latch_before,
+		label + ": hovering the target spends nothing and keeps the receipt pending")
+	if commit_mode == "":
+		await _key(KEY_ESCAPE)
+		_check(adapter._choice.is_empty() and adapter.target_strip == null,
+			label + ": Escape cancels without spending " + id)
+		await _release_card(id)
+		return
+	await _commit_shown(id, target, applied, commit_mode, label)
+
+
+func _commit_shown(id: String, target: int, applied: int, mode: String, label: String) -> void:
+	var definition: Dictionary = catalog.get_definition(id)
+	var forecast: Dictionary = adapter._service.forecast_single(
+		app.deck, app.party, app.enemies, id, target)
+	_check(forecast.get("ok", false)
+		and int(forecast.bleed_after) - int(forecast.bleed_before) == applied,
+		label + ": armed commit forecast still matches the strip for " + id)
+	var before := _state()
+	var enemy_before: Dictionary = app.enemies.get_enemy(target)
+	var prior_bleed: int = int(enemy_before.get("statuses", {}).get("bleed", 0))
+	var prior_exposed: int = int(enemy_before.get("statuses", {}).get("exposed", 0))
+	if mode == "keyboard":
+		adapter._targets[target].grab_focus()
+		await _frames()
+		await _key(KEY_ENTER)
+	else:
+		await _mouse(adapter._targets[target])
+	await _frames()
+	var event: Dictionary = adapter.last_event
+	_check(event.get("ok", false) and event.hits.size() == 1
+		and int(event.hits[0].position) == target,
+		label + ": real %s commit resolves exactly one chosen enemy: %s" % [mode, id])
+	var after: Dictionary = app.enemies.get_enemy(target)
+	_check(int(after.get("statuses", {}).get("bleed", 0)) == prior_bleed + applied,
+		label + ": committed enemy carries exactly the shown Bleed increase: " + id)
+	_check(int(event.hits[0].statuses.get("bleed", 0)) == applied,
+		label + ": the receipt records the same effective Bleed: " + id)
+	if definition.effects.has("exposed"):
+		_check(int(after.get("statuses", {}).get("exposed", 0)) == prior_exposed + 1
+			and int(event.hits[0].statuses.get("exposed", 0)) == 1,
+			label + ": Red Thread keeps its authored Exposed 1: " + id)
+	_check(app.deck.energy == int(before[3]) - int(definition.cost),
+		label + ": exactly the authored cost is spent: " + id)
+	_check(app.deck.discard_pile.count(id) == int(before[2].count(id)) + 1
+		and app.deck.hand.count(id) == int(before[1].count(id)) - 1,
+		label + ": one held copy leaves the hand for the discard pile: " + id)
+	_check(app.run_rng.seed == int(before[7]) and app.run_rng.state == int(before[8])
+		and app.deck._rng.state == int(before[9]),
+		label + ": committed cast never advances the seeded run or deck RNG: " + id)
+	for enemy in before[6]:
+		if int(enemy.position) != target:
+			_check(app.enemies.get_enemy(int(enemy.position)) == enemy,
+				label + ": every other enemy slot stays identical: " + id)
+
+
+func _check_hem_strip(hem_id: String, label: String, commit_mode := "") -> void:
+	var target := _first_target(1)
+	if target < 0:
+		_check(false, label + ": living target exists for " + hem_id)
+		return
+	_check(app.enemies.apply_statuses({target: {"bleed": 4}}),
+		label + ": chosen enemy really carries pre-existing Bleed")
+	app._refresh_enemy_roster()
+	if not await _draw_card(hem_id, label):
+		return
+	var definition: Dictionary = catalog.get_definition(hem_id)
+	await _arm(hem_id, false)
+	if adapter.target_strip == null:
+		return
+	var heading := adapter.target_strip.find_child("Rule", true, false) as Label
+	_check(heading != null and heading.text == _expected_hem_strip(definition),
+		label + ": strip describes doubling CURRENT Bleed with no flat +N: " + hem_id)
+	var patches: CombatPatchAttackRules = adapter._service._patches
+	var heads: CombatM05HeadPatchRules = adapter._service._head_patches
+	_check(patches.card_bleed_bonus("seamstress", hem_id) == 0
+		and heads.get_bonus("seamstress", hem_id, "bleed") == 0,
+		label + ": sewn Bleed bonuses never become a multiplier application: " + hem_id)
+	var forecast: Dictionary = adapter._service.forecast_single(
+		app.deck, app.party, app.enemies, hem_id, target)
+	var prior: int = int(forecast.get("bleed_before", 0))
+	_check(forecast.get("ok", false) and prior >= 4
+		and int(forecast.bleed_after) == prior * 2,
+		label + ": conditional forecast doubles the chosen stack: %s" % hem_id)
+	var before := _state()
+	await _hover(adapter._targets[target])
+	adapter._targets[target].grab_focus()
+	await _frames()
+	var preview := adapter.target_strip.find_child("OutcomePreview", true, false) as Label
+	_check(preview != null and preview.text.contains("Bleed: %d -> %d" % [prior, prior * 2]),
+		label + ": preview doubles N to 2N without an invented flat bonus: " + hem_id)
+	_check(_state() == before, label + ": doubled preview is transaction free: " + hem_id)
+	if commit_mode == "":
+		await _key(KEY_ESCAPE)
+		_check(adapter._choice.is_empty() and adapter.target_strip == null,
+			label + ": Escape cancels the doubling strip: " + hem_id)
+		await _release_card(hem_id)
+		return
+	var enemy_before: Dictionary = app.enemies.get_enemy(target)
+	var prior_bleed: int = int(enemy_before.get("statuses", {}).get("bleed", 0))
+	if commit_mode == "keyboard":
+		await _key(KEY_ENTER)
+	else:
+		await _mouse(adapter._targets[target])
+	await _frames()
+	var event: Dictionary = adapter.last_event
+	_check(event.get("ok", false) and event.hits.size() == 1,
+		label + ": doubling commit succeeded: " + hem_id)
+	var after: Dictionary = app.enemies.get_enemy(target)
+	_check(int(after.get("statuses", {}).get("bleed", 0)) == prior_bleed * 2,
+		label + ": committed doubling yields exactly N + N: " + hem_id)
+	_check(int(event.hits[0].statuses.get("bleed", 0)) == prior_bleed,
+		label + ": the receipt records the current stack, not a patch bonus: " + hem_id)
+
+
+func _bleed_case(label: String, head_id: String, arm_id: String,
+		table: Dictionary, first_commit: String, first_mode: String,
+		second_commit: String, second_mode: String) -> void:
+	var entry := await _enter_connected_fight(label)
+	if not entry.get("ok", false):
+		await _return()
+		return
+	if not await _sew_wardrobe(head_id, arm_id, label):
+		await _return()
+		return
+	if not await _enter_next_fight(entry.fixture, label):
+		await _return()
+		return
+	var patches: CombatPatchAttackRules = adapter._service._patches
+	var heads: CombatM05HeadPatchRules = adapter._service._head_patches
+	var bound: bool = patches != null and patches.is_valid() and heads != null and heads.read_projection().get("ok", false)
+	_check(bound, label + ": one battle-long genuine patch authority is bound")
+	if not bound:
+		await _return()
+		return
+	var passive := _expected_bloodline()
+	var head_bonus := _authored_patch_bleed(head_id)
+	var arm_bonus := _authored_patch_bleed(arm_id)
+	var active: Array = patches.active_snapshot().get("seamstress", [])
+	var seamstress_lives := false
+	for hero in app.party.get_heroes():
+		if hero["id"] == "seamstress":
+			seamstress_lives = hero["hp"] > 0
+	_check(seamstress_lives and active.has(head_id) == (head_id != "")
+		and active.has(arm_id) == (arm_id != ""),
+		label + ": the living Seamstress is the patch wearer in the real battle")
+	for id in BLEED_CARD_IDS:
+		var definition: Dictionary = catalog.get_definition(id)
+		var derived: int = int(definition.effects.get("bleed", 0)) + passive + head_bonus + arm_bonus
+		_check(derived == int(table[id]),
+			"%s: %s is authored %d + Bloodline %d + sewn %d/%d = %d" % [
+				label, id, int(definition.effects.get("bleed", 0)), passive,
+				head_bonus, arm_bonus, derived])
+		_check(patches.card_bleed_bonus("seamstress", id) == arm_bonus,
+			label + ": bound ARM projection credits the real Seamstress: " + id)
+		_check(heads.get_bonus("seamstress", id, "bleed") == head_bonus,
+			label + ": bound HEAD projection credits the real Seamstress: " + id)
+		_check(patches.card_bleed_bonus("warden", id) == 0
+			and patches.card_bleed_bonus("tinker", id) == 0
+			and heads.get_bonus("warden", id, "bleed") == 0
+			and heads.get_bonus("tinker", id, "bleed") == 0,
+			label + ": no other hero receives the Seamstress sewn Bleed: " + id)
+		await _check_bleed_strip(id, derived, label)
+	# A real cast proves the shown amount is applied once by the committed path.
+	await _check_bleed_strip(first_commit, int(table[first_commit]), label, first_mode)
+	await _check_bleed_strip(second_commit, int(table[second_commit]), label, second_mode)
+	# Hemorrhage: doubling stays conditional even with both sewn bonuses.
+	for hem_id in HEM_CARD_IDS:
+		await _check_hem_strip(hem_id, label)
+	await _check_hem_strip("seamstress_hemorrhage_hem", label, "mouse")
+	await _check_hem_strip("seamstress_hemorrhage_hem_plus", label, "keyboard")
+	await _return()
+	_check(adapter._service != null and adapter._service._patches == null,
+		label + ": leaving the fight retires the sewn projection")
+
+
+func _test_effective_sewn_bleed() -> void:
+	await _bleed_case("unpatched", "", "", {
+		"seamstress_running_stitch": 4, "seamstress_running_stitch_plus": 5,
+		"seamstress_red_thread": 7, "seamstress_red_thread_plus": 9,
+	}, "seamstress_running_stitch", "mouse",
+		"seamstress_red_thread_plus", "keyboard")
+	await _bleed_case("bloodstitch bonnet", "bloodstitch_bonnet", "", {
+		"seamstress_running_stitch": 5, "seamstress_running_stitch_plus": 6,
+		"seamstress_red_thread": 8, "seamstress_red_thread_plus": 10,
+	}, "seamstress_running_stitch_plus", "keyboard",
+		"seamstress_red_thread", "mouse")
+	await _bleed_case("bonnet and cuff", "bloodstitch_bonnet", "red_bobbin_cuff", {
+		"seamstress_running_stitch": 6, "seamstress_running_stitch_plus": 7,
+		"seamstress_red_thread": 9, "seamstress_red_thread_plus": 11,
+	}, "seamstress_running_stitch", "keyboard",
+		"seamstress_red_thread_plus", "mouse")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -1064,6 +1500,7 @@ func _run() -> void:
 	await _three_enemy_case()
 	await _test_mounted_worn_patches()
 	await _test_mounted_red_bobbin_cuff()
+	await _test_effective_sewn_bleed()
 	app.free()
 	_finish()
 
