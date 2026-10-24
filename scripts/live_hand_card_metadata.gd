@@ -233,6 +233,32 @@ func _base_id(card_id: String) -> String:
 ## card without one shows its owner's emblem. A stitched card has no single
 ## owner and an unknown ID has no facts, so both keep the drawn paper face.
 func _face_assets(card_id: String) -> Dictionary:
+	# A composite never acquires a whole-card owner. Resolve each genuine half
+	# through the same optional, cached art path as an ordinary card instead.
+	if card_id.begins_with(RunRestStitchCards.ID_PREFIX):
+		var stitched := {"frame": null, "picture": null,
+			"frame_path": "", "picture_path": "", "halves": []}
+		var facts := describe(card_id)
+		var pair: Array = facts.get("halves", [])
+		if not bool(facts.get("known", false)) or not _halves_known(pair):
+			return stitched
+		var first: Dictionary = _definition(str(pair[0]))
+		var second: Dictionary = _definition(str(pair[1]))
+		var first_owner: String = str(first.get("owner", ""))
+		var second_owner: String = str(second.get("owner", ""))
+		if first_owner == second_owner or not first_owner in ["warden", "seamstress", "tinker"] \
+				or not second_owner in ["warden", "seamstress", "tinker"]:
+			return stitched
+		for half_id in pair:
+			var half: Dictionary = _definition(str(half_id))
+			var art: Dictionary = _face_assets(str(half_id))
+			art["id"] = str(half_id)
+			art["owner"] = str(half.get("owner", ""))
+			art["colour"] = _owner_color(art["owner"])
+			art["from_positions"] = (half.get("from_positions", []) as Array).duplicate()
+			art["to_positions"] = (half.get("to_positions", []) as Array).duplicate()
+			stitched["halves"].append(art)
+		return stitched
 	var authored: Dictionary = _definition(card_id)
 	var owner: String = str(authored.get("owner", ""))
 	var frame: Texture2D = null
@@ -747,7 +773,41 @@ func get_facts(panel: Control) -> Dictionary:
 func get_geometry(panel: Control) -> Dictionary:
 	if not _bindings.has(panel) or not is_instance_valid(panel):
 		return {}
-	return card_layout(panel.size, _bindings[panel].get("faces", {}).get("frame") is Texture2D)
+	return _panel_layout(panel.size, _bindings[panel].get("faces", {}))
+
+
+## The two sewn images and their individual rule rows occupy the same actual
+## hand geometry used by _draw_panel. Pips have a reserved 47px cell in each
+## half's name/owner line, never over its effect. No extra widget is mounted.
+func _panel_layout(size: Vector2, faces: Dictionary) -> Dictionary:
+	var layout := card_layout(size, faces.get("frame") is Texture2D)
+	var regions: Array = layout.get("halves", [])
+	var half_faces: Array = faces.get("halves", [])
+	if regions.size() != 2 or half_faces.size() != 2:
+		return layout
+	var details: Array[Dictionary] = []
+	for index in range(2):
+		var row: Rect2 = regions[index]
+		var compact: bool = bool(layout["compact"])
+		var art_width := 21.0 if compact else 32.0
+		var text_x: float = row.position.x + (29.0 if compact else 40.0)
+		var pips := Rect2(row.end.x - 47.0, row.position.y + (1.0 if compact else 14.0),
+			45.0, 11.0)
+		var name := Rect2(text_x, row.position.y, maxf(0.0, pips.position.x - text_x - 3.0),
+			11.0 if compact else 14.0)
+		var owner := Rect2(text_x, row.position.y + 14.0,
+			maxf(0.0, pips.position.x - text_x - 3.0), 11.0) if not compact else Rect2()
+		var effect_top: float = row.position.y + (12.0 if compact else 27.0)
+		var effect := Rect2(text_x, effect_top, maxf(0.0, row.end.x - text_x - 2.0),
+			maxf(0.0, row.end.y - effect_top))
+		details.append({"art": Rect2(row.position + Vector2(3.0, 2.0),
+			Vector2(art_width, row.size.y - 4.0)),
+			"swatch": Rect2(row.position.x - 3.0, row.position.y + 1.0, 3.0, row.size.y - 2.0),
+			"name": name, "owner": owner, "pips": pips, "effect": effect,
+			"from_positions": (half_faces[index].get("from_positions", []) as Array).duplicate(),
+			"to_positions": (half_faces[index].get("to_positions", []) as Array).duplicate()})
+	layout["half_details"] = details
+	return layout
 
 
 ## Single source of truth for the drawn card. Mounted tests check these rects
@@ -1051,7 +1111,7 @@ func _draw_pips(panel: Control, facts: Dictionary, rect: Rect2) -> void:
 		return
 	var step := 7.0
 	var radius := 2.0
-	var x: float = rect.end.x - step * 5.0 - 4.0
+	var x: float = rect.end.x - 44.0
 	var y: float = rect.position.y + rect.size.y * 0.5
 	for index in range(1, 4):
 		var center := Vector2(x + step * (index - 1), y)
@@ -1074,7 +1134,8 @@ func _draw_pips(panel: Control, facts: Dictionary, rect: Rect2) -> void:
 
 ## One authored half (or a whole ordinary card): owner colour, fitted name,
 ## source/target rules and effect line. Ordered halves pass a "1." prefix.
-func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> void:
+func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "",
+		detail: Dictionary = {}) -> void:
 	var facts := describe(id)
 	var definition := _definition(id)
 	var owner_color := _owner_color(facts.get("owner", ""))
@@ -1090,6 +1151,13 @@ func _draw_half(panel: Control, id: String, rect: Rect2, order: String = "") -> 
 		effects.size.y = maxf(0.0, rect.end.y - effects.position.y)
 		if not rules.is_empty():
 			_text(panel, rules, effects, 13)
+		return
+	if not detail.is_empty():
+		panel.draw_rect(detail["swatch"], owner_color)
+		_text(panel, order + definition.get("display_name", id), detail["name"], 13, INK, _name_font(panel))
+		_text(panel, facts.get("owner_text", ""), detail["owner"], 9, owner_color)
+		_draw_pips(panel, facts, detail["pips"])
+		_text(panel, rules, detail["effect"], 11)
 		return
 	panel.draw_rect(Rect2(x - 3.0, rect.position.y + 1.0, 3, rect.size.y - 2.0), owner_color)
 	_text(panel, order + definition.get("display_name", id), Rect2(x, rect.position.y, width, 14), 13, INK, _name_font(panel))
@@ -1111,25 +1179,39 @@ func _halves_known(pair: Array) -> bool:
 
 ## One short sewn row of a compact stitched card: the authored half name in
 ## resolution order, then that half's own owner colour and terse effect line.
-func _draw_sewn_half(panel: Control, id: String, rect: Rect2, order: int) -> void:
+func _draw_sewn_half(panel: Control, id: String, rect: Rect2, order: int,
+		detail: Dictionary = {}) -> void:
 	var facts := describe(id)
 	var definition := _definition(id)
 	if definition.is_empty() or rect.size.y <= 12.0:
 		return
 	var owner_color := _owner_color(facts.get("owner", ""))
+	if not detail.is_empty():
+		panel.draw_rect(detail["swatch"], owner_color)
+		_text(panel, "%d. %s" % [order, definition.get("display_name", id)],
+			detail["name"], 11, INK, _name_font(panel))
+		_draw_pips(panel, facts, detail["pips"])
+		var effect: String = _rules(id)
+		var label: String = facts.get("owner_text", "")
+		if not effect.is_empty() and not label.is_empty() \
+				and _font(panel).get_string_size(label + " · " + effect,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x <= (detail["effect"] as Rect2).size.x:
+			effect = label + " · " + effect
+		_text(panel, effect, detail["effect"], 9, owner_color)
+		return
 	panel.draw_rect(Rect2(rect.position.x - 3.0, rect.position.y + 1.0, 3.0, rect.size.y - 2.0), owner_color)
 	_text(panel, "%d. %s" % [order, definition.get("display_name", id)],
 		Rect2(rect.position, Vector2(rect.size.x, minf(14.0, rect.size.y))), 11, INK, _name_font(panel))
 	# The effect line wins the narrow compact strip: the owner tag only joins it
 	# when both still fit at a legible size, otherwise the felt stripe and the
 	# detailed face keep the owner readable.
-	var detail: String = _rules(id)
+	var compact_rule: String = _rules(id)
 	var owner_text: String = facts.get("owner_text", "")
-	if not detail.is_empty() and not owner_text.is_empty() \
-			and _font(panel).get_string_size(owner_text + " · " + detail,
+	if not compact_rule.is_empty() and not owner_text.is_empty() \
+			and _font(panel).get_string_size(owner_text + " · " + compact_rule,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x <= rect.size.x:
-		detail = owner_text + " · " + detail
-	_text(panel, detail,
+		compact_rule = owner_text + " · " + compact_rule
+	_text(panel, compact_rule,
 		Rect2(rect.position.x, rect.position.y + 12.0, rect.size.x, maxf(6.0, rect.size.y - 12.0)), 9, owner_color)
 
 
@@ -1187,13 +1269,26 @@ func _draw_illustration(panel: Control, texture: Texture2D, rect: Rect2) -> void
 	panel.draw_rect(rect, RUST, false, 1.0)
 
 
+## Each half owns its own tiny framed crop. If either optional texture is
+## unavailable, its authored owner tint remains and no other picture is lent.
+func _draw_half_image(panel: Control, face: Dictionary, detail: Dictionary) -> void:
+	var art: Rect2 = detail["art"]
+	panel.draw_rect(art, _owner_color(str(face.get("owner", ""))))
+	var half_frame: Texture2D = face.get("frame")
+	if half_frame != null:
+		_draw_frame_texture(panel, half_frame, art, 3.0)
+	var picture: Texture2D = face.get("picture")
+	if picture != null:
+		_draw_illustration(panel, picture, art.grow(-2.0))
+
+
 func _draw_panel(panel: Control) -> void:
 	if not _bindings.has(panel) or not is_instance_valid(panel):
 		return
 	var facts: Dictionary = _bindings[panel].facts
 	var faces: Dictionary = _bindings[panel].get("faces", {})
 	var visual := visual_state(panel)
-	var layout := card_layout(panel.size, faces.get("frame") is Texture2D)
+	var layout := _panel_layout(panel.size, faces)
 	if layout.is_empty():
 		return
 	# Hover (or an armed drag) lifts the drawn card and enlarges it around its
@@ -1227,13 +1322,16 @@ func _draw_panel(panel: Control) -> void:
 	_text(panel, facts.get("owner_text", ""), layout["owner"], 11, _owner_color(facts.get("owner", "")))
 	_text(panel, _title(facts), layout["title"], 15 if not layout["compact"] else 13, INK, _name_font(panel))
 	var halves: Array = layout["halves"]
+	var half_details: Array = layout.get("half_details", [])
+	var half_faces: Array = faces.get("halves", [])
 	var pair: Array = facts.get("halves", [])
-	if halves.size() == 2 and _halves_known(pair):
+	if halves.size() == 2 and half_details.size() == 2 and _halves_known(pair):
 		for index in range(2):
+			_draw_half_image(panel, half_faces[index], half_details[index])
 			if layout["compact"]:
-				_draw_sewn_half(panel, str(pair[index]), halves[index], index + 1)
+				_draw_sewn_half(panel, str(pair[index]), halves[index], index + 1, half_details[index])
 			else:
-				_draw_half(panel, str(pair[index]), halves[index], "%d. " % (index + 1))
+				_draw_half(panel, str(pair[index]), halves[index], "%d. " % (index + 1), half_details[index])
 		panel.draw_dashed_line(Vector2(halves[1].position.x, halves[0].end.y + 3.0),
 			Vector2(halves[1].end.x, halves[0].end.y + 3.0), RUST, 1.0, 5.0)
 	else:
