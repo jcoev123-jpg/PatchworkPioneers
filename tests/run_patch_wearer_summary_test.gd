@@ -12,6 +12,7 @@ const SLOT_CATALOG := "res://data/patches/initial_patch_slots.json"
 const M05_HEAD_CATALOG := "res://data/patches/m05_head_patches.json"
 const M05_ARM_CATALOG := "res://data/patches/m05_arm_support_patches.json"
 const M05_ATTACK_CATALOG := "res://data/patches/m05_attack_patches.json"
+const M05_COAT_CATALOG := "res://data/patches/m05_coat_patches.json"
 const EYE_TEXT := "first successful attack each combat also applies Exposed 1"
 const ARM_TEXT := "+1 damage on that wearer's damaging cards"
 const COAT_TEXT := "+6 maximum HP"
@@ -29,6 +30,7 @@ const M05_HEAD_BLOCK_TEXT := "+2 Block on eligible Block cards owned by this liv
 const M05_ARM_BLOCK_TEXT := "+2 Block on eligible Block cards owned by this living wearer only"
 const M05_UNRAVEL_TEXT := "+1 Unravel on eligible Unravel cards owned by this living wearer only"
 const M05_FRAYFINDER_TEXT := "+2 Unravel once per player turn on this living wearer's first single-target attack hit, only against a target already at least 1/2 of its current Unravel threshold (not on every attack)"
+const BORROWED_BUTTON_TEXT := "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."
 
 
 func _badge_text() -> String:
@@ -54,6 +56,7 @@ func _initialize() -> void:
 	_test_coat_powers_lifecycle_and_previews()
 	_test_new_coat_patches_lifecycle()
 	_test_m05_coat_patches_lifecycle()
+	_test_borrowed_button_readout()
 	_test_m05_head_and_arm_summary()
 	_test_m05_torn_and_replacement_previews()
 	_test_m05_authority_fail_closed()
@@ -87,19 +90,22 @@ func _catalogs() -> Dictionary:
 	var m05_head: Variant = _json(M05_HEAD_CATALOG)
 	var m05_arm: Variant = _json(M05_ARM_CATALOG)
 	var m05_attack: Variant = _json(M05_ATTACK_CATALOG)
+	var m05_coat: Variant = _json(M05_COAT_CATALOG)
 	if typeof(attack) != TYPE_ARRAY or typeof(coat) != TYPE_ARRAY \
 			or typeof(initial) != TYPE_ARRAY or typeof(m05_head) != TYPE_ARRAY \
-			or typeof(m05_arm) != TYPE_ARRAY or typeof(m05_attack) != TYPE_ARRAY:
-		_check(false, "the six shipped patch catalogs are readable arrays")
+			or typeof(m05_arm) != TYPE_ARRAY or typeof(m05_attack) != TYPE_ARRAY \
+			or typeof(m05_coat) != TYPE_ARRAY:
+		_check(false, "the seven shipped patch catalogs are readable arrays")
 		return {}
 	return {"attack": attack, "coat": coat, "initial": initial,
-		"m05_head": m05_head, "m05_arm": m05_arm, "m05_attack": m05_attack}
+		"m05_head": m05_head, "m05_arm": m05_arm, "m05_attack": m05_attack,
+		"m05_coat": m05_coat}
 
 
 ## Every shipped record of one ID, so a duplicate can never pass unnoticed.
 func _records(catalogs: Dictionary, id: String) -> Array:
 	var found: Array = []
-	for key in ["attack", "coat", "initial", "m05_head", "m05_arm", "m05_attack"]:
+	for key in ["attack", "coat", "initial", "m05_head", "m05_arm", "m05_attack", "m05_coat"]:
 		for entry in catalogs.get(key, []):
 			if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == id:
 				found.append(entry)
@@ -110,7 +116,7 @@ func _records(catalogs: Dictionary, id: String) -> Array:
 ## from the shipped catalogs instead of hand-written fixture metadata.
 func _projected_definitions(catalogs: Dictionary) -> Array:
 	var definitions: Array = []
-	for key in ["initial", "attack", "coat", "m05_head", "m05_arm", "m05_attack"]:
+	for key in ["initial", "attack", "coat", "m05_head", "m05_arm", "m05_attack", "m05_coat"]:
 		for entry in catalogs.get(key, []):
 			if typeof(entry) != TYPE_DICTIONARY:
 				continue
@@ -151,6 +157,18 @@ func _without_record(catalogs: Dictionary, key: String, id: String) -> Dictionar
 			continue
 		kept.append(entry)
 	copy[key] = kept
+	return copy
+
+
+## A copy of the shipped catalogs with one authored record present twice.
+func _with_duplicate_record(catalogs: Dictionary, key: String, id: String) -> Dictionary:
+	var copy: Dictionary = catalogs.duplicate(true)
+	var entries: Array = []
+	for entry in copy.get(key, []):
+		entries.append(entry)
+		if typeof(entry) == TYPE_DICTIONARY and entry.get("id") == id:
+			entries.append(entry.duplicate(true))
+	copy[key] = entries
 	return copy
 
 
@@ -229,6 +247,9 @@ func _test_catalog_backed_definitions() -> void:
 			"effect": "first_single_target_half_unravel_attack_bonus", "amount": 2,
 			"minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2,
 			"once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single"},
+		"borrowed_button": {"slot": "COAT",
+			"effect": "other_hero_committed_heal_block", "heal_threshold": 1,
+			"block": 3, "uses_per_combat": 1},
 	}
 	for id in expectations:
 		var records := _records(catalogs, id)
@@ -780,7 +801,8 @@ func _test_sew_previews() -> void:
 		["hemguard_cuff", "ARM", M05_ARM_BLOCK_TEXT],
 		["red_bobbin_cuff", "ARM", M05_BLEED_TEXT],
 		["loose_thread_glove", "ARM", M05_UNRAVEL_TEXT],
-		["frayfinder_mitt", "ARM", M05_FRAYFINDER_TEXT]
+		["frayfinder_mitt", "ARM", M05_FRAYFINDER_TEXT],
+		["borrowed_button", "COAT", BORROWED_BUTTON_TEXT]
 	]
 	for record in known:
 		var fixture := _fixture()
@@ -1633,6 +1655,252 @@ func _test_m05_coat_patches_lifecycle() -> void:
 			and post_move_summary.heroes[2]["slots"][2]["rules_text"] == REINFORCED_PATCHCOAT_TEXT,
 			"Tinker COAT slot now has reinforced_patchcoat active (+9 maximum HP)")
 	_check(w.end_rest("rest_m05_summary_swap", w.get_snapshot()).ok, "Rest ends cleanly")
+
+
+## AC1/AC2/AC3: the authored Borrowed Button COAT record is described through
+## the existing catalog-authenticated summary and preview route, keeps its text
+## when torn, and fails closed when the M05 COAT catalog is falsified.
+func _test_borrowed_button_readout() -> void:
+	var f := _fixture(4)
+	if f.is_empty():
+		return
+	var w: RunPatchWardrobe = f.wardrobe
+	var catalogs: Dictionary = f.catalogs
+	var rejected := {"ok": false, "heroes": []}
+	var reject_preview := {"ok": false}
+
+	var records := _records(catalogs, "borrowed_button")
+	_check(records.size() == 1, "exactly one shipped record authors borrowed_button")
+	if records.size() == 1:
+		var record: Dictionary = records[0]
+		_check(record["id"] == "borrowed_button" and record["slot"] == "COAT"
+			and record["effect"] == "other_hero_committed_heal_block"
+			and int(record["heal_threshold"]) == 1 and int(record["block"]) == 3
+			and int(record["uses_per_combat"]) == 1,
+			"borrowed_button authors one other-hero heal for exactly 3 Block once per combat")
+	elif records.is_empty():
+		return
+
+	var torn := RunTornMending.new(f.heroes)
+	_check(torn.is_valid(), "the Borrowed Button fixture has a real torn ledger")
+	var torn_state := torn.read_state()
+	var before_w := w.get_snapshot()
+	var before_t := torn.read_state()
+	var local := RandomNumberGenerator.new()
+	local.seed = 77129
+	var local_before: int = local.state
+	seed(93217)
+	var global_next: int = randi()
+	seed(93217)
+
+	var empty_preview := RunPatchWearerSummary.preview_sew(
+		w, torn_state, "borrowed_button", "tinker")
+	_check(empty_preview.get("ok") == true
+		and empty_preview.get("patch_id") == "borrowed_button"
+		and empty_preview.get("slot") == "COAT"
+		and empty_preview.get("rules_text") == BORROWED_BUTTON_TEXT
+		and empty_preview.get("wearer") == "tinker"
+		and empty_preview.get("displaced_id") == ""
+		and empty_preview.get("displaced_rules_text") == ""
+		and empty_preview.get("scrap_delta") == 0,
+		"a legal empty-COAT preview publishes the authored once-per-combat Block condition")
+	_check(w.get_snapshot() == before_w and torn.read_state() == before_t
+		and local.state == local_before and randi() == global_next,
+		"the preview changes neither ledger and consumes no local or global RNG")
+
+	_check(w.sew("quilted_coat", "warden", "COAT", "bb_prior_coat", w.get_snapshot()).ok,
+		"a real M04 COAT is worn before the displacement preview")
+	var occupied_w := w.get_snapshot()
+	var displaced_preview := RunPatchWearerSummary.preview_sew(
+		w, torn_state, "borrowed_button", "warden")
+	_check(displaced_preview.get("ok") == true
+		and displaced_preview.get("patch_id") == "borrowed_button"
+		and displaced_preview.get("slot") == "COAT"
+		and displaced_preview.get("rules_text") == BORROWED_BUTTON_TEXT
+		and displaced_preview.get("wearer") == "warden"
+		and displaced_preview.get("displaced_id") == "quilted_coat"
+		and displaced_preview.get("displaced_rules_text") == COAT_TEXT
+		and displaced_preview.get("scrap_delta") == 1,
+		"a filled-COAT preview forecasts the displaced coat text and exactly one scrap")
+	_check(w.get_snapshot() == occupied_w and torn.read_state() == before_t,
+		"the displacement preview changes neither ledger")
+
+	var sew_eye := w.sew("button_eye", "seamstress", "HEAD", "bb_eye", w.get_snapshot())
+	_check(sew_eye.get("ok") == true,
+		"an established HEAD readout wearer is sewn alongside Borrowed Button")
+	var baseline := RunPatchWearerSummary.summarize(w, torn_state)
+	_check(baseline.get("ok") == true, "the readout before the Borrowed Button sew is genuine")
+	var sewn := w.sew("borrowed_button", "warden", "COAT", "bb_sew", w.get_snapshot())
+	_check(sewn.get("ok") == true and sewn.get("receipt", {}).get("patch_id") == "borrowed_button"
+		and sewn.get("receipt", {}).get("hero_id") == "warden"
+		and sewn.get("receipt", {}).get("slot") == "COAT"
+		and sewn.get("receipt", {}).get("displaced_id") == "quilted_coat"
+		and sewn.get("receipt", {}).get("scrap_delta") == 1,
+		"the real sew receipt matches the previewed displacement and scrap")
+
+	var summary := RunPatchWearerSummary.summarize(w, torn_state)
+	_check(summary.get("ok") == true, "the genuine readout publishes the sewn Borrowed Button")
+	if summary.get("ok") != true:
+		return
+	var coat: Dictionary = summary.heroes[0]["slots"][2]
+	_check(coat["slot"] == "COAT" and coat["patch_id"] == "borrowed_button"
+		and coat["active"] == true and coat["rules_text"] == BORROWED_BUTTON_TEXT,
+		"the living wearer shows one active Borrowed Button with its exact condition")
+	_check(coat["rules_text"].contains("Once per combat")
+		and coat["rules_text"].contains("another living hero")
+		and coat["rules_text"].contains("at least 1 HP")
+		and coat["rules_text"].contains("gain 3 Block")
+		and not coat["rules_text"].contains("maximum HP"),
+		"the description names the once-per-combat other-hero actual-heal +3 Block condition")
+	for s in range(2):
+		_check(summary.heroes[0]["slots"][s]["patch_id"] == ""
+			and summary.heroes[0]["slots"][s]["rules_text"] == ""
+			and not summary.heroes[0]["slots"][s]["active"],
+			"the Borrowed Button wearer keeps its other slots empty")
+	var eye: Dictionary = summary.heroes[1]["slots"][0]
+	_check(eye["patch_id"] == "button_eye" and eye["active"] == true
+		and eye["rules_text"] == EYE_TEXT,
+		"an established HEAD power keeps its authored identity and description")
+	for s in [1, 2]:
+		_check(summary.heroes[1]["slots"][s]["patch_id"] == ""
+			and summary.heroes[1]["slots"][s]["rules_text"] == "",
+			"the other wearer's remaining slots stay untouched")
+	for s in range(3):
+		_check(summary.heroes[2]["slots"][s]["patch_id"] == ""
+			and summary.heroes[2]["slots"][s]["rules_text"] == ""
+			and not summary.heroes[2]["slots"][s]["active"],
+			"a wearer without patches inherits nothing from Borrowed Button")
+	_check(baseline.get("ok") == true and summary.heroes[1] == baseline.heroes[1]
+		and summary.heroes[2] == baseline.heroes[2]
+		and summary.heroes[0]["slots"][0] == baseline.heroes[0]["slots"][0]
+		and summary.heroes[0]["slots"][1] == baseline.heroes[0]["slots"][1],
+		"the other wearers and unaffected slots keep their exact earlier records")
+	var no_bonus := RunPatchCoatRules.project_health(torn_state, w, catalogs["coat"])
+	_check(no_bonus.get("ok") == true and no_bonus.heroes[0]["max_hp"] == 40
+		and no_bonus.heroes[0]["hp"] == 40,
+		"the Borrowed Button COAT never projects a maximum-HP bonus or heal")
+
+	# A genuinely torn wearer keeps the description but publishes inactive.
+	var start: Array = torn_state.heroes
+	var ending: Array = start.duplicate(true)
+	ending[0]["hp"] = 0
+	_check(torn.observe_battle_end("bb_battle_tear", start, ending).ok,
+		"the real ledger witnesses the Borrowed Button wearer's tear")
+	var downed := torn.read_state()
+	var w_snap := w.get_snapshot()
+	_check(w.refresh_run_context(downed.heroes, w_snap.owned, w_snap.scraps,
+		w_snap.gold, w_snap.cards, w_snap),
+		"the wardrobe is refreshed to the genuine torn roster")
+	var down_summary := RunPatchWearerSummary.summarize(w, downed)
+	_check(down_summary.get("ok") == true, "the summary survives the tear")
+	if down_summary.get("ok") != true:
+		return
+	var down_coat: Dictionary = down_summary.heroes[0]["slots"][2]
+	_check(down_coat["patch_id"] == "borrowed_button" and down_coat["active"] == false
+		and down_coat["rules_text"] == BORROWED_BUTTON_TEXT,
+		"the torn wearer keeps the same Borrowed Button explanation as inactive")
+	_check(down_summary.heroes[1]["slots"][0]["patch_id"] == "button_eye"
+		and down_summary.heroes[1]["slots"][0]["active"] == true
+		and down_summary.heroes[1]["slots"][0]["rules_text"] == EYE_TEXT,
+		"the living wearer's established description is unchanged by the tear")
+	var before_downed := w.get_snapshot()
+	_check(RunPatchWearerSummary.preview_sew(w, downed,
+		"padded_vest", "warden") == reject_preview,
+		"a torn wearer cannot preview a new sew")
+	_check(w.get_snapshot() == before_downed and torn.read_state() == downed,
+		"the refused torn preview changes neither ledger")
+
+	var mend := torn.choose_mend("bb_mend_node", "bb_mend_receipt", "warden", 1, 2,
+		downed.heroes, true)
+	_check(mend.get("ok") == true and mend.get("heroes")[0]["hp"] == 9,
+		"the real mend restores the Borrowed Button wearer")
+	var mended := torn.read_state()
+	var mended_w := w.get_snapshot()
+	_check(w.refresh_run_context(mended.heroes, mended_w.owned, mended_w.scraps,
+		mended_w.gold, mended_w.cards, mended_w),
+		"the wardrobe is refreshed to the mended roster")
+	var mended_summary := RunPatchWearerSummary.summarize(w, mended)
+	_check(mended_summary.get("ok") == true, "the summary survives the mend")
+	if mended_summary.get("ok") == true:
+		var mended_coat: Dictionary = mended_summary.heroes[0]["slots"][2]
+		_check(mended_coat["patch_id"] == "borrowed_button" and mended_coat["active"] == true
+			and mended_coat["rules_text"] == BORROWED_BUTTON_TEXT,
+			"the permitted mend restores Borrowed Button eligibility with the same text")
+	var eligibility := RunPatchWearerSummary.preview_sew(w, mended, "padded_vest", "warden")
+	_check(eligibility.get("ok") == true and eligibility.get("slot") == "COAT"
+		and eligibility.get("rules_text") == PADDED_VEST_TEXT
+		and eligibility.get("displaced_id") == "borrowed_button"
+		and eligibility.get("displaced_rules_text") == BORROWED_BUTTON_TEXT
+		and eligibility.get("scrap_delta") == 1,
+		"the mended wearer previews a COAT replacement with the Borrowed Button text displaced")
+
+	# A genuinely unknown COAT patch is still named, but never invents a rule.
+	var future_w := RunPatchWardrobe.new(f.heroes, ["future_coat_patch"],
+		[{"id": "future_coat_patch", "slot": "COAT"}], 2, 170,
+		["warden_strike"], 8197)
+	_check(future_w.is_valid(), "the unknown COAT fixture is a real ledger")
+	var future_preview := RunPatchWearerSummary.preview_sew(
+		future_w, torn_state, "future_coat_patch", "warden")
+	_check(future_preview.get("ok") == true and future_preview.get("slot") == "COAT"
+		and future_preview.get("wearer") == "warden"
+		and future_preview.get("rules_text") == "",
+		"an unknown COAT preview keeps its slot without fabricating a power")
+	_check(future_w.sew("future_coat_patch", "tinker",
+		"COAT", "future_coat_sew", future_w.get_snapshot()).ok,
+		"an unknown COAT patch can be sewn in a real ledger")
+	var future_summary := RunPatchWearerSummary.summarize(future_w, torn_state)
+	_check(future_summary.get("ok") == true
+		and future_summary.heroes[2]["slots"][2]["patch_id"] == "future_coat_patch"
+		and future_summary.heroes[2]["slots"][2]["active"] == true
+		and future_summary.heroes[2]["slots"][2]["rules_text"] == "",
+		"an unknown COAT patch remains visible without an invented rule")
+
+	# AC3: missing, duplicated or falsified M05 COAT records fail closed.
+	var guarded_w := w.get_snapshot()
+	var guarded_t := torn.read_state()
+	var guard := RunPatchWearerSummary.preview_sew(w, mended, "padded_vest", "tinker")
+	_check(guard.get("ok") == true and guard.get("rules_text") == PADDED_VEST_TEXT,
+		"the guard preview legitimately succeeds with the shipped catalog")
+	var broken := [
+		["a borrowed_button with a wrong slot", "slot", "ARM"],
+		["a borrowed_button with a wrong effect", "effect", "other_hero_heal_block"],
+		["a borrowed_button with a wrong heal threshold", "heal_threshold", 2],
+		["a borrowed_button with a wrong Block", "block", 5],
+		["a borrowed_button with a wrong use count", "uses_per_combat", 2],
+		["a borrowed_button with a zero Block", "block", 0],
+		["a borrowed_button with a string Block", "block", "3"],
+	]
+	for entry in broken:
+		var patched := _with_field(catalogs, "m05_coat", "borrowed_button", entry[1], entry[2])
+		_check(RunPatchWearerSummary.summarize(w, mended, patched) == rejected,
+			str(entry[0]) + " is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(w, mended,
+			"padded_vest", "tinker", patched) == reject_preview,
+			str(entry[0]) + " refuses every preview")
+	for field in ["heal_threshold", "block", "uses_per_combat"]:
+		var patched := _without_field(catalogs, "m05_coat", "borrowed_button", field)
+		_check(RunPatchWearerSummary.summarize(w, mended, patched) == rejected,
+			"a borrowed_button without " + field + " is rejected exactly")
+		_check(RunPatchWearerSummary.preview_sew(w, mended,
+			"padded_vest", "tinker", patched) == reject_preview,
+			"a borrowed_button without " + field + " refuses every preview")
+	var missing := _without_record(catalogs, "m05_coat", "borrowed_button")
+	_check(RunPatchWearerSummary.summarize(w, mended, missing) == rejected,
+		"a missing borrowed_button record is rejected exactly")
+	_check(RunPatchWearerSummary.preview_sew(w, mended,
+		"padded_vest", "tinker", missing) == reject_preview,
+		"a missing borrowed_button record refuses every preview")
+	var duplicated := _with_duplicate_record(catalogs, "m05_coat", "borrowed_button")
+	_check(RunPatchWearerSummary.summarize(w, mended, duplicated) == rejected,
+		"a duplicated borrowed_button record is rejected exactly")
+	_check(RunPatchWearerSummary.preview_sew(w, mended,
+		"padded_vest", "tinker", duplicated) == reject_preview,
+		"a duplicated borrowed_button record refuses every preview")
+	_check(RunPatchWearerSummary.summarize(w, mended,
+		{"m05_coat": "nonsense"}) == rejected,
+		"a malformed M05 COAT catalog collection is rejected exactly")
+	_check(w.get_snapshot() == guarded_w and torn.read_state() == guarded_t,
+		"every M05 COAT rejection leaves both genuine ledgers unchanged")
 
 
 func _m05_expectations() -> Dictionary:
