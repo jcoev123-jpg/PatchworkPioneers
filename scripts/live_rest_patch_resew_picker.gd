@@ -10,6 +10,10 @@ const PAPER := Color("#c8b99e")
 const SLATE := Color("#252f39")
 const STITCH := Color("#7f8b89")
 const GOLD := Color("#f3d28f")
+## Sewn tags size themselves from the real caption; this is only a floor and
+## the extra room that keeps the stitched hem clear of the last text line.
+const TAG_MIN_HEIGHT := 56.0
+const TAG_STITCH_INSET := 10.0
 
 ## The mounted owner references these first real buttons for focus and its
 ## exact destination index guard. Neither opens a dropdown.
@@ -83,10 +87,9 @@ func present(wardrobe: RunPatchWardrobe, torn: RunTornMending,
 		var button: SewnChip = source_selector if i == 0 else SewnChip.new()
 		if i > 0:
 			source_tags.add_child(button)
-		_configure_tag(button, "Source_%d" % i, "%s / %s
-%s%s" % [
+		_configure_tag(button, "Source_%d" % i, "%s / %s\n%s%s" % [
 			_nice(option["from_hero"]), _slot_label(option["slot"]), _nice(option["patch_id"]),
-			" • torn/inactive" if not option["source_active"] else ""], 260)
+			" • torn/inactive" if not option["source_active"] else ""], 260, source_scroll)
 		button.pressed.connect(_choose_source.bind(i))
 		_source_buttons.append(button)
 	if _sources.is_empty():
@@ -113,6 +116,7 @@ func _choose_source(index: int, initial: bool = false) -> void:
 	for i in range(_source_buttons.size()):
 		_source_buttons[i].button_pressed = i == index
 		_style_chip(_source_buttons[i], i == index)
+	_reveal_tag.call_deferred(_source_buttons[index], source_scroll)
 	_refresh_destinations(initial)
 
 
@@ -136,9 +140,9 @@ func _refresh_destinations(select_first: bool = false) -> void:
 				"%s • swap with %s" % [
 					_slot_label(option["slot"]), _nice(option["exchanged_id"])])
 		_configure_tag(button, "Destination_%d" % i,
-			"%s / %s
-%s%s" % [_nice(option["to_hero"]), _action_label(option["kind"]), detail,
-			" • torn/inactive" if not option["destination_active"] else ""], 360)
+			"%s / %s\n%s%s" % [_nice(option["to_hero"]), _action_label(option["kind"]), detail,
+			" • torn/inactive" if not option["destination_active"] else ""], 360,
+			destination_scroll)
 		button.pressed.connect(_choose_destination.bind(i))
 		_destination_buttons.append(button)
 	if select_first and not _destinations.is_empty():
@@ -155,7 +159,9 @@ func _choose_destination(index: int) -> void:
 	for i in range(_destination_buttons.size()):
 		_destination_buttons[i].button_pressed = i == index
 		_style_chip(_destination_buttons[i], i == index)
+	_reveal_tag.call_deferred(_destination_buttons[index], destination_scroll)
 	_update_preview()
+	_relink_focus.call_deferred()
 
 
 func _request_selected() -> void:
@@ -254,10 +260,11 @@ func _reset_tags(container: HFlowContainer, buttons: Array[Button], first: SewnC
 	first.visible = false
 
 
-func _configure_tag(button: SewnChip, node_name: String, caption: String, width: float) -> void:
+func _configure_tag(button: SewnChip, node_name: String, caption: String,
+		width: float, scroll: ScrollContainer) -> void:
 	button.name = node_name
 	button.text = caption
-	button.custom_minimum_size = Vector2(width, 56)
+	button.custom_minimum_size = Vector2(width, TAG_MIN_HEIGHT)
 	button.tooltip_text = caption
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	button.focus_mode = Control.FOCUS_ALL
@@ -266,6 +273,45 @@ func _configure_tag(button: SewnChip, node_name: String, caption: String, width:
 	button.disabled = false
 	button.visible = true
 	_style_chip(button, false)
+	_fit_tag(button, caption, width)
+	if scroll != null and not button.has_meta("resew_reveal_wired"):
+		button.set_meta("resew_reveal_wired", true)
+		button.focus_entered.connect(_reveal_tag.bind(button, scroll))
+
+
+## Measure the real caption at its real body face and wrap width. A long name
+## or the torn/inactive suffix grows the sewn tag instead of clipping a line.
+func _fit_tag(button: SewnChip, caption: String, width: float) -> void:
+	var font := button.get_theme_font("font")
+	var font_size := button.get_theme_font_size("font_size")
+	var surface := button.get_theme_stylebox("normal") as StyleBoxFlat
+	var focus_surface := button.get_theme_stylebox("focus") as StyleBoxFlat
+	var side := 0.0
+	var vertical := 0.0
+	for state_surface in [surface, focus_surface]:
+		if state_surface != null:
+			side = maxf(side, state_surface.get_content_margin(SIDE_LEFT) \
+				+ state_surface.get_content_margin(SIDE_RIGHT))
+			vertical = maxf(vertical, state_surface.get_content_margin(SIDE_TOP) \
+				+ state_surface.get_content_margin(SIDE_BOTTOM))
+	# Extra room covers the sewn focus/selected border widening inside the tag.
+	var wrap_width := maxf(1.0, width - side - 8.0)
+	var text_height := float(font_size)
+	if font != null:
+		text_height = font.get_multiline_string_size(caption,
+			HORIZONTAL_ALIGNMENT_LEFT, wrap_width, font_size).y
+	button.custom_minimum_size = Vector2(width,
+		maxf(TAG_MIN_HEIGHT, ceilf(text_height + vertical + TAG_STITCH_INSET)))
+
+
+## Pointer and keyboard choices stay reachable: a tag taller than its scroll
+## viewport (or one on a later flow row) is scrolled into view when focused.
+func _reveal_tag(button: Control, scroll: ScrollContainer) -> void:
+	if not is_instance_valid(button) or not is_instance_valid(scroll) or not is_inside_tree():
+		return
+	if not button.is_inside_tree() or not scroll.is_ancestor_of(button):
+		return
+	scroll.ensure_control_visible(button)
 
 
 func _relink_focus() -> void:
@@ -348,6 +394,7 @@ func _build() -> void:
 	source_scroll.custom_minimum_size = Vector2(0, 126)
 	source_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	source_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	source_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	body.add_child(source_scroll)
 	source_tags = HFlowContainer.new()
 	source_tags.name = "SourceTags"
@@ -364,6 +411,7 @@ func _build() -> void:
 	destination_scroll.custom_minimum_size = Vector2(0, 64)
 	destination_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	destination_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	destination_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	body.add_child(destination_scroll)
 	destination_tags = HFlowContainer.new()
 	destination_tags.name = "DestinationTags"
