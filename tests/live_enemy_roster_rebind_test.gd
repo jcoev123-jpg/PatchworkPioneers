@@ -121,8 +121,12 @@ func _mounted(app, presenter) -> bool:
 		var actor_rect: Rect2 = puppet.get_global_rect() if is_instance_valid(puppet) else Rect2()
 		var patch_rect: Rect2 = Rect2(badge_rect.position + badge.patch_rect().position,
 			badge.patch_rect().size)
+		_check(badge.tooltip_text.contains("%d damage" % action.amount)
+			and badge.tooltip_text.contains("Hero %d" % action.target_position)
+			and not badge.tooltip_text.contains("Target policy"),
+			"replacement badge exposes fresh intent tooltip without stale text")
 		_check(is_instance_valid(puppet) and badge.is_visible_in_tree()
-			and badge.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and badge.mouse_filter == Control.MOUSE_FILTER_PASS
 			and badge.focus_mode == Control.FOCUS_NONE
 			and badge_rect.size.x >= badge.custom_minimum_size.x - 0.01
 			and badge_rect.size.y >= badge.custom_minimum_size.y - 0.01
