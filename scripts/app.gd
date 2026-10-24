@@ -246,6 +246,11 @@ class RouteBook extends Control:
 	const FLOOR_TAB := Rect2(206, 118, 210, 66)
 	const FLOOR_HINT := Rect2(206, 196, 210, 64)
 	const FELT_TAB := Color("#8f7a55")
+	const HERO_IDLE_PATHS := {
+		"warden": "res://assets/paper/heroes/warden.png",
+		"seamstress": "res://assets/paper/heroes/seamstress.png",
+		"tinker": "res://assets/paper/heroes/tinker.png",
+	}
 
 	var board_texture: Texture2D = null
 
@@ -281,6 +286,62 @@ class RouteBook extends Control:
 		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		add_child(hint)
+
+	## Only detached run values enter this view; it has no combat/service references.
+	func show_party(snapshot: Dictionary) -> void:
+		var values := snapshot.duplicate(true)
+		var slate := Control.new()
+		slate.name = "PartySlate"
+		slate.position = Vector2(190, 276)
+		slate.size = Vector2(388, 338)
+		slate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slate.focus_mode = Control.FOCUS_NONE
+		add_child(slate)
+		for index in range(values.heroes.size()):
+			var hero: Dictionary = values.heroes[index]
+			var row := Control.new()
+			row.name = "HeroRow" + str(index)
+			row.position = Vector2(0, index * 86)
+			row.size = Vector2(slate.size.x, 78)
+			row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.focus_mode = Control.FOCUS_NONE
+			slate.add_child(row)
+			var stitch := ActionCornerStitch.new()
+			stitch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			row.add_child(stitch)
+			var portrait := TextureRect.new()
+			portrait.name = "Portrait"
+			portrait.position = Vector2(10, 6)
+			portrait.size = Vector2(64, 66)
+			portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			portrait.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			portrait.focus_mode = Control.FOCUS_NONE
+			var path: String = HERO_IDLE_PATHS.get(hero.id, "")
+			if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
+				portrait.texture = load(path) as Texture2D
+			row.add_child(portrait)
+			if portrait.texture == null:
+				var fallback := _inert_label("PortraitFallback", "?", 26)
+				fallback.position = portrait.position
+				fallback.size = portrait.size
+				fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+				fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+				row.add_child(fallback)
+			var caption := _inert_label("HeroName", String(hero.name), 22)
+			caption.position = Vector2(86, 8)
+			caption.size = Vector2(290, 28)
+			row.add_child(caption)
+			var health := _inert_label("Health", "HP %d / %d" % [hero.hp, hero.max_hp], 20)
+			health.position = Vector2(86, 40)
+			health.size = Vector2(290, 28)
+			row.add_child(health)
+		var resources := _inert_label("Resources", "Deck: %d cards\nGold: %d    Scraps: %d" % [
+			values.deck_count, values.gold, values.scraps], 20)
+		resources.position = Vector2(10, 268)
+		resources.size = Vector2(368, 62)
+		slate.add_child(resources)
 
 	func _inert_label(node_name: String, text: String, font_size: int) -> Label:
 		var label := Label.new()
@@ -1152,6 +1213,8 @@ func _mount_route_book() -> void:
 		return
 	var book := RouteBook.new()
 	book.board_texture = RunRouteAtlas.load_board_texture(RunRouteAtlas.MAP_BOARD_PATH)
+	book.show_party({"heroes": run_heroes.duplicate(true), "deck_count": run_deck.size(),
+		"gold": session_gold, "scraps": run_scraps})
 	add_child(book)
 	route_book_backdrop = book
 

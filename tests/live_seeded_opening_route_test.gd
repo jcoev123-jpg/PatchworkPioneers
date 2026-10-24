@@ -169,6 +169,13 @@ func _book_state(app) -> Array:
 		var cue: Label = book.get_node_or_null("FloorCue")
 		state.append([book.uses_board_texture(),
 			area.text if area != null else "", cue.text if cue != null else ""])
+		var slate: Control = book.get_node("PartySlate")
+		for row in slate.get_children():
+			if row is Label:
+				state.append(row.text)
+			else:
+				state.append([row.get_node("HeroName").text, row.get_node("Health").text,
+					row.get_node("Portrait").texture != null])
 	else:
 		state.append(null)
 	for button in app.route_buttons:
@@ -214,6 +221,7 @@ func _opening_book(app) -> void:
 		and cue.get_meta("floor_number") == 1 and left_page.encloses(cue_rect),
 		"visible first-floor cue sits on the left page")
 	_check(not area_rect.intersects(cue_rect), "the area and floor patches stay separate on the left page")
+	_party_slate(app, left_page)
 	_check(app.run_map.get_route().is_empty() and app.run_map.get_current_node_id() == ""
 		and app.run_map.get_current_floor() == 0,
 		"the page tabs never invent a committed route")
@@ -295,6 +303,83 @@ func _opening_book(app) -> void:
 		"the map and Back actions stay reachable at the page foot")
 
 
+func _party_slate(app, page: Rect2) -> void:
+	var book = app.route_book_backdrop
+	var slates: Array = book.find_children("PartySlate", "Control", true, false)
+	_check(slates.size() == 1 and app.run_heroes.size() == 3 and not app.run_deck.is_empty(),
+		"one slate with a genuine initialized party and deck")
+	if slates.size() != 1:
+		return
+	var slate: Control = slates[0]
+	var rows := slate.find_children("HeroRow*", "Control", false, false)
+	_check(rows.size() == app.run_heroes.size(), "exactly one sewn row per run hero")
+	var expected_names := ["Warden", "Seamstress", "Tinker"]
+	var paths := ["res://assets/paper/heroes/warden.png", "res://assets/paper/heroes/seamstress.png",
+		"res://assets/paper/heroes/tinker.png"]
+	var previous: Rect2 = book.get_node("FloorHint").get_global_rect()
+	for index in range(mini(rows.size(), app.run_heroes.size())):
+		var row: Control = rows[index]
+		var hero: Dictionary = app.run_heroes[index]
+		var caption: Label = row.get_node("HeroName")
+		var health: Label = row.get_node("Health")
+		_check(hero.name == expected_names[index] and caption.text == hero.name
+			and health.text == "HP %d / %d" % [hero.hp, hero.max_hp],
+			"mounted name and current/max HP match independent run hero")
+		_check(row.get_global_rect().position.y >= previous.end.y,
+			"hero rows follow the tabs and never overlap")
+		previous = row.get_global_rect()
+		var portrait: TextureRect = row.get_node("Portrait")
+		_check(portrait.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
+			and portrait.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			and portrait.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR,
+			"portrait preserves its aspect ratio with linear filtering")
+		if ResourceLoader.exists(paths[index], "Texture2D"):
+			_check(portrait.texture == load(paths[index]), "committed idle portrait is mounted")
+		else:
+			_check(portrait.texture == null and row.get_node_or_null("PortraitFallback") != null
+				and not caption.text.is_empty(), "missing portrait retains readable fallback and name")
+	var resources: Label = slate.get_node("Resources")
+	_check(resources.text == "Deck: %d cards\nGold: %d    Scraps: %d" % [
+		app.run_deck.size(), app.session_gold, app.run_scraps]
+		and resources.get_global_rect().position.y >= previous.end.y,
+		"deck and wallet summary uses authoritative counts below the heroes")
+	var controls: Array = [slate]
+	controls.append_array(slate.find_children("*", "Control", true, false))
+	for control in controls:
+		_check(control.mouse_filter == Control.MOUSE_FILTER_IGNORE and control.focus_mode == Control.FOCUS_NONE
+			and control.is_visible_in_tree() and page.encloses(control.get_global_rect()),
+			"every slate control is inert and enclosed by the left page: " + str(control.name))
+		if control is Label:
+			_check(not control.text.contains("res://") and not control.text.contains("f01_")
+				and not control.text.contains("warden_") and not control.text.contains("seamstress_")
+				and not control.text.contains("tinker_"), "slate labels show no authored paths or IDs")
+
+
+func _slate_snapshot_fallback(app) -> void:
+	# Exercise missing art without changing or assuming absence of any committed asset.
+	var snapshot := {"heroes": app.run_heroes.duplicate(true), "deck_count": app.run_deck.size(),
+		"gold": app.session_gold, "scraps": app.run_scraps}
+	_check(snapshot.heroes.size() == 3, "snapshot fallback uses a genuine started party")
+	var expected_hp: int = snapshot.heroes[0].hp - 1
+	snapshot.heroes[0].id = "unillustrated_hero"
+	snapshot.heroes[0].hp = expected_hp
+	var book = app.RouteBook.new()
+	book.show_party(snapshot)
+	snapshot.heroes[0].name = "mutated caller"
+	snapshot.heroes[0].hp = 0
+	snapshot.gold = 999
+	var row: Control = book.get_node("PartySlate/HeroRow0")
+	_check(row.get_node("Portrait").texture == null and row.get_node_or_null("PortraitFallback") != null
+		and row.get_node("HeroName").text == app.run_heroes[0].name
+		and row.get_node("Health").text == "HP %d / %d" % [expected_hp, app.run_heroes[0].max_hp],
+		"missing art keeps name and non-full current HP after nested caller mutation")
+	_check(book.get_node("PartySlate/Resources").text == "Deck: %d cards\nGold: %d    Scraps: %d" % [
+		app.run_deck.size(), app.session_gold, app.run_scraps]
+		and app.run_heroes[0].hp == app.run_heroes[0].max_hp,
+		"snapshot presentation and caller mutations leave run authorities unchanged")
+	book.free()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var app = load("res://scenes/app.tscn").instantiate()
@@ -327,6 +412,7 @@ func _run() -> void:
 				and app.run_deck.size() == 12 and app.party_carryover is RunTornCarryover,
 				"Start publishes canonical seeded map, twelve cards and three heroes before combat")
 			_opening_book(app)
+			_slate_snapshot_fallback(app)
 			# Every mounted patch is reachable in authored order by Tab and back by
 			# reverse Tab, without spending any route or RNG state.
 			var first_patch: Button = app.route_buttons[0]
@@ -338,6 +424,7 @@ func _run() -> void:
 			_check(root.gui_get_focus_owner() == first_patch,
 				"reverse Tab returns to the first sewn patch")
 			var book_id := 0
+			var slate_id: int = app.route_book_backdrop.get_node("PartySlate").get_instance_id()
 			if is_instance_valid(app.route_book_backdrop):
 				book_id = app.route_book_backdrop.get_instance_id()
 			var book_state := _book_state(app)
@@ -347,6 +434,18 @@ func _run() -> void:
 			app.start_run_requested.emit()
 			app._open_route()
 			_check(_record(app) == before, "duplicate Start and stale Back/Return callbacks are inert")
+			_check(app.route_book_backdrop.get_instance_id() == book_id
+				and _book_state(app) == book_state, "repeat Start preserves the single slate")
+			_party_slate(app, Rect2(app.route_book_backdrop.global_position
+				+ app.route_book_backdrop.page_geometry().left_page.position,
+				app.route_book_backdrop.page_geometry().left_page.size))
+			await _activate(app.route_map_button, mode == 1)
+			_check(app.route_atlas != null and not app.route_book_backdrop.is_visible_in_tree(),
+				"full map hides the entire opening slate")
+			await _activate(app.route_atlas_close, mode == 1)
+			_check(_record(app) == before and _book_state(app) == book_state
+				and app.route_book_backdrop.is_visible_in_tree() and app.route_map_button.has_focus(),
+				"closing full map restores unchanged slate, ledgers, RNG and action focus")
 			_check(not app._choose_route("unknown") and not app._choose_route("f02_n0")
 				and not app._choose_route(fixture[2], weakref(map)) and _record(app) == before,
 				"unknown, future and foreign requests reject atomically")
@@ -390,6 +489,7 @@ func _run() -> void:
 			_check(app.route_book_backdrop == null, "committing the opening disposes its book")
 			await process_frame
 			_check(book_id != 0 and not is_instance_id_valid(book_id), "the disposed opening book is freed")
+			_check(not is_instance_id_valid(slate_id), "route choice frees the opening party slate")
 			if kind == "Rest":
 				_check(app.rest_recovery != null and app.rest_view.is_visible_in_tree()
 					and app.rest_continue_button.disabled, "real Rest visit mounted before any battle")
@@ -456,7 +556,11 @@ func _run() -> void:
 				var back: Button = app.rest_back_button if fixture[0] == "Rest" else app.shop_back_button if fixture[0] == "Shop" else app.route_back_button
 				await _activate(back, mode == 1)
 			else:
+				var cancelled_book: int = app.route_book_backdrop.get_instance_id()
+				var cancelled_slate: int = app.route_book_backdrop.get_node("PartySlate").get_instance_id()
 				await _activate(app.route_back_button, mode == 1)
+				_check(not is_instance_id_valid(cancelled_book) and not is_instance_id_valid(cancelled_slate),
+					"Back frees the book and its party slate")
 			_clean(app)
 	app.free()
 	_finish()
