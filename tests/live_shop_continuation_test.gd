@@ -1,6 +1,18 @@
 extends "res://tests/live_shop_route_entry_test.gd"
 ## Real seeded Fight -> reward -> Shop -> connected noncombat visit.
 
+## A deliberately tall autowrapped equipment preview, used only to exercise the
+## bounded Shop rail. It never enters game data; it stands in for the longest
+## authored conditional patch preview, the content that used to push Return below
+## the 1280x720 window.
+const LONG_PATCH_PREVIEW := "Switchback Button (Head slot)\nEffect: " \
+	+ "Once per player turn, when a different living hero's committed card or stitched half immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up. " \
+	+ "This deliberately long probe sentence is repeated so the autowrapped preview is unmistakably taller than the bounded card, exactly like the longest authored conditional patch text. " \
+	+ "Once per player turn, when a different living hero's committed card or stitched half immediately precedes this living wearer's committed card or half, this wearer gains 2 Block. " \
+	+ "Same-owner repeats and rejected plays never set it up, and every further line of this probe keeps wrapping inside the preview's own column. " \
+	+ "The bounded card scrolls this text so the fixed action rows below it never leave the 1280x720 window. " \
+	+ "Inactive while wearer is torn."
+
 
 func _continuation_fixture(kind: String, first_seed: int = 1, last_seed: int = 1000) -> Dictionary:
 	for value in range(first_seed, last_seed):
@@ -237,6 +249,41 @@ func _run() -> void:
 			var back: Callable = app.shop_back_button.pressed.get_connections()[0].callable
 			before = _continuation_state()
 			_bounds(app.shop_view)
+			var rail: Dictionary = _visit_tiles().action_rail_layout()
+			_check(not rail.is_empty() and bool(rail.get("fits", false))
+				and bool(rail.get("equipment_bounded", false)),
+				"real Shop bounds its action rail to the window with one bounded equipment card")
+			var preview: Label = app.shop_patch_preview
+			_check(is_instance_valid(preview) and preview.is_visible_in_tree(),
+				"real Shop mounts its authored equipment preview")
+			var original_preview: String = preview.text if is_instance_valid(preview) else ""
+			if is_instance_valid(preview):
+				preview.text = LONG_PATCH_PREVIEW
+			await _frames()
+			var tall: Dictionary = _visit_tiles().action_rail_layout()
+			_check(bool(tall.get("fits", false)) and bool(tall.get("equipment_scrolls", false)),
+				"a tall equipment preview scrolls inside its card instead of pushing Return/Continue off screen")
+			# The exact regression the user saw: Return and Continue used to fall
+			# below the window when the preview grew. Every mounted rail control,
+			# both title exits included, is still inside 1280x720.
+			_bounds(app.shop_view)
+			_check(app.shop_continue_button.is_visible_in_tree()
+				and app.shop_back_button.is_visible_in_tree()
+				and app.shop_continue_button.pressed.get_connections().size() == 1
+				and app.shop_back_button.pressed.get_connections().size() == 1
+				and _continuation_state() == before,
+				"bounded rail keeps both canonical title exits unchanged and spends nothing")
+			if is_instance_valid(preview):
+				preview.text = original_preview
+			await _frames()
+			_check(bool(_visit_tiles().action_rail_layout().get("fits", false))
+				and app.shop_patch_preview.text == original_preview,
+				"restoring the authored preview keeps the rail bounded and the real text intact")
+			var focus_before := _continuation_state()
+			app.shop_back_button.grab_focus()
+			await _frames()
+			_check(app.shop_back_button.has_focus() and _continuation_state() == focus_before,
+				"merely focusing the canonical Return changes no wallet, deck, route, ledger or RNG")
 			app._continue_from_shop(RunShopVisit.new(app.run_deck, app.session_gold, 0), weakref(live_map), prior, button)
 			app._continue_from_shop(visit, weakref(RunMap.new()), prior, button)
 			app._continue_from_shop(visit, weakref(live_map), empty_route, button)
@@ -392,7 +439,14 @@ func _run() -> void:
 			else:
 				_check(_continuation_state() == replay, "seeded mouse/keyboard replay reproduces entire continued run and both shop services")
 			stale = [exit, remove, buy, back, choose]
-			await _click(app.shop_back_button if kind == "Shop" else app.rest_back_button)
+			if kind == "Shop" and session == 1:
+				# The same canonical Return, activated from the keyboard.
+				app.shop_back_button.grab_focus()
+				await _frames()
+				_check(app.shop_back_button.has_focus(), "Return holds focus for keyboard activation")
+				await _key(KEY_ENTER)
+			else:
+				await _click(app.shop_back_button if kind == "Shop" else app.rest_back_button)
 			for callback in stale:
 				callback.call()
 			_check(app.title_view.visible and app.run_map == null and app.run_rng == null and app.run_deck.is_empty() and app.run_heroes.is_empty() and app.session_gold == 0 and app.run_removal_count == 0 and app.shop_visit == null, "Return after continued visit fully resets; stale controls inert")

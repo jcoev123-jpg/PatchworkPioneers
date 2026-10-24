@@ -21,6 +21,16 @@ const SELECTED_TEXT := "SELECTED"
 ## A deliberately long, wrapping probe title used only by this rendering test.
 ## It is never catalog data and never enters a real visit.
 const LONG_PROBE_TITLE := "Counter-stitch Across the Whole Wrapping Seam of Tailor's Trance"
+## A deliberately long, wrapping equipment preview used only by this rendering
+## test. It is never catalog data and never enters a real visit; it stands in for
+## the long authored patch preview that used to push Return below the window.
+const LONG_PATCH_PREVIEW := "Switchback Button (Head slot)\nEffect: " \
+	+ "Once per player turn, when a different living hero's committed card or stitched half immediately precedes this living wearer's committed card or half, this wearer gains 2 Block; same-owner repeats and rejected plays never set it up. " \
+	+ "This deliberately long probe sentence is repeated so the autowrapped preview is unmistakably taller than the bounded card, exactly like the longest authored conditional patch text. " \
+	+ "Once per player turn, when a different living hero's committed card or stitched half immediately precedes this living wearer's committed card or half, this wearer gains 2 Block. " \
+	+ "Same-owner repeats and rejected plays never set it up, and every further line of this probe keeps wrapping inside the preview's own column. " \
+	+ "The bounded card scrolls this text so the fixed action rows below it never leave the 1280x720 window. " \
+	+ "Inactive while wearer is torn."
 ## The paper inset the stamp must keep before the sewn border, measured here
 ## independently from the gallery's own layout constant. The same minimum is
 ## required below the settled stamp's own rect, so a stamp resting on (or
@@ -520,6 +530,8 @@ func _check_mounted_rail(screen: String) -> void:
 			"Rest card gallery and its tiles are untouched by the action skin")
 	_check([app.session_gold, app.run_scraps, app.run_deck] == wallet,
 		screen + " inspection spends nothing and leaves the shared deck alone")
+	if screen == "shop":
+		await _check_bounded_shop_rail(app, gallery)
 	_check_mounted_tile_art(gallery, screen)
 	await _check_mounted_selected_stamps(app, gallery, screen)
 
@@ -549,6 +561,69 @@ func _check_mounted_rail(screen: String) -> void:
 			screen + " teardown leaves the action's callbacks exactly as mounted")
 	app.free()
 	await process_frame
+
+
+## AC1: the mounted Shop's left action rail is bounded to the actual window. The
+## real action Buttons keep their identity and one canonical callback, and the
+## one variable-height part - the autowrapped equipment card - gives up height to
+## its own scroll instead of pushing Return/Continue below the 720 px view. The
+## tall preview here is a probe of exactly that defect; no screenshot or
+## hard-coded coordinate is involved.
+func _check_bounded_shop_rail(app, gallery) -> void:
+	var layout: Dictionary = gallery.action_rail_layout()
+	_check(not layout.is_empty(), "mounted Shop publishes its bounded action rail")
+	_check(bool(layout.get("fits", false)),
+		"Shop action rail is bounded to the mounted window instead of its bare minimum height")
+	_check(bool(layout.get("equipment_bounded", false)),
+		"the autowrapped equipment card is the one bounded part of the Shop rail")
+	_check(float(layout.get("equipment_visible_height", 0.0)) > 0.0,
+		"the bounded equipment card still shows a real window onto its content")
+	var actions: Array = [
+		[app.shop_buy_button, "Buy"], [app.shop_remove_button, "Remove"],
+		[app.shop_continue_button, "Continue"], [app.shop_back_button, "Return"]]
+	for entry in actions:
+		var button = entry[0]
+		var name: String = entry[1]
+		_check(is_instance_valid(button) and button.is_visible_in_tree()
+			and button.is_inside_tree() and app.shop_view.is_ancestor_of(button),
+			"bounded rail keeps the mounted Shop action: " + name)
+		_check(is_instance_valid(button) and button.pressed.get_connections().size() == 1,
+			"bounded rail keeps exactly one canonical callback: " + name)
+	var wallet := [app.session_gold, app.run_scraps, app.run_deck.duplicate(true)]
+	var rng = app.run_rng
+	var rng_state: Variant = rng.state if rng != null else null
+	var preview: Label = app.shop_patch_preview
+	_check(is_instance_valid(preview) and preview.is_visible_in_tree(),
+		"mounted Shop keeps its real equipment preview label")
+	if not is_instance_valid(preview):
+		return
+	var original := preview.text
+	preview.text = LONG_PATCH_PREVIEW
+	await _frames()
+	var tall: Dictionary = gallery.action_rail_layout()
+	_check(bool(tall.get("fits", false)),
+		"a tall wrapping equipment preview cannot push the Shop action rail below the window")
+	_check(bool(tall.get("equipment_scrolls", false)),
+		"the tall preview scrolls inside its bounded card instead of being clipped or growing the rail")
+	_check(float(tall.get("equipment_visible_height", 0.0)) > 0.0
+		and float(tall.get("equipment_visible_height", 0.0))
+			< float(tall.get("equipment_content_height", 0.0)),
+		"the bounded card keeps a visible window shorter than its taller content")
+	for name in ["Remove", "Continue", "Return"]:
+		var button: Button = app.shop_remove_button if name == "Remove" \
+			else app.shop_continue_button if name == "Continue" else app.shop_back_button
+		_check(is_instance_valid(button) and button.is_visible_in_tree()
+			and not button.disabled and button.pressed.get_connections().size() == 1,
+			"tall preview leaves the same enabled Shop action mounted: " + name)
+	_check([app.session_gold, app.run_scraps, app.run_deck] == wallet,
+		"a tall preview and the bounded rail leave the wallet and deck alone")
+	if rng != null:
+		_check(app.run_rng.state == rng_state, "the bounded rail draws no RNG")
+	preview.text = original
+	await _frames()
+	var restored: Dictionary = gallery.action_rail_layout()
+	_check(bool(restored.get("fits", false)) and preview.text == original,
+		"restoring the authored preview keeps the Shop action rail bounded and the real text intact")
 
 
 ## AC1: every card tile in the real mounted gallery - Shop offers, owned-card
