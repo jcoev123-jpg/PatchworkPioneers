@@ -21,6 +21,7 @@ const BODY_FONT_SIZE := 18
 ## The narrow Change First ticket keeps the same body size; its short caption
 ## wraps inside the 96x106 sewn ticket instead of shrinking to illegible type.
 const CHANGE_FIRST_FONT_SIZE := 18
+const CARD_NAME_FONT_SIZE := 16
 
 var first_selector: OptionButton
 var second_selector: OptionButton
@@ -475,8 +476,8 @@ func _mark_tile_selected(tile: Button, is_selected: bool) -> void:
 func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	var tile := Button.new()
 	tile.name = ("FirstTile_%d" if is_first else "SecondTile_%d") % entry["index"]
-	tile.custom_minimum_size = Vector2(96, 106)
-	tile.size = Vector2(96, 106)
+	tile.custom_minimum_size = Vector2(108, 106)
+	tile.size = Vector2(108, 106)
 	tile.focus_mode = Control.FOCUS_ALL
 	tile.mouse_filter = Control.MOUSE_FILTER_STOP
 	tile.set_meta("index", entry["index"])
@@ -495,7 +496,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	var owner_col: Color = OWNER_COLORS.get(owner_str, INK)
 	var stripe := Panel.new()
 	stripe.position = Vector2(3, 3)
-	stripe.size = Vector2(90, 16)
+	stripe.size = Vector2(102, 16)
 	stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var stripe_box := StyleBoxFlat.new()
 	stripe_box.bg_color = owner_col
@@ -507,11 +508,11 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	var stripe_label := Label.new()
 	stripe_label.name = "OwnerStripe"
 	stripe_label.position = Vector2(2, 0)
-	stripe_label.size = Vector2(86, 16)
+	stripe_label.size = Vector2(98, 16)
 	# One-based human copy number; the tile keeps the zero-based source index.
 	stripe_label.text = "#%d %s" % [int(entry["index"]) + 1, owner_str.capitalize()]
 	stripe_label.add_theme_font_size_override("font_size", 10)
-	stripe_label.add_theme_color_override("font_color", Color("#fdf6e5"))
+	stripe_label.add_theme_color_override("font_color", INK if owner_str == "tinker" else CREAM)
 	stripe_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	stripe_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	stripe_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -519,8 +520,8 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 
 	# Illustration window / fallback
 	var art_window := Panel.new()
-	art_window.position = Vector2(5, 21)
-	art_window.size = Vector2(86, 38)
+	art_window.position = Vector2(4, 21)
+	art_window.size = Vector2(100, 38)
 	art_window.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var art_box := StyleBoxFlat.new()
 	art_box.bg_color = owner_col.darkened(0.2)
@@ -534,7 +535,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	if tex != null:
 		var pic := TextureRect.new()
 		pic.position = Vector2(0, 0)
-		pic.size = Vector2(86, 38)
+		pic.size = Vector2(100, 38)
 		pic.texture = tex
 		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -546,7 +547,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 		fallback.name = "CardNameFallback"
 		fallback.theme_type_variation = "PatchHeading"
 		fallback.position = Vector2(2, 2)
-		fallback.size = Vector2(82, 34)
+		fallback.size = Vector2(96, 34)
 		fallback.text = entry["name"]
 		fallback.add_theme_font_size_override("font_size", 10)
 		fallback.add_theme_color_override("font_color", Color("#fdf6e5"))
@@ -560,10 +561,10 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	var name_lbl := Label.new()
 	name_lbl.name = "CardName"
 	name_lbl.theme_type_variation = "PatchHeading"
-	name_lbl.position = Vector2(3, 61)
-	name_lbl.size = Vector2(90, 22)
+	name_lbl.position = Vector2(2, 60)
+	name_lbl.size = Vector2(104, 24)
 	name_lbl.text = entry["name"]
-	name_lbl.add_theme_font_size_override("font_size", 11)
+	name_lbl.add_theme_font_size_override("font_size", CARD_NAME_FONT_SIZE)
 	name_lbl.add_theme_color_override("font_color", INK)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -584,7 +585,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	# Three small numbered sewn FROM pips (1, 2, 3)
 	var pips_row := HBoxContainer.new()
 	pips_row.name = "FromPips"
-	pips_row.position = Vector2(8, 85)
+	pips_row.position = Vector2(4, 85)
 	pips_row.size = Vector2(54, 16)
 	pips_row.add_theme_constant_override("separation", 3)
 	pips_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -633,7 +634,7 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	# Round sewn cost button
 	var cost_badge := Panel.new()
 	cost_badge.name = "CostBadge"
-	cost_badge.position = Vector2(66, 84)
+	cost_badge.position = Vector2(80, 84)
 	cost_badge.size = Vector2(24, 18)
 	cost_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cost_box := StyleBoxFlat.new()
@@ -719,6 +720,7 @@ func _create_change_first_button(first_idx: int) -> Button:
 	btn.add_theme_stylebox_override("hover_pressed", held)
 
 	btn.pressed.connect(_return_to_first_choice)
+	btn.focus_entered.connect(_on_tile_focus_entered.bind(btn, second_tile_scroll))
 	return btn
 
 
@@ -947,14 +949,18 @@ func clear() -> void:
 	second_tiles.clear()
 	if first_tile_container != null:
 		for child in first_tile_container.get_children():
+			first_tile_container.remove_child(child)
 			child.queue_free()
 	if second_tile_container != null:
 		for child in second_tile_container.get_children():
+			second_tile_container.remove_child(child)
 			child.queue_free()
 	if first_tile_scroll != null:
 		first_tile_scroll.visible = true
+		first_tile_scroll.scroll_horizontal = 0
 	if second_tile_scroll != null:
 		second_tile_scroll.visible = false
+		second_tile_scroll.scroll_horizontal = 0
 	if step_label != null:
 		step_label.text = "Rest Stitch unavailable"
 	if first_selector != null:
@@ -983,14 +989,18 @@ func refresh() -> void:
 	second_tiles.clear()
 	if first_tile_container != null:
 		for child in first_tile_container.get_children():
+			first_tile_container.remove_child(child)
 			child.queue_free()
 	if second_tile_container != null:
 		for child in second_tile_container.get_children():
+			second_tile_container.remove_child(child)
 			child.queue_free()
 	if first_tile_scroll != null:
 		first_tile_scroll.visible = true
+		first_tile_scroll.scroll_horizontal = 0
 	if second_tile_scroll != null:
 		second_tile_scroll.visible = false
+		second_tile_scroll.scroll_horizontal = 0
 
 	if first_selector == null:
 		return
@@ -1062,6 +1072,7 @@ func _populate_second_options(first_idx: int) -> void:
 	confirm_button.disabled = true
 
 	for child in second_tile_container.get_children():
+		second_tile_container.remove_child(child)
 		child.queue_free()
 	second_tiles.clear()
 
@@ -1082,6 +1093,7 @@ func _populate_second_options(first_idx: int) -> void:
 
 	first_tile_scroll.visible = false
 	second_tile_scroll.visible = true
+	second_tile_scroll.scroll_horizontal = 0
 
 	if step_label != null:
 		step_label.text = "Step 2: Choose second card from a different hero • 3 scraps."
@@ -1124,6 +1136,7 @@ func _return_to_first_choice() -> void:
 	_selected_second_index = -1
 	second_tile_scroll.visible = false
 	first_tile_scroll.visible = true
+	first_tile_scroll.scroll_horizontal = 0
 	first_selector.select(-1)
 	second_selector.select(-1)
 	second_selector.clear()

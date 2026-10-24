@@ -255,8 +255,8 @@ func _select_keyboard(button: OptionButton, target: int) -> void:
 
 func _bounds(c: Control) -> void:
 	var rect := c.get_global_rect()
-	_check(rect.position.x >= 0 and rect.position.y >= 0
-		and rect.end.x <= 1280 and rect.end.y <= 720, "visible panel/control fits 1280x720: " + c.name)
+	var ok := rect.position.x >= 0 and rect.position.y >= 0 and rect.end.x <= 1280 and rect.end.y <= 720
+	_check(ok, "visible panel/control fits 1280x720: " + c.name)
 
 
 func _assert_sewn_caption(panel: LiveRestStitchPairPicker, a: int, b: int,
@@ -837,6 +837,7 @@ func _run() -> void:
 	await _test_keyboard_focus_route()
 	await _test_owner_position_pips()
 	await _test_copy_numbering_from_one()
+	await _test_card_tile_typography_and_contrast()
 	_finish()
 
 
@@ -2686,5 +2687,159 @@ func _test_owner_position_pips() -> void:
 		"wallet scraps untouched at 3")
 	_check(local_rng.state == local_before and randi() == global_before,
 		"pip inspection and rendering draw no local or global RNG")
+
+	panel.free()
+
+
+## AC1, AC2, AC3: Card tile typography, contrast, components, and selection invariants.
+func _test_card_tile_typography_and_contrast() -> void:
+	var test_deck: Array[String] = [
+		"warden_strike",
+		"seamstress_running_stitch",
+		"tinker_pop_shot",
+		"tinker_snip_the_seam_plus",
+		"warden_counter_stitch_plus",
+	]
+	var ledger := RunRestStitchCards.new(test_deck, {}, 3)
+	_check(ledger.is_valid(), "typography test deck is valid")
+	var source := ledger.get_snapshot()
+
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 987654
+	var local_before := local_rng.state
+	seed(987654)
+	var global_before := randi()
+	seed(987654)
+
+	var panel := LiveRestStitchPairPicker.new()
+	panel.name = "TypographyRestStitchPairPicker"
+	panel.position = Vector2(330, 180)
+	panel.size = Vector2(710, 500)
+	root.add_child(panel)
+	await _frames()
+	panel.bind(ledger, source)
+	await _frames()
+
+	_check(LiveRestStitchPairPicker.CARD_NAME_FONT_SIZE >= 16,
+		"card name font size constant is at least 16px")
+
+	_check(panel.first_tiles.size() == test_deck.size(), "stage 1 tiles count matches deck size")
+	for i in range(panel.first_tiles.size()):
+		var tile := panel.first_tiles[i]
+		var card_id := test_deck[i]
+		var def := RunRestStitchCards.resolve_card_definition(card_id)
+		var owner_str: String = str(def["owner"])
+
+		_bounds(tile)
+
+		# AC1: Friendly name in PatchHeading at >= 16px, autowrap enabled
+		var name_label := tile.get_node_or_null("CardName") as Label
+		_check(name_label != null and name_label.is_visible_in_tree(),
+			"tile %d mounts visible CardName label" % i)
+		_check(name_label.theme_type_variation == "PatchHeading",
+			"tile %d CardName uses PatchHeading theme type variation" % i)
+		_check(name_label.get_theme_font_size("font_size") >= 16,
+			"tile %d CardName font size is >= 16px" % i)
+		_check(name_label.text == def["display_name"],
+			"tile %d CardName displays exact friendly authored name" % i)
+		_check(name_label.autowrap_mode != TextServer.AUTOWRAP_OFF,
+			"tile %d CardName has autowrap enabled" % i)
+		var font := name_label.get_theme_font("font")
+		while font is FontVariation:
+			font = (font as FontVariation).base_font
+		_check(font != null and font.resource_path.ends_with("LondrinaSolid-Regular.ttf"),
+			"tile %d CardName resolves LondrinaSolid-Regular" % i)
+
+		# AC2: Owner stripe coloring & contrast
+		var stripe_label := tile.find_child("OwnerStripe", true, false) as Label
+		_check(stripe_label != null, "tile %d mounts OwnerStripe label" % i)
+		var owner_color: Color = LiveRestStitchPairPicker.OWNER_COLORS[owner_str]
+		var stripe_panel := stripe_label.get_parent() as Panel
+		var stripe_style := stripe_panel.get_theme_stylebox("panel") as StyleBoxFlat
+		_check(stripe_style != null and stripe_style.bg_color == owner_color,
+			"tile %d owner stripe bg color matches owner color (%s)" % [i, owner_str])
+
+		var stripe_text_col := stripe_label.get_theme_color("font_color")
+		if owner_str == "tinker":
+			_check(stripe_text_col == LiveRestStitchPairPicker.INK,
+				"tinker owner stripe uses dark ink text")
+		else:
+			_check(stripe_text_col == LiveRestStitchPairPicker.CREAM,
+				"%s owner stripe uses cream text" % owner_str)
+		var stripe_contrast := _contrast(stripe_text_col, owner_color)
+		_check(stripe_contrast >= 4.5,
+			"tile %d owner stripe text has contrast >= 4.5 (was %.2f)" % [i, stripe_contrast])
+
+		# AC2: Art window or friendly fallback
+		var tex := LiveRestStitchPairPicker._texture(LiveRestStitchPairPicker.art_path(card_id))
+		var fallback_label := tile.find_child("CardNameFallback", true, false) as Label
+		if tex != null:
+			_check(fallback_label == null, "illustrated tile %d does not mount fallback label" % i)
+		else:
+			_check(fallback_label != null and fallback_label.text == def["display_name"],
+				"missing-art tile %d mounts fallback label with friendly name" % i)
+			_check(fallback_label.theme_type_variation == "PatchHeading",
+				"missing-art fallback label %d uses PatchHeading" % i)
+
+		# AC2: 3 canonical FROM pips
+		var pips_state := LiveRestStitchPairPicker.tile_pip_state(tile)
+		var canonical_from: Array = def.get("from_positions", [])
+		for pos in [1, 2, 3]:
+			var should_be_active := canonical_from.has(pos)
+			_check(pips_state["active_pips"].has(pos) == should_be_active,
+				"tile %d pip %d active matches canonical from_positions" % [i, pos])
+
+		# AC2: Cost badge
+		var cost_badge := tile.find_child("CostBadge", true, false) as Control
+		_check(cost_badge != null, "tile %d mounts CostBadge" % i)
+		var cost_lbl := cost_badge.find_child("CostLabel", true, false) as Label
+		_check(cost_lbl != null and cost_lbl.text == str(def["cost"]),
+			"tile %d CostBadge displays numeric cost %d" % [i, def["cost"]])
+
+	# Transition to Stage 2 by clicking tile 0 (warden_strike)
+	await _click_tile(panel.first_tiles[0])
+	await _frames()
+	_check(panel.second_tile_scroll.visible and not panel.first_tile_scroll.visible,
+		"stage 2 is visible after first selection")
+	_check(panel.confirm_button.disabled, "confirm button is disabled upon entering stage 2")
+
+	# Check Stage 2 tiles
+	for tile in panel.second_tiles:
+		_bounds(tile)
+		var name_label := tile.get_node_or_null("CardName") as Label
+		_check(name_label != null and name_label.get_theme_font_size("font_size") >= 16,
+			"stage 2 tile CardName font size is >= 16px")
+		_check(name_label.theme_type_variation == "PatchHeading",
+			"stage 2 tile CardName uses PatchHeading")
+		_check(name_label.autowrap_mode != TextServer.AUTOWRAP_OFF,
+			"stage 2 tile CardName has autowrap enabled")
+
+	# Check missing art synthesized entry
+	var synth_entry := {
+		"index": 99,
+		"id": "synthetic_missing_art_test",
+		"name": "Synthesized Long Card Name",
+		"owner": "tinker",
+		"cost": 2,
+	}
+	var synth_tile := panel._create_card_tile(synth_entry, true)
+	panel.add_child(synth_tile)
+	var synth_name := synth_tile.get_node_or_null("CardName") as Label
+	_check(synth_name != null and synth_name.text == "Synthesized Long Card Name",
+		"synth tile retains long name")
+	_check(synth_name.get_theme_font_size("font_size") >= 16,
+		"synth tile CardName font size >= 16px")
+	_check(synth_name.theme_type_variation == "PatchHeading",
+		"synth tile CardName uses PatchHeading")
+	var synth_fallback := synth_tile.find_child("CardNameFallback", true, false) as Label
+	_check(synth_fallback != null and synth_fallback.text == "Synthesized Long Card Name",
+		"synth tile mounts fallback with friendly name")
+	synth_tile.free()
+
+	# Invariance & Nonmutation (AC3)
+	_check(ledger.get_snapshot() == source and not ledger.is_consumed(),
+		"typography test leaves Rest ledger unconsumed and snapshot untouched")
+	_check(local_rng.state == local_before and randi() == global_before,
+		"typography test draws no local or global RNG")
 
 	panel.free()
