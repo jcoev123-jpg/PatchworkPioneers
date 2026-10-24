@@ -13,21 +13,25 @@ const CAPTION_STITCH := Color("#9c9484")
 const CAPTION_INK := CREAM
 ## Slain and no-action tags stay muted, but still read clearly on that dark plaque.
 const CAPTION_INK_MUTED := Color("#c4bba9")
-## Target policy: its own rust felt ticket, never painted across the caption.
+## Target policy: its own rust felt ticket, never painted across the caption. It is
+## never smaller than 13 px, so the ticket stays readable beside the action.
 const POLICY_FILL := Color("#8d4b3a")
 const POLICY_INK := CREAM
-const POLICY_FONT := 11
+const POLICY_FONT := 13
 ## Bounded caption type: the theme's own body size is the short-action size, and only a
 ## long authentic caption steps down, no further than this floor.
 const CAPTION_MAX_FONT := 18
 const CAPTION_MIN_FONT := 11
+## A caption shown beside a policy ticket is already compact, so it never shrinks below
+## this floor: the amount and destination stay readable next to the 13 px ticket.
+const COMPACT_MIN_FONT := 14
 ## Caption layout in badge coordinates, right of the unchanged sewn patch.
 const CAPTION_LEFT := 61.0
 const CAPTION_MARGIN := 4.0
 const CAPTION_PAD := 5.0
 const CAPTION_TOP := 1.0
 const CAPTION_BOTTOM := 1.0
-const POLICY_PAD := 5.0
+const POLICY_PAD := 4.0
 const POLICY_GAP := 5.0
 ## Compact sewn tag: the roster mounts it with a viewport-safe margin inside the intent band.
 const BADGE_WIDTH := 192.0
@@ -57,6 +61,10 @@ var readable_text := "NO ACTION"
 var intent_type := ""
 var amount := 0
 var target_position := 0
+## Authored debuff status (lowercase) and shove direction of the current announcement.
+## They are kept only so a relayout can rebuild the compact policy caption.
+var action_status := ""
+var shove_direction := 0
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
 const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Low HP",
@@ -96,8 +104,17 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_NONE
 	custom_minimum_size = Vector2(BADGE_WIDTH, BADGE_HEIGHT)
 	tooltip_text = "No action."
-	# The fitted caption depends on the mounted width, so a relayout repaints the tag.
-	resized.connect(queue_redraw)
+	# The fitted caption depends on the mounted width, so a relayout re-fits the compact
+	# policy caption and repaints the tag.
+	resized.connect(_relayout)
+	queue_redraw()
+
+
+## Re-fit the displayed caption after the mounted width changes, so a compact policy
+## caption never clips and can use the widest form that measures inside the new room.
+func _relayout() -> void:
+	if not policy_cue.is_empty():
+		_apply_compact_caption()
 	queue_redraw()
 
 
@@ -164,17 +181,66 @@ func caption_text_area() -> Rect2:
 
 
 ## Largest bounded caption size whose measured text fits that room. Short actions get the
-## theme's own body size; only a long authentic caption steps down, never below the floor.
+## theme's own body size; only a long authentic caption steps down, never below its floor.
 func caption_font_size() -> int:
 	var font := get_theme_default_font()
 	var room := caption_text_area()
+	var floor_size := caption_floor_font()
 	if font == null or room.size.x <= 0.0:
-		return CAPTION_MIN_FONT
-	for size_px in range(CAPTION_MAX_FONT, CAPTION_MIN_FONT - 1, -1):
+		return floor_size
+	for size_px in range(CAPTION_MAX_FONT, floor_size - 1, -1):
 		if font.get_string_size(readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x \
 				<= room.size.x:
 			return size_px
-	return CAPTION_MIN_FONT
+	return floor_size
+
+
+## The smallest size this caption may use. A compact caption shown beside a policy ticket
+## keeps the 14 px action floor; a full caption keeps the wider bounded range.
+func caption_floor_font() -> int:
+	return COMPACT_MIN_FONT if not policy_cue.is_empty() else CAPTION_MIN_FONT
+
+
+## Compact, unambiguous action forms in preference order: exact amount, target number and
+## shove direction. Empty whenever no policy ticket is shown, so a no-policy badge keeps
+## its full caption exactly as before.
+func compact_caption_forms() -> Array[String]:
+	var forms: Array[String] = []
+	if policy_cue.is_empty():
+		return forms
+	match intent_type:
+		"attack":
+			forms.append("Hit %d → %d" % [amount, target_position])
+			forms.append("Hit %d→%d" % [amount, target_position])
+		"debuff":
+			var label := action_status.capitalize()
+			forms.append("%s %d → %d" % [label, amount, target_position])
+			forms.append("%s %d→%d" % [label, amount, target_position])
+		"shove":
+			var long_dir := "back" if shove_direction == 1 else "forward"
+			var short_dir := "back" if shove_direction == 1 else "fwd"
+			forms.append("Shove %d %s" % [target_position, long_dir])
+			forms.append("Shove %d %s" % [target_position, short_dir])
+	return forms
+
+
+## The compact form actually displayed: the first one measured to fit beside the ticket at
+## the action floor, otherwise the shortest one. Only called while a ticket is shown; the
+## full action, amount, target and rule stay in tooltip_text.
+func _apply_compact_caption() -> void:
+	var forms := compact_caption_forms()
+	if forms.is_empty():
+		return
+	readable_text = forms[forms.size() - 1]
+	var font := get_theme_default_font()
+	var room := caption_text_area()
+	if font == null or room.size.x <= 0.0:
+		return
+	for form in forms:
+		if font.get_string_size(form, HORIZONTAL_ALIGNMENT_LEFT, -1, COMPACT_MIN_FONT).x \
+				<= room.size.x:
+			readable_text = form
+			return
 
 
 ## High-contrast ink on the dark plaque; inert states keep a muted but still legible cream.
@@ -205,6 +271,11 @@ func caption_rect() -> Rect2:
 		return area
 	var left := maxf(area.position.x, text.position.x - CAPTION_PAD)
 	var right := minf(area.end.x, text.end.x + CAPTION_PAD)
+	# A policy ticket keeps its own felt edge: the plaque stops one pixel short of it so
+	# the two sewn pieces never merge into one bar.
+	var tag := policy_rect()
+	if tag.size.x > 0.0:
+		right = minf(right, tag.position.x - 1.0)
 	return Rect2(left, area.position.y, right - left, area.size.y)
 
 
@@ -263,6 +334,8 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	# Never affect or advance the scheduler: the caller passes a copied announcement.
 	# Only targeted, active, authored actions receive the small policy tag.
 	policy_cue = ""
+	action_status = ""
+	shove_direction = 0
 	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
@@ -306,6 +379,7 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		elif intent_type == "debuff":
 			readable_text = "%s %d: %s" % [action.status.capitalize(), amount, rank_caption(target_position)]
 			var status_name := String(action.get("status", "")).to_lower()
+			action_status = status_name
 			# The three authored debuffs explain their own rule in full: the affected hero,
 			# the amount, the turn duration, Bleed's Block bypass and the rounded damage of
 			# Weak and Exposed. Only attack damage and the Bleed tick are described here.
@@ -323,6 +397,7 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 					status_name.capitalize(), amount, hero_target_label(target_position)]
 		else:
 			var push_dir := "push back" if action.direction == 1 else "push front"
+			shove_direction = action.direction if action.direction is int else 0
 			readable_text = "Shove %s %s" % [rank_caption(target_position), "back" if action.direction == 1 else "forward"]
 			tip = "Push %s %s." % [push_dir.trim_prefix("push "), hero_target_label(target_position)]
 	else:
@@ -335,6 +410,10 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	if not policy_cue.is_empty() and POLICY_DESCRIPTIONS.has(policy):
 		tip += "\nTarget policy (%s): %s." % [policy_cue.to_upper(), POLICY_DESCRIPTIONS[policy]]
 	tooltip_text = tip
+	# A policy ticket shares this same sewn band, so the displayed action switches to its
+	# measured compact form; the tooltip above keeps the full amount, target and rule.
+	if not policy_cue.is_empty():
+		_apply_compact_caption()
 	_update_visuals()
 
 

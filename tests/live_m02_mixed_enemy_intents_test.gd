@@ -148,6 +148,7 @@ func _run() -> void:
 	await _badge_icons(app)
 	await _debuff_hovers(app)
 	await _caption_readability(app)
+	await _policy_badges(app)
 	await _rejections(app)
 	app.free()
 	for failure in failures:
@@ -473,7 +474,8 @@ func _contrast(first: Color, second: Color) -> float:
 
 
 ## A mounted caption is really readable: fitted text inside its dark plaque at a bounded
-## size, high-contrast cream ink, and any target-policy cue as its own ticket beside it.
+## size, high-contrast cream ink, and any target-policy cue as its own 13 px ticket beside
+## it. A compact policy caption keeps a 14 px action floor instead of dropping to 11 px.
 func _caption_readable(badge) -> bool:
 	var font: Font = badge.get_theme_default_font()
 	if font == null or badge.readable_text.is_empty():
@@ -482,7 +484,9 @@ func _caption_readable(badge) -> bool:
 	var text: Rect2 = badge.caption_text_rect()
 	var plaque: Rect2 = badge.caption_rect()
 	var tag: Rect2 = badge.policy_rect()
-	var fits: bool = size_px >= LiveEnemyIntentBadge.CAPTION_MIN_FONT \
+	var floor_px: int = 14 if not badge.policy_cue.is_empty() \
+		else LiveEnemyIntentBadge.CAPTION_MIN_FONT
+	var fits: bool = size_px >= floor_px \
 		and size_px <= LiveEnemyIntentBadge.CAPTION_MAX_FONT \
 		and text.size.x > 0.0 and text.size.y > 0.0 \
 		and is_equal_approx(text.size.x, font.get_string_size(badge.readable_text,
@@ -496,10 +500,14 @@ func _caption_readable(badge) -> bool:
 		return false
 	if badge.policy_cue.is_empty():
 		return tag == Rect2() and badge.policy_text_rect() == Rect2()
-	if tag.size.x <= 0.0:
+	if tag.size.x <= 0.0 or LiveEnemyIntentBadge.POLICY_FONT < 13:
 		return false
+	var policy_text: Rect2 = badge.policy_text_rect()
 	return Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(tag) \
-		and not text.intersects(tag) and tag.grow(0.01).encloses(badge.policy_text_rect()) \
+		and not text.intersects(tag) and not plaque.intersects(tag) \
+		and tag.grow(0.01).encloses(policy_text) \
+		and is_equal_approx(policy_text.size.x, font.get_string_size(badge.policy_cue,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, LiveEnemyIntentBadge.POLICY_FONT).x) \
 		and _contrast(LiveEnemyIntentBadge.POLICY_INK, LiveEnemyIntentBadge.POLICY_FILL) >= 4.5
 
 
@@ -532,20 +540,20 @@ func _caption_readability(app) -> void:
 	_check(shove.policy_cue.is_empty() and shove.policy_rect() == Rect2()
 		and debuff.policy_cue.is_empty() and debuff.policy_rect() == Rect2(),
 		"the unbound live schedule announces no policy ticket of its own")
-	# A long authoritative debuff beside a real policy: bounded step-down, never beneath
-	# the policy ticket, never outside the badge.
+	# A long authoritative debuff beside a real policy: the compact action stays at its
+	# 14 px floor or larger, never runs under the policy ticket and never leaves the band.
 	var long_debuff := {"type": "debuff", "amount": 2, "status": "exposed", "target_position": 1}
 	var original := long_debuff.duplicate(true)
 	shove.show_intent(long_debuff, false, false, "exposed")
-	_check(shove.readable_text == "Exposed 2: Front" and shove.intent_type == "debuff"
+	_check(shove.readable_text == "Exposed 2 → 1" and shove.intent_type == "debuff"
 		and shove.amount == 2 and shove.target_position == 1
 		and shove.policy_cue == "Exposed" and long_debuff == original,
-		"long debuff keeps its exact authoritative text beside its target policy")
-	_check(_caption_readable(shove)
-		and shove.caption_font_size() >= LiveEnemyIntentBadge.CAPTION_MIN_FONT,
+		"long debuff keeps its exact amount and destination in the compact policy caption")
+	_check(_caption_readable(shove) and shove.caption_font_size() >= 14,
 		"the long debuff caption and its policy cue both fit the same intent band")
 	_check(shove.caption_rect().position.x > shove.patch_rect().end.x
 		and not shove.caption_text_rect().intersects(shove.policy_rect())
+		and not shove.caption_rect().intersects(shove.policy_rect())
 		and shove.policy_rect().size.y <= shove.caption_area_rect().size.y,
 		"the caption plaque and policy ticket stay distinguishable inside the same band")
 	_check(_icon_fits(shove, "res://assets/paper/ui/intent_debuff.png"),
@@ -553,17 +561,27 @@ func _caption_readability(app) -> void:
 	# A long shove caption with the longest policy label, still inside the same band.
 	shove.show_intent({"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
 		false, false, "lowest_living_hp")
-	_check(shove.readable_text == "Shove Back forward" and shove.policy_cue == "Low HP"
+	_check(shove.readable_text == "Shove 3 forward" and shove.policy_cue == "Low HP"
 		and shove.intent_type == "shove" and shove.target_position == 3
 		and _caption_readable(shove) and _icon_fits(shove, ""),
 		"a long shove caption fits beside its policy and keeps the sewn glyph")
+	# The narrowest sewn band (one column of a three-enemy stage) still fits: the compact
+	# action falls back to its tight measured form instead of crossing the ticket.
+	var mounted_size: Vector2 = shove.size
+	shove.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
+	shove.show_intent({"type": "shove", "amount": 0, "target_position": 3, "direction": -1},
+		false, false, "lowest_living_hp")
+	_check(shove.readable_text == "Shove 3 fwd" and shove.caption_font_size() >= 14
+		and _caption_readable(shove),
+		"the narrowest sewn band falls back to the tight shove form without clipping")
+	shove.size = mounted_size
 	# Unavailable icon art: the real missing-image fallback keeps the sewn glyph under the
 	# same readable caption, plaque and policy ticket.
 	var saved_root: String = shove.icon_root
 	shove.icon_root = "res://assets/paper/ui/absent/"
 	shove.show_intent(long_debuff, false, false, "front")
 	_check(shove.icon_texture == null and _icon_fits(shove, "")
-		and shove.readable_text == "Exposed 2: Front" and shove.amount == 2
+		and shove.readable_text == "Exposed 2 → 1" and shove.amount == 2
 		and shove.target_position == 1 and shove.policy_cue == "Front"
 		and _caption_readable(shove),
 		"unavailable icon art keeps the sewn-glyph fallback under the readable caption")
@@ -576,6 +594,125 @@ func _caption_readability(app) -> void:
 		and _icon_fits(shove, "")
 		and _icon_fits(debuff, "res://assets/paper/ui/intent_debuff.png"),
 		"a refresh restores the real announcements with their real icons and captions")
+	app.return_button.pressed.emit()
+	await process_frame
+
+
+## AC1/AC2: a genuine mounted weighted fight — the live admission's own bound scheduler
+## on the real roster, party and run RNG — announces each authored target policy on its
+## original enemy slot. The compact action keeps the exact amount, target and shove
+## direction at 14 px or more beside a 13 px ticket, inside the same sewn intent band;
+## the no-ticket block beside it keeps its full caption, and every hover still names the
+## full target, amount and rule. Nothing here changes a rule, a roll or combat state.
+func _policy_badges(app) -> void:
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node_or_null("LiveEnemyRoster")
+	_check(app.deck != null and app.enemy_intents != null and app.round_flow != null
+		and is_instance_valid(presenter) and presenter._badges.size() == 2,
+		"policy badge checks run on the real mounted battle")
+	if app.deck == null or not is_instance_valid(presenter) or presenter._badges.size() != 2:
+		return
+	var flow: CombatRoundFlow = app.round_flow
+	var old_intents: CombatEnemyIntents = app.enemy_intents
+	var old_unravel: CombatUnravel = flow._unravel
+	var old_roster: Array[Dictionary] = app.enemies.get_enemies()
+	var old_attacks: Array = app.enemy_attacks.duplicate(true)
+	var old_rng: int = app.run_rng.state
+	var before := _snapshot(app)
+	# The battle's own gauge service, bound to this exact mounted roster: the same
+	# authority the live attack preview shares with the round flow once a gauge card is
+	# played, so the read-only policy path is the one the player really gets.
+	var gauge := CombatUnravel.new()
+	_check(gauge.bind_roster(app.enemies, {1: "normal", 2: "normal"}),
+		"fixture binds the real mounted roster's own gauge service")
+	flow._unravel = gauge
+	# Representative attack, Weak, Exposed and shove announcements, one per authored
+	# policy, with the independent short caption the player should read.
+	var cases := [
+		["front", {"type": "attack", "amount": 5}, "Hit 5 → %d", "damage aimed at"],
+		["lowest_living_hp", {"type": "debuff", "amount": 2, "status": "weak"},
+			"Weak 2 → %d", "-25% outgoing attack damage"],
+		["exposed", {"type": "debuff", "amount": 2, "status": "exposed"},
+			"Exposed 2 → %d", "+50% incoming attack damage"],
+		["random", {"type": "shove", "amount": 0, "direction": 1}, "Shove %d back", "Push back"]]
+	var full_block := "Block +1"
+	for row in cases:
+		var policy: String = row[0]
+		var body: Dictionary = row[1].duplicate(true)
+		body["weight"] = 1
+		app.enemies._enemies[0]["intent"] = {"target": policy, "actions": [body]}
+		var schedule := CombatEnemyIntents.new(old_intents._definitions.duplicate(true))
+		_check(schedule.bind_battle(app.enemies, app.party, app.run_rng),
+			"test-authored %s weighted schedule binds the real mounted roster" % policy)
+		if not schedule.is_bound():
+			continue
+		app.enemy_intents = schedule
+		flow._intents = schedule
+		flow._battle_intents = schedule
+		var cached: Array[Dictionary] = schedule.get_intents()
+		app.enemy_attacks = cached
+		var state_before: int = app.run_rng.state
+		presenter._refresh()
+		var badge = presenter._badges[0]
+		var unticketed = presenter._badges[1]
+		var announced: Dictionary = cached[0]
+		var target: int = announced.get("target_position", 0)
+		var label: String = LiveEnemyIntentBadge.POLICY_LABELS[policy]
+		var expected := String(row[2]) % target
+		_check(presenter._bound_unravel(app) == gauge,
+			"the mounted %s fight exposes its bound gauge and weighted scheduler" % policy)
+		_check(schedule.is_bound() and announced.get("enemy_position") == 1
+			and announced.get("type") == body["type"] and target in [1, 2, 3]
+			and badge.is_visible_in_tree() and badge.policy_cue == label,
+			"real weighted %s action announces its own mounted policy ticket" % policy)
+		_check(badge.readable_text == expected and badge.intent_type == body["type"]
+			and badge.amount == body["amount"] and badge.target_position == target,
+			"compact %s caption keeps the exact amount and destination: %s" % [policy, expected])
+		_check(_caption_readable(badge) and badge.caption_font_size() >= 14
+			and LiveEnemyIntentBadge.POLICY_FONT >= 13
+			and badge.caption_text_rect().size.y > 0.0
+			and badge.policy_text_rect().size.y > 0.0,
+			"compact %s action reads at 14 px or more beside a 13 px or larger ticket" % policy)
+		_check(not badge.caption_text_rect().intersects(badge.policy_rect())
+			and not badge.caption_rect().intersects(badge.policy_rect())
+			and Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(badge.caption_rect())
+			and Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(badge.policy_rect())
+			and badge.policy_rect().end.x <= badge.caption_area_rect().end.x + 0.01,
+			"compact %s caption, plaque and ticket stay disjoint inside the sewn band" % policy)
+		_check(is_equal_approx(badge.size.y, LiveEnemyIntentBadge.BADGE_HEIGHT)
+			and Rect2(0, 0, 1280, 720).encloses(badge.get_global_rect()),
+			"compact %s badge keeps its mounted intent band inside the viewport" % policy)
+		# The ticket changes only the displayed caption: the full hover still names the
+		# exact target, amount, rule and policy. A shove announces direction and hero.
+		var tip: String = badge.tooltip_text
+		var mentions_amount: bool = body["type"] == "shove" or tip.contains(str(body.amount))
+		_check(tip.contains(LiveEnemyIntentBadge.hero_target_label(target))
+			and mentions_amount and tip.contains("Target policy (%s)" % label.to_upper())
+			and tip.contains(String(row[3])),
+			"compact %s caption keeps the full amount, target, rule and policy hover" % policy)
+		# The block source beside it has no ticket, so it keeps its exact full caption.
+		_check(unticketed.policy_cue.is_empty() and unticketed.policy_rect() == Rect2()
+			and unticketed.readable_text == full_block and unticketed.caption_font_size() > 14
+			and _caption_readable(unticketed),
+			"the unticketed %s source keeps its full readable caption" % policy)
+		for repeat in range(3):
+			presenter._refresh()
+		_check(schedule.get_intents() == cached and app.run_rng.state == state_before,
+			"repeated %s policy presentation is scheduler and RNG inert" % policy)
+	# Restore the real fixture exactly: roster metadata, authoritative scheduler, gauge,
+	# announcements and RNG, with nothing left behind by the presentation checks.
+	app.enemies._enemies.assign(old_roster.duplicate(true))
+	app.enemy_intents = old_intents
+	flow._intents = old_intents
+	flow._battle_intents = old_intents
+	flow._unravel = old_unravel
+	app.enemy_attacks = old_attacks
+	app.run_rng.state = old_rng
+	presenter._refresh()
+	_check(_snapshot(app) == before and app.enemy_intents == old_intents,
+		"policy badge fixture restores roster, announcements, gauge and RNG exactly")
 	app.return_button.pressed.emit()
 	await process_frame
 

@@ -1089,10 +1089,10 @@ func _caption_legibility(app, presenter) -> void:
 	var long_debuff := {"type": "debuff", "amount": 2, "status": "exposed", "target_position": 2}
 	var original := long_debuff.duplicate(true)
 	badge.show_intent(long_debuff, false, false, "front")
-	_check(badge.readable_text == "Exposed 2: Middle" and badge.amount == 2
+	_check(badge.readable_text == "Exposed 2 → 2" and badge.amount == 2
 		and badge.target_position == 2 and badge.intent_type == "debuff"
 		and badge.policy_cue == "Front" and long_debuff == original,
-		"a long debuff keeps its exact authoritative caption beside its target policy")
+		"a long debuff keeps its exact amount and destination beside its target policy")
 	_check(badge.tooltip_text == "Exposed 2 to Hero 2 (middle) — for 2 turns, +50% incoming attack damage; damage is rounded down, minimum 0.\nTarget policy (FRONT): picks the front living hero.",
 		"debuff with front policy explains exposed rule, hero target and front policy")
 	_check(_caption_fits(badge)
@@ -1112,7 +1112,7 @@ func _caption_legibility(app, presenter) -> void:
 	# A long shove caption with the longest policy label: still inside the same band.
 	badge.show_intent({"type": "shove", "amount": 0, "target_position": 3,
 		"direction": -1}, false, false, "lowest_living_hp")
-	_check(badge.readable_text == "Shove Back forward" and badge.icon_mode == "shove"
+	_check(badge.readable_text == "Shove 3 forward" and badge.icon_mode == "shove"
 		and badge.target_position == 3 and badge.policy_cue == "Low HP"
 		and _caption_fits(badge) and _badge_icon_fits(badge, ""),
 		"a long shove caption fits beside its policy and keeps the sewn glyph")
@@ -1124,7 +1124,7 @@ func _caption_legibility(app, presenter) -> void:
 	badge.icon_root = "res://assets/paper/ui/absent/"
 	badge.show_intent(long_debuff, false, false, "exposed")
 	_check(badge.icon_texture == null and _badge_icon_fits(badge, "")
-		and badge.readable_text == "Exposed 2: Middle" and badge.amount == 2
+		and badge.readable_text == "Exposed 2 → 2" and badge.amount == 2
 		and badge.target_position == 2 and badge.policy_cue == "Exposed"
 		and _caption_fits(badge) and badge.policy_text_rect() != Rect2(),
 		"unavailable icon art keeps the readable caption, plaque and policy ticket")
@@ -1161,15 +1161,19 @@ func _caption_legibility(app, presenter) -> void:
 	var draw_body := _method_body(source, "func _draw() -> void:")
 	var caption_body := _method_body(source, "func _draw_caption() -> void:")
 	var fit_body := _method_body(source, "func caption_font_size() -> int:")
+	var floor_body := _method_body(source, "func caption_floor_font() -> int:")
+	var compact_body := _method_body(source, "func compact_caption_forms() -> Array[String]:")
 	_check(draw_body.contains("_draw_caption()")
 		and caption_body.find("draw_colored_polygon(") >= 0
 		and caption_body.find("CAPTION_FILL") >= 0
 		and caption_body.find("draw_colored_polygon(") < caption_body.find("draw_string(")
 		and caption_body.contains("caption_ink()") and caption_body.contains("POLICY_FILL"),
 		"source paints the dark plaque under the cream caption and the separate policy ticket")
-	_check(fit_body.contains("CAPTION_MAX_FONT") and fit_body.contains("CAPTION_MIN_FONT")
-		and fit_body.contains("get_string_size(") and not fit_body.contains("-1, 14"),
-		"source fits the caption with the real theme font between bounded sizes")
+	_check(fit_body.contains("CAPTION_MAX_FONT") and fit_body.contains("caption_floor_font()")
+		and fit_body.contains("get_string_size(") and not fit_body.contains("-1, 14")
+		and floor_body.contains("CAPTION_MIN_FONT") and floor_body.contains("COMPACT_MIN_FONT")
+		and compact_body.contains("Hit %d → %d") and compact_body.contains("Shove %d %s"),
+		"source fits the caption with the real theme font between its compact and full floors")
 	_check(source.contains("func caption_ink() -> Color:")
 		and source.contains("func caption_rect() -> Rect2:")
 		and not source.contains("MUTED if icon_mode in [\"slain\", \"none\"] else CREAM"),
@@ -2347,15 +2351,23 @@ func _policy_cue_cases(app, presenter) -> void:
 			var expected_policy := CombatEnemyIntents.policy_for(app.enemies, position)
 			var target: int = action.get("target_position", 0)
 			var original_caption := ""
+			var compact_caption := ""
 			match action.type:
-				"attack": original_caption = "Hit %d: %s" % [action.amount, {1: "Front", 2: "Middle", 3: "Back"}.get(target, "")]
+				"attack":
+					original_caption = "Hit %d: %s" % [action.amount, {1: "Front", 2: "Middle", 3: "Back"}.get(target, "")]
+					compact_caption = "Hit %d → %d" % [action.amount, target]
 				"block": original_caption = "Block +%d" % action.amount
 				"buff": original_caption = "Buff +%d Block" % action.amount
-				"debuff": original_caption = "%s %d: %s" % [action.status.capitalize(), action.amount, {1: "Front", 2: "Middle", 3: "Back"}[target]]
-				"shove": original_caption = "Shove %s %s" % [{1: "Front", 2: "Middle", 3: "Back"}[target], "back" if action.direction == 1 else "forward"]
+				"debuff":
+					original_caption = "%s %d: %s" % [action.status.capitalize(), action.amount, {1: "Front", 2: "Middle", 3: "Back"}[target]]
+					compact_caption = "%s %d → %d" % [action.status.capitalize(), action.amount, target]
+				"shove":
+					original_caption = "Shove %s %s" % [{1: "Front", 2: "Middle", 3: "Back"}[target], "back" if action.direction == 1 else "forward"]
+					compact_caption = "Shove %d %s" % [target, "back" if action.direction == 1 else "forward"]
 			var expected_cue: String = {"front": "Front", "lowest_living_hp": "Low HP", "exposed": "Exposed", "random": "Random"}.get(expected_policy, "") \
 				if action.type in ["attack", "debuff", "shove"] else ""
-			_check(badge.policy_cue == expected_cue and badge.readable_text == original_caption
+			var expected_caption: String = original_caption if expected_cue.is_empty() else compact_caption
+			_check(badge.policy_cue == expected_cue and badge.readable_text == expected_caption
 				and badge.intent_type == action.type and badge.amount == action.amount
 				and badge.target_position == target and badge.source_position == position,
 				"%s action preserves exact caption/target and policy_for original slot %d" % [policy, position])
