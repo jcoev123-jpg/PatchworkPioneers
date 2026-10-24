@@ -190,6 +190,10 @@ func _resolve_pool_heal_half(party: CombatParty, half: Dictionary, target: int) 
 		return failed
 	if party.is_downed(owner_position) or not authored["from_positions"].has(owner_position):
 		return failed
+	if _support._torn != null:
+		for hero in _support._torn.read_state().get("heroes", []):
+			if typeof(hero) == TYPE_DICTIONARY and hero.get("id") == "seamstress" and int(hero.get("hp", 0)) <= 0:
+				return failed
 
 	var recipients: Array[int] = []
 	if field_mend:
@@ -204,9 +208,15 @@ func _resolve_pool_heal_half(party: CombatParty, half: Dictionary, target: int) 
 		recipients.append(target)
 	if recipients.is_empty():
 		return failed
+
+	var applied_block: int = block
 	if darning:
+		if _support._head_patches != null:
+			applied_block += _support._head_patches.get_bonus(authored["owner"], card_id, "block")
+		if _support._arm_patches != null:
+			applied_block += _support._arm_patches.card_block_bonus(authored["owner"], card_id)
 		var existing: int = party.get_hero(target)["block"]
-		if block > CombatParty.MAX_INT - existing:
+		if applied_block > CombatParty.MAX_INT - existing:
 			return failed
 
 	var applied_heal: int = heal
@@ -215,6 +225,6 @@ func _resolve_pool_heal_half(party: CombatParty, half: Dictionary, target: int) 
 	for position in recipients:
 		party.heal(position, applied_heal)
 	if darning:
-		party.gain_block(target, block)
+		party.gain_block(target, applied_block)
 	return {"ok": true, "effect": "ally_heal" if not field_mend else "party_heal",
-		"amount": applied_heal, "block": block, "affected_positions": recipients}
+		"amount": applied_heal, "block": applied_block, "affected_positions": recipients}
