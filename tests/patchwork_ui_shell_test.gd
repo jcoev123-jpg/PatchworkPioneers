@@ -29,6 +29,14 @@ func _run() -> void:
 		and (shared.get_font("font", "PatchHeadingButton") as Font).resource_path == shell.HEADING_FONT,
 		"master heading variation resolves the Londrina Regular face")
 	var master: Theme = load(shell.THEME_PATH)
+	var master_before := var_to_str(master)
+	_check_visit_theme(shared)
+	_check(not master.has_stylebox("normal", "OptionButton")
+		and not master.has_stylebox("panel", "PopupMenu")
+		and not master.has_stylebox("scroll", "VScrollBar"),
+		"selector surfaces belong to the shared copy, not the master")
+	_check(shell._fabric_style("res://missing_selector_surface.png", shell.PAPER) is StyleBoxFlat,
+		"unavailable UI art retains the readable shell fallback")
 	_check(master != null and master != shared and master.get_font_size("font_size", "PatchTitle") < 40,
 		"the shell duplicates the master Theme instead of mutating it")
 	_check(app.title_label.get_theme_font("font").resource_path == shell.TITLE_FONT,
@@ -194,6 +202,8 @@ func _run() -> void:
 				app.terminal_result_panel.description_label, "live terminal result")
 		elif screen == "rest":
 			_check_rest_arrow_tiles(app)
+		if screen in ["shop", "rest"]:
+			await _check_visit_controls(app, screen)
 		var controls: Array[Control] = []
 		_collect(app, controls)
 		_check(not controls.is_empty(), "live screen has themed controls: " + screen)
@@ -204,11 +214,13 @@ func _run() -> void:
 				visible_buttons += 1
 				# Existing authored reward/event/result overrides intentionally sit on this Theme.
 				if not control.has_theme_stylebox_override("normal"):
-					_check(control.get_theme_stylebox("normal") == app.theme.get_stylebox("normal", "Button"),
+					var button_type := "OptionButton" if control is OptionButton else "Button"
+					_check(control.get_theme_stylebox("normal") == app.theme.get_stylebox("normal", button_type),
 						"live button resolves shared style: " + screen)
 		_check(visible_buttons > 0, "each real preview has visible actions: " + screen)
 		_check(app.get_node("PatchworkUIShell").visible == (screen == "title"), "title decoration visibility: " + screen)
 		app.free()
+	_check(var_to_str(master) == master_before, "mounted visits leave the master Theme unchanged")
 	for failure in failures:
 		printerr(failure)
 	print("patchwork_ui_shell_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -220,6 +232,86 @@ func _collect(node: Node, controls: Array[Control]) -> void:
 		if child is Control:
 			controls.append(child)
 		_collect(child, controls)
+
+
+func _check_visit_theme(shared: Theme) -> void:
+	for type in ["OptionButton", "PopupMenu", "VScrollBar"]:
+		var entries: Array = ["normal", "hover", "pressed", "disabled", "focus"]
+		if type == "PopupMenu":
+			entries = ["panel", "hover"]
+		elif type == "VScrollBar":
+			entries = ["scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed"]
+		for entry in entries:
+			_check(shared.has_stylebox(entry, type), type + " explicitly owns " + entry)
+			var style := shared.get_stylebox(entry, type) as StyleBoxTexture
+			_check(style != null and style.texture != null
+				and style.texture.resource_path.begins_with("res://assets/paper/ui/reward_"),
+				type + " reuses shipped sewn texture: " + entry)
+	_check(not shared.get_stylebox("focus", "OptionButton").get("draw_center"),
+		"sewn keyboard focus leaves the selector caption uncovered")
+	_check(shared.get_color("font_disabled_color", "OptionButton")
+		!= shared.get_color("font_color", "OptionButton"), "disabled selector ink is distinct")
+	for type in ["OptionButton", "PopupMenu"]:
+		for entry in ["font_color", "font_hover_color", "font_disabled_color"]:
+			_check(shared.has_color(entry, type)
+				and shared.get_color(entry, type).srgb_to_linear().get_luminance() < 0.2,
+				type + " keeps dark legible ink on paper: " + entry)
+
+
+func _check_visit_controls(app, screen: String) -> void:
+	var selectors: Array = [app.shop_patch_offers, app.shop_patch_heroes] if screen == "shop" \
+		else [app.rest_stitch_first, app.rest_stitch_second]
+	var deck: Array = app.run_deck.duplicate(true)
+	var wallet := [app.session_gold, app.run_scraps]
+	for selector: OptionButton in selectors:
+		_check(is_instance_valid(selector) and selector.is_visible_in_tree() and selector.item_count > 0,
+			screen + " mounts a populated actual selector")
+		if not is_instance_valid(selector) or selector.item_count == 0:
+			continue
+		var selected := selector.selected
+		var metadata: Array = []
+		for index in range(selector.item_count):
+			metadata.append(selector.get_item_metadata(index))
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			_check(selector.get_theme_stylebox(state) == app.theme.get_stylebox(state, "OptionButton"),
+				screen + " actual selector inherits " + state)
+		_check(selector.get_theme_color("font_disabled_color") == app.theme.get_color("font_disabled_color", "OptionButton")
+			and selector.get_theme_color("font_focus_color") == app.theme.get_color("font_focus_color", "OptionButton"),
+			screen + " actual selector inherits disabled and focused ink")
+		selector.grab_focus()
+		_check(selector.has_focus(), screen + " actual selector accepts keyboard focus")
+		await _key(KEY_SPACE)
+		var popup := selector.get_popup()
+		_check(popup.visible and popup.item_count == selector.item_count,
+			screen + " keyboard opens the selector's populated PopupMenu")
+		popup.set_focused_item(selected)
+		_check(popup.get_focused_item() == selected, screen + " popup focuses the selected row")
+		for state in ["panel", "hover"]:
+			_check(popup.get_theme_stylebox(state) == app.theme.get_stylebox(state, "PopupMenu"),
+				screen + " actual PopupMenu inherits " + state)
+		for entry in ["font_color", "font_hover_color", "font_disabled_color"]:
+			_check(popup.get_theme_color(entry) == app.theme.get_color(entry, "PopupMenu"),
+				screen + " actual PopupMenu inherits " + entry)
+		popup.hide()
+		_check(selector.selected == selected, screen + " inspecting popup preserves selection")
+		for index in range(selector.item_count):
+			_check(selector.get_item_metadata(index) == metadata[index], screen + " popup preserves metadata")
+	var gallery = app.get_node_or_null("LiveVisitCardTiles")
+	_check(gallery != null and gallery.is_gallery_mounted(), screen + " mounts the real populated gallery")
+	if gallery != null and gallery.is_gallery_mounted():
+		var tiles: Array[Button] = gallery.offer_tiles() if screen == "shop" else gallery.upgrade_tiles()
+		_check(not tiles.is_empty(), screen + " gallery has real card tiles")
+		var bar: VScrollBar = gallery.gallery_scroll().get_v_scroll_bar()
+		for state in ["scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed"]:
+			_check(bar.get_theme_stylebox(state) == app.theme.get_stylebox(state, "VScrollBar"),
+				screen + " actual gallery scrollbar inherits " + state)
+		var track := bar.get_theme_stylebox("scroll") as StyleBoxTexture
+		var handle := bar.get_theme_stylebox("grabber") as StyleBoxTexture
+		_check(track != null and handle != null
+			and handle.modulate_color.get_luminance() > track.modulate_color.get_luminance() + 0.4,
+			screen + " scrollbar has a discernible paper grabber on dark fabric")
+	_check(app.run_deck == deck and [app.session_gold, app.run_scraps] == wallet,
+		screen + " focus and popup inspection do not spend or alter the deck")
 
 
 ## A real mounted heading resolves the master Londrina variation; its body line

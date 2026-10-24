@@ -143,7 +143,54 @@ func _build_theme() -> Theme:
 	focus.expand_margin_bottom = 3
 	shared.set_stylebox("focus", "Button", focus)
 	shared.set_font_size("font_size", "Button", 18)
+	# Shipped sewn paper surfaces; keep compact metrics owned by the live visits.
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var tints := {"normal": Color("ecdfbd"), "hover": Color("fff0ce"),
+			"pressed": Color("c9b996"), "disabled": Color("aaa391")}
+		shared.set_stylebox(state, "OptionButton", _fabric_style(
+			"res://assets/paper/ui/reward_button.png", tints[state]))
+	for entry in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		shared.set_color(entry, "OptionButton", INK)
+	shared.set_color("font_disabled_color", "OptionButton", Color("514b42"))
+	shared.set_font_size("font_size", "OptionButton", 18)
+	shared.set_constant("modulate_arrow", "OptionButton", 1)
+	var sewn_focus := _fabric_style("res://assets/paper/ui/reward_button.png", Color("f5d480"))
+	sewn_focus.set("draw_center", false)
+	if sewn_focus is StyleBoxFlat:
+		sewn_focus.border_color = Color("f5d480")
+		sewn_focus.set_border_width_all(3)
+	shared.set_stylebox("focus", "OptionButton", sewn_focus)
+	shared.set_stylebox("panel", "PopupMenu", _fabric_style(
+		"res://assets/paper/ui/reward_panel.png", PAPER, 12))
+	shared.set_stylebox("hover", "PopupMenu", _fabric_style(
+		"res://assets/paper/ui/reward_button.png", Color("f5d480")))
+	shared.set_color("font_color", "PopupMenu", INK)
+	shared.set_color("font_hover_color", "PopupMenu", INK)
+	shared.set_color("font_disabled_color", "PopupMenu", Color("696052"))
+	shared.set_color("font_accelerator_color", "PopupMenu", Color("514b42"))
+	shared.set_font_size("font_size", "PopupMenu", 18)
+	for state in ["scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed"]:
+		var tints := {"scroll": Color("514b42"), "scroll_focus": Color("696052"),
+			"grabber": PAPER, "grabber_highlight": Color("fff0ce"),
+			"grabber_pressed": Color("f5d480")}
+		shared.set_stylebox(state, "VScrollBar", _fabric_style(
+			"res://assets/paper/ui/reward_button.png", tints[state], 6))
 	return shared
+
+
+## Reuse pipeline art as nine-patch UI, with the same legible flat fallback as
+## the rest of the shell when an image cannot be loaded.
+func _fabric_style(path: String, tint: Color, margin: int = 8) -> StyleBox:
+	var texture := _load_backdrop(path)
+	if texture == null:
+		return _panel(tint, THREAD)
+	var style := StyleBoxTexture.new()
+	style.texture = texture
+	style.modulate_color = tint
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		style.set_texture_margin(side, margin)
+		style.set_content_margin(side, margin)
+	return style
 
 
 func _bind_title() -> void:
