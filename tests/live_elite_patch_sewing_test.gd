@@ -3,6 +3,119 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var sewing
 
+## Use the acquired patch through the next battle's real held-card input.
+func _acquired_attack_check(patch_id: String) -> void:
+	_check(app.party != null and app.enemies != null and not app._battle_closed
+		and app.party.get_hero(1).id == "warden" and not app.party.is_downed(1),
+		"acquired patch reaches a living Warden in a real later battle")
+	for id in ["seamstress_prick", "warden_strike"]:
+		while not app.deck.hand.has(id) and not app.deck.draw_pile.is_empty():
+			_check(app.deck.draw_extra(1) == 1, "draw real owned attack")
+		_check(app.deck.hand.has(id), "real deck contains " + id)
+	app._refresh_hand()
+	await _frames()
+	var rng: int = app.run_rng.state
+	for id in ["seamstress_prick", "warden_strike"]:
+		var cost: int = StarterCards.new().get_definition(id).cost
+		var energy: int = app.deck.energy
+		var copies: int = app.deck.hand.count(id)
+		var discarded: int = app.deck.discard_pile.count(id)
+		_check(await _choose(id, false), "physically select acquired-patch attack " + id)
+		await _key(KEY_1)
+		var event: Dictionary = presenter.last_event
+		var damage := 3 if id == "seamstress_prick" else (7 if patch_id == "pincushion_arm" else 6)
+		var statuses := {"bleed": 3} if id == "seamstress_prick" else ({"exposed": 1} if patch_id == "button_eye" else {})
+		_check(event.get("ok") == true and event.get("hits", []).size() == 1,
+			"acquired patch attack actually commits")
+		if event.get("ok") == true and event.get("hits", []).size() == 1:
+			_check(event.hits[0].damage == damage and event.hits[0].statuses == statuses,
+				"only living wearer receives exact authored acquired patch effect")
+		_check(app.deck.energy == energy - cost and app.deck.hand.count(id) == copies - 1
+			and app.deck.discard_pile.count(id) == discarded + 1 and app.run_rng.state == rng,
+			"acquired patch attack spends and discards once without RNG")
+
+## The production shared pool must naturally roll each new drop.
+func _attack_patch_claims() -> void:
+	for patch_id in ["button_eye", "pincushion_arm"]:
+		var next_seed := 1
+		var obtained := false
+		for attempt in range(40):
+			var fixture := _multi_fixture(next_seed)
+			_check(not fixture.is_empty(), "seeded Elite route exists for " + patch_id)
+			if fixture.is_empty():
+				return
+			var map := RunMap.new()
+			var route_rng := RandomNumberGenerator.new()
+			route_rng.seed = fixture.seed
+			_check(map.generate(route_rng), "real candidate map generates")
+			if _path_to(map, fixture.paths[0].back(), "Fight").is_empty():
+				next_seed = fixture.seed + 1
+				continue
+			if not await _routed_win(fixture, false):
+				return
+			await _click(app.reward_buttons[3])
+			await _click(app.continue_button)
+			var path: Array = fixture.paths[0].duplicate()
+			var elite: String = path.pop_back()
+			await _visit_path(path, false)
+			await _click(_route_action(elite))
+			var rng: int = app.run_rng.state
+			var ids: Array = app._catalog_trinket_ids()
+			for required in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+				_check(ids.has(required), "real Elite pool retains candidate " + required)
+			_check(app.run_rng.state == rng, "reading shared Elite catalog consumes no RNG")
+			for enemy in app.enemies.get_enemies():
+				_check(app.enemies.apply_damage(enemy.position, 9999), "win actual Elite")
+			var oracle := _reward_oracle()
+			app._observe_battle_result()
+			await _frames()
+			_check(app.fight_reward_trinket == oracle.drop and app.run_rng.state == oracle.rng,
+				"real Elite drop and RNG match independent shared-pool oracle")
+			if app.fight_reward_trinket != patch_id:
+				await _click(app.return_button)
+				next_seed = fixture.seed + 1
+				continue
+			var service: RunMultiFightRewards = app.multi_fight_rewards
+			var claim: Callable = app.reward_buttons[3].pressed.get_connections()[0].callable
+			await _click(app.reward_buttons[3])
+			_check(app.fight_reward_claimed and service._pending == null
+				and app.run_trinkets.has(patch_id) and sewing.hero_buttons.size() == 3,
+				"real Elite claim owns attack patch before sewing")
+			_reject_patch(claim, "new patch reward replay")
+			if sewing.hero_buttons.size() != 3:
+				return
+			var state: Dictionary = sewing.wardrobe.get_snapshot()
+			var target: Button = sewing.hero_buttons[0]
+			var callback: Callable = target.pressed.get_connections()[0].callable
+			_reject_patch(sewing._sew.bind("foreign", target, sewing._token, state), "new patch invalid wearer")
+			var stale := state.duplicate(true)
+			stale.gold += 1
+			_reject_patch(sewing._sew.bind("warden", target, sewing._token, stale), "new patch stale sew")
+			await _click(target)
+			var after: Dictionary = sewing.wardrobe.get_snapshot()
+			var slot := "HEAD" if patch_id == "button_eye" else "ARM"
+			_check(after.worn.warden[slot] == patch_id and after.gold == state.gold
+				and after.scraps == state.scraps and after.operation_ids.size() == state.operation_ids.size() + 1
+				and app.party_carryover._wardrobe == sewing.wardrobe,
+				"new Elite patch sews exact slot free and once")
+			_reject_patch(callback, "new patch sew replay")
+			await _click(app.continue_button)
+			_reject_patch(callback, "new patch retired sew")
+			var fight_path := _path_to(app.run_map, app.run_map.get_current_node_id(), "Fight")
+			_check(not fight_path.is_empty(), "claimed attack patch has a later connected Fight")
+			if not fight_path.is_empty():
+				var fight: String = fight_path.pop_back()
+				await _visit_path(fight_path, false)
+				await _click(_route_action(fight))
+				await _acquired_attack_check(patch_id)
+				await _click(app.return_button)
+			else:
+				await _click(app.route_back_button)
+			obtained = true
+			break
+		_check(obtained, "production Elite pool claimed, sewed and activated " + patch_id)
+
+
 ## Literal, independent ID -> readable name oracle, written by hand from the
 ## shipped catalogs and the owner's naming. It is never computed from the
 ## presenter's own table, so a wrong, missing or invented name fails here.
@@ -383,13 +496,13 @@ func _verify_worn_readout() -> void:
 		"long worn readout wraps within 1280-wide layout")
 
 
-func _coat_multi_fixture() -> Dictionary:
+func _coat_multi_fixture(reward_index: int = 0) -> Dictionary:
 	var first_seed := 1
 	for attempt in range(32):
 		var fixture := _multi_fixture(first_seed)
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return {}
-		await _click(app.reward_buttons[0])
+		await _click(app.reward_buttons[reward_index])
 		await _click(app.continue_button)
 		var path: Array = fixture.paths[0].duplicate()
 		var elite: String = path.pop_back()
@@ -588,6 +701,7 @@ func _run() -> void:
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	sewing = app.get_node("LiveElitePatchSewing")
+	await _attack_patch_claims()
 	_test_literal_names()
 	var fixture := await _coat_multi_fixture()
 	_check(not fixture.is_empty(), "real seeded route reaches two Elites and Shop")
@@ -793,7 +907,10 @@ func _run() -> void:
 	_check(not torn_fixture.is_empty(), "seeded torn-Warden predecessor connects to Elite without recovery Rest")
 	if not torn_fixture.is_empty():
 		await _test_torn_warden_focus(torn_fixture)
-	await _test_displaced_name(fixture)
+	var displaced_fixture := await _coat_multi_fixture(3)
+	_check(not displaced_fixture.is_empty(), "Skip reward seed naturally drops coat for displacement")
+	if not displaced_fixture.is_empty():
+		await _test_displaced_name(displaced_fixture)
 	await _test_authored_live_claims(fixture)
 	await _finish_sewing()
 

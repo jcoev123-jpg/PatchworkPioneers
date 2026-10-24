@@ -4342,13 +4342,8 @@ func _mount_shop_patches() -> void:
 	var carry := party_carryover as RunTornCarryover
 	_shop_wardrobe = carry._wardrobe if carry != null else null
 	if _shop_wardrobe == null:
-		var definitions: Variant = JSON.parse_string(FileAccess.get_file_as_string(
-			"res://data/patches/initial_patch_slots.json"))
-		var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
-			"res://data/patches/m04_coat_patches.json"))
-		if definitions is Array and coats is Array and RunPatchCoatRules._valid_authored(coats):
-			for coat in coats:
-				definitions.append({"id": coat.id, "slot": coat.slot})
+		var definitions := RunAuthoredPatchDefinitions.load_definitions()
+		if not definitions.is_empty():
 			_shop_wardrobe = RunPatchWardrobe.new(run_heroes, run_trinkets, definitions,
 				run_scraps, session_gold, run_deck, run_seed, true)
 	var row := HBoxContainer.new()

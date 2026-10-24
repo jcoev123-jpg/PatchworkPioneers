@@ -198,6 +198,7 @@ func _initialize() -> void:
 	_check(deck_is_authored, "the authored starter deck holds real catalog cards")
 	if party.size() == 3 and deck.size() > 0:
 		_test_generated_stock(party, deck, catalog)
+		_test_attack_patch_stock(party, catalog)
 		_test_seeded_replay(party, catalog)
 		_test_owned_fallback(party, deck, catalog)
 		_test_purchases(party, deck, catalog)
@@ -227,6 +228,28 @@ func _check(condition: bool, description: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(description)
+
+
+func _test_attack_patch_stock(party: Array[String], catalog: StarterCards) -> void:
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
+	var seen := {}
+	for id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+		var matches: Array = authored.trinkets.filter(func(entry): return entry.id == id)
+		_check(matches.size() == 1 and _whole_price(matches[0].price) == 100,
+			"shared patch candidate retained exactly once at 100 gold: " + id)
+	for value in range(1, 101):
+		var rng := _rng(value)
+		var oracle_rng := _rng(value)
+		var expected: Dictionary = _oracle(catalog, party, authored.cards, authored.trinkets, [], oracle_rng)
+		var actual: Dictionary = RunShopStockOffers.generate(rng, party,
+			authored.cards, authored.trinkets, [])
+		_check(actual.get("ok") == true and actual.trinkets == expected.trinkets
+			and rng.state == oracle_rng.state, "expanded patch pool follows seeded stock oracle")
+		for offer in actual.get("trinkets", []):
+			seen[offer.id] = true
+	for id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
+		_check(seen.has(id), "genuine seeded stock admits patch " + id)
 
 
 func _load_party() -> Array[String]:

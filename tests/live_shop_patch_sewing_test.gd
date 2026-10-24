@@ -3,6 +3,76 @@ extends "res://tests/live_elite_reward_continuation_test.gd"
 
 var wardrobe: RunPatchWardrobe
 
+## Use the acquired patch through the next battle's real held-card input.
+func _acquired_attack_check(patch_id: String) -> void:
+	_check(app.party != null and app.enemies != null and not app._battle_closed
+		and app.party.get_hero(1).id == "warden" and not app.party.is_downed(1),
+		"acquired patch reaches a living Warden in a real later battle")
+	for id in ["seamstress_prick", "warden_strike"]:
+		while not app.deck.hand.has(id) and not app.deck.draw_pile.is_empty():
+			_check(app.deck.draw_extra(1) == 1, "draw real owned attack")
+		_check(app.deck.hand.has(id), "real deck contains " + id)
+	app._refresh_hand()
+	await _frames()
+	var rng: int = app.run_rng.state
+	for id in ["seamstress_prick", "warden_strike"]:
+		var cost: int = StarterCards.new().get_definition(id).cost
+		var energy: int = app.deck.energy
+		var copies: int = app.deck.hand.count(id)
+		var discarded: int = app.deck.discard_pile.count(id)
+		_check(await _choose(id, false), "physically select acquired-patch attack " + id)
+		await _key(KEY_1)
+		var event: Dictionary = presenter.last_event
+		var damage := 3 if id == "seamstress_prick" else (7 if patch_id == "pincushion_arm" else 6)
+		var statuses := {"bleed": 3} if id == "seamstress_prick" else ({"exposed": 1} if patch_id == "button_eye" else {})
+		_check(event.get("ok") == true and event.get("hits", []).size() == 1,
+			"acquired patch attack actually commits")
+		if event.get("ok") == true and event.get("hits", []).size() == 1:
+			_check(event.hits[0].damage == damage and event.hits[0].statuses == statuses,
+				"only living wearer receives exact authored acquired patch effect")
+		_check(app.deck.energy == energy - cost and app.deck.hand.count(id) == copies - 1
+			and app.deck.discard_pile.count(id) == discarded + 1 and app.run_rng.state == rng,
+			"acquired patch attack spends and discards once without RNG")
+
+## Search actual seeded stock, never replace its candidate pool or listings.
+func _attack_patch_purchases() -> void:
+	for patch_id in ["button_eye", "pincushion_arm"]:
+		var next_seed := 1
+		var obtained := false
+		for attempt in range(40):
+			var fixture := _sequence_fixture(["Shop", "Fight"], next_seed)
+			_check(not fixture.is_empty(), "seeded Shop -> Fight route exists for " + patch_id)
+			if fixture.is_empty() or not await _routed_win(fixture, false):
+				return
+			await _click(app.reward_buttons[3])
+			await _click(app.continue_button)
+			app.session_gold = 500
+			await _reach(fixture.paths[0], false)
+			wardrobe = app._shop_wardrobe
+			var selected := -1
+			for i in range(app.shop_patch_offers.item_count):
+				if app.shop_purchases.get_stock().trinkets[i].id == patch_id:
+					selected = i
+			if selected < 0:
+				await _click(app.shop_back_button)
+				next_seed = fixture.seed + 1
+				continue
+			_check(wardrobe != null and wardrobe.is_valid()
+				and wardrobe.get_snapshot().definitions.get(patch_id) == ("HEAD" if patch_id == "button_eye" else "ARM"),
+				"unbound Shop builds the real shared authored wardrobe")
+			await _purchase(selected, false, 0)
+			var worn := wardrobe.get_snapshot()
+			await _click(app.shop_continue_button)
+			await _reach(fixture.paths[1], false)
+			_check(app.party_carryover._wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn.worn,
+				"paid attack patch assignment survives into next real Fight")
+			await _acquired_attack_check(patch_id)
+			await _click(app.return_button)
+			obtained = true
+			break
+		_check(obtained, "real seeded Shop bought, sewed and activated " + patch_id)
+
+
 
 func _sequence_fixture(kinds: Array, first_seed: int = 1, direct_last: bool = false) -> Dictionary:
 	for value in range(first_seed, 3000):
@@ -284,13 +354,10 @@ func _poor_and_replacement() -> void:
 				if id in ["stitched_badge", "spare_spool"]:
 					replacement_id = id
 					target = i
-					old_patch = "button_eye" if id == "stitched_badge" else "pincushion_arm"
+					old_patch = "bloodstitch_bonnet" if id == "stitched_badge" else "hemguard_cuff"
 					break
 			_check(not replacement_id.is_empty(), "real stock contains a patch with an authored occupied-slot fixture")
-			var definitions := []
-			for path in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches"]:
-				for record in JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/%s.json" % path)):
-					definitions.append({"id": record.id, "slot": record.slot})
+			var definitions := RunAuthoredPatchDefinitions.load_definitions()
 			app.run_trinkets.assign([old_patch])
 			wardrobe = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
 				app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
@@ -515,6 +582,7 @@ func _run() -> void:
 	root.add_child(app)
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
+	await _attack_patch_purchases()
 	var sewing = app.get_node("LiveElitePatchSewing")
 	var retained: Array[Callable] = []
 	var saw_coat := false

@@ -45,6 +45,8 @@
   "trinkets": [
     {"id": "stitched_badge", "price": 100},
     {"id": "spare_spool", "price": 100},
-    {"id": "quilted_coat", "price": 100}
+    {"id": "quilted_coat", "price": 100},
+    {"id": "button_eye", "price": 100},
+    {"id": "pincushion_arm", "price": 100}
   ]
 }

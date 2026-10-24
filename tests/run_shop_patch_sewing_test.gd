@@ -111,7 +111,8 @@ func _fixture(patch: String, gold: int = 200,
 	_check(offered_ids.has(patch), "selected patch actually stocked: " + patch)
 	if not offered_ids.has(patch):
 		return {}
-	_check(IDS.has(offered_ids[0]) and IDS.has(offered_ids[1])
+	_check(data.offers.trinkets.any(func(entry): return entry.id == offered_ids[0])
+		and data.offers.trinkets.any(func(entry): return entry.id == offered_ids[1])
 		and offered_ids[0] != offered_ids[1], "two distinct authored trinkets offered")
 	var party_defs: Array = data.starters.duplicate(true)
 	for entry in party_defs:
