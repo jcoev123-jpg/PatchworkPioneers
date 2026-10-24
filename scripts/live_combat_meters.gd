@@ -8,7 +8,9 @@ extends Node
 ## ribbon grows with them instead of shrinking or truncating the text. The snapshot text
 ## stays exactly as CombatActorMeter computes it; only the long-form paragraphs are
 ## hidden and reachable through the button tooltips, so no rule is duplicated on the
-## stage.
+## stage. A hero's ribbon also carries one legible sewn threat tag - "1 FOE" or "2 FOES" -
+## on the right hem of its HP trough, worded from the same announced counts the enemy
+## intent badges already own.
 
 ## Narrow ribbon geometry: wide enough for three status chips, never wider than the slot.
 const RIBBON_MAX_WIDTH := 200.0
@@ -53,6 +55,20 @@ const PATCH_LABELS := {"stitched_badge": "Stitched Badge", "spare_spool": "Spare
 ## missing image leaves the drawn shield in place, so protection is always readable.
 const UI_ART_DIR := "res://assets/paper/ui/"
 const BLOCK_ART := "hud_block.png"
+## The hero threat tag is one readable, grammatical word pair ("1 FOE", "2 FOES") on a
+## dark felt tag with a pale stitched border, never a cryptic "! 1". Twelve px is the
+## smallest size at which the count is legible on the ribbon; the tag grows to its own
+## measured word and still leaves the centred HP numerals completely uncovered.
+const THREAT_BADGE_FONT := 12
+const THREAT_BADGE_ONE := "1 FOE"
+const THREAT_BADGE_MANY := "%d FOES"
+const THREAT_BADGE_MIN_WIDTH := 42.0
+const THREAT_BADGE_PADDING := 10.0
+const THREAT_BADGE_MARGIN := 2.0
+## Pale thread on dark felt: the same high-contrast pair the other ribbon chips use.
+const THREAT_BADGE_FELT := Color("3d4a45")
+const THREAT_BADGE_INK := Color("f1e7d2")
+const THREAT_BADGE_THREAD := Color("c9b996")
 
 var row: Control
 var _battle: Control
@@ -282,23 +298,25 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 	if side == "enemy":
 		_make_unravel_thread(content, meter)
 	else:
-		# A little felt pin overlays the existing HP trough without taking a row,
-		# changing its forecast, or becoming a gameplay input target.
+		# A legible target-count felt tag overlays the right hem of the existing HP
+		# trough: it fills its own measured word, never covers the centred numerals,
+		# and stays a pointer/keyboard-inert picture.
 		var pin := Panel.new()
 		pin.name = "ThreatPin"
 		pin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pin.focus_mode = Control.FOCUS_NONE
 		pin.anchor_left = 1.0
 		pin.anchor_right = 1.0
-		pin.offset_left = -40.0
-		pin.offset_right = -2.0
-		pin.offset_top = 3.0
-		pin.offset_bottom = 19.0
+		pin.anchor_bottom = 1.0
+		pin.offset_left = -THREAT_BADGE_MIN_WIDTH - THREAT_BADGE_MARGIN
+		pin.offset_right = -THREAT_BADGE_MARGIN
+		pin.offset_top = 1.0
+		pin.offset_bottom = -1.0
 		var felt := StyleBoxFlat.new()
-		felt.bg_color = Color("704437")
-		felt.border_color = Color("e9dfcb")
-		felt.set_border_width_all(1)
-		felt.set_corner_radius_all(3)
+		felt.bg_color = THREAT_BADGE_FELT
+		felt.border_color = THREAT_BADGE_THREAD
+		felt.set_border_width_all(2)
+		felt.set_corner_radius_all(4)
 		pin.add_theme_stylebox_override("panel", felt)
 		meter.hp_bar.add_child(pin)
 		var text := Label.new()
@@ -307,8 +325,8 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 		text.focus_mode = Control.FOCUS_NONE
 		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		text.add_theme_font_size_override("font_size", 10)
-		text.add_theme_color_override("font_color", Color("e9dfcb"))
+		text.add_theme_font_size_override("font_size", THREAT_BADGE_FONT)
+		text.add_theme_color_override("font_color", THREAT_BADGE_INK)
 		text.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		pin.add_child(text)
 		pin.hide()
@@ -476,13 +494,32 @@ func _announced_threat_counts(app, unravel: CombatUnravel) -> Array[int]:
 	return counts
 
 
+## The already-computed announced count, worded for the reader: "1 FOE", "2 FOES", and
+## nothing at all when no live source targets this hero. The tag only reflects the count
+## `_announced_threat_counts` bound; it never asks the scheduler for another draw.
 func _sync_threat_pin(meter: CombatActorMeter, count: int) -> void:
 	var pin := meter.hp_bar.get_node_or_null("ThreatPin") as Panel
 	if pin == null:
 		return
 	var label := pin.get_node("Count") as Label
-	label.text = "! %d" % count if count > 0 else ""
-	pin.visible = count > 0
+	var text := "" if count <= 0 else (THREAT_BADGE_ONE if count == 1
+		else THREAT_BADGE_MANY % count)
+	if label.text != text:
+		label.text = text
+	var shown := count > 0
+	if pin.visible != shown:
+		pin.visible = shown
+	if not shown:
+		return
+	# Fill the tag with its own measured word, up to a readable cap, and keep it on the
+	# right hem where the centred HP numerals never reach it.
+	var room := maxf(THREAT_BADGE_MIN_WIDTH,
+		meter.hp_bar.size.x * 0.4 - THREAT_BADGE_MARGIN * 2.0)
+	var width := clampf(label.get_combined_minimum_size().x + THREAT_BADGE_PADDING,
+		THREAT_BADGE_MIN_WIDTH, room)
+	var wanted := -THREAT_BADGE_MARGIN - width
+	if not is_equal_approx(pin.offset_left, wanted):
+		pin.offset_left = wanted
 
 
 ## Hide the long-form paragraphs after each show_actor without deleting or rewriting them.
