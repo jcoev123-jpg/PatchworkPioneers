@@ -8,7 +8,7 @@ extends RefCounted
 const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding", "thorns"]
 ## Non-keyword rules are explained after the seven keywords, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
-const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling"]
+const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling", "two_hits"]
 ## The Unravel thresholds the authored "current threshold" condition compares to.
 const UNRAVEL_THRESHOLDS := "starts at 8 normal, 12 elite, 16 boss and rises by 4 after each break"
 ## The two energy-trading pool cards this Help knows, plus the exact authored
@@ -32,6 +32,16 @@ const BLEED_DOUBLING_OWNER := "seamstress"
 const BLEED_DOUBLING_BASE_COST := 2
 const BLEED_DOUBLING_PLUS_COST := 1
 const BLEED_DOUBLING_MULTIPLIER := 2
+## Pin and Pound's authored two sequential hits (D2-1). Only these two Warden
+## identities, the exact cost/slots/target and the two-hit descriptor qualify;
+## the shared catalog shape is re-checked so no other card can borrow the text.
+const PIN_AND_POUND_BASE_ID := "warden_pin_and_pound"
+const PIN_AND_POUND_PLUS_ID := "warden_pin_and_pound_plus"
+const PIN_AND_POUND_OWNER := "warden"
+const PIN_AND_POUND_COST := 2
+const PIN_AND_POUND_BASE_DAMAGE := 9
+const PIN_AND_POUND_PLUS_DAMAGE := 12
+const PIN_AND_POUND_HITS := 2
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -89,6 +99,8 @@ static func _special_line(rule_key: String, definition: Dictionary, effects: Dic
 			return _energy_tradeoff_line(definition, effects)
 		"bleed_doubling":
 			return _bleed_doubling_line(definition, effects)
+		"two_hits":
+			return _two_hits_line(definition, effects)
 	return {}
 
 
@@ -268,6 +280,59 @@ static func _bleed_doubling_line(definition: Dictionary, effects: Dictionary) ->
 		return {}
 	var explanation := "Doubles the Bleed already on the target instead of adding new Bleed: Bleed N becomes 2N, and a target with no Bleed stays at 0. The doubled stacks then tick like any Bleed at the affected unit's turn end: that unit loses HP equal to its Bleed, then Bleed decreases by 1 (an enemy tick also adds 1 Unravel). This is not a fresh Bleed application, so the Seamstress's usual +1 Bleed does not apply."
 	return {"keyword": "Bleed doubling", "explanation": explanation}
+
+
+## Pin and Pound's authored multi-hit attack: two sequential hits on the one
+## originally chosen enemy (D2-1), with hit 2 skipped if hit 1 kills it. The
+## D2-2 Pinned note is exact: only a different hero's single +5 applies, only
+## on hit 1 (consumed before hit 2 is computed), and the card itself never pins.
+## Only the exact base/'+' identity, owner, cost, source slot, enemy target range
+## and {damage, hits: 2} descriptor qualify; anything else gets no row.
+static func _two_hits_line(definition: Dictionary, effects: Dictionary) -> Dictionary:
+	var id_value: Variant = definition.get("id")
+	if not id_value is String:
+		return {}
+	var card_id: String = id_value
+	if card_id != PIN_AND_POUND_BASE_ID and card_id != PIN_AND_POUND_PLUS_ID:
+		return {}
+	if String(definition.get("owner", "")) != PIN_AND_POUND_OWNER:
+		return {}
+	if definition.get("target_kind") != "enemy_single":
+		return {}
+	if not _exact_positions(definition.get("from_positions", null), [1]):
+		return {}
+	if not _exact_positions(definition.get("to_positions", null), [1, 2, 3]):
+		return {}
+	var cost_value: Variant = definition.get("cost")
+	if not cost_value is int or int(cost_value) != PIN_AND_POUND_COST:
+		return {}
+	if effects.size() != 2:
+		return {}
+	var required_damage: int = PIN_AND_POUND_PLUS_DAMAGE if card_id == PIN_AND_POUND_PLUS_ID \
+		else PIN_AND_POUND_BASE_DAMAGE
+	var damage_value: Variant = effects.get("damage")
+	var hit_value: Variant = effects.get("hits")
+	if not damage_value is int or int(damage_value) != required_damage:
+		return {}
+	if not hit_value is int or int(hit_value) != PIN_AND_POUND_HITS:
+		return {}
+	var explanation := "Costs %d energy to play. Deals two hits of %d damage each, one after the other, to the same originally chosen enemy; if the first hit kills it, the second hit is skipped instead of moving to another enemy. A Pinned token placed by a DIFFERENT hero adds +5 damage to the first hit only, before Weak/Exposed, and is consumed then, so the second hit never gains it; a pin from the same hero does not apply. Pin and Pound itself creates no Pinned token." % [
+		int(cost_value), int(damage_value)]
+	return {"keyword": "Two hits", "explanation": explanation}
+
+
+## The authored positions, exactly as expected in order and nothing else.
+static func _exact_positions(value: Variant, expected: Array) -> bool:
+	if not value is Array:
+		return false
+	var positions: Array = value
+	if positions.size() != expected.size():
+		return false
+	for index in range(expected.size()):
+		var slot: Variant = positions[index]
+		if not slot is int or int(slot) != int(expected[index]):
+			return false
+	return true
 
 
 ## The authored party slots, exactly 1..3 in order and nothing else.
