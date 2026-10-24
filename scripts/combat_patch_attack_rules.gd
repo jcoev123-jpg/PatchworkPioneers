@@ -21,6 +21,10 @@ var _active: Dictionary = {}
 var _consumed: Dictionary = {}
 var _worn: Dictionary = {}
 var _living: Dictionary = {}
+var _wardrobe: RunPatchWardrobe = null
+var _torn: RunTornMending = null
+var _wardrobe_receipt: Dictionary = {}
+var _torn_receipt: Dictionary = {}
 
 var _starter_cards: StarterCards = null
 var _warden_cards: WardenPoolCards = null
@@ -41,6 +45,10 @@ func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	_consumed.clear()
 	_worn.clear()
 	_living.clear()
+	_wardrobe = null
+	_torn = null
+	_wardrobe_receipt.clear()
+	_torn_receipt.clear()
 	if wardrobe == null or torn == null or not wardrobe.is_valid() or not torn.is_valid():
 		return false
 	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG))
@@ -62,11 +70,26 @@ func bind_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	for owner in RunPatchWardrobe.HERO_IDS:
 		_consumed[owner] = false
 	_valid = true
+	_wardrobe = wardrobe
+	_torn = torn
+	_wardrobe_receipt = state.duplicate(true)
+	_torn_receipt = torn_state.duplicate(true)
 	return true
 
 
 func is_valid() -> bool:
 	return _valid
+
+
+## The frozen battle-start projection is only authoritative while the live
+## run ledgers still carry the exact receipts it was bound to. A later sew,
+## re-sew, refresh or torn-ledger change must fail closed, never replay the
+## wearer powers that were active when the battle started.
+func is_current() -> bool:
+	if not _valid or _wardrobe == null or _torn == null:
+		return false
+	return _wardrobe.get_snapshot() == _wardrobe_receipt \
+		and _torn.read_state() == _torn_receipt
 
 
 func active_snapshot() -> Dictionary:

@@ -22,6 +22,8 @@ var _head_rules: CombatM05HeadPatchRules = null
 
 ## A failed explicit binding fails closed; an untouched service stays unbound.
 ## Binding again starts a new combat with a fresh wearer snapshot and latch.
+## The rules keep the authenticated run receipts, so a later wardrobe or torn
+## change rejects every forecast and hit instead of reusing stale powers.
 func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bool:
 	_patches = CombatPatchAttackRules.new()
 	return _patches.bind_wardrobe(wardrobe, torn)
@@ -54,6 +56,11 @@ func stage_transaction() -> CombatAttackCards:
 		staged._patches._valid = _patches._valid
 		staged._patches._active = _patches._active.duplicate(true)
 		staged._patches._consumed = _patches._consumed.duplicate(true)
+		# The staged half must authenticate against the same live receipts.
+		staged._patches._wardrobe = _patches._wardrobe
+		staged._patches._torn = _patches._torn
+		staged._patches._wardrobe_receipt = _patches._wardrobe_receipt.duplicate(true)
+		staged._patches._torn_receipt = _patches._torn_receipt.duplicate(true)
 	return staged
 
 
@@ -168,7 +175,9 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	if deck == null or party == null or enemies == null:
 		return _failure()
-	if _patches != null and not _patches.is_valid():
+	# A frozen battle-start validity flag is not authority on its own: the live
+	# wardrobe and torn ledger must still carry the receipts it was bound to.
+	if _patches != null and (not _patches.is_valid() or not _patches.is_current()):
 		return _failure()
 	if _head_rules != null and not _head_rules.read_projection().get("ok", false):
 		return _failure()
