@@ -6,6 +6,7 @@ const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 ## The one committed Event scene this screen reuses; never a new asset.
 const EVENT_ART := "res://assets/paper/backgrounds/event_crossroads.png"
+const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
 const REQUIRED := {
 	"button_trail": "The Button Trail",
 	"loose_seam": "The Loose Seam",
@@ -696,8 +697,7 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 	_check(panel.description_label.theme_type_variation == ""
 		and (panel.description_label.get_theme_font("font") as Font).resource_path == BODY_FONT,
 		label + " Event description stays in the inherited body font")
-	_check(panel.paper_panel.get_theme_stylebox("panel") is StyleBoxFlat,
-		label + " patchwork paper StyleBoxFlat")
+	_check_paper_skin(label)
 	_check(panel.get_node("SlateBackdrop") is ColorRect, label + " slate background node")
 	_check_backdrop_layer(label)
 	var choices: Array = record["choices"]
@@ -1570,11 +1570,35 @@ func _test_wallet_numbered_keys() -> void:
 	await _frames()
 
 
-## AC1/AC3: the guarded art path is display-only. With a genuine three-choice
-## wallet Event open, probing an unavailable optional image hides the picture and
-## keeps the slate, the parchment and every authored ticket exactly as they were,
-## a real pointer press on the picture settles nothing, and restoring the
-## committed scene leaves the same offering to settle exactly once.
+## Mounted surface contract for both shipped fabric and opaque missing-art paper.
+func _check_paper_skin(label: String, fallback: bool = false) -> void:
+	_check(panel.find_children("PaperPanel", "PanelContainer", true, false).size() == 1,
+		label + " exactly one existing paper surface")
+	_check(panel.paper_panel.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR,
+		label + " fabric uses linear filtering")
+	var style := panel.paper_panel.get_theme_stylebox("panel")
+	if not fallback and ResourceLoader.exists(PANEL_ART, "Texture2D"):
+		_check(style is StyleBoxTexture, label + " shipped paper uses nine-sliced fabric")
+		if style is StyleBoxTexture:
+			_check(style.texture != null and style.texture.resource_path == PANEL_ART,
+				label + " uses existing reward panel texture")
+			_check(style.draw_center, label + " fabric fills the story surface")
+			for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+				_check(style.get_texture_margin(side) == 36.0,
+					label + " preserves sewn texture edge " + str(side))
+	else:
+		_check(style is StyleBoxFlat, label + " missing fabric retains flat paper")
+		if style is StyleBoxFlat:
+			_check(style.bg_color == Color("#e5d5b5") and style.bg_color.a == 1.0
+				and style.draw_center, label + " fallback paper is opaque")
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		_check(style.get_content_margin(side) == 5.0,
+			label + " preserves original paper content inset " + str(side))
+
+
+## AC1/AC3: missing paper and backdrop art preserve a genuine three-choice
+## wallet offering. The inert picture settles nothing; flat-paper pointer input
+## settles once, and close/reopen plus art restoration preserve layout and wallet.
 func _test_backdrop_fallback() -> void:
 	var record: Dictionary = authored.get("frayed_signpost", {})
 	_check(not record.is_empty(), "backdrop fallback fixture is a genuine authored Event")
@@ -1594,6 +1618,13 @@ func _test_backdrop_fallback() -> void:
 	for button in panel.get_choice_buttons():
 		before.append(button.text)
 	var selector := panel._selector
+	var paper := panel.paper_panel
+	var paper_rect := paper.get_global_rect()
+	panel.bind_event_paper("res://assets/paper/ui/event_panel_missing_test.png")
+	await _frames()
+	_check_paper_skin("mounted missing fabric", true)
+	_check(panel.paper_panel == paper and paper.get_global_rect() == paper_rect,
+		"missing fabric reuses the same panel and natural layout")
 	panel.bind_event_backdrop("res://assets/paper/backgrounds/event_crossroads_missing_test.png")
 	await _frames()
 	var backdrop := panel.get_node("EventBackdrop") as TextureRect
@@ -1624,8 +1655,30 @@ func _test_backdrop_fallback() -> void:
 	_check(wallet_committed.is_empty() and selector.is_valid() and not selector.is_claimed(),
 		"clicking the picture layer settles nothing")
 	_check(wallet == original_wallet, "art probe never touches the supplied wallet")
+	# Commit while the flat paper is mounted, through actual pointer input.
+	var fallback_buttons := panel.get_choice_buttons()
+	_check(fallback_buttons.size() == 3 and not fallback_buttons[0].disabled,
+		"flat paper keeps three live choices")
+	if fallback_buttons.size() == 3 and not fallback_buttons[0].disabled:
+		await _mouse(fallback_buttons[0])
+		await _mouse(fallback_buttons[0])
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": "frayed_signpost", "choice_id": "read",
+		"wallet": {"gold": 16, "scraps": 0}}, "flat paper mouse choice commits exactly once")
+	panel.close_event()
+	await _frames()
+	_check(panel.open_event_with_wallet(record, wallet), "flat paper Event reopens")
+	await _frames()
+	_check_paper_skin("reopened flat paper", true)
+	_check(wallet_committed.size() == 1 and wallet == original_wallet,
+		"close/reopen adds no wallet side effect")
+	wallet_committed.clear()
+	panel.bind_event_paper()
 	panel.bind_event_backdrop()
 	await _frames()
+	_check_paper_skin("restored sewn paper")
+	_check(panel.paper_panel == paper and paper.get_global_rect() == paper_rect,
+		"restore and reopen reuse the same paper with unchanged layout")
 	_check((backdrop.texture != null) == ResourceLoader.exists(EVENT_ART)
 		and backdrop.visible == (backdrop.texture != null),
 		"committed crossroads scene restores after the fallback probe")
