@@ -197,47 +197,45 @@ func _update_preview() -> void:
 	if estimate.get("ok") != true:
 		_clear("Preview expired: refresh the Rest before trying again")
 		return
-	var exchange := "empty %s slot" % _slot_name(estimate["slot"]) \
-		if estimate["kind"] == "MOVE" else (
-		"swap with %s" % _nice(estimate["exchanged_id"]))
 	# The validated snapshot is the only wallet truth: quote its exact scraps
 	# minus the real cost, never a UI claim or a separate ledger.
 	var current_scraps: Variant = _snapshot.get("scraps")
 	if typeof(current_scraps) != TYPE_INT or int(current_scraps) < int(estimate["cost"]):
 		_clear("Preview expired: refresh the Rest before trying again")
 		return
-	preview_label.text = "%s • %s • %s → %s • %s • Cost: %d scrap • Scraps %d → %d
-%s
-%s
-%s
-%s" % [
-		_action_label(estimate["kind"]), _slot_label(estimate["slot"]),
-		_nice(estimate["source"]["hero_id"]),
-		_nice(estimate["destination"]["hero_id"]), exchange, estimate["cost"],
-		current_scraps, int(current_scraps) - int(estimate["cost"]),
-		_wearer_preview(estimate["source"], "before"),
-		_wearer_preview(estimate["source"], "after"),
-		_wearer_preview(estimate["destination"], "before"),
-		_wearer_preview(estimate["destination"], "after")]
+	preview_label.text = String.chr(10).join([
+		"%s / %s / %s to %s / Cost: %d scrap / Scraps %d to %d" % [
+			_action_label(estimate["kind"]), _slot_label(estimate["slot"]),
+			_nice(estimate["source"]["hero_id"]),
+			_nice(estimate["destination"]["hero_id"]), estimate["cost"],
+			current_scraps, int(current_scraps) - int(estimate["cost"])],
+		_slot_change(estimate["source"], estimate["slot"]),
+		_slot_change(estimate["destination"], estimate["slot"])
+	])
 	confirm_button.disabled = _pending
 
 
-static func _wearer_preview(wearer: Dictionary, phase: String) -> String:
-	var state: Dictionary = wearer[phase]
-	var summary := []
-	for slot in RunRestPatchResewOptions.SLOTS:
-		var patch: Dictionary = state["slots"][slot]
-		var id: String = patch["id"]
-		if id == "":
-			summary.append("%s empty" % slot)
-		else:
-			var activity := "active" if patch["active"] else "dormant"
-			var power: String = " — " + patch["effect"] if not patch["effect"].is_empty() else ""
-			summary.append("%s %s (%s)%s" % [slot, _nice(id), activity, power])
-	return "%s %s • HP %d/%d, effective cap %d • %s" % [
-		_nice(wearer["hero_id"]), phase.to_upper(),
-		state["hp"], state["base_max_hp"], state["effective_max_hp"],
-		" | ".join(summary)]
+static func _slot_change(wearer: Dictionary, slot: String) -> String:
+	var before: Dictionary = wearer["before"]
+	var after: Dictionary = wearer["after"]
+	return "%s %s: %s to %s / HP %d/%d to %d/%d / effective cap %d to %d" % [
+		_nice(wearer["hero_id"]), _slot_label(slot),
+		_patch_state(before["slots"][slot]), _patch_state(after["slots"][slot]),
+		before["hp"], before["base_max_hp"], after["hp"], after["base_max_hp"],
+		before["effective_max_hp"], after["effective_max_hp"]]
+
+
+static func _patch_state(patch: Dictionary) -> String:
+	var id: String = patch["id"]
+	if id.is_empty():
+		return "empty"
+	var name := _nice(id)
+	var effect: String = patch["effect"]
+	if not patch["active"]:
+		return "%s (dormant; inactive power: %s)" % [name, effect] \
+			if not effect.is_empty() else "%s (dormant)" % name
+	return "%s (active: %s)" % [name, effect] \
+		if not effect.is_empty() else "%s (active)" % name
 
 
 func _reset_tags(container: HFlowContainer, buttons: Array[Button], first: SewnChip) -> void:
