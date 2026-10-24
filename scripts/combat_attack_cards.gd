@@ -17,6 +17,7 @@ var _tinker := CombatTinkerFirstAttack.new()
 var _basic := CombatBasicAttacks.new()
 var _statuses := CombatStatuses.new()
 var _patches: CombatPatchAttackRules = null
+var _head_rules: CombatM05HeadPatchRules = null
 
 
 ## A failed explicit binding fails closed; an untouched service stays unbound.
@@ -25,6 +26,12 @@ func bind_patch_wardrobe(wardrobe: RunPatchWardrobe, torn: RunTornMending) -> bo
 	_patches = CombatPatchAttackRules.new()
 	return _patches.bind_wardrobe(wardrobe, torn)
 
+
+## A present, invalid or stale M05 HEAD binding rejects all attacks.
+## The untouched unbound starter service continues with authored statuses.
+func bind_head_patch_rules(rules: CombatM05HeadPatchRules) -> bool:
+	_head_rules = rules
+	return rules != null and rules.read_projection().get("ok", false)
 
 
 ## The live turn coordinator must call this once per new player turn.
@@ -39,6 +46,9 @@ func stage_transaction() -> CombatAttackCards:
 	var staged := CombatAttackCards.new()
 	staged._tinker._consumed = _tinker._consumed
 	staged._tinker._path_bonus = _tinker._path_bonus
+	# Read-only projection is battle-scoped; staged halves must use the exact
+	# same live authority and reject if its source receipt has gone stale.
+	staged._head_rules = _head_rules
 	if _patches != null:
 		staged._patches = CombatPatchAttackRules.new()
 		staged._patches._valid = _patches._valid
@@ -160,6 +170,8 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		return _failure()
 	if _patches != null and not _patches.is_valid():
 		return _failure()
+	if _head_rules != null and not _head_rules.read_projection().get("ok", false):
+		return _failure()
 	if not ATTACK_IDS.has(card_id) or not enemies.can_apply_statuses({}):
 		return _failure()
 	if enemies.is_victorious():
@@ -216,6 +228,15 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 			owner_statuses = hero.get("statuses", {})
 	if owner_count != 1:
 		return _failure()
+	# A freshly constructed CombatParty can have positive HP while the sewn
+	# run ledger still marks this owner torn. Never let that actor cast.
+	if _head_rules != null:
+		var living_run_owner := false
+		for run_hero in _head_rules._torn.read_state().get("heroes", []):
+			if run_hero.get("id") == owner_id and run_hero.get("hp", 0) > 0:
+				living_run_owner = true
+		if not living_run_owner:
+			return _failure()
 	var patch_statuses := {} if _patches == null else _patches.exposed_for_first_hit(owner_id)
 	var patch_damage := 0 if _patches == null else _patches.damage_bonus(owner_id)
 	# Frayfinder is one base hit, never an area, later hit, or support cast.
@@ -239,6 +260,13 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var eligible: Array[int] = []
 	for position in positions:
 		var additions := _on_hit.status_for_confirmed_hit(card_id, true)
+		if _head_rules != null:
+			for status in ["weak", "bleed"]:
+				if additions.get(status, 0) > 0:
+					var extra := _head_rules.get_bonus(owner_id, card_id, status)
+					if extra > CombatStatuses.MAX_INT - additions[status]:
+						return _failure()
+					additions[status] += extra
 		for status in patch_statuses:
 			additions[status] = additions.get(status, 0) + patch_statuses[status]
 		var application := {position: additions}

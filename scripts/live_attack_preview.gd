@@ -764,7 +764,8 @@ func _queue_attack(position: int) -> void:
 	var target_id := ""
 	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
-			or _targeting.is_pool_combo_attack(id) or _is_path_card(id)) and position > 0:
+			or _targeting.is_pool_combo_attack(id) or _is_path_card(id) \
+			or id in CombatAttackCards.ATTACK_IDS) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
 	_commit.call_deferred(_armed, id, position, _token,
 		app.party, app.enemies, app.battle_result, app.run_rng, _turn, target_id,
@@ -782,7 +783,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var control := _targeting.is_seamstress_control(id)
 	var combo := _targeting.is_pool_combo_attack(id)
 	var path := _is_path_card(id)
-	var guarded := direct or control or combo or path
+	var guarded := direct or control or combo or path or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -806,8 +807,9 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((control or combo or path) and (app._battle_closed or target_id.is_empty() \
-			or app.enemies.get_enemy(position).get("id") != target_id))):
+			or ((control or combo or path or id in CombatAttackCards.ATTACK_IDS) \
+				and position > 0 and (app._battle_closed or target_id.is_empty() \
+				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
 		return
@@ -1133,6 +1135,8 @@ func _sync_battle() -> void:
 		# latch, including an explicitly failed wardrobe admission.
 		_controls.bind_patch_rules(_play._patches)
 		_controls.bind_head_patch_rules(head_rules)
+		if head_rules != null:
+			_play.bind_head_patch_rules(head_rules)
 		last_event = {}
 		# One Pinned set and one Unravel gauge live for this whole battle session.
 		# They are created here and never recreated or reset by a hand refresh.
@@ -1275,7 +1279,11 @@ func _refresh() -> void:
 					var half: Dictionary = current_forecast.halves[index]
 					var effects: PackedStringArray = []
 					for hit in half.get("hits", []):
-						effects.append("enemy %d: %d damage" % [hit.position, hit.damage])
+						var status_text := ""
+						for status in ["weak", "bleed"]:
+							if int(hit.get("statuses", {}).get(status, 0)) > 0:
+								status_text += ", %s %d" % [status.capitalize(), hit.statuses[status]]
+						effects.append("enemy %d: %d damage%s" % [hit.position, hit.damage, status_text])
 					if half.has("effect"):
 						effects.append("%s %d" % [half.effect.replace("_", " ").capitalize(), half.amount])
 					outcomes.append("%d: %s" % [index + 1, ", ".join(effects)])
@@ -1362,18 +1370,20 @@ func _refresh() -> void:
 	var targets: PackedStringArray = []
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
-	var additions: Dictionary = {}
+	var additions_by_position: Dictionary = {}
 	if not is_pool and not is_heavy and not is_direct and preview.playable:
-		additions = _on_hit.status_for_confirmed_hit(id, true)
-		if _play._patches != null:
-			var patch_statuses: Dictionary = _play._patches.exposed_for_first_hit(definition.get("owner", ""))
-			for status in patch_statuses:
-				additions[status] = additions.get(status, 0) + patch_statuses[status]
+		# This is the same pure status preflight as the confirmed attack, including
+		# the authored passive, HEAD bonus, M04 rider and capacity eligibility.
+		var status_plan := _play._prepare(_deck, app.party, app.enemies, id, 0,
+			{}, {}, false, tinker_cost_discount(id))
+		if status_plan.get("ok", false):
+			additions_by_position = status_plan.applications
 	for hit in preview.hits:
 		var detail := ("%d: 2 hits x %d damage each" % [hit.position, hit.damage]
 			if int(hit.get("hit_count", 1)) == 2 else "%d: %d damage" % [hit.position, hit.damage])
 		var enemy: Dictionary = app.enemies.get_enemy(hit.position)
 		var current: Dictionary = enemy.get("statuses", {})
+		var additions: Dictionary = additions_by_position.get(hit.position, {})
 		for status in additions:
 			var amount: int = additions[status]
 			var previous: int = current.get(status, 0)
