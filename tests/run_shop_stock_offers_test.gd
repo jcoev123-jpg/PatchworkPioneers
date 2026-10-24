@@ -25,6 +25,16 @@ const FIXTURE_CARD_PRICES := {
 }
 const DEFAULT_FIXTURE_PRICE := 50
 
+## Already-playable Tinker common bases admitted to the authored Shop; their
+## upgrades remain Rest-only, with these independent expected effects.
+const RIVET_SCATTER_SHOP_SPECS := {
+	"tinker_rivet_shot": {"price": 50, "from": [2, 3], "target": "enemy_single",
+		"effects": {"damage": 4, "exposed": 1}, "plus_effects": {"damage": 6, "exposed": 1}},
+	"tinker_scatter_bolts": {"price": 55, "from": [3], "target": "enemy_all",
+		"effects": {"damage": 3, "living_targets_only": true},
+		"plus_effects": {"damage": 4, "living_targets_only": true}},
+}
+
 ## Pool card prices for the three hero pools (base cards only, not + upgrades).
 const POOL_CARD_PRICES := {
 	# Warden pool
@@ -213,6 +223,7 @@ func _initialize() -> void:
 		_test_seamstress_shop_stock_and_purchases(party, deck, catalog)
 		_test_pinned_enabler_shop_offers_and_purchases(party, deck, catalog)
 		_test_unravel_trio_shop_offers_and_purchases(party, deck, catalog)
+		_test_tinker_attack_shop_stock(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -2487,3 +2498,173 @@ func _test_unravel_trio_shop_offers_and_purchases(party: Array[String], deck: Ar
 				{"id": card_id + "_plus", "owner": spec["owner"], "price": spec["price"]}),
 			trinkets, [])
 
+
+
+## Rivet Shot and Scatter Bolts are real, priced Shop candidates, while their
+## + forms are catalog-only upgrades. Drive the shipped pool and both ledgers.
+func _test_tinker_attack_shop_stock(party: Array[String], deck: Array[String],
+		catalog: StarterCards) -> void:
+	var authored := _authored_shop_offers()
+	var candidates: Array = authored.get("cards", [])
+	var patches: Array = authored.get("trinkets", [])
+	var tinker := TinkerPoolCards.new()
+	var counts := {}
+	for entry in candidates:
+		if entry is Dictionary and entry.get("id") is String:
+			counts[entry.id] = int(counts.get(entry.id, 0)) + 1
+	# All older entries retain their individual owner and price; no ordered-list
+	# or entire-catalog-size expectation depends on other lanes' additions.
+	for old_id in EXISTING_SHOP_CARDS:
+		var spec: Dictionary = EXISTING_SHOP_CARDS[old_id]
+		var matches := candidates.filter(func(entry): return entry.get("id") == old_id)
+		_check(matches.size() == 1 and matches[0].get("owner") == spec.owner
+			and _whole_price(matches[0].get("price")) == spec.price,
+			"Rivet/Scatter admission preserves existing Shop quote: " + old_id)
+
+	for card_id in RIVET_SCATTER_SHOP_SPECS:
+		var spec: Dictionary = RIVET_SCATTER_SHOP_SPECS[card_id]
+		var upgrade_id: String = card_id + "_plus"
+		var quote: int = spec.price
+		var matches := candidates.filter(func(entry): return entry.get("id") == card_id)
+		_check(counts.get(card_id, 0) == 1 and matches.size() == 1
+			and counts.get(upgrade_id, 0) == 0,
+			"Tinker " + card_id + ": one Shop base, zero upgrade offers")
+		if matches.is_empty():
+			continue
+		_check(matches[0].get("owner") == "tinker"
+			and _whole_price(matches[0].get("price")) == quote
+			and POOL_CARD_PRICES.get(card_id, -1) == quote,
+			"Tinker " + card_id + ": catalog-owned exact established Shop quote")
+		var base: Dictionary = tinker.get_definition(card_id)
+		var plus: Dictionary = tinker.get_definition(upgrade_id)
+		_check(tinker.get_pool_card_ids().has(card_id) and not catalog.has_card(card_id)
+			and not deck.has(card_id) and not deck.has(upgrade_id)
+			and base.get("id") == card_id and base.get("base_id") == card_id
+			and base.get("upgrade_id") == upgrade_id and base.get("is_upgrade") == false
+			and base.get("owner") == "tinker" and base.get("rarity") == "common"
+			and base.get("starting_copies") == 0,
+			"Tinker " + card_id + ": canonical common reward-only base")
+		for definition in [base, plus]:
+			var is_plus: bool = definition.get("id") == upgrade_id
+			_check(definition.get("id") == (upgrade_id if is_plus else card_id)
+				and definition.get("owner") == "tinker" and definition.get("rarity") == "common"
+				and definition.get("cost") == 1 and definition.get("from_positions") == spec["from"]
+				and definition.get("target_kind") == spec.target
+				and definition.get("to_positions") == [1, 2, 3]
+				and definition.get("effects") == (spec.plus_effects if is_plus else spec.effects)
+				and definition.get("base_id") == card_id and definition.get("upgrade_id") == upgrade_id
+				and definition.get("is_upgrade") == is_plus
+				and definition.get("starting_copies") == 0,
+				"Tinker " + card_id + ": exact base/plus targeting and effects (" + str(is_plus) + ")")
+
+		# Search a bounded fixed range in the actual complete JSON candidate
+		# pool; never force the desired ID with a synthetic offer fixture.
+		var seed_found: int = -1
+		var found: Dictionary = {}
+		for offset in range(300):
+			var seed_value: int = SEED + 1300 + offset
+			var stock: Dictionary = RunShopStockOffers.generate(
+				_rng(seed_value), party, candidates, patches, [])
+			if not stock.get("ok", false):
+				continue
+			if stock.cards.any(func(entry): return entry.get("id") == card_id):
+				seed_found = seed_value
+				found = stock
+				break
+		_check(seed_found >= 0, "Tinker " + card_id + ": found in bounded genuine seeded stock")
+		if seed_found < 0:
+			continue
+		var card_ids := {}
+		for entry in found.cards:
+			card_ids[entry.id] = true
+			_check(not String(entry.id).ends_with("_plus")
+				and _pool_price(candidates, entry.id) == entry.price
+				and party.has(entry.owner),
+				"Tinker " + card_id + ": every offer is a priced party-owned base")
+		var patch_ids := {}
+		for entry in found.trinkets:
+			patch_ids[entry.id] = true
+		_check(found.cards.size() == 5 and card_ids.size() == 5
+			and found.trinkets.size() == 2 and patch_ids.size() == 2,
+			"Tinker " + card_id + ": five distinct cards and two distinct patches")
+		var selected: Dictionary = {}
+		for entry in found.cards:
+			if entry.id == card_id:
+				selected = entry
+		_check(selected.get("owner") == "tinker" and selected.get("price") == quote,
+			"Tinker " + card_id + ": selected offer has exact owner and quote")
+		var original_rng := _rng(seed_found)
+		var oracle_rng := _rng(seed_found)
+		var replay_rng := _rng(seed_found)
+		var original := RunShopStockOffers.generate(original_rng, party, candidates, patches, [])
+		var oracle := _oracle(catalog, party, candidates, patches, [], oracle_rng)
+		var reversed_cards := candidates.duplicate(true)
+		var reversed_patches := patches.duplicate(true)
+		reversed_cards.reverse()
+		reversed_patches.reverse()
+		var replay := RunShopStockOffers.generate(replay_rng, party, reversed_cards, reversed_patches, [])
+		_check(original == found and original.cards == oracle.cards
+			and original.trinkets == oracle.trinkets and replay == original
+			and original_rng.state == oracle_rng.state
+			and original_rng.state == replay_rng.state
+			and original_rng.randi() == replay_rng.randi(),
+			"Tinker " + card_id + ": sorted oracle, reversed candidates and RNG replay")
+		var rng_after_stock: int = original_rng.state
+		var shop := RunShopPurchases.new(party, deck, [], quote, found.cards, found.trinkets)
+		var visit := RunShopVisit.new(deck, quote, 0, [])
+		_check(shop.is_valid() and visit.open_visit("shop-" + card_id),
+			"Tinker " + card_id + ": real generated purchase and visit ledgers open")
+		if not shop.is_valid() or not visit.get_state().removal_available:
+			continue
+		var before_state := shop.get_state()
+		var before_stock := shop.get_stock()
+		var unoffered_id := ""
+		for entry in candidates:
+			if not card_ids.has(entry.id):
+				unoffered_id = entry.id
+				break
+		_check(not unoffered_id.is_empty(), "Tinker " + card_id + ": a real unoffered choice exists")
+		var unoffered := shop.buy("card", unoffered_id)
+		_check(not unoffered.get("ok", true) and not unoffered.has("receipt")
+			and shop.get_state() == before_state and shop.get_stock() == before_stock
+			and original_rng.state == rng_after_stock,
+			"Tinker " + card_id + ": unoffered choice cannot spend, mutate or draw RNG")
+		var bought := shop.buy("card", card_id)
+		var after_state := shop.get_state()
+		var after_stock := shop.get_stock()
+		var expected_stock: Dictionary = before_stock.duplicate(true)
+		for entry in expected_stock.cards:
+			if entry.id == card_id:
+				entry.sold = true
+		_check(bought.get("ok", false) and bought.get("receipt", {}) ==
+			{"kind": "card", "id": card_id, "price": quote}
+			and after_state.deck == before_state.deck + [card_id]
+			and after_state.gold == before_state.gold - quote
+			and after_state.trinkets == before_state.trinkets
+			and after_state.party_ids == before_state.party_ids
+			and after_stock == expected_stock and original_rng.state == rng_after_stock,
+			"Tinker " + card_id + ": one priced base purchase, only its listing sold")
+		_check(visit.reconcile_purchase(bought)
+			and visit.get_state().deck == after_state.deck
+			and visit.get_state().gold == after_state.gold
+			and original_rng.state == rng_after_stock,
+			"Tinker " + card_id + ": authentic paid receipt reconciles to run visit")
+		var second := shop.buy("card", card_id)
+		_check(not second.get("ok", true) and not second.has("receipt")
+			and shop.get_state() == after_state and shop.get_stock() == after_stock
+			and original_rng.state == rng_after_stock,
+			"Tinker " + card_id + ": sold/repeated buy leaves all ledgers and RNG unchanged")
+		var poor := RunShopPurchases.new(party, deck, [], quote - 1, found.cards, found.trinkets)
+		_check(poor.is_valid(), "Tinker " + card_id + ": one-gold-short visit is valid")
+		if poor.is_valid():
+			var poor_state := poor.get_state()
+			var poor_stock := poor.get_stock()
+			var denied := poor.buy("card", card_id)
+			_check(not denied.get("ok", true) and not denied.has("receipt")
+				and poor.get_state() == poor_state and poor.get_stock() == poor_stock
+				and original_rng.state == rng_after_stock,
+				"Tinker " + card_id + ": unaffordable buy leaves deck, gold, patches, stock and RNG unchanged")
+		_reject("Tinker " + card_id + ": _plus candidate rejected before RNG draw",
+			_rng(seed_found), party,
+			_with_card(candidates, 0, {"id": upgrade_id, "owner": "tinker", "price": quote}),
+			patches, [])
