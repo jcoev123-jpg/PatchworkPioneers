@@ -119,6 +119,11 @@ func _mounted(app, presenter) -> bool:
 		# the viewport's upper edge and above its own actor art, and stays pointer/focus inert.
 		var badge_rect: Rect2 = badge.get_global_rect()
 		var actor_rect: Rect2 = puppet.get_global_rect() if is_instance_valid(puppet) else Rect2()
+		var art_rect: Rect2 = puppet.get_global_transform() * puppet.rest_drawn_rect()
+		var clearance: float = maxf(ROSTER_ART.INTENT_ART_CLEARANCE,
+			puppet.art_safety_inset() + ROSTER_ART.Puppet.RIM_RADIUS)
+		var expected_top: float = maxf(actor_rect.position.y,
+			maxf(ROSTER_ART.STAGE_INTENT_SAFE_MARGIN, art_rect.position.y - clearance - badge_rect.size.y))
 		var patch_rect: Rect2 = Rect2(badge_rect.position + badge.patch_rect().position,
 			badge.patch_rect().size)
 		_check(badge.tooltip_text.contains("%d damage" % action.amount)
@@ -130,12 +135,14 @@ func _mounted(app, presenter) -> bool:
 			and badge.focus_mode == Control.FOCUS_NONE
 			and badge_rect.size.x >= badge.custom_minimum_size.x - 0.01
 			and badge_rect.size.y >= badge.custom_minimum_size.y - 0.01
-			and badge_rect.position.y >= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_SAFE_MARGIN - 0.01
-			and badge_rect.end.y <= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_BAND + 0.01
+			and art_rect.has_area()
+			and is_equal_approx(badge_rect.position.y, expected_top)
+			and badge_rect.end.y <= art_rect.position.y + 0.01
+			and actor_rect.grow(0.01).encloses(badge_rect)
 			and Rect2(0, 0, 1280, 720).encloses(badge_rect),
-			"replacement intent badge keeps its full tag inside the viewport margin above its actor")
-		_check(patch_rect.position.y >= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_SAFE_MARGIN - 0.01
-			and patch_rect.end.y <= actor_rect.position.y + ROSTER_ART.STAGE_INTENT_BAND + 0.01
+			"replacement intent ticket belongs to its resting artwork inside its source slot")
+		_check(badge_rect.grow(0.01).encloses(patch_rect)
+			and patch_rect.end.y <= art_rect.position.y + 0.01
 			and Rect2(0, 0, 1280, 720).encloses(patch_rect),
 			"drawn intent patch is complete, not cut by the upper edge, and never covers actor art")
 	return true

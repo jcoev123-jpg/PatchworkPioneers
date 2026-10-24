@@ -66,8 +66,8 @@ const SHORT_LINES := {
 	"warden_hold_the_line": "Gain 5 Block. Other allies gain 2 Block.",
 	"warden_hold_the_line_plus": "Gain 7 Block. Other allies gain 3 Block.",
 	"warden_pinning_jab": "Deal 4. Pin.",
-	"warden_draw_fire": "Gain 6 Block. Guard until your next turn.",
-	"warden_counter_stitch": "Gain 5 Block. Gain 3 Thorns until your next turn.",
+	"warden_draw_fire": "Gain 6 Block. Guard.",
+	"warden_counter_stitch": "Gain 5 Block. Gain 3 Thorns.",
 	"warden_seam_breaker": "Deal 7. Unravel 4.",
 	"warden_pin_and_pound": "Deal 9 x2.",
 	"warden_bastion_quilt": "All allies gain 10 Block.",
@@ -84,7 +84,7 @@ const SHORT_LINES := {
 	"seamstress_tailors_trance": "Draw 2. Gain 1 energy.",
 	"seamstress_tailors_trance_plus": "Draw 3. Gain 1 energy.",
 	"tinker_rivet_shot": "Deal 4. Exposed 1.",
-	"tinker_spring_trap": "Deal 3. Pin +5.",
+	"tinker_spring_trap": "Deal 3. Pin.",
 	"tinker_scatter_bolts": "Deal 3 to all.",
 	"tinker_spare_parts": "Gain 3 Block. Draw 1.",
 	"tinker_spare_parts_plus": "Gain 4 Block. Draw 1.",
@@ -314,9 +314,10 @@ func _formatter_check(metadata) -> void:
 	_check(formatter.line(metadata.definition("tinker_snip_the_seam"))
 		== "Deal 5, or 15 if Unravelled or half gauge.",
 		"conditional damage keeps both authored amounts and its trigger")
-	_check(formatter.line(metadata.definition("tinker_spring_trap")) == "Deal 3. Pin +5."
-		and formatter.line(metadata.definition("warden_pinning_jab")) == "Deal 4. Pin.",
-		"Pin keeps its own bonus instead of a fabricated damage amount")
+	_check(formatter.line(metadata.definition("tinker_spring_trap")) == "Deal 3. Pin."
+		and formatter.line(metadata.definition("warden_pinning_jab")) == "Deal 4. Pin."
+		and not formatter.line(metadata.definition("tinker_spring_trap")).contains("+5"),
+		"Pin names the keyword on the face and leaves its bonus to the Help glossary")
 	_check(formatter.line(metadata.definition("warden_seam_breaker")) == "Deal 7. Unravel 4."
 		and formatter.line(metadata.definition("seamstress_unpick")) == "Unravel 5.",
 		"Unravel keeps its authored gauge amount")

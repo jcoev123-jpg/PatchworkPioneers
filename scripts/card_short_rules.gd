@@ -174,12 +174,13 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 				_amount(applied.get("unravel", authored), authored), object_suffix])
 		else:
 			unknown = true
+	# The face names the keyword only: the different-owner +5 and its single
+	# consumption stay in the sewn Help glossary, which explains them in full.
 	if effects.has("pinned"):
-		var bonus := _pin_bonus(effects["pinned"])
-		if bonus < 0:
+		if _pin_bonus(effects["pinned"]) < 0:
 			unknown = true
 		else:
-			clauses.append("pin%s%s" % [" +%d" % bonus if bonus > 0 else "", object_suffix])
+			clauses.append("pin" + object_suffix)
 	var phrases: Array[String] = []
 	for clause in clauses:
 		phrases.append(_capitalize(clause) + ".")
@@ -293,17 +294,17 @@ static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 			clauses.append("lose %d HP" % cost_hp)
 		else:
 			unknown = true
-	var tail_time := " until your next turn" \
-		if str(effects.get("duration", "")) == "until_next_turn" else ""
+	# Guard and Thorns print their keyword and authored amount only; the Help
+	# glossary owns the redirect/return-damage rules and their expiry.
 	if effects.has("guarding"):
 		if _flag(effects["guarding"]):
-			clauses.append("Guard" + tail_time)
+			clauses.append("Guard")
 		else:
 			unknown = true
 	if effects.has("thorns"):
 		var thorns := _amount(effects["thorns"], -1)
 		if thorns > 0:
-			clauses.append("gain %d Thorns%s" % [thorns, tail_time])
+			clauses.append("gain %d Thorns" % thorns)
 		else:
 			unknown = true
 	if clauses.is_empty():
@@ -413,6 +414,8 @@ static func _condition_text(value: Variant) -> String:
 	return joiner.join(conditions)
 
 
+## Only an authored true flag or a well-formed descriptor is a Pin; the amount it
+## would add is validated here but never printed on the face.
 static func _pin_bonus(value: Variant) -> int:
 	if value is bool:
 		return 0 if bool(value) else -1

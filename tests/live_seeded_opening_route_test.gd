@@ -172,7 +172,9 @@ func _book_state(app) -> Array:
 		var slate: Control = book.get_node("PartySlate")
 		for row in slate.get_children():
 			if row is Label:
-				state.append(row.text)
+				state.append([row.text, row.get_theme_font_size("font_size"),
+					row.get_theme_color("font_color"), row.has_theme_stylebox_override("normal"),
+					row.get_node_or_null("SupplyStitch") != null])
 			else:
 				state.append([row.get_node("HeroName").text, row.get_node("Health").text,
 					row.get_node("Portrait").texture != null])
@@ -339,10 +341,10 @@ func _party_slate(app, page: Rect2) -> void:
 			_check(portrait.texture == null and row.get_node_or_null("PortraitFallback") != null
 				and not caption.text.is_empty(), "missing portrait retains readable fallback and name")
 	var resources: Label = slate.get_node("Resources")
-	_check(resources.text == "Deck: %d cards\nGold: %d    Scraps: %d" % [
-		app.run_deck.size(), app.session_gold, app.run_scraps]
-		and resources.get_global_rect().position.y >= previous.end.y,
-		"deck and wallet summary uses authoritative counts below the heroes")
+	_check(resources.text == "Deck: %d cards\nGold: %d\nScraps: %d" % [
+		app.run_deck.size(), app.session_gold, app.run_scraps],
+		"supply tab uses authoritative deck and both wallet counts on separate lines")
+	_supply_style(resources)
 	var controls: Array = [slate]
 	controls.append_array(slate.find_children("*", "Control", true, false))
 	for control in controls:
@@ -353,6 +355,31 @@ func _party_slate(app, page: Rect2) -> void:
 			_check(not control.text.contains("res://") and not control.text.contains("f01_")
 				and not control.text.contains("warden_") and not control.text.contains("seamstress_")
 				and not control.text.contains("tinker_"), "slate labels show no authored paths or IDs")
+
+
+func _supply_style(resources: Label) -> void:
+	_check(resources.has_theme_stylebox_override("normal"), "supply tab owns its opaque backing")
+	var backing := resources.get_theme_stylebox("normal") as StyleBoxFlat
+	_check(backing != null, "supply backing is a padded StyleBoxFlat")
+	if backing == null:
+		return
+	var ink := resources.get_theme_color("font_color")
+	var contrast := (ink.srgb_to_linear().get_luminance() + 0.05) / (backing.bg_color.srgb_to_linear().get_luminance() + 0.05)
+	_check(backing.bg_color.a == 1.0 and ink.a == 1.0 and contrast >= 4.5
+		and resources.get_theme_font_size("font_size") >= 18,
+		"opaque supply backing and body text have strong contrast")
+	_check(backing.content_margin_left >= 12 and backing.content_margin_right >= 12
+		and backing.content_margin_top >= 10 and backing.content_margin_bottom >= 10
+		and backing.border_width_left > 0 and backing.border_width_right > 0
+		and backing.border_width_top > 0 and backing.border_width_bottom > 0,
+		"supply text has padding inside its bordered backing")
+	var stitch := resources.get_node_or_null("SupplyStitch") as Control
+	_check(stitch != null, "supply tab has a sewn edge")
+	if stitch != null:
+		_check(stitch.mouse_filter == Control.MOUSE_FILTER_IGNORE and stitch.focus_mode == Control.FOCUS_NONE,
+			"supply stitching is inert")
+	_check(resources.mouse_filter == Control.MOUSE_FILTER_IGNORE and resources.focus_mode == Control.FOCUS_NONE,
+		"supply label is pointer and keyboard inert")
 
 
 func _slate_snapshot_fallback(app) -> void:
@@ -368,15 +395,19 @@ func _slate_snapshot_fallback(app) -> void:
 	snapshot.heroes[0].name = "mutated caller"
 	snapshot.heroes[0].hp = 0
 	snapshot.gold = 999
+	snapshot.scraps = 999
+	snapshot.deck_count = 999
 	var row: Control = book.get_node("PartySlate/HeroRow0")
 	_check(row.get_node("Portrait").texture == null and row.get_node_or_null("PortraitFallback") != null
 		and row.get_node("HeroName").text == app.run_heroes[0].name
 		and row.get_node("Health").text == "HP %d / %d" % [expected_hp, app.run_heroes[0].max_hp],
 		"missing art keeps name and non-full current HP after nested caller mutation")
-	_check(book.get_node("PartySlate/Resources").text == "Deck: %d cards\nGold: %d    Scraps: %d" % [
+	_check(book.get_node("PartySlate/Resources").text == "Deck: %d cards\nGold: %d\nScraps: %d" % [
 		app.run_deck.size(), app.session_gold, app.run_scraps]
 		and app.run_heroes[0].hp == app.run_heroes[0].max_hp,
 		"snapshot presentation and caller mutations leave run authorities unchanged")
+	_check(not book.uses_board_texture(), "detached fallback book uses drawn pages")
+	_supply_style(book.get_node("PartySlate/Resources"))
 	book.free()
 
 

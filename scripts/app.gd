@@ -337,11 +337,31 @@ class RouteBook extends Control:
 			health.position = Vector2(86, 40)
 			health.size = Vector2(290, 28)
 			row.add_child(health)
-		var resources := _inert_label("Resources", "Deck: %d cards\nGold: %d    Scraps: %d" % [
-			values.deck_count, values.gold, values.scraps], 20)
-		resources.position = Vector2(10, 268)
-		resources.size = Vector2(368, 62)
+		var resources := _inert_label("Resources", "Deck: %d cards\nGold: %d\nScraps: %d" % [
+			values.deck_count, values.gold, values.scraps], 18)
+		# Upper-right supply tab on the left page, clear of the board's lower cloth hem.
+		# Keep the label under PartySlate so both mounted book paths retain their lookup.
+		resources.position = Vector2(244, -206)
+		resources.size = Vector2(172, 128)
+		resources.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		resources.add_theme_color_override("font_color", Color("fff3d6"))
+		var backing := StyleBoxFlat.new()
+		backing.bg_color = Color("42392f")
+		backing.border_color = Color("c9b996")
+		backing.set_border_width_all(1)
+		backing.set_corner_radius_all(6)
+		backing.content_margin_left = 14
+		backing.content_margin_right = 14
+		backing.content_margin_top = 12
+		backing.content_margin_bottom = 12
+		resources.add_theme_stylebox_override("normal", backing)
 		slate.add_child(resources)
+		var supply_stitch := ActionCornerStitch.new()
+		supply_stitch.name = "SupplyStitch"
+		supply_stitch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		supply_stitch.focus_mode = Control.FOCUS_NONE
+		supply_stitch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resources.add_child(supply_stitch)
 
 	func _inert_label(node_name: String, text: String, font_size: int) -> Label:
 		var label := Label.new()
