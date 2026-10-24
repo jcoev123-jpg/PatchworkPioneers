@@ -9,9 +9,9 @@ extends Node
 ## combat meter. A committed HP *loss* also makes only that actor's own visible,
 ## standing mounted puppet recoil; pure Block loss/reset and healing are not evidence
 ## of a hit, and nothing recoils for an uncommitted preview or a refused play. Each such
-## committed HP loss also kicks up a tiny one-shot puff of soft felt lint and thread scraps
-## at that actor's own presented puppet: never more than six flecks, fewer in fast mode,
-## gone within the same bounded cue length and never intercepting pointer or focus.
+## committed HP loss also raises one short, transparent sewn puff of the shipped felt/thread
+## art at that actor's own presented puppet: one bounded texture sprite, gone within the same
+## cue length, with no particle emitter and never intercepting pointer or focus.
 ## A committed held-card play whose single held copy really left the hand,
 ## whose authored record is an individually targeted enemy attack and whose only
 ## authoritative change was one enemy's HP/Block loss also lets that card's own living
@@ -42,19 +42,20 @@ const RECOIL_HISTORY_LIMIT := 64
 const FALL_HISTORY_LIMIT := 64
 const FADE_HISTORY_LIMIT := 64
 const PUFF_HISTORY_LIMIT := 64
-## A committed hit puffs a small handful of felt lint: at most six flecks in normal mode
-## and two in Fast mode, each a web-safe one-shot CPUParticles2D gone by the cue length.
-const PUFF_NORMAL_AMOUNT := 6
-const PUFF_FAST_AMOUNT := 2
-const PUFF_CREAM := Color("#f1e7ce")
-const PUFF_PALE := Color("#e3d7b8")
-const PUFF_RUST := Color("#b05a41")
-## Pre-built emitters kept idle under this listener. Constructing a CPUParticles2D seeds it
-## from the global RNG, which a committed play (and an observed run) must never draw from, so
-## one bounded reserve is built at mount and every hit reuses it. A teardown really frees the
-## emitters it caught mid-puff, so the reserve covers a long session of battle returns; once
-## it is spent no further puff is fabricated rather than drawing from the global RNG again.
-const PUFF_POOL_SIZE := 128
+## A committed hit raises one short, transparent sewn puff from the shipped AI-generated
+## felt/thread art: soft cream fluff for a hero, the ochre thread wisp for an enemy. There is
+## no emitter and no engine particle seed: the sprite's fixed extent, drift and opacity are
+## computed from the presented rectangle alone, so a committed play never draws any RNG.
+const PUFF_FLUFF_PATH := "res://assets/paper/vfx/fluff_puff.png"
+const PUFF_WISP_PATH := "res://assets/paper/vfx/thread_wisp.png"
+const PUFF_SPRITE_NAME := "CombatJuicePuff"
+const PUFF_NORMAL_ALPHA := 0.85
+const PUFF_FAST_ALPHA := 0.60
+const PUFF_SIZE_FRACTION := 0.55
+const PUFF_MIN_SIZE := 34.0
+const PUFF_MAX_SIZE := 92.0
+const PUFF_RISE_FRACTION := 0.22
+const PUFF_GROW := 1.18
 const FLIGHT_SIZE := Vector2(126, 64)
 const FLOAT_WIDTH := 120.0
 const FLOAT_HEIGHT := 26.0
@@ -85,16 +86,19 @@ var pose_history: Array[Dictionary] = []
 var recoil_history: Array[Dictionary] = []
 ## Separate bounded receipts for fall settles really started by a witnessed HP -> 0.
 var fall_history: Array[Dictionary] = []
-## Separate bounded receipts for felt/thread puffs really started by a committed HP loss
-## ({"side","position","id","hp","block","amount","duration","fast"}).
+## Separate bounded receipts for sewn felt/thread puffs really raised by a committed HP loss
+## ({"side","position","id","hp","block","texture","size","alpha","duration","fast"}).
 var puff_history: Array[Dictionary] = []
 ## Separate bounded receipts for real full-screen transitions
 ## ({"transitions":[{"screen","visible"}],"fast","duration","alpha"}).
 var fade_history: Array[Dictionary] = []
 ## The one reused, pointer-inert full-screen wash; hidden between transitions.
 var fade_layer: Control
-## One startup-allocated, recycled ambience; never create CPU emitters during seeded play.
+## One startup-allocated, recycled ambience of shipped images; never built during seeded play.
 var ambient: Control
+## The shipped transparent vfx images, admitted once at mount before any seeded play.
+var fluff_texture: Texture2D
+var wisp_texture: Texture2D
 ## Bumped once per battle binding, so a test or screenshot can prove a single rebind.
 var bind_serial := 0
 var bound := false
@@ -105,10 +109,8 @@ var _enemies: CombatEnemies
 var _deck: CombatDeck
 var _snapshot: Dictionary = {}
 var _cues: Array[Dictionary] = []
-## Live one-shot felt puffs ({"node","remaining","side","id"}), retired by their own span.
+## Live one-shot sewn puffs ({"node","remaining","side","id"}), retired by their own span.
 var _puffs: Array[Dictionary] = []
-## Idle, already built felt puff emitters ({"node"} lives here while no hit uses it).
-var _puff_pool: Array[CPUParticles2D] = []
 var _flights: Array[Dictionary] = []
 var _card_flights: Array[Dictionary] = []
 var _held_before: Array[String] = []
@@ -127,14 +129,24 @@ var _fade_serial := 0
 
 
 ## Mounts the one reused, hidden screen wash on the very first frame, so a later screen
-## transition never changes the node shape of the app it presents. The felt puff emitters
-## are built here, once, before any battle: a committed hit only ever reuses them.
+## transition never changes the node shape of the app it presents. The shipped felt/thread
+## puff images are admitted here, once, before any battle or seeded play: a committed hit
+## only ever places a bounded sprite of an already loaded texture.
 func _ready() -> void:
 	_make_fade_layer(get_parent())
-	_fill_puff_pool()
+	fluff_texture = _load_puff_texture(PUFF_FLUFF_PATH)
+	wisp_texture = _load_puff_texture(PUFF_WISP_PATH)
 	ambient = AMBIENT_SCRIPT.new()
 	add_child(ambient)
 	ambient.retire()
+
+
+## The shipped transparent vfx image, admitted once; missing art keeps the puff silent
+## instead of drawing a substitute shape.
+static func _load_puff_texture(path: String) -> Texture2D:
+	if not FileAccess.file_exists(path) or not ResourceLoader.exists(path, "Texture2D"):
+		return null
+	return load(path) as Texture2D
 
 
 func _process(delta: float) -> void:
@@ -552,14 +564,14 @@ func _emit_fall(app, change: Dictionary) -> void:
 		fall_history = fall_history.slice(fall_history.size() - FALL_HISTORY_LIMIT)
 
 
-## One committed HP loss also kicks up a short handful of soft felt lint and thread scraps
-## at that actor's authentic presented puppet, beside its existing recoil. Identity comes
-## from the authoritative side plus ID through the same fail-closed roster lookup; a hit
-## that just made its owner fall still presents that puppet in place, so the puff follows
-## it instead of vanishing. A stale, hidden or ambiguous binding puffs nothing. The emitter
-## is a plain CPUParticles2D (no texture, shader or timer hook), so it can never take
-## pointer or keyboard focus and never touches combat. It is taken from the mount-time pool,
-## because building one here would draw the global RNG that a committed play must leave alone.
+## One committed HP loss also raises one short sewn puff of the shipped felt/thread art at
+## that actor's authentic presented puppet, beside its existing recoil. Identity comes from
+## the authoritative side plus ID through the same fail-closed roster lookup; a hit that just
+## made its owner fall still presents that puppet in place, so the puff follows it instead of
+## vanishing. A stale, hidden or ambiguous binding puffs nothing. The cue is a plain, invisible-
+## to-input TextureRect holding an image admitted at mount: no emitter, no shader and no seed,
+## so it can never take pointer or keyboard focus, never touches combat and never draws RNG.
+## Its extent, drift and opacity are computed from the presented rectangle alone.
 func _emit_puff(app, hit: Dictionary) -> void:
 	if not is_instance_valid(overlay) or not overlay.is_inside_tree():
 		return
@@ -576,62 +588,47 @@ func _emit_puff(app, hit: Dictionary) -> void:
 	var rect: Rect2 = puppet.get_global_rect()
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return
+	# Soft cream fluff for a hero, the ochre thread wisp for an enemy: both shipped art.
+	var texture := fluff_texture if side == "hero" else wisp_texture
+	if texture == null:
+		return
 	var duration := duration_seconds()
-	var amount := PUFF_FAST_AMOUNT if fast_animations else PUFF_NORMAL_AMOUNT
-	if _puff_pool.is_empty():
+	var extent := clampf(minf(rect.size.x, rect.size.y) * PUFF_SIZE_FRACTION,
+		PUFF_MIN_SIZE, PUFF_MAX_SIZE)
+	if extent <= 0.0:
 		return
-	var puff: CPUParticles2D = _puff_pool.pop_back()
-	if not is_instance_valid(puff):
-		return
-	puff.amount = amount
-	puff.lifetime = duration
-	# A fixed per-actor seed keeps the fleck pattern deterministic and reproducible.
-	puff.seed = 712367 + int(hit["position"]) * 131 + (0 if side == "hero" else 7)
-	puff.initial_velocity_min = rect.size.y * 0.6
-	puff.initial_velocity_max = rect.size.y * 1.4
-	puff.reparent(overlay, false)
-	puff.position = _to_overlay(rect.get_center())
-	puff.visible = true
-	puff.emitting = true
+	var alpha := PUFF_FAST_ALPHA if fast_animations else PUFF_NORMAL_ALPHA
+	var puff := TextureRect.new()
+	puff.name = PUFF_SPRITE_NAME
+	puff.texture = texture
+	puff.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	puff.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	puff.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	puff.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	puff.focus_mode = Control.FOCUS_NONE
+	puff.size = Vector2(extent, extent)
+	puff.pivot_offset = puff.size * 0.5
+	puff.modulate = Color(1.0, 1.0, 1.0, alpha)
+	overlay.add_child(puff)
+	var center := _to_overlay(rect.get_center())
+	puff.position = center - puff.size * 0.5
+	var drift := Vector2(0.0, -extent * PUFF_RISE_FRACTION)
+	var tween := puff.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(puff, "position", puff.position + drift, duration)
+	tween.tween_property(puff, "scale", Vector2.ONE * PUFF_GROW, duration)
+	tween.tween_property(puff, "modulate:a", 0.0, duration)
 	_puffs.append({"node": puff, "remaining": duration, "side": side, "id": actor_id})
 	if puff_history.size() >= PUFF_HISTORY_LIMIT:
 		puff_history = puff_history.slice(puff_history.size() - PUFF_HISTORY_LIMIT + 1)
 	puff_history.append({"side": side, "position": int(hit["position"]), "id": actor_id,
-		"hp": int(hit["hp"]), "block": int(hit["block"]), "amount": amount,
+		"hp": int(hit["hp"]), "block": int(hit["block"]),
+		"texture": String(texture.resource_path), "size": extent, "alpha": alpha,
 		"duration": duration, "fast": fast_animations})
 
 
-## Builds any missing idle emitters. It runs on mount, never inside committed play, because
-## constructing a CPUParticles2D seeds it from the global RNG (a play must never draw that).
-func _fill_puff_pool() -> void:
-	while _puff_pool.size() < PUFF_POOL_SIZE:
-		var puff := CPUParticles2D.new()
-		puff.name = "CombatJuicePuff"
-		puff.one_shot = true
-		puff.emitting = false
-		puff.explosiveness = 1.0
-		puff.randomness = 0.6
-		puff.use_fixed_seed = true
-		puff.seed = 712367 + _puff_pool.size() * 131
-		puff.direction = Vector2(0.0, -1.0)
-		puff.spread = 75.0
-		puff.gravity = Vector2(0.0, 40.0)
-		puff.scale_amount_min = 2.0
-		puff.scale_amount_max = 4.0
-		puff.color = PUFF_CREAM
-		# Mostly pale cream lint with the odd rust thread scrap: flat felt, never a spark.
-		var ramp := Gradient.new()
-		ramp.set_color(0, PUFF_CREAM)
-		ramp.set_color(1, PUFF_RUST)
-		ramp.add_point(0.55, PUFF_PALE)
-		puff.color_initial_ramp = ramp
-		puff.visible = false
-		add_child(puff)
-		_puff_pool.append(puff)
-
-
-## Retires every puff by its own bounded span, so no finished tween, replacement battle or
-## teardown can leave a live emitter behind. Presentation only: it mutates no combat value.
+## Retires every sewn puff by its own bounded span, so no finished tween, replacement battle
+## or teardown can leave a live sprite behind. Presentation only: it mutates no combat value.
 func _tick_puffs(delta: float) -> void:
 	if _puffs.is_empty():
 		return
@@ -642,29 +639,18 @@ func _tick_puffs(delta: float) -> void:
 		if float(entry["remaining"]) > 0.0 and is_instance_valid(node):
 			keep.append(entry)
 			continue
-		_release_puff(node)
+		_free_puff(node)
 	_puffs = keep
 
 
-## Parks one finished emitter back under this listener, hidden and silent, so a later hit can
-## reuse it without constructing one. Presentation only: it mutates no combat value.
-func _release_puff(node) -> void:
-	if not is_instance_valid(node):
-		return
-	var puff := node as CPUParticles2D
-	if puff == null:
+## Frees one finished texture puff. A committed hit makes one bounded sprite and its own
+## timeout really removes it; nothing is pooled or left hidden. Presentation only.
+func _free_puff(node) -> void:
+	if is_instance_valid(node):
 		node.queue_free()
-		return
-	puff.emitting = false
-	puff.visible = false
-	if puff.get_parent() != null and puff.get_parent() != self:
-		puff.reparent(self, false)
-	puff.position = Vector2.ZERO
-	if not _puff_pool.has(puff):
-		_puff_pool.append(puff)
 
 
-## Felt puffs still on screen (a finished or killed emitter counts as zero).
+## Sewn puffs still on screen (a finished or killed sprite counts as zero).
 func live_puffs() -> int:
 	var count := 0
 	for entry in _puffs:
@@ -673,8 +659,8 @@ func live_puffs() -> int:
 	return count
 
 
-## Forgets every live puff; a teardown or replacement really frees those emitters so no cue
-## outlives its battle. The idle pool stays ready for the next mount.
+## Forgets every live puff; a teardown or replacement really frees those sprites so no cue
+## outlives its battle.
 func _kill_puffs() -> void:
 	for entry in _puffs:
 		var node = entry.get("node")
