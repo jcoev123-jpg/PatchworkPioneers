@@ -50,6 +50,7 @@ const FRIENDLY_LABELS := {
     "loose_thread_glove": "Loose Thread Glove",
     "frayfinder_mitt": "Frayfinder Mitt",
     "borrowed_button": "Borrowed Button",
+    "threadguard_wrap": "Threadguard Wrap",
 }
 
 static func _friendly_label(id: String) -> String:

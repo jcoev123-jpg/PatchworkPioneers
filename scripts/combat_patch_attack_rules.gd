@@ -13,7 +13,8 @@ const SUPPORT_CATALOG := "res://data/patches/m05_arm_support_patches.json"
 const SUPPORT_EFFECTS := {
 	"hemguard_cuff": {"slot": "ARM", "effect": "card_block_bonus", "amount": 2},
 	"red_bobbin_cuff": {"slot": "ARM", "effect": "card_bleed_bonus", "amount": 1},
-	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1}
+	"loose_thread_glove": {"slot": "ARM", "effect": "card_unravel_bonus", "amount": 1},
+	"threadguard_wrap": {"slot": "ARM", "effect": "card_block_bonus", "amount": 1}
 }
 
 var _valid := false
@@ -155,10 +156,13 @@ func card_support_bonuses(owner_id: Variant, card_id: Variant) -> Dictionary:
 
 	var result := {"block": 0, "bleed": 0, "unravel": 0}
 	match active_arm:
-		"hemguard_cuff":
+		# Hemguard Cuff (+2) and Threadguard Wrap (+1) are the same wearer-only
+		# rule at different authored amounts; both never invent Block on a card
+		# that does not already grant it.
+		"hemguard_cuff", "threadguard_wrap":
 			var val: Variant = effects.get("block")
 			if (typeof(val) == TYPE_INT or typeof(val) == TYPE_FLOAT) and int(val) > 0:
-				result["block"] = SUPPORT_EFFECTS["hemguard_cuff"]["amount"]
+				result["block"] = SUPPORT_EFFECTS[active_arm]["amount"]
 		"red_bobbin_cuff":
 			var val: Variant = effects.get("bleed")
 			if (typeof(val) == TYPE_INT or typeof(val) == TYPE_FLOAT) and int(val) > 0:
