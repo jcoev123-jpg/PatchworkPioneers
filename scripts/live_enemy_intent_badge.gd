@@ -22,6 +22,12 @@ const POLICY_FONT := 13
 ## long authentic caption steps down, no further than this floor.
 const CAPTION_MAX_FONT := 18
 const CAPTION_MIN_FONT := 11
+## The sewn display voice is the master Theme's PatchHeading variation, already shipped as
+## Londrina Solid Regular. This badge reuses that face for short captions only; it never
+## adds a font asset and never assigns the variation, so every other label keeps its body
+## face and the shared Theme stays untouched.
+const HEADING_VARIATION := "PatchHeading"
+const HEADING_FONT_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## A caption shown beside a policy ticket is already compact, so it never shrinks below
 ## this floor: the amount and destination stay readable next to the 13 px ticket.
 const COMPACT_MIN_FONT := 14
@@ -91,14 +97,43 @@ static func hero_target_label(pos: int) -> String:
 			return "Hero 3 (back)"
 		_:
 			return "Hero %d" % pos
+
+
+## A Theme's authored PatchHeading face, or null when that Theme merely falls back to its
+## own default font. The badge reads this; no Control ever copies the variation.
+static func patch_heading_face(source: Theme) -> Font:
+	if source == null:
+		return null
+	if not source.get_font_list(HEADING_VARIATION).has("font"):
+		return null
+	var face := source.get_font("font", HEADING_VARIATION)
+	if face == null or face == source.default_font:
+		return null
+	return face
+
+
+## The already-shipped Londrina Solid file that backs PatchHeading. No new asset is loaded,
+## and a missing file is simply null so the caption keeps its readable body face.
+static func load_heading_font(path: String) -> Font:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		return null
+	return load(path) as Font
+
+
 ## The committed HUD texture selected for the current mode; null draws the sewn glyph.
 var icon_texture: Texture2D = null
 ## Presentation-only art root. A redirected or unavailable root (missing file or import)
 ## keeps the drawn glyph instead of failing, without changing any authoritative text.
 var icon_root := ICON_DIR
+## Presentation-only display-face path. A redirected or unavailable file keeps the
+## readable body face instead of failing, and it never edits the shared Theme.
+var heading_font_path := HEADING_FONT_PATH
 ## Key: icon art path, value: Texture2D or null. A negative entry is cached too, so an
 ## unavailable image is never probed twice and the drawn glyph stays the fallback.
 var _icon_cache: Dictionary = {}
+## The display-face path actually probed, so redraws never reload the shipped font file.
+var _heading_probed_path := ""
+var _fallback_heading: Font = null
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	focus_mode = Control.FOCUS_NONE
@@ -116,6 +151,36 @@ func _relayout() -> void:
 	if not policy_cue.is_empty():
 		_apply_compact_caption()
 	queue_redraw()
+
+
+## Read-only display face: the nearest mounted Theme that really defines PatchHeading, else
+## the committed Londrina Solid file. It never assigns the variation to this badge, so the
+## battle's body text keeps the body face and the shipped fallback stays reachable.
+func heading_font() -> Font:
+	var mounted := inherited_theme()
+	if mounted != null:
+		var face := patch_heading_face(mounted)
+		if face != null:
+			return face
+	if heading_font_path != _heading_probed_path:
+		_heading_probed_path = heading_font_path
+		_fallback_heading = load_heading_font(heading_font_path)
+	return _fallback_heading
+
+
+## The nearest Theme mounted on this badge or an ancestor that really defines PatchHeading.
+func inherited_theme() -> Theme:
+	var node: Node = self
+	while node != null:
+		var mounted: Theme = null
+		if node is Control:
+			mounted = (node as Control).theme
+		elif node is Window:
+			mounted = (node as Window).theme
+		if mounted != null and patch_heading_face(mounted) != null:
+			return mounted
+		node = node.get_parent()
+	return null
 
 
 ## Complete stitched patch this badge draws, used by mounted layout checks.
@@ -159,7 +224,7 @@ func caption_area_rect() -> Rect2:
 ## and never overlapped by the caption because the caption is fitted around it.
 func policy_rect() -> Rect2:
 	var area := caption_area_rect()
-	var font := get_theme_default_font()
+	var font := policy_font()
 	if policy_cue.is_empty() or font == null or area.size.x <= 0.0:
 		return Rect2()
 	var width := font.get_string_size(policy_cue, HORIZONTAL_ALIGNMENT_LEFT, -1,
@@ -180,10 +245,11 @@ func caption_text_area() -> Rect2:
 	return Rect2(left, area.position.y, maxf(0.0, right - left), area.size.y)
 
 
-## Largest bounded caption size whose measured text fits that room. Short actions get the
-## theme's own body size; only a long authentic caption steps down, never below its floor.
+## Largest bounded caption size whose measured text fits that room with the effective Font.
+## Short actions get the theme's own body size; only a long authentic caption steps down,
+## never below its floor.
 func caption_font_size() -> int:
-	var font := get_theme_default_font()
+	var font := caption_font()
 	var room := caption_text_area()
 	var floor_size := caption_floor_font()
 	if font == null or room.size.x <= 0.0:
@@ -193,6 +259,29 @@ func caption_font_size() -> int:
 				<= room.size.x:
 			return size_px
 	return floor_size
+
+
+## The one Font the caption is really measured and painted with. A short authentic phrase
+## takes the sewn heading face when its own glyph bounds fit the fitted room at the full
+## short-action size; a longer phrase keeps the readable body face instead of a clipped or
+## shrunken heading, so its amount, target and direction are never lost.
+func caption_font() -> Font:
+	var body := get_theme_default_font()
+	var heading := heading_font()
+	if heading == null or heading == body:
+		return body
+	var room := caption_text_area()
+	if room.size.x > 0.0 and heading.get_string_size(readable_text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, CAPTION_MAX_FONT).x <= room.size.x:
+		return heading
+	return body
+
+
+## The one Font of the small 13 px policy ticket: the readable body face, so the ticket
+## keeps its unchanged compact measurement and geometry beside the heading caption. The
+## measured rect and the painted label both use this Font, never a second choice.
+func policy_font() -> Font:
+	return get_theme_default_font()
 
 
 ## The smallest size this caption may use. A compact caption shown beside a policy ticket
@@ -225,22 +314,24 @@ func compact_caption_forms() -> Array[String]:
 
 
 ## The compact form actually displayed: the first one measured to fit beside the ticket at
-## the action floor, otherwise the shortest one. Only called while a ticket is shown; the
-## full action, amount, target and rule stay in tooltip_text.
+## the action floor, otherwise the shortest one. Each candidate is measured with the same
+## effective Face caption_font() will paint it with. Only called while a ticket is shown;
+## the full action, amount, target and rule stay in tooltip_text.
 func _apply_compact_caption() -> void:
 	var forms := compact_caption_forms()
 	if forms.is_empty():
 		return
-	readable_text = forms[forms.size() - 1]
-	var font := get_theme_default_font()
+	var chosen := forms[forms.size() - 1]
 	var room := caption_text_area()
-	if font == null or room.size.x <= 0.0:
-		return
-	for form in forms:
-		if font.get_string_size(form, HORIZONTAL_ALIGNMENT_LEFT, -1, COMPACT_MIN_FONT).x \
-				<= room.size.x:
+	if room.size.x > 0.0:
+		for form in forms:
 			readable_text = form
-			return
+			var font := caption_font()
+			if font != null and font.get_string_size(form, HORIZONTAL_ALIGNMENT_LEFT, -1,
+					COMPACT_MIN_FONT).x <= room.size.x:
+				chosen = form
+				break
+	readable_text = chosen
 
 
 ## High-contrast ink on the dark plaque; inert states keep a muted but still legible cream.
@@ -248,9 +339,10 @@ func caption_ink() -> Color:
 	return CAPTION_INK_MUTED if icon_mode in ["slain", "none"] else CAPTION_INK
 
 
-## Where the fitted caption is really painted, in this badge's own coordinates.
+## Where the fitted caption is really painted, in this badge's own coordinates, measured
+## with the same effective Font the draw path uses.
 func caption_text_rect() -> Rect2:
-	var font := get_theme_default_font()
+	var font := caption_font()
 	var room := caption_text_area()
 	if font == null or room.size.x <= 0.0:
 		return Rect2()
@@ -281,7 +373,7 @@ func caption_rect() -> Rect2:
 
 ## Where the policy ticket's own caption is painted, for mounted fit checks.
 func policy_text_rect() -> Rect2:
-	var font := get_theme_default_font()
+	var font := policy_font()
 	var tag := policy_rect()
 	if font == null or tag.size.x <= 0.0:
 		return Rect2()
@@ -458,7 +550,8 @@ func _draw() -> void:
 ## rust-felt ticket that carries a target-policy cue. All of it is painted here, so the
 ## badge still mounts no child control and never takes pointer or keyboard input.
 func _draw_caption() -> void:
-	var font := get_theme_default_font()
+	var font := caption_font()
+	var size_px := caption_font_size()
 	var text := caption_text_rect()
 	if font == null or text.size.x <= 0.0:
 		return
@@ -478,8 +571,8 @@ func _draw_caption() -> void:
 			stitch, 1.2, true)
 		draw_line(Vector2(x, plaque.end.y - 5.0), Vector2(x + 3.0, plaque.end.y - 2.0),
 			stitch, 1.2, true)
-	draw_string(font, Vector2(text.position.x, text.end.y - font.get_descent(caption_font_size())),
-		readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, caption_font_size(), caption_ink())
+	draw_string(font, Vector2(text.position.x, text.end.y - font.get_descent(size_px)),
+		readable_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, caption_ink())
 	# Miniature rust-felt ticket to the right of the caption: the policy stays its own
 	# readable label instead of being painted across the announced action.
 	var tag := policy_rect()
@@ -488,9 +581,12 @@ func _draw_caption() -> void:
 	draw_rect(tag, POLICY_FILL)
 	draw_line(Vector2(tag.position.x + 2.0, tag.position.y + 1.0),
 		Vector2(tag.end.x - 2.0, tag.position.y + 1.0), CREAM, 1.0)
+	var policy := policy_font()
+	if policy == null:
+		return
 	var policy_text := policy_text_rect()
-	draw_string(font, Vector2(policy_text.position.x,
-		policy_text.end.y - font.get_descent(POLICY_FONT)), policy_cue,
+	draw_string(policy, Vector2(policy_text.position.x,
+		policy_text.end.y - policy.get_descent(POLICY_FONT)), policy_cue,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, POLICY_FONT, POLICY_INK)
 
 

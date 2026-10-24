@@ -148,6 +148,7 @@ func _run() -> void:
 	await _badge_icons(app)
 	await _debuff_hovers(app)
 	await _caption_readability(app)
+	await _heading_fonts(app)
 	await _policy_badges(app)
 	await _rejections(app)
 	app.free()
@@ -475,9 +476,10 @@ func _contrast(first: Color, second: Color) -> float:
 
 ## A mounted caption is really readable: fitted text inside its dark plaque at a bounded
 ## size, high-contrast cream ink, and any target-policy cue as its own 13 px ticket beside
-## it. A compact policy caption keeps a 14 px action floor instead of dropping to 11 px.
+## it. Both sewn pieces are measured with the badge's own effective Font, never a guessed
+## body face. A compact policy caption keeps a 14 px action floor instead of dropping to 11.
 func _caption_readable(badge) -> bool:
-	var font: Font = badge.get_theme_default_font()
+	var font: Font = badge.caption_font()
 	if font == null or badge.readable_text.is_empty():
 		return false
 	var size_px: int = badge.caption_font_size()
@@ -500,13 +502,14 @@ func _caption_readable(badge) -> bool:
 		return false
 	if badge.policy_cue.is_empty():
 		return tag == Rect2() and badge.policy_text_rect() == Rect2()
-	if tag.size.x <= 0.0 or LiveEnemyIntentBadge.POLICY_FONT < 13:
+	var ticket_font: Font = badge.policy_font()
+	if tag.size.x <= 0.0 or ticket_font == null or LiveEnemyIntentBadge.POLICY_FONT < 13:
 		return false
 	var policy_text: Rect2 = badge.policy_text_rect()
 	return Rect2(Vector2.ZERO, badge.size).grow(0.01).encloses(tag) \
 		and not text.intersects(tag) and not plaque.intersects(tag) \
 		and tag.grow(0.01).encloses(policy_text) \
-		and is_equal_approx(policy_text.size.x, font.get_string_size(badge.policy_cue,
+		and is_equal_approx(policy_text.size.x, ticket_font.get_string_size(badge.policy_cue,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, LiveEnemyIntentBadge.POLICY_FONT).x) \
 		and _contrast(LiveEnemyIntentBadge.POLICY_INK, LiveEnemyIntentBadge.POLICY_FILL) >= 4.5
 
@@ -594,6 +597,134 @@ func _caption_readability(app) -> void:
 		and _icon_fits(shove, "")
 		and _icon_fits(debuff, "res://assets/paper/ui/intent_debuff.png"),
 		"a refresh restores the real announcements with their real icons and captions")
+	app.return_button.pressed.emit()
+	await process_frame
+
+
+## AC1: the mounted sewn ticket takes the already-shipped PatchHeading display face for a
+## short genuine attack, block or buff caption, keeps the readable body face for a phrase
+## the display face cannot fit at the full short-action size, falls back to that body face
+## when the display file is unavailable, and measures/paints each sewn piece with the one
+## Font it really uses. Every transition stays presentation only: no combat state, tooltip
+## rule or RNG value moves.
+func _heading_fonts(app) -> void:
+	_fixture_start(app)
+	await process_frame
+	await process_frame
+	var presenter = app.get_node_or_null("LiveEnemyRoster")
+	_check(app.deck != null and app.enemy_intents != null and is_instance_valid(presenter)
+		and presenter._badges.size() == 2, "heading checks run on the real mounted battle")
+	if app.deck == null or not is_instance_valid(presenter) or presenter._badges.size() != 2:
+		return
+	var before := _snapshot(app)
+	var badge = presenter._badges[0]
+	var mounted_size: Vector2 = badge.size
+	var body: Font = badge.get_theme_default_font()
+	var heading: Font = badge.heading_font()
+	_check(body != null and heading != null and heading != body
+		and badge.inherited_theme() != null
+		and heading.resource_path == "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		"the mounted badge resolves the shipped PatchHeading face beside the body face")
+	# A Theme with no authored PatchHeading, and a missing file, resolve no display face at
+	# all instead of silently standing the body face in as a heading.
+	var bare := Theme.new()
+	bare.default_font = body
+	_check(LiveEnemyIntentBadge.patch_heading_face(bare) == null
+		and LiveEnemyIntentBadge.patch_heading_face(null) == null
+		and LiveEnemyIntentBadge.load_heading_font("res://assets/fonts/absent.ttf") == null
+		and LiveEnemyIntentBadge.load_heading_font("") == null,
+		"a Theme without PatchHeading and a missing file resolve no display face")
+	# Short genuine attack, block and buff announcements: the whole phrase fits the plaque
+	# at the full short-action size in the display face, measured with that exact Font.
+	var short_cases := [
+		[{"type": "attack", "amount": 5, "target_position": 2}, "Hit 5: Middle"],
+		[{"type": "block", "amount": 3}, "Block +3"],
+		[{"type": "buff", "amount": 2}, "Buff +2 Block"]]
+	for row in short_cases:
+		var action: Dictionary = row[0]
+		var original := action.duplicate(true)
+		badge.show_intent(action, false)
+		_check(badge.readable_text == row[1] and badge.caption_font() == heading
+			and badge.caption_font_size() == LiveEnemyIntentBadge.CAPTION_MAX_FONT
+			and is_equal_approx(badge.caption_text_rect().size.x, heading.get_string_size(row[1],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, badge.caption_font_size()).x)
+			and _caption_readable(badge) and action == original,
+			"short mounted caption measures and paints with the sewn display face: " + row[1])
+	# A longer genuine phrase the display face cannot fit at that size keeps the readable
+	# body face, still inside the same sewn plaque and above the bounded floor.
+	badge.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
+	badge.show_intent({"type": "shove", "amount": 0, "target_position": 2, "direction": 1}, false)
+	_check(badge.readable_text == "Shove Middle back" and badge.caption_font() == body
+		and badge.caption_font_size() > 14 and _caption_readable(badge),
+		"a long authentic caption keeps the readable body face instead of a clipped heading")
+	badge.size = mounted_size
+	# A genuine weighted debuff with its separate ticket: both sewn pieces measure and paint
+	# with one resolved face each, and the 13 px ticket never touches the fitted caption.
+	badge.show_intent({"type": "debuff", "amount": 2, "status": "weak", "target_position": 1},
+		false, false, "lowest_living_hp")
+	var ticket_face: Font = badge.policy_font()
+	_check(ticket_face == body and badge.policy_cue == "Low HP"
+		and is_equal_approx(badge.policy_text_rect().size.x, ticket_face.get_string_size(
+			"Low HP", HORIZONTAL_ALIGNMENT_LEFT, -1,
+			LiveEnemyIntentBadge.POLICY_FONT).x)
+		and is_equal_approx(badge.policy_rect().size.x, badge.policy_text_rect().size.x
+			+ LiveEnemyIntentBadge.POLICY_PAD * 2.0)
+		and not badge.caption_text_rect().intersects(badge.policy_rect())
+		and _caption_readable(badge),
+		"a weighted debuff ticket measures and paints with its one resolved face")
+	# The resolver's shipped fallback is a real mounted Control too: a badge with no
+	# PatchHeading Theme above it takes the committed Londrina file, and when that file is
+	# unavailable it keeps the readable body face without losing the announcement.
+	var saved_path: String = badge.heading_font_path
+	var short_attack := {"type": "attack", "amount": 5, "target_position": 2}
+	var bare_badge := LiveEnemyIntentBadge.new()
+	bare_badge.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
+	root.add_child(bare_badge)
+	await process_frame
+	bare_badge.show_intent(short_attack, false)
+	_check(bare_badge.inherited_theme() == null and bare_badge.get_theme_default_font() == body
+		and bare_badge.heading_font() == heading and bare_badge.caption_font() == heading
+		and bare_badge.readable_text == "Hit 5: Middle" and _caption_readable(bare_badge),
+		"a badge without a mounted heading Theme takes the shipped display file")
+	bare_badge.heading_font_path = "res://assets/fonts/absent.ttf"
+	bare_badge.show_intent(short_attack, false)
+	_check(bare_badge.heading_font() == null and bare_badge.caption_font() == body
+		and bare_badge.policy_font() == body and bare_badge.readable_text == "Hit 5: Middle"
+		and bare_badge.caption_font_size() > 0 and _caption_readable(bare_badge),
+		"an unavailable heading face falls back to the readable body face")
+	bare_badge.heading_font_path = saved_path
+	bare_badge.show_intent(short_attack, false)
+	_check(bare_badge.heading_font() == heading and bare_badge.caption_font() == heading
+		and _caption_readable(bare_badge),
+		"restoring the shipped face restores the display voice")
+	bare_badge.free()
+	# Source inspection: one effective Font is measured and painted in every caption path,
+	# and the policy ticket keeps the same rule.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_intent_badge.gd")
+	var face_body := _body(source, "func caption_font() -> Font:")
+	var fit_body := _body(source, "func caption_font_size() -> int:")
+	var text_body := _body(source, "func caption_text_rect() -> Rect2:")
+	var compact_body := _body(source, "func _apply_compact_caption() -> void:")
+	var draw_body := _body(source, "func _draw_caption() -> void:")
+	var ticket_body := _body(source, "func policy_rect() -> Rect2:")
+	var ticket_text_body := _body(source, "func policy_text_rect() -> Rect2:")
+	_check(face_body.contains("heading_font()")
+		and face_body.contains("get_theme_default_font()")
+		and face_body.contains("get_string_size(")
+		and fit_body.contains("caption_font()") and fit_body.contains("get_string_size(")
+		and text_body.contains("caption_font()")
+		and compact_body.contains("caption_font()")
+		and draw_body.contains("caption_font()") and draw_body.contains("caption_font_size()")
+		and draw_body.find("draw_string(font") >= 0,
+		"source measures and paints the caption with one effective Font")
+	_check(ticket_body.contains("policy_font()") and ticket_text_body.contains("policy_font()")
+		and draw_body.contains("policy_font()")
+		and draw_body.find("draw_string(policy") > draw_body.find("policy_font()"),
+		"source measures and paints the policy ticket with one effective Font")
+	_check(_snapshot(app) == before, "heading and fallback caption transitions are presentation only")
+	presenter._refresh()
+	_check(_snapshot(app) == before and _caption_readable(badge),
+		"a refresh restores the real announcements after the heading checks")
 	app.return_button.pressed.emit()
 	await process_frame
 
