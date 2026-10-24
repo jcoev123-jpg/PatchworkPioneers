@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_test_owner_moves_and_downed_field_mend()
 	_test_atomic_rejections()
 	_test_patch_binding_cases()
+	_test_m05_block_patch_cases()
 	_test_replay()
 	for failure: String in failures:
 		printerr(failure)
@@ -105,7 +106,7 @@ func _snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
 	}
 
 
-func _expected(before: Dictionary, card_id: String, target: int, bonus: int = 0) -> Dictionary:
+func _expected(before: Dictionary, card_id: String, target: int, bonus: int = 0, block_bonus: int = 0) -> Dictionary:
 	# Oracle uses named design expectations, not the implementation's effects.
 	var after: Dictionary = before.duplicate(true)
 	var spec: Dictionary = CASES[card_id]
@@ -119,19 +120,19 @@ func _expected(before: Dictionary, card_id: String, target: int, bonus: int = 0)
 	else:
 		var hero: Dictionary = after["heroes"][target - 1]
 		hero["hp"] = mini(hero["max_hp"], hero["hp"] + effects["heal"] + bonus)
-		hero["block"] += effects.get("block", 0)
+		hero["block"] += effects.get("block", 0) + block_bonus
 	after["hand"].remove_at(after["hand"].find(card_id))
 	after["discard"].append(card_id)
 	return after
 
 
 func _played(deck: CombatDeck, party: CombatParty, id: String, target: int,
-		label: String, bonus: int = 0, service = null) -> void:
+		label: String, bonus: int = 0, service = null, block_bonus: int = 0) -> void:
 	var before: Dictionary = _snapshot(deck, party)
 	_check(deck.turn_active and party.is_valid() and deck.hand.has(id),
 		label + ": authentic precondition (active hand, valid party)")
 	_check(deck.energy >= CASES[id]["cost"], label + ": affordable before action")
-	var expected: Dictionary = _expected(before, id, target, bonus)
+	var expected: Dictionary = _expected(before, id, target, bonus, block_bonus)
 	var player = service if service != null else resolver
 	_check(player.play_card(deck, party, id, target), label + ": succeeds")
 	_check(_snapshot(deck, party) == expected,
@@ -304,20 +305,35 @@ func _test_atomic_rejections() -> void:
 		"null authorities safely reject")
 
 
+func _load_patch_definitions() -> Array:
+	var files := [
+		CombatShopPatchRules.SLOTS_CATALOG,
+		"res://data/patches/m05_head_patches.json",
+		"res://data/patches/m05_arm_support_patches.json",
+		"res://data/patches/m04_attack_patches.json",
+	]
+	var definitions: Array = []
+	var seen := {}
+	for file_path: String in files:
+		var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(file_path))
+		_check(raw is Array and not (raw as Array).is_empty(), file_path + " is a readable array")
+		if raw is Array:
+			for entry in raw:
+				if entry is Dictionary and entry.has("id") and entry.has("slot"):
+					var pid: String = str(entry["id"])
+					if not seen.has(pid):
+						seen[pid] = true
+						definitions.append({"id": pid, "slot": str(entry["slot"])})
+	_check(seen.has("reinforced_browband"), "shipped reinforced_browband definition present")
+	_check(seen.has("hemguard_cuff"), "shipped hemguard_cuff definition present")
+	return definitions
+
+
 ## Real, unmodified ledgers: starter roster, authored patch catalog, one genuine sewing
 ## operation. Nothing here replaces stock, definitions or an authored card record.
 func _patch_fixture(wearer: String = "seamstress", sew: bool = true,
 		owned: Array = ["stitched_badge", "spare_spool"]) -> Dictionary:
-	var slots_raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
-		CombatShopPatchRules.SLOTS_CATALOG))
-	_check(slots_raw is Array and not (slots_raw as Array).is_empty(),
-		"authored patch slot catalog is readable")
-	if not slots_raw is Array:
-		return {}
-	var definitions: Array = []
-	for entry in slots_raw:
-		if entry is Dictionary and entry.has("id") and entry.has("slot"):
-			definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var definitions: Array = _load_patch_definitions()
 	var party := _party()
 	var heroes: Array = party.get_heroes()
 	var torn := RunTornMending.new(heroes)
@@ -333,6 +349,35 @@ func _patch_fixture(wearer: String = "seamstress", sew: bool = true,
 		_check(sewn.get("ok") == true
 			and wardrobe.get_snapshot().worn[wearer].ARM == "spare_spool",
 			"genuine Spare Spool sews into " + wearer + " ARM")
+	return {"party": party, "torn": torn, "wardrobe": wardrobe}
+
+
+func _m05_block_fixture(wearer: String = "seamstress", sew_head: bool = false,
+		sew_arm: bool = false,
+		owned: Array = ["reinforced_browband", "hemguard_cuff"]) -> Dictionary:
+	var definitions: Array = _load_patch_definitions()
+	var party := _party()
+	var heroes: Array = party.get_heroes()
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, definitions, 0, 0, [], 4242)
+	_check(torn.is_valid() and wardrobe.is_valid(),
+		"real RunTornMending and RunPatchWardrobe initialize validly for M05 Block")
+	if not torn.is_valid() or not wardrobe.is_valid():
+		return {}
+	if sew_head and owned.has("reinforced_browband"):
+		var snap: Dictionary = wardrobe.get_snapshot()
+		var sewn: Dictionary = wardrobe.sew("reinforced_browband", wearer, "HEAD",
+			"sew_head_" + wearer, snap)
+		_check(sewn.get("ok") == true
+			and wardrobe.get_snapshot().worn[wearer].HEAD == "reinforced_browband",
+			"genuine reinforced_browband sews into " + wearer + " HEAD")
+	if sew_arm and owned.has("hemguard_cuff"):
+		var snap: Dictionary = wardrobe.get_snapshot()
+		var sewn: Dictionary = wardrobe.sew("hemguard_cuff", wearer, "ARM",
+			"sew_arm_" + wearer, snap)
+		_check(sewn.get("ok") == true
+			and wardrobe.get_snapshot().worn[wearer].ARM == "hemguard_cuff",
+			"genuine hemguard_cuff sews into " + wearer + " ARM")
 	return {"party": party, "torn": torn, "wardrobe": wardrobe}
 
 
@@ -509,6 +554,200 @@ func _test_patch_binding_cases() -> void:
 		"restored real ledger is current again without silent repair")
 	_check([invalid.wardrobe.get_snapshot(), invalid.torn.read_state()] == ledger_before,
 		"binding attempts and rejections never mutate the authoritative ledgers")
+
+
+func _test_m05_block_patch_cases() -> void:
+	# AC1: HEAD only (reinforced_browband) adds +2 Block to Darning and Darning+
+	var head_fix := _m05_block_fixture("seamstress", true, false)
+	_check(not head_fix.is_empty(), "HEAD-only fixture created")
+	var head_service := CombatSeamstressPoolHeals.new()
+	_check(head_service.bind_patch_wardrobe(head_fix.wardrobe, head_fix.torn)
+		and head_service.is_patch_binding_valid(),
+		"HEAD-only wardrobe binds validly")
+	var head_party: CombatParty = head_fix.party
+	_patch_wound(head_party)
+	var head_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	# Darning base block 3 + 2 = 5, heal 4
+	_played(head_deck, head_party, "seamstress_darning", 1, "HEAD-only Darning to ally 1", 0, head_service, 2)
+	# Darning+ base block 4 + 2 = 6, heal 6
+	_played(head_deck, head_party, "seamstress_darning_plus", 3, "HEAD-only Darning+ to ally 3", 0, head_service, 2)
+
+	# AC1: Full-HP target with HEAD only
+	var head_full_party := _party()
+	var head_full_deck := _deck(["seamstress_darning"])
+	_played(head_full_deck, head_full_party, "seamstress_darning", 2, "HEAD-only Darning on full-HP self", 0, head_service, 2)
+	_check(head_full_party.get_hero(2)["hp"] == 30 and head_full_party.get_hero(2)["block"] == 5,
+		"HEAD-only Darning grants Block 5 to full-HP self without overhealing")
+
+	# AC2: ARM only (hemguard_cuff) adds +2 Block to Darning and Darning+
+	var arm_fix := _m05_block_fixture("seamstress", false, true)
+	_check(not arm_fix.is_empty(), "ARM-only fixture created")
+	var arm_service := CombatSeamstressPoolHeals.new()
+	_check(arm_service.bind_patch_wardrobe(arm_fix.wardrobe, arm_fix.torn)
+		and arm_service.is_patch_binding_valid(),
+		"ARM-only wardrobe binds validly")
+	var arm_party: CombatParty = arm_fix.party
+	_patch_wound(arm_party)
+	var arm_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	# Darning base block 3 + 2 = 5, heal 4
+	_played(arm_deck, arm_party, "seamstress_darning", 1, "ARM-only Darning to ally 1", 0, arm_service, 2)
+	# Darning+ base block 4 + 2 = 6, heal 6
+	_played(arm_deck, arm_party, "seamstress_darning_plus", 3, "ARM-only Darning+ to ally 3", 0, arm_service, 2)
+
+	# AC2: Both HEAD and ARM sewn produce printed Block + 4 (Darning: 7, Darning+: 8)
+	var both_fix := _m05_block_fixture("seamstress", true, true)
+	_check(not both_fix.is_empty(), "both-patch fixture created")
+	var both_service := CombatSeamstressPoolHeals.new()
+	_check(both_service.bind_patch_wardrobe(both_fix.wardrobe, both_fix.torn)
+		and both_service.is_patch_binding_valid(),
+		"both-patch wardrobe binds validly")
+	var both_party: CombatParty = both_fix.party
+	_patch_wound(both_party)
+	var both_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	# Darning base block 3 + 4 = 7, heal 4
+	_played(both_deck, both_party, "seamstress_darning", 1, "both-patch Darning to ally 1", 0, both_service, 4)
+	# Darning+ base block 4 + 4 = 8, heal 6
+	_played(both_deck, both_party, "seamstress_darning_plus", 3, "both-patch Darning+ to ally 3", 0, both_service, 4)
+
+	# AC2: Both patches: 2 consecutive plays of Darning in same turn
+	var two_party := _party()
+	_patch_wound(two_party)
+	var two_deck := _deck(["seamstress_darning", "seamstress_darning", "filler-a", "filler-b", "filler-c"])
+	_check(two_deck.energy == 3 and two_deck.hand.count("seamstress_darning") == 2, "two Darning copies ready")
+	_played(two_deck, two_party, "seamstress_darning", 2, "both-patch first Darning copy", 0, both_service, 4)
+	_check(two_deck.energy == 2 and two_deck.hand.count("seamstress_darning") == 1 and two_deck.discard_pile.count("seamstress_darning") == 1,
+		"first Darning spent exactly 1 energy and discarded exactly 1 copy")
+	_played(two_deck, two_party, "seamstress_darning", 2, "both-patch second Darning copy", 0, both_service, 4)
+	_check(two_deck.energy == 1 and two_deck.hand.count("seamstress_darning") == 0 and two_deck.discard_pile.count("seamstress_darning") == 2,
+		"second Darning spent exactly 1 energy and discarded second copy")
+	_check(two_party.get_hero(2)["block"] == 14, "consecutive plays stacked Block to 14 (7 + 7)")
+
+	# AC3: Owned but unsewn grants no Block bonus (Block 3 and 4)
+	var unsewn_fix := _m05_block_fixture("seamstress", false, false)
+	var unsewn_service := CombatSeamstressPoolHeals.new()
+	_check(unsewn_service.bind_patch_wardrobe(unsewn_fix.wardrobe, unsewn_fix.torn)
+		and unsewn_service.is_patch_binding_valid(),
+		"unsewn M05 wardrobe binds validly")
+	var unsewn_party: CombatParty = unsewn_fix.party
+	_patch_wound(unsewn_party)
+	var unsewn_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	_played(unsewn_deck, unsewn_party, "seamstress_darning", 1, "unsewn M05 Darning", 0, unsewn_service, 0)
+	_played(unsewn_deck, unsewn_party, "seamstress_darning_plus", 3, "unsewn M05 Darning+", 0, unsewn_service, 0)
+
+	# AC3: Patches sewn to Warden instead of Seamstress grant no Block bonus
+	var warden_fix := _m05_block_fixture("warden", true, true)
+	var warden_service := CombatSeamstressPoolHeals.new()
+	_check(warden_service.bind_patch_wardrobe(warden_fix.wardrobe, warden_fix.torn)
+		and warden_service.is_patch_binding_valid(),
+		"Warden-worn M05 wardrobe binds validly")
+	var warden_party: CombatParty = warden_fix.party
+	_patch_wound(warden_party)
+	var warden_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	_played(warden_deck, warden_party, "seamstress_darning", 1, "Warden-worn M05 Darning", 0, warden_service, 0)
+	_played(warden_deck, warden_party, "seamstress_darning_plus", 3, "Warden-worn M05 Darning+", 0, warden_service, 0)
+
+	# AC3: Tea and Field Mend gain NO Block even with both patches sewn to Seamstress
+	var spells_party: CombatParty = both_fix.party
+	_patch_wound(spells_party)
+	var spells_deck := _deck(["seamstress_thimble_tea", "seamstress_thimble_tea_plus",
+		"seamstress_field_mend", "filler-a", "filler-b"])
+	var b1_before: int = spells_party.get_hero(1)["block"]
+	var b2_before: int = spells_party.get_hero(2)["block"]
+	var b3_before: int = spells_party.get_hero(3)["block"]
+	_played(spells_deck, spells_party, "seamstress_thimble_tea", 1, "patched Tea has no Block", 0, both_service, 0)
+	_played(spells_deck, spells_party, "seamstress_thimble_tea_plus", 3, "patched Tea+ has no Block", 0, both_service, 0)
+	_played(spells_deck, spells_party, "seamstress_field_mend", 0, "patched Field Mend has no Block", 0, both_service, 0)
+	_check(spells_party.get_hero(1)["block"] == b1_before and spells_party.get_hero(2)["block"] == b2_before
+		and spells_party.get_hero(3)["block"] == b3_before,
+		"Tea and Field Mend never added any Block to any hero")
+
+	# Field Mend+ also gains no Block (tested on fresh deck)
+	var fm_party: CombatParty = _party()
+	_patch_wound(fm_party)
+	var fm_deck := _deck(["seamstress_field_mend_plus"])
+	var fm_b1: int = fm_party.get_hero(1)["block"]
+	var fm_b2: int = fm_party.get_hero(2)["block"]
+	var fm_b3: int = fm_party.get_hero(3)["block"]
+	_played(fm_deck, fm_party, "seamstress_field_mend_plus", 0, "patched Field Mend+ has no Block", 0, both_service, 0)
+	_check(fm_party.get_hero(1)["block"] == fm_b1 and fm_party.get_hero(2)["block"] == fm_b2
+		and fm_party.get_hero(3)["block"] == fm_b3,
+		"Field Mend+ never added any Block to any hero")
+
+	# AC3: Final Block overflow preflight check
+	# With both patches, Darning grants 7 Block.
+	# If ally 1 has MAX_INT - 6 Block, 7 > 6 so it must overflow and reject before any heal or spend.
+	var of_party := _party()
+	_check(of_party.apply_damage(1, 10), "target 1 is wounded")
+	_check(of_party.gain_block(1, CombatParty.MAX_INT - 6), "target 1 has MAX_INT - 6 Block")
+	var of_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	_rejected(of_deck, of_party, "seamstress_darning", 1, "both-patch Darning final-Block overflow", both_service)
+	# For Darning+, final block is 8. If target 3 has MAX_INT - 7 Block, 8 > 7 so it overflows and rejects.
+	_check(of_party.apply_damage(3, 10), "target 3 is wounded")
+	_check(of_party.gain_block(3, CombatParty.MAX_INT - 7), "target 3 has MAX_INT - 7 Block")
+	_rejected(of_deck, of_party, "seamstress_darning_plus", 3, "both-patch Darning+ final-Block overflow", both_service)
+
+	# AC3: Invalid targeting and energy with both patches
+	var inv_party := _party()
+	var inv_deck := _deck(["seamstress_darning", "seamstress_darning", "seamstress_darning", "filler-a", "filler-b"])
+	_rejected(inv_deck, inv_party, "seamstress_darning", 0, "both-patch Darning invalid target 0", both_service)
+	_rejected(inv_deck, inv_party, "seamstress_darning", 4, "both-patch Darning invalid target 4", both_service)
+	_check(inv_party.apply_damage(3, 26) and inv_party.is_downed(3), "target 3 truly downed")
+	_rejected(inv_deck, inv_party, "seamstress_darning", 3, "both-patch Darning downed target", both_service)
+	_check(inv_deck.try_spend_energy(3) and inv_deck.energy == 0, "energy exhausted")
+	_rejected(inv_deck, inv_party, "seamstress_darning", 1, "both-patch Darning exhausted energy", both_service)
+
+	# AC3: Genuine torn ledger state transition (downed wearer)
+	var torn_block_fix := _m05_block_fixture("seamstress", true, true)
+	var tb_wardrobe: RunPatchWardrobe = torn_block_fix.wardrobe
+	var tb_torn: RunTornMending = torn_block_fix.torn
+	var tb_start: Array = tb_torn.read_state().heroes
+	var tb_end: Array = tb_start.duplicate(true)
+	tb_end[1].hp = 0
+	_check(tb_torn.observe_battle_end("fight_torn_block", tb_start, tb_end).get("ok") == true
+		and tb_torn.read_state().heroes[1].hp == 0,
+		"Seamstress genuinely torn to 0 HP in torn ledger")
+	var tb_refresh: Dictionary = tb_wardrobe.get_snapshot()
+	_check(tb_wardrobe.refresh_run_context(tb_torn.read_state().heroes, tb_refresh.owned,
+		tb_refresh.scraps, tb_refresh.gold, tb_refresh.cards, tb_refresh),
+		"wardrobe refreshed with torn roster")
+	var tb_proj: Dictionary = tb_wardrobe.project_active(tb_torn.read_state())
+	_check(tb_proj.active.seamstress.is_empty(), "torn Seamstress has no active M05 patches")
+	var tb_service := CombatSeamstressPoolHeals.new()
+	_check(tb_service.bind_patch_wardrobe(tb_wardrobe, tb_torn) and tb_service.is_patch_binding_valid(),
+		"torn M05 wardrobe binds validly")
+	# Divergent state test (Lesson 41): combat party has living Seamstress, but run torn ledger marks her torn
+	var div_party := _party()
+	_patch_wound(div_party)
+	var div_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	# Plays with base Block 3 and 4, NO patch bonus:
+	_played(div_deck, div_party, "seamstress_darning", 1, "divergent torn Seamstress Darning grants no bonus", 0, tb_service, 0)
+	_played(div_deck, div_party, "seamstress_darning_plus", 3, "divergent torn Seamstress Darning+ grants no bonus", 0, tb_service, 0)
+
+	# If Seamstress is actually downed in combat party, play rejects atomically:
+	_check(div_party.apply_damage(2, 9999) and div_party.is_downed(2), "combat owner downed")
+	_rejected(div_deck, div_party, "seamstress_darning", 1, "downed owner in party rejects atomically", tb_service)
+
+	# AC4: Coexistence of HEAD reinforced_browband (+2 Block) and ARM spare_spool (+2 Heal)
+	var co_defs: Array = _load_patch_definitions()
+	var co_party := _party()
+	var co_heroes: Array = co_party.get_heroes()
+	var co_torn := RunTornMending.new(co_heroes)
+	var co_wardrobe := RunPatchWardrobe.new(co_heroes, ["reinforced_browband", "spare_spool"], co_defs, 0, 0, [], 4242)
+	var co_snap: Dictionary = co_wardrobe.get_snapshot()
+	_check(co_wardrobe.sew("reinforced_browband", "seamstress", "HEAD", "sew_co_head", co_snap).get("ok") == true,
+		"reinforced_browband sewn to HEAD")
+	co_snap = co_wardrobe.get_snapshot()
+	_check(co_wardrobe.sew("spare_spool", "seamstress", "ARM", "sew_co_arm", co_snap).get("ok") == true,
+		"spare_spool sewn to ARM")
+	var co_service := CombatSeamstressPoolHeals.new()
+	_check(co_service.bind_patch_wardrobe(co_wardrobe, co_torn) and co_service.is_patch_binding_valid(),
+		"coexisting HEAD browband and ARM spool bind validly")
+	_patch_wound(co_party)
+	var co_deck := _deck(["seamstress_darning", "seamstress_darning_plus", "filler-a", "filler-b", "filler-c"])
+	# Darning: heal 4 + 2 = 6, Block 3 + 2 = 5
+	_played(co_deck, co_party, "seamstress_darning", 1, "coexisting browband and spool Darning", 2, co_service, 2)
+	# Darning+: heal 6 + 2 = 8, Block 4 + 2 = 6
+	_played(co_deck, co_party, "seamstress_darning_plus", 3, "coexisting browband and spool Darning+", 2, co_service, 2)
 
 
 func _sequence(seed_value: int) -> Array:
