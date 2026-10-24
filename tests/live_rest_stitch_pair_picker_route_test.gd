@@ -1,6 +1,70 @@
 extends "res://tests/live_rest_stitch_choice_test.gd"
 
 
+func _assert_heading(label: Label, expected: String, font_size: int) -> void:
+	_check(label != null and label.is_inside_tree() and label.is_visible_in_tree(),
+		"heading is mounted and visible")
+	if label == null:
+		return
+	_check(label.text == expected, "heading retains exact authored text")
+	_check(label.theme == null and not label.has_theme_font_override("font")
+		and label.theme_type_variation == "PatchHeading",
+		"heading inherits PatchHeading without a local theme or font")
+	var font := label.get_theme_font("font")
+	_check(font == app.get_theme_font("font", "PatchHeading"),
+		"mounted heading resolves the inherited project heading font")
+	while font is FontVariation:
+		font = (font as FontVariation).base_font
+	_check(font != null and font.resource_path == "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		"mounted heading resolves Londrina Solid Regular")
+	_check(label.get_theme_font_size("font_size") == font_size,
+		"heading preserves compact font size")
+
+
+func _assert_tile_names(tiles: Array[Button], entries: Array[Dictionary]) -> void:
+	_check(not tiles.is_empty() and tiles.size() == entries.size(),
+		"mounted name checks cover every canonical option")
+	for i in range(mini(tiles.size(), entries.size())):
+		var tile := tiles[i]
+		var entry := entries[i]
+		var authored := RunRestStitchCards.resolve_card_definition(entry["id"])
+		_check(not authored.is_empty() and entry["name"] == authored.get("display_name")
+			and tile.get_meta("index") == entry["index"]
+			and tile.get_meta("id") == entry["id"]
+			and tile.get_meta("name") == entry["name"],
+			"tile identity and authored name match canonical entry")
+		_assert_heading(tile.get_node_or_null("CardName") as Label, entry["name"], 11)
+		var fallback := tile.find_child("CardNameFallback", true, false) as Label
+		if fallback != null:
+			_assert_heading(fallback, entry["name"], 10)
+
+
+func _assert_picker_names(picker: LiveRestStitchPairPicker) -> void:
+	_assert_heading(picker.get_node_or_null("StitchPickerHeading") as Label,
+		"REST • STITCH TWO ORIGINAL CARDS", 18)
+	_assert_tile_names(picker.first_tiles, picker._model.first_options())
+
+
+func _assert_missing_art_names(picker: LiveRestStitchPairPicker) -> void:
+	var entries := picker._model.first_options()
+	_check(not entries.is_empty(), "fallback fixture has a canonical authored option")
+	if entries.is_empty():
+		return
+	# Change only a detached presentation entry's art lookup ID. No shipped art
+	# is removed, and this fixture never enters the model or transaction path.
+	var entry := entries[0].duplicate(true)
+	entry["id"] = "__typography_missing_art_fixture__/card"
+	for first in [true, false]:
+		var tile := picker._create_card_tile(entry, first)
+		picker.add_child(tile)
+		_assert_heading(tile.get_node_or_null("CardName") as Label, entries[0]["name"], 11)
+		_assert_heading(tile.find_child("CardNameFallback", true, false) as Label,
+			entries[0]["name"], 10)
+		_check(tile.get_meta("name") == entries[0]["name"],
+			"missing-art tile retains canonical name metadata in both stages")
+		tile.free()
+
+
 func _assert_live_caption(picker: LiveRestStitchPairPicker, a: int, b: int,
 		first_name: String, second_name: String, deck_count: int, scraps_left: int,
 		label: String) -> void:
@@ -131,6 +195,9 @@ func _run() -> void:
 		_check(picker != null and app.rest_stitch_overlay.get_parent() == app, "guided picker mounts as sibling overlay")
 		if picker == null:
 			break
+		_assert_picker_names(picker)
+		if session == 0:
+			_assert_missing_art_names(picker)
 		_check(picker._model._service == app.rest_stitch and picker._model.source_snapshot() == app._rest_stitch_source, "picker binds exact real service and receipt")
 		for control in [picker, picker.first_tile_scroll, picker.second_tile_scroll, picker.confirm_button, app.rest_stitch_overlay.get_node("DismissStitch")]:
 			_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "guided controls bounded")
@@ -178,6 +245,7 @@ func _run() -> void:
 			await _frames()
 
 		var expected_second_options: Array = picker._model.second_options(a)
+		_assert_tile_names(picker.second_tiles, picker._model.second_options(a))
 		_check(picker.second_tiles.size() == expected_second_options.size(), "second_tiles populated with exact second_options count")
 		var second_indices: Array[int] = []
 		var no_same_owner := true
@@ -334,6 +402,12 @@ func _run() -> void:
 			# Reopening makes old dismissal and confirmation inert.
 			await _click(app.rest_stitch_guided_button)
 			var current = app.rest_stitch_overlay
+			var reopened: LiveRestStitchPairPicker = app.rest_stitch_picker
+			_check(reopened != null and reopened != picker, "dismissed picker is replaced by a fresh mounted picker")
+			if reopened != null:
+				_assert_picker_names(reopened)
+				await _click(reopened.first_tile_for_index(a))
+				_assert_tile_names(reopened.second_tiles, reopened._model.second_options(a))
 			dismiss.call()
 			_reject_stitch(request, "old picker after reopening")
 			_check(app.rest_stitch_overlay == current, "old dismiss cannot close replacement")

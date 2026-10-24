@@ -90,6 +90,8 @@ func _ready() -> void:
 			add_child(thread)
 
 	var title := Label.new()
+	title.name = "StitchPickerHeading"
+	title.theme_type_variation = "PatchHeading"
 	title.text = "REST • STITCH TWO ORIGINAL CARDS"
 	title.position = Vector2(27, 12)
 	title.size = Vector2(650, 24)
@@ -432,6 +434,8 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 		art_window.add_child(pic)
 	else:
 		var fallback := Label.new()
+		fallback.name = "CardNameFallback"
+		fallback.theme_type_variation = "PatchHeading"
 		fallback.position = Vector2(2, 2)
 		fallback.size = Vector2(82, 34)
 		fallback.text = entry["name"]
@@ -445,6 +449,8 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 
 	# Friendly authored name
 	var name_lbl := Label.new()
+	name_lbl.name = "CardName"
+	name_lbl.theme_type_variation = "PatchHeading"
 	name_lbl.position = Vector2(3, 61)
 	name_lbl.size = Vector2(90, 22)
 	name_lbl.text = entry["name"]
