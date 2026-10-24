@@ -165,20 +165,24 @@ func _pick(patch_id: String, destination: String) -> void:
 		if picker._sources[i]["patch_id"] == patch_id:
 			source_index = i
 			break
-	_check(source_index >= 0, "source selector contains " + patch_id)
+	_check(source_index >= 0, "sewn source tag contains " + patch_id)
 	if source_index < 0:
 		return
-	picker.source_selector.select(source_index)
-	picker.source_selector.item_selected.emit(source_index)
+	picker._source_buttons[source_index].pressed.emit()
+	_check(picker.source_selector.selected == source_index
+		and picker._source_buttons[source_index].button_pressed,
+		"source tag identity and selected felt style match " + patch_id)
 	var to_index := -1
 	for j in range(picker._destinations.size()):
 		if picker._destinations[j]["to_hero"] == destination:
 			to_index = j
 			break
-	_check(to_index >= 0, "destination selector contains " + destination)
+	_check(to_index >= 0, "sewn destination tag contains " + destination)
 	if to_index >= 0:
-		picker.destination_selector.select(to_index)
-		picker.destination_selector.item_selected.emit(to_index)
+		picker._destination_buttons[to_index].pressed.emit()
+		_check(picker.selected_option() == picker._destinations[to_index]
+			and picker._destination_buttons[to_index].button_pressed,
+			"selected destination matches exact authoritative service option")
 
 
 func _positive(f: Dictionary) -> void:
@@ -220,8 +224,26 @@ func _positive(f: Dictionary) -> void:
 		"non-owned patches never become options")
 	_check(picker.present(w, f.torn, start, f.rest)
 		and picker.scraps_label.text == "Scraps: 3"
-		and picker.source_selector.item_count == 5 and not picker.confirm_button.disabled,
+		and picker._source_buttons.size() == 5 and not picker.confirm_button.disabled,
 		"real picker renders five source selectors and truthful purse")
+	var initial_choice := picker.selected_option()
+	_check(initial_choice == picker._destinations[0]
+		and picker._source_buttons[0].button_pressed
+		and picker._destination_buttons[0].button_pressed,
+		"initial stitched source/destination state is exact")
+	picker._source_buttons[3].pressed.emit()
+	var offered := []
+	for option in model.options:
+		if option.patch_id == picker._sources[3].patch_id:
+			offered.append(option)
+	_check(picker._destinations == offered and offered.size() == 2
+		and picker.destination_selector.selected == -1 and picker.selected_option().is_empty()
+		and picker.confirm_button.disabled and not picker._source_buttons[0].button_pressed
+		and picker._source_buttons[3].button_pressed,
+		"changing source rebuilds only its offered recipients and clears stale destination")
+	_check(picker._destination_buttons[0].text.contains(offered[0].kind)
+		and picker._destination_buttons[1].text.contains(offered[1].kind),
+		"each destination chip states the service-offered MOVE/SWAP distinction")
 	picker.re_sew_requested.connect(_owner.bind(f))
 	_pick("button_eye", "seamstress")
 	_check(picker.selected_option().get("kind") == "SWAP"
@@ -455,7 +477,7 @@ func _torn_preview_active() -> void:
 	_check(picker.present(w, t, before, f.rest),
 		"two-scrap torn wearer still has all valid re-sew choices")
 	_pick("spare_spool", "warden")
-	_check(picker.source_selector.get_item_text(picker.source_selector.selected).contains("torn/inactive")
+	_check(picker._source_buttons[picker.source_selector.selected].text.contains("torn/inactive")
 		and picker.preview_label.text.contains("Tinker BEFORE") and picker.preview_label.text.contains("dormant")
 		and picker.scraps_label.text == "Scraps: 2",
 		"torn/inactive explicitly visible on source selector and preview")
