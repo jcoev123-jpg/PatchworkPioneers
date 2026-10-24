@@ -160,21 +160,21 @@ func _expected_cards() -> Dictionary:
 		"seamstress_prick": {"from": [1, 2, 3], "to": [1, 2, 3], "kind": "enemy_single",
 			"effects": {"damage": 3, "bleed": 2}, "text": "Deal 3. Bleed 2."},
 		"seamstress_mend": {"from": [2, 3], "to": [], "kind": "ally_single",
-			"effects": {"heal": 5}, "text": "Heal a chosen ally 5 HP."},
+			"effects": {"heal": 5}, "text": "Heal ally 5 HP."},
 		"seamstress_stitch_up": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
-			"effects": {"block": 5}, "text": "Give a chosen ally 5 Block."},
+			"effects": {"block": 5}, "text": "Ally gains 5 Block."},
 		"warden_brace_plus": {"from": [1, 2, 3], "to": [], "kind": "self",
 			"effects": {"block": 10}, "text": "Gain 10 Block."},
 		"seamstress_mend_plus": {"from": [2, 3], "to": [], "kind": "ally_single",
-			"effects": {"heal": 7}, "text": "Heal a chosen ally 7 HP."},
+			"effects": {"heal": 7}, "text": "Heal ally 7 HP."},
 		"seamstress_stitch_up_plus": {"from": [1, 2, 3], "to": [], "kind": "ally_single",
-			"effects": {"block": 7}, "text": "Give a chosen ally 7 Block."},
+			"effects": {"block": 7}, "text": "Ally gains 7 Block."},
 		"tinker_pop_shot": {"from": [2, 3], "to": [1, 2, 3], "kind": "enemy_single",
 			"effects": {"damage": 5}, "text": "Deal 5."},
 		"tinker_scrap_bomb": {"from": [3], "to": [1, 2, 3], "kind": "enemy_all",
 			"effects": {"damage": 4}, "text": "Deal 4 to all."},
 		"tinker_tune_up": {"from": [1, 2, 3], "to": [], "kind": "none",
-			"effects": {"draw": 1}, "text": "Draw 1 card."},
+			"effects": {"draw": 1}, "text": "Draw 1."},
 	}
 
 
@@ -1349,40 +1349,40 @@ func _expected_rules(definition: Dictionary) -> String:
 	# A descriptor heal names its own recipient instead of the cast's target.
 	if effects.get("heal") is Dictionary:
 		var heal: Dictionary = effects["heal"]
-		var who := "the weakest ally" \
+		var who := "weakest ally" \
 			if String(heal.get("target", "")) == "weakest_living_ally" else _sentence_recipient(definition)
 		var sentence := "Heal %s %d HP" % [who, int(heal.get("amount", -1))]
 		if String(heal.get("cap", "")) == "missing_hp":
-			sentence += ", capped at missing HP"
+			sentence += " (up to missing HP)"
 		sentences.append(sentence + ".")
 	if kind == "ally_single":
 		var clauses: Array[String] = []
 		var healed := false
 		if effects.get("heal") is int:
-			clauses.append("heal a chosen ally %d HP" % int(effects["heal"]))
+			clauses.append("heal ally %d HP" % int(effects["heal"]))
 			healed = true
 		if effects.has("block"):
-			clauses.append(("give them %d Block" % int(effects["block"])) if healed
-				else ("give a chosen ally %d Block" % int(effects["block"])))
+			clauses.append(("grant %d Block" % int(effects["block"])) if healed
+				else ("ally gains %d Block" % int(effects["block"])))
 		if not clauses.is_empty():
 			sentences.append(_sentence_capital(_sentence_join(clauses)) + ".")
 	if kind == "party_all":
 		var clauses: Array[String] = []
 		if effects.get("heal") is int:
-			clauses.append("heal every ally %d HP" % int(effects["heal"]))
+			clauses.append("heal all allies %d HP" % int(effects["heal"]))
 		if effects.has("block_all"):
-			clauses.append("give every ally %d Block" % int(effects["block_all"]))
+			clauses.append("all allies gain %d Block" % int(effects["block_all"]))
 		if not clauses.is_empty():
 			sentences.append(_sentence_capital(_sentence_join(clauses)) + ".")
-	# Self-directed effects share one sentence; other-ally Block joins it.
+	# Self-directed effects and other-ally Block keep separate compact clauses.
 	var self_clauses: Array[String] = []
 	if effects.has("block") and kind != "ally_single":
 		self_clauses.append("gain %d Block" % int(effects["block"]))
 	if effects.has("other_ally_block"):
-		self_clauses.append("give every other ally %d Block" % int(effects["other_ally_block"]))
+		self_clauses.append("other allies gain %d Block" % int(effects["other_ally_block"]))
 	if effects.has("draw"):
 		var drawn: int = int(effects["draw"])
-		self_clauses.append("draw %d card%s" % [drawn, "" if drawn == 1 else "s"])
+		self_clauses.append("draw %d" % drawn)
 	if effects.has("gain_energy"):
 		self_clauses.append("gain %d energy" % int(effects["gain_energy"]))
 	elif effects.has("energy"):
@@ -1403,7 +1403,8 @@ func _expected_rules(definition: Dictionary) -> String:
 	if effects.has("thorns"):
 		self_clauses.append("gain %d Thorns%s" % [int(effects["thorns"]), tail_time])
 	if not self_clauses.is_empty():
-		sentences.append(_sentence_capital(_sentence_join(self_clauses)) + ".")
+		for clause: String in self_clauses:
+			sentences.append(_sentence_capital(clause) + ".")
 	return " ".join(sentences)
 
 
@@ -1479,19 +1480,19 @@ func _covered_effect_keys() -> Array[String]:
 func _required_rule_phrases(card_id: String) -> Array[String]:
 	match card_id:
 		"warden_bastion_quilt":
-			return ["every ally", "10 Block"]
+			return ["All allies gain 10 Block"]
 		"warden_hold_the_line":
-			return ["give every other ally 2 Block"]
+			return ["Other allies gain 2 Block"]
 		"seamstress_darning":
-			return ["Heal a chosen ally 4 HP", "give them 3 Block"]
+			return ["Heal ally 4 HP", "grant 3 Block"]
 		"seamstress_stitch_up":
-			return ["Give a chosen ally 5 Block"]
+			return ["Ally gains 5 Block"]
 		"tinker_sight_glass":
-			return ["Exposed 2", "Draw 1 card"]
+			return ["Exposed 2", "Draw 1"]
 		"seamstress_red_thread":
 			return ["Bleed 6", "Exposed 1"]
 		"tinker_overclock":
-			return ["Gain 1 energy", "lose 3 HP"]
+			return ["Gain 1 energy", "Lose 3 HP"]
 		"tinker_ricochet":
 			return ["Deal 4 x3, random"]
 	return []

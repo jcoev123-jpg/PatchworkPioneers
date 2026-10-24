@@ -194,10 +194,10 @@ func _run() -> void:
 				"before_amount": 6, "after_amount": 7},
 			"warden_brace": {"before": "Gain 7 Block.", "after": "Gain 10 Block.",
 				"before_amount": 7, "after_amount": 10},
-			"seamstress_mend": {"before": "Heal a chosen ally 5 HP.",
-				"after": "Heal a chosen ally 7 HP.", "before_amount": 5, "after_amount": 7},
-			"seamstress_stitch_up": {"before": "Give a chosen ally 5 Block.",
-				"after": "Give a chosen ally 7 Block.", "before_amount": 5, "after_amount": 7},
+			"seamstress_mend": {"before": "Heal ally 5 HP.",
+				"after": "Heal ally 7 HP.", "before_amount": 5, "after_amount": 7},
+			"seamstress_stitch_up": {"before": "Ally gains 5 Block.",
+				"after": "Ally gains 7 Block.", "before_amount": 5, "after_amount": 7},
 		}
 		await _frames()
 		# Hovering a tile is a read-only explanation: it never upgrades, spends,

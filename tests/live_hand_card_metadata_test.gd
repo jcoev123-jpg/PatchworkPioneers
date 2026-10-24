@@ -46,7 +46,7 @@ const UNRAVEL_FACTS := [
 ## independently of the presenter: amounts, hit counts, block, healing, draw,
 ## energy/HP, statuses and the one/all/random recipient wording. Offensive
 ## effects read as compact clauses ("Deal 4. Exposed 1.", "Deal 3 to all.",
-## "Deal 2 x3, random."), while support wording is unchanged.
+## "Deal 2 x3, random."), and support keeps compact recipient clauses.
 const SHORT_LINES := {
 	"warden_strike": "Deal 6.",
 	"warden_strike_plus": "Deal 7.",
@@ -56,36 +56,44 @@ const SHORT_LINES := {
 	"warden_shield_bash_plus": "Deal 11. Weak 1.",
 	"seamstress_prick": "Deal 3. Bleed 3.",
 	"seamstress_prick_plus": "Deal 4. Bleed 3.",
-	"seamstress_mend": "Heal a chosen ally 5 HP.",
-	"seamstress_stitch_up": "Give a chosen ally 5 Block.",
+	"seamstress_mend": "Heal ally 5 HP.",
+	"seamstress_mend_plus": "Heal ally 7 HP.",
+	"seamstress_stitch_up": "Ally gains 5 Block.",
+	"seamstress_stitch_up_plus": "Ally gains 7 Block.",
 	"tinker_pop_shot": "Deal 5.",
 	"tinker_scrap_bomb": "Deal 4 to all.",
-	"tinker_tune_up": "Draw 1 card.",
-	"warden_hold_the_line": "Gain 5 Block and give every other ally 2 Block.",
+	"tinker_tune_up": "Draw 1.",
+	"warden_hold_the_line": "Gain 5 Block. Other allies gain 2 Block.",
+	"warden_hold_the_line_plus": "Gain 7 Block. Other allies gain 3 Block.",
 	"warden_pinning_jab": "Deal 4. Pin.",
-	"warden_draw_fire": "Gain 6 Block and Guard until your next turn.",
-	"warden_counter_stitch": "Gain 5 Block and gain 3 Thorns until your next turn.",
+	"warden_draw_fire": "Gain 6 Block. Guard until your next turn.",
+	"warden_counter_stitch": "Gain 5 Block. Gain 3 Thorns until your next turn.",
 	"warden_seam_breaker": "Deal 7. Unravel 4.",
 	"warden_pin_and_pound": "Deal 9 x2.",
-	"warden_bastion_quilt": "Give every ally 10 Block.",
+	"warden_bastion_quilt": "All allies gain 10 Block.",
 	"seamstress_running_stitch": "Deal 2. Bleed 4.",
-	"seamstress_darning": "Heal a chosen ally 4 HP and give them 3 Block.",
+	"seamstress_darning": "Heal ally 4 HP and grant 3 Block.",
+	"seamstress_darning_plus": "Heal ally 6 HP and grant 4 Block.",
 	"seamstress_snag": "Weak 1. Unravel 3.",
 	"seamstress_hemorrhage_hem": "Double Bleed.",
 	"seamstress_unpick": "Unravel 5.",
 	"seamstress_blanket_stitch": "Bleed 3 to all.",
-	"seamstress_field_mend": "Heal every ally 4 HP.",
+	"seamstress_field_mend": "Heal all allies 4 HP.",
+	"seamstress_field_mend_plus": "Heal all allies 6 HP.",
 	"seamstress_red_thread": "Exposed 1, Bleed 7.",
-	"seamstress_tailors_trance": "Draw 2 cards and gain 1 energy.",
+	"seamstress_tailors_trance": "Draw 2. Gain 1 energy.",
+	"seamstress_tailors_trance_plus": "Draw 3. Gain 1 energy.",
 	"tinker_rivet_shot": "Deal 4. Exposed 1.",
 	"tinker_spring_trap": "Deal 3. Pin +5.",
 	"tinker_scatter_bolts": "Deal 3 to all.",
-	"tinker_spare_parts": "Gain 3 Block and draw 1 card.",
+	"tinker_spare_parts": "Gain 3 Block. Draw 1.",
+	"tinker_spare_parts_plus": "Gain 4 Block. Draw 1.",
 	"tinker_long_barrel": "Deal 12.",
 	"tinker_spool_launcher": "Deal 3. Unravel 3.",
-	"tinker_overclock": "Gain 1 energy and lose 3 HP.",
+	"tinker_overclock": "Gain 1 energy. Lose 3 HP.",
+	"tinker_overclock_plus": "Gain 1 energy. Lose 3 HP.",
 	"tinker_shrapnel_seam": "Deal 5 to all. Unravel 2 to all.",
-	"tinker_sight_glass": "Exposed 2. Draw 1 card.",
+	"tinker_sight_glass": "Exposed 2. Draw 1.",
 	"tinker_ricochet": "Deal 4 x3, random.",
 	"tinker_bobbin_cannon": "Deal 20.",
 	"tinker_snip_the_seam": "Deal 5, or 15 if Unravelled or half gauge.",
@@ -330,6 +338,17 @@ func _formatter_check(metadata) -> void:
 	_check(formatter.line({"effects": {"damage": "6"}})
 		== "Other authored effects are not described.",
 		"an unreadable authored amount is reported, never printed")
+	for effects in [{"block": "5"}, {"draw": "2"}, {"energy": "1"},
+			{"heal": {"amount": "4", "target": "weakest_living_ally"}}]:
+		_check(formatter.line({"target_kind": "ally_single", "effects": effects})
+			== "Other authored effects are not described.",
+			"malformed support amount keeps honest fallback: " + str(effects))
+	_check(formatter.line({"target_kind": "enemy_single", "effects": {
+		"heal": {"amount": 3, "target": "weakest_living_ally", "cap": "missing_hp"}}})
+		== "Heal weakest ally 3 HP (up to missing HP).",
+		"descriptor heal keeps its own recipient and missing-HP cap")
+	_check(formatter.line({"action_kind": "adjacent_swap", "effects": {}})
+		== "Swap with adjacent ally.", "movement stays adjacent and concise")
 	_check(formatter.line({}) == "" and formatter.describe({}).get("known") == false,
 		"an empty record is not a known card")
 	_check(formatter.line(null) == "" and formatter.describe([]).get("known") == false,

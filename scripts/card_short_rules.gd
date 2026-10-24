@@ -27,7 +27,7 @@ const SEPARATOR := " "
 ## Terse markers the hover legend still explains for the painted pips.
 const ALL_TARGET := "ALL"
 const RANDOM_TARGET := "RND"
-const SWAP_SENTENCE := "Swap places with the adjacent ally."
+const SWAP_SENTENCE := "Swap with adjacent ally."
 const UNKNOWN_SENTENCE := "Other authored effects are not described."
 ## Statuses keep one fixed printed order whatever the authoring order is.
 const STATUS_ORDER := ["exposed", "weak", "bleed"]
@@ -253,13 +253,13 @@ static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 	if effects.has("other_ally_block"):
 		var ally_block := _amount(effects["other_ally_block"], -1)
 		if ally_block >= 0:
-			clauses.append("give every other ally %d Block" % ally_block)
+			clauses.append("other allies gain %d Block" % ally_block)
 		else:
 			unknown = true
 	if effects.has("draw"):
 		var draw := _amount(effects["draw"], -1)
 		if draw > 0:
-			clauses.append("draw %d card%s" % [draw, "" if draw == 1 else "s"])
+			clauses.append("draw %d" % draw)
 		else:
 			unknown = true
 	for key in ["gain_energy", "energy"]:
@@ -308,7 +308,10 @@ static func _self_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
 			unknown = true
 	if clauses.is_empty():
 		return {"sentence": "", "unknown": unknown}
-	return {"sentence": _capitalize(_join_and(clauses)) + ".", "unknown": unknown}
+	var sentences: Array[String] = []
+	for clause in clauses:
+		sentences.append(_capitalize(clause) + ".")
+	return {"sentence": SEPARATOR.join(sentences), "unknown": unknown}
 
 
 ## A single chosen ally: healing first, then the Block it also receives.
@@ -322,15 +325,15 @@ static func _ally_sentence(card: Dictionary, effects: Dictionary,
 	if effects.get("heal") is int:
 		var heal := _amount(effects["heal"], -1)
 		if heal >= 0:
-			clauses.append("heal a chosen ally %d HP" % heal)
+			clauses.append("heal ally %d HP" % heal)
 			healed = true
 		else:
 			unknown = true
 	if effects.has("block"):
 		var block := _amount(effects["block"], -1)
 		if block >= 0:
-			clauses.append("give them %d Block" % block if healed
-				else "give a chosen ally %d Block" % block)
+			clauses.append("grant %d Block" % block if healed
+				else "ally gains %d Block" % block)
 		else:
 			unknown = true
 	var status_clause := _status_clause(effects, applied)
@@ -358,13 +361,13 @@ static func _party_sentence(card: Dictionary, effects: Dictionary) -> Dictionary
 	if effects.get("heal") is int:
 		var heal := _amount(effects["heal"], -1)
 		if heal >= 0:
-			clauses.append("heal every ally %d HP" % heal)
+			clauses.append("heal all allies %d HP" % heal)
 		else:
 			unknown = true
 	if effects.has("block_all"):
 		var all_block := _amount(effects["block_all"], -1)
 		if all_block >= 0:
-			clauses.append("give every ally %d Block" % all_block)
+			clauses.append("all allies gain %d Block" % all_block)
 		else:
 			unknown = true
 	if clauses.is_empty():
@@ -381,11 +384,11 @@ static func _other_heal_sentence(card: Dictionary, effects: Dictionary) -> Dicti
 	var amount := _amount(heal.get("amount", -1), -1)
 	if amount < 0:
 		return {"sentence": "", "unknown": true}
-	var who := "the weakest ally" \
+	var who := "weakest ally" \
 		if str(heal.get("target", "")) == "weakest_living_ally" else _recipient(card)
 	var sentence := "Heal %s %d HP" % [who, amount]
 	if str(heal.get("cap", "")) == "missing_hp":
-		sentence += ", capped at missing HP"
+		sentence += " (up to missing HP)"
 	return {"sentence": sentence + ".", "unknown": false}
 
 

@@ -373,27 +373,27 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 			tokens.append("x%d" % hits)
 	if effects.has("block"):
 		if target_kind == "ally_single":
-			tokens.append(("them %d block" if effects.has("heal") else "chosen ally %d block")
+			tokens.append(("grant %d block" if effects.has("heal") else "ally gains %d block")
 				% int(effects["block"]))
 		else:
 			tokens.append("%d block" % int(effects["block"]))
 	if effects.has("other_ally_block"):
-		tokens.append("give every other ally %d block" % int(effects["other_ally_block"]))
+		tokens.append("other allies gain %d block" % int(effects["other_ally_block"]))
 	if effects.has("block_all"):
-		tokens.append("give every ally %d block" % int(effects["block_all"]))
+		tokens.append("all allies gain %d block" % int(effects["block_all"]))
 	if effects.get("heal") is Dictionary:
 		var heal: Dictionary = effects["heal"]
 		tokens.append("heal %s %d hp" % [
-			"the weakest ally" if str(heal.get("target", "")) == "weakest_living_ally" else "the target",
+			"weakest ally" if str(heal.get("target", "")) == "weakest_living_ally" else "the target",
 			int(heal.get("amount", 0))])
 		if str(heal.get("cap", "")) == "missing_hp":
-			tokens.append("capped at missing hp")
+			tokens.append("up to missing hp")
 	elif effects.has("heal"):
 		var heal_amount: int = int(effects["heal"])
 		if target_kind == "party_all":
-			tokens.append("heal every ally %d hp" % heal_amount)
+			tokens.append("heal all allies %d hp" % heal_amount)
 		elif target_kind == "ally_single":
-			tokens.append("heal a chosen ally %d hp" % heal_amount)
+			tokens.append("heal ally %d hp" % heal_amount)
 		else:
 			tokens.append("heal %d hp" % heal_amount)
 	if effects.has("exposed"):
@@ -416,7 +416,7 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 	if effects.has("thorns"):
 		tokens.append("%d thorns" % int(effects["thorns"]))
 	if effects.has("draw"):
-		tokens.append("draw %d card" % int(effects["draw"]))
+		tokens.append("draw %d" % int(effects["draw"]))
 	if effects.has("gain_energy"):
 		tokens.append("gain %d energy" % int(effects["gain_energy"]))
 	elif effects.has("energy"):
@@ -437,7 +437,7 @@ func _expected_rule_tokens(card_id: String, definition: Dictionary) -> Array[Str
 	elif target_kind == "enemy_all":
 		tokens.append("to all")
 	elif target_kind == "party_all":
-		tokens.append("every ally")
+		tokens.append("all allies")
 	return tokens
 
 
@@ -783,7 +783,7 @@ func _sewn_and_unknown_faces() -> void:
 		_check(tooltip.contains("BASE gain 7 Block") and tooltip.contains("BASE heal 5 HP, capped at max HP"),
 			"each half keeps its own precise effect")
 		_check(tooltip == metadata.stitched_tooltip(pair), "mounted tooltip is the ordered two-part tooltip")
-		_check(facts.get("rules") == "1. Gain 7 Block. · 2. Heal a chosen ally 5 HP.",
+		_check(facts.get("rules") == "1. Gain 7 Block. · 2. Heal ally 5 HP.",
 			"sewn face keeps first then second authored effect: " + str(facts.get("rules")))
 		var geometry: Dictionary = metadata.get_geometry(panel)
 		var rows: Array = geometry.get("halves", [])
