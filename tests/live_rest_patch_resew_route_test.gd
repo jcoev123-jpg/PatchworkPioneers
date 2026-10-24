@@ -11,6 +11,43 @@ func _rest_state() -> Array:
 		app.rest_recovery.is_consumed(), app.rest_upgrade.is_consumed()]
 
 
+## The master face a mounted control resolves through the installed theme.
+func _picker_face_path(control: Control) -> String:
+	if not is_instance_valid(control):
+		return ""
+	var font: Font = control.get_theme_font("font")
+	while font is FontVariation and (font as FontVariation).base_font != null:
+		font = (font as FontVariation).base_font
+	return font.resource_path if font != null else ""
+
+
+func _check_picker_typography(picker: LiveRestPatchResewPicker) -> void:
+	var heading := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+	var body := "res://assets/fonts/PatrickHand-Regular.ttf"
+	_check(picker.banner_label.theme_type_variation == "PatchHeading"
+		and picker.banner_label.get_theme_font_size("font_size") >= 26
+		and picker.source_heading.theme_type_variation == "PatchHeading"
+		and picker.destination_heading.theme_type_variation == "PatchHeading"
+		and picker.source_heading.get_theme_font_size("font_size") >= 18
+		and picker.destination_heading.get_theme_font_size("font_size") >= 18
+		and _picker_face_path(picker.banner_label) == heading
+		and _picker_face_path(picker.source_heading) == heading
+		and _picker_face_path(picker.destination_heading) == heading,
+		"live Rest re-sew headings wear the installed Londrina PatchHeading face")
+	_check(picker.confirm_button.theme_type_variation == "PatchHeadingButton"
+		and _picker_face_path(picker.confirm_button) == heading
+		and picker.confirm_button.is_visible_in_tree()
+		and not picker.confirm_button.pressed.get_connections().is_empty(),
+		"live Confirm re-sew button wears PatchHeadingButton and keeps its signal")
+	_check(picker
+		.find_children("*", "Label", true, false)
+		.filter(func(node): return node.theme_type_variation == "PatchHeading").size() == 3,
+		"live picker reserves the heading face for exactly its banner and two sections")
+	for label in [picker.scraps_label, picker.preview_label, picker.feedback_label]:
+		_check(label.theme_type_variation == "" and _picker_face_path(label) == body,
+			"live picker body text keeps the inherited Patrick Hand face")
+
+
 func _request(patch: String, source: String, target: String, keyboard: bool) -> void:
 	var picker: LiveRestPatchResewPicker = app.rest_patch_picker
 	var found := false
@@ -129,6 +166,7 @@ func _run() -> void:
 			return
 		for control in [picker.source_selector, picker.destination_selector, picker.confirm_button, app.rest_patch_overlay.get_node("DismissResew")]:
 			_check(control.is_visible_in_tree() and Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "overlay input bounds fit viewport")
+		_check_picker_typography(picker)
 		await _key(KEY_TAB)
 		_check(root.gui_get_focus_owner() == picker.source_selector, "Tab reaches source from dismiss control")
 		var callback: Callable = picker.re_sew_requested.get_connections()[0].callable

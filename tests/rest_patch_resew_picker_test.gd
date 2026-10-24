@@ -5,6 +5,10 @@ var checks := 0
 var host: Control
 var picker: LiveRestPatchResewPicker
 
+## The master faces project.godot installs: Londrina headings, Patrick Hand body.
+const BODY_FACE_PATH := "res://assets/fonts/PatrickHand-Regular.ttf"
+const HEADING_FACE_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -20,6 +24,7 @@ func _run() -> void:
 	picker.size = Vector2(1280, 720)
 	host.add_child(picker)
 	await process_frame
+	_typography_checks()
 	var f := _fixture(3)
 	if not f.is_empty():
 		_positive(f)
@@ -42,6 +47,112 @@ func _check(condition: bool, description: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(description)
+
+
+## The face a mounted control really resolves through the installed project
+## theme, looking through code-drawn FontVariation wrappers to their base font.
+func _face_path(control: Control) -> String:
+	if not is_instance_valid(control):
+		return ""
+	var font: Font = control.get_theme_font("font")
+	while font is FontVariation and (font as FontVariation).base_font != null:
+		font = (font as FontVariation).base_font
+	return font.resource_path if font != null else ""
+
+
+func _luminance(color: Color) -> float:
+	var channels := []
+	for value in [color.r, color.g, color.b]:
+		channels.append(value / 12.92 if value <= 0.04045
+			else pow((value + 0.055) / 1.055, 2.4))
+	return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+func _contrast(first: Color, second: Color) -> float:
+	var a := _luminance(first)
+	var b := _luminance(second)
+	return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+## The sewn option chips are body text too; checked on a picker that really
+## mounts five worn sources and their two same-slot recipients.
+func _chip_face_checks() -> void:
+	_check(picker._source_buttons.size() == 5 and picker._destination_buttons.size() == 2,
+		"chip typography fixture really mounts five sources and two recipients")
+	for chip in picker._source_buttons + picker._destination_buttons:
+		_check(_face_path(chip) == BODY_FACE_PATH
+			and chip.get_theme_font_size("font_size") == 13,
+			"sewn option chip text stays in the readable Patrick Hand body face")
+
+
+## AC1/AC2: the mounted picker's own named headings and Confirm button inherit
+## the master theme's Londrina faces, while every body text keeps Patrick Hand.
+func _typography_checks() -> void:
+	var theme_path := str(ProjectSettings.get_setting("gui/theme/custom", ""))
+	var master: Theme = load(theme_path) if ResourceLoader.exists(theme_path) else null
+	_check(master != null and theme_path == "res://assets/fonts/patchwork_theme.tres",
+		"project installs the master patchwork theme as its default")
+	if master == null:
+		return
+	var heading_font: Font = master.get_font("font", "PatchHeading")
+	var button_font: Font = master.get_font("font", "PatchHeadingButton")
+	_check(master.is_type_variation("PatchHeading", "Label")
+		and master.is_type_variation("PatchHeadingButton", "Button")
+		and heading_font != null and heading_font.resource_path == HEADING_FACE_PATH
+		and button_font != null and button_font.resource_path == HEADING_FACE_PATH
+		and master.default_font != null
+		and master.default_font.resource_path == BODY_FACE_PATH,
+		"master theme really provides Londrina headings and the Patrick Hand body face")
+	var banner := picker.find_child("ResewBanner", true, false) as Label
+	var source := picker.find_child("ResewSourceHeading", true, false) as Label
+	var destination := picker.find_child("ResewDestinationHeading", true, false) as Label
+	_check(banner != null and banner == picker.banner_label and banner.is_visible_in_tree()
+		and source != null and source == picker.source_heading and source.is_visible_in_tree()
+		and destination != null and destination == picker.destination_heading
+		and destination.is_visible_in_tree(),
+		"mounted picker exposes its named banner, source and recipient headings")
+	var panel := picker.find_child("StitchedPaperRestPanel", true, false) as Control
+	_check(panel != null and Rect2(0, 0, 1280, 720).encloses(panel.get_global_rect()),
+		"stitched Rest panel stays inside the 1280x720 screen")
+	for spec in [[banner, "REST  /  RE-SEW PATCHES", 26],
+			[source, "WORN PATCH  /  SOURCE HERO", 18],
+			[destination, "RECIPIENT HERO  /  MATCHING SLOT", 18]]:
+		var label := spec[0] as Label
+		if label == null:
+			_check(false, "named picker heading exists: " + str(spec[1]))
+			continue
+		_check(label.text == spec[1] and label.theme_type_variation == "PatchHeading"
+			and _face_path(label) == heading_font.resource_path
+			and label.get_theme_font_size("font_size") == spec[2]
+			and (panel == null or panel.get_global_rect().encloses(label.get_global_rect())),
+			"named picker heading inherits the master PatchHeading Londrina face: " + str(spec[1]))
+	for body in [picker.find_child("ResewInstruction", true, false), picker.scraps_label,
+			picker.preview_label, picker.feedback_label]:
+		var label := body as Label
+		_check(label != null and label.theme_type_variation == ""
+			and _face_path(label) == master.default_font.resource_path,
+			"ordinary picker instruction, scraps, preview and feedback keep Patrick Hand")
+	_check(picker.confirm_button.theme_type_variation == "PatchHeadingButton"
+		and _face_path(picker.confirm_button) == button_font.resource_path
+		and picker.confirm_button.is_visible_in_tree()
+		and picker.confirm_button.focus_mode == Control.FOCUS_ALL
+		and not picker.confirm_button.pressed.get_connections().is_empty(),
+		"Confirm re-sew inherits PatchHeadingButton and keeps its real pressed signal")
+	var face: Font = picker.confirm_button.get_theme_font("font")
+	var face_size := picker.confirm_button.get_theme_font_size("font_size")
+	var caption := face.get_string_size(picker.confirm_button.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, face_size)
+	var confirm_box := picker.confirm_button.get_global_rect()
+	_check(confirm_box.size.x > caption.x and confirm_box.size.y >= face_size
+		and Rect2(0, 0, 1280, 720).encloses(confirm_box),
+		"Confirm caption fits its real button on the 1280x720 Rest screen")
+	for spec in [["normal", "font_color"], ["hover", "font_hover_color"],
+			["pressed", "font_pressed_color"], ["hover_pressed", "font_hover_pressed_color"],
+			["focus", "font_focus_color"], ["disabled", "font_disabled_color"]]:
+		var surface := picker.confirm_button.get_theme_stylebox(spec[0]) as StyleBoxFlat
+		var ink: Color = picker.confirm_button.get_theme_color(spec[1])
+		_check(surface != null and _contrast(ink, surface.bg_color) >= 3.0,
+			"Confirm stays legible in its %s state" % spec[0])
 
 
 func _json(path: String) -> Variant:
@@ -226,6 +337,7 @@ func _positive(f: Dictionary) -> void:
 		and picker.scraps_label.text == "Scraps: 3"
 		and picker._source_buttons.size() == 5 and not picker.confirm_button.disabled,
 		"real picker renders five source selectors and truthful purse")
+	_chip_face_checks()
 	var initial_choice := picker.selected_option()
 	_check(initial_choice == picker._destinations[0]
 		and picker._source_buttons[0].button_pressed
