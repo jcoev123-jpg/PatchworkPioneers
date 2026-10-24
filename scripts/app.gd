@@ -623,6 +623,7 @@ var shop_buy_button: Button
 var shop_patch_offers: OptionButton
 var shop_patch_heroes: OptionButton
 var shop_patch_buy_button: Button
+var shop_patch_preview: Label
 var _shop_wardrobe: RunPatchWardrobe
 var _shop_patch_context: Array = []
 var run_removal_count := 0
@@ -3917,6 +3918,9 @@ func _continue_from_shop(visit: RunShopVisit, source_map: WeakRef, prior: Array[
 	button.disabled = true
 	_clear_visit_backdrop()
 	shop_view.hide()
+	if is_instance_valid(shop_patch_preview):
+		shop_patch_preview.queue_free()
+	shop_patch_preview = null
 	_present_connected_route(source_map)
 
 
@@ -4219,6 +4223,7 @@ func _choose_shop_route(id: String, source_map: WeakRef, prior: Array[String], b
 	shop_back_button.text = "Return to title (skip remaining removal)"
 	shop_back_button.pressed.connect(_return_from_visit.bind(shop_view))
 	shop_view.add_child(shop_back_button)
+	_shop_patch_context = _shop_patch_snapshot()
 	_refresh_shop()
 	_focus_visit(shop_view)
 	var actions: Array[Control] = [shop_offers, shop_buy_button, shop_cards, shop_remove_button, shop_patch_offers, shop_patch_heroes, shop_patch_buy_button, shop_continue_button, shop_back_button]
@@ -4360,7 +4365,12 @@ func _mount_shop_patches() -> void:
 	shop_patch_buy_button = Button.new()
 	shop_patch_buy_button.text = "Buy + sew (free)"
 	row.add_child(shop_patch_buy_button)
-	shop_patch_offers.item_selected.connect(func(_index): _refresh_shop_patches())
+	shop_patch_preview = Label.new()
+	shop_patch_preview.name = "ShopPatchPreview"
+	shop_patch_preview.custom_minimum_size.x = 440
+	shop_patch_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	shop_view.add_child(shop_patch_preview)
+	shop_patch_offers.item_selected.connect(_select_shop_patch.bind(shop_patch_offers))
 	shop_patch_buy_button.pressed.connect(_buy_shop_patch.bind(shop_visit, shop_purchases, shop_patch_buy_button))
 
 
@@ -4419,6 +4429,50 @@ func _refresh_shop_patches() -> void:
 	shop_patch_buy_button.disabled = _shop_wardrobe == null or selected >= stock.size() \
 		or stock[selected].sold or session_gold < stock[selected].price \
 		or _shop_patch_offer_text(stock[selected]).is_empty()
+	_refresh_shop_patch_preview()
+
+
+func _select_shop_patch(_index: int, source) -> void:
+	if not is_instance_valid(source) or source != shop_patch_offers \
+		or not is_instance_valid(shop_view) or not shop_view.is_visible_in_tree():
+		return
+	_refresh_shop_patches()
+
+
+## Read genuine stock and catalog powers only; never stage a sew or consume RNG.
+func _refresh_shop_patch_preview() -> void:
+	if not is_instance_valid(shop_patch_preview):
+		return
+	shop_patch_preview.text = "Patch preview unavailable."
+	if not _shop_patch_current() or not _current_shop_ledger():
+		return
+	var index := shop_patch_offers.selected
+	var stock: Array = shop_purchases.get_stock().trinkets
+	if index < 0 or index >= stock.size() or index >= shop_patch_offers.item_count:
+		return
+	var offer: Dictionary = stock[index]
+	if not shop_patch_offers.get_item_metadata(index) is String \
+		or shop_patch_offers.get_item_metadata(index) != offer.id:
+		return
+	var slot: Variant = _shop_wardrobe.get_snapshot().definitions.get(offer.id)
+	var authority := RunPatchWearerSummary._authority({})
+	if slot not in RunPatchWardrobe.SLOTS or authority.is_empty() \
+		or authority.slots.get(offer.id) != slot:
+		return
+	var effect := ""
+	if CombatShopPatchRules.EFFECTS.has(offer.id):
+		var power: Dictionary = CombatShopPatchRules.EFFECTS[offer.id]
+		if power.slot == slot:
+			if power.effect == "opening_block_bonus":
+				effect = "+%d opening Block for this living wearer (stacks with innate Block)" % power.amount
+			elif power.effect == "healing_card_bonus":
+				effect = "+%d healing on positive-heal cards owned by this living wearer only" % power.amount
+	else:
+		effect = RunPatchWearerSummary.KNOWN_TEXTS.get(offer.id, "")
+	if effect.is_empty():
+		return
+	shop_patch_preview.text = "%s | %s%s: %s. Inactive while wearer is torn." % [
+		String(offer.id).capitalize(), slot, " | SOLD" if offer.sold else "", effect]
 
 
 func _buy_shop_patch(visit: RunShopVisit, purchases: RunShopPurchases, button) -> void:
@@ -5202,6 +5256,7 @@ func _return_to_title() -> void:
 	shop_patch_offers = null
 	shop_patch_heroes = null
 	shop_patch_buy_button = null
+	shop_patch_preview = null
 	_shop_wardrobe = null
 	_shop_patch_context.clear()
 	_shop_map = null

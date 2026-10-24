@@ -36,7 +36,8 @@ func _acquired_attack_check(patch_id: String) -> void:
 
 ## Search actual seeded stock, never replace its candidate pool or listings.
 func _attack_patch_purchases() -> void:
-	for patch_id in ["button_eye", "pincushion_arm"]:
+	var retained_selection := Callable()
+	for patch_id in ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm"]:
 		var next_seed := 1
 		var obtained := false
 		for attempt in range(40):
@@ -49,6 +50,13 @@ func _attack_patch_purchases() -> void:
 			app.session_gold = 500
 			await _reach(fixture.paths[0], false)
 			wardrobe = app._shop_wardrobe
+			_check_preview()
+			if retained_selection.is_valid():
+				var fresh_text: String = app.shop_patch_preview.text
+				var fresh_state := _patch_state()
+				retained_selection.call(0)
+				_check(app.shop_patch_preview.text == fresh_text and _patch_state() == fresh_state,
+					"old Shop selection callback cannot change fresh preview or run")
 			var selected := -1
 			for i in range(app.shop_patch_offers.item_count):
 				if app.shop_purchases.get_stock().trinkets[i].id == patch_id:
@@ -58,19 +66,83 @@ func _attack_patch_purchases() -> void:
 				next_seed = fixture.seed + 1
 				continue
 			_check(wardrobe != null and wardrobe.is_valid()
-				and wardrobe.get_snapshot().definitions.get(patch_id) == ("HEAD" if patch_id == "button_eye" else "ARM"),
+				and wardrobe.get_snapshot().definitions.get(patch_id) == PREVIEW_POWERS[patch_id].slot,
 				"unbound Shop builds the real shared authored wardrobe")
+			for keyboard in [false, true]:
+				for i in range(app.shop_patch_offers.item_count):
+					var before := _patch_state()
+					await _pick(app.shop_patch_offers, i, keyboard)
+					_check_preview()
+					_check(_patch_state() == before, "physical selection only preserves every run ledger and RNG")
 			await _purchase(selected, false, 0)
 			var worn := wardrobe.get_snapshot()
+			var preview_ref: WeakRef = weakref(app.shop_patch_preview)
+			retained_selection = app.shop_patch_offers.item_selected.get_connections()[0].callable
 			await _click(app.shop_continue_button)
+			retained_selection.call(0)
+			_check(app.shop_patch_preview == null and preview_ref.get_ref() == null,
+				"Continue releases preview; retained selection callback stays inert")
 			await _reach(fixture.paths[1], false)
 			_check(app.party_carryover._wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn.worn,
 				"paid attack patch assignment survives into next real Fight")
-			await _acquired_attack_check(patch_id)
+			if patch_id in ["button_eye", "pincushion_arm"]:
+				await _acquired_attack_check(patch_id)
 			await _click(app.return_button)
+			retained_selection.call(0)
+			_check(app.shop_patch_preview == null and app.run_map == null,
+				"title leaves no preview or active old selection")
 			obtained = true
 			break
-		_check(obtained, "real seeded Shop bought, sewed and activated " + patch_id)
+		_check(obtained, "real seeded Shop previewed, bought and sewed " + patch_id)
+
+
+## Independent text oracle, grounded in authored slot/effect/amount records below.
+const PREVIEW_POWERS := {
+	"stitched_badge": {"slot": "HEAD", "effect": "opening_block_bonus", "amount": 3,
+		"text": "+3 opening Block for this living wearer (stacks with innate Block)"},
+	"spare_spool": {"slot": "ARM", "effect": "healing_card_bonus", "amount": 2,
+		"text": "+2 healing on positive-heal cards owned by this living wearer only"},
+	"quilted_coat": {"slot": "COAT", "max_hp_bonus": 6, "text": "+6 maximum HP"},
+	"button_eye": {"slot": "HEAD", "effect": "first_attack_exposed", "amount": 1,
+		"text": "first successful attack each combat also applies Exposed 1"},
+	"pincushion_arm": {"slot": "ARM", "effect": "card_attack_bonus", "amount": 1,
+		"text": "+1 damage on that wearer's damaging cards"},
+}
+
+
+func _check_preview() -> void:
+	var stock: Array = app.shop_purchases.get_stock().trinkets
+	var index: int = app.shop_patch_offers.selected
+	_check(not stock.is_empty() and index >= 0 and index < stock.size()
+		and is_instance_valid(app.shop_patch_preview), "preview has genuine selected stock and mounted label")
+	if index < 0 or index >= stock.size() or not is_instance_valid(app.shop_patch_preview):
+		return
+	var offer: Dictionary = stock[index]
+	_check(PREVIEW_POWERS.has(offer.id), "seeded stock contains a named authored candidate")
+	if not PREVIEW_POWERS.has(offer.id):
+		return
+	var expected: Dictionary = PREVIEW_POWERS[offer.id]
+	var record: Dictionary = {}
+	if CombatShopPatchRules.EFFECTS.has(offer.id):
+		record = CombatShopPatchRules.EFFECTS[offer.id]
+	else:
+		var path := "res://data/patches/m04_coat_patches.json" if offer.id == "quilted_coat" else "res://data/patches/m04_attack_patches.json"
+		for entry in JSON.parse_string(FileAccess.get_file_as_string(path)):
+			if entry.id == offer.id:
+				record = entry
+	_check(not record.is_empty() and record.get("slot") == expected.slot
+		and wardrobe.get_snapshot().definitions.get(offer.id) == expected.slot,
+		"preview oracle slot agrees with shipped record and wardrobe")
+	for field in ["effect", "amount", "max_hp_bonus"]:
+		if expected.has(field):
+			_check(record.get(field) == expected[field], "preview oracle matches authored " + field)
+	var text := "%s | %s%s: %s. Inactive while wearer is torn." % [String(offer.id).capitalize(),
+		expected.slot, " | SOLD" if offer.sold else "", expected.text]
+	_check(app.shop_patch_preview.text == text and app.shop_patch_preview.is_visible_in_tree()
+		and app.shop_patch_preview.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+		"visible autowrapped preview gives exact conditional name, slot and power")
+	_check(Rect2(0, 0, 1280, 720).encloses(app.shop_patch_preview.get_global_rect()),
+		"preview fits target viewport")
 
 
 
@@ -179,6 +251,10 @@ func _negative_inputs(callback: Callable) -> void:
 	var id: Variant = picker.get_item_metadata(0)
 	for forged in ["unstocked", app.shop_purchases.get_stock().trinkets[1].id, String(id).capitalize(), 12]:
 		picker.set_item_metadata(0, forged)
+		var unchanged := _patch_state()
+		app._refresh_shop_patch_preview()
+		_check(app.shop_patch_preview.text == "Patch preview unavailable." and _patch_state() == unchanged,
+			"malformed selection never advertises a power or mutates the run")
 		_reject_buy(callback, "forged stock selection")
 	picker.set_item_metadata(0, id)
 	var text := picker.get_item_text(0)
@@ -194,6 +270,8 @@ func _negative_inputs(callback: Callable) -> void:
 	heroes.set_item_metadata(0, owner)
 	var slot: String = wardrobe._definitions[id]
 	wardrobe._definitions[id] = "COAT" if slot != "COAT" else "HEAD"
+	app._refresh_shop_patch_preview()
+	_check(app.shop_patch_preview.text == "Patch preview unavailable.", "stale slot cannot advertise an effect")
 	_reject_buy(callback, "drifted authored slot")
 	wardrobe._definitions[id] = slot
 	for invalid in [null, "UNKNOWN"]:
@@ -203,6 +281,7 @@ func _negative_inputs(callback: Callable) -> void:
 			wardrobe._definitions[id] = invalid
 		app._refresh_shop_patches()
 		_check(app.shop_patch_buy_button.disabled, "missing/unknown slot disables purchase")
+		_check(app.shop_patch_preview.text == "Patch preview unavailable.", "unknown slot has no invented preview")
 		_reject_buy(callback, "missing/unknown slot")
 		app.shop_patch_buy_button.disabled = false
 		_reject_buy(callback, "forced enabled missing/unknown slot")
@@ -278,6 +357,7 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 		"selected genuine 100 gold offer is affordable and unsold")
 	await _pick(app.shop_patch_offers, index, keyboard)
 	await _pick(app.shop_patch_heroes, wearer, keyboard)
+	_check_preview()
 	if keyboard:
 		app.shop_patch_heroes.grab_focus()
 		await _key(KEY_TAB)
@@ -296,6 +376,7 @@ func _purchase(index: int, keyboard: bool, wearer: int = -1) -> void:
 	_check(app.shop_purchases.get_stock() == stock and app.party_carryover._wardrobe == wardrobe,
 		"only selected stock sold and same wardrobe bound")
 	_check_patch_labels()
+	_check_preview()
 	_check(app.shop_patch_buy_button.disabled, "selected sold stock disables purchase after refresh")
 	_check(app.shop_visit.get_state().trinkets == state.owned
 		and app.shop_purchases.get_state().trinkets == state.owned and app.run_trinkets == state.owned
@@ -312,9 +393,10 @@ func _pick(picker: OptionButton, index: int, keyboard: bool) -> void:
 	var popup := picker.get_popup()
 	_check(popup.visible, "physical input opens real patch/hero popup")
 	if keyboard:
-		await _key(KEY_HOME)
-		for step in range(index):
-			await _key(KEY_DOWN)
+		var focused := popup.get_focused_item()
+		_check(focused >= 0 and focused < picker.item_count, "opened popup has a real keyboard focus item")
+		for step in range(absi(index - focused)):
+			await _key(KEY_DOWN if index > focused else KEY_UP)
 		await _key(KEY_ENTER)
 	else:
 		var point := Vector2(popup.position) + Vector2(popup.size.x * 0.5,
@@ -330,7 +412,9 @@ func _pick(picker: OptionButton, index: int, keyboard: bool) -> void:
 			event.pressed = pressed
 			root.push_input(event, true)
 		await _frames()
-	_check(picker.selected == index and not popup.visible, "physical popup selects exact real item")
+	_check(picker.selected == index and not popup.visible,
+		"physical popup selects exact real item (keyboard=%s expected=%d actual=%d open=%s)" % [
+			keyboard, index, picker.selected, popup.visible])
 
 
 func _poor_and_replacement() -> void:
@@ -402,7 +486,12 @@ func _poor_and_replacement() -> void:
 			_check(app.run_deck == deck and app.session_gold == gold - 75
 				and wardrobe.get_snapshot().cards == deck and wardrobe.get_snapshot().gold == app.session_gold,
 				"patch-first removal synchronizes only committed wardrobe context")
+		var preview_ref: WeakRef = weakref(app.shop_patch_preview)
+		var selection: Callable = app.shop_patch_offers.item_selected.get_connections()[0].callable
 		await _click(app.shop_back_button)
+		selection.call(0)
+		_check(app.shop_patch_preview == null and preview_ref.get_ref() == null,
+			"Shop Return to title frees preview and rejects old selection callback")
 		callback.call()
 		_check(app.run_map == null and app.session_gold == 0, "Shop title discards retained purchase callback")
 
