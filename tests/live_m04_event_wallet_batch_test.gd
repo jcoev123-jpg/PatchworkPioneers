@@ -116,6 +116,21 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 		and panel.get_choice_buttons().size() == record.choices.size()
 		and panel.title_label.text == record.title and panel.description_label.text == record.description,
 		"mounted offering preserves actual authored title, story and choice count")
+	# Live typography: the real app-mounted Event sews its dynamic caption and
+	# number tags in the Theme's display face, while the story and tickets keep
+	# the inherited body face and their exact authored/forecast text.
+	var heading_face := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+	var body_face := "res://assets/fonts/PatrickHand-Regular.ttf"
+	var caption := panel.choices_container.get_parent().get_node_or_null("WalletBalance") as Label
+	_check(caption != null and caption.text == "Wallet  •  %d gold   /   %d scraps" % [_wallet()["gold"], _wallet()["scraps"]]
+		and (caption.get_theme_font("font") as Font).resource_path == heading_face,
+		"live wallet caption states exact balances in the display face")
+	_check((panel.description_label.get_theme_font("font") as Font).resource_path == body_face
+		and (panel.get_choice_buttons()[0].get_theme_font("font") as Font).resource_path == body_face,
+		"live story and tickets keep the body face")
+	for cue in panel.get_choice_cues():
+		_check((cue.get_theme_font("font") as Font).resource_path == heading_face,
+			"live sewn tag wears the display face")
 	_reject_wallet(entry, "duplicate route input while panel open")
 	var commit: Callable = panel.wallet_choice_committed.get_connections()[0].callable
 	_reject_wallet(commit.bind({"ok": true, "event_id": event_id, "choice_id": "forged",
