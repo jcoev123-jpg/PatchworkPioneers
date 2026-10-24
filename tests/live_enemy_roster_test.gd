@@ -26,6 +26,19 @@ const IDLE_ART := {
 	"spool_hexer": "res://assets/paper/enemies/spool_hexer.png",
 	"patchwork_behemoth": "res://assets/paper/boss/patchwork_behemoth.png",
 }
+## The four authored M05 normals ship no image yet, so each must draw its own sewn fallback
+## while its authentic battle record stays authoritative. These exact names, HP values,
+## target policies and strongest weighted attacks are pinned here, never read from the view.
+const M05_NORMALS := {
+	"felt_bulwark": {"name": "Felt Bulwark", "max_hp": 18, "target": "front",
+		"attack": {"amount": 2, "weight": 3}},
+	"moth_scribe": {"name": "Moth Scribe", "max_hp": 14, "target": "exposed",
+		"attack": {"amount": 2, "weight": 3}},
+	"pin_skitter": {"name": "Pin Skitter", "max_hp": 13, "target": "random",
+		"attack": {"amount": 2, "weight": 4}},
+	"thread_biter": {"name": "Thread Biter", "max_hp": 15, "target": "lowest_living_hp",
+		"attack": {"amount": 3, "weight": 3}},
+}
 
 
 func _initialize() -> void:
@@ -2091,6 +2104,7 @@ func _run() -> void:
 	await process_frame
 	app.starter_enemies_path = SOURCE
 	await _typed_stage(app, presenter)
+	await _m05_fallbacks(app, presenter)
 	await _expanded_meadow_layout(scene)
 	app.free()
 	reference.free()
@@ -2299,6 +2313,313 @@ func _typed_stage(app, presenter) -> void:
 	await process_frame
 	_check(presenter._puppets.is_empty() and presenter._badges.is_empty() and presenter.battle_row == null,
 		"routed Return clears every typed puppet and badge")
+
+
+## The authentic battle records of every catalog, read through the same production parser
+## battles use. Never a test fixture and never the presenter's own resolution.
+func _m05_records() -> Dictionary:
+	var records := {}
+	for path in RunAuthoredBattleEntry.CATALOG_PATHS:
+		for record in RunTypedBattleRoster._parse_catalog_text(
+				FileAccess.get_file_as_string(path)):
+			records[String(record.get("id", ""))] = record
+	return records
+
+
+## Every production Fight alternative whose whole roster is an unillustrated M05 normal.
+func _m05_pairs(pool: Dictionary) -> Array:
+	var pairs: Array = []
+	var fight = pool.get("Fight")
+	if not fight is Dictionary:
+		return pairs
+	for encounter_id in fight:
+		var entry = fight[encounter_id]
+		if not entry is Dictionary or not entry.get("enemy_ids") is Array:
+			continue
+		var ids: Array = entry["enemy_ids"]
+		var all_m05 := not ids.is_empty()
+		for actor_id in ids:
+			all_m05 = all_m05 and M05_NORMALS.has(actor_id)
+		if all_m05:
+			pairs.append(ids)
+	return pairs
+
+
+## One seeded production Fight that really admits this M05 pair. The prediction reproduces
+## only the live selector's single ordered-pool draw, so no encounter file is changed.
+func _m05_pair_seed(pool: Dictionary, pair_ids: Array) -> Dictionary:
+	var fight = pool.get("Fight")
+	if not fight is Dictionary or fight.is_empty():
+		return {}
+	var ids: Array = fight.keys()
+	ids.sort()
+	for seed_value in range(1, 701):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		for node_id in map.get_legal_choices():
+			if map.get_node(node_id).get("type") != "Fight" or not map.choose_node(node_id):
+				continue
+			var picked: String = ids[rng.randi_range(0, ids.size() - 1)]
+			var entry = fight.get(picked)
+			if entry is Dictionary and entry.get("enemy_ids") == pair_ids:
+				return {"seed": seed_value, "node": node_id}
+	return {}
+
+
+## Mount one authentic M05 pair through the real title, map and route controls, prove both
+## enemy puppets draw their own sewn fallback, then return to the title. Returns the IDs of
+## the roster that was really admitted.
+func _mount_m05_pair(app, presenter, pool: Dictionary, pair_ids: Array) -> Array:
+	var admitted: Array[String] = []
+	var seed_info := _m05_pair_seed(pool, pair_ids)
+	_check(not seed_info.is_empty(),
+		"a seeded production Fight really selects the M05 pair " + str(pair_ids))
+	if seed_info.is_empty():
+		return admitted
+	app.run_seed = int(seed_info.seed)
+	app.route_button.pressed.emit()
+	await process_frame
+	var route_button: Button = null
+	for candidate in app.route_buttons:
+		if candidate.get_meta("route_id") == seed_info.node:
+			route_button = candidate
+			break
+	_check(route_button != null and not route_button.disabled,
+		"the routed M05 Fight is reachable by its own map control " + str(pair_ids))
+	if route_button == null:
+		if is_instance_valid(app.route_back_button):
+			app.route_back_button.pressed.emit()
+			await process_frame
+		return admitted
+	route_button.pressed.emit()
+	for frame in range(3):
+		await process_frame
+	if app.enemies != null:
+		for enemy in app.enemies.get_enemies():
+			admitted.append(String(enemy.get("id")))
+	_check(admitted == pair_ids and presenter.enemies == app.enemies
+		and presenter._puppets.size() == CombatParty.PARTY_SIZE + pair_ids.size(),
+		"the real routed battle mounts exactly the selected M05 pair " + str(pair_ids))
+	if admitted != pair_ids or app.enemies == null or presenter.enemies != app.enemies:
+		if app.deck != null:
+			app.return_button.pressed.emit()
+			await process_frame
+		return admitted
+	var before: Array = _snapshot(app)
+	for index in range(pair_ids.size()):
+		var actor_id: String = pair_ids[index]
+		var expected: Dictionary = M05_NORMALS[actor_id]
+		var actor: Dictionary = app.enemies.get_enemy(index + 1)
+		var puppet = presenter._puppets[CombatParty.PARTY_SIZE + index]
+		_check(actor.get("id") == actor_id and actor.get("position") == index + 1
+			and actor.get("name") == expected.name and actor.get("max_hp") == expected.max_hp
+			and actor.get("hp") == expected.max_hp and actor.get("block") == 0
+			and actor.get("intent", {}).get("target") == expected.target,
+			"the mounted M05 enemy keeps its authentic live record: " + actor_id)
+		_check(puppet.actor_id == actor_id and puppet.fallback_kind == actor_id
+			and puppet.current_texture() == null and puppet.attack_texture == null
+			and puppet.image_rect() == Rect2(),
+			"the mounted M05 enemy draws its own sewn fallback and no borrowed texture: " + actor_id)
+		_check(presenter._labels[index].text == expected.name,
+			"its pinned stage name is the authentic enemy name: " + actor_id)
+		var shapes: Array = puppet.fallback_silhouettes()
+		var inside := not shapes.is_empty()
+		for part in shapes:
+			var points := PackedVector2Array(part.get("points", PackedVector2Array()))
+			inside = inside and points.size() >= 3
+			for point in points:
+				inside = inside and puppet.FALLBACK_EXTENTS.grow(0.01).has_point(point)
+		_check(inside, "its sewn silhouette is real and stays inside the puppet's extents: " + actor_id)
+		_check(puppet.actor_rest_bottom() >= puppet.art_band().position.y
+			and puppet.contact_shadow_rect().size.x > 0.0
+			and puppet.foot_line() < puppet.tag_band().position.y + 0.01,
+			"the same foot line, contact shadow and pinned tag stay unchanged: " + actor_id)
+	_check(presenter._puppets[CombatParty.PARTY_SIZE].fallback_silhouettes()
+		!= presenter._puppets[CombatParty.PARTY_SIZE + 1].fallback_silhouettes(),
+		"the two M05 enemies in one battle draw two different sewn variants")
+	# The identity fallback keeps the same bounded lunge, recoil and fall as any actor.
+	var host = presenter._puppets[CombatParty.PARTY_SIZE]
+	var phase: float = host.idle_phase
+	var rest: Rect2 = host.posed_fallback_rect()
+	_check(host.trigger_attack(0.6) and host.attacking() and host.pose_texture() == null,
+		"a fallback-only M05 actor still performs its committed lunge")
+	host._process(host.attack_span * 0.5)
+	_check(host.posed_fallback_rect() != rest and host.attack_lunge() * host.facing >= 4.0,
+		"its lunge really moves the drawn artwork")
+	host.cancel_attack()
+	host.idle_phase = phase
+	_check(host.trigger_recoil(0.6) and host.recoiling(),
+		"a fallback-only M05 actor still recoils from a committed hit")
+	host._process(host.recoil_span * 0.25)
+	_check(absf(host.recoil_pixels()) >= 1.5,
+		"its recoil really shakes the drawn artwork")
+	host._process(host.RECOIL_MAX_SECONDS)
+	host.idle_phase = phase
+	var fallen: bool = host.fallen
+	host.fallen = true
+	_check(host.settle_fall(0.6) and host.settling_fall(),
+		"a fallback-only M05 actor still eases into its fallen pose")
+	host._process(host.FALL_MAX_SECONDS)
+	_check(not host.settling_fall()
+		and is_equal_approx(host.fallen_tilt(), -host.FALL_TILT * host.facing),
+		"its settled fall is the same still fallen tilt as every actor")
+	host.fallen = fallen
+	host._process(0.1)
+	host.idle_phase = phase
+	presenter._refresh()
+	_check(_snapshot(app) == before,
+		"mounting and drawing the M05 fallback changes no HP, deck, energy, intents or RNG")
+	app.return_button.pressed.emit()
+	await process_frame
+	_check(presenter.enemies == null and presenter._puppets.is_empty(),
+		"leaving the M05 battle releases its roster and every mounted puppet")
+	return admitted
+
+
+## The four authored M05 normals must be identifiable in real routed battles without an
+## image: each exact ID maps to its own sewn fallback kind, binds no texture, keeps its
+## authentic record, and the generic fallback stays for a fabricated ID. Presentation only.
+func _m05_fallbacks(app, presenter) -> void:
+	var records := _m05_records()
+	for actor_id in M05_NORMALS:
+		var expected: Dictionary = M05_NORMALS[actor_id]
+		_check(records.has(actor_id), "the authentic M05 normal exists in the catalogs: " + actor_id)
+		if not records.has(actor_id):
+			continue
+		var record: Dictionary = records[actor_id]
+		var intent: Dictionary = record.get("intent", {})
+		var attack := {}
+		for action in intent.get("actions", []):
+			if action.get("type") == "attack":
+				attack = action
+		_check(record.get("name") == expected.name and record.get("max_hp") == expected.max_hp
+			and record.get("art_path") == "res://assets/paper/enemies/%s.png" % actor_id,
+			"the M05 normal keeps its exact authored name, HP and art path: " + actor_id)
+		_check(intent.get("target") == expected.target
+			and int(attack.get("amount", -1)) == int(expected.attack.amount)
+			and int(attack.get("weight", -1)) == int(expected.attack.weight),
+			"the M05 normal keeps its exact policy and weighted attack: " + actor_id)
+		_check(ROSTER_ART.fallback_kind_for(actor_id) == actor_id
+			and ROSTER_ART.art_paths(actor_id).is_empty()
+			and presenter.art_for(actor_id).is_empty(),
+			"its exact ID selects its own fallback kind and no image: " + actor_id)
+	# Live reachability: real seeded routed Fights really mount every M05 normal.
+	var pool = JSON.parse_string(FileAccess.get_file_as_string(RunAuthoredBattleEntry.POOLS_PATH))
+	_check(pool is Dictionary and pool.get("Fight") is Dictionary,
+		"the production Fight pool parses for the live M05 fallback check")
+	var mounted := {}
+	if pool is Dictionary and pool.get("Fight") is Dictionary:
+		for pair_ids in _m05_pairs(pool):
+			if mounted.size() >= M05_NORMALS.size():
+				break
+			var admitted: Array = await _mount_m05_pair(app, presenter, pool, pair_ids)
+			for actor_id in admitted:
+				mounted[actor_id] = true
+	for actor_id in M05_NORMALS:
+		_check(mounted.has(actor_id),
+			"the M05 normal really appears in a genuine routed battle: " + actor_id)
+	# One mounted slot, rebound through the real IDs and then a fabricated one.
+	_fixture_start(app)
+	await process_frame
+	var host = presenter._puppets[0] if not presenter._puppets.is_empty() else null
+	_check(host != null and presenter.enemies != null,
+		"a real mounted battle supplies the slot for the M05 rebind")
+	if host == null:
+		return
+	var before: Array = _snapshot(app)
+	var saved_id: String = host.actor_id
+	var saved_art := {"idle": host.idle_texture, "attack": host.attack_texture}
+	var saved_phase: float = host.idle_phase
+	var variants := {}
+	for actor_id in M05_NORMALS:
+		host.bind_actor(actor_id, presenter.art_for(actor_id))
+		variants[actor_id] = host.fallback_silhouettes()
+		_check(host.fallback_kind == actor_id and host.current_texture() == null
+			and host.attack_texture == null and not variants[actor_id].is_empty(),
+			"each M05 ID binds its own non-empty sewn fallback and no texture: " + actor_id)
+	var ids: Array = M05_NORMALS.keys()
+	var distinct := true
+	for left in range(ids.size()):
+		for right in range(left + 1, ids.size()):
+			distinct = distinct and variants[ids[left]] != variants[ids[right]]
+	_check(distinct, "all four M05 fallbacks draw different silhouettes and props")
+	# Identity, not slot position: the same ID in another slot draws the same variant.
+	host.bind_actor("moth_scribe", presenter.art_for("moth_scribe"))
+	var other = presenter._puppets[1]
+	var other_id: String = other.actor_id
+	var other_phase: float = other.idle_phase
+	other.bind_actor("moth_scribe", presenter.art_for("moth_scribe"))
+	_check(host.slot != other.slot and host.fallback_kind == other.fallback_kind
+		and host.fallback_silhouettes() == other.fallback_silhouettes(),
+		"the same M05 ID keeps its variant in any stage slot")
+	other.bind_actor(other_id, presenter.art_for(other_id))
+	other.idle_phase = other_phase
+	# Rebind two real IDs in one slot, then a fabricated one.
+	host.bind_actor("felt_bulwark", presenter.art_for("felt_bulwark"))
+	var first_shapes: Array = host.fallback_silhouettes()
+	host.bind_actor("thread_biter", presenter.art_for("thread_biter"))
+	var second_shapes: Array = host.fallback_silhouettes()
+	_check(host.fallback_kind == "thread_biter" and second_shapes != first_shapes,
+		"rebinding one slot to another M05 normal draws a different variant")
+	var fabricated := "fabricated_m05_fallback"
+	host.bind_actor(fabricated, presenter.art_for(fabricated))
+	_check(host.fallback_kind == ROSTER_ART.fallback_kind_for(fabricated)
+		and host.fallback_kind != "felt_bulwark" and host.fallback_kind != "thread_biter"
+		and host.fallback_silhouettes().is_empty() and host.current_texture() == null,
+		"a fabricated ID keeps the original generic drawn fallback")
+	# The bounded lunge, recoil and fall stay active on the identity-specific puppet.
+	host.bind_actor("felt_bulwark", presenter.art_for("felt_bulwark"))
+	var rest: Rect2 = host.posed_fallback_rect()
+	_check(host.trigger_attack(0.6) and host.attacking() and host.pose_texture() == null,
+		"the M05 fallback puppet still performs a committed lunge")
+	host._process(host.attack_span * 0.5)
+	_check(host.attacking() and host.posed_fallback_rect() != rest,
+		"the M05 fallback lunge really moves its drawn artwork")
+	host.cancel_attack()
+	host.idle_phase = saved_phase
+	_check(host.trigger_recoil(0.6) and host.recoiling(),
+		"the M05 fallback puppet still recoils from a committed hit")
+	host._process(host.recoil_span * 0.25)
+	_check(absf(host.recoil_pixels()) >= 1.5,
+		"the M05 fallback recoil really shakes its drawn artwork")
+	host._process(host.RECOIL_MAX_SECONDS)
+	host.idle_phase = saved_phase
+	host.fallen = true
+	_check(host.settle_fall(0.6) and host.settling_fall(),
+		"the M05 fallback puppet still eases into its fallen pose")
+	host._process(host.FALL_MAX_SECONDS)
+	_check(is_equal_approx(host.fallen_tilt(), -host.FALL_TILT * host.facing),
+		"the M05 fallback settles exactly at the existing fallen tilt")
+	host.fallen = false
+	host._process(0.1)
+	host.idle_phase = saved_phase
+	# Rim and paint choose the one identity-specific shape list from the same entry point.
+	var source := FileAccess.get_file_as_string("res://scripts/live_enemy_roster.gd")
+	var shape_body := _function_body(source, "func _draw_fallback_shapes(")
+	var named_body := _function_body(source, "func _draw_named_fallback_shapes(")
+	var fallback_body := _function_body(source, "func _draw_fallback(")
+	var rim_body := _function_body(source, "func _draw_silhouette(")
+	_check(fallback_body.contains("_draw_fallback_shapes(false)")
+		and rim_body.contains("_draw_fallback_shapes(true)")
+		and shape_body.contains("_draw_named_fallback_shapes(silhouette)")
+		and named_body.contains("fallback_silhouettes()") and named_body.contains("RIM_INK"),
+		"the filled puppet and its dark rim draw the one identity-specific shape list")
+	_check(shape_body.find("_draw_named_fallback_shapes(silhouette)")
+		< shape_body.find("Color(\"ecdfbd\")"),
+		"the identity dispatch precedes the generic body, so a named ID never mixes both")
+	host.bind_actor(saved_id, saved_art)
+	host.idle_phase = saved_phase
+	_check(host.actor_id == saved_id
+		and host.fallback_kind == ROSTER_ART.fallback_kind_for(saved_id)
+		and host.current_texture() == saved_art.idle,
+		"rebinding the slot restores the original actor exactly")
+	_check(_snapshot(app) == before,
+		"every M05 fallback rebind and pose changes no party, deck, energy, intents or RNG")
+	app.return_button.pressed.emit()
+	await process_frame
 
 
 ## Real mounted seeded fight, swapping only test fixture metadata to bind four
