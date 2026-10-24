@@ -2,10 +2,13 @@ extends Node
 ## Reads fresh snapshots only; retained references identify the current presentation.
 ##
 ## Each presented actor owns one slim, unboxed ribbon pinned to the stage hem directly
-## under its own actor slot: the HP number and bar, one Block value, and a single row of
-## small hoverable status buttons. The snapshot text stays exactly as CombatActorMeter
-## computes it; only the long-form paragraphs are hidden and reachable through the
-## button tooltips, so no rule is duplicated on the stage.
+## under its own actor slot: the HP number and bar, one Block value, and a width-aware
+## flow of sewn, hoverable status chips. Chips keep their complete names at a readable
+## size and wrap onto further rows when the actor's own slot is too narrow, so the
+## ribbon grows with them instead of shrinking or truncating the text. The snapshot text
+## stays exactly as CombatActorMeter computes it; only the long-form paragraphs are
+## hidden and reachable through the button tooltips, so no rule is duplicated on the
+## stage.
 
 ## Narrow ribbon geometry: wide enough for three status chips, never wider than the slot.
 const RIBBON_MAX_WIDTH := 200.0
@@ -19,12 +22,15 @@ const RIBBON_SLOT_INSET := 4.0
 ## One chip per Bleed/Weak/Exposed stack plus the downed/slain badge.
 const STATUS_BUTTONS := 4
 const STATUS_ORDER := ["bleed", "weak", "exposed"]
-## A fallen actor keeps its Bleed, Weak and Exposed stacks, so four chips can share one
-## narrow row. Four entries use compact-but-complete labels ("Ble 3") and a font size
-## that fits, so every name and count stays legible instead of being clipped.
+## Readable chip text: at every normal 1280x720 actor width the complete "Bleed 3"
+## style name is drawn at 14 px, and the chips wrap onto a second row only when the
+## actor's own slot is too narrow for the whole row. The compact names survive only as
+## the fallback for a slot narrower than one complete chip; the hover text stays whole.
 const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
-const CHIP_FONT_SIZES := [11, 10, 9]
+const READABLE_CHIP_FONT := 14
+const CHIP_FONT_SIZES := [14, 12, 11]
 const CHIP_SEPARATION := 2
+const CHIP_ROW_SEPARATION := 2
 ## Bounded, presentation-only readable names for known authored patch IDs. `_patch_power`
 ## below restates each M05 HEAD/ARM/COAT power as a short player sentence (worn amounts,
 ## wearer-only scope, real Block recipient, single-hit/once-per-turn/once-per-combat
@@ -337,11 +343,12 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 		incoming.autowrap_mode = TextServer.AUTOWRAP_OFF
 		incoming.add_theme_color_override("font_color", CombatActorMeter.INK)
 		content.add_child(incoming)
-	var buttons := HBoxContainer.new()
+	var buttons := HFlowContainer.new()
 	buttons.name = "StatusButtons"
 	buttons.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	buttons.focus_mode = Control.FOCUS_NONE
-	buttons.add_theme_constant_override("separation", 2)
+	buttons.add_theme_constant_override("h_separation", CHIP_SEPARATION)
+	buttons.add_theme_constant_override("v_separation", CHIP_ROW_SEPARATION)
 	content.add_child(buttons)
 	buttons.hide()
 	for index in range(STATUS_BUTTONS):
@@ -361,19 +368,20 @@ func _make_ribbon(meter: CombatActorMeter, side: String) -> void:
 
 
 ## Small sewn chip: pointer-hoverable for its rules, never focusable or activating.
-## The label is sized by the container and never clipped, so shortening the text is the
-## only way a chip can lose information; `_fit_chips` keeps every name and count whole.
+## The label takes its own measured width inside the wrapping row, so the chip never
+## squeezes or clips its text; the layout below only ever shortens or shrinks the text
+## when a single complete chip cannot fit the actor's slot at all.
 func _make_status_button(index: int) -> Button:
 	var button := Button.new()
 	button.name = "StatusButton%d" % (index + 1)
 	button.focus_mode = Control.FOCUS_NONE
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
 	button.mouse_default_cursor_shape = Control.CURSOR_HELP
-	button.custom_minimum_size = Vector2(0, 18)
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size = Vector2(0, _chip_height(READABLE_CHIP_FONT))
+	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	button.clip_text = false
 	button.autowrap_mode = TextServer.AUTOWRAP_OFF
-	button.add_theme_font_size_override("font_size", CHIP_FONT_SIZES[0])
+	button.add_theme_font_size_override("font_size", READABLE_CHIP_FONT)
 	button.add_theme_color_override("font_color", CombatActorMeter.INK)
 	button.add_theme_color_override("font_hover_color", CombatActorMeter.INK)
 	button.add_theme_color_override("font_pressed_color", CombatActorMeter.INK)
@@ -650,9 +658,10 @@ func _incoming_text(hero: Dictionary, forecast: Dictionary, position: int) -> St
 		"Incoming: %d Block, %d HP" % [next["block_absorbed"], next["hp_lost"]])
 
 
-## One chip row per ribbon: authoritative counts and a clear fallen badge.
-## Four entries (a fallen actor that keeps all three stacks) use compact labels and the
-## largest font size whose complete labels fit the ribbon, so nothing is truncated.
+## One chip flow per ribbon: authoritative counts and a clear fallen badge.
+## The complete labels are laid out at the readable size first and wrap inside the
+## actor's own ribbon width; only a slot narrower than one whole chip falls back to the
+## compact name or a smaller size, and a chip never clips its own text.
 func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: String,
 		incoming: Label, ribbon_width: float) -> void:
 	var entries: Array[Dictionary] = []
@@ -667,10 +676,11 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 				"full": "%s %d" % [String(key).capitalize(), count],
 				"short": "%s %d" % [STATUS_SHORT[key], count]})
 	var tooltip := _compose_tooltip(meter, incoming)
-	var buttons := meter.get_node("Padding/Content/StatusButtons") as HBoxContainer
-	var fit := {"texts": [], "font_size": CHIP_FONT_SIZES[0]}
+	var buttons := meter.get_node("Padding/Content/StatusButtons") as HFlowContainer
+	var fit: Dictionary = {"texts": [], "font_size": READABLE_CHIP_FONT,
+		"chip_height": _chip_height(READABLE_CHIP_FONT), "height": 0.0}
 	if not entries.is_empty():
-		fit = _fit_chips(buttons, entries, ribbon_width)
+		fit = _layout_chips(buttons, entries, ribbon_width)
 	for index in range(buttons.get_child_count()):
 		var button := buttons.get_child(index) as Button
 		var active := index < entries.size()
@@ -685,42 +695,78 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		var font_size: int = fit["font_size"]
 		if button.get_theme_font_size("font_size") != font_size:
 			button.add_theme_font_size_override("font_size", font_size)
+		var chip_height: float = fit["chip_height"]
+		if button.custom_minimum_size.y != chip_height:
+			button.custom_minimum_size = Vector2(0, chip_height)
 		if active:
 			_set_chip_style(button, entries[index]["kind"] == "fallen")
+	# The flow reserves the rows it really uses, so a wrapped ribbon pushes the shared
+	# hand and action rows down instead of drawing its chips across them.
+	var reserved := Vector2(0, float(fit["height"]))
+	if buttons.custom_minimum_size != reserved:
+		buttons.custom_minimum_size = reserved
 	# Collapsing the whole container avoids an empty stitched box or hit target.
 	buttons.visible = not entries.is_empty()
 
 
-## Four entries can never spell every long status name in one narrow row, so they use
-## the compact labels first; otherwise full names are preferred. Both shrink the font
-## before anything could be cut off, and a chip never clips its own text.
-func _fit_chips(buttons: HBoxContainer, entries: Array[Dictionary], ribbon_width: float) -> Dictionary:
+## Height of one sewn chip at a font size: the text box plus the 1 px stitched border.
+func _chip_height(font_size: int) -> float:
+	return float(font_size + 6)
+
+
+## Width-aware chip layout. Complete names at the readable 14 px are tried first, then
+## the compact names, then smaller sizes; only the first candidate whose widest single
+## chip fits the actor's slot is used. Every chosen chip is measured, so the row can
+## never render a label wider than its own control, and the returned row count lets the
+## ribbon reserve exactly the vertical space the wrap needs.
+func _layout_chips(buttons: HFlowContainer, entries: Array[Dictionary],
+		ribbon_width: float) -> Dictionary:
 	var available := maxf(0.0, ribbon_width - RIBBON_SLOT_INSET)
-	var modes: Array = []
-	if entries.size() >= STATUS_BUTTONS:
-		modes.append(true)
-	else:
-		modes.append(false)
-		modes.append(true)
-	var narrowest: Dictionary = {}
-	for mode in modes:
-		var compact: bool = mode
+	for compact in [false, true]:
+		var texts := _chip_texts(entries, compact)
 		for size_value in CHIP_FONT_SIZES:
 			var font_size: int = size_value
-			var texts := _chip_texts(entries, compact)
-			var total := 0.0
+			var widths: Array[float] = []
+			var widest := 0.0
 			for index in range(texts.size()):
 				var button := buttons.get_child(index) as Button
 				if button.text != texts[index]:
 					button.text = texts[index]
 				if button.get_theme_font_size("font_size") != font_size:
 					button.add_theme_font_size_override("font_size", font_size)
-				total += button.get_minimum_size().x
-			total += float(CHIP_SEPARATION * (texts.size() - 1))
-			narrowest = {"texts": texts, "font_size": font_size, "compact": compact}
-			if total <= available:
-				return narrowest
-	return narrowest
+				var width := button.get_minimum_size().x
+				widths.append(width)
+				widest = maxf(widest, width)
+			if widest > available:
+				continue
+			var chip_height := _chip_height(font_size)
+			var rows := _wrapped_rows(widths, available)
+			return {"texts": texts, "font_size": font_size, "compact": compact,
+				"rows": rows, "chip_height": chip_height,
+				"height": rows * chip_height + CHIP_ROW_SEPARATION * (rows - 1)}
+	# A slot narrower than the smallest complete name still gets one chip per row at the
+	# smallest readable size; the ribbon width itself is clamped above this width.
+	var fallback := _chip_texts(entries, true)
+	var fallback_height := _chip_height(CHIP_FONT_SIZES.back())
+	return {"texts": fallback, "font_size": CHIP_FONT_SIZES.back(), "compact": true,
+		"rows": fallback.size(), "chip_height": fallback_height,
+		"height": fallback.size() * fallback_height}
+
+
+## How many chip rows the flow uses for these measured widths, matching the container's
+## left-to-right wrap order and its horizontal separation.
+func _wrapped_rows(widths: Array[float], available: float) -> int:
+	var rows := 1
+	var used := 0.0
+	for width in widths:
+		if used <= 0.0:
+			used = width
+		elif used + CHIP_SEPARATION + width <= available:
+			used += CHIP_SEPARATION + width
+		else:
+			rows += 1
+			used = width
+	return rows
 
 
 func _chip_texts(entries: Array[Dictionary], compact: bool) -> Array[String]:

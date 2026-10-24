@@ -2,9 +2,10 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
-## Four chips must share one narrow ribbon row, so a fallen actor with all three
-## stacks gets compact-but-complete names; the tooltip keeps the full ones.
-const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
+## Status chips keep their complete names at a readable size: at every normal 1280x720
+## actor width the flow lays "Bleed 3" style labels out at 14 px and wraps them onto as
+## many rows as the actor's own slot needs, reserving exactly that height.
+const READABLE_CHIP_FONT := 14
 ## The committed Block icon the mounted ribbons must display beside a positive amount.
 const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
 ## Independent literal expectations for the authored M05 HEAD/ARM/COAT rules.
@@ -105,8 +106,8 @@ func _meters(app) -> Array[CombatActorMeter]:
 	return result
 
 
-func _buttons(meter: CombatActorMeter) -> HBoxContainer:
-	return meter.get_node_or_null("Padding/Content/StatusButtons") as HBoxContainer
+func _buttons(meter: CombatActorMeter) -> HFlowContainer:
+	return meter.get_node_or_null("Padding/Content/StatusButtons") as HFlowContainer
 
 
 func _visible_buttons(meter: CombatActorMeter) -> Array[Button]:
@@ -119,6 +120,50 @@ func _visible_buttons(meter: CombatActorMeter) -> Array[Button]:
 		if button != null and button.visible:
 			shown.append(button)
 	return shown
+
+
+## Measured label widths of the pool's first `count` chips. The layout under test sets
+## their text and font size, so these are the widths it has to wrap.
+func _chip_widths(buttons: HFlowContainer, count: int) -> Array[float]:
+	var widths: Array[float] = []
+	for index in range(count):
+		var button := buttons.get_child(index) as Button
+		widths.append(button.get_minimum_size().x)
+	return widths
+
+
+func _widest(widths: Array[float]) -> float:
+	var widest := 0.0
+	for width in widths:
+		widest = maxf(widest, width)
+	return widest
+
+
+## Independent wrap oracle: the rows a left-to-right flow needs for these measured chip
+## widths inside `available` px, using the separations the mounted container really has.
+## The test counts rows itself instead of asking the presenter for its own answer.
+func _measured_rows(widths: Array[float], available: float, separation: float) -> int:
+	var rows := 1
+	var used := 0.0
+	for width in widths:
+		if used <= 0.0:
+			used = width
+		elif used + separation + width <= available + 0.001:
+			used += separation + width
+		else:
+			rows += 1
+			used = width
+	return rows
+
+
+## Distinct vertical bands the laid-out chips really occupy after a layout pass.
+func _rendered_rows(chips: Array[Button]) -> int:
+	var bands: Array[float] = []
+	for chip in chips:
+		var band := roundf(chip.position.y)
+		if not bands.has(band):
+			bands.append(band)
+	return bands.size()
 
 
 ## The live stage slot of an actor, read from the mounted stage instead of the presenter.
@@ -190,19 +235,13 @@ func _expected_incoming(actor: Dictionary, forecast: Dictionary) -> String:
 
 func _expected_chips(actor: Dictionary, side: String) -> Array[String]:
 	var chips: Array[String] = []
-	var stacks: Array[String] = []
 	if actor.hp == 0:
 		chips.append("DOWNED" if side == "hero" else "SLAIN")
 	var statuses: Dictionary = actor.get("statuses", {})
 	for key in ["bleed", "weak", "exposed"]:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
-			stacks.append(key)
-	# Four chips share one narrow row, so their labels are compact but complete.
-	var compact := chips.size() + stacks.size() > 3
-	for key in stacks:
-		var count: int = statuses[key]
-		chips.append("%s %d" % [STATUS_SHORT[key] if compact else String(key).capitalize(), count])
+			chips.append("%s %d" % [String(key).capitalize(), count])
 	return chips
 
 
@@ -334,7 +373,7 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 		and content.find_children("ModifierExplanation", "Label", false, false).size() == 1
 		and content.find_children("BleedWarning", "Label", false, false).size() == 1
 		and content.find_children("IncomingForecast", "Label", false, false).size() == (1 if side == "hero" else 0)
-		and content.find_children("StatusButtons", "HBoxContainer", false, false).size() == 1
+		and content.find_children("StatusButtons", "HFlowContainer", false, false).size() == 1
 		and content.find_children("PatchButtons", "HBoxContainer", false, false).size() == (1 if side == "hero" else 0),
 		"one of each named snapshot child per mounted ribbon: " + meter.name)
 	_check(content.find_children("HPText", "Label", false, false).is_empty()
@@ -388,6 +427,14 @@ func _assert_ribbon(app, meter: CombatActorMeter, actor: Dictionary, side: Strin
 			"visible status chip is hoverable by pointer: " + meter.name)
 		_check(button.tooltip_text == expected_tooltip,
 			"exact combined hover text on '%s': %s" % [button.text, meter.name])
+		# Every normal 1280x720 slot keeps the complete name at the readable size; the
+		# flow may wrap, but it never narrows or truncates a mounted chip.
+		_check(button.get_theme_font_size("font_size") >= READABLE_CHIP_FONT,
+			"mounted chip keeps a %d px or larger font at this actor width: %s" % [
+				READABLE_CHIP_FONT, meter.name])
+		_check(not button.clip_text and button.get_minimum_size().x <= button.size.x + 0.5,
+			"mounted chip renders its complete label inside its own width: %s min=%s size=%s" % [
+				button.text, button.get_minimum_size(), button.size])
 	_check(texts == chips, "status chips match the authoritative counts %s: %s" % [str(chips), meter.name])
 	# Semantic slot identity only: the mounted ribbon belongs to this actor's side and
 	# position, and the actor drawn in that stage slot is the same authoritative actor.
@@ -429,7 +476,8 @@ func _assert_block_icon(meter: CombatActorMeter, actor: Dictionary) -> void:
 
 
 ## Four-chip ribbon: a fallen actor keeps all three stacks, so every chip must show its
-## complete name and count inside its own rendered width instead of being clipped.
+## complete name and count inside its own rendered width instead of being clipped, and
+## the wrapped flow must never push a chip outside the ribbon that owns it.
 func _assert_dense_chips(meter: CombatActorMeter, actor: Dictionary, side: String,
 		expected: Array[String]) -> void:
 	var shown := _visible_buttons(meter)
@@ -438,14 +486,19 @@ func _assert_dense_chips(meter: CombatActorMeter, actor: Dictionary, side: Strin
 	for button in shown:
 		texts.append(button.text)
 		_check(not button.clip_text, "dense chip never clips its label: " + button.text)
-		_check(button.get_theme_font_size("font_size") >= 10,
-			"dense chip keeps a legible font size: " + button.text)
+		_check(button.get_theme_font_size("font_size") >= READABLE_CHIP_FONT,
+			"dense chip keeps the readable %d px font: %s" % [READABLE_CHIP_FONT, button.text])
 		_check(button.get_minimum_size().x <= button.size.x + 0.5,
 			"dense chip renders its complete label inside its own width: " + button.text)
 		_check(button.size.x > 0.0 and button.size.y > 0.0,
 			"dense chip has a real rendered area: " + button.text)
+		_check(button.mouse_filter == Control.MOUSE_FILTER_STOP
+			and button.focus_mode == Control.FOCUS_NONE,
+			"dense chip keeps its hover target and stays keyboard-inert: " + button.text)
 	_check(texts == expected, "every dense chip keeps its name and count %s: %s" % [str(expected), meter.name])
 	_check(texts == _expected_chips(actor, side), "dense chips mirror the authoritative stacks: " + meter.name)
+	_check(not shown.is_empty() and shown[0].text in ["DOWNED", "SLAIN"],
+		"the fallen cue is the first dense chip: " + meter.name)
 	if shown.size() == 4:
 		var fallen_style := shown[0].get_theme_stylebox("normal") as StyleBoxFlat
 		var stack_style := shown[1].get_theme_stylebox("normal") as StyleBoxFlat
@@ -463,13 +516,47 @@ func _assert_no_duplicate_rule_tooltips(app) -> void:
 			continue
 		carriers += 1
 		_check(control is Button and control.is_visible_in_tree()
-			and control.get_parent() is HBoxContainer and control.get_parent().name == "StatusButtons",
+			and control.get_parent() is HFlowContainer and control.get_parent().name == "StatusButtons",
 			"status rules live only on a visible chip, never a duplicate stage control")
 	var expected_carriers := 0
 	for meter in _meters(app):
 		expected_carriers += _visible_buttons(meter).size()
 	_check(carriers == expected_carriers,
 		"only real mounted status chips carry tooltips, with no neutral or duplicate controls")
+
+
+## Every visible chip of every mounted ribbon stays wholly inside its own ribbon, keeps
+## a real pointer target, and never crosses the shared hand, the action buttons or
+## another actor's ribbon - whether the flow used one row or wrapped onto more.
+func _assert_chip_geometry(app) -> void:
+	var meters := _meters(app)
+	var viewport := Rect2(Vector2.ZERO, Vector2(root.size))
+	for meter in meters:
+		var ribbon := meter.get_global_rect()
+		var chips := _visible_buttons(meter)
+		for chip in chips:
+			var rect := chip.get_global_rect()
+			_check(rect.has_area() and viewport.encloses(rect),
+				"status chip stays inside the window: %s/%s" % [meter.name, chip.text])
+			_check(ribbon.grow(1.0).encloses(rect),
+				"status chip stays inside its own actor ribbon: %s/%s" % [meter.name, chip.text])
+			_check(chip.mouse_filter == Control.MOUSE_FILTER_STOP
+				and chip.get_minimum_size().x <= chip.size.x + 0.5
+				and chip.get_minimum_size().y <= chip.size.y + 0.5,
+				"status chip keeps a complete hover target at its rendered size: %s" % chip.text)
+			_check(not rect.intersects(app.hand_view.get_global_rect())
+				and not rect.intersects(app.end_turn_button.get_global_rect())
+				and not rect.intersects(app.return_button.get_global_rect()),
+				"status chip never covers the shared hand or the action buttons: " + chip.text)
+			for other in meters:
+				if other == meter:
+					continue
+				_check(not rect.intersects(other.get_global_rect()),
+					"status chip never spills into another actor's ribbon: %s/%s" % [meter.name, chip.text])
+		for index in range(chips.size()):
+			for other in range(index):
+				_check(not chips[index].get_global_rect().intersects(chips[other].get_global_rect()),
+					"separate status chips never overlap each other: " + meter.name)
 
 
 func _visible(app) -> void:
@@ -492,6 +579,7 @@ func _visible(app) -> void:
 		"exactly one mounted ribbon row per battle")
 	_check(app.end_turn_button.focus_next == app.end_turn_button.get_path_to(app.return_button), "existing Tab cycle")
 	_assert_no_duplicate_rule_tooltips(app)
+	_assert_chip_geometry(app)
 
 
 func _key(code: Key) -> void:
@@ -771,6 +859,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 			app.enemies._enemies[index] = enemy_turn["actors"][index].duplicate(true)
 		var after_owner_turn := _state(app)
 		presenter._sync_battle()
+		await _frames() # FlowContainer applies changed chip widths on its layout pass.
 		_visible(app)
 		_check(_state(app) == after_owner_turn,
 			"post-owner-boundary visual refresh never applies a second Bleed tick")
@@ -816,7 +905,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 	presenter._sync_battle()
 	await _frames()
 	_visible(app)
-	_assert_dense_chips(meters[3], dense, "enemy", ["SLAIN", "Ble 3", "Wea 1", "Exp 2"])
+	_assert_dense_chips(meters[3], dense, "enemy", ["SLAIN", "Bleed 3", "Weak 1", "Exposed 2"])
 	var dense_chips := _visible_buttons(meters[3])
 	if dense_chips.size() == 4:
 		await _hover(dense_chips[3])
@@ -824,6 +913,9 @@ func _exercise_live_bleed(app, presenter) -> void:
 			and dense_chips[3].tooltip_text == _expected_tooltip(dense, "enemy", _forecast(app))
 			and dense_chips[3].tooltip_text == "Statuses: Bleed 3 · Weak 1 · Exposed 2",
 			"hovering the dense fallen chip exposes the full status names")
+	# Width-aware flow: the same four complete chips reflow inside a narrow slot instead
+	# of shrinking or clipping, and the ribbon reserves exactly the rows it uses.
+	await _assert_wrapped_chips(app, presenter, meters[3], dense)
 	# Restore the identical authoritative session so the existing attack/replay
 	# assertions still run on the authored opening state, not synthetic combat.
 	for index in range(3):
@@ -831,6 +923,7 @@ func _exercise_live_bleed(app, presenter) -> void:
 	for index in range(2):
 		app.enemies._enemies[index] = original_enemies[index].duplicate(true)
 	presenter._sync_battle()
+	await _frames()
 	_visible(app)
 	_check(_state(app) == before and incoming_before != [],
 		"live status probe restores complete authored combat, intents, deck and RNG")
@@ -840,6 +933,151 @@ func _exercise_live_bleed(app, presenter) -> void:
 			and meters[index].modifier_explanation.text.is_empty()
 			and not meters[index].modifier_explanation.visible,
 			"clearing real statuses immediately hides every old warning")
+
+
+## The width-aware chip flow of one mounted ribbon. The complete fallen/chip set keeps
+## its 14 px names at the real actor width, wraps onto as many rows as its own measured
+## chip widths need while reserving exactly that height, stays unclipped with a real
+## hover target, and only a slot below the ribbon's own 84 px floor may fall back to the
+## compact name. The test counts the rows itself from the measured chips; a second
+## readable row at a dense actor width is valid, so nothing here demands one row.
+func _assert_wrapped_chips(app, presenter, meter: CombatActorMeter, actor: Dictionary) -> void:
+	var buttons := _buttons(meter)
+	var before := _state(app)
+	var expected := _expected_chips(actor, "enemy")
+	var entries: Array[Dictionary] = []
+	entries.append({"kind": "fallen", "full": expected[0], "short": expected[0]})
+	var statuses: Dictionary = actor.get("statuses", {})
+	for key in ["bleed", "weak", "exposed"]:
+		entries.append({"kind": key,
+			"full": "%s %d" % [String(key).capitalize(), statuses[key]],
+			"short": "%s %d" % [String(key).capitalize().substr(0, 3), statuses[key]]})
+	var wide: Dictionary = presenter._layout_chips(buttons, entries, 200.0)
+	var h_separation := float(buttons.get_theme_constant("h_separation"))
+	var row_gap := float(buttons.get_theme_constant("v_separation"))
+	var wide_available: float = 200.0 - presenter.RIBBON_SLOT_INSET
+	var wide_widths := _chip_widths(buttons, entries.size())
+	var wide_widest := _widest(wide_widths)
+	var wide_rows := _measured_rows(wide_widths, wide_available, h_separation)
+	_check(wide["font_size"] >= READABLE_CHIP_FONT and wide["compact"] == false
+		and wide["texts"] == expected and wide_widest > 0.0
+		and wide_widest <= wide_available + 0.5
+		and wide_rows >= 1 and wide_rows <= entries.size(),
+		"the normal actor width keeps all four complete names at the readable size")
+	_check(wide["rows"] == wide_rows
+		and is_equal_approx(wide["height"],
+			wide_rows * wide["chip_height"] + row_gap * float(wide_rows - 1))
+		and wide["height"] >= wide_rows * wide["chip_height"],
+		"the normal-width flow wraps exactly the rows its measured chips need and reserves them")
+	var narrow: Dictionary = presenter._layout_chips(buttons, entries, 96.0)
+	var narrow_available: float = 96.0 - presenter.RIBBON_SLOT_INSET
+	var narrow_rows := _measured_rows(_chip_widths(buttons, entries.size()), narrow_available,
+		h_separation)
+	_check(narrow["font_size"] >= READABLE_CHIP_FONT and narrow["compact"] == false
+		and narrow["texts"] == expected and narrow["rows"] == narrow_rows and narrow_rows >= 2
+		and is_equal_approx(narrow["height"],
+			narrow_rows * narrow["chip_height"] + row_gap * float(narrow_rows - 1))
+		and narrow["height"] > narrow["chip_height"],
+		"a narrow actor slot wraps the same complete chips onto further readable rows")
+	# The presenter itself applies that layout: complete labels, 14 px, measured to fit.
+	presenter._sync_status_buttons(meter, actor, "enemy", null, 96.0)
+	_check(buttons.custom_minimum_size.y == narrow["height"]
+		and buttons.custom_minimum_size.y > narrow["chip_height"],
+		"the wrapped ribbon reserves the extra rows it really uses")
+	var texts: Array[String] = []
+	var widest := 0.0
+	for button in _visible_buttons(meter):
+		texts.append(button.text)
+		widest = maxf(widest, button.get_minimum_size().x)
+		_check(not button.clip_text
+			and button.get_theme_font_size("font_size") >= READABLE_CHIP_FONT
+			and button.get_minimum_size().x <= 96.0 - 4.0 + 0.5
+			and button.mouse_filter == Control.MOUSE_FILTER_STOP
+			and button.tooltip_text.contains("Statuses:"),
+			"a wrapped chip keeps its complete text, readable font and hover target: " + button.text)
+	_check(texts == expected and widest > 0.0 and widest <= 92.0,
+		"every wrapped chip is measured inside the narrow slot, never clipped")
+	# The narrowest slot the real stage can produce still keeps complete 14 px names.
+	var floor_layout: Dictionary = presenter._layout_chips(buttons, entries,
+		presenter.RIBBON_MIN_WIDTH)
+	_check(floor_layout["font_size"] >= READABLE_CHIP_FONT and not floor_layout["compact"]
+		and floor_layout["texts"] == expected and floor_layout["rows"] >= 2,
+		"even the narrowest real ribbon keeps the complete names at 14 px by wrapping")
+	# Below that floor the compact fallback keeps a complete count on every chip.
+	var tiny: Dictionary = presenter._layout_chips(buttons, entries, 40.0)
+	_check(tiny["compact"] and tiny["font_size"] >= 11 and tiny["rows"] == 4
+		and tiny["texts"] == ["SLAIN", "Ble 3", "Wea 1", "Exp 2"],
+		"below the ribbon floor the compact fallback keeps every count, never a blank chip")
+	presenter._sync_battle()
+	await _frames()
+	_visible(app)
+	var restored := _visible_buttons(meter)
+	var restored_texts: Array[String] = []
+	for button in restored:
+		restored_texts.append(button.text)
+	var restored_rows := _rendered_rows(restored)
+	var restored_chip_height := restored[0].size.y if restored.size() == entries.size() else 0.0
+	var restored_height := restored_chip_height * float(restored_rows) \
+		+ row_gap * float(restored_rows - 1)
+	var restored_measured := _measured_rows(_chip_widths(buttons, entries.size()),
+		buttons.size.x, h_separation)
+	_check(_state(app) == before and restored.size() == 4 and restored_texts == expected,
+		"the narrow probe restores the real-width chips without spending or mutating combat")
+	_check(restored_rows >= 1 and restored_rows == restored_measured
+		and is_equal_approx(buttons.custom_minimum_size.y, restored_height)
+		and buttons.size.y >= restored_height - 0.5,
+		"the restored real-width flow wraps its measured rows and reserves exactly that height")
+	# Each restored chip stays a distinct hover target inside its own ribbon, inside the
+	# window and clear of the shared hand, the action buttons and its sibling chips.
+	for chip in restored:
+		await _hover(chip)
+		_check(root.gui_get_hovered_control() == chip
+			and chip.tooltip_text == _expected_tooltip(actor, "enemy", _forecast(app)),
+			"each restored chip is its own hover target with the full rules: " + chip.text)
+		_check(meter.get_global_rect().grow(1.0).encloses(chip.get_global_rect())
+			and buttons.get_global_rect().grow(1.0).encloses(chip.get_global_rect())
+			and Rect2(Vector2.ZERO, Vector2(root.size)).encloses(chip.get_global_rect())
+			and not chip.get_global_rect().intersects(app.hand_view.get_global_rect())
+			and not chip.get_global_rect().intersects(app.end_turn_button.get_global_rect())
+			and not chip.get_global_rect().intersects(app.return_button.get_global_rect()),
+			"restored chip stays inside its ribbon and clear of the shared hand: " + chip.text)
+	for index in range(restored.size()):
+		for other in range(index):
+			_check(not restored[index].get_global_rect().intersects(
+				restored[other].get_global_rect()),
+				"restored wrapped chips never overlap each other: " + restored[index].text)
+	# Exercise wrapping through the genuine mounted refresh too: larger valid counts
+	# require extra rows at the actual actor width without substituting a test presenter.
+	# Two readable rows are the correct outcome here, so the check measures the rendered
+	# bands and requires the ribbon to reserve exactly those rows.
+	var position: int = actor["position"]
+	_check(app.enemies.apply_statuses({position: {"bleed": 12345, "weak": 12345,
+		"exposed": 12345}}), "real status API supplies a non-vacuous mounted wrap case")
+	var wrapped_state := _state(app)
+	await _frames()
+	_visible(app)
+	var wrapped := _visible_buttons(meter)
+	var wrapped_rows := _rendered_rows(wrapped)
+	var wrapped_chip_height := wrapped[0].size.y if wrapped.size() == 4 else 0.0
+	var wrapped_height := wrapped_chip_height * float(wrapped_rows) \
+		+ row_gap * float(wrapped_rows - 1)
+	_check(wrapped.size() == 4 and wrapped_rows >= 2
+		and wrapped_rows == _measured_rows(_chip_widths(buttons, entries.size()),
+			buttons.size.x, h_separation)
+		and is_equal_approx(buttons.custom_minimum_size.y, wrapped_height)
+		and buttons.size.y >= wrapped_height - 0.5
+		and presenter.row.custom_minimum_size.y >= meter.get_combined_minimum_size().y,
+		"actual slot width wraps all four mounted chips onto its measured rows and reserves them")
+	for chip in wrapped:
+		await _hover(chip)
+		_check(root.gui_get_hovered_control() == chip
+			and chip.tooltip_text == _expected_tooltip(app.enemies.get_enemy(position), "enemy", _forecast(app)),
+			"every mounted wrapped chip retains its complete hover tooltip: " + chip.text)
+	_check(_state(app) == wrapped_state, "mounted wrap and hover preserve combat, deck and RNG")
+	app.enemies._enemies[position - 1] = actor.duplicate(true)
+	await _frames()
+	_visible(app)
+	_check(_state(app) == before, "mounted wrap fixture restores the identical authoritative state")
 
 
 func _run() -> void:
@@ -995,7 +1233,7 @@ func _run() -> void:
 		await _frames()
 		_visible(app)
 		var downed: Dictionary = app.party.get_hero(2)
-		_assert_dense_chips(_meters(app)[1], downed, "hero", ["DOWNED", "Ble 3", "Wea 1", "Exp 2"])
+		_assert_dense_chips(_meters(app)[1], downed, "hero", ["DOWNED", "Bleed 3", "Weak 1", "Exposed 2"])
 		var downed_dense := _visible_buttons(_meters(app)[1])
 		if downed_dense.size() == 4:
 			await _hover(downed_dense[2])
@@ -1409,7 +1647,7 @@ func _three_enemy_stage(app, presenter) -> void:
 	var fallen: Dictionary = app.enemies.get_enemy(2)
 	_check(fallen["hp"] == 0 and fallen["statuses"] == {"bleed": 3, "weak": 1, "exposed": 2},
 		"the slain three-enemy slot keeps all three stacks")
-	_assert_dense_chips(_meters(app)[4], fallen, "enemy", ["SLAIN", "Ble 3", "Wea 1", "Exp 2"])
+	_assert_dense_chips(_meters(app)[4], fallen, "enemy", ["SLAIN", "Bleed 3", "Weak 1", "Exposed 2"])
 	var fallen_chips := _visible_buttons(_meters(app)[4])
 	if fallen_chips.size() == 4:
 		await _hover(fallen_chips[1])
