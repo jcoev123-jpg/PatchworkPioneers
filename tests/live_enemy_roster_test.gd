@@ -1124,15 +1124,15 @@ func _caption_legibility(app, presenter) -> void:
 	_check(_badge_icon_fits(badge, "res://assets/paper/ui/intent_debuff.png")
 		and badge.caption_rect().position.x > badge.patch_rect().end.x,
 		"the long debuff caption keeps its committed icon art visible beside it")
-	# A long shove caption with the longest policy label: still inside the same band.
+	# A long shove caption with the longest targeting cue: still inside the same band.
 	badge.show_intent({"type": "shove", "amount": 0, "target_position": 3,
 		"direction": -1}, false, false, "lowest_living_hp")
 	_check(badge.readable_text == "Shove 3 forward" and badge.icon_mode == "shove"
-		and badge.target_position == 3 and badge.policy_cue == "Low HP"
+		and badge.target_position == 3 and badge.policy_cue == "Aim low HP"
 		and _caption_fits(badge) and _badge_icon_fits(badge, ""),
-		"a long shove caption fits beside its policy and keeps the sewn glyph")
-	_check(badge.tooltip_text == "Push front Hero 3 (back).\nTarget policy (LOW HP): aims at the living hero with the lowest HP.",
-		"shove with lowest_living_hp policy explains push front, hero target and lowest HP policy")
+		"a long shove caption fits beside its aiming ticket and keeps the sewn glyph")
+	_check(badge.tooltip_text == "Push front Hero 3 (back).\nTarget policy (AIM LOW HP): aims at the living hero with the lowest current HP.",
+		"shove with lowest_living_hp policy explains push front, hero target and current-HP aiming")
 	# Unavailable icon art: the real missing-image fallback still paints the same readable
 	# caption, plaque, policy ticket and sewn glyph from the same authoritative text.
 	var saved_root: String = badge.icon_root
@@ -1233,6 +1233,18 @@ func _badge_icon_fits(badge, path: String) -> bool:
 		and is_equal_approx(drawn.size.x / drawn.size.y, pixels.x / pixels.y) \
 		and badge.icon_rect().grow(0.01).encloses(drawn) \
 		and badge.patch_rect().grow(0.01).encloses(drawn)
+
+
+## The compact form the badge really displays beside its targeting ticket: the first authored
+## form that measures inside the room left at the 14 px action floor, else the tight form.
+## Measured with the theme body face, independently of the badge's own compact-form method.
+func _fitted_compact(badge, spaced: String, tight: String) -> String:
+	var font: Font = badge.get_theme_default_font()
+	var room: float = badge.caption_text_area().size.x
+	if font != null and room > 0.0 and font.get_string_size(spaced,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, LiveEnemyIntentBadge.COMPACT_MIN_FONT).x <= room:
+		return spaced
+	return tight
 
 
 ## The mounted caption really fits: its painted text measures inside the caption room at the
@@ -2777,28 +2789,37 @@ func _policy_cue_cases(app, presenter) -> void:
 			var target: int = action.get("target_position", 0)
 			var original_caption := ""
 			var compact_caption := ""
+			var tight_caption := ""
 			match action.type:
 				"attack":
 					original_caption = "Hit %d: %s" % [action.amount, {1: "Front", 2: "Middle", 3: "Back"}.get(target, "")]
 					compact_caption = "Hit %d → %d" % [action.amount, target]
+					tight_caption = "Hit %d→%d" % [action.amount, target]
 				"block": original_caption = "Block +%d" % action.amount
 				"buff": original_caption = "Buff +%d Block" % action.amount
 				"debuff":
 					original_caption = "%s %d: %s" % [action.status.capitalize(), action.amount, {1: "Front", 2: "Middle", 3: "Back"}[target]]
 					compact_caption = "%s %d → %d" % [action.status.capitalize(), action.amount, target]
+					tight_caption = "%s %d→%d" % [action.status.capitalize(), action.amount, target]
 				"shove":
 					original_caption = "Shove %s %s" % [{1: "Front", 2: "Middle", 3: "Back"}[target], "back" if action.direction == 1 else "forward"]
 					compact_caption = "Shove %d %s" % [target, "back" if action.direction == 1 else "forward"]
-			var expected_cue: String = {"front": "Front", "lowest_living_hp": "Low HP", "exposed": "Exposed", "random": "Random"}.get(expected_policy, "") \
+					tight_caption = "Shove %d %s" % [target, "back" if action.direction == 1 else "fwd"]
+			var expected_cue: String = {"front": "Front", "lowest_living_hp": "Aim low HP", "exposed": "Exposed", "random": "Random"}.get(expected_policy, "") \
 				if action.type in ["attack", "debuff", "shove"] else ""
-			var expected_caption: String = original_caption if expected_cue.is_empty() else compact_caption
+			# The displayed compact form is the first one that measures inside the room left
+			# beside the widened aiming ticket, measured here with the same body face at the
+			# 14 px action floor; the tight form is the measured fallback.
+			var expected_caption: String = original_caption if expected_cue.is_empty() \
+				else _fitted_compact(badge, compact_caption, tight_caption)
 			_check(badge.policy_cue == expected_cue and badge.readable_text == expected_caption
 				and badge.intent_type == action.type and badge.amount == action.amount
-				and badge.target_position == target and badge.source_position == position,
+				and badge.target_position == target and badge.source_position == position
+				and _caption_fits(badge),
 				"%s action preserves exact caption/target and policy_for original slot %d" % [policy, position])
 			var policy_descs := {
 				"front": "picks the front living hero",
-				"lowest_living_hp": "aims at the living hero with the lowest HP",
+				"lowest_living_hp": "aims at the living hero with the lowest current HP",
 				"exposed": "prioritises an Exposed living hero",
 				"random": "uses the run-seeded target choice"
 			}
@@ -2806,6 +2827,24 @@ func _policy_cue_cases(app, presenter) -> void:
 				_check(badge.tooltip_text.contains(LiveEnemyIntentBadge.hero_target_label(target))
 					and badge.tooltip_text.contains("Target policy (%s): %s." % [expected_cue.to_upper(), policy_descs[expected_policy]]),
 					"targeted action tooltip explains target and policy for original slot %d" % position)
+				if expected_policy == "lowest_living_hp":
+					# AC1: the acting enemy is at full health here, so the aiming ticket can
+					# only describe whom that enemy is going to hit: the living hero with the
+					# lowest current HP, read independently from the real party.
+					var acting: Dictionary = app.enemies.get_enemy(position)
+					var lowest: int = 0
+					for hero_position in range(1, CombatParty.PARTY_SIZE + 1):
+						var hero: Dictionary = app.party.get_hero(hero_position)
+						if hero.get("hp", 0) <= 0:
+							continue
+						if lowest == 0 or hero.get("hp", 0) < app.party.get_hero(lowest).get("hp", 0):
+							lowest = hero_position
+					_check(acting.get("hp") == acting.get("max_hp")
+						and badge.policy_cue == "Aim low HP"
+						and badge.tooltip_text.contains(
+							"aims at the living hero with the lowest current HP")
+						and target == lowest and lowest != 0,
+						"full-health enemy shows Aim low HP for the lowest-current-HP hero, not its own health")
 			else:
 				_check(badge.tooltip_text.contains("Block on the acting enemy")
 					and not badge.tooltip_text.contains("Target policy"),

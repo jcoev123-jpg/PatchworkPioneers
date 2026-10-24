@@ -31,14 +31,19 @@ const HEADING_FONT_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## A caption shown beside a policy ticket is already compact, so it never shrinks below
 ## this floor: the amount and destination stay readable next to the 13 px ticket.
 const COMPACT_MIN_FONT := 14
-## Caption layout in badge coordinates, right of the unchanged sewn patch.
-const CAPTION_LEFT := 61.0
-const CAPTION_MARGIN := 4.0
-const CAPTION_PAD := 5.0
+## Caption layout in badge coordinates, right of the unchanged sewn patch. The targeting
+## ticket now spells out "Aim low HP" instead of reading like a health status, so the sewn
+## insets are a couple of pixels tighter than before: at the narrowest real 192 px band the
+## longest authored debuff caption still fits at the 14 px action floor (its measured ladder
+## steps to the tight "Exposed 2→2" form), and the plaque keeps a 1 px stitched seam clear
+## of the ticket.
+const CAPTION_LEFT := 59.0
+const CAPTION_MARGIN := 2.0
+const CAPTION_PAD := 3.0
 const CAPTION_TOP := 1.0
 const CAPTION_BOTTOM := 1.0
-const POLICY_PAD := 4.0
-const POLICY_GAP := 5.0
+const POLICY_PAD := 3.0
+const POLICY_GAP := 2.0
 ## Compact sewn tag: the roster mounts it with a viewport-safe margin inside the intent band.
 const BADGE_WIDTH := 192.0
 const BADGE_HEIGHT := 28.0
@@ -73,11 +78,13 @@ var action_status := ""
 var shove_direction := 0
 ## Empty unless a valid mounted weighted action supplies its real policy.
 var policy_cue := ""
-const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Low HP",
+const POLICY_LABELS := {"front": "Front", "lowest_living_hp": "Aim low HP",
 	"exposed": "Exposed", "random": "Random"}
+## The hover explains the priority in full words, naming the hero and its *current* HP: this
+## cue is about the target, never about the acting enemy's own health or a Weak status.
 const POLICY_DESCRIPTIONS := {
 	"front": "picks the front living hero",
-	"lowest_living_hp": "aims at the living hero with the lowest HP",
+	"lowest_living_hp": "aims at the living hero with the lowest current HP",
 	"exposed": "prioritises an Exposed living hero",
 	"random": "uses the run-seeded target choice",
 }
