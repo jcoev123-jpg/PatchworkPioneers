@@ -39,7 +39,7 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 		if kind == "Boss":
 			if prefix.size() == 12 and next.get("Fight", 0) == 2 and next.get("Elite", 0) == 1 \
 				and next.get("Rest", 0) >= 2 and next.get("Shop", 0) > 0 \
-				and next.get("Event", 0) + next.get("Treasure", 0) > 0:
+				and next.get("Event", 0) >= 2:
 				return prefix
 			continue
 		var found := _search(map, node.outgoing, prefix, next)
@@ -49,7 +49,7 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	for value in range(4, SEED_LIMIT + 1):
+	for value in range(8, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
