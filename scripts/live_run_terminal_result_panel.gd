@@ -3,6 +3,8 @@ extends Control
 ## Standalone M03 terminal presentation. An external host owns mounting and
 ## title/new-run navigation; this view only requests the return action.
 ## Never observes combat or advances, settles or mutates a run.
+## The settled result keeps its genuine counters and adds one sewn ribbon per
+## hero, so the party's HP, permanent tears and worn patch names are readable.
 
 signal return_to_title_requested
 
@@ -41,6 +43,16 @@ const UNAVAILABLE := "Summary unavailable"
 const NO_PATCHES := "no patches"
 ## The one badge a hero receives for authenticated zero HP.
 const TORN_BADGE := "TORN"
+## The three sewn hero ribbons. Each keeps a heading name and a body detail
+## line at or above the 18 px floor, on the same cream felt used by the kept
+## sewn-card rows, so the recap reads as part of the patchwork result.
+const HERO_NAME_FONT_SIZE := 20
+const HERO_DETAIL_FONT_SIZE := 18
+const HERO_NAME_WIDTH := 132.0
+const HERO_ROW_BG := Color("#f2e5cb")
+const HERO_ROW_BORDER := Color("#8d7560")
+const HERO_NAME_INK := Color("#28363c")
+const HERO_DETAIL_INK := Color("#334750")
 
 @onready var backdrop_art: TextureRect = $ResultBackdropArt
 @onready var felt_mat: PanelContainer = $FeltMat
@@ -48,6 +60,9 @@ const TORN_BADGE := "TORN"
 @onready var title_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultTitle
 @onready var description_label: Label = $PaperPanel/ContentMargin/ResultContent/ResultDescription
 @onready var summary_label: Label = $PaperPanel/ContentMargin/ResultContent/RunSignature
+@onready var hero_recap: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap
+@onready var hero_recap_title: Label = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRecapTitle
+@onready var hero_rows: VBoxContainer = $PaperPanel/ContentMargin/ResultContent/HeroRecap/HeroRows
 @onready var return_button: Button = $PaperPanel/ContentMargin/ResultContent/ReturnButton
 @onready var top_stitches: Label = $PaperPanel/ContentMargin/ResultContent/TopStitches
 @onready var bottom_stitches: Label = $PaperPanel/ContentMargin/ResultContent/BottomStitches
@@ -96,10 +111,13 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	var battles_resolved: int = (settled as Array).size()
 	var signature: Dictionary = _validated_signature()
 	_can_return = signature.get("ok") == true
+	# One successful signature fills both the counters and the three hero
+	# ribbons: no second read, and no row is published from a partial result.
+	var hero_recaps: Array = _validated_hero_rows(signature) if _can_return else []
 	# The ledger may only be shown whole: a formatter that cannot render every
 	# proven row (including each hero's tears) fails closed with the same text.
 	var signature_text := _format_signature(signature) if _can_return else UNAVAILABLE
-	if signature_text == UNAVAILABLE:
+	if signature_text == UNAVAILABLE or hero_recaps.size() != RunSignatureSummary.HERO_IDS.size():
 		_can_return = false
 	var top_ledger := "Battles resolved: %d · Gold: %d · Scraps: %d" % [
 		battles_resolved,
@@ -108,7 +126,9 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	]
 	summary_label.text = ("%s\n%s" % [top_ledger, signature_text]) if _can_return else ("Battles resolved: %d\n%s" % [battles_resolved, signature_text])
 	_clear_details()
+	_clear_hero_rows()
 	if _can_return:
+		_mount_hero_rows(hero_recaps)
 		_populate_details(signature)
 	return_button.disabled = not _can_return
 	return_button.focus_mode = Control.FOCUS_ALL if _can_return else Control.FOCUS_NONE
@@ -136,6 +156,7 @@ func close_result() -> void:
 	return_button.focus_mode = Control.FOCUS_NONE
 	return_button.release_focus()
 	_clear_details()
+	_clear_hero_rows()
 	stitched_scroll.release_focus()
 	title_label.text = ""
 	description_label.text = ""
@@ -393,13 +414,12 @@ func _scroll_details_to(offset: float) -> void:
 	stitched_scroll.scroll_vertical = int(roundf(clampf(offset, 0.0, limit)))
 
 
-## Consume the validated projection in its original hero and slot order.
-## Each hero becomes one compact player-facing recap line: name, authentic
-## current/maximum HP, the TORN badge only while that hero's HP is zero, the
-## hero's genuine by-ID tear count stated exactly once, and then only the slots
-## that hero actually wears (or a plain "no patches" phrase). Empty slot
-## placeholders, raw IDs and diagnostic keys never reach the player.
+## Consume the validated projection's genuine counters. The three hero ribbons
+## are mounted separately from the same signature; a malformed hero still fails
+## the whole block shut, so a partial result never reaches the player.
 func _format_signature(summary: Dictionary) -> String:
+	if summary.get("ok") != true:
+		return UNAVAILABLE
 	var lines: Array[String] = [
 		"Stitched: %d made · %d in deck" % [summary.stitched_created, summary.stitched_current],
 		"Patches worn: %d" % summary.worn_total,
@@ -407,23 +427,51 @@ func _format_signature(summary: Dictionary) -> String:
 	var crafted := _crafted_cards_line(summary)
 	if not crafted.is_empty():
 		lines.append(crafted)
-	for hero in summary.heroes:
-		var row := _hero_recap_line(hero)
-		if row.is_empty():
-			return UNAVAILABLE
-		lines.append(row)
+	if _validated_hero_rows(summary).size() != RunSignatureSummary.HERO_IDS.size():
+		return UNAVAILABLE
 	return "\n".join(lines)
+
+
+## Exactly three canonical hero rows in Warden/Seamstress/Tinker identity order,
+## or none at all. Party position never decides which ribbon a hero receives.
+func _validated_hero_rows(summary: Dictionary) -> Array:
+	if summary.get("ok") != true:
+		return []
+	var heroes: Variant = summary.get("heroes")
+	if typeof(heroes) != TYPE_ARRAY or heroes.size() != RunSignatureSummary.HERO_IDS.size():
+		return []
+	var rows: Array = []
+	for index in range(RunSignatureSummary.HERO_IDS.size()):
+		var hero: Variant = heroes[index]
+		if typeof(hero) != TYPE_DICTIONARY \
+				or hero.get("hero_id") != RunSignatureSummary.HERO_IDS[index]:
+			return []
+		var parts: Dictionary = _hero_recap_parts(hero)
+		if parts.is_empty():
+			return []
+		rows.append(parts)
+	return rows
 
 
 ## One hero's compact recap row. Presentation only: it re-reads the already
 ## authenticated summary and never re-resolves a patch, a tear or a card.
 func _hero_recap_line(hero: Dictionary) -> String:
+	var parts := _hero_recap_parts(hero)
+	if parts.is_empty():
+		return ""
+	return "%s %s" % [parts["name"], parts["detail"]]
+
+
+## A hero ribbon's heading name and body detail, or {} when any part of that
+## hero is malformed. Authentic current/maximum HP, the single TORN badge at
+## zero HP, the genuine by-ID tear count and only actually worn slots.
+func _hero_recap_parts(hero: Dictionary) -> Dictionary:
 	var hero_id: Variant = hero.get("hero_id")
 	if typeof(hero_id) != TYPE_STRING or not RunSignatureSummary.HERO_IDS.has(hero_id):
-		return ""
+		return {}
 	var tears: Variant = hero.get("tears")
 	if typeof(tears) != TYPE_INT or tears < 0:
-		return ""
+		return {}
 	var parts: Array[String] = []
 	# HP is optional only for an unauthenticated direct formatter call; any
 	# malformed wider value still fails the whole ledger shut.
@@ -432,26 +480,87 @@ func _hero_recap_line(hero: Dictionary) -> String:
 		var max_hp: Variant = hero.get("max_hp")
 		if typeof(hp) != TYPE_INT or typeof(max_hp) != TYPE_INT \
 				or max_hp <= 0 or hp < 0 or hp > max_hp:
-			return ""
+			return {}
 		parts.append("%d/%d HP" % [hp, max_hp])
 		if hp == 0:
 			parts.append(TORN_BADGE)
 	parts.append(_tear_label(tears))
 	var slots: Variant = hero.get("slots")
 	if not slots is Dictionary:
-		return ""
+		return {}
 	var slot_map: Dictionary = slots
 	# Every canonical slot must be an authenticated ID string before any row is
 	# published; a malformed map must not masquerade as a bare wearer.
 	for slot in RunSignatureSummary.SLOTS:
 		if typeof(slot_map.get(slot)) != TYPE_STRING:
-			return ""
+			return {}
 	var worn := _worn_slots_text(slot_map)
-	if worn.is_empty():
-		parts.append(NO_PATCHES)
-	else:
-		parts.append(worn)
-	return "%s %s" % [str(hero_id).capitalize(), " · ".join(parts)]
+	parts.append(worn if not worn.is_empty() else NO_PATCHES)
+	return {
+		"name": str(hero_id).capitalize(),
+		"detail": " · ".join(parts),
+	}
+
+
+## Sew one cream felt ribbon per authenticated hero, each with a heading name
+## and its body detail. Rows are plain mouse-transparent labels: the sole
+## interactive control on this view stays the Return button.
+func _mount_hero_rows(rows: Array) -> void:
+	_clear_hero_rows()
+	for index in range(rows.size()):
+		var parts: Dictionary = rows[index]
+		var row := PanelContainer.new()
+		row.name = "HeroRow%d" % index
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var felt := StyleBoxFlat.new()
+		felt.bg_color = HERO_ROW_BG
+		felt.border_color = HERO_ROW_BORDER
+		felt.set_border_width_all(1)
+		felt.set_corner_radius_all(5)
+		row.add_theme_stylebox_override("panel", felt)
+		var inset := MarginContainer.new()
+		inset.name = "RowInset"
+		inset.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for side in ["left", "right"]:
+			inset.add_theme_constant_override("margin_" + side, 10)
+		for side in ["top", "bottom"]:
+			inset.add_theme_constant_override("margin_" + side, 3)
+		row.add_child(inset)
+		var line := HBoxContainer.new()
+		line.name = "RowLine"
+		line.add_theme_constant_override("separation", 8)
+		inset.add_child(line)
+		var name_label := Label.new()
+		name_label.name = "HeroName"
+		name_label.text = parts["name"]
+		name_label.custom_minimum_size = Vector2(HERO_NAME_WIDTH, 0)
+		name_label.theme_type_variation = "PatchHeading"
+		name_label.add_theme_color_override("font_color", HERO_NAME_INK)
+		name_label.add_theme_font_size_override("font_size", HERO_NAME_FONT_SIZE)
+		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		line.add_child(name_label)
+		var detail_label := Label.new()
+		detail_label.name = "HeroDetail"
+		detail_label.text = parts["detail"]
+		detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		detail_label.add_theme_color_override("font_color", HERO_DETAIL_INK)
+		detail_label.add_theme_font_size_override("font_size", HERO_DETAIL_FONT_SIZE)
+		detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		detail_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		line.add_child(detail_label)
+		hero_rows.add_child(row)
+	hero_recap.visible = not rows.is_empty()
+
+
+## Remove every ribbon and hide the recap block, so a closed or refused view
+## can never show a stale hero, HP, tear or patch name.
+func _clear_hero_rows() -> void:
+	if not is_node_ready():
+		return
+	hero_recap.hide()
+	for row in hero_rows.get_children():
+		hero_rows.remove_child(row)
+		row.queue_free()
 
 
 ## Named wear entries in HEAD/ARM/COAT order. Only genuinely worn patches are
@@ -578,6 +687,11 @@ func _apply_patchwork_style() -> void:
 	stitched_heading.theme_type_variation = "PatchHeading"
 	stitched_heading.add_theme_color_override("font_color", Color("#28363c"))
 	stitched_heading.add_theme_font_size_override("font_size", DETAIL_HEADING_FONT_SIZE)
+	# The recap block's own heading uses the same sewn heading face as the kept
+	# sewn-card title, so both groups read as one patchwork ledger.
+	hero_recap_title.theme_type_variation = "PatchHeading"
+	hero_recap_title.add_theme_color_override("font_color", Color("#28363c"))
+	hero_recap_title.add_theme_font_size_override("font_size", DETAIL_HEADING_FONT_SIZE)
 	var detail_paper := StyleBoxFlat.new()
 	detail_paper.bg_color = Color("#e9dabc")
 	detail_paper.border_color = Color("#78614e")

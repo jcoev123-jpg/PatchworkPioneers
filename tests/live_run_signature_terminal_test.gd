@@ -28,6 +28,17 @@ func _check(value: bool, message: String) -> void:
 		failures.append(message)
 
 
+## Exact text of one mounted hero ribbon, assembled from its two visible labels.
+func _hero_text(row: Control) -> String:
+	if row == null:
+		return ""
+	var name_label := row.get_node_or_null("RowInset/RowLine/HeroName") as Label
+	var detail_label := row.get_node_or_null("RowInset/RowLine/HeroDetail") as Label
+	if name_label == null or detail_label == null:
+		return ""
+	return "%s %s" % [name_label.text, detail_label.text]
+
+
 func _defs(path: String) -> Array:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	_check(data is Array and not data.is_empty(), "authored combat fixture exists: " + path)
@@ -178,8 +189,9 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 		_check(value.contains("Patches worn: %d" % expected.worn_total),
 			"mounted worn total matches oracle, not inventory size")
 		var rows: PackedStringArray = value.split("\n")
-		# Independent oracle line list: two counts, one optional craft recap of
-		# the first two current stitched names, then the three hero rows.
+		# Independent oracle line list: two counts and one optional craft recap
+		# of the first two current stitched names. The hero ribbons are mounted
+		# separately, so they are compared from their own real controls below.
 		var expected_rows: Array[String] = [
 			"Stitched: %d made · %d in deck" % [expected.stitched_created, expected.stitched_current],
 			"Patches worn: %d" % expected.worn_total,
@@ -193,11 +205,12 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 			if stitched_ids.size() > names.size():
 				craft += " +%d more" % (stitched_ids.size() - names.size())
 			expected_rows.append(craft)
+		var expected_heroes: Array[String] = []
 		for i in range(3):
 			var hero: Dictionary = expected.heroes[i]
 			var hp: int = 40 if hero.hero_id == "warden" else (30 if hero.hero_id == "seamstress" else 26)
 			# This staged run never admitted a battle, so every genuine by-ID tear
-			# count is zero; the terminal row states it explicitly. Only worn
+			# count is zero; the terminal ribbon states it explicitly. Only worn
 			# patches are named, each with its own slot, and an empty wearer says
 			# so instead of printing empty slot placeholders.
 			var parts: Array[String] = ["%d/%d HP" % [hp, hp], "0 tears"]
@@ -207,15 +220,25 @@ func _show(ctx: Dictionary, title: String, expected: Dictionary) -> void:
 				if not id.is_empty():
 					worn.append("%s %s" % [slot, id.capitalize()])
 			parts.append(" · ".join(worn) if not worn.is_empty() else "no patches")
-			expected_rows.append("%s %s" % [str(hero.hero_id).capitalize(), " · ".join(parts)])
+			expected_heroes.append("%s %s" % [str(hero.hero_id).capitalize(), " · ".join(parts)])
 		_check(rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"),
-			"mounted signature has battles resolved count, two counts, one craft line per nonempty deck and three hero lines")
+			"mounted signature has battles resolved count, two counts and one craft line per nonempty deck")
 		if rows.size() == expected_rows.size() + 1 and rows[0].begins_with("Battles resolved:"):
 			for i in range(expected_rows.size()):
 				_check(rows[i + 1] == expected_rows[i],
 					"actual signature line %d matches the independent oracle" % (i + 1))
+		var ribbons := panel.hero_rows.get_children()
+		_check(panel.hero_recap.is_visible_in_tree() and ribbons.size() == expected_heroes.size()
+			and ribbons.size() == 3,
+			"three sewn hero ribbons are mounted beside the genuine counters")
+		for i in range(mini(ribbons.size(), expected_heroes.size())):
+			_check(_hero_text(ribbons[i] as Control) == expected_heroes[i],
+				"mounted hero ribbon %d matches the independent oracle" % i)
+		var recap_text := "\n".join(expected_heroes)
 		_check(not value.contains("HEAD -") and not value.contains("ARM -")
-			and not value.contains("COAT -") and not value.contains("Tears:"),
+			and not value.contains("COAT -") and not value.contains("Tears:")
+			and not recap_text.contains("HEAD -") and not recap_text.contains("ARM -")
+			and not recap_text.contains("COAT -") and not recap_text.contains("Tears:"),
 			"mounted recap prints no empty-slot or diagnostic fragments")
 	var cards: Array = expected.get("current_stitched_cards", [])
 	_check(panel.stitched_section.visible == not cards.is_empty(),
@@ -367,7 +390,8 @@ func _run() -> void:
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.return_to_title_requested.connect(func() -> void: returns += 1)
 	await process_frame
-	_check(not panel.visible and panel.summary_label.text.is_empty(), "initial view contains no summary")
+	_check(not panel.visible and panel.summary_label.text.is_empty()
+		and panel.hero_rows.get_child_count() == 0, "initial view contains no summary")
 	_stage()
 	var win := _victory()
 	var oracle: Dictionary = RunSignatureSummary.summarize(deck, descriptors, cursor, wardrobe)
@@ -381,8 +405,9 @@ func _run() -> void:
 	_check(returns == 1 and panel.return_button.disabled, "Return one-shot even under replay")
 	panel.close_result()
 	_check(panel.summary_label.text.is_empty() and not panel.stitched_section.visible
-		and panel.stitched_rows.get_child_count() == 0,
-		"closing clears signature and every stitched row")
+		and panel.stitched_rows.get_child_count() == 0
+		and not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
+		"closing clears signature, every stitched row and every hero ribbon")
 	old_callback.call()
 	_check(returns == 1, "stale prior callback cannot return again")
 	_remove_and_resew()
@@ -429,6 +454,7 @@ func _run() -> void:
 	_check(panel.summary_label.text.contains("Stitched: 0 made · 0 in deck")
 		and panel.summary_label.text.contains("Patches worn: 0")
 		and not panel.summary_label.text.contains("Summary unavailable")
+		and panel.hero_recap.visible and panel.hero_rows.get_child_count() == 3
 		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
 		"validated never-bound wardrobe reports zero worn, not owned inventory")
 	_check(_source(loss) == before and app.party_carryover._wardrobe == null,
@@ -454,7 +480,8 @@ func _run() -> void:
 		and panel.summary_label.text.ends_with("Summary unavailable"),
 		"stale bound wardrobe fails closed rather than asserting zero worn")
 	_check(panel.title_label.text == "Defeat" and panel.return_button.disabled
-		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0,
+		and not panel.stitched_section.visible and panel.stitched_rows.get_child_count() == 0
+		and not panel.hero_recap.visible and panel.hero_rows.get_child_count() == 0,
 		"unavailable signature preserves outcome but disables Return and stale details")
 	_check(_source(loss) == before, "unavailable presentation leaves all source state intact")
 	panel.return_button.pressed.emit()
