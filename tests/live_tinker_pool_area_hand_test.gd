@@ -313,7 +313,6 @@ func _face(id: String) -> void:
 	# authored positions; only the simultaneous every-enemy cards are stitched.
 	var from_positions: Array = definition.from_positions
 	var to_positions: Array = definition.to_positions
-	var enemy_all: bool = definition.target_kind == "enemy_all"
 	var from_pips: Array = face.get("from_pips", [])
 	var to_pips: Array = face.get("to_pips", [])
 	_check(from_pips.size() == 3 and to_pips.size() == 3,
@@ -323,7 +322,7 @@ func _face(id: String) -> void:
 			"source pip %d matches the authored from positions: %s" % [index + 1, id])
 		_check(bool(to_pips[index]) == to_positions.has(index + 1),
 			"target pip %d matches the authored to positions: %s" % [index + 1, id])
-	_check(bool(face.get("thread", false)) == enemy_all,
+	_check(bool(face.get("thread", false)) == (definition.target_kind == "enemy_all"),
 		"stitched thread only for Scatter/Shrapnel, never Ricochet: " + id)
 	_check(panel.tooltip_text.contains(definition.display_name)
 		and panel.tooltip_text.contains("Enter / Space")
@@ -379,13 +378,10 @@ func _face(id: String) -> void:
 				and (not to_positions.has(index + 1) or to_style.bg_color == Color("#c49a3a"))
 				and to_style.corner_radius_top_left == 0,
 				"mounted square target pip %d matches authored to positions: %s" % [index + 1, id])
-		var thread = cue.find_child("Thread", true, false)
-		_check((thread != null) == enemy_all,
-			"mounted stitched thread node only on Scatter/Shrapnel: " + id)
-		if thread is HBoxContainer:
-			_check(thread.is_visible_in_tree() and thread.get_child_count() >= 3
-				and thread.mouse_filter != Control.MOUSE_FILTER_STOP,
-				"the stitched thread is visible and never takes pointer input: " + id)
+			_check(cue.get_global_rect().grow(1.0).encloses(from_pip.get_global_rect())
+				and cue.get_global_rect().grow(1.0).encloses(to_pip.get_global_rect()),
+				"source and target pip %d stay inside the sewn face: %s" % [index + 1, id])
+		_assert_thread(cue, definition, id)
 	_check(not panel.get_child(0).is_visible_in_tree()
 		and not panel.focus_neighbor_bottom.is_empty()
 		and panel.get_node_or_null(panel.focus_neighbor_bottom) == app.end_turn_button,
@@ -403,6 +399,49 @@ func _face(id: String) -> void:
 func _pip_filled(pip: Control) -> bool:
 	var style = pip.get_theme_stylebox("panel")
 	return style is StyleBoxFlat and style.bg_color.a > 0.0
+
+
+## The stitched thread is measured from the mounted nodes: every authored target
+## square is crossed through its centre by a real drawn stitch, the source
+## circles are never stitched, and Ricochet mounts no thread at all.
+func _assert_thread(cue: Control, definition: Dictionary, stage: String) -> void:
+	var thread = cue.find_child("Thread", true, false)
+	_check((thread != null) == (definition.target_kind == "enemy_all"),
+		"mounted stitched thread only on Scatter/Shrapnel, never Ricochet: " + stage)
+	if not thread is Control:
+		return
+	_check(thread.is_visible_in_tree() and thread.mouse_filter != Control.MOUSE_FILTER_STOP
+		and thread.focus_mode == Control.FOCUS_NONE,
+		"the stitched thread is visible and never takes pointer input: " + stage)
+	var stitches: Array[Rect2] = []
+	for child in thread.get_children():
+		if child is ColorRect and String(child.name).begins_with("Stitch") \
+				and child.is_visible_in_tree() and child.size.x > 0 and child.size.y > 0:
+			stitches.append((child as ColorRect).get_global_rect())
+	var to_positions: Array = definition.to_positions
+	_check(stitches.size() >= 2 * to_positions.size() - 1,
+		"the thread mounts one stitch per target square and gap: " + stage)
+	var face_rect: Rect2 = cue.get_global_rect()
+	var on_face := true
+	for stitch in stitches:
+		if not face_rect.grow(1.0).encloses(stitch):
+			on_face = false
+	_check(on_face, "every drawn stitch stays inside the visible sewn face: " + stage)
+	for index in range(3):
+		var square: Rect2 = (cue.find_child("To%d" % (index + 1), true, false) as Control).get_global_rect()
+		var source: Rect2 = (cue.find_child("From%d" % (index + 1), true, false) as Control).get_global_rect()
+		var linked := false
+		var crossed_source := false
+		for stitch in stitches:
+			if stitch.intersects(square) and stitch.position.y <= square.get_center().y \
+					and stitch.end.y >= square.get_center().y:
+				linked = true
+			if stitch.intersects(source):
+				crossed_source = true
+		_check(linked == to_positions.has(index + 1),
+			"thread runs through target square %d exactly when authored: %s" % [index + 1, stage])
+		_check(not crossed_source,
+			"thread never crosses source circle %d: %s" % [index + 1, stage])
 
 
 func _case(id: String, by_key: bool, key: Key = KEY_ENTER, hole: bool = false) -> void:

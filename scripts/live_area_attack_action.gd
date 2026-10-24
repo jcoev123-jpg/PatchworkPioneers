@@ -24,8 +24,94 @@ const TINKER := Color("#c49a3a")
 ## Printed source/target pips are small drawn controls, never art files.
 const PIP_SIZE := 9.0
 const PIP_SLOTS := [1, 2, 3]
+const PIP_GAP := 3.0
+const GROUP_GAP := 9.0
 const THREAD_DASH := 3.0
-const THREAD_STITCHES := 4
+const THREAD_STITCH := 2.0
+
+
+## The drawn position strip: three sewn source circles, three target squares and
+## the stitched connection that runs through the target-square centres. Laying
+## the strip out by hand (instead of a container row) keeps every stitch tied to
+## a real target square rather than to the gap after the source circles.
+class PipTrack:
+	extends Control
+
+	var pip_size := 9.0
+	var pip_gap := 3.0
+	var group_gap := 9.0
+	var dash := 3.0
+	var stitch := 2.0
+	## One flag per authored enemy slot; a filled flag is a named target square.
+	var targets: Array = []
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			layout()
+
+	## Position the six pips and, when present, the thread through the centres of
+	## the authored target squares.
+	func layout() -> void:
+		var total: float = 6.0 * pip_size + 4.0 * pip_gap + group_gap
+		var left: float = maxf(0.0, (size.x - total) * 0.5)
+		var top: float = maxf(0.0, (size.y - pip_size) * 0.5)
+		for index in range(3):
+			_place(get_node_or_null("From%d" % (index + 1)),
+				Vector2(left + index * (pip_size + pip_gap), top))
+		var to_left: float = left + 3.0 * pip_size + 2.0 * pip_gap + group_gap
+		var centres: Array[float] = []
+		for index in range(3):
+			var at := Vector2(to_left + index * (pip_size + pip_gap), top)
+			_place(get_node_or_null("To%d" % (index + 1)), at)
+			if index < targets.size() and bool(targets[index]):
+				centres.append(at.x + pip_size * 0.5)
+		_layout_thread(centres, top + pip_size * 0.5)
+
+	func _place(node: Node, at: Vector2) -> void:
+		if not node is Control:
+			return
+		var control := node as Control
+		control.position = at
+		control.size = Vector2(pip_size, pip_size)
+
+	## One dash per target square plus one in each gap: the dashes land on the
+	## square centres, never merely beside them.
+	func _layout_thread(centres: Array[float], middle: float) -> void:
+		var thread := get_node_or_null("Thread") as Control
+		if thread == null:
+			return
+		thread.position = Vector2.ZERO
+		thread.size = size
+		if centres.is_empty():
+			thread.visible = false
+			return
+		thread.visible = true
+		var seam := thread.get_node_or_null("Seam") as Control
+		if seam != null:
+			var first: float = centres[0]
+			var last: float = centres[centres.size() - 1]
+			seam.position = Vector2(first - pip_size * 0.5, middle - 0.5)
+			seam.size = Vector2(last - first + pip_size, 1.0)
+		var stitches: Array[Control] = []
+		for child in thread.get_children():
+			if child is Control and String(child.name).begins_with("Stitch"):
+				stitches.append(child as Control)
+		for index in range(stitches.size()):
+			var x: float
+			if index % 2 == 0:
+				# Every even stitch sits exactly on one target-square centre.
+				var slot := int(index / 2.0)
+				if slot >= centres.size():
+					break
+				x = centres[slot]
+			else:
+				# Every odd stitch fills the gap between two target squares.
+				var pair := int((index - 1) / 2.0)
+				if pair + 1 >= centres.size():
+					break
+				x = (centres[pair] + centres[pair + 1]) * 0.5
+			stitches[index].position = Vector2(x - dash * 0.5, middle - stitch * 0.5)
+			stitches[index].size = Vector2(dash, stitch)
 
 ## Retained mount handle. This adapter never creates a separate action control.
 var button: Button
@@ -470,25 +556,33 @@ func _pip_state(definition: Dictionary) -> Dictionary:
 
 
 ## Three small source circles and three small target squares. Only a
-## simultaneous every-enemy cast stitches them together; a random cast leaves the
-## squares unlinked because each hit picks its own living slot.
-func _pip_row(definition: Dictionary, owner_color: Color) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.focus_mode = Control.FOCUS_NONE
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 3)
-	row.custom_minimum_size = Vector2(0, 12)
+## simultaneous every-enemy cast stitches them together, and that thread runs
+## through the target-square centres; a random cast leaves the squares unlinked
+## because each hit picks its own living slot.
+func _pip_row(definition: Dictionary, owner_color: Color) -> Control:
 	var state: Dictionary = _pip_state(definition)
+	var track := PipTrack.new()
+	track.name = "Positions"
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	track.focus_mode = Control.FOCUS_NONE
+	track.pip_size = PIP_SIZE
+	track.pip_gap = PIP_GAP
+	track.group_gap = GROUP_GAP
+	track.dash = THREAD_DASH
+	track.stitch = THREAD_STITCH
+	track.targets = (state["to"] as Array).duplicate()
+	track.custom_minimum_size = Vector2(
+		6.0 * PIP_SIZE + 4.0 * PIP_GAP + GROUP_GAP, PIP_SIZE + 3.0)
 	for index in range(PIP_SLOTS.size()):
-		row.add_child(_pip("From%d" % int(PIP_SLOTS[index]), bool(state["from"][index]),
+		track.add_child(_pip("From%d" % int(PIP_SLOTS[index]), bool(state["from"][index]),
 			owner_color, true))
-	if bool(state["thread"]):
-		row.add_child(_thread(owner_color))
 	for index in range(PIP_SLOTS.size()):
-		row.add_child(_pip("To%d" % int(PIP_SLOTS[index]), bool(state["to"][index]),
+		track.add_child(_pip("To%d" % int(PIP_SLOTS[index]), bool(state["to"][index]),
 			owner_color, false))
-	return row
+	if bool(state["thread"]):
+		track.add_child(_thread(owner_color, state["to"]))
+	track.layout()
+	return track
 
 
 func _pip(pip_name: String, filled: bool, owner_color: Color, round: bool) -> Panel:
@@ -507,24 +601,32 @@ func _pip(pip_name: String, filled: bool, owner_color: Color, round: bool) -> Pa
 	return pip
 
 
-## A short dashed thread: one stitch per drawn dash, never an image.
-func _thread(owner_color: Color) -> HBoxContainer:
-	var thread := HBoxContainer.new()
+## A short stitched thread: an owner-coloured seam under one drawn dash per
+## target square and one per gap, never an image. The track positions every
+## stitch on a real target-square centre, so the seam visibly links the squares.
+func _thread(owner_color: Color, targets: Array) -> Control:
+	var thread := Control.new()
 	thread.name = "Thread"
 	thread.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	thread.focus_mode = Control.FOCUS_NONE
-	thread.alignment = BoxContainer.ALIGNMENT_CENTER
-	thread.add_theme_constant_override("separation", 2)
-	thread.custom_minimum_size = Vector2(THREAD_DASH * THREAD_STITCHES + 6, 0)
-	thread.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	for index in range(THREAD_STITCHES):
+	var seam := ColorRect.new()
+	seam.name = "Seam"
+	seam.color = owner_color.darkened(0.4)
+	seam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	seam.focus_mode = Control.FOCUS_NONE
+	thread.add_child(seam)
+	var squares := 0
+	for flag in targets:
+		if bool(flag):
+			squares += 1
+	var stitches: int = maxi(squares * 2 - 1, 1)
+	for index in range(stitches):
 		var stitch := ColorRect.new()
 		stitch.name = "Stitch%d" % index
-		stitch.color = Color(owner_color, 0.85)
+		stitch.color = CREAM
 		stitch.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		stitch.focus_mode = Control.FOCUS_NONE
-		stitch.custom_minimum_size = Vector2(THREAD_DASH, 1)
-		stitch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		stitch.custom_minimum_size = Vector2(THREAD_DASH, THREAD_STITCH)
 		thread.add_child(stitch)
 	return thread
 
