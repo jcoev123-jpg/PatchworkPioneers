@@ -6,6 +6,11 @@ var checks := 0
 ## actor width the flow lays "Bleed 3" style labels out at 14 px and wraps them onto as
 ## many rows as the actor's own slot needs, reserving exactly that height.
 const READABLE_CHIP_FONT := 14
+## The hero threat tag must word its already-announced count grammatically at a legible
+## size: "1 FOE", "2 FOES", and nothing at all when no source targets that hero.
+const THREAT_BADGE_FONT := 12
+const THREAT_BADGE_ONE := "1 FOE"
+const THREAT_BADGE_MANY := "%d FOES"
 ## The committed Block icon the mounted ribbons must display beside a positive amount.
 const BLOCK_ART := "res://assets/paper/ui/hud_block.png"
 ## Independent literal expectations for the authored M05 HEAD/ARM/COAT rules.
@@ -1665,6 +1670,84 @@ func _three_enemy_stage(app, presenter) -> void:
 		"typed three-enemy Return clears the whole ribbon row")
 
 
+## Independent wording oracle for the mounted hero threat tag: grammatical, exact, and
+## deliberately not produced by the presenter under test.
+func _expected_threat_text(count: int) -> String:
+	if count <= 0:
+		return ""
+	return THREAT_BADGE_ONE if count == 1 else THREAT_BADGE_MANY % count
+
+
+## WCAG relative luminance, used only to prove the felt tag keeps readable ink/thread.
+func _relative_luminance(color: Color) -> float:
+	var channels: Array[float] = []
+	for value in [color.r, color.g, color.b]:
+		channels.append(value / 12.92 if value <= 0.03928
+			else pow((value + 0.055) / 1.055, 2.4))
+	return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+func _contrast_ratio(first: Color, second: Color) -> float:
+	var high := maxf(_relative_luminance(first), _relative_luminance(second))
+	var low := minf(_relative_luminance(first), _relative_luminance(second))
+	return (high + 0.05) / (low + 0.05)
+
+
+## One legible sewn threat tag on the hero's own HP trough. The tag is what the player
+## reads instead of a cryptic "! N", so this asserts its exact grammatical text, its
+## minimum type size, the pale-on-dark felt with a stitched border, its pointer/keyboard
+## inertness, and that the complete word fits without covering the centred HP numerals.
+func _assert_threat_tag(meter: CombatActorMeter, count: int) -> void:
+	var pin := meter.hp_bar.get_node_or_null("ThreatPin") as Panel
+	_check(pin != null and meter.hp_bar.find_children("ThreatPin", "Panel", false, false).size() == 1,
+		"hero ribbon mounts exactly one threat tag on its HP trough: " + meter.name)
+	if pin == null:
+		return
+	var label := pin.get_node_or_null("Count") as Label
+	_check(label != null, "threat tag owns one Count label: " + meter.name)
+	if label == null:
+		return
+	var expected := _expected_threat_text(count)
+	_check(pin.visible == (count > 0) and pin.is_visible_in_tree() == (count > 0)
+		and label.text == expected,
+		"threat tag reads '%s' for %d announced source(s): %s" % [
+			expected, count, meter.name])
+	_check(label.get_theme_font_size("font_size") >= THREAT_BADGE_FONT
+		and label.get_combined_minimum_size().x > 0.0
+		and label.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER
+		and label.vertical_alignment == VERTICAL_ALIGNMENT_CENTER,
+		"threat wording is centred at %d px or larger: %s" % [THREAT_BADGE_FONT, meter.name])
+	_check(pin.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and pin.focus_mode == Control.FOCUS_NONE
+		and label.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and label.focus_mode == Control.FOCUS_NONE
+		and pin.gui_input.get_connections().is_empty()
+		and pin.tooltip_text.is_empty() and label.tooltip_text.is_empty(),
+		"threat tag stays pointer/focus inert and claims no action or hover: " + meter.name)
+	if count <= 0:
+		return
+	var felt := pin.get_theme_stylebox("panel") as StyleBoxFlat
+	_check(felt != null and felt.get_border_width(SIDE_LEFT) >= 2
+		and felt.get_corner_radius(CORNER_TOP_LEFT) >= 2,
+		"threat tag draws a sewn felt tag with a stitched border: " + meter.name)
+	if felt == null:
+		return
+	var ink := label.get_theme_color("font_color")
+	_check(_contrast_ratio(ink, felt.bg_color) >= 4.5
+		and _contrast_ratio(felt.border_color, felt.bg_color) >= 3.0,
+		"threat tag keeps pale ink on dark felt with a visible stitched edge: " + meter.name)
+	_check(label.get_combined_minimum_size().x <= label.size.x + 0.5
+		and label.get_combined_minimum_size().y <= label.size.y + 0.5
+		and Rect2(Vector2.ZERO, meter.hp_bar.size).grow(0.5).encloses(
+			Rect2(pin.position, pin.size)),
+		"the complete threat word fits its tag inside the HP trough: " + meter.name)
+	# The numerals are centred across the whole trough, so the tag's left edge must stay
+	# beyond the measured numeral box rather than painting over the HP value.
+	var numerals_end := (meter.hp_bar.size.x + meter.hp_text.get_combined_minimum_size().x) * 0.5
+	_check(pin.position.x >= numerals_end,
+		"threat tag leaves the centred HP value uncovered: " + meter.name)
+
+
 ## The authored Block icon follows exact live Block values, hides at zero, survives missing
 ## art as the drawn shield and is disposed with its own ribbon on Return.
 ## Counts on the actual HP trough of an admitted, seeded three-enemy battle.
@@ -1716,20 +1799,22 @@ func _threat_cue_cases(app, presenter) -> void:
 			expected[effective.target_position - 1] += 1
 		var rng_before: int = app.run_rng.state
 		var state_before: Array = _state(app)
+		var badge_ids: Array[int] = []
 		for read in range(3):
 			presenter._sync_battle()
 			var meters := _meters(app)
 			for position in range(1, 4):
-				var pin := meters[position - 1].hp_bar.get_node_or_null("ThreatPin") as Panel
-				_check(pin != null and pin.mouse_filter == Control.MOUSE_FILTER_IGNORE
-					and pin.focus_mode == Control.FOCUS_NONE,
-					"target pin is mounted on HP and cannot intercept combat input")
-				if pin != null:
-					var label := pin.get_node("Count") as Label
-					_check(pin.visible == (expected[position - 1] > 0)
-						and label.text == ("! %d" % expected[position - 1]
-							if expected[position - 1] > 0 else ""),
-						"read %d of mixed seeded case %d targets hero slot %d exactly" % [read, case_index, position])
+				var meter := meters[position - 1]
+				var badge := meter.hp_bar.get_node_or_null("ThreatPin/Count")
+				_check(badge != null, "mounted hero threat tag exists: " + meter.name)
+				if badge == null:
+					continue
+				if read == 0:
+					badge_ids.append(badge.get_instance_id())
+				else:
+					_check(badge.get_instance_id() == badge_ids[position - 1],
+						"read %d reuses the same threat tag for hero slot %d" % [read, position])
+				_assert_threat_tag(meter, expected[position - 1])
 		_check(_state(app) == state_before and schedule.get_intents() == cached
 			and app.run_rng.state == rng_before,
 			"repeated threat displays preserve HP, Block, statuses, deck, energy, cached actions and run RNG")
@@ -1750,15 +1835,18 @@ func _threat_cue_cases(app, presenter) -> void:
 				"authentic front target is downed after its action was announced")
 			presenter._sync_battle()
 			var fallen_pins := _meters(app)
+			_assert_threat_tag(fallen_pins[0], 0)
+			_assert_threat_tag(fallen_pins[1], 2)
 			_check(not fallen_pins[0].hp_bar.get_node("ThreatPin").visible
-				and fallen_pins[1].hp_bar.get_node("ThreatPin/Count").text == "! 2"
+				and fallen_pins[1].hp_bar.get_node("ThreatPin/Count").text == "2 FOES"
 				and fallen_pins[1].hp_bar.get_node("ThreatPin").visible,
 				"both policies use deterministic front fallback on living H2 with no RNG reroll")
 			_check(schedule.get_intents() == cached and app.run_rng.state == rng_before,
 				"downed announced target does not replace original cache or consume run RNG")
 			app.party._heroes.assign(old_party.duplicate(true))
 			presenter._sync_battle()
-			_check(_meters(app)[0].hp_bar.get_node("ThreatPin/Count").text == "! 2",
+			_assert_threat_tag(_meters(app)[0], 2)
+			_check(_meters(app)[0].hp_bar.get_node("ThreatPin/Count").text == "2 FOES",
 				"restored first hero recovers the two-source warning")
 		if case_index == 0:
 			_check(expected == [1, 0, 0], "one attack pins one hero; block and buff never count")
@@ -1767,31 +1855,37 @@ func _threat_cue_cases(app, presenter) -> void:
 				and skip.apply_unravel(app.enemies, 1, 8), "real Unravel service queues a source skip")
 			flow._unravel = skip
 			presenter._sync_battle()
+			_assert_threat_tag(_meters(app)[0], 0)
 			_check(_meters(app)[0].hp_bar.get_node("ThreatPin").visible == false,
 				"pending skip removes its only threat")
 			flow._unravel = old_unravel
 			_check(app.enemies.apply_damage(1, 999), "test kills its only attacking source")
 			presenter._sync_battle()
+			_assert_threat_tag(_meters(app)[0], 0)
 			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
 				"slain attacker cannot contribute threats")
 			app.enemies._enemies.assign(old_roster.duplicate(true))
 			presenter._sync_battle()
+			_assert_threat_tag(_meters(app)[0], 1)
 			_check(_meters(app)[0].hp_bar.get_node("ThreatPin").visible,
 				"restoring source restores its announced threat")
 			# A closed fight and missing/mismatched scheduler both fail closed.
 			app._battle_closed = true
 			presenter._sync_battle()
+			_assert_threat_tag(_meters(app)[0], 0)
 			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
 				"closed fight clears pending warning while ribbon exists")
 			app._battle_closed = false
 			app.enemy_intents = null
 			presenter._sync_battle()
+			_assert_threat_tag(_meters(app)[0], 0)
 			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
 				"missing intent authority hides stale target pin")
 			app.enemy_intents = schedule
 			var foreign := CombatEnemyIntents.new(patterns)
 			app.enemy_intents = foreign
 			presenter._sync_battle()
+			_assert_threat_tag(_meters(app)[0], 0)
 			_check(not _meters(app)[0].hp_bar.get_node("ThreatPin").visible,
 				"unbound, mismatched authority cannot fabricate a threat")
 			app.enemy_intents = schedule
