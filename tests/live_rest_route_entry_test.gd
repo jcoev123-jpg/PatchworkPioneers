@@ -108,9 +108,9 @@ func _check_rest_forecast() -> void:
 	for index in range(oracle.forecasts.size()):
 		var forecast: Dictionary = oracle.forecasts[index]
 		var hero: Dictionary = oracle.heroes[index]
-		_check(lines[index] == "%s: HP %d/%d -> %d/%d (+%d)%s" % [forecast.id.capitalize(),
-			forecast.hp_before, hero.max_hp, forecast.hp_after, hero.max_hp, forecast.hp_delta,
-			" Revive" if forecast.revived else ""], "visible current/result/delta/revive matches oracle exactly")
+		_check(lines[index] == "%s: HP %d/%d | %s: %d/%d (+%d HP)" % [forecast.id.capitalize(),
+			forecast.hp_before, hero.max_hp, "Revive" if forecast.revived else "Heal",
+			forecast.hp_after, hero.max_hp, forecast.hp_delta], "visible current/result/delta/revive matches oracle exactly")
 	for repeat in range(3):
 		app._refresh_rest_hp()
 		_check(app.rest_hp_label.text.split("\n") == lines, "repeated preview remains fresh and identical")
@@ -317,6 +317,9 @@ func _run() -> void:
 		if app.rest_view == null:
 			break
 		var bed_id: int = _check_rest_backdrop()
+		var heading := app.rest_view.get_child(0) as Label
+		_check(heading != null and heading.text == "Rest camp" and heading.is_visible_in_tree()
+			and heading.theme_type_variation == &"PatchHeading", "real Rest has a player-facing themed camp title")
 		_check_rest_forecast()
 		if session == 0:
 			replay_forecast = app.rest_hp_label.text
@@ -340,6 +343,8 @@ func _run() -> void:
 		_check(replacement.choose_node(fixture.fight) and replacement.choose_node(rest_id), "wrong map has otherwise identical valid Rest route")
 		app.run_map = replacement
 		var wrong_map_before := _persistent()
+		app._refresh_rest_hp()
+		_check_rest_hp_only()
 		old_heal.call()
 		_check(_persistent() == wrong_map_before and not visit.is_consumed(), "Heal rejects different map identity with identical route")
 		app.run_map = live_map
