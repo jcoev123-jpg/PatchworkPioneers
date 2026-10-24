@@ -32,7 +32,7 @@ const HP := {
     "ragling": 12, "ragling_guard": 12, "fray_scavenger": 14,
     "spool_stalker": 14, "button_guard": 16, "seam_ripper": 18,
     "needle_marshal": 28, "spool_hexer": 24,
-    "patchwork_behemoth": 42,
+    "patchwork_behemoth": 84,
 }
 const NAMES := {
     "ragling": "Ragling", "ragling_guard": "Guard Ragling",

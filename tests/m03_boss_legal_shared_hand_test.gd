@@ -1,7 +1,7 @@
 extends SceneTree
 ## A fresh authored Boss fight: no run-ledger receipt, injected hand or damage.
 
-const FIGHT_SEED := 30
+const FIGHT_SEED := 48
 const MAX_TURNS := 16
 var failures: Array[String] = []
 var checks := 0
@@ -139,8 +139,8 @@ func _fight() -> String:
 	_check(party.get_hero(1).id == "warden" and party.get_hero(1).hp == 40
 		and party.get_hero(2).id == "seamstress" and party.get_hero(2).hp == 30
 		and party.get_hero(3).id == "tinker" and party.get_hero(3).hp == 26
-		and enemies.get_enemy(1).id == "patchwork_behemoth" and enemies.get_enemy(1).hp == 42,
-		"authored healthy party faces actual single-phase 42-HP Behemoth")
+		and enemies.get_enemy(1).id == "patchwork_behemoth" and enemies.get_enemy(1).hp == 84,
+		"authored healthy party faces actual single-phase 84-HP Behemoth")
 	_check(cards == StarterCards.new().get_starting_deck(), "deck is the complete authored starting deck")
 	var pattern: Array = schedule[0].pattern
 	# Independent seeded deck witnesses cadence; it never controls the real hand.
@@ -294,10 +294,12 @@ func _fight() -> String:
 		if event[0] == "attack":
 			actions.append([event[1], event[2], event[4]])
 			sequence.append([event[1], event[2]])
-	_check(sequence == [[0, "seamstress_prick"], [0, "tinker_scrap_bomb"],
-		[1, "warden_shield_bash"], [1, "warden_strike"], [2, "tinker_pop_shot"],
-		[2, "tinker_pop_shot"], [3, "seamstress_prick"]],
-		"fixed seed witnesses the exact seven-attack sequence over four player turns")
+	_check(sequence == [[0, "warden_shield_bash"], [0, "tinker_pop_shot"],
+		[1, "tinker_scrap_bomb"], [1, "seamstress_prick"], [2, "warden_strike"],
+		[2, "tinker_pop_shot"], [2, "tinker_pop_shot"], [3, "tinker_scrap_bomb"],
+		[3, "seamstress_prick"], [4, "warden_strike"], [4, "tinker_pop_shot"],
+		[5, "warden_strike"]],
+		"fixed seed witnesses the exact twelve-attack sequence over six player turns")
 	print("Boss legal actions: ", JSON.stringify(actions), "; final: ", JSON.stringify(_snapshot(f)))
 	return JSON.stringify(trace)
 
@@ -333,7 +335,7 @@ func _test_behemoth_phase_rules() -> void:
 			break
 
 	_check(not behemoth_def.is_empty(), "shipped boss catalog contains patchwork_behemoth definition")
-	_check(behemoth_def.get("max_hp") == 42, "shipped boss definition max_hp is 42")
+	_check(behemoth_def.get("max_hp") == 84, "shipped boss definition max_hp is 84")
 
 	# Validate Phase 1 table
 	var p1_intent: Dictionary = behemoth_def.get("intent", {})
@@ -341,11 +343,11 @@ func _test_behemoth_phase_rules() -> void:
 	var p1_actions: Array = p1_intent.get("actions", [])
 	_check(p1_actions.size() == 3, "shipped phase-one intent has exactly 3 actions")
 	var expected_p1_actions := [
-		{"type": "attack", "amount": 2, "weight": 4},
+		{"type": "attack", "amount": 40, "weight": 4},
 		{"type": "block", "amount": 3, "weight": 2},
 		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
 	]
-	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 2 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 40 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
 
 	# Validate Phase 2 table
 	var p2_dict: Dictionary = parsed_p2 if parsed_p2 is Dictionary else {}
@@ -375,6 +377,9 @@ func _test_behemoth_phase_rules() -> void:
 	_check(res42.get("phase") == 1, "HP 42 select_phase returns phase 1")
 	_check(res42.get("intent") == p1_intent, "HP 42 intent matches phase 1 intent table")
 	_check(res42.get("intent").get("target") == "front", "HP 42 intent target is front")
+
+	var full_hp := CombatBehemothPhaseRules.select_phase(behemoth_def, 84, p2_dict)
+	_check(full_hp.get("ok") == true and full_hp.get("phase") == 1 and full_hp.get("intent") == p1_intent, "full 84 HP selects exact phase one")
 
 	# HP 22 -> Phase 1
 	var res22: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 22, p2_dict)
@@ -451,7 +456,7 @@ func _test_behemoth_phase_rules() -> void:
 	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, "21", p2_dict).get("ok") == false, "string HP fails closed")
 	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, null, p2_dict).get("ok") == false, "null HP fails closed")
 	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, -1, p2_dict).get("ok") == false, "negative HP fails closed")
-	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 43, p2_dict).get("ok") == false, "HP above max 42 fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 85, p2_dict).get("ok") == false, "HP above max 84 fails closed")
 	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 100, p2_dict).get("ok") == false, "HP 100 fails closed")
 
 	# Invalid phase / threshold

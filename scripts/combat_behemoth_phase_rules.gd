@@ -5,7 +5,7 @@ extends RefCounted
 ## and returns an explicit detached {ok, phase, intent} specification.
 
 const BOSS_ID := "patchwork_behemoth"
-const BOSS_MAX_HP := 42
+const BOSS_MAX_HP := 84
 const PHASE_TWO_THRESHOLD := 21
 const PHASE_ONE := 1
 const PHASE_TWO := 2
@@ -96,7 +96,7 @@ static func validate_boss_definition(boss_definition: Variant) -> bool:
 	var actions = intent.get("actions")
 	if not actions is Array or actions.size() != 3:
 		return false
-	return _validate_phase_actions(actions, 2, 3, 1)
+	return _validate_phase_actions(actions, 40, 3, 1)
 
 
 ## Validates that a phase-two record contains the exact valid Patchwork Behemoth phase-two schema.
