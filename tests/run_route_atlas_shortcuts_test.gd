@@ -53,6 +53,18 @@ func _ordered_legal(map: RunMap) -> Array[String]:
 	return result
 
 
+func _action(view: RunRouteAtlas, id: String) -> Button:
+	var marker := _marker(view, id)
+	return marker.get_node_or_null("Action") as Button if marker != null else null
+
+
+func _focused_id(view: RunRouteAtlas) -> String:
+	var owner := root.gui_get_focus_owner()
+	if owner != null and view._legal_actions.has(owner):
+		return str(owner.get_meta("route_id"))
+	return ""
+
+
 func _marker(view: RunRouteAtlas, id: String) -> PanelContainer:
 	for child in view.get_children():
 		if child is PanelContainer and child.get_meta("route_id") == id:
@@ -106,6 +118,10 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 			where + ": exact actual legal/chosen/inactive state " + id)
 		if index >= 0:
 			button_count += 1
+			_check(action is RunRouteAtlas.LegalPatchAction
+				and action.has_theme_stylebox_override("focus")
+				and action.get_theme_stylebox("focus") is StyleBoxEmpty,
+				where + ": round patch owns the stitched inset focus treatment " + id)
 			_check(action != null and action.focus_mode == Control.FOCUS_ALL
 				and action.is_visible_in_tree() and not action.disabled
 				and action.tooltip_text.contains(id)
@@ -115,6 +131,17 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 		else:
 			_check(action == null and identity.text == String(expected[id]["type"]),
 				where + ": future and current patches cannot request a choice " + id)
+	_check(view._legal_actions.size() == ordered.size()
+		and view._actions_by_id.size() == ordered.size(),
+		where + ": mounted focus chain has precisely legal choices")
+	for i in range(ordered.size()):
+		var action := _action(view, ordered[i])
+		var next := _action(view, ordered[(i + 1) % ordered.size()])
+		var previous := _action(view, ordered[(i - 1 + ordered.size()) % ordered.size()])
+		_check(action != null and next != null and previous != null
+			and action.get_node_or_null(action.focus_next) == next
+			and action.get_node_or_null(action.focus_previous) == previous,
+			where + ": authored focus links exclude all inert patches at index %d" % i)
 	_check(button_count == ordered.size() and marker_count == expected.size(),
 		where + ": all and only N legal Action buttons, with no off-window node")
 	_check(_state(map, rng) == before,
@@ -124,17 +151,19 @@ func _verify_labels(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator
 
 # Deliver physical SceneTree events instead of invoking RunRouteAtlas._input directly.
 # Return the press event's handled flag, before a release clears it.
-func _key(code: Key, echo: bool = false) -> bool:
+func _key(code: Key, echo: bool = false, shifted: bool = false) -> bool:
 	var down := InputEventKey.new()
 	down.keycode = code
 	down.pressed = true
 	down.echo = echo
+	down.shift_pressed = shifted
 	root.push_input(down, true)
 	var handled := root.is_input_handled()
 	await process_frame
 	var up := InputEventKey.new()
 	up.keycode = code
 	up.pressed = false
+	up.shift_pressed = shifted
 	root.push_input(up, true)
 	await process_frame
 	return handled
@@ -155,6 +184,86 @@ func _assert_key(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
 		where + ": only admitted shortcuts claim keyboard input")
 	_check(_state(map, rng) == before, where + ": key never chooses route or draws from model RNG")
 	_check(randi() == global_next, where + ": key never draws from global RNG")
+
+
+func _mouse_press(button: Button) -> void:
+	var point := button.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for down in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
+func _assert_navigation(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		ordered: Array[String], unrelated: Button, close: Button, where: String) -> void:
+	_check(ordered.size() >= 2, where + ": real multi-patch navigation precondition")
+	if ordered.size() < 2:
+		return
+	var before := _state(map, rng)
+	requests.clear()
+	seed(171903)
+	var next_global := randi()
+	seed(171903)
+	unrelated.grab_focus()
+	_check(unrelated.has_focus(), where + ": unrelated focus precondition")
+	await _key(KEY_DOWN)
+	_check(unrelated.has_focus() and requests.is_empty(),
+		where + ": arrow cannot steal unrelated app focus")
+	close.grab_focus()
+	_check(close.has_focus() and close.get_parent() == view.get_parent(),
+		where + ": sibling Close map owns entry focus")
+	await _key(KEY_UP)
+	_check(_focused_id(view) == ordered[ordered.size() - 1],
+		where + ": Up from Close map enters at last legal patch")
+	close.grab_focus()
+	await _key(KEY_DOWN)
+	_check(_focused_id(view) == ordered[0],
+		where + ": Down from Close map enters at first legal patch")
+	_check(requests.is_empty(), where + ": entering from Close never requests a route")
+	var first := _action(view, ordered[0])
+	_check(first != null and first.is_visible_in_tree(),
+		where + ": first legal Action is mounted")
+	if first == null:
+		return
+	first.grab_focus()
+	_check(_focused_id(view) == ordered[0], where + ": first patch genuinely has keyboard focus")
+	for i in range(ordered.size()):
+		await _key(KEY_DOWN)
+		_check(_focused_id(view) == ordered[(i + 1) % ordered.size()],
+			where + ": Down follows authored order, wrapping after the last patch %d" % i)
+		_check(requests.is_empty(), where + ": Down never emits a request")
+	await _key(KEY_UP)
+	_check(_focused_id(view) == ordered[ordered.size() - 1],
+		where + ": Up wraps backward from the first patch")
+	await _key(KEY_TAB)
+	_check(_focused_id(view) == ordered[0], where + ": real Tab wraps to first legal patch")
+	await _key(KEY_TAB, false, true)
+	_check(_focused_id(view) == ordered[ordered.size() - 1],
+		where + ": real Shift+Tab wraps to last legal patch")
+	for i in range(ordered.size() - 1, 0, -1):
+		await _key(KEY_TAB, false, true)
+		_check(_focused_id(view) == ordered[i - 1],
+			where + ": reverse Tab follows only legal controls %d" % i)
+	_check(requests.is_empty(), where + ": Tab and reverse Tab only change focus")
+	await _key(KEY_ENTER)
+	_check(requests == [ordered[0]], where + ": Enter presses exact focused original ID once")
+	requests.clear()
+	var second := _action(view, ordered[1])
+	second.grab_focus()
+	await _key(KEY_SPACE)
+	_check(requests == [ordered[1]], where + ": Space presses exact focused original ID once")
+	requests.clear()
+	await _mouse_press(_action(view, ordered[0]))
+	_check(requests == [ordered[0]], where + ": pointer click still presses the legal patch once")
+	_check(_state(map, rng) == before,
+		where + ": all focus, keyboard and pointer paths preserve route and seeded RNG")
+	_check(randi() == next_global, where + ": focus and activation never draw global RNG")
 
 
 func _assert_held_key(map: RunMap, rng: RandomNumberGenerator, id: String) -> void:
@@ -181,6 +290,59 @@ func _assert_held_key(map: RunMap, rng: RandomNumberGenerator, id: String) -> vo
 	_check(_state(map, rng) == before, "held key and repeats leave full run state intact")
 
 
+## Focus motion cannot submit a route; activation goes through Button.pressed.
+func _assert_focus_key(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		code: Key, expected_id: String, where: String, shifted: bool = false) -> void:
+	var before := _state(map, rng)
+	requests.clear()
+	seed(448819)
+	var next_global := randi()
+	seed(448819)
+	await _key(code, false, shifted)
+	_check(_focused_id(view) == expected_id,
+		where + ": focus follows real authored legal Action, expected " + expected_id)
+	_check(requests.is_empty(), where + ": motion never emits node_requested")
+	_check(_state(map, rng) == before, where + ": motion never commits map or draws run RNG")
+	_check(randi() == next_global, where + ": motion never draws global RNG")
+
+
+func _assert_activate_focus(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		code: Key, expected_id: String, where: String) -> void:
+	_check(_focused_id(view) == expected_id and _action(view, expected_id) != null,
+		where + ": key starts from a genuine focused legal Button")
+	var before := _state(map, rng)
+	requests.clear()
+	seed(448819)
+	var next_global := randi()
+	seed(448819)
+	await _key(code)
+	_check(requests == [expected_id],
+		where + ": Enter/Space presses exactly the focused original ID once")
+	_check(_state(map, rng) == before, where + ": activation is only a request")
+	_check(randi() == next_global, where + ": activation does not draw global RNG")
+
+
+func _assert_mouse_action(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
+		id: String, where: String) -> void:
+	var action := _action(view, id)
+	_check(action != null and action.is_visible_in_tree(),
+		where + ": pointer targets a mounted legal Action")
+	if action == null:
+		return
+	var before := _state(map, rng)
+	requests.clear()
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = action.get_global_rect().get_center()
+		event.global_position = event.position
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+	_check(requests == [id], where + ": mouse click presses original legal node once")
+	_check(_state(map, rng) == before, where + ": mouse request is presentation-only")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var view := RunRouteAtlas.new()
@@ -191,6 +353,15 @@ func _run() -> void:
 	other_focus.text = "Unrelated focus"
 	other_focus.position = Vector2(0, 0)
 	root.add_child(other_focus)
+	# Match the live optional overlay: Close map initially owns focus, with
+	# its own Tab loop. Arrow entry works without editing app.gd.
+	var close_focus := Button.new()
+	close_focus.text = "Close map"
+	close_focus.position = Vector2(520, 640)
+	close_focus.size = Vector2(240, 48)
+	close_focus.focus_next = NodePath(".")
+	close_focus.focus_previous = NodePath(".")
+	root.add_child(close_focus)
 	await process_frame
 	other_focus.grab_focus()
 	_check(other_focus.has_focus() and not view.has_focus(),
@@ -211,11 +382,48 @@ func _run() -> void:
 		view.bind_map(map)
 		var first_legal := _verify_labels(view, map, rng, "seed %d opening" % seed_value)
 		_check(first_legal.size() >= 3, "opening has three or four real choices")
+		_check(_focused_id(view).is_empty(), "atlas bind does not steal unrelated focus")
+		close_focus.grab_focus()
+		_check(close_focus.has_focus(), "overlay Close map owns initial keyboard focus")
+		await _assert_focus_key(view, map, rng, KEY_DOWN, first_legal[0],
+			"Close map Down enters first legal patch")
+		for i in range(1, first_legal.size()):
+			await _assert_focus_key(view, map, rng, KEY_DOWN, first_legal[i],
+				"Down authored legal order index %d" % i)
+		await _assert_focus_key(view, map, rng, KEY_DOWN, first_legal[0],
+			"Down wraps only legal patches")
+		await _assert_focus_key(view, map, rng, KEY_UP, first_legal.back(),
+			"Up reverse wraps only legal patches")
+		for i in range(first_legal.size() - 2, -1, -1):
+			await _assert_focus_key(view, map, rng, KEY_UP, first_legal[i],
+				"Up reverse authored legal order index %d" % i)
+		await _assert_focus_key(view, map, rng, KEY_TAB, first_legal[1],
+			"Tab advances through legal buttons")
+		await _assert_activate_focus(view, map, rng, KEY_ENTER, first_legal[1],
+			"Enter focused nonfirst legal")
+		await _assert_focus_key(view, map, rng, KEY_TAB, first_legal[2],
+			"Tab reaches later legal Action")
+		await _assert_activate_focus(view, map, rng, KEY_SPACE, first_legal[2],
+			"Space focused later legal")
+		await _assert_focus_key(view, map, rng, KEY_TAB, first_legal[(2 + 1) % first_legal.size()],
+			"Tab continues in legal order")
+		await _assert_focus_key(view, map, rng, KEY_TAB, first_legal[(2 + 2) % first_legal.size()],
+			"Tab loops among legal patches")
+		await _assert_focus_key(view, map, rng, KEY_TAB, first_legal[(2 + 1) % first_legal.size()],
+			"Shift+Tab walks backwards", true)
+		await _assert_mouse_action(view, map, rng, first_legal.back(),
+			"mouse still clicks a legal round patch")
+		_action(view, first_legal.back()).grab_focus()
+		view.refresh()
+		_check(_focused_id(view) == first_legal.back(),
+			"same-map refresh restores legal focus by original ID, not old Button reference")
 		for i in range(first_legal.size()):
 			await _assert_key(view, map, rng, NUMBER_KEYS[i], first_legal[i],
 				"seed %d initial shortcut %d" % [seed_value, i + 1])
 		if not first_legal.is_empty():
 			await _assert_held_key(map, rng, first_legal[0])
+		await _assert_navigation(view, map, rng, first_legal, other_focus, close_focus,
+			"seed %d mounted opening" % seed_value)
 		await _assert_key(view, map, rng, KEY_5, "", "unassigned key 5")
 		await _assert_key(view, map, rng, KEY_1, "", "auto-repeat suppressed", true)
 		if first_legal.size() < 4:
@@ -227,6 +435,11 @@ func _run() -> void:
 		var stale: Callable = first_action.pressed.get_connections()[0].callable if first_action != null else Callable()
 		view.hide()
 		await process_frame
+		_check(_focused_id(view).is_empty(),
+			"hidden atlas releases old legal focus")
+		requests.clear()
+		await _key(KEY_ENTER)
+		_check(requests.is_empty(), "Enter cannot activate a hidden route atlas")
 		await _assert_key(view, map, rng, KEY_1, "", "hidden mounted atlas")
 		view.show()
 		await process_frame
@@ -247,6 +460,8 @@ func _run() -> void:
 			"retained marker callback rejects external move")
 
 		view.refresh()
+		_check(_focused_id(view).is_empty() or _ordered_legal(map).has(_focused_id(view)),
+			"route refresh never preserves a newly nonlegal focused node")
 		var fresh := _verify_labels(view, map, rng, "seed %d advanced" % seed_value)
 		_check(not fresh.is_empty(), "new floor exposes real outgoing destinations")
 		if fresh.size() < 4:
@@ -267,12 +482,19 @@ func _run() -> void:
 		var regenerated := _state(map, identical_rng)
 		_check(regenerated["floors"] == previous["floors"], "same-seed graph replay is identical")
 		await _assert_key(view, map, identical_rng, KEY_1, "", "unrefreshed regenerated atlas")
+		if old_action != null:
+			old_action.grab_focus()
+			requests.clear()
+			await _key(KEY_SPACE)
+			_check(requests.is_empty(), "regenerated map rejects stale focused Button Space")
 		requests.clear()
 		if old_cb.is_valid():
 			old_cb.call()
 		_check(requests.is_empty() and _state(map, identical_rng) == regenerated,
 			"stale button callback rejected across same-seed regeneration")
 		view.refresh()
+		_check(_focused_id(view).is_empty() or _ordered_legal(map).has(_focused_id(view)),
+			"regeneration restores only live legal focus")
 		var replay_legal := _verify_labels(view, map, identical_rng, "seed %d regenerated" % seed_value)
 		await _assert_key(view, map, identical_rng, KEY_1, replay_legal[0],
 			"refreshed same-seed map accepts new callback")
@@ -303,6 +525,9 @@ func _run() -> void:
 					"floor %d newly refreshed shortcut" % floor_number)
 			else:
 				_check(map.is_complete() and now.is_empty(), "boss completion has zero legal shortcuts")
+				_check(view._legal_actions.is_empty() and view._actions_by_id.is_empty()
+					and _focused_id(view).is_empty(),
+					"completed map has no focusable or actionable marker")
 				await _assert_key(view, map, identical_rng, KEY_1, "", "completed atlas ignores 1")
 				await _assert_key(view, map, identical_rng, KEY_4, "", "completed atlas ignores 4")
 
@@ -314,6 +539,7 @@ func _run() -> void:
 	_check(saw_narrow, "at least one real connected state offers fewer than four destinations")
 	view.queue_free()
 	other_focus.queue_free()
+	close_focus.queue_free()
 	await process_frame
 	if failures.is_empty():
 		print("run_route_atlas_shortcuts_test: PASS (", checks, " checks)")

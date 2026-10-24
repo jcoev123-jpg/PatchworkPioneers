@@ -94,6 +94,9 @@ var _rendered_graph: Array = []
 var _rendered_route: Array[String] = []
 var _rendered_legal: Array[String] = []
 var _rendered_shortcuts: Array[String] = []
+## Only current mounted legal Action buttons; indexed in authored shortcut order.
+var _legal_actions: Array[Button] = []
+var _actions_by_id: Dictionary = {}
 ## Last map snapshot this view actually rendered, so a repeat refresh never replays.
 var _rendered_map: RunMap = null
 var _has_snapshot := false
@@ -153,6 +156,33 @@ class NodeToken extends Control:
 			var glyph := "▣" if token_kind == "Treasure" else "?"
 			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
 				20.0, 27, RunRouteAtlas.INK)
+
+## The Action draws a bone-thread ring WITHIN its round felt patch when focused.
+## Arcs leave the lower caption exposed; no filled overlay obscures token art.
+class LegalPatchAction extends Button:
+	func _init() -> void:
+		focus_entered.connect(queue_redraw)
+		focus_exited.connect(queue_redraw)
+
+	func _draw() -> void:
+		if not has_focus():
+			return
+		var centre := size * 0.5
+		# The focus seam is inset at least six pixels from the 80px edge.
+		# Leave the lower ~90-degree caption band unobstructed.
+		draw_arc(centre, 32.0, 2.32, TAU + 0.82, 52,
+			Color("#272f32"), 6.0, true)
+		draw_arc(centre, 32.0, 2.32, TAU + 0.82, 52,
+			Color("#fff1c6"), 3.5, true)
+		for angle in [2.56, 3.3, 4.04, 4.78, 5.52, 6.26]:
+			var radial := Vector2(cos(angle), sin(angle))
+			var tangent := Vector2(-radial.y, radial.x)
+			var point := centre + radial * 32.0
+			draw_line(point - radial * 3.0 - tangent * 2.3,
+				point + radial * 3.0 + tangent * 2.3, Color("#272f32"), 2.0, true)
+			draw_line(point - radial * 3.0 + tangent * 2.3,
+				point + radial * 3.0 - tangent * 2.3, Color("#fff1c6"), 2.0, true)
+
 
 ## Left-hand travel diary: an inert high-contrast sewn-paper journey and pinned
 ## twelve-floor progress trail. It never invents a route choice or reads RNG.
@@ -417,6 +447,11 @@ func refresh() -> void:
 	var previous_route := _rendered_route.duplicate()
 	var previous_legal := _rendered_legal.duplicate()
 	var had_snapshot := _has_snapshot
+	# Restore a focused legal choice by ID only; never retain a freed Button.
+	var focused_id := ""
+	var focus_owner := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	if focus_owner != null and _legal_actions.has(focus_owner):
+		focused_id = str(focus_owner.get_meta("route_id"))
 	# Kill and release every prior reveal before its threads are removed.
 	_teardown_reveal()
 	_rendered_graph = []
@@ -424,6 +459,8 @@ func refresh() -> void:
 	_rendered_route.clear()
 	_rendered_legal.clear()
 	_rendered_shortcuts.clear()
+	_legal_actions.clear()
+	_actions_by_id.clear()
 	_rendered_map = null
 	_has_snapshot = false
 	# Synchronous removal avoids stale, queued-for-deletion duplicates on repeated refresh.
@@ -518,6 +555,7 @@ func refresh() -> void:
 		_add_marker(current_id, String(current_node["type"]), positions[current_id],
 			chosen, legal, 0)
 		_add_pin(current_id, positions[current_id])
+	_rebuild_focus_chain(focused_id)
 
 
 ## A missing owner image leaves the complete drawn book instead of failing the preview.
@@ -858,9 +896,12 @@ func _add_marker(id: String, kind: String, at: Vector2,
 	_inert(caption)
 	marker.add_child(caption)
 	if state == "legal":
-		var action := Button.new()
+		var action := LegalPatchAction.new()
 		action.name = "Action"
 		action.flat = true
+		# A circular hand-sewn seam replaces the theme's rectangular focus box.
+		for state_name in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
+			action.add_theme_stylebox_override(state_name, StyleBoxEmpty.new())
 		action.focus_mode = Control.FOCUS_ALL
 		action.mouse_filter = Control.MOUSE_FILTER_STOP
 		action.position = Vector2(2, 2)
@@ -869,7 +910,53 @@ func _add_marker(id: String, kind: String, at: Vector2,
 		action.set_meta("route_id", id)
 		action.pressed.connect(_request_node.bind(id, _map, _revision))
 		marker.add_child(action)
+		_actions_by_id[id] = action
 	add_child(marker)
+
+
+## Explicit circular Tab order; no inert, current or future marker joins the chain.
+func _rebuild_focus_chain(focused_id: String) -> void:
+	_legal_actions.clear()
+	for id in _rendered_shortcuts:
+		var action: Button = _actions_by_id.get(id)
+		if is_instance_valid(action) and not action.disabled:
+			_legal_actions.append(action)
+	for index in range(_legal_actions.size()):
+		var action := _legal_actions[index]
+		action.focus_next = action.get_path_to(_legal_actions[(index + 1) % _legal_actions.size()])
+		action.focus_previous = action.get_path_to(
+			_legal_actions[(index - 1 + _legal_actions.size()) % _legal_actions.size()])
+	if not focused_id.is_empty() and is_visible_in_tree() and not _legal_actions.is_empty():
+		var restore: Button = _actions_by_id.get(focused_id, _legal_actions[0])
+		if is_instance_valid(restore):
+			restore.grab_focus()
+
+
+## An arrow enters from the overlay's Close map button (or no focus), then
+## cycles through this atlas alone. Other interface controls keep their focus.
+func _step_legal_focus(step: int) -> bool:
+	if not _snapshot_is_current() or _legal_actions.is_empty():
+		return false
+	var owner := get_viewport().gui_get_focus_owner()
+	var index := _legal_actions.find(owner)
+	if owner != null and index < 0:
+		if not (owner is Button and owner.text == "Close map"
+				and owner.get_parent() == get_parent()):
+			return false
+	# No prior legal focus: Down enters at the first patch, Up at the last.
+	var next_index := (index + step + _legal_actions.size()) % _legal_actions.size() \
+		if index >= 0 else (0 if step > 0 else _legal_actions.size() - 1)
+	_legal_actions[next_index].grab_focus()
+	return _legal_actions[next_index].has_focus()
+
+
+func _snapshot_is_current() -> bool:
+	return _map != null and _map.is_generated() and not _map.is_complete() \
+		and _map.get_generation_revision() == _rendered_generation \
+		and _map.get_floors() == _rendered_graph \
+		and _map.get_route() == _rendered_route \
+		and _map.get_legal_choices() == _rendered_legal
+
 
 ## The drawn pin names the party's current patch; it is decoration only.
 func _add_pin(id: String, at: Vector2) -> void:
@@ -890,6 +977,10 @@ func _input(event: InputEvent) -> void:
 		return
 	var key: InputEventKey = event
 	if not key.pressed or key.echo or not is_inside_tree() or not is_visible_in_tree():
+		return
+	if key.keycode == KEY_UP or key.keycode == KEY_DOWN:
+		if _step_legal_focus(-1 if key.keycode == KEY_UP else 1):
+			get_viewport().set_input_as_handled()
 		return
 	var index := -1
 	match key.keycode:
