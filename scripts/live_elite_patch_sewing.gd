@@ -166,14 +166,9 @@ func observe_claim(offering, result: Dictionary) -> void:
 	# refresh the guard or invalidate a player's already captured selection.
 	if offering == _service:
 		return
-	var definitions: Variant = JSON.parse_string(FileAccess.get_file_as_string(
-		"res://data/patches/initial_patch_slots.json"))
-	var coats: Variant = JSON.parse_string(FileAccess.get_file_as_string(
-		"res://data/patches/m04_coat_patches.json"))
-	if not definitions is Array or not coats is Array or not RunPatchCoatRules._valid_authored(coats):
+	var definitions: Array = RunAuthoredPatchDefinitions.load_definitions()
+	if definitions.is_empty():
 		return
-	for coat in coats:
-		definitions.append({"id": coat.id, "slot": coat.slot})
 	var carry := app.party_carryover as RunTornCarryover
 	if carry == null or (_bound_carry != null and carry._wardrobe != null and wardrobe != carry._wardrobe):
 		return
@@ -402,7 +397,18 @@ func _sew(hero_id: String, button, token: int, expected: Dictionary) -> void:
 		"elite:%s:%s" % [_map.get_current_node_id(), _drop], expected)
 	if not result.ok:
 		return
-	carry.bind_wardrobe(wardrobe, carry.torn, wardrobe.get_snapshot())
+	var sewn_state := wardrobe.get_snapshot()
+	if not carry.bind_wardrobe(wardrobe, carry.torn, sewn_state):
+		return
+	# The wardrobe owns the replacement ledger, while the routed run exposes
+	# the same inventory and scrap purse to subsequent nodes and rewards.
+	var app = get_parent()
+	app.run_trinkets.assign(sewn_state.owned)
+	app.run_scraps = sewn_state.scraps
+	# Continue checks the paid coordinator's current inventory against the run.
+	# Reconcile only its post-claim inventory snapshot; its receipt, offers,
+	# gold, paid battles and RNG remain untouched.
+	_service._trinkets.assign(sewn_state.owned)
 	_bound_carry = carry
 	for action in hero_buttons:
 		action.disabled = true

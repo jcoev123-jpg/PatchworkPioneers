@@ -794,6 +794,7 @@ func _run() -> void:
 	if not torn_fixture.is_empty():
 		await _test_torn_warden_focus(torn_fixture)
 	await _test_displaced_name(fixture)
+	await _test_authored_live_claims(fixture)
 	await _finish_sewing()
 
 
@@ -817,10 +818,8 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 	# The fixture's ledger admits every shipped patch slot (the initial slots,
 	# the authored attack patches and all authored coats) so the real sewing
 	# services can hold the prior wear; the drop, claim and sew below stay real.
-	var definitions: Array = []
-	for path in AUTHORED_PATCH_CATALOGS.slice(0, 3):
-		for record in JSON.parse_string(FileAccess.get_file_as_string(path)):
-			definitions.append({"id": record.id, "slot": record.slot})
+	var definitions: Array = RunAuthoredPatchDefinitions.load_definitions()
+	_check(not definitions.is_empty(), "prior-bound wardrobe uses complete authored projection")
 	var prior := RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
 		app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
 	_check(prior.is_valid(), "real roster admits the authored prior coat")
@@ -916,6 +915,182 @@ func _test_displaced_name(fixture: Dictionary) -> void:
 	_check(app.title_view.visible and sewing.wardrobe == null and app.run_map == null,
 		"displacement run returns to a clean sewn title")
 	_check(randi() == global_next, "displaced claim, sewing and reset preserve global RNG")
+
+
+## Install a fresh, real RunMultiFightRewards using one authored test candidate.
+## The production Shop drop pool is intentionally unchanged; all later actions
+## still pass through the mounted reward panel, app claim, signed service receipt,
+## carryover settlement, Elite chooser and physical hero button.
+func _authored_reward_fixture(drop: String) -> RunMultiFightRewards:
+	_check(not app.fight_reward_claimed and app.multi_fight_rewards != null
+		and app.reward_buttons.size() == 4 and not app.run_trinkets.has(drop),
+		"unclaimed actual Elite battle is ready for an authored fixture pool")
+	var owners: Array[String] = []
+	for hero in app.party.get_heroes():
+		owners.append(hero.id)
+	var records: Array = app._reward_candidate_records(owners)
+	var service := RunMultiFightRewards.new(app.run_map, app.run_rng, app.party_carryover,
+		app.run_deck, app.session_gold, app.run_trinkets, records, [drop],
+		app.run_stitch_descriptors, app.run_next_stitch_id)
+	var prepared: Dictionary = service.prepare(app._carryover_node, app.battle_result, app.party)
+	_check(prepared.get("ok") == true and prepared.get("trinket_drop_id") == drop
+		and service._pending != null and service._paid_battles.is_empty(),
+		"real coordinator prepares one seeded authored drop: " + drop)
+	if prepared.get("ok") != true:
+		return null
+	app._clear_reward_choice()
+	app.multi_fight_rewards = service
+	app.fight_reward_offers = prepared.offers
+	app.fight_reward_gold = prepared.gold_award
+	app.fight_reward_trinket = prepared.trinket_drop_id
+	app._mount_reward_choice(prepared)
+	await _frames()
+	_check(app.reward_buttons.size() == 4
+		and app.reward_choice_panel.is_visible_in_tree() and not app.fight_reward_claimed,
+		"real reward controls bind the new, still-unclaimed service")
+	return service
+
+
+## Genuine committed M05 HEAD/ARM/COAT receipts and a formerly-bound
+## incompatible wardrobe. ARM/COAT replace an actual previously worn patch;
+## HEAD uses a vacant slot. No forged result is passed to observe_claim.
+func _test_authored_live_claims(fixture: Dictionary) -> void:
+	for case in [
+		{"drop": "bloodstitch_bonnet", "slot": "HEAD", "prior": ""},
+		{"drop": "hemguard_cuff", "slot": "ARM", "prior": "spare_spool"},
+		{"drop": "borrowed_button", "slot": "COAT", "prior": "reinforced_patchcoat"},
+		{"drop": "bloodstitch_bonnet", "slot": "HEAD", "prior": "spare_spool",
+			"incompatible": true},
+	]:
+		var drop: String = case.drop
+		var expected_slot: String = case.slot
+		seed(307307)
+		var global_next := randi()
+		seed(307307)
+		if not await _routed_win(fixture, false):
+			return
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		var prior: RunPatchWardrobe = null
+		var prior_id: String = case.prior
+		if prior_id != "":
+			app.run_trinkets.append(prior_id)
+			var definitions: Array = (JSON.parse_string(FileAccess.get_file_as_string(
+				"res://data/patches/initial_patch_slots.json"))
+				if case.get("incompatible", false)
+				else RunAuthoredPatchDefinitions.load_definitions())
+			prior = RunPatchWardrobe.new(app.run_heroes, app.run_trinkets, definitions,
+				app.run_scraps, app.session_gold, app.run_deck, app.run_seed, true)
+			_check(prior.is_valid(), "fixture creates a valid bound earlier wardrobe")
+			if not prior.is_valid():
+				return
+			var old_slot: String = prior.get_snapshot().definitions[prior_id]
+			var old_sew := prior.sew(prior_id, "warden", old_slot,
+				"fixture:prior:" + prior_id, prior.get_snapshot())
+			_check(old_sew.ok and old_sew.receipt.scrap_delta == 0
+				and app.party_carryover.bind_wardrobe(prior, app.party_carryover.torn,
+					prior.get_snapshot()), "prior wear and carryover binding are canonical")
+		var path: Array = fixture.paths[0].duplicate()
+		var elite: String = path.pop_back()
+		await _visit_path(path, false)
+		await _click(_route_action(elite))
+		_check(app.run_map.get_current_node_id() == elite and not app._battle_closed,
+			"real Elite was entered through the connected route")
+		for enemy in app.enemies.get_enemies():
+			_check(app.enemies.apply_damage(enemy.position, 9999),
+				"actual Elite opponent defeated for " + drop)
+		app._observe_battle_result()
+		await _frames()
+		var service: RunMultiFightRewards = await _authored_reward_fixture(drop)
+		if service == null or app.reward_buttons.size() != 4:
+			return
+		var pre_claim := _complete_state()
+		_check(not app.run_trinkets.has(drop), "authored power not owned before actual claim")
+		await _click(app.reward_buttons[3])
+		_check(app.fight_reward_claimed and service._paid_battles.has(app.battle_result)
+			and service._pending == null and app.run_trinkets.has(drop),
+			"mounted Skip commits canonical Elite receipt and adds owned " + drop)
+		_check(_complete_state() != pre_claim,
+			"actual reward changes run state before any sewing is possible")
+		if case.get("incompatible", false):
+			_check(sewing.wardrobe == prior and app.party_carryover._wardrobe == prior
+				and not prior.get_snapshot().definitions.has(drop)
+				and prior.get_snapshot().owned.has(drop)
+				and sewing.hero_buttons.is_empty(),
+				"incompatible previously bound Shop-style wardrobe is kept and denies missing ID")
+			var denied_state := _complete_state()
+			var signed_receipt := {"ok": true, "receipt": {"node_id": elite,
+				"node_kind": "Elite", "trinket_drop_id": drop}}
+			sewing.observe_claim(service, signed_receipt)
+			_check(_complete_state() == denied_state,
+				"re-observation cannot replace or expand a bound incompatible wardrobe")
+			await _click(app.continue_button)
+			_check(app.route_view.is_visible_in_tree() and app.party_carryover._wardrobe == prior,
+				"rejected sewing still permits normal continuation with same authoritative ledger")
+			await _click(app.route_back_button)
+			_check(randi() == global_next, "incompatible receipt preserves global RNG")
+			continue
+		_check(sewing.wardrobe != null and sewing.hero_buttons.size() == 3
+			and sewing._eligible(), "complete live wardrobe offers 3 recipients for " + drop)
+		if sewing.wardrobe == null or sewing.hero_buttons.size() != 3:
+			return
+		var state: Dictionary = sewing.wardrobe.get_snapshot()
+		_check(state.definitions.get(drop) == expected_slot and state.owned.has(drop)
+			and state.heroes == app.run_heroes and app.party_carryover.torn.read_state().heroes == state.heroes,
+			"committed authored patch has correct slot, ownership and torn-roster preconditions")
+		var previews: Dictionary = await _verify_preview_choice(drop, state)
+		var target: Button = sewing.hero_buttons[0]
+		var result_preview: Dictionary = previews.get("warden", {})
+		var replaced: String = prior_id
+		_check(result_preview.get("ok") == true
+			and result_preview.get("slot") == expected_slot
+			and result_preview.get("displaced_id") == replaced
+			and result_preview.get("scrap_delta") == (1 if replaced != "" else 0),
+			"mounted authentic preview distinguishes empty-slot free sew from replacement")
+		var callback: Callable = target.pressed.get_connections()[0].callable
+		_reject_patch(sewing._sew.bind("foreign", target, sewing._token, state),
+			"authored signed receipt rejects foreign wearer")
+		var forged := state.duplicate(true)
+		forged.gold += 1
+		_reject_patch(sewing._sew.bind("warden", target, sewing._token, forged),
+			"authored signed receipt rejects stale wardrobe")
+		var torn_before: Dictionary = app.party_carryover.torn.read_state()
+		var unaffected := [app.session_gold, app.run_deck.duplicate(true), app.run_rng.state,
+			app.run_seed, app.fight_reward_claimed, app.fight_reward_offers.duplicate(true),
+			service.read_state().deck, service.read_state().gold,
+			service.read_state().party, service._paid_battles.duplicate(),
+			service._pending, app.run_map.get_route(), app.run_map.get_floors()]
+		var worn_expected: Dictionary = state.worn.duplicate(true)
+		worn_expected["warden"][expected_slot] = drop
+		await _click(target)
+		var after: Dictionary = sewing.wardrobe.get_snapshot()
+		_check(after.worn == worn_expected and after.owned.has(drop)
+			and (replaced == "" or not after.owned.has(replaced))
+			and after.scraps == state.scraps + (1 if replaced != "" else 0)
+			and after.operation_ids.size() == state.operation_ids.size() + 1,
+			"real hero button sews exact authored slot and destroys only displaced patch")
+		_check(app.run_trinkets == after.owned and app.run_scraps == after.scraps
+			and service.read_state().trinkets == after.owned
+			and app.party_carryover._wardrobe == sewing.wardrobe
+			and app.party_carryover.torn.read_state() == torn_before,
+			"run wallet, owned list, bound carryover and torn ledger match exact sewing result")
+		_check(unaffected == [app.session_gold, app.run_deck.duplicate(true), app.run_rng.state,
+			app.run_seed, app.fight_reward_claimed, app.fight_reward_offers.duplicate(true),
+			service.read_state().deck, service.read_state().gold,
+			service.read_state().party, service._paid_battles.duplicate(),
+			service._pending, app.run_map.get_route(), app.run_map.get_floors()],
+			"sew preserves gold, deck, reward, RNG, seed and route")
+		_verify_worn_readout()
+		_reject_patch(callback, "authored duplicate hero click")
+		await _click(app.continue_button)
+		_check(app.route_view.is_visible_in_tree()
+			and sewing.summary.text.contains(_expected_name(drop)),
+			"authored power and wearer survive normal Continue")
+		_reject_patch(callback, "authored stale callback after Continue")
+		await _click(app.route_back_button)
+		_check(sewing.wardrobe == null and app.title_view.visible,
+			"authored power run resets all sewing selections")
+		_check(randi() == global_next, "authored claimed, replaced and reset global RNG untouched")
 
 
 func _reward_oracle_after_prepare(service: RunMultiFightRewards) -> Dictionary:
