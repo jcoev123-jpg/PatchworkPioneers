@@ -8,11 +8,13 @@ extends Control
 
 signal return_to_title_requested
 
-## The one illustrated stage texture this view may use. It is already imported
-## by the reward panel's sewn camp, so the terminal result joins the established
-## patchwork identity without introducing new art. Resolution is exists-guarded:
-## a missing picture hides only this layer and never the result.
+## The illustrated stage textures this view may use. Both are already imported
+## shipped backgrounds, so the terminal result joins the established patchwork
+## identity without introducing new art: the final Boss stage for a won run and
+## the sewn camp for a fallen party (also the closed/default stage). Resolution
+## is exists-guarded: a missing picture hides only this layer and never the result.
 const CAMP_BACKDROP := "res://assets/paper/backgrounds/reward_camp.png"
+const BOSS_BACKDROP := "res://assets/paper/backgrounds/battle_boss.png"
 ## Conspicuous stitched perimeter: cream thread walked on the dark felt mat and
 ## dark thread sewn just inside the parchment's own border.
 const FELT_THREAD := Color("#e6d6b5")
@@ -104,6 +106,9 @@ func open_result(latch: RunActBattleOutcome) -> bool:
 	_is_open = true
 	_return_requested = false
 	_presented_status = status
+	# Only an authenticated terminal verdict chooses its stage picture, so a
+	# close/reopen can never carry the other outcome's art into this result.
+	apply_backdrop_art(backdrop_for_status(status))
 	title_label.text = "Victory" if status == RunActBattleOutcome.VICTORY else "Defeat"
 	description_label.text = ("The final boss has fallen. The run is complete."
 		if status == RunActBattleOutcome.VICTORY
@@ -765,6 +770,13 @@ func _style_felt_stage() -> void:
 		felt_mat.draw.connect(_draw_felt_stitches.bind(felt_mat))
 		felt_mat.resized.connect(felt_mat.queue_redraw)
 	apply_backdrop_art(CAMP_BACKDROP)
+
+
+## The already-shipped stage picture each validated terminal verdict selects:
+## the Boss battlefield for a witnessed run victory, the sewn camp for a downed
+## party. Presentation only; never consulted for settlement or navigation.
+static func backdrop_for_status(status: String) -> String:
+	return BOSS_BACKDROP if status == RunActBattleOutcome.VICTORY else CAMP_BACKDROP
 
 
 ## Exists-guarded texture lookup. A missing or unreadable resource returns null

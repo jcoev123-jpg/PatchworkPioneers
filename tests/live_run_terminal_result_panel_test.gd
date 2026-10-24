@@ -484,6 +484,14 @@ func _connected_draws(target: Control, method: String) -> int:
 	return total
 
 
+## Independent oracle for the stage picture each validated terminal verdict must
+## select: the shipped Boss battlefield for a won run, the sewn camp for a fallen
+## party.
+func _expected_backdrop(status: String) -> String:
+	return (LiveRunTerminalResultPanel.BOSS_BACKDROP if status == "Victory"
+		else LiveRunTerminalResultPanel.CAMP_BACKDROP)
+
+
 func _validate_view(status: String, label: String) -> void:
 	_check(panel.has_open_result() and panel.is_visible_in_tree(),
 		label + " mounted and visible")
@@ -516,7 +524,7 @@ func _validate_view(status: String, label: String) -> void:
 		label + " dark slate ColorRect covers background")
 	var stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
 	_check(stage != null and stage.texture != null and stage.is_visible_in_tree(),
-		label + " established illustrated camp stage is mounted and visible")
+		label + " authenticated verdict illustration is mounted and visible")
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
 	if stage != null:
 		_check(stage.get_index() < panel.paper_panel.get_index()
@@ -529,8 +537,14 @@ func _validate_view(status: String, label: String) -> void:
 		_check(stage.get_global_rect() == screen,
 			label + " illustration covers the whole 1280x720 stage")
 		if stage.texture != null:
-			_check(stage.texture.resource_path == LiveRunTerminalResultPanel.CAMP_BACKDROP,
-				label + " only the already-imported camp picture is used")
+			var expected_backdrop := _expected_backdrop(status)
+			var other_backdrop := (LiveRunTerminalResultPanel.CAMP_BACKDROP
+				if expected_backdrop == LiveRunTerminalResultPanel.BOSS_BACKDROP
+				else LiveRunTerminalResultPanel.BOSS_BACKDROP)
+			_check(stage.texture.resource_path == expected_backdrop,
+				label + " selects the already-imported picture of its own verdict")
+			_check(stage.texture.resource_path != other_backdrop,
+				label + " never shows the other terminal verdict's picture")
 	var felt := panel.get_node_or_null("FeltMat") as PanelContainer
 	var felt_box := (felt.get_theme_stylebox("panel") as StyleBoxFlat) if felt != null else null
 	_check(felt != null and felt.is_visible_in_tree()
@@ -669,11 +683,13 @@ func _settle_active_win(ctx: Dictionary, battle: Dictionary) -> void:
 ## felt/paper framing and the sole Return action all stay intact, and no run
 ## state, currency or RNG moves. A controlled synthetic path is used, so this
 ## never asserts that any committed art file is absent.
-func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: String) -> void:
+func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: String,
+		expected_backdrop: String) -> void:
 	var before := _snapshot(ctx, battle)
 	var stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
-	_check(stage != null and stage.texture != null and stage.is_visible_in_tree(),
-		label + " starts from the real illustrated stage")
+	_check(stage != null and stage.texture != null and stage.is_visible_in_tree()
+		and stage.texture.resource_path == expected_backdrop,
+		label + " starts from the verdict's own illustrated stage")
 	if stage == null:
 		return
 	var title := panel.title_label.text
@@ -707,12 +723,12 @@ func _test_missing_backdrop_art(ctx: Dictionary, battle: Dictionary, label: Stri
 		label + " felt and parchment framing stays readable without the picture")
 	_check(_snapshot(ctx, battle) == before,
 		label + " missing picture and stage changes never alter run state or RNG")
-	_check(panel.apply_backdrop_art(LiveRunTerminalResultPanel.CAMP_BACKDROP),
-		label + " the already-imported camp picture remounts")
+	_check(panel.apply_backdrop_art(expected_backdrop),
+		label + " the verdict's already-imported picture remounts")
 	await _frames()
 	_check(stage.visible and stage.is_visible_in_tree() and stage.texture != null
-		and stage.texture.resource_path == LiveRunTerminalResultPanel.CAMP_BACKDROP,
-		label + " restored illustration is the same existed camp picture")
+		and stage.texture.resource_path == expected_backdrop,
+		label + " restored illustration is the same existed picture as the verdict")
 	_check(panel.title_label.text == title and panel.description_label.text == description
 		and panel.summary_label.text == summary and _hero_rows_text() == recap
 		and not panel.return_button.disabled,
@@ -730,9 +746,17 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.open_result(victory_latch), "accepts settled Boss VICTORY")
 	await _frames()
 	_validate_view("Victory", "Boss victory")
+	var victory_stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
+	_check(victory_stage != null and victory_stage.texture != null
+		and victory_stage.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and victory_stage.texture.resource_path == LiveRunTerminalResultPanel.BOSS_BACKDROP,
+		"settled Boss victory selects the shipped Boss stage behind an inert picture")
+	var victory_backdrop := (victory_stage.texture.resource_path
+		if victory_stage != null and victory_stage.texture != null else "")
 	_check(panel.summary_label.text.begins_with("Battles resolved: %d · Gold: 0 · Scraps: 0\n" % victory_settled),
 		"Boss victory shows correct battles resolved count")
-	await _test_missing_backdrop_art(victory_ctx, victory_battle, "Boss victory")
+	await _test_missing_backdrop_art(victory_ctx, victory_battle, "Boss victory",
+		_expected_backdrop("Victory"))
 	var generation := panel._generation
 	var connections := panel.return_button.pressed.get_connections()
 	_check(connections.size() == 1, "only one callback for Return button")
@@ -776,9 +800,23 @@ func _test_terminal_interactions(victory: Dictionary, defeat: Dictionary) -> voi
 	_check(panel.open_result(defeat_latch), "new settled DEFEAT opens after close")
 	await _frames()
 	_validate_view("Defeat", "party defeat")
+	var defeat_stage := panel.get_node_or_null("ResultBackdropArt") as TextureRect
+	_check(defeat_stage != null and panel.title_label.text == "Defeat"
+		and defeat_stage.texture != null
+		and defeat_stage.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and defeat_stage.texture.resource_path == LiveRunTerminalResultPanel.CAMP_BACKDROP,
+		"outcome switch: defeat after a closed victory shows the camp picture")
+	if victory_stage != null and defeat_stage != null:
+		_check(not victory_backdrop.is_empty() and defeat_stage.texture != null
+			and defeat_stage.texture.resource_path != victory_backdrop,
+			"outcome switch: no stale Boss picture survives into the defeat result")
+	_check(panel.find_children("*", "Button", true, false).size() == 1
+		and not panel.return_button.disabled,
+		"outcome switch keeps exactly one enabled Return action")
 	_check(panel.summary_label.text.begins_with("Battles resolved: %d · Gold: 0 · Scraps: 0\n" % defeat_settled),
 		"Party defeat shows correct battles resolved count")
-	await _test_missing_backdrop_art(defeat_ctx, defeat_battle, "party defeat")
+	await _test_missing_backdrop_art(defeat_ctx, defeat_battle, "party defeat",
+		_expected_backdrop("Defeat"))
 	if old_callback.is_valid():
 		old_callback.call()
 	_check(returns == 1 and not panel.return_button.disabled,
