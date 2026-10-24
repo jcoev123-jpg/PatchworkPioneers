@@ -115,6 +115,12 @@ func _keeps_body_face(control: Control) -> bool:
 		and _font_path(control) == BODY_FONT
 
 
+## The shipped Theme's authored PatchHeading face, loaded independently of the view.
+func _shipped_heading_face() -> Font:
+	var master := load("res://assets/fonts/patchwork_theme.tres") as Theme
+	return master.get_font("font", "PatchHeading") if master != null else null
+
+
 ## Independent player-facing wording for one real node record: authored floor, authored
 ## kind and the one-based branch row. Spelled out here so this regression cannot inherit
 ## a wording mistake from the view itself.
@@ -422,6 +428,14 @@ func _verify(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator, label
 				label + ": authentic left journal, area and pinned visited trail without floor 13")
 			_check(_keeps_body_face(diary),
 				label + ": left journey diary stays in the body face, not a heading variation")
+			var heading_face := _shipped_heading_face()
+			var diary_heading := diary.heading_font()
+			_check(heading_face != null and heading_face.resource_path == HEADING_FONT
+				and diary_heading == heading_face
+				and diary_heading != diary.get_theme_default_font(),
+				label + ": both diary display headings take the real Londrina PatchHeading face")
+			_check(_font_path(diary) == BODY_FONT,
+				label + ": current, next and visited diary facts keep the Patrick Hand body face")
 		elif child is RunRouteAtlas.NextAreaTab:
 			tab_count += 1
 			_verify_next_area_tab(view, map, child, label)
@@ -1059,6 +1073,46 @@ func _exercise_status_tab(view: RunRouteAtlas) -> void:
 	view.bind_map(null)
 
 
+# AC1/AC2: the diary's two display headings resolve the mounted PatchHeading face, and
+# a detached diary without such a Theme still draws the shipped Londrina fallback.
+func _verify_journal_headings() -> void:
+	var master := load("res://assets/fonts/patchwork_theme.tres") as Theme
+	var master_heading: Font = master.get_font("font", "PatchHeading") if master != null else null
+	_check(master_heading != null and master_heading.resource_path == HEADING_FONT
+		and master.get_font_list("PatchHeading").has("font")
+		and RunRouteAtlas.HEADING_FONT_PATH == HEADING_FONT,
+		"journal heading fixture names the shipped Londrina PatchHeading face")
+	# The resolver must inspect a Theme's authored faces, not accept its default font.
+	_check(RunRouteAtlas.patch_heading_face(master) == master_heading
+		and RunRouteAtlas.patch_heading_face(null) == null
+		and RunRouteAtlas.patch_heading_face(Theme.new()) == null,
+		"heading resolver reads only a Theme's real PatchHeading face")
+	var detached := RunRouteAtlas.JourneyJournal.new()
+	_check(not detached.is_inside_tree() and detached.get_parent() == null
+		and detached.theme == null and detached.inherited_theme() == null,
+		"detached diary inherits no Theme that could supply PatchHeading")
+	var fallback := detached.heading_font()
+	_check(fallback != null and fallback is FontFile
+		and fallback.resource_path == HEADING_FONT,
+		"detached diary headings resolve the committed Londrina Solid file")
+	_check(detached.heading_font() == fallback and _font_path(detached) == BODY_FONT,
+		"detached diary still keeps its facts in Patrick Hand and caches the fallback")
+	# An inherited Theme that really authors PatchHeading wins over any fallback.
+	var themed := RunRouteAtlas.JourneyJournal.new()
+	themed.theme = master
+	_check(themed.heading_font() == master_heading
+		and themed.heading_font().resource_path == HEADING_FONT,
+		"an inherited PatchHeading Theme supplies the diary display face")
+	# A mounted Theme without the variation cannot pass its default font off as headings.
+	themed.theme = Theme.new()
+	_check(themed.heading_font() == fallback
+		and themed.heading_font().resource_path == HEADING_FONT
+		and themed.heading_font() != themed.get_theme_default_font(),
+		"a Theme without PatchHeading keeps the committed heading face, not the body face")
+	themed.free()
+	detached.free()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	# App mounts this view under PatchworkUIShell's installed master Theme, so install that
@@ -1073,6 +1127,7 @@ func _run() -> void:
 		"shipped master Theme still supplies the PatchHeading Londrina heading and Patrick Hand body")
 	if master_theme != null:
 		root.theme = master_theme
+	_verify_journal_headings()
 	var first := RunRouteAtlas.new()
 	first.position = Vector2(20, 40)
 	root.add_child(first)
