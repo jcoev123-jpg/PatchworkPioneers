@@ -1003,8 +1003,8 @@ func _test_list_authored_choices_plain_and_mixed() -> void:
 		var sid: String = str(c.get("source_id", ""))
 		_check(sid != "seamstress_running_stitch_plus", "prior pool plus is never an upgrade choice")
 		_check(sid != "warden_strike_plus", "prior starter plus is never an upgrade choice")
-		_check(sid != "tinker_tune_up",
-			"un-authored starter upgrades remain ineligible: " + sid)
+		_check(sid != "tinker_tune_up_plus",
+			"already-upgraded starters remain ineligible: " + sid)
 
 	_check(permitted.get(STRIKE_ID) == "warden_strike_plus", "permitted Strike maps to warden_strike_plus")
 	_check(permitted.get("warden_iron_hem") == "warden_iron_hem_plus", "permitted Iron Hem maps to plus")
@@ -1017,7 +1017,7 @@ func _test_list_authored_choices_plain_and_mixed() -> void:
 		and permitted.get("seamstress_mend") == "seamstress_mend_plus"
 		and permitted.get("seamstress_stitch_up") == "seamstress_stitch_up_plus",
 		"authored support upgrades included in genuine permitted map")
-	_check(not permitted.has("tinker_tune_up"), "unauthored Tune Up remains excluded")
+	_check(permitted.get("tinker_tune_up") == "tinker_tune_up_plus", "authored Tune Up is permitted")
 
 	var earned: Dictionary = _earned_mixed_ledger()
 	if not earned.get("ok", false):
@@ -1131,11 +1131,13 @@ func _test_choice_map_integration_and_canonical_authoring() -> void:
 
 		_assert_rejected_while_used(visit, idx_first, pristine_deck, base_id + ": second selection denied")
 
-		var unsupported: int = deck.find("tinker_tune_up")
+		var unsupported_deck: Array = deck.duplicate(true)
+		var unsupported: int = unsupported_deck.find("tinker_tune_up")
 		if unsupported >= 0 and unsupported != idx_first and unsupported != idx_second:
-			var starter_attempt_visit: RunRestCardUpgrade = RunRestCardUpgrade.new(deck, permitted, descriptors, cursor)
-			_assert_rejected(starter_attempt_visit, unsupported, pristine_deck,
-				base_id + ": non-upgradeable Tune Up cannot be upgraded with canonical map")
+			unsupported_deck[unsupported] = "tinker_tune_up_plus"
+			var starter_attempt_visit: RunRestCardUpgrade = RunRestCardUpgrade.new(unsupported_deck, permitted, descriptors, cursor)
+			_assert_rejected(starter_attempt_visit, unsupported, unsupported_deck,
+				base_id + ": already-upgraded Tune Up cannot be upgraded with canonical map")
 
 		_check(randi() == pre_rng, base_id + ": visit consumed zero RNG draws")
 
@@ -1154,7 +1156,7 @@ func _test_list_authored_choices_negative_and_isolation() -> void:
 		{"desc": "deck with null element", "deck": [valid_deck[0], null], "reg": null, "cursor": null},
 		{"desc": "deck with unknown card ID", "deck": [valid_deck[0], "unauthored_card_xyz"], "reg": null, "cursor": null},
 		{"desc": "deck with forged pool plus", "deck": [valid_deck[0], "warden_forged_hem_plus"], "reg": null, "cursor": null},
-		{"desc": "unauthored Tune Up plus", "deck": [valid_deck[0], "tinker_tune_up_plus"], "reg": null, "cursor": null},
+		{"desc": "forged Tune Up plus", "deck": [valid_deck[0], "tinker_tune_up_plus_forged"], "reg": null, "cursor": null},
 		{"desc": "deck with fake tinker plus", "deck": [valid_deck[0], "tinker_rivet_shot_plus_fake"], "reg": null, "cursor": null},
 		{"desc": "stitched card without descriptors", "deck": [valid_deck[0], "stitched_000001"], "reg": null, "cursor": null},
 		{"desc": "stitched card with empty registry", "deck": [valid_deck[0], "stitched_000001"], "reg": {}, "cursor": 2},
@@ -1227,6 +1229,9 @@ func _test_starter_support_upgrade_pairs() -> void:
 		{"base": "seamstress_mend", "plus": "seamstress_mend_plus", "owner": "seamstress",
 			"name": "Mend", "plus_name": "Mend+", "effect": {"heal": 5},
 			"plus_effect": {"heal": 7}, "positions": [2, 3], "target": "ally_single"},
+		{"base": "tinker_tune_up", "plus": "tinker_tune_up_plus", "owner": "tinker",
+			"name": "Tune Up", "plus_name": "Tune Up+", "effect": {"draw": 1},
+			"plus_effect": {"draw": 2}, "positions": [1, 2, 3], "target": "none", "cost": 0},
 		{"base": "seamstress_stitch_up", "plus": "seamstress_stitch_up_plus", "owner": "seamstress",
 			"name": "Stitch Up", "plus_name": "Stitch Up+", "effect": {"block": 5},
 			"plus_effect": {"block": 7}, "positions": [1, 2, 3], "target": "ally_single"},
@@ -1253,7 +1258,7 @@ func _test_starter_support_upgrade_pairs() -> void:
 		_check(base_def.get("effects") == tc["effect"]
 			and plus_def.get("effects") == tc["plus_effect"],
 			base_id + ": authored base and plus effects match the supported contract")
-		var deck: Array = [base_id, plus_id, base_id, "tinker_tune_up", "warden_strike_plus", "tinker_tune_up"]
+		var deck: Array = [base_id, plus_id, base_id, "tinker_tune_up_plus", "warden_strike_plus", "tinker_tune_up_plus"]
 		var pristine: Array = deck.duplicate(true)
 		var projection := RunRestCardUpgrade.list_authored_choices(deck)
 		_check(_is_ok(projection), base_id + ": genuine plain mixed starter deck projects")
@@ -1275,20 +1280,20 @@ func _test_starter_support_upgrade_pairs() -> void:
 				base_id + ": genuine per-copy canonical indexed metadata")
 		_check(found == [0, 2] and permitted.get(base_id) == plus_id,
 			base_id + ": both base copies and only genuine paired plus authorize upgrade")
-		_check(not permitted.has(plus_id) and not permitted.has("tinker_tune_up")
+		_check(not permitted.has(plus_id) and not permitted.has("tinker_tune_up_plus")
 			and not permitted.has("warden_strike_plus"),
-			base_id + ": already-plus and unsupported starters remain unselectable")
+			base_id + ": already-plus starters remain unselectable")
 		seed(RNG_SEED)
 		var next_draw := randi()
 		seed(RNG_SEED)
 		var visit := RunRestCardUpgrade.new(deck, permitted)
 		_assert_rejected(visit, 1, pristine, base_id + ": pre-upgraded copy rejected")
-		_assert_rejected(visit, 3, pristine, base_id + ": un-authored Tune Up upgrade rejected")
+		_assert_rejected(visit, 3, pristine, base_id + ": already-plus Tune Up upgrade rejected")
 		_assert_rejected(visit, 4, pristine, base_id + ": already-plus Strike upgrade rejected")
 		var result := visit.choose_upgrade(2)
 		_check(_is_ok(result) and visit.is_consumed() and result.get("original_id") == base_id
 			and result.get("upgraded_id") == plus_id
-			and result.get("deck") == [base_id, plus_id, plus_id, "tinker_tune_up", "warden_strike_plus", "tinker_tune_up"],
+			and result.get("deck") == [base_id, plus_id, plus_id, "tinker_tune_up_plus", "warden_strike_plus", "tinker_tune_up_plus"],
 			base_id + ": only second copy upgraded once and existing plus stays untouched")
 		_assert_rejected_while_used(visit, 0, pristine, base_id + ": no second Rest upgrade")
 		_check(deck == pristine and randi() == next_draw, base_id + ": no caller mutation or global RNG")

@@ -1,7 +1,7 @@
 extends Node
 ## Input/presentation only. Support and movement services own effects and charges.
 
-const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up",
+const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "tinker_tune_up_plus",
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",

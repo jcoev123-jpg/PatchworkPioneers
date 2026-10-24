@@ -81,6 +81,7 @@ func _test_offensive_plus() -> void:
 func _test_support_plus() -> void:
 	var catalog := StarterCards.new()
 	var expectations := {
+		"tinker_tune_up_plus": ["Tune Up+", "tinker", "none", "draw", 2, [1, 2, 3]],
 		"warden_brace_plus": ["Brace+", "warden", "self", "block", 10, [1, 2, 3]],
 		"seamstress_mend_plus": ["Mend+", "seamstress", "ally_single", "heal", 7, [2, 3]],
 		"seamstress_stitch_up_plus": ["Stitch Up+", "seamstress", "ally_single", "block", 7, [1, 2, 3]],
@@ -94,7 +95,7 @@ func _test_support_plus() -> void:
 		_check(plus.get("id") == card_id and not plus.is_empty(), card_id + " authored ID")
 		_check(plus.get("display_name") == expected[0], card_id + " visible name")
 		_check(plus.get("owner") == expected[1], card_id + " owner")
-		_check(plus.get("cost") == 1, card_id + " cost")
+		_check(plus.get("cost") == (0 if card_id == "tinker_tune_up_plus" else 1), card_id + " cost")
 		_check(plus.get("from_positions") == expected[5], card_id + " from_positions")
 		_check(plus.get("target_kind") == expected[2], card_id + " target_kind")
 		_check(plus.get("to_positions") == [], card_id + " to_positions empty")
@@ -117,8 +118,8 @@ func _test_support_plus() -> void:
 		"existing Strike+ remains seven damage")
 	_check(catalog.get_definition("tinker_tune_up").get("effects") == {"draw": 1},
 		"original Tune Up remains draw one")
-	_check(not catalog.has_card("tinker_tune_up_plus"),
-		"no Tune Up+ is authored without a specified draw upgrade")
+	_check(not catalog.has_card("tinker_tune_up_plus_forged"),
+		"forged Tune Up+ remains unauthored")
 	_check(starter_deck == authored and starter_deck.size() == 12,
 		"exact twelve-card starter membership and order retained")
 

@@ -66,6 +66,12 @@ func play_card(deck: CombatDeck, party: CombatParty, card_id: String,
 			effect_key = "draw"
 			effect = "draw"
 			amount = 1
+		"tinker_tune_up_plus":
+			owner_id = "tinker"
+			target_kind = "none"
+			effect_key = "draw"
+			effect = "draw"
+			amount = 2
 		_:
 			# Fail closed before looking at a hand, spending energy or drawing.
 			return false

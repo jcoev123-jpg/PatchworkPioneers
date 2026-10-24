@@ -214,6 +214,18 @@ func _init() -> void:
 			"illustration_path": "res://assets/paper/cards/tinker_scrap_bomb.png",
 			"starting_copies": 0
 		},
+		"tinker_tune_up_plus": {
+			"id": "tinker_tune_up_plus",
+			"display_name": "Tune Up+",
+			"owner": "tinker",
+			"cost": 0,
+			"from_positions": [1, 2, 3],
+			"target_kind": "none",
+			"to_positions": [],
+			"effects": {"draw": 2},
+			"illustration_path": "res://assets/paper/cards/tinker_tune_up.png",
+			"starting_copies": 0
+		},
 		"tinker_tune_up": {
 			"id": "tinker_tune_up",
 			"display_name": "Tune Up",
