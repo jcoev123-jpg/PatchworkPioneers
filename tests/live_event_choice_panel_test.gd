@@ -4,6 +4,8 @@ const PANEL_SCENE := "res://scenes/event_choice_panel.tscn"
 const EVENTS_PATH := "res://data/events/m04_events.json"
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
+## The one committed Event scene this screen reuses; never a new asset.
+const EVENT_ART := "res://assets/paper/backgrounds/event_crossroads.png"
 const REQUIRED := {
 	"button_trail": "The Button Trail",
 	"loose_seam": "The Loose Seam",
@@ -697,6 +699,7 @@ func _validate_layout(record: Dictionary, label: String) -> void:
 	_check(panel.paper_panel.get_theme_stylebox("panel") is StyleBoxFlat,
 		label + " patchwork paper StyleBoxFlat")
 	_check(panel.get_node("SlateBackdrop") is ColorRect, label + " slate background node")
+	_check_backdrop_layer(label)
 	var choices: Array = record["choices"]
 	var buttons := panel.get_choice_buttons()
 	_check(buttons.size() == choices.size(), label + " exact choice count")
@@ -1200,6 +1203,49 @@ func _test_rng_zero_draws() -> void:
 		"RNG flow commits once without effects")
 
 
+## AC1/AC2: one inert full-stage crossroads picture (with its own darkening scrim)
+## sits above the opaque slate and behind the parchment. It draws the committed
+## image only when that shipped file resolves; otherwise the layer is hidden and
+## the slate stays the ground. No pixel, node-position or fixed-coordinate claim.
+func _check_backdrop_layer(label: String) -> void:
+	var backdrop := panel.get_node_or_null("EventBackdrop") as TextureRect
+	_check(backdrop != null and backdrop.get_parent() == panel,
+		label + " mounts one Event backdrop picture layer")
+	if backdrop == null:
+		return
+	_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and backdrop.focus_mode == Control.FOCUS_NONE,
+		label + " backdrop never takes pointer or keyboard focus")
+	_check(backdrop.gui_input.get_connections().is_empty()
+		and backdrop.mouse_entered.get_connections().is_empty()
+		and backdrop.mouse_exited.get_connections().is_empty(),
+		label + " backdrop listens to no input signal")
+	_check(backdrop.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		and backdrop.expand_mode == TextureRect.EXPAND_IGNORE_SIZE,
+		label + " backdrop covers the stage without stretching the scene")
+	_check(backdrop.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR,
+		label + " backdrop keeps the linear felt filtering")
+	if ResourceLoader.exists(EVENT_ART):
+		_check(backdrop.texture != null and backdrop.texture.resource_path == EVENT_ART,
+			label + " backdrop draws the committed crossroads scene")
+		_check(backdrop.visible and backdrop.is_visible_in_tree(),
+			label + " shipped crossroads scene is really shown")
+	else:
+		_check(backdrop.texture == null and not backdrop.visible,
+			label + " unavailable scene leaves the slate ground")
+	var slate := panel.get_node_or_null("SlateBackdrop")
+	_check(slate is ColorRect and slate.visible and backdrop.get_index() > slate.get_index()
+		and backdrop.get_index() < panel.paper_panel.get_index(),
+		label + " art sits above the opaque slate and behind the parchment")
+	var scrim := backdrop.get_node_or_null("EventScrim") as ColorRect
+	_check(scrim != null and scrim.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and scrim.focus_mode == Control.FOCUS_NONE,
+		label + " darkening scrim never takes pointer or keyboard focus")
+	_check(scrim != null and scrim.get_parent() == backdrop
+		and scrim.is_visible_in_tree() == backdrop.is_visible_in_tree(),
+		label + " scrim darkens only the mounted picture, above it and behind the paper")
+
+
 func _check_story_structure(label: String) -> void:
 	_check(panel.choices_container.size_flags_vertical & Control.SIZE_EXPAND == 0,
 		label + " choices do not stretch away from the story")
@@ -1524,6 +1570,80 @@ func _test_wallet_numbered_keys() -> void:
 	await _frames()
 
 
+## AC1/AC3: the guarded art path is display-only. With a genuine three-choice
+## wallet Event open, probing an unavailable optional image hides the picture and
+## keeps the slate, the parchment and every authored ticket exactly as they were,
+## a real pointer press on the picture settles nothing, and restoring the
+## committed scene leaves the same offering to settle exactly once.
+func _test_backdrop_fallback() -> void:
+	var record: Dictionary = authored.get("frayed_signpost", {})
+	_check(not record.is_empty(), "backdrop fallback fixture is a genuine authored Event")
+	if record.is_empty():
+		return
+	seed(918273)
+	var expected_rng := randi()
+	seed(918273)
+	var wallet := {"gold": 6, "scraps": 1}
+	var original_wallet := wallet.duplicate(true)
+	wallet_committed.clear()
+	committed.clear()
+	_check(panel.open_event_with_wallet(record, wallet), "wallet Event opens for the art fallback probe")
+	await _frames()
+	_check_backdrop_layer("wallet art probe")
+	var before: Array[String] = []
+	for button in panel.get_choice_buttons():
+		before.append(button.text)
+	var selector := panel._selector
+	panel.bind_event_backdrop("res://assets/paper/backgrounds/event_crossroads_missing_test.png")
+	await _frames()
+	var backdrop := panel.get_node("EventBackdrop") as TextureRect
+	_check(backdrop.texture == null and not backdrop.visible,
+		"unavailable optional art hides the picture and keeps the plain slate")
+	_check(panel.get_node("SlateBackdrop").is_visible_in_tree(),
+		"unavailable optional art leaves the opaque slate as the ground")
+	var after: Array[String] = []
+	for button in panel.get_choice_buttons():
+		after.append(button.text)
+	_check(after == before and panel._selector == selector and selector.is_valid()
+		and not selector.is_claimed(), "art fallback probe changes no ticket and no offering")
+	# A real pointer press away from the parchment must never land on the picture.
+	var corner := Vector2(4, 4)
+	var motion := InputEventMouseMotion.new()
+	motion.position = corner
+	root.push_input(motion, true)
+	await _frames()
+	_check(root.gui_get_hovered_control() != backdrop,
+		"pointer over the art never lands on the inert picture layer")
+	for state in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.position = corner
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.pressed = state
+		root.push_input(click, true)
+	await _frames()
+	_check(wallet_committed.is_empty() and selector.is_valid() and not selector.is_claimed(),
+		"clicking the picture layer settles nothing")
+	_check(wallet == original_wallet, "art probe never touches the supplied wallet")
+	panel.bind_event_backdrop()
+	await _frames()
+	_check((backdrop.texture != null) == ResourceLoader.exists(EVENT_ART)
+		and backdrop.visible == (backdrop.texture != null),
+		"committed crossroads scene restores after the fallback probe")
+	var buttons := panel.get_choice_buttons()
+	_check(buttons.size() == 3 and not buttons[0].disabled,
+		"restored offering keeps its three reachable authored tickets")
+	if buttons.size() == 3 and not buttons[0].disabled:
+		buttons[0].pressed.emit()
+	_check(wallet_committed.size() == 1 and wallet_committed[0] == {
+		"ok": true, "event_id": "frayed_signpost", "choice_id": "read",
+		"wallet": {"gold": 16, "scraps": 0}},
+		"restored offering still settles its first authored choice exactly once")
+	_check(wallet == original_wallet, "art restore never spends the supplied wallet")
+	_check(randi() == expected_rng, "art binding, fallback and restore consume no RNG")
+	panel.close_event()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1563,6 +1683,7 @@ func _run() -> void:
 	await _test_wallet_keyboard()
 	await _test_numbered_choice_keys()
 	await _test_wallet_numbered_keys()
+	await _test_backdrop_fallback()
 	await _test_wallet_rejection_and_generation()
 	_finish()
 

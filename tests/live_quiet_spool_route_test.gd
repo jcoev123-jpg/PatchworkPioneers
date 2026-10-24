@@ -11,10 +11,19 @@ func _hover(control: Control) -> void:
 
 
 ## AC2: every mounted Event choice panel shows the committed crossroads scene above its
-## own opaque slate, behind the paper panel and its usable choices.
+## own opaque slate, behind the paper panel and its usable choices. The choice scene now
+## ships its own inert EventBackdrop picture layer, so the app's VisitBackdrop art bed is
+## identified by its bind API instead of by that occupied name.
+func _live_event_art_bed(panel):
+	for child in panel.get_children():
+		if child.has_method("bind_visit"):
+			return child
+	return null
+
+
 func _check_event_backdrop(panel, label: String) -> int:
 	_check_event_tickets(panel, label)
-	var bed = panel.get_node_or_null("EventBackdrop")
+	var bed = _live_event_art_bed(panel)
 	var slate = panel.get_node_or_null("SlateBackdrop")
 	_check(is_instance_valid(bed) and bed.get_parent() == panel
 		and bed.mouse_filter == Control.MOUSE_FILTER_IGNORE
@@ -45,6 +54,16 @@ func _check_event_backdrop(panel, label: String) -> int:
 		and visible.end.x <= pixels.x + 0.01 and visible.end.y <= pixels.y + 0.01
 		and is_equal_approx(visible.size.x * (drawn.size.x / pixels.x), view.size.x),
 		label + " crossroads scene crops only the centred window that fills the view")
+	# The shipped scene also carries its own inert picture layer; it must sit behind
+	# the parchment and above the slate, and it shows only when the committed file
+	# resolves (never a new asset, never a stretched frame).
+	var art = panel.get_node_or_null("EventBackdrop")
+	_check(art is TextureRect and art.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and art.focus_mode == Control.FOCUS_NONE and slate != null
+		and art.get_index() > slate.get_index() and art.get_index() < panel.paper_panel.get_index()
+		and art.visible == ResourceLoader.exists(expected)
+		and art.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_COVERED,
+		label + " keeps the panel's own inert crossroads layer behind the paper")
 	return panel.get_instance_id()
 
 
@@ -688,7 +707,7 @@ func _run() -> void:
 	var old_panel: LiveEventChoicePanel = app.quiet_spool_panel
 	var abandoned: Callable = old_panel.choice_committed.get_connections()[0].callable
 	var abandoned_click: Callable = old_panel.get_choice_buttons()[0].pressed.get_connections()[0].callable
-	_check(old_panel.get_node_or_null("EventBackdrop") != null,
+	_check(_live_event_art_bed(old_panel) != null,
 		"abandoned first Event really mounted its art bed")
 	app._return_to_title()
 	await _frames()

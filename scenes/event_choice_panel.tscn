@@ -21,6 +21,31 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.094, 0.141, 0.172, 1)
 
+[node name="EventBackdrop" type="TextureRect" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+focus_mode = 0
+mouse_filter = 2
+texture_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="EventScrim" type="ColorRect" parent="EventBackdrop"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+focus_mode = 0
+mouse_filter = 2
+color = Color(0.043, 0.063, 0.075, 0.24)
+
 [node name="PaperPanel" type="PanelContainer" parent="."]
 layout_mode = 1
 anchor_left = 0.125
