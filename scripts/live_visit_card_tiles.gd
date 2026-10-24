@@ -38,6 +38,10 @@ const ARROW := 0x2192
 ## The master body face every sewn tile label inherits from the App theme. It is
 ## only ever used as a FontVariation base, never edited or replaced on disk.
 const BODY_FONT_PATH := "res://assets/fonts/PatrickHand-Regular.ttf"
+## The master heading face the gallery titles, section headings and card names
+## wear through the shared "PatchHeading" Label variation. Only used as a
+## read-only lookup/fallback; the imported font is never edited.
+const HEADING_FONT_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## The fallback glyph's own pixel size and tightly fitted pen box. The arrow is
 ## drawn here rather than loaded from a platform font or an art file.
 const ARROW_GLYPH_SIZE := 32
@@ -75,6 +79,7 @@ var _gallery: PanelContainer = null
 var _scroll: ScrollContainer = null
 var _list: VBoxContainer = null
 var _summary: Label = null
+var _section_index: int = 0
 var _tiles: Array[Dictionary] = []
 var _masked: Array[Dictionary] = []
 var _epoch: int = 0
@@ -86,6 +91,7 @@ var _buy: Button = null
 var _remove: Button = null
 var _upgrade: Button = null
 var _arrow_face: FontVariation = null
+var _arrow_heading_face: FontVariation = null
 var _arrow_glyphs: FontFile = null
 
 
@@ -333,19 +339,20 @@ func _mount_gallery() -> void:
 
 	var title := Label.new()
 	title.name = "GalleryTitle"
-	title.text = "%s • CARD GALLERY" % _kind.to_upper()
+	title.text = ("Shop · Sewn cards" if _kind == "Shop" else "Rest · Card mending")
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title.theme_type_variation = "PatchHeading"
 	title.add_theme_color_override("font_color", DARK_INK)
-	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_font_size_override("font_size", 24)
 	column.add_child(title)
 	_summary = Label.new()
 	_summary.name = "GalleryHint"
-	_summary.text = ("Select only — the Shop's own Buy and Remove buttons still commit."
-		if _kind == "Shop" else "Select only — the Rest's own Upgrade button still commits.")
+	_summary.text = ("Choose a card, then press Buy or Remove."
+		if _kind == "Shop" else "Choose a card, then press Upgrade — or take Heal instead.")
 	_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_summary.add_theme_color_override("font_color", HINT_INK)
-	_summary.add_theme_font_size_override("font_size", 14)
+	_summary.add_theme_font_size_override("font_size", 15)
 	column.add_child(_summary)
 
 	_scroll = ScrollContainer.new()
@@ -410,6 +417,7 @@ func _rebuild() -> void:
 		_list.remove_child(child)
 		child.queue_free()
 	_tiles.clear()
+	_section_index = 0
 	if _kind == "Shop":
 		_rebuild_shop()
 	else:
@@ -423,17 +431,17 @@ func _rebuild_shop() -> void:
 	var offers := _selector_offer
 	var removals := _selector_remove
 	if offers == null or not is_instance_valid(offers):
-		_add_note("No card listings are mounted for this Shop.")
+		_add_note("No cards are for sale at this Shop.")
 	else:
-		_add_section("Buy a card",
-			"Select a listing, then press the Shop's own Buy button to pay its quote.")
+		_add_section("Cards for sale",
+			"Choose a card, then press Buy to pay its price.")
 		for row in range(offers.item_count):
 			_mount_tile(_offer_spec(row), row, "offer")
 	if removals == null or not is_instance_valid(removals):
-		_add_note("No owned-card removal is mounted for this Shop.")
+		_add_note("This Shop is not removing cards today.")
 	else:
-		_add_section("Remove one owned card",
-			"Every owned copy has its own tile, including duplicate copies.")
+		_add_section("Remove a card",
+			"Every copy in your deck has its own card. Choose one, then press Remove.")
 		for row in range(removals.item_count):
 			_mount_tile(_removal_spec(row), row, "removal")
 
@@ -441,33 +449,39 @@ func _rebuild_shop() -> void:
 func _rebuild_rest() -> void:
 	var selector := _selector_upgrade
 	if selector == null or not is_instance_valid(selector):
-		_add_note("This Rest offers no card upgrade; Heal remains available.")
+		_add_note("No card can be mended at this Rest; Heal is still available.")
 		return
-	_add_section("Upgrade a card (instead of Heal)",
-		"Select one owned copy, then press the Rest's own Upgrade button.")
+	_add_section("Mend a card",
+		"Choose one owned copy, then press Upgrade. Heal is still available.")
 	var rows := _rest_rows()
 	for row in range(selector.item_count):
 		_mount_tile(_upgrade_spec(selector, row, rows), row, "upgrade")
 
 
 func _add_section(text: String, hint: String) -> void:
+	_section_index += 1
 	var header := Label.new()
+	header.name = "GallerySectionHeading%d" % _section_index
 	header.text = text
 	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.theme_type_variation = "PatchHeading"
 	header.add_theme_color_override("font_color", DARK_INK)
-	header.add_theme_font_size_override("font_size", 17)
+	header.add_theme_font_size_override("font_size", 19)
 	_list.add_child(header)
 	var subtitle := Label.new()
+	subtitle.name = "GallerySectionHint%d" % _section_index
 	subtitle.text = hint
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	subtitle.add_theme_color_override("font_color", HINT_INK)
-	subtitle.add_theme_font_size_override("font_size", 13)
+	subtitle.add_theme_font_size_override("font_size", 15)
 	_list.add_child(subtitle)
 
 
 func _add_note(text: String) -> void:
+	_section_index += 1
 	var note := Label.new()
+	note.name = "GalleryNote%d" % _section_index
 	note.text = text
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -782,13 +796,26 @@ func _owner_text(definition: Dictionary, card_id: String) -> String:
 func arrow_face() -> FontVariation:
 	if _arrow_face != null:
 		return _arrow_face
+	_arrow_face = _arrow_variation(_body_face())
+	return _arrow_face
+
+
+## The same drawn-arrow fallback on the master heading face, for the one
+## PatchHeading label that prints U+2192: a Rest upgrade card's name.
+func arrow_heading_face() -> FontVariation:
+	if _arrow_heading_face != null:
+		return _arrow_heading_face
+	_arrow_heading_face = _arrow_variation(_heading_face())
+	return _arrow_heading_face
+
+
+func _arrow_variation(base: Font) -> FontVariation:
 	var variation := FontVariation.new()
-	variation.base_font = _body_face()
+	variation.base_font = base
 	var glyphs := arrow_glyph_font()
 	if glyphs != null and glyphs.has_char(ARROW):
 		variation.fallbacks = [glyphs]
-	_arrow_face = variation
-	return _arrow_face
+	return variation
 
 
 ## The body face a sewn tile label inherits here: the App theme's own Patrick
@@ -799,6 +826,16 @@ func _body_face() -> Font:
 		if inherited != null:
 			return inherited
 	return load(BODY_FONT_PATH) as Font
+
+
+## The shared master heading face for PatchHeading labels, resolved read-only
+## through the App theme. The imported master theme stays untouched.
+func _heading_face() -> Font:
+	if is_inside_tree():
+		var inherited: Font = get_theme_font("font", "PatchHeading")
+		if inherited != null:
+			return inherited
+	return load(HEADING_FONT_PATH) as Font
 
 
 ## A one-glyph bitmap face drawn in code: the U+2192 arrow. Returns null if the
@@ -862,10 +899,10 @@ func _stroke_distance(point: Vector2, start: Vector2, end: Vector2) -> float:
 ## Only the Rest upgrade face prints U+2192, and only its name and cost labels
 ## take the arrow fallback. Every other tile string, rule and tooltip keeps the
 ## inherited master face untouched.
-func _apply_arrow_face(spec: Dictionary, label: Label) -> void:
+func _apply_arrow_face(spec: Dictionary, label: Label, heading := false) -> void:
 	if spec.get("arrow_glyphs", false) != true or not label.text.contains(String.chr(ARROW)):
 		return
-	var face := arrow_face()
+	var face := arrow_heading_face() if heading else arrow_face()
 	if face != null and face.has_char(ARROW):
 		label.add_theme_font_override("font", face)
 
@@ -932,21 +969,23 @@ func build_card_face(spec: Dictionary) -> Dictionary:
 	title_row.add_theme_constant_override("separation", 6)
 	text_column.add_child(title_row)
 
-	var title_label: Label = _face._card_label("TileName", String(spec.get("title", "")), 19)
+	var title_label: Label = _face._card_label("TileName", String(spec.get("title", "")), 20)
+	title_label.theme_type_variation = "PatchHeading"
 	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title_label)
-	var meta_label: Label = _face._card_label("TileMeta", String(spec.get("meta", "")), 14)
+	var meta_label: Label = _face._card_label("TileMeta", String(spec.get("meta", "")), 15)
 	meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	meta_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	meta_label.add_theme_color_override("font_color", HINT_INK)
 	text_column.add_child(meta_label)
 	# The Rest upgrade name and cost are the only sewn tile text that prints an
-	# arrow; they keep Patrick Hand with the code-drawn U+2192 as the fallback.
-	_apply_arrow_face(spec, title_label)
+	# arrow; they keep the master heading/body faces with the code-drawn U+2192
+	# appended as the fallback.
+	_apply_arrow_face(spec, title_label, true)
 	_apply_arrow_face(spec, meta_label)
-	var effects_label: Label = _face._card_label("TileEffects", String(spec.get("effects", "")), 13)
+	var effects_label: Label = _face._card_label("TileEffects", String(spec.get("effects", "")), 16)
 	effects_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	effects_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text_column.add_child(effects_label)

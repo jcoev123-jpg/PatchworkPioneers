@@ -44,6 +44,58 @@ func _reject_upgrade(callback: Callable, reason: String) -> void:
 	_check(_upgrade_state() == before, reason + " preserves full state and choice eligibility")
 
 
+## AC1/AC2: the mounted Rest gallery names the visit in-world, keeps Heal
+## recognizable, directs Choose -> Upgrade and gives every heading the master
+## PatchHeading face while metadata and effects stay in the readable body face.
+func _check_rest_gallery_labels(gallery) -> void:
+	var panel: Control = gallery.gallery_panel()
+	var title := panel.find_child("GalleryTitle", true, false) as Label
+	var hint := panel.find_child("GalleryHint", true, false) as Label
+	_check(title != null and title.is_visible_in_tree() and title.text == "Rest · Card mending",
+		"mounted Rest gallery title names the Rest and its card mending")
+	_check(title != null and title.theme_type_variation == "PatchHeading"
+		and _label_face_path(title) == HEADING_FACE_PATH,
+		"mounted Rest gallery title wears the master PatchHeading face")
+	_check(hint != null and hint.is_visible_in_tree()
+		and hint.text == "Choose a card, then press Upgrade — or take Heal instead."
+		and hint.text.contains("Upgrade") and hint.text.contains("Heal")
+		and _label_face_path(hint) == BODY_FACE_PATH,
+		"mounted Rest gallery hint directs Upgrade and keeps Heal recognizable")
+	var headings: Array = panel.find_children("GallerySectionHeading*", "Label", true, false)
+	_check(headings.size() == 1 and (headings[0] as Label).text == "Mend a card",
+		"mounted Rest section names its in-world card mending action")
+	for node in headings:
+		var label := node as Label
+		_check(label.theme_type_variation == "PatchHeading"
+			and _label_face_path(label) == HEADING_FACE_PATH
+			and label.is_visible_in_tree(),
+			"the Rest section heading wears the master PatchHeading face: " + label.text)
+	var section_hints: Array = panel.find_children("GallerySectionHint*", "Label", true, false)
+	_check(section_hints.size() == 1 and (section_hints[0] as Label).text.contains("Upgrade")
+		and (section_hints[0] as Label).text.contains("Heal")
+		and _label_face_path(section_hints[0]) == BODY_FACE_PATH,
+		"the Rest section hint directs Upgrade in the body face and names Heal")
+	var shown := _gallery_text(panel)
+	_check(RETIRED_GALLERY_TEXT.all(func(token): return not shown.contains(token)),
+		"mounted Rest gallery drops developer wording from titles, hints and empty states")
+	for tile in gallery.upgrade_tiles():
+		var face_panel: Control = tile.get_parent()
+		var name_label := face_panel.find_child("TileName", true, false) as Label
+		var meta_label := face_panel.find_child("TileMeta", true, false) as Label
+		var effects_label := face_panel.find_child("TileEffects", true, false) as Label
+		_check(name_label != null and name_label.theme_type_variation == "PatchHeading"
+			and _label_face_path(name_label) == HEADING_FACE_PATH,
+			"every Rest card name wears the master PatchHeading face")
+		_check(meta_label != null and _label_face_path(meta_label) == BODY_FACE_PATH
+			and meta_label.get_theme_font_size("font_size") >= 15
+			and face_panel.get_global_rect().encloses(meta_label.get_global_rect()),
+			"every Rest tile keeps its body-face metadata at 15 px or more")
+		_check(effects_label != null and _label_face_path(effects_label) == BODY_FACE_PATH
+			and effects_label.get_theme_font_size("font_size") >= 16
+			and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
+			"every Rest tile keeps its body-face effects at 16 px or more")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -134,6 +186,7 @@ func _run() -> void:
 			and choices.mouse_filter == Control.MOUSE_FILTER_IGNORE
 			and choices.focus_mode == Control.FOCUS_NONE,
 			"masked Rest upgrade dropdown keeps its validated contract but takes no pointer or focus")
+		_check_rest_gallery_labels(gallery)
 		# Independent authored expectations: exact short combat prose and the
 		# canonical amount each half must print, never borrowed from the view.
 		var effect_contract := {
@@ -182,7 +235,7 @@ func _run() -> void:
 			var tile_panel: Control = tile.get_parent()
 			var effects_label := tile_panel.find_child("TileEffects", true, false) as Label
 			_check(effects_label != null and effects_label.text == details.effects
-				and effects_label.get_theme_font_size("font_size") >= 13
+				and effects_label.get_theme_font_size("font_size") >= 16
 				and effects_label.get_global_rect().size.x > 0.0
 				and effects_label.get_global_rect().size.y > 0.0
 				and tile_panel.get_global_rect().encloses(effects_label.get_global_rect()),

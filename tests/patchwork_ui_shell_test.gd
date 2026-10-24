@@ -3,6 +3,8 @@ extends "res://tests/live_run_map_entry_test.gd"
 
 ## The master body face every sewn tile label inherits: Patrick Hand.
 const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
+## The master heading face a sewn card name now wears: Londrina Regular.
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## U+2192, printed between the two halves of a real Rest upgrade tile.
 const ARROW := 0x2192
 
@@ -257,6 +259,8 @@ func _check_rest_arrow_tiles(app) -> void:
 		var meta_label := panel.find_child("TileMeta", true, false) as Label
 		_check(name_label != null and meta_label != null,
 			"real Rest upgrade tile mounts its name and cost labels")
+		_check(name_label != null and name_label.theme_type_variation == "PatchHeading",
+			"real Rest upgrade card name wears the master PatchHeading variation")
 		for label in [name_label, meta_label]:
 			if label == null:
 				continue
@@ -265,11 +269,13 @@ func _check_rest_arrow_tiles(app) -> void:
 			var face: Font = label.get_theme_font("font")
 			_check(face != null and face.has_char(ARROW),
 				"resolved Rest upgrade face covers U+2192 through its fallback: " + label.name)
+			# The card name is a PatchHeading title now; the cost line stays body.
+			var base_path: String = HEADING_FONT if label.name == "TileName" else BODY_FONT
 			_check(face is FontVariation
 				and (face as FontVariation).base_font != null
-				and (face as FontVariation).base_font.resource_path == BODY_FONT
+				and (face as FontVariation).base_font.resource_path == base_path
 				and not (face as FontVariation).base_font.has_char(ARROW),
-				"Rest upgrade text keeps the Patrick Hand base face: " + label.name)
+				"Rest upgrade text keeps its master base face: " + label.name)
 			arrows += _count_drawn_arrows(label, face)
 		# Every other line on the same sewn face keeps the inherited master face.
 		for other_name in ["OwnerLabel", "TileEffects"]:

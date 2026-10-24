@@ -84,6 +84,35 @@ func _visit_tiles():
 	return app.get_node("LiveVisitCardTiles")
 
 
+## The master faces the shared theme gives body and heading labels.
+const BODY_FACE_PATH := "res://assets/fonts/PatrickHand-Regular.ttf"
+const HEADING_FACE_PATH := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+## Developer wording the player-facing visit gallery must never show.
+const RETIRED_GALLERY_TEXT: Array[String] = ["CARD GALLERY", "Select only",
+	"own button", "commit"]
+
+
+## The face a mounted label actually resolves, looking through the code-drawn
+## arrow FontVariation to its own base font.
+func _label_face_path(label: Label) -> String:
+	if not is_instance_valid(label):
+		return ""
+	var font: Font = label.get_theme_font("font")
+	while font is FontVariation and (font as FontVariation).base_font != null:
+		font = (font as FontVariation).base_font
+	return font.resource_path if font != null else ""
+
+
+## Every player-facing string the mounted gallery currently shows, joined for
+## wording audits of titles, hints, sections and empty states.
+func _gallery_text(panel: Control) -> String:
+	var texts := PackedStringArray()
+	for node in panel.find_children("*", "Label", true, false):
+		if node is Label and node.is_visible_in_tree():
+			texts.append((node as Label).text)
+	return "\n".join(texts)
+
+
 ## Prose the retired multi-line card block printed; a tooltip showing one has
 ## fallen back to old wording instead of the precise catalog explanation.
 const RETIRED_TOOLTIP_TEXT: Array[String] = ["From:", "Target:", "Positions:",
@@ -531,6 +560,63 @@ func _check_tile_art(gallery) -> void:
 	drawn["tile"].free()
 
 
+## AC1/AC2: the mounted Shop gallery speaks in-world, names its Buy/Remove
+## directions, wears the master heading face on every heading and keeps the
+## body face readable for tile metadata and effects.
+func _check_shop_gallery_labels(gallery) -> void:
+	var panel: Control = gallery.gallery_panel()
+	var title := panel.find_child("GalleryTitle", true, false) as Label
+	var hint := panel.find_child("GalleryHint", true, false) as Label
+	_check(title != null and title.is_visible_in_tree() and title.text == "Shop · Sewn cards",
+		"mounted Shop gallery title names the Shop and its sewn cards")
+	_check(title != null and title.theme_type_variation == "PatchHeading"
+		and _label_face_path(title) == HEADING_FACE_PATH,
+		"mounted Shop gallery title wears the master PatchHeading face")
+	_check(hint != null and hint.is_visible_in_tree()
+		and hint.text == "Choose a card, then press Buy or Remove."
+		and hint.text.contains("Buy") and hint.text.contains("Remove")
+		and _label_face_path(hint) == BODY_FACE_PATH,
+		"mounted Shop gallery hint tells the player to choose a card and press Buy or Remove")
+	var headings: Array = panel.find_children("GallerySectionHeading*", "Label", true, false)
+	var heading_texts: Array[String] = []
+	for node in headings:
+		var label := node as Label
+		heading_texts.append(label.text)
+		_check(label.theme_type_variation == "PatchHeading"
+			and _label_face_path(label) == HEADING_FACE_PATH
+			and label.is_visible_in_tree(),
+			"every Shop section heading wears the master PatchHeading face: " + label.text)
+	_check(heading_texts == ["Cards for sale", "Remove a card"],
+		"mounted Shop sections name both in-world actions")
+	var section_hints: Array = panel.find_children("GallerySectionHint*", "Label", true, false)
+	_check(section_hints.size() == 2
+		and (section_hints[0] as Label).text.contains("Buy")
+		and (section_hints[1] as Label).text.contains("Remove")
+		and section_hints.all(func(node): return _label_face_path(node) == BODY_FACE_PATH),
+		"mounted Shop section hints direct Buy and Remove in the body face")
+	var shown := _gallery_text(panel)
+	_check(RETIRED_GALLERY_TEXT.all(func(token): return not shown.contains(token)),
+		"mounted Shop gallery drops developer wording from titles, hints and empty states")
+	var all_tiles: Array = gallery.offer_tiles()
+	all_tiles.append_array(gallery.removal_tiles())
+	for tile in all_tiles:
+		var face_panel: Control = tile.get_parent()
+		var name_label := face_panel.find_child("TileName", true, false) as Label
+		var meta_label := face_panel.find_child("TileMeta", true, false) as Label
+		var effects_label := face_panel.find_child("TileEffects", true, false) as Label
+		_check(name_label != null and name_label.theme_type_variation == "PatchHeading"
+			and _label_face_path(name_label) == HEADING_FACE_PATH,
+			"every Shop card name wears the master PatchHeading face")
+		_check(meta_label != null and _label_face_path(meta_label) == BODY_FACE_PATH
+			and meta_label.get_theme_font_size("font_size") >= 15
+			and face_panel.get_global_rect().encloses(meta_label.get_global_rect()),
+			"every Shop tile keeps its body-face metadata at 15 px or more")
+		_check(effects_label != null and _label_face_path(effects_label) == BODY_FACE_PATH
+			and effects_label.get_theme_font_size("font_size") >= 16
+			and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
+			"every Shop tile keeps its body-face effects at 16 px or more")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
@@ -712,6 +798,7 @@ func _run() -> void:
 		_check(gallery.offer_tiles().size() == 5, "Shop gallery shows all five offer tiles")
 		_check(gallery.removal_tiles().size() == app.run_deck.size(),
 			"Shop gallery shows exactly one removal tile per owned occurrence")
+		_check_shop_gallery_labels(gallery)
 		var scroll: ScrollContainer = gallery.gallery_scroll()
 		var scroll_start: int = scroll.scroll_vertical
 		scroll.ensure_control_visible(gallery.removal_tiles().back())
@@ -818,7 +905,7 @@ func _run() -> void:
 			var face_panel: Control = tile.get_parent()
 			var effects_label := face_panel.find_child("TileEffects", true, false) as Label
 			_check(effects_label != null and effects_label.text == gallery.tile_details(tile).effects
-				and effects_label.get_theme_font_size("font_size") >= 13
+				and effects_label.get_theme_font_size("font_size") >= 16
 				and face_panel.get_global_rect().encloses(effects_label.get_global_rect()),
 				"the concise effect stays legible inside its sewn Shop tile")
 		before = _shop_state()
