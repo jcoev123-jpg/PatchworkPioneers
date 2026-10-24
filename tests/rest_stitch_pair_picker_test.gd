@@ -197,6 +197,30 @@ func _bounds(c: Control) -> void:
 		and rect.end.x <= 1280 and rect.end.y <= 720, "visible panel/control fits 1280x720: " + c.name)
 
 
+func _assert_sewn_caption(panel: LiveRestStitchPairPicker, a: int, b: int,
+		first_name: String, second_name: String, deck_count: int, scraps_left: int,
+		label: String) -> void:
+	var forecast := panel._model.preview(a, b)
+	_check(not forecast.is_empty() and panel._current_pair() == forecast,
+		label + " rendered from the real selected indices and detached forecast")
+	if forecast.is_empty():
+		return
+	var expected := "Sew %s (copy #%d) + %s (copy #%d)\n%d → %d shared cards • 3 scraps spent • %d remaining\nSewn card cannot upgrade or stitch again" % [
+		first_name, a + 1, second_name, b + 1, deck_count, deck_count - 1, scraps_left]
+	var caption := panel.consequence_label.text
+	_check(caption == expected and panel.consequence_label.get_line_count() <= 3,
+		label + " shows exact ordered names, one-based copies, deck delta, scrap spend and permanent rule")
+	_check(not caption.contains("0-based") and not caption.contains("stitched_")
+		and not caption.contains(str(forecast["first_id"]))
+		and not caption.contains(str(forecast["second_id"])),
+		label + " hides internal identifiers and zero-based terminology")
+	_check(forecast["first_index"] == a and forecast["second_index"] == b
+		and forecast["deck_before_count"] == deck_count
+		and forecast["deck_after_count"] == deck_count - 1
+		and forecast["scrap_cost"] == 3 and forecast["remaining_scraps"] == scraps_left,
+		label + " visible projection retains exact zero-based oracle indices and economic fields")
+
+
 ## The first/second half must mount that original's own illustration (a final
 ## "_plus" shares its base picture) on its owner-colour cloth, with no fallback.
 func _thumb_ok(p: LiveRestStitchPairPicker, which: String, card_id: String, owner: String) -> void:
@@ -448,6 +472,17 @@ func _run() -> void:
 		and picker.confirm_button.disabled, "picker starts without synthetic second selection")
 	for i in range(deck.size()):
 		_check(picker.first_selector.get_item_metadata(i) == i, "UI first duplicate-instance metadata %d" % i)
+	# Both identical Strike instances keep different displayed copy numbers and exact indices.
+	for strike_index in [second_strike, first_strike]:
+		picker.first_selector.select(strike_index)
+		picker.first_selector.item_selected.emit(strike_index)
+		var prick_row := _row_in_second(picker, prick)
+		_check(prick_row >= 0, "Strike / Prick offers the selected cross-owner instance")
+		if prick_row >= 0:
+			picker.second_selector.select(prick_row)
+			picker.second_selector.item_selected.emit(prick_row)
+			_assert_sewn_caption(picker, strike_index, prick, "Strike", "Prick",
+				deck.size(), 0, "mounted Strike / Prick duplicate copy #%d" % (strike_index + 1))
 	# A separate area/Weak pair must show its independent front-only and
 	# all-enemy rules, without inventing Warden's opening Block as an effect.
 	var bash_index := _idx(deck, "warden_shield_bash")
@@ -530,16 +565,8 @@ func _run() -> void:
 		_check(not picker.confirm_button.disabled and picker.summary_label.text.contains("Prick / Pop Shot")
 			and picker.summary_label.text.contains("2 energy") and picker.summary_label.text.contains("3 scraps"),
 			"visible paper summary has correct joined name, energy and scraps")
-		var shown := picker._model.preview(prick, pop)
-		_check(picker.consequence_label.text == picker._consequence_lines(shown)
-			and picker.consequence_label.text.contains("#%d (seamstress_prick)" % prick)
-			and picker.consequence_label.text.contains("#%d (tinker_pop_shot)" % pop)
-			and picker.consequence_label.text.contains("12 → 11 shared cards")
-			and picker.consequence_label.text.contains("3 scraps → 0 remaining")
-			and picker.consequence_label.text.contains("stitched_000001")
-			and picker.consequence_label.text.contains("cannot upgrade or stitch again")
-			and picker.consequence_label.get_line_count() <= 3,
-			"visible prediction names instances, canonical composite, deck count and permanent tradeoff")
+		_assert_sewn_caption(picker, prick, pop, "Prick", "Pop Shot", 12, 0,
+			"mouse-visible Prick / Pop Shot forecast")
 		_check(picker.first_half_label.text ==
 			"First: Prick — Seamstress (1 energy)\nFrom hero positions 1-3; choose one enemy in positions 1-3\n3 damage; Bleed 2 (+1 Bleed if applied: Seamstress passive)",
 			"mouse-visible first half spells out exact authored Bleed and conditional Seamstress bonus")
@@ -1115,6 +1142,8 @@ func _test_mixed_pool_picker() -> void:
 	_check(ui.first_half_label.text ==
 		"First: Pinning Jab — Warden (1 energy)\nFrom hero positions 1-2; choose one enemy in positions 1\n4 damage; Pinned",
 		"Pinning Jab displays authored rules: owner, cost, from 1-2, target 1, 4 damage; Pinned")
+	_assert_sewn_caption(ui, 5, 2, "Pinning Jab", "Prick", mixed_deck.size(), scraps - 3,
+		"mixed owned pool / starter forecast with two scraps remaining")
 	_check(ui.first_half_label.get_line_count() <= 4, "Pinning Jab unclipped")
 
 	var jab_plus_row := _row_in_first(ui, 11)

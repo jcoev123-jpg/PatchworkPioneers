@@ -995,12 +995,12 @@ func _update_preview() -> void:
 	confirm_button.disabled = false
 
 
-## One compact, index-exact receipt readout below the two authored halves.
+## Friendly, one-based copy labels; the underlying receipt keeps exact zero-based indices.
 func _consequence_lines(pair: Dictionary) -> String:
-	return "Replace 0-based originals #%d (%s) + #%d (%s)\n%d → %d shared cards • %d scraps → %d remaining\nNew %s • cannot upgrade or stitch again" % [
-		pair["first_index"], pair["first_id"], pair["second_index"], pair["second_id"],
+	return "Sew %s (copy #%d) + %s (copy #%d)\n%d → %d shared cards • %d scraps spent • %d remaining\nSewn card cannot upgrade or stitch again" % [
+		pair["first_name"], pair["first_index"] + 1, pair["second_name"], pair["second_index"] + 1,
 		pair["deck_before_count"], pair["deck_after_count"], pair["scrap_cost"],
-		pair["remaining_scraps"], pair["stitched_id"]]
+		pair["remaining_scraps"]]
 
 
 func _positions(positions: Array) -> String:
