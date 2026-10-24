@@ -33,7 +33,8 @@ func _fixture(scraps: int = 4) -> Dictionary:
 	var definitions := []
 	var known := {}
 	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches",
-			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches"]:
+			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches",
+			"m05_coat_patches"]:
 		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 			"res://data/patches/%s.json" % catalog))
 		_check(typeof(entries) == TYPE_ARRAY, catalog + " authored JSON loaded")
@@ -45,10 +46,12 @@ func _fixture(scraps: int = 4) -> Dictionary:
 	_check(known.get("button_eye") == "HEAD" and known.get("pincushion_arm") == "ARM"
 		and known.get("quilted_coat") == "COAT" and known.get("stitched_badge") == "HEAD"
 		and known.get("spare_spool") == "ARM" and known.get("bloodstitch_bonnet") == "HEAD"
-		and known.get("frayfinder_mitt") == "ARM", "all required authored slot identities present")
+		and known.get("frayfinder_mitt") == "ARM" and known.get("borrowed_button") == "COAT",
+		"all required authored slot identities present")
 	var owned := ["button_eye", "pincushion_arm", "quilted_coat", "stitched_badge", "spare_spool",
 		"bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap", "reinforced_browband",
-		"hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove", "frayfinder_mitt"]
+		"hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove", "frayfinder_mitt",
+		"borrowed_button"]
 	var w := RunPatchWardrobe.new(heroes, owned, definitions, scraps, 37,
 		["warden_strike"], 93811, true)
 	_check(torn.is_valid() and w.is_valid(), "genuine ledger and torn services")
@@ -627,6 +630,310 @@ func _coat_fixture_with(sewn_coats: Dictionary, torn_hero_ids: Array = []) -> Di
 	return {"w": w, "t": torn, "rest": "rest_coats"}
 
 
+var _cached_borrowed_button := {}
+
+func _load_borrowed_button() -> Dictionary:
+	if not _cached_borrowed_button.is_empty():
+		return _cached_borrowed_button
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/m05_coat_patches.json"))
+	_check(typeof(raw) == TYPE_ARRAY, "m05_coat_patches.json array loaded")
+	if typeof(raw) == TYPE_ARRAY:
+		for entry in raw:
+			if entry is Dictionary and entry.get("id") == "borrowed_button":
+				_cached_borrowed_button = entry.duplicate(true)
+	return _cached_borrowed_button
+
+
+## Real wardrobe with the five initial worn patches plus Borrowed Button sewn
+## into Warden's initially empty COAT slot. `torn_hero_ids` are torn through a
+## genuine RunTornMending battle observation before the wardrobe is built.
+func _borrowed_button_fixture(torn_hero_ids: Array = []) -> Dictionary:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/heroes/starter_party.json"))
+	if typeof(raw) != TYPE_ARRAY or raw.size() != 3:
+		_check(false, "real three-hero catalog for the Borrowed Button fixture")
+		return {}
+	var combat_defs: Array = raw.duplicate(true)
+	for record in combat_defs:
+		record["max_hp"] = int(record["max_hp"])
+	var party := CombatParty.new(combat_defs)
+	_check(party.is_valid(), "real CombatParty for the Borrowed Button fixture")
+	if not party.is_valid():
+		return {}
+	var heroes := party.get_heroes()
+	var torn := RunTornMending.new(heroes)
+	if not torn_hero_ids.is_empty():
+		var damaged := heroes.duplicate(true)
+		for hero in damaged:
+			if torn_hero_ids.has(hero["id"]):
+				hero["hp"] = 0
+		_check(torn.observe_battle_end("borrowed_tear", heroes.duplicate(true), damaged).ok,
+			"real battle observation tears the Borrowed Button recipient")
+		heroes = torn.read_state()["heroes"]
+	var definitions := []
+	for catalog in ["initial_patch_slots", "m04_attack_patches", "m04_coat_patches",
+			"m05_head_patches", "m05_arm_support_patches", "m05_attack_patches",
+			"m05_coat_patches"]:
+		var entries: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/%s.json" % catalog))
+		if typeof(entries) == TYPE_ARRAY:
+			for entry in entries:
+				definitions.append({"id": entry["id"], "slot": entry["slot"]})
+	var owned := ["button_eye", "pincushion_arm", "quilted_coat", "stitched_badge",
+		"spare_spool", "borrowed_button"]
+	var w := RunPatchWardrobe.new(heroes, owned, definitions, 5, 50,
+		["warden_strike"], 93811, true)
+	if not torn.is_valid() or not w.is_valid():
+		return {}
+	for instruction in [["button_eye", "warden", "HEAD"],
+			["pincushion_arm", "seamstress", "ARM"],
+			["quilted_coat", "tinker", "COAT"],
+			["stitched_badge", "seamstress", "HEAD"],
+			["spare_spool", "tinker", "ARM"]]:
+		var receipt := w.sew(instruction[0], instruction[1], instruction[2],
+			"btn_sew:" + instruction[0], w.get_snapshot())
+		_check(receipt.ok, "Borrowed Button fixture sewn: " + instruction[0])
+	var borrowed := w.sew("borrowed_button", "warden", "COAT",
+		"btn_sew:borrowed_button", w.get_snapshot())
+	_check(borrowed.ok and borrowed.receipt.slot == "COAT",
+		"owned Borrowed Button sewn into Warden's empty COAT slot")
+	if not borrowed.ok:
+		return {}
+	_check(w.start_rest("rest_button", w.get_snapshot()).ok,
+		"Borrowed Button fixture opens the exact Rest")
+	return {"w": w, "t": torn, "rest": "rest_button"}
+
+
+const BORROWED_BUTTON_TEXT := "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block."
+
+
+func _borrowed_button_tests() -> void:
+	var catalog := _load_borrowed_button()
+	_check(catalog.get("slot") == "COAT"
+		and catalog.get("effect") == "other_hero_committed_heal_block"
+		and int(catalog.get("heal_threshold", 0)) == 1
+		and int(catalog.get("block", 0)) == 3
+		and int(catalog.get("uses_per_combat", 0)) == 1,
+		"catalog authors COAT / other-hero committed heal / 1 HP / 3 Block / once per combat")
+
+	# AC1/AC2: real sewn MOVE into an empty COAT slot between living heroes.
+	var f := _borrowed_button_fixture()
+	var w: RunPatchWardrobe = f.w
+	var t: RunTornMending = f.t
+	var move := _option(f, "borrowed_button", "seamstress")
+	_check(not move.is_empty() and move.kind == "MOVE"
+		and move.slot == "COAT" and move.exchanged_id == "",
+		"Borrowed Button has a legal one-scrap MOVE into an empty COAT slot")
+	if move.is_empty():
+		return
+	var before := w.get_snapshot()
+	var torn_before := t.read_state()
+	var forecast := RunRestPatchResewOptions.forecast(w, t, before, f.rest, move)
+	_check(forecast.get("ok") == true and forecast.get("kind") == "MOVE"
+		and forecast.get("cost") == 1 and forecast.get("slot") == "COAT"
+		and forecast.get("patch_id") == "borrowed_button"
+		and forecast.get("exchanged_id") == "",
+		"forecast returns the exact documented Borrowed Button MOVE for 1 scrap")
+	if not forecast.get("ok"):
+		return
+	_check(forecast.source.hero_id == "warden"
+		and forecast.source.before.slots.COAT.id == "borrowed_button"
+		and forecast.source.before.slots.COAT.active == true
+		and forecast.source.before.slots.COAT.effect == BORROWED_BUTTON_TEXT,
+		"source COAT shows Borrowed Button active with its authored text")
+	_check(forecast.source.after.slots.COAT == {"id": "", "active": false, "effect": ""}
+		and forecast.destination.before.slots.COAT == {"id": "", "active": false, "effect": ""},
+		"empty COAT slots stay empty in the projected before/after")
+	_check(forecast.destination.after.slots.COAT.id == "borrowed_button"
+		and forecast.destination.after.slots.COAT.active == true
+		and forecast.destination.after.slots.COAT.effect == BORROWED_BUTTON_TEXT,
+		"recipient AFTER shows Borrowed Button active with the same authored text")
+	_check(forecast.source.before.hp == 40 and forecast.source.after.hp == 40
+		and forecast.destination.before.hp == 30 and forecast.destination.after.hp == 30
+		and forecast.source.before.base_max_hp == 40 and forecast.source.after.base_max_hp == 40
+		and forecast.destination.before.base_max_hp == 30
+		and forecast.destination.after.base_max_hp == 30,
+		"Borrowed Button MOVE neither heals nor changes base maximum HP")
+	_check(forecast.source.before.effective_max_hp == 40
+		and forecast.source.after.effective_max_hp == 40
+		and forecast.destination.before.effective_max_hp == 30
+		and forecast.destination.after.effective_max_hp == 30,
+		"Borrowed Button is never an effective max-HP coat")
+	for wearer in [forecast.source, forecast.destination]:
+		for phase in ["before", "after"]:
+			var state: Dictionary = wearer[phase]
+			_check(state.keys().size() == 4 and state.has("hp") and state.has("base_max_hp")
+				and state.has("effective_max_hp") and state.has("slots"),
+				"wearer projection carries no fabricated Block, heal or bonus field")
+			for slot in RunRestPatchResewOptions.SLOTS:
+				var patch_state: Dictionary = state.slots[slot]
+				_check(patch_state.keys().size() == 3 and patch_state.has("id")
+					and patch_state.has("active") and patch_state.has("effect"),
+					"each slot projection carries only id, activity and foreword text")
+	_check(w.get_snapshot() == before and t.read_state() == torn_before,
+		"Borrowed Button forecast is a pure read of both authorities")
+
+	# The already-mounted live picker must print the same authoritative text.
+	root.size = Vector2i(1280, 720)
+	root.gui_embed_subwindows = true
+	var picker := LiveRestPatchResewPicker.new()
+	root.add_child(picker)
+	picker.size = Vector2(1280, 720)
+	await _frames()
+	_check(picker.present(w, t, before, f.rest),
+		"mounted picker accepts the exact Borrowed Button Rest")
+	await _frames()
+	var source_index := -1
+	for i in range(picker._sources.size()):
+		if picker._sources[i].patch_id == "borrowed_button" \
+				and picker._sources[i].from_hero == "warden":
+			source_index = i
+	_check(source_index >= 0, "Borrowed Button is a selectable real source")
+	if source_index >= 0:
+		await _pick(picker._source_buttons[source_index], false)
+		var destination_index := -1
+		for i in range(picker._destinations.size()):
+			if picker._destinations[i].to_hero == "seamstress":
+				destination_index = i
+		_check(destination_index >= 0,
+			"Borrowed Button has the legal empty-COAT recipient on the picker")
+		if destination_index >= 0:
+			await _pick(picker._destination_buttons[destination_index], false)
+			var selected := picker.selected_option()
+			_check(selected == move, "mounted tags bind the entire exact service option")
+			var preview: String = picker.preview_label.text
+			_check(preview.contains("Move • Coat patch")
+				and preview.contains("empty Coat slot")
+				and preview.contains("Warden BEFORE")
+				and preview.contains("Seamstress AFTER")
+				and preview.contains("COAT Borrowed Button (active) — " + BORROWED_BUTTON_TEXT)
+				and preview.contains("Cost: 1 scrap")
+				and not picker.confirm_button.disabled,
+				"mounted picker prints Borrowed Button's active authored text for MOVE")
+	picker.free()
+	await _frames()
+
+	# AC2: the actual one-scrap receipt matches the projection exactly.
+	var projected: Dictionary = before.worn.duplicate(true)
+	projected["warden"]["COAT"] = ""
+	projected["seamstress"]["COAT"] = "borrowed_button"
+	var commit := w.re_sew("borrowed_button", "warden", "seamstress", f.rest,
+		"btn_move", before)
+	var after := w.get_snapshot()
+	_check(commit.ok and commit.receipt.scrap_delta == -1
+		and commit.receipt.exchanged_id == "" and after.worn == projected
+		and after.scraps == before.scraps - 1 and after.owned == before.owned
+		and after.heroes == before.heroes and after.gold == before.gold
+		and after.cards == before.cards and after.seed == before.seed,
+		"real one-scrap Borrowed Button MOVE agrees with the before/after projection")
+	_check(t.read_state() == torn_before
+		and after.operation_ids.size() == before.operation_ids.size() + 1,
+		"Borrowed Button re-sew grants no heal or Block and changes no RNG")
+
+	# AC1/AC2: legal SWAP of Borrowed Button with an M04 max-HP coat.
+	var fs := _borrowed_button_fixture()
+	var swap := _option(fs, "borrowed_button", "tinker")
+	_check(not swap.is_empty() and swap.kind == "SWAP"
+		and swap.exchanged_id == "quilted_coat",
+		"Borrowed Button SWAPs with the worn quilted coat")
+	if swap.is_empty():
+		return
+	var swap_before: Dictionary = fs.w.get_snapshot()
+	var swap_forecast := RunRestPatchResewOptions.forecast(
+		fs.w, fs.t, swap_before, fs.rest, swap)
+	_check(swap_forecast.get("ok") == true and swap_forecast.get("kind") == "SWAP",
+		"Borrowed Button SWAP forecast succeeds")
+	_check(swap_forecast.source.before.slots.COAT.effect == BORROWED_BUTTON_TEXT
+		and swap_forecast.source.after.slots.COAT.id == "quilted_coat"
+		and swap_forecast.source.after.slots.COAT.effect == "+6 effective max HP (no heal)"
+		and swap_forecast.destination.before.slots.COAT.id == "quilted_coat"
+		and swap_forecast.destination.after.slots.COAT.effect == BORROWED_BUTTON_TEXT,
+		"SWAP tracks exact Borrowed Button ownership text on both wearers")
+	_check(swap_forecast.source.before.effective_max_hp == 40
+		and swap_forecast.source.after.effective_max_hp == 46
+		and swap_forecast.destination.before.effective_max_hp == 32
+		and swap_forecast.destination.after.effective_max_hp == 26,
+		"only the M04 coat moves the effective max HP through the SWAP")
+	var swap_commit: Dictionary = fs.w.re_sew("borrowed_button", "warden", "tinker", fs.rest,
+		"btn_swap", swap_before)
+	var swapped: Dictionary = fs.w.get_snapshot()
+	var swap_projected: Dictionary = swap_before.worn.duplicate(true)
+	swap_projected["warden"]["COAT"] = "quilted_coat"
+	swap_projected["tinker"]["COAT"] = "borrowed_button"
+	_check(swap_commit.ok and swapped.worn == swap_projected
+		and swapped.scraps == swap_before.scraps - 1
+		and swapped.heroes == swap_before.heroes and swapped.seed == swap_before.seed,
+		"real one-scrap SWAP leaves HP, ownership and RNG exactly as projected")
+
+	# A caller-supplied ledger that mis-slots the authenticated coat fails closed.
+	var forge_fixture := _borrowed_button_fixture()
+	var forge_option := _option(forge_fixture, "borrowed_button", "seamstress")
+	var forge_before: Dictionary = forge_fixture.w.get_snapshot()
+	var forge_torn: Dictionary = forge_fixture.t.read_state()
+	var forged: Dictionary = forge_before.duplicate(true)
+	forged["definitions"]["borrowed_button"] = "HEAD"
+	_check(not forge_option.is_empty()
+		and not RunRestPatchResewOptions.forecast(forge_fixture.w, forge_fixture.t, forged,
+			forge_fixture.rest, forge_option).ok
+		and forge_fixture.w.get_snapshot() == forge_before
+		and forge_fixture.t.read_state() == forge_torn,
+		"forged Borrowed Button slot definition fails closed without touching either authority")
+
+	# AC3: torn recipient keeps the documented text but projects dormant.
+	var ft := _borrowed_button_fixture(["seamstress"])
+	var torn_option := _option(ft, "borrowed_button", "seamstress")
+	_check(not torn_option.is_empty(), "torn recipient still has the legal COAT MOVE")
+	if torn_option.is_empty():
+		return
+	var torn_snapshot: Dictionary = ft.w.get_snapshot()
+	var torn_state: Dictionary = ft.t.read_state()
+	var torn_forecast := RunRestPatchResewOptions.forecast(
+		ft.w, ft.t, torn_snapshot, ft.rest, torn_option)
+	_check(torn_forecast.get("ok") == true
+		and torn_forecast.source.before.slots.COAT.active == true
+		and torn_forecast.source.before.slots.COAT.effect == BORROWED_BUTTON_TEXT,
+		"living Borrowed Button wearer keeps the text in a torn-party forecast")
+	_check(torn_forecast.destination.after.hp == 0
+		and torn_forecast.destination.after.base_max_hp == 27
+		and torn_forecast.destination.after.effective_max_hp == 27
+		and torn_forecast.destination.after.slots.COAT.id == "borrowed_button"
+		and torn_forecast.destination.after.slots.COAT.active == false
+		and torn_forecast.destination.after.slots.COAT.effect == BORROWED_BUTTON_TEXT,
+		"torn recipient shows Borrowed Button dormant with unchanged max HP")
+	var picker_torn := LiveRestPatchResewPicker.new()
+	root.add_child(picker_torn)
+	picker_torn.size = Vector2(1280, 720)
+	await _frames()
+	_check(picker_torn.present(ft.w, ft.t, torn_snapshot, ft.rest),
+		"mounted picker accepts the torn Borrowed Button Rest")
+	await _frames()
+	var torn_source := -1
+	for i in range(picker_torn._sources.size()):
+		if picker_torn._sources[i].patch_id == "borrowed_button":
+			torn_source = i
+	_check(torn_source >= 0, "torn fixture keeps Borrowed Button selectable")
+	if torn_source >= 0:
+		await _pick(picker_torn._source_buttons[torn_source], false)
+		var torn_destination := -1
+		for i in range(picker_torn._destinations.size()):
+			if picker_torn._destinations[i].to_hero == "seamstress":
+				torn_destination = i
+		if torn_destination >= 0:
+			await _pick(picker_torn._destination_buttons[torn_destination], false)
+			var torn_preview: String = picker_torn.preview_label.text
+			_check(torn_preview.contains("Seamstress AFTER • HP 0/27, effective cap 27")
+				and torn_preview.contains(
+					"COAT Borrowed Button (dormant) — " + BORROWED_BUTTON_TEXT)
+				and torn_preview.contains("Warden BEFORE")
+				and torn_preview.contains("Cost: 1 scrap"),
+				"mounted picker shows the torn Borrowed Button recipient as dormant")
+	picker_torn.free()
+	await _frames()
+	_check(ft.w.get_snapshot() == torn_snapshot and ft.t.read_state() == torn_state,
+		"torn Borrowed Button forecast mutates neither ledger nor torn party")
+
+
 func _coat_preview_tests() -> void:
 	var coat_amounts := _load_coat_amounts()
 	_check(coat_amounts.get("scrap_lined_vest") == 3
@@ -780,6 +1087,7 @@ func _coat_preview_tests() -> void:
 func _run() -> void:
 	_pure_tests()
 	_coat_preview_tests()
+	await _borrowed_button_tests()
 	_torn_test()
 	_torn_shop_test()
 	await _ui_test(KEY_SPACE)

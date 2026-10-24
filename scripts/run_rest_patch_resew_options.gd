@@ -174,6 +174,10 @@ static func _wearer(hero: Dictionary, assignments: Dictionary, coat_bonuses: Dic
 			effect = RunPatchWearerSummary.KNOWN_TEXTS.get(id, "")
 		elif (RunPatchWearerSummary.KNOWN_M05_ARM_POWERS.has(id) or RunPatchWearerSummary.KNOWN_M05_ATTACK_POWERS.has(id)) and slot == "ARM":
 			effect = RunPatchWearerSummary.KNOWN_TEXTS.get(id, "")
+		elif RunPatchWearerSummary.KNOWN_M05_COAT_POWERS.has(id) and slot == "COAT":
+			# Borrowed Button is the only authored M05 coat: a conditional
+			# wearer Block power, never a maximum-HP bonus or instant Block.
+			effect = RunPatchWearerSummary.KNOWN_TEXTS.get(id, "")
 		slots[slot] = {"id": id, "active": id != "" and hp > 0, "effect": effect}
 	var coat_id: String = slots["COAT"]["id"]
 	var coat_active: bool = hp > 0 and coat_bonuses.has(coat_id)
