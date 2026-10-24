@@ -12,6 +12,7 @@ var checks: int = 0
 var requests: Array[Dictionary] = []
 var _hand_coin := Color.WHITE
 var _hand_coin_ready := false
+var _display_font_cache: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -209,6 +210,36 @@ func _hand_coin_color() -> Color:
 	return _hand_coin
 
 
+## The project's three real faces, resolved from the installed theme exactly once:
+## the Label display face (PatchHeading), the Button display face
+## (PatchHeadingButton) and the plain body face every other line keeps.
+func _display_fonts() -> Dictionary:
+	if not _display_font_cache.is_empty():
+		return _display_font_cache
+	var theme := load(String(ProjectSettings.get_setting("gui/theme/custom"))) as Theme
+	_check(theme != null, "configured project theme loads for display typography")
+	if theme == null:
+		return {}
+	var heading := theme.get_font(&"font", &"PatchHeading") as Font
+	var action := theme.get_font(&"font", &"PatchHeadingButton") as Font
+	var body := theme.default_font
+	_check(heading != null and action != null and body != null,
+		"project theme supplies both display variations and the body face")
+	_check(theme.get_type_variation_base(&"PatchHeading") == &"Label"
+		and theme.get_type_variation_base(&"PatchHeadingButton") == &"Button",
+		"display variations stay bound to their Label and Button base types")
+	_check(heading != null and heading.resource_path
+		== "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		"PatchHeading resolves the authored Londrina Solid Regular display face")
+	_check(action != null and action.resource_path
+		== "res://assets/fonts/LondrinaSolid-Regular.ttf",
+		"PatchHeadingButton resolves the authored Londrina Solid Regular display face")
+	_check(heading != null and body != null and heading != body,
+		"display face is a different resource from the plain body face")
+	_display_font_cache = {"theme": theme, "heading": heading, "action": action, "body": body}
+	return _display_font_cache
+
+
 ## The mounted cost coin must keep the exact catalog cost and paint that numeral
 ## centred inside the golden coin, measured from the font actually drawn. No
 ## stitch or line may cross the numeral's ink box.
@@ -380,6 +411,21 @@ func _check_owner_strip(receipt: Dictionary, slot: int) -> void:
 		"owner strip and its name are visibly drawn: " + card_id)
 	_check(label.get_theme_font_size("font_size") >= 13,
 		"owner name is drawn at a legible point size: " + card_id)
+	var fonts := _display_fonts()
+	if not fonts.is_empty():
+		_check(label.theme_type_variation == &"PatchHeading"
+			and label.get_theme_font(&"font") == fonts["heading"],
+			"owner name resolves the project PatchHeading display face: " + card_id)
+		_check(label.get_theme_font(&"font") != fonts["body"],
+			"owner name is not left on the plain body face: " + card_id)
+	# The chosen display face must still fit the established 24px felt strip.
+	var owner_font: Font = label.get_theme_font(&"font")
+	if owner_font != null:
+		var owner_size: int = label.get_theme_font_size("font_size")
+		_check(owner_font.get_height(owner_size) <= patch.size.y + 1.0,
+			"owner name's display line fits inside its felt strip: " + card_id)
+		_check(label.get_global_rect().size.y >= owner_font.get_height(owner_size) - 1.0,
+			"owner name has the full display line's height: " + card_id)
 	_check(patch.get_global_rect().size.y >= label.get_global_rect().size.y
 		and patch.get_global_rect().size.y <= 40.0,
 		"owner strip grows only enough for the name: " + card_id)
@@ -638,6 +684,18 @@ func _check_skip_and_vertical_fit(label: String) -> void:
 	_check(skip.size.x >= safe_width and skip.custom_minimum_size.x >= safe_width
 		and skip.size.y >= text_height + 16.0,
 		label + " full Skip glyphs fit within the burlap's sewn border")
+	_check(skip.theme_type_variation == &"PatchHeadingButton",
+		label + " Skip action wears the PatchHeadingButton variation")
+	var fonts := _display_fonts()
+	if not fonts.is_empty():
+		_check(font == fonts["action"] and font != fonts["body"],
+			label + " Skip measures the project display face, never the body face")
+	# The fitted minimum must come from that final face: no stale body metric may
+	# leave the complete Skip label overflowing the sewn burlap.
+	_check(is_equal_approx(skip.custom_minimum_size.x,
+			ceilf(text_width + float(panel.BUTTON_EDGE + 12) * 2.0))
+		and is_equal_approx(skip.custom_minimum_size.y, maxf(54.0, text_height + 20.0)),
+		label + " Skip's minimum size is derived from the final display font")
 	var burlap := skip.get_node_or_null("BurlapPatch") as NinePatchRect
 	if burlap != null:
 		_check(burlap.get_global_rect().encloses(skip.get_global_rect()),
@@ -855,6 +913,71 @@ func _test_cost_and_marks(fight_base: Dictionary, elite_base: Dictionary) -> voi
 		_check(seen_kinds.has(kind), "mounted cases really cover target kind " + kind)
 
 
+## Every mounted reward action and owner strip wears the project display faces:
+## Choose/Skip/Help on PatchHeadingButton and owner names on PatchHeading, while
+## card names keep PatchHeading and rules, rarity, pips and the coin numeral keep
+## their existing body contracts. Hover, focus and disabled stay visibly distinct.
+func _check_display_typography() -> void:
+	var fonts := _display_fonts()
+	if fonts.is_empty():
+		return
+	var action_font: Font = fonts["action"]
+	var body_font: Font = fonts["body"]
+	_check(panel.has_open_rewards() and panel.choices_container.get_child_count() == 3,
+		"display typography inspected on a mounted three-offer reward")
+	if not panel.has_open_rewards() or panel.choices_container.get_child_count() != 3:
+		return
+	var actions := panel.get_choice_buttons()
+	_check(actions.size() == 4, "display typography inspects all four reward actions")
+	for index in range(mini(actions.size(), 4)):
+		var button := actions[index]
+		var action_name := "Skip" if button == panel.skip_button else "Choose %d" % index
+		_check(button.theme_type_variation == &"PatchHeadingButton",
+			"%s resolves the PatchHeadingButton variation" % action_name)
+		_check(button.get_theme_font(&"font") == action_font,
+			"%s resolves the project display font" % action_name)
+		_check(button.get_theme_font(&"font") != body_font,
+			"%s is lettered in the display face, not the body face" % action_name)
+		_check(button.get_theme_font_size(&"font_size") == 20,
+			"%s keeps its authored 20 point size" % action_name)
+		var state_boxes: Array[StyleBoxFlat] = []
+		for state in ["normal", "hover", "disabled"]:
+			var box := button.get_theme_stylebox(state) as StyleBoxFlat
+			_check(box != null, "%s keeps a drawn %s face" % [action_name, state])
+			state_boxes.append(box)
+		if state_boxes.size() == 3 and state_boxes[0] != null \
+				and state_boxes[1] != null and state_boxes[2] != null:
+			_check(state_boxes[0].bg_color != state_boxes[1].bg_color
+				and state_boxes[0].bg_color != state_boxes[2].bg_color,
+				"%s keeps visibly distinct hover and disabled faces" % action_name)
+		_check(button.get_theme_color("font_focus_color") == panel.DARK_INK,
+			"%s keeps its dark focused ink" % action_name)
+	for index in range(panel.choices_container.get_child_count()):
+		var content := panel.choices_container.get_child(index).get_node(
+			"CardMargin/CardContent") as VBoxContainer
+		var card_id := String(panel._receipt["offers"][index].get("id", ""))
+		var owner_label := content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
+		_check(owner_label != null and owner_label.theme_type_variation == &"PatchHeading"
+			and owner_label.get_theme_font(&"font") == fonts["heading"]
+			and owner_label.get_theme_font(&"font") != body_font,
+			"owner strip is lettered in PatchHeading: " + card_id)
+		var help := content.get_node_or_null("OwnerPatch/HelpCorner/HelpButton") as Button
+		if help == null:
+			continue
+		_check(help.theme_type_variation == &"PatchHeadingButton"
+			and help.get_theme_font(&"font") == action_font,
+			"Help tab resolves the PatchHeadingButton display font: " + card_id)
+		_check(help.get_theme_font_size(&"font_size") >= 12,
+			"Help tab keeps a legible compact point size: " + card_id)
+		var help_size: int = help.get_theme_font_size(&"font_size")
+		var help_width: float = action_font.get_string_size(help.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, help_size).x
+		_check(help.get_global_rect().size.x >= help_width + 12.0
+			and help.get_global_rect().size.y
+				>= action_font.get_height(help_size) - 1.0,
+			"Help tab leaves room for its complete display label: " + card_id)
+
+
 func _check_reward_typography(receipt: Dictionary) -> void:
 	var project_theme := load(String(ProjectSettings.get_setting("gui/theme/custom"))) as Theme
 	_check(project_theme != null, "configured project theme loads")
@@ -869,6 +992,7 @@ func _check_reward_typography(receipt: Dictionary) -> void:
 		"project heading resolves to authored Londrina Solid Regular")
 	_check(panel.has_open_rewards() and panel.title_label.is_visible_in_tree(),
 		"typography inspected on an open mounted reward")
+	_check_display_typography()
 	_check(panel.title_label.theme_type_variation == &"PatchHeading"
 		and panel.title_label.get_theme_font(&"font") == heading_font,
 		"mounted reward banner resolves the project PatchHeading font")
@@ -2490,6 +2614,104 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 	await _frames()
 
 
+## A valid reward offer with no authored keyword mounts no Help tab at all, while
+## a keyword offer in the same three-offer receipt keeps its separate tab. The
+## three owner strips cover Warden, Seamstress and Tinker, and the glossary's
+## Close action wears the same display face as every reward action.
+func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
+	var ids: Array[String] = ["warden_strike", "seamstress_prick", "tinker_pop_shot"]
+	var catalog := StarterCards.new()
+	var receipt := base.duplicate(true)
+	for slot in range(3):
+		var definition := catalog.get_definition(ids[slot])
+		_check(not definition.is_empty(), "keyword-presence case is an authored card: " + ids[slot])
+		if definition.is_empty():
+			return
+		receipt["offers"][slot] = {"id": ids[slot],
+			"owner": String(definition.get("owner", ""))}
+	var before := receipt.duplicate(true)
+	var fonts := _display_fonts()
+	_check(not fonts.is_empty(), "display faces resolve for the keyword-presence case")
+	if fonts.is_empty():
+		return
+	requests.clear()
+	_check(panel.open_rewards("keyword_presence", kind, receipt),
+		"%s keyword-presence receipt mounts through the real panel" % kind)
+	if not panel.has_open_rewards():
+		return
+	await _frames()
+	var owners: Array[String] = []
+	var keyword_cards := 0
+	var plain_cards := 0
+	var first_help: Button = null
+	for slot in range(3):
+		var card_id := ids[slot]
+		var content := panel.choices_container.get_child(slot).get_node(
+			"CardMargin/CardContent") as VBoxContainer
+		var help := content.get_node_or_null("OwnerPatch/HelpCorner/HelpButton") as Button
+		var choose := content.get_node("ChooseButton") as Button
+		var owner_label := content.get_node("OwnerPatch/OwnerLabel") as Label
+		var keywords := CardKeywordGlossary.describe(catalog.get_definition(card_id))
+		owners.append(String(receipt["offers"][slot]["owner"]))
+		_check(choose.theme_type_variation == &"PatchHeadingButton"
+			and choose.get_theme_font(&"font") == fonts["action"]
+			and choose.get_theme_font(&"font") != fonts["body"],
+			"Choose action wears the display face: " + card_id)
+		_check(owner_label.theme_type_variation == &"PatchHeading"
+			and owner_label.get_theme_font(&"font") == fonts["heading"],
+			"owner label wears PatchHeading: " + card_id)
+		if keywords.is_empty():
+			plain_cards += 1
+			_check(help == null and content.get_node_or_null("OwnerPatch/HelpCorner") == null,
+				"no-keyword offer mounts no Help tab at all: " + card_id)
+			continue
+		keyword_cards += 1
+		_check(help != null and help.is_visible_in_tree() and not help.disabled,
+			"keyword offer keeps a live Help tab: " + card_id)
+		if help == null:
+			continue
+		_check(help.theme_type_variation == &"PatchHeadingButton"
+			and help.get_theme_font(&"font") == fonts["action"],
+			"Help tab wears the display face: " + card_id)
+		var help_size: int = help.get_theme_font_size(&"font_size")
+		var help_width: float = fonts["action"].get_string_size(help.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, help_size).x
+		_check(help.get_global_rect().size.x >= help_width + 12.0
+			and help.get_global_rect().size.y
+				>= fonts["action"].get_height(help_size) - 1.0,
+			"compact Help tab still fits its complete display label: " + card_id)
+		if first_help == null:
+			first_help = help
+	_check(keyword_cards >= 1 and plain_cards >= 1,
+		"the case really mounts a keyword Help tab and a no-keyword offer")
+	_check(owners.size() == 3 and owners[0] == "warden" and owners[1] == "seamstress"
+		and owners[2] == "tinker",
+		"the three resolved owner labels cover all three heroes: " + str(owners))
+	var actions := panel.get_choice_buttons()
+	_check(actions.size() == 4 and actions[3].theme_type_variation == &"PatchHeadingButton"
+		and actions[3].text == "Skip — take no card",
+		"%s Skip keeps its complete display label" % kind)
+	if first_help != null:
+		await _mouse(first_help)
+		var overlay := panel.get_node_or_null("KeywordHelpOverlay") as PanelContainer
+		_check(overlay != null and panel._help_overlay == overlay,
+			"keyword Help opens the real glossary for its offer")
+		if overlay != null:
+			var close := overlay.get_node_or_null("HelpContent/CloseHelpButton") as Button
+			_check(close != null and close.theme_type_variation == &"PatchHeadingButton"
+				and close.get_theme_font(&"font") == fonts["action"]
+				and close.get_theme_font_size(&"font_size") >= 18,
+				"glossary Close action wears the display face")
+			if close != null:
+				await _mouse(close)
+				_check(panel._help_overlay == null and first_help.has_focus(),
+					"closing the glossary returns focus to its Help tab")
+	_check(requests.is_empty() and panel._receipt == before and not panel._awaiting_ack,
+		"keyword-presence presentation never requests or mutates the receipt: " + kind)
+	panel.close_rewards()
+	await _frames()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var loaded := load(SCENE) as PackedScene
@@ -2528,6 +2750,8 @@ func _run() -> void:
 	await _test_missing_art_placeholder()
 	await _test_art_and_help_clearance(original_fight, "Fight")
 	await _test_art_and_help_clearance(original_elite, "Elite")
+	await _test_no_keyword_card_without_help(original_fight, "Fight")
+	await _test_no_keyword_card_without_help(original_elite, "Elite")
 	_malformed(original_fight)
 	await _replay_and_stale(original_fight)
 	var pool_fight := _prepared_pool(false, 18203)
