@@ -22,6 +22,7 @@ const INITIAL_SLOTS_PATH := "res://data/patches/initial_patch_slots.json"
 const M05_HEAD_PATCHES_PATH := "res://data/patches/m05_head_patches.json"
 const M05_ARM_PATCHES_PATH := "res://data/patches/m05_arm_support_patches.json"
 const M05_ATTACK_PATCHES_PATH := "res://data/patches/m05_attack_patches.json"
+const M05_COAT_PATCHES_PATH := "res://data/patches/m05_coat_patches.json"
 
 ## The only authored wearer powers this readout may describe. Each known ID is
 ## checked against its shipped catalog record before any text is published.
@@ -61,6 +62,14 @@ const KNOWN_M05_ATTACK_POWERS := {
 		"minimum_unravel_numerator": 1, "minimum_unravel_denominator": 2,
 		"once_per_player_turn": true, "hit_number": 1, "target_kind": "enemy_single"},
 }
+## M05 COAT wearer modifier. The condition belongs to CombatBorrowedButton, which
+## is not yet bound into live combat, so this readout only authenticates the
+## authored record and describes its exact trigger. It never claims a live Block
+## award and never turns the coat into a maximum-HP bonus.
+const KNOWN_M05_COAT_POWERS := {
+	"borrowed_button": {"slot": "COAT", "effect": "other_hero_committed_heal_block",
+		"heal_threshold": 1, "block": 3, "uses_per_combat": 1},
+}
 ## Shop catalogs author slot identity alone; CombatShopPatchRules owns their powers.
 ## Descriptions of the already authored rules, never new effect calculations.
 const KNOWN_TEXTS := {
@@ -82,12 +91,14 @@ const KNOWN_TEXTS := {
 	"red_bobbin_cuff": "+1 Bleed on eligible Bleed cards owned by this living wearer only",
 	"loose_thread_glove": "+1 Unravel on eligible Unravel cards owned by this living wearer only",
 	"frayfinder_mitt": "+2 Unravel once per player turn on this living wearer's first single-target attack hit, only against a target already at least 1/2 of its current Unravel threshold (not on every attack)",
+	"borrowed_button": "Once per combat, when another living hero's committed card or stitched half restores at least 1 HP to this living wearer, gain 3 Block.",
 }
 
 
 ## Summarize every worn slot of the caller's three heroes.
-## `catalogs` may override the shipped catalogs ({"attack","coat","initial"}
-## arrays) so malformed authored records can be exercised without touching
+## `catalogs` may override the shipped catalogs (arrays keyed by catalog name,
+## such as "attack", "coat", "initial", "m05_head", "m05_arm", "m05_attack" and
+## "m05_coat") so malformed authored records can be exercised without touching
 ## any on-disk JSON; an omitted or empty override reads the shipped files.
 static func summarize(wardrobe: RunPatchWardrobe, torn_state: Variant,
 		catalogs: Variant = {}) -> Dictionary:
@@ -363,9 +374,11 @@ static func _authority(catalogs: Variant) -> Dictionary:
 	var m05_head: Variant = _catalog_array(catalogs, "m05_head", M05_HEAD_PATCHES_PATH)
 	var m05_arm: Variant = _catalog_array(catalogs, "m05_arm", M05_ARM_PATCHES_PATH)
 	var m05_attack: Variant = _catalog_array(catalogs, "m05_attack", M05_ATTACK_PATCHES_PATH)
+	var m05_coat: Variant = _catalog_array(catalogs, "m05_coat", M05_COAT_PATCHES_PATH)
 	if typeof(attack) != TYPE_ARRAY or typeof(coat) != TYPE_ARRAY \
 			or typeof(initial) != TYPE_ARRAY or typeof(m05_head) != TYPE_ARRAY \
-			or typeof(m05_arm) != TYPE_ARRAY or typeof(m05_attack) != TYPE_ARRAY:
+			or typeof(m05_arm) != TYPE_ARRAY or typeof(m05_attack) != TYPE_ARRAY \
+			or typeof(m05_coat) != TYPE_ARRAY:
 		return {}
 	var slots: Dictionary = {}
 	if not _collect(attack, "attack", slots):
@@ -379,6 +392,8 @@ static func _authority(catalogs: Variant) -> Dictionary:
 	if not _collect(m05_arm, "m05_arm", slots):
 		return {}
 	if not _collect(m05_attack, "m05_attack", slots):
+		return {}
+	if not _collect(m05_coat, "m05_coat", slots):
 		return {}
 	for id in KNOWN_ATTACK_POWERS:
 		if not slots.has(id):
@@ -396,6 +411,9 @@ static func _authority(catalogs: Variant) -> Dictionary:
 		if not slots.has(id):
 			return {}
 	for id in KNOWN_M05_ATTACK_POWERS:
+		if not slots.has(id):
+			return {}
+	for id in KNOWN_M05_COAT_POWERS:
 		if not slots.has(id):
 			return {}
 	return {"slots": slots}
@@ -490,6 +508,23 @@ static func _collect(entries: Array, kind: String, slots: Dictionary) -> bool:
 				return false
 			if entry.get("target_kind") != expected["target_kind"]:
 				return false
+			slots[id] = expected["slot"]
+		elif kind == "m05_coat":
+			if not KNOWN_M05_COAT_POWERS.has(id):
+				continue
+			if slots.has(id):
+				return false
+			var expected: Dictionary = KNOWN_M05_COAT_POWERS[id]
+			if entry.get("slot") != expected["slot"] or entry.get("effect") != expected["effect"]:
+				return false
+			# Every authored number is part of the condition: a positive but
+			# different threshold, Block or use count is a different power.
+			for field in ["heal_threshold", "block", "uses_per_combat"]:
+				var value: Variant = entry.get(field)
+				if not _integral(value) or value <= 0:
+					return false
+				if int(value) != int(expected[field]):
+					return false
 			slots[id] = expected["slot"]
 		else:
 			if not CombatShopPatchRules.EFFECTS.has(id):
