@@ -1036,6 +1036,224 @@ func _test_global_rng(defeat: Dictionary) -> void:
 		"no seeded map RNG or model change, exactly one extra genuine return")
 
 
+## Wheel-scroll the hovered control with real pointer wheel events.
+func _wheel(control: Control, button_index: MouseButton, times: int) -> void:
+	var point := control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for i in range(times):
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = button_index
+		event.pressed = true
+		root.push_input(event, true)
+	await _frames()
+
+
+func _font_path(label: Label) -> String:
+	var font := label.get_theme_font("font") as Font
+	return font.resource_path if font != null else ""
+
+
+## Text rectangle a label can actually print inside, honouring its paper style.
+func _label_interior(label: Label) -> Vector2:
+	var box := label.get_theme_stylebox("normal") as StyleBox
+	if box == null:
+		return label.size
+	return Vector2(label.size.x - box.get_margin(SIDE_LEFT) - box.get_margin(SIDE_RIGHT),
+		label.size.y - box.get_margin(SIDE_TOP) - box.get_margin(SIDE_BOTTOM))
+
+
+## Independent TextServer measurement of the label's own text at its resolved
+## font and width, so "readable" means the glyphs really fit the control.
+func _printed_text_size(label: Label, width: float) -> Vector2:
+	return label.get_theme_font("font").get_multiline_string_size(label.text,
+		label.horizontal_alignment, width, label.get_theme_font_size("font_size"))
+
+
+## VIS V2 readability of the mounted run ledger and kept-card details. Every
+## genuine body/detail control must resolve to at least 18 px while keeping the
+## master body/heading font resources, and the retained list must still scroll
+## to its last row with the wheel and the keyboard and leave Return reachable.
+func _test_readable_typography(victory: Dictionary, defeat: Dictionary) -> void:
+	var theme := load("res://assets/fonts/patchwork_theme.tres") as Theme
+	_check(theme != null and theme.default_font != null
+		and theme.default_font.resource_path == BODY_FONT
+		and (theme.get_font("font", "PatchHeading") as Font).resource_path == HEADING_FONT,
+		"AC1: the shipped patchwork theme still owns the same body and heading faces")
+	var sewn := _stitch_pairs(_starter_deck(), [
+		["warden_strike", "seamstress_prick"],
+		["warden_brace", "seamstress_mend"],
+		["warden_shield_bash", "tinker_pop_shot"],
+	], 9)
+	_check(not sewn.is_empty(), "AC2: readable-result fixture commits three genuine stitches")
+	if sewn.is_empty():
+		return
+	var wardrobe := _wardrobe(sewn["deck"], [
+		["button_eye", "warden", "HEAD", "readable_sew_warden"],
+		["pincushion_arm", "seamstress", "ARM", "readable_sew_seamstress"],
+		["quilted_coat", "tinker", "COAT", "readable_sew_tinker"],
+	])
+	var expected := _signature(sewn, wardrobe)
+	var cards: Array = expected.get("current_stitched_cards", [])
+	_check(expected.get("ok") == true and cards.size() >= 3,
+		"AC2: three retained stitched cards come from the authentic projection")
+	_install_run(sewn, wardrobe)
+	var before := _app_snapshot()
+	_check(panel.open_result(victory["ctx"]["latch"]), "AC1: genuine settled Victory opens for readability")
+	await _frames()
+	await _audit_result_readability("Victory", expected, victory, before, "AC1/AC2 Boss victory")
+	panel.close_result()
+	_check(not panel.has_open_result() and panel.stitched_rows.get_child_count() == 0
+		and panel.stitched_scroll.scroll_vertical == 0,
+		"AC2: closing the readable result clears every retained row and its scroll offset")
+	_check(panel.open_result(defeat["ctx"]["latch"]), "AC1: genuine settled Defeat opens for readability")
+	await _frames()
+	await _audit_result_readability("Defeat", expected, defeat, before, "AC1/AC2 party defeat")
+	panel.close_result()
+	_check(_app_snapshot() == before,
+		"AC3: readability and list scrolling never alter run, deck, wardrobe or currency")
+
+
+## Mounted audit of one genuine settled result: font sizes on real controls,
+## unclipped signed lines, exact card order/names/owners, and mouse plus keyboard
+## access to the last retained row while Return stays reachable.
+func _audit_result_readability(status: String, expected: Dictionary,
+		terminal: Dictionary, app_before: Dictionary, label: String) -> void:
+	var state := _snapshot(terminal["ctx"], terminal["battle"])
+	var ctx: Dictionary = terminal["ctx"]
+	var settled := (ctx["latch"].get_state().get("settled_node_ids") as Array).size()
+	_check(panel.has_open_result() and panel.is_visible_in_tree()
+		and panel.get_presented_status() == status.to_upper(), label + ": mounted settled result")
+	var title := panel.title_label
+	_check(title.theme_type_variation == "PatchHeading" and _font_path(title) == HEADING_FONT
+		and title.get_theme_font_size("font_size") >= 40,
+		label + ": result title keeps the 40 px PatchHeading hierarchy")
+	var ledger := panel.summary_label
+	_check(ledger.get_theme_font_size("font_size") >= 18,
+		label + ": mounted run ledger resolves to at least 18 px")
+	_check(ledger.theme_type_variation == "" and _font_path(ledger) == BODY_FONT,
+		label + ": run ledger keeps the inherited body face")
+	var sentence := panel.description_label
+	_check(sentence.get_theme_font_size("font_size") >= 18 and _font_path(sentence) == BODY_FONT,
+		label + ": outcome sentence keeps readable body text")
+	var detail := panel.stitched_heading
+	_check(detail.theme_type_variation == "PatchHeading" and _font_path(detail) == HEADING_FONT
+		and detail.get_theme_font_size("font_size") >= 18,
+		label + ": stitched-card heading resolves to at least 18 px on the heading face")
+	# Exact authoritative signature, with an independent line oracle.
+	var lines := ledger.text.split("\n")
+	var expected_lines: Array[String] = [
+		"Battles resolved: %d" % settled,
+		"Stitched: %d made · %d in deck" % [expected.stitched_created, expected.stitched_current],
+		"Patches worn: %d" % expected.worn_total,
+	]
+	var stitched_ids: Array = expected.stitched_ids
+	if not stitched_ids.is_empty():
+		var names: Array[String] = []
+		for index in range(mini(stitched_ids.size(), 2)):
+			names.append(expected.descriptors[stitched_ids[index]].display_name)
+		var craft := "Crafted: " + "  ·  ".join(names)
+		if stitched_ids.size() > names.size():
+			craft += " +%d more" % (stitched_ids.size() - names.size())
+		expected_lines.append(craft)
+	for hero in expected.heroes:
+		var parts: Array[String] = []
+		for slot in ["HEAD", "ARM", "COAT"]:
+			var patch_id: String = hero.slots[slot]
+			parts.append("%s %s" % [slot, patch_id.capitalize() if not patch_id.is_empty() else "-"])
+		expected_lines.append("%s  %s" % [str(hero.hero_id).capitalize(), "  ·  ".join(parts)])
+	_check(lines.size() == expected_lines.size(), label + ": exact number of signed ledger lines")
+	for index in range(mini(lines.size(), expected_lines.size())):
+		_check(lines[index] == expected_lines[index],
+			label + ": signed ledger line %d is unchanged" % index)
+	var interior := _label_interior(ledger)
+	var printed := _printed_text_size(ledger, interior.x)
+	_check(printed.y <= interior.y + 0.5 and printed.x <= interior.x + 0.5,
+		label + ": every signed ledger line prints unclipped inside its paper")
+	# Kept-card rows: exact order, names, halves and owners, all readable.
+	var cards: Array = expected.get("current_stitched_cards", [])
+	_check(panel.stitched_section.visible
+		and panel.stitched_rows.get_child_count() == cards.size(),
+		label + ": every retained card is mounted in its signed order")
+	_check(printed.y > 0 and panel.stitched_rows.get_child_count() >= 3,
+		label + ": readability oracle is non-vacuous")
+	for index in range(mini(cards.size(), panel.stitched_rows.get_child_count())):
+		var card: Dictionary = cards[index]
+		var first: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[0])
+		var second: Dictionary = RunRestStitchCards.resolve_card_definition(card.half_ids[1])
+		var row := panel.stitched_rows.get_child(index) as Control
+		var composite := row.get_node("CardInset/CardLines/Composite") as Label
+		var halves := row.get_node("CardInset/CardLines/Halves") as Label
+		_check(composite.get_theme_font_size("font_size") >= 18
+			and composite.theme_type_variation == "PatchHeading"
+			and _font_path(composite) == HEADING_FONT,
+			label + ": composite name resolves to at least 18 px on the heading face")
+		_check(halves.get_theme_font_size("font_size") >= 18 and halves.theme_type_variation == ""
+			and _font_path(halves) == BODY_FONT,
+			label + ": both ordered halves keep the body face at 18 px or more")
+		_check(composite.text == "%s  ·  %d energy" % [card.display_name, card.cost],
+			label + ": retained composite name and cost are unchanged")
+		_check(halves.text == "1 · %s (%s)    →    2 · %s (%s)" % [
+			first.display_name, str(first.owner).capitalize(),
+			second.display_name, str(second.owner).capitalize()],
+			label + ": retained half names and owners are unchanged in order")
+		_check(_printed_text_size(composite, composite.size.x).y <= composite.size.y + 0.5
+			and _printed_text_size(halves, halves.size.x).y <= halves.size.y + 0.5,
+			label + ": composite name and half description print unclipped")
+		_check(row.size.y >= row.get_combined_minimum_size().y - 0.5,
+			label + ": retained row is allocated its full readable height")
+	var scroll := panel.stitched_scroll
+	var bar := scroll.get_v_scroll_bar()
+	var last_row := panel.stitched_rows.get_child(panel.stitched_rows.get_child_count() - 1) as Control
+	var stage := Rect2(Vector2.ZERO, Vector2(root.size))
+	_check(bar.max_value > scroll.size.y and scroll.size.y >= 80.0,
+		label + ": retained list viewport is shorter than its three rows")
+	scroll.scroll_vertical = 0
+	await _frames()
+	await _wheel(scroll, MOUSE_BUTTON_WHEEL_DOWN, 40)
+	_check(scroll.scroll_vertical >= int(bar.max_value - scroll.size.y) - 1,
+		label + ": mouse wheel scrolls the retained list to its end")
+	_check(scroll.get_global_rect().encloses(last_row.get_global_rect()),
+		label + ": the last retained card row is fully visible after wheel scrolling")
+	await _wheel(scroll, MOUSE_BUTTON_WHEEL_UP, 40)
+	_check(scroll.scroll_vertical == 0, label + ": mouse wheel scrolls back to the first row")
+	_check(scroll.focus_mode == Control.FOCUS_ALL, label + ": retained list accepts keyboard focus")
+	scroll.grab_focus()
+	await _frames()
+	_check(scroll.has_focus(), label + ": retained list takes real keyboard focus")
+	await _key(KEY_DOWN)
+	_check(scroll.scroll_vertical > 0, label + ": Down key scrolls the retained list")
+	await _key(KEY_PAGEDOWN)
+	_check(scroll.scroll_vertical >= int(bar.max_value - scroll.size.y) - 1,
+		label + ": Page Down reaches the end of the retained list")
+	await _key(KEY_HOME)
+	_check(scroll.scroll_vertical == 0, label + ": Home returns to the first retained row")
+	await _key(KEY_END)
+	_check(scroll.get_global_rect().encloses(last_row.get_global_rect()),
+		label + ": End key brings the last retained row into view")
+	scroll.release_focus()
+	scroll.scroll_vertical = 0
+	await _frames()
+	var button := panel.return_button
+	_check(button.text == "Return to Title" and not button.disabled
+		and button.focus_mode == Control.FOCUS_ALL and button.is_visible_in_tree(),
+		label + ": Return to Title stays visible, enabled and focusable")
+	_check(panel.paper_panel.get_global_rect().encloses(button.get_global_rect())
+		and stage.encloses(button.get_global_rect()),
+		label + ": Return to Title is fully inside the paper and the stage")
+	_check(ledger.get_global_rect().end.y <= detail.get_global_rect().position.y
+		and panel.stitched_section.get_global_rect().end.y <= button.get_global_rect().position.y,
+		label + ": ledger and retained list never overlap the Return action")
+	button.grab_focus()
+	await _frames()
+	_check(button.has_focus(), label + ": Return action still takes focus after list scrolling")
+	button.release_focus()
+	_check(_app_snapshot() == app_before and _snapshot(ctx, terminal["battle"]) == state,
+		label + ": typography and scrolling change no signed run state or RNG")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1070,6 +1288,7 @@ func _run() -> void:
 		_test_reordered_heroes()
 		_test_global_rng(defeat)
 		_test_invalid_source(defeat)
+		await _test_readable_typography(victory, defeat)
 	_finish()
 
 
