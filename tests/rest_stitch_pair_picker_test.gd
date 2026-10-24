@@ -126,7 +126,7 @@ func _wheel(control: Control, button_index: MouseButton, times: int) -> void:
 	await _frames()
 
 
-func _body_font_path(label: Label) -> String:
+func _body_font_path(label: Control) -> String:
 	var font := label.get_theme_font("font") as Font
 	return font.resource_path if font != null else ""
 
@@ -170,6 +170,18 @@ func _click(button: Control) -> void:
 		event.pressed = press
 		root.push_input(event, true)
 	await _frames()
+
+
+## Scroll a mounted scroll-container tile into view with real focus, then click it.
+func _click_tile(tile: Button) -> void:
+	_check(tile != null and tile.is_inside_tree() and tile.is_visible_in_tree() and not tile.disabled,
+		"clicked original tile is mounted and enabled")
+	if tile == null or not is_instance_valid(tile):
+		return
+	tile.grab_focus()
+	await _frames()
+	_check(tile.has_focus(), "clicked original tile is scrolled into view and focused")
+	await _click(tile)
 
 
 func _key(keycode: Key) -> void:
@@ -824,6 +836,7 @@ func _run() -> void:
 	await _test_submitted_single_intent_latch()
 	await _test_keyboard_focus_route()
 	await _test_owner_position_pips()
+	await _test_copy_numbering_from_one()
 	_finish()
 
 
@@ -1243,6 +1256,244 @@ func _test_readable_stitch_forecast() -> void:
 	_check(ledger.get_snapshot() == source and not ledger.is_consumed(),
 		"readable forecast and scrolling spend no scraps and mutate no Rest receipt")
 	panel.free()
+
+
+## AC1/AC2/AC3: every visible instance label counts copies from one while the
+## selection, tile metadata and transaction receipts keep the exact zero-based
+## deck index; the narrow Change First ticket names that copy at body size.
+func _test_copy_numbering_from_one() -> void:
+	var deck := _deck()
+	var strike_a := _idx(deck, "warden_strike", 0)
+	var strike_b := _idx(deck, "warden_strike", 1)
+	var prick_a := _idx(deck, "seamstress_prick", 0)
+	var prick_b := _idx(deck, "seamstress_prick", 1)
+	_check(strike_a >= 0 and strike_b > strike_a and prick_a >= 0 and prick_b > prick_a
+		and strike_a != prick_a,
+		"copy-numbering fixture uses both shipped duplicate source indices")
+	if strike_a < 0 or strike_b <= strike_a or prick_b <= prick_a:
+		return
+	var ledger := RunRestStitchCards.new(deck, {}, 3)
+	_check(ledger.is_valid() and not ledger.is_consumed(),
+		"copy-numbering fixture has a genuine unconsumed 3-scrap ledger")
+	var source := ledger.get_snapshot()
+	var panel := LiveRestStitchPairPicker.new()
+	panel.name = "CopyNumberRestStitchPicker"
+	panel.position = Vector2(285, 75)
+	root.add_child(panel)
+	await _frames()
+	var intents: Array[Dictionary] = []
+	panel.stitch_requested.connect(func(a, b, s): intents.append({"first": a, "second": b, "source": s}))
+	panel.bind(ledger, source)
+	await _frames()
+
+	# AC1: the mounted first-stage ribbons and first selector rows count from one.
+	_check(panel.first_tiles.size() == deck.size() and panel.first_selector.item_count == deck.size(),
+		"every original starter instance is mounted in both first-stage surfaces")
+	for row in range(panel.first_selector.item_count):
+		var index: int = panel.first_selector.get_item_metadata(row)
+		var definition := catalog.get_definition(deck[index])
+		var owner := str(definition["owner"])
+		_check(_stripe_text(panel.first_tile_for_index(index)) ==
+			"#%d %s" % [index + 1, owner.capitalize()],
+			"first tile %d ribbon prints its one-based copy number and real owner" % index)
+		_check(panel.first_selector.get_item_text(row) == _expected_row_text(index, deck[index]),
+			"first selector row %d prints one-based copy, authored name, owner and cost" % index)
+		_check(not _stripe_text(panel.first_tile_for_index(index)).contains("#0")
+			and not panel.first_selector.get_item_text(row).contains("#0"),
+			"first original %d never renders copy #0" % index)
+	var strike_stripes := [
+		_stripe_text(panel.first_tile_for_index(strike_a)),
+		_stripe_text(panel.first_tile_for_index(strike_b)),
+	]
+	_check(strike_stripes == ["#%d Warden" % (strike_a + 1), "#%d Warden" % (strike_b + 1)]
+		and strike_stripes[0] != strike_stripes[1],
+		"the two Warden Strike originals show their own one-based copies, never a shared #0")
+	_check(panel.first_selector.get_item_text(_row_in_first(panel, strike_a))
+		!= panel.first_selector.get_item_text(_row_in_first(panel, strike_b)),
+		"the two Strike selector rows are distinguishable by copy number")
+
+	# AC2: a chosen duplicate names its own copy on the Change First ticket.
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, strike_b), true)
+	_check(panel.selected_first_index() == strike_b and panel.second_tile_scroll.visible,
+		"keyboard selects the later Warden Strike duplicate without changing its zero-based index")
+	_check(panel.second_tiles.size() == panel.second_selector.item_count and not panel.second_tiles.is_empty(),
+		"second stage mounts the same eligible originals in both surfaces")
+	for row in range(panel.second_selector.item_count):
+		var index: int = panel.second_selector.get_item_metadata(row)
+		var definition := catalog.get_definition(deck[index])
+		var owner := str(definition["owner"])
+		_check(_stripe_text(panel.second_tile_for_index(index)) ==
+			"#%d %s" % [index + 1, owner.capitalize()],
+			"second tile %d ribbon prints its one-based copy number and real owner" % index)
+		_check(panel.second_selector.get_item_text(row) == _expected_row_text(index, deck[index]),
+			"second selector row %d prints one-based copy, authored name, owner and cost" % index)
+		_check(not panel.second_selector.get_item_text(row).contains("#0"),
+			"second original %d never renders copy #0" % index)
+	_assert_change_first_ticket(panel, strike_b, "Strike", "warden",
+		"first-stage Change First ticket for duplicate copy #%d" % (strike_b + 1))
+
+	await _click_tile(panel.second_tile_for_index(prick_b))
+	_check(panel.selected_first_index() == strike_b and panel.selected_second_index() == prick_b,
+		"mouse second choice keeps both exact zero-based duplicate indices")
+	_check(panel.first_tile_for_index(strike_b).get_meta("index") == strike_b
+		and panel.second_tile_for_index(prick_b).get_meta("index") == prick_b
+		and panel.first_selector.get_item_metadata(panel.first_selector.selected) == strike_b
+		and panel.second_selector.get_item_metadata(panel.second_selector.selected) == prick_b,
+		"tile and selector metadata stay zero-based and exact for the displayed pair")
+	_assert_sewn_caption(panel, strike_b, prick_b, "Strike", "Prick", deck.size(), 0,
+		"copy-numbering duplicate Strike / Prick forecast")
+	_check(panel.change_first_button.text.contains(
+			"copy #%d" % (int(panel._current_pair()["first_index"]) + 1))
+		and panel.consequence_label.text.contains("copy #%d" % (strike_b + 1))
+		and panel.consequence_label.text.contains("copy #%d" % (prick_b + 1))
+		and not panel.consequence_label.text.contains("copy #0"),
+		"ticket and consequence forecast agree on both one-based copies")
+	# AC3: the existing independent oracle proves the preview and commit economics.
+	var preview := _assert_projection(panel._model, source, strike_b, prick_b,
+		"mounted duplicate Strike / Prick oracle")
+	var higher_half_cost := maxi(int(catalog.get_definition("warden_strike")["cost"]),
+		int(catalog.get_definition("seamstress_prick")["cost"]))
+	_check(not preview.is_empty() and preview["energy_cost"] == mini(3, higher_half_cost + 1)
+		and preview["scrap_cost"] == 3 and preview["remaining_scraps"] == 0
+		and preview["first_index"] == strike_b and preview["second_index"] == prick_b,
+		"mounted pair forecasts min(3, higher half cost + 1) energy and exactly 3 scraps")
+	_check(ledger.get_snapshot() == source and not ledger.is_consumed(),
+		"armed copy-numbered pair still spends nothing before confirmation")
+	var guard := RandomNumberGenerator.new()
+	guard.seed = 707213
+	var guard_state := guard.state
+	seed(707213)
+	var guard_next := randi()
+	seed(707213)
+	var deck_before := deck.duplicate()
+	var armed_ticket := panel.change_first_button
+	_check(armed_ticket != null and not armed_ticket.disabled
+		and armed_ticket.focus_mode == Control.FOCUS_ALL,
+		"armed pair leaves Change First a visible enabled keyboard action")
+
+	# AC2: mouse Change First drops the pair and returns to the first stage.
+	await _click(panel.change_first_button)
+	_check(panel.first_tile_scroll.visible and not panel.second_tile_scroll.visible
+		and panel.selected_first_index() == -1 and panel.selected_second_index() == -1
+		and panel.confirm_button.disabled and panel.consequence_label.text.is_empty(),
+		"Change First discards the armed pair and returns to the first stage")
+	var focused := _focused_tile(panel.first_tiles)
+	_check(focused != null and focused.is_visible_in_tree(),
+		"Change First returns keyboard focus to a visible first-stage original")
+
+	# Reselecting the other duplicate must refresh the caption, not keep a stale copy.
+	await _click_tile(panel.first_tile_for_index(strike_a))
+	_check(panel.selected_first_index() == strike_a and panel.second_tile_scroll.visible,
+		"mouse reselects the earlier Warden Strike duplicate by its zero-based index")
+	var updated := panel.change_first_button
+	_check(updated != null and is_instance_valid(updated),
+		"the second stage mounts a fresh Change First ticket")
+	_assert_change_first_ticket(panel, strike_a, "Strike", "warden",
+		"updated Change First ticket for duplicate copy #%d" % (strike_a + 1))
+	_check(updated != null and not updated.text.contains("copy #%d" % (strike_b + 1)),
+		"the new ticket never retains the previous duplicate's copy number")
+	if updated != null:
+		updated.grab_focus()
+		await _frames()
+		_check(updated.has_focus(), "the updated Change First ticket takes keyboard focus")
+		await _key(KEY_ENTER)
+		_check(panel.selected_first_index() == -1 and panel.first_tile_scroll.visible
+			and panel.confirm_button.disabled,
+			"keyboard Change First on the updated ticket also returns to the first stage")
+
+	# The same duplicate pair still confirms exactly once with zero-based indices.
+	await _select_live_tile(panel.first_selector, _row_in_first(panel, strike_b), true)
+	await _click_tile(panel.second_tile_for_index(prick_b))
+	_check(panel.selected_first_index() == strike_b and panel.selected_second_index() == prick_b
+		and not panel.confirm_button.disabled,
+		"re-armed duplicate pair is confirmable after both Change First routes")
+	await _click(panel.confirm_button)
+	_check(intents.size() == 1 and intents[0]["first"] == strike_b
+		and intents[0]["second"] == prick_b and intents[0]["source"] == source,
+		"exactly one intent carries the exact zero-based duplicate indices and receipt")
+	_check(ledger.get_snapshot() == source and not ledger.is_consumed()
+		and ledger.get_snapshot()["deck"] == deck_before,
+		"copy-numbered labels never commit, spend or reorder the real Rest deck")
+	_check(guard.state == guard_state and randi() == guard_next,
+		"copy-numbering labels, tickets and confirmation draw no local or global RNG")
+	panel.free()
+
+
+func _stripe_text(tile: Button) -> String:
+	if tile == null or not is_instance_valid(tile):
+		return ""
+	var label := tile.find_child("OwnerStripe", true, false) as Label
+	return label.text if label != null and label.is_visible_in_tree() else ""
+
+
+## Independent expectation from the authored catalog, not the picker's own text helper.
+func _expected_row_text(index: int, card_id: String) -> String:
+	var definition := catalog.get_definition(card_id)
+	return "#%d  %s • %s (%d energy)" % [index + 1, definition["display_name"],
+		str(definition["owner"]).capitalize(), definition["cost"]]
+
+
+## The narrow ticket must stay a legible 96x106 action: every caption line prints
+## at body size inside the sewn face, and the tooltip names owner, card and copy.
+func _assert_change_first_ticket(panel: LiveRestStitchPairPicker, first_index: int,
+		card_name: String, owner: String, label: String) -> void:
+	var button := panel.change_first_button
+	_check(button != null and is_instance_valid(button) and button.is_inside_tree()
+		and button.is_visible_in_tree() and not button.disabled,
+		label + " is a mounted, enabled action")
+	if button == null or not is_instance_valid(button):
+		return
+	var copy_label := "copy #%d" % (first_index + 1)
+	_check(button.custom_minimum_size == Vector2(96, 106) and button.size.x >= 96.0
+		and button.size.y >= 106.0 and button.focus_mode == Control.FOCUS_ALL,
+		label + " keeps the 96x106 clickable, keyboard-reachable ticket")
+	_check(button.get_theme_font_size("font_size") >= 18,
+		label + " prints its action caption at 18 px or larger")
+	_check(_body_font_path(button) == BODY_FONT,
+		label + " keeps the inherited project body face")
+	_check(button.text.contains(copy_label) and not button.text.contains("copy #0"),
+		label + " caption names the same one-based " + copy_label)
+	_check(first_index == 0 or not button.text.contains("copy #%d" % first_index),
+		label + " caption never falls back to the zero-based source index")
+	_check(button.tooltip_text.contains(card_name) and button.tooltip_text.contains(owner.capitalize())
+		and button.tooltip_text.contains(copy_label),
+		label + " tooltip names authored name, owner and one-based copy")
+	var font := button.get_theme_font("font")
+	var font_size := button.get_theme_font_size("font_size")
+	var lines := button.text.split("\n")
+	var widest := 0.0
+	for line in lines:
+		widest = maxf(widest, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+	var narrowest := Vector2(1e9, 1e9)
+	for state in [["normal", "font_color"], ["hover", "font_hover_color"],
+			["pressed", "font_pressed_color"], ["focus", "font_focus_color"]]:
+		var face := button.get_theme_stylebox(state[0]) as StyleBoxFlat
+		_check(face != null and _contrast(button.get_theme_color(state[1]), face.bg_color) >= 3.0,
+			label + " caption stays legible in its " + state[0] + " state")
+		if face != null:
+			narrowest = Vector2(
+				minf(narrowest.x, button.size.x - face.get_content_margin(SIDE_LEFT)
+					- face.get_content_margin(SIDE_RIGHT)),
+				minf(narrowest.y, button.size.y - face.get_content_margin(SIDE_TOP)
+					- face.get_content_margin(SIDE_BOTTOM)))
+	_check(font != null and lines.size() <= 3 and widest <= narrowest.x + 0.5
+		and font.get_height(font_size) * lines.size() <= narrowest.y + 0.5,
+		label + " caption stays a compact three-line block inside the ticket instead of clipping")
+	_bounds(button)
+
+
+func _luminance(color: Color) -> float:
+	var channels := []
+	for value in [color.r, color.g, color.b]:
+		channels.append(value / 12.92 if value <= 0.04045
+			else pow((value + 0.055) / 1.055, 2.4))
+	return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+func _contrast(first: Color, second: Color) -> float:
+	var a := _luminance(first)
+	var b := _luminance(second)
+	return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 
 
 func _finish() -> void:

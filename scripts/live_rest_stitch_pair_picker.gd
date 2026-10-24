@@ -18,6 +18,9 @@ const SECOND_THUMB_RECT := Rect2(532, 116, 100, 70)
 ## Sewing-table body copy: the primary instruction, both authored halves and
 ## the genuine consequence forecast stay readable at 1280x720.
 const BODY_FONT_SIZE := 18
+## The narrow Change First ticket keeps the same body size; its short caption
+## wraps inside the 96x106 sewn ticket instead of shrinking to illegible type.
+const CHANGE_FIRST_FONT_SIZE := 18
 
 var first_selector: OptionButton
 var second_selector: OptionButton
@@ -307,6 +310,13 @@ static func from_positions_tooltip(positions: Array) -> String:
 	return "Owner FROM: " + ", ".join(PackedStringArray(values))
 
 
+## Human-facing copy number for one deck instance. The model, tile metadata and
+## every transaction receipt keep the exact zero-based source index; only this
+## display string is one-based.
+static func copy_label(deck_index: int) -> String:
+	return "copy #%d" % (deck_index + 1)
+
+
 ## Public presentation query for tile FROM-pip state (tests and accessibility).
 static func tile_pip_state(tile: Button) -> Dictionary:
 	if tile == null:
@@ -495,9 +505,11 @@ func _create_card_tile(entry: Dictionary, is_first: bool) -> Button:
 	tile.add_child(stripe)
 
 	var stripe_label := Label.new()
+	stripe_label.name = "OwnerStripe"
 	stripe_label.position = Vector2(2, 0)
 	stripe_label.size = Vector2(86, 16)
-	stripe_label.text = "#%d %s" % [entry["index"], owner_str.capitalize()]
+	# One-based human copy number; the tile keeps the zero-based source index.
+	stripe_label.text = "#%d %s" % [int(entry["index"]) + 1, owner_str.capitalize()]
 	stripe_label.add_theme_font_size_override("font_size", 10)
 	stripe_label.add_theme_color_override("font_color", Color("#fdf6e5"))
 	stripe_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -654,14 +666,28 @@ func _create_change_first_button(first_idx: int) -> Button:
 	btn.size = Vector2(96, 106)
 	btn.focus_mode = Control.FOCUS_ALL
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP
-	var first_name := ""
+	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var first_entry: Dictionary = {}
 	for entry in _model.first_options():
 		if entry["index"] == first_idx:
-			first_name = entry["name"]
+			first_entry = entry
 			break
-	btn.text = "← Change\nFirst Card\n(#%d %s)" % [first_idx, first_name]
-	btn.add_theme_font_size_override("font_size", 11)
-	btn.add_theme_color_override("font_color", INK)
+	# The arrow, verb and one-based copy number stay short enough to print at
+	# body size inside the narrow ticket; the full authoring lives in the
+	# tooltip because the 96x106 ticket cannot hold a long card name.
+	btn.text = "← Change\nFirst\n" + copy_label(first_idx)
+	if first_entry.is_empty():
+		btn.tooltip_text = "Choose a different first card."
+	else:
+		btn.tooltip_text = "Change first original — %s %s, %s\nChoose a different first card." % [
+			str(first_entry.get("owner", "")).capitalize(), str(first_entry.get("name", "")),
+			copy_label(first_idx)]
+	btn.add_theme_font_size_override("font_size", CHANGE_FIRST_FONT_SIZE)
+	# The shared theme leaves Button colours at engine defaults, where hover and
+	# focus ink is near-white; the sewn ticket keeps dark ink in every state.
+	for color_name in ["font_color", "font_hover_color", "font_pressed_color",
+			"font_focus_color", "font_hover_pressed_color"]:
+		btn.add_theme_color_override(color_name, INK)
 
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color("#ebdcc0")
@@ -683,6 +709,14 @@ func _create_change_first_button(first_idx: int) -> Button:
 	focus.set_border_width_all(3)
 	focus.set_corner_radius_all(5)
 	btn.add_theme_stylebox_override("focus", focus)
+
+	var held := StyleBoxFlat.new()
+	held.bg_color = Color("#ddcbaa")
+	held.border_color = INK
+	held.set_border_width_all(3)
+	held.set_corner_radius_all(5)
+	btn.add_theme_stylebox_override("pressed", held)
+	btn.add_theme_stylebox_override("hover_pressed", held)
 
 	btn.pressed.connect(_return_to_first_choice)
 	return btn
@@ -997,7 +1031,7 @@ func refresh() -> void:
 
 
 func _entry_text(entry: Dictionary) -> String:
-	return "#%d  %s • %s (%d energy)" % [entry["index"], entry["name"], entry["owner"].capitalize(), entry["cost"]]
+	return "#%d  %s • %s (%d energy)" % [int(entry["index"]) + 1, entry["name"], entry["owner"].capitalize(), entry["cost"]]
 
 
 # --- Tile and Selector Interaction Handlers ---
