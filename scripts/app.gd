@@ -3,6 +3,38 @@ extends Control
 
 signal start_run_requested
 
+## Presentation only: follows the original visit column without reparenting controls.
+## Ownership by the art bed makes Continue/Return retire the surface and its bindings.
+class ShopActionBacking extends Panel:
+	const SHELL := preload("res://scripts/patchwork_ui_shell.gd")
+	const PADDING := 10.0
+	var _view: WeakRef
+
+	func bind_view(view: Control) -> void:
+		name = "ShopActionBacking"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_NONE
+		var surface := get_theme_stylebox("panel", "PanelContainer").duplicate() as StyleBoxFlat
+		surface.bg_color.a = 1.0
+		add_theme_stylebox_override("panel", surface)
+		var stitches := SHELL.ButtonStitches.new()
+		stitches.name = "RailStitches"
+		stitches.focus_mode = Control.FOCUS_NONE
+		add_child(stitches)
+		_view = weakref(view)
+		view.item_rect_changed.connect(_sync_rect)
+		view.visibility_changed.connect(_sync_rect)
+		_sync_rect()
+
+	func _sync_rect() -> void:
+		var view := _view.get_ref() as Control
+		visible = is_instance_valid(view) and view.is_visible_in_tree()
+		if not visible:
+			return
+		var rect := view.get_global_rect().grow(PADDING)
+		global_position = rect.position
+		size = rect.size
+
 const TITLE := "Patchwork Pioneers"
 const STARTER_DECK_PATH := "res://data/cards/starter_deck.json"
 const STARTER_PARTY_PATH := "res://data/heroes/starter_party.json"
@@ -4827,6 +4859,10 @@ func _mount_visit_backdrop(kind: String, view: Control) -> void:
 	add_child(bed)
 	move_child(bed, view.get_index())
 	visit_backdrop = bed
+	if kind == "Shop":
+		var backing := ShopActionBacking.new()
+		bed.add_child(backing)
+		backing.bind_view(view)
 
 
 ## Releases the visit bed with the visit that mounted it; continuation and title return

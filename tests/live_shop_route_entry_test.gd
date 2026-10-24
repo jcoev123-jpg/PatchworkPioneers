@@ -615,6 +615,33 @@ func _check_shop_backdrop() -> int:
 		and visible.end.x <= pixels.x + 0.01 and visible.end.y <= pixels.y + 0.01
 		and is_equal_approx(visible.size.x * (drawn.size.x / pixels.x), view.size.x),
 		"Shop stall scene crops only the centred window that fills the view")
+	var backing := bed.get_node_or_null("ShopActionBacking") as Panel
+	_check(backing != null and bed.find_children("ShopActionBacking", "Panel", true, false).size() == 1,
+		"real Shop mounts exactly one named action rail backing")
+	if backing != null:
+		var rect := backing.get_global_rect()
+		var rail: Rect2 = app.shop_view.get_global_rect()
+		var surface := backing.get_theme_stylebox("panel") as StyleBoxFlat
+		_check(surface != null and surface.draw_center and surface.bg_color.a == 1.0
+			and surface.bg_color == app.get_theme_stylebox("panel", "PanelContainer").bg_color
+			and backing.get_node_or_null("RailStitches") != null,
+			"rail uses opaque installed felt style with the shell's stitched edge")
+		_check(backing.is_visible_in_tree() and rect.is_equal_approx(rail.grow(10.0))
+			and Rect2(0, 0, 1280, 720).encloses(rect),
+			"compact backing follows the laid-out rail inside the viewport")
+		for control in [app.shop_view.get_node("ShopTitle"), app.shop_label,
+				app.shop_buy_button, app.shop_remove_button, app.shop_patch_preview,
+				app.shop_continue_button, app.shop_back_button]:
+			_check(control.is_visible_in_tree() and rect.encloses(control.get_global_rect()),
+				"opaque rail covers every exposed title, wallet, action and preview")
+		var gallery: Control = _visit_tiles().gallery_panel()
+		_check(is_instance_valid(gallery) and gallery.is_visible_in_tree()
+			and not rect.intersects(gallery.get_global_rect()) and rect.size.x < 1280.0 * 0.65,
+			"stall art and right gallery remain outside the compact rail backing")
+		for decoration in [backing, backing.get_node("RailStitches")]:
+			_check(decoration.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and decoration.focus_mode == Control.FOCUS_NONE,
+				"rail and stitches capture neither pointer nor keyboard focus")
 	return bed.get_instance_id()
 
 
@@ -857,6 +884,7 @@ func _run() -> void:
 		return
 	var stale: Array[Callable] = []
 	var replay: Array = []
+	var retired_backing_id := 0
 	# Normal insufficient funds, funded mouse, funded keyboard with escalated quote,
 	# and same-seed normal restart/skip.
 	for session in range(4):
@@ -1006,6 +1034,18 @@ func _run() -> void:
 		if app.shop_view == null or app.shop_visit == null:
 			break
 		var bed_id: int = _check_shop_backdrop()
+		var backing: Control = app.visit_backdrop.get_node("ShopActionBacking")
+		var backing_id := backing.get_instance_id()
+		_check(backing_id != retired_backing_id and not is_instance_id_valid(retired_backing_id),
+			"fresh routed visit remounts a new backing without retaining its predecessor")
+		var presentation_before := _shop_state()
+		var stock_before: Dictionary = app.shop_purchases.get_stock().duplicate(true)
+		app.shop_view.position += Vector2(1, 1)
+		_check(backing.get_global_rect().is_equal_approx(app.shop_view.get_global_rect().grow(10.0)),
+			"backing follows actual view movement without a fixed layout guess")
+		app.shop_view.position -= Vector2(1, 1)
+		_check(_shop_state() == presentation_before and app.shop_purchases.get_stock() == stock_before,
+			"backing layout leaves wallet, deck, stock, route and seeded RNG unchanged")
 		_check_visit_actions(app.shop_view, [app.shop_buy_button, app.shop_remove_button,
 			app.shop_continue_button, app.shop_back_button], ["Buy", "Remove", "Continue", "Return"])
 		_check(not app.shop_continue_button.disabled and not app.shop_back_button.disabled,
@@ -1086,6 +1126,7 @@ func _run() -> void:
 		if session == 0:
 			app.shop_view.visible = false
 			await _frames()
+			_check(not backing.is_visible_in_tree(), "backing hides with its original Shop view")
 			_check(app.shop_offers.custom_minimum_size == Vector2(440, 48)
 				and app.shop_offers.modulate.a == 1.0
 				and app.shop_offers.focus_mode != Control.FOCUS_NONE
@@ -1094,6 +1135,10 @@ func _run() -> void:
 				"tearing the gallery down restores the canonical Shop dropdown exactly")
 			app.shop_view.visible = true
 			await _frames()
+			_check(backing.is_visible_in_tree()
+				and backing.get_global_rect().is_equal_approx(app.shop_view.get_global_rect().grow(10.0))
+				and app.visit_backdrop.get_node("ShopActionBacking") == backing,
+				"re-entry reuses one backing and follows the restored rail layout")
 			_check(gallery.is_gallery_mounted() and gallery.gallery_kind() == "Shop"
 				and app.shop_offers.custom_minimum_size == Vector2.ZERO
 				and app.shop_offers.modulate.a == 0.0,
@@ -1312,13 +1357,23 @@ func _run() -> void:
 		stale = [route_callback, back_callback, remove_callback, tile_callback,
 			app.shop_continue_button.pressed.get_connections()[0].callable,
 			app.shop_back_button.pressed.get_connections()[0].callable]
-		if session % 2 == 0:
+		if session == 2:
+			var continue_before := _persistent()
+			app.shop_continue_button.grab_focus()
+			await _key(KEY_ENTER)
+			_check(app.visit_backdrop == null and not is_instance_id_valid(backing_id)
+				and app.route_view.is_visible_in_tree() and _persistent() == continue_before,
+				"keyboard Continue retires rail and art without changing run state")
+			await _click(app.route_back_button)
+		elif session % 2 == 0:
 			app.shop_back_button.grab_focus()
 			await _key(KEY_ENTER)
 		else:
 			await _click(app.shop_back_button)
 		_check(app.visit_backdrop == null and not is_instance_id_valid(bed_id),
 			"Return releases the Shop art bed with its visit")
+		_check(not is_instance_id_valid(backing_id), "Return leaves no Shop rail backing behind")
+		retired_backing_id = backing_id
 		for callback in stale:
 			callback.call()
 		_check(visit.get_state().status == "closed" and app.title_view.visible and app.shop_visit == null
