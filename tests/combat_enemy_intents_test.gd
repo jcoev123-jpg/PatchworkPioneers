@@ -16,6 +16,8 @@ func _initialize() -> void:
 	_test_weighted_announcement_reads_and_rerolls()
 	_test_weighted_dead_slots_and_legacy_isolation()
 	_test_weighted_rejections()
+	_test_behemoth_phase_transition_cache()
+	_test_behemoth_phase_fail_closed()
 	if failures.is_empty():
 		print("combat_enemy_intents_test: PASS (", checks, " checks)")
 	else:
@@ -568,3 +570,146 @@ func _test_weighted_rejections() -> void:
 		"an already bound fight cannot bind twice")
 
 
+
+
+func _boss_fixture() -> Dictionary:
+	var catalog: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies/boss.json"))
+	_check(catalog is Array and catalog.size() == 1, "boss fixture: real catalog contains Behemoth")
+	if not catalog is Array or catalog.size() != 1:
+		return {}
+	var record: Dictionary = catalog[0].duplicate(true)
+	record["max_hp"] = int(record["max_hp"])
+	return record
+
+
+func _phase_two_fixture() -> Dictionary:
+	var phase: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		CombatBehemothPhaseRules.PHASE_TWO_PATH))
+	_check(phase is Dictionary, "phase two fixture: real authored JSON parses")
+	return phase if phase is Dictionary else {}
+
+
+func _assert_boss_slot(slot: Dictionary, amount: int, policy: String, label: String) -> void:
+	_check(slot.get("enemy_position") == 1 and slot.get("target") == policy,
+		label + ": original slot and precise policy")
+	var actions: Array = slot.get("actions", [])
+	_check(actions.size() == 3, label + ": three authored alternatives")
+	if actions.size() != 3:
+		return
+	_check(actions[0] == {"weight": 4, "action": {"type": "attack", "amount": amount}}
+		and actions[1] == {"weight": 2, "action": {"type": "block", "amount": 3}}
+		and actions[2] == {"weight": 1, "action": {"type": "debuff", "amount": 1, "status": "weak"}},
+		label + ": exact 4:2:1 weights, attack, Block 3 and Weak 1")
+
+
+func _test_behemoth_phase_transition_cache() -> void:
+	var source := _boss_fixture()
+	var phase := _phase_two_fixture()
+	if source.is_empty() or phase.is_empty():
+		return
+	var enemies := CombatEnemies.new([source])
+	var party := _party_fixture(35, 5, 8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 18721
+	var schedule := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(enemies.is_valid() and schedule.bind_battle(enemies, party, rng),
+		"canonical real Behemoth binds at 42 HP")
+	if not schedule.is_bound():
+		return
+	_assert_boss_slot(schedule._slots[0], 2, "front", "42 HP")
+	_check(CombatEnemyIntents.policy_for(enemies, 1) == "front",
+		"executor policy is front for phase one")
+	var first := schedule.get_intents()
+	_check(first.size() == 1 and first[0].enemy_position == 1,
+		"real Boss has one cached slot")
+	var before := rng.state
+	_check(enemies.gain_block(1, 6) and enemies.apply_damage(1, 6)
+		and enemies.get_enemy(1).hp == 42, "Block absorbs damage without lowering HP")
+	_check(schedule.get_intents() == first and rng.state == before,
+		"Block and read cannot transition or spend RNG")
+	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+		and schedule.advance_turn(), "22 HP advances in phase one")
+	_assert_boss_slot(schedule._slots[0], 2, "front", "22 HP")
+	var locked := schedule.get_intents()
+	before = rng.state
+	_check(enemies.apply_damage(1, 1) and enemies.get_enemy(1).hp == 21,
+		"player hit crosses the actual half-HP boundary")
+	for ignored in range(5):
+		var hostile := schedule.get_intents()
+		hostile[0]["amount"] = 999
+	_check(schedule.get_intents() == locked and rng.state == before
+		and CombatEnemyIntents.policy_for(enemies, 1) == "front",
+		"threshold does not rewrite the current announcement or policy on reads")
+	_check(schedule.advance_turn(), "next committed roll transitions phase")
+	_assert_boss_slot(schedule._slots[0], 4, "lowest_living_hp", "21 HP")
+	_check(schedule._boss_phase == 2 and
+		CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
+		"cached phase and authoritative executor policy switch together")
+	var next := schedule.get_intents()
+	_check(next.size() == 1 and next[0].get("enemy_position") == 1
+		and (next[0].get("amount") in [1, 3, 4]),
+		"21 HP publishes one phase-two action with authored amount")
+	before = rng.state
+	_check(next == schedule.get_intents() and rng.state == before,
+		"phase two remains stable across repeated reads")
+	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 1
+		and schedule.advance_turn() and schedule._boss_phase == 2,
+		"living 1 HP Behemoth retains phase two")
+	_assert_boss_slot(schedule._slots[0], 4, "lowest_living_hp", "1 HP")
+	_check(enemies.apply_damage(1, 1) and enemies.is_slain(1)
+		and schedule.advance_turn() and enemies.get_enemy(1).hp == 0,
+		"slain Behemoth stays in its slot and advances inertly")
+	var heroes_before := party.get_heroes()
+	var result := CombatEnemyPhase.new().execute_phase(
+		party, enemies, schedule.get_intents(), null, true)
+	_check(result.get("ok", false) and result.events.size() == 1
+		and not result.events[0].applied and party.get_heroes() == heroes_before,
+		"0 HP Behemoth never executes its cached action")
+	# Authored caller-owned data cannot mutate phase choices after binding.
+	source["intent"]["actions"][0]["amount"] = 999
+	phase["intent"]["actions"][0]["amount"] = 999
+	_check(schedule._boss_definition.intent.actions[0].amount != 999
+		and schedule._phase_two_record.intent.actions[0].amount != 999,
+		"both bound authored definitions are detached")
+
+
+func _test_behemoth_phase_fail_closed() -> void:
+	var boss := _boss_fixture()
+	var phase := _phase_two_fixture()
+	if boss.is_empty() or phase.is_empty():
+		return
+	for variant in ["missing", "wrong_threshold", "wrong_action", "counterfeit",
+			"wrong_roster_name", "mixed_boss_roster"]:
+		var source: Variant = boss.duplicate(true)
+		var p2: Variant = phase.duplicate(true)
+		var roster := [boss.duplicate(true)]
+		if variant == "missing":
+			p2 = null
+		elif variant == "wrong_threshold":
+			p2["threshold_hp"] = 20
+		elif variant == "wrong_action":
+			p2["intent"]["actions"][0]["amount"] = 3
+		elif variant == "counterfeit":
+			source["id"] = "false_behemoth"
+		elif variant == "wrong_roster_name":
+			roster[0]["name"] = "Impostor"
+		else:
+			roster.append({"id": "ordinary", "max_hp": 5,
+				"intent": {"target": "front", "actions": [
+					{"type": "attack", "amount": 1, "weight": 1}]}})
+		var enemies := CombatEnemies.new(roster)
+		var party := _party_fixture()
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 9000
+		var initial_rng := rng.state
+		var initial_enemies := enemies.get_enemies()
+		var initial_party := party.get_heroes()
+		var schedule := CombatEnemyIntents.new([_enemy(1, [_block(1)])]
+			if roster.size() == 1 else [_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+		var fixed := schedule.get_intents()
+		_check(not schedule._bind_battle_with_phase_data(enemies, party, rng, source, p2),
+			variant + ": invalid Boss metadata fails before binding")
+		_check(not schedule.is_bound() and schedule.get_intents() == fixed
+			and rng.state == initial_rng and enemies.get_enemies() == initial_enemies
+			and party.get_heroes() == initial_party,
+			variant + ": rejection publishes no cache, RNG draw or combat mutation")
