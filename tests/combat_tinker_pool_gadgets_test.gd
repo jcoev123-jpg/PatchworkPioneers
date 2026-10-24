@@ -1,6 +1,18 @@
 extends SceneTree
 ## D2-1 deterministic headless tests for Tinker's Spare Parts and Sight Glass
-## shared-hand utility resolution (base and plus versions).
+## shared-hand utility resolution (base and plus versions), plus the M05
+## wearer-only ARM/HEAD Block projection onto Spare Parts.
+
+const ARM_PATCHES := "res://data/patches/m05_arm_support_patches.json"
+const HEAD_PATCHES := "res://data/patches/m05_head_patches.json"
+const BOTH_PATCHES := [
+	{"id": "hemguard_cuff", "slot": "ARM"},
+	{"id": "reinforced_browband", "slot": "HEAD"},
+]
+const CUFF_ONLY := [{"id": "hemguard_cuff", "slot": "ARM"}]
+const BROWBAND_ONLY := [{"id": "reinforced_browband", "slot": "HEAD"}]
+const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
+const SIGHT_GLASS_IDS := ["tinker_sight_glass", "tinker_sight_glass_plus"]
 
 var failures: Array[String] = []
 var checks: int = 0
@@ -11,11 +23,15 @@ func _initialize() -> void:
 	_test_sight_glass_ac2()
 	_test_rejections_ac3()
 	_test_regressions_ac4()
+	_test_wearer_block_ac1()
+	_test_wearer_scope_ac2()
+	_test_wearer_rejections_ac3()
 	for failure in failures:
 		printerr(failure)
 	print("combat_tinker_pool_gadgets_test: ", "PASS" if failures.is_empty() else "FAIL",
 		" (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
 
 
 func _check(condition: bool, message: String) -> void:
@@ -479,3 +495,464 @@ func _test_regressions_ac4() -> void:
 	_check(enemies.can_apply_statuses({1: {"exposed": 1}}), "CombatEnemies can stack")
 	_check(enemies.apply_statuses({1: {"exposed": 1}}) and enemies.get_enemy(1)["statuses"]["exposed"] == 2,
 		"CombatEnemies Exposed stacks")
+
+
+## ---------------------------------------------------------------------------
+## M05 wearer-only Block projection fixtures.
+## ---------------------------------------------------------------------------
+
+func _patch_records(path: String) -> Array:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check(parsed is Array and not parsed.is_empty(),
+		"authored patch catalog is a nonempty array: " + path)
+	var records := []
+	if parsed is Array:
+		for entry in parsed:
+			if entry is Dictionary and entry.get("id") is String and entry.get("slot") is String:
+				records.append({"id": entry["id"], "slot": entry["slot"]})
+	return records
+
+
+## Genuine RunPatchWardrobe + RunTornMending over the real starter roster, with
+## every authored M05 ARM/HEAD patch owned and the required Block patches present.
+func _wearer_ledgers() -> Dictionary:
+	var definitions := _patch_records(ARM_PATCHES)
+	definitions.append_array(_patch_records(HEAD_PATCHES))
+	var owned := []
+	for record in definitions:
+		owned.append(record["id"])
+	_check(owned.has("hemguard_cuff") and owned.has("reinforced_browband"),
+		"required wearer Block patch IDs are authored in the M05 catalogs")
+	var heroes := _party().get_heroes()
+	var torn := RunTornMending.new(heroes)
+	var wardrobe := RunPatchWardrobe.new(heroes, owned, definitions, 5, 100,
+		["warden_brace", "seamstress_prick", "tinker_spool_launcher"], 24680)
+	_check(wardrobe.is_valid() and torn.is_valid(),
+		"genuine wardrobe and torn ledgers are valid for the canonical roster")
+	_check(wardrobe.get_snapshot().get("heroes") == torn.read_state().get("heroes"),
+		"wardrobe and torn agree on the canonical hero authorities")
+	return {"wardrobe": wardrobe, "torn": torn, "heroes": heroes}
+
+
+## Sews the requested patches onto their wearers and binds an explicit,
+## authenticated resolver to those exact ledgers.
+func _bound_service(patches: Array, wearer: String = "tinker") -> Dictionary:
+	var ctx := _wearer_ledgers()
+	var wardrobe: RunPatchWardrobe = ctx["wardrobe"]
+	var torn: RunTornMending = ctx["torn"]
+	for index in range(patches.size()):
+		var patch: Dictionary = patches[index]
+		var target: String = patch.get("wearer", wearer)
+		var sewn: Dictionary = wardrobe.sew(patch["id"], target, patch["slot"],
+			"op-186-sew-%d" % index, wardrobe.get_snapshot())
+		_check(sewn.get("ok") == true,
+			"genuine sew of %s onto %s %s" % [patch["id"], target, patch["slot"]])
+	var wardrobe_before: Dictionary = wardrobe.get_snapshot()
+	var torn_before: Dictionary = torn.read_state()
+	var svc := CombatTinkerPoolGadgets.new()
+	var bound: bool = svc.bind_patch_wardrobe(wardrobe, torn, wardrobe_before, torn_before)
+	_check(bound, "explicit authenticated bind with matching ledger snapshots")
+	_check(svc.is_patch_binding_valid(), "bound ledger authorities are still current")
+	_check(wardrobe.get_snapshot() == wardrobe_before,
+		"binding the resolver does not mutate the wardrobe ledger")
+	_check(torn.read_state() == torn_before,
+		"binding the resolver does not mutate the torn ledger")
+	return {"svc": svc, "wardrobe": wardrobe, "torn": torn}
+
+
+func _spare_parts_deck(card_id: String, seed_value: int) -> CombatDeck:
+	# Three matching copies among seven cards guarantee at least one held copy
+	# and leave a seeded draw supply for the single draw.
+	return _deck([card_id, card_id, card_id, "filler_a", "filler_b",
+		"filler_c", "filler_d"], seed_value)
+
+
+## Plays one held Spare Parts card through a genuine shared deck and party while
+## keeping a real first-attack latch alongside it for the nonattack assertion.
+func _play_spare_parts(svc: CombatTinkerPoolGadgets, card_id: String, order: Array,
+		seed_value: int = 4242) -> Dictionary:
+	var party := _party(order)
+	var tinker_position: int = order.find("tinker") + 1
+	var deck := _spare_parts_deck(card_id, seed_value)
+	var latch := CombatTinkerFirstAttack.new()
+	latch.start_player_turn()
+	_check(latch.arm_path_bonus(2), "first-attack fixture arms one Path bonus")
+	var before := _full_snapshot(deck, party)
+	var draw_before: Array = deck.draw_pile.duplicate()
+	var result = svc.resolve_spare_parts(deck, party, card_id)
+	return {"result": result, "before": before, "draw_before": draw_before,
+		"after": _full_snapshot(deck, party), "deck": deck, "party": party,
+		"latch": latch, "tinker_position": tinker_position,
+		"held_before": before["hand"].count(card_id)}
+
+
+func _check_spare_parts_play(svc: CombatTinkerPoolGadgets, card_id: String, order: Array,
+		expected_block: int, label: String, seed_value: int = 4242) -> Dictionary:
+	var run := _play_spare_parts(svc, card_id, order, seed_value)
+	var deck: CombatDeck = run["deck"]
+	var party: CombatParty = run["party"]
+	var tinker_position: int = run["tinker_position"]
+	var held_before: int = run["held_before"]
+	_check(held_before >= 1 and run["before"]["energy"] == 3,
+		label + ": genuine held card with the shared three energy")
+	_check(run["result"] == {"ok": true, "block": expected_block, "drawn": 1},
+		label + ": exact projected Block and exactly one drawn card")
+	var others_unblocked := true
+	for position in range(1, 4):
+		if position != tinker_position and party.get_hero(position)["block"] != 0:
+			others_unblocked = false
+	_check(party.get_hero(tinker_position)["block"] == expected_block and others_unblocked,
+		label + ": Block goes only to the real Tinker slot")
+	_check(party.get_hero(tinker_position)["hp"] == run["before"]["party"][tinker_position - 1]["hp"],
+		label + ": no HP mutation")
+	_check(deck.energy == 3 and deck.combat_state.energy == run["before"]["state_energy"],
+		label + ": printed zero energy charged")
+	_check(deck.hand.size() == 5 and deck.discard_pile == [card_id]
+		and deck.hand.count(card_id) + deck.draw_pile.count(card_id) \
+			+ deck.discard_pile.count(card_id) == 3,
+		label + ": one drawn card and exactly one discarded copy")
+	_check(deck.draw_pile == run["draw_before"].slice(0, run["draw_before"].size() - 1),
+		label + ": the draw comes from the seeded pile in order")
+	_check(deck._rng.state == run["before"]["rng"],
+		label + ": no speculative RNG draws")
+	var latch: CombatTinkerFirstAttack = run["latch"]
+	_check(latch.first_hit_bonus() == 3 and latch.path_bonus() == 2
+		and latch.bonus_for_attack("tinker_rivet_shot") == 5,
+		label + ": first-attack and Path state untouched by a nonattack")
+	_check(latch.record_successful_attack("tinker_rivet_shot")
+		and latch.first_hit_bonus() == 0 and latch.path_bonus() == 0,
+		label + ": a later real attack still consumes the untouched latch")
+	return run
+
+
+## ---------------------------------------------------------------------------
+## AC1: an active Tinker-worn Hemguard Cuff ARM and/or Reinforced Browband HEAD
+## raises Spare Parts Block by +2 each for base and plus, keeping one draw and
+## the printed zero energy.
+## ---------------------------------------------------------------------------
+
+func _test_wearer_block_ac1() -> void:
+	var canonical := ["warden", "seamstress", "tinker"]
+	var middle := ["warden", "tinker", "seamstress"]
+	var configs := [
+		{"label": "unbound", "patches": [], "bonus": 0},
+		{"label": "Hemguard Cuff only", "patches": CUFF_ONLY, "bonus": 2},
+		{"label": "Reinforced Browband only", "patches": BROWBAND_ONLY, "bonus": 2},
+		{"label": "both patches", "patches": BOTH_PATCHES, "bonus": 4},
+	]
+	for config in configs:
+		var svc: CombatTinkerPoolGadgets
+		if config["patches"].is_empty():
+			svc = CombatTinkerPoolGadgets.new()
+		else:
+			svc = _bound_service(config["patches"])["svc"]
+		for order in [canonical, middle]:
+			for card_id in SPARE_PARTS_IDS:
+				var authored: int = 4 if card_id.ends_with("_plus") else 3
+				var label := "%s / %s / pos%d" % [config["label"], card_id,
+					order.find("tinker") + 1]
+				_check_spare_parts_play(svc, card_id, order,
+					authored + int(config["bonus"]), label)
+
+	## Inspectable binding: both rules are genuine, current and detached.
+	var bound := _bound_service(BOTH_PATCHES)
+	var bound_svc: CombatTinkerPoolGadgets = bound["svc"]
+	var wardrobe: RunPatchWardrobe = bound["wardrobe"]
+	var torn: RunTornMending = bound["torn"]
+	_check(bound_svc.get_wardrobe() == wardrobe and bound_svc.get_torn() == torn,
+		"AC1: bound resolver returns the authenticated ledgers")
+	_check(bound_svc.get_patches() != null and bound_svc.get_patches().is_valid(),
+		"AC1: bound resolver holds valid CombatPatchAttackRules")
+	_check(bound_svc.get_head_patches() != null
+		and bound_svc.get_head_patches().read_projection().get("ok") == true,
+		"AC1: bound resolver holds valid CombatM05HeadPatchRules")
+	_check(bound_svc.get_patches().card_block_bonus("tinker", "tinker_spare_parts") == 2
+		and bound_svc.get_head_patches().get_bonus("tinker", "tinker_spare_parts", "block") == 2,
+		"AC1: each authored patch contributes exactly +2 to the Spare Parts Block")
+
+	## Two equal-seed replays leave identical deck, RNG and party traces.
+	for card_id in SPARE_PARTS_IDS:
+		var authored: int = 4 if card_id.ends_with("_plus") else 3
+		var replay_a: CombatTinkerPoolGadgets = _bound_service(BOTH_PATCHES)["svc"]
+		var replay_b: CombatTinkerPoolGadgets = _bound_service(BOTH_PATCHES)["svc"]
+		var first := _check_spare_parts_play(replay_a, card_id, canonical, authored + 4,
+			"AC1 replay A " + card_id, 54321)
+		var second := _check_spare_parts_play(replay_b, card_id, canonical, authored + 4,
+			"AC1 replay B " + card_id, 54321)
+		_check(first["result"] == second["result"],
+			"AC1 equal-seed replay: identical Spare Parts result for " + card_id)
+		_check(first["after"] == second["after"],
+			"AC1 equal-seed replay: identical party, piles, energy and RNG trace for " + card_id)
+		var first_deck: CombatDeck = first["deck"]
+		var second_deck: CombatDeck = second["deck"]
+		_check(first_deck.draw_pile == second_deck.draw_pile
+			and first_deck.discard_pile == second_deck.discard_pile
+			and first_deck._rng.state == second_deck._rng.state,
+			"AC1 equal-seed replay: identical draw, discard and RNG state for " + card_id)
+
+
+## ---------------------------------------------------------------------------
+## AC2: only the living Tinker in position 2 or 3 receives the bonus; unbound,
+## another wearer or a torn Tinker keeps 3/4. Sight Glass is untouched.
+## ---------------------------------------------------------------------------
+
+func _test_wearer_scope_ac2() -> void:
+	var canonical := ["warden", "seamstress", "tinker"]
+	var middle := ["warden", "tinker", "seamstress"]
+
+	## No wardrobe bound at all: the legal authored baseline.
+	for card_id in SPARE_PARTS_IDS:
+		var authored: int = 4 if card_id.ends_with("_plus") else 3
+		_check_spare_parts_play(CombatTinkerPoolGadgets.new(), card_id, canonical,
+			authored, "AC2 unbound baseline " + card_id)
+
+	## Both patches worn by Warden: Tinker keeps the authored numbers.
+	var warden_worn := _bound_service(BOTH_PATCHES, "warden")
+	_check_spare_parts_play(warden_worn["svc"], "tinker_spare_parts", canonical, 3,
+		"AC2 Warden-worn patches give Tinker no bonus")
+	_check_spare_parts_play(warden_worn["svc"], "tinker_spare_parts_plus", middle, 4,
+		"AC2 Warden-worn patches give Spare Parts+ no bonus")
+
+	## Mixed wearers: only the patch on Tinker counts.
+	var mixed := _bound_service([
+		{"id": "hemguard_cuff", "slot": "ARM", "wearer": "seamstress"},
+		{"id": "reinforced_browband", "slot": "HEAD", "wearer": "tinker"},
+	])
+	_check_spare_parts_play(mixed["svc"], "tinker_spare_parts", canonical, 5,
+		"AC2 Seamstress-worn cuff contributes nothing while Tinker's Browband adds 2")
+	_check_spare_parts_play(mixed["svc"], "tinker_spare_parts_plus", middle, 6,
+		"AC2 mixed wearers on Spare Parts+ from position 2")
+
+	## Tinker torn in the run ledger but still living in this combat party.
+	var torn_ctx := _wearer_ledgers()
+	var torn_wardrobe: RunPatchWardrobe = torn_ctx["wardrobe"]
+	var torn: RunTornMending = torn_ctx["torn"]
+	var heroes: Array = torn_ctx["heroes"]
+	_check(torn_wardrobe.sew("hemguard_cuff", "tinker", "ARM", "op-186-torn-arm",
+		torn_wardrobe.get_snapshot()).get("ok") == true, "AC2 sew cuff before the tear")
+	_check(torn_wardrobe.sew("reinforced_browband", "tinker", "HEAD", "op-186-torn-head",
+		torn_wardrobe.get_snapshot()).get("ok") == true, "AC2 sew browband before the tear")
+	var battle_end: Array = heroes.duplicate(true)
+	battle_end[2]["hp"] = 0
+	_check(torn.observe_battle_end("node-186-tinker-tear", heroes.duplicate(true),
+		battle_end).get("ok") == true, "AC2 battle end observed: Tinker torn")
+	var torn_state: Dictionary = torn.read_state()
+	_check(torn_state["heroes"][2]["hp"] == 0, "AC2 torn ledger records Tinker at zero HP")
+	var stale_ctx: Dictionary = torn_wardrobe.get_snapshot()
+	_check(torn_wardrobe.refresh_run_context(torn_state["heroes"], stale_ctx["owned"],
+		stale_ctx["scraps"], stale_ctx["gold"], stale_ctx["cards"], stale_ctx),
+		"AC2 wardrobe refresh adopts the torn roster")
+	var torn_svc := CombatTinkerPoolGadgets.new()
+	_check(torn_svc.bind_patch_wardrobe(torn_wardrobe, torn),
+		"AC2 bind the torn ledger explicitly")
+	_check(torn_svc.is_patch_binding_valid(), "AC2 torn binding is authentic and current")
+	for card_id in SPARE_PARTS_IDS:
+		var authored: int = 4 if card_id.ends_with("_plus") else 3
+		var torn_run := _check_spare_parts_play(torn_svc, card_id, canonical, authored,
+			"AC2 torn Tinker keeps authored Block for " + card_id)
+		var party: CombatParty = torn_run["party"]
+		_check(party.get_hero(3)["hp"] == 26 and not party.is_downed(3),
+			"AC2 combat party still shows a living Tinker while the run ledger is torn")
+		_check_spare_parts_play(torn_svc, card_id, middle, authored,
+			"AC2 torn Tinker from position 2 keeps authored Block for " + card_id)
+
+	## Sight Glass keeps its authored Exposed 2 / draw 1 and never gains Block.
+	var bound := _bound_service(BOTH_PATCHES)
+	var sight_svc: CombatTinkerPoolGadgets = bound["svc"]
+	for card_id in SIGHT_GLASS_IDS:
+		for target in [1, 2, 3]:
+			var sight_party := _party(middle)
+			var enemies := _enemies([50, 60, 70])
+			var deck := _spare_parts_deck(card_id, 777)
+			var before := _full_snapshot(deck, sight_party, enemies)
+			var result = sight_svc.resolve_sight_glass(deck, sight_party, enemies, card_id, target)
+			_check(result == {"ok": true, "exposed_applied": 2, "drawn": 1, "target": target},
+				"AC2 " + card_id + " keeps Exposed 2 and one draw under the wearer bind")
+			_check(enemies.get_enemy(target)["statuses"]["exposed"] == 2
+				and enemies.get_enemy(target)["hp"] == before["enemies"][target - 1]["hp"],
+				"AC2 " + card_id + " applies exactly Exposed 2 to target " + str(target))
+			_check(deck.energy == 2 and deck.discard_pile == [card_id],
+				"AC2 " + card_id + " still spends its printed one energy and discards once")
+			_check(sight_party.get_heroes() == before["party"],
+				"AC2 " + card_id + " grants no Block to the patched Tinker")
+
+
+## ---------------------------------------------------------------------------
+## AC3: stale or failed bindings, illegal positions/hand and insufficient Block
+## capacity make no HP, Block, energy, draw/discard, status or RNG mutation.
+## ---------------------------------------------------------------------------
+
+func _test_wearer_rejections_ac3() -> void:
+	var middle := ["warden", "tinker", "seamstress"]
+
+	## 1. The wardrobe moves after a successful bind.
+	var wardrobe_ctx := _bound_service(BOTH_PATCHES)
+	var wardrobe_svc: CombatTinkerPoolGadgets = wardrobe_ctx["svc"]
+	var wardrobe: RunPatchWardrobe = wardrobe_ctx["wardrobe"]
+	_check(wardrobe.sew("bloodstitch_bonnet", "warden", "HEAD", "op-186-stale-head",
+		wardrobe.get_snapshot()).get("ok") == true, "AC3 auxiliary sew fixture on the bound wardrobe")
+	_check(not wardrobe_svc.is_patch_binding_valid(),
+		"AC3 a moved wardrobe makes the binding stale")
+	var party := _party()
+	var deck := _spare_parts_deck("tinker_spare_parts", 4242)
+	var before := _full_snapshot(deck, party)
+	var result = wardrobe_svc.resolve_spare_parts(deck, party, "tinker_spare_parts")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 stale wardrobe binding")
+	_check(deck._rng.state == before["rng"], "AC3 stale wardrobe binding consumes no RNG")
+
+	## 2. The torn ledger moves after a successful bind.
+	var torn_ctx := _bound_service(BOTH_PATCHES)
+	var torn_svc: CombatTinkerPoolGadgets = torn_ctx["svc"]
+	var torn: RunTornMending = torn_ctx["torn"]
+	var heroes := _party().get_heroes()
+	var battle_end: Array = heroes.duplicate(true)
+	battle_end[0]["hp"] = 0
+	_check(torn.observe_battle_end("node-186-stale-torn", heroes, battle_end).get("ok") == true,
+		"AC3 seamstress torn after the bind")
+	_check(not torn_svc.is_patch_binding_valid(),
+		"AC3 a moved torn ledger makes the binding stale")
+	party = _party()
+	deck = _spare_parts_deck("tinker_spare_parts_plus", 4242)
+	before = _full_snapshot(deck, party)
+	result = torn_svc.resolve_spare_parts(deck, party, "tinker_spare_parts_plus")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 stale torn binding")
+	_check(deck._rng.state == before["rng"], "AC3 stale torn binding consumes no RNG")
+
+	## 3. Explicit bindings that fail authentication reject every later cast.
+	var failed_ctx := _wearer_ledgers()
+	var failed_wardrobe: RunPatchWardrobe = failed_ctx["wardrobe"]
+	var failed_torn: RunTornMending = failed_ctx["torn"]
+	_check(failed_wardrobe.sew("hemguard_cuff", "tinker", "ARM", "op-186-failed-arm",
+		failed_wardrobe.get_snapshot()).get("ok") == true, "AC3 sew before the failed bind")
+	var genuine: Dictionary = failed_wardrobe.get_snapshot()
+	var wrong_snapshot: Dictionary = genuine.duplicate(true)
+	wrong_snapshot["scraps"] = int(wrong_snapshot["scraps"]) + 1
+	var failed_svc := CombatTinkerPoolGadgets.new()
+	_check(not failed_svc.bind_patch_wardrobe(failed_wardrobe, failed_torn,
+		wrong_snapshot, failed_torn.read_state()),
+		"AC3 mismatched expected wardrobe rejects the explicit bind")
+	_check(not failed_svc.is_patch_binding_valid(), "AC3 a failed bind stays explicit and invalid")
+	party = _party()
+	deck = _spare_parts_deck("tinker_spare_parts", 4242)
+	before = _full_snapshot(deck, party)
+	result = failed_svc.resolve_spare_parts(deck, party, "tinker_spare_parts")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 failed binding never grants a vanilla cast")
+
+	var null_svc := CombatTinkerPoolGadgets.new()
+	_check(not null_svc.bind_patch_wardrobe(null, null),
+		"AC3 absent authorities reject the explicit bind")
+	party = _party()
+	deck = _spare_parts_deck("tinker_spare_parts_plus", 4242)
+	before = _full_snapshot(deck, party)
+	result = null_svc.resolve_spare_parts(deck, party, "tinker_spare_parts_plus")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 absent authorities never grant a vanilla cast")
+
+	## 4. A torn ledger the wardrobe has not adopted fails the bind closed.
+	var diverged_ctx := _wearer_ledgers()
+	var diverged_wardrobe: RunPatchWardrobe = diverged_ctx["wardrobe"]
+	var diverged_torn: RunTornMending = diverged_ctx["torn"]
+	_check(diverged_wardrobe.sew("reinforced_browband", "tinker", "HEAD",
+		"op-186-diverged-head", diverged_wardrobe.get_snapshot()).get("ok") == true,
+		"AC3 sew before the roster divergence")
+	var diverged_end: Array = _party().get_heroes().duplicate(true)
+	diverged_end[2]["hp"] = 0
+	_check(diverged_torn.observe_battle_end("node-186-diverged", _party().get_heroes(),
+		diverged_end).get("ok") == true, "AC3 torn roster diverges from the wardrobe")
+	var diverged_svc := CombatTinkerPoolGadgets.new()
+	_check(not diverged_svc.bind_patch_wardrobe(diverged_wardrobe, diverged_torn),
+		"AC3 divergent roster authorities reject the explicit bind")
+	party = _party()
+	deck = _spare_parts_deck("tinker_spare_parts", 4242)
+	before = _full_snapshot(deck, party)
+	result = diverged_svc.resolve_spare_parts(deck, party, "tinker_spare_parts")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 divergent roster binding rejects without a vanilla cast")
+
+	## 5. Illegal position and hand with a genuine, current binding.
+	var bound := _bound_service(BOTH_PATCHES)
+	var svc: CombatTinkerPoolGadgets = bound["svc"]
+	party = _party(["tinker", "warden", "seamstress"])
+	deck = _spare_parts_deck("tinker_spare_parts", 4242)
+	before = _full_snapshot(deck, party)
+	result = svc.resolve_spare_parts(deck, party, "tinker_spare_parts")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 patched Spare Parts rejects Tinker at position 1")
+	party = _party(middle)
+	deck = _spare_parts_deck("tinker_spare_parts", 4242)
+	before = _full_snapshot(deck, party)
+	result = svc.resolve_spare_parts(deck, party, "tinker_spare_parts", 1)
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 patched Spare Parts rejects a false target")
+	deck = _deck(["warden_brace", "seamstress_mend", "tinker_tune_up",
+		"tinker_pop_shot", "extra1"], 4242)
+	before = _full_snapshot(deck, party)
+	result = svc.resolve_spare_parts(deck, party, "tinker_spare_parts")
+	_assert_rejection(result, before, _full_snapshot(deck, party),
+		"AC3 patched Spare Parts rejects a missing hand card")
+
+	## 6. Held IDs whose authored definition is not a zero-cost self Block draw.
+	for invalid_id in ["tinker_rivet_shot", "tinker_spare_parts_stale"]:
+		party = _party(middle)
+		deck = _spare_parts_deck(invalid_id, 4242)
+		_check(deck.hand.has(invalid_id), "AC3 held invalid definition fixture: " + invalid_id)
+		before = _full_snapshot(deck, party)
+		result = svc.resolve_spare_parts(deck, party, invalid_id)
+		_assert_rejection(result, before, _full_snapshot(deck, party),
+			"AC3 invalid definition rejected: " + invalid_id)
+
+	## 7. Block capacity is capped before any party/deck mutation.
+	var capacity_party := _party()
+	_check(capacity_party.gain_block(3, CombatParty.MAX_INT - 6),
+		"AC3 Tinker Block near capacity fixture")
+	var capacity_deck := _spare_parts_deck("tinker_spare_parts", 4242)
+	var capacity_before := _full_snapshot(capacity_deck, capacity_party)
+	var capacity_result = svc.resolve_spare_parts(capacity_deck, capacity_party,
+		"tinker_spare_parts")
+	_assert_rejection(capacity_result, capacity_before,
+		_full_snapshot(capacity_deck, capacity_party), "AC3 patched Block above capacity")
+	_check(capacity_deck._rng.state == capacity_before["rng"],
+		"AC3 capacity rejection consumes no RNG")
+
+	## The authored 3 fits where the patched 7 does not, and an exact fit succeeds.
+	var authored_party := _party()
+	_check(authored_party.gain_block(3, CombatParty.MAX_INT - 6),
+		"AC3 near-capacity unbound fixture")
+	var authored_deck := _spare_parts_deck("tinker_spare_parts", 4242)
+	var authored_result = CombatTinkerPoolGadgets.new().resolve_spare_parts(
+		authored_deck, authored_party, "tinker_spare_parts")
+	_check(authored_result == {"ok": true, "block": 3, "drawn": 1},
+		"AC3 the authored 3 still fits where the patched 7 does not")
+	var exact_party := _party()
+	_check(exact_party.gain_block(3, CombatParty.MAX_INT - 7),
+		"AC3 exact patched capacity fixture")
+	var exact_deck := _spare_parts_deck("tinker_spare_parts", 4242)
+	var exact_result = svc.resolve_spare_parts(exact_deck, exact_party, "tinker_spare_parts")
+	_check(exact_result == {"ok": true, "block": 7, "drawn": 1}
+		and exact_party.get_hero(3)["block"] == CombatParty.MAX_INT,
+		"AC3 an exactly fitting patched Block still lands and caps at MAX_INT")
+
+	## 8. Insufficient energy and no RNG mutation, with a current binding.
+	party = _party(middle)
+	var enemies := _enemies()
+	deck = _spare_parts_deck("tinker_sight_glass", 4242)
+	_check(deck.try_spend_energy(3) and deck.energy == 0, "AC3 energy exhausted fixture")
+	before = _full_snapshot(deck, party, enemies)
+	result = svc.resolve_sight_glass(deck, party, enemies, "tinker_sight_glass", 1)
+	_assert_rejection(result, before, _full_snapshot(deck, party, enemies),
+		"AC3 bound Sight Glass still rejects insufficient energy")
+	_check(deck._rng.state == before["rng"],
+		"AC3 insufficient energy consumes no RNG")
+
+	## 9. Sight Glass is independent of the Spare Parts wearer bind.
+	party = _party(middle)
+	enemies = _enemies([50, 60, 70])
+	deck = _spare_parts_deck("tinker_sight_glass", 4242)
+	result = wardrobe_svc.resolve_sight_glass(deck, party, enemies, "tinker_sight_glass", 2)
+	_check(result == {"ok": true, "exposed_applied": 2, "drawn": 1, "target": 2},
+		"AC3 Sight Glass keeps its authored play while the Spare Parts bind is stale")
+	_check(enemies.get_enemy(2)["statuses"]["exposed"] == 2 and deck.energy == 2,
+		"AC3 Sight Glass applies only Exposed 2 and its printed energy")
