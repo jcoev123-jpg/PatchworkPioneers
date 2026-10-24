@@ -144,7 +144,7 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 		var offered: Dictionary = snapshot["offers"][index]
 		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offered["id"])
 		var card_panel := _mount_card(index, offered, definition)
-		var help := card_panel.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+		var help := card_panel.get_node_or_null("CardMargin/CardContent/CardHeader/HelpButton") as Button
 		if help != null:
 			_help_buttons.append(help)
 			_help_ids[help] = offered["id"]
@@ -244,18 +244,30 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	content.add_theme_constant_override("separation", CARD_CONTENT_SEPARATION)
 	margin.add_child(content)
 
+	# Horizontal card header row with flexible owner ribbon and optional Help cell
+	var header := HBoxContainer.new()
+	header.name = "CardHeader"
+	header.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_theme_constant_override("separation", 0)
+	content.add_child(header)
+
 	# Owner color patch (sewn stripe at top) with the owning hero's name sewn in
 	var owner := String(offer["owner"])
 	var owner_patch := _OwnerPatch.new()
 	owner_patch.name = "OwnerPatch"
 	owner_patch.owner_color = OWNER_COLORS[owner]
 	owner_patch.custom_minimum_size = Vector2(0, OWNER_STRIP_HEIGHT)
-	content.add_child(owner_patch)
+	owner_patch.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	owner_patch.size_flags_vertical = Control.SIZE_FILL
+	header.add_child(owner_patch)
 	var owner_label := _card_label("OwnerLabel", owner.capitalize(), OWNER_NAME_FONT_SIZE)
 	# The hero name is sewn in the project's display face. Its measured 14px line
 	# height fits the existing 24px owner felt, so no strip or card geometry moves.
 	owner_label.theme_type_variation = &"PatchHeading"
 	owner_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	owner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	owner_label.add_theme_color_override("font_color", owner_ink(owner))
 	owner_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	owner_patch.add_child(owner_label)
@@ -376,36 +388,22 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.mouse_exited.connect(_on_card_mouse_exited.bind(index))
 	action.focus_entered.connect(_on_card_focus_entered.bind(index))
 	action.focus_exited.connect(_on_card_focus_exited.bind(index))
-	# Help belongs to this card's owner patch; its right-anchored geometry
-	# follows the actual strip instead of an unsized sibling of the card.
+	# Distinct, always reserved-in-width Help tab cell for keyword cards,
+	# adjacent sibling to OwnerPatch in CardHeader.
 	var keywords: Array[Dictionary] = CardKeywordGlossary.describe(definition)
 	if not keywords.is_empty():
-		var corner := Control.new()
-		corner.name = "HelpCorner"
-		corner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		corner.focus_mode = Control.FOCUS_NONE
-		owner_patch.add_child(corner)
-		corner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		# Reserve the tab's width so even the longer Seamstress label is clear.
-		owner_label.offset_right = -(HELP_TAB_SIZE.x + 6.0)
 		var help := Button.new()
 		help.name = "HelpButton"
 		help.text = "Help"
 		help.focus_mode = Control.FOCUS_ALL
 		help.mouse_filter = Control.MOUSE_FILTER_STOP
-		corner.add_child(help)
-		# Right edge and full height are relative to the real owner strip.
-		help.anchor_left = 1.0
-		help.anchor_right = 1.0
-		help.anchor_top = 0.0
-		help.anchor_bottom = 0.0
-		help.offset_left = -HELP_TAB_SIZE.x
-		help.offset_right = 0.0
-		help.offset_top = 0.0
-		help.offset_bottom = HELP_TAB_SIZE.y
+		help.custom_minimum_size = HELP_TAB_SIZE
+		help.size_flags_horizontal = Control.SIZE_SHRINK_END
+		help.size_flags_vertical = Control.SIZE_FILL
 		_style_button(help, OWNER_COLORS[owner])
 		help.add_theme_font_size_override("font_size", 14)
 		_add_focus_stitch(help)
+		header.add_child(help)
 	return card
 
 
@@ -572,7 +570,7 @@ func _on_help_pressed(generation: int, node_id: String, index: int,
 	if index < 0 or index >= _card_panels.size() or index >= _receipt.get("offers", []).size():
 		return
 	if _card_panels[index].get_node_or_null(
-			"CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") != button \
+			"CardMargin/CardContent/CardHeader/HelpButton") != button \
 			or String(_receipt["offers"][index].get("id", "")) != card_id:
 		return
 	var definition := RunPoolCardRewardOffers.resolve_reward_definition(card_id)
@@ -1294,6 +1292,7 @@ class _OwnerPatch extends Control:
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		resized.connect(queue_redraw)
 
 	func _draw() -> void:
 		var rect := Rect2(Vector2(0, 0), size)

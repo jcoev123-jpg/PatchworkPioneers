@@ -382,11 +382,16 @@ func _check_owner_strip(receipt: Dictionary, slot: int) -> void:
 	if card == null:
 		return
 	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-	var patch := content.get_node_or_null("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+	var header := content.get_node_or_null("CardHeader") as HBoxContainer
+	var patch: LiveRunCardRewardChoicePanel._OwnerPatch = null
+	if header != null:
+		patch = header.get_node_or_null("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+	elif content != null:
+		patch = content.get_node_or_null("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
 	var label: Label = null
 	if patch != null:
 		label = patch.get_node_or_null("OwnerLabel") as Label
-	_check(patch != null and label != null, "owner strip mounts a hero name: " + card_id)
+	_check(header != null and patch != null and label != null, "owner strip mounts a hero name: " + card_id)
 	if patch == null or label == null:
 		return
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
@@ -956,12 +961,13 @@ func _check_display_typography() -> void:
 		var content := panel.choices_container.get_child(index).get_node(
 			"CardMargin/CardContent") as VBoxContainer
 		var card_id := String(panel._receipt["offers"][index].get("id", ""))
-		var owner_label := content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
+		var header := content.get_node_or_null("CardHeader") as HBoxContainer
+		var owner_label := header.get_node_or_null("OwnerPatch/OwnerLabel") as Label if header != null else content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
 		_check(owner_label != null and owner_label.theme_type_variation == &"PatchHeading"
 			and owner_label.get_theme_font(&"font") == fonts["heading"]
 			and owner_label.get_theme_font(&"font") != body_font,
 			"owner strip is lettered in PatchHeading: " + card_id)
-		var help := content.get_node_or_null("OwnerPatch/HelpCorner/HelpButton") as Button
+		var help := header.get_node_or_null("HelpButton") as Button if header != null else content.get_node_or_null("OwnerPatch/HelpCorner/HelpButton") as Button
 		if help == null:
 			continue
 		_check(help.theme_type_variation == &"PatchHeadingButton"
@@ -1167,7 +1173,8 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		if card == null:
 			continue
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var owner_patch := content.get_node("OwnerPatch") as Control
+		var header := content.get_node_or_null("CardHeader") as HBoxContainer
+		var owner_patch := (header.get_node("OwnerPatch") as Control) if header != null else (content.get_node("OwnerPatch") as Control)
 		var name_label := content.get_node("NameLabel") as Label
 		var rarity_label := content.get_node("RarityLabel") as Label
 		var cost_button := content.get_node("CostButton") as Control
@@ -1470,10 +1477,11 @@ func _replay_and_stale(base: Dictionary) -> void:
 		var ui: Array = []
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
-			var owner_patch_node := content.get_node("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+			var header := content.get_node_or_null("CardHeader") as HBoxContainer
+			var owner_patch_node := (header.get_node("OwnerPatch") if header != null else content.get_node("OwnerPatch")) as LiveRunCardRewardChoicePanel._OwnerPatch
 			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
 			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
-			var owner_name := content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
+			var owner_name := (header.get_node_or_null("OwnerPatch/OwnerLabel") if header != null else content.get_node_or_null("OwnerPatch/OwnerLabel")) as Label
 			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
 				owner_name.text if owner_name != null else "",
 				content.get_node("NameLabel").text,
@@ -1794,7 +1802,8 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		if card == null:
 			continue
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var owner_patch := content.get_node("OwnerPatch") as Control
+		var header := content.get_node_or_null("CardHeader") as HBoxContainer
+		var owner_patch := (header.get_node("OwnerPatch") as Control) if header != null else (content.get_node("OwnerPatch") as Control)
 		var name_label := content.get_node("NameLabel") as Label
 		var rarity_label := content.get_node("RarityLabel") as Label
 		var cost_button := content.get_node("CostButton") as Control
@@ -1958,10 +1967,11 @@ func _test_pool_replay(first: Dictionary) -> void:
 		var ui: Array = []
 		for index in range(3):
 			var content := panel.choices_container.get_child(index).get_node("CardMargin/CardContent")
-			var owner_patch_node := content.get_node("OwnerPatch") as LiveRunCardRewardChoicePanel._OwnerPatch
+			var header := content.get_node_or_null("CardHeader") as HBoxContainer
+			var owner_patch_node := (header.get_node("OwnerPatch") if header != null else content.get_node("OwnerPatch")) as LiveRunCardRewardChoicePanel._OwnerPatch
 			var cost_btn := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
 			var pips := content.get_node("PositionPips") as LiveRunCardRewardChoicePanel._PositionPips
-			var owner_name := content.get_node_or_null("OwnerPatch/OwnerLabel") as Label
+			var owner_name := (header.get_node_or_null("OwnerPatch/OwnerLabel") if header != null else content.get_node_or_null("OwnerPatch/OwnerLabel")) as Label
 			ui.append([owner_patch_node.owner_color if owner_patch_node != null else Color.WHITE,
 				owner_name.text if owner_name != null else "",
 				content.get_node("NameLabel").text,
@@ -2378,7 +2388,7 @@ func _check_mounted_art_clearance(card: PanelContainer, context: String) -> void
 	var content := card.get_node("CardMargin/CardContent") as VBoxContainer
 	var art := content.get_node("CardArt") as Control
 	var screen := Rect2(Vector2.ZERO, Vector2(1280, 720))
-	for strip in ["OwnerPatch", "NameLabel", "CostButton", "PositionPips", "RulesLabel", "ChooseButton"]:
+	for strip in ["CardHeader", "NameLabel", "CostButton", "PositionPips", "RulesLabel", "ChooseButton"]:
 		var control := content.get_node(strip) as Control
 		_check(control.is_visible_in_tree() and control.size.x > 0 and control.size.y > 0
 			and screen.encloses(control.get_global_rect())
@@ -2605,24 +2615,30 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			_check(false, "help clearance card mounts: " + card_id)
 			continue
 		var content := card.get_node("CardMargin/CardContent") as VBoxContainer
-		var help := card.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
+		var header := content.get_node_or_null("CardHeader") as HBoxContainer
+		_check(header != null, "card header exists: " + card_id)
+		if header == null:
+			continue
+		var help := header.get_node_or_null("HelpButton") as Button if header != null else card.get_node_or_null("CardMargin/CardContent/OwnerPatch/HelpCorner/HelpButton") as Button
 		_check(help != null and help.is_visible_in_tree() and not help.disabled,
 			"keyword card keeps a live Help tab: " + card_id)
 		if help == null:
 			continue
 		var help_rect := help.get_global_rect()
-		var owner_patch := content.get_node("OwnerPatch") as Control
+		var owner_patch := (header.get_node("OwnerPatch") if header != null else content.get_node("OwnerPatch")) as Control
 		var owner_label := owner_patch.get_node("OwnerLabel") as Label
-		var corner := owner_patch.get_node("HelpCorner") as Control
 		var owner_rect := owner_patch.get_global_rect()
+		var header_rect := header.get_global_rect()
 		_check(card.get_global_rect().encloses(help_rect) and screen.encloses(help_rect),
 			"Help tab stays inside its card and 1280x720: " + card_id)
-		_check(corner.get_parent() == owner_patch
-			and owner_rect.encloses(corner.get_global_rect())
-			and owner_rect.encloses(help_rect)
-			and absf(help_rect.end.x - owner_rect.end.x) <= 1.0
-			and absf(help_rect.position.y - owner_rect.position.y) <= 1.0,
-			"Help follows its own owner strip's right edge: " + card_id)
+		_check(help.get_parent() == header and owner_patch.get_parent() == header,
+			"header contains owner patch and Help tab as sibling cells: " + card_id)
+		_check(not help_rect.intersects(owner_rect),
+			"Help tab and owner ribbon do not overlap: " + card_id)
+		_check(header_rect.encloses(help_rect) and header_rect.encloses(owner_rect),
+			"card header row fits both owner patch and Help tab: " + card_id)
+		_check(is_equal_approx(header.size.y, 24.0) and help.size.y <= 24.0 and owner_patch.size.y <= 24.0,
+			"card header keeps to one 24px line: " + card_id)
 		_check(not help_rect.intersects(owner_label.get_global_rect())
 			and not help_rect.intersects(panel.title_label.get_global_rect())
 			and not help_rect.intersects(panel.gold_label.get_global_rect())
@@ -2659,7 +2675,18 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			await _mouse(close)
 			_check(panel._help_overlay == null and help.has_focus(),
 				"mouse Close returns focus to the owning Help: " + card_id)
-		help.grab_focus()
+		var choose := content.get_node("ChooseButton") as Button
+		choose.grab_focus()
+		await _key(KEY_RIGHT)
+		_check(help.has_focus(),
+			"keyboard Right from Choose navigates focus to Help: " + card_id)
+		await _key(KEY_ENTER)
+		_check(panel._help_overlay != null,
+			"keyboard Enter on this Help opens glossary: " + card_id)
+		if panel._help_overlay != null:
+			await _key(KEY_ESCAPE)
+			_check(panel._help_overlay == null and help.has_focus(),
+				"keyboard Escape closes glossary and restores Help focus: " + card_id)
 		await _key(KEY_SPACE)
 		_check(panel._help_overlay != null,
 			"keyboard Space on this Help opens glossary: " + card_id)
@@ -2667,6 +2694,9 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 			await _key(KEY_ESCAPE)
 			_check(panel._help_overlay == null and help.has_focus(),
 				"keyboard Escape closes glossary and restores Help focus: " + card_id)
+		await _key(KEY_LEFT)
+		_check(choose.has_focus(),
+			"keyboard Left returns focus from Help to Choose: " + card_id)
 		_check(requests.is_empty() and panel._receipt == receipt_before
 			and not panel._awaiting_ack,
 			"mouse/keyboard Help never requests or changes the prepared choice: " + card_id)
@@ -2726,9 +2756,12 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 		var card_id := ids[slot]
 		var content := panel.choices_container.get_child(slot).get_node(
 			"CardMargin/CardContent") as VBoxContainer
-		var help := content.get_node_or_null("OwnerPatch/HelpCorner/HelpButton") as Button
+		var header := content.get_node_or_null("CardHeader") as HBoxContainer
+		_check(header != null, "card header exists: " + card_id)
+		var help := header.get_node_or_null("HelpButton") as Button if header != null else content.get_node_or_null("OwnerPatch/HelpCorner/HelpButton") as Button
 		var choose := content.get_node("ChooseButton") as Button
-		var owner_label := content.get_node("OwnerPatch/OwnerLabel") as Label
+		var owner_patch := (header.get_node("OwnerPatch") if header != null else content.get_node("OwnerPatch")) as Control
+		var owner_label := owner_patch.get_node("OwnerLabel") as Label
 		var keywords := CardKeywordGlossary.describe(catalog.get_definition(card_id))
 		owners.append(String(receipt["offers"][slot]["owner"]))
 		_check(choose.theme_type_variation == &"PatchHeadingButton"
@@ -2740,8 +2773,10 @@ func _test_no_keyword_card_without_help(base: Dictionary, kind: String) -> void:
 			"owner label wears PatchHeading: " + card_id)
 		if keywords.is_empty():
 			plain_cards += 1
-			_check(help == null and content.get_node_or_null("OwnerPatch/HelpCorner") == null,
+			_check(help == null and (header == null or header.get_node_or_null("HelpButton") == null),
 				"no-keyword offer mounts no Help tab at all: " + card_id)
+			_check(owner_patch != null and header != null and is_equal_approx(owner_patch.size.x, header.size.x),
+				"owner ribbon occupies full width of card header when no Help tab: " + card_id)
 			continue
 		keyword_cards += 1
 		_check(help != null and help.is_visible_in_tree() and not help.disabled,
