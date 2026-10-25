@@ -258,6 +258,66 @@
         { "id": "buy_thread_steel", "text": "Buy three spools of thread-steel (spend 21 gold; gain 3 scraps)", "outcome": { "gold": -21, "scraps": 3 } },
         { "id": "leave_forge", "text": "Leave the forge before the next bell", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_stitched_fog_carousel",
+      "title": "The Stitched Fog Carousel",
+      "description": "Button-eyed hobbyhorses circle a silent quilt carousel while amber lanterns disappear into the fog.",
+      "choices": [
+        { "id": "collect_brass_tickets", "text": "Collect the dropped brass tickets (+11 gold)", "outcome": { "gold": 11, "scraps": 0 } },
+        { "id": "buy_spare_stitching", "text": "Pay 13 gold for two bundles of carousel stitching (+2 scraps)", "outcome": { "gold": -13, "scraps": 2 } },
+        { "id": "watch_horses", "text": "Watch the horses disappear (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rust_bell_laundry",
+      "title": "The Rust-Bell Laundry",
+      "description": "Tiny ragdoll washerfolk hang oxblood coats under a rusted bell that tolls whenever the wind changes.",
+      "choices": [
+        { "id": "gather_wash_lint", "text": "Gather clean discarded fabric (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "rehem_work_smocks", "text": "Re-hem the work smocks (spend 2 scraps; gain 29 gold)", "outcome": { "gold": 29, "scraps": -2 } },
+        { "id": "keep_dry", "text": "Keep to the dry road (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_inky_needle_orchard",
+      "title": "The Inky Needle Orchard",
+      "description": "A grove of midnight-blue pincushion trees bears blunt silver needles instead of fruit.",
+      "choices": [
+        { "id": "gather_needles", "text": "Gather loose needle stems (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "pay_orchard_keeper", "text": "Pay the orchard keeper 16 gold for three thread spools (+3 scraps)", "outcome": { "gold": -16, "scraps": 3 } },
+        { "id": "pass_trees", "text": "Pass between the silent trees (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silver_spool_circus",
+      "title": "The Silver-Spool Circus",
+      "description": "A lantern-lit puppet circus unfurls its silver-thread tent across the moonlit road.",
+      "choices": [
+        { "id": "rig_shadow_curtain", "text": "Rig the shadow curtain (spend 1 scrap; earn 21 gold)", "outcome": { "gold": 21, "scraps": -1 } },
+        { "id": "buy_sewn_seats", "text": "Buy a stitched seat ribbon (spend 10 gold; gain 1 scrap)", "outcome": { "gold": -10, "scraps": 1 } },
+        { "id": "skip_performance", "text": "Skip the midnight performance (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_thorned_pocket_library",
+      "title": "The Thorned Pocket Library",
+      "description": "A rolling bookcase with button wheels carries tiny stitched books beneath a crown of woollen briars.",
+      "choices": [
+        { "id": "bind_torn_volumes", "text": "Rebind the torn volumes (spend 2 scraps; earn 30 gold)", "outcome": { "gold": 30, "scraps": -2 } },
+        { "id": "salvage_bookmark", "text": "Collect a loose embroidered bookmark (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave_books", "text": "Leave the books undisturbed (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_amber_hem_undertaker",
+      "title": "The Amber-Hem Undertaker",
+      "description": "A gentle button-eyed doll tends lanterns beside a ceremonial velvet quilt, carefully stitching its frayed edge.",
+      "choices": [
+        { "id": "repair_velvet_hem", "text": "Repair the velvet hem (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "buy_lantern_wick", "text": "Buy two spare lantern wicks (spend 15 gold; gain 2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
+        { "id": "offer_respect", "text": "Offer a respectful bow (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
