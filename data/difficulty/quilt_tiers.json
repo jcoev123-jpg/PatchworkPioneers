@@ -1,0 +1,27 @@
+{
+  "id": "steeper_quilt",
+  "title": "Steeper Quilt",
+  "description": "Optional difficulty tiers for the Steeper Quilt rule. Tier 0 preserves the BAL baseline; later tiers only steepen existing enemies and unlock after the previous tier is won.",
+  "max_hp_rounding": "ceil",
+  "max_hp_rounding_rule": "max_hp_bonus = ceil(enemy_max_hp * max_hp_percent_bonus / 100): apply the percentage, then round the added max HP up to the next whole point. 0% adds nothing. Applies to existing normal, Elite and Boss enemies, both Boss phases included.",
+  "tiers": [
+    {
+      "tier": 0,
+      "max_hp_percent_bonus": 0,
+      "attack_intent_bonus": 0,
+      "requires_cleared_tier": null
+    },
+    {
+      "tier": 1,
+      "max_hp_percent_bonus": 10,
+      "attack_intent_bonus": 1,
+      "requires_cleared_tier": 0
+    },
+    {
+      "tier": 2,
+      "max_hp_percent_bonus": 20,
+      "attack_intent_bonus": 2,
+      "requires_cleared_tier": 1
+    }
+  ]
+}
