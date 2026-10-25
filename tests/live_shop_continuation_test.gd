@@ -79,7 +79,9 @@ func _check_connected_book() -> void:
 		var kind: String = app.run_map.get_node(id).type
 		ids.append(id)
 		_check(button.get_parent() == app.route_view and button.get_meta("route_kind") == kind
-			and button.text == app.route_kind_label(kind) and button.get_child_count() == 2, "friendly sewn node keeps exact legal identity and token/stitches")
+			and button.text == {"Rest": "Rest stop / Campfire", "Shop": "Shop / Peddler"}.get(kind, app.route_kind_label(kind))
+			and button.get_meta("v3_kind") == {"Rest": "Campfire", "Shop": "Peddler"}.get(kind, kind)
+			and button.get_child_count() == 2, "friendly sewn node keeps exact legal identity, projected kind and token/stitches")
 		if not button.disabled:
 			actions.append(button)
 	_check(not ids.is_empty() and ids == app.run_map.get_legal_choices(), "book shows precisely the real legal choices")
@@ -383,7 +385,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = live_map.get_node(id).type
 				shown.append(id)
-				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
+				_check(action.get_meta("route_kind") == node_kind and action.text == {"Rest": "Rest stop / Campfire", "Shop": "Shop / Peddler"}.get(node_kind, app.route_kind_label(node_kind)) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
 				if action.disabled:
 					await _click(action)
 					action.pressed.emit()
