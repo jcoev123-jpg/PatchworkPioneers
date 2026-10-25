@@ -290,6 +290,8 @@ func _leave_flow(app, kind: String) -> void:
 		await _click(app.patch_stall_leave)
 	if kind == "SewingCircle":
 		await _click(app.sewing_leave_button)
+		_check(not app._sewing_closed and not app.sewing_view.confirm_button.disabled, "Leave previews before explicit confirmation")
+		await _click(app.sewing_view.confirm_button)
 	if kind == "Unpicker":
 		await _click(app.unpicker_leave_button)
 	if kind == "Campfire":

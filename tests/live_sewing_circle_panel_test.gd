@@ -89,6 +89,7 @@ func _run() -> void:
 		await _test_upgrade(keyboard)
 		await _test_stitch(keyboard)
 		await _test_leave(keyboard)
+	await _test_confirmation_handoff()
 	await _test_rejections()
 	_check(randi() == seeded_next, "mounted browsing and decisions consume no global RNG")
 	panel.queue_free()
@@ -267,6 +268,65 @@ func _test_leave(keyboard: bool) -> void:
 		"source_receipt": source.receipt, "charged_scraps": 0})
 	_check(result == expected, "exact Leave receipt preserves complete ledger")
 	_check_replay(visit, intents[0])
+
+
+## Only this panel's own physical Confirm may mint the payload its controller
+## settles: the hand-off is exact, detached and one-shot, and rebind/close retire it.
+func _test_confirmation_handoff() -> void:
+	var visit := _make()
+	await _bind(visit)
+	var source := visit.read_state()
+	var forwarded := {"action": "leave", "first_index": -1, "second_index": -1,
+		"visit_id": source.visit_id, "node_id": source.node_id, "source_snapshot": source}
+	_check(panel.take_confirmed(forwarded) == {} and panel._confirmed.is_empty(),
+		"no direct call can mint a confirmed payload")
+	await _activate(panel.leave_button, false)
+	_check(panel.take_confirmed(forwarded) == {} and panel._confirmed.is_empty() and intents.is_empty(),
+		"an unconfirmed selection mints nothing and emits nothing")
+	await _activate(panel.confirm_button, false)
+	_check(intents.size() == 1 and panel._submitted and not panel._confirmed.is_empty(),
+		"physical Confirm mints exactly one pending payload")
+	if intents.size() != 1:
+		return
+	var confirmed := intents[0]
+	var altered_action := confirmed.duplicate(true)
+	altered_action.action = "upgrade"
+	var altered_index := confirmed.duplicate(true)
+	altered_index.first_index = 0
+	var altered_snapshot := confirmed.duplicate(true)
+	altered_snapshot.source_snapshot.remaining_scraps += 1
+	var extra_key := confirmed.duplicate(true)
+	extra_key.result = "ok"
+	for altered in [altered_action, altered_index, altered_snapshot, extra_key]:
+		_check(panel.take_confirmed(altered) == {} and panel._confirmed == confirmed,
+			"an altered payload never matches or consumes the pending confirmation")
+	var handed := panel.take_confirmed(confirmed)
+	_check(handed == confirmed and panel._confirmed.is_empty(),
+		"the exact confirmed payload is handed over once")
+	_check(panel.take_confirmed(confirmed) == {} and panel._confirmed.is_empty(),
+		"a second hand-over gets nothing")
+	var second := _make()
+	await _bind(second)
+	await _activate(panel.upgrade_button, false)
+	await _activate(panel.option_buttons[1], false)
+	await _activate(panel.confirm_button, false)
+	_check(intents.size() == 1 and panel._submitted and not panel._confirmed.is_empty(),
+		"a fresh visit mints its own pending payload")
+	if intents.size() != 1:
+		return
+	var pending := intents[0]
+	await _bind(_make())
+	_check(panel._confirmed.is_empty() and not panel._submitted and panel.take_confirmed(pending) == {},
+		"rebind retires an unconsumed confirmed payload")
+	await _activate(panel.leave_button, true)
+	await _activate(panel.confirm_button, true)
+	_check(intents.size() == 1 and not panel._confirmed.is_empty(), "a rebound visit mints its own payload")
+	if intents.size() != 1:
+		return
+	var before_close := intents[0]
+	panel.close()
+	_check(not panel.visible and panel._confirmed.is_empty() and not panel._submitted
+		and panel.take_confirmed(before_close) == {}, "close retires the pending confirmed payload")
 
 
 func _test_rejections() -> void:

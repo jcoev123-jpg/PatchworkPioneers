@@ -20,10 +20,22 @@ func _acquired_attack_check(patch_id: String) -> void:
 		var energy: int = app.deck.energy
 		var copies: int = app.deck.hand.count(id)
 		var discarded: int = app.deck.discard_pile.count(id)
+		# The routed floor-band fight can carry Weak from the genuine opening.
+		# Keep the literal patch bonus oracle, then apply the authored status ratios
+		# against the pre-hit actors rather than assuming a clean fixed roster.
+		var owner := "seamstress" if id == "seamstress_prick" else "warden"
+		var actors: Array = app.party.get_heroes().filter(func(hero): return hero.id == owner)
+		_check(actors.size() == 1 and actors[0].hp > 0, "actual living attack owner exists")
+		var attacker: Dictionary = actors[0].get("statuses", {})
+		var defender: Dictionary = app.enemies.get_enemy(1).get("statuses", {})
+		var damage := 3 if id == "seamstress_prick" else (7 if patch_id == "pincushion_arm" else 6)
+		damage = floori(damage * (0.75 if attacker.get("weak", 0) > 0 else 1.0)
+			* (1.5 if defender.get("exposed", 0) > 0 else 1.0))
+		if defender.get("tangled", 0) > 0:
+			damage += 2
 		_check(await _choose(id, false), "physically select acquired-patch attack " + id)
 		await _key(KEY_1)
 		var event: Dictionary = presenter.last_event
-		var damage := 3 if id == "seamstress_prick" else (7 if patch_id == "pincushion_arm" else 6)
 		var statuses := {"bleed": 3} if id == "seamstress_prick" else ({"exposed": 1} if patch_id == "button_eye" else {})
 		_check(event.get("ok") == true and event.get("hits", []).size() == 1,
 			"acquired patch attack actually commits")
@@ -105,7 +117,13 @@ func _attack_patch_claims() -> void:
 			if sewing.hero_buttons.size() != 3:
 				return
 			var state: Dictionary = sewing.wardrobe.get_snapshot()
-			var target: Button = sewing.hero_buttons[0]
+			var targets: Array[Button] = []
+			for action in sewing.hero_buttons:
+				if action.get_meta("hero_id") == "warden":
+					targets.append(action)
+			_check(targets.size() == 1 and not targets[0].disabled,
+				"real Warden recipient is enabled even after a routed shove")
+			var target: Button = targets[0]
 			var callback: Callable = target.pressed.get_connections()[0].callable
 			_reject_patch(sewing._sew.bind("foreign", target, sewing._token, state), "new patch invalid wearer")
 			var stale := state.duplicate(true)
