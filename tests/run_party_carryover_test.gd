@@ -225,16 +225,16 @@ func _test_legal_opening_fight() -> void:
 
 func _test_legal_opening_rest() -> void:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 6
+	rng.seed = 7
 	var map := RunMap.new()
 	_check(map.generate(rng) and map.get_route().is_empty(),
-		"seed 6 generates an untraversed real map")
+		"seed 7 generates an untraversed real map")
 	var rest_id := ""
 	for node_id in map.get_legal_choices():
 		if map.get_node(node_id).get("type") == "Rest":
 			rest_id = node_id
 			break
-	_check(not rest_id.is_empty(), "seed 6 offers a genuinely legal opening Rest")
+	_check(not rest_id.is_empty(), "seed 7 offers a genuinely legal opening Rest")
 	if rest_id.is_empty():
 		return
 	var rng_before := rng.state

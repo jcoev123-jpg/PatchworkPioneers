@@ -233,6 +233,8 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 		"Rest":
 			await _click(app.rest_heal_button)
 			await _click(app.rest_continue_button)
+		"SewingCircle":
+			await _click(app.sewing_leave_button)
 		"Shop":
 			await _click(app.shop_continue_button)
 		"Event":

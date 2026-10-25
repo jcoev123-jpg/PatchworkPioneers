@@ -14,7 +14,7 @@ const LONG_PATCH_PREVIEW := "Switchback Button (Head slot)\nEffect: " \
 	+ "Inactive while wearer is torn."
 
 
-func _continuation_fixture(kind: String, first_seed: int = 1, last_seed: int = 1000) -> Dictionary:
+func _continuation_fixture(kind: String, first_seed: int = 1, last_seed: int = 2000) -> Dictionary:
 	for value in range(first_seed, last_seed):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
@@ -361,7 +361,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = live_map.get_node(id).type
 				shown.append(id)
-				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
+				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
 				if action.disabled:
 					await _click(action)
 					action.pressed.emit()

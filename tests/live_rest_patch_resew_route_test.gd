@@ -252,9 +252,10 @@ func _run() -> void:
 		await _reach(fixture.paths[3], keyboard)
 		_check(app.party_carryover._wardrobe == wardrobe and wardrobe.get_snapshot().worn == worn and app.party != null, "same assignments survive real onward Fight admission")
 		_check(randi() == global_next, "accepted and rejected paths consume no global RNG")
+		var onward := wardrobe.get_snapshot()
 		app._return_to_title()
 		callback.call(patch, "tinker", source, closed.rest_ids.back(), closed)
-		_check(app.rest_patch_picker == null and app._rest_wardrobe == null and wardrobe.get_snapshot() == closed, "Return clears UI/owner and retires callbacks")
+		_check(app.rest_patch_picker == null and app._rest_wardrobe == null and wardrobe.get_snapshot() == onward, "Return clears UI/owner and retires callbacks after legitimate transit updates")
 	app.free()
 	await _frames()
 	for failure in failures:

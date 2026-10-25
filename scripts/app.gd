@@ -76,6 +76,7 @@ const BASE_SCREEN_SCENE := "res://scenes/base_screen.tscn"
 ## Opening chooser: one readable label per authored node kind, so the raw node ID stays
 ## in metadata only. Unknown kinds keep their authored name instead of hiding the stop.
 const ROUTE_KIND_LABELS := {
+	"SewingCircle": "Sewing Circle",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -87,6 +88,7 @@ const ROUTE_KIND_LABELS := {
 ## Felt patch and thread colours of each kind's sewn route token, reused by the drawn
 ## no-art fallback (Treasure owns no committed token image yet).
 const ROUTE_KIND_FELT := {
+	"SewingCircle": Color("#795e78"),
 	"Fight": Color("#8a5a4a"),
 	"Elite": Color("#9a6248"),
 	"Rest": Color("#6d7f63"),
@@ -96,6 +98,7 @@ const ROUTE_KIND_FELT := {
 	"Boss": Color("#8a4a4a"),
 }
 const ROUTE_KIND_THREAD := {
+	"SewingCircle": Color("#ead0e7"),
 	"Fight": Color("#e8c9a0"),
 	"Elite": Color("#f0d2a0"),
 	"Rest": Color("#c6dcc0"),
@@ -1371,6 +1374,8 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
 	button.set_meta("route_label", label)
+	if kind == "SewingCircle":
+		button.set_meta("sewing_source", _sewing_context())
 	button.disabled = kind not in RunMap.NORMAL_TYPES and (opening or kind != "Boss")
 	if button.disabled:
 		button.text = label + " (unavailable)"
@@ -1482,6 +1487,8 @@ func _dispatch_route(id: String, source: WeakRef, prior: Array[String], button) 
 		or button.get_meta("route_kind", "") != run_map.get_node(id).get("type"):
 		return false
 	match run_map.get_node(id).get("type"):
+		"SewingCircle":
+			return _choose_sewing_route(id, source, prior, button)
 		"Fight", "Elite", "Boss":
 			return _choose_battle_route(id, source, prior, button)
 		"Rest":
@@ -1560,6 +1567,9 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 	if not is_instance_valid(button) or not route_buttons.has(button) \
 		or button.get_parent() != route_view or button.get_meta("route_id") != id \
 		or button.disabled or not button.visible:
+		return false
+	if run_map.get_node(id).get("type") == "SewingCircle" \
+		and button.get_meta("sewing_source", {}) != _sewing_context():
 		return false
 	_clear_route_atlas()
 	route_view.show()
@@ -2611,8 +2621,12 @@ func _unfought_run() -> bool:
 			"pending_node_id": "", "settled_node_ids": []} or act_outcome._pending_result != null:
 		return false
 	for id in run_map.get_route():
-		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure"]:
+		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle"]:
 			return false
+		if run_map.get_node(id).get("type") == "SewingCircle":
+			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
+			if _sewing_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
+				return false
 	if run_map.get_route().is_empty():
 		return run_deck == _load_starter_deck() and run_heroes == carry._initial \
 			and carry.read_state().completed_rests.is_empty() and LiveWebPlaytestBoot.has_opening_wallet(self) \
@@ -2647,6 +2661,11 @@ func _can_choose_connected_route() -> bool:
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
 		return _current_completed_rest() and is_instance_valid(rest_view) and not rest_view.visible \
 			and is_instance_valid(rest_continue_button) and rest_continue_button.disabled
+	if run_map.get_node(run_map.get_current_node_id()).get("type") == "SewingCircle":
+		return _sewing_closed and _sewing_original == _sewing_context() \
+			and _sewing_visits.get(run_map.get_current_node_id(), []) == [run_map,
+				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
+			and is_instance_valid(sewing_view) and not sewing_view.visible
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Event", "Treasure"]:
 		return _placeholder_map != null and _placeholder_map.get_ref() == run_map \
 			and not _placeholder_route.is_empty() and run_map.get_route() == _placeholder_route
@@ -3792,6 +3811,192 @@ func _clear_dye_vat() -> void:
 		remove_child(dye_vat_panel)
 		dye_vat_panel.queue_free()
 	dye_vat_panel = null
+
+
+var sewing_view: VBoxContainer
+var sewing_upgrade_cards: OptionButton
+var sewing_first: OptionButton
+var sewing_second: OptionButton
+var sewing_upgrade_button: Button
+var sewing_stitch_button: Button
+var sewing_leave_button: Button
+var _sewing_controls: Array = []
+var _sewing_original: Dictionary = {}
+var _sewing_closed := false
+var _sewing_visits: Dictionary = {}
+
+
+## Exact authorities, including identities as well as detached mutable state.
+func _sewing_context() -> Dictionary:
+	if run_map == null or run_rng == null or party_carryover == null:
+		return {}
+	var carry := party_carryover as RunTornCarryover
+	var wardrobe := carry._wardrobe if carry != null else null
+	return {"map": run_map, "revision": run_map.get_generation_revision(),
+		"floors": run_map.get_floors(), "route": run_map.get_route(),
+		"heroes": run_heroes.duplicate(true), "party": party,
+		"live_heroes": party.get_heroes() if party != null else [],
+		"carry": party_carryover, "ledger": party_carryover.read_state(),
+		"torn": carry.torn.read_state() if carry != null else {},
+		"wardrobe": wardrobe, "wardrobe_state": wardrobe.get_snapshot() if wardrobe != null else {},
+		"rng": run_rng, "rng_state": run_rng.state, "rng_seed": run_rng.seed, "seed": run_seed,
+		"gold": session_gold, "scraps": run_scraps, "patches": run_trinkets.duplicate(),
+		"removals": run_removal_count, "deck": run_deck.duplicate(),
+		"descriptors": run_stitch_descriptors.duplicate(true), "cursor": run_next_stitch_id}
+
+
+func _choose_sewing_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
+	if not _can_choose_connected_route() or source == null or source.get_ref() != run_map \
+		or not is_instance_valid(route_view) or not route_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button not in route_buttons \
+		or button.get_parent() != route_view or button.disabled or not button.is_visible_in_tree() \
+		or button.get_meta("route_id", "") != id or button.get_meta("route_kind", "") != "SewingCircle" \
+		or run_map.get_route() != prior or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "SewingCircle" \
+		or button.get_meta("sewing_source", {}) != _sewing_context():
+		return false
+	var context := _sewing_context()
+	var wardrobe = context.wardrobe
+	if wardrobe != null:
+		var state: Dictionary = context.wardrobe_state
+		if not wardrobe.is_valid() or state.heroes != run_heroes or state.cards != run_deck \
+			or state.owned != run_trinkets or state.scraps != run_scraps or state.gold != session_gold \
+			or state.seed != run_seed or state.rest_id != "" \
+			or not context.carry.can_bind_wardrobe(wardrobe, context.carry.torn, state):
+			return false
+	var canonical := RunRestCardUpgrade.list_authored_choices(run_deck, run_stitch_descriptors, run_next_stitch_id)
+	if not canonical.ok or not RunRestStitchCards.new(run_deck, run_stitch_descriptors,
+			run_scraps, run_next_stitch_id).is_valid() or context != _sewing_context():
+		return false
+	if not run_map.choose_node(id):
+		return false
+	_clear_route_view()
+	if is_instance_valid(sewing_view):
+		remove_child(sewing_view)
+		sewing_view.queue_free()
+	_sewing_closed = false
+	sewing_view = VBoxContainer.new()
+	sewing_view.name = "SewingCircle"
+	sewing_view.position = Vector2(300, 130)
+	sewing_view.custom_minimum_size = Vector2(680, 420)
+	sewing_view.add_theme_constant_override("separation", 10)
+	add_child(sewing_view)
+	var title := Label.new()
+	title.text = "Sewing Circle - choose one, or leave\nStitch: two different owners, 3 scraps (you have %d)" % run_scraps
+	sewing_view.add_child(title)
+	sewing_upgrade_cards = OptionButton.new()
+	sewing_view.add_child(sewing_upgrade_cards)
+	for row in canonical.choices:
+		sewing_upgrade_cards.add_item(_sewing_upgrade_text(row))
+		sewing_upgrade_cards.set_item_metadata(sewing_upgrade_cards.item_count - 1, row.duplicate(true))
+	sewing_upgrade_cards.disabled = canonical.choices.is_empty()
+	sewing_upgrade_button = Button.new()
+	sewing_first = OptionButton.new()
+	sewing_second = OptionButton.new()
+	sewing_stitch_button = Button.new()
+	sewing_leave_button = Button.new()
+	sewing_view.add_child(sewing_upgrade_button)
+	sewing_view.add_child(sewing_first)
+	sewing_view.add_child(sewing_second)
+	sewing_view.add_child(sewing_stitch_button)
+	sewing_view.add_child(sewing_leave_button)
+	for selector in [sewing_first, sewing_second]:
+		for index in range(run_deck.size()):
+			var definition := RunRestStitchCards.resolve_card_definition(run_deck[index])
+			if definition.is_empty():
+				continue
+			selector.add_item(_sewing_half_text(index, definition))
+			selector.set_item_metadata(selector.item_count - 1, index)
+		selector.disabled = selector.item_count == 0
+	sewing_upgrade_button.text = "Upgrade"
+	sewing_upgrade_button.disabled = canonical.choices.is_empty()
+	sewing_stitch_button.text = "Stitch"
+	sewing_stitch_button.tooltip_text = "Requires 3 scraps and two cards with different owners"
+	sewing_stitch_button.disabled = run_scraps < 3 or sewing_first.item_count < 2
+	sewing_leave_button.text = "Leave"
+	_sewing_controls = [sewing_upgrade_cards, sewing_upgrade_button, sewing_first,
+		sewing_second, sewing_stitch_button, sewing_leave_button]
+	for action in [sewing_upgrade_button, sewing_stitch_button, sewing_leave_button]:
+		action.theme_type_variation = &"PatchHeadingButton"
+		action.pressed.connect(_sewing_action.bind(action, sewing_view, _sewing_controls.duplicate()))
+	for index in range(_sewing_controls.size()):
+		var control: Control = _sewing_controls[index]
+		control.custom_minimum_size = Vector2(680, 44)
+		control.focus_mode = Control.FOCUS_ALL
+		control.focus_next = control.get_path_to(_sewing_controls[(index + 1) % _sewing_controls.size()])
+		control.focus_previous = control.get_path_to(_sewing_controls[(index + 5) % _sewing_controls.size()])
+	_sewing_original = _sewing_context()
+	sewing_leave_button.grab_focus()
+	return true
+
+
+func _sewing_upgrade_text(row: Dictionary) -> String:
+	return "Deck #%d: %s - %s -> %s" % [row.index + 1, row.owner.capitalize(), row.display_name, row.plus_display_name]
+
+
+func _sewing_half_text(index: int, definition: Dictionary) -> String:
+	return "Deck #%d: %s - %s" % [index + 1, definition.owner.capitalize(), definition.display_name]
+
+
+func _sewing_action(button, view, controls: Array) -> void:
+	if _sewing_closed or _sewing_original.is_empty() or _sewing_original != _sewing_context() \
+		or not is_instance_valid(view) or view != sewing_view or view.get_parent() != self \
+		or not view.is_visible_in_tree() or controls != _sewing_controls \
+		or controls != [sewing_upgrade_cards, sewing_upgrade_button, sewing_first,
+			sewing_second, sewing_stitch_button, sewing_leave_button] \
+		or button not in [sewing_upgrade_button, sewing_stitch_button, sewing_leave_button] \
+		or not is_instance_valid(button) or button.disabled:
+		return
+	for control in controls:
+		if not is_instance_valid(control) or control.get_parent() != view or not control.is_visible_in_tree():
+			return
+	var result: Dictionary = {}
+	if button == sewing_upgrade_button:
+		var canonical := RunRestCardUpgrade.list_authored_choices(run_deck, run_stitch_descriptors, run_next_stitch_id)
+		var selector := sewing_upgrade_cards
+		if not canonical.ok or selector.disabled or selector.item_count != canonical.choices.size() \
+			or selector.selected < 0 or selector.selected >= selector.item_count:
+			return
+		for i in range(selector.item_count):
+			if selector.get_item_metadata(i) != canonical.choices[i] or selector.is_item_disabled(i) \
+				or selector.get_item_text(i) != _sewing_upgrade_text(canonical.choices[i]):
+				return
+		result = RunRestCardUpgrade.new(run_deck, canonical.permitted_upgrades,
+			run_stitch_descriptors, run_next_stitch_id).choose_upgrade(canonical.choices[selector.selected].index)
+	elif button == sewing_stitch_button:
+		var indices: Array[int] = []
+		for i in range(run_deck.size()):
+			if not RunRestStitchCards.resolve_card_definition(run_deck[i]).is_empty():
+				indices.append(i)
+		for selector in [sewing_first, sewing_second]:
+			if selector.disabled or selector.item_count != indices.size() or selector.selected < 0 or selector.selected >= indices.size():
+				return
+			for i in range(indices.size()):
+				if typeof(selector.get_item_metadata(i)) != TYPE_INT or selector.get_item_metadata(i) != indices[i] \
+					or selector.is_item_disabled(i) or selector.get_item_text(i) != _sewing_half_text(indices[i], RunRestStitchCards.resolve_card_definition(run_deck[indices[i]])):
+					return
+		var visit := RunRestStitchCards.new(run_deck, run_stitch_descriptors, run_scraps, run_next_stitch_id)
+		if not visit.is_valid():
+			return
+		result = visit.choose_stitch(indices[sewing_first.selected], indices[sewing_second.selected], _stitch_snapshot())
+	if button != sewing_leave_button and not result.get("ok", false):
+		return
+	# Publish the complete winning ledger synchronously; no signals or RNG in between.
+	if button != sewing_leave_button:
+		run_deck.assign(result.deck)
+		if button == sewing_stitch_button:
+			run_stitch_descriptors = result.descriptors.duplicate(true)
+			run_scraps = result.remaining_scraps
+			run_next_stitch_id = result.next_stitch_id
+	_sync_bound_wardrobe(party_carryover as RunTornCarryover)
+	_sewing_closed = true
+	_sewing_original = _sewing_context()
+	_sewing_visits[run_map.get_current_node_id()] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
+	for control in controls:
+		control.disabled = true
+	view.hide()
+	_clear_visit_backdrop()
+	_present_connected_route(weakref(run_map))
 
 
 func _current_completed_rest() -> bool:
@@ -5687,6 +5892,14 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	if is_instance_valid(sewing_view):
+		remove_child(sewing_view)
+		sewing_view.queue_free()
+	sewing_view = null
+	_sewing_controls.clear()
+	_sewing_original.clear()
+	_sewing_visits.clear()
+	_sewing_closed = false
 	# Only an uncommitted Base-launched opening returns to the village.
 	var restore_base: bool = _route_from_base and run_map != null \
 		and run_map.get_route().is_empty()

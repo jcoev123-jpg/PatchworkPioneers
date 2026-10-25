@@ -777,8 +777,8 @@ func _mitt_scope_stitched_case(fixture: Dictionary) -> void:
 			and receipt.halves[1].hits[0].damage == 6
 			and receipt.halves[0].hits[0].position == 1
 			and receipt.halves[1].hits[0].position == 2
-			and app.enemies.get_enemy(1).hp == first_enemy.hp - maxi(0, 14 - first_enemy.block)
-			and app.enemies.get_enemy(2).hp == second_enemy.hp - maxi(0, 6 - second_enemy.block),
+			and app.enemies.get_enemy(1).hp == maxi(0, first_enemy.hp - maxi(0, 14 - first_enemy.block))
+			and app.enemies.get_enemy(2).hp == maxi(0, second_enemy.hp - maxi(0, 6 - second_enemy.block)),
 			"first sewn Tinker half applies 5 printed +3 native +4 Scope +2 mitt")
 	_check(app.deck.energy == energy_before - 2
 		and app.deck.discard_pile.count(stitched_id) == discard_before + 1

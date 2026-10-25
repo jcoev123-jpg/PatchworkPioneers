@@ -3,7 +3,7 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
-const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]
+const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle"]
 const FORMERLY_BLOCKED_SEED := 6
 
 
@@ -160,9 +160,9 @@ func _test_playable_openings_preserve_original_generation() -> void:
 			expected[0][0].type = "Fight"
 		if value == FORMERLY_BLOCKED_SEED:
 			_check(not originally_playable, "pinned seed was blocked before fallback")
-			_check(original[0].size() == 3 and original[0][0].type == "Rest"
-				and original[0][1].type == "Rest" and original[0][2].type == "Treasure",
-				"pinned original opening is Rest, Rest, Treasure")
+			_check(original[0].size() == 3 and original[0][0].type == "Event"
+				and original[0][1].type == "Shop" and original[0][2].type == "Elite",
+				"pinned seven-kind oracle opening is Event, Shop, Elite")
 		var rng := _rng(value)
 		var map := RunMap.new()
 		_check(map.generate(rng), "opening generates for seed %d" % value)

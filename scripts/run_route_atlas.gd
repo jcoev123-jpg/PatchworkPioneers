@@ -53,6 +53,7 @@ const MAP_BOARD_PATH := "res://assets/paper/backgrounds/map_board.png"
 ## Kinds without an entry keep the original drawn paper marker, and so does a token
 ## whose file cannot be loaded, so a missing PNG never breaks the preview.
 const NODE_TOKEN_PATHS := {
+	"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 	"Fight": "res://assets/paper/ui/map_node_fight.png",
 	"Elite": "res://assets/paper/ui/map_node_elite.png",
 	"Event": "res://assets/paper/ui/map_node_event.png",
@@ -232,7 +233,7 @@ class NodeToken extends Control:
 				RunRouteAtlas.THREAD, 2.0, true)
 		var font := get_theme_default_font()
 		if font != null:
-			var glyph := "▣" if token_kind == "Treasure" else "?"
+			var glyph := "S" if token_kind == "SewingCircle" else ("▣" if token_kind == "Treasure" else "?")
 			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
 				20.0, 27, RunRouteAtlas.INK)
 
@@ -1114,6 +1115,10 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 ## The detailed Rest alternative is tooltip-only so the small ticket stays legible.
 static func stop_consequence(kind: String) -> Dictionary:
 	match kind:
+		"SewingCircle":
+			return {"lead": "Choose one: upgrade or stitch",
+				"detail": "Stitch different owners: 3 scraps; or leave",
+				"tooltip": "Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged"}
 		"Fight":
 			return {"lead": "Win: 10–20 gold + 1 scrap",
 				"detail": "Choose 1 of 3 cards, or skip",

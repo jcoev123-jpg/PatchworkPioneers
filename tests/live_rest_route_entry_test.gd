@@ -376,7 +376,7 @@ func _run() -> void:
 		for button in app.route_buttons:
 			var id: String = button.get_meta("route_id")
 			shown.append(id)
-			_check(button.disabled == (app.run_map.get_node(id).type not in ["Rest", "Shop", "Event", "Treasure", "Fight", "Elite", "Boss"]), "only supported connected controls enabled")
+			_check(button.disabled == (app.run_map.get_node(id).type not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Fight", "Elite", "Boss"]), "only supported connected controls enabled")
 			if button.disabled:
 				await _click(button)
 				button.grab_focus()

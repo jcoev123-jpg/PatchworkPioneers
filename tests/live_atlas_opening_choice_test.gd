@@ -2,6 +2,9 @@ extends "res://tests/live_run_map_entry_test.gd"
 
 ## Independent, pinned design facts for the actual mounted player-facing atlas.
 const LIVE_HELP := {
+	"SewingCircle": ["Choose one: upgrade or stitch",
+		"Stitch different owners: 3 scraps; or leave",
+		"Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged"],
 	"Fight": ["Win: 10–20 gold + 1 scrap", "Choose 1 of 3 cards, or skip",
 		"On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip"],
 	"Elite": ["Win: 25–35 gold + 2 scraps + patch", "Choose 1 of 3 cards, or skip",
@@ -81,6 +84,7 @@ func _inert(app, callback: Callable, id: String, reason: String) -> void:
 ## Mounted app opens an honest three-floor viewport, not the full distant map.
 func _tokens(atlas: RunRouteAtlas) -> void:
 	var expected := {
+		"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 		"Fight": "res://assets/paper/ui/map_node_fight.png",
 		"Elite": "res://assets/paper/ui/map_node_elite.png",
 		"Event": "res://assets/paper/ui/map_node_event.png",
@@ -284,9 +288,9 @@ func _leave_flow(app, kind: String) -> void:
 ## Mouse, Enter and Space on the actual marker must match the direct chooser.
 func _legal_openings(app) -> void:
 	var cases: Array = [
-		["Rest", 2, "f01_n2"], ["Shop", 3, "f01_n2"],
-		["Event", 7, "f01_n1"], ["Treasure", 9, "f01_n2"],
-		["Elite", 1, "f01_n1"],
+		["Rest", 7, "f01_n3"], ["Shop", 2, "f01_n2"],
+		["Event", 3, "f01_n2"], ["Treasure", 1, "f01_n1"],
+		["Elite", 1, "f01_n2"],
 	]
 	for fixture in cases:
 		var kind: String = fixture[0]

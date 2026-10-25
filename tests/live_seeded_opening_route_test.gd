@@ -3,6 +3,7 @@ extends "res://tests/live_run_map_entry_test.gd"
 
 ## Written out here, not read from App, so the mounted label cannot agree with a broken map.
 const EXPECTED_ROUTE_LABELS := {
+	"SewingCircle": "Sewing Circle",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -418,11 +419,12 @@ func _run() -> void:
 	await process_frame
 	await _invalid_starts(app)
 	var cases: Array = [
-		["Fight", 1, "f01_n0", ""], ["Elite", 1, "f01_n1", ""],
-		["Rest", 2, "f01_n2", "f02_n3"], ["Shop", 3, "f01_n2", "f02_n2"],
-		["Event", 7, "f01_n1", "f02_n0"], ["Treasure", 9, "f01_n2", "f02_n2"],
+		["Fight", 1, "f01_n0", ""], ["Elite", 1, "f01_n2", ""],
+		["Rest", 13, "f01_n0", "f02_n1"], ["Shop", 2, "f01_n2", "f02_n3"],
+		["Event", 8, "f01_n1", "f02_n0"], ["Treasure", 1, "f01_n1", "f02_n1"],
 	]
-	_check(cases.size() == 6, "all six opening fixtures exist")
+	for required in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]:
+		_check(cases.any(func(row): return row[0] == required), "required opening fixture exists: " + required)
 	var stale: Array[Callable] = []
 	for fixture in cases:
 		var replay: Array = []

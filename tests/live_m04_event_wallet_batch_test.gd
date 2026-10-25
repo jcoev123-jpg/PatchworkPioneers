@@ -9,7 +9,7 @@ var gold_purchases := 0
 func _fixtures() -> Dictionary:
 	var found := {}
 	var ids: Array = RunM04EventRotation.new().get_generic_event_ids()
-	for value in range(1, 100000):
+	for value in range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

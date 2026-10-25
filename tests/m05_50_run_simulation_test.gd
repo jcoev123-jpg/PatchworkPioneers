@@ -219,6 +219,13 @@ func _run_seed(value: int) -> Dictionary:
 						seam.heals, seam.control, seam.bleed, unravel, tinker.area, tinker.area_unravel, tinker.gadgets)
 					if decision.is_empty():
 						break
+					# The seven-kind route can leave a deck with no damage line at all
+					# (for example a middle Warden whose strikes are sewn to Torn
+					# owners). Stop playing defence and let the real enemies finish the
+					# fight; the turn cap and authenticated defeat gate stay unchanged.
+					if decision.kind in ["support", "earned_block"] \
+						and not _has_damage_line(deck_ids, descriptors, party.get_heroes(), enemies.get_enemies()):
+						break
 					var before := _combat_snapshot(combat_deck, party, enemies, rng)
 					var accepted := false
 					var pool_receipt := {}
@@ -493,6 +500,28 @@ func _run_seed(value: int) -> Dictionary:
 			visit["before"] = before
 			visit["after"] = after
 			event_visits.append(visit)
+		elif kind == "SewingCircle":
+			# The pilot can use this separate stop's existing stitch service;
+			# absent a legal funded pair it leaves without consuming Rest heal.
+			var before := _event_snapshot(map, carry, wardrobe, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
+			var pair := strategy.choose_stitch(deck_ids, carry.read_state().heroes, scraps)
+			if not pair.is_empty():
+				var visit := RunRestStitchCards.new(deck_ids, descriptors, scraps, next_stitch_id)
+				var receipt := visit.choose_stitch(pair.first, pair.second, visit.get_snapshot())
+				if not receipt.ok or not visit.is_consumed():
+					return _fail("legal Sewing Circle stitch")
+				deck_ids.assign(receipt.deck)
+				descriptors = receipt.descriptors.duplicate(true)
+				scraps = receipt.remaining_scraps
+				next_stitch_id = receipt.next_stitch_id
+				stitches += 1
+				if not wardrobe.refresh_run_context(carry.read_state().heroes,
+						owned, scraps, gold, deck_ids, wardrobe.get_snapshot()):
+					return _fail("Sewing Circle wardrobe context")
+			elif before != _event_snapshot(map, carry, wardrobe, deck_ids,
+					descriptors, next_stitch_id, gold, scraps, owned, rng, event_history):
+				return _fail("Sewing Circle Leave changed authoritative state")
 		elif kind == "Treasure":
 			treasure_visits += 1
 		else:
@@ -517,6 +546,39 @@ func _run_seed(value: int) -> Dictionary:
 		"elite_battles": elite_battles, "elite_wins": elite_wins,
 		"elite_defeats": elite_defeats, "elite_lowest_hp": elite_lowest_hp,
 		"elite_encounters": elite_encounters}
+
+
+## True while some deck card (plain or a stitched half) still has a living owner and
+## a living enemy it can damage. A pilot with no such line can never win, so it stops
+## defending and lets the real enemies finish the fight instead of looping forever.
+func _has_damage_line(deck_ids: Array, descriptors: Dictionary, heroes: Array,
+		enemies: Array) -> bool:
+	for id in deck_ids:
+		var halves: Array = [RunRestStitchCards.resolve_card_definition(id)]
+		if descriptors.has(id):
+			halves = [descriptors[id].first_half, descriptors[id].second_half]
+		var playable := true
+		for half in halves:
+			if half.is_empty():
+				playable = false
+				continue
+			var owner_alive := false
+			for hero in heroes:
+				if hero.id == half.owner and hero.hp > 0 \
+						and half.from_positions.has(hero.position):
+					owner_alive = true
+			if not owner_alive:
+				playable = false
+		if not playable:
+			continue
+		for half in halves:
+			if not (half.effects.has("damage") or half.effects.has("bleed") \
+					or half.effects.has("unravel")):
+				continue
+			for enemy in enemies:
+				if enemy.hp > 0 and half.to_positions.has(enemy.position):
+					return true
+	return false
 
 
 ## The energy resolver returns bool. Publish a receipt only after independently
@@ -801,8 +863,11 @@ func _test_energy_pool_fixture() -> void:
 			and definition.effects.get("self_hp_loss", 0) == (3 if overclock else 0),
 			"energy authored base/plus values " + id)
 		_check(strategy.choose_reward([{"id": id}], 3, 0) == ("" if id.ends_with("_plus") else id) \
+			and strategy.choose_reward([{"id": id}], 3,
+				M05SeededRunStrategy.PICK_LIMIT - 1) == ("" if id.ends_with("_plus") else id) \
 			and strategy.choose_reward([{"id": id}], 1, 0).is_empty() \
-			and strategy.choose_reward([{"id": id}], 3, 1).is_empty(), "energy reward skips/upgrades " + id)
+			and strategy.choose_reward([{"id": id}], 3,
+				M05SeededRunStrategy.PICK_LIMIT).is_empty(), "energy reward skips/upgrades " + id)
 		for position in [1, 2, 3]:
 			for condition in ["legal", "refill", "blocked", "absent", "downed", "wrong_target",
 					"zero_energy", "inactive", "rejected", "overflow"]:
@@ -1000,7 +1065,8 @@ func _test_block_pool_fixture() -> void:
 		_check(strategy.choose_reward(offered, 3, 0) == ("" if id.ends_with("_plus") else id),
 			"Block rewards accept only eligible bases " + id)
 		_check(strategy.choose_reward(offered, 1, 0).is_empty() \
-			and strategy.choose_reward(offered, 3, 1).is_empty(), "Block keeps seeded skips " + id)
+			and strategy.choose_reward(offered, 3,
+				M05SeededRunStrategy.PICK_LIMIT).is_empty(), "Block keeps seeded skips " + id)
 		var conditions := ["legal", "wrong_target", "downed_owner", "dead_ally"]
 		if definition.cost > 0:
 			conditions.append("no_energy")
@@ -1700,7 +1766,8 @@ func _test_tinker_pool_fixture() -> void:
 				and definition.target_kind == ("enemy_all" if area else ("self" if base == "tinker_spare_parts" else "enemy_single")), "authored Tinker cost/FROM/TO/kind " + id)
 			_check(strategy.choose_reward([{"id": id}], 3, 0) == (id if suffix == "" else "") \
 				and strategy.choose_reward([{"id": id}], 1, 0).is_empty() \
-				and strategy.choose_reward([{"id": id}], 3, 1).is_empty(), "Tinker reward keeps skips and base-only offers")
+				and strategy.choose_reward([{"id": id}], 3,
+					M05SeededRunStrategy.PICK_LIMIT).is_empty(), "Tinker reward keeps skips and base-only offers")
 			for condition in ["legal", "middle", "refill", "primed", "consumed", "slain_gap", "lethal", "absent", "no_energy", "inactive", "downed_owner", "missing_owner", "wrong_slot", "wrong_target", "dead_target", "dead_targets", "invalid_gauge", "foreign_gauge", "overflow", "stale", "stale_torn", "rejected"]:
 				if condition == "dead_target" and base != "tinker_sight_glass":
 					continue

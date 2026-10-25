@@ -24,6 +24,10 @@ const EARNED_SEAMSTRESS := [
 const EARNED_TINKER := [
 	"tinker_scatter_bolts", "tinker_shrapnel_seam", "tinker_spare_parts", "tinker_sight_glass",
 ]
+## Bounded card picks per eligible seed. The seven-kind map shifts which cards a
+## run is offered first, so a single pick no longer reaches every authored pool
+## family the baseline must exercise; the pilot takes at most two authored cards.
+const PICK_LIMIT := 2
 
 
 func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
@@ -50,6 +54,8 @@ func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
 				score = 112 if scraps < 3 and elites == 0 else 15
 			"Rest":
 				score = 155 if need_stitch else (100 if wounded else 44)
+			"SewingCircle":
+				score = 155 if need_stitch else 44
 			"Shop":
 				score = 80 if purchase_plausible else 46
 			"Event":
@@ -57,9 +63,9 @@ func choose_route(map: RunMap, heroes: Array, scraps: int, stitched: int,
 			"Treasure":
 				score = 54
 		# Prefer a legal next-floor Rest once a real reward can fund stitching.
-		if scraps >= 3 and stitched == 0 and kind != "Rest":
+		if scraps >= 3 and stitched == 0 and kind not in ["Rest", "SewingCircle"]:
 			for next_id in node.outgoing:
-				if map.get_node(next_id).type == "Rest":
+				if map.get_node(next_id).type in ["Rest", "SewingCircle"]:
 					score += 12
 					break
 		if score > best_score or (score == best_score and (best.is_empty() or id < best)):
@@ -96,7 +102,7 @@ func choose_event_choice(forecast: Dictionary) -> String:
 
 
 func choose_reward(offers: Array, seed_value: int, previous_picks: int) -> String:
-	if offers.is_empty() or seed_value % 3 != 0 or previous_picks != 0:
+	if offers.is_empty() or seed_value % 3 != 0 or previous_picks >= PICK_LIMIT:
 		return "" # Real Skip is an authored choice, not an invented award.
 	# Rotate family priority within the original picking subset, without RNG.
 	var families := [CombatPoolEnergyCards.SUPPORTED_IDS, EARNED_POOL_BLOCKS,

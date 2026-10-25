@@ -7,6 +7,7 @@ var seen_help_kinds: Dictionary = {}
 ## The six committed sewn tokens, written out independently of the view's own table so
 ## this regression cannot silently inherit an omission from the implementation.
 const TOKEN_PATHS := {
+	"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 	"Fight": "res://assets/paper/ui/map_node_fight.png",
 	"Elite": "res://assets/paper/ui/map_node_elite.png",
 	"Event": "res://assets/paper/ui/map_node_event.png",
@@ -127,6 +128,9 @@ func _shipped_heading_face() -> Font:
 ## a wording mistake from the view itself.
 ## Independent authored stop guidance oracle; does not call the atlas presentation helper.
 const EXPECTED_HELP := {
+	"SewingCircle": {"lead": "Choose one: upgrade or stitch",
+		"detail": "Stitch different owners: 3 scraps; or leave",
+		"tooltip": "Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged"},
 	"Fight": {"lead": "Win: 10–20 gold + 1 scrap",
 		"detail": "Choose 1 of 3 cards, or skip",
 		"tooltip": "On win: 10–20 gold + 1 scrap; choose 1 of 3 cards or skip"},
@@ -261,7 +265,7 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 		and view.has_cached_node_token(failed_path), label + ": missing texture cached as null")
 	var probe := RunRouteAtlas.new()
 	var none: Array[String] = []
-	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss"]
+	var test_kinds := ["Fight", "Elite", "Event", "Shop", "Rest", "Treasure", "Boss", "SewingCircle"]
 	for i in range(test_kinds.size()):
 		var kind: String = test_kinds[i]
 		var id := "f01_n%d" % i

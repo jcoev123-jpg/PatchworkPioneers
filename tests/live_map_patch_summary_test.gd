@@ -176,7 +176,7 @@ func _summary_negatives() -> void:
 ## The authored stock is drawn from the live run RNG, so the search widens past
 ## the first qualifying route instead of assuming one seed always stocks a coat.
 func _coat_fixture() -> Dictionary:
-	var first_seed := 1
+	var first_seed := 4867 # Verified seven-kind route with a genuine coat listing.
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
 		var fixture := _continuation_fixture("Rest", first_seed, 30000)
 		if fixture.is_empty() or not await _routed_win(fixture, true):
@@ -195,6 +195,32 @@ func _coat_fixture() -> Dictionary:
 	return {}
 
 
+## The expanded map pool changes the post-combat stock draw. Discover a
+## genuine listing for BOTH healthy and downed wearer sessions before auditing it.
+func _slot_fixture(downed: bool) -> Dictionary:
+	# Independently discovered seven-kind route starts; the real stock check
+	# below remains mandatory and can continue searching if the catalog grows.
+	var first_seed := 5056 if downed else 7252
+	for attempt in range(80):
+		var fixture := _continuation_fixture("Rest", first_seed, 30000)
+		if fixture.is_empty():
+			return {}
+		if not await _routed_win(fixture, downed):
+			return {}
+		await _click(app.reward_buttons[3])
+		await _click(app.continue_button)
+		app.session_gold = 400
+		await _click(_route_action(fixture.shop))
+		var found := false
+		for offer in app.shop_purchases.get_stock().trinkets:
+			found = found or offer.id in ["stitched_badge", "spare_spool"]
+		await _click(app.shop_back_button)
+		if found:
+			return fixture
+		first_seed = fixture.seed + 1
+	return {}
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	root.gui_embed_subwindows = true
@@ -202,10 +228,10 @@ func _run() -> void:
 	root.add_child(app)
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
-	var fixture := _continuation_fixture("Rest")
-	_check(not fixture.is_empty(), "real seeded Fight -> Shop -> Rest fixture exists")
-	if not fixture.is_empty():
-		for downed in [false, true]:
+	for downed in [false, true]:
+		var fixture := await _slot_fixture(downed)
+		_check(not fixture.is_empty(), "real seeded Fight -> Shop -> Rest fixture exists")
+		if not fixture.is_empty():
 			var replay := []
 			for keyboard in [false, true]:
 				seed(108108)
