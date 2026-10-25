@@ -50,6 +50,28 @@ const LEGACY_ELITES := {
 			{"type": "attack", "amount": 45, "weight": 3},
 			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
 			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
+## V3-2 appends two further harder Elites that reuse existing needle and spool
+## puppets. They are authored content only: no encounter or floor-band pool
+## binds them yet, so these checks read them by ID from the catalog itself.
+const V3_2_ELITES := {
+	"needle_briar_guard": {
+		"name": "Needle Briar Guard", "max_hp": 42,
+		"art_path": "res://assets/paper/enemies/needle_marshal.png",
+		"target": "front",
+		"actions": [
+			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
+			{"type": "block", "amount": 8, "weight": 2},
+			{"type": "attack", "amount": 9, "weight": 3}]},
+	"spool_snarekeeper": {
+		"name": "Spool Snarekeeper", "max_hp": 40,
+		"art_path": "res://assets/paper/enemies/spool_hexer.png",
+		"target": "front",
+		"actions": [
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+			{"type": "debuff", "amount": 2, "status": "weak", "weight": 2},
+			{"type": "attack", "amount": 8, "weight": 3}]}}
+## Authored slot order for the two-record V3-2 roster fixtures.
+const V3_2_ORDER := ["needle_briar_guard", "spool_snarekeeper"]
 const PATTERNS := {
 	"needle_marshal_elite": [
 		{"enemy_position":1,"pattern":[
@@ -76,6 +98,7 @@ func _initialize() -> void:
 	_test_selection()
 	_test_live_weighted_elites()
 	_test_v3_elites()
+	_test_v3_2_elites()
 	_test_rejections()
 	for failure in failures:
 		printerr(failure)
@@ -982,3 +1005,397 @@ func _test_v3_elites() -> void:
 		"authored elite records and on-disk source untouched by the append checks")
 	_check(randi() == expected_rng,
 		"v3 elite catalog lookups, announcements and beats use no global RNG")
+
+
+## A fresh two-Elite battle: both V3-2 records in authored slot order and a
+## genuinely living Warden/Seamstress/Tinker party.
+func _v3_2_fixture(records: Dictionary) -> Dictionary:
+	var definitions: Array = []
+	for id in V3_2_ORDER:
+		definitions.append(records[id].duplicate(true))
+	var party := _party()
+	var enemies := CombatEnemies.new(definitions)
+	var living := 0
+	for hero in party.get_heroes():
+		if hero.get("hp", 0) > 0:
+			living += 1
+	_check(party.is_valid() and living == 3,
+		"three living hero slots for the V3-2 fixtures")
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 2
+		and enemies.get_enemy(1).get("id") == "needle_briar_guard"
+		and enemies.get_enemy(2).get("id") == "spool_snarekeeper"
+		and enemies.get_enemy(1).get("hp") == 42
+		and enemies.get_enemy(2).get("hp") == 40,
+		"both authored V3-2 elites occupy real slots 1 and 2")
+	return {"party": party, "enemies": enemies}
+
+
+## One executable beat taken from an authenticated record's authored list with
+## its own source slot and a resolved hero target. A missing alternative fails.
+func _authored_beat(record: Dictionary, source: int, kind: String,
+		target: int) -> Dictionary:
+	var spec: Variant = record.get("intent", {})
+	var raw_actions: Variant = spec.get("actions", []) if spec is Dictionary else []
+	if not raw_actions is Array:
+		_check(false, "authenticated record authors an action list")
+		return {}
+	for raw in raw_actions:
+		if not raw is Dictionary or raw.get("type") != kind:
+			continue
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var body: Variant = weighted.get("action", {})
+		_check(body is Dictionary and not body.is_empty(),
+			"authenticated authored alternative " + kind + " of "
+				+ str(record.get("id")))
+		if not body is Dictionary or body.is_empty():
+			return {}
+		var action: Dictionary = body.duplicate(true)
+		action["enemy_position"] = source
+		if kind in ["attack", "debuff", "shove", "snip_block"]:
+			action["target_position"] = target
+		return action
+	_check(false, "authored alternative exists for " + kind + " of "
+		+ str(record.get("id")))
+	return {}
+
+
+## Authored action bodies of one V3-2 record without their weights.
+func _authored_bodies(id: String) -> Array:
+	var bodies: Array = []
+	for authored in V3_2_ELITES[id]["actions"]:
+		var body: Dictionary = authored.duplicate(true)
+		body.erase("weight")
+		bodies.append(body)
+	return bodies
+
+
+## Bind one fresh seeded scheduler to the authentic two-Elite roster and the
+## real three-hero party, then replay a fixed number of announced turns.
+func _v3_2_announcements(records: Dictionary, seed_value: int, turns: int) -> Dictionary:
+	var fixture := _v3_2_fixture(records)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var rng := _rng(seed_value)
+	# The legacy schedule is only the binding fixture: announcements come from
+	# the authentic roster's authored weighted intents.
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]},
+		{"enemy_position": 2, "pattern": [{"type": "block", "amount": 1}]}])
+	if not scheduler.is_valid() or not scheduler.bind_battle(enemies, party, rng):
+		_check(false, "genuine V3-2 roster binds to seeded weighted intentions")
+		return {}
+	var quiet_state: int = rng.state
+	var trace: Array = []
+	var states: Array = []
+	for turn in range(turns):
+		var announced := scheduler.get_intents()
+		_check(scheduler.get_intents() == announced and rng.state == quiet_state,
+			"V3-2 announcement readback spends no run RNG")
+		trace.append(announced)
+		states.append(rng.state)
+		if not scheduler.advance_turn():
+			_check(false, "bound V3-2 scheduler advances one turn")
+			return {}
+		quiet_state = rng.state
+	return {"trace": trace, "states": states, "rng": rng.state}
+
+
+## The authored weighted spec, bind_battle, front targets and fixed-seed replay
+## of both new records on a genuine roster and party.
+func _test_v3_2_announcements(records: Dictionary) -> void:
+	var fixture := _v3_2_fixture(records)
+	var roster: CombatEnemies = fixture["enemies"]
+	for position in range(1, V3_2_ORDER.size() + 1):
+		var id: String = V3_2_ORDER[position - 1]
+		var expected: Dictionary = V3_2_ELITES[id]
+		_check(roster.get_enemy(position).get("id") == id
+			and roster.get_enemy(position).get("intent") == records[id].get("intent"),
+			"authentic roster slot carries the authored intent " + id)
+		var slot := CombatEnemyIntents._weighted_slot(position, records[id].get("intent"))
+		_check(not slot.is_empty() and slot.get("enemy_position") == position
+			and slot.get("target") == expected["target"]
+			and slot.get("actions", []).size() == expected["actions"].size(),
+			"authored weighted spec normalizes for its own slot " + id)
+		if slot.is_empty():
+			continue
+		var normalized: Array = []
+		for entry in slot["actions"]:
+			var action: Dictionary = entry["action"].duplicate(true)
+			action["weight"] = entry["weight"]
+			normalized.append(action)
+		_check(normalized == expected["actions"],
+			"exact authored weighted alternatives and positive weights " + id)
+
+	var first := _v3_2_announcements(records, 41771, 6)
+	var second := _v3_2_announcements(records, 41771, 6)
+	_check(not first.is_empty() and first == second,
+		"two fresh same-seed bound instances announce identical actions and RNG")
+	if first.is_empty():
+		return
+	_check(first["trace"].size() == 6,
+		"six seeded turns were announced from the authentic roster")
+	var observed := 0
+	for turn in first["trace"]:
+		_check(turn.size() == 2 and turn[0].get("enemy_position") == 1
+			and turn[1].get("enemy_position") == 2,
+			"one announcement for each authentic V3-2 slot")
+		for action in turn:
+			observed += 1
+			var source: int = action.get("enemy_position", 0)
+			if source < 1 or source > V3_2_ORDER.size():
+				_check(false, "announced source is an authentic V3-2 slot")
+				continue
+			var id: String = V3_2_ORDER[source - 1]
+			var body: Dictionary = action.duplicate(true)
+			body.erase("enemy_position")
+			body.erase("target_position")
+			_check(body in _authored_bodies(id),
+				"announcement is one authored alternative only " + id + " "
+					+ str(action))
+			if action.get("type") in ["attack", "debuff", "shove"]:
+				_check(action.get("target_position") == 1,
+					"front policy announces the living front hero " + id)
+	_check(observed == 12, "every seeded two-slot announcement was checked")
+
+
+## Each authored V3-2 alternative on its own fresh full-party fixture.
+func _test_v3_2_beats(records: Dictionary) -> void:
+	var needle: Dictionary = records["needle_briar_guard"]
+	var spool: Dictionary = records["spool_snarekeeper"]
+
+	# Needle: authored Bleed 2 on the living front hero, no immediate damage.
+	var fixture := _v3_2_fixture(records)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var beat := _authored_beat(needle, 1, "debuff", 1)
+	if beat.is_empty():
+		return
+	_check(beat.get("status") == "bleed" and beat.get("amount") == 2,
+		"authenticated Needle alternative is authored Bleed 2")
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	var input := [beat.duplicate(true)]
+	var input_before := input.duplicate(true)
+	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	var after := party.get_hero(1)
+	_check(result == {"ok": true, "events": [_phase_event(beat)]}
+		and after.get("statuses") == {"bleed": 2}
+		and after.get("hp") == heroes_before[0]["hp"]
+		and after.get("block") == heroes_before[0]["block"],
+		"authored Bleed 2 lands without immediate damage")
+	_check(party.get_hero(2) == heroes_before[1] and party.get_hero(3) == heroes_before[2]
+		and enemies.get_enemies() == foes_before and input == input_before,
+		"Needle Bleed leaves the other heroes, roster and input untouched")
+
+	# Needle: authored Block 8 on its own enemy slot.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	beat = _authored_beat(needle, 1, "block", 0)
+	if beat.is_empty():
+		return
+	_check(beat == {"type": "block", "amount": 8, "enemy_position": 1},
+		"authenticated Needle alternative is authored Block 8")
+	heroes_before = party.get_heroes()
+	foes_before = enemies.get_enemies()
+	input = [beat.duplicate(true)]
+	input_before = input.duplicate(true)
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	_check(result == {"ok": true, "events": [_phase_event(beat)]}
+		and enemies.get_enemy(1).get("block") == 8
+		and enemies.get_enemy(1).get("hp") == foes_before[0]["hp"]
+		and enemies.get_enemy(2) == foes_before[1]
+		and party.get_heroes() == heroes_before and input == input_before,
+		"authored Block 8 guards only the Needle slot and touches no hero")
+
+	# Needle: authored Attack 9 into a front hero who holds four Block.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	beat = _authored_beat(needle, 1, "attack", 1)
+	if beat.is_empty():
+		return
+	_check(beat.get("amount") == 9 and party.gain_block(1, 4)
+		and party.get_hero(1).get("hp") == 40,
+		"authenticated Needle attack is 9 against a living four-Block front hero")
+	foes_before = enemies.get_enemies()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [beat.duplicate(true)])
+	after = party.get_hero(1)
+	_check(result == {"ok": true, "events": [_phase_event(beat)]}
+		and after.get("block") == 0 and after.get("hp") == 35
+		and party.get_hero(2).get("hp") == 30 and party.get_hero(3).get("hp") == 26
+		and enemies.get_enemies() == foes_before,
+		"authored Needle attack 9 absorbs four Block then deals exactly five HP")
+
+	# Spool: authored shove +1 from the living front hero into the middle slot.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	beat = _authored_beat(spool, 2, "shove", 1)
+	if beat.is_empty():
+		return
+	_check(beat.get("amount") == 0 and beat.get("direction") == 1,
+		"authenticated Spool alternative is an authored shove +1")
+	_check(party.get_hero(1).get("id") == "warden"
+		and party.get_hero(2).get("id") == "seamstress"
+		and party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30,
+		"shove precondition: distinct living front and middle heroes")
+	_check(party.apply_damage(1, 4) and party.gain_block(1, 2)
+		and party.apply_damage(2, 3) and party.gain_block(2, 1),
+		"shove precondition: distinct current HP and Block on both heroes")
+	heroes_before = party.get_heroes()
+	foes_before = enemies.get_enemies()
+	input = [beat.duplicate(true)]
+	input_before = input.duplicate(true)
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	_check(result == {"ok": true, "events": [_phase_event(beat)]},
+		"authored Spool shove +1 from slot 2 resolves as one applied beat")
+	var expected: Array = heroes_before.duplicate(true)
+	expected[0] = heroes_before[1].duplicate(true)
+	expected[1] = heroes_before[0].duplicate(true)
+	expected[0]["position"] = 1
+	expected[1]["position"] = 2
+	_check(party.get_heroes() == expected,
+		"shove +1 exchanges the living front and middle heroes only")
+	_check(party.get_hero(1).get("id") == "seamstress"
+		and party.get_hero(2).get("id") == "warden"
+		and party.get_hero(1).get("hp") == heroes_before[1]["hp"]
+		and party.get_hero(2).get("hp") == heroes_before[0]["hp"]
+		and party.get_hero(1).get("block") == heroes_before[1]["block"]
+		and party.get_hero(2).get("block") == heroes_before[0]["block"],
+		"swapped heroes keep their identity, current HP and Block")
+	_check(enemies.get_enemies() == foes_before and input == input_before,
+		"a shove is not a damaging move and leaves the input untouched")
+
+	# Spool: authored Weak 2 on the living front hero.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	beat = _authored_beat(spool, 2, "debuff", 1)
+	if beat.is_empty():
+		return
+	_check(beat.get("status") == "weak" and beat.get("amount") == 2,
+		"authenticated Spool alternative is authored Weak 2")
+	heroes_before = party.get_heroes()
+	foes_before = enemies.get_enemies()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [beat.duplicate(true)])
+	_check(result == {"ok": true, "events": [_phase_event(beat)]}
+		and party.get_hero(1).get("statuses") == {"weak": 2}
+		and party.get_hero(1).get("hp") == heroes_before[0]["hp"]
+		and party.get_hero(2).get("statuses", {}).is_empty()
+		and party.get_hero(3).get("statuses", {}).is_empty()
+		and enemies.get_enemies() == foes_before,
+		"authored Weak 2 lands twice on exactly the living front hero")
+
+	# Spool: authored Attack 8 into the front hero who holds three Block.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	beat = _authored_beat(spool, 2, "attack", 1)
+	if beat.is_empty():
+		return
+	_check(beat.get("amount") == 8 and party.gain_block(1, 3)
+		and party.get_hero(1).get("hp") == 40,
+		"authenticated Spool attack is 8 against a living three-Block front hero")
+	foes_before = enemies.get_enemies()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [beat.duplicate(true)])
+	after = party.get_hero(1)
+	_check(result == {"ok": true, "events": [_phase_event(beat)]}
+		and after.get("block") == 0 and after.get("hp") == 35
+		and party.get_hero(2).get("hp") == 30 and party.get_hero(3).get("hp") == 26
+		and enemies.get_enemies() == foes_before,
+		"authored Spool attack 8 absorbs three Block then deals exactly five HP")
+
+
+## The real phase engine's existing dead-neighbour and malformed-beat behaviour
+## for the V3-2 pair: no forced move, no partial mutation, no RNG spend.
+func _test_v3_2_phase_rejections(records: Dictionary) -> void:
+	var run_rng := _rng(91807)
+	var run_state: int = run_rng.state
+	var spool: Dictionary = records["spool_snarekeeper"]
+
+	# A genuinely downed shove partner: the middle hero is at zero HP.
+	var fixture := _v3_2_fixture(records)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var shove := _authored_beat(spool, 2, "shove", 1)
+	if shove.is_empty():
+		return
+	_check(party.apply_damage(2, 30) and party.is_downed(2)
+		and not party.is_downed(1),
+		"dead-neighbour precondition: only the middle hero is downed")
+	_reject_beat("V3-2 shove +1 into a downed neighbour", party, enemies, shove)
+
+	# The same announcement through the bound live path stays inert instead of
+	# forcing an illegal exchange.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	_check(party.apply_damage(2, 30) and party.is_downed(2)
+		and not party.is_downed(1),
+		"bound dead-neighbour precondition: only the middle hero is downed")
+	_check(CombatEnemyIntents.policy_for(enemies, 2) == "front",
+		"authentic Spool slot carries the front policy for the bound path")
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	var input := [shove.duplicate(true)]
+	var input_before := input.duplicate(true)
+	var inert: Dictionary = CombatEnemyPhase.new().execute_phase(
+		party, enemies, input, null, true)
+	var skipped := _phase_event(shove)
+	skipped["applied"] = false
+	_check(inert == {"ok": true, "events": [skipped]}
+		and party.get_heroes() == heroes_before
+		and enemies.get_enemies() == foes_before and input == input_before,
+		"a dead shove neighbour is skipped without a fake forced move")
+
+	# Malformed target, source and direction fail closed and mutate nothing.
+	fixture = _v3_2_fixture(records)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	_check(party.gain_block(1, 5) and enemies.gain_block(2, 3),
+		"malformed-beat precondition: real hero and enemy Block survive")
+	var bad_target := shove.duplicate(true)
+	bad_target["target_position"] = 0
+	_reject_beat("V3-2 shove target outside the party", party, enemies, bad_target)
+	var bad_source := _authored_beat(records["needle_briar_guard"], 3, "attack", 1)
+	_reject_beat("V3-2 announced source outside the roster", party, enemies, bad_source)
+	var bad_direction := shove.duplicate(true)
+	bad_direction["direction"] = 2
+	_reject_beat("V3-2 shove direction outside the authored pair", party, enemies,
+		bad_direction)
+	_check(run_rng.state == run_state,
+		"rejected V3-2 beats leave the run RNG state untouched")
+
+
+## V3-2: exact authored content, seeded authentic announcements and each
+## authored beat, with every earlier Elite record still intact by ID.
+func _test_v3_2_elites() -> void:
+	seed(62117)
+	var expected_rng := randi()
+	seed(62117)
+	var elites := _catalog(ELITES)
+	var untouched := elites.duplicate(true)
+	var records := {}
+	for id in V3_2_ELITES:
+		records[id] = _authored_elite(elites, id, V3_2_ELITES[id])
+	for id in LEGACY_ELITES:
+		_authored_elite(elites, id, LEGACY_ELITES[id])
+	for id in V3_ELITES:
+		_authored_elite(elites, id, V3_ELITES[id])
+	_check(records["needle_briar_guard"].get("id") == "needle_briar_guard"
+		and records["spool_snarekeeper"].get("id") == "spool_snarekeeper"
+		and records["needle_briar_guard"].get("id")
+			!= records["spool_snarekeeper"].get("id"),
+		"both V3-2 Elite IDs exist exactly once each and are distinct")
+	_check(records["needle_briar_guard"].get("intent")
+		!= records["spool_snarekeeper"].get("intent"),
+		"the two V3-2 elites author distinct weighted alternatives")
+	_test_v3_2_announcements(records)
+	_test_v3_2_beats(records)
+	_test_v3_2_phase_rejections(records)
+	_check(elites == untouched and RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string(ELITES)) == untouched,
+		"V3-2 checks never mutate the authored elite records")
+	_check(randi() == expected_rng,
+		"V3-2 catalog lookups, bound announcements and beats use no global RNG")
