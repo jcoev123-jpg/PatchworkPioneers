@@ -5,6 +5,7 @@ extends "res://tests/live_run_map_entry_test.gd"
 const EXPECTED_ROUTE_LABELS := {
 	"SewingCircle": "Sewing Circle",
 	"Campfire": "Campfire",
+	"PatchStall": "Patch Stall",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -419,8 +420,8 @@ func _run() -> void:
 	root.add_child(app)
 	await process_frame
 	await _invalid_starts(app)
-	var cases: Array = [["Fight", 1, "f01_n0", ""], ["Elite", 1, "f01_n3", ""]]
-	for kind in ["Rest", "Shop", "Event", "Treasure"]:
+	var cases: Array = []
+	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]:
 		var found: Array = []
 		for value in range(1, 1000):
 			var rng := RandomNumberGenerator.new()
@@ -430,6 +431,9 @@ func _run() -> void:
 			for id in map.get_legal_choices():
 				if map.get_node(id).type != kind:
 					continue
+				if kind in ["Fight", "Elite"]:
+					found = [kind, value, id, ""]
+					break
 				for next in map.get_node(id).outgoing:
 					if map.get_node(next).type == "Fight":
 						found = [kind, value, id, next]

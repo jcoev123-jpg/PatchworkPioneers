@@ -69,7 +69,7 @@ func _check_chooser() -> void:
 		var id: String = button.get_meta("route_id")
 		shown.append(id)
 		var kind: String = app.run_map.get_node(id).type
-		_check(button.is_visible_in_tree() and button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "Fight", "Elite", "Boss"]), "exact supported successor types actionable")
+		_check(button.is_visible_in_tree() and button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Fight", "Elite", "Boss"]), "exact supported successor types actionable")
 		if button.disabled:
 			var before := _placeholder_state()
 			await _click(button)

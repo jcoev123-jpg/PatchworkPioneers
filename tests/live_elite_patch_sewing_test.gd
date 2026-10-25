@@ -44,7 +44,7 @@ func _attack_patch_claims() -> void:
 		var next_seed: int = drop_seeds.get(patch_id, search_seed)
 		var obtained := false
 		for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
-			var fixture := _multi_fixture(next_seed, 30000)
+			var fixture := _multi_fixture(next_seed, maxi(30000, next_seed + 10000))
 			if not fixture.is_empty():
 				search_seed = maxi(search_seed, fixture.seed + 1)
 			_check(not fixture.is_empty(), "seeded Elite route exists for " + patch_id)
@@ -644,7 +644,7 @@ func _verify_worn_readout() -> void:
 func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dictionary:
 	var first_seed := 5052 if prior_coat else 1
 	for attempt in range(maxi(40, RunAuthoredPatchDefinitions.load_definitions().size() * 8)):
-		var fixture := _multi_fixture(first_seed, 30000)
+		var fixture := _multi_fixture(first_seed, maxi(30000, first_seed + 20000))
 		if fixture.is_empty() or not await _routed_win(fixture, false):
 			return {}
 		await _click(app.reward_buttons[reward_index])
@@ -672,7 +672,7 @@ func _coat_multi_fixture(reward_index: int = 0, prior_coat: bool = false) -> Dic
 func _torn_focus_fixture() -> Dictionary:
 	var next_seed := 1
 	for attempt in range(120):
-		var fixture := _multi_fixture(next_seed)
+		var fixture := _multi_fixture(next_seed, maxi(3000, next_seed + 12000))
 		if fixture.is_empty():
 			return {}
 		var rng := RandomNumberGenerator.new()

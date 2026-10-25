@@ -3,7 +3,7 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
-const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire"]
+const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall"]
 
 
 func _initialize() -> void:
@@ -146,6 +146,7 @@ func _test_playable_openings_preserve_original_generation() -> void:
 	var blocked_count := 0
 	var playable_count := 0
 	var campfire_seen := false
+	var patch_stall_seen := false
 	var blocked_fallback_verified := false
 	for value in range(128):
 		var original_rng := _rng(value)
@@ -157,6 +158,7 @@ func _test_playable_openings_preserve_original_generation() -> void:
 		for row in original:
 			for node in row:
 				campfire_seen = campfire_seen or node.type == "Campfire"
+				patch_stall_seen = patch_stall_seen or node.type == "PatchStall"
 		if originally_playable:
 			playable_count += 1
 		else:
@@ -183,6 +185,7 @@ func _test_playable_openings_preserve_original_generation() -> void:
 	_check(blocked_fallback_verified,
 		"bounded seed search finds and verifies a blocked opening fallback")
 	_check(campfire_seen, "seed sweep includes Campfire nodes")
+	_check(patch_stall_seen, "seed sweep includes Patch Stall nodes")
 
 
 func _assert_graph(map: RunMap) -> void:

@@ -913,7 +913,7 @@ func _run() -> void:
 			var id: String = button.get_meta("route_id")
 			var kind: String = app.run_map.get_node(id).type
 			shown.append(id)
-			_check(button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Fight", "Elite", "Boss"]), "only supported connected controls enabled")
+			_check(button.disabled == (kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Fight", "Elite", "Boss"]), "only supported connected controls enabled")
 			if kind == "Shop":
 				shop = button
 			if button.disabled:

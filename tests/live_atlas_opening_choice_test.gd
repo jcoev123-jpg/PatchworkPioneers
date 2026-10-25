@@ -2,6 +2,9 @@ extends "res://tests/live_run_map_entry_test.gd"
 
 ## Independent, pinned design facts for the actual mounted player-facing atlas.
 const LIVE_HELP := {
+	"PatchStall": ["Choose one: buy a patch or leave",
+		"3 priced power patches; choose a wearer; sewing included",
+		"Buy one of 3 priced power patches for one chosen hero, sewing included, or leave unchanged"],
 	"Campfire": ["Choose one: heal or leave",
 		"Heal 30% max HP; torn revives at 1 HP first",
 		"One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged"],
@@ -89,6 +92,7 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 	var expected := {
 		"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 		"Campfire": "res://assets/paper/ui/map_node_campfire.png",
+		"PatchStall": "res://assets/paper/ui/map_node_patch_stall.png",
 		"Fight": "res://assets/paper/ui/map_node_fight.png",
 		"Elite": "res://assets/paper/ui/map_node_elite.png",
 		"Event": "res://assets/paper/ui/map_node_event.png",

@@ -439,13 +439,24 @@ func _moth_outcomes() -> void:
 	seed(720074)
 	global_next = randi()
 	seed(720074)
-	app.run_seed = 6
+	app.run_seed = 64
 	await _click(app.start_button)
-	await _click(_route_action("f01_n1"))
+	var opening := _route_action("f01_n3")
+	_check(app.run_map.get_node("f01_n3").get("type") == "Event" and is_instance_valid(opening),
+		"zero-scrap opening has a real first Event")
+	if not is_instance_valid(opening):
+		return
+	await _click(opening)
 	_check(app.quiet_spool_panel != null, "opening run's first Event is Quiet Spool")
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	_check(app.run_scraps == 0 and app._quiet_spool_completed, "Ignore leaves a zero-scrap wallet")
-	await _click(_route_action("f02_n0"))
+	var next_event := _route_action("f02_n3")
+	_check(app.run_map.get_node("f01_n3").get("outgoing", []).has("f02_n3")
+		and app.run_map.get_node("f02_n3").get("type") == "Event"
+		and is_instance_valid(next_event), "zero-scrap Moth entry remains genuinely connected")
+	if not is_instance_valid(next_event):
+		return
+	await _click(next_event)
 	panel = app.moth_panel
 	_check(panel != null, "opening run's second Event mounts Moth")
 	if panel == null:
@@ -536,7 +547,7 @@ func _run() -> void:
 	presenter = app.get_node("LiveAttackPreview")
 	var stale: Array[Callable] = []
 	for won in [false, true]:
-		var fixture := _placeholder_fixture("", "Event") if won else {"seed": 6, "path": ["f01_n1", "f02_n0"]}
+		var fixture := _placeholder_fixture("", "Event") if won else {"seed": 64, "path": ["f01_n3", "f02_n3"]}
 		_check(not fixture.is_empty(), "real seeded Event fixture exists")
 		if fixture.is_empty():
 			continue
@@ -560,7 +571,18 @@ func _run() -> void:
 						callback.call()
 				_check(_event_state() == before_stale, "fresh same-seed run rejects old bindings")
 				var id: String = fixture.path[0]
+				var next_id: String = fixture.path[1]
+				_check(app.run_map.get_legal_choices().has(id)
+					and app.run_map.get_node(id).get("type") == "Event"
+					and app.run_map.get_node(id).get("outgoing", []).has(next_id)
+					and app.run_map.get_node(next_id).get("type") == "Event",
+					"genuine connected zero-Fight two-Event witness")
 				var action := _route_action(id)
+				_check(is_instance_valid(action) and not action.disabled
+					and not action.pressed.get_connections().is_empty(),
+					"first real Event control is mounted and bound before callback")
+				if not is_instance_valid(action) or action.disabled or action.pressed.get_connections().is_empty():
+					break
 				var entry: Callable = action.pressed.get_connections()[0].callable
 				# Invalid authored records fail before choosing the node or mounting anything.
 				var path := OS.get_environment("TEMP").path_join("quiet_spool_route_invalid.json")

@@ -8,14 +8,14 @@ var failures: Array[String] = []
 var checks := 0
 
 
-## Eight normal kinds repin two route fixtures. These seeds naturally witness
-## an early defeat (102) and an offered, acquired, later-played Blanket Stitch
-## (186), with the unchanged strategy; neither outcomes nor choices are injected.
+## Nine normal kinds repin the early-defeat (88) and generic wallet (169) fixtures.
+## Keep 47 original seeds and the offered/acquired/played Blanket Stitch witness (186),
+## with the unchanged strategy; neither outcomes nor choices are injected.
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
-	for value in range(1, 49):
+	for value in range(1, 48):
 		values.append(value)
-	values.append_array([102, 186])
+	values.append_array([88, 169, 186])
 	return values
 
 
@@ -555,6 +555,36 @@ func _run_seed(value: int) -> Dictionary:
 			elif before != _event_snapshot(map, carry, wardrobe, deck_ids,
 					descriptors, next_stitch_id, gold, scraps, owned, rng, event_history):
 				return _fail("Sewing Circle Leave changed authoritative state")
+		elif kind == "PatchStall":
+			var before := _event_snapshot(map, carry, wardrobe, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
+			var oracle := RandomNumberGenerator.new()
+			oracle.state = rng.state
+			var eligible: Array = []
+			var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+			for offer in shop_catalog.trinkets:
+				if not owned.has(offer.id) and powers.any(func(power): return power.id == offer.id):
+					eligible.append(offer.id)
+			eligible.sort()
+			var expected: Array = []
+			for i in range(3):
+				if eligible.is_empty():
+					return _fail("Patch Stall oracle has insufficient candidates")
+				var selected := oracle.randi_range(0, eligible.size() - 1)
+				expected.append(eligible[selected])
+				eligible.remove_at(selected)
+			var sampled := RunShopPurchases.sample_patch_stall_offers(rng, shop_catalog.trinkets, owned)
+			if not sampled.ok or sampled.offers.size() != 3:
+				return _fail("three genuine Patch Stall offers")
+			# This card-focused pilot leaves patch-only stops; stock still consumes the real seeded draws.
+			for i in range(3):
+				if sampled.offers[i].id != expected[i]:
+					return _fail("Patch Stall seeded offer mismatch")
+			before[10] = str(oracle.state)
+			var after := _event_snapshot(map, carry, wardrobe, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
+			if before != after:
+				return _fail("Patch Stall Leave changed run authorities")
 		elif kind == "Treasure":
 			treasure_visits += 1
 		else:

@@ -188,7 +188,7 @@ func _return() -> void:
 func _hand_fixture() -> Dictionary:
 	# Repinned so every tested composite can be drawn without overcrowding the
 	# hand below the renderer's 88px minimum for the detailed/compact face checks.
-	for value in range(34379, 50001):
+	for value in range(1702, 50001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -552,8 +552,12 @@ func _return_race(id: String) -> void:
 		_check(app.deck.draw_extra(1) == 1, "real redraw for Return race")
 	app._refresh_hand()
 	await _frames()
-	_check(app.deck.hand.has(id) and presenter._bindings.has(_panel(id)), "Return race has genuine held actionable composite")
-	_stale_card_input = presenter._bindings[_panel(id)].input
+	_check(app.deck.hand.has(id) and _panel(id) != null and is_instance_valid(_panel(id))
+		and presenter._bindings.has(_panel(id)), "Return race has genuine held actionable composite")
+	var panel = _panel(id)
+	if panel == null or not is_instance_valid(panel) or not presenter._bindings.has(panel):
+		return
+	_stale_card_input = presenter._bindings[panel].input
 	await _arm(id, true)
 	await _key(KEY_1)
 	var deck: CombatDeck = app.deck

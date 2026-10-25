@@ -235,6 +235,8 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 			await _click(app.rest_continue_button)
 		"Campfire":
 			await _click(app.campfire_leave_button)
+		"PatchStall":
+			await _click(app.patch_stall_leave)
 		"SewingCircle":
 			await _click(app.sewing_leave_button)
 		"Shop":

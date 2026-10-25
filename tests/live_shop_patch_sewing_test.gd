@@ -1103,13 +1103,18 @@ func _badge_fights() -> void:
 			await _reach(fixture.paths[0], keyboard)
 			wardrobe = app._shop_wardrobe
 			await _purchase(badge, keyboard, wearer)
-			var persistent := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
+			var paid := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
 				app.run_trinkets.duplicate(), app.session_gold, app.run_scraps]
 			await _activate(app.shop_continue_button, keyboard)
+			_check([app.run_heroes, app.run_deck, app.run_trinkets, app.session_gold, app.run_scraps] == paid,
+				"leaving a paid Shop preserves persistent heroes, deck, ownership and currency")
 			# The route callback must fail closed on a stale bound wardrobe.
 			var transit: Array = fixture.paths[1].duplicate()
 			var destination: String = transit.pop_back()
 			await _visit_path(transit, keyboard)
+			# A transit Rest or Event may legitimately heal or pay before the Badge fight.
+			var persistent := [app.run_heroes.duplicate(true), app.run_deck.duplicate(),
+				app.run_trinkets.duplicate(), app.session_gold, app.run_scraps]
 			var action: Button = _route_action(destination)
 			var callback: Callable = action.pressed.get_connections()[0].callable
 			wardrobe._heroes[wearer].hp -= 1

@@ -1,7 +1,7 @@
 extends SceneTree
 ## Service integration only: public combat damage witnesses outcomes, not UI play.
-## Search seeds 1..612, depth at most twelve, using generated public graph data.
-const SEED_LIMIT := 612
+## Search seeds 1..772, depth at most twelve, using generated public graph data.
+const SEED_LIMIT := 772
 const TRINKETS := ["thread_token", "button_charm", "spool_pendant"]
 var failures: Array[String] = []
 var checks := 0

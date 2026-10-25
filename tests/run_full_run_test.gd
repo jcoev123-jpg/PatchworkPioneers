@@ -55,9 +55,9 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	# Seed 121 is the first retained seven-kind fixture with a funded Shop,
+	# The expanded stop pool repins the retained fixture (now seed 255) with a funded Shop,
 	# final recovery and a witnessed full win using the unchanged held-card pilot.
-	for value in range(121, SEED_LIMIT + 1):
+	for value in range(128, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -580,6 +580,15 @@ func _win(fixture: Dictionary) -> Array:
 			await _reward(battles == 2)
 			_check(app.run_heroes == carried and app.run_heroes == app.party_carryover.read_state().heroes,
 				"claim publishes exact combat HP/status/positions, clearing only transient Block")
+		elif kind == "PatchStall":
+			var before := _inventory()
+			var callback := _retained(app.patch_stall_leave)
+			await _activate(app.patch_stall_leave, true)
+			_check(_inventory() == before and app._can_choose_connected_route(),
+				"post-fight Patch Stall Leave preserves full inventory and admits onward route")
+			stale.append(callback)
+			await _reject_stale()
+			_record(["patch_stall_leave"])
 		elif kind == "SewingCircle":
 			var before := _inventory()
 			var callback := _retained(app.sewing_leave_button)

@@ -383,7 +383,7 @@ func _run() -> void:
 				var id: String = action.get_meta("route_id")
 				var node_kind: String = live_map.get_node(id).type
 				shown.append(id)
-				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
+				_check(action.get_meta("route_kind") == node_kind and action.text == app.route_kind_label(node_kind) and action.disabled == (node_kind not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Fight", "Elite", "Boss"]), "exact adjacent ID/type with only supported kinds enabled")
 				if action.disabled:
 					await _click(action)
 					action.pressed.emit()

@@ -78,6 +78,7 @@ const BASE_SCREEN_SCENE := "res://scenes/base_screen.tscn"
 const ROUTE_KIND_LABELS := {
 	"SewingCircle": "Sewing Circle",
 	"Campfire": "Campfire",
+	"PatchStall": "Patch Stall",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -91,6 +92,7 @@ const ROUTE_KIND_LABELS := {
 const ROUTE_KIND_FELT := {
 	"SewingCircle": Color("#795e78"),
 	"Campfire": Color("#965a39"),
+	"PatchStall": Color("#546b5f"),
 	"Fight": Color("#8a5a4a"),
 	"Elite": Color("#9a6248"),
 	"Rest": Color("#6d7f63"),
@@ -102,6 +104,7 @@ const ROUTE_KIND_FELT := {
 const ROUTE_KIND_THREAD := {
 	"SewingCircle": Color("#ead0e7"),
 	"Campfire": Color("#f1c38f"),
+	"PatchStall": Color("#dbe6c2"),
 	"Fight": Color("#e8c9a0"),
 	"Elite": Color("#f0d2a0"),
 	"Rest": Color("#c6dcc0"),
@@ -1428,7 +1431,7 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
 	button.set_meta("route_label", label)
-	if kind in ["SewingCircle", "Campfire"]:
+	if kind in ["SewingCircle", "Campfire", "PatchStall"]:
 		button.set_meta("sewing_source", _sewing_context())
 	button.disabled = kind not in RunMap.NORMAL_TYPES and (opening or kind != "Boss")
 	if button.disabled:
@@ -1541,6 +1544,8 @@ func _dispatch_route(id: String, source: WeakRef, prior: Array[String], button) 
 		or button.get_meta("route_kind", "") != run_map.get_node(id).get("type"):
 		return false
 	match run_map.get_node(id).get("type"):
+		"PatchStall":
+			return _choose_patch_stall_route(id, source, prior, button)
 		"Campfire":
 			return _choose_campfire_route(id, source, prior, button)
 		"SewingCircle":
@@ -1624,7 +1629,7 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 		or button.get_parent() != route_view or button.get_meta("route_id") != id \
 		or button.disabled or not button.visible:
 		return false
-	if run_map.get_node(id).get("type") in ["SewingCircle", "Campfire"] \
+	if run_map.get_node(id).get("type") in ["SewingCircle", "Campfire", "PatchStall"] \
 		and button.get_meta("sewing_source", {}) != _sewing_context():
 		return false
 	_clear_route_atlas()
@@ -2677,8 +2682,12 @@ func _unfought_run() -> bool:
 			"pending_node_id": "", "settled_node_ids": []} or act_outcome._pending_result != null:
 		return false
 	for id in run_map.get_route():
-		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire"]:
+		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall"]:
 			return false
+		if run_map.get_node(id).get("type") == "PatchStall":
+			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
+			if _patch_stall_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
+				return false
 		if run_map.get_node(id).get("type") == "Campfire":
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
 			if _campfire_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
@@ -2716,6 +2725,11 @@ func _can_choose_connected_route() -> bool:
 		return false
 	if run_map.get_route().is_empty():
 		return _unfought_run()
+	if run_map.get_node(run_map.get_current_node_id()).get("type") == "PatchStall":
+		return _patch_stall_closed and _patch_stall_original == _sewing_context() \
+			and _patch_stall_visits.get(run_map.get_current_node_id(), []) == [run_map, \
+				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
+			and is_instance_valid(patch_stall_view) and not patch_stall_view.visible
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"]:
 		return _can_leave_fight()
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
@@ -3895,6 +3909,168 @@ func _clear_dye_vat() -> void:
 		remove_child(dye_vat_panel)
 		dye_vat_panel.queue_free()
 	dye_vat_panel = null
+
+
+var patch_stall_view: VBoxContainer
+var patch_stall_buttons: Array[Button] = []
+var patch_stall_heroes: OptionButton
+var patch_stall_leave: Button
+var patch_stall_visit: RunShopVisit
+var patch_stall_purchases: RunShopPurchases
+var _patch_stall_wardrobe: RunPatchWardrobe
+var _patch_stall_original: Dictionary = {}
+var _patch_stall_context: Array = []
+var _patch_stall_closed := false
+var _patch_stall_visits: Dictionary = {}
+
+
+func _patch_stall_snapshot() -> Array:
+	return [_sewing_context(), act_outcome, act_outcome.get_state(), patch_stall_visit,
+		patch_stall_visit.get_state(), patch_stall_purchases, patch_stall_purchases.get_state(),
+		patch_stall_purchases.get_stock(), patch_stall_purchases.patch_stall_choice_used(),
+		_patch_stall_wardrobe, _patch_stall_wardrobe.get_snapshot(), patch_stall_view,
+		patch_stall_buttons.duplicate(), patch_stall_heroes, patch_stall_leave]
+
+
+func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
+	if not _can_choose_connected_route() or source == null or source.get_ref() != run_map \
+		or not is_instance_valid(route_view) or not route_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button not in route_buttons \
+		or button.get_parent() != route_view or button.disabled or not button.is_visible_in_tree() \
+		or button.get_meta("route_id", "") != id or button.get_meta("route_kind", "") != "PatchStall" \
+		or run_map.get_route() != prior or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "PatchStall" \
+		or button.get_meta("sewing_source", {}) != _sewing_context():
+		return false
+	var carry := party_carryover as RunTornCarryover
+	var definitions := RunAuthoredPatchDefinitions.load_definitions()
+	if carry == null or definitions.is_empty():
+		return false
+	var wardrobe := carry._wardrobe
+	if wardrobe == null:
+		wardrobe = RunPatchWardrobe.new(run_heroes, run_trinkets, definitions,
+			run_scraps, session_gold, run_deck, run_seed, true)
+	var w := wardrobe.get_snapshot()
+	if not wardrobe.is_valid() or w.heroes != run_heroes or w.owned != run_trinkets \
+		or w.gold != session_gold or w.scraps != run_scraps or w.cards != run_deck \
+		or w.seed != run_seed or w.rest_id != "" or not carry.can_bind_wardrobe(wardrobe, carry.torn, w):
+		return false
+	var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	if not authored is Dictionary or not authored.get("trinkets") is Array:
+		return false
+	var visit := RunShopVisit.new(run_deck, session_gold, run_removal_count, run_trinkets,
+		run_stitch_descriptors, run_next_stitch_id)
+	if not visit.get_state().valid:
+		return false
+	var rng_before := run_rng.state
+	var sampled := RunShopPurchases.sample_patch_stall_offers(run_rng, authored.trinkets, run_trinkets)
+	if not sampled.ok:
+		return false
+	var ids: Array = []
+	for hero in run_heroes:
+		ids.append(hero.id)
+	var purchases := RunShopPurchases.new(ids, run_deck, run_trinkets, session_gold, [], sampled.offers, "patch_stall")
+	if not purchases.is_valid() or not run_map.choose_node(id):
+		run_rng.state = rng_before
+		return false
+	if not visit.open_visit(id):
+		run_map.undo_choice(id, prior)
+		run_rng.state = rng_before
+		return false
+	_clear_route_view()
+	if is_instance_valid(patch_stall_view):
+		patch_stall_view.free()
+	patch_stall_visit = visit
+	patch_stall_purchases = purchases
+	_patch_stall_wardrobe = wardrobe
+	_patch_stall_closed = false
+	patch_stall_buttons.clear()
+	patch_stall_view = VBoxContainer.new()
+	patch_stall_view.name = "PatchStall"
+	patch_stall_view.position = Vector2(280, 170)
+	patch_stall_view.custom_minimum_size = Vector2(720, 320)
+	patch_stall_view.add_theme_constant_override("separation", 12)
+	add_child(patch_stall_view)
+	var title := Label.new()
+	title.text = "Patch Stall - buy one patch, sewing included, or Leave.\nGold: %d" % session_gold
+	title.add_theme_font_size_override("font_size", 22)
+	patch_stall_view.add_child(title)
+	patch_stall_heroes = OptionButton.new()
+	patch_stall_heroes.custom_minimum_size.y = 42
+	for hero in run_heroes:
+		patch_stall_heroes.add_item(hero.id.capitalize())
+		patch_stall_heroes.set_item_metadata(patch_stall_heroes.item_count - 1, hero.id)
+	patch_stall_view.add_child(patch_stall_heroes)
+	for offer in purchases.get_stock().trinkets:
+		var action := Button.new()
+		action.text = "%s (%s) - %d gold%s" % [String(offer.id).capitalize(),
+			w.definitions[offer.id], offer.price, " (insufficient gold)" if session_gold < offer.price else ""]
+		action.custom_minimum_size.y = 48
+		action.disabled = session_gold < offer.price
+		action.set_meta("patch_id", offer.id)
+		patch_stall_view.add_child(action)
+		patch_stall_buttons.append(action)
+		action.pressed.connect(_patch_stall_action.bind(action, patch_stall_view, visit))
+	patch_stall_leave = Button.new()
+	patch_stall_leave.text = "Leave"
+	patch_stall_leave.custom_minimum_size.y = 48
+	patch_stall_view.add_child(patch_stall_leave)
+	patch_stall_leave.pressed.connect(_patch_stall_action.bind(patch_stall_leave, patch_stall_view, visit))
+	var controls: Array[Control] = [patch_stall_heroes]
+	for action in patch_stall_buttons:
+		if not action.disabled:
+			controls.append(action)
+	controls.append(patch_stall_leave)
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
+	_patch_stall_context = _patch_stall_snapshot()
+	controls[0].grab_focus()
+	return true
+
+
+func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
+	if _patch_stall_closed or _patch_stall_context.is_empty() or visit == null or visit != patch_stall_visit \
+		or not is_instance_valid(view) or view != patch_stall_view or view.get_parent() != self \
+		or not view.is_visible_in_tree() or not is_instance_valid(button) \
+		or button not in patch_stall_buttons + [patch_stall_leave] or button.get_parent() != view \
+		or button.disabled or not button.is_visible_in_tree() or _patch_stall_snapshot() != _patch_stall_context \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "PatchStall":
+		return
+	if button != patch_stall_leave:
+		if not is_instance_valid(patch_stall_heroes) or patch_stall_heroes.get_parent() != view \
+			or patch_stall_heroes.disabled or not patch_stall_heroes.is_visible_in_tree() \
+			or patch_stall_heroes.item_count != 3:
+			return
+		var row := patch_stall_heroes.selected
+		if row < 0 or row >= run_heroes.size() \
+			or patch_stall_heroes.get_item_metadata(row) != run_heroes[row].id \
+			or patch_stall_heroes.get_item_text(row) != String(run_heroes[row].id).capitalize():
+			return
+		var index := patch_stall_buttons.find(button)
+		var offer: Dictionary = patch_stall_purchases.get_stock().trinkets[index]
+		if button.get_meta("patch_id", "") != offer.id:
+			return
+		var carry := party_carryover as RunTornCarryover
+		var w := _patch_stall_wardrobe.get_snapshot()
+		if carry == null or not carry.can_bind_wardrobe(_patch_stall_wardrobe, carry.torn, w):
+			return
+		var result := RunShopPatchSewing.purchase_and_sew(patch_stall_purchases, visit, _patch_stall_wardrobe,
+			run_map.get_current_node_id(), offer.id, run_heroes[row].id, w.definitions.get(offer.id),
+			"patch_stall:%s" % run_map.get_current_node_id(), patch_stall_purchases.get_state(),
+			patch_stall_purchases.get_stock(), visit.get_state(), w)
+		if not result.ok:
+			return
+		run_trinkets.assign(result.wardrobe_state.owned)
+		run_scraps = result.wardrobe_state.scraps
+		session_gold = result.wardrobe_state.gold
+		carry.bind_wardrobe(_patch_stall_wardrobe, carry.torn, result.wardrobe_state)
+	visit.close_visit()
+	_patch_stall_closed = true
+	_patch_stall_original = _sewing_context()
+	_patch_stall_visits[run_map.get_current_node_id()] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
+	view.hide()
+	_present_connected_route(weakref(run_map))
 
 
 var campfire_view: VBoxContainer
@@ -6090,6 +6266,19 @@ func _return_to_title() -> void:
 	campfire_view = null
 	campfire_visit = null
 	_campfire_original.clear()
+	if is_instance_valid(patch_stall_view):
+		patch_stall_view.free()
+	patch_stall_view = null
+	patch_stall_visit = null
+	patch_stall_purchases = null
+	_patch_stall_wardrobe = null
+	patch_stall_buttons.clear()
+	patch_stall_heroes = null
+	patch_stall_leave = null
+	_patch_stall_original.clear()
+	_patch_stall_context.clear()
+	_patch_stall_visits.clear()
+	_patch_stall_closed = false
 	_campfire_visits.clear()
 	_campfire_closed = false
 	if is_instance_valid(sewing_view):

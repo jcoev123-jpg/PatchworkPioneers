@@ -54,7 +54,7 @@ func enter_preview(app, screen: String) -> bool:
 			_busy = false
 			return false
 	elif screen != "title":
-		app.run_seed = {"rest": 4, "shop": 3, "event": 1}.get(screen, 1)
+		app.run_seed = {"rest": 2, "shop": 3, "event": 1}.get(screen, 1)
 		app.start_button.pressed.emit()
 		if app.run_map == null or not _visible(app.route_view):
 			_busy = false
@@ -64,7 +64,7 @@ func enter_preview(app, screen: String) -> bool:
 		app.run_scraps = SCRAPS
 		_preview_map = weakref(app.run_map)
 		if screen != "map":
-			var route: String = {"rest": "f01_n3", "shop": "f01_n1", "event": "f01_n2"}.get(screen, "f01_n0")
+			var route: String = {"rest": "f01_n2", "shop": "f01_n1", "event": "f01_n2"}.get(screen, "f01_n0")
 			for button in app.route_buttons:
 				if button.get_meta("route_id") == route and not button.disabled:
 					button.pressed.emit()

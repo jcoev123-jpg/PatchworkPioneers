@@ -4,6 +4,40 @@ extends "res://tests/live_fight_carryover_entry_test.gd"
 var last_latch: RunActBattleOutcome
 
 
+# Unlike the Rest-only parent fixture, this act-outcome test must also enter
+# a connected second battle after a genuine opening victory.
+func _fixture() -> Dictionary:
+	for value in range(1, 6001):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var opening_rng: int = rng.state
+		for id in map.get_legal_choices():
+			if map.get_node(id).get("type") != "Fight":
+				continue
+			var rest := false
+			var other := false
+			var battle := false
+			for next in map.get_node(id).get("outgoing", []):
+				var kind: String = map.get_node(next).get("type", "")
+				rest = rest or kind == "Rest"
+				other = other or kind not in ["Rest", "Shop", "Event", "Treasure"]
+				battle = battle or kind in ["Fight", "Elite"]
+			if not (rest and other and battle):
+				continue
+			rng.state = opening_rng
+			if not map.choose_node(id):
+				continue
+			var selected := RunAuthoredBattleEntry.new().entry_current_battle(
+				map, rng, RunFightEncounterSelection.new())
+			if selected.get("encounter_id") == "starter_attacks":
+				return {"seed": value, "fight": id}
+			map.undo_choice(id, [])
+	return {}
+
+
 func _snapshot() -> Array:
 	var result := super._snapshot()
 	result.append(app.act_outcome.get_state() if app.act_outcome != null else {})

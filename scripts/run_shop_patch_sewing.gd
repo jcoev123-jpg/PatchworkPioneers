@@ -19,6 +19,8 @@ static func purchase_and_sew(purchases: RunShopPurchases, visit: RunShopVisit,
 		expected_purchase: Variant, expected_stock: Variant,
 		expected_visit: Variant, expected_wardrobe: Variant) -> Dictionary:
 	var rejected := {"ok": false}
+	if purchases != null and purchases.patch_stall_choice_used():
+		return rejected
 	if purchases == null or visit == null or wardrobe == null 			or not purchases.is_valid() or not wardrobe.is_valid():
 		return rejected
 	# Equality to complete fresh reads also checks the wardrobe's own receipt
