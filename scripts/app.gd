@@ -1334,9 +1334,10 @@ func _open_route() -> void:
 	route_view.add_child(heading)
 	var actions: Array[Button] = []
 	var branch_targets: Array[Rect2] = []
-	for id in run_map.get_legal_choices():
+	for choice in _authenticated_route_choices(run_map, RunV3StopChoiceProjection.project_legal_choices(run_map)):
+		var id: String = choice.id
 		var node := run_map.get_node(id)
-		var button := _route_choice_button(id, String(node.type))
+		var button := _route_choice_button(id, String(node.type), true, choice)
 		button.position = Vector2(ROUTE_PATCH_LEFT, route_patch_top(int(node.get("position", 0))))
 		route_view.add_child(button)
 		branch_targets.append(Rect2(button.position, button.size))
@@ -1422,11 +1423,29 @@ func _route_token_texture(path: String) -> Texture2D:
 	return _route_tokens.get(path)
 
 
-## One art-backed opening patch: exact ID in metadata, readable kind label, sewn token,
-## a stitched felt face and a readable kind accent. Its page slot is set by the caller
-## from the authored node position, so the patch is never a list row.
-func _route_choice_button(id: String, kind: String, opening: bool = true) -> Button:
+## Authenticate the complete read projection against the current map before presentation.
+## Detached projected kinds never participate in route admission or dispatch.
+func _authenticated_route_choices(source_map: RunMap, projected: Array) -> Array:
+	if source_map == null or source_map != run_map:
+		return []
+	var legal := source_map.get_legal_choices()
+	if projected.size() != legal.size():
+		return []
+	for index in range(legal.size()):
+		var source := source_map.get_node(legal[index])
+		var choice = projected[index]
+		if not choice is Dictionary or source.is_empty() \
+			or choice.get("id") != legal[index] or choice.get("type") != source.get("type") \
+			or choice.get("v3_kind") != RunV3StopChoiceProjection.v3_kind_for(str(source.get("type"))):
+			return []
+	return projected.duplicate(true)
+
+
+## Keep the authenticated source kind for token art, availability and dispatch.
+func _route_choice_button(id: String, kind: String, opening: bool, choice: Dictionary) -> Button:
 	var label := route_kind_label(kind)
+	if kind in ["Rest", "Shop"]:
+		label += " / " + str(choice.v3_kind)
 	var button := Button.new()
 	button.name = "Opening_" + id
 	button.text = label
@@ -1436,6 +1455,7 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 	button.add_theme_font_size_override("font_size", 20)
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
+	button.set_meta("v3_kind", choice.v3_kind)
 	button.set_meta("route_label", label)
 	if kind in ["SewingCircle", "Campfire", "PatchStall", "Unpicker"]:
 		button.set_meta("sewing_source", _sewing_context())
@@ -1444,6 +1464,10 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 		button.text = label + " (unavailable)"
 	else:
 		button.tooltip_text = "Choose this %s" % label.to_lower()
+		if kind == "Rest":
+			button.tooltip_text = "Campfire preview: opens the legacy Rest screen to heal or upgrade a card."
+		elif kind == "Shop":
+			button.tooltip_text = "Peddler preview: opens the legacy Shop screen to buy cards or remove a card."
 	_style_route_button(button, ROUTE_KIND_THREAD.get(kind, ROUTE_BOOK_THREAD), true)
 	button.add_child(_route_token(kind))
 	button.add_child(_route_patch_stitch(kind))
@@ -2470,9 +2494,10 @@ func _present_connected_route(source_map: WeakRef) -> void:
 	route_view.add_child(branches)
 	var targets: Array[Rect2] = []
 	var prior := run_map.get_route()
-	for id in run_map.get_legal_choices():
+	for choice in _authenticated_route_choices(run_map, RunV3StopChoiceProjection.project_legal_choices(run_map)):
+		var id: String = choice.id
 		var node := run_map.get_node(id)
-		var action := _route_choice_button(id, String(node.type), false)
+		var action := _route_choice_button(id, String(node.type), false, choice)
 		# Four legal patches fit above up to three direct-child Mend quotes.
 		action.custom_minimum_size = Vector2(ROUTE_PATCH_SIZE.x, 54)
 		action.size = action.custom_minimum_size
