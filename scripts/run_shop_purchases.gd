@@ -119,38 +119,67 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 	_valid = true
 
 
+const RARE_CATALOG_PATH := "res://data/patches/mpw_synergy_patches.json"
+## One ordinary eligible power patch is always worth this many tickets. A
+## P8 rare's authored stock_weight_percent is a percentage of ONE ordinary
+## patch's weight, never a share of the whole stock or a reserved slot.
+const ORDINARY_PATCH_TICKETS := 100
+const ORDINARY_WEIGHT_BASIS := "ordinary_patch"
+
+
+## The shipped P8 rare records, or {"ok": false} when the catalog is missing
+## or unparseable. The sampler fails closed instead of quietly stocking
+## ordinary patches only.
+static func _shipped_rare_records() -> Dictionary:
+	if not FileAccess.file_exists(RARE_CATALOG_PATH):
+		return {"ok": false}
+	var text := FileAccess.get_file_as_string(RARE_CATALOG_PATH)
+	if text.is_empty():
+		return {"ok": false}
+	var parsed: Variant = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_ARRAY:
+		return {"ok": false}
+	return {"ok": true, "records": parsed}
+
+
 ## Static sampling helper for Patch Stall deterministic three-patch selection.
 ## Accepts the actual run RandomNumberGenerator, candidate records read by
-## its caller from data/shop/initial_offers.json, and owned patch IDs.
-## Returns exactly three distinct, unowned, catalog-authored power patches
-## with their authored positive gold prices; never the inert starter
-## slots (stitched_badge, spare_spool). On failure, no RNG is advanced.
+## its caller from data/shop/initial_offers.json, owned patch IDs and,
+## optionally, the authored P8 rare records (production passes nothing and the
+## shipped catalog is loaded). Returns exactly three distinct, unowned,
+## catalog-authored power patches with their authored positive gold prices;
+## never the inert starter slots (stitched_badge, spare_spool).
+##
+## Every eligible ordinary patch carries ORDINARY_PATCH_TICKETS tickets; every
+## eligible unowned P8 rare carries its authored percentage of one ordinary
+## patch (10 tickets for the shipped 10%). Three tickets are drawn without
+## replacement from the sorted eligible IDs, always through the supplied run
+## RNG. All inputs and catalog fields are validated before the first draw, and
+## on failure no RNG is advanced.
 static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
-		owned_ids: Variant) -> Dictionary:
+		owned_ids: Variant, rare_records: Variant = null) -> Dictionary:
 	# Preflight all inputs without touching the RNG.
 	if not rng is RandomNumberGenerator:
 		return {"ok": false}
 	if typeof(candidates) != TYPE_ARRAY or candidates.is_empty():
-		print("FAIL: candidates invalid or empty, type=", typeof(candidates), ", empty=", candidates.is_empty())
 		return {"ok": false}
 	if typeof(owned_ids) != TYPE_ARRAY:
-		print("FAIL: owned_ids not array, type=", typeof(owned_ids))
 		return {"ok": false}
 
 	# Load real power definitions; reject if any catalog is missing or invalid.
 	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
-	if powers == null or typeof(powers) != TYPE_ARRAY or powers.is_empty():
-		print("FAIL: powers empty or invalid, powers=", powers)
+	if typeof(powers) != TYPE_ARRAY or powers.is_empty():
 		return {"ok": false}
 
-	var power_ids: Dictionary = {}
+	var power_slots: Dictionary = {}
 	for entry in powers:
 		if not entry is Dictionary or not entry.has("id") or not entry.has("slot"):
 			return {"ok": false}
 		var id: Variant = entry["id"]
-		if not _is_id(str(id)):
+		var slot: Variant = entry["slot"]
+		if not _is_id(id) or typeof(slot) != TYPE_STRING or power_slots.has(id):
 			return {"ok": false}
-		power_ids[str(id)] = true
+		power_slots[id] = slot
 
 	# Validate owned IDs are strings.
 	var owned_set: Dictionary = {}
@@ -159,57 +188,126 @@ static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
 			return {"ok": false}
 		owned_set[str(id)] = true
 
-	# Filter candidates to eligible unowned powers with positive authored prices.
-	var eligible: Array = []
-	var eligible_price_map: Dictionary = {}
+	# Validate the P8 rare records (shipped by default) before any draw. A
+	# malformed rare record refuses the whole stall rather than falling back
+	# to an unauthored or merely ordinary item.
+	var rare_source: Variant = rare_records
+	if rare_source == null:
+		var shipped := _shipped_rare_records()
+		if shipped.get("ok") != true:
+			return {"ok": false}
+		rare_source = shipped["records"]
+	if typeof(rare_source) != TYPE_ARRAY:
+		return {"ok": false}
+	var rare_tickets: Dictionary = {}
+	var rare_prices: Dictionary = {}
+	for value in rare_source:
+		if typeof(value) != TYPE_DICTIONARY:
+			return {"ok": false}
+		var record: Dictionary = value
+		var rare_id: Variant = record.get("id")
+		var rare_slot: Variant = record.get("slot")
+		if not _is_id(rare_id) or typeof(rare_slot) != TYPE_STRING:
+			return {"ok": false}
+		if not power_slots.has(rare_id) or power_slots[rare_id] != rare_slot:
+			return {"ok": false}
+		if rare_tickets.has(rare_id):
+			return {"ok": false}
+		if record.get("rarity") != "rare" \
+				or record.get("stock_weight_basis") != ORDINARY_WEIGHT_BASIS \
+				or record.get("stock_competes_for_existing_slot") != true:
+			return {"ok": false}
+		var rare_price: Variant = _positive_int(record.get("shop_price_gold"))
+		var rare_percent: Variant = _positive_int(record.get("stock_weight_percent"))
+		if rare_price == null or rare_percent == null:
+			return {"ok": false}
+		var tickets: int = ORDINARY_PATCH_TICKETS * rare_percent / 100
+		if tickets <= 0:
+			return {"ok": false}
+		rare_tickets[rare_id] = tickets
+		rare_prices[rare_id] = rare_price
+
+	# Validate every supplied candidate, then keep the eligible unowned powers.
+	var weights: Dictionary = {}
+	var prices: Dictionary = {}
 	for value in candidates:
 		if typeof(value) != TYPE_DICTIONARY:
 			return {"ok": false}
-		if not value.has("id") or not value.has("price"):
+		var offer: Dictionary = value
+		if not offer.has("id") or not offer.has("price"):
 			return {"ok": false}
-		var id_str: String = str(value["id"])
-		var price: Variant = value["price"]
-		if id_str.is_empty() or price == null:
+		var id_str: Variant = offer["id"]
+		var price: Variant = _positive_int(offer["price"])
+		if not _is_id(id_str) or price == null:
 			return {"ok": false}
-		if not power_ids.has(id_str) or owned_set.has(id_str):
+		if owned_set.has(id_str) or not power_slots.has(id_str):
 			continue
-		if typeof(price) != TYPE_INT and not (typeof(price) == TYPE_FLOAT and price == int(price) and price > 0):
+		# A rare listed among ordinary data stays one rare entry at its
+		# authored rare price and weight, never a duplicate ordinary ticket.
+		if rare_tickets.has(id_str):
+			continue
+		if weights.has(id_str):
 			return {"ok": false}
-		# Ensure no duplicate eligible IDs.
-		if eligible.has(id_str) or eligible_price_map.has(id_str):
-			return {"ok": false}
-		eligible.append(id_str)
-		eligible_price_map[id_str] = int(price)
+		weights[id_str] = ORDINARY_PATCH_TICKETS
+		prices[id_str] = price
 
-	# Must have at least three eligible candidates to draw three without replacement.
-	print("ELIGIBLE COUNT BEFORE CHECK: ", eligible.size())
-	if eligible.size() < 3:
+	# Admit each unowned rare from its validated catalog record. Ordinary
+	# data never needs to list it, and owning it removes it from the pool.
+	for rare_id in rare_tickets:
+		if owned_set.has(rare_id):
+			continue
+		weights[rare_id] = rare_tickets[rare_id]
+		prices[rare_id] = rare_prices[rare_id]
+
+	# Three distinct IDs are required; otherwise no draw may be consumed.
+	var remaining: Array = weights.keys()
+	if remaining.size() < 3:
 		return {"ok": false}
 
 	# Sort eligible IDs for deterministic input-order independence.
-	eligible.sort()
+	remaining.sort()
 
-	# Draw three distinct IDs without replacement using the supplied RNG.
+	# Draw three tickets without replacement using the supplied RNG.
 	var selected_ids: Array = []
-	var remaining: Array = eligible.duplicate(true)
+	var total := 0
+	for id in remaining:
+		total += weights[id]
 	for i in range(3):
-		if remaining.is_empty():
+		if total <= 0 or remaining.is_empty():
 			return {"ok": false}
-		var index: int = rng.randi_range(0, remaining.size() - 1)
-		selected_ids.append(remaining[index])
-		remaining.remove_at(index)
+		var ticket: int = rng.randi_range(0, total - 1)
+		var chosen := ""
+		var walked := 0
+		for id in remaining:
+			walked += weights[id]
+			if ticket < walked:
+				chosen = id
+				break
+		if chosen.is_empty():
+			return {"ok": false}
+		selected_ids.append(chosen)
+		total -= weights[chosen]
+		remaining.erase(chosen)
 
-	# Build the three offer records in sorted selection order.
+	# Build the three offer records in selection order.
 	var offers: Array = []
 	for id_str in selected_ids:
-		offers.append({"id": id_str, "price": eligible_price_map[id_str]})
-
-	print("ABOUT TO RETURN SUCCESS, offers_size=", offers.size())
+		offers.append({"id": id_str, "price": prices[id_str]})
 	return {"ok": true, "offers": offers}
 
 
 static func _is_id(value: Variant) -> bool:
 	return typeof(value) == TYPE_STRING and not value.strip_edges().is_empty()
+
+
+## Authored JSON numbers parse as floats, so a whole positive price, weight or
+## percentage is accepted as either an integer or an integral float.
+static func _positive_int(value: Variant) -> Variant:
+	if typeof(value) == TYPE_INT:
+		return value if value > 0 else null
+	if typeof(value) == TYPE_FLOAT and value == floor(value) and value > 0:
+		return int(value)
+	return null
 
 
 static func _is_price(value: Variant) -> bool:

@@ -65,22 +65,53 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	oracle.state = app.run_rng.state
 	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
 	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
-	var ids: Array = []
+	var power_ids: Dictionary = {}
 	for record in powers:
-		ids.append(record.id)
-	var remaining: Array = []
+		power_ids[record.id] = record.slot
+	var rare_source: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/patches/mpw_synergy_patches.json"))
+	_check(typeof(rare_source) == TYPE_ARRAY and not rare_source.is_empty(),
+		"shipped P8 rare catalog is readable for the stock oracle")
+	var weights := {}
 	var prices := {}
 	for offer in authored.trinkets:
-		if ids.has(offer.id) and not app.run_trinkets.has(offer.id):
-			remaining.append(offer.id)
+		if power_ids.has(offer.id) and not app.run_trinkets.has(offer.id):
+			weights[offer.id] = 100
 			prices[offer.id] = int(offer.price)
+	# Each P8 rare competes with ONE ordinary patch at its authored percentage.
+	var rare_records: Array = rare_source if rare_source is Array else []
+	for record in rare_records:
+		if app.run_trinkets.has(record.id):
+			continue
+		weights[record.id] = 100 * int(record.stock_weight_percent) / 100
+		prices[record.id] = int(record.shop_price_gold)
+	var remaining: Array = weights.keys()
 	remaining.sort()
 	_check(remaining.size() >= 3, "real priced power candidate pool")
+	# The live entry's real pool weighs both P8 rares as one tenth of one
+	# ordinary patch and keeps the earlier named ordinary patches at full weight.
+	_check(weights.get("relay_bobbin") == 10 and weights.get("hearth_lining") == 10,
+		"live Patch Stall pool weighs both P8 rares at 10% of one ordinary")
+	_check(weights.get("button_eye") == 100 and weights.get("frayfinder_mitt") == 100
+		and weights.get("borrowed_button") == 100,
+		"live Patch Stall pool keeps earlier ordinary patches at full weight")
+	_check(prices.get("relay_bobbin") == 100 and prices.get("hearth_lining") == 100,
+		"live Patch Stall quotes both P8 rares at 100 gold")
 	var expected: Array = []
 	for i in range(3):
-		var index := oracle.randi_range(0, remaining.size() - 1)
-		expected.append({"id": remaining[index], "price": prices[remaining[index]], "sold": false})
-		remaining.remove_at(index)
+		var total := 0
+		for id in remaining:
+			total += weights[id]
+		var ticket := oracle.randi_range(0, total - 1)
+		var walked := 0
+		var chosen := ""
+		for id in remaining:
+			walked += weights[id]
+			if ticket < walked:
+				chosen = id
+				break
+		expected.append({"id": chosen, "price": prices[chosen], "sold": false})
+		remaining.erase(chosen)
 	if keyboard:
 		await _click(app.route_map_button)
 		var marker: Button = app.route_atlas.get_node("Node_" + fixture.id + "/Action")
