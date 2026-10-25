@@ -3,6 +3,11 @@ extends RefCounted
 ## Resolves caller-supplied support definitions against the authoritative shared
 ## CombatDeck and CombatParty. Does not own card definitions or duplicate state.
 
+## The four authored Scarecrow straw support IDs. Only these records resolve here;
+## the caller forwards an ID, never a definition, so no forged effect data is used.
+const SCARECROW_STRAW_IDS := ["scarecrow_straw_padding", "scarecrow_straw_padding_plus",
+	"scarecrow_straw_wrap", "scarecrow_straw_wrap_plus"]
+
 var _patches: CombatShopPatchRules = null
 var _arm_patches: CombatPatchAttackRules = null
 var _head_patches: CombatM05HeadPatchRules = null
@@ -45,6 +50,93 @@ func is_patch_binding_valid() -> bool:
 		_wardrobe, _torn, _wardrobe_snapshot, _torn_snapshot) and CombatPatchAttackRules.new().bind_wardrobe(
 		_wardrobe, _torn) and CombatM05HeadPatchRules.new().bind_wardrobe(
 		_wardrobe, _torn)
+
+
+## Returns a detached, shape-checked Scarecrow straw definition from the authored
+## ScarecrowStarterCards / ScarecrowPoolCards catalogs, or {} for anything else.
+static func scarecrow_straw_definition(card_id: Variant) -> Dictionary:
+	if not card_id is String:
+		return {}
+	var id: String = card_id
+	if not SCARECROW_STRAW_IDS.has(id):
+		return {}
+	var definition := ScarecrowStarterCards.new().get_definition(id)
+	if definition.is_empty():
+		definition = ScarecrowPoolCards.new().get_definition(id)
+	if definition.is_empty() or definition.get("id") != id:
+		return {}
+	if definition.get("owner") != "scarecrow" or definition.get("target_kind") != "ally_single":
+		return {}
+	var cost: Variant = definition.get("cost")
+	if not cost is int or cost < 0 or cost > CombatState.TURN_ENERGY:
+		return {}
+	var from_positions: Variant = definition.get("from_positions")
+	if not from_positions is Array or from_positions.is_empty():
+		return {}
+	for position in from_positions:
+		if not position is int or position < 1 or position > CombatParty.PARTY_SIZE:
+			return {}
+	var to_positions: Variant = definition.get("to_positions")
+	if not to_positions is Array or not to_positions.is_empty():
+		return {}
+	var effects: Variant = definition.get("effects")
+	if not effects is Dictionary:
+		return {}
+	# The printed contract is exactly one positive Block and one shared draw.
+	if effects.size() != 2:
+		return {}
+	var block: Variant = effects.get("block")
+	var draw: Variant = effects.get("draw")
+	if not block is int or block <= 0 or not draw is int or draw != 1:
+		return {}
+	return definition
+
+
+## Resolves one authored Scarecrow straw support card: printed Block on the
+## selected living ally (Scarecrow itself permitted) plus exactly one shared-deck
+## draw. No mutation, including RNG movement, happens before every precondition
+## passes, so a rejection leaves party, piles, energy and RNG untouched.
+func play_scarecrow_straw(deck: CombatDeck, party: CombatParty, card_id: Variant,
+		target_position: int) -> bool:
+	if deck == null or party == null or not deck.turn_active or not party.is_valid():
+		return false
+	if not is_patch_binding_valid():
+		return false
+	var definition := scarecrow_straw_definition(card_id)
+	if definition.is_empty():
+		return false
+	var id: String = definition["id"]
+	var cost: int = definition["cost"]
+	var block: int = definition["effects"]["block"]
+	var from_positions: Array = definition["from_positions"]
+
+	if not deck.hand.has(id) or deck.energy < cost:
+		return false
+	var owner_position := 0
+	for hero in party.get_heroes():
+		if hero["id"] == "scarecrow":
+			owner_position = hero["position"]
+			break
+	if owner_position == 0 or not from_positions.has(owner_position):
+		return false
+	if party.is_downed(owner_position):
+		return false
+	if target_position < 1 or target_position > CombatParty.PARTY_SIZE:
+		return false
+	if party.is_downed(target_position):
+		return false
+	if block > CombatParty.MAX_INT - party.get_hero(target_position)["block"]:
+		return false
+
+	# Full preflight passed: charge once, pad the selected ally, then let the
+	# still-held card request one shared draw (zero is a legitimate result) and
+	# discard exactly one copy.
+	if not deck.try_spend_energy(cost):
+		return false
+	party.gain_block(target_position, block)
+	deck.draw_extra(1)
+	deck.discard_played(id)
+	return true
 
 
 func play_support(deck: CombatDeck, party: CombatParty, definition: Dictionary, target_position: int = 0, cost_discount: int = 0) -> bool:
