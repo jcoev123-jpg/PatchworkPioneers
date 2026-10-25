@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_paid_both_pairs()
 	_test_targeting_after_commits()
 	_test_rejections()
+	_test_tangled_blocks_own_side_move()
 	_test_seeded_replay()
 	for failure in failures:
 		printerr(failure)
@@ -424,6 +425,153 @@ func _test_rejections() -> void:
 		== {"ok": false, "heroes": []}, "old preview keeps exact rejection shape")
 	_check(_snapshot(deck, party) == preview_before,
 		"legal and rejected previews preserve entire state and injected RNG")
+
+
+## A rejection is only meaningful when the same fixture is otherwise playable: the
+## Warden really stands on an allowed source slot, the card is genuinely held and
+## affordable, and the unchanged generic preview still proposes the reorder.
+func _tangled_reject(deck: CombatDeck, party: CombatParty, id: String,
+		definition: Dictionary, label: String) -> void:
+	var slot := 0
+	for index in range(CombatParty.PARTY_SIZE):
+		if party._heroes[index].get("id") == definition.get("owner"):
+			slot = index + 1
+	_check(slot > 0 and definition["from_positions"].has(slot),
+		label + ": Warden genuinely sits on an allowed source slot")
+	_check(deck.turn_active and deck.hand.has(id) and deck.energy >= int(definition["cost"]),
+		label + ": genuinely active, held and affordable before the Tangled gate")
+	_check(CombatPositionSwaps.preview_adjacent_swap(party, slot,
+		int(definition["direction"])).get("ok", false),
+		label + ": unchanged generic preview still proposes the reorder")
+	_reject(deck, party, id, definition, label)
+
+
+## A genuine paid Backstep that leaves the real Warden in slot 2, so Advance's
+## authored source/direction are exercised on a live roster rather than a stand-in.
+func _warden_slot_two_fixture() -> Array:
+	var party := _party()
+	_decorate(party)
+	var deck := _deck(["warden_backstep", "warden_advance"])
+	_move(deck, party, M02PositionCards.new().get_definition("warden_backstep"),
+		["seamstress", "warden", "tinker"], "advance fixture genuine paid backstep")
+	_check(party.get_hero(2).get("id") == "warden" and deck.energy == 2
+		and deck.discard_pile == ["warden_backstep"],
+		"advance fixture really has the Warden in slot 2 after one paid step")
+	return [party, deck]
+
+
+func _test_tangled_blocks_own_side_move() -> void:
+	var catalog := M02PositionCards.new()
+	var backstep := catalog.get_definition("warden_backstep")
+	var advance := catalog.get_definition("warden_advance")
+	_check(backstep.get("id") == "warden_backstep" and backstep.get("owner") == "warden"
+		and backstep.get("cost") == 1 and backstep.get("from_positions") == [1, 2]
+		and backstep.get("direction") == 1 and backstep.get("action_kind") == "adjacent_swap",
+		"genuine authored Backstep definition")
+	_check(advance.get("id") == "warden_advance" and advance.get("owner") == "warden"
+		and advance.get("cost") == 1 and advance.get("from_positions") == [2, 3]
+		and advance.get("direction") == -1 and advance.get("action_kind") == "adjacent_swap",
+		"genuine authored Advance definition")
+	var starter := StarterCards.new()
+	for id in M02PositionCards.IDS:
+		_check(not starter.get_starting_deck().has(id),
+			id + ": Tangled gate uses the real optional move, not a starter card")
+
+	# AC1: Backstep from Warden slot 1. Either participant's Tangled, N=1 and N=3
+	# alike, blocks before charge, discard, roster edit or RNG draw.
+	for stacks in [1, 3]:
+		for actor_slot in [1, 2]:
+			var party := _party()
+			_decorate(party)
+			var deck := _deck(["warden_backstep"])
+			party._heroes[actor_slot - 1]["statuses"]["tangled"] = stacks
+			_check(party._heroes[actor_slot - 1]["statuses"]["tangled"] == stacks,
+				"backstep fixture really stores Tangled %d on slot %d" % [stacks, actor_slot])
+			if actor_slot == 2:
+				_check(not party._heroes[0]["statuses"].has("tangled"),
+					"active Tangled ally is blocked while the Warden himself is clear")
+			_tangled_reject(deck, party, "warden_backstep", backstep,
+				"backstep blocked by Tangled %d on slot %d" % [stacks, actor_slot])
+
+	# AC1: Advance from Warden slot 2, again for both participant roles and N=1/N=3.
+	for stacks in [1, 3]:
+		for actor_slot in [1, 2]:
+			var fixture := _warden_slot_two_fixture()
+			var party: CombatParty = fixture[0]
+			var deck: CombatDeck = fixture[1]
+			party._heroes[actor_slot - 1]["statuses"]["tangled"] = stacks
+			_check(party._heroes[actor_slot - 1]["statuses"]["tangled"] == stacks,
+				"advance fixture really stores Tangled %d on slot %d" % [stacks, actor_slot])
+			if actor_slot == 1:
+				_check(not party._heroes[1]["statuses"].has("tangled"),
+					"active Tangled ally ahead is blocked while the Warden himself is clear")
+			_tangled_reject(deck, party, "warden_advance", advance,
+				"advance blocked by Tangled %d on slot %d" % [stacks, actor_slot])
+
+	# AC2: the same held card/position/direction fixtures stay legal without Tangled.
+	var control_party := _party()
+	_decorate(control_party)
+	for hero in control_party._heroes:
+		_check(not hero.get("statuses", {}).has("tangled"), "clear backstep fixture has no Tangled key")
+	var control_deck := _deck(["warden_backstep"])
+	_move(control_deck, control_party, backstep, ["seamstress", "warden", "tinker"],
+		"clear backstep legal control")
+	_check(control_deck.energy == 2 and control_deck.discard_pile == ["warden_backstep"],
+		"clear backstep spent exactly one energy and discarded exactly once")
+
+	control_party = _party()
+	_decorate(control_party)
+	control_deck = _deck(["warden_backstep", "warden_advance"])
+	_move(control_deck, control_party, backstep, ["seamstress", "warden", "tinker"],
+		"clear advance setup")
+	_move(control_deck, control_party, advance, ["warden", "seamstress", "tinker"],
+		"clear advance legal control")
+	_check(control_deck.energy == 1
+		and control_deck.discard_pile == ["warden_backstep", "warden_advance"],
+		"clear advance spent exactly one energy per paid swap")
+
+	# AC2: zero is expired and never restricts the ordinary move.
+	for zero_slot in [1, 2]:
+		var zero_party := _party()
+		_decorate(zero_party)
+		var zero_deck := _deck(["warden_backstep"])
+		zero_party._heroes[zero_slot - 1]["statuses"]["tangled"] = 0
+		_check(zero_party._heroes[zero_slot - 1]["statuses"]["tangled"] == 0,
+			"zero Tangled fixture on slot " + str(zero_slot))
+		_move(zero_deck, zero_party, backstep, ["seamstress", "warden", "tinker"],
+			"Tangled 0 on slot " + str(zero_slot) + " allows backstep")
+
+	# AC2: a genuine owner-turn end expires Tangled 1 and restores the paid move.
+	var rules := CombatStatuses.new()
+	for expiry_slot in [1, 2]:
+		var expiry_party := _party()
+		_decorate(expiry_party)
+		var expiry_deck := _deck(["warden_backstep"])
+		var actor: Dictionary = expiry_party._heroes[expiry_slot - 1]
+		var with_tangled: Dictionary = actor["statuses"].duplicate(true)
+		with_tangled["tangled"] = 1
+		var aged: Dictionary = rules.end_owner_turn(int(actor["hp"]), int(actor["block"]),
+			with_tangled)
+		_check(aged.get("ok", false) and not aged.get("statuses", {}).has("tangled"),
+			"Tangled 1 on slot " + str(expiry_slot) + " genuinely expires at the owner-turn end")
+		actor["statuses"] = aged["statuses"]
+		_check(not actor["statuses"].has("tangled"),
+			"expired actor record on slot " + str(expiry_slot) + " carries no Tangled")
+		_move(expiry_deck, expiry_party, backstep, ["seamstress", "warden", "tinker"],
+			"expired Tangled on slot " + str(expiry_slot) + " allows backstep")
+
+	# AC2: malformed Tangled data rejects instead of being coerced into a legal stack.
+	for bad in ["1", true, 1.5, 2.0, -1, null, [], {}, {"n": 1}]:
+		for actor_slot in [1, 2]:
+			var bad_party := _party()
+			_decorate(bad_party)
+			var bad_deck := _deck(["warden_backstep"])
+			bad_party._heroes[actor_slot - 1]["statuses"]["tangled"] = bad
+			_check(bad_party._heroes[actor_slot - 1]["statuses"].has("tangled")
+				and bad_party._heroes[actor_slot - 1]["statuses"]["tangled"] == bad,
+				"malformed Tangled fixture really stored " + str(bad))
+			_tangled_reject(bad_deck, bad_party, "warden_backstep", backstep,
+				"malformed Tangled " + str(bad) + " on slot " + str(actor_slot))
 
 
 func _trace(seed_value: int) -> Array:
