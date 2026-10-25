@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "id": "v3_raincoat_bridge",
+      "title": "The Raincoat Bridge",
+      "description": "A soaked quilt bridge stretching over a ravine.",
+      "choices": [
+        { "id": "salvage_hems", "text": "Salvage loose hems (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "trade_fare", "text": "Trade fare for threads (-12 gold, +2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "take_detour", "text": "Take a detour (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_puppet_box_office",
+      "title": "The Puppet Box Office",
+      "description": "Rag puppets wait under a patchwork theatre awning.",
+      "choices": [
+        { "id": "perform", "text": "Perform a short act (+9 gold)", "outcome": { "gold": 9, "scraps": 0 } },
+        { "id": "restring", "text": "Restring the puppets (+24 gold, -2 scraps)", "outcome": { "gold": 24, "scraps": -2 } },
+        { "id": "applaud", "text": "Applaud and move on", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mismatched_mittens",
+      "title": "The Mismatched Mittens",
+      "description": "A merchant untangling sewn pairs of mismatched mittens.",
+      "choices": [
+        { "id": "untangle", "text": "Help untangle pairs (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "trade_copper", "text": "Trade copper for threads (-15 gold, +2 scraps)", "outcome": { "gold": -15, "scraps": 2 } },
+        { "id": "sell_pair", "text": "Sell a matched pair (+18 gold, -1 scrap)", "outcome": { "gold": 18, "scraps": -1 } }
+      ]
+    },
+    {
+      "id": "v3_coil_and_crow",
+      "title": "The Coil and Crow",
+      "description": "A crow guarding a copper-coloured thread wheel.",
+      "choices": [
+        { "id": "chase_crow", "text": "Chase the crow away (+6 gold)", "outcome": { "gold": 6, "scraps": 0 } },
+        { "id": "buy_coil", "text": "Buy the thread coil (-20 gold, +3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
+        { "id": "back_away", "text": "Back away slowly", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_patchwork_lighthouse",
+      "title": "The Patchwork Lighthouse",
+      "description": "Fabric fog gathers around a dim stitched beacon.",
+      "choices": [
+        { "id": "gather_threads", "text": "Gather threads in the fog (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "repair_beacon", "text": "Repair the beacon (+26 gold, -2 scraps)", "outcome": { "gold": 26, "scraps": -2 } },
+        { "id": "pass_by", "text": "Pass by quietly", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_orchard",
+      "title": "The Button Orchard",
+      "description": "Brass buttons hang heavily on felt branches.",
+      "choices": [
+        { "id": "pick_buttons", "text": "Pick some buttons (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "ribbon_trade", "text": "Trade for ribbons (-14 gold, +2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "sell_harvest", "text": "Sell the harvest (+20 gold, -1 scrap)", "outcome": { "gold": 20, "scraps": -1 } }
+      ]
+    }
+  ]
+}
