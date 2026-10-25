@@ -1,13 +1,13 @@
 class_name CardKeywordGlossary
 extends RefCounted
 ## Read-only explanations for authored card effects. No run, scene or RNG state.
-## The fixed order is independent of Dictionary insertion order: the nine keyword
-## rows first (the legacy seven, then Riposte and Tangled), then the authored
-## special-rule rows in SPECIAL_ORDER.
+## The fixed order is independent of Dictionary insertion order: the ten keyword
+## rows first (the legacy seven, then Riposte, Tangled and Blind), then the
+## authored special-rule rows in SPECIAL_ORDER.
 ## Help is explanatory only; it never says an unheld card can be played.
 
 const KEYWORD_ORDER := ["bleed", "weak", "exposed", "pinned", "unravel", "guarding",
-	"thorns", "riposte", "tangled"]
+	"thorns", "riposte", "tangled", "blind"]
 ## Non-keyword rules are explained after the keyword rows, always in this
 ## order and only for the exact authored descriptor shape (never a guess).
 const SPECIAL_ORDER := ["conditional_damage", "random_hit", "energy_tradeoff", "bleed_doubling", "two_hits"]
@@ -92,9 +92,14 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 		return lines
 	var effects: Dictionary = effects_value
 	for key: String in KEYWORD_ORDER:
-		if not effects.has(key):
+		if key == "blind":
+			# Blind is authored under two different keys, so its presence is the
+			# strict two-spelling check rather than one plain key lookup.
+			if not _authored_blind(definition, effects):
+				continue
+		elif not effects.has(key):
 			continue
-		var raw: Variant = effects[key]
+		var raw: Variant = effects.get(key)
 		var keyword := ""
 		var explanation := ""
 		if key in ["bleed", "weak", "exposed", "unravel", "thorns"]:
@@ -111,6 +116,10 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 			if not raw is int or int(raw) <= 0:
 				continue
 			keyword = "Tangled %d" % int(raw)
+		elif key == "blind":
+			# Blind is the Lantern Monk's one-shot keyword, already accepted by
+			# the strict presence check above; it prints no amount.
+			keyword = "Blind"
 		elif (key == "pinned" or key == "guarding") and ((raw is bool and raw) or (raw is Dictionary and not raw.is_empty())):
 			keyword = key.capitalize()
 		else:
@@ -134,6 +143,8 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 				explanation = "When the Rag Duelist is hit, she strikes back for %d damage. The authored Riposte lasts one turn. This Help explains the printed design rule only; combat does not yet apply Riposte." % int(raw)
 			"tangled":
 				explanation = "For %d turns, the Tangled unit cannot move or be moved by its own side, and attacks against it deal +2 damage. This Help explains the printed design rule only; combat does not yet apply Tangled." % int(raw)
+			"blind":
+				explanation = "Blind is one-shot, never a stack or a number of turns: the affected enemy's NEXT attack misses, and after that attack the Blind is spent. This Help explains the printed design rule only; live combat does not yet cancel the attack."
 		lines.append({"keyword": keyword, "explanation": explanation})
 	for key: String in SPECIAL_ORDER:
 		var special := _special_line(key, definition, effects)
@@ -525,6 +536,32 @@ static func _darning_line(definition: Dictionary, effects: Dictionary) -> Dictio
 	var explanation := "Heals a chosen living ally %d HP and grants that ally %d Block. Costs %d energy and is playable by the Seamstress from positions 1-3. Healing is capped by the chosen living ally's missing HP, while the Block portion still applies even if the ally is already at full HP. A downed hero cannot be chosen and is not revived." % [
 		int(heal_value), int(block_value), int(cost_value)]
 	return {"keyword": "Mixed rescue", "explanation": explanation}
+
+
+## Blind is the Lantern Monk's look-driven one-shot status, authored in exactly
+## two shapes: the starter catalogs' integer `blind: 1` and the reward pool's
+## boolean `blind_next_attack: true`. Both mean "the target's next attack misses,
+## then the Blind is spent", so two spellings on one record are ambiguous and a
+## non-one count is never normalized into stacks. It is an enemy-only keyword:
+## a party, ally, self or unreadable recipient never borrows the row.
+static func _authored_blind(definition: Dictionary, effects: Dictionary) -> bool:
+	var has_count: bool = effects.has("blind")
+	var has_flag: bool = effects.has("blind_next_attack")
+	if has_count == has_flag:
+		return false
+	if has_count:
+		var count_value: Variant = effects["blind"]
+		# `true` and `1.0` are not the authored integer one.
+		if not count_value is int or int(count_value) != 1:
+			return false
+	else:
+		var flag_value: Variant = effects["blind_next_attack"]
+		if not flag_value is bool or not bool(flag_value):
+			return false
+	match str(definition.get("target_kind", "")):
+		"enemy_single", "enemy_all", "enemy_random":
+			return true
+	return false
 
 
 ## An authored empty target list, exactly as expected and nothing else.

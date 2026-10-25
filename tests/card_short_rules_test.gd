@@ -342,9 +342,9 @@ func _test_rag_duelist_faces() -> void:
 func _test_rag_duelist_help() -> void:
 	var legacy_size := LEGACY_KEYWORD_ORDER.size()
 	_check(CardKeywordGlossary.KEYWORD_ORDER.slice(0, legacy_size) == LEGACY_KEYWORD_ORDER
-		and CardKeywordGlossary.KEYWORD_ORDER.size() == legacy_size + 2
-		and CardKeywordGlossary.KEYWORD_ORDER.slice(legacy_size) == ["riposte", "tangled"],
-		"Riposte and Tangled follow the seven legacy keyword rows: "
+		and CardKeywordGlossary.KEYWORD_ORDER.size() == legacy_size + 3
+		and CardKeywordGlossary.KEYWORD_ORDER.slice(legacy_size) == ["riposte", "tangled", "blind"],
+		"Riposte, Tangled and Blind follow the seven legacy keyword rows: "
 		+ str(CardKeywordGlossary.KEYWORD_ORDER))
 	for pair in [["rag_duelist_cape_guard", 3], ["rag_duelist_cape_guard_plus", 4],
 			["rag_duelist_duelist_reprise", 5], ["rag_duelist_duelist_reprise_plus", 7]]:
