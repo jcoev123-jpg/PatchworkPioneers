@@ -40,7 +40,12 @@ func _fixtures() -> Dictionary:
 	# fallback when the generated route/pool changes.
 	var hints := [7756, 35510, 45517, 50329, 64084, 171871, 233942, 236527,
 		277144, 331198, 379017, 422169, 444032, 449809, 456282, 611184, 802796, 807198, 855041,
-		531535, 1012766, 2218200]
+		531535, 1012766, 2218200,
+		# Repinned genuine seeds after the V3-4 midnight-story batch grew the
+		# combined eligible pool: quilt_bridge, button_moon_festival,
+		# v3_coil_and_crow, estate_sale, frayed_signpost, v3_mismatched_mittens,
+		# patchwork_ferry and needle_gate.
+		529380, 610125, 696642, 775148, 946019, 1363210, 1433081, 449195]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value

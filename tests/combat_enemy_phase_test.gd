@@ -11,6 +11,8 @@ func _initialize() -> void:
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
 	_test_policy_targets()
+	_test_drain_after_confirmed_hit()
+	_test_drain_inert_and_fail_closed()
 	_test_rejections()
 	_test_replay_and_empty()
 	if failures.is_empty():
@@ -503,4 +505,195 @@ func _test_policy_targets() -> void:
 	_check(phase.execute_phase(party, enemies, [forged], null, true) == {"ok": false, "events": []}
 		and party.get_heroes() == heroes_before and enemies.get_enemies() == enemy_before,
 		"a forged announcement rejects without mutations")
+
+
+func _drain_roster(definitions: Array) -> CombatEnemies:
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == definitions.size(),
+		"precondition: real Drain roster occupies its authored slots")
+	return enemies
+
+
+## AC1: the real staged phase heals a living wound-carrying Drain source by
+## exactly the HP its own one confirmed hit removed, after Block, once.
+func _test_drain_after_confirmed_hit() -> void:
+	var party := _party()
+	var enemies := _drain_roster([
+		{"id": "bobbin-bat", "max_hp": 12, "drain": true},
+		{"id": "ragling-a", "max_hp": 15}])
+	_check(enemies.get_enemy(1).get("drain") == true and enemies.get_enemy(1).max_hp == 12,
+		"AC1 precondition: living source 1 authors boolean drain")
+	_check(enemies.apply_damage(1, 4) and enemies.get_enemy(1).hp == 8,
+		"AC1 precondition: Drain source is genuinely wounded by four")
+	party._heroes[2]["statuses"] = {"bleed": 2}
+	_check(enemies.apply_statuses({2: {"weak": 1}}),
+		"AC1 precondition: unrelated actors carry real statuses")
+	var source_record: Dictionary = enemies._enemies[0]
+	var other_record: Dictionary = enemies._enemies[1]
+	var warden_record: Dictionary = party._heroes[0]
+	var tinker_record: Dictionary = party._heroes[2]
+	var result := phase.execute_phase(party, enemies, [_attack(1, 3, 2)])
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": true}]},
+		"AC1: a Drain beat keeps the exact ordinary attack event shape")
+	_check(party.get_hero(2).hp == 27 and party.get_hero(2).block == 0,
+		"AC1: the real recipient really loses the three dispatched HP")
+	_check(enemies.get_enemy(1).hp == 11,
+		"AC1: Drain restores exactly the three HP its hit removed, once")
+	_check(is_same(enemies._enemies[0], source_record)
+		and is_same(enemies._enemies[1], other_record)
+		and is_same(party._heroes[0], warden_record)
+		and is_same(party._heroes[2], tinker_record),
+		"AC1: publication preserves every actor dictionary identity")
+	_check(party.get_hero(1).hp == 40 and enemies.get_enemy(2).hp == 15
+		and enemies.get_enemy(2).block == 0
+		and enemies.get_enemy(2).statuses == {"weak": 1}
+		and party.get_hero(3).statuses == {"bleed": 2},
+		"AC1: unrelated HP, Block and statuses stay untouched")
+	_check(enemies.get_enemy(1).get("drain") == true
+		and enemies.get_enemy(1).max_hp == 12 and enemies.get_enemy(1).position == 1,
+		"AC1: healing preserves source identity, position and metadata")
+
+	# The heal is capped by the source's missing HP, never overhealing.
+	party = _party()
+	enemies = _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true},
+		{"id": "ragling-a", "max_hp": 15}])
+	_check(enemies.apply_damage(1, 8) and enemies.get_enemy(1).hp == 4
+		and enemies.get_enemy(1).max_hp == 12,
+		"AC1 precondition: source is missing eight of twelve HP")
+	result = phase.execute_phase(party, enemies, [_attack(1, 10, 2)])
+	_check(party.get_hero(2).hp == 20,
+		"AC1: the recipient genuinely loses ten HP in that one hit")
+	_check(enemies.get_enemy(1).hp == 12 and enemies.get_enemy(1).hp <= enemies.get_enemy(1).max_hp,
+		"AC1: Drain heals min(HP loss, missing HP) and never overheals")
+
+	# Block absorbs first; only the real post-Block HP loss is healed.
+	party = _party()
+	enemies = _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true}])
+	_check(enemies.apply_damage(1, 6) and enemies.get_enemy(1).hp == 6
+		and party.gain_block(2, 5),
+		"AC1 precondition: wounded source and a five-Block recipient")
+	result = phase.execute_phase(party, enemies, [_attack(1, 8, 2)])
+	_check(party.get_hero(2).hp == 27 and party.get_hero(2).block == 0,
+		"AC1: five Block absorbs first and three HP are really lost")
+	_check(enemies.get_enemy(1).hp == 9,
+		"AC1: Drain heals the three post-Block HP loss, not the eight nominal")
+
+	# Two genuine Drain sources in one staged phase heal independently.
+	party = _party()
+	enemies = _drain_roster([
+		{"id": "bobbin-bat", "max_hp": 12, "drain": true},
+		{"id": "bobbin-moth", "max_hp": 15, "drain": true}])
+	_check(enemies.apply_damage(1, 5) and enemies.apply_damage(2, 10)
+		and enemies.get_enemy(1).hp == 7 and enemies.get_enemy(2).hp == 5,
+		"AC1 precondition: two wounded Drain sources")
+	result = phase.execute_phase(party, enemies, [_attack(2, 3, 3), _attack(1, 4, 2)])
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": true},
+		{"type": "attack", "enemy_position": 2, "target_position": 3, "applied": true}]},
+		"AC1: two Drain beats keep the exact ordered ordinary events")
+	_check(party.get_hero(2).hp == 26 and party.get_hero(3).hp == 23,
+		"AC1: each recipient really loses its own announced damage")
+	_check(enemies.get_enemy(1).hp == 11 and enemies.get_enemy(2).hp == 8,
+		"AC1: each source heals from its own hit only, exactly once per beat")
+
+
+## AC2: every non-hit or non-Drain state stays inert without resurrecting,
+## and malformed authored metadata rejects the phase before any staging.
+func _test_drain_inert_and_fail_closed() -> void:
+	# A fully blocked hit is applied but removes no HP, so it heals nothing.
+	var party := _party()
+	var enemies := _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true}])
+	_check(enemies.apply_damage(1, 6) and enemies.get_enemy(1).hp == 6
+		and party.gain_block(2, 20),
+		"AC2 precondition: wounded Drain source and a fully blocking recipient")
+	var result := phase.execute_phase(party, enemies, [_attack(1, 5, 2)])
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": true}]},
+		"AC2: a fully blocked Drain beat is still one applied attack")
+	_check(party.get_hero(2).hp == 30 and party.get_hero(2).block == 15
+		and enemies.get_enemy(1).hp == 6,
+		"AC2: Block-absorbed damage never heals Drain")
+
+	# A real zero-damage hit removes no HP either.
+	party = _party()
+	enemies = _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true}])
+	_check(enemies.apply_damage(1, 6) and enemies.get_enemy(1).hp == 6,
+		"AC2 precondition: wounded source for a zero-damage beat")
+	result = phase.execute_phase(party, enemies, [_attack(1, 0, 2)])
+	_check(result.get("ok") == true and result["events"][0].applied == true
+		and party.get_hero(2).hp == 30 and enemies.get_enemy(1).hp == 6,
+		"AC2: a confirmed zero-damage hit heals nothing")
+
+	# A downed announced recipient makes the beat inert: no damage, no heal.
+	party = _party()
+	enemies = _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true}])
+	_check(enemies.apply_damage(1, 6) and party.apply_damage(2, 30)
+		and party.is_downed(2),
+		"AC2 precondition: wounded source and a genuinely downed recipient")
+	result = phase.execute_phase(party, enemies, [_attack(1, 9, 2)])
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": false}]}
+		and party.is_downed(2) and enemies.get_enemy(1).hp == 6,
+		"AC2: a skipped beat can never fabricate damage or a Drain heal")
+
+	# A full-HP Drain source has no missing HP to restore.
+	party = _party()
+	enemies = _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true}])
+	result = phase.execute_phase(party, enemies, [_attack(1, 5, 2)])
+	_check(party.get_hero(2).hp == 25 and enemies.get_enemy(1).hp == 12,
+		"AC2: a full-HP Drain source heals nothing and keeps its maximum")
+
+	# Absent and explicit-false Drain are valid non-Drain content.
+	for flag in [null, false]:
+		party = _party()
+		var definition := {"id": "bobbin-bat", "max_hp": 12}
+		if flag != null:
+			definition["drain"] = flag
+		enemies = _drain_roster([definition])
+		_check(enemies.apply_damage(1, 6) and enemies.get_enemy(1).hp == 6,
+			"AC2 precondition: valid non-Drain source wounded by six")
+		result = phase.execute_phase(party, enemies, [_attack(1, 5, 2)])
+		_check(result == {"ok": true, "events": [
+			{"type": "attack", "enemy_position": 1, "target_position": 2, "applied": true}]}
+			and party.get_hero(2).hp == 25 and enemies.get_enemy(1).hp == 6,
+			"AC2: a valid non-Drain source (" + str(flag) + ") heals nothing")
+
+	# An already-slain Drain source stays slain and inert.
+	party = _party()
+	enemies = _drain_roster([{"id": "bobbin-bat", "max_hp": 12, "drain": true}])
+	_check(enemies.apply_damage(1, 12) and enemies.is_slain(1),
+		"AC2 precondition: the Drain source is already slain")
+	var slain: Dictionary = enemies.get_enemy(1)
+	result = phase.execute_phase(party, enemies, [_attack(1, 9, 1)])
+	_check(result == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "target_position": 1, "applied": false}]}
+		and enemies.get_enemy(1) == slain and enemies.is_slain(1)
+		and party.get_hero(1).hp == 40,
+		"AC2: a slain Drain source never acts, heals or resurrects")
+
+	# Malformed Drain metadata fails the phase before staging, exactly like the
+	# bleeding sting, even when that slot itself does not act.
+	for invalid in [1, 0, "true", 1.0, null, [], {}]:
+		party = _party()
+		enemies = CombatEnemies.new([
+			{"id": "bobbin-bat", "max_hp": 12, "drain": invalid},
+			{"id": "ragling-a", "max_hp": 15}])
+		_check(enemies.is_valid() and enemies.get_enemy(1).has("drain")
+			and enemies.get_enemy(2).hp == 15,
+			"AC4 precondition: live roster carries malformed drain metadata")
+		var intents := [_attack(2, 4, 1)]
+		var input := intents.duplicate(true)
+		var heroes_before := party.get_heroes()
+		var roster_before := enemies.get_enemies()
+		_check(phase.execute_phase(party, enemies, intents) == {"ok": false, "events": []}
+			and party.get_heroes() == heroes_before
+			and enemies.get_enemies() == roster_before and intents == input,
+			"AC4: malformed drain metadata rejects the whole phase atomically: "
+				+ str(invalid))
+		_check(phase.execute_phase(party, enemies, []) == {"ok": false, "events": []}
+			and party.get_heroes() == heroes_before
+			and enemies.get_enemies() == roster_before,
+			"AC4: malformed metadata fails before any beat is staged: " + str(invalid))
+
 

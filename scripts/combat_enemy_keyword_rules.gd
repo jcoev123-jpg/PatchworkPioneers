@@ -1,7 +1,8 @@
 class_name CombatEnemyKeywordRules
 extends RefCounted
 ## Scene-free enemy keyword rules for Thorns N ("attacker takes N per hit") and
-## Enrage ("gain +2 attack when hit, max 3 stacks").
+## Enrage ("gain +2 attack when hit, max 3 stacks"), plus Drain ("heal for damage
+## dealt").
 ## Thorns is an opt-in service: the battle caller invokes it once per CONFIRMED
 ## positive-damage hit, passing the defender's PRE-HIT record and the authentic
 ## CombatStatusAttacks.resolve_vs_enemy receipt for that hit. It never runs for
@@ -11,6 +12,11 @@ extends RefCounted
 ## N comes from content; this class assigns no production value.
 ## Enrage is a pure quote: it reports the stacks and additive attack bonus after
 ## one confirmed hit without touching the roster or any live attack intent.
+## Drain is an opt-in service: the battle caller invokes it once per CONFIRMED
+## enemy hit, passing the authentic CombatStatusAttacks.resolve_vs_hero receipt
+## for that hit. It heals only the hero HP loss of that hit, so Block-absorbed
+## damage never heals, and it is clamped to the source's missing HP. Nothing in
+## the live enemy phase calls it yet; that hookup is a separate task.
 
 ## Enrage caps at three stacks; each stack adds +2 attack (0, +2, +4, +6).
 const ENRAGE_MAX_STACKS := 3
@@ -71,6 +77,67 @@ func quote_enrage_after_hit(pre_hit_enemy: Dictionary, receipt: Dictionary) -> D
 	if receipt["damage"] <= 0 or stacks >= ENRAGE_MAX_STACKS:
 		return _enrage_no_op(stacks)
 	return _enrage_applied(stacks + 1)
+
+
+## Heal the attacking enemy after ONE confirmed hit.
+## enemies: the authoritative CombatEnemies roster that owns the source.
+## source_position: 1-3; the source must be a living slot of that roster carrying
+##   boolean `drain: true` metadata. `drain: false` or an absent key is a valid
+##   non-Drain source; a non-boolean flag, a missing/impossible max_hp or hp, or a
+##   slain slot is invalid.
+## attack_receipt: the authentic CombatStatusAttacks.resolve_vs_hero result
+##   {ok, damage, block_absorbed, hp_loss} for that same hit.
+## Returns a detached receipt {ok, applied, healed}. Drain N is not a separate
+## multiplier: it restores min(receipt.hp_loss, max_hp - hp) HP through
+## CombatEnemies.heal, so Block-absorbed damage never heals, nothing overheals and
+## a slain enemy is never revived. A valid non-Drain source, or a confirmed hit
+## with zero HP loss, returns an inert success (ok=true, applied=false, healed=0).
+## Missing/invalid roster, source or metadata, and failed/malformed receipts fail
+## closed to ok=false without mutating either side. Inputs are never mutated and
+## no RNG is used.
+func resolve_drain_after_hit(enemies: CombatEnemies, source_position: int,
+		attack_receipt: Dictionary) -> Dictionary:
+	if enemies == null or not enemies.is_valid():
+		return _drain_failure()
+	var source: Dictionary = enemies.get_enemy(source_position)
+	if not _valid_drain_source(source) or not _valid_receipt(attack_receipt):
+		return _drain_failure()
+	if not attack_receipt["ok"]:
+		return _drain_failure()
+	if not source.get("drain", false):
+		return _drain_inert()
+	if attack_receipt["hp_loss"] <= 0:
+		return _drain_inert()
+	var missing_hp: int = source["max_hp"] - source["hp"]
+	var amount: int = mini(attack_receipt["hp_loss"], missing_hp)
+	if amount <= 0:
+		return _drain_inert()
+	if not enemies.heal(source_position, amount):
+		return _drain_failure()
+	return {"ok": true, "applied": true, "healed": amount}
+
+
+## A full snapshot of a living slot with valid, explicitly boolean Drain metadata.
+func _valid_drain_source(source: Dictionary) -> bool:
+	if not _valid_enemy_record(source):
+		return false
+	var hp: Variant = source.get("hp")
+	var max_hp: Variant = source.get("max_hp")
+	if not hp is int or not max_hp is int:
+		return false
+	if hp <= 0 or max_hp <= 0 or hp > max_hp:
+		return false
+	if source.has("drain") and not source["drain"] is bool:
+		return false
+	return true
+
+
+func _drain_inert() -> Dictionary:
+	return {"ok": true, "applied": false, "healed": 0}
+
+
+func _drain_failure() -> Dictionary:
+	return {"ok": false, "applied": false, "healed": 0}
 
 
 ## Shared with Thorns, so keep every currently accepted record valid here too.
