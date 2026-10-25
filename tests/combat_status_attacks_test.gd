@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_invalid_rosters_and_targets()
 	_test_status_validation()
 	_test_immutable_snapshots_and_replay()
+	_test_thorns_retaliation()
 	if failures.is_empty():
 		print("combat_status_attacks_test: PASS (", checks, " checks)")
 	else:
@@ -258,3 +259,225 @@ func _test_immutable_snapshots_and_replay() -> void:
 				"independent identical fixtures replay complete results and roster snapshots")
 		_check(attacker == attack_original and defender == defend_original,
 			"both caller dictionaries preserve all status counts across replay")
+
+
+func _thorns_result(thorns: int, absorbed: int, loss: int) -> Dictionary:
+	return {"ok": true, "applied": true, "thorns": thorns,
+		"block_absorbed": absorbed, "hp_loss": loss}
+
+
+func _no_thorns(thorns: int) -> Dictionary:
+	return {"ok": true, "applied": false, "thorns": thorns,
+		"block_absorbed": 0, "hp_loss": 0}
+
+
+func _thorns_failure() -> Dictionary:
+	return {"ok": false, "applied": false, "thorns": 0,
+		"block_absorbed": 0, "hp_loss": 0}
+
+
+## Real roster whose first enemy carries the representative Thorns fixture value.
+## Pass null to omit the keyword entirely.
+func _thorns_enemies(thorns: Variant) -> CombatEnemies:
+	var definitions: Array = [
+		{"id": "patch_imp", "max_hp": 12}, {"id": "stitch_foe", "max_hp": 17},
+		{"id": "paper_foe", "max_hp": 21}]
+	if thorns != null:
+		definitions[0]["thorns"] = thorns
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid(), "thorns fixture roster is valid")
+	return enemies
+
+
+func _reject_thorns(rules: CombatEnemyKeywordRules, party: CombatParty, pos: int,
+		enemy_record: Dictionary, receipt: Dictionary, reason: String) -> void:
+	var heroes_before: Array[Dictionary] = []
+	if party != null and party.is_valid():
+		heroes_before = party.get_heroes()
+	var enemy_before := enemy_record.duplicate(true)
+	var receipt_before := receipt.duplicate(true)
+	_check(rules.resolve_thorns_retaliation(party, pos, enemy_record, receipt) == _thorns_failure(),
+		"thorns rejection: " + reason)
+	if party != null and party.is_valid():
+		_check(party.get_heroes() == heroes_before, "party unchanged on thorns rejection: " + reason)
+	_check(enemy_record == enemy_before and receipt == receipt_before,
+		"inputs unchanged on thorns rejection: " + reason)
+
+
+func _test_thorns_retaliation() -> void:
+	var rules := CombatEnemyKeywordRules.new()
+	_check(rules.has_method("resolve_thorns_retaliation"),
+		"scene-free Thorns rule exposes its documented method")
+	_test_thorns_positive_paths(rules)
+	_test_thorns_fail_closed(rules)
+	_test_thorns_replay_and_rng(rules)
+
+
+func _test_thorns_positive_paths(rules: CombatEnemyKeywordRules) -> void:
+	# AC1: hero Block absorbs retaliation before HP (Block 2 vs Thorns 3 -> 1 HP lost).
+	var party := _party()
+	var enemies := _thorns_enemies(3)
+	_check(party.gain_block(1, 2), "thorns fixture: Warden opens with Block 2")
+	var pre_hit := enemies.get_enemy(1)
+	var receipt := attacks.resolve_vs_enemy(enemies, 1, 5, {}, {})
+	_check(receipt == _event(5, 0, 5), "thorns fixture: authentic confirmed 5-damage hit")
+	var roster_before := enemies.get_enemies()
+	var pre_hit_before := pre_hit.duplicate(true)
+	var receipt_before := receipt.duplicate(true)
+	var result := rules.resolve_thorns_retaliation(party, 1, pre_hit, receipt)
+	_check(result == _thorns_result(3, 2, 1), "hero Block 2 absorbs Thorns 3 before HP (loss 1)")
+	_check(party.get_hero(1)["hp"] == 39 and party.get_hero(1)["block"] == 0,
+		"Warden authoritative HP and Block after retaliation")
+	_check(party.get_hero(2)["hp"] == 30 and party.get_hero(3)["hp"] == 26,
+		"unrelated heroes keep full HP after thorns")
+	_check(enemies.get_enemies() == roster_before, "enemy ledger untouched by thorns")
+	_check(pre_hit == pre_hit_before and receipt == receipt_before,
+		"thorns leaves the pre-hit snapshot and receipt dictionaries intact")
+	# A positive hit fully absorbed by ENEMY Block still triggers Thorns.
+	var absorbed_party := _party()
+	var absorbed_enemies := _thorns_enemies(3)
+	_check(absorbed_enemies.gain_block(1, 10), "thorns fixture: enemy Block 10")
+	var absorbed_pre := absorbed_enemies.get_enemy(1)
+	var absorbed_hit := attacks.resolve_vs_enemy(absorbed_enemies, 1, 5, {}, {})
+	_check(absorbed_hit == _event(5, 5, 0),
+		"thorns fixture: positive hit fully absorbed by enemy Block")
+	var absorbed_result := rules.resolve_thorns_retaliation(
+		absorbed_party, 1, absorbed_pre, absorbed_hit)
+	_check(absorbed_result == _thorns_result(3, 0, 3),
+		"fully absorbed positive hit still triggers Thorns 3")
+	_check(absorbed_party.get_hero(1)["hp"] == 37 and absorbed_party.get_hero(1)["block"] == 0,
+		"Warden loses 3 HP to Thorns after an absorbed hit")
+	# A lethal hit still triggers retaliation exactly once.
+	var lethal_party := _party()
+	var lethal_enemies := _thorns_enemies(3)
+	var lethal_pre := lethal_enemies.get_enemy(1)
+	var lethal_hit := attacks.resolve_vs_enemy(lethal_enemies, 1, 100, {}, {})
+	_check(lethal_hit == _event(100, 0, 12) and lethal_enemies.is_slain(1),
+		"thorns fixture: authentic lethal hit")
+	var lethal_result := rules.resolve_thorns_retaliation(lethal_party, 1, lethal_pre, lethal_hit)
+	_check(lethal_result == _thorns_result(3, 0, 3),
+		"lethal hit triggers Thorns exactly once using the pre-hit snapshot")
+	_check(lethal_party.get_hero(1)["hp"] == 37,
+		"lethal-hit retaliation damages the living attacker")
+	# Two separate confirmed hits each trigger their own retaliation, never aggregated.
+	var split_party := _party()
+	var split_enemies := _thorns_enemies(3)
+	var first_pre := split_enemies.get_enemy(1)
+	var first_hit := attacks.resolve_vs_enemy(split_enemies, 1, 4, {}, {})
+	var first_result := rules.resolve_thorns_retaliation(split_party, 1, first_pre, first_hit)
+	var second_pre := split_enemies.get_enemy(1)
+	var second_hit := attacks.resolve_vs_enemy(split_enemies, 1, 4, {}, {})
+	var second_result := rules.resolve_thorns_retaliation(split_party, 1, second_pre, second_hit)
+	_check(first_result == _thorns_result(3, 0, 3) and second_result == _thorns_result(3, 0, 3),
+		"each separate confirmed hit triggers its own Thorns 3")
+	_check(split_party.get_hero(1)["hp"] == 34,
+		"two hits cost 6 HP total instead of one aggregated retaliation")
+
+
+func _test_thorns_fail_closed(rules: CombatEnemyKeywordRules) -> void:
+	var good := _event(5, 0, 5)
+	# AC2: explicit Thorns 0 is a successful zero-effect receipt.
+	var zero_party := _party()
+	var zero_enemies := _thorns_enemies(0)
+	var zero_pre := zero_enemies.get_enemy(1)
+	var zero_hit := attacks.resolve_vs_enemy(zero_enemies, 1, 5, {}, {})
+	var zero_before := zero_party.get_heroes()
+	_check(zero_hit == good, "zero-thorns fixture has a confirmed hit")
+	_check(rules.resolve_thorns_retaliation(zero_party, 1, zero_pre, zero_hit) == _no_thorns(0),
+		"explicit Thorns 0 returns a zero-effect receipt")
+	_check(zero_party.get_heroes() == zero_before, "Thorns 0 leaves every hero untouched")
+	# AC2: omitted Thorns is a successful zero-effect receipt.
+	var plain_party := _party()
+	var plain_enemies := _thorns_enemies(null)
+	var plain_pre := plain_enemies.get_enemy(1)
+	_check(not plain_pre.has("thorns"), "omitted-thorns fixture really has no keyword")
+	var plain_hit := attacks.resolve_vs_enemy(plain_enemies, 1, 5, {}, {})
+	var plain_before := plain_party.get_heroes()
+	_check(plain_hit == good, "omitted-thorns fixture has a confirmed hit")
+	_check(rules.resolve_thorns_retaliation(plain_party, 1, plain_pre, plain_hit) == _no_thorns(0),
+		"absent Thorns returns a zero-effect receipt quoting 0")
+	_check(plain_party.get_heroes() == plain_before, "absent Thorns leaves every hero untouched")
+	# AC2: a confirmed zero-damage result never retaliates.
+	var zd_party := _party()
+	var zd_enemies := _thorns_enemies(3)
+	var zd_pre := zd_enemies.get_enemy(1)
+	var zd_hit := attacks.resolve_vs_enemy(zd_enemies, 1, 0, {}, {})
+	var zd_before := zd_party.get_heroes()
+	_check(zd_hit == _event(0, 0, 0), "zero-damage fixture is a successful zero hit")
+	_check(rules.resolve_thorns_retaliation(zd_party, 1, zd_pre, zd_hit) == _no_thorns(3),
+		"confirmed zero damage causes no retaliation")
+	_check(zd_party.get_heroes() == zd_before, "zero-damage hit leaves every hero untouched")
+	# AC2: failed attacks are rejected, never treated as a zero-effect hit.
+	var failed_party := _party()
+	var failed_enemies := _thorns_enemies(3)
+	_check(failed_enemies.apply_damage(1, 12) and failed_enemies.is_slain(1),
+		"failed-attack fixture has a slain defender")
+	var failed_pre := failed_enemies.get_enemy(1)
+	var failed_hit := attacks.resolve_vs_enemy(failed_enemies, 1, 5, {}, {})
+	_check(failed_hit == _failure(), "failed-attack fixture really fails")
+	_reject_thorns(rules, failed_party, 1, failed_pre, failed_hit, "failed attack receipt")
+	# AC2: malformed receipts fail closed.
+	var malformed_party := _party()
+	var enemy_record := {"id": "patch_imp", "hp": 12, "block": 0, "thorns": 3}
+	var malformed: Array[Dictionary] = [
+		{}, {"ok": true}, {"damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		{"ok": "yes", "damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		{"ok": 1, "damage": 5, "block_absorbed": 0, "hp_loss": 5},
+		{"ok": true, "damage": -1, "block_absorbed": 0, "hp_loss": 0},
+		{"ok": true, "damage": 5.5, "block_absorbed": 0, "hp_loss": 5},
+		{"ok": true, "damage": 5, "block_absorbed": -1, "hp_loss": 5},
+		{"ok": true, "damage": 5, "block_absorbed": 0, "hp_loss": -1},
+		{"ok": true, "damage": 5, "block_absorbed": 0, "hp_loss": 5.0}
+	]
+	for bad_receipt in malformed:
+		_reject_thorns(rules, malformed_party, 1, enemy_record, bad_receipt,
+			"malformed receipt " + str(bad_receipt))
+	# AC2: malformed enemy records fail closed.
+	var enemy_party := _party()
+	for bad_enemy in [{}, {"hp": -1, "thorns": 3}, {"hp": 12, "block": -2, "thorns": 3},
+			{"hp": "12", "thorns": 3}]:
+		_reject_thorns(rules, enemy_party, 1, bad_enemy, good,
+			"malformed enemy record " + str(bad_enemy))
+	# AC2: negative/noninteger Thorns values are rejected.
+	for bad_thorns in [-1, 1.5, "3", true]:
+		_reject_thorns(rules, enemy_party, 1,
+			{"id": "patch_imp", "hp": 12, "block": 0, "thorns": bad_thorns}, good,
+			"invalid Thorns " + str(bad_thorns))
+	# AC2: bad attacker positions and a downed attacker fail closed.
+	var pos_party := _party()
+	for pos in [-1, 0, 4]:
+		_reject_thorns(rules, pos_party, pos, enemy_record, good,
+			"bad attacker position %d" % pos)
+	var downed_party := _party()
+	_check(downed_party.apply_damage(1, 40) and downed_party.is_downed(1),
+		"downed-attacker fixture really is downed")
+	_reject_thorns(rules, downed_party, 1, enemy_record, good, "downed attacker")
+	# AC2: null and invalid parties fail closed.
+	_reject_thorns(rules, null, 1, enemy_record, good, "null party")
+	var invalid_party := CombatParty.new([])
+	_check(not invalid_party.is_valid(), "invalid party fixture really is invalid")
+	_reject_thorns(rules, invalid_party, 1, enemy_record, good, "invalid party")
+
+
+func _test_thorns_replay_and_rng(rules: CombatEnemyKeywordRules) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 987654321
+	var state_before := rng.state
+	var first_receipt: Dictionary = {}
+	var first_heroes: Array[Dictionary] = []
+	for repeat in range(2):
+		var party := _party()
+		_check(party.gain_block(1, 2), "replay fixture: Warden Block 2")
+		var enemies := _thorns_enemies(3)
+		var pre_hit := enemies.get_enemy(1)
+		var hit := attacks.resolve_vs_enemy(enemies, 1, 5, {}, {})
+		var result := rules.resolve_thorns_retaliation(party, 1, pre_hit, hit)
+		_check(result == _thorns_result(3, 2, 1),
+			"replay %d: deterministic thorns receipt" % repeat)
+		if repeat == 0:
+			first_receipt = result.duplicate(true)
+			first_heroes = party.get_heroes()
+		else:
+			_check(result == first_receipt and party.get_heroes() == first_heroes,
+				"independent identical fixtures replay identical receipt and party snapshot")
+	_check(rng.state == state_before, "Thorns rule leaves the run RNG untouched")
