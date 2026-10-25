@@ -1841,8 +1841,9 @@ func _warden_path_presentation() -> void:
 		and probe.tooltip_text.contains("BASE deal 6 damage"),
 		"mounted Warden Path tooltip carries both the Path and card rows")
 	var attacks = app.get_node_or_null("LiveAttackPreview")
-	_check(attacks != null and not attacks.has_method("warden_path_playable"),
-		"no genuine mounted Warden battle resolver exists for these cards yet")
+	_check(attacks != null and attacks.has_method("warden_path_playable")
+		and app.run_warden_path_receipt.is_empty() and not attacks.warden_path_playable("warden_lance_pin"),
+		"an unselected Warden battle resolver refuses the probe card")
 	_check(not bool(probe_metadata.visual_state(probe).get("playable", true)),
 		"absent Warden battle resolver never enables the mounted face")
 	_check(not probe.self_modulate.is_equal_approx(Color.WHITE),
