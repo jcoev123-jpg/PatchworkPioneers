@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "id": "v3_warden_shield_menders",
+      "title": "The Shield-Menders",
+      "description": "At a shield repair queue, a huge patched shield props up the town gate.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["hold_the_gate", "sell_spare_rivets"],
+      "choices": [
+        { "id": "hold_the_gate", "text": "Stand watch by the giant shield (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_spare_rivets", "text": "Trade a spare shield rivet (spend 1 scrap; gain 17 gold)", "outcome": { "gold": 17, "scraps": -1 } },
+        { "id": "leave", "text": "Leave without exchanging anything", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_thread_cart",
+      "title": "Scarlet Thread Cart",
+      "description": "The seamstress finds a wagon knotted with red-thread pennants and giant needles.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["sew_bunting", "buy_red_thread"],
+      "choices": [
+        { "id": "sew_bunting", "text": "Sew the red pennant (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "buy_red_thread", "text": "Buy a red-thread bundle (spend 12 gold; gain 2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "leave", "text": "Leave without exchanging anything", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_clockwork_wagon",
+      "title": "The Clockwork Wagon",
+      "description": "A clockwork trader's wagon ticks under a load of crooked buttons and gears.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["recover_gears", "fix_ratchet"],
+      "choices": [
+        { "id": "recover_gears", "text": "Gather the fallen gears (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "fix_ratchet", "text": "Repair the wagon ratchet (spend 2 scraps; gain 28 gold)", "outcome": { "gold": 28, "scraps": -2 } },
+        { "id": "leave", "text": "Leave without exchanging anything", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_moth_vigil",
+      "title": "Moth Vigil",
+      "description": "A warm patchwork lantern gathers moths beside a candlelit cloth shrine.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["guide_moths", "buy_wax"],
+      "choices": [
+        { "id": "guide_moths", "text": "Guide the moths by lantern light (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_wax", "text": "Buy lantern wax (spend 12 gold; gain 2 scraps)", "outcome": { "gold": -12, "scraps": 2 } },
+        { "id": "leave", "text": "Leave without exchanging anything", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_needle_fair",
+      "title": "The Needle Fair",
+      "description": "A caped duelist holds a friendly fencing fair with a long thin needle rapier.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["duel_for_purse", "trade_ribbon"],
+      "choices": [
+        { "id": "duel_for_purse", "text": "Win the friendly fencing purse (+20 gold)", "outcome": { "gold": 20, "scraps": 0 } },
+        { "id": "trade_ribbon", "text": "Buy two red ribbon bundles (spend 10 gold; gain 2 scraps)", "outcome": { "gold": -10, "scraps": 2 } },
+        { "id": "leave", "text": "Leave without exchanging anything", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    }
+  ]
+}
