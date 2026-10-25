@@ -4152,7 +4152,7 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 	_present_connected_route(weakref(run_map))
 
 
-var campfire_view: VBoxContainer
+var campfire_view: LiveCampfirePanel
 var campfire_heal_button: Button
 var campfire_leave_button: Button
 var campfire_visit: RunCampfireVisit
@@ -4294,27 +4294,15 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 		campfire_view.queue_free()
 	campfire_visit = visit
 	_campfire_closed = false
-	campfire_view = VBoxContainer.new()
+	campfire_view = LiveCampfirePanel.new()
 	campfire_view.name = "Campfire"
-	campfire_view.position = Vector2(300, 190)
-	campfire_view.custom_minimum_size = Vector2(680, 240)
-	campfire_view.size = Vector2(680, 240)
-	campfire_view.add_theme_constant_override("separation", 16)
+	campfire_view.position = Vector2(200, 60)
 	add_child(campfire_view)
-	var title := Label.new()
-	title.text = "Campfire — choose one action\nHeal each hero 30% max HP (torn revives at 1 HP first), or leave."
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.custom_minimum_size.y = 88
-	title.add_theme_font_size_override("font_size", 22)
-	campfire_view.add_child(title)
-	campfire_heal_button = Button.new()
-	campfire_leave_button = Button.new()
-	campfire_heal_button.text = "Heal"
-	campfire_leave_button.text = "Leave"
-	for action in [campfire_heal_button, campfire_leave_button]:
-		campfire_view.add_child(action)
-		action.custom_minimum_size.y = 48
-		action.pressed.connect(_campfire_action.bind(action, campfire_view, visit))
+	campfire_view.bind(visit)
+	campfire_heal_button = campfire_view.heal_button
+	campfire_leave_button = campfire_view.leave_button
+	var snapshot := visit.read_state()
+	campfire_view.decision_requested.connect(_campfire_action.bind(campfire_view, visit, snapshot))
 	campfire_heal_button.focus_next = campfire_heal_button.get_path_to(campfire_leave_button)
 	campfire_leave_button.focus_next = campfire_leave_button.get_path_to(campfire_heal_button)
 	campfire_heal_button.focus_previous = campfire_heal_button.focus_next
@@ -4324,41 +4312,63 @@ func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], b
 	return true
 
 
-func _campfire_action(button, view, visit: RunCampfireVisit) -> void:
+func _campfire_action(intent: Dictionary, view,
+		visit: RunCampfireVisit, snapshot: Dictionary) -> void:
+	if not _commit_campfire_action(intent, view, visit, snapshot):
+		# A refused submission spends neither the service nor the UI's next attempt.
+		# Rebinding also retires the callback generation that emitted this request.
+		if is_instance_valid(view) and view == campfire_view and visit == campfire_visit \
+			and not _campfire_closed and view._submitted and visit.read_state() == snapshot:
+			view.bind(visit)
+
+
+func _commit_campfire_action(intent: Dictionary, view,
+		visit: RunCampfireVisit, snapshot: Dictionary) -> bool:
 	if _campfire_closed or _campfire_original.is_empty() or _campfire_original != _sewing_context() \
 		or visit == null or visit != campfire_visit or not is_instance_valid(view) \
 		or view != campfire_view or view.get_parent() != self or not view.is_visible_in_tree() \
-		or button not in [campfire_heal_button, campfire_leave_button] \
-		or not is_instance_valid(button) or button.get_parent() != view or button.disabled \
-		or not button.is_visible_in_tree() or run_map.get_node(run_map.get_current_node_id()).get("type") != "Campfire":
-		return
+		or not view._submitted or view._visit != visit or view._snapshot != snapshot \
+		or not view._display_current() or run_map == null \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Campfire":
+		return false
 	var id := run_map.get_current_node_id()
-	# Authenticate the service itself, then stage its decision on a detached visit.
-	if visit.read_state() != {"ok": true, "node_id": id, "status": RunCampfireVisit.OPEN, "heroes": run_heroes}:
-		return
+	if intent.size() != 4 or intent.get("action") not in ["heal", "leave"] \
+		or intent.get("source_visit") != visit or intent.get("node_id") != id \
+		or intent.get("expected_heroes") != snapshot.get("heroes") \
+		or snapshot != {"ok": true, "node_id": id, "status": RunCampfireVisit.OPEN, "heroes": run_heroes} \
+		or visit.read_state() != snapshot:
+		return false
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes:
+		return false
+	if carry._wardrobe != null:
+		var state := carry._wardrobe.get_snapshot()
+		if not carry._wardrobe.is_valid() or state.heroes != run_heroes or state.cards != run_deck \
+			or state.owned != run_trinkets or state.scraps != run_scraps or state.gold != session_gold \
+			or state.seed != run_seed or state.rest_id != "" \
+			or not carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
+			return false
 	var staged := RunCampfireVisit.new(id, run_heroes)
-	var receipt := staged.choose_heal(id, run_heroes) if button == campfire_heal_button else staged.leave(id, run_heroes)
+	var receipt := staged.choose_heal(id, run_heroes) if intent.action == "heal" else staged.leave(id, run_heroes)
 	if not receipt.ok or receipt.node_id != id:
-		return
-	if button == campfire_heal_button:
-		var carry := party_carryover as RunTornCarryover
+		return false
+	if intent.action == "heal":
 		if carry == null or carry._observer() == null or carry.read_state().completed_rests.has(id):
-			return
+			return false
 		var proposed := carry._observer().apply_rest(id, run_heroes, true)
 		if not proposed.ok or proposed.heroes != receipt.heroes:
-			return
+			return false
 		var recovered := carry.choose_rest_heal(id)
 		if not recovered.ok or recovered.heroes != receipt.heroes:
-			return
+			return false
 		run_heroes = recovered.heroes.duplicate(true)
 	campfire_visit = staged
 	_campfire_closed = true
 	_campfire_original = _sewing_context()
 	_campfire_visits[id] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
-	campfire_heal_button.disabled = true
-	campfire_leave_button.disabled = true
-	view.hide()
+	view.close()
 	_present_connected_route(weakref(run_map))
+	return true
 
 
 var sewing_view: LiveSewingCirclePanel
@@ -6410,6 +6420,8 @@ func _return_to_title() -> void:
 		remove_child(campfire_view)
 		campfire_view.queue_free()
 	campfire_view = null
+	campfire_heal_button = null
+	campfire_leave_button = null
 	campfire_visit = null
 	_campfire_original.clear()
 	if is_instance_valid(patch_stall_view):

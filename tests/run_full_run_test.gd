@@ -258,7 +258,10 @@ func _node(id: String, index: int) -> bool:
 			var expected_carry: Dictionary = expected_inventory[9]
 			expected_carry.heroes = receipt.heroes.duplicate(true)
 			expected_carry.completed_rests.append(id)
-			var campfire_callback := _retained(app.campfire_heal_button)
+			# Keep the app-owned listener callable across panel teardown/title return.
+			var campfire_callback: Callable = app.campfire_view.decision_requested.get_connections()[0].callable.bind({
+				"action": "heal", "source_visit": app.campfire_visit,
+				"node_id": id, "expected_heroes": app.run_heroes.duplicate(true)})
 			await _activate(app.campfire_heal_button, index % 2 == 0)
 			_check(app.campfire_visit.read_state().status == RunCampfireVisit.HEALED
 				and app.route_view != null and app.route_view.is_visible_in_tree()

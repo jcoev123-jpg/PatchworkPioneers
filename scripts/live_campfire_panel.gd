@@ -234,6 +234,9 @@ func _request(action: String, generation: int, source: RunCampfireVisit) -> void
 			or not _source_current() or not _display_current() \
 			or (action != "heal" and action != "leave"):
 		return
+	var button := heal_button if action == "heal" else leave_button
+	if button.disabled or not button.is_visible_in_tree():
+		return
 	_submitted = true
 	heal_button.disabled = true
 	leave_button.disabled = true

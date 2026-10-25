@@ -304,6 +304,14 @@ func _fail_closed() -> void:
 	var source := original.read_state()
 	var stale_heal: Callable = panel._connections[panel.heal_button]
 	var stale_leave: Callable = panel._connections[panel.leave_button]
+	for button in [panel.heal_button, panel.leave_button]:
+		button.disabled = true
+		var before := original.read_state()
+		var callback: Callable = panel._connections[button]
+		callback.call()
+		_check(intents.is_empty() and original.read_state() == before and not panel._submitted,
+			"disabled action rejects its captured callback without spending submission")
+		button.disabled = false
 	panel.title_label.text = "Sewing Circle"
 	_reject_without_mutation(original, "forged title metadata")
 	panel.title_label.text = "CAMPFIRE"
