@@ -29,6 +29,7 @@ const FRAME_SOURCE_EDGE := 34.0
 
 var _catalog := StarterCards.new()
 var _toss := CombatWardenV3ShieldTossCards.new()
+var _cleansing := CombatSeamstressV3CleansingCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
@@ -74,6 +75,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _cleansing.is_supported_card(card_id):
+		return _cleansing._catalog_definition(card_id)
 	if _toss.is_supported_card(card_id):
 		return _toss._catalog_definition(card_id)
 	_load_path_cards()
@@ -444,6 +447,8 @@ func _recipient(definition: Dictionary) -> String:
 ## fields and the real confirmed-hit starter adapter are described, and any
 ## unrecognized effect key is flagged instead of being rendered as a number.
 func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[String]:
+	if _cleansing.is_supported_card(card_id):
+		return ["Heal %d HP to the chosen living ally, capped at max HP. Choose one present Bleed, Weak or Exposed to remove completely; heal alone if none are present." % definition.effects.heal]
 	var parts: Array[String] = []
 	var raw_effects: Variant = definition.get("effects", {})
 	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
@@ -1104,6 +1109,8 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _cleansing.is_supported_card(id):
+		return "Heal %d; choose Bleed/Weak/Exposed to remove all (if present)" % _definition(id).effects.heal
 	if _toss.is_supported_card(id):
 		var effects: Dictionary = _definition(id).effects
 		return "Damage = own Block%s; keep Block" % (

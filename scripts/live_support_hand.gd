@@ -5,6 +5,8 @@ const SUPPORT_IDS := ["warden_brace", "warden_brace_plus", "tinker_tune_up", "ti
 	"seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up", "seamstress_stitch_up_plus"]
 const SPARE_PARTS_IDS := ["tinker_spare_parts", "tinker_spare_parts_plus"]
 const ALLY_IDS := ["seamstress_mend", "seamstress_mend_plus", "seamstress_stitch_up",
+	"seamstress_v3_mending_knot", "seamstress_v3_mending_knot_plus",
+	"seamstress_v3_darn_the_tear", "seamstress_v3_darn_the_tear_plus",
 	"seamstress_stitch_up_plus", "warden_patch_guard", "warden_patch_guard_plus",
 	"seamstress_darning", "seamstress_darning_plus", "seamstress_thimble_tea", "seamstress_thimble_tea_plus"]
 const TABLE_ID := "SupportTableBacking"
@@ -68,6 +70,8 @@ var _block_cards := CombatWardenPoolBlockCards.new()
 var _energy_cards := CombatPoolEnergyCards.new()
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _heal_cards := CombatSeamstressPoolHeals.new()
+var _cleansing := CombatSeamstressV3CleansingCards.new()
+var cleanse_choices: HBoxContainer
 var _metadata = preload("res://scripts/live_hand_card_metadata.gd").new()
 var _receipt_seq := 0
 
@@ -484,7 +488,7 @@ func _input(event: InputEvent) -> void:
 			_toggle_help()
 			get_viewport().set_input_as_handled()
 			return
-		if event.keycode == KEY_ESCAPE and _help_slot.visible:
+		if event.keycode == KEY_ESCAPE and _help_slot.visible and not _pending.get("choosing", false):
 			_help_slot.hide()
 			get_viewport().set_input_as_handled()
 			return
@@ -587,11 +591,15 @@ func _path_discount(card_id: String) -> int:
 
 
 func _is_actionable(card_id: String) -> bool:
+	if _cleansing.is_supported_card(card_id):
+		return true
 	return card_id in SUPPORT_IDS or card_id in SPARE_PARTS_IDS or card_id in M02PositionCards.IDS or _is_block_card(card_id) or _is_energy_card(card_id) or _is_heal_card(card_id) or _is_path_card(card_id)
 
 
 ## One entry point keeps starter support and pool Block cards on the same commit path.
-func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int) -> bool:
+func _play_held(deck: CombatDeck, party: CombatParty, card_id: String, position: int, debuff: String = "") -> bool:
+	if _cleansing.is_supported_card(card_id):
+		return bool(_cleansing.play_card(deck, party, card_id, position, debuff).get("ok", false))
 	if _is_path_card(card_id):
 		return _play_path_card(card_id)
 	if card_id in SPARE_PARTS_IDS:
@@ -820,10 +828,14 @@ func _sync_battle() -> void:
 		if choosing:
 			_hud.move_child(help_label, 1)
 	if choosing:
-		_help_slot.hide()
+		_help_slot.visible = is_instance_valid(cleanse_choices)
 	var help_text: String = TABLE_HELP
 	if choosing:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
+		if _cleansing.is_supported_card(_pending.id):
+			help_text = "%s: 1 energy; heal %d; %s | Esc: cancel" % [_metadata.definition(_pending.id).display_name,
+				_metadata.definition(_pending.id).effects.heal,
+				"choose Bleed / Weak / Exposed below (Tab, Enter / Space)" if is_instance_valid(cleanse_choices) else "choose a living ally, then a debuff"]
 	if help_label.text != help_text:
 		help_label.text = help_text
 	# The same patch keeps the sewn frame; only its face changes: idle Help in the shipped
@@ -1067,7 +1079,7 @@ func _eligible(panel, card_id: String, deck: CombatDeck, party: CombatParty, bat
 			or app.enemies == null or not app.enemies.is_valid() \
 			or party.is_defeated() or app.enemies.is_victorious():
 			return false
-	if _is_energy_card(card_id) or card_id in SPARE_PARTS_IDS or _is_heal_card(card_id):
+	if _is_energy_card(card_id) or card_id in SPARE_PARTS_IDS or _is_heal_card(card_id) or _cleansing.is_supported_card(card_id):
 		# Presentation preflight only: the pool resolver revalidates and commits.
 		if app._battle_closed or not deck.turn_active or app.battle_result == null \
 			or not app.battle_result.can_continue() or app.battle_result._party != party \
@@ -1112,6 +1124,8 @@ func _on_card_input(event: InputEvent, panel, card_id: String, deck: CombatDeck,
 		return
 	_cancel_pending()
 	_pending = {"panel": panel, "id": card_id, "choosing": false, "queued": false, "context": _current_move_context(panel)}
+	if _cleansing.is_supported_card(card_id):
+		_pending.owner_roster = _party.get_heroes().map(func(hero): return [hero.id, hero.position])
 	if card_id in ALLY_IDS and not _selection_valid():
 		_cancel_pending()
 		return
@@ -1179,6 +1193,11 @@ func _selection_valid() -> bool:
 		return false
 	if _pending.get("context", []) != _current_move_context(_pending.panel):
 		return false
+	if _cleansing.is_supported_card(_pending.id):
+		if _pending.owner_roster != _party.get_heroes().map(func(hero): return [hero.id, hero.position]):
+			return false
+		if _pending.has("statuses") and _party.get_hero(_pending.target.position).get("statuses", {}) != _pending.statuses:
+			return false
 	if _pending.id not in ALLY_IDS:
 		return true
 	# Presentation preflight only; the support service revalidates and commits.
@@ -1260,6 +1279,40 @@ func _on_target_input(event: InputEvent, panel, position: int, token: int) -> vo
 	panel.accept_event()
 	_pending.queued = true
 	_pending.target = {"position": position, "hero_id": _targets[panel].hero_id}
+	if _cleansing.is_supported_card(_pending.id):
+		var statuses: Variant = _party.get_hero(position).get("statuses", {})
+		if not statuses is Dictionary:
+			_cancel_pending()
+			return
+		_pending.statuses = statuses.duplicate(true)
+		var options: Array[String] = []
+		for debuff in CombatSeamstressV3CleansingCards.ELIGIBLE_DEBUFFS:
+			var count: Variant = _pending.statuses.get(debuff, 0)
+			if count is int and count > 0:
+				options.append(debuff)
+		if not options.is_empty():
+			cleanse_choices = HBoxContainer.new()
+			cleanse_choices.name = "CleansingDebuffChoices"
+			help_disclosure.hide()
+			_help_slot.add_child(cleanse_choices)
+			for debuff in options:
+				var button := Button.new()
+				button.name = debuff.capitalize()
+				button.text = "Remove all %s (%d)" % [debuff.capitalize(), _pending.statuses[debuff]]
+				button.add_theme_font_size_override("font_size", 18)
+				button.pressed.connect(_choose_debuff.bind(debuff, position, token))
+				cleanse_choices.add_child(button)
+			cleanse_choices.get_child(0).grab_focus()
+			_sync_battle()
+			return
+		_pending.debuff = ""
+	_resolve_target.call_deferred(position, token)
+
+
+func _choose_debuff(debuff: String, position: int, token: int) -> void:
+	if token != _token or _pending.is_empty() or _pending.has("debuff"):
+		return
+	_pending.debuff = debuff
 	_resolve_target.call_deferred(position, token)
 
 
@@ -1272,8 +1325,12 @@ func _resolve_target(position: int, token: int) -> void:
 		_cancel_pending()
 		return
 	var id: String = _pending.id
+	var debuff: String = _pending.get("debuff", "")
+	if _cleansing.is_supported_card(id) and not _cleansing._prepare(_deck, _party, id, position, debuff).get("ok", false):
+		_cancel_pending()
+		return
 	_cancel_pending()
-	if _play_held(_deck, _party, id, position):
+	if _play_held(_deck, _party, id, position, debuff):
 		_forward_switchback_ordinary_play(id)
 		var app = get_parent()
 		app._refresh_party()
@@ -1283,6 +1340,13 @@ func _resolve_target(position: int, token: int) -> void:
 
 
 func _cancel_pending() -> void:
+	if is_instance_valid(cleanse_choices):
+		cleanse_choices.free()
+	cleanse_choices = null
+	if is_instance_valid(help_disclosure):
+		help_disclosure.show()
+	if is_instance_valid(_help_slot):
+		_help_slot.hide()
 	_dragging = false
 	if is_instance_valid(_pending.get("panel")):
 		_pending.panel.set_meta("aiming", false)
