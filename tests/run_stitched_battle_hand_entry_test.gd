@@ -13,6 +13,8 @@ func _initialize() -> void:
     _test_paid_removal()
     _test_optional_path_admission()
     _test_optional_path_rejections()
+    _test_trio_path_admission()
+    _test_trio_path_rejections()
     for reason in failures:
         printerr(reason)
     print("run_stitched_battle_hand_entry_test: ",
@@ -525,3 +527,128 @@ func _test_optional_path_rejections() -> void:
         and _admit_path(ledger, _rng(9721), bulwark).get("ok") == true
         and _admit_path(ledger, _rng(9721), vanguard).get("ok") == true,
         "both authentic claims remain admissible after all failed preflights")
+
+
+func _trio_claim(warden: String, seamstress: String, tinker: String) -> Dictionary:
+    var source := RunHeroPathLoadout.new()
+    var claim := source.choose({
+        "warden": warden, "seamstress": seamstress, "tinker": tinker})
+    _check(claim.get("ok") == true and source.is_claimed()
+        and RunHeroPathLoadout.authenticate_receipt(claim).get("ok") == true,
+        "authentic trio prerequisite " + warden + "/" + seamstress + "/" + tinker)
+    return claim
+
+
+func _test_trio_path_admission() -> void:
+    var base := _starting_ledger()
+    var stitched := _stitch()
+    if base.is_empty() or stitched.is_empty():
+        return
+    var combinations := 0
+    for warden in ["bulwark", "vanguard"]:
+        for seamstress in ["bloodline", "unpicker"]:
+            for tinker in ["sharpshot", "clockwork"]:
+                combinations += 1
+                var claim := _trio_claim(warden, seamstress, tinker)
+                if claim.get("ok") != true:
+                    continue
+                var selected := [claim.paths.warden.card.id,
+                    claim.paths.seamstress.card.id, claim.paths.tinker.card.id]
+                _check(selected.size() == 3 and selected[0] != selected[1]
+                    and selected[1] != selected[2] and selected[0] != selected[2],
+                    "three distinct selected card IDs")
+                for ledger in [base, stitched]:
+                    var before: Dictionary = ledger.duplicate(true)
+                    var authority := RunRestStitchCards.new(ledger.deck,
+                        ledger.descriptors, ledger.remaining_scraps, ledger.next_stitch_id)
+                    _check(authority.is_valid() and authority.get_snapshot().receipt == ledger.receipt,
+                        "trio uses current canonical Rest ledger")
+                    if not authority.is_valid():
+                        continue
+                    var seed_value := 8900 + combinations * 2 + (1 if ledger == stitched else 0)
+                    var rng := _rng(seed_value)
+                    var oracle_rng := _rng(seed_value)
+                    var expected_ids: Array[String] = []
+                    expected_ids.assign(ledger.deck)
+                    expected_ids.append_array(selected)
+                    var oracle := CombatDeck.new(expected_ids, oracle_rng)
+                    var entered := _admit_path(ledger, rng, claim)
+                    _check(entered.get("ok") == true, "trio admits base or stitched ledger")
+                    if entered.get("ok") != true:
+                        continue
+                    var battle: CombatDeck = entered.combat_deck
+                    _check(_counts(_all(battle)) == _counts(expected_ids)
+                        and _all(battle).size() == ledger.deck.size() + 3
+                        and _all(battle).count(selected[0]) == 1
+                        and _all(battle).count(selected[1]) == 1
+                        and _all(battle).count(selected[2]) == 1,
+                        "trio adds exactly one chosen card per hero and preserves every run card")
+                    _check(battle.draw_pile == oracle.draw_pile and rng.state == oracle_rng.state
+                        and battle.hand.is_empty() and battle.energy == 0
+                        and not battle.turn_active,
+                        "admission makes exactly one seeded CombatDeck shuffle, no turn")
+                    _check(entered.snapshot == authority.get_snapshot()
+                        and entered.run_cards.get_snapshot() == authority.get_snapshot()
+                        and ledger == before
+                        and entered.snapshot.deck == ledger.deck
+                        and entered.snapshot.descriptors == ledger.descriptors
+                        and entered.snapshot.remaining_scraps == ledger.remaining_scraps
+                        and entered.snapshot.next_stitch_id == ledger.next_stitch_id,
+                        "trio leaves complete permanent ledger and receipt unchanged")
+                    _check(not entered.snapshot.deck.has(selected[0])
+                        and not entered.snapshot.deck.has(selected[1])
+                        and not entered.snapshot.deck.has(selected[2])
+                        and entered.battle_only_hero_paths.card_ids == selected
+                        and entered.battle_only_hero_paths.receipt == claim,
+                        "battle-only claim is carried without Path cards in Rest")
+                    entered.battle_only_hero_paths.receipt.paths.tinker.passive["forged"] = true
+                    _check(claim == RunHeroPathLoadout.new().choose({
+                        "warden": warden, "seamstress": seamstress, "tinker": tinker}),
+                        "returned trio receipt is detached from caller")
+                    _check(battle.start_turn() and oracle.start_turn()
+                        and battle.hand.size() == 5 and battle.energy == 3
+                        and battle.hand == oracle.hand
+                        and battle.draw_pile == oracle.draw_pile
+                        and rng.state == oracle_rng.state,
+                        "trio draws five and gains three energy reproducibly")
+    _check(combinations == 8, "all eight trio combinations admitted on both ledgers")
+
+
+func _test_trio_path_rejections() -> void:
+    var ledger := _starting_ledger()
+    if ledger.is_empty():
+        return
+    var claim := _trio_claim("bulwark", "bloodline", "sharpshot")
+    if claim.get("ok") != true:
+        return
+    var forged := claim.duplicate(true)
+    forged.paths.warden.passive.starting_block = 16
+    _reject_path(ledger, ledger.receipt, forged, "forged trio passive")
+    forged = claim.duplicate(true)
+    forged.paths.seamstress.card.effects.bleed = 9
+    _reject_path(ledger, ledger.receipt, forged, "forged trio card")
+    forged = claim.duplicate(true)
+    forged.paths.tinker.card.owner = "warden"
+    _reject_path(ledger, ledger.receipt, forged, "forged trio owner")
+    forged = claim.duplicate(true)
+    forged.deck[0] = "tinker_scope"
+    _reject_path(ledger, ledger.receipt, forged, "forged trio base deck")
+    forged = claim.duplicate(true)
+    forged.paths.erase("seamstress")
+    _reject_path(ledger, ledger.receipt, forged, "missing trio hero")
+    forged = claim.duplicate(true)
+    forged.paths["extra"] = forged.paths.warden.duplicate(true)
+    _reject_path(ledger, ledger.receipt, forged, "extra trio hero")
+    var source := RunHeroPathLoadout.new()
+    _check(source.choose({"warden": "bulwark", "seamstress": "bloodline",
+        "tinker": "sharpshot"}).get("ok") == true, "trio replay fixture claimed")
+    _reject_path(ledger, ledger.receipt, source.choose({"warden": "bulwark",
+        "seamstress": "bloodline", "tinker": "sharpshot"}), "replayed trio selection")
+    _reject_path(ledger, "stale-receipt", claim, "trio with stale Rest receipt")
+    for card_id in RunStitchedBattleHandEntry.PATH_CARD_IDS:
+        var corrupted := ledger.duplicate(true)
+        corrupted.deck.append(card_id)
+        _reject_path(corrupted, corrupted.receipt, claim,
+            "permanent ledger contains Path card " + card_id)
+    _check(_admit_path(ledger, _rng(9700), claim).get("ok") == true,
+        "authentic trio remains admissible after failed preflights")
