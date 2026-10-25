@@ -198,6 +198,66 @@
         { "id": "buy_spools", "text": "Give 20 gold for three dry spools (+3 scraps)", "outcome": { "gold": -20, "scraps": 3 } },
         { "id": "turn_away", "text": "Turn away from the reflection", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_ghostlight_playhouse",
+      "title": "The Ghostlight Playhouse",
+      "description": "Button-eyed actors bow beneath a lone amber candle in a theatre of torn oxblood velvet.",
+      "choices": [
+        { "id": "gather_prop_ribbons", "text": "Gather dropped costume ribbons (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "rent_footlights", "text": "Rent the spare footlights (spend 17 gold; gain 3 scraps)", "outcome": { "gold": -17, "scraps": 3 } },
+        { "id": "close_curtain", "text": "Close the velvet curtain and leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_frosted_pincushion",
+      "title": "The Frosted Pincushion",
+      "description": "A mountain-sized pincushion bristles with icy needles while its brass pins ring like bells.",
+      "choices": [
+        { "id": "pull_copper_pin", "text": "Pull a loose copper pin (+12 gold)", "outcome": { "gold": 12, "scraps": 0 } },
+        { "id": "reline_needle_cap", "text": "Re-line a needle cap (spend 2 scraps; gain 26 gold)", "outcome": { "gold": 26, "scraps": -2 } },
+        { "id": "skirt_ice", "text": "Skirt the frozen cushion and leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_threadbare_aviary",
+      "title": "The Threadbare Aviary",
+      "description": "Clockwork felt birds rustle in a stitched cage whose roof has lost its final seam.",
+      "choices": [
+        { "id": "gather_fallen_feathers", "text": "Gather soft feather stuffing (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "mend_birdcage", "text": "Buy cage-repair thread (spend 13 gold; gain 2 scraps)", "outcome": { "gold": -13, "scraps": 2 } },
+        { "id": "leave_birds", "text": "Let the birds rest and leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_moss_garden",
+      "title": "The Oxblood Moss Garden",
+      "description": "Plush midnight roses bloom from the stitched pockets of a wandering quilt garden.",
+      "choices": [
+        { "id": "gather_garden_trim", "text": "Collect clipped rose hems (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "sell_rose_ribbon", "text": "Trade one saved scrap for a rose ribbon (spend 1 scrap; gain 18 gold)", "outcome": { "gold": 18, "scraps": -1 } },
+        { "id": "leave_garden", "text": "Walk out through the moss gate", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_cloud_hem_windmill",
+      "title": "The Cloud-Hem Windmill",
+      "description": "A patchwork windmill turns its broad cloud-patterned sails above a valley of sewn grasses.",
+      "choices": [
+        { "id": "crank_spool", "text": "Crank the spare spool for wages (+7 gold)", "outcome": { "gold": 7, "scraps": 0 } },
+        { "id": "trade_cuttings", "text": "Sell two sailcloth scraps (spend 2 scraps; gain 32 gold)", "outcome": { "gold": 32, "scraps": -2 } },
+        { "id": "watch_sails", "text": "Watch the sails turn and leave", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_stone_button_forge",
+      "title": "The Stone Button Forge",
+      "description": "A giant button-eyed smith hammers moon-bright brass circles on an embroidered anvil.",
+      "choices": [
+        { "id": "sweep_button_shanks", "text": "Sweep stray button shanks (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "buy_thread_steel", "text": "Buy three spools of thread-steel (spend 21 gold; gain 3 scraps)", "outcome": { "gold": -21, "scraps": 3 } },
+        { "id": "leave_forge", "text": "Leave the forge before the next bell", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
