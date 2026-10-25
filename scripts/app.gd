@@ -1908,6 +1908,10 @@ func _build_battle() -> void:
 	# The fan rotates the outer cards a few pixels beyond the unrotated row.
 	cards.add_theme_constant_override("separation", 10)
 	tray.add_child(cards)
+	var help_slot := VBoxContainer.new()
+	help_slot.name = "BattleHandDisclosureSlot"
+	help_slot.hide()
+	cards.add_child(help_slot)
 	var information := HBoxContainer.new()
 	information.name = "BattleHandInformation"
 	information.add_theme_constant_override("separation", 16)
