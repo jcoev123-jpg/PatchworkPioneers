@@ -11,6 +11,9 @@ func _initialize() -> void:
 	_test_two_turn_mixed_phase()
 	_test_dead_sources_and_downed_targets()
 	_test_policy_targets()
+	_test_enrage_attack_bonus()
+	_test_enrage_status_and_replay()
+	_test_enrage_legacy_and_fail_closed()
 	_test_drain_after_confirmed_hit()
 	_test_drain_inert_and_fail_closed()
 	_test_rejections()
@@ -505,6 +508,224 @@ func _test_policy_targets() -> void:
 	_check(phase.execute_phase(party, enemies, [forged], null, true) == {"ok": false, "events": []}
 		and party.get_heroes() == heroes_before and enemies.get_enemies() == enemy_before,
 		"a forged announcement rejects without mutations")
+
+
+func _enrage_roster(definitions: Array) -> CombatEnemies:
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == definitions.size(),
+		"precondition: real Enrage roster occupies its authored living slots")
+	return enemies
+
+
+## AC1: a living Enrage source's stored stacks add exactly +2 per stack to its
+## own announced attack before any status modifier, and the beat awards nothing.
+func _test_enrage_attack_bonus() -> void:
+	for stacks in [0, 1, 2, 3]:
+		var party := _party()
+		var enemies := _enrage_roster([
+			{"id": "patch-imp", "max_hp": 20, "enrage": true, "enrage_stacks": stacks},
+			{"id": "ragling-a", "max_hp": 15}])
+		_check(enemies.get_enemy(1).get("enrage") == true
+			and enemies.get_enemy(1).get("enrage_stacks") == stacks
+			and not enemies.get_enemy(2).has("enrage"),
+			"AC1 precondition: source 1 authors Enrage at " + str(stacks)
+				+ " stacks and source 2 authors none")
+		_check(party.gain_block(1, 20) and party.gain_block(2, 20),
+			"AC1 precondition: both announced recipients carry real absorbing Block")
+		var warden: Dictionary = party._heroes[0]
+		var seamstress: Dictionary = party._heroes[1]
+		var source_record: Dictionary = enemies._enemies[0]
+		var sibling_record: Dictionary = enemies._enemies[1]
+		var intents := [_attack(2, 5, 2), _attack(1, 5, 1)]
+		var input := intents.duplicate(true)
+		var result := phase.execute_phase(party, enemies, intents)
+		_check(result == {"ok": true, "events": [
+			_event("attack", 1, true, 1), _event("attack", 2, true, 2)]},
+			"AC1: an Enrage beat keeps the exact ordered ordinary event shape")
+		_check(party.get_hero(1)["block"] == 20 - (5 + stacks * 2)
+			and party.get_hero(1)["hp"] == 40,
+			"AC1: the Enrage source really deals " + str(5 + stacks * 2)
+				+ " before any status modifier")
+		_check(party.get_hero(2)["block"] == 15 and party.get_hero(2)["hp"] == 30,
+			"AC1: the non-Enrage sibling still deals exactly its announced five")
+		_check(enemies.get_enemy(1) == source_record
+			and enemies.get_enemy(2) == sibling_record,
+			"AC1: the phase awards no stack and touches neither roster record")
+		_check(is_same(party._heroes[0], warden) and is_same(party._heroes[1], seamstress),
+			"AC1: publication keeps the original hero dictionaries")
+		_check(intents == input, "AC1: the caller announcements are never rewritten")
+
+	# An Enrage source without an explicit count really starts at zero stacks.
+	var missing_party := _party()
+	var missing := _enrage_roster([{"id": "patch-imp", "max_hp": 20, "enrage": true}])
+	_check(missing.get_enemy(1).get("enrage") == true
+		and not missing.get_enemy(1).has("enrage_stacks"),
+		"AC1 precondition: Enrage metadata without a stored count")
+	_check(missing_party.gain_block(1, 9), "AC1 precondition: real absorbing Block")
+	_check(phase.execute_phase(missing_party, missing, [_attack(1, 5, 1)])
+		== {"ok": true, "events": [_event("attack", 1, true, 1)]}
+		and missing_party.get_hero(1)["block"] == 4 and missing_party.get_hero(1)["hp"] == 40,
+		"AC1: an absent stack count means zero stacks and the plain announced five")
+
+	# A slain Enrage source is skipped without bonus, damage or stack churn.
+	var dead_party := _party()
+	var dead := _enrage_roster([{"id": "patch-imp", "max_hp": 12,
+		"enrage": true, "enrage_stacks": 2}])
+	_check(dead.apply_damage(1, 12) and dead.is_slain(1),
+		"AC1 precondition: the Enrage source is genuinely slain")
+	var slain: Dictionary = dead.get_enemy(1)
+	_check(phase.execute_phase(dead_party, dead, [_attack(1, 5, 1)])
+		== {"ok": true, "events": [_event("attack", 1, false, 1)]}
+		and dead_party.get_hero(1)["hp"] == 40 and dead.get_enemy(1) == slain,
+		"AC1: a slain Enrage source is skipped without its stored bonus")
+
+
+## AC2: the Enrage bonus is added BEFORE the existing Weak/Exposed adjustment,
+## so the real formula floors once from the increased base. AC1: identical
+## fixtures repeat exactly, and one real battle-bound scheduler draw is the
+## only run-RNG consumption around the phase.
+func _test_enrage_status_and_replay() -> void:
+	# [stacks, source Weak, defender Exposed, expected Warden HP]
+	# base = 5 + 2*stacks; Weak floors *3/4, Exposed *3/2, both *9/8.
+	var cases: Array = [
+		[0, true, false, 37], [3, true, false, 32],
+		[0, false, true, 33], [3, false, true, 24],
+		[0, true, true, 35], [3, true, true, 28]]
+	for entry in cases:
+		var party := _party()
+		var enemies := _enrage_roster([{"id": "patch-imp", "max_hp": 20,
+			"enrage": true, "enrage_stacks": entry[0]}])
+		if entry[1]:
+			_check(enemies.apply_statuses({1: {"weak": 2}}),
+				"AC2 precondition: the Enrage source really carries Weak")
+		if entry[2]:
+			party._heroes[0]["statuses"] = {"exposed": 2}
+			_check(party.get_hero(1)["statuses"] == {"exposed": 2},
+				"AC2 precondition: the announced Warden really carries Exposed")
+		var label := "AC2: base " + str(5 + int(entry[0]) * 2) + " weak=" + str(entry[1]) \
+			+ " exposed=" + str(entry[2])
+		var result := phase.execute_phase(party, enemies, [_attack(1, 5, 1)])
+		_check(result == {"ok": true, "events": [_event("attack", 1, true, 1)]},
+			label + ": the adjusted beat keeps the ordinary event shape")
+		_check(party.get_hero(1)["hp"] == entry[3],
+			label + ": the bonus sits inside the base the status formula scales")
+
+	# AC1: identical literal announcements repeat their exact outcome.
+	var expected_events: Dictionary = {}
+	var expected_heroes: Array = []
+	var expected_enemies: Array = []
+	for repetition in range(3):
+		var party := _party()
+		var enemies := _enrage_roster([
+			{"id": "patch-imp", "max_hp": 20, "enrage": true, "enrage_stacks": 2},
+			{"id": "ragling-a", "max_hp": 15}])
+		var result := phase.execute_phase(party, enemies,
+			[_attack(1, 5, 2), _attack(2, 5, 1)])
+		_check(result == {"ok": true, "events": [
+			_event("attack", 1, true, 2), _event("attack", 2, true, 1)]},
+			"AC1 replay: ordered Enrage then plain beats keep exact events")
+		_check(party.get_hero(1)["hp"] == 35 and party.get_hero(2)["hp"] == 21,
+			"AC1 replay: nine from the Enrage source and five from its sibling")
+		if repetition == 0:
+			expected_events = result.duplicate(true)
+			expected_heroes = party.get_heroes()
+			expected_enemies = enemies.get_enemies()
+		else:
+			_check(result == expected_events and party.get_heroes() == expected_heroes
+				and enemies.get_enemies() == expected_enemies,
+				"AC1 replay: an identical fixture repeats its exact phase outcome")
+
+	# AC1: a genuine battle-bound scheduler really draws on the seeded run RNG;
+	# the Enrage phase itself must consume none of it and repeat exactly.
+	var run_rng := RandomNumberGenerator.new()
+	run_rng.seed = 515151
+	var weighted: Array = [
+		{"id": "patch-imp", "max_hp": 20, "enrage": true, "enrage_stacks": 1,
+			"intent": {"target": "random",
+				"actions": [{"weight": 1, "type": "attack", "amount": 5}]}},
+		{"id": "ragling-a", "max_hp": 15,
+			"intent": {"target": "random",
+				"actions": [{"weight": 1, "type": "attack", "amount": 5}]}}]
+	var seeded_party := _party()
+	var seeded_enemies := _enrage_roster(weighted)
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 5, "target_position": 1}]},
+		{"enemy_position": 2, "pattern": [{"type": "attack", "amount": 5, "target_position": 1}]}])
+	_check(scheduler.is_valid(), "AC1 precondition: valid legacy pattern scheduler")
+	var seed_state := run_rng.state
+	_check(scheduler.bind_battle(seeded_enemies, seeded_party, run_rng),
+		"AC1 precondition: real weighted announcements bound to the seeded run RNG")
+	_check(run_rng.state != seed_state,
+		"AC1 precondition: the two random target policies really draw on the run RNG")
+	var announcements := scheduler.get_intents()
+	var drawn_state := run_rng.state
+	var first := phase.execute_phase(seeded_party, seeded_enemies, announcements, null, true)
+	_check(first.get("ok") == true and run_rng.state == drawn_state,
+		"AC1: the seeded phase consumes no run RNG beyond the announcement draw")
+	var seeded_heroes := seeded_party.get_heroes()
+	var replay_party := _party()
+	var replay_enemies := _enrage_roster(weighted)
+	var second := phase.execute_phase(replay_party, replay_enemies, announcements, null, true)
+	_check(second == first and replay_party.get_heroes() == seeded_heroes,
+		"AC1: the same fixed-seed announcements replay the same exact phase")
+
+
+## AC3: absent/false Enrage metadata keeps the legacy contract, while malformed
+## flag or stack metadata rejects a whole mixed batch before publication.
+func _test_enrage_legacy_and_fail_closed() -> void:
+	for definition in [
+			{"id": "patch-imp", "max_hp": 20},
+			{"id": "patch-imp", "max_hp": 20, "enrage": false},
+			{"id": "patch-imp", "max_hp": 20, "enrage": false, "enrage_stacks": 3}]:
+		var party := _party()
+		var enemies := _enrage_roster([definition])
+		_check(not enemies.get_enemy(1).get("enrage", false),
+			"AC3 precondition: no active Enrage flag: " + str(definition))
+		_check(party.gain_block(1, 12), "AC3 precondition: real absorbing Block")
+		var source_record: Dictionary = enemies._enemies[0]
+		var result := phase.execute_phase(party, enemies, [_attack(1, 5, 1)])
+		_check(result == {"ok": true, "events": [_event("attack", 1, true, 1)]}
+			and party.get_hero(1)["block"] == 7 and party.get_hero(1)["hp"] == 40,
+			"AC3: a non-Enrage source deals its plain announced five: " + str(definition))
+		_check(enemies.get_enemy(1) == source_record,
+			"AC3: leftover stacks on a non-Enrage source gain and change nothing")
+
+	seed(8181)
+	var next_global := randi()
+	seed(8181)
+	var malformed: Array = []
+	for flag in [1, 0, "true", 1.0, null, [], {}]:
+		malformed.append({"enrage": flag})
+	for stacks in [-1, 4, 5, 1.5, "2", true, null, []]:
+		malformed.append({"enrage": true, "enrage_stacks": stacks})
+	for extra in malformed:
+		var party := _party()
+		var second := {"id": "ragling-a", "max_hp": 15}
+		second.merge(extra, true)
+		var enemies := CombatEnemies.new([
+			{"id": "patch-imp", "max_hp": 20, "enrage": true, "enrage_stacks": 1}, second])
+		var key: String = extra.keys()[0]
+		_check(enemies.is_valid() and enemies.get_enemy(2).has(key)
+			and enemies.get_enemy(2)[key] == extra[key],
+			"AC3 precondition: a living later source really carries malformed Enrage "
+				+ key + " " + str(extra[key]))
+		_check(party.gain_block(1, 6) and party.gain_block(2, 6),
+			"AC3 precondition: nontrivial real Block on both recipients")
+		var intents := [_attack(1, 5, 1), _attack(2, 5, 2)]
+		var input := intents.duplicate(true)
+		var heroes_before := party.get_heroes()
+		var roster_before := enemies.get_enemies()
+		_check(phase.execute_phase(party, enemies, intents) == {"ok": false, "events": []},
+			"AC3: malformed Enrage metadata rejects the whole mixed batch " + str(extra))
+		_check(party.get_heroes() == heroes_before and enemies.get_enemies() == roster_before
+			and party.get_hero(1)["hp"] == 40 and party.get_hero(1)["block"] == 6
+			and intents == input,
+			"AC3: the earlier legal Enrage attack is rolled back with the batch "
+				+ str(extra))
+		_check(phase.execute_phase(party, enemies, []) == {"ok": false, "events": []}
+			and party.get_heroes() == heroes_before and enemies.get_enemies() == roster_before,
+			"AC3: malformed metadata fails before any beat is staged " + str(extra))
+	_check(randi() == next_global, "AC3: rejected malformed Enrage batches consume no RNG")
 
 
 func _drain_roster(definitions: Array) -> CombatEnemies:

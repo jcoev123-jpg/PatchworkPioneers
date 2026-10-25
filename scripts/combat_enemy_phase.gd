@@ -10,6 +10,14 @@ const BLEED_ON_ATTACK_AMOUNT := 1
 ## really removed, clamped to its missing HP. Block-absorbed damage is not
 ## Drain. Strictly boolean or absent, exactly like the bleeding sting.
 const DRAIN_FIELD := "drain"
+## Authored content flag: this enemy's own executed attack gains +2 damage per
+## stored Enrage stack. Strictly boolean or absent; non-Enrage sources gain
+## nothing even when a stack count is left over.
+const ENRAGE_FIELD := "enrage"
+## Optional stack count for an Enrage source: an integer in 0..3, where an
+## absent count means zero. The phase only ever READS it; awarding a stack after
+## a player hit is a separate task.
+const ENRAGE_STACKS_FIELD := "enrage_stacks"
 
 func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 		reactions: CombatWardenGuardReactions = null, policy_targets := false) -> Dictionary:
@@ -82,7 +90,15 @@ func execute_phase(party: CombatParty, enemies: CombatEnemies, intents: Array,
 				# recipient's pre-hit record is captured before it is dispatched.
 				var recipient_before: Dictionary = staged_party.get_hero(actual_target)
 				var hit_target: int = actual_target
-				var damage := CombatStatuses.new().adjusted_attack_damage(effective.amount,
+				# The source's stored Enrage stacks add their authored bonus ONCE
+				# to its own announced amount, before any status adjustment and
+				# therefore before Guard/Block handling. The roster's count is only
+				# read here: no stack is awarded or rewritten by this beat.
+				var enrage_bonus := _enrage_attack_bonus(staged_enemies, source)
+				var announced: int = effective.amount
+				if enrage_bonus < 0 or announced > CombatParty.MAX_INT - enrage_bonus:
+					return failure
+				var damage := CombatStatuses.new().adjusted_attack_damage(announced + enrage_bonus,
 					staged_enemies.get_enemy(source).get("statuses", {}),
 					staged_party.get_hero(actual_target).get("statuses", {}))
 				var attack: Dictionary = effective.duplicate(true)
@@ -183,6 +199,29 @@ static func _drains(enemies: CombatEnemies, source: int) -> bool:
 	return value is bool and value == true
 
 
+## The stored Enrage attack bonus of one roster source, using the accepted
+## keyword constants (2 damage per stack, at most 3 stacks). Only a source that
+## authors `enrage: true` gains anything; an absent or explicit-false flag gains
+## nothing even with leftover stacks, and an absent count means zero stacks.
+## Returns -1 for malformed metadata so the caller fails closed instead of
+## inventing damage. Read-only: no stack is awarded and no RNG is used.
+static func _enrage_attack_bonus(enemies: CombatEnemies, source: int) -> int:
+	if enemies == null or not enemies.is_valid():
+		return 0
+	var enemy: Dictionary = enemies.get_enemy(source)
+	if enemy.is_empty():
+		return 0
+	var flag: Variant = enemy.get(ENRAGE_FIELD, false)
+	if not flag is bool:
+		return -1
+	if not flag:
+		return 0
+	var stacks: Variant = enemy.get(ENRAGE_STACKS_FIELD, 0)
+	if not stacks is int or stacks < 0 or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+		return -1
+	return stacks * CombatEnemyKeywordRules.ENRAGE_ATTACK_BONUS_PER_STACK
+
+
 ## The optional authored flags are content, never numbers or truthy strings:
 ## one malformed record fails the whole phase before any beat is staged.
 static func _attack_metadata_valid(roster: Array) -> bool:
@@ -194,6 +233,13 @@ static func _attack_metadata_valid(roster: Array) -> bool:
 			return false
 		if enemy.has(DRAIN_FIELD) and not (enemy[DRAIN_FIELD] is bool):
 			return false
+		if enemy.has(ENRAGE_FIELD) and not (enemy[ENRAGE_FIELD] is bool):
+			return false
+		if enemy.has(ENRAGE_STACKS_FIELD):
+			var stacks: Variant = enemy[ENRAGE_STACKS_FIELD]
+			if not stacks is int or stacks < 0 \
+					or stacks > CombatEnemyKeywordRules.ENRAGE_MAX_STACKS:
+				return false
 	return true
 
 
