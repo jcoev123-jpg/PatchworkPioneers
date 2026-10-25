@@ -19,6 +19,7 @@ const CATALOG_PATHS := [
 	"res://data/patches/m05_arm_support_patches.json",
 	"res://data/patches/m05_attack_patches.json",
 	"res://data/patches/m05_coat_patches.json",
+	"res://data/patches/mpw_synergy_patches.json",
 ]
 
 ## The starter catalog holds inert slots, never power stock.
@@ -33,7 +34,8 @@ static func load_definitions() -> Array:
 
 
 ## Production power-only accessor for Shop and Elite stock candidates. Returns
-## only the six power catalogs' authored {id, slot} records.
+## only the seven power catalogs' authored {id, slot} records (the initial
+## starter catalog is excluded, the P8 rare catalog is included).
 static func load_power_definitions() -> Array:
 	var texts: Array = _read_catalog_texts()
 	if texts.is_empty():
@@ -105,6 +107,10 @@ static func _project(catalogs: Variant, power_only: bool) -> Array:
 		RunPatchWearerSummary.KNOWN_M05_ARM_POWERS,
 		RunPatchWearerSummary.KNOWN_M05_ATTACK_POWERS,
 		RunPatchWearerSummary.KNOWN_M05_COAT_POWERS,
+		{
+			"relay_bobbin": {"slot": "HEAD"},
+			"hearth_lining": {"slot": "COAT"},
+		},
 	]
 	var projected: Array = []
 	var seen: Dictionary = {}
