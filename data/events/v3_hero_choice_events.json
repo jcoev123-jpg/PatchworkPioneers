@@ -59,6 +59,66 @@
         { "id": "trade_ribbon", "text": "Buy two red ribbon bundles (spend 10 gold; gain 2 scraps)", "outcome": { "gold": -10, "scraps": 2 } },
         { "id": "leave", "text": "Leave without exchanging anything", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_scarecrow_crow_roost",
+      "title": "The Crow's Threshing",
+      "description": "A black crow perches on a burlap-headed straw doll beside an overgrown granary.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["gather_loose_straw", "sell_crow_feathers"],
+      "choices": [
+        { "id": "gather_loose_straw", "text": "Gather loose straw ties (+2 scraps)", "outcome": { "gold": 0, "scraps": 2 } },
+        { "id": "sell_crow_feathers", "text": "Trade a bundle of crow feathers (spend 1 scrap; gain 19 gold)", "outcome": { "gold": 19, "scraps": -1 } },
+        { "id": "leave", "text": "Leave the roost untouched", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_knit_ford",
+      "title": "The Knitted Ford",
+      "description": "A narrow crossing is webbed with wool bolas and two bent knitting-needle posts.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["retrieve_bolas", "purchase_wool"],
+      "choices": [
+        { "id": "retrieve_bolas", "text": "Retrieve a spool tangled in the ford (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "purchase_wool", "text": "Buy fresh coloured wool (spend 14 gold; gain 2 scraps)", "outcome": { "gold": -14, "scraps": 2 } },
+        { "id": "leave", "text": "Cross without disturbing the knitting", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_button_press",
+      "title": "The Giant Button Press",
+      "description": "A rattling bronze press stamps brass buttons as a towering button-bodied golem waits.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["stamp_brass", "collect_shanks"],
+      "choices": [
+        { "id": "stamp_brass", "text": "Feed the press two scrap bundles (spend 2 scraps; gain 31 gold)", "outcome": { "gold": 31, "scraps": -2 } },
+        { "id": "collect_shanks", "text": "Collect fallen button shanks (+1 scrap)", "outcome": { "gold": 0, "scraps": 1 } },
+        { "id": "leave", "text": "Leave the button press", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_evening_beacon",
+      "title": "The Evening Beacon",
+      "description": "Moths ring a dim lantern pole while travellers queue to relight their stitched lamps.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["trim_evening_wick", "gather_amber_wax"],
+      "choices": [
+        { "id": "trim_evening_wick", "text": "Trim the beacon wick (spend 1 scrap; gain 16 gold)", "outcome": { "gold": 16, "scraps": -1 } },
+        { "id": "gather_amber_wax", "text": "Buy two wax spools (spend 10 gold; gain 2 scraps)", "outcome": { "gold": -10, "scraps": 2 } },
+        { "id": "leave", "text": "Let the lantern burn", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_scarlet_fair",
+      "title": "The Scarlet Fencing Fair",
+      "description": "A feather-hatted puppet duelist invites the party to a needle-rapier bout.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["win_scarlet_purse", "buy_fencing_ribbon"],
+      "choices": [
+        { "id": "win_scarlet_purse", "text": "Win the fencing purse (+22 gold)", "outcome": { "gold": 22, "scraps": 0 } },
+        { "id": "buy_fencing_ribbon", "text": "Buy fresh fencing ribbons (spend 13 gold; gain 2 scraps)", "outcome": { "gold": -13, "scraps": 2 } },
+        { "id": "leave", "text": "Bow and leave the fair", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
