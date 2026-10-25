@@ -265,7 +265,7 @@ func show_actor(snapshot: Dictionary, side: String) -> bool:
 	block_badge.visible = protection > 0
 	var statuses: Dictionary = snapshot.get("statuses", {})
 	var active: Array[String] = []
-	for key in ["bleed", "weak", "exposed"]:
+	for key in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 		var count: int = statuses.get(key, 0)
 		if count > 0:
 			active.append("%s %d" % [key.capitalize(), count])
@@ -333,7 +333,7 @@ func _valid_snapshot(snapshot: Dictionary, side: String) -> bool:
 		if not statuses is Dictionary:
 			return false
 		for key in statuses:
-			if not key is String or key not in ["bleed", "weak", "exposed"]:
+			if not key is String or key not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 				return false
 			var count = statuses[key]
 			if not count is int or count < 0:

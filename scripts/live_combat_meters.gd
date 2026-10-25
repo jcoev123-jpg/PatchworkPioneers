@@ -21,14 +21,15 @@ const RIBBON_HEIGHT := 64.0
 ## outside the stitched fill.
 const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
-## Four reusable slots: fallen badge, ordinary statuses, or living enemy Thorns.
-const STATUS_BUTTONS := 4
-const STATUS_ORDER := ["bleed", "weak", "exposed"]
+## Six reusable slots: three legacy stacks, Tangled, Riposte and fallen/Thorns.
+const STATUS_BUTTONS := 6
+const STATUS_ORDER := ["bleed", "weak", "exposed", "tangled", "riposte"]
 ## Readable chip text: at every normal 1280x720 actor width the complete "Bleed 3"
 ## style name is drawn at 14 px, and the chips wrap onto a second row only when the
 ## actor's own slot is too narrow for the whole row. The compact names survive only as
 ## the fallback for a slot narrower than one complete chip; the hover text stays whole.
-const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp", "thorns": "Thr"}
+const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp",
+	"tangled": "Tan", "riposte": "Rip", "thorns": "Thr"}
 const READABLE_CHIP_FONT := 14
 const CHIP_FONT_SIZES := [14, 12, 11]
 const CHIP_SEPARATION := 2
@@ -734,8 +735,17 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		var button := buttons.get_child(index) as Button
 		var active := index < entries.size()
 		var text := String(fit["texts"][index]) if active else ""
-		var rule := (thorns_tooltip(int(thorns)) if entries[index]["kind"] == "thorns"
-			else tooltip) if active else ""
+		var rule := ""
+		if active:
+			var kind: String = entries[index]["kind"]
+			if kind == "thorns":
+				rule = thorns_tooltip(int(thorns))
+			else:
+				rule = tooltip
+				if kind == "tangled":
+					rule += "\n" + tangled_tooltip(int(statuses["tangled"]))
+				elif kind == "riposte":
+					rule += "\n" + riposte_tooltip(int(statuses["riposte"]))
 		if button.visible != active:
 			button.visible = active
 		if button.text != text:
@@ -764,6 +774,16 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 ## can absorb a positive hit without suppressing Thorns retaliation.
 static func thorns_tooltip(amount: int) -> String:
 	return "Thorns %d: Each confirmed positive-damage hit on this enemy deals %d damage back to its attacking hero, even if enemy Block absorbs that hit. Hero Block absorbs the retaliation before HP. Misses, failed plays, zero-damage attacks and previews do not retaliate." % [amount, amount]
+
+
+## Tangled N counts owner turns but its +2 is flat, not multiplied by N.
+static func tangled_tooltip(turns: int) -> String:
+	return "Tangled %d: Cannot move or be moved by its own side for %d remaining owner turns. Takes +2 attack damage from each positive-base attack after Weak/Exposed adjustment, once per attack (not per Tangled stack)." % [turns, turns]
+
+
+## Riposte N is counterdamage per confirmed hit, never an N-turn duration.
+static func riposte_tooltip(damage: int) -> String:
+	return "Riposte %d: Deals %d counterdamage on each confirmed hit while active. %d is damage per hit, not a turn count; Riposte expires completely at this actor's next owner-turn end." % [damage, damage, damage]
 
 
 ## Height of one sewn chip at a font size: the text box plus the 1 px stitched border.
