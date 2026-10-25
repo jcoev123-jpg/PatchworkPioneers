@@ -51,7 +51,7 @@ const UNAVAILABLE := "Summary unavailable"
 const NO_PATCHES := "no patches"
 ## The one badge a hero receives for authenticated zero HP.
 const TORN_BADGE := "TORN"
-const HERO_TORN_BADGE_FONT_SIZE := 14
+const HERO_TORN_BADGE_FONT_SIZE := 19
 const HERO_TORN_BADGE_BG := Color("#e4d2b5")
 ## The three sewn hero tickets. Each keeps a heading name and a body detail
 ## line at or above the 18 px floor, on the same cream felt used by the kept
@@ -639,6 +639,10 @@ func _mount_hero_rows(rows: Array) -> void:
 		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		inset.add_child(portrait)
 		apply_hero_portrait(portrait, HERO_PORTRAITS.get(parts["hero_id"], ""))
+		if parts.get("is_torn", false):
+			portrait.modulate = Color(0.6, 0.6, 0.62, 1.0)
+		else:
+			portrait.modulate = Color.WHITE
 		var line := VBoxContainer.new()
 		line.name = "RowLine"
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
