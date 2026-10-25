@@ -222,6 +222,101 @@ func _assert_stage(app, presenter) -> void:
 			"large stage keeps this control unclipped at 1280x720: " + control.name)
 
 
+
+## Rebind an actually mounted hero Puppet without creating fictional party admission.
+## Its new ID is a presentation input; authoritative combat and the pinned party
+## name must still belong to the original hero until legitimate run wiring changes it.
+func _v3_identity_rebind(app, presenter) -> void:
+	_check(presenter._puppets.size() >= CombatParty.PARTY_SIZE
+		and app.party != null and app.deck != null and app.run_rng != null,
+		"rebind test has a live battle, party, deck, RNG and all three hero Puppets")
+	if presenter._puppets.size() < CombatParty.PARTY_SIZE:
+		return
+	var hero = presenter._puppets[0]
+	var old_id: String = String(app.party.get_hero(hero.slot).get("id", ""))
+	_check(not old_id.is_empty() and hero.actor_id == old_id
+		and presenter.hero_puppet(old_id) == hero,
+		"original hero comes from authentic party slot and is targetable by canonical ID")
+	if old_id.is_empty():
+		return
+	var idle: Texture2D = hero.idle_texture
+	var attack: Texture2D = hero.attack_texture
+	var phase: float = hero.idle_phase
+	var target: Rect2 = hero.get_global_rect()
+	var all_targets: Array = []
+	for puppet in presenter._puppets:
+		all_targets.append(puppet.get_global_rect())
+	var labels: Array = []
+	for tag in presenter._hero_tags:
+		labels.append([tag.text, tag.get_global_rect()])
+	for label in presenter._labels:
+		labels.append([label.text, label.get_global_rect()])
+	var badges: Array = []
+	for badge in presenter._badges:
+		badges.append([badge.readable_text, badge.get_global_rect()])
+	var controls: Array = []
+	for control in [app.hero_view, app.hand_view, app.end_turn_button, app.return_button,
+			presenter.panel, presenter.battle_row]:
+		controls.append(control.get_global_rect())
+	var before := _snapshot(app, [app.enemies], [app.enemy_intents])
+	for new_id in ["lantern_monk", "rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]:
+		_check(hero.actor_id == old_id and hero.current_texture() == idle,
+			"each newcomer starts from the same real old hero's art: " + new_id)
+		_check(hero.trigger_attack(0.6) and hero.trigger_recoil(0.6),
+			"old hero has simultaneous authentic presentation poses before rebind: " + new_id)
+		hero.fallen = true
+		_check(hero.settle_fall(0.6) and hero.settling_fall(),
+			"old hero has an in-flight Torn settle before new actor binds: " + new_id)
+		hero.bind_actor(new_id, {})
+		_check(hero.actor_id == new_id and hero.fallback_kind == new_id
+			and hero.current_texture() == null and not hero.fallback_silhouettes().is_empty()
+			and not hero.attacking() and not hero.recoiling() and not hero.settling_fall(),
+			"ID-based rebind uses new fallback and clears all three old poses: " + new_id)
+		# The fallen flag is an external/authoritative observation; binding must not
+		# secretly revive it. This fixture then supplies a living new actor observation.
+		_check(hero.fallen and presenter.presented_puppet("hero", new_id) == hero
+			and presenter.hero_puppet(new_id) == null,
+			"rebind does not fabricate an HP revival or a targetable fallen hero: " + new_id)
+		hero.fallen = false
+		hero._process(0.0)
+		_check(presenter.hero_puppet(new_id) == hero
+			and presenter.puppet_for("hero", old_id) == null
+			and presenter.puppet_for("enemy", new_id) == null
+			and presenter.puppet_for("hero", "fabricated_v3_actor") == null,
+			"live target lookup follows sole presented ID, side and living state: " + new_id)
+		_check(hero.get_global_rect() == target and hero.art_band().size.y >= 100.0
+			and hero.actor_rest_bottom() <= hero.tag_band().position.y + 0.01
+			and hero.contact_shadow_rect().has_area(),
+			"new puppet keeps original hit target, stage, foot line and shadow: " + new_id)
+		hero.bind_actor(old_id, {"idle": idle, "attack": attack})
+		hero.idle_phase = phase
+		_check(hero.actor_id == old_id and hero.current_texture() == idle
+			and hero.attack_texture == attack and hero.fallback_kind == ROSTER_ART.fallback_kind_for(old_id)
+			and not hero.attacking() and not hero.recoiling() and not hero.settling_fall()
+			and presenter.hero_puppet(old_id) == hero and presenter.hero_puppet(new_id) == null,
+			"new-to-old restores original image, canonical target and rest state: " + new_id)
+	var final_targets: Array = []
+	for puppet in presenter._puppets:
+		final_targets.append(puppet.get_global_rect())
+	var final_labels: Array = []
+	for tag in presenter._hero_tags:
+		final_labels.append([tag.text, tag.get_global_rect()])
+	for label in presenter._labels:
+		final_labels.append([label.text, label.get_global_rect()])
+	var final_badges: Array = []
+	for badge in presenter._badges:
+		final_badges.append([badge.readable_text, badge.get_global_rect()])
+	var final_controls: Array = []
+	for control in [app.hero_view, app.hand_view, app.end_turn_button, app.return_button,
+			presenter.panel, presenter.battle_row]:
+		final_controls.append(control.get_global_rect())
+	_check(_snapshot(app, [app.enemies], [app.enemy_intents]) == before
+		and final_targets == all_targets and final_labels == labels
+		and final_badges == badges and final_controls == controls,
+		"all newcomer rebinding preserves real hero/enemy records, card piles, energy,"
+		+ " RNG, run map, intent, labels and mouse/keyboard targets")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load("res://scenes/app.tscn") as PackedScene
@@ -244,6 +339,7 @@ func _run() -> void:
 		return
 	# The seeded starter fight is the real shipped-art battle this stage must present.
 	_assert_stage(app, presenter)
+	_v3_identity_rebind(app, presenter)
 	var seeded_art := 0
 	for puppet in presenter._puppets:
 		if puppet.current_texture() == null:
