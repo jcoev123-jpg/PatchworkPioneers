@@ -76,6 +76,9 @@ const STAGE_TAG_HEIGHT := 26.0
 ## The already-shipped display face every pinned actor name wears: the master Theme's
 ## Londrina Solid Regular variation, installed by PatchworkUIShell from the shipped font.
 const NAME_TAG_VARIATION := "PatchHeading"
+## One readable body size for both mounted name tags, at the VIS 18 px floor, so the
+## sewn hero and enemy names read at a glance instead of as small print.
+const NAME_TAG_FONT_SIZE := 18
 ## The stage is laid in: both the authored scene and the drawn quilt fallback are dimmed
 ## by about one fifth and framed with soft dark edges, so the sewn actors and their pinned
 ## labels read as the lit subject. The same wash and frame never touch a sibling control.
@@ -1449,14 +1452,14 @@ func _sync_battle() -> void:
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.focus_mode = Control.FOCUS_NONE
 		# Sewn display lettering on the live stage: the shipped PatchHeading face, kept at
-		# the same 16 px high-contrast ink on the felt tag.
+		# the readable 18 px high-contrast ink on the felt tag.
 		label.theme_type_variation = NAME_TAG_VARIATION
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.max_lines_visible = 1
 		label.custom_minimum_size.x = 0
-		label.add_theme_font_size_override("font_size", 16)
+		label.add_theme_font_size_override("font_size", NAME_TAG_FONT_SIZE)
 		# Cream ink with a dark outline stays readable over the pinned tag.
 		label.add_theme_constant_override("outline_size", 6)
 		label.add_theme_color_override("font_outline_color", Color("1a1d20"))
@@ -1497,7 +1500,7 @@ func _make_name_tag(tag_name: String) -> Label:
 	tag.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	tag.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tag.max_lines_visible = 1
-	tag.add_theme_font_size_override("font_size", 16)
+	tag.add_theme_font_size_override("font_size", NAME_TAG_FONT_SIZE)
 	tag.add_theme_constant_override("outline_size", 6)
 	tag.add_theme_color_override("font_outline_color", Color("1a1d20"))
 	tag.anchor_left = 0.0
