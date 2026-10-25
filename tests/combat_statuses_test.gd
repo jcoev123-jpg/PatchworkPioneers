@@ -9,6 +9,8 @@ func _initialize() -> void:
 	_test_contract()
 	_test_bleed()
 	_test_attack_modifiers()
+	_test_riposte_projection()
+	_test_riposte_one_owner_turn()
 	_test_owner_windows()
 	_test_invalid_and_snapshots()
 	_test_replay()
@@ -93,6 +95,179 @@ func _test_attack_modifiers() -> void:
 		"expired statuses cannot change damage")
 	_check(rules.adjusted_attack_damage(0, {"weak": 1}, {"exposed": 1}) == 0,
 		"zero attack damage remains zero")
+
+
+func _authored_riposte_cards() -> Array:
+	## The six real Rag Duelist Riposte descriptors: id, catalog and authored N.
+	var starters := RagDuelistStarterCards.new()
+	var pool := RagDuelistPoolCards.new()
+	return [
+		["rag_duelist_cape_parry", starters, 2],
+		["rag_duelist_cape_parry_plus", starters, 3],
+		["rag_duelist_cape_guard", pool, 3],
+		["rag_duelist_cape_guard_plus", pool, 4],
+		["rag_duelist_duelist_reprise", pool, 5],
+		["rag_duelist_duelist_reprise_plus", pool, 7],
+	]
+
+
+func _test_riposte_projection() -> void:
+	_check(rules.has_method("riposte_damage_for_confirmed_hit"),
+		"scene-free Riposte projection entrypoint exists")
+
+	var authored := _authored_riposte_cards()
+	var exact_effects := {
+		"rag_duelist_cape_parry": {"block": 4, "riposte": 2, "duration": 1},
+		"rag_duelist_cape_parry_plus": {"block": 6, "riposte": 3, "duration": 1},
+		"rag_duelist_cape_guard": {"block": 5, "riposte": 3, "duration": 1},
+		"rag_duelist_cape_guard_plus": {"block": 7, "riposte": 4, "duration": 1},
+		"rag_duelist_duelist_reprise": {"riposte": 5, "duration": 1},
+		"rag_duelist_duelist_reprise_plus": {"riposte": 7, "duration": 1},
+	}
+	var by_value := {}
+	for entry: Array in authored:
+		var card_id: String = entry[0]
+		var catalog: Variant = entry[1]
+		var expected: int = entry[2]
+		var definition: Dictionary = catalog.get_definition(card_id)
+		_check(not definition.is_empty() and definition.get("id") == card_id,
+			"authored Rag Duelist Riposte card exists: " + card_id)
+		var effects: Dictionary = definition.get("effects", {})
+		_check(effects == exact_effects[card_id],
+			"authored base/plus descriptor and duration 1 are exact: " + card_id)
+		var authored_riposte: Variant = effects.get("riposte")
+		_check(authored_riposte is int and authored_riposte > 0,
+			"authored Riposte is a positive integer for " + card_id)
+		_check(int(effects.get("duration", 0)) == 1,
+			"authored Riposte lasts exactly one turn for " + card_id)
+		by_value[expected] = card_id
+
+	# Every authored N returns exactly that counterdamage on every confirmed hit.
+	for value in [2, 3, 4, 5, 7]:
+		_check(by_value.has(value), "real Rag Duelist catalogs cover Riposte %d" % value)
+		var statuses := {"riposte": value}
+		var snapshot: Dictionary = statuses.duplicate(true)
+		for hit in range(3):
+			_check(rules.riposte_damage_for_confirmed_hit(statuses, true) == value,
+				"%s: confirmed hit %d in the same owner turn returns exactly Riposte %d"
+					% [by_value.get(value, "?"), hit + 1, value])
+			_check(statuses == snapshot,
+				"querying an active Riposte never consumes or mutates it (N=%d, hit %d)" % [value, hit + 1])
+		_check(rules.riposte_damage_for_confirmed_hit(statuses, false) == 0,
+			"skipped/unconfirmed hit returns no Riposte %d counterdamage" % value)
+		_check(statuses == snapshot, "unconfirmed hit leaves active Riposte untouched (N=%d)" % value)
+
+	# No source, zero, and unconfirmed hits produce nothing and change nothing.
+	var absent := {}
+	var zero := {"riposte": 0}
+	var zero_snapshot: Dictionary = zero.duplicate(true)
+	_check(rules.riposte_damage_for_confirmed_hit(absent, true) == 0,
+		"no Riposte status returns 0 counterdamage")
+	_check(rules.riposte_damage_for_confirmed_hit(zero, true) == 0,
+		"Riposte 0 returns 0 counterdamage")
+	_check(rules.riposte_damage_for_confirmed_hit({"riposte": 4}, false) == 0,
+		"an unconfirmed hit returns 0 even with active Riposte")
+	_check(absent.is_empty() and zero == zero_snapshot,
+		"zero and absent Riposte inputs stay unchanged")
+
+	# Malformed and unsupported statuses keep failing closed, even with a confirmed hit.
+	var bad_statuses: Array[Dictionary] = [
+		{"riposte": -1}, {"riposte": 1.0}, {"riposte": "3"}, {"riposte": null},
+		{"riposte": true}, {"riposte": []}, {"riposte": {"nested": 1}},
+		{"Riposte": 2}, {&"riposte": 3}, {"poison": 1}, {1: 2},
+		{"riposte": 3, "poison": 1}, {"riposte": 3, "bleed": -1}, {"riposte": 3, "weak": 1.5},
+	]
+	for bad in bad_statuses:
+		var prior: Dictionary = bad.duplicate(true)
+		_check(rules.riposte_damage_for_confirmed_hit(bad, true) == 0,
+			"malformed or unsupported status fails the Riposte projection closed: " + str(bad))
+		_check(bad == prior, "rejected Riposte status input is unchanged: " + str(bad))
+
+	# A status that is now valid cannot change the existing attack projection.
+	_check(rules.adjusted_attack_damage(8, {"riposte": 5}, {}) == 8
+		and rules.adjusted_attack_damage(8, {}, {"riposte": 5}) == 8,
+		"Riposte alone never modifies attack damage")
+	_check(rules.adjusted_attack_damage(8, {"weak": 1, "riposte": 7},
+		{"exposed": 1, "riposte": 2}) == 9,
+		"Weak/Exposed math is unchanged while Riposte is active")
+
+	# Deterministic replay of the projection.
+	for unused in range(3):
+		var replay := {"riposte": 3}
+		var replay_snapshot: Dictionary = replay.duplicate(true)
+		_check(rules.riposte_damage_for_confirmed_hit(replay, true)
+			== rules.riposte_damage_for_confirmed_hit(replay, true),
+			"identical confirmed-hit projections reproduce the same counterdamage")
+		_check(replay == replay_snapshot, "replay never changes the Riposte input")
+
+
+func _test_riposte_one_owner_turn() -> void:
+	# N is damage, never duration: one owner turn clears Riposte completely.
+	for value in [1, 2, 3, 4, 5, 7, 9223372036854775807]:
+		var statuses := {"riposte": value}
+		var snapshot: Dictionary = statuses.duplicate(true)
+		_check(rules.riposte_damage_for_confirmed_hit(statuses, true) == value,
+			"Riposte %d is active before its owner's turn ends" % value)
+		var ended := rules.end_owner_turn(12, 6, statuses)
+		_check(ended == {"ok": true, "hp": 12, "block": 6, "statuses": {}, "bleed_hp_loss": 0},
+			"one owner turn expires Riposte %d completely, not N-1" % value)
+		_check(not ended["statuses"].has("riposte"),
+			"expired Riposte %d is absent from the next state" % value)
+		_check(statuses == snapshot, "expiry never mutates the caller's Riposte %d" % value)
+		_check(rules.riposte_damage_for_confirmed_hit(ended["statuses"], true) == 0,
+			"expired Riposte %d yields no counterdamage" % value)
+
+	var zero_expired := rules.end_owner_turn(11, 5, {"riposte": 0})
+	_check(zero_expired == {"ok": true, "hp": 11, "block": 5, "statuses": {}, "bleed_hp_loss": 0},
+		"Riposte 0 is removed at the owner turn too")
+
+	# Mixed statuses keep the prior Bleed/Weak/Exposed/Tangled damage and aging.
+	var mixed := {"bleed": 2, "weak": 2, "exposed": 1, "tangled": 3, "riposte": 4}
+	var mixed_snapshot: Dictionary = mixed.duplicate(true)
+	_check(rules.riposte_damage_for_confirmed_hit(mixed, true) == 4,
+		"mixed status map still projects its Riposte 4")
+	var mixed_end := rules.end_owner_turn(10, 5, mixed)
+	_check(mixed_end == {"ok": true, "hp": 8, "block": 5,
+		"statuses": {"bleed": 1, "weak": 1, "tangled": 2}, "bleed_hp_loss": 2},
+		"mixed aging keeps Bleed/Weak/Tangled while Expired Exposed and Riposte vanish")
+	_check(mixed == mixed_snapshot, "mixed Riposte expiry never mutates the caller's statuses")
+	_check(not mixed_end["statuses"].has("riposte") and not mixed_end["statuses"].has("exposed"),
+		"one-turn Riposte and expired Exposed leave the next state")
+	_check(rules.adjusted_attack_damage(8, mixed, {}) == 6
+		and rules.adjusted_attack_damage(8, mixed_end["statuses"], {}) == 6,
+		"Weak 2 and Weak 1 keep the same prior attack modifier across the Riposte turn")
+	_check(rules.adjusted_attack_damage(8, {}, mixed_end["statuses"]) == 10,
+		"tangled defender retains Tangled 2's flat +2 after Riposte expires")
+
+	# Riposte is actor-local: another actor's window is untouched.
+	var holder := {"riposte": 6}
+	var bystander := {"riposte": 2, "exposed": 2}
+	var bystander_snapshot: Dictionary = bystander.duplicate(true)
+	var holder_end := rules.end_owner_turn(9, 4, holder)
+	_check(holder_end["statuses"].is_empty(), "ending the holder's turn clears only its own Riposte")
+	_check(bystander == bystander_snapshot
+		and rules.riposte_damage_for_confirmed_hit(bystander, true) == 2,
+		"a bystander actor's Riposte stays active until that actor's own turn ends")
+	var bystander_end := rules.end_owner_turn(9, 4, bystander)
+	_check(bystander_end == {"ok": true, "hp": 9, "block": 4,
+		"statuses": {"exposed": 1}, "bleed_hp_loss": 0},
+		"the second actor's own turn removes Riposte and ages its statuses once")
+
+	# Returned maps are detached from the caller's Riposte state.
+	var detached_input := {"riposte": 4, "weak": 2}
+	var detached_result := rules.end_owner_turn(9, 4, detached_input)
+	detached_result["statuses"]["riposte"] = 99
+	detached_result["statuses"]["weak"] = 99
+	_check(detached_input == {"riposte": 4, "weak": 2},
+		"editing an end-of-turn result cannot resurrect a caller's Riposte")
+
+	# Malformed Riposte input still rejects the whole owner turn.
+	for bad in [{"riposte": -1}, {"riposte": 1.0}, {"riposte": "2"}, {"riposte": 2, "poison": 1}]:
+		var prior: Dictionary = bad.duplicate(true)
+		_check(rules.end_owner_turn(10, 7, bad)
+			== {"ok": false, "hp": 10, "block": 7, "statuses": prior, "bleed_hp_loss": 0},
+			"invalid Riposte status fails the owner turn closed: " + str(bad))
+		_check(bad == prior, "rejected owner-turn Riposte input is unchanged: " + str(bad))
 
 
 func _test_owner_windows() -> void:
