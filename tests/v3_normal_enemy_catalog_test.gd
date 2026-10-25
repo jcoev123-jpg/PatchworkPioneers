@@ -9,6 +9,9 @@ func _initialize() -> void:
 	_test_catalog_records_and_parsing()
 	_test_three_slot_roster_and_weighted_slots()
 	_test_fixed_seed_binding_and_alternatives()
+	_test_trio_catalog_records()
+	_test_hedgehog_thorns_through_typed_roster()
+	_test_trio_seeded_announcements()
 	_test_negative_fixtures()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
@@ -286,6 +289,372 @@ func _test_fixed_seed_binding_and_alternatives() -> void:
 				and CombatEnemyIntents.shove_is_legal(party, 1, int(announced.get("direction", 0))),
 				"forced forward shove from the front edge announces only a legal move")
 
+## The three tougher look-driven normal enemies of this batch. Numbers are the
+## bounded v3 tuning from the brief; the design fixes identity and the 5-9
+## normal attack band, not each individual weight.
+func _trio_expected() -> Dictionary:
+	return {
+		"pincushion_hedgehog": {"id": "pincushion_hedgehog", "name": "Pincushion Hedgehog",
+			"max_hp": 25, "thorns": 3,
+			"art_path": "res://assets/paper/enemies/pincushion_hedgehog.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "attack", "amount": 6, "weight": 3},
+				{"type": "block", "amount": 6, "weight": 2}]}},
+		"moth_swarm": {"id": "moth_swarm", "name": "Moth Swarm", "max_hp": 21,
+			"art_path": "res://assets/paper/enemies/moth_swarm.png",
+			"intent": {"target": "front", "actions": [
+				{"type": "snip_block", "amount": 0, "weight": 2},
+				{"type": "attack", "amount": 7, "weight": 3},
+				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1}]}},
+		"needle_wasp": {"id": "needle_wasp", "name": "Needle Wasp", "max_hp": 22,
+			"art_path": "res://assets/paper/enemies/needle_wasp.png",
+			"intent": {"target": "lowest_living_hp", "actions": [
+				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
+				{"type": "attack", "amount": 8, "weight": 3}]}}
+	}
+
+## True when the record really authors this action alternative.
+func _has_alternative(record: Dictionary, kind: String, amount: int,
+		status: String = "") -> bool:
+	var spec: Variant = record.get("intent")
+	if not spec is Dictionary:
+		return false
+	var actions: Variant = spec.get("actions")
+	if not actions is Array:
+		return false
+	for raw in actions:
+		if not raw is Dictionary or raw.get("type") != kind \
+				or int(raw.get("amount", -1)) != amount:
+			continue
+		if status.is_empty() or raw.get("status") == status:
+			return true
+	return false
+
+func _test_trio_catalog_records() -> void:
+	var parsed := _load_parsed()
+	var ids: Array[String] = []
+	for record in parsed:
+		if record is Dictionary:
+			ids.append(String(record.get("id", "")))
+	# All eleven earlier records stay authored exactly as they were; the batch
+	# only appends. No total and no ordered list is asserted.
+	var earlier_expectations := _old_expected()
+	earlier_expectations.merge(_new_expected())
+	for earlier in earlier_expectations:
+		_check(ids.has(String(earlier)), "earlier enemy still present after this append: " + String(earlier))
+		var kept := _find(parsed, String(earlier))
+		_check(not kept.is_empty() and _norm(kept) == _norm(earlier_expectations[earlier]),
+			"earlier enemy record is unchanged: " + String(earlier))
+	var trio := _trio_expected()
+	for new_id in trio:
+		_check(ids.has(String(new_id)), "trio enemy is individually present: " + String(new_id))
+		var record := _find(parsed, String(new_id))
+		_check(not record.is_empty(), "trio enemy record present: " + String(new_id))
+		if record.is_empty():
+			continue
+		_check(_norm(record) == _norm(trio[new_id]),
+			"trio enemy has its exact authored fields: " + String(new_id))
+		var spec: Variant = record.get("intent")
+		var expected_target: String = trio[new_id]["intent"]["target"]
+		_check(spec is Dictionary and spec.get("target") == expected_target,
+			"trio enemy keeps its authored target policy: " + String(new_id))
+		var actions: Variant = spec.get("actions") if spec is Dictionary else null
+		_check(actions is Array and not actions.is_empty(),
+			"trio enemy authors weighted action alternatives: " + String(new_id))
+		for raw in actions:
+			_check(CombatEnemyIntents.weighted_action(raw) != {},
+				"trio alternative validates through the weighted scheduler: %s %s" % [new_id, str(raw)])
+			var kind := String(raw.get("type", ""))
+			# The V3 list also names summon and multi_hit; those need separately
+			# scoped engine support, so this slice must not claim them.
+			_check(kind in ["attack", "block", "debuff", "snip_block"],
+				"trio alternative only uses currently supported mechanics: %s %s" % [new_id, kind])
+			if kind == "attack":
+				var amount := int(raw.get("amount", 0))
+				_check(amount >= 5 and amount <= 9,
+					"trio normal attack stays inside the authored 5-9 band: " + String(new_id))
+	# Look-driven identity: every one of the three acts the way it looks.
+	var hedgehog := _find(parsed, "pincushion_hedgehog")
+	_check(int(hedgehog.get("thorns", -1)) == 3, "Hedgehog carries authored Thorns 3 metadata")
+	_check(_has_alternative(hedgehog, "attack", 6) and _has_alternative(hedgehog, "block", 6),
+		"Hedgehog bristles into a 6 attack or 6 Block")
+	var moth := _find(parsed, "moth_swarm")
+	_check(_has_alternative(moth, "snip_block", 0) and _has_alternative(moth, "attack", 7)
+		and _has_alternative(moth, "debuff", 1, "weak"),
+		"Moth Swarm chews Block away, bites for 7 or leaves Weak 1")
+	var wasp := _find(parsed, "needle_wasp")
+	_check(_has_alternative(wasp, "debuff", 2, "bleed") and _has_alternative(wasp, "attack", 8),
+		"Needle Wasp stings Bleed 2 or hits for 8")
+	_check(wasp.get("intent", {}).get("target") == "lowest_living_hp",
+		"Needle Wasp hunts the lowest-living hero")
+
+## Local typed-selection fixture for this authored slice: these enemies are not
+## wired into any live encounter pool yet, so the schedule is supplied here while
+## the catalog file, its strict parser and the CombatEnemies bridge stay real.
+func _trio_choice(ids: Array) -> Dictionary:
+	var definitions: Array = []
+	for index in range(ids.size()):
+		definitions.append({"enemy_position": index + 1,
+			"pattern": [{"type": "attack", "amount": 5, "target_position": 1}]})
+	return {"success": true, "node_type": "Fight", "encounter_id": "v3_trio_slice",
+		"definitions": definitions}
+
+func _assemble(ids: Array) -> Dictionary:
+	return RunTypedBattleRoster.new().assemble(_trio_choice(ids),
+		{"v3_trio_slice": ids}, [PATH])
+
+## A genuine seeded starter deck whose real hand truly holds the wanted attack.
+func _attack_deck(wanted: String) -> CombatDeck:
+	var cards := StarterCards.new().get_starting_deck()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4261
+	var deck := CombatDeck.new(cards, rng)
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3 and deck.hand.size() == 5,
+		"authentic seeded deck starts with five held cards and three energy")
+	var guard := 0
+	while not deck.hand.has(wanted) and not deck.draw_pile.is_empty() and guard <= cards.size():
+		_check(deck.draw_extra(1) == 1, "draw_extra advances a genuine draw")
+		guard += 1
+	_check(deck.hand.has(wanted), "the chosen authored attack is genuinely held: " + wanted)
+	return deck
+
+func _test_hedgehog_thorns_through_typed_roster() -> void:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(PATH))
+	_check(raw is Array, "raw enemy catalog JSON parses for the Thorns precondition")
+	var raw_hedgehog := _find(raw if raw is Array else [], "pincushion_hedgehog")
+	_check(raw_hedgehog.get("thorns") is float and raw_hedgehog.get("thorns") == 3.0,
+		"precondition: authored Thorns arrives from JSON as a double")
+	_check(_find(_load_parsed(), "pincushion_hedgehog").get("thorns") is int,
+		"the strict catalog parser normalizes Thorns to a genuine int")
+	var answer := _assemble(["pincushion_hedgehog", "moth_swarm"])
+	_check(answer.get("ok") == true,
+		"Hedgehog roster assembles through the genuine typed-roster bridge")
+	if not answer.get("ok", false):
+		return
+	var enemies: Variant = answer.get("enemies")
+	_check(enemies is CombatEnemies and enemies.is_valid()
+		and enemies.get_enemies().size() == 2, "the bridge builds two real actors")
+	if not enemies is CombatEnemies or not enemies.is_valid():
+		return
+	var hedgehog: Dictionary = enemies.get_enemy(1)
+	_check(hedgehog.get("id") == "pincushion_hedgehog" and hedgehog.get("max_hp") == 25
+		and hedgehog.get("hp") == 25 and hedgehog.get("block") == 0,
+		"typed Hedgehog starts at its authored 25 HP and zero Block")
+	_check(hedgehog.get("thorns") is int and hedgehog.get("thorns") == 3,
+		"typed roster exposes Thorns as a genuine int 3, never a JSON double")
+	var party := _party()
+	var deck := _attack_deck("warden_strike")
+	_check(party.gain_block(1, 2), "Warden really owns two Block before the confirmed hit")
+	var party_before := party.get_heroes()
+	var enemies_before: Array = enemies.get_enemies()
+	_check(party_before[0].get("hp") == 40 and party_before[0].get("block") == 2,
+		"precondition: living Warden at 40 HP with 2 Block")
+	var attacks := CombatAttackCards.new()
+	var forecast := attacks.forecast_attack(deck, party, enemies, "warden_strike")
+	_check(forecast.get("playable") == true and forecast.get("hits", []).size() == 2
+		and {"position": 1, "damage": 6} in forecast.get("hits", []),
+		"the real held Strike forecast offers the Hedgehog at its computed six damage")
+	_check(party.get_heroes() == party_before and enemies.get_enemies() == enemies_before,
+		"a pure forecast never triggers Thorns nor damages any actor")
+	var result := attacks.play_attack(deck, party, enemies, "warden_strike", 1)
+	_check(result.get("ok") == true and result.get("hits", []).size() == 1,
+		"the real held-card attack against the Hedgehog commits")
+	var hit: Dictionary = result.get("hits", [{}])[0]
+	_check(hit.get("position") == 1 and hit.get("damage") == 6
+		and hit.get("block_absorbed") == 0 and hit.get("hp_loss") == 6,
+		"confirmed-hit receipt keeps the authored six damage and the old schema")
+	_check(enemies.get_enemy(1).get("hp") == 19,
+		"the Hedgehog takes the confirmed six damage")
+	var warden: Dictionary = party.get_hero(1)
+	_check(warden.get("block") == 0 and warden.get("hp") == 39,
+		"Thorns 3 retaliates against the attacker through Block before HP")
+	_check(party.get_hero(2).get("hp") == 30 and party.get_hero(2).get("block") == 0
+		and party.get_hero(3).get("hp") == 26 and party.get_hero(3).get("block") == 0,
+		"Thorns retaliation lands only on the attacking hero")
+	# Control: a confirmed hit on the non-thorned authored Moth Swarm never
+	# retaliates, so a green Hedgehog hit cannot merely echo shared damage.
+	var control_party := _party()
+	var control_deck := _attack_deck("warden_strike")
+	var control_answer := _assemble(["pincushion_hedgehog", "moth_swarm"])
+	_check(control_answer.get("ok") == true, "control roster assembles for the no-Thorns hit")
+	if not control_answer.get("ok", false):
+		return
+	var control_enemies: CombatEnemies = control_answer["enemies"]
+	_check(not control_enemies.get_enemy(2).has("thorns"),
+		"precondition: the authored Moth Swarm carries no Thorns metadata")
+	var control := CombatAttackCards.new().play_attack(control_deck, control_party,
+		control_enemies, "warden_strike", 2)
+	_check(control.get("ok") == true and control_party.get_hero(1).get("hp") == 40
+		and control_party.get_hero(1).get("block") == 0,
+		"a confirmed hit on a non-thorned enemy costs the attacker nothing")
+	# Control: an uncommitted, rejected attack triggers nothing and spends nothing.
+	var rejected_party := _party()
+	var rejected_deck := _attack_deck("warden_strike")
+	var rejected_answer := _assemble(["pincushion_hedgehog"])
+	_check(rejected_answer.get("ok") == true, "single Hedgehog roster assembles for the rejection control")
+	if not rejected_answer.get("ok", false):
+		return
+	var rejected_enemies: CombatEnemies = rejected_answer["enemies"]
+	var rejected := CombatAttackCards.new().play_attack(rejected_deck, rejected_party,
+		rejected_enemies, "warden_strike", 3)
+	_check(rejected == {"ok": false, "hits": []}
+		and rejected_party.get_hero(1).get("hp") == 40
+		and rejected_party.get_hero(1).get("block") == 0
+		and rejected_enemies.get_enemy(1).get("hp") == 25
+		and rejected_deck.hand.has("warden_strike") and rejected_deck.energy == 3,
+		"a rejected zero-hit attack never triggers Thorns and mutates nothing")
+
+## True when the announcement body is one of the record's authored alternatives.
+func _is_authored_alternative(record: Dictionary, announced: Dictionary) -> bool:
+	var spec: Variant = record.get("intent")
+	if not spec is Dictionary:
+		return false
+	var body: Dictionary = {}
+	for key in announced:
+		if key in ["enemy_position", "target_position"]:
+			continue
+		body[key] = announced[key]
+	var actions: Variant = spec.get("actions")
+	if not actions is Array:
+		return false
+	for raw in actions:
+		if not raw is Dictionary:
+			continue
+		var authored: Dictionary = {}
+		for key in raw:
+			if key == "weight":
+				continue
+			authored[key] = raw[key]
+		if _norm(authored) == _norm(body):
+			return true
+	return false
+
+## Resolve a real Moth Swarm Block snip through the genuine special-action service.
+func _resolve_snip(announced: Dictionary, enemies: CombatEnemies) -> void:
+	var party := _party()
+	_check(party.gain_block(1, 5) and party.get_hero(1).get("block") == 5,
+		"precondition: the front hero really holds five Block")
+	var receipt := CombatEnemySpecialActions.new().execute_actions(party, enemies, [announced])
+	_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1
+		and receipt["events"][0].get("applied") == true,
+		"Moth Block snip resolves as a real enemy special action")
+	_check(party.get_hero(1).get("block") == 0 and party.get_hero(1).get("hp") == 40,
+		"snip sets the target's Block to zero without dealing HP damage")
+
+## Resolve a real Weak/Bleed application through the genuine special-action service.
+func _resolve_debuff(announced: Dictionary, enemies: CombatEnemies, status: String) -> void:
+	var party := _party()
+	var target := int(announced.get("target_position", 0))
+	_check(target >= 1 and target <= CombatParty.PARTY_SIZE and not party.is_downed(target),
+		"precondition: the announced debuff target is a living hero")
+	if target < 1 or target > CombatParty.PARTY_SIZE:
+		return
+	var receipt := CombatEnemySpecialActions.new().execute_actions(party, enemies, [announced])
+	_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1
+		and receipt["events"][0].get("applied") == true,
+		"the announced debuff resolves as a real enemy special action")
+	_check(party.get_hero(target).get("statuses", {}).get(status, 0)
+		== int(announced.get("amount", 0)),
+		"the announced %s amount lands on the policy target" % status)
+	for position in range(1, CombatParty.PARTY_SIZE + 1):
+		if position == target:
+			continue
+		_check(party.get_hero(position).get("statuses", {}).get(status, 0) == 0,
+			"unaffected hero %d gains no %s" % [position, status])
+
+func _test_trio_seeded_announcements() -> void:
+	var parsed := _load_parsed()
+	var trio: Array = []
+	for id in ["pincushion_hedgehog", "moth_swarm", "needle_wasp"]:
+		var record := _find(parsed, id)
+		_check(not record.is_empty(), "authentic trio source present: " + id)
+		trio.append(record)
+	_check(trio.size() == 3, "precondition: all three authentic records loaded")
+	if trio.size() != 3:
+		return
+	var party := _party()
+	_check(party.is_valid() and party.get_heroes().size() == 3,
+		"precondition: an authentic three-hero party")
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30
+		and party.get_hero(3).get("hp") == 26,
+		"precondition: lowest living HP is the back hero, so policies differ")
+	var bound := _bind(4261, trio)
+	_check(bound.get("ok") == true and bound.scheduler.is_bound(),
+		"the authentic three-slot trio binds seeded weighted intents")
+	_check(bound.party.get_heroes() == _party().get_heroes(),
+		"seeded intent selection never applies Hedgehog Thorns early")
+	if bound.get("ok", false):
+		var enemies: CombatEnemies = bound["enemies"]
+		_check(CombatEnemyIntents.policy_for(enemies, 1) == "front"
+			and CombatEnemyIntents.policy_for(enemies, 2) == "front"
+			and CombatEnemyIntents.policy_for(enemies, 3) == "lowest_living_hp",
+			"the seeded roster keeps every authored target policy")
+		var intents: Array = bound.scheduler.get_intents()
+		_check(intents.size() == 3, "the seeded roster announces once per authentic slot")
+		for index in range(intents.size()):
+			var announced: Dictionary = intents[index]
+			var source: Dictionary = trio[index]
+			var enemy_id := String(source.get("id", ""))
+			_check(announced.get("enemy_position") == index + 1,
+				"announcement keeps its original source slot: " + enemy_id)
+			_check(_is_authored_alternative(source, announced),
+				"announcement is one of the authored alternatives: " + enemy_id)
+			if announced.get("type") in ["attack", "debuff", "snip_block"]:
+				var expected_target := 1 if source["intent"]["target"] == "front" else 3
+				_check(announced.get("target_position") == expected_target,
+					"announcement applies the authored target policy: " + enemy_id)
+		var replay := _bind(4261, trio)
+		_check(replay.get("ok") == true and replay.scheduler.get_intents() == intents
+			and replay.rng.state == bound.rng.state,
+			"seeded trio announcements and RNG state replay exactly")
+	# Force every authored alternative, so no guessed seed can hide one.
+	var forced := [
+		{"id": "pincushion_hedgehog", "target": "front",
+			"action": {"type": "attack", "amount": 6, "weight": 1}},
+		{"id": "pincushion_hedgehog", "target": "front",
+			"action": {"type": "block", "amount": 6, "weight": 1}},
+		{"id": "moth_swarm", "target": "front",
+			"action": {"type": "snip_block", "amount": 0, "weight": 1}},
+		{"id": "moth_swarm", "target": "front",
+			"action": {"type": "attack", "amount": 7, "weight": 1}},
+		{"id": "moth_swarm", "target": "front",
+			"action": {"type": "debuff", "status": "weak", "amount": 1, "weight": 1}},
+		{"id": "needle_wasp", "target": "lowest_living_hp",
+			"action": {"type": "debuff", "status": "bleed", "amount": 2, "weight": 1}},
+		{"id": "needle_wasp", "target": "lowest_living_hp",
+			"action": {"type": "attack", "amount": 8, "weight": 1}}]
+	for case in forced:
+		var record := _find(parsed, String(case.id))
+		_check(not record.is_empty(), "forced alternative source present: " + String(case.id))
+		if record.is_empty():
+			continue
+		var forced_record: Dictionary = record.duplicate(true)
+		forced_record["intent"] = {"target": case.target, "actions": [case.action]}
+		var forced_enemies := CombatEnemies.new([forced_record])
+		var forced_rng := RandomNumberGenerator.new()
+		forced_rng.seed = 4261
+		var forced_scheduler := CombatEnemyIntents.new([_enemy(1, [{"type": "block", "amount": 1}])])
+		var did_bind := forced_enemies.is_valid() \
+			and forced_scheduler.bind_battle(forced_enemies, party, forced_rng)
+		_check(did_bind, "forced alternative binds: %s %s" % [case.id, str(case.action)])
+		if not did_bind:
+			continue
+		var announced: Dictionary = forced_scheduler.get_intents()[0]
+		_check(announced.get("type") == case.action.type
+			and int(announced.get("amount", -1)) == int(case.action.amount),
+			"forced alternative announces its authored effect: %s %s" % [case.id, str(case.action)])
+		if case.action.has("status"):
+			_check(announced.get("status") == case.action.status,
+				"forced debuff keeps its authored status: " + String(case.action.status))
+		if announced.get("type") in ["attack", "debuff", "snip_block"]:
+			var expected := 1 if case.target == "front" else 3
+			_check(announced.get("target_position") == expected,
+				"forced alternative honours the authored target policy: " + String(case.id))
+		if announced.get("type") == "snip_block":
+			_resolve_snip(announced, forced_enemies)
+		elif announced.get("type") == "debuff":
+			_resolve_debuff(announced, forced_enemies, String(case.action.status))
+
 func _test_negative_fixtures() -> void:
 	# Duplicate ID rejection in catalog parsing.
 	var duplicate_a := {"id": "a", "name": "A", "max_hp": 1, "art_path": "x",
@@ -310,6 +679,24 @@ func _test_negative_fixtures() -> void:
 	blank_id["max_hp"] = 1
 	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([blank_id])).is_empty(),
 		"blank catalog ID is rejected")
+	# Optional authored Thorns metadata must be a genuine nonnegative integer.
+	var thorned := {"id": "thorn_fixture", "name": "Thorn", "max_hp": 10, "thorns": 3,
+		"art_path": "x", "intent": {"target": "front",
+			"actions": [{"type": "attack", "amount": 1, "weight": 1}]}}
+	var thorned_parsed := RunTypedBattleRoster._parse_catalog_text(JSON.stringify([thorned]))
+	_check(thorned_parsed.size() == 1 and thorned_parsed[0].get("thorns") is int
+		and thorned_parsed[0].get("thorns") == 3,
+		"integral JSON Thorns normalizes to a genuine int")
+	var thornless := thorned.duplicate(true)
+	thornless["id"] = "thornless_fixture"
+	thornless.erase("thorns")
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([thornless])).size() == 1,
+		"absent Thorns metadata stays optional")
+	for invalid_thorns in [-1, -1.0, 2.5, "3", true, null, []]:
+		var malformed_thorns := thorned.duplicate(true)
+		malformed_thorns["thorns"] = invalid_thorns
+		_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([malformed_thorns])).is_empty(),
+			"invalid Thorns metadata rejects the whole catalog: " + str(invalid_thorns))
 	# Invalid action rejection.
 	_check(CombatEnemyIntents.weighted_action({"type": "attack", "amount": 1, "weight": 0}).is_empty(),
 		"zero weight is rejected")
