@@ -110,6 +110,95 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 	_valid = true
 
 
+## Static sampling helper for Patch Stall deterministic three-patch selection.
+## Accepts the actual run RandomNumberGenerator, candidate records read by
+## its caller from data/shop/initial_offers.json, and owned patch IDs.
+## Returns exactly three distinct, unowned, catalog-authored power patches
+## with their authored positive gold prices; never the inert starter
+## slots (stitched_badge, spare_spool). On failure, no RNG is advanced.
+static func sample_patch_stall_offers(rng: Variant, candidates: Variant,
+		owned_ids: Variant) -> Dictionary:
+	# Preflight all inputs without touching the RNG.
+	if not rng is RandomNumberGenerator:
+		return {"ok": false}
+	if typeof(candidates) != TYPE_ARRAY or candidates.is_empty():
+		print("FAIL: candidates invalid or empty, type=", typeof(candidates), ", empty=", candidates.is_empty())
+		return {"ok": false}
+	if typeof(owned_ids) != TYPE_ARRAY:
+		print("FAIL: owned_ids not array, type=", typeof(owned_ids))
+		return {"ok": false}
+
+	# Load real power definitions; reject if any catalog is missing or invalid.
+	var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+	if powers == null or typeof(powers) != TYPE_ARRAY or powers.is_empty():
+		print("FAIL: powers empty or invalid, powers=", powers)
+		return {"ok": false}
+
+	var power_ids: Dictionary = {}
+	for entry in powers:
+		if not entry is Dictionary or not entry.has("id") or not entry.has("slot"):
+			return {"ok": false}
+		var id: Variant = entry["id"]
+		if not _is_id(str(id)):
+			return {"ok": false}
+		power_ids[str(id)] = true
+
+	# Validate owned IDs are strings.
+	var owned_set: Dictionary = {}
+	for id in owned_ids:
+		if not _is_id(id):
+			return {"ok": false}
+		owned_set[str(id)] = true
+
+	# Filter candidates to eligible unowned powers with positive authored prices.
+	var eligible: Array = []
+	var eligible_price_map: Dictionary = {}
+	for value in candidates:
+		if typeof(value) != TYPE_DICTIONARY:
+			return {"ok": false}
+		if not value.has("id") or not value.has("price"):
+			return {"ok": false}
+		var id_str: String = str(value["id"])
+		var price: Variant = value["price"]
+		if id_str.is_empty() or price == null:
+			return {"ok": false}
+		if not power_ids.has(id_str) or owned_set.has(id_str):
+			continue
+		if typeof(price) != TYPE_INT and not (typeof(price) == TYPE_FLOAT and price == int(price) and price > 0):
+			return {"ok": false}
+		# Ensure no duplicate eligible IDs.
+		if eligible.has(id_str) or eligible_price_map.has(id_str):
+			return {"ok": false}
+		eligible.append(id_str)
+		eligible_price_map[id_str] = int(price)
+
+	# Must have at least three eligible candidates to draw three without replacement.
+	print("ELIGIBLE COUNT BEFORE CHECK: ", eligible.size())
+	if eligible.size() < 3:
+		return {"ok": false}
+
+	# Sort eligible IDs for deterministic input-order independence.
+	eligible.sort()
+
+	# Draw three distinct IDs without replacement using the supplied RNG.
+	var selected_ids: Array = []
+	var remaining: Array = eligible.duplicate(true)
+	for i in range(3):
+		if remaining.is_empty():
+			return {"ok": false}
+		var index: int = rng.randi_range(0, remaining.size() - 1)
+		selected_ids.append(remaining[index])
+		remaining.remove_at(index)
+
+	# Build the three offer records in sorted selection order.
+	var offers: Array = []
+	for id_str in selected_ids:
+		offers.append({"id": id_str, "price": eligible_price_map[id_str]})
+
+	print("ABOUT TO RETURN SUCCESS, offers_size=", offers.size())
+	return {"ok": true, "offers": offers}
+
+
 static func _is_id(value: Variant) -> bool:
 	return typeof(value) == TYPE_STRING and not value.strip_edges().is_empty()
 
