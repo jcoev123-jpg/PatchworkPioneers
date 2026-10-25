@@ -2,7 +2,9 @@ extends "res://tests/live_event_treasure_continuation_test.gd"
 ## Genuine seeded opening routes through all three specials to each generic Event.
 
 const REQUIRED := ["button_trail", "loose_seam", "thimble_well", "frayed_signpost",
-	"needle_gate", "quilting_bee", "estate_sale"]
+	"needle_gate", "quilting_bee", "estate_sale", "lantern_moth_clearing",
+	"patchwork_ferry", "spool_clocktower", "ragpicker_cart", "quilt_bridge",
+	"button_moon_festival"]
 var gold_purchases := 0
 
 
