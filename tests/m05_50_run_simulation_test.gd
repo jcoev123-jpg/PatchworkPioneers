@@ -560,19 +560,42 @@ func _run_seed(value: int) -> Dictionary:
 				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
 			var oracle := RandomNumberGenerator.new()
 			oracle.state = rng.state
-			var eligible: Array = []
+			# Independent weighted ticket oracle: every eligible unowned
+			# ordinary patch carries 100 tickets and each P8 rare its authored
+			# percentage of one ordinary patch, drawn from sorted IDs.
+			var power_slots := {}
 			var powers := RunAuthoredPatchDefinitions.load_power_definitions()
+			for power in powers:
+				power_slots[power.id] = power.slot
+			var rare_source: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+				"res://data/patches/mpw_synergy_patches.json"))
+			var weights := {}
 			for offer in shop_catalog.trinkets:
-				if not owned.has(offer.id) and powers.any(func(power): return power.id == offer.id):
-					eligible.append(offer.id)
+				if not owned.has(offer.id) and power_slots.has(offer.id):
+					weights[offer.id] = 100
+			var rare_records: Array = rare_source if rare_source is Array else []
+			for record in rare_records:
+				if not owned.has(record.id):
+					weights[record.id] = 100 * int(record.stock_weight_percent) / 100
+			var eligible: Array = weights.keys()
 			eligible.sort()
 			var expected: Array = []
 			for i in range(3):
 				if eligible.is_empty():
 					return _fail("Patch Stall oracle has insufficient candidates")
-				var selected := oracle.randi_range(0, eligible.size() - 1)
-				expected.append(eligible[selected])
-				eligible.remove_at(selected)
+				var total := 0
+				for id in eligible:
+					total += weights[id]
+				var ticket := oracle.randi_range(0, total - 1)
+				var walked := 0
+				var chosen := ""
+				for id in eligible:
+					walked += weights[id]
+					if ticket < walked:
+						chosen = id
+						break
+				expected.append(chosen)
+				eligible.erase(chosen)
 			var sampled := RunShopPurchases.sample_patch_stall_offers(rng, shop_catalog.trinkets, owned)
 			if not sampled.ok or sampled.offers.size() != 3:
 				return _fail("three genuine Patch Stall offers")

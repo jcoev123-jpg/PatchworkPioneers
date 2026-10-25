@@ -1053,6 +1053,99 @@ func _test_stitched_forged_receipts() -> void:
 const PATCH_STALL_PARTY := ["warden", "seamstress", "tinker"]
 const PATCH_STALL_DECK := ["w_start", "s_start", "w_start", "t_start"]
 const PATCH_STALL_IDS := ["stitched_badge", "spare_spool", "quilted_coat"]
+const RARE_PATCH_CATALOG := "res://data/patches/mpw_synergy_patches.json"
+## One eligible ordinary power patch is worth 100 tickets at a Patch Stall.
+const ORDINARY_TICKETS := 100
+const RARE_PATCH_IDS := ["relay_bobbin", "hearth_lining"]
+const RETAINED_ORDINARY_IDS := ["button_eye", "frayfinder_mitt", "borrowed_button"]
+
+
+## The shipped P8 rare records, read straight from their authored catalog.
+func _rare_records() -> Array:
+	var text := FileAccess.get_file_as_string(RARE_PATCH_CATALOG)
+	_check(not text.is_empty(), "shipped P8 rare catalog is readable")
+	var parsed: Variant = JSON.parse_string(text)
+	_check(typeof(parsed) == TYPE_ARRAY and not parsed.is_empty(),
+		"shipped P8 rare catalog parses to authored records")
+	return parsed if typeof(parsed) == TYPE_ARRAY else []
+
+
+## Independent integer-ticket oracle for the Patch Stall stock sampler:
+## every eligible unowned ordinary power carries 100 tickets, every eligible
+## unowned P8 rare its authored percentage of ONE ordinary patch, sorted IDs,
+## one ticket draw per selection without replacement, all from the supplied
+## RNG only.
+func _ticket_oracle(rng: RandomNumberGenerator, candidates: Array, owned: Array,
+		rare: Array) -> Array:
+	var power_slots := _power_slots()
+	var rare_tickets := {}
+	var prices := {}
+	for record in rare:
+		rare_tickets[record.id] = ORDINARY_TICKETS * int(record.stock_weight_percent) / 100
+		prices[record.id] = int(record.shop_price_gold)
+	var weights := {}
+	for offer in candidates:
+		if not power_slots.has(offer.id) or owned.has(offer.id) or rare_tickets.has(offer.id):
+			continue
+		weights[offer.id] = ORDINARY_TICKETS
+		prices[offer.id] = int(offer.price)
+	for id in rare_tickets:
+		if not owned.has(id):
+			weights[id] = rare_tickets[id]
+	var remaining: Array = weights.keys()
+	remaining.sort()
+	var offers: Array = []
+	for i in range(3):
+		var total := 0
+		for id in remaining:
+			total += weights[id]
+		var ticket := rng.randi_range(0, total - 1)
+		var walked := 0
+		var chosen := ""
+		for id in remaining:
+			walked += weights[id]
+			if ticket < walked:
+				chosen = id
+				break
+		offers.append({"id": chosen, "price": prices[chosen]})
+		remaining.erase(chosen)
+	return offers
+
+
+func _power_slots() -> Dictionary:
+	var slots := {}
+	for entry in RunAuthoredPatchDefinitions.load_power_definitions():
+		slots[entry.id] = entry.slot
+	return slots
+
+
+func _sampled_ids(result: Dictionary) -> Array:
+	var ids: Array = []
+	if result.get("ok") != true:
+		return ids
+	for offer in result.get("offers", []):
+		ids.append(offer.get("id"))
+	return ids
+
+
+func _offer_ids(candidates: Array, wanted: Array) -> Array:
+	var found: Array = []
+	for offer in candidates:
+		if wanted.has(offer.get("id")):
+			found.append(offer.duplicate(true))
+	return found
+
+
+func _seeded_rng(value: int) -> RandomNumberGenerator:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = value
+	return rng
+
+
+func _rare_variant(record: Dictionary, field: String, value: Variant) -> Dictionary:
+	var copy: Dictionary = record.duplicate(true)
+	copy[field] = value
+	return copy
 
 
 func _patch_stall_fixture(gold: int = 150, trinkets: Array = ["button_eye"]) -> Dictionary:
@@ -1458,7 +1551,6 @@ func _test_patch_stall_sampling() -> void:
 	_check(result.get("ok") == true, "genuine sampling succeeds with real candidates")
 	_check(result.has("offers"), "success carries offers array")
 	_check(result.get("offers").size() == 3, "exactly three offers returned")
-	print("DEBUG offers type: ", typeof(result.get("offers")), ", value: ", result.get("offers"))
 
 	# Every returned offer must be a real unowned power with a positive price.
 	var selected_ids: Array = []
@@ -1509,6 +1601,254 @@ func _test_patch_stall_sampling() -> void:
 		prices.append(offer.get("price"))
 	_check(prices.size() == 3 and prices[0] == 100 and prices[1] == 100
 		and prices[2] == 100, "three unique unowned prices are authored 100 gold")
+
+	var rare := _rare_records()
+	var power_slots := _power_slots()
+	var unowned: Array = []
+	# The two shipped rares are registered catalog powers in their authored
+	# slots, and are absent from the ordinary priced candidate data.
+	for record in rare:
+		_check(power_slots.get(record.id) == record.slot,
+			"registered P8 power slot matches " + str(record.id))
+		var listed := candidates.filter(func(offer): return offer.get("id") == record.id)
+		_check(listed.is_empty(),
+			"rare is stocked from its own catalog, not ordinary data: " + str(record.id))
+	for id in RARE_PATCH_IDS:
+		_check(power_slots.has(id), "shipped rare is a registered power: " + id)
+
+	# AC1: a bounded seeded search witnesses BOTH rares as genuine three-offer
+	# stock, alongside the retained named ordinary candidates.
+	var witness_targets: Array = RARE_PATCH_IDS + RETAINED_ORDINARY_IDS
+	var witnesses := {}
+	var witness_offers := {}
+	for value in range(1, 601):
+		var sweep_rng := RandomNumberGenerator.new()
+		sweep_rng.seed = value
+		var sampled := RunShopPurchases.sample_patch_stall_offers(
+			sweep_rng, candidates, unowned, rare)
+		if sampled.get("ok") != true or sampled.get("offers").size() != 3:
+			_check(false, "bounded witness sampling succeeds for seed " + str(value))
+			break
+		var seen := {}
+		for offer in sampled.get("offers"):
+			_check(typeof(offer.get("id")) == TYPE_STRING and typeof(offer.get("price")) == TYPE_INT,
+				"witness offer is an authored id and whole-gold price")
+			_check(not seen.has(offer.get("id")), "witness sample has three distinct IDs")
+			seen[offer.get("id")] = true
+			if witness_targets.has(offer.get("id")) and not witnesses.has(offer.get("id")):
+				witnesses[offer.get("id")] = value
+				witness_offers[offer.get("id")] = offer.duplicate(true)
+		if witnesses.size() == witness_targets.size():
+			break
+	for id in witness_targets:
+		_check(witnesses.has(id), "bounded seeded search witnesses " + id)
+	_check(power_slots.get("relay_bobbin") == "HEAD"
+		and power_slots.get("hearth_lining") == "COAT",
+		"the witnessed rares are genuine HEAD and COAT powers")
+	# The three named earlier ordinary candidates are still stocked at the
+	# authored 100-gold quote alongside the rares.
+	for entry in _offer_ids(candidates, RETAINED_ORDINARY_IDS):
+		_check(witnesses.has(entry.get("id")),
+			"retained ordinary candidate is still offered: " + str(entry.get("id")))
+		if not witnesses.has(entry.get("id")):
+			continue
+		_check(entry.get("price") == 100
+			and witness_offers[entry.get("id")].get("price") == int(entry.get("price")),
+			"retained ordinary candidate keeps its authored quote: " + str(entry.get("id")))
+	for record in rare:
+		if not witnesses.has(record.id):
+			continue
+		var offer: Dictionary = witness_offers[record.id]
+		_check(offer.get("price") == int(record.shop_price_gold),
+			"witnessed rare keeps its authored 100-gold quote: " + str(record.id))
+		_check(power_slots.get(record.id) == record.slot,
+			"witnessed rare keeps its authored slot: " + str(record.id))
+		# The same three-offer sample is genuinely purchasable at that price.
+		var rare_sample := RunShopPurchases.sample_patch_stall_offers(
+			_seeded_rng(witnesses[record.id]), candidates, unowned, rare)
+		var rare_stall := RunShopPurchases.new(PATCH_STALL_PARTY.duplicate(),
+			PATCH_STALL_DECK.duplicate(), unowned.duplicate(), int(record.shop_price_gold),
+			[], rare_sample.get("offers", []), "patch_stall")
+		_check(rare_stall.is_valid(), "witnessed rare sample is a valid stall: " + str(record.id))
+		_check(rare_stall.get_stock()["trinkets"].size() == 3,
+			"witnessed rare sample keeps exactly three offers: " + str(record.id))
+		var paid := rare_stall.buy("trinket", record.id)
+		_check(paid.get("ok") == true and paid.get("receipt") == {
+			"kind": "trinket", "id": record.id, "price": int(record.shop_price_gold)},
+			"rare purchase records its authored receipt once: " + str(record.id))
+		_check(rare_stall.get_state().gold == 0
+			and rare_stall.get_state().trinkets == [record.id]
+			and rare_stall.patch_stall_choice_used(),
+			"rare purchase spends exactly 100 gold and latches: " + str(record.id))
+		var again := rare_stall.buy("trinket", record.id)
+		_check(again.get("ok") != true and not again.has("receipt")
+			and rare_stall.get_state().gold == 0,
+			"rare patch cannot be bought twice and gold never goes negative")
+		var sold := 0
+		for listing in rare_stall.get_stock()["trinkets"]:
+			if listing.get("id") == record.id and listing.get("sold") == true:
+				sold += 1
+		_check(sold == 1, "rare sale is recorded exactly once in the stock ledger")
+		# One gold short of the authored quote can never take the rare.
+		var short_stall := RunShopPurchases.new(PATCH_STALL_PARTY.duplicate(),
+			PATCH_STALL_DECK.duplicate(), unowned.duplicate(),
+			int(record.shop_price_gold) - 1, [], rare_sample.get("offers", []), "patch_stall")
+		var short_paid := short_stall.buy("trinket", record.id)
+		_check(short_paid.get("ok") != true and not short_paid.has("receipt")
+			and short_stall.get_state().gold == int(record.shop_price_gold) - 1
+			and not short_stall.patch_stall_choice_used()
+			and short_stall.get_state().trinkets.is_empty(),
+			"one gold short never buys a rare and never latches")
+		# Leave-safe: every other offer is refused once the single choice is used.
+		for other in rare_sample.get("offers", []):
+			if other.get("id") != record.id:
+				_check(rare_stall.buy("trinket", other.get("id")).get("ok") != true,
+					"second paid purchase refused after a rare")
+
+	# AC2: exact relative weights against the independent ticket oracle.
+	# Each P8 rare is authored at 10% of ONE ordinary patch's 100 tickets.
+	for record in rare:
+		_check(ORDINARY_TICKETS * int(record.stock_weight_percent) / 100 == 10,
+			"rare weight is 10% of one ordinary patch: " + str(record.id))
+	var oracle_seeds := [1, 7, 4242, 88001, 999983]
+	for value in oracle_seeds:
+		var actual_rng := _seeded_rng(value)
+		var oracle_rng := _seeded_rng(value)
+		var expected := _ticket_oracle(oracle_rng, candidates, unowned, rare)
+		var actual := RunShopPurchases.sample_patch_stall_offers(
+			actual_rng, candidates, unowned, rare)
+		_check(actual.get("ok") == true and actual.get("offers") == expected,
+			"weighted ticket oracle matches sampler for seed " + str(value))
+		_check(actual_rng.state == oracle_rng.state,
+			"sampler consumes exactly the oracle's draws for seed " + str(value))
+		var reversed: Array = candidates.duplicate(true)
+		reversed.reverse()
+		var reversed_rng_actual := _seeded_rng(value)
+		var reversed_oracle_rng := _seeded_rng(value)
+		var reversed_expected := _ticket_oracle(reversed_oracle_rng, reversed, unowned, rare)
+		var reversed_actual := RunShopPurchases.sample_patch_stall_offers(
+			reversed_rng_actual, reversed, unowned, rare)
+		_check(reversed_actual.get("ok") == true and reversed_actual.get("offers") == expected
+			and reversed_expected == expected,
+			"reversed offer data keeps the sorted-ID ticket draws for seed " + str(value))
+		_check(reversed_rng_actual.state == oracle_rng.state,
+			"reversed offer data consumes the same draws for seed " + str(value))
+
+	# A three-ordinary/two-rare pool isolates the relative weight: the rares
+	# hold 20 of 320 tickets, so the FIRST draw is rare about one time in 16.
+	var subset: Array = _offer_ids(candidates, RETAINED_ORDINARY_IDS)
+	_check(subset.size() == 3, "three retained ordinary candidates form the weight subset")
+	var rare_firsts := 0
+	for value in range(1, 321):
+		var subset_result := RunShopPurchases.sample_patch_stall_offers(
+			_seeded_rng(value), subset, unowned, rare)
+		_check(subset_result.get("ok") == true
+			and subset_result.get("offers").size() == 3,
+			"three-ordinary/two-rare subset still stocks three")
+		if RARE_PATCH_IDS.has(subset_result.get("offers")[0].get("id")):
+			rare_firsts += 1
+	_check(rare_firsts >= 8 and rare_firsts <= 40,
+		"first draw treats both rares as one tenth of one ordinary (saw "
+		+ str(rare_firsts) + "/320)")
+
+	# AC4: owned rares leave the pool without collapsing the ordinary stock.
+	for value in [3, 11, 97]:
+		var owned_result := RunShopPurchases.sample_patch_stall_offers(
+			_seeded_rng(value), candidates, RARE_PATCH_IDS.duplicate(), rare)
+		_check(owned_result.get("ok") == true
+			and owned_result.get("offers").size() == 3
+			and _sampled_ids(owned_result).all(func(id): return not RARE_PATCH_IDS.has(id)),
+			"owned rares are never restocked while ordinary stock continues")
+
+	# AC4: fewer than three total eligible unowned powers fail closed with no
+	# RNG consumed; the two-ordinary pool is genuinely smaller than three.
+	var two_ordinary: Array = _offer_ids(candidates, ["button_eye", "frayfinder_mitt"])
+	_check(two_ordinary.size() == 2, "two-ordinary pool fixture is non-vacuous")
+	var short_rng := _seeded_rng(5150)
+	var short_state := short_rng.state
+	_check(RunShopPurchases.sample_patch_stall_offers(short_rng, two_ordinary,
+			RARE_PATCH_IDS.duplicate(), rare) == {"ok": false}
+		and short_rng.state == short_state,
+		"two eligible unowned powers reject before any draw")
+	_check(RunShopPurchases.sample_patch_stall_offers(short_rng, two_ordinary,
+			unowned, []) == {"ok": false} and short_rng.state == short_state,
+		"empty rare catalog still requires three eligible powers")
+
+	# AC4: malformed rare catalog records refuse the stall, never a fallback.
+	var malformed_rare: Array = []
+	for field in ["id", "slot", "rarity", "shop_price_gold", "stock_weight_percent",
+			"stock_weight_basis", "stock_competes_for_existing_slot"]:
+		var missing: Dictionary = rare[0].duplicate(true)
+		missing.erase(field)
+		malformed_rare.append(["missing " + field, [missing]])
+	malformed_rare.append(["wrong slot", [_rare_variant(rare[0], "slot", "COAT")]])
+	malformed_rare.append(["unauthored id",
+		[_rare_variant(_rare_variant(rare[0], "id", "unauthored_rare"), "slot", "HEAD")]])
+	malformed_rare.append(["duplicate record", [rare[0], rare[0]]])
+	malformed_rare.append(["not rare", [_rare_variant(rare[0], "rarity", "common")]])
+	malformed_rare.append(["wrong weight basis",
+		[_rare_variant(rare[0], "stock_weight_basis", "whole_stock")]])
+	malformed_rare.append(["does not compete",
+		[_rare_variant(rare[0], "stock_competes_for_existing_slot", false)]])
+	malformed_rare.append(["zero price", [_rare_variant(rare[0], "shop_price_gold", 0)]])
+	malformed_rare.append(["fractional price", [_rare_variant(rare[0], "shop_price_gold", 99.5)]])
+	malformed_rare.append(["string price", [_rare_variant(rare[0], "shop_price_gold", "100")]])
+	malformed_rare.append(["zero weight", [_rare_variant(rare[0], "stock_weight_percent", 0)]])
+	malformed_rare.append(["negative weight", [_rare_variant(rare[0], "stock_weight_percent", -10)]])
+	malformed_rare.append(["fractional weight", [_rare_variant(rare[0], "stock_weight_percent", 2.5)]])
+	malformed_rare.append(["non-dictionary record", [null]])
+	malformed_rare.append(["string record", ["relay_bobbin"]])
+	malformed_rare.append(["non-array catalog", {"records": rare.duplicate(true)}])
+	for entry in malformed_rare:
+		var denied_rng := _seeded_rng(7321)
+		var denied_state := denied_rng.state
+		_check(RunShopPurchases.sample_patch_stall_offers(denied_rng, candidates,
+				unowned, entry[1]) == {"ok": false} and denied_rng.state == denied_state,
+			"malformed rare catalog rejects without a draw: " + str(entry[0]))
+
+	# AC4: corrupt or duplicate ordinary offers refuse before any draw too.
+	var corrupt: Array = []
+	var power_candidates: Array = _offer_ids(candidates, RETAINED_ORDINARY_IDS)
+	_check(power_candidates.size() == 3, "corrupt-offer fixture uses real power candidates")
+	var duplicate_offer: Array = power_candidates.duplicate(true)
+	duplicate_offer.append(power_candidates[0].duplicate(true))
+	corrupt.append(["duplicate offer", duplicate_offer])
+	var missing_price: Array = candidates.duplicate(true)
+	missing_price[0].erase("price")
+	corrupt.append(["missing price", missing_price])
+	var missing_id: Array = candidates.duplicate(true)
+	missing_id[0].erase("id")
+	corrupt.append(["missing id", missing_id])
+	for price in [0, -1, 1.5, "100", true, null]:
+		var bad_price: Array = candidates.duplicate(true)
+		bad_price[0]["price"] = price
+		corrupt.append(["price " + str(price), bad_price])
+	var bad_id: Array = candidates.duplicate(true)
+	bad_id[0]["id"] = 17
+	corrupt.append(["numeric id", bad_id])
+	var bad_entry: Array = candidates.duplicate(true)
+	bad_entry[0] = "button_eye"
+	corrupt.append(["non-dictionary offer", bad_entry])
+	for entry in corrupt:
+		var denied_rng := _seeded_rng(9081)
+		var denied_state := denied_rng.state
+		_check(RunShopPurchases.sample_patch_stall_offers(denied_rng, entry[1],
+				unowned, rare) == {"ok": false} and denied_rng.state == denied_state,
+			"corrupt offer data rejects without a draw: " + str(entry[0]))
+
+	# AC4: same seed and eligible set replay; returned offers stay detached.
+	var first_rng := _seeded_rng(31337)
+	var first := RunShopPurchases.sample_patch_stall_offers(first_rng, candidates, unowned, rare)
+	var replay_rng2 := _seeded_rng(31337)
+	var second := RunShopPurchases.sample_patch_stall_offers(replay_rng2, candidates, unowned, rare)
+	_check(first == second and first_rng.state == replay_rng2.state,
+		"same seed and eligible set replay identical weighted offers")
+	first["offers"][0]["id"] = "forged"
+	first["offers"][0]["price"] = -1
+	first["offers"].clear()
+	var third := RunShopPurchases.sample_patch_stall_offers(_seeded_rng(31337),
+		candidates, unowned, rare)
+	_check(third == second, "mutating a returned sample cannot corrupt later stock")
 
 	# Feed the result to the existing purchase constructor for patch_stall.
 	var stall_fixture := {
