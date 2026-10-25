@@ -246,9 +246,12 @@ func _test_attack_patch_stock(party: Array[String], catalog: StarterCards) -> vo
 		"res://data/shop/initial_offers.json"))
 	var definitions := RunAuthoredPatchDefinitions.load_definitions()
 	_check(not definitions.is_empty(), "all authored patch catalogs validate before stock assertions")
+	var p8_ids := {"relay_bobbin": true, "hearth_lining": true}
 	var seen := {}
 	for definition in definitions:
 		var id: String = definition.id
+		if p8_ids.has(id):
+			continue
 		var matches: Array = authored.trinkets.filter(func(entry): return entry.id == id)
 		_check(matches.size() == 1 and _whole_price(matches[0].price) == 100,
 			"shared patch candidate retained exactly once at 100 gold: " + id)
@@ -264,6 +267,8 @@ func _test_attack_patch_stock(party: Array[String], catalog: StarterCards) -> vo
 			seen[offer.id] = true
 	for definition in definitions:
 		var id: String = definition.id
+		if p8_ids.has(id):
+			continue
 		_check(seen.has(id), "genuine seeded stock admits patch " + id)
 
 

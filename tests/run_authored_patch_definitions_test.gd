@@ -1,5 +1,5 @@
 extends SceneTree
-## Scene-free validation and detachment of all seven authored wardrobes, plus
+## Scene-free validation and detachment of all eight authored wardrobes, plus
 ## the power-only subset reserved for future Shop and Elite stock.
 
 var failures: Array[String] = []
@@ -70,6 +70,7 @@ func _run() -> void:
 		"wool_patch_cloak": "COAT", "chain_stitched_coat": "COAT",
 		"reinforced_patchcoat": "COAT", "thick_felt_mantle": "COAT",
 		"borrowed_button": "COAT",
+		"relay_bobbin": "HEAD", "hearth_lining": "COAT",
 	}
 	for id in required:
 		_check(_has_one(projected, id, required[id]),
@@ -90,6 +91,7 @@ func _run() -> void:
 		"wool_patch_cloak": "COAT", "chain_stitched_coat": "COAT",
 		"reinforced_patchcoat": "COAT", "thick_felt_mantle": "COAT",
 		"borrowed_button": "COAT",
+		"relay_bobbin": "HEAD", "hearth_lining": "COAT",
 	}
 	for id in power_required:
 		_check(_has_one(power, id, power_required[id]),
@@ -204,6 +206,26 @@ func _run() -> void:
 	copy = catalogs.duplicate(true)
 	copy[5][0]["id"] = "stitched_badge"
 	_rejected_everywhere(copy, "starter record duplicated into a power catalog fails closed")
+
+	# P8 negative fixtures: missing, malformed, duplicate, wrong-slot.
+	copy = catalogs.duplicate(true)
+	copy[7] = []
+	_rejected_everywhere(copy, "empty P8 catalog fails closed")
+	copy = catalogs.duplicate(true)
+	copy[7] = [{"id": "relay_bobbin", "slot": "COAT"}]
+	_rejected_everywhere(copy, "P8 wrong slot for relay_bobbin fails closed")
+	copy = catalogs.duplicate(true)
+	copy[7] = [{"id": "hearth_lining", "slot": "HEAD"}]
+	_rejected_everywhere(copy, "P8 wrong slot for hearth_lining fails closed")
+	copy = catalogs.duplicate(true)
+	copy[7].append({"id": "relay_bobbin", "slot": "HEAD"})
+	_rejected_everywhere(copy, "P8 duplicate relay_bobbin fails closed")
+	var bad_p8_texts := texts.duplicate()
+	bad_p8_texts[7] = "[broken"
+	_check(RunAuthoredPatchDefinitions.from_json_texts(bad_p8_texts).is_empty(),
+		"malformed P8 JSON fails without partial output")
+	_check(RunAuthoredPatchDefinitions.power_definitions_from_json_texts(bad_p8_texts).is_empty(),
+		"malformed P8 JSON fails without partial power candidates")
 
 	var bad_texts := texts.duplicate()
 	bad_texts[3] = "[broken"
