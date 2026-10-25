@@ -23,5 +23,17 @@
       {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
       {"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
       {"type": "attack", "amount": 8, "weight": 2}
+    ]}},
+  {"id": "needle_briar_guard", "name": "Needle Briar Guard", "max_hp": 42, "art_path": "res://assets/paper/enemies/needle_marshal.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
+      {"type": "block", "amount": 8, "weight": 2},
+      {"type": "attack", "amount": 9, "weight": 3}
+    ]}},
+  {"id": "spool_snarekeeper", "name": "Spool Snarekeeper", "max_hp": 40, "art_path": "res://assets/paper/enemies/spool_hexer.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+      {"type": "debuff", "amount": 2, "status": "weak", "weight": 2},
+      {"type": "attack", "amount": 8, "weight": 3}
     ]}}
 ]
