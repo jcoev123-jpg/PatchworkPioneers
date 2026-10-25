@@ -8,28 +8,69 @@ const DYE_EVENT_PATH := "res://data/events/dye_vat.json"
 var _cached_dye_fixture: Dictionary = {}
 
 
-## A genuine seeded run: starter Fight, five consecutive Events, then a Fight.
+## Five genuine Events in order; harmless Treasure transit may separate them.
+func _find_dye_path(map: RunMap, choices: Array, kinds: Array) -> Array:
+	for id in choices:
+		var node := map.get_node(id)
+		if node.type == "Treasure" and kinds.size() < 7:
+			var transit := _find_dye_path(map, node.outgoing, kinds)
+			if not transit.is_empty():
+				return [id] + transit
+			continue
+		if node.type != kinds[0]:
+			continue
+		if kinds.size() == 1:
+			return [id]
+		var tail := _find_dye_path(map, node.outgoing, kinds.slice(1))
+		if not tail.is_empty():
+			return [id] + tail
+	return []
+
+
 func _dye_fixture() -> Dictionary:
 	if not _cached_dye_fixture.is_empty():
 		return _cached_dye_fixture.duplicate(true)
 	var kinds: Array = ["Fight", "Event", "Event", "Event", "Event", "Event", "Fight"]
-	# Repinned for the nine-kind map. Still generate and authenticate every
-	# node and the opening encounter; avoid a million-seed search on each run.
-	for value in [731621]:
+	for value in [622337] + range(1, 1000001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		map.generate(rng)
-		var path := _find_path(map, map.get_legal_choices(), kinds)
-		if path.is_empty():
+		var path := _find_dye_path(map, map.get_legal_choices(), kinds)
+		if path.is_empty() or map.get_node(path[0]).type != "Fight":
 			continue
 		map.choose_node(path[0])
-		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng,
-			RunFightEncounterSelection.new())
-		if selected.get("encounter_id") == "starter_attacks":
-			_cached_dye_fixture = {"seed": value, "fight": path[0], "path": path.slice(1)}
-			return _cached_dye_fixture.duplicate(true)
+		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng, RunFightEncounterSelection.new())
+		if selected.get("encounter_id") != "starter_attacks":
+			continue
+		var nodes: Array = []
+		var transit := {}
+		var treasures: Array = []
+		for id in path.slice(1):
+			if map.get_node(id).type == "Treasure":
+				treasures.append(id)
+			else:
+				transit[id] = treasures.duplicate()
+				treasures.clear()
+				nodes.append(id)
+		_cached_dye_fixture = {"seed": value, "fight": path[0], "path": nodes, "transit": transit}
+		return _cached_dye_fixture.duplicate(true)
 	return {}
+
+
+func _dye_transit(fixture: Dictionary, destination: String) -> void:
+	for id in fixture.get("transit", {}).get(destination, []):
+		if app.run_map.get_route().has(id):
+			continue
+		var before: Dictionary = app._sewing_context()
+		var prior: Array = app.run_map.get_route()
+		_check(app.run_map.get_node(id).type == "Treasure" and app.run_map.get_legal_choices().has(id), "Dye transit is genuinely connected Treasure")
+		await _click(_route_action(id))
+		var after: Dictionary = app._sewing_context()
+		_check(app.run_map.get_route() == prior + [id] and app._can_choose_connected_route(), "Treasure advances once through the real route control")
+		before.erase("route")
+		after.erase("route")
+		_check(before == after, "Treasure transit retains complete ledger and RNG")
 
 
 ## A genuine zero-fight opening route with three consecutive Events.
@@ -121,6 +162,7 @@ func _reach_dye_vat(fixture: Dictionary, reward: bool, feed: bool, duplicate: bo
 	await _click(app.continue_button)
 	var after_reward: int = app.run_scraps
 	# First Event: the unchanged Quiet Spool, Watch for exactly one scrap.
+	await _dye_transit(fixture, fixture.path[0])
 	await _click(_route_action(fixture.path[0]))
 	_check(app.quiet_spool_panel != null, "the first routed Event is still the Quiet Spool")
 	if not is_instance_valid(app.quiet_spool_panel):
@@ -128,6 +170,7 @@ func _reach_dye_vat(fixture: Dictionary, reward: bool, feed: bool, duplicate: bo
 	await _click(app.quiet_spool_panel.get_choice_buttons()[0])
 	_check(app.run_scraps == after_reward + 1, "the unchanged Quiet Spool Watch funds exactly one scrap")
 	# Second Event: the unchanged Moth Infestation; Feed one ordinary card or Escape.
+	await _dye_transit(fixture, fixture.path[1])
 	await _click(_route_action(fixture.path[1]))
 	_check(app.moth_panel != null, "the second routed Event is still the Moth Infestation")
 	if not is_instance_valid(app.moth_panel):
@@ -187,6 +230,7 @@ func _dye_immerse_outcomes() -> void:
 	seed(730073)
 	var global_next := randi()
 	seed(730073)
+	await _dye_transit(fixture, fixture.path[2])
 	var third := _route_action(fixture.path[2])
 	_check(third != null and not third.disabled and third.get_meta("route_kind") == "Event",
 		"the third Event is an actual enabled route choice")
@@ -303,6 +347,7 @@ func _dye_immerse_outcomes() -> void:
 		_reject_dye(callback, "replayed Dye Vat input after Immerse")
 	_check(_dye_state() == settled, "duplicate or stale Dye Vat input changes nothing")
 	# Resolve the fourth Event's safe exit before testing the later generic wallet.
+	await _dye_transit(fixture, fixture.path[3])
 	await _click(_route_action(fixture.path[3]))
 	_check(is_instance_valid(app.needle_toll_panel), "fourth Event mounts Needle Toll after Dye Vat")
 	if not is_instance_valid(app.needle_toll_panel):
@@ -313,6 +358,7 @@ func _dye_immerse_outcomes() -> void:
 	_check(app.run_deck == toll_deck and app.run_scraps == toll_scraps + 1 and app.route_view != null,
 		"Needle Toll safe exit preserves the upgraded Dye Vat deck")
 	# A later Event opens a generic wallet choice without changing the upgraded deck.
+	await _dye_transit(fixture, fixture.path[4])
 	var later := _route_action(fixture.path[4])
 	_check(later != null and not later.disabled and later.get_meta("route_kind") == "Event",
 		"the Event after the Dye Vat is an enabled connected choice")
@@ -348,6 +394,7 @@ func _dye_immerse_outcomes() -> void:
 	resources[13].gold = after_resources[13].gold
 	_check(resources == after_resources, "generic choice changes no other actors, services or RNG")
 	# AC2 re-entry: the upgraded deck enters the next genuinely routed battle.
+	await _dye_transit(fixture, fixture.path[5])
 	var next := _route_action(fixture.path[5])
 	_check(next != null and not next.disabled, "the routed Fight after the Dye Vat is an enabled choice")
 	if next == null:
@@ -394,6 +441,7 @@ func _dye_unaffordable_outcomes() -> void:
 	_check(scraps_before == int(built.get("after_reward", -1)) + 1
 		and scraps_before < RunDyeVatOutcome.UPGRADE_SCRAP_COST,
 		"the unchanged first two Events leave fewer than three scraps")
+	await _dye_transit(fixture, fixture.path[2])
 	var third := _route_action(fixture.path[2])
 	if third == null:
 		return
@@ -440,12 +488,14 @@ func _dye_no_base_outcomes() -> void:
 		return
 	app.run_seed = fixture.seed
 	await _click(app.start_button)
+	await _dye_transit(fixture, fixture.path[0])
 	await _click(_route_action(fixture.path[0]))
 	_check(app.quiet_spool_panel != null, "the opening route's first Event is the Quiet Spool")
 	if not is_instance_valid(app.quiet_spool_panel):
 		return
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	_check(app.run_scraps == 0, "Ignore leaves a zero-scrap wallet")
+	await _dye_transit(fixture, fixture.path[1])
 	await _click(_route_action(fixture.path[1]))
 	_check(app.moth_panel != null, "the opening route's second Event is the Moth Infestation")
 	if not is_instance_valid(app.moth_panel):
@@ -474,6 +524,7 @@ func _dye_no_base_outcomes() -> void:
 		app.dye_vat_catalog_path = broken
 		var route_before: Array = app.run_map.get_route()
 		var before := _dye_state()
+		await _dye_transit(fixture, fixture.path[2])
 		await _click(_route_action(fixture.path[2]))
 		_check(app.dye_vat_panel == null and app.run_map.get_route() == route_before
 			and _dye_state() == before and is_instance_valid(app.route_view),
@@ -481,6 +532,7 @@ func _dye_no_base_outcomes() -> void:
 	DirAccess.remove_absolute(broken)
 	app.dye_vat_catalog_path = DYE_EVENT_PATH
 	var deck_before: Array = app.run_deck.duplicate()
+	await _dye_transit(fixture, fixture.path[2])
 	var third := _route_action(fixture.path[2])
 	if third == null:
 		return
@@ -524,6 +576,7 @@ func _dye_stale_context_outcome() -> void:
 	if built.is_empty():
 		return
 	var base_id := String(built.get("base_id", ""))
+	await _dye_transit(fixture, fixture.path[2])
 	var third := _route_action(fixture.path[2])
 	if third == null:
 		return

@@ -1095,7 +1095,7 @@ func _test_selection_cache_and_replay() -> void:
 		var other_node: String = non_fight["node"]
 		var other_rng: RandomNumberGenerator = non_fight["rng"]
 		var other_kind: String = other_map.get_node(other_node).get("type", "")
-		_check(other_kind in ["Rest", "Shop", "Event", "Treasure"],
+		_check(other_kind in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Unpicker"],
 			"AC2: the refusal fixture really is a non-battle node (%s)" % other_kind)
 		var state_before := other_rng.state
 		var refused := RunFightEncounterSelection.new().select_current_battle(other_map,

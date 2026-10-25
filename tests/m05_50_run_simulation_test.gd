@@ -8,14 +8,14 @@ var failures: Array[String] = []
 var checks := 0
 
 
-## Nine normal kinds repin the early-defeat (88) and generic wallet (169) fixtures.
-## Keep 47 original seeds and the offered/acquired/played Blanket Stitch witness (186),
+## Ten normal kinds repin the early-defeat (99) and generic wallet (110) fixtures.
+## Keep 47 original seeds and the offered/acquired/played Blanket Stitch witness (267),
 ## with the unchanged strategy; neither outcomes nor choices are injected.
 func _cohort_seeds() -> Array[int]:
 	var values: Array[int] = []
 	for value in range(1, 48):
 		values.append(value)
-	values.append_array([88, 169, 186])
+	values.append_array([99, 110, 267])
 	return values
 
 
@@ -585,6 +585,18 @@ func _run_seed(value: int) -> Dictionary:
 				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
 			if before != after:
 				return _fail("Patch Stall Leave changed run authorities")
+		elif kind == "Unpicker":
+			# The acquisition pilot retains its deck, using the genuine Leave receipt.
+			var before := _event_snapshot(map, carry, wardrobe, deck_ids,
+				descriptors, next_stitch_id, gold, scraps, owned, rng, event_history)
+			var visit := RunUnpickerVisit.new(choice, deck_ids, gold, 0, descriptors, next_stitch_id)
+			var source := visit.read_state()
+			var receipt := visit.leave(source.visit_id, choice, source)
+			if not receipt.ok or not visit.is_consumed() or receipt.deck != deck_ids \
+				or receipt.gold != gold or receipt.descriptors != descriptors \
+				or before != _event_snapshot(map, carry, wardrobe, deck_ids,
+					descriptors, next_stitch_id, gold, scraps, owned, rng, event_history):
+				return _fail("Unpicker Leave changed run authorities")
 		elif kind == "Treasure":
 			treasure_visits += 1
 		else:

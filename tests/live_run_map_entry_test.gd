@@ -4,6 +4,7 @@ var failures: Array[String] = []
 var checks := 0
 ## Exact mounted atlas facts: independent of RunRouteAtlas.stop_consequence().
 const ROUTE_HELP_TOOLTIPS := {
+	"Unpicker": "Remove one owned card for 75 gold plus 25 per previous removal, or leave unchanged",
 	"PatchStall": "Buy one of 3 priced power patches for one chosen hero, sewing included, or leave unchanged",
 	"Campfire": "One action: heal each hero 30% max HP (torn revives at 1 HP first), or leave unchanged",
 	"SewingCircle": "Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged",
@@ -345,7 +346,7 @@ func _preview(app, keyboard: bool, stale: Array = []) -> Array:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
-	# Nine-kind independent oracle: seed 6 keeps two genuine Treasure nodes after fallback.
+	# Ten-kind independent oracle: seed 6 keeps its authored Event and Elite.
 	var fixture_seed := 6
 	var fight_id := "f01_n0"
 	var reference_rng := RandomNumberGenerator.new()
@@ -715,9 +716,9 @@ func _run() -> void:
 			"fallback Fight enabled and initially focused")
 		for index in [1, 2]:
 			_check(not app.route_buttons[index].disabled, "all legal opening types are enabled")
-		_check(app.run_map.get_floors()[0][1].type == "Treasure"
-			and app.run_map.get_floors()[0][2].type == "Treasure",
-			"fallback preserves remaining nine-kind oracle entries")
+		_check(app.run_map.get_floors()[0][1].type == "Event"
+			and app.run_map.get_floors()[0][2].type == "Elite",
+			"fallback preserves remaining ten-kind oracle entries")
 		app.route_buttons.back().grab_focus()
 		await _key(KEY_TAB)
 		_check(app.route_map_button.has_focus(), "Tab reaches full map after legal choices")

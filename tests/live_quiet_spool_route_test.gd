@@ -439,10 +439,10 @@ func _moth_outcomes() -> void:
 	seed(720074)
 	global_next = randi()
 	seed(720074)
-	app.run_seed = 64
+	app.run_seed = 8
 	await _click(app.start_button)
-	var opening := _route_action("f01_n3")
-	_check(app.run_map.get_node("f01_n3").get("type") == "Event" and is_instance_valid(opening),
+	var opening := _route_action("f01_n1")
+	_check(app.run_map.get_node("f01_n1").get("type") == "Event" and is_instance_valid(opening),
 		"zero-scrap opening has a real first Event")
 	if not is_instance_valid(opening):
 		return
@@ -450,9 +450,9 @@ func _moth_outcomes() -> void:
 	_check(app.quiet_spool_panel != null, "opening run's first Event is Quiet Spool")
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	_check(app.run_scraps == 0 and app._quiet_spool_completed, "Ignore leaves a zero-scrap wallet")
-	var next_event := _route_action("f02_n3")
-	_check(app.run_map.get_node("f01_n3").get("outgoing", []).has("f02_n3")
-		and app.run_map.get_node("f02_n3").get("type") == "Event"
+	var next_event := _route_action("f02_n0")
+	_check(app.run_map.get_node("f01_n1").get("outgoing", []).has("f02_n0")
+		and app.run_map.get_node("f02_n0").get("type") == "Event"
 		and is_instance_valid(next_event), "zero-scrap Moth entry remains genuinely connected")
 	if not is_instance_valid(next_event):
 		return
@@ -547,7 +547,7 @@ func _run() -> void:
 	presenter = app.get_node("LiveAttackPreview")
 	var stale: Array[Callable] = []
 	for won in [false, true]:
-		var fixture := _placeholder_fixture("", "Event") if won else {"seed": 64, "path": ["f01_n3", "f02_n3"]}
+		var fixture := _placeholder_fixture("", "Event") if won else {"seed": 8, "path": ["f01_n1", "f02_n0"]}
 		_check(not fixture.is_empty(), "real seeded Event fixture exists")
 		if fixture.is_empty():
 			continue
@@ -723,9 +723,9 @@ func _run() -> void:
 				_check(app.moth_panel == null and app._moth_context.is_empty() and app._moth_picker == null
 					and not app._moth_completed, "title invalidates completed Moth binding")
 	# Abandon an unresolved visit, then prove its live callbacks cannot reach a new one.
-	app.run_seed = 1
+	app.run_seed = 6
 	await _click(app.start_button)
-	await _click(_route_action("f01_n2"))
+	await _click(_route_action("f01_n1"))
 	var old_panel: LiveEventChoicePanel = app.quiet_spool_panel
 	var abandoned: Callable = old_panel.choice_committed.get_connections()[0].callable
 	var abandoned_click: Callable = old_panel.get_choice_buttons()[0].pressed.get_connections()[0].callable
@@ -736,7 +736,7 @@ func _run() -> void:
 	_check(app.find_children("EventBackdrop", "Control", true, false).is_empty(),
 		"title return releases the abandoned Event art bed")
 	await _click(app.start_button)
-	await _click(_route_action("f01_n2"))
+	await _click(_route_action("f01_n1"))
 	_reject_event(abandoned.bind("quiet_spool", "watch"), "abandoned signal in fresh seeded visit")
 	_reject_event(abandoned_click, "abandoned choice in fresh seeded visit")
 	# A real panel commit with a stale run wallet must reject, even though the
@@ -751,7 +751,7 @@ func _run() -> void:
 	app._return_to_title()
 	await _frames()
 	await _click(app.start_button)
-	await _click(_route_action("f01_n2"))
+	await _click(_route_action("f01_n1"))
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	_check(app.run_scraps == 0, "fresh Ignore has independent outcome")
 	app._return_to_title()

@@ -79,6 +79,7 @@ const ROUTE_KIND_LABELS := {
 	"SewingCircle": "Sewing Circle",
 	"Campfire": "Campfire",
 	"PatchStall": "Patch Stall",
+	"Unpicker": "Unpicker",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -93,6 +94,7 @@ const ROUTE_KIND_FELT := {
 	"SewingCircle": Color("#795e78"),
 	"Campfire": Color("#965a39"),
 	"PatchStall": Color("#546b5f"),
+	"Unpicker": Color("#665784"),
 	"Fight": Color("#8a5a4a"),
 	"Elite": Color("#9a6248"),
 	"Rest": Color("#6d7f63"),
@@ -105,6 +107,7 @@ const ROUTE_KIND_THREAD := {
 	"SewingCircle": Color("#ead0e7"),
 	"Campfire": Color("#f1c38f"),
 	"PatchStall": Color("#dbe6c2"),
+	"Unpicker": Color("#e1d5fa"),
 	"Fight": Color("#e8c9a0"),
 	"Elite": Color("#f0d2a0"),
 	"Rest": Color("#c6dcc0"),
@@ -1434,7 +1437,7 @@ func _route_choice_button(id: String, kind: String, opening: bool = true) -> But
 	button.set_meta("route_id", id)
 	button.set_meta("route_kind", kind)
 	button.set_meta("route_label", label)
-	if kind in ["SewingCircle", "Campfire", "PatchStall"]:
+	if kind in ["SewingCircle", "Campfire", "PatchStall", "Unpicker"]:
 		button.set_meta("sewing_source", _sewing_context())
 	button.disabled = kind not in RunMap.NORMAL_TYPES and (opening or kind != "Boss")
 	if button.disabled:
@@ -1547,6 +1550,8 @@ func _dispatch_route(id: String, source: WeakRef, prior: Array[String], button) 
 		or button.get_meta("route_kind", "") != run_map.get_node(id).get("type"):
 		return false
 	match run_map.get_node(id).get("type"):
+		"Unpicker":
+			return _choose_unpicker_route(id, source, prior, button)
 		"PatchStall":
 			return _choose_patch_stall_route(id, source, prior, button)
 		"Campfire":
@@ -1632,7 +1637,7 @@ func _choose_atlas_opening(id: String, source_map: WeakRef, source_view: WeakRef
 		or button.get_parent() != route_view or button.get_meta("route_id") != id \
 		or button.disabled or not button.visible:
 		return false
-	if run_map.get_node(id).get("type") in ["SewingCircle", "Campfire", "PatchStall"] \
+	if run_map.get_node(id).get("type") in ["SewingCircle", "Campfire", "PatchStall", "Unpicker"] \
 		and button.get_meta("sewing_source", {}) != _sewing_context():
 		return false
 	_clear_route_atlas()
@@ -2685,11 +2690,15 @@ func _unfought_run() -> bool:
 			"pending_node_id": "", "settled_node_ids": []} or act_outcome._pending_result != null:
 		return false
 	for id in run_map.get_route():
-		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall"]:
+		if run_map.get_node(id).get("type") not in ["Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Unpicker"]:
 			return false
 		if run_map.get_node(id).get("type") == "PatchStall":
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
 			if _patch_stall_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
+				return false
+		if run_map.get_node(id).get("type") == "Unpicker":
+			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
+			if _unpicker_visits.get(id, []) != [run_map, run_map.get_generation_revision(), run_map.get_floors(), prefix]:
 				return false
 		if run_map.get_node(id).get("type") == "Campfire":
 			var prefix := run_map.get_route().slice(0, run_map.get_route().find(id) + 1)
@@ -2738,6 +2747,11 @@ func _can_choose_connected_route() -> bool:
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
 		return _current_completed_rest() and is_instance_valid(rest_view) and not rest_view.visible \
 			and is_instance_valid(rest_continue_button) and rest_continue_button.disabled
+	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Unpicker":
+		return _unpicker_closed and _unpicker_original == _sewing_context() \
+			and _unpicker_visits.get(run_map.get_current_node_id(), []) == [run_map, \
+				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
+			and is_instance_valid(unpicker_view) and not unpicker_view.visible
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Campfire":
 		return _campfire_closed and _campfire_original == _sewing_context() \
 			and _campfire_visits.get(run_map.get_current_node_id(), []) == [run_map, \
@@ -4120,6 +4134,141 @@ var campfire_visit: RunCampfireVisit
 var _campfire_original: Dictionary = {}
 var _campfire_closed := false
 var _campfire_visits: Dictionary = {}
+
+
+var unpicker_view: VBoxContainer
+var unpicker_cards: OptionButton
+var unpicker_remove_button: Button
+var unpicker_leave_button: Button
+var unpicker_visit: RunUnpickerVisit
+var _unpicker_source: Dictionary = {}
+var _unpicker_original: Dictionary = {}
+var _unpicker_closed := false
+var _unpicker_visits: Dictionary = {}
+
+
+func _choose_unpicker_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
+	if not _can_choose_connected_route() or source == null or source.get_ref() != run_map \
+		or not is_instance_valid(route_view) or not route_view.is_visible_in_tree() \
+		or not is_instance_valid(button) or button not in route_buttons \
+		or button.get_parent() != route_view or button.disabled or not button.is_visible_in_tree() \
+		or button.get_meta("route_id", "") != id or button.get_meta("route_kind", "") != "Unpicker" \
+		or run_map.get_route() != prior or not run_map.get_legal_choices().has(id) \
+		or run_map.get_node(id).get("type") != "Unpicker" \
+		or button.get_meta("sewing_source", {}) != _sewing_context():
+		return false
+	var carry := party_carryover as RunTornCarryover
+	if carry == null or carry._observer() == null or carry.read_state().heroes != run_heroes:
+		return false
+	if carry._wardrobe != null:
+		var state := carry._wardrobe.get_snapshot()
+		if not carry._wardrobe.is_valid() or state.heroes != run_heroes or state.cards != run_deck \
+			or state.owned != run_trinkets or state.scraps != run_scraps or state.gold != session_gold \
+			or state.seed != run_seed or state.rest_id != "" \
+			or not carry.can_bind_wardrobe(carry._wardrobe, carry.torn, state):
+			return false
+	var visit := RunUnpickerVisit.new(id, run_deck, session_gold, run_removal_count,
+		run_stitch_descriptors, run_next_stitch_id)
+	if not visit.is_valid() or not run_map.choose_node(id):
+		return false
+	_clear_route_view()
+	if is_instance_valid(unpicker_view):
+		unpicker_view.free()
+	unpicker_visit = visit
+	_unpicker_source = visit.read_state()
+	_unpicker_closed = false
+	unpicker_view = VBoxContainer.new()
+	unpicker_view.name = "Unpicker"
+	unpicker_view.position = Vector2(300, 190)
+	unpicker_view.custom_minimum_size = Vector2(680, 260)
+	unpicker_view.add_theme_constant_override("separation", 16)
+	add_child(unpicker_view)
+	var title := Label.new()
+	title.text = "Unpicker - remove one owned card or Leave\nGold: %d | Remove: %d gold" % [session_gold, visit.quote().price]
+	unpicker_view.add_child(title)
+	unpicker_cards = OptionButton.new()
+	unpicker_view.add_child(unpicker_cards)
+	# The service removes the first matching occurrence. Present exactly those
+	# physical occurrences, with their deck positions, rather than mislabel duplicates.
+	for index in range(run_deck.size()):
+		if run_deck.find(run_deck[index]) != index:
+			continue
+		unpicker_cards.add_item(_unpicker_card_text(index))
+		unpicker_cards.set_item_metadata(unpicker_cards.item_count - 1, index)
+	unpicker_remove_button = Button.new()
+	unpicker_remove_button.text = "Remove - %d gold" % visit.quote().price
+	unpicker_remove_button.disabled = session_gold < visit.quote().price or unpicker_cards.item_count == 0
+	unpicker_leave_button = Button.new()
+	unpicker_leave_button.text = "Leave"
+	for action in [unpicker_remove_button, unpicker_leave_button]:
+		unpicker_view.add_child(action)
+		action.pressed.connect(_unpicker_action.bind(action, unpicker_view, visit))
+	var controls := [unpicker_cards, unpicker_remove_button, unpicker_leave_button]
+	for i in range(controls.size()):
+		controls[i].custom_minimum_size.y = 48
+		controls[i].focus_next = controls[i].get_path_to(controls[(i + 1) % 3])
+		controls[i].focus_previous = controls[i].get_path_to(controls[(i + 2) % 3])
+	_unpicker_original = _sewing_context()
+	unpicker_leave_button.grab_focus()
+	return true
+
+
+func _unpicker_card_text(index: int) -> String:
+	var definition: Dictionary = run_stitch_descriptors.get(run_deck[index], RunRestStitchCards.resolve_card_definition(run_deck[index]))
+	return "%d. %s" % [index + 1, definition.get("display_name", run_deck[index])]
+
+
+func _unpicker_action(button, view, visit: RunUnpickerVisit) -> void:
+	if _unpicker_closed or _unpicker_original.is_empty() or _unpicker_original != _sewing_context() \
+		or visit == null or visit != unpicker_visit or visit.read_state() != _unpicker_source \
+		or not is_instance_valid(view) or view != unpicker_view or view.get_parent() != self \
+		or not view.is_visible_in_tree() or button not in [unpicker_remove_button, unpicker_leave_button] \
+		or not is_instance_valid(button) or button.disabled \
+		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Unpicker":
+		return
+	for control in [unpicker_cards, unpicker_remove_button, unpicker_leave_button]:
+		if not is_instance_valid(control) or control.get_parent() != view or not control.is_visible_in_tree():
+			return
+	var id := run_map.get_current_node_id()
+	var staged := RunUnpickerVisit.new(id, run_deck, session_gold, run_removal_count,
+		run_stitch_descriptors, run_next_stitch_id)
+	if not staged.is_valid() or staged.read_state() != _unpicker_source:
+		return
+	var result: Dictionary
+	if button == unpicker_remove_button:
+		var indices: Array[int] = []
+		for index in range(run_deck.size()):
+			if run_deck.find(run_deck[index]) == index:
+				indices.append(index)
+		if unpicker_cards.disabled or unpicker_cards.item_count != indices.size() \
+			or unpicker_cards.selected < 0 or unpicker_cards.selected >= indices.size():
+			return
+		for i in range(indices.size()):
+			if unpicker_cards.get_item_metadata(i) != indices[i] or unpicker_cards.is_item_disabled(i) \
+				or unpicker_cards.get_item_text(i) != _unpicker_card_text(indices[i]):
+				return
+		result = staged.remove_card(run_deck[indices[unpicker_cards.selected]], _unpicker_source.visit_id, id, _unpicker_source)
+	else:
+		result = staged.leave(_unpicker_source.visit_id, id, _unpicker_source)
+	if not result.ok or result.source_snapshot != _unpicker_source \
+		or result.source_receipt != _unpicker_source.receipt or _unpicker_original != _sewing_context() \
+		or visit.read_state() != _unpicker_source:
+		return
+	# Publish the complete authenticated receipt without signals or RNG between fields.
+	run_deck.assign(result.deck)
+	session_gold = result.gold
+	run_removal_count = result.prior_removals
+	run_stitch_descriptors = result.descriptors.duplicate(true)
+	run_next_stitch_id = result.next_stitch_id
+	unpicker_visit = staged
+	_sync_bound_wardrobe(party_carryover as RunTornCarryover)
+	_unpicker_closed = true
+	_unpicker_original = _sewing_context()
+	_unpicker_visits[id] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
+	for control in [unpicker_cards, unpicker_remove_button, unpicker_leave_button]:
+		control.disabled = true
+	view.hide()
+	_present_connected_route(weakref(run_map))
 
 
 func _choose_campfire_route(id: String, source: WeakRef, prior: Array[String], button) -> bool:
@@ -6300,6 +6449,17 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	if is_instance_valid(unpicker_view):
+		unpicker_view.free()
+	unpicker_view = null
+	unpicker_cards = null
+	unpicker_remove_button = null
+	unpicker_leave_button = null
+	unpicker_visit = null
+	_unpicker_source.clear()
+	_unpicker_original.clear()
+	_unpicker_visits.clear()
+	_unpicker_closed = false
 	if is_instance_valid(campfire_view):
 		remove_child(campfire_view)
 		campfire_view.queue_free()

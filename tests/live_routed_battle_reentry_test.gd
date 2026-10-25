@@ -73,7 +73,7 @@ func _path_to(map: RunMap, source: String, kind: String) -> Array:
 
 
 func _battle_fixture(kind: String, min_path: int = 0, max_path: int = 0,
-		limit: int = 3000) -> Dictionary:
+		limit: int = 30000) -> Dictionary:
 	for value in range(1, limit):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value

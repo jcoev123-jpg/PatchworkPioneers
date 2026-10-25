@@ -1014,7 +1014,7 @@ func _run() -> void:
 		var id: String = button.get_meta("route_id")
 		_check(app.run_map.get_legal_choices().has(id)
 			and app.run_map.get_node(id).get("type") == button.get_meta("route_kind")
-			and button.text.begins_with("Sewing Circle" if button.get_meta("route_kind") == "SewingCircle" else String(button.get_meta("route_kind")))
+			and button.text.begins_with({"SewingCircle": "Sewing Circle", "PatchStall": "Patch Stall"}.get(button.get_meta("route_kind"), String(button.get_meta("route_kind"))))
 			and not button.text.contains(id) and button.is_visible_in_tree(),
 			"legal mounted opening type label: " + id)
 	# A replayed Base callback cannot replace or re-open the live chooser.

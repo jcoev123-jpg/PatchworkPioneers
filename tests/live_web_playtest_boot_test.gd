@@ -79,7 +79,7 @@ func _run() -> void:
 					and app.base_screen.back_button.is_visible_in_tree(),
 					"village preview mounts focusable Set out and Back to title")
 			else:
-				_check(app.run_seed == {"rest": 2, "shop": 3, "event": 1}.get(screen, 1), "fixed seed: " + screen)
+				_check(app.run_seed == {"rest": 10, "shop": 14, "event": 6}.get(screen, 1), "fixed seed: " + screen)
 				_check(app.session_gold == 100 and app.run_scraps == 10, "consistent currency fixture: " + screen)
 				_check(app.run_deck == StarterCards.new().get_starting_deck(), "authored complete starter deck: " + screen)
 				var heroes: Array = app.run_heroes
@@ -98,7 +98,7 @@ func _run() -> void:
 					_check(not app._unfought_run(), "preview scraps drift still fails closed")
 					app.run_scraps -= 1
 				else:
-					var id: String = {"rest": "f01_n2", "shop": "f01_n1", "event": "f01_n2"}.get(screen, "f01_n0")
+					var id: String = {"rest": "f01_n1", "shop": "f01_n3", "event": "f01_n1"}.get(screen, "f01_n0")
 					_check(route == [id] and app.run_map.get_current_node_id() == id, "exact real route chosen")
 					_check(app.run_map.get_node(id).type == {"rest": "Rest", "shop": "Shop", "event": "Event"}.get(screen, "Fight"), "legal node type")
 				if screen in ["battle", "reward", "results"]:

@@ -53,6 +53,7 @@ const MAP_BOARD_PATH := "res://assets/paper/backgrounds/map_board.png"
 ## Kinds without an entry keep the original drawn paper marker, and so does a token
 ## whose file cannot be loaded, so a missing PNG never breaks the preview.
 const NODE_TOKEN_PATHS := {
+	"Unpicker": "res://assets/paper/ui/map_node_unpicker.png",
 	"Campfire": "res://assets/paper/ui/map_node_campfire.png",
 	"PatchStall": "res://assets/paper/ui/map_node_patch_stall.png",
 	"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
@@ -235,7 +236,7 @@ class NodeToken extends Control:
 				RunRouteAtlas.THREAD, 2.0, true)
 		var font := get_theme_default_font()
 		if font != null:
-			var glyph := "P" if token_kind == "PatchStall" else ("C" if token_kind == "Campfire" else ("S" if token_kind == "SewingCircle" else ("▣" if token_kind == "Treasure" else "?")))
+			var glyph := "U" if token_kind == "Unpicker" else "P" if token_kind == "PatchStall" else ("C" if token_kind == "Campfire" else ("S" if token_kind == "SewingCircle" else ("▣" if token_kind == "Treasure" else "?")))
 			draw_string(font, middle + Vector2(-10, 9), glyph, HORIZONTAL_ALIGNMENT_CENTER,
 				20.0, 27, RunRouteAtlas.INK)
 
@@ -1117,6 +1118,10 @@ func _add_thread(source: String, target: String, positions: Dictionary,
 ## The detailed Rest alternative is tooltip-only so the small ticket stays legible.
 static func stop_consequence(kind: String) -> Dictionary:
 	match kind:
+		"Unpicker":
+			return {"lead": "Choose one: remove a card or leave",
+				"detail": "Remove: 75 gold initially, +25 each time",
+				"tooltip": "Remove one owned card for 75 gold plus 25 per previous removal, or leave unchanged"}
 		"PatchStall":
 			return {"lead": "Choose one: buy a patch or leave",
 				"detail": "3 priced power patches; choose a wearer; sewing included",

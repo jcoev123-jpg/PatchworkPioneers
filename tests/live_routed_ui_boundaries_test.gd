@@ -233,6 +233,8 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 		"Rest":
 			await _click(app.rest_heal_button)
 			await _click(app.rest_continue_button)
+		"Unpicker":
+			await _click(app.unpicker_leave_button)
 		"Campfire":
 			await _click(app.campfire_leave_button)
 		"PatchStall":
@@ -277,9 +279,9 @@ func _run() -> void:
 	await _frames()
 	await _four_keys()
 	var fixtures: Array = []
-	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Boss"]:
+	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Boss", "Unpicker"]:
 		fixtures.append(_fixture("", kind))
-	for kind in ["Fight", "Rest", "Shop", "Event", "Treasure"]:
+	for kind in ["Fight", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
 		fixtures.append(_fixture(kind, ""))
 	for fixture in fixtures:
 		_check(not fixture.is_empty(), "concrete generated connected fixture exists")
@@ -311,9 +313,9 @@ func _run() -> void:
 				callback.call()
 			_check(app.run_map == null and app.reward_choice_panel == null and app.title_view.visible,
 				"Return clears bindings; retained callbacks cannot revive session")
-	for kind in ["Fight", "Elite", "Boss", "Rest", "Shop", "Event", "Treasure"]:
+	for kind in ["Fight", "Elite", "Boss", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
 		_check(reached.has(kind), "actually entered connected " + kind)
-	for kind in ["Fight", "Rest", "Shop", "Event", "Treasure"]:
+	for kind in ["Fight", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
 		_check(departed.has(kind), "actually completed predecessor " + kind)
 	for number in range(1, 5):
 		_check(used_keys.has(number), "actually exercised physical key " + str(number))

@@ -6,6 +6,7 @@ const EXPECTED_ROUTE_LABELS := {
 	"SewingCircle": "Sewing Circle",
 	"Campfire": "Campfire",
 	"PatchStall": "Patch Stall",
+	"Unpicker": "Unpicker",
 	"Fight": "Fight",
 	"Elite": "Elite fight",
 	"Rest": "Rest stop",
@@ -421,7 +422,7 @@ func _run() -> void:
 	await process_frame
 	await _invalid_starts(app)
 	var cases: Array = []
-	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]:
+	for kind in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
 		var found: Array = []
 		for value in range(1, 1000):
 			var rng := RandomNumberGenerator.new()
@@ -445,7 +446,7 @@ func _run() -> void:
 		_check(not found.is_empty(), "bounded genuine connected Fight fixture for " + kind)
 		if not found.is_empty():
 			cases.append(found)
-	for required in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure"]:
+	for required in ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "Unpicker"]:
 		_check(cases.any(func(row): return row[0] == required), "required opening fixture exists: " + required)
 	var stale: Array[Callable] = []
 	for fixture in cases:
@@ -557,6 +558,10 @@ func _run() -> void:
 				_check(app.run_deck == cards and not app.rest_continue_button.disabled,
 					"existing Rest transaction commits exact deck/heal choice")
 				await _activate(app.rest_continue_button, mode == 1)
+			elif kind == "Unpicker":
+				_check(app.unpicker_visit.is_valid() and app.unpicker_view.is_visible_in_tree(), "real seeded Unpicker mounted")
+				stale.append(app.unpicker_leave_button.pressed.get_connections()[0].callable)
+				await _activate(app.unpicker_leave_button, mode == 1)
 			elif kind == "Shop":
 				_check(app.shop_visit != null and app.shop_purchases != null and app.shop_view.is_visible_in_tree(),
 					"real seeded Shop visit mounted before any battle")
@@ -606,6 +611,8 @@ func _run() -> void:
 			await _activate(app.start_button, mode == 0)
 			if fixture[0] not in ["Fight", "Elite"]:
 				await _activate(_button(app, fixture[2]), mode == 0)
+				if fixture[0] == "Unpicker":
+					await _activate(app.unpicker_leave_button, mode == 1)
 				if fixture[0] == "Event":
 					await _activate(app.quiet_spool_panel.get_choice_buttons()[1], mode == 1)
 				var back: Button = app.rest_back_button if fixture[0] == "Rest" else app.shop_back_button if fixture[0] == "Shop" else app.route_back_button

@@ -3,7 +3,7 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
-const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall"]
+const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Unpicker"]
 
 
 func _initialize() -> void:
@@ -147,6 +147,7 @@ func _test_playable_openings_preserve_original_generation() -> void:
 	var playable_count := 0
 	var campfire_seen := false
 	var patch_stall_seen := false
+	var unpicker_seen := false
 	var blocked_fallback_verified := false
 	for value in range(128):
 		var original_rng := _rng(value)
@@ -159,6 +160,7 @@ func _test_playable_openings_preserve_original_generation() -> void:
 			for node in row:
 				campfire_seen = campfire_seen or node.type == "Campfire"
 				patch_stall_seen = patch_stall_seen or node.type == "PatchStall"
+				unpicker_seen = unpicker_seen or node.type == "Unpicker"
 		if originally_playable:
 			playable_count += 1
 		else:
@@ -186,6 +188,7 @@ func _test_playable_openings_preserve_original_generation() -> void:
 		"bounded seed search finds and verifies a blocked opening fallback")
 	_check(campfire_seen, "seed sweep includes Campfire nodes")
 	_check(patch_stall_seen, "seed sweep includes Patch Stall nodes")
+	_check(unpicker_seen, "bounded seeded graphs genuinely generate Unpicker")
 
 
 func _assert_graph(map: RunMap) -> void:

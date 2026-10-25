@@ -2,6 +2,9 @@ extends "res://tests/live_run_map_entry_test.gd"
 
 ## Independent, pinned design facts for the actual mounted player-facing atlas.
 const LIVE_HELP := {
+	"Unpicker": ["Choose one: remove a card or leave",
+		"Remove: 75 gold initially, +25 each time",
+		"Remove one owned card for 75 gold plus 25 per previous removal, or leave unchanged"],
 	"PatchStall": ["Choose one: buy a patch or leave",
 		"3 priced power patches; choose a wearer; sewing included",
 		"Buy one of 3 priced power patches for one chosen hero, sewing included, or leave unchanged"],
@@ -92,7 +95,8 @@ func _tokens(atlas: RunRouteAtlas) -> void:
 	var expected := {
 		"SewingCircle": "res://assets/paper/ui/map_node_sewing_circle.png",
 		"Campfire": "res://assets/paper/ui/map_node_campfire.png",
-		"PatchStall": "res://assets/paper/ui/map_node_patch_stall.png",
+		"Unpicker": "res://assets/paper/ui/map_node_unpicker.png",
+	"PatchStall": "res://assets/paper/ui/map_node_patch_stall.png",
 		"Fight": "res://assets/paper/ui/map_node_fight.png",
 		"Elite": "res://assets/paper/ui/map_node_elite.png",
 		"Event": "res://assets/paper/ui/map_node_event.png",
@@ -227,6 +231,11 @@ func _assert_flow(app, kind: String, id: String, rng_state: int) -> void:
 			and app.act_outcome.get_state().pending_node_id == id,
 			"live outcome latch and torn witness bind the actual %s battle" % kind)
 		return
+	if kind == "Unpicker":
+		_check(app.unpicker_view != null and app.unpicker_view.is_visible_in_tree()
+			and app.unpicker_visit.is_valid() and app.run_rng.state == rng_state
+			and app.route_view == null, "Unpicker mounts authentic visit without RNG")
+		return
 	if kind == "Campfire":
 		_check(app.campfire_view != null and app.campfire_view.is_visible_in_tree()
 			and app.campfire_visit.read_state().status == RunCampfireVisit.OPEN
@@ -277,6 +286,12 @@ func _leave_flow(app, kind: String) -> void:
 	if kind == "Event" and is_instance_valid(app.quiet_spool_panel):
 		_check(app.route_view == null, "Event exit requires completing its pending choice")
 		await _click(app.quiet_spool_panel.get_choice_buttons()[1])
+	if kind == "PatchStall":
+		await _click(app.patch_stall_leave)
+	if kind == "SewingCircle":
+		await _click(app.sewing_leave_button)
+	if kind == "Unpicker":
+		await _click(app.unpicker_leave_button)
 	if kind == "Campfire":
 		await _click(app.campfire_leave_button)
 	var back: Button
@@ -284,7 +299,7 @@ func _leave_flow(app, kind: String) -> void:
 		back = app.rest_back_button
 	elif kind == "Shop":
 		back = app.shop_back_button
-	elif kind in ["Event", "Treasure", "Campfire"]:
+	elif kind in ["Event", "Treasure", "Campfire", "Unpicker", "PatchStall", "SewingCircle"]:
 		back = app.route_back_button
 	else:
 		back = app.return_button
@@ -303,7 +318,7 @@ func _leave_flow(app, kind: String) -> void:
 ## Mouse, Enter and Space on the actual marker must match the direct chooser.
 func _legal_openings(app) -> void:
 	var cases: Array = []
-	for kind in ["Rest", "Shop", "Event", "Treasure", "Elite", "Campfire"]:
+	for kind in ["Rest", "Shop", "Event", "Treasure", "Elite", "Campfire", "Unpicker"]:
 		var found: Array = []
 		for value in range(1, 1000):
 			var rng := RandomNumberGenerator.new()

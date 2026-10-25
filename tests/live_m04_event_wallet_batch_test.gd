@@ -36,8 +36,8 @@ func _fixtures() -> Dictionary:
 	var ids: Array = RunM04EventRotation.new(_combined_catalog()).get_generic_event_ids()
 	# Treasure traversal consumes no RNG or wallet; allow it between the six
 	# authentic Events rather than requiring a rare six-consecutive-Event route.
-	var hints := [4178, 25765, 26720, 28625, 35959, 38144, 80384, 94902,
-		104705, 107050, 123370, 133091, 140812, 176208, 205371, 324423, 388809, 390215, 503851]
+	var hints := [7756, 35510, 45517, 50329, 64084, 171871, 233942, 236527,
+		277144, 331198, 379017, 422169, 444032, 449809, 456282, 611184, 802796, 807198, 855041]
 	for value in hints + range(1, 500000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value

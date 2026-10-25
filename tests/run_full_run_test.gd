@@ -1,6 +1,6 @@
 extends "res://tests/live_run_map_entry_test.gd"
 ## Mounted twelve-floor gate. Only physical input mutates gameplay state.
-const SEED_LIMIT := 256
+const SEED_LIMIT := 5000
 var app
 var trace: Array = []
 var stale: Array[Callable] = []
@@ -63,9 +63,9 @@ func _search(map: RunMap, choices: Array, path: Array, counts: Dictionary) -> Ar
 
 
 func _fixture() -> Dictionary:
-	# The expanded stop pool repins the retained fixture (now seed 255) with a funded Shop,
+	# The expanded stop pool repins the retained fixture (now seed 1107) with a funded Shop,
 	# final recovery and a witnessed full win using the unchanged held-card pilot.
-	for value in range(128, SEED_LIMIT + 1):
+	for value in [1107] + range(128, SEED_LIMIT + 1):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -209,6 +209,12 @@ func _node(id: String, index: int) -> bool:
 				break
 		_check(_inventory() == inventory, "visit applies only its exact authored wallet and seeded draw; HP and ledgers unchanged")
 		no_effect_visits += 1
+	elif kind == "Unpicker":
+		_check(app.route_view == null and is_instance_valid(app.unpicker_view), "Unpicker gates routing before Leave")
+		var leave := _retained(app.unpicker_leave_button)
+		await _activate(app.unpicker_leave_button, index % 2 == 0)
+		_check(_inventory() == inventory and app._can_choose_connected_route(), "Unpicker Leave preserves every ledger and RNG")
+		stale.append(leave)
 	elif kind == "Campfire":
 		_check(app.route_view == null and is_instance_valid(app.campfire_view)
 			and app.campfire_view.is_visible_in_tree(), "Campfire blocks routing until its one-use choice")
@@ -660,7 +666,7 @@ func _win(fixture: Dictionary) -> Array:
 			await _activate(app.shop_continue_button)
 			stale.append(callback)
 		else:
-			_check(kind in ["Event", "Treasure", "Campfire"] and app.route_view.is_visible_in_tree(),
+			_check(kind in ["Event", "Treasure", "Campfire", "Unpicker"] and app.route_view.is_visible_in_tree(),
 				"settled map visit exposes next connected controls")
 	_check(battles == 4, "two Fights, one Elite and final Boss actually completed")
 	return trace.duplicate(true)
@@ -679,7 +685,7 @@ func _event_path(map: RunMap, choices: Array, count: int) -> Array:
 
 
 func _needle_fixture() -> Dictionary:
-	for value in range(1, 30000):
+	for value in [45517] + range(1, 100000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

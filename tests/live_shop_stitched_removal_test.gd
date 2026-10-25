@@ -64,7 +64,7 @@ func _prepare_shop_receipt(fixture: Dictionary, keyboard: bool, upgrade: bool = 
 
 
 func _shop_fixture() -> Dictionary:
-	for value in range(239855, 240856):
+	for value in [218053] + range(1, 500001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()

@@ -188,7 +188,7 @@ func _return() -> void:
 func _hand_fixture() -> Dictionary:
 	# Repinned so every tested composite can be drawn without overcrowding the
 	# hand below the renderer's 88px minimum for the detailed/compact face checks.
-	for value in range(1702, 50001):
+	for value in [28258] + range(1, 50001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
