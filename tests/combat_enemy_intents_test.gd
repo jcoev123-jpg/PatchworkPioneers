@@ -6,6 +6,8 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_special_schema()
+	_test_snip_schema()
+	_test_snip_bound_phases_and_badge()
 	_test_one_enemy()
 	_test_three_enemies_and_wrap()
 	_test_copy_isolation_and_replay()
@@ -69,6 +71,231 @@ func _turns() -> Array:
 		[_announced(1, _attack(6, 1)), _announced(2, _attack(0, 3)), _announced(3, _attack(8, 2))],
 		[_announced(1, _block(4)), _announced(2, _block(0)), _announced(3, _attack(8, 2))]
 	]
+
+
+
+func _snip_action(target: int) -> Dictionary:
+	return {"type": "snip_block", "amount": 0, "target_position": target}
+
+
+func _test_snip_schema() -> void:
+	var valid := _snip_action(1)
+	for position in [1, 2, 3]:
+		_check(CombatEnemyIntents.valid_action(_snip_action(position)),
+			"snip legacy exact zero-amount, living-slot shape validates")
+	var legacy := CombatEnemyIntents.new([_enemy(2, [_snip_action(3), _snip_action(1)])])
+	_check(legacy.is_valid() and legacy.get_intents() == [_announced(2, _snip_action(3))],
+		"legacy snip caches the exact authored target and original source")
+	_check(legacy.advance_turn() and legacy.get_intents() == [_announced(2, _snip_action(1))],
+		"legacy snip cycles without retargeting")
+	var weighted := {"type": "snip_block", "amount": 0.0, "weight": 2.0}
+	_check(CombatEnemyIntents.weighted_action(weighted) ==
+		{"weight": 2, "action": {"type": "snip_block", "amount": 0}},
+		"JSON integral weight/amount normalize without a target in authored body")
+	for bad in [
+		{"type": "snip_block", "amount": 1, "target_position": 1},
+		{"type": "snip_block", "amount": -1, "target_position": 1},
+		{"type": "snip_block", "amount": 0, "target_position": 0},
+		{"type": "snip_block", "amount": 0, "target_position": 4},
+		{"type": "snip_block", "amount": 0, "target_position": 1.0},
+		{"type": "snip_block", "amount": 0, "target_position": true},
+		{"type": "snip_block", "amount": 0, "target_position": 1, "extra": true},
+		{"type": "snip_block", "amount": 0, "target_position": 1, "direction": 1},
+		{"type": "snip_block", "amount": 0, "target_position": 1, "status": "weak"},
+		{"type": "snip_block", "target_position": 1}]:
+		_reject("malformed legacy snip " + str(bad),
+			[_enemy(1, [_block(1)]), _enemy(2, [_snip_action(1), bad])])
+	for bad in [
+		{"type": "snip_block", "amount": 1, "weight": 1},
+		{"type": "snip_block", "amount": -1, "weight": 1},
+		{"type": "snip_block", "amount": 0, "weight": 0},
+		{"type": "snip_block", "amount": 0, "weight": 1, "target_position": 1},
+		{"type": "snip_block", "amount": 0, "weight": 1, "enemy_position": 1},
+		{"type": "snip_block", "amount": 0, "weight": 1, "target_policy": "front"},
+		{"type": "snip_block", "amount": 0, "weight": 1, "extra": true},
+		{"type": "snip_block", "amount": 0, "weight": 1, "direction": 1},
+		{"type": "snip_block", "amount": 0, "weight": 1, "status": "weak"}]:
+		_check(CombatEnemyIntents.weighted_action(bad).is_empty(),
+			"malformed weighted snip fails exact shape " + str(bad))
+		_reject_bind("malformed weighted snip", {"target": "front", "actions": [
+			{"type": "attack", "amount": 1, "weight": 1}, bad]})
+
+
+func _snip_two_source(reverse: bool, seed_value: int) -> Dictionary:
+	var party := _party_fixture()
+	_check(party.gain_block(1, 6) and party.get_hero(1).block == 6,
+		"snip phase precondition: Warden has six Block")
+	var snip := {"type": "snip_block", "amount": 0, "weight": 1}
+	var attack := {"type": "attack", "amount": 5, "weight": 1}
+	var second := _policy_enemy("front", [snip if reverse else attack])
+	second["id"] = "policy_enemy_two"
+	var enemies := CombatEnemies.new([
+		_policy_enemy("front", [attack if reverse else snip]), second])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var scheduler := CombatEnemyIntents.new([
+		_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+	_check(enemies.is_valid() and scheduler.bind_battle(enemies, party, rng),
+		"snip phase precondition: 2 actual living CombatEnemies bind an authored intent")
+	return {"party": party, "enemies": enemies, "rng": rng, "scheduler": scheduler}
+
+
+func _test_snip_bound_phases_and_badge() -> void:
+	for reverse in [false, true]:
+		var fixture := _snip_two_source(reverse, 41371)
+		var party: CombatParty = fixture.party
+		var enemies: CombatEnemies = fixture.enemies
+		var rng: RandomNumberGenerator = fixture.rng
+		var schedule: CombatEnemyIntents = fixture.scheduler
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = 41371
+		var actions := schedule.get_intents()
+		var inputs := actions.duplicate(true)
+		var before := party.get_heroes()
+		var foes := enemies.get_enemies()
+		var hero_refs := party._heroes.duplicate()
+		_check(actions.size() == 2 and actions[0].enemy_position == 1
+			and actions[1].enemy_position == 2
+			and actions[0].type == ("attack" if reverse else "snip_block")
+			and actions[1].type == ("snip_block" if reverse else "attack")
+			and actions[0].target_position == 1 and actions[1].target_position == 1,
+			"two-source authored snip/attack announcement cached in original source slots")
+		_check(schedule.get_intents() == actions and rng.state == oracle.state,
+			"singleton weighted/front policy spends zero RNG on binding or reads")
+		var event_snip := {"type": "snip_block", "enemy_position": 2 if reverse else 1,
+			"applied": true, "target_position": 1}
+		var event_hit := {"type": "attack", "enemy_position": 1 if reverse else 2,
+			"applied": true, "target_position": 1}
+		var expected_events := [event_hit, event_snip] if reverse else [event_snip, event_hit]
+		# Deliberately reverse caller order: CombatEnemyPhase must resolve source 1 first.
+		var result := CombatEnemyPhase.new().execute_phase(
+			party, enemies, [actions[1], actions[0]], null, true)
+		var expected := before.duplicate(true)
+		expected[0]["block"] = 0
+		expected[0]["hp"] = 40 if reverse else 35
+		_check(result == {"ok": true, "events": expected_events},
+			"phase emits exact ordered snip/attack event trace with real target")
+		_check(party.get_heroes() == expected and enemies.get_enemies() == foes,
+			"snip-before-attack loses five HP; attack-before-snip preserves 40 HP")
+		_check(actions == inputs and rng.state == oracle.state
+			and is_same(party._heroes[0], hero_refs[0])
+			and is_same(party._heroes[1], hero_refs[1]),
+			"phase preserves cached announcement, RNG and canonical hero identities")
+		var replay := _snip_two_source(reverse, 41371)
+		var replay_actions: Array = replay.scheduler.get_intents()
+		var replay_result := CombatEnemyPhase.new().execute_phase(
+			replay.party, replay.enemies, replay_actions, null, true)
+		_check(replay_actions == actions and replay_result == result
+			and replay.party.get_heroes() == party.get_heroes()
+			and replay.rng.state == rng.state,
+			"independent same-seed two-source replay matches trace and complete state")
+		if not reverse:
+			var badge := LiveEnemyIntentBadge.new()
+			get_root().add_child(badge)
+			badge.size = Vector2(192, 28)
+			badge.show_intent(actions[0], false, false, "front")
+			var rect := badge.caption_text_rect()
+			var available := badge.caption_text_area()
+			_check(badge.icon_mode == "snip_block" and badge.intent_type == "snip_block"
+				and badge.target_position == 1 and badge.readable_text.contains("Snip")
+				and badge.readable_text.contains("Block")
+				and badge.readable_text.contains("1") and badge.readable_text != "NO ACTION",
+				"live sewn badge names the snip and its concrete hero")
+			_check(badge.tooltip_text.contains("remove all Block")
+				and badge.tooltip_text.contains("no direct HP damage")
+				and badge.tooltip_text.contains("Hero 1 (front)")
+				and badge.tooltip_text.contains("Target policy (FRONT)")
+				and badge.tooltip_text.contains("picks the front living hero")
+				and badge.policy_cue == "Front",
+				"live tooltip explains entire Block removal, zero HP damage and priority")
+			_check(badge.icon_art_path_for("snip_block") ==
+				LiveEnemyIntentBadge.icon_path_for("debuff")
+				and badge.caption_font_size() >= LiveEnemyIntentBadge.COMPACT_MIN_FONT
+				and rect.size.x > 0 and rect.end.x <= available.end.x + 0.5
+				and badge.policy_text_rect().size.x > 0,
+				"snip selects existing art and caption fits the 192x28 mounted strip")
+			badge.free()
+
+	# A first source can tear the announced recipient during the SAME phase.
+	# Source 2 must use its roster policy's first surviving choice at its beat.
+	var late_party := _party_fixture()
+	_check(late_party.gain_block(2, 4), "in-phase Torn fallback has four middle Block")
+	var late_snip := _policy_enemy("lowest_living_hp", [
+		{"type": "snip_block", "amount": 0, "weight": 1}])
+	late_snip["id"] = "late_snipper"
+	var late_enemies := CombatEnemies.new([
+		_policy_enemy("lowest_living_hp", [
+			{"type": "attack", "amount": 26, "weight": 1}]), late_snip])
+	var late_rng := RandomNumberGenerator.new()
+	late_rng.seed = 911
+	var late_schedule := CombatEnemyIntents.new([
+		_enemy(1, [_block(1)]), _enemy(2, [_block(1)])])
+	_check(late_enemies.is_valid()
+		and late_schedule.bind_battle(late_enemies, late_party, late_rng),
+		"two actual sources bind a lethal hit followed by a policy snip")
+	var late_announced := late_schedule.get_intents()
+	var late_state := late_rng.state
+	_check(late_announced.size() == 2 and late_announced[0].target_position == 3
+		and late_announced[1].target_position == 3,
+		"both cached policies initially choose living lowest-HP Tinker")
+	var late_trace := CombatEnemyPhase.new().execute_phase(
+		late_party, late_enemies, [late_announced[1], late_announced[0]], null, true)
+	_check(late_trace == {"ok": true, "events": [
+		{"type": "attack", "enemy_position": 1, "applied": true, "target_position": 3},
+		{"type": "snip_block", "enemy_position": 2, "applied": true, "target_position": 2}]}
+		and late_party.get_hero(3).hp == 0 and late_party.get_hero(2).hp == 30
+		and late_party.get_hero(2).block == 0
+		and late_rng.state == late_state and late_schedule.get_intents() == late_announced,
+		"earlier lethal beat retargets later policy-bound snip without extra draw")
+	# Every policy is reached by the same weighted snip without special-case targets.
+	var low := _party_fixture(35, 28, 10)
+	var marked := _party_fixture()
+	marked._heroes[1]["statuses"] = {"exposed": 1}
+	_check(_bound_announcement("lowest_living_hp", low, 41, [
+		{"type": "snip_block", "amount": 0, "weight": 1}]).get("target_position") == 3
+		and _bound_announcement("exposed", marked, 42, [
+			{"type": "snip_block", "amount": 0, "weight": 1}]).get("target_position") == 2
+		and _bound_announcement("exposed", _party_fixture(), 43, [
+			{"type": "snip_block", "amount": 0, "weight": 1}]).get("target_position") == 1,
+		"snip uses lowest HP, Exposed priority and front fallback")
+	var random_party := _party_fixture()
+	var random_rng := RandomNumberGenerator.new()
+	random_rng.seed = 6742
+	var target_oracle := RandomNumberGenerator.new()
+	target_oracle.seed = 6742
+	var expected_random := target_oracle.randi_range(0, 2) + 1
+	var random_enemies := CombatEnemies.new([_policy_enemy("random", [
+		{"type": "snip_block", "amount": 0, "weight": 1}])])
+	var random_schedule := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(random_schedule.bind_battle(random_enemies, random_party, random_rng)
+		and random_schedule.get_intents()[0].target_position == expected_random
+		and random_rng.state == target_oracle.state,
+		"single-choice random snip consumes exactly one seeded target draw")
+	var cached := random_schedule.get_intents()
+	_check(random_schedule.get_intents() == cached
+		and random_rng.state == target_oracle.state,
+		"random snip reads leave run RNG and announcement unchanged")
+	# Cached lowest-HP target Torn after binding must fall back without a new draw.
+	var retarget_party := _party_fixture()
+	_check(retarget_party.gain_block(2, 4), "fallback target initially has Block")
+	var retarget_enemies := CombatEnemies.new([_policy_enemy("lowest_living_hp", [
+		{"type": "snip_block", "amount": 0, "weight": 1}])])
+	var retarget_rng := RandomNumberGenerator.new()
+	retarget_rng.seed = 71
+	var retarget_schedule := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(retarget_schedule.bind_battle(retarget_enemies, retarget_party, retarget_rng),
+		"policy snip bound to living weakest Tinker")
+	var announced := retarget_schedule.get_intents()
+	var rng_before := retarget_rng.state
+	_check(announced[0].target_position == 3 and retarget_party.apply_damage(3, 26)
+		and retarget_party.is_downed(3), "precondition: cached target becomes Torn")
+	var resolved := CombatEnemyPhase.new().execute_phase(
+		retarget_party, retarget_enemies, announced, null, true)
+	_check(resolved == {"ok": true, "events": [
+		{"type": "snip_block", "enemy_position": 1, "target_position": 2, "applied": true}]}
+		and retarget_party.get_hero(2).block == 0
+		and retarget_rng.state == rng_before and retarget_schedule.get_intents() == announced,
+		"policy snip retargets newly Torn cached recipient without RNG or cache mutation")
 
 
 func _test_one_enemy() -> void:

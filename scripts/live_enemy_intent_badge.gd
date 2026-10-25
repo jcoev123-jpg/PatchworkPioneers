@@ -64,6 +64,7 @@ const ICON_ART := {
 	"block": "intent_defend.png",
 	"buff": "intent_buff.png",
 	"debuff": "intent_debuff.png",
+	"snip_block": "intent_debuff.png",
 }
 
 var source_position := 0
@@ -317,6 +318,9 @@ func compact_caption_forms() -> Array[String]:
 			var short_dir := "back" if shove_direction == 1 else "fwd"
 			forms.append("Shove %d %s" % [target_position, long_dir])
 			forms.append("Shove %d %s" % [target_position, short_dir])
+		"snip_block":
+			forms.append("Snip Block→%d" % target_position)
+			forms.append("Snip→%d" % target_position)
 	return forms
 
 
@@ -435,7 +439,7 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 	policy_cue = ""
 	action_status = ""
 	shove_direction = 0
-	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove"] \
+	if not slain and not skip_pending and action.get("type") in ["attack", "debuff", "shove", "snip_block"] \
 			and action.get("target_position") in [1, 2, 3] and POLICY_LABELS.has(policy):
 		policy_cue = POLICY_LABELS[policy]
 	var tip := ""
@@ -460,6 +464,13 @@ func show_intent(action: Dictionary, slain: bool, skip_pending: bool = false,
 		target_position = action.get("target_position", 0)
 		readable_text = "Hit %d: %s" % [amount, rank_caption(target_position)]
 		tip = "%d damage aimed at %s." % [amount, hero_target_label(target_position)]
+	elif action.get("type") == "snip_block":
+		icon_mode = "snip_block"
+		intent_type = "snip_block"
+		amount = 0
+		target_position = action.get("target_position", 0)
+		readable_text = "Snip Block: %s" % rank_caption(target_position)
+		tip = "Snip Block on %s: remove all Block; no direct HP damage." % hero_target_label(target_position)
 	elif action.get("type") == "block":
 		icon_mode = "block"
 		intent_type = "block"
@@ -618,7 +629,7 @@ func _draw_glyph() -> void:
 		draw_circle(Vector2(29, 22), 12, SLATE)
 		draw_line(Vector2(20, 22), Vector2(38, 22), RUST, 4)
 		draw_line(Vector2(29, 13), Vector2(29, 31), RUST, 4)
-	elif icon_mode == "debuff":
+	elif icon_mode in ["debuff", "snip_block"]:
 		draw_colored_polygon(PackedVector2Array([Vector2(29, 8), Vector2(44, 33), Vector2(14, 33)]), RUST)
 		draw_line(Vector2(29, 15), Vector2(29, 25), CREAM, 3)
 	elif icon_mode == "shove":
