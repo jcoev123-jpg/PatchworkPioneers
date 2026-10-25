@@ -999,6 +999,11 @@ func _check_reward_typography(receipt: Dictionary) -> void:
 	_check(heading_font != null and heading_font.resource_path
 		== "res://assets/fonts/LondrinaSolid-Regular.ttf",
 		"project heading resolves to authored Londrina Solid Regular")
+	# VIS V2 body floor: the rules sentence and the rarity tag are read at
+	# arm's length on the sewing table, so the shared body size may never drop
+	# below 18 px at 1280x720. Independent of the mounted labels below.
+	_check(LiveRunCardRewardChoicePanel.BODY_FONT_SIZE >= 18,
+		"reward card body text keeps the VIS V2 18px floor at 1280x720")
 	_check(panel.has_open_rewards() and panel.title_label.is_visible_in_tree(),
 		"typography inspected on an open mounted reward")
 	_check_display_typography()
@@ -1054,8 +1059,9 @@ func _check_reward_typography(receipt: Dictionary) -> void:
 			var label := content.get_node(label_name) as Label
 			_check(label.theme_type_variation == &""
 				and label.get_theme_font(&"font") == project_theme.default_font
-				and label.get_theme_font_size(&"font_size") == 15,
-				"body/rarity keep default font and size: %s %s" % [card_id, label_name])
+				and label.get_theme_font_size(&"font_size") == 18,
+				"body/rarity keep default font and 18px VIS floor: %s %s"
+					% [card_id, label_name])
 		var cost := content.get_node("CostButton") as LiveRunCardRewardChoicePanel._CostButton
 		_check(cost.theme_type_variation == &""
 			and cost.get_theme_default_font() == project_theme.default_font,
@@ -1225,7 +1231,7 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 					"mounted card uses the one shared short-sentence formatter " + offer["id"])
 				_assert_no_position_prose(rules_label.text, String(offer["id"]))
 			_check(rules_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
-				and rules_label.get_theme_font_size("font_size") >= 15
+				and rules_label.get_theme_font_size("font_size") >= 18
 				and rules_label.get_line_count() <= 3
 				and rules_label.get_visible_line_count() == rules_label.get_line_count(),
 				"rules are readable in at most three complete rendered lines " + offer["id"])
@@ -1838,6 +1844,14 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var expected_rarity: String = String(definition.get("rarity", "")).capitalize()
 		_check(rarity_label != null and rarity_label.visible and rarity_label.text == expected_rarity,
 			"RarityLabel matches authored rarity: %s (%s)" % [expected_rarity, card_id])
+		var body_fonts := _display_fonts()
+		if not body_fonts.is_empty():
+			_check(rarity_label.get_theme_font(&"font") == body_fonts["body"]
+				and rarity_label.get_theme_font_size(&"font_size") == 18,
+				"visible rarity tag is 18px project body text: " + card_id)
+			_check(rules_label.get_theme_font(&"font") == body_fonts["body"]
+				and rules_label.get_theme_font_size(&"font_size") == 18,
+				"short rules are 18px project body text: " + card_id)
 		var sewn_box := rarity_label.get_theme_stylebox("normal") as StyleBoxFlat
 		_check(sewn_box != null and sewn_box.border_width_left >= 1,
 			"RarityLabel has visible sewn accent border: " + card_id)
@@ -1874,7 +1888,7 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 			_check(rules_label.text.contains(phrase),
 				"authored rule phrase '%s' visible for %s" % [phrase, card_id])
 		_check(rules_label.get_visible_line_count() == rules_label.get_line_count()
-			and rules_label.get_theme_font_size("font_size") >= 15,
+			and rules_label.get_theme_font_size("font_size") >= 18,
 			"pool rules fully rendered and readable: " + card_id)
 		_check(card.get_global_rect().encloses(rules_label.get_global_rect())
 			and screen.encloses(rules_label.get_global_rect())
