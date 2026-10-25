@@ -196,7 +196,7 @@ func _title_snapshot(app) -> Array:
 		app.run_heroes.duplicate(true), app.run_map, app.deck, app.run_rng,
 		app.fight_selection, app.encounter_id, app.party_carryover,
 		app.run_seamstress_path_receipt.duplicate(true),
-		app.run_tinker_path_receipt.duplicate(true)]
+		app.run_tinker_path_receipt.duplicate(true), app.run_warden_path_receipt.duplicate(true)]
 
 
 ## The seeded opening-route model shared by both entry paths.
@@ -840,7 +840,7 @@ func _run() -> void:
 		and app.run_tinker_path_choice != null
 		and not app.run_tinker_path_choice.has_selection(),
 		"previewing changes no seeded run, deck, gold, scraps or Path claim")
-	# Real keyboard focus cycle: Back, both Path options, both Tinker options, Set out.
+	# Real keyboard focus cycle includes all three mounted hero boards.
 	seed(171173)
 	var focus_global := randi()
 	seed(171173)
@@ -866,11 +866,29 @@ func _run() -> void:
 		and view.tinker_hint_label.text
 			== String(VillagePathPreview.tinker(tinker_shown[1]).get("hint", "")),
 		"Tab focus previews the second Tinker Path")
+	for index in range(view.warden_buttons.size()):
+		await _key(KEY_TAB)
+		_check(view.warden_buttons[index].has_focus()
+			and view.warden_hint_label.text == String(VillagePathPreview.warden(
+				view.warden_path_options()[index]).get("hint", "")),
+			"Tab previews each mounted Warden option")
 	await _key(KEY_TAB)
 	_check(view.set_out_button.has_focus()
 		and view.path_hint_label.text == "Choose one Path for this run"
-		and view.tinker_hint_label.text == "Choose one Tinker Path for this run",
-		"leaving both boards restores their prompts")
+		and view.tinker_hint_label.text == "Choose one Tinker Path for this run"
+		and view.warden_hint_label.text == "Choose one Warden Path for this run",
+		"leaving all boards restores their prompts")
+	for control in [view.warden_buttons[1], view.warden_buttons[0],
+			view.tinker_buttons[1], view.tinker_buttons[0], view.path_buttons[1],
+			view.path_buttons[0], view.back_button, view.set_out_button]:
+		for down in [true, false]:
+			var reverse := InputEventKey.new()
+			reverse.keycode = KEY_TAB
+			reverse.shift_pressed = true
+			reverse.pressed = down
+			root.push_input(reverse, true)
+			await process_frame
+		_check(control.has_focus(), "reverse Tab traverses every mounted village choice")
 	_check(path_requests[0] == 0 and tinker_requests[0] == 0,
 		"keyboard focus previews request no Path either")
 	_check(randi() == focus_global, "keyboard previews spend no global RNG")
@@ -916,13 +934,16 @@ func _run() -> void:
 		and app.run_seamstress_path_choice.get_receipt()["path_id"] == "bloodline",
 		"repeated or alternate Path callbacks cannot overwrite the pick")
 	# The confirmed Seamstress Path narrows the sewn loop to Back, the still-open
-	# Tinker options and Set out.
+	# Tinker and Warden options and Set out.
 	await _key(KEY_TAB)
 	_check(view.back_button.has_focus(), "Tab reaches Back to title")
 	await _key(KEY_TAB)
 	_check(view.tinker_buttons[0].has_focus(), "Tab reaches the still-open first Tinker Path")
 	await _key(KEY_TAB)
 	_check(view.tinker_buttons[1].has_focus(), "Tab reaches the still-open second Tinker Path")
+	for button in view.warden_buttons:
+		await _key(KEY_TAB)
+		_check(button.has_focus(), "Tab reaches each still-open Warden Path")
 	await _key(KEY_TAB)
 	_check(view.set_out_button.has_focus(), "Tab wraps back to Set out")
 	seed(151152)

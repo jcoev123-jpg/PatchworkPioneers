@@ -567,6 +567,8 @@ var run_seamstress_path_receipt: Dictionary = {}
 var run_tinker_path_choice: RunTinkerPathChoice
 ## Detached receipt of the Tinker Path this run carries; empty until Set out.
 var run_tinker_path_receipt: Dictionary = {}
+var run_warden_path_choice: RunWardenPathChoice
+var run_warden_path_receipt: Dictionary = {}
 ## The one validated Tinker setup receipt this village visit produced, detached
 ## from the setup. Empty until a Tinker option is confirmed.
 var _tinker_setup_receipt: Dictionary = {}
@@ -1030,6 +1032,13 @@ func _open_base() -> bool:
 		view.present_tinker_path_options(_tinker_path_options(run_tinker_path_choice))
 	view.path_choice_requested.connect(_base_path_choice.bind(weakref(view)))
 	view.tinker_path_choice_requested.connect(_base_tinker_path_choice.bind(weakref(view)))
+	run_warden_path_choice = RunWardenPathChoice.new()
+	var warden_options: Array = []
+	for path in run_warden_path_choice.get_authored_paths():
+		warden_options.append({"id": path.id, "display_name": path.display_name,
+			"card_name": path.card.display_name})
+	view.present_warden_path_options(warden_options)
+	view.warden_path_choice_requested.connect(_base_warden_path_choice.bind(weakref(view)))
 	view.set_out_requested.connect(_base_set_out.bind(weakref(view)))
 	view.back_requested.connect(_base_back.bind(weakref(view)))
 	title_view.hide()
@@ -1153,6 +1162,44 @@ func _live_base(source: WeakRef) -> BaseScreen:
 	return view
 
 
+func _base_warden_path_choice(path_id: String, source: WeakRef) -> void:
+	var view := _live_base(source)
+	if view == null:
+		return
+	if not run_warden_path_receipt.is_empty() or run_warden_path_choice == null \
+			or not run_warden_path_choice.is_valid():
+		view.release_warden_path_choice()
+		return
+	var receipt := run_warden_path_choice.choose(path_id)
+	if not receipt.get("ok", false):
+		view.release_warden_path_choice()
+		return
+	view.mark_warden_path_selected(receipt.path_id, receipt.display_name)
+
+
+func _selected_warden_receipt(view: BaseScreen) -> Dictionary:
+	if view == null or run_warden_path_choice == null:
+		return {}
+	var receipt := run_warden_path_choice.get_receipt()
+	if not RunWardenPathChoice.authenticate_receipt(receipt).get("ok", false) \
+			or view.selected_warden_path_id() != receipt.path_id \
+			or view.selected_warden_path_name() != receipt.display_name:
+		return {}
+	return receipt
+
+
+## No selection means the ordinary opening. A present malformed receipt is
+## passed through so CombatRoundFlow's admission refuses it atomically.
+func _warden_battle_receipt() -> Variant:
+	if run_warden_path_receipt.is_empty():
+		return null
+	if run_warden_path_choice == null \
+			or run_warden_path_choice.get_receipt() != run_warden_path_receipt \
+			or not RunWardenPathChoice.authenticate_receipt(run_warden_path_receipt).get("ok", false):
+		return {"ok": false}
+	return run_warden_path_receipt.duplicate(true)
+
+
 func _close_base(view: BaseScreen = null) -> void:
 	if not is_instance_valid(base_screen):
 		base_screen = null
@@ -1179,6 +1226,7 @@ func _base_set_out(source: WeakRef) -> void:
 	# Only a real opening book commits the setup's Path as this run's detached receipt.
 	run_seamstress_path_receipt = _selected_path_receipt(view)
 	run_tinker_path_receipt = _selected_tinker_receipt(view)
+	run_warden_path_receipt = _selected_warden_receipt(view)
 	_route_from_base = true
 	_close_base(view)
 
@@ -1191,6 +1239,8 @@ func _base_back(source: WeakRef) -> void:
 	# Back to title abandons this visit's Path setup; nothing of it reaches a run.
 	run_seamstress_path_choice = null
 	run_seamstress_path_receipt = {}
+	run_warden_path_choice = null
+	run_warden_path_receipt = {}
 	run_tinker_path_choice = null
 	run_tinker_path_receipt = {}
 	_tinker_setup_receipt = {}
@@ -1211,6 +1261,7 @@ func _open_route() -> void:
 		return
 	# A fresh opening starts with no Path receipt; only this Base's Set out commits one.
 	run_seamstress_path_receipt = {}
+	run_warden_path_receipt = {}
 	run_tinker_path_receipt = {}
 	_route_from_base = false
 	var cards := _load_starter_deck()
@@ -1667,7 +1718,7 @@ func _start_battle(shared_rng: RandomNumberGenerator = null, encounter_definitio
 	var starting_deck := CombatDeck.new([], starting_rng)
 	var starting_result := CombatBattleResult.new(starting_party, starting_enemies)
 	var starting_flow := CombatRoundFlow.new(starting_deck, starting_party,
-		starting_enemies, selector, starting_result)
+		starting_enemies, selector, starting_result, null, null, _warden_battle_receipt())
 	if not starting_flow._valid_bindings():
 		push_warning("Starter combat bindings are invalid; run was not started")
 		return false
@@ -2737,7 +2788,7 @@ func _choose_battle_route(id: String, source_map: WeakRef, prior: Array[String],
 			else:
 				next_result = CombatBattleResult.new(next_party, entry.enemies)
 				next_flow = CombatRoundFlow.new(next_deck, next_party, entry.enemies,
-					battle_intents, next_result)
+					battle_intents, next_result, null, null, _warden_battle_receipt())
 				staged = next_flow.begin_fight()
 				if staged:
 					staged = torn_carry.begin_battle(id, next_result, next_party)
@@ -5861,6 +5912,9 @@ func _end_turn(button = null) -> void:
 		button.disabled = false
 		return
 	# A committed End Turn opens the next hand: reset before it can earn receipts.
+	var attack_presenter := get_node_or_null("LiveAttackPreview")
+	if attack_presenter != null:
+		attack_presenter.advance_warden_turn()
 	_quilt_advance_turn()
 	if not _observe_battle_result():
 		return
@@ -5905,6 +5959,8 @@ func _return_to_title() -> void:
 		and run_map.get_route().is_empty()
 	_route_from_base = false
 	# A fresh title owns no Path: an abandoned or finished run drops its receipt.
+	run_warden_path_receipt = {}
+	run_warden_path_choice = null
 	run_seamstress_path_receipt = {}
 	run_seamstress_path_choice = null
 	run_tinker_path_receipt = {}

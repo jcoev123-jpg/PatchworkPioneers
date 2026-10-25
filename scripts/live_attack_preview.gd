@@ -26,6 +26,8 @@ var _direct_fire := CombatTinkerPoolAttacks.new()
 var _direct_fire_preview := CombatTinkerDirectFirePreview.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
+var _vanguard: CombatWardenVanguardPassive
+var _warden_turn := -1
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
 var _statuses := CombatStatuses.new()
 var _on_hit := CombatOnHitStatuses.new()
@@ -797,6 +799,7 @@ func _queue_attack(position: int) -> void:
 	var target_id := ""
 	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
+			or _targeting.is_heavy_pool_attack(id) \
 			or _targeting.is_pool_combo_attack(id) or _is_path_card(id) \
 			or id in CombatAttackCards.ATTACK_IDS) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
@@ -817,7 +820,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var control := _targeting.is_seamstress_control(id)
 	var combo := _targeting.is_pool_combo_attack(id)
 	var path := _is_path_card(id)
-	var guarded := direct or control or combo or path or id in CombatAttackCards.ATTACK_IDS
+	var heavy := _targeting.is_heavy_pool_attack(id)
+	var guarded := direct or control or combo or path or heavy or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -837,7 +841,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (direct or combo or path) and (app._battle_closed or target_id.is_empty() \
+	if (direct or combo or path or heavy) and (app._battle_closed or target_id.is_empty() \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
 		return
@@ -845,7 +849,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((control or combo or path or id in CombatAttackCards.ATTACK_IDS) \
+			or ((control or combo or path or heavy or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -914,13 +918,23 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 	if _targeting.is_heavy_pool_attack(id):
 		if forecast:
 			return _heavy_forecast(party, enemies, id)
+		if _vanguard != null and not _warden_current():
+			return {"ok": false}
+		var pin_quote := {}
+		if _vanguard != null:
+			pin_quote = _vanguard.quote_attack(_deck, party, enemies, _pinned,
+				_heavy_attacks, id, position)
 		var mitt_quote := {}
 		if _fray != null:
 			mitt_quote = _fray.quote_heavy_hit(id, position)
 		var committed := _heavy_attacks.play_attack(_deck, party, enemies, id, position,
 			{}, {}, _pinned, _play._patches, _fray, mitt_quote)
+		var mitt_confirmed := true
 		if committed.get("ok", false) and mitt_quote.get("bonus") == 2:
-			_fray.consume_confirmed_hit(mitt_quote, committed)
+			mitt_confirmed = _fray.consume_confirmed_hit(mitt_quote, committed)
+		if committed.get("ok", false) and mitt_confirmed and pin_quote.get("ok", false):
+			_vanguard.confirm_attack(_deck, party, enemies, _pinned, _heavy_attacks,
+				pin_quote, committed)
 		return committed
 	var owner_statuses: Dictionary = {}
 	var owner: String = _catalog.get_definition(id).get("owner", "")
@@ -1238,6 +1252,15 @@ func _sync_battle() -> void:
 				_fray = mitt
 		_heavy_attacks.set_pinned(_pinned)
 		_heavy_attacks.set_mitt(_fray)
+		var warden_receipt: Variant = app._warden_battle_receipt()
+		if app.run_map != null and warden_receipt is Dictionary \
+				and warden_receipt.get("path_id") == "vanguard":
+			var passive := CombatWardenVanguardPassive.new()
+			if passive.bind_battle(warden_receipt, _deck, app.party, app.enemies,
+					_pinned, _heavy_attacks) and passive.begin_player_turn(_deck,
+					app.party, app.enemies, _pinned, _heavy_attacks):
+				_vanguard = passive
+				_warden_turn = app.enemy_intents._turn_index
 		# The selected Path card is bound only to this battle's genuine receipt,
 		# deck, party, roster and the one gauge shared with its round flow.
 		_bind_path_cards(app)
@@ -1529,6 +1552,10 @@ func _unbind(panel) -> void:
 
 
 func _clear() -> void:
+	if _vanguard != null:
+		_vanguard.retire_battle()
+	_vanguard = null
+	_warden_turn = -1
 	_cancel_choice()
 	_turn = -1
 	for panel in _bindings.keys():
@@ -1560,6 +1587,25 @@ func _clear() -> void:
 	_direct_fire = CombatTinkerPoolAttacks.new(_play._tinker)
 	_selected = null
 	_receipt_seq = 0
+
+
+func _warden_current(turn_offset: int = 0) -> bool:
+	var app = get_parent()
+	return app != null and app._combo_battle_current() and app.deck == _deck \
+		and app.enemy_intents._turn_index == _warden_turn + turn_offset \
+		and _session == [app.party, app.enemies, app.battle_result, app.run_rng, app.enemy_intents] \
+		and app._warden_battle_receipt() == app.run_warden_path_receipt
+
+
+## Only the app's successful End Turn owns this notification. Refresh and hover
+## cannot re-arm, and duplicate notifications see the same intent index.
+func advance_warden_turn() -> void:
+	var app = get_parent()
+	if _vanguard == null or app == null or app.deck != _deck \
+			or app.enemy_intents == null or not _warden_current(1):
+		return
+	if _vanguard.advance_confirmed_turn():
+		_warden_turn = app.enemy_intents._turn_index
 
 
 

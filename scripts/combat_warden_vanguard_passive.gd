@@ -137,6 +137,17 @@ func current_turn() -> int:
 	return _turn_serial if _bound else 0
 
 
+## The app calls only after its atomic RoundFlow.end_turn() succeeded and
+## opened the next hand. Refused transitions never reach this notification.
+func advance_confirmed_turn() -> bool:
+	if _phase != "active" or not _same_authorities(_deck, _party, _enemies, _pinned, _attacks):
+		return false
+	if not _deck.turn_active or _deck.energy != CombatState.TURN_ENERGY:
+		return false
+	_phase = "between"
+	return begin_player_turn(_deck, _party, _enemies, _pinned, _attacks)
+
+
 ## One pending quote at a time. Checks the real held authored heavy card,
 ## Warden's living legal FROM slot and the original living TO slot via the
 ## resolver's own can_play. Cannot spend, pin, draw, or advance RNG.
@@ -164,6 +175,9 @@ func quote_attack(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	}
 	_pending = {"ticket": ticket.duplicate(true), "before": _snapshot(),
 		"card_id": card_id, "target_position": target_position}
+	# Capture the authentic optional Mitt before payment/consumption. Detached
+	# replay must use the same resolver bonuses as the live paid transaction.
+	_pending["mitt"] = _mitt_before()
 	return ticket.duplicate(true)
 
 
@@ -249,6 +263,23 @@ func _replay(before: Dictionary, card_id: String, slot: int) -> Dictionary:
 		clone_patches._worn = (patch_data["worn"] as Dictionary).duplicate(true)
 		clone_patches._living = (patch_data["living"] as Dictionary).duplicate(true)
 	var clone_attacks := CombatWardenPoolHeavyAttacks.new(clone_pin, clone_patches)
+	var mitt_data: Dictionary = _pending.get("mitt", {})
+	if not mitt_data.is_empty():
+		var source: CombatFrayfinderMitt = mitt_data.source
+		if source != _attacks.get_mitt() or not source.is_valid():
+			return {"ok": false}
+		var gauge := CombatUnravel.new()
+		gauge._bound_enemies = clone_enemies
+		gauge._gauges = mitt_data.gauges.duplicate(true)
+		gauge._tiers_by_position = mitt_data.tiers.duplicate(true)
+		var mitt := CombatFrayfinderMitt.new()
+		if not mitt.bind_battle(clone_deck, clone_party, clone_enemies, gauge,
+				source._wardrobe, source._torn):
+			return {"ok": false}
+		mitt._turn_open = mitt_data.turn_open
+		mitt._generation = mitt_data.generation
+		mitt._used = mitt_data.used.duplicate(true)
+		clone_attacks.set_mitt(mitt)
 	if not clone_attacks.can_play(clone_deck, clone_party, clone_enemies, card_id, slot):
 		return {"ok": false}
 	var receipt := clone_attacks.play_attack(clone_deck, clone_party, clone_enemies, card_id, slot)
@@ -287,6 +318,16 @@ static func _patch_snapshot(patches: CombatPatchAttackRules) -> Variant:
 		"worn": patches._worn.duplicate(true),
 		"living": patches._living.duplicate(true),
 	}
+
+
+func _mitt_before() -> Dictionary:
+	var mitt := _attacks.get_mitt()
+	if mitt == null:
+		return {}
+	return {"source": mitt, "gauges": mitt._unravel._gauges.duplicate(true),
+		"tiers": mitt._unravel._tiers_by_position.duplicate(true),
+		"turn_open": mitt._turn_open, "generation": mitt._generation,
+		"used": mitt._used.duplicate(true)}
 
 
 static func _exact(a: Variant, b: Variant) -> bool:

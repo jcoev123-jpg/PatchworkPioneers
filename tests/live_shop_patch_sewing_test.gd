@@ -751,9 +751,13 @@ func _shop_fight_shop() -> void:
 	_check(remaining >= 0, "second Shop stocks a genuinely unsold patch")
 	if remaining >= 0:
 		var second_id: String = app.shop_purchases.get_stock().trinkets[remaining].id
-		await _purchase(remaining, true)
+		# Stock position is not a wearer identity: two Shops can offer the same
+		# slot at index zero. Use another hero so this persistence scenario
+		# actually preserves the first sewn patch while adding the second.
+		var second_wearer := 1 if remaining == 0 else remaining
+		await _purchase(remaining, true, second_wearer)
 		var after_sew: Dictionary = bound.get_snapshot()
-		_check(after_sew.worn[app.run_heroes[remaining].id][after_sew.definitions[second_id]] == second_id
+		_check(after_sew.worn[app.run_heroes[second_wearer].id][after_sew.definitions[second_id]] == second_id
 			and after_sew.worn[wearer][after_sew.definitions[first_id]] == first_id
 			and after_sew.operation_ids.size() == sewn.operation_ids.size() + 1
 			and after_sew.operation_ids.slice(0, sewn.operation_ids.size()) == sewn.operation_ids,
