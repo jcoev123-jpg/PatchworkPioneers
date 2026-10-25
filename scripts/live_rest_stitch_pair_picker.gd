@@ -217,6 +217,8 @@ func _ready() -> void:
 
 	confirm_button = Button.new()
 	confirm_button.text = "Confirm Stitch • 3 scraps"
+	confirm_button.theme_type_variation = "PatchHeadingButton"
+	confirm_button.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	confirm_button.position = Vector2(30, 434)
 	confirm_button.size = Vector2(650, 44)
 	confirm_button.focus_mode = Control.FOCUS_ALL
@@ -683,6 +685,7 @@ func _create_change_first_button(first_idx: int) -> Button:
 		btn.tooltip_text = "Change first original — %s %s, %s\nChoose a different first card." % [
 			str(first_entry.get("owner", "")).capitalize(), str(first_entry.get("name", "")),
 			copy_label(first_idx)]
+	btn.theme_type_variation = "PatchHeadingButton"
 	btn.add_theme_font_size_override("font_size", CHANGE_FIRST_FONT_SIZE)
 	# The shared theme leaves Button colours at engine defaults, where hover and
 	# focus ink is near-white; the sewn ticket keeps dark ink in every state.

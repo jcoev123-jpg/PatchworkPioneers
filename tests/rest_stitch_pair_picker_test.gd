@@ -1450,8 +1450,8 @@ func _assert_change_first_ticket(panel: LiveRestStitchPairPicker, first_index: i
 		label + " keeps the 96x106 clickable, keyboard-reachable ticket")
 	_check(button.get_theme_font_size("font_size") >= 18,
 		label + " prints its action caption at 18 px or larger")
-	_check(_body_font_path(button) == BODY_FONT,
-		label + " keeps the inherited project body face")
+	_check(_body_font_path(button).ends_with("LondrinaSolid-Regular.ttf"),
+		label + " resolves the committed display face (PatchHeadingButton / Londrina)")
 	_check(button.text.contains(copy_label) and not button.text.contains("copy #0"),
 		label + " caption names the same one-based " + copy_label)
 	_check(first_index == 0 or not button.text.contains("copy #%d" % first_index),
@@ -2103,6 +2103,32 @@ func _test_submitted_single_intent_latch() -> void:
 
 	_check(not p.confirm_button.disabled, "confirm button enabled for selected pair")
 
+	# AC1: Confirm Stitch button resolves PatchHeadingButton/Londrina at >=18 px and keeps exact caption.
+	_check(p.confirm_button.theme_type_variation == "PatchHeadingButton",
+		"Confirm Stitch uses PatchHeadingButton variation")
+	_check(p.confirm_button.get_theme_font_size("font_size") >= 18,
+		"Confirm Stitch font size >= 18 px")
+	_check(p.confirm_button.text == "Confirm Stitch • 3 scraps",
+		"Confirm Stitch keeps exact authored caption")
+
+	# AC2: Change First button resolves same display face, retains caption/tooltip, stays focusable.
+	_check(p.change_first_button != null and p.change_first_button.is_visible_in_tree(),
+		"Change First button is mounted and visible in stage 2")
+	_check(p.change_first_button.theme_type_variation == "PatchHeadingButton",
+		"Change First uses PatchHeadingButton variation")
+	_check(p.change_first_button.get_theme_font_size("font_size") >= 18,
+		"Change First font size >= 18 px")
+	_check(p.change_first_button.text.contains("Change")
+		and p.change_first_button.text.contains("First")
+		and p.change_first_button.text.contains("copy"),
+		"Change First keeps wrapped arrow/verb/copy caption")
+	_check(p.change_first_button.tooltip_text.contains("Choose a different first card"),
+		"Change First retains authored tooltip")
+	_check(p.change_first_button.focus_mode == Control.FOCUS_ALL,
+		"Change First stays keyboard-focusable")
+
+	# AC3: Existing legal/stale/repeated/request behavior preserved (covered by existing assertions below).
+
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 882244
 	var rng_before := rng.state
@@ -2374,6 +2400,15 @@ func _test_keyboard_focus_route() -> void:
 		and panel.first_tile_scroll.visible and not panel.second_tile_scroll.visible
 		and panel.confirm_button.disabled,
 		"Change First returns to the first stage without an armed pair")
+	# AC2: Change First retains caption/tooltips and stays keyboard-focusable after return.
+	_check(panel.change_first_button != null
+		and panel.change_first_button.theme_type_variation == "PatchHeadingButton",
+		"Change First keeps PatchHeadingButton face after return")
+	_check(panel.change_first_button.text.contains("Change")
+		and panel.change_first_button.text.contains("First"),
+		"Change First caption preserved after return to stage 1")
+	_check(panel.change_first_button.tooltip_text.contains("Choose a different"),
+		"Change First tooltip preserved after return")
 	var returned := _focused_tile(panel.first_tiles)
 	_check(returned != null and returned.is_visible_in_tree()
 		and returned.focus_mode == Control.FOCUS_ALL,
