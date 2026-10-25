@@ -230,9 +230,12 @@ func _refresh() -> void:
 			if candidate.index == _first:
 				chosen_first = candidate
 				break
-		if not chosen_first.is_empty():
-			preview_label.text = "First: %s | %s | copy #%d | %d energy.\nChoose a DIFFERENT owner's card below.\nPress Stitch again to change the first card." % [
-				chosen_first.owner.capitalize(), chosen_first.name, _first + 1, chosen_first.cost]
+		if not chosen_first.is_empty() and not options.is_empty():
+			var pair: Dictionary = _visit.stitch_preview(_first, options[0].index)
+			if not pair.is_empty():
+				preview_label.text = "FIRST | %s | %s | copy #%d | %d energy\n%s\nChoose a DIFFERENT owner's card for THEN.\nBoth owners must be alive, each in their own legal FROM position to play.\nPress Stitch again to change the first card." % [
+					pair.first_owner.capitalize(), pair.first_name, _first + 1,
+					pair.first_cost, _effects(pair.first_half.effects)]
 	_wire_focus()
 
 
@@ -291,7 +294,14 @@ func _select(index: int, epoch: int, rows_epoch: int = -1, row: Variant = null) 
 			if _preview.is_empty():
 				return
 			_mark_selected(index, option.owner)
-			preview_label.text = "%s\nFirst (%s): %s | %d energy | %s\nSecond (%s): %s | %d energy | %s\nOrdered halves: %s THEN %s\nEnergy: %d. Scraps: %d -> %d (cost %d)\nDeck: %d -> %d cards. Consumes copies #%d and #%d in this order.\nBoth owners must be alive in legal FROM positions to play." % [_preview.display_name, _preview.first_owner.capitalize(), _preview.first_name, _preview.first_cost, _effects(_preview.first_half.effects), _preview.second_owner.capitalize(), _preview.second_name, _preview.second_cost, _effects(_preview.second_half.effects), _preview.first_name, _preview.second_name, _preview.energy_cost, _source.remaining_scraps, _preview.remaining_scraps, _preview.scrap_cost, _preview.deck_before_count, _preview.deck_after_count, _first + 1, _second + 1]
+			preview_label.text = "%s\nFIRST | %s | %s | copy #%d | %d energy\n%s\nTHEN | %s | %s | copy #%d | %d energy\n%s\nEnergy: %d (max half + 1, capped at 3). Scraps: %d -> %d (cost %d)\nDeck: %d -> %d cards. Consumes copies #%d and #%d in this order.\nBoth owners must be alive, each in their own legal FROM position to play." % [
+				_preview.display_name, _preview.first_owner.capitalize(), _preview.first_name,
+				_first + 1, _preview.first_cost, _effects(_preview.first_half.effects),
+				_preview.second_owner.capitalize(), _preview.second_name, _second + 1,
+				_preview.second_cost, _effects(_preview.second_half.effects),
+				_preview.energy_cost, _source.remaining_scraps, _preview.remaining_scraps,
+				_preview.scrap_cost, _preview.deck_before_count, _preview.deck_after_count,
+				_first + 1, _second + 1]
 		else:
 			return
 		confirm_button.disabled = false
@@ -300,11 +310,38 @@ func _select(index: int, epoch: int, rows_epoch: int = -1, row: Variant = null) 
 		return
 
 
+## Present only the exact fields supplied by the authenticated option/preview.
+## Keep the authored actions in a stable reading order, and expose unfamiliar
+## source fields as readable key/value text rather than guessing their rules.
 func _effects(effects: Dictionary) -> String:
+	if effects.is_empty():
+		return "No effects"
 	var parts: PackedStringArray = []
-	for key in effects:
-		parts.append("%s %s" % [str(key).replace("_", " "), str(effects[key])])
-	return ", ".join(parts)
+	var known: Array[String] = ["damage", "block", "heal", "bleed", "weak", "draw"]
+	var extras: Array = effects.keys()
+	extras.sort()
+	var ordered: Array = []
+	for key in known:
+		if effects.has(key):
+			ordered.append(key)
+	for key in extras:
+		if not known.has(key):
+			ordered.append(key)
+	for key in ordered:
+		var amount: String = str(effects[key])
+		var phrase := ""
+		match str(key):
+			"damage": phrase = "Deal %s damage" % amount
+			"block": phrase = "Gain %s Block" % amount
+			"heal": phrase = "Heal %s HP" % amount
+			"bleed": phrase = "Apply Bleed %s" % amount
+			"weak": phrase = "Apply Weak %s" % amount
+			"draw": phrase = "Draw %s card%s" % [amount, "" if amount == "1" else "s"]
+			_: phrase = "%s: %s" % [str(key).replace("_", " "), amount]
+		if not parts.is_empty():
+			phrase = phrase.substr(0, 1).to_lower() + phrase.substr(1)
+		parts.append(phrase)
+	return "; ".join(parts)
 
 
 func preview() -> Dictionary:
@@ -345,13 +382,28 @@ func take_confirmed(intent: Variant) -> Dictionary:
 func _option_row(option: Dictionary, upgrade: bool) -> Button:
 	var owner: String = option.get("owner", "")
 	var name: String = option.get("display_name", option.get("name", ""))
+	var stitch_effects := "Unavailable"
+	if not upgrade:
+		var projection: Dictionary = {}
+		if _first < 0:
+			var partners: Array = _visit.stitch_second_options(option.index)
+			if not partners.is_empty():
+				projection = _visit.stitch_preview(option.index, partners[0].index)
+			if not projection.is_empty():
+				stitch_effects = _effects(projection.first_half.effects)
+		else:
+			projection = _visit.stitch_preview(_first, option.index)
+			if not projection.is_empty():
+				stitch_effects = _effects(projection.second_half.effects)
 	var caption := "%s | %s | copy #%d | %d energy" % [
 		name, owner, option.index + 1, option.get("cost", 0)]
 	if upgrade:
 		caption += " | Before: %s | After: %s | %d energy | %s" % [
 			_effects(option.effects), option.plus_display_name, option.plus_cost,
 			_effects(option.plus_effects)]
-	var height := 192 if upgrade else 100
+	else:
+		caption += " | Effects: %s" % stitch_effects
+	var height := 192 if upgrade else 132
 	var button := _button(caption, Vector2.ZERO, Vector2(414, height))
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	# Preserve the complete canonical accessible caption while placed ink labels
@@ -400,8 +452,8 @@ func _option_row(option: Dictionary, upgrade: bool) -> Button:
 			option.plus_display_name, option.plus_cost, _effects(option.plus_effects)],
 			Vector2(24, 126), Vector2(375, 61), 15)
 	else:
-		_card_label(button, "Source: %d energy. Select this occurrence." % option.cost,
-			Vector2(24, 71), Vector2(372, 23), 14)
+		_card_label(button, "EFFECTS | %s" % stitch_effects,
+			Vector2(24, 72), Vector2(375, 54), 15)
 	button.set_meta("option", option.duplicate(true))
 	button.set_meta("selected", false)
 	button.set_meta("normal_style", button.get_theme_stylebox("normal"))
