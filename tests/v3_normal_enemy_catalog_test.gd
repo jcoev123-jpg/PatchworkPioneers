@@ -9,6 +9,7 @@ func _initialize() -> void:
 	_test_catalog_records_and_parsing()
 	_test_three_slot_roster_and_weighted_slots()
 	_test_fixed_seed_binding_and_alternatives()
+	_test_zipper_snake_forward_pull_phase()
 	_test_trio_catalog_records()
 	_test_hedgehog_thorns_through_typed_roster()
 	_test_trio_seeded_announcements()
@@ -283,15 +284,86 @@ func _test_fixed_seed_binding_and_alternatives() -> void:
 		_check(announced.get("type") == forced.action.type
 			and int(announced.get("amount", -1)) == int(forced.amount),
 			"forced alternative announces its authored effect: " + String(forced.id))
-		if announced.get("type") in ["attack", "debuff", "shove", "snip_block"]:
+		if String(forced.id) == "zipper_snake":
+			# The authored pull names the middle hero so it really moves forward;
+			# reversing it into a push was the old front-edge workaround.
+			_check(announced.get("target_position") == 2
+				and announced.get("direction") == -1,
+				"forced Zipper Snake pull announces the middle hero pulled forward")
+			_check(CombatEnemyIntents.shove_is_legal(party, 2, -1),
+				"precondition: the announced middle-to-front pull is legal")
+		elif announced.get("type") in ["attack", "debuff", "shove", "snip_block"]:
 			_check(announced.get("target_position") == 1,
 				"forced alternative targets the front hero: " + String(forced.id))
-		if String(forced.id) == "zipper_snake":
-			# The authored pull from slot 2 to 1 is illegal for a front hero, so the
-			# announcement is re-aimed to the living neighbour instead.
-			_check(announced.get("direction") == 1
-				and CombatEnemyIntents.shove_is_legal(party, 1, int(announced.get("direction", 0))),
-				"forced forward shove from the front edge announces only a legal move")
+
+## The authentic Zipper Snake pull, announced by the real bound scheduler and
+## then executed by the real enemy phase: the middle hero is dragged forward and
+## all three heroes keep their own HP, Block and statuses.
+func _test_zipper_snake_forward_pull_phase() -> void:
+	var parsed := _load_parsed()
+	var snake := _find(parsed, "zipper_snake")
+	_check(not snake.is_empty(), "authentic Zipper Snake source present for the pull phase")
+	if snake.is_empty():
+		return
+	var authored_pull := _authored_alternative(snake, "shove", 0)
+	_check(int(authored_pull.get("direction", 0)) == -1,
+		"precondition: the authentic Snake pull is an authored direction -1 shove")
+	if authored_pull.is_empty():
+		return
+	var party := _party()
+	_check(party.get_hero(1).get("id") == "warden"
+		and party.get_hero(2).get("id") == "seamstress"
+		and party.get_hero(3).get("id") == "tinker",
+		"precondition: Warden, Seamstress and Tinker fill slots 1-3")
+	_check(party.apply_damage(1, 10) and party.gain_block(1, 5)
+		and party.apply_damage(2, 4) and party.gain_block(2, 3)
+		and party.apply_damage(3, 6),
+		"precondition: every hero carries distinct HP and Block")
+	party._heroes[0]["statuses"] = {"weak": 2}
+	party._heroes[1]["statuses"] = {"exposed": 3}
+	party._heroes[2]["statuses"] = {"bleed": 1}
+	var before := {}
+	for hero in party.get_heroes():
+		before[hero.id] = hero.duplicate(true)
+	# Detached single-action fixture: production weights 2/3 stay untouched.
+	var pull := _force_normal_alternative(snake, authored_pull, party)
+	if pull.is_empty():
+		return
+	var committed: int = pull.rng.state
+	var announced: Array = pull.intents
+	_check(announced.size() == 1 and announced[0].get("type") == "shove"
+		and announced[0].get("enemy_position") == 1
+		and announced[0].get("target_position") == 2
+		and announced[0].get("direction") == -1,
+		"the bound Snake announces hero 2 pulled toward the front slot")
+	_check(CombatEnemyIntents.shove_is_legal(party, 2, -1),
+		"precondition: the announced middle-to-front pull is legal")
+	_check(pull.scheduler.get_intents() == announced and pull.rng.state == committed,
+		"the genuine announcement replays without spending run RNG")
+	var receipt := CombatEnemyPhase.new().execute_phase(party, pull.enemies, announced, null, true)
+	_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+		"the genuine Snake pull resolves through a real CombatEnemyPhase")
+	if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+		var event: Dictionary = receipt["events"][0]
+		_check(event.get("type") == "shove" and event.get("enemy_position") == 1
+			and event.get("target_position") == 2 and event.get("direction") == -1
+			and event.get("applied") == true,
+			"the phase applies exactly one middle-to-front pull")
+	_check(party.get_hero(1).get("id") == "seamstress" and party.get_hero(1).get("position") == 1
+		and party.get_hero(2).get("id") == "warden" and party.get_hero(2).get("position") == 2
+		and party.get_hero(3).get("id") == "tinker" and party.get_hero(3).get("position") == 3,
+		"the pull swaps Seamstress to the front, moves Warden to the middle and keeps Tinker in the back")
+	var after := {}
+	for hero in party.get_heroes():
+		after[hero.id] = hero
+	for id in ["warden", "seamstress", "tinker"]:
+		_check(after.has(id) and before.has(id), "the pull keeps the original actor " + id)
+		if not after.has(id) or not before.has(id):
+			continue
+		_check(after[id].get("hp") == before[id].get("hp")
+			and after[id].get("block") == before[id].get("block")
+			and after[id].get("statuses", {}) == before[id].get("statuses", {}),
+			"the pull preserves " + id + " HP, Block and statuses")
 
 ## The three tougher look-driven normal enemies of this batch. Numbers are the
 ## bounded v3 tuning from the brief; the design fixes identity and the 5-9
@@ -761,11 +833,48 @@ func _test_negative_fixtures() -> void:
 		"single authored shove roster binds")
 	if edge_scheduler.is_bound():
 		var announced: Dictionary = edge_scheduler.get_intents()[0]
-		_check(announced.get("target_position") == 1 and announced.get("direction") == 1,
-			"front-edge shove is announced away from the illegal edge")
+		_check(announced.get("target_position") == 2 and announced.get("direction") == -1,
+			"front-policy forward pull announces the middle hero, never a reversed push")
 		_check(CombatEnemyIntents.shove_is_legal(party, int(announced.get("target_position", 0)),
 			int(announced.get("direction", 0))),
-			"announced front-edge shove moves into a living neighbour")
+			"announced forward pull moves into a living neighbour")
+	# A valid party with no legal forward pair keeps the pre-existing safe
+	# handling: no illegal swap and no extra run RNG draw.
+	var gapped := _party()
+	_check(gapped.apply_damage(2, 30) and gapped.is_downed(2),
+		"precondition: the middle hero is genuinely downed")
+	var gapped_roster := CombatEnemies.new([edge_enemy.duplicate(true)])
+	var gapped_scheduler := CombatEnemyIntents.new([_enemy(1, [{"type": "block", "amount": 1}])])
+	var gapped_rng := RandomNumberGenerator.new()
+	gapped_rng.seed = 12
+	_check(gapped_roster.is_valid()
+		and gapped_scheduler.bind_battle(gapped_roster, gapped, gapped_rng),
+		"a party with no legal forward pair still binds its authored shove")
+	if gapped_scheduler.is_bound():
+		var gapped_committed: int = gapped_rng.state
+		var gapped_action: Dictionary = gapped_scheduler.get_intents()[0]
+		var gapped_target: int = int(gapped_action.get("target_position", 0))
+		var gapped_direction: int = int(gapped_action.get("direction", 0))
+		var gapped_body: Dictionary = gapped_action.duplicate(true)
+		gapped_body.erase("enemy_position")
+		_check(CombatEnemyIntents.valid_action(gapped_body),
+			"the no-pair announcement is still a structurally valid action")
+		_check(not CombatEnemyIntents.shove_is_legal(gapped, gapped_target, gapped_direction),
+			"precondition: the gapped party has no legal forward pair")
+		var gapped_heroes: Array = gapped.get_heroes()
+		var gapped_enemies: Array = gapped_roster.get_enemies()
+		var gapped_receipt := CombatEnemyPhase.new().execute_phase(gapped, gapped_roster,
+			[gapped_action], null, true)
+		_check(gapped_receipt.get("ok") == true
+			and gapped_receipt.get("events", []).size() == 1
+			and gapped_receipt["events"][0].get("applied") == false,
+			"a forward pull with no legal pair stays an inert ordered beat")
+		_check(gapped.get_heroes() == gapped_heroes
+			and gapped_roster.get_enemies() == gapped_enemies,
+			"the inert forward pull leaves every hero and enemy unchanged")
+		_check(gapped_rng.state == gapped_committed
+			and gapped_scheduler.get_intents() == [gapped_action],
+			"the inert forward pull neither re-rolls nor spends run RNG")
 	# A downed announced hero falls back to the policy target, and that fallback
 	# shove is re-aimed away from the downed neighbour instead of off the board.
 	var downed_party := _party()

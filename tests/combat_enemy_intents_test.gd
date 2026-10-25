@@ -637,10 +637,88 @@ func _test_weighted_binding_and_policies() -> void:
 		_check(announced.get("target_position") == 1, "weighted choice keeps the authored policy target")
 		seen[announced.get("amount")] = true
 	_check(seen.has(1) and seen.has(2), "both authored alternatives are announced across seeds")
-	var shove := _bound_announcement("front", _party_fixture(), 7,
+	# A battle-bound forward pull names the hero it drags toward the front: the
+	# front policy's own hero cannot step forward, so the announcement names the
+	# living middle hero and keeps the authored direction instead of reversing it.
+	var pull_party := _party_fixture()
+	_check(pull_party.get_hero(1).get("id") == "warden"
+		and pull_party.get_hero(2).get("id") == "seamstress"
+		and pull_party.get_hero(3).get("id") == "tinker",
+		"precondition: living Warden, Seamstress and Tinker fill slots 1-3")
+	var pull_actions: Array = [{"type": "shove", "amount": 0, "direction": -1, "weight": 1}]
+	var pull_enemies := CombatEnemies.new([_policy_enemy("front", pull_actions)])
+	var pull_rng := RandomNumberGenerator.new()
+	pull_rng.seed = 7
+	var pull_scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(pull_enemies.is_valid() and pull_scheduler.bind_battle(pull_enemies, pull_party, pull_rng),
+		"a battle-bound front-policy forward pull binds the real roster and party")
+	if pull_scheduler.is_bound():
+		var committed := pull_rng.state
+		var pull := pull_scheduler.get_intents()
+		_check(pull.size() == 1 and pull[0] == {"type": "shove", "amount": 0,
+			"target_position": 2, "direction": -1, "enemy_position": 1},
+			"the bound forward pull announces hero 2 pulled toward slot 1")
+		_check(CombatEnemyIntents.shove_is_legal(pull_party, 2, -1),
+			"precondition: the announced middle-to-front pull is legal")
+		var tampered := pull.duplicate(true)
+		tampered[0]["target_position"] = 3
+		tampered[0]["direction"] = 1
+		tampered.clear()
+		_check(pull_scheduler.get_intents() == pull and pull_scheduler.get_intents() == pull,
+			"repeated reads return the same detached cached pull")
+		_check(pull_rng.state == committed, "reading the cached pull never spends run RNG")
+		# Seed/RNG-stable replay of the same bound announcement.
+		var replay_party := _party_fixture()
+		var replay_enemies := CombatEnemies.new([_policy_enemy("front", pull_actions)])
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = 7
+		var replay := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+		_check(replay_enemies.is_valid()
+			and replay.bind_battle(replay_enemies, replay_party, replay_rng)
+			and replay.get_intents() == pull and replay_rng.state == committed,
+			"a same-seed rebuild announces the identical pull with the identical RNG state")
+	# A pull whose policy target can already step forward keeps that hero, and
+	# ordinary attacks, debuffs and backwards pushes keep their own policies.
+	var lowest := _bound_announcement("lowest_living_hp", _party_fixture(30, 25, 10), 7,
 		[{"type": "shove", "amount": 0, "direction": -1, "weight": 1}])
-	_check(shove.get("type") == "shove" and shove.get("target_position") == 1
-		and shove.get("direction") == 1, "a policy shove flips an illegal direction deterministically")
+	_check(lowest.get("target_position") == 3 and lowest.get("direction") == -1,
+		"a legal forward pull keeps the policy's own lowest-HP hero")
+	var attack := _bound_announcement("lowest_living_hp", _party_fixture(30, 25, 10), 7,
+		[{"type": "attack", "amount": 2, "weight": 1}])
+	_check(attack.get("target_position") == 3, "ordinary attacks still use the authored policy")
+	var debuff := _bound_announcement("exposed", _party_fixture(), 7,
+		[{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}])
+	_check(debuff.get("target_position") == 1, "debuffs still use the authored policy")
+	var push := _bound_announcement("front", _party_fixture(), 7,
+		[{"type": "shove", "amount": 0, "direction": 1, "weight": 1}])
+	_check(push.get("target_position") == 1 and push.get("direction") == 1,
+		"an authored backwards push still shoves the policy's front hero")
+	# The authentic catalog record keeps one weighted draw per source, so the
+	# correction never changes the run RNG cadence.
+	var snake := _authored_enemy("res://data/enemies/run_enemies.json", "zipper_snake")
+	var snake_enemies := CombatEnemies.new([snake])
+	var snake_party := _party_fixture()
+	var snake_rng := RandomNumberGenerator.new()
+	snake_rng.seed = 31415
+	var snake_scheduler := CombatEnemyIntents.new([_enemy(1, [_block(1)])])
+	_check(not snake.is_empty() and snake_enemies.is_valid()
+		and snake_scheduler.bind_battle(snake_enemies, snake_party, snake_rng),
+		"the authentic Zipper Snake record binds its weighted intent")
+	if snake_scheduler.is_bound():
+		var oracle := RandomNumberGenerator.new()
+		oracle.seed = 31415
+		oracle.randi_range(1, 5)
+		_check(snake_rng.state == oracle.state,
+			"the authored pull keeps exactly one weighted draw per source")
+		var snake_action: Dictionary = snake_scheduler.get_intents()[0]
+		if snake_action.get("type") == "shove":
+			_check(snake_action.get("target_position") == 2
+				and snake_action.get("direction") == -1,
+				"an announced Snake pull names the middle hero and keeps direction -1")
+		else:
+			_check(snake_action.get("type") == "attack" and snake_action.get("amount") == 6
+				and snake_action.get("target_position") == 1,
+				"an announced Snake attack keeps the front policy and authored damage")
 
 
 func _test_weighted_announcement_reads_and_rerolls() -> void:
