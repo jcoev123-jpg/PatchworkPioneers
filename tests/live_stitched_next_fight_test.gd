@@ -7,7 +7,9 @@ extends "res://tests/live_stitched_hand_play_test.gd"
 ## The same earned-stitch route, now with a battle waiting after the stitched
 ## Fight so the mounted reward can be settled and the run can continue.
 func _hand_fixture() -> Dictionary:
-	for value in range(1, 20001):
+	# Seed 1815 is the first verified route in this bounded search band that
+	# wins its stronger weighted Elite with all three stitch owners alive.
+	for value in range(1815, 20001):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -102,7 +104,9 @@ func _win_earned_elite() -> bool:
 				var preview := CombatAttackTargeting.new().get_preview(app.deck, app.party, app.enemies, held)
 				if preview.playable and preview.requires_selection:
 					chosen = held
-					target = preview.target_positions.back()
+					# Remove the dangerous front Elite first when a real held card can target it.
+					target = (1 if preview.target_positions.has(1)
+						else preview.target_positions.back())
 					break
 			if chosen.is_empty():
 				break
@@ -114,6 +118,13 @@ func _win_earned_elite() -> bool:
 		await _click(app.end_turn_button)
 	var won: bool = app.battle_result.get_outcome() == CombatBattleResult.VICTORY
 	_check(won and app.reward_buttons.size() == 4, "Elite won through actual held-card inputs")
+	if won:
+		var heroes: Array[Dictionary] = app.party.get_heroes()
+		var hp_values: Array[int] = []
+		for hero in heroes:
+			hp_values.append(int(hero.get("hp", 0)))
+		_check(hp_values.size() == 3 and hp_values.any(func(hp: int) -> bool: return hp > 0),
+			"genuine Elite victory retains a three-hero roster with a living owner: HP %s" % [str(hp_values)])
 	return won and app.reward_buttons.size() == 4
 
 
@@ -132,6 +143,12 @@ func _prepare_receipt(fixture: Dictionary, keyboard: bool, use_pool: bool = fals
 	await _click(_route_action(fixture.elite.back()))
 	if not await _win_earned_elite():
 		return ""
+	var heroes: Array[Dictionary] = app.party.get_heroes()
+	var hp_values: Array[int] = []
+	for hero in heroes:
+		hp_values.append(int(hero.get("hp", 0)))
+	_check(hp_values.size() == 3 and hp_values.all(func(hp: int) -> bool: return hp > 0),
+		"genuine Elite victory leaves all three stitch owners alive: HP %s" % [str(hp_values)])
 	await _click(app.reward_buttons[3])
 	_check(app.run_scraps == 3, "genuine Elite claim funds three-scrap Stitch")
 	await _click(app.continue_button)
@@ -218,12 +235,29 @@ func _settle_and_continue(fixture: Dictionary, composite: String, keyboard: bool
 	_check(offers.size() == 3, "composite reward offers exactly three cards")
 	if offers.size() != 3:
 		return {}
+	var living_owners: Array[String] = []
+	for hero in app.party.get_heroes():
+		if int(hero.get("hp", 0)) > 0:
+			living_owners.append(str(hero.get("id", "")))
+	_check(not living_owners.is_empty(), "victory reward has actual living hero owners")
+	var eligible_bases: Dictionary = {}
+	for candidate in RunPoolCardRewardOffers.get_authored_base_candidates():
+		eligible_bases[str(candidate.get("id", ""))] = str(candidate.get("owner", ""))
+	_check(not eligible_bases.is_empty(), "authored base reward catalog exists")
+	var offered_ids: Array[String] = []
 	for index in range(3):
 		var offer: Dictionary = offers[index]
-		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(str(offer.get("id", "")))
-		_check(not definition.is_empty() and definition.get("owner") == offer.get("owner")
-			and definition.get("owner") == ["warden", "seamstress", "tinker"][index],
-			"composite reward offers an authored base card for living hero " + str(index + 1))
+		var offered_id := str(offer.get("id", ""))
+		var definition: Dictionary = RunPoolCardRewardOffers.resolve_reward_definition(offered_id)
+		var owner := str(offer.get("owner", ""))
+		_check(not definition.is_empty() and definition.get("owner") == owner
+			and eligible_bases.get(offered_id, "") == owner and living_owners.has(owner)
+			and not offered_ids.has(offered_id),
+			"composite reward offers a unique authored base card from a living owner " + str(index + 1))
+		if index < living_owners.size():
+			_check(owner == living_owners[index],
+				"first-pass rewards follow living party order " + str(index + 1))
+		offered_ids.append(offered_id)
 	_check(award >= 10 and award <= 20 and drop.is_empty(),
 		"composite Fight pays the authored normal gold range without a trinket")
 	_check(is_instance_valid(app.continue_button) == false, "unsettled composite reward exposes no Continue")

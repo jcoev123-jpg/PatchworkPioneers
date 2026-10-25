@@ -36,6 +36,7 @@ func _initialize() -> void:
 	_test_catalogs()
 	_test_cycles()
 	_test_selection()
+	_test_live_weighted_elites()
 	_test_rejections()
 	for failure in failures:
 		printerr(failure)
@@ -474,3 +475,145 @@ func _test_rejections() -> void:
 	_check(_snapshot(map, rng, selector) == before,
 		"subsequent valid typed assembly succeeds without reroll after rejections")
 
+
+
+## The real authored entry picks both the roster and schedule; opt that exact
+## returned scheduler into the same weighted battle binding used by a run.
+## The escort is deliberately required to announce a non-damaging beat so
+## the primary Elite attack has an independent Block-before-HP oracle.
+func _test_live_weighted_elites() -> void:
+	var expected_specs := {
+		"needle_marshal": {"target": "front", "actions": [
+			{"type": "attack", "amount": 5, "weight": 2},
+			{"type": "attack", "amount": 4, "weight": 2},
+			{"type": "buff", "amount": 3, "weight": 1},
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]},
+		"spool_hexer": {"target": "random", "actions": [
+			{"type": "attack", "amount": 45, "weight": 3},
+			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
+	var elites := _catalog(ELITES)
+	for source_id in expected_specs:
+		var actual := _record(elites, source_id)
+		var spec: Dictionary = actual.get("intent", {})
+		_check(spec.get("target") == expected_specs[source_id].target
+			and spec.get("actions", []).size() == expected_specs[source_id].actions.size(),
+			"retained exact target and weighted action count " + source_id)
+		if spec.get("actions", []).size() == expected_specs[source_id].actions.size():
+			for i in range(spec.actions.size()):
+				var normalized := CombatEnemyIntents.weighted_action(spec.actions[i])
+				var action: Dictionary = normalized.get("action", {}).duplicate(true)
+				action["weight"] = normalized.get("weight", 0)
+				_check(action == expected_specs[source_id].actions[i],
+					"exact attack/nonattack amount, action type and weight " + source_id + "/" + str(i))
+		var original_attacks := [4, 3] if source_id == "needle_marshal" else [3]
+		var attack_index := 0
+		for action in expected_specs[source_id].actions:
+			if action.type == "attack":
+				_check(action.amount > original_attacks[attack_index],
+					"authored weighted attack exceeds exact original " + source_id + "/" + str(attack_index))
+				attack_index += 1
+		_check(actual.get("max_hp") == (28 if source_id == "needle_marshal" else 24)
+			and actual.get("art_path") == "res://assets/paper/enemies/%s.png" % source_id,
+			"retained exact health and art on weighted routed Elite " + source_id)
+	for encounter_id in ROSTERS:
+		var source_id: String = ROSTERS[encounter_id][0]
+		var seed_value := -1
+		# Require an actual legal node AND production pool choice, not a test
+		# roster with its weights injected. Only select a seed with a live
+		# weighted attack plus a non-damaging escort announcement.
+		for attempt in range(1, 401):
+			var candidate := _elite_route(attempt)
+			if candidate.is_empty():
+				continue
+			var entry := RunAuthoredBattleEntry.new().entry_current_battle(
+				candidate.map, candidate.rng, RunFightEncounterSelection.new())
+			if not entry.get("success", false) or entry.get("encounter_id") != encounter_id:
+				continue
+			var party := _party()
+			for position in [1, 2, 3]:
+				_check(party.gain_block(position, 2), "genuine seeded Elite Block precondition")
+			var intents: CombatEnemyIntents = entry.intents
+			if not intents.bind_battle(entry.enemies, party, candidate.rng):
+				continue
+			var announced := intents.get_intents()
+			if announced.size() == 2 and announced[0].get("type") == "attack" \
+					and announced[1].get("type") in ["block", "buff"]:
+				seed_value = attempt
+				break
+		_check(seed_value > 0, "bounded real route and weighted attack seed for " + encounter_id)
+		if seed_value < 0:
+			continue
+		var replay_history: Array = []
+		for replay in range(2):
+			var routed := _elite_route(seed_value)
+			_check(not routed.is_empty(), "real legal Elite route on replay " + encounter_id)
+			if routed.is_empty():
+				break
+			var admitted := RunAuthoredBattleEntry.new().entry_current_battle(
+				routed.map, routed.rng, RunFightEncounterSelection.new())
+			_check(admitted.get("success", false) and admitted.get("encounter_id") == encounter_id
+				and admitted.get("node_type") == "Elite",
+				"live authored weighted Elite entry " + encounter_id)
+			if not admitted.get("success", false):
+				break
+			var enemies: CombatEnemies = admitted.enemies
+			var party := _party()
+			for position in [1, 2, 3]:
+				_check(party.gain_block(position, 2), "independent starting Block " + encounter_id)
+			_check(enemies.get_enemies().size() == 2
+				and enemies.get_enemy(1).get("id") == source_id
+				and enemies.get_enemy(1).get("intent") == _record(elites, source_id).get("intent")
+				and not admitted.definitions.is_empty(),
+				"non-vacuous true catalog-bound roster and schedule " + encounter_id)
+			var bound: CombatEnemyIntents = admitted.intents
+			_check(bound.bind_battle(enemies, party, routed.rng) and bound.is_bound(),
+				"run RNG drives real bound weighted intentions " + encounter_id)
+			if not bound.is_bound():
+				break
+			var rng_at_announcement: int = routed.rng.state
+			var announced: Array[Dictionary] = bound.get_intents()
+			_check(announced.size() == 2 and announced == bound.get_intents()
+				and routed.rng.state == rng_at_announcement,
+				"cached attack announcement has no extra draw " + encounter_id)
+			if announced.size() != 2:
+				break
+			var attack := announced[0]
+			var escort := announced[1]
+			_check(attack.get("type") == "attack"
+				and escort.get("type") in ["block", "buff"]
+				and attack.get("amount") in ([5, 4] if source_id == "needle_marshal" else [45])
+				and attack.get("enemy_position") == 1 and escort.get("enemy_position") == 2,
+				"exact strengthened attack and harmless companion weighted beat " + encounter_id)
+			var target: int = attack.get("target_position", 0)
+			_check(target in [1, 2, 3] and
+				(target == 1 if source_id == "needle_marshal" else true),
+				"retained live front/random target policy " + encounter_id)
+			if target not in [1, 2, 3]:
+				break
+			var original := party.get_hero(target)
+			var before_hp: int = original.hp
+			var before_block: int = original.block
+			_check(before_hp > 0 and before_block == 2 and attack.amount > before_block,
+				"non-vacuous Block-before-HP attack preconditions " + encounter_id)
+			var snapshot := [party.get_heroes(), enemies.get_enemies(), routed.rng.state]
+			var bad := CombatEnemyPhase.new().execute_phase(party, enemies, [
+				{"enemy_position": 1, "type": "attack", "amount": attack.amount, "target_position": 0}])
+			_check(not bad.get("ok", false) and snapshot ==
+				[party.get_heroes(), enemies.get_enemies(), routed.rng.state],
+				"invalid phase action refuses without HP/Block/RNG mutation " + encounter_id)
+			var settled := CombatEnemyPhase.new().execute_phase(party, enemies, announced)
+			var after := party.get_hero(target)
+			_check(settled.get("ok", false)
+				and settled.get("events", []).size() == 2
+				and settled.events[0] == _event(attack)
+				and after.block == maxi(0, before_block - attack.amount)
+				and after.hp == maxi(0, before_hp - maxi(0, attack.amount - before_block)),
+				"independently verified exact Block absorption before HP " + encounter_id)
+			var trace := [admitted.encounter_id, announced, settled, party.get_heroes(),
+				enemies.get_enemies(), routed.rng.state]
+			if replay == 0:
+				replay_history = trace
+			else:
+				_check(replay_history == trace,
+					"identical real typed Elite entry, bound weighted attack, phase and RNG replay " + encounter_id)

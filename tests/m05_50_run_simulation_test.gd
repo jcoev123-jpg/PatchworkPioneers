@@ -118,6 +118,11 @@ func _run_seed(value: int) -> Dictionary:
 	var battles := 0
 	var fights := 0
 	var elites := 0
+	var elite_battles := 0
+	var elite_wins := 0
+	var elite_defeats := 0
+	var elite_lowest_hp := 0
+	var elite_encounters := {}
 	var plays := 0
 	var phases := 0
 	var picks := 0
@@ -152,6 +157,7 @@ func _run_seed(value: int) -> Dictionary:
 		var kind: String = node.type
 		if kind in ["Fight", "Elite", "Boss"]:
 			battles += 1
+			elite_battles += 1 if kind == "Elite" else 0
 			var admitted := RunStitchedBattleHandEntry.new().admit_next_fight(
 				deck_ids, descriptors, scraps, next_stitch_id,
 				RunRestStitchCards.new(deck_ids, descriptors, scraps, next_stitch_id).get_snapshot().receipt, rng)
@@ -169,6 +175,9 @@ func _run_seed(value: int) -> Dictionary:
 			var intents: CombatEnemyIntents = entered.intents
 			if not intents.bind_battle(enemies, party, rng):
 				return _fail("live weighted enemy announcement %s" % choice)
+			if kind == "Elite":
+				elite_encounters[entered.encounter_id] = \
+					elite_encounters.get(entered.encounter_id, 0) + 1
 			var tiers := {}
 			for position in range(1, enemies.get_enemies().size() + 1):
 				tiers[position] = "boss" if kind == "Boss" else ("elite" if kind == "Elite" else "normal")
@@ -317,10 +326,16 @@ func _run_seed(value: int) -> Dictionary:
 				# already latched DEFEAT. The first observed result stays final.
 				if not party.is_defeated() or result.get_outcome() != CombatBattleResult.DEFEAT or not result.is_finished():
 					return _fail("non-authentic defeat")
+				elite_defeats += 1 if kind == "Elite" else 0
 				lost = true
 				break
 			if not enemies.is_victorious() or party.is_defeated():
 				return _fail("non-authentic victory")
+			if kind == "Elite":
+				elite_wins += 1
+				for hero in party.get_heroes():
+					if hero.hp > 0 and (elite_lowest_hp == 0 or hero.hp < elite_lowest_hp):
+						elite_lowest_hp = hero.hp
 			if kind == "Boss":
 				won = true
 				break
@@ -498,7 +513,10 @@ func _run_seed(value: int) -> Dictionary:
 		"acquired_ids": acquired_ids, "earned_plays": earned_plays,
 		"reward_visits": reward_visits,
 		"unaffordable_checks": unaffordable_checks,
-		"gold": gold, "scraps": scraps, "actions": action_total}
+		"gold": gold, "scraps": scraps, "actions": action_total,
+		"elite_battles": elite_battles, "elite_wins": elite_wins,
+		"elite_defeats": elite_defeats, "elite_lowest_hp": elite_lowest_hp,
+		"elite_encounters": elite_encounters}
 
 
 ## The energy resolver returns bool. Publish a receipt only after independently
@@ -1317,10 +1335,29 @@ func _report(trials: Array[Dictionary]) -> void:
 	var tinker_rewards := {}
 	var tinker_plays := {}
 	var earned_receipts := []
+	var defeats_by_floor := {}
+	var defeat_seeds := {}
+	var elite_battles := 0
+	var elite_wins := 0
+	var elite_defeats := 0
+	var elite_lowest_hp := 0
+	var elite_encounters := {}
 	var starter_ids := StarterCards.new().get_starting_deck()
 	for trial in trials:
 		wins += 1 if trial.won else 0
 		floor_total += trial.floor
+		elite_battles += trial.elite_battles
+		elite_wins += trial.elite_wins
+		elite_defeats += trial.elite_defeats
+		for elite_id in trial.elite_encounters:
+			elite_encounters[elite_id] = elite_encounters.get(elite_id, 0) + trial.elite_encounters[elite_id]
+		if trial.elite_lowest_hp > 0 and (elite_lowest_hp == 0 or trial.elite_lowest_hp < elite_lowest_hp):
+			elite_lowest_hp = trial.elite_lowest_hp
+		if trial.lost:
+			defeats_by_floor[trial.floor] = defeats_by_floor.get(trial.floor, 0) + 1
+			if not defeat_seeds.has(trial.floor):
+				defeat_seeds[trial.floor] = []
+			defeat_seeds[trial.floor].append(trial.seed)
 		stitches += trial.stitches
 		sews += trial.sews
 		picks += trial.picks
@@ -1432,6 +1469,24 @@ func _report(trials: Array[Dictionary]) -> void:
 		"aggregate arithmetic bounds")
 	print("M05 balance: wins=%d/%d (%.1f%%), average reached floor=%.2f/12" %
 		[wins, SEED_COUNT, float(wins) * 100.0 / SEED_COUNT, float(floor_total) / SEED_COUNT])
+	var defeat_floors: Array = defeats_by_floor.keys()
+	defeat_floors.sort()
+	var defeat_rows: Array[String] = []
+	var pre_terminal_defeats := 0
+	for defeat_floor in defeat_floors:
+		defeat_rows.append("floor %d: %d (seeds %s)" % [defeat_floor,
+			defeats_by_floor[defeat_floor], JSON.stringify(defeat_seeds[defeat_floor])])
+		if defeat_floor < RunMap.FLOOR_COUNT:
+			pre_terminal_defeats += defeats_by_floor[defeat_floor]
+	print("M05 defeats by actual terminal floor: %s" %
+		["; ".join(defeat_rows) if not defeat_rows.is_empty() else "none"])
+	_check(pre_terminal_defeats > 0,
+		"cohort includes at least one authentic defeat before floor 12")
+	print("M05 Elite battles=%d wins=%d terminal_defeats=%d lowest surviving HP after an Elite win=%d" % [
+		elite_battles, elite_wins, elite_defeats, elite_lowest_hp])
+	print("M05 routed Elite encounters=%s" % [JSON.stringify(elite_encounters)])
+	_check(elite_battles > 0 and elite_wins > 0,
+		"cohort actually enters and wins real routed Elite battles")
 	print("M05 participation: stitches=%d sews=%d picks=%d skips=%d plays=%d enemy_phases=%d" %
 		[stitches, sews, picks, skips, plays, phases])
 	print("M05 Shop visits=%d paid card purchases=%d unaffordable rejections=%d" % [visits, purchases, unaffordable])
@@ -1445,6 +1500,9 @@ func _report(trials: Array[Dictionary]) -> void:
 		JSON.stringify(acquired_energy), JSON.stringify(energy_rewards), JSON.stringify(energy_plays)])
 	print("M05 BAL win target 15-30/50 (30-60%%): %s (%d/50)" % [
 		"PASS" if wins >= 15 and wins <= 30 else "FAIL", wins])
+	_check(wins >= 15 and wins <= 30, "retained 15-30 genuine victories in the 50 original seeds")
+	_check(defeats_by_floor.values().reduce(func(sum, count): return sum + count, 0) == SEED_COUNT - wins,
+		"all terminal nonwins counted exactly once at their actual reached floor")
 	if wins == 0:
 		print("M05 literal no-card-over-half winning-deck gate: NOT_EVALUABLE (zero winners)")
 		print("M05 mandatory starter / optional acquired frequency: NOT_EVALUABLE")
