@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_draw_fire_variants()
 	_test_counter_stitch_variants()
 	_test_joint_modes_and_turn_boundary()
+	_test_guard_redirect_drain()
 	_test_skips_and_rollback()
 	if failures.is_empty():
 		print("combat_enemy_phase_guard_reactions_test: PASS (", checks, " checks)")
@@ -314,3 +315,110 @@ func _test_skips_and_rollback() -> void:
 	_check(default_result == {"ok": true, "events": [
 		{"type": "attack", "enemy_position": 1, "applied": true, "target_position": 2}]},
 		"AC3: no-reaction three-arg event contains no new reaction-only keys")
+
+
+func _drain_enemies(hps: Array[int], drain_flags: Array) -> CombatEnemies:
+	var definitions: Array = []
+	for index: int in range(hps.size()):
+		var definition := {"id": "bobbin-" + str(index + 1), "max_hp": hps[index]}
+		if index < drain_flags.size():
+			definition["drain"] = drain_flags[index]
+		definitions.append(definition)
+	var enemies := CombatEnemies.new(definitions)
+	_check(enemies.is_valid() and enemies.get_enemies().size() == hps.size(),
+		"precondition: real Drain roster with original source slots")
+	return enemies
+
+
+## AC3: with a genuine paid Guard redirect, Drain reads the actual recipient's
+## post-Block Warden HP loss, not the announced ally or the nominal damage, and
+## a source slain by lethal Thorns retaliation in that same beat stays slain.
+func _test_guard_redirect_drain() -> void:
+	var party := _party()
+	var enemies := _drain_enemies([12, 15], [true, false])
+	_check(enemies.apply_damage(1, 8) and enemies.get_enemy(1).hp == 4
+		and enemies.get_enemy(1).get("drain") == true,
+		"AC3 precondition: living source 1 is wounded and authors Drain")
+	var deck := _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and reactions.is_guarding() and party.get_hero(1).block == 12
+		and deck.energy == 2,
+		"AC3 precondition: authentic paid Draw Fire guards with twelve Block")
+	var rng_before: int = deck._rng.state
+	var result: Dictionary = phase.execute_phase(party, enemies,
+		[_attack(1, 18, 2)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 2, true, 1, true, 0)]},
+		"AC3: the redirected Drain beat keeps the exact reaction event shape")
+	_check(party.get_hero(1).hp == 34 and party.get_hero(1).block == 0
+		and party.get_hero(2).hp == 30 and party.get_hero(3).hp == 26,
+		"AC3: twelve Block absorbs twelve, so only the redirected Warden loses six HP")
+	_check(enemies.get_enemy(1).hp == 10 and enemies.get_enemy(2).hp == 15,
+		"AC3: Drain heals the redirected Warden's eight->six loss, not the announced slot")
+	_check(deck._rng.state == rng_before and reactions.is_guarding()
+		and reactions.get_thorns() == 0,
+		"AC3: Drain draws no RNG and never consumes Guarding")
+
+	# A redirected hit fully swallowed by the Warden's Block heals nothing.
+	party = _party()
+	enemies = _drain_enemies([12], [true])
+	_check(enemies.apply_damage(1, 8) and enemies.get_enemy(1).hp == 4,
+		"AC3 precondition: wounded Drain source for the blocked redirect")
+	deck = _deck(["warden_draw_fire", "warden_counter_stitch",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	reactions = CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_draw_fire")
+		and party.get_hero(1).block == 12,
+		"AC3 precondition: authentic paid guard with twelve Block")
+	rng_before = deck._rng.state
+	result = phase.execute_phase(party, enemies, [_attack(1, 10, 2)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 2, true, 1, true, 0)]}
+		and party.get_hero(1).hp == 40 and party.get_hero(1).block == 2
+		and party.get_hero(2).hp == 30,
+		"AC3: a redirected hit fully absorbed by Block removes no HP")
+	_check(enemies.get_enemy(1).hp == 4 and deck._rng.state == rng_before,
+		"AC3: a fully blocked redirect heals no Drain and consumes no RNG")
+
+	# Lethal Thorns retaliation during the same resolution: the source dies and
+	# Drain must not resurrect it even though the hero really lost HP.
+	party = _party()
+	enemies = _drain_enemies([12], [true])
+	_check(enemies.apply_damage(1, 8) and enemies.get_enemy(1).hp == 4,
+		"AC3 precondition: Drain source will die to four Thorns")
+	deck = _deck(["warden_counter_stitch_plus", "warden_draw_fire",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	reactions = CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_counter_stitch_plus")
+		and reactions.get_thorns() == 4 and party.get_hero(1).block == 13,
+		"AC3 precondition: authentic paid Counter-stitch+ authors Thorns 4 and 13 Block")
+	rng_before = deck._rng.state
+	result = phase.execute_phase(party, enemies, [_attack(1, 20, 1)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 1, true, 1, false, 4)]},
+		"AC3: the lethal retaliation beat keeps its exact reaction event")
+	_check(party.get_hero(1).hp == 33 and party.get_hero(1).block == 0,
+		"AC3: the Warden really loses seven HP after her Block")
+	_check(enemies.is_slain(1) and enemies.get_enemy(1).hp == 0
+		and enemies.get_enemy(1).max_hp == 12,
+		"AC3: Thorns-slain Drain source stays slain instead of healing back")
+	_check(deck._rng.state == rng_before and reactions.get_thorns() == 4,
+		"AC3: the lethal retaliation consumes no RNG and keeps its mode")
+
+	# A surviving Thorns hit still heals the real HP the hero lost.
+	party = _party()
+	enemies = _drain_enemies([15], [true])
+	_check(enemies.apply_damage(1, 6) and enemies.get_enemy(1).hp == 9,
+		"AC3 precondition: Drain source survives four Thorns at nine HP")
+	deck = _deck(["warden_counter_stitch_plus", "warden_draw_fire",
+		"warden_iron_hem", "warden_hold_the_line", "warden_quick_darn"])
+	reactions = CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(deck, party, "warden_counter_stitch_plus")
+		and reactions.get_thorns() == 4,
+		"AC3 precondition: authentic paid Thorns 4")
+	result = phase.execute_phase(party, enemies, [_attack(1, 20, 1)], reactions)
+	_check(result == {"ok": true, "events": [_hit(1, 1, true, 1, false, 4)]}
+		and party.get_hero(1).hp == 33,
+		"AC3: the surviving retaliation beat applies its usual damage and Thorns")
+	_check(enemies.get_enemy(1).hp == 12,
+		"AC3: Drain heals the seven hero HP lost, after Thorns damage, once")
+
