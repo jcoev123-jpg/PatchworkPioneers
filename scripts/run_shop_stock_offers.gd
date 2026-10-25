@@ -225,34 +225,8 @@ static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 	if not (party_ids is Array) or not (card_candidates is Array):
 		return rejected
 
-	# Build catalog references and known owners from all four catalogs.
-	var starter_catalog := StarterCards.new()
-	var warden_pool := WardenPoolCards.new()
-	var seamstress_pool := SeamstressPoolCards.new()
-	var tinker_pool := TinkerPoolCards.new()
-	var known_owners := {}
-	for catalog_id in starter_catalog.get_all_card_ids():
-		var definition: Dictionary = starter_catalog.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in warden_pool.get_all_card_ids():
-		var definition: Dictionary = warden_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in seamstress_pool.get_all_card_ids():
-		var definition: Dictionary = seamstress_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in tinker_pool.get_pool_card_ids():
-		var definition: Dictionary = tinker_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for base_id in tinker_pool.get_pool_card_ids():
-		var upgrade_id: String = tinker_pool.get_upgrade_id(base_id)
-		if upgrade_id:
-			var definition: Dictionary = tinker_pool.get_definition(upgrade_id)
-			if definition.get("owner") is String:
-				known_owners[definition["owner"]] = true
+	var catalogs: Array = _peddler_catalogs()
+	var known_owners: Dictionary = _build_known_owners(catalogs)
 
 	# The party is exactly three distinct heroes the authored catalogs know.
 	var party_set := {}
@@ -290,26 +264,12 @@ static func generate_peddler_cards(rng: Variant, party_ids: Variant,
 		if price < 0:
 			return rejected
 
-		var definition: Dictionary = {}
-		var catalog_owner: String = ""
-		var is_pool_card: bool = false
-		if starter_catalog.has_card(card_id):
-			definition = starter_catalog.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-		elif warden_pool.has_card(card_id):
-			definition = warden_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		elif seamstress_pool.has_card(card_id):
-			definition = seamstress_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		elif tinker_pool.has_card(card_id):
-			definition = tinker_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		else:
+		var found := _find_card_definition(card_id, catalogs)
+		if found.is_empty():
 			return rejected
+		var definition: Dictionary = found["def"]
+		var catalog_owner: String = definition.get("owner", "")
+		var is_pool_card: bool = found["is_pool"]
 		if definition.is_empty() or catalog_owner.is_empty():
 			return rejected
 		# Pool upgrade cards (ending in _plus) are not valid Peddler stock.
@@ -367,34 +327,8 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 			or not (patch_candidates is Array) or not (owned_patch_ids is Array):
 		return rejected
 
-	# Build catalog references and known owners from all four catalogs.
-	var starter_catalog := StarterCards.new()
-	var warden_pool := WardenPoolCards.new()
-	var seamstress_pool := SeamstressPoolCards.new()
-	var tinker_pool := TinkerPoolCards.new()
-	var known_owners := {}
-	for catalog_id in starter_catalog.get_all_card_ids():
-		var definition: Dictionary = starter_catalog.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in warden_pool.get_all_card_ids():
-		var definition: Dictionary = warden_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in seamstress_pool.get_all_card_ids():
-		var definition: Dictionary = seamstress_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for catalog_id in tinker_pool.get_pool_card_ids():
-		var definition: Dictionary = tinker_pool.get_definition(catalog_id)
-		if definition.get("owner") is String:
-			known_owners[definition["owner"]] = true
-	for base_id in tinker_pool.get_pool_card_ids():
-		var upgrade_id: String = tinker_pool.get_upgrade_id(base_id)
-		if upgrade_id:
-			var definition: Dictionary = tinker_pool.get_definition(upgrade_id)
-			if definition.get("owner") is String:
-				known_owners[definition["owner"]] = true
+	var catalogs: Array = _peddler_catalogs()
+	var known_owners: Dictionary = _build_known_owners(catalogs)
 
 	# The party is exactly three distinct heroes the authored catalogs know.
 	var party_set := {}
@@ -473,26 +407,12 @@ static func generate_peddler_stock(rng: Variant, party_ids: Variant,
 		if price < 0:
 			return rejected
 
-		var definition: Dictionary = {}
-		var catalog_owner: String = ""
-		var is_pool_card: bool = false
-		if starter_catalog.has_card(card_id):
-			definition = starter_catalog.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-		elif warden_pool.has_card(card_id):
-			definition = warden_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		elif seamstress_pool.has_card(card_id):
-			definition = seamstress_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		elif tinker_pool.has_card(card_id):
-			definition = tinker_pool.get_definition(card_id)
-			catalog_owner = definition.get("owner", "")
-			is_pool_card = true
-		else:
+		var found := _find_card_definition(card_id, catalogs)
+		if found.is_empty():
 			return rejected
+		var definition: Dictionary = found["def"]
+		var catalog_owner: String = definition.get("owner", "")
+		var is_pool_card: bool = found["is_pool"]
 		if definition.is_empty() or catalog_owner.is_empty():
 			return rejected
 		# Pool upgrade cards (ending in _plus) are not valid Peddler stock.
@@ -551,3 +471,46 @@ static func _read_price(value: Variant) -> int:
 			return -1
 		return int(value)
 	return -1
+
+
+static func _peddler_catalogs() -> Array:
+	return [
+		StarterCards.new(),
+		WardenPoolCards.new(),
+		SeamstressPoolCards.new(),
+		TinkerPoolCards.new(),
+		LanternMonkPoolCards.new(),
+		RagDuelistPoolCards.new(),
+		ScarecrowPoolCards.new(),
+		YarnRangerPoolCards.new()
+	]
+
+
+static func _build_known_owners(catalogs: Array) -> Dictionary:
+	var known_owners := {}
+	for catalog: Variant in catalogs:
+		var ids: Array
+		if catalog.has_method("get_pool_card_ids"):
+			ids = catalog.get_pool_card_ids()
+		else:
+			ids = catalog.get_all_card_ids()
+		for catalog_id: String in ids:
+			var definition: Dictionary = catalog.get_definition(catalog_id)
+			if definition.get("owner") is String:
+				known_owners[definition["owner"]] = true
+		if catalog.has_method("get_pool_card_ids"):
+			for base_id: String in catalog.get_pool_card_ids():
+				var upgrade_id: String = catalog.get_upgrade_id(base_id)
+				if upgrade_id:
+					var definition: Dictionary = catalog.get_definition(upgrade_id)
+					if definition.get("owner") is String:
+						known_owners[definition["owner"]] = true
+	return known_owners
+
+
+static func _find_card_definition(card_id: String, catalogs: Array) -> Dictionary:
+	for i in range(catalogs.size()):
+		var catalog: Variant = catalogs[i]
+		if catalog.has_card(card_id):
+			return {"def": catalog.get_definition(card_id), "is_pool": i > 0}
+	return {}

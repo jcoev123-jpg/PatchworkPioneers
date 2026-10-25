@@ -2687,6 +2687,107 @@ func _test_peddler_cards(party: Array[String], deck: Array[String], catalog: Sta
 		{"id": "tinker_tune_up", "owner": "tinker", "price": 35},
 		{"id": "tinker_rivet_shot", "owner": "tinker", "price": 50},
 	]
+	
+	# Mixed V3 test
+	var v3_party: Array[String] = ["warden", "lantern_monk", "rag_duelist"]
+	var v3_peddler_cards: Array = [
+		{"id": "warden_brace", "owner": "warden", "price": 40},
+		{"id": "warden_hold_the_line", "owner": "warden", "price": 55},
+		{"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50},
+		{"id": "lantern_monk_moth_lure", "owner": "lantern_monk", "price": 50},
+		{"id": "rag_duelist_needle_prick", "owner": "rag_duelist", "price": 50},
+		{"id": "rag_duelist_needle_lunge", "owner": "rag_duelist", "price": 50},
+	]
+	
+	var v3_party_2: Array[String] = ["seamstress", "scarecrow", "yarn_ranger"]
+	var v3_peddler_cards_2: Array = [
+		{"id": "seamstress_mend", "owner": "seamstress", "price": 45},
+		{"id": "seamstress_darning", "owner": "seamstress", "price": 55},
+		{"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50},
+		{"id": "scarecrow_crow_peck", "owner": "scarecrow", "price": 50},
+		{"id": "yarn_ranger_needle_arrow", "owner": "yarn_ranger", "price": 50},
+		{"id": "yarn_ranger_tangle_bolas", "owner": "yarn_ranger", "price": 50},
+	]
+
+	var v3_rng := _rng(SEED + 9500)
+	var v3_rng_oracle := _rng(SEED + 9500)
+	var v3_res := RunShopStockOffers.generate_peddler_cards(v3_rng, v3_party, v3_peddler_cards)
+	_check(v3_res.get("ok", false), "peddler generates with mixed v3 party 1")
+	var expected_v3_cards := _peddler_cards_oracle(v3_party, v3_peddler_cards, v3_rng_oracle)
+	_check(v3_res.get("cards", []) == expected_v3_cards, "v3 peddler cards match oracle")
+	_check(v3_rng.state == v3_rng_oracle.state, "v3 peddler cards RNG state matches oracle")
+	var v3_cards: Array = v3_res.get("cards", [])
+	_check(v3_cards.size() == 3, "peddler v3 returns exactly three cards")
+	for i in range(3):
+		_check(v3_cards[i].get("owner") == v3_party[i], "v3 card " + str(i) + " matches owner")
+	for offer in v3_cards:
+		var card_id: String = offer.get("id", "")
+		_check(_pool_has_id(v3_peddler_cards, card_id), "offered card is from candidate pool: " + card_id)
+		var expected_owner: String = ""
+		var all_catalogs: Array = RunShopStockOffers._peddler_catalogs()
+		var found_def := RunShopStockOffers._find_card_definition(card_id, all_catalogs)
+		if not found_def.is_empty():
+			expected_owner = found_def["def"].get("owner", "")
+		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id)
+		_check(offer.get("price") == _pool_price(v3_peddler_cards, card_id), "offer keeps the supplied price: " + card_id)
+
+	var v3_rng_replay := _rng(SEED + 9500)
+	var v3_res_replay := RunShopStockOffers.generate_peddler_cards(v3_rng_replay, v3_party, v3_peddler_cards)
+	_check(v3_res_replay.get("cards", []) == v3_res.get("cards", []), "v3 peddler cards seeded replay")
+
+	var v3_rng2 := _rng(SEED + 9501)
+	var v3_rng_oracle2 := _rng(SEED + 9501)
+	var v3_res2 := RunShopStockOffers.generate_peddler_cards(v3_rng2, v3_party_2, v3_peddler_cards_2)
+	_check(v3_res2.get("ok", false), "peddler generates with mixed v3 party 2")
+	var expected_v3_cards2 := _peddler_cards_oracle(v3_party_2, v3_peddler_cards_2, v3_rng_oracle2)
+	_check(v3_res2.get("cards", []) == expected_v3_cards2, "v3 peddler cards 2 match oracle")
+	_check(v3_rng2.state == v3_rng_oracle2.state, "v3 peddler cards 2 RNG state matches oracle")
+	var v3_cards2: Array = v3_res2.get("cards", [])
+	_check(v3_cards2.size() == 3, "peddler v3 returns exactly three cards")
+	for i in range(3):
+		_check(v3_cards2[i].get("owner") == v3_party_2[i], "v3 card " + str(i) + " matches owner")
+	for offer in v3_cards2:
+		var card_id: String = offer.get("id", "")
+		_check(_pool_has_id(v3_peddler_cards_2, card_id), "offered card is from candidate pool: " + card_id)
+		var expected_owner: String = ""
+		var all_catalogs: Array = RunShopStockOffers._peddler_catalogs()
+		var found_def := RunShopStockOffers._find_card_definition(card_id, all_catalogs)
+		if not found_def.is_empty():
+			expected_owner = found_def["def"].get("owner", "")
+		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id)
+		_check(offer.get("price") == _pool_price(v3_peddler_cards_2, card_id), "offer keeps the supplied price: " + card_id)
+
+	var v3_rng_replay2 := _rng(SEED + 9501)
+	var v3_res_replay2 := RunShopStockOffers.generate_peddler_cards(v3_rng_replay2, v3_party_2, v3_peddler_cards_2)
+	_check(v3_res_replay2.get("cards", []) == v3_res2.get("cards", []), "v3 peddler cards 2 seeded replay")
+
+	var v3_reject_plus = v3_peddler_cards.duplicate(true)
+	v3_reject_plus.append({"id": "lantern_monk_wick_flicker_plus", "owner": "lantern_monk", "price": 50})
+	_reject_peddler_cards("v3 peddler cards plus-only candidate", _rng(SEED), v3_party, v3_reject_plus)
+
+	var v3_reject_unk = v3_peddler_cards.duplicate(true)
+	v3_reject_unk.append({"id": "unknown_v3_card", "owner": "lantern_monk", "price": 50})
+	_reject_peddler_cards("v3 peddler cards unknown card", _rng(SEED), v3_party, v3_reject_unk)
+	
+	var v3_reject_other = v3_peddler_cards.duplicate(true)
+	v3_reject_other[2] = {"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50}
+	_reject_peddler_cards("v3 peddler cards other-party card", _rng(SEED), v3_party, v3_reject_other)
+
+	var v3_reject_spoofed = v3_peddler_cards.duplicate(true)
+	v3_reject_spoofed[2] = {"id": "lantern_monk_wick_flicker", "owner": "rag_duelist", "price": 50}
+	_reject_peddler_cards("v3 peddler cards spoofed owner", _rng(SEED), v3_party, v3_reject_spoofed)
+
+	var v3_reject_dup = v3_peddler_cards.duplicate(true)
+	v3_reject_dup[3] = {"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50}
+	_reject_peddler_cards("v3 peddler cards duplicate", _rng(SEED), v3_party, v3_reject_dup)
+
+	var v3_reject_missing = [v3_peddler_cards[0], v3_peddler_cards[2]]
+	_reject_peddler_cards("v3 peddler cards missing party-owner card", _rng(SEED), v3_party, v3_reject_missing)
+
+	var v3_reject_malformed = v3_peddler_cards.duplicate(true)
+	v3_reject_malformed[0] = {"id": "warden_brace", "owner": "warden", "price": -10}
+	_reject_peddler_cards("v3 peddler cards malformed price", _rng(SEED), v3_party, v3_reject_malformed)
+
 	# Success: exactly one per hero in party order.
 	var rng2 := _rng(SEED + 9000)
 	var result2 := RunShopStockOffers.generate_peddler_cards(rng2, party, peddler_cards)
@@ -2820,21 +2921,14 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 	_check(cards.size() == 3, "peddler stock returns exactly three cards")
 	_check(patches.size() == 1, "peddler stock returns exactly one patch")
 	# Every offered card must be from the candidate pool, have correct owner and price.
-	var warden_pool := WardenPoolCards.new()
-	var seamstress_pool := SeamstressPoolCards.new()
-	var tinker_pool := TinkerPoolCards.new()
 	for offer in cards:
 		var card_id: String = offer.get("id", "")
 		_check(_pool_has_id(card_pool, card_id), "offered card is from candidate pool: " + card_id)
 		var expected_owner: String = ""
-		if catalog.has_card(card_id):
-			expected_owner = catalog.get_definition(card_id).get("owner", "")
-		elif warden_pool.has_card(card_id):
-			expected_owner = warden_pool.get_definition(card_id).get("owner", "")
-		elif seamstress_pool.has_card(card_id):
-			expected_owner = seamstress_pool.get_definition(card_id).get("owner", "")
-		elif tinker_pool.has_card(card_id):
-			expected_owner = tinker_pool.get_definition(card_id).get("owner", "")
+		var all_catalogs: Array = RunShopStockOffers._peddler_catalogs()
+		var found_def := RunShopStockOffers._find_card_definition(card_id, all_catalogs)
+		if not found_def.is_empty():
+			expected_owner = found_def["def"].get("owner", "")
 		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id)
 		_check(party.has(offer.get("owner")), "offered card belongs to the party: " + card_id)
 		_check(offer.get("price") == _pool_price(card_pool, card_id), "offer keeps the supplied price: " + card_id)
@@ -2847,6 +2941,116 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 	_check(patch_offer.get("price") == _pool_price(real_patches, patch_offer.get("id", "")), "patch keeps supplied price")
 
 	# AC2: seeded replay and exact RNG state match independent four-draw oracle.
+	# V3 peddler stock test
+	var v3_party: Array[String] = ["warden", "lantern_monk", "rag_duelist"]
+	var v3_peddler_cards: Array = [
+		{"id": "warden_brace", "owner": "warden", "price": 40},
+		{"id": "warden_hold_the_line", "owner": "warden", "price": 55},
+		{"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50},
+		{"id": "lantern_monk_moth_lure", "owner": "lantern_monk", "price": 50},
+		{"id": "rag_duelist_needle_prick", "owner": "rag_duelist", "price": 50},
+		{"id": "rag_duelist_needle_lunge", "owner": "rag_duelist", "price": 50},
+	]
+	var v3_rng := _rng(SEED + 10500)
+	var v3_oracle_rng := _rng(SEED + 10500)
+	var v3_res := RunShopStockOffers.generate_peddler_stock(v3_rng, v3_party, v3_peddler_cards, real_patches, owned_patches)
+	_check(v3_res.get("ok", false), "peddler stock generates with mixed v3 party 1")
+	var expected_v3_stock := _peddler_stock_oracle(catalog, v3_party, v3_peddler_cards, real_patches, owned_patches, v3_oracle_rng)
+	_check(v3_res.get("cards", []) == expected_v3_stock.get("cards", []), "v3 peddler stock cards match oracle")
+	_check(v3_res.get("patches", []) == expected_v3_stock.get("patches", []), "v3 peddler stock patches match oracle")
+	_check(v3_rng.state == v3_oracle_rng.state, "v3 peddler stock RNG state matches oracle")
+
+	var v3_rng_b := _rng(SEED + 10500)
+	var v3_res_b := RunShopStockOffers.generate_peddler_stock(v3_rng_b, v3_party, v3_peddler_cards, real_patches, owned_patches)
+	_check(v3_res_b.get("ok", false), "v3 seeded replay gives valid result")
+	_check(v3_res_b.get("cards", []) == v3_res.get("cards", []), "v3 seeded replay gives identical cards")
+	_check(v3_res_b.get("patches", []) == v3_res.get("patches", []), "v3 seeded replay gives identical patches")
+	_check(v3_rng_b.state == v3_rng.state, "v3 seeded replay matches post-generation RNG state")
+	
+	for offer in v3_res.get("cards", []):
+		var card_id: String = offer.get("id", "")
+		_check(_pool_has_id(v3_peddler_cards, card_id), "offered card is from candidate pool: " + card_id)
+		var expected_owner: String = ""
+		var all_catalogs: Array = RunShopStockOffers._peddler_catalogs()
+		var found_def := RunShopStockOffers._find_card_definition(card_id, all_catalogs)
+		if not found_def.is_empty():
+			expected_owner = found_def["def"].get("owner", "")
+		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id)
+		_check(offer.get("price") == _pool_price(v3_peddler_cards, card_id), "offer keeps the supplied price: " + card_id)
+
+	# V3 peddler stock test 2 (Scarecrow / Yarn Ranger)
+	var v3_party_2: Array[String] = ["seamstress", "scarecrow", "yarn_ranger"]
+	var v3_peddler_cards_2: Array = [
+		{"id": "seamstress_mend", "owner": "seamstress", "price": 45},
+		{"id": "seamstress_darning", "owner": "seamstress", "price": 55},
+		{"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50},
+		{"id": "scarecrow_crow_peck", "owner": "scarecrow", "price": 50},
+		{"id": "yarn_ranger_needle_arrow", "owner": "yarn_ranger", "price": 50},
+		{"id": "yarn_ranger_tangle_bolas", "owner": "yarn_ranger", "price": 50},
+	]
+	var v3_rng2 := _rng(SEED + 10501)
+	var v3_oracle_rng2 := _rng(SEED + 10501)
+	var v3_res2 := RunShopStockOffers.generate_peddler_stock(v3_rng2, v3_party_2, v3_peddler_cards_2, real_patches, owned_patches)
+	_check(v3_res2.get("ok", false), "peddler stock generates with mixed v3 party 2")
+	var expected_v3_stock2 := _peddler_stock_oracle(catalog, v3_party_2, v3_peddler_cards_2, real_patches, owned_patches, v3_oracle_rng2)
+	_check(v3_res2.get("cards", []) == expected_v3_stock2.get("cards", []), "v3 peddler stock cards 2 match oracle")
+	_check(v3_res2.get("patches", []) == expected_v3_stock2.get("patches", []), "v3 peddler stock patches 2 match oracle")
+	_check(v3_rng2.state == v3_oracle_rng2.state, "v3 peddler stock 2 RNG state matches oracle")
+
+	var v3_rng2_b := _rng(SEED + 10501)
+	var v3_res2_b := RunShopStockOffers.generate_peddler_stock(v3_rng2_b, v3_party_2, v3_peddler_cards_2, real_patches, owned_patches)
+	_check(v3_res2_b.get("cards", []) == v3_res2.get("cards", []), "v3 seeded replay 2 gives identical cards")
+	_check(v3_res2_b.get("patches", []) == v3_res2.get("patches", []), "v3 seeded replay 2 gives identical patches")
+	
+	for offer in v3_res2.get("cards", []):
+		var card_id: String = offer.get("id", "")
+		_check(_pool_has_id(v3_peddler_cards_2, card_id), "offered card is from candidate pool: " + card_id)
+		var expected_owner: String = ""
+		var all_catalogs: Array = RunShopStockOffers._peddler_catalogs()
+		var found_def := RunShopStockOffers._find_card_definition(card_id, all_catalogs)
+		if not found_def.is_empty():
+			expected_owner = found_def["def"].get("owner", "")
+		_check(offer.get("owner") == expected_owner, "offer uses correct catalog owner for " + card_id)
+		_check(offer.get("price") == _pool_price(v3_peddler_cards_2, card_id), "offer keeps the supplied price: " + card_id)
+
+	var v3_rng_owned := _rng(SEED + 10502)
+	var v3_res_owned := RunShopStockOffers.generate_peddler_stock(v3_rng_owned, v3_party_2, v3_peddler_cards_2, real_patches, ["stitched_badge", "spare_spool", "quilted_coat"])
+	_check(v3_res_owned.get("ok", false), "v3 peddler stock generates when all patches owned")
+	_check(v3_res_owned.get("patches", []).size() == 1, "v3 peddler stock offers one patch from owned fallback")
+	var v3_offered_patch_id: String = v3_res_owned["patches"][0]["id"]
+	_check(["stitched_badge", "spare_spool", "quilted_coat"].has(v3_offered_patch_id), "v3 offered patch is from owned fallback pool")
+
+	var v3_stock_reject_plus = v3_peddler_cards.duplicate(true)
+	v3_stock_reject_plus.append({"id": "lantern_monk_wick_flicker_plus", "owner": "lantern_monk", "price": 50})
+	_reject_peddler_stock("v3 peddler stock plus-only candidate", _rng(SEED), v3_party, v3_stock_reject_plus, real_patches, owned_patches)
+
+	var v3_stock_reject_unk = v3_peddler_cards.duplicate(true)
+	v3_stock_reject_unk.append({"id": "unknown_v3_card", "owner": "lantern_monk", "price": 50})
+	_reject_peddler_stock("v3 peddler stock unknown card", _rng(SEED), v3_party, v3_stock_reject_unk, real_patches, owned_patches)
+	
+	var v3_stock_reject_other = v3_peddler_cards.duplicate(true)
+	v3_stock_reject_other[2] = {"id": "scarecrow_pitchfork_prick", "owner": "scarecrow", "price": 50}
+	_reject_peddler_stock("v3 peddler stock other-party card", _rng(SEED), v3_party, v3_stock_reject_other, real_patches, owned_patches)
+
+	var v3_stock_reject_spoofed = v3_peddler_cards.duplicate(true)
+	v3_stock_reject_spoofed[2] = {"id": "lantern_monk_wick_flicker", "owner": "rag_duelist", "price": 50}
+	_reject_peddler_stock("v3 peddler stock spoofed owner", _rng(SEED), v3_party, v3_stock_reject_spoofed, real_patches, owned_patches)
+
+	var v3_stock_reject_dup = v3_peddler_cards.duplicate(true)
+	v3_stock_reject_dup[3] = {"id": "lantern_monk_wick_flicker", "owner": "lantern_monk", "price": 50}
+	_reject_peddler_stock("v3 peddler stock duplicate", _rng(SEED), v3_party, v3_stock_reject_dup, real_patches, owned_patches)
+
+	var v3_stock_reject_missing = [v3_peddler_cards[0], v3_peddler_cards[2]]
+	_reject_peddler_stock("v3 peddler stock missing party-owner card", _rng(SEED), v3_party, v3_stock_reject_missing, real_patches, owned_patches)
+
+	var v3_stock_reject_malformed = v3_peddler_cards.duplicate(true)
+	v3_stock_reject_malformed[0] = {"id": "warden_brace", "owner": "warden", "price": -10}
+	_reject_peddler_stock("v3 peddler stock malformed price", _rng(SEED), v3_party, v3_stock_reject_malformed, real_patches, owned_patches)
+
+	var v3_stock_reject_patch = real_patches.duplicate(true)
+	v3_stock_reject_patch[0] = {"id": "stitched_badge", "price": -5}
+	_reject_peddler_stock("v3 peddler stock invalid patch", _rng(SEED), v3_party, v3_peddler_cards, v3_stock_reject_patch, owned_patches)
+
 	var oracle_rng := _rng(SEED + 10000)
 	var rng_a := _rng(SEED + 10000)
 	var rng_b := _rng(SEED + 10000)
@@ -2954,11 +3158,48 @@ func _test_peddler_stock(party: Array[String], deck: Array[String], catalog: Sta
 
 
 ## Independent sorted-pool oracle for Peddler stock (3 hero cards + 1 patch).
+func _peddler_cards_oracle(party: Array[String], card_pool: Array, rng: RandomNumberGenerator) -> Array:
+	var groups := {}
+	for hero in party:
+		groups[hero] = []
+	var card_prices := {}
+	for entry in card_pool:
+		var card_id: String = entry["id"]
+		var owner: String = entry["owner"]
+		var price: int = entry["price"]
+		if party.has(owner):
+			card_prices[card_id] = price
+			groups[owner].append(card_id)
+	var expected_cards: Array = []
+	for hero in party:
+		var ids: Array = groups[hero]
+		ids.sort()
+		var index: int = rng.randi_range(0, ids.size() - 1)
+		var chosen: String = ids[index]
+		expected_cards.append({"id": chosen, "owner": hero, "price": card_prices[chosen]})
+	return expected_cards
+
+func _reject_peddler_cards(label: String, rng_input: Variant, party_input: Variant, cards_input: Variant) -> void:
+	var state_before: int = rng_input.state if rng_input is RandomNumberGenerator else -1
+	var party_before = party_input.duplicate(true) if party_input is Array else party_input
+	var cards_before = cards_input.duplicate(true) if cards_input is Array else cards_input
+	var global_expected := -1
+	if not (rng_input is RandomNumberGenerator):
+		seed(48213)
+		global_expected = randi()
+		seed(48213)
+	var result: Dictionary = RunShopStockOffers.generate_peddler_cards(rng_input, party_input, cards_input)
+	_check(result.get("ok") == false, label + ": rejected")
+	_check(result.get("cards", ["bad"]).is_empty(), label + ": no offers published")
+	if rng_input is RandomNumberGenerator:
+		_check(rng_input.state == state_before, label + ": no RNG consumed")
+	if global_expected >= 0:
+		_check(randi() == global_expected, label + ": global RNG untouched")
+	_check(party_input == party_before, label + ": party unchanged")
+	_check(cards_input == cards_before, label + ": card candidates unchanged")
+
 func _peddler_stock_oracle(catalog: StarterCards, party: Array[String], card_pool: Array,
 		patch_pool: Array, owned: Array[String], rng: RandomNumberGenerator) -> Dictionary:
-	var warden_pool := WardenPoolCards.new()
-	var seamstress_pool := SeamstressPoolCards.new()
-	var tinker_pool := TinkerPoolCards.new()
 
 	# Build eligible card IDs per hero.
 	var card_prices := {}
