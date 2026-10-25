@@ -643,8 +643,11 @@ func _win(fixture: Dictionary) -> Array:
 				"claim publishes exact combat HP/status/positions, clearing only transient Block")
 		elif kind == "PatchStall":
 			var before := _inventory()
-			var callback := _retained(app.patch_stall_leave)
-			await _activate(app.patch_stall_leave, true)
+			var source: Dictionary = app.patch_stall_service.read_state()
+			var callback: Callable = app.patch_stall_view.intent_requested.get_connections()[0].callable.bind({
+				"action": "leave", "node_id": source.node_id, "visit_id": source.visit_id,
+				"expected_snapshot": source.snapshot})
+			await _activate(app.patch_stall_view.leave_button, true)
 			_check(_inventory() == before and app._can_choose_connected_route(),
 				"post-fight Patch Stall Leave preserves full inventory and admits onward route")
 			stale.append(callback)

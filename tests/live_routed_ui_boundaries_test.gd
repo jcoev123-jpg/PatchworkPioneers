@@ -238,7 +238,7 @@ func _complete_node(kind: String, mode: int, step: int) -> void:
 		"Campfire":
 			await _click(app.campfire_leave_button)
 		"PatchStall":
-			await _click(app.patch_stall_leave)
+			await _click(app.patch_stall_view.leave_button)
 		"SewingCircle":
 			await _click(app.sewing_leave_button)
 			_check(not app._sewing_closed and not app.sewing_view.confirm_button.disabled, "Leave previews before explicit confirmation")

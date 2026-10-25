@@ -287,7 +287,7 @@ func _leave_flow(app, kind: String) -> void:
 		_check(app.route_view == null, "Event exit requires completing its pending choice")
 		await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 	if kind == "PatchStall":
-		await _click(app.patch_stall_leave)
+		await _click(app.patch_stall_view.leave_button)
 	if kind == "SewingCircle":
 		await _click(app.sewing_leave_button)
 		_check(not app._sewing_closed and not app.sewing_view.confirm_button.disabled, "Leave previews before explicit confirmation")

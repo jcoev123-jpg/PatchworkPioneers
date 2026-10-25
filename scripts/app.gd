@@ -2766,7 +2766,10 @@ func _can_choose_connected_route() -> bool:
 		return _patch_stall_closed and _patch_stall_original == _sewing_context() \
 			and _patch_stall_visits.get(run_map.get_current_node_id(), []) == [run_map, \
 				run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()] \
-			and is_instance_valid(patch_stall_view) and not patch_stall_view.visible
+			and patch_stall_view == null and not _patch_stall_context.is_empty() \
+			and patch_stall_service != null and patch_stall_service.is_consumed() \
+			and patch_stall_visit != null and patch_stall_visit.get_state().status == "closed" \
+			and _patch_stall_snapshot() == _patch_stall_context
 	if run_map.get_node(run_map.get_current_node_id()).get("type") in ["Fight", "Elite"]:
 		return _can_leave_fight()
 	if run_map.get_node(run_map.get_current_node_id()).get("type") == "Rest":
@@ -3990,10 +3993,7 @@ func _clear_dye_vat() -> void:
 	dye_vat_panel = null
 
 
-var patch_stall_view: VBoxContainer
-var patch_stall_buttons: Array[Button] = []
-var patch_stall_heroes: OptionButton
-var patch_stall_leave: Button
+var patch_stall_view: LivePatchStallPanel
 var patch_stall_visit: RunShopVisit
 var patch_stall_service: RunPatchStallVisit
 var patch_stall_purchases: RunShopPurchases
@@ -4005,11 +4005,16 @@ var _patch_stall_visits: Dictionary = {}
 
 
 func _patch_stall_snapshot() -> Array:
+	if patch_stall_visit == null or patch_stall_purchases == null or _patch_stall_wardrobe == null \
+		or patch_stall_service == null or act_outcome == null:
+		return []
 	return [_sewing_context(), act_outcome, act_outcome.get_state(), patch_stall_visit,
 		patch_stall_visit.get_state(), patch_stall_purchases, patch_stall_purchases.get_state(),
 		patch_stall_purchases.get_stock(), patch_stall_purchases.patch_stall_choice_used(),
 		_patch_stall_wardrobe, _patch_stall_wardrobe.get_snapshot(), patch_stall_view,
-		patch_stall_buttons.duplicate(), patch_stall_heroes, patch_stall_leave,
+		patch_stall_view.offer_buttons.duplicate() if is_instance_valid(patch_stall_view) else [],
+		patch_stall_view.wearer_buttons.duplicate() if is_instance_valid(patch_stall_view) else [],
+		patch_stall_view.leave_button if is_instance_valid(patch_stall_view) else null,
 		patch_stall_service, patch_stall_service.read_state(), patch_stall_service.quote()]
 
 
@@ -4066,83 +4071,86 @@ func _choose_patch_stall_route(id: String, source: WeakRef, prior: Array[String]
 		return false
 	_clear_route_view()
 	if is_instance_valid(patch_stall_view):
+		patch_stall_view.close()
 		patch_stall_view.free()
 	patch_stall_visit = visit
 	patch_stall_service = service
 	patch_stall_purchases = purchases
 	_patch_stall_wardrobe = wardrobe
 	_patch_stall_closed = false
-	patch_stall_buttons.clear()
-	patch_stall_view = VBoxContainer.new()
+	patch_stall_view = LivePatchStallPanel.new()
 	patch_stall_view.name = "PatchStall"
-	patch_stall_view.position = Vector2(280, 170)
-	patch_stall_view.custom_minimum_size = Vector2(720, 320)
-	patch_stall_view.add_theme_constant_override("separation", 12)
+	patch_stall_view.position = Vector2(190, 45)
 	add_child(patch_stall_view)
-	var title := Label.new()
-	title.text = "Patch Stall - buy one patch, sewing included, or Leave.\nGold: %d" % session_gold
-	title.add_theme_font_size_override("font_size", 22)
-	patch_stall_view.add_child(title)
-	patch_stall_heroes = OptionButton.new()
-	patch_stall_heroes.custom_minimum_size.y = 42
-	for hero in run_heroes:
-		patch_stall_heroes.add_item(hero.id.capitalize())
-		patch_stall_heroes.set_item_metadata(patch_stall_heroes.item_count - 1, hero.id)
-	patch_stall_view.add_child(patch_stall_heroes)
-	for offer in service.quote().offers:
-		var action := Button.new()
-		action.text = "%s (%s) - %d gold%s" % [String(offer.id).capitalize(),
-			w.definitions[offer.id], offer.price, " (insufficient gold)" if session_gold < offer.price else ""]
-		action.custom_minimum_size.y = 48
-		action.disabled = session_gold < offer.price
-		action.set_meta("patch_id", offer.id)
-		patch_stall_view.add_child(action)
-		patch_stall_buttons.append(action)
-		action.pressed.connect(_patch_stall_action.bind(action, patch_stall_view, visit))
-	patch_stall_leave = Button.new()
-	patch_stall_leave.text = "Leave"
-	patch_stall_leave.custom_minimum_size.y = 48
-	patch_stall_view.add_child(patch_stall_leave)
-	patch_stall_leave.pressed.connect(_patch_stall_action.bind(patch_stall_leave, patch_stall_view, visit))
-	var controls: Array[Control] = [patch_stall_heroes]
-	for action in patch_stall_buttons:
-		if not action.disabled:
-			controls.append(action)
-	controls.append(patch_stall_leave)
-	for index in range(controls.size()):
-		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
-		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
+	patch_stall_view.bind(service)
+	patch_stall_view.intent_requested.connect(_patch_stall_action.bind(
+		weakref(patch_stall_view), service, service.read_state(), service.quote()))
 	_patch_stall_context = _patch_stall_snapshot()
-	controls[0].grab_focus()
 	return true
 
 
-func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
-	if _patch_stall_closed or _patch_stall_context.is_empty() or visit == null or visit != patch_stall_visit \
-		or patch_stall_service == null or patch_stall_service.is_consumed() \
-		or not is_instance_valid(view) or view != patch_stall_view or view.get_parent() != self \
-		or not view.is_visible_in_tree() or not is_instance_valid(button) \
-		or button not in patch_stall_buttons + [patch_stall_leave] or button.get_parent() != view \
-		or button.disabled or not button.is_visible_in_tree() or _patch_stall_snapshot() != _patch_stall_context \
+func _patch_stall_action(intent: Dictionary, source: WeakRef, service: RunPatchStallVisit,
+		bound: Dictionary, quoted: Dictionary) -> void:
+	_try_patch_stall_action(intent, source, service, bound, quoted)
+	# A refused optimistic submission must remain retryable after its authority
+	# is restored. Rebinding also retires that rejected generation's callbacks.
+	if source != null and is_instance_valid(patch_stall_view) and source.get_ref() == patch_stall_view \
+		and patch_stall_view._submitted and service == patch_stall_view._visit \
+		and service != null and not service.is_consumed():
+		patch_stall_view.bind(service)
+
+
+func _try_patch_stall_action(intent: Dictionary, source: WeakRef, service: RunPatchStallVisit,
+		bound: Dictionary, quoted: Dictionary) -> void:
+	if _patch_stall_closed or _patch_stall_context.is_empty() or source == null \
+		or not is_instance_valid(patch_stall_view) or source.get_ref() != patch_stall_view \
+		or service == null or service != patch_stall_service or service.is_consumed() \
+		or patch_stall_view.get_parent() != self or not patch_stall_view.is_visible_in_tree() \
+		or _patch_stall_snapshot() != _patch_stall_context \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "PatchStall":
 		return
-	var service_state := patch_stall_service.read_state()
+	var view := patch_stall_view
+	var service_state := service.read_state()
 	var node_id := run_map.get_current_node_id()
-	if service_state.node_id != node_id or service_state.status != "available":
+	if service_state != bound or service.quote() != quoted or service_state.node_id != node_id \
+		or service_state.status != "available" or view._visit != service \
+		or view._source != bound or view._quoted != quoted or not view._submitted \
+		or not view._connections.is_empty() or not view._valid_receipts(bound, quoted, view._slots):
 		return
-	if button != patch_stall_leave:
-		if not is_instance_valid(patch_stall_heroes) or patch_stall_heroes.get_parent() != view \
-			or patch_stall_heroes.disabled or not patch_stall_heroes.is_visible_in_tree() \
-			or patch_stall_heroes.item_count != 3:
+	var keys := intent.keys()
+	keys.sort()
+	var required := ["action", "expected_snapshot", "node_id", "visit_id"]
+	if intent.get("action") == "buy_patch":
+		required.append_array(["patch_id", "wearer_id"])
+	elif intent.get("action") != "leave":
+		return
+	required.sort()
+	if keys != required or intent.node_id != node_id or intent.visit_id != bound.visit_id \
+		or intent.expected_snapshot != bound.snapshot or view._wearer_index < 0 or view._wearer_index >= 3:
+		return
+	# Submission disables the whole panel synchronously before emitting. Recheck
+	# every physical control and its full source caption at this controller boundary.
+	for i in range(3):
+		var pin := view.wearer_buttons[i]
+		var action := view.offer_buttons[i]
+		if not view._attached(pin) or not pin.disabled or pin.text != view._wearer_caption(i) \
+			or pin.get_meta("wearer_id", "") != bound.snapshot.party_ids[i] \
+			or not view._attached(action) or not action.disabled or action.text != view._offer_caption(i) \
+			or action.get_meta("patch_id", "") != quoted.offers[i].id:
 			return
-		var row := patch_stall_heroes.selected
-		if row < 0 or row >= run_heroes.size() \
-			or patch_stall_heroes.get_item_metadata(row) != run_heroes[row].id \
-			or patch_stall_heroes.get_item_text(row) != String(run_heroes[row].id).capitalize():
+	if not view._attached(view.leave_button) or not view.leave_button.disabled \
+		or view.leave_button.text != "Leave  \u00b7  FREE" or view.wallet_label.text != view._wallet_caption():
+		return
+	var visit := patch_stall_visit
+	if intent.action == "buy_patch":
+		if not intent.patch_id is String or not intent.wearer_id is String \
+			or intent.wearer_id != bound.snapshot.party_ids[view._wearer_index]:
 			return
-		var index := patch_stall_buttons.find(button)
-		var offer: Dictionary = patch_stall_service.quote().offers[index]
-		if button.get_meta("patch_id", "") != offer.id:
+		var offer: Dictionary = {}
+		for listing in quoted.offers:
+			if listing.id == intent.patch_id:
+				offer = listing
+		if offer.is_empty() or offer.sold or session_gold < offer.price:
 			return
 		var receipt := patch_stall_service.preview_purchase(offer.id, service_state.visit_id, node_id, service_state.snapshot)
 		if receipt.is_empty():
@@ -4152,7 +4160,7 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 		if carry == null or not carry.can_bind_wardrobe(_patch_stall_wardrobe, carry.torn, w):
 			return
 		var result := RunShopPatchSewing.purchase_and_sew(patch_stall_purchases, visit, _patch_stall_wardrobe,
-			run_map.get_current_node_id(), offer.id, run_heroes[row].id, w.definitions.get(offer.id),
+			run_map.get_current_node_id(), offer.id, intent.wearer_id, w.definitions.get(offer.id),
 			"patch_stall:%s" % run_map.get_current_node_id(), patch_stall_purchases.get_state(),
 			patch_stall_purchases.get_stock(), visit.get_state(), w)
 		if not result.ok:
@@ -4172,7 +4180,12 @@ func _patch_stall_action(button, view, visit: RunShopVisit) -> void:
 	_patch_stall_closed = true
 	_patch_stall_original = _sewing_context()
 	_patch_stall_visits[run_map.get_current_node_id()] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
-	view.hide()
+	for connection in view.intent_requested.get_connections():
+		view.intent_requested.disconnect(connection.callable)
+	view.close()
+	view.queue_free()
+	patch_stall_view = null
+	_patch_stall_context = _patch_stall_snapshot()
 	_present_connected_route(weakref(run_map))
 
 
@@ -6449,15 +6462,13 @@ func _return_to_title() -> void:
 	campfire_visit = null
 	_campfire_original.clear()
 	if is_instance_valid(patch_stall_view):
+		patch_stall_view.close()
 		patch_stall_view.free()
 	patch_stall_view = null
 	patch_stall_visit = null
 	patch_stall_service = null
 	patch_stall_purchases = null
 	_patch_stall_wardrobe = null
-	patch_stall_buttons.clear()
-	patch_stall_heroes = null
-	patch_stall_leave = null
 	_patch_stall_original.clear()
 	_patch_stall_context.clear()
 	_patch_stall_visits.clear()

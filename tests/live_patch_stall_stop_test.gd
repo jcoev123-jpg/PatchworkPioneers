@@ -143,14 +143,28 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		and service_state.snapshot == {"party_ids": ids, "deck_ids": app.run_deck,
 			"owned_trinkets": app.run_trinkets, "gold": app.session_gold}, "service binds confirmed node and exact live ledger")
 	_check(service.quote() == {"offers": expected, "decisions": ["buy_patch", "leave"]}, "service authentic quote matches independent seeded oracle")
+	_check(not app._can_choose_connected_route(), "open visit cannot advance before a physical decision")
+	var panel: LivePatchStallPanel = app.patch_stall_view
+	_check(panel.position == Vector2(190, 45) and panel.size == Vector2(900, 630)
+		and panel._visit == service and panel._source == service_state and panel._quoted == service.quote(),
+		"one authentic centered sewn panel binds exact service after node commit")
+	var mounted: Array = []
+	for child in app.get_children():
+		if child.name == "PatchStall":
+			_check(child is LivePatchStallPanel, "mounted Patch Stall node is an authentic sewn panel")
+			mounted.append(child)
+	_check(mounted.size() == 1, "exactly one mounted Patch Stall panel")
 	for index in range(3):
 		var offer: Dictionary = expected[index]
-		_check(app.patch_stall_buttons[index].text == "%s (%s) - %d gold%s" % [String(offer.id).capitalize(),
-			power_ids[offer.id], offer.price,
-			" (insufficient gold)" if app.session_gold < offer.price else ""], "visible choice displays exact authentic price and patch")
-	_check(app.patch_stall_buttons.size() == 3 and app.patch_stall_heroes.item_count == 3
-		and app.patch_stall_leave.text == "Leave" and not is_instance_valid(app.shop_view), "only patch choices, three recipients and Leave")
-	var controls: Array = [app.patch_stall_heroes] + app.patch_stall_buttons + [app.patch_stall_leave]
+		var shortfall: int = maxi(0, offer.price - app.session_gold)
+		var cost := "%d gold" % offer.price if shortfall == 0 else "%d gold  \u00b7  short %d" % [offer.price, shortfall]
+		var caption := "%s  [%s]    \u2715 %s    \u00b7    %s" % [String(offer.id).replace("_", " ").capitalize(),
+			offer.id, power_ids[offer.id], cost]
+		_check(panel.offer_buttons[index].text == caption, "visible choice displays exact authentic price and patch")
+	_check(panel.offer_buttons.size() == 3 and panel.wearer_buttons.size() == 3
+		and panel.leave_button.text == "Leave  \u00b7  FREE" and not is_instance_valid(app.shop_view),
+		"only patch choices, three recipients and Leave")
+	var controls: Array = panel.wearer_buttons + panel.offer_buttons + [panel.leave_button]
 	for control in controls:
 		_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), "visible controls fit viewport")
 	var visited: Array = []
@@ -160,10 +174,40 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	for control in controls:
 		if not control.disabled:
 			_check(visited.has(control), "Tab reaches every enabled action and recipient selector")
-	var action: Button = app.patch_stall_buttons[1]
-	var callback: Callable = action.pressed.get_connections()[0].callable
+	var action: Button = app.patch_stall_view.offer_buttons[1]
+	var callback: Callable = func():
+		panel._connections[action].call()
+	var handler: Callable = panel.intent_requested.get_connections()[0].callable
+	var proposal := {"action": "buy_patch", "patch_id": expected[1].id, "wearer_id": ids[0],
+		"node_id": fixture.id, "visit_id": service_state.visit_id, "expected_snapshot": service_state.snapshot}
+	_stall_refuse(handler.bind(proposal), "direct intent without panel submission")
+	# Exact-key and full source authentication at the real app listener, even
+	# when a hostile caller imitates the panel's submitted control state.
+	for key in ["action", "patch_id", "wearer_id", "node_id", "visit_id", "expected_snapshot", "extra"]:
+		var forged := proposal.duplicate(true)
+		match key:
+			"action": forged.action = "buy"
+			"patch_id": forged.patch_id = "forged"
+			"wearer_id": forged.wearer_id = "forged"
+			"node_id": forged.node_id = "foreign"
+			"visit_id": forged.visit_id = "foreign"
+			"expected_snapshot": forged.expected_snapshot.gold += 1
+			"extra": forged.extra = true
+
+		panel._submitted = true
+		for control in controls:
+			control.disabled = true
+		panel._retire_callbacks()
+		_stall_refuse(handler.bind(forged), "corrupted intent " + key)
+	panel.bind(service)
+
 	var original: Dictionary = app._sewing_context()
-	var foreign := RunPatchStallVisit.new(fixture.id, ids, app.run_deck, app.run_trinkets, app.session_gold, expected)
+	var prepared: Array = []
+	for offer in expected:
+		prepared.append({"id": offer.id, "price": offer.price})
+	var foreign := RunPatchStallVisit.new(fixture.id, ids, app.run_deck, app.run_trinkets, app.session_gold, prepared)
+	_check(foreign.is_valid() and foreign.read_state() == service_state and foreign.quote() == service.quote(),
+		"foreign identity fixture has genuinely identical valid source and quote")
 	app.patch_stall_service = foreign
 	_stall_refuse(callback, "foreign service with identical quote")
 	app.patch_stall_service = service
@@ -188,9 +232,9 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	app.patch_stall_view.hide()
 	_stall_refuse(callback, "hidden view")
 	app.patch_stall_view.show()
-	app.patch_stall_heroes.set_item_metadata(0, "forged")
+	panel.wearer_buttons[0].set_meta("wearer_id", "forged")
 	_stall_refuse(callback, "forged recipient")
-	app.patch_stall_heroes.set_item_metadata(0, app.run_heroes[0].id)
+	panel.wearer_buttons[0].set_meta("wearer_id", app.run_heroes[0].id)
 	var metadata: Variant = action.get_meta("patch_id")
 	action.set_meta("patch_id", "forged")
 	_stall_refuse(callback, "forged patch")
@@ -200,7 +244,7 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	_stall_refuse(callback, "stock drift")
 	app.patch_stall_purchases._stock = stock.duplicate(true)
 	if not funded:
-		_check(app.patch_stall_buttons.all(func(b): return b.disabled), "broke visit disables all purchases")
+		_check(app.patch_stall_view.offer_buttons.all(func(b): return b.disabled), "broke visit disables all purchases")
 		_stall_refuse(callback, "broke purchase")
 	else:
 		action.disabled = true
@@ -208,32 +252,33 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		action.disabled = false
 	var fake := Button.new()
 	app.patch_stall_view.add_child(fake)
-	_stall_refuse(app._patch_stall_action.bind(fake, app.patch_stall_view, app.patch_stall_visit), "forged control")
+	_stall_refuse(app._patch_stall_action.bind(proposal, weakref(fake), service, service_state, service.quote()), "forged control")
 	fake.free()
 	_check(app._sewing_context() == original, "negative fixtures restore exact source")
-	# Keyboard recipient selection drives the real popup; mouse scenarios set its chosen row.
-	app.patch_stall_heroes.grab_focus()
-	await _key(KEY_SPACE)
-	await _frames()
+	# Both input modes choose a real sewn wearer pin.
 	if keyboard:
-		for i in range(wearer):
-			await _key(KEY_DOWN)
-		await _key(KEY_ENTER)
+		panel.wearer_buttons[wearer].grab_focus()
+		await _key(KEY_SPACE)
 	else:
-		var popup: PopupMenu = app.patch_stall_heroes.get_popup()
-		popup.hide()
-		app.patch_stall_heroes.select(wearer)
+		await _click(panel.wearer_buttons[wearer])
 	await _frames()
-	_check(app.patch_stall_heroes.selected == wearer, "chosen wearer selector")
-	var chosen: Button = action if buy else app.patch_stall_leave
-	var dead: Callable = chosen.pressed.get_connections()[0].callable
+	_check(panel._wearer_index == wearer and panel.wearer_buttons[wearer].get_meta("wearer_id") == ids[wearer],
+		"chosen physical wearer pin")
+	var chosen: Button = action if buy else app.patch_stall_view.leave_button
+	var final_intent: Dictionary = proposal.duplicate(true) if buy else {
+		"action": "leave", "node_id": fixture.id, "visit_id": service_state.visit_id,
+		"expected_snapshot": service_state.snapshot}
+	if buy:
+		final_intent.wearer_id = ids[wearer]
+	var dead: Callable = handler.bind(final_intent)
+	var retired: WeakRef = weakref(panel)
 	if keyboard:
 		chosen.grab_focus()
 		await _key(KEY_SPACE)
 	else:
 		await _click(chosen)
 	await _frames()
-	_check(app._patch_stall_closed and not app.patch_stall_view.visible and app._can_choose_connected_route(), "one decision closes visit and admits onward play")
+	_check(app._patch_stall_closed and app.patch_stall_view == null and retired.get_ref() == null and app._can_choose_connected_route(), "one decision closes visit and admits onward play")
 	_check(service.is_consumed() and service.read_state().snapshot == service_state.snapshot,
 		"physical decision consumes exactly the bound service without replacing its source")
 	_check(app.run_rng.state == original.rng_state and app.run_deck == original.deck
@@ -260,7 +305,19 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 	else:
 		_check(app._sewing_context() == original and not app.patch_stall_purchases.patch_stall_choice_used(), "Leave is entirely inert")
 	_stall_refuse(dead, "duplicate action")
-	_stall_refuse(callback, "other choice after closure")
+	_stall_refuse(handler.bind(proposal), "other choice after closure")
+	app.patch_stall_service = foreign
+	_check(not app._can_choose_connected_route(), "foreign open service cannot authenticate freed-panel route")
+	var foreign_source := foreign.read_state()
+	_check(foreign.leave(foreign_source.visit_id, foreign_source.node_id, foreign_source.snapshot).ok,
+		"foreign service is genuinely consumed for closed identity rejection")
+	_check(not app._can_choose_connected_route(), "foreign consumed service cannot authenticate freed-panel route")
+	app.patch_stall_service = service
+	var witness: Array = app._patch_stall_visits[fixture.id]
+	app._patch_stall_visits.erase(fixture.id)
+	_check(not app._can_choose_connected_route(), "freed panel requires authentic route witness")
+	app._patch_stall_visits[fixture.id] = witness
+	_check(app._can_choose_connected_route(), "restored authentic closed service and witness admit onward route")
 	var result: Array = [app.run_map.get_floors(), app.run_map.get_route(), app.run_rng.state,
 		app.run_trinkets.duplicate(), app.session_gold, app.run_scraps, app.run_heroes.duplicate(true), expected]
 	var next := _button(fixture.next)
@@ -297,7 +354,50 @@ func _run() -> void:
 	var connected := await _stall_scenario(false, false, false, 0, true)
 	var replay := await _stall_scenario(true, false, false, 0, true)
 	_check(not connected.is_empty() and connected == replay, "post-victory connected map and atlas entry replay")
+	await _open_title_teardown()
 	_finish()
+
+
+func _open_title_teardown() -> void:
+	fixture = _fixture()
+	_check(not fixture.is_empty(), "open-title teardown has a genuine seeded route")
+	if fixture.is_empty():
+		return
+	app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await _frames()
+	app.run_seed = fixture.seed
+	await _click(app.start_button)
+	await _click(_button(fixture.id))
+	var panel: LivePatchStallPanel = app.patch_stall_view
+	_check(is_instance_valid(panel) and panel.is_visible_in_tree(), "title teardown starts with open mounted panel")
+	if not is_instance_valid(panel):
+		app.free()
+		return
+	var service: RunPatchStallVisit = app.patch_stall_service
+	var source := service.read_state()
+	var handler: Callable = panel.intent_requested.get_connections()[0].callable.bind({
+		"action": "leave", "node_id": source.node_id, "visit_id": source.visit_id,
+		"expected_snapshot": source.snapshot})
+	var retired: WeakRef = weakref(panel)
+	app._return_to_title()
+	await _frames()
+	_check(retired.get_ref() == null and app.patch_stall_view == null and app.patch_stall_service == null
+		and app._patch_stall_context.is_empty() and app._patch_stall_visits.is_empty(),
+		"title frees open panel and clears all bindings and witnesses")
+	handler.call()
+	_check(app.run_map == null and service.read_state() == source, "retired open intent cannot consume visit at title")
+	await _click(app.start_button)
+	await _frames()
+	var before: Dictionary = app._sewing_context()
+	_check(app.run_map != null and not before.is_empty(), "real new run exists before stale replay")
+	handler.call()
+	_check(app._sewing_context() == before and service.read_state() == source
+		and app.patch_stall_view == null and app.patch_stall_service == null,
+		"old open binding cannot affect new run or revive old visit")
+	app._return_to_title()
+	app.free()
+	await _frames()
 
 
 func _finish() -> void:
