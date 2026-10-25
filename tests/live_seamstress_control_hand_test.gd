@@ -693,7 +693,13 @@ func _tier_cases() -> void:
 		"the live starter roster classifies as two normal slots")
 
 	var elite_records := _catalog_records("res://data/enemies/m04_elites.json")
-	var elite := CombatEnemies.new(elite_records)
+	# The elite catalog gains v3 records over time while a roster holds at most
+	# three, so bind the two named originals instead of the whole catalog.
+	var named_elites: Array = elite_records.filter(func(record: Dictionary) -> bool:
+		return record["id"] in ["needle_marshal", "spool_hexer"])
+	_check(named_elites.size() == 2,
+		"both named authored elite records are present for the tier check")
+	var elite := CombatEnemies.new(named_elites)
 	_check(elite.is_valid() and not presenter.enemy_tier_map(elite).is_empty(),
 		"the authored elite catalog classifies")
 	var elite_tiers: Dictionary = presenter.enemy_tier_map(elite)
@@ -716,7 +722,7 @@ func _tier_cases() -> void:
 	_check(presenter.enemy_tier_map(unknown).is_empty(),
 		"an unknown original enemy ID binds no gauge")
 	var mixed_records: Array = []
-	mixed_records.append(elite_records[0])
+	mixed_records.append(named_elites[0])
 	mixed_records.append(run_records[0])
 	var mixed := CombatEnemies.new(mixed_records)
 	_check(presenter.enemy_tier_map(mixed) == {1: "elite", 2: "normal"},

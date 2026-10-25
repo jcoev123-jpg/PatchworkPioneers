@@ -12,6 +12,44 @@ const HEXER := "res://data/encounters/spool_hexer_elite.json"
 const ROSTERS := {
 	"needle_marshal_elite": ["needle_marshal", "ragling_guard"],
 	"spool_hexer_elite": ["spool_hexer", "spool_stalker"]}
+## V3-2 appends two harder look-driven elites. Their authored alternatives are
+## checked by ID only, never by catalog total or position.
+const V3_ELITES := {
+	"scissor_bailiff": {
+		"name": "Scissor Bailiff", "max_hp": 36,
+		"art_path": "res://assets/paper/enemies/scissor_bailiff.png",
+		"target": "front",
+		"actions": [
+			{"type": "snip_block", "amount": 0, "weight": 2},
+			{"type": "debuff", "amount": 2, "status": "bleed", "weight": 2},
+			{"type": "attack", "amount": 9, "weight": 2}]},
+	"zipper_hauler": {
+		"name": "Zipper Hauler", "max_hp": 38,
+		"art_path": "res://assets/paper/enemies/zipper_hauler.png",
+		"target": "front",
+		"actions": [
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 2},
+			{"type": "attack", "amount": 8, "weight": 2}]}}
+## The two earlier Elite records must survive the append unchanged.
+const LEGACY_ELITES := {
+	"needle_marshal": {
+		"name": "Needle Marshal", "max_hp": 28,
+		"art_path": "res://assets/paper/enemies/needle_marshal.png",
+		"target": "front",
+		"actions": [
+			{"type": "attack", "amount": 5, "weight": 2},
+			{"type": "attack", "amount": 4, "weight": 2},
+			{"type": "buff", "amount": 3, "weight": 1},
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 1}]},
+	"spool_hexer": {
+		"name": "Spool Hexer", "max_hp": 24,
+		"art_path": "res://assets/paper/enemies/spool_hexer.png",
+		"target": "random",
+		"actions": [
+			{"type": "attack", "amount": 45, "weight": 3},
+			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]}}
 const PATTERNS := {
 	"needle_marshal_elite": [
 		{"enemy_position":1,"pattern":[
@@ -37,6 +75,7 @@ func _initialize() -> void:
 	_test_cycles()
 	_test_selection()
 	_test_live_weighted_elites()
+	_test_v3_elites()
 	_test_rejections()
 	for failure in failures:
 		printerr(failure)
@@ -617,3 +656,329 @@ func _test_live_weighted_elites() -> void:
 			else:
 				_check(replay_history == trace,
 					"identical real typed Elite entry, bound weighted attack, phase and RNG replay " + encounter_id)
+
+
+## One authored Elite record checked by ID against its independent expectation:
+## identity, HP, art, target policy and every executable weighted alternative.
+func _authored_elite(records: Array, id: String, expected: Dictionary) -> Dictionary:
+	var record := _record(records, id)
+	if record.is_empty():
+		return {}
+	_check(record.get("id") == id and record.get("name") == expected["name"]
+		and record.get("max_hp") is int and record.get("max_hp") == expected["max_hp"]
+		and record.get("art_path") == expected["art_path"],
+		"exact authored identity, HP and art " + id)
+	var spec: Variant = record.get("intent")
+	_check(spec is Dictionary and spec.size() == 2
+		and spec.get("target") == expected["target"], "exact authored target policy " + id)
+	var actions: Array = spec.get("actions") if spec is Dictionary else []
+	var normalized: Array = []
+	for raw in actions:
+		if not raw is Dictionary:
+			_check(false, "authored alternative is a dictionary " + id)
+			continue
+		_check(not raw.has("target_position") and not raw.has("enemy_position")
+			and not raw.has("target_policy"),
+			"authored alternative carries no target or slot field " + id + " " + str(raw))
+		var weighted := CombatEnemyIntents.weighted_action(raw)
+		var action: Dictionary = weighted.get("action", {}).duplicate(true)
+		action["weight"] = weighted.get("weight", 0)
+		normalized.append(action)
+	_check(normalized == expected["actions"],
+		"exact executable weighted alternatives " + id + " " + str(normalized))
+	return record
+
+
+## A genuinely living three-hero party and the new elite alone in enemy slot 1.
+func _new_elite_fixture(record: Dictionary) -> Dictionary:
+	var party := _party()
+	var enemies := CombatEnemies.new([record])
+	var living := 0
+	for hero in party.get_heroes():
+		if hero.get("hp", 0) > 0:
+			living += 1
+	_check(party.is_valid() and living == 3, "three living occupied hero slots "
+		+ str(record.get("id")))
+	_check(enemies.is_valid() and enemies.get_enemies().size() == 1
+		and enemies.get_enemy(1).get("id") == record.get("id")
+		and enemies.get_enemy(1).get("hp") == record.get("max_hp")
+		and enemies.get_enemy(1).get("position") == 1,
+		"new authored elite alone in enemy slot 1 " + str(record.get("id")))
+	return {"party": party, "enemies": enemies}
+
+
+## The event CombatEnemyPhase publishes for one applied announced beat.
+func _phase_event(action: Dictionary) -> Dictionary:
+	var event := {"type": action["type"], "enemy_position": action["enemy_position"],
+		"applied": true}
+	for field in ["target_position", "status", "direction"]:
+		if action.has(field):
+			event[field] = action[field]
+	return event
+
+
+## Seeded bound announcements for one authored elite over several turns.
+func _announcements(record: Dictionary, seed_value: int, turns: int) -> Array:
+	var fixture := _new_elite_fixture(record)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	# The legacy schedule is only the binding fixture; the announcement comes
+	# from the authored weighted intent of the real roster record.
+	var scheduler := CombatEnemyIntents.new([
+		{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+	if not scheduler.is_valid() or not scheduler.bind_battle(
+			fixture["enemies"], fixture["party"], rng):
+		return []
+	var trace: Array = []
+	for turn in range(turns):
+		trace.append(scheduler.get_intents())
+		if not scheduler.advance_turn():
+			return []
+	return trace
+
+
+func _assert_elite_announcements(id: String, record: Dictionary) -> void:
+	var bodies: Array = []
+	for authored in V3_ELITES[id]["actions"]:
+		var body: Dictionary = authored.duplicate(true)
+		body.erase("weight")
+		bodies.append(body)
+	var first := _announcements(record, 41771, 8)
+	var second := _announcements(record, 41771, 8)
+	_check(first.size() == 8 and second == first,
+		"identical seeded announcements from a fresh bound instance " + id)
+	var observed := 0
+	for turn in first:
+		_check(turn.size() == 1 and turn[0].get("enemy_position") == 1,
+			"one announcement for the single authored slot " + id)
+		if turn.size() != 1:
+			continue
+		var announced: Dictionary = turn[0]
+		var target = announced.get("target_position")
+		var body := announced.duplicate(true)
+		body.erase("enemy_position")
+		body.erase("target_position")
+		_check(target is int and target >= 1 and target <= CombatParty.PARTY_SIZE,
+			"front policy picks one living hero slot " + id)
+		_check(body in bodies,
+			"announcement is one authored alternative only " + id + " " + str(announced))
+		var executable: Dictionary = announced.duplicate(true)
+		executable.erase("enemy_position")
+		_check(CombatEnemyIntents.valid_action(executable),
+			"announcement is an executable action " + id + " " + str(announced))
+		observed += 1
+	_check(observed == 8, "all seeded announcements observed " + id)
+
+
+func _test_scissor_beats(record: Dictionary) -> void:
+	var fixture := _new_elite_fixture(record)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var snip := {"type": "snip_block", "enemy_position": 1, "amount": 0,
+		"target_position": 1}
+	_check(party.gain_block(1, 5) and party.get_hero(1).get("block") == 5
+		and party.get_hero(1).get("hp") > 0,
+		"snip precondition: a living, genuinely blocked front hero")
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	var input := [snip.duplicate(true)]
+	var input_before := input.duplicate(true)
+	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	_check(result == {"ok": true, "events": [_phase_event(snip)]},
+		"announced Scissor snip resolves as one applied beat")
+	var after := party.get_hero(1)
+	_check(after.get("block") == 0 and after.get("hp") == heroes_before[0]["hp"],
+		"Scissor snip takes the hero's Block to exactly 0 without HP damage")
+	_check(party.get_hero(2) == heroes_before[1] and party.get_hero(3) == heroes_before[2]
+		and enemies.get_enemies() == foes_before and input == input_before,
+		"snip leaves other heroes, the enemy roster and the input untouched")
+
+	fixture = _new_elite_fixture(record)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	var bleed := {"type": "debuff", "enemy_position": 1, "amount": 2,
+		"status": "bleed", "target_position": 2}
+	heroes_before = party.get_heroes()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [bleed.duplicate(true)])
+	after = party.get_hero(2)
+	_check(result == {"ok": true, "events": [_phase_event(bleed)]}
+		and after.get("statuses") == {"bleed": 2}
+		and after.get("hp") == heroes_before[1]["hp"]
+		and after.get("block") == heroes_before[1]["block"]
+		and party.get_hero(1).get("statuses", {}).is_empty()
+		and party.get_hero(3).get("statuses", {}).is_empty(),
+		"authored Bleed 2 lands twice on exactly the chosen living hero")
+
+	fixture = _new_elite_fixture(record)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	party._heroes[0]["statuses"] = {"bleed": 1}
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [
+		{"type": "debuff", "enemy_position": 1, "amount": 2,
+		"status": "bleed", "target_position": 1}])
+	_check(result.get("ok", false) and party.get_hero(1).get("statuses") == {"bleed": 3},
+		"authored Bleed 2 adds two to an existing hero counter")
+
+	fixture = _new_elite_fixture(record)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	var strike := {"type": "attack", "enemy_position": 1, "amount": 9,
+		"target_position": 3}
+	_check(party.gain_block(3, 4) and party.get_hero(3).get("hp") == 26,
+		"attack precondition: rear Tinker holds four Block and 26 HP")
+	foes_before = enemies.get_enemies()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [strike.duplicate(true)])
+	after = party.get_hero(3)
+	_check(result == {"ok": true, "events": [_phase_event(strike)]}
+		and after.get("block") == 0 and after.get("hp") == 21
+		and enemies.get_enemies() == foes_before,
+		"authored Scissor attack 9 absorbs four Block then deals exactly five HP")
+
+
+func _test_zipper_beats(record: Dictionary) -> void:
+	var fixture := _new_elite_fixture(record)
+	var party: CombatParty = fixture["party"]
+	var enemies: CombatEnemies = fixture["enemies"]
+	var shove := {"type": "shove", "enemy_position": 1, "amount": 0,
+		"target_position": 1, "direction": 1}
+	_check(party.apply_damage(1, 4) and party.gain_block(1, 2)
+		and party.apply_damage(2, 3) and party.gain_block(2, 1),
+		"shove precondition: both front heroes live with distinct HP and Block")
+	party._heroes[1]["statuses"] = {"exposed": 1}
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	var input := [shove.duplicate(true)]
+	var input_before := input.duplicate(true)
+	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	_check(result == {"ok": true, "events": [_phase_event(shove)]},
+		"announced Zipper shove +1 resolves as one applied beat")
+	var expected := heroes_before.duplicate(true)
+	expected[0] = heroes_before[1].duplicate(true)
+	expected[1] = heroes_before[0].duplicate(true)
+	expected[0]["position"] = 1
+	expected[1]["position"] = 2
+	_check(party.get_heroes() == expected,
+		"shove +1 exchanges the living heroes in positions 1/2 with every other field kept")
+	_check(party.get_hero(1).get("id") == "seamstress"
+		and party.get_hero(2).get("id") == "warden"
+		and party.get_hero(1).get("hp") == heroes_before[1]["hp"]
+		and party.get_hero(2).get("hp") == heroes_before[0]["hp"]
+		and party.get_hero(1).get("block") == heroes_before[1]["block"]
+		and party.get_hero(2).get("block") == heroes_before[0]["block"],
+		"swapped heroes keep their current HP, Block and statuses")
+	_check(enemies.get_enemies() == foes_before and input == input_before,
+		"a shove is not a damaging move and leaves the authored input untouched")
+
+	fixture = _new_elite_fixture(record)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	var expose := {"type": "debuff", "enemy_position": 1, "amount": 1,
+		"status": "exposed", "target_position": 3}
+	heroes_before = party.get_heroes()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [expose.duplicate(true)])
+	_check(result == {"ok": true, "events": [_phase_event(expose)]}
+		and party.get_hero(3).get("statuses") == {"exposed": 1}
+		and party.get_hero(3).get("hp") == heroes_before[2]["hp"]
+		and party.get_hero(1).get("statuses", {}).is_empty()
+		and party.get_hero(2).get("statuses", {}).is_empty(),
+		"authored Exposed 1 lands on exactly the chosen living hero")
+
+	fixture = _new_elite_fixture(record)
+	party = fixture["party"]
+	enemies = fixture["enemies"]
+	var strike := {"type": "attack", "enemy_position": 1, "amount": 8,
+		"target_position": 2}
+	_check(party.gain_block(2, 3) and party.get_hero(2).get("hp") == 30,
+		"attack precondition: middle Seamstress holds three Block and 30 HP")
+	foes_before = enemies.get_enemies()
+	result = CombatEnemyPhase.new().execute_phase(party, enemies, [strike.duplicate(true)])
+	var after := party.get_hero(2)
+	_check(result == {"ok": true, "events": [_phase_event(strike)]}
+		and after.get("block") == 0 and after.get("hp") == 25
+		and enemies.get_enemies() == foes_before,
+		"authored Zipper attack 8 absorbs three Block then deals exactly five HP")
+
+
+## A rejected beat must leave both rosters and the announced input byte-identical.
+func _reject_beat(label: String, party: CombatParty, enemies: CombatEnemies,
+		action: Dictionary) -> void:
+	var heroes_before := party.get_heroes()
+	var foes_before := enemies.get_enemies()
+	var input := [action.duplicate(true)]
+	var input_before := input.duplicate(true)
+	var result: Dictionary = CombatEnemyPhase.new().execute_phase(party, enemies, input)
+	_check(result == {"ok": false, "events": []}, "illegal announced beat fails closed " + label)
+	_check(party.get_heroes() == heroes_before and enemies.get_enemies() == foes_before
+		and input == input_before,
+		"rejected beat mutates no hero, enemy or input " + label)
+
+
+func _test_v3_phase_rejections(records: Dictionary) -> void:
+	for id in records:
+		var record: Dictionary = records[id]
+		var fixture := _new_elite_fixture(record)
+		var party: CombatParty = fixture["party"]
+		_check(party.gain_block(1, 5) and party.gain_block(3, 4),
+			"rejection precondition: real hero Block must survive " + id)
+		_reject_beat("out-of-range snip target " + id, party, fixture["enemies"],
+			{"type": "snip_block", "enemy_position": 1, "amount": 0, "target_position": 0})
+
+		fixture = _new_elite_fixture(record)
+		party = fixture["party"]
+		_check(party.gain_block(1, 5) and party.apply_damage(2, 30) and party.is_downed(2),
+			"rejection precondition: the middle hero is genuinely downed " + id)
+		_reject_beat("Bleed on a downed hero " + id, party, fixture["enemies"],
+			{"type": "debuff", "enemy_position": 1, "amount": 2,
+			"status": "bleed", "target_position": 2})
+		_reject_beat("Exposed on a downed hero " + id, party, fixture["enemies"],
+			{"type": "debuff", "enemy_position": 1, "amount": 1,
+			"status": "exposed", "target_position": 2})
+
+		fixture = _new_elite_fixture(record)
+		party = fixture["party"]
+		_check(party.gain_block(3, 4), "rejection precondition: rear Block must survive " + id)
+		_reject_beat("shove past the back slot " + id, party, fixture["enemies"],
+			{"type": "shove", "enemy_position": 1, "amount": 0,
+			"target_position": 3, "direction": 1})
+
+		fixture = _new_elite_fixture(record)
+		party = fixture["party"]
+		_check(party.gain_block(1, 4) and party.apply_damage(2, 30) and party.is_downed(2),
+			"rejection precondition: the shove partner is genuinely downed " + id)
+		_reject_beat("shove into a downed neighbour " + id, party, fixture["enemies"],
+			{"type": "shove", "enemy_position": 1, "amount": 0,
+			"target_position": 1, "direction": 1})
+
+		fixture = _new_elite_fixture(record)
+		_reject_beat("announced source outside the roster " + id,
+			fixture["party"], fixture["enemies"],
+			{"type": "attack", "enemy_position": 2, "amount": 9, "target_position": 1})
+
+
+func _test_v3_elites() -> void:
+	seed(61388)
+	var expected_rng := randi()
+	seed(61388)
+	var elites := _catalog(ELITES)
+	var untouched := elites.duplicate(true)
+	for id in LEGACY_ELITES:
+		_authored_elite(elites, id, LEGACY_ELITES[id])
+	var records := {}
+	for id in V3_ELITES:
+		records[id] = _authored_elite(elites, id, V3_ELITES[id])
+	_check(records["scissor_bailiff"].get("id") == "scissor_bailiff"
+		and records["zipper_hauler"].get("id") == "zipper_hauler"
+		and records["scissor_bailiff"].get("id") != records["zipper_hauler"].get("id"),
+		"two distinct new Elite IDs exist exactly once each")
+	_check(records["scissor_bailiff"].get("intent") != records["zipper_hauler"].get("intent"),
+		"the two new elites author distinct weighted alternatives")
+	for id in records:
+		_assert_elite_announcements(id, records[id])
+	_test_scissor_beats(records["scissor_bailiff"])
+	_test_zipper_beats(records["zipper_hauler"])
+	_test_v3_phase_rejections(records)
+	_check(elites == untouched and RunTypedBattleRoster._parse_catalog_text(
+		FileAccess.get_file_as_string(ELITES)) == untouched,
+		"authored elite records and on-disk source untouched by the append checks")
+	_check(randi() == expected_rng,
+		"v3 elite catalog lookups, announcements and beats use no global RNG")
