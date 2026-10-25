@@ -23,6 +23,9 @@ func _initialize() -> void:
 	_test_stitched_removal_rebase()
 	_test_stitched_forged_receipts()
 	_test_legacy_quote_and_rebase()
+	_test_patch_stall_contract()
+	_test_patch_stall_purchase()
+	_test_patch_stall_rejections()
 	if failures.is_empty():
 		print("run_shop_purchases_test: PASS (", checks, " checks)")
 	else:
@@ -849,6 +852,331 @@ func _test_stitched_forged_receipts() -> void:
 	_check(visit.get_state().descriptors == made.descriptors,
 		"mutating the removal receipt cannot corrupt the visit registry")
 	_check(randi() == expected_draw, "every stitched forgery attempt consumes no global RNG")
+
+
+const PATCH_STALL_PARTY := ["warden", "seamstress", "tinker"]
+const PATCH_STALL_DECK := ["w_start", "s_start", "w_start", "t_start"]
+const PATCH_STALL_IDS := ["stitched_badge", "spare_spool", "quilted_coat"]
+
+
+func _patch_stall_fixture(gold: int = 150, trinkets: Array = ["button_eye"]) -> Dictionary:
+	return {
+		"party_ids": PATCH_STALL_PARTY.duplicate(),
+		"deck": PATCH_STALL_DECK.duplicate(),
+		"trinkets": trinkets.duplicate(),
+		"gold": gold,
+		"cards": [],
+		"offers_trinkets": [
+			{"id": "stitched_badge", "price": 100},
+			{"id": "spare_spool", "price": 100},
+			{"id": "quilted_coat", "price": 100}
+		]
+	}
+
+
+func _patch_stall(fixture: Dictionary) -> RunShopPurchases:
+	return RunShopPurchases.new(
+		fixture["party_ids"], fixture["deck"], fixture["trinkets"],
+		fixture["gold"], fixture["cards"], fixture["offers_trinkets"], "patch_stall"
+	)
+
+
+func _patch_stall_state(gold: int = 150, trinkets: Array = ["button_eye"]) -> Dictionary:
+	return {
+		"party_ids": PATCH_STALL_PARTY.duplicate(),
+		"deck": PATCH_STALL_DECK.duplicate(),
+		"trinkets": trinkets.duplicate(),
+		"gold": gold
+	}
+
+
+func _patch_stall_stock() -> Dictionary:
+	return {
+		"cards": [],
+		"trinkets": [
+			{"id": "stitched_badge", "price": 100, "sold": false},
+			{"id": "spare_spool", "price": 100, "sold": false},
+			{"id": "quilted_coat", "price": 100, "sold": false}
+		]
+	}
+
+
+func _assert_stall_model(shop: RunShopPurchases, expected_state: Dictionary,
+		expected_stock: Dictionary, label: String) -> void:
+	_check(shop.get_state() == expected_state, label + " complete stall state")
+	_check(shop.get_stock() == expected_stock, label + " complete three-patch stock")
+
+
+func _stall_rejected(shop: RunShopPurchases, kind: String, id: String,
+		label: String) -> void:
+	var before_state := shop.get_state()
+	var before_stock := shop.get_stock()
+	var result := shop.buy(kind, id)
+	_assert_result(result, false, before_state, before_stock, label)
+	_assert_stall_model(shop, before_state, before_stock, label)
+	result["state"]["deck"].append("forged")
+	result["stock"]["trinkets"].clear()
+	_assert_stall_model(shop, before_state, before_stock, label + " result isolation")
+
+
+func _patch_stall_invalid(label: String, fixture: Dictionary) -> void:
+	var original: Dictionary = fixture.duplicate(true)
+	var stall := _patch_stall(fixture)
+	_check(not stall.is_valid(), label + " patch stall invalid")
+	_check(stall.get_state() == {} and stall.get_stock() == {},
+		label + " no partial stall state published")
+	_check(not stall.patch_stall_choice_used(),
+		label + " invalid stall never reports a used choice")
+	_assert_result(stall.buy("trinket", "stitched_badge"), false, {}, {},
+		label + " refused patch")
+	_check(fixture == original, label + " original stall input untouched")
+
+
+func _test_patch_stall_contract() -> void:
+	seed(76007)
+	var expected_draw := randi()
+	seed(76007)
+	var stall := _patch_stall(_patch_stall_fixture())
+	_check(stall.is_valid(), "three-patch stall accepts zero cards and three patches")
+	_check(stall.has_method("patch_stall_choice_used"),
+		"read-only choice-used query exists")
+	_check(not stall.patch_stall_choice_used(), "fresh stall reports choice unused")
+	_assert_stall_model(stall, _patch_stall_state(), _patch_stall_stock(),
+		"patch stall initial")
+	_check(stall.get_stock()["cards"].size() == 0, "patch stall offers zero cards")
+	_check(stall.get_stock()["trinkets"].size() == 3,
+		"patch stall offers exactly three patches")
+
+	var authored: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var by_id := {}
+	if authored is Dictionary:
+		for entry in authored["trinkets"]:
+			by_id[entry["id"]] = entry["price"]
+	for listing in stall.get_stock()["trinkets"]:
+		_check(by_id.get(listing["id"]) == listing["price"],
+			"authored 100-gold price matches " + str(listing["id"]))
+	for patch in PATCH_STALL_IDS:
+		_check(by_id.get(patch) == 100, "shipped candidate is authored " + patch)
+
+	# The ordinary Shop keeps its exact 5/2 stock on the same run context.
+	var normal_shop := RunShopPurchases.new(
+		PATCH_STALL_PARTY.duplicate(), PATCH_STALL_DECK.duplicate(), ["button_eye"], 150,
+		[
+			{"id": "s_zero", "owner": "warden", "price": 0},
+			{"id": "s_exact", "owner": "seamstress", "price": 60},
+			{"id": "s_costly", "owner": "tinker", "price": 140},
+			{"id": "s_more", "owner": "warden", "price": 10},
+			{"id": "s_final", "owner": "seamstress", "price": 130}
+		],
+		[{"id": "t_spool", "price": 50}, {"id": "t_pocket", "price": 20}]
+	)
+	_check(normal_shop.is_valid(), "normal Shop still admits the same run context")
+	_check(normal_shop.get_stock()["cards"].size() == 5
+		and normal_shop.get_stock()["trinkets"].size() == 2,
+		"normal Shop still requires five cards and two patches")
+	_check(normal_shop.get_state()["deck"] == PATCH_STALL_DECK,
+		"normal Shop keeps the supplied deck")
+	_check(not normal_shop.patch_stall_choice_used(),
+		"normal Shop never reports a patch-stall choice")
+
+	# Fail-closed Patch Stall shapes.
+	for cards in [[{"id": "c_a", "owner": "warden", "price": 5}],
+			[{}, {}, {}, {}, {}]]:
+		var f := _patch_stall_fixture()
+		f["cards"] = cards
+		_patch_stall_invalid("nonempty stall cards", f)
+	for count in [0, 2, 4]:
+		var f := _patch_stall_fixture()
+		f["offers_trinkets"] = [
+			{"id": "stitched_badge", "price": 100},
+			{"id": "spare_spool", "price": 100},
+			{"id": "quilted_coat", "price": 100},
+			{"id": "button_eye", "price": 100}
+		].slice(0, count)
+		_patch_stall_invalid(str(count) + "-patch stall", f)
+	var dup := _patch_stall_fixture()
+	dup["offers_trinkets"] = [
+		{"id": "stitched_badge", "price": 100},
+		{"id": "stitched_badge", "price": 100},
+		{"id": "spare_spool", "price": 100}
+	]
+	_patch_stall_invalid("duplicate patch listing", dup)
+	for price in [-1, 0.5, "100", true, null]:
+		var f := _patch_stall_fixture()
+		f["offers_trinkets"][0]["price"] = price
+		_patch_stall_invalid("invalid patch price " + str(price), f)
+	for gold in [-1, 1.5, "150", true]:
+		var f := _patch_stall_fixture()
+		f["gold"] = gold
+		_patch_stall_invalid("invalid stall gold " + str(gold), f)
+	for mode in ["", "Shop", "stall", "patch-stall", 7, null]:
+		var f := _patch_stall_fixture()
+		var bad := RunShopPurchases.new(f["party_ids"], f["deck"], f["trinkets"],
+			f["gold"], f["cards"], f["offers_trinkets"], mode)
+		_check(not bad.is_valid(), "unknown visit kind " + str(mode) + " rejects")
+		_check(bad.get_state() == {} and bad.get_stock() == {},
+			"unknown visit kind " + str(mode) + " publishes nothing")
+		_check(not bad.patch_stall_choice_used(),
+			"unknown visit kind " + str(mode) + " never reports a used choice")
+	_check(randi() == expected_draw, "patch stall admission consumes no global RNG")
+
+
+func _test_patch_stall_purchase() -> void:
+	seed(76011)
+	var expected_draw := randi()
+	seed(76011)
+	var stall := _patch_stall(_patch_stall_fixture())
+	_check(stall.is_valid(), "purchase fixture stall valid")
+	var state := _patch_stall_state()
+	var stock := _patch_stall_stock()
+	state["trinkets"].append("stitched_badge")
+	state["gold"] = 50
+	stock["trinkets"][0]["sold"] = true
+	_assert_result(stall.buy("trinket", "stitched_badge"), true, state, stock,
+		"authored 100-gold stitched_badge",
+		{"kind": "trinket", "id": "stitched_badge", "price": 100})
+	_check(stall.patch_stall_choice_used(), "successful purchase latches the choice")
+	_check(stall.get_state()["trinkets"].count("stitched_badge") == 1,
+		"exactly one added patch")
+	_check(stall.get_state()["gold"] == 50, "exactly 50 gold after the purchase")
+
+	var replay_before := stall.get_state()
+	var replay_stock := stall.get_stock()
+	_assert_result(stall.buy("trinket", "stitched_badge"), false,
+		replay_before, replay_stock, "replay of chosen patch")
+	_check(stall.patch_stall_choice_used(), "replay keeps the choice latched")
+	_check(stall.get_state() == replay_before and stall.get_stock() == replay_stock,
+		"replay spends nothing")
+	for other in ["spare_spool", "quilted_coat"]:
+		_assert_result(stall.buy("trinket", other), false,
+			replay_before, replay_stock, "alternate listing " + other + " after choice")
+	_check(not stall.get_stock()["trinkets"][1]["sold"]
+		and not stall.get_stock()["trinkets"][2]["sold"],
+		"other two listings remain unsold")
+	_assert_result(stall.buy("card", "stitched_badge"), false,
+		replay_before, replay_stock, "card kind at the stall")
+	_assert_result(stall.buy("card", "anything"), false,
+		replay_before, replay_stock, "empty card stock at the stall")
+	_check(randi() == expected_draw, "stall purchase and replays consume no global RNG")
+
+	for patch in PATCH_STALL_IDS:
+		var fresh := _patch_stall(_patch_stall_fixture())
+		var paid := fresh.buy("trinket", patch)
+		_check(paid.ok
+			and paid.receipt == {"kind": "trinket", "id": patch, "price": 100}
+			and fresh.get_state()["gold"] == 50,
+			"authored stall can charge any single patch " + patch)
+		_check(fresh.patch_stall_choice_used(), "single-use latch per " + patch)
+		_check(fresh.get_state()["trinkets"] == ["button_eye", patch],
+			"only the chosen patch is added " + patch)
+
+
+func _test_patch_stall_rejections() -> void:
+	seed(76013)
+	var expected_draw := randi()
+	seed(76013)
+	var owned := _patch_stall(_patch_stall_fixture(150, ["button_eye", "spare_spool"]))
+	_check(owned.is_valid(), "owned-listing stall still admits")
+	_check(owned.get_stock()["trinkets"][1]["sold"], "owned listing starts sold")
+	_assert_result(owned.buy("trinket", "spare_spool"), false,
+		owned.get_state(), owned.get_stock(), "owned patch cannot be bought")
+	_check(not owned.patch_stall_choice_used(),
+		"rejected owned purchase does not latch")
+
+	var poor := _patch_stall(_patch_stall_fixture(99))
+	_assert_result(poor.buy("trinket", "stitched_badge"), false,
+		poor.get_state(), poor.get_stock(),
+		"99-gold cannot afford a 100-gold patch")
+	_check(not poor.patch_stall_choice_used(),
+		"rejected unaffordable purchase does not latch")
+	_check(poor.get_state()["gold"] == 99, "unaffordable rejection spends nothing")
+
+	var stall := _patch_stall(_patch_stall_fixture())
+	for action in [["trinket", "not_in_stock", "unknown trinket"],
+			["trinket", "", "empty ID"], ["trinket", " ", "whitespace ID"],
+			["", "stitched_badge", "blank kind"],
+			["Trinket", "stitched_badge", "noncanonical kind"],
+			["other", "stitched_badge", "other kind"]]:
+		_stall_rejected(stall, action[0], action[1], "stall reject " + action[2])
+	_check(not stall.patch_stall_choice_used(),
+		"every stall rejection leaves the choice unused")
+	_check(stall.get_stock()["trinkets"].all(func(l): return not l["sold"]),
+		"rejected stall attempts leave every listing unsold")
+	_check(stall.get_state()["gold"] == 150, "rejected stall attempts spend nothing")
+
+	# Paid removal rebase does not operate at a Patch Stall.
+	var stall_cards: Array[String] = []
+	stall_cards.assign(stall.get_state()["deck"])
+	var visit := RunShopVisit.new(stall_cards, stall.get_state()["gold"], 0)
+	_check(visit.open_visit("stall-removal"),
+		"real visit still opens on the stall ledger")
+	var before := visit.get_state()
+	var removed := RunShopCardRemoval.try_remove(stall_cards, before.gold, 0, "w_start")
+	var frozen_state := stall.get_state()
+	var frozen_stock := stall.get_stock()
+	_check(removed.ok, "otherwise legal removal helper result computed")
+	_check(not stall.can_rebase_removal(before, removed, "w_start"),
+		"stall can_rebase_removal refuses the legal removal")
+	_check(not stall.rebase_removal(before, removed, "w_start"),
+		"stall rebase_removal refuses the legal removal")
+	_check(stall.get_state() == frozen_state and stall.get_stock() == frozen_stock,
+		"stall rebase attempts do not mutate state or stock")
+	_check(not stall.patch_stall_choice_used(),
+		"stall removal rebase attempt does not latch the patch choice")
+
+	# Genuine wardrobe replacement via settle_displaced_patch.
+	var bought := _patch_stall(_patch_stall_fixture())
+	_check(bought.buy("trinket", "stitched_badge").ok,
+		"stall permits the first paid patch for the settle test")
+	var heroes := [
+		{"id": "warden", "position": 1, "hp": 40, "max_hp": 40, "block": 0,
+			"statuses": {}},
+		{"id": "seamstress", "position": 2, "hp": 30, "max_hp": 30, "block": 0,
+			"statuses": {}},
+		{"id": "tinker", "position": 3, "hp": 26, "max_hp": 26, "block": 0,
+			"statuses": {}}
+	]
+	var definitions := [
+		{"id": "stitched_badge", "slot": "HEAD"},
+		{"id": "button_eye", "slot": "HEAD"}
+	]
+	var wardrobe := RunPatchWardrobe.new(heroes,
+		["button_eye", "stitched_badge"], definitions, 0,
+		bought.get_state()["gold"], bought.get_state()["deck"], 0, true)
+	_check(wardrobe.is_valid(), "wardrobe admits the stall-posted inventory")
+	var first_sew := wardrobe.sew("button_eye", "warden", "HEAD", "sew-old",
+		wardrobe.get_snapshot())
+	_check(first_sew.ok, "prior old patch sewn at HEAD")
+	var replacement := wardrobe.sew("stitched_badge", "warden", "HEAD", "sew-new",
+		wardrobe.get_snapshot())
+	_check(replacement.ok and replacement.receipt.displaced_id == "button_eye",
+		"genuine wardrobe replacement displaces the old patch")
+	_check(not wardrobe.get_snapshot()["owned"].has("button_eye"),
+		"wardrobe destroys the old patch from ownership")
+	_check(bought.settle_displaced_patch("button_eye", "stitched_badge",
+		bought.get_state()),
+		"stall settles the displaced patch after the wardrobe sew")
+	_check(bought.get_state()["trinkets"] == ["stitched_badge"],
+		"one patch owner remains after settle and no second charge")
+	_check(bought.get_state()["gold"] == 50, "settle does not charge a second time")
+	_check(not bought.settle_displaced_patch("button_eye", "stitched_badge",
+		bought.get_state()), "settle cannot be replayed")
+	# Non-vacuous fail-closed case: both IDs are genuinely owned, but the
+	# "purchased" one was never sold at this stall, so settle must refuse.
+	var stranger := _patch_stall(_patch_stall_fixture(150, ["button_eye", "padded_vest"]))
+	_check(stranger.buy("trinket", "stitched_badge").ok,
+		"stall sale recorded before the unsold-listing check")
+	var stranger_before := stranger.get_state()
+	_check(stranger_before.trinkets == ["button_eye", "padded_vest", "stitched_badge"],
+		"unsold-listing fixture owns both settle operands")
+	_check(not stranger.settle_displaced_patch("button_eye", "padded_vest",
+		stranger_before), "settle refuses a patch never sold at this stall")
+	_check(stranger.get_state() == stranger_before,
+		"refused settle leaves ownership unchanged")
+
+	_check(randi() == expected_draw,
+		"stall rejections, removal rebases and settle consume no global RNG")
 
 
 func _test_legacy_quote_and_rebase() -> void:
