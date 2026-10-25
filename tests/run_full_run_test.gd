@@ -649,8 +649,13 @@ func _win(fixture: Dictionary) -> Array:
 			_record(["patch_stall_leave"])
 		elif kind == "SewingCircle":
 			var before := _inventory()
-			var callback := _retained(app.sewing_leave_button)
+			var source: Dictionary = app._sewing_source.duplicate(true)
+			var callback: Callable = app.sewing_view.intent_requested.get_connections()[0].callable.bind({
+				"action": "leave", "node_id": source.node_id, "visit_id": source.visit_id,
+				"source_snapshot": source})
 			await _activate(app.sewing_leave_button, true)
+			_check(not app._sewing_closed and not app.sewing_view.confirm_button.disabled, "Leave previews before explicit confirmation")
+			await _activate(app.sewing_view.confirm_button, true)
 			_check(_inventory() == before and app._can_choose_connected_route(),
 				"post-fight Sewing Circle Leave preserves full inventory and admits onward route")
 			stale.append(callback)

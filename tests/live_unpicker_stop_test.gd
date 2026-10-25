@@ -1,5 +1,16 @@
 extends "res://tests/live_sewing_circle_stop_test.gd"
 
+
+func _pick(selector: OptionButton, index: int) -> void:
+	selector.select(0)
+	selector.grab_focus()
+	await _key(KEY_ENTER)
+	for i in range(index):
+		await _key(KEY_DOWN)
+	await _key(KEY_ENTER)
+	_check(selector.selected == index, "physical popup input selects exact occurrence")
+
+
 func _unpicker_state() -> Array:
 	return [app._sewing_context(), app.act_outcome.get_state(), app.unpicker_visit.read_state(),
 		app._unpicker_source.duplicate(true), app._unpicker_closed, app._unpicker_visits.duplicate(true)]
@@ -115,17 +126,18 @@ func _unpicker_boot(stitched: bool, funded: bool) -> void:
 			await _click(_button(sewing_id))
 			await _frames()
 			_check(app.sewing_view != null and app.sewing_stitch_button.disabled == false, "real sewing visit permits authentic stitch")
-			app.sewing_first.select(0)
-			var first_owner: String = RunRestStitchCards.resolve_card_definition(app.run_deck[app.sewing_first.get_item_metadata(0)]).owner
-			var second := -1
-			for i in range(app.sewing_second.item_count):
-				var index: int = app.sewing_second.get_item_metadata(i)
-				if RunRestStitchCards.resolve_card_definition(app.run_deck[index]).owner != first_owner:
-					second = i
-					break
-			_check(second >= 0, "authentic different-owner stitch pair exists")
-			app.sewing_second.select(second)
-			await _click(app.sewing_stitch_button)
+			var panel: LiveSewingCirclePanel = app.sewing_view
+			await _activate(panel.stitch_button, false)
+			var first: int = panel.option_buttons[0].get_meta("option").index
+			var first_owner: String = RunRestStitchCards.resolve_card_definition(app.run_deck[first]).owner
+			await _activate(panel.option_buttons[0], false)
+			_check(not panel.option_buttons.is_empty(), "authentic different-owner stitch pair exists")
+			var second: int = panel.option_buttons[0].get_meta("option").index
+			_check(RunRestStitchCards.resolve_card_definition(app.run_deck[second]).owner != first_owner,
+				"real panel offers a different owner's occurrence")
+			await _activate(panel.option_buttons[0], false)
+			_check(not app._sewing_closed and not panel.confirm_button.disabled, "stitch preview requires confirmation")
+			await _activate(panel.confirm_button, false)
 			await _frames()
 			_check(app.run_stitch_descriptors.size() == stitch_number and app.run_next_stitch_id == stitch_number + 1 and app._can_choose_connected_route(), "mounted Sewing commits authentic owned stitch")
 
