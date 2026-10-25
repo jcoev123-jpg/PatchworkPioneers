@@ -214,6 +214,137 @@ static func generate(rng: Variant, party_ids: Variant, card_candidates: Variant,
 	return {"ok": true, "cards": cards, "trinkets": trinkets}
 
 
+## Builds one seeded Peddler card stock: exactly one authored card offer for
+## each of the three party heroes. Returns {"ok": false, "cards": []} for any
+## malformed input, leaving the caller's arrays and RNG untouched.
+static func generate_peddler_cards(rng: Variant, party_ids: Variant,
+		card_candidates: Variant) -> Dictionary:
+	var rejected: Dictionary = {"ok": false, "cards": []}
+	if not (rng is RandomNumberGenerator):
+		return rejected
+	if not (party_ids is Array) or not (card_candidates is Array):
+		return rejected
+
+	# Build catalog references and known owners from all four catalogs.
+	var starter_catalog := StarterCards.new()
+	var warden_pool := WardenPoolCards.new()
+	var seamstress_pool := SeamstressPoolCards.new()
+	var tinker_pool := TinkerPoolCards.new()
+	var known_owners := {}
+	for catalog_id in starter_catalog.get_all_card_ids():
+		var definition: Dictionary = starter_catalog.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	for catalog_id in warden_pool.get_all_card_ids():
+		var definition: Dictionary = warden_pool.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	for catalog_id in seamstress_pool.get_all_card_ids():
+		var definition: Dictionary = seamstress_pool.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	for catalog_id in tinker_pool.get_pool_card_ids():
+		var definition: Dictionary = tinker_pool.get_definition(catalog_id)
+		if definition.get("owner") is String:
+			known_owners[definition["owner"]] = true
+	for base_id in tinker_pool.get_pool_card_ids():
+		var upgrade_id: String = tinker_pool.get_upgrade_id(base_id)
+		if upgrade_id:
+			var definition: Dictionary = tinker_pool.get_definition(upgrade_id)
+			if definition.get("owner") is String:
+				known_owners[definition["owner"]] = true
+
+	# The party is exactly three distinct heroes the authored catalogs know.
+	var party_set := {}
+	var party_order: Array[String] = []
+	for party_id in party_ids:
+		if not (party_id is String):
+			return rejected
+		var hero_id: String = party_id
+		if hero_id.strip_edges().is_empty() or party_set.has(hero_id) \
+				or not known_owners.has(hero_id):
+			return rejected
+		party_set[hero_id] = true
+		party_order.append(hero_id)
+	if party_set.size() != 3:
+		return rejected
+
+	# Eligible card IDs grouped by their catalog owner, plus their prices.
+	var card_prices := {}
+	var eligible_by_hero := {}
+	for hero_id in party_order:
+		eligible_by_hero[hero_id] = []
+
+	for candidate in card_candidates:
+		if not (candidate is Dictionary):
+			return rejected
+		var entry: Dictionary = candidate
+		if not entry.has("id") or not entry.has("price"):
+			return rejected
+		if not (entry["id"] is String):
+			return rejected
+		var card_id: String = entry["id"]
+		if card_id.strip_edges().is_empty() or card_prices.has(card_id):
+			return rejected
+		var price := _read_price(entry["price"])
+		if price < 0:
+			return rejected
+
+		var definition: Dictionary = {}
+		var catalog_owner: String = ""
+		var is_pool_card: bool = false
+		if starter_catalog.has_card(card_id):
+			definition = starter_catalog.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+		elif warden_pool.has_card(card_id):
+			definition = warden_pool.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+			is_pool_card = true
+		elif seamstress_pool.has_card(card_id):
+			definition = seamstress_pool.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+			is_pool_card = true
+		elif tinker_pool.has_card(card_id):
+			definition = tinker_pool.get_definition(card_id)
+			catalog_owner = definition.get("owner", "")
+			is_pool_card = true
+		else:
+			return rejected
+		if definition.is_empty() or catalog_owner.is_empty():
+			return rejected
+		# Pool upgrade cards (ending in _plus) are not valid Peddler stock.
+		# StarterCards upgrade cards remain valid per the legacy rules.
+		if is_pool_card and card_id.ends_with("_plus"):
+			return rejected
+		var owner: String = catalog_owner
+		if not party_set.has(owner):
+			return rejected
+		if entry.has("owner"):
+			if not (entry["owner"] is String) or entry["owner"] != owner:
+				return rejected
+		card_prices[card_id] = price
+		eligible_by_hero[owner].append(card_id)
+
+	# Require at least one eligible card for each party hero.
+	for hero_id in party_order:
+		if eligible_by_hero[hero_id].is_empty():
+			return rejected
+
+	# Sort each hero's eligible IDs so candidate order cannot affect the draw.
+	for hero_id in party_order:
+		eligible_by_hero[hero_id].sort()
+
+	# One randi_range draw per hero, in party order.
+	var cards: Array = []
+	for hero_id in party_order:
+		var ids: Array = eligible_by_hero[hero_id]
+		var index: int = rng.randi_range(0, ids.size() - 1)
+		var chosen: String = ids[index]
+		cards.append({"id": chosen, "owner": hero_id, "price": card_prices[chosen]})
+
+	return {"ok": true, "cards": cards}
+
+
 ## Reads a supplied price. JSON numbers arrive as floats, so a whole float is
 ## accepted and normalised to an int; a fractional, negative or non-numeric
 ## price is rejected instead of being truncated into a valid-looking price.

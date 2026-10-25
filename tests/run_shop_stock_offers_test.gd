@@ -224,6 +224,7 @@ func _initialize() -> void:
 		_test_pinned_enabler_shop_offers_and_purchases(party, deck, catalog)
 		_test_unravel_trio_shop_offers_and_purchases(party, deck, catalog)
 		_test_tinker_attack_shop_stock(party, deck, catalog)
+		_test_peddler_cards(party, deck, catalog)
 	else:
 		_check(false, "preconditions for non-vacuous shop stock tests failed")
 	if failures.is_empty():
@@ -2673,3 +2674,124 @@ func _test_tinker_attack_shop_stock(party: Array[String], deck: Array[String],
 			_rng(seed_found), party,
 			_with_card(candidates, 0, {"id": upgrade_id, "owner": "tinker", "price": quote}),
 			patches, [])
+
+
+## Peddler: one priced card per party hero, deterministic and fail-closed.
+func _test_peddler_cards(party: Array[String], deck: Array[String], catalog: StarterCards) -> void:
+	var peddler_cards: Array = [
+		{"id": "warden_brace", "owner": "warden", "price": 40},
+		{"id": "warden_hold_the_line", "owner": "warden", "price": 55},
+		{"id": "seamstress_mend", "owner": "seamstress", "price": 45},
+		{"id": "seamstress_darning", "owner": "seamstress", "price": 55},
+		{"id": "tinker_tune_up", "owner": "tinker", "price": 35},
+		{"id": "tinker_rivet_shot", "owner": "tinker", "price": 50},
+	]
+	# Success: exactly one per hero in party order.
+	var rng2 := _rng(SEED + 9000)
+	var result2 := RunShopStockOffers.generate_peddler_cards(rng2, party, peddler_cards)
+	_check(result2.get("ok", false), "peddler generates with two cards per hero")
+	var cards: Array = result2.get("cards", [])
+	_check(cards.size() == 3, "peddler returns exactly three cards")
+	# Build expected oracle.
+	var groups := {"warden": [], "seamstress": [], "tinker": []}
+	for entry in peddler_cards:
+		var owner: String = entry["owner"]
+		groups[owner].append(entry["id"])
+	var expected_cards: Array = []
+	for hero in party:
+		var ids: Array = groups[hero].duplicate()
+		ids.sort()
+		groups[hero] = ids
+	# Reset oracle rng
+	var orng := _rng(SEED + 9000)
+	for hero in party:
+		var ids: Array = groups[hero]
+		var idx: int = orng.randi_range(0, ids.size() - 1)
+		var chosen: String = ids[idx]
+		var price := 0
+		for entry in peddler_cards:
+			if entry["id"] == chosen:
+				price = entry["price"]
+		expected_cards.append({"id": chosen, "owner": hero, "price": price})
+	_check(cards == expected_cards, "peddler matches per-hero sorted oracle")
+	_check(rng2.state == orng.state, "peddler uses three draws and leaves matching RNG state")
+	# Reversed input equivalent.
+	var reversed := peddler_cards.duplicate(true)
+	reversed.reverse()
+	var rng3 := _rng(SEED + 9000)
+	var result3 := RunShopStockOffers.generate_peddler_cards(rng3, party, reversed)
+	_check(result3 == result2, "peddler reversed input produces identical output")
+	# One candidate per member succeeds.
+	var minimal := [
+		{"id": "warden_brace", "owner": "warden", "price": 40},
+		{"id": "seamstress_mend", "owner": "seamstress", "price": 45},
+		{"id": "tinker_tune_up", "owner": "tinker", "price": 35},
+	]
+	var rmin := RunShopStockOffers.generate_peddler_cards(_rng(SEED + 9001), party, minimal)
+	_check(rmin.get("ok", false) and rmin.get("cards", []).size() == 3, "peddler succeeds with one candidate per hero")
+	# Invalid: missing member stock.
+	var no_warden := [
+		{"id": "seamstress_mend", "owner": "seamstress", "price": 45},
+		{"id": "tinker_tune_up", "owner": "tinker", "price": 35},
+	]
+	var rngw := _rng(SEED + 9002)
+	var before_state := rngw.state
+	var resw := RunShopStockOffers.generate_peddler_cards(rngw, party, no_warden)
+	_check(not resw.get("ok", true) and resw.get("cards", []).is_empty(), "peddler rejects missing hero stock")
+	_check(rngw.state == before_state, "peddler missing stock preserves RNG")
+	# Invalid party.
+	var rngp := _rng(SEED + 9003)
+	var beforep := rngp.state
+	var resp := RunShopStockOffers.generate_peddler_cards(rngp, [party[0], party[0], party[2]], peddler_cards)
+	_check(not resp.get("ok", true), "peddler rejects duplicate party")
+	_check(rngp.state == beforep, "peddler duplicate party preserves RNG")
+	# Wrong owner.
+	var wrong_owner_pool := peddler_cards.duplicate(true)
+	wrong_owner_pool[0] = {"id": "warden_brace", "owner": "seamstress", "price": 40}
+	var rnwo := _rng(SEED + 9004)
+	var beforewo := rnwo.state
+	var reswo := RunShopStockOffers.generate_peddler_cards(rnwo, party, wrong_owner_pool)
+	_check(not reswo.get("ok", true), "peddler rejects wrong owner")
+	_check(rnwo.state == beforewo, "peddler wrong owner preserves RNG")
+	# Pool upgrade candidate.
+	var upgrade_pool := peddler_cards.duplicate(true)
+	upgrade_pool.append({"id": "warden_hold_the_line_plus", "owner": "warden", "price": 55})
+	var rnup := _rng(SEED + 9005)
+	var beforeup := rnup.state
+	var resup := RunShopStockOffers.generate_peddler_cards(rnup, party, upgrade_pool)
+	_check(not resup.get("ok", true), "peddler rejects pool upgrade candidate")
+	_check(rnup.state == beforeup, "peddler pool upgrade preserves RNG")
+	# Negative price.
+	var neg_pool := peddler_cards.duplicate(true)
+	neg_pool[0] = {"id": "warden_brace", "owner": "warden", "price": -1}
+	var rnneg := _rng(SEED + 9006)
+	var beforeneg := rnneg.state
+	var resneg := RunShopStockOffers.generate_peddler_cards(rnneg, party, neg_pool)
+	_check(not resneg.get("ok", true), "peddler rejects negative price")
+	_check(rnneg.state == beforeneg, "peddler negative price preserves RNG")
+	# Fractional price.
+	var frac_pool := peddler_cards.duplicate(true)
+	frac_pool[0] = {"id": "warden_brace", "owner": "warden", "price": 12.5}
+	var rnfrac := _rng(SEED + 9007)
+	var beforefrac := rnfrac.state
+	var resfrac := RunShopStockOffers.generate_peddler_cards(rnfrac, party, frac_pool)
+	_check(not resfrac.get("ok", true), "peddler rejects fractional price")
+	_check(rnfrac.state == beforefrac, "peddler fractional price preserves RNG")
+	# Unknown candidate.
+	var unk_pool := peddler_cards.duplicate(true)
+	unk_pool[0] = {"id": "__unknown_card__", "owner": "warden", "price": 40}
+	var rnunk := _rng(SEED + 9008)
+	var beforeunk := rnunk.state
+	var resunk := RunShopStockOffers.generate_peddler_cards(rnunk, party, unk_pool)
+	_check(not resunk.get("ok", true), "peddler rejects unknown candidate")
+	_check(rnunk.state == beforeunk, "peddler unknown candidate preserves RNG")
+	# Duplicate candidate.
+	var dup_pool := peddler_cards.duplicate(true)
+	dup_pool[1] = {"id": "warden_brace", "owner": "warden", "price": 55}
+	var rndup := _rng(SEED + 9009)
+	var beforedup := rndup.state
+	var resdup := RunShopStockOffers.generate_peddler_cards(rndup, party, dup_pool)
+	_check(not resdup.get("ok", true), "peddler rejects duplicate candidate")
+	_check(rndup.state == beforedup, "peddler duplicate candidate preserves RNG")
+	# Inputs unchanged.
+	_check(peddler_cards.size() == 6, "peddler leaves candidate input unchanged")
