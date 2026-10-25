@@ -1,6 +1,6 @@
 class_name RunShopPurchases
 extends RefCounted
-## One Shop or Patch Stall visit's supplied listings. No stock rolls,
+## One Shop, Patch Stall or Peddler visit's supplied listings. No stock rolls,
 ## catalog lookups, passive effects, or card removal happen here.
 ##
 ## Construct with (party_ids, deck_card_ids, owned_trinket_ids, gold,
@@ -9,6 +9,8 @@ extends RefCounted
 ## contract exactly. The optional "patch_stall" mode requires zero card
 ## offers and exactly three distinct priced patch offers, allows only one
 ## successful patch purchase per visit, and refuses paid removal rebases.
+## "peddler" requires one distinct card per party hero and one patch, permits
+## one successful purchase of either kind, and refuses paid removal rebases.
 ## Invalid visits expose empty state/stock and never accept purchases.
 ##
 ## get_state(): {"party_ids": Array, "deck": Array, "trinkets": Array, "gold": int}
@@ -36,15 +38,18 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 		return
 	if typeof(gold) != TYPE_INT or gold < 0:
 		return
-	if not visit_kind is String or not (visit_kind == "shop" or visit_kind == "patch_stall"):
+	if not visit_kind is String or not visit_kind in ["shop", "patch_stall", "peddler"]:
 		return
 	if typeof(card_offers) != TYPE_ARRAY or typeof(trinket_offers) != TYPE_ARRAY:
 		return
 	if visit_kind == "shop":
 		if card_offers.size() != 5 or trinket_offers.size() != 2:
 			return
-	else:
+	elif visit_kind == "patch_stall":
 		if card_offers.size() != 0 or trinket_offers.size() != 3:
+			return
+	else:
+		if card_offers.size() != 3 or trinket_offers.size() != 1:
 			return
 
 	var party_seen := {}
@@ -63,6 +68,7 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 
 	var copied_cards: Array = []
 	var card_seen := {}
+	var card_owners_seen := {}
 	for value in card_offers:
 		if typeof(value) != TYPE_DICTIONARY:
 			return
@@ -75,6 +81,9 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 			return
 		if not _is_price(offer["price"]):
 			return
+		if visit_kind == "peddler" and card_owners_seen.has(offer["owner"]):
+			return
+		card_owners_seen[offer["owner"]] = true
 		card_seen[offer["id"]] = true
 		copied_cards.append({
 			"id": offer["id"], "owner": offer["owner"],
@@ -235,7 +244,7 @@ func patch_stall_choice_used() -> bool:
 ## snapshot with NEITHER field keeps the exact legacy five-key contract, and a
 ## mixed or malformed field set is refused outright.
 func can_rebase_removal(before: Variant, result: Variant, card_id: Variant) -> bool:
-	if not _valid or _visit_kind == "patch_stall" or _removal_rebased \
+	if not _valid or _visit_kind != "shop" or _removal_rebased \
 			or not before is Dictionary or not result is Dictionary or not _is_id(card_id):
 		return false
 	if not before.get("valid") is bool or before.get("valid") != true \
@@ -280,11 +289,11 @@ func rebase_removal(before: Variant, result: Variant, card_id: Variant) -> bool:
 func buy(kind: String, id: String) -> Dictionary:
 	if not _valid or not (kind == "card" or kind == "trinket") or not _is_id(id):
 		return _result(false)
-	# A Patch Stall sells only one patch per visit; card buys and replays
-	# are refused fail-closed without spending or mutating any state.
-	if _visit_kind == "patch_stall":
-		if kind != "trinket" or _choice_used:
-			return _result(false)
+	# Single-choice visits latch only after a successful purchase.
+	if _visit_kind != "shop" and _choice_used:
+		return _result(false)
+	if _visit_kind == "patch_stall" and kind != "trinket":
+		return _result(false)
 
 	var category: String = "cards" if kind == "card" else "trinkets"
 	var destination: String = "deck" if kind == "card" else "trinkets"
@@ -297,7 +306,7 @@ func buy(kind: String, id: String) -> Dictionary:
 		_state["gold"] -= listing["price"]
 		_state[destination].append(id)
 		listing["sold"] = true
-		if _visit_kind == "patch_stall":
+		if _visit_kind != "shop":
 			_choice_used = true
 		return _result(true, {"kind": kind, "id": id, "price": listing["price"]})
 	return _result(false)

@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_patch_stall_purchase()
 	_test_patch_stall_rejections()
 	_test_patch_stall_sampling()
+	_test_peddler()
 	if failures.is_empty():
 		print("run_shop_purchases_test: PASS (", checks, " checks)")
 	else:
@@ -40,6 +41,200 @@ func _check(condition: bool, message: String) -> void:
 	checks += 1
 	if not condition:
 		failures.append(message)
+
+
+func _peddler(f: Dictionary) -> RunShopPurchases:
+	return RunShopPurchases.new(f.party_ids, f.deck, f.trinkets, f.gold,
+		f.cards, f.offers_trinkets, "peddler")
+
+
+func _peddler_fixture(rng: RandomNumberGenerator, owned: Array = []) -> Dictionary:
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+		"res://data/shop/initial_offers.json"))
+	var party := ["warden", "seamstress", "tinker"]
+	var stock := RunShopStockOffers.generate_peddler_stock(
+		rng, party, authored.cards, authored.trinkets, owned)
+	_check(stock.ok and stock.cards.size() == 3 and stock.patches.size() == 1,
+		"authentic seeded Peddler supplier succeeds")
+	return {"party_ids": party, "deck": [STRIKE, PRICK, POP],
+		"trinkets": owned.duplicate(), "gold": 500,
+		"cards": stock.cards, "offers_trinkets": stock.patches}
+
+
+func _peddler_refuses_removal(shop: RunShopPurchases) -> void:
+	var state := shop.get_state()
+	var stock := shop.get_stock()
+	var cards: Array[String] = []
+	cards.assign(state.deck)
+	var owned: Array[String] = []
+	owned.assign(state.trinkets)
+	var visit := RunShopVisit.new(cards, state.gold, 0, owned)
+	_check(visit.open_visit("peddler-removal"), "Peddler removal fixture opens")
+	var before := visit.get_state()
+	var result := RunShopCardRemoval.try_remove(cards, state.gold, 0, STRIKE)
+	_check(result.ok and before.trinkets == state.trinkets,
+		"Peddler removal receipt is otherwise legal and matches inventory")
+	_check(not shop.can_rebase_removal(before, result, STRIKE), "Peddler removal preflight refused")
+	_check(not shop.rebase_removal(before, result, STRIKE), "Peddler removal rebase refused")
+	_assert_model(shop, state, stock, "Peddler removal refusal")
+
+
+func _test_peddler() -> void:
+	seed(256031)
+	var expected_global := randi()
+	seed(256031)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 256031
+	var fixture := _peddler_fixture(rng)
+	var after_stock := rng.state
+	var canonical := fixture.duplicate(true)
+	var shop := _peddler(fixture)
+	_check(shop.is_valid(), "authentic 3+1 Peddler admits")
+	var initial_state := shop.get_state()
+	var initial_stock := shop.get_stock()
+	_check(initial_state == {"party_ids": fixture.party_ids, "deck": fixture.deck,
+		"trinkets": [], "gold": 500}, "Peddler initial ledger is exact")
+	var owners: Array = []
+	for i in range(3):
+		var offer: Dictionary = initial_stock.cards[i]
+		owners.append(offer.owner)
+		_check(offer == {"id": fixture.cards[i].id, "owner": fixture.cards[i].owner,
+			"price": fixture.cards[i].price, "sold": false}, "Peddler card retains supplied price")
+	_check(owners == fixture.party_ids, "one seeded card per party owner")
+	_check(initial_stock.trinkets == [{"id": fixture.offers_trinkets[0].id,
+		"price": fixture.offers_trinkets[0].price, "sold": false}], "one priced unsold patch")
+	fixture.cards[0].price = 0
+	fixture.offers_trinkets[0].id = "forged_patch"
+	fixture.deck.clear()
+	fixture.party_ids.clear()
+	fixture.trinkets.append("forged_owned")
+	var detached := shop.get_stock()
+	detached.cards[0].sold = true
+	detached.trinkets.clear()
+	var detached_state := shop.get_state()
+	detached_state.deck.clear()
+	detached_state.gold = 0
+	_assert_model(shop, initial_state, initial_stock, "Peddler inputs and reads detached")
+	_peddler_refuses_removal(shop)
+
+	# Each card slot and the patch are independent single-purchase alternatives.
+	for choice in range(4):
+		var kind := "card" if choice < 3 else "trinket"
+		var category := "cards" if choice < 3 else "trinkets"
+		var index := choice if choice < 3 else 0
+		var offer: Dictionary = initial_stock[category][index]
+		var fresh := _peddler(canonical)
+		var expected_state := initial_state.duplicate(true)
+		expected_state.gold -= offer.price
+		expected_state["deck" if choice < 3 else "trinkets"].append(offer.id)
+		var expected_stock := initial_stock.duplicate(true)
+		expected_stock[category][index].sold = true
+		var paid := fresh.buy(kind, offer.id)
+		_assert_result(paid, true, expected_state, expected_stock, "Peddler chosen purchase",
+			{"kind": kind, "id": offer.id, "price": offer.price})
+		paid.receipt.price = -1
+		paid.state.deck.clear()
+		paid.stock[category][index].sold = false
+		_assert_model(fresh, expected_state, expected_stock, "Peddler paid result detached")
+		for repeat in range(2):
+			for card in canonical.cards:
+				_assert_result(fresh.buy("card", card.id), false, expected_state,
+					expected_stock, "Peddler later card selection")
+			_assert_result(fresh.buy("trinket", canonical.offers_trinkets[0].id), false,
+				expected_state, expected_stock, "Peddler later patch selection")
+		_peddler_refuses_removal(fresh)
+		var replay_rng := RandomNumberGenerator.new()
+		replay_rng.seed = 256031
+		var replay_fixture := _peddler_fixture(replay_rng)
+		_check(replay_fixture == canonical and replay_rng.state == after_stock,
+			"Peddler supplier replay identical")
+		var replay := _peddler(replay_fixture)
+		_assert_result(replay.buy(kind, offer.id), true, expected_state, expected_stock,
+			"Peddler deterministic purchase replay", {"kind": kind, "id": offer.id, "price": offer.price})
+		_check(replay_rng.state == after_stock, "Peddler replay purchase consumes no run RNG")
+
+	# Failed, foreign and forged snapshot choices cannot change or latch the visit.
+	for action in [["card", "unknown"], ["trinket", "unknown"],
+		["card", ""], ["patch", canonical.offers_trinkets[0].id],
+		["trinket", canonical.cards[0].id], ["card", canonical.offers_trinkets[0].id],
+		["card", "foreign_card"], ["trinket", "forged_patch"]]:
+		var rejected := shop.buy(action[0], action[1])
+		_assert_result(rejected, false, initial_state, initial_stock, "Peddler invalid selection")
+		rejected.state.gold = 99999
+		rejected.stock.cards[0].price = 0
+		_assert_model(shop, initial_state, initial_stock, "Peddler rejection result detached")
+	_check(shop.buy("card", canonical.cards[0].id).ok, "Peddler refusals never latch")
+	var owned_fixture := canonical.duplicate(true)
+	owned_fixture.trinkets = [canonical.offers_trinkets[0].id]
+	var owned := _peddler(owned_fixture)
+	_check(owned.is_valid() and owned.get_stock().trinkets[0].sold, "Peddler owned patch starts sold")
+	var owned_state := owned.get_state()
+	var owned_stock := owned.get_stock()
+	_assert_result(owned.buy("trinket", canonical.offers_trinkets[0].id), false,
+		owned_state, owned_stock, "Peddler owned patch rejection")
+	_assert_model(owned, owned_state, owned_stock, "Peddler owned patch no mutation")
+	_check(owned.buy("card", canonical.cards[1].id).ok, "owned patch rejection leaves card choice available")
+	var poor_fixture := canonical.duplicate(true)
+	poor_fixture.gold = 0
+	var poor := _peddler(poor_fixture)
+	var poor_state := poor.get_state()
+	var poor_stock := poor.get_stock()
+	for card in canonical.cards:
+		_check(card.price > 0, "authentic unaffordable card has positive price")
+		_assert_result(poor.buy("card", card.id), false, poor_state, poor_stock, "Peddler unaffordable card")
+	_check(canonical.offers_trinkets[0].price > 0, "authentic unaffordable patch has positive price")
+	_assert_result(poor.buy("trinket", canonical.offers_trinkets[0].id), false,
+		poor_state, poor_stock, "Peddler unaffordable patch")
+	_assert_model(poor, poor_state, poor_stock, "Peddler unaffordable no mutation")
+	# A cheaper card remains affordable after either kind of unaffordable attempt.
+	var mixed_fixture := canonical.duplicate(true)
+	mixed_fixture.gold = 50
+	mixed_fixture.cards[0].price = 51
+	mixed_fixture.cards[1].price = 50
+	mixed_fixture.offers_trinkets[0].price = 51
+	var mixed := _peddler(mixed_fixture)
+	var mixed_state := mixed.get_state()
+	var mixed_stock := mixed.get_stock()
+	for action in [["card", mixed_fixture.cards[0].id], ["trinket", mixed_fixture.offers_trinkets[0].id]]:
+		_assert_result(mixed.buy(action[0], action[1]), false, mixed_state, mixed_stock, "Peddler insufficient gold does not latch")
+		_assert_model(mixed, mixed_state, mixed_stock, "Peddler insufficient gold no mutation")
+	_check(mixed.buy("card", mixed_fixture.cards[1].id).ok and mixed.get_state().gold == 0,
+		"exact-price Peddler buy still succeeds after unaffordable attempts")
+
+	# Reject malformed admission before publishing any state or stock.
+	var invalid: Array = []
+	for field in ["cards", "offers_trinkets"]:
+		for count in [-1, 1]:
+			var bad := canonical.duplicate(true)
+			if count < 0:
+				bad[field].pop_back()
+			else:
+				bad[field].append(bad[field][0].duplicate(true))
+			invalid.append(bad)
+	for field in ["cards", "offers_trinkets"]:
+		for price in [-1, 1.5, 100.0, "100", true, null]:
+			var bad := canonical.duplicate(true)
+			bad[field][0].price = price
+			invalid.append(bad)
+		for value in [null, {}, {"id": "forged", "price": 10, "sold": false}]:
+			var bad := canonical.duplicate(true)
+			bad[field][0] = value
+			invalid.append(bad)
+	for owner in ["foreign_hero", canonical.cards[1].owner, "", 7]:
+		var bad := canonical.duplicate(true)
+		bad.cards[0].owner = owner
+		invalid.append(bad)
+	var duplicate := canonical.duplicate(true)
+	duplicate.cards[0].id = duplicate.cards[1].id
+	invalid.append(duplicate)
+	for bad in invalid:
+		var rejected := _peddler(bad)
+		_check(not rejected.is_valid(), "malformed Peddler fails closed")
+		_assert_model(rejected, {}, {}, "invalid Peddler publishes nothing")
+		_assert_result(rejected.buy("card", canonical.cards[0].id), false, {}, {}, "invalid Peddler refuses card")
+		_assert_result(rejected.buy("trinket", canonical.offers_trinkets[0].id), false, {}, {}, "invalid Peddler refuses patch")
+	_check(rng.state == after_stock, "Peddler admission and all transactions consume no run RNG")
+	_check(randi() == expected_global, "Peddler operations consume no global RNG")
 
 
 func _fixture() -> Dictionary:
