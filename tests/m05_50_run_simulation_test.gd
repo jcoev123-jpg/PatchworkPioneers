@@ -24,6 +24,7 @@ func _initialize() -> void:
 	_test_energy_pool_fixture()
 	_test_seamstress_pool_fixture()
 	_test_tinker_pool_fixture()
+	_test_generic_event_affordability_witness()
 	var start_ms := Time.get_ticks_msec()
 	var seeds: Array[int] = []
 	var first: Array[Dictionary] = []
@@ -54,6 +55,55 @@ func _initialize() -> void:
 	for failure in failures:
 		printerr("M05 baseline: ", failure)
 	quit(0 if failures.is_empty() else 1)
+
+
+## The pinned 50-seed cohort keeps its original strategy and totals, so the one
+## genuine unaffordable generic-Event refusal it used to reach is now pinned by
+## its own witness seed instead of by the cohort sample. Adding the six
+## lantern-haunted stories to the shared surviving pool changed which generic
+## Event each cohort visit draws, so this run is asserted separately (never
+## folded into the cohort totals). Seed 1138 is an authentic completed run whose
+## generic Event offers one signed choice that the visit wallet cannot fund.
+const EVENT_AFFORDABILITY_WITNESS_SEED := 1138
+
+
+func _test_generic_event_affordability_witness() -> void:
+	var trial := _run_seed(EVENT_AFFORDABILITY_WITNESS_SEED)
+	_check(trial.get("ok", false), "affordability witness seed %d runs to completion: %s" % [
+		EVENT_AFFORDABILITY_WITNESS_SEED, trial.get("error", "")])
+	if not trial.get("ok", false):
+		return
+	var witness := {}
+	var refused := 0
+	for visit in trial.event_visits:
+		if not visit.generic:
+			continue
+		refused += visit.unaffordable
+		if visit.unaffordable > 0 and witness.is_empty():
+			witness = visit
+	_check(refused > 0, "affordability witness meets a genuinely unaffordable generic Event choice")
+	if witness.is_empty():
+		return
+	_check(witness.record.id != "" and witness.forecast.get("ok", false)
+		and witness.forecast.get("event_id") == witness.record.id,
+		"the witness forecasts its authentic authored generic Event")
+	var denied_rows: Array = witness.forecast.get("choices", []).filter(func(row): return not row.affordable)
+	_check(denied_rows.size() == witness.unaffordable and witness.unaffordable > 0,
+		"the witness forecast lists exactly the refused signed choices")
+	for row in denied_rows:
+		var authored: Array = witness.record.choices.filter(func(item): return item.id == row.choice_id)
+		_check(authored.size() == 1
+			and (int(authored[0].outcome.gold) < 0 or int(authored[0].outcome.scraps) < 0),
+			"each refused witness choice is a genuine signed debit: " + str(row.choice_id))
+	var chosen_rows: Array = witness.forecast.get("choices", []).filter(
+		func(row): return row.choice_id == witness.receipt.choice_id)
+	_check(chosen_rows.size() == 1 and chosen_rows[0].affordable
+		and witness.receipt.get("ok", false) and witness.receipt.get("event_id") == witness.record.id
+		and witness.receipt.get("wallet") == witness.wallet,
+		"the witness still settles one affordable authored choice exactly")
+	var replay := _run_seed(EVENT_AFFORDABILITY_WITNESS_SEED)
+	_check(replay.get("ok", false) and replay == trial,
+		"the affordability witness replays identically from its pinned seed")
 
 
 func _check(condition: bool, message: String) -> void:
@@ -1627,8 +1677,12 @@ func _report(trials: Array[Dictionary]) -> void:
 		"cohort witnesses legal Shop visits, paid card receipts and unaffordable rejections")
 	for event_id in ["quiet_spool", "moth_infestation", "dye_vat"]:
 		_check(specials.get(event_id, 0) > 0, "cohort commits real special Event " + event_id)
-	_check(generic > 0 and event_unaffordable > 0,
-		"cohort commits seeded generic Event wallet choices and rejects unaffordable choices")
+	_check(generic > 0,
+		"cohort commits seeded generic Event wallet choices")
+	# The genuine unaffordable-refusal path is pinned separately by
+	# _test_generic_event_affordability_witness(): the fixed cohort sample no
+	# longer draws that shape now that the shared pool carries the lantern-haunted
+	# batch, and its original strategy and totals stay untouched.
 	_check(wins >= 0 and wins <= SEED_COUNT and floor_total >= SEED_COUNT,
 		"aggregate arithmetic bounds")
 	print("M05 balance: wins=%d/%d (%.1f%%), average reached floor=%.2f/12" %
