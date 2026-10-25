@@ -2877,9 +2877,41 @@ func _test_art_and_help_clearance(base: Dictionary, kind: String) -> void:
 		if overlay != null:
 			var help_title := overlay.get_node("HelpContent/HelpTitle") as Label
 			var lines := overlay.get_node("HelpContent/KeywordScroll/KeywordLines") as VBoxContainer
-			_check(help_title.text.contains(String(_base_pool_definition(card_id)["display_name"]))
+			var def: Dictionary = _base_pool_definition(card_id)
+			_check(help_title.text.contains(String(def["display_name"]))
 				and lines.get_child_count() > 0,
 				"glossary names the offered card and explains real keywords: " + card_id)
+			_check(help_title.theme_type_variation == &"PatchHeading",
+				"HelpTitle uses PatchHeading display font variation: " + card_id)
+			_check(help_title.get_theme_font_size("font_size") >= 22,
+				"HelpTitle font size >= 22 px: " + card_id)
+			var fonts := _display_fonts()
+			if not fonts.is_empty():
+				_check(help_title.get_theme_font(&"font") == fonts["heading"],
+					"HelpTitle effective font is Theme Londrina Solid heading: " + card_id)
+			
+			var actual_keywords: Array = []
+			var test_glossary: Script = load("res://scripts/card_keyword_glossary.gd")
+			if test_glossary != null and test_glossary.has_method("describe"):
+				actual_keywords = test_glossary.describe(def)
+			
+			var line_idx := 0
+			for child in lines.get_children():
+				var label_child := child as Label
+				if label_child != null:
+					if actual_keywords.size() > line_idx:
+						_check(label_child.text == "%s — %s" % [actual_keywords[line_idx]["keyword"], actual_keywords[line_idx]["explanation"]],
+							"KeywordLine remains the exact authored keyword — explanation: " + card_id)
+					_check(label_child.get_theme_font_size("font_size") >= 18,
+						"KeywordLine font size >= 18 px: " + card_id)
+					_check(label_child.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
+						"KeywordLine wraps inside existing scrolling glossary: " + card_id)
+					if not fonts.is_empty():
+						var child_font: Font = label_child.get_theme_font(&"font")
+						_check(child_font == fonts["body"] or child_font == null,
+							"KeywordLine effective font is Theme default Patrick Hand: " + card_id)
+				line_idx += 1
+			
 			var close := overlay.get_node("HelpContent/CloseHelpButton") as Button
 			await _mouse(close)
 			_check(panel._help_overlay == null and help.has_focus(),

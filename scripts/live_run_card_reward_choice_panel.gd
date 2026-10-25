@@ -641,6 +641,7 @@ func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
 	title.text = String(definition["display_name"]) + "  •  Keywords"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.theme_type_variation = &"PatchHeading"
 	title.add_theme_font_size_override("font_size", 22)
 	title.add_theme_color_override("font_color", owner_ink(owner))
 	var felt_box := StyleBoxFlat.new()
@@ -667,7 +668,7 @@ func _mount_help_overlay(definition: Dictionary, keywords: Array[Dictionary],
 		line.name = "KeywordLine_%d" % list.get_child_count()
 		line.text = "%s — %s" % [item["keyword"], item["explanation"]]
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		line.add_theme_font_size_override("font_size", 17)
+		line.add_theme_font_size_override("font_size", 18)
 		line.add_theme_color_override("font_color", DARK_INK)
 		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		list.add_child(line)
