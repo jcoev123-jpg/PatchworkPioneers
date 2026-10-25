@@ -1,0 +1,41 @@
+[
+  {
+    "id": "relay_bobbin",
+    "name": "Relay Bobbin",
+    "slot": "HEAD",
+    "rarity": "rare",
+    "effect": "different_hero_pinned_token_shared_energy",
+    "trigger": "different_living_hero_consumes_pin_placed_by_wearer",
+    "pin_must_be_placed_by_wearer": true,
+    "consumer_must_be_living": true,
+    "consumer_must_differ_from_wearer": true,
+    "wearer_must_be_living": true,
+    "wearer_must_be_untorn": true,
+    "requires_confirmed_receipt": true,
+    "shared_energy": 1,
+    "shared_energy_cap": 3,
+    "uses_per_combat": 1,
+    "shop_price_gold": 100,
+    "stock_weight_percent": 10,
+    "stock_weight_basis": "ordinary_patch",
+    "stock_competes_for_existing_slot": true
+  },
+  {
+    "id": "hearth_lining",
+    "name": "Hearth Lining",
+    "slot": "COAT",
+    "rarity": "rare",
+    "effect": "earned_quilt_bonus_wearer_heal",
+    "trigger": "first_earned_quilt_bonus_in_combat",
+    "requires_earned_bonus": true,
+    "wearer_must_be_living": true,
+    "wearer_must_be_untorn": true,
+    "heal": 2,
+    "heal_cap": "max_hp",
+    "uses_per_combat": 1,
+    "shop_price_gold": 100,
+    "stock_weight_percent": 10,
+    "stock_weight_basis": "ordinary_patch",
+    "stock_competes_for_existing_slot": true
+  }
+]

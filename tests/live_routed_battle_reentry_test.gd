@@ -189,6 +189,12 @@ func _visit_path(path: Array, keyboard: bool) -> void:
 						await _key(KEY_ENTER)
 					else:
 						await _click(leave)
+				elif is_instance_valid(app.needle_toll_panel):
+					var scraps: int = app.run_scraps
+					var rng: int = app.run_rng.state
+					await _click(app.needle_toll_panel.get_choice_buttons()[1])
+					_check(app.needle_toll_panel == null and app.run_scraps == scraps + 1
+						and app.run_rng.state == rng, "transit toll safe exit changes only scraps")
 				elif is_instance_valid(app.wallet_event_panel):
 					_check(app.route_view == null, "generic transit Event requires its wallet choice")
 					var panel: LiveEventChoicePanel = app.wallet_event_panel

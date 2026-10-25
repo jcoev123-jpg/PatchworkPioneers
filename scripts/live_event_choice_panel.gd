@@ -68,6 +68,56 @@ signal wallet_choice_committed(result: Dictionary)
 @onready var bottom_stitches: Label = $PaperPanel/ContentMargin/EventContent/BottomStitches
 
 var _selector: RunEventChoice = null
+var needle_payer: OptionButton
+
+
+## Render detached rules state; only the app may publish a transaction.
+func open_needle_toll(outcome: RunNeedleToll) -> bool:
+	if _is_open or outcome == null or not outcome.is_valid():
+		return false
+	var record := outcome.get_event()
+	var captions: Array[String] = []
+	if outcome.is_paid():
+		record.choices = []
+		for id in outcome.get_offered_ids():
+			var card := RunPoolCardRewardOffers.resolve_reward_definition(id)
+			var caption := "Claim %s (%s, rare)" % [card.get("display_name", id), card.get("owner", "")]
+			record.choices.append({"id": id, "text": caption})
+			captions.append(caption)
+		record.choices.append({"id": "skip", "text": "Skip - take no card"})
+		captions.append("Skip - take no card")
+	else:
+		captions.assign(["Pay toll with selected hero: -6 HP; choose a rare card", record.choices[1].text])
+	if not open_event(record):
+		return false
+	for index in range(_choice_buttons.size()):
+		_choice_buttons[index].text = captions[index]
+		_choice_buttons[index].tooltip_text = captions[index]
+	if outcome.is_open():
+		needle_payer = OptionButton.new()
+		needle_payer.name = "NeedlePayer"
+		needle_payer.custom_minimum_size.y = 44
+		needle_payer.add_theme_font_size_override("font_size", 21)
+		for id in outcome.get_eligible_hero_ids():
+			for hero in outcome.get_snapshot().heroes:
+				if hero.id == id:
+					needle_payer.add_item("%s: %d HP" % [id.capitalize(), hero.hp])
+					needle_payer.set_item_metadata(needle_payer.item_count - 1, id)
+		choices_container.get_parent().add_child(needle_payer)
+		choices_container.get_parent().move_child(needle_payer, choices_container.get_index())
+		needle_payer.disabled = needle_payer.item_count == 0
+		_choice_buttons[0].disabled = needle_payer.disabled
+	var controls: Array[Control] = []
+	if is_instance_valid(needle_payer) and not needle_payer.disabled:
+		controls.append(needle_payer)
+	for button in _choice_buttons:
+		if not button.disabled:
+			controls.append(button)
+	for index in range(controls.size()):
+		controls[index].focus_next = controls[index].get_path_to(controls[(index + 1) % controls.size()])
+		controls[index].focus_previous = controls[index].get_path_to(controls[(index - 1 + controls.size()) % controls.size()])
+	controls[0].grab_focus()
+	return true
 var _generation: int = 0
 var _is_open: bool = false
 var _choice_buttons: Array[Button] = []
@@ -353,6 +403,10 @@ func _forecast_line(forecast: Dictionary, wallet: Dictionary) -> String:
 ## Discards selector, previews and any wallet snapshot, and invalidates
 ## all prior callback generations before another event can be opened.
 func close_event() -> void:
+	if is_instance_valid(needle_payer):
+		needle_payer.get_parent().remove_child(needle_payer)
+		needle_payer.queue_free()
+	needle_payer = null
 	_committed_choice.clear()
 	_generation += 1
 	_is_open = false

@@ -23,6 +23,7 @@ func _initialize() -> void:
 		"authored base exactly matches the starter catalog order")
 	_test_combinations(base)
 	_test_rejections(base)
+	_test_authentication_rejections()
 	_finish()
 
 
@@ -126,6 +127,15 @@ func _test_combinations(base: Array) -> void:
 					label + " CombatDeck accepts typed IDs without changing multiset")
 				var stored: Dictionary = composer.get_receipt()
 				_check(stored == result, label + " detached receipt initially matches")
+				var authenticated := RunHeroPathLoadout.authenticate_receipt(stored)
+				_check(authenticated.get("ok") == true
+					and authenticated.get("card_ids") == chosen_cards
+					and authenticated.get("receipt") == stored,
+					label + " complete authored selection authenticates with three IDs")
+				if authenticated.get("ok") == true:
+					authenticated.receipt.paths.warden.passive["forged"] = true
+					_check(composer.get_receipt() == stored,
+						label + " authentication returns a detached canonical copy")
 				paths["warden"]["passive"]["forged"] = true
 				paths["seamstress"]["card"]["effects"]["forged"] = 99
 				paths["tinker"]["card"]["from_positions"].clear()
@@ -174,3 +184,52 @@ func _test_rejections(base: Array) -> void:
 	_check(composer.choose(valid, rng).get("ok", false) and composer.is_claimed(),
 		"valid selection succeeds after every rejection")
 	_check(rng.state == state_before, "valid composition still consumes no caller RNG")
+
+
+func _reject_authentication(candidate: Variant, label: String) -> void:
+	var before: Variant = candidate.duplicate(true) if candidate is Dictionary or candidate is Array else candidate
+	_check(RunHeroPathLoadout.authenticate_receipt(candidate) == {"ok": false}
+		and candidate == before, label + " fails closed without input mutation")
+
+
+func _test_authentication_rejections() -> void:
+	var composer := RunHeroPathLoadout.new()
+	var claim := composer.choose(_selection("bulwark", "bloodline", "sharpshot"))
+	_check(claim.get("ok") == true and composer.is_claimed()
+		and RunHeroPathLoadout.authenticate_receipt(claim).get("ok") == true,
+		"rejection fixture begins with authentic three-hero claim")
+	if claim.get("ok") != true:
+		return
+	for bad in [null, [], {}, false, composer.choose(
+			_selection("bulwark", "bloodline", "sharpshot"))]:
+		_reject_authentication(bad, "malformed or replayed trio claim")
+	var forged := claim.duplicate(true)
+	forged.paths.warden.passive.starting_block = 16
+	_reject_authentication(forged, "changed passive")
+	forged = claim.duplicate(true)
+	forged.paths.seamstress.card.effects.bleed = 9
+	_reject_authentication(forged, "changed card effect")
+	forged = claim.duplicate(true)
+	forged.paths.tinker.card.owner = "warden"
+	_reject_authentication(forged, "changed card owner")
+	forged = claim.duplicate(true)
+	forged.deck[0] = "tinker_scope"
+	_reject_authentication(forged, "changed base deck")
+	forged = claim.duplicate(true)
+	forged.deck.append("tinker_scope")
+	_reject_authentication(forged, "duplicate appended card")
+	forged = claim.duplicate(true)
+	forged.paths.erase("seamstress")
+	_reject_authentication(forged, "missing hero")
+	forged = claim.duplicate(true)
+	forged.paths["extra"] = forged.paths.warden.duplicate(true)
+	_reject_authentication(forged, "extra hero")
+	forged = claim.duplicate(true)
+	forged.paths.tinker.path_id = "clockwork"
+	_reject_authentication(forged, "selection and record mismatch")
+	forged = claim.duplicate(true)
+	forged["ok"] = 1
+	_reject_authentication(forged, "bool-int claim mismatch")
+	forged = claim.duplicate(true)
+	forged.paths.warden.erase("card")
+	_reject_authentication(forged, "missing selected card")
