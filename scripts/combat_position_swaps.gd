@@ -105,6 +105,15 @@ static func play_move_card(deck: CombatDeck, party: CombatParty, card_id: Varian
 	if not preview_adjacent_swap(party, owner_position, direction)["ok"]:
 		return false
 
+	# V3-2 Tangled: a hero afflicted by its own side cannot move itself or be
+	# moved by its team, so both participants of this allied swap are inspected
+	# before any charge, discard or roster edit. Only this hero-owned paid
+	# transaction is gated: the generic preview (and so an enemy shove, which is
+	# not movement "by its own side") keeps its old behavior.
+	if _tangled_blocks(party._heroes[owner_position - 1]) \
+			or _tangled_blocks(party._heroes[owner_position + direction - 1]):
+		return false
+
 	# The two deck operations cannot fail after the complete preflight above:
 	# the turn is active, energy is sufficient and the held ID exists.
 	if not deck.try_spend_energy(cost):
@@ -119,3 +128,21 @@ static func play_move_card(deck: CombatDeck, party: CombatParty, card_id: Varian
 	mover["position"] = destination_index + 1
 	neighbor["position"] = mover_index + 1
 	return true
+
+## V3-2 Tangled N: a positive integer count blocks this allied move for the actor
+## whether it is the mover or the one being moved. Absent statuses or an absent
+## key mean no active Tangled, and zero means expired. Any other stored value is
+## malformed and rejects the play instead of being coerced into a legal stack.
+static func _tangled_blocks(actor: Dictionary) -> bool:
+	var statuses = actor.get("statuses")
+	if statuses == null:
+		return false
+	if not statuses is Dictionary:
+		return true
+	if not statuses.has("tangled"):
+		return false
+	var count = statuses["tangled"]
+	if not count is int:
+		return true
+	return count != 0
+

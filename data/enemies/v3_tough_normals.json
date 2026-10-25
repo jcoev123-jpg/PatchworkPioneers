@@ -1,0 +1,14 @@
+[
+  {"id": "spindle_ram", "name": "Spindle Ram", "max_hp": 30, "art_path": "res://assets/paper/enemies/spindle_ram.png",
+    "intent": {"target": "front", "actions": [
+      {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+      {"type": "block", "amount": 7, "weight": 2},
+      {"type": "attack", "amount": 8, "weight": 3}
+    ]}},
+  {"id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith", "max_hp": 27, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
+    "intent": {"target": "lowest_living_hp", "actions": [
+      {"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
+      {"type": "debuff", "status": "exposed", "amount": 1, "weight": 1},
+      {"type": "attack", "amount": 9, "weight": 3}
+    ]}}
+]
