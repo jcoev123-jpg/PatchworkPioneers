@@ -26,6 +26,7 @@ var _direct_fire := CombatTinkerPoolAttacks.new()
 var _direct_fire_preview := CombatTinkerDirectFirePreview.new()
 var _pool_strikes := CombatPoolPlainStrikes.new()
 var _heavy_attacks := CombatWardenPoolHeavyAttacks.new()
+var _toss := CombatWardenV3ShieldTossCards.new()
 var _vanguard: CombatWardenVanguardPassive
 var _warden_turn := -1
 var _tinker_gadgets := CombatTinkerPoolGadgets.new()
@@ -775,6 +776,8 @@ func _single(panel) -> bool:
 ## Starter, plain-strike, heavy-pool, Seamstress control attacks and this
 ## battle's selected Path card use separate authored catalogs.
 func _definition(card_id: String) -> Dictionary:
+	if _toss.is_supported_card(card_id):
+		return _toss._catalog_definition(card_id)
 	if _is_warden_card(card_id):
 		return _warden_card
 	if _is_path_card(card_id):
@@ -818,6 +821,8 @@ func _select(event: InputEvent, panel) -> void:
 ## service itself validates each original enemy slot before it is offered.
 func _target_preview(id: String) -> Dictionary:
 	var app = get_parent()
+	if _toss.is_supported_card(id):
+		return _toss_forecast(app.party, app.enemies, id)
 	if _is_warden_card(id):
 		return warden_preview(id)
 	if _is_path_card(id):
@@ -858,6 +863,7 @@ func _queue_attack(position: int) -> void:
 	if (_direct_fire_preview.supports(id) or _targeting.is_sight_glass(id) \
 			or _targeting.is_seamstress_control(id) \
 			or _targeting.is_heavy_pool_attack(id) \
+			or _toss.is_supported_card(id) \
 			or _targeting.is_pool_combo_attack(id) or _is_path_card(id) or _is_warden_card(id) \
 			or id in CombatAttackCards.ATTACK_IDS) and position > 0:
 		target_id = str(app.enemies.get_enemy(position).get("id", ""))
@@ -879,7 +885,8 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	var combo := _targeting.is_pool_combo_attack(id)
 	var path := _is_path_card(id) or _is_warden_card(id)
 	var heavy := _targeting.is_heavy_pool_attack(id)
-	var guarded := direct or control or combo or path or heavy or id in CombatAttackCards.ATTACK_IDS
+	var toss := _toss.is_supported_card(id)
+	var guarded := direct or control or combo or path or heavy or toss or id in CombatAttackCards.ATTACK_IDS
 	if not _bindings.has(panel) or panel != _armed or not _eligible(panel) or _card_id(panel) != id or _bindings[panel].id != id:
 		if guarded or _targeting.is_sight_glass(id):
 			_reject_stitch()
@@ -902,7 +909,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 		_reject_stitch()
 		return
 	var energy_before: int = _deck.energy
-	if (direct or combo or path or heavy) and (app._battle_closed \
+	if (direct or combo or path or heavy or toss) and (app._battle_closed \
 			or (target_id.is_empty() and not (_is_warden_card(id) and position == 0)) \
 			or app.deck._rng != rng or (combo and not app._combo_battle_current())):
 		_reject_stitch()
@@ -911,7 +918,7 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 	if not preview.playable or (position not in preview.target_positions if preview.requires_selection else position != 0) \
 			or (((_targeting.is_sight_glass(id) or direct) and (app._battle_closed or target_id.is_empty() \
 			or app.enemies.get_enemy(position).get("id") != target_id)) \
-			or ((control or combo or path or heavy or id in CombatAttackCards.ATTACK_IDS) \
+			or ((control or combo or path or heavy or toss or id in CombatAttackCards.ATTACK_IDS) \
 				and position > 0 and (app._battle_closed or target_id.is_empty() \
 				or app.enemies.get_enemy(position).get("id") != target_id))):
 		if guarded or _targeting.is_sight_glass(id):
@@ -931,6 +938,14 @@ func _commit(panel, id: String, position: int, token: int, party, enemies, resul
 
 
 func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, position: int, forecast: bool = false) -> Dictionary:
+	if _toss.is_supported_card(id):
+		if forecast:
+			return _toss_forecast(party, enemies, id)
+		var snapshots := _toss_statuses(party, enemies, position)
+		if not snapshots.get("ok", false):
+			return {"ok": false}
+		return _toss.play_card(_deck, party, enemies, id, position,
+			snapshots.attacker, snapshots.defender)
 	if _is_warden_card(id):
 		if not warden_ready() or party != get_parent().party or enemies != get_parent().enemies:
 			return {"ok": false}
@@ -1160,6 +1175,38 @@ func _pool_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> D
 	return {"playable": true, "requires_selection": true, "hits": hits}
 
 
+## Read live snapshots without coercion; the paid service validates their contents.
+func _toss_statuses(party: CombatParty, enemies: CombatEnemies, position: int) -> Dictionary:
+	if party == null or enemies == null:
+		return {"ok": false}
+	for hero in party.get_heroes():
+		if hero.get("id") == CombatWardenV3ShieldTossCards.OWNER:
+			var attacker: Variant = hero.get("statuses", {})
+			var defender: Variant = enemies.get_enemy(position).get("statuses", {})
+			if attacker is Dictionary and defender is Dictionary:
+				return {"ok": true, "attacker": attacker, "defender": defender}
+	return {"ok": false}
+
+
+func _toss_forecast(party: CombatParty, enemies: CombatEnemies, id: String) -> Dictionary:
+	var preview := {"playable": false, "requires_selection": true,
+		"target_positions": [], "hits": []}
+	for position in CombatWardenV3ShieldTossCards.TO_POSITIONS:
+		var snapshots := _toss_statuses(party, enemies, position)
+		if not snapshots.get("ok", false):
+			continue
+		var plan := _toss._prepare(_deck, party, enemies, id, position,
+			snapshots.attacker, snapshots.defender)
+		if not plan.get("ok", false):
+			continue
+		var damage := _statuses.adjusted_attack_damage(plan.base_damage,
+			plan.attacker_statuses, plan.defender_statuses)
+		preview.target_positions.append(position)
+		preview.hits.append({"position": position, "damage": damage})
+	preview.playable = not preview.target_positions.is_empty()
+	return preview
+
+
 ## Identical read-only damage preview, but express Pin and Pound as two
 ## sequential hits on the chosen target, not a single damage packet, and include
 ## any conditional first-hit bonus without mutating or latching anything.
@@ -1254,7 +1301,7 @@ func _eligible(panel) -> bool:
 	var index: int = panel.get_index()
 	var path_ok: bool = (_is_path_card(id) and not _path_positions(id).is_empty()) \
 		or (_is_warden_card(id) and warden_preview(id).get("playable", false))
-	return (_targeting.supports(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
+	return (_targeting.supports(id) or _toss.is_supported_card(id) or _direct_fire_preview.supports(id) or _stitch_preview(id).playable or path_ok) and index < _deck.hand.size() and _deck.hand[index] == id
 
 
 func _sync_battle() -> void:
@@ -1510,6 +1557,8 @@ func _refresh() -> void:
 			definition.display_name, definition.cost, _key_hint(path_slots), path_reading]
 		return
 	var preview := _resolve_attack(app.party, app.enemies, id, 0, true)
+	if _toss.is_supported_card(id):
+		current_forecast = preview.duplicate(true)
 	if _targeting.is_pool_combo_attack(id):
 		current_forecast = preview.duplicate(true)
 		# Reuse the existing detailed oracle formatter, but make the live input
@@ -1566,7 +1615,7 @@ func _refresh() -> void:
 	# Only attach on-hit counters to starter attacks. Reward-pool strikes have
 	# no starter passive or worn-patch hook of their own.
 	var additions_by_position: Dictionary = {}
-	if not is_pool and not is_heavy and not is_direct and preview.playable:
+	if not is_pool and not is_heavy and not is_direct and not _toss.is_supported_card(id) and preview.playable:
 		# This is the same pure status preflight as the confirmed attack, including
 		# the authored passive, HEAD bonus, M04 rider and capacity eligibility.
 		var status_plan := _play._prepare(_deck, app.party, app.enemies, id, 0,
@@ -1605,7 +1654,7 @@ func _refresh() -> void:
 	var controls: String
 	if not _single(_selected):
 		controls = "P: select; Enter / Space / click card: cast"
-	elif is_pool or is_heavy or is_direct:
+	elif is_pool or is_heavy or is_direct or _toss.is_supported_card(id):
 		# Report exactly the slots this forecast offers, never a wider key row.
 		var legal: Array[int] = []
 		for hit in preview.hits:

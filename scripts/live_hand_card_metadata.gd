@@ -28,6 +28,7 @@ const ART_DIR := "res://assets/paper/"
 const FRAME_SOURCE_EDGE := 34.0
 
 var _catalog := StarterCards.new()
+var _toss := CombatWardenV3ShieldTossCards.new()
 var _warden_pool := WardenPoolCards.new()
 var _tinker_pool := TinkerPoolCards.new()
 var _seamstress_pool := SeamstressPoolCards.new()
@@ -73,6 +74,8 @@ func _ledger() -> RunRestStitchCards:
 ## lookup. Whether a recognized card may be played is a separate live decision
 ## made by the mounted presenters (see _wired); an unknown ID stays unknown.
 func _definition(card_id: String) -> Dictionary:
+	if _toss.is_supported_card(card_id):
+		return _toss._catalog_definition(card_id)
 	_load_path_cards()
 	_load_tinker_path_cards()
 	_load_warden_path_cards()
@@ -445,6 +448,9 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 	var raw_effects: Variant = definition.get("effects", {})
 	var effects: Dictionary = raw_effects if raw_effects is Dictionary else {}
 	var recipient: String = _recipient(definition)
+	if effects.get("damage_equal_to_owner_block", false):
+		parts.append("Deal damage equal to Warden's current Block%s. Keep that Block." % (
+			" + %d" % int(effects.bonus_damage) if effects.has("bonus_damage") else ""))
 	if definition.get("action_kind") == "adjacent_swap":
 		parts.append("Swap with the living adjacent ally %s" % ("behind" if int(definition.get("direction", 0)) == 1 else "ahead"))
 	if effects.has("damage"):
@@ -563,7 +569,7 @@ func _precise_effect_lines(card_id: String, definition: Dictionary) -> Array[Str
 			var authored: int = int(effects.get("bleed", 0))
 			rule += " (authored Bleed %d + Seamstress passive %d)" % [authored, addition - authored]
 		parts.append(rule)
-	if CardShortRules.has_unknown(definition):
+	if CardShortRules.has_unknown(definition) and not _toss.is_supported_card(card_id):
 		parts.append("BASE another authored effect is not described")
 	return parts
 
@@ -977,7 +983,7 @@ func _update_visual(panel: Control) -> void:
 		if battle_preview != null and is_instance_valid(battle_preview) \
 				and battle_preview.has_method("tinker_cost_discount"):
 			discount = int(battle_preview.tinker_cost_discount(id))
-		if id in CombatTinkerDirectFirePreview.IDS:
+		if id in CombatTinkerDirectFirePreview.IDS or _toss.is_supported_card(id):
 			# The mounted battle owns both the legal picker and its shared pin.
 			# Catalog knowledge alone cannot enable Spring Trap.
 			playable = battle_preview != null and is_instance_valid(battle_preview) \
@@ -1098,6 +1104,10 @@ func _center_text(panel: Control, value: String, rect: Rect2, preferred: int) ->
 ## keeps the ordinary and two-half sewn faces identical; applied amounts come
 ## from the same validated record the tooltip explains, never from a prediction.
 func _rules(id: String) -> String:
+	if _toss.is_supported_card(id):
+		var effects: Dictionary = _definition(id).effects
+		return "Damage = own Block%s; keep Block" % (
+			" + %d" % int(effects.bonus_damage) if effects.has("bonus_damage") else "")
 	var definition: Dictionary = _definition(id)
 	if definition.is_empty():
 		return ""
