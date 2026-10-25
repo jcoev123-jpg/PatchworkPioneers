@@ -67,7 +67,7 @@ func _valid_roster(side: String, actors: Array) -> bool:
 		if not statuses is Dictionary:
 			return false
 		for name in statuses:
-			if not name is String or name not in ["bleed", "weak", "exposed"]:
+			if not name is String or name not in ["bleed", "weak", "exposed", "tangled", "riposte"]:
 				return false
 			var count = statuses[name]
 			if not count is int or count < 0:
