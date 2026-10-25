@@ -255,6 +255,23 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 	panel.choice_scroll.ensure_control_visible(tile)
 	await _frames()
 	await _activate(tile, keyboard)
+	var expected_card_id := str(panel._rows[tile]["id"])
+	var price: int = RunShopCardRemoval.BASE_PRICE + RunShopCardRemoval.PRICE_STEP * int(app.run_removal_count)
+	var forecast_gold := -1
+	if funded:
+		var run_deck := app.run_deck as Array
+		forecast_gold = app.session_gold - price
+		var chosen_copies: int = run_deck.count(expected_card_id)
+		_check(panel.status_label.text.contains(panel._card_name(expected_card_id))
+				and panel.status_label.text.contains("first of %d %s" % [
+						chosen_copies, "copy" if chosen_copies == 1 else "copies"])
+				and panel.status_label.text.contains("deck %d→%d" % [run_deck.size(), run_deck.size() - 1])
+				and panel.status_label.text.contains("gold %d→%d (%d cost)" % [
+						app.session_gold, forecast_gold, price]),
+				"visible panel preview agrees with run_deck, wallet and prior removals in live route")
+	else:
+		_check(panel.status_label.text.contains("Need %d more gold" % (price - app.session_gold)),
+				"selected unaffordable live visit keeps the honest shortfall hint")
 	if funded:
 		panel.card_buttons.back().grab_focus()
 		await _key(KEY_TAB)
@@ -305,6 +322,9 @@ func _unpicker_scenario(stitched: bool, funded: bool, remove: bool, keyboard: bo
 		_check(app.run_deck == remaining, "only the first selected occurrence is removed in exact deck order")
 		_check(app.run_deck.size() == original.deck.size() - 1 and app.session_gold == original.gold - 75 - 25 * original.removals
 			and app.run_removal_count == original.removals + 1, "one actual occurrence removed and exact escalating debit")
+		if forecast_gold >= 0:
+			_check(app.session_gold == forecast_gold,
+				"authoritative purchase lands on exactly the previewed wallet")
 		if stitched:
 			_check(not app.run_stitch_descriptors.has(card) and app.run_next_stitch_id == original.cursor, "authentic descriptor retired without cursor reuse")
 			_check(original.descriptors.size() == 2 and app.run_stitch_descriptors.size() == 1, "real second stitched descriptor survives")

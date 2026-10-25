@@ -59,11 +59,13 @@ func _ready() -> void:
 
 	title_label = _label("UNPICKER  ·  remove one card", Vector2(30, 23), Vector2(820, 43), 30, GOLD)
 	wallet_label = _label("", Vector2(30, 73), Vector2(820, 34), 22, CREAM)
-	status_label = _label("", Vector2(30, 116), Vector2(820, 34), 18, CREAM)
+	# Reserved height: a long stitched owner/name forecast wraps to three lines and
+	# must stay above the card rows instead of drawing over them.
+	status_label = _label("", Vector2(30, 116), Vector2(820, 86), 18, CREAM)
 
 	choice_scroll = ScrollContainer.new()
-	choice_scroll.position = Vector2(30, 164)
-	choice_scroll.size = Vector2(820, 322)
+	choice_scroll.position = Vector2(30, 208)
+	choice_scroll.size = Vector2(820, 278)
 	choice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	choice_scroll.follow_focus = true
 	add_child(choice_scroll)
@@ -265,18 +267,68 @@ func _connect_button(button: Button, callback: Callable) -> void:
 	button.pressed.connect(callback)
 
 
+## Display-only projection of the authenticated source for one selectable card.
+## Pure: it reads the bound snapshot only and never mutates the visit, run state or RNG.
+static func forecast(source: Dictionary, selected_id: String) -> Dictionary:
+	var deck: Array = source.get("deck", [])
+	if selected_id.is_empty() or not deck.has(selected_id):
+		return {}
+	var descriptors: Dictionary = source.get("descriptors", {})
+	var gold := int(source.get("gold", 0))
+	var price := int(source.get("price", 0))
+	return {
+		"card_id": selected_id,
+		"first": deck.find(selected_id),
+		"copies": deck.count(selected_id),
+		"deck_before": deck.size(),
+		"deck_after": deck.size() - 1,
+		"gold_before": gold,
+		"gold_after": gold - price,
+		"price": price,
+		"stitched": descriptors.has(selected_id),
+	}
+
+
+func _forecast_line() -> String:
+	var projected := LiveUnpickerPanel.forecast(_source, _selected_id)
+	if projected.is_empty():
+		return ""
+	var copies := int(projected["copies"])
+	var line := "%s  •  first of %d %s  •  deck %d→%d  •  gold %d→%d (%d cost)" % [
+			_card_name(_selected_id), copies, "copy" if copies == 1 else "copies",
+			int(projected["deck_before"]), int(projected["deck_after"]),
+			int(projected["gold_before"]), int(projected["gold_after"]), int(projected["price"])]
+	if projected["stitched"]:
+		line += "  •  stitched descriptor removed"
+	return line
+
+
+func _affordable() -> bool:
+	return not _source.is_empty() and _source.has("gold") and _source.has("price") \
+			and int(_source["gold"]) >= int(_source["price"])
+
+
+func _status_line() -> String:
+	if not _active():
+		return "Visit closed or changed. No choice can be submitted."
+	if not _affordable():
+		return "Need %d more gold to Remove. Leave is free." % [int(_source["price"]) - int(_source["gold"])]
+	if _selected_id.is_empty():
+		return "Choose one card, then Remove it once. Or Leave."
+	var line := _forecast_line()
+	return line if not line.is_empty() else "Choose one card, then Remove it once. Or Leave."
+
+
+func _update_status() -> void:
+	status_label.text = _status_line()
+
+
 func _refresh() -> void:
 	_retire_callbacks()
 	_clear_choices()
 	wallet_label.text = _quote_line()
 	var open := _active()
-	var affordable := open and int(_source["gold"]) >= int(_source["price"])
-	if not open:
-		status_label.text = "Visit closed or changed. No choice can be submitted."
-	elif not affordable:
-		status_label.text = "Need %d more gold to Remove. Leave is free." % [int(_source["price"]) - int(_source["gold"])]
-	else:
-		status_label.text = "Choose one card, then Remove it once. Or Leave."
+	_update_status()
 	for id in _canonical_ids() if open else []:
 		var first: int = (_source["deck"] as Array).find(id)
 		var label_text := _caption(id)
@@ -288,7 +340,7 @@ func _refresh() -> void:
 		card_buttons.append(button)
 		_connect_button(button, _choose.bind(id, button, _epoch))
 		button.focus_entered.connect(choice_scroll.ensure_control_visible.bind(button))
-	remove_button.disabled = not affordable or _selected_id.is_empty() or card_buttons.is_empty()
+	remove_button.disabled = not _affordable() or _selected_id.is_empty() or card_buttons.is_empty()
 	leave_button.disabled = not open
 	if open:
 		_connect_button(remove_button, _request_remove.bind(_epoch))
@@ -326,6 +378,7 @@ func _choose(id: String, button: Button, epoch: int) -> void:
 			_selected_id = ""
 			_selected_button = null
 			remove_button.disabled = true
+			_update_status()
 			return
 		_selected_button.text = _caption(_selected_id)
 		_selected_button.add_theme_stylebox_override("normal", _button_style(Color("#485348"), THREAD))
@@ -334,6 +387,7 @@ func _choose(id: String, button: Button, epoch: int) -> void:
 	button.text = "◆  " + _caption(id)
 	button.add_theme_stylebox_override("normal", _button_style(Color("#5b6849"), GOLD))
 	remove_button.disabled = int(_source["gold"]) < int(_source["price"])
+	_update_status()
 	_wire_focus()
 
 

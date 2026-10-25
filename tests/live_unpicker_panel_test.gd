@@ -155,6 +155,10 @@ func _test_layout() -> void:
 			"bounded scroll never clips footer Remove/Leave")
 	_check(panel.remove_button.disabled and not panel.leave_button.disabled,
 			"only two distinct actions, selection required for Remove")
+	_check(panel.status_label.text == "Choose one card, then Remove it once. Or Leave.",
+			"unselected visit keeps the original choose-card hint")
+	_check(panel.status_label.get_global_rect().end.y <= panel.choice_scroll.get_global_rect().position.y,
+			"reserved forecast band sits above the card rows")
 	var unique: Array[String] = []
 	for id in source.deck:
 		if not unique.has(id):
@@ -203,6 +207,29 @@ func _test_remove(keyboard: bool) -> void:
 	_check(row.text.begins_with("◆") and not panel.remove_button.disabled
 			and panel.card_buttons.filter(func(item): return item.text.begins_with("◆")).size() == 1,
 			"exactly one visibly selected canonical row")
+	var deck := source["deck"] as Array
+	var first := deck.find(id)
+	var copies := deck.count(id)
+	var expected_price: int = RunShopCardRemoval.BASE_PRICE + RunShopCardRemoval.PRICE_STEP * int(source["prior_removals"])
+	var gold := int(source["gold"])
+	_check(copies == 2 and first == 0 and row.text.contains("%02d" % (first + 1)),
+			"independent starter first-copy and first-position prerequisite")
+	_check(panel.status_label.text.contains("Warden Strike")
+			and panel.status_label.text.contains("first of %d copies" % copies)
+			and panel.status_label.text.contains("deck %d→%d" % [deck.size(), deck.size() - 1])
+			and panel.status_label.text.contains("gold %d→%d (%d cost)" % [
+					gold, gold - expected_price, expected_price]),
+			"compact pre-confirmation preview: authored name, first copy of 2, deck 12→11, 75 quote")
+	var projected := LiveUnpickerPanel.forecast(source, id)
+	_check(projected.get("card_id") == id and projected.get("first") == first
+			and projected.get("copies") == copies and projected.get("deck_before") == deck.size()
+			and projected.get("deck_after") == deck.size() - 1
+			and projected.get("gold_before") == gold and projected.get("gold_after") == gold - expected_price
+			and projected.get("price") == expected_price and projected.get("stitched") == false
+			and LiveUnpickerPanel.forecast(source, "") == {},
+			"pure source projection matches the independent ledger, not hardcoded UI text")
+	_check(visit.read_state() == source and intents.is_empty() and not visit.is_consumed(),
+			"forecast is display-only, never a spend or service mutation")
 	await _activate(panel.remove_button, keyboard, KEY_ENTER)
 	_check(intents.size() == 1 and visit.read_state() == source and not visit.is_consumed(),
 			"one detached intent, never a view-side spend")
@@ -268,13 +295,28 @@ func _test_price_boundaries() -> void:
 		var visit := _make(fixture.gold, fixture.prior)
 		await _bind(visit)
 		var before := visit.read_state()
+		var selected_id: String = before.deck[0]
 		_check(visit.quote().price == fixture.price
 				and panel.wallet_label.text.contains("%d gold" % fixture.price),
 				"service-derived price shown at boundary " + str(fixture))
+		if not fixture.can_remove:
+			panel.card_buttons[0].grab_focus()
+			await _settle()
+			_check(panel.remove_button.disabled and not panel.leave_button.disabled,
+					"focus alone never enables an unaffordable paid action " + str(fixture))
 		await _activate(panel.card_buttons[0], false)
 		_check(panel.remove_button.disabled != fixture.can_remove
 				and not panel.leave_button.disabled,
 				"affordability and free Leave at boundary " + str(fixture))
+		if not fixture.can_remove:
+			_check(panel.status_label.text.contains("Need %d more gold" % (fixture.price - fixture.gold)),
+					"unaffordable quote still shows shortfall despite selection")
+		else:
+			_check(panel.status_label.text.contains("first of %d %s" % [
+							before.deck.count(selected_id), "copy" if before.deck.count(selected_id) == 1 else "copies"])
+					and panel.status_label.text.contains("gold %d→%d (%d cost)" % [
+							fixture.gold, fixture.gold - fixture.price, fixture.price]),
+					"preview quotes the escalating service price, never a hardcoded 75 " + str(fixture))
 		if fixture.can_remove:
 			await _activate(panel.remove_button, false)
 			_check(intents.size() == 1, "affordable 75/100 sends one intent")
@@ -323,11 +365,31 @@ func _test_stitched() -> void:
 	var halves: Array = source.descriptors[id].half_ids
 	var owner1 := str(RunRestStitchCards.resolve_card_definition(halves[0]).get("owner", "")).capitalize()
 	var owner2 := str(RunRestStitchCards.resolve_card_definition(halves[1]).get("owner", "")).capitalize()
+	var expected_name := owner1 + " / " + owner2 + " - " + str(source.descriptors[id].display_name)
 	_check(card_row.text.contains(source.descriptors[id].display_name)
 			and card_row.text.contains("%02d" % (first + 1))
 			and card_row.text.contains(owner1 + " / " + owner2 + " - "),
 			"descriptor names composite on canonical first-occurrence tile with ordered owners")
 	await _activate(card_row, false)
+	var copies: int = source.deck.count(id)
+	_check(panel.status_label.text.contains(expected_name)
+			and panel.status_label.text.contains("first of %d %s" % [copies, "copy" if copies == 1 else "copies"])
+			and panel.status_label.text.contains("deck %d→%d" % [source.deck.size(), source.deck.size() - 1])
+			and panel.status_label.text.contains("gold 100→25 (75 cost)")
+			and panel.status_label.text.contains("stitched descriptor removed"),
+			"stitched row selection previews composed name, one absorbed entry and descriptor retirement")
+	var lines: int = panel.status_label.get_line_count()
+	var line_height: float = float(panel.status_label.get_line_height())
+	_check(float(lines) * line_height <= panel.status_label.size.y + 0.5
+			and panel.status_label.size.y >= 2.0 * line_height
+			and panel.status_label.get_global_rect().end.y <= panel.choice_scroll.get_global_rect().position.y
+			and not panel.status_label.get_global_rect().intersects(panel.remove_button.get_global_rect())
+			and not panel.status_label.get_global_rect().intersects(panel.leave_button.get_global_rect()),
+			"long stitched owner/name forecast wraps inside its band above rows and buttons (%d lines of %d)"
+					% [lines, int(line_height)])
+	_check(visit.read_state() == source and intents.is_empty()
+			and visit.is_valid() and not visit.is_consumed(),
+			"stitched forecast neither mutates nor consumes the authenticated visit")
 	await _activate(panel.remove_button, false)
 	_check(intents.size() == 1 and intents[0].get("selected_card_id") == id,
 			"selected descriptor identity captured without row metadata")
@@ -368,6 +430,9 @@ func _test_rejections() -> void:
 	var retired_leave: Callable = panel._connections[panel.leave_button]
 	await _activate(row, false)
 	var original_quote := panel.wallet_label.text
+	var forecast_text := panel.status_label.text
+	_check(forecast_text.contains("first of") and forecast_text.contains("gold"),
+			"genuine selection really produced a forecast before rebind")
 	panel.wallet_label.text = "Wallet: 99999 gold • Remove: 0 gold"
 	panel.remove_button.pressed.emit()
 	panel.leave_button.pressed.emit()
@@ -394,8 +459,10 @@ func _test_rejections() -> void:
 	retired_leave.call()
 	_check(intents.is_empty() and old.read_state() == before
 			and newer.read_state() == after_new
-			and panel.remove_button.disabled,
-			"retired callbacks and rebind reset selection and cannot touch either source")
+			and panel.remove_button.disabled
+			and panel.status_label.text == "Choose one card, then Remove it once. Or Leave."
+			and panel.status_label.text != forecast_text,
+			"retired callbacks and rebind reset selection and forecast without touching either source")
 	var closed_before := newer.read_state()
 	panel.close()
 	panel.leave_button.pressed.emit()
