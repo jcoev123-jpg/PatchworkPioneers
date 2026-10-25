@@ -627,7 +627,10 @@ func _run() -> void:
 				await _activate(app.rest_continue_button, mode == 1)
 			elif kind == "Unpicker":
 				_check(app.unpicker_visit.is_valid() and app.unpicker_view.is_visible_in_tree(), "real seeded Unpicker mounted")
-				stale.append(app.unpicker_leave_button.pressed.get_connections()[0].callable)
+				var source: Dictionary = app.unpicker_visit.read_state()
+				stale.append(app.unpicker_view.decision_requested.get_connections()[0].callable.bind({
+					"action": "leave", "visit_id": source.visit_id, "node_id": source.node_id,
+					"expected_snapshot": source.duplicate(true)}))
 				await _activate(app.unpicker_leave_button, mode == 1)
 			elif kind == "Shop":
 				_check(app.shop_visit != null and app.shop_purchases != null and app.shop_view.is_visible_in_tree(),

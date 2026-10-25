@@ -4161,8 +4161,7 @@ var _campfire_closed := false
 var _campfire_visits: Dictionary = {}
 
 
-var unpicker_view: VBoxContainer
-var unpicker_cards: OptionButton
+var unpicker_view: LiveUnpickerPanel
 var unpicker_remove_button: Button
 var unpicker_leave_button: Button
 var unpicker_visit: RunUnpickerVisit
@@ -4202,79 +4201,51 @@ func _choose_unpicker_route(id: String, source: WeakRef, prior: Array[String], b
 	unpicker_visit = visit
 	_unpicker_source = visit.read_state()
 	_unpicker_closed = false
-	unpicker_view = VBoxContainer.new()
+	unpicker_view = LiveUnpickerPanel.new()
 	unpicker_view.name = "Unpicker"
-	unpicker_view.position = Vector2(300, 190)
-	unpicker_view.custom_minimum_size = Vector2(680, 260)
-	unpicker_view.add_theme_constant_override("separation", 16)
+	unpicker_view.position = Vector2(200, 60)
 	add_child(unpicker_view)
-	var title := Label.new()
-	title.text = "Unpicker - remove one owned card or Leave\nGold: %d | Remove: %d gold" % [session_gold, visit.quote().price]
-	unpicker_view.add_child(title)
-	unpicker_cards = OptionButton.new()
-	unpicker_view.add_child(unpicker_cards)
-	# The service removes the first matching occurrence. Present exactly those
-	# physical occurrences, with their deck positions, rather than mislabel duplicates.
-	for index in range(run_deck.size()):
-		if run_deck.find(run_deck[index]) != index:
-			continue
-		unpicker_cards.add_item(_unpicker_card_text(index))
-		unpicker_cards.set_item_metadata(unpicker_cards.item_count - 1, index)
-	unpicker_remove_button = Button.new()
-	unpicker_remove_button.text = "Remove - %d gold" % visit.quote().price
-	unpicker_remove_button.disabled = session_gold < visit.quote().price or unpicker_cards.item_count == 0
-	unpicker_leave_button = Button.new()
-	unpicker_leave_button.text = "Leave"
-	for action in [unpicker_remove_button, unpicker_leave_button]:
-		unpicker_view.add_child(action)
-		action.pressed.connect(_unpicker_action.bind(action, unpicker_view, visit))
-	var controls := [unpicker_cards, unpicker_remove_button, unpicker_leave_button]
-	for i in range(controls.size()):
-		controls[i].custom_minimum_size.y = 48
-		controls[i].focus_next = controls[i].get_path_to(controls[(i + 1) % 3])
-		controls[i].focus_previous = controls[i].get_path_to(controls[(i + 2) % 3])
+	unpicker_view.bind(visit)
+	unpicker_remove_button = unpicker_view.remove_button
+	unpicker_leave_button = unpicker_view.leave_button
+	unpicker_view.decision_requested.connect(_unpicker_decision.bind(unpicker_view, visit))
 	_unpicker_original = _sewing_context()
-	unpicker_leave_button.grab_focus()
 	return true
 
 
-func _unpicker_card_text(index: int) -> String:
-	var definition: Dictionary = run_stitch_descriptors.get(run_deck[index], RunRestStitchCards.resolve_card_definition(run_deck[index]))
-	return "%d. %s" % [index + 1, definition.get("display_name", run_deck[index])]
-
-
-func _unpicker_action(button, view, visit: RunUnpickerVisit) -> void:
+func _unpicker_decision(intent: Dictionary, view, visit: RunUnpickerVisit) -> void:
 	if _unpicker_closed or _unpicker_original.is_empty() or _unpicker_original != _sewing_context() \
 		or visit == null or visit != unpicker_visit or visit.read_state() != _unpicker_source \
 		or not is_instance_valid(view) or view != unpicker_view or view.get_parent() != self \
-		or not view.is_visible_in_tree() or button not in [unpicker_remove_button, unpicker_leave_button] \
-		or not is_instance_valid(button) or button.disabled \
+		or not view.is_visible_in_tree() or view._visit != visit or view._source != _unpicker_source \
+		or view.wallet_label.text != view._quote_line() \
+		or unpicker_remove_button != view.remove_button or unpicker_leave_button != view.leave_button \
+		or not view._submitted or run_map == null \
+		or run_map.get_current_node_id() != _unpicker_source.get("node_id") \
 		or run_map.get_node(run_map.get_current_node_id()).get("type") != "Unpicker":
 		return
-	for control in [unpicker_cards, unpicker_remove_button, unpicker_leave_button]:
-		if not is_instance_valid(control) or control.get_parent() != view or not control.is_visible_in_tree():
-			return
 	var id := run_map.get_current_node_id()
+	if intent.get("visit_id") != _unpicker_source.visit_id or intent.get("node_id") != id \
+		or intent.get("expected_snapshot") != _unpicker_source:
+		return
 	var staged := RunUnpickerVisit.new(id, run_deck, session_gold, run_removal_count,
 		run_stitch_descriptors, run_next_stitch_id)
 	if not staged.is_valid() or staged.read_state() != _unpicker_source:
 		return
 	var result: Dictionary
-	if button == unpicker_remove_button:
-		var indices: Array[int] = []
-		for index in range(run_deck.size()):
-			if run_deck.find(run_deck[index]) == index:
-				indices.append(index)
-		if unpicker_cards.disabled or unpicker_cards.item_count != indices.size() \
-			or unpicker_cards.selected < 0 or unpicker_cards.selected >= indices.size():
-			return
-		for i in range(indices.size()):
-			if unpicker_cards.get_item_metadata(i) != indices[i] or unpicker_cards.is_item_disabled(i) \
-				or unpicker_cards.get_item_text(i) != _unpicker_card_text(indices[i]):
+	match intent.get("action"):
+		"remove_card":
+			var card: Variant = intent.get("selected_card_id")
+			if intent.size() != 5 or typeof(card) != TYPE_STRING or card != view._selected_id \
+				or not run_deck.has(card) or not view._honest_row(view._selected_button, card, true):
 				return
-		result = staged.remove_card(run_deck[indices[unpicker_cards.selected]], _unpicker_source.visit_id, id, _unpicker_source)
-	else:
-		result = staged.leave(_unpicker_source.visit_id, id, _unpicker_source)
+			result = staged.remove_card(card, intent.visit_id, id, intent.expected_snapshot)
+		"leave":
+			if intent.size() != 4:
+				return
+			result = staged.leave(intent.visit_id, id, intent.expected_snapshot)
+		_:
+			return
 	if not result.ok or result.source_snapshot != _unpicker_source \
 		or result.source_receipt != _unpicker_source.receipt or _unpicker_original != _sewing_context() \
 		or visit.read_state() != _unpicker_source:
@@ -4290,9 +4261,7 @@ func _unpicker_action(button, view, visit: RunUnpickerVisit) -> void:
 	_unpicker_closed = true
 	_unpicker_original = _sewing_context()
 	_unpicker_visits[id] = [run_map, run_map.get_generation_revision(), run_map.get_floors(), run_map.get_route()]
-	for control in [unpicker_cards, unpicker_remove_button, unpicker_leave_button]:
-		control.disabled = true
-	view.hide()
+	view.close()
 	_present_connected_route(weakref(run_map))
 
 
@@ -6430,7 +6399,6 @@ func _return_to_title() -> void:
 	if is_instance_valid(unpicker_view):
 		unpicker_view.free()
 	unpicker_view = null
-	unpicker_cards = null
 	unpicker_remove_button = null
 	unpicker_leave_button = null
 	unpicker_visit = null
