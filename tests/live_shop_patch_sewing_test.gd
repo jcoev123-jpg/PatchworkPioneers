@@ -1069,9 +1069,9 @@ func _badge_flow_state(f: Dictionary) -> Array:
 func _badge_fights() -> void:
 	_badge_service_checks()
 	var fixture := {}
-	# Verified genuine Badge stock and connected follow-up fights; keep the
-	# advancing bounded search below for future authored pool/map changes.
-	var next_seed := 49267
+	# Current verified connected route; search its genuine stock and advance
+	# deterministically when the Badge is absent after authored pool/map changes.
+	var next_seed := 983
 	var badge := -1
 	# Find a real generated route whose real stock contains the Badge. Never
 	# replace stock or patch definitions to manufacture a positive case.

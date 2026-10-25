@@ -38,6 +38,11 @@ const ACTOR_ART := {
 	"warden": "heroes/warden",
 	"seamstress": "heroes/seamstress",
 	"tinker": "heroes/tinker",
+	"lantern_monk": "heroes/lantern_monk",
+	"rag_duelist": "heroes/rag_duelist",
+	"scarecrow": "heroes/scarecrow",
+	"yarn_ranger": "heroes/yarn_ranger",
+	"button_golem": "heroes/button_golem",
 	"ragling": "enemies/ragling",
 	"ragling_guard": "enemies/ragling_guard",
 	"fray_scavenger": "enemies/fray_scavenger",
@@ -211,7 +216,10 @@ class Puppet extends Control:
 	## one, keeps the generic drawn puppet. The kind follows the bound actor ID only, never
 	## the stage slot, so a rebind really changes the puppet an actor draws.
 	const FALLBACK_KIND_GENERIC := "generic"
-	const FALLBACK_ACTOR_IDS := ["felt_bulwark", "moth_scribe", "pin_skitter", "thread_biter"]
+	const FALLBACK_ACTOR_IDS := [
+		"felt_bulwark", "moth_scribe", "pin_skitter", "thread_biter",
+		"lantern_monk", "rag_duelist", "scarecrow", "yarn_ranger", "button_golem",
+	]
 	## Muted sewn felt tones of the identity-specific puppets. `cloth` always keeps this
 	## actor's own slot felt, so the four still share the stage's handmade palette.
 	const NAMED_TONES := {
@@ -223,6 +231,21 @@ class Puppet extends Control:
 		"rust": Color("8c6550"),
 		"olive": Color("555d48"),
 		"plum": Color("6c5a72"),
+		"saffron": Color("e0a53a"),
+		"monk_plum": Color("6b3f6e"),
+		"monk_cream": Color("f1e6c8"),
+		"crimson": Color("b5323a"),
+		"duelist_black": Color("2a2326"),
+		"gold": Color("d7b14a"),
+		"burlap": Color("b88f5a"),
+		"pumpkin": Color("d9752b"),
+		"denim": Color("3f5f8a"),
+		"moss": Color("5d7a3a"),
+		"teal": Color("2f7a7a"),
+		"wool": Color("efe9dc"),
+		"walnut": Color("7a5236"),
+		"brass": Color("c49a3a"),
+		"golem_slate": Color("55606e"),
 	}
 	## One soft oval contact patch on the shared foot line, drawn from the rest pose. It is
 	## a few concentric translucent ovals, so the shadow fades at its rim instead of reading
@@ -855,6 +878,16 @@ class Puppet extends Control:
 				return _pin_skitter_silhouettes()
 			"thread_biter":
 				return _thread_biter_silhouettes()
+			"lantern_monk":
+				return _lantern_monk_silhouettes()
+			"rag_duelist":
+				return _rag_duelist_silhouettes()
+			"scarecrow":
+				return _scarecrow_silhouettes()
+			"yarn_ranger":
+				return _yarn_ranger_silhouettes()
+			"button_golem":
+				return _button_golem_silhouettes()
 		return []
 
 
@@ -887,6 +920,16 @@ class Puppet extends Control:
 				_pin_skitter_details()
 			"thread_biter":
 				_thread_biter_details()
+			"lantern_monk":
+				_lantern_monk_details()
+			"rag_duelist":
+				_rag_duelist_details()
+			"scarecrow":
+				_scarecrow_details()
+			"yarn_ranger":
+				_yarn_ranger_details()
+			"button_golem":
+				_button_golem_details()
 
 
 	## Felt Bulwark: a squat, wide felt slab behind a big sewn round shield held forward.
@@ -1027,8 +1070,209 @@ class Puppet extends Control:
 		draw_line(Vector2(4, 14), Vector2(12, 20), ink, 1.2, true)
 
 
-	func _fallback_part(tone: String, points: PackedVector2Array) -> Dictionary:
-		return {"tone": tone, "points": points}
+	## Lantern Monk: squat saffron robe, a raised pole lantern, and two circling moths.
+	## Every outer shape is part of both the dark rim and the coloured puppet.
+	func _lantern_monk_silhouettes() -> Array[Dictionary]:
+		return [
+			_fallback_part("monk_plum", PackedVector2Array([Vector2(-18, 22), Vector2(-10, 24),
+				Vector2(-10, 42.5), Vector2(-20, 42.5)]), "left_foot"),
+			_fallback_part("monk_plum", PackedVector2Array([Vector2(4, 23), Vector2(13, 22),
+				Vector2(17, 42.5), Vector2(6, 42.5)]), "right_foot"),
+			_fallback_part("saffron", oval_points(Vector2(-4, 12), Vector2(21, 27), 24), "round_robe"),
+			_fallback_part("monk_plum", PackedVector2Array([Vector2(-18, 8), Vector2(-6, 0),
+				Vector2(1, 25), Vector2(-18, 29)]), "robe_patch"),
+			_fallback_part("saffron", PackedVector2Array([Vector2(12, -3), Vector2(29, -19),
+				Vector2(33, -15), Vector2(18, 9)]), "raised_sleeve"),
+			_fallback_part("walnut", PackedVector2Array([Vector2(33, 17), Vector2(36, 17),
+				Vector2(36, -41), Vector2(33, -41)]), "lantern_pole"),
+			_fallback_part("monk_plum", PackedVector2Array([Vector2(25, -38), Vector2(35, -43),
+				Vector2(44, -37)]), "lantern_roof"),
+			_fallback_part("saffron", PackedVector2Array([Vector2(26, -37), Vector2(43, -37),
+				Vector2(42, -17), Vector2(28, -17)]), "sewn_lantern"),
+			_fallback_part("monk_cream", oval_points(Vector2(35, -28), Vector2(5, 8), 12), "lantern_glow"),
+			_fallback_part("monk_cream", oval_points(Vector2(-7, -19), Vector2(15, 14), 20), "round_face"),
+			_fallback_part("monk_cream", PackedVector2Array([Vector2(18, -38), Vector2(23, -41),
+				Vector2(25, -34), Vector2(21, -32)]), "first_moth"),
+			_fallback_part("monk_plum", PackedVector2Array([Vector2(42, -9), Vector2(46, -13),
+				Vector2(47, -6), Vector2(43, -5)]), "second_moth"),
+		]
+
+
+	func _lantern_monk_details() -> void:
+		var ink := fallback_tone("ink")
+		var cream := fallback_tone("monk_cream")
+		draw_circle(Vector2(0, -22), 5.0, cream)
+		draw_circle(Vector2(1, -22), 3.4, ink) # The lantern-lit oversized button eye.
+		_draw_droopy_eye(Vector2(-15, -21), 2.8)
+		draw_line(Vector2(-10, -11), Vector2(1, -10), ink, 1.5, true)
+		_draw_teeth(Vector2(-8, -10), 6.0)
+		_draw_cross_stitches(Vector2(-15, 4), Vector2(-10, 27), 5, cream)
+		_draw_cross_stitches(Vector2(29, -35), Vector2(30, -20), 3, ink)
+		draw_dashed_line(Vector2(35, -37), Vector2(35, -18), ink, 1.0, 4.0)
+
+
+	## Rag Duelist: trailing tattered cape, plumed hat and a slim needle rapier.
+	func _rag_duelist_silhouettes() -> Array[Dictionary]:
+		return [
+			_fallback_part("duelist_black", PackedVector2Array([Vector2(-8, 24), Vector2(1, 24),
+				Vector2(-1, 42.5), Vector2(-13, 42.5)]), "left_boot"),
+			_fallback_part("duelist_black", PackedVector2Array([Vector2(7, 23), Vector2(16, 21),
+				Vector2(21, 42.5), Vector2(10, 42.5)]), "right_boot"),
+			_fallback_part("crimson", PackedVector2Array([Vector2(-10, -17), Vector2(-26, -7),
+				Vector2(-22, 9), Vector2(-26, 29), Vector2(-13, 21), Vector2(-7, 35),
+				Vector2(8, 14)]), "tattered_cape"),
+			_fallback_part("duelist_black", oval_points(Vector2(0, 7), Vector2(13, 24), 20), "lean_coat"),
+			_fallback_part("crimson", PackedVector2Array([Vector2(2, -7), Vector2(18, -7),
+				Vector2(19, 18), Vector2(8, 21)]), "coat_lapel"),
+			_fallback_part("gold", PackedVector2Array([Vector2(13, -4), Vector2(26, 4),
+				Vector2(33, 0), Vector2(23, -9)]), "guard_arm"),
+			_fallback_part("gold", PackedVector2Array([Vector2(26, -2), Vector2(34, -3),
+				Vector2(34, 2), Vector2(26, 2)]), "rapier_hilt"),
+			_fallback_part("steel", PackedVector2Array([Vector2(31, -1), Vector2(47, -13),
+				Vector2(46, -8), Vector2(33, 2)]), "needle_rapier"),
+			_fallback_part("face", oval_points(Vector2(-1, -22), Vector2(13, 12), 20), "duelist_face"),
+			_fallback_part("duelist_black", PackedVector2Array([Vector2(-22, -35), Vector2(14, -35),
+				Vector2(20, -31), Vector2(-24, -31)]), "wide_hat_brim"),
+			_fallback_part("crimson", PackedVector2Array([Vector2(-14, -35), Vector2(-7, -42),
+				Vector2(8, -39), Vector2(11, -34)]), "tilted_hat"),
+			_fallback_part("gold", PackedVector2Array([Vector2(1, -37), Vector2(5, -43),
+				Vector2(9, -43), Vector2(7, -35)]), "hat_feather"),
+		]
+
+
+	func _rag_duelist_details() -> void:
+		var ink := fallback_tone("ink")
+		var gold := fallback_tone("gold")
+		draw_circle(Vector2(-7, -24), 4.2, fallback_tone("duelist_black"))
+		draw_circle(Vector2(-7, -24), 1.4, gold) # Button eyepatch.
+		_draw_stare_eye(Vector2(5, -24), 2.4)
+		_draw_teeth(Vector2(-4, -13), 7.0)
+		draw_line(Vector2(24, -3), Vector2(30, 4), ink, 1.4, true)
+		_draw_cross_stitches(Vector2(-20, 2), Vector2(-17, 21), 4, gold)
+		_draw_cross_stitches(Vector2(11, 0), Vector2(11, 16), 3, gold)
+
+
+	## Scarecrow: burlap sack head, crow on the shoulder, straw and pitchfork.
+	func _scarecrow_silhouettes() -> Array[Dictionary]:
+		return [
+			_fallback_part("denim", PackedVector2Array([Vector2(-13, 22), Vector2(-4, 24),
+				Vector2(-5, 42.5), Vector2(-16, 42.5)]), "left_trouser"),
+			_fallback_part("denim", PackedVector2Array([Vector2(5, 25), Vector2(15, 21),
+				Vector2(19, 42.5), Vector2(7, 42.5)]), "right_trouser"),
+			_fallback_part("pumpkin", PackedVector2Array([Vector2(-21, -6), Vector2(14, -6),
+				Vector2(23, 27), Vector2(-25, 27)]), "stuffed_shirt"),
+			_fallback_part("denim", PackedVector2Array([Vector2(-5, -6), Vector2(15, 2),
+				Vector2(13, 23), Vector2(-12, 23)]), "denim_patch"),
+			_fallback_part("burlap", PackedVector2Array([Vector2(-21, -35), Vector2(6, -40),
+				Vector2(16, -25), Vector2(12, -9), Vector2(-17, -11)]), "sack_head"),
+			_fallback_part("gold", PackedVector2Array([Vector2(-20, -35), Vector2(-26, -42),
+				Vector2(-13, -39), Vector2(-8, -43), Vector2(-2, -37)]), "head_straw"),
+			_fallback_part("gold", PackedVector2Array([Vector2(-22, 4), Vector2(-26, -1),
+				Vector2(-24, 13), Vector2(-17, 15)]), "sleeve_straw"),
+			_fallback_part("duelist_black", PackedVector2Array([Vector2(-23, -10), Vector2(-20, -22),
+				Vector2(-13, -23), Vector2(-7, -15), Vector2(-10, -9)]), "shoulder_crow"),
+			_fallback_part("gold", PackedVector2Array([Vector2(-12, -18), Vector2(-6, -16),
+				Vector2(-13, -14)]), "crow_beak"),
+			_fallback_part("walnut", PackedVector2Array([Vector2(31, 42), Vector2(35, 42),
+				Vector2(35, -39), Vector2(31, -39)]), "pitchfork_handle"),
+			_fallback_part("steel", PackedVector2Array([Vector2(29, -27), Vector2(29, -40),
+				Vector2(31, -43), Vector2(33, -30), Vector2(38, -43), Vector2(40, -40),
+				Vector2(40, -24)]), "pitchfork_tines"),
+		]
+
+
+	func _scarecrow_details() -> void:
+		var ink := fallback_tone("ink")
+		var straw := fallback_tone("gold")
+		_draw_x_eye(Vector2(-11, -28), 3.2)
+		_draw_stare_eye(Vector2(5, -29), 2.4)
+		draw_dashed_line(Vector2(-12, -17), Vector2(8, -18), ink, 1.8, 3.0)
+		_draw_teeth(Vector2(-10, -17), 17.0)
+		_draw_cross_stitches(Vector2(-12, -3), Vector2(9, 19), 5, straw)
+		draw_line(Vector2(-16, -12), Vector2(-9, -9), ink, 1.0, true)
+
+
+	## Yarn Ranger: tiny knitted hood with catlike ears, needle-bow and yarn bola.
+	func _yarn_ranger_silhouettes() -> Array[Dictionary]:
+		return [
+			_fallback_part("moss", PackedVector2Array([Vector2(-12, 24), Vector2(-4, 25),
+				Vector2(-5, 42.5), Vector2(-15, 42.5)]), "left_boot"),
+			_fallback_part("teal", PackedVector2Array([Vector2(2, 24), Vector2(12, 20),
+				Vector2(17, 42.5), Vector2(6, 42.5)]), "right_boot"),
+			_fallback_part("moss", oval_points(Vector2(-3, 11), Vector2(16, 24), 22), "ranger_tunic"),
+			_fallback_part("teal", PackedVector2Array([Vector2(-18, 5), Vector2(-9, 2),
+				Vector2(-6, 26), Vector2(-23, 30)]), "cape_patch"),
+			_fallback_part("moss", PackedVector2Array([Vector2(-19, -34), Vector2(-19, -43),
+				Vector2(-7, -36)]), "left_hood_ear"),
+			_fallback_part("teal", PackedVector2Array([Vector2(2, -38), Vector2(10, -43),
+				Vector2(14, -29)]), "right_hood_ear"),
+			_fallback_part("moss", oval_points(Vector2(-3, -23), Vector2(16, 17), 20), "knitted_hood"),
+			_fallback_part("wool", oval_points(Vector2(-2, -21), Vector2(11, 11), 20), "wool_face"),
+			_fallback_part("steel", PackedVector2Array([Vector2(28, -40), Vector2(32, -41),
+				Vector2(39, 8), Vector2(35, 12)]), "upper_bow_needle"),
+			_fallback_part("steel", PackedVector2Array([Vector2(35, 12), Vector2(39, 8),
+				Vector2(30, 36), Vector2(26, 35)]), "lower_bow_needle"),
+			_fallback_part("wool", PackedVector2Array([Vector2(30, -37), Vector2(43, -14),
+				Vector2(29, 34), Vector2(32, 11)]), "bow_yarn_string"),
+			_fallback_part("teal", oval_points(Vector2(-21, 21), Vector2(4, 6), 12), "hip_yarn_bola"),
+		]
+
+
+	func _yarn_ranger_details() -> void:
+		var ink := fallback_tone("ink")
+		var wool := fallback_tone("wool")
+		_draw_stare_eye(Vector2(3, -23), 3.0)
+		_draw_x_eye(Vector2(-9, -22), 2.0)
+		_draw_teeth(Vector2(-4, -14), 5.0)
+		draw_dashed_line(Vector2(-15, -31), Vector2(8, -32), wool, 1.0, 4.0)
+		_draw_cross_stitches(Vector2(-12, 9), Vector2(7, 19), 4, wool)
+		draw_circle(Vector2(-22, 21), 2.0, wool)
+		draw_line(Vector2(-21, 17), Vector2(-24, 23), ink, 1.1, true)
+
+
+	## Button Golem: the broadest stack, tiny head and immense two-hole button fists.
+	func _button_golem_silhouettes() -> Array[Dictionary]:
+		return [
+			_fallback_part("golem_slate", PackedVector2Array([Vector2(-18, 20), Vector2(-7, 20),
+				Vector2(-10, 42.5), Vector2(-24, 42.5)]), "left_column_leg"),
+			_fallback_part("golem_slate", PackedVector2Array([Vector2(14, 20), Vector2(25, 20),
+				Vector2(31, 42.5), Vector2(17, 42.5)]), "right_column_leg"),
+			_fallback_part("walnut", oval_points(Vector2(3, 12), Vector2(27, 28), 28), "broad_button_body"),
+			_fallback_part("brass", oval_points(Vector2(4, 4), Vector2(23, 14), 24), "upper_button"),
+			_fallback_part("walnut", oval_points(Vector2(3, 22), Vector2(24, 13), 24), "lower_button"),
+			_fallback_part("golem_slate", PackedVector2Array([Vector2(-20, -3), Vector2(-26, 3),
+				Vector2(-26, 17), Vector2(-17, 17)]), "left_button_arm"),
+			_fallback_part("golem_slate", PackedVector2Array([Vector2(22, -4), Vector2(34, -4),
+				Vector2(39, 13), Vector2(26, 15)]), "right_button_arm"),
+			_fallback_part("brass", oval_points(Vector2(-20, 13), Vector2(6, 12), 16), "left_button_fist"),
+			_fallback_part("brass", oval_points(Vector2(39, 8), Vector2(8, 13), 16), "right_button_fist"),
+			_fallback_part("walnut", oval_points(Vector2(0, -27), Vector2(9, 9), 20), "tiny_head"),
+			_fallback_part("brass", PackedVector2Array([Vector2(-9, -33), Vector2(1, -41),
+				Vector2(7, -33)]), "head_seam"),
+		]
+
+
+	func _button_golem_details() -> void:
+		var ink := fallback_tone("ink")
+		var brass := fallback_tone("brass")
+		for center in [Vector2(-4, -29), Vector2(4, -29)]:
+			draw_circle(center, 2.0, ink) # Thread-hole eyes.
+		for center in [Vector2(-20, 13), Vector2(39, 8)]:
+			draw_circle(center + Vector2(0, -4), 1.8, ink)
+			draw_circle(center + Vector2(0, 4), 1.8, ink)
+		draw_circle(Vector2(-3, 4), 2.3, ink)
+		draw_circle(Vector2(10, 4), 2.3, ink)
+		draw_circle(Vector2(-3, 22), 2.3, brass)
+		draw_circle(Vector2(9, 22), 2.3, brass)
+		_draw_cross_stitches(Vector2(-15, -2), Vector2(-11, 25), 4, brass)
+		draw_dashed_line(Vector2(-6, -17), Vector2(7, -17), brass, 1.1, 3.0)
+
+
+	func _fallback_part(tone: String, points: PackedVector2Array, part: String = "") -> Dictionary:
+		var shape := {"tone": tone, "points": points}
+		if not part.is_empty():
+			shape["part"] = part
+		return shape
 
 
 	## One muted sewn tone of the identity-specific puppets; `cloth` keeps this actor's own

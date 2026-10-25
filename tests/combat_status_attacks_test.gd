@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_invalid_rosters_and_targets()
 	_test_status_validation()
 	_test_immutable_snapshots_and_replay()
+	_test_tangled_bonus_and_ageing()
 	_test_thorns_retaliation()
 	if failures.is_empty():
 		print("combat_status_attacks_test: PASS (", checks, " checks)")
@@ -259,6 +260,169 @@ func _test_immutable_snapshots_and_replay() -> void:
 				"independent identical fixtures replay complete results and roster snapshots")
 		_check(attacker == attack_original and defender == defend_original,
 			"both caller dictionaries preserve all status counts across replay")
+
+
+## AC1-AC3: Tangled's flat +2 after the Weak/Exposed floor, on both the direct
+## rules and the authoritative roster bridge, plus actor-local owner-turn ageing.
+func _test_tangled_bonus_and_ageing() -> void:
+	var rules := CombatStatuses.new()
+	_check(rules.has_method("adjusted_attack_damage") and rules.has_method("end_owner_turn"),
+		"tangled fixture drives the real CombatStatuses service")
+	var direct_scenarios: Array[Dictionary] = [
+		{"attacker": {}, "defender": {"tangled": 1}, "damage": 10,
+			"label": "Tangled alone adds a flat 2"},
+		{"attacker": {}, "defender": {"tangled": 3}, "damage": 10,
+			"label": "Tangled N=3 still adds 2 once, never per stack"},
+		{"attacker": {}, "defender": {"tangled": 0}, "damage": 8,
+			"label": "Tangled 0 is inactive"},
+		{"attacker": {"tangled": 5}, "defender": {}, "damage": 8,
+			"label": "attacker-only Tangled adds nothing"},
+		{"attacker": {"weak": 1}, "defender": {"tangled": 2}, "damage": 8,
+			"label": "Weak floors 8 to 6 then adds 2"},
+		{"attacker": {}, "defender": {"exposed": 1, "tangled": 1}, "damage": 14,
+			"label": "Exposed raises 8 to 12 then adds 2"},
+		{"attacker": {"weak": 1}, "defender": {"exposed": 1, "tangled": 1}, "damage": 11,
+			"label": "Weak+Exposed floor once to 9 then adds 2"}
+	]
+	for scenario in direct_scenarios:
+		var attacker: Dictionary = scenario["attacker"]
+		var defender: Dictionary = scenario["defender"]
+		var attacker_before := attacker.duplicate(true)
+		var defender_before := defender.duplicate(true)
+		_check(rules.adjusted_attack_damage(8, attacker, defender) == scenario["damage"],
+			"8-base direct status maths: " + scenario["label"])
+		_check(attacker == attacker_before and defender == defender_before,
+			"direct 8-base status maths never mutates input: " + scenario["label"])
+	_check(rules.adjusted_attack_damage(0, {}, {"tangled": 5}) == 0,
+		"zero base damage never gains Tangled's 2")
+	_check(rules.adjusted_attack_damage(1, {"weak": 1}, {"tangled": 5}) == 2,
+		"positive base still gains Tangled after a single floor to zero")
+	_check(rules.adjusted_attack_damage(9223372036854775807, {}, {"tangled": 1}) == 0,
+		"unrepresentable Tangled-boosted damage fails closed instead of overflowing")
+
+	# Real enemy: 6 base + Tangled 2 against four Block -> 4 absorbed, 4 HP lost.
+	var enemies := _enemies()
+	_check(enemies.gain_block(1, 4), "tangled enemy fixture has four Block")
+	var untouched_enemies: Array[Dictionary] = [enemies.get_enemy(2), enemies.get_enemy(3)]
+	var attacker := {"bleed": 1}
+	var defender := {"tangled": 1}
+	var attacker_before := attacker.duplicate(true)
+	var defender_before := defender.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 246813579
+	var rng_before := rng.state
+	_check(attacks.resolve_vs_enemy(enemies, 1, 6, attacker, defender) == _event(8, 4, 4),
+		"real enemy 6 + Tangled 2 absorbs four Block then loses four HP")
+	_check(enemies.get_enemy(1)["hp"] == 8 and enemies.get_enemy(1)["block"] == 0,
+		"real enemy authoritative HP and Block after Tangled hit")
+	_check([enemies.get_enemy(2), enemies.get_enemy(3)] == untouched_enemies,
+		"Tangled enemy hit leaves other positions untouched")
+	_check(attacker == attacker_before and defender == defender_before,
+		"Tangled enemy hit never ages or mutates supplied statuses")
+	_check(rng.state == rng_before, "Tangled status attack leaves the run RNG untouched")
+
+	# Control and inactive cases on fresh real enemies prove the +2 happens exactly once.
+	var control := _enemies()
+	_check(control.gain_block(1, 4), "control enemy fixture has four Block")
+	_check(attacks.resolve_vs_enemy(control, 1, 6, {"tangled": 2}, {}) == _event(6, 4, 2),
+		"attacker-only Tangled leaves the real enemy hit unchanged")
+	var zero := _enemies()
+	_check(zero.gain_block(1, 4), "zero-base enemy fixture has four Block")
+	var zero_before := zero.get_enemies()
+	_check(attacks.resolve_vs_enemy(zero, 1, 0, {}, {"tangled": 3}) == _event(0, 0, 0),
+		"zero-base hit against Tangled is a successful zero result")
+	_check(zero.get_enemies() == zero_before, "zero-base Tangled hit changes no HP or Block")
+	var replay_a := _enemies()
+	var replay_b := _enemies()
+	_check(replay_a.gain_block(1, 4) and replay_b.gain_block(1, 4),
+		"replay enemy fixtures both have four Block")
+	_check(attacks.resolve_vs_enemy(replay_a, 1, 6, {}, {"tangled": 1})
+		== attacks.resolve_vs_enemy(replay_b, 1, 6, {}, {"tangled": 1})
+		and replay_a.get_enemies() == replay_b.get_enemies()
+		and replay_a.get_enemy(1)["hp"] == 8,
+		"independent identical Tangled hits produce the same receipt and roster")
+
+	# Real hero: 8 base + Tangled 2 against six Block -> 6 absorbed, 4 HP lost.
+	var party := _party()
+	_check(party.gain_block(1, 6), "tangled hero fixture has six Block")
+	var untouched_heroes: Array[Dictionary] = [party.get_hero(2), party.get_hero(3)]
+	var hero_attacker := {}
+	var hero_defender := {"tangled": 2}
+	var hero_attacker_before := hero_attacker.duplicate(true)
+	var hero_defender_before := hero_defender.duplicate(true)
+	_check(attacks.resolve_vs_hero(party, 1, 8, hero_attacker, hero_defender) == _event(10, 6, 4),
+		"real Warden absorbs six Block then loses four HP from 8 + Tangled 2")
+	_check(party.get_hero(1)["hp"] == 36 and party.get_hero(1)["block"] == 0,
+		"real Warden authoritative HP and Block after Tangled hit")
+	_check([party.get_hero(2), party.get_hero(3)] == untouched_heroes,
+		"Tangled hero hit leaves other heroes untouched")
+	_check(hero_attacker == hero_attacker_before and hero_defender == hero_defender_before,
+		"Tangled hero hit never ages or mutates supplied statuses")
+	var plain_party := _party()
+	_check(plain_party.gain_block(1, 6), "plain hero control has six Block")
+	_check(attacks.resolve_vs_hero(plain_party, 1, 8, {"weak": 1}, {}) == _event(6, 6, 0),
+		"the same weak hero hit without Tangled keeps its old 6 damage")
+
+	# AC3: owner-local ageing, independent of Bleed, beside the other statuses.
+	var statuses := {"tangled": 2}
+	var statuses_before := statuses.duplicate(true)
+	var first := rules.end_owner_turn(10, 7, statuses)
+	_check(first == {"ok": true, "hp": 10, "block": 7,
+		"statuses": {"tangled": 1}, "bleed_hp_loss": 0},
+		"first owner turn ages Tangled 2 to 1 without touching HP or Block")
+	var second := rules.end_owner_turn(first["hp"], first["block"], first["statuses"])
+	_check(second == {"ok": true, "hp": 10, "block": 7,
+		"statuses": {}, "bleed_hp_loss": 0},
+		"second owner turn expires Tangled without touching HP or Block")
+	_check(statuses == statuses_before, "two owner turns never mutate the caller's Tangled map")
+	var mixed := {"bleed": 2, "weak": 1, "exposed": 2, "tangled": 2}
+	var mixed_before := mixed.duplicate(true)
+	var mixed_first := rules.end_owner_turn(10, 5, mixed)
+	_check(mixed_first == {"ok": true, "hp": 8, "block": 5,
+		"statuses": {"bleed": 1, "exposed": 1, "tangled": 1}, "bleed_hp_loss": 2},
+		"Tangled ages beside Bleed/Weak/Exposed with unchanged Block")
+	var mixed_second := rules.end_owner_turn(mixed_first["hp"], mixed_first["block"],
+		mixed_first["statuses"])
+	_check(mixed_second == {"ok": true, "hp": 7, "block": 5,
+		"statuses": {}, "bleed_hp_loss": 1},
+		"mixed statuses all expire after their owner turns")
+	_check(mixed == mixed_before, "mixed owner-turn sequence preserves the caller's dictionary")
+	var zero_turn := rules.end_owner_turn(4, 2, {"tangled": 0})
+	_check(zero_turn == {"ok": true, "hp": 4, "block": 2,
+		"statuses": {}, "bleed_hp_loss": 0},
+		"Tangled 0 expires cleanly without affecting HP or Block")
+
+	# AC4: malformed counters fail closed in both the rules and the real bridge.
+	var bad_enemies := _enemies()
+	var bad_party := _party()
+	_check(bad_enemies.gain_block(1, 4) and bad_party.gain_block(1, 6),
+		"malformed Tangled fixtures have living targets and Block")
+	var bad_counters: Array[Dictionary] = [
+		{"tangled": -1}, {"tangled": 1.5}, {"tangled": "1"}, {"tangled": true},
+		{"tangled": null}, {"tangled": []}, {"tangled": {"n": 1}}, {"Tangled": 1},
+		{"poison": 1}, {1: 2}
+	]
+	for bad in bad_counters:
+		_check(rules.adjusted_attack_damage(8, {}, bad) == 0
+			and rules.adjusted_attack_damage(8, bad, {}) == 0,
+			"malformed Tangled fails closed for both roles: " + str(bad))
+		var rejected := rules.end_owner_turn(10, 7, bad)
+		_check(rejected["ok"] == false and rejected["statuses"] == bad,
+			"malformed Tangled owner turn fails closed: " + str(bad))
+		_reject_enemy(bad_enemies, 1, 6, {}, bad, "malformed Tangled defender: " + str(bad))
+		_reject_enemy(bad_enemies, 1, 6, bad, {}, "malformed Tangled attacker: " + str(bad))
+		_reject_hero(bad_party, 1, 8, {}, bad, "malformed Tangled hero defender: " + str(bad))
+		_reject_hero(bad_party, 1, 8, bad, {}, "malformed Tangled hero attacker: " + str(bad))
+	var dead_enemies := _enemies()
+	_check(dead_enemies.apply_damage(2, 17) and dead_enemies.is_slain(2),
+		"slain enemy fixture for Tangled is genuinely dead")
+	_reject_enemy(dead_enemies, 2, 6, {}, {"tangled": 2},
+		"slain enemy cannot receive a Tangled-boosted hit")
+	var downed_party := _party()
+	_check(downed_party.apply_damage(2, 30) and downed_party.is_downed(2),
+		"downed hero fixture for Tangled is genuinely downed")
+	_reject_hero(downed_party, 2, 8, {}, {"tangled": 2},
+		"downed hero cannot receive a Tangled-boosted hit")
 
 
 func _thorns_result(thorns: int, absorbed: int, loss: int) -> Dictionary:
