@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_harder_normal_catalog_records()
 	_test_harder_normal_seeded_announcements()
 	_test_harder_normal_phase_actions()
+	_test_needle_wasp_bleeding_sting()
 	_test_negative_fixtures()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
@@ -310,6 +311,7 @@ func _trio_expected() -> Dictionary:
 				{"type": "attack", "amount": 7, "weight": 3},
 				{"type": "debuff", "status": "weak", "amount": 1, "weight": 1}]}},
 		"needle_wasp": {"id": "needle_wasp", "name": "Needle Wasp", "max_hp": 22,
+			"bleed_on_attack": true,
 			"art_path": "res://assets/paper/enemies/needle_wasp.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "status": "bleed", "amount": 2, "weight": 2},
@@ -390,6 +392,20 @@ func _test_trio_catalog_records() -> void:
 		"Needle Wasp stings Bleed 2 or hits for 8")
 	_check(wasp.get("intent", {}).get("target") == "lowest_living_hp",
 		"Needle Wasp hunts the lowest-living hero")
+	# The bleeding sting is one authored boolean on this enemy alone; it is not
+	# a new weighted alternative, so the two authored choices stay untouched.
+	_check(wasp.get("bleed_on_attack") is bool and wasp.get("bleed_on_attack") == true,
+		"Needle Wasp alone authors the boolean bleeding sting")
+	var carriers: Array[String] = []
+	for record in parsed:
+		if record is Dictionary and record.get("bleed_on_attack") is bool \
+				and record.get("bleed_on_attack") == true:
+			carriers.append(String(record.get("id", "")))
+	_check(carriers == ["needle_wasp"],
+		"bleed_on_attack=true is authored by Needle Wasp and nobody else: " + str(carriers))
+	var wasp_actions: Array = wasp.get("intent", {}).get("actions", [])
+	_check(wasp_actions.size() == 2,
+		"the bleeding sting adds no extra weighted action to Needle Wasp")
 
 ## Local typed-selection fixture for this authored slice: these enemies are not
 ## wired into any live encounter pool yet, so the schedule is supplied here while
@@ -990,7 +1006,8 @@ func _force_normal_alternative(source: Dictionary, raw: Variant,
 	_check(bound, "forced one-source harder encounter binds: " + str(raw))
 	if not bound:
 		return {}
-	return {"enemies": enemies, "intents": scheduler.get_intents()}
+	return {"enemies": enemies, "intents": scheduler.get_intents(), "rng": rng,
+		"scheduler": scheduler}
 
 func _test_harder_normal_phase_actions() -> void:
 	var parsed := _load_parsed()
@@ -1132,3 +1149,270 @@ func _test_harder_normal_phase_actions() -> void:
 			== hp_before - (int(case.amount) - absorbed),
 			"only the unabsorbed remainder reaches HP for the %d-damage hit: %s"
 				% [int(case.amount), String(case.id)])
+
+
+## The real Warden reaction hand, seeded like the existing guard-phase fixture.
+func _guard_deck(held_cards: Array[String]) -> CombatDeck:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 131006
+	var deck := CombatDeck.new(held_cards, rng)
+	_check(deck.start_turn() and deck.hand.size() == held_cards.size(),
+		"precondition: the real reaction hand is dealt")
+	for id in held_cards:
+		_check(deck.hand.has(id), "precondition: paid reaction card is held: " + id)
+	return deck
+
+## An announced attack built here only for the downed and malformed controls;
+## the positive cases use the authentic authored alternative instead.
+func _raw_attack_intent(target: int) -> Dictionary:
+	return {"type": "attack", "enemy_position": 1, "amount": 8, "target_position": target}
+
+func _test_needle_wasp_bleeding_sting() -> void:
+	var parsed := _load_parsed()
+	var wasp := _find(parsed, "needle_wasp")
+	_check(not wasp.is_empty(), "precondition: authentic Needle Wasp record loaded")
+	if wasp.is_empty():
+		return
+	_check(wasp.get("bleed_on_attack") is bool and wasp.get("bleed_on_attack") == true,
+		"AC1: the parsed Needle Wasp carries bleed_on_attack as a genuine bool")
+	var attack := _authored_alternative(wasp, "attack", 8)
+	_check(not attack.is_empty(), "precondition: authentic authored attack 8 alternative")
+	var bleed_2 := _authored_alternative(wasp, "debuff", 2)
+	_check(not bleed_2.is_empty() and bleed_2.get("status") == "bleed",
+		"precondition: authentic authored standalone Bleed 2 alternative")
+	# AC2: an unblocked sting on the real 40/30/26 party bleeds its real recipient.
+	var party := _party()
+	_check(party.get_hero(1).get("hp") == 40 and party.get_hero(2).get("hp") == 30
+		and party.get_hero(3).get("hp") == 26,
+		"precondition: authentic Warden 40 / Seamstress 30 / Tinker 26 party")
+	_check(CombatEnemyIntents.priority_target(party, "lowest_living_hp") == 3,
+		"precondition: the authored policy really announces Tinker at slot 3")
+	var sting_case := _force_normal_alternative(wasp, attack, party)
+	if sting_case.is_empty():
+		return
+	_check(sting_case.intents.size() == 1 and sting_case.intents[0].get("type") == "attack"
+		and int(sting_case.intents[0].get("amount", -1)) == 8
+		and sting_case.intents[0].get("target_position") == 3,
+		"the forced sting announces its authored 8 damage on Tinker")
+	var untouched := [party.get_hero(1), party.get_hero(2)]
+	var without_bleed: Dictionary = party.get_hero(3)
+	var receipt := CombatEnemyPhase.new().execute_phase(party, sting_case.enemies,
+		sting_case.intents, null, true)
+	_check(receipt.get("ok") == true and receipt.get("events", []).size() == 1,
+		"AC2: the announced sting resolves through a real CombatEnemyPhase")
+	if receipt.get("ok", false) and receipt.get("events", []).size() == 1:
+		var event: Dictionary = receipt["events"][0]
+		_check(event == {"type": "attack", "enemy_position": 1, "applied": true,
+			"target_position": 3},
+			"AC2: the phase receipt keeps its exact pre-existing attack shape")
+	_check(party.get_hero(3).get("hp") == 18 and party.get_hero(3).get("block") == 0,
+		"AC2: the unblocked 8-damage sting drops Tinker from 26 to 18 HP")
+	_check(party.get_hero(3).get("statuses", {}).get("bleed", 0) == 1,
+		"AC2: the hero who really lost HP gains exactly Bleed 1")
+	_check(int(without_bleed.get("statuses", {}).get("bleed", 0)) == 0,
+		"precondition: Tinker held no Bleed before the sting")
+	_check([party.get_hero(1), party.get_hero(2)] == untouched,
+		"AC2: the other two heroes keep their HP, Block and statuses")
+	# Consecutive confirmed stings stack the status; the second still hits Tinker.
+	var second := _force_normal_alternative(wasp, attack, party)
+	if not second.is_empty():
+		_check(second.intents.size() == 1 and second.intents[0].get("target_position") == 3,
+			"the stacking sting still announces Tinker as the lowest-living hero")
+		var second_receipt := CombatEnemyPhase.new().execute_phase(party, second.enemies,
+			second.intents, null, true)
+		_check(second_receipt.get("ok") == true, "the second sting resolves through the real phase")
+		_check(party.get_hero(3).get("hp") == 10
+			and party.get_hero(3).get("statuses", {}).get("bleed", 0) == 2,
+			"AC2: a second confirmed sting stacks Bleed to 2 and drops Tinker to 10 HP")
+	# AC3: the separate authored Bleed 2 debuff stays exactly Bleed 2.
+	var debuff_party := _party()
+	var debuff_case := _force_normal_alternative(wasp, bleed_2, debuff_party)
+	if not debuff_case.is_empty():
+		_check(debuff_case.intents.size() == 1 and debuff_case.intents[0].get("type") == "debuff"
+			and debuff_case.intents[0].get("status") == "bleed"
+			and int(debuff_case.intents[0].get("amount", -1)) == 2
+			and debuff_case.intents[0].get("target_position") == 3,
+			"the standalone debuff announces Bleed 2 on Tinker")
+		var debuff_receipt := CombatEnemyPhase.new().execute_phase(debuff_party,
+			debuff_case.enemies, debuff_case.intents, null, true)
+		_check(debuff_receipt.get("ok") == true and debuff_receipt.get("events", [{}])[0].get(
+			"applied") == true, "the announced Bleed 2 debuff resolves through the real phase")
+		_check(debuff_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 2,
+			"AC3: the separate Bleed 2 action stays exactly Bleed 2 with no sting bonus")
+		_check(debuff_party.get_hero(3).get("hp") == 26,
+			"AC3: the standalone Bleed 2 costs its target no HP")
+		for position in [1, 2]:
+			_check(debuff_party.get_hero(position).get("statuses", {}).get("bleed", 0) == 0,
+				"unannounced hero %d gains no Bleed from the debuff" % position)
+	# AC3: full Block protects HP and therefore prevents the sting's Bleed.
+	var blocked_party := _party()
+	_check(blocked_party.gain_block(3, 8), "precondition: Tinker really holds eight Block")
+	var blocked := _force_normal_alternative(wasp, attack, blocked_party)
+	if not blocked.is_empty():
+		var blocked_receipt := CombatEnemyPhase.new().execute_phase(blocked_party,
+			blocked.enemies, blocked.intents, null, true)
+		_check(blocked_receipt.get("ok") == true, "the blocked sting still resolves")
+		_check(blocked_party.get_hero(3).get("hp") == 26
+			and blocked_party.get_hero(3).get("block") == 0,
+			"AC3: eight Block absorb the whole sting and leave HP untouched")
+		_check(blocked_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 0,
+			"AC3: a fully blocked sting inflicts no Bleed")
+	# Only the HP actually lost after Block causes the sting.
+	var partial_party := _party()
+	_check(partial_party.gain_block(3, 5), "precondition: Tinker really holds five Block")
+	var partial := _force_normal_alternative(wasp, attack, partial_party)
+	if not partial.is_empty():
+		var partial_receipt := CombatEnemyPhase.new().execute_phase(partial_party,
+			partial.enemies, partial.intents, null, true)
+		_check(partial_receipt.get("ok") == true, "the partially blocked sting resolves")
+		_check(partial_party.get_hero(3).get("hp") == 23
+			and partial_party.get_hero(3).get("block") == 0
+			and partial_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 1,
+			"AC3: real HP loss after Block still earns exactly Bleed 1")
+	# AC3: a slain wasp never stings.
+	var slain_party := _party()
+	var slain_case := _force_normal_alternative(wasp, attack, slain_party)
+	if not slain_case.is_empty():
+		_check(slain_case.enemies.apply_damage(1, 22) and slain_case.enemies.is_slain(1),
+			"precondition: the stinging wasp is genuinely slain before its beat")
+		var slain_before: Array = slain_party.get_heroes()
+		var slain_receipt := CombatEnemyPhase.new().execute_phase(slain_party,
+			slain_case.enemies, slain_case.intents, null, true)
+		_check(slain_receipt.get("ok") == true
+			and slain_receipt.get("events", [{}])[0].get("applied") == false,
+			"AC3: a slain wasp's announced sting resolves as an inert beat")
+		_check(slain_party.get_heroes() == slain_before,
+			"AC3: a slain wasp deals no damage and grants no Bleed")
+	# AC3: a downed announced hero never bleeds.
+	var downed_party := _party()
+	_check(downed_party.apply_damage(3, 26) and downed_party.is_downed(3),
+		"precondition: the announced Tinker is already downed")
+	var downed_enemies := CombatEnemies.new([wasp.duplicate(true)])
+	_check(downed_enemies.is_valid(), "precondition: a real one-wasp roster for the downed beat")
+	var downed_before: Array = downed_party.get_heroes()
+	var downed_receipt := CombatEnemyPhase.new().execute_phase(downed_party, downed_enemies,
+		[_raw_attack_intent(3)])
+	_check(downed_receipt.get("ok") == true
+		and downed_receipt.get("events", [{}])[0].get("applied") == false
+		and downed_party.get_heroes() == downed_before,
+		"AC3: a downed announced hero takes no sting damage and gains no Bleed")
+	# AC3: another authored enemy without the flag never bleeds on HP damage.
+	var control_source := _find(parsed, "seam_ripper")
+	_check(not control_source.is_empty() and not control_source.has("bleed_on_attack"),
+		"precondition: another authored normal enemy carries no bleeding sting")
+	if not control_source.is_empty():
+		var control_party := _party()
+		var control_case := _force_normal_alternative(control_source,
+			_authored_alternative(control_source, "attack", 4), control_party)
+		if not control_case.is_empty():
+			var control_receipt := CombatEnemyPhase.new().execute_phase(control_party,
+				control_case.enemies, control_case.intents, null, true)
+			_check(control_receipt.get("ok") == true, "the unarmed enemy's attack resolves")
+			_check(control_party.get_hero(3).get("hp") == 22
+				and control_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 0,
+				"AC3: HP damage from a non-wasp enemy never adds the sting's Bleed")
+	# AC3: the same wasp with an explicit authored false never stings.
+	var false_record := wasp.duplicate(true)
+	false_record["bleed_on_attack"] = false
+	var false_party := _party()
+	var false_enemies := CombatEnemies.new([false_record])
+	_check(false_enemies.is_valid() and false_enemies.get_enemy(1).get("bleed_on_attack") == false,
+		"precondition: a real roster carries the explicit false flag")
+	var false_receipt := CombatEnemyPhase.new().execute_phase(false_party, false_enemies,
+		[_raw_attack_intent(3)], null, true)
+	_check(false_receipt.get("ok") == true and false_party.get_hero(3).get("hp") == 18
+		and false_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 0,
+		"AC3: an explicit false flag still deals the 8 damage but grants no Bleed")
+	# AC3: Warden Guard redirects the sting; only the real recipient bleeds.
+	var guard_party := _party()
+	var guard_deck := _guard_deck(["warden_draw_fire", "warden_iron_hem",
+		"warden_hold_the_line", "warden_quick_darn", "warden_counter_stitch"])
+	var reactions := CombatWardenGuardReactions.new()
+	_check(reactions.play_from_hand(guard_deck, guard_party, "warden_draw_fire")
+		and reactions.is_guarding() and guard_party.get_hero(1).get("block") == 6,
+		"precondition: the real paid Draw Fire activates Guarding and six Block")
+	var guard_case := _force_normal_alternative(wasp, attack, guard_party)
+	if not guard_case.is_empty():
+		_check(guard_case.intents.size() == 1
+			and guard_case.intents[0].get("target_position") == 3,
+			"the guard case announces Tinker before any redirect")
+		var guard_receipt := CombatEnemyPhase.new().execute_phase(guard_party,
+			guard_case.enemies, guard_case.intents, reactions)
+		_check(guard_receipt.get("ok") == true and guard_receipt.get("events", []).size() == 1,
+			"AC3: the redirected sting resolves through the real reaction path")
+		if guard_receipt.get("ok", false) and guard_receipt.get("events", []).size() == 1:
+			var guard_event: Dictionary = guard_receipt["events"][0]
+			_check(guard_event.get("target_position") == 3
+				and guard_event.get("actual_target_position") == 1
+				and guard_event.get("redirected") == true,
+				"AC3: the receipt keeps the announced Tinker and reports the Warden as actual recipient")
+		_check(guard_party.get_hero(1).get("hp") == 38
+			and guard_party.get_hero(1).get("block") == 0
+			and guard_party.get_hero(1).get("statuses", {}).get("bleed", 0) == 1,
+			"AC3: only the Warden who really lost 2 HP gains Bleed 1")
+		_check(guard_party.get_hero(3).get("hp") == 26
+			and guard_party.get_hero(3).get("statuses", {}).get("bleed", 0) == 0,
+			"AC3: the announced Tinker takes nothing and gains no Bleed")
+		_check(guard_party.get_hero(2).get("statuses", {}).get("bleed", 0) == 0,
+			"AC3: the uninvolved Seamstress gains no Bleed")
+	# AC4: malformed metadata fails closed without authoritative mutation.
+	for invalid_value in ["true", 1, 1.0, null, [], {}]:
+		var malformed := wasp.duplicate(true)
+		malformed["bleed_on_attack"] = invalid_value
+		_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([malformed])).is_empty(),
+			"AC4: malformed bleed_on_attack rejects the whole catalog: " + str(invalid_value))
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([wasp])).size() == 1,
+		"AC4: the genuine boolean flag keeps the catalog valid")
+	var contested := wasp.duplicate(true)
+	contested["bleed_on_attack"] = false
+	_check(RunTypedBattleRoster._parse_catalog_text(JSON.stringify([contested])).size() == 1,
+		"AC4: an explicit false stays valid metadata and simply never stings")
+	var malformed_record := wasp.duplicate(true)
+	malformed_record["bleed_on_attack"] = 1
+	var malformed_enemies := CombatEnemies.new([malformed_record])
+	_check(malformed_enemies.is_valid(),
+		"precondition: the malformed roster really constructs before the phase rejects it")
+	var malformed_party := _party()
+	var malformed_party_before: Array = malformed_party.get_heroes()
+	var malformed_enemies_before: Array = malformed_enemies.get_enemies()
+	var malformed_rng := RandomNumberGenerator.new()
+	malformed_rng.seed = 7161
+	var malformed_state: int = malformed_rng.state
+	var rejected := CombatEnemyPhase.new().execute_phase(malformed_party,
+		malformed_enemies, [_raw_attack_intent(3)], null, true)
+	_check(rejected == {"ok": false, "events": []},
+		"AC4: malformed bleed_on_attack metadata rejects the phase")
+	_check(malformed_party.get_heroes() == malformed_party_before
+		and malformed_enemies.get_enemies() == malformed_enemies_before
+		and malformed_rng.state == malformed_state,
+		"AC4: a rejected malformed roster changes no hero, enemy or RNG state")
+	var invalid_party := _party()
+	var invalid_case := _force_normal_alternative(wasp, attack, invalid_party)
+	if not invalid_case.is_empty():
+		var invalid_before: Array = [invalid_party.get_heroes(),
+			invalid_case.enemies.get_enemies()]
+		var bad_intent: Dictionary = invalid_case.intents[0].duplicate(true)
+		bad_intent["target_position"] = 0
+		var invalid_receipt := CombatEnemyPhase.new().execute_phase(invalid_party,
+			invalid_case.enemies, [bad_intent], null, true)
+		_check(invalid_receipt == {"ok": false, "events": []}
+			and [invalid_party.get_heroes(), invalid_case.enemies.get_enemies()] == invalid_before,
+			"AC4: an invalid announced sting rejects the phase without damage or Bleed")
+	# AC4: one identical seeded sting replays exactly, twice.
+	var replay_party_one := _party()
+	var replay_party_two := _party()
+	var replay_one := _force_normal_alternative(wasp, attack, replay_party_one)
+	var replay_two := _force_normal_alternative(wasp, attack, replay_party_two)
+	if not replay_one.is_empty() and not replay_two.is_empty():
+		_check(replay_one.intents == replay_two.intents,
+			"AC4: identical seeds announce the identical sting")
+		var replay_result_one := CombatEnemyPhase.new().execute_phase(replay_party_one,
+			replay_one.enemies, replay_one.intents, null, true)
+		var replay_result_two := CombatEnemyPhase.new().execute_phase(replay_party_two,
+			replay_two.enemies, replay_two.intents, null, true)
+		_check(replay_result_one == replay_result_two
+			and replay_party_one.get_heroes() == replay_party_two.get_heroes()
+			and replay_one.enemies.get_enemies() == replay_two.enemies.get_enemies(),
+			"AC4: an identical seeded sting reproduces actors, statuses and receipts")
+		_check(replay_one.rng.state == replay_two.rng.state,
+			"AC4: an identical seeded sting leaves matching RNG state")

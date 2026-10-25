@@ -103,5 +103,10 @@ static func _parse_catalog_text(json_text: String) -> Array:
 		if record.has("thorns") and (not RunFightEncounterSelection._coerce_integral_field(
 				record, "thorns") or record["thorns"] < 0):
 			return []
+		# Optional bleeding-sting metadata is authored content, never a number:
+		# a JSON string, number, null, array or object must reject the whole
+		# catalog before any record is published.
+		if record.has("bleed_on_attack") and not (record["bleed_on_attack"] is bool):
+			return []
 		seen.append(id)
 	return records
