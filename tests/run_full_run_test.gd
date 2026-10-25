@@ -165,6 +165,12 @@ func _node(id: String, index: int) -> bool:
 		elif is_instance_valid(app.dye_vat_panel):
 			_check(app.route_view == null, "third Event blocks routing until Dye Vat choice")
 			await _activate(app.dye_vat_panel.get_choice_buttons()[2], true)
+		elif is_instance_valid(app.needle_toll_panel):
+			_check(app.route_view == null, "fourth Event blocks routing until Needle Toll choice")
+			var exit: Callable = app.needle_toll_panel.choice_committed.get_connections()[0].callable.bind("needle_toll", "safe_exit")
+			await _activate(app.needle_toll_panel.get_choice_buttons()[1], true)
+			inventory[3] += 1
+			stale.append(exit)
 		elif is_instance_valid(app.wallet_event_panel):
 			var panel: LiveEventChoicePanel = app.wallet_event_panel
 			var record: Dictionary = panel._selector.get_event()
@@ -606,6 +612,216 @@ func _win(fixture: Dictionary) -> Array:
 	return trace.duplicate(true)
 
 
+func _event_path(map: RunMap, choices: Array, count: int) -> Array:
+	for id in choices:
+		if map.get_node(id).type != "Event":
+			continue
+		if count == 1:
+			return [id]
+		var tail := _event_path(map, map.get_node(id).outgoing, count - 1)
+		if not tail.is_empty():
+			return [id] + tail
+	return []
+
+
+func _needle_fixture() -> Dictionary:
+	for value in range(1, 30000):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = value
+		var map := RunMap.new()
+		if not map.generate(rng):
+			continue
+		var path := _event_path(map, map.get_legal_choices(), 6)
+		if not path.is_empty():
+			return {"seed": value, "path": path, "graph": map.get_floors()}
+	return {}
+
+
+func _needle_button(id: String) -> Button:
+	for button in app.route_buttons:
+		if button.get_meta("route_id") == id:
+			return button
+	return null
+
+
+func _needle_reject(callback: Callable, label: String) -> void:
+	var before := _state()
+	var ledger: Dictionary = app.party_carryover.torn.read_state()
+	callback.call()
+	_check(_state() == before and app.party_carryover.torn.read_state() == ledger,
+		label + " preserves the full run, route, tear ledger and RNG")
+
+
+func _needle_pending(panel: LiveEventChoicePanel, index: int, keyboard: bool) -> void:
+	var commit: Callable = panel.choice_committed.get_connections()[0].callable
+	panel.choice_committed.disconnect(commit)
+	var id: String = panel._bound_choices[panel.get_choice_buttons()[index]]
+	await _activate(panel.get_choice_buttons()[index], keyboard)
+	_check(panel._selector.is_claimed() and panel._committed_choice.choice_id == id,
+		"negative cases start from a genuine physically claimed intent")
+	var pending := commit.bind("needle_toll", id)
+	panel.hide()
+	_needle_reject(pending, "hidden mounted view with authentic pending intent")
+	panel.show()
+	var source: RunMap = app.run_map
+	var foreign := RunMap.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20
+	_check(foreign.generate(rng), "foreign map fixture really generates")
+	app.run_map = foreign
+	_needle_reject(pending, "foreign source map with authentic pending intent")
+	app.run_map = source
+	app.run_scraps += 1
+	_needle_reject(pending, "stale wallet with authentic pending intent")
+	app.run_scraps -= 1
+	app.run_deck.append("warden_strike")
+	_needle_reject(pending, "stale deck with authentic pending intent")
+	app.run_deck.pop_back()
+	app.run_next_stitch_id += 1
+	_needle_reject(pending, "stale stitch cursor with authentic pending intent")
+	app.run_next_stitch_id -= 1
+	if is_instance_valid(panel.needle_payer):
+		var picker := panel.needle_payer
+		var metadata: Variant = picker.get_item_metadata(picker.selected)
+		picker.set_item_metadata(picker.selected, "foreign_hero")
+		_needle_reject(pending, "forged payer row with authentic pending intent")
+		picker.set_item_metadata(picker.selected, metadata)
+	pending.call()
+	await _frames()
+
+
+## Six real connected Event nodes prove the one-time insertion and subsequent
+## seeded wallet rotation independently of the combat-heavy twelve-floor gate.
+func _needle_visits(fixture: Dictionary, branch: String, keyboard: bool) -> Array:
+	await _start(fixture)
+	for index in range(3):
+		await _activate(_needle_button(fixture.path[index]), keyboard)
+		var special: LiveEventChoicePanel = app.quiet_spool_panel if index == 0 else (
+			app.moth_panel if index == 1 else app.dye_vat_panel)
+		_check(is_instance_valid(special) and app.route_view == null, "actual special precedes toll")
+		if not is_instance_valid(special):
+			return []
+		await _activate(special.get_choice_buttons()[1 if index == 0 else 2], keyboard)
+	var route_button := _needle_button(fixture.path[3])
+	var entry := _retained(route_button)
+	# Admission failure cannot consume the fourth route or any random draw.
+	app.session_gold = -1
+	_needle_reject(entry, "invalid context admission")
+	app.session_gold = 0
+	_needle_reject(Callable(app, "_open_needle_toll").bind("not_a_node", weakref(app.run_map)),
+		"failed route admission after panel mounting")
+	var before := _inventory()
+	var ledger: Dictionary = app.party_carryover.torn.read_state()
+	await _activate(route_button, keyboard)
+	var panel: LiveEventChoicePanel = app.needle_toll_panel
+	_check(is_instance_valid(panel) and app.route_view == null and _inventory() == before,
+		"fourth Event mounts Needle Toll without HP, wallet, deck or RNG change")
+	if not is_instance_valid(panel):
+		return []
+	var commit: Callable = panel.choice_committed.get_connections()[0].callable
+	if branch == "abandon":
+		var abandoned := _state()
+		app._clear_needle_toll()
+		_check(_state() == abandoned and app.party_carryover.torn.read_state() == ledger,
+			"abandoning the mounted toll changes no run state or RNG")
+		_needle_reject(commit.bind("needle_toll", "safe_exit"), "abandoned panel callback")
+		app._return_to_title()
+		await _frames()
+		return [before]
+	_needle_reject(entry, "duplicate route while toll mounted")
+	_needle_reject(commit.bind("needle_toll", "safe_exit"), "unclaimed forged signal")
+	_check(panel.needle_payer.item_count == 3, "all three actual healthy heroes may pay")
+	var rng := RandomNumberGenerator.new()
+	rng.state = app.run_rng.state
+	var oracle := RunNeedleToll.new({"heroes": app.run_heroes,
+		"wallet": {"gold": app.session_gold, "scraps": app.run_scraps}, "deck": app.run_deck}, rng)
+	var result: Array = []
+	if branch == "safe_exit":
+		await _needle_pending(panel, 1, keyboard)
+		before[3] += 1
+		_check(_inventory() == before and app.party_carryover.torn.read_state() == ledger,
+			"safe exit is exactly +1 scrap without HP, deck, ledger or RNG changes")
+	else:
+		# Choose the second hero with physical popup navigation or mouse input.
+		var picker := panel.needle_payer
+		if keyboard:
+			picker.grab_focus()
+			await _key(KEY_ENTER)
+			await _key(KEY_DOWN)
+			await _key(KEY_ENTER)
+			await _key(KEY_TAB)
+			_check(panel.get_choice_buttons()[0].has_focus(), "Tab reaches pay from payer selection")
+		else:
+			await _click(picker)
+			var popup := picker.get_popup()
+			_check(popup.visible and popup.item_count == 3, "mouse opens the real three-payer popup")
+			# Three equal-height hero rows: the popup centre is the second row.
+			await _click_point(Vector2(popup.position) + Vector2(popup.size) * 0.5)
+		_check(picker.selected == 1, "physical payer selection chooses Seamstress (keyboard=%s, selected=%d)" % [keyboard, picker.selected])
+		var paid := oracle.pay_toll("seamstress")
+		_check(paid.ok and paid.offered_ids.size() == 2 and paid.offered_ids[0] != paid.offered_ids[1],
+			"oracle has two distinct seeded rare offers")
+		await _needle_pending(panel, 0, keyboard)
+		_check(app._needle_toll_completed and is_instance_valid(app.needle_toll_panel)
+			and app.route_view == null and app.run_heroes == paid.heroes
+			and app.party_carryover.read_state().heroes == paid.heroes
+			and app.party_carryover.torn.read_state().heroes == paid.heroes
+			and app.run_rng.state == rng.state and app.run_deck == before[0],
+			"payment publishes exact -6 current HP in all owners and exactly the seeded draws")
+		ledger.heroes = paid.heroes.duplicate(true)
+		_check(app.party_carryover.torn.read_state() == ledger,
+			"payment preserves all tear, cap, battle and mend history")
+		var next_party: CombatParty = app.party_carryover.create_next_fight_party()
+		_check(next_party != null and next_party.get_heroes() == paid.heroes,
+			"paid carryover admits the next real combat party")
+		if not is_instance_valid(app.needle_toll_panel):
+			return []
+		var offers: LiveEventChoicePanel = app.needle_toll_panel
+		_check(offers != panel and offers.needle_payer == null and offers.get_choice_buttons().size() == 3
+			and app._needle_toll_outcome.get_offered_ids() == paid.offered_ids,
+			"paid stage replaces payer with two real rare card choices and Skip")
+		for offer in paid.offers:
+			_check(offer.rarity == "rare" and offer.owner in ["warden", "seamstress", "tinker"],
+				"offers belong to the active party and are rare")
+		_needle_reject(commit.bind("needle_toll", "pay_toll"), "old payment callback after stage transition")
+		var claim: Callable = offers.choice_committed.get_connections()[0].callable
+		_needle_reject(claim.bind("needle_toll", "foreign_card"), "unoffered forged claim")
+		var expected := oracle.skip_cards() if branch == "skip" else oracle.claim_card(paid.offered_ids[1])
+		var selected := 2 if branch == "skip" else 1
+		await _needle_pending(offers, selected, keyboard)
+		_check(app.run_deck == expected.deck and app.run_heroes == paid.heroes
+			and app.run_rng.state == rng.state and app.run_stitch_descriptors == before[5]
+			and app.run_next_stitch_id == before[6] and app.run_scraps == before[3],
+			"claim adds only the selected copy or Skip adds none, preserving stitch ledger and RNG")
+		_needle_reject(claim.bind("needle_toll", paid.offered_ids[1]), "replayed claim")
+		result.append([paid, expected, str(rng.state)])
+	_check(app.needle_toll_panel == null and app._needle_toll_context.is_empty()
+		and app._needle_toll_outcome == null and app.route_view != null,
+		"settlement fully clears the panel and resumes the route")
+	_needle_reject(commit.bind("needle_toll", "safe_exit"), "closed toll callback")
+	_needle_reject(entry, "settled route replay")
+	for index in range(4, 6):
+		var expected_rng := RandomNumberGenerator.new()
+		expected_rng.state = app.run_rng.state
+		var rotation := RunM04EventRotation.new().select_event(expected_rng, app._wallet_event_history)
+		await _activate(_needle_button(fixture.path[index]), keyboard)
+		var wallet_panel: LiveEventChoicePanel = app.wallet_event_panel
+		_check(is_instance_valid(wallet_panel) and app.needle_toll_panel == null,
+			"subsequent Event returns to generic wallet rotation")
+		if not is_instance_valid(wallet_panel):
+			return []
+		_check(wallet_panel._selector.get_event() == rotation.event and app.run_rng.state == expected_rng.state,
+			"subsequent seeded selection and history remain unchanged")
+		for button in wallet_panel.get_choice_buttons():
+			if not button.disabled:
+				await _activate(button, keyboard)
+				break
+	result.append(_inventory())
+	await _activate(app.route_back_button, keyboard)
+	_check(not app._needle_toll_completed and app.needle_toll_panel == null, "new-run boundary clears toll latch")
+	return result
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
@@ -614,6 +830,14 @@ func _run() -> void:
 	seed(980098)
 	var global_next := randi()
 	seed(980098)
+	var needle_fixture := _needle_fixture()
+	_check(not needle_fixture.is_empty(), "genuine six-Event route exists")
+	if not needle_fixture.is_empty():
+		await _needle_visits(needle_fixture, "abandon", false)
+		for branch in ["safe_exit", "claim", "skip"]:
+			var pointer := await _needle_visits(needle_fixture, branch, false)
+			var keys := await _needle_visits(needle_fixture, branch, true)
+			_check(not pointer.is_empty() and pointer == keys, "Needle Toll mouse/keyboard seeded replay: " + branch)
 	var fixture := _fixture()
 	_check(not fixture.is_empty(), "bounded connected twelve-floor fixture exists")
 	if not fixture.is_empty():

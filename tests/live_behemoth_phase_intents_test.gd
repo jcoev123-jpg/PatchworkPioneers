@@ -63,7 +63,7 @@ func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
 		deck = CombatDeck.new(StarterCards.new().get_starting_deck(), rng)
 	if not party.is_valid() or not enemies.is_valid() \
 			or enemies.get_enemy(1).get("id") != "patchwork_behemoth" \
-			or enemies.get_enemy(1).get("hp") != 42 \
+			or enemies.get_enemy(1).get("hp") != 84 \
 			or not selector.bind_battle(enemies, party, rng):
 		return {}
 	var battle := {"map": map, "rng": rng, "party": party,
@@ -83,7 +83,7 @@ func _start_boss(seed_value: int, with_round_flow := false) -> Dictionary:
 
 func _hurt_to_phase_two(battle: Dictionary) -> bool:
 	var enemies: CombatEnemies = battle.enemies
-	return enemies.apply_damage(1, 21) and enemies.get_enemy(1).hp == 21 \
+	return enemies.apply_damage(1, 63) and enemies.get_enemy(1).hp == 21 \
 		and battle.intents.advance_turn()
 
 
@@ -97,14 +97,14 @@ func _test_real_boss_threshold() -> void:
 	var selector: CombatEnemyIntents = battle.intents
 	_check(battle.map.get_route().size() == 12
 		and selector.is_bound() and selector._boss_slot == 1
-		and enemies.get_enemy(1).max_hp == 42,
-		"real selected Boss keeps one authentic enemy slot and 42 HP")
+		and enemies.get_enemy(1).max_hp == 84,
+		"real selected Boss keeps one authentic enemy slot and 84 HP")
 	_check(selector._slots[0].target == "front"
-		and selector._slots[0].actions[0].action.amount == 2,
+		and selector._slots[0].actions[0].action.amount == 40,
 		"initial first-phase action/policy are authored")
 	var announced := selector.get_intents()
 	var rng_before := rng.state
-	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+	_check(enemies.apply_damage(1, 62) and enemies.get_enemy(1).hp == 22
 		and selector.get_intents() == announced and rng.state == rng_before,
 		"damage to 22 does not refresh an already announced action")
 	_check(selector.advance_turn() and selector._slots[0].target == "front",
@@ -272,19 +272,19 @@ func _test_locked_phase_one_attack() -> void:
 	var selector: CombatEnemyIntents = battle.intents
 	var locked := selector.get_intents()
 	var state_before: int = battle.rng.state
-	_check(locked[0] == {"type": "attack", "amount": 2,
+	_check(locked[0] == {"type": "attack", "amount": 40,
 			"enemy_position": 1, "target_position": 1},
-		"phase-one attack commits exact authored 2 damage to front")
-	_check(enemies.apply_damage(1, 21) and enemies.get_enemy(1).hp == 21
+		"phase-one attack commits exact authored 40 damage to front")
+	_check(enemies.apply_damage(1, 63) and enemies.get_enemy(1).hp == 21
 		and selector.get_intents() == locked and battle.rng.state == state_before
 		and CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"crossing the threshold mid-player-turn keeps old action and fallback policy")
 	var executed := CombatEnemyPhase.new().execute_phase(
 		party, enemies, locked, null, true)
 	_check(executed.get("ok", false) and executed.events[0].target_position == 1
-		and executed.events[0].applied and party.get_hero(1).hp == 38
+		and executed.events[0].applied and party.get_hero(1).hp == 0
 		and party.get_hero(3).hp == 26,
-		"old front attack really executes for two despite boss now at 21 HP")
+		"old front attack really executes for 40 despite boss now at 21 HP")
 	_check(selector.advance_turn()
 		and selector._slots[0].actions[0].action.amount == 4
 		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
@@ -370,7 +370,7 @@ func _test_round_phase_crossing() -> void:
 	_check(battle.map.get_current_floor() == 12 and intents.is_bound()
 		and intents._boss_slot == 1 and battle.unravel._bound_enemies == enemies
 		and battle.unravel.get_snapshot(1).threshold == 16
-		and deck._rng == battle.rng and enemies.get_enemy(1).max_hp == 42
+		and deck._rng == battle.rng and enemies.get_enemy(1).max_hp == 84
 		and party.get_hero(1).max_hp == 40 and party.get_hero(2).max_hp == 30
 		and party.get_hero(3).max_hp == 26,
 		"round uses authentic boss, three original heroes, shared RNG and Boss gauge")
@@ -379,12 +379,12 @@ func _test_round_phase_crossing() -> void:
 		and party.get_hero(1).block == 6,
 		"real active first hand is opened before the threshold crossing")
 	var locked := intents.get_intents()
-	_check(locked.size() == 1 and locked[0] == {"type": "attack", "amount": 2,
+	_check(locked.size() == 1 and locked[0] == {"type": "attack", "amount": 40,
 		"enemy_position": 1, "target_position": 1}
 		and intents._boss_phase == 1 and CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"bound phase-one attack is already committed against front Warden")
 	var state: int = battle.rng.state
-	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+	_check(enemies.apply_damage(1, 62) and enemies.get_enemy(1).hp == 22
 		and intents.get_intents() == locked and battle.rng.state == state,
 		"at 22 HP the real battle keeps its phase-one announcement")
 	_check(enemies.apply_damage(1, 1) and enemies.get_enemy(1).hp == 21
@@ -399,9 +399,9 @@ func _test_round_phase_crossing() -> void:
 		and (not oracle.intent.has("target_position") or oracle.intent.target_position == 2),
 		"authored phase-two weighted oracle targets the lowest living HP hero")
 	_check(flow.end_turn(), "real round commits previously announced phase-one attack")
-	_check(party.get_hero(1).hp == 38 and party.get_hero(2).hp == 14
+	_check(party.get_hero(1).hp == 0 and party.get_hero(2).hp == 14
 		and enemies.get_enemy(1).hp == 21 and battle.unravel.get_snapshot(1).gauge == 0,
-		"old 2-damage front attack executes despite the Boss being at 21")
+		"old 40-damage front attack executes despite the Boss being at 21")
 	_check(intents._boss_phase == 2 and intents._slots[0].target == "lowest_living_hp"
 		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp"
 		and intents.get_intents() == [oracle.get("intent")]
@@ -426,7 +426,7 @@ func _test_round_unravel_action_kinds() -> void:
 		var intents: CombatEnemyIntents = battle.intents
 		var gauge: CombatUnravel = battle.unravel
 		_check(flow.begin_fight() and party.apply_damage(2, 16)
-			and enemies.apply_damage(1, 21) and enemies.get_enemy(1).hp == 21
+			and enemies.apply_damage(1, 63) and enemies.get_enemy(1).hp == 21
 			and gauge.apply_unravel(enemies, 1, 16),
 			"active Boss turn crosses phase and reaches the 16-gauge break: " + kind)
 		var locked := intents.get_intents()
@@ -487,18 +487,18 @@ func _test_round_bleed_delayed_skip() -> void:
 	var gauge: CombatUnravel = battle.unravel
 	var flow: CombatRoundFlow = battle.flow
 	_check(flow.begin_fight() and party.apply_damage(1, 6)
-		and enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 22
+		and enemies.apply_damage(1, 62) and enemies.get_enemy(1).hp == 22
 		and enemies.gain_block(1, 4)
 		and enemies.apply_statuses({1: {"bleed": 1}})
 		and gauge.apply_unravel(enemies, 1, 15),
 		"at 22 HP boss has surviving Bleed, Block 4 and 15/16 gauge")
 	var locked := intents.get_intents()
 	_check(locked.size() == 1 and locked[0].type == "attack"
-		and locked[0].amount == 2 and locked[0].target_position == 1
+		and locked[0].amount == 40 and locked[0].target_position == 1
 		and not gauge.get_snapshot(1).skip_pending,
 		"Bleed has not preemptively skipped the already-announced front attack")
 	_check(flow.end_turn(), "owner turn executes committed attack then enemy Bleed tick")
-	_check(party.get_hero(1).hp == 38 and enemies.get_enemy(1).hp == 21
+	_check(party.get_hero(1).hp == 0 and enemies.get_enemy(1).hp == 21
 		and enemies.get_enemy(1).block == 4
 		and enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 0
 		and gauge.get_snapshot(1) == {"gauge": 16, "threshold": 16,
@@ -563,7 +563,7 @@ func _test_round_rejections_and_replay() -> void:
 	var start_state := _round_snapshot(battle)
 	_check(not flow.end_turn() and _round_snapshot(battle) == start_state,
 		"end-turn before admission rejects without consuming the first weighted intent")
-	_check(flow.begin_fight() and enemies.apply_damage(1, 21)
+	_check(flow.begin_fight() and enemies.apply_damage(1, 63)
 		and gauge.apply_unravel(enemies, 1, 16)
 		and gauge.get_snapshot(1).skip_pending,
 		"malformed and mismatched end-turn guards start with a genuine pending Boss skip")
@@ -594,7 +594,7 @@ func _test_round_rejections_and_replay() -> void:
 	if not terminal.is_empty():
 		_check(terminal.flow.begin_fight()
 			and terminal.unravel.apply_unravel(terminal.enemies, 1, 16)
-			and terminal.enemies.apply_damage(1, 42)
+			and terminal.enemies.apply_damage(1, 84)
 			and terminal.result.evaluate() == CombatBattleResult.VICTORY,
 			"terminal victory is latched while the Boss's skip remains pending")
 		var end_state := _round_snapshot(terminal)
@@ -621,7 +621,7 @@ func _round_replay(seed_value: int) -> Array:
 	if battle.is_empty() or not battle.flow.begin_fight():
 		return []
 	var first := _round_snapshot(battle)
-	if not battle.enemies.apply_damage(1, 21) or not battle.party.apply_damage(2, 16) \
+	if not battle.enemies.apply_damage(1, 63) or not battle.party.apply_damage(2, 16) \
 			or not battle.unravel.apply_unravel(battle.enemies, 1, 16):
 		return []
 	var crossed := _round_snapshot(battle)
@@ -645,7 +645,7 @@ func _test_round_down_target_fallback() -> void:
 		if battle.is_empty():
 			break
 		if not battle.flow.begin_fight() or not battle.party.apply_damage(2, 16) \
-				or not battle.enemies.apply_damage(1, 21) \
+				or not battle.enemies.apply_damage(1, 63) \
 				or not battle.unravel.apply_unravel(battle.enemies, 1, 16) \
 				or not battle.flow.end_turn():
 			break

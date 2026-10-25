@@ -9,18 +9,21 @@ var gold_purchases := 0
 func _fixtures() -> Dictionary:
 	var found := {}
 	var ids: Array = RunM04EventRotation.new().get_generic_event_ids()
-	for value in range(1, 30000):
+	for value in range(1, 100000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
 		if not map.generate(rng):
 			continue
-		var path := _find_path(map, map.get_legal_choices(), ["Event", "Event", "Event", "Event", "Event"])
+		var path := _find_path(map, map.get_legal_choices(), ["Event", "Event", "Event", "Event", "Event", "Event"])
 		if path.is_empty():
 			continue
+		var toll := RunNeedleToll.new({"heroes": CombatParty.new(app._load_party_definitions()).get_heroes(),
+			"wallet": {"gold": 0, "scraps": 0}, "deck": app._load_starter_deck()}, rng)
+		_check(toll.pay_toll("warden").ok, "fixture stages real paid toll draws")
 		var event_id: String = ids[rng.randi_range(0, ids.size() - 1)]
 		if not found.has(event_id):
-			found[event_id] = {"seed": value, "path": path.slice(0, 4), "next": path[4]}
+			found[event_id] = {"seed": value, "path": path.slice(0, 5), "next": path[5]}
 		var complete := true
 		for required in REQUIRED:
 			complete = complete and found.has(required)
@@ -72,6 +75,18 @@ func _reach(fixture: Dictionary, funded: bool = true) -> void:
 	_check(app._quiet_spool_completed and app._moth_completed and app._dye_vat_completed
 		and _wallet() == {"gold": 0, "scraps": 2 if funded else 0},
 		"three authentic special receipts establish exact opening wallet")
+	await _click(_route_action(fixture.path[3]))
+	_check(is_instance_valid(app.needle_toll_panel), "fourth Event mounts the inserted toll")
+	if not is_instance_valid(app.needle_toll_panel):
+		return
+	await _click(app.needle_toll_panel.get_choice_buttons()[0])
+	_check(is_instance_valid(app.needle_toll_panel) and app._needle_toll_outcome.is_paid(),
+		"paid toll preserves the wallet before generic affordability tests")
+	if is_instance_valid(app.needle_toll_panel):
+		await _click(app.needle_toll_panel.get_choice_buttons()[2])
+	_check(app.needle_toll_panel == null and app._needle_toll_completed
+		and _wallet() == {"gold": 0, "scraps": 2 if funded else 0},
+		"Skip resumes routing with the exact original wallet including zero-wallet negatives")
 
 
 func _return_title() -> void:
@@ -86,7 +101,7 @@ func _return_title() -> void:
 
 func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 	await _reach(fixture)
-	var button := _route_action(fixture.path[3])
+	var button := _route_action(fixture.path[4])
 	var entry: Callable = button.pressed.get_connections()[0].callable
 	var rng := RandomNumberGenerator.new()
 	rng.state = app.run_rng.state
@@ -210,7 +225,7 @@ func _named(fixture: Dictionary, event_id: String, keyboard: bool) -> Array:
 
 func _failures(fixture: Dictionary) -> void:
 	await _reach(fixture, false)
-	var button := _route_action(fixture.path[3])
+	var button := _route_action(fixture.path[4])
 	var entry: Callable = button.pressed.get_connections()[0].callable
 	var catalog_path: String = app.event_catalog_path
 	app.event_catalog_path = "res://missing_event_catalog.json"

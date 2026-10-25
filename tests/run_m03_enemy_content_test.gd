@@ -104,7 +104,7 @@ func _test_catalogs() -> void:
 		"ragling": ["Ragling", 12], "ragling_guard": ["Guard Ragling", 12],
 		"fray_scavenger": ["Fray Scavenger", 14], "button_guard": ["Button Guard", 16],
 		"spool_stalker": ["Spool Stalker", 14], "seam_ripper": ["Seam Ripper", 18],
-		"patchwork_behemoth": ["Patchwork Behemoth", 42],
+		"patchwork_behemoth": ["Patchwork Behemoth", 84],
 	}
 	for id in required:
 		var entry := _record(id)
@@ -242,7 +242,7 @@ func _play_typed_boss() -> Dictionary:
 		for index in range(3):
 			_check(party.get_hero(index + 1).hp == expected_hp[index],
 				"only announced attack changes HP at turn %d slot %d" % [turns, index + 1])
-		_check(enemies.get_enemy(1).hp == 42, "no-card run never damages the Boss")
+		_check(enemies.get_enemy(1).hp == 84, "no-card run never damages the Boss")
 		if downed_weak:
 			skipped_downed_weak = true
 			_check(party.get_hero(2).hp == 0 and party.get_hero(2).get("statuses", {}) == {},
@@ -346,7 +346,7 @@ func _test_inert_and_invalid() -> void:
 		var pair := CombatEnemies.new([_record("patchwork_behemoth"), _record("ragling")])
 		malformed.enemy_position = 2
 		_assert_phase_unchanged(party, pair, [{"enemy_position": 1, "type": "block", "amount": 3}, malformed], {"ok": false, "events": []})
-	_check(boss.apply_damage(1, 42) and boss.is_slain(1), "real authored boss slain")
+	_check(boss.apply_damage(1, 84) and boss.is_slain(1), "real authored boss slain")
 	for action in EXPECTED:
 		var announced: Dictionary = action.duplicate(true)
 		announced.enemy_position = 1

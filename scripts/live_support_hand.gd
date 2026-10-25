@@ -24,7 +24,7 @@ const HUD_ART := {
 ## disabled state, only the sewn face behind them changes.
 const BUTTON_STATES := ["normal", "hover", "pressed", "disabled"]
 ## Visible idle cue only: the complete mouse/keyboard instructions live in TABLE_HELP_DETAIL,
-## which the cue exposes as a real hover tooltip instead of stretching across the footer.
+## exposed by hover, click and F1 without stretching the action rail.
 const TABLE_HELP := "Help"
 const TABLE_HELP_DETAIL := "Click, drag or focus a card and press Enter / Space to play it. " \
 	+ "Up / Down or Tab moves between cards. Esc or Cancel clears a chosen target."
@@ -47,6 +47,9 @@ var cancel_button: Button
 var energy_label: Label
 var energy_orb: Control
 var help_label: Label
+var help_disclosure: Label
+var _help_slot: Control
+var _information: Control
 var footer_spring: Control
 var backing: Control
 var quilt_row: HBoxContainer
@@ -461,7 +464,30 @@ func _process(_delta: float) -> void:
 	_sync_battle()
 
 
+func _toggle_help() -> void:
+	if is_instance_valid(_help_slot) and not _pending.get("choosing", false):
+		_help_slot.visible = not _help_slot.visible
+
+
+func _on_help_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and not event.pressed and help_label.get_parent() == _information:
+		_toggle_help()
+		help_label.accept_event()
+
+
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo \
+			and is_instance_valid(help_disclosure) and is_instance_valid(_battle) \
+			and _battle.is_visible_in_tree():
+		if event.keycode == KEY_F1 and not _pending.get("choosing", false):
+			_toggle_help()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_ESCAPE and _help_slot.visible:
+			_help_slot.hide()
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventMouseMotion and not _pending.is_empty():
 		var source = _pending.panel
 		if is_instance_valid(source):
@@ -673,7 +699,8 @@ func _sync_battle() -> void:
 		help_label.focus_mode = Control.FOCUS_NONE
 		help_label.tooltip_text = TABLE_HELP_DETAIL
 		help_label.theme_type_variation = HELP_IDLE_FACE
-		help_label.custom_minimum_size = Vector2(64, 34)
+		# Fit the existing information strip without taking height from the actor stage.
+		help_label.custom_minimum_size = Vector2(64, 32)
 		help_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		help_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -694,8 +721,22 @@ func _sync_battle() -> void:
 		var stitch := HelpStitch.new()
 		stitch.name = "SupportHandHelpStitch"
 		help_label.add_child(stitch)
-		_add_named(hud, help_label, "SupportHandHelp")
-		hud.move_child(help_label, 1)
+		_information = _battle.find_child("BattleHandInformation", true, false)
+		_help_slot = _battle.find_child("BattleHandDisclosureSlot", true, false)
+		_add_named(_information, help_label, "SupportHandHelp")
+		help_label.gui_input.connect(_on_help_input)
+		help_disclosure = Label.new()
+		help_disclosure.name = "SupportHandHelpDisclosure"
+		help_disclosure.text = TABLE_HELP_DETAIL
+		help_disclosure.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		help_disclosure.add_theme_font_size_override("font_size", HELP_FONT_SIZE)
+		help_disclosure.add_theme_color_override("font_color", Color("ecdfbd"))
+		help_disclosure.add_theme_stylebox_override("normal", patch.duplicate())
+		help_disclosure.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_help_slot.add_child(help_disclosure)
+		var disclosure_stitch := HelpStitch.new()
+		disclosure_stitch.name = "SupportHelpDisclosureStitch"
+		help_disclosure.add_child(disclosure_stitch)
 		# Inert spring: the cue itself no longer stretches, and the accepted End Turn / Return
 		# row keeps its far-right placement. Hidden while a target message needs the room.
 		footer_spring = Control.new()
@@ -773,6 +814,13 @@ func _sync_battle() -> void:
 	energy_label.text = "%d" % _deck.energy
 	# Idle: one short sewn cue, no stretch. Targeting: the full card-name prompt takes the row.
 	var choosing: bool = _pending.get("choosing", false)
+	var help_home: Control = _hud if choosing else _information
+	if help_label.get_parent() != help_home:
+		help_label.reparent(help_home)
+		if choosing:
+			_hud.move_child(help_label, 1)
+	if choosing:
+		_help_slot.hide()
 	var help_text: String = TABLE_HELP
 	if choosing:
 		help_text = "%s: choose a living ally | Esc: cancel" % _metadata.definition(_pending.id).get("display_name", _pending.id)
@@ -1144,6 +1192,7 @@ func _selection_valid() -> bool:
 
 
 func _choose_target() -> void:
+	_help_slot.hide()
 	_pending.choosing = true
 	cancel_button.show()
 	var panels: Array[Control] = []
@@ -1286,6 +1335,13 @@ func _clear() -> void:
 	if is_instance_valid(help_label):
 		help_label.queue_free()
 	help_label = null
+	if is_instance_valid(_help_slot):
+		_help_slot.hide()
+	if is_instance_valid(help_disclosure):
+		help_disclosure.queue_free()
+	help_disclosure = null
+	_help_slot = null
+	_information = null
 	if is_instance_valid(footer_spring):
 		footer_spring.queue_free()
 	footer_spring = null

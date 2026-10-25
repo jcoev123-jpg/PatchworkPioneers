@@ -123,7 +123,19 @@ func commit_victory(node_id: Variant, result: CombatBattleResult, party: CombatP
 func _observer() -> RunTornMending:
 	var proposal := RunTornMending.new(_initial)
 	for receipt in _receipts:
-		if receipt.has("start"):
+		if receipt.has("needle_toll"):
+			if proposal.read_state().heroes != receipt.context.heroes:
+				return null
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 0
+			var toll := RunNeedleToll.new(receipt.context, rng)
+			var paid := toll.pay_toll(receipt.needle_toll)
+			if not paid.ok:
+				return null
+			# A nonlethal Event wound changes current HP only. Preserve every tear,
+			# cap, battle and mending receipt in this replayed ledger.
+			proposal._heroes = paid.heroes.duplicate(true)
+		elif receipt.has("start"):
 			if not proposal.observe_battle_end(receipt.node, receipt.start, receipt.end).ok:
 				return null
 		elif receipt.has("mend"):
@@ -135,6 +147,37 @@ func _observer() -> RunTornMending:
 	if proposal.read_state() != torn.read_state():
 		return null
 	return proposal
+
+
+## Publish an authenticated paid toll without inventing a battle or a tear.
+func apply_needle_toll(outcome: RunNeedleToll, expected: Dictionary) -> bool:
+	if outcome == null or not outcome.is_paid() or expected != read_state():
+		return false
+	for receipt in _receipts:
+		if receipt.has("needle_toll"):
+			return false
+	var proposal := _observer()
+	var source := outcome.get_source_snapshot()
+	if proposal == null or source.heroes != _heroes or torn.read_state().heroes != _heroes:
+		return false
+	var context := {"heroes": source.heroes, "wallet": source.wallet, "deck": source.deck}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 0
+	var replay := RunNeedleToll.new(context, rng)
+	var hero: String = outcome._wounded_hero_id
+	var paid := replay.pay_toll(hero)
+	if not paid.ok or paid.heroes != outcome.get_snapshot().heroes:
+		return false
+	if _wardrobe != null:
+		var state := _wardrobe.get_snapshot()
+		if state.heroes != _heroes or not _wardrobe.refresh_run_context(paid.heroes,
+			state.owned, state.scraps, state.gold, state.cards, state):
+			return false
+	proposal._heroes = paid.heroes.duplicate(true)
+	torn = proposal
+	_heroes = paid.heroes.duplicate(true)
+	_receipts.append({"needle_toll": hero, "context": context.duplicate(true)})
+	return true
 
 
 func preview_reward(node: String, result: CombatBattleResult, party: CombatParty) -> RunTornMending:

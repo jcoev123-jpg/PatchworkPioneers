@@ -1272,9 +1272,30 @@ func _check_story_structure(label: String) -> void:
 	_check(panel.description_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART,
 		label + " complete story wraps naturally")
 	var content := panel.choices_container.get_parent()
-	_check(panel.description_label.get_index() < panel.choices_container.get_index()
+	# The authored display line keeps only the height its own font needs: no
+	# reserved title block may open a blank band above the story.
+	var title_font := panel.title_label.get_theme_font("font")
+	var title_size := panel.title_label.get_theme_font_size("font_size")
+	var title_height := title_font.get_height(title_size) if title_font != null else 0.0
+	_check(title_font != null
+		and panel.title_label.get_combined_minimum_size().y <= title_height + 4.0,
+		label + " title takes only its natural display height")
+	_check(panel.title_label.get_index() + 1 == panel.description_label.get_index()
+		and panel.description_label.get_index() < panel.choices_container.get_index()
 		and panel.bottom_stitches.get_index() > panel.choices_container.get_index(),
-		label + " story, tickets, bottom stitching stay in content order")
+		label + " title, story, tickets, bottom stitching stay in content order")
+	# Nothing but the optional wallet caption may sit between the story and the
+	# tickets; any other block there would be the blank gulf this view avoids.
+	for index in range(panel.description_label.get_index() + 1, panel.choices_container.get_index()):
+		var between := content.get_child(index)
+		_check(between is Label and between.name == "WalletBalance",
+			label + " only the wallet caption sits between story and tickets")
+	for child in content.get_children():
+		var block := child as Control
+		_check(block != null and block.size_flags_vertical & Control.SIZE_EXPAND == 0,
+			label + " no content block stretches the parchment")
+	_check(absf(panel.paper_panel.size.y - panel.paper_panel.get_combined_minimum_size().y) <= 1.0,
+		label + " parchment stays content-sized")
 	var balance := content.get_node_or_null("WalletBalance")
 	if balance != null:
 		_check(balance.get_index() > panel.description_label.get_index()
@@ -1802,6 +1823,120 @@ func _test_backdrop_fallback() -> void:
 	await _frames()
 
 
+func _test_needle_carryover() -> void:
+	var party := CombatParty.new([
+		{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}])
+	var carry := RunTornCarryover.new(party.get_heroes())
+	var enemies := CombatEnemies.new([{"id": "dummy", "max_hp": 1}])
+	var result := CombatBattleResult.new(party, enemies)
+	_check(carry.begin_battle("before_toll", result, party), "real carryover admits the pre-toll battle")
+	party.apply_damage(2, 30)
+	enemies.apply_damage(1, 1)
+	_check(result.evaluate() == CombatBattleResult.VICTORY, "pre-toll battle actually ends with a torn ally")
+	_check(carry.commit_victory("before_toll", result, party).ok
+		and carry.apply_reward("before_toll", result, party).ok, "battle and reward publish the genuine tear")
+	_check(carry.choose_rest_heal("before_toll_rest").ok, "real rest revives torn hero before toll")
+	var ledger := carry.torn.read_state()
+	_check(ledger.tear_counts.seamstress == 1 and ledger.heroes[1].max_hp == 27
+		and ledger.heroes[1].hp >= 7, "toll starts from a genuinely reduced cap and nonempty tear history")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 245
+	var toll := RunNeedleToll.new({"heroes": carry.read_state().heroes,
+		"wallet": {"gold": 0, "scraps": 0}, "deck": ["warden_strike"]}, rng)
+	var paid := toll.pay_toll("seamstress")
+	_check(paid.ok and carry.apply_needle_toll(toll, carry.read_state()), "paid toll commits through carryover")
+	ledger.heroes = paid.heroes
+	_check(carry.torn.read_state() == ledger and carry.read_state().heroes == paid.heroes,
+		"toll preserves the genuine tear, reduced max HP, battle and rest history")
+	var before := carry.read_state()
+	var state: int = rng.state
+	_check(not carry.apply_needle_toll(toll, before) and carry.read_state() == before
+		and carry.torn.read_state() == ledger and rng.state == state, "replayed carryover payment is inert")
+	_check(carry.create_next_fight_party() != null and carry.choose_rest_heal("after_toll_rest").ok
+		and carry.create_next_fight_party() != null, "later rest and fight hydration replay toll history successfully")
+
+
+func _test_needle_toll() -> void:
+	var heroes: Array = CombatParty.new([
+		{"id": "warden", "max_hp": 40}, {"id": "seamstress", "max_hp": 30},
+		{"id": "tinker", "max_hp": 26}]).get_heroes()
+	heroes[0].hp = 6
+	heroes[1].hp = 0
+	heroes[2].hp = 7
+	var context := {"heroes": heroes, "wallet": {"gold": 0, "scraps": 0},
+		"deck": ["warden_strike"]}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 245
+	var outcome := RunNeedleToll.new(context, rng)
+	var state: int = rng.state
+	_check(outcome.is_open() and panel.open_needle_toll(outcome), "real toll contract mounts")
+	await _frames()
+	_check(panel.needle_payer != null and panel.needle_payer.item_count == 1
+		and panel.needle_payer.get_item_metadata(0) == "tinker",
+		"only the living hero at the exact 7 HP boundary is presented")
+	_check(panel.get_choice_buttons()[1].text == outcome.get_event().choices[1].text,
+		"safe exit keeps the authored +1 scrap wording")
+	var old: Callable = panel.get_choice_buttons()[0].pressed.get_connections()[0].callable
+	var count := committed.size()
+	panel.hide()
+	await _key(KEY_1)
+	old.call()
+	_check(committed.size() == count and rng.state == state and outcome.is_open(),
+		"hidden payment changes neither rules nor RNG")
+	panel.show()
+	panel.needle_payer.grab_focus()
+	await _key(KEY_TAB)
+	_check(panel.get_choice_buttons()[0].has_focus(), "Tab reaches pay from the eligible payer")
+	await _key(KEY_TAB)
+	_check(panel.get_choice_buttons()[1].has_focus(), "Tab reaches authored safe exit")
+	await _key(KEY_SPACE)
+	_check(committed.size() == count + 1 and committed.back().choice_id == "safe_exit"
+		and outcome.is_open() and rng.state == state and context.heroes == heroes,
+		"keyboard safe exit emits presentation intent without spending caller state")
+	panel.close_event()
+	_check(panel.needle_payer == null and panel.get_choice_buttons().is_empty(), "close clears payer and choices")
+	_check(panel.open_needle_toll(outcome), "uncommitted rules can be presented again")
+	old.call()
+	_check(not panel._selector.is_claimed(), "old generation cannot commit reopened toll")
+	panel.close_event()
+	var paid := outcome.pay_toll("tinker")
+	_check(paid.ok and paid.heroes[2].hp == 1 and paid.offered_ids.size() == 2,
+		"boundary payer pays exactly six and supplies two real rare cards")
+	_check(panel.open_needle_toll(outcome), "paid rare offers mount")
+	await _frames()
+	_check(panel.needle_payer == null and panel.get_choice_buttons().size() == 3,
+		"paid offering has two cards and Skip without stale payer")
+	for index in range(2):
+		_check(panel._bound_choices[panel.get_choice_buttons()[index]] == paid.offered_ids[index]
+			and panel.get_choice_buttons()[index].text.contains("rare")
+			and Rect2(0, 0, 1280, 720).encloses(panel.get_choice_buttons()[index].get_global_rect()),
+			"rare offer identity is bound to a visible control that fits")
+	await _mouse(panel.get_choice_buttons()[1])
+	_check(committed.back().choice_id == paid.offered_ids[1] and outcome.is_paid(),
+		"mouse chooses exactly the second offered card without mutating rules")
+	panel.close_event()
+	_check(panel.open_needle_toll(outcome), "paid offering reopens for Skip keyboard check")
+	await _frames()
+	await _key(KEY_3)
+	_check(committed.back().choice_id == "skip", "physical third key reaches Skip")
+	panel.close_event()
+	heroes[2].hp = 6
+	var denied := RunNeedleToll.new(context, rng)
+	_check(denied.is_open() and panel.open_needle_toll(denied), "all-ineligible party still mounts safe exit")
+	await _frames()
+	_check(panel.needle_payer.item_count == 0 and panel.needle_payer.disabled
+		and panel.get_choice_buttons()[0].disabled and panel.get_choice_buttons()[1].has_focus(),
+		"no ineligible payer is shown and safe exit remains focused")
+	count = committed.size()
+	state = rng.state
+	await _key(KEY_1)
+	await _mouse(panel.get_choice_buttons()[0])
+	_check(committed.size() == count and rng.state == state, "ineligible pay mouse and key consume nothing")
+	panel.close_event()
+	_check(denied.is_open() and rng.state == state, "abandoning the open view consumes no rules or RNG")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var scene := load(PANEL_SCENE) as PackedScene
@@ -1844,6 +1979,8 @@ func _run() -> void:
 	await _test_cue_font_reopen()
 	await _test_backdrop_fallback()
 	await _test_wallet_rejection_and_generation()
+	await _test_needle_toll()
+	_test_needle_carryover()
 	_finish()
 
 

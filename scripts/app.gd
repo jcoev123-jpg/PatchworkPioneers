@@ -735,6 +735,12 @@ var _dye_vat_context: Array = []
 var _dye_vat_completed := false
 var _dye_vat_picker: ItemList
 var _dye_vat_node := ""
+var needle_toll_panel: LiveEventChoicePanel
+var _needle_toll_outcome: RunNeedleToll
+var _needle_toll_context: Array = []
+var _needle_toll_completed := false
+var _needle_toll_node := ""
+var _needle_toll_rng_start: int = 0
 var card_reward: RunCardRewardChoice
 var fight_rewards: RunFightVictoryRewards
 var multi_fight_rewards: RunMultiFightRewards
@@ -1908,6 +1914,10 @@ func _build_battle() -> void:
 	# The fan rotates the outer cards a few pixels beyond the unrotated row.
 	cards.add_theme_constant_override("separation", 10)
 	tray.add_child(cards)
+	var help_slot := VBoxContainer.new()
+	help_slot.name = "BattleHandDisclosureSlot"
+	help_slot.hide()
+	cards.add_child(help_slot)
 	var information := HBoxContainer.new()
 	information.name = "BattleHandInformation"
 	information.add_theme_constant_override("separation", 16)
@@ -2612,6 +2622,8 @@ func _unfought_run() -> bool:
 
 
 func _can_choose_connected_route() -> bool:
+	if is_instance_valid(needle_toll_panel):
+		return false
 	if is_instance_valid(quiet_spool_panel) or is_instance_valid(moth_panel) \
 		or is_instance_valid(dye_vat_panel) or is_instance_valid(wallet_event_panel):
 		return false
@@ -2833,14 +2845,15 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 		or run_map.get_node(id).get("type") not in ["Event", "Treasure"]:
 		return false
 	if run_map.get_node(id).type == "Event":
-		# The run's first Event stays Quiet Spool; its second is the accepted
-		# Moth Infestation and Dye Vat transactions, then the generic rotation.
+		# Resolve each once-per-run authored visit before the generic rotation.
 		if not _quiet_spool_completed:
 			return _open_quiet_spool(id, source_map)
 		if not _moth_completed:
 			return _open_moth_infestation(id, source_map)
 		if not _dye_vat_completed:
 			return _open_dye_vat(id, source_map)
+		if not _needle_toll_completed:
+			return _open_needle_toll(id, source_map)
 		return _open_wallet_event(id, source_map)
 	if not run_map.choose_node(id):
 		return false
@@ -2849,6 +2862,137 @@ func _choose_placeholder_route(id: String, source_map: WeakRef, prior: Array[Str
 	_clear_route_view()
 	_present_connected_route(source_map)
 	return true
+
+
+func _needle_toll_snapshot() -> Array:
+	var carry := party_carryover as RunTornCarryover
+	if run_map == null or run_rng == null or carry == null or act_outcome == null \
+		or not is_instance_valid(needle_toll_panel) or _needle_toll_outcome == null \
+		or needle_toll_panel._selector == null:
+		return []
+	var payers: Array = []
+	var picker := needle_toll_panel.needle_payer
+	if is_instance_valid(picker):
+		for index in range(picker.item_count):
+			payers.append([picker.get_item_text(index), picker.get_item_metadata(index), picker.is_item_disabled(index)])
+	return [run_map, run_map.get_generation_revision(), run_map.get_floors(),
+		run_map.get_route(), run_map.get_current_node_id(), _needle_toll_node,
+		run_rng, run_rng.state, run_seed, run_deck.duplicate(), run_heroes.duplicate(true),
+		run_trinkets.duplicate(), session_gold, run_scraps, run_removal_count,
+		run_stitch_descriptors.duplicate(true), run_next_stitch_id, carry, carry.read_state(),
+		carry.torn, carry.torn.read_state(), carry._wardrobe,
+		carry._wardrobe.get_snapshot() if carry._wardrobe != null else {},
+		act_outcome, act_outcome.get_state(), needle_toll_panel, needle_toll_panel._selector,
+		needle_toll_panel._selector.get_event(), _needle_toll_outcome,
+		_needle_toll_outcome.get_snapshot(), _needle_toll_outcome.get_source_snapshot(),
+		_needle_toll_outcome._rng.state, _needle_toll_rng_start, _needle_toll_completed,
+		_quiet_spool_completed, _moth_completed, _dye_vat_completed,
+		_wallet_event_history.duplicate(), picker, payers]
+
+
+func _open_needle_toll(id: String, source: WeakRef) -> bool:
+	if _needle_toll_completed or is_instance_valid(needle_toll_panel) \
+		or source == null or source.get_ref() != run_map:
+		return false
+	var rng := RandomNumberGenerator.new()
+	rng.state = run_rng.state
+	var outcome := RunNeedleToll.new({"heroes": run_heroes,
+		"wallet": {"gold": session_gold, "scraps": run_scraps}, "deck": run_deck}, rng)
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	add_child(panel)
+	if not panel.open_needle_toll(outcome):
+		panel.free()
+		return false
+	_mount_event_backdrop(panel)
+	if not run_map.choose_node(id):
+		panel.free()
+		return false
+	needle_toll_panel = panel
+	_needle_toll_outcome = outcome
+	_needle_toll_rng_start = run_rng.state
+	_needle_toll_node = id
+	_clear_route_view()
+	_needle_toll_context = _needle_toll_snapshot()
+	panel.choice_committed.connect(_commit_needle_toll.bind(panel, source))
+	return true
+
+
+func _commit_needle_toll(event_id: String, choice_id: String, panel, source: WeakRef) -> void:
+	if not is_instance_valid(panel) or panel != needle_toll_panel or panel.get_parent() != self \
+		or not panel.is_visible_in_tree() or not panel.has_open_event() \
+		or source == null or source.get_ref() != run_map or _needle_toll_context.is_empty() \
+		or _needle_toll_snapshot() != _needle_toll_context \
+		or run_map.get_current_node_id() != _needle_toll_node \
+		or run_map.get_node(_needle_toll_node).get("type") != "Event" \
+		or panel._selector == null or not panel._selector.is_claimed() \
+		or event_id != RunNeedleToll.EVENT_ID \
+		or panel._committed_choice != {"ok": true, "event_id": event_id, "choice_id": choice_id}:
+		return
+	# Replay the receipt on a detached RNG before publishing any live state.
+	var original := _needle_toll_outcome.get_source_snapshot()
+	var rng := RandomNumberGenerator.new()
+	rng.state = _needle_toll_rng_start
+	var staged := RunNeedleToll.new({"heroes": original.heroes,
+		"wallet": original.wallet, "deck": original.deck}, rng)
+	var receipt: Dictionary
+	if _needle_toll_outcome.is_paid():
+		if not staged.pay_toll(_needle_toll_outcome._wounded_hero_id).ok \
+			or staged.get_snapshot() != _needle_toll_outcome.get_snapshot() or rng.state != run_rng.state:
+			return
+		receipt = staged.skip_cards() if choice_id == "skip" else staged.claim_card(choice_id)
+	elif _needle_toll_outcome.is_open() and not _needle_toll_completed:
+		if choice_id == RunNeedleToll.CHOICE_SAFE_EXIT:
+			receipt = staged.take_safe_exit()
+		elif choice_id == RunNeedleToll.CHOICE_PAY:
+			var picker: OptionButton = panel.needle_payer
+			if not is_instance_valid(picker) or picker.get_parent() != panel.choices_container.get_parent() \
+				or not picker.is_visible_in_tree() or picker.disabled or picker.selected < 0 \
+				or picker.is_item_disabled(picker.selected):
+				return
+			receipt = staged.pay_toll(picker.get_item_metadata(picker.selected))
+	if receipt.get("ok") != true or receipt.get("receipt", "").is_empty():
+		return
+	if staged.is_paid():
+		var next := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+		add_child(next)
+		if not next.open_needle_toll(staged):
+			next.free()
+			return
+		if not (party_carryover as RunTornCarryover).apply_needle_toll(staged, party_carryover.read_state()):
+			next.free()
+			return
+		_mount_event_backdrop(next)
+		panel.close_event()
+		remove_child(panel)
+		panel.queue_free()
+		needle_toll_panel = next
+		_needle_toll_outcome = staged
+		run_heroes = receipt.heroes.duplicate(true)
+		run_rng.state = rng.state
+		_needle_toll_completed = true
+		_needle_toll_context = _needle_toll_snapshot()
+		next.choice_committed.connect(_commit_needle_toll.bind(next, source))
+		return
+	run_deck.assign(receipt.deck)
+	session_gold = receipt.wallet.gold
+	run_scraps = receipt.wallet.scraps
+	_needle_toll_completed = true
+	_placeholder_map = source
+	_placeholder_route = run_map.get_route()
+	_clear_needle_toll()
+	_present_connected_route(source)
+
+
+func _clear_needle_toll() -> void:
+	_needle_toll_context.clear()
+	_needle_toll_outcome = null
+	_needle_toll_node = ""
+	_needle_toll_rng_start = 0
+	if is_instance_valid(needle_toll_panel):
+		needle_toll_panel.close_event()
+		remove_child(needle_toll_panel)
+		needle_toll_panel.queue_free()
+	needle_toll_panel = null
 
 
 func _wallet_event_snapshot() -> Array:
@@ -5561,6 +5705,8 @@ func _return_to_title() -> void:
 	_moth_completed = false
 	_clear_dye_vat()
 	_dye_vat_completed = false
+	_clear_needle_toll()
+	_needle_toll_completed = false
 	_clear_wallet_event()
 	_wallet_event_history.clear()
 	_clear_rest_patch_overlay()

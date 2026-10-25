@@ -5,12 +5,15 @@ extends "res://tests/live_quiet_spool_route_test.gd"
 ## the real run ledger and the scene-free RunDyeVatOutcome service.
 
 const DYE_EVENT_PATH := "res://data/events/dye_vat.json"
+var _cached_dye_fixture: Dictionary = {}
 
 
-## A genuine seeded run: starter Fight, four consecutive Events, then a Fight.
+## A genuine seeded run: starter Fight, five consecutive Events, then a Fight.
 func _dye_fixture() -> Dictionary:
-	var kinds: Array = ["Fight", "Event", "Event", "Event", "Event", "Fight"]
-	for value in range(1, 30000):
+	if not _cached_dye_fixture.is_empty():
+		return _cached_dye_fixture.duplicate(true)
+	var kinds: Array = ["Fight", "Event", "Event", "Event", "Event", "Event", "Fight"]
+	for value in range(1, 200000):
 		var rng := RandomNumberGenerator.new()
 		rng.seed = value
 		var map := RunMap.new()
@@ -22,7 +25,8 @@ func _dye_fixture() -> Dictionary:
 		var selected := RunAuthoredBattleEntry.new().entry_current_battle(map, rng,
 			RunFightEncounterSelection.new())
 		if selected.get("encounter_id") == "starter_attacks":
-			return {"seed": value, "fight": path[0], "path": path.slice(1)}
+			_cached_dye_fixture = {"seed": value, "fight": path[0], "path": path.slice(1)}
+			return _cached_dye_fixture.duplicate(true)
 	return {}
 
 
@@ -296,8 +300,18 @@ func _dye_immerse_outcomes() -> void:
 	for callback in [commit.bind("dye_vat", "immerse"), commit.bind("dye_vat", "leave"), immerse_click, entry]:
 		_reject_dye(callback, "replayed Dye Vat input after Immerse")
 	_check(_dye_state() == settled, "duplicate or stale Dye Vat input changes nothing")
+	# Resolve the fourth Event's safe exit before testing the later generic wallet.
+	await _click(_route_action(fixture.path[3]))
+	_check(is_instance_valid(app.needle_toll_panel), "fourth Event mounts Needle Toll after Dye Vat")
+	if not is_instance_valid(app.needle_toll_panel):
+		return
+	var toll_deck: Array = app.run_deck.duplicate()
+	var toll_scraps: int = app.run_scraps
+	await _click(app.needle_toll_panel.get_choice_buttons()[1])
+	_check(app.run_deck == toll_deck and app.run_scraps == toll_scraps + 1 and app.route_view != null,
+		"Needle Toll safe exit preserves the upgraded Dye Vat deck")
 	# A later Event opens a generic wallet choice without changing the upgraded deck.
-	var later := _route_action(fixture.path[3])
+	var later := _route_action(fixture.path[4])
 	_check(later != null and not later.disabled and later.get_meta("route_kind") == "Event",
 		"the Event after the Dye Vat is an enabled connected choice")
 	if later == null:
@@ -306,7 +320,7 @@ func _dye_immerse_outcomes() -> void:
 	var later_deck: Array = app.run_deck.duplicate()
 	await _click(later)
 	_check(app.dye_vat_panel == null and app.quiet_spool_panel == null and app.moth_panel == null
-		and app.run_map.get_route() == later_route + [fixture.path[3]] and app.route_view == null
+		and app.run_map.get_route() == later_route + [fixture.path[4]] and app.route_view == null
 		and app.run_deck == later_deck and is_instance_valid(app.wallet_event_panel),
 		"a later Event mounts the wallet panel and gates continuation")
 	if not is_instance_valid(app.wallet_event_panel):
@@ -332,7 +346,7 @@ func _dye_immerse_outcomes() -> void:
 	resources[13].gold = after_resources[13].gold
 	_check(resources == after_resources, "generic choice changes no other actors, services or RNG")
 	# AC2 re-entry: the upgraded deck enters the next genuinely routed battle.
-	var next := _route_action(fixture.path[4])
+	var next := _route_action(fixture.path[5])
 	_check(next != null and not next.disabled, "the routed Fight after the Dye Vat is an enabled choice")
 	if next == null:
 		return
