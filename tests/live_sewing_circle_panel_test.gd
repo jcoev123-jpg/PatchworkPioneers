@@ -156,8 +156,21 @@ func _test_layout() -> void:
 		_check(rendered.contains(canonical_upgrades[i].display_name)
 			and rendered.contains(canonical_upgrades[i].owner)
 			and rendered.contains("copy #%d" % (canonical_upgrades[i].index + 1)), "readable occurrence caption")
-	for i in range(mini(4, panel.option_buttons.size())):
-		_check(viewport.encloses(panel.option_buttons[i].get_global_rect()), "occurrence option fits viewport")
+		_check(_card_ink(panel.option_buttons[i]).contains(canonical_upgrades[i].display_name)
+			and _card_ink(panel.option_buttons[i]).contains(canonical_upgrades[i].plus_display_name)
+			and _card_ink(panel.option_buttons[i]).contains("copy #%d" % (canonical_upgrades[i].index + 1))
+			and _card_ink(panel.option_buttons[i]).contains("%d energy" % canonical_upgrades[i].cost)
+			and _card_ink(panel.option_buttons[i]).contains("%d energy" % canonical_upgrades[i].plus_cost),
+			"sewn ink exposes original, upgraded name, costs and canonical copy")
+		_assert_decorations(panel.option_buttons[i])
+	_check(viewport.encloses(panel.option_buttons[0].get_global_rect()), "first fully shown mini-card fits viewport")
+	for button in panel.option_buttons:
+		var clipped := button.get_global_rect().intersection(panel.choice_scroll.get_global_rect())
+		_check(not clipped.intersects(panel.confirm_button.get_global_rect())
+			and button.size.x <= panel.choice_scroll.size.x and button.size.y >= 100,
+			"even offscreen copies only paint inside the choice scroll, never Confirm")
+	_check(panel.choice_scroll.clip_contents and panel.choice_scroll.size == Vector2(440, 350)
+		and panel.preview_scroll.size == Vector2(428, 350), "fixed clipped two-column layout")
 	_check(panel.choice_scroll.get_v_scroll_bar().max_value > panel.choice_scroll.size.y, "long deck contained in scroll")
 	panel.option_buttons.back().grab_focus()
 	await _settle_layout()
@@ -174,6 +187,13 @@ func _test_upgrade(keyboard: bool) -> void:
 	await _activate(panel.option_buttons[1], keyboard)
 	_check(panel.preview().index == 1 and panel.preview().effects == {"damage": 6}
 		and panel.preview().plus_effects == {"damage": 7}, "genuine upgrade preview for second duplicate")
+	_check(panel.option_buttons[1].get_meta("selected") and not panel.option_buttons[0].get_meta("selected"),
+		"only the selected duplicate carries a sewn selection highlight")
+	var upgrade_ink := _card_ink(panel.option_buttons[1])
+	_check(upgrade_ink.contains("Warden") and upgrade_ink.contains(visit.upgrade_options()[1].display_name)
+		and upgrade_ink.contains(visit.upgrade_options()[1].plus_display_name) and upgrade_ink.contains("damage 6")
+		and upgrade_ink.contains("damage 7") and upgrade_ink.contains("1 energy"),
+		"real Warden occurrence physically shows its 1-energy 6-to-7 comparison")
 	_check(panel.preview_label.text.contains("damage 6") and panel.preview_label.text.contains("damage 7"), "visible before/after effects")
 	await _activate(panel.confirm_button, keyboard)
 	_check(intents.size() == 1 and visit.read_state() == source, "UI emits once and never settles")
@@ -206,8 +226,18 @@ func _test_stitch(keyboard: bool) -> void:
 	await _activate(panel.option_buttons[1], keyboard)
 	_check(panel.option_buttons.size() == 1 and panel.option_buttons[0].get_meta("option").index == 2, "second stage only different-owner occurrence")
 	_check(panel.option_buttons[0].get_meta("option") == visit.stitch_second_options(1)[0], "exact canonical stitch partner metadata")
+	_check(panel.preview_label.text.contains("Warden") and panel.preview_label.text.contains(visit.stitch_first_options()[1].name)
+		and panel.preview_label.text.contains("copy #2") and _card_ink(panel.option_buttons[0]).contains("Seamstress")
+		and _card_ink(panel.option_buttons[0]).contains(visit.stitch_second_options(1)[0].name),
+		"first owner is visible while the only legal second owner is selectable")
+	_assert_decorations(panel.option_buttons[0])
 	await _activate(panel.option_buttons[0], keyboard)
 	_check(panel.preview() == expected and panel.preview_label.text.contains("Scraps: 7 -> 4"), "exact detached genuine stitch forecast")
+	_check(panel.option_buttons[0].get_meta("selected") and panel.preview_label.text.contains("cost 3")
+		and panel.preview_label.text.contains("THEN") and panel.preview_label.text.contains("damage 6")
+		and panel.preview_label.text.contains("damage 3")
+		and panel.preview_label.text.contains("legal FROM positions"),
+		"highlighted pair shows ordered authored halves and battle-owner caveat")
 	_check(panel.preview_label.text.contains(expected.display_name)
 		and panel.preview_label.text.contains("Energy: %d" % expected.energy_cost)
 		and panel.preview_label.text.contains("Deck: %d -> %d cards" % [expected.deck_before_count, expected.deck_after_count]),
@@ -345,6 +375,27 @@ func _test_rejections() -> void:
 	await _bind(visit)
 	var source := visit.read_state()
 	await _activate(panel.upgrade_button, false)
+	var retired_row: Callable = panel.option_buttons[1].pressed.get_connections()[0].callable
+	await _activate(panel.stitch_button, false)
+	var stage_rows: int = panel._rows_epoch
+	retired_row.call()
+	_check(panel._rows_epoch == stage_rows and panel._first == -1 and panel.preview().is_empty()
+		and panel.confirm_button.disabled and visit.read_state() == source,
+		"mode switch retires old occurrence callback without substituting a legal stitch index")
+	await _activate(panel.option_buttons[0], false)
+	var retired_partner: Callable = panel.option_buttons[0].pressed.get_connections()[0].callable
+	await _activate(panel.stitch_button, false)
+	retired_partner.call()
+	_check(panel._first == -1 and panel._second == -1 and panel.confirm_button.disabled,
+		"restarting Stitch retires old first-stage callbacks")
+	var hidden_options := panel.option_buttons.size()
+	panel.hide()
+	var hidden_mode: Callable = panel.upgrade_button.pressed.get_connections()[0].callable
+	hidden_mode.call()
+	_check(not panel.visible and panel._mode == "stitch" and panel.option_buttons.size() == hidden_options
+		and panel.confirm_button.disabled, "hidden controls cannot recreate or authorize options")
+	panel.show()
+	await _activate(panel.upgrade_button, false)
 	var stale_select: Callable = panel.option_buttons[1].pressed.get_connections()[0].callable
 	panel._select(99, panel._epoch)
 	_check(panel.confirm_button.disabled and panel.preview().is_empty() and visit.read_state() == source, "bad occurrence cannot confirm or spend")
@@ -384,3 +435,24 @@ func _test_rejections() -> void:
 	var settled := replacement.read_state()
 	pending_confirm.call()
 	_check(intents.is_empty() and replacement.read_state() == settled, "authority drift rejects pending UI confirmation without spend")
+
+
+## Inspect visible label nodes, not the Button's retained accessibility text.
+func _card_ink(button: Button) -> String:
+	var lines: PackedStringArray = []
+	for node in button.find_children("*", "Label", true, false):
+		lines.append((node as Label).text)
+	return "\n".join(lines)
+
+
+func _assert_decorations(button: Button) -> void:
+	_check(button.focus_mode == Control.FOCUS_ALL and button.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"canonical option Button alone owns click and keyboard focus")
+	var children := button.find_children("*", "Control", true, false)
+	_check(children.size() >= 5, "real sewn labels, seam and cost coin exist")
+	for child in children:
+		var control: Control = child
+		_check(control.mouse_filter == Control.MOUSE_FILTER_IGNORE and control.focus_mode == Control.FOCUS_NONE,
+			"every decorative descendant ignores pointer and cannot take focus")
+		_check(Rect2(Vector2.ZERO, button.size).has_point(control.position) or control.get_parent() != button,
+			"each top-level ink decoration starts within its canonical card")

@@ -20,6 +20,11 @@ var option_buttons: Array[Button] = []
 var _visit: RunSewingCircleVisit
 var _source: Dictionary = {}
 var _epoch := 0
+## A regenerated occurrence list has its own guard: retiring rows on a mode or
+## stitch-stage change must invalidate queued/old pressed callbacks as well.
+var _rows_epoch := 0
+## Trusted row/button bindings are separate from mutable UI metadata.
+var _row_indices: Dictionary = {}
 var _submitted := false
 var _mode := ""
 var _first := -1
@@ -182,10 +187,13 @@ func _retire_session() -> void:
 
 
 func _clear_options() -> void:
+	_rows_epoch += 1
+	_row_indices.clear()
 	option_buttons.clear()
 	for child in choices.get_children():
 		choices.remove_child(child)
 		child.queue_free()
+	choice_scroll.scroll_vertical = 0
 
 
 func _refresh() -> void:
@@ -215,17 +223,16 @@ func _refresh() -> void:
 			preview_label.text = "Leave without changing your deck or spending scraps."
 			confirm_button.disabled = false
 	for option in options:
-		var caption := "%s | %s | copy #%d" % [option.get("display_name", option.get("name", "")), option.owner, option.index + 1]
-		var button := _button(caption, Vector2.ZERO, Vector2(414, 52))
-		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		remove_child(button)
-		choices.add_child(button)
-		button.set_meta("option", option.duplicate(true))
-		button.pressed.connect(_select.bind(option.index, _epoch))
-		button.focus_entered.connect(choice_scroll.ensure_control_visible.bind(button))
-		option_buttons.append(button)
+		option_buttons.append(_option_row(option, _mode == "upgrade"))
 	if _mode == "stitch" and _first >= 0:
-		preview_label.text = "First: copy #%d. Choose a different owner's card.\nPress Stitch again to change the first card." % (_first + 1)
+		var chosen_first: Dictionary = {}
+		for candidate in _visit.stitch_first_options():
+			if candidate.index == _first:
+				chosen_first = candidate
+				break
+		if not chosen_first.is_empty():
+			preview_label.text = "First: %s | %s | copy #%d | %d energy.\nChoose a DIFFERENT owner's card below.\nPress Stitch again to change the first card." % [
+				chosen_first.owner.capitalize(), chosen_first.name, _first + 1, chosen_first.cost]
 	_wire_focus()
 
 
@@ -240,7 +247,10 @@ func _wire_focus() -> void:
 
 
 func _choose_mode(mode: String, epoch: int) -> void:
-	if epoch != _epoch or not _active():
+	if epoch != _epoch or not _active() or not is_visible_in_tree():
+		return
+	var action: Button = upgrade_button if mode == "upgrade" else stitch_button if mode == "stitch" else leave_button if mode == "leave" else null
+	if action == null or action.disabled or not action.is_visible_in_tree():
 		return
 	_reset_selection()
 	_mode = mode
@@ -251,8 +261,13 @@ func _choose_mode(mode: String, epoch: int) -> void:
 		confirm_button.grab_focus()
 
 
-func _select(index: int, epoch: int) -> void:
-	if epoch != _epoch or not _active():
+
+func _select(index: int, epoch: int, rows_epoch: int = -1, row: Variant = null) -> void:
+	if epoch != _epoch or not _active() or not is_visible_in_tree() \
+			or (rows_epoch >= 0 and rows_epoch != _rows_epoch):
+		return
+	if rows_epoch >= 0 and (not is_instance_valid(row) or not option_buttons.has(row)
+			or _row_indices.get(row, -1) != index or row.disabled or not row.is_visible_in_tree()):
 		return
 	var options: Array = _visit.upgrade_options() if _mode == "upgrade" else \
 		(_visit.stitch_first_options() if _first < 0 else _visit.stitch_second_options(_first))
@@ -261,8 +276,9 @@ func _select(index: int, epoch: int) -> void:
 			continue
 		if _mode == "upgrade":
 			_first = index
+			_mark_selected(index, option.owner)
 			_preview = option.duplicate(true)
-			preview_label.text = "%s -> %s\nEnergy: %d -> %d\nBefore: %s\nAfter: %s\nCost: free. Only copy #%d changes." % [option.display_name, option.plus_display_name, option.cost, option.plus_cost, _effects(option.effects), _effects(option.plus_effects), index + 1]
+			preview_label.text = "%s | copy #%d\n%s -> %s\nEnergy: %d -> %d\nBefore: %s\nAfter: %s\nCost: free. Only copy #%d changes." % [option.owner.capitalize(), index + 1, option.display_name, option.plus_display_name, option.cost, option.plus_cost, _effects(option.effects), _effects(option.plus_effects), index + 1]
 		elif _mode == "stitch" and _first < 0:
 			_first = index
 			_refresh()
@@ -274,7 +290,8 @@ func _select(index: int, epoch: int) -> void:
 			_preview = _visit.stitch_preview(_first, _second)
 			if _preview.is_empty():
 				return
-			preview_label.text = "%s\nFirst (%s): %s\nSecond (%s): %s\nEnergy: %d. Scraps: %d -> %d\nDeck: %d -> %d cards. Consumes copies #%d and #%d in this order." % [_preview.display_name, _preview.first_owner, _effects(_preview.first_half.effects), _preview.second_owner, _effects(_preview.second_half.effects), _preview.energy_cost, _source.remaining_scraps, _preview.remaining_scraps, _preview.deck_before_count, _preview.deck_after_count, _first + 1, _second + 1]
+			_mark_selected(index, option.owner)
+			preview_label.text = "%s\nFirst (%s): %s | %d energy | %s\nSecond (%s): %s | %d energy | %s\nOrdered halves: %s THEN %s\nEnergy: %d. Scraps: %d -> %d (cost %d)\nDeck: %d -> %d cards. Consumes copies #%d and #%d in this order.\nBoth owners must be alive in legal FROM positions to play." % [_preview.display_name, _preview.first_owner.capitalize(), _preview.first_name, _preview.first_cost, _effects(_preview.first_half.effects), _preview.second_owner.capitalize(), _preview.second_name, _preview.second_cost, _effects(_preview.second_half.effects), _preview.first_name, _preview.second_name, _preview.energy_cost, _source.remaining_scraps, _preview.remaining_scraps, _preview.scrap_cost, _preview.deck_before_count, _preview.deck_after_count, _first + 1, _second + 1]
 		else:
 			return
 		confirm_button.disabled = false
@@ -295,7 +312,8 @@ func preview() -> Dictionary:
 
 
 func _confirm(epoch: int) -> void:
-	if epoch != _epoch or not _active() or confirm_button.disabled:
+	if epoch != _epoch or not _active() or confirm_button.disabled \
+			or not is_visible_in_tree() or not confirm_button.is_visible_in_tree():
 		return
 	var intent := {"action": _mode, "first_index": _first, "second_index": _second,
 		"visit_id": _source.visit_id, "node_id": _source.node_id,
@@ -320,3 +338,114 @@ func take_confirmed(intent: Variant) -> Dictionary:
 	var confirmed := _confirmed.duplicate(true)
 	_confirmed.clear()
 	return confirmed
+
+
+## Every option remains a single source-index Button; decorations cannot
+## intercept input or become independent focus/activation targets.
+func _option_row(option: Dictionary, upgrade: bool) -> Button:
+	var owner: String = option.get("owner", "")
+	var name: String = option.get("display_name", option.get("name", ""))
+	var caption := "%s | %s | copy #%d | %d energy" % [
+		name, owner, option.index + 1, option.get("cost", 0)]
+	if upgrade:
+		caption += " | Before: %s | After: %s | %d energy | %s" % [
+			_effects(option.effects), option.plus_display_name, option.plus_cost,
+			_effects(option.plus_effects)]
+	var height := 192 if upgrade else 100
+	var button := _button(caption, Vector2.ZERO, Vector2(414, height))
+	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Preserve the complete canonical accessible caption while placed ink labels
+	# render its lines without the Button's text being painted twice.
+	for state in ["font_color", "font_hover_color", "font_pressed_color",
+			"font_hover_pressed_color", "font_focus_color", "font_disabled_color"]:
+		button.add_theme_color_override(state, Color.TRANSPARENT)
+	remove_child(button)
+	choices.add_child(button)
+	var stripe := ColorRect.new()
+	stripe.color = _owner_color(owner)
+	stripe.position = Vector2(5, 6)
+	stripe.size = Vector2(9, height - 12)
+	stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stripe.focus_mode = Control.FOCUS_NONE
+	button.add_child(stripe)
+	_card_label(button, "%s | copy #%d" % [owner.capitalize(), option.index + 1],
+		Vector2(24, 8), Vector2(292, 22), 15)
+	_card_label(button, name, Vector2(24, 32), Vector2(288, 37), 17)
+	var coin := Panel.new()
+	coin.position = Vector2(322, 34)
+	coin.size = Vector2(82, 32)
+	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	coin.focus_mode = Control.FOCUS_NONE
+	var coin_style: StyleBox
+	if ResourceLoader.exists(BUTTON_ART, "Texture2D"):
+		var fabric := StyleBoxTexture.new()
+		fabric.texture = ResourceLoader.load(BUTTON_ART)
+		fabric.set_texture_margin_all(12)
+		coin_style = fabric
+	else:
+		var flat := StyleBoxFlat.new()
+		flat.bg_color = Color("#dfc99a")
+		flat.border_color = INK
+		flat.set_border_width_all(1)
+		coin_style = flat
+	coin.add_theme_stylebox_override("panel", coin_style)
+	button.add_child(coin)
+	var cost_label := _card_label(coin, "%d energy" % option.get("cost", 0),
+		Vector2(2, 3), Vector2(78, 25), 14)
+	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if upgrade:
+		_card_label(button, "BEFORE | %d energy\n%s" % [option.cost, _effects(option.effects)],
+			Vector2(24, 72), Vector2(375, 51), 15)
+		_card_label(button, "AFTER | %s | %d energy\n%s" % [
+			option.plus_display_name, option.plus_cost, _effects(option.plus_effects)],
+			Vector2(24, 126), Vector2(375, 61), 15)
+	else:
+		_card_label(button, "Source: %d energy. Select this occurrence." % option.cost,
+			Vector2(24, 71), Vector2(372, 23), 14)
+	button.set_meta("option", option.duplicate(true))
+	button.set_meta("selected", false)
+	button.set_meta("normal_style", button.get_theme_stylebox("normal"))
+	button.set_meta("hover_style", button.get_theme_stylebox("hover"))
+	_row_indices[button] = option.index
+	button.pressed.connect(_select.bind(option.index, _epoch, _rows_epoch, button))
+	button.focus_entered.connect(choice_scroll.ensure_control_visible.bind(button))
+	return button
+
+
+func _card_label(parent: Control, message: String, at: Vector2,
+		dimensions: Vector2, font_size: int) -> Label:
+	var label := Label.new()
+	label.text = message
+	label.position = at
+	label.size = dimensions
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_color_override("font_color", INK)
+	label.add_theme_font_size_override("font_size", font_size)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.focus_mode = Control.FOCUS_NONE
+	parent.add_child(label)
+	return label
+
+
+func _owner_color(owner: String) -> Color:
+	match owner:
+		"warden": return Color("#477394")
+		"seamstress": return Color("#a25775")
+		"tinker": return Color("#8b7440")
+		_: return Color("#746c60")
+
+
+func _mark_selected(index: int, owner: String) -> void:
+	for button in option_buttons:
+		var selected: bool = _row_indices.get(button, -1) == index
+		button.set_meta("selected", selected)
+		if selected:
+			var sewn := StyleBoxFlat.new()
+			sewn.bg_color = Color("#e5d6b6")
+			sewn.border_color = _owner_color(owner)
+			sewn.set_border_width_all(3)
+			button.add_theme_stylebox_override("normal", sewn)
+			button.add_theme_stylebox_override("hover", sewn)
+		else:
+			button.add_theme_stylebox_override("normal", button.get_meta("normal_style"))
+			button.add_theme_stylebox_override("hover", button.get_meta("hover_style"))
