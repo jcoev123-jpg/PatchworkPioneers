@@ -21,14 +21,14 @@ const RIBBON_HEIGHT := 64.0
 ## outside the stitched fill.
 const RIBBON_HP_BAR_HEIGHT := 22.0
 const RIBBON_SLOT_INSET := 4.0
-## One chip per Bleed/Weak/Exposed stack plus the downed/slain badge.
+## Four reusable slots: fallen badge, ordinary statuses, or living enemy Thorns.
 const STATUS_BUTTONS := 4
 const STATUS_ORDER := ["bleed", "weak", "exposed"]
 ## Readable chip text: at every normal 1280x720 actor width the complete "Bleed 3"
 ## style name is drawn at 14 px, and the chips wrap onto a second row only when the
 ## actor's own slot is too narrow for the whole row. The compact names survive only as
 ## the fallback for a slot narrower than one complete chip; the hover text stays whole.
-const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp"}
+const STATUS_SHORT := {"bleed": "Ble", "weak": "Wea", "exposed": "Exp", "thorns": "Thr"}
 const READABLE_CHIP_FONT := 14
 const CHIP_FONT_SIZES := [14, 12, 11]
 const CHIP_SEPARATION := 2
@@ -410,19 +410,25 @@ func _make_status_button(index: int) -> Button:
 
 
 ## One chip style per chip kind: the fallen badge reads as a distinct sewn patch.
-func _set_chip_style(button: Button, fallen: bool) -> void:
-	if button.has_meta("fallen_chip") and bool(button.get_meta("fallen_chip")) == fallen:
+func _set_chip_style(button: Button, fallen: bool, hazard: bool = false) -> void:
+	if button.has_meta("fallen_chip") and button.has_meta("hazard_chip") \
+			and bool(button.get_meta("fallen_chip")) == fallen \
+			and bool(button.get_meta("hazard_chip")) == hazard:
 		return
 	button.set_meta("fallen_chip", fallen)
+	button.set_meta("hazard_chip", hazard)
 	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
-		button.add_theme_stylebox_override(state, _chip_style(state == "hover", fallen))
+		button.add_theme_stylebox_override(state, _chip_style(state == "hover", fallen, hazard))
 
 
-func _chip_style(hovered: bool, fallen: bool = false) -> StyleBoxFlat:
+func _chip_style(hovered: bool, fallen: bool = false, hazard: bool = false) -> StyleBoxFlat:
 	var chip := StyleBoxFlat.new()
 	if fallen:
 		chip.bg_color = Color("5b3c34") if hovered else Color("46302b")
 		chip.border_color = Color("e8b7a4") if hovered else Color("c0806e")
+	elif hazard:
+		chip.bg_color = Color("704434") if hovered else Color("583328")
+		chip.border_color = Color("f0c49c") if hovered else Color("d99c77")
 	else:
 		chip.bg_color = Color("3d4a45") if hovered else Color("2f3b36")
 		chip.border_color = Color("c9b996") if hovered else Color("6d7a70")
@@ -712,6 +718,12 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 			entries.append({"kind": key,
 				"full": "%s %d" % [String(key).capitalize(), count],
 				"short": "%s %d" % [STATUS_SHORT[key], count]})
+	# Passive contact hazard: not a timed status or a scheduled intent.
+	var thorns = snapshot.get("thorns", 0)
+	if side == "enemy" and snapshot.get("hp", 0) is int and snapshot["hp"] > 0 \
+			and thorns is int and thorns > 0:
+		entries.append({"kind": "thorns", "full": "Thorns %d" % thorns,
+			"short": "%s %d" % [STATUS_SHORT["thorns"], thorns]})
 	var tooltip := _compose_tooltip(meter, incoming)
 	var buttons := meter.get_node("Padding/Content/StatusButtons") as HFlowContainer
 	var fit: Dictionary = {"texts": [], "font_size": READABLE_CHIP_FONT,
@@ -722,7 +734,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		var button := buttons.get_child(index) as Button
 		var active := index < entries.size()
 		var text := String(fit["texts"][index]) if active else ""
-		var rule := tooltip if active else ""
+		var rule := (thorns_tooltip(int(thorns)) if entries[index]["kind"] == "thorns"
+			else tooltip) if active else ""
 		if button.visible != active:
 			button.visible = active
 		if button.text != text:
@@ -736,7 +749,8 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		if button.custom_minimum_size.y != chip_height:
 			button.custom_minimum_size = Vector2(0, chip_height)
 		if active:
-			_set_chip_style(button, entries[index]["kind"] == "fallen")
+			_set_chip_style(button, entries[index]["kind"] == "fallen",
+				entries[index]["kind"] == "thorns")
 	# The flow reserves the rows it really uses, so a wrapped ribbon pushes the shared
 	# hand and action rows down instead of drawing its chips across them.
 	var reserved := Vector2(0, float(fit["height"]))
@@ -744,6 +758,12 @@ func _sync_status_buttons(meter: CombatActorMeter, snapshot: Dictionary, side: S
 		buttons.custom_minimum_size = reserved
 	# Collapsing the whole container avoids an empty stitched box or hit target.
 	buttons.visible = not entries.is_empty()
+
+
+## Exact confirmed-positive-hit contract from CombatEnemyKeywordRules: enemy Block
+## can absorb a positive hit without suppressing Thorns retaliation.
+static func thorns_tooltip(amount: int) -> String:
+	return "Thorns %d: Each confirmed positive-damage hit on this enemy deals %d damage back to its attacking hero, even if enemy Block absorbs that hit. Hero Block absorbs the retaliation before HP. Misses, failed plays, zero-damage attacks and previews do not retaliate." % [amount, amount]
 
 
 ## Height of one sewn chip at a font size: the text box plus the 1 px stitched border.

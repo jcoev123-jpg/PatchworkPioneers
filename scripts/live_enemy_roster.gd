@@ -97,6 +97,8 @@ var _battle: Control
 var _labels: Array[Label] = []
 var _hero_tags: Array[Label] = []
 var _badges: Array[LiveEnemyIntentBadge] = []
+## One passive contact-hazard label per mounted enemy, separate from its intent.
+var _thorns_tags: Array[PanelContainer] = []
 var battle_row: HBoxContainer
 var _heroes: HBoxContainer
 var _hero_parent: Node
@@ -1473,6 +1475,9 @@ func _sync_battle() -> void:
 		# Containers settle after mounting; resize and normal refresh both use resting art.
 		puppet.resized.connect(_place_intent_ticket.bind(puppet, badge))
 		_badges.append(badge)
+		var thorns_tag := _make_thorns_tag(enemy.position)
+		puppet.add_child(thorns_tag)
+		_thorns_tags.append(thorns_tag)
 	panel.custom_minimum_size.x = 300
 	battle_row.add_child(panel)
 	# One deterministic stage behind both lineups: the authored scene of this fight when
@@ -1514,6 +1519,53 @@ func _make_name_tag(tag_name: String) -> Label:
 	return tag
 
 
+## Sewn rust-felt contact-hazard tag, built once per enemy and input-inert. The
+## label is a fallback in its own right; no new art or enemy action is needed.
+func _make_thorns_tag(position: int) -> PanelContainer:
+	var tag := PanelContainer.new()
+	tag.name = "EnemyThorns%d" % position
+	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tag.focus_mode = Control.FOCUS_NONE
+	var felt := StyleBoxFlat.new()
+	felt.bg_color = Color("583328")
+	felt.border_color = Color("e0aa82")
+	felt.set_border_width_all(2)
+	felt.set_corner_radius_all(3)
+	felt.content_margin_left = 5.0
+	felt.content_margin_right = 5.0
+	felt.content_margin_top = 2.0
+	felt.content_margin_bottom = 2.0
+	tag.add_theme_stylebox_override("panel", felt)
+	var caption := Button.new()
+	caption.name = "Caption"
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	caption.focus_mode = Control.FOCUS_NONE
+	caption.flat = true
+	caption.add_theme_font_size_override("font_size", 12)
+	caption.add_theme_color_override("font_color", Color("fff0d8"))
+	tag.add_child(caption)
+	tag.hide()
+	return tag
+
+
+## Within its own puppet art band, below the intent band, above the
+## name tag and outside the HP ribbon; target geometry is never changed.
+func _place_thorns_tag(puppet: Puppet, tag: PanelContainer) -> void:
+	if not is_instance_valid(puppet) or not is_instance_valid(tag):
+		return
+	var band := puppet.art_band()
+	var width := tag.get_combined_minimum_size().x
+	var height := tag.get_combined_minimum_size().y
+	if not band.has_area() or width > band.size.x or height + 3.0 > band.size.y:
+		tag.hide()
+		return
+	var art := puppet.rest_drawn_rect()
+	var left := clampf(art.position.x - width - 3.0, band.position.x,
+		band.end.x - width)
+	tag.position = Vector2(left, band.position.y + 3.0)
+	tag.size = Vector2(width, height)
+
+
 func _refresh() -> void:
 	if enemies == null or not is_instance_valid(panel):
 		return
@@ -1540,6 +1592,18 @@ func _refresh() -> void:
 		var position: int = enemy["position"]
 		# Short pinned name tag; the meter and the SLAIN badge own HP/Block/death readouts.
 		_labels[index].text = String(enemy["name"]) if enemy.get("name") is String else ""
+		var tag := _thorns_tags[index]
+		var amount = enemy.get("thorns", 0)
+		var show_hazard: bool = position == index + 1 and enemy.get("hp") is int \
+			and enemy["hp"] > 0 and amount is int and amount > 0 \
+			and enemies == app.enemies and _battle == app.battle_view
+		var caption := tag.get_node("Caption") as Button
+		caption.text = "Thorns %d" % amount if show_hazard else ""
+		if show_hazard:
+			_place_thorns_tag(_puppets[CombatParty.PARTY_SIZE + index] as Puppet, tag)
+			tag.show()
+		else:
+			tag.hide()
 		var pending := false
 		if unravel != null and not enemies.is_slain(position):
 			pending = unravel.get_snapshot(position).get("skip_pending", false)
@@ -1802,6 +1866,7 @@ func _clear() -> void:
 	_labels.clear()
 	_hero_tags.clear()
 	_badges.clear()
+	_thorns_tags.clear()
 	if is_instance_valid(panel):
 		if panel.get_parent() != null:
 			panel.get_parent().remove_child(panel)
