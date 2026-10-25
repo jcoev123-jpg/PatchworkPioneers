@@ -20,7 +20,7 @@ const KNOWN_EFFECT_KEYS := [
 	"guarding", "thorns", "riposte", "tangled", "draw", "energy", "gain_energy",
 	"self_hp_loss", "conditional_damage", "random_target_each_hit", "rng_source",
 	"living_targets_only", "duration", "next_attack_damage_bonus",
-	"next_turn_energy", "expires",
+	"next_turn_energy", "expires", "blind", "blind_next_attack",
 ]
 ## Sentences are separated by one space, so the face reads as ordinary prose.
 const SEPARATOR := " "
@@ -112,7 +112,8 @@ static func _recipient(card: Dictionary) -> String:
 
 static func _has_enemy_effects(effects: Dictionary) -> bool:
 	for key in ["damage", "conditional_damage", "exposed", "weak", "bleed",
-			"unravel", "bleed_multiplier", "pinned", "tangled"]:
+			"unravel", "bleed_multiplier", "pinned", "tangled", "blind",
+			"blind_next_attack"]:
 		if effects.has(key):
 			return true
 	return false
@@ -190,6 +191,17 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 			clauses.append("tangled %d%s" % [tangled, object_suffix])
 		else:
 			unknown = true
+	# Blind is a one-shot keyword: the recipient's next attack misses and the
+	# Blind is spent, so the face prints the keyword and no duration. Only the
+	# two authored spellings on an enemy cast are read; a malformed value, two
+	# spellings at once or a non-enemy recipient stays undescribed instead of
+	# inventing a Blind.
+	if effects.has("blind") or effects.has("blind_next_attack"):
+		var blind := _blind_clause(card, effects)
+		if bool(blind.get("valid", false)):
+			clauses.append(str(blind["clause"]))
+		else:
+			unknown = true
 	var phrases: Array[String] = []
 	for clause in clauses:
 		phrases.append(_capitalize(clause) + ".")
@@ -202,6 +214,29 @@ static func _enemy_sentence(card: Dictionary, effects: Dictionary,
 		else:
 			unknown = true
 	return {"sentence": SEPARATOR.join(phrases).strip_edges(), "unknown": unknown}
+
+
+## The authored Blind spellings: the starter catalogs write `blind: 1` (the
+## literal integer one) and the reward pool writes `blind_next_attack: true`
+## (a boolean, not an integer). Both mean the same one-shot keyword, so two
+## spellings on one record are ambiguous. Any other value, a missing/extra
+## spelling or a non-enemy recipient is not a Blind this formatter will print.
+static func _blind_clause(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if not _is_enemy_target(card):
+		return {"valid": false, "clause": ""}
+	if effects.has("blind") == effects.has("blind_next_attack"):
+		return {"valid": false, "clause": ""}
+	var valid := false
+	if effects.has("blind"):
+		var stacks: Variant = effects["blind"]
+		# `true` and `1.0` are not the authored integer one.
+		valid = stacks is int and int(stacks) == 1
+	else:
+		var flag: Variant = effects["blind_next_attack"]
+		valid = flag is bool and bool(flag)
+	if not valid:
+		return {"valid": false, "clause": ""}
+	return {"valid": true, "clause": "blind" + _enemy_object_suffix(card)}
 
 
 ## The recipient a non-damage clause names: an area cast says "to all" once per
