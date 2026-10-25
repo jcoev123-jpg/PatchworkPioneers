@@ -100,7 +100,7 @@ func _test_real_boss_threshold() -> void:
 		and enemies.get_enemy(1).max_hp == 84,
 		"real selected Boss keeps one authentic enemy slot and 84 HP")
 	_check(selector._slots[0].target == "front"
-		and selector._slots[0].actions[0].action.amount == 40,
+		and selector._slots[0].actions[0].action.amount == 34,
 		"initial first-phase action/policy are authored")
 	var announced := selector.get_intents()
 	var rng_before := rng.state
@@ -116,7 +116,7 @@ func _test_real_boss_threshold() -> void:
 		and CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"crossing to 21 locks current announcement, RNG and front policy")
 	_check(selector.advance_turn() and selector._slots[0].target == "lowest_living_hp"
-		and selector._slots[0].actions[0].action.amount == 4
+		and selector._slots[0].actions[0].action.amount == 40
 		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
 		"next real Boss roll publishes phase-two amount and policy together")
 	announced = selector.get_intents()
@@ -160,9 +160,9 @@ func _test_phase_two_actions() -> void:
 			and CombatEnemyIntents.policy_for(battle.enemies, 1) == "lowest_living_hp",
 			"each seeded real Boss encounter is committed to phase two")
 	var intent: Dictionary = attack.intents.get_intents()[0]
-	_check(intent == {"type": "attack", "amount": 4, "enemy_position": 1,
+	_check(intent == {"type": "attack", "amount": 40, "enemy_position": 1,
 			"target_position": 2},
-		"phase-two attack announces exactly 4 against lowest-HP hero 2")
+		"phase-two attack announces exactly 40 against lowest-HP hero 2")
 	var party: CombatParty = attack.party
 	_check(party.gain_block(2, 2), "target gains real Block 2 before attack")
 	var result := CombatEnemyPhase.new().execute_phase(
@@ -170,9 +170,9 @@ func _test_phase_two_actions() -> void:
 	_check(result.get("ok", false) and result.events.size() == 1
 		and result.events[0].applied and result.events[0].target_position == 2,
 		"cached phase-two attack executes through CombatEnemyPhase")
-	_check(party.get_hero(2).hp == 3 and party.get_hero(2).block == 0
+	_check(party.get_hero(2).hp == 0 and party.get_hero(2).block == 0
 		and party.get_hero(1).hp == 8 and party.get_hero(3).hp == 8,
-		"4 damage consumes 2 Block before 2 HP and spares untargeted heroes")
+		"40 damage consumes 2 Block then downs announced hero 2 and spares untargeted heroes")
 	# The announced target can fall during the player turn. Tied fallback HP
 	# chooses front position 1 over back position 3 (both at 8).
 	var fallback := _seeded_phase_action("attack")
@@ -188,8 +188,8 @@ func _test_phase_two_actions() -> void:
 		_check(fallback_result.get("ok", false)
 			and fallback_result.events[0].target_position == 1
 			and fallback_result.events[0].applied
-			and target.get_hero(1).hp == 4 and target.get_hero(3).hp == 8,
-			"lowest-living-HP fallback chooses tied front hero and deals cached 4")
+			and target.get_hero(1).hp == 0 and target.get_hero(3).hp == 8,
+			"lowest-living-HP fallback chooses tied front hero and deals cached 40")
 	var block_intent: Dictionary = block.intents.get_intents()[0]
 	_check(block_intent == {"type": "block", "amount": 3, "enemy_position": 1},
 		"phase-two Block 3 has no hero target")
@@ -236,6 +236,11 @@ func _replay(seed_value: int) -> Array:
 		result.append({"intent": announced, "events": resolved.events,
 			"heroes": party.get_heroes(), "enemies": enemies.get_enemies(),
 			"rng_before": rng_before, "rng_after": battle.rng.state})
+		# Phase-two attacks hit for more than any hero's maximum HP, so the
+		# authentic fight ends once the third attack downs the last hero and
+		# there is no living target for a following announcement.
+		if party.is_defeated():
+			break
 		if not selector.advance_turn():
 			return []
 		result.append({"next": selector.get_intents(), "rng": battle.rng.state})
@@ -245,13 +250,24 @@ func _replay(seed_value: int) -> Array:
 func _test_seeded_replay() -> void:
 	var first := _replay(188421)
 	var second := _replay(188421)
-	_check(first.size() == 16 and first == second,
-		"two genuine identically seeded Boss battles replay eight action/outcome/RNG traces")
-	if first.size() == 16:
+	_check(first.size() == 7 and first == second,
+		"two genuine identically seeded Boss battles replay seven ordered action/outcome/RNG traces to authentic defeat")
+	if first.size() == 7:
 		_check(first[0].intent[0].enemy_position == 1
 			and first[0].enemies[0].hp == 21
 			and first[0].events.size() == 1,
 			"replay trace actually exercises original Boss slot at phase-two HP")
+		var downed := true
+		for hero in first[6].heroes:
+			downed = downed and hero.hp == 0
+		_check(downed and first[6].events[0].applied
+			and first[1].rng != first[0].rng_after
+			and first[3].rng != first[2].rng_after
+			and first[5].rng != first[4].rng_after
+			and first[2].rng_before == first[1].rng
+			and first[4].rng_before == first[3].rng
+			and first[6].rng_before == first[5].rng,
+			"revised phase-two attacks end the party with exactly one weighted draw per committed turn")
 
 
 func _test_locked_phase_one_attack() -> void:
@@ -272,9 +288,9 @@ func _test_locked_phase_one_attack() -> void:
 	var selector: CombatEnemyIntents = battle.intents
 	var locked := selector.get_intents()
 	var state_before: int = battle.rng.state
-	_check(locked[0] == {"type": "attack", "amount": 40,
+	_check(locked[0] == {"type": "attack", "amount": 34,
 			"enemy_position": 1, "target_position": 1},
-		"phase-one attack commits exact authored 40 damage to front")
+		"phase-one attack commits exact authored 34 damage to front")
 	_check(enemies.apply_damage(1, 63) and enemies.get_enemy(1).hp == 21
 		and selector.get_intents() == locked and battle.rng.state == state_before
 		and CombatEnemyIntents.policy_for(enemies, 1) == "front",
@@ -282,11 +298,11 @@ func _test_locked_phase_one_attack() -> void:
 	var executed := CombatEnemyPhase.new().execute_phase(
 		party, enemies, locked, null, true)
 	_check(executed.get("ok", false) and executed.events[0].target_position == 1
-		and executed.events[0].applied and party.get_hero(1).hp == 0
+		and executed.events[0].applied and party.get_hero(1).hp == 6
 		and party.get_hero(3).hp == 26,
-		"old front attack really executes for 40 despite boss now at 21 HP")
+		"old front attack really executes for 34 despite boss now at 21 HP")
 	_check(selector.advance_turn()
-		and selector._slots[0].actions[0].action.amount == 4
+		and selector._slots[0].actions[0].action.amount == 40
 		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
 		"following announcement (only) upgrades the actual attack/policy")
 
@@ -379,7 +395,7 @@ func _test_round_phase_crossing() -> void:
 		and party.get_hero(1).block == 6,
 		"real active first hand is opened before the threshold crossing")
 	var locked := intents.get_intents()
-	_check(locked.size() == 1 and locked[0] == {"type": "attack", "amount": 40,
+	_check(locked.size() == 1 and locked[0] == {"type": "attack", "amount": 34,
 		"enemy_position": 1, "target_position": 1}
 		and intents._boss_phase == 1 and CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"bound phase-one attack is already committed against front Warden")
@@ -399,14 +415,19 @@ func _test_round_phase_crossing() -> void:
 		and (not oracle.intent.has("target_position") or oracle.intent.target_position == 2),
 		"authored phase-two weighted oracle targets the lowest living HP hero")
 	_check(flow.end_turn(), "real round commits previously announced phase-one attack")
-	_check(party.get_hero(1).hp == 0 and party.get_hero(2).hp == 14
+	_check(party.get_hero(1).hp == 6 and party.get_hero(2).hp == 14
 		and enemies.get_enemy(1).hp == 21 and battle.unravel.get_snapshot(1).gauge == 0,
-		"old 40-damage front attack executes despite the Boss being at 21")
+		"old 34-damage front attack executes despite the Boss being at 21")
+	# The same pre-advance RNG state reproduces the one weighted draw, now
+	# resolved against the party as it stands after the committed attack.
+	var next_oracle := _next_phase_two_oracle(battle, state)
 	_check(intents._boss_phase == 2 and intents._slots[0].target == "lowest_living_hp"
 		and CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp"
-		and intents.get_intents() == [oracle.get("intent")]
-		and battle.rng.state == oracle.get("rng"),
-		"only successful advance draws genuine phase-two action once, with bound policy")
+		and not next_oracle.is_empty()
+		and intents.get_intents() == [next_oracle.get("intent")]
+		and battle.rng.state == next_oracle.get("rng")
+		and intents.get_intents()[0].get("target_position", 1) == 1,
+		"only successful advance draws genuine phase-two action once against lowest living HP")
 	var before := _round_snapshot(battle)
 	var detached := intents.get_intents()
 	detached[0]["amount"] = 999
@@ -494,11 +515,11 @@ func _test_round_bleed_delayed_skip() -> void:
 		"at 22 HP boss has surviving Bleed, Block 4 and 15/16 gauge")
 	var locked := intents.get_intents()
 	_check(locked.size() == 1 and locked[0].type == "attack"
-		and locked[0].amount == 40 and locked[0].target_position == 1
+		and locked[0].amount == 34 and locked[0].target_position == 1
 		and not gauge.get_snapshot(1).skip_pending,
 		"Bleed has not preemptively skipped the already-announced front attack")
 	_check(flow.end_turn(), "owner turn executes committed attack then enemy Bleed tick")
-	_check(party.get_hero(1).hp == 0 and enemies.get_enemy(1).hp == 21
+	_check(party.get_hero(1).hp == 6 and enemies.get_enemy(1).hp == 21
 		and enemies.get_enemy(1).block == 4
 		and enemies.get_enemy(1).get("statuses", {}).get("bleed", 0) == 0
 		and gauge.get_snapshot(1) == {"gauge": 16, "threshold": 16,

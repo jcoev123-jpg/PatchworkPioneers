@@ -96,7 +96,7 @@ static func validate_boss_definition(boss_definition: Variant) -> bool:
 	var actions = intent.get("actions")
 	if not actions is Array or actions.size() != 3:
 		return false
-	return _validate_phase_actions(actions, 40, 3, 1)
+	return _validate_phase_actions(actions, 34, 3, 1)
 
 
 ## Validates that a phase-two record contains the exact valid Patchwork Behemoth phase-two schema.
@@ -121,7 +121,7 @@ static func validate_phase_two_record(phase_two_record: Variant) -> bool:
 	var actions = intent.get("actions")
 	if not actions is Array or actions.size() != 3:
 		return false
-	return _validate_phase_actions(actions, 4, 3, 1)
+	return _validate_phase_actions(actions, 40, 3, 1)
 
 
 static func _extract_boss_dict(boss_input: Variant) -> Dictionary:

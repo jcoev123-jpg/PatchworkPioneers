@@ -550,7 +550,7 @@ func _win(fixture: Dictionary) -> Array:
 					"witnessed authored final Boss victory after all twelve selections")
 				await _return_terminal("Victory")
 				break
-			await _reward(battles == 1)
+			await _reward(battles == 2)
 			_check(app.run_heroes == carried and app.run_heroes == app.party_carryover.read_state().heroes,
 				"claim publishes exact combat HP/status/positions, clearing only transient Block")
 		elif kind == "Rest":

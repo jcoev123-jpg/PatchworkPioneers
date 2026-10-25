@@ -343,11 +343,11 @@ func _test_behemoth_phase_rules() -> void:
 	var p1_actions: Array = p1_intent.get("actions", [])
 	_check(p1_actions.size() == 3, "shipped phase-one intent has exactly 3 actions")
 	var expected_p1_actions := [
-		{"type": "attack", "amount": 40, "weight": 4},
+		{"type": "attack", "amount": 34, "weight": 4},
 		{"type": "block", "amount": 3, "weight": 2},
 		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
 	]
-	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 40 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 34 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
 
 	# Validate Phase 2 table
 	var p2_dict: Dictionary = parsed_p2 if parsed_p2 is Dictionary else {}
@@ -359,11 +359,11 @@ func _test_behemoth_phase_rules() -> void:
 	var p2_actions: Array = p2_intent.get("actions", [])
 	_check(p2_actions.size() == 3, "phase-two intent has exactly 3 actions")
 	var expected_p2_actions := [
-		{"type": "attack", "amount": 4, "weight": 4},
+		{"type": "attack", "amount": 40, "weight": 4},
 		{"type": "block", "amount": 3, "weight": 2},
 		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
 	]
-	_check(p2_actions == expected_p2_actions, "phase-two actions match attack 4 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+	_check(p2_actions == expected_p2_actions, "phase-two actions match attack 40 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
 
 	# Snapshots before any projection
 	var boss_deep_before: Variant = parsed_boss.duplicate(true)
@@ -423,9 +423,9 @@ func _test_behemoth_phase_rules() -> void:
 	res21.get("intent").get("actions")[0]["amount"] = 999
 	res21.get("intent")["target"] = "mutated_policy"
 	var res21_fresh: Dictionary = CombatBehemothPhaseRules.select_phase(behemoth_def, 21, p2_dict)
-	_check(res21_fresh.get("intent").get("actions")[0].get("amount") == 4, "returned intent is deep copy; fresh query attack amount is 4")
+	_check(res21_fresh.get("intent").get("actions")[0].get("amount") == 40, "returned intent is deep copy; fresh query attack amount is 40")
 	_check(res21_fresh.get("intent").get("target") == "lowest_living_hp", "returned intent is deep copy; fresh query target is lowest_living_hp")
-	_check(p2_dict.get("intent").get("actions")[0].get("amount") == 4, "source phase-two record attack amount remains 4")
+	_check(p2_dict.get("intent").get("actions")[0].get("amount") == 40, "source phase-two record attack amount remains 40")
 	_check(p2_dict.get("intent").get("target") == "lowest_living_hp", "source phase-two record target remains lowest_living_hp")
 
 	# 5. Negative and fail-closed tests:
@@ -504,7 +504,21 @@ func _test_behemoth_phase_rules() -> void:
 	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_amt).get("ok") == false, "negative amount fails closed")
 	var bad_amt2: Dictionary = p2_dict.duplicate(true)
 	bad_amt2["intent"]["actions"][0]["amount"] = 5
-	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_amt2).get("ok") == false, "attack amount 5 != 4 fails closed")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_amt2).get("ok") == false, "attack amount 5 != 40 fails closed")
+	# The repaired inversion is part of the exact contract: the old phase-one
+	# 40 and the old phase-two 4 are no longer accepted by either validator.
+	var old_p1_amt: Dictionary = behemoth_def.duplicate(true)
+	old_p1_amt["intent"]["actions"][0]["amount"] = 40
+	_check(CombatBehemothPhaseRules.select_phase(old_p1_amt, 22, p2_dict).get("ok") == false, "phase-one attack amount 40 (old inverted value) fails closed")
+	var wrong_p1_amt: Dictionary = behemoth_def.duplicate(true)
+	wrong_p1_amt["intent"]["actions"][0]["amount"] = 33
+	_check(CombatBehemothPhaseRules.select_phase(wrong_p1_amt, 22, p2_dict).get("ok") == false, "phase-one attack amount 33 != 34 fails closed")
+	var old_p2_amt: Dictionary = p2_dict.duplicate(true)
+	old_p2_amt["intent"]["actions"][0]["amount"] = 4
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, old_p2_amt).get("ok") == false, "phase-two attack amount 4 (old inverted value) fails closed")
+	var swapped_p2_amt: Dictionary = p2_dict.duplicate(true)
+	swapped_p2_amt["intent"]["actions"][0]["amount"] = 34
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, swapped_p2_amt).get("ok") == false, "phase-two attack amount 34 != 40 fails closed")
 
 	# Verify sources remained unmutated after all negative probes
 	_check(parsed_boss == boss_deep_before, "boss catalog unmutated after all negative probes")

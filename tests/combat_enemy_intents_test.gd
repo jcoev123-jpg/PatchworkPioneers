@@ -616,7 +616,7 @@ func _test_behemoth_phase_transition_cache() -> void:
 		"canonical real Behemoth binds at 84 HP")
 	if not schedule.is_bound():
 		return
-	_assert_boss_slot(schedule._slots[0], 40, "front", "84 HP")
+	_assert_boss_slot(schedule._slots[0], 34, "front", "84 HP")
 	_check(CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"executor policy is front for phase one")
 	var first := schedule.get_intents()
@@ -629,7 +629,7 @@ func _test_behemoth_phase_transition_cache() -> void:
 		"Block and read cannot transition or spend RNG")
 	_check(enemies.apply_damage(1, 62) and enemies.get_enemy(1).hp == 22
 		and schedule.advance_turn(), "22 HP advances in phase one")
-	_assert_boss_slot(schedule._slots[0], 40, "front", "22 HP")
+	_assert_boss_slot(schedule._slots[0], 34, "front", "22 HP")
 	var locked := schedule.get_intents()
 	before = rng.state
 	_check(enemies.apply_damage(1, 1) and enemies.get_enemy(1).hp == 21,
@@ -641,13 +641,13 @@ func _test_behemoth_phase_transition_cache() -> void:
 		and CombatEnemyIntents.policy_for(enemies, 1) == "front",
 		"threshold does not rewrite the current announcement or policy on reads")
 	_check(schedule.advance_turn(), "next committed roll transitions phase")
-	_assert_boss_slot(schedule._slots[0], 4, "lowest_living_hp", "21 HP")
+	_assert_boss_slot(schedule._slots[0], 40, "lowest_living_hp", "21 HP")
 	_check(schedule._boss_phase == 2 and
 		CombatEnemyIntents.policy_for(enemies, 1) == "lowest_living_hp",
 		"cached phase and authoritative executor policy switch together")
 	var next := schedule.get_intents()
 	_check(next.size() == 1 and next[0].get("enemy_position") == 1
-		and (next[0].get("amount") in [1, 3, 4]),
+		and (next[0].get("amount") in [1, 3, 40]),
 		"21 HP publishes one phase-two action with authored amount")
 	before = rng.state
 	_check(next == schedule.get_intents() and rng.state == before,
@@ -655,7 +655,7 @@ func _test_behemoth_phase_transition_cache() -> void:
 	_check(enemies.apply_damage(1, 20) and enemies.get_enemy(1).hp == 1
 		and schedule.advance_turn() and schedule._boss_phase == 2,
 		"living 1 HP Behemoth retains phase two")
-	_assert_boss_slot(schedule._slots[0], 4, "lowest_living_hp", "1 HP")
+	_assert_boss_slot(schedule._slots[0], 40, "lowest_living_hp", "1 HP")
 	_check(enemies.apply_damage(1, 1) and enemies.is_slain(1)
 		and schedule.advance_turn() and enemies.get_enemy(1).hp == 0,
 		"slain Behemoth stays in its slot and advances inertly")
